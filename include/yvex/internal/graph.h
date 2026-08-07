@@ -197,13 +197,13 @@ typedef struct yvex_attention_state_recipe_request yvex_attention_state_recipe_r
 typedef struct yvex_attention_workspace_recipe yvex_attention_workspace_recipe;
 int yvex_attention_state_recipe_seal(yvex_attention_state_recipe *recipe,
                                      yvex_error *err);
-
 typedef struct yvex_attention_publication {
-    int owned, complete, prefix_addressable;
+    int owned, complete, prefix_addressable, device_state_staged;
     struct yvex_attention_workspace *workspace;
     unsigned int evidence_level;
     char execution_identity[YVEX_SHA256_HEX_CAP];
-    unsigned long long layer_index;
+    const unsigned int *token_ids;
+    unsigned long long layer_index, device_state_staged_bytes;
     yvex_attention_class attention_class;
     unsigned long long token_position, token_count, hidden_width, q_rank;
     unsigned long long core_output_width, envelope_output_width;
@@ -221,7 +221,6 @@ typedef struct yvex_attention_publication {
     yvex_attention_rolling_state_output next_main_rolling_state;
     yvex_attention_rolling_state_output next_indexer_rolling_state;
 } yvex_attention_publication;
-
 /* Historical tests use the same owned object as an execution trace. */
 typedef yvex_attention_publication yvex_attention_execution_trace;
 
@@ -482,6 +481,7 @@ typedef struct {
     int (*cancel_requested)(void *context);
     void *cancel_context;
     const char *input_identity;
+    const unsigned int *token_ids;
     yvex_attention_activation_view_fn activation_view;
     /* This view may stand alone only for CUDA execution without full host evidence. */
     yvex_attention_device_view_fn device_view;

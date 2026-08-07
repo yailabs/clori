@@ -172,29 +172,45 @@ extern "C" __global__ void yvex_moe_route_rows(
     int normalize, double scaling, float *scores,
     unsigned long long *selected, float *weights, int *status)
 {
+    __shared__ int active;
     unsigned long long row = (unsigned long long)blockIdx.x;
-    if (!status || *status || threadIdx.x || row >= row_count) return;
-    if (!logits || !scores || !selected || !weights || !row_count ||
-        !routed_experts || routed_experts > 256ull || !topk || topk > 16ull ||
-        topk > routed_experts || router_class > 1u || !isfinite(scaling) ||
-        scaling <= 0.0 || (router_class == 0u &&
-        (!hash_table || !token_ids || hash_columns < topk ||
-         hash_row_bytes < hash_columns * sizeof(int32_t))) ||
-        (router_class == 1u && !bias)) {
-        atomicCAS(status, 0, 2);
-        return;
+    unsigned int thread = threadIdx.x;
+    if (!status || row >= row_count) return;
+    if (thread == 0u) {
+        active = *status == 0;
+        if (active && (!logits || !scores || !selected || !weights || !row_count ||
+            !routed_experts || routed_experts > 256ull || !topk || topk > 16ull ||
+            topk > routed_experts || router_class > 1u || !isfinite(scaling) ||
+            scaling <= 0.0 || (router_class == 0u &&
+            (!hash_table || !token_ids || hash_columns < topk ||
+             hash_row_bytes < hash_columns * sizeof(int32_t))) ||
+            (router_class == 1u && !bias))) {
+            atomicCAS(status, 0, 2);
+            active = 0;
+        }
     }
+    __syncthreads();
+    if (!active) return;
     const float *row_logits = logits + row * routed_experts;
     float *row_scores = scores + row * routed_experts;
     unsigned long long *row_selected = selected + row * topk;
     float *row_weights = weights + row * topk;
-    for (unsigned long long expert = 0ull; expert < routed_experts; ++expert) {
+    /* Score evaluation is independent by expert and dominates serial routing.
+     * Selection stays on one lane so source tie-breaking and double accumulation
+     * remain byte-for-byte identical to the retained oracle. */
+    for (unsigned long long expert = thread; expert < routed_experts;
+         expert += blockDim.x) {
         double value = (double)row_logits[expert];
         double softplus = value > 0.0 ? value + log1p(exp(-value)) : log1p(exp(value));
         double score = sqrt(softplus);
-        if (!isfinite(score)) { atomicCAS(status, 0, 1); return; }
+        if (!isfinite(score)) {
+            atomicCAS(status, 0, 1);
+            atomicExch(&active, 0);
+        }
         row_scores[expert] = (float)score;
     }
+    __syncthreads();
+    if (!active || thread) return;
     for (unsigned long long rank = 0ull; rank < topk; ++rank) {
         unsigned long long chosen = ~0ull;
         if (router_class == 0u) {
@@ -246,28 +262,55 @@ extern "C" __global__ void yvex_moe_pair_order(
     unsigned long long topk, unsigned long long expert_count,
     unsigned long long *order, unsigned long long *unique_experts, int *status)
 {
-    if (!status || *status || blockIdx.x || threadIdx.x) return;
-    if (!selected || !row_count || !topk || !expert_count || !order || !unique_experts) {
-        atomicCAS(status, 0, 2);
-        return;
-    }
-    unsigned long long emitted = 0ull, unique = 0ull;
-    for (unsigned long long expert = 0ull; expert < expert_count; ++expert) {
-        unsigned long long before = emitted;
-        for (unsigned long long pair = 0ull; pair < row_count * topk; ++pair) {
-            if (selected[pair] >= expert_count) {
-                atomicCAS(status, 0, 2);
-                return;
-            }
-            if (selected[pair] == expert) order[emitted++] = pair;
+    __shared__ unsigned long long counts[256];
+    __shared__ unsigned long long offsets[256];
+    __shared__ int active;
+    unsigned int thread = threadIdx.x;
+    unsigned long long pairs;
+    if (!status || blockIdx.x) return;
+    if (thread == 0u) {
+        active = *status == 0;
+        if (active && (!selected || !row_count || !topk || !expert_count ||
+            expert_count > blockDim.x || !order || !unique_experts ||
+            row_count > ~0ull / topk)) {
+            atomicCAS(status, 0, 2);
+            active = 0;
         }
-        if (emitted != before) unique++;
     }
-    if (emitted != row_count * topk) {
-        atomicCAS(status, 0, 2);
-        return;
+    __syncthreads();
+    if (!active) return;
+    pairs = row_count * topk;
+    unsigned long long count = 0ull;
+    if ((unsigned long long)thread < expert_count) {
+        for (unsigned long long pair = 0ull; pair < pairs; ++pair) {
+            unsigned long long expert = selected[pair];
+            if (expert >= expert_count) {
+                atomicCAS(status, 0, 2);
+                atomicExch(&active, 0);
+            }
+            if (expert == (unsigned long long)thread) count++;
+        }
     }
-    *unique_experts = unique;
+    counts[thread] = count;
+    __syncthreads();
+    if (!active) return;
+    if (thread == 0u) {
+        unsigned long long emitted = 0ull, unique = 0ull;
+        for (unsigned long long expert = 0ull; expert < expert_count; ++expert) {
+            offsets[expert] = emitted;
+            emitted += counts[expert];
+            if (counts[expert]) unique++;
+        }
+        if (emitted != pairs) {
+            atomicCAS(status, 0, 2);
+            active = 0;
+        } else *unique_experts = unique;
+    }
+    __syncthreads();
+    if (!active || (unsigned long long)thread >= expert_count) return;
+    unsigned long long cursor = offsets[thread];
+    for (unsigned long long pair = 0ull; pair < pairs; ++pair)
+        if (selected[pair] == (unsigned long long)thread) order[cursor++] = pair;
 }
 
 extern "C" __global__ void yvex_moe_grouped_up_rows(

@@ -178,6 +178,48 @@ changing mode or upstream execution identity invalidates the old registry.
 This lets repeated target decode reuse one executable while prefill and other
 exact shapes remain separately keyed.
 
+CUDA session residency owns two device banks for each admitted attention-state
+layer and tracks which bank is committed. Normal production attention stages
+the complete non-prefix candidate directly from its phase arrays into the
+other bank with ordered D2D copies. Commit flips the bank authority; abort
+retains the committed bank, and the next non-extension begin clones it before
+reuse. The graph provider still materializes the bounded host candidate as the
+semantic oracle, but residency does not upload that duplicate state again.
+Audit/forensic evidence and prefix-addressable speculative selection retain
+their explicit host materialization and H2D path because they consume a
+selected checkpoint rather than the final phase state. Counters distinguish
+initial/admitted uploads, device staging, and bank cloning.
+
+Token-backed publications advance the logical state identity once per token
+and position. Target-only execution, multi-row verification and accepted-prefix
+promotion therefore name the same committed state when they publish the same
+token sequence. Canonical synthetic probes, which have no token input, retain
+their sealed execution identity instead.
+
+The host graph-state provider reserves stable virtual spans for each state
+component and commits physical pages only as admitted history ranges become
+reachable. Page geometry comes from the capacity plan independently for SWA,
+compressed, HCA, indexer, rolling and draft classes; it is not one global token
+constant. The pool charges page tables and actual system-page residency before
+candidate writes or committed publication. Reset releases physical pages with
+the virtual address unchanged. Reference providers without a capacity plan
+retain the bounded eager allocation oracle.
+
+On CUDA Driver-VMM hardware, the session residency owner projects the same
+logical envelope into two stable virtual device banks per selected layer. It
+maps physical allocation granules only for provider-visible committed spans and
+pre-admitted candidate growth, uploads and copies only those visible spans, and
+refuses resolution beyond each admitted extent. Reset decommits physical
+granules without relocating the virtual banks. Its summary keeps virtual bytes,
+physical resident bytes, allocation granularity and cumulative commit/release
+counts distinct. CUDA implementations without VMM retain the explicit bounded
+full-bank fallback.
+
+This device paging removes full-capacity allocation from the admitted GB10 VMM
+path; it does not by itself qualify 512K model execution. Full-model attention,
+workspace, throughput and continuation evidence at each deep-context band
+remain required before deep-context readiness can be published.
+
 An ordinary execution unit follows:
 
 ```text
@@ -209,11 +251,12 @@ trace verbosity: production cannot require complete hidden, state, logits, or
 probability host scans merely to derive evidence.
 
 The portable CUDA production profile keeps its admitted Q8 activation codec
-and parallel F32 reductions. Full forensic attention comparison instead selects
-a canonical-order F64 accumulator and disables activation compression for that
-operation, so the independent stage oracle measures semantic execution rather
-than the production approximation. This slower numerical adapter is unreachable
-from production and is not a performance path.
+and parallel F32 reductions. Full forensic attention and token-local MoE
+comparison instead select canonical-order F64 row dots and disable activation
+compression for those operations, so the independent stage oracles measure
+semantic execution rather than the production approximation. These slower
+numerical adapters are unreachable from production and are not performance
+paths.
 
 Before target prefill/decode, draft, verification, correction, or reset, the
 runtime selects an identity-bound execution shape. The shape distinguishes
@@ -281,11 +324,13 @@ therefore cannot report a future zero for DSpark prefill or turn an unmeasured
 operation into a complete roofline lower bound.
 
 Prefix selection also snapshots state-residency counters around its serialized
-mutation. Promotion therefore reports exact H2D and one synchronization per
-successful CUDA state upload, with zero D2H, D2D and kernel launches. Its
-state-copy and temporary bytes remain unavailable until their owners can report
-compulsory traffic rather than allocation capacity. Repeated occupancy is
-aggregated as a checked work-unit-weighted mean, never as an additive counter.
+mutation. Prefix-addressable promotion therefore reports exact H2D and one
+synchronization per selected-checkpoint upload, with zero D2H, D2D and kernel
+launches. Ordinary non-prefix production separately records exact D2D bytes for
+phase-to-candidate staging and committed-to-candidate bank cloning. Temporary
+bytes remain unavailable until their owners can report compulsory traffic
+rather than allocation capacity. Repeated occupancy is aggregated as a checked
+work-unit-weighted mean, never as an additive counter.
 
 ## Memory and residency
 

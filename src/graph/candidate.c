@@ -89,6 +89,7 @@ static void candidate_release_publication(yvex_attention_publication *publicatio
     free(publication->compressed_positions);
     free(publication->indexer_kv);
     free(publication->indexer_positions);
+    free((void *)publication->token_ids);
     free(publication->main_rolling_kv_checkpoints);
     free(publication->main_rolling_score_checkpoints);
     free(publication->indexer_rolling_kv_checkpoints);
@@ -157,6 +158,7 @@ int yvex_attention_candidate_delta_open(
     copy->topk_counts = copy->topk_positions = NULL;
     copy->raw_kv = copy->compressed_kv = copy->indexer_kv = NULL;
     copy->compressed_positions = copy->indexer_positions = NULL;
+    copy->token_ids = NULL;
     copy->main_rolling_kv_checkpoints = NULL;
     copy->main_rolling_score_checkpoints = NULL;
     copy->indexer_rolling_kv_checkpoints = NULL;
@@ -184,6 +186,9 @@ int yvex_attention_candidate_delta_open(
                         publication->indexer_positions,
                         publication->indexer_count,
                         sizeof(*copy->indexer_positions)) ||
+        (publication->token_ids &&
+         !candidate_copy((void **)&copy->token_ids, publication->token_ids,
+                         publication->token_count, sizeof(*copy->token_ids))) ||
         !(publication->prefix_addressable
               ? candidate_copy_rolling(
                     publication, &publication->next_main_rolling_state,

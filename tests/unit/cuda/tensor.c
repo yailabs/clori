@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include <yvex/api.h>
+#include <yvex/internal/backend.h>
 
 #include "tests/test.h"
 
@@ -22,6 +23,68 @@ static void make_desc(yvex_backend_tensor_desc *desc,
     desc->dims[0] = d0;
     desc->dims[1] = d1;
     desc->bytes = d0 * d1 * (unsigned long long)sizeof(float);
+}
+
+static int assert_virtual_pages(yvex_backend *backend)
+{
+    yvex_backend_memory_stats before, committed, released;
+    yvex_backend_tensor_desc desc = {0};
+    yvex_device_tensor *tensor = NULL;
+    yvex_error err;
+    unsigned long long granularity = 0ull, delta = 0ull, freed = 0ull;
+    unsigned char value = 0x5au, observed = 0u;
+
+    YVEX_TEST_ASSERT(yvex_backend_get_memory_stats(backend, &before, &err) == YVEX_OK,
+                     "snapshot memory before virtual reservation");
+    desc.name = "cuda_virtual_pages";
+    desc.dtype = YVEX_DTYPE_I8;
+    desc.rank = 1u;
+    desc.dims[0] = desc.bytes = 8ull * 1024ull * 1024ull;
+    YVEX_TEST_ASSERT(yvex_backend_tensor_reserve(
+                         backend, &desc, &tensor, &granularity, &err) == YVEX_OK &&
+                         tensor && granularity && tensor->virtual_reserved &&
+                         tensor->resident_bytes == 0ull,
+                     "reserve stable CUDA virtual tensor without physical pages");
+    YVEX_TEST_ASSERT(yvex_backend_get_memory_stats(backend, &committed, &err) == YVEX_OK &&
+                         committed.allocated_bytes == before.allocated_bytes,
+                     "virtual address reservation consumes no physical memory budget");
+    YVEX_TEST_ASSERT(yvex_backend_tensor_commit_range(
+                         backend, tensor, granularity + 1ull, 1ull, &delta, &err) == YVEX_OK &&
+                         delta == granularity && tensor->resident_bytes == granularity,
+                     "commit exactly one intersecting physical granule");
+    YVEX_TEST_ASSERT(yvex_backend_tensor_commit_range(
+                         backend, tensor, granularity + 2ull, 1ull, &delta, &err) == YVEX_OK &&
+                         delta == 0ull && tensor->resident_bytes == granularity,
+                     "overlapping commitment is idempotent");
+    YVEX_TEST_ASSERT(yvex_backend_tensor_commit_range(
+                         backend, tensor, 3ull * granularity, 1ull, &delta, &err) == YVEX_OK &&
+                         delta == granularity && tensor->resident_bytes == 2ull * granularity,
+                     "commit a disjoint physical granule");
+    {
+        yvex_device_tensor view = *tensor;
+        view.data += granularity + 1ull;
+        view.bytes = view.dims[0] = 1ull;
+        YVEX_TEST_ASSERT(yvex_backend_tensor_write(
+                             backend, &view, &value, 1ull, &err) == YVEX_OK &&
+                             yvex_backend_tensor_read(
+                                 backend, &view, &observed, 1ull, &err) == YVEX_OK &&
+                             observed == value,
+                         "committed virtual page supports bounded tensor movement");
+    }
+    YVEX_TEST_ASSERT(yvex_backend_get_memory_stats(backend, &committed, &err) == YVEX_OK &&
+                         committed.allocated_bytes ==
+                             before.allocated_bytes + 2ull * granularity,
+                     "physical page commitments update exact memory accounting");
+    YVEX_TEST_ASSERT(yvex_backend_tensor_decommit(
+                         backend, tensor, &freed, &err) == YVEX_OK &&
+                         freed == 2ull * granularity && tensor->resident_bytes == 0ull,
+                     "decommit every physical page while retaining virtual ownership");
+    YVEX_TEST_ASSERT(yvex_backend_get_memory_stats(backend, &released, &err) == YVEX_OK &&
+                         released.allocated_bytes == before.allocated_bytes,
+                     "decommit restores the pre-reservation physical budget");
+    YVEX_TEST_ASSERT(yvex_backend_tensor_release(backend, &tensor, &err) == YVEX_OK && !tensor,
+                     "release the stable virtual address exactly once");
+    return 0;
 }
 
 int yvex_cuda_test_tensor(void)
@@ -47,6 +110,8 @@ int yvex_cuda_test_tensor(void)
         return 77;
     }
     YVEX_TEST_ASSERT(rc == YVEX_OK, "open cuda backend");
+    YVEX_TEST_ASSERT(assert_virtual_pages(backend) == 0,
+                     "CUDA virtual page ownership is transactional");
 
     rc = yvex_backend_get_memory_stats(backend, &stats, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "initial stats");

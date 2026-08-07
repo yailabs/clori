@@ -89,6 +89,21 @@ fi
 make -s check-source-manifest >/dev/null ||
     fail "generated source projection is stale or nondeterministic"
 
+# Nested package/native-CUDA compositions may request the same generated image
+# manifest concurrently. Publication must expose either the previous complete
+# manifest or the next complete manifest, never a truncated intermediate file.
+for target in '$(CUDA_PTX_INC)' '$(CUDA_CUBIN_INC)'; do
+    recipe=$(awk -v target="$target" '
+        index($0, target ":") == 1 { active = 1 }
+        active && /^[^[:space:]#][^=]*:/ && index($0, target ":") != 1 { exit }
+        active { print }
+    ' Makefile)
+    printf '%s\n' "$recipe" | grep -F 'tmp="$@.tmp.$$$$"' >/dev/null ||
+        fail "$target generation lacks a process-unique staging path"
+    printf '%s\n' "$recipe" | grep -F 'mv "$$tmp" "$@"' >/dev/null ||
+        fail "$target generation is not atomically published"
+done
+
 for obsolete_target in cli server test-client test-cli-cutover \
                        test-openai-agent test-runtime-benchmark-chart \
                        test-runtime-sessions test-runtime-turns \

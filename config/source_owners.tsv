@@ -138,6 +138,7 @@ src/graph/numeric.c	graph	graph.numeric	generic	private	reusable-algorithm	runti
 src/graph/plan.c	graph	graph.plan	generic	private	immutable-planning	runtime,cli	implementation	none
 src/graph/private.h	graph	graph.private	generic	private	private-interface	runtime,cli	interface	none
 src/graph/state_recipe.c	graph	graph.state_recipe	generic	private	immutable-planning	model,graph,runtime,tests	implementation	none
+src/graph/state_pages.c	graph	graph.state_pages	generic	private	resource-lifecycle	graph.state,runtime,tests	implementation	none
 src/io/writer.c	io	io.writer	generic	private	transactional-io	repository	implementation	none
 src/model/artifacts/gate.c	model.artifacts	model.artifacts.gate	generic	private	reusable-algorithm	cli,artifact	implementation	none
 src/model/artifacts/ref.c	model.artifacts	model.artifacts.ref	generic	private	reusable-algorithm	cli,artifact	implementation	none

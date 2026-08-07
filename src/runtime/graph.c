@@ -1,5 +1,4 @@
-/* Coordinates one session's attention candidate transaction with reusable backend resources.
- * Publication waits until execution, validation, and residency succeed across every owner. */
+/* Publishes attention candidates only after graph validation and state residency succeed. */
 #include <yvex/internal/core.h>
 #include <yvex/internal/backend.h>
 #include <yvex/internal/benchmark.h>
@@ -657,22 +656,22 @@ publish:
 }
 static int runtime_attention_mode_bind_descriptor(const yvex_graph_attention_operator_request *request,
     yvex_runtime_execution_session *session, const yvex_graph_attention_operator_result *result,
-    yvex_runtime_execution_mode mode, const yvex_graph_attention_capacity_plan *capacity,
-    yvex_error *err) {
+    yvex_runtime_execution_mode mode, const yvex_graph_attention_capacity_plan *capacity, yvex_error *err) {
     const yvex_runtime_session_view *view = yvex_runtime_session_view_get(session);
-    const yvex_graph_attention_capacity_summary *summary =
-        yvex_graph_attention_capacity_plan_summary(capacity);
-    yvex_backend_cuda_attention_mode selected;
+    const yvex_graph_attention_capacity_summary *summary = yvex_graph_attention_capacity_plan_summary(capacity);
+    yvex_backend_attention_phase phase = request->phase == YVEX_RUNTIME_PHASE_ATTENTION_DECODE
+            ? YVEX_BACKEND_ATTENTION_PHASE_DECODE : YVEX_BACKEND_ATTENTION_PHASE_PREFILL;
+    yvex_backend_cuda_attention_mode selected = mode == YVEX_RUNTIME_MODE_FULL
+        ? YVEX_BACKEND_CUDA_ATTENTION_FULL
+        : mode == YVEX_RUNTIME_MODE_PIECEWISE ? YVEX_BACKEND_CUDA_ATTENTION_PIECEWISE
+                                              : YVEX_BACKEND_CUDA_ATTENTION_EAGER;
     if (!request->compare_backends && request->backend != YVEX_BACKEND_KIND_CUDA)
         return YVEX_OK;
     if (!view || !summary)
         return runtime_refuse(err, YVEX_ERR_STATE, "runtime.attention.capacity",
                               "sealed capacity plan is required for backend configuration");
-    selected = mode == YVEX_RUNTIME_MODE_FULL ? YVEX_BACKEND_CUDA_ATTENTION_FULL
-        : mode == YVEX_RUNTIME_MODE_PIECEWISE ? YVEX_BACKEND_CUDA_ATTENTION_PIECEWISE
-                                              : YVEX_BACKEND_CUDA_ATTENTION_EAGER;
     return yvex_backend_cuda_attention_configure(
-        view->backend, selected, result->execution_descriptor_identity, result->capture_bucket,
+        view->backend, phase, selected, result->execution_descriptor_identity, result->capture_bucket,
         summary->components[YVEX_ATTENTION_STATE_BINDING_LOCAL_HISTORY].maximum_capacity,
         summary->components[YVEX_ATTENTION_STATE_BINDING_COMPRESSED_HISTORY].maximum_capacity,
         summary->components[YVEX_ATTENTION_STATE_BINDING_INDEXER_HISTORY].maximum_capacity, err);
@@ -733,16 +732,13 @@ typedef struct {
     yvex_runtime_state_residency *residency;
     yvex_attention_operation_scope operation_scope;
     yvex_sha256 output_hash;
-    unsigned long long output_values;
-    unsigned long long active_layer_ordinal;
-    int hash_output;
-    int layer_active;
+    unsigned long long output_values, active_layer_ordinal;
+    int hash_output, layer_active;
     char last_delta_identity[YVEX_SHA256_HEX_CAP];
 } runtime_attention_state_bridge;
 static int runtime_attention_state_begin(
     void *context, unsigned long long layer_ordinal, const yvex_attention_layer_plan *layer,
-    const yvex_attention_history_view *initial_history,
-    unsigned long long token_position, unsigned long long token_count,
+    const yvex_attention_history_view *initial_history, unsigned long long token_position, unsigned long long count,
     const yvex_attention_cancellation *cancellation, const yvex_attention_history_view **history,
     yvex_attention_failure *failure, yvex_error *err) {
     runtime_attention_state_bridge *bridge = (runtime_attention_state_bridge *)context;
@@ -752,7 +748,10 @@ static int runtime_attention_state_begin(
                               "valid state bridge and bounded token range are required");
     rc = bridge->provider->begin(
         bridge->provider->context, layer_ordinal, layer, initial_history,
-        token_position, token_count, cancellation, history, failure, err);
+        token_position, count, cancellation, history, failure, err);
+    if (rc == YVEX_OK && bridge->residency)
+        rc = yvex_runtime_state_residency_transition(
+            bridge->residency, bridge->provider, NULL, layer_ordinal, count, YVEX_RUNTIME_STATE_BEGIN, err);
     if (rc == YVEX_OK) {
         bridge->active_layer_ordinal = layer_ordinal;
         bridge->layer_active = 1;
@@ -761,21 +760,22 @@ static int runtime_attention_state_begin(
 }
 static int runtime_attention_state_hash_output(
     runtime_attention_state_bridge *bridge, const yvex_attention_publication *publication) {
-    const float *values;
-    unsigned long long width, count, index;
-    values = bridge->operation_scope == YVEX_ATTENTION_OPERATION_ENVELOPE
-                 ? publication->envelope_output : publication->core_output;
+    const float *values; unsigned long long width, count, index;
     width = bridge->operation_scope == YVEX_ATTENTION_OPERATION_ENVELOPE
                 ? publication->envelope_output_width : publication->core_output_width;
-    if (!values || !width || !yvex_core_u64_mul(publication->token_count, width, &count))
-        return 0;
-    for (index = 0ull; index < count; ++index) {
-        uint32_t bits;
-        if (!isfinite(values[index]))
-            return 0;
-        memcpy(&bits, &values[index], sizeof(bits));
-        if (!yvex_sha256_update_u64(&bridge->output_hash, (unsigned long long)bits))
-            return 0;
+    if (!width || !yvex_core_u64_mul(publication->token_count, width, &count)) return 0;
+    if (publication->evidence_level == YVEX_ATTENTION_EVIDENCE_NONE) {
+        if (!yvex_sha256_update_text(&bridge->output_hash, publication->execution_identity)) return 0;
+    } else {
+        values = bridge->operation_scope == YVEX_ATTENTION_OPERATION_ENVELOPE
+                     ? publication->envelope_output : publication->core_output;
+        if (!values) return 0;
+        for (index = 0ull; index < count; ++index) {
+            uint32_t bits;
+            if (!isfinite(values[index])) return 0;
+            memcpy(&bits, &values[index], sizeof(bits));
+            if (!yvex_sha256_update_u64(&bridge->output_hash, (unsigned long long)bits)) return 0;
+        }
     }
     bridge->output_values += count;
     return 1;
@@ -794,9 +794,9 @@ static int runtime_attention_state_stage(
     rc = bridge->provider->stage(bridge->provider->context, publication, cancellation,
         state_delta_identity, failure, err);
     if (rc == YVEX_OK && bridge->residency)
-        rc = yvex_runtime_state_residency_stage(
-            bridge->residency, bridge->provider,
-            bridge->active_layer_ordinal, err);
+        rc = yvex_runtime_state_residency_transition(
+            bridge->residency, bridge->provider, publication, bridge->active_layer_ordinal,
+            0ull, YVEX_RUNTIME_STATE_STAGE, err);
     if (rc == YVEX_OK && state_delta_identity)
         yvex_runtime_identity_copy(bridge->last_delta_identity, state_delta_identity);
     if (rc == YVEX_OK) bridge->layer_active = 0;
@@ -1307,9 +1307,9 @@ int yvex_runtime_attention_probe_execute(yvex_runtime_execution_session *session
          !session_view->attention_workspace) ||
         request->backend_context ||
         request->workspace || request->state_provider || request->logical_model_identity ||
-        (request->activation_view ? request->probe != YVEX_ATTENTION_PROBE_UNSPECIFIED ||
-                                        !yvex_sha256_hex_valid(request->input_identity)
-                                  : request->probe != YVEX_ATTENTION_PROBE_CANONICAL_V2) ||
+        ((request->activation_view || request->device_view) ? request->probe != YVEX_ATTENTION_PROBE_UNSPECIFIED ||
+                   !yvex_sha256_hex_valid(request->input_identity)
+             : request->probe != YVEX_ATTENTION_PROBE_CANONICAL_V2) ||
         (request->compare_backends
              ? yvex_backend_kind_of(session_view->backend) != YVEX_BACKEND_KIND_CUDA
              : yvex_backend_kind_of(session_view->backend) != request->backend))

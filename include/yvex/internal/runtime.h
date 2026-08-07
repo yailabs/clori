@@ -53,8 +53,7 @@ typedef struct yvex_runtime_binding_failure {
 #define YVEX_RUNTIME_FAMILY_ADAPTER_SCHEMA_V3 3u
 #define YVEX_RUNTIME_EXECUTION_DESCRIPTOR_SCHEMA_V2 2u
 typedef enum {
-    YVEX_SEQUENCE_MIXER_SOFTMAX_ATTENTION = 0, YVEX_SEQUENCE_MIXER_RECURRENT_LINEAR,
-    YVEX_SEQUENCE_MIXER_STATE_SPACE
+    YVEX_SEQUENCE_MIXER_SOFTMAX_ATTENTION = 0, YVEX_SEQUENCE_MIXER_RECURRENT_LINEAR, YVEX_SEQUENCE_MIXER_STATE_SPACE
 } yvex_sequence_mixer_family;
 typedef enum {
     YVEX_SEQUENCE_MIXER_DENSE_MHA = 0, YVEX_SEQUENCE_MIXER_GROUPED_QUERY,
@@ -62,8 +61,7 @@ typedef enum {
     YVEX_SEQUENCE_MIXER_LATENT_ATTENTION, YVEX_SEQUENCE_MIXER_SPARSE_ATTENTION,
     YVEX_SEQUENCE_MIXER_COMPRESSED_SPARSE, YVEX_SEQUENCE_MIXER_HIERARCHICAL_COMPRESSED,
     YVEX_SEQUENCE_MIXER_CROSS_ATTENTION, YVEX_SEQUENCE_MIXER_DELTANET,
-    YVEX_SEQUENCE_MIXER_GATED_DELTANET, YVEX_SEQUENCE_MIXER_KIMI_DELTA,
-    YVEX_SEQUENCE_MIXER_MAMBA
+    YVEX_SEQUENCE_MIXER_GATED_DELTANET, YVEX_SEQUENCE_MIXER_KIMI_DELTA, YVEX_SEQUENCE_MIXER_MAMBA
 } yvex_sequence_mixer_semantics;
 typedef enum {
     YVEX_RUNTIME_MIXER_UNSUPPORTED = 0, YVEX_RUNTIME_MIXER_SUPPORTED,
@@ -303,8 +301,10 @@ typedef struct {
 typedef struct yvex_runtime_residency yvex_runtime_residency;
 typedef struct yvex_runtime_state_residency yvex_runtime_state_residency;
 typedef struct {
-    int sealed, cuda_ready, invalidated;
-    unsigned long long layer_count, host_bytes, device_bytes, upload_bytes, upload_count;
+    int sealed, cuda_ready, paged, invalidated;
+    unsigned long long layer_count, host_bytes, device_bytes, virtual_device_bytes;
+    unsigned long long page_granularity, page_commit_count, page_release_count, upload_bytes, upload_count;
+    unsigned long long copy_bytes, copy_count, device_stage_bytes, device_stage_count;
     unsigned long long generation, staged_layer_count, commit_count, abort_count;
     char layout_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_state_residency_summary;
@@ -332,10 +332,12 @@ int yvex_runtime_residency_cuda_session_attach(yvex_runtime_residency *residency
 int yvex_runtime_residency_invalidate(yvex_runtime_residency *residency, yvex_error *err);
 int yvex_runtime_state_residency_prepare(yvex_runtime_state_residency **out, yvex_backend *backend,
     const yvex_graph_attention_capacity_plan *capacity, const yvex_attention_state_provider *provider,
-    unsigned long long prior_host_bytes, unsigned long long maximum_host_bytes,
-    unsigned long long prior_device_bytes, unsigned long long maximum_device_bytes, yvex_error *err);
-int yvex_runtime_state_residency_stage(yvex_runtime_state_residency *residency,
-    const yvex_attention_state_provider *provider, unsigned long long layer_index, yvex_error *err);
+    unsigned long long prior_host_bytes, unsigned long long maximum_host_bytes, unsigned long long prior_device_bytes,
+    unsigned long long maximum_device_bytes, yvex_error *err);
+typedef enum { YVEX_RUNTIME_STATE_BEGIN = 0, YVEX_RUNTIME_STATE_STAGE } yvex_runtime_state_action;
+int yvex_runtime_state_residency_transition(yvex_runtime_state_residency *,
+    const yvex_attention_state_provider *, const yvex_attention_publication *,
+    unsigned long long, unsigned long long, yvex_runtime_state_action, yvex_error *);
 int yvex_runtime_state_residency_publish(yvex_runtime_state_residency *residency, yvex_error *err);
 void yvex_runtime_state_residency_commit(yvex_runtime_state_residency *residency);
 void yvex_runtime_state_residency_abort(yvex_runtime_state_residency *residency);
@@ -343,14 +345,13 @@ int yvex_runtime_state_residency_reset(yvex_runtime_state_residency *residency, 
 int yvex_runtime_state_residency_invalidate(yvex_runtime_state_residency *residency, yvex_error *err);
 int yvex_runtime_state_residency_close(yvex_runtime_state_residency **residency, yvex_error *err);
 int yvex_runtime_state_residency_summary_copy(const yvex_runtime_state_residency *residency,
-    yvex_runtime_state_residency_summary *out, yvex_error *err);
+                                              yvex_runtime_state_residency_summary *out, yvex_error *err);
 const yvex_runtime_family_adapter *yvex_runtime_family_adapter_find(const char *target_id);
 /* A cleanup failure may publish an unpublished model in out; close retries exact ownership. */
 int yvex_runtime_model_open(yvex_runtime_model **out, const yvex_runtime_model_open_request *request,
                             yvex_runtime_model_failure *failure, yvex_error *err);
 int yvex_runtime_model_validate(yvex_runtime_model *model, yvex_runtime_model_failure *failure, yvex_error *err);
-int yvex_runtime_model_summary_copy(const yvex_runtime_model *model,
-                                    yvex_runtime_model_summary *out, yvex_error *err);
+int yvex_runtime_model_summary_copy(const yvex_runtime_model *model, yvex_runtime_model_summary *out, yvex_error *err);
 void yvex_runtime_model_close(yvex_runtime_model **model);
 const yvex_runtime_model_view *yvex_runtime_model_view_get(const yvex_runtime_model *model);
 typedef struct {

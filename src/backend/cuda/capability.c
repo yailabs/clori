@@ -808,3 +808,103 @@ int yvex_cuda_deferred_release_drain(yvex_backend *backend, yvex_error *err)
         yvex_error_clear(err);
     return result;
 }
+
+static int attention_configuration_reject(yvex_error *err, yvex_status status,
+                                          const char *message)
+{
+    yvex_error_set(err, status, "cuda.attention.configure", message);
+    return status;
+}
+
+/*
+ * Configuration records are immutable because captured capacity is part of executable topology.
+ * Phase selection may revisit an admitted record, while an execution-identity change invalidates
+ * graph executables before the new identity becomes active.
+ */
+int yvex_backend_cuda_attention_configure(
+    yvex_backend *backend, yvex_backend_attention_phase phase,
+    yvex_backend_cuda_attention_mode mode,
+    const char *compatibility_identity, const char *capture_bucket,
+    unsigned long long local_capacity, unsigned long long compressed_capacity,
+    unsigned long long indexer_capacity, yvex_error *err)
+{
+    yvex_cuda_backend_state *state =
+        backend && backend->kind == YVEX_BACKEND_KIND_CUDA ? yvex_cuda_state(backend) : NULL;
+    const yvex_cuda_attention_configuration *active = NULL;
+    yvex_cuda_attention_configuration *configuration;
+    yvex_backend_cuda_graph_capability capability;
+    unsigned int index;
+    int rc;
+    if (!state || phase < YVEX_BACKEND_ATTENTION_PHASE_DECODE ||
+        phase >= YVEX_BACKEND_ATTENTION_PHASE_COUNT ||
+        mode < YVEX_BACKEND_CUDA_ATTENTION_EAGER ||
+        mode > YVEX_BACKEND_CUDA_ATTENTION_FULL || !compatibility_identity ||
+        !compatibility_identity[0] || !capture_bucket || !capture_bucket[0] ||
+        strlen(compatibility_identity) >=
+            sizeof(state->attention_configurations[0].compatibility_identity) ||
+        strlen(capture_bucket) >=
+            sizeof(state->attention_configurations[0].capture_bucket))
+        return attention_configuration_reject(
+            err, YVEX_ERR_INVALID_ARG,
+            "CUDA backend, phase, concrete mode, identity, and capture bucket are required");
+    rc = backend_dispatch_admit(backend, "cuda.attention.configure", err);
+    if (rc != YVEX_OK) return rc;
+    if (mode != YVEX_BACKEND_CUDA_ATTENTION_EAGER) {
+        rc = yvex_backend_cuda_graph_query(backend, &capability, err);
+        if (rc != YVEX_OK) return rc;
+        if (capability.state != YVEX_BACKEND_CUDA_GRAPH_OPEN ||
+            !capability.edge_inventory_available || !capability.async_copy_available ||
+            !capability.pinned_host_memory_available) {
+            yvex_error_setf(err, YVEX_ERR_UNSUPPORTED, "cuda.attention.configure",
+                            "CUDA graph topology/copy/staging admission failed: reason=%u",
+                            (unsigned int)capability.reason);
+            return YVEX_ERR_UNSUPPORTED;
+        }
+        if (!backend->workspace_device_tensor || !backend->resident_device_tensor)
+            return attention_configuration_reject(
+                err, YVEX_ERR_STATE,
+                "CUDA graph attention requires stable workspace and resident weights");
+    }
+    if (state->attention_configuration_count &&
+        state->attention_active_configuration < state->attention_configuration_count)
+        active = &state->attention_configurations[state->attention_active_configuration];
+    if (active && strcmp(active->compatibility_identity, compatibility_identity) != 0) {
+        unsigned long long affected;
+        rc = yvex_backend_cuda_attention_graph_registry_apply(
+            backend, YVEX_BACKEND_CUDA_GRAPH_REGISTRY_INVALIDATE, &affected, err);
+        if (rc != YVEX_OK) return rc;
+    }
+    for (index = 0u; index < state->attention_configuration_count; ++index) {
+        configuration = &state->attention_configurations[index];
+        if (configuration->phase == phase && configuration->mode == mode &&
+            configuration->local_capacity == local_capacity &&
+            configuration->compressed_capacity == compressed_capacity &&
+            configuration->indexer_capacity == indexer_capacity &&
+            strcmp(configuration->compatibility_identity, compatibility_identity) == 0 &&
+            strcmp(configuration->capture_bucket, capture_bucket) == 0) {
+            state->attention_active_configuration = index;
+            state->attention_configuration_hits++;
+            yvex_error_clear(err);
+            return YVEX_OK;
+        }
+    }
+    if (state->attention_configuration_count >= YVEX_CUDA_ATTENTION_CONFIGURATION_CAP)
+        return attention_configuration_reject(
+            err, YVEX_ERR_BOUNDS, "CUDA attention configuration registry is full");
+    index = state->attention_configuration_count++;
+    configuration = &state->attention_configurations[index];
+    memset(configuration, 0, sizeof(*configuration));
+    configuration->configured = 1;
+    configuration->phase = phase;
+    configuration->mode = mode;
+    configuration->local_capacity = local_capacity;
+    configuration->compressed_capacity = compressed_capacity;
+    configuration->indexer_capacity = indexer_capacity;
+    memcpy(configuration->compatibility_identity, compatibility_identity,
+           strlen(compatibility_identity) + 1u);
+    memcpy(configuration->capture_bucket, capture_bucket, strlen(capture_bucket) + 1u);
+    state->attention_active_configuration = index;
+    state->attention_configuration_misses++;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}

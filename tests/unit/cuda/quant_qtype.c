@@ -158,10 +158,11 @@ static int quant_cuda_parity(yvex_backend *backend,
     return 0;
 }
 
-static void quant_q8_reference(const float input[512], float output[512])
+static void quant_q8_reference(const float *input, float *output,
+                               unsigned int width)
 {
     unsigned int block;
-    for (block = 0u; block < 2u; ++block) {
+    for (block = 0u; block < width / 256u; ++block) {
         unsigned int index, maximum = 0u;
         float absolute = 0.0f, inverse;
         for (index = 0u; index < 256u; ++index) {
@@ -186,7 +187,7 @@ static void quant_q8_reference(const float input[512], float output[512])
 
 static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
 {
-    enum { ROWS = 3, INPUT_ROWS = 3, WIDTH = 512, HEAD = 173 };
+    enum { ROWS = 5, INPUT_ROWS = 3, WIDTH = 4096, HEAD = 173 };
     yvex_backend_tensor_desc descriptor = {0};
     yvex_device_tensor *resident = NULL, *input = NULL, *additive = NULL, *output = NULL;
     yvex_device_tensor *split_head = NULL, *split_tail = NULL;
@@ -211,7 +212,8 @@ static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
             vectors[input_index * WIDTH + index] =
                 (float)((int)((index + input_index * 5u) % 29ull) - 14) /
                 (float)(13u + input_index);
-        quant_q8_reference(vectors + input_index * WIDTH, q8_vectors + input_index * WIDTH);
+        quant_q8_reference(vectors + input_index * WIDTH,
+                           q8_vectors + input_index * WIDTH, WIDTH);
     }
     for (index = 0ull; index < WIDTH; ++index)
         split_reference[index] = yvex_quant_bf16_decode(
@@ -384,6 +386,95 @@ static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
                          yvex_backend_tensor_release(backend, &input, &err) == YVEX_OK &&
                          yvex_backend_tensor_release(backend, &resident, &err) == YVEX_OK,
                      "Q8 activation matvec releases all CUDA ownership");
+    return 0;
+}
+
+static int quant_cuda_q8_grouped_matvec(yvex_backend *backend,
+                                        unsigned int qtype,
+                                        unsigned int width)
+{
+    enum { ROWS = 2, MAX_WIDTH = 1536 };
+    yvex_backend_tensor_desc descriptor = {0};
+    yvex_device_tensor *resident = NULL, *input = NULL, *output = NULL;
+    unsigned char *mapped = NULL, *encoded = NULL;
+    float source[ROWS * MAX_WIDTH], vector[MAX_WIDTH], q8_vector[MAX_WIDTH];
+    float expected[ROWS], actual[ROWS];
+    yvex_backend_cuda_operation_facts facts;
+    yvex_quant_failure failure;
+    yvex_error err;
+    size_t row_bytes = 0u;
+    unsigned int row;
+    unsigned long long index;
+
+    YVEX_TEST_ASSERT(width == 768u || width == 1536u,
+                     "grouped Q8 activation width is an admitted short-row shape");
+    for (index = 0ull; index < width; ++index)
+        vector[index] = (float)((int)(index % 31ull) - 15) /
+                        (float)(11ull + index % 3ull);
+    quant_q8_reference(vector, q8_vector, width);
+    for (row = 0u; row < ROWS; ++row) {
+        size_t current_bytes = 0u;
+        for (index = 0ull; index < width; ++index)
+            source[row * width + index] =
+                (float)((int)((index * 5ull + row * 7ull) % 37ull) - 18) /
+                (float)(3ull + index % 7ull);
+        YVEX_TEST_ASSERT(quant_cuda_encode_row(
+                             qtype, source + row * width, width,
+                             &encoded, &current_bytes),
+                         "grouped Q8 activation row encodes");
+        if (!row) row_bytes = current_bytes;
+        YVEX_TEST_ASSERT(current_bytes == row_bytes,
+                         "grouped Q8 activation rows share geometry");
+        if (!mapped) {
+            descriptor.name = "q8_grouped_encoded";
+            descriptor.dtype = YVEX_DTYPE_I8;
+            descriptor.rank = 1u;
+            descriptor.dims[0] = descriptor.bytes = ROWS * row_bytes;
+            YVEX_TEST_ASSERT(backend->vtable->resident_alloc(
+                                 backend, &descriptor, &resident, &mapped, &err) == YVEX_OK,
+                             "grouped Q8 activation matrix allocates");
+        }
+        memcpy(mapped + row * row_bytes, encoded, row_bytes);
+        free(encoded);
+        encoded = NULL;
+        YVEX_TEST_ASSERT(yvex_quant_cpu_dot(
+                             qtype, mapped + row * row_bytes, row_bytes,
+                             q8_vector, width, &expected[row], &failure, &err) == YVEX_OK,
+                         "grouped Q8 activation reference succeeds");
+    }
+    YVEX_TEST_ASSERT(yvex_backend_resident_attach(
+                         backend, mapped, ROWS * row_bytes, resident, 17ull, &err) == YVEX_OK,
+                     "grouped Q8 activation matrix attaches");
+    descriptor.name = "q8_grouped_input";
+    descriptor.dtype = YVEX_DTYPE_F32;
+    descriptor.dims[0] = width;
+    descriptor.bytes = width * sizeof(float);
+    YVEX_TEST_ASSERT(yvex_backend_tensor_alloc(backend, &descriptor, &input, &err) == YVEX_OK &&
+                         yvex_backend_tensor_write(
+                             backend, input, vector, descriptor.bytes, &err) == YVEX_OK,
+                     "grouped Q8 activation input becomes resident");
+    descriptor.name = "q8_grouped_output";
+    descriptor.dims[0] = ROWS;
+    descriptor.bytes = sizeof(actual);
+    YVEX_TEST_ASSERT(yvex_backend_tensor_alloc(backend, &descriptor, &output, &err) == YVEX_OK,
+                     "grouped Q8 activation output allocates");
+    YVEX_TEST_ASSERT(yvex_backend_cuda_encoded_matvec(
+                         backend, mapped, ROWS * row_bytes, qtype, ROWS, width,
+                         row_bytes, 1ull, input, NULL, 0ull, NULL, output,
+                         &facts, &err) == YVEX_OK &&
+                         facts.kernel_launches == 2ull &&
+                         yvex_backend_tensor_read(
+                             backend, output, actual, sizeof(actual), &err) == YVEX_OK,
+                     "grouped Q8 activation projection executes once");
+    for (row = 0u; row < ROWS; ++row)
+        YVEX_TEST_ASSERT(fabs((double)actual[row] - expected[row]) <=
+                                 1e-5 * (1.0 + fabs((double)expected[row])),
+                             "grouped Q8 activation preserves the canonical block result");
+    YVEX_TEST_ASSERT(yvex_backend_resident_detach(backend, &err) == YVEX_OK &&
+                         yvex_backend_tensor_release(backend, &output, &err) == YVEX_OK &&
+                         yvex_backend_tensor_release(backend, &input, &err) == YVEX_OK &&
+                         yvex_backend_tensor_release(backend, &resident, &err) == YVEX_OK,
+                     "grouped Q8 activation releases CUDA ownership");
     return 0;
 }
 
@@ -858,6 +949,8 @@ int yvex_cuda_test_quant_qtype(void)
     yvex_error err;
     unsigned int index;
     unsigned int row;
+    unsigned int matvec_grid, matvec_block;
+    int block_row;
     int rc;
 
     memset(&options, 0, sizeof(options));
@@ -868,6 +961,24 @@ int yvex_cuda_test_quant_qtype(void)
                 yvex_error_message(&err), yvex_error_where(&err));
     YVEX_TEST_ASSERT(rc == YVEX_OK,
                      "CUDA qtype parity backend opens");
+    YVEX_TEST_ASSERT(
+        yvex_cuda_qtype_matvec_geometry(
+            24ull, 16384ull, 3ull, YVEX_GGUF_QTYPE_F32, 1,
+            &matvec_grid, &matvec_block, &block_row) &&
+            matvec_grid == 72u && matvec_block == 256u && block_row,
+        "wide narrow F32 projection assigns one reduction block per row and input");
+    YVEX_TEST_ASSERT(
+        yvex_cuda_qtype_matvec_geometry(
+            24ull, 16384ull, 3ull, YVEX_GGUF_QTYPE_F32, 0,
+            &matvec_grid, &matvec_block, &block_row) &&
+            matvec_grid == 12u && matvec_block == 192u && !block_row,
+        "reference geometry retains canonical warp-owned rows");
+    YVEX_TEST_ASSERT(
+        yvex_cuda_qtype_matvec_geometry(
+            4096ull, 8192ull, 1ull, YVEX_GGUF_QTYPE_Q8_0, 1,
+            &matvec_grid, &matvec_block, &block_row) &&
+            matvec_grid == 512u && matvec_block == 256u && !block_row,
+        "encoded Q8 projection cannot enter the F32 reduction class");
     for (index = 0u; index < sizeof(cases) / sizeof(cases[0]); ++index) {
         double maximum_difference = 0.0;
         double maximum_relative_difference = 0.0;
@@ -892,6 +1003,14 @@ int yvex_cuda_test_quant_qtype(void)
                      "IQ2_XXS production Q8 activation matvec");
     YVEX_TEST_ASSERT(quant_cuda_q8_matvec(backend, YVEX_GGUF_QTYPE_MXFP4) == 0,
                      "MXFP4 production Q8 activation matvec");
+    for (index = 4u; index < sizeof(cases) / sizeof(cases[0]); ++index) {
+        YVEX_TEST_ASSERT(quant_cuda_q8_grouped_matvec(
+                             backend, cases[index].qtype, 1536u) == 0,
+                         "six-block production Q8 activation matvec");
+        YVEX_TEST_ASSERT(quant_cuda_q8_grouped_matvec(
+                             backend, cases[index].qtype, 768u) == 0,
+                         "three-block production Q8 activation matvec");
+    }
     YVEX_TEST_ASSERT(quant_cuda_encoded_gather(backend) == 0,
                      "resident qtype row gather");
     YVEX_TEST_ASSERT(quant_cuda_transformer_facts(backend) == 0,

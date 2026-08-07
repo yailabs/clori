@@ -631,13 +631,37 @@ static yvex_backend_cuda_graph *graph_find(yvex_cuda_backend_state *state, const
 static int graph_is_attention(const yvex_cuda_backend_state *state,
                               const yvex_backend_cuda_graph *graph)
 {
-    size_t length;
-    if (!state || !state->attention_graph_configured || !graph || !graph->compatibility_identity)
+    unsigned int index;
+    size_t graph_length, length;
+    if (!state || !graph || !graph->compatibility_identity)
         return 0;
-    length = strlen(state->attention_compatibility_identity);
-    return strncmp(graph->compatibility_identity,
-                   state->attention_compatibility_identity, length) == 0 &&
-           graph->compatibility_identity[length] == ':';
+    graph_length = strlen(graph->compatibility_identity);
+    for (index = 0u; index < state->attention_configuration_count; ++index) {
+        const yvex_cuda_attention_configuration *configuration =
+            &state->attention_configurations[index];
+        length = strlen(configuration->compatibility_identity);
+        if (configuration->configured && length < graph_length &&
+            strncmp(graph->compatibility_identity,
+                    configuration->compatibility_identity, length) == 0 &&
+            graph->compatibility_identity[length] == ':')
+            return 1;
+    }
+    return 0;
+}
+
+const yvex_cuda_attention_configuration *yvex_cuda_attention_configuration_active(
+    const yvex_cuda_backend_state *state, yvex_backend_attention_phase phase)
+{
+    const yvex_cuda_attention_configuration *configuration;
+    if (!state || !state->attention_configuration_count ||
+        state->attention_active_configuration >=
+            state->attention_configuration_count)
+        return NULL;
+    configuration =
+        &state->attention_configurations[state->attention_active_configuration];
+    return configuration->configured && configuration->phase == phase
+               ? configuration
+               : NULL;
 }
 /*
  * Return the stream selected by an explicit graph lifecycle or the session execution owner.
@@ -1412,6 +1436,10 @@ int yvex_cuda_attention_graph_key(const yvex_backend *backend,
     const yvex_cuda_backend_state *state =
         backend && backend->kind == YVEX_BACKEND_KIND_CUDA ? yvex_cuda_state(backend) : NULL;
     const uintptr_t base = backend ? (uintptr_t)backend->resident_host_base : 0u;
+    const yvex_cuda_attention_configuration *configuration =
+        state && job
+            ? yvex_cuda_attention_configuration_active(state, job->phase)
+            : NULL;
     const double numeric[] = {job ? job->rms_epsilon : 0.0,
                               job ? job->position.theta : 0.0,
                               job ? job->position.scaling_factor : 0.0};
@@ -1421,16 +1449,16 @@ int yvex_cuda_attention_graph_key(const yvex_backend *backend,
     char hex[YVEX_SHA256_HEX_BYTES];
     size_t index;
     if (!state || !job || !output || first >= last ||
-        last > YVEX_CUDA_ATTENTION_STAGE_COUNT || !base || !state->attention_graph_configured ||
-        !state->attention_compatibility_identity[0]) {
+        last > YVEX_CUDA_ATTENTION_STAGE_COUNT || !base || !configuration ||
+        !configuration->compatibility_identity[0]) {
         return graph_reject(
             err, YVEX_ERR_STATE, "cuda.attention.graph_key",
-            "configured CUDA attention residency and stage interval are required");
+            "phase-bound CUDA attention residency and stage interval are required");
     }
-    if (state->attention_mode != YVEX_BACKEND_CUDA_ATTENTION_EAGER &&
-        (job->local_count > state->attention_local_capacity ||
-         job->compressed_count > state->attention_compressed_capacity ||
-         job->indexer_count > state->attention_indexer_capacity)) {
+    if (configuration->mode != YVEX_BACKEND_CUDA_ATTENTION_EAGER &&
+        (job->local_count > configuration->local_capacity ||
+         job->compressed_count > configuration->compressed_capacity ||
+         job->indexer_count > configuration->indexer_capacity)) {
         return graph_reject(err, YVEX_ERR_BOUNDS, "cuda.attention.graph_key",
                             "CUDA attention history exceeds its admitted capture bucket");
     }
@@ -1442,13 +1470,13 @@ int yvex_cuda_attention_graph_key(const yvex_backend *backend,
 #define HASH(value) \
     do { if (!yvex_sha256_update_u64(&hash, (unsigned long long)(value))) goto failed; } while (0)
     if (!yvex_sha256_update_text(&hash, "yvex.cuda.attention-topology.v7") ||
-        !yvex_sha256_update_text(&hash, state->attention_compatibility_identity) ||
-        !yvex_sha256_update_text(&hash, state->attention_capture_bucket))
+        !yvex_sha256_update_text(&hash, configuration->compatibility_identity) ||
+        !yvex_sha256_update_text(&hash, configuration->capture_bucket))
         goto failed;
     HASH(backend->resident_generation);
     HASH(backend->workspace_generation);
     HASH(backend->host_workspace_generation);
-    HASH(state->attention_mode); HASH(YVEX_CUDA_ATTENTION_STAGE_COUNT);
+    HASH(configuration->mode); HASH(YVEX_CUDA_ATTENTION_STAGE_COUNT);
     HASH(first); HASH(last);
     HASH(job->schema); HASH(job->phase); HASH(job->operation_scope);
     HASH(job->candidate_block_visible);
@@ -1460,10 +1488,10 @@ int yvex_cuda_attention_graph_key(const yvex_backend *backend,
     HASH(job->kv_width); HASH(job->sliding_window); HASH(job->compression_ratio);
     HASH(job->output_groups); HASH(job->output_group_input_width); HASH(job->output_rank);
     HASH(job->indexer_heads); HASH(job->indexer_head_dimension); HASH(job->indexer_topk);
-    HASH(state->attention_local_capacity); HASH(job->local_stride);
-    HASH(state->attention_compressed_capacity);
+    HASH(configuration->local_capacity); HASH(job->local_stride);
+    HASH(configuration->compressed_capacity);
     HASH(job->compressed_stride);
-    HASH(state->attention_indexer_capacity); HASH(job->indexer_stride);
+    HASH(configuration->indexer_capacity); HASH(job->indexer_stride);
     HASH(job->main_rolling.present);
     HASH(job->main_rolling.ratio); HASH(job->main_rolling.head_dimension);
     HASH(job->main_rolling.state_width); HASH(job->main_rolling.state_slots);
@@ -1502,7 +1530,7 @@ int yvex_cuda_attention_graph_key(const yvex_backend *backend,
         goto failed;
     yvex_sha256_hex(digest, hex);
     if (snprintf(output, 160u, "%s:%u-%u:%s",
-                 state->attention_compatibility_identity, first, last, hex) <= 0)
+                 configuration->compatibility_identity, first, last, hex) <= 0)
         goto failed;
     yvex_error_clear(err);
     return YVEX_OK;
@@ -1690,78 +1718,18 @@ static int graph_release_registry(yvex_cuda_backend_state *state, int attention_
     if (result == YVEX_OK) yvex_error_clear(err);
     return result;
 }
-/*
- * Select one explicit CUDA attention mode for a session backend.
- *
- * Live CUDA backend, concrete mode, and upstream execution compatibility identity. Records only
- * session-local dispatch policy and invalidates graphs from a replaced identity.
- */
-int yvex_backend_cuda_attention_configure(
-    yvex_backend *backend, yvex_backend_cuda_attention_mode mode,
-    const char *compatibility_identity, const char *capture_bucket,
-    unsigned long long local_capacity, unsigned long long compressed_capacity,
-    unsigned long long indexer_capacity, yvex_error *err)
-{
-    yvex_cuda_backend_state *state =
-        backend && backend->kind == YVEX_BACKEND_KIND_CUDA ? yvex_cuda_state(backend) : NULL;
-    yvex_backend_cuda_graph_capability capability;
-    int rc;
-    if (!state || backend->kind != YVEX_BACKEND_KIND_CUDA ||
-        mode < YVEX_BACKEND_CUDA_ATTENTION_EAGER ||
-        mode > YVEX_BACKEND_CUDA_ATTENTION_FULL || !compatibility_identity ||
-        !compatibility_identity[0] || !capture_bucket || !capture_bucket[0] ||
-        strlen(compatibility_identity) >= sizeof(state->attention_compatibility_identity) ||
-        strlen(capture_bucket) >= sizeof(state->attention_capture_bucket)) {
-        return graph_reject(
-            err, YVEX_ERR_INVALID_ARG, "cuda.attention.configure",
-            "CUDA backend, concrete mode, compatibility identity, and capture bucket are required");
-    }
-    rc = backend_dispatch_admit(backend, "cuda.attention.configure", err);
-    if (rc != YVEX_OK) return rc;
-    if (mode != YVEX_BACKEND_CUDA_ATTENTION_EAGER) {
-        rc = yvex_backend_cuda_graph_query(backend, &capability, err);
-        if (rc != YVEX_OK)
-            return rc;
-        if (capability.state != YVEX_BACKEND_CUDA_GRAPH_OPEN ||
-            !capability.edge_inventory_available || !capability.async_copy_available ||
-            !capability.pinned_host_memory_available) {
-            yvex_error_setf(err, YVEX_ERR_UNSUPPORTED, "cuda.attention.configure",
-                            "requested CUDA graph mode lacks topology/copy/staging admission: %s",
-                            graph_reason_name(capability.reason));
-            return YVEX_ERR_UNSUPPORTED;
-        }
-        if (!backend->workspace_device_tensor || !backend->resident_device_tensor) {
-            return graph_reject(
-                err, YVEX_ERR_STATE, "cuda.attention.configure",
-                "CUDA graph attention requires stable workspace and resident weights");
-        }
-    }
-    if (state->attention_graph_configured &&
-        (state->attention_mode != mode ||
-         strcmp(state->attention_compatibility_identity, compatibility_identity) != 0)) {
-        unsigned long long affected;
-        rc = yvex_backend_cuda_attention_graph_registry_apply(
-            backend, YVEX_BACKEND_CUDA_GRAPH_REGISTRY_INVALIDATE, &affected, err);
-        if (rc != YVEX_OK)
-            return rc;
-    }
-    state->attention_mode = mode;
-    state->attention_local_capacity = local_capacity;
-    state->attention_compressed_capacity = compressed_capacity;
-    state->attention_indexer_capacity = indexer_capacity;
-    state->attention_graph_configured = 1;
-    memcpy(state->attention_compatibility_identity, compatibility_identity,
-           strlen(compatibility_identity) + 1u);
-    memcpy(state->attention_capture_bucket, capture_bucket, strlen(capture_bucket) + 1u);
-    yvex_error_clear(err);
-    return YVEX_OK;
-}
-
 int yvex_backend_cuda_attention_graph_summary_get(
     const yvex_backend *backend, yvex_backend_cuda_attention_graph_summary *out, yvex_error *err)
 {
     const yvex_cuda_backend_state *state =
         backend && backend->kind == YVEX_BACKEND_KIND_CUDA ? yvex_cuda_state(backend) : NULL;
+    const yvex_cuda_attention_configuration *configuration =
+        state && state->attention_configuration_count &&
+                state->attention_active_configuration <
+                    state->attention_configuration_count
+            ? &state->attention_configurations[
+                  state->attention_active_configuration]
+            : NULL;
     const yvex_backend_cuda_graph *graph;
     yvex_sha256 launch_hash, exec_hash;
     int have_graph = 0;
@@ -1771,13 +1739,18 @@ int yvex_backend_cuda_attention_graph_summary_get(
     }
     memset(out, 0, sizeof(*out));
     out->schema = YVEX_BACKEND_CUDA_ATTENTION_GRAPH_SCHEMA;
-    out->configured = state->attention_graph_configured;
+    out->configured = configuration != NULL;
     out->kernel_bundle_native = state->kernel_bundle_native;
-    out->selected_mode = state->attention_mode;
+    out->selected_mode = configuration ? configuration->mode
+                                       : YVEX_BACKEND_CUDA_ATTENTION_EAGER;
     out->driver_version = state->driver_version;
-    memcpy(out->compatibility_identity, state->attention_compatibility_identity,
-           sizeof(out->compatibility_identity));
-    memcpy(out->capture_bucket, state->attention_capture_bucket, sizeof(out->capture_bucket));
+    if (configuration) {
+        memcpy(out->compatibility_identity,
+               configuration->compatibility_identity,
+               sizeof(out->compatibility_identity));
+        memcpy(out->capture_bucket, configuration->capture_bucket,
+               sizeof(out->capture_bucket));
+    }
     memcpy(out->kernel_bundle_architecture, state->kernel_bundle_architecture,
            sizeof(out->kernel_bundle_architecture));
     memcpy(out->cuda_build_identity, state->kernel_bundle_identity,
@@ -1820,7 +1793,9 @@ int yvex_backend_cuda_attention_graph_summary_get(
                                 "CUDA attention graph summary identity update failed");
         }
     }
-    out->piece_count = state->attention_mode == YVEX_BACKEND_CUDA_ATTENTION_PIECEWISE
+    out->piece_count = configuration &&
+                               configuration->mode ==
+                                   YVEX_BACKEND_CUDA_ATTENTION_PIECEWISE
                            ? out->graph_count : (out->graph_count ? 1ull : 0ull);
     if (have_graph &&
         (identity_finish(&launch_hash, out->launch_graph_identity, err) != YVEX_OK ||

@@ -1120,6 +1120,7 @@ static int runtime_moe_execute_layer_rows(
     }
     deferred = batch->execution_class == YVEX_EXECUTION_CLASS_DEVICE_NATIVE &&
                context->pending_active;
+    if (!deferred && batch->device_outputs) batch->device_outputs->is_written = 0;
     if ((context->pending_active && !deferred) ||
         (deferred &&
          (layer->ordinal != context->pending_layer_count ||
@@ -1222,6 +1223,7 @@ static int runtime_moe_execute_layer_rows(
     if (rc == YVEX_OK && !deferred && !yvex_sha256_final(&routing_hash, digest))
         rc = runtime_moe_refuse(err, YVEX_ERR_STATE,
                                 "ordered MoE routing identity finalization failed");
+    if (rc == YVEX_OK && !deferred && batch->device_outputs) batch->device_outputs->is_written = 1;
     if (rc == YVEX_OK && !deferred)
         yvex_sha256_hex(digest, result->routing_digest);
     if (rc == YVEX_OK) {

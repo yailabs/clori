@@ -27,6 +27,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include "src/runtime/private.h"
 #include "tests/test.h"
 
 #define TEST_BINDING_HEADER_BYTES 88u
@@ -213,9 +214,10 @@ typedef struct {
 } injected_state;
 struct injected_state_control {
     injected_state *active;
-    unsigned int opens, summaries, commits, aborts, invalidations, releases, discards;
+    unsigned int opens, summaries, configures, commits, aborts;
+    unsigned int invalidations, releases, discards;
     int fail_open_after_publish, malformed_success, fail_discard_once;
-    int fail_summary_once, fail_commit_once, fail_abort_once;
+    int fail_summary_once, fail_configure_once, fail_commit_once, fail_abort_once;
     int fail_invalidate_once, fail_release_once;
 };
 
@@ -403,6 +405,31 @@ static int injected_state_reset(void *context, yvex_attention_failure *failure,
     return YVEX_OK;
 }
 
+static int injected_state_configure_pages(
+    void *context, const yvex_execution_capacity_plan *capacity,
+    yvex_attention_failure *failure, yvex_error *err)
+{
+    injected_state *state = (injected_state *)context;
+    (void)failure;
+    if (!state || !capacity ||
+        capacity->schema_version != YVEX_EXECUTION_CAPACITY_PLAN_SCHEMA_V1)
+        return YVEX_ERR_INVALID_ARG;
+    state->control->configures++;
+    if (state->control->fail_configure_once) {
+        state->control->fail_configure_once = 0;
+        yvex_error_set(err, YVEX_ERR_STATE, "test.state.pages",
+                       "injected state paging failure");
+        return YVEX_ERR_STATE;
+    }
+    state->summary.paged = 1;
+    state->summary.paging_configured = 1;
+    yvex_core_text_copy(
+        state->summary.capacity_plan_identity,
+        sizeof(state->summary.capacity_plan_identity), capacity->identity);
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
 static int injected_state_invalidate(void *context, yvex_error *err)
 {
     injected_state *state = (injected_state *)context;
@@ -452,15 +479,16 @@ static int injected_state_factory_open(
     state = (injected_state *)calloc(1u, sizeof(*state));
     if (!state) return YVEX_ERR_NOMEM;
     state->control = control;
-    state->summary.schema_version = YVEX_GRAPH_ATTENTION_STATE_SCHEMA_V2;
+    state->summary.schema_version = YVEX_GRAPH_ATTENTION_STATE_SCHEMA_V4;
     state->summary.sealed = 1;
     memset(state->summary.state_layout_identity, 'c', YVEX_SHA256_HEX_CAP - 1u);
     state->summary.state_layout_identity[YVEX_SHA256_HEX_CAP - 1u] = '\0';
     control->active = state;
     control->opens++;
     *out = (yvex_attention_state_provider){
-        .schema_version = YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V4,
+        .schema_version = YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V5,
         .context = state,
+        .configure_pages = injected_state_configure_pages,
         .prepare = injected_state_prepare,
         .summary = injected_state_summary,
         .view = injected_state_view,
@@ -1529,7 +1557,7 @@ static int test_model_execution_binding_v8(const char *root)
                          &session, model, &session_request,
                          &model_failure, &err) == YVEX_OK,
                      "v8 runtime session opens for capacity admission");
-    generation_options.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V4;
+    generation_options.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V5;
     generation_options.backend = YVEX_BACKEND_KIND_CPU;
     generation_options.mode = YVEX_GENERATION_MODE_TARGET_ONLY;
     generation_options.context_capacity = 5ull;
@@ -2555,9 +2583,11 @@ static int test_runtime_injected_state_provider(
     yvex_runtime_model_failure failure;
     yvex_runtime_session_summary summary;
     yvex_runtime_state_promotion_facts promotion;
-    injected_state_control control;
-    yvex_attention_state_provider_factory factory;
-    yvex_runtime_session_open_request request;
+    yvex_execution_capacity_plan capacity = {0};
+    injected_state_control control, partial_target, partial_draft;
+    yvex_attention_state_provider_factory factory, partial_factory;
+    yvex_runtime_session_open_request request, partial_request;
+    yvex_attention_failure state_failure;
     yvex_error err;
     int rc;
 
@@ -2570,14 +2600,21 @@ static int test_runtime_injected_state_provider(
     memset(&request, 0, sizeof(request));
     request.backend = YVEX_BACKEND_KIND_CPU;
     request.attention_state_factory = &factory;
+    capacity.schema_version = YVEX_EXECUTION_CAPACITY_PLAN_SCHEMA_V1;
+    memset(capacity.identity, 'd', YVEX_SHA256_HEX_CAP - 1u);
+    capacity.identity[YVEX_SHA256_HEX_CAP - 1u] = '\0';
     YVEX_TEST_ASSERT(runtime_model_open_fixture(
                          fixture, prepared, &model, &failure, &err) == YVEX_OK,
                      "runtime model opens for injected state provider");
 
     YVEX_TEST_ASSERT(yvex_runtime_session_open(
                          &session, model, &request, &failure, &err) == YVEX_OK &&
-                         control.active && control.opens == 1u,
-                     "session consumes the injected provider factory");
+                         control.active && control.opens == 1u &&
+                         yvex_runtime_session_configure_persistent_pages(
+                             session, &capacity, &failure, &err) == YVEX_OK &&
+                         control.configures == 1u &&
+                         control.active->summary.paging_configured,
+                     "session configures paging through the injected provider factory");
     control.active->summary.transaction_active = 1;
     control.active->summary.staged_layer_count = 1ull;
     YVEX_TEST_ASSERT(yvex_runtime_session_begin(session, &failure, &err) == YVEX_OK &&
@@ -2599,10 +2636,53 @@ static int test_runtime_injected_state_provider(
                          control.releases == 1u && !control.active,
                      "successful injected provider closes through its owner");
 
+    memset(&partial_target, 0, sizeof(partial_target));
+    memset(&partial_draft, 0, sizeof(partial_draft));
+    partial_factory = (yvex_attention_state_provider_factory){
+        .context = &partial_target,
+        .open = injected_state_factory_open,
+        .discard = injected_state_factory_discard,
+    };
+    partial_request = request;
+    partial_request.attention_state_factory = &partial_factory;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_session_open(
+            &session, model, &partial_request, &failure, &err) == YVEX_OK &&
+            injected_state_factory_open(
+                &partial_draft, NULL, NULL, 0ull,
+                &session->draft_attention_state_provider, &state_failure,
+                &err) == YVEX_OK,
+        "session opens independently owned target and draft state providers");
+    session->draft_attention_state_provider_ready = 1;
+    session->view.draft_attention_state_provider =
+        &session->draft_attention_state_provider;
+    partial_draft.fail_configure_once = 1;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_session_configure_persistent_pages(
+            session, &capacity, &failure, &err) == YVEX_ERR_STATE &&
+            failure.code == YVEX_RUNTIME_MODEL_FAILURE_GRAPH &&
+            partial_target.configures == 1u && partial_draft.configures == 1u &&
+            partial_target.invalidations == 1u &&
+            partial_draft.invalidations == 1u &&
+            yvex_runtime_session_summary_copy(
+                session, &summary, &err) == YVEX_OK && summary.invalidated,
+        "draft paging failure invalidates a partially configured state pair");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_session_close(&session, &err) == YVEX_OK && !session &&
+            !partial_target.active && !partial_draft.active,
+        "partially configured state providers release through their owners");
+
     control.fail_commit_once = 1;
     YVEX_TEST_ASSERT(yvex_runtime_session_open(
                          &session, model, &request, &failure, &err) == YVEX_OK,
                      "injected provider reopens for commit failure");
+    control.fail_configure_once = 1;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_session_configure_persistent_pages(
+            session, &capacity, &failure, &err) == YVEX_ERR_STATE &&
+            failure.code == YVEX_RUNTIME_MODEL_FAILURE_GRAPH &&
+            control.configures == 2u && !control.active->summary.invalidated,
+        "paging configuration failure returns before session-state mutation");
     control.active->summary.transaction_active = 1;
     control.active->summary.staged_layer_count = 1ull;
     rc = yvex_runtime_session_begin(session, &failure, &err);
@@ -2891,6 +2971,147 @@ static int test_runtime_probe_consumer_boundary(
     yvex_graph_attention_capacity_plan_close(&capacity);
     YVEX_TEST_ASSERT(yvex_runtime_session_close(&session, &err) == YVEX_OK && !session,
                      "probe consumer session closes without staged state");
+    yvex_runtime_model_close(&model);
+    return 0;
+}
+
+static void runtime_paged_capacity_fixture(yvex_execution_capacity_plan *capacity)
+{
+    unsigned long long index;
+
+    memset(capacity, 0, sizeof(*capacity));
+    capacity->schema_version = YVEX_EXECUTION_CAPACITY_PLAN_SCHEMA_V1;
+    capacity->per_session_maximum = 128ull;
+    capacity->state_pool_bytes = 1ull << 30u;
+    capacity->candidate_reserve_bytes = 1ull << 30u;
+    capacity->state_class_count = YVEX_MODEL_STATE_CLASS_COUNT;
+    memset(capacity->model_execution_identity, 'a', YVEX_SHA256_HEX_CAP - 1u);
+    memset(capacity->hardware_profile_identity, 'b', YVEX_SHA256_HEX_CAP - 1u);
+    memset(capacity->workload_profile_identity, 'c', YVEX_SHA256_HEX_CAP - 1u);
+    memset(capacity->identity, 'd', YVEX_SHA256_HEX_CAP - 1u);
+    for (index = 0ull; index < capacity->state_class_count; ++index) {
+        yvex_execution_state_class_plan *state = &capacity->state_classes[index];
+
+        state->state_class = (yvex_model_state_class)index;
+        state->extent = YVEX_EXECUTION_STATE_EXTENT_CONTEXT;
+        state->logical_block_tokens = 1ull;
+        state->bytes_per_block = 8ull;
+        state->page_tokens = 128ull;
+        state->page_bytes = 1024ull;
+    }
+}
+
+/* CUDA staging must not read virtual history pages before their provider admission. */
+static int test_runtime_paged_state_cuda_pack(
+    const binding_fixture *fixture, const yvex_runtime_binding_prepare_result *prepared)
+{
+    yvex_runtime_model *model = NULL;
+    yvex_runtime_execution_session *session = NULL;
+    yvex_runtime_state_residency *residency = NULL;
+    yvex_backend *backend = NULL;
+    const yvex_attention_state_provider *provider;
+    const yvex_graph_attention_capacity_layer *layer;
+    yvex_graph_attention_capacity_plan *attention_capacity = NULL;
+    yvex_graph_attention_capacity_request attention_request = {0};
+    yvex_execution_capacity_plan page_capacity;
+    yvex_runtime_state_residency_summary summary;
+    yvex_runtime_session_open_request session_request = {0};
+    yvex_runtime_model_failure model_failure;
+    yvex_attention_failure attention_failure;
+    yvex_backend_options backend_options = {0};
+    yvex_error err;
+
+    YVEX_TEST_ASSERT(runtime_model_open_fixture(
+                         fixture, prepared, &model, &model_failure, &err) == YVEX_OK,
+                     "runtime model opens for paged CUDA residency packing");
+    session_request.backend = YVEX_BACKEND_KIND_CPU;
+    YVEX_TEST_ASSERT(yvex_runtime_session_open(
+                         &session, model, &session_request, &model_failure, &err) == YVEX_OK,
+                     "runtime session opens for paged CUDA residency packing");
+    provider = yvex_runtime_session_view_get(session)->attention_state_provider;
+    runtime_paged_capacity_fixture(&page_capacity);
+    YVEX_TEST_ASSERT(yvex_runtime_session_configure_persistent_pages(
+                         session, &page_capacity, &model_failure, &err) == YVEX_OK,
+                     "runtime provider admits class-specific virtual pages");
+    attention_request.scope = YVEX_ATTENTION_PROBE_SCOPE_QUICK;
+    attention_request.token_count = 1ull;
+    attention_request.execution_count = 1ull;
+    attention_request.select_layer = 1;
+    YVEX_TEST_ASSERT(yvex_graph_attention_capacity_plan_build(
+                         &attention_capacity, runtime_fixture_adapter()->graph(),
+                         yvex_runtime_model_view_get(model)->attention,
+                         &attention_request, &err) == YVEX_OK,
+                     "one-layer paged state capacity seals");
+    layer = yvex_graph_attention_capacity_plan_layer(attention_capacity, 0ull);
+    YVEX_TEST_ASSERT(layer && layer->selected &&
+                         provider->prepare(provider->context, 0ull, &layer->recipe,
+                                           NULL, &attention_failure, &err) == YVEX_OK,
+                     "empty committed and candidate histories reserve inaccessible tails");
+    backend_options.kind = YVEX_BACKEND_KIND_CPU;
+    YVEX_TEST_ASSERT(yvex_backend_open(&backend, &backend_options, &err) == YVEX_OK,
+                     "host-backed backend opens for deterministic CUDA staging test");
+    backend->kind = YVEX_BACKEND_KIND_CUDA;
+    YVEX_TEST_ASSERT(yvex_runtime_state_residency_prepare(
+                         &residency, backend, attention_capacity, provider,
+                         0ull, ULLONG_MAX, 0ull, ULLONG_MAX, &err) == YVEX_OK &&
+                         yvex_runtime_state_residency_summary_copy(
+                             residency, &summary, &err) == YVEX_OK &&
+                         summary.cuda_ready && summary.upload_count == 2ull &&
+                         summary.upload_bytes == summary.device_bytes,
+                     "CUDA staging copies only visible history while retaining full addresses");
+    YVEX_TEST_ASSERT(yvex_runtime_state_residency_close(&residency, &err) == YVEX_OK,
+                     "paged CUDA residency staging releases exactly");
+    backend->kind = YVEX_BACKEND_KIND_CPU;
+    YVEX_TEST_ASSERT(yvex_backend_close_checked(&backend, &err) == YVEX_OK,
+                     "host-backed staging backend closes");
+    backend_options.kind = YVEX_BACKEND_KIND_CUDA;
+    if (yvex_backend_open(&backend, &backend_options, &err) == YVEX_OK) {
+        unsigned long long committed_pages;
+        YVEX_TEST_ASSERT(yvex_runtime_state_residency_prepare(
+                             &residency, backend, attention_capacity, provider,
+                             0ull, ULLONG_MAX, 0ull, ULLONG_MAX, &err) == YVEX_OK &&
+                             yvex_runtime_state_residency_summary_copy(
+                                 residency, &summary, &err) == YVEX_OK,
+                         "native CUDA state residency prepares from provider pages");
+        if (backend->virtual_tensor_ready) {
+            YVEX_TEST_ASSERT(summary.paged && !summary.host_bytes,
+                             "native CUDA state uses page-backed device storage");
+            YVEX_TEST_ASSERT(summary.virtual_device_bytes && summary.page_granularity,
+                             "native CUDA state reports virtual geometry");
+            YVEX_TEST_ASSERT(!summary.device_bytes && !summary.page_commit_count,
+                             "empty CUDA state reserves no physical pages");
+            YVEX_TEST_ASSERT(yvex_runtime_state_residency_transition(
+                                 residency, provider, NULL, 0ull, 1ull,
+                                 YVEX_RUNTIME_STATE_BEGIN, &err) == YVEX_OK &&
+                                 yvex_runtime_state_residency_summary_copy(
+                                     residency, &summary, &err) == YVEX_OK,
+                             "candidate growth admits its CUDA pages before execution");
+            YVEX_TEST_ASSERT(summary.page_commit_count,
+                             "native CUDA state commits admitted physical pages");
+            YVEX_TEST_ASSERT(summary.device_bytes ==
+                                 summary.page_commit_count * summary.page_granularity,
+                             "native CUDA state accounts every physical granule");
+            committed_pages = summary.page_commit_count;
+            YVEX_TEST_ASSERT(yvex_runtime_state_residency_reset(residency, &err) == YVEX_OK &&
+                                 yvex_runtime_state_residency_summary_copy(
+                                     residency, &summary, &err) == YVEX_OK &&
+                                 !summary.device_bytes &&
+                                 summary.page_release_count == committed_pages,
+                             "state reset releases physical pages but retains virtual geometry");
+        } else {
+            YVEX_TEST_ASSERT(!summary.paged && summary.host_bytes == summary.device_bytes,
+                             "CUDA without VMM exposes its explicit full-bank fallback");
+        }
+        YVEX_TEST_ASSERT(yvex_runtime_state_residency_close(&residency, &err) == YVEX_OK &&
+                             yvex_backend_close_checked(&backend, &err) == YVEX_OK,
+                         "native CUDA state residency closes exactly");
+    } else {
+        YVEX_TEST_ASSERT(yvex_error_code(&err) == YVEX_ERR_UNSUPPORTED,
+                         "unavailable CUDA refuses paged runtime state explicitly");
+    }
+    yvex_graph_attention_capacity_plan_close(&attention_capacity);
+    YVEX_TEST_ASSERT(yvex_runtime_session_close(&session, &err) == YVEX_OK,
+                     "paged state test session closes");
     yvex_runtime_model_close(&model);
     return 0;
 }
@@ -3318,6 +3539,7 @@ int yvex_test_runtime_binding(void)
     if (test_runtime_injected_state_provider(&fixture, &prepared) != 0) goto done;
     if (test_runtime_cleanup_lease_retry(&fixture, &prepared) != 0) goto done;
     if (test_runtime_probe_consumer_boundary(&fixture, &prepared) != 0) goto done;
+    if (test_runtime_paged_state_cuda_pack(&fixture, &prepared) != 0) goto done;
     if (test_runtime_cuda_session_cleanup_retry(&fixture, &prepared) != 0) goto done;
     if (test_runtime_cuda_workspace_transaction(&fixture, &prepared) != 0) goto done;
     if (test_runtime_model_snapshot_drift(&fixture, &prepared) != 0) goto done;

@@ -25,8 +25,10 @@ source-authored conversation product path earns local protocol v7, provider
 request/wire v2, tokenizer plan v3, tokenizer provider result v2 and OpenAI
 compatibility profile v2. The installed server-construction API and public
 declaration count remain unchanged. Runtime events remain schema v3, Physical
-Execution IR and compiled profiles remain schema v1, and generation remains
-ABI v4. Every admitted change has a concrete fact and compatibility rule in the
+Execution IR and compiled profiles remain schema v1. Generation plan ABI v5
+binds the exact workload-profile identity needed to validate its phase roofline
+ledger; result schema v4 and its wire projections remain unchanged. Every
+admitted change has a concrete fact and compatibility rule in the
 contract matrix; the size of this milestone alone earns no version bump.
 
 An implementation-discovered identity change is admitted beside that frozen
@@ -43,6 +45,9 @@ entry audit:
 | Sampling-transaction internal ABI | v1 | v1 | the existing selection call accepts an optional staged RNG transaction; its test-only result validator is retired | in-process signature and private transaction layout only; result layout is unchanged | old callers select directly or obtain uniform values and select outside the sampling owner | complete rebuild; direct callers pass no transaction; outer transactions retain prepare/publish/abort authority; no persistence, wire, public API or profile migration | CPU/CUDA abort and exact retry, commit-only sample and RNG accounting, stale-base refusal, bounded device result |
 | DSpark target-anchor internal ABI | v1 | v1 | one typed sampling source and its staged selection replace mandatory complete-probability materialization | in-process helper and result-field naming only; no persisted, wire, state-layout or public incompatibility | old rebuilt callers materialize one complete probability row before target selection | complete rebuild; CPU and evidence-bearing paths use the host sampling oracle, production CUDA consumes resident logits; explicit full distributions remain forensic operations | runtime sampling/speculation/generation, CUDA bounded selection, full-array production guard, transaction abort and commit |
 | Stochastic-speculation internal ABI | v1 | v1 | resident draft/target row directories and bounded p/q acceptance facts | in-process operation table and helper signatures only; no persisted, wire or state-layout incompatibility | old objects are never mixed with rebuilt objects; the retained oracle expects host probability rows | complete rebuild; production CUDA uses the device operation, while CPU and audit/forensic profiles retain the oracle; no artifact, binding, protocol, event, profile or public API migration | every accepted prefix, residual and bonus agreement, workspace and malformed-token refusal, canonical identity reseal |
+| Generation plan ABI | v4 | v5 | exact workload-profile identity associated with phase roofline evidence | in-process plan layout and semantic identity; result and wire layouts are unchanged | rebuilt v5 readers reject plans that cannot identify their workload profile | complete rebuild; no artifact, binding, protocol, event or public API migration | plan identity mutation, mismatched-workload refusal and live CUDA generation result validation |
+| Attention-state summary | v3 | v4 | capacity-plan identity plus virtual, resident, page-table, commit and release facts | in-process internal record layout only; no persisted or wire representation | rebuilt readers require v4 and never mix old objects | complete rebuild; the page-pool owner projects counters without a second mutable truth | 512K logical reservation, bounded resident growth, reset release and stable-address tests |
+| Attention-state provider ABI | v4 | v5 | capacity-plan configuration before persistent storage admission | in-process function-table layout only; no persisted, wire or public C incompatibility | rebuilt runtime validation rejects a provider without the configuration operation | complete rebuild; target and draft configure under one serialized session mutation and partial configuration invalidates the session | provider forwarding/failure, changed-plan refusal, pre-mutation budget refusal and abort rollback |
 
 The later source-authored conversation gate earned these product-boundary
 changes. Reader and writer behavior remain separate because compatibility in
@@ -118,6 +123,23 @@ outside the device-byte lower bound; their elapsed cost remains inside the
 phase duration. Occupancy remains unavailable, so optimization ordering is
 still provisional rather than a promoted kernel-priority decision.
 
+Production CUDA attention now leaves the completed core and envelope rows in
+the caller-owned device output instead of downloading a second numerical copy
+for evidence. Its production hash binds the already sealed execution identity
+and output extent. Audit and forensic profiles still materialize and hash the
+numerical rows, so the retained CPU/CUDA oracle is unchanged. Normal
+non-prefix production also stages completed attention state directly into the
+session candidate bank with ordered D2D copies; commit flips bank authority and
+abort causes an exact committed-bank clone before reuse. The bounded D2H host
+oracle remains, while its duplicate state H2D is absent. Prefix-addressable
+speculation and audit/forensic evidence retain the explicit host upload path.
+The canonical lifecycle is documented in
+[`runtime.md`](../architecture/runtime.md#persistent-state); this does not yet
+claim elimination of the retained host oracle or prefix-selection H2D. State
+identity now advances per committed token and position, so target-only,
+verification-width and prefix-promotion paths converge on one identity for the
+same token sequence without replay or a full-state host hash.
+
 Compatible width-N CUDA output rows now execute through one encoded-head
 operation. Host producers use one bounded row-batch upload; device producers
 must expose one contiguous identity-compatible view. The encoded head is
@@ -151,6 +173,43 @@ and failed verification cannot publish selected IDs or state. CPU,
 audit/forensic and host-reference DSpark retain the complete-distribution oracle.
 No persisted, wire, public C or profile schema needed a version change.
 
+The source-authored mHC envelope keeps its FP64 sigmoid, Sinkhorn and
+normalization contract, but independent stream rows no longer execute behind
+one device lane. Stream-local pre/post gates, combination rows and alternating
+Sinkhorn row/column normalizations run in parallel while each row or column
+retains the original ordered reduction. BF16 residual squares accumulate in
+F32 before the final FP64 inverse; the complete 43-layer CUDA oracle remains
+bit-exact against the CPU/reference projection. No family geometry enters the
+common kernel and no model, state, wire or profile identity changes.
+
+Weighted DeepSeek RMSNorm applies the same admitted BF16 boundary: lanes
+accumulate independent residual squares in F32, reduce them cooperatively and
+retain the FP64 inverse, encoded weight application and BF16 publication. The
+complete 43-layer attention oracle remains bit-exact. On the candidate artifact
+and fixed four-token DSpark request, an identity-bound Nsight Systems capture
+reduced 2,487 weighted-normalization instances from 175,153,088 ns to
+25,373,280 ns; five warm resident runs retained the exact token and usage
+fixture at a median 2.95367613 final token/s. The external capture digest is
+`3719695af07073ea69f9506bdaa36c48cefa0f15148e3c587ad660880956621d`.
+This component result is causal optimization evidence, not a promoted model
+performance claim, and changes no persisted, wire, public or profile contract.
+
+DeepSeek attention reduction now evaluates each visible history row once. A
+stable online softmax retains source-order dot reductions and rescales the
+accumulated denominator and value row whenever the running maximum changes;
+the earlier two-sweep implementation remains represented by the independent
+CPU/reference oracle. Across 6,772,096 compared values, the full 43-layer CUDA
+lane remains inside its admitted contract (`max_abs=0.00390625`,
+`rmse=5.685668969537683e-06`) and deterministic across repeated execution. On
+the candidate artifact and fixed four-token DSpark request, an identity-bound
+Nsight Systems capture reduced 699 attention-reduction instances from
+212,617,664 ns to 118,771,328 ns while preserving exact generated text, token
+usage and stop facts. Five warm resident runs measured a median 3.09469247
+final token/s. The external capture digest is
+`0abbf09993c4a1b7ed15181f06969816fa03180c7df72cf731d9d4d5b3b05fd2`.
+This is component evidence rather than a promoted model-performance claim and
+does not change a persisted, wire, public or profile contract.
+
 CUDA attention graph replay now separates mutable state preparation from the
 captured kernel topology. The graph-stream preamble refreshes the current state
 bank before capture and every warm replay; promotion generation is therefore
@@ -167,6 +226,30 @@ Shape reconfiguration within one graph mode and profile identity retains
 compatible cached executables; a mode or identity change still invalidates
 them.
 
+The graph persistent-state provider now consumes the admitted per-class page
+geometry before preparing storage. Stable anonymous virtual spans preserve the
+contiguous history ABI, while physical host pages are committed only for
+reached SWA, compressed, HCA, indexer and rolling-state ranges. Each
+provider-local checked pool accounts actual host-page residency, semantic pages
+and page-table bytes;
+candidate and committed destinations preflight that pool before mutation.
+Reset discards physical pages without relocating the virtual spans, and an
+aborted first candidate never reads an uncommitted committed page. A 512K
+logical-capacity fixture proves reservation without full physical allocation,
+and a bounded-pool fixture refuses before a layer becomes visible.
+
+On a CUDA backend with complete Driver VMM capability, runtime residency now
+reserves stable virtual banks for the complete sealed recipe while initially
+mapping no physical pages for empty histories. Candidate begin commits the
+granules intersecting visible state and the requested growth before kernels can
+resolve them; committed-bank cloning and host upload touch visible spans only.
+Resolver admission is bounded by the committed span rather than logical
+capacity, and reset decommits every physical granule while preserving the
+virtual geometry. Summary facts distinguish virtual bytes, physical bytes,
+granularity and cumulative page commits/releases. CUDA without VMM retains the
+explicit full-bank fallback. Native `sm_121` tests prove the VMM lifecycle, but
+real 512K full-model execution remains a separate open qualification gate.
+
 The CUDA kernel bundle now admits an ordered set of independently compiled
 manifest-owned modules. General kernels and the MoE kernel family share one
 toolchain-only qtype primitive interface, while module loading, required-symbol
@@ -179,15 +262,70 @@ Production CUDA MoE now consumes the existing width-N runtime contract through
 one backend capability table. Workspace size derives from every admitted layer
 qtype and the compiled row capacity. Each layer routes all rows, builds a
 deterministic expert-major pair order, executes resident routed/shared packs,
-and leaves its selected experts and weights on the device. It enqueues only one
-bounded status word and one unique-expert count per layer. One completion after
-the full transformer stack validates all layer statuses, recovers exact active
-weight bytes from sealed base/per-expert factors, and publishes the aggregate
-facts. A later final-stage read or synchronization on the same session stream
-satisfies that completion without another barrier; otherwise one stream wait
-closes the stack. The independent immediate and token-local CPU/CUDA paths
-remain the audit/reference oracles. The internal source ABI rebuilds atomically;
+and leaves its selected experts and weights on the device. Independent expert
+scores are evaluated cooperatively; one ordered lane retains the source
+tie-breaking and double-precision weight accumulation contract. Pair counting
+and stable expert-major emission use one lane per expert, while the resulting
+order is identical to the serial oracle. The owner enqueues only one bounded
+status word and one unique-expert count per layer. One completion after the full
+transformer stack validates all layer statuses, recovers exact active weight
+bytes from sealed base/per-expert factors, and publishes the aggregate facts. A
+later final-stage read or synchronization on the same session stream satisfies
+that completion without another barrier; otherwise one stream wait closes the
+stack. The independent immediate and token-local CPU/CUDA paths remain the
+audit/reference oracles. Resident weights no longer reserve an unused
+per-expert staging range, so that oracle fits the same shape-preflighted
+workspace as the width-N path. Full forensic evidence disables Q8 activation
+compression for its row dots; live admission therefore checks the production
+approximation and the tighter forensic CPU/CUDA comparison separately. Qtype
+access expectations are derived from the admitted MoE plan rather than a
+duplicated physical-variant table. The internal source ABI rebuilds atomically;
 no persisted, wire, public C, execution-profile, or state-layout schema changes.
+
+The shared CUDA qtype primitive now admits short-row shapes that form
+geometry-selected two-, four- or eight-lane groups for Q8_0, Q2_K, IQ2_XXS and
+MXFP4 activation dots. Group-local work redistributes only exact integer terms;
+each leader reconstructs the canonical block float before returning values to
+the unchanged warp reduction lanes. The same primitive therefore fills idle
+lanes across dense and grouped-MoE consumers without a model-name branch,
+derived-layout change or numerical-contract bump.
+
+IQ2_XXS sign-grid reconstruction now uses the CUDA population-count primitive
+to recover the source parity bit rather than shifting the seven-bit code in a
+serial loop. Every affected row-dot and full attention comparison remains
+exact. On the candidate artifact and fixed four-token DSpark request, an
+identity-bound Nsight Systems capture reduced the 12,075 generic qtype matvec
+instances from 1,282,725,728 ns to 1,243,993,280 ns. The external capture
+digest is
+`e89e01fd362403a135c375cce60eb3eb6234dfbc4a69a42568e8fcb36e3d4632`.
+The measured component reduction is not a promoted model-performance claim and
+changes no qtype, layout, persisted, wire, public or profile contract.
+
+The model-derived F32 mHC projections expose 24 rows over 16,384 source values.
+For this narrow-output geometry, each row/input pair now owns one 256-lane
+reduction block; encoded qtypes and split-input reference execution retain the
+canonical warp-owned topology. The complete 43-layer CUDA attention oracle
+compared 6,772,096 values inside the admitted contract
+(`max_abs=0.00390625`, `rmse=5.685668969537683e-06`) and remained byte-stable
+across repeated runs. On the fixed four-token request, comparable native-SM121
+captures reduced the affected projection from 344,227.7 ns to 32,808.4 ns per
+instance and generic qtype matvec time from 1,287,263,456 ns to 962,302,860.8 ns
+per request. Five warm resident runs retained exact text, stop and 9/4/13 usage
+facts at a median wall time of 2.746745 s (min 2.743537 s, max and nearest-rank
+p95 2.947920 s, coefficient of variation 0.0290). The before/after external
+capture digests are
+`47de758b3d3645ea83663b469ca79bae1cdf1d672272361f84fa0f8266af1a93`
+and `97a01cb0fe2f082c83a3a19a7da2606f21e345acfe7a960680507f974aef95e9`.
+This is causal component evidence, not a promoted model-performance claim, and
+changes only the complete-rebuild kernel ABI: no qtype, persisted, wire,
+public, execution-profile or state-layout contract changes.
+
+Multi-row qtype projections now derive their launch topology from both matrix
+rows and input rows. Up to eight compatible input rows share one encoded-row
+block, while wider batches tile that same mapping without padding the logical
+row count. This keeps output-head and verification rows contiguous in the
+kernel launch, preserves the existing per-warp arithmetic and tail refusal,
+and changes no qtype, numerical, persisted, wire or public contract.
 
 Each CUDA backend/session now owns one non-blocking ordinary-execution stream.
 Production attention graph pieces borrow that stream, preserve their order and
@@ -237,7 +375,7 @@ derived from vocabulary and model-authored proposal width before execution;
 undersized capacity and malformed candidates refuse before a launch. CPU and
 audit/forensic execution retain the complete-distribution oracle. This changes
 only an internal operation table and helper signature; binding v8, protocol v7,
-events v3, compiled profile v1, generation ABI v4 and the server-construction
+events v3, compiled profile v1, generation ABI v5 and the server-construction
 API remain unchanged by this optimization.
 
 Production CUDA DSpark now selects each target-authored anchor directly from
@@ -248,7 +386,7 @@ evidence-bearing profiles select through the same sampling owner over the host
 row, rather than reconstructing a second selection algorithm in speculation.
 The normal production profile refuses host-authored selection facts and records
 zero full-array host-scan bytes. This is an internal complete-rebuild ABI change
-only; binding v8, protocol v7, events v3, generation ABI v4 and the
+only; binding v8, protocol v7, events v3, generation ABI v5 and the
 server-construction API remain unchanged by this optimization.
 
 Source-selected target features now collapse their mHC residual streams on
@@ -341,10 +479,13 @@ coexistence, typed capacity/page planning, pre-materialization memory refusal,
 the availability-aware production phase ledger, and identity-bound native
 SM121 CUBIN admission. It also establishes identity-bound width-N CUDA logits
 publication and greedy/stochastic DSpark target-anchor selection without
-full-vocabulary host materialization.
+full-vocabulary host materialization, plus stable-address host graph-state
+paging under the admitted per-class capacity plan and on-demand CUDA VMM state
+residency with stable device addresses.
 It does not yet establish Tensor Core execution, specialized attention,
 GB10-competitive grouped MoE, zero per-layer attention synchronization,
 full-model live qualification of target-only or DSpark device sampling,
-full-model live qualification of all reasoning modes, paged state allocation,
-prefix persistence, continuous batching, competitive throughput, evaluation,
-benchmark qualification, release qualification, or Hugging Face publication.
+full-model live qualification of all reasoning modes, paged CUDA state
+real deep-context qualification, prefix persistence, continuous batching,
+competitive throughput, evaluation, benchmark qualification, release
+qualification, or Hugging Face publication.

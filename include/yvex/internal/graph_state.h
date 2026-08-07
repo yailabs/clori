@@ -17,6 +17,7 @@ extern "C" {
 #define YVEX_GRAPH_ATTENTION_STATE_SCHEMA_V1 1u
 #define YVEX_GRAPH_ATTENTION_STATE_SCHEMA_V2 2u
 #define YVEX_GRAPH_ATTENTION_STATE_SCHEMA_V3 3u
+#define YVEX_GRAPH_ATTENTION_STATE_SCHEMA_V4 4u
 #define YVEX_ATTENTION_STATE_RECIPE_SCHEMA_V1 1u
 #define YVEX_ATTENTION_STATE_COMPONENT_CAP 8u
 #define YVEX_ATTENTION_WORKSPACE_RECIPE_SCHEMA_V1 1u
@@ -162,23 +163,31 @@ typedef struct {
     int sealed, persistent, cancelled, invalidated, transaction_active;
     int candidate_active, abort_required, position_consistent;
     int staged_batch_complete, prefix_selected, extension_ready;
+    int paged, paging_configured;
     unsigned long long layer_count, prepared_layer_count, staged_layer_count, allocated_bytes;
+    unsigned long long virtual_bytes, resident_bytes, page_table_bytes;
+    unsigned long long page_count, resident_page_count, page_commit_count;
+    unsigned long long page_release_count;
     unsigned long long commit_count, abort_count, cancellation_count, reset_count, generation;
     unsigned long long capacity, committed_sequence_length, next_position;
     unsigned long long staged_generation, staged_next_position, selected_prefix_count;
     yvex_graph_attention_state_component_summary components[YVEX_ATTENTION_STATE_BINDING_COUNT];
     char state_layout_identity[YVEX_SHA256_HEX_CAP], state_content_identity[YVEX_SHA256_HEX_CAP];
     char staged_state_content_identity[YVEX_SHA256_HEX_CAP];
+    char capacity_plan_identity[YVEX_SHA256_HEX_CAP];
 } yvex_graph_attention_state_summary;
 typedef enum {
     YVEX_ATTENTION_STATE_VIEW_COMMITTED = 0,
     YVEX_ATTENTION_STATE_VIEW_CANDIDATE
 } yvex_attention_state_view_kind;
 
-#define YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V4 4u
+#define YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V5 5u
 typedef struct yvex_attention_state_provider {
     unsigned int schema_version;
     void *context;
+    int (*configure_pages)(void *context,
+                           const yvex_execution_capacity_plan *capacity,
+                           yvex_attention_failure *failure, yvex_error *err);
     int (*prepare)(void *context, unsigned long long layer_index,
                    const yvex_attention_state_recipe *recipe,
                    const yvex_attention_history_view *initial_history,
@@ -255,6 +264,10 @@ typedef struct {
 int yvex_runtime_session_prepare_persistent_state(
     struct yvex_runtime_execution_session *session,
     const yvex_graph_attention_capacity_plan *capacity,
+    struct yvex_runtime_model_failure *failure, yvex_error *err);
+int yvex_runtime_session_configure_persistent_pages(
+    struct yvex_runtime_execution_session *session,
+    const yvex_execution_capacity_plan *capacity,
     struct yvex_runtime_model_failure *failure, yvex_error *err);
 int yvex_runtime_session_prepare_persistent_scope_state(
     struct yvex_runtime_execution_session *session, yvex_tensor_scope scope,

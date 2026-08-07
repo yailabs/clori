@@ -840,10 +840,6 @@ static void cuda_rolling_commit(const yvex_attention_rolling_state_view *before,
     after->score_state_extent = after->kv_state_extent;
 }
 
-static double cuda_checksum(const float *values, unsigned long long count) {
-    return yvex_attention_checksum(values, count);
-}
-
 static int cuda_output_identity(const yvex_attention_plan *plan,
                                 const yvex_attention_execution_trace *trace,
                                 char out[YVEX_DEEPSEEK_ATTENTION_IDENTITY_CAP]) {
@@ -958,6 +954,8 @@ int yvex_attention_cuda_publish(attention_cuda_context *context)
             "CUDA attention compulsory memory extent overflowed");
     context->trace.compressed_count = context->cuda_output.compressed_count;
     context->trace.indexer_count = context->cuda_output.indexer_count;
+    context->trace.device_state_staged = context->cuda_output.device_state_staged;
+    context->trace.device_state_staged_bytes = context->cuda_output.device_state_staged_bytes;
     context->trace.compressed_stride = context->trace.compressed_count
                                            ? context->layer->head_dimension : 0ull;
     context->trace.indexer_stride = context->trace.indexer_count
@@ -1023,22 +1021,22 @@ int yvex_attention_cuda_publish(attention_cuda_context *context)
         context->cuda_output.host_workspace_allocation_count;
     context->result->cuda_host_workspace_reused = context->cuda_output.host_workspace_reused;
     context->result->q_projection_checksum = context->trace.q_low
-        ? cuda_checksum(context->trace.q_low, q_low) : 0.0;
+        ? yvex_attention_checksum(context->trace.q_low, q_low) : 0.0;
     context->result->kv_projection_checksum =
-        cuda_checksum(context->trace.raw_kv, raw);
+        yvex_attention_checksum(context->trace.raw_kv, raw);
     context->result->rope_checksum = context->trace.query
-        ? cuda_checksum(context->trace.query, query) : 0.0;
+        ? yvex_attention_checksum(context->trace.query, query) : 0.0;
     context->result->attention_checksum = context->trace.attention_values
-        ? cuda_checksum(context->trace.attention_values, query) : 0.0;
-    context->result->core_output_checksum =
-        cuda_checksum(context->trace.output, output);
-    context->result->envelope_output_checksum =
-        cuda_checksum(context->trace.envelope_output, envelope);
+        ? yvex_attention_checksum(context->trace.attention_values, query) : 0.0;
+    context->result->core_output_checksum = context->trace.evidence_level
+        ? yvex_attention_checksum(context->trace.output, output) : 0.0;
+    context->result->envelope_output_checksum = context->trace.evidence_level
+        ? yvex_attention_checksum(context->trace.envelope_output, envelope) : 0.0;
     context->result->output_checksum =
         context->opts->operation_scope == YVEX_ATTENTION_OPERATION_ENVELOPE
             ? context->result->envelope_output_checksum
             : context->result->core_output_checksum;
-    if (!cuda_output_identity(
+    if (context->trace.evidence_level && !cuda_output_identity(
             context->plan, &context->trace, context->result->output_identity))
         return yvex_attention_cuda_reject(
             context, YVEX_DEEPSEEK_ATTENTION_FAILURE_STATE_DELTA,

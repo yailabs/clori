@@ -438,6 +438,73 @@ int yvex_backend_tensor_alloc(yvex_backend *backend,
     return backend->vtable->tensor_alloc(backend, desc, out, err);
 }
 
+int yvex_backend_tensor_reserve(yvex_backend *backend, const yvex_backend_tensor_desc *desc,
+                                yvex_device_tensor **out, unsigned long long *granularity,
+                                yvex_error *err)
+{
+    int rc;
+    if (out) *out = NULL;
+    if (granularity) *granularity = 0ull;
+    if (!backend || !out || !granularity) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "backend.tensor.reserve",
+                       "backend, tensor output, and granularity output are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    rc = backend_dispatch_admit(backend, "backend.tensor.reserve", err);
+    if (rc == YVEX_OK) rc = backend_desc_valid(desc, err);
+    if (rc != YVEX_OK) return rc;
+    if (!backend->vtable || !backend->vtable->tensor_reserve) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "backend.tensor.reserve",
+                       "backend does not support virtual tensor reservation");
+        return YVEX_ERR_UNSUPPORTED;
+    }
+    return backend->vtable->tensor_reserve(backend, desc, out, granularity, err);
+}
+
+int yvex_backend_tensor_commit_range(yvex_backend *backend,
+                                     yvex_device_tensor *tensor,
+                                     unsigned long long offset,
+                                     unsigned long long bytes,
+                                     unsigned long long *resident_delta,
+                                     yvex_error *err)
+{
+    int rc;
+    if (resident_delta) *resident_delta = 0ull;
+    if (!backend || !tensor || !resident_delta || !bytes || offset > tensor->bytes ||
+        bytes > tensor->bytes - offset) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "backend.tensor.commit",
+                       "one owned virtual tensor range is required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    rc = backend_dispatch_admit(backend, "backend.tensor.commit", err);
+    if (rc != YVEX_OK) return rc;
+    if (!backend->vtable || !backend->vtable->tensor_commit) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "backend.tensor.commit",
+                       "backend does not support physical page commitment");
+        return YVEX_ERR_UNSUPPORTED;
+    }
+    return backend->vtable->tensor_commit(backend, tensor, offset, bytes, resident_delta, err);
+}
+
+int yvex_backend_tensor_decommit(yvex_backend *backend, yvex_device_tensor *tensor,
+                                 unsigned long long *released_bytes, yvex_error *err)
+{
+    int rc;
+    if (released_bytes) *released_bytes = 0ull;
+    if (!backend || !tensor || !released_bytes) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "backend.tensor.decommit",
+                       "backend, virtual tensor, and release output are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    rc = backend_dispatch_admit(backend, "backend.tensor.decommit", err);
+    if (rc != YVEX_OK) return rc;
+    if (!backend->vtable || !backend->vtable->tensor_decommit) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "backend.tensor.decommit",
+                       "backend does not support physical page decommitment");
+        return YVEX_ERR_UNSUPPORTED;
+    }
+    return backend->vtable->tensor_decommit(backend, tensor, released_bytes, err);
+}
 void yvex_backend_tensor_free(yvex_backend *backend,
                               yvex_device_tensor *tensor)
 {

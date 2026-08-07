@@ -1844,7 +1844,8 @@ static int run_runtime_oracle_mode(
         : YVEX_BACKEND_CUDA_ATTENTION_PIECEWISE;
     if (rc == YVEX_OK)
         rc = yvex_backend_cuda_attention_configure(
-            session_view->backend, backend_mode,
+            session_view->backend, YVEX_BACKEND_ATTENTION_PHASE_DECODE,
+            backend_mode,
             model_view->binding->executable_graph_identity,
             "decode-1",
             capacity_summary->components[

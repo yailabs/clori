@@ -19,6 +19,7 @@
 #include <yvex/internal/backend.h>
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/graph.h>
+#include <yvex/internal/graph_state.h>
 #include <yvex/internal/quant_numeric.h>
 #include <limits.h>
 #include <math.h>
@@ -28,6 +29,79 @@
 typedef struct {
     unsigned int input_ids[4], output_ids[4];
 } yvex_graph_op_edges;
+
+/* Stable virtual spans commit physical state pages only as graph publication reaches them. */
+typedef struct yvex_graph_state_page_pool yvex_graph_state_page_pool;
+typedef struct yvex_graph_state_page_store yvex_graph_state_page_store;
+typedef struct {
+    yvex_attention_state_component_recipe recipe;
+    float *values;
+    unsigned long long *positions;
+    float *auxiliary;
+    unsigned long long start, allocated_rows;
+    yvex_graph_state_page_store *value_pages;
+    yvex_graph_state_page_store *position_pages;
+    yvex_graph_state_page_store *auxiliary_pages;
+} yvex_graph_state_component_storage;
+typedef struct {
+    unsigned long long allocated_bytes, metadata_bytes, virtual_bytes;
+    unsigned long long resident_bytes, page_count, resident_page_count;
+    unsigned long long page_commit_count, page_release_count;
+} yvex_graph_state_page_summary;
+int yvex_graph_state_page_pool_open(
+    yvex_graph_state_page_pool **out, unsigned long long maximum_bytes,
+    yvex_error *err);
+int yvex_graph_state_page_pool_bind_capacity(
+    yvex_graph_state_page_pool *pool,
+    const yvex_execution_capacity_plan *capacity, yvex_error *err);
+void yvex_graph_state_page_pool_release(
+    yvex_graph_state_page_pool *pool, unsigned long long bytes);
+int yvex_graph_state_page_pool_summary(
+    const yvex_graph_state_page_pool *pool,
+    yvex_graph_state_page_summary *out, yvex_error *err);
+void yvex_graph_state_page_pool_close(yvex_graph_state_page_pool **pool);
+int yvex_graph_state_capacity_plan_valid(
+    const yvex_execution_capacity_plan *capacity);
+int yvex_graph_state_bank_pages_open(
+    yvex_graph_state_page_pool *pool,
+    const yvex_execution_capacity_plan *capacity,
+    const yvex_attention_summary *summary,
+    const yvex_attention_layer_plan *layer,
+    const yvex_attention_state_recipe *recipe,
+    yvex_graph_state_component_storage
+        components[YVEX_ATTENTION_STATE_BINDING_COUNT],
+    yvex_attention_history_view *view, yvex_error *err);
+int yvex_graph_state_bank_pages_reset(
+    yvex_graph_state_component_storage
+        components[YVEX_ATTENTION_STATE_BINDING_COUNT],
+    yvex_attention_history_view *view,
+    const yvex_attention_state_recipe *recipe, yvex_error *err);
+void yvex_graph_state_bank_pages_bind(
+    yvex_graph_state_component_storage
+        components[YVEX_ATTENTION_STATE_BINDING_COUNT],
+    yvex_attention_history_view *view,
+    const yvex_attention_state_recipe *recipe);
+int yvex_graph_state_bank_pages_transfer(
+    yvex_graph_state_component_storage
+        components[YVEX_ATTENTION_STATE_BINDING_COUNT],
+    yvex_attention_history_view *view,
+    const yvex_attention_state_recipe *recipe,
+    const yvex_attention_history_view *source,
+    int validate_storage, yvex_error *err);
+void yvex_graph_state_bank_pages_close(
+    yvex_graph_state_component_storage
+        components[YVEX_ATTENTION_STATE_BINDING_COUNT]);
+int yvex_graph_state_pages_prepare_publications(
+    yvex_attention_history_view *view,
+    yvex_graph_state_component_storage
+        components[YVEX_ATTENTION_STATE_BINDING_COUNT],
+    const yvex_attention_state_recipe *recipe,
+    const yvex_attention_publication *const *publications,
+    unsigned long long publication_count, yvex_error *err);
+int yvex_graph_state_pointer_table_reserve(
+    yvex_graph_state_page_pool *pool, void ***table,
+    unsigned long long *capacity, unsigned long long *bytes,
+    unsigned long long limit, yvex_error *err);
 struct yvex_graph {
     yvex_graph_status status;
     char *architecture, *model_name;

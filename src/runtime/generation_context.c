@@ -642,7 +642,7 @@ static int generation_plan_build(yvex_runtime_generation_context *context,
     const yvex_transformer_plan_summary *transformer;
     const yvex_runtime_logits_plan_summary *logits;
     const yvex_tokenizer_plan_summary *tokenizer;
-    yvex_runtime_generation_plan_summary plan;
+    yvex_runtime_generation_plan_summary plan = {0};
     if (yvex_runtime_model_summary_copy(context->model, &model, err) != YVEX_OK)
         return yvex_error_code(err);
     transformer = yvex_transformer_plan_summary_get(
@@ -658,8 +658,7 @@ static int generation_plan_build(yvex_runtime_generation_context *context,
         return generation_context_refuse(
             err, YVEX_ERR_STATE,
             "generation lower-owner plans are incompatible");
-    memset(&plan, 0, sizeof(plan));
-    plan.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V4;
+    plan.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V5;
     plan.backend = context->options.backend;
     plan.mode = context->options.mode;
     plan.context_capacity = context->options.context_capacity;
@@ -689,6 +688,7 @@ static int generation_plan_build(yvex_runtime_generation_context *context,
                                context->execution_profile.kernel_bundle_identity);
     yvex_runtime_identity_copy(plan.execution_profile_identity,
                                context->execution_profile.identity);
+    yvex_runtime_identity_copy(plan.workload_profile_identity, context->workload_profile.identity);
     yvex_core_text_copy(plan.hardware_profile, sizeof(plan.hardware_profile),
                         context->execution_profile.hardware_profile);
     if (context->speculation) {
@@ -815,13 +815,14 @@ int yvex_runtime_generation_context_open(
 {
     yvex_runtime_generation_context *context = NULL;
     yvex_runtime_decode_options decode_options = {0};
+    yvex_runtime_model_failure state_failure = {0};
     yvex_tokenizer_decode_options decoder_options = {0};
     const yvex_runtime_logits_plan_summary *logits_plan = NULL;
     unsigned long long hidden_bytes, logits_bytes;
     int rc = YVEX_OK;
     if (out) *out = NULL;
     if (!out || !model || !session || !options ||
-        options->schema_version != YVEX_RUNTIME_GENERATION_SCHEMA_V4 ||
+        options->schema_version != YVEX_RUNTIME_GENERATION_SCHEMA_V5 ||
         (options->backend != YVEX_BACKEND_KIND_CPU &&
          options->backend != YVEX_BACKEND_KIND_CUDA) ||
         options->mode > YVEX_GENERATION_MODE_DSPARK ||
@@ -862,6 +863,9 @@ int yvex_runtime_generation_context_open(
     rc = generation_execution_profile_build(context, err);
     if (rc != YVEX_OK) goto failure;
     rc = generation_capacity_build(context, err);
+    if (rc != YVEX_OK) goto failure;
+    rc = yvex_runtime_session_configure_persistent_pages(
+        session, &context->capacity_plan, &state_failure, err);
     if (rc != YVEX_OK) goto failure;
     rc = yvex_execution_shape_registry_open(
         &context->execution_shapes, 128ull, err);

@@ -852,6 +852,7 @@ static int test_attention_graph_configuration(yvex_backend *backend)
     yvex_backend_cuda_graph_info graph_info;
     yvex_backend_memory_stats memory_before;
     yvex_backend_memory_stats memory_after;
+    yvex_cuda_backend_state *state;
     yvex_backend_tensor_desc desc;
     yvex_device_tensor *input = NULL;
     yvex_device_tensor *output = NULL;
@@ -869,6 +870,8 @@ static int test_attention_graph_configuration(yvex_backend *backend)
     };
     unsigned long long count = 0ull;
     unsigned long long failed_synchronize_count = 0ull;
+    unsigned long long configuration_hits;
+    unsigned int configuration_count;
     size_t fault_index;
     unsigned int stage;
     int rc;
@@ -878,7 +881,8 @@ static int test_attention_graph_configuration(yvex_backend *backend)
     YVEX_TEST_ASSERT(rc == YVEX_ERR_INVALID_ARG && count == 0ull,
                      "negative registry action refuses without invalidation");
     rc = yvex_backend_cuda_attention_configure(
-        backend, YVEX_BACKEND_CUDA_ATTENTION_EAGER, "attention-config-eager-v1",
+        backend, YVEX_BACKEND_ATTENTION_PHASE_PREFILL,
+        YVEX_BACKEND_CUDA_ATTENTION_EAGER, "attention-config-eager-v1",
         "not-applicable", 0ull, 0ull, 0ull, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "configure eager CUDA attention mode");
     rc = yvex_backend_cuda_attention_graph_summary_get(backend, &summary, &err);
@@ -887,7 +891,8 @@ static int test_attention_graph_configuration(yvex_backend *backend)
                      summary.graph_count == 0ull,
                      "eager attention mode reports no fabricated graphs");
     rc = yvex_backend_cuda_attention_configure(
-        backend, YVEX_BACKEND_CUDA_ATTENTION_FULL, "attention-config-full-v1",
+        backend, YVEX_BACKEND_ATTENTION_PHASE_DECODE,
+        YVEX_BACKEND_CUDA_ATTENTION_FULL, "attention-config-full-v1",
         "decode-1", 4ull, 1ull, 1ull, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_STATE,
                      "full graph mode refuses without stable residency and workspace");
@@ -906,7 +911,8 @@ static int test_attention_graph_configuration(yvex_backend *backend)
     rc = yvex_backend_workspace_attach(backend, workspace, 9ull, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "attach stable attention workspace");
     rc = yvex_backend_cuda_attention_configure(
-        backend, YVEX_BACKEND_CUDA_ATTENTION_PIECEWISE, "attention-config-piecewise-v1",
+        backend, YVEX_BACKEND_ATTENTION_PHASE_PREFILL,
+        YVEX_BACKEND_CUDA_ATTENTION_PIECEWISE, "attention-config-piecewise-v1",
         "prefill-4", 4ull, 1ull, 1ull, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "configure piecewise CUDA attention mode");
     rc = yvex_backend_cuda_attention_graph_summary_get(backend, &summary, &err);
@@ -1096,18 +1102,39 @@ static int test_attention_graph_configuration(yvex_backend *backend)
                      summary.update_count == 1ull && summary.update_pending_count == 0ull &&
                      summary.memcpy_node_count >= 2ull && summary.memset_node_count > 0ull,
                      "attention summary aggregates updated transfer-complete graph evidence");
+    state = yvex_cuda_state(backend);
+    configuration_count = state->attention_configuration_count;
     rc = yvex_backend_cuda_attention_configure(
-        backend, YVEX_BACKEND_CUDA_ATTENTION_PIECEWISE, "attention-config-piecewise-v1",
+        backend, YVEX_BACKEND_ATTENTION_PHASE_DECODE,
+        YVEX_BACKEND_CUDA_ATTENTION_PIECEWISE, "attention-config-piecewise-v1",
         "decode-1", 8ull, 2ull, 2ull, &err);
     if (rc == YVEX_OK)
         rc = yvex_backend_cuda_attention_graph_registry_count(backend, &count, &err);
-    YVEX_TEST_ASSERT(rc == YVEX_OK && count == 1ull,
-                     "shape reconfiguration retains compatible graph ownership");
+    YVEX_TEST_ASSERT(
+        rc == YVEX_OK && count == 1ull &&
+            state->attention_configuration_count == configuration_count + 1u &&
+            state->attention_configurations[
+                state->attention_active_configuration].phase ==
+                YVEX_BACKEND_ATTENTION_PHASE_DECODE,
+        "shape reconfiguration retains compatible graph ownership by phase");
+    YVEX_TEST_ASSERT(
+        yvex_cuda_attention_configuration_active(
+            state, YVEX_BACKEND_ATTENTION_PHASE_PREFILL) == NULL,
+        "an active decode shape cannot satisfy a prefill dispatch");
+    configuration_count = state->attention_configuration_count;
+    configuration_hits = state->attention_configuration_hits;
     rc = yvex_backend_cuda_attention_configure(
-        backend, YVEX_BACKEND_CUDA_ATTENTION_PIECEWISE, "attention-config-piecewise-v1",
+        backend, YVEX_BACKEND_ATTENTION_PHASE_PREFILL,
+        YVEX_BACKEND_CUDA_ATTENTION_PIECEWISE, "attention-config-piecewise-v1",
         "prefill-4", 4ull, 1ull, 1ull, &err);
-    YVEX_TEST_ASSERT(rc == YVEX_OK,
-                     "returning to an admitted shape preserves its executable");
+    YVEX_TEST_ASSERT(
+        rc == YVEX_OK &&
+            state->attention_configuration_count == configuration_count &&
+            state->attention_configuration_hits == configuration_hits + 1ull &&
+            state->attention_configurations[
+                state->attention_active_configuration].phase ==
+                YVEX_BACKEND_ATTENTION_PHASE_PREFILL,
+        "returning to an admitted phase selects its immutable capacity record");
     rc = yvex_backend_cuda_attention_graph_registry_apply(
         backend, YVEX_BACKEND_CUDA_GRAPH_REGISTRY_UPDATE, &count, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && count == 1ull,
@@ -1287,6 +1314,7 @@ static int test_attention_graph_configuration(yvex_backend *backend)
     rc = yvex_backend_tensor_release(backend, &input, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "release captured attention fixture input");
     memset(&job, 0, sizeof(job));
+    job.phase = YVEX_BACKEND_ATTENTION_PHASE_PREFILL;
     for (stage = 0u; stage < YVEX_CUDA_ATTENTION_STAGE_COUNT; ++stage) {
         char piece_key[160];
 
@@ -1361,7 +1389,8 @@ static int test_attention_graph_configuration(yvex_backend *backend)
     YVEX_TEST_ASSERT(rc == YVEX_ERR_STATE,
                      "attention graph interval beyond canonical stage count refuses");
     rc = yvex_backend_cuda_attention_configure(
-        backend, YVEX_BACKEND_CUDA_ATTENTION_FULL, "attention-config-full-v2",
+        backend, YVEX_BACKEND_ATTENTION_PHASE_DECODE,
+        YVEX_BACKEND_CUDA_ATTENTION_FULL, "attention-config-full-v2",
         "decode-1", 4ull, 1ull, 1ull, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK,
                      "new compatibility identity invalidates before full mode configuration");
@@ -1466,7 +1495,8 @@ static int test_backend_graph_close_retry(void)
                      "allocate production graph close-retry output");
     YVEX_TEST_ASSERT(
         yvex_backend_cuda_attention_configure(
-            backend, YVEX_BACKEND_CUDA_ATTENTION_EAGER, "cuda-close-retry-v1",
+            backend, YVEX_BACKEND_ATTENTION_PHASE_DECODE,
+            YVEX_BACKEND_CUDA_ATTENTION_EAGER, "cuda-close-retry-v1",
             "not-applicable", 0ull, 0ull, 0ull, &err) == YVEX_OK,
         "configure registry identity for checked backend close retry");
     fixture = (rope_graph_fixture){
@@ -1586,6 +1616,30 @@ static int test_execution_stream_lifecycle(void)
     return 0;
 }
 
+static int test_attention_failure_preserves_cause(void)
+{
+    const yvex_cuda_attention_operations *operations =
+        yvex_cuda_attention_operations_get();
+    yvex_backend_attention_failure failure = {0};
+    yvex_error err;
+    int rc;
+
+    yvex_error_set(&err, YVEX_ERR_BOUNDS, "cuda.attention.specific",
+                   "specific attention capacity was exceeded");
+    rc = operations->fail(
+        &failure, YVEX_BACKEND_ATTENTION_FAILURE_SYNCHRONIZE,
+        "cuda.attention.wrapper", 7ull, 5ull, &err, YVEX_ERR_BOUNDS,
+        "generic attention completion failed");
+    YVEX_TEST_ASSERT(
+        rc == YVEX_ERR_BOUNDS &&
+            failure.code == YVEX_BACKEND_ATTENTION_FAILURE_SYNCHRONIZE &&
+            failure.expected == 7ull && failure.actual == 5ull &&
+            strcmp(yvex_error_where(&err), "cuda.attention.specific") == 0 &&
+            strstr(yvex_error_message(&err), "specific attention capacity") != NULL,
+        "attention failure facts preserve the originating CUDA cause");
+    return 0;
+}
+
 int yvex_cuda_test_graph(void)
 {
     yvex_backend *backend = NULL;
@@ -1630,6 +1684,9 @@ int yvex_cuda_test_graph(void)
     if (rc != 0)
         return rc;
     rc = test_execution_stream_lifecycle();
+    if (rc != 0)
+        return rc;
+    rc = test_attention_failure_preserves_cause();
     if (rc != 0)
         return rc;
     return test_backend_detach();

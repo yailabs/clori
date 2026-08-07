@@ -15,182 +15,6 @@
 #include <stdlib.h>
 #include <string.h>
 #define CUDA_ATTENTION_BLOCK 256u
-#define CUDA_QTYPE_MATVEC_ROWS 8u
-/*
- * Initialize one stable device range synchronously or on the active capture stream.
- *
- * Malformed ranges or unavailable Driver entrypoints publish typed failure.
- */
-static int cuda_work_initialize(yvex_cuda_work *work, CUdeviceptr target,
-                                size_t bytes, const void *source, int zero,
-                                const char *stage, yvex_error *err)
-{
-    CUstream stream;
-    if (!source && !zero) return YVEX_OK;
-    if (!work || !work->state || !target || !bytes) {
-        yvex_error_set(err, YVEX_ERR_INVALID_ARG, stage,
-                       "CUDA range initialization is invalid");
-        return YVEX_ERR_INVALID_ARG;
-    }
-    if (work->prepare_only) return YVEX_OK;
-    stream = yvex_cuda_launch_stream(work->backend);
-    if (stream) {
-        if ((source && !work->state->driver.cuMemcpyHtoDAsync_v2) ||
-            (zero && !work->state->driver.cuMemsetD8Async)) {
-            yvex_error_set(err, YVEX_ERR_UNSUPPORTED, stage,
-                           "captured CUDA range initialization is unavailable");
-            return YVEX_ERR_UNSUPPORTED;
-        }
-        return yvex_cuda_status(
-            &work->state->driver,
-            source ? work->state->driver.cuMemcpyHtoDAsync_v2(
-                         target, source, bytes, stream)
-                   : work->state->driver.cuMemsetD8Async(target, 0u, bytes, stream),
-            stage, err);
-    }
-    return yvex_cuda_status(
-        &work->state->driver,
-        source ? work->state->driver.cuMemcpyHtoD_v2(target, source, bytes)
-               : work->state->driver.cuMemsetD8_v2(target, 0u, bytes),
-        stage, err);
-}
-/*
- * Acquire and initialize one range from a stable workspace or owned device allocation.
- *
- * Budget, workspace, allocation, or copy error retains ownership for cleanup. Generic CUDA
- * transaction resource; it does not infer family geometry.
- */
-int yvex_cuda_work_allocate(yvex_cuda_work *work,
-                            CUdeviceptr *out,
-                            size_t bytes,
-                            const void *source,
-                            int zero,
-                            const char *stage,
-                            yvex_cuda_work_failure *failure,
-                            yvex_error *err)
-{
-    unsigned long long address = 0ull;
-    unsigned long long next;
-    int acquired;
-    int rc;
-    if (failure)
-        *failure = YVEX_CUDA_WORK_FAILURE_NONE;
-    if (!work || !work->backend || !work->state || !out || !bytes ||
-        work->count >= YVEX_CUDA_WORK_MAX_RANGES) {
-        yvex_error_set(err, YVEX_ERR_INVALID_ARG, stage,
-                       "CUDA work allocation request is invalid");
-        return YVEX_ERR_INVALID_ARG;
-    }
-    rc = backend_dispatch_admit(work->backend, stage, err);
-    if (rc != YVEX_OK) {
-        if (failure) *failure = YVEX_CUDA_WORK_FAILURE_ALLOCATION;
-        return rc;
-    }
-    if (work->count == 0u) {
-        rc = yvex_cuda_deferred_release_drain(work->backend, err);
-        if (rc != YVEX_OK) {
-            if (failure)
-                *failure = YVEX_CUDA_WORK_FAILURE_ALLOCATION;
-            return rc;
-        }
-    }
-    if (work->current_bytes > ULLONG_MAX - (unsigned long long)bytes ||
-        (work->budget && work->current_bytes + (unsigned long long)bytes > work->budget)) {
-        if (failure)
-            *failure = YVEX_CUDA_WORK_FAILURE_BUDGET;
-        yvex_error_set(err, YVEX_ERR_NOMEM, stage, "CUDA work device-byte budget exceeded");
-        return YVEX_ERR_NOMEM;
-    }
-    next = work->current_bytes + (unsigned long long)bytes;
-    acquired = work->raw_only ? YVEX_BACKEND_RESIDENT_MISS
-                              : yvex_backend_workspace_acquire(
-                                    work->backend, bytes, 256ull, &address);
-    if (acquired == YVEX_BACKEND_RESIDENT_HIT) {
-        *out = (CUdeviceptr)address;
-        work->workspace_owned[work->count] = 1u;
-    } else if (!work->raw_only && work->backend->workspace_device_tensor) {
-        if (failure)
-            *failure = YVEX_CUDA_WORK_FAILURE_BUDGET;
-        yvex_error_setf(
-            err, acquired == YVEX_BACKEND_RESIDENT_INVALID
-                     ? YVEX_ERR_BOUNDS : YVEX_ERR_NOMEM,
-            stage,
-            "CUDA reusable workspace needs %zu bytes at cursor %llu of %llu",
-            bytes, work->backend->workspace_cursor,
-            work->backend->workspace_bytes);
-        return acquired == YVEX_BACKEND_RESIDENT_INVALID ? YVEX_ERR_BOUNDS
-                                                         : YVEX_ERR_NOMEM;
-    } else {
-        rc = yvex_backend_memory_can_add(work->backend, bytes, "CUDA", stage, err);
-        if (rc != YVEX_OK) {
-            if (failure)
-                *failure = YVEX_CUDA_WORK_FAILURE_BUDGET;
-            return rc;
-        }
-        rc = yvex_cuda_status(&work->state->driver,
-                              work->state->driver.cuMemAlloc_v2(out, bytes), stage, err);
-        if (rc != YVEX_OK) {
-            if (failure)
-                *failure = YVEX_CUDA_WORK_FAILURE_ALLOCATION;
-            return rc;
-        }
-        backend_memory_acquire(work->backend, bytes);
-    }
-    work->pointers[work->count] = *out;
-    work->sizes[work->count++] = bytes;
-    work->current_bytes = next;
-    if (next > work->peak_bytes)
-        work->peak_bytes = next;
-    rc = cuda_work_initialize(work, *out, bytes, source, zero, stage, err);
-    if (rc != YVEX_OK && failure)
-        *failure = YVEX_CUDA_WORK_FAILURE_COPY;
-    return rc;
-}
-/*
- * Release every owned CUDA work range in reverse acquisition order.
- *
- * Frees only non-workspace ranges and clears exact ownership/accounting.
- */
-int yvex_cuda_work_cleanup(yvex_cuda_work *work, yvex_error *err)
-{
-    yvex_error cleanup;
-    int result = YVEX_OK;
-    if (!work) {
-        yvex_error_clear(err);
-        return YVEX_OK;
-    }
-    while (work->count) {
-        unsigned int index = work->count - 1u;
-        int rc = work->workspace_owned[index]
-                     ? YVEX_OK
-                     : yvex_cuda_temporary_free(work->backend, work->variant,
-                                                &work->pointers[index],
-                                                work->sizes[index], 1,
-                                                "cuda.work.cleanup", &cleanup);
-        if (!work->workspace_owned[index] && work->pointers[index] != 0u) {
-            if (result == YVEX_OK) {
-                result = rc;
-                if (err)
-                    *err = cleanup;
-            }
-            break;
-        }
-        work->current_bytes = work->current_bytes >= work->sizes[index]
-                                  ? work->current_bytes - work->sizes[index] : 0ull;
-        work->pointers[index] = 0u;
-        work->workspace_owned[index] = 0u;
-        work->sizes[index] = 0ull;
-        work->count = index;
-        if (rc != YVEX_OK && result == YVEX_OK) {
-            result = rc;
-            if (err)
-                *err = cleanup;
-        }
-    }
-    if (result == YVEX_OK)
-        yvex_error_clear(err);
-    return result;
-}
 static int cuda_work_launch(yvex_cuda_work *work,
                             CUfunction function,
                             unsigned int grid,
@@ -231,7 +55,7 @@ static int attention_fail(yvex_backend_attention_failure *failure,
         failure->expected = expected;
         failure->actual = actual;
     }
-    yvex_error_set(err, status, stage, message);
+    if (!yvex_error_is_set(err)) yvex_error_set(err, status, stage, message);
     return status;
 }
 static int attention_account_transfer(
@@ -322,7 +146,7 @@ static int attention_initialize(yvex_cuda_work *work, CUdeviceptr target,
         return attention_fail(
             failure, YVEX_BACKEND_ATTENTION_FAILURE_COPY, stage, bytes, 0ull,
             err, YVEX_ERR_BACKEND, "injected CUDA attention input copy failure");
-    rc = cuda_work_initialize(work, target, bytes, source, zero, stage, err);
+    rc = yvex_cuda_work_initialize(work, target, bytes, source, zero, stage, err);
     return rc == YVEX_OK ? YVEX_OK : attention_fail(
         failure, YVEX_BACKEND_ATTENTION_FAILURE_COPY, stage, bytes, 0ull, err,
         (yvex_status)rc, "CUDA attention range initialization failed");
@@ -438,19 +262,22 @@ static int attention_matvec(yvex_cuda_work *work,
                                yvex_error *err)
 {
     CUdeviceptr additive = 0ull;
-    int q8_path, q8_input = 0;
-    unsigned long long output_rows;
+    int block_row = 0, q8_path, q8_input = 0;
+    unsigned int matvec_grid, matvec_block;
+    q8_path = weight && !work->forensic_numeric &&
+              weight->row_width % 256ull == 0ull &&
+              yvex_cuda_q8_activation_eligible(weight->qtype);
     if (!weight || !weight->present || !device_weight || !vector || !out ||
         !rows || !input_rows || start_row > weight->row_count ||
         rows > weight->row_count - start_row ||
-        !yvex_core_u64_mul(rows, input_rows, &output_rows) ||
-        output_rows > UINT_MAX * (unsigned long long)CUDA_QTYPE_MATVEC_ROWS)
+        !yvex_cuda_qtype_matvec_geometry(
+            rows, weight ? weight->row_width : 0ull, input_rows,
+            weight ? weight->qtype : 0u, 1, &matvec_grid, &matvec_block,
+            &block_row))
         return attention_fail(
             failure, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT, stage,
             weight ? weight->row_count : 0ull, start_row + rows, err,
             YVEX_ERR_BOUNDS, "CUDA attention matvec geometry is invalid");
-    q8_path = !work->forensic_numeric && weight->row_width % 256ull == 0ull &&
-              yvex_cuda_q8_activation_eligible(weight->qtype);
     if (q8_path) {
         unsigned long long blocks = weight->row_width / 256ull;
         unsigned long long quantize_tasks, quantized_bytes;
@@ -483,13 +310,11 @@ static int attention_matvec(yvex_cuda_work *work,
             void *params[] = {&device_weight, (void *)&weight->row_bytes,
                 (void *)&weight->row_width, &start_row, &rows,
                 &input_rows, (void *)&weight->qtype, &quantized, &q8_input,
-                &work->forensic_numeric, &additive, &out,
+                &block_row, &work->forensic_numeric, &additive, &out,
                 &output_bf16, &status
             };
-            unsigned int grid = (unsigned int)((output_rows + CUDA_QTYPE_MATVEC_ROWS - 1ull) /
-                                               CUDA_QTYPE_MATVEC_ROWS);
             rc = attention_launch(work, work->state->qtype_matvec_function,
-                                  grid, CUDA_ATTENTION_BLOCK, 0u, params, stage,
+                                  matvec_grid, matvec_block, 0u, params, stage,
                                   failure, err);
         }
         return rc;
@@ -498,13 +323,12 @@ static int attention_matvec(yvex_cuda_work *work,
         void *params[] = {&device_weight, (void *)&weight->row_bytes,
             (void *)&weight->row_width, &start_row, &rows,
             &input_rows, (void *)&weight->qtype, &vector, &q8_input,
-            &work->forensic_numeric, &additive, &out, &output_bf16, &status
+            &block_row, &work->forensic_numeric, &additive, &out,
+            &output_bf16, &status
         };
-        unsigned int grid = (unsigned int)((output_rows + CUDA_QTYPE_MATVEC_ROWS - 1ull) /
-                                           CUDA_QTYPE_MATVEC_ROWS);
         return attention_launch(
             work, work->state->qtype_matvec_function,
-            grid, CUDA_ATTENTION_BLOCK, 0u, params, stage, failure, err);
+            matvec_grid, matvec_block, 0u, params, stage, failure, err);
     }
 }
 static int attention_decode(yvex_cuda_work *work,
@@ -559,7 +383,8 @@ static int attention_weighted_norm(
         };
         return attention_launch(
             work, work->state->deepseek_weighted_norm_function, (unsigned int)vectors,
-            1u, 0u, params, stage, failure, err);
+            CUDA_ATTENTION_BLOCK, CUDA_ATTENTION_BLOCK * sizeof(double),
+            params, stage, failure, err);
     }
 }
 static int attention_unit_norm(yvex_cuda_work *work,
@@ -648,7 +473,8 @@ static int attention_activation(
         };
         return attention_launch(
             work, work->state->deepseek_activation_function,
-            (unsigned int)vectors, 1u, 0u, params, stage, failure, err);
+            (unsigned int)vectors, CUDA_ATTENTION_BLOCK, 0u, params, stage,
+            failure, err);
     }
 }
 
@@ -1009,6 +835,174 @@ static int attention_stage_layout(
     *total = cursor;
     return 1;
 }
+
+typedef struct {
+    const void *host;
+    CUdeviceptr source, target;
+    unsigned long long count;
+    size_t width;
+} cuda_state_span;
+
+static int cuda_state_source_offset(CUdeviceptr base, unsigned long long count,
+                                    size_t width, CUdeviceptr *out)
+{
+    unsigned long long bytes;
+    if (!out || !yvex_core_u64_mul(count, (unsigned long long)width, &bytes) ||
+        base > ULLONG_MAX - bytes)
+        return 0;
+    *out = base + bytes;
+    return 1;
+}
+
+/* Publish complete non-prefix state into the already admitted candidate bank. */
+static int attention_state_stage(
+    yvex_backend *backend, const yvex_backend_attention_job *job,
+    const yvex_cuda_attention_state_sources *sources,
+    size_t *copied_bytes, int *staged, yvex_error *err)
+{
+    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    cuda_state_span spans[10];
+    CUstream stream;
+    unsigned long long total_local, local_count, local_offset;
+    unsigned long long compressed_count, indexer_count;
+    CUdeviceptr local, local_positions, main_kv, main_score, index_kv, index_score;
+    size_t bytes = 0u, index;
+    unsigned int hits = 0u, misses = 0u;
+    int rc;
+    if (copied_bytes) *copied_bytes = 0u;
+    if (staged) *staged = 0;
+    if (!backend || !job || !sources || !copied_bytes || !staged || !state) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "cuda.attention.state.stage",
+                       "CUDA attention state publication arguments are incomplete");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    if (!yvex_core_u64_add(sources->initial_local, job->token_count, &total_local) ||
+        !yvex_core_u64_add(sources->initial_compressed,
+                           sources->emitted_compressed, &compressed_count) ||
+        !yvex_core_u64_add(sources->initial_indexer,
+                           sources->emitted_indexer, &indexer_count) ||
+        job->local_stride > SIZE_MAX / sizeof(float) ||
+        job->compressed_stride > SIZE_MAX / sizeof(float) ||
+        job->indexer_stride > SIZE_MAX / sizeof(float)) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "cuda.attention.state.stage",
+                       "CUDA attention state publication extent overflowed");
+        return YVEX_ERR_BOUNDS;
+    }
+    local_count = total_local < sources->local_capacity
+                      ? total_local : sources->local_capacity;
+    local_offset = total_local - local_count;
+    if (!cuda_state_source_offset(
+            sources->local, local_offset,
+            sizeof(float) * (size_t)job->local_stride, &local) ||
+        !cuda_state_source_offset(
+            sources->local_positions, local_offset,
+            sizeof(unsigned long long), &local_positions) ||
+        !cuda_state_source_offset(
+            sources->main_kv, job->token_count,
+            sizeof(float) * (size_t)sources->main_extent, &main_kv) ||
+        !cuda_state_source_offset(
+            sources->main_score, job->token_count,
+            sizeof(float) * (size_t)sources->main_extent, &main_score) ||
+        !cuda_state_source_offset(
+            sources->index_kv, job->token_count,
+            sizeof(float) * (size_t)sources->index_extent, &index_kv) ||
+        !cuda_state_source_offset(
+            sources->index_score, job->token_count,
+            sizeof(float) * (size_t)sources->index_extent, &index_score)) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "cuda.attention.state.stage",
+                       "CUDA attention state publication extent overflowed");
+        return YVEX_ERR_BOUNDS;
+    }
+    spans[0] = (cuda_state_span){job->local_kv, local, 0ull, local_count,
+                                 sizeof(float) * (size_t)job->local_stride};
+    spans[1] = (cuda_state_span){job->local_positions, local_positions, 0ull,
+                                 local_count, sizeof(unsigned long long)};
+    spans[2] = (cuda_state_span){job->compressed_kv, sources->compressed, 0ull,
+                                 compressed_count,
+                                 sizeof(float) * (size_t)job->compressed_stride};
+    spans[3] = (cuda_state_span){job->compressed_positions,
+                                 sources->compressed_positions, 0ull,
+                                 compressed_count, sizeof(unsigned long long)};
+    spans[4] = (cuda_state_span){job->indexer_kv, sources->indexer, 0ull,
+                                 indexer_count,
+                                 sizeof(float) * (size_t)job->indexer_stride};
+    spans[5] = (cuda_state_span){job->indexer_positions, sources->indexer_positions, 0ull,
+                                 indexer_count, sizeof(unsigned long long)};
+    spans[6] = (cuda_state_span){job->main_rolling.kv_state, main_kv, 0ull,
+                                 job->main_rolling.kv_state_capacity, sizeof(float)};
+    spans[7] = (cuda_state_span){job->main_rolling.score_state, main_score, 0ull,
+                                 job->main_rolling.score_state_capacity, sizeof(float)};
+    spans[8] = (cuda_state_span){job->indexer_rolling.kv_state, index_kv, 0ull,
+                                 job->indexer_rolling.kv_state_capacity, sizeof(float)};
+    spans[9] = (cuda_state_span){job->indexer_rolling.score_state, index_score, 0ull,
+                                 job->indexer_rolling.score_state_capacity, sizeof(float)};
+    for (index = 0u; index < sizeof(spans) / sizeof(spans[0]); ++index) {
+        size_t span_bytes;
+        unsigned long long target = 0ull;
+        int resolved;
+        if (!spans[index].count) continue;
+        if (!spans[index].host || !spans[index].source ||
+            !yvex_cuda_work_checked_bytes(
+                spans[index].count, spans[index].width, &span_bytes)) {
+            yvex_error_set(err, YVEX_ERR_BOUNDS, "cuda.attention.state.stage",
+                           "CUDA attention state span is invalid");
+            return YVEX_ERR_BOUNDS;
+        }
+        resolved = yvex_backend_state_residency_resolve(
+            backend, spans[index].host, span_bytes, &target);
+        if (resolved == YVEX_BACKEND_RESIDENT_INVALID) {
+            yvex_error_set(err, YVEX_ERR_STATE, "cuda.attention.state.stage",
+                           "CUDA attention state residency is invalidated");
+            return YVEX_ERR_STATE;
+        }
+        if (resolved == YVEX_BACKEND_RESIDENT_HIT) ++hits;
+        else ++misses;
+        spans[index].target = (CUdeviceptr)target;
+        if (span_bytes > SIZE_MAX - bytes) {
+            yvex_error_set(err, YVEX_ERR_BOUNDS, "cuda.attention.state.stage",
+                           "CUDA attention state byte accounting overflowed");
+            return YVEX_ERR_BOUNDS;
+        }
+        bytes += span_bytes;
+    }
+    if (!hits) {
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    if (misses) {
+        yvex_error_set(err, YVEX_ERR_STATE, "cuda.attention.state.stage",
+                       "CUDA attention state residency resolved only a partial publication");
+        return YVEX_ERR_STATE;
+    }
+    rc = yvex_cuda_set_current(backend, "cuda.attention.state.stage", err);
+    if (rc != YVEX_OK) return rc;
+    stream = yvex_cuda_launch_stream(backend);
+    for (index = 0u; index < sizeof(spans) / sizeof(spans[0]); ++index) {
+        size_t span_bytes = 0u;
+        CUresult copied;
+        if (!spans[index].count) continue;
+        if (!yvex_cuda_work_checked_bytes(
+                spans[index].count, spans[index].width, &span_bytes)) {
+            yvex_error_set(err, YVEX_ERR_BOUNDS, "cuda.attention.state.stage",
+                           "CUDA attention state span drifted after admission");
+            return YVEX_ERR_BOUNDS;
+        }
+        copied = stream && state->driver.cuMemcpyDtoDAsync_v2
+                     ? state->driver.cuMemcpyDtoDAsync_v2(
+                           spans[index].target, spans[index].source,
+                           span_bytes, stream)
+                     : !stream ? state->driver.cuMemcpyDtoD_v2(
+                           spans[index].target, spans[index].source, span_bytes)
+                               : (CUresult)1;
+        rc = yvex_cuda_status(&state->driver, copied,
+                              "cuda.attention.state.stage", err);
+        if (rc != YVEX_OK) return rc;
+    }
+    *copied_bytes = bytes;
+    *staged = 1;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
 /*
  * Expose the single private encoded-attention operation boundary.
  *
@@ -1025,7 +1019,7 @@ const yvex_cuda_attention_operations *yvex_cuda_attention_operations_get(void)
         attention_allocate, attention_initialize, attention_download,
         attention_launch, attention_round_bf16, attention_matvec, attention_decode,
         attention_weighted_norm, attention_unit_norm, attention_rope,
-        attention_activation
+        attention_activation, attention_state_stage
     };
     return &operations;
 }

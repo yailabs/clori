@@ -33,6 +33,12 @@ change. Git history preserves implementation chronology.
 - A source-derived model-execution descriptor and identity-bound hardware,
   workload, per-state capacity, page-geometry and phase-roofline contracts for
   GB10 execution planning.
+- Stable virtual host-state spans whose physical pages are committed from the
+  admitted per-class capacity plan, with bounded candidate/committed preflight,
+  exact reset release, and refusal before an over-budget layer becomes visible.
+  CUDA Driver-VMM residency mirrors that envelope with stable device addresses,
+  on-demand physical granules, bounded visible-span transfers and exact reset
+  decommit. Full-model deep-context product qualification remains open.
 - An operator-reachable, identity-bound CUDA bandwidth fixture that records raw
   streaming, D2D and coherent-host samples instead of treating peak hardware
   bandwidth as measured evidence.
@@ -59,12 +65,55 @@ change. Git history preserves implementation chronology.
 - Production CUDA MoE now routes a complete compatible row batch, orders its
   row/expert pairs by expert, executes resident routed and shared packs through
   one width-N backend transaction, and derives workspace from admitted layer
-  qtypes and row capacity. Selected routes and weights remain device-local;
+  qtypes and row capacity. Expert scores are evaluated cooperatively, while
+  source tie-breaking and weight accumulation remain ordered. Expert-major
+  pair counts and stable pair emission are likewise parallel rather than owned
+  by one device lane. Selected routes and weights remain device-local;
   each layer enqueues only bounded status and unique-expert facts, and one
   transformer-stack completion validates them and reconstructs exact active
   bytes. A proved final-stage session-stream barrier avoids a redundant wait.
   Immediate and token-local CPU/CUDA execution remain the explicit portable
-  audit/reference oracles.
+  audit/reference oracles. Resident-weight oracle execution no longer reserves
+  an unused expert staging range, and full forensic evidence disables Q8
+  activation compression so live tests distinguish its tighter numerical
+  contract from the admitted production approximation.
+- CUDA mHC envelope gates, combination rows and Sinkhorn row/column passes now
+  execute across their independent stream lanes. Ordered reductions and FP64
+  source transforms remain intact, while BF16 residual-square accumulation no
+  longer consumes FP64 issue bandwidth; the full 43-layer CPU/CUDA oracle stays
+  bit-exact.
+- CUDA DeepSeek RMSNorm now reduces independent BF16 residual squares across
+  the block instead of serializing FP64 accumulation through one lane. The
+  inverse, encoded scale and BF16 publication contracts remain unchanged, and
+  the full attention oracle remains bit-exact.
+- CUDA DeepSeek attention now uses one stable online-softmax sweep over visible
+  local and compressed history. Each source-ordered dot product is consumed
+  once, with prior value lanes renormalized when the running maximum changes;
+  the complete CPU/CUDA oracle remains inside its admitted numerical contract.
+- Normal production CUDA attention now stages completed non-prefix sequence
+  state directly into a session-owned candidate bank through ordered D2D
+  copies. Commit flips the committed bank, while abort and later reuse clone
+  the exact committed state. The retained host oracle no longer causes a
+  duplicate state upload; prefix-addressable speculation and audit/forensic
+  paths keep their explicit host materialization. Logical state identity is
+  token- and position-derived, independent of whether the same prefix arrived
+  through target-only execution, verification or accepted-prefix promotion.
+- Short CUDA qtype rows now form geometry-selected two-, four- or eight-lane
+  groups across Q8_0, Q2_K, IQ2_XXS and MXFP4 activation dots. Only integer
+  terms are redistributed; every encoded block is reconstructed before the
+  original floating-point reduction order, preserving exact output while
+  filling lanes that the row geometry would otherwise leave idle.
+- IQ2_XXS CUDA sign reconstruction now derives the encoded parity bit with the
+  hardware population-count primitive instead of a serial bit-shift loop,
+  preserving exact qtype, attention and grouped-MoE results.
+- Wide F32 projections with at most 32 output rows now assign one CUDA block to
+  each row/input pair instead of leaving a single warp to traverse 16K source
+  values. Encoded qtypes retain their warp-owned geometry, while the complete
+  DeepSeek attention oracle continues to admit the optimized reduction.
+- Multi-row CUDA qtype projections now group compatible input rows around the
+  same encoded matrix row and tile wider batches explicitly. Output-head and
+  verification launches therefore preserve row locality without changing the
+  existing warp arithmetic or padding logical work.
 - Target-only production stochastic sampling now filters and selects directly
   from resident CUDA logits. The host publishes the deterministic PCG advance
   only after cancellation-safe validation. Production stochastic DSpark keeps
@@ -114,6 +163,12 @@ change. Git history preserves implementation chronology.
 
 ### Changed
 
+- Generation plan ABI v5 now binds the compiled workload-profile identity, so
+  CUDA phase-roofline evidence validates against its actual workload instead
+  of being rejected against the distinct per-request profiling identity.
+- Production CUDA attention now keeps completed activation rows in the
+  caller-owned device output; only audit and forensic profiles materialize the
+  duplicate numerical host rows.
 - CUDA kernel admission now binds and atomically owns multiple independently
   compiled manifest-owned PTX/native modules under kernel-bundle identity v3;
   the routed/shared MoE kernel family no longer shares one monolithic CUDA

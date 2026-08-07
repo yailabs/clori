@@ -482,6 +482,27 @@ extern "C" __global__ void yvex_q8_quantize(
         *(short *)(block + 260u + thread * 2u) = (short)sum;
     }
 }
+static __device__ int qtype_matvec_pair(
+    unsigned long long rows, unsigned long long input_rows,
+    unsigned long long *row, unsigned long long *input_row)
+{
+    unsigned int warp = threadIdx.x >> 5u;
+    unsigned int warps = blockDim.x >> 5u;
+    if (!rows || !input_rows || !warps ||
+        (input_rows <= 8ull && warps < input_rows)) return 0;
+    if (input_rows <= 8ull) {
+        unsigned int groups = warps / (unsigned int)input_rows;
+        *row = (unsigned long long)blockIdx.x * groups +
+               warp / (unsigned int)input_rows;
+        *input_row = warp % (unsigned int)input_rows;
+    } else {
+        unsigned long long tiles = (input_rows + 7ull) / 8ull;
+        *row = (unsigned long long)blockIdx.x / tiles;
+        *input_row = ((unsigned long long)blockIdx.x % tiles) * warps + warp;
+    }
+    return *row < rows && *input_row < input_rows;
+}
+
 extern "C" __global__ void yvex_qtype_matvec(
     const unsigned char *encoded,
     unsigned long long row_bytes,
@@ -492,33 +513,43 @@ extern "C" __global__ void yvex_qtype_matvec(
     unsigned int qtype,
     const void *vector,
     int q8_input,
+    int block_row,
     int forensic_numeric,
     const float *additive,
     float *out,
     int output_bf16,
     int *status)
 {
+    __shared__ float warp_sums[8];
     unsigned int lane = threadIdx.x & 31u;
     unsigned int warp = threadIdx.x >> 5u;
-    unsigned long long pair = (unsigned long long)blockIdx.x * 8ull + warp;
-    unsigned long long input_row = row_count ? pair / row_count : input_rows;
-    unsigned long long row = row_count ? pair % row_count : row_count;
+    unsigned long long input_row = input_rows, row = row_count;
     const unsigned char *row_data;
     const void *input;
     float sum;
-    if (!status) return;
-    if (*status != 0 || input_row >= input_rows) return;
-    if (!encoded || !vector || !out || !row_bytes || !row_width || !row_count) {
-        atomicCAS(status, 0, 2);
+    if (!status || *status != 0) return;
+    if (!encoded || !vector || !out || !row_bytes || !row_width ||
+        !row_count || !input_rows || (block_row != 0 && block_row != 1) ||
+        (block_row && (qtype != YVEX_GGUF_QTYPE_F32 || q8_input ||
+                       blockDim.x != 256u))) {
+        if (!lane) atomicCAS(status, 0, 2);
         return;
     }
+    if (block_row) {
+        unsigned long long task = blockIdx.x;
+        if (row_count > ~0ull / input_rows ||
+            task >= row_count * input_rows) return;
+        row = task / input_rows;
+        input_row = task % input_rows;
+    } else if (!qtype_matvec_pair(row_count, input_rows, &row, &input_row))
+        return;
     row_data = encoded + (start_row + row) * row_bytes;
     input = q8_input
         ? (const void *)((const unsigned char *)vector +
                          input_row * (row_width / YVEX_CUDA_Q8_K_BLOCK) * YVEX_CUDA_Q8_K_BYTES)
         : (const void *)((const float *)vector + input_row * row_width);
     if (forensic_numeric) {
-        if (lane == 0u) {
+        if ((block_row ? threadIdx.x : lane) == 0u) {
             double reference = 0.0;
             const float *reference_input = (const float *)input;
             for (unsigned long long i = 0ull; i < row_width; ++i) {
@@ -532,6 +563,33 @@ extern "C" __global__ void yvex_qtype_matvec(
             if (!isfinite(value)) atomicCAS(status, 0, 1);
             else out[input_row * row_count + row] =
                 output_bf16 ? float_to_bf16_rne(value) : value;
+        }
+        return;
+    }
+    if (block_row) {
+        const float *weight = (const float *)row_data;
+        const float *values = (const float *)input;
+        sum = 0.0f;
+        for (unsigned long long i = threadIdx.x; i < row_width; i += blockDim.x) {
+            float value = float_to_bf16_rne(values[i]);
+            if (!isfinite(weight[i]) || !isfinite(value)) atomicCAS(status, 0, 1);
+            else sum = fmaf(weight[i], value, sum);
+        }
+        for (unsigned int offset = 16u; offset; offset >>= 1u)
+            sum += __shfl_down_sync(0xffffffffu, sum, offset);
+        if (!lane) warp_sums[warp] = sum;
+        __syncthreads();
+        if (!warp) {
+            sum = lane < 8u ? warp_sums[lane] : 0.0f;
+            for (unsigned int offset = 16u; offset; offset >>= 1u)
+                sum += __shfl_down_sync(0xffffffffu, sum, offset);
+            if (!lane) {
+                float value = additive
+                    ? __fadd_rn(sum, additive[input_row * row_count + row]) : sum;
+                if (!isfinite(value)) atomicCAS(status, 0, 1);
+                else out[input_row * row_count + row] =
+                    output_bf16 ? float_to_bf16_rne(value) : value;
+            }
         }
         return;
     }
@@ -574,17 +632,15 @@ extern "C" __global__ void yvex_qtype_split_matvec(
     int *status)
 {
     unsigned int lane = threadIdx.x & 31u;
-    unsigned int warp = threadIdx.x >> 5u;
-    unsigned long long pair = (unsigned long long)blockIdx.x * 8ull + warp;
-    unsigned long long input_row = row_count ? pair / row_count : input_rows;
-    unsigned long long row = row_count ? pair % row_count : row_count;
+    unsigned long long input_row = input_rows, row = row_count;
     float sum = 0.0f;
-    if (!status || *status != 0 || input_row >= input_rows) return;
+    if (!status || *status != 0) return;
     if (!encoded || !head || !tail || !out || !row_bytes || !row_width ||
-        !row_count || !head_width || head_width >= row_width) {
-        atomicCAS(status, 0, 2);
+        !row_count || !input_rows || !head_width || head_width >= row_width) {
+        if (!lane) atomicCAS(status, 0, 2);
         return;
     }
+    if (!qtype_matvec_pair(row_count, input_rows, &row, &input_row)) return;
     const unsigned char *row_data = encoded + (start_row + row) * row_bytes;
     unsigned long long tail_width = row_width - head_width;
     const float *head_row = head + input_row * head_width;
@@ -660,31 +716,54 @@ extern "C" __global__ void yvex_deepseek_weighted_norm(
     unsigned int weight_qtype, double epsilon, unsigned long long vectors,
     int *status)
 {
+    extern __shared__ float square_terms[];
+    __shared__ double inverse;
+    __shared__ int active;
     unsigned int lane = threadIdx.x;
-    double mean = 0.0;
+    float square_sum = 0.0f;
     if (!status) return;
-    if (*status != 0 || (unsigned long long)blockIdx.x >= vectors) return;
+    if ((unsigned long long)blockIdx.x >= vectors) return;
     if (!values || !weight || !count || !vectors || epsilon <= 0.0) {
         if (lane == 0u) atomicCAS(status, 0, 2);
         return;
     }
-    if (lane != 0u) return;
+    if (lane == 0u) active = *status == 0;
+    __syncthreads();
+    if (!active) return;
     values += (unsigned long long)blockIdx.x * count;
-    for (unsigned long long i = 0ull; i < count; ++i) {
-        double value = (double)values[i];
+    /* Values entering RMSNorm have already crossed the BF16 execution
+       boundary. Accumulating independent squares per lane avoids serial FP64
+       issue while the inverse and weighted publication retain their double
+       contract. */
+    for (unsigned long long i = (unsigned long long)lane; i < count;
+         i += (unsigned long long)blockDim.x) {
+        float value = values[i];
         if (!isfinite(value)) {
             atomicCAS(status, 0, 1);
-            return;
+            atomicExch(&active, 0);
         }
-        mean = __dadd_rn(mean, __dmul_rn(value, value));
+        square_sum = fmaf(value, value, square_sum);
     }
-    mean = __ddiv_rn(mean, (double)count);
-    double inverse = __ddiv_rn(1.0, sqrt(__dadd_rn(mean, epsilon)));
-    if (!isfinite(inverse)) {
-        atomicCAS(status, 0, 1);
-        return;
+    square_terms[lane] = square_sum;
+    __syncthreads();
+    for (unsigned int offset = blockDim.x >> 1u; offset; offset >>= 1u) {
+        if (lane < offset)
+            square_terms[lane] += square_terms[lane + offset];
+        __syncthreads();
     }
-    for (unsigned long long i = 0ull; i < count; ++i) {
+    if (lane == 0u) {
+        double mean = (double)square_terms[0];
+        mean = __ddiv_rn(mean, (double)count);
+        inverse = __ddiv_rn(1.0, sqrt(__dadd_rn(mean, epsilon)));
+        if (!isfinite(inverse)) {
+            atomicCAS(status, 0, 1);
+            active = 0;
+        }
+    }
+    __syncthreads();
+    if (!active) return;
+    for (unsigned long long i = (unsigned long long)lane; i < count;
+         i += (unsigned long long)blockDim.x) {
         double scale = (double)qtype_value(weight, i, weight_qtype);
         double result = __dmul_rn(
             __dmul_rn((double)values[i], inverse), scale);
@@ -921,74 +1000,102 @@ extern "C" __global__ void yvex_deepseek_activation(
     unsigned long long vector_width, unsigned long long block_width,
     unsigned int quantization, int hadamard, int *status)
 {
+    __shared__ unsigned int maximum_bits;
+    __shared__ float quantization_scale;
+    __shared__ int active;
     unsigned long long vector_index = (unsigned long long)blockIdx.x;
+    unsigned int thread = threadIdx.x;
     if (!status) return;
-    if (*status != 0 || threadIdx.x != 0u || vector_index >= vector_count)
-        return;
+    if (vector_index >= vector_count) return;
     if (!values || !vector_count || !vector_width || !block_width ||
         vector_width % block_width || (quantization != 1u && quantization != 2u)) {
-        atomicCAS(status, 0, 2);
+        if (thread == 0u) atomicCAS(status, 0, 2);
         return;
     }
+    if (thread == 0u) active = *status == 0;
+    __syncthreads();
+    if (!active) return;
     float *vector = values + vector_index * vector_width;
     if (hadamard) {
         if ((vector_width & (vector_width - 1ull)) != 0ull ||
             vector_width > 1024ull) {
-            atomicCAS(status, 0, 2);
+            if (thread == 0u) atomicCAS(status, 0, 2);
             return;
         }
-        for (unsigned long long step = 1ull; step < vector_width; step *= 2ull)
-            for (unsigned long long block = 0ull; block < vector_width;
-                 block += step * 2ull)
-                for (unsigned long long lane = 0ull; lane < step; ++lane) {
-                    float left = vector[block + lane];
-                    float right = vector[block + lane + step];
-                    vector[block + lane] = left + right;
-                    vector[block + lane + step] = left - right;
-                }
+        /* Each butterfly pair is independent within a stage. The stage
+           barrier preserves the source-authored Hadamard operation order. */
+        for (unsigned long long step = 1ull; step < vector_width; step *= 2ull) {
+            for (unsigned long long pair = (unsigned long long)thread;
+                 pair < vector_width / 2ull;
+                 pair += (unsigned long long)blockDim.x) {
+                unsigned long long block = (pair / step) * step * 2ull;
+                unsigned long long lane = pair % step;
+                float left = vector[block + lane];
+                float right = vector[block + lane + step];
+                vector[block + lane] = left + right;
+                vector[block + lane + step] = left - right;
+            }
+            __syncthreads();
+        }
         float scale = rsqrtf((float)vector_width);
-        for (unsigned long long i = 0ull; i < vector_width; ++i)
+        for (unsigned long long i = (unsigned long long)thread; i < vector_width;
+             i += (unsigned long long)blockDim.x)
             vector[i] *= scale;
+        __syncthreads();
     }
     for (unsigned long long offset = 0ull; offset < vector_width;
          offset += block_width) {
-        float amax = quantization == 1u ? 1.0e-4f : 0.0f;
-        for (unsigned long long i = 0ull; i < block_width; ++i) {
+        if (thread == 0u)
+            maximum_bits = __float_as_uint(quantization == 1u ? 1.0e-4f : 0.0f);
+        __syncthreads();
+        for (unsigned long long i = (unsigned long long)thread; i < block_width;
+             i += (unsigned long long)blockDim.x) {
             float value = vector[offset + i];
             if (!isfinite(value)) {
                 atomicCAS(status, 0, 1);
-                return;
+                atomicExch(&active, 0);
+                continue;
             }
             float magnitude = fabsf(value);
-            if (magnitude > amax) amax = magnitude;
+            atomicMax(&maximum_bits, __float_as_uint(magnitude));
         }
-        float minimum = 6.0f * ldexpf(1.0f, -126);
-        if (quantization == 2u && amax < minimum) amax = minimum;
-        float scale = deepseek_power_two_ceil(
-            amax / (quantization == 1u ? 448.0f : 6.0f));
-        unsigned int scale_code = deepseek_e8m0_encode(scale);
-        scale = e8m0_bits_to_float(scale_code);
-        if (!isfinite(scale) || scale <= 0.0f) {
-            atomicCAS(status, 0, 1);
-            return;
+        __syncthreads();
+        if (!active) return;
+        if (thread == 0u) {
+            float amax = __uint_as_float(maximum_bits);
+            float minimum = 6.0f * ldexpf(1.0f, -126);
+            if (quantization == 2u && amax < minimum) amax = minimum;
+            float scale = deepseek_power_two_ceil(
+                amax / (quantization == 1u ? 448.0f : 6.0f));
+            unsigned int scale_code = deepseek_e8m0_encode(scale);
+            quantization_scale = e8m0_bits_to_float(scale_code);
+            if (!isfinite(quantization_scale) || quantization_scale <= 0.0f) {
+                atomicCAS(status, 0, 1);
+                active = 0;
+            }
         }
-        for (unsigned long long i = 0ull; i < block_width; ++i) {
-            float normalized = vector[offset + i] / scale;
+        __syncthreads();
+        if (!active) return;
+        for (unsigned long long i = (unsigned long long)thread; i < block_width;
+             i += (unsigned long long)blockDim.x) {
+            float normalized = vector[offset + i] / quantization_scale;
             if (quantization == 1u) {
                 if (normalized > 448.0f) normalized = 448.0f;
                 if (normalized < -448.0f) normalized = -448.0f;
                 vector[offset + i] = float_to_bf16_rne(
                     deepseek_fp8_decode(deepseek_fp8_encode(normalized)) *
-                    scale);
+                    quantization_scale);
             } else if (quantization == 2u) {
                 vector[offset + i] = float_to_bf16_rne(
                     deepseek_fp4_decode(deepseek_fp4_encode(normalized)) *
-                    scale);
+                    quantization_scale);
             } else {
                 atomicCAS(status, 0, 2);
-                return;
+                atomicExch(&active, 0);
             }
         }
+        __syncthreads();
+        if (!active) return;
     }
 }
 
@@ -1000,92 +1107,141 @@ extern "C" __global__ void yvex_deepseek_mhc_pre(
     double mhc_epsilon, double post_multiplier, float *collapsed,
     float *post, float *combination, unsigned long long row_count, int *status)
 {
+    extern __shared__ double shared[];
+    __shared__ int active;
     unsigned long long batch = (unsigned long long)blockIdx.x;
-    if (!status || batch >= row_count || threadIdx.x != 0u || *status != 0)
-        return;
+    unsigned int thread = threadIdx.x;
+    if (!status || batch >= row_count) return;
     if (!residual || !linear_mix || !scale || !base || !collapsed || !post ||
         !combination || !row_count || !streams || !stream_width || !sinkhorn_iterations ||
         mixing_rows != (streams + 2ull) * streams || rms_epsilon <= 0.0 ||
         mhc_epsilon <= 0.0 || post_multiplier <= 0.0) {
-        atomicCAS(status, 0, 2);
+        if (thread == 0u) atomicCAS(status, 0, 2);
         return;
     }
+    if (thread == 0u) active = *status == 0;
+    __syncthreads();
+    if (!active) return;
     unsigned long long expanded = streams * stream_width;
     residual += batch * expanded;
     linear_mix += batch * mixing_rows;
     collapsed += batch * stream_width;
     post += batch * streams;
     combination += batch * streams * streams;
-    double squares = 0.0;
-    for (unsigned long long lane = 0ull; lane < expanded; ++lane) {
+    double *pre_weights = shared;
+    double *inverse = shared + streams;
+    float *square_terms = (float *)(inverse + 1);
+    for (unsigned long long lane = (unsigned long long)thread; lane < expanded;
+         lane += (unsigned long long)blockDim.x) {
         float value = float_to_bf16_rne(residual[lane]);
         residual[lane] = value;
         if (!isfinite(value)) {
             atomicCAS(status, 0, 1);
-            return;
+            atomicExch(&active, 0);
         }
-        squares += (double)value * (double)value;
     }
-    double inverse = 1.0 / sqrt(squares / (double)expanded + rms_epsilon);
-    if (!isfinite(inverse)) {
-        atomicCAS(status, 0, 1);
-        return;
+    __syncthreads();
+    if (!active) return;
+    /* Residuals are already BF16 values. Accumulating their squares in F32
+       avoids making the envelope normalization depend on scarce FP64 issue
+       bandwidth; the final inverse and source-authored mHC transforms retain
+       their double contract before BF16 publication. */
+    {
+        float square_sum = 0.0f;
+        unsigned int offset;
+        for (unsigned long long lane = (unsigned long long)thread; lane < expanded;
+             lane += (unsigned long long)blockDim.x) {
+            float value = residual[lane];
+            square_sum = fmaf(value, value, square_sum);
+        }
+        square_terms[thread] = square_sum;
+        __syncthreads();
+        for (offset = blockDim.x >> 1u; offset; offset >>= 1u) {
+            if (thread < offset)
+                square_terms[thread] += square_terms[thread + offset];
+            __syncthreads();
+        }
+        if (thread == 0u) *inverse = (double)square_terms[0];
     }
-    for (unsigned long long lane = 0ull; lane < stream_width; ++lane)
-        collapsed[lane] = 0.0f;
-    for (unsigned long long stream = 0ull; stream < streams; ++stream) {
-        double pre_arg = (double)linear_mix[stream] * inverse * (double)scale[0] +
-                         (double)base[stream];
-        double pre = pre_arg >= 0.0 ? 1.0 / (1.0 + exp(-pre_arg))
-                                    : exp(pre_arg) / (1.0 + exp(pre_arg));
+    if (thread == 0u) {
+        *inverse = 1.0 / sqrt(*inverse / (double)expanded + rms_epsilon);
+        if (!isfinite(*inverse)) {
+            atomicCAS(status, 0, 1);
+            active = 0;
+        }
+    }
+    __syncthreads();
+    if (!active) return;
+    if ((unsigned long long)thread < streams) {
+        unsigned long long stream = (unsigned long long)thread;
+        double pre_arg = (double)linear_mix[stream] * *inverse *
+                         (double)scale[0] + (double)base[stream];
+        double pre_exp = exp(pre_arg >= 0.0 ? -pre_arg : pre_arg);
+        double pre = pre_arg >= 0.0 ? 1.0 / (1.0 + pre_exp)
+                                    : pre_exp / (1.0 + pre_exp);
         unsigned long long post_index = streams + stream;
-        double post_arg = (double)linear_mix[post_index] * inverse * (double)scale[1] +
-                          (double)base[post_index];
-        double post_sigmoid = post_arg >= 0.0 ? 1.0 / (1.0 + exp(-post_arg))
-                                              : exp(post_arg) / (1.0 + exp(post_arg));
+        double post_arg = (double)linear_mix[post_index] * *inverse *
+                          (double)scale[1] + (double)base[post_index];
+        double post_exp = exp(post_arg >= 0.0 ? -post_arg : post_arg);
+        double post_sigmoid = post_arg >= 0.0 ? 1.0 / (1.0 + post_exp)
+                                              : post_exp / (1.0 + post_exp);
+        pre_weights[stream] = pre + mhc_epsilon;
         post[stream] = (float)(post_multiplier * post_sigmoid);
         for (unsigned long long target = 0ull; target < streams; ++target) {
             unsigned long long index = 2ull * streams + stream * streams + target;
             combination[stream * streams + target] =
-                (float)((double)linear_mix[index] * inverse * (double)scale[2] +
-                        (double)base[index]);
+                (float)((double)linear_mix[index] * *inverse *
+                        (double)scale[2] + (double)base[index]);
         }
-        for (unsigned long long lane = 0ull; lane < stream_width; ++lane)
-            collapsed[lane] += (float)((pre + mhc_epsilon) *
-                (double)residual[stream * stream_width + lane]);
     }
-    for (unsigned long long row = 0ull; row < streams; ++row) {
+    __syncthreads();
+    for (unsigned long long lane = (unsigned long long)thread; lane < stream_width;
+         lane += (unsigned long long)blockDim.x) {
+        float total = 0.0f;
+        for (unsigned long long stream = 0ull; stream < streams; ++stream)
+            total += (float)(pre_weights[stream] *
+                (double)residual[stream * stream_width + lane]);
+        collapsed[lane] = total;
+    }
+    if ((unsigned long long)thread < streams) {
+        unsigned long long row = (unsigned long long)thread;
         double maximum = -INFINITY;
         double total = 0.0;
         for (unsigned long long column = 0ull; column < streams; ++column)
             maximum = maximum > (double)combination[row * streams + column]
                 ? maximum : (double)combination[row * streams + column];
         for (unsigned long long column = 0ull; column < streams; ++column) {
-            double value = exp((double)combination[row * streams + column] - maximum);
+            double value = exp(
+                (double)combination[row * streams + column] - maximum);
             combination[row * streams + column] = (float)value;
             total += value;
         }
         if (!isfinite(total) || total <= 0.0) {
             atomicCAS(status, 0, 1);
-            return;
+            atomicExch(&active, 0);
+        } else {
+            for (unsigned long long column = 0ull; column < streams; ++column)
+                combination[row * streams + column] = (float)(
+                    (double)combination[row * streams + column] / total + mhc_epsilon);
         }
-        for (unsigned long long column = 0ull; column < streams; ++column)
-            combination[row * streams + column] =
-                (float)((double)combination[row * streams + column] / total + mhc_epsilon);
     }
-    for (unsigned long long iteration = 0ull; iteration < sinkhorn_iterations; ++iteration) {
-        if (iteration != 0ull) {
-            for (unsigned long long row = 0ull; row < streams; ++row) {
-                double total = 0.0;
-                for (unsigned long long column = 0ull; column < streams; ++column)
-                    total += combination[row * streams + column];
-                for (unsigned long long column = 0ull; column < streams; ++column)
-                    combination[row * streams + column] =
-                        (float)((double)combination[row * streams + column] /
-                                (total + mhc_epsilon));
-            }
+    __syncthreads();
+    if (!active) return;
+    for (unsigned long long iteration = 0ull;
+         iteration < sinkhorn_iterations; ++iteration) {
+        if (iteration != 0ull && (unsigned long long)thread < streams) {
+            unsigned long long row = (unsigned long long)thread;
+            double total = 0.0;
+            for (unsigned long long column = 0ull; column < streams; ++column)
+                total += combination[row * streams + column];
+            for (unsigned long long column = 0ull; column < streams; ++column)
+                combination[row * streams + column] =
+                    (float)((double)combination[row * streams + column] /
+                            (total + mhc_epsilon));
         }
-        for (unsigned long long column = 0ull; column < streams; ++column) {
+        __syncthreads();
+        if ((unsigned long long)thread < streams) {
+            unsigned long long column = (unsigned long long)thread;
             double total = 0.0;
             for (unsigned long long row = 0ull; row < streams; ++row)
                 total += combination[row * streams + column];
@@ -1094,11 +1250,14 @@ extern "C" __global__ void yvex_deepseek_mhc_pre(
                     (float)((double)combination[row * streams + column] /
                             (total + mhc_epsilon));
         }
+        __syncthreads();
     }
-    for (unsigned long long lane = 0ull; lane < stream_width; ++lane) {
+    for (unsigned long long lane = (unsigned long long)thread; lane < stream_width;
+         lane += (unsigned long long)blockDim.x) {
         if (!isfinite(collapsed[lane]) || !isfinite(post[lane % streams])) {
             atomicCAS(status, 0, 1);
-            return;
+            atomicExch(&active, 0);
+            continue;
         }
         collapsed[lane] = float_to_bf16_rne(collapsed[lane]);
     }
@@ -1365,9 +1524,14 @@ extern "C" __global__ void yvex_deepseek_topk(
     unsigned long long *valid_count, float *scores,
     unsigned long long *valid_indexes, int *status)
 {
+    extern __shared__ double head_terms[];
+    __shared__ unsigned long long valid;
+    __shared__ int active;
+    __shared__ int candidate_valid;
     unsigned long long total;
+    unsigned int thread = threadIdx.x;
     if (!status) return;
-    if (*status != 0 || blockIdx.x != 0u || threadIdx.x != 0u) return;
+    if (blockIdx.x != 0u) return;
     if (!index_query || !index_weights || !selected || !selected_positions ||
         !selected_count || !valid_count || !scores || !valid_indexes || !heads ||
         !head_dim || !ratio || !k || history_count > ~0ull - current_count ||
@@ -1375,11 +1539,16 @@ extern "C" __global__ void yvex_deepseek_topk(
                            history_stride < head_dim)) ||
         (current_count && (!current_indexer || !current_positions ||
                            current_stride < head_dim))) {
-        atomicCAS(status, 0, 2);
+        if (thread == 0u) atomicCAS(status, 0, 2);
         return;
     }
+    if (thread == 0u) {
+        active = *status == 0;
+        valid = 0ull;
+    }
+    __syncthreads();
+    if (!active) return;
     total = history_count + current_count;
-    unsigned long long valid = 0ull;
     for (unsigned long long candidate = 0ull; candidate < total; ++candidate) {
         const float *row;
         unsigned long long position;
@@ -1391,69 +1560,157 @@ extern "C" __global__ void yvex_deepseek_topk(
             row = current_indexer + local * current_stride;
             position = current_positions[local];
         }
-        if (!row || position > query_position ||
-            position > ~0ull - ratio + 1ull ||
-            position + ratio - 1ull > query_position) continue;
-        for (unsigned long long prior = 0ull; prior < valid; ++prior) {
-            unsigned long long prior_candidate = valid_indexes[prior];
-            unsigned long long prior_position = prior_candidate < history_count
-                ? history_positions[prior_candidate]
-                : current_positions[prior_candidate - history_count];
-            if (prior_position == position) {
-                atomicCAS(status, 0, 1);
-                return;
+        if (thread == 0u) {
+            candidate_valid = row && position <= query_position &&
+                position <= ~0ull - ratio + 1ull &&
+                position + ratio - 1ull <= query_position;
+            for (unsigned long long prior = 0ull;
+                 candidate_valid && prior < valid; ++prior) {
+                unsigned long long prior_candidate = valid_indexes[prior];
+                unsigned long long prior_position = prior_candidate < history_count
+                    ? history_positions[prior_candidate]
+                    : current_positions[prior_candidate - history_count];
+                if (prior_position == position) {
+                    atomicCAS(status, 0, 1);
+                    active = 0;
+                }
             }
         }
+        __syncthreads();
+        if (!active) return;
+        if (!candidate_valid) continue;
+        /* Heads are independent; lane zero retains the source-order reduction
+           across each tile so ranking and tie behavior stay bit-identical. */
         double score = 0.0;
-        for (unsigned long long head = 0ull; head < heads; ++head) {
-            double dot = 0.0;
-            const float *query = index_query + head * head_dim;
-            for (unsigned long long lane = 0ull; lane < head_dim; ++lane) {
-                double term = __dmul_rn((double)query[lane], (double)row[lane]);
-                dot = __dadd_rn(dot, term);
+        for (unsigned long long base = 0ull; base < heads;
+             base += (unsigned long long)blockDim.x) {
+            unsigned long long head = base + (unsigned long long)thread;
+            double contribution = 0.0;
+            if (head < heads) {
+                double dot = 0.0;
+                const float *query = index_query + head * head_dim;
+                for (unsigned long long lane = 0ull; lane < head_dim; ++lane) {
+                    double term = __dmul_rn((double)query[lane], (double)row[lane]);
+                    dot = __dadd_rn(dot, term);
+                }
+                if (dot < 0.0) dot = 0.0;
+                contribution = __dmul_rn(dot, (double)index_weights[head]);
             }
-            if (dot < 0.0) dot = 0.0;
-            score = __dadd_rn(
-                score, __dmul_rn(dot, (double)index_weights[head]));
+            head_terms[thread] = contribution;
+            __syncthreads();
+            if (thread == 0u) {
+                unsigned long long tile = heads - base;
+                if (tile > (unsigned long long)blockDim.x) tile = blockDim.x;
+                for (unsigned long long i = 0ull; i < tile; ++i)
+                    score = __dadd_rn(score, head_terms[i]);
+            }
+            __syncthreads();
         }
-        score = __dmul_rn(score, 1.0 / sqrt((double)head_dim));
-        score = __dmul_rn(score, 1.0 / sqrt((double)heads));
-        if (!isfinite(score)) {
-            atomicCAS(status, 0, 1);
-            return;
+        if (thread == 0u) {
+            score = __dmul_rn(score, 1.0 / sqrt((double)head_dim));
+            score = __dmul_rn(score, 1.0 / sqrt((double)heads));
+            if (!isfinite(score)) {
+                atomicCAS(status, 0, 1);
+                active = 0;
+            } else {
+                scores[valid] = (float)score;
+                valid_indexes[valid] = candidate;
+                valid++;
+            }
         }
-        scores[valid] = (float)score;
-        valid_indexes[valid] = candidate;
-        valid++;
+        __syncthreads();
+        if (!active) return;
     }
-    unsigned long long chosen = valid < k ? valid : k;
-    for (unsigned long long rank = 0ull; rank < chosen; ++rank) {
-        unsigned long long best = ~0ull;
-        for (unsigned long long i = 0ull; i < valid; ++i) {
-            unsigned long long candidate = valid_indexes[i];
-            unsigned long long position = candidate < history_count
-                ? history_positions[candidate]
-                : current_positions[candidate - history_count];
-            int already = 0;
-            for (unsigned long long prior = 0ull; prior < rank; ++prior)
-                if (selected[prior] == candidate) already = 1;
-            if (already) continue;
-            if (best == ~0ull || scores[i] > scores[best] ||
-                (scores[i] == scores[best] && position <
-                    (valid_indexes[best] < history_count
-                        ? history_positions[valid_indexes[best]]
-                        : current_positions[valid_indexes[best] - history_count])))
-                best = i;
+    if (thread == 0u) {
+        unsigned long long chosen = valid < k ? valid : k;
+        for (unsigned long long rank = 0ull; rank < chosen; ++rank) {
+            unsigned long long best = ~0ull;
+            for (unsigned long long i = 0ull; i < valid; ++i) {
+                unsigned long long candidate = valid_indexes[i];
+                unsigned long long position = candidate < history_count
+                    ? history_positions[candidate]
+                    : current_positions[candidate - history_count];
+                int already = 0;
+                for (unsigned long long prior = 0ull; prior < rank; ++prior)
+                    if (selected[prior] == candidate) already = 1;
+                if (already) continue;
+                if (best == ~0ull || scores[i] > scores[best] ||
+                    (scores[i] == scores[best] && position <
+                        (valid_indexes[best] < history_count
+                            ? history_positions[valid_indexes[best]]
+                            : current_positions[valid_indexes[best] - history_count])))
+                    best = i;
+            }
+            selected[rank] = valid_indexes[best];
+            selected_positions[rank] = selected[rank] < history_count
+                ? history_positions[selected[rank]]
+                : current_positions[selected[rank] - history_count];
         }
-        selected[rank] = valid_indexes[best];
-        selected_positions[rank] = selected[rank] < history_count
-            ? history_positions[selected[rank]]
-            : current_positions[selected[rank] - history_count];
+        *selected_count = chosen;
+        *valid_count = valid;
     }
-    *selected_count = chosen;
-    *valid_count = valid;
 }
+typedef struct {
+    const float *history_local;
+    const unsigned long long *history_local_positions;
+    unsigned long long history_local_count;
+    unsigned long long history_local_stride;
+    const float *current_kv;
+    const float *history_compressed;
+    const unsigned long long *history_compressed_positions;
+    unsigned long long history_compressed_count;
+    unsigned long long history_compressed_stride;
+    const float *current_compressed;
+    const unsigned long long *current_compressed_positions;
+    unsigned long long current_compressed_count;
+    unsigned long long current_compressed_stride;
+    const unsigned long long *selected;
+    unsigned long long sliding_window;
+    unsigned long long ratio;
+    unsigned int attention_class;
+    unsigned long long token_position;
+    int candidate_block_visible;
+} deepseek_reduce_rows;
 
+static __device__ __forceinline__ const float *deepseek_reduce_row(
+    const deepseek_reduce_rows *rows, unsigned long long pass,
+    unsigned long long candidate, int *visible)
+{
+    const float *row = NULL;
+    unsigned long long position = ~0ull;
+    *visible = 0;
+    if (pass == 0ull) {
+        if (candidate < rows->history_local_count) {
+            row = rows->history_local + candidate * rows->history_local_stride;
+            position = rows->history_local_positions[candidate];
+        } else {
+            row = rows->current_kv;
+            position = rows->token_position;
+        }
+        if (!rows->candidate_block_visible) {
+            unsigned long long first = rows->token_position + 1ull > rows->sliding_window
+                ? rows->token_position + 1ull - rows->sliding_window : 0ull;
+            if (position < first || position > rows->token_position) return NULL;
+        }
+    } else {
+        unsigned long long index = rows->attention_class == 2u
+            ? candidate : rows->selected[candidate];
+        if (index < rows->history_compressed_count) {
+            row = rows->history_compressed + index * rows->history_compressed_stride;
+            position = rows->history_compressed_positions[index];
+        } else {
+            unsigned long long local = index - rows->history_compressed_count;
+            if (local >= rows->current_compressed_count) return NULL;
+            row = rows->current_compressed + local * rows->current_compressed_stride;
+            position = rows->current_compressed_positions[local];
+        }
+        if (!row || position > rows->token_position ||
+            position > ~0ull - rows->ratio + 1ull ||
+            position + rows->ratio - 1ull > rows->token_position) return NULL;
+    }
+    *visible = row != NULL;
+    return row;
+}
 
 extern "C" __global__ void yvex_deepseek_reduce(
     const float *query,
@@ -1484,11 +1741,17 @@ extern "C" __global__ void yvex_deepseek_reduce(
     float *out,
     int *status)
 {
+    extern __shared__ double dot_terms[];
+    __shared__ double maximum;
+    __shared__ double denominator;
+    __shared__ double probability;
+    __shared__ double renormalization;
+    __shared__ unsigned long long selected_count;
+    __shared__ int active;
     unsigned long long head = (unsigned long long)blockIdx.x;
     unsigned int thread = threadIdx.x;
     if (!status) return;
-    if (*status != 0 || head >= query_heads) return;
-    if (thread != 0u) return;
+    if (head >= query_heads) return;
     if (!query || !current_kv || !sinks || !out || !query_heads || !head_dim ||
         !sliding_window || token_position == ~0ull || attention_class > 2u ||
         (candidate_block_visible != 0 && candidate_block_visible != 1) ||
@@ -1507,116 +1770,95 @@ extern "C" __global__ void yvex_deepseek_reduce(
         (attention_class == 1u && ratio != 4ull) ||
         (attention_class == 2u && ratio != 128ull) ||
         (attention_class == 0u && ratio != 0ull)) {
-        atomicCAS(status, 0, 2);
+        if (thread == 0u) atomicCAS(status, 0, 2);
         return;
     }
     const float *q = query + head * head_dim;
-    double maximum = (double)sinks[head];
     double scale = 1.0 / sqrt((double)head_dim);
     unsigned long long local_total = history_local_count +
                                      (candidate_block_visible ? 0ull : 1ull);
-    unsigned long long selected_count = selected_count_ptr
-        ? *selected_count_ptr : 0ull;
+    if (thread == 0u) {
+        active = *status == 0;
+        maximum = (double)sinks[head];
+        denominator = 1.0;
+        selected_count = selected_count_ptr ? *selected_count_ptr : 0ull;
+    }
+    __syncthreads();
+    if (!active) return;
     unsigned long long compressed_total = attention_class == 2u
         ? history_compressed_count + current_compressed_count
         : selected_count;
-    for (unsigned long long pass = 0ull; pass < 2ull; ++pass) {
-        unsigned long long count = pass == 0ull ? local_total : compressed_total;
-        for (unsigned long long candidate = 0ull; candidate < count; ++candidate) {
-            const float *row = NULL;
-            unsigned long long position = ~0ull;
-            if (pass == 0ull) {
-                if (candidate < history_local_count) {
-                    row = history_local + candidate * history_local_stride;
-                    position = history_local_positions[candidate];
-                } else {
-                    row = current_kv;
-                    position = token_position;
-                }
-                if (!candidate_block_visible) {
-                    unsigned long long first = token_position + 1ull > sliding_window
-                        ? token_position + 1ull - sliding_window : 0ull;
-                    if (position < first || position > token_position) continue;
-                }
-            } else {
-                unsigned long long index = attention_class == 2u
-                    ? candidate : selected[candidate];
-                if (index < history_compressed_count) {
-                    row = history_compressed + index * history_compressed_stride;
-                    position = history_compressed_positions[index];
-                } else {
-                    unsigned long long local = index - history_compressed_count;
-                    row = current_compressed + local * current_compressed_stride;
-                    position = current_compressed_positions[local];
-                }
-                if (!row || position > token_position ||
-                    position > ~0ull - ratio + 1ull ||
-                    position + ratio - 1ull > token_position) continue;
-            }
-            double dot = 0.0;
-            for (unsigned long long lane = 0ull; lane < head_dim; ++lane) {
-                double term = __dmul_rn((double)q[lane], (double)row[lane]);
-                dot = __dadd_rn(dot, term);
-            }
-            double score = __dmul_rn(dot, scale);
-            if (score > maximum) maximum = score;
-        }
-    }
-    double denominator = exp(__dadd_rn((double)sinks[head], -maximum));
-    for (unsigned long long lane = 0ull; lane < head_dim; ++lane)
+    deepseek_reduce_rows rows = {
+        history_local, history_local_positions, history_local_count,
+        history_local_stride, current_kv, history_compressed,
+        history_compressed_positions, history_compressed_count,
+        history_compressed_stride, current_compressed,
+        current_compressed_positions, current_compressed_count,
+        current_compressed_stride, selected, sliding_window, ratio,
+        attention_class, token_position, candidate_block_visible
+    };
+    for (unsigned long long lane = (unsigned long long)thread; lane < head_dim;
+         lane += (unsigned long long)blockDim.x)
         out[head * head_dim + lane] = 0.0f;
+    __syncthreads();
+    /* Candidates retain source order, but a stable online softmax keeps each
+       dot product single-use. When a new maximum arrives, every output lane
+       and the accumulated denominator are renormalized before that candidate
+       is incorporated. */
     for (unsigned long long pass = 0ull; pass < 2ull; ++pass) {
         unsigned long long count = pass == 0ull ? local_total : compressed_total;
         for (unsigned long long candidate = 0ull; candidate < count; ++candidate) {
-            const float *row = NULL;
-            unsigned long long position = ~0ull;
-            if (pass == 0ull) {
-                if (candidate < history_local_count) {
-                    row = history_local + candidate * history_local_stride;
-                    position = history_local_positions[candidate];
-                } else {
-                    row = current_kv;
-                    position = token_position;
-                }
-                if (!candidate_block_visible) {
-                    unsigned long long first = token_position + 1ull > sliding_window
-                        ? token_position + 1ull - sliding_window : 0ull;
-                    if (position < first || position > token_position) continue;
-                }
-            } else {
-                unsigned long long index = attention_class == 2u
-                    ? candidate : selected[candidate];
-                if (index < history_compressed_count) {
-                    row = history_compressed + index * history_compressed_stride;
-                    position = history_compressed_positions[index];
-                } else {
-                    unsigned long long local = index - history_compressed_count;
-                    row = current_compressed + local * current_compressed_stride;
-                    position = current_compressed_positions[local];
-                }
-                if (!row || position > token_position ||
-                    position > ~0ull - ratio + 1ull ||
-                    position + ratio - 1ull > token_position) continue;
-            }
+            int visible;
+            const float *row = deepseek_reduce_row(&rows, pass, candidate, &visible);
+            if (!visible) continue;
             double dot = 0.0;
-            for (unsigned long long lane = 0ull; lane < head_dim; ++lane) {
-                double term = __dmul_rn((double)q[lane], (double)row[lane]);
-                dot = __dadd_rn(dot, term);
+            for (unsigned long long base = 0ull; base < head_dim;
+                 base += (unsigned long long)blockDim.x) {
+                unsigned long long lane = base + (unsigned long long)thread;
+                dot_terms[thread] = lane < head_dim
+                    ? __dmul_rn((double)q[lane], (double)row[lane]) : 0.0;
+                __syncthreads();
+                if (thread == 0u) {
+                    unsigned long long tile = head_dim - base;
+                    if (tile > (unsigned long long)blockDim.x) tile = blockDim.x;
+                    for (unsigned long long i = 0ull; i < tile; ++i)
+                        dot = __dadd_rn(dot, dot_terms[i]);
+                }
+                __syncthreads();
             }
-            double probability = exp(__dadd_rn(__dmul_rn(dot, scale), -maximum));
-            denominator = __dadd_rn(denominator, probability);
-            for (unsigned long long lane = 0ull; lane < head_dim; ++lane) {
-                float term = (float)__dmul_rn(probability, (double)row[lane]);
+            if (thread == 0u) {
+                double score = __dmul_rn(dot, scale);
+                if (score > maximum) {
+                    renormalization = exp(__dadd_rn(maximum, -score));
+                    maximum = score;
+                    probability = 1.0;
+                    denominator = __dadd_rn(
+                        __dmul_rn(denominator, renormalization), probability);
+                } else {
+                    renormalization = 1.0;
+                    probability = exp(__dadd_rn(score, -maximum));
+                    denominator = __dadd_rn(denominator, probability);
+                }
+            }
+            __syncthreads();
+            for (unsigned long long lane = (unsigned long long)thread; lane < head_dim;
+                 lane += (unsigned long long)blockDim.x) {
                 unsigned long long offset = head * head_dim + lane;
-                out[offset] = __fadd_rn(out[offset], term);
+                out[offset] = (float)__dadd_rn(
+                    __dmul_rn((double)out[offset], renormalization),
+                    __dmul_rn(probability, (double)row[lane]));
             }
+            __syncthreads();
         }
     }
-    if (!isfinite(denominator) || denominator <= 0.0) {
+    if (thread == 0u && (!isfinite(denominator) || denominator <= 0.0)) {
         atomicCAS(status, 0, 1);
-        return;
+        active = 0;
     }
-    for (unsigned long long lane = 0ull; lane < head_dim; ++lane) {
+    __syncthreads();
+    if (!active) return;
+    for (unsigned long long lane = (unsigned long long)thread; lane < head_dim;
+         lane += (unsigned long long)blockDim.x) {
         float published = (float)__ddiv_rn((double)out[head * head_dim + lane],
                                            denominator);
         if (!isfinite(published)) atomicCAS(status, 0, 1);
