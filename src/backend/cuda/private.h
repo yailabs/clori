@@ -169,7 +169,18 @@ typedef struct {
     CUresult (*cuGetErrorString)(CUresult error, const char **pStr);
 } yvex_cuda_driver;
 typedef struct {
+    void *library, *handle;
+    int (*create)(void **handle), (*destroy)(void *handle);
+    int (*set_stream)(void *handle, CUstream stream);
+    int (*gemm_ex)(void *handle, int transa, int transb, int m, int n, int k,
+                   const void *alpha, const void *a, int atype, int lda,
+                   const void *b, int btype, int ldb, const void *beta,
+                   void *c, int ctype, int ldc, int compute_type, int algorithm);
+    int ready;
+} yvex_cuda_blas;
+typedef struct {
     yvex_cuda_driver driver;
+    yvex_cuda_blas blas;
     CUcontext context;
     CUdevice device;
     int device_index;
@@ -184,6 +195,7 @@ typedef struct {
     CUfunction matmul_function;
     CUfunction qtype_row_dot_function;
     CUfunction attention_bf16_round_function;
+    CUfunction bf16_pack_function;
     CUfunction qtype_matvec_function;
     CUfunction qtype_split_matvec_function;
     CUfunction qtype_gather_function;

@@ -56,6 +56,23 @@ extern "C" __global__ void yvex_attention_bf16_round(
     }
     values[index] = float_to_bf16_rne(value);
 }
+extern "C" __global__ void yvex_f32_to_bf16(
+    const float *input, unsigned short *output, unsigned long long count, int *status)
+{
+    unsigned long long index =
+        (unsigned long long)blockIdx.x * (unsigned long long)blockDim.x +
+        (unsigned long long)threadIdx.x;
+    union { float value; unsigned int bits; } encoded;
+    unsigned int rounding;
+    if (!status || *status || index >= count) return;
+    if (!input || !output || !isfinite(input[index])) {
+        atomicCAS(status, 0, 1);
+        return;
+    }
+    encoded.value = input[index];
+    rounding = 0x7fffu + ((encoded.bits >> 16u) & 1u);
+    output[index] = (unsigned short)((encoded.bits + rounding) >> 16u);
+}
 extern "C" __global__ void yvex_argmax_f32(
     const float *values, unsigned long long row_count, unsigned long long row_width,
     unsigned int *selected_tokens, float *selected_values,

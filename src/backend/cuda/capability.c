@@ -42,6 +42,8 @@ static const cuda_kernel_binding cuda_kernel_bindings[] = {
      CUDA_HANDLE_OFFSET(qtype_row_dot_function)},
     {"yvex_attention_bf16_round", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(attention_bf16_round_function)},
+    {"yvex_f32_to_bf16", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(bf16_pack_function)},
     {"yvex_qtype_matvec", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(qtype_matvec_function)},
     {"yvex_qtype_split_matvec", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,

@@ -387,6 +387,107 @@ static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
     return 0;
 }
 
+static int quant_cuda_bf16_gemm(yvex_backend *backend)
+{
+    enum { ROWS = 5, INPUT_ROWS = 3, WIDTH = 64 };
+    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    yvex_backend_tensor_desc descriptor = {0};
+    yvex_device_tensor *resident = NULL, *input = NULL, *output = NULL;
+    unsigned char *mapped = NULL, *encoded_row = NULL;
+    float weights[ROWS * WIDTH], inputs[INPUT_ROWS * WIDTH];
+    float expected[INPUT_ROWS * ROWS], actual[INPUT_ROWS * ROWS];
+    yvex_backend_cuda_operation_facts facts;
+    yvex_error err;
+    size_t row_bytes = 0u;
+    unsigned long long row, input_row, column;
+    int rc;
+
+    YVEX_TEST_ASSERT(state && state->blas.ready,
+                     "cuBLAS mixed projection is admitted on the CUDA host");
+    for (column = 0ull; column < ROWS * WIDTH; ++column)
+        weights[column] = (float)((int)((column * 7ull + 3ull) % 29ull) - 14) /
+                          (float)(3ull + column % 7ull);
+    for (column = 0ull; column < INPUT_ROWS * WIDTH; ++column)
+        inputs[column] = (float)((int)((column * 5ull + 1ull) % 23ull) - 11) /
+                         (float)(5ull + column % 3ull);
+    for (row = 0ull; row < ROWS; ++row) {
+        size_t current_bytes = 0u;
+        YVEX_TEST_ASSERT(quant_cuda_encode_row(
+                             YVEX_GGUF_QTYPE_BF16, weights + row * WIDTH, WIDTH,
+                             &encoded_row, &current_bytes),
+                         "BF16 GEMM row encodes canonically");
+        if (!row) {
+            row_bytes = current_bytes;
+            descriptor.name = "bf16_gemm_resident";
+            descriptor.dtype = YVEX_DTYPE_I8;
+            descriptor.rank = 1u;
+            descriptor.dims[0] = descriptor.bytes = ROWS * row_bytes;
+            YVEX_TEST_ASSERT(backend->vtable->resident_alloc(
+                                 backend, &descriptor, &resident, &mapped, &err) == YVEX_OK,
+                             "BF16 GEMM resident matrix allocates");
+        }
+        YVEX_TEST_ASSERT(current_bytes == row_bytes,
+                         "BF16 GEMM rows share exact geometry");
+        memcpy(mapped + row * row_bytes, encoded_row, row_bytes);
+        free(encoded_row);
+        encoded_row = NULL;
+    }
+    for (input_row = 0ull; input_row < INPUT_ROWS; ++input_row)
+        for (row = 0ull; row < ROWS; ++row) {
+            double value = 0.0;
+            for (column = 0ull; column < WIDTH; ++column) {
+                unsigned short bits;
+                memcpy(&bits, mapped + row * row_bytes + column * sizeof(bits), sizeof(bits));
+                value += (double)yvex_quant_bf16_decode(bits) *
+                         (double)yvex_quant_bf16_decode(yvex_quant_bf16_encode(
+                             inputs[input_row * WIDTH + column]));
+            }
+            expected[input_row * ROWS + row] = (float)value;
+        }
+    YVEX_TEST_ASSERT(yvex_backend_resident_attach(
+                         backend, mapped, descriptor.bytes, resident, 17ull, &err) == YVEX_OK,
+                     "BF16 GEMM resident matrix attaches");
+    descriptor.name = "bf16_gemm_input";
+    descriptor.dtype = YVEX_DTYPE_F32;
+    descriptor.dims[0] = INPUT_ROWS * WIDTH;
+    descriptor.bytes = sizeof(inputs);
+    YVEX_TEST_ASSERT(yvex_backend_tensor_alloc(backend, &descriptor, &input, &err) == YVEX_OK &&
+                         yvex_backend_tensor_write(
+                             backend, input, inputs, sizeof(inputs), &err) == YVEX_OK,
+                     "BF16 GEMM input becomes device resident");
+    descriptor.name = "bf16_gemm_output";
+    descriptor.dims[0] = INPUT_ROWS * ROWS;
+    descriptor.bytes = sizeof(actual);
+    YVEX_TEST_ASSERT(yvex_backend_tensor_alloc(backend, &descriptor, &output, &err) == YVEX_OK,
+                     "BF16 GEMM output allocates");
+    rc = yvex_backend_cuda_encoded_matvec(
+        backend, mapped, ROWS * row_bytes, YVEX_GGUF_QTYPE_BF16,
+        ROWS, WIDTH, row_bytes, INPUT_ROWS, input, NULL, 0ull,
+        NULL, output, &facts, &err);
+    if (rc != YVEX_OK)
+        fprintf(stderr, "BF16 cuBLAS refusal: %s (%s)\n",
+                yvex_error_message(&err), yvex_error_where(&err));
+    YVEX_TEST_ASSERT(rc == YVEX_OK && facts.kernel_launches == 2ull &&
+                         facts.d2h_bytes == sizeof(int) &&
+                         facts.temporary_bytes ==
+                             INPUT_ROWS * WIDTH * sizeof(unsigned short) + sizeof(int) &&
+                         facts.device_synchronizations == 1ull,
+                     "BF16 row batch selects one pack plus mixed cuBLAS GEMM");
+    YVEX_TEST_ASSERT(yvex_backend_tensor_read(
+                         backend, output, actual, sizeof(actual), &err) == YVEX_OK,
+                     "BF16 GEMM result downloads");
+    for (column = 0ull; column < INPUT_ROWS * ROWS; ++column)
+        YVEX_TEST_ASSERT(fabs((double)actual[column] - expected[column]) <=
+                             2e-4 * (1.0 + fabs((double)expected[column])),
+                         "mixed cuBLAS GEMM matches the decoded BF16 reference");
+    YVEX_TEST_ASSERT(yvex_backend_resident_detach(backend, &err) == YVEX_OK &&
+                         yvex_backend_tensor_release(backend, &output, &err) == YVEX_OK &&
+                         yvex_backend_tensor_release(backend, &input, &err) == YVEX_OK &&
+                         yvex_backend_tensor_release(backend, &resident, &err) == YVEX_OK,
+                     "BF16 GEMM releases all CUDA ownership");
+    return 0;
+}
+
 static int quant_cuda_tensor(yvex_backend *backend, const char *name,
                              unsigned int dtype, const void *source,
                              unsigned long long bytes,
@@ -892,6 +993,8 @@ int yvex_cuda_test_quant_qtype(void)
                      "IQ2_XXS production Q8 activation matvec");
     YVEX_TEST_ASSERT(quant_cuda_q8_matvec(backend, YVEX_GGUF_QTYPE_MXFP4) == 0,
                      "MXFP4 production Q8 activation matvec");
+    YVEX_TEST_ASSERT(quant_cuda_bf16_gemm(backend) == 0,
+                     "BF16 production row batch GEMM");
     YVEX_TEST_ASSERT(quant_cuda_encoded_gather(backend) == 0,
                      "resident qtype row gather");
     YVEX_TEST_ASSERT(quant_cuda_transformer_facts(backend) == 0,
