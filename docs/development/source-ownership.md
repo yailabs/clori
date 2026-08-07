@@ -182,7 +182,8 @@ domain algorithms. No writer owns command output.
 | `src/runtime/descriptor.c` | runtime-descriptor ABI, deterministic import, validation, lookup, and typed result projection |
 | `src/runtime/core.c` | immutable runtime-model and mutable execution-session lifecycle |
 | `src/runtime/binding.c` | transactional, content-addressed runtime-binding serialization and admission |
-| `src/runtime/residency.c` | read-only resident attention-weight packs and generation-bound invalidation |
+| `src/runtime/residency.c` | immutable model/component weight residency and model-lifetime sharing |
+| `src/runtime/state_residency.c` | session persistent-state banks, CUDA paging, publication, rollback, reset and invalidation |
 | `src/runtime/graph.c` | execution descriptors, phase/mode dispatch, reusable workspace, and transactional publication |
 | `src/runtime/benchmark.c` | identity-bound runtime timing, baseline, CSV, and deterministic SVG serialization |
 | `src/graph/execution.c` | Physical Execution IR, compiled execution-profile identities, device-view admission, and execution-shape registry |

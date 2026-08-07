@@ -173,6 +173,7 @@ include/yvex/internal/transformer.h	graph	graph.transformer	generic	private	inte
 src/runtime/transformer.c	runtime	runtime.transformer	generic	private	transactional-execution	runtime,graph,cli,tests	implementation	none
 src/runtime/transformer_input.c	runtime	runtime.transformer_input	generic	private	file-serialization	runtime,cli,tests	implementation	none
 src/runtime/residency.c	runtime	runtime.residency	generic	private	resource-lifecycle	artifact,graph,runtime	implementation	none
+src/runtime/state_residency.c	runtime	runtime.state_residency	generic	private	resource-lifecycle	backend,graph,runtime,tests	implementation	none
 include/yvex/internal/graph_state.h	graph	graph.state	generic	private	resource-lifecycle	graph,runtime,tests	interface	none
 src/graph/state.c	graph	graph.state	generic	private	resource-lifecycle	graph,runtime,tests	implementation	none
 src/model/target/catalog.c	model.target	model.target.catalog	generic	private	reusable-algorithm	model,cli	implementation	none
