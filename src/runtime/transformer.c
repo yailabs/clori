@@ -631,7 +631,7 @@ static int transformer_feature_capture(transformer_chunk_context *chunk,
             chunk->token_count, plan->hidden_width, plan->residual_streams,
             &chunk->device_hidden, chunk->output->device_features,
             resident_row_offset, chunk->output->device_feature_row_stride,
-            feature_index * plan->hidden_width,
+            chunk->output->device_features ? feature_index * plan->hidden_width : 0ull,
             destination ? chunk->owner->candidate_hidden : NULL, &facts, err);
         if (rc != YVEX_OK) return rc;
         rc = yvex_runtime_transformer_cuda_facts_add(chunk->result, &facts, 0ull, 0ull, 0ull, err);
