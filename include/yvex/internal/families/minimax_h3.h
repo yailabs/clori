@@ -562,7 +562,7 @@ typedef struct {
     int (*scheduler_step)(float *output, const float *sample, const float *velocity,
                           unsigned long long values, float timestep, float sigma,
                           float sigma_next, yvex_error *err);
-    int (*audio_vae_admit)(
+    int (*component_admit)(const char *component,
         const yvex_artifact *artifact, const yvex_gguf *gguf,
         const yvex_tensor_table *tensors, yvex_complete_artifact_admission *out,
         yvex_artifact_admission_failure *failure, yvex_error *err);
@@ -577,10 +577,6 @@ typedef struct {
         const yvex_minimax_h3_audio_decode_options *options,
         yvex_minimax_h3_audio_decode_result *result,
         yvex_minimax_h3_component_execution_failure *failure, yvex_error *err);
-    int (*video_vae_admit)(
-        const yvex_artifact *artifact, const yvex_gguf *gguf,
-        const yvex_tensor_table *tensors, yvex_complete_artifact_admission *out,
-        yvex_artifact_admission_failure *failure, yvex_error *err);
     int (*video_vae_decode_cpu)(
         yvex_materialization_session *session,
         const yvex_minimax_h3_video_decode_options *options,

@@ -4,6 +4,7 @@
 #include <yvex/internal/families/minimax_h3.h>
 
 #include "src/graph/private.h"
+#include <yvex/internal/artifact.h>
 #include <yvex/internal/compilation.h>
 #include <yvex/internal/model_target.h>
 
@@ -618,6 +619,26 @@ static int test_t2va_plan(void)
     return 0;
 }
 
+static int test_component_admission_routing(void)
+{
+    yvex_complete_artifact_admission admission;
+    yvex_artifact_admission_failure failure;
+    yvex_error err;
+
+    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->component_admit(
+                         "unknown", NULL, NULL, NULL, &admission, &failure, &err) ==
+                         YVEX_ERR_INVALID_ARG &&
+                         failure.code == YVEX_ARTIFACT_ADMISSION_INVALID_ARGUMENT &&
+                         strcmp(failure.field, "component") == 0,
+                     "component admission refuses an unknown family-owned component");
+    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->component_admit(
+                         "audio_vae", NULL, NULL, NULL, &admission, &failure, &err) ==
+                         YVEX_ERR_INVALID_ARG &&
+                         failure.code == YVEX_ARTIFACT_ADMISSION_INVALID_ARGUMENT,
+                     "component admission refuses absent generic structural views");
+    return 0;
+}
+
 int yvex_test_minimax_h3(void)
 {
     if (test_components() != 0) return 1;
@@ -630,5 +651,6 @@ int yvex_test_minimax_h3(void)
     if (test_video_numeric_primitives() != 0) return 1;
     if (test_video_execution_refusals() != 0) return 1;
     if (test_t2va_plan() != 0) return 1;
+    if (test_component_admission_routing() != 0) return 1;
     return 0;
 }

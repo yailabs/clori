@@ -15,18 +15,15 @@
 #include <yvex/model.h>
 #include <yvex/qtype.h>
 #include <yvex/registry.h>
-
 #ifdef __cplusplus
 extern "C" {
 #endif
-
 int yvex_artifact_snapshot_equal(const yvex_artifact_snapshot *left,
                                  const yvex_artifact_snapshot *right);
 int yvex_artifact_cache_release(const yvex_artifact *artifact,
                                 unsigned long long offset,
                                 unsigned long long byte_count,
                                 yvex_error *err);
-
 /* Identity. */
 typedef struct {
     yvex_sha256 hash;
@@ -55,7 +52,6 @@ int yvex_artifact_payload_identity_compute(const yvex_artifact *artifact, const 
                                            size_t buffer_bytes,
                                            yvex_artifact_payload_identity *out,
                                            yvex_error *err);
-
 /* Roundtrip Gate. */
 #define YVEX_GGUF_OFFICIAL_READER_REVISION "af97976c7810cdabb1863172f31c432dab767de7"
 #define YVEX_SELECTED_DEEPSEEK_ARTIFACT_FILENAME                                           \
@@ -225,7 +221,6 @@ int yvex_artifact_physical_compatibility_validate(
     const yvex_gguf_writer_plan *writer_plan, const yvex_complete_artifact_admission *admission,
     const yvex_artifact *artifact, const yvex_gguf *gguf, yvex_artifact_physical_compatibility *out,
     yvex_artifact_compatibility_failure *failure, yvex_error *err);
-
 typedef enum {
     YVEX_ARTIFACT_DESCRIPTOR_REFUSED = 0,
     YVEX_ARTIFACT_DESCRIPTOR_REPORT_ONLY = 1,
@@ -244,11 +239,19 @@ typedef struct {
 int yvex_complete_artifact_admit(const yvex_artifact_admission_request *request,
                                  yvex_complete_artifact_admission *out,
                                  yvex_artifact_admission_failure *failure, yvex_error *err);
-/* Rebind one family-provided exact component catalog row to an unchanged opened artifact. */
+typedef struct { const char *key, *value; } yvex_artifact_component_metadata;
+typedef struct { unsigned int qtype; unsigned long long tensors; } yvex_artifact_component_storage;
+typedef struct {
+    const yvex_complete_artifact_admission *catalog;
+    const yvex_artifact_component_metadata *metadata;
+    const yvex_artifact_component_storage *storage;
+    unsigned long long metadata_count, storage_count, elements, alignment;
+} yvex_artifact_component_contract;
+/* Reconcile a family-provided exact component contract with one unchanged opened artifact. */
 int yvex_artifact_admit_component(
-    const yvex_artifact *artifact, const yvex_complete_artifact_admission *catalog,
-    yvex_complete_artifact_admission *out, yvex_artifact_admission_failure *failure,
-    yvex_error *err);
+    const yvex_artifact *artifact, const yvex_gguf *gguf, const yvex_tensor_table *tensors,
+    const yvex_artifact_component_contract *contract, yvex_complete_artifact_admission *out,
+    yvex_artifact_admission_failure *failure, yvex_error *err);
 int yvex_artifact_admission_identity_verify(
     const yvex_artifact *artifact, yvex_complete_artifact_admission *admission,
     int (*progress)(void *context, unsigned long long completed,
@@ -257,7 +260,6 @@ int yvex_artifact_admission_identity_verify(
 const char *yvex_artifact_admission_code_name(yvex_artifact_admission_code code);
 int yvex_artifact_descriptor_from_admission(const yvex_complete_artifact_admission *admission,
                                             yvex_artifact_descriptor_fact *fact);
-
 /* Materialize. */
 #define YVEX_MATERIALIZATION_IDENTITY_CAP 65u
 #define YVEX_MATERIALIZATION_NAME_CAP 192u

@@ -63,6 +63,7 @@ int main(int argc, char **argv)
     const char *latent_path = NULL;
     const char *output_path = NULL;
     const char *reference_path = NULL;
+    const char *component = "audio_vae";
     int rc;
 
     if ((argc == 5 || argc == 6) && strcmp(argv[1], "--decode") == 0) {
@@ -71,6 +72,9 @@ int main(int argc, char **argv)
         latent_path = argv[3];
         output_path = argv[4];
         if (argc == 6) reference_path = argv[5];
+    } else if (argc == 4 && strcmp(argv[1], "--admit-component") == 0) {
+        component = argv[2];
+        options.path = argv[3];
     } else if (argc == 3 && strcmp(argv[1], "--expect-refused") == 0) {
         expect_refused = 1;
         options.path = argv[2];
@@ -79,6 +83,7 @@ int main(int argc, char **argv)
     } else {
         fprintf(stderr,
                 "usage: minimax_h3_audio [--expect-refused] AUDIO_VAE_GGUF\n"
+                "       minimax_h3_audio --admit-component COMPONENT GGUF\n"
                 "       minimax_h3_audio --decode AUDIO_VAE_GGUF LATENT_F32 OUTPUT_F32 "
                 "[REFERENCE_F32]\n");
         return 2;
@@ -88,8 +93,8 @@ int main(int argc, char **argv)
     if (rc == YVEX_OK) rc = yvex_gguf_open(&gguf, artifact, &err);
     if (rc == YVEX_OK) rc = yvex_tensor_table_from_gguf(&tensors, gguf, &err);
     if (rc == YVEX_OK)
-        rc = yvex_graph_register_minimax_h3()->audio_vae_admit(
-            artifact, gguf, tensors, &admission, &failure, &err);
+        rc = yvex_graph_register_minimax_h3()->component_admit(
+            component, artifact, gguf, tensors, &admission, &failure, &err);
     if (expect_refused) {
         if (rc == YVEX_OK) {
             fprintf(stderr, "audio_vae_corruption=accepted\n");
@@ -99,7 +104,7 @@ int main(int argc, char **argv)
             rc = YVEX_OK;
         }
     } else if (rc != YVEX_OK) {
-        (void)fail("audio_vae_admission", &failure, &err);
+        (void)fail("component_admission", &failure, &err);
     } else if (decode) {
         yvex_minimax_h3_audio_decode_options decode_options;
         yvex_minimax_h3_audio_decode_result result;
@@ -173,7 +178,7 @@ int main(int argc, char **argv)
             }
         }
     } else {
-        printf("audio_vae_admission=accepted\n");
+        printf("component_admission=accepted component=%s\n", component);
         printf("artifact_identity=%s\n", admission.artifact_identity);
         printf("admission_identity=%s\n", admission.admission_identity);
         printf("payload_byte_identity=%s\n", admission.payload_byte_identity);

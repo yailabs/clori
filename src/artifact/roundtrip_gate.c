@@ -398,7 +398,7 @@ int yvex_artifact_admit_deepseek(const yvex_artifact *artifact,
     return YVEX_OK;
 }
 
-int yvex_artifact_admit_component(
+static int artifact_admit_component_catalog(
     const yvex_artifact *artifact, const yvex_complete_artifact_admission *catalog,
     yvex_complete_artifact_admission *out, yvex_artifact_admission_failure *failure,
     yvex_error *err)
@@ -440,6 +440,126 @@ int yvex_artifact_admit_component(
     if (failure) memset(failure, 0, sizeof(*failure));
     yvex_error_clear(err);
     return YVEX_OK;
+}
+
+/* Reconcile a family catalog with the complete structural and storage inventory before trust. */
+int yvex_artifact_admit_component(
+    const yvex_artifact *artifact, const yvex_gguf *gguf, const yvex_tensor_table *tensors,
+    const yvex_artifact_component_contract *contract, yvex_complete_artifact_admission *out,
+    yvex_artifact_admission_failure *failure, yvex_error *err)
+{
+    unsigned long long qtype_counts[YVEX_GGUF_QTYPE_ABI_UPSTREAM_MAX_ID + 1u] = {0};
+    unsigned long long elements = 0ull, payload = 0ull, index;
+    const yvex_complete_artifact_admission *catalog = contract ? contract->catalog : NULL;
+    int rc;
+
+    if (out) memset(out, 0, sizeof(*out));
+    if (!artifact || !gguf || !tensors || !contract || !catalog || !out ||
+        !contract->metadata || !contract->metadata_count || !contract->storage ||
+        !contract->storage_count || !contract->elements || !contract->alignment)
+        return admission_fail(
+            failure, YVEX_ARTIFACT_ADMISSION_INVALID_ARGUMENT, "component-contract", 1u,
+            0u, err, YVEX_ERR_INVALID_ARG,
+            "exact component contract and structural artifact views are required");
+    if (yvex_gguf_metadata_count(gguf) != catalog->metadata_count)
+        return admission_fail(
+            failure, YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH, "metadata-count",
+            catalog->metadata_count, yvex_gguf_metadata_count(gguf), err,
+            YVEX_ERR_FORMAT, "component metadata coverage differs from its catalog");
+    {
+        const yvex_gguf_value *value = yvex_gguf_metadata_find(gguf, "general.alignment");
+        unsigned long long alignment = 0ull;
+
+        if (!value || yvex_gguf_value_as_u64(value, &alignment) != YVEX_OK ||
+            alignment != contract->alignment)
+            return admission_fail(
+                failure, YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH, "general.alignment",
+                contract->alignment, alignment, err, YVEX_ERR_FORMAT,
+                "component alignment metadata differs from its catalog");
+    }
+    for (index = 0ull; index < contract->metadata_count; ++index) {
+        const yvex_artifact_component_metadata *fact = &contract->metadata[index];
+        const yvex_gguf_value *value = yvex_gguf_metadata_find(gguf, fact->key);
+        const char *text = NULL;
+        unsigned long long length = 0ull;
+        size_t expected = fact->value ? strlen(fact->value) : 0u;
+
+        if (!fact->key || !fact->value || !value ||
+            yvex_gguf_value_as_string(value, &text, &length) != YVEX_OK ||
+            length != expected || memcmp(text, fact->value, expected) != 0)
+            return admission_fail(
+                failure, YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH,
+                fact->key ? fact->key : "metadata", expected, length, err,
+                YVEX_ERR_FORMAT, "component string metadata differs from its catalog");
+    }
+    if (yvex_tensor_table_count(tensors) != catalog->tensor_count)
+        return admission_fail(
+            failure, YVEX_ARTIFACT_ADMISSION_TENSOR_COVERAGE, "tensor-count",
+            catalog->tensor_count, yvex_tensor_table_count(tensors), err,
+            YVEX_ERR_FORMAT, "component tensor coverage differs from its catalog");
+    for (index = 0ull; index < contract->storage_count; ++index) {
+        unsigned long long prior;
+
+        if (contract->storage[index].qtype > YVEX_GGUF_QTYPE_ABI_UPSTREAM_MAX_ID ||
+            !contract->storage[index].tensors)
+            return admission_fail(
+                failure, YVEX_ARTIFACT_ADMISSION_INVALID_ARGUMENT, "storage-contract",
+                1u, 0u, err, YVEX_ERR_INVALID_ARG,
+                "component storage contract contains an invalid population");
+        for (prior = 0ull; prior < index; ++prior)
+            if (contract->storage[prior].qtype == contract->storage[index].qtype)
+                return admission_fail(
+                    failure, YVEX_ARTIFACT_ADMISSION_INVALID_ARGUMENT, "storage-contract",
+                    1u, 0u, err, YVEX_ERR_INVALID_ARG,
+                    "component storage contract repeats one qtype");
+    }
+    for (index = 0ull; index < yvex_tensor_table_count(tensors); ++index) {
+        const yvex_tensor_info *tensor = yvex_tensor_table_at(tensors, index);
+        yvex_tensor_shape_accounting accounting;
+
+        rc = yvex_tensor_shape_accounting_validate(tensor, &accounting, err);
+        if (rc != YVEX_OK)
+            return admission_fail(
+                failure, YVEX_ARTIFACT_ADMISSION_TENSOR_COVERAGE, "tensor-shape",
+                1u, index, err, (yvex_status)rc,
+                "component tensor shape or storage accounting is invalid");
+        if (tensor->ggml_type > YVEX_GGUF_QTYPE_ABI_UPSTREAM_MAX_ID)
+            return admission_fail(
+                failure, YVEX_ARTIFACT_ADMISSION_TENSOR_COVERAGE, "tensor-qtype",
+                YVEX_GGUF_QTYPE_ABI_UPSTREAM_MAX_ID, tensor->ggml_type, err,
+                YVEX_ERR_UNSUPPORTED, "component tensor qtype is outside the admitted ABI");
+        qtype_counts[tensor->ggml_type]++;
+        if (!yvex_core_u64_add(elements, accounting.element_count, &elements) ||
+            !yvex_core_u64_add(payload, accounting.storage_byte_count, &payload))
+            return admission_fail(
+                failure, YVEX_ARTIFACT_ADMISSION_TENSOR_COVERAGE, "tensor-population",
+                1u, index, err, YVEX_ERR_BOUNDS,
+                "component aggregate tensor accounting overflowed");
+    }
+    for (index = 0ull; index <= YVEX_GGUF_QTYPE_ABI_UPSTREAM_MAX_ID; ++index) {
+        unsigned long long expected = 0ull, storage_index;
+
+        for (storage_index = 0ull; storage_index < contract->storage_count; ++storage_index)
+            if (contract->storage[storage_index].qtype == index)
+                expected = contract->storage[storage_index].tensors;
+        if (qtype_counts[index] != expected)
+            return admission_fail(
+                failure, YVEX_ARTIFACT_ADMISSION_TENSOR_COVERAGE, "tensor-qtype-count",
+                expected, qtype_counts[index], err, YVEX_ERR_FORMAT,
+                "component qtype population differs from its catalog");
+    }
+    if (elements != contract->elements || payload != catalog->payload_bytes)
+        return admission_fail(
+            failure, YVEX_ARTIFACT_ADMISSION_TENSOR_COVERAGE,
+            elements != contract->elements ? "element-count" : "payload-bytes",
+            elements != contract->elements ? contract->elements : catalog->payload_bytes,
+            elements != contract->elements ? elements : payload, err, YVEX_ERR_FORMAT,
+            "component aggregate storage differs from its catalog");
+    rc = artifact_admit_component_catalog(artifact, catalog, out, failure, err);
+    if (rc == YVEX_OK)
+        rc = yvex_artifact_admission_identity_verify(
+            artifact, out, NULL, NULL, failure, err);
+    return rc;
 }
 
 /* Bind one opened artifact snapshot to its admitted exact-file identity. */

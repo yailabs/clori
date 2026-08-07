@@ -50,6 +50,48 @@
 #define VIDEO_ELEMENTS 2603871032ull
 #define VIDEO_PAYLOAD_BYTES 10415484128ull
 #define VIDEO_FILE_BYTES 10415528096ull
+#define TEXT_COMPONENT_IDENTITY \
+    "a4b9c13360aeaa03bbd4d9681b821575e6556bead71c226d0aa72fca5aca7382"
+#define TEXT_TRANSFORM_IDENTITY \
+    "4e940d589f14194ee827be627afac91ee28ee2a45f1add22753d9ed3dae3962a"
+#define TEXT_PROFILE_IDENTITY \
+    "0283fdfcf493f1ac5fb1a43f21f379959686eebea58442428e1cb8c8ffaebdec"
+#define TEXT_QUANT_EXECUTION_IDENTITY \
+    "49f1e9c6de67d1cc751334a401e8b747d8c3fca197170d70e8962dc345e9b399"
+#define TEXT_PAYLOAD_PLAN_IDENTITY \
+    "146cdaba98f69a4dd0c712ef6e42d409bf56d73b7261f797a817fc242bc83a1c"
+#define TEXT_PAYLOAD_BYTE_IDENTITY \
+    "c95ade3aef89252f46fb190b8d6d80dbbc6c335bef8fab3d2610dc688bcc326f"
+#define TEXT_WRITER_PLAN_IDENTITY \
+    "d2531f0af0a89baf5e3cb093eed4cbcec9a3a959d3fd81bbc78c709d183c5af4"
+#define TEXT_ARTIFACT_IDENTITY \
+    "e12f2a5a1412dd8f5c590f97d6ba044ec2622a9a56b7243022df6e7f4acee3bc"
+#define TEXT_MAPPING_IDENTITY 17587980532596554443ull
+#define TEXT_TENSORS 1058ull
+#define TEXT_ELEMENTS 33357390064ull
+#define TEXT_PAYLOAD_BYTES 66714780128ull
+#define TEXT_FILE_BYTES 66714871424ull
+#define TRANSFORMER_COMPONENT_IDENTITY \
+    "9745fc5bbf42a0a5d2d42209e50e64f5a58704c7602bce0f71f3225431304318"
+#define TRANSFORMER_TRANSFORM_IDENTITY \
+    "8f3b16dff00769261df2d5f59c915c114874cb3abfb54ddc11d537875caec58a"
+#define TRANSFORMER_PROFILE_IDENTITY \
+    "43e82bc972981d6c3c6a879fc34972ee27083f8aad96e98c69ff2818aeda50a6"
+#define TRANSFORMER_QUANT_EXECUTION_IDENTITY \
+    "6ffc46df955c106fb627ecbda599c7380522f67651617c897d843edb91c3142c"
+#define TRANSFORMER_PAYLOAD_PLAN_IDENTITY \
+    "8bdeafd4f1e2345a9e593002cd00c97027909fdf16c1840d884836583e8335e6"
+#define TRANSFORMER_PAYLOAD_BYTE_IDENTITY \
+    "b261084e21a0098eb6947e65a05d559fa9b649d88e88f167120406634c786e85"
+#define TRANSFORMER_WRITER_PLAN_IDENTITY \
+    "72464d996bb662fdc7311258e5689c4e2f5255c91c9b01a5c88930fe2782f8f6"
+#define TRANSFORMER_ARTIFACT_IDENTITY \
+    "d274449dae245d86d391f255a9043c64f9d1d14be8b37466962e89a69d5af955"
+#define TRANSFORMER_MAPPING_IDENTITY 17862857563445514422ull
+#define TRANSFORMER_TENSORS 535ull
+#define TRANSFORMER_ELEMENTS 33122992912ull
+#define TRANSFORMER_PAYLOAD_BYTES 66280430144ull
+#define TRANSFORMER_FILE_BYTES 66280465664ull
 
 typedef struct {
     float *data;
@@ -1495,12 +1537,7 @@ static int video_vae_decode_cpu(yvex_materialization_session *session,
     return rc;
 }
 
-typedef struct {
-    const char *key;
-    const char *value;
-} component_metadata_fact;
-
-static const component_metadata_fact audio_metadata[] = {
+static const yvex_artifact_component_metadata audio_metadata[] = {
     {"general.architecture", "minimax-h3"},
     {"general.name", "audio_vae"},
     {"yvex.logical.target", YVEX_MINIMAX_H3_TARGET_ID},
@@ -1547,110 +1584,115 @@ static const yvex_complete_artifact_admission audio_catalog = {
     .payload_integrity_accepted = 1,
     .materialization_input_ready = 1,
 };
-
-static int audio_refuse(yvex_artifact_admission_failure *failure, const char *field,
-                        unsigned long long expected, unsigned long long actual,
-                        yvex_status status, yvex_error *err, const char *message)
-{
-    if (failure) {
-        memset(failure, 0, sizeof(*failure));
-        failure->code = YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH;
-        failure->expected = expected;
-        failure->actual = actual;
-        yvex_core_text_copy(failure->field, sizeof(failure->field), field);
-    }
-    yvex_error_set(err, status, "graph.minimax_h3.audio_vae", message);
-    return status;
-}
-
-static int audio_metadata_validate(const yvex_gguf *gguf,
-                                   yvex_artifact_admission_failure *failure,
-                                   yvex_error *err)
-{
-    size_t index;
-
-    if (yvex_gguf_metadata_count(gguf) != audio_catalog.metadata_count)
-        return audio_refuse(failure, "metadata-count", audio_catalog.metadata_count,
-                            yvex_gguf_metadata_count(gguf), YVEX_ERR_FORMAT, err,
-                            "Audio VAE artifact metadata coverage differs from the admitted file");
-    for (index = 0u; index < sizeof(audio_metadata) / sizeof(audio_metadata[0]); ++index) {
-        const yvex_gguf_value *value = yvex_gguf_metadata_find(gguf, audio_metadata[index].key);
-        const char *text = NULL;
-        unsigned long long length = 0ull;
-        size_t expected = strlen(audio_metadata[index].value);
-
-        if (!value || yvex_gguf_value_as_string(value, &text, &length) != YVEX_OK ||
-            length != expected || memcmp(text, audio_metadata[index].value, expected) != 0)
-            return audio_refuse(failure, audio_metadata[index].key, expected, length,
-                                YVEX_ERR_FORMAT, err,
-                                "Audio VAE artifact metadata identity differs from its recipe");
-    }
-    return YVEX_OK;
-}
-
-static int audio_tensors_validate(const yvex_tensor_table *tensors,
-                                  yvex_artifact_admission_failure *failure,
-                                  yvex_error *err)
-{
-    unsigned long long elements = 0ull;
-    unsigned long long payload = 0ull;
-    unsigned long long index;
-
-    if (yvex_tensor_table_count(tensors) != audio_catalog.tensor_count)
-        return audio_refuse(failure, "tensor-count", audio_catalog.tensor_count,
-                            yvex_tensor_table_count(tensors), YVEX_ERR_FORMAT, err,
-                            "Audio VAE tensor coverage differs from the admitted component");
-    for (index = 0ull; index < yvex_tensor_table_count(tensors); ++index) {
-        const yvex_tensor_info *tensor = yvex_tensor_table_at(tensors, index);
-        unsigned long long tensor_elements = 1ull;
-        unsigned int dimension;
-
-        if (!tensor || tensor->ggml_type != YVEX_GGUF_QTYPE_F32 || !tensor->rank)
-            return audio_refuse(failure, "tensor-qtype", YVEX_GGUF_QTYPE_F32,
-                                tensor ? tensor->ggml_type : ~0ull, YVEX_ERR_FORMAT, err,
-                                "Audio VAE requires the exact source-faithful F32 inventory");
-        for (dimension = 0u; dimension < tensor->rank; ++dimension) {
-            if (!tensor->dims[dimension] ||
-                !yvex_core_u64_mul(tensor_elements, tensor->dims[dimension], &tensor_elements))
-                return audio_refuse(failure, "tensor-elements", 1ull, 0ull,
-                                    YVEX_ERR_BOUNDS, err,
-                                    "Audio VAE tensor element accounting overflowed");
-        }
-        if (!yvex_core_u64_add(elements, tensor_elements, &elements) ||
-            !yvex_core_u64_add(payload, tensor->storage_bytes, &payload))
-            return audio_refuse(failure, "tensor-population", 1ull, 0ull,
-                                YVEX_ERR_BOUNDS, err,
-                                "Audio VAE aggregate tensor accounting overflowed");
-    }
-    if (elements != YVEX_MINIMAX_H3_AUDIO_ELEMENTS)
-        return audio_refuse(failure, "element-count", YVEX_MINIMAX_H3_AUDIO_ELEMENTS,
-                            elements, YVEX_ERR_FORMAT, err,
-                            "Audio VAE aggregate element count differs from its recipe");
-    if (payload != audio_catalog.payload_bytes)
-        return audio_refuse(failure, "payload-bytes", audio_catalog.payload_bytes,
-                            payload, YVEX_ERR_FORMAT, err,
-                            "Audio VAE aggregate payload extent differs from its recipe");
-    return YVEX_OK;
-}
-
-static int audio_vae_admit(const yvex_artifact *artifact, const yvex_gguf *gguf,
-                           const yvex_tensor_table *tensors,
+static const yvex_artifact_component_storage audio_storage[] = {
+    {YVEX_GGUF_QTYPE_F32, YVEX_MINIMAX_H3_AUDIO_TENSORS},
+};
+static const yvex_artifact_component_contract audio_contract = {
+    &audio_catalog, audio_metadata, audio_storage,
+    sizeof(audio_metadata) / sizeof(audio_metadata[0]), 1ull,
+    YVEX_MINIMAX_H3_AUDIO_ELEMENTS, 32ull,
+};
+static int component_admit(const char *component, const yvex_artifact *artifact,
+                           const yvex_gguf *gguf, const yvex_tensor_table *tensors,
                            yvex_complete_artifact_admission *out,
-                           yvex_artifact_admission_failure *failure, yvex_error *err)
-{
-    int rc;
+                           yvex_artifact_admission_failure *failure, yvex_error *err);
 
-    if (!artifact || !gguf || !tensors || !out)
-        return audio_refuse(failure, "arguments", 4ull, 0ull, YVEX_ERR_INVALID_ARG,
-                            err, "Audio VAE admission requires artifact and structural views");
-    rc = audio_metadata_validate(gguf, failure, err);
-    if (rc == YVEX_OK) rc = audio_tensors_validate(tensors, failure, err);
-    if (rc == YVEX_OK)
-        rc = yvex_artifact_admit_component(artifact, &audio_catalog, out, failure, err);
-    if (rc == YVEX_OK)
-        rc = yvex_artifact_admission_identity_verify(artifact, out, NULL, NULL, failure, err);
-    return rc;
-}
+static const yvex_artifact_component_metadata text_metadata[] = {
+    {"general.architecture", "minimax-h3"}, {"general.name", "text_encoder"},
+    {"yvex.logical.target", YVEX_MINIMAX_H3_TARGET_ID},
+    {"yvex.logical.component", "text_encoder"},
+    {"yvex.source.snapshot.identity", VIDEO_SOURCE_SNAPSHOT_IDENTITY},
+    {"yvex.logical.component.identity", TEXT_COMPONENT_IDENTITY},
+    {"yvex.logical.component_manifest.identity", VIDEO_COMPONENT_MANIFEST_IDENTITY},
+    {"yvex.logical.architecture.identity", VIDEO_ARCHITECTURE_IDENTITY},
+    {"yvex.logical.role_map.identity", VIDEO_ROLE_MAP_IDENTITY},
+    {"yvex.logical.unresolved_requirements.identity", VIDEO_UNRESOLVED_IDENTITY},
+    {"yvex.transformation.identity", TEXT_TRANSFORM_IDENTITY},
+    {"yvex.physical.profile.name", VIDEO_PROFILE_NAME},
+    {"yvex.physical.profile.identity", TEXT_PROFILE_IDENTITY},
+    {"yvex.physical.payload_plan.identity", TEXT_PAYLOAD_PLAN_IDENTITY},
+    {"yvex.payload.identity", VIDEO_PAYLOAD_IDENTITY},
+    {"yvex.evidence.stage", "component-artifact-planned"},
+    {"yvex.physical.shape.policy", "preserve-leading-three-fold-trailing-v1"},
+};
+static const yvex_complete_artifact_admission text_catalog = {
+    .artifact_class = YVEX_ARTIFACT_CLASS_COMPONENT_YVEX,
+    .metadata_count = 18ull, .tensor_count = TEXT_TENSORS,
+    .payload_bytes = TEXT_PAYLOAD_BYTES, .file_bytes = TEXT_FILE_BYTES,
+    .source_snapshot_identity = VIDEO_SOURCE_SNAPSHOT_KEY,
+    .mapping_identity = TEXT_MAPPING_IDENTITY,
+    .payload_identity = VIDEO_PAYLOAD_IDENTITY,
+    .transform_identity = TEXT_TRANSFORM_IDENTITY,
+    .profile_identity = TEXT_PROFILE_IDENTITY,
+    .profile_name = VIDEO_PROFILE_NAME,
+    .quant_execution_identity = TEXT_QUANT_EXECUTION_IDENTITY,
+    .payload_plan_identity = TEXT_PAYLOAD_PLAN_IDENTITY,
+    .payload_byte_identity = TEXT_PAYLOAD_BYTE_IDENTITY,
+    .writer_plan_identity = TEXT_WRITER_PLAN_IDENTITY,
+    .artifact_identity = TEXT_ARTIFACT_IDENTITY,
+    .official_reader_revision = YVEX_GGUF_OFFICIAL_READER_REVISION,
+    .logical_target = YVEX_MINIMAX_H3_TARGET_ID,
+    .logical_component = "text_encoder",
+    .logical_component_identity = TEXT_COMPONENT_IDENTITY,
+    .native_reader_accepted = 1, .official_reader_accepted = 1,
+    .payload_integrity_accepted = 1, .materialization_input_ready = 1,
+};
+static const yvex_artifact_component_storage text_storage[] = {
+    {YVEX_GGUF_QTYPE_BF16, TEXT_TENSORS},
+};
+static const yvex_artifact_component_contract text_contract = {
+    &text_catalog, text_metadata, text_storage,
+    sizeof(text_metadata) / sizeof(text_metadata[0]), 1ull,
+    TEXT_ELEMENTS, 32ull,
+};
+
+static const yvex_artifact_component_metadata transformer_metadata[] = {
+    {"general.architecture", "minimax-h3"}, {"general.name", "transformer"},
+    {"yvex.logical.target", YVEX_MINIMAX_H3_TARGET_ID},
+    {"yvex.logical.component", "transformer"},
+    {"yvex.source.snapshot.identity", VIDEO_SOURCE_SNAPSHOT_IDENTITY},
+    {"yvex.logical.component.identity", TRANSFORMER_COMPONENT_IDENTITY},
+    {"yvex.logical.component_manifest.identity", VIDEO_COMPONENT_MANIFEST_IDENTITY},
+    {"yvex.logical.architecture.identity", VIDEO_ARCHITECTURE_IDENTITY},
+    {"yvex.logical.role_map.identity", VIDEO_ROLE_MAP_IDENTITY},
+    {"yvex.logical.unresolved_requirements.identity", VIDEO_UNRESOLVED_IDENTITY},
+    {"yvex.transformation.identity", TRANSFORMER_TRANSFORM_IDENTITY},
+    {"yvex.physical.profile.name", VIDEO_PROFILE_NAME},
+    {"yvex.physical.profile.identity", TRANSFORMER_PROFILE_IDENTITY},
+    {"yvex.physical.payload_plan.identity", TRANSFORMER_PAYLOAD_PLAN_IDENTITY},
+    {"yvex.payload.identity", VIDEO_PAYLOAD_IDENTITY},
+    {"yvex.evidence.stage", "component-artifact-planned"},
+};
+static const yvex_complete_artifact_admission transformer_catalog = {
+    .artifact_class = YVEX_ARTIFACT_CLASS_COMPONENT_YVEX,
+    .metadata_count = 17ull, .tensor_count = TRANSFORMER_TENSORS,
+    .payload_bytes = TRANSFORMER_PAYLOAD_BYTES, .file_bytes = TRANSFORMER_FILE_BYTES,
+    .source_snapshot_identity = VIDEO_SOURCE_SNAPSHOT_KEY,
+    .mapping_identity = TRANSFORMER_MAPPING_IDENTITY,
+    .payload_identity = VIDEO_PAYLOAD_IDENTITY,
+    .transform_identity = TRANSFORMER_TRANSFORM_IDENTITY,
+    .profile_identity = TRANSFORMER_PROFILE_IDENTITY,
+    .profile_name = VIDEO_PROFILE_NAME,
+    .quant_execution_identity = TRANSFORMER_QUANT_EXECUTION_IDENTITY,
+    .payload_plan_identity = TRANSFORMER_PAYLOAD_PLAN_IDENTITY,
+    .payload_byte_identity = TRANSFORMER_PAYLOAD_BYTE_IDENTITY,
+    .writer_plan_identity = TRANSFORMER_WRITER_PLAN_IDENTITY,
+    .artifact_identity = TRANSFORMER_ARTIFACT_IDENTITY,
+    .official_reader_revision = YVEX_GGUF_OFFICIAL_READER_REVISION,
+    .logical_target = YVEX_MINIMAX_H3_TARGET_ID,
+    .logical_component = "transformer",
+    .logical_component_identity = TRANSFORMER_COMPONENT_IDENTITY,
+    .native_reader_accepted = 1, .official_reader_accepted = 1,
+    .payload_integrity_accepted = 1, .materialization_input_ready = 1,
+};
+static const yvex_artifact_component_storage transformer_storage[] = {
+    {YVEX_GGUF_QTYPE_F32, 13ull}, {YVEX_GGUF_QTYPE_BF16, 522ull},
+};
+static const yvex_artifact_component_contract transformer_contract = {
+    &transformer_catalog, transformer_metadata, transformer_storage,
+    sizeof(transformer_metadata) / sizeof(transformer_metadata[0]), 2ull,
+    TRANSFORMER_ELEMENTS, 32ull,
+};
 
 static int audio_vae_execute_artifact_cpu(
     const yvex_artifact *artifact, const yvex_gguf *gguf,
@@ -1680,7 +1722,8 @@ static int audio_vae_execute_artifact_cpu(
             &execution, YVEX_MINIMAX_H3_COMPONENT_EXECUTION_INVALID_ARGUMENT,
             NULL, 5ull, 0ull, YVEX_ERR_INVALID_ARG,
             "Audio VAE artifact execution requires structural inputs and output state");
-    rc = audio_vae_admit(artifact, gguf, tensors, &admission, &admission_failure, err);
+    rc = component_admit(
+        "audio_vae", artifact, gguf, tensors, &admission, &admission_failure, err);
     admitted = rc == YVEX_OK;
     yvex_materialization_options_default(&materialization_options);
     materialization_options.max_chunk_bytes = 64ull * 1024ull * 1024ull;
@@ -1708,7 +1751,7 @@ static int audio_vae_execute_artifact_cpu(
     return rc;
 }
 
-static const component_metadata_fact video_metadata[] = {
+static const yvex_artifact_component_metadata video_metadata[] = {
     {"general.architecture", "minimax-h3"},
     {"general.name", "video_vae"},
     {"yvex.logical.target", YVEX_MINIMAX_H3_TARGET_ID},
@@ -1754,114 +1797,38 @@ static const yvex_complete_artifact_admission video_catalog = {
     .payload_integrity_accepted = 1,
     .materialization_input_ready = 1,
 };
+static const yvex_artifact_component_storage video_storage[] = {
+    {YVEX_GGUF_QTYPE_F32, VIDEO_TENSORS},
+};
+static const yvex_artifact_component_contract video_contract = {
+    &video_catalog, video_metadata, video_storage,
+    sizeof(video_metadata) / sizeof(video_metadata[0]), 1ull,
+    VIDEO_ELEMENTS, 32ull,
+};
 
-static int video_artifact_refuse(yvex_artifact_admission_failure *failure,
-                                 const char *field, unsigned long long expected,
-                                 unsigned long long actual, yvex_status status,
-                                 yvex_error *err, const char *message)
-{
-    if (failure) {
-        memset(failure, 0, sizeof(*failure));
-        failure->code = YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH;
-        failure->expected = expected;
-        failure->actual = actual;
-        yvex_core_text_copy(failure->field, sizeof(failure->field), field);
-    }
-    yvex_error_set(err, status, "graph.minimax_h3.video_vae", message);
-    return status;
-}
-
-static int video_metadata_validate(const yvex_gguf *gguf,
-                                   yvex_artifact_admission_failure *failure,
-                                   yvex_error *err)
-{
-    size_t index;
-
-    if (yvex_gguf_metadata_count(gguf) != video_catalog.metadata_count)
-        return video_artifact_refuse(
-            failure, "metadata-count", video_catalog.metadata_count,
-            yvex_gguf_metadata_count(gguf), YVEX_ERR_FORMAT, err,
-            "Visual VAE artifact metadata coverage differs from the admitted file");
-    for (index = 0u; index < sizeof(video_metadata) / sizeof(video_metadata[0]); ++index) {
-        const yvex_gguf_value *value = yvex_gguf_metadata_find(gguf, video_metadata[index].key);
-        const char *text = NULL;
-        unsigned long long length = 0ull;
-        size_t expected = strlen(video_metadata[index].value);
-
-        if (!value || yvex_gguf_value_as_string(value, &text, &length) != YVEX_OK ||
-            length != expected || memcmp(text, video_metadata[index].value, expected) != 0)
-            return video_artifact_refuse(
-                failure, video_metadata[index].key, expected, length,
-                YVEX_ERR_FORMAT, err,
-                "Visual VAE artifact metadata identity differs from its recipe");
-    }
-    return YVEX_OK;
-}
-
-static int video_tensors_validate(const yvex_tensor_table *tensors,
-                                  yvex_artifact_admission_failure *failure,
-                                  yvex_error *err)
-{
-    unsigned long long elements = 0ull, payload = 0ull, index;
-
-    if (yvex_tensor_table_count(tensors) != video_catalog.tensor_count)
-        return video_artifact_refuse(
-            failure, "tensor-count", video_catalog.tensor_count,
-            yvex_tensor_table_count(tensors), YVEX_ERR_FORMAT, err,
-            "Visual VAE tensor coverage differs from the admitted component");
-    for (index = 0ull; index < yvex_tensor_table_count(tensors); ++index) {
-        const yvex_tensor_info *tensor = yvex_tensor_table_at(tensors, index);
-        unsigned long long tensor_elements = 1ull;
-        unsigned int dimension;
-
-        if (!tensor || tensor->ggml_type != YVEX_GGUF_QTYPE_F32 || !tensor->rank)
-            return video_artifact_refuse(
-                failure, "tensor-qtype", YVEX_GGUF_QTYPE_F32,
-                tensor ? tensor->ggml_type : ~0ull, YVEX_ERR_FORMAT, err,
-                "Visual VAE requires the exact source-faithful F32 inventory");
-        for (dimension = 0u; dimension < tensor->rank; ++dimension)
-            if (!tensor->dims[dimension] ||
-                !yvex_core_u64_mul(tensor_elements, tensor->dims[dimension], &tensor_elements))
-                return video_artifact_refuse(
-                    failure, "tensor-elements", 1ull, 0ull, YVEX_ERR_BOUNDS, err,
-                    "Visual VAE tensor element accounting overflowed");
-        if (!yvex_core_u64_add(elements, tensor_elements, &elements) ||
-            !yvex_core_u64_add(payload, tensor->storage_bytes, &payload))
-            return video_artifact_refuse(
-                failure, "tensor-population", 1ull, 0ull, YVEX_ERR_BOUNDS, err,
-                "Visual VAE aggregate tensor accounting overflowed");
-    }
-    if (elements != VIDEO_ELEMENTS)
-        return video_artifact_refuse(
-            failure, "element-count", VIDEO_ELEMENTS, elements,
-            YVEX_ERR_FORMAT, err,
-            "Visual VAE aggregate element count differs from its recipe");
-    if (payload != video_catalog.payload_bytes)
-        return video_artifact_refuse(
-            failure, "payload-bytes", video_catalog.payload_bytes, payload,
-            YVEX_ERR_FORMAT, err,
-            "Visual VAE aggregate payload extent differs from its recipe");
-    return YVEX_OK;
-}
-
-static int video_vae_admit(const yvex_artifact *artifact, const yvex_gguf *gguf,
-                           const yvex_tensor_table *tensors,
+static int component_admit(const char *component, const yvex_artifact *artifact,
+                           const yvex_gguf *gguf, const yvex_tensor_table *tensors,
                            yvex_complete_artifact_admission *out,
                            yvex_artifact_admission_failure *failure, yvex_error *err)
 {
-    int rc;
+    const yvex_artifact_component_contract *contract = NULL;
 
-    if (!artifact || !gguf || !tensors || !out)
-        return video_artifact_refuse(
-            failure, "arguments", 4ull, 0ull, YVEX_ERR_INVALID_ARG, err,
-            "Visual VAE admission requires artifact and structural views");
-    rc = video_metadata_validate(gguf, failure, err);
-    if (rc == YVEX_OK) rc = video_tensors_validate(tensors, failure, err);
-    if (rc == YVEX_OK)
-        rc = yvex_artifact_admit_component(artifact, &video_catalog, out, failure, err);
-    if (rc == YVEX_OK)
-        rc = yvex_artifact_admission_identity_verify(artifact, out, NULL, NULL, failure, err);
-    return rc;
+    if (component && strcmp(component, "audio_vae") == 0) contract = &audio_contract;
+    if (component && strcmp(component, "video_vae") == 0) contract = &video_contract;
+    if (component && strcmp(component, "text_encoder") == 0) contract = &text_contract;
+    if (component && strcmp(component, "transformer") == 0) contract = &transformer_contract;
+    if (!contract) {
+        if (failure) {
+            memset(failure, 0, sizeof(*failure));
+            failure->code = YVEX_ARTIFACT_ADMISSION_INVALID_ARGUMENT;
+            yvex_core_text_copy(failure->field, sizeof(failure->field), "component");
+        }
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "graph.minimax_h3.component",
+                       "unknown MiniMax-H3 weighted component");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    return yvex_artifact_admit_component(
+        artifact, gguf, tensors, contract, out, failure, err);
 }
 
 static int video_vae_execute_artifact_cpu(
@@ -1892,7 +1859,8 @@ static int video_vae_execute_artifact_cpu(
             &execution, YVEX_MINIMAX_H3_COMPONENT_EXECUTION_INVALID_ARGUMENT,
             NULL, 5ull, 0ull, YVEX_ERR_INVALID_ARG,
             "Visual VAE artifact execution requires structural inputs and output state");
-    rc = video_vae_admit(artifact, gguf, tensors, &admission, &admission_failure, err);
+    rc = component_admit(
+        "video_vae", artifact, gguf, tensors, &admission, &admission_failure, err);
     admitted = rc == YVEX_OK;
     yvex_materialization_options_default(&materialization_options);
     materialization_options.max_chunk_bytes = 64ull * 1024ull * 1024ull;
@@ -1926,10 +1894,9 @@ const yvex_minimax_h3_graph_api *yvex_graph_register_minimax_h3(void)
     static const yvex_minimax_h3_graph_api api = {
         t2va_plan_build,
         scheduler_step,
-        audio_vae_admit,
+        component_admit,
         audio_vae_decode_cpu,
         audio_vae_execute_artifact_cpu,
-        video_vae_admit,
         video_vae_decode_cpu,
         video_vae_execute_artifact_cpu,
     };

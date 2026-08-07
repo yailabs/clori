@@ -176,8 +176,8 @@ int main(int argc, char **argv)
         free(output);
         free(latent);
     } else if (rc == YVEX_OK) {
-        rc = yvex_graph_register_minimax_h3()->video_vae_admit(
-            artifact, gguf, tensors, &admission, &admission_failure, &err);
+        rc = yvex_graph_register_minimax_h3()->component_admit(
+            "video_vae", artifact, gguf, tensors, &admission, &admission_failure, &err);
         if (expect_refused) {
             if (rc == YVEX_OK) {
                 fprintf(stderr, "video_vae_corruption=accepted\n");

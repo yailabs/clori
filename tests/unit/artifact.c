@@ -198,14 +198,16 @@ static int test_deepseek_variant_admission_catalog(void)
 
 static int test_component_admission_catalog(void)
 {
-    char root[] = "/tmp/yvex-artifact-component-XXXXXX";
-    char path[YVEX_ARTIFACT_PATH_CAP];
+    yvex_artifact_component_metadata metadata[] = {
+        {"general.architecture", "llama"}, {"general.name", "yvex-test"},
+    };
+    yvex_artifact_component_storage storage[] = {{YVEX_GGUF_QTYPE_F32, 1ull}};
     yvex_complete_artifact_admission catalog = {
         .artifact_class = YVEX_ARTIFACT_CLASS_COMPONENT_YVEX,
-        .metadata_count = 17u,
-        .tensor_count = 3u,
-        .payload_bytes = 96u,
-        .file_bytes = 4096u,
+        .metadata_count = 5u,
+        .tensor_count = 1u,
+        .payload_bytes = 128u,
+        .file_bytes = 416u,
         .source_snapshot_identity = 0x11223344u,
         .mapping_identity = 0x55667788u,
         .payload_identity =
@@ -224,7 +226,7 @@ static int test_component_admission_catalog(void)
         .writer_plan_identity =
             "7777777777777777777777777777777777777777777777777777777777777777",
         .artifact_identity =
-            "8888888888888888888888888888888888888888888888888888888888888888",
+            "3ad71e86689ae7d85d471dd9879702449551c945cb5e0ae50f02edc1fd99af44",
         .official_reader_revision = YVEX_GGUF_OFFICIAL_READER_REVISION,
         .logical_target = "fixture-target",
         .logical_component = "audio_vae",
@@ -235,63 +237,67 @@ static int test_component_admission_catalog(void)
         .payload_integrity_accepted = 1,
         .materialization_input_ready = 1,
     };
+    yvex_artifact_component_contract contract = {
+        &catalog, metadata, storage, 2ull, 1ull, 32ull, 32ull,
+    };
     yvex_complete_artifact_admission admission;
     yvex_artifact_admission_failure failure;
-    yvex_artifact_file_identity identity;
     yvex_artifact_options options = {0};
     yvex_artifact *artifact = NULL;
+    yvex_tensor_table *tensors = NULL;
+    yvex_gguf *gguf = NULL;
     yvex_error err;
-    int fd;
 
-    YVEX_TEST_ASSERT(mkdtemp(root) != NULL, "component catalog root created");
-    YVEX_TEST_ASSERT(snprintf(path, sizeof(path), "%s/audio.gguf", root) <
-                         (int)sizeof(path),
-                     "component catalog path fits");
-    fd = open(path, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
-    YVEX_TEST_ASSERT(fd >= 0 && ftruncate(fd, (off_t)catalog.file_bytes) == 0 &&
-                         close(fd) == 0,
-                     "component catalog sparse extent created");
-    options.path = path;
+    options.path = "tests/fixtures/gguf/valid-metadata-tensors.gguf";
     options.readonly = 1;
     YVEX_TEST_ASSERT(yvex_artifact_open(&artifact, &options, &err) == YVEX_OK,
                      "component catalog artifact opened");
-    YVEX_TEST_ASSERT(yvex_artifact_identity_read_open(artifact, &identity, &err) == YVEX_OK,
-                     "component catalog exact file identity derived");
-    strcpy(catalog.artifact_identity, identity.sha256);
+    YVEX_TEST_ASSERT(yvex_gguf_open(&gguf, artifact, &err) == YVEX_OK &&
+                         yvex_tensor_table_from_gguf(&tensors, gguf, &err) == YVEX_OK,
+                     "component catalog structural views opened");
     YVEX_TEST_ASSERT(yvex_artifact_admit_component(
-                         artifact, &catalog, &admission, &failure, &err) == YVEX_OK &&
+                         artifact, gguf, tensors, &contract, &admission, &failure,
+                         &err) == YVEX_OK &&
                          admission.complete &&
                          admission.artifact_class == YVEX_ARTIFACT_CLASS_COMPONENT_YVEX &&
                          strcmp(admission.logical_component, "audio_vae") == 0 &&
                          !admission.tokenizer_complete &&
-                         !admission.artifact_identity_verified &&
-                         yvex_sha256_hex_is_valid(admission.admission_identity),
-                     "component catalog admits exact non-tokenizer artifact facts");
-    YVEX_TEST_ASSERT(yvex_artifact_admission_identity_verify(
-                         artifact, &admission, NULL, NULL, &failure, &err) == YVEX_OK &&
                          admission.artifact_identity_verified &&
-                         admission.artifact_bytes_hashed == catalog.file_bytes,
-                     "component admission publishes trust only after exact file hashing");
+                         admission.artifact_bytes_hashed == catalog.file_bytes &&
+                         yvex_sha256_hex_is_valid(admission.admission_identity),
+                     "component contract reconciles structure before publishing trust");
+    metadata[1].value = "wrong";
+    YVEX_TEST_ASSERT(yvex_artifact_admit_component(
+                         artifact, gguf, tensors, &contract, &admission, &failure,
+                         &err) == YVEX_ERR_FORMAT &&
+                         failure.code == YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH,
+                     "component contract refuses metadata identity drift");
+    metadata[1].value = "yvex-test";
+    storage[0].tensors = 2ull;
+    YVEX_TEST_ASSERT(yvex_artifact_admit_component(
+                         artifact, gguf, tensors, &contract, &admission, &failure,
+                         &err) == YVEX_ERR_FORMAT &&
+                         failure.code == YVEX_ARTIFACT_ADMISSION_TENSOR_COVERAGE,
+                     "component contract refuses qtype population drift");
+    storage[0].tensors = 1ull;
     catalog.file_bytes++;
     YVEX_TEST_ASSERT(yvex_artifact_admit_component(
-                         artifact, &catalog, &admission, &failure, &err) ==
-                         YVEX_ERR_FORMAT &&
+                         artifact, gguf, tensors, &contract, &admission, &failure,
+                         &err) == YVEX_ERR_FORMAT &&
                          failure.code == YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH,
                      "component catalog refuses wrong artifact extent");
     catalog.file_bytes--;
     strcpy(catalog.artifact_identity,
            "8888888888888888888888888888888888888888888888888888888888888888");
     YVEX_TEST_ASSERT(yvex_artifact_admit_component(
-                         artifact, &catalog, &admission, &failure, &err) == YVEX_OK &&
-                         yvex_artifact_admission_identity_verify(
-                             artifact, &admission, NULL, NULL, &failure, &err) ==
-                             YVEX_ERR_FORMAT &&
+                         artifact, gguf, tensors, &contract, &admission, &failure,
+                         &err) == YVEX_ERR_FORMAT &&
                          failure.code == YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH &&
                          !admission.artifact_identity_verified,
                      "component catalog refuses same-size content identity drift");
+    yvex_tensor_table_close(tensors);
+    yvex_gguf_close(gguf);
     yvex_artifact_close(artifact);
-    YVEX_TEST_ASSERT(unlink(path) == 0 && rmdir(root) == 0,
-                     "component catalog fixture cleaned");
     return 0;
 }
 
