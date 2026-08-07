@@ -1397,7 +1397,7 @@ test-surface: tests/test_surface.sh
 test-source-ownership: tests/test_source_ownership.sh config/source_owners.tsv
 	sh tests/test_source_ownership.sh
 
-test-repository-layout: tests/test_repository_layout.sh Makefile
+test-repository-layout: $(LIBYVEX) tests/test_repository_layout.sh Makefile
 	sh tests/test_repository_layout.sh
 
 test-architecture-boundaries: $(LIBYVEX) $(YVEX_BIN) $(YVEXD_BIN) $(TEST_REFERENCE_OBJS) tests/test_architecture_boundaries.sh
