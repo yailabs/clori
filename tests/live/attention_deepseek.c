@@ -1873,6 +1873,7 @@ static int run_runtime_oracle_mode(
             memset(&probe, 0, sizeof(probe));
             memset(&model_failure, 0, sizeof(model_failure));
             request.backend = YVEX_BACKEND_KIND_CUDA;
+            request.execution_phase = YVEX_ATTENTION_EXECUTION_PHASE_DECODE;
             request.probe = YVEX_ATTENTION_PROBE_CANONICAL_V2;
             request.scope = YVEX_ATTENTION_PROBE_SCOPE_QUICK;
             request.operation_scope = YVEX_ATTENTION_OPERATION_CORE;

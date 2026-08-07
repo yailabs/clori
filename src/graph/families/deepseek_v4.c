@@ -1576,12 +1576,37 @@ if (context->layer->compute_contract !=
         "CUDA attention compute contract has no backend projection");
 context->job.compute_contract = YVEX_BACKEND_ATTENTION_COMPUTE_BF16_F32_RNE_V1;
 context->job.schema = YVEX_BACKEND_ATTENTION_JOB_SCHEMA;
-context->job.phase = context->layer->tensor_scope == YVEX_TENSOR_SCOPE_DRAFT
-    ? YVEX_BACKEND_ATTENTION_PHASE_SPECULATIVE_DRAFT
-    : context->opts->retain_prefix_checkpoints
-          ? YVEX_BACKEND_ATTENTION_PHASE_SPECULATIVE_VERIFY
-          : context->token_count == 1ull ? YVEX_BACKEND_ATTENTION_PHASE_DECODE
-                                         : YVEX_BACKEND_ATTENTION_PHASE_PREFILL;
+switch (context->opts->execution_phase) {
+case YVEX_ATTENTION_EXECUTION_PHASE_PREFILL:
+    context->job.phase = YVEX_BACKEND_ATTENTION_PHASE_PREFILL;
+    break;
+case YVEX_ATTENTION_EXECUTION_PHASE_DECODE:
+    context->job.phase = YVEX_BACKEND_ATTENTION_PHASE_DECODE;
+    break;
+case YVEX_ATTENTION_EXECUTION_PHASE_MIXED:
+    context->job.phase = YVEX_BACKEND_ATTENTION_PHASE_MIXED;
+    break;
+case YVEX_ATTENTION_EXECUTION_PHASE_DRAFT:
+    context->job.phase = YVEX_BACKEND_ATTENTION_PHASE_SPECULATIVE_DRAFT;
+    break;
+case YVEX_ATTENTION_EXECUTION_PHASE_VERIFY:
+    context->job.phase = YVEX_BACKEND_ATTENTION_PHASE_SPECULATIVE_VERIFY;
+    break;
+case YVEX_ATTENTION_EXECUTION_PHASE_UNSPECIFIED:
+    context->job.phase = context->layer->tensor_scope == YVEX_TENSOR_SCOPE_DRAFT
+        ? YVEX_BACKEND_ATTENTION_PHASE_SPECULATIVE_DRAFT
+        : context->opts->retain_prefix_checkpoints
+              ? YVEX_BACKEND_ATTENTION_PHASE_SPECULATIVE_VERIFY
+              : context->token_count == 1ull ? YVEX_BACKEND_ATTENTION_PHASE_DECODE
+                                             : YVEX_BACKEND_ATTENTION_PHASE_PREFILL;
+    break;
+default:
+    return yvex_attention_cuda_reject(
+        context, YVEX_DEEPSEEK_ATTENTION_FAILURE_INVALID_ARGUMENT,
+        YVEX_ATTENTION_EXECUTION_PHASE_COUNT,
+        context->opts->execution_phase, YVEX_ERR_INVALID_ARG,
+        "CUDA attention execution phase is invalid");
+}
 context->job.candidate_block_visible = context->opts->candidate_block_visible;
 context->job.retain_prefix_checkpoints = context->opts->retain_prefix_checkpoints;
 context->job.operation_scope = context->opts->operation_scope ==

@@ -303,6 +303,16 @@ typedef struct {
 
 typedef struct {
     yvex_attention_operation_scope operation_scope;
+    /* Unspecified is retained only for reference probes that predate phase-aware execution. */
+    enum yvex_attention_execution_phase {
+        YVEX_ATTENTION_EXECUTION_PHASE_UNSPECIFIED = 0,
+        YVEX_ATTENTION_EXECUTION_PHASE_PREFILL,
+        YVEX_ATTENTION_EXECUTION_PHASE_DECODE,
+        YVEX_ATTENTION_EXECUTION_PHASE_MIXED,
+        YVEX_ATTENTION_EXECUTION_PHASE_DRAFT,
+        YVEX_ATTENTION_EXECUTION_PHASE_VERIFY,
+        YVEX_ATTENTION_EXECUTION_PHASE_COUNT
+    } execution_phase;
     const char *logical_model_identity;
     unsigned long long layer_index, token_position, token_count;
     unsigned long long local_history_tokens, compressed_history_tokens;
@@ -470,6 +480,7 @@ typedef enum {
 typedef struct {
     yvex_backend_kind backend;
     yvex_tensor_scope tensor_scope;
+    enum yvex_attention_execution_phase execution_phase;
     yvex_backend *backend_context;
     const char *logical_model_identity;
     yvex_attention_probe_kind probe;

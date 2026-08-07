@@ -1471,6 +1471,7 @@ static int attention_probe_layer_execute(
     }
     context->family->cpu_options_default(&options);
     options.operation_scope = context->request->operation_scope;
+    options.execution_phase = context->request->execution_phase;
     options.logical_model_identity = context->request->logical_model_identity;
     options.layer_index = layer->layer_index;
     options.token_position = position;
@@ -1610,7 +1611,7 @@ static int attention_probe_finalize(attention_probe_context *context) {
     char *backend_digest[] = {result->cpu_output_digest, result->cuda_output_digest};
     char *backend_state_digest[] = {result->cpu_state_delta_digest,
                                     result->cuda_state_delta_digest};
-    attention_probe_identity_field fields[17];
+    attention_probe_identity_field fields[18];
     const char *selected_digest;
     unsigned int index;
     if (!attention_probe_comparison_identity(result->comparison_contract_identity))
@@ -1693,7 +1694,8 @@ static int attention_probe_finalize(attention_probe_context *context) {
     fields[14] = (attention_probe_identity_field){result->cuda_state_delta_digest, 0ull};
     fields[15] = (attention_probe_identity_field){result->state_delta_digest, 0ull};
     fields[16] = (attention_probe_identity_field){NULL, request->candidate_block_visible};
-    if (!attention_probe_identity("yvex.attention.operator.execution.v4", fields, 17u,
+    fields[17] = (attention_probe_identity_field){NULL, request->execution_phase};
+    if (!attention_probe_identity("yvex.attention.operator.execution.v5", fields, 18u,
                                   result->attention_execution_identity))
         goto identity_failure;
     return YVEX_OK;
@@ -1782,7 +1784,8 @@ int yvex_attention_execute(
         (request->scope != YVEX_ATTENTION_PROBE_SCOPE_QUICK &&
          request->scope != YVEX_ATTENTION_PROBE_SCOPE_FULL) ||
         (request->operation_scope != YVEX_ATTENTION_OPERATION_CORE &&
-         request->operation_scope != YVEX_ATTENTION_OPERATION_ENVELOPE))
+         request->operation_scope != YVEX_ATTENTION_OPERATION_ENVELOPE) ||
+        request->execution_phase >= YVEX_ATTENTION_EXECUTION_PHASE_COUNT)
         return attention_probe_fail(err, YVEX_ERR_INVALID_ARG, "canonical V2 probe request is invalid");
     if (!family || !plan || !session || !descriptor || !result ||
         !family->plan_summary || !family->plan_layer_count || !family->plan_layer_at ||

@@ -1273,6 +1273,7 @@ static int transformer_core_features_execute(
     activation.device_output = device_features ? &device_output : NULL;
     execution = (yvex_attention_execution_request){
         .backend = request.backend, .tensor_scope = YVEX_TENSOR_SCOPE_DRAFT,
+        .execution_phase = YVEX_ATTENTION_EXECUTION_PHASE_DRAFT,
         .probe = YVEX_ATTENTION_PROBE_UNSPECIFIED, .scope = YVEX_ATTENTION_PROBE_SCOPE_FULL,
         .operation_scope = YVEX_ATTENTION_OPERATION_CORE, .token_count = token_count,
         .token_position = token_start, .select_position = 1,
@@ -1742,6 +1743,14 @@ int yvex_runtime_transformer_execute(yvex_runtime_transformer_context *context,
             .token_count = count, .input_width = plan->expanded_width};
         execution.backend = request->backend;
         execution.tensor_scope = context->options.tensor_scope;
+        execution.execution_phase =
+            context->options.tensor_scope == YVEX_TENSOR_SCOPE_DRAFT
+                ? YVEX_ATTENTION_EXECUTION_PHASE_DRAFT
+                : request->retain_prefix_checkpoints
+                      ? YVEX_ATTENTION_EXECUTION_PHASE_VERIFY
+                      : request->phase == YVEX_TRANSFORMER_PHASE_DECODE
+                            ? YVEX_ATTENTION_EXECUTION_PHASE_DECODE
+                            : YVEX_ATTENTION_EXECUTION_PHASE_PREFILL;
         execution.probe = YVEX_ATTENTION_PROBE_UNSPECIFIED;
         execution.scope = YVEX_ATTENTION_PROBE_SCOPE_FULL;
         execution.operation_scope = YVEX_ATTENTION_OPERATION_ENVELOPE;

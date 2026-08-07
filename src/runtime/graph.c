@@ -1884,6 +1884,14 @@ int yvex_graph_attention_operator_execute(const yvex_graph_attention_operator_re
         runtime_seconds(yvex_core_monotonic_ns() - phase_started);
     memset(&probe_request, 0, sizeof(probe_request));
     probe_request.backend = request->backend;
+    probe_request.execution_phase =
+        request->phase == YVEX_RUNTIME_PHASE_ATTENTION_DECODE
+            ? YVEX_ATTENTION_EXECUTION_PHASE_DECODE
+            : request->phase == YVEX_RUNTIME_PHASE_ATTENTION_MIXED
+                  ? YVEX_ATTENTION_EXECUTION_PHASE_MIXED
+                  : request->phase == YVEX_RUNTIME_PHASE_ATTENTION_SPECULATIVE_VERIFY
+                        ? YVEX_ATTENTION_EXECUTION_PHASE_VERIFY
+                        : YVEX_ATTENTION_EXECUTION_PHASE_PREFILL;
     probe_request.probe = request->probe;
     probe_request.scope = request->scope;
     probe_request.operation_scope = request->operation_scope == YVEX_RUNTIME_SCOPE_ATTENTION_CORE
