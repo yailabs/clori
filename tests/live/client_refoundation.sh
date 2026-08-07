@@ -154,6 +154,17 @@ test "$(sed -n '1p' "$root/turn1")" = "$(sed -n '1p' "$root/turn1.after-reset")"
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --max-new-tokens 1 \
     --strategy greedy Hello >"$root/oneshot"
 
+XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --session reasoning-live \
+    --max-new-tokens 64 --strategy greedy --reasoning high \
+    'What is 2 plus 2? Answer briefly.' \
+    >"$root/reasoning.out" 2>"$root/reasoning.metrics"
+grep -E 'reasoning [1-9][0-9]* tokens' "$root/reasoning.metrics" >/dev/null
+grep -E 'final [1-9][0-9]* tokens' "$root/reasoning.metrics" >/dev/null
+! grep -F '</think>' "$root/reasoning.out" >/dev/null
+XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session show reasoning-live \
+    >"$root/reasoning.session"
+grep -F 'ready' "$root/reasoning.session" >/dev/null
+
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session new cancel-live >/dev/null
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --session cancel-live \
     --max-new-tokens 16 --strategy greedy 'Explain attention briefly.' \

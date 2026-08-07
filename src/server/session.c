@@ -68,10 +68,11 @@ typedef struct {
     unsigned long long first_reasoning_ns, reasoning_completed_ns;
     unsigned long long first_final_ns, reasoning_tokens, final_tokens;
     unsigned long long reasoning_bytes, final_bytes;
+    unsigned long long reasoning_control_bytes;
     unsigned int reasoning_start_token_id, reasoning_end_token_id;
     const unsigned char *reasoning_end;
     unsigned long long reasoning_end_count;
-    int reasoning_active;
+    int reasoning_active, reasoning_boundary_seen;
     double queue_seconds;
     yvex_tokenizer_reasoning_stream *reasoning_stream;
 } turn_sink;
@@ -113,6 +114,42 @@ static yvex_client_failure_class turn_failure_class(int status)
     case YVEX_ERR_TIMEOUT: return YVEX_CLIENT_FAILURE_GATEWAY_TIMEOUT;
     default: return YVEX_CLIENT_FAILURE_INTERNAL;
     }
+}
+
+static int turn_output_geometry(const turn_sink *sink,
+                                unsigned long long generated_bytes,
+                                unsigned long long *final_offset,
+                                yvex_error *err)
+{
+    unsigned long long visible, raw;
+
+    if (!sink || !final_offset ||
+        !yvex_core_u64_add(sink->reasoning_bytes, sink->final_bytes,
+                           &visible) ||
+        !yvex_core_u64_add(visible, sink->reasoning_control_bytes, &raw)) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "server.reasoning.output",
+                       "typed output channel extent overflowed");
+        return YVEX_ERR_BOUNDS;
+    }
+    if (sink->request->reasoning_policy == YVEX_REASONING_DISABLED) {
+        if (sink->reasoning_bytes || sink->reasoning_control_bytes ||
+            sink->reasoning_boundary_seen || raw != generated_bytes) {
+            yvex_error_set(err, YVEX_ERR_FORMAT, "server.reasoning.output",
+                           "chat output contains an explicit reasoning boundary");
+            return YVEX_ERR_FORMAT;
+        }
+        *final_offset = 0u;
+    } else {
+        if (sink->reasoning_active || !sink->reasoning_boundary_seen ||
+            raw != generated_bytes ||
+            !yvex_core_u64_add(sink->reasoning_bytes,
+                               sink->reasoning_control_bytes, final_offset)) {
+            yvex_error_set(err, YVEX_ERR_FORMAT, "server.reasoning.output",
+                           "typed reasoning channels do not cover source output");
+            return YVEX_ERR_FORMAT;
+        }
+    }
+    return YVEX_OK;
 }
 
 static void session_partial_turn_set(
@@ -621,6 +658,8 @@ static int turn_fragment(void *opaque,
             return YVEX_ERR_FORMAT;
         }
         sink->reasoning_active = 0;
+        sink->reasoning_boundary_seen = 1;
+        sink->reasoning_control_bytes = byte_count;
         sink->reasoning_completed_ns = now;
         classified_bytes = sink->reasoning_end;
         classified_count = sink->reasoning_end_count;
@@ -779,6 +818,7 @@ static int session_turn_commit(server_session *session,
                                int status, yvex_error *err)
 {
     unsigned long long index;
+    unsigned long long final_offset = 0u;
     unsigned long long next_message_generation, next_transcript_generation;
     unsigned long long committed =
         result->final_position >= result->model_committed_token_count
@@ -822,18 +862,14 @@ static int session_turn_commit(server_session *session,
                 session, YVEX_PROMPT_ROLE_USER, request->prompt,
                 request->prompt_bytes, &transcript_error);
         }
-        if (transcript_rc == YVEX_OK &&
-            sink->reasoning_bytes + sink->final_bytes !=
-                result->generated_text_bytes) {
-            yvex_error_set(&transcript_error, YVEX_ERR_FORMAT,
-                           "server.session.transcript",
-                           "typed output channels do not cover generated text");
-            transcript_rc = YVEX_ERR_FORMAT;
-        }
+        if (transcript_rc == YVEX_OK)
+            transcript_rc = turn_output_geometry(
+                sink, result->generated_text_bytes, &final_offset,
+                &transcript_error);
         if (transcript_rc == YVEX_OK)
             transcript_rc = session_message_append(
                 session, YVEX_PROMPT_ROLE_ASSISTANT,
-                session->turn_text + sink->reasoning_bytes,
+                session->turn_text + final_offset,
                 sink->final_bytes, &transcript_error);
         if (transcript_rc != YVEX_OK) {
             session->message_count = prior_messages;
@@ -1008,6 +1044,7 @@ static int session_provider_result_prepare(
     unsigned char *owned_completion = NULL;
     unsigned long long completion_count;
     unsigned long long visible_count;
+    unsigned long long final_offset = 0u, final_visible;
     int status;
     if (!request->provider_request) return YVEX_OK;
     visible_count = provider_visible_bytes(
@@ -1017,17 +1054,22 @@ static int session_provider_result_prepare(
     completion_count = visible_count;
     if (request->reasoning_policy != YVEX_REASONING_DISABLED) {
         conversation = session_conversation_protocol(view->tokenizer);
-        if (!conversation || sink->reasoning_active ||
-            sink->reasoning_bytes + sink->final_bytes !=
-                result->generated_text_bytes ||
-            visible_count < sink->reasoning_bytes ||
-            visible_count - sink->reasoning_bytes > sink->final_bytes ||
-            strlen(conversation->thinking_end) > ULLONG_MAX - visible_count) {
+        if (!conversation ||
+            turn_output_geometry(sink, result->generated_text_bytes,
+                                 &final_offset, err) != YVEX_OK ||
+            visible_count < final_offset ||
+            visible_count - final_offset > sink->final_bytes) {
             yvex_error_set(err, YVEX_ERR_FORMAT, "server.provider.reasoning",
                            "typed reasoning channels do not form a complete source output");
             return YVEX_ERR_FORMAT;
         }
-        completion_count = visible_count + strlen(conversation->thinking_end);
+        final_visible = visible_count - final_offset;
+        if (!yvex_core_u64_add(sink->reasoning_bytes,
+                               strlen(conversation->thinking_end),
+                               &completion_count) ||
+            !yvex_core_u64_add(completion_count, final_visible,
+                               &completion_count))
+            return YVEX_ERR_BOUNDS;
         if (completion_count > SIZE_MAX) return YVEX_ERR_BOUNDS;
         owned_completion = malloc((size_t)completion_count);
         if (!owned_completion) return YVEX_ERR_NOMEM;
@@ -1037,11 +1079,11 @@ static int session_provider_result_prepare(
         memcpy(owned_completion + sink->reasoning_bytes,
                conversation->thinking_end,
                strlen(conversation->thinking_end));
-        if (visible_count > sink->reasoning_bytes)
+        if (final_visible)
             memcpy(owned_completion + sink->reasoning_bytes +
                        strlen(conversation->thinking_end),
-                   session->turn_text + sink->reasoning_bytes,
-                   (size_t)(visible_count - sink->reasoning_bytes));
+                   session->turn_text + final_offset,
+                   (size_t)final_visible);
         completion = owned_completion;
     }
     status = yvex_tokenizer_parse_provider_completion(
