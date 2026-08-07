@@ -133,9 +133,11 @@ baseline facts, not a release benchmark.
 The active implementation now derives execution geometry from one sealed model
 descriptor, admits binding v8 beside retained v7, separates hardware,
 workload, capacity and state-page facts, refuses insufficient model-residency
-memory before artifact open, defines a phase roofline ledger, and admits an
-identity-bound native `sm_121` CUBIN beside portable PTX. Specialized kernels,
-Tensor Core execution and the optimized serving after-state remain open.
+memory before artifact open, commits host graph state through stable per-class
+virtual pages, defines a phase roofline ledger, and admits an identity-bound
+native `sm_121` CUBIN beside portable PTX. CUDA state residency still allocates
+complete banks. Specialized kernels, Tensor Core execution, real deep-context
+qualification and the optimized serving after-state remain open.
 
 The continuation selects expert placement, cache, grouped execution, fusion,
 prefetch, graph capture and kernel order only from measured phase economics.

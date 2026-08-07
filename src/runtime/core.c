@@ -162,8 +162,9 @@ int yvex_runtime_private_success(yvex_error *err) {
 }
 
 static int runtime_attention_state_provider_valid(const yvex_attention_state_provider *provider) {
-    return provider && provider->schema_version == YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V4 &&
-           provider->context && provider->prepare && provider->summary && provider->view &&
+    return provider && provider->schema_version == YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V5 &&
+           provider->context && provider->configure_pages && provider->prepare &&
+           provider->summary && provider->view &&
            provider->identity && provider->begin && provider->stage &&
            provider->select_prefix &&
            provider->prepare_commit && provider->publish_commit && provider->cancel_commit &&

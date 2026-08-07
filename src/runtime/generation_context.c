@@ -815,6 +815,7 @@ int yvex_runtime_generation_context_open(
 {
     yvex_runtime_generation_context *context = NULL;
     yvex_runtime_decode_options decode_options = {0};
+    yvex_runtime_model_failure state_failure = {0};
     yvex_tokenizer_decode_options decoder_options = {0};
     const yvex_runtime_logits_plan_summary *logits_plan = NULL;
     unsigned long long hidden_bytes, logits_bytes;
@@ -862,6 +863,9 @@ int yvex_runtime_generation_context_open(
     rc = generation_execution_profile_build(context, err);
     if (rc != YVEX_OK) goto failure;
     rc = generation_capacity_build(context, err);
+    if (rc != YVEX_OK) goto failure;
+    rc = yvex_runtime_session_configure_persistent_pages(
+        session, &context->capacity_plan, &state_failure, err);
     if (rc != YVEX_OK) goto failure;
     rc = yvex_execution_shape_registry_open(
         &context->execution_shapes, 128ull, err);

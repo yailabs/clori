@@ -196,6 +196,20 @@ promotion therefore name the same committed state when they publish the same
 token sequence. Canonical synthetic probes, which have no token input, retain
 their sealed execution identity instead.
 
+The host graph-state provider reserves stable virtual spans for each state
+component and commits physical pages only as admitted history ranges become
+reachable. Page geometry comes from the capacity plan independently for SWA,
+compressed, HCA, indexer, rolling and draft classes; it is not one global token
+constant. The pool charges page tables and actual system-page residency before
+candidate writes or committed publication. Reset releases physical pages with
+the virtual address unchanged. Reference providers without a capacity plan
+retain the bounded eager allocation oracle.
+
+This host paging does not make CUDA residency paged. The current CUDA session
+owner still allocates complete state banks for its admitted recipe, so 512K
+product execution and deep-context readiness remain refused until device
+residency consumes the same class plan without full-capacity duplication.
+
 An ordinary execution unit follows:
 
 ```text

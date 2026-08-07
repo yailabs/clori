@@ -187,6 +187,8 @@ domain algorithms. No writer owns command output.
 | `src/runtime/benchmark.c` | identity-bound runtime timing, baseline, CSV, and deterministic SVG serialization |
 | `src/graph/execution.c` | Physical Execution IR, compiled execution-profile identities, device-view admission, and execution-shape registry |
 | `src/graph/candidate.c` | prefix-addressable attention candidate deltas and exact accepted-prefix projection |
+| `src/graph/state.c` | committed/candidate persistent-state transactions, prefix promotion, rollback and state identity |
+| `src/graph/state_pages.c` | stable virtual state spans, per-class host-page commitment, pool accounting and release lifecycle |
 | `src/graph/state_recipe.c` | immutable family-neutral persistent-state recipe projection |
 | `src/server/core.c` | one-model host, private listener, bounded queue, worker and shutdown |
 | `src/server/session.c` | exact conversation sessions, KV continuation, turns and partial state |

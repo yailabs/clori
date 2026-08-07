@@ -504,6 +504,56 @@ int yvex_runtime_session_prepare_persistent_state(
         session, YVEX_TENSOR_SCOPE_GLOBAL, capacity, failure, err);
 }
 
+int yvex_runtime_session_configure_persistent_pages(
+    yvex_runtime_execution_session *session,
+    const yvex_execution_capacity_plan *capacity,
+    yvex_runtime_model_failure *failure, yvex_error *err)
+{
+    yvex_attention_failure state_failure;
+    int rc, target_configured = 0;
+    if (!session || !capacity || !session->lifecycle_mutex_ready ||
+        pthread_mutex_lock(&session->lifecycle_mutex) != 0)
+        return yvex_runtime_private_refuse(
+            failure, YVEX_RUNTIME_REFUSE_WORKSPACE_LOCK, 1ull, 0ull, err);
+    if (!session->summary.open || session->summary.busy || session->closing ||
+        !session->attention_state_provider_ready ||
+        !session->attention_state_provider.configure_pages ||
+        (session->draft_attention_state_provider_ready &&
+         !session->draft_attention_state_provider.configure_pages)) {
+        rc = yvex_runtime_private_refuse(
+            failure, YVEX_RUNTIME_REFUSE_WORKSPACE_SESSION_STATE, 0ull, 1ull,
+            err);
+        goto done;
+    }
+    memset(&state_failure, 0, sizeof(state_failure));
+    rc = session->attention_state_provider.configure_pages(
+        session->attention_state_provider.context, capacity, &state_failure,
+        err);
+    target_configured = rc == YVEX_OK;
+    if (rc == YVEX_OK && session->draft_attention_state_provider_ready)
+        rc = session->draft_attention_state_provider.configure_pages(
+            session->draft_attention_state_provider.context, capacity,
+            &state_failure, err);
+    if (rc != YVEX_OK) {
+        if (target_configured && session->draft_attention_state_provider_ready) {
+            yvex_error cleanup;
+            session->summary.invalidated = 1;
+            (void)yvex_runtime_private_session_invalidate(session, 1, &cleanup);
+        }
+        yvex_runtime_private_failure_record(
+            failure, YVEX_RUNTIME_MODEL_FAILURE_GRAPH,
+            "persistent-state-pages", 1ull, 0ull,
+            "execution capacity could not configure persistent state pages");
+    }
+done:
+    (void)pthread_mutex_unlock(&session->lifecycle_mutex);
+    if (rc == YVEX_OK) {
+        if (failure) memset(failure, 0, sizeof(*failure));
+        yvex_error_clear(err);
+    }
+    return rc;
+}
+
 int yvex_runtime_session_reset_persistent_state(yvex_runtime_execution_session *session,
     yvex_runtime_model_failure *failure, yvex_error *err) {
     yvex_attention_failure state_failure;

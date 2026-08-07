@@ -1844,6 +1844,109 @@ static int test_operator_missing_binding_refusal(void)
     return 0;
 }
 
+static void state_page_capacity_open(yvex_execution_capacity_plan *capacity)
+{
+    unsigned long long index;
+
+    memset(capacity, 0, sizeof(*capacity));
+    capacity->schema_version = YVEX_EXECUTION_CAPACITY_PLAN_SCHEMA_V1;
+    capacity->per_session_maximum = 524288ull;
+    capacity->state_pool_bytes = 64ull * 1024ull;
+    capacity->state_class_count = 6ull;
+    (void)snprintf(capacity->model_execution_identity, YVEX_SHA256_HEX_CAP,
+                   "%064x", 0x101u);
+    (void)snprintf(capacity->hardware_profile_identity, YVEX_SHA256_HEX_CAP,
+                   "%064x", 0x102u);
+    (void)snprintf(capacity->workload_profile_identity, YVEX_SHA256_HEX_CAP,
+                   "%064x", 0x103u);
+    (void)snprintf(capacity->identity, YVEX_SHA256_HEX_CAP, "%064x", 0x104u);
+    for (index = 0ull; index < capacity->state_class_count; ++index) {
+        yvex_execution_state_class_plan *state = &capacity->state_classes[index];
+        state->state_class = (yvex_model_state_class)index;
+        state->logical_block_tokens =
+            index == YVEX_MODEL_STATE_COMPRESSED_HISTORY ||
+                    index == YVEX_MODEL_STATE_HCA_HISTORY ||
+                    index == YVEX_MODEL_STATE_INDEXER_HISTORY
+                ? 128ull
+                : 1ull;
+        state->bytes_per_block = 4096ull;
+        state->page_tokens = index == YVEX_MODEL_STATE_COMPRESSED_HISTORY
+                                 ? 128ull
+                             : index == YVEX_MODEL_STATE_HCA_HISTORY
+                                 ? 128ull
+                             : index == YVEX_MODEL_STATE_INDEXER_HISTORY
+                                 ? 256ull : 16ull;
+        state->page_bytes = state->page_tokens /
+                            state->logical_block_tokens *
+                            state->bytes_per_block;
+    }
+}
+
+static int test_state_pages(const state_plan_fixture *fixture)
+{
+    yvex_execution_capacity_plan capacity, changed;
+    yvex_attention_state_recipe_request request = {0};
+    yvex_attention_state_recipe recipe;
+    yvex_graph_attention_state_summary summary, touched;
+    yvex_attention_failure failure;
+    test_state state = {0}, limited = {0};
+    yvex_error err;
+    const float *stable;
+    char delta[YVEX_SHA256_HEX_CAP];
+
+    yvex_error_clear(&err);
+    state_page_capacity_open(&capacity);
+    request.layer_ordinal = 1ull;
+    request.final_position = capacity.per_session_maximum;
+    request.attention_plan_identity = fixture->plan.summary.attention_plan_identity;
+    YVEX_TEST_ASSERT(
+        state_open(&state, state_family(), &fixture->plan, 512ull * 1024ull,
+                   &failure, &err) == YVEX_OK &&
+            state.configure_pages(state.context, &capacity, &failure, &err) == YVEX_OK &&
+            state_recipe_project(&fixture->layers[1], &request, &recipe,
+                                 &failure, &err) == YVEX_OK &&
+            state.prepare(state.context, 1ull, &recipe, NULL, &failure, &err) == YVEX_OK &&
+            state_summary(&state, &summary, &err) == YVEX_OK && summary.paged &&
+            summary.paging_configured && summary.virtual_bytes > summary.resident_bytes &&
+            strcmp(summary.capacity_plan_identity, capacity.identity) == 0,
+        "512K logical state prepares through class pages without full physical allocation");
+    stable = state_view(&state, 1ull, YVEX_ATTENTION_STATE_VIEW_COMMITTED)->local_kv;
+    YVEX_TEST_ASSERT(
+        state_begin(&state, &fixture->layers[1], 0ull, 1ull, NULL,
+                    &failure, &err) == YVEX_OK &&
+            state_apply_token(&state, &fixture->layers[1], 0ull, 1, delta) &&
+            state.abort(state.context, &failure, &err) == YVEX_OK &&
+            state_summary(&state, &touched, &err) == YVEX_OK &&
+            touched.next_position == 0ull,
+        "first candidate abort does not read an uncommitted history page");
+    YVEX_TEST_ASSERT(
+        state_apply_token(&state, &fixture->layers[1], 0ull, 0, delta) &&
+            state_summary(&state, &touched, &err) == YVEX_OK &&
+            touched.resident_bytes > summary.resident_bytes,
+        "first state publication commits only its reached semantic pages");
+    changed = capacity;
+    (void)snprintf(changed.identity, sizeof(changed.identity), "%064x", 0x105u);
+    YVEX_TEST_ASSERT(
+        state.configure_pages(state.context, &changed, &failure, &err) == YVEX_ERR_STATE &&
+            state.reset(state.context, &failure, &err) == YVEX_OK &&
+            state_summary(&state, &summary, &err) == YVEX_OK &&
+            summary.page_release_count > 0ull &&
+            state_view(&state, 1ull, YVEX_ATTENTION_STATE_VIEW_COMMITTED)->local_kv == stable &&
+            state_close(&state),
+        "reset releases physical pages without relocating the admitted state span");
+    capacity.state_pool_bytes = 4096ull;
+    YVEX_TEST_ASSERT(
+        state_open(&limited, state_family(), &fixture->plan, 512ull * 1024ull,
+                   &failure, &err) == YVEX_OK &&
+            limited.configure_pages(limited.context, &capacity, &failure, &err) == YVEX_OK &&
+            limited.prepare(limited.context, 1ull, &recipe, NULL,
+                            &failure, &err) == YVEX_ERR_BOUNDS &&
+            state_summary(&limited, &summary, &err) == YVEX_OK &&
+            summary.prepared_layer_count == 0ull && state_close(&limited),
+        "state-pool budget refuses deep storage before a layer becomes visible");
+    return 0;
+}
+
 int yvex_test_runtime_state(void)
 {
     state_plan_fixture fixture;
@@ -1855,6 +1958,7 @@ int yvex_test_runtime_state(void)
     if (test_capacity_plan(&fixture) != 0) return 1;
     if (test_execution_descriptor_identity() != 0) return 1;
     if (test_operator_missing_binding_refusal() != 0) return 1;
+    if (test_state_pages(&fixture) != 0) return 1;
     if (test_state_identity_geometry(&fixture) != 0) return 1;
     if (test_state_lifecycle(&fixture) != 0) return 1;
     if (test_state_prefix_promotion(&fixture) != 0) return 1;

@@ -46,6 +46,8 @@ entry audit:
 | DSpark target-anchor internal ABI | v1 | v1 | one typed sampling source and its staged selection replace mandatory complete-probability materialization | in-process helper and result-field naming only; no persisted, wire, state-layout or public incompatibility | old rebuilt callers materialize one complete probability row before target selection | complete rebuild; CPU and evidence-bearing paths use the host sampling oracle, production CUDA consumes resident logits; explicit full distributions remain forensic operations | runtime sampling/speculation/generation, CUDA bounded selection, full-array production guard, transaction abort and commit |
 | Stochastic-speculation internal ABI | v1 | v1 | resident draft/target row directories and bounded p/q acceptance facts | in-process operation table and helper signatures only; no persisted, wire or state-layout incompatibility | old objects are never mixed with rebuilt objects; the retained oracle expects host probability rows | complete rebuild; production CUDA uses the device operation, while CPU and audit/forensic profiles retain the oracle; no artifact, binding, protocol, event, profile or public API migration | every accepted prefix, residual and bonus agreement, workspace and malformed-token refusal, canonical identity reseal |
 | Generation plan ABI | v4 | v5 | exact workload-profile identity associated with phase roofline evidence | in-process plan layout and semantic identity; result and wire layouts are unchanged | rebuilt v5 readers reject plans that cannot identify their workload profile | complete rebuild; no artifact, binding, protocol, event or public API migration | plan identity mutation, mismatched-workload refusal and live CUDA generation result validation |
+| Attention-state summary | v3 | v4 | capacity-plan identity plus virtual, resident, page-table, commit and release facts | in-process internal record layout only; no persisted or wire representation | rebuilt readers require v4 and never mix old objects | complete rebuild; the page-pool owner projects counters without a second mutable truth | 512K logical reservation, bounded resident growth, reset release and stable-address tests |
+| Attention-state provider ABI | v4 | v5 | capacity-plan configuration before persistent storage admission | in-process function-table layout only; no persisted, wire or public C incompatibility | rebuilt runtime validation rejects a provider without the configuration operation | complete rebuild; target and draft configure under one serialized session mutation and partial configuration invalidates the session | provider forwarding/failure, changed-plan refusal, pre-mutation budget refusal and abort rollback |
 
 The later source-authored conversation gate earned these product-boundary
 changes. Reader and writer behavior remain separate because compatibility in
@@ -223,6 +225,20 @@ on the explicit eager reference until the target/draft arena is graph-stable.
 Shape reconfiguration within one graph mode and profile identity retains
 compatible cached executables; a mode or identity change still invalidates
 them.
+
+The graph persistent-state provider now consumes the admitted per-class page
+geometry before preparing storage. Stable anonymous virtual spans preserve the
+contiguous history ABI, while physical host pages are committed only for
+reached SWA, compressed, HCA, indexer and rolling-state ranges. Each
+provider-local checked pool accounts actual host-page residency, semantic pages
+and page-table bytes;
+candidate and committed destinations preflight that pool before mutation.
+Reset discards physical pages without relocating the virtual spans, and an
+aborted first candidate never reads an uncommitted committed page. A 512K
+logical-capacity fixture proves reservation without full physical allocation,
+and a bounded-pool fixture refuses before a layer becomes visible. This is the
+host graph-state boundary only: CUDA state residency still owns full-capacity
+banks, so real deep-context execution is not yet admitted.
 
 The CUDA kernel bundle now admits an ordered set of independently compiled
 manifest-owned modules. General kernels and the MoE kernel family share one
@@ -453,10 +469,12 @@ coexistence, typed capacity/page planning, pre-materialization memory refusal,
 the availability-aware production phase ledger, and identity-bound native
 SM121 CUBIN admission. It also establishes identity-bound width-N CUDA logits
 publication and greedy/stochastic DSpark target-anchor selection without
-full-vocabulary host materialization.
+full-vocabulary host materialization, plus stable-address host graph-state
+paging under the admitted per-class capacity plan.
 It does not yet establish Tensor Core execution, specialized attention,
 GB10-competitive grouped MoE, zero per-layer attention synchronization,
 full-model live qualification of target-only or DSpark device sampling,
-full-model live qualification of all reasoning modes, paged state allocation,
-prefix persistence, continuous batching, competitive throughput, evaluation,
-benchmark qualification, release qualification, or Hugging Face publication.
+full-model live qualification of all reasoning modes, paged CUDA state
+residency, real deep-context qualification, prefix persistence, continuous
+batching, competitive throughput, evaluation, benchmark qualification,
+release qualification, or Hugging Face publication.
