@@ -1916,7 +1916,7 @@ static int test_state_pages(const state_plan_fixture *fixture)
     yvex_attention_state_recipe recipe, initial_recipe;
     yvex_graph_attention_state_summary summary, touched;
     yvex_attention_failure failure;
-    test_state state = {0}, initial = {0}, limited = {0};
+    test_state state = {0}, initial = {0}, reference = {0}, limited = {0};
     yvex_error err;
     const float *stable;
     char delta[YVEX_SHA256_HEX_CAP];
@@ -1930,6 +1930,12 @@ static int test_state_pages(const state_plan_fixture *fixture)
         state_recipe_project(&fixture->layers[1], &request, &initial_recipe,
                              &failure, &err) == YVEX_OK &&
             initial_recipe.components[1].capacity == 0ull &&
+            state_open(&reference, state_family(), &fixture->plan,
+                       512ull * 1024ull, &failure, &err) == YVEX_OK &&
+            reference.prepare(reference.context, 1ull, &initial_recipe, NULL,
+                              &failure, &err) == YVEX_OK &&
+            reference.reset(reference.context, &failure, &err) == YVEX_OK &&
+            state_close(&reference) &&
             state_open(&initial, state_family(), &fixture->plan, 512ull * 1024ull,
                        &failure, &err) == YVEX_OK &&
             initial.configure_pages(initial.context, &capacity, &failure, &err) == YVEX_OK &&
@@ -1937,7 +1943,7 @@ static int test_state_pages(const state_plan_fixture *fixture)
                             &failure, &err) == YVEX_OK &&
             initial.reset(initial.context, &failure, &err) == YVEX_OK &&
             state_close(&initial),
-        "periodic state remains valid before its first history row exists");
+        "paged and reference periodic state remain valid before the first history row");
     memset(&request, 0, sizeof(request));
     request.layer_ordinal = 1ull;
     request.final_position = capacity.per_session_maximum;

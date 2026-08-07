@@ -599,7 +599,7 @@ static int pages_component_rows(
         *rows = recipe->kind == YVEX_ATTENTION_STATE_COMPONENT_HISTORY
                     ? recipe->capacity
                     : recipe->rolling.state_slots;
-        return *rows != 0ull;
+        return *rows != 0ull || recipe->kind == YVEX_ATTENTION_STATE_COMPONENT_HISTORY;
     }
     plan = pages_component_plan(
         capacity, pages_component_class(summary, layer, recipe));
