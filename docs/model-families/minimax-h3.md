@@ -1,9 +1,10 @@
 # MiniMax-H3 FL2VA Family Record
 
 Status: source acquired and verified; logical architecture, tensor roles, and
-Transformation IR admitted; source-faithful Audio and Visual VAE component
-artifacts admitted through native and pinned official readers; complete Audio
-VAE and bounded multi-patch Visual VAE CPU decodes numerically conform; not an
+Transformation IR admitted; source-faithful Audio VAE, Visual VAE, and Text
+Encoder component artifacts admitted through native and pinned official
+readers; complete Audio VAE and bounded multi-patch Visual VAE CPU decodes
+numerically conform; one exact Qwen3-VL embedding row executes on GB10; not an
 executable family
 
 This record owns current YVEX facts for MiniMax-H3 Base FL2VA. YVEX now admits
@@ -12,14 +13,17 @@ has a non-runtime model target, one bounded family owner, a composite logical
 component manifest, a seven-edge phase DAG through transactional media
 publication, an exact tensor-role classifier, and component-aware
 artifact-neutral Transformation IR schema v2. YVEX emits independently
-identified Audio and Visual VAE component GGUF files without changing source
-dtype. The graph-family recipe binds each file to the exact component, source
+identified Audio VAE, Visual VAE, and Text Encoder component GGUF files without
+changing source dtype. The graph-family recipe binds each file to the exact component, source
 snapshot, physical plan, aggregate payload, and whole-file identities before
 materialization. The graph owner executes the complete Audio VAE decoder and
 all 36 Visual VAE decoder blocks for checked latent geometries, with
-independent numerical conformance evidence for both. It does not add a family
-runtime, full-scale Visual qualification, GB10 path, synchronized media path, or
-release obligation. The frozen quantitative intake evidence is the
+independent numerical conformance evidence for both. A staged Text Encoder
+residency registers the exact BF16 component with CUDA and gathers a checked
+token embedding with zero error against independent source bytes. This does
+not execute any of the 64 Qwen text layers. It does not add a family runtime,
+full-scale Visual qualification, complete conditioning, synchronized media
+path, or release obligation. The frozen quantitative intake evidence is the
 [FL2VA intake audit](../audits/minimax-h3-fl2va-b8b09e3/README.md); the common
 promotion rules remain in the [family integration contract](integration.md).
 
@@ -31,8 +35,8 @@ promotion rules remain in the [family integration contract](integration.md).
 | Branch status | open |
 | Branch completion | first YVEX-authored playable synchronized MiniMax-H3 FL2VA audio-video output |
 | Current wave | `R010.MINIMAX.H3.FL2VA.END_TO_END.0` |
-| Current boundary | exact Audio and Visual VAE component artifacts admitted and materialized; complete Audio and bounded multi-patch Visual CPU decodes conform to pinned upstream oracles |
-| Next expected boundary | GB10 Visual component execution and full-scale qualification, then exact Qwen3-VL/Omni latent generation and synchronized media publication |
+| Current boundary | exact Audio VAE, Visual VAE, and Text Encoder component artifacts admitted; complete Audio and bounded multi-patch Visual CPU decodes conform; exact Text embedding initialization conforms on GB10 |
+| Next expected boundary | first complete Qwen3-VL text layer and then the exact 50-layer `t2va` conditioning path, followed by Omni latent generation and synchronized media publication |
 
 The branch preserves the accepted intake history and remains open across all
 later source, artifact, graph, backend, residency, latent, VAE, media, and
@@ -58,7 +62,7 @@ or rename the branch.
 | Tensor-role-map identity | `61e7a2cfc29e6dd3da966878f5388f1472a406d7e33ba34ef65f44b61f08f013` |
 | Transformation IR identity | `bd941103d754df8c1eb02ff9b90db4ba86b7e389691f2d0c4027343eccbc0b0b` |
 | Aggregate derivation identity | `cc2886a388a475c2df246558dfb41c8d66e549afd4c4e34d19e2bbd3b70a3ff5` |
-| Evidence stage | exact source verified; architecture, tensor roles, and Transformation IR admitted; Audio and Visual VAE component artifacts emitted and admitted; complete Audio and bounded multi-patch Visual CPU decodes numerically conform |
+| Evidence stage | exact source verified; architecture, tensor roles, and Transformation IR admitted; Audio VAE, Visual VAE, and Text Encoder component artifacts emitted and admitted; complete Audio and bounded multi-patch Visual CPU decodes numerically conform; one exact Text embedding row conforms on GB10 |
 
 The external evidence directory used during the intake was
 `/home/dgmothx/lab/models/intake/minimax-h3/<FULL_REVISION>/`. That path is an
@@ -505,14 +509,13 @@ admitted by this component evidence.
 
 ## Visual VAE physical and CPU numerical boundary
 
-The Visual VAE uses the same source-faithful physical profile. Its source has
-rank-five Conv3D weights while GGUF v3 admits at most four dimensions. The
-writer therefore preserves the first three logical axes, folds only the
-remaining trailing axes into physical axis four, retains the complete logical
-shape in Transformation IR, and records
-`preserve-leading-three-fold-trailing-v1`. Any other equal-element reshape is
-refused. This is an exact storage projection, not a change to convolution
-semantics.
+The Visual VAE uses the accepted source-faithful physical profile. For rank-five
+Conv3D weights it retains the first three logical axes and folds all trailing
+logical axes into GGUF physical axis four. Transformation IR retains the
+complete logical shape and the artifact records
+`preserve-leading-three-fold-trailing-v1`. Any other equal-element
+reshape is refused. This is an exact storage projection, not a change to
+convolution semantics.
 
 | Fact | Value |
 | --- | --- |
@@ -587,18 +590,72 @@ executes the production decoder, and publishes the exact output extent without
 replacing an existing file. `end_user_path_available: false`: raw F32 RGB frames
 are not a playable video, and no audio synchronization or media container exists.
 
+## Text Encoder artifact and embedding boundary
+
+The Text Encoder uses the corrected source-faithful physical projection
+`reverse-logical-fold-outer-v1`. GGUF axis zero is the contiguous row width, so
+each rank-two matrix reverses its logical axes; ranks above four retain the
+three innermost reversed axes and fold remaining outer logical axes into axis
+four. Transformation IR retains every original logical shape. The earlier
+leading-axis projection was rejected because equal element count did not
+preserve encoded row semantics.
+
+| Fact | Value |
+| --- | --- |
+| Component | Qwen3-VL Text/vision encoder |
+| Component identity | `a4b9c544dc15ea6d7fa5e7ed895410402206970b04a64e4b17334821a0fb21d0` |
+| Transformation identity | `4e940d589f14194ee827be627afac91ee28ee2a45f1add22753d9ed3dae3962a` |
+| Physical variant identity | `5b534130f5114f096db93b96cce26fc6def534c95b6d338b87a668591c20b78f` |
+| Payload-plan identity | `214f0afd6fd2718e8184ce169e55018bc1b93598d34e8930e0514e7fe91328c0` |
+| Writer-plan identity | `6bc51d17fa1d9fdc173764478853a16f503dd97dbf014ca47a55d4d7cbc60045` |
+| Quant-execution identity | `50fe7545f9fa204dd636fbdf44e660fc92dd52740d2f39b04118a83d72d058ee` |
+| Artifact identity / SHA-256 | `fd3178c1addbc325c17f23cf6aae9a46dfe0e152211cc7181e9fa512f4046021` |
+| Aggregate payload-byte identity | `c95ade3aef89252f46fb190b8d6d80dbbc6c335bef8fab3d2610dc688bcc326f` |
+| Tensor and element coverage | 1,058 of 1,058; 33,357,390,064 elements |
+| Source and physical dtype | BF16 |
+| Payload / GGUF file bytes | 66,714,780,128 / 66,714,871,392 |
+| Native and pinned official-reader admission | accepted; official revision `af97976c7810cdabb1863172f31c432dab767de7` |
+| Runtime/media readiness | false |
+
+The bounded graph path admits and materializes the complete component, hashes
+all payload bytes, creates one identity-bound 66,714,780,128-byte staged host
+residency, and registers that existing address with CUDA. CUDA context creation
+precedes the large locked arena so GB10 driver state cannot be starved by a
+late context allocation. The runtime consumes an already-open backend through
+the common residency owner; no MiniMax runtime or duplicate device copy is
+created.
+
+For token ID 1, the generic encoded-gather primitive decoded the exact
+`model.language_model.embed_tokens.weight` BF16 row to 5,120 F32 values. The
+independent source-row oracle has SHA-256
+`1c301c9ab63a7fc6737ef1bf2b8bf9f048d9f74f78bdad209120d72f67e40de3`.
+The GB10 result had maximum absolute error zero, residency identity
+`57a3f20e1e7177d8a8a98ba7161f10ef535f265c69866986f6a92f04ea72f773`,
+and execution identity
+`58c60a097568a2eb79c6c1cb020a839d05e5ed79643a3867f4bf91144d9b8ece`.
+It used one kernel launch, 4 H2D bytes for the token index, 20,484 accounted
+D2H bytes, and 20,488 device bytes. These are correctness-run resource facts,
+not benchmark claims.
+
+`production_capability_available: true` only for exact Text embedding
+initialization. `production_api_available: true` through the internal graph and
+backend family ABIs. `internal_live_runner_available: true`.
+`operator_command_available: false` and `end_user_path_available: false`: no
+operator command is promoted for a single embedding row, and neither the
+Qwen3-VL conditioning output nor any media output exists at this boundary.
+
 ## Progression and non-claims
 
 `progression_decision: proceed`
 
 `downstream_safe: true`
 
-The downstream consumer is backend-owned GB10 Visual execution and full-scale
-qualification, followed by the Qwen3-VL and Omni latent-generation
-path on `feature/minimax-h3`. There is no gate blocker, boundary incompleteness,
-evidence gap, or current external blocker in either admitted bounded component
-execution contract. Visual tiling, the exact Omni scheduler and MM-RoPE
-contracts, staged residency, synchronized media
+The downstream consumer is the first complete Qwen3-VL text transformer layer,
+then the exact 50-layer `t2va` conditioning path and Omni latent generation on
+`feature/minimax-h3`. There is no gate blocker, boundary incompleteness,
+evidence gap, or current external blocker in the admitted bounded component or
+embedding execution contracts. Visual tiling, the exact Omni scheduler and
+MM-RoPE contracts, complete staged phase residency, synchronized media
 transaction, evaluation, and benchmark are deferred depth with explicit later
 consumers. They do not weaken the two admitted execution identities, and none
 is claimed by them.
@@ -607,7 +664,7 @@ requires an eligibility conclusion.
 
 This implementation boundary does not prove:
 
-- MiniMax-H3 numerical execution or artifacts for the Qwen3-VL or Omni components;
+- complete Qwen3-VL conditioning or any Omni-Transformer numerical execution;
 - complete composite-artifact support or Physical Execution IR;
 - GB10 backend support or simultaneous/staged runtime residency;
 - Omni-Transformer, solver, timestep, or MM-RoPE numerical correctness;

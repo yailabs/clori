@@ -680,29 +680,28 @@ typedef struct {
 static int writer_component_shape_matches(const yvex_transform_shape *logical,
                                           const yvex_quant_decision *physical,
                                           int *folded) {
-    unsigned long long trailing = 1ull;
+    unsigned long long outer = 1ull;
     unsigned int dimension;
 
     if (!logical || !physical || !folded || !logical->rank || !physical->rank)
         return 0;
     if (logical->rank == physical->rank) {
         for (dimension = 0u; dimension < logical->rank; ++dimension)
-            if (logical->dims[dimension] != physical->dims[dimension])
+            if (logical->dims[logical->rank - dimension - 1u] != physical->dims[dimension])
                 return 0;
         return 1;
     }
     if (logical->rank <= YVEX_GGUF_QTYPE_MAX_DIMS ||
         physical->rank != YVEX_GGUF_QTYPE_MAX_DIMS)
         return 0;
-    for (dimension = 0u; dimension + 1u < YVEX_GGUF_QTYPE_MAX_DIMS;
-         ++dimension)
-        if (logical->dims[dimension] != physical->dims[dimension])
+    for (dimension = 0u; dimension + 1u < YVEX_GGUF_QTYPE_MAX_DIMS; ++dimension)
+        if (logical->dims[logical->rank - dimension - 1u] != physical->dims[dimension])
             return 0;
-    for (dimension = YVEX_GGUF_QTYPE_MAX_DIMS - 1u;
-         dimension < logical->rank; ++dimension)
-        if (!yvex_core_u64_mul(trailing, logical->dims[dimension], &trailing))
+    for (dimension = 0u;
+         dimension < logical->rank - YVEX_GGUF_QTYPE_MAX_DIMS + 1u; ++dimension)
+        if (!yvex_core_u64_mul(outer, logical->dims[dimension], &outer))
             return 0;
-    if (trailing != physical->dims[YVEX_GGUF_QTYPE_MAX_DIMS - 1u])
+    if (outer != physical->dims[YVEX_GGUF_QTYPE_MAX_DIMS - 1u])
         return 0;
     *folded = 1;
     return 1;
@@ -799,7 +798,7 @@ static int writer_component_metadata_build(writer_component_context *context) {
            (!context->physical_shape_folded ||
             writer_meta_text(context->metadata, &context->metadata_count,
                              "yvex.physical.shape.policy",
-                             "preserve-leading-three-fold-trailing-v1"));
+                             "reverse-logical-fold-outer-v1"));
 }
 
 static writer_fixture_tensor_status writer_component_tensors_build(

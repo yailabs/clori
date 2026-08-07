@@ -623,6 +623,9 @@ static int test_component_admission_routing(void)
 {
     yvex_complete_artifact_admission admission;
     yvex_artifact_admission_failure failure;
+    yvex_minimax_h3_conditioning_result conditioning;
+    unsigned int token = 1u;
+    float output[5120];
     yvex_error err;
 
     YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->component_admit(
@@ -636,6 +639,18 @@ static int test_component_admission_routing(void)
                          YVEX_ERR_INVALID_ARG &&
                          failure.code == YVEX_ARTIFACT_ADMISSION_INVALID_ARGUMENT,
                      "component admission refuses absent generic structural views");
+    memset(output, 0x5a, sizeof(output));
+    YVEX_TEST_ASSERT(yvex_backend_register_minimax_h3()->text_embed_cuda(
+                         NULL, NULL, 0ull, 0u, 0ull, 0ull, 0ull, NULL, 0ull,
+                         &token, 1ull, output, 5120ull, &conditioning, &err) ==
+                         YVEX_ERR_INVALID_ARG &&
+                         !conditioning.complete && ((unsigned char *)output)[0] == 0x5a,
+                     "CUDA conditioning refuses absent materialization without publication");
+    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->text_encoder_embed_artifact_cuda(
+                         NULL, NULL, NULL, &token, 1ull, output, 5120ull, 1ull, 1ull,
+                         &conditioning, &err) == YVEX_ERR_INVALID_ARG &&
+                         !conditioning.complete && ((unsigned char *)output)[0] == 0x5a,
+                     "artifact conditioning refuses absent exact component views");
     return 0;
 }
 

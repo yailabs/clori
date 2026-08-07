@@ -299,6 +299,128 @@ static int test_materialization_refusals(void)
     return 0;
 }
 
+/* Prove one verified component can own a deterministic staged resident pack. */
+static int test_component_residency(void)
+{
+    static const char component_identity[] =
+        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+    yvex_artifact *artifact = NULL;
+    yvex_gguf *gguf = NULL;
+    yvex_tensor_table *tensors = NULL;
+    yvex_complete_artifact_admission admission;
+    yvex_materialization_options materialization_options;
+    yvex_materialization_plan *plan = NULL;
+    yvex_materialization_session *session = NULL;
+    yvex_materialization_failure materialization_failure;
+    yvex_runtime_residency *first = NULL, *second = NULL;
+    yvex_runtime_residency_options options = {0};
+    yvex_runtime_residency_failure failure;
+    yvex_runtime_residency_summary first_summary, second_summary;
+    yvex_backend_options backend_options = {0};
+    yvex_backend *wrong_backend = NULL;
+    yvex_materialization_access_summary before, after;
+    const yvex_materialized_tensor_binding *binding;
+    const unsigned char *arena = NULL, *resident = NULL, *borrowed = NULL;
+    unsigned long long arena_bytes = 0ull, resident_bytes = 0ull;
+    yvex_error err;
+    int uploaded = 0, rc;
+
+    YVEX_TEST_ASSERT(open_fixture(&artifact, &gguf, &tensors) == 0,
+                     "open component residency fixture");
+    fill_fixture_admission(artifact, tensors, &admission);
+    yvex_materialization_options_default(&materialization_options);
+    rc = yvex_materialization_plan_build(
+        &plan, &admission, artifact, gguf, tensors, NULL,
+        &materialization_options, &materialization_failure, &err);
+    if (rc == YVEX_OK)
+        rc = yvex_materialization_session_open(
+            &session, plan, artifact, &materialization_options,
+            &materialization_failure, &err);
+    if (rc == YVEX_OK)
+        rc = yvex_materialization_session_commit(
+            session, &materialization_failure, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK, "component residency materialization committed");
+    binding = yvex_materialization_session_tensor_at(session, 0ull);
+    YVEX_TEST_ASSERT(binding && binding->encoded_bytes == 128ull,
+                     "component residency binding is exact");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_component_residency_prepare(
+            &first, session, "mutable-component", &options, &failure, &err) ==
+                YVEX_ERR_INVALID_ARG && !first &&
+            failure.code == YVEX_RUNTIME_RESIDENCY_FAILURE_INVALID_ARGUMENT,
+        "component residency refuses a mutable semantic identity");
+    options.maximum_host_bytes = 127ull;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_component_residency_prepare(
+            &first, session, component_identity, &options, &failure, &err) ==
+                YVEX_ERR_NOMEM && !first &&
+            failure.code == YVEX_RUNTIME_RESIDENCY_FAILURE_BUDGET,
+        "component residency refuses a host budget below exact payload bytes");
+    options.maximum_host_bytes = 128ull;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_component_residency_prepare(
+            &first, session, component_identity, &options, &failure, &err) == YVEX_OK &&
+            first,
+        "component residency prepares within its exact host budget");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_residency_snapshot(
+            first, &first_summary, &arena, &arena_bytes, &err) == YVEX_OK &&
+            first_summary.sealed && first_summary.attached && first_summary.host_ready &&
+            first_summary.host_locked && first_summary.model_complete &&
+            first_summary.binding_count == 1ull && first_summary.model_binding_count == 1ull &&
+            first_summary.encoded_bytes == 128ull && arena && arena_bytes == 128ull &&
+            yvex_sha256_hex_valid(first_summary.payload_digest) &&
+            yvex_sha256_hex_valid(first_summary.residency_identity),
+        "component residency publishes complete deterministic host facts");
+    backend_options.kind = YVEX_BACKEND_KIND_CPU;
+    YVEX_TEST_ASSERT(
+        yvex_backend_open(&wrong_backend, &backend_options, &err) == YVEX_OK &&
+            yvex_runtime_residency_cuda_session_attach(
+                first, &wrong_backend, 1ull, &uploaded, &second_summary, &err) ==
+                YVEX_ERR_INVALID_ARG &&
+            wrong_backend && !uploaded &&
+            yvex_backend_close_checked(&wrong_backend, &err) == YVEX_OK && !wrong_backend,
+        "component residency refuses a prepared non-CUDA owner without consuming it");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_residency_binding_view(
+            first, binding, &resident, &resident_bytes, &err) == YVEX_OK &&
+            resident == arena && resident_bytes == binding->encoded_bytes,
+        "component residency resolves the exact encoded tensor span");
+    YVEX_TEST_ASSERT(
+        yvex_materialization_session_access_summary(session, &before, &err) == YVEX_OK &&
+            yvex_materialization_session_borrow(
+                session, binding, 0ull, (size_t)binding->encoded_bytes,
+                &borrowed, &materialization_failure, &err) == YVEX_OK &&
+            borrowed == resident &&
+            yvex_materialization_session_access_summary(session, &after, &err) == YVEX_OK &&
+            after.artifact_read_calls == before.artifact_read_calls &&
+            after.resident_read_calls == before.resident_read_calls + 1ull,
+        "component materialization borrows resident bytes without reopening the artifact");
+    YVEX_TEST_ASSERT(yvex_runtime_residency_close(&first, &err) == YVEX_OK && !first,
+                     "component residency detaches and closes");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_component_residency_prepare(
+            &second, session, component_identity, &options, &failure, &err) == YVEX_OK &&
+            yvex_runtime_residency_snapshot(
+                second, &second_summary, NULL, NULL, &err) == YVEX_OK &&
+            strcmp(second_summary.payload_digest, first_summary.payload_digest) == 0 &&
+            strcmp(second_summary.residency_identity,
+                   first_summary.residency_identity) == 0,
+        "repeated component residency has byte-identical semantic identities");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_residency_invalidate(second, &err) == YVEX_OK &&
+            yvex_runtime_residency_binding_view(
+                second, binding, &resident, &resident_bytes, &err) == YVEX_ERR_STATE &&
+            yvex_runtime_residency_close(&second, &err) == YVEX_OK && !second,
+        "component residency invalidation refuses subsequent tensor resolution");
+    yvex_materialization_session_close(session);
+    yvex_materialization_plan_close(plan);
+    yvex_tensor_table_close(tensors);
+    yvex_gguf_close(gguf);
+    yvex_artifact_close(artifact);
+    return 0;
+}
+
 /* Prove a sealed resident provider replaces only its exact tensor's physical reads. */
 static int test_materialization_resident_provider(void)
 {
@@ -456,6 +578,7 @@ int yvex_test_materialization_runtime(void)
 {
     if (test_materialization_fixture() != 0) return 1;
     if (test_materialization_refusals() != 0) return 1;
+    if (test_component_residency() != 0) return 1;
     if (test_materialization_resident_provider() != 0) return 1;
     return 0;
 }

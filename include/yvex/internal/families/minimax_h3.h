@@ -1,18 +1,11 @@
-/*
- * Bind the exact MiniMax-H3 FL2VA source to one component-aware logical target.
- *
- * The model target owns source interpretation and Transformation IR composition. The family
- * graph registration separately admits exact component artifacts and bounded component
- * execution without promoting a family runtime, solver, complete model, or media capability.
- */
+/* Bind the exact FL2VA source, logical target, component graph, and bounded execution without
+ * promoting a family runtime, solver, complete model, or media capability. */
 #ifndef INCLUDE_YVEX_INTERNAL_FAMILIES_MINIMAX_H3_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_FAMILIES_MINIMAX_H3_H_INCLUDED
-
 #include <stddef.h>
 #include <yvex/core.h>
 #include <yvex/source.h>
 #include <yvex/internal/source_payload.h>
-
 typedef struct yvex_transform_ir yvex_transform_ir;
 typedef struct yvex_transform_binding yvex_transform_binding;
 typedef struct yvex_artifact yvex_artifact;
@@ -21,7 +14,7 @@ typedef struct yvex_tensor_table yvex_tensor_table;
 typedef struct yvex_complete_artifact_admission yvex_complete_artifact_admission;
 typedef struct yvex_artifact_admission_failure yvex_artifact_admission_failure;
 typedef struct yvex_materialization_session yvex_materialization_session;
-
+typedef struct yvex_backend yvex_backend;
 #define YVEX_MINIMAX_H3_TARGET_ID "minimax-h3-fl2va"
 #define YVEX_MINIMAX_H3_REPOSITORY "MiniMaxAI/MiniMax-H3"
 #define YVEX_MINIMAX_H3_REVISION "b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08"
@@ -42,7 +35,6 @@ typedef struct yvex_materialization_session yvex_materialization_session;
 #define YVEX_MINIMAX_H3_TENSOR_BYTES 144016000740ull
 #define YVEX_MINIMAX_H3_SOURCE_BYTES 144051204180ull
 #define YVEX_MINIMAX_H3_NO_COORDINATE (~0ull)
-
 /* Exact source-faithful Audio VAE physical boundary emitted by YVEX. */
 #define YVEX_MINIMAX_H3_AUDIO_COMPONENT_IDENTITY                                      \
     "be921beb8581b44624aaad452f30f77f1e204159ae8fe11da455d5208dc4e62b"
@@ -79,7 +71,7 @@ typedef struct yvex_materialization_session yvex_materialization_session;
 #define YVEX_MINIMAX_H3_AUDIO_ELEMENTS 151326585ull
 #define YVEX_MINIMAX_H3_AUDIO_PAYLOAD_BYTES 605306340ull
 #define YVEX_MINIMAX_H3_AUDIO_FILE_BYTES 605401984ull
-
+#define YVEX_MINIMAX_H3_TEXT_COMPONENT_IDENTITY "a4b9c13360aeaa03bbd4d9681b821575e6556bead71c226d0aa72fca5aca7382"
 typedef enum {
     YVEX_MINIMAX_H3_COMPONENT_PIPELINE = 0,
     YVEX_MINIMAX_H3_COMPONENT_PROCESSOR,
@@ -91,7 +83,6 @@ typedef enum {
     YVEX_MINIMAX_H3_COMPONENT_LATENT_CONTROLLER,
     YVEX_MINIMAX_H3_COMPONENT_COUNT
 } yvex_minimax_h3_component_id;
-
 typedef enum {
     YVEX_MINIMAX_H3_PHASE_PREPARE = 1,
     YVEX_MINIMAX_H3_PHASE_CONDITION,
@@ -101,7 +92,6 @@ typedef enum {
     YVEX_MINIMAX_H3_PHASE_AUDIO_DECODE,
     YVEX_MINIMAX_H3_PHASE_MEDIA_PUBLISH
 } yvex_minimax_h3_phase;
-
 typedef enum {
     YVEX_MINIMAX_H3_LIFETIME_METADATA = 1,
     YVEX_MINIMAX_H3_LIFETIME_PHASE,
@@ -109,17 +99,14 @@ typedef enum {
     YVEX_MINIMAX_H3_LIFETIME_REQUEST_MUTABLE,
     YVEX_MINIMAX_H3_LIFETIME_OUTPUT_TRANSACTION
 } yvex_minimax_h3_lifetime;
-
 typedef enum {
     YVEX_MINIMAX_H3_SHARING_INDEPENDENT = 0,
     YVEX_MINIMAX_H3_SHARING_LOGICALLY_SHARED,
     YVEX_MINIMAX_H3_SHARING_DUPLICATED_SOURCE
 } yvex_minimax_h3_sharing;
-
 typedef enum {
     YVEX_MINIMAX_H3_TRANSFORM_IDENTITY = 0
 } yvex_minimax_h3_transform;
-
 typedef enum {
     YVEX_MINIMAX_H3_DATA_TEXT = 1u << 0,
     YVEX_MINIMAX_H3_DATA_MEDIA_GRID = 1u << 1,
@@ -131,7 +118,6 @@ typedef enum {
     YVEX_MINIMAX_H3_DATA_STEREO_SAMPLES = 1u << 7,
     YVEX_MINIMAX_H3_DATA_SYNCHRONIZED_MEDIA = 1u << 8
 } yvex_minimax_h3_data_class;
-
 typedef enum {
     YVEX_MINIMAX_H3_ROLE_TEXT_EMBEDDING = 1,
     YVEX_MINIMAX_H3_ROLE_TEXT_OUTPUT_HEAD,
@@ -546,6 +532,21 @@ typedef struct {
     int complete;
 } yvex_minimax_h3_video_decode_result;
 typedef struct {
+    unsigned long long token_count, hidden_width, resident_bytes;
+    unsigned long long kernel_launches, h2d_bytes, d2h_bytes, device_bytes;
+    char residency_identity[65], execution_identity[65];
+    int complete;
+} yvex_minimax_h3_conditioning_result;
+typedef struct {
+    int (*text_embed_cuda)(yvex_backend *backend, const unsigned char *encoded,
+        unsigned long long encoded_bytes, unsigned int qtype, unsigned long long row_count,
+        unsigned long long row_width, unsigned long long row_bytes,
+        const char *residency_identity, unsigned long long resident_bytes,
+        const unsigned int *token_ids, unsigned long long token_count, float *output,
+        unsigned long long output_capacity, yvex_minimax_h3_conditioning_result *result,
+        yvex_error *err);
+} yvex_minimax_h3_backend_api;
+typedef struct {
     unsigned long long text_tokens, frames, width, height;
     unsigned long long video_latent_frames, video_latent_height, video_latent_width;
     unsigned long long audio_latent_steps, audio_rows, video_rows, packed_rows;
@@ -566,31 +567,34 @@ typedef struct {
         const yvex_artifact *artifact, const yvex_gguf *gguf,
         const yvex_tensor_table *tensors, yvex_complete_artifact_admission *out,
         yvex_artifact_admission_failure *failure, yvex_error *err);
-    int (*audio_vae_decode_cpu)(
-        yvex_materialization_session *session,
+    int (*text_encoder_embed_artifact_cuda)(
+        const yvex_artifact *artifact, const yvex_gguf *gguf, const yvex_tensor_table *tensors,
+        const unsigned int *token_ids, unsigned long long token_count,
+        float *output, unsigned long long output_capacity,
+        unsigned long long maximum_host_bytes, unsigned long long maximum_device_bytes,
+        yvex_minimax_h3_conditioning_result *result, yvex_error *err);
+    int (*audio_vae_decode_cpu)(yvex_materialization_session *session,
         const yvex_minimax_h3_audio_decode_options *options,
-        yvex_minimax_h3_audio_decode_result *result,
-        yvex_minimax_h3_component_execution_failure *failure, yvex_error *err);
+        yvex_minimax_h3_audio_decode_result *result, yvex_minimax_h3_component_execution_failure *failure,
+        yvex_error *err);
     int (*audio_vae_execute_artifact_cpu)(
-        const yvex_artifact *artifact, const yvex_gguf *gguf,
-        const yvex_tensor_table *tensors,
+        const yvex_artifact *artifact, const yvex_gguf *gguf, const yvex_tensor_table *tensors,
         const yvex_minimax_h3_audio_decode_options *options,
-        yvex_minimax_h3_audio_decode_result *result,
-        yvex_minimax_h3_component_execution_failure *failure, yvex_error *err);
-    int (*video_vae_decode_cpu)(
-        yvex_materialization_session *session,
+        yvex_minimax_h3_audio_decode_result *result, yvex_minimax_h3_component_execution_failure *failure,
+        yvex_error *err);
+    int (*video_vae_decode_cpu)(yvex_materialization_session *session,
         const yvex_minimax_h3_video_decode_options *options,
-        yvex_minimax_h3_video_decode_result *result,
-        yvex_minimax_h3_component_execution_failure *failure, yvex_error *err);
+        yvex_minimax_h3_video_decode_result *result, yvex_minimax_h3_component_execution_failure *failure,
+        yvex_error *err);
     int (*video_vae_execute_artifact_cpu)(
-        const yvex_artifact *artifact, const yvex_gguf *gguf,
-        const yvex_tensor_table *tensors,
+        const yvex_artifact *artifact, const yvex_gguf *gguf, const yvex_tensor_table *tensors,
         const yvex_minimax_h3_video_decode_options *options,
-        yvex_minimax_h3_video_decode_result *result,
-        yvex_minimax_h3_component_execution_failure *failure, yvex_error *err);
+        yvex_minimax_h3_video_decode_result *result, yvex_minimax_h3_component_execution_failure *failure,
+        yvex_error *err);
 } yvex_minimax_h3_graph_api;
 const yvex_minimax_h3_api *yvex_model_register_minimax_h3(void);
 const yvex_minimax_h3_transform_api *yvex_model_minimax_h3_transform_api(void);
 const yvex_minimax_h3_handoff_api *yvex_model_minimax_h3_handoff_api(void);
 const yvex_minimax_h3_graph_api *yvex_graph_register_minimax_h3(void);
+const yvex_minimax_h3_backend_api *yvex_backend_register_minimax_h3(void);
 #endif /* INCLUDE_YVEX_INTERNAL_FAMILIES_MINIMAX_H3_H_INCLUDED */

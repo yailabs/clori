@@ -1351,7 +1351,7 @@ static int test_payload_transform_binding_untrusted(payload_fixture *fixture)
 
 static int test_payload_component_physical_shape_fold(void)
 {
-    static const unsigned long long logical_dims[] = {2u, 2u, 2u, 2u, 256u};
+    static const unsigned long long logical_dims[] = {1u, 2u, 4u, 2u, 256u};
     payload_fixture fixture;
     yvex_source_payload_failure payload_failure;
     yvex_source_payload_plan *payload_plan = NULL;
@@ -1411,11 +1411,11 @@ static int test_payload_component_physical_shape_fold(void)
     decision = yvex_quant_plan_decision_at(plan, 0u);
     YVEX_TEST_ASSERT(summary && decision && summary->complete &&
                          decision->rank == 4u &&
-                         decision->dims[0] == 2u && decision->dims[1] == 2u &&
-                         decision->dims[2] == 2u && decision->dims[3] == 512u &&
+                         decision->dims[0] == 256u && decision->dims[1] == 2u &&
+                         decision->dims[2] == 4u && decision->dims[3] == 2u &&
                          decision->element_count == 4096u &&
                          decision->encoded_bytes == 8192u,
-                     "canonical fold preserves elements and exact bytes");
+                     "canonical GGUF projection preserves elements and exact bytes");
 
     memset(&request, 0, sizeof(request));
     request.input_class = YVEX_GGUF_WRITER_INPUT_LOGICAL_COMPONENT;

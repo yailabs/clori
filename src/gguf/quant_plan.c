@@ -1080,16 +1080,17 @@ int yvex_quant_plan_build_source_faithful(
         decisions[ordinal].rank = terminal->shape.rank <= YVEX_GGUF_QTYPE_MAX_DIMS
                                       ? terminal->shape.rank
                                       : YVEX_GGUF_QTYPE_MAX_DIMS;
-        for (dimension = 0u; dimension < decisions[ordinal].rank; ++dimension)
-            decisions[ordinal].dims[dimension] = terminal->shape.dims[dimension];
+        for (dimension = 0u; dimension < decisions[ordinal].rank; ++dimension) {
+            unsigned int logical_axis = terminal->shape.rank - dimension - 1u;
+            decisions[ordinal].dims[dimension] = terminal->shape.dims[logical_axis];
+        }
         if (terminal->shape.rank > YVEX_GGUF_QTYPE_MAX_DIMS) {
-            unsigned long long folded = decisions[ordinal].dims[
-                YVEX_GGUF_QTYPE_MAX_DIMS - 1u];
+            unsigned long long folded = 1ull;
+            unsigned int outer_axes =
+                terminal->shape.rank - YVEX_GGUF_QTYPE_MAX_DIMS + 1u;
 
-            for (dimension = YVEX_GGUF_QTYPE_MAX_DIMS;
-                 dimension < terminal->shape.rank; ++dimension) {
-                if (!yvex_core_u64_mul(folded, terminal->shape.dims[dimension],
-                                       &folded)) {
+            for (dimension = 0u; dimension < outer_axes; ++dimension) {
+                if (!yvex_core_u64_mul(folded, terminal->shape.dims[dimension], &folded)) {
                     free(decisions);
                     return quant_plan_fail(
                         failure, YVEX_QUANT_FAILURE_INVALID_DIMENSION, ordinal,

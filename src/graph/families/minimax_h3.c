@@ -7,6 +7,7 @@
  */
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/families/minimax_h3.h>
+#include <yvex/internal/runtime.h>
 
 #include "src/graph/private.h"
 
@@ -15,33 +16,19 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#define VIDEO_COMPONENT_IDENTITY \
-    "c45d914061f4a8d71e84d70cf79f286793919bdc040f48e94b4ec83c2ee8a0e7"
-#define VIDEO_SOURCE_SNAPSHOT_IDENTITY \
-    "897ceaff08708f431132c6643bc8f1041ace8c0444a3ea248bbf727fc7da9943"
-#define VIDEO_COMPONENT_MANIFEST_IDENTITY \
-    "715f2359aaff048ccca8207976421af5f9f76b08b6f24986b3cc186d2822bc0e"
-#define VIDEO_ARCHITECTURE_IDENTITY \
-    "47a03bbac2b5346771f70ae39155920f9b1c6e6cec17f2639dd0cbedfa90b517"
-#define VIDEO_ROLE_MAP_IDENTITY \
-    "61e7a2cfc29e6dd3da966878f5388f1472a406d7e33ba34ef65f44b61f08f013"
-#define VIDEO_UNRESOLVED_IDENTITY \
-    "935ae0a2371b15131b8920a879462484ebd3f5526ff5a97ef95c4e0af7b7cc1d"
-#define VIDEO_TRANSFORM_IDENTITY \
-    "438aee784ab722b7c7cb5de1a934fa9ab3067282f30311ee2d595ad128f2d4f8"
-#define VIDEO_PROFILE_IDENTITY \
-    "2a4211fda0e32dc53e4734a57e4ddc4cd408483b2980eb1439770dabb9bea575"
-#define VIDEO_QUANT_EXECUTION_IDENTITY \
-    "87f12d8363dbd2a9a5f930a9bcfdbb06533c14db29f2139becc99b2042c76e81"
-#define VIDEO_PAYLOAD_PLAN_IDENTITY \
-    "baf38268668fd651189dd0e4f90907cb7cc30061275913352dc770ba89a081d8"
-#define VIDEO_PAYLOAD_BYTE_IDENTITY \
-    "97e4e92a97cb16890346a77f9766b4ad368c22df24715144a60d008a54eef2b7"
-#define VIDEO_WRITER_PLAN_IDENTITY \
-    "f821e9c691a06f7e9b16261fc5261c160cbac5c7953e0155d6f52fea28ca00d1"
-#define VIDEO_ARTIFACT_IDENTITY \
-    "29bb1df65227fa05444c4002e18d61934d70d872d8472c4757e93971f9e474cd"
+#define VIDEO_COMPONENT_IDENTITY "c45d914061f4a8d71e84d70cf79f286793919bdc040f48e94b4ec83c2ee8a0e7"
+#define VIDEO_SOURCE_SNAPSHOT_IDENTITY "897ceaff08708f431132c6643bc8f1041ace8c0444a3ea248bbf727fc7da9943"
+#define VIDEO_COMPONENT_MANIFEST_IDENTITY "715f2359aaff048ccca8207976421af5f9f76b08b6f24986b3cc186d2822bc0e"
+#define VIDEO_ARCHITECTURE_IDENTITY "47a03bbac2b5346771f70ae39155920f9b1c6e6cec17f2639dd0cbedfa90b517"
+#define VIDEO_ROLE_MAP_IDENTITY "61e7a2cfc29e6dd3da966878f5388f1472a406d7e33ba34ef65f44b61f08f013"
+#define VIDEO_UNRESOLVED_IDENTITY "935ae0a2371b15131b8920a879462484ebd3f5526ff5a97ef95c4e0af7b7cc1d"
+#define VIDEO_TRANSFORM_IDENTITY "438aee784ab722b7c7cb5de1a934fa9ab3067282f30311ee2d595ad128f2d4f8"
+#define VIDEO_PROFILE_IDENTITY "2a4211fda0e32dc53e4734a57e4ddc4cd408483b2980eb1439770dabb9bea575"
+#define VIDEO_QUANT_EXECUTION_IDENTITY "87f12d8363dbd2a9a5f930a9bcfdbb06533c14db29f2139becc99b2042c76e81"
+#define VIDEO_PAYLOAD_PLAN_IDENTITY "baf38268668fd651189dd0e4f90907cb7cc30061275913352dc770ba89a081d8"
+#define VIDEO_PAYLOAD_BYTE_IDENTITY "97e4e92a97cb16890346a77f9766b4ad368c22df24715144a60d008a54eef2b7"
+#define VIDEO_WRITER_PLAN_IDENTITY "f821e9c691a06f7e9b16261fc5261c160cbac5c7953e0155d6f52fea28ca00d1"
+#define VIDEO_ARTIFACT_IDENTITY "29bb1df65227fa05444c4002e18d61934d70d872d8472c4757e93971f9e474cd"
 #define VIDEO_PAYLOAD_IDENTITY YVEX_MINIMAX_H3_AUDIO_PAYLOAD_IDENTITY
 #define VIDEO_PROFILE_NAME YVEX_MINIMAX_H3_AUDIO_PROFILE_NAME
 #define VIDEO_SOURCE_SNAPSHOT_KEY 9907051661387403075ull
@@ -50,68 +37,45 @@
 #define VIDEO_ELEMENTS 2603871032ull
 #define VIDEO_PAYLOAD_BYTES 10415484128ull
 #define VIDEO_FILE_BYTES 10415528096ull
-#define TEXT_COMPONENT_IDENTITY \
-    "a4b9c13360aeaa03bbd4d9681b821575e6556bead71c226d0aa72fca5aca7382"
-#define TEXT_TRANSFORM_IDENTITY \
-    "4e940d589f14194ee827be627afac91ee28ee2a45f1add22753d9ed3dae3962a"
-#define TEXT_PROFILE_IDENTITY \
-    "0283fdfcf493f1ac5fb1a43f21f379959686eebea58442428e1cb8c8ffaebdec"
-#define TEXT_QUANT_EXECUTION_IDENTITY \
-    "49f1e9c6de67d1cc751334a401e8b747d8c3fca197170d70e8962dc345e9b399"
-#define TEXT_PAYLOAD_PLAN_IDENTITY \
-    "146cdaba98f69a4dd0c712ef6e42d409bf56d73b7261f797a817fc242bc83a1c"
-#define TEXT_PAYLOAD_BYTE_IDENTITY \
-    "c95ade3aef89252f46fb190b8d6d80dbbc6c335bef8fab3d2610dc688bcc326f"
-#define TEXT_WRITER_PLAN_IDENTITY \
-    "d2531f0af0a89baf5e3cb093eed4cbcec9a3a959d3fd81bbc78c709d183c5af4"
-#define TEXT_ARTIFACT_IDENTITY \
-    "e12f2a5a1412dd8f5c590f97d6ba044ec2622a9a56b7243022df6e7f4acee3bc"
+#define TEXT_COMPONENT_IDENTITY YVEX_MINIMAX_H3_TEXT_COMPONENT_IDENTITY
+#define TEXT_TRANSFORM_IDENTITY "4e940d589f14194ee827be627afac91ee28ee2a45f1add22753d9ed3dae3962a"
+#define TEXT_PROFILE_IDENTITY "5b534130f5114f096db93b96cce26fc6def534c95b6d338b87a668591c20b78f"
+#define TEXT_QUANT_EXECUTION_IDENTITY "50fe7545f9fa204dd636fbdf44e660fc92dd52740d2f39b04118a83d72d058ee"
+#define TEXT_PAYLOAD_PLAN_IDENTITY "214f0afd6fd2718e8184ce169e55018bc1b93598d34e8930e0514e7fe91328c0"
+#define TEXT_PAYLOAD_BYTE_IDENTITY "c95ade3aef89252f46fb190b8d6d80dbbc6c335bef8fab3d2610dc688bcc326f"
+#define TEXT_WRITER_PLAN_IDENTITY "6bc51d17fa1d9fdc173764478853a16f503dd97dbf014ca47a55d4d7cbc60045"
+#define TEXT_ARTIFACT_IDENTITY "fd3178c1addbc325c17f23cf6aae9a46dfe0e152211cc7181e9fa512f4046021"
 #define TEXT_MAPPING_IDENTITY 17587980532596554443ull
 #define TEXT_TENSORS 1058ull
 #define TEXT_ELEMENTS 33357390064ull
 #define TEXT_PAYLOAD_BYTES 66714780128ull
-#define TEXT_FILE_BYTES 66714871424ull
-#define TRANSFORMER_COMPONENT_IDENTITY \
-    "9745fc5bbf42a0a5d2d42209e50e64f5a58704c7602bce0f71f3225431304318"
-#define TRANSFORMER_TRANSFORM_IDENTITY \
-    "8f3b16dff00769261df2d5f59c915c114874cb3abfb54ddc11d537875caec58a"
-#define TRANSFORMER_PROFILE_IDENTITY \
-    "43e82bc972981d6c3c6a879fc34972ee27083f8aad96e98c69ff2818aeda50a6"
-#define TRANSFORMER_QUANT_EXECUTION_IDENTITY \
-    "6ffc46df955c106fb627ecbda599c7380522f67651617c897d843edb91c3142c"
-#define TRANSFORMER_PAYLOAD_PLAN_IDENTITY \
-    "8bdeafd4f1e2345a9e593002cd00c97027909fdf16c1840d884836583e8335e6"
-#define TRANSFORMER_PAYLOAD_BYTE_IDENTITY \
-    "b261084e21a0098eb6947e65a05d559fa9b649d88e88f167120406634c786e85"
-#define TRANSFORMER_WRITER_PLAN_IDENTITY \
-    "72464d996bb662fdc7311258e5689c4e2f5255c91c9b01a5c88930fe2782f8f6"
-#define TRANSFORMER_ARTIFACT_IDENTITY \
-    "d274449dae245d86d391f255a9043c64f9d1d14be8b37466962e89a69d5af955"
+#define TEXT_FILE_BYTES 66714871392ull
+#define TRANSFORMER_COMPONENT_IDENTITY "9745fc5bbf42a0a5d2d42209e50e64f5a58704c7602bce0f71f3225431304318"
+#define TRANSFORMER_TRANSFORM_IDENTITY "8f3b16dff00769261df2d5f59c915c114874cb3abfb54ddc11d537875caec58a"
+#define TRANSFORMER_PROFILE_IDENTITY "43e82bc972981d6c3c6a879fc34972ee27083f8aad96e98c69ff2818aeda50a6"
+#define TRANSFORMER_QUANT_EXECUTION_IDENTITY "6ffc46df955c106fb627ecbda599c7380522f67651617c897d843edb91c3142c"
+#define TRANSFORMER_PAYLOAD_PLAN_IDENTITY "8bdeafd4f1e2345a9e593002cd00c97027909fdf16c1840d884836583e8335e6"
+#define TRANSFORMER_PAYLOAD_BYTE_IDENTITY "b261084e21a0098eb6947e65a05d559fa9b649d88e88f167120406634c786e85"
+#define TRANSFORMER_WRITER_PLAN_IDENTITY "72464d996bb662fdc7311258e5689c4e2f5255c91c9b01a5c88930fe2782f8f6"
+#define TRANSFORMER_ARTIFACT_IDENTITY "d274449dae245d86d391f255a9043c64f9d1d14be8b37466962e89a69d5af955"
 #define TRANSFORMER_MAPPING_IDENTITY 17862857563445514422ull
 #define TRANSFORMER_TENSORS 535ull
 #define TRANSFORMER_ELEMENTS 33122992912ull
 #define TRANSFORMER_PAYLOAD_BYTES 66280430144ull
 #define TRANSFORMER_FILE_BYTES 66280465664ull
 
-typedef struct {
-    float *data;
-    unsigned long long count;
-} component_buffer;
+typedef struct { float *data; unsigned long long count; } component_buffer;
 
 typedef struct {
-    yvex_materialization_session *session;
-    const yvex_minimax_h3_audio_decode_options *options;
-    yvex_minimax_h3_audio_decode_result *result;
-    yvex_minimax_h3_component_execution_failure *failure;
+    yvex_materialization_session *session; const yvex_minimax_h3_audio_decode_options *options;
+    yvex_minimax_h3_audio_decode_result *result; yvex_minimax_h3_component_execution_failure *failure;
     yvex_error *err;
     unsigned long long live_workspace_bytes;
 } audio_execution;
 
 typedef struct {
-    yvex_materialization_session *session;
-    const yvex_minimax_h3_video_decode_options *options;
-    yvex_minimax_h3_video_decode_result *result;
-    yvex_minimax_h3_component_execution_failure *failure;
+    yvex_materialization_session *session; const yvex_minimax_h3_video_decode_options *options;
+    yvex_minimax_h3_video_decode_result *result; yvex_minimax_h3_component_execution_failure *failure;
     yvex_error *err;
     unsigned long long live_workspace_bytes;
     unsigned long long patches, rows;
@@ -1613,7 +1577,7 @@ static const yvex_artifact_component_metadata text_metadata[] = {
     {"yvex.physical.payload_plan.identity", TEXT_PAYLOAD_PLAN_IDENTITY},
     {"yvex.payload.identity", VIDEO_PAYLOAD_IDENTITY},
     {"yvex.evidence.stage", "component-artifact-planned"},
-    {"yvex.physical.shape.policy", "preserve-leading-three-fold-trailing-v1"},
+    {"yvex.physical.shape.policy", "reverse-logical-fold-outer-v1"},
 };
 static const yvex_complete_artifact_admission text_catalog = {
     .artifact_class = YVEX_ARTIFACT_CLASS_COMPONENT_YVEX,
@@ -1707,6 +1671,9 @@ static int audio_vae_execute_artifact_cpu(
     yvex_materialization_failure materialization_failure;
     yvex_materialization_plan *plan = NULL;
     yvex_materialization_session *session = NULL;
+    yvex_runtime_residency *residency = NULL;
+    yvex_runtime_residency_options residency_options = {0};
+    yvex_runtime_residency_failure residency_failure;
     audio_execution execution = {0};
     int admitted = 0;
     int rc;
@@ -1739,12 +1706,25 @@ static int audio_vae_execute_artifact_cpu(
             &materialization_failure, err);
     if (rc == YVEX_OK)
         rc = yvex_materialization_session_commit(session, &materialization_failure, err);
+    residency_options.maximum_host_bytes = admission.payload_bytes;
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_component_residency_prepare(
+            &residency, session, admission.logical_component_identity,
+            &residency_options, &residency_failure, err);
     if (rc == YVEX_OK)
         rc = audio_vae_decode_cpu(session, options, result, failure, err);
     if (rc != YVEX_OK && failure && failure->code == YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NONE) {
         failure->code = admitted ? YVEX_MINIMAX_H3_COMPONENT_EXECUTION_MATERIALIZATION
                                  : YVEX_MINIMAX_H3_COMPONENT_EXECUTION_LIFECYCLE;
         failure->reason = yvex_error_message(err);
+    }
+    {
+        yvex_error cleanup;
+        int cleanup_rc = yvex_runtime_residency_close(&residency, &cleanup);
+        if (cleanup_rc != YVEX_OK) {
+            rc = cleanup_rc;
+            if (err) *err = cleanup;
+        }
     }
     yvex_materialization_session_close(session);
     yvex_materialization_plan_close(plan);
@@ -1844,6 +1824,9 @@ static int video_vae_execute_artifact_cpu(
     yvex_materialization_failure materialization_failure;
     yvex_materialization_plan *plan = NULL;
     yvex_materialization_session *session = NULL;
+    yvex_runtime_residency *residency = NULL;
+    yvex_runtime_residency_options residency_options = {0};
+    yvex_runtime_residency_failure residency_failure;
     video_execution execution = {0};
     int admitted = 0;
     int rc;
@@ -1876,6 +1859,11 @@ static int video_vae_execute_artifact_cpu(
             &materialization_failure, err);
     if (rc == YVEX_OK)
         rc = yvex_materialization_session_commit(session, &materialization_failure, err);
+    residency_options.maximum_host_bytes = admission.payload_bytes;
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_component_residency_prepare(
+            &residency, session, admission.logical_component_identity,
+            &residency_options, &residency_failure, err);
     if (rc == YVEX_OK)
         rc = video_vae_decode_cpu(session, options, result, failure, err);
     if (rc != YVEX_OK && failure &&
@@ -1884,22 +1872,129 @@ static int video_vae_execute_artifact_cpu(
                                  : YVEX_MINIMAX_H3_COMPONENT_EXECUTION_LIFECYCLE;
         failure->reason = yvex_error_message(err);
     }
+    {
+        yvex_error cleanup;
+        int cleanup_rc = yvex_runtime_residency_close(&residency, &cleanup);
+        if (cleanup_rc != YVEX_OK) {
+            rc = cleanup_rc;
+            if (err) *err = cleanup;
+        }
+    }
     yvex_materialization_session_close(session);
     yvex_materialization_plan_close(plan);
     return rc;
 }
-
+static int text_encoder_embed_artifact_cuda(const yvex_artifact *artifact,
+    const yvex_gguf *gguf, const yvex_tensor_table *tensors,
+    const unsigned int *token_ids, unsigned long long token_count,
+    float *output, unsigned long long output_capacity,
+    unsigned long long maximum_host_bytes, unsigned long long maximum_device_bytes,
+    yvex_minimax_h3_conditioning_result *result, yvex_error *err)
+{
+    const yvex_minimax_h3_backend_api *backend = yvex_backend_register_minimax_h3();
+    const yvex_materialized_tensor_binding *embedding = NULL;
+    yvex_complete_artifact_admission admission;
+    yvex_artifact_admission_failure admission_failure;
+    yvex_materialization_options options;
+    yvex_materialization_failure failure;
+    yvex_materialization_plan *plan = NULL;
+    yvex_materialization_session *session = NULL;
+    yvex_runtime_residency_options residency_options = {0};
+    yvex_runtime_residency_failure residency_failure;
+    yvex_runtime_residency_summary residency_summary;
+    yvex_runtime_residency *residency = NULL;
+    yvex_backend_options backend_options = {0};
+    yvex_backend *cuda = NULL;
+    const unsigned char *encoded = NULL;
+    unsigned long long encoded_bytes = 0ull, output_values = 0ull, output_bytes = 0ull;
+    float *staged = NULL;
+    yvex_minimax_h3_conditioning_result published = {0};
+    int uploaded = 0, rc, cleanup_rc, residency_close_rc;
+    yvex_error cleanup, residency_cleanup;
+    if (result) memset(result, 0, sizeof(*result));
+    if (!artifact || !gguf || !tensors || !backend || !backend->text_embed_cuda ||
+        !token_ids || !token_count || !output || !result ||
+        !yvex_core_u64_mul(token_count, 5120ull, &output_values) ||
+        output_values > output_capacity ||
+        !yvex_core_u64_mul(output_values, sizeof(float), &output_bytes) ||
+        output_bytes > SIZE_MAX) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "minimax-h3.text-conditioning",
+                       "exact component inputs, bounded output, and CUDA backend are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    staged = (float *)malloc((size_t)output_bytes);
+    if (!staged) {
+        yvex_error_set(err, YVEX_ERR_NOMEM, "minimax-h3.text-conditioning.output",
+                       "transactional graph output allocation failed");
+        return YVEX_ERR_NOMEM;
+    }
+    backend_options.kind = YVEX_BACKEND_KIND_CUDA;
+    backend_options.memory_limit_bytes = maximum_device_bytes;
+    rc = yvex_backend_open(&cuda, &backend_options, err);
+    if (rc == YVEX_OK)
+        rc = component_admit(
+            "text_encoder", artifact, gguf, tensors, &admission, &admission_failure, err);
+    yvex_materialization_options_default(&options);
+    options.max_chunk_bytes = 64ull * 1024ull * 1024ull;
+    if (rc == YVEX_OK)
+        rc = yvex_materialization_plan_build(
+            &plan, &admission, artifact, gguf, tensors, NULL, &options, &failure, err);
+    if (rc == YVEX_OK)
+        rc = yvex_materialization_session_open(
+            &session, plan, artifact, &options, &failure, err);
+    if (rc == YVEX_OK) rc = yvex_materialization_session_commit(session, &failure, err);
+    embedding = rc == YVEX_OK
+        ? component_binding_find(session, "model.language_model.embed_tokens.weight") : NULL;
+    if (rc == YVEX_OK && !embedding) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "minimax-h3.text-conditioning.embedding",
+                       "admitted text component lacks its embedding binding");
+        rc = YVEX_ERR_FORMAT;
+    }
+    residency_options.maximum_host_bytes = maximum_host_bytes;
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_component_residency_prepare(
+            &residency, session, admission.logical_component_identity,
+            &residency_options, &residency_failure, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_residency_binding_view(
+            residency, embedding, &encoded, &encoded_bytes, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_residency_cuda_session_attach(
+            residency, &cuda, maximum_device_bytes, &uploaded, &residency_summary, err);
+    if (rc == YVEX_OK)
+        rc = backend->text_embed_cuda(
+            cuda, encoded, encoded_bytes, embedding->qtype, embedding->row_count,
+            embedding->row_width, embedding->encoded_bytes / embedding->row_count,
+            residency_summary.residency_identity, residency_summary.encoded_bytes,
+            token_ids, token_count, staged, output_values, &published, err);
+    yvex_error_clear(&cleanup);
+    cleanup_rc = yvex_backend_close_checked(&cuda, &cleanup);
+    yvex_error_clear(&residency_cleanup);
+    residency_close_rc = yvex_runtime_residency_close(&residency, &residency_cleanup);
+    if (cleanup_rc == YVEX_OK && residency_close_rc != YVEX_OK) {
+        cleanup_rc = residency_close_rc;
+        cleanup = residency_cleanup;
+    }
+    if (cleanup_rc != YVEX_OK) {
+        rc = cleanup_rc;
+        if (err) *err = cleanup;
+    }
+    yvex_materialization_session_close(session);
+    yvex_materialization_plan_close(plan);
+    if (rc == YVEX_OK) {
+        memcpy(output, staged, (size_t)output_bytes);
+        *result = published;
+        yvex_error_clear(err);
+    }
+    free(staged);
+    return rc;
+}
 const yvex_minimax_h3_graph_api *yvex_graph_register_minimax_h3(void)
 {
     static const yvex_minimax_h3_graph_api api = {
-        t2va_plan_build,
-        scheduler_step,
-        component_admit,
-        audio_vae_decode_cpu,
-        audio_vae_execute_artifact_cpu,
-        video_vae_decode_cpu,
-        video_vae_execute_artifact_cpu,
+        t2va_plan_build, scheduler_step, component_admit, text_encoder_embed_artifact_cuda,
+        audio_vae_decode_cpu, audio_vae_execute_artifact_cpu,
+        video_vae_decode_cpu, video_vae_execute_artifact_cpu,
     };
-
     return &api;
 }
