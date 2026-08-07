@@ -196,18 +196,35 @@ static int state_bank_open(attention_state *state,
                            attention_state_bank *bank,
                            attention_layer_state *layer,
                            yvex_attention_failure *failure, yvex_error *err) {
+    yvex_error cause;
+    yvex_status status;
+
     memset(bank, 0, sizeof(*bank));
     if (yvex_graph_state_bank_pages_open(
             state->page_pool,
             state->paging_configured ? &state->capacity_plan : NULL,
             yvex_attention_plan_summary(state->plan), &layer->plan,
-            &layer->recipe, bank->components, &bank->view, err) != YVEX_OK)
-        return state_reject(
-            failure, layer->plan.layer_index, 1ull, 0ull,
-            "attention state page-store allocation failed",
-            yvex_error_is_set(err) ? (yvex_status)yvex_error_code(err)
-                                   : YVEX_ERR_NOMEM,
-            err);
+            &layer->recipe, bank->components, &bank->view, err) != YVEX_OK) {
+        cause = err ? *err : (yvex_error){0};
+        status = yvex_error_is_set(&cause)
+                     ? (yvex_status)yvex_error_code(&cause)
+                     : YVEX_ERR_NOMEM;
+        if (failure) {
+            memset(failure, 0, sizeof(*failure));
+            failure->code = YVEX_ATTENTION_FAILURE_STATE_DELTA;
+            failure->layer_index = layer->plan.layer_index;
+            failure->role = YVEX_TENSOR_ROLE_UNKNOWN;
+            failure->expected = 1ull;
+            failure->reason = "attention state page-store allocation failed";
+        }
+        yvex_error_setf(
+            err, status, "graph.attention.state",
+            "attention state page-store allocation failed (layer=%llu): %s",
+            layer->plan.layer_index,
+            yvex_error_is_set(&cause) ? yvex_error_message(&cause)
+                                      : "allocation owner returned no detail");
+        return status;
+    }
     yvex_graph_state_bank_pages_bind(
         bank->components, &bank->view, &layer->recipe);
     return YVEX_OK;
