@@ -2975,6 +2975,102 @@ static int test_runtime_probe_consumer_boundary(
     return 0;
 }
 
+static void runtime_paged_capacity_fixture(yvex_execution_capacity_plan *capacity)
+{
+    unsigned long long index;
+
+    memset(capacity, 0, sizeof(*capacity));
+    capacity->schema_version = YVEX_EXECUTION_CAPACITY_PLAN_SCHEMA_V1;
+    capacity->per_session_maximum = 128ull;
+    capacity->state_pool_bytes = 1ull << 30u;
+    capacity->candidate_reserve_bytes = 1ull << 30u;
+    capacity->state_class_count = YVEX_MODEL_STATE_CLASS_COUNT;
+    memset(capacity->model_execution_identity, 'a', YVEX_SHA256_HEX_CAP - 1u);
+    memset(capacity->hardware_profile_identity, 'b', YVEX_SHA256_HEX_CAP - 1u);
+    memset(capacity->workload_profile_identity, 'c', YVEX_SHA256_HEX_CAP - 1u);
+    memset(capacity->identity, 'd', YVEX_SHA256_HEX_CAP - 1u);
+    for (index = 0ull; index < capacity->state_class_count; ++index) {
+        yvex_execution_state_class_plan *state = &capacity->state_classes[index];
+
+        state->state_class = (yvex_model_state_class)index;
+        state->extent = YVEX_EXECUTION_STATE_EXTENT_CONTEXT;
+        state->logical_block_tokens = 1ull;
+        state->bytes_per_block = 8ull;
+        state->page_tokens = 128ull;
+        state->page_bytes = 1024ull;
+    }
+}
+
+/* CUDA staging must not read virtual history pages before their provider admission. */
+static int test_runtime_paged_state_cuda_pack(
+    const binding_fixture *fixture, const yvex_runtime_binding_prepare_result *prepared)
+{
+    yvex_runtime_model *model = NULL;
+    yvex_runtime_execution_session *session = NULL;
+    yvex_runtime_state_residency *residency = NULL;
+    yvex_backend *backend = NULL;
+    const yvex_attention_state_provider *provider;
+    const yvex_graph_attention_capacity_layer *layer;
+    yvex_graph_attention_capacity_plan *attention_capacity = NULL;
+    yvex_graph_attention_capacity_request attention_request = {0};
+    yvex_execution_capacity_plan page_capacity;
+    yvex_runtime_state_residency_summary summary;
+    yvex_runtime_session_open_request session_request = {0};
+    yvex_runtime_model_failure model_failure;
+    yvex_attention_failure attention_failure;
+    yvex_backend_options backend_options = {0};
+    yvex_error err;
+
+    YVEX_TEST_ASSERT(runtime_model_open_fixture(
+                         fixture, prepared, &model, &model_failure, &err) == YVEX_OK,
+                     "runtime model opens for paged CUDA residency packing");
+    session_request.backend = YVEX_BACKEND_KIND_CPU;
+    YVEX_TEST_ASSERT(yvex_runtime_session_open(
+                         &session, model, &session_request, &model_failure, &err) == YVEX_OK,
+                     "runtime session opens for paged CUDA residency packing");
+    provider = yvex_runtime_session_view_get(session)->attention_state_provider;
+    runtime_paged_capacity_fixture(&page_capacity);
+    YVEX_TEST_ASSERT(yvex_runtime_session_configure_persistent_pages(
+                         session, &page_capacity, &model_failure, &err) == YVEX_OK,
+                     "runtime provider admits class-specific virtual pages");
+    attention_request.scope = YVEX_ATTENTION_PROBE_SCOPE_QUICK;
+    attention_request.token_count = 1ull;
+    attention_request.execution_count = 1ull;
+    attention_request.select_layer = 1;
+    YVEX_TEST_ASSERT(yvex_graph_attention_capacity_plan_build(
+                         &attention_capacity, runtime_fixture_adapter()->graph(),
+                         yvex_runtime_model_view_get(model)->attention,
+                         &attention_request, &err) == YVEX_OK,
+                     "one-layer paged state capacity seals");
+    layer = yvex_graph_attention_capacity_plan_layer(attention_capacity, 0ull);
+    YVEX_TEST_ASSERT(layer && layer->selected &&
+                         provider->prepare(provider->context, 0ull, &layer->recipe,
+                                           NULL, &attention_failure, &err) == YVEX_OK,
+                     "empty committed and candidate histories reserve inaccessible tails");
+    backend_options.kind = YVEX_BACKEND_KIND_CPU;
+    YVEX_TEST_ASSERT(yvex_backend_open(&backend, &backend_options, &err) == YVEX_OK,
+                     "host-backed backend opens for deterministic CUDA staging test");
+    backend->kind = YVEX_BACKEND_KIND_CUDA;
+    YVEX_TEST_ASSERT(yvex_runtime_state_residency_prepare(
+                         &residency, backend, attention_capacity, provider,
+                         0ull, ULLONG_MAX, 0ull, ULLONG_MAX, &err) == YVEX_OK &&
+                         yvex_runtime_state_residency_summary_copy(
+                             residency, &summary, &err) == YVEX_OK &&
+                         summary.cuda_ready && summary.upload_count == 2ull &&
+                         summary.upload_bytes == summary.device_bytes,
+                     "CUDA staging copies only visible history while retaining full addresses");
+    YVEX_TEST_ASSERT(yvex_runtime_state_residency_close(&residency, &err) == YVEX_OK,
+                     "paged CUDA residency staging releases exactly");
+    backend->kind = YVEX_BACKEND_KIND_CPU;
+    YVEX_TEST_ASSERT(yvex_backend_close_checked(&backend, &err) == YVEX_OK,
+                     "host-backed staging backend closes");
+    yvex_graph_attention_capacity_plan_close(&attention_capacity);
+    YVEX_TEST_ASSERT(yvex_runtime_session_close(&session, &err) == YVEX_OK,
+                     "paged state test session closes");
+    yvex_runtime_model_close(&model);
+    return 0;
+}
+
 static int runtime_cuda_test_ready(int *ready)
 {
     yvex_backend *backend = NULL;
@@ -3398,6 +3494,7 @@ int yvex_test_runtime_binding(void)
     if (test_runtime_injected_state_provider(&fixture, &prepared) != 0) goto done;
     if (test_runtime_cleanup_lease_retry(&fixture, &prepared) != 0) goto done;
     if (test_runtime_probe_consumer_boundary(&fixture, &prepared) != 0) goto done;
+    if (test_runtime_paged_state_cuda_pack(&fixture, &prepared) != 0) goto done;
     if (test_runtime_cuda_session_cleanup_retry(&fixture, &prepared) != 0) goto done;
     if (test_runtime_cuda_workspace_transaction(&fixture, &prepared) != 0) goto done;
     if (test_runtime_model_snapshot_drift(&fixture, &prepared) != 0) goto done;

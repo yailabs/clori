@@ -109,29 +109,89 @@ static int state_resident_identity(
     return 1;
 }
 
-static int state_resident_source(
+static int state_resident_history_count(
     const yvex_attention_history_view *view,
-    yvex_attention_state_binding binding, const void *spans[3])
+    yvex_attention_state_binding binding, unsigned long long *count)
 {
-    memset(spans, 0, 3u * sizeof(*spans));
-    if (!view) return 0;
+    if (!view || !count) return 0;
     switch (binding) {
     case YVEX_ATTENTION_STATE_BINDING_LOCAL_HISTORY:
-        spans[0] = view->local_kv; spans[1] = view->local_positions; return 1;
-    case YVEX_ATTENTION_STATE_BINDING_COMPRESSED_HISTORY:
-        spans[0] = view->compressed_kv; spans[1] = view->compressed_positions; return 1;
-    case YVEX_ATTENTION_STATE_BINDING_INDEXER_HISTORY:
-        spans[0] = view->indexer_kv; spans[1] = view->indexer_positions; return 1;
-    case YVEX_ATTENTION_STATE_BINDING_MAIN_ROLLING:
-        spans[0] = view->main_rolling_state.kv_state;
-        spans[2] = view->main_rolling_state.score_state;
+        *count = view->local_tail_count;
         return 1;
-    case YVEX_ATTENTION_STATE_BINDING_INDEXER_ROLLING:
-        spans[0] = view->indexer_rolling_state.kv_state;
-        spans[2] = view->indexer_rolling_state.score_state;
+    case YVEX_ATTENTION_STATE_BINDING_COMPRESSED_HISTORY:
+        *count = view->compressed_entry_count;
+        return 1;
+    case YVEX_ATTENTION_STATE_BINDING_INDEXER_HISTORY:
+        *count = view->indexer_entry_count;
         return 1;
     default: return 0;
     }
+}
+
+static const yvex_attention_rolling_state_view *state_resident_rolling_source(
+    const yvex_attention_history_view *view,
+    yvex_attention_state_binding binding)
+{
+    if (!view) return NULL;
+    if (binding == YVEX_ATTENTION_STATE_BINDING_MAIN_ROLLING)
+        return &view->main_rolling_state;
+    if (binding == YVEX_ATTENTION_STATE_BINDING_INDEXER_ROLLING)
+        return &view->indexer_rolling_state;
+    return NULL;
+}
+
+static int state_resident_source(
+    const yvex_attention_history_view *view,
+    const yvex_attention_state_component_recipe *component,
+    const void *spans[3], unsigned long long visible[3], yvex_error *err)
+{
+    const yvex_attention_rolling_state_view *rolling;
+    unsigned long long count, values;
+
+    memset(spans, 0, 3u * sizeof(*spans));
+    memset(visible, 0, 3u * sizeof(*visible));
+    if (!view || !component) return 0;
+    switch (component->binding) {
+    case YVEX_ATTENTION_STATE_BINDING_LOCAL_HISTORY:
+        spans[0] = view->local_kv;
+        spans[1] = view->local_positions;
+        break;
+    case YVEX_ATTENTION_STATE_BINDING_COMPRESSED_HISTORY:
+        spans[0] = view->compressed_kv;
+        spans[1] = view->compressed_positions;
+        break;
+    case YVEX_ATTENTION_STATE_BINDING_INDEXER_HISTORY:
+        spans[0] = view->indexer_kv;
+        spans[1] = view->indexer_positions;
+        break;
+    case YVEX_ATTENTION_STATE_BINDING_MAIN_ROLLING:
+    case YVEX_ATTENTION_STATE_BINDING_INDEXER_ROLLING:
+        rolling = state_resident_rolling_source(view, component->binding);
+        if (!rolling ||
+            rolling->kv_state_extent != component->rolling.kv_state_extent ||
+            rolling->score_state_extent != component->rolling.score_state_extent ||
+            !yvex_core_u64_mul(rolling->kv_state_extent, sizeof(float), &visible[0]) ||
+            !yvex_core_u64_mul(rolling->score_state_extent, sizeof(float), &visible[2])) {
+            yvex_error_set(err, YVEX_ERR_FORMAT, "runtime.state.residency.pack",
+                           "persistent rolling-state extent drifted");
+            return 0;
+        }
+        spans[0] = rolling->kv_state;
+        spans[2] = rolling->score_state;
+        return 1;
+    default: return 0;
+    }
+    if (component->kind != YVEX_ATTENTION_STATE_COMPONENT_HISTORY ||
+        !state_resident_history_count(view, component->binding, &count) ||
+        count > component->capacity ||
+        !yvex_core_u64_mul(count, component->value_width, &values) ||
+        !yvex_core_u64_mul(values, sizeof(float), &visible[0]) ||
+        !yvex_core_u64_mul(count, sizeof(unsigned long long), &visible[1])) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "runtime.state.residency.pack",
+                       "persistent history visible extent drifted");
+        return 0;
+    }
+    return 1;
 }
 
 static int state_resident_pack(
@@ -151,23 +211,28 @@ static int state_resident_pack(
     for (index = 0u; index < recipe->component_count; ++index) {
         state_resident_component *target = &layer->components[index];
         const void *pointers[3];
+        unsigned long long visible[3];
         unsigned int span;
-        if (!state_resident_source(view, recipe->components[index].binding, pointers)) {
-            yvex_error_set(err, YVEX_ERR_FORMAT, "runtime.state.residency.pack",
-                           "persistent state component binding is invalid");
+        if (!state_resident_source(view, &recipe->components[index], pointers,
+                                   visible, err)) {
+            if (!yvex_error_is_set(err))
+                yvex_error_set(err, YVEX_ERR_FORMAT, "runtime.state.residency.pack",
+                               "persistent state component binding is invalid");
             return YVEX_ERR_FORMAT;
         }
         for (span = 0u; span < 3u; ++span) {
-            if (target->bytes[span] && !pointers[span]) {
+            if (visible[span] > target->bytes[span] ||
+                (target->bytes[span] && !pointers[span])) {
                 yvex_error_set(err, YVEX_ERR_FORMAT,
                                "runtime.state.residency.pack",
                                "persistent state component span drifted");
                 return YVEX_ERR_FORMAT;
             }
             target->host[bank][span] = pointers[span];
-            if (materialize && target->bytes[span] && layer->host[bank])
+            /* Future provider pages are deliberately inaccessible until admitted. */
+            if (materialize && visible[span] && layer->host[bank])
                 memcpy(layer->host[bank] + target->offset[span],
-                       pointers[span], (size_t)target->bytes[span]);
+                       pointers[span], (size_t)visible[span]);
         }
     }
     return YVEX_OK;
