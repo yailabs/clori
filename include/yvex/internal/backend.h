@@ -370,7 +370,7 @@ typedef struct yvex_backend_cuda_operation_facts {
     unsigned long long h2d_bytes, d2h_bytes, d2d_bytes, kernel_launches, upload_count;
     unsigned long long download_count, stream_synchronizations, device_synchronizations;
     unsigned long long active_weight_bytes, state_bytes;
-    unsigned long long activation_bytes, temporary_bytes;
+    unsigned long long activation_bytes, temporary_bytes, tensor_core_launches;
     int compulsory_memory_facts_available;
 } yvex_backend_cuda_operation_facts;
 int yvex_backend_cuda_encoded_matvec(yvex_backend *backend, const unsigned char *resident_encoded,

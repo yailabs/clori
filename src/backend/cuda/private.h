@@ -239,6 +239,7 @@ typedef struct {
     CUfunction bf16_pack_function;
     CUfunction qtype_matvec_function;
     CUfunction qtype_split_matvec_function;
+    CUfunction q8_0_tensorcore_rows_function;
     CUfunction qtype_gather_function;
     CUfunction argmax_f32_function;
     CUfunction sample_stochastic_f32_function;

@@ -216,8 +216,9 @@ int yvex_backend_cuda_encoded_matvec(
     unsigned long long temporary_bytes = sizeof(int), q8_workspace_bytes = 0ull;
     CUdeviceptr encoded_ptr, input_ptr, input_tail_ptr = 0ull, additive_ptr = 0ull, output_ptr;
     CUdeviceptr status = 0ull, quantized = 0ull;
-    unsigned long long start_row = 0ull, launches = 0ull;
+    unsigned long long start_row = 0ull, launches = 0ull, tensorcore_grid = 0ull;
     int output_bf16 = 0, host_status = 0, rc, cleanup_rc, q8_path, q8_input = 0;
+    int tensorcore_path;
     int block_row = 0;
     int forensic_numeric = 0, split_input = input_tail != NULL;
     unsigned int matvec_grid, matvec_block;
@@ -230,6 +231,8 @@ int yvex_backend_cuda_encoded_matvec(
     }
     q8_path = activation_q8 && !split_input && row_width % 256ull == 0ull &&
               yvex_cuda_q8_activation_eligible(qtype);
+    tensorcore_path = q8_path && qtype == YVEX_GGUF_QTYPE_Q8_0 &&
+                      state && state->q8_0_tensorcore_rows_function;
     if (!state || !resident_encoded || !encoded_bytes || !row_count || !input_rows ||
         !row_width || !row_bytes || !facts || split_input != (input_head_width != 0ull) ||
         (split_input && input_head_width >= row_width) ||
@@ -265,6 +268,14 @@ int yvex_backend_cuda_encoded_matvec(
         yvex_error_set(err, YVEX_ERR_FORMAT, "cuda.encoded-matvec",
                        "resident encoded matvec geometry or ownership is incompatible");
         return YVEX_ERR_FORMAT;
+    }
+    if (tensorcore_path &&
+        (!yvex_core_u64_mul((row_count + 15ull) / 16ull,
+                            (input_rows + 15ull) / 16ull, &tensorcore_grid) ||
+         tensorcore_grid > UINT_MAX)) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "cuda.encoded-matvec.tensorcore",
+                       "Tensor Core row-batch grid exceeds launch bounds");
+        return YVEX_ERR_BOUNDS;
     }
     output->is_written = 0;
     rc = yvex_cuda_require_capability(backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
@@ -317,6 +328,9 @@ int yvex_backend_cuda_encoded_matvec(
                              &row_count, &input_rows, &qtype, &quantized, &q8_input,
                              &block_row, &forensic_numeric, &additive_ptr, &output_ptr,
                              &output_bf16, &status};
+        void *tensorcore_params[] = {
+            &encoded_ptr, &row_bytes, &row_width, &start_row, &row_count,
+            &input_rows, &quantized, &additive_ptr, &output_ptr, &status};
         void *split_params[] = {&encoded_ptr, &row_bytes, &row_width, &start_row,
                                 &row_count, &input_rows, &qtype, &input_ptr,
                                 &input_tail_ptr, &input_head_width, &additive_ptr,
@@ -324,9 +338,13 @@ int yvex_backend_cuda_encoded_matvec(
         q8_input = q8_path;
         rc = yvex_cuda_launch(
             backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
-            split_input ? state->qtype_split_matvec_function : state->qtype_matvec_function,
-            matvec_grid, matvec_block, 0u,
-            split_input ? split_params : q8_path ? q8_params : params,
+            tensorcore_path ? state->q8_0_tensorcore_rows_function
+                            : split_input ? state->qtype_split_matvec_function
+                                          : state->qtype_matvec_function,
+            tensorcore_path ? (unsigned int)tensorcore_grid : matvec_grid,
+            tensorcore_path ? 32u : matvec_block, 0u,
+            tensorcore_path ? tensorcore_params
+                            : split_input ? split_params : q8_path ? q8_params : params,
             "cuda.encoded-matvec.launch", err);
         if (rc == YVEX_OK) launches++;
     }
@@ -358,6 +376,7 @@ int yvex_backend_cuda_encoded_matvec(
         facts->active_weight_bytes = encoded_bytes;
         facts->activation_bytes = activation_bytes;
         facts->temporary_bytes = temporary_bytes;
+        facts->tensor_core_launches = tensorcore_path ? 1ull : 0ull;
         facts->compulsory_memory_facts_available = 1;
         yvex_error_clear(err);
     }

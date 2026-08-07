@@ -13,8 +13,8 @@
     "source_special_boundaries": ["platform-interface", "backend-kernel", "generated-abi"]
   },
   "limits": {
-    "production_files": 225,
-    "translation_units": 170,
+    "production_files": 226,
+    "translation_units": 171,
     "headers": 55,
     "public_headers": 14,
     "internal_headers": 29,
@@ -27,7 +27,7 @@
     "physical_lines": 189692,
     "code_lines": 176838,
     "executable_lines": 114287,
-    "semantic_owners": 211,
+    "semantic_owners": 212,
     "public_function_declarations": 401,
     "library_global_symbols": 1224,
     "nonpublic_global_symbols": 823,

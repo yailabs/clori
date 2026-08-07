@@ -238,7 +238,7 @@ static __device__ float qtype_warp_dot(const unsigned char *row, const float *ve
         if (!lane) atomicCAS(status, 0, 2);
     } else for (unsigned long long i = lane; i < width; i += 32ull) {
         float weight = qtype_value(row, i, qtype);
-        float value = float_to_bf16_rne(vector[i]);
+        float value = vector[i];
         if (!isfinite(weight) || !isfinite(value)) atomicCAS(status, 0, 1);
         else sum = fmaf(weight, value, sum);
     }

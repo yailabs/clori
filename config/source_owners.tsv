@@ -54,10 +54,11 @@ src/backend/cuda/graph.c	backend.cuda	backend.cuda.graph	backend	private	resourc
 src/backend/cuda/families/deepseek_v4.c	backend.cuda.family	backend.cuda.family.deepseek_v4	family	private	reusable-algorithm	graph.family	implementation	none
 src/backend/cuda/families/minimax_h3.c	backend.cuda.family	backend.cuda.family.minimax_h3	family	private	reusable-algorithm	graph.family	implementation	none
 src/backend/cuda/info.c	backend.cuda	backend.cuda.info	backend	private	reusable-algorithm	backend,graph	implementation	none
-src/backend/cuda/kernel_primitives.h	backend.cuda	backend.cuda.kernel_primitives	backend	private	platform-interface	backend.cuda.kernels,backend.cuda.moe_kernels,backend.cuda.sampling_kernels,backend.cuda.transformer	interface	none
+src/backend/cuda/kernel_primitives.h	backend.cuda	backend.cuda.kernel_primitives	backend	private	platform-interface	backend.cuda.kernels,backend.cuda.moe_kernels,backend.cuda.sampling_kernels,backend.cuda.tensorcore,backend.cuda.transformer	interface	none
 src/backend/cuda/kernels.cu	backend.cuda	backend.cuda.kernels	backend	private	backend-kernel	backend,graph	backend-kernel	none
 src/backend/cuda/moe_kernels.cu	backend.cuda	backend.cuda.moe_kernels	backend	private	backend-kernel	backend,graph	backend-kernel	none
 src/backend/cuda/sampling_kernels.cu	backend.cuda	backend.cuda.sampling_kernels	backend	private	backend-kernel	runtime,generation	backend-kernel	none
+src/backend/cuda/tensorcore.cu	backend.cuda	backend.cuda.tensorcore	backend	private	backend-kernel	backend.cuda.qtype,runtime.logits	backend-kernel	none
 src/backend/cuda/ops.c	backend.cuda	backend.cuda.ops	backend	private	reusable-algorithm	backend,graph	implementation	none
 src/backend/cuda/private.h	backend.cuda	backend.cuda.private	backend	private	platform-interface	backend,graph	interface	none
 src/backend/cuda/qtype.c	backend.cuda	backend.cuda.qtype	backend	private	reusable-algorithm	backend,graph	implementation	none

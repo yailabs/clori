@@ -554,7 +554,7 @@ extern "C" __global__ void yvex_qtype_matvec(
             const float *reference_input = (const float *)input;
             for (unsigned long long i = 0ull; i < row_width; ++i) {
                 double weight = (double)qtype_value(row_data, i, qtype);
-                double value = (double)float_to_bf16_rne(reference_input[i]);
+                double value = (double)reference_input[i];
                 reference = __dadd_rn(reference, __dmul_rn(weight, value));
             }
             float value = (float)reference;
@@ -571,7 +571,7 @@ extern "C" __global__ void yvex_qtype_matvec(
         const float *values = (const float *)input;
         sum = 0.0f;
         for (unsigned long long i = threadIdx.x; i < row_width; i += blockDim.x) {
-            float value = float_to_bf16_rne(values[i]);
+            float value = values[i];
             if (!isfinite(weight[i]) || !isfinite(value)) atomicCAS(status, 0, 1);
             else sum = fmaf(weight[i], value, sum);
         }

@@ -50,6 +50,8 @@ static const cuda_kernel_binding cuda_kernel_bindings[] = {
      CUDA_HANDLE_OFFSET(qtype_matvec_function)},
     {"yvex_qtype_split_matvec", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(qtype_split_matvec_function)},
+    {"yvex_q8_0_tensorcore_rows", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(q8_0_tensorcore_rows_function)},
     {"yvex_qtype_gather", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(qtype_gather_function)},
     {"yvex_argmax_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
