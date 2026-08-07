@@ -753,7 +753,7 @@ static int logits_project_cuda(yvex_runtime_logits_context *context,
             context->resident_head_bytes, context->plan.summary.qtype,
             context->plan.summary.row_count, context->plan.summary.row_width,
             context->plan.summary.row_bytes, 1ull, device_hidden,
-            NULL, 0ull, NULL, &logits_view, &facts, err);
+            NULL, 0ull, NULL, &logits_view, 0, &facts, err);
     if (rc == YVEX_OK)
         context->device_logits_publication = logits_view;
     if (rc == YVEX_OK && !context->options.device_selection)
@@ -1456,7 +1456,7 @@ static int logits_project_cuda_batch(
             context->resident_head_bytes, context->plan.summary.qtype,
             context->plan.summary.row_count, context->plan.summary.row_width,
             context->plan.summary.row_bytes, row_count, device_hidden,
-            NULL, 0ull, NULL, &logits_view, &facts, err);
+            NULL, 0ull, NULL, &logits_view, 0, &facts, err);
     if (rc == YVEX_OK)
         context->device_logits_publication = logits_view;
     if (rc == YVEX_OK && !device_output)

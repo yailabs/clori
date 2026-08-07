@@ -980,8 +980,8 @@ static int attn_prepare(attn_run *run) {
     run->resources.state = run->state;
     run->resources.variant = YVEX_BACKEND_VARIANT_ATTENTION_ENCODED;
     run->resources.budget = run->job->max_device_bytes;
-    /* Full evidence trades the production activation codec for canonical-order
-     * arithmetic so the independent oracle can compare exact stage values. */
+    run->resources.activation_q8 = 0;
+    /* Full evidence additionally selects canonical-order arithmetic for stage oracles. */
     run->resources.forensic_numeric = run->job->evidence_level == 3u;
     return YVEX_OK;
 }

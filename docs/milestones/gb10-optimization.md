@@ -153,8 +153,8 @@ deep-context continuation or throughput claim.
 Compatible width-N CUDA output rows now execute through one encoded-head
 operation. Host producers use one bounded row-batch upload; device producers
 must expose one contiguous identity-compatible view. The encoded head is
-counted once, Q8 activation preparation and projection launch once for the
-complete width, and the full output block is downloaded once for the retained
+counted once, production retains F32 activations, projection launches once for
+the complete width, and the full output block is downloaded once for the retained
 host sampling consumer. Aggregate physical facts belong to the ordered logits
 execution rather than being multiplied into each row. Mixed, non-contiguous or
 invalid source directories remain on the explicit row-local reference path,
@@ -285,12 +285,14 @@ that completion without another barrier; otherwise one stream wait closes the
 stack. The independent immediate and token-local CPU/CUDA paths remain the
 audit/reference oracles. Resident weights no longer reserve an unused
 per-expert staging range, so that oracle fits the same shape-preflighted
-workspace as the width-N path. Full forensic evidence disables Q8 activation
-compression for its row dots; live admission therefore checks the production
-approximation and the tighter forensic CPU/CUDA comparison separately. Qtype
-access expectations are derived from the admitted MoE plan rather than a
-duplicated physical-variant table. The internal source ABI rebuilds atomically;
-no persisted, wire, public C, execution-profile, or state-layout schema changes.
+workspace as the width-N path. Weight qtype no longer selects Q8 activation
+compression implicitly: production and forensic MoE retain F32 activations,
+while forensic evidence separately selects canonical-order row dots. The live
+oracle covers hash routing, learned routing at layers 3 and 8, all 43 CUDA
+layers and cancellation. Qtype access expectations derive from the admitted
+MoE plan rather than a duplicated physical-variant table. The internal source
+ABI rebuilds atomically; no persisted, wire, public C, execution-profile, or
+state-layout schema changes.
 
 The shared CUDA qtype primitive now admits short-row shapes that form
 geometry-selected two-, four- or eight-lane groups for Q8_0, Q2_K, IQ2_XXS and

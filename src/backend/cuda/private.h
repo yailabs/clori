@@ -310,9 +310,9 @@ typedef struct {
 const yvex_cuda_attention_configuration *yvex_cuda_attention_configuration_active(
     const yvex_cuda_backend_state *state, yvex_backend_attention_phase phase);
 
-/* These formats have a blockwise dot against the canonical Q8_K activation
- * workspace. Keep admission singular so attention, generic projection, and
- * MoE cannot silently choose different physical paths. */
+/* These formats can consume the canonical Q8_K activation workspace. Runtime
+ * admission remains a separate explicit decision because weight qtype alone
+ * cannot establish whole-stack numerical compatibility. */
 static inline int yvex_cuda_q8_activation_eligible(unsigned int qtype)
 {
     return qtype == YVEX_GGUF_QTYPE_IQ2_XXS || qtype == YVEX_GGUF_QTYPE_Q2_K ||
@@ -352,7 +352,7 @@ typedef struct {
     CUdeviceptr pointers[YVEX_CUDA_WORK_MAX_RANGES], q8_input;
     unsigned long long sizes[YVEX_CUDA_WORK_MAX_RANGES];
     unsigned char workspace_owned[YVEX_CUDA_WORK_MAX_RANGES];
-    int prepare_only, raw_only, forensic_numeric;
+    int prepare_only, raw_only, forensic_numeric, activation_q8;
     unsigned int count;
     unsigned long long current_bytes, peak_bytes, budget, launches, q8_capacity;
 } yvex_cuda_work;

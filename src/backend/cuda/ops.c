@@ -264,7 +264,7 @@ static int attention_matvec(yvex_cuda_work *work,
     CUdeviceptr additive = 0ull;
     int block_row = 0, q8_path, q8_input = 0;
     unsigned int matvec_grid, matvec_block;
-    q8_path = weight && !work->forensic_numeric &&
+    q8_path = weight && work->activation_q8 && !work->forensic_numeric &&
               weight->row_width % 256ull == 0ull &&
               yvex_cuda_q8_activation_eligible(weight->qtype);
     if (!weight || !weight->present || !device_weight || !vector || !out ||

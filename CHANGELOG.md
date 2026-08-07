@@ -56,8 +56,8 @@ change. Git history preserves implementation chronology.
   output-head rows now publish complete compulsory weight, activation,
   temporary and zero-state byte facts, giving that phase a real memory lower
   bound without estimating traffic from allocation capacity. Compatible
-  width-N CUDA rows now share Q8 activation preparation and one encoded-head
-  execution, while the ordered logits result owns one aggregate physical-facts
+  width-N CUDA rows now share one encoded-head execution, while the ordered
+  logits result owns one aggregate physical-facts
   record and incompatible inputs retain an explicit row-local fallback.
   Device-native output batches now publish contiguous identity-bound logits
   row views for downstream CUDA selection without allocating or downloading a
@@ -74,9 +74,9 @@ change. Git history preserves implementation chronology.
   bytes. A proved final-stage session-stream barrier avoids a redundant wait.
   Immediate and token-local CPU/CUDA execution remain the explicit portable
   audit/reference oracles. Resident-weight oracle execution no longer reserves
-  an unused expert staging range, and full forensic evidence disables Q8
-  activation compression so live tests distinguish its tighter numerical
-  contract from the admitted production approximation.
+  an unused expert staging range. Compatible weight qtypes no longer select Q8
+  activation compression implicitly; production retains F32 activations while
+  full forensic evidence separately selects canonical-order accumulation.
 - CUDA mHC envelope gates, combination rows and Sinkhorn row/column passes now
   execute across their independent stream lanes. Ordered reductions and FP64
   source transforms remain intact, while BF16 residual-square accumulation no

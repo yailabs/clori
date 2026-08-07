@@ -205,7 +205,7 @@ int yvex_backend_cuda_encoded_matvec(
     unsigned long long row_bytes, unsigned long long input_rows,
     const yvex_device_tensor *input, const yvex_device_tensor *input_tail,
     unsigned long long input_head_width, const yvex_device_tensor *additive,
-    yvex_device_tensor *output,
+    yvex_device_tensor *output, int activation_q8,
     yvex_backend_cuda_operation_facts *facts, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
@@ -223,7 +223,12 @@ int yvex_backend_cuda_encoded_matvec(
     unsigned int matvec_grid, matvec_block;
     yvex_error cleanup;
     if (facts) memset(facts, 0, sizeof(*facts));
-    q8_path = !split_input && row_width % 256ull == 0ull &&
+    if (activation_q8 != 0 && activation_q8 != 1) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "cuda.encoded-matvec.activation",
+                       "activation Q8 policy must be explicitly disabled or enabled");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    q8_path = activation_q8 && !split_input && row_width % 256ull == 0ull &&
               yvex_cuda_q8_activation_eligible(qtype);
     if (!state || !resident_encoded || !encoded_bytes || !row_count || !input_rows ||
         !row_width || !row_bytes || !facts || split_input != (input_head_width != 0ull) ||

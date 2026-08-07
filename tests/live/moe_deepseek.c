@@ -13,9 +13,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Production admits two Q8 activation boundaries per expert chain before
- * seven routed/shared results are accumulated. Forensic evidence disables
- * that approximation and retains the tighter composed BF16 bound. */
+/* The production model path retains F32 activations until a separately
+ * identity-bound whole-stack policy admits compression. Forensic execution
+ * also retains the tighter canonical-order accumulation contract. */
 #define MOE_LIVE_PRODUCTION_ABSOLUTE_TOLERANCE 6.0e-3
 #define MOE_LIVE_FORENSIC_ABSOLUTE_TOLERANCE 3.0e-3
 #define MOE_LIVE_RELATIVE_TOLERANCE 3.0e-3
@@ -257,9 +257,9 @@ static int live_representative(yvex_runtime_moe_context *cpu_context,
                                const char *profile, double absolute_tolerance,
                                yvex_error *err)
 {
-    const unsigned long long layers[] = {0ull, 3ull};
+    const unsigned long long layers[] = {0ull, 3ull, 8ull};
     unsigned long long case_index;
-    for (case_index = 0ull; case_index < 2ull; ++case_index) {
+    for (case_index = 0ull; case_index < sizeof(layers) / sizeof(layers[0]); ++case_index) {
         unsigned long long ordinal = layers[case_index], stride;
         const yvex_moe_layer_plan *layer = yvex_moe_plan_layer_at(plan, ordinal);
         const float *values;
@@ -446,6 +446,7 @@ int main(int argc, char **argv)
     request.artifact_path = argv[1];
     request.runtime_binding_path = argv[2];
     request.target_id = "deepseek4-v4-flash-dspark";
+    request.residency_backend = YVEX_BACKEND_KIND_CUDA;
     forensic_options.evidence_level = YVEX_ATTENTION_EVIDENCE_FULL;
     rc = yvex_runtime_model_open(&model, &request, &failure, &err);
     if (rc == YVEX_OK)

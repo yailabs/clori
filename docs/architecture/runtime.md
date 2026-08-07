@@ -257,13 +257,14 @@ class. `production`, `audit`, and `forensic` evidence are independent from
 trace verbosity: production cannot require complete hidden, state, logits, or
 probability host scans merely to derive evidence.
 
-The portable CUDA production profile keeps its admitted Q8 activation codec
-and parallel F32 reductions. Full forensic attention and token-local MoE
-comparison instead select canonical-order F64 row dots and disable activation
-compression for those operations, so the independent stage oracles measure
-semantic execution rather than the production approximation. These slower
-numerical adapters are unreachable from production and are not performance
-paths.
+The CUDA backend retains a directly tested Q8 activation codec, but compatible
+weight qtype establishes kernel capability rather than admission of that
+approximation. Production encoded projection, attention and MoE therefore keep
+F32 activations until an identity-bound execution profile passes whole-stack
+numerical admission. Full forensic attention and token-local MoE comparison
+additionally select canonical-order F64 row dots so independent stage oracles
+measure semantic execution. Those slower numerical adapters are unreachable
+from production and are not performance paths.
 
 Before target prefill/decode, draft, verification, correction, or reset, the
 runtime selects an identity-bound execution shape. The shape distinguishes
