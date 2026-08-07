@@ -205,10 +205,20 @@ candidate writes or committed publication. Reset releases physical pages with
 the virtual address unchanged. Reference providers without a capacity plan
 retain the bounded eager allocation oracle.
 
-This host paging does not make CUDA residency paged. The current CUDA session
-owner still allocates complete state banks for its admitted recipe, so 512K
-product execution and deep-context readiness remain refused until device
-residency consumes the same class plan without full-capacity duplication.
+On CUDA Driver-VMM hardware, the session residency owner projects the same
+logical envelope into two stable virtual device banks per selected layer. It
+maps physical allocation granules only for provider-visible committed spans and
+pre-admitted candidate growth, uploads and copies only those visible spans, and
+refuses resolution beyond each admitted extent. Reset decommits physical
+granules without relocating the virtual banks. Its summary keeps virtual bytes,
+physical resident bytes, allocation granularity and cumulative commit/release
+counts distinct. CUDA implementations without VMM retain the explicit bounded
+full-bank fallback.
+
+This device paging removes full-capacity allocation from the admitted GB10 VMM
+path; it does not by itself qualify 512K model execution. Full-model attention,
+workspace, throughput and continuation evidence at each deep-context band
+remain required before deep-context readiness can be published.
 
 An ordinary execution unit follows:
 

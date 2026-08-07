@@ -236,9 +236,19 @@ candidate and committed destinations preflight that pool before mutation.
 Reset discards physical pages without relocating the virtual spans, and an
 aborted first candidate never reads an uncommitted committed page. A 512K
 logical-capacity fixture proves reservation without full physical allocation,
-and a bounded-pool fixture refuses before a layer becomes visible. This is the
-host graph-state boundary only: CUDA state residency still owns full-capacity
-banks, so real deep-context execution is not yet admitted.
+and a bounded-pool fixture refuses before a layer becomes visible.
+
+On a CUDA backend with complete Driver VMM capability, runtime residency now
+reserves stable virtual banks for the complete sealed recipe while initially
+mapping no physical pages for empty histories. Candidate begin commits the
+granules intersecting visible state and the requested growth before kernels can
+resolve them; committed-bank cloning and host upload touch visible spans only.
+Resolver admission is bounded by the committed span rather than logical
+capacity, and reset decommits every physical granule while preserving the
+virtual geometry. Summary facts distinguish virtual bytes, physical bytes,
+granularity and cumulative page commits/releases. CUDA without VMM retains the
+explicit full-bank fallback. Native `sm_121` tests prove the VMM lifecycle, but
+real 512K full-model execution remains a separate open qualification gate.
 
 The CUDA kernel bundle now admits an ordered set of independently compiled
 manifest-owned modules. General kernels and the MoE kernel family share one
@@ -470,11 +480,12 @@ the availability-aware production phase ledger, and identity-bound native
 SM121 CUBIN admission. It also establishes identity-bound width-N CUDA logits
 publication and greedy/stochastic DSpark target-anchor selection without
 full-vocabulary host materialization, plus stable-address host graph-state
-paging under the admitted per-class capacity plan.
+paging under the admitted per-class capacity plan and on-demand CUDA VMM state
+residency with stable device addresses.
 It does not yet establish Tensor Core execution, specialized attention,
 GB10-competitive grouped MoE, zero per-layer attention synchronization,
 full-model live qualification of target-only or DSpark device sampling,
 full-model live qualification of all reasoning modes, paged CUDA state
-residency, real deep-context qualification, prefix persistence, continuous
-batching, competitive throughput, evaluation, benchmark qualification,
-release qualification, or Hugging Face publication.
+real deep-context qualification, prefix persistence, continuous batching,
+competitive throughput, evaluation, benchmark qualification, release
+qualification, or Hugging Face publication.

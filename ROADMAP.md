@@ -135,9 +135,11 @@ descriptor, admits binding v8 beside retained v7, separates hardware,
 workload, capacity and state-page facts, refuses insufficient model-residency
 memory before artifact open, commits host graph state through stable per-class
 virtual pages, defines a phase roofline ledger, and admits an identity-bound
-native `sm_121` CUBIN beside portable PTX. CUDA state residency still allocates
-complete banks. Specialized kernels, Tensor Core execution, real deep-context
-qualification and the optimized serving after-state remain open.
+native `sm_121` CUBIN beside portable PTX. On Driver-VMM hardware, CUDA session
+state now reserves stable logical banks and commits only the physical granules
+reached by visible or pre-admitted candidate spans; the non-VMM path remains an
+explicit full-bank fallback. Specialized kernels, Tensor Core execution, real
+deep-context qualification and the optimized serving after-state remain open.
 
 The continuation selects expert placement, cache, grouped execution, fusion,
 prefetch, graph capture and kernel order only from measured phase economics.

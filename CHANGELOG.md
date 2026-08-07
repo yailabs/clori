@@ -36,7 +36,9 @@ change. Git history preserves implementation chronology.
 - Stable virtual host-state spans whose physical pages are committed from the
   admitted per-class capacity plan, with bounded candidate/committed preflight,
   exact reset release, and refusal before an over-budget layer becomes visible.
-  CUDA state residency and deep-context product qualification remain open.
+  CUDA Driver-VMM residency mirrors that envelope with stable device addresses,
+  on-demand physical granules, bounded visible-span transfers and exact reset
+  decommit. Full-model deep-context product qualification remains open.
 - An operator-reachable, identity-bound CUDA bandwidth fixture that records raw
   streaming, D2D and coherent-host samples instead of treating peak hardware
   bandwidth as measured evidence.

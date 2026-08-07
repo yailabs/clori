@@ -243,7 +243,7 @@ struct yvex_backend {
     unsigned char *host_workspace_base;
     unsigned long long host_workspace_bytes, host_workspace_cursor, host_workspace_peak;
     unsigned long long host_workspace_generation, host_workspace_allocation_count;
-    int host_workspace_owned, host_workspace_pinned, shared_owner_registered;
+    int host_workspace_owned, host_workspace_pinned, shared_owner_registered, virtual_tensor_ready;
 };
 #define YVEX_BACKEND_LIFECYCLE_CLOSING (1ull << 63)
 #define YVEX_BACKEND_LIFECYCLE_CHILD_MASK (YVEX_BACKEND_LIFECYCLE_CLOSING - 1ull)

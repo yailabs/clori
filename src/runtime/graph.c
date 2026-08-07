@@ -751,7 +751,7 @@ static int runtime_attention_state_begin(
         token_position, count, cancellation, history, failure, err);
     if (rc == YVEX_OK && bridge->residency)
         rc = yvex_runtime_state_residency_transition(
-            bridge->residency, bridge->provider, NULL, layer_ordinal, YVEX_RUNTIME_STATE_BEGIN, err);
+            bridge->residency, bridge->provider, NULL, layer_ordinal, count, YVEX_RUNTIME_STATE_BEGIN, err);
     if (rc == YVEX_OK) {
         bridge->active_layer_ordinal = layer_ordinal;
         bridge->layer_active = 1;
@@ -796,7 +796,7 @@ static int runtime_attention_state_stage(
     if (rc == YVEX_OK && bridge->residency)
         rc = yvex_runtime_state_residency_transition(
             bridge->residency, bridge->provider, publication, bridge->active_layer_ordinal,
-            YVEX_RUNTIME_STATE_STAGE, err);
+            0ull, YVEX_RUNTIME_STATE_STAGE, err);
     if (rc == YVEX_OK && state_delta_identity)
         yvex_runtime_identity_copy(bridge->last_delta_identity, state_delta_identity);
     if (rc == YVEX_OK) bridge->layer_active = 0;

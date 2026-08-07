@@ -688,7 +688,7 @@ int yvex_runtime_session_select_attention_prefix(
             provider->context, layer, YVEX_ATTENTION_STATE_VIEW_CANDIDATE);
         if (view)
             rc = yvex_runtime_state_residency_transition(
-                residency, provider, NULL, layer,
+                residency, provider, NULL, layer, 0ull,
                 YVEX_RUNTIME_STATE_STAGE, err);
     }
     if (rc == YVEX_OK && residency)

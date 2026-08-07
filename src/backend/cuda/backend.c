@@ -1792,6 +1792,7 @@ int yvex_backend_open_cuda_impl(yvex_backend **out,
         state->driver.cuMemRelease && state->driver.cuMemMap &&
         state->driver.cuMemUnmap && state->driver.cuMemSetAccess &&
         state->driver.cuMemGetAllocationGranularity;
+    backend->virtual_tensor_ready = state->virtual_memory_management;
     backend->status = YVEX_BACKEND_STATUS_CONTEXT_READY;
     backend->stats.memory_limit_bytes = memory_limit_bytes;
     backend->tensor_id_next = 1;
@@ -1880,6 +1881,7 @@ int yvex_backend_open_shared_cuda(yvex_backend **out,
     state->device_index = owner->device_index;
     state->driver_version = owner->driver_version;
     state->virtual_memory_management = owner->virtual_memory_management;
+    backend->virtual_tensor_ready = state->virtual_memory_management;
     state->context_owner = context_owner;
     state->context_borrowed = 1;
     backend->status = YVEX_BACKEND_STATUS_CONTEXT_READY;

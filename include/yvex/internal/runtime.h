@@ -301,8 +301,9 @@ typedef struct {
 typedef struct yvex_runtime_residency yvex_runtime_residency;
 typedef struct yvex_runtime_state_residency yvex_runtime_state_residency;
 typedef struct {
-    int sealed, cuda_ready, invalidated;
-    unsigned long long layer_count, host_bytes, device_bytes, upload_bytes, upload_count;
+    int sealed, cuda_ready, paged, invalidated;
+    unsigned long long layer_count, host_bytes, device_bytes, virtual_device_bytes;
+    unsigned long long page_granularity, page_commit_count, page_release_count, upload_bytes, upload_count;
     unsigned long long copy_bytes, copy_count, device_stage_bytes, device_stage_count;
     unsigned long long generation, staged_layer_count, commit_count, abort_count;
     char layout_identity[YVEX_SHA256_HEX_CAP];
@@ -336,7 +337,7 @@ int yvex_runtime_state_residency_prepare(yvex_runtime_state_residency **out, yve
 typedef enum { YVEX_RUNTIME_STATE_BEGIN = 0, YVEX_RUNTIME_STATE_STAGE } yvex_runtime_state_action;
 int yvex_runtime_state_residency_transition(yvex_runtime_state_residency *,
     const yvex_attention_state_provider *, const yvex_attention_publication *,
-    unsigned long long, yvex_runtime_state_action, yvex_error *);
+    unsigned long long, unsigned long long, yvex_runtime_state_action, yvex_error *);
 int yvex_runtime_state_residency_publish(yvex_runtime_state_residency *residency, yvex_error *err);
 void yvex_runtime_state_residency_commit(yvex_runtime_state_residency *residency);
 void yvex_runtime_state_residency_abort(yvex_runtime_state_residency *residency);

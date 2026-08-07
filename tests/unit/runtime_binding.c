@@ -3064,6 +3064,51 @@ static int test_runtime_paged_state_cuda_pack(
     backend->kind = YVEX_BACKEND_KIND_CPU;
     YVEX_TEST_ASSERT(yvex_backend_close_checked(&backend, &err) == YVEX_OK,
                      "host-backed staging backend closes");
+    backend_options.kind = YVEX_BACKEND_KIND_CUDA;
+    if (yvex_backend_open(&backend, &backend_options, &err) == YVEX_OK) {
+        unsigned long long committed_pages;
+        YVEX_TEST_ASSERT(yvex_runtime_state_residency_prepare(
+                             &residency, backend, attention_capacity, provider,
+                             0ull, ULLONG_MAX, 0ull, ULLONG_MAX, &err) == YVEX_OK &&
+                             yvex_runtime_state_residency_summary_copy(
+                                 residency, &summary, &err) == YVEX_OK,
+                         "native CUDA state residency prepares from provider pages");
+        if (backend->virtual_tensor_ready) {
+            YVEX_TEST_ASSERT(summary.paged && !summary.host_bytes,
+                             "native CUDA state uses page-backed device storage");
+            YVEX_TEST_ASSERT(summary.virtual_device_bytes && summary.page_granularity,
+                             "native CUDA state reports virtual geometry");
+            YVEX_TEST_ASSERT(!summary.device_bytes && !summary.page_commit_count,
+                             "empty CUDA state reserves no physical pages");
+            YVEX_TEST_ASSERT(yvex_runtime_state_residency_transition(
+                                 residency, provider, NULL, 0ull, 1ull,
+                                 YVEX_RUNTIME_STATE_BEGIN, &err) == YVEX_OK &&
+                                 yvex_runtime_state_residency_summary_copy(
+                                     residency, &summary, &err) == YVEX_OK,
+                             "candidate growth admits its CUDA pages before execution");
+            YVEX_TEST_ASSERT(summary.page_commit_count,
+                             "native CUDA state commits admitted physical pages");
+            YVEX_TEST_ASSERT(summary.device_bytes ==
+                                 summary.page_commit_count * summary.page_granularity,
+                             "native CUDA state accounts every physical granule");
+            committed_pages = summary.page_commit_count;
+            YVEX_TEST_ASSERT(yvex_runtime_state_residency_reset(residency, &err) == YVEX_OK &&
+                                 yvex_runtime_state_residency_summary_copy(
+                                     residency, &summary, &err) == YVEX_OK &&
+                                 !summary.device_bytes &&
+                                 summary.page_release_count == committed_pages,
+                             "state reset releases physical pages but retains virtual geometry");
+        } else {
+            YVEX_TEST_ASSERT(!summary.paged && summary.host_bytes == summary.device_bytes,
+                             "CUDA without VMM exposes its explicit full-bank fallback");
+        }
+        YVEX_TEST_ASSERT(yvex_runtime_state_residency_close(&residency, &err) == YVEX_OK &&
+                             yvex_backend_close_checked(&backend, &err) == YVEX_OK,
+                         "native CUDA state residency closes exactly");
+    } else {
+        YVEX_TEST_ASSERT(yvex_error_code(&err) == YVEX_ERR_UNSUPPORTED,
+                         "unavailable CUDA refuses paged runtime state explicitly");
+    }
     yvex_graph_attention_capacity_plan_close(&attention_capacity);
     YVEX_TEST_ASSERT(yvex_runtime_session_close(&session, &err) == YVEX_OK,
                      "paged state test session closes");
