@@ -1403,7 +1403,7 @@ int yvex_runtime_activation_prefill_operator_execute(
     if (!request || !result || !retained_cleanup || *retained_cleanup ||
         !request->activation_input_path ||
         request->operator_action != YVEX_RUNTIME_OPERATOR_EXECUTE ||
-        request->phase != YVEX_RUNTIME_PHASE_ATTENTION_PREFILL ||
+        request->phase != YVEX_EXECUTION_PHASE_PREFILL ||
         request->mode != YVEX_RUNTIME_MODE_EAGER ||
         request->scope != YVEX_ATTENTION_PROBE_SCOPE_FULL ||
         request->compare_backends) {

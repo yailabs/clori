@@ -67,13 +67,13 @@ typedef enum {
     YVEX_BACKEND_ATTENTION_SCOPE_CORE = 0,
     YVEX_BACKEND_ATTENTION_SCOPE_ENVELOPE
 } yvex_backend_attention_scope;
+/* Values mirror the cross-subsystem execution phase ABI; correction and reset are not backend
+ * attention phases and remain invalid gaps. CUDA admission asserts every shared value. */
 typedef enum {
-    YVEX_BACKEND_ATTENTION_PHASE_DECODE = 0,
-    YVEX_BACKEND_ATTENTION_PHASE_PREFILL,
-    YVEX_BACKEND_ATTENTION_PHASE_MIXED,
-    YVEX_BACKEND_ATTENTION_PHASE_SPECULATIVE_DRAFT,
-    YVEX_BACKEND_ATTENTION_PHASE_SPECULATIVE_VERIFY,
-    YVEX_BACKEND_ATTENTION_PHASE_COUNT
+    YVEX_BACKEND_ATTENTION_PHASE_PREFILL = 0, YVEX_BACKEND_ATTENTION_PHASE_DECODE = 1,
+    YVEX_BACKEND_ATTENTION_PHASE_SPECULATIVE_DRAFT = 2,
+    YVEX_BACKEND_ATTENTION_PHASE_SPECULATIVE_VERIFY = 3,
+    YVEX_BACKEND_ATTENTION_PHASE_MIXED = 6, YVEX_BACKEND_ATTENTION_PHASE_COUNT = 7
 } yvex_backend_attention_phase;
 typedef int (*yvex_backend_cancelled_fn)(void *context);
 typedef struct { yvex_backend_cancelled_fn requested; void *context; } yvex_backend_cancellation;

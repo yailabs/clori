@@ -1590,7 +1590,7 @@ static void execution_descriptor_fixture(
     facts->probe = YVEX_ATTENTION_PROBE_CANONICAL_V2;
     facts->probe_scope = YVEX_ATTENTION_PROBE_SCOPE_FULL;
     facts->operation_scope = YVEX_RUNTIME_SCOPE_ATTENTION_ENVELOPE;
-    facts->phase = YVEX_RUNTIME_PHASE_ATTENTION_PREFILL;
+    facts->phase = YVEX_EXECUTION_PHASE_PREFILL;
     facts->backend = YVEX_BACKEND_KIND_CPU;
     facts->requested_mode = YVEX_RUNTIME_MODE_EAGER;
     facts->token_count = 4ull;
@@ -1683,7 +1683,7 @@ static int test_execution_descriptor_identity(void)
                    changed.executable_graph_identity) == 0,
         "unknown probe refuses without changing upstream identity facts");
     changed = facts;
-    changed.phase = YVEX_RUNTIME_PHASE_ATTENTION_DECODE;
+    changed.phase = YVEX_EXECUTION_PHASE_DECODE;
     YVEX_TEST_ASSERT(execution_descriptor_changed(first, &changed),
                      "phase mutation changes execution descriptor");
     changed = facts;
@@ -1820,7 +1820,7 @@ static int test_operator_missing_binding_refusal(void)
     request.backend = YVEX_BACKEND_KIND_CPU;
     request.probe = YVEX_ATTENTION_PROBE_UNSPECIFIED;
     request.scope = YVEX_ATTENTION_PROBE_SCOPE_QUICK;
-    request.phase = YVEX_RUNTIME_PHASE_ATTENTION_PREFILL;
+    request.phase = YVEX_EXECUTION_PHASE_PREFILL;
     request.mode = YVEX_RUNTIME_MODE_EAGER;
     request.operation_scope = YVEX_RUNTIME_SCOPE_ATTENTION_CORE;
     request.operator_action = YVEX_RUNTIME_OPERATOR_STATE_EXERCISE;

@@ -19,6 +19,18 @@ _Static_assert(sizeof(yvex_attention_rolling_state_view) ==
 _Static_assert(offsetof(yvex_attention_rolling_state_view, attention_plan_identity) ==
                    offsetof(yvex_attention_rolling_state_output, attention_plan_identity),
                "rolling view/output identity offsets must remain compatible");
+_Static_assert((int)YVEX_BACKEND_ATTENTION_PHASE_PREFILL == (int)YVEX_EXECUTION_PHASE_PREFILL,
+               "backend prefill phase must match execution ABI");
+_Static_assert((int)YVEX_BACKEND_ATTENTION_PHASE_DECODE == (int)YVEX_EXECUTION_PHASE_DECODE,
+               "backend decode phase must match execution ABI");
+_Static_assert((int)YVEX_BACKEND_ATTENTION_PHASE_SPECULATIVE_DRAFT ==
+                   (int)YVEX_EXECUTION_PHASE_DRAFT,
+               "backend draft phase must match execution ABI");
+_Static_assert((int)YVEX_BACKEND_ATTENTION_PHASE_SPECULATIVE_VERIFY ==
+                   (int)YVEX_EXECUTION_PHASE_VERIFY,
+               "backend verify phase must match execution ABI");
+_Static_assert((int)YVEX_BACKEND_ATTENTION_PHASE_MIXED == (int)YVEX_EXECUTION_PHASE_MIXED,
+               "backend mixed phase must match execution ABI");
 
 static int attention_refuse(yvex_attention_failure *failure, yvex_attention_failure_code code,
                             unsigned long long layer, unsigned long long expected,
@@ -1785,7 +1797,11 @@ int yvex_attention_execute(
          request->scope != YVEX_ATTENTION_PROBE_SCOPE_FULL) ||
         (request->operation_scope != YVEX_ATTENTION_OPERATION_CORE &&
          request->operation_scope != YVEX_ATTENTION_OPERATION_ENVELOPE) ||
-        request->execution_phase >= YVEX_ATTENTION_EXECUTION_PHASE_COUNT)
+        (request->execution_phase != YVEX_EXECUTION_PHASE_PREFILL &&
+         request->execution_phase != YVEX_EXECUTION_PHASE_DECODE &&
+         request->execution_phase != YVEX_EXECUTION_PHASE_MIXED &&
+         request->execution_phase != YVEX_EXECUTION_PHASE_DRAFT &&
+         request->execution_phase != YVEX_EXECUTION_PHASE_VERIFY))
         return attention_probe_fail(err, YVEX_ERR_INVALID_ARG, "canonical V2 probe request is invalid");
     if (!family || !plan || !session || !descriptor || !result ||
         !family->plan_summary || !family->plan_layer_count || !family->plan_layer_at ||

@@ -845,8 +845,12 @@ int yvex_backend_cuda_attention_configure(
     yvex_backend_cuda_graph_capability capability;
     unsigned int index;
     int rc;
-    if (!state || phase < YVEX_BACKEND_ATTENTION_PHASE_DECODE ||
-        phase >= YVEX_BACKEND_ATTENTION_PHASE_COUNT ||
+    if (!state ||
+        (phase != YVEX_BACKEND_ATTENTION_PHASE_PREFILL &&
+         phase != YVEX_BACKEND_ATTENTION_PHASE_DECODE &&
+         phase != YVEX_BACKEND_ATTENTION_PHASE_MIXED &&
+         phase != YVEX_BACKEND_ATTENTION_PHASE_SPECULATIVE_DRAFT &&
+         phase != YVEX_BACKEND_ATTENTION_PHASE_SPECULATIVE_VERIFY) ||
         mode < YVEX_BACKEND_CUDA_ATTENTION_EAGER ||
         mode > YVEX_BACKEND_CUDA_ATTENTION_FULL || !compatibility_identity ||
         !compatibility_identity[0] || !capture_bucket || !capture_bucket[0] ||

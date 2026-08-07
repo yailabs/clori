@@ -1873,7 +1873,7 @@ static int run_runtime_oracle_mode(
             memset(&probe, 0, sizeof(probe));
             memset(&model_failure, 0, sizeof(model_failure));
             request.backend = YVEX_BACKEND_KIND_CUDA;
-            request.execution_phase = YVEX_ATTENTION_EXECUTION_PHASE_DECODE;
+            request.execution_phase = YVEX_EXECUTION_PHASE_DECODE;
             request.probe = YVEX_ATTENTION_PROBE_CANONICAL_V2;
             request.scope = YVEX_ATTENTION_PROBE_SCOPE_QUICK;
             request.operation_scope = YVEX_ATTENTION_OPERATION_CORE;
@@ -2086,7 +2086,7 @@ static int run_runtime_phase_cleanup_retry(
     request.backend = YVEX_BACKEND_KIND_CPU;
     request.probe = YVEX_ATTENTION_PROBE_CANONICAL_V2;
     request.scope = YVEX_ATTENTION_PROBE_SCOPE_QUICK;
-    request.phase = YVEX_RUNTIME_PHASE_ATTENTION_PREFILL;
+    request.phase = YVEX_EXECUTION_PHASE_PREFILL;
     request.mode = YVEX_RUNTIME_MODE_EAGER;
     request.operation_scope = YVEX_RUNTIME_SCOPE_ATTENTION_CORE;
     request.operator_action = YVEX_RUNTIME_OPERATOR_STATE_EXERCISE;

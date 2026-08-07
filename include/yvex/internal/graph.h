@@ -13,10 +13,8 @@
 #include <yvex/internal/execution.h>
 #include <yvex/internal/model.h>
 #include <yvex/registry.h>
-
 #define YVEX_ATTENTION_NO_LAYER (~0ull)
 #define YVEX_ATTENTION_NO_TENSOR_INDEX (~0ull)
-
 typedef enum {
     YVEX_GRAPH_REPORT_MODE_NORMAL = 0,
     YVEX_GRAPH_REPORT_MODE_TABLE,
@@ -303,16 +301,7 @@ typedef struct {
 
 typedef struct {
     yvex_attention_operation_scope operation_scope;
-    /* Unspecified is retained only for reference probes that predate phase-aware execution. */
-    enum yvex_attention_execution_phase {
-        YVEX_ATTENTION_EXECUTION_PHASE_UNSPECIFIED = 0,
-        YVEX_ATTENTION_EXECUTION_PHASE_PREFILL,
-        YVEX_ATTENTION_EXECUTION_PHASE_DECODE,
-        YVEX_ATTENTION_EXECUTION_PHASE_MIXED,
-        YVEX_ATTENTION_EXECUTION_PHASE_DRAFT,
-        YVEX_ATTENTION_EXECUTION_PHASE_VERIFY,
-        YVEX_ATTENTION_EXECUTION_PHASE_COUNT
-    } execution_phase;
+    yvex_execution_phase execution_phase;
     const char *logical_model_identity;
     unsigned long long layer_index, token_position, token_count;
     unsigned long long local_history_tokens, compressed_history_tokens;
@@ -327,7 +316,7 @@ typedef struct {
     yvex_attention_publication *publication;
     yvex_attention_execution_trace *trace;
     const yvex_attention_cancellation *cancellation;
-    int candidate_block_visible, retain_prefix_checkpoints;
+    int candidate_block_visible, retain_prefix_checkpoints, execution_phase_present;
 } yvex_attention_cpu_options;
 
 typedef struct {
@@ -480,7 +469,7 @@ typedef enum {
 typedef struct {
     yvex_backend_kind backend;
     yvex_tensor_scope tensor_scope;
-    enum yvex_attention_execution_phase execution_phase;
+    yvex_execution_phase execution_phase;
     yvex_backend *backend_context;
     const char *logical_model_identity;
     yvex_attention_probe_kind probe;
@@ -503,7 +492,7 @@ typedef struct {
     yvex_attention_probe_evidence_fn evidence;
     void *evidence_context;
     yvex_attention_transaction_disposition transaction_disposition;
-    int candidate_block_visible, retain_prefix_checkpoints;
+    int candidate_block_visible, retain_prefix_checkpoints, execution_phase_present;
 } yvex_attention_probe_request;
 typedef yvex_attention_probe_request yvex_attention_execution_request;
 typedef struct {
