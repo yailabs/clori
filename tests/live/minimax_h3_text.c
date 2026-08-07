@@ -17,6 +17,8 @@ enum { TEXT_HIDDEN = 5120u };
 /* The independent PyTorch CPU/CUDA BF16 oracle pair differs by these measured bounds. */
 static const float layer_oracle_max_absolute = 0.046875f;
 static const double layer_oracle_max_rmse = 0.002315;
+static const float encoder_oracle_max_absolute = 0.375f;
+static const double encoder_oracle_max_rmse = 0.026718;
 
 static const char *const layer_weight_names[YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT] = {
     "model.language_model.embed_tokens.weight",
@@ -183,7 +185,7 @@ static int layer_proof_execute(
     }
     if (rc == YVEX_OK)
         rc = family->text_layer_cuda(
-            backend, weights, identity, arena_bytes, token, 1ull, output,
+            backend, weights, 1ull, identity, arena_bytes, token, 1ull, output,
             TEXT_HIDDEN, result, err);
     if (attached) {
         yvex_error_clear(&cleanup);
@@ -214,7 +216,7 @@ static int layer_proof_execute(
 }
 
 static int reference_compare(const char *path, const float output[TEXT_HIDDEN],
-                             int bf16_accumulation_contract)
+                             int execution_mode)
 {
     float reference[TEXT_HIDDEN];
     float maximum = 0.0f;
@@ -235,7 +237,9 @@ static int reference_compare(const char *path, const float output[TEXT_HIDDEN],
     }
     squared = sqrt(squared / TEXT_HIDDEN);
     printf("oracle_max_absolute_error=%.9g oracle_rmse=%.9g\n", maximum, squared);
-    if (!bf16_accumulation_contract) return maximum == 0.0f;
+    if (!execution_mode) return maximum == 0.0f;
+    if (execution_mode == 3)
+        return maximum <= encoder_oracle_max_absolute && squared <= encoder_oracle_max_rmse;
     return maximum <= layer_oracle_max_absolute && squared <= layer_oracle_max_rmse;
 }
 
@@ -268,12 +272,13 @@ int main(int argc, char **argv)
     if (argc != 5 && argc != 6) {
         fprintf(stderr,
                 "usage: minimax_h3_text TEXT_GGUF TOKEN OUTPUT_F32 REFERENCE_F32 "
-                "[layer0|layer0-proof]\n");
+                "[layer0|layer0-proof|encoder50]\n");
         return 2;
     }
     if (argc == 6) {
         if (strcmp(argv[5], "layer0") == 0) execution_mode = 1;
         else if (strcmp(argv[5], "layer0-proof") == 0) execution_mode = 2;
+        else if (strcmp(argv[5], "encoder50") == 0) execution_mode = 3;
         else {
             fprintf(stderr, "text_mode=refused\n");
             return 2;
@@ -296,15 +301,12 @@ int main(int argc, char **argv)
         if (execution_mode == 2)
             rc = layer_proof_execute(
                 artifact, gguf, tensors, &token, output, &result, &err);
-        else if (execution_mode == 1)
-            rc = api->text_encoder_layer_artifact_cuda(
-                artifact, gguf, tensors, &token, 1ull, output, TEXT_HIDDEN,
-                70ull * 1024ull * 1024ull * 1024ull, 512ull * 1024ull * 1024ull,
-                &result, &err);
         else
-            rc = api->text_encoder_embed_artifact_cuda(
-                artifact, gguf, tensors, &token, 1ull, output, TEXT_HIDDEN,
-                70ull * 1024ull * 1024ull * 1024ull, 256ull * 1024ull * 1024ull,
+            rc = api->text_encoder_artifact_cuda(
+                artifact, gguf, tensors, &token, 1ull,
+                execution_mode == 3 ? 50ull : execution_mode == 1 ? 1ull : 0ull,
+                output, TEXT_HIDDEN, 70ull * 1024ull * 1024ull * 1024ull,
+                execution_mode ? 512ull * 1024ull * 1024ull : 256ull * 1024ull * 1024ull,
                 &result, &err);
     }
     if (rc == YVEX_OK && !output_write(argv[3], output)) {
@@ -312,13 +314,14 @@ int main(int argc, char **argv)
                        "conditioning output could not be written completely");
         rc = YVEX_ERR_IO;
     }
-    if (rc == YVEX_OK && !reference_compare(argv[4], output, execution_mode != 0)) {
+    if (rc == YVEX_OK && !reference_compare(argv[4], output, execution_mode)) {
         yvex_error_set(&err, YVEX_ERR_FORMAT, "minimax-h3.text.oracle",
                        "YVEX conditioning differs from the independent BF16 oracle");
         rc = YVEX_ERR_FORMAT;
     }
     if (rc == YVEX_OK) {
         const char *mode = execution_mode == 2 ? "layer0-proof"
+                           : execution_mode == 3 ? "encoder50"
                            : execution_mode == 1 ? "layer0" : "embedding";
         printf("text_conditioning=accepted mode=%s\n", mode);
         printf("tokens=%llu hidden=%llu layers=%llu resident_bytes=%llu\n",

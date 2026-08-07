@@ -50,6 +50,7 @@ typedef struct {
     const yvex_minimax_h3_text_weight *weights;
     yvex_device_tensor *device[TEXT_DEVICE_COUNT];
     unsigned long long tokens, values, output_bytes, device_bytes;
+    unsigned long long layer_count, layer_index;
     yvex_minimax_h3_conditioning_result facts;
 } text_layer_run;
 
@@ -200,17 +201,18 @@ static int text_embed_cuda(
 
 static int text_layer_identity(
     const char *residency_identity, const unsigned int *token_ids,
-    unsigned long long token_count, const float *values, unsigned long long value_count,
+    unsigned long long token_count, unsigned long long layer_count,
+    const float *values, unsigned long long value_count,
     char output[TEXT_IDENTITY_CAP])
 {
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     unsigned long long index;
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.minimax-h3.qwen-text-layer.cuda.v1") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.minimax-h3.qwen-text-stack.cuda.v1") ||
         !yvex_sha256_update_text(&hash, YVEX_MINIMAX_H3_TEXT_COMPONENT_IDENTITY) ||
         !yvex_sha256_update_text(&hash, residency_identity) ||
-        !yvex_sha256_update_u64(&hash, 0ull) ||
+        !yvex_sha256_update_u64(&hash, layer_count) ||
         !yvex_sha256_update_u64(&hash, token_count) ||
         !yvex_sha256_update_u64(&hash, TEXT_HIDDEN)) return 0;
     for (index = 0ull; index < token_count; ++index)
@@ -226,7 +228,7 @@ static int text_layer_identity(
 }
 
 static int text_weights_validate(
-    const yvex_minimax_h3_text_weight weights[YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT],
+    const yvex_minimax_h3_text_weight *weights, unsigned long long layer_count,
     unsigned long long *weight_bytes)
 {
     static const unsigned long long rows[YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT] = {
@@ -237,17 +239,21 @@ static int text_weights_validate(
         TEXT_HIDDEN, TEXT_HIDDEN, TEXT_HIDDEN, TEXT_HIDDEN, TEXT_HIDDEN, TEXT_Q_WIDTH,
         TEXT_HEAD_DIM, TEXT_HEAD_DIM, TEXT_HIDDEN, TEXT_HIDDEN, TEXT_HIDDEN, TEXT_FFN,
     };
-    unsigned long long index;
+    unsigned long long count, index;
     if (weight_bytes) *weight_bytes = 0ull;
-    if (!weights || !weight_bytes) return 0;
-    for (index = 0ull; index < YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT; ++index) {
+    if (!weights || !layer_count ||
+        layer_count > YVEX_MINIMAX_H3_TEXT_CONDITIONING_LAYERS || !weight_bytes ||
+        !yvex_core_u64_mul(layer_count, YVEX_MINIMAX_H3_TEXT_LAYER_WEIGHT_COUNT, &count) ||
+        !yvex_core_u64_add(count, 1ull, &count)) return 0;
+    for (index = 0ull; index < count; ++index) {
         const yvex_minimax_h3_text_weight *weight = weights + index;
-        unsigned long long expected;
+        unsigned long long expected, slot = index ? 1ull +
+            (index - 1ull) % YVEX_MINIMAX_H3_TEXT_LAYER_WEIGHT_COUNT : 0ull;
         if (!weight->encoded || weight->qtype != YVEX_GGUF_QTYPE_BF16 ||
-            weight->row_count != rows[index] || weight->row_width != widths[index] ||
-            !yvex_core_u64_mul(widths[index], 2ull, &expected) ||
+            weight->row_count != rows[slot] || weight->row_width != widths[slot] ||
+            !yvex_core_u64_mul(widths[slot], 2ull, &expected) ||
             weight->row_bytes != expected ||
-            !yvex_core_u64_mul(rows[index], expected, &expected) ||
+            !yvex_core_u64_mul(rows[slot], expected, &expected) ||
             weight->encoded_bytes != expected ||
             !yvex_core_u64_add(*weight_bytes, weight->encoded_bytes, weight_bytes)) return 0;
     }
@@ -313,11 +319,19 @@ static int text_devices_prepare(text_layer_run *run, yvex_error *err)
     return rc;
 }
 
+static const yvex_minimax_h3_text_weight *text_weight(
+    const text_layer_run *run, yvex_minimax_h3_text_weight_slot slot)
+{
+    if (slot == YVEX_MINIMAX_H3_TEXT_EMBEDDING) return run->weights;
+    return run->weights + 1ull +
+           run->layer_index * YVEX_MINIMAX_H3_TEXT_LAYER_WEIGHT_COUNT + slot - 1ull;
+}
+
 static int text_weight_gather(text_layer_run *run, yvex_minimax_h3_text_weight_slot slot,
                               yvex_device_tensor *output, const unsigned int *rows,
                               unsigned long long row_count, yvex_error *err)
 {
-    const yvex_minimax_h3_text_weight *weight = run->weights + slot;
+    const yvex_minimax_h3_text_weight *weight = text_weight(run, slot);
     yvex_backend_cuda_operation_facts facts;
     int rc = yvex_backend_cuda_encoded_gather(
         run->backend, weight->encoded, weight->encoded_bytes, weight->qtype,
@@ -334,7 +348,7 @@ static int text_weight_project(text_layer_run *run, yvex_minimax_h3_text_weight_
                                const yvex_device_tensor *additive,
                                yvex_device_tensor *output, yvex_error *err)
 {
-    const yvex_minimax_h3_text_weight *weight = run->weights + slot;
+    const yvex_minimax_h3_text_weight *weight = text_weight(run, slot);
     yvex_backend_cuda_operation_facts facts;
     int rc = yvex_backend_cuda_encoded_matvec(
         run->backend, weight->encoded, weight->encoded_bytes, weight->qtype,
@@ -522,17 +536,19 @@ static int text_layer_compute(text_layer_run *run, const unsigned int *token_ids
         rc = text_weight_gather(run, YVEX_MINIMAX_H3_TEXT_EMBEDDING,
                                 run->device[TEXT_DEVICE_HIDDEN], token_ids,
                                 run->tokens, err);
-    if (rc == YVEX_OK)
+    for (run->layer_index = 0ull; rc == YVEX_OK && run->layer_index < run->layer_count;
+         ++run->layer_index) {
         rc = text_norm(run, TEXT_DEVICE_HIDDEN, YVEX_MINIMAX_H3_TEXT_INPUT_NORM,
                        TEXT_DEVICE_NORM, run->values, err);
-    if (rc == YVEX_OK) rc = text_attention(run, err);
-    if (rc == YVEX_OK)
-        rc = text_weight_project(run, YVEX_MINIMAX_H3_TEXT_O_PROJECTION,
-                                 run->device[TEXT_DEVICE_ATTENTION],
-                                 run->device[TEXT_DEVICE_HIDDEN],
-                                 run->device[TEXT_DEVICE_RESIDUAL], err);
-    if (rc == YVEX_OK) rc = text_round(run, TEXT_DEVICE_RESIDUAL, run->values, err);
-    if (rc == YVEX_OK) rc = text_mlp(run, err);
+        if (rc == YVEX_OK) rc = text_attention(run, err);
+        if (rc == YVEX_OK)
+            rc = text_weight_project(run, YVEX_MINIMAX_H3_TEXT_O_PROJECTION,
+                                     run->device[TEXT_DEVICE_ATTENTION],
+                                     run->device[TEXT_DEVICE_HIDDEN],
+                                     run->device[TEXT_DEVICE_RESIDUAL], err);
+        if (rc == YVEX_OK) rc = text_round(run, TEXT_DEVICE_RESIDUAL, run->values, err);
+        if (rc == YVEX_OK) rc = text_mlp(run, err);
+    }
     if (rc == YVEX_OK)
         rc = yvex_backend_tensor_read(run->backend, run->device[TEXT_DEVICE_HIDDEN],
                                       staged, run->output_bytes, err);
@@ -561,7 +577,7 @@ static int text_devices_release(text_layer_run *run, int rc, yvex_error *err)
 
 static int text_layer_cuda(
     yvex_backend *backend,
-    const yvex_minimax_h3_text_weight weights[YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT],
+    const yvex_minimax_h3_text_weight *weights, unsigned long long layer_count,
     const char *residency_identity, unsigned long long resident_bytes,
     const unsigned int *token_ids, unsigned long long token_count, float *output,
     unsigned long long output_capacity, yvex_minimax_h3_conditioning_result *result,
@@ -573,7 +589,7 @@ static int text_layer_cuda(
     unsigned long long index, weight_bytes = 0ull;
     int rc = YVEX_OK;
     if (result) memset(result, 0, sizeof(*result));
-    if (!backend || !text_weights_validate(weights, &weight_bytes) ||
+    if (!backend || !text_weights_validate(weights, layer_count, &weight_bytes) ||
         !yvex_sha256_hex_valid(residency_identity) || resident_bytes < weight_bytes || !token_ids ||
         !token_count || token_count > TEXT_MAX_TOKENS || !output || !result ||
         !yvex_core_u64_mul(token_count, TEXT_HIDDEN, &run.values) ||
@@ -582,7 +598,7 @@ static int text_layer_cuda(
         run.output_bytes > SIZE_MAX)
         return conditioning_refuse(
             err, YVEX_ERR_INVALID_ARG, "cuda.minimax-h3.text-layer.validate",
-            "exact layer-zero BF16 weights, tokens, residency, and output are required");
+            "exact Qwen BF16 stack weights, tokens, residency, and output are required");
     for (index = 0ull; index < token_count; ++index)
         if (token_ids[index] >= TEXT_VOCAB)
             return conditioning_refuse(err, YVEX_ERR_BOUNDS,
@@ -596,9 +612,10 @@ static int text_layer_cuda(
     run.backend = backend;
     run.weights = weights;
     run.tokens = token_count;
+    run.layer_count = layer_count;
     rc = text_layer_compute(&run, token_ids, staged, err);
     if (rc == YVEX_OK &&
-        !text_layer_identity(residency_identity, token_ids, token_count, staged,
+        !text_layer_identity(residency_identity, token_ids, token_count, layer_count, staged,
                              run.values, published.execution_identity))
         rc = conditioning_refuse(err, YVEX_ERR_STATE,
                                  "cuda.minimax-h3.text-layer.identity",
@@ -608,7 +625,7 @@ static int text_layer_cuda(
         memcpy(output, staged, (size_t)run.output_bytes);
         published.token_count = token_count;
         published.hidden_width = TEXT_HIDDEN;
-        published.layer_count = 1ull;
+        published.layer_count = layer_count;
         published.resident_bytes = resident_bytes;
         published.kernel_launches = run.facts.kernel_launches;
         published.h2d_bytes = run.facts.h2d_bytes;

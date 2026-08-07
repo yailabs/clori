@@ -508,7 +508,9 @@ typedef enum {
     YVEX_MINIMAX_H3_TEXT_GATE_PROJECTION,
     YVEX_MINIMAX_H3_TEXT_UP_PROJECTION,
     YVEX_MINIMAX_H3_TEXT_DOWN_PROJECTION,
-    YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT
+    YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT,
+    YVEX_MINIMAX_H3_TEXT_LAYER_WEIGHT_COUNT = YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT - 1,
+    YVEX_MINIMAX_H3_TEXT_CONDITIONING_LAYERS = 50
 } yvex_minimax_h3_text_weight_slot;
 typedef struct {
     const unsigned char *encoded;
@@ -524,7 +526,7 @@ typedef struct {
         unsigned long long output_capacity, yvex_minimax_h3_conditioning_result *result,
         yvex_error *err);
     int (*text_layer_cuda)(yvex_backend *backend,
-        const yvex_minimax_h3_text_weight weights[YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT],
+        const yvex_minimax_h3_text_weight *weights, unsigned long long layer_count,
         const char *residency_identity, unsigned long long resident_bytes,
         const unsigned int *token_ids, unsigned long long token_count, float *output,
         unsigned long long output_capacity, yvex_minimax_h3_conditioning_result *result,
@@ -551,15 +553,10 @@ typedef struct {
         const yvex_artifact *artifact, const yvex_gguf *gguf,
         const yvex_tensor_table *tensors, yvex_complete_artifact_admission *out,
         yvex_artifact_admission_failure *failure, yvex_error *err);
-    int (*text_encoder_embed_artifact_cuda)(
+    int (*text_encoder_artifact_cuda)(
         const yvex_artifact *artifact, const yvex_gguf *gguf, const yvex_tensor_table *tensors,
         const unsigned int *token_ids, unsigned long long token_count,
-        float *output, unsigned long long output_capacity,
-        unsigned long long maximum_host_bytes, unsigned long long maximum_device_bytes,
-        yvex_minimax_h3_conditioning_result *result, yvex_error *err);
-    int (*text_encoder_layer_artifact_cuda)(
-        const yvex_artifact *artifact, const yvex_gguf *gguf, const yvex_tensor_table *tensors,
-        const unsigned int *token_ids, unsigned long long token_count,
+        unsigned long long layer_count,
         float *output, unsigned long long output_capacity,
         unsigned long long maximum_host_bytes, unsigned long long maximum_device_bytes,
         yvex_minimax_h3_conditioning_result *result, yvex_error *err);

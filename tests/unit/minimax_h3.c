@@ -646,13 +646,13 @@ static int test_component_admission_routing(void)
                          YVEX_ERR_INVALID_ARG &&
                          !conditioning.complete && ((unsigned char *)output)[0] == 0x5a,
                      "CUDA conditioning refuses absent materialization without publication");
-    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->text_encoder_embed_artifact_cuda(
-                         NULL, NULL, NULL, &token, 1ull, output, 5120ull, 1ull, 1ull,
+    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->text_encoder_artifact_cuda(
+                         NULL, NULL, NULL, &token, 1ull, 0ull, output, 5120ull, 1ull, 1ull,
                          &conditioning, &err) == YVEX_ERR_INVALID_ARG &&
                          !conditioning.complete && ((unsigned char *)output)[0] == 0x5a,
                      "artifact conditioning refuses absent exact component views");
-    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->text_encoder_layer_artifact_cuda(
-                         NULL, NULL, NULL, &token, 1ull, output, 5120ull, 1ull, 1ull,
+    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->text_encoder_artifact_cuda(
+                         NULL, NULL, NULL, &token, 1ull, 50ull, output, 5120ull, 1ull, 1ull,
                          &conditioning, &err) == YVEX_ERR_INVALID_ARG &&
                          !conditioning.complete && ((unsigned char *)output)[0] == 0x5a,
                      "artifact text layer refuses absent exact component views");

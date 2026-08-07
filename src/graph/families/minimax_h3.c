@@ -1793,53 +1793,76 @@ static int video_vae_execute_artifact_cpu(
     yvex_materialization_plan_close(plan);
     return rc;
 }
-static const char *const text_layer_weight_names[YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT] = {
-    "model.language_model.embed_tokens.weight",
-    "model.language_model.layers.0.input_layernorm.weight",
-    "model.language_model.layers.0.self_attn.q_proj.weight",
-    "model.language_model.layers.0.self_attn.k_proj.weight",
-    "model.language_model.layers.0.self_attn.v_proj.weight",
-    "model.language_model.layers.0.self_attn.o_proj.weight",
-    "model.language_model.layers.0.self_attn.q_norm.weight",
-    "model.language_model.layers.0.self_attn.k_norm.weight",
-    "model.language_model.layers.0.post_attention_layernorm.weight",
-    "model.language_model.layers.0.mlp.gate_proj.weight",
-    "model.language_model.layers.0.mlp.up_proj.weight",
-    "model.language_model.layers.0.mlp.down_proj.weight",
+static const char *const text_layer_weight_suffixes[YVEX_MINIMAX_H3_TEXT_LAYER_WEIGHT_COUNT] = {
+    "input_layernorm.weight",
+    "self_attn.q_proj.weight",
+    "self_attn.k_proj.weight",
+    "self_attn.v_proj.weight",
+    "self_attn.o_proj.weight",
+    "self_attn.q_norm.weight",
+    "self_attn.k_norm.weight",
+    "post_attention_layernorm.weight",
+    "mlp.gate_proj.weight",
+    "mlp.up_proj.weight",
+    "mlp.down_proj.weight",
 };
 static int text_layer_weights_bind(
     const yvex_materialization_session *session, const yvex_runtime_residency *residency,
-    yvex_minimax_h3_text_weight weights[YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT], yvex_error *err)
+    yvex_minimax_h3_text_weight *weights, unsigned long long layer_count, yvex_error *err)
 {
-    unsigned long long index;
-    for (index = 0ull; index < YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT; ++index) {
-        const yvex_materialized_tensor_binding *binding =
-            component_binding_find(session, text_layer_weight_names[index]);
-        if (!binding || !binding->row_count ||
-            yvex_runtime_residency_binding_view(
-                residency, binding, &weights[index].encoded,
-                &weights[index].encoded_bytes, err) != YVEX_OK) {
-            yvex_error_set(err, YVEX_ERR_FORMAT, "minimax-h3.text-layer.binding",
-                           "an exact layer-zero BF16 binding is unavailable");
-            return YVEX_ERR_FORMAT;
+    unsigned long long index, layer, slot = 0ull;
+    char name[160];
+    const yvex_materialized_tensor_binding *binding =
+        component_binding_find(session, "model.language_model.embed_tokens.weight");
+    if (!binding || !binding->row_count ||
+        yvex_runtime_residency_binding_view(
+            residency, binding, &weights[0].encoded, &weights[0].encoded_bytes, err) != YVEX_OK) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "minimax-h3.text-layer.binding",
+                       "the exact Qwen embedding binding is unavailable");
+        return YVEX_ERR_FORMAT;
+    }
+    weights[0].qtype = binding->qtype;
+    weights[0].row_count = binding->row_count;
+    weights[0].row_width = binding->row_width;
+    weights[0].row_bytes = binding->encoded_bytes / binding->row_count;
+    for (layer = 0ull; layer < layer_count; ++layer) {
+        for (index = 0ull; index < YVEX_MINIMAX_H3_TEXT_LAYER_WEIGHT_COUNT; ++index) {
+            int length = snprintf(name, sizeof(name), "model.language_model.layers.%llu.%s",
+                                  layer, text_layer_weight_suffixes[index]);
+            slot = 1ull + layer * YVEX_MINIMAX_H3_TEXT_LAYER_WEIGHT_COUNT + index;
+            if (length < 0 || (size_t)length >= sizeof(name)) {
+                yvex_error_set(err, YVEX_ERR_BOUNDS, "minimax-h3.text-layer.name",
+                               "a Qwen layer binding name exceeded its bounded representation");
+                return YVEX_ERR_BOUNDS;
+            }
+            binding = component_binding_find(session, name);
+            if (!binding || !binding->row_count ||
+                yvex_runtime_residency_binding_view(
+                    residency, binding, &weights[slot].encoded,
+                    &weights[slot].encoded_bytes, err) != YVEX_OK) {
+                yvex_error_set(err, YVEX_ERR_FORMAT, "minimax-h3.text-layer.binding",
+                               "an exact Qwen BF16 layer binding is unavailable");
+                return YVEX_ERR_FORMAT;
+            }
+            weights[slot].qtype = binding->qtype;
+            weights[slot].row_count = binding->row_count;
+            weights[slot].row_width = binding->row_width;
+            weights[slot].row_bytes = binding->encoded_bytes / binding->row_count;
         }
-        weights[index].qtype = binding->qtype;
-        weights[index].row_count = binding->row_count;
-        weights[index].row_width = binding->row_width;
-        weights[index].row_bytes = binding->encoded_bytes / binding->row_count;
     }
     return YVEX_OK;
 }
 static int text_encoder_artifact_cuda(const yvex_artifact *artifact,
     const yvex_gguf *gguf, const yvex_tensor_table *tensors,
     const unsigned int *token_ids, unsigned long long token_count,
+    unsigned long long layer_count,
     float *output, unsigned long long output_capacity,
     unsigned long long maximum_host_bytes, unsigned long long maximum_device_bytes,
-    int execute_layer, yvex_minimax_h3_conditioning_result *result, yvex_error *err)
+    yvex_minimax_h3_conditioning_result *result, yvex_error *err)
 {
     const yvex_minimax_h3_backend_api *backend = yvex_backend_register_minimax_h3();
     const yvex_materialized_tensor_binding *embedding = NULL;
-    yvex_minimax_h3_text_weight weights[YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT] = {{0}};
+    yvex_minimax_h3_text_weight *weights = NULL;
     yvex_complete_artifact_admission admission;
     yvex_artifact_admission_failure admission_failure;
     yvex_materialization_options options;
@@ -1854,14 +1877,15 @@ static int text_encoder_artifact_cuda(const yvex_artifact *artifact,
     yvex_backend *cuda = NULL;
     const unsigned char *encoded = NULL;
     unsigned long long encoded_bytes = 0ull, output_values = 0ull, output_bytes = 0ull;
+    unsigned long long weight_count = 0ull;
     float *staged = NULL;
     yvex_minimax_h3_conditioning_result published = {0};
     int uploaded = 0, rc, cleanup_rc, residency_close_rc;
     yvex_error cleanup, residency_cleanup;
     if (result) memset(result, 0, sizeof(*result));
     if (!artifact || !gguf || !tensors || !backend || !backend->text_embed_cuda ||
-        !backend->text_layer_cuda ||
-        !token_ids || !token_count || !output || !result ||
+        !backend->text_layer_cuda || !token_ids || !token_count || !output || !result ||
+        layer_count > YVEX_MINIMAX_H3_TEXT_CONDITIONING_LAYERS ||
         !yvex_core_u64_mul(token_count, 5120ull, &output_values) ||
         output_values > output_capacity ||
         !yvex_core_u64_mul(output_values, sizeof(float), &output_bytes) ||
@@ -1874,6 +1898,18 @@ static int text_encoder_artifact_cuda(const yvex_artifact *artifact,
     if (!staged) {
         yvex_error_set(err, YVEX_ERR_NOMEM, "minimax-h3.text-conditioning.output",
                        "transactional graph output allocation failed");
+        return YVEX_ERR_NOMEM;
+    }
+    if (layer_count &&
+        (!yvex_core_u64_mul(layer_count, YVEX_MINIMAX_H3_TEXT_LAYER_WEIGHT_COUNT,
+                            &weight_count) ||
+         !yvex_core_u64_add(weight_count, 1ull, &weight_count) ||
+         weight_count > SIZE_MAX / sizeof(*weights) ||
+         !(weights = (yvex_minimax_h3_text_weight *)calloc((size_t)weight_count,
+                                                            sizeof(*weights))))) {
+        free(staged);
+        yvex_error_set(err, YVEX_ERR_NOMEM, "minimax-h3.text-conditioning.weights",
+                       "bounded Qwen conditioning weight bindings could not be allocated");
         return YVEX_ERR_NOMEM;
     }
     backend_options.kind = YVEX_BACKEND_KIND_CUDA;
@@ -1903,23 +1939,23 @@ static int text_encoder_artifact_cuda(const yvex_artifact *artifact,
         rc = yvex_runtime_component_residency_prepare(
             &residency, session, admission.logical_component_identity,
             &residency_options, &residency_failure, err);
-    if (rc == YVEX_OK && !execute_layer)
+    if (rc == YVEX_OK && !layer_count)
         rc = yvex_runtime_residency_binding_view(
             residency, embedding, &encoded, &encoded_bytes, err);
-    if (rc == YVEX_OK && execute_layer)
-        rc = text_layer_weights_bind(session, residency, weights, err);
+    if (rc == YVEX_OK && layer_count)
+        rc = text_layer_weights_bind(session, residency, weights, layer_count, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_residency_cuda_session_attach(
             residency, &cuda, maximum_device_bytes, &uploaded, &residency_summary, err);
-    if (rc == YVEX_OK && !execute_layer)
+    if (rc == YVEX_OK && !layer_count)
         rc = backend->text_embed_cuda(
             cuda, encoded, encoded_bytes, embedding->qtype, embedding->row_count,
             embedding->row_width, embedding->encoded_bytes / embedding->row_count,
             residency_summary.residency_identity, residency_summary.encoded_bytes,
             token_ids, token_count, staged, output_values, &published, err);
-    if (rc == YVEX_OK && execute_layer)
+    if (rc == YVEX_OK && layer_count)
         rc = backend->text_layer_cuda(
-            cuda, weights, residency_summary.residency_identity,
+            cuda, weights, layer_count, residency_summary.residency_identity,
             residency_summary.encoded_bytes, token_ids, token_count, staged,
             output_values, &published, err);
     yvex_error_clear(&cleanup);
@@ -1942,35 +1978,13 @@ static int text_encoder_artifact_cuda(const yvex_artifact *artifact,
         yvex_error_clear(err);
     }
     free(staged);
+    free(weights);
     return rc;
-}
-static int text_encoder_embed_artifact_cuda(const yvex_artifact *artifact,
-    const yvex_gguf *gguf, const yvex_tensor_table *tensors,
-    const unsigned int *token_ids, unsigned long long token_count,
-    float *output, unsigned long long output_capacity,
-    unsigned long long maximum_host_bytes, unsigned long long maximum_device_bytes,
-    yvex_minimax_h3_conditioning_result *result, yvex_error *err)
-{
-    return text_encoder_artifact_cuda(
-        artifact, gguf, tensors, token_ids, token_count, output, output_capacity,
-        maximum_host_bytes, maximum_device_bytes, 0, result, err);
-}
-static int text_encoder_layer_artifact_cuda(const yvex_artifact *artifact,
-    const yvex_gguf *gguf, const yvex_tensor_table *tensors,
-    const unsigned int *token_ids, unsigned long long token_count,
-    float *output, unsigned long long output_capacity,
-    unsigned long long maximum_host_bytes, unsigned long long maximum_device_bytes,
-    yvex_minimax_h3_conditioning_result *result, yvex_error *err)
-{
-    return text_encoder_artifact_cuda(
-        artifact, gguf, tensors, token_ids, token_count, output, output_capacity,
-        maximum_host_bytes, maximum_device_bytes, 1, result, err);
 }
 const yvex_minimax_h3_graph_api *yvex_graph_register_minimax_h3(void)
 {
     static const yvex_minimax_h3_graph_api api = {
-        t2va_plan_build, scheduler_step, component_admit, text_encoder_embed_artifact_cuda,
-        text_encoder_layer_artifact_cuda,
+        t2va_plan_build, scheduler_step, component_admit, text_encoder_artifact_cuda,
         audio_vae_decode_cpu, audio_vae_execute_artifact_cpu,
         video_vae_decode_cpu, video_vae_execute_artifact_cpu,
     };

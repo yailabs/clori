@@ -35,8 +35,8 @@ promotion rules remain in the [family integration contract](integration.md).
 | Branch status | open |
 | Branch completion | first YVEX-authored playable synchronized MiniMax-H3 FL2VA audio-video output |
 | Current wave | `R010.MINIMAX.H3.FL2VA.END_TO_END.0` |
-| Current boundary | exact Audio VAE, Visual VAE, and Text Encoder component artifacts admitted; complete Audio and bounded multi-patch Visual CPU decodes conform; exact Text embedding initialization conforms on GB10 |
-| Next expected boundary | first complete Qwen3-VL text layer and then the exact 50-layer `t2va` conditioning path, followed by Omni latent generation and synchronized media publication |
+| Current boundary | exact Audio VAE, Visual VAE, and Text Encoder component artifacts admitted; complete Audio and bounded multi-patch Visual CPU decodes conform; the exact 50-layer text-only Qwen3-VL conditioning stack conforms on GB10 |
+| Next expected boundary | exact prompt tokenization and multi-token `t2va` conditioning, followed by Omni latent generation and synchronized media publication |
 
 The branch preserves the accepted intake history and remains open across all
 later source, artifact, graph, backend, residency, latent, VAE, media, and
@@ -683,8 +683,43 @@ conformance into complete encoder conditioning.
 execution. `production_api_available: true` through the internal graph and
 backend family ABIs. `internal_live_runner_available: true`.
 `operator_command_available: false` and `end_user_path_available: false`: the
-complete 50-layer `t2va` encoder, tokenizer/processor projection, and final
-conditioning output remain downstream consumers.
+tokenizer/processor projection and multi-token conditioning output remain
+downstream consumers.
+
+## Qwen3-VL 50-layer text conditioning boundary
+
+The same component residency now executes the source-selected unnormalized
+`hidden_states[50]`: embedding followed by decoder layers 0 through 49, without
+the final RMSNorm or vocabulary output head. The independently frozen Diffusers
+reference at `f53d552036a0d1bd5570782a39cd40cfabf112bc` establishes that
+MiniMax-H3 consumes this exact intermediate state. Text-only prompts use no chat
+template or special tokens; tokenizer execution itself remains the next
+consumer and is not bypassed by this one-token numerical proof.
+
+The independent Torch 2.11 / Transformers 5.14 CUDA oracle for token ID 1 has
+SHA-256 `397afc1a72b0a4c817d7ae07715632395427eec39d1fbd6ddeb46424da01be32`.
+Two clean YVEX executions produced byte-identical output with SHA-256
+`dc75902c7831fe01a3f93834ff0e78da2a7487e0bfd2a2e0301de9303478e44f`.
+The final state differs from the independent dense-reduction order by maximum
+absolute error 0.375 and RMSE 0.0267173705; relative L2 error is 0.00012279117
+and cosine similarity is 0.99999999246. The live contract records both maximum
+and RMSE rather than treating BF16 non-identity as exact parity.
+
+The accepted run consumed all 1,058 component tensors and 66,714,780,128
+resident payload bytes. It launched 1,351 CUDA kernels with 52,004 host-to-device
+bytes, 24,284 device-to-host bytes, and 464,896 bytes of reusable device
+workspace. Residency identity is
+`57a3f20e1e7177d8a8a98ba7161f10ef535f265c69866986f6a92f04ea72f773`;
+execution identity is
+`f61792ee00b885b06a7fa031b315c2c6b28436883a3493a439ae4b0ace91402b`.
+The layer-zero proof output remains byte-identical after the stack extension.
+
+`production_capability_available: true` for exact token-ID-to-50-layer text-only
+conditioning. `production_api_available: true` through the internal graph and
+backend family ABIs. `internal_live_runner_available: true`.
+`operator_command_available: false` and `end_user_path_available: false`:
+prompt tokenization, multi-token MM-RoPE and causal attention, Omni execution,
+latent generation, VAE composition, and media publication remain downstream.
 
 ## Progression and non-claims
 
@@ -692,11 +727,11 @@ conditioning output remain downstream consumers.
 
 `downstream_safe: true`
 
-The downstream consumer is the exact 50-layer `t2va` conditioning path, then
-Omni latent generation on
+The downstream consumer is exact prompt tokenization and multi-token `t2va`
+conditioning, then Omni latent generation on
 `feature/minimax-h3`. There is no gate blocker, boundary incompleteness,
-evidence gap, or current external blocker in the admitted bounded component or
-embedding and layer-zero execution contracts. Visual tiling, the exact Omni scheduler and
+evidence gap, or current external blocker in the admitted bounded component,
+embedding, layer-zero, or 50-layer text-stack execution contracts. Visual tiling, the exact Omni scheduler and
 MM-RoPE contracts, complete staged phase residency, synchronized media
 transaction, evaluation, and benchmark are deferred depth with explicit later
 consumers. They do not weaken the two admitted execution identities, and none
@@ -706,7 +741,7 @@ requires an eligibility conclusion.
 
 This implementation boundary does not prove:
 
-- complete Qwen3-VL conditioning or any Omni-Transformer numerical execution;
+- complete prompt-to-Qwen3-VL conditioning or any Omni-Transformer numerical execution;
 - complete composite-artifact support or Physical Execution IR;
 - GB10 backend support or simultaneous/staged runtime residency;
 - Omni-Transformer, solver, timestep, or MM-RoPE numerical correctness;

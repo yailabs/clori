@@ -826,6 +826,15 @@ test-minimax-text-layer-live: $(MINIMAX_TEXT_LIVE_RUNNER)
 		"$(BUILD_DIR)/tests/minimax_h3_text_layer.f32" \
 		"$(MINIMAX_H3_TEXT_LAYER_REFERENCE)" layer0
 
+test-minimax-text-encoder-live: $(MINIMAX_TEXT_LIVE_RUNNER)
+	@test -n "$(MINIMAX_H3_TEXT_ARTIFACT)" || { \
+		echo "MINIMAX_H3_TEXT_ARTIFACT is required" >&2; exit 2; }
+	@test -n "$(MINIMAX_H3_TEXT_ENCODER_REFERENCE)" || { \
+		echo "MINIMAX_H3_TEXT_ENCODER_REFERENCE is required" >&2; exit 2; }
+	$(MINIMAX_TEXT_LIVE_RUNNER) "$(MINIMAX_H3_TEXT_ARTIFACT)" 1 \
+		"$(BUILD_DIR)/tests/minimax_h3_text_encoder.f32" \
+		"$(MINIMAX_H3_TEXT_ENCODER_REFERENCE)" encoder50
+
 test-attention: $(TEST_RUNNER) test-attention-fixture-isolation
 	$(TEST_RUNNER)
 
