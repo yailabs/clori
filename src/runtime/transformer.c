@@ -1095,20 +1095,32 @@ static int transformer_shape_admit(
             required.token_width, required.position, failure.shape_identity,
             required.workspace_identity, required.state_layout_identity);
     }
+    if (rc == YVEX_OK && request->backend == YVEX_BACKEND_KIND_CUDA &&
+        !context->options.execution_profile->eager_attention_reference) {
+        yvex_backend_attention_phase phase = selected->phase == YVEX_EXECUTION_PHASE_DRAFT
+            ? YVEX_BACKEND_ATTENTION_PHASE_SPECULATIVE_DRAFT
+            : selected->phase == YVEX_EXECUTION_PHASE_VERIFY
+                ? YVEX_BACKEND_ATTENTION_PHASE_SPECULATIVE_VERIFY
+            : selected->phase == YVEX_EXECUTION_PHASE_DECODE
+                ? YVEX_BACKEND_ATTENTION_PHASE_DECODE : YVEX_BACKEND_ATTENTION_PHASE_PREFILL;
+        rc = yvex_backend_cuda_attention_configure(
+            context->session_view->backend, phase, YVEX_BACKEND_CUDA_ATTENTION_FULL,
+            context->options.execution_profile->identity, "generation",
+            selected->local_capacity, selected->compressed_capacity,
+            selected->indexer_capacity, err);
+    }
     return rc;
 }
 static int transformer_prepare(yvex_runtime_transformer_context *context,
-                               const yvex_transformer_input_summary *input,
-                               const yvex_runtime_transformer_request *request,
-                               yvex_graph_attention_state_summary *state, yvex_error *err)
+    const yvex_transformer_input_summary *input, const yvex_runtime_transformer_request *request,
+    yvex_graph_attention_state_summary *state, yvex_error *err)
 {
     yvex_graph_attention_capacity_plan *capacity = NULL;
-    const yvex_graph_attention_capacity_summary *capacity_summary;
     yvex_runtime_model_failure failure;
     yvex_runtime_session_summary session;
     yvex_attention_failure attention_failure;
     yvex_runtime_execution_mode mode;
-    unsigned long long final, workspace_tokens, workspace_start, workspace_bytes;
+    unsigned long long final, workspace_tokens, workspace_bytes;
     int rc;
     if (request->phase != YVEX_TRANSFORMER_PHASE_PREFILL &&
         request->phase != YVEX_TRANSFORMER_PHASE_DECODE)
@@ -1145,6 +1157,9 @@ static int transformer_prepare(yvex_runtime_transformer_context *context,
         return transformer_runtime_refuse(err, YVEX_ERR_STATE,
                                           "transformer state position/capacity is incompatible");
     if (request->backend == YVEX_BACKEND_KIND_CPU) return YVEX_OK;
+    mode = context->options.execution_profile &&
+                   !context->options.execution_profile->eager_attention_reference
+               ? YVEX_RUNTIME_MODE_FULL : YVEX_RUNTIME_MODE_EAGER;
     workspace_bytes = context->moe_workspace_bytes;
     if (workspace_bytes < context->options.minimum_device_workspace_bytes)
         workspace_bytes = context->options.minimum_device_workspace_bytes;
@@ -1163,42 +1178,27 @@ static int transformer_prepare(yvex_runtime_transformer_context *context,
             return transformer_runtime_refuse(
                 err, YVEX_ERR_STATE,
                 "target prefix extension cannot reuse the admitted CUDA workspace");
-        yvex_runtime_identity_copy(context->workspace_identity, session.workspace_identity);
-        return transformer_shape_admit(context, input, request, state, &session, err);
+    } else {
+        workspace_tokens = request->chunk_tokens < input->token_count ? request->chunk_tokens : input->token_count;
+        rc = transformer_capacity_build(&capacity, context->model_view,
+                                        context->options.tensor_scope,
+                                        context->options.context_capacity - workspace_tokens,
+                                        workspace_tokens, err);
+        if (rc == YVEX_OK)
+            rc = yvex_runtime_session_prepare_attention_workspace(
+                context->session, mode, YVEX_RUNTIME_SCOPE_ATTENTION_ENVELOPE,
+                YVEX_ATTENTION_EVIDENCE_NONE, capacity, workspace_bytes, &failure, err);
+        yvex_graph_attention_capacity_plan_close(&capacity);
+        if (rc == YVEX_OK)
+            rc = yvex_runtime_session_summary_copy(context->session, &session, err);
+        if (rc == YVEX_OK && (!session.host_workspace_owned || !session.host_workspace_pinned ||
+                              !yvex_sha256_hex_valid(session.workspace_identity)))
+            rc = transformer_runtime_refuse(err, YVEX_ERR_STATE,
+                "transformer CUDA workspace did not publish stable ownership");
     }
-    workspace_tokens = request->chunk_tokens < input->token_count
-                           ? request->chunk_tokens : input->token_count;
-    workspace_start = context->options.context_capacity - workspace_tokens;
-    mode = context->options.execution_profile &&
-                   !context->options.execution_profile->eager_attention_reference
-               ? YVEX_RUNTIME_MODE_FULL : YVEX_RUNTIME_MODE_EAGER;
-    rc = transformer_capacity_build(&capacity, context->model_view,
-                                    context->options.tensor_scope, workspace_start,
-                                    workspace_tokens, err);
-    if (rc == YVEX_OK)
-        rc = yvex_runtime_session_prepare_attention_workspace(
-            context->session, mode, YVEX_RUNTIME_SCOPE_ATTENTION_ENVELOPE,
-            YVEX_ATTENTION_EVIDENCE_NONE, capacity, workspace_bytes, &failure, err);
-    capacity_summary = yvex_graph_attention_capacity_plan_summary(capacity);
-    if (rc == YVEX_OK && mode == YVEX_RUNTIME_MODE_FULL)
-        rc = yvex_backend_cuda_attention_configure(
-            context->session_view->backend, YVEX_BACKEND_CUDA_ATTENTION_FULL,
-            context->options.execution_profile->identity, "generation",
-            capacity_summary->components[YVEX_ATTENTION_STATE_BINDING_LOCAL_HISTORY].maximum_capacity,
-            capacity_summary->components[YVEX_ATTENTION_STATE_BINDING_COMPRESSED_HISTORY].maximum_capacity,
-            capacity_summary->components[YVEX_ATTENTION_STATE_BINDING_INDEXER_HISTORY].maximum_capacity, err);
-    yvex_graph_attention_capacity_plan_close(&capacity);
-    if (rc == YVEX_OK)
-        rc = yvex_runtime_session_summary_copy(context->session, &session, err);
-    if (rc == YVEX_OK && (!session.host_workspace_owned || !session.host_workspace_pinned ||
-                          !yvex_sha256_hex_valid(session.workspace_identity)))
-        rc = transformer_runtime_refuse(err, YVEX_ERR_STATE,
-            "transformer CUDA workspace did not publish stable ownership");
-    if (rc == YVEX_OK)
-        yvex_runtime_identity_copy(context->workspace_identity, session.workspace_identity);
-    if (rc == YVEX_OK)
-        rc = transformer_shape_admit(context, input, request, state, &session, err);
-    return rc;
+    if (rc != YVEX_OK) return rc;
+    yvex_runtime_identity_copy(context->workspace_identity, session.workspace_identity);
+    return transformer_shape_admit(context, input, request, state, &session, err);
 }
 static int transformer_core_features_execute(
     yvex_runtime_transformer_context *context, const unsigned int *token_ids, unsigned long long token_start,

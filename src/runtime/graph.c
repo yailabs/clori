@@ -656,22 +656,22 @@ publish:
 }
 static int runtime_attention_mode_bind_descriptor(const yvex_graph_attention_operator_request *request,
     yvex_runtime_execution_session *session, const yvex_graph_attention_operator_result *result,
-    yvex_runtime_execution_mode mode, const yvex_graph_attention_capacity_plan *capacity,
-    yvex_error *err) {
+    yvex_runtime_execution_mode mode, const yvex_graph_attention_capacity_plan *capacity, yvex_error *err) {
     const yvex_runtime_session_view *view = yvex_runtime_session_view_get(session);
-    const yvex_graph_attention_capacity_summary *summary =
-        yvex_graph_attention_capacity_plan_summary(capacity);
-    yvex_backend_cuda_attention_mode selected;
+    const yvex_graph_attention_capacity_summary *summary = yvex_graph_attention_capacity_plan_summary(capacity);
+    yvex_backend_attention_phase phase = request->phase == YVEX_RUNTIME_PHASE_ATTENTION_DECODE
+            ? YVEX_BACKEND_ATTENTION_PHASE_DECODE : YVEX_BACKEND_ATTENTION_PHASE_PREFILL;
+    yvex_backend_cuda_attention_mode selected = mode == YVEX_RUNTIME_MODE_FULL
+        ? YVEX_BACKEND_CUDA_ATTENTION_FULL
+        : mode == YVEX_RUNTIME_MODE_PIECEWISE ? YVEX_BACKEND_CUDA_ATTENTION_PIECEWISE
+                                              : YVEX_BACKEND_CUDA_ATTENTION_EAGER;
     if (!request->compare_backends && request->backend != YVEX_BACKEND_KIND_CUDA)
         return YVEX_OK;
     if (!view || !summary)
         return runtime_refuse(err, YVEX_ERR_STATE, "runtime.attention.capacity",
                               "sealed capacity plan is required for backend configuration");
-    selected = mode == YVEX_RUNTIME_MODE_FULL ? YVEX_BACKEND_CUDA_ATTENTION_FULL
-        : mode == YVEX_RUNTIME_MODE_PIECEWISE ? YVEX_BACKEND_CUDA_ATTENTION_PIECEWISE
-                                              : YVEX_BACKEND_CUDA_ATTENTION_EAGER;
     return yvex_backend_cuda_attention_configure(
-        view->backend, selected, result->execution_descriptor_identity, result->capture_bucket,
+        view->backend, phase, selected, result->execution_descriptor_identity, result->capture_bucket,
         summary->components[YVEX_ATTENTION_STATE_BINDING_LOCAL_HISTORY].maximum_capacity,
         summary->components[YVEX_ATTENTION_STATE_BINDING_COMPRESSED_HISTORY].maximum_capacity,
         summary->components[YVEX_ATTENTION_STATE_BINDING_INDEXER_HISTORY].maximum_capacity, err);

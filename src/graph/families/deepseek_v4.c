@@ -1574,14 +1574,14 @@ if (context->layer->compute_contract !=
         YVEX_ATTENTION_COMPUTE_BF16_F32_RNE_V1,
         context->layer->compute_contract, YVEX_ERR_UNSUPPORTED,
         "CUDA attention compute contract has no backend projection");
-context->job.compute_contract =
-    YVEX_BACKEND_ATTENTION_COMPUTE_BF16_F32_RNE_V1;
+context->job.compute_contract = YVEX_BACKEND_ATTENTION_COMPUTE_BF16_F32_RNE_V1;
 context->job.schema = YVEX_BACKEND_ATTENTION_JOB_SCHEMA;
-context->job.phase = context->token_count == 1ull
-    ? YVEX_BACKEND_ATTENTION_PHASE_DECODE
-    : context->opts->candidate_block_visible
-          ? YVEX_BACKEND_ATTENTION_PHASE_SPECULATIVE_DRAFT
-          : YVEX_BACKEND_ATTENTION_PHASE_PREFILL;
+context->job.phase = context->layer->tensor_scope == YVEX_TENSOR_SCOPE_DRAFT
+    ? YVEX_BACKEND_ATTENTION_PHASE_SPECULATIVE_DRAFT
+    : context->opts->retain_prefix_checkpoints
+          ? YVEX_BACKEND_ATTENTION_PHASE_SPECULATIVE_VERIFY
+          : context->token_count == 1ull ? YVEX_BACKEND_ATTENTION_PHASE_DECODE
+                                         : YVEX_BACKEND_ATTENTION_PHASE_PREFILL;
 context->job.candidate_block_visible = context->opts->candidate_block_visible;
 context->job.retain_prefix_checkpoints = context->opts->retain_prefix_checkpoints;
 context->job.operation_scope = context->opts->operation_scope ==

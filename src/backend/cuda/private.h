@@ -60,6 +60,17 @@ typedef struct {
     unsigned long long bytes;
     yvex_backend_operation_variant variant;
 } yvex_cuda_deferred_release;
+#define YVEX_CUDA_ATTENTION_CONFIGURATION_CAP 128u
+typedef struct {
+    int configured;
+    yvex_backend_attention_phase phase;
+    yvex_backend_cuda_attention_mode mode;
+    unsigned long long local_capacity;
+    unsigned long long compressed_capacity;
+    unsigned long long indexer_capacity;
+    char compatibility_identity[YVEX_BACKEND_CUDA_GRAPH_IDENTITY_CAP];
+    char capture_bucket[YVEX_BACKEND_CUDA_CAPTURE_BUCKET_CAP];
+} yvex_cuda_attention_configuration;
 #define YVEX_CUDA_SUCCESS 0
 #define YVEX_CUDA_ERROR_INVALID_VALUE 1
 #define YVEX_CUDA_ERROR_OUT_OF_MEMORY 2
@@ -230,11 +241,12 @@ typedef struct {
     CUevent timing_stop;
     int timing_ready;
     int timing_active;
-    int attention_graph_configured;
-    yvex_backend_cuda_attention_mode attention_mode;
-    unsigned long long attention_local_capacity;
-    unsigned long long attention_compressed_capacity;
-    unsigned long long attention_indexer_capacity;
+    yvex_cuda_attention_configuration
+        attention_configurations[YVEX_CUDA_ATTENTION_CONFIGURATION_CAP];
+    unsigned int attention_configuration_count;
+    unsigned int attention_active_configuration;
+    unsigned long long attention_configuration_hits;
+    unsigned long long attention_configuration_misses;
     yvex_cuda_deferred_release deferred_releases[YVEX_CUDA_DEFERRED_RELEASE_MAX];
     unsigned int deferred_release_count;
     unsigned long long deferred_release_bytes;
@@ -246,11 +258,12 @@ typedef struct {
     char kernel_bundle_architecture[16];
     yvex_backend_bandwidth_evidence bandwidth_evidence;
     int bandwidth_ready, bandwidth_active;
-    char attention_compatibility_identity[YVEX_BACKEND_CUDA_GRAPH_IDENTITY_CAP];
-    char attention_capture_bucket[YVEX_BACKEND_CUDA_CAPTURE_BUCKET_CAP];
     const yvex_backend *context_owner;
     int context_borrowed;
 } yvex_cuda_backend_state;
+
+const yvex_cuda_attention_configuration *yvex_cuda_attention_configuration_active(
+    const yvex_cuda_backend_state *state, yvex_backend_attention_phase phase);
 
 /* These formats have a blockwise dot against the canonical Q8_K activation
  * workspace. Keep admission singular so attention, generic projection, and

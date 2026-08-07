@@ -73,7 +73,8 @@ typedef enum {
     YVEX_BACKEND_ATTENTION_PHASE_PREFILL,
     YVEX_BACKEND_ATTENTION_PHASE_MIXED,
     YVEX_BACKEND_ATTENTION_PHASE_SPECULATIVE_DRAFT,
-    YVEX_BACKEND_ATTENTION_PHASE_SPECULATIVE_VERIFY
+    YVEX_BACKEND_ATTENTION_PHASE_SPECULATIVE_VERIFY,
+    YVEX_BACKEND_ATTENTION_PHASE_COUNT
 } yvex_backend_attention_phase;
 typedef int (*yvex_backend_cancelled_fn)(void *context);
 typedef struct { yvex_backend_cancelled_fn requested; void *context; } yvex_backend_cancellation;
@@ -537,7 +538,7 @@ typedef struct {
 int yvex_backend_cuda_graph_query(const yvex_backend *backend,
                                   yvex_backend_cuda_graph_capability *out, yvex_error *err);
 int yvex_backend_cuda_attention_configure(
-    yvex_backend *backend, yvex_backend_cuda_attention_mode mode,
+    yvex_backend *backend, yvex_backend_attention_phase phase, yvex_backend_cuda_attention_mode mode,
     const char *compatibility_identity, const char *capture_bucket,
     unsigned long long local_capacity, unsigned long long compressed_capacity,
     unsigned long long indexer_capacity, yvex_error *err);
