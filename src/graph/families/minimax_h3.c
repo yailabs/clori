@@ -8,9 +8,7 @@
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/families/minimax_h3.h>
 #include <yvex/internal/runtime.h>
-
 #include "src/graph/private.h"
-
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -63,16 +61,13 @@
 #define TRANSFORMER_ELEMENTS 33122992912ull
 #define TRANSFORMER_PAYLOAD_BYTES 66280430144ull
 #define TRANSFORMER_FILE_BYTES 66280465664ull
-
 typedef struct { float *data; unsigned long long count; } component_buffer;
-
 typedef struct {
     yvex_materialization_session *session; const yvex_minimax_h3_audio_decode_options *options;
     yvex_minimax_h3_audio_decode_result *result; yvex_minimax_h3_component_execution_failure *failure;
     yvex_error *err;
     unsigned long long live_workspace_bytes;
 } audio_execution;
-
 typedef struct {
     yvex_materialization_session *session; const yvex_minimax_h3_video_decode_options *options;
     yvex_minimax_h3_video_decode_result *result; yvex_minimax_h3_component_execution_failure *failure;
@@ -80,7 +75,6 @@ typedef struct {
     unsigned long long live_workspace_bytes;
     unsigned long long patches, rows;
 } video_execution;
-
 static int t2va_plan_build(yvex_minimax_h3_t2va_plan *out,
                            unsigned long long text_tokens, unsigned long long width,
                            unsigned long long height, unsigned long long frames,
@@ -90,7 +84,6 @@ static int t2va_plan_build(yvex_minimax_h3_t2va_plan *out,
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     unsigned long long frame_blocks, spatial_rows;
     unsigned int step;
-
     if (!out || !text_tokens || width < 32ull || height < 32ull ||
         width % 32ull || height % 32ull || frames < 5ull ||
         (frames - 5ull) % 17ull) {
@@ -133,7 +126,6 @@ static int t2va_plan_build(yvex_minimax_h3_t2va_plan *out,
     for (step = 0u; step < out->sigma_grid_points; ++step) {
         float base = (float)(out->sigma_grid_points - 1u - step) /
                      (float)(out->sigma_grid_points - 1u);
-
         out->video_sigmas[step] = 12.0f * base / (1.0f + 11.0f * base);
         out->audio_sigmas[step] = 3.0f * base / (1.0f + 2.0f * base);
     }
@@ -153,7 +145,6 @@ static int t2va_plan_build(yvex_minimax_h3_t2va_plan *out,
     }
     for (step = 0u; step < out->sigma_grid_points; ++step) {
         uint32_t video_bits, audio_bits;
-
         memcpy(&video_bits, &out->video_sigmas[step], sizeof(video_bits));
         memcpy(&audio_bits, &out->audio_sigmas[step], sizeof(audio_bits));
         if (!yvex_sha256_update_u64_be(&hash, video_bits) ||
@@ -173,14 +164,12 @@ static int t2va_plan_build(yvex_minimax_h3_t2va_plan *out,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Advance one modality while retaining H3's data-ward velocity sign and F32 blend order. */
 static int scheduler_step(float *output, const float *sample, const float *velocity,
                           unsigned long long values, float timestep, float sigma,
                           float sigma_next, yvex_error *err)
 {
     unsigned long long index;
-
     if (!output || !sample || !velocity || !values || !isfinite(timestep) ||
         !isfinite(sigma) || !isfinite(sigma_next) || timestep < 0.0f ||
         timestep >= 1.0f || sigma <= 0.0f || sigma_next < 0.0f ||
@@ -198,13 +187,11 @@ static int scheduler_step(float *output, const float *sample, const float *veloc
     for (index = 0ull; index < values; ++index) {
         float denoised = sample[index] + (1.0f - timestep) * velocity[index];
         float ratio = sigma_next / sigma;
-
         output[index] = ratio * sample[index] + (1.0f - ratio) * denoised;
     }
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 static int audio_execution_refuse(audio_execution *execution,
                                   yvex_minimax_h3_component_execution_code code,
                                   const char *tensor_name, unsigned long long expected,
@@ -225,7 +212,6 @@ static int audio_execution_refuse(audio_execution *execution,
                    "graph.minimax_h3.audio_vae.execute", reason);
     return status;
 }
-
 static int audio_cancel_check(audio_execution *execution)
 {
     if (execution->options->cancelled &&
@@ -235,13 +221,11 @@ static int audio_cancel_check(audio_execution *execution)
                                       "Audio VAE execution was cancelled at a layer boundary");
     return YVEX_OK;
 }
-
 static int audio_buffer_open(audio_execution *execution, component_buffer *buffer,
                              unsigned long long count)
 {
     unsigned long long bytes;
     unsigned long long next_live;
-
     memset(buffer, 0, sizeof(*buffer));
     if (!count || !yvex_core_u64_mul(count, sizeof(float), &bytes) ||
         bytes > (unsigned long long)SIZE_MAX ||
@@ -265,22 +249,18 @@ static int audio_buffer_open(audio_execution *execution, component_buffer *buffe
         execution->result->peak_workspace_bytes = next_live;
     return YVEX_OK;
 }
-
 static void audio_buffer_close(audio_execution *execution, component_buffer *buffer)
 {
     unsigned long long bytes = buffer->count * sizeof(float);
-
     if (bytes <= execution->live_workspace_bytes)
         execution->live_workspace_bytes -= bytes;
     free(buffer->data);
     memset(buffer, 0, sizeof(*buffer));
 }
-
 static const yvex_materialized_tensor_binding *
 component_binding_find(const yvex_materialization_session *session, const char *name)
 {
     unsigned long long index;
-
     for (index = 0ull;; ++index) {
         const yvex_materialized_tensor_binding *binding =
             yvex_materialization_session_tensor_at(session, index);
@@ -288,7 +268,6 @@ component_binding_find(const yvex_materialization_session *session, const char *
         if (strcmp(binding->name, name) == 0) return binding;
     }
 }
-
 static int audio_tensor_load(audio_execution *execution, const char *name,
                              unsigned int rank, const unsigned long long *dims,
                              component_buffer *buffer)
@@ -300,7 +279,6 @@ static int audio_tensor_load(audio_execution *execution, const char *name,
     unsigned long long expected_bytes = 0ull;
     unsigned int dimension;
     int rc;
-
     if (!binding)
         return audio_execution_refuse(execution,
                                       YVEX_MINIMAX_H3_COMPONENT_EXECUTION_MISSING_TENSOR,
@@ -349,12 +327,10 @@ static int audio_tensor_load(audio_execution *execution, const char *name,
     execution->result->payload_bytes_read += binding->encoded_bytes;
     return YVEX_OK;
 }
-
 static int audio_name_build(audio_execution *execution, char *output, size_t capacity,
                             const char *prefix, const char *suffix)
 {
     int written = snprintf(output, capacity, "%s%s", prefix, suffix);
-
     if (written < 0 || (size_t)written >= capacity)
         return audio_execution_refuse(execution,
                                       YVEX_MINIMAX_H3_COMPONENT_EXECUTION_TENSOR_CONTRACT,
@@ -363,7 +339,6 @@ static int audio_name_build(audio_execution *execution, char *output, size_t cap
                                       "Audio VAE tensor name exceeded its bounded identity field");
     return YVEX_OK;
 }
-
 static int audio_conv_execute(audio_execution *execution, const char *prefix,
                               const yvex_graph_conv1d_geometry *geometry,
                               const float *input, unsigned long long input_count,
@@ -378,7 +353,6 @@ static int audio_conv_execute(audio_execution *execution, const char *prefix,
     unsigned long long bias_dims[1];
     char name[256];
     int rc = audio_cancel_check(execution);
-
     if (rc != YVEX_OK) return rc;
     weight_dims[0] = geometry->transposed ? geometry->input_channels :
                                               geometry->output_channels;
@@ -421,7 +395,6 @@ static int audio_conv_execute(audio_execution *execution, const char *prefix,
     audio_buffer_close(execution, &weight);
     return rc;
 }
-
 static int audio_activation_execute(audio_execution *execution, const char *prefix,
                                     const float *input, unsigned long long batch,
                                     unsigned long long channels, unsigned long long length,
@@ -436,7 +409,6 @@ static int audio_activation_execute(audio_execution *execution, const char *pref
     unsigned long long filter_dims[3] = {1ull, 1ull, 12ull};
     char name[256];
     int rc = audio_cancel_check(execution);
-
     if (rc != YVEX_OK) return rc;
     rc = audio_name_build(execution, name, sizeof(name), prefix, ".act.alpha");
     if (rc == YVEX_OK)
@@ -471,20 +443,17 @@ static int audio_activation_execute(audio_execution *execution, const char *pref
     audio_buffer_close(execution, &alpha);
     return rc;
 }
-
 typedef enum {
     AUDIO_NAME_RESBLOCK_ACTIVATION,
     AUDIO_NAME_RESBLOCK_CONV1,
     AUDIO_NAME_RESBLOCK_CONV2,
     AUDIO_NAME_UPSAMPLE
 } audio_indexed_name_kind;
-
 static int audio_indexed_name(audio_execution *execution, char *output, size_t capacity,
                               audio_indexed_name_kind kind, unsigned long long first,
                               unsigned long long second)
 {
     int written;
-
     switch (kind) {
     case AUDIO_NAME_RESBLOCK_ACTIVATION:
         written = snprintf(output, capacity, "decoder.resblocks.%llu.activations.%llu",
@@ -505,7 +474,6 @@ static int audio_indexed_name(audio_execution *execution, char *output, size_t c
         written = -1;
         break;
     }
-
     if (written < 0 || (size_t)written >= capacity)
         return audio_execution_refuse(execution,
                                       YVEX_MINIMAX_H3_COMPONENT_EXECUTION_TENSOR_CONTRACT,
@@ -515,7 +483,6 @@ static int audio_indexed_name(audio_execution *execution, char *output, size_t c
                                       "Audio VAE indexed tensor name exceeded its bound");
     return YVEX_OK;
 }
-
 static int audio_resblock_execute(audio_execution *execution,
                                   unsigned long long block_index,
                                   const float *input, unsigned long long batch,
@@ -531,7 +498,6 @@ static int audio_resblock_execute(audio_execution *execution,
     unsigned long long layer;
     char prefix[256];
     int rc;
-
     if (!yvex_core_u64_mul(batch, channels, &values) ||
         !yvex_core_u64_mul(values, length, &values))
         return audio_execution_refuse(execution,
@@ -550,7 +516,6 @@ static int audio_resblock_execute(audio_execution *execution,
             ((kernels[block_index % 3ull] - 1ull) * dilations[layer]) / 2ull,
             0ull, 0};
         unsigned long long index;
-
         rc = audio_indexed_name(execution, prefix, sizeof(prefix),
                                 AUDIO_NAME_RESBLOCK_ACTIVATION,
                                 block_index, layer * 2ull);
@@ -594,7 +559,6 @@ cleanup:
     audio_buffer_close(execution, &activation);
     return rc;
 }
-
 static int audio_stage_execute(audio_execution *execution, unsigned long long stage,
                                const component_buffer *input, unsigned long long batch,
                                unsigned long long input_channels,
@@ -612,7 +576,6 @@ static int audio_stage_execute(audio_execution *execution, unsigned long long st
     unsigned long long block_index;
     char prefix[256];
     int rc;
-
     memset(output, 0, sizeof(*output));
     if (stage >= sizeof(rates) / sizeof(rates[0]) || input_channels < 2ull)
         return audio_execution_refuse(execution,
@@ -669,7 +632,6 @@ cleanup:
     audio_buffer_close(execution, &upsampled);
     return rc;
 }
-
 static int audio_execution_identity(const yvex_materialization_summary *summary,
                                     const yvex_minimax_h3_audio_decode_options *options,
                                     yvex_minimax_h3_audio_decode_result *result)
@@ -677,7 +639,6 @@ static int audio_execution_identity(const yvex_materialization_summary *summary,
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     unsigned long long index;
-
     yvex_sha256_init(&hash);
     if (!yvex_sha256_update_text(&hash, "yvex.minimax-h3.audio-vae.cpu.v1") ||
         !yvex_sha256_update_text(&hash, summary->artifact_identity) ||
@@ -710,7 +671,6 @@ static int audio_execution_identity(const yvex_materialization_summary *summary,
     yvex_sha256_hex(digest, result->execution_identity);
     return 1;
 }
-
 static int audio_decode_validate(audio_execution *execution)
 {
     const yvex_materialization_summary *summary =
@@ -718,7 +678,6 @@ static int audio_decode_validate(audio_execution *execution)
     unsigned long long latent_values = 0ull;
     unsigned long long output_values = 0ull;
     unsigned long long index;
-
     if (!execution->options || !execution->result ||
         !execution->options->latent || !execution->options->output ||
         !execution->options->batch || !execution->options->latent_steps ||
@@ -766,7 +725,6 @@ static int audio_decode_validate(audio_execution *execution)
                         summary->artifact_identity);
     return YVEX_OK;
 }
-
 static int audio_vae_decode_cpu(yvex_materialization_session *session,
                                 const yvex_minimax_h3_audio_decode_options *options,
                                 yvex_minimax_h3_audio_decode_result *result,
@@ -783,7 +741,6 @@ static int audio_vae_decode_cpu(yvex_materialization_session *session,
     unsigned long long length;
     unsigned long long stage;
     int rc;
-
     if (result) memset(result, 0, sizeof(*result));
     if (failure) memset(failure, 0, sizeof(*failure));
     memset(&execution, 0, sizeof(execution));
@@ -883,7 +840,6 @@ static int audio_vae_decode_cpu(yvex_materialization_session *session,
     if (rc == YVEX_OK) yvex_error_clear(err);
     return rc;
 }
-
 static int video_execution_refuse(video_execution *execution,
                                   yvex_minimax_h3_component_execution_code code,
                                   const char *tensor_name, unsigned long long expected,
@@ -904,7 +860,6 @@ static int video_execution_refuse(video_execution *execution,
                    "graph.minimax_h3.video_vae.execute", reason);
     return status;
 }
-
 static int video_cancel_check(video_execution *execution)
 {
     if (execution->options->cancelled &&
@@ -915,12 +870,10 @@ static int video_cancel_check(video_execution *execution)
             "Visual VAE execution was cancelled at a block boundary");
     return YVEX_OK;
 }
-
 static int video_buffer_open(video_execution *execution, component_buffer *buffer,
                              unsigned long long count)
 {
     unsigned long long bytes, next_live;
-
     memset(buffer, 0, sizeof(*buffer));
     if (!count || !yvex_core_u64_mul(count, sizeof(float), &bytes) ||
         bytes > (unsigned long long)SIZE_MAX ||
@@ -946,17 +899,14 @@ static int video_buffer_open(video_execution *execution, component_buffer *buffe
         execution->result->peak_workspace_bytes = next_live;
     return YVEX_OK;
 }
-
 static void video_buffer_close(video_execution *execution, component_buffer *buffer)
 {
     unsigned long long bytes = buffer->count * sizeof(float);
-
     if (bytes <= execution->live_workspace_bytes)
         execution->live_workspace_bytes -= bytes;
     free(buffer->data);
     memset(buffer, 0, sizeof(*buffer));
 }
-
 static int video_tensor_load(video_execution *execution, const char *name,
                              unsigned int rank, const unsigned long long *dims,
                              component_buffer *buffer)
@@ -967,7 +917,6 @@ static int video_tensor_load(video_execution *execution, const char *name,
     unsigned long long count = 1ull, expected_bytes;
     unsigned int dimension;
     int rc;
-
     if (!binding)
         return video_execution_refuse(
             execution, YVEX_MINIMAX_H3_COMPONENT_EXECUTION_MISSING_TENSOR,
@@ -1008,12 +957,10 @@ static int video_tensor_load(video_execution *execution, const char *name,
     execution->result->payload_bytes_read += binding->encoded_bytes;
     return YVEX_OK;
 }
-
 static int video_name(video_execution *execution, char output[256],
                       const char *prefix, const char *suffix)
 {
     int written = snprintf(output, 256u, "%s%s", prefix, suffix);
-
     if (written < 0 || written >= 256)
         return video_execution_refuse(
             execution, YVEX_MINIMAX_H3_COMPONENT_EXECUTION_TENSOR_CONTRACT,
@@ -1021,7 +968,6 @@ static int video_name(video_execution *execution, char output[256],
             YVEX_ERR_BOUNDS, "Visual VAE tensor name exceeded its bound");
     return YVEX_OK;
 }
-
 static int video_linear(video_execution *execution, const char *prefix,
                         unsigned int weight_rank, const float *input,
                         unsigned long long rows, unsigned long long input_width,
@@ -1032,7 +978,6 @@ static int video_linear(video_execution *execution, const char *prefix,
     unsigned long long bias_dims[1] = {output_width};
     char name[256];
     int rc = video_name(execution, name, prefix, ".weight");
-
     if (rc == YVEX_OK)
         rc = video_tensor_load(execution, name, weight_rank, weight_dims, &weight);
     if (rc == YVEX_OK) rc = video_name(execution, name, prefix, ".bias");
@@ -1054,7 +999,6 @@ static int video_linear(video_execution *execution, const char *prefix,
     video_buffer_close(execution, &weight);
     return rc;
 }
-
 static int video_rms_norm(video_execution *execution, const char *prefix,
                           const float *input, unsigned long long rows,
                           unsigned long long width, float *output)
@@ -1064,7 +1008,6 @@ static int video_rms_norm(video_execution *execution, const char *prefix,
     unsigned long long row;
     char name[256];
     int rc = video_name(execution, name, prefix, ".weight");
-
     if (rc == YVEX_OK) rc = video_tensor_load(execution, name, 1u, dims, &weight);
     if (rc == YVEX_OK) memcpy(output, input, (size_t)(rows * width * sizeof(float)));
     for (row = 0ull; row < rows && rc == YVEX_OK; ++row)
@@ -1077,7 +1020,6 @@ static int video_rms_norm(video_execution *execution, const char *prefix,
     video_buffer_close(execution, &weight);
     return rc;
 }
-
 static int video_scale_residual(video_execution *execution, const char *name,
                                 const float *delta, unsigned long long rows,
                                 unsigned long long width, float *hidden)
@@ -1086,7 +1028,6 @@ static int video_scale_residual(video_execution *execution, const char *name,
     unsigned long long dims[1] = {width};
     unsigned long long index;
     int rc = video_tensor_load(execution, name, 1u, dims, &scale);
-
     if (rc == YVEX_OK)
         for (index = 0ull; index < rows * width; ++index) {
             float value = hidden[index] + delta[index] * scale.data[index % width];
@@ -1102,12 +1043,10 @@ static int video_scale_residual(video_execution *execution, const char *name,
     video_buffer_close(execution, &scale);
     return rc;
 }
-
 static int video_qk_normalize(video_execution *execution, float *qkv,
                               unsigned long long rows)
 {
     unsigned long long row, head;
-
     for (row = 0ull; row < rows; ++row)
         for (head = 0ull; head < 32ull; ++head) {
             float *base = qkv + row * 6144ull + head * 192ull;
@@ -1120,13 +1059,11 @@ static int video_qk_normalize(video_execution *execution, float *qkv,
         }
     return YVEX_OK;
 }
-
 static void video_rope_apply(const video_execution *execution, float *qkv)
 {
     const yvex_minimax_h3_video_decode_options *options = execution->options;
     const float tau = 6.28318530717958647692f;
     unsigned long long token, head;
-
     for (token = 0ull; token < execution->rows; ++token) {
         float coordinates[3] = {0.0f, 0.0f, 0.0f};
         float cosine[24], sine[24];
@@ -1167,13 +1104,11 @@ static void video_rope_apply(const video_execution *execution, float *qkv)
         }
     }
 }
-
 static int video_block_name(video_execution *execution, char output[256],
                             unsigned long long block, const char *suffix)
 {
     int written = snprintf(output, 256u, "decoder.transformer_blocks.%llu%s",
                            block, suffix);
-
     if (written < 0 || written >= 256)
         return video_execution_refuse(
             execution, YVEX_MINIMAX_H3_COMPONENT_EXECUTION_TENSOR_CONTRACT,
@@ -1181,7 +1116,6 @@ static int video_block_name(video_execution *execution, char output[256],
             YVEX_ERR_BOUNDS, "Visual VAE block tensor name exceeded its bound");
     return YVEX_OK;
 }
-
 static int video_block_execute(video_execution *execution,
                                unsigned long long block, component_buffer *hidden,
                                component_buffer *normalized, component_buffer *qkv,
@@ -1191,7 +1125,6 @@ static int video_block_execute(video_execution *execution,
 {
     char name[256];
     int rc = video_cancel_check(execution);
-
     if (rc == YVEX_OK) rc = video_block_name(execution, name, block, ".norm1");
     if (rc == YVEX_OK)
         rc = video_rms_norm(execution, name, hidden->data, execution->rows, 2048ull,
@@ -1242,13 +1175,11 @@ static int video_block_execute(video_execution *execution,
     }
     return rc;
 }
-
 static int video_final_norm(video_execution *execution, component_buffer *hidden)
 {
     component_buffer weight = {0}, bias = {0};
     unsigned long long dims[1] = {2048ull};
     int rc = video_tensor_load(execution, "decoder.norm_out.weight", 1u, dims, &weight);
-
     if (rc == YVEX_OK)
         rc = video_tensor_load(execution, "decoder.norm_out.bias", 1u, dims, &bias);
     if (rc == YVEX_OK)
@@ -1264,7 +1195,6 @@ static int video_final_norm(video_execution *execution, component_buffer *hidden
     video_buffer_close(execution, &weight);
     return rc;
 }
-
 static int video_execution_identity(const yvex_materialization_summary *summary,
                                     const yvex_minimax_h3_video_decode_options *options,
                                     yvex_minimax_h3_video_decode_result *result)
@@ -1272,7 +1202,6 @@ static int video_execution_identity(const yvex_materialization_summary *summary,
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     unsigned long long index;
-
     yvex_sha256_init(&hash);
     if (!yvex_sha256_update_text(
             &hash, result->output_values == 3072ull
@@ -1311,13 +1240,11 @@ static int video_execution_identity(const yvex_materialization_summary *summary,
     yvex_sha256_hex(digest, result->execution_identity);
     return 1;
 }
-
 static int video_decode_validate(video_execution *execution)
 {
     const yvex_materialization_summary *summary =
         yvex_materialization_session_summary(execution->session);
     unsigned long long input_values = 0ull, output_values = 0ull, index;
-
     if (!execution->options || !execution->result || !execution->options->latent ||
         !execution->options->output || execution->options->batch != 1ull ||
         execution->options->latent_channels != 24ull ||
@@ -1371,17 +1298,14 @@ static int video_decode_validate(video_execution *execution)
                         summary->artifact_identity);
     return YVEX_OK;
 }
-
 static void video_latent_pack(const yvex_minimax_h3_video_decode_options *options,
                               unsigned long long patches, float *packed)
 {
     unsigned long long patch, channel;
-
     for (patch = 0ull; patch < patches; ++patch)
         for (channel = 0ull; channel < 24ull; ++channel)
             packed[patch * 24ull + channel] = options->latent[channel * patches + patch];
 }
-
 static void video_output_unpack(const component_buffer *patch_output,
                                 const yvex_minimax_h3_video_decode_options *options,
                                 yvex_minimax_h3_video_decode_result *result)
@@ -1389,7 +1313,6 @@ static void video_output_unpack(const component_buffer *patch_output,
     unsigned long long patch, value;
     unsigned long long input_plane = options->latent_height * options->latent_width;
     unsigned long long output_plane = result->height * result->width;
-
     for (patch = 0ull; patch < patch_output->count / 3072ull; ++patch) {
         unsigned long long temporal = patch / input_plane;
         unsigned long long spatial = patch % input_plane;
@@ -1408,7 +1331,6 @@ static void video_output_unpack(const component_buffer *patch_output,
         }
     }
 }
-
 static int video_vae_decode_cpu(yvex_materialization_session *session,
                                 const yvex_minimax_h3_video_decode_options *options,
                                 yvex_minimax_h3_video_decode_result *result,
@@ -1428,7 +1350,6 @@ static int video_vae_decode_cpu(yvex_materialization_session *session,
     unsigned long long register_dims[3] = {1ull, 4ull, 2048ull};
     unsigned long long block;
     int rc;
-
     if (result) memset(result, 0, sizeof(*result));
     if (failure) memset(failure, 0, sizeof(*failure));
     if (!options || !result)
@@ -1500,7 +1421,6 @@ static int video_vae_decode_cpu(yvex_materialization_session *session,
     if (rc == YVEX_OK) yvex_error_clear(err);
     return rc;
 }
-
 static const yvex_artifact_component_metadata audio_metadata[] = {
     {"general.architecture", "minimax-h3"},
     {"general.name", "audio_vae"},
@@ -1521,7 +1441,6 @@ static const yvex_artifact_component_metadata audio_metadata[] = {
     {"yvex.payload.identity", YVEX_MINIMAX_H3_AUDIO_PAYLOAD_IDENTITY},
     {"yvex.evidence.stage", "component-artifact-planned"},
 };
-
 static const yvex_complete_artifact_admission audio_catalog = {
     .artifact_class = YVEX_ARTIFACT_CLASS_COMPONENT_YVEX,
     .metadata_count = 17ull,
@@ -1560,7 +1479,6 @@ static int component_admit(const char *component, const yvex_artifact *artifact,
                            const yvex_gguf *gguf, const yvex_tensor_table *tensors,
                            yvex_complete_artifact_admission *out,
                            yvex_artifact_admission_failure *failure, yvex_error *err);
-
 static const yvex_artifact_component_metadata text_metadata[] = {
     {"general.architecture", "minimax-h3"}, {"general.name", "text_encoder"},
     {"yvex.logical.target", YVEX_MINIMAX_H3_TARGET_ID},
@@ -1609,7 +1527,6 @@ static const yvex_artifact_component_contract text_contract = {
     sizeof(text_metadata) / sizeof(text_metadata[0]), 1ull,
     TEXT_ELEMENTS, 32ull,
 };
-
 static const yvex_artifact_component_metadata transformer_metadata[] = {
     {"general.architecture", "minimax-h3"}, {"general.name", "transformer"},
     {"yvex.logical.target", YVEX_MINIMAX_H3_TARGET_ID},
@@ -1657,7 +1574,6 @@ static const yvex_artifact_component_contract transformer_contract = {
     sizeof(transformer_metadata) / sizeof(transformer_metadata[0]), 2ull,
     TRANSFORMER_ELEMENTS, 32ull,
 };
-
 static int audio_vae_execute_artifact_cpu(
     const yvex_artifact *artifact, const yvex_gguf *gguf,
     const yvex_tensor_table *tensors,
@@ -1677,7 +1593,6 @@ static int audio_vae_execute_artifact_cpu(
     audio_execution execution = {0};
     int admitted = 0;
     int rc;
-
     if (result) memset(result, 0, sizeof(*result));
     if (failure) memset(failure, 0, sizeof(*failure));
     execution.options = options;
@@ -1730,7 +1645,6 @@ static int audio_vae_execute_artifact_cpu(
     yvex_materialization_plan_close(plan);
     return rc;
 }
-
 static const yvex_artifact_component_metadata video_metadata[] = {
     {"general.architecture", "minimax-h3"},
     {"general.name", "video_vae"},
@@ -1750,7 +1664,6 @@ static const yvex_artifact_component_metadata video_metadata[] = {
     {"yvex.evidence.stage", "component-artifact-planned"},
     {"yvex.physical.shape.policy", "preserve-leading-three-fold-trailing-v1"},
 };
-
 static const yvex_complete_artifact_admission video_catalog = {
     .artifact_class = YVEX_ARTIFACT_CLASS_COMPONENT_YVEX,
     .metadata_count = 18ull,
@@ -1785,14 +1698,12 @@ static const yvex_artifact_component_contract video_contract = {
     sizeof(video_metadata) / sizeof(video_metadata[0]), 1ull,
     VIDEO_ELEMENTS, 32ull,
 };
-
 static int component_admit(const char *component, const yvex_artifact *artifact,
                            const yvex_gguf *gguf, const yvex_tensor_table *tensors,
                            yvex_complete_artifact_admission *out,
                            yvex_artifact_admission_failure *failure, yvex_error *err)
 {
     const yvex_artifact_component_contract *contract = NULL;
-
     if (component && strcmp(component, "audio_vae") == 0) contract = &audio_contract;
     if (component && strcmp(component, "video_vae") == 0) contract = &video_contract;
     if (component && strcmp(component, "text_encoder") == 0) contract = &text_contract;
@@ -1810,7 +1721,6 @@ static int component_admit(const char *component, const yvex_artifact *artifact,
     return yvex_artifact_admit_component(
         artifact, gguf, tensors, contract, out, failure, err);
 }
-
 static int video_vae_execute_artifact_cpu(
     const yvex_artifact *artifact, const yvex_gguf *gguf,
     const yvex_tensor_table *tensors,
@@ -1830,7 +1740,6 @@ static int video_vae_execute_artifact_cpu(
     video_execution execution = {0};
     int admitted = 0;
     int rc;
-
     if (result) memset(result, 0, sizeof(*result));
     if (failure) memset(failure, 0, sizeof(*failure));
     execution.options = options;
@@ -1884,15 +1793,53 @@ static int video_vae_execute_artifact_cpu(
     yvex_materialization_plan_close(plan);
     return rc;
 }
-static int text_encoder_embed_artifact_cuda(const yvex_artifact *artifact,
+static const char *const text_layer_weight_names[YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT] = {
+    "model.language_model.embed_tokens.weight",
+    "model.language_model.layers.0.input_layernorm.weight",
+    "model.language_model.layers.0.self_attn.q_proj.weight",
+    "model.language_model.layers.0.self_attn.k_proj.weight",
+    "model.language_model.layers.0.self_attn.v_proj.weight",
+    "model.language_model.layers.0.self_attn.o_proj.weight",
+    "model.language_model.layers.0.self_attn.q_norm.weight",
+    "model.language_model.layers.0.self_attn.k_norm.weight",
+    "model.language_model.layers.0.post_attention_layernorm.weight",
+    "model.language_model.layers.0.mlp.gate_proj.weight",
+    "model.language_model.layers.0.mlp.up_proj.weight",
+    "model.language_model.layers.0.mlp.down_proj.weight",
+};
+static int text_layer_weights_bind(
+    const yvex_materialization_session *session, const yvex_runtime_residency *residency,
+    yvex_minimax_h3_text_weight weights[YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT], yvex_error *err)
+{
+    unsigned long long index;
+    for (index = 0ull; index < YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT; ++index) {
+        const yvex_materialized_tensor_binding *binding =
+            component_binding_find(session, text_layer_weight_names[index]);
+        if (!binding || !binding->row_count ||
+            yvex_runtime_residency_binding_view(
+                residency, binding, &weights[index].encoded,
+                &weights[index].encoded_bytes, err) != YVEX_OK) {
+            yvex_error_set(err, YVEX_ERR_FORMAT, "minimax-h3.text-layer.binding",
+                           "an exact layer-zero BF16 binding is unavailable");
+            return YVEX_ERR_FORMAT;
+        }
+        weights[index].qtype = binding->qtype;
+        weights[index].row_count = binding->row_count;
+        weights[index].row_width = binding->row_width;
+        weights[index].row_bytes = binding->encoded_bytes / binding->row_count;
+    }
+    return YVEX_OK;
+}
+static int text_encoder_artifact_cuda(const yvex_artifact *artifact,
     const yvex_gguf *gguf, const yvex_tensor_table *tensors,
     const unsigned int *token_ids, unsigned long long token_count,
     float *output, unsigned long long output_capacity,
     unsigned long long maximum_host_bytes, unsigned long long maximum_device_bytes,
-    yvex_minimax_h3_conditioning_result *result, yvex_error *err)
+    int execute_layer, yvex_minimax_h3_conditioning_result *result, yvex_error *err)
 {
     const yvex_minimax_h3_backend_api *backend = yvex_backend_register_minimax_h3();
     const yvex_materialized_tensor_binding *embedding = NULL;
+    yvex_minimax_h3_text_weight weights[YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT] = {{0}};
     yvex_complete_artifact_admission admission;
     yvex_artifact_admission_failure admission_failure;
     yvex_materialization_options options;
@@ -1913,6 +1860,7 @@ static int text_encoder_embed_artifact_cuda(const yvex_artifact *artifact,
     yvex_error cleanup, residency_cleanup;
     if (result) memset(result, 0, sizeof(*result));
     if (!artifact || !gguf || !tensors || !backend || !backend->text_embed_cuda ||
+        !backend->text_layer_cuda ||
         !token_ids || !token_count || !output || !result ||
         !yvex_core_u64_mul(token_count, 5120ull, &output_values) ||
         output_values > output_capacity ||
@@ -1955,18 +1903,25 @@ static int text_encoder_embed_artifact_cuda(const yvex_artifact *artifact,
         rc = yvex_runtime_component_residency_prepare(
             &residency, session, admission.logical_component_identity,
             &residency_options, &residency_failure, err);
-    if (rc == YVEX_OK)
+    if (rc == YVEX_OK && !execute_layer)
         rc = yvex_runtime_residency_binding_view(
             residency, embedding, &encoded, &encoded_bytes, err);
+    if (rc == YVEX_OK && execute_layer)
+        rc = text_layer_weights_bind(session, residency, weights, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_residency_cuda_session_attach(
             residency, &cuda, maximum_device_bytes, &uploaded, &residency_summary, err);
-    if (rc == YVEX_OK)
+    if (rc == YVEX_OK && !execute_layer)
         rc = backend->text_embed_cuda(
             cuda, encoded, encoded_bytes, embedding->qtype, embedding->row_count,
             embedding->row_width, embedding->encoded_bytes / embedding->row_count,
             residency_summary.residency_identity, residency_summary.encoded_bytes,
             token_ids, token_count, staged, output_values, &published, err);
+    if (rc == YVEX_OK && execute_layer)
+        rc = backend->text_layer_cuda(
+            cuda, weights, residency_summary.residency_identity,
+            residency_summary.encoded_bytes, token_ids, token_count, staged,
+            output_values, &published, err);
     yvex_error_clear(&cleanup);
     cleanup_rc = yvex_backend_close_checked(&cuda, &cleanup);
     yvex_error_clear(&residency_cleanup);
@@ -1989,10 +1944,33 @@ static int text_encoder_embed_artifact_cuda(const yvex_artifact *artifact,
     free(staged);
     return rc;
 }
+static int text_encoder_embed_artifact_cuda(const yvex_artifact *artifact,
+    const yvex_gguf *gguf, const yvex_tensor_table *tensors,
+    const unsigned int *token_ids, unsigned long long token_count,
+    float *output, unsigned long long output_capacity,
+    unsigned long long maximum_host_bytes, unsigned long long maximum_device_bytes,
+    yvex_minimax_h3_conditioning_result *result, yvex_error *err)
+{
+    return text_encoder_artifact_cuda(
+        artifact, gguf, tensors, token_ids, token_count, output, output_capacity,
+        maximum_host_bytes, maximum_device_bytes, 0, result, err);
+}
+static int text_encoder_layer_artifact_cuda(const yvex_artifact *artifact,
+    const yvex_gguf *gguf, const yvex_tensor_table *tensors,
+    const unsigned int *token_ids, unsigned long long token_count,
+    float *output, unsigned long long output_capacity,
+    unsigned long long maximum_host_bytes, unsigned long long maximum_device_bytes,
+    yvex_minimax_h3_conditioning_result *result, yvex_error *err)
+{
+    return text_encoder_artifact_cuda(
+        artifact, gguf, tensors, token_ids, token_count, output, output_capacity,
+        maximum_host_bytes, maximum_device_bytes, 1, result, err);
+}
 const yvex_minimax_h3_graph_api *yvex_graph_register_minimax_h3(void)
 {
     static const yvex_minimax_h3_graph_api api = {
         t2va_plan_build, scheduler_step, component_admit, text_encoder_embed_artifact_cuda,
+        text_encoder_layer_artifact_cuda,
         audio_vae_decode_cpu, audio_vae_execute_artifact_cpu,
         video_vae_decode_cpu, video_vae_execute_artifact_cpu,
     };

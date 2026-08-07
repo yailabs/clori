@@ -603,7 +603,7 @@ preserve encoded row semantics.
 | Fact | Value |
 | --- | --- |
 | Component | Qwen3-VL Text/vision encoder |
-| Component identity | `a4b9c544dc15ea6d7fa5e7ed895410402206970b04a64e4b17334821a0fb21d0` |
+| Component identity | `a4b9c13360aeaa03bbd4d9681b821575e6556bead71c226d0aa72fca5aca7382` |
 | Transformation identity | `4e940d589f14194ee827be627afac91ee28ee2a45f1add22753d9ed3dae3962a` |
 | Physical variant identity | `5b534130f5114f096db93b96cce26fc6def534c95b6d338b87a668591c20b78f` |
 | Payload-plan identity | `214f0afd6fd2718e8184ce169e55018bc1b93598d34e8930e0514e7fe91328c0` |
@@ -644,17 +644,59 @@ backend family ABIs. `internal_live_runner_available: true`.
 operator command is promoted for a single embedding row, and neither the
 Qwen3-VL conditioning output nor any media output exists at this boundary.
 
+## Qwen3-VL text layer-zero execution boundary
+
+The family backend now composes one source-exact decoder block from generic
+CUDA encoded projections and reusable transformer activation primitives. The
+path consumes the embedding plus all eleven layer-zero tensors, preserves the
+source BF16 cast policy across Qwen RMSNorm and gated SiLU, applies 64-query / 8-KV
+head grouped-query causal attention with head width 128, and executes the
+5,120 -> 25,600 -> 5,120 MLP with both residual publications. Explicit
+rotate-half tables use theta 5,000,000; the text-only position has identical
+temporal, height, and width indices, so interleaved MM-RoPE mechanically reduces
+to that common frequency table for this one-token evidence case.
+
+The complete production path admitted and locked all 1,058 Text Encoder tensors
+and 66,714,780,128 payload bytes before executing layer zero. Its output was
+byte-identical to a bounded 12-tensor test residency at SHA-256
+`9eab948b039467913abe428325a745158233581eda26dddb119b93e8dab559f5`.
+The full path used residency identity
+`57a3f20e1e7177d8a8a98ba7161f10ef535f265c69866986f6a92f04ea72f773`
+and execution identity
+`9b5f7adc1979412a9e373d78212eb6fb39ea07f2ef56d5ef23a111d120d43942`.
+It reported 28 kernel launches, 1,044 H2D bytes, 20,560 D2H bytes, and
+464,896 bytes of activation allocations. These are correctness-run accounting
+facts, not performance measurements.
+
+The independent pinned Transformers CUDA oracle output has SHA-256
+`c7718d83b435bcf9cbfbcd66793f911c196dcaa4f5f1b24aba65bbf8ccc3092e`;
+the independent CPU oracle has SHA-256
+`f17ded5dc67373dc5054b7288129e65168a7cb115d158071f4934d0f947d3606`.
+The two independent BF16 oracles differ by maximum absolute error 0.046875 and
+RMSE 0.00231452686 because their dense reductions use different hardware
+orders. YVEX versus the CUDA oracle is inside that measured cross-backend
+envelope at maximum absolute error 0.03125 and RMSE 0.00116229074. The live
+test retains both maximum and RMSE bounds and does not promote one-block
+conformance into complete encoder conditioning.
+
+`production_capability_available: true` only for exact one-token layer-zero
+execution. `production_api_available: true` through the internal graph and
+backend family ABIs. `internal_live_runner_available: true`.
+`operator_command_available: false` and `end_user_path_available: false`: the
+complete 50-layer `t2va` encoder, tokenizer/processor projection, and final
+conditioning output remain downstream consumers.
+
 ## Progression and non-claims
 
 `progression_decision: proceed`
 
 `downstream_safe: true`
 
-The downstream consumer is the first complete Qwen3-VL text transformer layer,
-then the exact 50-layer `t2va` conditioning path and Omni latent generation on
+The downstream consumer is the exact 50-layer `t2va` conditioning path, then
+Omni latent generation on
 `feature/minimax-h3`. There is no gate blocker, boundary incompleteness,
 evidence gap, or current external blocker in the admitted bounded component or
-embedding execution contracts. Visual tiling, the exact Omni scheduler and
+embedding and layer-zero execution contracts. Visual tiling, the exact Omni scheduler and
 MM-RoPE contracts, complete staged phase residency, synchronized media
 transaction, evaluation, and benchmark are deferred depth with explicit later
 consumers. They do not weaken the two admitted execution identities, and none

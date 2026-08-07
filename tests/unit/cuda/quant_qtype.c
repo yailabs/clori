@@ -828,6 +828,161 @@ static int quant_cuda_transformer_facts(yvex_backend *backend)
     return 0;
 }
 
+static int quant_cuda_dense_transformer(yvex_backend *backend)
+{
+    yvex_device_tensor *rotary = NULL, *cosines = NULL, *sines = NULL;
+    yvex_device_tensor *query = NULL, *key = NULL, *value = NULL, *attention = NULL;
+    yvex_device_tensor *gate = NULL, *up = NULL, *product = NULL;
+    yvex_device_tensor *norm_input = NULL, *norm_weight = NULL, *norm_output = NULL;
+    float rotary_input[4] = {1.0f, 2.0f, 3.0f, 4.0f};
+    float cosine_input[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float sine_input[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    float rotary_output[4], query_input[8], key_input[4], value_input[4];
+    float attention_output[8], gate_input[4] = {-2.0f, -0.5f, 0.5f, 2.0f};
+    float up_input[4] = {3.0f, 4.0f, 5.0f, 6.0f}, product_output[4];
+    float norm_values[4] = {1.0f, -2.0f, 3.0f, -4.0f};
+    float norm_scales[4] = {0.5f, 1.0f, 1.5f, 2.0f}, norm_result[4];
+    yvex_backend_cuda_operation_facts facts;
+    yvex_error err;
+    unsigned long long index;
+    int rc;
+
+    for (index = 0ull; index < 4ull; ++index) {
+        query_input[index * 2ull] = 1.0f;
+        query_input[index * 2ull + 1ull] = 0.0f;
+    }
+    key_input[0] = 1.0f;
+    key_input[1] = 0.0f;
+    key_input[2] = 0.0f;
+    key_input[3] = 1.0f;
+    value_input[0] = 2.0f;
+    value_input[1] = 4.0f;
+    value_input[2] = 6.0f;
+    value_input[3] = 8.0f;
+    YVEX_TEST_ASSERT(
+        quant_cuda_tensor(backend, "rotary", YVEX_DTYPE_F32, rotary_input,
+                          sizeof(rotary_input), &rotary, &err) &&
+            quant_cuda_tensor(backend, "cosines", YVEX_DTYPE_F32, cosine_input,
+                              sizeof(cosine_input), &cosines, &err) &&
+            quant_cuda_tensor(backend, "sines", YVEX_DTYPE_F32, sine_input,
+                              sizeof(sine_input), &sines, &err),
+        "dense transformer rotary tensors allocate");
+    rc = yvex_cuda_transformer_rotary_half(
+        backend, rotary, cosines, sines, 1ull, 1ull, 4ull, &facts, &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_OK && facts.kernel_launches == 1ull &&
+            facts.device_synchronizations == 1ull &&
+            yvex_backend_tensor_read(
+                backend, rotary, rotary_output, sizeof(rotary_output), &err) == YVEX_OK &&
+            rotary_output[0] == -3.0f && rotary_output[1] == -4.0f &&
+            rotary_output[2] == 1.0f && rotary_output[3] == 2.0f,
+        "explicit rotate-half tables preserve paired source values");
+    YVEX_TEST_ASSERT(
+        quant_cuda_tensor(backend, "norm-input", YVEX_DTYPE_F32, norm_values,
+                          sizeof(norm_values), &norm_input, &err) &&
+            quant_cuda_tensor(backend, "norm-weight", YVEX_DTYPE_F32, norm_scales,
+                              sizeof(norm_scales), &norm_weight, &err) &&
+            quant_cuda_tensor(backend, "norm-output", YVEX_DTYPE_F32, NULL,
+                              sizeof(norm_result), &norm_output, &err) &&
+            yvex_cuda_transformer_rms_norm_bf16(
+                backend, norm_input, norm_weight, norm_output, 1ull, 4ull, 1e-6f,
+                &facts, &err) == YVEX_OK &&
+            yvex_backend_tensor_read(backend, norm_output, norm_result,
+                                     sizeof(norm_result), &err) == YVEX_OK,
+        "dense transformer Qwen RMS policy executes");
+    for (index = 0ull; index < 4ull; ++index) {
+        float inverse = 1.0f / sqrtf(7.5f + 1e-6f);
+        float normalized = yvex_quant_bf16_decode(
+            yvex_quant_bf16_encode(norm_values[index] * inverse));
+        float expected = yvex_quant_bf16_decode(
+            yvex_quant_bf16_encode(normalized * norm_scales[index]));
+        YVEX_TEST_ASSERT(norm_result[index] == expected,
+                         "dense transformer Qwen RMS preserves the intermediate BF16 cast");
+    }
+    YVEX_TEST_ASSERT(
+        quant_cuda_tensor(backend, "query", YVEX_DTYPE_F32, query_input,
+                          sizeof(query_input), &query, &err) &&
+            quant_cuda_tensor(backend, "key", YVEX_DTYPE_F32, key_input,
+                              sizeof(key_input), &key, &err) &&
+            quant_cuda_tensor(backend, "value", YVEX_DTYPE_F32, value_input,
+                              sizeof(value_input), &value, &err) &&
+            quant_cuda_tensor(backend, "attention", YVEX_DTYPE_F32, NULL,
+                              sizeof(attention_output), &attention, &err),
+        "dense transformer GQA tensors allocate");
+    rc = yvex_cuda_transformer_gqa(
+        backend, query, key, value, attention, 2ull, 2ull, 1ull, 2ull, &facts, &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_OK && facts.kernel_launches == 1ull &&
+            facts.device_synchronizations == 1ull &&
+            yvex_backend_tensor_read(backend, attention, attention_output,
+                                     sizeof(attention_output), &err) == YVEX_OK,
+        "causal grouped-query attention publishes one bounded output");
+    for (index = 0ull; index < 2ull; ++index)
+        YVEX_TEST_ASSERT(attention_output[index * 2ull] == 2.0f &&
+                             attention_output[index * 2ull + 1ull] == 4.0f,
+                         "first causal row sees only the first value");
+    {
+        float probability = expf(1.0f / sqrtf(2.0f));
+        float expected0 = (probability * 2.0f + 6.0f) / (probability + 1.0f);
+        float expected1 = (probability * 4.0f + 8.0f) / (probability + 1.0f);
+        for (index = 2ull; index < 4ull; ++index)
+            YVEX_TEST_ASSERT(fabsf(attention_output[index * 2ull] - expected0) < 1e-6f &&
+                                 fabsf(attention_output[index * 2ull + 1ull] - expected1) < 1e-6f,
+                             "second causal row uses stable grouped-query softmax");
+    }
+    YVEX_TEST_ASSERT(
+        quant_cuda_tensor(backend, "gate", YVEX_DTYPE_F32, gate_input,
+                          sizeof(gate_input), &gate, &err) &&
+            quant_cuda_tensor(backend, "up", YVEX_DTYPE_F32, up_input,
+                              sizeof(up_input), &up, &err) &&
+            quant_cuda_tensor(backend, "product", YVEX_DTYPE_F32, NULL,
+                              sizeof(product_output), &product, &err) &&
+            yvex_cuda_transformer_silu_product_bf16(
+                backend, gate, up, product, 4ull, &facts, &err) == YVEX_OK &&
+            yvex_backend_tensor_read(backend, product, product_output,
+                                     sizeof(product_output), &err) == YVEX_OK,
+        "dense transformer SiLU product executes");
+    for (index = 0ull; index < 4ull; ++index) {
+        float activated = yvex_quant_bf16_decode(yvex_quant_bf16_encode(
+            gate_input[index] / (1.0f + expf(-gate_input[index]))));
+        float expected = yvex_quant_bf16_decode(
+            yvex_quant_bf16_encode(activated * up_input[index]));
+        YVEX_TEST_ASSERT(product_output[index] == expected,
+                         "dense transformer SiLU product matches the BF16 scalar oracle");
+    }
+    YVEX_TEST_ASSERT(
+        yvex_cuda_transformer_bf16_round(
+            backend, product, 4ull, &facts, &err) == YVEX_OK &&
+            facts.kernel_launches == 1ull && facts.d2h_bytes == sizeof(int) &&
+            yvex_backend_tensor_read(backend, product, product_output,
+                                     sizeof(product_output), &err) == YVEX_OK,
+        "dense transformer BF16 activation round reports exact status transfer");
+    for (index = 0ull; index < 4ull; ++index) {
+        float activated = yvex_quant_bf16_decode(yvex_quant_bf16_encode(
+            gate_input[index] / (1.0f + expf(-gate_input[index]))));
+        float expected = yvex_quant_bf16_decode(
+            yvex_quant_bf16_encode(activated * up_input[index]));
+        YVEX_TEST_ASSERT(product_output[index] == expected,
+                         "dense transformer BF16 activation round matches the scalar codec");
+    }
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_release(backend, &rotary, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &cosines, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &sines, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &query, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &key, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &value, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &attention, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &norm_input, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &norm_weight, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &norm_output, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &gate, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &up, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &product, &err) == YVEX_OK,
+        "dense transformer test tensors release cleanly");
+    return 0;
+}
+
 /* Proves typed geometry, alignment, capability, and failure cleanup refusals. */
 static int quant_cuda_refusals(const yvex_backend_options *options)
 {
@@ -999,6 +1154,8 @@ int yvex_cuda_test_quant_qtype(void)
                      "resident qtype row gather");
     YVEX_TEST_ASSERT(quant_cuda_transformer_facts(backend) == 0,
                      "transformer envelope physical facts");
+    YVEX_TEST_ASSERT(quant_cuda_dense_transformer(backend) == 0,
+                     "dense transformer activation primitives");
     yvex_backend_close(backend);
     return quant_cuda_refusals(&options);
 }

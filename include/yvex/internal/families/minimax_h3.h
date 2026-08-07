@@ -232,19 +232,11 @@ typedef struct {
 } yvex_minimax_h3_phase_edge;
 
 typedef struct {
-    unsigned long long text_layers;
-    unsigned long long text_width;
-    unsigned long long text_ffn_width;
-    unsigned long long text_query_heads;
-    unsigned long long text_kv_heads;
-    unsigned long long text_head_dimension;
-    unsigned long long vocabulary_size;
-    unsigned long long rope_theta;
+    unsigned long long text_layers, text_width, text_ffn_width;
+    unsigned long long text_query_heads, text_kv_heads, text_head_dimension;
+    unsigned long long vocabulary_size, rope_theta;
     unsigned long long mrope_sections[3];
-    unsigned long long vision_layers;
-    unsigned long long vision_width;
-    unsigned long long vision_ffn_width;
-    unsigned long long vision_heads;
+    unsigned long long vision_layers, vision_width, vision_ffn_width, vision_heads;
     unsigned long long vision_patch[3];
     unsigned long long vision_merge;
     unsigned long long deepstack_layers[3];
@@ -253,73 +245,39 @@ typedef struct {
 } yvex_minimax_h3_encoder_signature;
 
 typedef struct {
-    unsigned long long blocks;
-    unsigned long long width;
-    unsigned long long ffn_width;
-    unsigned long long heads;
-    unsigned long long head_dimension;
-    unsigned long long token_refiner_blocks;
-    unsigned long long conditioning_width;
-    unsigned long long video_channels;
-    unsigned long long audio_channels;
+    unsigned long long blocks, width, ffn_width, heads, head_dimension;
+    unsigned long long token_refiner_blocks, conditioning_width;
+    unsigned long long video_channels, audio_channels;
     unsigned long long video_patch[3];
-    unsigned long long audio_patch_steps;
-    unsigned long long audio_patch_channels;
-    unsigned long long timestep_input;
-    unsigned long long timestep_hidden;
-    unsigned long long timestep_output;
-    unsigned long long adaln_width;
-    unsigned long long final_adaln_width;
-    unsigned long long video_head_width;
-    unsigned long long audio_head_width;
+    unsigned long long audio_patch_steps, audio_patch_channels;
+    unsigned long long timestep_input, timestep_hidden, timestep_output;
+    unsigned long long adaln_width, final_adaln_width;
+    unsigned long long video_head_width, audio_head_width;
     int qk_normalization;
 } yvex_minimax_h3_omni_signature;
 
 typedef struct {
-    unsigned long long latent_channels;
-    unsigned long long media_channels;
-    unsigned long long base_channels;
-    unsigned long long stage_count;
+    unsigned long long latent_channels, media_channels, base_channels, stage_count;
     unsigned long long channel_multipliers[6];
     unsigned long long spatial_down[6];
     unsigned long long spatial_up[6];
     unsigned long long temporal_down[6];
-    unsigned long long spatial_ratio;
-    unsigned long long temporal_ratio;
-    unsigned long long residual_blocks;
-    unsigned long long decoder_blocks;
-    unsigned long long decoder_heads;
-    unsigned long long decoder_head_dimension;
-    unsigned long long decoder_rope_ratio_numerator;
-    unsigned long long decoder_rope_ratio_denominator;
-    unsigned long long decoder_rope_theta;
-    unsigned long long tile_size;
-    unsigned long long tile_overlap;
-    unsigned long long clip_length;
-    unsigned long long token_drop;
-    int conv3d;
-    int isolated_temporal_group_norm;
-    int encoder_tiling;
-    int decoder_tiling;
-    int parallel_tiling;
-    int causal_encoder;
-    int causal_decoder;
+    unsigned long long spatial_ratio, temporal_ratio, residual_blocks;
+    unsigned long long decoder_blocks, decoder_heads, decoder_head_dimension;
+    unsigned long long decoder_rope_ratio_numerator, decoder_rope_ratio_denominator;
+    unsigned long long decoder_rope_theta, tile_size, tile_overlap, clip_length, token_drop;
+    int conv3d, isolated_temporal_group_norm, encoder_tiling, decoder_tiling;
+    int parallel_tiling, causal_encoder, causal_decoder;
 } yvex_minimax_h3_video_vae_signature;
 
 typedef struct {
-    unsigned long long latent_channels;
-    unsigned long long output_channels;
-    unsigned long long sample_rate;
-    unsigned long long encoder_width;
-    unsigned long long decoder_width;
-    unsigned long long latent_projection_width;
+    unsigned long long latent_channels, output_channels, sample_rate;
+    unsigned long long encoder_width, decoder_width, latent_projection_width;
     unsigned long long encoder_stage_count;
     unsigned long long encoder_rates[5];
     unsigned long long decoder_stage_count;
     unsigned long long decoder_rates[7];
-    unsigned long long encoder_rate_product;
-    unsigned long long decoder_rate_product;
-    unsigned long long latent_steps_per_second;
+    unsigned long long encoder_rate_product, decoder_rate_product, latent_steps_per_second;
     int attention_projection;
 } yvex_minimax_h3_audio_vae_signature;
 
@@ -532,15 +490,41 @@ typedef struct {
     int complete;
 } yvex_minimax_h3_video_decode_result;
 typedef struct {
-    unsigned long long token_count, hidden_width, resident_bytes;
+    unsigned long long token_count, hidden_width, layer_count, resident_bytes;
     unsigned long long kernel_launches, h2d_bytes, d2h_bytes, device_bytes;
     char residency_identity[65], execution_identity[65];
     int complete;
 } yvex_minimax_h3_conditioning_result;
+typedef enum {
+    YVEX_MINIMAX_H3_TEXT_EMBEDDING = 0,
+    YVEX_MINIMAX_H3_TEXT_INPUT_NORM,
+    YVEX_MINIMAX_H3_TEXT_Q_PROJECTION,
+    YVEX_MINIMAX_H3_TEXT_K_PROJECTION,
+    YVEX_MINIMAX_H3_TEXT_V_PROJECTION,
+    YVEX_MINIMAX_H3_TEXT_O_PROJECTION,
+    YVEX_MINIMAX_H3_TEXT_Q_NORM,
+    YVEX_MINIMAX_H3_TEXT_K_NORM,
+    YVEX_MINIMAX_H3_TEXT_POST_NORM,
+    YVEX_MINIMAX_H3_TEXT_GATE_PROJECTION,
+    YVEX_MINIMAX_H3_TEXT_UP_PROJECTION,
+    YVEX_MINIMAX_H3_TEXT_DOWN_PROJECTION,
+    YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT
+} yvex_minimax_h3_text_weight_slot;
+typedef struct {
+    const unsigned char *encoded;
+    unsigned long long encoded_bytes, row_count, row_width, row_bytes;
+    unsigned int qtype;
+} yvex_minimax_h3_text_weight;
 typedef struct {
     int (*text_embed_cuda)(yvex_backend *backend, const unsigned char *encoded,
         unsigned long long encoded_bytes, unsigned int qtype, unsigned long long row_count,
         unsigned long long row_width, unsigned long long row_bytes,
+        const char *residency_identity, unsigned long long resident_bytes,
+        const unsigned int *token_ids, unsigned long long token_count, float *output,
+        unsigned long long output_capacity, yvex_minimax_h3_conditioning_result *result,
+        yvex_error *err);
+    int (*text_layer_cuda)(yvex_backend *backend,
+        const yvex_minimax_h3_text_weight weights[YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT],
         const char *residency_identity, unsigned long long resident_bytes,
         const unsigned int *token_ids, unsigned long long token_count, float *output,
         unsigned long long output_capacity, yvex_minimax_h3_conditioning_result *result,
@@ -568,6 +552,12 @@ typedef struct {
         const yvex_tensor_table *tensors, yvex_complete_artifact_admission *out,
         yvex_artifact_admission_failure *failure, yvex_error *err);
     int (*text_encoder_embed_artifact_cuda)(
+        const yvex_artifact *artifact, const yvex_gguf *gguf, const yvex_tensor_table *tensors,
+        const unsigned int *token_ids, unsigned long long token_count,
+        float *output, unsigned long long output_capacity,
+        unsigned long long maximum_host_bytes, unsigned long long maximum_device_bytes,
+        yvex_minimax_h3_conditioning_result *result, yvex_error *err);
+    int (*text_encoder_layer_artifact_cuda)(
         const yvex_artifact *artifact, const yvex_gguf *gguf, const yvex_tensor_table *tensors,
         const unsigned int *token_ids, unsigned long long token_count,
         float *output, unsigned long long output_capacity,

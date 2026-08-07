@@ -64,6 +64,7 @@
 	test-runtime-sanitizers-live test-materialize-live-plan \
 	test-materialize-live test-minimax-audio-artifact-live \
 	test-minimax-video-artifact-live test-minimax-text-conditioning-live \
+	test-minimax-text-layer-live \
 	test-attention test-attention-fixture-isolation \
 	test-attention-live-plan test-attention-live test-attention-cli-live \
 	test-attention-cuda test-quant test-quant-asan test-quant-ubsan \
@@ -815,6 +816,15 @@ test-minimax-text-conditioning-live: $(MINIMAX_TEXT_LIVE_RUNNER)
 		echo "MINIMAX_H3_TEXT_REFERENCE is required" >&2; exit 2; }
 	$(MINIMAX_TEXT_LIVE_RUNNER) "$(MINIMAX_H3_TEXT_ARTIFACT)" 1 \
 		"$(BUILD_DIR)/tests/minimax_h3_text.f32" "$(MINIMAX_H3_TEXT_REFERENCE)"
+
+test-minimax-text-layer-live: $(MINIMAX_TEXT_LIVE_RUNNER)
+	@test -n "$(MINIMAX_H3_TEXT_ARTIFACT)" || { \
+		echo "MINIMAX_H3_TEXT_ARTIFACT is required" >&2; exit 2; }
+	@test -n "$(MINIMAX_H3_TEXT_LAYER_REFERENCE)" || { \
+		echo "MINIMAX_H3_TEXT_LAYER_REFERENCE is required" >&2; exit 2; }
+	$(MINIMAX_TEXT_LIVE_RUNNER) "$(MINIMAX_H3_TEXT_ARTIFACT)" 1 \
+		"$(BUILD_DIR)/tests/minimax_h3_text_layer.f32" \
+		"$(MINIMAX_H3_TEXT_LAYER_REFERENCE)" layer0
 
 test-attention: $(TEST_RUNNER) test-attention-fixture-isolation
 	$(TEST_RUNNER)
