@@ -1,5 +1,4 @@
-/* Runtime descriptors bind immutable model resources while execution sessions isolate mutable
- * sequence state. This non-installed ABI keeps those lifetimes explicit across runtime consumers. */
+/* Immutable model resources and isolated mutable sequence state remain explicit in this runtime ABI. */
 #ifndef INCLUDE_YVEX_INTERNAL_RUNTIME_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_RUNTIME_H_INCLUDED
 #include <string.h>
@@ -255,7 +254,6 @@ typedef struct {
 typedef struct yvex_runtime_model yvex_runtime_model;
 typedef struct yvex_runtime_execution_session yvex_runtime_execution_session;
 typedef struct yvex_runtime_cleanup_lease yvex_runtime_cleanup_lease;
-/* Resident encoded full-model pack shared read-only by execution sessions. */
 #define YVEX_RUNTIME_RESIDENCY_SCHEMA_V4 4u
 typedef enum {
     YVEX_RUNTIME_RESIDENCY_FAILURE_NONE = 0,
@@ -294,9 +292,8 @@ typedef struct {
     unsigned long long resident_read_calls, resident_bytes_read;
     unsigned long long qtype_binding_counts[YVEX_RUNTIME_DESCRIPTOR_QTYPE_CAP];
     unsigned long long qtype_bytes[YVEX_RUNTIME_DESCRIPTOR_QTYPE_CAP];
-    char payload_digest[YVEX_SHA256_HEX_CAP];
+    char payload_digest[YVEX_SHA256_HEX_CAP], residency_identity[YVEX_SHA256_HEX_CAP];
     char output_head_residency_identity[YVEX_SHA256_HEX_CAP];
-    char residency_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_residency_summary;
 typedef struct yvex_runtime_residency yvex_runtime_residency;
 typedef struct yvex_runtime_state_residency yvex_runtime_state_residency;
@@ -312,8 +309,7 @@ typedef struct {
     const yvex_runtime_residency *residency;
     const yvex_runtime_binding_summary *binding;
     const yvex_runtime_family_adapter *adapter;
-    const yvex_attention_plan *attention;
-    const yvex_attention_plan *draft_attention;
+    const yvex_attention_plan *attention, *draft_attention;
     const yvex_runtime_descriptor *descriptor;
     const yvex_physical_execution_ir *physical_execution;
     const yvex_tokenizer *tokenizer;
@@ -321,12 +317,16 @@ typedef struct {
 } yvex_runtime_model_view;
 int yvex_runtime_residency_prepare(yvex_runtime_residency **out, yvex_runtime_model *model,
     const yvex_runtime_residency_options *options, yvex_runtime_residency_failure *failure, yvex_error *err);
+int yvex_runtime_component_residency_prepare(yvex_runtime_residency **out,
+    yvex_materialization_session *materialization, const char *component_identity,
+    const yvex_runtime_residency_options *options, yvex_runtime_residency_failure *failure, yvex_error *err);
 int yvex_runtime_residency_close(yvex_runtime_residency **residency, yvex_error *err);
 int yvex_runtime_residency_snapshot(const yvex_runtime_residency *residency, yvex_runtime_residency_summary *summary,
     const unsigned char **arena, unsigned long long *arena_bytes, yvex_error *err);
 int yvex_runtime_residency_binding_view(const yvex_runtime_residency *residency,
     const yvex_materialized_tensor_binding *binding, const unsigned char **data,
     unsigned long long *bytes, yvex_error *err);
+/* A non-null backend is consumed as an already-open CUDA owner before a large arena is registered. */
 int yvex_runtime_residency_cuda_session_attach(yvex_runtime_residency *residency, yvex_backend **backend,
     unsigned long long maximum_device_bytes, int *uploaded, yvex_runtime_residency_summary *summary, yvex_error *err);
 int yvex_runtime_residency_invalidate(yvex_runtime_residency *residency, yvex_error *err);
@@ -592,8 +592,8 @@ typedef struct yvex_graph_attention_operator_result {
     char failure_code[32], failure_where[YVEX_ERROR_WHERE_CAP];
 } yvex_graph_attention_operator_result;
 int yvex_graph_attention_operator_execute(const yvex_graph_attention_operator_request *request,
-                                          yvex_graph_attention_operator_result *result,
-                                          yvex_runtime_cleanup_lease **retained_cleanup, yvex_error *err);
+    yvex_graph_attention_operator_result *result, yvex_runtime_cleanup_lease **retained_cleanup,
+    yvex_error *err);
 #ifdef __cplusplus
 }
 #endif

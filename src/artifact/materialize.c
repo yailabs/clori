@@ -388,11 +388,14 @@ int yvex_materialization_plan_build(yvex_materialization_plan **out,
                                   err, YVEX_ERR_INVALID_ARG,
                                   "materialization chunk budget is invalid");
     if (local.require_complete_admission &&
-        (!admission->complete || admission->artifact_class != YVEX_ARTIFACT_CLASS_COMPLETE_YVEX ||
+        (!admission->complete ||
+         (admission->artifact_class != YVEX_ARTIFACT_CLASS_COMPLETE_YVEX &&
+          admission->artifact_class != YVEX_ARTIFACT_CLASS_COMPONENT_YVEX) ||
          !admission->materialization_input_ready || admission->runtime_supported))
         return materialize_reject(failure, YVEX_MATERIALIZATION_FAILURE_ADMISSION, NULL,
                                   YVEX_MATERIALIZATION_NO_INDEX, 1ull, 0ull, 0ull, err,
-                                  YVEX_ERR_STATE, "complete YVEX artifact admission is required");
+                                  YVEX_ERR_STATE,
+                                  "complete YVEX model or component admission is required");
     if (yvex_artifact_snapshot_get(artifact, &snapshot, err) != YVEX_OK ||
         !yvex_artifact_snapshot_equal(&snapshot, &admission->file_snapshot))
         return materialize_reject(failure, YVEX_MATERIALIZATION_FAILURE_SNAPSHOT_DRIFT, NULL,

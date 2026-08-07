@@ -7,6 +7,7 @@
  */
 #include "src/backend/cuda/private.h"
 #include <ctype.h>
+#include <dlfcn.h>
 #include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -204,6 +205,55 @@ static int cuda_lifecycle_failure_matches(const char *variable, const char *stag
 {
     const char *selected = variable ? getenv(variable) : NULL;
     return selected && stage && strcmp(selected, stage) == 0;
+}
+
+/* Admit cuBLAS opportunistically; family consumers decide when its GEMM is mandatory. */
+static int cuda_blas_open(yvex_backend *backend, yvex_error *err)
+{
+    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    yvex_cuda_blas *blas;
+    if (!state) return YVEX_ERR_INVALID_ARG;
+    blas = &state->blas;
+    blas->library = dlopen("libcublas.so.13", RTLD_NOW | RTLD_LOCAL);
+    if (!blas->library) blas->library = dlopen("libcublas.so", RTLD_NOW | RTLD_LOCAL);
+    if (!blas->library) goto unavailable;
+    blas->create = NULL;
+    *(void **)(&blas->create) = dlsym(blas->library, "cublasCreate_v2");
+    *(void **)(&blas->destroy) = dlsym(blas->library, "cublasDestroy_v2");
+    *(void **)(&blas->set_stream) = dlsym(blas->library, "cublasSetStream_v2");
+    *(void **)(&blas->gemm_ex) = dlsym(blas->library, "cublasGemmEx");
+    if (!blas->create || !blas->destroy || !blas->set_stream || !blas->gemm_ex ||
+        blas->create(&blas->handle) != 0 ||
+        blas->set_stream(blas->handle, state->execution_stream) != 0) {
+        if (blas->handle && blas->destroy) (void)blas->destroy(blas->handle);
+        dlclose(blas->library);
+        goto unavailable;
+    }
+    blas->ready = 1;
+    yvex_error_clear(err);
+    return YVEX_OK;
+unavailable:
+    memset(blas, 0, sizeof(*blas));
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+/* Release the library handle before its CUDA stream and context disappear. */
+static int cuda_blas_close(yvex_backend *backend, yvex_error *err)
+{
+    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    yvex_cuda_blas *blas;
+    if (!state) return YVEX_OK;
+    blas = &state->blas;
+    if (blas->handle && (!blas->destroy || blas->destroy(blas->handle) != 0)) {
+        yvex_error_set(err, YVEX_ERR_BACKEND, "cuda.blas.close",
+                       "cuBLAS handle cleanup failed");
+        return YVEX_ERR_BACKEND;
+    }
+    if (blas->library) dlclose(blas->library);
+    memset(blas, 0, sizeof(*blas));
+    yvex_error_clear(err);
+    return YVEX_OK;
 }
 
 /* Own one non-blocking execution stream per backend/session when the Driver exposes it. */
@@ -436,6 +486,9 @@ static int cuda_close(yvex_backend *backend, yvex_error *err)
     if (rc != YVEX_OK)
         return rc;
     rc = yvex_cuda_graphs_close_all(backend, err);
+    if (rc != YVEX_OK)
+        return rc;
+    rc = cuda_blas_close(backend, err);
     if (rc != YVEX_OK)
         return rc;
     rc = cuda_execution_stream_close(backend, err);
@@ -1809,7 +1862,9 @@ int yvex_backend_open_cuda_impl(yvex_backend **out,
     if (rc != YVEX_OK) goto failed;
     rc = yvex_cuda_kernel_bundle_admit(backend, err);
     if (rc == YVEX_OK) {
-        backend->status = YVEX_BACKEND_STATUS_READY;
+        rc = cuda_blas_open(backend, err);
+        if (rc == YVEX_OK) backend->status = YVEX_BACKEND_STATUS_READY;
+        else goto failed;
     } else if (backend_cleanup_only(backend) ||
                backend->status == YVEX_BACKEND_STATUS_FAILED) {
         *out = backend;
@@ -1898,6 +1953,11 @@ int yvex_backend_open_shared_cuda(yvex_backend **out,
                                   err ? *err : (yvex_error){0}, err);
     }
     rc = cuda_timing_open(backend, err);
+    if (rc != YVEX_OK) {
+        return cuda_open_rollback(out, &backend, rc,
+                                  err ? *err : (yvex_error){0}, err);
+    }
+    rc = cuda_blas_open(backend, err);
     if (rc != YVEX_OK) {
         return cuda_open_rollback(out, &backend, rc,
                                   err ? *err : (yvex_error){0}, err);

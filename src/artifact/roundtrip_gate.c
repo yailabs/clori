@@ -136,7 +136,10 @@ static int admission_identity_encode(const yvex_complete_artifact_admission *adm
     if (!admission || !output)
         return 0;
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.artifact.admission.v2") ||
+    if (!yvex_sha256_update_text(
+            &hash, admission->artifact_class == YVEX_ARTIFACT_CLASS_COMPONENT_YVEX
+                       ? "yvex.component-artifact.admission.v1"
+                       : "yvex.artifact.admission.v2") ||
         !yvex_sha256_update_u64(&hash, admission->artifact_class) ||
         !yvex_sha256_update_u64(&hash, admission->metadata_count) ||
         !yvex_sha256_update_u64(&hash, admission->tensor_count) ||
@@ -154,6 +157,10 @@ static int admission_identity_encode(const yvex_complete_artifact_admission *adm
         !yvex_sha256_update_text(&hash, admission->writer_plan_identity) ||
         !yvex_sha256_update_text(&hash, admission->artifact_identity) ||
         !yvex_sha256_update_text(&hash, admission->official_reader_revision) ||
+        (admission->artifact_class == YVEX_ARTIFACT_CLASS_COMPONENT_YVEX &&
+         (!yvex_sha256_update_text(&hash, admission->logical_target) ||
+          !yvex_sha256_update_text(&hash, admission->logical_component) ||
+          !yvex_sha256_update_text(&hash, admission->logical_component_identity))) ||
         !yvex_sha256_final(&hash, digest))
         return 0;
     yvex_sha256_hex(digest, output);
@@ -171,6 +178,30 @@ static int admission_deepseek_identities_valid(
            yvex_sha256_hex_is_valid(admission->payload_identity) &&
            yvex_sha256_hex_is_valid(admission->transform_identity) &&
            yvex_sha256_hex_is_valid(admission->writer_plan_identity);
+}
+
+static int admission_component_catalog_valid(
+    const yvex_complete_artifact_admission *catalog)
+{
+    return catalog && catalog->artifact_class == YVEX_ARTIFACT_CLASS_COMPONENT_YVEX &&
+           catalog->metadata_count && catalog->tensor_count && catalog->payload_bytes &&
+           catalog->file_bytes && catalog->source_snapshot_identity &&
+           catalog->mapping_identity && catalog->logical_target[0] &&
+           catalog->logical_component[0] &&
+           yvex_sha256_hex_is_valid(catalog->logical_component_identity) &&
+           yvex_sha256_hex_is_valid(catalog->artifact_identity) &&
+           yvex_sha256_hex_is_valid(catalog->profile_identity) &&
+           yvex_sha256_hex_is_valid(catalog->quant_execution_identity) &&
+           yvex_sha256_hex_is_valid(catalog->payload_plan_identity) &&
+           yvex_sha256_hex_is_valid(catalog->payload_byte_identity) &&
+           yvex_sha256_hex_is_valid(catalog->payload_identity) &&
+           yvex_sha256_hex_is_valid(catalog->transform_identity) &&
+           yvex_sha256_hex_is_valid(catalog->writer_plan_identity) &&
+           strcmp(catalog->official_reader_revision,
+                  YVEX_GGUF_OFFICIAL_READER_REVISION) == 0 &&
+           !catalog->tokenizer_complete && catalog->native_reader_accepted &&
+           catalog->official_reader_accepted && catalog->payload_integrity_accepted &&
+           catalog->materialization_input_ready && !catalog->runtime_supported;
 }
 
 static const yvex_complete_artifact_admission *admission_deepseek_for_size(
@@ -365,6 +396,170 @@ int yvex_artifact_admit_deepseek(const yvex_artifact *artifact,
         memset(failure, 0, sizeof(*failure));
     yvex_error_clear(err);
     return YVEX_OK;
+}
+
+static int artifact_admit_component_catalog(
+    const yvex_artifact *artifact, const yvex_complete_artifact_admission *catalog,
+    yvex_complete_artifact_admission *out, yvex_artifact_admission_failure *failure,
+    yvex_error *err)
+{
+    yvex_artifact_snapshot snapshot;
+    int rc;
+
+    if (out) memset(out, 0, sizeof(*out));
+    if (!artifact || !out || !admission_component_catalog_valid(catalog))
+        return admission_fail(
+            failure, YVEX_ARTIFACT_ADMISSION_INVALID_ARGUMENT, "component-catalog", 1u,
+            0u, err, YVEX_ERR_INVALID_ARG,
+            "exact admitted component catalog row and opened artifact are required");
+    if (yvex_artifact_size(artifact) != catalog->file_bytes)
+        return admission_fail(
+            failure, YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH, "file-bytes",
+            catalog->file_bytes, yvex_artifact_size(artifact), err, YVEX_ERR_FORMAT,
+            "component artifact extent differs from its admitted catalog row");
+    rc = yvex_artifact_snapshot_get(artifact, &snapshot, err);
+    if (rc == YVEX_OK) rc = yvex_artifact_snapshot_validate(artifact, NULL, err);
+    if (rc != YVEX_OK)
+        return admission_fail(
+            failure, YVEX_ARTIFACT_ADMISSION_FILE_DRIFT, "file-snapshot",
+            catalog->file_bytes, 0u, err, (yvex_status)rc,
+            "component artifact snapshot is not stable");
+
+    *out = *catalog;
+    out->file_snapshot = snapshot;
+    yvex_core_text_copy(out->artifact_path, sizeof(out->artifact_path),
+                        yvex_artifact_path(artifact));
+    out->artifact_bytes_hashed = 0u;
+    out->artifact_identity_verified = 0;
+    out->complete = 1;
+    if (!admission_identity_encode(out, out->admission_identity))
+        return admission_fail(
+            failure, YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH,
+            "admission-identity", 1u, 0u, err, YVEX_ERR_BOUNDS,
+            "component admission identity encoding failed");
+    if (failure) memset(failure, 0, sizeof(*failure));
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+/* Reconcile a family catalog with the complete structural and storage inventory before trust. */
+int yvex_artifact_admit_component(
+    const yvex_artifact *artifact, const yvex_gguf *gguf, const yvex_tensor_table *tensors,
+    const yvex_artifact_component_contract *contract, yvex_complete_artifact_admission *out,
+    yvex_artifact_admission_failure *failure, yvex_error *err)
+{
+    unsigned long long qtype_counts[YVEX_GGUF_QTYPE_ABI_UPSTREAM_MAX_ID + 1u] = {0};
+    unsigned long long elements = 0ull, payload = 0ull, index;
+    const yvex_complete_artifact_admission *catalog = contract ? contract->catalog : NULL;
+    int rc;
+
+    if (out) memset(out, 0, sizeof(*out));
+    if (!artifact || !gguf || !tensors || !contract || !catalog || !out ||
+        !contract->metadata || !contract->metadata_count || !contract->storage ||
+        !contract->storage_count || !contract->elements || !contract->alignment)
+        return admission_fail(
+            failure, YVEX_ARTIFACT_ADMISSION_INVALID_ARGUMENT, "component-contract", 1u,
+            0u, err, YVEX_ERR_INVALID_ARG,
+            "exact component contract and structural artifact views are required");
+    if (yvex_gguf_metadata_count(gguf) != catalog->metadata_count)
+        return admission_fail(
+            failure, YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH, "metadata-count",
+            catalog->metadata_count, yvex_gguf_metadata_count(gguf), err,
+            YVEX_ERR_FORMAT, "component metadata coverage differs from its catalog");
+    {
+        const yvex_gguf_value *value = yvex_gguf_metadata_find(gguf, "general.alignment");
+        unsigned long long alignment = 0ull;
+
+        if (!value || yvex_gguf_value_as_u64(value, &alignment) != YVEX_OK ||
+            alignment != contract->alignment)
+            return admission_fail(
+                failure, YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH, "general.alignment",
+                contract->alignment, alignment, err, YVEX_ERR_FORMAT,
+                "component alignment metadata differs from its catalog");
+    }
+    for (index = 0ull; index < contract->metadata_count; ++index) {
+        const yvex_artifact_component_metadata *fact = &contract->metadata[index];
+        const yvex_gguf_value *value = yvex_gguf_metadata_find(gguf, fact->key);
+        const char *text = NULL;
+        unsigned long long length = 0ull;
+        size_t expected = fact->value ? strlen(fact->value) : 0u;
+
+        if (!fact->key || !fact->value || !value ||
+            yvex_gguf_value_as_string(value, &text, &length) != YVEX_OK ||
+            length != expected || memcmp(text, fact->value, expected) != 0)
+            return admission_fail(
+                failure, YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH,
+                fact->key ? fact->key : "metadata", expected, length, err,
+                YVEX_ERR_FORMAT, "component string metadata differs from its catalog");
+    }
+    if (yvex_tensor_table_count(tensors) != catalog->tensor_count)
+        return admission_fail(
+            failure, YVEX_ARTIFACT_ADMISSION_TENSOR_COVERAGE, "tensor-count",
+            catalog->tensor_count, yvex_tensor_table_count(tensors), err,
+            YVEX_ERR_FORMAT, "component tensor coverage differs from its catalog");
+    for (index = 0ull; index < contract->storage_count; ++index) {
+        unsigned long long prior;
+
+        if (contract->storage[index].qtype > YVEX_GGUF_QTYPE_ABI_UPSTREAM_MAX_ID ||
+            !contract->storage[index].tensors)
+            return admission_fail(
+                failure, YVEX_ARTIFACT_ADMISSION_INVALID_ARGUMENT, "storage-contract",
+                1u, 0u, err, YVEX_ERR_INVALID_ARG,
+                "component storage contract contains an invalid population");
+        for (prior = 0ull; prior < index; ++prior)
+            if (contract->storage[prior].qtype == contract->storage[index].qtype)
+                return admission_fail(
+                    failure, YVEX_ARTIFACT_ADMISSION_INVALID_ARGUMENT, "storage-contract",
+                    1u, 0u, err, YVEX_ERR_INVALID_ARG,
+                    "component storage contract repeats one qtype");
+    }
+    for (index = 0ull; index < yvex_tensor_table_count(tensors); ++index) {
+        const yvex_tensor_info *tensor = yvex_tensor_table_at(tensors, index);
+        yvex_tensor_shape_accounting accounting;
+
+        rc = yvex_tensor_shape_accounting_validate(tensor, &accounting, err);
+        if (rc != YVEX_OK)
+            return admission_fail(
+                failure, YVEX_ARTIFACT_ADMISSION_TENSOR_COVERAGE, "tensor-shape",
+                1u, index, err, (yvex_status)rc,
+                "component tensor shape or storage accounting is invalid");
+        if (tensor->ggml_type > YVEX_GGUF_QTYPE_ABI_UPSTREAM_MAX_ID)
+            return admission_fail(
+                failure, YVEX_ARTIFACT_ADMISSION_TENSOR_COVERAGE, "tensor-qtype",
+                YVEX_GGUF_QTYPE_ABI_UPSTREAM_MAX_ID, tensor->ggml_type, err,
+                YVEX_ERR_UNSUPPORTED, "component tensor qtype is outside the admitted ABI");
+        qtype_counts[tensor->ggml_type]++;
+        if (!yvex_core_u64_add(elements, accounting.element_count, &elements) ||
+            !yvex_core_u64_add(payload, accounting.storage_byte_count, &payload))
+            return admission_fail(
+                failure, YVEX_ARTIFACT_ADMISSION_TENSOR_COVERAGE, "tensor-population",
+                1u, index, err, YVEX_ERR_BOUNDS,
+                "component aggregate tensor accounting overflowed");
+    }
+    for (index = 0ull; index <= YVEX_GGUF_QTYPE_ABI_UPSTREAM_MAX_ID; ++index) {
+        unsigned long long expected = 0ull, storage_index;
+
+        for (storage_index = 0ull; storage_index < contract->storage_count; ++storage_index)
+            if (contract->storage[storage_index].qtype == index)
+                expected = contract->storage[storage_index].tensors;
+        if (qtype_counts[index] != expected)
+            return admission_fail(
+                failure, YVEX_ARTIFACT_ADMISSION_TENSOR_COVERAGE, "tensor-qtype-count",
+                expected, qtype_counts[index], err, YVEX_ERR_FORMAT,
+                "component qtype population differs from its catalog");
+    }
+    if (elements != contract->elements || payload != catalog->payload_bytes)
+        return admission_fail(
+            failure, YVEX_ARTIFACT_ADMISSION_TENSOR_COVERAGE,
+            elements != contract->elements ? "element-count" : "payload-bytes",
+            elements != contract->elements ? contract->elements : catalog->payload_bytes,
+            elements != contract->elements ? elements : payload, err, YVEX_ERR_FORMAT,
+            "component aggregate storage differs from its catalog");
+    rc = artifact_admit_component_catalog(artifact, catalog, out, failure, err);
+    if (rc == YVEX_OK)
+        rc = yvex_artifact_admission_identity_verify(
+            artifact, out, NULL, NULL, failure, err);
+    return rc;
 }
 
 /* Bind one opened artifact snapshot to its admitted exact-file identity. */

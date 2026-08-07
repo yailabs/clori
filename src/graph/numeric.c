@@ -1326,3 +1326,501 @@ int yvex_attention_fp4_fake_quant_block(
         "FP4 fake quant refuses non-finite activation",
         "FP4 fake quant produced invalid UE8M0 scale", failure, err);
 }
+
+static int graph_numeric_reject(yvex_error *err, yvex_status status, const char *message)
+{
+    yvex_error_set(err, status, "graph.numeric", message);
+    return status;
+}
+
+int yvex_graph_conv1d_output_length(const yvex_graph_conv1d_geometry *geometry,
+                                    unsigned long long *output_length, yvex_error *err)
+{
+    unsigned long long dilated_kernel;
+    unsigned long long padded;
+    unsigned long long result;
+
+    if (output_length) *output_length = 0ull;
+    if (!geometry || !output_length || !geometry->batch || !geometry->input_channels ||
+        !geometry->output_channels || !geometry->input_length || !geometry->kernel_size ||
+        !geometry->stride || !geometry->dilation)
+        return graph_numeric_reject(err, YVEX_ERR_INVALID_ARG,
+                                    "Conv1D geometry requires nonzero extents");
+    if (!yvex_core_u64_mul(geometry->kernel_size - 1ull, geometry->dilation,
+                           &dilated_kernel) ||
+        !yvex_core_u64_add(dilated_kernel, 1ull, &dilated_kernel))
+        return graph_numeric_reject(err, YVEX_ERR_BOUNDS,
+                                    "Conv1D dilated kernel extent overflowed");
+    if (geometry->transposed) {
+        unsigned long long expanded;
+        unsigned long long removed;
+
+        if (geometry->output_padding >= geometry->stride)
+            return graph_numeric_reject(err, YVEX_ERR_INVALID_ARG,
+                                        "transposed Conv1D output padding exceeds its stride");
+        if (!yvex_core_u64_mul(geometry->input_length - 1ull, geometry->stride,
+                               &expanded) ||
+            !yvex_core_u64_mul(geometry->padding, 2ull, &removed) ||
+            !yvex_core_u64_add(expanded, dilated_kernel, &result) ||
+            !yvex_core_u64_add(result, geometry->output_padding, &result) || result <= removed)
+            return graph_numeric_reject(err, YVEX_ERR_BOUNDS,
+                                        "transposed Conv1D output extent is invalid");
+        result -= removed;
+    } else {
+        unsigned long long added;
+
+        if (geometry->output_padding)
+            return graph_numeric_reject(err, YVEX_ERR_INVALID_ARG,
+                                        "ordinary Conv1D has no output padding");
+        if (!yvex_core_u64_mul(geometry->padding, 2ull, &added) ||
+            !yvex_core_u64_add(geometry->input_length, added, &padded) ||
+            padded < dilated_kernel)
+            return graph_numeric_reject(err, YVEX_ERR_BOUNDS,
+                                        "Conv1D kernel exceeds padded input extent");
+        result = (padded - dilated_kernel) / geometry->stride + 1ull;
+    }
+    *output_length = result;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+static int graph_conv1d_extents(const yvex_graph_conv1d_geometry *geometry,
+                                unsigned long long output_length,
+                                unsigned long long *input_elements,
+                                unsigned long long *weight_elements,
+                                unsigned long long *output_elements, yvex_error *err)
+{
+    unsigned long long input_rows;
+    unsigned long long weight_rows;
+    unsigned long long output_rows;
+
+    if (!yvex_core_u64_mul(geometry->batch, geometry->input_channels, &input_rows) ||
+        !yvex_core_u64_mul(input_rows, geometry->input_length, input_elements) ||
+        !yvex_core_u64_mul(geometry->input_channels, geometry->output_channels,
+                           &weight_rows) ||
+        !yvex_core_u64_mul(weight_rows, geometry->kernel_size, weight_elements) ||
+        !yvex_core_u64_mul(geometry->batch, geometry->output_channels, &output_rows) ||
+        !yvex_core_u64_mul(output_rows, output_length, output_elements))
+        return graph_numeric_reject(err, YVEX_ERR_BOUNDS,
+                                    "Conv1D tensor extent overflowed");
+    return YVEX_OK;
+}
+
+static int graph_conv1d_scale(const float *weight, unsigned long long base,
+                              unsigned long long count, const float *gain,
+                              unsigned long long gain_index, float *scale,
+                              yvex_error *err)
+{
+    double squared = 0.0;
+    unsigned long long index;
+
+    *scale = 1.0f;
+    if (!gain) return YVEX_OK;
+    for (index = 0ull; index < count; ++index) {
+        double value = weight[base + index];
+        squared += value * value;
+    }
+    if (!isfinite(squared) || squared <= 0.0 || !isfinite(gain[gain_index]))
+        return graph_numeric_reject(err, YVEX_ERR_FORMAT,
+                                    "Conv1D weight normalization is not finite");
+    *scale = gain[gain_index] / sqrtf((float)squared);
+    if (!isfinite(*scale))
+        return graph_numeric_reject(err, YVEX_ERR_FORMAT,
+                                    "Conv1D weight normalization scale is not finite");
+    return YVEX_OK;
+}
+
+static int graph_conv1d_forward(const yvex_graph_conv1d_geometry *geometry,
+                                const float *input, const float *weight,
+                                const float *bias, const float *gain,
+                                unsigned long long output_length, float *output,
+                                yvex_error *err)
+{
+    unsigned long long batch;
+    unsigned long long output_channel;
+
+    for (output_channel = 0ull; output_channel < geometry->output_channels;
+         ++output_channel) {
+        unsigned long long weight_base = output_channel * geometry->input_channels *
+                                         geometry->kernel_size;
+        float scale;
+        int rc = graph_conv1d_scale(
+            weight, weight_base, geometry->input_channels * geometry->kernel_size,
+            gain, output_channel, &scale, err);
+        if (rc != YVEX_OK) return rc;
+        for (batch = 0ull; batch < geometry->batch; ++batch) {
+            unsigned long long output_position;
+            for (output_position = 0ull; output_position < output_length;
+                 ++output_position) {
+                float sum = bias ? bias[output_channel] : 0.0f;
+                unsigned long long input_channel;
+                for (input_channel = 0ull; input_channel < geometry->input_channels;
+                     ++input_channel) {
+                    unsigned long long kernel;
+                    for (kernel = 0ull; kernel < geometry->kernel_size; ++kernel) {
+                        unsigned long long projected = output_position * geometry->stride +
+                                                       kernel * geometry->dilation;
+                        unsigned long long input_position;
+                        unsigned long long input_index;
+                        unsigned long long weight_index;
+                        if (projected < geometry->padding) continue;
+                        input_position = projected - geometry->padding;
+                        if (input_position >= geometry->input_length) continue;
+                        input_index = (batch * geometry->input_channels + input_channel) *
+                                      geometry->input_length + input_position;
+                        weight_index = weight_base + input_channel * geometry->kernel_size +
+                                       kernel;
+                        sum += input[input_index] * weight[weight_index] * scale;
+                    }
+                }
+                if (!isfinite(sum))
+                    return graph_numeric_reject(err, YVEX_ERR_FORMAT,
+                                                "Conv1D produced a non-finite value");
+                output[(batch * geometry->output_channels + output_channel) * output_length +
+                       output_position] = sum;
+            }
+        }
+    }
+    return YVEX_OK;
+}
+
+static int graph_conv1d_transposed(const yvex_graph_conv1d_geometry *geometry,
+                                   const float *input, const float *weight,
+                                   const float *bias, const float *gain,
+                                   unsigned long long output_length, float *output,
+                                   yvex_error *err)
+{
+    unsigned long long output_elements = geometry->batch * geometry->output_channels *
+                                         output_length;
+    unsigned long long index;
+    unsigned long long batch;
+
+    for (index = 0ull; index < output_elements; ++index)
+        output[index] = bias ? bias[(index / output_length) % geometry->output_channels] : 0.0f;
+    for (batch = 0ull; batch < geometry->batch; ++batch) {
+        unsigned long long input_channel;
+        for (input_channel = 0ull; input_channel < geometry->input_channels; ++input_channel) {
+            unsigned long long weight_base = input_channel * geometry->output_channels *
+                                             geometry->kernel_size;
+            float scale;
+            int rc = graph_conv1d_scale(
+                weight, weight_base, geometry->output_channels * geometry->kernel_size,
+                gain, input_channel, &scale, err);
+            if (rc != YVEX_OK) return rc;
+            for (index = 0ull; index < geometry->input_length; ++index) {
+                float value = input[(batch * geometry->input_channels + input_channel) *
+                                    geometry->input_length + index] * scale;
+                unsigned long long output_channel;
+                for (output_channel = 0ull; output_channel < geometry->output_channels;
+                     ++output_channel) {
+                    unsigned long long kernel;
+                    for (kernel = 0ull; kernel < geometry->kernel_size; ++kernel) {
+                        unsigned long long projected = index * geometry->stride +
+                                                       kernel * geometry->dilation;
+                        unsigned long long output_position;
+                        unsigned long long output_index;
+                        unsigned long long weight_index;
+                        if (projected < geometry->padding) continue;
+                        output_position = projected - geometry->padding;
+                        if (output_position >= output_length) continue;
+                        output_index = (batch * geometry->output_channels + output_channel) *
+                                       output_length + output_position;
+                        weight_index = weight_base + output_channel * geometry->kernel_size +
+                                       kernel;
+                        output[output_index] += value * weight[weight_index];
+                    }
+                }
+            }
+        }
+    }
+    for (index = 0ull; index < output_elements; ++index)
+        if (!isfinite(output[index]))
+            return graph_numeric_reject(err, YVEX_ERR_FORMAT,
+                                        "transposed Conv1D produced a non-finite value");
+    return YVEX_OK;
+}
+
+int yvex_graph_conv1d_f32(const yvex_graph_conv1d_geometry *geometry,
+                          const float *input, unsigned long long input_count,
+                          const float *weight, unsigned long long weight_count,
+                          const float *bias, unsigned long long bias_count,
+                          const float *gain, unsigned long long gain_count,
+                          float *output, unsigned long long output_count,
+                          yvex_error *err)
+{
+    unsigned long long output_length;
+    unsigned long long expected_input;
+    unsigned long long expected_weight;
+    unsigned long long expected_output;
+    unsigned long long normalized_channels;
+    int rc;
+
+    if (!geometry || !input || !weight || !output)
+        return graph_numeric_reject(err, YVEX_ERR_INVALID_ARG,
+                                    "Conv1D requires geometry, input, weight, and output");
+    rc = yvex_graph_conv1d_output_length(geometry, &output_length, err);
+    if (rc != YVEX_OK) return rc;
+    rc = graph_conv1d_extents(geometry, output_length, &expected_input,
+                              &expected_weight, &expected_output, err);
+    if (rc != YVEX_OK) return rc;
+    normalized_channels = geometry->transposed ? geometry->input_channels :
+                                                 geometry->output_channels;
+    if (input_count != expected_input || weight_count != expected_weight ||
+        output_count != expected_output || (bias && bias_count != geometry->output_channels) ||
+        (!bias && bias_count) || (gain && gain_count != normalized_channels) ||
+        (!gain && gain_count))
+        return graph_numeric_reject(err, YVEX_ERR_BOUNDS,
+                                    "Conv1D tensor extents differ from geometry");
+    rc = geometry->transposed ?
+             graph_conv1d_transposed(geometry, input, weight, bias, gain,
+                                     output_length, output, err) :
+             graph_conv1d_forward(geometry, input, weight, bias, gain,
+                                  output_length, output, err);
+    if (rc == YVEX_OK) yvex_error_clear(err);
+    return rc;
+}
+
+int yvex_graph_alias_snake_f32(const float *input, unsigned long long batch,
+                               unsigned long long channels, unsigned long long length,
+                               const float *alpha_log, const float *beta_log,
+                               const float up_filter[12], const float down_filter[12],
+                               float *output, float *scratch,
+                               unsigned long long scratch_count, yvex_error *err)
+{
+    unsigned long long doubled;
+    unsigned long long groups;
+    unsigned long long total_elements;
+    unsigned long long padded_length;
+    unsigned long long group;
+
+    if (!input || !batch || !channels || !length || !alpha_log || !beta_log ||
+        !up_filter || !down_filter || !output || !scratch ||
+        !yvex_core_u64_mul(batch, channels, &groups) ||
+        !yvex_core_u64_mul(groups, length, &total_elements) ||
+        total_elements > (unsigned long long)SIZE_MAX / sizeof(float) ||
+        !yvex_core_u64_mul(length, 2ull, &doubled) ||
+        !yvex_core_u64_add(length, 10ull, &padded_length) ||
+        padded_length > (~0ull - 15ull) / 2ull || scratch_count < doubled)
+        return graph_numeric_reject(err, YVEX_ERR_INVALID_ARG,
+                                    "alias-free SnakeBeta requires complete bounded buffers");
+    for (group = 0ull; group < groups; ++group) {
+        unsigned long long position;
+        unsigned long long channel = group % channels;
+        float alpha = expf(alpha_log[channel]);
+        float beta = expf(beta_log[channel]);
+
+        if (!isfinite(alpha) || !isfinite(beta) || beta <= 0.0f)
+            return graph_numeric_reject(err, YVEX_ERR_FORMAT,
+                                        "SnakeBeta parameters are not finite");
+        for (position = 0ull; position < doubled; ++position) {
+            unsigned long long raw_position = position + 15ull;
+            float value = 0.0f;
+            unsigned long long padded_position;
+            for (padded_position = 0ull; padded_position < padded_length;
+                 ++padded_position) {
+                unsigned long long projected = padded_position * 2ull;
+                unsigned long long kernel;
+                unsigned long long source_position;
+                if (raw_position < projected || raw_position - projected >= 12ull) continue;
+                kernel = raw_position - projected;
+                source_position = padded_position < 5ull ? 0ull : padded_position - 5ull;
+                if (source_position >= length) source_position = length - 1ull;
+                value += input[group * length + source_position] * up_filter[kernel];
+            }
+            value *= 2.0f;
+            value += sinf(alpha * value) * sinf(alpha * value) / (beta + 1.0e-9f);
+            if (!isfinite(value))
+                return graph_numeric_reject(err, YVEX_ERR_FORMAT,
+                                            "SnakeBeta produced a non-finite value");
+            scratch[position] = value;
+        }
+        for (position = 0ull; position < length; ++position) {
+            float value = 0.0f;
+            unsigned long long kernel;
+            for (kernel = 0ull; kernel < 12ull; ++kernel) {
+                unsigned long long padded = position * 2ull + kernel;
+                unsigned long long source_position = padded < 5ull ? 0ull : padded - 5ull;
+                if (source_position >= doubled) source_position = doubled - 1ull;
+                value += scratch[source_position] * down_filter[kernel];
+            }
+            if (!isfinite(value))
+                return graph_numeric_reject(err, YVEX_ERR_FORMAT,
+                                            "SnakeBeta downsampling produced a non-finite value");
+            output[group * length + position] = value;
+        }
+    }
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+/* Project source-layout [out, in] F32 weights without inventing a physical transpose. */
+int yvex_graph_linear_source_f32(
+    const float *input, unsigned long long input_count, unsigned long long rows,
+    unsigned long long input_width, const float *weight,
+    unsigned long long weight_count, const float *bias,
+    unsigned long long bias_count, unsigned long long output_width,
+    float *output, unsigned long long output_count, yvex_error *err)
+{
+    unsigned long long expected_input, expected_weight, expected_output;
+    unsigned long long row, column;
+
+    if (!input || !rows || !input_width || !weight || !output || !output_width ||
+        !yvex_core_u64_mul(rows, input_width, &expected_input) ||
+        !yvex_core_u64_mul(output_width, input_width, &expected_weight) ||
+        !yvex_core_u64_mul(rows, output_width, &expected_output) ||
+        expected_input > (unsigned long long)SIZE_MAX / sizeof(float) ||
+        expected_weight > (unsigned long long)SIZE_MAX / sizeof(float) ||
+        expected_output > (unsigned long long)SIZE_MAX / sizeof(float) ||
+        expected_input != input_count || expected_weight != weight_count ||
+        expected_output != output_count || (bias && bias_count != output_width) ||
+        (!bias && bias_count))
+        return graph_numeric_reject(err, YVEX_ERR_BOUNDS,
+                                    "linear F32 extents differ from source geometry");
+    for (row = 0ull; row < rows; ++row) {
+        const float *input_row = input + row * input_width;
+        for (column = 0ull; column < output_width; ++column) {
+            const float *weight_row = weight + column * input_width;
+            float sum = bias ? bias[column] : 0.0f;
+            unsigned long long inner;
+
+            for (inner = 0ull; inner < input_width; ++inner)
+                sum += input_row[inner] * weight_row[inner];
+            if (!isfinite(sum))
+                return graph_numeric_reject(err, YVEX_ERR_FORMAT,
+                                            "linear F32 produced a non-finite value");
+            output[row * output_width + column] = sum;
+        }
+    }
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+/* Apply the source LayerNorm contract in place over independently normalized rows. */
+int yvex_graph_layer_norm_f32(float *values, unsigned long long rows,
+                              unsigned long long width, const float *weight,
+                              const float *bias, double epsilon, yvex_error *err)
+{
+    unsigned long long row;
+
+    if (!values || !rows || !width || !weight || !bias || !isfinite(epsilon) ||
+        epsilon <= 0.0 || rows > ULLONG_MAX / width ||
+        rows * width > (unsigned long long)SIZE_MAX / sizeof(float))
+        return graph_numeric_reject(err, YVEX_ERR_INVALID_ARG,
+                                    "LayerNorm requires bounded rows, affine values, and epsilon");
+    for (row = 0ull; row < rows; ++row) {
+        float *current = values + row * width;
+        double mean = 0.0, variance = 0.0, inverse;
+        unsigned long long index;
+
+        for (index = 0ull; index < width; ++index) {
+            if (!isfinite(current[index]) || !isfinite(weight[index]) ||
+                !isfinite(bias[index]))
+                return graph_numeric_reject(err, YVEX_ERR_FORMAT,
+                                            "LayerNorm input or affine value is non-finite");
+            mean += current[index];
+        }
+        mean /= (double)width;
+        for (index = 0ull; index < width; ++index) {
+            double centered = (double)current[index] - mean;
+            variance += centered * centered;
+        }
+        inverse = 1.0 / sqrt(variance / (double)width + epsilon);
+        if (!isfinite(inverse))
+            return graph_numeric_reject(err, YVEX_ERR_FORMAT,
+                                        "LayerNorm variance is not finite");
+        for (index = 0ull; index < width; ++index) {
+            double normalized = ((double)current[index] - mean) * inverse;
+            double result = normalized * weight[index] + bias[index];
+            if (!isfinite(result))
+                return graph_numeric_reject(err, YVEX_ERR_FORMAT,
+                                            "LayerNorm produced a non-finite value");
+            current[index] = (float)result;
+        }
+    }
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_graph_silu_gate_f32(const float *fused, unsigned long long rows,
+                             unsigned long long width, float *output,
+                             yvex_error *err)
+{
+    unsigned long long row, index;
+
+    if (!fused || !rows || !width || !output || width > ULLONG_MAX / 2ull ||
+        rows > ULLONG_MAX / (width * 2ull) ||
+        rows * width > (unsigned long long)SIZE_MAX / sizeof(float))
+        return graph_numeric_reject(err, YVEX_ERR_INVALID_ARG,
+                                    "gated SiLU requires bounded fused rows and output");
+    for (row = 0ull; row < rows; ++row) {
+        const float *gate = fused + row * width * 2ull;
+        const float *value = gate + width;
+        for (index = 0ull; index < width; ++index) {
+            float result = gate[index] / (1.0f + expf(-gate[index])) * value[index];
+            if (!isfinite(result))
+                return graph_numeric_reject(err, YVEX_ERR_FORMAT,
+                                            "gated SiLU produced a non-finite value");
+            output[row * width + index] = result;
+        }
+    }
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+/* Execute full noncausal attention over interleaved [head, Q/K/V, width] rows. */
+int yvex_graph_full_attention_f32(
+    const float *qkv, unsigned long long rows, unsigned long long heads,
+    unsigned long long head_width, float *output, float *scratch,
+    unsigned long long scratch_count, yvex_error *err)
+{
+    unsigned long long hidden, qkv_width, output_elements, qkv_elements;
+    unsigned long long query, head;
+    float scale;
+
+    if (!qkv || !rows || !heads || !head_width || !output || !scratch ||
+        !yvex_core_u64_mul(heads, head_width, &hidden) ||
+        !yvex_core_u64_mul(hidden, 3ull, &qkv_width) ||
+        !yvex_core_u64_mul(rows, hidden, &output_elements) ||
+        !yvex_core_u64_mul(rows, qkv_width, &qkv_elements) ||
+        output_elements > (unsigned long long)SIZE_MAX / sizeof(float) ||
+        qkv_elements > (unsigned long long)SIZE_MAX / sizeof(float) ||
+        scratch_count < rows)
+        return graph_numeric_reject(err, YVEX_ERR_INVALID_ARG,
+                                    "full attention requires bounded QKV geometry and scratch");
+    scale = 1.0f / sqrtf((float)head_width);
+    memset(output, 0, (size_t)output_elements * sizeof(*output));
+    for (query = 0ull; query < rows; ++query) {
+        for (head = 0ull; head < heads; ++head) {
+            const float *q = qkv + query * qkv_width + head * head_width * 3ull;
+            float maximum = -INFINITY, sum = 0.0f;
+            unsigned long long key, coordinate;
+
+            for (key = 0ull; key < rows; ++key) {
+                const float *k = qkv + key * qkv_width +
+                                 head * head_width * 3ull + head_width;
+                float score = 0.0f;
+                for (coordinate = 0ull; coordinate < head_width; ++coordinate)
+                    score += q[coordinate] * k[coordinate];
+                scratch[key] = score * scale;
+                if (scratch[key] > maximum) maximum = scratch[key];
+            }
+            for (key = 0ull; key < rows; ++key) {
+                scratch[key] = expf(scratch[key] - maximum);
+                sum += scratch[key];
+            }
+            if (!isfinite(sum) || sum <= 0.0f)
+                return graph_numeric_reject(err, YVEX_ERR_FORMAT,
+                                            "full attention softmax is not finite");
+            for (key = 0ull; key < rows; ++key) {
+                const float *value = qkv + key * qkv_width +
+                                     head * head_width * 3ull + head_width * 2ull;
+                float probability = scratch[key] / sum;
+                float *destination = output + query * hidden + head * head_width;
+                for (coordinate = 0ull; coordinate < head_width; ++coordinate)
+                    destination[coordinate] += probability * value[coordinate];
+            }
+        }
+    }
+    yvex_error_clear(err);
+    return YVEX_OK;
+}

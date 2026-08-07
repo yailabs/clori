@@ -221,7 +221,7 @@ forbidden.
 | --- | --- |
 | `src/graph/plan.c` | runtime descriptor roles, immutable graph plan and backend admission facts |
 | `src/graph/attention.c` | generic attention protocol, identity validation and transactional state boundary |
-| `src/graph/numeric.c` | reusable attention numerical operations without family policy |
+| `src/graph/numeric.c` | reusable attention and bounded tensor numerical operations without family policy |
 | `src/graph/state.c` | immutable prior-state views, candidate deltas, and transactional attention-state lifecycle |
 | `src/graph/families/deepseek_v4.c` | DeepSeek schedule, recurrence and CPU/CUDA operation composition |
 | `src/backend/cuda/families/deepseek_v4.c` | irreducible fused CUDA lowering for the DeepSeek graph recipe; no runtime or model authority |
@@ -231,6 +231,8 @@ forbidden.
 | `src/backend/cuda/graph.c` | CUDA launch-graph registry, capture, instantiate, replay, update, invalidation, and release |
 | `src/backend/cuda/ops.c` | validated host launch binding for admitted exact variants |
 | `src/backend/cuda/kernels.cu` | canonical general device kernels; generated modules remain build output |
+| `src/backend/cuda/transformer.c` | CUDA transformer primitive validation, launch, and numerical reporting |
+| `src/backend/cuda/transformer_kernels.cu` | independently compiled CUDA transformer kernels under the same owner |
 | `src/backend/cuda/moe_kernels.cu` | independently compiled routed/shared MoE kernel family |
 | `src/backend/cuda/kernel_primitives.h` | toolchain-only qtype/device primitives shared by both CUDA kernel families |
 | `src/backend/cuda/qtype.c` | CUDA qtype capability/refusal facts |

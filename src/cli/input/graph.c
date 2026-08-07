@@ -44,6 +44,8 @@ static void graph_args_defaults(yvex_graph_args *out) {
     out->attention.regression_basis_points = ULLONG_MAX;
     out->moe.coverage = "full";
     out->moe.progress = "off";
+    out->component.batch = 1ull;
+    out->component.maximum_host_bytes = 256ull * 1024ull * 1024ull;
     out->transformer.phase = "prefill";
     out->transformer.input_class = "token-ids";
     out->transformer.progress = "off";
@@ -863,6 +865,89 @@ static int graph_parse_transformer(int argc, char **argv, yvex_graph_args *out,
     return YVEX_OK;
 }
 
+static int graph_parse_component(int argc, char **argv, yvex_graph_args *out,
+                                 yvex_error *err)
+{
+    int video;
+    int index;
+
+    if (argc < 4 || (strcmp(argv[3], "audio-vae") != 0 &&
+                     strcmp(argv[3], "video-vae") != 0))
+        return graph_arg_error(err, "yvex: graph component requires audio-vae or video-vae");
+    out->component.name = argv[3];
+    video = strcmp(out->component.name, "video-vae") == 0;
+    out->component.active = 1;
+    for (index = 4; index < argc; ++index) {
+        const char *flag = argv[index];
+        const char *value;
+        if (strcmp(flag, "--help") == 0 || strcmp(flag, "-h") == 0) {
+            out->help_requested = 1;
+            return YVEX_OK;
+        }
+        value = graph_moe_value(argc, argv, &index, err);
+        if (!value) return YVEX_ERR_INVALID_ARG;
+        if (strcmp(flag, "--target") == 0) out->component.target = value;
+        else if (strcmp(flag, "--artifact") == 0) out->component.artifact_path = value;
+        else if (strcmp(flag, "--backend") == 0) out->component.backend = value;
+        else if (strcmp(flag, "--input-file") == 0) out->component.input_file = value;
+        else if (strcmp(flag, "--out") == 0) out->component.output_file = value;
+        else if (strcmp(flag, "--batch") == 0) {
+            if (!parse_positive_ull(value, &out->component.batch))
+                return graph_arg_error(err, "yvex: --batch requires a positive integer");
+        } else if (strcmp(flag, "--latent-steps") == 0) {
+            if (!parse_positive_ull(value, &out->component.latent_steps))
+                return graph_arg_error(err,
+                                       "yvex: --latent-steps requires a positive integer");
+        } else if (strcmp(flag, "--latent-frames") == 0) {
+            if (!parse_positive_ull(value, &out->component.latent_frames))
+                return graph_arg_error(err,
+                                       "yvex: --latent-frames requires a positive integer");
+        } else if (strcmp(flag, "--latent-height") == 0) {
+            if (!parse_positive_ull(value, &out->component.latent_height))
+                return graph_arg_error(err,
+                                       "yvex: --latent-height requires a positive integer");
+        } else if (strcmp(flag, "--latent-width") == 0) {
+            if (!parse_positive_ull(value, &out->component.latent_width))
+                return graph_arg_error(err,
+                                       "yvex: --latent-width requires a positive integer");
+        } else if (strcmp(flag, "--max-host-bytes") == 0) {
+            if (!parse_positive_ull(value, &out->component.maximum_host_bytes))
+                return graph_arg_error(err,
+                                       "yvex: --max-host-bytes requires a positive integer");
+        } else if (strcmp(flag, "--output") == 0) {
+            if (!graph_parse_output_mode(value, 1, &out->render_mode))
+                return graph_arg_errorf(err, "yvex: unsupported graph output mode: %s", value);
+        } else {
+            return graph_arg_errorf(err, "yvex: unknown graph component option: %s", flag);
+        }
+    }
+    if (!out->component.target || !out->component.artifact_path ||
+        !out->component.backend || !out->component.input_file ||
+        !out->component.output_file)
+        return graph_arg_error(
+            err, video ? "yvex: execute component video-vae requires target, artifact, backend, "
+                         "input file, latent geometry, and output path"
+                       : "yvex: execute component audio-vae requires target, artifact, backend, "
+                         "input file, latent steps, and output path");
+    if ((!video && (!out->component.latent_steps || out->component.latent_frames ||
+                    out->component.latent_height || out->component.latent_width)) ||
+        (video && (out->component.latent_steps || !out->component.latent_frames ||
+                   !out->component.latent_height || !out->component.latent_width)))
+        return graph_arg_error(
+            err, video ? "yvex: video-vae requires latent frames, height, and width"
+                       : "yvex: audio-vae requires latent steps");
+    if (video && out->component.batch != 1ull)
+        return graph_arg_error(err, "yvex: Visual VAE currently admits only batch 1");
+    if (strcmp(out->component.target, YVEX_MINIMAX_H3_TARGET_ID) != 0)
+        return graph_arg_errorf(err, "yvex: %s component requires minimax-h3-fl2va",
+                                out->component.name);
+    if (strcmp(out->component.backend, "cpu") != 0)
+        return graph_arg_errorf(err, "yvex: %s currently admits only backend cpu",
+                                video ? "Visual VAE" : "Audio VAE");
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
 int yvex_graph_args_parse(int argc, char **argv, yvex_graph_args *out, yvex_error *err) {
     if (!out) {
         graph_arg_error(err, "graph parser requires output");
@@ -894,6 +979,8 @@ int yvex_graph_args_parse(int argc, char **argv, yvex_graph_args *out, yvex_erro
     }
     if (strcmp(argv[2], "moe") == 0)
         return graph_parse_moe(argc, argv, out, err);
+    if (strcmp(argv[2], "component") == 0)
+        return graph_parse_component(argc, argv, out, err);
     if (strcmp(argv[2], "transformer") == 0)
         return graph_parse_transformer(argc, argv, out, err);
 

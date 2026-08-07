@@ -13,6 +13,13 @@
 #include <stdlib.h>
 #include <string.h>
 #define CUDA_QTYPE_MATVEC_BLOCK 256u
+#define CUDA_QTYPE_MATVEC_ROWS 8u
+#define CUDA_BLAS_OP_N 0
+#define CUDA_BLAS_OP_T 1
+#define CUDA_BLAS_R_32F 0
+#define CUDA_BLAS_R_16BF 14
+#define CUDA_BLAS_COMPUTE_32F 68
+#define CUDA_BLAS_DEFAULT -1
 
 /* Wide, narrow F32 matrices need one block per row/input pair to expose enough
  * independent reduction work; ordinary encoded rows remain warp-owned so
@@ -75,6 +82,116 @@ static int cuda_quant_fail(yvex_quant_failure *failure,
     }
     yvex_error_set(err, (yvex_status)status, "cuda.quant.row_dot", message);
     return status;
+}
+
+/* Execute the source-faithful BF16 row-major projection through one mixed GEMM. */
+static int cuda_blas_bf16_projection(
+    yvex_backend *backend, yvex_cuda_backend_state *state,
+    CUdeviceptr encoded, unsigned long long encoded_bytes,
+    unsigned long long row_count, unsigned long long row_width,
+    unsigned long long input_rows, const yvex_device_tensor *input,
+    const yvex_device_tensor *additive, yvex_device_tensor *output,
+    unsigned long long activation_bytes, yvex_backend_cuda_operation_facts *facts,
+    yvex_error *err)
+{
+    const float alpha = 1.0f, beta = additive ? 1.0f : 0.0f;
+    yvex_cuda_work work = {0};
+    CUdeviceptr input_ptr = (CUdeviceptr)input->data;
+    CUdeviceptr output_ptr = (CUdeviceptr)output->data;
+    CUdeviceptr packed = 0ull, device_status = 0ull;
+    unsigned long long input_elements, packed_bytes, output_bytes, grid;
+    int host_status = 0, rc = YVEX_OK, cleanup_rc, blas_status;
+    yvex_error cleanup;
+
+    if (!state->blas.ready || row_count > INT_MAX || row_width > INT_MAX ||
+        input_rows > INT_MAX ||
+        !yvex_core_u64_mul(row_width, input_rows, &input_elements) ||
+        !yvex_core_u64_mul(input_elements, sizeof(unsigned short), &packed_bytes) ||
+        !yvex_core_u64_mul(row_count, input_rows, &output_bytes) ||
+        !yvex_core_u64_mul(output_bytes, sizeof(float), &output_bytes) ||
+        !yvex_core_u64_add(input_elements, CUDA_QTYPE_MATVEC_BLOCK - 1ull, &grid) ||
+        grid / CUDA_QTYPE_MATVEC_BLOCK > UINT_MAX || packed_bytes > SIZE_MAX) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "cuda.encoded-gemm",
+                       "BF16 projection exceeds cuBLAS integer geometry");
+        return YVEX_ERR_BOUNDS;
+    }
+    work.backend = backend;
+    work.state = state;
+    work.variant = YVEX_BACKEND_VARIANT_ATTENTION_ENCODED;
+    rc = yvex_cuda_work_allocate(&work, &packed, (size_t)packed_bytes, NULL, 0,
+                                 "cuda.encoded-gemm.input", NULL, err);
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_work_allocate(&work, &device_status, sizeof(int), NULL, 1,
+                                     "cuda.encoded-gemm.status", NULL, err);
+    if (rc == YVEX_OK) {
+        void *params[] = {&input_ptr, &packed, &input_elements, &device_status};
+        rc = yvex_cuda_launch(
+            backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+            state->bf16_pack_function,
+            (unsigned int)(grid / CUDA_QTYPE_MATVEC_BLOCK),
+            CUDA_QTYPE_MATVEC_BLOCK, 0u, params,
+            "cuda.encoded-gemm.pack", err);
+    }
+    if (rc == YVEX_OK && additive) {
+        CUdeviceptr additive_ptr = (CUdeviceptr)additive->data;
+        int driver_status = state->driver.cuMemcpyDtoDAsync_v2
+                                ? state->driver.cuMemcpyDtoDAsync_v2(
+                                      output_ptr, additive_ptr, (size_t)output_bytes,
+                                      state->execution_stream)
+                                : state->driver.cuMemcpyDtoD_v2(
+                                      output_ptr, additive_ptr, (size_t)output_bytes);
+        if (driver_status != YVEX_CUDA_SUCCESS)
+            rc = yvex_cuda_status(&state->driver, driver_status,
+                                  "cuda.encoded-gemm.additive", err);
+    }
+    blas_status = rc == YVEX_OK
+        ? state->blas.gemm_ex(
+              state->blas.handle, CUDA_BLAS_OP_T, CUDA_BLAS_OP_N,
+              (int)row_count, (int)input_rows, (int)row_width, &alpha,
+              (const void *)(uintptr_t)encoded, CUDA_BLAS_R_16BF, (int)row_width,
+              (const void *)(uintptr_t)packed, CUDA_BLAS_R_16BF, (int)row_width,
+              &beta, (void *)(uintptr_t)output_ptr, CUDA_BLAS_R_32F, (int)row_count,
+              CUDA_BLAS_COMPUTE_32F, CUDA_BLAS_DEFAULT)
+        : 0;
+    if (rc == YVEX_OK && blas_status != 0) {
+        yvex_error_setf(err, YVEX_ERR_BACKEND, "cuda.encoded-gemm",
+                        "cuBLAS BF16 projection failed with status %d", blas_status);
+        rc = YVEX_ERR_BACKEND;
+    }
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_synchronize(
+            backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+            "cuda.encoded-gemm.sync", err);
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_status(
+            &state->driver,
+            state->driver.cuMemcpyDtoH_v2(
+                &host_status, device_status, sizeof(host_status)),
+            "cuda.encoded-gemm.status", err);
+    if (rc == YVEX_OK && host_status) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "cuda.encoded-gemm",
+                       "BF16 projection input contains invalid numerics");
+        rc = YVEX_ERR_FORMAT;
+    }
+    yvex_error_clear(&cleanup);
+    cleanup_rc = yvex_cuda_work_cleanup(&work, &cleanup);
+    if (rc == YVEX_OK && cleanup_rc != YVEX_OK) {
+        rc = cleanup_rc;
+        if (err) *err = cleanup;
+    }
+    if (rc != YVEX_OK) return rc;
+    output->is_written = 1;
+    facts->d2h_bytes = sizeof(host_status);
+    facts->d2d_bytes = additive ? output_bytes : 0ull;
+    facts->kernel_launches = 2ull;
+    facts->download_count = 1ull;
+    facts->device_synchronizations = 1ull;
+    facts->active_weight_bytes = encoded_bytes;
+    facts->activation_bytes = activation_bytes;
+    facts->temporary_bytes = packed_bytes + sizeof(host_status);
+    facts->compulsory_memory_facts_available = 1;
+    yvex_error_clear(err);
+    return YVEX_OK;
 }
 /*
  * Project one resident encoded matrix through the generic CUDA qtype matvec.
@@ -148,13 +265,18 @@ int yvex_backend_cuda_encoded_matvec(
     rc = yvex_cuda_require_capability(backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
                                       "cuda.encoded-matvec", err);
     if (rc == YVEX_OK) rc = yvex_cuda_set_current(backend, "cuda.encoded-matvec", err);
+    encoded_ptr = (CUdeviceptr)device_address;
+    if (rc == YVEX_OK && !split_input && input_rows > 1ull &&
+        qtype == YVEX_GGUF_QTYPE_BF16 && state->blas.ready)
+        return cuda_blas_bf16_projection(
+            backend, state, encoded_ptr, encoded_bytes, row_count, row_width,
+            input_rows, input, additive, output, activation_bytes, facts, err);
     work.backend = backend;
     work.state = state;
     work.variant = YVEX_BACKEND_VARIANT_ATTENTION_ENCODED;
     if (rc == YVEX_OK)
         rc = yvex_cuda_work_allocate(&work, &status, sizeof(int), NULL, 1,
                                      "cuda.encoded-matvec.status", NULL, err);
-    encoded_ptr = (CUdeviceptr)device_address;
     input_ptr = (CUdeviceptr)input->data;
     if (input_tail) input_tail_ptr = (CUdeviceptr)input_tail->data;
     if (additive) additive_ptr = (CUdeviceptr)additive->data;

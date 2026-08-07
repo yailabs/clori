@@ -196,6 +196,111 @@ static int test_deepseek_variant_admission_catalog(void)
     return 0;
 }
 
+static int test_component_admission_catalog(void)
+{
+    yvex_artifact_component_metadata metadata[] = {
+        {"general.architecture", "llama"}, {"general.name", "yvex-test"},
+    };
+    yvex_artifact_component_storage storage[] = {{YVEX_GGUF_QTYPE_F32, 1ull}};
+    yvex_complete_artifact_admission catalog = {
+        .artifact_class = YVEX_ARTIFACT_CLASS_COMPONENT_YVEX,
+        .metadata_count = 5u,
+        .tensor_count = 1u,
+        .payload_bytes = 128u,
+        .file_bytes = 416u,
+        .source_snapshot_identity = 0x11223344u,
+        .mapping_identity = 0x55667788u,
+        .payload_identity =
+            "1111111111111111111111111111111111111111111111111111111111111111",
+        .transform_identity =
+            "2222222222222222222222222222222222222222222222222222222222222222",
+        .profile_identity =
+            "3333333333333333333333333333333333333333333333333333333333333333",
+        .profile_name = "fixture-component-f32-v1",
+        .quant_execution_identity =
+            "4444444444444444444444444444444444444444444444444444444444444444",
+        .payload_plan_identity =
+            "5555555555555555555555555555555555555555555555555555555555555555",
+        .payload_byte_identity =
+            "6666666666666666666666666666666666666666666666666666666666666666",
+        .writer_plan_identity =
+            "7777777777777777777777777777777777777777777777777777777777777777",
+        .artifact_identity =
+            "3ad71e86689ae7d85d471dd9879702449551c945cb5e0ae50f02edc1fd99af44",
+        .official_reader_revision = YVEX_GGUF_OFFICIAL_READER_REVISION,
+        .logical_target = "fixture-target",
+        .logical_component = "audio_vae",
+        .logical_component_identity =
+            "9999999999999999999999999999999999999999999999999999999999999999",
+        .native_reader_accepted = 1,
+        .official_reader_accepted = 1,
+        .payload_integrity_accepted = 1,
+        .materialization_input_ready = 1,
+    };
+    yvex_artifact_component_contract contract = {
+        &catalog, metadata, storage, 2ull, 1ull, 32ull, 32ull,
+    };
+    yvex_complete_artifact_admission admission;
+    yvex_artifact_admission_failure failure;
+    yvex_artifact_options options = {0};
+    yvex_artifact *artifact = NULL;
+    yvex_tensor_table *tensors = NULL;
+    yvex_gguf *gguf = NULL;
+    yvex_error err;
+
+    options.path = "tests/fixtures/gguf/valid-metadata-tensors.gguf";
+    options.readonly = 1;
+    YVEX_TEST_ASSERT(yvex_artifact_open(&artifact, &options, &err) == YVEX_OK,
+                     "component catalog artifact opened");
+    YVEX_TEST_ASSERT(yvex_gguf_open(&gguf, artifact, &err) == YVEX_OK &&
+                         yvex_tensor_table_from_gguf(&tensors, gguf, &err) == YVEX_OK,
+                     "component catalog structural views opened");
+    YVEX_TEST_ASSERT(yvex_artifact_admit_component(
+                         artifact, gguf, tensors, &contract, &admission, &failure,
+                         &err) == YVEX_OK &&
+                         admission.complete &&
+                         admission.artifact_class == YVEX_ARTIFACT_CLASS_COMPONENT_YVEX &&
+                         strcmp(admission.logical_component, "audio_vae") == 0 &&
+                         !admission.tokenizer_complete &&
+                         admission.artifact_identity_verified &&
+                         admission.artifact_bytes_hashed == catalog.file_bytes &&
+                         yvex_sha256_hex_is_valid(admission.admission_identity),
+                     "component contract reconciles structure before publishing trust");
+    metadata[1].value = "wrong";
+    YVEX_TEST_ASSERT(yvex_artifact_admit_component(
+                         artifact, gguf, tensors, &contract, &admission, &failure,
+                         &err) == YVEX_ERR_FORMAT &&
+                         failure.code == YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH,
+                     "component contract refuses metadata identity drift");
+    metadata[1].value = "yvex-test";
+    storage[0].tensors = 2ull;
+    YVEX_TEST_ASSERT(yvex_artifact_admit_component(
+                         artifact, gguf, tensors, &contract, &admission, &failure,
+                         &err) == YVEX_ERR_FORMAT &&
+                         failure.code == YVEX_ARTIFACT_ADMISSION_TENSOR_COVERAGE,
+                     "component contract refuses qtype population drift");
+    storage[0].tensors = 1ull;
+    catalog.file_bytes++;
+    YVEX_TEST_ASSERT(yvex_artifact_admit_component(
+                         artifact, gguf, tensors, &contract, &admission, &failure,
+                         &err) == YVEX_ERR_FORMAT &&
+                         failure.code == YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH,
+                     "component catalog refuses wrong artifact extent");
+    catalog.file_bytes--;
+    strcpy(catalog.artifact_identity,
+           "8888888888888888888888888888888888888888888888888888888888888888");
+    YVEX_TEST_ASSERT(yvex_artifact_admit_component(
+                         artifact, gguf, tensors, &contract, &admission, &failure,
+                         &err) == YVEX_ERR_FORMAT &&
+                         failure.code == YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH &&
+                         !admission.artifact_identity_verified,
+                     "component catalog refuses same-size content identity drift");
+    yvex_tensor_table_close(tensors);
+    yvex_gguf_close(gguf);
+    yvex_artifact_close(artifact);
+    return 0;
+}
+
 int yvex_test_artifact(void)
 {
     const char *fixture = "tests/fixtures/gguf/valid-minimal.gguf";
@@ -208,6 +313,8 @@ int yvex_test_artifact(void)
                      "artifact symlink lifecycle refuses unsafe paths");
     YVEX_TEST_ASSERT(test_deepseek_variant_admission_catalog() == 0,
                      "DeepSeek physical catalog admits the exact candidate");
+    YVEX_TEST_ASSERT(test_component_admission_catalog() == 0,
+                     "component physical catalog admits exact component facts");
 
     memset(&options, 0, sizeof(options));
     options.path = fixture;

@@ -2,6 +2,9 @@
 #include "tests/test.h"
 
 #include <yvex/internal/families/minimax_h3.h>
+
+#include "src/graph/private.h"
+#include <yvex/internal/artifact.h>
 #include <yvex/internal/compilation.h>
 #include <yvex/internal/model_target.h>
 
@@ -373,6 +376,289 @@ static int test_operator_truth(void)
     return 0;
 }
 
+static int test_audio_numeric_primitives(void)
+{
+    const float input[] = {1.0f, 2.0f, 3.0f};
+    const float weight[] = {1.0f, 2.0f, 1.0f};
+    const float gain[] = {2.449489742783178f};
+    const float transpose_input[] = {1.0f, 2.0f};
+    float output[3];
+    float alias_input[] = {1.0f, 3.0f};
+    float alias_output[2];
+    float scratch[4];
+    float alpha[] = {0.0f};
+    float beta[] = {0.0f};
+    float up_filter[12] = {0};
+    float down_filter[12] = {0};
+    yvex_graph_conv1d_geometry geometry = {1ull, 1ull, 1ull, 3ull, 3ull,
+                                           1ull, 1ull, 1ull, 0ull, 0};
+    yvex_error err;
+
+    YVEX_TEST_ASSERT(yvex_graph_conv1d_f32(
+                         &geometry, input, 3ull, weight, 3ull, NULL, 0ull,
+                         gain, 1ull, output, 3ull, &err) == YVEX_OK,
+                     "weight-normalized Conv1D executes");
+    YVEX_TEST_ASSERT(fabsf(output[0] - 4.0f) < 1.0e-5f &&
+                         fabsf(output[1] - 8.0f) < 1.0e-5f &&
+                         fabsf(output[2] - 8.0f) < 1.0e-5f,
+                     "Conv1D matches the independent hand calculation");
+
+    geometry.input_length = 2ull;
+    geometry.stride = 2ull;
+    geometry.transposed = 1;
+    YVEX_TEST_ASSERT(yvex_graph_conv1d_f32(
+                         &geometry, transpose_input, 2ull, weight, 3ull,
+                         NULL, 0ull, gain, 1ull, output, 3ull, &err) == YVEX_OK,
+                     "weight-normalized transposed Conv1D executes");
+    YVEX_TEST_ASSERT(fabsf(output[0] - 2.0f) < 1.0e-5f &&
+                         fabsf(output[1] - 3.0f) < 1.0e-5f &&
+                         fabsf(output[2] - 4.0f) < 1.0e-5f,
+                     "transposed Conv1D matches the independent hand calculation");
+    geometry.output_padding = geometry.stride;
+    YVEX_TEST_ASSERT(yvex_graph_conv1d_f32(
+                         &geometry, transpose_input, 2ull, weight, 3ull,
+                         NULL, 0ull, gain, 1ull, output, 3ull, &err) == YVEX_ERR_INVALID_ARG,
+                     "transposed Conv1D refuses output padding outside its stride");
+    geometry.output_padding = 0ull;
+
+    up_filter[5] = 0.5f;
+    down_filter[5] = 1.0f;
+    YVEX_TEST_ASSERT(yvex_graph_alias_snake_f32(
+                         alias_input, 1ull, 1ull, 2ull, alpha, beta,
+                         up_filter, down_filter, alias_output, scratch, 4ull,
+                         &err) == YVEX_OK,
+                     "alias-free SnakeBeta executes with bounded scratch");
+    YVEX_TEST_ASSERT(fabsf(alias_output[0] - (1.0f + sinf(1.0f) * sinf(1.0f))) < 1.0e-5f &&
+                         fabsf(alias_output[1] - (3.0f + sinf(3.0f) * sinf(3.0f))) < 1.0e-5f,
+                     "alias-free activation matches the independent filter calculation");
+    YVEX_TEST_ASSERT(yvex_graph_alias_snake_f32(
+                         alias_input, 1ull, 1ull, 2ull, alpha, beta,
+                         up_filter, down_filter, alias_output, scratch, 3ull,
+                         &err) == YVEX_ERR_INVALID_ARG,
+                     "alias-free activation refuses insufficient scratch");
+    down_filter[5] = INFINITY;
+    YVEX_TEST_ASSERT(yvex_graph_alias_snake_f32(
+                         alias_input, 1ull, 1ull, 2ull, alpha, beta,
+                         up_filter, down_filter, alias_output, scratch, 4ull,
+                         &err) == YVEX_ERR_FORMAT,
+                     "alias-free activation refuses a non-finite downsampling result");
+    return 0;
+}
+
+static int test_audio_execution_refusals(void)
+{
+    float latent[32] = {0};
+    float output[800];
+    yvex_minimax_h3_audio_decode_options options;
+    yvex_minimax_h3_audio_decode_result result;
+    yvex_minimax_h3_component_execution_failure failure;
+    yvex_error err;
+
+    memset(output, 0x5a, sizeof(output));
+    memset(&options, 0, sizeof(options));
+    options.latent = latent;
+    options.batch = 1ull;
+    options.latent_channels = 31ull;
+    options.latent_steps = 1ull;
+    options.output = output;
+    options.output_capacity = 800ull;
+    options.max_workspace_bytes = 1024ull;
+    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->audio_vae_decode_cpu(
+                         NULL, &options, &result, &failure, &err) == YVEX_ERR_INVALID_ARG &&
+                         failure.code == YVEX_MINIMAX_H3_COMPONENT_EXECUTION_INVALID_ARGUMENT,
+                     "Audio VAE decode refuses invented latent geometry");
+    options.latent_channels = 32ull;
+    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->audio_vae_decode_cpu(
+                         NULL, &options, &result, &failure, &err) == YVEX_ERR_STATE &&
+                         failure.code == YVEX_MINIMAX_H3_COMPONENT_EXECUTION_LIFECYCLE,
+                     "Audio VAE decode refuses execution without committed materialization");
+    YVEX_TEST_ASSERT(((unsigned char *)output)[0] == 0x5a,
+                     "refused Audio VAE decode does not publish output");
+    return 0;
+}
+
+static int test_video_numeric_primitives(void)
+{
+    const float linear_input[4] = {1.0f, 2.0f, -1.0f, 3.0f};
+    const float linear_weight[4] = {1.0f, 0.0f, 0.0f, 2.0f};
+    const float linear_bias[2] = {0.5f, -1.0f};
+    float linear_output[4];
+    float layer_values[2] = {1.0f, 3.0f};
+    const float layer_weight[2] = {1.0f, 1.0f};
+    const float layer_bias[2] = {0.0f, 0.0f};
+    const float fused[2] = {0.0f, 2.0f};
+    float gated[1];
+    const float qkv[12] = {
+        1.0f, 0.0f, 1.0f, 0.0f, 1.0f, 2.0f,
+        0.0f, 1.0f, 0.0f, 1.0f, 3.0f, 4.0f,
+    };
+    float attention[4];
+    float scratch[2];
+    float selected = expf(1.0f / sqrtf(2.0f));
+    float expected_first = (selected * 1.0f + 3.0f) / (selected + 1.0f);
+    yvex_error err;
+
+    YVEX_TEST_ASSERT(yvex_graph_linear_source_f32(
+                         linear_input, 4ull, 2ull, 2ull,
+                         linear_weight, 4ull, linear_bias, 2ull, 2ull,
+                         linear_output, 4ull, &err) == YVEX_OK,
+                     "source-layout linear projection is executable");
+    YVEX_TEST_ASSERT(fabsf(linear_output[0] - 1.5f) < 1.0e-6f &&
+                         fabsf(linear_output[1] - 3.0f) < 1.0e-6f &&
+                         fabsf(linear_output[2] + 0.5f) < 1.0e-6f &&
+                         fabsf(linear_output[3] - 5.0f) < 1.0e-6f,
+                     "source-layout linear projection matches the independent result");
+    YVEX_TEST_ASSERT(yvex_graph_linear_source_f32(
+                         linear_input, 3ull, 2ull, 2ull,
+                         linear_weight, 4ull, linear_bias, 2ull, 2ull,
+                         linear_output, 4ull, &err) == YVEX_ERR_BOUNDS,
+                     "source-layout linear projection refuses mismatched extents");
+    YVEX_TEST_ASSERT(yvex_graph_layer_norm_f32(
+                         layer_values, 1ull, 2ull, layer_weight, layer_bias,
+                         1.0e-5, &err) == YVEX_OK &&
+                         fabsf(layer_values[0] + 0.999995f) < 1.0e-5f &&
+                         fabsf(layer_values[1] - 0.999995f) < 1.0e-5f,
+                     "LayerNorm matches the independent two-value result");
+    YVEX_TEST_ASSERT(yvex_graph_silu_gate_f32(
+                         fused, 1ull, 1ull, gated, &err) == YVEX_OK &&
+                         gated[0] == 0.0f,
+                     "gated SiLU applies gate-first source semantics");
+    YVEX_TEST_ASSERT(yvex_graph_full_attention_f32(
+                         qkv, 2ull, 1ull, 2ull, attention, scratch, 2ull,
+                         &err) == YVEX_OK &&
+                         fabsf(attention[0] - expected_first) < 1.0e-6f &&
+                         fabsf(attention[1] - (expected_first + 1.0f)) < 1.0e-6f,
+                     "full attention matches an independent noncausal softmax result");
+    YVEX_TEST_ASSERT(yvex_graph_full_attention_f32(
+                         qkv, 2ull, 1ull, 2ull, attention, scratch, 1ull,
+                         &err) == YVEX_ERR_INVALID_ARG,
+                     "full attention refuses insufficient scratch");
+    return 0;
+}
+
+static int test_video_execution_refusals(void)
+{
+    float latent[24] = {0};
+    float output[3072];
+    yvex_minimax_h3_video_decode_options options;
+    yvex_minimax_h3_video_decode_result result;
+    yvex_minimax_h3_component_execution_failure failure;
+    yvex_error err;
+
+    memset(output, 0x5a, sizeof(output));
+    memset(&options, 0, sizeof(options));
+    options.latent = latent;
+    options.output = output;
+    options.output_capacity = 3072ull;
+    options.batch = 1ull;
+    options.latent_channels = 24ull;
+    options.latent_frames = 1ull;
+    options.latent_height = 1ull;
+    options.latent_width = 2ull;
+    options.max_workspace_bytes = 256ull * 1024ull * 1024ull;
+    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->video_vae_decode_cpu(
+                         NULL, &options, &result, &failure, &err) == YVEX_ERR_BOUNDS &&
+                         failure.code == YVEX_MINIMAX_H3_COMPONENT_EXECUTION_INVALID_ARGUMENT,
+                     "Visual VAE decode refuses output storage smaller than its geometry");
+    options.latent_width = 1ull;
+    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->video_vae_decode_cpu(
+                         NULL, &options, &result, &failure, &err) == YVEX_ERR_STATE &&
+                         failure.code == YVEX_MINIMAX_H3_COMPONENT_EXECUTION_LIFECYCLE,
+                     "Visual VAE decode refuses execution without committed materialization");
+    YVEX_TEST_ASSERT(((unsigned char *)output)[0] == 0x5a,
+                     "refused Visual VAE decode does not publish output");
+    return 0;
+}
+
+static int test_t2va_plan(void)
+{
+    yvex_minimax_h3_t2va_plan first, repeated;
+    float sample[2] = {0.5f, -1.0f}, velocity[2] = {2.0f, 4.0f};
+    float stepped[2] = {13.0f, 13.0f};
+    yvex_error err;
+
+    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->t2va_plan_build(
+                         &first, 16ull, 1344ull, 768ull, 124ull, &err) == YVEX_OK &&
+                         first.complete && first.video_latent_frames == 37ull &&
+                         first.video_latent_height == 48ull &&
+                         first.video_latent_width == 84ull &&
+                         first.audio_latent_steps == 207ull &&
+                         first.audio_rows == 414ull && first.video_rows == 37296ull &&
+                         first.packed_rows == 37726ull && first.sigma_grid_points == 20u &&
+                         first.model_evaluations == 19u,
+                     "t2va plan reconstructs the exact source geometry and packed layout");
+    YVEX_TEST_ASSERT(fabsf(first.video_sigmas[0] - 1.0f) < 1.0e-7f &&
+                         fabsf(first.audio_sigmas[0] - 1.0f) < 1.0e-7f &&
+                         fabsf(first.video_sigmas[18] - 0.4f) < 1.0e-7f &&
+                         fabsf(first.audio_sigmas[18] - 0.142857149f) < 1.0e-7f &&
+                         first.video_sigmas[19] == 0.0f && first.audio_sigmas[19] == 0.0f,
+                     "t2va plan includes terminal zero in the paired shifted sigma grids");
+    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->scheduler_step(
+                         stepped, sample, velocity, 2ull, 0.75f, 0.25f, 0.1f,
+                         &err) == YVEX_OK &&
+                         fabsf(stepped[0] - 0.8f) < 1.0e-7f &&
+                         fabsf(stepped[1] + 0.4f) < 1.0e-7f,
+                     "t2va scheduler applies the exact data-ward rectified-flow update");
+    velocity[1] = NAN;
+    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->scheduler_step(
+                         stepped, sample, velocity, 2ull, 0.75f, 0.25f, 0.1f,
+                         &err) == YVEX_ERR_FORMAT && stepped[0] == 0.8f &&
+                         stepped[1] == -0.4f,
+                     "t2va scheduler validates every value before publishing output");
+    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->t2va_plan_build(
+                         &repeated, 16ull, 1344ull, 768ull, 124ull, &err) == YVEX_OK &&
+                         strcmp(first.identity, repeated.identity) == 0,
+                     "t2va plan identity is deterministic");
+    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->t2va_plan_build(
+                         &repeated, 16ull, 1344ull, 768ull, 123ull, &err) ==
+                         YVEX_ERR_INVALID_ARG &&
+                         yvex_graph_register_minimax_h3()->t2va_plan_build(
+                             &repeated, 16ull, 1343ull, 768ull, 124ull, &err) ==
+                         YVEX_ERR_INVALID_ARG,
+                     "t2va plan refuses invalid temporal and spatial grids");
+    return 0;
+}
+
+static int test_component_admission_routing(void)
+{
+    yvex_complete_artifact_admission admission;
+    yvex_artifact_admission_failure failure;
+    yvex_minimax_h3_conditioning_result conditioning;
+    unsigned int token = 1u;
+    float output[5120];
+    yvex_error err;
+
+    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->component_admit(
+                         "unknown", NULL, NULL, NULL, &admission, &failure, &err) ==
+                         YVEX_ERR_INVALID_ARG &&
+                         failure.code == YVEX_ARTIFACT_ADMISSION_INVALID_ARGUMENT &&
+                         strcmp(failure.field, "component") == 0,
+                     "component admission refuses an unknown family-owned component");
+    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->component_admit(
+                         "audio_vae", NULL, NULL, NULL, &admission, &failure, &err) ==
+                         YVEX_ERR_INVALID_ARG &&
+                         failure.code == YVEX_ARTIFACT_ADMISSION_INVALID_ARGUMENT,
+                     "component admission refuses absent generic structural views");
+    memset(output, 0x5a, sizeof(output));
+    YVEX_TEST_ASSERT(yvex_backend_register_minimax_h3()->text_embed_cuda(
+                         NULL, NULL, 0ull, 0u, 0ull, 0ull, 0ull, NULL, 0ull,
+                         &token, 1ull, output, 5120ull, &conditioning, &err) ==
+                         YVEX_ERR_INVALID_ARG &&
+                         !conditioning.complete && ((unsigned char *)output)[0] == 0x5a,
+                     "CUDA conditioning refuses absent materialization without publication");
+    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->text_encoder_artifact_cuda(
+                         NULL, NULL, NULL, &token, 1ull, 0ull, output, 5120ull, 1ull, 1ull,
+                         &conditioning, &err) == YVEX_ERR_INVALID_ARG &&
+                         !conditioning.complete && ((unsigned char *)output)[0] == 0x5a,
+                     "artifact conditioning refuses absent exact component views");
+    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->text_encoder_artifact_cuda(
+                         NULL, NULL, NULL, &token, 1ull, 50ull, output, 5120ull, 1ull, 1ull,
+                         &conditioning, &err) == YVEX_ERR_INVALID_ARG &&
+                         !conditioning.complete && ((unsigned char *)output)[0] == 0x5a,
+                     "artifact text layer refuses absent exact component views");
+    return 0;
+}
+
 int yvex_test_minimax_h3(void)
 {
     if (test_components() != 0) return 1;
@@ -380,5 +666,11 @@ int yvex_test_minimax_h3(void)
     if (test_roles() != 0) return 1;
     if (test_component_ir() != 0) return 1;
     if (test_operator_truth() != 0) return 1;
+    if (test_audio_numeric_primitives() != 0) return 1;
+    if (test_audio_execution_refusals() != 0) return 1;
+    if (test_video_numeric_primitives() != 0) return 1;
+    if (test_video_execution_refusals() != 0) return 1;
+    if (test_t2va_plan() != 0) return 1;
+    if (test_component_admission_routing() != 0) return 1;
     return 0;
 }

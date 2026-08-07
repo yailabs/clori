@@ -36,6 +36,282 @@
 #include <yvex/internal/source.h>
 
 static volatile sig_atomic_t graph_attention_signal_seen;
+static int graph_attention_cancel_requested(void *context);
+static int graph_attention_signals_install(struct sigaction *old_interrupt,
+                                           struct sigaction *old_terminate,
+                                           yvex_error *err);
+static int graph_attention_signals_restore(const struct sigaction *old_interrupt,
+                                           const struct sigaction *old_terminate,
+                                           yvex_error *err);
+static int graph_cli_print_runtime_error(const yvex_error *err, int exit_code);
+
+static int graph_cli_minimax_audio_execute(
+    const yvex_graph_args *args, yvex_error *err)
+{
+    yvex_artifact_options artifact_options = {0};
+    yvex_minimax_h3_audio_decode_options decode_options;
+    yvex_minimax_h3_audio_decode_result decode_result;
+    yvex_minimax_h3_component_execution_failure execution_failure;
+    yvex_cli_minimax_audio_result report;
+    yvex_core_file_result input_file_result;
+    yvex_core_file_result output_file_result;
+    yvex_artifact *artifact = NULL;
+    yvex_tensor_table *tensors = NULL;
+    yvex_gguf *gguf = NULL;
+    unsigned char *input_bytes = NULL;
+    float *output = NULL;
+    size_t input_count = 0u;
+    unsigned long long latent_values;
+    unsigned long long expected_input_bytes;
+    unsigned long long output_values;
+    unsigned long long output_bytes;
+    unsigned long long fixed_bytes;
+    unsigned long long workspace_bytes;
+    struct sigaction old_interrupt;
+    struct sigaction old_terminate;
+    int signals_installed = 0;
+    int render_rc;
+    int restore_rc;
+    int rc;
+
+    memset(&report, 0, sizeof(report));
+    memset(&decode_options, 0, sizeof(decode_options));
+    memset(&decode_result, 0, sizeof(decode_result));
+    if (!yvex_core_u64_mul(args->component.batch, 32ull, &latent_values) ||
+        !yvex_core_u64_mul(latent_values, args->component.latent_steps, &latent_values) ||
+        !yvex_core_u64_mul(latent_values, sizeof(float), &expected_input_bytes) ||
+        !yvex_core_u64_mul(args->component.batch, args->component.latent_steps,
+                           &output_values) ||
+        !yvex_core_u64_mul(output_values, 800ull, &output_values) ||
+        !yvex_core_u64_mul(output_values, sizeof(float), &output_bytes) ||
+        !yvex_core_u64_add(expected_input_bytes, output_bytes, &fixed_bytes) ||
+        fixed_bytes >= args->component.maximum_host_bytes ||
+        expected_input_bytes > (unsigned long long)SIZE_MAX ||
+        output_bytes > (unsigned long long)SIZE_MAX) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "graph_minimax_audio_cli",
+                       "Audio VAE input, output, and workspace exceed --max-host-bytes");
+        return graph_cli_print_runtime_error(err, exit_for_status(YVEX_ERR_BOUNDS));
+    }
+    workspace_bytes = args->component.maximum_host_bytes - fixed_bytes;
+    rc = yvex_core_file_read_snapshot(
+        args->component.input_file, (size_t)expected_input_bytes, &input_bytes,
+        &input_count, &input_file_result, err);
+    if (rc == YVEX_OK && input_count != (size_t)expected_input_bytes) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "graph_minimax_audio_cli",
+                       "Audio VAE input file does not match batch x 32 x latent-steps F32");
+        rc = YVEX_ERR_FORMAT;
+    }
+    output = rc == YVEX_OK ? (float *)malloc((size_t)output_bytes) : NULL;
+    if (rc == YVEX_OK && !output) {
+        yvex_error_set(err, YVEX_ERR_NOMEM, "graph_minimax_audio_cli",
+                       "Audio VAE output allocation failed");
+        rc = YVEX_ERR_NOMEM;
+    }
+    artifact_options.path = args->component.artifact_path;
+    artifact_options.readonly = 1;
+    if (rc == YVEX_OK) rc = yvex_artifact_open(&artifact, &artifact_options, err);
+    if (rc == YVEX_OK) rc = yvex_gguf_open(&gguf, artifact, err);
+    if (rc == YVEX_OK) rc = yvex_tensor_table_from_gguf(&tensors, gguf, err);
+    if (rc == YVEX_OK) {
+        rc = graph_attention_signals_install(&old_interrupt, &old_terminate, err);
+        signals_installed = rc == YVEX_OK;
+    }
+    decode_options.latent = (const float *)input_bytes;
+    decode_options.batch = args->component.batch;
+    decode_options.latent_channels = 32ull;
+    decode_options.latent_steps = args->component.latent_steps;
+    decode_options.output = output;
+    decode_options.output_capacity = output_values;
+    decode_options.max_workspace_bytes = workspace_bytes;
+    decode_options.cancelled = graph_attention_cancel_requested;
+    if (rc == YVEX_OK)
+        rc = yvex_graph_register_minimax_h3()->audio_vae_execute_artifact_cpu(
+            artifact, gguf, tensors, &decode_options, &decode_result,
+            &execution_failure, err);
+    if (signals_installed) {
+        yvex_error restore_error;
+        yvex_error_clear(&restore_error);
+        restore_rc = graph_attention_signals_restore(
+            &old_interrupt, &old_terminate, &restore_error);
+        signals_installed = 0;
+        if (restore_rc != YVEX_OK) {
+            *err = restore_error;
+            rc = restore_rc;
+        }
+        graph_attention_signal_seen = 0;
+    }
+    if (rc == YVEX_OK)
+        rc = yvex_core_file_publish_noreplace(
+            args->component.output_file, output, (size_t)output_bytes, NULL,
+            NULL, NULL, &output_file_result, err);
+    if (rc == YVEX_OK) {
+        report.status = "component-decode-complete";
+        report.target = args->component.target;
+        report.component = "audio_vae";
+        report.backend = args->component.backend;
+        report.output_path = args->component.output_file;
+        report.batch = decode_result.batch;
+        report.samples_per_channel = decode_result.samples_per_channel;
+        report.tensor_reads = decode_result.tensor_reads;
+        report.payload_bytes_read = decode_result.payload_bytes_read;
+        report.peak_workspace_bytes = decode_result.peak_workspace_bytes;
+        report.published_bytes = output_bytes;
+        report.published = 1;
+        yvex_core_text_copy(report.artifact_identity, sizeof(report.artifact_identity),
+                            decode_result.artifact_identity);
+        yvex_core_text_copy(report.execution_identity, sizeof(report.execution_identity),
+                            decode_result.execution_identity);
+        render_rc = yvex_minimax_audio_render(
+            yvex_cli_out_stdout(), args->render_mode, &report);
+        if (render_rc != YVEX_OK) {
+            yvex_error_set(err, render_rc, "graph_minimax_audio_cli",
+                           "Audio VAE result rendering failed after publication");
+            rc = render_rc;
+        }
+    }
+    yvex_tensor_table_close(tensors);
+    yvex_gguf_close(gguf);
+    yvex_artifact_close(artifact);
+    free(output);
+    free(input_bytes);
+    if (rc != YVEX_OK)
+        return graph_cli_print_runtime_error(err, exit_for_status(rc));
+    return 0;
+}
+
+static int graph_cli_minimax_video_execute(const yvex_graph_args *args,
+                                           yvex_error *err)
+{
+    yvex_artifact_options artifact_options = {0};
+    yvex_minimax_h3_video_decode_options decode_options;
+    yvex_minimax_h3_video_decode_result decode_result;
+    yvex_minimax_h3_component_execution_failure execution_failure;
+    yvex_cli_minimax_video_result report;
+    yvex_core_file_result input_file_result, output_file_result;
+    yvex_artifact *artifact = NULL;
+    yvex_tensor_table *tensors = NULL;
+    yvex_gguf *gguf = NULL;
+    unsigned char *input_bytes = NULL;
+    float *output = NULL;
+    size_t input_count = 0u;
+    unsigned long long patches, input_values, expected_input_bytes;
+    unsigned long long output_values, output_bytes;
+    unsigned long long fixed_bytes, workspace_bytes;
+    struct sigaction old_interrupt, old_terminate;
+    int signals_installed = 0;
+    int render_rc, restore_rc;
+    int rc;
+
+    memset(&report, 0, sizeof(report));
+    memset(&decode_options, 0, sizeof(decode_options));
+    memset(&decode_result, 0, sizeof(decode_result));
+    if (!yvex_core_u64_mul(args->component.latent_frames,
+                           args->component.latent_height, &patches) ||
+        !yvex_core_u64_mul(patches, args->component.latent_width, &patches) ||
+        !yvex_core_u64_mul(patches, 24ull, &input_values) ||
+        !yvex_core_u64_mul(input_values, sizeof(float), &expected_input_bytes) ||
+        !yvex_core_u64_mul(patches, 3072ull, &output_values) ||
+        !yvex_core_u64_mul(output_values, sizeof(float), &output_bytes) ||
+        expected_input_bytes > (unsigned long long)SIZE_MAX ||
+        output_bytes > (unsigned long long)SIZE_MAX ||
+        !yvex_core_u64_add(expected_input_bytes, output_bytes, &fixed_bytes) ||
+        fixed_bytes >= args->component.maximum_host_bytes) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "graph_minimax_video_cli",
+                       "Visual VAE input, output, and workspace exceed --max-host-bytes");
+        return graph_cli_print_runtime_error(err, exit_for_status(YVEX_ERR_BOUNDS));
+    }
+    workspace_bytes = args->component.maximum_host_bytes - fixed_bytes;
+    rc = yvex_core_file_read_snapshot(
+        args->component.input_file, (size_t)expected_input_bytes, &input_bytes,
+        &input_count, &input_file_result, err);
+    if (rc == YVEX_OK && input_count != (size_t)expected_input_bytes) {
+        yvex_error_setf(err, YVEX_ERR_FORMAT, "graph_minimax_video_cli",
+                        "Visual VAE input file must contain exact [1,24,%llu,%llu,%llu] F32 data",
+                        args->component.latent_frames, args->component.latent_height,
+                        args->component.latent_width);
+        rc = YVEX_ERR_FORMAT;
+    }
+    output = rc == YVEX_OK ? (float *)malloc((size_t)output_bytes) : NULL;
+    if (rc == YVEX_OK && !output) {
+        yvex_error_set(err, YVEX_ERR_NOMEM, "graph_minimax_video_cli",
+                       "Visual VAE output allocation failed");
+        rc = YVEX_ERR_NOMEM;
+    }
+    artifact_options.path = args->component.artifact_path;
+    artifact_options.readonly = 1;
+    if (rc == YVEX_OK) rc = yvex_artifact_open(&artifact, &artifact_options, err);
+    if (rc == YVEX_OK) rc = yvex_gguf_open(&gguf, artifact, err);
+    if (rc == YVEX_OK) rc = yvex_tensor_table_from_gguf(&tensors, gguf, err);
+    if (rc == YVEX_OK) {
+        rc = graph_attention_signals_install(&old_interrupt, &old_terminate, err);
+        signals_installed = rc == YVEX_OK;
+    }
+    decode_options.latent = (const float *)input_bytes;
+    decode_options.output = output;
+    decode_options.output_capacity = output_values;
+    decode_options.batch = 1ull;
+    decode_options.latent_channels = 24ull;
+    decode_options.latent_frames = args->component.latent_frames;
+    decode_options.latent_height = args->component.latent_height;
+    decode_options.latent_width = args->component.latent_width;
+    decode_options.max_workspace_bytes = workspace_bytes;
+    decode_options.cancelled = graph_attention_cancel_requested;
+    if (rc == YVEX_OK)
+        rc = yvex_graph_register_minimax_h3()->video_vae_execute_artifact_cpu(
+            artifact, gguf, tensors, &decode_options, &decode_result,
+            &execution_failure, err);
+    if (signals_installed) {
+        yvex_error restore_error;
+        yvex_error_clear(&restore_error);
+        restore_rc = graph_attention_signals_restore(
+            &old_interrupt, &old_terminate, &restore_error);
+        signals_installed = 0;
+        if (restore_rc != YVEX_OK) {
+            *err = restore_error;
+            rc = restore_rc;
+        }
+        graph_attention_signal_seen = 0;
+    }
+    if (rc == YVEX_OK)
+        rc = yvex_core_file_publish_noreplace(
+            args->component.output_file, output, (size_t)output_bytes, NULL,
+            NULL, NULL, &output_file_result, err);
+    if (rc == YVEX_OK) {
+        report.status = "component-decode-complete";
+        report.target = args->component.target;
+        report.component = "video_vae";
+        report.backend = args->component.backend;
+        report.output_path = args->component.output_file;
+        report.batch = decode_result.batch;
+        report.frames = decode_result.frames;
+        report.height = decode_result.height;
+        report.width = decode_result.width;
+        report.tensor_reads = decode_result.tensor_reads;
+        report.payload_bytes_read = decode_result.payload_bytes_read;
+        report.peak_workspace_bytes = decode_result.peak_workspace_bytes;
+        report.published_bytes = output_bytes;
+        report.published = 1;
+        yvex_core_text_copy(report.artifact_identity, sizeof(report.artifact_identity),
+                            decode_result.artifact_identity);
+        yvex_core_text_copy(report.execution_identity, sizeof(report.execution_identity),
+                            decode_result.execution_identity);
+        render_rc = yvex_minimax_video_render(
+            yvex_cli_out_stdout(), args->render_mode, &report);
+        if (render_rc != YVEX_OK) {
+            yvex_error_set(err, render_rc, "graph_minimax_video_cli",
+                           "Visual VAE result rendering failed after publication");
+            rc = render_rc;
+        }
+    }
+    yvex_tensor_table_close(tensors);
+    yvex_gguf_close(gguf);
+    yvex_artifact_close(artifact);
+    free(output);
+    free(input_bytes);
+    if (rc != YVEX_OK)
+        return graph_cli_print_runtime_error(err, exit_for_status(rc));
+    return 0;
+}
 
 typedef struct {
     int enabled;
@@ -1585,6 +1861,10 @@ int yvex_graph_command(int argc, char **argv,
 
     if (args.moe.active)
         return graph_cli_moe_execute(&args, retained_cleanup, &err);
+    if (args.component.active && strcmp(args.component.name, "video-vae") == 0)
+        return graph_cli_minimax_video_execute(&args, &err);
+    if (args.component.active)
+        return graph_cli_minimax_audio_execute(&args, &err);
     if (args.transformer.active && args.transformer.generate)
         return graph_cli_transformer_generate(&args, retained_cleanup, &err);
     if (args.transformer.active && args.transformer.sample)

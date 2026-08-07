@@ -1,18 +1,29 @@
 # MiniMax-H3 FL2VA Family Record
 
-Status: source acquired and verified; logical architecture, tensor roles,
-Transformation IR, and one source-faithful Audio VAE physical artifact
-admitted through native roundtrip; not an executable family
+Status: source acquired and verified; logical architecture, tensor roles, and
+Transformation IR admitted; source-faithful Audio VAE, Visual VAE, and Text
+Encoder component artifacts admitted through native and pinned official
+readers; complete Audio VAE and bounded multi-patch Visual VAE CPU decodes
+numerically conform; one exact Qwen3-VL embedding row executes on GB10; not an
+executable family
 
 This record owns current YVEX facts for MiniMax-H3 Base FL2VA. YVEX now admits
 the complete immutable FL2VA source through its production source owner and
 has a non-runtime model target, one bounded family owner, a composite logical
 component manifest, a seven-edge phase DAG through transactional media
 publication, an exact tensor-role classifier, and component-aware
-artifact-neutral Transformation IR schema v2. YVEX also emits one independently
-identified Audio VAE component GGUF without changing source dtype or executing
-its payload. It does not add component materialization, a runtime adapter,
-backend operation, hosted path, or release obligation. The frozen quantitative intake evidence is the
+artifact-neutral Transformation IR schema v2. YVEX emits independently
+identified Audio VAE, Visual VAE, and Text Encoder component GGUF files without
+changing source dtype. The graph-family recipe binds each file to the exact component, source
+snapshot, physical plan, aggregate payload, and whole-file identities before
+materialization. The graph owner executes the complete Audio VAE decoder and
+all 36 Visual VAE decoder blocks for checked latent geometries, with
+independent numerical conformance evidence for both. A staged Text Encoder
+residency registers the exact BF16 component with CUDA and gathers a checked
+token embedding with zero error against independent source bytes. This does
+not execute any of the 64 Qwen text layers. It does not add a family runtime,
+full-scale Visual qualification, complete conditioning, synchronized media
+path, or release obligation. The frozen quantitative intake evidence is the
 [FL2VA intake audit](../audits/minimax-h3-fl2va-b8b09e3/README.md); the common
 promotion rules remain in the [family integration contract](integration.md).
 
@@ -23,9 +34,9 @@ promotion rules remain in the [family integration contract](integration.md).
 | Implementation branch | `feature/minimax-h3` |
 | Branch status | open |
 | Branch completion | first YVEX-authored playable synchronized MiniMax-H3 FL2VA audio-video output |
-| Current wave | `R010.MINIMAX.H3.FL2VA.PHYSICAL.0` |
-| Current boundary | source-faithful Audio VAE physical variant emitted and accepted by the native YVEX GGUF roundtrip |
-| Next expected boundary | component artifact admission and Audio VAE materialization/numerical decode |
+| Current wave | `R010.MINIMAX.H3.FL2VA.END_TO_END.0` |
+| Current boundary | exact Audio VAE, Visual VAE, and Text Encoder component artifacts admitted; complete Audio and bounded multi-patch Visual CPU decodes conform; the exact 50-layer text-only Qwen3-VL conditioning stack conforms on GB10 |
+| Next expected boundary | exact prompt tokenization and multi-token `t2va` conditioning, followed by Omni latent generation and synchronized media publication |
 
 The branch preserves the accepted intake history and remains open across all
 later source, artifact, graph, backend, residency, latent, VAE, media, and
@@ -51,7 +62,7 @@ or rename the branch.
 | Tensor-role-map identity | `61e7a2cfc29e6dd3da966878f5388f1472a406d7e33ba34ef65f44b61f08f013` |
 | Transformation IR identity | `bd941103d754df8c1eb02ff9b90db4ba86b7e389691f2d0c4027343eccbc0b0b` |
 | Aggregate derivation identity | `cc2886a388a475c2df246558dfb41c8d66e549afd4c4e34d19e2bbd3b70a3ff5` |
-| Evidence stage | exact source verified; architecture, tensor roles, and Transformation IR admitted; one Audio VAE component artifact emitted; no numerical execution |
+| Evidence stage | exact source verified; architecture, tensor roles, and Transformation IR admitted; Audio VAE, Visual VAE, and Text Encoder component artifacts emitted and admitted; complete Audio and bounded multi-patch Visual CPU decodes numerically conform; one exact Text embedding row conforms on GB10 |
 
 The external evidence directory used during the intake was
 `/home/dgmothx/lab/models/intake/minimax-h3/<FULL_REVISION>/`. That path is an
@@ -70,8 +81,10 @@ shards totaling 144,016,376,436 file bytes and 54 metadata/license files
 totaling 34,827,744 bytes. Complete SHA-256 verification covered all
 144,051,204,180 source bytes. Production admission reconciled all 3,240 tensor
 headers, 69,235,580,593 elements, and 144,016,000,740 declared payload bytes.
-No tensor payload byte was executed. Local paths, transfer URLs, timestamps,
-and the implementation branch are absent from every semantic identity.
+No tensor payload byte was executed during source admission. The later Audio
+VAE component execution consumes only its independently admitted physical
+artifact. Local paths, transfer URLs, timestamps, and the implementation branch
+are absent from every semantic identity.
 
 ## License facts
 
@@ -271,12 +284,13 @@ publication need bounded type, shape, or lifecycle extensions.
 
 The material missing boundaries are batched memory-efficient full attention,
 arbitrary masks, MM-RoPE, patchify/unpatchify, elementwise residual/modulation,
-Conv1D/2D/3D, temporal and spatial resampling, alias-free audio operations,
+Conv2D/3D, temporal and spatial video resampling,
 AdaLN and derived-cache lifecycle, tensor-normal RNG, typed audio/video data,
 media serialization, synchronized output transactions, and composite phase
 residency. Visual/audio VAE execution and joint iterative updates are family
-compositions over those generic mechanisms. A similarly named decoder
-primitive does not establish any of these semantics.
+compositions over those generic mechanisms. Generic F32 Conv1D, transposed
+Conv1D, and alias-free SnakeBeta now have bounded CPU implementations consumed
+by the exact Audio VAE recipe; no CUDA admission follows from that evidence.
 
 ## Single-GB10 memory feasibility
 
@@ -423,13 +437,15 @@ payload hash all succeed.
 | Writer-plan identity | `40c89b292935ae03708df9a131d92fbd2fc2de6428550ade6f8c436294217271` |
 | Quant-execution identity | `551609d790bd9af9a51297bacbc7d476bbe436239ee0ce86fb1daa896fccd2ec` |
 | Artifact identity / SHA-256 | `52a10c9f6f6e3b9b81569a95329f503fcb3cbddb224d12bf7851b4929d02e1c1` |
+| Aggregate payload-byte identity | `59850eaaecfc00f777bbeb2506a231e57313940a4c0e00b4501472cbc1a5cbf2` |
+| Component admission identity | `9e162ac79a7fa318830b50201dba6e2f865e74e413f8ee66ec0348410521180e` |
 | Tensor coverage | 1,087 of 1,087 |
 | Element coverage | 151,326,585 |
 | Source and physical dtype | F32 |
 | Payload bytes | 605,306,340 |
 | GGUF file bytes | 605,401,984 |
 | Native roundtrip | accepted |
-| Official-reader admission | pending |
+| Official-reader admission | accepted at pinned revision `af97976c7810cdabb1863172f31c432dab767de7` |
 | Runtime/media readiness | false |
 
 The artifact lives in the external identity-bound operator evidence root and
@@ -452,30 +468,284 @@ component identity, non-identity transformation, missing source range, invalid
 dtype/shape, malformed GGUF metadata, failed native roundtrip, and incomplete
 publication all fail closed.
 
+## Audio VAE numerical component boundary
+
+The family graph recipe consumes a committed materialization of the exact
+component artifact and executes the complete 32 kHz BigVGAN decoder natively in
+C. It includes the 32-to-2,048 latent projection, weight-normalized Conv1D and
+transposed Conv1D, seven 800x aggregate upsampling stages, all 21 AMP residual
+blocks, stored anti-alias filters, log-parameterized SnakeBeta activations, the
+final projection, and the declared clamp. Weights are read per operation and
+released after use; the implementation does not retain the complete 605 MB
+component payload.
+
+The frozen external oracle input has SHA-256
+`3e6c38768994c033027be3423831469d1a6123911265e7bc144d41a4efae2b97`.
+For shape `[1,32,1]`, pinned upstream source produced 800 F32 samples with
+SHA-256 `7485f79d5abf97ca7374696d413dbb88fe5ffdac4e6b054549d0846039575f4e`.
+Two YVEX runs produced execution identity
+`a0d94960d6717785cd96ac1128b07e64fb1eb5ff8d3bb83f3fcc66a6f1c16ce3`,
+read 914 decoder tensors and 259,757,412 payload bytes, and used 58,740,736
+bytes of peak tracked workspace. Maximum absolute error was
+`3.87430191e-7` against a `1e-5` acceptance tolerance. Timing from this
+correctness run is not a component benchmark or performance claim.
+
+`production_capability_available: true` for bounded CPU Audio VAE component
+decode. `production_api_available: true` through the internal family graph ABI.
+`internal_live_runner_available: true`. `operator_command_available: true`
+through:
+
+```sh
+yvex execute component audio-vae \
+  --target minimax-h3-fl2va --artifact <AUDIO_VAE_GGUF> --backend cpu \
+  --input-file <LATENT_F32> --batch 1 --latent-steps 1 --out <OUTPUT_F32>
+```
+
+The same real artifact and oracle latent produced the identity and conformance
+result above through this command, then atomically published 3,200 bytes.
+`end_user_path_available: false`: the output is raw component F32, not an audio
+container. No runtime, CUDA, stereo publication, or audio-video capability is
+admitted by this component evidence.
+
+## Visual VAE physical and CPU numerical boundary
+
+The Visual VAE uses the accepted source-faithful physical profile. For rank-five
+Conv3D weights it retains the first three logical axes and folds all trailing
+logical axes into GGUF physical axis four. Transformation IR retains the
+complete logical shape and the artifact records
+`preserve-leading-three-fold-trailing-v1`. Any other equal-element
+reshape is refused. This is an exact storage projection, not a change to
+convolution semantics.
+
+| Fact | Value |
+| --- | --- |
+| Component | Visual VAE |
+| Component identity | `c45d914061f4a8d71e84d70cf79f286793919bdc040f48e94b4ec83c2ee8a0e7` |
+| Transformation identity | `438aee784ab722b7c7cb5de1a934fa9ab3067282f30311ee2d595ad128f2d4f8` |
+| Physical variant identity | `2a4211fda0e32dc53e4734a57e4ddc4cd408483b2980eb1439770dabb9bea575` |
+| Writer-plan identity | `f821e9c691a06f7e9b16261fc5261c160cbac5c7953e0155d6f52fea28ca00d1` |
+| Quant-execution identity | `87f12d8363dbd2a9a5f930a9bcfdbb06533c14db29f2139becc99b2042c76e81` |
+| Artifact identity / SHA-256 | `29bb1df65227fa05444c4002e18d61934d70d872d8472c4757e93971f9e474cd` |
+| Aggregate payload-byte identity | `97e4e92a97cb16890346a77f9766b4ad368c22df24715144a60d008a54eef2b7` |
+| Component admission identity | `d696260e0ab80f8f05e395b6d12659dafddb144149f5aabb82f56d2baa782c8d` |
+| Tensor and element coverage | 560 of 560; 2,603,871,032 elements |
+| Source and physical dtype | F32 |
+| Payload / GGUF file bytes | 10,415,484,128 / 10,415,528,096 |
+| Native and pinned official-reader admission | accepted; official revision `af97976c7810cdabb1863172f31c432dab767de7` |
+| Runtime/media readiness | false |
+
+The CPU decoder consumes checked F32 `[1,24,T,H,W]` latent geometry and emits
+F32 `[1,3,T*4,H*16,W*16]`. It packs channel-major latent storage, executes the
+post-quant 1x1x1 projection, latent embedding, four learned register tokens,
+one zero class token, all 36 width-2,048 transformer blocks, 32-head noncausal
+attention, unit Q/K normalization, gated SiLU FFNs, learned residual scales,
+final LayerNorm, and the 3,072-value per-patch RGB reconstruction head. The
+first 48 values of each Q/K head use the exact three-dimensional, angle-scaled
+partial RoPE over length-normalized temporal and spatial coordinates; suffix
+coordinates remain zero. Checked arithmetic, output capacity, and the operator
+host budget fail closed before execution.
+
+The independent oracle latent has SHA-256
+`9e2288163885582f278f23fef919d569a0d0a864a27e91290e3ab334f999331b`.
+Pinned upstream execution produced RGB F32 `[1,3,4,16,16]` with SHA-256
+`c9805cfa585be08f35689d7fb50af4b9c8343a0cb2bfdeb2ae74f017e08a2117`.
+Two independent YVEX executions were byte-identical at SHA-256
+`b9a5de9b20404d5e6ba2fc768eac016d1c2806a2be834a6ae47481502f3d4d71`,
+shared execution identity
+`04334015ddd330c6b5b8334a37ae9df6169b68f24350f94cd641d6b10e72c91a`,
+read 441 decoder tensors and 9,694,124,384 payload bytes, and used 135,217,176
+bytes of peak tracked workspace. Maximum absolute error was
+`5.06639481e-6` against a `1e-5` tolerance. The observed correctness-run time
+is not a component benchmark or performance claim.
+
+A second independent input `[1,24,1,1,2]` with SHA-256
+`91b30bd96f589fff34365629bb14bbb4788a283f6e5ee935e60dce7212721d19`
+exercises nonzero spatial coordinates, partial 3D RoPE, multi-patch attention,
+and output unpacking. YVEX emitted `[1,3,4,16,32]` at SHA-256
+`c6db8fbf93714d7c7f548f3ffc06075af50ce59bb3ad4f8b140fbc946c3cb627`
+with execution identity
+`f4d52d1f8459a0316b87d49a3c9df6325b785537b8ce001b9f9f9f36608e2a13`.
+Maximum absolute error against the official CPU oracle was `2.74181366e-6`.
+The official CPU and GB10 oracles themselves differed by `3.26871872e-4`,
+while YVEX and the CPU oracle had relative L2 error `8.99401874e-7`; this
+establishes the CPU conformance contract without masking cross-backend F32
+reduction differences. The run read the same 441 tensors and used 135,373,020
+bytes of peak tracked workspace.
+
+`production_capability_available: true` for budget-bounded CPU Visual VAE
+decode. `production_api_available: true` through the internal family graph ABI.
+`internal_live_runner_available: true`. `operator_command_available: true`
+through:
+
+```sh
+yvex execute component video-vae \
+  --target minimax-h3-fl2va --artifact <VIDEO_VAE_GGUF> --backend cpu \
+  --input-file <LATENT_F32> --batch 1 \
+  --latent-frames <T> --latent-height <H> --latent-width <W> \
+  --out <RGB_F32> --output json
+```
+
+The command authenticates the complete artifact, bounds all tracked workspace,
+executes the production decoder, and publishes the exact output extent without
+replacing an existing file. `end_user_path_available: false`: raw F32 RGB frames
+are not a playable video, and no audio synchronization or media container exists.
+
+## Text Encoder artifact and embedding boundary
+
+The Text Encoder uses the corrected source-faithful physical projection
+`reverse-logical-fold-outer-v1`. GGUF axis zero is the contiguous row width, so
+each rank-two matrix reverses its logical axes; ranks above four retain the
+three innermost reversed axes and fold remaining outer logical axes into axis
+four. Transformation IR retains every original logical shape. The earlier
+leading-axis projection was rejected because equal element count did not
+preserve encoded row semantics.
+
+| Fact | Value |
+| --- | --- |
+| Component | Qwen3-VL Text/vision encoder |
+| Component identity | `a4b9c13360aeaa03bbd4d9681b821575e6556bead71c226d0aa72fca5aca7382` |
+| Transformation identity | `4e940d589f14194ee827be627afac91ee28ee2a45f1add22753d9ed3dae3962a` |
+| Physical variant identity | `5b534130f5114f096db93b96cce26fc6def534c95b6d338b87a668591c20b78f` |
+| Payload-plan identity | `214f0afd6fd2718e8184ce169e55018bc1b93598d34e8930e0514e7fe91328c0` |
+| Writer-plan identity | `6bc51d17fa1d9fdc173764478853a16f503dd97dbf014ca47a55d4d7cbc60045` |
+| Quant-execution identity | `50fe7545f9fa204dd636fbdf44e660fc92dd52740d2f39b04118a83d72d058ee` |
+| Artifact identity / SHA-256 | `fd3178c1addbc325c17f23cf6aae9a46dfe0e152211cc7181e9fa512f4046021` |
+| Aggregate payload-byte identity | `c95ade3aef89252f46fb190b8d6d80dbbc6c335bef8fab3d2610dc688bcc326f` |
+| Tensor and element coverage | 1,058 of 1,058; 33,357,390,064 elements |
+| Source and physical dtype | BF16 |
+| Payload / GGUF file bytes | 66,714,780,128 / 66,714,871,392 |
+| Native and pinned official-reader admission | accepted; official revision `af97976c7810cdabb1863172f31c432dab767de7` |
+| Runtime/media readiness | false |
+
+The bounded graph path admits and materializes the complete component, hashes
+all payload bytes, creates one identity-bound 66,714,780,128-byte staged host
+residency, and registers that existing address with CUDA. CUDA context creation
+precedes the large locked arena so GB10 driver state cannot be starved by a
+late context allocation. The runtime consumes an already-open backend through
+the common residency owner; no MiniMax runtime or duplicate device copy is
+created.
+
+For token ID 1, the generic encoded-gather primitive decoded the exact
+`model.language_model.embed_tokens.weight` BF16 row to 5,120 F32 values. The
+independent source-row oracle has SHA-256
+`1c301c9ab63a7fc6737ef1bf2b8bf9f048d9f74f78bdad209120d72f67e40de3`.
+The GB10 result had maximum absolute error zero, residency identity
+`57a3f20e1e7177d8a8a98ba7161f10ef535f265c69866986f6a92f04ea72f773`,
+and execution identity
+`58c60a097568a2eb79c6c1cb020a839d05e5ed79643a3867f4bf91144d9b8ece`.
+It used one kernel launch, 4 H2D bytes for the token index, 20,484 accounted
+D2H bytes, and 20,488 device bytes. These are correctness-run resource facts,
+not benchmark claims.
+
+`production_capability_available: true` only for exact Text embedding
+initialization. `production_api_available: true` through the internal graph and
+backend family ABIs. `internal_live_runner_available: true`.
+`operator_command_available: false` and `end_user_path_available: false`: no
+operator command is promoted for a single embedding row, and neither the
+Qwen3-VL conditioning output nor any media output exists at this boundary.
+
+## Qwen3-VL text layer-zero execution boundary
+
+The family backend now composes one source-exact decoder block from generic
+CUDA encoded projections and reusable transformer activation primitives. The
+path consumes the embedding plus all eleven layer-zero tensors, preserves the
+source BF16 cast policy across Qwen RMSNorm and gated SiLU, applies 64-query / 8-KV
+head grouped-query causal attention with head width 128, and executes the
+5,120 -> 25,600 -> 5,120 MLP with both residual publications. Explicit
+rotate-half tables use theta 5,000,000; the text-only position has identical
+temporal, height, and width indices, so interleaved MM-RoPE mechanically reduces
+to that common frequency table for this one-token evidence case.
+
+The complete production path admitted and locked all 1,058 Text Encoder tensors
+and 66,714,780,128 payload bytes before executing layer zero. Its output was
+byte-identical to a bounded 12-tensor test residency at SHA-256
+`9eab948b039467913abe428325a745158233581eda26dddb119b93e8dab559f5`.
+The full path used residency identity
+`57a3f20e1e7177d8a8a98ba7161f10ef535f265c69866986f6a92f04ea72f773`
+and execution identity
+`9b5f7adc1979412a9e373d78212eb6fb39ea07f2ef56d5ef23a111d120d43942`.
+It reported 28 kernel launches, 1,044 H2D bytes, 20,560 D2H bytes, and
+464,896 bytes of activation allocations. These are correctness-run accounting
+facts, not performance measurements.
+
+The independent pinned Transformers CUDA oracle output has SHA-256
+`c7718d83b435bcf9cbfbcd66793f911c196dcaa4f5f1b24aba65bbf8ccc3092e`;
+the independent CPU oracle has SHA-256
+`f17ded5dc67373dc5054b7288129e65168a7cb115d158071f4934d0f947d3606`.
+The two independent BF16 oracles differ by maximum absolute error 0.046875 and
+RMSE 0.00231452686 because their dense reductions use different hardware
+orders. YVEX versus the CUDA oracle is inside that measured cross-backend
+envelope at maximum absolute error 0.03125 and RMSE 0.00116229074. The live
+test retains both maximum and RMSE bounds and does not promote one-block
+conformance into complete encoder conditioning.
+
+`production_capability_available: true` only for exact one-token layer-zero
+execution. `production_api_available: true` through the internal graph and
+backend family ABIs. `internal_live_runner_available: true`.
+`operator_command_available: false` and `end_user_path_available: false`: the
+tokenizer/processor projection and multi-token conditioning output remain
+downstream consumers.
+
+## Qwen3-VL 50-layer text conditioning boundary
+
+The same component residency now executes the source-selected unnormalized
+`hidden_states[50]`: embedding followed by decoder layers 0 through 49, without
+the final RMSNorm or vocabulary output head. The independently frozen Diffusers
+reference at `f53d552036a0d1bd5570782a39cd40cfabf112bc` establishes that
+MiniMax-H3 consumes this exact intermediate state. Text-only prompts use no chat
+template or special tokens; tokenizer execution itself remains the next
+consumer and is not bypassed by this one-token numerical proof.
+
+The independent Torch 2.11 / Transformers 5.14 CUDA oracle for token ID 1 has
+SHA-256 `397afc1a72b0a4c817d7ae07715632395427eec39d1fbd6ddeb46424da01be32`.
+Two clean YVEX executions produced byte-identical output with SHA-256
+`dc75902c7831fe01a3f93834ff0e78da2a7487e0bfd2a2e0301de9303478e44f`.
+The final state differs from the independent dense-reduction order by maximum
+absolute error 0.375 and RMSE 0.0267173705; relative L2 error is 0.00012279117
+and cosine similarity is 0.99999999246. The live contract records both maximum
+and RMSE rather than treating BF16 non-identity as exact parity.
+
+The accepted run consumed all 1,058 component tensors and 66,714,780,128
+resident payload bytes. It launched 1,351 CUDA kernels with 52,004 host-to-device
+bytes, 24,284 device-to-host bytes, and 464,896 bytes of reusable device
+workspace. Residency identity is
+`57a3f20e1e7177d8a8a98ba7161f10ef535f265c69866986f6a92f04ea72f773`;
+execution identity is
+`f61792ee00b885b06a7fa031b315c2c6b28436883a3493a439ae4b0ace91402b`.
+The layer-zero proof output remains byte-identical after the stack extension.
+
+`production_capability_available: true` for exact token-ID-to-50-layer text-only
+conditioning. `production_api_available: true` through the internal graph and
+backend family ABIs. `internal_live_runner_available: true`.
+`operator_command_available: false` and `end_user_path_available: false`:
+prompt tokenization, multi-token MM-RoPE and causal attention, Omni execution,
+latent generation, VAE composition, and media publication remain downstream.
+
 ## Progression and non-claims
 
 `progression_decision: proceed`
 
 `downstream_safe: true`
 
-The downstream consumer is component artifact admission and Audio VAE
-materialization/numerical decode on `feature/minimax-h3`. There is no gate
-blocker, boundary incompleteness, evidence gap, or current external blocker in
-the source-faithful emission boundary. Official-reader evidence, materialized
-weights, the exact scheduler and MM-RoPE numerical contracts, component
-execution, staged residency, synchronized media transaction, evaluation, and
-benchmark are deferred depth with explicit later consumers. They do not weaken
-the emitted component identity, and none is claimed by it.
+The downstream consumer is exact prompt tokenization and multi-token `t2va`
+conditioning, then Omni latent generation on
+`feature/minimax-h3`. There is no gate blocker, boundary incompleteness,
+evidence gap, or current external blocker in the admitted bounded component,
+embedding, layer-zero, or 50-layer text-stack execution contracts. Visual tiling, the exact Omni scheduler and
+MM-RoPE contracts, complete staged phase residency, synchronized media
+transaction, evaluation, and benchmark are deferred depth with explicit later
+consumers. They do not weaken the two admitted execution identities, and none
+is claimed by them.
 License review remains an external authorization prerequisite for any use that
 requires an eligibility conclusion.
 
 This implementation boundary does not prove:
 
-- MiniMax-H3 numerical execution or artifacts for the other three weighted components;
+- complete prompt-to-Qwen3-VL conditioning or any Omni-Transformer numerical execution;
 - complete composite-artifact support or Physical Execution IR;
 - GB10 backend support or simultaneous/staged runtime residency;
 - Omni-Transformer, solver, timestep, or MM-RoPE numerical correctness;
-- Visual VAE or Audio VAE execution;
+- full-scale/tiled Visual VAE qualification or either VAE in the complete latent and media pipeline;
 - audio/video synchronization, playable media output, or hosted serving;
 - Diffusers, SGLang, or vLLM parity;
 - model quality, generation speed, practical 768p, or 2K generation;

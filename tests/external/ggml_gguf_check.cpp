@@ -53,6 +53,21 @@ static bool required_tokenizer(const gguf_context * ctx,
            gguf_find_key(ctx, "yvex.tokenizer.config.json") >= 0;
 }
 
+static bool admitted_payload_class(const gguf_context * ctx,
+                                   uint64_t tokens,
+                                   uint64_t merges) {
+    if (tokens || merges) return required_tokenizer(ctx, tokens, merges);
+    int64_t target_key = gguf_find_key(ctx, "yvex.logical.target");
+    int64_t component_key = gguf_find_key(ctx, "yvex.logical.component");
+    int64_t identity_key =
+        gguf_find_key(ctx, "yvex.logical.component.identity");
+    return target_key >= 0 && component_key >= 0 && identity_key >= 0 &&
+           gguf_get_kv_type(ctx, target_key) == GGUF_TYPE_STRING &&
+           gguf_get_kv_type(ctx, component_key) == GGUF_TYPE_STRING &&
+           gguf_get_kv_type(ctx, identity_key) == GGUF_TYPE_STRING &&
+           std::strlen(gguf_get_val_str(ctx, identity_key)) == 64u;
+}
+
 int main(int argc, char ** argv) {
     uint64_t expected_size;
     uint64_t expected_metadata;
@@ -94,7 +109,7 @@ int main(int argc, char ** argv) {
         gguf_get_n_kv(gguf) != static_cast<int64_t>(expected_metadata) ||
         gguf_get_n_tensors(gguf) != static_cast<int64_t>(expected_tensors) ||
         gguf_get_alignment(gguf) != 32u ||
-        !required_tokenizer(gguf, expected_tokens, expected_merges)) {
+        !admitted_payload_class(gguf, expected_tokens, expected_merges)) {
         std::fprintf(stderr, "official_structure=refused\n");
         gguf_free(gguf);
         ggml_free(tensor_ctx);

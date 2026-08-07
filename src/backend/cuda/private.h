@@ -209,7 +209,18 @@ typedef struct {
     CUresult (*cuGetErrorString)(CUresult error, const char **pStr);
 } yvex_cuda_driver;
 typedef struct {
+    void *library, *handle;
+    int (*create)(void **handle), (*destroy)(void *handle);
+    int (*set_stream)(void *handle, CUstream stream);
+    int (*gemm_ex)(void *handle, int transa, int transb, int m, int n, int k,
+                   const void *alpha, const void *a, int atype, int lda,
+                   const void *b, int btype, int ldb, const void *beta,
+                   void *c, int ctype, int ldc, int compute_type, int algorithm);
+    int ready;
+} yvex_cuda_blas;
+typedef struct {
     yvex_cuda_driver driver;
+    yvex_cuda_blas blas;
     CUcontext context;
     CUdevice device;
     int device_index;
@@ -220,10 +231,12 @@ typedef struct {
     CUfunction embed_f16_function;
     CUfunction rms_norm_f32_function;
     CUfunction rms_norm_f16_function;
+    CUfunction rms_norm_bf16_policy_function;
     CUfunction rope_function;
     CUfunction matmul_function;
     CUfunction qtype_row_dot_function;
     CUfunction attention_bf16_round_function;
+    CUfunction bf16_pack_function;
     CUfunction qtype_matvec_function;
     CUfunction qtype_split_matvec_function;
     CUfunction qtype_gather_function;
@@ -256,6 +269,9 @@ typedef struct {
     CUfunction moe_accumulate_function;
     CUfunction mlp_function;
     CUfunction attention_function;
+    CUfunction rotary_half_function;
+    CUfunction gqa_causal_function;
+    CUfunction silu_product_function;
     yvex_cuda_kernel_bundle_state kernel_bundle_state;
     yvex_backend_capability_reason kernel_bundle_reason;
     yvex_backend_operation_variant kernel_bundle_failure_variant;
@@ -517,38 +533,40 @@ int yvex_cuda_launch_synchronize(yvex_backend *, yvex_backend_operation_variant,
 int yvex_cuda_temporary_free(yvex_backend *, yvex_backend_operation_variant, CUdeviceptr *,
                              unsigned long long, int, const char *, yvex_error *);
 int yvex_cuda_deferred_release_drain(yvex_backend *backend, yvex_error *err);
-int yvex_cuda_op_embed(yvex_backend *backend,
-                       const yvex_device_tensor *embedding,
-                       const unsigned int *token_ids,
-                       unsigned long long token_count,
-                       yvex_device_tensor *out,
-                       yvex_error *err);
-int yvex_cuda_op_rms_norm(yvex_backend *backend,
-                          const yvex_device_tensor *input,
-                          const yvex_device_tensor *weight,
-                          float epsilon,
-                          yvex_device_tensor *out,
-                          yvex_error *err);
-int yvex_cuda_op_rope(yvex_backend *backend,
-                      const yvex_device_tensor *input,
-                      unsigned long long position,
-                      float rope_base,
-                      yvex_device_tensor *out,
-                      yvex_error *err);
+int yvex_cuda_op_embed(yvex_backend *backend, const yvex_device_tensor *embedding,
+                       const unsigned int *token_ids, unsigned long long token_count,
+                       yvex_device_tensor *out, yvex_error *err);
+int yvex_cuda_op_rms_norm(yvex_backend *backend, const yvex_device_tensor *input,
+                          const yvex_device_tensor *weight, float epsilon,
+                          yvex_device_tensor *out, yvex_error *err);
+int yvex_cuda_op_rope(yvex_backend *backend, const yvex_device_tensor *input,
+                      unsigned long long position, float rope_base,
+                      yvex_device_tensor *out, yvex_error *err);
 int yvex_cuda_op_matmul(yvex_backend *backend,
                         const yvex_device_tensor *input,
                         const yvex_device_tensor *weight,
-                        yvex_device_tensor *out,
-                        yvex_error *err);
-int yvex_cuda_op_mlp(yvex_backend *backend,
-                     const yvex_device_tensor *input,
-                     const yvex_device_tensor *gate_weight,
-                     const yvex_device_tensor *up_weight,
-                     const yvex_device_tensor *down_weight,
-                     const yvex_mlp_options *options,
-                     yvex_device_tensor *intermediate,
-                     yvex_device_tensor *out,
-                     yvex_error *err);
+                        yvex_device_tensor *out, yvex_error *err);
+int yvex_cuda_op_mlp(yvex_backend *backend, const yvex_device_tensor *input,
+                     const yvex_device_tensor *gate_weight, const yvex_device_tensor *up_weight,
+                     const yvex_device_tensor *down_weight, const yvex_mlp_options *options,
+                     yvex_device_tensor *intermediate, yvex_device_tensor *out, yvex_error *err);
+int yvex_cuda_transformer_rotary_half(yvex_backend *backend, yvex_device_tensor *values,
+    const yvex_device_tensor *cosines, const yvex_device_tensor *sines,
+    unsigned long long tokens, unsigned long long heads, unsigned long long head_dim,
+    yvex_backend_cuda_operation_facts *facts, yvex_error *err);
+int yvex_cuda_transformer_gqa(yvex_backend *backend, const yvex_device_tensor *query,
+    const yvex_device_tensor *key, const yvex_device_tensor *value, yvex_device_tensor *output,
+    unsigned long long tokens, unsigned long long query_heads, unsigned long long kv_heads,
+    unsigned long long head_dim, yvex_backend_cuda_operation_facts *facts, yvex_error *err);
+int yvex_cuda_transformer_silu_product_bf16(yvex_backend *backend, const yvex_device_tensor *gate,
+    const yvex_device_tensor *up, yvex_device_tensor *output, unsigned long long count,
+    yvex_backend_cuda_operation_facts *facts, yvex_error *err);
+int yvex_cuda_transformer_bf16_round(yvex_backend *backend, yvex_device_tensor *values,
+    unsigned long long count, yvex_backend_cuda_operation_facts *facts, yvex_error *err);
+int yvex_cuda_transformer_rms_norm_bf16(yvex_backend *backend, const yvex_device_tensor *input,
+    const yvex_device_tensor *weight, yvex_device_tensor *output, unsigned long long rows,
+    unsigned long long width, float epsilon, yvex_backend_cuda_operation_facts *facts,
+    yvex_error *err);
 int yvex_cuda_op_attention(yvex_backend *backend,
                            const yvex_device_tensor *query,
                            const yvex_device_tensor *keys,

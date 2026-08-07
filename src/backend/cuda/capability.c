@@ -35,6 +35,8 @@ static const cuda_kernel_binding cuda_kernel_bindings[] = {
      CUDA_HANDLE_OFFSET(rms_norm_f32_function)},
     {"yvex_rms_norm_f32_weight_f16", YVEX_BACKEND_VARIANT_RMS_NORM_F32_WEIGHT_F16,
      CUDA_HANDLE_OFFSET(rms_norm_f16_function)},
+    {"yvex_rms_norm_bf16_policy_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(rms_norm_bf16_policy_function)},
     {"yvex_rope_f32", YVEX_BACKEND_VARIANT_ROPE_F32, CUDA_HANDLE_OFFSET(rope_function)},
     {"yvex_matmul_f32", YVEX_BACKEND_VARIANT_MATMUL_F32,
      CUDA_HANDLE_OFFSET(matmul_function)},
@@ -42,6 +44,8 @@ static const cuda_kernel_binding cuda_kernel_bindings[] = {
      CUDA_HANDLE_OFFSET(qtype_row_dot_function)},
     {"yvex_attention_bf16_round", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(attention_bf16_round_function)},
+    {"yvex_f32_to_bf16", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(bf16_pack_function)},
     {"yvex_qtype_matvec", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(qtype_matvec_function)},
     {"yvex_qtype_split_matvec", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
@@ -106,6 +110,12 @@ static const cuda_kernel_binding cuda_kernel_bindings[] = {
      CUDA_HANDLE_OFFSET(mlp_function)},
     {"yvex_attention_f32", YVEX_BACKEND_VARIANT_ATTENTION_CAUSAL_F32,
      CUDA_HANDLE_OFFSET(attention_function)},
+    {"yvex_rotary_half_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(rotary_half_function)},
+    {"yvex_gqa_causal_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(gqa_causal_function)},
+    {"yvex_silu_product_bf16_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(silu_product_function)},
 };
 #define CUDA_KERNEL_BINDING_COUNT (sizeof(cuda_kernel_bindings) / sizeof(cuda_kernel_bindings[0]))
 #undef CUDA_HANDLE_OFFSET
