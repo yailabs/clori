@@ -122,29 +122,79 @@ static int t2va_plan_build(yvex_minimax_h3_t2va_plan *out,
                        "t2va packed sequence overflowed");
         return YVEX_ERR_BOUNDS;
     }
-    out->sampler_steps = 20u;
-    for (step = 0u; step < out->sampler_steps; ++step) {
-        float base = (float)(out->sampler_steps - step) /
-                     (float)out->sampler_steps;
+    out->sigma_grid_points = 20u;
+    out->model_evaluations = out->sigma_grid_points - 1u;
+    for (step = 0u; step < out->sigma_grid_points; ++step) {
+        float base = (float)(out->sigma_grid_points - 1u - step) /
+                     (float)(out->sigma_grid_points - 1u);
+
         out->video_sigmas[step] = 12.0f * base / (1.0f + 11.0f * base);
         out->audio_sigmas[step] = 3.0f * base / (1.0f + 2.0f * base);
     }
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.minimax-h3.t2va.res-multistep.v1") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.minimax-h3.t2va.res-multistep.v2") ||
         !yvex_sha256_update_text(&hash, YVEX_MINIMAX_H3_TARGET_ID) ||
         !yvex_sha256_update_text(&hash, YVEX_MINIMAX_H3_REVISION) ||
         !yvex_sha256_update_u64_be(&hash, text_tokens) ||
         !yvex_sha256_update_u64_be(&hash, width) ||
         !yvex_sha256_update_u64_be(&hash, height) ||
         !yvex_sha256_update_u64_be(&hash, frames) ||
-        !yvex_sha256_update_u64_be(&hash, out->sampler_steps) ||
-        !yvex_sha256_final(&hash, digest)) {
+        !yvex_sha256_update_u64_be(&hash, out->sigma_grid_points) ||
+        !yvex_sha256_update_u64_be(&hash, out->model_evaluations)) {
         yvex_error_set(err, YVEX_ERR_STATE, "graph.minimax_h3.t2va.plan",
                        "t2va plan identity construction failed");
         return YVEX_ERR_STATE;
     }
+    for (step = 0u; step < out->sigma_grid_points; ++step) {
+        uint32_t video_bits, audio_bits;
+
+        memcpy(&video_bits, &out->video_sigmas[step], sizeof(video_bits));
+        memcpy(&audio_bits, &out->audio_sigmas[step], sizeof(audio_bits));
+        if (!yvex_sha256_update_u64_be(&hash, video_bits) ||
+            !yvex_sha256_update_u64_be(&hash, audio_bits)) {
+            yvex_error_set(err, YVEX_ERR_STATE, "graph.minimax_h3.t2va.plan",
+                           "t2va schedule identity construction failed");
+            return YVEX_ERR_STATE;
+        }
+    }
+    if (!yvex_sha256_final(&hash, digest)) {
+        yvex_error_set(err, YVEX_ERR_STATE, "graph.minimax_h3.t2va.plan",
+                       "t2va plan identity finalization failed");
+        return YVEX_ERR_STATE;
+    }
     yvex_sha256_hex(digest, out->identity);
     out->complete = 1;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+/* Advance one modality while retaining H3's data-ward velocity sign and F32 blend order. */
+static int scheduler_step(float *output, const float *sample, const float *velocity,
+                          unsigned long long values, float timestep, float sigma,
+                          float sigma_next, yvex_error *err)
+{
+    unsigned long long index;
+
+    if (!output || !sample || !velocity || !values || !isfinite(timestep) ||
+        !isfinite(sigma) || !isfinite(sigma_next) || timestep < 0.0f ||
+        timestep >= 1.0f || sigma <= 0.0f || sigma_next < 0.0f ||
+        sigma_next >= sigma) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "graph.minimax_h3.scheduler.step",
+                       "H3 scheduler step requires finite state and a decreasing sigma interval");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    for (index = 0ull; index < values; ++index)
+        if (!isfinite(sample[index]) || !isfinite(velocity[index])) {
+            yvex_error_set(err, YVEX_ERR_FORMAT, "graph.minimax_h3.scheduler.step",
+                           "H3 scheduler input contains a non-finite value");
+            return YVEX_ERR_FORMAT;
+        }
+    for (index = 0ull; index < values; ++index) {
+        float denoised = sample[index] + (1.0f - timestep) * velocity[index];
+        float ratio = sigma_next / sigma;
+
+        output[index] = ratio * sample[index] + (1.0f - ratio) * denoised;
+    }
     yvex_error_clear(err);
     return YVEX_OK;
 }
@@ -1875,6 +1925,7 @@ const yvex_minimax_h3_graph_api *yvex_graph_register_minimax_h3(void)
 {
     static const yvex_minimax_h3_graph_api api = {
         t2va_plan_build,
+        scheduler_step,
         audio_vae_admit,
         audio_vae_decode_cpu,
         audio_vae_execute_artifact_cpu,

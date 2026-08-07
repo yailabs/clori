@@ -549,17 +549,19 @@ typedef struct {
     unsigned long long text_tokens, frames, width, height;
     unsigned long long video_latent_frames, video_latent_height, video_latent_width;
     unsigned long long audio_latent_steps, audio_rows, video_rows, packed_rows;
-    float video_sigmas[21], audio_sigmas[21];
-    unsigned int sampler_steps;
+    float video_sigmas[20], audio_sigmas[20];
+    unsigned int sigma_grid_points, model_evaluations;
     char identity[65];
     int complete;
 } yvex_minimax_h3_t2va_plan;
-
 typedef struct {
     int (*t2va_plan_build)(yvex_minimax_h3_t2va_plan *out,
                            unsigned long long text_tokens, unsigned long long width,
                            unsigned long long height, unsigned long long frames,
                            yvex_error *err);
+    int (*scheduler_step)(float *output, const float *sample, const float *velocity,
+                          unsigned long long values, float timestep, float sigma,
+                          float sigma_next, yvex_error *err);
     int (*audio_vae_admit)(
         const yvex_artifact *artifact, const yvex_gguf *gguf,
         const yvex_tensor_table *tensors, yvex_complete_artifact_admission *out,
@@ -591,10 +593,8 @@ typedef struct {
         yvex_minimax_h3_video_decode_result *result,
         yvex_minimax_h3_component_execution_failure *failure, yvex_error *err);
 } yvex_minimax_h3_graph_api;
-
 const yvex_minimax_h3_api *yvex_model_register_minimax_h3(void);
 const yvex_minimax_h3_transform_api *yvex_model_minimax_h3_transform_api(void);
 const yvex_minimax_h3_handoff_api *yvex_model_minimax_h3_handoff_api(void);
 const yvex_minimax_h3_graph_api *yvex_graph_register_minimax_h3(void);
-
 #endif /* INCLUDE_YVEX_INTERNAL_FAMILIES_MINIMAX_H3_H_INCLUDED */

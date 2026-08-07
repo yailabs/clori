@@ -572,6 +572,8 @@ static int test_video_execution_refusals(void)
 static int test_t2va_plan(void)
 {
     yvex_minimax_h3_t2va_plan first, repeated;
+    float sample[2] = {0.5f, -1.0f}, velocity[2] = {2.0f, 4.0f};
+    float stepped[2] = {13.0f, 13.0f};
     yvex_error err;
 
     YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->t2va_plan_build(
@@ -581,14 +583,27 @@ static int test_t2va_plan(void)
                          first.video_latent_width == 84ull &&
                          first.audio_latent_steps == 207ull &&
                          first.audio_rows == 414ull && first.video_rows == 37296ull &&
-                         first.packed_rows == 37726ull && first.sampler_steps == 20u,
+                         first.packed_rows == 37726ull && first.sigma_grid_points == 20u &&
+                         first.model_evaluations == 19u,
                      "t2va plan reconstructs the exact source geometry and packed layout");
     YVEX_TEST_ASSERT(fabsf(first.video_sigmas[0] - 1.0f) < 1.0e-7f &&
                          fabsf(first.audio_sigmas[0] - 1.0f) < 1.0e-7f &&
-                         fabsf(first.video_sigmas[19] - 0.38709677f) < 1.0e-7f &&
-                         fabsf(first.audio_sigmas[19] - 0.13636364f) < 1.0e-7f &&
-                         first.video_sigmas[20] == 0.0f && first.audio_sigmas[20] == 0.0f,
-                     "t2va plan binds the paired shifted simple schedule");
+                         fabsf(first.video_sigmas[18] - 0.4f) < 1.0e-7f &&
+                         fabsf(first.audio_sigmas[18] - 0.142857149f) < 1.0e-7f &&
+                         first.video_sigmas[19] == 0.0f && first.audio_sigmas[19] == 0.0f,
+                     "t2va plan includes terminal zero in the paired shifted sigma grids");
+    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->scheduler_step(
+                         stepped, sample, velocity, 2ull, 0.75f, 0.25f, 0.1f,
+                         &err) == YVEX_OK &&
+                         fabsf(stepped[0] - 0.8f) < 1.0e-7f &&
+                         fabsf(stepped[1] + 0.4f) < 1.0e-7f,
+                     "t2va scheduler applies the exact data-ward rectified-flow update");
+    velocity[1] = NAN;
+    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->scheduler_step(
+                         stepped, sample, velocity, 2ull, 0.75f, 0.25f, 0.1f,
+                         &err) == YVEX_ERR_FORMAT && stepped[0] == 0.8f &&
+                         stepped[1] == -0.4f,
+                     "t2va scheduler validates every value before publishing output");
     YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->t2va_plan_build(
                          &repeated, 16ull, 1344ull, 768ull, 124ull, &err) == YVEX_OK &&
                          strcmp(first.identity, repeated.identity) == 0,
