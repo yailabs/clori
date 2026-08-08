@@ -185,7 +185,8 @@ int yvex_runtime_speculation_context_open(
     yvex_runtime_logits_context *target_logits,
     yvex_runtime_sampling_context *target_sampling,
     const struct yvex_runtime_sampling_policy *sampling_policy,
-    const yvex_runtime_speculation_options *options, yvex_error *err);
+    const yvex_runtime_speculation_options *options,
+    unsigned long long *workspace_bytes, yvex_error *err);
 const yvex_speculation_family_policy *yvex_runtime_speculation_policy_get(
     const yvex_runtime_speculation_context *context);
 int yvex_runtime_speculation_prefill(

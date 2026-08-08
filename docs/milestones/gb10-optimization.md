@@ -390,6 +390,15 @@ only an internal operation table and helper signature; binding v8, protocol v7,
 events v3, compiled profile v1, generation ABI v5 and the server-construction
 API remain unchanged by this optimization.
 
+Generation admission now obtains the exact target and draft transformer
+workspace requirements from their lower owners and seals one session-owned
+CUDA arena at their maximum before execution. The capacity pass retains its
+already compiled target attention envelope for this admission rather than
+reconstructing topology in the hot path. Fixed-seed full-model stochastic
+DSpark repeats compare the semantic per-layer state digest; the separately
+reported physical state identity remains correctly bound to the measured
+capacity/layout evidence and is not a repeatability oracle.
+
 Production CUDA DSpark now selects each target-authored anchor directly from
 the resident output-head row. Greedy selection returns one bounded token/value
 record; stochastic selection remains inside the speculation-owned RNG
@@ -496,7 +505,7 @@ paging under the admitted per-class capacity plan and on-demand CUDA VMM state
 residency with stable device addresses.
 It does not yet establish Tensor Core execution, specialized attention,
 GB10-competitive grouped MoE, zero per-layer attention synchronization,
-full-model live qualification of target-only or DSpark device sampling,
+the complete full-model device-sampling fault and acceptance-corpus matrix,
 full-model live qualification of all reasoning modes, paged CUDA state
 real deep-context qualification, prefix persistence, continuous batching,
 competitive throughput, evaluation, benchmark qualification, release

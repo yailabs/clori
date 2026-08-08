@@ -349,7 +349,7 @@ int yvex_runtime_speculation_context_open(
     yvex_runtime_execution_session *session, yvex_runtime_transformer_context *target_transformer,
     yvex_runtime_logits_context *target_logits, yvex_runtime_sampling_context *target_sampling,
     const yvex_runtime_sampling_policy *sampling_policy,
-    const yvex_runtime_speculation_options *options, yvex_error *err)
+    const yvex_runtime_speculation_options *options, unsigned long long *workspace_bytes, yvex_error *err)
 {
     yvex_runtime_speculation_context *context = NULL;
     yvex_runtime_transformer_options transformer_options = {0};
@@ -361,8 +361,9 @@ int yvex_runtime_speculation_context_open(
     unsigned long long draft_context_capacity;
     int rc;
     if (out) *out = NULL;
+    if (workspace_bytes) *workspace_bytes = 0ull;
     if (!out || !model || !session || !target_transformer || !target_logits ||
-        !target_sampling || !sampling_policy || !options ||
+        !target_sampling || !sampling_policy || !options || !workspace_bytes ||
         !options->execution_profile || !options->shape_registry ||
         (options->backend != YVEX_BACKEND_KIND_CPU &&
          options->backend != YVEX_BACKEND_KIND_CUDA) || !options->context_capacity)
@@ -427,7 +428,8 @@ int yvex_runtime_speculation_context_open(
     transformer_options.execution_profile = options->execution_profile;
     transformer_options.shape_registry = options->shape_registry;
     rc = yvex_runtime_transformer_context_open(
-        &context->draft_transformer, model, session, &transformer_options, err);
+        &context->draft_transformer, model, session, &transformer_options,
+        workspace_bytes, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_logits_admit_shared_draft_plan(
             target_logits, yvex_runtime_transformer_context_plan(context->draft_transformer), err);
@@ -1188,7 +1190,6 @@ static int speculation_accept_device(yvex_runtime_speculation_context *context,
     if (rc == YVEX_OK) cycle->acceptance = acceptance;
     return rc;
 }
-
 static int speculation_accept_cycle(yvex_runtime_speculation_context *context,
     const yvex_runtime_speculation_cycle_request *request,
     yvex_runtime_speculation_cycle_result *result, yvex_error *err)

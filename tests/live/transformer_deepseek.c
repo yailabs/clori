@@ -44,7 +44,7 @@ static int live_execution_open(live_execution *execution, yvex_runtime_model *mo
                                   &failure, err) != YVEX_OK)
         return yvex_error_code(err);
     return yvex_runtime_transformer_context_open(
-        &execution->context, model, execution->session, &options, err);
+        &execution->context, model, execution->session, &options, NULL, err);
 }
 
 static int live_execution_close(live_execution *execution, yvex_error *err)

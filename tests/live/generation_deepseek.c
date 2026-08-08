@@ -938,7 +938,7 @@ static int live_manual_execute(yvex_runtime_model *model,
     rc = yvex_runtime_session_open(&session, model, &session_options, &failure, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_transformer_context_open(
-            &transformer, model, session, &transformer_options, err);
+            &transformer, model, session, &transformer_options, NULL, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_decode_context_open(
             &decode, transformer, session, &decode_options, err);
@@ -1484,7 +1484,7 @@ int main(int argc, char **argv)
                production.result.generated_text_bytes,
                production.result.generated_text_digest,
                production.result.final_position,
-               production.result.final_persistent_state_digest,
+               production.semantic_state_digest,
                yvex_runtime_generation_stop_reason_name(
                    production.result.stop_reason),
                mode == YVEX_GENERATION_MODE_TARGET_ONLY ? "pass" : "not-applicable",

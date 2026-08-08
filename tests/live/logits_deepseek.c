@@ -104,7 +104,7 @@ static int live_open(live_logits *execution, yvex_runtime_model *model,
         return yvex_error_code(err);
     if (yvex_runtime_transformer_context_open(
             &execution->transformer, model, execution->session,
-            &transformer_options, err) != YVEX_OK)
+            &transformer_options, NULL, err) != YVEX_OK)
         return yvex_error_code(err);
     if (yvex_runtime_decode_context_open(
             &execution->decode, execution->transformer, execution->session,

@@ -1344,7 +1344,8 @@ int yvex_runtime_transformer_stage_core_features(
 /* Allocate and seal one transformer context over a model/session pair with complete rollback. */
 int yvex_runtime_transformer_context_open(yvex_runtime_transformer_context **out,
                                           yvex_runtime_model *model, yvex_runtime_execution_session *session,
-                                          const yvex_runtime_transformer_options *options, yvex_error *err)
+                                          const yvex_runtime_transformer_options *options,
+                                          unsigned long long *workspace_bytes, yvex_error *err)
 {
     yvex_runtime_transformer_context *context;
     yvex_runtime_moe_options moe_options;
@@ -1352,6 +1353,7 @@ int yvex_runtime_transformer_context_open(yvex_runtime_transformer_context **out
     const yvex_moe_plan *moe_plan;
     int rc;
     if (out) *out = NULL;
+    if (workspace_bytes) *workspace_bytes = 0ull;
     if (!out || !model || !session || !options || !options->context_capacity ||
         (options->tensor_scope != YVEX_TENSOR_SCOPE_GLOBAL &&
          options->tensor_scope != YVEX_TENSOR_SCOPE_DRAFT) ||
@@ -1400,6 +1402,11 @@ int yvex_runtime_transformer_context_open(yvex_runtime_transformer_context **out
     if (rc == YVEX_OK && options->workspace_token_capacity)
         rc = transformer_runtime_buffers(context, options->workspace_token_capacity, err);
     if (rc != YVEX_OK) goto failure;
+    if (workspace_bytes)
+        *workspace_bytes = context->moe_workspace_bytes >
+                                   context->options.minimum_device_workspace_bytes
+                               ? context->moe_workspace_bytes
+                               : context->options.minimum_device_workspace_bytes;
     *out = context;
     yvex_error_clear(err);
     return YVEX_OK;
@@ -1917,7 +1924,8 @@ int yvex_transformer_operator_execute(const yvex_transformer_operator_request *r
     options.cancel_requested = request->cancel_requested;
     options.cancel_context = request->cancel_context;
     if (rc == YVEX_OK)
-        rc = yvex_runtime_transformer_context_open(&context, model, session, &options, err);
+        rc = yvex_runtime_transformer_context_open(
+            &context, model, session, &options, NULL, err);
     if (rc == YVEX_OK) {
         rc = yvex_runtime_cleanup_lease_adopt(cleanup, context,
                                               transformer_runtime_cleanup, err);

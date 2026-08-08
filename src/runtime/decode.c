@@ -759,7 +759,7 @@ int yvex_runtime_decode_operator_execute(
     transformer_options.cancel_context = request->cancel_context;
     if (rc == YVEX_OK)
         rc = yvex_runtime_transformer_context_open(
-            &transformer, model, session, &transformer_options, err);
+            &transformer, model, session, &transformer_options, NULL, err);
     if (rc == YVEX_OK) {
         rc = yvex_runtime_cleanup_lease_adopt(
             cleanup, transformer, decode_transformer_cleanup, err);

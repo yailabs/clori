@@ -1868,7 +1868,7 @@ int yvex_runtime_logits_operator_execute(
     transformer_options.context_capacity = request->context_capacity;
     if (rc == YVEX_OK)
         rc = yvex_runtime_transformer_context_open(
-            &transformer, model, session, &transformer_options, err);
+            &transformer, model, session, &transformer_options, NULL, err);
     if (rc == YVEX_OK) {
         rc = yvex_runtime_cleanup_lease_adopt(
             cleanup, transformer, logits_transformer_cleanup, err);
