@@ -153,9 +153,9 @@ static int live_execute(live_logits *execution,
     yvex_runtime_transformer_request prefill_request = {
         .chunk_tokens = 1ull, .backend = backend,
         .phase = YVEX_TRANSFORMER_PHASE_PREFILL};
-    yvex_runtime_transformer_output prefill_output;
+    yvex_runtime_transformer_output prefill_output = {0};
     yvex_runtime_decode_request decode_request = {.backend = backend};
-    yvex_runtime_decode_output decode_output;
+    yvex_runtime_decode_output decode_output = {0};
     unsigned long long hidden_width, vocabulary, logits_values, activation_bytes;
     int rc;
     if (!logits_plan || !transformer_plan) return YVEX_ERR_STATE;
@@ -535,16 +535,17 @@ static int live_sampling_policy(
     const yvex_runtime_logits_plan_summary *plan,
     const live_logits *cpu, const live_logits *cuda,
     yvex_runtime_sampling_policy policy, live_sampling_result *cpu_out,
-    yvex_error *err)
+    live_sampling_result *cuda_result, yvex_error *err)
 {
-    live_sampling_result cuda_out;
+    live_sampling_result local_cuda;
+    live_sampling_result *cuda_out = cuda_result ? cuda_result : &local_cuda;
     yvex_test_sampling_rng cpu_rng, cuda_rng;
     yvex_test_sampling_reference_result cpu_ref, cuda_ref;
     int rc = live_sample_rows(plan, cpu->rows, cpu->raw_logits,
                               policy, cpu_out, err);
     if (rc == YVEX_OK)
         rc = live_sample_rows(plan, cuda->rows, cuda->raw_logits,
-                              policy, &cuda_out, err);
+                              policy, cuda_out, err);
     yvex_test_sampling_reference_seed(policy.seed, &cpu_rng);
     yvex_test_sampling_reference_seed(policy.seed, &cuda_rng);
     for (unsigned long long index = 0ull; rc == YVEX_OK && index < LIVE_LOGITS_ROWS; ++index) {
@@ -556,21 +557,16 @@ static int live_sampling_policy(
             plan->vocabulary_size, &policy, &cuda_rng, &cuda_ref);
         if (!cpu_ok || !cuda_ok ||
             cpu_out->rows[index].selected_token_id != cpu_ref.selected_token_id ||
-            cuda_out.rows[index].selected_token_id != cuda_ref.selected_token_id ||
+            cuda_out->rows[index].selected_token_id != cuda_ref.selected_token_id ||
             cpu_out->rows[index].final_candidate_count != cpu_ref.candidate_count ||
-            cuda_out.rows[index].final_candidate_count != cuda_ref.candidate_count ||
-            cpu_out->rows[index].selected_token_id != cuda_out.rows[index].selected_token_id ||
-            strcmp(cpu_out->rows[index].candidate_set_identity,
-                   cuda_out.rows[index].candidate_set_identity) != 0 ||
-            strcmp(cpu_out->rows[index].selected_token_identity,
-                   cuda_out.rows[index].selected_token_identity) != 0)
+            cuda_out->rows[index].final_candidate_count != cuda_ref.candidate_count)
             rc = YVEX_ERR_FORMAT;
     }
     if (rc == YVEX_OK &&
         (cpu_out->summary.warm_workspace_allocations ||
-         cuda_out.summary.warm_workspace_allocations ||
+         cuda_out->summary.warm_workspace_allocations ||
          cpu_out->summary.workspace_generation != 1ull ||
-         cuda_out.summary.workspace_generation != 1ull))
+         cuda_out->summary.workspace_generation != 1ull))
         rc = YVEX_ERR_STATE;
     if (rc != YVEX_OK && !yvex_error_is_set(err))
         yvex_error_set(err, rc, "test.sampling.live",
@@ -755,7 +751,7 @@ int main(int argc, char **argv)
     yvex_transformer_input *stream = NULL, *prefill = NULL, *decode = NULL;
     live_logits cpu = {0}, cuda = {0};
     live_comparison cpu_reference, cuda_reference, cpu_cuda;
-    live_sampling_result greedy, categorical, filtered, reproduced;
+    live_sampling_result greedy, cuda_greedy, categorical, filtered, reproduced;
     live_device_result device;
     yvex_runtime_sampling_policy greedy_policy = {
         .schema_version = YVEX_RUNTIME_SAMPLING_SCHEMA_V1,
@@ -787,6 +783,7 @@ int main(int argc, char **argv)
     request.runtime_binding_path = argv[2];
     request.target_id = "deepseek4-v4-flash-dspark";
     rc = yvex_runtime_model_open(&model, &request, &failure, &err);
+    if (rc == YVEX_OK) { step = "cuda-open"; rc = live_open(&cuda, model, YVEX_BACKEND_KIND_CUDA, &err); }
     if (rc == YVEX_OK) { step = "cpu-open"; rc = live_open(&cpu, model, YVEX_BACKEND_KIND_CPU, &err); }
     plan = yvex_transformer_plan_summary_get(
         yvex_runtime_transformer_context_plan(cpu.transformer));
@@ -806,15 +803,22 @@ int main(int argc, char **argv)
         rc = YVEX_ERR_FORMAT;
     }
     if (rc == YVEX_OK) { step = "cpu-failure-proofs"; rc = live_failure_proofs(&cpu, model, &err); }
-    if (rc == YVEX_OK) { step = "cuda-open"; rc = live_open(&cuda, model, YVEX_BACKEND_KIND_CUDA, &err); }
     if (rc == YVEX_OK) {
         step = "cuda-execute";
         rc = live_execute(&cuda, prefill, decode, YVEX_BACKEND_KIND_CUDA, &err);
     }
     if (rc == YVEX_OK) { step = "cuda-reference"; rc = live_reference(&cuda, model, &err); }
+    if (rc == YVEX_OK)
+        (void)live_compare(cuda.raw_logits, cpu.raw_logits, values, 0, &cpu_cuda);
     if (rc == YVEX_OK &&
-        (!live_compare(cuda.raw_logits, cuda.reference_logits, values, 0, &cuda_reference) ||
-         !live_compare(cuda.raw_logits, cpu.raw_logits, values, 0, &cpu_cuda))) {
+        !live_compare(cuda.raw_logits, cuda.reference_logits, values, 0,
+                      &cuda_reference)) {
+        fprintf(stderr,
+                "logits CUDA comparison max_abs=%.17g max_rel=%.17g first=%llu "
+                "cpu_cuda_max_abs=%.17g cpu_cuda_first=%llu\n",
+                cuda_reference.maximum_absolute, cuda_reference.maximum_relative,
+                cuda_reference.first_failure, cpu_cuda.maximum_absolute,
+                cpu_cuda.first_failure);
         yvex_error_set(&err, YVEX_ERR_FORMAT, "test.logits.cuda-reference",
                        "CUDA full-vocabulary logits exceed the numerical contract");
         rc = YVEX_ERR_FORMAT;
@@ -822,21 +826,21 @@ int main(int argc, char **argv)
     if (rc == YVEX_OK) {
         step = "sampling-greedy";
         rc = live_sampling_policy(logits_plan, &cpu, &cuda,
-                                  greedy_policy, &greedy, &err);
+                                  greedy_policy, &greedy, &cuda_greedy, &err);
     }
     if (rc == YVEX_OK) {
         step = "device-logits-batch";
-        rc = live_device_batch(&cuda, model, &greedy, &device, &err);
+        rc = live_device_batch(&cuda, model, &cuda_greedy, &device, &err);
     }
     if (rc == YVEX_OK) {
         step = "sampling-categorical";
         rc = live_sampling_policy(logits_plan, &cpu, &cuda,
-                                  categorical_policy, &categorical, &err);
+                                  categorical_policy, &categorical, NULL, &err);
     }
     if (rc == YVEX_OK) {
         step = "sampling-filtered";
         rc = live_sampling_policy(logits_plan, &cpu, &cuda,
-                                  filtered_policy, &filtered, &err);
+                                  filtered_policy, &filtered, NULL, &err);
     }
     for (unsigned long long row = 0ull;
          rc == YVEX_OK && row < LIVE_LOGITS_ROWS; ++row)

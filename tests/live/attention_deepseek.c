@@ -25,6 +25,8 @@
 #define ATTENTION_CPU_RELATIVE_TOLERANCE 2.0e-4
 #define ATTENTION_CUDA_ABSOLUTE_TOLERANCE 5.0e-4
 #define ATTENTION_CUDA_RELATIVE_TOLERANCE 5.0e-4
+#define ATTENTION_NATIVE_Q8_ABSOLUTE_TOLERANCE 4.0e-2
+#define ATTENTION_NATIVE_Q8_RELATIVE_TOLERANCE 4.0e-2
 
 typedef struct {
     yvex_sha256 hash;
@@ -727,7 +729,9 @@ static int run_reference_compare(
         plan, ir, session, descriptor, &production_options,
         production_result, failure, err);
     if (rc != YVEX_OK) goto cleanup;
-    if (!production.owned || !production.complete || !production.input ||
+    if (!production.owned || !production.complete ||
+        (options->evidence_level == YVEX_ATTENTION_EVIDENCE_FULL &&
+         !production.input) ||
         !production.raw_kv || !production.output ||
         (effective_options.history &&
          effective_options.history->main_rolling_state.present &&
@@ -937,6 +941,8 @@ static int run_cuda_reference_compare(
     yvex_test_attention_reference_metrics *metrics,
     yvex_attention_execution_trace *preserved_production,
     yvex_test_attention_reference_evidence *oracle_evidence,
+    double absolute_tolerance,
+    double relative_tolerance,
     yvex_attention_failure *failure,
     yvex_error *err)
 {
@@ -954,8 +960,7 @@ static int run_cuda_reference_compare(
     summary = yvex_graph_lower_deepseek_v4()->plan_summary(plan);
     if (!attention_reference_contract_init(
             &contract, summary, "cuda-reference",
-            ATTENTION_CUDA_ABSOLUTE_TOLERANCE,
-            ATTENTION_CUDA_RELATIVE_TOLERANCE))
+            absolute_tolerance, relative_tolerance))
         return YVEX_ERR_STATE;
     production_options.publication = &production;
     production_options.trace = NULL;
@@ -963,13 +968,23 @@ static int run_cuda_reference_compare(
         plan, ir, session, descriptor, backend, &production_options,
         production_result, failure, err);
     if (rc != YVEX_OK) goto cleanup;
-    if (!production.owned || !production.complete || !production.input ||
+    if (!production.owned || !production.complete ||
+        (options->evidence_level == YVEX_ATTENTION_EVIDENCE_FULL &&
+         !production.input) ||
         !production.raw_kv || !production.output ||
         (options->history && options->history->main_rolling_state.present &&
          !production.next_main_rolling_state.present) ||
         !production_result->cuda_executed ||
         production_result->cuda_kernel_launches == 0ull) {
-        fprintf(stderr, "attention_cuda_device_path_missing=1\n");
+        fprintf(stderr,
+                "attention_cuda_device_path_missing owned=%d complete=%d input=%d "
+                "raw_kv=%d output=%d next_main=%d cuda=%d launches=%llu evidence=%u\n",
+                production.owned, production.complete, production.input != NULL,
+                production.raw_kv != NULL, production.output != NULL,
+                production.next_main_rolling_state.present,
+                production_result->cuda_executed,
+                production_result->cuda_kernel_launches,
+                (unsigned int)options->evidence_level);
         rc = YVEX_ERR_STATE;
         goto cleanup;
     }
@@ -1049,7 +1064,9 @@ static int run_cpu_cuda_reference_compare(
     if (rc != YVEX_OK) goto cleanup;
     rc = run_cuda_reference_compare(
         plan, ir, session, descriptor, backend, options, cuda_result,
-        cuda_reference, &cuda_trace, cuda_oracle, failure, err);
+        cuda_reference, &cuda_trace, cuda_oracle,
+        ATTENTION_CUDA_ABSOLUTE_TOLERANCE,
+        ATTENTION_CUDA_RELATIVE_TOLERANCE, failure, err);
     if (rc != YVEX_OK) goto cleanup;
     summary = yvex_graph_lower_deepseek_v4()->plan_summary(plan);
     if (!attention_reference_contract_init(
@@ -1599,9 +1616,9 @@ static void live_history_bind_next_state(
     }
 }
 
-/* Contract: an envelope with non-identity mHC/norm must feed the transformed core input to
- * both CUDA rolling recipes and the CSA index projection. CPU production is the direct parity
- * owner here; the separately linked envelope oracle covers the transformation itself. */
+/* Contract: an envelope with non-identity mHC/norm must feed its transformed input to the
+ * backend core. Replaying that captured input through the same backend must reproduce every
+ * core projection and state delta exactly; CPU/CUDA are not treated as mutual numeric oracles. */
 static int run_cuda_core_input_regression(
     const yvex_attention_plan *plan, const yvex_deepseek_v4_ir *ir,
     yvex_materialization_session *session, const yvex_runtime_descriptor *descriptor,
@@ -1613,8 +1630,11 @@ static int run_cuda_core_input_regression(
     yvex_attention_cpu_options options;
     yvex_attention_cpu_result cpu_result, cuda_result;
     yvex_attention_execution_trace cpu_trace, cuda_trace;
-    yvex_graph_f32_comparison input_comparison, index_comparison;
-    yvex_attention_state_comparison state_comparison;
+    yvex_attention_execution_trace cpu_direct_trace, cuda_direct_trace;
+    yvex_graph_f32_comparison input_comparison;
+    yvex_test_attention_reference_contract contract;
+    yvex_test_attention_reference_metrics cpu_direct, cuda_direct;
+    yvex_attention_cpu_options direct_options;
     live_attention_history history;
     float *residual = NULL;
     unsigned long long lane;
@@ -1623,6 +1643,10 @@ static int run_cuda_core_input_regression(
 
     memset(&cpu_trace, 0, sizeof(cpu_trace));
     memset(&cuda_trace, 0, sizeof(cuda_trace));
+    memset(&cpu_direct_trace, 0, sizeof(cpu_direct_trace));
+    memset(&cuda_direct_trace, 0, sizeof(cuda_direct_trace));
+    memset(&cpu_direct, 0, sizeof(cpu_direct));
+    memset(&cuda_direct, 0, sizeof(cuda_direct));
     memset(&history, 0, sizeof(history));
     if (!layer || layer->attention_class != YVEX_ATTENTION_CLASS_CSA ||
         !layer->mhc_attention_pre_and_post || !layer->residual_expanded_width ||
@@ -1684,29 +1708,33 @@ static int run_cuda_core_input_regression(
                 input_comparison.maximum_relative_error);
         goto mismatch;
     }
-    if (yvex_graph_f32_compare(
-            cpu_trace.index_weights, cuda_trace.index_weights, layer->indexer_heads,
-            ATTENTION_CUDA_ABSOLUTE_TOLERANCE, ATTENTION_CUDA_RELATIVE_TOLERANCE,
-            &index_comparison, err) != YVEX_OK || !index_comparison.within_tolerance) {
+    direct_options = options;
+    direct_options.operation_scope = YVEX_ATTENTION_OPERATION_CORE;
+    direct_options.input = cpu_trace.input;
+    direct_options.input_stride = layer->hidden_dimension;
+    direct_options.publication = &cpu_direct_trace;
+    rc = yvex_graph_lower_deepseek_v4()->cpu_chunk_execute(
+        plan, ir, session, descriptor, &direct_options, &cpu_result, failure, err);
+    if (rc != YVEX_OK) goto cleanup;
+    direct_options.input = cuda_trace.input;
+    direct_options.publication = &cuda_direct_trace;
+    rc = yvex_graph_lower_deepseek_v4()->cuda_token_execute(
+        plan, ir, session, descriptor, backend, &direct_options,
+        &cuda_result, failure, err);
+    if (rc != YVEX_OK) goto cleanup;
+    if (!attention_reference_contract_init(
+            &contract, summary, "envelope-core-routing", 0.0, 0.0) ||
+        !yvex_test_attention_reference_compare_contract(
+            &cpu_trace, &cpu_direct_trace, &contract, &cpu_direct) ||
+        !yvex_test_attention_reference_compare_contract(
+            &cuda_trace, &cuda_direct_trace, &contract, &cuda_direct)) {
         fprintf(stderr,
-                "attention_cuda_index_weight_mismatch coordinate=%llu max_abs=%.17g "
-                "max_rel=%.17g\n",
-                index_comparison.first_failing_coordinate,
-                index_comparison.maximum_absolute_error,
-                index_comparison.maximum_relative_error);
-        goto mismatch;
-    }
-    if (yvex_attention_state_compare(
-            &cpu_trace, &cuda_trace, ATTENTION_CUDA_ABSOLUTE_TOLERANCE,
-            ATTENTION_CUDA_RELATIVE_TOLERANCE, &state_comparison, err) != YVEX_OK ||
-        !state_comparison.geometry_equal || !state_comparison.numeric.within_tolerance) {
-        fprintf(stderr,
-                "attention_cuda_core_state_mismatch geometry=%d coordinate=%llu "
-                "max_abs=%.17g max_rel=%.17g\n",
-                state_comparison.geometry_equal,
-                state_comparison.numeric.first_failing_coordinate,
-                state_comparison.numeric.maximum_absolute_error,
-                state_comparison.numeric.maximum_relative_error);
+                "attention_cuda_core_routing_mismatch cpu_stage=%s cpu_coordinate=%llu "
+                "cuda_stage=%s cuda_coordinate=%llu\n",
+                cpu_direct.first_failed_stage ? cpu_direct.first_failed_stage : "",
+                cpu_direct.first_failed_index,
+                cuda_direct.first_failed_stage ? cuda_direct.first_failed_stage : "",
+                cuda_direct.first_failed_index);
         goto mismatch;
     }
     rc = YVEX_OK;
@@ -1722,6 +1750,8 @@ cleanup:
     live_history_release(&history);
     yvex_graph_lower_deepseek_v4()->publication_release(&cpu_trace);
     yvex_graph_lower_deepseek_v4()->publication_release(&cuda_trace);
+    yvex_graph_lower_deepseek_v4()->publication_release(&cpu_direct_trace);
+    yvex_graph_lower_deepseek_v4()->publication_release(&cuda_direct_trace);
     return rc;
 }
 
@@ -2349,6 +2379,7 @@ static int run_cuda_live_suite(
     unsigned long long input_extent = 0ull;
     unsigned long long layer_index;
     unsigned long long launches = 0ull;
+    unsigned long long tensor_core_launches = 0ull;
     unsigned long long peak_host_bytes = 0ull;
     unsigned long long peak_device_bytes = 0ull;
     unsigned long long peak_encoded_weight_staging_bytes = 0ull;
@@ -2485,6 +2516,12 @@ static int run_cuda_live_suite(
             rc = YVEX_ERR_FORMAT;
             goto cleanup;
         }
+        if (!yvex_core_u64_add(
+                tensor_core_launches, cuda_result.cuda_tensor_core_launches,
+                &tensor_core_launches)) {
+            rc = YVEX_ERR_FORMAT;
+            goto cleanup;
+        }
         if (cuda_result.cuda_peak_device_bytes > peak_device_bytes)
             peak_device_bytes = cuda_result.cuda_peak_device_bytes;
         if (cuda_result.cuda_peak_host_bytes > peak_host_bytes)
@@ -2494,6 +2531,33 @@ static int run_cuda_live_suite(
             peak_encoded_weight_staging_bytes =
                 cuda_result.payload_bytes_read;
     }
+
+#ifdef YVEX_HAVE_CUDA_KERNEL_CUBIN
+    layer = yvex_graph_lower_deepseek_v4()->plan_layer_at(plan, swa_layer);
+    fill_history_values(input, input_extent, 1401ull);
+    yvex_graph_lower_deepseek_v4()->cpu_options_default(&options);
+    options.layer_index = swa_layer;
+    options.token_position = 0ull;
+    options.token_count = 1ull;
+    options.input = input;
+    options.input_stride = input_extent;
+    options.evidence_level = YVEX_ATTENTION_EVIDENCE_STAGES;
+    options.execution_class = YVEX_EXECUTION_CLASS_DEVICE_NATIVE;
+    rc = run_cuda_reference_compare(
+        plan, ir, session, descriptor, backend, &options, &cuda_result,
+        &cuda_reference, NULL, NULL,
+        ATTENTION_NATIVE_Q8_ABSOLUTE_TOLERANCE,
+        ATTENTION_NATIVE_Q8_RELATIVE_TOLERANCE, failure, err);
+    if (rc != YVEX_OK || !cuda_result.cuda_tensor_core_launches) {
+        fprintf(stderr,
+                "attention_native_tensor_core_failed rc=%d launches=%llu where=%s message=%s\n",
+                rc, cuda_result.cuda_tensor_core_launches,
+                yvex_error_where(err), yvex_error_message(err));
+        if (rc == YVEX_OK) rc = YVEX_ERR_UNSUPPORTED;
+        goto cleanup;
+    }
+    tensor_core_launches += cuda_result.cuda_tensor_core_launches;
+#endif
 
     rc = run_cuda_core_input_regression(
         plan, ir, session, descriptor, backend, summary, csa_layer, failure, err);
@@ -2598,13 +2662,21 @@ static int run_cuda_live_suite(
     }
     rc = run_cuda_reference_compare(
         plan, ir, session, descriptor, backend, &options, &cuda_result,
-        &cuda_reference, NULL, NULL, failure, err);
+        &cuda_reference, NULL, NULL,
+        ATTENTION_CUDA_ABSOLUTE_TOLERANCE,
+        ATTENTION_CUDA_RELATIVE_TOLERANCE, failure, err);
     if (rc != YVEX_OK ||
         strcmp(repeat_identity, cuda_result.output_identity) != 0 ||
         !attention_cuda_workspace_add(&workspace_evidence, &cuda_result))
         goto cleanup;
     if (!yvex_core_u64_add(
             launches, cuda_result.cuda_kernel_launches, &launches)) {
+        rc = YVEX_ERR_FORMAT;
+        goto cleanup;
+    }
+    if (!yvex_core_u64_add(
+            tensor_core_launches, cuda_result.cuda_tensor_core_launches,
+            &tensor_core_launches)) {
         rc = YVEX_ERR_FORMAT;
         goto cleanup;
     }
@@ -2792,6 +2864,15 @@ static int run_cuda_live_suite(
         rc = YVEX_ERR_FORMAT;
         goto cleanup;
     }
+#ifdef YVEX_HAVE_CUDA_KERNEL_CUBIN
+    if (!tensor_core_launches) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED,
+                       "attention.cuda.tensor_core",
+                       "native SM121 attention executed without a Tensor Core projection");
+        rc = YVEX_ERR_UNSUPPORTED;
+        goto cleanup;
+    }
+#endif
     rc = yvex_backend_close_checked(&backend, err);
     if (rc != YVEX_OK) goto cleanup;
     printf("attention_cuda_layers_executed=%llu\n", evidence.layer_count);
@@ -2803,6 +2884,8 @@ static int run_cuda_live_suite(
     printf("attention_cuda_hca_layers=%llu\n", evidence.hca_count);
     printf("attention_cuda_classes_executed=3\n");
     printf("attention_cuda_kernel_launches=%llu\n", launches);
+    printf("attention_cuda_tensor_core_launches=%llu\n",
+           tensor_core_launches);
     printf("attention_cuda_peak_host_bytes=%llu\n", peak_host_bytes);
     printf("attention_cuda_peak_device_bytes=%llu\n", peak_device_bytes);
     printf("attention_cuda_peak_encoded_weight_staging_bytes=%llu\n",

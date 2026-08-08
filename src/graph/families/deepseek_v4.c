@@ -1617,6 +1617,8 @@ context->job.indexer_heads = context->layer->indexer_heads;
 context->job.indexer_head_dimension = context->layer->indexer_head_dimension;
 context->job.indexer_topk = context->layer->sparse_topk.k;
 context->job.evidence_level = (unsigned int)context->opts->evidence_level;
+context->job.native_execution =
+    context->opts->execution_class == YVEX_EXECUTION_CLASS_DEVICE_NATIVE;
 context->job.residual_stream_count = context->layer->residual_stream_count;
 context->job.residual_stream_width = context->layer->residual_stream_width;
 context->job.residual_expanded_width = context->layer->residual_expanded_width;
@@ -1766,6 +1768,8 @@ if (context->rc != YVEX_OK) {
             "CUDA attention backend execution failed");
     return context->rc;
 }
+context->result->cuda_tensor_core_launches =
+    context->cuda_output.tensor_core_launches;
     return YVEX_OK;
 }
 static int graph_cuda_request_execute(const yvex_attention_plan *plan, const void *family_ir,

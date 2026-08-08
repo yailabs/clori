@@ -1263,6 +1263,8 @@ static int transformer_core_features_execute(
         .device_view = device_features ? transformer_device_view : NULL,
         .activation_context = &activation, .cancel_requested = context->options.cancel_requested,
         .cancel_context = context->options.cancel_context,
+        .execution_class = context->options.execution_profile ?
+            context->options.execution_profile->execution_class : YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE,
         .evidence_level = context->options.evidence_level, .transaction_disposition = disposition};
     if (rc == YVEX_OK)
         rc = yvex_runtime_attention_probe_execute(context->session, context->model,
@@ -1751,6 +1753,9 @@ int yvex_runtime_transformer_execute(yvex_runtime_transformer_context *context,
         execution.cancel_requested = context->options.cancel_requested;
         execution.cancel_context = context->options.cancel_context;
         execution.evidence_level = context->options.evidence_level;
+        execution.execution_class = context->options.execution_profile
+                                        ? context->options.execution_profile->execution_class
+                                        : YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE;
         execution.evidence = transformer_layer_evidence;
         execution.evidence_context = &chunk;
         execution.transaction_disposition = request->transaction_disposition;

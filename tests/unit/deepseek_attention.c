@@ -119,6 +119,15 @@ static int test_cpu_resource_guards(void)
                      "CUDA trace admits its exact host budget");
     yvex_graph_lower_deepseek_v4()->publication_release(&trace);
 
+    rc = yvex_attention_cuda_trace_open(
+        &trace, &layer, YVEX_ATTENTION_OPERATION_CORE, &history, 0ull, 1ull,
+        YVEX_ATTENTION_EVIDENCE_STAGES, 0, NULL, trace_bytes, &row_bytes, &failure, &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_OK && !trace.input && trace.q_low && trace.query &&
+            trace.attention_values && !trace.topk_counts && !trace.topk_positions,
+        "STAGES CUDA publication allocates stage evidence without forensic input/top-k spans");
+    yvex_graph_lower_deepseek_v4()->publication_release(&trace);
+
     YVEX_TEST_ASSERT(
         yvex_attention_workspace_open(&workspace, trace_bytes, &err) == YVEX_OK &&
             yvex_attention_workspace_begin(workspace, &err) == YVEX_OK,
@@ -1799,6 +1808,7 @@ static int test_independent_reference_detects_stage_mutations(void)
     memset(&production, 0, sizeof(production));
     production.owned = 1;
     production.complete = 1;
+    production.evidence_level = YVEX_ATTENTION_EVIDENCE_FULL;
     production.layer_index = 2ull;
     production.attention_class = YVEX_ATTENTION_CLASS_CSA;
     production.token_position = 8ull;

@@ -263,10 +263,12 @@ static int attention_matvec(yvex_cuda_work *work,
 {
     CUdeviceptr additive = 0ull;
     int block_row = 0, q8_path, q8_input = 0;
+    unsigned long long tensorcore_grid = 0ull;
     unsigned int matvec_grid, matvec_block;
     q8_path = weight && work->activation_q8 && !work->forensic_numeric &&
+              weight->qtype == YVEX_GGUF_QTYPE_Q8_0 &&
               weight->row_width % 256ull == 0ull &&
-              yvex_cuda_q8_activation_eligible(weight->qtype);
+              work->state->q8_0_tensorcore_rows_function;
     if (!weight || !weight->present || !device_weight || !vector || !out ||
         !rows || !input_rows || start_row > weight->row_count ||
         rows > weight->row_count - start_row ||
@@ -278,6 +280,14 @@ static int attention_matvec(yvex_cuda_work *work,
             failure, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT, stage,
             weight ? weight->row_count : 0ull, start_row + rows, err,
             YVEX_ERR_BOUNDS, "CUDA attention matvec geometry is invalid");
+    if (q8_path &&
+        (!yvex_core_u64_mul((rows + 15ull) / 16ull,
+                            (input_rows + 15ull) / 16ull, &tensorcore_grid) ||
+         tensorcore_grid > UINT_MAX))
+        return attention_fail(
+            failure, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT, stage,
+            UINT_MAX, tensorcore_grid, err, YVEX_ERR_BOUNDS,
+            "CUDA Tensor Core attention grid exceeds launch bounds");
     if (q8_path) {
         unsigned long long blocks = weight->row_width / 256ull;
         unsigned long long quantize_tasks, quantized_bytes;
@@ -306,16 +316,15 @@ static int attention_matvec(yvex_cuda_work *work,
                                   params, "cuda.q8-activation", failure, err);
         }
         if (rc == YVEX_OK) {
-            q8_input = 1;
-            void *params[] = {&device_weight, (void *)&weight->row_bytes,
-                (void *)&weight->row_width, &start_row, &rows,
-                &input_rows, (void *)&weight->qtype, &quantized, &q8_input,
-                &block_row, &work->forensic_numeric, &additive, &out,
-                &output_bf16, &status
-            };
-            rc = attention_launch(work, work->state->qtype_matvec_function,
-                                  matvec_grid, matvec_block, 0u, params, stage,
-                                  failure, err);
+            void *params[] = {
+                &device_weight, (void *)&weight->row_bytes,
+                (void *)&weight->row_width, &start_row, &rows, &input_rows,
+                &quantized, &additive, &out, &output_bf16, &status};
+            rc = attention_launch(
+                work, work->state->q8_0_tensorcore_rows_function,
+                (unsigned int)tensorcore_grid, 32u, 0u, params, stage,
+                failure, err);
+            if (rc == YVEX_OK) work->tensor_core_launches++;
         }
         return rc;
     }
@@ -477,7 +486,6 @@ static int attention_activation(
             failure, err);
     }
 }
-
 static int attention_validate_job(yvex_backend_attention_job *job,
                                   yvex_backend_attention_output *output,
                                   yvex_backend_attention_failure *failure,
@@ -568,9 +576,14 @@ static int attention_validate_job(yvex_backend_attention_job *job,
             failure, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT,
             "cuda.attention.validate.evidence", 3ull, job->evidence_level,
             err, YVEX_ERR_FORMAT, "CUDA attention evidence level is invalid");
+    if (job->native_execution != 0 && job->native_execution != 1)
+        return attention_fail(
+            failure, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT,
+            "cuda.attention.validate.native_execution", 1ull,
+            (unsigned long long)job->native_execution, err, YVEX_ERR_FORMAT,
+            "CUDA attention native-execution admission is invalid");
     return YVEX_OK;
 }
-
 static int attention_validate_weight(const yvex_backend_attention_weight *weight,
                                      unsigned long long rows,
                                      unsigned long long width,
@@ -600,7 +613,6 @@ static int attention_validate_weight(const yvex_backend_attention_weight *weight
             reason ? reason : "CUDA attention encoded weight capability is unavailable");
     return YVEX_OK;
 }
-
 static int attention_validate_activation(
     const yvex_backend_attention_activation *policy, unsigned long long width,
     const char *stage, yvex_backend_attention_failure *failure, yvex_error *err)
@@ -616,7 +628,6 @@ static int attention_validate_activation(
             "CUDA attention activation policy and width are incompatible");
     return YVEX_OK;
 }
-
 static int attention_validate_rolling(
     const yvex_backend_attention_job *job,
     const yvex_backend_attention_rolling *rolling, unsigned long long ratio,
@@ -643,7 +654,6 @@ static int attention_validate_rolling(
             "CUDA attention rolling-state geometry is invalid");
     return YVEX_OK;
 }
-
 static int attention_spans_disjoint(const yvex_cuda_host_span *writes,
                                     size_t write_count,
                                     const yvex_cuda_host_span *reads,
@@ -680,7 +690,6 @@ static int attention_spans_disjoint(const yvex_cuda_host_span *writes,
     }
     return 1;
 }
-
 static int attention_validate_alias(
     const yvex_backend_attention_job *job,
     const yvex_cuda_attention_transfer *transfers, size_t transfer_count,

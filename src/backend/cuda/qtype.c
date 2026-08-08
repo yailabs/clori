@@ -330,7 +330,8 @@ int yvex_backend_cuda_encoded_matvec(
                              &output_bf16, &status};
         void *tensorcore_params[] = {
             &encoded_ptr, &row_bytes, &row_width, &start_row, &row_count,
-            &input_rows, &quantized, &additive_ptr, &output_ptr, &status};
+            &input_rows, &quantized, &additive_ptr, &output_ptr, &output_bf16,
+            &status};
         void *split_params[] = {&encoded_ptr, &row_bytes, &row_width, &start_row,
                                 &row_count, &input_rows, &qtype, &input_ptr,
                                 &input_tail_ptr, &input_head_width, &additive_ptr,

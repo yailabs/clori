@@ -112,7 +112,7 @@ typedef struct {
     yvex_backend_attention_rolling main_rolling, indexer_rolling;
     const yvex_backend_cancellation *cancellation;
     unsigned int evidence_level;
-    int candidate_block_visible, retain_prefix_checkpoints;
+    int candidate_block_visible, retain_prefix_checkpoints, native_execution;
     unsigned long long max_host_bytes, max_device_bytes;
 } yvex_backend_attention_job;
 typedef struct {
@@ -126,7 +126,8 @@ typedef struct {
     unsigned long long tokens_executed, compressed_count, indexer_count;
     unsigned long long topk_count, valid_candidate_count;
     unsigned long long host_bytes, peak_host_bytes, device_bytes, peak_device_bytes;
-    unsigned long long kernel_launches, h2d_bytes, d2h_bytes, d2d_bytes, device_state_staged_bytes;
+    unsigned long long kernel_launches, tensor_core_launches, h2d_bytes, d2h_bytes, d2d_bytes;
+    unsigned long long device_state_staged_bytes;
     unsigned long long stream_synchronizations, device_synchronizations;
     unsigned long long device_execution_elapsed_ns, host_workspace_capacity;
     unsigned long long host_workspace_used, host_workspace_peak, host_workspace_allocation_count;
@@ -399,8 +400,7 @@ int yvex_backend_host_workspace_prepare_owned(yvex_backend *backend, unsigned lo
 int yvex_backend_host_workspace_detach(yvex_backend *backend, yvex_error *err);
 int yvex_backend_host_workspace_acquire(yvex_backend *, unsigned long long,
                                         unsigned long long, void **);
-int yvex_backend_host_workspace_summary_get(const yvex_backend *,
-                                            yvex_backend_host_workspace_summary *);
+int yvex_backend_host_workspace_summary_get(const yvex_backend *, yvex_backend_host_workspace_summary *);
 int yvex_backend_validate_rope(const yvex_device_tensor *tensor, unsigned long long *head_dim,
                                const char *where, yvex_error *err);
 int yvex_backend_validate_embed(const yvex_backend *backend,

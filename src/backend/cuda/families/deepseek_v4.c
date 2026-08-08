@@ -980,8 +980,10 @@ static int attn_prepare(attn_run *run) {
     run->resources.state = run->state;
     run->resources.variant = YVEX_BACKEND_VARIANT_ATTENTION_ENCODED;
     run->resources.budget = run->job->max_device_bytes;
-    run->resources.activation_q8 = 0;
-    /* Full evidence additionally selects canonical-order arithmetic for stage oracles. */
+    run->resources.activation_q8 = run->job->native_execution && run->job->evidence_level < 3u &&
+        run->state->kernel_bundle_native &&
+        run->state->q8_0_tensorcore_rows_function != NULL;
+    /* Full evidence selects canonical-order arithmetic for the stage oracles. */
     run->resources.forensic_numeric = run->job->evidence_level == 3u;
     return YVEX_OK;
 }
@@ -1031,7 +1033,6 @@ static int attn_allocate_base(attn_run *run) {
         run->initial_indexer_count * sizeof(unsigned long long);
     return YVEX_OK;
 }
-/* Bind one ordinal to disjoint arenas without materializing device dependencies. */
 static void attn_phase_bind(attn_run *run, unsigned long long ordinal) {
     yvex_backend_attention_job *job = &run->request;
     unsigned long long position = run->phase_start_position + ordinal;
@@ -1681,8 +1682,7 @@ static int attn_numerical_execute(attn_run *run) {
             "cuda.deepseek_attention.graph.mode", YVEX_BACKEND_CUDA_ATTENTION_FULL,
             run->configuration->mode, YVEX_ERR_UNSUPPORTED,
             "CUDA attention execution mode is unavailable");
-    /* Parallel draft queries require every candidate projection before reduction, so the
-     * projection boundary remains split even when ordinary attention selected full capture. */
+    /* Draft needs every projection before reduction, so candidate capture retains this split. */
     rc = attn_graph_execute(run, 0u, YVEX_CUDA_ATTENTION_STAGE_COMPRESS);
     if (rc == YVEX_OK && run->job->attention_class != YVEX_BACKEND_ATTENTION_SWA)
         rc = attn_graph_execute(
@@ -1886,7 +1886,6 @@ static int attn_stage_inputs(attn_run *run) {
     }
     return YVEX_OK;
 }
-/* Publish the fully admitted transaction as the sole caller-visible commit. */
 static int attn_publish(attn_run *run) {
     yvex_backend_host_workspace_summary workspace;
     unsigned long long backend_h2d, backend_d2h;
@@ -1928,6 +1927,7 @@ static int attn_publish(attn_run *run) {
     run->output->device_bytes = 0ull;
     run->output->peak_device_bytes = run->resources.peak_bytes;
     run->output->kernel_launches = run->resources.launches;
+    run->output->tensor_core_launches = run->resources.tensor_core_launches;
     run->output->h2d_bytes = run->h2d_bytes;
     run->output->d2h_bytes = run->d2h_bytes;
     run->output->d2d_bytes = run->d2d_bytes;

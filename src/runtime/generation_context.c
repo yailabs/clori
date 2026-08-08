@@ -599,7 +599,8 @@ static int generation_execution_profile_build(
             return generation_context_refuse(
                 err, YVEX_ERR_STATE, "CUDA graph capability is unavailable");
         kernel_bundle = cuda.cuda_build_identity;
-        (void)snprintf(hardware, sizeof(hardware), "portable-cuda-sm%d%d",
+        (void)snprintf(hardware, sizeof(hardware), "%s-cuda-sm%d%d",
+                       cuda.kernel_bundle_native ? "native" : "portable",
                        session.compute_capability_major,
                        session.compute_capability_minor);
     } else {
@@ -624,7 +625,12 @@ static int generation_execution_profile_build(
                                   : YVEX_EXECUTION_GENERATION_TARGET_ONLY;
     request.workload = YVEX_EXECUTION_WORKLOAD_INTERACTIVE;
     request.evidence = context->options.evidence_profile;
-    request.execution_class = YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE;
+    request.execution_class =
+        context->options.backend == YVEX_BACKEND_KIND_CUDA &&
+                cuda.kernel_bundle_native &&
+                context->options.evidence_profile == YVEX_EXECUTION_EVIDENCE_PRODUCTION
+            ? YVEX_EXECUTION_CLASS_DEVICE_NATIVE
+            : YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE;
     request.host_stochastic_reference =
         context->options.sampling_policy.strategy != YVEX_SAMPLING_STRATEGY_GREEDY &&
         !generation_device_stochastic(context, session_view->backend);

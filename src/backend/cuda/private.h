@@ -356,6 +356,7 @@ typedef struct {
     int prepare_only, raw_only, forensic_numeric, activation_q8;
     unsigned int count;
     unsigned long long current_bytes, peak_bytes, budget, launches, q8_capacity;
+    unsigned long long tensor_core_launches;
 } yvex_cuda_work;
 typedef enum {
     YVEX_CUDA_WORK_FAILURE_NONE = 0,

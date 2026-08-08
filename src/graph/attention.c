@@ -1389,6 +1389,9 @@ static int attention_probe_backend_execute(
         !yvex_core_u64_add(context->candidate.kernel_launches,
                            run->evidence.cuda_kernel_launches,
                            &context->candidate.kernel_launches) ||
+        !yvex_core_u64_add(context->candidate.tensor_core_launches,
+                           run->evidence.cuda_tensor_core_launches,
+                           &context->candidate.tensor_core_launches) ||
         !yvex_core_u64_add(context->candidate.h2d_bytes,
                            run->evidence.cuda_h2d_bytes,
                            &context->candidate.h2d_bytes) ||
@@ -1494,6 +1497,7 @@ static int attention_probe_layer_execute(
     options.device_output = device_output;
     options.history = execution_history;
     options.evidence_level = context->request->evidence_level;
+    options.execution_class = context->request->execution_class;
     options.workspace = context->request->workspace;
     options.cancellation = context->request->cancel_requested ? &cancellation : NULL;
     options.candidate_block_visible = context->request->candidate_block_visible;
@@ -1623,7 +1627,7 @@ static int attention_probe_finalize(attention_probe_context *context) {
     char *backend_digest[] = {result->cpu_output_digest, result->cuda_output_digest};
     char *backend_state_digest[] = {result->cpu_state_delta_digest,
                                     result->cuda_state_delta_digest};
-    attention_probe_identity_field fields[18];
+    attention_probe_identity_field fields[19];
     const char *selected_digest;
     unsigned int index;
     if (!attention_probe_comparison_identity(result->comparison_contract_identity))
@@ -1707,7 +1711,8 @@ static int attention_probe_finalize(attention_probe_context *context) {
     fields[15] = (attention_probe_identity_field){result->state_delta_digest, 0ull};
     fields[16] = (attention_probe_identity_field){NULL, request->candidate_block_visible};
     fields[17] = (attention_probe_identity_field){NULL, request->execution_phase};
-    if (!attention_probe_identity("yvex.attention.operator.execution.v5", fields, 18u,
+    fields[18] = (attention_probe_identity_field){NULL, request->execution_class};
+    if (!attention_probe_identity("yvex.attention.operator.execution.v6", fields, 19u,
                                   result->attention_execution_identity))
         goto identity_failure;
     return YVEX_OK;
@@ -1801,7 +1806,8 @@ int yvex_attention_execute(
          request->execution_phase != YVEX_EXECUTION_PHASE_DECODE &&
          request->execution_phase != YVEX_EXECUTION_PHASE_MIXED &&
          request->execution_phase != YVEX_EXECUTION_PHASE_DRAFT &&
-         request->execution_phase != YVEX_EXECUTION_PHASE_VERIFY))
+         request->execution_phase != YVEX_EXECUTION_PHASE_VERIFY) ||
+        request->execution_class > YVEX_EXECUTION_CLASS_FORENSIC_REFERENCE)
         return attention_probe_fail(err, YVEX_ERR_INVALID_ARG, "canonical V2 probe request is invalid");
     if (!family || !plan || !session || !descriptor || !result ||
         !family->plan_summary || !family->plan_layer_count || !family->plan_layer_at ||

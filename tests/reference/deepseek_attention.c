@@ -2483,6 +2483,7 @@ int yvex_test_attention_reference_compare_contract(
     }
     if (!production || !reference || !production->owned || !reference->owned ||
         !production->complete || !reference->complete ||
+        production->evidence_level > YVEX_ATTENTION_EVIDENCE_FULL ||
         production->layer_index != reference->layer_index ||
         production->attention_class != reference->attention_class ||
         production->token_position != reference->token_position ||
@@ -2507,15 +2508,19 @@ int yvex_test_attention_reference_compare_contract(
                                (count_), contract, metrics))                 \
             return 0;                                                        \
     } while (0)
-    count = production->token_count * production->hidden_width;
-    REF_STAGE("input", YVEX_TEST_ATTENTION_STAGE_INPUT,
-              production->input, reference->input, count);
-    count = production->token_count * production->q_rank;
-    REF_STAGE("q-low", YVEX_TEST_ATTENTION_STAGE_Q_LOW,
-              production->q_low, reference->q_low, count);
-    count = production->token_count * production->query_width;
-    REF_STAGE("query", YVEX_TEST_ATTENTION_STAGE_QUERY,
-              production->query, reference->query, count);
+    if (production->evidence_level == YVEX_ATTENTION_EVIDENCE_FULL) {
+        count = production->token_count * production->hidden_width;
+        REF_STAGE("input", YVEX_TEST_ATTENTION_STAGE_INPUT,
+                  production->input, reference->input, count);
+    }
+    if (production->evidence_level >= YVEX_ATTENTION_EVIDENCE_STAGES) {
+        count = production->token_count * production->q_rank;
+        REF_STAGE("q-low", YVEX_TEST_ATTENTION_STAGE_Q_LOW,
+                  production->q_low, reference->q_low, count);
+        count = production->token_count * production->query_width;
+        REF_STAGE("query", YVEX_TEST_ATTENTION_STAGE_QUERY,
+                  production->query, reference->query, count);
+    }
     count = production->token_count * production->kv_width;
     REF_STAGE("raw-kv", YVEX_TEST_ATTENTION_STAGE_RAW_KV,
               production->raw_kv, reference->raw_kv, count);
@@ -2527,18 +2532,20 @@ int yvex_test_attention_reference_compare_contract(
     REF_STAGE("indexer-kv", YVEX_TEST_ATTENTION_STAGE_INDEXER_KV,
               production->indexer_kv,
               reference->indexer_kv, count);
-    count = production->token_count * production->index_query_stride;
-    REF_STAGE("index-query", YVEX_TEST_ATTENTION_STAGE_INDEX_QUERY,
-              production->index_query,
-              reference->index_query, count);
-    count = production->token_count * production->index_weight_stride;
-    REF_STAGE("index-weights", YVEX_TEST_ATTENTION_STAGE_INDEX_WEIGHTS,
-              production->index_weights,
-              reference->index_weights, count);
-    count = production->token_count * production->query_width;
-    REF_STAGE("attention", YVEX_TEST_ATTENTION_STAGE_ATTENTION,
-              production->attention_values,
-              reference->attention_values, count);
+    if (production->evidence_level >= YVEX_ATTENTION_EVIDENCE_STAGES) {
+        count = production->token_count * production->index_query_stride;
+        REF_STAGE("index-query", YVEX_TEST_ATTENTION_STAGE_INDEX_QUERY,
+                  production->index_query,
+                  reference->index_query, count);
+        count = production->token_count * production->index_weight_stride;
+        REF_STAGE("index-weights", YVEX_TEST_ATTENTION_STAGE_INDEX_WEIGHTS,
+                  production->index_weights,
+                  reference->index_weights, count);
+        count = production->token_count * production->query_width;
+        REF_STAGE("attention", YVEX_TEST_ATTENTION_STAGE_ATTENTION,
+                  production->attention_values,
+                  reference->attention_values, count);
+    }
     count = production->token_count * production->hidden_width;
     REF_STAGE("output", YVEX_TEST_ATTENTION_STAGE_OUTPUT,
               production->output, reference->output, count);
@@ -2570,7 +2577,10 @@ int yvex_test_attention_reference_compare_contract(
             return 0;
         }
     }
-    for (i = 0ull; i < production->token_count; ++i) {
+    for (i = 0ull;
+         production->evidence_level == YVEX_ATTENTION_EVIDENCE_FULL &&
+         i < production->token_count;
+         ++i) {
         unsigned long long j;
         if (production->topk_stride &&
             production->topk_counts[i] != reference->topk_counts[i]) {

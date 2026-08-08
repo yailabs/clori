@@ -15,7 +15,7 @@ extern "C" __global__ void yvex_q8_0_tensorcore_rows(
     unsigned long long row_width, unsigned long long start_row,
     unsigned long long row_count, unsigned long long input_rows,
     const unsigned char *activation, const float *additive,
-    float *output, int *status)
+    float *output, int output_bf16, int *status)
 {
     __shared__ __align__(16) signed char weight_tile[16 * 16];
     __shared__ __align__(16) signed char activation_tile[16 * 16];
@@ -117,7 +117,7 @@ extern "C" __global__ void yvex_q8_0_tensorcore_rows(
                               ? __fadd_rn(totals[index], additive[output_index])
                               : totals[index];
             if (!isfinite(value)) atomicCAS(status, 0, 1);
-            else output[output_index] = value;
+            else output[output_index] = output_bf16 ? float_to_bf16_rne(value) : value;
         }
     }
 }
