@@ -29,13 +29,15 @@ typedef struct {
     yvex_runtime_state_residency_summary state_residency;
     yvex_runtime_generation_token_result tokens[LIVE_GENERATION_MAX_TOKENS];
     unsigned char text[LIVE_GENERATION_TEXT_BYTES];
+    char semantic_state_digest[YVEX_SHA256_HEX_CAP];
 } live_generation;
 
 typedef struct {
     unsigned int tokens[LIVE_GENERATION_MAX_TOKENS];
     unsigned long long sampled, committed, text_bytes, final_position;
     unsigned char text[LIVE_GENERATION_TEXT_BYTES];
-    char state_digest[YVEX_SHA256_HEX_CAP], rng_identity[YVEX_SHA256_HEX_CAP];
+    char semantic_state_digest[YVEX_SHA256_HEX_CAP];
+    char rng_identity[YVEX_SHA256_HEX_CAP];
 } live_manual;
 
 typedef struct {
@@ -100,6 +102,54 @@ static int live_state(const yvex_runtime_execution_session *session,
                       yvex_error *err)
 {
     return live_scope_state(session, 0, summary, err);
+}
+
+static int live_semantic_state_digest(
+    const yvex_runtime_execution_session *session,
+    char digest[YVEX_SHA256_HEX_CAP], yvex_error *err)
+{
+    const yvex_runtime_session_view *view = yvex_runtime_session_view_get(session);
+    const yvex_attention_state_provider *provider =
+        view ? view->attention_state_provider : NULL;
+    yvex_graph_attention_state_summary summary;
+    yvex_sha256 hash;
+    unsigned char bytes[YVEX_SHA256_DIGEST_BYTES];
+    char layer_identity[YVEX_SHA256_HEX_CAP];
+    unsigned long long layer;
+    int rc;
+
+    if (!provider || !provider->summary || !provider->identity || !digest) {
+        yvex_error_set(err, YVEX_ERR_STATE, "generation_live.state",
+                       "persistent state identity provider is unavailable");
+        return YVEX_ERR_STATE;
+    }
+    rc = provider->summary(provider->context, &summary, err);
+    if (rc != YVEX_OK) return rc;
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.live.generation.state-semantics.v1") ||
+        !yvex_sha256_update_u64(&hash, summary.layer_count)) {
+        yvex_error_set(err, YVEX_ERR_STATE, "generation_live.state",
+                       "persistent state digest initialization failed");
+        return YVEX_ERR_STATE;
+    }
+    for (layer = 0ull; layer < summary.layer_count; ++layer) {
+        rc = provider->identity(provider->context, layer, layer_identity, err);
+        if (rc != YVEX_OK) return rc;
+        if (!yvex_sha256_update_u64(&hash, layer) ||
+            !yvex_sha256_update_text(&hash, layer_identity)) {
+            yvex_error_set(err, YVEX_ERR_STATE, "generation_live.state",
+                           "persistent layer identity could not be aggregated");
+            return YVEX_ERR_STATE;
+        }
+    }
+    if (!yvex_sha256_final(&hash, bytes)) {
+        yvex_error_set(err, YVEX_ERR_STATE, "generation_live.state",
+                       "persistent state digest finalization failed");
+        return YVEX_ERR_STATE;
+    }
+    yvex_sha256_hex(bytes, digest);
+    yvex_error_clear(err);
+    return YVEX_OK;
 }
 
 static int live_cancel_at_position(void *opaque)
@@ -259,6 +309,9 @@ static int live_production_request(
             yvex_error_set(err, rc, "generation_live",
                            "generation state residency evidence is unavailable");
     }
+    if (rc == YVEX_OK)
+        rc = live_semantic_state_digest(
+            session, out->semantic_state_digest, err);
     if (rc == YVEX_OK && backend == YVEX_BACKEND_KIND_CUDA &&
         out->result.profile.counters[
             YVEX_RUNTIME_PROFILE_FULL_ARRAY_HOST_SCAN_BYTES]) {
@@ -279,11 +332,30 @@ static int live_production_request(
     }
     if (rc == YVEX_OK && backend == YVEX_BACKEND_KIND_CUDA &&
         mode == YVEX_GENERATION_MODE_TARGET_ONLY &&
-        (out->state_residency.upload_bytes != out->state_residency.device_bytes ||
-         out->state_residency.upload_count != 2ull * out->state_residency.layer_count)) {
+        ((out->state_residency.paged &&
+          (!out->state_residency.page_granularity ||
+           out->state_residency.host_bytes ||
+           !out->state_residency.virtual_device_bytes ||
+           out->state_residency.device_bytes !=
+               out->state_residency.page_commit_count *
+                   out->state_residency.page_granularity)) ||
+         (!out->state_residency.paged &&
+          (out->state_residency.upload_bytes != out->state_residency.device_bytes ||
+           out->state_residency.upload_count !=
+               2ull * out->state_residency.layer_count)))) {
         rc = YVEX_ERR_STATE;
-        yvex_error_set(err, rc, "generation_live",
-                       "target-only CUDA state performed a post-admission host upload");
+        yvex_error_setf(
+            err, rc, "generation_live",
+            "target-only CUDA state residency accounting is inconsistent "
+            "(paged=%d uploads=%llu bytes=%llu resident=%llu virtual=%llu "
+            "pages=%llu granularity=%llu)",
+            out->state_residency.paged,
+            out->state_residency.upload_count,
+            out->state_residency.upload_bytes,
+            out->state_residency.device_bytes,
+            out->state_residency.virtual_device_bytes,
+            out->state_residency.page_commit_count,
+            out->state_residency.page_granularity);
     }
     yvex_error_clear(&cleanup);
     close_rc = yvex_runtime_generation_context_close(&context, &cleanup);
@@ -962,9 +1034,11 @@ static int live_manual_execute(yvex_runtime_model *model,
     if (rc == YVEX_OK) rc = live_state(session, &state, err);
     if (rc == YVEX_OK) {
         out->final_position = state.next_position;
-        yvex_runtime_identity_copy(out->state_digest, state.state_content_identity);
-        rc = yvex_runtime_sampling_context_snapshot(
-            sampling, &sampling_summary, err);
+        rc = live_semantic_state_digest(
+            session, out->semantic_state_digest, err);
+        if (rc == YVEX_OK)
+            rc = yvex_runtime_sampling_context_snapshot(
+                sampling, &sampling_summary, err);
     }
     if (rc == YVEX_OK)
         yvex_runtime_identity_copy(out->rng_identity,
@@ -1070,20 +1144,6 @@ static int live_compare(const live_generation *production,
                         production->result.final_position, manual->final_position);
         return YVEX_ERR_FORMAT;
     }
-    if (strcmp(production->result.final_persistent_state_digest,
-               manual->state_digest) != 0) {
-        yvex_error_setf(err, YVEX_ERR_FORMAT, "generation_live.compare",
-                        "persistent state differs production=%.16s manual=%.16s",
-                        production->result.final_persistent_state_digest,
-                        manual->state_digest);
-        return YVEX_ERR_FORMAT;
-    }
-    if (strcmp(production->result.final_rng_identity, manual->rng_identity) != 0 ||
-        memcmp(production->text, manual->text, (size_t)manual->text_bytes) != 0) {
-        yvex_error_set(err, YVEX_ERR_FORMAT, "generation_live.compare",
-                       "composition RNG or rendered text differs");
-        return YVEX_ERR_FORMAT;
-    }
     for (index = 0ull; index < manual->sampled; ++index)
         if (production->tokens[index].sampled_token_id != manual->tokens[index] ||
             (production->tokens[index].model_committed &&
@@ -1096,6 +1156,20 @@ static int live_compare(const live_generation *production,
                             manual->tokens[index]);
             return YVEX_ERR_FORMAT;
         }
+    if (strcmp(production->semantic_state_digest,
+               manual->semantic_state_digest) != 0) {
+        yvex_error_setf(err, YVEX_ERR_FORMAT, "generation_live.compare",
+                        "persistent state differs production=%.16s manual=%.16s",
+                        production->semantic_state_digest,
+                        manual->semantic_state_digest);
+        return YVEX_ERR_FORMAT;
+    }
+    if (strcmp(production->result.final_rng_identity, manual->rng_identity) != 0 ||
+        memcmp(production->text, manual->text, (size_t)manual->text_bytes) != 0) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "generation_live.compare",
+                       "composition RNG or rendered text differs");
+        return YVEX_ERR_FORMAT;
+    }
     yvex_error_clear(err);
     return YVEX_OK;
 }
