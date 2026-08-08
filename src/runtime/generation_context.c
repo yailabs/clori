@@ -483,7 +483,16 @@ static int generation_capacity_build(
     yvex_execution_capacity_plan_request request = {0};
     unsigned long long workspace, sampling_workspace = 0ull, index, count = 0ull;
     if (generation_capacity_hardware(context, err) != YVEX_OK) return yvex_error_code(err);
-    if (!model) return YVEX_OK;
+    if (!model) {
+        yvex_graph_attention_capacity_request legacy = {0};
+        legacy.scope = YVEX_ATTENTION_PROBE_SCOPE_FULL;
+        legacy.token_count = context->options.context_capacity;
+        legacy.execution_count = 1ull;
+        legacy.use_requested_position = 1;
+        return yvex_graph_attention_capacity_plan_build(
+            workspace_capacity, context->model_view->adapter->graph(),
+            context->model_view->attention, &legacy, err);
+    }
     if (generation_capacity_workload(context, err) != YVEX_OK) return yvex_error_code(err);
     if (context->options.context_capacity > model->maximum_context)
         return generation_context_refuse(
@@ -886,9 +895,11 @@ int yvex_runtime_generation_context_open(
     if (rc != YVEX_OK) goto failure;
     rc = generation_capacity_build(context, &workspace_capacity, err);
     if (rc != YVEX_OK) goto failure;
-    rc = yvex_runtime_session_configure_persistent_pages(
-        session, &context->capacity_plan, &state_failure, err);
-    if (rc != YVEX_OK) goto failure;
+    if (context->capacity_plan.schema_version) {
+        rc = yvex_runtime_session_configure_persistent_pages(
+            session, &context->capacity_plan, &state_failure, err);
+        if (rc != YVEX_OK) goto failure;
+    }
     rc = yvex_execution_shape_registry_open(
         &context->execution_shapes, 128ull, err);
     if (rc != YVEX_OK) goto failure;

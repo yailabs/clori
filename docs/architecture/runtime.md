@@ -323,7 +323,7 @@ H2D/D2H/D2D movement and synchronization. Their transformer active-byte facts,
 occupancy and batched-decode facts remain unavailable, so the global
 optimization priority stays provisional. The offline generation operator
 exposes the ledger in audit and JSON projections without adding it to protocol
-v7 or making trace verbosity a numerical dependency.
+v8 or making trace verbosity a numerical dependency.
 
 Speculative prefill now merges the target transformer, resident feature
 projection and draft-core physical records before publishing its phase slot.

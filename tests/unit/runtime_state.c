@@ -1909,6 +1909,83 @@ static void state_page_capacity_open(yvex_execution_capacity_plan *capacity)
     }
 }
 
+static int test_state_checkpoint_restore(const state_plan_fixture *fixture)
+{
+    state_plan_fixture single = *fixture;
+    yvex_attention_history_view layers[1];
+    char identities[1][YVEX_SHA256_HEX_CAP];
+    yvex_attention_state_checkpoint checkpoint = {0};
+    yvex_graph_attention_state_summary before, after, empty;
+    yvex_attention_failure failure;
+    yvex_error err;
+    test_state source = {0}, restored = {0};
+    const yvex_attention_history_view *view;
+    char delta[YVEX_SHA256_HEX_CAP];
+    unsigned long long position;
+    int restore_rc;
+
+    single.plan.layer_count = single.plan.summary.layer_count = 1ull;
+    single.plan.summary.csa_layer_count = single.plan.summary.hca_layer_count = 0ull;
+    yvex_error_clear(&err);
+    YVEX_TEST_ASSERT(
+        state_open(&source, state_family(), &single.plan, 1024ull * 1024ull,
+                   &failure, &err) == YVEX_OK &&
+            state_open(&restored, state_family(), &single.plan,
+                       1024ull * 1024ull, &failure, &err) == YVEX_OK &&
+            state_prepare(&source, &single.layers[0],
+                          single.plan.summary.attention_plan_identity) &&
+            state_prepare(&restored, &single.layers[0],
+                          single.plan.summary.attention_plan_identity),
+        "checkpoint providers open with identical sealed geometry");
+    for (position = 0ull; position < 3ull; ++position)
+        YVEX_TEST_ASSERT(
+            state_apply_token(&source, &single.layers[0], position, 0, delta),
+            "checkpoint source commits an exact prefix");
+    view = state_view(&source, 0ull, YVEX_ATTENTION_STATE_VIEW_COMMITTED);
+    YVEX_TEST_ASSERT(
+        view && state_summary(&source, &before, &err) == YVEX_OK &&
+            state_identity(&source, 0ull, identities[0], &err) == YVEX_OK &&
+            state_summary(&restored, &empty, &err) == YVEX_OK,
+        "checkpoint captures committed state and identities");
+    layers[0] = *view;
+    checkpoint.schema_version = YVEX_ATTENTION_STATE_CHECKPOINT_SCHEMA_V1;
+    checkpoint.layer_count = 1ull;
+    checkpoint.committed_sequence_length = before.committed_sequence_length;
+    checkpoint.layers = layers;
+    checkpoint.layer_identities =
+        (const char (*)[YVEX_SHA256_HEX_CAP])identities;
+    strcpy(checkpoint.state_layout_identity, before.state_layout_identity);
+    strcpy(checkpoint.state_content_identity, before.state_content_identity);
+    strcpy(checkpoint.capacity_plan_identity, before.capacity_plan_identity);
+    restore_rc = restored.restore
+                     ? restored.restore(restored.context, &checkpoint, &failure,
+                                        &err)
+                     : YVEX_ERR_STATE;
+    YVEX_TEST_ASSERT(
+        restored.schema_version == YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V6 &&
+            restored.restore && restore_rc == YVEX_OK &&
+            state_summary(&restored, &after, &err) == YVEX_OK &&
+            after.committed_sequence_length == 3ull &&
+            after.next_position == 3ull &&
+            strcmp(after.state_content_identity,
+                   before.state_content_identity) == 0 &&
+            state_identity(&restored, 0ull, delta, &err) == YVEX_OK &&
+            strcmp(delta, identities[0]) == 0,
+        "checkpoint restore publishes the exact committed prefix atomically");
+    identities[0][0] = identities[0][0] == '0' ? '1' : '0';
+    YVEX_TEST_ASSERT(
+        restored.reset(restored.context, &failure, &err) == YVEX_OK &&
+            restored.restore(restored.context, &checkpoint, &failure, &err) ==
+                YVEX_ERR_FORMAT &&
+            state_summary(&restored, &after, &err) == YVEX_OK &&
+            after.committed_sequence_length == 0ull &&
+            strcmp(after.state_content_identity, empty.state_content_identity) == 0,
+        "corrupt checkpoint identity refuses without publishing partial state");
+    YVEX_TEST_ASSERT(state_close(&source) && state_close(&restored),
+                     "checkpoint providers close cleanly");
+    return 0;
+}
+
 static int test_state_pages(const state_plan_fixture *fixture)
 {
     yvex_execution_capacity_plan capacity, changed;
@@ -2015,6 +2092,7 @@ int yvex_test_runtime_state(void)
     if (test_state_identity_is_execution_shape_neutral(&fixture) != 0) return 1;
     if (test_candidate_prefix_compression_boundary() != 0) return 1;
     if (test_state_reset(&fixture) != 0) return 1;
+    if (test_state_checkpoint_restore(&fixture) != 0) return 1;
     if (test_summary_capacity_accounting(&fixture) != 0) return 1;
     if (test_prepare_failure_is_atomic(&fixture) != 0) return 1;
     if (test_batch_publication_is_atomic(&fixture) != 0) return 1;

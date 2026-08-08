@@ -1,8 +1,8 @@
-# Local Protocol v7
+# Local Protocol v8
 
 Status: normative private protocol contract
 
-Schema/version: `YVEX_LOCAL_PROTOCOL_VERSION = 7`.
+Schema/version: `YVEX_LOCAL_PROTOCOL_VERSION = 8`.
 
 Authority: `include/yvex/server.h` and `src/server/protocol.c`. This document
 explains the wire and lifecycle contract; code remains authoritative for exact
@@ -16,18 +16,18 @@ private UID-owned Unix-domain socket and is not a public network API.
 
 ## Framing and negotiation
 
-Every connection negotiates version 7 and exchanges bounded typed frames.
+Every connection negotiates version 8 and exchanges bounded typed frames.
 Lengths, enums, strings, arrays, message/tool fields, and correlations are
 validated before dispatch. Oversized, truncated, duplicate, unknown, or
 malformed fields refuse without entering the model worker.
 
-Every earlier version, including v6, is refused explicitly. There is no private
+Every earlier version, including v7, is refused explicitly. There is no private
 pre-v0.1 compatibility decoder. Unknown operations and response kinds fail
 closed.
 
 ## Operations
 
-Protocol v7 carries runtime start-state/status/stop, live model and memory
+Protocol v8 carries runtime start-state/status/stop, live model and memory
 facts, selected target-only or DSpark generation mode, session lifecycle,
 generation turns and cancellation, speculative lifecycle events, event
 subscriptions, and composed console status. Offline compile, artifact,
@@ -126,9 +126,12 @@ progress. A partial session refuses an ordinary turn until reset.
 ## Side effects
 
 The protocol may create/reset/close sessions, enqueue/cancel generation,
-commit runtime state through the worker, publish events, or initiate bounded
-daemon shutdown. Parsing and status operations do not open artifacts or execute
-model work locally in the client.
+commit runtime state through the worker, save one immutable model-state
+checkpoint, restore it at the exact current semantic-session position, publish
+events, or initiate bounded daemon shutdown. State checkpoint messages carry
+the file digest, byte extent, scope count, committed position, and bound model,
+binding, and artifact identities. Parsing and status operations do not open
+artifacts or execute model work locally in the client.
 
 ## Failure and cleanup
 
@@ -154,6 +157,9 @@ format.
 
 ## Non-claims
 
-Protocol v7 is not a public remote API, authentication protocol, TLS transport,
+Protocol v8 is not a public remote API, authentication protocol, TLS transport,
 stable cross-version SDK promise, distributed serving protocol, or model
-quality contract.
+quality contract. The current checkpoint operation preserves committed model
+state only. It does not yet persist the server transcript, token ledger,
+detokenizer, or RNG authority and therefore cannot claim cross-restart session
+continuation.

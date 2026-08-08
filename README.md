@@ -131,7 +131,7 @@ three-terminal observation, sessions, shutdown, configuration, and recovery.
 | `yvexd` | One long-lived model, worker, queue, session/KV registry, private protocol, loopback OpenAI adapter, and telemetry authority |
 | `libyvex` | Reusable compilation, artifact, runtime, graph, backend, tokenizer, and generation implementation |
 
-Runtime-facing `yvex` operations always cross private local protocol v7. The
+Runtime-facing `yvex` operations always cross private local protocol v8. The
 finite offline lane may link engine owners but never hosts a persistent model.
 One compiled operation registry drives command paths, syntax, help, JSON
 discovery, completion, and slash schemas without becoming a domain-policy

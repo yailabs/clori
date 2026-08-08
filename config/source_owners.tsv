@@ -27,6 +27,7 @@ include/yvex/internal/model_artifact.h	model.artifacts	model.artifacts.internal	
 include/yvex/internal/model_target.h	model.target	model.target.internal	generic	private	internal-abi	model,source,cli	interface	none
 include/yvex/internal/quant_numeric.h	gguf	gguf.quant_numeric	generic	private	internal-abi	artifact,model,quant,backend	interface	none
 include/yvex/internal/runtime.h	runtime	runtime.internal	generic	private	internal-abi	runtime,graph,cli	interface	none
+include/yvex/internal/runtime_state_store.h	runtime	runtime.state_store	generic	private	file-serialization	runtime,server,tests	interface	none
 src/runtime/private.h	runtime	runtime.private	generic	private	internal-abi	runtime	interface	none
 include/yvex/internal/source.h	source	source.internal	generic	private	internal-abi	model,compilation	interface	none
 include/yvex/internal/source_payload.h	source	source.payload	generic	private	internal-abi	model,compilation,cli	interface	none
@@ -179,6 +180,7 @@ src/runtime/transformer.c	runtime	runtime.transformer	generic	private	transactio
 src/runtime/transformer_input.c	runtime	runtime.transformer_input	generic	private	file-serialization	runtime,cli,tests	implementation	none
 src/runtime/residency.c	runtime	runtime.residency	generic	private	resource-lifecycle	artifact,graph,runtime	implementation	none
 src/runtime/state_residency.c	runtime	runtime.state_residency	generic	private	resource-lifecycle	backend,graph,runtime,tests	implementation	none
+src/runtime/state_store.c	runtime	runtime.state_store	generic	private	file-serialization	runtime,server,tests	implementation	none
 include/yvex/internal/graph_state.h	graph	graph.state	generic	private	resource-lifecycle	graph,runtime,tests	interface	none
 src/graph/state.c	graph	graph.state	generic	private	resource-lifecycle	graph,runtime,tests	implementation	none
 src/model/target/catalog.c	model.target	model.target.catalog	generic	private	reusable-algorithm	model,cli	implementation	none

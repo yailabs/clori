@@ -48,6 +48,8 @@ entry audit:
 | Generation plan ABI | v4 | v5 | exact workload-profile identity associated with phase roofline evidence | in-process plan layout and semantic identity; result and wire layouts are unchanged | rebuilt v5 readers reject plans that cannot identify their workload profile | complete rebuild; no artifact, binding, protocol, event or public API migration | plan identity mutation, mismatched-workload refusal and live CUDA generation result validation |
 | Attention-state summary | v3 | v4 | capacity-plan identity plus virtual, resident, page-table, commit and release facts | in-process internal record layout only; no persisted or wire representation | rebuilt readers require v4 and never mix old objects | complete rebuild; the page-pool owner projects counters without a second mutable truth | 512K logical reservation, bounded resident growth, reset release and stable-address tests |
 | Attention-state provider ABI | v4 | v5 | capacity-plan configuration before persistent storage admission | in-process function-table layout only; no persisted, wire or public C incompatibility | rebuilt runtime validation rejects a provider without the configuration operation | complete rebuild; target and draft configure under one serialized session mutation and partial configuration invalidates the session | provider forwarding/failure, changed-plan refusal, pre-mutation budget refusal and abort rollback |
+| Attention-state provider ABI | v5 | v6 | exact committed-state restore with lineage and layout identities | in-process function-table layout plus versioned checkpoint payload | rebuilt runtime validation rejects a provider without restore | complete rebuild; checkpoint files remain immutable and model-bound | exact restore, corruption refusal, no partial publication |
+| Local protocol | v7 | v8 | typed model-state checkpoint path, restore bound and result evidence | private Unix framing and payload | every non-v8 peer fails handshake | atomic daemon/client cutover; no compatibility decoder | request/message roundtrip, operator reachability, non-v8 refusal |
 
 The later source-authored conversation gate earned these product-boundary
 changes. Reader and writer behavior remain separate because compatibility in
@@ -386,7 +388,7 @@ acceptance identity before state or RNG publication. Workspace capacity is
 derived from vocabulary and model-authored proposal width before execution;
 undersized capacity and malformed candidates refuse before a launch. CPU and
 audit/forensic execution retain the complete-distribution oracle. This changes
-only an internal operation table and helper signature; binding v8, protocol v7,
+only an internal operation table and helper signature; binding v8, protocol v8,
 events v3, compiled profile v1, generation ABI v5 and the server-construction
 API remain unchanged by this optimization.
 
@@ -407,7 +409,7 @@ evidence-bearing profiles select through the same sampling owner over the host
 row, rather than reconstructing a second selection algorithm in speculation.
 The normal production profile refuses host-authored selection facts and records
 zero full-array host-scan bytes. This is an internal complete-rebuild ABI change
-only; binding v8, protocol v7, events v3, generation ABI v5 and the
+only; binding v8, protocol v8, events v3, generation ABI v5 and the
 server-construction API remain unchanged by this optimization.
 
 Source-selected target features now collapse their mHC residual streams on
@@ -483,7 +485,7 @@ non-interactive `--reasoning` policy. Only the exact model-emitted
 fails closed, arbitrary prose is never reclassified, and no hidden model state
 is exposed.
 
-Protocol v7 carries distinct reasoning, final, tool and error channels plus
+Protocol v8 carries distinct reasoning, final, tool and error channels plus
 reasoning/final token counts, rates, first-token times and total completion
 time. The REPL renders explicit reasoning incrementally and distinctly; raw
 execution writes canonical channel payload bytes without terminal decoration.

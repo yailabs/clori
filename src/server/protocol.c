@@ -30,6 +30,8 @@ enum {
     TAG_TRACE_LEVEL,
     TAG_PROVIDER_REQUEST,
     TAG_REASONING_POLICY,
+    TAG_STATE_PATH,
+    TAG_MAXIMUM_STATE_FILE_BYTES,
     TAG_MESSAGE_KIND = 32,
     TAG_STATUS,
     TAG_REASON,
@@ -190,7 +192,15 @@ enum {
     TAG_TOTAL_COMPLETION_SECONDS,
     TAG_REASONING_RATE,
     TAG_FINAL_RATE,
-    TAG_TOTAL_COMPLETION_RATE
+    TAG_TOTAL_COMPLETION_RATE,
+    TAG_CHECKPOINT_SCHEMA,
+    TAG_CHECKPOINT_FILE_BYTES,
+    TAG_CHECKPOINT_SCOPE_COUNT,
+    TAG_CHECKPOINT_POSITION,
+    TAG_CHECKPOINT_RUNTIME_MODEL_ID,
+    TAG_CHECKPOINT_RUNTIME_BINDING_ID,
+    TAG_CHECKPOINT_ARTIFACT_ID,
+    TAG_CHECKPOINT_FILE_DIGEST
 };
 typedef struct {
     unsigned char *data;
@@ -360,6 +370,21 @@ static int reader_text(const unsigned char *bytes, unsigned long long count,
     return 1;
 }
 
+static int request_state_fields_valid(const yvex_client_request *request)
+{
+    int state_operation =
+        request->operation == YVEX_CLIENT_OP_SESSION_STATE_SAVE ||
+        request->operation == YVEX_CLIENT_OP_SESSION_STATE_RESTORE;
+    if (!memchr(request->state_path, '\0', sizeof(request->state_path)))
+        return 0;
+    if (!state_operation)
+        return !request->state_path[0] && !request->maximum_state_file_bytes;
+    if (!request->state_path[0]) return 0;
+    return request->operation == YVEX_CLIENT_OP_SESSION_STATE_SAVE
+               ? !request->maximum_state_file_bytes
+               : request->maximum_state_file_bytes != 0u;
+}
+
 int yvex_protocol_request_encode(const yvex_client_request *request,
                                  unsigned char *output,
                                  unsigned long long capacity,
@@ -379,6 +404,7 @@ int yvex_protocol_request_encode(const yvex_client_request *request,
         (int)request->trace_level < (int)YVEX_SERVER_TRACE_SUMMARY ||
         request->trace_level > YVEX_SERVER_TRACE_FULL ||
         request->reasoning_policy > YVEX_REASONING_MAXIMUM ||
+        !request_state_fields_valid(request) ||
         (request->stochastic != 0 && request->stochastic != 1) ||
         (request->seed_present != 0 && request->seed_present != 1) ||
         (request->trace_content != 0 && request->trace_content != 1) ||
@@ -423,6 +449,9 @@ int yvex_protocol_request_encode(const yvex_client_request *request,
         !writer_u64(&writer, TAG_TRACE_LEVEL, request->trace_level) ||
         !writer_u64(&writer, TAG_REASONING_POLICY,
                     request->reasoning_policy) ||
+        !writer_text(&writer, TAG_STATE_PATH, request->state_path) ||
+        !writer_u64(&writer, TAG_MAXIMUM_STATE_FILE_BYTES,
+                    request->maximum_state_file_bytes) ||
         !writer_field(&writer, TAG_PROVIDER_REQUEST, provider_bytes,
                       provider_count)) {
         free(provider_bytes);
@@ -514,10 +543,19 @@ int yvex_protocol_request_decode(const unsigned char *input,
             if (valid)
                 candidate.reasoning_policy = (yvex_reasoning_policy)value;
             break;
+        case TAG_STATE_PATH:
+            valid = reader_text(bytes, count, candidate.state_path,
+                                sizeof(candidate.state_path));
+            break;
+        case TAG_MAXIMUM_STATE_FILE_BYTES:
+            valid = reader_u64(bytes, count,
+                               &candidate.maximum_state_file_bytes);
+            break;
         default: valid = 0; break;
         }
     }
     if (next < 0 || !valid || !have_operation ||
+        !request_state_fields_valid(&candidate) ||
         (candidate.prompt_bytes && candidate.provider_request)) {
         free(prompt);
         yvex_provider_request_close(&provider);
@@ -589,6 +627,25 @@ static int reader_metrics(const unsigned char *bytes, unsigned long long count,
 static int optional_identity_valid(const char value[YVEX_SHA256_HEX_CAP])
 {
     return !value[0] || yvex_sha256_hex_valid(value);
+}
+
+static int checkpoint_fields_valid(
+    const yvex_client_state_checkpoint *checkpoint)
+{
+    if (!checkpoint->schema_version)
+        return !checkpoint->file_bytes && !checkpoint->scope_count &&
+               !checkpoint->committed_sequence_length &&
+               !checkpoint->runtime_model_identity[0] &&
+               !checkpoint->runtime_binding_identity[0] &&
+               !checkpoint->artifact_identity[0] &&
+               !checkpoint->file_digest[0];
+    return checkpoint->schema_version == YVEX_CLIENT_STATE_CHECKPOINT_SCHEMA_V1 &&
+           checkpoint->file_bytes &&
+           checkpoint->scope_count &&
+           yvex_sha256_hex_valid(checkpoint->runtime_model_identity) &&
+           yvex_sha256_hex_valid(checkpoint->runtime_binding_identity) &&
+           yvex_sha256_hex_valid(checkpoint->artifact_identity) &&
+           yvex_sha256_hex_valid(checkpoint->file_digest);
 }
 
 static int partial_turn_fields_valid(const yvex_client_partial_turn *partial)
@@ -710,6 +767,7 @@ static int message_fields_valid(const yvex_client_message *message)
                       YVEX_REASONING_DISABLED,
                       YVEX_REASONING_MAXIMUM) &&
            partial_turn_fields_valid(&message->partial_turn) &&
+           checkpoint_fields_valid(&message->state_checkpoint) &&
            isfinite(message->queue_seconds) &&
            isfinite(message->prefill_seconds) &&
            isfinite(message->first_token_seconds) &&
@@ -924,6 +982,22 @@ static int protocol_message_core_write(wire_writer *writer,
                     message->session_identity) &&
         writer_text(writer, TAG_TURN_IDENTITY, message->turn_identity) &&
         writer_text(writer, TAG_STATE_DIGEST, message->state_digest) &&
+        MESSAGE_U64(TAG_CHECKPOINT_SCHEMA,
+                    message->state_checkpoint.schema_version) &&
+        MESSAGE_U64(TAG_CHECKPOINT_FILE_BYTES,
+                    message->state_checkpoint.file_bytes) &&
+        MESSAGE_U64(TAG_CHECKPOINT_SCOPE_COUNT,
+                    message->state_checkpoint.scope_count) &&
+        MESSAGE_U64(TAG_CHECKPOINT_POSITION,
+                    message->state_checkpoint.committed_sequence_length) &&
+        writer_text(writer, TAG_CHECKPOINT_RUNTIME_MODEL_ID,
+                    message->state_checkpoint.runtime_model_identity) &&
+        writer_text(writer, TAG_CHECKPOINT_RUNTIME_BINDING_ID,
+                    message->state_checkpoint.runtime_binding_identity) &&
+        writer_text(writer, TAG_CHECKPOINT_ARTIFACT_ID,
+                    message->state_checkpoint.artifact_identity) &&
+        writer_text(writer, TAG_CHECKPOINT_FILE_DIGEST,
+                    message->state_checkpoint.file_digest) &&
         writer_text(writer, TAG_GENERATED_TOKEN_IDENTITY,
                     message->generated_token_identity) &&
         writer_text(writer, TAG_GENERATED_TEXT_DIGEST,
@@ -1296,6 +1370,41 @@ static int message_base_field(yvex_client_message *candidate, unsigned int tag,
     case TAG_STATE_DIGEST:
         valid = reader_text(bytes, count, candidate->state_digest,
                             sizeof(candidate->state_digest));
+        break;
+    case TAG_CHECKPOINT_SCHEMA:
+        valid = reader_u64(bytes, count, &value) && value <= UINT_MAX;
+        candidate->state_checkpoint.schema_version = (unsigned int)value;
+        break;
+    case TAG_CHECKPOINT_FILE_BYTES:
+        valid = BASE_U64(candidate->state_checkpoint.file_bytes);
+        break;
+    case TAG_CHECKPOINT_SCOPE_COUNT:
+        valid = BASE_U64(candidate->state_checkpoint.scope_count);
+        break;
+    case TAG_CHECKPOINT_POSITION:
+        valid = BASE_U64(
+            candidate->state_checkpoint.committed_sequence_length);
+        break;
+    case TAG_CHECKPOINT_RUNTIME_MODEL_ID:
+        valid = reader_text(
+            bytes, count, candidate->state_checkpoint.runtime_model_identity,
+            sizeof(candidate->state_checkpoint.runtime_model_identity));
+        break;
+    case TAG_CHECKPOINT_RUNTIME_BINDING_ID:
+        valid = reader_text(
+            bytes, count,
+            candidate->state_checkpoint.runtime_binding_identity,
+            sizeof(candidate->state_checkpoint.runtime_binding_identity));
+        break;
+    case TAG_CHECKPOINT_ARTIFACT_ID:
+        valid = reader_text(
+            bytes, count, candidate->state_checkpoint.artifact_identity,
+            sizeof(candidate->state_checkpoint.artifact_identity));
+        break;
+    case TAG_CHECKPOINT_FILE_DIGEST:
+        valid = reader_text(
+            bytes, count, candidate->state_checkpoint.file_digest,
+            sizeof(candidate->state_checkpoint.file_digest));
         break;
     case TAG_GENERATED_TOKEN_IDENTITY:
         valid = reader_text(bytes, count, candidate->generated_token_identity,

@@ -1,5 +1,5 @@
 /*
- * Provide deterministic status, session, text, JSON, and tool-call protocol-v7 facts. Never
+ * Provide deterministic status, session, text, JSON, and tool-call protocol-v8 facts. Never
  * enters production objects.
  */
 
@@ -56,7 +56,7 @@ static int send_ack(int fd, const yvex_client_request *request,
 {
     yvex_client_message message;
     message_base(&message, YVEX_CLIENT_MESSAGE_ACK, request);
-    strcpy(message.reason, "protocol-v7");
+    strcpy(message.reason, "protocol-v8");
     return yvex_server_protocol_send(fd, &message, err);
 }
 
@@ -679,8 +679,15 @@ int main(int argc, char **argv)
         int client = accept(listener, NULL, NULL);
         if (client < 0 && errno == EINTR) continue;
         if (client < 0) { rc = 1; break; }
-        if (serve_connection(client, &err) != YVEX_OK && !stopped)
-            rc = 1;
+        {
+            int connection_status = serve_connection(client, &err);
+            if (connection_status != YVEX_OK && !stopped) {
+                fprintf(stderr, "connection.error status=%d where=%s reason=%s\n",
+                        connection_status, yvex_error_where(&err),
+                        yvex_error_message(&err));
+                rc = 1;
+            }
+        }
         close(client);
         if (rc) break;
     }

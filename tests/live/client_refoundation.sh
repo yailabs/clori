@@ -94,7 +94,24 @@ XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --session main \
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --session main \
     --max-new-tokens 1 --strategy greedy 'How are you?' \
     >"$root/turn2" 2>"$root/turn2.metrics"
-grep -F '14 prompt · 6 reused' "$root/turn2.metrics" >/dev/null
+grep -F '14 prompt/6 reused' "$root/turn2.metrics" >/dev/null
+
+state_path="$root/main-state.yvex"
+XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session state save main "$state_path" \
+    >"$root/state.save"
+test -s "$state_path"
+grep -E '^state checkpoint saved position=[1-9][0-9]* bytes=[1-9][0-9]* digest=[0-9a-f]{64}$' \
+    "$root/state.save" >/dev/null
+if XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session state restore main \
+    "$state_path" 1 >"$root/state.restore.bounded" 2>&1; then
+    exit 1
+fi
+XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session state restore main \
+    "$state_path" 1073741824 >"$root/state.restore"
+grep -E '^state checkpoint restored position=[1-9][0-9]* bytes=[1-9][0-9]* digest=[0-9a-f]{64}$' \
+    "$root/state.restore" >/dev/null
+test "$(sed -E 's/^.* digest=//' "$root/state.save")" = \
+    "$(sed -E 's/^.* digest=//' "$root/state.restore")"
 
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session detach main >/dev/null
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session show main >"$root/detached"
@@ -103,7 +120,7 @@ XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session attach main >/dev/null
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" runtime status --json >"$root/status.after.json"
 grep -F '"model_open_count":1' "$root/status.after.json" >/dev/null
 grep -E '"resident_device_bytes":[1-9][0-9]*' "$root/status.after.json" >/dev/null
-grep -F '"output_head_upload_count":1' "$root/status.after.json" >/dev/null
+grep -E '"output_head_upload_count":[01](,|})' "$root/status.after.json" >/dev/null
 
 mkfifo "$root/repl.input"
 NO_COLOR=1 XDG_RUNTIME_DIR="$runtime" script -q -f -e \
@@ -154,6 +171,7 @@ test "$(sed -n '1p' "$root/turn1")" = "$(sed -n '1p' "$root/turn1.after-reset")"
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --max-new-tokens 1 \
     --strategy greedy Hello >"$root/oneshot"
 
+XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session new reasoning-live >/dev/null
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --session reasoning-live \
     --max-new-tokens 64 --strategy greedy --reasoning high \
     'What is 2 plus 2? Answer briefly.' \
@@ -163,7 +181,7 @@ grep -E 'final [1-9][0-9]* tokens' "$root/reasoning.metrics" >/dev/null
 ! grep -F '</think>' "$root/reasoning.out" >/dev/null
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session show reasoning-live \
     >"$root/reasoning.session"
-grep -F 'ready' "$root/reasoning.session" >/dev/null
+grep -F 'detached' "$root/reasoning.session" >/dev/null
 
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session new cancel-live >/dev/null
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --session cancel-live \

@@ -212,6 +212,10 @@ change. Git history preserves implementation chronology.
 - Advanced the private local protocol to version 7 for typed reasoning/final/
   tool/error channels and separate reasoning/final timing and token metrics;
   every non-v7 peer is refused.
+- Advanced the private local protocol to version 8 for immutable committed
+  model-state checkpoint save/restore with an explicit restore byte bound,
+  exact-position admission, and typed identity/digest evidence; every non-v8
+  peer is refused.
 - Made hosted startup registry-first: `model list` reports complete startup
   profiles, `model select NAME` resolves one profile without path flags, and
   `runtime start` opens the selected model without environment variables.

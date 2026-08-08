@@ -168,7 +168,7 @@ retained reference binding. Hardware-profile, workload-profile, capacity-plan
 and phase-roofline schemas begin at v1 as internal contracts. The installed
 server construction entrypoints and public declaration count remain unchanged.
 The source-authored conversation boundary admits provider request/wire schema
-v2, tokenizer plan v3, tokenizer provider result v2, and local protocol v7.
+v2, tokenizer plan v3, tokenizer provider result v2, and local protocol v8.
 Runtime event schema v3, Physical Execution IR v1 and compiled profile v1
 remain unchanged. Generation plan ABI v5 adds the workload-profile identity
 required to bind phase evidence to the compiled workload; generation result
@@ -192,7 +192,7 @@ plan ABI v5 binds the ledger's workload-profile identity instead of comparing
 it with the distinct per-request profiling identity. Result validation checks
 that like-for-like identity and the availability masks when a ledger is
 present; old internal results with no ledger retain their zero-initialized
-meaning. Protocol v7 and event schema v3 do not change.
+meaning. Protocol v8 and event schema v3 do not change.
 
 CUDA producers currently expose exact active-weight and launch facts for
 target-only prefill and decode together with their exact H2D/D2H/D2D movement
@@ -503,7 +503,7 @@ Domain APIs retain semantic validation and lifecycle. Runtime-client adapter
 objects remain protocol-only, while finite offline adapters may consume the
 non-installed engine interfaces already documented here.
 
-## Application Provider And Local Protocol v7
+## Application Provider And Local Protocol v8
 
 `<yvex/provider.h>` is the installed transport-neutral application request and
 result ABI. Provider schema v2 binds separate assistant reasoning content,
@@ -514,13 +514,13 @@ reasoning, at most one assistant tool call, and its original field semantics.
 Clone and wire-decode publish only a complete owned request graph. The provider
 owner neither parses HTTP nor renders model-family prompt syntax.
 
-`<yvex/server.h>` protocol v7 carries the sealed provider request through the
+`<yvex/server.h>` protocol v8 carries the sealed provider request through the
 private Unix socket. Provider output messages distinguish assistant text,
 explicit reasoning, function calls, usage, terminal completion, and failure.
 Typed events bind the provider adapter, provider-request identity, and external
 correlation ID while excluding prompt and output content.
 
-Protocol v7 carries selected generation mode, speculative lifecycle events,
+Protocol v8 carries selected generation mode, speculative lifecycle events,
 accepted-prefix facts, exact proposal/verification/commit accounting, turn
 timing and cancellation classes, an exact partial-turn schema, source-authored
 reasoning policy, typed reasoning/final/tool/error channels, and separate
@@ -529,7 +529,9 @@ retains the typed `console.status` and the removal of former
 model/artifact facades introduced by the preceding protocol. Facts that are
 not authoritative, including selected client configuration, active
 micro-phase, or KV byte use when unavailable, have explicit availability bits
-and are never fabricated. Every non-v7 frame refuses during the handshake;
+and are never fabricated. Version 8 additionally carries immutable committed
+model-state checkpoint save/restore operations with an explicit file bound and
+typed digest/identity evidence. Every non-v8 frame refuses during the handshake;
 there is no private pre-v0.1 compatibility decoder.
 
 Protocol error messages carry `yvex_client_failure_class`, so adapters map

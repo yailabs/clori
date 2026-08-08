@@ -48,6 +48,18 @@ typedef struct {
     unsigned long long resident_bytes, page_count, resident_page_count;
     unsigned long long page_commit_count, page_release_count;
 } yvex_graph_state_page_summary;
+typedef struct {
+    const float *values;
+    const unsigned long long *positions;
+    unsigned long long count, width;
+} yvex_graph_state_history_span;
+int yvex_graph_state_history_project(
+    const yvex_attention_history_view *view,
+    const yvex_attention_state_component_recipe *component,
+    yvex_graph_state_history_span *out);
+const yvex_attention_rolling_state_view *yvex_graph_state_rolling_view(
+    const yvex_attention_history_view *view,
+    yvex_attention_state_binding binding);
 int yvex_graph_state_page_pool_open(
     yvex_graph_state_page_pool **out, unsigned long long maximum_bytes,
     yvex_error *err);
@@ -102,6 +114,14 @@ int yvex_graph_state_pointer_table_reserve(
     yvex_graph_state_page_pool *pool, void ***table,
     unsigned long long *capacity, unsigned long long *bytes,
     unsigned long long limit, yvex_error *err);
+int yvex_graph_state_initial_identity(
+    const yvex_attention_history_view *view,
+    const yvex_attention_state_recipe *recipe, const char *plan_identity,
+    char output[YVEX_SHA256_HEX_CAP]);
+int yvex_graph_state_advance_identity(
+    const char *prior_identity, const yvex_attention_state_recipe *recipe,
+    const char *plan_identity, const yvex_attention_publication *publication,
+    char output[YVEX_SHA256_HEX_CAP]);
 struct yvex_graph {
     yvex_graph_status status;
     char *architecture, *model_name;

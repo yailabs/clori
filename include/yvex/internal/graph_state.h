@@ -184,7 +184,19 @@ typedef enum {
     YVEX_ATTENTION_STATE_VIEW_CANDIDATE
 } yvex_attention_state_view_kind;
 
+#define YVEX_ATTENTION_STATE_CHECKPOINT_SCHEMA_V1 1u
+typedef struct {
+    unsigned int schema_version;
+    unsigned long long layer_count, committed_sequence_length;
+    const yvex_attention_history_view *layers;
+    const char (*layer_identities)[YVEX_SHA256_HEX_CAP];
+    char state_layout_identity[YVEX_SHA256_HEX_CAP];
+    char state_content_identity[YVEX_SHA256_HEX_CAP];
+    char capacity_plan_identity[YVEX_SHA256_HEX_CAP];
+} yvex_attention_state_checkpoint;
+
 #define YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V5 5u
+#define YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V6 6u
 typedef struct yvex_attention_state_provider {
     unsigned int schema_version;
     void *context;
@@ -226,6 +238,9 @@ typedef struct yvex_attention_state_provider {
     int (*commit)(void *context, yvex_attention_failure *failure, yvex_error *err);
     int (*abort)(void *context, yvex_attention_failure *failure, yvex_error *err);
     int (*reset)(void *context, yvex_attention_failure *failure, yvex_error *err);
+    int (*restore)(void *context,
+                   const yvex_attention_state_checkpoint *checkpoint,
+                   yvex_attention_failure *failure, yvex_error *err);
     int (*invalidate)(void *context, yvex_error *err);
     int (*release)(void **context, yvex_error *err);
 } yvex_attention_state_provider;

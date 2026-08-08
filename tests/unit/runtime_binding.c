@@ -14,6 +14,7 @@
 #include <yvex/internal/graph.h>
 #include <yvex/internal/graph_state.h>
 #include <yvex/internal/runtime.h>
+#include <yvex/internal/runtime_state_store.h>
 
 #include <dirent.h>
 #include <errno.h>
@@ -446,6 +447,18 @@ static int injected_state_invalidate(void *context, yvex_error *err)
     return YVEX_OK;
 }
 
+static int injected_state_restore(
+    void *context, const yvex_attention_state_checkpoint *checkpoint,
+    yvex_attention_failure *failure, yvex_error *err)
+{
+    (void)context;
+    (void)checkpoint;
+    (void)failure;
+    yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "test.state.restore",
+                   "injected provider does not persist state");
+    return YVEX_ERR_UNSUPPORTED;
+}
+
 static int injected_state_release(void **context, yvex_error *err)
 {
     injected_state *state = context ? (injected_state *)*context : NULL;
@@ -486,7 +499,7 @@ static int injected_state_factory_open(
     control->active = state;
     control->opens++;
     *out = (yvex_attention_state_provider){
-        .schema_version = YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V5,
+        .schema_version = YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V6,
         .context = state,
         .configure_pages = injected_state_configure_pages,
         .prepare = injected_state_prepare,
@@ -502,6 +515,7 @@ static int injected_state_factory_open(
         .commit = injected_state_commit,
         .abort = injected_state_abort,
         .reset = injected_state_reset,
+        .restore = injected_state_restore,
         .invalidate = injected_state_invalidate,
         .release = injected_state_release};
     if (control->malformed_success) {
@@ -2853,7 +2867,8 @@ static int test_runtime_cleanup_lease_retry(
 }
 
 static int test_runtime_probe_consumer_boundary(
-    const binding_fixture *fixture, const yvex_runtime_binding_prepare_result *prepared)
+    const binding_fixture *fixture, const yvex_runtime_binding_prepare_result *prepared,
+    const char *root)
 {
     yvex_runtime_model *model = NULL;
     yvex_runtime_execution_session *session = NULL;
@@ -2867,9 +2882,17 @@ static int test_runtime_probe_consumer_boundary(
     yvex_attention_failure attention_failure;
     yvex_graph_attention_state_summary state_before, state_after;
     yvex_runtime_state_residency_summary state_residency;
+    yvex_runtime_state_store_summary saved_state, restored_state;
     yvex_runtime_session_summary session_summary;
     const yvex_attention_history_view *stable_view;
+    const yvex_attention_layer_plan *state_layer;
+    const yvex_attention_history_view *candidate_history = NULL;
+    yvex_attention_publication publication = {0};
+    float state_values[4] = {0.25f, -0.25f, 0.5f, -0.5f};
+    unsigned int state_token = 7u;
+    char state_delta[YVEX_SHA256_HEX_CAP];
     yvex_error err;
+    char state_path[YVEX_PATH_CAP], corrupt_path[YVEX_PATH_CAP];
     int rc;
 
     YVEX_TEST_ASSERT(runtime_model_open_fixture(
@@ -2968,10 +2991,101 @@ static int test_runtime_probe_consumer_boundary(
     YVEX_TEST_ASSERT(rc == YVEX_ERR_INVALID_ARG && !result.layers_executed &&
                          strcmp(yvex_error_where(&err), "runtime.attention.execute") == 0,
                      "session-scoped execution refuses a caller-injected workspace");
+    state_layer = yvex_attention_plan_layer_at(model_view->attention, 0ull);
+    YVEX_TEST_ASSERT(state_layer, "state checkpoint fixture layer is available");
+    publication.owned = publication.complete = publication.prefix_addressable = 1;
+    (void)snprintf(publication.execution_identity,
+                   sizeof(publication.execution_identity), "%064x", 91);
+    publication.layer_index = 0ull;
+    publication.attention_class = state_layer->attention_class;
+    publication.token_position = 0ull;
+    publication.token_count = 1ull;
+    publication.token_ids = &state_token;
+    publication.kv_width = state_layer->head_dimension;
+    publication.raw_kv = state_values;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_session_begin(session, &model_failure, &err) == YVEX_OK,
+        "state checkpoint fixture owns one session transaction");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_session_view_get(session)->attention_state_provider->begin(
+            yvex_runtime_session_view_get(session)->attention_state_provider->context,
+            0ull, state_layer, NULL, 0ull, 1ull, NULL,
+            &candidate_history, &attention_failure, &err) == YVEX_OK &&
+            candidate_history,
+        "state checkpoint fixture begins one candidate prefix");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_session_view_get(session)->attention_state_provider->stage(
+            yvex_runtime_session_view_get(session)->attention_state_provider->context,
+            &publication, NULL, state_delta, &attention_failure, &err) == YVEX_OK,
+        "state checkpoint fixture stages one candidate prefix");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_session_view_get(session)->attention_state_provider->commit(
+            yvex_runtime_session_view_get(session)->attention_state_provider->context,
+            &attention_failure, &err) == YVEX_OK &&
+            yvex_runtime_session_finish(session, YVEX_ERR_IO, &err) == YVEX_ERR_IO &&
+            yvex_runtime_session_view_get(session)->attention_state_provider->summary(
+                yvex_runtime_session_view_get(session)->attention_state_provider->context,
+                &state_before, &err) == YVEX_OK &&
+            state_before.committed_sequence_length == 1ull,
+        "successful state transaction commits one prefix before persistence");
+    YVEX_TEST_ASSERT(
+        snprintf(state_path, sizeof(state_path), "%s/state.yvex", root) <
+                (int)sizeof(state_path) &&
+            snprintf(corrupt_path, sizeof(corrupt_path), "%s/state-corrupt.yvex", root) <
+                (int)sizeof(corrupt_path),
+        "state checkpoint fixture paths are bounded");
+    rc = yvex_runtime_session_state_save(session, state_path, &saved_state, &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_OK &&
+            saved_state.schema_version == YVEX_RUNTIME_STATE_STORE_SCHEMA_V1 &&
+            saved_state.scope_count == 1ull &&
+            saved_state.committed_sequence_length == 1ull &&
+            yvex_sha256_hex_valid(saved_state.file_digest) &&
+            yvex_runtime_session_state_save(session, state_path, &restored_state,
+                                            &err) == YVEX_ERR_STATE,
+        "state checkpoint publishes once with exact model-bound evidence");
+    YVEX_TEST_ASSERT(
+            yvex_runtime_session_reset_persistent_state(
+            session, &model_failure, &err) == YVEX_OK &&
+            yvex_runtime_session_state_restore(
+                session, state_path, saved_state.file_bytes,
+                saved_state.committed_sequence_length, &restored_state,
+                &err) == YVEX_OK &&
+            restored_state.committed_sequence_length == 1ull &&
+            strcmp(restored_state.file_digest, saved_state.file_digest) == 0 &&
+            yvex_runtime_session_view_get(session)->attention_state_provider->summary(
+                yvex_runtime_session_view_get(session)->attention_state_provider->context,
+                &state_after, &err) == YVEX_OK &&
+            state_after.committed_sequence_length == 1ull &&
+            strcmp(state_after.state_content_identity,
+                   state_before.state_content_identity) == 0,
+        "state checkpoint restores the exact committed prefix after reset");
+    YVEX_TEST_ASSERT(copy_regular_file(state_path, corrupt_path),
+                     "state checkpoint corruption fixture copies");
+    {
+        int descriptor = open(corrupt_path, O_RDWR | O_CLOEXEC);
+        unsigned char byte = 0xffu;
+        YVEX_TEST_ASSERT(
+            descriptor >= 0 && pwrite(descriptor, &byte, 1u, 256) == 1 &&
+                close(descriptor) == 0 &&
+                yvex_runtime_session_state_restore(
+                    session, corrupt_path, saved_state.file_bytes,
+                    saved_state.committed_sequence_length, &restored_state,
+                    &err) == YVEX_ERR_FORMAT &&
+                yvex_runtime_session_view_get(session)->attention_state_provider->summary(
+                    yvex_runtime_session_view_get(session)->attention_state_provider->context,
+                    &state_after, &err) == YVEX_OK &&
+                state_after.committed_sequence_length == 1ull &&
+                strcmp(state_after.state_content_identity,
+                       state_before.state_content_identity) == 0,
+            "corrupt checkpoint refuses before mutating committed state");
+    }
     yvex_graph_attention_capacity_plan_close(&capacity);
     YVEX_TEST_ASSERT(yvex_runtime_session_close(&session, &err) == YVEX_OK && !session,
                      "probe consumer session closes without staged state");
     yvex_runtime_model_close(&model);
+    YVEX_TEST_ASSERT(unlink(state_path) == 0 && unlink(corrupt_path) == 0,
+                     "state checkpoint fixtures clean up");
     return 0;
 }
 
@@ -3538,7 +3652,7 @@ int yvex_test_runtime_binding(void)
     if (test_runtime_state_factory_candidate_cleanup(&fixture, &prepared) != 0) goto done;
     if (test_runtime_injected_state_provider(&fixture, &prepared) != 0) goto done;
     if (test_runtime_cleanup_lease_retry(&fixture, &prepared) != 0) goto done;
-    if (test_runtime_probe_consumer_boundary(&fixture, &prepared) != 0) goto done;
+    if (test_runtime_probe_consumer_boundary(&fixture, &prepared, root) != 0) goto done;
     if (test_runtime_paged_state_cuda_pack(&fixture, &prepared) != 0) goto done;
     if (test_runtime_cuda_session_cleanup_retry(&fixture, &prepared) != 0) goto done;
     if (test_runtime_cuda_workspace_transaction(&fixture, &prepared) != 0) goto done;

@@ -208,7 +208,7 @@ start` in the first and run `runtime status`, then `chat`, in the second.
 Chat opens one concise attachment view and the stable prompt:
 
 ```text
-YVEX 0.1.0 · protocol 7
+YVEX 0.1.0 · protocol 8
 
   model      deepseek4-v4-flash-dspark
   variant    abcdef012345
@@ -334,14 +334,21 @@ state, and persistent KV while sharing immutable model resources:
 ./yvex session attach main
 ./yvex session detach main
 ./yvex session reset main
+./yvex session state save main /var/lib/yvex/main-state.yvex
+./yvex session state restore main /var/lib/yvex/main-state.yvex 1073741824
 ./yvex session close main
 ```
 
 Client disconnect and detach do not close the model. A partial or cancelled
 turn can retain model-committed state and is never silently marked complete.
-Protocol v7 reports the exact committed position, token/text counts, state
+Protocol v8 reports the exact committed position, token/text counts, state
 generations, failure class, and reset requirement. Reset clears the session KV,
 tokens, transcript, decoder, and RNG policy without closing the host.
+
+State checkpoints are immutable and restore only when their model, binding,
+artifact, scope and committed position match the live session. The restore byte
+bound is mandatory. This operation currently protects model state inside one
+live semantic session; it is not yet a cross-restart conversation restore.
 
 ## Status, metrics, and trace
 
