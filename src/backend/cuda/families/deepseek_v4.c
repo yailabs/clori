@@ -79,7 +79,7 @@ typedef struct {
     unsigned long long query_width, candidate_capacity, topk_capacity, low_count;
     unsigned long long local_extent, compressed_extent, history_index_extent;
     unsigned long long local_storage_extent, compressed_storage_extent, indexer_storage_extent;
-    unsigned long long local_capacity, compressed_capacity, indexer_capacity;
+    unsigned long long local_capacity, publication_local_capacity, compressed_capacity, indexer_capacity;
     unsigned long long index_query_extent, emission_position, topk_count, staged_valid_count;
     unsigned long long h2d_bytes, d2h_bytes, d2d_bytes, device_execution_elapsed_ns;
     unsigned long long stream_synchronizations, device_synchronizations;
@@ -121,14 +121,12 @@ static int attn_stage_layout(attn_run *run, unsigned char *base, size_t *total);
 static int attn_extent(const attn_run *run, attn_extent_kind kind, unsigned long long *out);
 static const void *attn_allocation_source(const attn_run *run, attn_source_kind source);
 static int attn_graph_mode(const attn_run *run) {
-    return run->configuration &&
-           run->configuration->mode != YVEX_BACKEND_CUDA_ATTENTION_EAGER;
+    return run->configuration && run->configuration->mode != YVEX_BACKEND_CUDA_ATTENTION_EAGER;
 }
 static int attn_run_fail(attn_run *run, yvex_backend_attention_failure_code code,
                                    const char *stage, unsigned long long expected, unsigned long long actual,
                                    yvex_status status, const char *message) {
-    return run->ops->fail(
-        run->failure, code, stage, expected, actual, run->err, status, message);
+    return run->ops->fail(run->failure, code, stage, expected, actual, run->err, status, message);
 }
 static int attn_account_d2d(attn_run *run, size_t bytes, const char *stage) {
     if (yvex_core_u64_add(run->d2d_bytes, bytes, &run->d2d_bytes)) return YVEX_OK;
@@ -837,9 +835,11 @@ static int attn_prepare(attn_run *run) {
     run->initial_compressed_count = run->job->compressed_count;
     run->initial_indexer_count = run->job->indexer_count;
     run->local_capacity = attn_graph_mode(run)
-                              ? run->configuration->local_capacity
-                              : run->job->sliding_window -
-                                    (run->job->candidate_block_visible ? 0ull : 1ull);
+                              ? yvex_cuda_attention_local_capacity(run->configuration, run->job, 0)
+                              : run->job->sliding_window;
+    run->publication_local_capacity = attn_graph_mode(run) ?
+        yvex_cuda_attention_local_capacity(run->configuration, run->job, 1) :
+        run->job->sliding_window - (run->job->candidate_block_visible ? 0ull : 1ull);
     run->compressed_capacity = run->job->attention_class == YVEX_BACKEND_ATTENTION_SWA
         ? 0ull : (attn_graph_mode(run)
                       ? run->configuration->compressed_capacity
@@ -1737,7 +1737,7 @@ static int attn_synchronize(attn_run *run) {
             run->phase_indexer_positions, run->phase_main_kv, run->phase_main_score,
             run->phase_index_kv, run->phase_index_score, run->initial_local_count,
             run->initial_compressed_count, run->initial_indexer_count,
-            run->phase_compressed_count, run->phase_indexer_count, run->local_capacity,
+            run->phase_compressed_count, run->phase_indexer_count, run->publication_local_capacity,
             run->rolling[ROLL_MAIN].extent, run->rolling[ROLL_INDEX].extent};
         rc = run->ops->state_stage(
             run->backend, run->job, &sources, &state_bytes, &state_staged, run->err);

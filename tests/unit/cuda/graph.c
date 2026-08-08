@@ -1379,10 +1379,29 @@ static int test_attention_graph_configuration(yvex_backend *backend)
     YVEX_TEST_ASSERT(rc == YVEX_OK && strcmp(first_key, dynamic_key) == 0,
                      "non-compression pieces ignore emission topology");
     job.local_count = 5ull;
+    job.sliding_window = 5ull;
+    job.candidate_block_visible = 1;
+    YVEX_TEST_ASSERT(yvex_cuda_attention_local_capacity(
+                         &state->attention_configurations[state->attention_active_configuration],
+                         &job, 0) == 5ull && yvex_cuda_attention_local_capacity(
+                         &state->attention_configurations[state->attention_active_configuration],
+                         &job, 1) == 4ull,
+                     "execution storage and published target state retain distinct capacities");
+    rc = yvex_cuda_attention_graph_key(
+        backend, &job, 0u, YVEX_CUDA_ATTENTION_STAGE_COUNT, dynamic_key, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK,
+                     "candidate-visible history admits the reserved transaction slot");
+    job.candidate_block_visible = 0;
+    rc = yvex_cuda_attention_graph_key(
+        backend, &job, 0u, YVEX_CUDA_ATTENTION_STAGE_COUNT, dynamic_key, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK,
+                     "full initial ring admits phase-local target trimming");
+    job.candidate_block_visible = 1;
+    job.local_count = 6ull;
     rc = yvex_cuda_attention_graph_key(
         backend, &job, 0u, YVEX_CUDA_ATTENTION_STAGE_COUNT, dynamic_key, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_BOUNDS,
-                     "history beyond capture capacity refuses before replay");
+                     "candidate-visible history beyond the sliding window refuses");
     memset(&job, 0, sizeof(job));
     rc = yvex_cuda_attention_graph_key(
         backend, &job, 0u, YVEX_CUDA_ATTENTION_STAGE_COUNT + 1u, full_key, &err);

@@ -650,8 +650,7 @@ static int graph_is_attention(const yvex_cuda_backend_state *state,
 }
 
 const yvex_cuda_attention_configuration *yvex_cuda_attention_configuration_active(
-    const yvex_cuda_backend_state *state, yvex_backend_attention_phase phase)
-{
+    const yvex_cuda_backend_state *state, yvex_backend_attention_phase phase) {
     const yvex_cuda_attention_configuration *configuration;
     if (!state || !state->attention_configuration_count ||
         state->attention_active_configuration >=
@@ -1456,7 +1455,7 @@ int yvex_cuda_attention_graph_key(const yvex_backend *backend,
             "phase-bound CUDA attention residency and stage interval are required");
     }
     if (configuration->mode != YVEX_BACKEND_CUDA_ATTENTION_EAGER &&
-        (job->local_count > configuration->local_capacity ||
+        (job->local_count > yvex_cuda_attention_local_capacity(configuration, job, 0) ||
          job->compressed_count > configuration->compressed_capacity ||
          job->indexer_count > configuration->indexer_capacity)) {
         return graph_reject(err, YVEX_ERR_BOUNDS, "cuda.attention.graph_key",
@@ -1488,7 +1487,7 @@ int yvex_cuda_attention_graph_key(const yvex_backend *backend,
     HASH(job->kv_width); HASH(job->sliding_window); HASH(job->compression_ratio);
     HASH(job->output_groups); HASH(job->output_group_input_width); HASH(job->output_rank);
     HASH(job->indexer_heads); HASH(job->indexer_head_dimension); HASH(job->indexer_topk);
-    HASH(configuration->local_capacity); HASH(job->local_stride);
+    HASH(yvex_cuda_attention_local_capacity(configuration, job, 0)); HASH(job->local_stride);
     HASH(configuration->compressed_capacity);
     HASH(job->compressed_stride);
     HASH(configuration->indexer_capacity); HASH(job->indexer_stride);

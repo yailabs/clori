@@ -310,17 +310,20 @@ typedef struct {
 
 const yvex_cuda_attention_configuration *yvex_cuda_attention_configuration_active(
     const yvex_cuda_backend_state *state, yvex_backend_attention_phase phase);
+static inline unsigned long long yvex_cuda_attention_local_capacity(
+    const yvex_cuda_attention_configuration *shape,
+    const yvex_backend_attention_job *job, int publication) {
+    return shape->local_capacity + (!publication && shape->local_capacity < job->sliding_window);
+}
 
 /* These formats can consume the canonical Q8_K activation workspace. Runtime
  * admission remains a separate explicit decision because weight qtype alone
  * cannot establish whole-stack numerical compatibility. */
-static inline int yvex_cuda_q8_activation_eligible(unsigned int qtype)
-{
+static inline int yvex_cuda_q8_activation_eligible(unsigned int qtype) {
     return qtype == YVEX_GGUF_QTYPE_IQ2_XXS || qtype == YVEX_GGUF_QTYPE_Q2_K ||
            qtype == YVEX_GGUF_QTYPE_Q8_0 || qtype == YVEX_GGUF_QTYPE_MXFP4;
 }
-typedef int (*yvex_cuda_graph_enqueue_fn)(void *context, int enqueue_kernels,
-                                          yvex_error *err);
+typedef int (*yvex_cuda_graph_enqueue_fn)(void *context, int enqueue_kernels, yvex_error *err);
 typedef int (*yvex_cuda_graph_prepare_fn)(void *context, yvex_error *err);
 /* Canonical contiguous stages in the admitted CUDA attention launch schedule. */
 typedef enum {
@@ -335,8 +338,7 @@ typedef enum {
 static inline int cuda_attention_piece_active(
     yvex_backend_attention_scope scope,
     yvex_backend_attention_class attention_class,
-    yvex_cuda_attention_stage stage)
-{
+    yvex_cuda_attention_stage stage) {
     if (stage >= YVEX_CUDA_ATTENTION_STAGE_COUNT)
         return 0;
     if (scope == YVEX_BACKEND_ATTENTION_SCOPE_CORE &&
@@ -424,8 +426,7 @@ int yvex_cuda_attention_graph_key(const yvex_backend *, const yvex_backend_atten
 /* Derive one representable host byte extent for a CUDA work range. */
 static inline int yvex_cuda_work_checked_bytes(unsigned long long count,
                                                unsigned long long width,
-                                               size_t *out)
-{
+                                               size_t *out) {
     if (!out || !width || count > (unsigned long long)SIZE_MAX / width)
         return 0;
     *out = (size_t)(count * width);
