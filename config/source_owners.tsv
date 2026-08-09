@@ -19,6 +19,7 @@ include/yvex/internal/generation.h	runtime	runtime.generation	generic	private	in
 include/yvex/internal/logits.h	runtime	runtime.logits	generic	private	internal-abi	runtime,cli,tests	interface	none
 include/yvex/internal/sampling.h	runtime	runtime.sampling	generic	private	internal-abi	runtime,cli,tests	interface	none
 include/yvex/internal/graph.h	graph	graph.internal	generic	private	internal-abi	runtime,backend,cli	interface	none
+include/yvex/internal/operator_graph.h	graph	graph.operator_ir	generic	private	internal-abi	model.family,graph,runtime,tests	interface	none
 include/yvex/internal/moe.h	graph	graph.moe	generic	private	internal-abi	graph,runtime,backend,cli,tests	interface	none
 include/yvex/internal/gguf.h	gguf	gguf.internal	generic	private	internal-abi	artifact,model,quant	interface	none
 include/yvex/internal/gguf_writer.h	gguf	gguf.writer	generic	private	internal-abi	artifact,quant	interface	none
@@ -142,6 +143,7 @@ src/graph/candidate.c	graph	graph.candidate	generic	private	resource-lifecycle	g
 src/graph/component.c	graph	graph.component	generic	private	reusable-algorithm	graph.family,tests	implementation	none
 src/graph/moe.c	graph	graph.moe	generic	private	reusable-algorithm	runtime,backend,cli,tests	implementation	none
 src/graph/compiled_plan.c	graph	graph.compiled_plan	generic	private	file-serialization	artifact,runtime,tests	implementation	none
+src/graph/operator_ir.c	graph	graph.operator_ir	generic	private	immutable-planning	model.family,graph,runtime,tests	implementation	none
 src/graph/output_head.c	graph	graph.output_head	generic	private	reusable-algorithm	artifact,runtime,tests	implementation	none
 src/graph/transformer.c	graph	graph.transformer	generic	private	reusable-algorithm	runtime,backend,cli,tests	implementation	none
 src/backend/cuda/moe.c	backend.cuda	backend.cuda.moe	backend	private	backend-implementation	runtime,graph,tests	implementation	none

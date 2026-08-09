@@ -43,8 +43,9 @@ int yvex_runtime_binding_compile_publish(
     if (rc == YVEX_OK &&
         (!products.admission || !products.physical_compatibility ||
          !products.materialization || !products.runtime_descriptor ||
-         !products.attention_plan || !products.graph_compiler ||
-         !products.physical_execution_policy || !products.capabilities ||
+         !products.operator_graph || !products.attention_plan ||
+         !products.physical_execution || !products.compiled_plan ||
+         !products.capabilities ||
          !products.transformer_policy || !products.logits_policy ||
          !products.speculation_policy || !products.tokenizer_policy)) {
         yvex_error_set(err, YVEX_ERR_STATE, "runtime.binding.compile-publish",
@@ -57,10 +58,11 @@ int yvex_runtime_binding_compile_publish(
         prepare.physical_compatibility = products.physical_compatibility;
         prepare.materialization = products.materialization;
         prepare.runtime_descriptor = products.runtime_descriptor;
+        prepare.operator_graph = products.operator_graph;
+        prepare.physical_execution = products.physical_execution;
+        prepare.compiled_plan = products.compiled_plan;
         prepare.attention_plan = products.attention_plan;
         prepare.draft_attention_plan = products.draft_attention_plan;
-        prepare.graph_compiler = products.graph_compiler;
-        prepare.physical_execution_policy = products.physical_execution_policy;
         prepare.family_adapter_id = products.family_adapter_id;
         prepare.family_adapter_version = products.family_adapter_version;
         prepare.artifact_format = products.artifact_format;

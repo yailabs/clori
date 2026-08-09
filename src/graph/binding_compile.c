@@ -13,6 +13,7 @@
 #include <yvex/internal/gguf.h>
 #include <yvex/internal/gguf_writer.h>
 #include <yvex/internal/graph.h>
+#include <yvex/internal/operator_graph.h>
 #include <yvex/internal/quant_numeric.h>
 #include <yvex/internal/tokenizer.h>
 
@@ -31,6 +32,9 @@ typedef struct {
     yvex_materialization_plan *materialization_plan;
     yvex_materialization_session *materialization;
     yvex_semantic_model_ir *semantic_model;
+    yvex_operator_graph_ir *operator_graph;
+    yvex_physical_execution_ir *physical_execution;
+    yvex_compiled_model_plan *compiled_plan;
     yvex_runtime_descriptor *descriptor;
     yvex_attention_plan *attention;
     yvex_attention_plan *draft_attention;
@@ -75,12 +79,15 @@ static int pipeline_valid(const yvex_family_compiler_adapter *adapter)
 static void binding_compiler_close(binding_compiler *compiler)
 {
     if (!compiler) return;
+    yvex_compiled_model_plan_close(&compiler->compiled_plan);
+    yvex_physical_execution_ir_close(&compiler->physical_execution);
     yvex_gguf_writer_plan_release(&compiler->writer);
     yvex_quant_plan_release(&compiler->quant);
     yvex_imatrix_data_close(compiler->imatrix);
     yvex_quant_policy_close(compiler->quant_policy);
     yvex_attention_plan_close(compiler->attention);
     yvex_attention_plan_close(compiler->draft_attention);
+    yvex_operator_graph_ir_close(&compiler->operator_graph);
     yvex_runtime_descriptor_close(compiler->descriptor);
     yvex_semantic_model_ir_close(&compiler->semantic_model);
     yvex_materialization_session_close(compiler->materialization);
@@ -163,6 +170,12 @@ static int binding_compiler_graph(binding_compiler *compiler, yvex_error *err)
             &compiler->draft_attention, compiler->semantic_model,
             compiler->materialization, compiler->descriptor,
             &compiler->attention_failure, err);
+    if (rc == YVEX_OK)
+        rc = yvex_operator_graph_ir_build_transformer(
+            &compiler->operator_graph, compiler->semantic_model,
+            &yvex_runtime_descriptor_summary_get(
+                 compiler->descriptor)->model_execution,
+            compiler->attention, compiler->draft_attention, err);
     return rc;
 }
 
@@ -279,20 +292,6 @@ static int binding_compiler_prepare(
         rc = YVEX_ERR_STATE;
     }
     if (rc != YVEX_OK) return rc;
-    products->directory = request->directory;
-    products->admission = &compiler->admission;
-    products->physical_compatibility = &compiler->compatibility;
-    products->materialization = compiler->materialization;
-    products->runtime_descriptor = compiler->descriptor;
-    products->attention_plan = compiler->attention;
-    products->draft_attention_plan = compiler->draft_attention;
-    products->graph_compiler = compiler->graph;
-    products->physical_execution_policy = compiler->adapter->physical_execution_policy;
-    products->family_adapter_id = request->family_adapter_id;
-    products->family_adapter_version = request->family_adapter_version;
-    products->artifact_format = "gguf";
-    products->artifact_format_version = writer->gguf_version;
-    products->logical_transform_identity = transform->transform_identity;
     if (!compiler->adapter->execution_capabilities(&compiler->capabilities) ||
         !yvex_runtime_capabilities_contract_valid(&compiler->capabilities) ||
         !compiler->adapter->transformer_policy(
@@ -307,6 +306,42 @@ static int binding_compiler_prepare(
                        "family execution envelope compilation failed");
         return YVEX_ERR_STATE;
     }
+    rc = yvex_physical_execution_ir_build(
+        &compiler->physical_execution, compiler->materialization,
+        compiler->descriptor, compiler->admission.profile_identity,
+        compiler->adapter->physical_execution_policy, err);
+    if (rc == YVEX_OK) {
+        yvex_compiled_model_plan_request plan = {
+            .operator_graph = compiler->operator_graph,
+            .materialization = compiler->materialization,
+            .descriptor = compiler->descriptor,
+            .attention = compiler->attention,
+            .draft_attention = compiler->draft_attention,
+            .graph = compiler->graph,
+            .family_adapter_id = request->family_adapter_id,
+            .family_adapter_version = request->family_adapter_version,
+            .capabilities = compiler->capabilities,
+            .transformer_policy = compiler->transformer_policy,
+            .logits_policy = compiler->logits_policy};
+        rc = yvex_compiled_model_plan_build(
+            &compiler->compiled_plan, &plan, err);
+    }
+    if (rc != YVEX_OK) return rc;
+    products->directory = request->directory;
+    products->admission = &compiler->admission;
+    products->physical_compatibility = &compiler->compatibility;
+    products->materialization = compiler->materialization;
+    products->runtime_descriptor = compiler->descriptor;
+    products->operator_graph = compiler->operator_graph;
+    products->physical_execution = compiler->physical_execution;
+    products->compiled_plan = compiler->compiled_plan;
+    products->attention_plan = compiler->attention;
+    products->draft_attention_plan = compiler->draft_attention;
+    products->family_adapter_id = request->family_adapter_id;
+    products->family_adapter_version = request->family_adapter_version;
+    products->artifact_format = "gguf";
+    products->artifact_format_version = writer->gguf_version;
+    products->logical_transform_identity = transform->transform_identity;
     products->capabilities = &compiler->capabilities;
     products->transformer_policy = &compiler->transformer_policy;
     products->logits_policy = &compiler->logits_policy;

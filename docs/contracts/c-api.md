@@ -169,15 +169,16 @@ The internal runtime is family-neutral. Its main objects are:
 
 Model-execution descriptor schema v1 is a non-installed fieldwise projection
 of source/family context, attention, MoE, output, DSpark and state facts.
-Runtime binding v11 persists and authenticates it together with the compiled
-model plan and pointer-free tokenizer/conversation policy. Bindings v7 through
-v10 are refused because they cannot represent that complete execution
-authority. Hardware-profile, workload-profile, capacity-plan
-and phase-roofline schemas begin at v1 as internal contracts. The installed
-server construction entrypoints and public declaration count remain unchanged.
+Runtime binding v12 persists and authenticates it together with the canonical
+operator graph identity, compiled model plan, and pointer-free
+tokenizer/conversation policy. Bindings v7 through v11 are refused because they
+cannot represent that complete execution authority. Hardware-profile,
+workload-profile, capacity-plan and phase-roofline schemas begin at v1 as
+internal contracts. The installed server construction entrypoints and public
+declaration count remain unchanged.
 The source-authored conversation boundary admits provider request/wire schema
 v2, tokenizer plan v3, tokenizer provider result v2, and local protocol v8.
-Runtime event schema v3, Physical Execution IR v1 and compiled profile v1
+Runtime event schema v3, Physical Execution IR v1 and compiled profile v2
 remain unchanged. Generation plan ABI v5 adds the workload-profile identity
 required to bind phase evidence to the compiled workload; generation result
 schema v4 and all wire projections remain unchanged.

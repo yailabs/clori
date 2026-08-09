@@ -190,6 +190,8 @@ struct yvex_quant_policy;
 struct yvex_quant_plan;
 struct yvex_gguf_writer_lowering_api;
 struct yvex_family_compilation_products;
+typedef struct yvex_operator_graph_ir yvex_operator_graph_ir;
+typedef struct yvex_compiled_model_plan yvex_compiled_model_plan;
 
 #define YVEX_SEMANTIC_MODEL_IR_SCHEMA_V1 1u
 typedef struct yvex_semantic_model_ir yvex_semantic_model_ir;
@@ -313,9 +315,10 @@ typedef struct yvex_family_compilation_products {
     const struct yvex_artifact_physical_compatibility *physical_compatibility;
     const struct yvex_materialization_session *materialization;
     const struct yvex_runtime_descriptor *runtime_descriptor;
+    const yvex_operator_graph_ir *operator_graph;
+    const struct yvex_physical_execution_ir *physical_execution;
+    const yvex_compiled_model_plan *compiled_plan;
     const struct yvex_attention_plan *attention_plan, *draft_attention_plan;
-    const struct yvex_graph_compiler_api *graph_compiler;
-    const struct yvex_physical_execution_policy *physical_execution_policy;
     unsigned long long family_adapter_id, family_adapter_version;
     const char *artifact_format, *logical_transform_identity;
     unsigned int artifact_format_version;
@@ -346,8 +349,8 @@ struct yvex_runtime_descriptor;
 struct yvex_attention_plan;
 struct yvex_moe_plan;
 struct yvex_transformer_plan;
-typedef struct yvex_compiled_model_plan yvex_compiled_model_plan;
 typedef struct {
+    const yvex_operator_graph_ir *operator_graph;
     const struct yvex_materialization_session *materialization;
     const struct yvex_runtime_descriptor *descriptor;
     const struct yvex_attention_plan *attention, *draft_attention;
@@ -404,6 +407,8 @@ const struct yvex_moe_plan *yvex_compiled_model_plan_moe(
 const struct yvex_transformer_plan *yvex_compiled_model_plan_transformer(
     const yvex_compiled_model_plan *plan, int draft);
 const struct yvex_runtime_logits_plan_summary *yvex_compiled_model_plan_output_head(
+    const yvex_compiled_model_plan *plan);
+const char *yvex_compiled_model_plan_operator_graph_identity(
     const yvex_compiled_model_plan *plan);
 void yvex_compiled_model_plan_close(yvex_compiled_model_plan **plan);
 int yvex_output_head_plan_build(

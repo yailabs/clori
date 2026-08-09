@@ -7,6 +7,7 @@
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/gguf_writer.h>
 #include <yvex/internal/graph.h>
+#include <yvex/internal/operator_graph.h>
 #include <yvex/internal/quant_numeric.h>
 #include <yvex/internal/runtime.h>
 #include <yvex/internal/model_artifact.h>
@@ -841,6 +842,37 @@ cleanup:
     return rc == YVEX_OK && result->complete ? 0 : 1;
 }
 
+static int artifact_semantic_model_build(
+    yvex_semantic_model_ir **out, const yvex_deepseek_v4_ir *architecture,
+    yvex_error *err)
+{
+    const yvex_model_family_api *model = yvex_model_register_deepseek_v4();
+    yvex_model_execution_descriptor execution = {0};
+    yvex_semantic_model_ir_request request = {0};
+    char logical[YVEX_SHA256_HEX_CAP] = {0};
+    int rc;
+    if (out) *out = NULL;
+    if (!out || !architecture ||
+        !model->transform.architecture_identity(architecture, logical))
+        return YVEX_ERR_INVALID_ARG;
+    rc = model->ir.execution_descriptor(
+        architecture, logical, &execution, err);
+    if (rc != YVEX_OK) return rc;
+    request = (yvex_semantic_model_ir_request){
+        .schema_version = YVEX_SEMANTIC_MODEL_IR_SCHEMA_V1,
+        .family_adapter_id = YVEX_DEEPSEEK_V4_ADAPTER_ID,
+        .family_adapter_version = YVEX_DEEPSEEK_V4_ADAPTER_VERSION,
+        .target_id = "deepseek4-v4-flash-dspark",
+        .source_model_identity = execution.source_model_identity,
+        .logical_model_identity = execution.logical_model_identity,
+        .semantic_payload_identity = execution.identity,
+        .maximum_context = execution.maximum_context,
+        .original_context = execution.original_context,
+        .context_capability_present = 1,
+        .family_payload = (void *)architecture};
+    return yvex_semantic_model_ir_seal(out, &request, err);
+}
+
 static int artifact_variant_bind(
     const yvex_deepseek_payload_handoff *handoff, const yvex_quant_plan *quant,
     const artifact_live_result *emitted, const char *binding_directory,
@@ -857,6 +889,10 @@ static int artifact_variant_bind(
     yvex_materialization_plan *materialization_plan = NULL;
     yvex_materialization_session *materialization = NULL;
     yvex_deepseek_v4_ir *architecture = NULL;
+    yvex_semantic_model_ir *semantic_model = NULL;
+    yvex_operator_graph_ir *operator_graph = NULL;
+    yvex_physical_execution_ir *physical_execution = NULL;
+    yvex_compiled_model_plan *compiled_plan = NULL;
     yvex_runtime_descriptor *descriptor = NULL;
     yvex_attention_plan *attention = NULL;
     yvex_attention_plan *draft_attention = NULL;
@@ -874,6 +910,7 @@ static int artifact_variant_bind(
     yvex_gguf_writer_plan_options writer_options;
     yvex_gguf_writer_plan_request writer_request = {0};
     yvex_runtime_binding_prepare_request prepare = {0};
+    yvex_compiled_model_plan_request compiled_request = {0};
     yvex_runtime_binding_prepare_result prepared = {0};
     yvex_runtime_binding_failure binding_failure = {0};
     const yvex_transform_ir_summary *transform = yvex_transform_ir_summary_get(
@@ -924,17 +961,25 @@ static int artifact_variant_bind(
             &architecture, model->payload.verification(handoff),
             &architecture_failure, &error);
     if (rc == YVEX_OK)
+        rc = artifact_semantic_model_build(
+            &semantic_model, architecture, &error);
+    if (rc == YVEX_OK)
         rc = yvex_runtime_descriptor_build_deepseek(
             &descriptor, &emitted->admission, materialization, model->payload.map(handoff),
             architecture, &descriptor_failure, &error);
     if (rc == YVEX_OK)
         rc = graph->plan_build(
-            &attention, architecture, materialization, descriptor,
+            &attention, semantic_model, materialization, descriptor,
             &attention_failure, &error);
     if (rc == YVEX_OK && graph->draft_plan_build)
         rc = graph->draft_plan_build(
-            &draft_attention, architecture, materialization, descriptor,
+            &draft_attention, semantic_model, materialization, descriptor,
             &attention_failure, &error);
+    if (rc == YVEX_OK)
+        rc = yvex_operator_graph_ir_build_transformer(
+            &operator_graph, semantic_model,
+            &yvex_runtime_descriptor_summary_get(descriptor)->model_execution,
+            attention, draft_attention, &error);
     yvex_gguf_writer_plan_options_default(&writer_options);
     writer_request.input_class = YVEX_GGUF_WRITER_INPUT_COMPLETE_ARTIFACT;
     writer_request.quant_plan = quant;
@@ -961,16 +1006,37 @@ static int artifact_variant_bind(
                               yvex_runtime_descriptor_summary_get(descriptor),
                               &prepare.speculation_policy)))
         rc = YVEX_ERR_STATE;
+    if (rc == YVEX_OK)
+        rc = yvex_physical_execution_ir_build(
+            &physical_execution, materialization, descriptor,
+            emitted->admission.profile_identity,
+            adapter->physical_execution_policy, &error);
+    if (rc == YVEX_OK) {
+        compiled_request.operator_graph = operator_graph;
+        compiled_request.materialization = materialization;
+        compiled_request.descriptor = descriptor;
+        compiled_request.attention = attention;
+        compiled_request.draft_attention = draft_attention;
+        compiled_request.graph = graph;
+        compiled_request.family_adapter_id = adapter->adapter_id;
+        compiled_request.family_adapter_version = adapter->adapter_version;
+        compiled_request.capabilities = prepare.capabilities;
+        compiled_request.transformer_policy = prepare.transformer_policy;
+        compiled_request.logits_policy = prepare.logits_policy;
+        rc = yvex_compiled_model_plan_build(
+            &compiled_plan, &compiled_request, &error);
+    }
     if (rc == YVEX_OK) {
         prepare.directory = binding_directory;
         prepare.admission = &emitted->admission;
         prepare.physical_compatibility = &compatibility;
         prepare.materialization = materialization;
         prepare.runtime_descriptor = descriptor;
+        prepare.operator_graph = operator_graph;
+        prepare.physical_execution = physical_execution;
+        prepare.compiled_plan = compiled_plan;
         prepare.attention_plan = attention;
         prepare.draft_attention_plan = draft_attention;
-        prepare.graph_compiler = graph;
-        prepare.physical_execution_policy = adapter->physical_execution_policy;
         prepare.family_adapter_id = adapter->adapter_id;
         prepare.family_adapter_version = adapter->adapter_version;
         prepare.artifact_format = "gguf";
@@ -1002,6 +1068,10 @@ static int artifact_variant_bind(
                 yvex_error_message(&error));
     }
     yvex_gguf_writer_plan_release(&writer);
+    yvex_compiled_model_plan_close(&compiled_plan);
+    yvex_physical_execution_ir_close(&physical_execution);
+    yvex_operator_graph_ir_close(&operator_graph);
+    yvex_semantic_model_ir_close(&semantic_model);
     yvex_attention_plan_close(attention);
     yvex_attention_plan_close(draft_attention);
     yvex_runtime_descriptor_close(descriptor);

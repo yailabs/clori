@@ -11,13 +11,15 @@ artifact requirements are in the [Artifact and Admission Contract](../contracts/
 ```text
 verified source snapshot
   -> logical model and canonical tensor roles
-  -> sealed model-execution descriptor
+  -> sealed Semantic Model IR and model-execution descriptor
   -> immutable transformation plan
   -> policy-selected physical variant
   -> deterministic transformation execution
   -> complete GGUF artifact
   -> artifact admission
-  -> Physical Execution IR and materialization
+  -> canonical Operator Graph IR
+  -> canonicalization and validation
+  -> Physical Execution IR, compiled execution envelope and materialization
   -> content-addressed runtime binding
 ```
 
@@ -133,12 +135,11 @@ capacity planner evaluates state geometry, artifact bytes, hardware facts and
 resource reserve. The current 4096-token DeepSeek profile is one such selected
 workload, not the model's semantic limit.
 
-Runtime binding v11 persists the pointer-free compiled tokenizer and
-conversation policy beside the model/operator execution records. Source-owned
-syntax and exact tokenizer component identities enter through the family
-compiler adapter; tokenizer, runtime and server consume the authenticated
-record without enumerating a concrete family. Bindings v7 through v10 are
-refused because none can represent the current complete compilation authority.
+Runtime binding v12 persists the canonical operator graph identity and the pointer-free compiled
+tokenizer and conversation policy beside the model/operator execution records. Source-owned syntax
+and exact tokenizer component identities enter through the family compiler adapter; tokenizer,
+runtime and server consume the authenticated record without enumerating a concrete family. Bindings
+v7 through v11 are refused because none can represent the current complete compilation authority.
 Physical Execution IR remains at its existing schema. Compiled execution
 profile v2 replaces three fallback booleans with identity-bearing attention,
 MoE, and sampling resolutions; this is an incompatible internal contract change

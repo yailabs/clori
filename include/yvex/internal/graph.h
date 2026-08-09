@@ -211,6 +211,7 @@ typedef struct {
     int cuda_execution_ready, full_execution_ready;
 } yvex_attention_summary;
 int yvex_compiled_graph_identities(
+    const char *operator_graph_identity,
     const yvex_materialization_summary *materialization,
     const yvex_runtime_descriptor_summary *descriptor,
     const yvex_attention_summary *attention,

@@ -27,7 +27,7 @@ static inline void yvex_runtime_identity_copy(char destination[YVEX_SHA256_HEX_C
     if (length) memcpy(destination, source, length);
 }
 #define YVEX_RUNTIME_REASON_CAP 256u
-#define YVEX_RUNTIME_BINDING_SCHEMA_CURRENT 11u
+#define YVEX_RUNTIME_BINDING_SCHEMA_CURRENT 12u
 #define YVEX_RUNTIME_BINDING_SUFFIX ".yvex-runtime-binding"
 typedef enum {
     YVEX_RUNTIME_BINDING_FAILURE_NONE = 0, YVEX_RUNTIME_BINDING_FAILURE_INVALID_ARGUMENT,
@@ -80,10 +80,11 @@ typedef struct yvex_runtime_binding_prepare_request {
     const yvex_artifact_physical_compatibility *physical_compatibility;
     const yvex_materialization_session *materialization;
     const yvex_runtime_descriptor *runtime_descriptor;
+    const yvex_operator_graph_ir *operator_graph;
+    const yvex_physical_execution_ir *physical_execution;
+    const yvex_compiled_model_plan *compiled_plan;
     const yvex_attention_plan *attention_plan;
     const yvex_attention_plan *draft_attention_plan;
-    const yvex_graph_compiler_api *graph_compiler;
-    const yvex_physical_execution_policy *physical_execution_policy;
     unsigned long long family_adapter_id, family_adapter_version;
     const char *artifact_format;
     unsigned int artifact_format_version;

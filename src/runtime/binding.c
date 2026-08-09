@@ -2,6 +2,7 @@
 #include "src/runtime/private.h"
 #include <yvex/internal/core.h>
 #include <yvex/internal/moe.h>
+#include <yvex/internal/operator_graph.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -23,10 +24,12 @@
 #define BINDING_MAGIC_V9 "YVRBND9\0"
 #define BINDING_MAGIC_V10 "YVRBND10"
 #define BINDING_MAGIC_V11 "YVRBND11"
+#define BINDING_MAGIC_V12 "YVRBND12"
 #define BINDING_SCHEMA_V7 7u
 #define BINDING_SCHEMA_V8 8u
 #define BINDING_SCHEMA_V9 9u
 #define BINDING_SCHEMA_V10 10u
+#define BINDING_SCHEMA_V11 11u
 #define BINDING_MAGIC_BYTES 8u
 #define BINDING_HEADER_BYTES (BINDING_MAGIC_BYTES + 16u + 64u)
 #define BINDING_MAX_BYTES (64u * 1024u * 1024u)
@@ -770,28 +773,6 @@ static int binding_moe_unavailable_identity(
     yvex_sha256_hex(digest, output);
     return 1;
 }
-static int binding_moe_plan_identity(
-    const yvex_runtime_binding_prepare_request *request,
-    const yvex_attention_plan *attention, char output[YVEX_SHA256_HEX_CAP],
-    yvex_error *err)
-{
-    const yvex_moe_plan_summary *summary;
-    yvex_moe_plan *plan = NULL;
-    int rc = yvex_moe_plan_build(
-        &plan, request->graph_compiler->moe, request->family_adapter_id,
-        request->family_adapter_version,
-        request->materialization, request->runtime_descriptor, attention, err);
-    summary = yvex_moe_plan_summary_get(plan);
-    if (rc == YVEX_OK && summary)
-        yvex_runtime_identity_copy(output, summary->moe_plan_identity);
-    else if (rc == YVEX_OK) {
-        yvex_error_set(err, YVEX_ERR_STATE, "runtime.binding",
-                       "MoE plan did not publish an identity");
-        rc = YVEX_ERR_STATE;
-    }
-    yvex_moe_plan_close(&plan);
-    return rc;
-}
 static const binding_field layer_prefix_fields[] = {
     FIELD_U(yvex_attention_layer_plan, ordinal),
     FIELD_U(yvex_attention_layer_plan, layer_index),
@@ -975,11 +956,14 @@ static int prepare_validate(const yvex_runtime_binding_prepare_request *request,
     const yvex_runtime_descriptor_summary *descriptor;
     const yvex_attention_summary *attention;
     const yvex_attention_summary *draft_attention;
+    const yvex_operator_graph_summary *operators;
+    const physical_summary *physical;
+    const char *compiled_graph;
     const char *compatibility_mismatch;
-    if (!request || !request->directory || !request->directory[0] || !request->admission ||
+    if (!request || !request->directory || !request->directory[0] ||
+        !request->admission || !request->operator_graph ||
+        !request->physical_execution || !request->compiled_plan ||
         !request->materialization || !request->runtime_descriptor || !request->attention_plan ||
-        !request->graph_compiler || !request->graph_compiler->moe ||
-        !request->physical_execution_policy ||
         !request->family_adapter_id || !request->family_adapter_version ||
         !request->artifact_format || !request->artifact_format[0] ||
         strlen(request->artifact_format) >= sizeof(((yvex_runtime_binding_summary *)0)->artifact_format) ||
@@ -998,9 +982,19 @@ static int prepare_validate(const yvex_runtime_binding_prepare_request *request,
             "runtime binding capabilities are not a valid compiled envelope", err);
     materialization = yvex_materialization_session_summary(request->materialization);
     descriptor = yvex_runtime_descriptor_summary_get(request->runtime_descriptor);
+    operators = yvex_operator_graph_ir_summary(request->operator_graph);
+    physical = yvex_physical_execution_ir_summary(request->physical_execution);
+    compiled_graph = yvex_compiled_model_plan_operator_graph_identity(
+        request->compiled_plan);
     attention = yvex_attention_plan_summary(request->attention_plan);
     draft_attention = yvex_attention_plan_summary(request->draft_attention_plan);
-    if (!descriptor || !binding_policies_match_model(
+    if (!descriptor || !operators ||
+        operators->family_adapter_id != request->family_adapter_id ||
+        operators->family_adapter_version != request->family_adapter_version ||
+        operators->maximum_context != descriptor->model_execution.maximum_context ||
+        operators->target_layer_count != descriptor->model_execution.layer_count ||
+        operators->draft_layer_count != descriptor->model_execution.draft_layer_count ||
+        !binding_policies_match_model(
             &descriptor->model_execution, &request->transformer_policy,
             &request->logits_policy, &request->speculation_policy) ||
         request->tokenizer_policy.family_adapter_id != request->family_adapter_id ||
@@ -1068,7 +1062,22 @@ static int prepare_validate(const yvex_runtime_binding_prepare_request *request,
             failure, YVEX_RUNTIME_BINDING_FAILURE_IDENTITY, "identity-chain",
             request->directory, 0ull, 1ull, 0ull, YVEX_ERR_STATE,
             "runtime binding inputs do not share one immutable identity chain", err);
+    if (!physical || physical->decision_count != materialization->tensor_count ||
+        strcmp(physical->physical_variant_identity,
+               request->admission->profile_identity) != 0)
+        return binding_reject(
+            failure, YVEX_RUNTIME_BINDING_FAILURE_COMPATIBILITY,
+            "physical-execution", request->directory, 0ull,
+            materialization->tensor_count, 0ull, YVEX_ERR_STATE,
+            "runtime binding requires compiler-sealed physical execution truth", err);
+    if (!compiled_graph || strcmp(compiled_graph, operators->identity) != 0)
+        return binding_reject(
+            failure, YVEX_RUNTIME_BINDING_FAILURE_IDENTITY,
+            "operator-graph", request->directory, 0ull, 1ull, 0ull,
+            YVEX_ERR_STATE,
+            "compiled execution does not bind the canonical operator graph", err);
     if (!yvex_compiled_graph_identities(
+            operators->identity,
             materialization, descriptor, attention, draft_attention,
             semantic, executable))
         return binding_reject(
@@ -1076,22 +1085,27 @@ static int prepare_validate(const yvex_runtime_binding_prepare_request *request,
             request->directory, 0ull, 1ull, 0ull, YVEX_ERR_STATE,
             "runtime binding graph identity inputs are incomplete", err);
     if (request->capabilities.moe_plan_ready) {
-        if (binding_moe_plan_identity(request, request->attention_plan,
-                                      moe_identity, err) != YVEX_OK)
+        const yvex_moe_plan_summary *moe = yvex_moe_plan_summary_get(
+            yvex_compiled_model_plan_moe(request->compiled_plan, 0));
+        const yvex_moe_plan_summary *draft_moe = yvex_moe_plan_summary_get(
+            yvex_compiled_model_plan_moe(request->compiled_plan, 1));
+        if (!moe)
             return binding_reject(
                 failure, YVEX_RUNTIME_BINDING_FAILURE_COMPATIBILITY,
                 "moe-plan",
                 request->directory, 0ull, 1ull, 0ull,
-                err && err->code != YVEX_OK ? err->code : YVEX_ERR_STATE,
+                YVEX_ERR_STATE,
                 "runtime binding requires an admitted target MoE plan", err);
-        if (draft_attention &&
-            binding_moe_plan_identity(request, request->draft_attention_plan,
-                                      draft_moe_identity, err) != YVEX_OK)
+        yvex_runtime_identity_copy(moe_identity, moe->moe_plan_identity);
+        if (draft_attention && !draft_moe)
             return binding_reject(
                 failure, YVEX_RUNTIME_BINDING_FAILURE_COMPATIBILITY,
                 "draft-moe-plan", request->directory, 0ull, 1ull, 0ull,
-                err && err->code != YVEX_OK ? err->code : YVEX_ERR_STATE,
+                YVEX_ERR_STATE,
                 "runtime binding requires an admitted draft MoE plan", err);
+        if (draft_moe)
+            yvex_runtime_identity_copy(
+                draft_moe_identity, draft_moe->moe_plan_identity);
     } else if (!binding_moe_unavailable_identity(request, descriptor, moe_identity)) {
         return binding_reject(failure, YVEX_RUNTIME_BINDING_FAILURE_IDENTITY,
                               "moe-plan", request->directory, 0ull, 1ull, 0ull,
@@ -1153,7 +1167,7 @@ static int binding_body_write(const yvex_runtime_binding_prepare_request *reques
     layer_count = attention->layer_count;
     draft_layer_count = draft_attention ? draft_attention->layer_count : 0ull;
     if (!yvex_runtime_capabilities_identity(capabilities, capability_identity) ||
-        !bytes_put_text(body, "yvex.runtime.binding.payload.v11") ||
+        !bytes_put_text(body, "yvex.runtime.binding.payload.v12") ||
         !bytes_put_u64(body, YVEX_RUNTIME_BINDING_SCHEMA_CURRENT) ||
         !bytes_put_u64(body, adapter_id) || !bytes_put_u64(body, adapter_version) ||
         !bytes_put_text(body, format) || !bytes_put_u64(body, format_version) ||
@@ -1223,7 +1237,7 @@ static int binding_identity(const unsigned char *body, size_t body_bytes,
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.binding.v11") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.binding.v12") ||
         !yvex_sha256_update_u64(&hash, YVEX_RUNTIME_BINDING_SCHEMA_CURRENT) ||
         !yvex_sha256_update(&hash, body, body_bytes) ||
         !yvex_sha256_final(&hash, digest)) return 0;
@@ -1235,7 +1249,7 @@ static int build_file(const binding_bytes *body, const char *identity, binding_b
     if (!body || !identity || !file) return 0;
     file->maximum = BINDING_MAX_BYTES;
     file->initial_capacity = 4096u;
-    return yvex_core_bytes_append(file, BINDING_MAGIC_V11, BINDING_MAGIC_BYTES) &&
+    return yvex_core_bytes_append(file, BINDING_MAGIC_V12, BINDING_MAGIC_BYTES) &&
            bytes_put_u64(file, YVEX_RUNTIME_BINDING_SCHEMA_CURRENT) &&
            bytes_put_u64(file, (unsigned long long)body->count) &&
            yvex_core_bytes_append(file, identity, 64u) &&
@@ -1257,7 +1271,7 @@ static binding_parse_result parse_body(yvex_runtime_binding *binding,
     unsigned long long draft_layer_count = 0ull, i;
     if (!cursor_text(&cursor, domain, sizeof(domain)) ||
         !cursor_u64(&cursor, &schema) || schema != expected_schema ||
-        strcmp(domain, "yvex.runtime.binding.payload.v11") != 0 ||
+        strcmp(domain, "yvex.runtime.binding.payload.v12") != 0 ||
         !cursor_u64(&cursor, &family_id) || !family_id ||
         !cursor_u64(&cursor, &family_version) || !family_version ||
         !cursor_text(&cursor, format, sizeof(format)) || !format[0] ||
@@ -1512,6 +1526,7 @@ static int binding_validate(const yvex_runtime_binding *binding,
                                         &binding->draft_attention))))
         return 0;
     if (!yvex_compiled_graph_identities(
+            yvex_compiled_model_plan_operator_graph_identity(binding->plan),
             &binding->materialization, &binding->descriptor, &binding->attention,
             binding->summary.draft_layer_count ? &binding->draft_attention : NULL,
             semantic, executable)) {
@@ -1637,8 +1652,10 @@ static int binding_file_decode(yvex_runtime_binding **out,
            memcmp(magic, BINDING_MAGIC_V9, sizeof(magic)) == 0) ||
           (schema == BINDING_SCHEMA_V10 &&
            memcmp(magic, BINDING_MAGIC_V10, sizeof(magic)) == 0) ||
+          (schema == BINDING_SCHEMA_V11 &&
+           memcmp(magic, BINDING_MAGIC_V11, sizeof(magic)) == 0) ||
           (schema == YVEX_RUNTIME_BINDING_SCHEMA_CURRENT &&
-           memcmp(magic, BINDING_MAGIC_V11, sizeof(magic)) == 0))) {
+           memcmp(magic, BINDING_MAGIC_V12, sizeof(magic)) == 0))) {
         rc = binding_reject(failure, YVEX_RUNTIME_BINDING_FAILURE_SCHEMA,
                             "schema-version", path, 0ull,
                             YVEX_RUNTIME_BINDING_SCHEMA_CURRENT, schema,
@@ -1651,7 +1668,7 @@ static int binding_file_decode(yvex_runtime_binding **out,
             failure, YVEX_RUNTIME_BINDING_FAILURE_COMPATIBILITY,
             "model-execution", path, 0ull, YVEX_RUNTIME_BINDING_SCHEMA_CURRENT,
             schema, YVEX_ERR_FORMAT,
-            "runtime binding predates the compiled model plan and must be rebuilt", err);
+            "runtime binding predates the canonical operator graph and must be rebuilt", err);
         goto done;
     }
     if (!cursor_u64(&header, &body_bytes) ||
@@ -1829,12 +1846,9 @@ int yvex_runtime_binding_prepare(const yvex_runtime_binding_prepare_request *req
     char final_name[96], final_path[YVEX_PATH_CAP];
     yvex_core_file_result file_result;
     binding_candidate_context candidate;
-    yvex_physical_execution_ir *physical = NULL;
     yvex_transformer_family_policy transformer = {0};
     yvex_logits_family_policy logits = {0};
     yvex_speculation_family_policy speculation = {0};
-    yvex_compiled_model_plan *plan = NULL;
-    yvex_compiled_model_plan_request plan_request;
     int rc;
     if (result) memset(result, 0, sizeof(*result));
     rc = prepare_validate(request, semantic, executable, moe_identity,
@@ -1846,36 +1860,17 @@ int yvex_runtime_binding_prepare(const yvex_runtime_binding_prepare_request *req
                                 "runtime binding result is required", err);
         return rc;
     }
-    rc = yvex_physical_execution_ir_build(
-        &physical, request->materialization, request->runtime_descriptor,
-        request->admission->profile_identity,
-        request->physical_execution_policy, err);
-    if (rc != YVEX_OK)
-        rc = binding_reject(
-            failure, YVEX_RUNTIME_BINDING_FAILURE_COMPATIBILITY,
-            "physical-execution", request->directory, 0ull, 1ull, 0ull,
-            (yvex_status)rc, "physical execution compilation failed", err);
     if (rc == YVEX_OK) {
         transformer = request->transformer_policy;
         logits = request->logits_policy;
         speculation = request->speculation_policy;
     }
-    if (request)
-        plan_request = (yvex_compiled_model_plan_request){
-            request->materialization, request->runtime_descriptor,
-            request->attention_plan, request->draft_attention_plan,
-            request->graph_compiler,
-            request->family_adapter_id, request->family_adapter_version,
-            request->capabilities, request->transformer_policy,
-            request->logits_policy};
-    else memset(&plan_request, 0, sizeof(plan_request));
-    if (rc == YVEX_OK)
-        rc = yvex_compiled_model_plan_build(&plan, &plan_request, err);
     if (rc == YVEX_OK) {
         const yvex_moe_plan_summary *moe = yvex_moe_plan_summary_get(
-            yvex_compiled_model_plan_moe(plan, 0));
+            yvex_compiled_model_plan_moe(request->compiled_plan, 0));
         const yvex_moe_plan_summary *draft =
-            yvex_moe_plan_summary_get(yvex_compiled_model_plan_moe(plan, 1));
+            yvex_moe_plan_summary_get(
+                yvex_compiled_model_plan_moe(request->compiled_plan, 1));
         if ((request->capabilities.moe_plan_ready &&
              (!moe || strcmp(moe->moe_plan_identity, moe_identity) != 0 ||
               (request->draft_attention_plan &&
@@ -1896,10 +1891,12 @@ int yvex_runtime_binding_prepare(const yvex_runtime_binding_prepare_request *req
         rc = yvex_tokenizer_family_policy_encode(
             &request->tokenizer_policy, &tokenizer_policy_bytes, err);
     if (rc == YVEX_OK)
-        rc = yvex_compiled_model_plan_encode(plan, &compiled_plan_bytes, err);
+        rc = yvex_compiled_model_plan_encode(
+            request->compiled_plan, &compiled_plan_bytes, err);
     if (rc == YVEX_OK &&
         !binding_body_write(request, semantic, executable, moe_identity,
-                            draft_moe_identity, physical, &transformer, &logits,
+                            draft_moe_identity, request->physical_execution,
+                            &transformer, &logits,
                             &speculation, &tokenizer_policy_bytes,
                             &compiled_plan_bytes, &body))
         rc = binding_reject(
@@ -1948,8 +1945,6 @@ int yvex_runtime_binding_prepare(const yvex_runtime_binding_prepare_request *req
     yvex_error_clear(err);
     if (failure) memset(failure, 0, sizeof(*failure));
 done:
-    yvex_compiled_model_plan_close(&plan);
-    yvex_physical_execution_ir_close(&physical);
     free(compiled_plan_bytes.data);
     free(tokenizer_policy_bytes.data);
     free(body.data);

@@ -8,6 +8,7 @@
 #include <yvex/internal/backend.h>
 #include <yvex/internal/compilation.h>
 #include <yvex/internal/model_target.h>
+#include <yvex/internal/operator_graph.h>
 #include <yvex/internal/runtime.h>
 
 #include <string.h>
@@ -378,6 +379,83 @@ static int test_operator_truth(void)
     return 0;
 }
 
+static int test_canonical_operator_graph(void)
+{
+    yvex_semantic_model_ir_request semantic_request = {
+        .schema_version = YVEX_SEMANTIC_MODEL_IR_SCHEMA_V1,
+        .family_adapter_id = 0x4d494e494d4158ull,
+        .family_adapter_version = 1ull,
+        .target_id = YVEX_MINIMAX_H3_TARGET_ID,
+        .source_model_identity = YVEX_MINIMAX_H3_SOURCE_TREE_IDENTITY,
+        .logical_model_identity = YVEX_MINIMAX_H3_MODEL_INDEX_IDENTITY,
+        .semantic_payload_identity = YVEX_MINIMAX_H3_TEXT_COMPONENT_IDENTITY};
+    const yvex_operator_kind kinds[] = {
+        YVEX_OPERATOR_TEXT_CONDITIONING, YVEX_OPERATOR_AUDIO_CODEC,
+        YVEX_OPERATOR_MULTIMODAL_TRANSFORMER,
+        YVEX_OPERATOR_RECTIFIED_FLOW};
+    yvex_operator_node nodes[4] = {0};
+    yvex_operator_edge edges[3] = {0};
+    yvex_operator_graph_request graph_request = {0};
+    yvex_semantic_model_ir *semantic = NULL;
+    yvex_operator_graph_ir *first = NULL, *second = NULL;
+    const yvex_operator_graph_summary *summary;
+    yvex_error err;
+    unsigned int index;
+
+    YVEX_TEST_ASSERT(yvex_semantic_model_ir_seal(
+                         &semantic, &semantic_request, &err) == YVEX_OK,
+                     "MiniMax component semantics seal without transformer context");
+    for (index = 0u; index < 4u; ++index) {
+        nodes[index].schema_version = YVEX_OPERATOR_GRAPH_SCHEMA_V1;
+        nodes[index].ordinal = index;
+        nodes[index].kind = kinds[index];
+        nodes[index].scope = YVEX_TENSOR_SCOPE_GLOBAL;
+        nodes[index].layer_index = YVEX_OPERATOR_GRAPH_NO_NODE;
+        nodes[index].input_width = nodes[index].output_width = 1ull;
+        nodes[index].numeric_contract =
+            YVEX_OPERATOR_NUMERIC_REFERENCE_TOLERANCE;
+        strcpy(nodes[index].attribute_identity,
+               YVEX_MINIMAX_H3_TEXT_COMPONENT_IDENTITY);
+        if (index < 3u) {
+            edges[index].schema_version = YVEX_OPERATOR_GRAPH_SCHEMA_V1;
+            edges[index].ordinal = index;
+            edges[index].source_node = index;
+            edges[index].target_node = index + 1u;
+            edges[index].kind = YVEX_OPERATOR_EDGE_ORDER;
+            edges[index].state_class = YVEX_MODEL_STATE_CLASS_COUNT;
+        }
+    }
+    graph_request.semantic_model = semantic;
+    graph_request.nodes = nodes;
+    graph_request.node_count = 4ull;
+    graph_request.edges = edges;
+    graph_request.edge_count = 3ull;
+    YVEX_TEST_ASSERT(yvex_operator_graph_ir_seal(
+                         &first, &graph_request, &err) == YVEX_OK,
+                     "MiniMax component DAG lowers into canonical operator truth");
+    summary = yvex_operator_graph_ir_summary(first);
+    YVEX_TEST_ASSERT(summary && summary->node_count == 4ull &&
+                         summary->edge_count == 3ull &&
+                         summary->maximum_context == 0ull &&
+                         yvex_sha256_hex_valid(summary->identity),
+                     "non-transformer graph keeps context capability absent");
+    YVEX_TEST_ASSERT(yvex_operator_graph_ir_seal(
+                         &second, &graph_request, &err) == YVEX_OK &&
+                         strcmp(summary->identity,
+                                yvex_operator_graph_ir_summary(second)->identity) == 0,
+                     "canonical component graph identity repeats");
+    yvex_operator_graph_ir_close(&second);
+    edges[1].source_node = 2ull;
+    edges[1].target_node = 1ull;
+    YVEX_TEST_ASSERT(yvex_operator_graph_ir_seal(
+                         &second, &graph_request, &err) == YVEX_ERR_INVALID_ARG &&
+                         !second,
+                     "reversed component dependency is refused");
+    yvex_operator_graph_ir_close(&first);
+    yvex_semantic_model_ir_close(&semantic);
+    return 0;
+}
+
 static int test_audio_numeric_primitives(void)
 {
     const float input[] = {1.0f, 2.0f, 3.0f};
@@ -715,6 +793,7 @@ int yvex_test_minimax_h3(void)
     if (test_roles() != 0) return 1;
     if (test_component_ir() != 0) return 1;
     if (test_operator_truth() != 0) return 1;
+    if (test_canonical_operator_graph() != 0) return 1;
     if (test_audio_numeric_primitives() != 0) return 1;
     if (test_video_numeric_primitives() != 0) return 1;
     if (test_t2va_plan() != 0) return 1;

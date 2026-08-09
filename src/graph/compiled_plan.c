@@ -3,6 +3,7 @@
 
 #include <yvex/internal/core.h>
 #include <yvex/internal/moe.h>
+#include <yvex/internal/operator_graph.h>
 #include <yvex/internal/transformer.h>
 
 #include <limits.h>
@@ -10,7 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define MODEL_PLAN_SCHEMA_V1 1u
+#define MODEL_PLAN_SCHEMA_V2 2u
 #define MODEL_PLAN_MAX_LAYERS 65536ull
 
 typedef struct {
@@ -19,12 +20,14 @@ typedef struct {
 } model_plan_cursor;
 
 struct yvex_compiled_model_plan {
+    char operator_graph_identity[YVEX_SHA256_HEX_BYTES];
     yvex_moe_plan *moe, *draft_moe;
     yvex_transformer_plan *transformer, *draft_transformer;
     yvex_runtime_logits_plan_summary output_head;
 };
 
 int yvex_compiled_graph_identities(
+    const char *operator_graph_identity,
     const yvex_materialization_summary *materialization,
     const yvex_runtime_descriptor_summary *descriptor,
     const yvex_attention_summary *attention,
@@ -37,21 +40,11 @@ int yvex_compiled_graph_identities(
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     if (semantic) semantic[0] = '\0';
     if (executable) executable[0] = '\0';
-    if (!materialization || !descriptor || !attention || !semantic || !executable)
+    if (!yvex_sha256_hex_valid(operator_graph_identity) || !materialization ||
+        !descriptor || !attention || !semantic || !executable)
         return 0;
-    yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.semantic-graph.v2") ||
-        !yvex_sha256_update_text(&hash, descriptor->logical_model_identity) ||
-        !yvex_sha256_update_text(&hash, descriptor->runtime_numeric_identity) ||
-        !yvex_sha256_update_text(&hash, attention->attention_plan_identity) ||
-        !yvex_sha256_update_u64(&hash, attention->layer_count) ||
-        !yvex_sha256_update_text(&hash, draft_attention
-                                           ? draft_attention->attention_plan_identity
-                                           : "draft-absent") ||
-        !yvex_sha256_update_u64(&hash, draft_attention ? draft_attention->layer_count : 0ull) ||
-        !yvex_sha256_final(&hash, digest))
-        return 0;
-    yvex_sha256_hex(digest, semantic_value);
+    yvex_core_text_copy(semantic_value, sizeof(semantic_value),
+                        operator_graph_identity);
     yvex_sha256_init(&hash);
     if (!yvex_sha256_update_text(&hash, "yvex.runtime.executable-graph.v2") ||
         !yvex_sha256_update_text(&hash, semantic_value) ||
@@ -555,7 +548,8 @@ int yvex_compiled_model_plan_build(
     int rc;
     if (out) *out = NULL;
     if (!out || !request || !request->materialization ||
-        !request->descriptor || !request->attention || !request->graph ||
+        !request->operator_graph || !request->descriptor ||
+        !request->attention || !request->graph ||
         !request->graph->moe)
         return model_plan_refuse(err, YVEX_ERR_INVALID_ARG,
                                  "compiled model-plan inputs are required");
@@ -563,6 +557,31 @@ int yvex_compiled_model_plan_build(
     if (!plan)
         return model_plan_refuse(err, YVEX_ERR_NOMEM,
                                  "compiled model-plan allocation failed");
+    {
+        const yvex_operator_graph_summary *operators =
+            yvex_operator_graph_ir_summary(request->operator_graph);
+        const yvex_runtime_descriptor_summary *descriptor =
+            yvex_runtime_descriptor_summary_get(request->descriptor);
+        const yvex_attention_summary *attention =
+            yvex_attention_plan_summary(request->attention);
+        const yvex_attention_summary *draft =
+            yvex_attention_plan_summary(request->draft_attention);
+        if (!operators || !descriptor || !attention ||
+            operators->family_adapter_id != request->family_adapter_id ||
+            operators->family_adapter_version != request->family_adapter_version ||
+            operators->target_layer_count != attention->layer_count ||
+            operators->draft_layer_count != (draft ? draft->layer_count : 0ull) ||
+            operators->maximum_context !=
+                descriptor->model_execution.maximum_context) {
+            yvex_compiled_model_plan_close(&plan);
+            return model_plan_refuse(
+                err, YVEX_ERR_FORMAT,
+                "operator graph does not match the compiled execution inputs");
+        }
+        yvex_core_text_copy(plan->operator_graph_identity,
+                            sizeof(plan->operator_graph_identity),
+                            operators->identity);
+    }
     compile_execution = request->capabilities.moe_plan_ready ||
                         request->capabilities.transformer_ready ||
                         request->capabilities.logits_ready;
@@ -623,8 +642,10 @@ int yvex_compiled_model_plan_encode(
         (target_present != (plans->output_head.schema_version != 0u)) ||
         (plans->draft_moe != NULL) != (plans->draft_transformer != NULL) ||
         (!target_present && draft_present) ||
-        !plan_put_text(bytes, "yvex.compiled-model-plan.v1") ||
-        !plan_put_u64(bytes, MODEL_PLAN_SCHEMA_V1) ||
+        !yvex_sha256_hex_valid(plans->operator_graph_identity) ||
+        !plan_put_text(bytes, "yvex.compiled-model-plan.v2") ||
+        !plan_put_u64(bytes, MODEL_PLAN_SCHEMA_V2) ||
+        !plan_put_text(bytes, plans->operator_graph_identity) ||
         !plan_put_u64(bytes, (unsigned int)target_present) ||
         (target_present &&
          (!moe_plan_write(bytes, plans->moe) ||
@@ -651,15 +672,19 @@ int yvex_compiled_model_plan_decode(
     int rc;
     if (out) *out = NULL;
     if (!out || !data || !count || !plan_get_text(&cursor, domain) ||
-        strcmp(domain, "yvex.compiled-model-plan.v1") != 0 ||
-        !plan_get_u64(&cursor, &schema) || schema != MODEL_PLAN_SCHEMA_V1)
+        strcmp(domain, "yvex.compiled-model-plan.v2") != 0 ||
+        !plan_get_u64(&cursor, &schema) || schema != MODEL_PLAN_SCHEMA_V2)
         return model_plan_refuse(err, YVEX_ERR_FORMAT,
                                  "compiled model-plan header is malformed");
     plan = (yvex_compiled_model_plan *)calloc(1u, sizeof(*plan));
     if (!plan)
         return model_plan_refuse(err, YVEX_ERR_NOMEM,
                                  "compiled model-plan allocation failed");
-    if (!plan_get_u64(&cursor, &target_present) || target_present > 1ull)
+    if (!plan_get_text(&cursor, plan->operator_graph_identity) ||
+        !yvex_sha256_hex_valid(plan->operator_graph_identity))
+        rc = model_plan_refuse(err, YVEX_ERR_FORMAT,
+                               "compiled operator graph identity is malformed");
+    else if (!plan_get_u64(&cursor, &target_present) || target_present > 1ull)
         rc = model_plan_refuse(err, YVEX_ERR_FORMAT,
                                "compiled target-plan presence is malformed");
     else rc = YVEX_OK;
@@ -844,4 +869,11 @@ const yvex_runtime_logits_plan_summary *yvex_compiled_model_plan_output_head(
     const yvex_compiled_model_plan *plan)
 {
     return plan && plan->output_head.schema_version ? &plan->output_head : NULL;
+}
+
+const char *yvex_compiled_model_plan_operator_graph_identity(
+    const yvex_compiled_model_plan *plan)
+{
+    return plan && yvex_sha256_hex_valid(plan->operator_graph_identity)
+               ? plan->operator_graph_identity : NULL;
 }
