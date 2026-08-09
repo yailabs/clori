@@ -278,6 +278,11 @@ if find src -path '*/families/*' -type f \
     xargs -0 rg -n "$family_transform_builder_pattern"; then
     fail "a family projection owns mutable Transformation IR lifecycle"
 fi
+if rg -n -i "(families/|$generic_family_symbol_pattern)" \
+    src/model/compilation/ir.c src/model/compilation/ir_identity.c \
+    src/model/compilation/ir_validate.c; then
+    fail "generic Transformation IR owners contain concrete family semantics"
+fi
 
 family_neutral_sources=$(
     {
