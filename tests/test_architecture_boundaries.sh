@@ -343,11 +343,10 @@ if rg -n 'yvex_runtime_attention_(state|capacity)' \
     fail "generic attention state retains the obsolete runtime-owned ABI"
 fi
 
-# DeepSeek cold preparation is intentionally composed by the admitted model
-# artifact gate.  Its callback remains file-local; common runtime and CLI code
-# can reach it only through the typed family-preparation registry.
-if [ "$(rg -c "$family_preparation_callback_pattern" src/model/artifacts/gate.c)" -ne 1 ]; then
-    fail "DeepSeek cold preparation callback is missing or no longer file-local"
+# DeepSeek cold preparation belongs to its compiler-facing family projection. Common artifact,
+# runtime, and CLI owners can reach it only through the typed preparation registry.
+if [ "$(rg -c "$family_preparation_callback_pattern" src/graph/families/deepseek_v4.c)" -ne 1 ]; then
+    fail "DeepSeek cold preparation callback escaped its family compiler projection"
 fi
 if rg -n "$family_preparation_leak_pattern" src/runtime src/cli/commands/graph.c; then
     fail "family-specific cold preparation leaked into common runtime/CLI owners"
@@ -364,9 +363,9 @@ fi
 preparation_callback_owners=$(
     rg -l 'prepare_deepseek_runtime_binding' src include | LC_ALL=C sort
 )
-if [ "$preparation_callback_owners" != 'src/model/artifacts/gate.c' ]; then
+if [ "$preparation_callback_owners" != 'src/graph/families/deepseek_v4.c' ]; then
     printf '%s\n' "$preparation_callback_owners" >&2
-    fail "DeepSeek cold preparation callback escaped its admitted composition owner"
+    fail "DeepSeek cold preparation callback escaped its family compiler projection"
 fi
 
 # Runtime consumes an immutable runtime binding. Source verification,
