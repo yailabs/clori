@@ -31,11 +31,16 @@ The immutable runtime model retains:
 
 - the authenticated artifact and binding;
 - the Physical Execution IR and compiled execution profile;
-- imported family-neutral descriptors and the typed family adapter;
+- imported family-neutral descriptors, compiled model plan, and generic graph capability;
 - read-only encoded weights and model-lifetime backend resources;
 - the tokenizer plan and output-head residency;
 - target and DSpark draft/verification plans, their shared resources, and
   executable capability and identity facts.
+
+Model open does not resolve a concrete family adapter. Family policy terminates
+in the authenticated binding and compiled model plan; runtime instantiates those
+facts and uses the common graph execution contract. The explicit startup target
+is retained as an immutable product label, not as an execution-policy selector.
 
 Each server session owns one mutable execution session, committed token ledger,
 transcript, incremental decoder, sampling/RNG state, turn state, and persistent

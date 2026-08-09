@@ -134,7 +134,7 @@ static int runtime_session_workspace_requirements(
     static const yvex_attention_operation_scope graph_scopes[] = {
         YVEX_ATTENTION_OPERATION_CORE, YVEX_ATTENTION_OPERATION_ENVELOPE, YVEX_ATTENTION_OPERATION_RELEASE_SET};
     const yvex_graph_attention_capacity_summary *summary = yvex_graph_attention_capacity_plan_summary(capacity);
-    const yvex_graph_execution_api *graph = session->model->execution->api;
+    const yvex_graph_execution_api *graph = session->model->graph;
     const yvex_attention_summary *draft_summary =
         yvex_attention_plan_summary(session->model->draft_attention);
     const yvex_attention_plan *attention =

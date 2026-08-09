@@ -24,7 +24,9 @@ family_branch_pattern="(${family_compare_pattern}[^;]*${family_name_pattern}|${f
 runtime_planning_include_pattern='#include[[:space:]]+[<"]yvex/internal/(compilation|source|source_payload|gguf_writer)[.]h[>"]'
 runtime_planning_call_pattern='yvex_(source_payload_[A-Za-z0-9_]*|transform_[A-Za-z0-9_]*|quant_plan_[A-Za-z0-9_]*|gguf_writer_[A-Za-z0-9_]*)[[:space:]]*\('
 runtime_planning_symbol_pattern='^yvex_(source_payload_[A-Za-z0-9_]*|transform_[A-Za-z0-9_]*|quant_plan_[A-Za-z0-9_]*|gguf_writer_[A-Za-z0-9_]*)$'
-runtime_family_dispatch_pattern='(yvex_runtime_family_adapter|[.]adapter->graph|[.]adapter[[:space:]]*=)'
+runtime_family_dispatch_pattern='(yvex_runtime_family_adapter|[.]adapter->graph|'
+runtime_family_dispatch_pattern="${runtime_family_dispatch_pattern}"'[.]adapter[[:space:]]*=|'
+runtime_family_dispatch_pattern="${runtime_family_dispatch_pattern}"'yvex_graph_execution_(find|at)[[:space:]]*\()'
 fallback_ptx_pattern='(fallback_ptx|ptx_fallback|"[[:space:]]*[.]version[[:space:]]+[0-9])'
 cuda_cpu_fallback_pattern='(cpu_chunk_execute|rolling_state_step_cpu|yvex_backend_open_cpu(_impl)?|yvex_quant_cpu_[A-Za-z0-9_]*|yvex_attention_[A-Za-z0-9_]*_cpu)[[:space:]]*\('
 deprecated_digest_hash_pattern='yvex_sha256_[A-Za-z0-9_]*[[:space:]]*\([^;]*\boutput_digest\b'
@@ -112,9 +114,12 @@ fi
 printf '%s\n' 'model.adapter->graph();' |
     rg "$runtime_family_dispatch_pattern" >/dev/null ||
     fail "runtime family-dispatch guard misses a concrete adapter callback"
-if printf '%s\n' 'model.execution->api;' |
+printf '%s\n' 'yvex_graph_execution_find(0, 0, target);' |
+    rg "$runtime_family_dispatch_pattern" >/dev/null ||
+    fail "runtime family-dispatch guard misses a concrete execution registry lookup"
+if printf '%s\n' 'model.graph;' |
     rg "$runtime_family_dispatch_pattern" >/dev/null; then
-    fail "runtime family-dispatch guard rejects compiled execution binding"
+    fail "runtime family-dispatch guard rejects the generic graph capability"
 fi
 printf '%s\n' 'static const char fallback_ptx[] = ".version 8.0";' |
     rg -i "$fallback_ptx_pattern" >/dev/null ||

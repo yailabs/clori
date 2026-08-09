@@ -3524,32 +3524,34 @@ static int test_runtime_cuda_workspace_transaction(
     return 0;
 }
 
-static int test_runtime_model_adapter_refusal(
+static int test_runtime_model_compiled_execution(
     const binding_fixture *fixture, const yvex_runtime_binding_prepare_result *prepared)
 {
     yvex_runtime_model_open_request request;
     yvex_runtime_model *model = NULL;
     yvex_runtime_model_failure failure;
-    char target[] = "deepseek4-v4-flash-dspark";
+    char target[] = "compiled-fixture";
     yvex_error err;
 
     memset(&request, 0, sizeof(request));
     request.artifact_path = yvex_artifact_path(fixture->artifact);
     request.runtime_binding_path = prepared->path;
-    request.target_id = "not-a-runtime-family";
+    request.target_id = "";
     YVEX_TEST_ASSERT(yvex_runtime_model_open(
                          &model, &request, &failure, &err) != YVEX_OK && !model &&
-                         failure.code == YVEX_RUNTIME_MODEL_FAILURE_ADAPTER,
-                     "runtime model refuses an unregistered target before artifact work");
+                         failure.code == YVEX_RUNTIME_MODEL_FAILURE_INVALID_ARGUMENT,
+                     "runtime model refuses a missing presentation target before artifact work");
     request.target_id = target;
     YVEX_TEST_ASSERT(yvex_runtime_model_open(
                          &model, &request, &failure, &err) == YVEX_OK && model,
-                     "runtime model resolves the registered adapter from caller target text");
+                     "runtime model instantiates compiled execution without family lookup");
     memset(target, 'x', sizeof(target) - 1u);
     target[sizeof(target) - 1u] = '\0';
-    YVEX_TEST_ASSERT(strcmp(yvex_runtime_model_view_get(model)->execution->target_id,
-                            "deepseek4-v4-flash-dspark") == 0,
-                     "sealed runtime model retains canonical immutable registry storage");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_model_view_get(model)->graph == &yvex_attention_execution_api &&
+            strcmp(yvex_runtime_model_view_get(model)->target_id,
+                   "compiled-fixture") == 0,
+        "sealed runtime model owns its presentation target and generic execution API");
     yvex_runtime_model_close(&model);
     return 0;
 }
@@ -3677,7 +3679,7 @@ int yvex_test_runtime_binding(void)
     if (test_artifact_copy_portability(&fixture, &prepared, root) != 0) goto done;
     if (test_compiled_model_binding_v10(root) != 0) goto done;
     if (test_runtime_family_neutrality() != 0) goto done;
-    if (test_runtime_model_adapter_refusal(&fixture, &prepared) != 0) goto done;
+    if (test_runtime_model_compiled_execution(&fixture, &prepared) != 0) goto done;
     if (test_runtime_model_progress(&fixture, &prepared) != 0) goto done;
     if (test_runtime_model_session_reuse(&fixture, &prepared) != 0) goto done;
     if (test_runtime_concurrent_session_isolation(&fixture, &prepared) != 0) goto done;

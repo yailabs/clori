@@ -924,9 +924,9 @@ int yvex_runtime_generation_operator_execute(
         }
     }
     view = yvex_runtime_model_view_get(model);
-    if (view && view->execution)
+    if (view && view->target_id)
         yvex_core_text_copy(result->family, sizeof(result->family),
-                            view->execution->family_name);
+                            view->target_id);
     if (rc == YVEX_OK) generation_operator_ready(result, request->backend);
     primary = err ? *err : (yvex_error){0};
     yvex_error_clear(&cleanup_error);

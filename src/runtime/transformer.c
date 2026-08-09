@@ -1868,7 +1868,7 @@ int yvex_transformer_operator_execute(const yvex_transformer_operator_request *r
                                               &output, &result->execution, err);
     if (rc == YVEX_OK) {
         yvex_core_text_copy(result->family, sizeof(result->family),
-                            model_view->execution->family_name);
+                            model_view->target_id);
         yvex_runtime_identity_copy(result->artifact_identity,
                                    model_view->binding->artifact_identity);
         yvex_runtime_identity_copy(result->runtime_binding_identity,

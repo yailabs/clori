@@ -155,15 +155,16 @@ The internal runtime is family-neutral. Its main objects are:
 | Object | Ownership |
 | --- | --- |
 | `yvex_runtime_binding` | immutable content-addressed bridge from an admitted artifact to runtime identities and executable requirements |
-| `yvex_runtime_family_adapter` | typed family projection; DeepSeek is the first admitted adapter, not a separate runtime |
+| `yvex_family_compiler_adapter` | compilation-only family projection that seals policy into the binding and never enters runtime model state |
 | `yvex_runtime_model` | immutable verified artifact handle, binding, imported target/draft/verification plans and read-only resident weights |
 | `yvex_runtime_execution_session` | mutable backend context, reusable workspace, committed target state, bounded speculative candidate state, cancellation and CUDA Graph registry |
 | execution descriptor | canonical pointer-free identity over phase, mode, scope, geometry, residency, workspace, state and device facts |
 
 Model-execution descriptor schema v1 is a non-installed fieldwise projection
 of source/family context, attention, MoE, output, DSpark and state facts.
-Runtime binding v8 persists and authenticates it; v7 remains readable for the
-retained reference binding. Hardware-profile, workload-profile, capacity-plan
+Runtime binding v10 persists and authenticates it together with the compiled
+model plan. Bindings v7 through v9 are refused because they cannot represent
+that execution authority. Hardware-profile, workload-profile, capacity-plan
 and phase-roofline schemas begin at v1 as internal contracts. The installed
 server construction entrypoints and public declaration count remain unchanged.
 The source-authored conversation boundary admits provider request/wire schema

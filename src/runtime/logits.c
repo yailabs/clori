@@ -1615,7 +1615,7 @@ static void logits_operator_publish_facts(
             yvex_runtime_logits_plan_summary_get(logits_context);
         if (logits_plan) result->plan = *logits_plan;
         yvex_core_text_copy(result->family, sizeof(result->family),
-                            model_view->execution->family_name);
+                            model_view->target_id);
         yvex_runtime_identity_copy(result->artifact_identity,
                                    model_view->binding->artifact_identity);
         yvex_runtime_identity_copy(result->runtime_binding_identity,

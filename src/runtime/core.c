@@ -702,7 +702,8 @@ static void runtime_model_view_bind(yvex_runtime_model *model)
     model->view.binding = &model->binding_summary;
     model->view.compiled_binding = model->binding;
     model->view.compiled_plan = model->binding->plan;
-    model->view.execution = model->execution;
+    model->view.graph = model->graph;
+    model->view.target_id = model->target_id;
     model->view.attention = model->attention;
     model->view.draft_attention = model->draft_attention;
     model->view.moe = yvex_compiled_model_plan_moe(model->binding->plan, 0);
@@ -722,7 +723,6 @@ static void runtime_model_view_bind(yvex_runtime_model *model)
 int yvex_runtime_model_open(yvex_runtime_model **out, const yvex_runtime_model_open_request *request,
                             yvex_runtime_model_failure *failure, yvex_error *err) {
     yvex_runtime_model *model = NULL;
-    const yvex_graph_execution_binding *execution;
     const yvex_runtime_descriptor_summary *descriptor_summary;
     const yvex_attention_summary *attention_summary;
     const yvex_attention_summary *draft_attention_summary;
@@ -734,7 +734,9 @@ int yvex_runtime_model_open(yvex_runtime_model **out, const yvex_runtime_model_o
     int rc;
     if (out) *out = NULL;
     if (failure) memset(failure, 0, sizeof(*failure));
-    if (!out || !request || !request->artifact_path || !request->runtime_binding_path || !request->target_id)
+    if (!out || !request || !request->artifact_path || !request->runtime_binding_path ||
+        !request->target_id || !request->target_id[0] ||
+        strlen(request->target_id) >= sizeof(model->target_id))
         return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_MODEL_OPEN_REQUEST, 1ull, 0ull, err);
     model = (yvex_runtime_model *)calloc(1u, sizeof(*model));
     if (!model)
@@ -761,22 +763,8 @@ int yvex_runtime_model_open(yvex_runtime_model **out, const yvex_runtime_model_o
     if (rc != YVEX_OK)
         return runtime_model_open_fail(
             out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_BINDING, 1ull, 0ull, err, (yvex_status)rc);
-    execution = yvex_graph_execution_find(
-        model->binding_summary.family_adapter_id,
-        model->binding_summary.family_adapter_version, NULL);
-    if (!execution || execution->schema_version != YVEX_GRAPH_EXECUTION_BINDING_SCHEMA_V1 ||
-        !execution->api || !execution->target_id ||
-        strcmp(execution->target_id, request->target_id) != 0)
-        return runtime_model_open_fail(
-            out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_ADAPTER,
-            model->binding_summary.family_adapter_id,
-            model->binding_summary.family_adapter_id, err, YVEX_ERR_FORMAT);
-    model->execution = execution;
-    if (strcmp(model->binding_summary.logical_transform_identity,
-               execution->logical_transform_identity) != 0)
-        return runtime_model_open_fail(
-            out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_LOGICAL_TRANSFORM, 1ull, 0ull, err,
-            YVEX_ERR_FORMAT);
+    model->graph = &yvex_attention_execution_api;
+    yvex_core_text_copy(model->target_id, sizeof(model->target_id), request->target_id);
     rc = runtime_model_memory_preflight(
         request, &model->admission, &capacity_refusal, &required_bytes, &available_bytes);
     if (rc != YVEX_OK)
@@ -1446,7 +1434,7 @@ int yvex_runtime_session_open(yvex_runtime_execution_session **out,
     session->maximum_host_bytes = request->maximum_host_bytes;
     session->maximum_device_bytes = request->maximum_device_bytes;
     session->summary.backend = request->backend;
-    graph = model->view.execution ? model->view.execution->api : NULL;
+    graph = model->view.graph;
     if (model->residency) {
         rc = yvex_runtime_residency_snapshot(model->residency, &residency_storage,
                                              NULL, NULL, err);

@@ -66,13 +66,8 @@ static const runtime_attention_request_rule runtime_attention_request_rules[] = 
 };
 static int runtime_attention_request_validate(const yvex_graph_attention_operator_request *request, yvex_error *err) {
     unsigned int rule;
-    if (!request || !request->target)
+    if (!request || !request->target || !request->target[0])
         return runtime_refuse(err, YVEX_ERR_INVALID_ARG, "runtime.attention", "attention target is required");
-    if (!yvex_graph_execution_find(0ull, 0ull, request->target)) {
-        yvex_error_setf(err, YVEX_ERR_UNSUPPORTED, "runtime.attention",
-                        "unsupported attention target: %s", request->target);
-        return YVEX_ERR_UNSUPPORTED;
-    }
     const int rejected[] = {
         !request->artifact_path || !request->runtime_binding_path || !request->artifact_path[0] ||
             !request->runtime_binding_path[0],
@@ -307,17 +302,15 @@ static int runtime_attention_trace_finish(runtime_attention_trace *trace,
 }
 static void runtime_attention_result_initialize(const yvex_graph_attention_operator_request *request,
                                                 yvex_graph_attention_operator_result *result) {
-    const yvex_graph_execution_binding *execution;
     *result = runtime_attention_result_default;
     if (!request) return;
-    execution = request->target ? yvex_graph_execution_find(0ull, 0ull, request->target) : NULL;
     (void)snprintf(result->command, sizeof(result->command), "graph attention %s",
                    runtime_attention_name(runtime_attention_action_names, YVEX_RUNTIME_OPERATOR_RESIDENCY_INSPECT,
                                           (unsigned int)request->operator_action));
     if (request->target)
         yvex_core_text_copy(result->target, sizeof(result->target), request->target);
-    if (execution) {
-        yvex_core_text_copy(result->family, sizeof(result->family), execution->family_name);
+    if (request->target) {
+        yvex_core_text_copy(result->family, sizeof(result->family), request->target);
         if (request->probe == YVEX_ATTENTION_PROBE_CANONICAL_V2)
             yvex_core_text_copy(result->input_class, sizeof(result->input_class), "canonical_attention_probe");
     }
@@ -359,7 +352,7 @@ static void runtime_attention_result_initialize(const yvex_graph_attention_opera
 static int runtime_attention_result_bind(const yvex_runtime_model *model,
                                          yvex_graph_attention_operator_result *result, yvex_error *err) {
     const yvex_runtime_model_view *view = yvex_runtime_model_view_get(model);
-    const yvex_graph_execution_binding *execution = view ? view->execution : NULL;
+    const yvex_graph_execution_api *graph = view ? view->graph : NULL;
     yvex_runtime_model_summary model_summary;
     const yvex_runtime_binding_summary *binding = view ? view->binding : NULL;
     const yvex_artifact_physical_compatibility *compatibility =
@@ -368,9 +361,9 @@ static int runtime_attention_result_bind(const yvex_runtime_model *model,
         yvex_materialization_session_summary(view ? view->materialization : NULL);
     const yvex_runtime_descriptor_summary *descriptor =
         yvex_runtime_descriptor_summary_get(view ? view->descriptor : NULL);
-    const yvex_attention_summary *attention = execution && execution->api
+    const yvex_attention_summary *attention = graph
         ? yvex_attention_plan_summary(view->attention) : NULL;
-    if (!execution || yvex_runtime_model_summary_copy(model, &model_summary, err) != YVEX_OK ||
+    if (!graph || yvex_runtime_model_summary_copy(model, &model_summary, err) != YVEX_OK ||
         !model_summary.sealed || !model_summary.valid || !binding ||
         !compatibility || !compatibility->physical_payload_compatible ||
         !materialization || !materialization->committed || !descriptor || !attention)
@@ -1297,8 +1290,8 @@ int yvex_runtime_attention_probe_execute(yvex_runtime_execution_session *session
     const yvex_attention_plan *attention;
     const yvex_attention_state_provider *persistent_state;
     yvex_runtime_state_residency *state_residency;
-    if (!request || !result || !view || !view->binding || !view->execution ||
-        !view->execution->api || !session_view || session_view->model != model ||
+    if (!request || !result || !view || !view->binding || !view->graph ||
+        !session_view || session_view->model != model ||
         (request->tensor_scope != YVEX_TENSOR_SCOPE_GLOBAL &&
          request->tensor_scope != YVEX_TENSOR_SCOPE_DRAFT) ||
         !session_view->backend ||
@@ -1344,7 +1337,7 @@ int yvex_runtime_attention_probe_execute(yvex_runtime_execution_session *session
     acquired = rc == YVEX_OK && !staged;
     if (rc == YVEX_OK)
         rc = yvex_attention_execute(
-            view->execution->api, attention, NULL, view->materialization,
+            view->graph, attention, NULL, view->materialization,
             view->descriptor, &execution, &probe, &failure, err);
     if (rc != YVEX_OK && err && !yvex_error_is_set(err))
         yvex_error_set(err, (yvex_status)rc, "runtime.attention.execute",
@@ -1701,8 +1694,8 @@ static int runtime_attention_cleanup(yvex_runtime_cleanup_lease **lease, double 
     return status;
 }
 static int runtime_attention_open(const yvex_graph_attention_operator_request *request,
-    const yvex_graph_execution_binding *execution, yvex_runtime_cleanup_lease **cleanup,
-    yvex_runtime_model **model, yvex_runtime_execution_session **session,
+    yvex_runtime_cleanup_lease **cleanup, yvex_runtime_model **model,
+    yvex_runtime_execution_session **session,
     yvex_runtime_execution_mode *selected_mode, yvex_runtime_model_failure *failure,
     yvex_graph_attention_operator_result *result, yvex_error *err) {
     yvex_runtime_model_open_request model_request = {0};
@@ -1711,7 +1704,7 @@ static int runtime_attention_open(const yvex_graph_attention_operator_request *r
     int rc;
     model_request.artifact_path = request->artifact_path;
     model_request.runtime_binding_path = request->runtime_binding_path;
-    model_request.target_id = execution->target_id;
+    model_request.target_id = request->target;
     model_request.maximum_host_bytes = request->maximum_host_bytes;
     model_request.progress = request->progress;
     model_request.progress_context = request->progress_context;
@@ -1799,7 +1792,6 @@ static int runtime_attention_qualify(yvex_graph_attention_operator_result *resul
 }
 int yvex_graph_attention_operator_execute(const yvex_graph_attention_operator_request *request,
     yvex_graph_attention_operator_result *result, yvex_runtime_cleanup_lease **retained_cleanup, yvex_error *err) {
-    const yvex_graph_execution_binding *execution;
     yvex_runtime_model *model = NULL;
     yvex_runtime_execution_session *session = NULL;
     yvex_runtime_cleanup_lease *cleanup = NULL;
@@ -1826,7 +1818,6 @@ int yvex_graph_attention_operator_execute(const yvex_graph_attention_operator_re
         return rc;
     }
     yvex_core_execution_observation_snapshot(&observation_before);
-    execution = yvex_graph_execution_find(0ull, 0ull, request->target);
     repeat = request->repeat ? request->repeat : 1ull;
     warmup = request->warmup;
     if (!warmup && (request->operator_action == YVEX_RUNTIME_OPERATOR_REPLAY ||
@@ -1846,7 +1837,7 @@ int yvex_graph_attention_operator_execute(const yvex_graph_attention_operator_re
         device_samples = samples + repeat;
     }
     memset(&failure, 0, sizeof(failure));
-    rc = runtime_attention_open(request, execution, &cleanup, &model, &session,
+    rc = runtime_attention_open(request, &cleanup, &model, &session,
                                 &selected_mode, &failure, result, err);
     phase_started = yvex_core_monotonic_ns();
     if (rc == YVEX_OK && samples && !warmup && repeat &&
@@ -1932,7 +1923,7 @@ int yvex_graph_attention_operator_execute(const yvex_graph_attention_operator_re
     phase_started = yvex_core_monotonic_ns();
     if (rc == YVEX_OK && preparation_dispatches)
         rc = runtime_attention_operator_dispatch(
-            request, session, model, execution->api, &probe_request, phase_context, 0ull,
+            request, session, model, &yvex_attention_execution_api, &probe_request, phase_context, 0ull,
             preparation_dispatches, measurement_start, dispatch_count, samples, device_samples,
             &failure, result, err);
     if (preparation_dispatches && measurement_start)
@@ -1949,9 +1940,9 @@ int yvex_graph_attention_operator_execute(const yvex_graph_attention_operator_re
     }
     if (rc == YVEX_OK && preparation_dispatches < dispatch_count)
         rc = runtime_attention_operator_dispatch(
-            request, session, model, execution->api, &probe_request, phase_context, preparation_dispatches,
-            dispatch_count - preparation_dispatches, measurement_start, dispatch_count, samples,
-            device_samples, &failure, result, err);
+            request, session, model, &yvex_attention_execution_api, &probe_request,
+            phase_context, preparation_dispatches, dispatch_count - preparation_dispatches,
+            measurement_start, dispatch_count, samples, device_samples, &failure, result, err);
     if (rc == YVEX_OK)
         rc = runtime_attention_warm_snapshot_take(model, session, &warm_after, err);
     if (rc == YVEX_OK)

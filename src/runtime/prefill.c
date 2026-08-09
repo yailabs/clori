@@ -1221,7 +1221,7 @@ static int activation_prefill_operator_publish(
         result->target, sizeof(result->target), request->target);
     yvex_core_text_copy(
         result->family, sizeof(result->family),
-        model_view->execution->family_name);
+        model_view->target_id);
     yvex_core_text_copy(
         result->backend, sizeof(result->backend),
         request->backend == YVEX_BACKEND_KIND_CUDA ? "cuda" : "cpu");
