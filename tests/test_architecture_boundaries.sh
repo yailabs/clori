@@ -25,6 +25,7 @@ generic_family_symbol_pattern='\b(deepseek|minimax|qwen|gemma|llama|kimi|mamba)[
 runtime_planning_include_pattern='#include[[:space:]]+[<"]yvex/internal/(compilation|source|source_payload|gguf_writer)[.]h[>"]'
 runtime_planning_call_pattern='yvex_(source_payload_[A-Za-z0-9_]*|transform_[A-Za-z0-9_]*|quant_plan_[A-Za-z0-9_]*|gguf_writer_[A-Za-z0-9_]*)[[:space:]]*\('
 runtime_planning_symbol_pattern='^yvex_(source_payload_[A-Za-z0-9_]*|transform_[A-Za-z0-9_]*|quant_plan_[A-Za-z0-9_]*|gguf_writer_[A-Za-z0-9_]*)$'
+execution_topology_build_pattern='yvex_(physical_execution_ir_build|compiled_model_plan_build|moe_plan_build|transformer_plan_compile|output_head_plan_build)[[:space:]]*\('
 runtime_family_dispatch_pattern='(yvex_runtime_family_adapter|[.]adapter->graph|'
 runtime_family_dispatch_pattern="${runtime_family_dispatch_pattern}"'[.]adapter[[:space:]]*=|'
 runtime_family_dispatch_pattern="${runtime_family_dispatch_pattern}"'yvex_graph_execution_(find|at)[[:space:]]*\()'
@@ -120,6 +121,13 @@ printf '%s\n' 'yvex_quant_plan_build_explicit();' |
 if printf '%s\n' 'yvex_quant_f16_decode(bits);' |
     rg "$runtime_planning_call_pattern" >/dev/null; then
     fail "runtime planning-dependency guard rejects the canonical scalar codec"
+fi
+printf '%s\n' 'yvex_compiled_model_plan_build(&plan, &request, &err);' |
+    rg "$execution_topology_build_pattern" >/dev/null ||
+    fail "execution-topology guard misses compiled plan construction"
+if printf '%s\n' 'yvex_compiled_model_plan_decode(&plan, bytes, count, &err);' |
+    rg "$execution_topology_build_pattern" >/dev/null; then
+    fail "execution-topology guard rejects compiled plan import"
 fi
 printf '%s\n' 'yvex_gguf_writer_plan_release' |
     rg "$runtime_planning_symbol_pattern" >/dev/null ||
@@ -318,6 +326,25 @@ fi
 if rg -n "$runtime_planning_call_pattern" src/runtime; then
     fail "runtime translation unit calls a source/compiler planning owner"
 fi
+# Binding preparation is the sole runtime-subsystem compiler boundary. Model
+# open and request execution import the sealed plan and may select only within
+# its admitted envelope; they never compile topology from family facts.
+runtime_execution_owners=$(
+    find src/runtime -maxdepth 1 -type f -name '*.c' ! -name binding.c |
+        LC_ALL=C sort
+)
+if printf '%s\n' "$runtime_execution_owners" |
+    xargs rg -n "$execution_topology_build_pattern"; then
+    fail "runtime model-open or execution owner reconstructs compiled topology"
+fi
+[ "$(rg -c 'yvex_physical_execution_ir_build[[:space:]]*\(' src/runtime/binding.c)" -eq 1 ] ||
+    fail "runtime binding preparation does not own exactly one physical-plan compilation"
+[ "$(rg -c 'yvex_compiled_model_plan_build[[:space:]]*\(' src/runtime/binding.c)" -eq 1 ] ||
+    fail "runtime binding preparation does not own exactly one compiled-plan construction"
+rg -n 'yvex_runtime_binding_import_graph[[:space:]]*\(' src/runtime/core.c >/dev/null ||
+    fail "runtime model-open no longer imports the sealed execution graph"
+rg -n 'binding_summary[.]physical_execution_identity' src/runtime/core.c >/dev/null ||
+    fail "runtime model-open does not authenticate the imported physical plan"
 runtime_objects=$(find build/obj/src/runtime -type f -name '*.o' 2>/dev/null | LC_ALL=C sort)
 [ -n "$runtime_objects" ] || fail "runtime object inventory is unavailable"
 runtime_planning_symbols=$(
