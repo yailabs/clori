@@ -2098,8 +2098,10 @@ static int test_runtime_family_neutrality(void)
                          strcmp(deepseek->operator_artifact_filename,
                                 YVEX_SELECTED_DEEPSEEK_ARTIFACT_FILENAME) == 0 &&
                          preparation->model && preparation->prepare_runtime_binding &&
-                         compiler && compiler->runtime_binding_compile &&
-                         compiler->runtime_binding_release &&
+                         compiler && compiler->binding_pipeline &&
+                         compiler->binding_compile == yvex_family_binding_compile &&
+                         compiler->binding_pipeline->source_open &&
+                         compiler->binding_pipeline->semantic_model_build &&
                          preparation->model() == yvex_model_register_deepseek_v4(),
                      "compiler preparation facts remain separate from execution facts");
     yvex_error_clear(&err);

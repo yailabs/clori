@@ -300,11 +300,28 @@ static const yvex_graph_execution_binding deepseek_execution = {
     .operator_family_key = "deepseek",
     .operator_artifact_filename = YVEX_SELECTED_DEEPSEEK_ARTIFACT_FILENAME,
     .api = &yvex_attention_execution_api};
-static int deepseek_runtime_binding_compile(
-    const yvex_compilation_runtime_binding_request *request,
-    yvex_runtime_binding_prepare_request *prepare, void **owner,
+static int deepseek_compilation_source_open(
+    yvex_family_compilation_source *out,
+    const yvex_compilation_runtime_binding_request *request, yvex_error *err);
+static void deepseek_compilation_source_close(void *owner);
+static int deepseek_compilation_materialization(
+    const void *context, yvex_materialization_projection *out, yvex_error *err);
+static int deepseek_compilation_semantic_model(
+    void **out, const yvex_source_verification *verification, yvex_error *err);
+static void deepseek_compilation_semantic_close(void *model);
+static int deepseek_compilation_descriptor(
+    yvex_runtime_descriptor **out, const yvex_complete_artifact_admission *admission,
+    yvex_materialization_session *materialization, const void *lowering_context,
+    const void *semantic_model, yvex_error *err);
+static int deepseek_compilation_quant_default(
+    yvex_quant_plan **out, const yvex_transform_ir *transform,
+    const yvex_transform_binding *binding, const void *lowering_context,
     yvex_error *err);
-static void deepseek_runtime_binding_release(void *owner);
+static int deepseek_compilation_quant_policy(
+    yvex_quant_plan **out, const yvex_transform_ir *transform,
+    const yvex_transform_binding *binding, const void *lowering_context,
+    const yvex_quant_policy *policy, const char *imatrix_identity,
+    yvex_error *err);
 static const yvex_physical_execution_policy deepseek_physical_execution_policy = {
     .schema_version = YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V1,
     .activation = YVEX_EXECUTION_ACTIVATION_DEVICE_F32,
@@ -313,8 +330,24 @@ static const yvex_physical_execution_policy deepseek_physical_execution_policy =
     .fallback = YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE,
     .dense_kernel_family = "portable-encoded-row",
     .expert_kernel_family = "portable-expert-row"};
+static const yvex_family_binding_pipeline deepseek_binding_pipeline = {
+    .schema_version = YVEX_FAMILY_BINDING_PIPELINE_SCHEMA_V1,
+    .source_open = deepseek_compilation_source_open,
+    .source_close = deepseek_compilation_source_close,
+    .artifact_admit = yvex_artifact_admit_deepseek,
+    .materialization_project = deepseek_compilation_materialization,
+    .semantic_model_build = deepseek_compilation_semantic_model,
+    .semantic_model_close = deepseek_compilation_semantic_close,
+    .runtime_descriptor_build = deepseek_compilation_descriptor,
+    .quant_plan_default = deepseek_compilation_quant_default,
+    .quant_plan_policy = deepseek_compilation_quant_policy,
+    .writer_lowering = yvex_model_deepseek_writer_lowering_api,
+    .imatrix_source_identity = YVEX_DEEPSEEK_QUANT_IMATRIX_SOURCE_IDENTITY,
+    .imatrix_dataset_identity = YVEX_DEEPSEEK_QUANT_IMATRIX_DATASET_IDENTITY,
+    .imatrix_producer = "llama.cpp-imatrix",
+    .imatrix_producer_version = 1u};
 static const yvex_family_compiler_adapter deepseek_compiler = {
-    .schema_version = YVEX_FAMILY_COMPILER_SCHEMA_V1,
+    .schema_version = YVEX_FAMILY_COMPILER_SCHEMA_V2,
     .adapter_id = YVEX_DEEPSEEK_V4_ADAPTER_ID,
     .adapter_version = YVEX_DEEPSEEK_V4_ADAPTER_VERSION,
     .target_id = "deepseek4-v4-flash-dspark",
@@ -326,8 +359,8 @@ static const yvex_family_compiler_adapter deepseek_compiler = {
     .logits_policy = deepseek_logits_policy,
     .speculation_policy = deepseek_speculation_policy,
     .tokenizer_policy = deepseek_tokenizer_policy,
-    .runtime_binding_compile = deepseek_runtime_binding_compile,
-    .runtime_binding_release = deepseek_runtime_binding_release};
+    .binding_pipeline = &deepseek_binding_pipeline,
+    .binding_compile = yvex_family_binding_compile};
 const yvex_family_compiler_adapter *yvex_compiler_family_deepseek_v4(void) {
     return &deepseek_compiler;
 }
@@ -1537,327 +1570,125 @@ const yvex_model_family_payload_api *yvex_model_deepseek_payload_api(void) {
     return &api;
 }
 
-typedef struct {
-    const yvex_model_family_api *model;
-    const yvex_graph_compiler_api *graph;
-    yvex_deepseek_payload_handoff *handoff;
-    yvex_artifact *artifact;
-    yvex_gguf *gguf;
-    yvex_tensor_table *tensors;
-    yvex_complete_artifact_admission admission;
-    yvex_materialization_plan *materialization_plan;
-    yvex_materialization_session *materialization;
-    yvex_deepseek_v4_ir *architecture;
-    yvex_runtime_descriptor *descriptor;
-    yvex_attention_plan *attention;
-    yvex_attention_plan *draft_attention;
-    yvex_quant_policy *quant_policy;
-    yvex_imatrix_data *imatrix;
-    yvex_quant_plan *quant;
-    yvex_gguf_writer_plan *writer;
-    yvex_artifact_physical_compatibility compatibility;
-    yvex_artifact_compatibility_failure compatibility_failure;
-    yvex_deepseek_payload_handoff_options payload_options;
-    yvex_deepseek_payload_failure payload_failure;
-    yvex_artifact_admission_failure admission_failure;
-    yvex_materialization_options materialization_options;
-    yvex_materialization_projection materialization_projection;
-    yvex_materialization_failure materialization_failure;
-    yvex_runtime_descriptor_failure descriptor_failure;
-    yvex_deepseek_v4_ir_failure architecture_failure;
-    yvex_attention_failure attention_failure;
-    yvex_quant_failure quant_failure;
-    yvex_gguf_writer_failure writer_failure;
-} runtime_binding_compiler;
-
-static void runtime_binding_compiler_close(runtime_binding_compiler *compiler)
-{
-    if (!compiler) return;
-    yvex_gguf_writer_plan_release(&compiler->writer);
-    yvex_quant_plan_release(&compiler->quant);
-    yvex_imatrix_data_close(compiler->imatrix);
-    yvex_quant_policy_close(compiler->quant_policy);
-    yvex_attention_plan_close(compiler->attention);
-    yvex_attention_plan_close(compiler->draft_attention);
-    yvex_runtime_descriptor_close(compiler->descriptor);
-    if (compiler->model) compiler->model->ir.close(compiler->architecture);
-    yvex_materialization_session_close(compiler->materialization);
-    yvex_materialization_plan_close(compiler->materialization_plan);
-    yvex_tensor_table_close(compiler->tensors);
-    yvex_gguf_close(compiler->gguf);
-    yvex_artifact_close(compiler->artifact);
-    if (compiler->model) compiler->model->payload.close(compiler->handoff);
-    memset(compiler, 0, sizeof(*compiler));
-}
-
-static int runtime_binding_compiler_open(
-    runtime_binding_compiler *compiler,
+static int deepseek_compilation_source_open(
+    yvex_family_compilation_source *out,
     const yvex_compilation_runtime_binding_request *request, yvex_error *err)
 {
-    yvex_artifact_options options = {0};
+    const yvex_model_family_api *model = yvex_model_register_deepseek_v4();
+    const yvex_model_family_payload_api *payload = model ? &model->payload : NULL;
+    yvex_deepseek_payload_handoff_options options = {0};
+    yvex_deepseek_payload_failure failure = {0};
+    yvex_deepseek_payload_handoff *handoff = NULL;
     int rc;
 
-    compiler->payload_options.source_path = request->source_path;
-    compiler->payload_options.models_root = request->models_root;
-    compiler->payload_options.manifest_path = request->source_manifest_path;
-    yvex_source_payload_budget_default(&compiler->payload_options.budget);
-    compiler->payload_options.budget.maximum_open_handles = 32u;
-    compiler->payload_options.budget.maximum_streams = 16u;
-    compiler->payload_options.budget.maximum_inflight_host_bytes =
-        compiler->payload_options.budget.chunk_bytes *
-        compiler->payload_options.budget.maximum_streams;
-    compiler->payload_options.chunk_bytes = compiler->payload_options.budget.chunk_bytes;
-    compiler->payload_options.page_bytes = compiler->payload_options.budget.page_bytes;
-    rc = compiler->model->payload.open(&compiler->handoff, &compiler->payload_options,
-                                       &compiler->payload_failure, err);
-    options.path = request->artifact_path;
-    options.readonly = 1;
-    if (rc == YVEX_OK) rc = yvex_artifact_open(&compiler->artifact, &options, err);
-    if (rc == YVEX_OK) rc = yvex_gguf_open(&compiler->gguf, compiler->artifact, err);
-    if (rc == YVEX_OK)
-        rc = yvex_tensor_table_from_gguf(&compiler->tensors, compiler->gguf, err);
-    if (rc == YVEX_OK)
-        rc = yvex_artifact_admit_deepseek(
-            compiler->artifact, &compiler->admission, &compiler->admission_failure, err);
-    if (rc == YVEX_OK)
-        rc = yvex_artifact_admission_identity_verify(
-            compiler->artifact, &compiler->admission, NULL, NULL,
-            &compiler->admission_failure, err);
-    return rc;
-}
-
-static int runtime_binding_compiler_plan(runtime_binding_compiler *compiler,
-                                         const yvex_compilation_runtime_binding_request *request,
-                                         yvex_error *err)
-{
-    const yvex_transform_ir_summary *transform = yvex_transform_ir_summary_get(
-        compiler->model->payload.transform_ir(compiler->handoff));
-    yvex_imatrix_data_options imatrix_options = {0};
-    yvex_imatrix_data_summary imatrix_summary = {0};
-    yvex_gguf_writer_plan_options writer_options;
-    yvex_gguf_writer_plan_request writer_request;
-    int rc;
-
-    yvex_materialization_options_default(&compiler->materialization_options);
-    compiler->materialization_options.require_terminal_projection = 1;
-    compiler->materialization_options.max_chunk_bytes = 16ull * 1024ull * 1024ull;
-    compiler->materialization_options.cache_budget_bytes = 256ull * 1024ull * 1024ull;
-    compiler->materialization_options.future_graph_scratch_reserve_bytes =
-        2ull * 1024ull * 1024ull * 1024ull;
-    compiler->materialization_options.future_kv_reserve_bytes =
-        2ull * 1024ull * 1024ull * 1024ull;
-    rc = yvex_deepseek_materialization_projection(
-        compiler->model->payload.map(compiler->handoff),
-        &compiler->materialization_projection, err);
-    if (rc == YVEX_OK)
-        rc = yvex_materialization_plan_build(
-            &compiler->materialization_plan, &compiler->admission, compiler->artifact,
-            compiler->gguf, compiler->tensors, &compiler->materialization_projection,
-            &compiler->materialization_options, &compiler->materialization_failure, err);
-    if (rc == YVEX_OK)
-        rc = yvex_materialization_session_open(
-            &compiler->materialization, compiler->materialization_plan, compiler->artifact,
-            &compiler->materialization_options, &compiler->materialization_failure, err);
-    if (rc == YVEX_OK)
-        rc = yvex_materialization_session_commit(
-            compiler->materialization, &compiler->materialization_failure, err);
-    if (rc == YVEX_OK)
-        rc = compiler->model->ir.build(
-            &compiler->architecture,
-            compiler->model->payload.verification(compiler->handoff),
-            &compiler->architecture_failure, err);
-    if (rc == YVEX_OK)
-        rc = yvex_runtime_descriptor_build_deepseek(
-            &compiler->descriptor, &compiler->admission, compiler->materialization,
-            compiler->model->payload.map(compiler->handoff), compiler->architecture,
-            &compiler->descriptor_failure, err);
-    if (rc == YVEX_OK)
-        rc = compiler->graph->plan_build(
-            &compiler->attention, compiler->architecture, compiler->materialization,
-            compiler->descriptor, &compiler->attention_failure, err);
-    if (rc == YVEX_OK && compiler->graph->draft_plan_build)
-        rc = compiler->graph->draft_plan_build(
-            &compiler->draft_attention, compiler->architecture,
-            compiler->materialization, compiler->descriptor,
-            &compiler->attention_failure, err);
-    if (rc == YVEX_OK && request->physical_variant_plan_path) {
-        if (!transform) {
-            yvex_error_set(err, YVEX_ERR_STATE, "graph_attention_prepare",
-                           "variant preparation requires the sealed transform identity");
-            rc = YVEX_ERR_STATE;
-        } else if ((request->quant_policy_path != NULL) ==
-            (request->quant_preset_name != NULL)) {
-            yvex_error_set(err, YVEX_ERR_INVALID_ARG, "graph_attention_prepare",
-                           "variant preparation requires exactly one quant policy or preset");
-            rc = YVEX_ERR_INVALID_ARG;
-        } else if (request->quant_policy_path) {
-            rc = yvex_quant_policy_open(&compiler->quant_policy,
-                                        request->quant_policy_path, err);
-        } else {
-            rc = yvex_quant_policy_preset_open(&compiler->quant_policy,
-                                               request->quant_preset_name, err);
-        }
-        if (rc == YVEX_OK && request->imatrix_path) {
-            imatrix_options.path = request->imatrix_path;
-            /* This request carries a path, not independent calibration provenance. Reconstruct
-             * only the admitted predecessor prior used by planning and emission; a fresh
-             * calibration requires an explicit provenance contract rather than inference from
-             * the policy-selection mechanism. */
-            imatrix_options.source_model_identity =
-                YVEX_DEEPSEEK_QUANT_IMATRIX_SOURCE_IDENTITY;
-            imatrix_options.calibration_dataset_identity =
-                YVEX_DEEPSEEK_QUANT_IMATRIX_DATASET_IDENTITY;
-            imatrix_options.producer = "llama.cpp-imatrix";
-            imatrix_options.producer_version = 1u;
-            imatrix_options.maximum_mapped_bytes = 1024u * 1024u * 1024u;
-            rc = yvex_imatrix_data_open(&compiler->imatrix, &imatrix_options, err);
-            if (rc == YVEX_OK)
-                rc = yvex_imatrix_data_get_summary(compiler->imatrix,
-                                                   &imatrix_summary, err);
-        }
-        if (rc == YVEX_OK)
-            rc = yvex_quant_plan_build_deepseek_policy(
-                &compiler->quant,
-                compiler->model->payload.transform_ir(compiler->handoff),
-                compiler->model->payload.binding(compiler->handoff),
-                compiler->model->payload.map(compiler->handoff),
-                compiler->quant_policy,
-                imatrix_summary.complete ? imatrix_summary.imatrix_identity : NULL,
-                NULL,
-                &compiler->quant_failure, err);
-        if (rc == YVEX_OK)
-            rc = yvex_quant_plan_file_validate(request->physical_variant_plan_path,
-                                               compiler->quant, err);
-    } else if (rc == YVEX_OK &&
-               (request->quant_policy_path || request->quant_preset_name ||
-                request->imatrix_path)) {
-        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "graph_attention_prepare",
-                       "policy, preset, and imatrix require a sealed physical variant plan");
-        rc = YVEX_ERR_INVALID_ARG;
-    } else if (rc == YVEX_OK) {
-        rc = yvex_quant_plan_build_deepseek_profile(
-            &compiler->quant, compiler->model->payload.transform_ir(compiler->handoff),
-            compiler->model->payload.binding(compiler->handoff),
-            compiler->model->payload.map(compiler->handoff),
-            YVEX_QUANT_PROFILE_RELEASE_Q8_Q2, NULL, &compiler->quant_failure, err);
-    }
-    if (rc != YVEX_OK) return rc;
-    yvex_gguf_writer_plan_options_default(&writer_options);
-    writer_options.required_execution_identity =
-        request->physical_variant_plan_path ? NULL : compiler->admission.quant_execution_identity;
-    memset(&writer_request, 0, sizeof(writer_request));
-    writer_request.input_class = YVEX_GGUF_WRITER_INPUT_COMPLETE_ARTIFACT;
-    writer_request.quant_plan = compiler->quant;
-    writer_request.options = &writer_options;
-    writer_request.input.complete.lowering =
-        yvex_model_deepseek_writer_lowering_api();
-    writer_request.input.complete.lowering_context =
-        compiler->model->payload.map(compiler->handoff);
-    writer_request.input.complete.verification =
-        compiler->model->payload.verification(compiler->handoff);
-    return yvex_gguf_writer_plan_build(
-        &compiler->writer, &writer_request, &compiler->writer_failure, err);
-}
-
-static void deepseek_runtime_binding_release(void *owner)
-{
-    runtime_binding_compiler *compiler = (runtime_binding_compiler *)owner;
-
-    if (!compiler) return;
-    runtime_binding_compiler_close(compiler);
-    free(compiler);
-}
-
-static int deepseek_runtime_binding_compile(
-    const yvex_compilation_runtime_binding_request *request,
-    yvex_runtime_binding_prepare_request *prepare, void **owner,
-    yvex_error *err)
-{
-    runtime_binding_compiler *compiler;
-    const yvex_gguf_writer_plan_summary *writer = NULL;
-    const yvex_transform_ir_summary *transform = NULL;
-    int rc;
-
-    if (prepare) memset(prepare, 0, sizeof(*prepare));
-    if (owner) *owner = NULL;
-    if (!request || !prepare || !owner || !request->source_path ||
-        !request->models_root || !request->source_manifest_path ||
-        !request->artifact_path) {
-        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "graph_attention_prepare",
-                       "source, artifact, and source manifest are required");
+    if (out) memset(out, 0, sizeof(*out));
+    if (!out || !request || !payload || !payload->open || !payload->close) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "deepseek.compilation-source",
+                       "source output, request, and family payload API are required");
         return YVEX_ERR_INVALID_ARG;
     }
-    compiler = (runtime_binding_compiler *)calloc(1u, sizeof(*compiler));
-    if (!compiler) {
-        yvex_error_set(err, YVEX_ERR_NOMEM, "graph_attention_prepare",
-                       "family compilation owner allocation failed");
-        return YVEX_ERR_NOMEM;
-    }
-    *owner = compiler;
-    compiler->model = yvex_model_register_deepseek_v4();
-    compiler->graph = deepseek_compiler.graph ? deepseek_compiler.graph() : NULL;
-    if (!compiler->model || !compiler->graph ||
-        !deepseek_compiler.execution_capabilities ||
-        !deepseek_compiler.transformer_policy ||
-        !deepseek_compiler.logits_policy ||
-        !deepseek_compiler.speculation_policy ||
-        !deepseek_compiler.tokenizer_policy) {
-        yvex_error_set(err, YVEX_ERR_STATE, "graph_attention_prepare",
-                       "family compiler registration is incomplete");
-        return YVEX_ERR_STATE;
-    }
-    rc = runtime_binding_compiler_open(compiler, request, err);
-    if (rc == YVEX_OK) rc = runtime_binding_compiler_plan(compiler, request, err);
-    if (rc == YVEX_OK)
-        rc = yvex_artifact_physical_compatibility_validate(
-            compiler->writer, &compiler->admission, compiler->artifact,
-            compiler->gguf, &compiler->compatibility,
-            &compiler->compatibility_failure, err);
-    if (rc == YVEX_OK)
-        writer = yvex_gguf_writer_plan_summary_get(compiler->writer);
-    if (rc == YVEX_OK)
-        transform = yvex_transform_ir_summary_get(
-            compiler->model->payload.transform_ir(compiler->handoff));
-    if (rc == YVEX_OK &&
-        (!writer || !transform ||
-         !yvex_sha256_hex_is_valid(transform->transform_identity) ||
-         !compiler->compatibility.physical_payload_compatible)) {
-        yvex_error_set(err, YVEX_ERR_STATE, "graph_attention_prepare",
-                       "logical transform and physical compatibility proof are required");
-        rc = YVEX_ERR_STATE;
-    }
+    options.source_path = request->source_path;
+    options.models_root = request->models_root;
+    options.manifest_path = request->source_manifest_path;
+    yvex_source_payload_budget_default(&options.budget);
+    options.budget.maximum_open_handles = 32u;
+    options.budget.maximum_streams = 16u;
+    options.budget.maximum_inflight_host_bytes =
+        options.budget.chunk_bytes * options.budget.maximum_streams;
+    options.chunk_bytes = options.budget.chunk_bytes;
+    options.page_bytes = options.budget.page_bytes;
+    rc = payload->open(&handoff, &options, &failure, err);
     if (rc != YVEX_OK) return rc;
-    prepare->directory = request->directory;
-    prepare->admission = &compiler->admission;
-    prepare->physical_compatibility = &compiler->compatibility;
-    prepare->materialization = compiler->materialization;
-    prepare->runtime_descriptor = compiler->descriptor;
-    prepare->attention_plan = compiler->attention;
-    prepare->draft_attention_plan = compiler->draft_attention;
-    prepare->graph_compiler = compiler->graph;
-    prepare->physical_execution_policy = deepseek_compiler.physical_execution_policy;
-    prepare->family_adapter_id = request->family_adapter_id;
-    prepare->family_adapter_version = request->family_adapter_version;
-    prepare->artifact_format = "gguf";
-    prepare->artifact_format_version = writer->gguf_version;
-    prepare->logical_transform_identity = transform->transform_identity;
-    if (!deepseek_compiler.execution_capabilities(&prepare->capabilities) ||
-        !yvex_runtime_capabilities_contract_valid(&prepare->capabilities) ||
-        !deepseek_compiler.transformer_policy(
-            yvex_runtime_descriptor_summary_get(compiler->descriptor),
-            &prepare->transformer_policy) ||
-        !deepseek_compiler.logits_policy(&prepare->logits_policy) ||
-        !deepseek_compiler.speculation_policy(
-            yvex_runtime_descriptor_summary_get(compiler->descriptor),
-            &prepare->speculation_policy) ||
-        !deepseek_compiler.tokenizer_policy(&prepare->tokenizer_policy, err)) {
-        yvex_error_set(err, YVEX_ERR_STATE, "graph_attention_prepare",
-                       "family execution envelope compilation failed");
+    out->owner = handoff;
+    out->verification = payload->verification(handoff);
+    out->transform_ir = payload->transform_ir(handoff);
+    out->transform_binding = payload->binding(handoff);
+    out->lowering_context = payload->map(handoff);
+    if (!out->verification || !out->transform_ir || !out->transform_binding ||
+        !out->lowering_context) {
+        payload->close(handoff);
+        memset(out, 0, sizeof(*out));
+        yvex_error_set(err, YVEX_ERR_STATE, "deepseek.compilation-source",
+                       "family payload did not project complete compiler inputs");
         return YVEX_ERR_STATE;
     }
     return YVEX_OK;
 }
 
+static void deepseek_compilation_source_close(void *owner)
+{
+    yvex_model_register_deepseek_v4()->payload.close(
+        (yvex_deepseek_payload_handoff *)owner);
+}
+
+static int deepseek_compilation_materialization(
+    const void *context, yvex_materialization_projection *out, yvex_error *err)
+{
+    return yvex_deepseek_materialization_projection(
+        (const yvex_deepseek_gguf_map *)context, out, err);
+}
+
+static int deepseek_compilation_semantic_model(
+    void **out, const yvex_source_verification *verification, yvex_error *err)
+{
+    const yvex_model_family_api *model = yvex_model_register_deepseek_v4();
+    yvex_deepseek_v4_ir_failure failure = {0};
+    yvex_deepseek_v4_ir *semantic = NULL;
+    int rc;
+
+    if (out) *out = NULL;
+    if (!out || !model) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "deepseek.semantic-model",
+                       "semantic model output and family are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    rc = model->ir.build(&semantic, verification, &failure, err);
+    if (rc == YVEX_OK) *out = semantic;
+    return rc;
+}
+
+static void deepseek_compilation_semantic_close(void *model)
+{
+    yvex_model_register_deepseek_v4()->ir.close((yvex_deepseek_v4_ir *)model);
+}
+
+static int deepseek_compilation_descriptor(
+    yvex_runtime_descriptor **out, const yvex_complete_artifact_admission *admission,
+    yvex_materialization_session *materialization, const void *lowering_context,
+    const void *semantic_model, yvex_error *err)
+{
+    yvex_runtime_descriptor_failure failure = {0};
+
+    return yvex_runtime_descriptor_build_deepseek(
+        out, admission, materialization,
+        (const yvex_deepseek_gguf_map *)lowering_context,
+        (const yvex_deepseek_v4_ir *)semantic_model, &failure, err);
+}
+
+static int deepseek_compilation_quant_default(
+    yvex_quant_plan **out, const yvex_transform_ir *transform,
+    const yvex_transform_binding *binding, const void *lowering_context,
+    yvex_error *err)
+{
+    yvex_quant_failure failure = {0};
+
+    return yvex_quant_plan_build_deepseek_profile(
+        out, transform, binding, (const yvex_deepseek_gguf_map *)lowering_context,
+        YVEX_QUANT_PROFILE_RELEASE_Q8_Q2, NULL, &failure, err);
+}
+
+static int deepseek_compilation_quant_policy(
+    yvex_quant_plan **out, const yvex_transform_ir *transform,
+    const yvex_transform_binding *binding, const void *lowering_context,
+    const yvex_quant_policy *policy, const char *imatrix_identity,
+    yvex_error *err)
+{
+    yvex_quant_failure failure = {0};
+
+    return yvex_quant_plan_build_deepseek_policy(
+        out, transform, binding, (const yvex_deepseek_gguf_map *)lowering_context,
+        policy, imatrix_identity, NULL, &failure, err);
+}
 static int prepare_deepseek_runtime_binding(
     const yvex_compilation_runtime_binding_request *request,
     yvex_compilation_runtime_binding_result *result, yvex_error *err)

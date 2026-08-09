@@ -163,7 +163,7 @@ typedef struct {
     char field[64];
     char tensor_name[YVEX_GGUF_WRITER_NAME_CAP];
 } yvex_artifact_compatibility_failure;
-typedef struct {
+typedef struct yvex_artifact_physical_compatibility {
     unsigned int schema_version;
     unsigned long long source_snapshot_identity;
     unsigned long long mapping_identity;

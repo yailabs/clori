@@ -2,7 +2,8 @@
  * Family compilation ends at one immutable execution envelope.
  *
  * The adapter supplies semantic policy while compiler-plane owners validate and persist the
- * result. Runtime code consumes the persisted records and never invokes these callbacks.
+ * result. Only the binding-publication boundary invokes these callbacks; runtime execution
+ * consumes the persisted records.
  */
 #ifndef INCLUDE_YVEX_INTERNAL_COMPILER_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_COMPILER_H_INCLUDED
@@ -16,7 +17,7 @@
 extern "C" {
 #endif
 
-#define YVEX_FAMILY_COMPILER_SCHEMA_V1 1u
+#define YVEX_FAMILY_COMPILER_SCHEMA_V2 2u
 #define YVEX_RUNTIME_EXECUTION_CAPABILITY_SCHEMA_V2 2u
 #define YVEX_TRANSFORMER_PLAN_SCHEMA_V2 2u
 #define YVEX_RUNTIME_LOGITS_SCHEMA_V3 3u
@@ -107,10 +108,77 @@ typedef struct yvex_speculation_family_policy {
 
 struct yvex_graph_compiler_api;
 struct yvex_compilation_runtime_binding_request;
-struct yvex_runtime_binding_prepare_request;
 struct yvex_runtime_descriptor_summary;
 struct yvex_tokenizer_family_policy;
 struct yvex_physical_execution_policy;
+struct yvex_artifact;
+struct yvex_complete_artifact_admission;
+struct yvex_artifact_admission_failure;
+struct yvex_artifact_physical_compatibility;
+struct yvex_materialization_projection;
+struct yvex_materialization_session;
+struct yvex_runtime_descriptor;
+struct yvex_transform_ir;
+struct yvex_transform_binding;
+struct yvex_source_verification;
+struct yvex_quant_policy;
+struct yvex_quant_plan;
+struct yvex_gguf_writer_lowering_api;
+struct yvex_family_compilation_products;
+
+#define YVEX_FAMILY_BINDING_PIPELINE_SCHEMA_V1 1u
+typedef struct yvex_family_compilation_source {
+    void *owner;
+    const struct yvex_source_verification *verification;
+    const struct yvex_transform_ir *transform_ir;
+    const struct yvex_transform_binding *transform_binding;
+    const void *lowering_context;
+} yvex_family_compilation_source;
+
+/*
+ * Family callbacks project semantic facts into one generic binding-compilation lifecycle.
+ * Every borrowed view remains valid until source_close; semantic_model is independently owned.
+ */
+typedef struct yvex_family_binding_pipeline {
+    unsigned int schema_version;
+    int (*source_open)(yvex_family_compilation_source *out,
+                       const struct yvex_compilation_runtime_binding_request *request,
+                       yvex_error *err);
+    void (*source_close)(void *owner);
+    int (*artifact_admit)(const struct yvex_artifact *artifact,
+                          struct yvex_complete_artifact_admission *out,
+                          struct yvex_artifact_admission_failure *failure,
+                          yvex_error *err);
+    int (*materialization_project)(const void *lowering_context,
+                                   struct yvex_materialization_projection *out,
+                                   yvex_error *err);
+    int (*semantic_model_build)(void **out,
+                                const struct yvex_source_verification *verification,
+                                yvex_error *err);
+    void (*semantic_model_close)(void *model);
+    int (*runtime_descriptor_build)(
+        struct yvex_runtime_descriptor **out,
+        const struct yvex_complete_artifact_admission *admission,
+        struct yvex_materialization_session *materialization,
+        const void *lowering_context, const void *semantic_model,
+        yvex_error *err);
+    int (*quant_plan_default)(struct yvex_quant_plan **out,
+                              const struct yvex_transform_ir *transform,
+                              const struct yvex_transform_binding *binding,
+                              const void *lowering_context, yvex_error *err);
+    int (*quant_plan_policy)(struct yvex_quant_plan **out,
+                             const struct yvex_transform_ir *transform,
+                             const struct yvex_transform_binding *binding,
+                             const void *lowering_context,
+                             const struct yvex_quant_policy *policy,
+                             const char *imatrix_identity, yvex_error *err);
+    const struct yvex_gguf_writer_lowering_api *(*writer_lowering)(void);
+    const char *imatrix_source_identity;
+    const char *imatrix_dataset_identity;
+    const char *imatrix_producer;
+    unsigned int imatrix_producer_version;
+} yvex_family_binding_pipeline;
+
 typedef struct yvex_family_compiler_adapter {
     unsigned int schema_version;
     unsigned long long adapter_id, adapter_version;
@@ -124,12 +192,42 @@ typedef struct yvex_family_compiler_adapter {
     int (*speculation_policy)(const struct yvex_runtime_descriptor_summary *,
                               yvex_speculation_family_policy *);
     int (*tokenizer_policy)(struct yvex_tokenizer_family_policy *, yvex_error *);
-    int (*runtime_binding_compile)(
-        const struct yvex_compilation_runtime_binding_request *,
-        struct yvex_runtime_binding_prepare_request *, void **owner,
-        yvex_error *);
-    void (*runtime_binding_release)(void *owner);
+    const yvex_family_binding_pipeline *binding_pipeline;
+    int (*binding_compile)(
+        const struct yvex_family_compiler_adapter *adapter,
+        const struct yvex_compilation_runtime_binding_request *request,
+        struct yvex_family_compilation_products *products, void **owner,
+        yvex_error *err);
 } yvex_family_compiler_adapter;
+
+/*
+ * A successful compile lends every product from owner through release. The compile callback sets
+ * release before publishing owned state so callers can discharge partial failures identically.
+ */
+typedef struct yvex_family_compilation_products {
+    const char *directory;
+    const struct yvex_complete_artifact_admission *admission;
+    const struct yvex_artifact_physical_compatibility *physical_compatibility;
+    const struct yvex_materialization_session *materialization;
+    const struct yvex_runtime_descriptor *runtime_descriptor;
+    const struct yvex_attention_plan *attention_plan, *draft_attention_plan;
+    const struct yvex_graph_compiler_api *graph_compiler;
+    const struct yvex_physical_execution_policy *physical_execution_policy;
+    unsigned long long family_adapter_id, family_adapter_version;
+    const char *artifact_format, *logical_transform_identity;
+    unsigned int artifact_format_version;
+    const yvex_runtime_capabilities *capabilities;
+    const yvex_transformer_family_policy *transformer_policy;
+    const yvex_logits_family_policy *logits_policy;
+    const yvex_speculation_family_policy *speculation_policy;
+    const struct yvex_tokenizer_family_policy *tokenizer_policy;
+    void (*release)(void *owner);
+} yvex_family_compilation_products;
+
+int yvex_family_binding_compile(
+    const yvex_family_compiler_adapter *adapter,
+    const struct yvex_compilation_runtime_binding_request *request,
+    yvex_family_compilation_products *products, void **owner, yvex_error *err);
 
 int yvex_runtime_capabilities_identity(
     const yvex_runtime_capabilities *facts,

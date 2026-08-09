@@ -417,6 +417,17 @@ fi
 if rg -n -i '(families/|deepseek|minimax)' src/runtime/binding_publish.c; then
     fail "generic runtime-binding publication contains concrete family semantics"
 fi
+if rg -n -i '(families/|deepseek|minimax)' src/graph/binding_compile.c; then
+    fail "generic runtime-binding compiler contains concrete family semantics"
+fi
+if rg -n 'yvex_(artifact_open|gguf_open|tensor_table_from_gguf|materialization_plan_build|quant_plan_file_validate|gguf_writer_plan_build)[[:space:]]*\(' \
+    src/graph/families/deepseek_v4.c; then
+    fail "the DeepSeek projection owns generic runtime-binding resource lifecycle"
+fi
+if rg -n '#include[[:space:]]+[<"]yvex/internal/(compilation|gguf_writer|quant_numeric)[.]h[>"]' \
+    src/runtime/binding_publish.c; then
+    fail "runtime-binding publication imports compiler planning representation"
+fi
 binding_prepare_callers=$(rg -l 'yvex_runtime_binding_prepare[[:space:]]*\(' src |
     LC_ALL=C sort)
 if [ "$binding_prepare_callers" != "$(printf '%s\n' \
