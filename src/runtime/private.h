@@ -132,6 +132,7 @@ struct yvex_runtime_generation_context {
     yvex_backend_bandwidth_evidence bandwidth_evidence;
     yvex_execution_workload_profile workload_profile;
     yvex_execution_capacity_plan capacity_plan;
+    unsigned long long sampling_workspace_bytes;
     yvex_execution_shape_registry *execution_shapes;
     yvex_execution_phase_measurement phase_measurements[YVEX_EXECUTION_ROOFLINE_PHASE_COUNT];
     unsigned long long phase_measurement_count;

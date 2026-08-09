@@ -98,6 +98,7 @@ typedef struct yvex_runtime_binding_summary {
     unsigned int schema_version;
     unsigned long long family_adapter_id, family_adapter_version;
     unsigned long long tensor_count, layer_count, draft_layer_count, file_bytes;
+    unsigned long long semantic_maximum_context;
     unsigned long long physical_execution_decision_count, source_snapshot_identity, mapping_identity;
     unsigned int artifact_format_version;
     char artifact_format[16];

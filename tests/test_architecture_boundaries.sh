@@ -469,6 +469,10 @@ if printf '%s\n' "$runtime_execution_owners" |
     xargs rg -n "$execution_topology_build_pattern"; then
     fail "runtime model-open or execution owner reconstructs compiled topology"
 fi
+if rg -n '(yvex_runtime_descriptor_summary_get|yvex_model_execution_descriptor)' \
+    src/runtime/generation_context.c src/runtime/decode.c; then
+    fail "runtime capacity or decode reconstructs geometry from the semantic descriptor"
+fi
 [ "$(rg -c 'yvex_physical_execution_ir_build[[:space:]]*\(' src/runtime/binding.c)" -eq 1 ] ||
     fail "runtime binding preparation does not own exactly one physical-plan compilation"
 [ "$(rg -c 'yvex_compiled_model_plan_build[[:space:]]*\(' src/runtime/binding.c)" -eq 1 ] ||

@@ -243,10 +243,10 @@ typedef struct {
     unsigned long long promotion_fragmentation_bytes;
     int shared, copy_on_write;
 } yvex_execution_state_class_plan;
-
 typedef struct {
     unsigned int schema_version;
-    const yvex_model_execution_descriptor *model;
+    const char *semantic_model_identity;
+    unsigned long long semantic_maximum_context, candidate_width, semantic_state_class_mask;
     const yvex_execution_hardware_profile *hardware;
     const yvex_execution_workload_profile *workload;
     unsigned long long model_bytes, derived_layout_bytes;

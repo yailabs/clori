@@ -1545,8 +1545,7 @@ static int binding_validate(const yvex_runtime_binding *binding,
 /*
  * Project one public summary from the canonical parsed or prepared owners.
  *
- * Base summary, exact owner summaries, content identity, and file length. Fills only canonical
- * identity and accounting fields in the summary.
+ * Projects canonical identities and accounting facts from the admitted owners.
  */
 static void summary_finish(yvex_runtime_binding_summary *summary,
                            const yvex_complete_artifact_admission *admission,
@@ -1582,6 +1581,7 @@ static void summary_finish(yvex_runtime_binding_summary *summary,
     if (yvex_sha256_hex_is_valid(descriptor->model_execution.identity))
         yvex_runtime_identity_copy(summary->model_execution_identity,
                                    descriptor->model_execution.identity);
+    summary->semantic_maximum_context = descriptor->model_execution.maximum_context;
     yvex_runtime_identity_copy(summary->attention_plan_identity,
                                attention->attention_plan_identity);
     if (draft_attention)

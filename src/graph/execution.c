@@ -703,7 +703,7 @@ static int capacity_state_request_valid(
 
 static int capacity_state_geometry(
     const yvex_execution_state_class_request *request,
-    const yvex_model_execution_descriptor *model,
+    unsigned long long candidate_width,
     const yvex_execution_hardware_profile *hardware,
     const yvex_execution_workload_profile *workload,
     yvex_execution_state_class_plan *plan)
@@ -732,7 +732,7 @@ static int capacity_state_geometry(
     if (request->extent == YVEX_EXECUTION_STATE_EXTENT_FIXED)
         logical_tokens = request->fixed_tokens_per_sequence;
     else if (request->extent == YVEX_EXECUTION_STATE_EXTENT_CANDIDATE)
-        logical_tokens = model->proposal_width + 1ull;
+        logical_tokens = candidate_width;
     for (candidate_tokens = base_tokens; candidate_tokens <= maximum_tokens;) {
         unsigned long long pages, rounded_tokens, blocks, page_bytes, table_bytes;
         unsigned long long fragmentation, cow_bytes, promotion_bytes, score;
@@ -795,7 +795,7 @@ static int capacity_state_usage(
         if (source->extent == YVEX_EXECUTION_STATE_EXTENT_FIXED)
             per_sequence_tokens = source->fixed_tokens_per_sequence;
         else if (source->extent == YVEX_EXECUTION_STATE_EXTENT_CANDIDATE)
-            per_sequence_tokens = request->model->proposal_width + 1ull;
+            per_sequence_tokens = request->candidate_width;
         if (source->extent == YVEX_EXECUTION_STATE_EXTENT_PREFIX_BUDGET) {
             unsigned long long bytes_per_page;
             if (!yvex_core_u64_add(record.page_bytes, source->page_table_entry_bytes,
@@ -848,18 +848,20 @@ static int capacity_state_usage(
 
 static int capacity_request_validate(
     const yvex_execution_capacity_plan_request *request,
-    const yvex_model_execution_descriptor **model,
     const yvex_execution_hardware_profile **hardware,
     const yvex_execution_workload_profile **workload)
 {
     unsigned long long index, seen = 0ull;
-    if (!request || !(*model = request->model) || !(*hardware = request->hardware) ||
+    if (!request || !(*hardware = request->hardware) ||
         !(*workload = request->workload) ||
         request->schema_version != YVEX_EXECUTION_CAPACITY_PLAN_SCHEMA_V1 ||
-        (*model)->schema_version != YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1 ||
+        !yvex_sha256_hex_valid(request->semantic_model_identity) ||
+        !request->semantic_maximum_context || !request->candidate_width ||
+        !request->semantic_state_class_mask ||
+        (request->semantic_state_class_mask &
+         ~((1ull << YVEX_MODEL_STATE_CLASS_COUNT) - 1ull)) ||
         (*hardware)->schema_version != YVEX_EXECUTION_HARDWARE_PROFILE_SCHEMA_V1 ||
         (*workload)->schema_version != YVEX_EXECUTION_WORKLOAD_PROFILE_SCHEMA_V1 ||
-        !yvex_sha256_hex_valid((*model)->identity) ||
         !yvex_sha256_hex_valid((*hardware)->identity) ||
         !yvex_sha256_hex_valid((*workload)->identity) || !request->model_bytes ||
         !((*hardware)->admitted_fact_mask &
@@ -876,10 +878,10 @@ static int capacity_request_validate(
             (index && state->state_class <= request->state_classes[index - 1ull].state_class))
             return 0;
         bit = YVEX_MODEL_STATE_CLASS_BIT(state->state_class);
-        if ((seen & bit) || !((*model)->persistent_state_class_mask & bit)) return 0;
+        if ((seen & bit) || !(request->semantic_state_class_mask & bit)) return 0;
         seen |= bit;
     }
-    if (seen != (*model)->persistent_state_class_mask) return 0;
+    if (seen != request->semantic_state_class_mask) return 0;
     if ((*workload)->prefix_sharing &&
         !(seen & YVEX_MODEL_STATE_CLASS_BIT(YVEX_MODEL_STATE_PREFIX_CHECKPOINT))) return 0;
     return 1;
@@ -931,7 +933,6 @@ int yvex_execution_capacity_plan_build(
     const yvex_execution_capacity_plan_request *request,
     yvex_execution_capacity_plan *plan, yvex_error *err)
 {
-    const yvex_model_execution_descriptor *model;
     const yvex_execution_hardware_profile *hardware;
     const yvex_execution_workload_profile *workload;
     yvex_execution_state_class_plan geometry[YVEX_MODEL_STATE_CLASS_COUNT] = {{0}};
@@ -939,12 +940,13 @@ int yvex_execution_capacity_plan_build(
     unsigned long long state_bytes, candidate_bytes, required_bytes;
 
     if (plan) memset(plan, 0, sizeof(*plan));
-    if (!plan || !capacity_request_validate(request, &model, &hardware, &workload))
+    if (!plan || !capacity_request_validate(request, &hardware, &workload))
         return execution_refuse(err, YVEX_ERR_INVALID_ARG,
                                 "runtime.execution.capacity",
                                 "complete per-state-class planning facts are required");
     for (index = 0ull; index < request->state_class_count; ++index)
-        if (!capacity_state_geometry(&request->state_classes[index], model, hardware,
+        if (!capacity_state_geometry(&request->state_classes[index],
+                                     request->candidate_width, hardware,
                                      workload, &geometry[index]))
             return execution_refuse(err, YVEX_ERR_BOUNDS,
                                     "runtime.execution.capacity",
@@ -965,8 +967,9 @@ int yvex_execution_capacity_plan_build(
                                 "runtime.execution.capacity",
                                 "fixed runtime resources exceed usable memory");
     low = workload->minimum_session_context;
-    high = workload->requested_session_context < model->maximum_context
-               ? workload->requested_session_context : model->maximum_context;
+    high = workload->requested_session_context < request->semantic_maximum_context
+               ? workload->requested_session_context
+               : request->semantic_maximum_context;
     while (low <= high) {
         unsigned long long middle = low + (high - low) / 2ull;
         if (!capacity_state_usage(request, geometry, middle, NULL,
@@ -996,7 +999,7 @@ int yvex_execution_capacity_plan_build(
         !capacity_add(&plan->required_bytes, plan->candidate_reserve_bytes) ||
         !yvex_core_u64_mul(admitted, workload->concurrent_sequences,
                            &plan->total_logical_context_tokens) ||
-        !yvex_core_u64_mul(model->proposal_width + 1ull,
+        !yvex_core_u64_mul(request->candidate_width,
                            workload->concurrent_sequences,
                            &plan->candidate_reserve_tokens))
         return execution_refuse(err, YVEX_ERR_BOUNDS,
@@ -1004,7 +1007,7 @@ int yvex_execution_capacity_plan_build(
                                 "state-pool capacity accounting overflowed");
 
     plan->schema_version = YVEX_EXECUTION_CAPACITY_PLAN_SCHEMA_V1;
-    plan->model_maximum_context = model->maximum_context;
+    plan->model_maximum_context = request->semantic_maximum_context;
     plan->admitted_execution_maximum = admitted;
     plan->per_session_maximum = admitted;
     plan->per_request_maximum = admitted;
@@ -1026,7 +1029,8 @@ int yvex_execution_capacity_plan_build(
     plan->unreserved_bytes = hardware->usable_memory_bytes - plan->required_bytes;
     plan->state_class_count = request->state_class_count;
     yvex_core_text_copy(plan->model_execution_identity,
-                        sizeof(plan->model_execution_identity), model->identity);
+                        sizeof(plan->model_execution_identity),
+                        request->semantic_model_identity);
     yvex_core_text_copy(plan->hardware_profile_identity,
                         sizeof(plan->hardware_profile_identity), hardware->identity);
     yvex_core_text_copy(plan->workload_profile_identity,

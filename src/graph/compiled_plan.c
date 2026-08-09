@@ -710,7 +710,8 @@ int yvex_compiled_model_plan_admit(
                !admission->capabilities->transformer_ready &&
                !admission->capabilities->logits_ready;
     if (yvex_compiled_model_plan_context_envelope(
-            plans, admission->model, &context, &err) != YVEX_OK ||
+            plans, admission->semantic_model_identity,
+            admission->semantic_maximum_context, &context, &err) != YVEX_OK ||
         !admission->capabilities->moe_plan_ready ||
         !admission->capabilities->transformer_ready ||
         !admission->capabilities->logits_ready ||
@@ -754,7 +755,8 @@ int yvex_compiled_model_plan_admit(
 
 int yvex_compiled_model_plan_context_envelope(
     const yvex_compiled_model_plan *plan,
-    const yvex_model_execution_descriptor *model,
+    const char *semantic_model_identity,
+    unsigned long long semantic_maximum_context,
     yvex_compiled_context_envelope *envelope, yvex_error *err)
 {
     const yvex_transformer_plan_summary *target =
@@ -764,24 +766,23 @@ int yvex_compiled_model_plan_context_envelope(
         yvex_transformer_plan_summary_get(
             yvex_compiled_model_plan_transformer(plan, 1));
     if (envelope) memset(envelope, 0, sizeof(*envelope));
-    if (!envelope || !model ||
-        model->schema_version != YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1 ||
-        !model->maximum_context || !yvex_sha256_hex_valid(model->identity) ||
-        !target || target->maximum_context != model->maximum_context ||
+    if (!envelope || !yvex_sha256_hex_valid(semantic_model_identity) ||
+        !semantic_maximum_context || !target ||
+        target->maximum_context != semantic_maximum_context ||
         !yvex_sha256_hex_valid(target->transformer_plan_identity) ||
-        (!!draft != !!model->draft_layer_count) ||
-        (draft && (draft->maximum_context != model->maximum_context ||
+        (draft && (draft->maximum_context != semantic_maximum_context ||
                    !yvex_sha256_hex_valid(draft->transformer_plan_identity))))
         return model_plan_refuse(
             err, YVEX_ERR_FORMAT,
             "compiled context envelope does not match semantic model capability");
     envelope->schema_version = YVEX_COMPILED_CONTEXT_ENVELOPE_SCHEMA_V1;
-    envelope->semantic_maximum_context = model->maximum_context;
+    envelope->semantic_maximum_context = semantic_maximum_context;
     envelope->target_maximum_context = target->maximum_context;
     envelope->draft_available = draft != NULL;
     envelope->draft_maximum_context = draft ? draft->maximum_context : 0ull;
     yvex_core_text_copy(envelope->model_execution_identity,
-                        sizeof(envelope->model_execution_identity), model->identity);
+                        sizeof(envelope->model_execution_identity),
+                        semantic_model_identity);
     yvex_core_text_copy(envelope->target_transformer_identity,
                         sizeof(envelope->target_transformer_identity),
                         target->transformer_plan_identity);

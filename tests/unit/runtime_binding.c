@@ -1654,7 +1654,9 @@ static int test_compiled_model_binding_v11(const char *root)
                          &binding, prepared.path, &summary, NULL, &failure, &err) == YVEX_OK &&
                          summary.schema_version == YVEX_RUNTIME_BINDING_SCHEMA_CURRENT &&
                          strcmp(summary.model_execution_identity,
-                                descriptor->model_execution.identity) == 0,
+                                descriptor->model_execution.identity) == 0 &&
+                         summary.semantic_maximum_context ==
+                             descriptor->model_execution.maximum_context,
                      "v11 reader authenticates compiled execution records");
     yvex_runtime_binding_close(binding);
     YVEX_TEST_ASSERT(runtime_model_open_fixture(
