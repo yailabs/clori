@@ -11,25 +11,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <yvex/internal/core.h>
-#include <yvex/internal/families/deepseek_v4.h>
 #include <yvex/internal/quant_numeric.h>
 
 typedef struct {
     unsigned long long hash;
     unsigned long long ordinal_plus_one;
 } quant_plan_slot;
-
-typedef struct {
-    yvex_transform_operation_kind operation;
-    yvex_deepseek_gguf_transform lowering;
-} operation_lowering;
-
-static const operation_lowering operation_lowerings[] = {
-    {YVEX_TRANSFORM_OP_IDENTITY, YVEX_DEEPSEEK_GGUF_TRANSFORM_DIRECT},
-    {YVEX_TRANSFORM_OP_DECODE_SCALE_PAIR, YVEX_DEEPSEEK_GGUF_TRANSFORM_FP8_E4M3_E8M0},
-    {YVEX_TRANSFORM_OP_CHECKED_CAST, YVEX_DEEPSEEK_GGUF_TRANSFORM_I64_TO_I32},
-    {YVEX_TRANSFORM_OP_EXPERT_AGGREGATE, YVEX_DEEPSEEK_GGUF_TRANSFORM_EXPERT_MXFP4},
-};
 
 static const unsigned int exact_qtypes[YVEX_TRANSFORM_DTYPE_REAL + 1u] = {
     [YVEX_TRANSFORM_DTYPE_F32] = YVEX_GGUF_QTYPE_F32,
@@ -58,7 +45,6 @@ struct yvex_quant_plan {
     yvex_quant_plan_summary summary;
     const yvex_transform_ir *ir;
     const yvex_transform_binding *binding;
-    const yvex_deepseek_gguf_map *map;
     yvex_quant_decision *decisions;
     quant_plan_slot *index;
     yvex_quant_allocate_fn allocate;
@@ -161,14 +147,6 @@ static yvex_tensor_scope quant_map_scope(yvex_transform_scope scope) {
     return YVEX_TENSOR_SCOPE_DRAFT;
 }
 
-static yvex_deepseek_gguf_transform quant_map_operation(yvex_transform_operation_kind operation) {
-    size_t index;
-    for (index = 0u; index < sizeof(operation_lowerings) / sizeof(operation_lowerings[0]); ++index)
-        if (operation_lowerings[index].operation == operation)
-            return operation_lowerings[index].lowering;
-    return (yvex_deepseek_gguf_transform)-1;
-}
-
 static unsigned int quant_exact_qtype(yvex_transform_dtype dtype) {
     return ((dtype >= YVEX_TRANSFORM_DTYPE_F32 && dtype <= YVEX_TRANSFORM_DTYPE_I32) ||
             dtype == YVEX_TRANSFORM_DTYPE_REAL)
@@ -176,27 +154,22 @@ static unsigned int quant_exact_qtype(yvex_transform_dtype dtype) {
                : UINT_MAX;
 }
 
-static unsigned int quant_candidate_qtype(yvex_quant_profile_kind profile,
-                                          const yvex_transform_value *terminal,
-                                          const yvex_transform_node *node) {
-    if (node->kind == YVEX_TRANSFORM_OP_CHECKED_CAST)
-        return YVEX_GGUF_QTYPE_I32;
-    if (node->kind == YVEX_TRANSFORM_OP_EXPERT_AGGREGATE)
-        return profile == YVEX_QUANT_PROFILE_RELEASE_Q8_Q2 ? YVEX_GGUF_QTYPE_Q2_K
-                                                           : YVEX_GGUF_QTYPE_MXFP4;
-    if (terminal->precision.flags & YVEX_TRANSFORM_PRECISION_QUANTIZABLE_WEIGHT) {
-        if (profile == YVEX_QUANT_PROFILE_RELEASE_Q8_Q2)
-            return YVEX_GGUF_QTYPE_Q8_0;
-        if (node->kind == YVEX_TRANSFORM_OP_DECODE_SCALE_PAIR)
-            return YVEX_GGUF_QTYPE_F32;
-    }
-    return quant_exact_qtype(terminal->dtype);
+static unsigned int quant_lowered_qtype(yvex_quant_profile_kind profile,
+                                        const yvex_transform_value *terminal,
+                                        const yvex_quant_lowering_tensor *descriptor) {
+    if (!descriptor->profile_qtype_required &&
+        !(terminal->precision.flags & YVEX_TRANSFORM_PRECISION_QUANTIZABLE_WEIGHT))
+        return quant_exact_qtype(terminal->dtype);
+    return profile == YVEX_QUANT_PROFILE_SOURCE_FAITHFUL
+               ? descriptor->source_faithful_qtype
+               : descriptor->release_qtype;
 }
 
 static int
 quant_descriptor_matches(const yvex_transform_ir *ir, const yvex_transform_value *terminal,
-                         const yvex_transform_node *node, const yvex_deepseek_gguf_map *map,
-                         const yvex_deepseek_gguf_descriptor *descriptor,
+                         const yvex_transform_node *node,
+                         const yvex_quant_lowering_api *lowering, const void *lowering_context,
+                         const yvex_quant_lowering_tensor *descriptor,
                          unsigned long long ordinal, yvex_quant_failure *failure, yvex_error *err) {
     unsigned int dimension;
     unsigned long long input;
@@ -205,7 +178,7 @@ quant_descriptor_matches(const yvex_transform_ir *ir, const yvex_transform_value
         descriptor->scope != quant_map_scope(terminal->logical_key.scope) ||
         descriptor->layer_index != terminal->logical_key.layer_index ||
         descriptor->predictor_index != terminal->logical_key.auxiliary_index ||
-        descriptor->transform != quant_map_operation(node->kind) ||
+        descriptor->operation != node->kind ||
         descriptor->logical_rank != terminal->shape.rank ||
         descriptor->contribution_count != node->input_count) {
         return quant_plan_fail(failure, YVEX_QUANT_FAILURE_UNMATCHED_LOWERING, ordinal, ULLONG_MAX,
@@ -218,7 +191,7 @@ quant_descriptor_matches(const yvex_transform_ir *ir, const yvex_transform_value
         unsigned int source_axis = terminal_axis;
 
         if (node->kind == YVEX_TRANSFORM_OP_EXPERT_AGGREGATE) {
-            source_axis = terminal_axis == node->axis  ? YVEX_DEEPSEEK_GGUF_AGGREGATED_AXIS
+            source_axis = terminal_axis == node->axis  ? UINT_MAX
                           : terminal_axis > node->axis ? terminal_axis - 1u
                                                        : terminal_axis;
         }
@@ -234,16 +207,18 @@ quant_descriptor_matches(const yvex_transform_ir *ir, const yvex_transform_value
         const yvex_transform_value *value = yvex_transform_ir_node_input_at(ir, node, input);
         const yvex_transform_source_value *source =
             value ? yvex_transform_ir_source_at(ir, value->source_index) : NULL;
-        const yvex_deepseek_gguf_contribution *contribution =
-            yvex_model_register_deepseek_v4()->lowering.contribution_at(
-                map, descriptor->contribution_offset + input);
-        if (!value || !source || !contribution || contribution->descriptor_index != ordinal ||
-            strcmp(contribution->source_name, source->source_name) != 0 ||
-            contribution->source_dtype != source->source_dtype ||
-            contribution->expert_index != source->expert_index) {
+        yvex_quant_lowering_contribution contribution;
+        int contribution_ready = lowering && lowering->contribution_at &&
+                                 lowering->contribution_at(
+                                     lowering_context, descriptor->contribution_offset + input,
+                                     &contribution);
+        if (!value || !source || !contribution_ready || contribution.tensor_ordinal != ordinal ||
+            strcmp(contribution.source_name, source->source_name) != 0 ||
+            contribution.source_dtype != source->source_dtype ||
+            contribution.expert_index != source->expert_index) {
             return quant_plan_fail(failure, YVEX_QUANT_FAILURE_UNMATCHED_LOWERING, ordinal,
                                    value ? value->source_index : ULLONG_MAX, input,
-                                   contribution ? contribution->descriptor_index : ULLONG_MAX,
+                                   contribution_ready ? contribution.tensor_ordinal : ULLONG_MAX,
                                    UINT_MAX, node->kind, err, YVEX_ERR_FORMAT,
                                    "lowering contribution does not match the exact IR input");
         }
@@ -292,7 +267,7 @@ quant_capability_failure(const yvex_quant_numeric_capability *capability) {
 }
 
 static int quant_decision_geometry(yvex_quant_decision *decision,
-                                   const yvex_deepseek_gguf_descriptor *descriptor,
+                                   const yvex_quant_lowering_tensor *descriptor,
                                    yvex_quant_failure *failure, yvex_error *err) {
     return quant_decision_geometry_dims(decision, descriptor->logical_dims,
                                         descriptor->logical_rank, failure, err);
@@ -394,7 +369,7 @@ static int quant_build_qtype_decision(unsigned int qtype,
                                           const yvex_transform_binding *binding,
                                           const yvex_transform_value *terminal,
                                           const yvex_transform_node *node,
-                                          const yvex_deepseek_gguf_descriptor *descriptor,
+                                          const yvex_quant_lowering_tensor *descriptor,
                                           unsigned long long ordinal, yvex_quant_decision *decision,
                                           yvex_quant_failure *failure, yvex_error *err) {
     const yvex_quant_numeric_capability *capability;
@@ -470,11 +445,12 @@ static int quant_build_candidate_decision(yvex_quant_profile_kind profile,
                                           const yvex_transform_binding *binding,
                                           const yvex_transform_value *terminal,
                                           const yvex_transform_node *node,
-                                          const yvex_deepseek_gguf_descriptor *descriptor,
+                                          const yvex_quant_lowering_tensor *descriptor,
                                           unsigned long long ordinal, yvex_quant_decision *decision,
                                           yvex_quant_failure *failure, yvex_error *err) {
-    return quant_build_qtype_decision(quant_candidate_qtype(profile, terminal, node), binding,
-                                      terminal, node, descriptor, ordinal, decision, failure, err);
+    unsigned int qtype = quant_lowered_qtype(profile, terminal, descriptor);
+    return quant_build_qtype_decision(qtype, binding, terminal, node, descriptor, ordinal,
+                                      decision, failure, err);
 }
 
 static int payload_u64(yvex_sha256 *hash, unsigned long long value)
@@ -642,7 +618,8 @@ static int quant_plan_identity(yvex_quant_plan *plan) {
 typedef struct {
     const yvex_transform_ir *ir;
     const yvex_transform_binding *binding;
-    const yvex_deepseek_gguf_map *map;
+    const yvex_quant_lowering_api *lowering;
+    const void *lowering_context;
     const yvex_transform_ir_summary *ir_summary;
     const yvex_transform_binding_summary *binding_summary;
     yvex_quant_plan_options options;
@@ -708,7 +685,6 @@ static int quant_build_allocate(quant_build_context *context,
     context->plan->allocator_context = context->options.context;
     context->plan->ir = context->ir;
     context->plan->binding = context->binding;
-    context->plan->map = context->map;
     context->plan->summary.schema_version = YVEX_QUANT_PROFILE_SCHEMA_VERSION;
     context->plan->summary.state = YVEX_QUANT_PLAN_BUILDING;
     context->plan->summary.terminal_count = count;
@@ -1110,18 +1086,23 @@ int yvex_quant_plan_build_source_faithful(
 }
 
 /*
- * Account both DeepSeek candidates and index one selected terminal.
+ * Account both family-projected candidates and index one selected terminal.
  *
  * Candidate comparison remains deterministic and payload-free.
  */
-static int quant_deepseek_decision_build(quant_build_context *context,
-                                         yvex_quant_profile_kind profile,
-                                         unsigned long long ordinal) {
+static int quant_lowered_decision_build(quant_build_context *context,
+                                        yvex_quant_profile_kind profile,
+                                        unsigned long long ordinal) {
     const yvex_transform_value *terminal = yvex_transform_ir_terminal_at(context->ir, ordinal);
     const yvex_transform_node *node =
         terminal ? yvex_transform_ir_node_at(context->ir, terminal->producer_node_id) : NULL;
-    const yvex_deepseek_gguf_descriptor *descriptor =
-        yvex_model_register_deepseek_v4()->lowering.at(context->map, ordinal);
+    yvex_quant_lowering_tensor descriptor_storage;
+    const yvex_quant_lowering_tensor *descriptor =
+        context->lowering && context->lowering->tensor_at &&
+                context->lowering->tensor_at(context->lowering_context, ordinal,
+                                             &descriptor_storage)
+            ? &descriptor_storage
+            : NULL;
     yvex_quant_decision reference_decision;
     yvex_quant_decision release_decision;
     yvex_quant_decision *decision = &context->plan->decisions[ordinal];
@@ -1135,7 +1116,8 @@ static int quant_deepseek_decision_build(quant_build_context *context,
             terminal ? terminal->canonical_ordinal : ULLONG_MAX, UINT_MAX,
             node ? node->kind : YVEX_TRANSFORM_OP_COUNT, context->err, YVEX_ERR_FORMAT,
             "binding does not expose the canonical terminal operation");
-    rc = quant_descriptor_matches(context->ir, terminal, node, context->map, descriptor, ordinal,
+    rc = quant_descriptor_matches(context->ir, terminal, node, context->lowering,
+                                  context->lowering_context, descriptor, ordinal,
                                   context->failure, context->err);
     if (rc != YVEX_OK)
         return rc;
@@ -1166,7 +1148,8 @@ static int quant_deepseek_decision_build(quant_build_context *context,
                            "quantization decision index is exhausted");
 }
 
-static int quant_deepseek_plan_seal(quant_build_context *context, yvex_quant_profile_kind profile) {
+static int quant_lowered_plan_seal(quant_build_context *context,
+                                   yvex_quant_profile_kind profile) {
     yvex_quant_candidate_summary *selected = &context->plan->summary.candidates[profile];
 
     context->plan->summary.candidates[0].numerically_admissible = 1;
@@ -1228,7 +1211,7 @@ static unsigned int quant_policy_qtype(yvex_quant_qtype qtype) {
 static int quant_policy_rule_matches(const yvex_quant_policy_rule *rule,
                                      const yvex_transform_value *terminal,
                                      const yvex_transform_node *node,
-                                     const yvex_deepseek_gguf_descriptor *descriptor) {
+                                     const yvex_quant_lowering_tensor *descriptor) {
     unsigned long long mask = rule->match_mask;
     yvex_quant_policy_physical_class physical =
         terminal->precision.flags & YVEX_TRANSFORM_PRECISION_QUANTIZABLE_WEIGHT
@@ -1248,7 +1231,7 @@ static int quant_policy_rule_matches(const yvex_quant_policy_rule *rule,
         !quant_policy_pattern_matches(rule->tensor_pattern, descriptor->emitted_name))
         return 0;
     if ((mask & YVEX_QUANT_MATCH_LAYER_RANGE) &&
-        (descriptor->layer_index == YVEX_DEEPSEEK_GGUF_NO_INDEX ||
+        (descriptor->layer_index == ULLONG_MAX ||
          descriptor->layer_index < rule->layer_first || descriptor->layer_index > rule->layer_last))
         return 0;
     if ((mask & YVEX_QUANT_MATCH_EXPERT_GROUP) &&
@@ -1278,7 +1261,7 @@ static int quant_policy_actions_equal(const yvex_quant_policy_rule *left,
 static int quant_policy_resolve(const yvex_quant_policy *policy,
                                 const yvex_transform_value *terminal,
                                 const yvex_transform_node *node,
-                                const yvex_deepseek_gguf_descriptor *descriptor,
+                                const yvex_quant_lowering_tensor *descriptor,
                                 const yvex_quant_policy_rule **selected,
                                 unsigned long long *selected_ordinal,
                                 yvex_quant_failure *failure, yvex_error *err) {
@@ -1339,15 +1322,20 @@ static int quant_policy_bind_decision(yvex_quant_decision *decision,
  *
  * Incomplete lowering, policy conflict, unsupported qtype, or identity failure refuses.
  */
-static int quant_deepseek_policy_decision_build(
+static int quant_lowered_policy_decision_build(
     quant_build_context *context, const yvex_quant_policy *policy,
     const yvex_quant_policy_summary *policy_summary, unsigned long long ordinal,
     yvex_quant_candidate_summary *selected_summary) {
     const yvex_transform_value *terminal = yvex_transform_ir_terminal_at(context->ir, ordinal);
     const yvex_transform_node *node =
         terminal ? yvex_transform_ir_node_at(context->ir, terminal->producer_node_id) : NULL;
-    const yvex_deepseek_gguf_descriptor *descriptor =
-        yvex_model_register_deepseek_v4()->lowering.at(context->map, ordinal);
+    yvex_quant_lowering_tensor descriptor_storage;
+    const yvex_quant_lowering_tensor *descriptor =
+        context->lowering && context->lowering->tensor_at &&
+                context->lowering->tensor_at(context->lowering_context, ordinal,
+                                             &descriptor_storage)
+            ? &descriptor_storage
+            : NULL;
     const yvex_quant_policy_rule *rule = NULL;
     unsigned long long rule_ordinal = ULLONG_MAX;
     yvex_quant_decision baseline;
@@ -1362,7 +1350,8 @@ static int quant_deepseek_policy_decision_build(
                                terminal ? terminal->canonical_ordinal : ULLONG_MAX, UINT_MAX,
                                node ? node->kind : YVEX_TRANSFORM_OP_COUNT, context->err,
                                YVEX_ERR_FORMAT, "policy plan terminal is incomplete");
-    rc = quant_descriptor_matches(context->ir, terminal, node, context->map, descriptor, ordinal,
+    rc = quant_descriptor_matches(context->ir, terminal, node, context->lowering,
+                                  context->lowering_context, descriptor, ordinal,
                                   context->failure, context->err);
     if (rc != YVEX_OK)
         return rc;
@@ -1405,7 +1394,7 @@ static int quant_deepseek_policy_decision_build(
         rule = NULL;
         rule_ordinal = ULLONG_MAX;
     } else if (rule->qtype == YVEX_QUANT_QTYPE_SOURCE) {
-        qtype = quant_candidate_qtype(YVEX_QUANT_PROFILE_SOURCE_FAITHFUL, terminal, node);
+        qtype = quant_lowered_qtype(YVEX_QUANT_PROFILE_SOURCE_FAITHFUL, terminal, descriptor);
     } else {
         qtype = quant_policy_qtype(rule->qtype);
     }
@@ -1443,30 +1432,34 @@ static int quant_deepseek_policy_decision_build(
                            "policy decision index exhausted");
 }
 
-/*
- * Resolve one sealed policy over every canonical DeepSeek terminal without payload reads.
- *
- * Complete IR/binding/lowering, sealed policy, optional imatrix identity, and budget. Returns one
- * immutable identity-bound physical-variant plan.
- */
-int yvex_quant_plan_build_deepseek_policy(
+/* Resolve one sealed family policy over every projected terminal without payload reads. */
+int yvex_quant_plan_build_policy(
     yvex_quant_plan **out, const yvex_transform_ir *ir,
-    const yvex_transform_binding *binding, const yvex_deepseek_gguf_map *map,
-    const yvex_quant_policy *policy, const char *imatrix_identity,
-    const yvex_quant_plan_options *options, yvex_quant_failure *failure, yvex_error *err) {
+    const yvex_transform_binding *binding, const yvex_quant_lowering_api *lowering,
+    const void *lowering_context, const yvex_quant_policy *policy,
+    const char *imatrix_identity, const yvex_quant_plan_options *options,
+    yvex_quant_failure *failure, yvex_error *err) {
     quant_build_context context;
     yvex_quant_policy_summary policy_summary;
     yvex_quant_candidate_summary selected;
-    const yvex_deepseek_gguf_map_summary *map_summary =
-        yvex_model_register_deepseek_v4()->lowering.summary(map);
+    yvex_quant_lowering_summary lowering_summary;
     unsigned long long ordinal;
     int rc;
 
     memset(&context, 0, sizeof(context));
     memset(&selected, 0, sizeof(selected));
+    memset(&lowering_summary, 0, sizeof(lowering_summary));
     if (out)
         *out = NULL;
-    if (!out || !ir || !binding || !map || !policy || !map_summary ||
+    if (!out || !ir || !binding || !lowering || !lowering_context ||
+        !lowering->source_profile_name || !lowering->release_profile_name || !lowering->summary ||
+        !lowering->source_profile_name[0] || !lowering->release_profile_name[0] ||
+        strlen(lowering->source_profile_name) >=
+            sizeof(((yvex_quant_plan_summary *)0)->profile_name) ||
+        strlen(lowering->release_profile_name) >=
+            sizeof(((yvex_quant_plan_summary *)0)->profile_name) ||
+        !lowering->tensor_at || !lowering->contribution_at ||
+        !lowering->summary(lowering_context, &lowering_summary) || !policy ||
         yvex_quant_policy_get_summary(policy, &policy_summary, err) != YVEX_OK ||
         policy_summary.schema_version != YVEX_QUANT_POLICY_SCHEMA_VERSION ||
         policy_summary.status != YVEX_QUANT_POLICY_STATUS_VALID ||
@@ -1475,28 +1468,32 @@ int yvex_quant_plan_build_deepseek_policy(
         return quant_plan_fail(failure, YVEX_QUANT_FAILURE_INVALID_ARGUMENT, ULLONG_MAX,
                                ULLONG_MAX, 1u, 0u, UINT_MAX, YVEX_TRANSFORM_OP_COUNT, err,
                                YVEX_ERR_INVALID_ARG,
-                               "complete DeepSeek inputs and one valid policy-v2 are required");
+                               "complete lowering inputs and one valid policy-v2 are required");
     rc = yvex_quant_policy_identity_validate(policy, err);
     if (rc != YVEX_OK)
         return rc;
     context.ir = ir;
     context.binding = binding;
-    context.map = map;
+    context.lowering = lowering;
+    context.lowering_context = lowering_context;
     context.ir_summary = yvex_transform_ir_summary_get(ir);
     context.binding_summary = yvex_transform_binding_summary_get(binding);
     context.profile_name = policy_summary.name;
-    context.mapping_identity = map_summary->mapping_identity;
+    context.mapping_identity = lowering_summary.mapping_identity;
     context.failure = failure;
     context.err = err;
     if (!context.ir_summary || !context.binding_summary || !context.ir_summary->complete ||
-        !context.binding_summary->complete || !map_summary->complete ||
+        !context.binding_summary->complete || !lowering_summary.complete ||
+        !lowering_summary.mapping_identity ||
+        lowering_summary.source_identity != context.ir_summary->source_snapshot_identity ||
         yvex_transform_binding_ir(binding) != ir ||
-        context.ir_summary->terminal_count != YVEX_DEEPSEEK_GGUF_DESCRIPTOR_COUNT)
+        context.ir_summary->terminal_count != lowering_summary.tensor_count ||
+        context.ir_summary->source_value_count != lowering_summary.contribution_count)
         return quant_plan_fail(failure, YVEX_QUANT_FAILURE_INVALID_ARGUMENT, ULLONG_MAX,
-                               ULLONG_MAX, YVEX_DEEPSEEK_GGUF_DESCRIPTOR_COUNT,
+                               ULLONG_MAX, lowering_summary.tensor_count,
                                context.ir_summary ? context.ir_summary->terminal_count : 0u,
                                UINT_MAX, YVEX_TRANSFORM_OP_COUNT, err, YVEX_ERR_FORMAT,
-                               "policy resolution requires the complete canonical DeepSeek graph");
+                               "policy resolution requires one complete canonical lowering");
     rc = quant_binding_identity_validate(&context);
     if (rc == YVEX_OK)
         rc = quant_build_allocate(&context, options);
@@ -1512,16 +1509,16 @@ int yvex_quant_plan_build_deepseek_policy(
                         sizeof(context.plan->summary.imatrix_identity),
                         imatrix_identity && imatrix_identity[0] ? imatrix_identity : "none");
     context.plan->summary.candidates[0].kind = YVEX_QUANT_PROFILE_SOURCE_FAITHFUL;
-    context.plan->summary.candidates[0].name = YVEX_QUANT_REFERENCE_PROFILE_NAME;
+    context.plan->summary.candidates[0].name = lowering->source_profile_name;
     context.plan->summary.candidates[0].compute_admissible = 1;
     context.plan->summary.candidates[1].kind = YVEX_QUANT_PROFILE_RELEASE_Q8_Q2;
-    context.plan->summary.candidates[1].name = YVEX_QUANT_RELEASE_PROFILE_NAME;
+    context.plan->summary.candidates[1].name = lowering->release_profile_name;
     context.plan->summary.candidates[1].compute_admissible = 1;
     selected.name = context.plan->summary.profile_name;
     selected.compute_admissible = 1;
     for (ordinal = 0u; ordinal < context.ir_summary->terminal_count; ++ordinal) {
-        rc = quant_deepseek_policy_decision_build(&context, policy, &policy_summary, ordinal,
-                                                  &selected);
+        rc = quant_lowered_policy_decision_build(&context, policy, &policy_summary, ordinal,
+                                                 &selected);
         if (rc != YVEX_OK) {
             yvex_quant_plan_release(&context.plan);
             return rc;
@@ -1558,76 +1555,88 @@ int yvex_quant_plan_build_deepseek_policy(
     return YVEX_OK;
 }
 
-int yvex_quant_plan_build_deepseek_profile(yvex_quant_plan **out, const yvex_transform_ir *ir,
-                                           const yvex_transform_binding *binding,
-                                           const yvex_deepseek_gguf_map *map,
-                                           yvex_quant_profile_kind profile,
-                                           const yvex_quant_plan_options *options,
-                                           yvex_quant_failure *failure, yvex_error *err) {
+int yvex_quant_plan_build_profile(
+    yvex_quant_plan **out, const yvex_transform_ir *ir,
+    const yvex_transform_binding *binding, const yvex_quant_lowering_api *lowering,
+    const void *lowering_context, yvex_quant_profile_kind profile,
+    const yvex_quant_plan_options *options, yvex_quant_failure *failure, yvex_error *err) {
     quant_build_context context;
-    const yvex_deepseek_gguf_map_summary *map_summary =
-        yvex_model_register_deepseek_v4()->lowering.summary(map);
+    yvex_quant_lowering_summary lowering_summary;
     unsigned long long ordinal;
     int rc;
 
     memset(&context, 0, sizeof(context));
+    memset(&lowering_summary, 0, sizeof(lowering_summary));
     context.ir = ir;
     context.binding = binding;
-    context.map = map;
+    context.lowering = lowering;
+    context.lowering_context = lowering_context;
     context.ir_summary = yvex_transform_ir_summary_get(ir);
     context.binding_summary = yvex_transform_binding_summary_get(binding);
-    context.profile_name = profile == YVEX_QUANT_PROFILE_SOURCE_FAITHFUL
-                               ? YVEX_QUANT_REFERENCE_PROFILE_NAME
-                               : YVEX_QUANT_RELEASE_PROFILE_NAME;
-    context.mapping_identity = map_summary ? map_summary->mapping_identity : 0u;
+    context.profile_name = lowering
+                               ? (profile == YVEX_QUANT_PROFILE_SOURCE_FAITHFUL
+                                      ? lowering->source_profile_name
+                                      : lowering->release_profile_name)
+                               : NULL;
+    if (lowering && lowering->summary && lowering_context)
+        lowering->summary(lowering_context, &lowering_summary);
+    context.mapping_identity = lowering_summary.mapping_identity;
     context.failure = failure;
     context.err = err;
     if (out)
         *out = NULL;
-    if (!out || !ir || !binding || !map ||
+    if (!out || !ir || !binding || !lowering || !lowering_context ||
+        !lowering->source_profile_name || !lowering->release_profile_name || !lowering->summary ||
+        !lowering->source_profile_name[0] || !lowering->release_profile_name[0] ||
+        strlen(lowering->source_profile_name) >=
+            sizeof(((yvex_quant_plan_summary *)0)->profile_name) ||
+        strlen(lowering->release_profile_name) >=
+            sizeof(((yvex_quant_plan_summary *)0)->profile_name) ||
+        !lowering->tensor_at || !lowering->contribution_at ||
         (profile != YVEX_QUANT_PROFILE_SOURCE_FAITHFUL &&
          profile != YVEX_QUANT_PROFILE_RELEASE_Q8_Q2) ||
         yvex_transform_binding_ir(binding) != ir || !context.ir_summary ||
-        !context.binding_summary || !map_summary || !context.ir_summary->complete ||
-        !context.binding_summary->complete || !map_summary->complete)
+        !context.binding_summary || !context.ir_summary->complete ||
+        !context.binding_summary->complete || !lowering_summary.complete)
         return quant_plan_fail(failure, YVEX_QUANT_FAILURE_INVALID_ARGUMENT, ULLONG_MAX, ULLONG_MAX,
                                1u, 0u, UINT_MAX, YVEX_TRANSFORM_OP_COUNT, err, YVEX_ERR_INVALID_ARG,
                                "sealed IR, complete binding, lowering, and output are required");
     rc = quant_binding_identity_validate(&context);
     if (rc != YVEX_OK)
         return rc;
-    if (map_summary->mapping_identity != YVEX_DEEPSEEK_GGUF_MAPPING_IDENTITY)
-        return quant_plan_fail(failure, YVEX_QUANT_FAILURE_MAPPING_IDENTITY, ULLONG_MAX, ULLONG_MAX,
-                               YVEX_DEEPSEEK_GGUF_MAPPING_IDENTITY, map_summary->mapping_identity,
-                               UINT_MAX, YVEX_TRANSFORM_OP_COUNT, err, YVEX_ERR_FORMAT,
-                               "GGUF mapping identity is not the pinned lowering");
-    if (context.ir_summary->terminal_count != YVEX_DEEPSEEK_GGUF_DESCRIPTOR_COUNT ||
-        context.ir_summary->source_value_count != YVEX_DEEPSEEK_GGUF_SOURCE_COUNT ||
-        map_summary->descriptor_count != context.ir_summary->terminal_count)
+    if (!lowering_summary.mapping_identity ||
+        lowering_summary.source_identity != context.ir_summary->source_snapshot_identity)
+        return quant_plan_fail(failure, YVEX_QUANT_FAILURE_MAPPING_IDENTITY, ULLONG_MAX,
+                               ULLONG_MAX, context.ir_summary->source_snapshot_identity,
+                               lowering_summary.source_identity, UINT_MAX,
+                               YVEX_TRANSFORM_OP_COUNT, err, YVEX_ERR_FORMAT,
+                               "lowering identity does not bind the admitted source snapshot");
+    if (context.ir_summary->terminal_count != lowering_summary.tensor_count ||
+        context.ir_summary->source_value_count != lowering_summary.contribution_count)
         return quant_plan_fail(failure, YVEX_QUANT_FAILURE_MISSING_DECISION, ULLONG_MAX, ULLONG_MAX,
-                               YVEX_DEEPSEEK_GGUF_DESCRIPTOR_COUNT,
+                               lowering_summary.tensor_count,
                                context.ir_summary->terminal_count, UINT_MAX,
                                YVEX_TRANSFORM_OP_COUNT, err, YVEX_ERR_FORMAT,
-                               "target-scale terminal or source accounting is incomplete");
+                               "terminal or source lowering accounting is incomplete");
     rc = quant_build_allocate(&context, options);
     if (rc != YVEX_OK) {
         yvex_quant_plan_release(&context.plan);
         return rc;
     }
     context.plan->summary.candidates[0].kind = YVEX_QUANT_PROFILE_SOURCE_FAITHFUL;
-    context.plan->summary.candidates[0].name = YVEX_QUANT_REFERENCE_PROFILE_NAME;
+    context.plan->summary.candidates[0].name = lowering->source_profile_name;
     context.plan->summary.candidates[0].compute_admissible = 1;
     context.plan->summary.candidates[1].kind = YVEX_QUANT_PROFILE_RELEASE_Q8_Q2;
-    context.plan->summary.candidates[1].name = YVEX_QUANT_RELEASE_PROFILE_NAME;
+    context.plan->summary.candidates[1].name = lowering->release_profile_name;
     context.plan->summary.candidates[1].compute_admissible = 1;
     for (ordinal = 0u; ordinal < context.ir_summary->terminal_count; ++ordinal) {
-        rc = quant_deepseek_decision_build(&context, profile, ordinal);
+        rc = quant_lowered_decision_build(&context, profile, ordinal);
         if (rc != YVEX_OK) {
             yvex_quant_plan_release(&context.plan);
             return rc;
         }
     }
-    rc = quant_deepseek_plan_seal(&context, profile);
+    rc = quant_lowered_plan_seal(&context, profile);
     if (rc != YVEX_OK) {
         yvex_quant_plan_release(&context.plan);
         return rc;

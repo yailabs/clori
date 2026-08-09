@@ -234,7 +234,7 @@ static int test_arch_ir_golden_topology(void)
         "logical architecture and Transformation IR identities remain distinct");
     YVEX_TEST_ASSERT(
         strcmp(logical_identity,
-               YVEX_QUANT_DSPARK_IMATRIX_SOURCE_IDENTITY) != 0,
+               YVEX_DEEPSEEK_QUANT_IMATRIX_SOURCE_IDENTITY) != 0,
         "current DSpark identity cannot impersonate retained predecessor calibration");
     execution_rc = yvex_model_register_deepseek_v4()->ir.execution_descriptor
                        ? yvex_model_register_deepseek_v4()->ir.execution_descriptor(

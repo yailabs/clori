@@ -1080,14 +1080,14 @@ int main(int argc, char **argv)
         const char *binding_directory = getenv("YVEX_VARIANT_BINDING_DIR");
         char binding_path[YVEX_PATH_CAP];
 
-        if (!preset || !preset[0]) preset = YVEX_QUANT_DSPARK_PROFILE_NAME;
+        if (!preset || !preset[0]) preset = YVEX_DEEPSEEK_QUANT_DSPARK_PROFILE_NAME;
         memset(&variant_imatrix_summary, 0, sizeof(variant_imatrix_summary));
         memset(&imatrix_options, 0, sizeof(imatrix_options));
         imatrix_options.path = imatrix_path;
         imatrix_options.source_model_identity =
-            YVEX_QUANT_DSPARK_IMATRIX_SOURCE_IDENTITY;
+            YVEX_DEEPSEEK_QUANT_IMATRIX_SOURCE_IDENTITY;
         imatrix_options.calibration_dataset_identity =
-            YVEX_QUANT_DSPARK_IMATRIX_DATASET_IDENTITY;
+            YVEX_DEEPSEEK_QUANT_IMATRIX_DATASET_IDENTITY;
         imatrix_options.producer = "llama.cpp-imatrix";
         imatrix_options.producer_version = 1u;
         imatrix_options.maximum_mapped_bytes = 1024u * 1024u * 1024u;

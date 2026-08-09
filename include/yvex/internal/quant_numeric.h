@@ -215,24 +215,6 @@ int yvex_quant_cpu_dot(unsigned int qtype,
 /* Quant Plan. */
 #define YVEX_QUANT_PROFILE_SCHEMA_VERSION 1u
 #define YVEX_QUANT_PLAN_IDENTITY_CAP 65u
-#define YVEX_QUANT_RELEASE_PROFILE_NAME \
-    "deepseek-v4-flash-dspark-q8_0-q2_k-v1"
-#define YVEX_QUANT_REFERENCE_PROFILE_NAME \
-    "deepseek-v4-flash-dspark-source-faithful-v1"
-#define YVEX_QUANT_DSPARK_PROFILE_NAME \
-    "deepseek-v4-flash-dspark-bootstrap-q2-v1"
-/*
- * The bootstrap IQ2 decisions use the retained DS4 importance matrix only as
- * a predecessor prior for the same routed-expert roles. Shared tensor names do
- * not imply shared payloads: the DSpark snapshot differs from its predecessor,
- * so this identity must remain attached to the earlier source and must never be
- * reported as DSpark calibration. Fresh calibration belongs to the physical
- * optimization and evaluation passes.
- */
-#define YVEX_QUANT_DSPARK_IMATRIX_SOURCE_IDENTITY \
-    "cc774dffb6aa3a8e9f507b1dd454fbf7f5c68187138736f9a330ee9eaec07067"
-#define YVEX_QUANT_DSPARK_IMATRIX_DATASET_IDENTITY \
-    "deepseek-v4-flash-chat-v2-rendered-prompts-v1"
 typedef enum {
     YVEX_QUANT_PLAN_BUILDING = 0,
     YVEX_QUANT_PLAN_SEALED,
@@ -338,6 +320,51 @@ typedef struct yvex_quant_plan_options {
     void *context;
     size_t maximum_owned_bytes;
 } yvex_quant_plan_options;
+/*
+ * Family compilation projects physical tensor facts through this bounded quantization ABI.
+ * Build calls borrow the adapter context and copy callback rows synchronously. Profile names have
+ * process lifetime because sealed plan summaries retain their pointers.
+ */
+typedef struct {
+    unsigned long long contribution_count, tensor_count;
+    unsigned long long source_identity, mapping_identity;
+    int complete;
+} yvex_quant_lowering_summary;
+typedef struct {
+    yvex_tensor_role role;
+    yvex_tensor_collection collection;
+    yvex_tensor_scope scope;
+    unsigned long long layer_index, predictor_index, expert_count;
+    char emitted_name[192];
+    yvex_transform_operation_kind operation;
+    unsigned int source_faithful_qtype, release_qtype, logical_rank;
+    int profile_qtype_required;
+    unsigned long long logical_dims[YVEX_GGUF_QTYPE_MAX_DIMS];
+    unsigned int source_axis_for_logical[YVEX_GGUF_QTYPE_MAX_DIMS];
+    unsigned long long contribution_offset, contribution_count;
+} yvex_quant_lowering_tensor;
+typedef struct {
+    char source_name[256];
+    yvex_native_dtype source_dtype;
+    unsigned long long tensor_ordinal, expert_index;
+} yvex_quant_lowering_contribution;
+typedef struct yvex_quant_lowering_api {
+    const char *source_profile_name, *release_profile_name;
+    int (*summary)(const void *context, yvex_quant_lowering_summary *out);
+    int (*tensor_at)(const void *context, unsigned long long ordinal,
+                     yvex_quant_lowering_tensor *out);
+    int (*contribution_at)(const void *context, unsigned long long ordinal,
+                           yvex_quant_lowering_contribution *out);
+} yvex_quant_lowering_api;
+typedef struct {
+    const char *name, *architecture, *source_kind;
+    const yvex_quant_policy_rule *rules;
+    unsigned long long rule_count;
+} yvex_quant_policy_definition;
+/* Create one sealed policy while copying the definition and all rule-owned strings. */
+int yvex_quant_policy_create_definition(
+    yvex_quant_policy **out, const yvex_quant_policy_definition *definition,
+    yvex_error *err);
 typedef struct {
     unsigned int qtype;
     int approximation;
@@ -366,6 +393,17 @@ int yvex_quant_plan_build_source_faithful(
     const yvex_quant_plan_options *options,
     yvex_quant_failure *failure,
     yvex_error *err);
+int yvex_quant_plan_build_profile(
+    yvex_quant_plan **out, const yvex_transform_ir *ir,
+    const yvex_transform_binding *binding, const yvex_quant_lowering_api *lowering,
+    const void *lowering_context, yvex_quant_profile_kind profile,
+    const yvex_quant_plan_options *options, yvex_quant_failure *failure, yvex_error *err);
+int yvex_quant_plan_build_policy(
+    yvex_quant_plan **out, const yvex_transform_ir *ir,
+    const yvex_transform_binding *binding, const yvex_quant_lowering_api *lowering,
+    const void *lowering_context, const yvex_quant_policy *policy,
+    const char *imatrix_identity, const yvex_quant_plan_options *options,
+    yvex_quant_failure *failure, yvex_error *err);
 void yvex_quant_plan_release(yvex_quant_plan **plan);
 const yvex_quant_plan_summary *yvex_quant_plan_summary_get(
     const yvex_quant_plan *plan);

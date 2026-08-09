@@ -1627,6 +1627,238 @@ const yvex_model_family_lowering_api *yvex_model_deepseek_lowering_api(void)
     return &api;
 }
 
+static int quant_lowering_summary(const void *context, yvex_quant_lowering_summary *out)
+{
+    const yvex_deepseek_gguf_map_summary *summary =
+        lowering_summary((const yvex_deepseek_gguf_map *)context);
+
+    if (!summary || !out) return 0;
+    *out = (yvex_quant_lowering_summary){
+        summary->source_contribution_count,
+        summary->descriptor_count,
+        summary->source_identity,
+        summary->mapping_identity,
+        summary->complete};
+    return 1;
+}
+
+static int quant_lowering_qtypes(yvex_deepseek_gguf_transform transform,
+                                 unsigned int *source_faithful, unsigned int *release)
+{
+    if (!source_faithful || !release) return 0;
+    switch (transform) {
+    case YVEX_DEEPSEEK_GGUF_TRANSFORM_DIRECT:
+    case YVEX_DEEPSEEK_GGUF_TRANSFORM_FP8_E4M3_E8M0:
+        *source_faithful = YVEX_GGUF_QTYPE_F32;
+        *release = YVEX_GGUF_QTYPE_Q8_0;
+        return 1;
+    case YVEX_DEEPSEEK_GGUF_TRANSFORM_EXPERT_MXFP4:
+        *source_faithful = YVEX_GGUF_QTYPE_MXFP4;
+        *release = YVEX_GGUF_QTYPE_Q2_K;
+        return 1;
+    case YVEX_DEEPSEEK_GGUF_TRANSFORM_I64_TO_I32:
+        *source_faithful = YVEX_GGUF_QTYPE_I32;
+        *release = YVEX_GGUF_QTYPE_I32;
+        return 1;
+    }
+    return 0;
+}
+
+static yvex_transform_operation_kind quant_lowering_operation(
+    yvex_deepseek_gguf_transform transform)
+{
+    switch (transform) {
+    case YVEX_DEEPSEEK_GGUF_TRANSFORM_DIRECT: return YVEX_TRANSFORM_OP_IDENTITY;
+    case YVEX_DEEPSEEK_GGUF_TRANSFORM_FP8_E4M3_E8M0:
+        return YVEX_TRANSFORM_OP_DECODE_SCALE_PAIR;
+    case YVEX_DEEPSEEK_GGUF_TRANSFORM_EXPERT_MXFP4:
+        return YVEX_TRANSFORM_OP_EXPERT_AGGREGATE;
+    case YVEX_DEEPSEEK_GGUF_TRANSFORM_I64_TO_I32: return YVEX_TRANSFORM_OP_CHECKED_CAST;
+    }
+    return YVEX_TRANSFORM_OP_COUNT;
+}
+
+static int quant_lowering_tensor(const void *context, unsigned long long ordinal,
+                                 yvex_quant_lowering_tensor *out)
+{
+    const yvex_deepseek_gguf_descriptor *row =
+        lowering_at((const yvex_deepseek_gguf_map *)context, ordinal);
+
+    if (!row || !out || row->logical_rank > YVEX_GGUF_QTYPE_MAX_DIMS ||
+        row->transform > YVEX_DEEPSEEK_GGUF_TRANSFORM_I64_TO_I32) return 0;
+    memset(out, 0, sizeof(*out));
+    out->role = row->role;
+    out->collection = row->collection;
+    out->scope = row->scope;
+    out->layer_index = row->layer_index;
+    out->predictor_index = row->predictor_index;
+    out->expert_count = row->expert_count;
+    yvex_core_text_copy(out->emitted_name, sizeof(out->emitted_name), row->emitted_name);
+    out->operation = quant_lowering_operation(row->transform);
+    if (out->operation == YVEX_TRANSFORM_OP_COUNT ||
+        !quant_lowering_qtypes(row->transform, &out->source_faithful_qtype,
+                               &out->release_qtype)) return 0;
+    out->profile_qtype_required =
+        row->transform == YVEX_DEEPSEEK_GGUF_TRANSFORM_EXPERT_MXFP4 ||
+        row->transform == YVEX_DEEPSEEK_GGUF_TRANSFORM_I64_TO_I32;
+    out->logical_rank = row->logical_rank;
+    memcpy(out->logical_dims, row->logical_dims, sizeof(out->logical_dims));
+    memcpy(out->source_axis_for_logical, row->source_axis_for_logical,
+           sizeof(out->source_axis_for_logical));
+    out->contribution_offset = row->contribution_offset;
+    out->contribution_count = row->contribution_count;
+    return 1;
+}
+
+static int quant_lowering_contribution(const void *context, unsigned long long ordinal,
+                                       yvex_quant_lowering_contribution *out)
+{
+    const yvex_deepseek_gguf_contribution *row =
+        lowering_contribution_at((const yvex_deepseek_gguf_map *)context, ordinal);
+
+    if (!row || !out) return 0;
+    memset(out, 0, sizeof(*out));
+    yvex_core_text_copy(out->source_name, sizeof(out->source_name), row->source_name);
+    out->source_dtype = row->source_dtype;
+    out->tensor_ordinal = row->descriptor_index;
+    out->expert_index = row->expert_index;
+    return 1;
+}
+
+static const yvex_quant_lowering_api *deepseek_quant_lowering_api(void)
+{
+    static const yvex_quant_lowering_api api = {
+        YVEX_DEEPSEEK_QUANT_SOURCE_PROFILE_NAME,
+        YVEX_DEEPSEEK_QUANT_RELEASE_PROFILE_NAME,
+        quant_lowering_summary, quant_lowering_tensor, quant_lowering_contribution};
+    return &api;
+}
+
+static void deepseek_preset_rule(
+    yvex_quant_policy_rule *rule, unsigned long long match_mask, yvex_tensor_role role,
+    yvex_quant_policy_operation operation, yvex_tensor_scope scope,
+    yvex_quant_policy_physical_class physical_class, yvex_quant_qtype qtype, int imatrix,
+    unsigned int priority, const char *label)
+{
+    memset(rule, 0, sizeof(*rule));
+    rule->schema_version = YVEX_QUANT_POLICY_SCHEMA_VERSION;
+    rule->match_mask = match_mask;
+    rule->role = role;
+    rule->operation = operation;
+    rule->scope = scope;
+    rule->physical_class = physical_class;
+    rule->qtype = qtype;
+    rule->requires_imatrix = imatrix;
+    rule->requires_cpu_compute = 1;
+    rule->requires_cuda_compute = 1;
+    rule->priority = priority;
+    rule->label = label;
+}
+
+unsigned long long yvex_quant_policy_preset_count(void)
+{
+    return 3u;
+}
+
+const char *yvex_quant_policy_preset_name(unsigned long long index)
+{
+    static const char *const names[] = {
+        "source-faithful", YVEX_DEEPSEEK_QUANT_RELEASE_PROFILE_NAME,
+        YVEX_DEEPSEEK_QUANT_DSPARK_PROFILE_NAME};
+    return index < sizeof(names) / sizeof(names[0]) ? names[index] : NULL;
+}
+
+int yvex_quant_policy_preset_open(yvex_quant_policy **out, const char *name, yvex_error *err)
+{
+    static const yvex_tensor_role exact_roles[] = {
+        YVEX_TENSOR_ROLE_DRAFT_FEATURE_NORM, YVEX_TENSOR_ROLE_DRAFT_OUTPUT_NORM,
+        YVEX_TENSOR_ROLE_DRAFT_MARKOV_EMBEDDING, YVEX_TENSOR_ROLE_DRAFT_MARKOV_OUTPUT,
+        YVEX_TENSOR_ROLE_DRAFT_CONFIDENCE};
+    yvex_quant_policy_rule rules[10];
+    yvex_quant_policy_definition definition;
+    unsigned long long count = 0u;
+    unsigned long long index;
+
+    if (out) *out = NULL;
+    if (!out || !name) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "quant_policy_preset",
+                       "out and preset name are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    if (strcmp(name, "source-faithful") != 0 &&
+        strcmp(name, YVEX_DEEPSEEK_QUANT_RELEASE_PROFILE_NAME) != 0 &&
+        strcmp(name, YVEX_DEEPSEEK_QUANT_DSPARK_PROFILE_NAME) != 0) {
+        yvex_error_setf(err, YVEX_ERR_UNSUPPORTED, "quant_policy_preset",
+                        "unknown quantization preset: %s", name);
+        return YVEX_ERR_UNSUPPORTED;
+    }
+    deepseek_preset_rule(
+        &rules[count++], YVEX_QUANT_MATCH_PHYSICAL_CLASS, YVEX_TENSOR_ROLE_UNKNOWN,
+        YVEX_QUANT_POLICY_OPERATION_ANY, YVEX_TENSOR_SCOPE_GLOBAL,
+        YVEX_QUANT_POLICY_PHYSICAL_QUANTIZABLE,
+        strcmp(name, "source-faithful") == 0 ? YVEX_QUANT_QTYPE_SOURCE : YVEX_QUANT_QTYPE_Q8_0,
+        0, 10u, strcmp(name, "source-faithful") == 0
+                      ? "preserve the admitted source physical representation"
+                      : "default approximable terminal representation");
+    if (strcmp(name, YVEX_DEEPSEEK_QUANT_RELEASE_PROFILE_NAME) == 0)
+        deepseek_preset_rule(
+            &rules[count++], YVEX_QUANT_MATCH_OPERATION, YVEX_TENSOR_ROLE_UNKNOWN,
+            YVEX_QUANT_POLICY_OPERATION_EXPERT_AGGREGATE, YVEX_TENSOR_SCOPE_GLOBAL,
+            YVEX_QUANT_POLICY_PHYSICAL_ANY, YVEX_QUANT_QTYPE_Q2_K, 0, 100u,
+            "verified release routed-expert aggregate");
+    if (strcmp(name, YVEX_DEEPSEEK_QUANT_DSPARK_PROFILE_NAME) == 0) {
+        static const yvex_tensor_role expert_roles[] = {
+            YVEX_TENSOR_ROLE_MOE_EXPERT_GATE, YVEX_TENSOR_ROLE_MOE_EXPERT_UP,
+            YVEX_TENSOR_ROLE_MOE_EXPERT_DOWN};
+        static const yvex_quant_qtype expert_qtypes[] = {
+            YVEX_QUANT_QTYPE_IQ2_XXS, YVEX_QUANT_QTYPE_IQ2_XXS, YVEX_QUANT_QTYPE_Q2_K};
+        static const char *const expert_labels[] = {
+            "imatrix-weighted routed expert gate", "imatrix-weighted routed expert up",
+            "imatrix-covered routed expert down"};
+        for (index = 0u; index < 3u; ++index)
+            deepseek_preset_rule(
+                &rules[count++], YVEX_QUANT_MATCH_ROLE | YVEX_QUANT_MATCH_SCOPE |
+                                     YVEX_QUANT_MATCH_OPERATION,
+                expert_roles[index], YVEX_QUANT_POLICY_OPERATION_EXPERT_AGGREGATE,
+                YVEX_TENSOR_SCOPE_MAIN_LAYER, YVEX_QUANT_POLICY_PHYSICAL_ANY,
+                expert_qtypes[index], 1, 200u, expert_labels[index]);
+        deepseek_preset_rule(
+            &rules[count++], YVEX_QUANT_MATCH_SCOPE | YVEX_QUANT_MATCH_PHYSICAL_CLASS,
+            YVEX_TENSOR_ROLE_UNKNOWN, YVEX_QUANT_POLICY_OPERATION_ANY,
+            YVEX_TENSOR_SCOPE_DRAFT, YVEX_QUANT_POLICY_PHYSICAL_QUANTIZABLE,
+            YVEX_QUANT_QTYPE_Q8_0, 0, 150u, "conservative DSpark draft representation");
+        for (index = 0u; index < sizeof(exact_roles) / sizeof(exact_roles[0]); ++index)
+            deepseek_preset_rule(
+                &rules[count++], YVEX_QUANT_MATCH_ROLE | YVEX_QUANT_MATCH_SCOPE,
+                exact_roles[index], YVEX_QUANT_POLICY_OPERATION_ANY, YVEX_TENSOR_SCOPE_DRAFT,
+                YVEX_QUANT_POLICY_PHYSICAL_ANY, YVEX_QUANT_QTYPE_BF16, 0, 250u,
+                "exact DSpark norm, Markov, and confidence control");
+    }
+    definition = (yvex_quant_policy_definition){
+        name, "deepseek4-v4-flash-dspark", "built-in-preset", rules, count};
+    return yvex_quant_policy_create_definition(out, &definition, err);
+}
+
+int yvex_quant_plan_build_deepseek_profile(
+    yvex_quant_plan **out, const yvex_transform_ir *ir,
+    const yvex_transform_binding *binding, const yvex_deepseek_gguf_map *map,
+    yvex_quant_profile_kind profile, const yvex_quant_plan_options *options,
+    yvex_quant_failure *failure, yvex_error *err)
+{
+    return yvex_quant_plan_build_profile(out, ir, binding, deepseek_quant_lowering_api(), map,
+                                         profile, options, failure, err);
+}
+
+int yvex_quant_plan_build_deepseek_policy(
+    yvex_quant_plan **out, const yvex_transform_ir *ir,
+    const yvex_transform_binding *binding, const yvex_deepseek_gguf_map *map,
+    const yvex_quant_policy *policy, const char *imatrix_identity,
+    const yvex_quant_plan_options *options, yvex_quant_failure *failure, yvex_error *err)
+{
+    return yvex_quant_plan_build_policy(out, ir, binding, deepseek_quant_lowering_api(), map,
+                                        policy, imatrix_identity, options, failure, err);
+}
+
 static int writer_lowering_summary(const void *context,
                                    yvex_gguf_writer_lowering_summary *out)
 {

@@ -234,8 +234,7 @@ typedef struct {
     int use_cache, final_mhc_post_required, final_mhc_head_required, final_norm_after_mhc_head;
 } yvex_deepseek_v4_model_spec;
 typedef void *(*yvex_deepseek_v4_ir_allocate_fn)(size_t size, void *context);
-typedef void (*yvex_deepseek_v4_ir_release_fn)(void *allocation,
-                                               void *context);
+typedef void (*yvex_deepseek_v4_ir_release_fn)(void *allocation, void *context);
 typedef struct {
     yvex_deepseek_v4_ir_allocate_fn allocate;
     yvex_deepseek_v4_ir_release_fn release;
@@ -319,6 +318,12 @@ typedef struct {
 #define YVEX_DEEPSEEK_GGUF_DRAFT_DESCRIPTOR_COUNT 81ull
 #define YVEX_DEEPSEEK_GGUF_SOURCE_COUNT 72317ull
 #define YVEX_DEEPSEEK_GGUF_MAPPING_IDENTITY 0x779aa44d104fc718ull
+#define YVEX_DEEPSEEK_QUANT_SOURCE_PROFILE_NAME "deepseek-v4-flash-dspark-source-faithful-v1"
+#define YVEX_DEEPSEEK_QUANT_RELEASE_PROFILE_NAME "deepseek-v4-flash-dspark-q8_0-q2_k-v1"
+#define YVEX_DEEPSEEK_QUANT_DSPARK_PROFILE_NAME "deepseek-v4-flash-dspark-bootstrap-q2-v1"
+#define YVEX_DEEPSEEK_QUANT_IMATRIX_SOURCE_IDENTITY \
+    "cc774dffb6aa3a8e9f507b1dd454fbf7f5c68187138736f9a330ee9eaec07067"
+#define YVEX_DEEPSEEK_QUANT_IMATRIX_DATASET_IDENTITY "deepseek-v4-flash-chat-v2-rendered-prompts-v1"
 typedef enum {
     YVEX_DEEPSEEK_GGUF_TRANSFORM_DIRECT = 0, YVEX_DEEPSEEK_GGUF_TRANSFORM_FP8_E4M3_E8M0,
     YVEX_DEEPSEEK_GGUF_TRANSFORM_EXPERT_MXFP4, YVEX_DEEPSEEK_GGUF_TRANSFORM_I64_TO_I32
@@ -436,10 +441,6 @@ typedef struct {
     yvex_source_payload_budget budget;
     size_t chunk_bytes, page_bytes;
 } yvex_deepseek_payload_handoff_options;
-/*
- * One immutable registration is the complete family-visible ABI.  Consumers
- * select typed operations from this table; implementation helpers remain
- * private to the family translation unit. */
 typedef struct {
     int (*build)(yvex_deepseek_v4_ir **out, const struct yvex_source_verification *verification,
                  yvex_deepseek_v4_ir_failure *failure, yvex_error *err);
@@ -488,12 +489,10 @@ typedef struct {
                                                    unsigned long long index);
     const yvex_deepseek_tensor_coverage_row *(*find)(const yvex_deepseek_tensor_coverage *coverage,
                                                      const char *source_name);
-    int (*find_index)(const yvex_deepseek_tensor_coverage *coverage,
-                      const char *source_name,
+    int (*find_index)(const yvex_deepseek_tensor_coverage *coverage, const char *source_name,
                       unsigned long long *row_index);
     int (*find_source_index)(const yvex_deepseek_tensor_coverage *coverage,
-                             const char *source_name,
-                             unsigned long long *source_index);
+                             const char *source_name, unsigned long long *source_index);
     const char *(*collection_name)(yvex_tensor_collection collection);
     const char *(*failure_name)(yvex_deepseek_tensor_coverage_failure_code code);
 } yvex_model_family_coverage_api;
@@ -564,10 +563,10 @@ const yvex_model_family_transform_api *yvex_model_deepseek_transform_api(void);
 const yvex_model_family_lowering_api *yvex_model_deepseek_lowering_api(void);
 const yvex_gguf_writer_lowering_api *yvex_model_deepseek_writer_lowering_api(void);
 const yvex_model_family_payload_api *yvex_model_deepseek_payload_api(void);
-int yvex_transform_deepseek_architecture_identity(
-    const yvex_deepseek_v4_ir *architecture, char output[YVEX_DEEPSEEK_IDENTITY_CAP]);
-int yvex_gguf_map_deepseek_name(const char *native_name, char *target,
-                                size_t target_cap, yvex_tensor_role *role,
+int yvex_transform_deepseek_architecture_identity(const yvex_deepseek_v4_ir *architecture,
+                                                  char output[YVEX_DEEPSEEK_IDENTITY_CAP]);
+int yvex_gguf_map_deepseek_name(const char *native_name, char *target, size_t target_cap,
+                                yvex_tensor_role *role,
                                 yvex_weight_mapping_issue_kind *issue);
 int yvex_quant_plan_build_deepseek_profile(
     yvex_quant_plan **out, const yvex_transform_ir *ir,

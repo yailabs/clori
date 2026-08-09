@@ -41,7 +41,7 @@ static int quant_plan_invariants(const yvex_quant_plan_summary *summary, int pol
 
     if (!common) return 0;
     if (!policy_plan)
-        return summary->qtype_tensor_counts[YVEX_GGUF_QTYPE_Q2_K] == 132u &&
+        return summary->qtype_tensor_counts[YVEX_GGUF_QTYPE_Q2_K] == 138u &&
                summary->qtype_tensor_counts[YVEX_GGUF_QTYPE_IQ2_XXS] == 0u &&
                !summary->calibration_required;
     if (!ds4_preset) return 1;
@@ -146,7 +146,8 @@ int main(int argc, char **argv)
     int preset_plan = preset_name && preset_name[0];
     int external_policy_plan = policy_path && policy_path[0];
     int policy_plan = preset_plan || external_policy_plan;
-    int ds4_plan = preset_plan && strcmp(preset_name, YVEX_QUANT_DSPARK_PROFILE_NAME) == 0;
+    int ds4_plan =
+        preset_plan && strcmp(preset_name, YVEX_DEEPSEEK_QUANT_DSPARK_PROFILE_NAME) == 0;
     int compatibility_profile_equal = 0;
     int rc;
 
@@ -199,9 +200,9 @@ int main(int argc, char **argv)
             memset(&imatrix_options, 0, sizeof(imatrix_options));
             imatrix_options.path = imatrix_path;
             imatrix_options.source_model_identity =
-                YVEX_QUANT_DSPARK_IMATRIX_SOURCE_IDENTITY;
+                YVEX_DEEPSEEK_QUANT_IMATRIX_SOURCE_IDENTITY;
             imatrix_options.calibration_dataset_identity =
-                YVEX_QUANT_DSPARK_IMATRIX_DATASET_IDENTITY;
+                YVEX_DEEPSEEK_QUANT_IMATRIX_DATASET_IDENTITY;
             imatrix_options.producer = "llama.cpp-imatrix";
             imatrix_options.producer_version = 1u;
             imatrix_options.maximum_mapped_bytes = 1024u * 1024u * 1024u;

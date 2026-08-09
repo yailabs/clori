@@ -1694,9 +1694,10 @@ static int runtime_binding_compiler_plan(runtime_binding_compiler *compiler,
              * only the admitted predecessor prior used by planning and emission; a fresh
              * calibration requires an explicit provenance contract rather than inference from
              * the policy-selection mechanism. */
-            imatrix_options.source_model_identity = YVEX_QUANT_DSPARK_IMATRIX_SOURCE_IDENTITY;
+            imatrix_options.source_model_identity =
+                YVEX_DEEPSEEK_QUANT_IMATRIX_SOURCE_IDENTITY;
             imatrix_options.calibration_dataset_identity =
-                YVEX_QUANT_DSPARK_IMATRIX_DATASET_IDENTITY;
+                YVEX_DEEPSEEK_QUANT_IMATRIX_DATASET_IDENTITY;
             imatrix_options.producer = "llama.cpp-imatrix";
             imatrix_options.producer_version = 1u;
             imatrix_options.maximum_mapped_bytes = 1024u * 1024u * 1024u;

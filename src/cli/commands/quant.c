@@ -182,9 +182,9 @@ static int quant_cli_imatrix_open(quant_cli_context *context, const char *path,
      * it calibration of the new DSpark transform would make two different
      * source snapshots share one semantic claim. */
     options.source_model_identity =
-        YVEX_QUANT_DSPARK_IMATRIX_SOURCE_IDENTITY;
+        YVEX_DEEPSEEK_QUANT_IMATRIX_SOURCE_IDENTITY;
     options.calibration_dataset_identity =
-        YVEX_QUANT_DSPARK_IMATRIX_DATASET_IDENTITY;
+        YVEX_DEEPSEEK_QUANT_IMATRIX_DATASET_IDENTITY;
     options.producer = "llama.cpp-imatrix";
     options.producer_version = 1u;
     options.maximum_mapped_bytes = 1024u * 1024u * 1024u;
