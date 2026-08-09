@@ -103,8 +103,8 @@ static int test_cpu_resource_guards(void)
         YVEX_ATTENTION_EVIDENCE_FULL, 0, NULL, ULLONG_MAX, &trace_bytes, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && trace_bytes != 0ull,
                      "CUDA trace reports its complete owned bytes");
-    yvex_graph_lower_deepseek_v4()->publication_release(&trace);
-    yvex_graph_lower_deepseek_v4()->publication_release(&trace);
+    yvex_attention_execution_trace_release(&trace);
+    yvex_attention_execution_trace_release(&trace);
     YVEX_TEST_ASSERT(!trace.owned && !trace.complete && !trace.output,
                      "attention publication release is idempotent");
     rc = yvex_attention_cuda_trace_open(
@@ -120,7 +120,7 @@ static int test_cpu_resource_guards(void)
         YVEX_ATTENTION_EVIDENCE_FULL, 0, NULL, trace_bytes, &row_bytes, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && row_bytes == trace_bytes && trace.owned,
                      "CUDA trace admits its exact host budget");
-    yvex_graph_lower_deepseek_v4()->publication_release(&trace);
+    yvex_attention_execution_trace_release(&trace);
 
     rc = yvex_attention_cuda_trace_open(
         &trace, &layer, YVEX_ATTENTION_OPERATION_CORE, &history, 0ull, 1ull,
@@ -129,7 +129,7 @@ static int test_cpu_resource_guards(void)
         rc == YVEX_OK && !trace.input && trace.q_low && trace.query &&
             trace.attention_values && !trace.topk_counts && !trace.topk_positions,
         "STAGES CUDA publication allocates stage evidence without forensic input/top-k spans");
-    yvex_graph_lower_deepseek_v4()->publication_release(&trace);
+    yvex_attention_execution_trace_release(&trace);
 
     YVEX_TEST_ASSERT(
         yvex_attention_workspace_open(&workspace, trace_bytes, &err) == YVEX_OK &&
@@ -145,7 +145,7 @@ static int test_cpu_resource_guards(void)
             !trace.topk_counts && !trace.topk_positions && trace.raw_kv &&
             trace.output,
         "FAST CUDA publication retains production output/state and omits evidence-only spans");
-    yvex_graph_lower_deepseek_v4()->publication_release(&trace);
+    yvex_attention_execution_trace_release(&trace);
     YVEX_TEST_ASSERT(
         yvex_attention_workspace_rewind(workspace, 0ull, &err) == YVEX_OK &&
             yvex_attention_workspace_finish(workspace, &err) == YVEX_OK,
@@ -472,19 +472,19 @@ static int test_history_contracts(void)
     history.local_kv_stride = 512ull;
     history.local_positions = &local_positions[1];
     yvex_error_clear(&err);
-    rc = yvex_graph_lower_deepseek_v4()->history_validate(
+    rc = yvex_attention_history_validate(
         &swa, &history, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "SWA accepts immutable local history");
 
     history.local_kv = NULL;
-    rc = yvex_graph_lower_deepseek_v4()->history_validate(
+    rc = yvex_attention_history_validate(
         &swa, &history, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT,
                      "history count without raw KV storage refuses");
     history.local_kv = local_kv + 512ull;
 
     history.local_tail_count = 129ull;
-    rc = yvex_graph_lower_deepseek_v4()->history_validate(
+    rc = yvex_attention_history_validate(
         &csa, &history, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_BOUNDS,
                      "history over sliding window refuses");
@@ -497,7 +497,7 @@ static int test_history_contracts(void)
     history.compressed_kv = compressed_kv;
     history.compressed_kv_stride = 512ull;
     history.compressed_positions = compressed_positions;
-    rc = yvex_graph_lower_deepseek_v4()->history_validate(
+    rc = yvex_attention_history_validate(
         &swa, &history, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT,
                      "SWA refuses compressed history");
@@ -507,7 +507,7 @@ static int test_history_contracts(void)
     history.indexer_kv = indexer_kv;
     history.indexer_kv_stride = 128ull;
     history.indexer_positions = indexer_positions;
-    rc = yvex_graph_lower_deepseek_v4()->history_validate(
+    rc = yvex_attention_history_validate(
         &hca, &history, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT,
                      "HCA refuses CSA indexer history");
@@ -524,38 +524,38 @@ static int test_history_contracts(void)
     init_rolling_view(&history.indexer_rolling_state,
                       YVEX_DEEPSEEK_ATTENTION_ROLLING_INDEXER, &csa, 12ull,
                       indexer_state_kv, indexer_state_score);
-    rc = yvex_graph_lower_deepseek_v4()->history_validate(
+    rc = yvex_attention_history_validate(
         &csa, &history, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK,
                      "CSA accepts compressed and indexer history");
     history.local_positions = &local_positions[1];
-    rc = yvex_graph_lower_deepseek_v4()->history_validate(
+    rc = yvex_attention_history_validate(
         &csa, &history, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT,
                      "history missing the local suffix head refuses");
     history.local_positions = local_positions;
     history.compressed_entry_count = 2ull;
     history.indexer_entry_count = 2ull;
-    rc = yvex_graph_lower_deepseek_v4()->history_validate(
+    rc = yvex_attention_history_validate(
         &csa, &history, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT,
                      "history missing the latest compressed group refuses");
     history.compressed_entry_count = 3ull;
     history.indexer_entry_count = 3ull;
     history.main_rolling_state.previous_fill = 3ull;
-    rc = yvex_graph_lower_deepseek_v4()->history_validate(
+    rc = yvex_attention_history_validate(
         &csa, &history, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_STATE,
                      "partially filled prior rolling group refuses");
     history.main_rolling_state.previous_fill = 4ull;
     history.main_rolling_state.current_fill = 1ull;
-    rc = yvex_graph_lower_deepseek_v4()->history_validate(
+    rc = yvex_attention_history_validate(
         &csa, &history, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_STATE,
                      "stale rolling current fill refuses");
     history.main_rolling_state.current_fill = 0ull;
     history.main_rolling_state.cursor = 1ull;
-    rc = yvex_graph_lower_deepseek_v4()->history_validate(
+    rc = yvex_attention_history_validate(
         &csa, &history, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_STATE,
                      "stale rolling cursor refuses");
@@ -563,14 +563,14 @@ static int test_history_contracts(void)
     history.main_rolling_state.previous_fill = 0ull;
     history.main_rolling_state.next_token_position = 0ull;
     main_state_score[0] = 0.0f;
-    rc = yvex_graph_lower_deepseek_v4()->history_validate(
+    rc = yvex_attention_history_validate(
         &csa, &history, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT,
                      "active first overlap emission refuses finite inactive history");
     main_state_score[0] = -INFINITY;
     history.main_rolling_state.cursor = 0ull;
     history.main_rolling_state.next_token_position = 1ull;
-    rc = yvex_graph_lower_deepseek_v4()->history_validate(
+    rc = yvex_attention_history_validate(
         &csa, &history, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_STATE,
                      "stale rolling state position refuses");
@@ -1121,7 +1121,7 @@ static int run_rolling_sequence(
                     YVEX_DEEPSEEK_ATTENTION_COMPONENT_COMPRESSED_MAIN_KV,
                     &compressed_span, &failure, &err) != YVEX_OK)
                 goto cleanup;
-            if (yvex_graph_lower_deepseek_v4()->rolling_state_step_cpu(
+            if (yvex_attention_rolling_state_step_cpu(
                     layer, &before, token_kv, token_score, ape_row, &after,
                     compressed_span.data ? (float *)compressed_span.data
                                          : token_kv,
@@ -1172,7 +1172,7 @@ static int run_rolling_sequence(
                         YVEX_DEEPSEEK_ATTENTION_COMPONENT_INDEXER_KV,
                         &index_emit_span, &failure, &err) != YVEX_OK)
                     goto cleanup;
-                if (yvex_graph_lower_deepseek_v4()->rolling_state_step_cpu(
+                if (yvex_attention_rolling_state_step_cpu(
                         layer, &index_before, index_token_kv,
                         index_token_score, index_ape_row, &index_after,
                         index_emit_span.data ? (float *)index_emit_span.data

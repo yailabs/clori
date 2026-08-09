@@ -147,7 +147,7 @@ static int runtime_session_workspace_requirements(
     yvex_attention_operation_scope graph_scope;
     unsigned long long count = yvex_attention_plan_layer_count(attention), index;
     memset(requirements, 0, sizeof(*requirements));
-    if (!summary || !graph || !graph->workspace_recipe ||
+    if (!summary || !graph ||
         strcmp(summary->attention_plan_identity,
                yvex_attention_plan_summary(attention)->attention_plan_identity) != 0)
         return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_WORKSPACE_STATE, 1ull, 0ull, err);
@@ -177,7 +177,8 @@ static int runtime_session_workspace_requirements(
         if (rc != YVEX_OK) return rc;
         memset(&recipe, 0, sizeof(recipe));
         memset(&graph_failure, 0, sizeof(graph_failure));
-        rc = graph->workspace_recipe(layer, &envelope, graph_mode, graph_scope, evidence_level,
+        rc = yvex_attention_workspace_recipe_build(
+            layer, &envelope, graph_mode, graph_scope, evidence_level,
             summary->maximum_token_count, &recipe, &graph_failure, err);
         if (rc == YVEX_OK)
             rc = yvex_backend_attention_workspace_required_from_recipe(&recipe, &layer_bytes, err);

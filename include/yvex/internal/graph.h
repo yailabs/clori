@@ -344,6 +344,18 @@ typedef struct {
 void yvex_attention_rolling_output_bind(
     const yvex_attention_rolling_state_output *output,
     yvex_attention_rolling_state_view *view);
+int yvex_attention_state_recipe_build(
+    const yvex_attention_layer_plan *layer,
+    const yvex_attention_state_recipe_request *request,
+    yvex_attention_state_recipe *recipe, yvex_attention_failure *failure,
+    yvex_error *err);
+int yvex_attention_workspace_recipe_build(
+    const yvex_attention_layer_plan *layer,
+    const yvex_attention_state_recipe *state, yvex_attention_execution_mode mode,
+    yvex_attention_operation_scope scope, yvex_attention_evidence_level evidence_level,
+    unsigned long long token_capacity,
+    yvex_attention_workspace_recipe *recipe, yvex_attention_failure *failure,
+    yvex_error *err);
 
 typedef struct yvex_graph_compiler_api {
     int (*plan_build)(yvex_attention_plan **out, const void *family_ir,
@@ -360,30 +372,7 @@ typedef struct yvex_graph_execution_api {
     int (*selection_key_resolve)(const char *operator_token,
                                  unsigned long long *selection_key,
                                  yvex_error *err);
-    int (*state_recipe)(const yvex_attention_layer_plan *layer,
-                        const yvex_attention_state_recipe_request *request,
-                        yvex_attention_state_recipe *recipe,
-                        yvex_attention_failure *failure, yvex_error *err);
-    int (*workspace_recipe)(const yvex_attention_layer_plan *layer,
-                            const yvex_attention_state_recipe *state_recipe,
-                            yvex_attention_execution_mode mode,
-                            yvex_attention_operation_scope scope,
-                            yvex_attention_evidence_level evidence_level,
-                            unsigned long long token_capacity,
-                            yvex_attention_workspace_recipe *recipe,
-                            yvex_attention_failure *failure, yvex_error *err);
-    int (*history_validate)(const yvex_attention_layer_plan *layer,
-                            const yvex_attention_history_view *history,
-                            yvex_attention_failure *failure, yvex_error *err);
-    int (*rolling_state_step_cpu)(const yvex_attention_layer_plan *layer,
-                                  const yvex_attention_rolling_state_view *before,
-                                  const float *token_kv, const float *token_score,
-                                  const float *ape_row, yvex_attention_rolling_state_output *after,
-                                  float *compressed_out, unsigned long long compressed_out_count,
-                                  int *emitted, yvex_attention_failure *failure, yvex_error *err);
     void (*cpu_options_default)(yvex_attention_cpu_options *options);
-    void (*publication_release)(yvex_attention_publication *publication);
-    void (*execution_trace_release)(yvex_attention_execution_trace *trace);
     int (*cuda_token_execute)(const yvex_attention_plan *plan, const void *family_ir,
                               yvex_materialization_session *session,
                               const yvex_runtime_descriptor *descriptor, yvex_backend *backend,

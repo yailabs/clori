@@ -1804,13 +1804,7 @@ static const yvex_graph_compiler_api deepseek_graph_compiler = {
     .draft_plan_build = graph_draft_plan_build};
 static const yvex_graph_execution_api deepseek_graph_api = {
     .selection_key_resolve = graph_selection_key_resolve,
-    .state_recipe = yvex_attention_state_recipe_build,
-    .workspace_recipe = yvex_attention_workspace_recipe_build,
-    .history_validate = yvex_attention_history_validate,
-    .rolling_state_step_cpu = yvex_attention_rolling_state_step_cpu,
     .cpu_options_default = graph_cpu_options_default,
-    .publication_release = yvex_attention_execution_trace_release,
-    .execution_trace_release = yvex_attention_execution_trace_release,
     .cuda_token_execute = graph_cuda_request_execute,
     .cpu_chunk_execute = graph_cpu_chunk_execute
 };

@@ -169,7 +169,6 @@ static int runtime_state_prepare_fixture(
     unsigned long long layer_index, yvex_attention_failure *failure,
     yvex_error *err)
 {
-    const yvex_runtime_family_adapter *adapter = runtime_fixture_adapter();
     const yvex_runtime_model_view *view = yvex_runtime_model_view_get(model);
     const yvex_attention_summary *summary = view
         ? yvex_attention_plan_summary(view->attention) : NULL;
@@ -177,16 +176,15 @@ static int runtime_state_prepare_fixture(
         ? yvex_attention_plan_layer_at(view->attention, layer_index) : NULL;
     yvex_attention_state_recipe_request request = {0};
     yvex_attention_state_recipe recipe = {0};
-    const yvex_graph_execution_api *graph = adapter && adapter->graph
-        ? adapter->graph() : NULL;
     int rc;
 
-    if (!graph || !graph->state_recipe || !summary || !layer) return YVEX_ERR_STATE;
+    if (!summary || !layer) return YVEX_ERR_STATE;
     request.layer_ordinal = layer_index;
     request.final_position = layer->sliding_window
                                  ? layer->sliding_window - 1ull : 1ull;
     request.attention_plan_identity = summary->attention_plan_identity;
-    rc = graph->state_recipe(layer, &request, &recipe, failure, err);
+    rc = yvex_attention_state_recipe_build(
+        layer, &request, &recipe, failure, err);
     if (rc != YVEX_OK) return rc;
     return provider && provider->prepare
                ? provider->prepare(provider->context, layer_index, &recipe,
@@ -482,14 +480,13 @@ static int injected_state_release(void **context, yvex_error *err)
 }
 
 static int injected_state_factory_open(
-    void *context, const yvex_graph_execution_api *family,
-    const yvex_attention_plan *plan, unsigned long long maximum_host_bytes,
+    void *context, const yvex_attention_plan *plan,
+    unsigned long long maximum_host_bytes,
     yvex_attention_state_provider *out,
     yvex_attention_failure *failure, yvex_error *err)
 {
     injected_state_control *control = (injected_state_control *)context;
     injected_state *state;
-    (void)family;
     (void)plan;
     (void)maximum_host_bytes;
     (void)failure;
@@ -2717,7 +2714,7 @@ static int test_runtime_injected_state_provider(
         yvex_runtime_session_open(
             &session, model, &partial_request, &failure, &err) == YVEX_OK &&
             injected_state_factory_open(
-                &partial_draft, NULL, NULL, 0ull,
+                &partial_draft, NULL, 0ull,
                 &session->draft_attention_state_provider, &state_failure,
                 &err) == YVEX_OK,
         "session opens independently owned target and draft state providers");
@@ -2972,8 +2969,7 @@ static int test_runtime_probe_consumer_boundary(
     capacity_request.layer_start = 0ull;
     YVEX_TEST_ASSERT(
         yvex_graph_attention_capacity_plan_build(
-            &capacity, runtime_fixture_adapter()->graph(),
-            yvex_runtime_model_view_get(model)->attention,
+            &capacity, yvex_runtime_model_view_get(model)->attention,
             &capacity_request, &err) == YVEX_OK,
         "one-layer capacity plan seals for the runtime consumer");
     YVEX_TEST_ASSERT(
@@ -3206,8 +3202,7 @@ static int test_runtime_paged_state_cuda_pack(
     attention_request.execution_count = 1ull;
     attention_request.select_layer = 1;
     YVEX_TEST_ASSERT(yvex_graph_attention_capacity_plan_build(
-                         &attention_capacity, runtime_fixture_adapter()->graph(),
-                         yvex_runtime_model_view_get(model)->attention,
+                         &attention_capacity, yvex_runtime_model_view_get(model)->attention,
                          &attention_request, &err) == YVEX_OK,
                      "one-layer paged state capacity seals");
     layer = yvex_graph_attention_capacity_plan_layer(attention_capacity, 0ull);
@@ -3438,8 +3433,7 @@ static int test_runtime_cuda_workspace_transaction(
     capacity_request.token_count = 1ull;
     capacity_request.execution_count = 1ull;
     YVEX_TEST_ASSERT(yvex_graph_attention_capacity_plan_build(
-                         &capacity, runtime_fixture_adapter()->graph(),
-                         yvex_runtime_model_view_get(model)->attention,
+                         &capacity, yvex_runtime_model_view_get(model)->attention,
                          &capacity_request, &err) == YVEX_OK,
                      "transactional workspace capacity plan seals");
     YVEX_TEST_ASSERT(yvex_runtime_session_summary_copy(session, &before, &err) == YVEX_OK,

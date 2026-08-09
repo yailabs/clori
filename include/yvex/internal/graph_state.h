@@ -149,8 +149,7 @@ typedef struct {
 
 typedef struct yvex_graph_attention_capacity_plan yvex_graph_attention_capacity_plan;
 int yvex_graph_attention_capacity_plan_build(
-    yvex_graph_attention_capacity_plan **out, const yvex_graph_execution_api *family,
-    const yvex_attention_plan *attention,
+    yvex_graph_attention_capacity_plan **out, const yvex_attention_plan *attention,
     const yvex_graph_attention_capacity_request *request, yvex_error *err);
 const yvex_graph_attention_capacity_summary *yvex_graph_attention_capacity_plan_summary(
     const yvex_graph_attention_capacity_plan *plan);
@@ -246,8 +245,8 @@ typedef struct yvex_attention_state_provider {
 } yvex_attention_state_provider;
 typedef struct {
     void *context;
-    int (*open)(void *context, const yvex_graph_execution_api *family,
-                const yvex_attention_plan *plan, unsigned long long maximum_host_bytes,
+    int (*open)(void *context, const yvex_attention_plan *plan,
+                unsigned long long maximum_host_bytes,
                 yvex_attention_state_provider *out,
                 yvex_attention_failure *failure, yvex_error *err);
     /* Owns every candidate returned by a failed or malformed open. On success it
@@ -257,7 +256,7 @@ typedef struct {
 } yvex_attention_state_provider_factory;
 
 int yvex_attention_state_provider_open_persistent(
-    const yvex_graph_execution_api *family, const yvex_attention_plan *plan,
+    const yvex_attention_plan *plan,
     unsigned long long maximum_host_bytes, yvex_attention_state_provider *out,
     yvex_attention_failure *failure, yvex_error *err);
 

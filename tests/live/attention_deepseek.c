@@ -99,8 +99,8 @@ static float runtime_oracle_bf16_round(float value)
 }
 
 static int runtime_oracle_state_factory_open(
-    void *context, const yvex_graph_execution_api *family,
-    const yvex_attention_plan *plan, unsigned long long maximum_host_bytes,
+    void *context, const yvex_attention_plan *plan,
+    unsigned long long maximum_host_bytes,
     yvex_attention_state_provider *out, yvex_attention_failure *failure,
     yvex_error *err)
 {
@@ -110,7 +110,7 @@ static int runtime_oracle_state_factory_open(
 
     if (!control) return YVEX_ERR_INVALID_ARG;
     rc = yvex_attention_state_provider_open_persistent(
-        family, plan, maximum_host_bytes, out, failure, err);
+        plan, maximum_host_bytes, out, failure, err);
     if (rc == YVEX_OK) control->opens++;
     return rc;
 }
@@ -276,7 +276,7 @@ static int runtime_oracle_compare_publication(
     options.input_stride = layer->hidden_dimension;
     options.history = evidence->history;
     if (!yvex_test_attention_reference_execute(
-            evidence->plan, evidence->ir, evidence->materialization,
+            layer, evidence->ir, evidence->materialization,
             evidence->descriptor, &options, &reference, reason)) {
         yvex_error_setf(err, YVEX_ERR_FORMAT, "attention.runtime_oracle",
                         "independent runtime publication reference failed: %s",
@@ -308,7 +308,7 @@ static int runtime_oracle_compare_publication(
     rc = YVEX_OK;
 
 cleanup:
-    yvex_graph_lower_deepseek_v4()->execution_trace_release(&reference);
+    yvex_attention_execution_trace_release(&reference);
     return rc;
 }
 
@@ -740,7 +740,7 @@ static int run_reference_compare(
         goto cleanup;
     }
     if (!yvex_test_attention_reference_execute(
-            plan, ir, session, descriptor, &effective_options, &reference,
+            layer, ir, session, descriptor, &effective_options, &reference,
             reason)) {
         fprintf(stderr, "attention_reference_failure=%s\n", reason);
         rc = YVEX_ERR_FORMAT;
@@ -781,8 +781,8 @@ static int run_reference_compare(
     rc = YVEX_OK;
 
 cleanup:
-    yvex_graph_lower_deepseek_v4()->publication_release(&production);
-    yvex_graph_lower_deepseek_v4()->execution_trace_release(&reference);
+    yvex_attention_execution_trace_release(&production);
+    yvex_attention_execution_trace_release(&reference);
     free(owned_input);
     return rc;
 }
@@ -840,6 +840,7 @@ static int run_real_mutation_proof(
     yvex_error *err)
 {
     const yvex_attention_summary *summary;
+    const yvex_attention_layer_plan *layer;
     yvex_test_attention_reference_contract contract;
     yvex_test_attention_reference_metrics metrics;
     yvex_attention_cpu_options production_options;
@@ -857,7 +858,8 @@ static int run_real_mutation_proof(
     production_options.publication = &production;
     production_options.trace = NULL;
     summary = yvex_attention_plan_summary(plan);
-    if (!attention_reference_contract_init(
+    layer = yvex_attention_plan_layer_at(plan, options->layer_index);
+    if (!layer || !attention_reference_contract_init(
             &contract, summary, "real-stage-mutation",
             ATTENTION_CPU_ABSOLUTE_TOLERANCE,
             ATTENTION_CPU_RELATIVE_TOLERANCE))
@@ -867,7 +869,7 @@ static int run_real_mutation_proof(
         failure, err);
     if (rc != YVEX_OK) goto cleanup;
     if (!yvex_test_attention_reference_execute(
-            plan, ir, session, descriptor, options, &reference, reason) ||
+            layer, ir, session, descriptor, options, &reference, reason) ||
         !yvex_test_attention_reference_compare_contract(
             &production, &reference, &contract, &metrics)) {
         rc = YVEX_ERR_FORMAT;
@@ -925,8 +927,8 @@ static int run_real_mutation_proof(
     *detected_count += detected;
     rc = YVEX_OK;
 cleanup:
-    yvex_graph_lower_deepseek_v4()->publication_release(&production);
-    yvex_graph_lower_deepseek_v4()->execution_trace_release(&reference);
+    yvex_attention_execution_trace_release(&production);
+    yvex_attention_execution_trace_release(&reference);
     return rc;
 }
 
@@ -947,6 +949,7 @@ static int run_cuda_reference_compare(
     yvex_error *err)
 {
     const yvex_attention_summary *summary;
+    const yvex_attention_layer_plan *layer;
     yvex_test_attention_reference_contract contract;
     yvex_attention_cpu_options production_options = *options;
     yvex_attention_execution_trace production;
@@ -958,7 +961,8 @@ static int run_cuda_reference_compare(
     memset(&reference, 0, sizeof(reference));
     memset(metrics, 0, sizeof(*metrics));
     summary = yvex_attention_plan_summary(plan);
-    if (!attention_reference_contract_init(
+    layer = yvex_attention_plan_layer_at(plan, options->layer_index);
+    if (!layer || !attention_reference_contract_init(
             &contract, summary, "cuda-reference",
             absolute_tolerance, relative_tolerance))
         return YVEX_ERR_STATE;
@@ -989,7 +993,7 @@ static int run_cuda_reference_compare(
         goto cleanup;
     }
     if (!yvex_test_attention_reference_execute(
-            plan, ir, session, descriptor, options, &reference, reason)) {
+            layer, ir, session, descriptor, options, &reference, reason)) {
         fprintf(stderr, "attention_cuda_reference_failure=%s\n", reason);
         rc = YVEX_ERR_FORMAT;
         goto cleanup;
@@ -1028,8 +1032,8 @@ static int run_cuda_reference_compare(
     rc = YVEX_OK;
 
 cleanup:
-    yvex_graph_lower_deepseek_v4()->publication_release(&production);
-    yvex_graph_lower_deepseek_v4()->execution_trace_release(&reference);
+    yvex_attention_execution_trace_release(&production);
+    yvex_attention_execution_trace_release(&reference);
     return rc;
 }
 
@@ -1093,8 +1097,8 @@ static int run_cpu_cuda_reference_compare(
     rc = YVEX_OK;
 
 cleanup:
-    yvex_graph_lower_deepseek_v4()->execution_trace_release(&cpu_trace);
-    yvex_graph_lower_deepseek_v4()->execution_trace_release(&cuda_trace);
+    yvex_attention_execution_trace_release(&cpu_trace);
+    yvex_attention_execution_trace_release(&cuda_trace);
     return rc;
 }
 
@@ -1150,7 +1154,6 @@ static int attention_live_cancel_requested(void *context)
 static int attention_cuda_workspace_prepare(
     yvex_backend *backend, const yvex_attention_plan *plan, yvex_error *err)
 {
-    const yvex_graph_execution_api *family = yvex_graph_lower_deepseek_v4();
     const yvex_attention_layer_plan *layer;
     yvex_attention_state_recipe_request state_request;
     yvex_attention_state_recipe state;
@@ -1159,7 +1162,7 @@ static int attention_cuda_workspace_prepare(
     unsigned long long count, index, required = 0ull, layer_bytes;
     int rc;
 
-    if (!backend || !plan || !family->state_recipe || !family->workspace_recipe)
+    if (!backend || !plan)
         return 0;
     count = yvex_attention_plan_layer_count(plan);
     for (index = 0ull; index < count; ++index) {
@@ -1171,9 +1174,10 @@ static int attention_cuda_workspace_prepare(
         state_request.final_position = ATTENTION_LIVE_MAX_STATE_POSITION;
         state_request.attention_plan_identity =
             yvex_attention_plan_summary(plan)->attention_plan_identity;
-        rc = family->state_recipe(layer, &state_request, &state, &failure, err);
+        rc = yvex_attention_state_recipe_build(
+            layer, &state_request, &state, &failure, err);
         if (rc == YVEX_OK)
-            rc = family->workspace_recipe(
+            rc = yvex_attention_workspace_recipe_build(
                 layer, &state, YVEX_ATTENTION_EXECUTION_EAGER,
                 YVEX_ATTENTION_OPERATION_ENVELOPE,
                 YVEX_ATTENTION_EVIDENCE_FULL, 4ull, &workspace,
@@ -1254,7 +1258,7 @@ static int run_cuda_fault_case(
                 cancel_on_call, rc, result.executed, trace.owned,
                 (unsigned int)failure.code, (unsigned int)expected_failure,
                 yvex_error_where(err), yvex_error_message(err));
-    yvex_graph_lower_deepseek_v4()->execution_trace_release(&trace);
+    yvex_attention_execution_trace_release(&trace);
     rc = yvex_backend_close_checked(&backend, err);
     if (rc != YVEX_OK)
         fprintf(stderr,
@@ -1748,10 +1752,10 @@ mismatch:
 cleanup:
     free(residual);
     live_history_release(&history);
-    yvex_graph_lower_deepseek_v4()->publication_release(&cpu_trace);
-    yvex_graph_lower_deepseek_v4()->publication_release(&cuda_trace);
-    yvex_graph_lower_deepseek_v4()->publication_release(&cpu_direct_trace);
-    yvex_graph_lower_deepseek_v4()->publication_release(&cuda_direct_trace);
+    yvex_attention_execution_trace_release(&cpu_trace);
+    yvex_attention_execution_trace_release(&cuda_trace);
+    yvex_attention_execution_trace_release(&cpu_direct_trace);
+    yvex_attention_execution_trace_release(&cuda_direct_trace);
     return rc;
 }
 
@@ -2222,9 +2226,7 @@ static int run_runtime_graph_oracle_suite(
         const yvex_runtime_model_view *view = yvex_runtime_model_view_get(model);
 
         rc = yvex_graph_attention_capacity_plan_build(
-            &capacity,
-            view && view->adapter ? view->adapter->graph() : NULL,
-            view ? view->attention : NULL, &capacity_request, err);
+            &capacity, view ? view->attention : NULL, &capacity_request, err);
     }
     if (rc == YVEX_OK)
         rc = yvex_runtime_session_open(
@@ -2974,7 +2976,7 @@ static int run_cuda_live_suite(
 
 cleanup:
     (void)unsetenv("YVEX_TEST_CUDA_ATTENTION_FAILURE");
-    yvex_graph_lower_deepseek_v4()->execution_trace_release(&failed_trace);
+    yvex_attention_execution_trace_release(&failed_trace);
     live_history_release(&history);
     free(input);
     {
@@ -3596,7 +3598,7 @@ identity_mutation_done:
                 selection_trace.topk_counts[0] != 512ull) {
                 if (rc != YVEX_OK)
                     print_attention_failure(&attention_failure, &err);
-                yvex_graph_lower_deepseek_v4()->execution_trace_release(
+                yvex_attention_execution_trace_release(
                     &selection_trace);
                 live_history_release(&history);
                 goto cleanup_fail;
@@ -3620,7 +3622,7 @@ identity_mutation_done:
                     selected_index = j;
                 if (!chosen) unselected_index = j;
             }
-            yvex_graph_lower_deepseek_v4()->execution_trace_release(
+            yvex_attention_execution_trace_release(
                 &selection_trace);
             if (selected_index == ~0ull || unselected_index == ~0ull) {
                 live_history_release(&history);
@@ -3709,12 +3711,12 @@ identity_mutation_done:
                     attention_failure.code !=
                         YVEX_DEEPSEEK_ATTENTION_FAILURE_HISTORY ||
                     masked_trace.owned || exec_result.executed) {
-                    yvex_graph_lower_deepseek_v4()->execution_trace_release(
+                    yvex_attention_execution_trace_release(
                         &masked_trace);
                     live_history_release(&history);
                     goto cleanup_fail;
                 }
-                yvex_graph_lower_deepseek_v4()->execution_trace_release(
+                yvex_attention_execution_trace_release(
                     &masked_trace);
             }
             printf("attention_csa_real_candidates=513\n");
@@ -3766,7 +3768,7 @@ identity_mutation_done:
                 !boundary_trace.next_main_rolling_state.present) {
                 if (rc != YVEX_OK)
                     print_attention_failure(&attention_failure, &err);
-                yvex_graph_lower_deepseek_v4()->execution_trace_release(
+                yvex_attention_execution_trace_release(
                     &boundary_trace);
                 live_history_release(&boundary_history);
                 goto cleanup_fail;
@@ -3777,7 +3779,7 @@ identity_mutation_done:
                 (unsigned long long *)malloc(sizeof(unsigned long long));
             if (!boundary_history.compressed_kv ||
                 !boundary_history.compressed_positions) {
-                yvex_graph_lower_deepseek_v4()->execution_trace_release(
+                yvex_attention_execution_trace_release(
                     &boundary_trace);
                 live_history_release(&boundary_history);
                 goto cleanup_fail;
@@ -3823,7 +3825,7 @@ identity_mutation_done:
                 after_result.topk_candidates != 1ull) {
                 if (rc != YVEX_OK)
                     print_attention_failure(&attention_failure, &err);
-                yvex_graph_lower_deepseek_v4()->execution_trace_release(
+                yvex_attention_execution_trace_release(
                     &boundary_trace);
                 live_history_release(&boundary_history);
                 goto cleanup_fail;
@@ -3833,7 +3835,7 @@ identity_mutation_done:
             printf("attention_hca_first_after_boundary=1\n");
             printf("attention_hca_external_compressed_used=%d\n",
                    after_result.topk_candidates == 1ull);
-            yvex_graph_lower_deepseek_v4()->execution_trace_release(&boundary_trace);
+            yvex_attention_execution_trace_release(&boundary_trace);
             live_history_release(&boundary_history);
 
             if (!live_history_init(&multi_history, layer, attention_summary,

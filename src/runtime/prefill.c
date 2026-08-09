@@ -912,9 +912,6 @@ static int activation_prefill_capacity_build(
     yvex_error *err)
 {
     yvex_graph_attention_capacity_request request;
-    const yvex_graph_execution_api *graph =
-        model && model->adapter && model->adapter->graph
-            ? model->adapter->graph() : NULL;
     memset(&request, 0, sizeof(request));
     request.scope = YVEX_ATTENTION_PROBE_SCOPE_FULL;
     request.history_tokens = request.start_position = start;
@@ -922,7 +919,7 @@ static int activation_prefill_capacity_build(
     request.execution_count = 1ull;
     request.use_requested_position = 1;
     return yvex_graph_attention_capacity_plan_build(
-        out, graph, model ? model->attention : NULL, &request, err);
+        out, model ? model->attention : NULL, &request, err);
 }
 
 static int activation_prefill_prepare(

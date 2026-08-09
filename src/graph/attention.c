@@ -1566,7 +1566,7 @@ cleanup:
             rc = abort_rc;
     }
     for (index = 0u; index < ATTENTION_PROBE_BACKEND_COUNT; ++index)
-        context->family->publication_release(&backend[index].publication);
+        yvex_attention_execution_trace_release(&backend[index].publication);
     attention_probe_history_release(&history);
     if (context->request->workspace) {
         yvex_error rewind_error;
@@ -1810,8 +1810,7 @@ int yvex_attention_execute(
         request->execution_class > YVEX_EXECUTION_CLASS_FORENSIC_REFERENCE)
         return attention_probe_fail(err, YVEX_ERR_INVALID_ARG, "canonical V2 probe request is invalid");
     if (!family || !plan || !session || !descriptor || !result ||
-        !family->cpu_options_default || !family->cpu_chunk_execute || !family->cuda_token_execute ||
-        !family->publication_release)
+        !family->cpu_options_default || !family->cpu_chunk_execute || !family->cuda_token_execute)
         return attention_probe_fail(err, YVEX_ERR_INVALID_ARG,
                                     "sealed attention owners and execution API are required");
     context.summary = yvex_attention_plan_summary(plan);

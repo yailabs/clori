@@ -926,8 +926,8 @@ static int runtime_attention_phase_lane_evidence_begin(
     return YVEX_OK;
 }
 static int runtime_attention_phase_lane_open(
-    runtime_attention_phase_lane *lane, const yvex_graph_execution_api *graph,
-    const yvex_attention_plan *plan, unsigned long long layer_ordinal,
+    runtime_attention_phase_lane *lane, const yvex_attention_plan *plan,
+    unsigned long long layer_ordinal,
     const yvex_attention_state_recipe *recipe,
     yvex_attention_operation_scope operation_scope, unsigned long long maximum_host_bytes,
     yvex_attention_failure *failure, yvex_error *err) {
@@ -941,7 +941,7 @@ static int runtime_attention_phase_lane_open(
         return runtime_refuse(err, YVEX_ERR_BOUNDS, "runtime.attention.phase",
                               "phase lane recipe is unavailable or stale");
     rc = yvex_attention_state_provider_open_persistent(
-        graph, plan, maximum_host_bytes, &lane->state_provider, failure, err);
+        plan, maximum_host_bytes, &lane->state_provider, failure, err);
     if (rc != YVEX_OK) return rc;
     lane->state_provider_ready = 1;
     if (recipe->initial_position) {
@@ -1083,8 +1083,8 @@ static int runtime_attention_phase_context_release(void **owner, yvex_error *err
     return YVEX_OK;
 }
 static int runtime_attention_phase_context_open(
-    runtime_attention_phase_context *context, const yvex_graph_execution_api *graph,
-    const yvex_attention_plan *plan, const yvex_graph_attention_capacity_plan *capacity,
+    runtime_attention_phase_context *context, const yvex_attention_plan *plan,
+    const yvex_graph_attention_capacity_plan *capacity,
     yvex_attention_operation_scope operation_scope, unsigned long long start_position,
     unsigned long long token_count,
     unsigned long long maximum_host_bytes, yvex_attention_failure *failure, yvex_error *err) {
@@ -1134,7 +1134,7 @@ static int runtime_attention_phase_context_open(
         }
         for (lane = 0u; rc == YVEX_OK && lane < 2u; ++lane)
             rc = runtime_attention_phase_lane_open(
-                &entry->lane[lane], graph, plan, layer, &phase_recipe,
+                &entry->lane[lane], plan, layer, &phase_recipe,
                 operation_scope, maximum_host_bytes, failure, err);
     }
     if (rc == YVEX_OK && pair != context->pair_count)
@@ -1740,7 +1740,7 @@ static int runtime_attention_open(const yvex_graph_attention_operator_request *r
     return rc;
 }
 static int runtime_attention_capacity_build(const yvex_graph_attention_operator_request *request,
-    const yvex_runtime_model *model, const yvex_graph_execution_api *graph,
+    const yvex_runtime_model *model,
     unsigned long long execution_count, yvex_graph_attention_capacity_plan **out, yvex_error *err) {
     const yvex_runtime_model_view *view = yvex_runtime_model_view_get(model);
     yvex_graph_attention_capacity_request facts;
@@ -1766,7 +1766,7 @@ static int runtime_attention_capacity_build(const yvex_graph_attention_operator_
     facts.select_layer = request->select_layer;
     facts.select_selection_key = request->select_selection_key;
     return yvex_graph_attention_capacity_plan_build(
-        out, graph, view ? view->attention : NULL, &facts, err);
+        out, view ? view->attention : NULL, &facts, err);
 }
 static const unsigned long long runtime_qualification_counters[] = {
     1ull, 0ull, 0ull, 0ull, 0ull, 0ull, 0ull, 1ull, 1ull, 1ull, 1ull};
@@ -1858,7 +1858,8 @@ int yvex_graph_attention_operator_execute(const yvex_graph_attention_operator_re
     if (rc == YVEX_OK && (!yvex_core_u64_add(warmup, automatic_preparation, &measurement_start) ||
          !yvex_core_u64_add(measurement_start, repeat, &dispatch_count)))
         rc = runtime_refuse(err, YVEX_ERR_BOUNDS, "runtime.attention.state", "extent overflowed");
-    if (rc == YVEX_OK) rc = runtime_attention_capacity_build(request, model, graph, dispatch_count, &capacity, err);
+    if (rc == YVEX_OK)
+        rc = runtime_attention_capacity_build(request, model, dispatch_count, &capacity, err);
     if (rc == YVEX_OK)
         rc = runtime_attention_trace_begin(&trace, request, result->selected_mode, err);
     if (rc == YVEX_OK &&
@@ -1922,7 +1923,7 @@ int yvex_graph_attention_operator_execute(const yvex_graph_attention_operator_re
         }
         if (rc == YVEX_OK)
             rc = runtime_attention_phase_context_open(
-                phase_context, graph, view ? view->attention : NULL, capacity,
+                phase_context, view ? view->attention : NULL, capacity,
                 probe_request.operation_scope, request->history_tokens,
                 probe_request.token_count, request->maximum_host_bytes, &phase_failure, err);
     }

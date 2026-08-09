@@ -1934,7 +1934,7 @@ static int ref_output_projection(
 }
 
 int yvex_test_attention_reference_execute(
-    const yvex_attention_plan *plan,
+    const yvex_attention_layer_plan *layer,
     const yvex_deepseek_v4_ir *ir,
     yvex_materialization_session *session,
     const yvex_runtime_descriptor *descriptor,
@@ -1943,7 +1943,6 @@ int yvex_test_attention_reference_execute(
     char reason[YVEX_TEST_ATTENTION_REFERENCE_REASON_CAP])
 {
     const yvex_attention_cpu_options *opts = options;
-    const yvex_attention_layer_plan *layer;
     const yvex_deepseek_v4_layer_spec *architecture;
     const yvex_runtime_tensor_binding *q_a;
     const yvex_runtime_tensor_binding *q_a_norm;
@@ -1992,7 +1991,7 @@ int yvex_test_attention_reference_execute(
     memset(&next_main_state, 0, sizeof(next_main_state));
     memset(&next_indexer_state, 0, sizeof(next_indexer_state));
     if (reason) reason[0] = '\0';
-    if (!plan || !ir || !session || !descriptor || !opts || !opts->input ||
+    if (!layer || !ir || !session || !descriptor || !opts || !opts->input ||
         !trace || trace->owned) {
         ref_reason(reason, "reference execution arguments are invalid");
         return 0;
@@ -2002,9 +2001,8 @@ int yvex_test_attention_reference_execute(
         return 0;
     }
     token_count = opts->token_count ? opts->token_count : 1ull;
-    layer = yvex_attention_plan_layer_at(plan, opts->layer_index);
     architecture = yvex_model_register_deepseek_v4()->ir.layer_at(ir, opts->layer_index);
-    if (!layer || !architecture || !token_count) {
+    if (layer->layer_index != opts->layer_index || !architecture || !token_count) {
         ref_reason(reason, "reference execution layer is absent");
         return 0;
     }

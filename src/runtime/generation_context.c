@@ -234,7 +234,6 @@ static int generation_capacity_graph_geometry(
     generation_capacity_geometry *geometry,
     yvex_graph_attention_capacity_plan **workspace_capacity, yvex_error *err)
 {
-    const yvex_graph_execution_api *graph = context->model_view->adapter->graph();
     const yvex_attention_plan *plans[2] = {
         context->model_view->attention, context->model_view->draft_attention};
     unsigned long long plan_index;
@@ -260,7 +259,7 @@ static int generation_capacity_graph_geometry(
         request.execution_count = 1ull;
         request.use_requested_position = 1;
         rc = yvex_graph_attention_capacity_plan_build(
-            &capacity, graph, plans[plan_index], &request, err);
+            &capacity, plans[plan_index], &request, err);
         if (rc == YVEX_OK &&
             !generation_capacity_plan_accumulate(
                 geometry, plans[plan_index], capacity, plan_index != 0ull))

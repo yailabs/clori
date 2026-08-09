@@ -339,18 +339,6 @@ int yvex_attention_execution_admit(
     unsigned long long csa_ratio, unsigned long long hca_ratio,
     const yvex_attention_layer_plan **layer, yvex_attention_failure *failure,
     yvex_error *err);
-int yvex_attention_state_recipe_build(
-    const yvex_attention_layer_plan *layer,
-    const yvex_attention_state_recipe_request *request,
-    yvex_attention_state_recipe *recipe, yvex_attention_failure *failure,
-    yvex_error *err);
-int yvex_attention_workspace_recipe_build(
-    const yvex_attention_layer_plan *layer,
-    const yvex_attention_state_recipe *state, yvex_attention_execution_mode mode,
-    yvex_attention_operation_scope scope, yvex_attention_evidence_level evidence_level,
-    unsigned long long token_capacity,
-    yvex_attention_workspace_recipe *recipe, yvex_attention_failure *failure,
-    yvex_error *err);
 const yvex_runtime_tensor_binding *yvex_attention_binding_find(const yvex_runtime_descriptor *descriptor,
     yvex_tensor_role role, const yvex_attention_layer_plan *layer);
 int yvex_attention_decode_row(yvex_materialization_session *session, const yvex_runtime_tensor_binding *binding,

@@ -1326,7 +1326,6 @@ static int runtime_session_open_fail(yvex_runtime_execution_session **out,
 
 static int runtime_session_state_open(
     yvex_runtime_execution_session *session, yvex_runtime_model *model,
-    const yvex_graph_execution_api *graph,
     const yvex_attention_state_provider_factory *factory,
     unsigned long long state_budget, yvex_runtime_model_failure *failure,
     yvex_error *err)
@@ -1341,12 +1340,12 @@ static int runtime_session_state_open(
     }
     if (factory) {
         session->attention_state_factory = *factory;
-        rc = factory->open(factory->context, graph, model->attention,
+        rc = factory->open(factory->context, model->attention,
                            state_budget, &session->attention_state_provider,
                            &state_failure, err);
     } else {
         rc = yvex_attention_state_provider_open_persistent(
-            graph, model->attention, state_budget,
+            model->attention, state_budget,
             &session->attention_state_provider, &state_failure, err);
     }
     if (rc != YVEX_OK ||
@@ -1372,13 +1371,13 @@ static int runtime_session_state_open(
     memset(&state_failure, 0, sizeof(state_failure));
     if (factory) {
         session->draft_attention_state_factory = *factory;
-        rc = factory->open(factory->context, graph, model->draft_attention,
+        rc = factory->open(factory->context, model->draft_attention,
                            state_budget,
                            &session->draft_attention_state_provider,
                            &state_failure, err);
     } else {
         rc = yvex_attention_state_provider_open_persistent(
-            graph, model->draft_attention, state_budget,
+            model->draft_attention, state_budget,
             &session->draft_attention_state_provider, &state_failure, err);
     }
     if (rc != YVEX_OK ||
@@ -1488,7 +1487,7 @@ int yvex_runtime_session_open(yvex_runtime_execution_session **out,
     session->summary.workspace_generation = 1ull;
     state_budget = request->maximum_host_bytes ? request->maximum_host_bytes - admitted_host_bytes
                                                : 0ull;
-    rc = runtime_session_state_open(session, model, graph, state_factory,
+    rc = runtime_session_state_open(session, model, state_factory,
                                     state_budget, failure, err);
     if (rc != YVEX_OK)
         return runtime_session_open_fail(out, session, rc, failure, err);

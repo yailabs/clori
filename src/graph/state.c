@@ -60,7 +60,6 @@ static int state_hash_u64s(yvex_sha256 *hash, const unsigned long long *values,
     return 1;
 }
 typedef struct {
-    const yvex_graph_execution_api *family;
     const yvex_attention_plan *plan;
     attention_layer_state *layers;
     unsigned long long layer_count, maximum_host_bytes;
@@ -598,7 +597,7 @@ static int state_bank_apply_publication(
     }
     candidate->view.token_count += publication->token_count;
     {
-        int rc = state->family->history_validate(
+        int rc = yvex_attention_history_validate(
             &layer->plan, &candidate->view, failure, err);
         if (rc != YVEX_OK) return rc;
     }
@@ -690,15 +689,14 @@ static int state_delta_identity(attention_state_transaction *transaction) {
     return 1;
 }
 static int state_open(
-    attention_state **out, const yvex_graph_execution_api *family,
-    const yvex_attention_plan *plan, unsigned long long maximum_host_bytes,
+    attention_state **out, const yvex_attention_plan *plan,
+    unsigned long long maximum_host_bytes,
     yvex_attention_failure *failure, yvex_error *err) {
     attention_state *state;
     unsigned long long index, count;
     if (out) *out = NULL;
     count = yvex_attention_plan_layer_count(plan);
-    if (!out || !family || !family->state_recipe || !family->history_validate ||
-        !plan || !count)
+    if (!out || !plan || !count)
         return state_reject(failure, YVEX_ATTENTION_NO_LAYER, 1ull, 0ull,
                             "sealed attention plan and family state ABI are required",
                             YVEX_ERR_INVALID_ARG, err);
@@ -725,7 +723,6 @@ static int state_open(
                                    : YVEX_ERR_NOMEM,
             err);
     }
-    state->family = family;
     state->plan = plan;
     state->layer_count = count;
     state->maximum_host_bytes = maximum_host_bytes;
@@ -879,7 +876,7 @@ static int state_prepare(
         goto done;
     }
     if (initial_history) {
-        rc = state->family->history_validate(&candidate.plan, initial_history,
+        rc = yvex_attention_history_validate(&candidate.plan, initial_history,
                                              failure, err);
         if (rc != YVEX_OK) goto done;
     }
@@ -1722,7 +1719,7 @@ static int state_restore(
         attention_state_bank *candidate = &layer->bank[1u - layer->committed_bank];
         const yvex_attention_history_view *view = &checkpoint->layers[index];
         rc = view->token_count == checkpoint->committed_sequence_length
-                 ? state->family->history_validate(&layer->plan, view, failure, err)
+                 ? yvex_attention_history_validate(&layer->plan, view, failure, err)
                  : YVEX_ERR_FORMAT;
         if (rc == YVEX_OK)
             rc = yvex_graph_state_bank_pages_transfer(
@@ -1954,7 +1951,7 @@ static int provider_persistent_release(void **context, yvex_error *err) {
     return YVEX_OK;
 }
 int yvex_attention_state_provider_open_persistent(
-    const yvex_graph_execution_api *family, const yvex_attention_plan *plan,
+    const yvex_attention_plan *plan,
     unsigned long long maximum_host_bytes, yvex_attention_state_provider *out,
     yvex_attention_failure *failure, yvex_error *err) {
     attention_state *state = NULL;
@@ -1965,7 +1962,7 @@ int yvex_attention_state_provider_open_persistent(
                        "attention state provider output is required");
         return YVEX_ERR_INVALID_ARG;
     }
-    rc = state_open(&state, family, plan, maximum_host_bytes, failure, err);
+    rc = state_open(&state, plan, maximum_host_bytes, failure, err);
     if (rc != YVEX_OK) return rc;
     *out = (yvex_attention_state_provider){
         .schema_version = YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V6,
