@@ -360,6 +360,12 @@ fi
 if rg -n -i '(families/|deepseek|minimax)' src/artifact include/yvex/internal/artifact.h; then
     fail "generic artifact owners contain a concrete family catalog or ABI"
 fi
+artifact_catalog_owners=$(rg -l 'deepseek_(selected|native_drafter)_catalog' src include |
+    LC_ALL=C sort)
+if [ "$artifact_catalog_owners" != 'src/graph/families/deepseek_v4.c' ]; then
+    printf '%s\n' "$artifact_catalog_owners" >&2
+    fail "DeepSeek physical artifact catalog escaped its family compiler projection"
+fi
 preparation_callback_owners=$(
     rg -l 'prepare_deepseek_runtime_binding' src include | LC_ALL=C sort
 )
