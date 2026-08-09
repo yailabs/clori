@@ -255,11 +255,8 @@ int yvex_runtime_logits_admit_shared_draft_plan(
 {
     const yvex_transformer_plan_summary *draft =
         yvex_transformer_plan_summary_get(draft_plan);
-    const yvex_runtime_descriptor_summary *runtime =
-        context && context->model_view
-            ? yvex_runtime_descriptor_summary_get(context->model_view->descriptor) : NULL;
     const yvex_speculation_family_policy *policy = NULL;
-    if (!context || !draft || !runtime || !context->model_view ||
+    if (!context || !draft || !context->model_view ||
         !yvex_runtime_binding_policies(
             context->model_view->compiled_binding, NULL, NULL, &policy) ||
         policy->schema_version != YVEX_SPECULATION_FAMILY_POLICY_SCHEMA_V1 ||

@@ -356,7 +356,7 @@ int yvex_runtime_speculation_context_open(
     yvex_runtime_sampling_options sampling_options = {0};
     yvex_runtime_sampling_policy draft_policy = {0};
     const yvex_transformer_plan_summary *target_plan;
-    const yvex_runtime_descriptor_summary *descriptor;
+    const yvex_transformer_plan_summary *draft_plan;
     const yvex_speculation_family_policy *policy;
     unsigned long long draft_context_capacity;
     int rc;
@@ -378,20 +378,23 @@ int yvex_runtime_speculation_context_open(
     context->target_sampling = target_sampling;
     context->sampling_policy = *sampling_policy;
     context->options = *options;
-    descriptor = context->model_view ? yvex_runtime_descriptor_summary_get(
-        context->model_view->descriptor) : NULL;
     target_plan = yvex_transformer_plan_summary_get(
         yvex_runtime_transformer_context_plan(target_transformer));
+    draft_plan = yvex_transformer_plan_summary_get(
+        context->model_view
+            ? yvex_compiled_model_plan_transformer(
+                  context->model_view->compiled_plan, 1)
+            : NULL);
     if (context->model_view && yvex_runtime_binding_policies(
             context->model_view->compiled_binding, NULL, NULL, &policy))
         context->policy = *policy;
-    if (!context->model_view || !descriptor || !target_plan ||
+    if (!context->model_view || !target_plan || !draft_plan ||
         yvex_runtime_transformer_context_session(target_transformer) != session ||
         context->policy.schema_version != YVEX_SPECULATION_FAMILY_POLICY_SCHEMA_V1 ||
         !context->policy.target_verification_required || !context->policy.parallel_block_backbone ||
         !context->policy.sequential_markov || !context->policy.shares_output_head ||
         !context->model_view->draft_attention ||
-        descriptor->draft_layer_count != context->policy.draft_layer_count ||
+        draft_plan->layer_count != context->policy.draft_layer_count ||
         target_plan->tensor_scope != YVEX_TENSOR_SCOPE_MAIN_LAYER ||
         context->policy.block_size < 2ull ||
         context->policy.block_size > YVEX_SPECULATION_MAX_BLOCK) {

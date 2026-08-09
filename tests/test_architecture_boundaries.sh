@@ -470,8 +470,11 @@ if printf '%s\n' "$runtime_execution_owners" |
     fail "runtime model-open or execution owner reconstructs compiled topology"
 fi
 if rg -n '(yvex_runtime_descriptor_summary_get|yvex_model_execution_descriptor)' \
-    src/runtime/generation_context.c src/runtime/decode.c; then
+    src/runtime/generation_context.c src/runtime/decode.c src/runtime/logits.c; then
     fail "runtime capacity or decode reconstructs geometry from the semantic descriptor"
+fi
+if rg -n 'descriptor->draft_layer_count' src/runtime/speculation.c; then
+    fail "runtime speculation reconstructs compiled draft topology from the descriptor"
 fi
 [ "$(rg -c 'yvex_physical_execution_ir_build[[:space:]]*\(' src/runtime/binding.c)" -eq 1 ] ||
     fail "runtime binding preparation does not own exactly one physical-plan compilation"
