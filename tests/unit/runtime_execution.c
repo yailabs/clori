@@ -281,7 +281,7 @@ static int execution_test_profile(void)
     yvex_error err;
 
     execution_test_identity(identity, 'a');
-    request.schema_version = YVEX_COMPILED_EXECUTION_PROFILE_SCHEMA_V1;
+    request.schema_version = YVEX_COMPILED_EXECUTION_PROFILE_SCHEMA_V2;
     request.logical_model_identity = identity;
     request.physical_variant_identity = identity;
     request.physical_execution_identity = identity;
@@ -296,9 +296,9 @@ static int execution_test_profile(void)
     request.workload = YVEX_EXECUTION_WORKLOAD_INTERACTIVE;
     request.evidence = YVEX_EXECUTION_EVIDENCE_PRODUCTION;
     request.execution_class = YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE;
-    request.host_stochastic_reference = 1;
-    request.token_local_moe_reference = 1;
-    request.eager_attention_reference = 1;
+    request.attention_resolution = YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
+    request.moe_resolution = YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
+    request.sampling_resolution = YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
     YVEX_TEST_ASSERT(yvex_compiled_execution_profile_seal(
                          &request, &first, &err) == YVEX_OK,
                      "compiled execution profile should seal");
@@ -307,11 +307,26 @@ static int execution_test_profile(void)
                      "equal compiled execution profile should seal");
     YVEX_TEST_ASSERT(strcmp(first.identity, second.identity) == 0,
                      "compiled execution identity should be deterministic");
+    YVEX_TEST_ASSERT(
+        first.resolution == YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED,
+        "compiled profile should expose its admitted degraded resolution");
+    request.attention_resolution = YVEX_EXECUTION_RESOLUTION_EXACT;
+    YVEX_TEST_ASSERT(yvex_compiled_execution_profile_seal(
+                         &request, &second, &err) == YVEX_OK &&
+                         strcmp(first.identity, second.identity) != 0,
+                     "capability resolution should change execution identity");
+    request.attention_resolution =
+        YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
     request.evidence = YVEX_EXECUTION_EVIDENCE_FORENSIC;
     YVEX_TEST_ASSERT(yvex_compiled_execution_profile_seal(
                          &request, &second, &err) == YVEX_OK &&
                          strcmp(first.identity, second.identity) != 0,
                      "evidence profile should change execution identity");
+    request.attention_resolution =
+        YVEX_EXECUTION_RESOLUTION_TEMPORARILY_RESOURCE_LIMITED;
+    YVEX_TEST_ASSERT(yvex_compiled_execution_profile_seal(
+                         &request, &second, &err) == YVEX_ERR_INVALID_ARG,
+                     "non-executable capability resolution should refuse profile admission");
     return 0;
 }
 

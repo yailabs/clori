@@ -1074,8 +1074,9 @@ static int runtime_moe_execute_layer_rows(
         (batch->execution_class != YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE &&
          batch->execution_class != YVEX_EXECUTION_CLASS_DEVICE_NATIVE) ||
         (context->options.execution_profile &&
-         ((context->options.execution_profile->token_local_moe_reference !=
-           (batch->execution_class == YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE)) ||
+         ((context->options.execution_profile->moe_resolution ==
+               YVEX_EXECUTION_RESOLUTION_EXACT) !=
+              (batch->execution_class == YVEX_EXECUTION_CLASS_DEVICE_NATIVE) ||
           !batch->execution_profile_identity ||
           strcmp(batch->execution_profile_identity,
                  context->options.execution_profile->identity) != 0)) ||

@@ -615,7 +615,7 @@ static int generation_execution_profile_build(
     } else {
         yvex_core_text_copy(hardware, sizeof(hardware), "portable-cpu");
     }
-    request.schema_version = YVEX_COMPILED_EXECUTION_PROFILE_SCHEMA_V1;
+    request.schema_version = YVEX_COMPILED_EXECUTION_PROFILE_SCHEMA_V2;
     request.logical_model_identity = binding->logical_model_identity;
     request.physical_variant_identity = binding->profile_identity;
     request.physical_execution_identity = physical->identity;
@@ -640,20 +640,26 @@ static int generation_execution_profile_build(
                 context->options.evidence_profile == YVEX_EXECUTION_EVIDENCE_PRODUCTION
             ? YVEX_EXECUTION_CLASS_DEVICE_NATIVE
             : YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE;
-    request.host_stochastic_reference =
-        context->options.sampling_policy.strategy != YVEX_SAMPLING_STRATEGY_GREEDY &&
-        !generation_device_stochastic(context, session_view->backend);
-    request.token_local_moe_reference =
-        context->options.backend != YVEX_BACKEND_KIND_CUDA ||
-        context->options.evidence_profile != YVEX_EXECUTION_EVIDENCE_PRODUCTION ||
-        yvex_backend_moe_operations_get(session_view->backend) == NULL;
-    request.eager_attention_reference =
-        context->options.backend != YVEX_BACKEND_KIND_CUDA ||
-        context->options.mode == YVEX_GENERATION_MODE_DSPARK ||
-        !binding->capabilities.cuda_full_graph_implemented ||
-        graph.state != YVEX_BACKEND_CUDA_GRAPH_OPEN ||
-        !graph.edge_inventory_available || !graph.async_memory_available ||
-        !graph.async_copy_available || !graph.pinned_host_memory_available;
+    request.sampling_resolution =
+        context->options.sampling_policy.strategy == YVEX_SAMPLING_STRATEGY_GREEDY ||
+                generation_device_stochastic(context, session_view->backend)
+            ? YVEX_EXECUTION_RESOLUTION_EXACT
+            : YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
+    request.moe_resolution =
+        context->options.backend == YVEX_BACKEND_KIND_CUDA &&
+                context->options.evidence_profile == YVEX_EXECUTION_EVIDENCE_PRODUCTION &&
+                yvex_backend_moe_operations_get(session_view->backend) != NULL
+            ? YVEX_EXECUTION_RESOLUTION_EXACT
+            : YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
+    request.attention_resolution =
+        context->options.backend == YVEX_BACKEND_KIND_CUDA &&
+                context->options.mode != YVEX_GENERATION_MODE_DSPARK &&
+                binding->capabilities.cuda_full_graph_implemented &&
+                graph.state == YVEX_BACKEND_CUDA_GRAPH_OPEN &&
+                graph.edge_inventory_available && graph.async_memory_available &&
+                graph.async_copy_available && graph.pinned_host_memory_available
+            ? YVEX_EXECUTION_RESOLUTION_EXACT
+            : YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
     return yvex_compiled_execution_profile_seal(
         &request, &context->execution_profile, err);
 }
@@ -909,7 +915,8 @@ int yvex_runtime_generation_context_open(
     if (context->options.backend == YVEX_BACKEND_KIND_CUDA)
         rc = yvex_runtime_session_prepare_attention_workspace(
             context->session,
-            context->execution_profile.eager_attention_reference
+            context->execution_profile.attention_resolution !=
+                YVEX_EXECUTION_RESOLUTION_EXACT
                 ? YVEX_RUNTIME_MODE_EAGER : YVEX_RUNTIME_MODE_FULL,
             YVEX_RUNTIME_SCOPE_ATTENTION_ENVELOPE, YVEX_ATTENTION_EVIDENCE_NONE,
             workspace_capacity, execution_workspace, &workspace_failure, err);

@@ -46,6 +46,7 @@ family_runtime_context_pattern='(context_capacity|requested_session_context|admi
 family_runtime_context_pattern="${family_runtime_context_pattern}"'per_(session|request)_maximum|physical_state_pool_tokens)'
 moe_family_registry_pattern='yvex_graph_moe_family_(at|find)[[:space:]]*\('
 conversation_family_registry_pattern='yvex_model_conversation_protocol_(at|find)[[:space:]]*\('
+legacy_resolution_boolean_pattern='(host_stochastic_reference|token_local_moe_reference|eager_attention_reference)'
 
 # Every expression used as a hard gate carries positive and negative probes.
 # This catches regex drift before a repository scan can produce false comfort.
@@ -96,6 +97,13 @@ printf '%s\n' 'options.context_capacity = 4096;' |
 if printf '%s\n' 'model.maximum_context = 1048576;' |
     rg "$family_runtime_context_pattern" >/dev/null; then
     fail "family context-capacity guard rejects a semantic model maximum"
+fi
+printf '%s\n' 'profile.eager_attention_reference = 1;' |
+    rg "$legacy_resolution_boolean_pattern" >/dev/null ||
+    fail "capability-resolution guard misses a legacy fallback boolean"
+if printf '%s\n' 'profile.attention_resolution = YVEX_EXECUTION_RESOLUTION_EXACT;' |
+    rg "$legacy_resolution_boolean_pattern" >/dev/null; then
+    fail "capability-resolution guard rejects a typed resolution"
 fi
 printf '%s\n' 'yvex_graph_moe_family_at(index);' |
     rg "$moe_family_registry_pattern" >/dev/null ||
@@ -211,6 +219,13 @@ if find src -path '*/families/*' -type f \
         \( -name '*.c' -o -name '*.h' -o -name '*.cu' \) -print0 |
     xargs -0 rg -n "$family_runtime_context_pattern"; then
     fail "a family projection owns runtime-selected context capacity"
+fi
+
+if rg -n "$legacy_resolution_boolean_pattern" src include; then
+    fail "an execution owner retains an untyped fallback boolean"
+fi
+if rg -n 'YVEX_EXECUTION_RESOLUTION_' src/backend; then
+    fail "a backend selects execution capability policy"
 fi
 
 family_neutral_sources=$(

@@ -15,7 +15,7 @@ extern "C" {
 #endif
 
 #define YVEX_PHYSICAL_EXECUTION_SCHEMA_V1 1u
-#define YVEX_COMPILED_EXECUTION_PROFILE_SCHEMA_V1 1u
+#define YVEX_COMPILED_EXECUTION_PROFILE_SCHEMA_V2 2u
 #define YVEX_EXECUTION_HARDWARE_PROFILE_SCHEMA_V1 1u
 #define YVEX_EXECUTION_WORKLOAD_PROFILE_SCHEMA_V1 1u
 #define YVEX_EXECUTION_CAPACITY_PLAN_SCHEMA_V1 1u
@@ -36,6 +36,14 @@ typedef enum {
     YVEX_EXECUTION_CLASS_DEVICE_NATIVE,
     YVEX_EXECUTION_CLASS_FORENSIC_REFERENCE
 } yvex_execution_class;
+
+typedef enum {
+    YVEX_EXECUTION_RESOLUTION_EXACT = 0,
+    YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED,
+    YVEX_EXECUTION_RESOLUTION_TEMPORARILY_RESOURCE_LIMITED,
+    YVEX_EXECUTION_RESOLUTION_UNSUPPORTED,
+    YVEX_EXECUTION_RESOLUTION_TRUST_FAILURE
+} yvex_execution_resolution;
 
 typedef enum {
     YVEX_EXECUTION_CONSUMER_EMBEDDING = 0,
@@ -414,9 +422,9 @@ typedef struct {
     yvex_execution_workload_class workload;
     yvex_execution_evidence_profile evidence;
     yvex_execution_class execution_class;
-    int host_stochastic_reference;
-    int token_local_moe_reference;
-    int eager_attention_reference;
+    yvex_execution_resolution attention_resolution;
+    yvex_execution_resolution moe_resolution;
+    yvex_execution_resolution sampling_resolution;
 } yvex_compiled_execution_profile_request;
 
 typedef struct {
@@ -428,9 +436,10 @@ typedef struct {
     yvex_execution_workload_class workload;
     yvex_execution_evidence_profile evidence;
     yvex_execution_class execution_class;
-    int host_stochastic_reference;
-    int token_local_moe_reference;
-    int eager_attention_reference;
+    yvex_execution_resolution resolution;
+    yvex_execution_resolution attention_resolution;
+    yvex_execution_resolution moe_resolution;
+    yvex_execution_resolution sampling_resolution;
     char hardware_profile[YVEX_EXECUTION_TEXT_CAP];
     char kernel_bundle_identity[YVEX_SHA256_HEX_CAP];
     char identity[YVEX_SHA256_HEX_CAP];

@@ -612,7 +612,8 @@ int yvex_runtime_transformer_execute_block(
     batch.token_ids_present = 1;
     batch.execution_class = YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE;
     if (normal_cuda && context->busy && context->options.execution_profile &&
-        !context->options.execution_profile->token_local_moe_reference)
+        context->options.execution_profile->moe_resolution ==
+            YVEX_EXECUTION_RESOLUTION_EXACT)
         batch.execution_class = YVEX_EXECUTION_CLASS_DEVICE_NATIVE;
     batch.execution_profile_identity = context->options.execution_profile
                                            ? context->options.execution_profile->identity : NULL;
@@ -990,7 +991,8 @@ static int transformer_shape_admit(
             required.workspace_identity, required.state_layout_identity);
     }
     if (rc == YVEX_OK && request->backend == YVEX_BACKEND_KIND_CUDA &&
-        !context->options.execution_profile->eager_attention_reference) {
+        context->options.execution_profile->attention_resolution ==
+            YVEX_EXECUTION_RESOLUTION_EXACT) {
         rc = yvex_backend_cuda_attention_configure(
             context->session_view->backend, (yvex_backend_attention_phase)selected->phase,
             YVEX_BACKEND_CUDA_ATTENTION_FULL, context->options.execution_profile->identity, "generation",
@@ -1046,7 +1048,8 @@ static int transformer_prepare(yvex_runtime_transformer_context *context,
                                           "transformer state position/capacity is incompatible");
     if (request->backend == YVEX_BACKEND_KIND_CPU) return YVEX_OK;
     mode = context->options.execution_profile &&
-                   !context->options.execution_profile->eager_attention_reference
+                   context->options.execution_profile->attention_resolution ==
+                       YVEX_EXECUTION_RESOLUTION_EXACT
                ? YVEX_RUNTIME_MODE_FULL : YVEX_RUNTIME_MODE_EAGER;
     workspace_bytes = context->moe_workspace_bytes;
     if (workspace_bytes < context->options.minimum_device_workspace_bytes)

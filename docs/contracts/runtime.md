@@ -155,7 +155,13 @@ means decrementing counters after publication.
 Every request consumes one immutable compiled execution profile binding the
 logical model, physical variant, Physical Execution IR, artifact,
 materialization, runtime binding, kernel bundle, hardware, context, mode,
-workload, evidence profile, and execution class. `production` admits bounded
+workload, evidence profile, and execution class. Profile v2 also records typed
+attention, MoE, and sampling resolutions. An executable resolution is either
+`exact` or `compatible-degraded`; resource pressure, unsupported capability,
+and trust failure cannot be sealed as an executable profile. The aggregate
+resolution is derived from those three operation facts rather than supplied as
+a second authority. Backend owners report capability facts but never select a
+resolution. `production` admits bounded
 status and accounting only; `audit` may add selected probes and device digests;
 `forensic` may explicitly materialize full intermediates. Trace verbosity does
 not select evidence depth, and production identity does not require complete

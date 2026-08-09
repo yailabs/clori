@@ -133,8 +133,11 @@ syntax and exact tokenizer component identities enter through the family
 compiler adapter; tokenizer, runtime and server consume the authenticated
 record without enumerating a concrete family. Bindings v7 through v10 are
 refused because none can represent the current complete compilation authority.
-Physical Execution IR and compiled execution profiles remain at their existing
-schemas because this change does not alter their persisted facts.
+Physical Execution IR remains at its existing schema. Compiled execution
+profile v2 replaces three fallback booleans with identity-bearing attention,
+MoE, and sampling resolutions; this is an incompatible internal contract change
+because v1 cannot represent why an admitted execution differs from the exact
+path.
 
 Artifact drift, binding drift, unsupported qtypes, missing roles, resource
 overflow, or incompatible runtime requirements refuse before model execution.

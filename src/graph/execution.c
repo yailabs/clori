@@ -1426,6 +1426,12 @@ int yvex_execution_roofline_ledger_build(
     return YVEX_OK;
 }
 
+static int execution_resolution_executable(yvex_execution_resolution resolution)
+{
+    return resolution == YVEX_EXECUTION_RESOLUTION_EXACT ||
+           resolution == YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
+}
+
 int yvex_compiled_execution_profile_seal(
     const yvex_compiled_execution_profile_request *request,
     yvex_compiled_execution_profile *profile, yvex_error *err)
@@ -1435,7 +1441,7 @@ int yvex_compiled_execution_profile_seal(
     size_t index;
     if (profile) memset(profile, 0, sizeof(*profile));
     if (!request || !profile ||
-        request->schema_version != YVEX_COMPILED_EXECUTION_PROFILE_SCHEMA_V1 ||
+        request->schema_version != YVEX_COMPILED_EXECUTION_PROFILE_SCHEMA_V2 ||
         !request->hardware_profile || !request->hardware_profile[0] ||
         strlen(request->hardware_profile) >= YVEX_EXECUTION_TEXT_CAP ||
         request->backend > YVEX_BACKEND_KIND_CUDA ||
@@ -1443,6 +1449,9 @@ int yvex_compiled_execution_profile_seal(
         request->workload > YVEX_EXECUTION_WORKLOAD_QUALIFICATION ||
         request->evidence > YVEX_EXECUTION_EVIDENCE_FORENSIC ||
         request->execution_class > YVEX_EXECUTION_CLASS_FORENSIC_REFERENCE ||
+        !execution_resolution_executable(request->attention_resolution) ||
+        !execution_resolution_executable(request->moe_resolution) ||
+        !execution_resolution_executable(request->sampling_resolution) ||
         !request->context_capacity)
         return execution_refuse(
             err, YVEX_ERR_INVALID_ARG, "runtime.execution.profile",
@@ -1460,7 +1469,7 @@ int yvex_compiled_execution_profile_seal(
                 err, YVEX_ERR_FORMAT, "runtime.execution.profile",
                 "compiled execution profile identity input is invalid");
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.compiled-execution-profile.v1"))
+    if (!yvex_sha256_update_text(&hash, "yvex.compiled-execution-profile.v2"))
         goto identity_failed;
     for (index = 0u; index < sizeof(identities) / sizeof(identities[0]); ++index)
         if (!yvex_sha256_update_text(&hash, identities[index]))
@@ -1475,15 +1484,12 @@ int yvex_compiled_execution_profile_seal(
         !yvex_sha256_update_u64(&hash, request->workload) ||
         !yvex_sha256_update_u64(&hash, request->evidence) ||
         !yvex_sha256_update_u64(&hash, request->execution_class) ||
-        !yvex_sha256_update_u64(
-            &hash, (unsigned long long)request->host_stochastic_reference) ||
-        !yvex_sha256_update_u64(
-            &hash, (unsigned long long)request->token_local_moe_reference) ||
-        !yvex_sha256_update_u64(
-            &hash, (unsigned long long)request->eager_attention_reference) ||
+        !yvex_sha256_update_u64(&hash, request->attention_resolution) ||
+        !yvex_sha256_update_u64(&hash, request->moe_resolution) ||
+        !yvex_sha256_update_u64(&hash, request->sampling_resolution) ||
         !execution_hash_finish(&hash, profile->identity))
         goto identity_failed;
-    profile->schema_version = YVEX_COMPILED_EXECUTION_PROFILE_SCHEMA_V1;
+    profile->schema_version = YVEX_COMPILED_EXECUTION_PROFILE_SCHEMA_V2;
     profile->backend = request->backend;
     profile->device_index = request->device_index;
     profile->compute_major = request->compute_major;
@@ -1493,9 +1499,15 @@ int yvex_compiled_execution_profile_seal(
     profile->workload = request->workload;
     profile->evidence = request->evidence;
     profile->execution_class = request->execution_class;
-    profile->host_stochastic_reference = request->host_stochastic_reference;
-    profile->token_local_moe_reference = request->token_local_moe_reference;
-    profile->eager_attention_reference = request->eager_attention_reference;
+    profile->attention_resolution = request->attention_resolution;
+    profile->moe_resolution = request->moe_resolution;
+    profile->sampling_resolution = request->sampling_resolution;
+    profile->resolution =
+        request->attention_resolution == YVEX_EXECUTION_RESOLUTION_EXACT &&
+                request->moe_resolution == YVEX_EXECUTION_RESOLUTION_EXACT &&
+                request->sampling_resolution == YVEX_EXECUTION_RESOLUTION_EXACT
+            ? YVEX_EXECUTION_RESOLUTION_EXACT
+            : YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
     yvex_core_text_copy(profile->hardware_profile,
                         sizeof(profile->hardware_profile),
                         request->hardware_profile);

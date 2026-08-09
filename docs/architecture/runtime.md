@@ -258,7 +258,10 @@ never rewinds published state by decrementing counters.
 One compiled execution profile binds logical model, physical variant, Physical
 Execution IR, artifact, materialization, runtime binding, kernel bundle,
 hardware, context, generation mode, workload, evidence profile and execution
-class. `production`, `audit`, and `forensic` evidence are independent from
+class. Its typed attention, MoE, and sampling resolutions make every admitted
+portable/eager/reference path visible and identity-bearing. Backend code reports
+facts; the execution-policy owner chooses `exact` or `compatible-degraded`
+before dispatch. `production`, `audit`, and `forensic` evidence are independent from
 trace verbosity: production cannot require complete hidden, state, logits, or
 probability host scans merely to derive evidence.
 
