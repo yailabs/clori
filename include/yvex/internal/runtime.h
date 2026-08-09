@@ -74,7 +74,7 @@ typedef enum {
 } yvex_runtime_lifecycle_phase;
 typedef int (*yvex_runtime_progress_callback)(void *, yvex_runtime_lifecycle_phase, unsigned long long,
                                               unsigned long long);
-typedef struct {
+typedef struct yvex_runtime_binding_prepare_request {
     const char *directory;
     const yvex_complete_artifact_admission *admission;
     const yvex_artifact_physical_compatibility *physical_compatibility;
@@ -129,6 +129,10 @@ typedef struct yvex_runtime_binding yvex_runtime_binding;
 int yvex_runtime_binding_prepare(const yvex_runtime_binding_prepare_request *request,
                                  yvex_runtime_binding_prepare_result *result,
                                  yvex_runtime_binding_failure *failure, yvex_error *err);
+int yvex_runtime_binding_compile_publish(
+    const yvex_family_compiler_adapter *adapter,
+    const struct yvex_compilation_runtime_binding_request *request,
+    char path[YVEX_PATH_CAP], int *published, yvex_error *err);
 int yvex_runtime_binding_open(yvex_runtime_binding **out, const char *path,
     yvex_runtime_binding_summary *summary,
     yvex_complete_artifact_admission *admission,

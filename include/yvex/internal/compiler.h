@@ -106,6 +106,8 @@ typedef struct yvex_speculation_family_policy {
 } yvex_speculation_family_policy;
 
 struct yvex_graph_compiler_api;
+struct yvex_compilation_runtime_binding_request;
+struct yvex_runtime_binding_prepare_request;
 struct yvex_runtime_descriptor_summary;
 struct yvex_tokenizer_family_policy;
 typedef struct yvex_family_compiler_adapter {
@@ -120,6 +122,11 @@ typedef struct yvex_family_compiler_adapter {
     int (*speculation_policy)(const struct yvex_runtime_descriptor_summary *,
                               yvex_speculation_family_policy *);
     int (*tokenizer_policy)(struct yvex_tokenizer_family_policy *, yvex_error *);
+    int (*runtime_binding_compile)(
+        const struct yvex_compilation_runtime_binding_request *,
+        struct yvex_runtime_binding_prepare_request *, void **owner,
+        yvex_error *);
+    void (*runtime_binding_release)(void *owner);
 } yvex_family_compiler_adapter;
 
 int yvex_runtime_capabilities_identity(

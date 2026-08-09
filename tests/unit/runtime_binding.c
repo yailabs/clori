@@ -2054,6 +2054,9 @@ static int test_runtime_family_neutrality(void)
     const yvex_graph_execution_binding *deepseek =
         yvex_graph_execution_find(0ull, 0ull, "deepseek4-v4-flash-dspark");
     const yvex_graph_family_preparation *preparation = yvex_graph_family_preparation_at(0ull);
+    const yvex_family_compiler_adapter *compiler =
+        yvex_compiler_family_deepseek_v4();
+    yvex_compilation_runtime_binding_request request = {0};
     yvex_compilation_runtime_binding_result rejected = {0};
     yvex_error err;
 
@@ -2066,6 +2069,8 @@ static int test_runtime_family_neutrality(void)
                          strcmp(deepseek->operator_artifact_filename,
                                 YVEX_SELECTED_DEEPSEEK_ARTIFACT_FILENAME) == 0 &&
                          preparation->model && preparation->prepare_runtime_binding &&
+                         compiler && compiler->runtime_binding_compile &&
+                         compiler->runtime_binding_release &&
                          preparation->model() == yvex_model_register_deepseek_v4(),
                      "compiler preparation facts remain separate from execution facts");
     yvex_error_clear(&err);
@@ -2073,6 +2078,11 @@ static int test_runtime_family_neutrality(void)
                              YVEX_ERR_INVALID_ARG &&
                          !rejected.published && !rejected.path[0],
                      "typed family preparation callback refuses incomplete compiler input");
+    YVEX_TEST_ASSERT(yvex_runtime_binding_compile_publish(
+                         compiler, &request, rejected.path,
+                         &rejected.published, &err) == YVEX_ERR_INVALID_ARG &&
+                         !rejected.published && !rejected.path[0],
+                     "generic publication owner refuses incomplete family compiler products");
     YVEX_TEST_ASSERT(yvex_graph_execution_find(
                          deepseek->adapter_id, deepseek->adapter_version, NULL) == deepseek,
                      "compiled adapter identity selects one immutable execution binding");

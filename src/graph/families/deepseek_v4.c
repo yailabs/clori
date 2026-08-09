@@ -300,6 +300,11 @@ static const yvex_graph_execution_binding deepseek_execution = {
     .operator_family_key = "deepseek",
     .operator_artifact_filename = YVEX_SELECTED_DEEPSEEK_ARTIFACT_FILENAME,
     .api = &yvex_attention_execution_api};
+static int deepseek_runtime_binding_compile(
+    const yvex_compilation_runtime_binding_request *request,
+    yvex_runtime_binding_prepare_request *prepare, void **owner,
+    yvex_error *err);
+static void deepseek_runtime_binding_release(void *owner);
 static const yvex_family_compiler_adapter deepseek_compiler = {
     .schema_version = YVEX_FAMILY_COMPILER_SCHEMA_V1,
     .adapter_id = YVEX_DEEPSEEK_V4_ADAPTER_ID,
@@ -311,7 +316,9 @@ static const yvex_family_compiler_adapter deepseek_compiler = {
     .transformer_policy = deepseek_transformer_policy,
     .logits_policy = deepseek_logits_policy,
     .speculation_policy = deepseek_speculation_policy,
-    .tokenizer_policy = deepseek_tokenizer_policy};
+    .tokenizer_policy = deepseek_tokenizer_policy,
+    .runtime_binding_compile = deepseek_runtime_binding_compile,
+    .runtime_binding_release = deepseek_runtime_binding_release};
 const yvex_family_compiler_adapter *yvex_compiler_family_deepseek_v4(void) {
     return &deepseek_compiler;
 }
@@ -1741,102 +1748,116 @@ static int runtime_binding_compiler_plan(runtime_binding_compiler *compiler,
         &compiler->writer, &writer_request, &compiler->writer_failure, err);
 }
 
-/*
- * Publish the admitted DeepSeek runtime binding through its family preparation adapter.
- *
- * Resolved compiler-plane paths, exact adapter identity, and caller-owned output.
- */
-static int prepare_deepseek_runtime_binding(
-    const yvex_compilation_runtime_binding_request *request,
-    yvex_compilation_runtime_binding_result *result, yvex_error *err)
+static void deepseek_runtime_binding_release(void *owner)
 {
-    runtime_binding_compiler compiler = {0};
-    yvex_runtime_binding_prepare_request prepare = {0};
-    yvex_runtime_binding_prepare_result prepared = {0};
-    yvex_runtime_binding_failure failure = {0};
-    const yvex_family_compiler_adapter *adapter = NULL;
+    runtime_binding_compiler *compiler = (runtime_binding_compiler *)owner;
+
+    if (!compiler) return;
+    runtime_binding_compiler_close(compiler);
+    free(compiler);
+}
+
+static int deepseek_runtime_binding_compile(
+    const yvex_compilation_runtime_binding_request *request,
+    yvex_runtime_binding_prepare_request *prepare, void **owner,
+    yvex_error *err)
+{
+    runtime_binding_compiler *compiler;
     const yvex_gguf_writer_plan_summary *writer = NULL;
     const yvex_transform_ir_summary *transform = NULL;
     int rc;
 
-    if (result) memset(result, 0, sizeof(*result));
-    if (!request || !result || !request->source_path || !request->models_root ||
-        !request->source_manifest_path || !request->artifact_path ||
-        !request->directory || !request->directory[0] ||
-        !request->family_adapter_id || !request->family_adapter_version) {
+    if (prepare) memset(prepare, 0, sizeof(*prepare));
+    if (owner) *owner = NULL;
+    if (!request || !prepare || !owner || !request->source_path ||
+        !request->models_root || !request->source_manifest_path ||
+        !request->artifact_path) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "graph_attention_prepare",
-                       "source, artifact, binding directory, and adapter identity are required");
+                       "source, artifact, and source manifest are required");
         return YVEX_ERR_INVALID_ARG;
     }
-    compiler.model = yvex_model_register_deepseek_v4();
-    adapter = yvex_compiler_family_deepseek_v4();
-    compiler.graph = adapter && adapter->graph ? adapter->graph() : NULL;
-    if (!compiler.model || !compiler.graph || !adapter ||
-        adapter->schema_version != YVEX_FAMILY_COMPILER_SCHEMA_V1 ||
-        adapter->adapter_id != request->family_adapter_id ||
-        adapter->adapter_version != request->family_adapter_version ||
-        !adapter->execution_capabilities || !adapter->transformer_policy ||
-        !adapter->logits_policy || !adapter->speculation_policy ||
-        !adapter->tokenizer_policy) {
-        yvex_error_set(err, YVEX_ERR_STATE, "graph_attention_prepare",
-                       "family preparation and compiler adapter registration disagree");
-        rc = YVEX_ERR_STATE;
-    } else {
-        rc = runtime_binding_compiler_open(&compiler, request, err);
+    compiler = (runtime_binding_compiler *)calloc(1u, sizeof(*compiler));
+    if (!compiler) {
+        yvex_error_set(err, YVEX_ERR_NOMEM, "graph_attention_prepare",
+                       "family compilation owner allocation failed");
+        return YVEX_ERR_NOMEM;
     }
-    if (rc == YVEX_OK) rc = runtime_binding_compiler_plan(&compiler, request, err);
+    *owner = compiler;
+    compiler->model = yvex_model_register_deepseek_v4();
+    compiler->graph = deepseek_compiler.graph ? deepseek_compiler.graph() : NULL;
+    if (!compiler->model || !compiler->graph ||
+        !deepseek_compiler.execution_capabilities ||
+        !deepseek_compiler.transformer_policy ||
+        !deepseek_compiler.logits_policy ||
+        !deepseek_compiler.speculation_policy ||
+        !deepseek_compiler.tokenizer_policy) {
+        yvex_error_set(err, YVEX_ERR_STATE, "graph_attention_prepare",
+                       "family compiler registration is incomplete");
+        return YVEX_ERR_STATE;
+    }
+    rc = runtime_binding_compiler_open(compiler, request, err);
+    if (rc == YVEX_OK) rc = runtime_binding_compiler_plan(compiler, request, err);
     if (rc == YVEX_OK)
         rc = yvex_artifact_physical_compatibility_validate(
-            compiler.writer, &compiler.admission, compiler.artifact, compiler.gguf,
-            &compiler.compatibility, &compiler.compatibility_failure, err);
-    if (rc == YVEX_OK) writer = yvex_gguf_writer_plan_summary_get(compiler.writer);
+            compiler->writer, &compiler->admission, compiler->artifact,
+            compiler->gguf, &compiler->compatibility,
+            &compiler->compatibility_failure, err);
+    if (rc == YVEX_OK)
+        writer = yvex_gguf_writer_plan_summary_get(compiler->writer);
     if (rc == YVEX_OK)
         transform = yvex_transform_ir_summary_get(
-            compiler.model->payload.transform_ir(compiler.handoff));
-    if (rc == YVEX_OK && (!writer || !transform ||
-                          !yvex_sha256_hex_is_valid(transform->transform_identity) ||
-                          !compiler.compatibility.physical_payload_compatible)) {
+            compiler->model->payload.transform_ir(compiler->handoff));
+    if (rc == YVEX_OK &&
+        (!writer || !transform ||
+         !yvex_sha256_hex_is_valid(transform->transform_identity) ||
+         !compiler->compatibility.physical_payload_compatible)) {
         yvex_error_set(err, YVEX_ERR_STATE, "graph_attention_prepare",
                        "logical transform and physical compatibility proof are required");
         rc = YVEX_ERR_STATE;
     }
-    if (rc == YVEX_OK) {
-        prepare.directory = request->directory;
-        prepare.admission = &compiler.admission;
-        prepare.physical_compatibility = &compiler.compatibility;
-        prepare.materialization = compiler.materialization;
-        prepare.runtime_descriptor = compiler.descriptor;
-        prepare.attention_plan = compiler.attention;
-        prepare.draft_attention_plan = compiler.draft_attention;
-        prepare.graph_compiler = compiler.graph;
-        prepare.family_adapter_id = request->family_adapter_id;
-        prepare.family_adapter_version = request->family_adapter_version;
-        prepare.artifact_format = "gguf";
-        prepare.artifact_format_version = writer->gguf_version;
-        prepare.logical_transform_identity = transform->transform_identity;
-        if (!adapter->execution_capabilities(&prepare.capabilities) ||
-            !yvex_runtime_capabilities_contract_valid(&prepare.capabilities) ||
-            !adapter->transformer_policy(
-                yvex_runtime_descriptor_summary_get(compiler.descriptor),
-                &prepare.transformer_policy) ||
-            !adapter->logits_policy(&prepare.logits_policy) ||
-            !adapter->speculation_policy(
-                yvex_runtime_descriptor_summary_get(compiler.descriptor),
-                &prepare.speculation_policy) ||
-            !adapter->tokenizer_policy(&prepare.tokenizer_policy, err)) {
-            yvex_error_set(err, YVEX_ERR_STATE, "graph_attention_prepare",
-                           "family execution envelope compilation failed");
-            rc = YVEX_ERR_STATE;
-        } else {
-            rc = yvex_runtime_binding_prepare(&prepare, &prepared, &failure, err);
-        }
+    if (rc != YVEX_OK) return rc;
+    prepare->directory = request->directory;
+    prepare->admission = &compiler->admission;
+    prepare->physical_compatibility = &compiler->compatibility;
+    prepare->materialization = compiler->materialization;
+    prepare->runtime_descriptor = compiler->descriptor;
+    prepare->attention_plan = compiler->attention;
+    prepare->draft_attention_plan = compiler->draft_attention;
+    prepare->graph_compiler = compiler->graph;
+    prepare->family_adapter_id = request->family_adapter_id;
+    prepare->family_adapter_version = request->family_adapter_version;
+    prepare->artifact_format = "gguf";
+    prepare->artifact_format_version = writer->gguf_version;
+    prepare->logical_transform_identity = transform->transform_identity;
+    if (!deepseek_compiler.execution_capabilities(&prepare->capabilities) ||
+        !yvex_runtime_capabilities_contract_valid(&prepare->capabilities) ||
+        !deepseek_compiler.transformer_policy(
+            yvex_runtime_descriptor_summary_get(compiler->descriptor),
+            &prepare->transformer_policy) ||
+        !deepseek_compiler.logits_policy(&prepare->logits_policy) ||
+        !deepseek_compiler.speculation_policy(
+            yvex_runtime_descriptor_summary_get(compiler->descriptor),
+            &prepare->speculation_policy) ||
+        !deepseek_compiler.tokenizer_policy(&prepare->tokenizer_policy, err)) {
+        yvex_error_set(err, YVEX_ERR_STATE, "graph_attention_prepare",
+                       "family execution envelope compilation failed");
+        return YVEX_ERR_STATE;
     }
-    if (rc == YVEX_OK) {
-        memcpy(result->path, prepared.path, sizeof(result->path));
-        result->published = prepared.published;
+    return YVEX_OK;
+}
+
+static int prepare_deepseek_runtime_binding(
+    const yvex_compilation_runtime_binding_request *request,
+    yvex_compilation_runtime_binding_result *result, yvex_error *err)
+{
+    if (result) memset(result, 0, sizeof(*result));
+    if (!result) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "graph_attention_prepare",
+                       "runtime binding output is required");
+        return YVEX_ERR_INVALID_ARG;
     }
-    runtime_binding_compiler_close(&compiler);
-    return rc;
+    return yvex_runtime_binding_compile_publish(
+        &deepseek_compiler, request, result->path, &result->published, err);
 }
 
 /*

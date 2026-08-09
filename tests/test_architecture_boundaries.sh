@@ -373,6 +373,16 @@ if [ "$preparation_callback_owners" != 'src/graph/families/deepseek_v4.c' ]; the
     printf '%s\n' "$preparation_callback_owners" >&2
     fail "DeepSeek cold preparation callback escaped its family compiler projection"
 fi
+if rg -n -i '(families/|deepseek|minimax)' src/runtime/binding_publish.c; then
+    fail "generic runtime-binding publication contains concrete family semantics"
+fi
+binding_prepare_callers=$(rg -l 'yvex_runtime_binding_prepare[[:space:]]*\(' src |
+    LC_ALL=C sort)
+if [ "$binding_prepare_callers" != "$(printf '%s\n' \
+    src/runtime/binding.c src/runtime/binding_publish.c)" ]; then
+    printf '%s\n' "$binding_prepare_callers" >&2
+    fail "runtime-binding publication escaped its runtime codec and compiler owner"
+fi
 
 # Runtime consumes an immutable runtime binding. Source verification,
 # Transformation-IR construction, quant planning, and writer planning belong

@@ -170,6 +170,7 @@ src/model/families/minimax_h3.c	model.family	model.family.minimax_h3	family	priv
 src/runtime/descriptor.c	runtime	runtime.descriptor	generic	private	resource-lifecycle	artifact,graph,runtime	implementation	none
 src/runtime/binding.c	runtime	runtime.binding	generic	private	file-serialization	artifact,graph,runtime,cli	implementation	none
 src/runtime/binding_import.c	runtime	runtime.binding_import	generic	private	resource-lifecycle	runtime.transformer,runtime.logits,runtime.speculation	implementation	none
+src/runtime/binding_publish.c	runtime	runtime.binding_publish	generic	private	resource-lifecycle	model.compilation,runtime.binding	implementation	none
 src/runtime/decode.c	runtime	runtime.decode	generic	private	transactional-execution	runtime,cli,tests	implementation	none
 src/runtime/acceptance.c	runtime	runtime.speculation_acceptance	generic	private	numerical-oracle	runtime,generation,tests	implementation	none
 src/runtime/generation.c	runtime	runtime.generation	generic	private	transactional-execution	runtime,cli,tests	implementation	none
