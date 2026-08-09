@@ -60,7 +60,7 @@ static int state_hash_u64s(yvex_sha256 *hash, const unsigned long long *values,
     return 1;
 }
 typedef struct {
-    const yvex_graph_family_api *family;
+    const yvex_graph_execution_api *family;
     const yvex_attention_plan *plan;
     attention_layer_state *layers;
     unsigned long long layer_count, maximum_host_bytes;
@@ -690,7 +690,7 @@ static int state_delta_identity(attention_state_transaction *transaction) {
     return 1;
 }
 static int state_open(
-    attention_state **out, const yvex_graph_family_api *family,
+    attention_state **out, const yvex_graph_execution_api *family,
     const yvex_attention_plan *plan, unsigned long long maximum_host_bytes,
     yvex_attention_failure *failure, yvex_error *err) {
     attention_state *state;
@@ -1954,7 +1954,7 @@ static int provider_persistent_release(void **context, yvex_error *err) {
     return YVEX_OK;
 }
 int yvex_attention_state_provider_open_persistent(
-    const yvex_graph_family_api *family, const yvex_attention_plan *plan,
+    const yvex_graph_execution_api *family, const yvex_attention_plan *plan,
     unsigned long long maximum_host_bytes, yvex_attention_state_provider *out,
     yvex_attention_failure *failure, yvex_error *err) {
     attention_state *state = NULL;

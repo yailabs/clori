@@ -968,7 +968,7 @@ typedef struct {
     float *values;
 } attention_probe_segment;
 typedef struct {
-    const yvex_graph_family_api *family;
+    const yvex_graph_execution_api *family;
     const yvex_attention_plan *plan;
     const void *family_ir;
     yvex_materialization_session *session;
@@ -1766,7 +1766,7 @@ static void attention_probe_comparison_publish(yvex_attention_probe_result *resu
 }
 
 int yvex_attention_execute(
-    const yvex_graph_family_api *family, const yvex_attention_plan *plan,
+    const yvex_graph_execution_api *family, const yvex_attention_plan *plan,
     const void *family_ir, yvex_materialization_session *session,
     const yvex_runtime_descriptor *descriptor,
     const yvex_attention_execution_request *request,
@@ -1810,12 +1810,11 @@ int yvex_attention_execute(
         request->execution_class > YVEX_EXECUTION_CLASS_FORENSIC_REFERENCE)
         return attention_probe_fail(err, YVEX_ERR_INVALID_ARG, "canonical V2 probe request is invalid");
     if (!family || !plan || !session || !descriptor || !result ||
-        !family->plan_summary || !family->plan_layer_count || !family->plan_layer_at ||
         !family->cpu_options_default || !family->cpu_chunk_execute || !family->cuda_token_execute ||
         !family->publication_release)
         return attention_probe_fail(err, YVEX_ERR_INVALID_ARG,
                                     "sealed attention owners and execution API are required");
-    context.summary = family->plan_summary(plan);
+    context.summary = yvex_attention_plan_summary(plan);
     if (!context.summary || !context.summary->full_execution_ready ||
         !context.summary->cpu_reference_ready ||
         ((request->compare_backends || request->backend == YVEX_BACKEND_KIND_CUDA) &&
@@ -1825,7 +1824,7 @@ int yvex_attention_execute(
     if ((unsigned int)request->evidence_level >
             (unsigned int)YVEX_ATTENTION_EVIDENCE_FULL ||
         (request->select_layer &&
-         request->layer_ordinal >= family->plan_layer_count(plan)) ||
+         request->layer_ordinal >= yvex_attention_plan_layer_count(plan)) ||
         (request->select_position && !request->select_layer && !request->state_provider))
         return attention_probe_fail(err, YVEX_ERR_BOUNDS,
                                     "selected attention probe layer or position is invalid");
@@ -1858,8 +1857,8 @@ int yvex_attention_execute(
         if (rc != YVEX_OK)
             goto cleanup;
     }
-    for (index = 0ull; index < family->plan_layer_count(plan); ++index) {
-        const yvex_attention_layer_plan *layer = family->plan_layer_at(plan, index);
+    for (index = 0ull; index < yvex_attention_plan_layer_count(plan); ++index) {
+        const yvex_attention_layer_plan *layer = yvex_attention_plan_layer_at(plan, index);
         int class_selected;
         int include;
         unsigned long long position = request->token_position;
@@ -1932,7 +1931,7 @@ cleanup:
 }
 
 int yvex_attention_probe_execute(
-    const yvex_graph_family_api *family, const yvex_attention_plan *plan,
+    const yvex_graph_execution_api *family, const yvex_attention_plan *plan,
     const void *family_ir, yvex_materialization_session *session,
     const yvex_runtime_descriptor *descriptor,
     const yvex_attention_probe_request *request,

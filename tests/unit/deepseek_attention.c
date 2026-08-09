@@ -7,6 +7,9 @@
 #include "src/graph/private.h"
 #include "tests/reference/deepseek_attention.h"
 
+#include <yvex/internal/compiler.h>
+#include <yvex/internal/families/deepseek_v4.h>
+
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -418,7 +421,7 @@ static int test_plan_requires_committed_inputs(void)
     int rc;
 
     yvex_error_clear(&err);
-    rc = yvex_graph_lower_deepseek_v4()->plan_build(
+    rc = yvex_compiler_family_deepseek_v4()->graph()->plan_build(
         &plan, NULL, NULL, NULL, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_INVALID_ARG,
                      "attention plan refuses missing inputs");

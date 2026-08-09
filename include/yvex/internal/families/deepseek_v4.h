@@ -34,7 +34,8 @@ typedef struct yvex_runtime_descriptor yvex_runtime_descriptor;
 typedef struct yvex_runtime_descriptor_failure yvex_runtime_descriptor_failure;
 typedef struct yvex_model_target_request yvex_model_target_request;
 typedef struct yvex_model_target_report yvex_model_target_report;
-typedef struct yvex_graph_family_api yvex_graph_family_api;
+typedef struct yvex_graph_execution_api yvex_graph_execution_api;
+typedef struct yvex_graph_compiler_api yvex_graph_compiler_api;
 typedef struct yvex_family_compiler_adapter yvex_family_compiler_adapter;
 #define YVEX_DEEPSEEK_V4_IR_NO_LAYER (~0ull)
 typedef enum {
@@ -593,5 +594,5 @@ int yvex_model_mapping_report_deepseek(
     const yvex_model_target_request *request, yvex_model_target_report *report, yvex_error *err);
 const yvex_model_family_api *yvex_model_register_deepseek_v4(void);
 const yvex_family_compiler_adapter *yvex_compiler_family_deepseek_v4(void);
-const yvex_graph_family_api *yvex_graph_lower_deepseek_v4(void);
+const yvex_graph_execution_api *yvex_graph_lower_deepseek_v4(void);
 #endif

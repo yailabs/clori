@@ -976,7 +976,7 @@ static int transformer_capacity_build(yvex_graph_attention_capacity_plan **out,
                                       yvex_error *err)
 {
     yvex_graph_attention_capacity_request request;
-    const yvex_graph_family_api *graph = model && model->adapter && model->adapter->graph
+    const yvex_graph_execution_api *graph = model && model->adapter && model->adapter->graph
         ? model->adapter->graph() : NULL;
     memset(&request, 0, sizeof(request));
     request.scope = YVEX_ATTENTION_PROBE_SCOPE_FULL;

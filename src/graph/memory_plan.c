@@ -92,7 +92,7 @@ static int capacity_identity(
  * selection, geometry, overflow, or allocation publishes no plan.
  */
 int yvex_graph_attention_capacity_plan_build(
-    yvex_graph_attention_capacity_plan **out, const yvex_graph_family_api *family,
+    yvex_graph_attention_capacity_plan **out, const yvex_graph_execution_api *family,
     const yvex_attention_plan *attention,
     const yvex_graph_attention_capacity_request *request, yvex_error *err) {
     const yvex_attention_summary *attention_summary = yvex_attention_plan_summary(attention);

@@ -1799,13 +1799,10 @@ static int graph_cuda_request_execute(const yvex_attention_plan *plan, const voi
         memset(context.result, 0, sizeof(*context.result));
     return rc;
 }
-static const yvex_graph_family_api deepseek_graph_api = {
+static const yvex_graph_compiler_api deepseek_graph_compiler = {
     .plan_build = graph_plan_build,
-    .draft_plan_build = graph_draft_plan_build,
-    .plan_close = yvex_attention_plan_close,
-    .plan_summary = yvex_attention_plan_summary,
-    .plan_layer_count = yvex_attention_plan_layer_count,
-    .plan_layer_at = yvex_attention_plan_layer_at,
+    .draft_plan_build = graph_draft_plan_build};
+static const yvex_graph_execution_api deepseek_graph_api = {
     .selection_key_resolve = graph_selection_key_resolve,
     .state_recipe = yvex_attention_state_recipe_build,
     .workspace_recipe = yvex_attention_workspace_recipe_build,
@@ -1817,7 +1814,10 @@ static const yvex_graph_family_api deepseek_graph_api = {
     .cuda_token_execute = graph_cuda_request_execute,
     .cpu_chunk_execute = graph_cpu_chunk_execute
 };
-const yvex_graph_family_api *yvex_graph_lower_deepseek_v4(void) { return &deepseek_graph_api; }
+const yvex_graph_execution_api *yvex_graph_lower_deepseek_v4(void) { return &deepseek_graph_api; }
+static const yvex_graph_compiler_api *deepseek_graph_compile(void) {
+    return &deepseek_graph_compiler;
+}
 static const yvex_model_execution_descriptor *deepseek_execution_model(const yvex_runtime_descriptor_summary *runtime) {
     return runtime && runtime->model_execution.schema_version == YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1
                ? &runtime->model_execution : NULL;
@@ -1987,7 +1987,7 @@ static const yvex_family_compiler_adapter deepseek_compiler = {
     .adapter_version = YVEX_DEEPSEEK_V4_ADAPTER_VERSION,
     .target_id = "deepseek4-v4-flash-dspark",
     .logical_transform_identity = YVEX_SELECTED_DEEPSEEK_TRANSFORM_IDENTITY,
-    .graph = yvex_graph_lower_deepseek_v4,
+    .graph = deepseek_graph_compile,
     .execution_capabilities = deepseek_execution_capabilities,
     .transformer_policy = deepseek_transformer_policy,
     .logits_policy = deepseek_logits_policy,

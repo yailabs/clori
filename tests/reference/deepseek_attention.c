@@ -2002,7 +2002,7 @@ int yvex_test_attention_reference_execute(
         return 0;
     }
     token_count = opts->token_count ? opts->token_count : 1ull;
-    layer = yvex_graph_lower_deepseek_v4()->plan_layer_at(plan, opts->layer_index);
+    layer = yvex_attention_plan_layer_at(plan, opts->layer_index);
     architecture = yvex_model_register_deepseek_v4()->ir.layer_at(ir, opts->layer_index);
     if (!layer || !architecture || !token_count) {
         ref_reason(reason, "reference execution layer is absent");

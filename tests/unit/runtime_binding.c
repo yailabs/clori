@@ -177,7 +177,7 @@ static int runtime_state_prepare_fixture(
         ? yvex_attention_plan_layer_at(view->attention, layer_index) : NULL;
     yvex_attention_state_recipe_request request = {0};
     yvex_attention_state_recipe recipe = {0};
-    const yvex_graph_family_api *graph = adapter && adapter->graph
+    const yvex_graph_execution_api *graph = adapter && adapter->graph
         ? adapter->graph() : NULL;
     int rc;
 
@@ -482,7 +482,7 @@ static int injected_state_release(void **context, yvex_error *err)
 }
 
 static int injected_state_factory_open(
-    void *context, const yvex_graph_family_api *family,
+    void *context, const yvex_graph_execution_api *family,
     const yvex_attention_plan *plan, unsigned long long maximum_host_bytes,
     yvex_attention_state_provider *out,
     yvex_attention_failure *failure, yvex_error *err)

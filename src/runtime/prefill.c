@@ -912,7 +912,7 @@ static int activation_prefill_capacity_build(
     yvex_error *err)
 {
     yvex_graph_attention_capacity_request request;
-    const yvex_graph_family_api *graph =
+    const yvex_graph_execution_api *graph =
         model && model->adapter && model->adapter->graph
             ? model->adapter->graph() : NULL;
     memset(&request, 0, sizeof(request));

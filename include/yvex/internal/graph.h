@@ -345,7 +345,7 @@ void yvex_attention_rolling_output_bind(
     const yvex_attention_rolling_state_output *output,
     yvex_attention_rolling_state_view *view);
 
-typedef struct yvex_graph_family_api {
+typedef struct yvex_graph_compiler_api {
     int (*plan_build)(yvex_attention_plan **out, const void *family_ir,
                       const yvex_materialization_session *session,
                       const yvex_runtime_descriptor *descriptor, yvex_attention_failure *failure,
@@ -354,11 +354,9 @@ typedef struct yvex_graph_family_api {
                             const yvex_materialization_session *session,
                             const yvex_runtime_descriptor *descriptor,
                             yvex_attention_failure *failure, yvex_error *err);
-    void (*plan_close)(yvex_attention_plan *plan);
-    const yvex_attention_summary *(*plan_summary)(const yvex_attention_plan *plan);
-    unsigned long long (*plan_layer_count)(const yvex_attention_plan *plan);
-    const yvex_attention_layer_plan *(*plan_layer_at)(const yvex_attention_plan *plan,
-                                                      unsigned long long index);
+} yvex_graph_compiler_api;
+
+typedef struct yvex_graph_execution_api {
     int (*selection_key_resolve)(const char *operator_token,
                                  unsigned long long *selection_key,
                                  yvex_error *err);
@@ -398,11 +396,11 @@ typedef struct yvex_graph_family_api {
                              const yvex_attention_cpu_options *options,
                              yvex_attention_cpu_result *result, yvex_attention_failure *failure,
                              yvex_error *err);
-} yvex_graph_family_api;
+} yvex_graph_execution_api;
 
 /* Resolve the reusable graph numerical arena independently of backend staging. */
 int yvex_attention_workspace_capacity_resolve(
-    const yvex_graph_family_api *family, const yvex_attention_plan *plan,
+    const yvex_graph_execution_api *family, const yvex_attention_plan *plan,
     unsigned long long *arena_bytes, yvex_error *err);
 
 struct yvex_model_family_api;
@@ -582,7 +580,7 @@ int yvex_attention_probe_history_open(yvex_attention_probe_history **out,
     const yvex_attention_layer_plan *layer, const yvex_attention_summary *summary, unsigned long long position,
     const yvex_attention_history_view **view, yvex_error *err);
 void yvex_attention_probe_history_close(yvex_attention_probe_history **history);
-int yvex_attention_probe_execute(const yvex_graph_family_api *family,
+int yvex_attention_probe_execute(const yvex_graph_execution_api *family,
                                  const yvex_attention_plan *plan, const void *family_ir,
                                  yvex_materialization_session *session,
                                  const yvex_runtime_descriptor *descriptor,
@@ -590,7 +588,7 @@ int yvex_attention_probe_execute(const yvex_graph_family_api *family,
                                  yvex_attention_probe_result *result,
                                  yvex_attention_failure *failure, yvex_error *err);
 int yvex_attention_execute(
-    const yvex_graph_family_api *family, const yvex_attention_plan *plan,
+    const yvex_graph_execution_api *family, const yvex_attention_plan *plan,
     const void *family_ir, yvex_materialization_session *session,
     const yvex_runtime_descriptor *descriptor,
     const yvex_attention_execution_request *request,

@@ -393,12 +393,8 @@ static int runtime_model_release(yvex_runtime_model *model, yvex_error *err) {
     model->tokenizer = NULL;
     yvex_materialization_session_close(model->materialization);
     model->materialization = NULL;
-    if (model->adapter && model->adapter->graph && model->adapter->graph() &&
-        model->adapter->graph()->plan_close)
-        model->adapter->graph()->plan_close(model->attention);
-    if (model->adapter && model->adapter->graph && model->adapter->graph() &&
-        model->adapter->graph()->plan_close)
-        model->adapter->graph()->plan_close(model->draft_attention);
+    yvex_attention_plan_close(model->attention);
+    yvex_attention_plan_close(model->draft_attention);
     yvex_runtime_descriptor_close(model->descriptor);
     yvex_materialization_plan_close(model->materialization_plan);
     yvex_tensor_table_close(model->tensors);
@@ -839,9 +835,8 @@ int yvex_runtime_model_open(yvex_runtime_model **out, const yvex_runtime_model_o
         return runtime_model_open_fail(
             out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_IMPORTED_IDENTITY,
             1ull, 0ull, err, YVEX_ERR_FORMAT);
-    attention_summary = model->adapter->graph()->plan_summary(model->attention);
-    draft_attention_summary = model->adapter->graph()->plan_summary(
-        model->draft_attention);
+    attention_summary = yvex_attention_plan_summary(model->attention);
+    draft_attention_summary = yvex_attention_plan_summary(model->draft_attention);
     if (!descriptor_summary || !attention_summary ||
         strcmp(descriptor_summary->runtime_descriptor_identity,
                model->binding_summary.runtime_descriptor_identity) != 0 ||
@@ -1331,7 +1326,7 @@ static int runtime_session_open_fail(yvex_runtime_execution_session **out,
 
 static int runtime_session_state_open(
     yvex_runtime_execution_session *session, yvex_runtime_model *model,
-    const yvex_graph_family_api *graph,
+    const yvex_graph_execution_api *graph,
     const yvex_attention_state_provider_factory *factory,
     unsigned long long state_budget, yvex_runtime_model_failure *failure,
     yvex_error *err)
@@ -1417,7 +1412,7 @@ int yvex_runtime_session_open(yvex_runtime_execution_session **out,
     const yvex_runtime_residency_summary *residency = NULL;
     const yvex_attention_state_provider_factory *state_factory =
         request ? request->attention_state_factory : NULL;
-    const yvex_graph_family_api *graph;
+    const yvex_graph_execution_api *graph;
     yvex_backend_options backend_options;
     unsigned long long workspace_bytes = 0ull, draft_workspace_bytes = 0ull;
     unsigned long long admitted_host_bytes = 0ull, state_budget;

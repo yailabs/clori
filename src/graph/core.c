@@ -21,20 +21,19 @@ struct yvex_attention_workspace {
  * Refuses absent policy or overflow.
  */
 int yvex_attention_workspace_capacity_resolve(
-    const yvex_graph_family_api *family, const yvex_attention_plan *plan,
+    const yvex_graph_execution_api *family, const yvex_attention_plan *plan,
     unsigned long long *arena_bytes, yvex_error *err)
 {
     const yvex_attention_summary *summary;
     yvex_attention_cpu_options options;
     unsigned long long required_arena;
     if (arena_bytes) *arena_bytes = 0ull;
-    if (!family || !plan || !arena_bytes || !family->plan_summary ||
-        !family->cpu_options_default) {
+    if (!family || !plan || !arena_bytes || !family->cpu_options_default) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "attention.workspace",
                        "sealed plan and family workspace policy are required");
         return YVEX_ERR_INVALID_ARG;
     }
-    summary = family->plan_summary(plan);
+    summary = yvex_attention_plan_summary(plan);
     memset(&options, 0, sizeof(options));
     family->cpu_options_default(&options);
     if (!summary || !summary->full_execution_ready || !options.scratch_limit_bytes ||

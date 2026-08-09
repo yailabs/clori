@@ -149,7 +149,7 @@ typedef struct {
 
 typedef struct yvex_graph_attention_capacity_plan yvex_graph_attention_capacity_plan;
 int yvex_graph_attention_capacity_plan_build(
-    yvex_graph_attention_capacity_plan **out, const yvex_graph_family_api *family,
+    yvex_graph_attention_capacity_plan **out, const yvex_graph_execution_api *family,
     const yvex_attention_plan *attention,
     const yvex_graph_attention_capacity_request *request, yvex_error *err);
 const yvex_graph_attention_capacity_summary *yvex_graph_attention_capacity_plan_summary(
@@ -246,7 +246,7 @@ typedef struct yvex_attention_state_provider {
 } yvex_attention_state_provider;
 typedef struct {
     void *context;
-    int (*open)(void *context, const yvex_graph_family_api *family,
+    int (*open)(void *context, const yvex_graph_execution_api *family,
                 const yvex_attention_plan *plan, unsigned long long maximum_host_bytes,
                 yvex_attention_state_provider *out,
                 yvex_attention_failure *failure, yvex_error *err);
@@ -257,7 +257,7 @@ typedef struct {
 } yvex_attention_state_provider_factory;
 
 int yvex_attention_state_provider_open_persistent(
-    const yvex_graph_family_api *family, const yvex_attention_plan *plan,
+    const yvex_graph_execution_api *family, const yvex_attention_plan *plan,
     unsigned long long maximum_host_bytes, yvex_attention_state_provider *out,
     yvex_attention_failure *failure, yvex_error *err);
 

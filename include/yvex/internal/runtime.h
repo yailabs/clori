@@ -103,7 +103,7 @@ typedef struct yvex_runtime_family_adapter {
     const char *operator_artifact_filename, *logical_transform_identity;
     yvex_sequence_mixer_family mixer_family;
     int (*mixer_capability)(yvex_sequence_mixer_semantics, yvex_runtime_mixer_capability *);
-    const yvex_graph_family_api *(*graph)(void);
+    const yvex_graph_execution_api *(*graph)(void);
 } yvex_runtime_family_adapter;
 typedef struct {
     const char *directory;

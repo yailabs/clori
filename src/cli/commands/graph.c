@@ -721,7 +721,7 @@ static int graph_cli_attention_request_build(const yvex_graph_args *args,
                                              graph_attention_request *out, yvex_error *err) {
     yvex_paths paths = {0};
     const yvex_runtime_family_adapter *adapter;
-    const yvex_graph_family_api *graph;
+    const yvex_graph_execution_api *graph;
     char gguf_dir[YVEX_PATH_CAP];
     char registry_runtime_dir[YVEX_PATH_CAP];
     int exists = 0;

@@ -86,13 +86,13 @@ typedef struct yvex_speculation_family_policy {
     char policy_identity[YVEX_SPECULATION_IDENTITY_CAP];
 } yvex_speculation_family_policy;
 
-struct yvex_graph_family_api;
+struct yvex_graph_compiler_api;
 struct yvex_runtime_descriptor_summary;
 typedef struct yvex_family_compiler_adapter {
     unsigned int schema_version;
     unsigned long long adapter_id, adapter_version;
     const char *target_id, *logical_transform_identity;
-    const struct yvex_graph_family_api *(*graph)(void);
+    const struct yvex_graph_compiler_api *(*graph)(void);
     int (*execution_capabilities)(yvex_runtime_capabilities *out);
     int (*transformer_policy)(const struct yvex_runtime_descriptor_summary *,
                               yvex_transformer_family_policy *);

@@ -847,9 +847,10 @@ static int artifact_variant_bind(
     char binding_path[YVEX_PATH_CAP])
 {
     const yvex_model_family_api *model = yvex_model_register_deepseek_v4();
-    const yvex_graph_family_api *graph = yvex_graph_lower_deepseek_v4();
     const yvex_family_compiler_adapter *adapter =
         yvex_compiler_family_deepseek_v4();
+    const yvex_graph_compiler_api *graph = adapter && adapter->graph
+        ? adapter->graph() : NULL;
     yvex_artifact *artifact = NULL;
     yvex_gguf *gguf = NULL;
     yvex_tensor_table *tensors = NULL;
@@ -994,8 +995,8 @@ static int artifact_variant_bind(
                 yvex_error_message(&error));
     }
     yvex_gguf_writer_plan_release(&writer);
-    if (graph) graph->plan_close(attention);
-    if (graph) graph->plan_close(draft_attention);
+    yvex_attention_plan_close(attention);
+    yvex_attention_plan_close(draft_attention);
     yvex_runtime_descriptor_close(descriptor);
     if (model) model->ir.close(architecture);
     yvex_materialization_session_close(materialization);

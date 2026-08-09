@@ -369,7 +369,7 @@ static int runtime_attention_result_bind(const yvex_runtime_model *model,
     const yvex_runtime_descriptor_summary *descriptor =
         yvex_runtime_descriptor_summary_get(view ? view->descriptor : NULL);
     const yvex_attention_summary *attention = adapter && adapter->graph()
-        ? adapter->graph()->plan_summary(view->attention) : NULL;
+        ? yvex_attention_plan_summary(view->attention) : NULL;
     if (!adapter || yvex_runtime_model_summary_copy(model, &model_summary, err) != YVEX_OK ||
         !model_summary.sealed || !model_summary.valid || !binding ||
         !compatibility || !compatibility->physical_payload_compatible ||
@@ -926,7 +926,7 @@ static int runtime_attention_phase_lane_evidence_begin(
     return YVEX_OK;
 }
 static int runtime_attention_phase_lane_open(
-    runtime_attention_phase_lane *lane, const yvex_graph_family_api *graph,
+    runtime_attention_phase_lane *lane, const yvex_graph_execution_api *graph,
     const yvex_attention_plan *plan, unsigned long long layer_ordinal,
     const yvex_attention_state_recipe *recipe,
     yvex_attention_operation_scope operation_scope, unsigned long long maximum_host_bytes,
@@ -979,7 +979,7 @@ static int runtime_attention_phase_lane_close(runtime_attention_phase_lane *lane
 }
 static int runtime_attention_phase_lane_execute(
     runtime_attention_phase_lane *lane, yvex_runtime_model *model,
-    const yvex_graph_family_api *graph, const yvex_attention_probe_request *base_request,
+    const yvex_graph_execution_api *graph, const yvex_attention_probe_request *base_request,
     unsigned long long layer_ordinal, unsigned long long token_count,
     int decode_steps, yvex_attention_failure *failure, yvex_error *err) {
     const yvex_runtime_model_view *view = yvex_runtime_model_view_get(model);
@@ -1083,7 +1083,7 @@ static int runtime_attention_phase_context_release(void **owner, yvex_error *err
     return YVEX_OK;
 }
 static int runtime_attention_phase_context_open(
-    runtime_attention_phase_context *context, const yvex_graph_family_api *graph,
+    runtime_attention_phase_context *context, const yvex_graph_execution_api *graph,
     const yvex_attention_plan *plan, const yvex_graph_attention_capacity_plan *capacity,
     yvex_attention_operation_scope operation_scope, unsigned long long start_position,
     unsigned long long token_count,
@@ -1144,7 +1144,7 @@ static int runtime_attention_phase_context_open(
 }
 static int runtime_attention_phase_equivalence(
     yvex_runtime_execution_session *session, yvex_runtime_model *model,
-    const yvex_graph_family_api *graph, const yvex_attention_probe_request *base_request,
+    const yvex_graph_execution_api *graph, const yvex_attention_probe_request *base_request,
     runtime_attention_phase_context *context,
     unsigned long long start_position, unsigned long long token_count,
     yvex_runtime_model_failure *model_failure,
@@ -1376,7 +1376,7 @@ static int runtime_attention_state_probe(yvex_runtime_execution_session *session
 static int runtime_attention_operator_dispatch(
     const yvex_graph_attention_operator_request *request,
     yvex_runtime_execution_session *session, yvex_runtime_model *model,
-    const yvex_graph_family_api *graph, yvex_attention_probe_request *probe_request,
+    const yvex_graph_execution_api *graph, yvex_attention_probe_request *probe_request,
     runtime_attention_phase_context *phase_context,
     unsigned long long first, unsigned long long count,
     unsigned long long warmup, unsigned long long total, double *samples, double *device_samples,
@@ -1740,7 +1740,7 @@ static int runtime_attention_open(const yvex_graph_attention_operator_request *r
     return rc;
 }
 static int runtime_attention_capacity_build(const yvex_graph_attention_operator_request *request,
-    const yvex_runtime_model *model, const yvex_graph_family_api *graph,
+    const yvex_runtime_model *model, const yvex_graph_execution_api *graph,
     unsigned long long execution_count, yvex_graph_attention_capacity_plan **out, yvex_error *err) {
     const yvex_runtime_model_view *view = yvex_runtime_model_view_get(model);
     yvex_graph_attention_capacity_request facts;
@@ -1800,7 +1800,7 @@ static int runtime_attention_qualify(yvex_graph_attention_operator_result *resul
 int yvex_graph_attention_operator_execute(const yvex_graph_attention_operator_request *request,
     yvex_graph_attention_operator_result *result, yvex_runtime_cleanup_lease **retained_cleanup, yvex_error *err) {
     const yvex_runtime_family_adapter *adapter;
-    const yvex_graph_family_api *graph;
+    const yvex_graph_execution_api *graph;
     yvex_runtime_model *model = NULL;
     yvex_runtime_execution_session *session = NULL;
     yvex_runtime_cleanup_lease *cleanup = NULL;

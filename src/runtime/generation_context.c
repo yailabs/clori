@@ -234,7 +234,7 @@ static int generation_capacity_graph_geometry(
     generation_capacity_geometry *geometry,
     yvex_graph_attention_capacity_plan **workspace_capacity, yvex_error *err)
 {
-    const yvex_graph_family_api *graph = context->model_view->adapter->graph();
+    const yvex_graph_execution_api *graph = context->model_view->adapter->graph();
     const yvex_attention_plan *plans[2] = {
         context->model_view->attention, context->model_view->draft_attention};
     unsigned long long plan_index;

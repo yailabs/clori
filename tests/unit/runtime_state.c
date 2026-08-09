@@ -200,9 +200,9 @@ malformed:
     return YVEX_ERR_FORMAT;
 }
 
-static const yvex_graph_family_api *state_family(void)
+static const yvex_graph_execution_api *state_family(void)
 {
-    static const yvex_graph_family_api family = {
+    static const yvex_graph_execution_api family = {
         .state_recipe = state_recipe_project,
         .workspace_recipe = yvex_attention_workspace_recipe_build,
         .history_validate = yvex_attention_history_validate,
@@ -344,7 +344,7 @@ static int test_workspace_recipe_identity(void)
 
 static int test_workspace_capture_geometry(const state_plan_fixture *fixture)
 {
-    const yvex_graph_family_api *family = state_family();
+    const yvex_graph_execution_api *family = state_family();
     yvex_attention_state_recipe_request request;
     yvex_attention_state_recipe state, index_state;
     yvex_attention_workspace_recipe workspace, index_workspace;
@@ -427,7 +427,7 @@ static int test_workspace_capture_geometry(const state_plan_fixture *fixture)
 /* Prove one immutable capacity plan owns selection, exact per-layer geometry, and identity. */
 static int test_capacity_plan(const state_plan_fixture *fixture)
 {
-    const yvex_graph_family_api *family = state_family();
+    const yvex_graph_execution_api *family = state_family();
     yvex_graph_attention_capacity_plan *first = NULL, *second = NULL;
     yvex_graph_attention_capacity_request request;
     const yvex_graph_attention_capacity_summary *summary;
@@ -580,7 +580,7 @@ static int state_token_rolling(const yvex_attention_layer_plan *layer,
                                yvex_attention_rolling_state_output *after,
                                float compressed[2], int *emitted)
 {
-    const yvex_graph_family_api *family = state_family();
+    const yvex_graph_execution_api *family = state_family();
     float *values = NULL, *scores = NULL, *ape = NULL;
     unsigned long long index, extent;
     yvex_attention_failure failure;
@@ -677,7 +677,7 @@ fail:
 
 typedef yvex_attention_state_provider test_state;
 
-static int state_open(test_state *state, const yvex_graph_family_api *family,
+static int state_open(test_state *state, const yvex_graph_execution_api *family,
                       const yvex_attention_plan *plan,
                       unsigned long long maximum_host_bytes,
                       yvex_attention_failure *failure, yvex_error *err)
@@ -825,7 +825,7 @@ static int state_stage_prefix(test_state *state,
 
 static int test_state_prefix_promotion(const state_plan_fixture *fixture)
 {
-    const yvex_graph_family_api *family = state_family();
+    const yvex_graph_execution_api *family = state_family();
     const yvex_attention_layer_plan *layer = &fixture->layers[0];
     unsigned long long accepted;
 
@@ -882,7 +882,7 @@ static int test_state_prefix_promotion(const state_plan_fixture *fixture)
 
 static int test_state_prefix_extension(const state_plan_fixture *fixture)
 {
-    const yvex_graph_family_api *family = state_family();
+    const yvex_graph_execution_api *family = state_family();
     const yvex_attention_layer_plan *layer = &fixture->layers[0];
     test_state state = {0};
     yvex_graph_attention_state_summary summary;
@@ -927,7 +927,7 @@ static int test_state_prefix_extension(const state_plan_fixture *fixture)
 static int test_state_identity_is_execution_shape_neutral(
     const state_plan_fixture *fixture)
 {
-    const yvex_graph_family_api *family = state_family();
+    const yvex_graph_execution_api *family = state_family();
     const yvex_attention_layer_plan *layer = &fixture->layers[0];
     test_state sequential = {0}, verified = {0};
     yvex_graph_attention_state_summary left, right;
@@ -1070,7 +1070,7 @@ static int state_identity_sample(
     char layout[YVEX_SHA256_HEX_CAP], char committed[YVEX_SHA256_HEX_CAP],
     char delta_identity[YVEX_SHA256_HEX_CAP])
 {
-    const yvex_graph_family_api *family = state_family();
+    const yvex_graph_execution_api *family = state_family();
     const yvex_attention_layer_plan *layer = &fixture->layers[layer_index];
     test_state state = {0};
     yvex_graph_attention_state_summary summary;
@@ -1130,7 +1130,7 @@ static int state_phase_equivalence(const state_plan_fixture *fixture,
                                    unsigned long long layer_index,
                                    unsigned long long token_count)
 {
-    const yvex_graph_family_api *family = state_family();
+    const yvex_graph_execution_api *family = state_family();
     const yvex_attention_layer_plan *layer = &fixture->layers[layer_index];
     test_state chunk = {0}, decode = {0};
     char chunk_delta[YVEX_SHA256_HEX_CAP], decode_delta[YVEX_SHA256_HEX_CAP];
@@ -1208,7 +1208,7 @@ done:
 
 static int test_state_lifecycle(const state_plan_fixture *fixture)
 {
-    const yvex_graph_family_api *family = state_family();
+    const yvex_graph_execution_api *family = state_family();
     test_state state = {0};
     char delta[YVEX_SHA256_HEX_CAP];
     yvex_graph_attention_state_summary transaction_summary;
@@ -1289,7 +1289,7 @@ static int test_state_lifecycle(const state_plan_fixture *fixture)
 
 static int test_state_reset(const state_plan_fixture *fixture)
 {
-    const yvex_graph_family_api *family = state_family();
+    const yvex_graph_execution_api *family = state_family();
     test_state state = {0};
     char delta[YVEX_SHA256_HEX_CAP];
     yvex_graph_attention_state_summary before, after;
@@ -1350,7 +1350,7 @@ static int test_state_reset(const state_plan_fixture *fixture)
 /* Prove a failed later-layer preparation cannot publish or corrupt prior state ownership. */
 static int test_prepare_failure_is_atomic(const state_plan_fixture *fixture)
 {
-    const yvex_graph_family_api *family = state_family();
+    const yvex_graph_execution_api *family = state_family();
     test_state state = {0};
     yvex_attention_state_recipe_request request;
     yvex_attention_state_recipe recipe;
@@ -1403,7 +1403,7 @@ static int test_prepare_failure_is_atomic(const state_plan_fixture *fixture)
 /* Prove a multi-layer batch flips no selector until one atomic publish. */
 static int test_batch_publication_is_atomic(const state_plan_fixture *fixture)
 {
-    const yvex_graph_family_api *family = state_family();
+    const yvex_graph_execution_api *family = state_family();
     test_state state = {0};
     char delta[YVEX_SHA256_HEX_CAP];
     yvex_graph_attention_state_summary summary;
@@ -1543,7 +1543,7 @@ static int test_batch_publication_is_atomic(const state_plan_fixture *fixture)
 /* Prove aggregate capacity accounting remains distinct from one-layer capture maxima. */
 static int test_summary_capacity_accounting(const state_plan_fixture *fixture)
 {
-    const yvex_graph_family_api *family = state_family();
+    const yvex_graph_execution_api *family = state_family();
     test_state state = {0};
     yvex_graph_attention_state_summary summary;
     yvex_graph_attention_state_summary initial;

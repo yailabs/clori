@@ -927,7 +927,7 @@ const char *yvex_materialize_failure_class_name(yvex_materialize_failure_class f
 
 typedef struct {
     const yvex_model_family_api *model;
-    const yvex_graph_family_api *graph;
+    const yvex_graph_compiler_api *graph;
     yvex_deepseek_payload_handoff *handoff;
     yvex_artifact *artifact;
     yvex_gguf *gguf;
@@ -965,8 +965,8 @@ static void runtime_binding_compiler_close(runtime_binding_compiler *compiler)
     yvex_quant_plan_release(&compiler->quant);
     yvex_imatrix_data_close(compiler->imatrix);
     yvex_quant_policy_close(compiler->quant_policy);
-    if (compiler->graph) compiler->graph->plan_close(compiler->attention);
-    if (compiler->graph) compiler->graph->plan_close(compiler->draft_attention);
+    yvex_attention_plan_close(compiler->attention);
+    yvex_attention_plan_close(compiler->draft_attention);
     yvex_runtime_descriptor_close(compiler->descriptor);
     if (compiler->model) compiler->model->ir.close(compiler->architecture);
     yvex_materialization_session_close(compiler->materialization);
