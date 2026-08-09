@@ -495,44 +495,6 @@ typedef struct {
     char residency_identity[65], execution_identity[65];
     int complete;
 } yvex_minimax_h3_conditioning_result;
-typedef enum {
-    YVEX_MINIMAX_H3_TEXT_EMBEDDING = 0,
-    YVEX_MINIMAX_H3_TEXT_INPUT_NORM,
-    YVEX_MINIMAX_H3_TEXT_Q_PROJECTION,
-    YVEX_MINIMAX_H3_TEXT_K_PROJECTION,
-    YVEX_MINIMAX_H3_TEXT_V_PROJECTION,
-    YVEX_MINIMAX_H3_TEXT_O_PROJECTION,
-    YVEX_MINIMAX_H3_TEXT_Q_NORM,
-    YVEX_MINIMAX_H3_TEXT_K_NORM,
-    YVEX_MINIMAX_H3_TEXT_POST_NORM,
-    YVEX_MINIMAX_H3_TEXT_GATE_PROJECTION,
-    YVEX_MINIMAX_H3_TEXT_UP_PROJECTION,
-    YVEX_MINIMAX_H3_TEXT_DOWN_PROJECTION,
-    YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT,
-    YVEX_MINIMAX_H3_TEXT_LAYER_WEIGHT_COUNT = YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT - 1
-} yvex_minimax_h3_text_weight_slot;
-typedef struct {
-    const unsigned char *encoded;
-    unsigned long long encoded_bytes, row_count, row_width, row_bytes;
-    unsigned int qtype;
-} yvex_minimax_h3_text_weight;
-typedef struct {
-    int (*text_embed_cuda)(yvex_backend *backend,
-        const yvex_minimax_h3_encoder_signature *geometry, const unsigned char *encoded,
-        unsigned long long encoded_bytes, unsigned int qtype, unsigned long long row_count,
-        unsigned long long row_width, unsigned long long row_bytes,
-        const char *residency_identity, unsigned long long resident_bytes,
-        const unsigned int *token_ids, unsigned long long token_count, float *output,
-        unsigned long long output_capacity, yvex_minimax_h3_conditioning_result *result,
-        yvex_error *err);
-    int (*text_layer_cuda)(yvex_backend *backend,
-        const yvex_minimax_h3_encoder_signature *geometry,
-        const yvex_minimax_h3_text_weight *weights, unsigned long long layer_count,
-        const char *residency_identity, unsigned long long resident_bytes,
-        const unsigned int *token_ids, unsigned long long token_count, float *output,
-        unsigned long long output_capacity, yvex_minimax_h3_conditioning_result *result,
-        yvex_error *err);
-} yvex_minimax_h3_backend_api;
 typedef struct {
     unsigned long long text_tokens, frames, width, height;
     unsigned long long video_latent_frames, video_latent_height, video_latent_width;
@@ -585,5 +547,4 @@ const yvex_minimax_h3_api *yvex_model_register_minimax_h3(void);
 const yvex_minimax_h3_transform_api *yvex_model_minimax_h3_transform_api(void);
 const yvex_minimax_h3_handoff_api *yvex_model_minimax_h3_handoff_api(void);
 const yvex_minimax_h3_graph_api *yvex_graph_register_minimax_h3(void);
-const yvex_minimax_h3_backend_api *yvex_backend_register_minimax_h3(void);
 #endif /* INCLUDE_YVEX_INTERNAL_FAMILIES_MINIMAX_H3_H_INCLUDED */

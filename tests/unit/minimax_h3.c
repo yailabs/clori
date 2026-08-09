@@ -5,6 +5,7 @@
 
 #include "src/graph/private.h"
 #include <yvex/internal/artifact.h>
+#include <yvex/internal/backend.h>
 #include <yvex/internal/compilation.h>
 #include <yvex/internal/model_target.h>
 
@@ -624,9 +625,10 @@ static int test_component_admission_routing(void)
     yvex_complete_artifact_admission admission;
     yvex_artifact_admission_failure failure;
     yvex_minimax_h3_architecture architecture;
-    yvex_minimax_h3_encoder_signature invalid_geometry;
+    yvex_backend_text_encoder_geometry geometry, invalid_geometry;
     yvex_minimax_h3_failure family_failure;
     yvex_minimax_h3_conditioning_result conditioning;
+    yvex_backend_text_execution_result backend_result;
     unsigned int token = 1u;
     float output[5120];
     int rc;
@@ -646,25 +648,39 @@ static int test_component_admission_routing(void)
     YVEX_TEST_ASSERT(yvex_model_register_minimax_h3()->architecture_canonical(
                          &architecture, &family_failure, &err) == YVEX_OK,
                      "component execution receives canonical family geometry");
+    geometry = (yvex_backend_text_encoder_geometry){
+        .schema_version = YVEX_BACKEND_TEXT_ENCODER_SCHEMA_V1,
+        .semantic_identity = YVEX_MINIMAX_H3_TEXT_COMPONENT_IDENTITY,
+        .embedding_identity_domain = "yvex.minimax-h3.text-conditioning.cuda.v1",
+        .encoder_identity_domain = "yvex.minimax-h3.qwen-text-stack.cuda.v1",
+        .layer_capacity = architecture.encoder.text_layers,
+        .hidden_width = architecture.encoder.text_width,
+        .ffn_width = architecture.encoder.text_ffn_width,
+        .query_heads = architecture.encoder.text_query_heads,
+        .kv_heads = architecture.encoder.text_kv_heads,
+        .head_dimension = architecture.encoder.text_head_dimension,
+        .vocabulary_size = architecture.encoder.vocabulary_size,
+        .rope_theta = architecture.encoder.rope_theta,
+        .normalization_epsilon = 1.0e-6f};
     memset(output, 0x5a, sizeof(output));
-    rc = yvex_backend_register_minimax_h3()->text_embed_cuda(
-        NULL, &architecture.encoder, NULL, 0ull, 0u, 0ull, 0ull, 0ull, NULL, 0ull,
-        &token, 1ull, output, 5120ull, &conditioning, &err);
+    rc = yvex_backend_text_embedding_execute(
+        NULL, &geometry, NULL, 0ull, 0u, 0ull, 0ull, 0ull, NULL, 0ull,
+        &token, 1ull, output, 5120ull, &backend_result, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_INVALID_ARG,
                      "CUDA conditioning reports invalid absent materialization");
-    YVEX_TEST_ASSERT(!conditioning.complete && ((unsigned char *)output)[0] == 0x5a,
+    YVEX_TEST_ASSERT(!backend_result.complete && ((unsigned char *)output)[0] == 0x5a,
                      "CUDA conditioning does not publish a refused execution");
     YVEX_TEST_ASSERT(strcmp(yvex_error_where(&err),
-                            "cuda.minimax-h3.text-embedding.validate") == 0,
+                            "cuda.text-embedding.validate") == 0,
                      "CUDA conditioning refuses absent materialization without publication");
-    invalid_geometry = architecture.encoder;
-    ++invalid_geometry.text_query_heads;
-    YVEX_TEST_ASSERT(yvex_backend_register_minimax_h3()->text_embed_cuda(
+    invalid_geometry = geometry;
+    ++invalid_geometry.query_heads;
+    YVEX_TEST_ASSERT(yvex_backend_text_embedding_execute(
                          NULL, &invalid_geometry, NULL, 0ull, 0u, 0ull, 0ull, 0ull,
-                         NULL, 0ull, &token, 1ull, output, 5120ull, &conditioning,
+                         NULL, 0ull, &token, 1ull, output, 5120ull, &backend_result,
                          &err) == YVEX_ERR_INVALID_ARG &&
                          strcmp(yvex_error_where(&err),
-                                "cuda.minimax-h3.text-geometry") == 0,
+                                "cuda.text-geometry") == 0,
                      "CUDA conditioning refuses inconsistent family geometry");
     YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->text_encoder_artifact_cuda(
                          NULL, NULL, NULL, &architecture.encoder, &token, 1ull, 0ull,

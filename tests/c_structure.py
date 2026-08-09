@@ -1401,9 +1401,13 @@ class Audit:
             if len(consumers) < 2:
                 errors.append(f"non-public global lacks cross-TU consumer: {symbol}: {consumers}")
 
-        for entrypoint in self.policy["symbols"]["family_entrypoints"]:
+        required_entrypoints = (
+            self.policy["symbols"]["family_entrypoints"]
+            + self.policy["symbols"]["required_internal_entrypoints"]
+        )
+        for entrypoint in required_entrypoints:
             if len(definitions.get(entrypoint, [])) != 1:
-                errors.append(f"family entrypoint cardinality: {entrypoint}")
+                errors.append(f"required entrypoint cardinality: {entrypoint}")
         return errors
 
     def natural_violations(self) -> list[str]:

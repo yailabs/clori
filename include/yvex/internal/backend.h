@@ -164,6 +164,63 @@ typedef struct {
 int yvex_backend_attention_execute(yvex_backend *backend, const yvex_backend_attention_job *job,
                                    yvex_backend_attention_output *output,
                                    yvex_backend_attention_failure *failure, yvex_error *err);
+
+/* A family compiler supplies this complete text-stack geometry and semantic identity. The CUDA
+ * operation executes it without recovering a source architecture or selecting family policy. */
+#define YVEX_BACKEND_TEXT_ENCODER_SCHEMA_V1 1u
+typedef struct {
+    unsigned int schema_version;
+    const char *semantic_identity;
+    const char *embedding_identity_domain;
+    const char *encoder_identity_domain;
+    unsigned long long layer_capacity, hidden_width, ffn_width;
+    unsigned long long query_heads, kv_heads, head_dimension;
+    unsigned long long vocabulary_size, rope_theta;
+    float normalization_epsilon;
+} yvex_backend_text_encoder_geometry;
+typedef enum {
+    YVEX_BACKEND_TEXT_EMBEDDING = 0,
+    YVEX_BACKEND_TEXT_INPUT_NORM,
+    YVEX_BACKEND_TEXT_Q_PROJECTION,
+    YVEX_BACKEND_TEXT_K_PROJECTION,
+    YVEX_BACKEND_TEXT_V_PROJECTION,
+    YVEX_BACKEND_TEXT_O_PROJECTION,
+    YVEX_BACKEND_TEXT_Q_NORM,
+    YVEX_BACKEND_TEXT_K_NORM,
+    YVEX_BACKEND_TEXT_POST_NORM,
+    YVEX_BACKEND_TEXT_GATE_PROJECTION,
+    YVEX_BACKEND_TEXT_UP_PROJECTION,
+    YVEX_BACKEND_TEXT_DOWN_PROJECTION,
+    YVEX_BACKEND_TEXT_WEIGHT_COUNT,
+    YVEX_BACKEND_TEXT_LAYER_WEIGHT_COUNT = YVEX_BACKEND_TEXT_WEIGHT_COUNT - 1
+} yvex_backend_text_weight_slot;
+typedef struct {
+    const unsigned char *encoded;
+    unsigned long long encoded_bytes, row_count, row_width, row_bytes;
+    unsigned int qtype;
+} yvex_backend_text_weight;
+typedef struct {
+    unsigned long long token_count, hidden_width, layer_count, resident_bytes;
+    unsigned long long kernel_launches, h2d_bytes, d2h_bytes, device_bytes;
+    char residency_identity[YVEX_SHA256_HEX_BYTES];
+    char execution_identity[YVEX_SHA256_HEX_BYTES];
+    int complete;
+} yvex_backend_text_execution_result;
+int yvex_backend_text_embedding_execute(
+    yvex_backend *backend, const yvex_backend_text_encoder_geometry *geometry,
+    const unsigned char *encoded, unsigned long long encoded_bytes,
+    unsigned int qtype, unsigned long long row_count, unsigned long long row_width,
+    unsigned long long row_bytes, const char *residency_identity,
+    unsigned long long resident_bytes, const unsigned int *token_ids,
+    unsigned long long token_count, float *output, unsigned long long output_capacity,
+    yvex_backend_text_execution_result *result, yvex_error *err);
+int yvex_backend_text_encoder_execute(
+    yvex_backend *backend, const yvex_backend_text_encoder_geometry *geometry,
+    const yvex_backend_text_weight *weights, unsigned long long layer_count,
+    const char *residency_identity, unsigned long long resident_bytes,
+    const unsigned int *token_ids, unsigned long long token_count, float *output,
+    unsigned long long output_capacity, yvex_backend_text_execution_result *result,
+    yvex_error *err);
 typedef int (*yvex_backend_state_resolve_fn)(
     const void *context, const void *host, unsigned long long bytes,
     unsigned long long *device_address);

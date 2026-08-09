@@ -1668,7 +1668,7 @@ static int video_vae_execute_artifact_cpu(
     yvex_materialization_plan_close(plan);
     return rc;
 }
-static const char *const text_layer_weight_suffixes[YVEX_MINIMAX_H3_TEXT_LAYER_WEIGHT_COUNT] = {
+static const char *const text_layer_weight_suffixes[YVEX_BACKEND_TEXT_LAYER_WEIGHT_COUNT] = {
     "input_layernorm.weight",
     "self_attn.q_proj.weight",
     "self_attn.k_proj.weight",
@@ -1681,9 +1681,46 @@ static const char *const text_layer_weight_suffixes[YVEX_MINIMAX_H3_TEXT_LAYER_W
     "mlp.up_proj.weight",
     "mlp.down_proj.weight",
 };
+static yvex_backend_text_encoder_geometry text_backend_geometry(
+    const yvex_minimax_h3_encoder_signature *source)
+{
+    return (yvex_backend_text_encoder_geometry){
+        .schema_version = YVEX_BACKEND_TEXT_ENCODER_SCHEMA_V1,
+        .semantic_identity = YVEX_MINIMAX_H3_TEXT_COMPONENT_IDENTITY,
+        .embedding_identity_domain = "yvex.minimax-h3.text-conditioning.cuda.v1",
+        .encoder_identity_domain = "yvex.minimax-h3.qwen-text-stack.cuda.v1",
+        .layer_capacity = source ? source->text_layers : 0ull,
+        .hidden_width = source ? source->text_width : 0ull,
+        .ffn_width = source ? source->text_ffn_width : 0ull,
+        .query_heads = source ? source->text_query_heads : 0ull,
+        .kv_heads = source ? source->text_kv_heads : 0ull,
+        .head_dimension = source ? source->text_head_dimension : 0ull,
+        .vocabulary_size = source ? source->vocabulary_size : 0ull,
+        .rope_theta = source ? source->rope_theta : 0ull,
+        .normalization_epsilon = 1.0e-6f};
+}
+static void text_execution_result_project(
+    yvex_minimax_h3_conditioning_result *out,
+    const yvex_backend_text_execution_result *source)
+{
+    *out = (yvex_minimax_h3_conditioning_result){
+        .token_count = source->token_count,
+        .hidden_width = source->hidden_width,
+        .layer_count = source->layer_count,
+        .resident_bytes = source->resident_bytes,
+        .kernel_launches = source->kernel_launches,
+        .h2d_bytes = source->h2d_bytes,
+        .d2h_bytes = source->d2h_bytes,
+        .device_bytes = source->device_bytes,
+        .complete = source->complete};
+    memcpy(out->residency_identity, source->residency_identity,
+           sizeof(out->residency_identity));
+    memcpy(out->execution_identity, source->execution_identity,
+           sizeof(out->execution_identity));
+}
 static int text_layer_weights_bind(
     const yvex_materialization_session *session, const yvex_runtime_residency *residency,
-    yvex_minimax_h3_text_weight *weights, unsigned long long layer_count, yvex_error *err)
+    yvex_backend_text_weight *weights, unsigned long long layer_count, yvex_error *err)
 {
     unsigned long long index, layer, slot = 0ull;
     char name[160];
@@ -1701,10 +1738,10 @@ static int text_layer_weights_bind(
     weights[0].row_width = binding->row_width;
     weights[0].row_bytes = binding->encoded_bytes / binding->row_count;
     for (layer = 0ull; layer < layer_count; ++layer) {
-        for (index = 0ull; index < YVEX_MINIMAX_H3_TEXT_LAYER_WEIGHT_COUNT; ++index) {
+        for (index = 0ull; index < YVEX_BACKEND_TEXT_LAYER_WEIGHT_COUNT; ++index) {
             int length = snprintf(name, sizeof(name), "model.language_model.layers.%llu.%s",
                                   layer, text_layer_weight_suffixes[index]);
-            slot = 1ull + layer * YVEX_MINIMAX_H3_TEXT_LAYER_WEIGHT_COUNT + index;
+            slot = 1ull + layer * YVEX_BACKEND_TEXT_LAYER_WEIGHT_COUNT + index;
             if (length < 0 || (size_t)length >= sizeof(name)) {
                 yvex_error_set(err, YVEX_ERR_BOUNDS, "minimax-h3.text-layer.name",
                                "a Qwen layer binding name exceeded its bounded representation");
@@ -1736,9 +1773,10 @@ static int text_encoder_artifact_cuda(const yvex_artifact *artifact,
     unsigned long long maximum_host_bytes, unsigned long long maximum_device_bytes,
     yvex_minimax_h3_conditioning_result *result, yvex_error *err)
 {
-    const yvex_minimax_h3_backend_api *backend = yvex_backend_register_minimax_h3();
+    const yvex_backend_text_encoder_geometry backend_geometry =
+        text_backend_geometry(geometry);
     const yvex_materialized_tensor_binding *embedding = NULL;
-    yvex_minimax_h3_text_weight *weights = NULL;
+    yvex_backend_text_weight *weights = NULL;
     yvex_complete_artifact_admission admission;
     yvex_artifact_admission_failure admission_failure;
     yvex_materialization_options options;
@@ -1755,12 +1793,13 @@ static int text_encoder_artifact_cuda(const yvex_artifact *artifact,
     unsigned long long encoded_bytes = 0ull, output_values = 0ull, output_bytes = 0ull;
     unsigned long long weight_count = 0ull;
     float *staged = NULL;
+    yvex_backend_text_execution_result backend_result = {0};
     yvex_minimax_h3_conditioning_result published = {0};
     int uploaded = 0, rc, cleanup_rc, residency_close_rc;
     yvex_error cleanup, residency_cleanup;
     if (result) memset(result, 0, sizeof(*result));
-    if (!artifact || !gguf || !tensors || !geometry || !backend || !backend->text_embed_cuda ||
-        !backend->text_layer_cuda || !token_ids || !token_count || !output || !result ||
+    if (!artifact || !gguf || !tensors || !geometry || !token_ids || !token_count ||
+        !output || !result ||
         layer_count > geometry->text_layers ||
         !yvex_core_u64_mul(token_count, geometry->text_width, &output_values) ||
         output_values > output_capacity ||
@@ -1777,11 +1816,11 @@ static int text_encoder_artifact_cuda(const yvex_artifact *artifact,
         return YVEX_ERR_NOMEM;
     }
     if (layer_count &&
-        (!yvex_core_u64_mul(layer_count, YVEX_MINIMAX_H3_TEXT_LAYER_WEIGHT_COUNT,
+        (!yvex_core_u64_mul(layer_count, YVEX_BACKEND_TEXT_LAYER_WEIGHT_COUNT,
                             &weight_count) ||
          !yvex_core_u64_add(weight_count, 1ull, &weight_count) ||
          weight_count > SIZE_MAX / sizeof(*weights) ||
-         !(weights = (yvex_minimax_h3_text_weight *)calloc((size_t)weight_count,
+         !(weights = (yvex_backend_text_weight *)calloc((size_t)weight_count,
                                                             sizeof(*weights))))) {
         free(staged);
         yvex_error_set(err, YVEX_ERR_NOMEM, "minimax-h3.text-conditioning.weights",
@@ -1824,18 +1863,19 @@ static int text_encoder_artifact_cuda(const yvex_artifact *artifact,
         rc = yvex_runtime_residency_cuda_session_attach(
             residency, &cuda, maximum_device_bytes, &uploaded, &residency_summary, err);
     if (rc == YVEX_OK && !layer_count)
-        rc = backend->text_embed_cuda(
-            cuda, geometry, encoded, encoded_bytes,
+        rc = yvex_backend_text_embedding_execute(
+            cuda, &backend_geometry, encoded, encoded_bytes,
             embedding->qtype, embedding->row_count,
             embedding->row_width, embedding->encoded_bytes / embedding->row_count,
             residency_summary.residency_identity, residency_summary.encoded_bytes,
-            token_ids, token_count, staged, output_values, &published, err);
+            token_ids, token_count, staged, output_values, &backend_result, err);
     if (rc == YVEX_OK && layer_count)
-        rc = backend->text_layer_cuda(
-            cuda, geometry, weights, layer_count,
+        rc = yvex_backend_text_encoder_execute(
+            cuda, &backend_geometry, weights, layer_count,
             residency_summary.residency_identity,
             residency_summary.encoded_bytes, token_ids, token_count, staged,
-            output_values, &published, err);
+            output_values, &backend_result, err);
+    if (rc == YVEX_OK) text_execution_result_project(&published, &backend_result);
     yvex_error_clear(&cleanup);
     cleanup_rc = yvex_backend_close_checked(&cuda, &cleanup);
     yvex_error_clear(&residency_cleanup);

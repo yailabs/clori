@@ -20,7 +20,7 @@ static const double layer_oracle_max_rmse = 0.002315;
 static const float encoder_oracle_max_absolute = 0.375f;
 static const double encoder_oracle_max_rmse = 0.026718;
 
-static const char *const layer_weight_names[YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT] = {
+static const char *const layer_weight_names[YVEX_BACKEND_TEXT_WEIGHT_COUNT] = {
     "model.language_model.embed_tokens.weight",
     "model.language_model.layers.0.input_layernorm.weight",
     "model.language_model.layers.0.self_attn.q_proj.weight",
@@ -49,16 +49,16 @@ static const yvex_materialized_tensor_binding *binding_find(
 static int proof_weights_load(
     yvex_materialization_session *session, unsigned char **arena_out,
     unsigned long long *arena_bytes_out,
-    yvex_minimax_h3_text_weight weights[YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT],
+    yvex_backend_text_weight weights[YVEX_BACKEND_TEXT_WEIGHT_COUNT],
     char identity[65], yvex_error *err)
 {
-    const yvex_materialized_tensor_binding *bindings[YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT];
+    const yvex_materialized_tensor_binding *bindings[YVEX_BACKEND_TEXT_WEIGHT_COUNT];
     yvex_materialization_failure failure;
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     unsigned char *arena;
     unsigned long long index, total = 0ull, cursor = 0ull;
-    for (index = 0ull; index < YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT; ++index) {
+    for (index = 0ull; index < YVEX_BACKEND_TEXT_WEIGHT_COUNT; ++index) {
         bindings[index] = binding_find(session, layer_weight_names[index]);
         if (!bindings[index] || !bindings[index]->row_count ||
             !yvex_core_u64_add(total, bindings[index]->encoded_bytes, &total)) {
@@ -81,7 +81,7 @@ static int proof_weights_load(
     }
     yvex_sha256_init(&hash);
     if (!yvex_sha256_update_text(&hash, "yvex.minimax-h3.text-layer-zero.proof.v1")) goto failed;
-    for (index = 0ull; index < YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT; ++index) {
+    for (index = 0ull; index < YVEX_BACKEND_TEXT_WEIGHT_COUNT; ++index) {
         const yvex_materialized_tensor_binding *binding = bindings[index];
         if (binding->encoded_bytes > SIZE_MAX ||
             yvex_materialization_session_read(
@@ -119,9 +119,10 @@ static int layer_proof_execute(
     yvex_error *err)
 {
     const yvex_minimax_h3_graph_api *graph = yvex_graph_register_minimax_h3();
-    const yvex_minimax_h3_backend_api *family = yvex_backend_register_minimax_h3();
     const yvex_minimax_h3_api *model = yvex_model_register_minimax_h3();
     yvex_minimax_h3_architecture architecture;
+    yvex_backend_text_encoder_geometry geometry;
+    yvex_backend_text_execution_result backend_result = {0};
     yvex_minimax_h3_failure architecture_failure;
     yvex_complete_artifact_admission admission;
     yvex_artifact_admission_failure admission_failure;
@@ -129,7 +130,7 @@ static int layer_proof_execute(
     yvex_materialization_failure materialization_failure;
     yvex_materialization_plan *plan = NULL;
     yvex_materialization_session *session = NULL;
-    yvex_minimax_h3_text_weight weights[YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT] = {{0}};
+    yvex_backend_text_weight weights[YVEX_BACKEND_TEXT_WEIGHT_COUNT] = {{0}};
     yvex_backend_options backend_options = {0};
     yvex_backend_tensor_desc descriptor = {0};
     yvex_backend *backend = NULL;
@@ -140,7 +141,7 @@ static int layer_proof_execute(
     int attached = 0, rc, release_rc;
     yvex_error cleanup;
     if (!artifact || !gguf || !tensors || !token || !output || !result ||
-        !graph || !family || !family->text_layer_cuda || !model ||
+        !graph || !model ||
         !model->architecture_canonical ||
         model->architecture_canonical(
             &architecture, &architecture_failure, err) != YVEX_OK) {
@@ -148,6 +149,20 @@ static int layer_proof_execute(
                        "exact artifact views, token, output, and production backend are required");
         return YVEX_ERR_INVALID_ARG;
     }
+    geometry = (yvex_backend_text_encoder_geometry){
+        .schema_version = YVEX_BACKEND_TEXT_ENCODER_SCHEMA_V1,
+        .semantic_identity = YVEX_MINIMAX_H3_TEXT_COMPONENT_IDENTITY,
+        .embedding_identity_domain = "yvex.minimax-h3.text-conditioning.cuda.v1",
+        .encoder_identity_domain = "yvex.minimax-h3.qwen-text-stack.cuda.v1",
+        .layer_capacity = architecture.encoder.text_layers,
+        .hidden_width = architecture.encoder.text_width,
+        .ffn_width = architecture.encoder.text_ffn_width,
+        .query_heads = architecture.encoder.text_query_heads,
+        .kv_heads = architecture.encoder.text_kv_heads,
+        .head_dimension = architecture.encoder.text_head_dimension,
+        .vocabulary_size = architecture.encoder.vocabulary_size,
+        .rope_theta = architecture.encoder.rope_theta,
+        .normalization_epsilon = 1.0e-6f};
     rc = graph->component_admit(
         "text_encoder", artifact, gguf, tensors, &admission, &admission_failure, err);
     yvex_materialization_options_default(&materialization_options);
@@ -185,10 +200,25 @@ static int layer_proof_execute(
         attached = rc == YVEX_OK;
     }
     if (rc == YVEX_OK)
-        rc = family->text_layer_cuda(
-            backend, &architecture.encoder, weights, 1ull, identity, arena_bytes,
-            token, 1ull, output,
-            TEXT_HIDDEN, result, err);
+        rc = yvex_backend_text_encoder_execute(
+            backend, &geometry, weights, 1ull, identity, arena_bytes, token, 1ull,
+            output, TEXT_HIDDEN, &backend_result, err);
+    if (rc == YVEX_OK) {
+        *result = (yvex_minimax_h3_conditioning_result){
+            .token_count = backend_result.token_count,
+            .hidden_width = backend_result.hidden_width,
+            .layer_count = backend_result.layer_count,
+            .resident_bytes = backend_result.resident_bytes,
+            .kernel_launches = backend_result.kernel_launches,
+            .h2d_bytes = backend_result.h2d_bytes,
+            .d2h_bytes = backend_result.d2h_bytes,
+            .device_bytes = backend_result.device_bytes,
+            .complete = backend_result.complete};
+        memcpy(result->residency_identity, backend_result.residency_identity,
+               sizeof(result->residency_identity));
+        memcpy(result->execution_identity, backend_result.execution_identity,
+               sizeof(result->execution_identity));
+    }
     if (attached) {
         yvex_error_clear(&cleanup);
         release_rc = yvex_backend_resident_detach(backend, &cleanup);

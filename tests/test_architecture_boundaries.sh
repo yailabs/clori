@@ -235,6 +235,18 @@ if rg -n -i '(families/|deepseek|minimax)' src/backend/cuda/attention.c; then
     fail "generic CUDA attention execution contains concrete family semantics"
 fi
 
+# MiniMax retains source interpretation and irreducible graph composition. Its
+# dense text stack is now a compiled generic backend operation rather than a
+# third family projection that owns execution resource mechanics.
+minimax_family_sources=$(find src -path '*/families/minimax_h3.c' -type f | sort)
+expected_minimax_family_sources='src/graph/families/minimax_h3.c
+src/model/families/minimax_h3.c'
+[ "$minimax_family_sources" = "$expected_minimax_family_sources" ] ||
+    fail "MiniMax must terminate at its model and graph family projections"
+if rg -n -i '(families/|deepseek|minimax|qwen)' src/backend/cuda/text_encoder.c; then
+    fail "generic CUDA text execution contains concrete family semantics"
+fi
+
 if find src include -type f \( -name '*.c' -o -name '*.h' -o -name '*.cu' \) \
         ! -path 'src/model/families/*' -print0 |
     xargs -0 rg -n "$conversation_literal_pattern"; then
