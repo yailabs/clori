@@ -712,6 +712,27 @@ static int runtime_model_residency_open(
     return YVEX_OK;
 }
 
+static void runtime_model_view_bind(yvex_runtime_model *model)
+{
+    model->view.binding = &model->binding_summary;
+    model->view.compiled_binding = model->binding;
+    model->view.adapter = model->adapter;
+    model->view.attention = model->attention;
+    model->view.draft_attention = model->draft_attention;
+    model->view.moe = yvex_compiled_model_plan_moe(model->binding->plan, 0);
+    model->view.draft_moe = yvex_compiled_model_plan_moe(model->binding->plan, 1);
+    model->view.transformer =
+        yvex_compiled_model_plan_transformer(model->binding->plan, 0);
+    model->view.draft_transformer =
+        yvex_compiled_model_plan_transformer(model->binding->plan, 1);
+    model->view.output_head =
+        yvex_compiled_model_plan_output_head(model->binding->plan);
+    model->view.descriptor = model->descriptor;
+    model->view.physical_execution = model->physical_execution;
+    model->view.tokenizer = model->tokenizer;
+    model->view.materialization = model->materialization;
+}
+
 int yvex_runtime_model_open(yvex_runtime_model **out, const yvex_runtime_model_open_request *request,
                             yvex_runtime_model_failure *failure, yvex_error *err) {
     yvex_runtime_model *model = NULL;
@@ -882,15 +903,7 @@ int yvex_runtime_model_open(yvex_runtime_model **out, const yvex_runtime_model_o
         return runtime_model_open_fail(
             out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_CAPABILITIES, 1ull, 0ull, err,
             (yvex_status)rc);
-    model->view.binding = &model->binding_summary;
-    model->view.compiled_binding = model->binding;
-    model->view.adapter = model->adapter;
-    model->view.attention = model->attention;
-    model->view.draft_attention = model->draft_attention;
-    model->view.descriptor = model->descriptor;
-    model->view.physical_execution = model->physical_execution;
-    model->view.tokenizer = model->tokenizer;
-    model->view.materialization = model->materialization;
+    runtime_model_view_bind(model);
     rc = runtime_model_residency_open(model, request, descriptor_summary,
                                       attention_summary, &residency_refusal, err);
     if (rc != YVEX_OK)

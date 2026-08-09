@@ -1805,7 +1805,7 @@ int yvex_graph_attention_operator_execute(const yvex_graph_attention_operator_re
     yvex_runtime_execution_session *session = NULL;
     yvex_runtime_cleanup_lease *cleanup = NULL;
     yvex_graph_attention_capacity_plan *capacity = NULL;
-    yvex_runtime_model_failure model_failure;
+    yvex_runtime_model_failure failure;
     yvex_attention_probe_request probe_request;
     runtime_attention_phase_context *phase_context = NULL;
     runtime_attention_trace trace;
@@ -1847,9 +1847,8 @@ int yvex_graph_attention_operator_execute(const yvex_graph_attention_operator_re
         }
         device_samples = samples + repeat;
     }
-    memset(&model_failure, 0, sizeof(model_failure));
-    rc = runtime_attention_open(request, adapter, &cleanup, &model, &session, &selected_mode,
-                                &model_failure, result, err);
+    memset(&failure, 0, sizeof(failure));
+    rc = runtime_attention_open(request, adapter, &cleanup, &model, &session, &selected_mode, &failure, result, err);
     phase_started = yvex_core_monotonic_ns();
     if (rc == YVEX_OK && samples && !warmup && repeat &&
         (request->compare_backends || request->backend == YVEX_BACKEND_KIND_CUDA) &&
@@ -1873,7 +1872,7 @@ int yvex_graph_attention_operator_execute(const yvex_graph_attention_operator_re
         rc = yvex_runtime_session_prepare_attention_workspace(
             session, selected_mode, request->operation_scope,
             runtime_attention_evidence_levels[request->trace_policy], capacity, 0ull,
-            &model_failure, err);
+            &failure, err);
     if (rc == YVEX_OK)
         rc = runtime_attention_execution_descriptor_identity(
             request, model, session, capacity, result, result->execution_descriptor_identity, err);
@@ -1936,7 +1935,7 @@ int yvex_graph_attention_operator_execute(const yvex_graph_attention_operator_re
         rc = runtime_attention_operator_dispatch(
             request, session, model, graph, &probe_request, phase_context, 0ull,
             preparation_dispatches, measurement_start, dispatch_count, samples, device_samples,
-            &model_failure, result, err);
+            &failure, result, err);
     if (preparation_dispatches && measurement_start)
         result->lifecycle_seconds[YVEX_RUNTIME_LIFECYCLE_GRAPH_WARMUP] +=
             runtime_seconds(yvex_core_monotonic_ns() - phase_started);
@@ -1953,7 +1952,7 @@ int yvex_graph_attention_operator_execute(const yvex_graph_attention_operator_re
         rc = runtime_attention_operator_dispatch(
             request, session, model, graph, &probe_request, phase_context, preparation_dispatches,
             dispatch_count - preparation_dispatches, measurement_start, dispatch_count, samples,
-            device_samples, &model_failure, result, err);
+            device_samples, &failure, result, err);
     if (rc == YVEX_OK)
         rc = runtime_attention_warm_snapshot_take(model, session, &warm_after, err);
     if (rc == YVEX_OK)

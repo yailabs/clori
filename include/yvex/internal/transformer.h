@@ -57,20 +57,15 @@ typedef struct {
     char transformer_plan_identity[YVEX_SHA256_HEX_CAP];
     yvex_transformer_weight_binding weights[YVEX_TRANSFORMER_WEIGHT_COUNT];
 } yvex_transformer_plan_summary;
-typedef struct {
-    yvex_transformer_family_policy policy;
-    yvex_tensor_scope tensor_scope;
-    unsigned long long family_adapter_id, family_adapter_version;
-    unsigned long long layer_count, vocabulary_size;
-    const char *artifact_identity, *materialization_identity, *logical_model_identity;
-    const char *runtime_numeric_identity, *runtime_descriptor_identity;
-    yvex_transformer_weight_binding weights[YVEX_TRANSFORMER_WEIGHT_COUNT];
-} yvex_transformer_plan_facts;
 typedef struct yvex_transformer_plan yvex_transformer_plan;
-int yvex_transformer_plan_build(yvex_transformer_plan **out,
-                                const yvex_transformer_plan_facts *facts,
-                                const yvex_attention_plan *attention,
-                                const yvex_moe_plan *moe, yvex_error *err);
+int yvex_transformer_plan_compile(
+    yvex_transformer_plan **out, const yvex_transformer_family_policy *policy,
+    unsigned long long family_adapter_id,
+    unsigned long long family_adapter_version,
+    const yvex_materialization_session *materialization,
+    const yvex_runtime_descriptor *descriptor,
+    const yvex_attention_plan *attention, const yvex_moe_plan *moe,
+    yvex_tensor_scope execution_scope, yvex_error *err);
 int yvex_transformer_plan_import(yvex_transformer_plan **out,
                                  const yvex_transformer_plan_summary *summary,
                                  const yvex_transformer_layer_plan *layers,
@@ -80,6 +75,8 @@ int yvex_transformer_plan_seal(yvex_transformer_plan_summary *summary,
                                yvex_error *err);
 const yvex_transformer_plan_summary *yvex_transformer_plan_summary_get(
     const yvex_transformer_plan *plan);
+const yvex_transformer_layer_plan *yvex_transformer_plan_layer_at(
+    const yvex_transformer_plan *plan, unsigned long long ordinal);
 void yvex_transformer_plan_close(yvex_transformer_plan **plan);
 typedef struct {
     unsigned int schema_version;

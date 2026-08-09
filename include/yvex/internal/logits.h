@@ -22,23 +22,6 @@ typedef enum {
     YVEX_LOGITS_SOURCE_DRAFT = 2
 } yvex_logits_source_phase;
 
-typedef struct {
-    unsigned int schema_version;
-    unsigned long long family_adapter_id, family_adapter_version;
-    unsigned long long output_head_tensor_id, row_width, row_count, row_bytes;
-    unsigned long long encoded_bytes, vocabulary_size, hidden_width;
-    yvex_tensor_role role;
-    unsigned int qtype;
-    int separate_output_head, output_head_bias;
-    char artifact_identity[YVEX_SHA256_HEX_CAP];
-    char materialization_identity[YVEX_SHA256_HEX_CAP];
-    char logical_model_identity[YVEX_SHA256_HEX_CAP];
-    char runtime_numeric_identity[YVEX_SHA256_HEX_CAP];
-    char runtime_descriptor_identity[YVEX_SHA256_HEX_CAP];
-    char transformer_plan_identity[YVEX_SHA256_HEX_CAP];
-    char output_head_plan_identity[YVEX_SHA256_HEX_CAP];
-} yvex_runtime_logits_plan_summary;
-
 typedef struct yvex_runtime_logits_plan yvex_runtime_logits_plan;
 
 typedef struct {

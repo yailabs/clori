@@ -8,6 +8,7 @@
 #define INCLUDE_YVEX_INTERNAL_COMPILER_H_INCLUDED
 
 #include <yvex/core.h>
+#include <yvex/internal/core.h>
 #include <yvex/internal/model.h>
 #include <yvex/registry.h>
 
@@ -71,6 +72,23 @@ typedef struct yvex_logits_family_policy {
     int separate_output_head, tied_output_head, output_head_bias;
 } yvex_logits_family_policy;
 
+typedef struct yvex_runtime_logits_plan_summary {
+    unsigned int schema_version;
+    unsigned long long family_adapter_id, family_adapter_version;
+    unsigned long long output_head_tensor_id, row_width, row_count, row_bytes;
+    unsigned long long encoded_bytes, vocabulary_size, hidden_width;
+    yvex_tensor_role role;
+    unsigned int qtype;
+    int separate_output_head, output_head_bias;
+    char artifact_identity[YVEX_SHA256_HEX_BYTES];
+    char materialization_identity[YVEX_SHA256_HEX_BYTES];
+    char logical_model_identity[YVEX_SHA256_HEX_BYTES];
+    char runtime_numeric_identity[YVEX_SHA256_HEX_BYTES];
+    char runtime_descriptor_identity[YVEX_SHA256_HEX_BYTES];
+    char transformer_plan_identity[YVEX_SHA256_HEX_BYTES];
+    char output_head_plan_identity[YVEX_SHA256_HEX_BYTES];
+} yvex_runtime_logits_plan_summary;
+
 typedef struct yvex_speculation_family_policy {
     unsigned int schema_version;
     unsigned long long block_size, noise_token_id;
@@ -109,6 +127,62 @@ int yvex_runtime_capabilities_admitted_by(
     const yvex_runtime_capabilities *maximum);
 int yvex_runtime_capabilities_contract_valid(
     const yvex_runtime_capabilities *facts);
+
+struct yvex_materialization_session;
+struct yvex_runtime_descriptor;
+struct yvex_attention_plan;
+struct yvex_moe_plan;
+struct yvex_transformer_plan;
+typedef struct yvex_compiled_model_plan yvex_compiled_model_plan;
+typedef struct {
+    const struct yvex_materialization_session *materialization;
+    const struct yvex_runtime_descriptor *descriptor;
+    const struct yvex_attention_plan *attention, *draft_attention;
+    unsigned long long family_adapter_id, family_adapter_version;
+    yvex_runtime_capabilities capabilities;
+    yvex_transformer_family_policy transformer_policy;
+    yvex_logits_family_policy logits_policy;
+} yvex_compiled_model_plan_request;
+typedef struct {
+    unsigned long long family_adapter_id, family_adapter_version;
+    unsigned long long tensor_count, layer_count, draft_layer_count;
+    const yvex_runtime_capabilities *capabilities;
+    const char *artifact_identity, *materialization_identity;
+    const char *runtime_descriptor_identity;
+    const char *attention_plan_identity, *draft_attention_plan_identity;
+    const char *moe_plan_identity, *draft_moe_plan_identity;
+    const char *transformer_plan_identity, *draft_transformer_plan_identity;
+    const char *output_head_plan_identity;
+} yvex_compiled_model_plan_admission;
+int yvex_compiled_model_plan_build(
+    yvex_compiled_model_plan **out,
+    const yvex_compiled_model_plan_request *request, yvex_error *err);
+int yvex_compiled_model_plan_encode(
+    const yvex_compiled_model_plan *plan, yvex_core_bytes *bytes,
+    yvex_error *err);
+int yvex_compiled_model_plan_decode(
+    yvex_compiled_model_plan **out, const unsigned char *data, size_t count,
+    yvex_error *err);
+int yvex_compiled_model_plan_admit(
+    const yvex_compiled_model_plan *plan,
+    const yvex_compiled_model_plan_admission *admission);
+const struct yvex_moe_plan *yvex_compiled_model_plan_moe(
+    const yvex_compiled_model_plan *plan, int draft);
+const struct yvex_transformer_plan *yvex_compiled_model_plan_transformer(
+    const yvex_compiled_model_plan *plan, int draft);
+const struct yvex_runtime_logits_plan_summary *yvex_compiled_model_plan_output_head(
+    const yvex_compiled_model_plan *plan);
+void yvex_compiled_model_plan_close(yvex_compiled_model_plan **plan);
+int yvex_output_head_plan_build(
+    yvex_runtime_logits_plan_summary *out,
+    unsigned long long family_adapter_id,
+    unsigned long long family_adapter_version,
+    const struct yvex_materialization_session *materialization,
+    const struct yvex_runtime_descriptor *descriptor,
+    const struct yvex_transformer_plan *transformer,
+    const yvex_logits_family_policy *policy, yvex_error *err);
+int yvex_output_head_plan_validate(
+    const yvex_runtime_logits_plan_summary *summary, yvex_error *err);
 
 #ifdef __cplusplus
 }

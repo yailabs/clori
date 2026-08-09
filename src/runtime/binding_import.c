@@ -4,6 +4,28 @@
 #include <stdlib.h>
 #include <string.h>
 
+int yvex_runtime_private_binding_refuse(
+    yvex_runtime_binding_failure *failure, yvex_runtime_binding_failure_code code,
+    const char *field, const char *path, unsigned long long record,
+    unsigned long long expected, unsigned long long actual, yvex_status status,
+    const char *reason, yvex_error *err)
+{
+    if (failure) {
+        memset(failure, 0, sizeof(*failure));
+        failure->code = code;
+        failure->record_index = record;
+        failure->expected = expected;
+        failure->actual = actual;
+        failure->reason = reason;
+        if (field)
+            yvex_core_text_copy(failure->field, sizeof(failure->field), field);
+        if (path)
+            yvex_core_text_copy(failure->path, sizeof(failure->path), path);
+    }
+    yvex_error_set(err, status, "runtime.binding", reason);
+    return status;
+}
+
 int yvex_runtime_binding_policies(
     const yvex_runtime_binding *binding,
     const yvex_transformer_family_policy **transformer,
@@ -18,6 +40,48 @@ int yvex_runtime_binding_policies(
     if (logits) *logits = &binding->logits_policy;
     if (speculation) *speculation = &binding->speculation_policy;
     return 1;
+}
+
+void yvex_runtime_binding_close(yvex_runtime_binding *binding)
+{
+    if (!binding) return;
+    yvex_compiled_model_plan_close(&binding->plan);
+    yvex_physical_execution_ir_close(&binding->physical_execution);
+    free(binding->materialized);
+    free(binding->runtime);
+    free(binding->layers);
+    free(binding->draft_layers);
+    free(binding);
+}
+
+int yvex_runtime_private_compiled_plan_valid(
+    const yvex_runtime_binding *binding)
+{
+    yvex_compiled_model_plan_admission admission;
+    if (!binding) return 0;
+    memset(&admission, 0, sizeof(admission));
+    admission.family_adapter_id = binding->summary.family_adapter_id;
+    admission.family_adapter_version = binding->summary.family_adapter_version;
+    admission.tensor_count = binding->summary.tensor_count;
+    admission.layer_count = binding->summary.layer_count;
+    admission.draft_layer_count = binding->summary.draft_layer_count;
+    admission.capabilities = &binding->summary.capabilities;
+    admission.artifact_identity = binding->admission.artifact_identity;
+    admission.materialization_identity = binding->materialization.plan_identity;
+    admission.runtime_descriptor_identity =
+        binding->descriptor.runtime_descriptor_identity;
+    admission.attention_plan_identity = binding->attention.attention_plan_identity;
+    admission.draft_attention_plan_identity =
+        binding->draft_attention.attention_plan_identity;
+    admission.moe_plan_identity = binding->summary.moe_plan_identity;
+    admission.draft_moe_plan_identity = binding->summary.draft_moe_plan_identity;
+    admission.transformer_plan_identity =
+        binding->summary.transformer_plan_identity;
+    admission.draft_transformer_plan_identity =
+        binding->summary.draft_transformer_plan_identity;
+    admission.output_head_plan_identity =
+        binding->summary.output_head_plan_identity;
+    return yvex_compiled_model_plan_admit(binding->plan, &admission);
 }
 
 int yvex_runtime_binding_import_materialization(

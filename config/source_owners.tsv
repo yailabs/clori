@@ -135,6 +135,8 @@ src/gguf/writer.c	gguf	gguf.writer	generic	private	transactional-io	artifact,mod
 src/graph/attention.c	graph	graph.attention	generic	private	reusable-algorithm	runtime,cli	implementation	none
 src/graph/candidate.c	graph	graph.candidate	generic	private	resource-lifecycle	graph,runtime,tests	implementation	none
 src/graph/moe.c	graph	graph.moe	generic	private	reusable-algorithm	runtime,backend,cli,tests	implementation	none
+src/graph/compiled_plan.c	graph	graph.compiled_plan	generic	private	file-serialization	artifact,runtime,tests	implementation	none
+src/graph/output_head.c	graph	graph.output_head	generic	private	reusable-algorithm	artifact,runtime,tests	implementation	none
 src/graph/transformer.c	graph	graph.transformer	generic	private	reusable-algorithm	runtime,backend,cli,tests	implementation	none
 src/backend/cuda/moe.c	backend.cuda	backend.cuda.moe	backend	private	backend-implementation	runtime,graph,tests	implementation	none
 src/graph/core.c	graph	graph.core	generic	private	resource-lifecycle	runtime,cli	implementation	none

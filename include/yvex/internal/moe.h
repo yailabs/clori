@@ -101,6 +101,9 @@ int yvex_moe_plan_build(yvex_moe_plan **out, unsigned long long adapter_id,
                         const yvex_materialization_session *materialization,
                         const yvex_runtime_descriptor *descriptor,
                         const yvex_attention_plan *attention, yvex_error *err);
+int yvex_moe_plan_import(yvex_moe_plan **out,
+                         const yvex_moe_plan_summary *summary,
+                         const yvex_moe_layer_plan *layers, yvex_error *err);
 const yvex_moe_plan_summary *yvex_moe_plan_summary_get(const yvex_moe_plan *plan);
 const yvex_moe_layer_plan *yvex_moe_plan_layer_at(const yvex_moe_plan *plan,
                                                    unsigned long long ordinal);

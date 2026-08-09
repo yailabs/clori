@@ -43,6 +43,7 @@ struct yvex_runtime_binding {
     yvex_speculation_family_policy speculation_policy;
     yvex_attention_summary attention, draft_attention;
     yvex_attention_layer_plan *layers, *draft_layers;
+    yvex_compiled_model_plan *plan;
 };
 
 int yvex_runtime_private_binding_refuse(
@@ -50,6 +51,8 @@ int yvex_runtime_private_binding_refuse(
     const char *field, const char *path, unsigned long long record,
     unsigned long long expected, unsigned long long actual, yvex_status status,
     const char *reason, yvex_error *err);
+int yvex_runtime_private_compiled_plan_valid(
+    const yvex_runtime_binding *binding);
 
 struct yvex_runtime_model {
     const yvex_runtime_family_adapter *adapter;

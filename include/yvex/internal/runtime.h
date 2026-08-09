@@ -26,7 +26,7 @@ static inline void yvex_runtime_identity_copy(char destination[YVEX_SHA256_HEX_C
     if (length) memcpy(destination, source, length);
 }
 #define YVEX_RUNTIME_REASON_CAP 256u
-#define YVEX_RUNTIME_BINDING_SCHEMA_CURRENT 9u
+#define YVEX_RUNTIME_BINDING_SCHEMA_CURRENT 10u
 #define YVEX_RUNTIME_BINDING_SUFFIX ".yvex-runtime-binding"
 typedef enum {
     YVEX_RUNTIME_BINDING_FAILURE_NONE = 0, YVEX_RUNTIME_BINDING_FAILURE_INVALID_ARGUMENT,
@@ -142,6 +142,9 @@ typedef struct yvex_runtime_binding_summary {
     char attention_plan_identity[YVEX_SHA256_HEX_CAP], moe_plan_identity[YVEX_SHA256_HEX_CAP];
     char draft_attention_plan_identity[YVEX_SHA256_HEX_CAP];
     char draft_moe_plan_identity[YVEX_SHA256_HEX_CAP];
+    char transformer_plan_identity[YVEX_SHA256_HEX_CAP];
+    char draft_transformer_plan_identity[YVEX_SHA256_HEX_CAP];
+    char output_head_plan_identity[YVEX_SHA256_HEX_CAP];
     char semantic_graph_identity[YVEX_SHA256_HEX_CAP], executable_graph_identity[YVEX_SHA256_HEX_CAP];
     yvex_artifact_physical_compatibility physical_compatibility;
     yvex_runtime_capabilities capabilities;
@@ -267,6 +270,8 @@ typedef struct {
 } yvex_runtime_residency_summary;
 typedef struct yvex_runtime_residency yvex_runtime_residency;
 typedef struct yvex_runtime_state_residency yvex_runtime_state_residency;
+typedef struct yvex_moe_plan yvex_moe_plan;
+typedef struct yvex_transformer_plan yvex_transformer_plan;
 typedef struct {
     int sealed, cuda_ready, paged, invalidated;
     unsigned long long layer_count, host_bytes, device_bytes, virtual_device_bytes;
@@ -281,6 +286,9 @@ typedef struct {
     const yvex_runtime_binding_summary *binding;
     const yvex_runtime_family_adapter *adapter;
     const yvex_attention_plan *attention, *draft_attention;
+    const yvex_moe_plan *moe, *draft_moe;
+    const yvex_transformer_plan *transformer, *draft_transformer;
+    const yvex_runtime_logits_plan_summary *output_head;
     const yvex_runtime_descriptor *descriptor;
     const yvex_physical_execution_ir *physical_execution;
     const yvex_tokenizer *tokenizer;

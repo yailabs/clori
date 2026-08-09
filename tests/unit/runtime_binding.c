@@ -852,7 +852,7 @@ static int test_binding_readdress(const char *path, unsigned char *file, size_t 
         !test_binding_u64(file, count, 8u, &schema) ||
         schema != YVEX_RUNTIME_BINDING_SCHEMA_CURRENT)
         return 0;
-    domain = "yvex.runtime.binding.v9";
+    domain = "yvex.runtime.binding.v10";
     yvex_sha256_init(&hash);
     if (!yvex_sha256_update_text(&hash, domain) ||
         !yvex_sha256_update_u64(&hash, schema) ||
@@ -1563,7 +1563,7 @@ static int test_prepare_reopen_import(const binding_fixture *fixture, const char
     return 0;
 }
 
-static int test_model_execution_binding_v9(const char *root)
+static int test_compiled_model_binding_v10(const char *root)
 {
     binding_fixture fixture;
     yvex_runtime_binding_prepare_request request;
@@ -1582,37 +1582,37 @@ static int test_model_execution_binding_v9(const char *root)
     yvex_error err;
 
     YVEX_TEST_ASSERT(
-        variant_path(root, "model-v9", "runtime.gguf", directory, artifact_path) &&
+        variant_path(root, "model-v10", "runtime.gguf", directory, artifact_path) &&
             copy_regular_file("tests/fixtures/gguf/valid-tokenizer-simple.gguf",
                               artifact_path) &&
             rewrite_attention_artifact_fixture(artifact_path),
-        "v9 runtime artifact fixture created");
+        "v10 runtime artifact fixture created");
     YVEX_TEST_ASSERT(fixture_build(&fixture, artifact_path, 1),
-                     "v9 runtime binding fixture built");
+                     "v10 runtime binding fixture built");
     descriptor = yvex_runtime_descriptor_summary_get(fixture.descriptor);
     YVEX_TEST_ASSERT(descriptor &&
                          descriptor->model_execution.schema_version ==
                              YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1,
-                     "v9 fixture owns a sealed model execution descriptor");
+                     "v10 fixture owns a sealed model execution descriptor");
     YVEX_TEST_ASSERT(fixture_binding_request(&fixture, directory, &request) &&
                          yvex_runtime_binding_prepare(
                              &request, &prepared, &failure, &err) == YVEX_OK,
-                     "v9 runtime binding prepared");
+                     "v10 runtime binding prepared");
     YVEX_TEST_ASSERT(yvex_runtime_binding_open(
                          &binding, prepared.path, &summary, NULL, &failure, &err) == YVEX_OK &&
                          summary.schema_version == YVEX_RUNTIME_BINDING_SCHEMA_CURRENT &&
                          strcmp(summary.model_execution_identity,
                                 descriptor->model_execution.identity) == 0,
-                     "v9 reader authenticates compiled execution records");
+                     "v10 reader authenticates compiled execution records");
     yvex_runtime_binding_close(binding);
     YVEX_TEST_ASSERT(runtime_model_open_fixture(
                          &fixture, &prepared, &model, &model_failure, &err) == YVEX_OK,
-                     "v9 runtime model instantiates compiled execution geometry");
+                     "v10 runtime model instantiates compiled execution geometry");
     session_request.backend = YVEX_BACKEND_KIND_CPU;
     YVEX_TEST_ASSERT(yvex_runtime_session_open(
                          &session, model, &session_request,
                          &model_failure, &err) == YVEX_OK,
-                     "v9 runtime session opens for capacity admission");
+                     "v10 runtime session opens for capacity admission");
     generation_options.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V5;
     generation_options.backend = YVEX_BACKEND_KIND_CPU;
     generation_options.mode = YVEX_GENERATION_MODE_TARGET_ONLY;
@@ -1632,7 +1632,7 @@ static int test_model_execution_binding_v9(const char *root)
                          &err) == YVEX_ERR_BOUNDS && !generation,
                      "model-authored context maximum refuses before state mutation");
     YVEX_TEST_ASSERT(yvex_runtime_session_close(&session, &err) == YVEX_OK && !session,
-                     "v9 capacity session closes");
+                     "v10 capacity session closes");
     yvex_runtime_model_close(&model);
     fixture_close(&fixture);
     (void)unlink(prepared.path);
@@ -1646,7 +1646,7 @@ static int test_corruption_refusals(const yvex_runtime_binding_prepare_result *p
 {
     const char *basename = strrchr(prepared->path, '/');
     const char *variants[] = {
-        "truncated", "tail", "legacy-schema", "stale", "precompiled-v8"};
+        "truncated", "tail", "legacy-schema", "stale", "precompiled-v9"};
     const yvex_runtime_binding_failure_code expected[] = {
         YVEX_RUNTIME_BINDING_FAILURE_TRUNCATED,
         YVEX_RUNTIME_BINDING_FAILURE_TRAILING_DATA,
@@ -1693,12 +1693,12 @@ static int test_corruption_refusals(const yvex_runtime_binding_prepare_result *p
             YVEX_TEST_ASSERT(pwrite(fd, &value, 1u, 96) == 1,
                              "runtime binding stale byte written");
         } else {
-            unsigned char legacy_header[16] = "YVRBND8";
+            unsigned char legacy_header[16] = "YVRBND9";
             test_binding_put_u64(legacy_header, 8u,
                                  YVEX_RUNTIME_BINDING_SCHEMA_CURRENT - 1u);
             YVEX_TEST_ASSERT(pwrite(fd, legacy_header, sizeof(legacy_header), 0) ==
                                  (ssize_t)sizeof(legacy_header),
-                             "precompiled v8 header written");
+                             "precompiled v9 header written");
         }
         YVEX_TEST_ASSERT(close(fd) == 0, "runtime binding variant closed");
         rc = yvex_runtime_binding_open(&binding, paths[i], NULL, NULL, &failure, &err);
@@ -3688,7 +3688,7 @@ int yvex_test_runtime_binding(void)
     if (test_canonical_refusals(&prepared, root) != 0) goto done;
     if (test_graph_identity_refusals(&prepared, root) != 0) goto done;
     if (test_artifact_copy_portability(&fixture, &prepared, root) != 0) goto done;
-    if (test_model_execution_binding_v9(root) != 0) goto done;
+    if (test_compiled_model_binding_v10(root) != 0) goto done;
     if (test_runtime_family_neutrality() != 0) goto done;
     if (test_runtime_model_adapter_refusal(&fixture, &prepared) != 0) goto done;
     if (test_runtime_model_progress(&fixture, &prepared) != 0) goto done;

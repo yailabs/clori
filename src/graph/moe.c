@@ -330,6 +330,61 @@ int yvex_moe_plan_build(yvex_moe_plan **out, unsigned long long adapter_id,
     yvex_error_clear(err);
     return YVEX_OK;
 }
+
+/* Reopen the pointer-free compiler product and independently reseal every identity. */
+int yvex_moe_plan_import(yvex_moe_plan **out,
+                         const yvex_moe_plan_summary *summary,
+                         const yvex_moe_layer_plan *layers, yvex_error *err)
+{
+    yvex_moe_plan *plan = NULL;
+    char expected_plan[YVEX_SHA256_HEX_CAP];
+    unsigned long long index;
+    if (out) *out = NULL;
+    if (!out || !summary || !layers ||
+        summary->schema_version != YVEX_MOE_PLAN_SCHEMA_V1 ||
+        summary->tensor_scope > YVEX_TENSOR_SCOPE_DRAFT ||
+        !summary->layer_count || summary->layer_count > SIZE_MAX / sizeof(*layers) ||
+        !summary->routed_experts || !summary->experts_per_token ||
+        !yvex_sha256_hex_valid(summary->moe_plan_identity))
+        return moe_refuse(err, YVEX_ERR_INVALID_ARG,
+                          "MoE plan import facts are invalid");
+    plan = (yvex_moe_plan *)calloc(1u, sizeof(*plan));
+    if (!plan || !(plan->layers = (yvex_moe_layer_plan *)malloc(
+                       (size_t)summary->layer_count * sizeof(*plan->layers)))) {
+        yvex_moe_plan_close(&plan);
+        return moe_refuse(err, YVEX_ERR_NOMEM,
+                          "MoE imported plan allocation failed");
+    }
+    plan->summary = *summary;
+    memcpy(plan->layers, layers,
+           (size_t)summary->layer_count * sizeof(*plan->layers));
+    memcpy(expected_plan, summary->moe_plan_identity, sizeof(expected_plan));
+    plan->summary.moe_plan_identity[0] = '\0';
+    for (index = 0ull; index < summary->layer_count; ++index) {
+        char expected_layer[YVEX_SHA256_HEX_CAP];
+        yvex_moe_layer_plan *layer = &plan->layers[index];
+        memcpy(expected_layer, layer->layer_identity, sizeof(expected_layer));
+        layer->layer_identity[0] = '\0';
+        if (layer->schema_version != YVEX_MOE_PLAN_SCHEMA_V1 ||
+            layer->ordinal != index ||
+            layer->tensor_scope != summary->tensor_scope ||
+            layer->routed_experts != summary->routed_experts ||
+            layer->experts_per_token != summary->experts_per_token ||
+            !moe_layer_identity(layer, &plan->summary) ||
+            strcmp(layer->layer_identity, expected_layer) != 0)
+            goto invalid;
+    }
+    if (!moe_plan_identity(plan) ||
+        strcmp(plan->summary.moe_plan_identity, expected_plan) != 0)
+        goto invalid;
+    *out = plan;
+    yvex_error_clear(err);
+    return YVEX_OK;
+invalid:
+    yvex_moe_plan_close(&plan);
+    return moe_refuse(err, YVEX_ERR_STATE,
+                      "MoE imported plan identity is stale");
+}
 /*
  * Borrow the immutable MoE plan summary.
  *
