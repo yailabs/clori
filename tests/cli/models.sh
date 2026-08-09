@@ -379,7 +379,7 @@ grep 'status: models-scan' "$ROOT/scan.out"
 "$YVEX_BIN" model registry add --path "$ARTIFACT" --registry "$REG" \
   --support-level selected-tensor-materialized \
   --runtime-binding "$BINDING" --target deepseek4-v4-flash-dspark \
-  --backend cpu --generation-mode dspark --context 4096 > "$ROOT/add.out"
+  --backend cpu --generation-mode dspark --ctx 4096 > "$ROOT/add.out"
 grep 'alias: deepseek4-v4-flash-dspark-selected-embed' "$ROOT/add.out"
 grep 'status: models-added' "$ROOT/add.out"
 test -f "$REG"
@@ -402,16 +402,6 @@ grep 'registered_sha256:' "$ROOT/list-audit.out"
 grep 'registered_selected_embedding_ready:' "$ROOT/list-audit.out"
 grep 'startup_profile_ready: true' "$ROOT/list-audit.out"
 grep 'status: models-list' "$ROOT/list-audit.out"
-
-YVEX_MODELS_REGISTRY="$REG" \
-  "$YVEX_BIN" model select deepseek4-v4-flash-dspark-selected-embed > "$ROOT/use.out"
-grep 'selected model: deepseek4-v4-flash-dspark-selected-embed' "$ROOT/use.out"
-
-"$YVEX_BIN" model selected > "$ROOT/current.out"
-grep 'deepseek4-v4-flash-dspark-selected-embed' "$ROOT/current.out"
-grep 'backend=cpu · mode=dspark · context=4096' "$ROOT/current.out"
-! grep 'artifact=' "$ROOT/current.out"
-! grep 'binding=' "$ROOT/current.out"
 
 "$YVEX_BIN" model list --registry "$REG" --output nope > "$ROOT/list-bad-output.out" 2> "$ROOT/list-bad-output.err" && exit 1 || true
 grep 'unsupported output mode: nope' "$ROOT/list-bad-output.err"
@@ -439,11 +429,9 @@ grep 'unsupported output mode: nope' "$ROOT/inspect-bad-output.err"
 "$YVEX_BIN" model registry add --path "$ARTIFACT" --registry "$REG" \
   --alias deepseek4-v4-flash-dspark-runtime-incomplete > "$ROOT/add-incomplete.out"
 YVEX_MODELS_REGISTRY="$REG" \
-  "$YVEX_BIN" model select deepseek4-v4-flash-dspark-runtime-incomplete \
+  "$YVEX_BIN" server deepseek4-v4-flash-dspark-runtime-incomplete \
   > "$ROOT/use-incomplete.out" 2> "$ROOT/use-incomplete.err" && exit 1 || true
 grep 'model has no complete startup profile' "$ROOT/use-incomplete.err"
-"$YVEX_BIN" model selected > "$ROOT/current-after-incomplete.out"
-grep 'deepseek4-v4-flash-dspark-selected-embed' "$ROOT/current-after-incomplete.out"
 "$YVEX_BIN" model registry remove deepseek4-v4-flash-dspark-runtime-incomplete \
   --registry "$REG" > "$ROOT/remove-incomplete.out"
 
@@ -451,14 +439,9 @@ grep 'deepseek4-v4-flash-dspark-selected-embed' "$ROOT/current-after-incomplete.
 grep 'removed: deepseek4-v4-flash-dspark-selected-embed' "$ROOT/remove.out"
 grep 'status: models-removed' "$ROOT/remove.out"
 
-"$YVEX_BIN" model selected > "$ROOT/current-after-remove.out"
-grep 'deepseek4-v4-flash-dspark-selected-embed' "$ROOT/current-after-remove.out"
-
 YVEX_MODELS_REGISTRY="$REG" \
-  "$YVEX_BIN" model select missing > "$ROOT/use-missing.out" 2> "$ROOT/use-missing.err" && exit 1 || true
+  "$YVEX_BIN" server missing > "$ROOT/use-missing.out" 2> "$ROOT/use-missing.err" && exit 1 || true
 grep 'model is not registered: missing' "$ROOT/use-missing.err"
-"$YVEX_BIN" model selected > "$ROOT/current-after-refusal.out"
-grep 'deepseek4-v4-flash-dspark-selected-embed' "$ROOT/current-after-refusal.out"
 
 "$YVEX_BIN" help --advanced > "$ROOT/help.out"
 grep 'yvex model acquire' "$ROOT/help.out"

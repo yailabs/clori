@@ -290,10 +290,13 @@ def test_audit_reconciliation(registry: dict[str, object]) -> None:
             "flag row has no audited command owner")
     require(sum(row.get("lane") == "offline-engine" and row.get("CLI_projection") for row in rows) >= 39,
             "offline capabilities were not preserved")
-    require(sum(row.get("lane") == "runtime-client" and row.get("CLI_projection") for row in rows) >= 20,
-            "runtime capabilities were not preserved")
+    require(sum(row.get("lane") == "runtime-client" and row.get("CLI_projection") for row in rows) >= 17,
+            "client capabilities were not preserved")
+    require(any(row.get("operation_id") == "server.host" and
+                row.get("lane") == "daemon-entrypoint" and row.get("CLI_projection")
+                for row in rows), "foreground server entrypoint is not projected")
     slash = {row.get("slash_projection") for row in rows if row.get("slash_projection") != "none"}
-    require(slash == {"/help", "/status", "/runtime", "/model", "/memory", "/context", "/sessions",
+    require(slash == {"/help", "/status", "/model", "/memory", "/context", "/sessions",
                       "/session", "/new", "/attach", "/detach", "/reset", "/close",
                       "/cancel", "/quit", "/nothink", "/think", "/think-max"},
             f"unexpected slash catalog: {sorted(slash)}")
@@ -396,7 +399,8 @@ def test_completion() -> None:
         require(first.stdout == second.stdout, f"nondeterministic {shell} completion")
         require("yvex-dev" not in first.stdout and "yvex-openai" not in first.stdout,
                 f"retired executable in {shell} completion")
-        require("'runtime'" in first.stdout and "runtime status" in first.stdout,
+        require("'server'" in first.stdout and "server status" in first.stdout and
+                "--ctx" in first.stdout,
                 f"{shell} completion is not context aware")
         outputs[shell] = first.stdout
     with tempfile.TemporaryDirectory(prefix="yvex-completion-") as temporary:

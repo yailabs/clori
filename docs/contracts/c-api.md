@@ -8,7 +8,7 @@ lifetime, inputs, outputs, side effects, failure, and compatibility policy;
 the headers remain exact ABI authority.
 
 This document maps the installed C ABI and the non-installed contracts used by
-the engine-linked daemon and finite engineering operations. It describes
+the engine-linked foreground server and finite engineering operations. It describes
 ownership and lifetime; it does not turn an internal runtime boundary into a public
 compatibility promise.
 
@@ -112,14 +112,13 @@ as explicit `target-only` mode.
 `yvex_model_registry_startup_validate` checks that all startup facts are
 present and that the two local files are readable. It does not authenticate
 either identity, materialize weights, initialize a backend, or establish
-runtime support. Selection remains an inert local configuration write; `yvexd`
-performs full artifact and binding admission when the model is opened.
+runtime support. The explicit `yvex server MODEL` entrypoint performs full
+artifact and binding admission when the model is opened.
 
 The default catalog is user-local data at
 `~/.local/share/yvex/models.local.json`; an explicit `YVEX_DATA_DIR` changes
-that owner for controlled deployments. The selected startup configuration
-remains separately owned under private XDG configuration. Catalog entry,
-selected model, and live runtime model are three distinct facts.
+that owner for controlled deployments. Catalog entry, invocation-selected
+profile, and live runtime model are three distinct facts.
 
 ## Model, Materialization, And Backend
 
@@ -540,7 +539,7 @@ inspecting diagnostic text. `yvex_client_timeout_set()` bounds application
 adapter send/receive waiting; zero restores unbounded post-handshake waiting
 for native watch and trace consumers.
 
-The source-separated OpenAI adapter inside `yvexd` consumes only the provider
+The source-separated OpenAI adapter inside the foreground server consumes only the provider
 contract, protocol client, and bounded HTTP/JSON/SSE owners. It opens no second
 artifact or model, owns no KV, and cannot call Transformer, generation, or CUDA
 owners directly. The exact HTTP profile is documented in
@@ -582,8 +581,8 @@ uncommitted participant. Existing generated-token and completion-usage counts
 remain committed-target counts.
 
 `<yvex/server.h>` exposes the local protocol, one-model host, server session,
-typed event, metrics snapshot, and thin protocol-client lifecycles. `yvexd`
-owns one engine-linked host and bounded model worker. Server sessions retain
+typed event, metrics snapshot, and thin protocol-client lifecycles. The
+engine-linked `yvex server` entrypoint owns one host and bounded model worker. Server sessions retain
 independent execution state, exact token ledgers, transcripts, and turn records
 across client detach. The next turn reuses KV only after exact token-prefix
 admission and prefills only the new suffix.
@@ -702,7 +701,7 @@ The current runtime supports the complete hosted DeepSeek prompt-to-text path on
 CPU and the admitted mixed GB10 CUDA path. It composes exact tokenizer encoding,
 prompt-suffix prefill, persistent state, MoE, the complete Transformer, raw
 vocabulary logits, common-host sampling, sampled-token decode feedback, typed
-stop, incremental detokenization, and committed streaming through one daemon
+stop, incremental detokenization, and committed streaming through one server
 model and isolated server sessions. It does not establish public serving,
 model evaluation, a release-path full-model benchmark, or release readiness.
 

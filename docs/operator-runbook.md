@@ -1,10 +1,10 @@
 # YVEX Operator Runbook — Local Runtime
 
 This runbook owns first startup and routine operation of the installed local
-runtime host and clients. Normal operation is registry-first: users list a
-complete local model profile, select it by name, start the runtime, and enter
-chat without exporting paths or repeating daemon flags. Its commands follow
-the canonical operation registry. The REPL attaches to the resident daemon and
+server and clients. Normal operation is registry-first: users list a complete
+local model profile, name it when starting the foreground server, and enter
+chat without exporting paths or repeating internal paths. Its commands follow
+the canonical operation registry. The REPL attaches to the resident server and
 uses the same typed session, progress, and result facts as noninteractive
 clients.
 It is not a capability ledger: consult [`ROADMAP.md`](../ROADMAP.md) for current
@@ -12,11 +12,10 @@ gates.
 
 ## Prerequisites
 
-Builds provide two executable products:
-
-- `yvexd` hosts one process-resident runtime model, the private Unix listener,
-  and the bounded loopback OpenAI-compatible listener;
-- `yvex` owns native runtime clients and finite offline engineering operations.
+Builds provide one executable product. `yvex server MODEL` hosts one
+process-resident runtime model, the private Unix listener, and the bounded
+loopback OpenAI-compatible listener in the foreground. Other `yvex` modes own
+native clients and finite offline engineering operations.
 
 Starting a host requires one registry entry containing an admitted complete
 GGUF, its exact runtime binding, target, backend, and context capacity. Inspect
@@ -26,9 +25,9 @@ the available entries first:
 ./yvex model list
 ```
 
-Only a row with `STARTUP` equal to `yes` can be selected for hosted execution.
+Only a row with `STARTUP` equal to `yes` can be named for hosted execution.
 Use `model show NAME` to confirm its backend and `target-only` or `dspark`
-generation mode before selection. If the table is empty or every row says
+generation mode before startup. If the table is empty or every row says
 `no`, complete the one-time
 [registration procedure](#registering-an-existing-model). Backend selection is
 part of that profile and never falls back silently.
@@ -100,53 +99,53 @@ artifact emission.
 
 ## First verified startup
 
-First check whether this user already owns a ready host:
+First check whether this user already owns a ready server:
 
 ```sh
-./yvex runtime status
+./yvex server status
 ```
 
-If it reports `ready`, do not start another daemon; proceed to chat or runtime
-inspection. If it refuses because no host is present, inspect and select one
+If it reports `ready`, do not start another server; proceed to chat or runtime
+inspection. If it refuses because no server is present, inspect one
 startup-ready registry entry. The alias below is illustrative; use one printed
 by `model list`:
 
 ```sh
 ./yvex model list
 ./yvex model show deepseek4-v4-flash-dspark-runtime-iq2xxs
-./yvex model select deepseek4-v4-flash-dspark-runtime-iq2xxs
-./yvex model selected
 ```
 
 Then start the host in the first terminal:
 
 ```sh
-./yvex runtime start
+./yvex server deepseek4-v4-flash-dspark-runtime-iq2xxs
 ```
 
-`runtime start` replaces its finite client process with the sibling `yvexd`
-binary. Foreground operation is intentional: keep this terminal open. Exactly
-one daemon owns the model, sessions, KV, worker, local socket, OpenAI listener,
-and telemetry.
+`server MODEL` directly enters the server entrypoint in the `yvex` process.
+Foreground operation is intentional: keep this terminal open. Exactly one
+server owns the model, sessions, KV, worker, local socket, OpenAI listener, and
+telemetry.
 
 Before the potentially long admission begins, the command prints the complete
 selected startup identity and states that the host remains in the foreground:
 
 ```text
-YVEX runtime · starting selected model deepseek4-v4-flash-dspark-runtime-iq2xxs
-  target deepseek4-v4-flash-dspark · CUDA · DSpark · context 4096
-  foreground host · leave this terminal open · readiness follows model admission
+YVEX server · foreground
+  profile deepseek4-v4-flash-dspark-runtime-iq2xxs
+  target deepseek4-v4-flash-dspark · backend cuda · mode dspark · requested ctx 4096
+  local endpoint .../yvexd.sock · OpenAI 127.0.0.1:8001
+  stop with Ctrl-C here or `yvex server stop` from another terminal
 ```
 
-This is the model the new daemon is about to open. It is not a projection of a
-previously running daemon and it is flushed before control passes to `yvexd`.
+This is the model the new server is about to open. It is not a projection of a
+previously running process and it is flushed before admission begins.
 
 Startup authenticates the selected artifact and binding, creates the immutable
 runtime model, builds residency once, and only then publishes the local socket.
-Large models can spend several minutes in this phase. The foreground daemon
+Large models can spend several minutes in this phase. The foreground server
 prints an elapsed-time heartbeat every ten seconds until admission completes or
 fails; it does not claim a percentage that the admission pipeline cannot prove.
-From a second terminal, `yvex runtime status` refuses while the socket is absent
+From a second terminal, `yvex server status` refuses while the socket is absent
 and reports `ready` only after admission completes. A refusal or startup failure
 leaves no partially ready listener.
 
@@ -157,13 +156,11 @@ different responsibilities:
 
 - `yvex model list` reads the local model registry and marks complete readable
   startup profiles;
-- `yvex model select NAME` copies one profile into the inert configuration for
-  a future launch; it does not open the artifact or change a running daemon;
-- `yvex runtime start` opens and authenticates the selected artifact and binding,
-  materializes runtime-owned resources, copies the encoded payload into the
-  daemon's host arena, and keeps the resulting runtime model open;
-- `yvex runtime model` reports the identities actually open in the daemon;
-- `yvex runtime memory` reports current process, mapped, host-resident, and
+- `yvex server NAME` opens and authenticates the named profile's artifact and
+  binding, materializes runtime-owned resources, copies the encoded payload
+  into the server's host arena, and keeps the resulting runtime model open;
+- `yvex server model` reports the identities actually open in the server;
+- `yvex server memory` reports current process, mapped, host-resident, and
   device-resident memory facts;
 - `yvex chat` and `yvex run` use the already resident model through the local
   protocol and never create another model copy.
@@ -179,19 +176,19 @@ the complete RAM transfer finish before the socket becomes ready.
 
 ## Three-terminal operation
 
-All three terminals attach to the same daemon and model. They do not create
+All three terminals attach to the same server and model. They do not create
 three model copies.
 
 Terminal 1 owns the foreground host lifecycle:
 
 ```sh
-./yvex runtime start
+./yvex server deepseek4-v4-flash-dspark-runtime-iq2xxs
 ```
 
 Terminal 2 renders the operational engine view:
 
 ```sh
-./yvex runtime watch
+./yvex server log
 ```
 
 Terminal 3 owns the interactive conversation:
@@ -205,7 +202,7 @@ Start Terminal 1 first. Terminals 2 and 3 may attach in either order after
 sequence. Default telemetry excludes prompt and answer content.
 
 If observation is not needed, two terminals are sufficient: keep `runtime
-start` in the first and run `runtime status`, then `chat`, in the second.
+server in the first and run `server status`, then `chat`, in the second.
 
 ## Interactive console
 
@@ -236,9 +233,9 @@ commands
 yvex>
 ```
 
-The exact identities come from the running daemon; the example values are not
+The exact identities come from the running server; the example values are not
 admission evidence. Model output is streamed directly without repeated role
-labels. During a turn, the console updates one daemon-authored prefill line in
+labels. During a turn, the console updates one server-authored prefill line in
 place. The terminal result then reports prefill, generation, TTFT, speculation,
 context, stop reason, and session on one compact line. Candidate token text is
 never displayed.
@@ -275,12 +272,12 @@ while keeping the process-resident model open.
 
 Ctrl-L clears the visible terminal while the REPL prompt is active, then redraws
 the prompt and any input already typed. It does not detach, reset, cancel, or
-otherwise mutate the daemon-owned session.
+otherwise mutate the server-owned session.
 
 ## One-shot requests
 
 An ephemeral one-shot session streams one answer and closes while leaving the
-daemon and model alive:
+server and model alive:
 
 ```sh
 ./yvex run "Explain attention in one sentence."
@@ -303,7 +300,7 @@ intended:
 
 ## OpenAI-compatible application provider
 
-The same `yvexd` process owns the application listener. After
+The same `yvex server` process owns the application listener. After
 `runtime.ready`, verify it without starting another process:
 
 ```sh
@@ -354,42 +351,39 @@ artifact, scope and committed position match the live session. The restore byte
 bound is mandatory. This operation currently protects model state inside one
 live semantic session; it is not yet a cross-restart conversation restore.
 
-## Status, metrics, and trace
+## Status, metrics, and logs
 
 Use compact status for normal operation:
 
 ```sh
-./yvex runtime status
-./yvex runtime status --json
-./yvex runtime model
-./yvex runtime memory
+./yvex server status
+./yvex server status --json
+./yvex server model
+./yvex server memory
 ```
 
-`runtime model` proves which artifact, binding, physical variant, target, and
-backend are actually open. `runtime memory` separates mapped artifact bytes,
+`server model` proves which artifact, binding, physical variant, target, and
+backend are actually open. `server memory` separates mapped artifact bytes,
 the process-lifetime host arena, and device-resident allocations.
 
-Subscribe to compact engine activity or the typed trace independently of the
-daemon console:
+Follow typed server activity independently of the foreground console:
 
 ```sh
-./yvex runtime watch
-./yvex runtime trace
-./yvex runtime trace --json
+./yvex server log
+./yvex server log --json
 ```
 
-`watch` starts with one stable startup/runtime block, then projects each request
+The human `server log` starts with one stable startup/runtime block, then projects each request
 as one coherent unit with stable time, request, session, phase, duration and
 result fields. It groups prefill and DSpark cycles, shows queue pressure only
 when contended, uses human byte units and named stop reasons, and replaces any
 active progress line with one stable completion or failure summary. It
 suppresses ordinary connection churn, token fragments and profiler detail.
-Human `trace` retains those details and adds sequence, severity, turn, phase,
-timing, rate, execution profile and shape facts.
-`trace --json` emits the canonical complete JSONL event record. Prompts and
-answers remain absent from all three by default.
+`server log --json` emits the canonical complete JSONL event record, including
+the typed detail omitted by the compact human view. Prompts and answers remain
+absent from both projections by default.
 
-Raw daemon JSONL is selected at host startup with `--console raw`. Increase
+Raw server-console JSONL is selected at startup with `--console raw`. Increase
 `--trace-level` from `summary` to `stages`, `tokens`, or `full` only when the
 additional volume is required. Text content remains excluded unless the host is
 started with the explicit `--trace-content` opt-in.
@@ -399,7 +393,7 @@ started with the explicit `--trace-content` opt-in.
 Request shutdown through the local protocol:
 
 ```sh
-./yvex runtime stop
+./yvex server stop
 ```
 
 The host refuses new work, drains or cancels queued and active requests under
@@ -424,33 +418,31 @@ once with the advanced registry operation and absolute paths:
   --target deepseek4-v4-flash-dspark \
   --backend cuda \
   --generation-mode dspark \
-  --context 4096 \
+  --ctx 4096 \
   --support-level selected-tensor-materialized
 ```
 
 This operation reads the GGUF, records its identity and metadata, checks that
 the startup profile is structurally complete, and stores it in the user-local
-registry. It does not establish runtime admission; `yvexd` authenticates
+registry. It does not establish runtime admission; `yvex server` authenticates
 the artifact and binding again when it opens the model. Normal subsequent use
 contains no paths or environment variables:
 
 `--support-level` records only the artifact inspection/materialization stage.
 The binding, target, backend, mode, and context fields separately own startup
-profile readiness; the selected profile and the model live in `yvexd` remain
-separate states.
+profile readiness; the registry profile and the model live in the server remain
+separate facts.
 
 ```sh
 ./yvex model list
-./yvex model select deepseek4-v4-flash-dspark-runtime-iq2xxs
-./yvex model selected
-./yvex runtime start
+./yvex server deepseek4-v4-flash-dspark-runtime-iq2xxs
 ```
 
-`model selected` reads only the inert private selection; `model list` reads
-real registry entries; and `runtime model` reads the identities actually open
-in `yvexd`. These states may differ without being conflated. Applying another
-selection requires a daemon restart; hot model switching and multi-model
-hosting are not current capabilities.
+`model list` reads registry entries; the positional `MODEL` argument selects
+one entry for this invocation; and `server model` reads the identities actually
+open in the resident server. Starting another model requires stopping the
+current server first; hot model switching and multi-model hosting are not
+current capabilities.
 
 Generation mode is part of the startup profile. `dspark` requires a binding
 that contains target, draft, and target-verification plans; `target-only` is
@@ -462,8 +454,6 @@ artifact/binding.
 
 - `$XDG_RUNTIME_DIR/yvex/yvexd.sock` is the private mode-0600 local protocol
   endpoint; its directory and singleton lock are private to the owning UID.
-- `$XDG_CONFIG_HOME/yvex/model.conf` stores the optional selected model alias
-  and inert startup options at mode 0600.
 - `~/.local/share/yvex/models.local.json` stores local model registry entries,
   including complete startup profiles. `YVEX_DATA_DIR` may override the parent
   for controlled deployments. The file is local configuration, not tracked
@@ -478,8 +468,8 @@ fallback.
 
 ## Recovery
 
-- Missing socket: confirm `model selected`, run `yvex runtime start`, and wait
-  for `runtime status` to report `ready`.
+- Missing socket: run `yvex server MODEL` and wait for `server status` to
+  report `ready`.
 - Stale or unsafe socket: verify UID, mode, runtime-directory ownership, and
   singleton-lock ownership; never delete another user's socket.
 - Binding or artifact mismatch: select the binding for that exact artifact
@@ -489,10 +479,10 @@ fallback.
 - Unsupported CUDA: start an admitted CPU host or repair CUDA admission; no
   CUDA request falls back silently.
 - Queue refusal: wait for current work or reduce client concurrency; do not
-  launch another daemon against the same socket.
-- OpenAI `503 runtime_unavailable`: start the host with `yvex runtime start`,
+  launch another server against the same socket.
+- OpenAI `503 runtime_unavailable`: start the host with `yvex server MODEL`,
   wait for `runtime.ready`, and confirm `openai_ready` in
-  `yvex runtime status --json`.
+  `yvex server status --json`.
 - OpenAI `422 unsupported_parameter`: remove the named unsupported field;
   fields are never ignored silently.
 

@@ -1,15 +1,16 @@
 #!/bin/sh
-# Verifies yvexd process grammar and fail-closed listener admission.
+# Verifies the direct foreground server grammar and fail-closed model admission.
 set -eu
 
 . tests/support/cleanup.sh
 
-YVEXD_BIN=${YVEXD_BIN:-./yvexd}
+YVEX_BIN=${YVEX_BIN:-./yvex}
 OUT_DIR=${YVEX_TEST_OUT_DIR:-build/tests/cli-server}
+HOME_ROOT=$OUT_DIR/home
 SOCKET_PATH=${TMPDIR:-/tmp}/yvex-cli-server-$$.sock
 
 yvex_test_cleanup "$OUT_DIR" "$SOCKET_PATH"
-mkdir -p "$OUT_DIR"
+mkdir -p "$OUT_DIR" "$HOME_ROOT/.local/share/yvex"
 
 fail()
 {
@@ -22,50 +23,81 @@ contains()
     grep -F -- "$2" "$1" >/dev/null || fail "$1 missing: $2"
 }
 
-"$YVEXD_BIN" --help >"$OUT_DIR/help.out" 2>"$OUT_DIR/help.err"
-contains "$OUT_DIR/help.out" 'usage: yvexd --model ARTIFACT --runtime-binding FILE'
-contains "$OUT_DIR/help.out" '[--openai on|off]'
-contains "$OUT_DIR/help.out" '[--generation-mode target-only|dspark]'
-contains "$OUT_DIR/help.out" 'loopback OpenAI listener'
-"$YVEXD_BIN" --version >"$OUT_DIR/version.out" 2>"$OUT_DIR/version.err"
-contains "$OUT_DIR/version.out" '0.1.0 protocol=8'
+artifact=$OUT_DIR/current.gguf
+binding=$OUT_DIR/current.binding
+printf 'artifact fixture\n' >"$artifact"
+printf 'binding fixture\n' >"$binding"
+artifact=$(realpath "$artifact")
+binding=$(realpath "$binding")
+cat >"$HOME_ROOT/.local/share/yvex/models.local.json" <<EOF
+{
+  "schema": "yvex.models.local.v3",
+  "models": [{
+    "alias": "current-model-runtime-profile",
+    "path": "$artifact",
+    "runtime_binding": "$binding",
+    "runtime_target": "deepseek4-v4-flash-dspark",
+    "runtime_backend": "cpu",
+    "runtime_mode": "target-only",
+    "runtime_context": 4096
+  }]
+}
+EOF
+
+"$YVEX_BIN" server --help >"$OUT_DIR/help.out" 2>"$OUT_DIR/help.err"
+contains "$OUT_DIR/help.out" 'usage: yvex server MODEL [options]'
+contains "$OUT_DIR/help.out" 'Run one model server in the foreground.'
+contains "$OUT_DIR/help.out" '--ctx'
+! grep -F -- '--context' "$OUT_DIR/help.out" >/dev/null
+contains "$OUT_DIR/help.out" '--openai'
 
 set +e
-"$YVEXD_BIN" >"$OUT_DIR/missing.out" 2>"$OUT_DIR/missing.err"
+HOME="$HOME_ROOT" "$YVEX_BIN" server >"$OUT_DIR/missing.out" 2>"$OUT_DIR/missing.err"
 missing_status=$?
-"$YVEXD_BIN" --model missing --runtime-binding missing --openai remote \
+HOME="$HOME_ROOT" "$YVEX_BIN" server absent >"$OUT_DIR/absent.out" 2>"$OUT_DIR/absent.err"
+absent_status=$?
+HOME="$HOME_ROOT" "$YVEX_BIN" server current-model-runtime-profile --openai remote \
     >"$OUT_DIR/remote.out" 2>"$OUT_DIR/remote.err"
 remote_status=$?
-"$YVEXD_BIN" --model missing --runtime-binding missing --openai-port 0 \
+HOME="$HOME_ROOT" "$YVEX_BIN" server current-model-runtime-profile --openai-port 0 \
     >"$OUT_DIR/port.out" 2>"$OUT_DIR/port.err"
 port_status=$?
-"$YVEXD_BIN" --model missing --runtime-binding missing --openai on --openai off \
+HOME="$HOME_ROOT" "$YVEX_BIN" server current-model-runtime-profile --openai on --openai off \
     >"$OUT_DIR/duplicate.out" 2>"$OUT_DIR/duplicate.err"
 duplicate_status=$?
-"$YVEXD_BIN" --model missing --runtime-binding missing --generation-mode invalid \
+HOME="$HOME_ROOT" "$YVEX_BIN" server current-model-runtime-profile --generation-mode invalid \
     >"$OUT_DIR/mode.out" 2>"$OUT_DIR/mode.err"
 mode_status=$?
-"$YVEXD_BIN" --model missing --runtime-binding missing \
-    --target deepseek4-v4-flash >"$OUT_DIR/retired.out" 2>"$OUT_DIR/retired.err"
-retired_status=$?
-"$YVEXD_BIN" --model "$SOCKET_PATH.gguf" \
-    --runtime-binding "$SOCKET_PATH.binding" \
-    --socket "$SOCKET_PATH" --openai off \
+HOME="$HOME_ROOT" "$YVEX_BIN" server current-model-runtime-profile --context 8192 \
+    >"$OUT_DIR/context.out" 2>"$OUT_DIR/context.err"
+context_status=$?
+HOME="$HOME_ROOT" "$YVEX_BIN" server current-model-runtime-profile \
+    --ctx 8192 --socket "$SOCKET_PATH" --openai off \
     >"$OUT_DIR/admission.out" 2>"$OUT_DIR/admission.err"
 admission_status=$?
 set -e
+
 test "$missing_status" -eq 2
+test "$absent_status" -eq 1
 test "$remote_status" -eq 2
 test "$port_status" -eq 2
 test "$duplicate_status" -eq 2
 test "$mode_status" -eq 2
-test "$retired_status" -eq 2
+test "$context_status" -eq 2
 test "$admission_status" -eq 1
-contains "$OUT_DIR/missing.err" '--model and --runtime-binding are required'
-contains "$OUT_DIR/port.err" 'invalid or duplicate --openai-port'
-contains "$OUT_DIR/duplicate.err" 'duplicate --openai option'
-contains "$OUT_DIR/mode.err" '--generation-mode requires target-only or dspark'
-contains "$OUT_DIR/retired.err" 'target deepseek4-v4-flash was replaced; use deepseek4-v4-flash-dspark'
+contains "$OUT_DIR/missing.err" 'usage: yvex server MODEL [options]'
+contains "$OUT_DIR/absent.err" 'model is not registered: absent'
+contains "$OUT_DIR/remote.err" 'invalid value for --openai: remote'
+contains "$OUT_DIR/port.err" 'invalid value for --openai-port: 0'
+contains "$OUT_DIR/duplicate.err" 'duplicate flag: --openai'
+contains "$OUT_DIR/mode.err" 'invalid value for --generation-mode: invalid'
+contains "$OUT_DIR/context.err" 'unknown flag: --context'
+contains "$OUT_DIR/admission.out" 'YVEX server · foreground'
+contains "$OUT_DIR/admission.out" 'profile current-model-runtime-profile'
+contains "$OUT_DIR/admission.out" 'backend=cpu · mode=target-only · requested ctx=8192'
+contains "$OUT_DIR/admission.out" "artifact $artifact"
+contains "$OUT_DIR/admission.out" "binding $binding"
+contains "$OUT_DIR/admission.out" 'stop with Ctrl-C or `yvex server stop`'
 contains "$OUT_DIR/admission.err" 'model admission in progress (elapsed 0 s)'
 contains "$OUT_DIR/admission.err" 'model admission failed (elapsed '
 yvex_test_cleanup "$SOCKET_PATH"

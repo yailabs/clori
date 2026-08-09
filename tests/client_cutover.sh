@@ -27,9 +27,9 @@ trap cleanup EXIT HUP INT TERM
 for expected in \
     'yvex chat' \
     'yvex run' \
-    'yvex runtime status' \
+    'yvex server status' \
     'yvex session list' \
-    'yvex model selected' \
+    'yvex server MODEL' \
     'yvex compile source manifest' \
     'yvex compile quant plan' \
     'yvex artifact verify' \
@@ -54,8 +54,8 @@ do
     grep -F "$expected" "$root/advanced" >/dev/null
 done
 
-"$YVEX_BIN" help runtime trace >"$root/leaf-help"
-grep -F 'operation: runtime.trace' "$root/leaf-help" >/dev/null
+"$YVEX_BIN" help server log >"$root/leaf-help"
+grep -F 'operation: server.log' "$root/leaf-help" >/dev/null
 "$YVEX_BIN" help --json >"$root/discovery.json"
 python3 - "$root/discovery.json" <<'PY'
 import json, pathlib, sys
@@ -63,7 +63,9 @@ payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
 assert payload['schema'] == 'yvex.command.discovery.v1'
 assert len(payload['registry_identity']) == 64
 paths = {row['command_path'] for row in payload['operations'] if row['projections']['cli']}
-assert 'runtime status' in paths
+assert 'server status' in paths
+assert 'server' in paths
+assert 'runtime status' not in paths
 assert 'execute tokenizer encode' in paths
 assert not any(path.split(' ', 1)[0] in {
     'evidence', 'graph', 'quant', 'source', 'tensor', 'tokenizer', 'eval', 'bench'
@@ -71,7 +73,8 @@ assert not any(path.split(' ', 1)[0] in {
 PY
 "$YVEX_BIN" completion bash >"$root/yvex.bash"
 bash -n "$root/yvex.bash"
-grep -F 'runtime' "$root/yvex.bash" >/dev/null
+grep -F 'server' "$root/yvex.bash" >/dev/null
+grep -F -- '--ctx' "$root/yvex.bash" >/dev/null
 grep -F -- '--backend' "$root/yvex.bash" >/dev/null
 
 # Every absorbed engineering capability has one registry-selected canonical route.
@@ -131,7 +134,9 @@ for command in evidence graph quant source tensor tokenizer; do
     grep -F "removed command: $command" "$root/err" >/dev/null
     grep -F 'hint:' "$root/err" >/dev/null
 done
-for arguments in 'runtime input' 'runtime context' 'runtime trace --follow'; do
+for arguments in 'runtime input' 'runtime context' 'runtime start' \
+    'runtime status' 'runtime model' 'runtime memory' 'runtime watch' \
+    'runtime trace' 'runtime stop' 'model select' 'model selected'; do
     set +e
     # shellcheck disable=SC2086
     "$YVEX_BIN" $arguments >"$root/out" 2>"$root/err"
@@ -172,10 +177,9 @@ test "$status" -eq 2
 grep -F 'chat requires a terminal' "$root/err" >/dev/null
 
 for arguments in \
-    'runtime status --bogus' \
-    'runtime watch --bogus' \
-    'runtime trace --bogus' \
-    'runtime stop --bogus' \
+    'server status --bogus' \
+    'server log --bogus' \
+    'server stop --bogus' \
     'session list --bogus' \
     'session show main --json' \
     'model show --bogus'
@@ -189,12 +193,12 @@ do
 done
 
 # One registry-driven parser owns help bypass, types, ranges, duplicates, and relations.
-"$YVEX_BIN" model select -h >"$root/out" 2>"$root/err"
-grep -F 'operation: model.select' "$root/out" >/dev/null
+"$YVEX_BIN" server -h >"$root/out" 2>"$root/err"
+grep -F 'operation: server.host' "$root/out" >/dev/null
 for arguments in \
-    'model select' \
-    'model select current extra' \
-    'model select current --artifact /models/current.gguf' \
+    'server' \
+    'server current extra' \
+    'server current --context 4096' \
     'compile artifact prepare --out artifact.gguf --out-dir artifacts'
 do
     set +e
@@ -206,14 +210,14 @@ do
     grep -F 'usage: yvex' "$root/err" >/dev/null
 done
 set +e
-"$YVEX_BIN" runtime statu >"$root/out" 2>"$root/err"
+"$YVEX_BIN" server statu >"$root/out" 2>"$root/err"
 status=$?
 set -e
 test "$status" -eq 2
-grep -F 'did you mean `yvex runtime status`' "$root/err" >/dev/null
+grep -F 'did you mean `yvex server status`' "$root/err" >/dev/null
 
-# Selected startup configuration resolves one complete registry profile and remains distinct from
-# live daemon state.
+# Registry discovery remains distinct from the model hosted by a running server. No command writes
+# an implicit startup selection.
 artifact="$root/current.gguf"
 binding="$root/current.binding"
 registry="$home_root/.local/share/yvex/models.local.json"
@@ -241,52 +245,11 @@ grep -F 'current-model-runtime-profile' "$root/out" >/dev/null
 grep -F 'cuda' "$root/out" >/dev/null
 grep -F '4096' "$root/out" >/dev/null
 grep -F 'yes' "$root/out" >/dev/null
-HOME="$home_root" \
-    "$YVEX_BIN" model select current-model-runtime-profile >"$root/out"
-grep -F 'selected model: current-model-runtime-profile' "$root/out" >/dev/null
-test "$(stat -c '%a' "$home_root/.config/yvex/model.conf")" = 600
-test "$(stat -c '%a' "$home_root/.config/yvex")" = 700
-HOME="$home_root" "$YVEX_BIN" model selected >"$root/out"
-grep -F 'target deepseek4-v4-flash-dspark · backend=cuda · mode=dspark · context=4096' \
-    "$root/out" >/dev/null
-! grep -F 'artifact=' "$root/out" >/dev/null
-! grep -F 'binding=' "$root/out" >/dev/null
-
-# A flag-free start projects the selected profile into yvexd's startup vector. Keep this proof
-# isolated from the resident daemon by placing the client beside a recording test double.
-mkdir "$root/product-bin"
-cp "$YVEX_BIN" "$root/product-bin/yvex"
-cat >"$root/product-bin/yvexd" <<'EOF'
-#!/bin/sh
-printf '%s\n' "$@" >"$YVEX_TEST_DAEMON_ARGS"
-EOF
-chmod 700 "$root/product-bin/yvexd"
-HOME="$home_root" YVEX_TEST_DAEMON_ARGS="$root/daemon-arguments" \
-    "$root/product-bin/yvex" runtime start >"$root/start.out"
-grep -F 'starting selected model current-model-runtime-profile' "$root/start.out" >/dev/null
-grep -F 'target deepseek4-v4-flash-dspark · CUDA · DSpark · context 4096' \
-    "$root/start.out" >/dev/null
-grep -F 'foreground host · leave this terminal open · readiness follows model admission' \
-    "$root/start.out" >/dev/null
-cat >"$root/expected-daemon-arguments" <<EOF
---model
-$artifact
---runtime-binding
-$binding
---target
-deepseek4-v4-flash-dspark
---backend
-cuda
---generation-mode
-dspark
---context
-4096
-EOF
-cmp "$root/expected-daemon-arguments" "$root/daemon-arguments"
+test ! -e "$home_root/.config/yvex/model.conf"
 
 set +e
 HOME="$home_root" XDG_RUNTIME_DIR="$root/absent-runtime" \
-    "$YVEX_BIN" runtime model >"$root/out2" 2>"$root/err"
+    "$YVEX_BIN" server model >"$root/out2" 2>"$root/err"
 status=$?
 set -e
 test "$status" -eq 1
@@ -298,4 +261,5 @@ test -f "$YVEX_CLIENT_LANE_OBJ"
 ! nm -u "$YVEX_CLIENT_LANE_OBJ" | grep -E \
     'yvex_(runtime_model_open|artifact_materialize|runtime_transformer|runtime_generation_operator_execute|backend_cuda)' \
     >/dev/null
+! nm -u "$YVEX_CLIENT_LANE_OBJ" | grep -E 'execv|execvp' >/dev/null
 printf 'test: client_command_architecture\n'

@@ -2,7 +2,6 @@
 set -eu
 
 YVEX_BIN=${YVEX_BIN:-./yvex}
-YVEXD_BIN=${YVEXD_BIN:-./yvexd}
 OUT_ROOT=${YVEX_TEST_OUT_DIR:-build/tests/cli}
 
 run_section() {
@@ -11,7 +10,6 @@ run_section() {
 
     printf 'cli: %s\n' "$name"
     YVEX_BIN="$YVEX_BIN" \
-    YVEXD_BIN="$YVEXD_BIN" \
     YVEX_TEST_OUT_DIR="$OUT_ROOT/$name" \
         sh "$script"
 }

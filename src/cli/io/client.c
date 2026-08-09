@@ -1,7 +1,7 @@
 /*
  * Runtime-facing commands are deliberately thin local-protocol clients. Even though the yvex ELF
  * also contains finite offline-engine adapters, this lane cannot open artifacts, initialize CUDA,
- * or call generation directly; every hosted operation crosses yvexd's protocol boundary.
+ * or call generation directly; every hosted client operation crosses the server protocol boundary.
  *
  * The file also owns the linear interactive console. Operation identity and argument schemas come
  * from the compiled registry; terminal state and rendering remain client-owned projections.
@@ -16,8 +16,6 @@
 #include <yvex/server.h>
 #include <ctype.h>
 #include <errno.h>
-#include <fcntl.h>
-#include <limits.h>
 #include <math.h>
 #include <pthread.h>
 #include <signal.h>
@@ -26,7 +24,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
-#include <sys/stat.h>
 #include <sys/types.h>
 #include <termios.h>
 #include <time.h>
@@ -50,15 +47,6 @@ typedef struct {
     char *entry[CLIENT_REPL_HISTORY_MAX];
     size_t count;
 } client_repl_history;
-typedef struct {
-    char name[YVEX_SERVER_SESSION_NAME_CAP];
-    char artifact[PATH_MAX];
-    char binding[PATH_MAX];
-    char target[128];
-    char backend[8];
-    char mode[16];
-    unsigned long long context;
-} client_model_config;
 static volatile sig_atomic_t repl_signal_state;
 static int console_status(const char *session_name);
 static int console_status_fetch(const char *session_name,
@@ -129,7 +117,7 @@ static const char *lane_name(yvex_operator_lane lane)
     switch (lane) {
     case YVEX_OPERATOR_LANE_RUNTIME_CLIENT: return "runtime-client";
     case YVEX_OPERATOR_LANE_OFFLINE_ENGINE: return "offline-engine";
-    case YVEX_OPERATOR_LANE_DAEMON_ENTRYPOINT: return "daemon-entrypoint";
+    case YVEX_OPERATOR_LANE_DAEMON_ENTRYPOINT: return "server-entrypoint";
     case YVEX_OPERATOR_LANE_REPL_LOCAL: return "REPL-local";
     case YVEX_OPERATOR_LANE_API_ONLY: return "API-only";
     case YVEX_OPERATOR_LANE_TEST_ONLY: return "test-only";
@@ -173,10 +161,43 @@ static void render_leaf_help(const yvex_operator_descriptor *descriptor)
         puts("\noptions:");
         for (index = 0u; index < descriptor->flag_count; ++index) {
             const yvex_operator_flag_descriptor *flag = &descriptor->flags[index];
-            printf("  %-24s%s%s\n", flag->name, flag->takes_value ? " VALUE" : "",
-                   strcmp(flag->aliases, "none") ? "  (alias available)" : "");
+            printf("  %-24s", flag->name);
+            if (flag->takes_value) {
+                if (strcmp(flag->enum_values, "none"))
+                    printf(" %s", flag->enum_values);
+                else if (!strcmp(flag->value_type, "u64"))
+                    fputs(" N", stdout);
+                else
+                    fputs(" VALUE", stdout);
+            }
+            if (strcmp(flag->aliases, "none")) fputs("  (alias available)", stdout);
+            fputc('\n', stdout);
         }
     }
+}
+
+static void render_command_index_line(const yvex_operator_descriptor *descriptor)
+{
+    size_t index, width = strlen(descriptor->command_path);
+    printf("  yvex %s", descriptor->command_path);
+    for (index = 0u; index < descriptor->argument_count; ++index) {
+        const yvex_operator_argument_descriptor *argument = &descriptor->arguments[index];
+        if (!strcmp(argument->multiplicity, "many")) {
+            printf(" [%s ...]", argument->name);
+            width += strlen(argument->name) + 7u;
+        } else if (argument->required) {
+            printf(" %s", argument->name);
+            width += strlen(argument->name) + 1u;
+        } else {
+            printf(" [%s]", argument->name);
+            width += strlen(argument->name) + 3u;
+        }
+    }
+    if (width < 42u) printf("%*s", (int)(42u - width), "");
+    else fputc(' ', stdout);
+    printf(" %s%s\n", descriptor->summary,
+           descriptor->visibility == YVEX_OPERATOR_VISIBILITY_ENGINEERING
+               ? " [engineering]" : "");
 }
 void yvex_client_render_usage_error(const yvex_operator_descriptor *operation)
 {
@@ -332,21 +353,22 @@ int yvex_client_render_help_path(size_t path_count, const char *const *path,
         fputc('\n', stderr);
         return 2;
     }
-    if (exact && matches == 1u) {
+    if (exact) {
         render_leaf_help(exact);
-        return 0;
+        if (matches == 1u) return 0;
+        puts("\nsubcommands:");
+    } else {
+        puts(path_count ? "YVEX command namespace\n" : "YVEX local inference\n");
     }
-    puts(path_count ? "YVEX command namespace\n" : "YVEX local inference\n");
     for (index = 0u; index < yvex_operator_descriptor_count; ++index) {
         const yvex_operator_descriptor *descriptor = &yvex_operator_descriptors[index];
         int visible = path_count != 0u ||
                       descriptor->visibility == YVEX_OPERATOR_VISIBILITY_PRODUCT_DEFAULT ||
                       (advanced && (descriptor->visibility == YVEX_OPERATOR_VISIBILITY_PRODUCT_ADVANCED ||
                                     descriptor->visibility == YVEX_OPERATOR_VISIBILITY_ENGINEERING));
-        if (descriptor->cli_projection && visible &&
+        if (descriptor != exact && descriptor->cli_projection && visible &&
             descriptor_has_prefix(descriptor, path_count, path))
-            printf("  yvex %-42s %s%s\n", descriptor->command_path, descriptor->summary,
-                   descriptor->visibility == YVEX_OPERATOR_VISIBILITY_ENGINEERING ? " [engineering]" : "");
+            render_command_index_line(descriptor);
     }
     if (!advanced) puts("\nUse `yvex help --advanced` for advanced and engineering commands.");
     return 0;
@@ -355,8 +377,7 @@ static int client_error(const yvex_error *err)
 {
     fprintf(stderr, "yvex: %s\n", yvex_error_message(err));
     if (yvex_error_code(err) == YVEX_ERR_IO)
-        fprintf(stderr, "hint: run `yvex model list`, select one model, then use "
-                        "`yvex runtime start`\n");
+        fprintf(stderr, "hint: run `yvex model list`, then `yvex server MODEL`\n");
     return 1;
 }
 static void request_init(yvex_client_request *request,
@@ -607,13 +628,13 @@ static int runtime_summary_fetch(yvex_server_summary *summary, yvex_error *err)
         *summary = message.runtime;
     else if (rc == YVEX_OK) {
         yvex_error_set(err, YVEX_ERR_FORMAT, "client.status",
-                       "daemon returned an unexpected response");
+                       "server returned an unexpected response");
         rc = YVEX_ERR_FORMAT;
     }
     yvex_client_close(&client);
     return rc;
 }
-static int runtime_status(int json)
+static int server_status(int json)
 {
     yvex_server_summary summary;
     yvex_error err;
@@ -621,7 +642,7 @@ static int runtime_status(int json)
     if (rc == YVEX_OK) render_status(&summary, json);
     return rc == YVEX_OK ? 0 : client_error(&err);
 }
-static int runtime_model(void)
+static int server_model(void)
 {
     yvex_server_summary summary;
     yvex_error err;
@@ -638,7 +659,7 @@ static int runtime_model(void)
     }
     return rc == YVEX_OK ? 0 : client_error(&err);
 }
-static int runtime_memory(void)
+static int server_memory(void)
 {
     yvex_server_summary summary;
     yvex_error err;
@@ -646,7 +667,7 @@ static int runtime_memory(void)
     if (rc == YVEX_OK) {
         yvex_cli_terminal_style style;
         yvex_cli_terminal_style_get(stdout, &style);
-        printf("%sruntime memory%s · %.2f GiB host · %.2f GiB device · "
+        printf("%sserver memory%s · %.2f GiB host · %.2f GiB device · "
                "%.2f GiB mapped · %.2f GiB RSS · %.2f GiB peak RSS\n",
                style.strong, style.reset,
                (double)summary.metrics.resident_host_bytes / 1073741824.0,
@@ -657,7 +678,7 @@ static int runtime_memory(void)
     }
     return rc == YVEX_OK ? 0 : client_error(&err);
 }
-static int runtime_events(int projection)
+static int server_log(int json_output)
 {
     yvex_client_request request;
     yvex_client_message message;
@@ -668,28 +689,25 @@ static int runtime_events(int projection)
     yvex_cli_watch_renderer watch;
     char json[2048];
     int rc;
-    if (!projection) {
+    if (!json_output) {
         rc = runtime_summary_fetch(&summary, &err);
         if (rc != YVEX_OK) return client_error(&err);
         render_status(&summary, 0);
         yvex_cli_terminal_style_get(stdout, &style);
-        printf("%swatch%s · operational history and live events · Ctrl-C to stop\n\n",
+        printf("%sserver log%s · operational history and live events · Ctrl-C to stop\n\n",
                style.accent, style.reset);
         yvex_cli_watch_renderer_open(&watch);
     }
-    if (projection == 1)
-        puts("trace · full live event stream · Ctrl-C to stop");
-    request_init(&request, projection ? YVEX_CLIENT_OP_RUNTIME_TRACE : YVEX_CLIENT_OP_RUNTIME_WATCH);
-    request.trace_level = projection ? YVEX_SERVER_TRACE_FULL : YVEX_SERVER_TRACE_STAGES;
+    request_init(&request, json_output ? YVEX_CLIENT_OP_RUNTIME_TRACE
+                                      : YVEX_CLIENT_OP_RUNTIME_WATCH);
+    request.trace_level = json_output ? YVEX_SERVER_TRACE_FULL : YVEX_SERVER_TRACE_STAGES;
     rc = request_open(&client, &request, &err);
     while (rc == YVEX_OK) {
         rc = yvex_client_receive(client, &message, &err);
         if (rc != YVEX_OK) break;
         if (message.kind != YVEX_CLIENT_MESSAGE_EVENT) continue;
-        if (!projection)
+        if (!json_output)
             (void)yvex_cli_watch_renderer_event(&watch, &message.event);
-        else if (projection == 1)
-            (void)yvex_cli_out_server_event(&message.event, 1);
         else if (yvex_server_event_json(&message.event, json, sizeof(json), &err) == YVEX_OK) {
             fputs(json, stdout);
             fflush(stdout);
@@ -697,7 +715,7 @@ static int runtime_events(int projection)
         if (message.event.kind == YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_COMPLETE)
             break;
     }
-    if (!projection) yvex_cli_watch_renderer_finish(&watch);
+    if (!json_output) yvex_cli_watch_renderer_finish(&watch);
     yvex_client_close(&client);
     return rc == YVEX_OK ? 0 : client_error(&err);
 }
@@ -1259,14 +1277,14 @@ static int repl_command(const char *line, char current[YVEX_SERVER_SESSION_NAME_
     case YVEX_OPERATOR_RUNTIME_CONSOLE_STATUS:
         (void)console_status(current);
         break;
-    case YVEX_OPERATOR_RUNTIME_RUNTIME_STATUS:
-        (void)runtime_status(0);
+    case YVEX_OPERATOR_RUNTIME_SERVER_STATUS:
+        (void)server_status(0);
         break;
-    case YVEX_OPERATOR_RUNTIME_RUNTIME_MODEL:
-        (void)runtime_model();
+    case YVEX_OPERATOR_RUNTIME_SERVER_MODEL:
+        (void)server_model();
         break;
-    case YVEX_OPERATOR_RUNTIME_RUNTIME_MEMORY:
-        (void)runtime_memory();
+    case YVEX_OPERATOR_RUNTIME_SERVER_MEMORY:
+        (void)server_memory();
         break;
     case YVEX_OPERATOR_RUNTIME_SESSION_LIST:
         (void)administration(YVEX_CLIENT_OP_SESSION_LIST, NULL, 1);
@@ -1512,309 +1530,6 @@ static int run_command(int argc, char **argv)
         return status;
     }
 }
-static int model_config_paths(char directory[PATH_MAX], char path[PATH_MAX])
-{
-    const char *base = getenv("XDG_CONFIG_HOME");
-    char fallback[PATH_MAX];
-    int count;
-    if (!base || !base[0]) {
-        const char *home = getenv("HOME");
-        count = home ? snprintf(fallback, sizeof(fallback), "%s/.config", home) : -1;
-        if (!home || home[0] != '/' || count <= 0 || (size_t)count >= sizeof(fallback))
-            return 0;
-        base = fallback;
-    }
-    count = snprintf(directory, PATH_MAX, "%s/yvex", base);
-    if (base[0] != '/' || count <= 0 || count >= PATH_MAX) return 0;
-    count = snprintf(path, PATH_MAX, "%s/model.conf", directory);
-    if (count <= 0 || count >= PATH_MAX)
-        return 0;
-    return 1;
-}
-static int model_config_directory(const char *directory)
-{
-    struct stat status;
-    char parent[PATH_MAX], resolved[PATH_MAX], *slash;
-    (void)snprintf(parent, sizeof(parent), "%s", directory);
-    slash = strrchr(parent, '/');
-    if (!slash || slash == parent) return 0;
-    *slash = '\0';
-    if (lstat(parent, &status) != 0 || !S_ISDIR(status.st_mode) ||
-        status.st_uid != geteuid() || !realpath(parent, resolved) ||
-        strcmp(parent, resolved))
-        return 0;
-    if (mkdir(directory, 0700) != 0 && errno != EEXIST) return 0;
-    if (lstat(directory, &status) != 0 || !S_ISDIR(status.st_mode) ||
-        S_ISLNK(status.st_mode) || status.st_uid != geteuid())
-        return 0;
-    /* Selection contains absolute model paths. Harden a user-owned YVEX directory left behind by
-     * an ordinary permissive umask before publishing the mode-0600 snapshot. */
-    if ((status.st_mode & 0077u) != 0u &&
-        (chmod(directory, 0700) != 0 || lstat(directory, &status) != 0 ||
-         (status.st_mode & 0077u) != 0u))
-        return 0;
-    return 1;
-}
-static int model_config_write(const client_model_config *config)
-{
-    char directory[PATH_MAX], path[PATH_MAX], temporary[PATH_MAX];
-    FILE *output = NULL;
-    int fd = -1, ok = 0, count;
-    count = model_config_paths(directory, path)
-                ? snprintf(temporary, sizeof(temporary), "%s/.model.%lu", directory,
-                           (unsigned long)getpid())
-                : -1;
-    if (!model_config_paths(directory, path) || !model_config_directory(directory) ||
-        count <= 0 || (size_t)count >= sizeof(temporary))
-        return 0;
-    fd = open(temporary, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
-    if (fd < 0) return 0;
-    output = fdopen(fd, "w");
-    if (!output) {
-        (void)close(fd);
-        (void)unlink(temporary);
-        return 0;
-    }
-    fd = -1;
-    ok = fprintf(output,
-                 "name\t%s\nartifact\t%s\nbinding\t%s\ntarget\t%s\nbackend\t%s\nmode\t%s\ncontext\t%llu\n",
-                 config->name, config->artifact, config->binding, config->target,
-                 config->backend, config->mode, config->context) > 0 &&
-         fflush(output) == 0 && fsync(fileno(output)) == 0;
-    if (fclose(output) != 0) ok = 0;
-    output = NULL;
-    if (ok) ok = rename(temporary, path) == 0;
-    if (!ok) (void)unlink(temporary);
-    return ok;
-}
-static int model_config_read(client_model_config *config)
-{
-    char directory[PATH_MAX], path[PATH_MAX], line[PATH_MAX + 32u];
-    struct stat status;
-    FILE *input;
-    int fd, fields = 0;
-    if (!config || !model_config_paths(directory, path) ||
-        lstat(path, &status) != 0 || !S_ISREG(status.st_mode) ||
-        S_ISLNK(status.st_mode) || status.st_uid != geteuid() ||
-        (status.st_mode & 0077u) != 0u)
-        return 0;
-    fd = open(path, O_RDONLY | O_NOFOLLOW);
-    if (fd < 0 || fstat(fd, &status) != 0 || !S_ISREG(status.st_mode)) {
-        if (fd >= 0) (void)close(fd);
-        return 0;
-    }
-    input = fdopen(fd, "r");
-    if (!input) {
-        (void)close(fd);
-        return 0;
-    }
-    memset(config, 0, sizeof(*config));
-    while (fgets(line, sizeof(line), input)) {
-        char *value = strchr(line, '\t'), *newline;
-        if (!value || !(newline = strchr(value + 1, '\n')) || newline[1]) {
-            fields = -1;
-            break;
-        }
-        *value++ = '\0';
-        *newline = '\0';
-        if (!strcmp(line, "name") && !config->name[0] && value[0] &&
-            strlen(value) < sizeof(config->name) &&
-            snprintf(config->name, sizeof(config->name), "%s", value) > 0)
-            fields++;
-        else if (!strcmp(line, "artifact") && !config->artifact[0] && value[0] &&
-                 strlen(value) < sizeof(config->artifact) &&
-                 snprintf(config->artifact, sizeof(config->artifact), "%s", value) > 0)
-            fields++;
-        else if (!strcmp(line, "binding") && !config->binding[0] && value[0] &&
-                 strlen(value) < sizeof(config->binding) &&
-                 snprintf(config->binding, sizeof(config->binding), "%s", value) > 0)
-            fields++;
-        else if (!strcmp(line, "target") && !config->target[0] && value[0] &&
-                 strlen(value) < sizeof(config->target) &&
-                 snprintf(config->target, sizeof(config->target), "%s", value) > 0)
-            fields++;
-        else if (!strcmp(line, "backend") && !config->backend[0] && value[0] &&
-                 strlen(value) < sizeof(config->backend) &&
-                 snprintf(config->backend, sizeof(config->backend), "%s", value) > 0)
-            fields++;
-        else if (!strcmp(line, "mode") && !config->mode[0] && value[0] &&
-                 strlen(value) < sizeof(config->mode) &&
-                 snprintf(config->mode, sizeof(config->mode), "%s", value) > 0)
-            fields++;
-        else if (!strcmp(line, "context") && !config->context &&
-                 parse_u64(value, &config->context, 0))
-            fields++;
-        else {
-            fields = -1;
-            break;
-        }
-    }
-    if (ferror(input) || fclose(input) != 0) fields = -1;
-    return fields == 7 && config->artifact[0] == '/' && config->binding[0] == '/' &&
-           (!strcmp(config->backend, "cpu") || !strcmp(config->backend, "cuda")) &&
-           (!strcmp(config->mode, "target-only") || !strcmp(config->mode, "dspark"));
-}
-static int model_select_command(int argc, char **argv)
-{
-    yvex_model_registry_options options;
-    yvex_model_registry *registry = NULL;
-    const yvex_model_registry_entry *entry;
-    client_model_config config;
-    yvex_error err;
-    int rc;
-    memset(&config, 0, sizeof(config));
-    memset(&options, 0, sizeof(options));
-    yvex_error_clear(&err);
-    if (argc != 4 || !argv[3][0] || strlen(argv[3]) >= sizeof(config.name))
-        return 2;
-    rc = yvex_model_registry_open(&registry, &options, &err);
-    if (rc != YVEX_OK) {
-        fprintf(stderr, "yvex: model registry is unavailable: %s\n"
-                        "hint: use `yvex model registry add --help` to register a startup profile\n",
-                yvex_error_message(&err));
-        return 1;
-    }
-    entry = yvex_model_registry_find(registry, argv[3]);
-    if (!entry) {
-        fprintf(stderr, "yvex: model is not registered: %s\n"
-                        "hint: inspect available profiles with `yvex model list`\n",
-                argv[3]);
-        yvex_model_registry_close(registry);
-        return 1;
-    }
-    if (strlen(entry->path) >= sizeof(config.artifact) ||
-        strlen(entry->runtime_binding) >= sizeof(config.binding) ||
-        strlen(entry->runtime_target) >= sizeof(config.target) ||
-        strlen(entry->runtime_backend) >= sizeof(config.backend) ||
-        strlen(entry->runtime_mode) >= sizeof(config.mode)) {
-        fprintf(stderr, "yvex: registered startup profile exceeds client configuration limits\n");
-        yvex_model_registry_close(registry);
-        return 1;
-    }
-    rc = yvex_model_registry_startup_validate(entry, &err);
-    if (rc != YVEX_OK) {
-        fprintf(stderr, "yvex: model cannot be selected: %s\n"
-                        "hint: `yvex model show %s` reports its startup profile\n",
-                yvex_error_message(&err), argv[3]);
-        yvex_model_registry_close(registry);
-        return 1;
-    }
-    if (snprintf(config.name, sizeof(config.name), "%s", entry->alias) <= 0 ||
-        snprintf(config.artifact, sizeof(config.artifact), "%s", entry->path) <= 0 ||
-        snprintf(config.binding, sizeof(config.binding), "%s", entry->runtime_binding) <= 0 ||
-        snprintf(config.target, sizeof(config.target), "%s", entry->runtime_target) <= 0 ||
-        snprintf(config.backend, sizeof(config.backend), "%s", entry->runtime_backend) <= 0 ||
-        snprintf(config.mode, sizeof(config.mode), "%s", entry->runtime_mode) <= 0) {
-        yvex_model_registry_close(registry);
-        return 1;
-    }
-    config.context = entry->runtime_context;
-    yvex_model_registry_close(registry);
-    if (!model_config_write(&config)) {
-        fprintf(stderr, "yvex: selected model configuration could not be written safely\n");
-        return 1;
-    }
-    {
-        yvex_cli_terminal_style style;
-        yvex_cli_terminal_style_get(stdout, &style);
-        printf("%sselected model:%s %s · target %s · %s · %s · context %llu · "
-               "%srestart runtime to apply%s\n",
-               style.success, style.reset, config.name, config.target,
-               !strcmp(config.backend, "cuda") ? "CUDA" : "CPU",
-               !strcmp(config.mode, "dspark") ? "DSpark" : "target-only",
-               config.context, style.dim, style.reset);
-    }
-    return 0;
-}
-static int model_config_show(void)
-{
-    client_model_config config;
-    if (!model_config_read(&config)) {
-        fprintf(stderr,
-                "yvex: no selected model\n"
-                "hint: run `yvex model list`, then `yvex model select NAME`\n");
-        return 1;
-    }
-    {
-        yvex_cli_terminal_style style;
-        yvex_cli_terminal_style_get(stdout, &style);
-        printf("%sselected model:%s %s · target %s · backend=%s · mode=%s · context=%llu\n",
-               style.strong, style.reset, config.name, config.target, config.backend,
-               config.mode, config.context);
-    }
-    return 0;
-}
-static int exec_sibling_vector(const char *binary, char *const arguments[])
-{
-    char executable[PATH_MAX], sibling[PATH_MAX];
-    ssize_t count;
-    count = readlink("/proc/self/exe", executable, sizeof(executable) - 1u);
-    if (count > 0 && (size_t)count < sizeof(executable)) {
-        char *slash;
-        executable[count] = '\0';
-        slash = strrchr(executable, '/');
-        if (slash) {
-            *slash = '\0';
-            if (snprintf(sibling, sizeof(sibling), "%s/%s", executable,
-                         binary) > 0)
-                execv(sibling, arguments);
-        }
-    }
-    execvp(binary, arguments);
-    fprintf(stderr, "yvex: cannot execute %s: %s\n", binary, strerror(errno));
-    return 1;
-}
-static int exec_sibling(const char *binary, int argc, char **argv, int skip)
-{
-    char **arguments = calloc((size_t)argc + 1u, sizeof(*arguments));
-    int index, out = 0, status;
-    if (!arguments) return 1;
-    arguments[out++] = (char *)binary;
-    for (index = skip; index < argc; ++index) arguments[out++] = argv[index];
-    arguments[out] = NULL;
-    status = exec_sibling_vector(binary, arguments);
-    free(arguments);
-    return status;
-}
-static int runtime_start(int argc, char **argv)
-{
-    client_model_config config;
-    yvex_cli_terminal_style style;
-    char context[32];
-    char *arguments[16];
-    int count = 0;
-    if (argc > 3) return exec_sibling("yvexd", argc, argv, 3);
-    if (!model_config_read(&config)) {
-        fprintf(stderr,
-                "yvex: no selected model\n"
-                "hint: run `yvex model list`, then `yvex model select NAME`\n");
-        return 1;
-    }
-    (void)snprintf(context, sizeof(context), "%llu", config.context);
-    arguments[count++] = "yvexd";
-    arguments[count++] = "--model";
-    arguments[count++] = config.artifact;
-    arguments[count++] = "--runtime-binding";
-    arguments[count++] = config.binding;
-    arguments[count++] = "--target";
-    arguments[count++] = config.target;
-    arguments[count++] = "--backend";
-    arguments[count++] = config.backend;
-    arguments[count++] = "--generation-mode";
-    arguments[count++] = config.mode;
-    arguments[count++] = "--context";
-    arguments[count++] = context;
-    arguments[count] = NULL;
-    yvex_cli_terminal_style_get(stdout, &style);
-    printf("%sYVEX runtime%s · %sstarting selected model%s %s\n"
-           "  target %s · %s · %s · context %llu\n"
-           "  foreground host · leave this terminal open · readiness follows model admission\n",
-           style.strong, style.reset, style.accent, style.reset, config.name, config.target,
-           !strcmp(config.backend, "cuda") ? "CUDA" : "CPU",
-           !strcmp(config.mode, "dspark") ? "DSpark" : "target-only", config.context);
-    (void)fflush(stdout);
-    return exec_sibling_vector("yvexd", arguments);
-}
 static int help_command(int argc, char **argv, size_t consumed)
 {
     const char *path[16];
@@ -1851,7 +1566,7 @@ static int console_status_fetch(const char *session_name,
         rc = message->status;
     } else if (rc == YVEX_OK && message->kind != YVEX_CLIENT_MESSAGE_CONSOLE_STATUS) {
         yvex_error_set(err, YVEX_ERR_FORMAT, "client.console-status",
-                       "daemon returned an unexpected console status response");
+                       "server returned an unexpected console status response");
         rc = YVEX_ERR_FORMAT;
     }
     yvex_client_close(&client);
@@ -1937,15 +1652,13 @@ int yvex_client_dispatch(const yvex_operator_descriptor *operation, int argc,
     switch (operation->runtime_adapter) {
     case YVEX_OPERATOR_RUNTIME_CHAT: return chat_command(argc, argv);
     case YVEX_OPERATOR_RUNTIME_RUN: return run_command(argc, argv);
-    case YVEX_OPERATOR_RUNTIME_RUNTIME_START: return runtime_start(argc, argv);
-    case YVEX_OPERATOR_RUNTIME_RUNTIME_STATUS:
-        return runtime_status(argc > 3 && !strcmp(argv[3], "--json"));
-    case YVEX_OPERATOR_RUNTIME_RUNTIME_MODEL: return runtime_model();
-    case YVEX_OPERATOR_RUNTIME_RUNTIME_MEMORY: return runtime_memory();
-    case YVEX_OPERATOR_RUNTIME_RUNTIME_WATCH: return runtime_events(0);
-    case YVEX_OPERATOR_RUNTIME_RUNTIME_TRACE:
-        return runtime_events(argc > 3 && !strcmp(argv[3], "--json") ? 2 : 1);
-    case YVEX_OPERATOR_RUNTIME_RUNTIME_STOP:
+    case YVEX_OPERATOR_RUNTIME_SERVER_STATUS:
+        return server_status(argc > 3 && !strcmp(argv[3], "--json"));
+    case YVEX_OPERATOR_RUNTIME_SERVER_MODEL: return server_model();
+    case YVEX_OPERATOR_RUNTIME_SERVER_MEMORY: return server_memory();
+    case YVEX_OPERATOR_RUNTIME_SERVER_LOG:
+        return server_log(argc > 3 && !strcmp(argv[3], "--json"));
+    case YVEX_OPERATOR_RUNTIME_SERVER_STOP:
         return administration(YVEX_CLIENT_OP_RUNTIME_STOP, NULL, 0);
     case YVEX_OPERATOR_RUNTIME_SESSION_NEW:
         return administration(YVEX_CLIENT_OP_SESSION_NEW, name, 0);
@@ -1978,8 +1691,6 @@ int yvex_client_dispatch(const yvex_operator_descriptor *operation, int argc,
     case YVEX_OPERATOR_RUNTIME_SESSION_CANCEL:
         puts(cancellation_request(name) ? "cancel requested" : "no active turn");
         return 0;
-    case YVEX_OPERATOR_RUNTIME_MODEL_SELECTED: return model_config_show();
-    case YVEX_OPERATOR_RUNTIME_MODEL_SELECT: return model_select_command(argc, argv);
     case YVEX_OPERATOR_RUNTIME_HELP: return help_command(argc, argv, consumed);
     case YVEX_OPERATOR_RUNTIME_COMPLETION:
         return yvex_cli_completion_command(argc, argv, consumed);

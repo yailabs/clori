@@ -484,8 +484,8 @@ def check_content(rows: list[dict[str, str]]) -> None:
         if "unsupported runtime family" not in text:
             fail(f"{family} record does not state unsupported runtime stage")
 
-    if "The daemon-backed console uses one `yvex>` prompt" not in readme:
-        fail("README does not describe the current daemon-backed console")
+    if "The server-backed console uses one `yvex>` prompt" not in readme:
+        fail("README does not describe the current server-backed console")
     if "Ctrl-D exits cleanly" not in readme:
         fail("README omits the current console EOF contract")
     if "functional but transitional" in readme:

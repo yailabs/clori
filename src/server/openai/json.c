@@ -935,7 +935,7 @@ int openai_json_admit(const openai_http_request *http,
                          "model and complete input are required");
     if (rc == YVEX_OK && strcmp(request->model, selected_model) != 0)
         rc = json_refuse(err, YVEX_ERR_STATE,
-                         "requested model is not loaded by yvexd");
+                         "requested model is not loaded by the YVEX server");
     if (rc == YVEX_OK && endpoint == OPENAI_ENDPOINT_RESPONSES)
         rc = prepend_instruction(request, instruction, err);
     if (rc == YVEX_OK) instruction.bytes = NULL;

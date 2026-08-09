@@ -9,7 +9,7 @@ and [Events Contract](../contracts/events-telemetry.md).
 
 ## Hosted lifecycle
 
-One `yvexd` process owns one immutable runtime model from startup until
+One foreground `yvex server MODEL` process owns one immutable runtime model from startup until
 shutdown. Startup authenticates the complete artifact and runtime binding,
 imports descriptors and Physical Execution IR, seals the compiled execution
 profile, builds model-lifetime host and accelerator resources, prepares

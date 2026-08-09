@@ -1,5 +1,5 @@
 #!/bin/sh
-# Exercise the line editor and daemon-backed console through a real PTY.
+# Exercise the line editor and server-backed console through a real PTY.
 set -eu
 
 YVEX_BIN=${YVEX_BIN:-./yvex}
@@ -185,7 +185,7 @@ grep -F '  Ctrl-L       clear and redraw input' "$root/typescript.plain" >/dev/n
 test "$(awk '/^commands$/ { catalog = 1; next }
              catalog && /^$/ { exit }
              catalog && /^  \// { count++ }
-             END { print count + 0 }' "$root/typescript.plain")" -eq 18
+             END { print count + 0 }' "$root/typescript.plain")" -eq 17
 ! grep -F 'commands ·' "$root/typescript.plain" >/dev/null
 grep -F "$clear" "$root/typescript" >/dev/null
 grep -F "$redrawn" "$root/typescript" >/dev/null
@@ -476,28 +476,23 @@ wait "$repl_pid"
 repl_pid=
 grep -F 'live aaaaaaaaaaaa' "$root/completion.typescript" >/dev/null
 
-XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" runtime watch >"$root/watch"
-XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" runtime trace >"$root/trace"
-XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" runtime trace --json >"$root/trace.jsonl"
-XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" runtime status >"$root/status"
-grep -F 'YVEX runtime ·' "$root/watch" >/dev/null
-grep -F 'watch · operational history and live events · Ctrl-C to stop' \
-    "$root/watch" >/dev/null
-grep -E 'REQUEST[[:space:]]+fixture/fixture-request' "$root/watch" >/dev/null
-grep -E 'RUNTIME[[:space:]]+runtime shutdown complete' "$root/watch" >/dev/null
-! grep -F 'kernel launches 4511 · stream syncs 63' "$root/watch" >/dev/null
-! grep -F 'client disconnected' "$root/watch" >/dev/null
-! grep -E '^#[0-9]+' "$root/watch" >/dev/null
-grep -E '^#[0-9]+ info[[:space:]]+request started' "$root/trace" >/dev/null
-grep -F 'trace · full live event stream · Ctrl-C to stop' "$root/trace" >/dev/null
-grep -F 'phase launches · kernel launches 4511 · stream syncs 63' "$root/trace" >/dev/null
-! grep -E '(^|[[:space:]])[ab]=' "$root/watch" >/dev/null
-! grep -E '(^|[[:space:]])[ab]=' "$root/trace" >/dev/null
-! grep -F "$esc" "$root/watch" "$root/trace" "$root/status" >/dev/null
-grep -F '"schema":3' "$root/trace.jsonl" >/dev/null
-grep -F '"kind":"generation.profile"' "$root/trace.jsonl" >/dev/null
+XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server log >"$root/log"
+XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server log --json >"$root/log.jsonl"
+XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server status >"$root/status"
+grep -F 'YVEX runtime ·' "$root/log" >/dev/null
+grep -F 'server log · operational history and live events · Ctrl-C to stop' \
+    "$root/log" >/dev/null
+grep -E 'REQUEST[[:space:]]+fixture/fixture-request' "$root/log" >/dev/null
+grep -E 'RUNTIME[[:space:]]+runtime shutdown complete' "$root/log" >/dev/null
+! grep -F 'kernel launches 4511 · stream syncs 63' "$root/log" >/dev/null
+! grep -F 'client disconnected' "$root/log" >/dev/null
+! grep -E '^#[0-9]+' "$root/log" >/dev/null
+! grep -E '(^|[[:space:]])[ab]=' "$root/log" >/dev/null
+! grep -F "$esc" "$root/log" "$root/status" >/dev/null
+grep -F '"schema":3' "$root/log.jsonl" >/dev/null
+grep -F '"kind":"generation.profile"' "$root/log.jsonl" >/dev/null
 
-# Losing yvexd during a turn restores the prompt and terminal before exit.
+# Losing the server during a turn restores the prompt and terminal before exit.
 mkfifo "$root/disconnect.input"
 NO_COLOR=1 XDG_RUNTIME_DIR="$runtime" script -q -f -e \
     -c "$YVEX_BIN chat --session disconnect" "$root/disconnect.typescript" \
@@ -538,7 +533,7 @@ wait "$repl_pid"
 repl_pid=
 grep -F "${esc}[?2004l" "$root/disconnect.typescript" >/dev/null
 
-# A PTY selects chat, but connection refusal remains typed when no daemon exists.
+# A PTY selects chat, but connection refusal remains typed when no server exists.
 set +e
 printf '\004' | XDG_RUNTIME_DIR="$runtime" \
     script -q -e -c "$YVEX_BIN chat --session pty" "$root/absent.typescript" \
@@ -548,5 +543,5 @@ set -e
 
 test "$status" -eq 1
 ! grep -F 'chat requires a terminal' "$root/absent.typescript" >/dev/null
-grep -F '`yvex runtime start`' "$root/absent.typescript" >/dev/null
+grep -F '`yvex server MODEL`' "$root/absent.typescript" >/dev/null
 printf 'test: repl_pty\n'

@@ -39,8 +39,8 @@ src/runtime/             family-neutral immutable model, sessions, execution and
 
 ```text
 registry JSON -> strict build validation -> immutable compiled descriptors -> yvex dispatch/help
-product argv -> protocol v8 -> yvexd worker/session -> typed events/results -> client render
-application -> OpenAI profile -> provider contract -> local protocol -> same yvexd worker/session
+product argv -> protocol v8 -> server worker/session -> typed events/results -> client render
+application -> OpenAI profile -> provider contract -> local protocol -> same server worker/session
 engineering argv -> nested owner route -> report/domain -> engineering render -> cli/io
 
 file writer -> explicit local files only
@@ -245,7 +245,7 @@ forbidden.
 | Registry validation and deterministic C projection | `tools/generate_operator_registry.py` |
 | Generated immutable descriptor data | `build/generated/operator/*` |
 | Product entry, REPL and compact render | `src/cli/io/client.c` |
-| Runtime-host entry | `src/daemon/yvexd.c` |
+| Foreground server entry | `src/cli/io/server.c` |
 | Local protocol and host | `src/server/*` |
 | Provider-neutral application contract | `include/yvex/provider.h`, `src/provider/core.c` |
 | OpenAI compatibility adapter | `src/server/openai/*` |

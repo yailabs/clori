@@ -8,11 +8,10 @@ or release claims.
 
 ## System boundary
 
-YVEX is one native compiler and inference system with two product executables:
+YVEX is one native compiler and inference system with one product executable:
 
 ```text
-yvex   finite public command process
-yvexd  long-lived local runtime process
+yvex  foreground model server, protocol clients, and finite offline operations
 ```
 
 `libyvex` supplies reusable compilation, artifact, runtime, graph, backend,
@@ -27,20 +26,22 @@ curated explanation, not runtime evidence.
 
 ## Product processes
 
-`yvex` has two mechanically separated lanes:
+`yvex` has three mechanically separated lanes:
 
 - the runtime-client lane uses the private local protocol for chat, one-shot
   generation, runtime administration, sessions, live model inspection,
-  cancellation, watch, and trace;
+  cancellation, and the single human/JSON log surface;
+- the foreground `server MODEL` lane directly owns persistent model hosting;
 - the finite offline-engine lane calls admitted library owners for compilation,
   artifact operations, inspection, direct component execution, profiling, and
   system facts.
 
 The runtime-client lane cannot open an artifact, initialize CUDA, execute a
 Transformer, or host a model. The offline lane closes all resources before the
-process exits and never owns persistent sessions.
+process exits and never owns persistent sessions. The server lane is explicit
+in the invocation and never shells out to or executes a hidden binary.
 
-`yvexd` owns one process-lifetime runtime model containing target and DSpark
+The foreground server lane owns one process-lifetime runtime model containing target and DSpark
 draft/verification plans, one bounded worker and queue, one server-session
 registry, one private Unix listener, one loopback OpenAI-compatible listener,
 and one telemetry authority. HTTP and native clients enter the same worker,

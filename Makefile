@@ -6,7 +6,6 @@
 #   make info
 #   make lib
 #   make client
-#   make daemon
 #   make package
 #   make cuda-info
 #   make cuda
@@ -35,12 +34,11 @@
 #   make clean
 #
 # Product topology:
-#   - ./yvex is the sole public command surface.
-#   - ./yvexd is the sole long-lived model host and owns the loopback adapter.
+#   - ./yvex is the sole public command and foreground model-server surface.
 
 .DEFAULT_GOAL := all
 
-.PHONY: all info lib client daemon package generate-source-manifest \
+.PHONY: all info lib client package generate-source-manifest \
 	check-source-manifest generate-operator-registry \
 	generate-command-migration \
 	check-operator-registry test-operator-registry cuda-info cuda-kernels cuda test-cuda test-cuda-graph \
@@ -161,7 +159,6 @@ PINNED_GGML_BUILD ?= $(PINNED_GGML_ROOT)/build-yvex
 
 LIBYVEX ?= $(LIB_DIR)/libyvex.a
 YVEX_BIN ?= ./yvex
-YVEXD_BIN ?= ./yvexd
 
 ifneq ($(strip $(MAKECMDGOALS)),clean)
 include $(SOURCE_MANIFEST_MK)
@@ -202,7 +199,6 @@ CLIENT_PROTOCOL_OBJS := \
 	$(OBJ_DIR)/src/provider/core.o \
 	$(OBJ_DIR)/src/server/protocol.o \
 	$(OBJ_DIR)/src/server/telemetry.o
-DAEMON_OBJ := $(patsubst %.c,$(OBJ_DIR)/%.o,$(DAEMON_SRCS))
 OPENAI_ADAPTER_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(OPENAI_ADAPTER_SRCS))
 
 CUDA_ARCH_FLAG := $(if $(filter auto,$(YVEX_CUDA_ARCH)),,-arch=$(YVEX_CUDA_ARCH))
@@ -310,7 +306,7 @@ RUNNER_OBJS := $(TEST_MAIN_OBJ) $(QUANT_TEST_RUNNER_OBJ) \
 	$(TRANSFORMER_LIVE_OBJ) $(DECODE_LIVE_OBJ) $(LOGITS_LIVE_OBJ) $(TOKENIZER_LIVE_OBJ) \
 	$(GENERATION_LIVE_OBJ) $(OPENAI_FAKE_HOST_OBJ) $(OPENAI_ADAPTER_HOST_OBJ)
 DEPENDENCY_FILES := $(CORE_OBJS:.o=.d) $(YVEX_OBJS:.o=.d) \
-	$(DAEMON_OBJ:.o=.d) $(OPENAI_ADAPTER_OBJS:.o=.d) $(TEST_UNIT_OBJS:.o=.d) \
+	$(OPENAI_ADAPTER_OBJS:.o=.d) $(TEST_UNIT_OBJS:.o=.d) \
 	$(TEST_REFERENCE_OBJS:.o=.d) $(QUANT_TEST_UNIT_OBJS:.o=.d) \
 	$(CUDA_TEST_UNIT_OBJS:.o=.d) $(RUNNER_OBJS:.o=.d)
 
@@ -325,15 +321,14 @@ info:
 	@echo "project_control: ROADMAP.md"
 	@echo "interface: local client/protocol plus engine library ABI"
 	@echo "library: libyvex.a"
-	@echo "client: ./yvex run|chat|runtime|session|graph|artifact|quant|tokenizer"
-	@echo "daemon: ./yvexd long-lived local runtime host plus loopback OpenAI adapter"
+	@echo "product: ./yvex server|run|chat|session|graph|artifact|quant|tokenizer"
 	@echo "runtime_attention: CPU eager and admitted GB10 CUDA eager/piecewise/full implemented"
 	@echo "benchmark_attention: identity-bound baseline, JSON/CSV, and deterministic SVG capability implemented"
 	@echo "persistent_kv: session-owned DeepSeek CPU/CUDA state implemented"
 	@echo "generation: implemented behind the admitted local runtime host"
 	@echo "release: blocked"
 
-all: generate-source-manifest generate-operator-registry lib client daemon
+all: generate-source-manifest generate-operator-registry lib client
 
 generate-source-manifest: $(SOURCE_MANIFEST_MK)
 
@@ -374,9 +369,7 @@ lib: $(LIBYVEX)
 
 client: generate-operator-registry $(YVEX_BIN)
 
-daemon: $(YVEXD_BIN)
-
-package: client daemon config/package_manifest.tsv NOTICE.md
+package: client config/package_manifest.tsv NOTICE.md
 	@set -eu; \
 	package_root='$(BUILD_DIR)/package'; \
 	package_dir='$(BUILD_DIR)/package/product'; \
@@ -384,25 +377,23 @@ package: client daemon config/package_manifest.tsv NOTICE.md
 	if test -d "$$package_root"; then find "$$package_root" -depth -mindepth 1 -delete; fi; \
 	mkdir -p "$$package_dir/bin" "$$package_dir/share/yvex"; \
 	cp '$(YVEX_BIN)' "$$package_dir/bin/yvex"; \
-	cp '$(YVEXD_BIN)' "$$package_dir/bin/yvexd"; \
 	cp config/package_manifest.tsv NOTICE.md "$$package_dir/share/yvex/"; \
-	printf '%s\n' 'yvex package: product client + local runtime host' \
+	printf '%s\n' 'yvex package: command and foreground model server' \
 		> "$$package_dir/share/yvex/profile"; \
 	commit=$$(git rev-parse HEAD); \
 	client_sha=$$(sha256sum '$(YVEX_BIN)' | awk '{print $$1}'); \
-	daemon_sha=$$(sha256sum '$(YVEXD_BIN)' | awk '{print $$1}'); \
 	library_sha=$$(sha256sum '$(LIBYVEX)' | awk '{print $$1}'); \
 	registry_identity=$$(cat '$(OPERATOR_REGISTRY_IDENTITY)'); \
 	package_identity=$$(printf '%s\n' "$$commit" '8' 'cpu+cuda-dynamic' \
-		"$$registry_identity" "$$client_sha" "$$daemon_sha" "$$library_sha" | \
+		"$$registry_identity" "$$client_sha" "$$library_sha" | \
 		sha256sum | awk '{print $$1}'); \
 	{ printf 'field\tvalue\n'; \
 	  printf 'profile\tproduct\nsource_commit\t%s\n' "$$commit"; \
 	  printf 'package_identity\t%s\n' "$$package_identity"; \
 	  printf 'protocol_version\t%s\noperator_registry_identity\t%s\nbackend\t%s\n' \
 		'8' "$$registry_identity" 'cpu+cuda-dynamic'; \
-	  printf 'yvex_sha256\t%s\nyvexd_sha256\t%s\nlibyvex_sha256\t%s\n' \
-		"$$client_sha" "$$daemon_sha" "$$library_sha"; \
+	  printf 'yvex_sha256\t%s\nlibyvex_sha256\t%s\n' \
+		"$$client_sha" "$$library_sha"; \
 	} > "$$package_dir/share/yvex/build.tsv"
 
 cuda-info: $(YVEX_BIN)
@@ -414,7 +405,7 @@ cuda-info: $(YVEX_BIN)
 cuda-kernels: $(CUDA_PTX_INC) $(if $(CUDA_NATIVE_ARCH),$(CUDA_CUBIN_INC))
 	@echo "yvex cuda kernels: built from $(CUDA_CU_SRCS) arch=$(YVEX_CUDA_ARCH)"
 
-cuda: cuda-kernels lib client daemon $(CUDA_TEST_RUNNER)
+cuda: cuda-kernels lib client $(CUDA_TEST_RUNNER)
 	@echo "yvex cuda build: dynamic Driver API plus admitted PTX/native kernel image"
 
 test-cuda: cuda
@@ -439,7 +430,6 @@ check-cuda: cuda-info test-cuda smoke-cuda test-attention-cuda
 test-cuda-no-nvcc: tests/test_cuda_failclosed.sh
 	$(MAKE) BUILD_DIR=build/no-nvcc \
 		YVEX_BIN=build/no-nvcc/yvex \
-		YVEXD_BIN=build/no-nvcc/yvexd \
 		NVCC=__yvex_nvcc_unavailable__ all
 	YVEX_BIN=build/no-nvcc/yvex sh tests/test_cuda_failclosed.sh
 
@@ -463,12 +453,12 @@ test-openai-bet-tennis: test-openai
 		YVEX_OPENAI_HOST=$(OPENAI_FAKE_HOST) \
 		sh tests/integration/bet_tennis.sh
 
-test-openai-live: daemon
-	YVEX_BIN=$(YVEX_BIN) YVEXD_BIN=$(YVEXD_BIN) \
+test-openai-live: client
+	YVEX_BIN=$(YVEX_BIN) \
 		sh tests/live/openai.sh
 
-test-cli: client daemon $(CLI_TEST) $(CLIENT_CUTOVER_TEST)
-	YVEX_BIN='$(YVEX_BIN)' YVEXD_BIN='$(YVEXD_BIN)' sh $(CLI_TEST)
+test-cli: client $(CLI_TEST) $(CLIENT_CUTOVER_TEST)
+	YVEX_BIN='$(YVEX_BIN)' sh $(CLI_TEST)
 	YVEX_BIN='$(YVEX_BIN)' YVEX_CLIENT_LANE_OBJ='$(CLIENT_LANE_OBJ)' \
 		sh $(CLIENT_CUTOVER_TEST)
 
@@ -672,7 +662,7 @@ test-repl: client $(OPENAI_FAKE_HOST) $(REPL_PTY_TEST)
 
 test-packaging: package
 	@test -x '$(BUILD_DIR)/package/product/bin/yvex'
-	@test -x '$(BUILD_DIR)/package/product/bin/yvexd'
+	@test ! -e '$(BUILD_DIR)/package/product/bin/yvexd'
 	@test ! -e '$(BUILD_DIR)/package/product/bin/yvex-openai'
 	@test ! -e '$(BUILD_DIR)/package/product/bin/yvex-dev'
 	@test -f '$(BUILD_DIR)/package/product/share/yvex/package_manifest.tsv'
@@ -682,11 +672,11 @@ test-packaging: package
 	@test ! -e '$(BUILD_DIR)/package/developer'
 
 test-product-topology: all package tests/product_topology.sh
-	YVEX_BIN='$(YVEX_BIN)' YVEXD_BIN='$(YVEXD_BIN)' BUILD_DIR='$(BUILD_DIR)' \
+	YVEX_BIN='$(YVEX_BIN)' BUILD_DIR='$(BUILD_DIR)' \
 		sh tests/product_topology.sh
 
-test-runtime-client-refoundation-live: client daemon $(CLIENT_REFOUNDATION_LIVE_TEST)
-	YVEX_BIN='$(YVEX_BIN)' YVEXD_BIN='$(YVEXD_BIN)' \
+test-runtime-client-refoundation-live: client $(CLIENT_REFOUNDATION_LIVE_TEST)
+	YVEX_BIN='$(YVEX_BIN)' \
 		YVEX_MODEL_ARTIFACT='$(YVEX_MODEL_ARTIFACT)' \
 		YVEX_RUNTIME_BINDING='$(YVEX_RUNTIME_BINDING)' \
 		sh $(CLIENT_REFOUNDATION_LIVE_TEST)
@@ -698,11 +688,11 @@ test-runtime-asan:
 	build_dir="$$tmp_dir/build"; \
 	ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:strict_string_checks=1 \
 		$(MAKE) BUILD_DIR="$$build_dir" \
-			YVEX_BIN="$$build_dir/yvex" YVEXD_BIN="$$build_dir/yvexd" \
+			YVEX_BIN="$$build_dir/yvex" \
 			NVCC=__yvex_nvcc_unavailable__ \
 			CFLAGS='$(CFLAGS) -O1 -g -fno-omit-frame-pointer -fsanitize=address,leak' \
 			LDFLAGS='$(LDFLAGS) -fsanitize=address,leak' \
-			test-runtime client daemon test-openai; \
+			test-runtime client test-openai; \
 	ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:strict_string_checks=1 \
 		YVEX_BIN="$$build_dir/yvex" \
 		YVEX_TEST_HOST="$$build_dir/tests/openai_host" sh $(REPL_PTY_TEST); \
@@ -745,12 +735,12 @@ test-runtime-ubsan:
 	build_dir="$$tmp_dir/build"; \
 	UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
 		$(MAKE) BUILD_DIR="$$build_dir" \
-			YVEX_BIN="$$build_dir/yvex" YVEXD_BIN="$$build_dir/yvexd" \
+			YVEX_BIN="$$build_dir/yvex" \
 			NVCC=__yvex_nvcc_unavailable__ \
 		CFLAGS='$(CFLAGS) -O1 -g -fno-omit-frame-pointer -fsanitize=undefined \
 			-fno-sanitize-recover=undefined' \
 			LDFLAGS='$(LDFLAGS) -fsanitize=undefined' \
-			test-runtime client daemon test-openai; \
+			test-runtime client test-openai; \
 	UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
 		YVEX_BIN="$$build_dir/yvex" \
 		YVEX_TEST_HOST="$$build_dir/tests/openai_host" sh $(REPL_PTY_TEST); \
@@ -1400,15 +1390,15 @@ test-source-ownership: tests/test_source_ownership.sh config/source_owners.tsv
 test-repository-layout: $(LIBYVEX) tests/test_repository_layout.sh Makefile
 	sh tests/test_repository_layout.sh
 
-test-architecture-boundaries: $(LIBYVEX) $(YVEX_BIN) $(YVEXD_BIN) $(TEST_REFERENCE_OBJS) tests/test_architecture_boundaries.sh
-	YVEX_LIB="$(LIBYVEX)" YVEX_BIN="$(YVEX_BIN)" YVEXD_BIN="$(YVEXD_BIN)" \
+test-architecture-boundaries: $(LIBYVEX) $(YVEX_BIN) $(TEST_REFERENCE_OBJS) tests/test_architecture_boundaries.sh
+	YVEX_LIB="$(LIBYVEX)" YVEX_BIN="$(YVEX_BIN)" \
 		YVEX_CLIENT_LANE_OBJ="$(CLIENT_LANE_OBJ)" \
 		YVEX_REFERENCE_OBJS="$(TEST_REFERENCE_OBJS)" \
 		sh tests/test_architecture_boundaries.sh
 
 smoke: test-cli
 
-check: check-docs check-guardrails lib client daemon test test-cuda-no-nvcc test-gguf-artifact-abi test-gguf-layout-integrity test-gguf-qtype-abi test-layout test-code-natural test-project-control test-docs-surface test-documentation-architecture test-surface test-source-ownership test-repository-layout test-architecture-boundaries smoke
+check: check-docs check-guardrails lib client test test-cuda-no-nvcc test-gguf-artifact-abi test-gguf-layout-integrity test-gguf-qtype-abi test-layout test-code-natural test-project-control test-docs-surface test-documentation-architecture test-surface test-source-ownership test-repository-layout test-architecture-boundaries smoke
 	@echo "yvex check: ok"
 
 $(LIBYVEX): $(CORE_OBJS)
@@ -1511,13 +1501,9 @@ $(CUDA_CUBIN_INC): $(CUDA_CUBIN)
 			'$(CUDA_NATIVE_ARCH)'; \
 	} >"$$tmp"; mv "$$tmp" "$@"; trap - EXIT HUP INT TERM
 
-$(YVEX_BIN): $(YVEX_OBJS) $(LIBYVEX)
+$(YVEX_BIN): $(YVEX_OBJS) $(OPENAI_ADAPTER_OBJS) $(LIBYVEX)
 	@mkdir -p $(@D)
-	$(CC) $(CFLAGS) $(YVEX_OBJS) $(LIBYVEX) $(LDFLAGS) $(LDLIBS) -o $@
-
-$(YVEXD_BIN): $(DAEMON_OBJ) $(OPENAI_ADAPTER_OBJS) $(LIBYVEX)
-	@mkdir -p $(@D)
-	$(CC) $(CFLAGS) $(DAEMON_OBJ) $(OPENAI_ADAPTER_OBJS) $(LIBYVEX) \
+	$(CC) $(CFLAGS) $(YVEX_OBJS) $(OPENAI_ADAPTER_OBJS) $(LIBYVEX) \
 		$(LDFLAGS) $(LDLIBS) -o $@
 
 $(TEST_RUNNER): $(TEST_MAIN_OBJ) $(TEST_UNIT_OBJS) $(TEST_REFERENCE_OBJS) \
@@ -1685,7 +1671,7 @@ check-guardrails: check-source-manifest $(LIBYVEX) $(YVEX_BIN) \
 	@test -f include/yvex/server.h
 	@test ! -d fixtures
 	@test -f src/cli/main.c
-	@test -f src/daemon/yvexd.c
+	@test -f src/cli/io/server.c
 	@test -f src/server/core.c
 	@test -z "$$(git ls-files 'yvex_*.c')"
 	@test -z "$$(git ls-files 'yvex_*_private.h')"
