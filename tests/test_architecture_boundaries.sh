@@ -21,6 +21,7 @@ fail() {
 family_compare_pattern='(strcmp|strncmp|strcasecmp|strncasecmp|strstr|strcasestr)'
 family_name_pattern='(deepseek|qwen|gemma|llama|kimi|mamba)'
 family_branch_pattern="(${family_compare_pattern}[^;]*${family_name_pattern}|${family_name_pattern}[^;]*${family_compare_pattern})"
+generic_family_symbol_pattern='\b(deepseek|minimax|qwen|gemma|llama|kimi|mamba)[A-Za-z0-9_]*\b'
 runtime_planning_include_pattern='#include[[:space:]]+[<"]yvex/internal/(compilation|source|source_payload|gguf_writer)[.]h[>"]'
 runtime_planning_call_pattern='yvex_(source_payload_[A-Za-z0-9_]*|transform_[A-Za-z0-9_]*|quant_plan_[A-Za-z0-9_]*|gguf_writer_[A-Za-z0-9_]*)[[:space:]]*\('
 runtime_planning_symbol_pattern='^yvex_(source_payload_[A-Za-z0-9_]*|transform_[A-Za-z0-9_]*|quant_plan_[A-Za-z0-9_]*|gguf_writer_[A-Za-z0-9_]*)$'
@@ -129,6 +130,13 @@ if printf '%s\n' 'model.graph;' |
     rg "$runtime_family_dispatch_pattern" >/dev/null; then
     fail "runtime family-dispatch guard rejects the generic graph capability"
 fi
+printf '%s\n' 'CUfunction deepseek_decode_function;' |
+    rg -i "$generic_family_symbol_pattern" >/dev/null ||
+    fail "generic backend family-symbol guard misses a concrete kernel handle"
+if printf '%s\n' 'CUfunction encoded_row_decode_function;' |
+    rg -i "$generic_family_symbol_pattern" >/dev/null; then
+    fail "generic backend family-symbol guard rejects an operation-named kernel handle"
+fi
 printf '%s\n' 'static const char fallback_ptx[] = ".version 8.0";' |
     rg -i "$fallback_ptx_pattern" >/dev/null ||
     fail "fallback-PTX guard misses an embedded production blob"
@@ -220,6 +228,17 @@ while IFS= read -r source; do
     fi
 done <<EOF
 $family_neutral_sources
+EOF
+generic_cuda_sources=$(
+    find src/backend/cuda -maxdepth 1 -type f \
+        \( -name '*.c' -o -name '*.h' -o -name '*.cu' \) | LC_ALL=C sort
+)
+while IFS= read -r source; do
+    if rg -n -i "$generic_family_symbol_pattern" "$source"; then
+        fail "generic CUDA owner names a concrete family: $source"
+    fi
+done <<EOF
+$generic_cuda_sources
 EOF
 if rg -n "$cli_family_helper_pattern" src/cli/commands/graph.c; then
     fail "common graph CLI bypasses typed runtime-family preparation facts"

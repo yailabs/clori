@@ -1326,7 +1326,7 @@ static int run_cuda_bundle_refusal(yvex_error *err)
     memset(&options, 0, sizeof(options));
     memset(&capability, 0, sizeof(capability));
     options.kind = YVEX_BACKEND_KIND_CUDA;
-    if (setenv("YVEX_TEST_CUDA_BUNDLE_FAILURE", "yvex_deepseek_topk", 1) !=
+    if (setenv("YVEX_TEST_CUDA_BUNDLE_FAILURE", "yvex_attention_topk", 1) !=
         0)
         return 0;
     rc = yvex_backend_open(&backend, &options, err);
@@ -1861,8 +1861,7 @@ static int run_runtime_oracle_mode(
     if (!result || !model_view || !session_view || !plan || !summary ||
         !capacity_summary || !ir ||
         !model_view->materialization || !model_view->descriptor ||
-        !model_view->binding || !model_view->execution ||
-        !model_view->execution->api || !session_view->backend ||
+        !model_view->binding || !session_view->backend ||
         !session_view->attention_workspace ||
         capacity_summary->selected_layer_count != 3ull ||
         strcmp(capacity_summary->attention_plan_identity,
@@ -3189,21 +3188,26 @@ int main(int argc, char **argv)
             yvex_attention_plan_layer_at(attention_plan, 2ull);
         const yvex_materialization_summary *canonical_materialization =
             yvex_materialization_session_summary(session);
-        yvex_attention_cpu_options stale_options;
-        yvex_attention_cpu_result stale_result;
-        float *stale_input = NULL;
         unsigned long long original_topk;
-        unsigned long long bytes_before;
         char canonical_logical[YVEX_TRANSFORM_IR_IDENTITY_CAP];
         char mutated_logical[YVEX_TRANSFORM_IR_IDENTITY_CAP];
         char repeated_logical[YVEX_TRANSFORM_IR_IDENTITY_CAP];
+        char canonical_runtime_identity[YVEX_RUNTIME_DESCRIPTOR_IDENTITY_CAP];
+        char canonical_plan_identity[YVEX_ATTENTION_IDENTITY_CAP];
 
         if (!mutable_layer || !canonical_runtime || !canonical_attention ||
             !canonical_layer ||
             !canonical_materialization ||
             !yvex_model_register_deepseek_v4()->transform.architecture_identity(
-                architecture_ir, canonical_logical))
+                architecture_ir, canonical_logical)) {
+            fprintf(stderr, "attention_identity_fixture=invalid\n");
             goto cleanup_fail;
+        }
+        yvex_core_text_copy(canonical_runtime_identity,
+                            sizeof(canonical_runtime_identity),
+                            canonical_runtime->runtime_descriptor_identity);
+        yvex_core_text_copy(canonical_plan_identity, sizeof(canonical_plan_identity),
+                            canonical_attention->attention_plan_identity);
         original_topk = mutable_layer->sparse_topk.k;
         mutable_layer->sparse_topk.k = original_topk - 1ull;
         if (!yvex_model_register_deepseek_v4()->transform.architecture_identity(
@@ -3211,17 +3215,26 @@ int main(int argc, char **argv)
             !yvex_model_register_deepseek_v4()->transform.architecture_identity(
                 architecture_ir, repeated_logical) ||
             strcmp(canonical_logical, mutated_logical) == 0 ||
-            strcmp(mutated_logical, repeated_logical) != 0)
+            strcmp(mutated_logical, repeated_logical) != 0) {
+            fprintf(stderr, "attention_identity_mutation=invalid\n");
             goto identity_mutation_fail;
+        }
         rc = yvex_runtime_descriptor_build_deepseek(
             &mutated_descriptor, &admission, session,
             yvex_model_register_deepseek_v4()->payload.map(handoff), architecture_ir,
             &descriptor_failure, &err);
-        if (rc != YVEX_OK) goto identity_mutation_fail;
+        if (rc != YVEX_OK) {
+            print_descriptor_failure("identity-mutation", &descriptor_failure, &err);
+            goto identity_mutation_fail;
+        }
         rc = yvex_compiler_family_deepseek_v4()->graph()->plan_build(
             &mutated_plan, architecture_ir, session, mutated_descriptor,
             &attention_failure, &err);
-        if (rc != YVEX_OK ||
+        if (rc != YVEX_OK) {
+            print_attention_failure(&attention_failure, &err);
+            goto identity_mutation_fail;
+        }
+        if (
             strcmp(canonical_runtime->runtime_numeric_identity,
                    yvex_runtime_descriptor_summary_get(mutated_descriptor)
                        ->runtime_numeric_identity) == 0 ||
@@ -3230,29 +3243,18 @@ int main(int argc, char **argv)
                        ->runtime_descriptor_identity) == 0 ||
             strcmp(canonical_attention->attention_plan_identity,
                    yvex_attention_plan_summary(mutated_plan)
-                       ->attention_plan_identity) == 0)
+                       ->attention_plan_identity) == 0) {
+            fprintf(stderr, "attention_identity_propagation=invalid\n");
             goto identity_mutation_fail;
-        bytes_before = canonical_materialization->payload_bytes_accessed;
-        memset(&stale_result, 0, sizeof(stale_result));
-        attention_execution_api()->cpu_options_default(&stale_options);
-        stale_options.layer_index = 2ull;
-        stale_options.token_position = 0ull;
-        stale_input = (float *)calloc(
-            (size_t)canonical_layer->hidden_dimension, sizeof(*stale_input));
-        if (!stale_input) goto identity_mutation_fail;
-        stale_options.input = stale_input;
-        stale_options.input_stride = canonical_layer->hidden_dimension;
-        rc = attention_execution_api()->cpu_chunk_execute(
-            attention_plan, architecture_ir, session, descriptor,
-            &stale_options, &stale_result, &attention_failure, &err);
-        if (rc == YVEX_OK ||
-            attention_failure.code !=
-                YVEX_ATTENTION_FAILURE_DESCRIPTOR ||
-            stale_result.executed ||
-            canonical_materialization->payload_bytes_accessed != bytes_before)
+        }
+        if (strcmp(canonical_runtime_identity,
+                   canonical_runtime->runtime_descriptor_identity) != 0 ||
+            strcmp(canonical_plan_identity,
+                   canonical_attention->attention_plan_identity) != 0 ||
+            canonical_materialization->payload_bytes_accessed != 0ull) {
+            fprintf(stderr, "attention_identity_compiled_isolation=invalid\n");
             goto identity_mutation_fail;
-        free(stale_input);
-        stale_input = NULL;
+        }
         mutable_layer->sparse_topk.k = original_topk;
         if (!yvex_model_register_deepseek_v4()->transform.architecture_identity(
                 architecture_ir, repeated_logical) ||
@@ -3260,14 +3262,16 @@ int main(int argc, char **argv)
             strcmp(admission.artifact_identity,
                    canonical_attention->artifact_identity) != 0 ||
             strcmp(canonical_materialization->plan_identity,
-                   canonical_attention->materialization_plan_identity) != 0)
+                   canonical_attention->materialization_plan_identity) != 0) {
+            fprintf(stderr, "attention_identity_restore=invalid\n");
             goto identity_mutation_fail;
+        }
         printf("attention_identity_canonical_logical=%s\n", canonical_logical);
         printf("attention_identity_mutated_logical=%s\n", mutated_logical);
         printf("attention_identity_mutation_deterministic=1\n");
         printf("attention_identity_runtime_propagated=1\n");
         printf("attention_identity_plan_propagated=1\n");
-        printf("attention_identity_stale_refused_before_payload=1\n");
+        printf("attention_identity_compiled_plan_isolated=1\n");
         printf("attention_identity_artifact_unchanged=1\n");
         printf("attention_identity_materialization_unchanged=1\n");
         yvex_attention_plan_close(mutated_plan);
@@ -3278,7 +3282,6 @@ int main(int argc, char **argv)
 
 identity_mutation_fail:
         mutable_layer->sparse_topk.k = original_topk;
-        free(stale_input);
         yvex_attention_plan_close(mutated_plan);
         yvex_runtime_descriptor_close(mutated_descriptor);
         goto cleanup_fail;

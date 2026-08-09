@@ -1174,7 +1174,7 @@ static int attn_envelope_pre(attn_run *run) {
             &run->mhc_post, &run->mhc_combination, &one, &run->device_status
         };
         rc = run->ops->launch(
-            &run->resources, run->state->deepseek_mhc_pre_function, 1u,
+            &run->resources, run->state->residual_mhc_pre_function, 1u,
             YVEX_CUDA_ATTN_BLOCK, shared_bytes, params,
             "cuda.deepseek_attention.mhc_pre", run->failure, run->err);
     }
@@ -1305,7 +1305,7 @@ static int attn_rolling_execute(attn_run *run, unsigned int kind) {
             (void *)&rolling->overlap, &emit, &run->device_status
         };
         rc = run->ops->launch(
-            &run->resources, run->state->deepseek_rolling_function, 1u,
+            &run->resources, run->state->attention_rolling_state_function, 1u,
             YVEX_CUDA_ATTN_BLOCK, 0u, params, stage, run->failure, run->err);
     }
     if (rc != YVEX_OK || (!emit && !attn_graph_mode(run))) return rc;
@@ -1382,7 +1382,7 @@ static int attn_index_topk(attn_run *run) {
             &run->device_status
         };
         return run->ops->launch(
-            &run->resources, run->state->deepseek_topk_function, 1u,
+            &run->resources, run->state->attention_topk_function, 1u,
             YVEX_CUDA_ATTN_BLOCK, YVEX_CUDA_ATTN_BLOCK * sizeof(double),
             params, "cuda.deepseek_attention.topk", run->failure, run->err);
     }
@@ -1421,7 +1421,7 @@ static int attn_reduce(attn_run *run) {
             &run->device_status
         };
         rc = run->ops->launch(
-            &run->resources, run->state->deepseek_reduce_function,
+            &run->resources, run->state->attention_reduce_function,
             (unsigned int)run->job->query_heads, YVEX_CUDA_ATTN_BLOCK,
             YVEX_CUDA_ATTN_BLOCK * sizeof(double), params,
             "cuda.deepseek_attention.reduce", run->failure, run->err);
@@ -1480,7 +1480,7 @@ static int attn_envelope_post(attn_run *run) {
             &run->envelope_output, &one, &run->device_status
         };
         return run->ops->launch(
-            &run->resources, run->state->deepseek_mhc_post_function, grid,
+            &run->resources, run->state->residual_mhc_post_function, grid,
             YVEX_CUDA_ATTN_BLOCK, 0u, params,
             "cuda.deepseek_attention.mhc_post", run->failure, run->err);
     }

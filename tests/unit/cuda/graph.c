@@ -522,7 +522,7 @@ static int enqueue_rolling_fixture(void *opaque, int enqueue_kernels, yvex_error
     };
     const char *stage = "cuda.graph.fixture.rolling";
 
-    if (!state || !state->deepseek_rolling_function) {
+    if (!state || !state->attention_rolling_state_function) {
         yvex_error_set(err, YVEX_ERR_STATE, stage,
                        "admitted rolling kernel function is required");
         return YVEX_ERR_STATE;
@@ -530,10 +530,10 @@ static int enqueue_rolling_fixture(void *opaque, int enqueue_kernels, yvex_error
     return enqueue_kernels
         ? yvex_cuda_launch(
               fixture->backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
-              state->deepseek_rolling_function, 1u, 256u, 0u, params, stage, err)
+              state->attention_rolling_state_function, 1u, 256u, 0u, params, stage, err)
         : yvex_cuda_graph_kernel_update(
               fixture->backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
-              state->deepseek_rolling_function, 1u, 256u, 0u, params, stage, err);
+              state->attention_rolling_state_function, 1u, 256u, 0u, params, stage, err);
 }
 
 /* Prove a warm graph replay updates the rolling insertion cursor. */

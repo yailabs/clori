@@ -456,14 +456,14 @@ int yvex_cuda_test_info(void)
     static const char *attention_symbols[] = {
         "yvex_attention_bf16_round",
         "yvex_qtype_matvec",
-        "yvex_deepseek_decode",
-        "yvex_deepseek_weighted_norm",
-        "yvex_deepseek_unit_norm",
-        "yvex_deepseek_rope",
-        "yvex_deepseek_activation",
-        "yvex_deepseek_rolling",
-        "yvex_deepseek_topk",
-        "yvex_deepseek_reduce"
+        "yvex_encoded_row_decode",
+        "yvex_attention_weighted_norm",
+        "yvex_attention_unit_norm",
+        "yvex_attention_yarn_rope",
+        "yvex_attention_activation_quantize",
+        "yvex_attention_rolling_state",
+        "yvex_attention_topk",
+        "yvex_attention_reduce"
     };
     size_t symbol_index;
     unsigned char *imported = NULL, *mapped = NULL;
