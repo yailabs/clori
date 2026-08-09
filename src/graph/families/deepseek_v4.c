@@ -10,6 +10,7 @@
 #include <yvex/internal/moe.h>
 #include <yvex/internal/runtime.h>
 #include <yvex/internal/logits.h>
+#include <yvex/internal/operator_graph.h>
 #include <yvex/internal/transformer.h>
 #include <limits.h>
 #include <stdio.h>
@@ -367,6 +368,7 @@ static const yvex_family_compiler_adapter deepseek_compiler = {
     .logical_transform_identity = YVEX_SELECTED_DEEPSEEK_TRANSFORM_IDENTITY,
     .physical_execution_policy = &deepseek_physical_execution_policy,
     .graph = deepseek_graph_compile,
+    .operator_graph_build = yvex_operator_graph_ir_build_transformer,
     .execution_capabilities = deepseek_execution_capabilities,
     .transformer_policy = deepseek_transformer_policy,
     .logits_policy = deepseek_logits_policy,

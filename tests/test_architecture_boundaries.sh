@@ -50,6 +50,7 @@ conversation_family_registry_pattern='yvex_model_conversation_protocol_(at|find)
 legacy_resolution_boolean_pattern='(host_stochastic_reference|token_local_moe_reference|eager_attention_reference)'
 backend_representation_pattern='\bbackend->(vtable|virtual_tensor_ready|state_residency_generation|resident_host_base|workspace_device_tensor)'
 family_transform_builder_pattern='yvex_transform_builder_(create|add_source|declare_value|add_node|seal|release)[[:space:]]*\('
+generic_family_operator_lowering_pattern='yvex_operator_graph_ir_build_transformer[[:space:]]*\('
 
 # Every expression used as a hard gate carries positive and negative probes.
 # This catches regex drift before a repository scan can produce false comfort.
@@ -168,6 +169,13 @@ printf '%s\n' 'yvex_transform_builder_seal(builder, &ir, &failure, &err);' |
 if printf '%s\n' 'yvex_transform_recipe_sink_add(sink, &recipe, &failure, &err);' |
     rg "$family_transform_builder_pattern" >/dev/null; then
     fail "family transform guard rejects the semantic recipe projection"
+fi
+printf '%s\n' 'yvex_operator_graph_ir_build_transformer(&graph, semantic, descriptor, target, draft, &err);' |
+    rg "$generic_family_operator_lowering_pattern" >/dev/null ||
+    fail "family operator-lowering guard misses direct generic compiler composition"
+if printf '%s\n' 'adapter->operator_graph_build(&graph, semantic, descriptor, target, draft, &err);' |
+    rg "$generic_family_operator_lowering_pattern" >/dev/null; then
+    fail "family operator-lowering guard rejects typed family composition"
 fi
 printf '%s\n' 'CUfunction deepseek_decode_function;' |
     rg -i "$generic_family_symbol_pattern" >/dev/null ||
@@ -316,6 +324,11 @@ fi
 if rg -n -i "(families/|$generic_family_symbol_pattern)" src/gguf/conversion.c; then
     fail "generic GGUF conversion owns or imports concrete family semantics"
 fi
+if rg -n "$generic_family_operator_lowering_pattern" src/graph/binding_compile.c; then
+    fail "generic binding compilation chooses concrete family operator composition"
+fi
+rg -n 'adapter->operator_graph_build[[:space:]]*\(' src/graph/binding_compile.c >/dev/null ||
+    fail "binding compilation no longer delegates operator composition to the family adapter"
 rg -n 'yvex_model_conversion_projection_find' src/gguf/conversion.c >/dev/null ||
     fail "generic GGUF conversion no longer consumes a typed family projection"
 

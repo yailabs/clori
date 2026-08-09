@@ -183,6 +183,7 @@ struct yvex_artifact_physical_compatibility;
 struct yvex_materialization_projection;
 struct yvex_materialization_session;
 struct yvex_runtime_descriptor;
+struct yvex_attention_plan;
 struct yvex_transform_ir;
 struct yvex_transform_binding;
 struct yvex_source_verification;
@@ -290,6 +291,13 @@ typedef struct yvex_family_compiler_adapter {
     const char *target_id, *logical_transform_identity;
     const struct yvex_physical_execution_policy *physical_execution_policy;
     const struct yvex_graph_compiler_api *(*graph)(void);
+    int (*operator_graph_build)(
+        yvex_operator_graph_ir **out,
+        const yvex_semantic_model_ir *semantic_model,
+        const yvex_model_execution_descriptor *model,
+        const struct yvex_attention_plan *attention,
+        const struct yvex_attention_plan *draft_attention,
+        yvex_error *err);
     int (*execution_capabilities)(yvex_runtime_capabilities *out);
     int (*transformer_policy)(const struct yvex_runtime_descriptor_summary *,
                               yvex_transformer_family_policy *);

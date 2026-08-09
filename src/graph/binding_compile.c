@@ -65,7 +65,8 @@ static int pipeline_valid(const yvex_family_compiler_adapter *adapter)
 
     return adapter && adapter->schema_version == YVEX_FAMILY_COMPILER_SCHEMA_V2 &&
            adapter->adapter_id && adapter->adapter_version && adapter->graph &&
-           adapter->physical_execution_policy && adapter->execution_capabilities &&
+           adapter->operator_graph_build && adapter->physical_execution_policy &&
+           adapter->execution_capabilities &&
            adapter->transformer_policy && adapter->logits_policy &&
            adapter->speculation_policy && adapter->tokenizer_policy && pipeline &&
            pipeline->schema_version == YVEX_FAMILY_BINDING_PIPELINE_SCHEMA_V1 &&
@@ -154,6 +155,7 @@ static int binding_compiler_materialize(binding_compiler *compiler, yvex_error *
 
 static int binding_compiler_graph(binding_compiler *compiler, yvex_error *err)
 {
+    const yvex_runtime_descriptor_summary *descriptor_summary;
     int rc = compiler->pipeline->semantic_model_build(
         &compiler->semantic_model, compiler->source.verification, err);
 
@@ -170,12 +172,19 @@ static int binding_compiler_graph(binding_compiler *compiler, yvex_error *err)
             &compiler->draft_attention, compiler->semantic_model,
             compiler->materialization, compiler->descriptor,
             &compiler->attention_failure, err);
+    descriptor_summary = rc == YVEX_OK
+                             ? yvex_runtime_descriptor_summary_get(compiler->descriptor)
+                             : NULL;
+    if (rc == YVEX_OK && !descriptor_summary) {
+        yvex_error_set(err, YVEX_ERR_STATE, "compilation.operator-graph",
+                       "family descriptor did not publish sealed model semantics");
+        rc = YVEX_ERR_STATE;
+    }
     if (rc == YVEX_OK)
-        rc = yvex_operator_graph_ir_build_transformer(
+        rc = compiler->adapter->operator_graph_build(
             &compiler->operator_graph, compiler->semantic_model,
-            &yvex_runtime_descriptor_summary_get(
-                 compiler->descriptor)->model_execution,
-            compiler->attention, compiler->draft_attention, err);
+            &descriptor_summary->model_execution, compiler->attention,
+            compiler->draft_attention, err);
     return rc;
 }
 
