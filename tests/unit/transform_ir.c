@@ -420,6 +420,82 @@ static int test_transform_identity_and_lifecycle(void)
     return 0;
 }
 
+static int transform_test_identity_project(
+    void *context, yvex_transform_recipe_sink *sink,
+    yvex_transform_failure *failure, yvex_error *err)
+{
+    static const char *const names[] = {
+        "identity.alpha", "identity.skipped", "identity.gamma"};
+    unsigned long long index;
+    (void)context;
+    for (index = 0ull; index < sizeof(names) / sizeof(names[0]); ++index) {
+        yvex_transform_source_spec source;
+        yvex_transform_recipe recipe = {0};
+        int rc;
+        if (index == 1ull) continue;
+        transform_test_source_spec(
+            &source, names[index], index, YVEX_NATIVE_DTYPE_F32,
+            YVEX_TRANSFORM_DTYPE_F32, transform_test_shape(4ull, 0ull),
+            YVEX_TRANSFORM_IR_NO_ID);
+        source.requirement_index = index == 2ull ? 1ull : 0ull;
+        recipe.sources = &source;
+        recipe.source_count = 1ull;
+        recipe.terminal.semantic_id = 0x5000ull + index;
+        recipe.terminal.shape = source.shape;
+        recipe.terminal.dtype = source.value_dtype;
+        recipe.terminal.precision = transform_test_exact(YVEX_TRANSFORM_PHYSICAL_F32);
+        recipe.terminal.logical_key.scope = source.scope;
+        recipe.terminal.logical_key.subsystem = source.subsystem;
+        recipe.terminal.logical_key.role = source.role_hint;
+        recipe.terminal.logical_key.layer_index = 0ull;
+        recipe.terminal.logical_key.auxiliary_index = YVEX_TRANSFORM_IR_NO_ID;
+        recipe.terminal.logical_key.group_index = index;
+        recipe.operation.kind = YVEX_TRANSFORM_OP_IDENTITY;
+        recipe.operation.numeric = YVEX_TRANSFORM_NUMERIC_EXACT;
+        recipe.operation.ordering = YVEX_TRANSFORM_ORDER_INPUT;
+        recipe.operation.payload_execution_required = 1;
+        rc = yvex_transform_recipe_sink_add(sink, &recipe, failure, err);
+        if (rc != YVEX_OK) return rc;
+    }
+    return YVEX_OK;
+}
+
+static int test_transform_identity_projection(void)
+{
+    yvex_transform_header header;
+    yvex_transform_ir *first = NULL;
+    yvex_transform_ir *second = NULL;
+    yvex_transform_failure failure = {0};
+    yvex_error err;
+    const yvex_transform_source_value *gamma;
+
+    transform_test_header(&header, 2ull, 2ull);
+    YVEX_TEST_ASSERT(
+        yvex_transform_recipe_compile(
+            &first, &header, transform_test_identity_project, NULL, NULL,
+            &failure, &err) == YVEX_OK &&
+        yvex_transform_recipe_compile(
+            &second, &header, transform_test_identity_project, NULL, NULL,
+            &failure, &err) == YVEX_OK,
+        "generic identity projection seals through the production builder");
+    gamma = yvex_transform_ir_source_find(first, "identity.gamma");
+    YVEX_TEST_ASSERT(
+        gamma && gamma->requirement_index == 1ull &&
+        yvex_transform_ir_summary_get(first)->terminal_count == 2ull &&
+        strcmp(yvex_transform_ir_summary_get(first)->transform_identity,
+               yvex_transform_ir_summary_get(second)->transform_identity) == 0,
+        "identity projection skips candidates and preserves canonical ordinals");
+    yvex_transform_ir_release(&second);
+    yvex_transform_ir_release(&first);
+    transform_test_header(&header, 1ull, 2ull);
+    YVEX_TEST_ASSERT(
+        yvex_transform_recipe_compile(
+            &first, &header, transform_test_identity_project, NULL, NULL,
+            &failure, &err) != YVEX_OK && !first,
+        "recipe compiler refuses divergent projected source authority");
+    return 0;
+}
+
 static int test_transform_operation_suite(void)
 {
     const unsigned long long expert_count = 256u;
@@ -1388,6 +1464,7 @@ static int test_transform_allocation_sweep(void)
 int yvex_test_transform_ir(void)
 {
     if (test_transform_identity_and_lifecycle() != 0) return 1;
+    if (test_transform_identity_projection() != 0) return 1;
     if (test_transform_operation_suite() != 0) return 1;
     if (test_transform_negative_graphs() != 0) return 1;
     if (test_transform_operation_refusals() != 0) return 1;

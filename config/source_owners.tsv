@@ -161,6 +161,7 @@ src/model/compilation/binding.c	model.compilation	model.compilation.binding	gene
 src/model/compilation/ir.c	model.compilation	model.compilation.ir	generic	private	reusable-algorithm	model.family,quant	implementation	none
 src/model/compilation/ir_identity.c	model.compilation	model.compilation.ir_identity	generic	private	canonical-identity	model.family,quant	implementation	none
 src/model/compilation/ir_validate.c	model.compilation	model.compilation.ir_validate	generic	private	reusable-algorithm	model.family,quant	implementation	none
+src/model/compilation/private.h	model.compilation	model.compilation.ir	generic	private	private-interface	model.compilation	interface	none
 src/model/core.c	model	model.core	generic	private	resource-lifecycle	artifact,graph,runtime	implementation	none
 include/yvex/internal/families/deepseek_v4.h	model	model.families.deepseek_v4	family	private	family-interface	artifact,graph,runtime	interface	none
 include/yvex/internal/families/minimax_h3.h	model	model.families.minimax_h3	family	private	family-interface	model.compilation,cli,tests	interface	none

@@ -10,6 +10,7 @@
 
 #include <yvex/internal/core.h>
 #include <yvex/internal/families/deepseek_v4.h>
+#include "src/model/compilation/private.h"
 
 #include <limits.h>
 #include <stdint.h>
@@ -993,9 +994,123 @@ const char *yvex_transform_failure_name(yvex_transform_failure_code code)
                ? transform_failure_names[code]
                : "unknown-transform-failure";
 }
+
+struct yvex_transform_recipe_sink {
+    yvex_transform_builder *builder;
+    unsigned long long source_count;
+    unsigned long long terminal_ordinal;
+};
+
+int yvex_transform_recipe_sink_add(
+    yvex_transform_recipe_sink *sink, const yvex_transform_recipe *recipe,
+    yvex_transform_failure *failure, yvex_error *err)
+{
+    yvex_transform_value_spec terminal;
+    yvex_transform_node_spec operation;
+    unsigned long long *inputs = NULL;
+    unsigned long long terminal_value = 0ull, node_id, index;
+    size_t input_bytes;
+    int rc;
+
+    if (!sink || !sink->builder || !recipe || !recipe->sources ||
+        !recipe->source_count ||
+        recipe->source_count > (unsigned long long)(SIZE_MAX / sizeof(*inputs))) {
+        return yvex_transform_fail(
+            failure, YVEX_TRANSFORM_FAILURE_INVALID_ARGUMENT,
+            YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
+            YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
+            YVEX_TRANSFORM_IR_NO_ID, 1ull, 0ull, 0u, err,
+            "transform_recipe_sink_add");
+    }
+    input_bytes = (size_t)recipe->source_count * sizeof(*inputs);
+    inputs = sink->builder->allocator.allocate(
+        input_bytes, sink->builder->allocator.context);
+    if (!inputs)
+        return yvex_transform_fail(
+            failure, YVEX_TRANSFORM_FAILURE_ALLOCATION,
+            YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
+            YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
+            YVEX_TRANSFORM_IR_NO_ID, input_bytes, 0ull, 0u, err,
+            "transform_recipe_sink_add");
+    rc = YVEX_OK;
+    for (index = 0ull; rc == YVEX_OK && index < recipe->source_count; ++index)
+        rc = yvex_transform_builder_add_source(
+            sink->builder, &recipe->sources[index], &inputs[index], failure, err);
+    terminal = recipe->terminal;
+    terminal.kind = YVEX_TRANSFORM_VALUE_TERMINAL;
+    terminal.canonical_ordinal = sink->terminal_ordinal;
+    if (rc == YVEX_OK)
+        rc = yvex_transform_builder_declare_value(
+            sink->builder, &terminal, &terminal_value, failure, err);
+    operation = recipe->operation;
+    operation.output_value_id = terminal_value;
+    operation.input_value_ids = inputs;
+    operation.input_count = recipe->source_count;
+    if (rc == YVEX_OK)
+        rc = yvex_transform_builder_add_node(
+            sink->builder, &operation, &node_id, failure, err);
+    sink->builder->allocator.release(inputs, sink->builder->allocator.context);
+    if (rc == YVEX_OK) {
+        sink->source_count += recipe->source_count;
+        ++sink->terminal_ordinal;
+    }
+    return rc;
+}
+
+int yvex_transform_recipe_compile(
+    yvex_transform_ir **out, const yvex_transform_header *header,
+    yvex_transform_recipe_project_fn project, void *context,
+    const yvex_transform_builder_options *options,
+    yvex_transform_failure *failure, yvex_error *err)
+{
+    yvex_transform_recipe_sink sink = {0};
+    const yvex_transform_ir_summary *summary;
+    int rc;
+
+    if (out) *out = NULL;
+    if (!out || !header || !project)
+        return yvex_transform_fail(
+            failure, YVEX_TRANSFORM_FAILURE_INVALID_ARGUMENT,
+            YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
+            YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
+            YVEX_TRANSFORM_IR_NO_ID, 1ull, 0ull, 0u, err,
+            "transform_recipe_compile");
+    rc = yvex_transform_builder_create(
+        &sink.builder, header, options, failure, err);
+    if (rc == YVEX_OK) rc = project(context, &sink, failure, err);
+    if (rc == YVEX_OK &&
+        (sink.source_count != header->expected_source_count ||
+         sink.terminal_ordinal != header->expected_terminal_count))
+        rc = yvex_transform_fail(
+            failure, YVEX_TRANSFORM_FAILURE_MISSING_TERMINAL,
+            YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
+            YVEX_TRANSFORM_IR_NO_ID, sink.terminal_ordinal,
+            YVEX_TRANSFORM_IR_NO_ID, header->expected_terminal_count,
+            sink.terminal_ordinal, 0u, err, "transform_recipe_compile");
+    if (rc == YVEX_OK)
+        rc = yvex_transform_builder_seal(sink.builder, out, failure, err);
+    yvex_transform_builder_release(&sink.builder);
+    summary = rc == YVEX_OK ? yvex_transform_ir_summary_get(*out) : NULL;
+    if (rc == YVEX_OK &&
+        (!summary || !summary->complete ||
+         summary->source_value_count != header->expected_source_count ||
+         summary->terminal_count != header->expected_terminal_count ||
+         summary->node_count != header->expected_terminal_count ||
+         summary->payload_bytes_read != 0ull)) {
+        yvex_transform_ir_release(out);
+        rc = yvex_transform_fail(
+            failure, YVEX_TRANSFORM_FAILURE_SEAL,
+            YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
+            YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
+            YVEX_TRANSFORM_IR_NO_ID, header->expected_terminal_count,
+            summary ? summary->terminal_count : 0ull, 0u, err,
+            "transform_recipe_compile");
+    }
+    return rc;
+}
 /* The family transform recipe registers semantics in the generic sealed IR. */
 typedef struct {
-    yvex_transform_builder *builder;
+    yvex_transform_recipe_sink *sink;
     const yvex_model_family_api *family;
     const yvex_source_verification *verification;
     const yvex_deepseek_v4_ir *architecture;
@@ -1005,7 +1120,6 @@ typedef struct {
     yvex_transform_allocator temporary_allocator;
     yvex_transform_failure *failure;
     yvex_error *err;
-    unsigned long long terminal_ordinal;
 } deepseek_transform_builder;
 
 static void *deepseek_default_allocate(size_t size, void *context)
@@ -1099,10 +1213,9 @@ static int deepseek_add_source(deepseek_transform_builder *builder,
                                unsigned long long expert,
                                yvex_native_dtype expected_dtype,
                                int packed_fp4,
-                               unsigned long long *value_id)
+                               yvex_transform_source_spec *spec)
 {
     const yvex_deepseek_tensor_coverage_row *row;
-    yvex_transform_source_spec spec;
     unsigned long long requirement_index;
     unsigned long long source_index;
     unsigned long long identity;
@@ -1130,33 +1243,32 @@ static int deepseek_add_source(deepseek_transform_builder *builder,
             (unsigned long long)row->source->dtype,
             "deepseek_transform_source");
     }
-    memset(&spec, 0, sizeof(spec));
-    spec.source_name = row->source->name;
-    spec.shard_name = row->source->shard_path;
-    spec.source_tensor_index = source_index;
-    spec.requirement_index = requirement_index;
-    spec.source_snapshot_identity = builder->coverage_summary->source_identity;
-    spec.source_dtype = row->source->dtype;
-    spec.value_dtype = deepseek_dtype(row->source->dtype, packed_fp4);
-    spec.shape.rank = row->source->rank;
+    memset(spec, 0, sizeof(*spec));
+    spec->source_name = row->source->name;
+    spec->shard_name = row->source->shard_path;
+    spec->source_tensor_index = source_index;
+    spec->requirement_index = requirement_index;
+    spec->source_snapshot_identity = builder->coverage_summary->source_identity;
+    spec->source_dtype = row->source->dtype;
+    spec->value_dtype = deepseek_dtype(row->source->dtype, packed_fp4);
+    spec->shape.rank = row->source->rank;
     for (dimension = 0u; dimension < row->source->rank; ++dimension)
-        spec.shape.dims[dimension] = row->source->dims[dimension];
-    spec.relative_begin = row->source->data_start;
-    spec.relative_end = row->source->data_end;
+        spec->shape.dims[dimension] = row->source->dims[dimension];
+    spec->relative_begin = row->source->data_start;
+    spec->relative_end = row->source->data_end;
     identity = deepseek_hash_text(1469598103934665603ull, name);
     identity = yvex_core_hash_mix_u64(identity,
                                  builder->coverage_summary->coverage_identity);
     identity = yvex_core_hash_mix_u64(identity, requirement_index);
-    spec.requirement_identity = identity;
-    spec.scope = deepseek_scope(scope);
-    spec.subsystem = deepseek_subsystem(collection);
-    spec.role_hint = role;
-    spec.layer_index = layer;
-    spec.auxiliary_index = auxiliary;
-    spec.expert_index = expert;
-    spec.required_uses = 1u;
-    return yvex_transform_builder_add_source(
-        builder->builder, &spec, value_id, builder->failure, builder->err);
+    spec->requirement_identity = identity;
+    spec->scope = deepseek_scope(scope);
+    spec->subsystem = deepseek_subsystem(collection);
+    spec->role_hint = role;
+    spec->layer_index = layer;
+    spec->auxiliary_index = auxiliary;
+    spec->expert_index = expert;
+    spec->required_uses = 1u;
+    return YVEX_OK;
 }
 
 static int deepseek_add_terminal(deepseek_transform_builder *builder,
@@ -1165,47 +1277,39 @@ static int deepseek_add_terminal(deepseek_transform_builder *builder,
                                  yvex_tensor_scope scope,
                                  unsigned long long layer,
                                  unsigned long long auxiliary,
+                                 const yvex_transform_source_spec *sources,
+                                 unsigned long long source_count,
                                  const yvex_transform_shape *shape,
                                  yvex_transform_dtype dtype,
                                  const yvex_transform_precision_constraint *precision,
                                  const yvex_transform_node_spec *operation)
 {
-    yvex_transform_value_spec value;
-    yvex_transform_node_spec node = *operation;
-    unsigned long long value_id;
-    unsigned long long node_id;
+    yvex_transform_recipe recipe = {0};
     unsigned long long semantic = 1469598103934665603ull;
-    int rc;
 
-    memset(&value, 0, sizeof(value));
-    value.kind = YVEX_TRANSFORM_VALUE_TERMINAL;
     semantic = yvex_core_hash_mix_u64(semantic, (unsigned long long)scope);
     semantic = yvex_core_hash_mix_u64(semantic, (unsigned long long)collection);
     semantic = yvex_core_hash_mix_u64(semantic, (unsigned long long)role);
     semantic = yvex_core_hash_mix_u64(semantic, layer);
     semantic = yvex_core_hash_mix_u64(semantic, auxiliary);
-    value.semantic_id = semantic;
-    value.canonical_ordinal = builder->terminal_ordinal;
-    value.shape = *shape;
-    value.dtype = dtype;
-    value.precision = *precision;
-    value.logical_key.scope = deepseek_scope(scope);
-    value.logical_key.subsystem = deepseek_subsystem(collection);
-    value.logical_key.role = role;
-    value.logical_key.layer_index = scope == YVEX_TENSOR_SCOPE_GLOBAL
+    recipe.sources = sources;
+    recipe.source_count = source_count;
+    recipe.terminal.semantic_id = semantic;
+    recipe.terminal.shape = *shape;
+    recipe.terminal.dtype = dtype;
+    recipe.terminal.precision = *precision;
+    recipe.terminal.logical_key.scope = deepseek_scope(scope);
+    recipe.terminal.logical_key.subsystem = deepseek_subsystem(collection);
+    recipe.terminal.logical_key.role = role;
+    recipe.terminal.logical_key.layer_index = scope == YVEX_TENSOR_SCOPE_GLOBAL
         ? YVEX_TRANSFORM_IR_NO_ID : layer;
-    value.logical_key.auxiliary_index =
+    recipe.terminal.logical_key.auxiliary_index =
         scope == YVEX_TENSOR_SCOPE_DRAFT
             ? auxiliary : YVEX_TRANSFORM_IR_NO_ID;
-    value.logical_key.group_index = 0u;
-    rc = yvex_transform_builder_declare_value(
-        builder->builder, &value, &value_id, builder->failure, builder->err);
-    if (rc != YVEX_OK) return rc;
-    node.output_value_id = value_id;
-    rc = yvex_transform_builder_add_node(
-        builder->builder, &node, &node_id, builder->failure, builder->err);
-    if (rc == YVEX_OK) builder->terminal_ordinal++;
-    return rc;
+    recipe.terminal.logical_key.group_index = 0u;
+    recipe.operation = *operation;
+    return yvex_transform_recipe_sink_add(
+        builder->sink, &recipe, builder->failure, builder->err);
 }
 
 static int deepseek_add_direct(deepseek_transform_builder *builder,
@@ -1223,7 +1327,7 @@ static int deepseek_add_direct(deepseek_transform_builder *builder,
     yvex_transform_precision_constraint precision;
     yvex_transform_node_spec node;
     yvex_transform_shape shape;
-    unsigned long long input;
+    yvex_transform_source_spec source;
     yvex_transform_dtype output_dtype;
     unsigned int dimension;
     int rc;
@@ -1233,7 +1337,7 @@ static int deepseek_add_direct(deepseek_transform_builder *builder,
                                1u, 0u, "deepseek_transform_direct");
     rc = deepseek_add_source(
         builder, source_name, role, collection, scope, layer, auxiliary,
-        YVEX_DEEPSEEK_TENSOR_NO_INDEX, source_dtype, 0, &input);
+        YVEX_DEEPSEEK_TENSOR_NO_INDEX, source_dtype, 0, &source);
     if (rc != YVEX_OK) return rc;
     memset(&shape, 0, sizeof(shape));
     shape.rank = row->source->rank;
@@ -1254,15 +1358,13 @@ static int deepseek_add_direct(deepseek_transform_builder *builder,
     memset(&node, 0, sizeof(node));
     node.kind = checked_cast ? YVEX_TRANSFORM_OP_CHECKED_CAST
                              : YVEX_TRANSFORM_OP_IDENTITY;
-    node.input_value_ids = &input;
-    node.input_count = 1u;
     node.numeric = checked_cast ? YVEX_TRANSFORM_NUMERIC_RANGE_PROOF
                                 : YVEX_TRANSFORM_NUMERIC_EXACT;
     node.ordering = YVEX_TRANSFORM_ORDER_INPUT;
     node.payload_execution_required = 1;
     return deepseek_add_terminal(builder, role, collection, scope, layer,
-                                 auxiliary, &shape, output_dtype, &precision,
-                                 &node);
+                                 auxiliary, &source, 1u, &shape, output_dtype,
+                                 &precision, &node);
 }
 
 static int deepseek_add_fp8(deepseek_transform_builder *builder,
@@ -1279,7 +1381,7 @@ static int deepseek_add_fp8(deepseek_transform_builder *builder,
     yvex_transform_precision_constraint precision;
     yvex_transform_node_spec node;
     yvex_transform_shape shape;
-    unsigned long long inputs[2];
+    yvex_transform_source_spec sources[2];
     unsigned int dimension;
     int rc;
 
@@ -1292,12 +1394,12 @@ static int deepseek_add_fp8(deepseek_transform_builder *builder,
     rc = deepseek_add_source(
         builder, weight, role, collection, scope, layer, auxiliary,
         YVEX_DEEPSEEK_TENSOR_NO_INDEX, YVEX_NATIVE_DTYPE_F8_E4M3, 0,
-        &inputs[0]);
+        &sources[0]);
     if (rc == YVEX_OK)
         rc = deepseek_add_source(
             builder, scale, role, collection, scope, layer, auxiliary,
             YVEX_DEEPSEEK_TENSOR_NO_INDEX, YVEX_NATIVE_DTYPE_F8_E8M0, 0,
-            &inputs[1]);
+            &sources[1]);
     if (rc != YVEX_OK) return rc;
     memset(&shape, 0, sizeof(shape));
     shape.rank = row->source->rank;
@@ -1314,8 +1416,6 @@ static int deepseek_add_fp8(deepseek_transform_builder *builder,
     precision.reference_compute_required = 1;
     memset(&node, 0, sizeof(node));
     node.kind = YVEX_TRANSFORM_OP_DECODE_SCALE_PAIR;
-    node.input_value_ids = inputs;
-    node.input_count = 2u;
     node.scale_block_rows = builder->model->source_constraint.quant_block_rows;
     node.scale_block_columns =
         builder->model->source_constraint.quant_block_columns;
@@ -1323,8 +1423,8 @@ static int deepseek_add_fp8(deepseek_transform_builder *builder,
     node.ordering = YVEX_TRANSFORM_ORDER_INPUT;
     node.payload_execution_required = 1;
     return deepseek_add_terminal(
-        builder, role, collection, scope, layer, auxiliary, &shape,
-        YVEX_TRANSFORM_DTYPE_REAL, &precision, &node);
+        builder, role, collection, scope, layer, auxiliary, sources, 2u,
+        &shape, YVEX_TRANSFORM_DTYPE_REAL, &precision, &node);
 }
 
 static int deepseek_add_experts(deepseek_transform_builder *builder,
@@ -1342,7 +1442,7 @@ static int deepseek_add_experts(deepseek_transform_builder *builder,
     yvex_transform_precision_constraint precision;
     yvex_transform_node_spec node;
     yvex_transform_shape shape;
-    unsigned long long *inputs = NULL;
+    yvex_transform_source_spec *sources = NULL;
     unsigned long long input_count;
     unsigned long long logical_width;
     unsigned long long expert;
@@ -1354,14 +1454,14 @@ static int deepseek_add_experts(deepseek_transform_builder *builder,
             builder, YVEX_TRANSFORM_FAILURE_INVALID_AGGREGATION,
             1u, expert_count, "deepseek_transform_experts");
     input_count = expert_count * 2u;
-    if (input_count > (unsigned long long)(SIZE_MAX / sizeof(inputs[0])))
+    if (input_count > (unsigned long long)(SIZE_MAX / sizeof(sources[0])))
         return deepseek_refuse(
             builder, YVEX_TRANSFORM_FAILURE_RESOURCE_BUDGET,
             SIZE_MAX, input_count, "deepseek_transform_experts");
-    bytes = (size_t)input_count * sizeof(inputs[0]);
-    inputs = (unsigned long long *)builder->temporary_allocator.allocate(
+    bytes = (size_t)input_count * sizeof(sources[0]);
+    sources = (yvex_transform_source_spec *)builder->temporary_allocator.allocate(
         bytes, builder->temporary_allocator.context);
-    if (!inputs)
+    if (!sources)
         return deepseek_refuse(builder, YVEX_TRANSFORM_FAILURE_ALLOCATION,
                                bytes, 0u, "deepseek_transform_experts");
     (void)snprintf(weight, sizeof(weight), "%s.ffn.experts.0.%s.weight",
@@ -1387,13 +1487,13 @@ static int deepseek_add_experts(deepseek_transform_builder *builder,
             builder, weight, role,
             YVEX_TENSOR_COLLECTION_ROUTED_EXPERT, scope, layer,
             auxiliary, expert, YVEX_NATIVE_DTYPE_I8, 1,
-            &inputs[expert * 2u]);
+            &sources[expert * 2u]);
         if (rc == YVEX_OK)
             rc = deepseek_add_source(
                 builder, scale, role,
                 YVEX_TENSOR_COLLECTION_ROUTED_EXPERT, scope, layer,
                 auxiliary, expert, YVEX_NATIVE_DTYPE_F8_E8M0, 0,
-                &inputs[expert * 2u + 1u]);
+                &sources[expert * 2u + 1u]);
         if (rc != YVEX_OK) goto cleanup;
     }
     logical_width = first->source->dims[1] *
@@ -1414,8 +1514,6 @@ static int deepseek_add_experts(deepseek_transform_builder *builder,
     precision.reference_compute_required = 1;
     memset(&node, 0, sizeof(node));
     node.kind = YVEX_TRANSFORM_OP_EXPERT_AGGREGATE;
-    node.input_value_ids = inputs;
-    node.input_count = input_count;
     node.axis = 0u;
     node.expert_count = expert_count;
     node.packing_factor =
@@ -1427,12 +1525,12 @@ static int deepseek_add_experts(deepseek_transform_builder *builder,
     node.payload_execution_required = 1;
     rc = deepseek_add_terminal(
         builder, role, YVEX_TENSOR_COLLECTION_ROUTED_EXPERT,
-        scope, layer, auxiliary, &shape, YVEX_TRANSFORM_DTYPE_REAL,
-        &precision, &node);
+        scope, layer, auxiliary, sources, input_count, &shape,
+        YVEX_TRANSFORM_DTYPE_REAL, &precision, &node);
 
 cleanup:
     builder->temporary_allocator.release(
-        inputs, builder->temporary_allocator.context);
+        sources, builder->temporary_allocator.context);
     return rc;
 }
 
@@ -1494,8 +1592,11 @@ static int deepseek_add_layer(deepseek_transform_builder *builder,
     return rc;
 }
 
-static int deepseek_build_graph(deepseek_transform_builder *builder)
+static int deepseek_build_graph(void *context, yvex_transform_recipe_sink *sink,
+                                yvex_transform_failure *failure,
+                                yvex_error *err)
 {
+    deepseek_transform_builder *builder = context;
     const yvex_tensor_role head_roles[3] = {
         YVEX_TENSOR_ROLE_HC_HEAD_FUNCTION,
         YVEX_TENSOR_ROLE_HC_HEAD_BASE,
@@ -1507,6 +1608,10 @@ static int deepseek_build_graph(deepseek_transform_builder *builder)
     unsigned long long layer;
     unsigned int index;
     int rc;
+
+    builder->sink = sink;
+    builder->failure = failure;
+    builder->err = err;
 
     rc = deepseek_add_direct(
         builder, YVEX_TENSOR_ROLE_TOKEN_EMBEDDING,
@@ -1725,19 +1830,8 @@ static int deepseek_transform_build(
     header.expected_source_count = YVEX_DEEPSEEK_TRANSFORM_SOURCE_COUNT;
     header.expected_terminal_count = YVEX_DEEPSEEK_TRANSFORM_TERMINAL_COUNT;
     header.header_scan_count = deepseek.coverage_summary->header_scan_count;
-    rc = yvex_transform_builder_create(
-        &deepseek.builder, &header, options, failure, err);
-    if (rc == YVEX_OK) rc = deepseek_build_graph(&deepseek);
-    if (rc == YVEX_OK &&
-        deepseek.terminal_ordinal != YVEX_DEEPSEEK_TRANSFORM_TERMINAL_COUNT)
-        rc = deepseek_refuse(
-            &deepseek, YVEX_TRANSFORM_FAILURE_MISSING_TERMINAL,
-            YVEX_DEEPSEEK_TRANSFORM_TERMINAL_COUNT,
-            deepseek.terminal_ordinal, "deepseek_transform_build");
-    if (rc == YVEX_OK)
-        rc = yvex_transform_builder_seal(
-            deepseek.builder, out, failure, err);
-    yvex_transform_builder_release(&deepseek.builder);
+    rc = yvex_transform_recipe_compile(
+        out, &header, deepseek_build_graph, &deepseek, options, failure, err);
     if (rc == YVEX_OK) {
         const yvex_transform_ir_summary *summary =
             yvex_transform_ir_summary_get(*out);

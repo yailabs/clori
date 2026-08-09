@@ -52,6 +52,12 @@ roles. The transformation plan then binds every terminal output tensor to its
 ordered source contributions and typed operations. Plan construction is
 artifact-neutral and payload-free.
 
+Each family projects immutable source and terminal recipes through the bounded
+compiler sink. The generic compilation owner alone allocates mutable builder
+state, assigns canonical value and node ordinals, validates expected source and
+terminal populations, seals the IR, and releases failed construction. Family
+code cannot manipulate or persist the mutable builder representation.
+
 The family projection also seals source-authored context, attention, MoE,
 output, DSpark and persistent-state geometry into one pointer-free
 model-execution descriptor. Common planning consumes that identity-bound
