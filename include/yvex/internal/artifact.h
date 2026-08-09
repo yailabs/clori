@@ -54,31 +54,6 @@ int yvex_artifact_payload_identity_compute(const yvex_artifact *artifact, const 
                                            yvex_error *err);
 /* Roundtrip Gate. */
 #define YVEX_GGUF_OFFICIAL_READER_REVISION "af97976c7810cdabb1863172f31c432dab767de7"
-#define YVEX_SELECTED_DEEPSEEK_ARTIFACT_FILENAME                                           \
-    "deepseek-v4-flash-dspark-bootstrap-q2-v1.gguf"
-#define YVEX_SELECTED_DEEPSEEK_ARTIFACT_IDENTITY                                                   \
-    "bf80bd7372e9ff754cd61d8f6e849ca8eff2177fad40840a2dad8e840b35690a"
-#define YVEX_SELECTED_DEEPSEEK_PROFILE_NAME "deepseek-v4-flash-dspark-bootstrap-q2-v1"
-#define YVEX_SELECTED_DEEPSEEK_PROFILE_IDENTITY                                                    \
-    "a48d43c8594999a1af3a5b1f572b34a5823042cb767832d558642bb804b036c5"
-#define YVEX_SELECTED_DEEPSEEK_EXECUTION_IDENTITY                                                  \
-    "777559149e4e8421c34299da78f63f6b0d296a91005d7670196164c3c72b62af"
-#define YVEX_SELECTED_DEEPSEEK_PAYLOAD_PLAN_IDENTITY                                               \
-    "8d1a89e794363c0aaf1c721b07c0661ea03f9680691d0113543b2540297b69e7"
-#define YVEX_SELECTED_DEEPSEEK_PAYLOAD_BYTE_IDENTITY                                               \
-    "6dce1edb82810715687d40c6d62273e992cfe9e0aa610cb9598447e06fb7099f"
-#define YVEX_SELECTED_DEEPSEEK_PAYLOAD_IDENTITY                                                    \
-    "e05ddb86f9783bf665d05395636588f4e8dbd1ee6f1ba54be4140f84369ee939"
-#define YVEX_SELECTED_DEEPSEEK_TRANSFORM_IDENTITY                                                  \
-    "cb857e6be90168ddde621c1352b0d45084901c683520f1eb1241d5559e01b7b5"
-#define YVEX_SELECTED_DEEPSEEK_WRITER_PLAN_IDENTITY                                                \
-    "1ba1ceaa709862145b1a145e938cf03327cd58da27bca42ade2f884e2b2fc635"
-#define YVEX_SELECTED_DEEPSEEK_FILE_BYTES 108285860832ull
-#define YVEX_SELECTED_DEEPSEEK_PAYLOAD_BYTES 108274154488ull
-#define YVEX_SELECTED_DEEPSEEK_TENSOR_COUNT 1409ull
-#define YVEX_SELECTED_DEEPSEEK_METADATA_COUNT 76ull
-#define YVEX_SELECTED_DEEPSEEK_SOURCE_IDENTITY 0x8d8da435dea23049ull
-#define YVEX_SELECTED_DEEPSEEK_MAPPING_IDENTITY 0x779aa44d104fc718ull
 typedef enum {
     YVEX_ARTIFACT_CLASS_REFUSED = 0,
     YVEX_ARTIFACT_CLASS_TENSOR_PROOF,

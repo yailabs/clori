@@ -15,6 +15,9 @@
 #define YVEX_DEEPSEEK_V4_RUNTIME_FP8_ACT_BLOCK 64ull
 #define YVEX_DEEPSEEK_V4_RUNTIME_FP4_ACT_BLOCK 32ull
 #define YVEX_DEEPSEEK_V4_RUNTIME_TOPK_POLICY_VERSION 1u
+#define YVEX_SELECTED_DEEPSEEK_ARTIFACT_FILENAME "deepseek-v4-flash-dspark-bootstrap-q2-v1.gguf"
+#define YVEX_SELECTED_DEEPSEEK_FILE_BYTES 108285860832ull
+#define YVEX_SELECTED_DEEPSEEK_TRANSFORM_IDENTITY "cb857e6be90168ddde621c1352b0d45084901c683520f1eb1241d5559e01b7b5"
 typedef struct yvex_source_verification yvex_source_verification;
 typedef struct yvex_source_tensor_snapshot yvex_source_tensor_snapshot;
 typedef struct yvex_source_payload_plan yvex_source_payload_plan;
