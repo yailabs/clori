@@ -250,19 +250,6 @@ const yvex_runtime_family_adapter *yvex_runtime_family_adapter_find(const char *
     return NULL;
 }
 
-const yvex_runtime_family_adapter *yvex_runtime_private_adapter_find_identity(
-    unsigned long long adapter_id, unsigned long long adapter_version)
-{
-    unsigned long long index;
-    for (index = 0ull;; ++index) {
-        const yvex_runtime_family_adapter *adapter = yvex_runtime_family_at(index);
-        if (!adapter) return NULL;
-        if (adapter->adapter_id == adapter_id &&
-            adapter->adapter_version == adapter_version)
-            return adapter;
-    }
-}
-
 static int runtime_model_session_reserve(yvex_runtime_model *model,
                                          yvex_runtime_model_failure *failure,
                                          yvex_error *err) {

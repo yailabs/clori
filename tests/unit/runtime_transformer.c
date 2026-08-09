@@ -13,6 +13,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <yvex/internal/families/deepseek_v4.h>
 #include <yvex/internal/quant_numeric.h>
 #include <yvex/internal/runtime.h>
 #include <yvex/internal/transformer.h>
@@ -74,8 +75,8 @@ static int transformer_test_plan(yvex_transformer_plan **out,
 
 static int transformer_test_family(void)
 {
-    const yvex_runtime_family_adapter *adapter =
-        yvex_runtime_family_adapter_find("deepseek4-v4-flash-dspark");
+    const yvex_family_compiler_adapter *adapter =
+        yvex_compiler_family_deepseek_v4();
     yvex_runtime_descriptor_summary runtime = {0};
     yvex_transformer_family_policy policy;
     runtime.model_execution = (yvex_model_execution_descriptor){

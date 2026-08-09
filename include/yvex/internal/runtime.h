@@ -9,6 +9,7 @@
 #include <yvex/graph.h>
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/benchmark.h>
+#include <yvex/internal/compiler.h>
 #include <yvex/internal/execution.h>
 #include <yvex/internal/graph.h>
 #include <yvex/internal/graph_state.h>
@@ -94,36 +95,7 @@ typedef enum {
 } yvex_runtime_lifecycle_phase;
 typedef int (*yvex_runtime_progress_callback)(void *, yvex_runtime_lifecycle_phase, unsigned long long,
                                               unsigned long long);
-typedef struct {
-    int attention_semantics_ready, attention_core_ready, attention_envelope_ready;
-    int cpu_prefill_eager_ready, cpu_decode_eager_ready, cuda_prefill_eager_ready,
-        cuda_decode_eager_ready;
-    int cuda_eager_implemented, cuda_piecewise_graph_implemented, cuda_full_graph_implemented;
-    int cuda_prefill_piecewise_graph_ready, cuda_decode_piecewise_graph_ready;
-    int cuda_prefill_full_graph_ready, cuda_decode_full_graph_ready;
-    int attention_weight_residency_ready, attention_workspace_ready;
-    int attention_state_delta_ready, attention_operator_ready, attention_trace_ready;
-    int attention_profile_ready, attention_benchmark_ready, mixed_attention_ready;
-    int speculative_attention_ready, persistent_kv_ready;
-    int moe_plan_ready, moe_router_ready, moe_routed_expert_ready, moe_shared_expert_ready,
-        moe_block_ready;
-    int transformer_ready, output_head_binding_ready, output_head_projection_ready;
-    int logits_cpu_ready, logits_cuda_ready, logits_prefill_ready, logits_decode_ready,
-        logits_full_vocabulary_ready, logits_hidden_contract_ready,
-        logits_partial_progress_ready, logits_ready;
-    int generation_ready;
-} yvex_runtime_capabilities;
-#define YVEX_RUNTIME_EXECUTION_CAPABILITY_SCHEMA_V2 2u
-int yvex_runtime_capabilities_identity(
-    const yvex_runtime_capabilities *facts,
-    char output[YVEX_SHA256_HEX_CAP]);
-int yvex_runtime_capabilities_admitted_by(const yvex_runtime_capabilities *facts,
-                                          const yvex_runtime_capabilities *maximum);
-int yvex_runtime_capabilities_contract_valid(const yvex_runtime_capabilities *facts);
 const struct yvex_runtime_family_adapter *yvex_runtime_family_at(unsigned long long index);
-struct yvex_transformer_family_policy;
-struct yvex_logits_family_policy;
-struct yvex_speculation_family_policy;
 typedef struct yvex_runtime_family_adapter {
     unsigned int schema_version;
     unsigned long long adapter_id, adapter_version;
@@ -132,10 +104,6 @@ typedef struct yvex_runtime_family_adapter {
     yvex_sequence_mixer_family mixer_family;
     int (*mixer_capability)(yvex_sequence_mixer_semantics, yvex_runtime_mixer_capability *);
     const yvex_graph_family_api *(*graph)(void);
-    int (*execution_capabilities)(yvex_runtime_capabilities *out);
-    int (*transformer_policy)(const yvex_runtime_descriptor_summary *, struct yvex_transformer_family_policy *);
-    int (*logits_policy)(struct yvex_logits_family_policy *out);
-    int (*speculation_policy)(const yvex_runtime_descriptor_summary *, struct yvex_speculation_family_policy *);
 } yvex_runtime_family_adapter;
 typedef struct {
     const char *directory;
@@ -150,6 +118,9 @@ typedef struct {
     unsigned int artifact_format_version;
     const char *logical_transform_identity;
     yvex_runtime_capabilities capabilities;
+    yvex_transformer_family_policy transformer_policy;
+    yvex_logits_family_policy logits_policy;
+    yvex_speculation_family_policy speculation_policy;
 } yvex_runtime_binding_prepare_request;
 typedef struct yvex_runtime_binding_summary {
     unsigned int schema_version;
@@ -201,9 +172,9 @@ int yvex_runtime_binding_import_graph(
     yvex_runtime_binding_failure *failure, yvex_error *err);
 int yvex_runtime_binding_policies(
     const yvex_runtime_binding *binding,
-    const struct yvex_transformer_family_policy **transformer,
-    const struct yvex_logits_family_policy **logits,
-    const struct yvex_speculation_family_policy **speculation);
+    const yvex_transformer_family_policy **transformer,
+    const yvex_logits_family_policy **logits,
+    const yvex_speculation_family_policy **speculation);
 typedef enum {
     YVEX_RUNTIME_MODEL_FAILURE_NONE = 0, YVEX_RUNTIME_MODEL_FAILURE_INVALID_ARGUMENT,
     YVEX_RUNTIME_MODEL_FAILURE_ADAPTER, YVEX_RUNTIME_MODEL_FAILURE_BINDING,

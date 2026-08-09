@@ -158,6 +158,11 @@ static const yvex_runtime_family_adapter *runtime_fixture_adapter(void)
     return yvex_runtime_family_adapter_find("deepseek4-v4-flash-dspark");
 }
 
+static const yvex_family_compiler_adapter *runtime_fixture_compiler(void)
+{
+    return yvex_compiler_family_deepseek_v4();
+}
+
 static int runtime_state_prepare_fixture(
     const yvex_runtime_model *model,
     const yvex_attention_state_provider *provider,
@@ -1223,6 +1228,8 @@ static int fixture_binding_request(const binding_fixture *fixture, const char *d
                                    yvex_runtime_binding_prepare_request *request)
 {
     const yvex_runtime_family_adapter *adapter = runtime_fixture_adapter();
+    const yvex_family_compiler_adapter *compiler = runtime_fixture_compiler();
+    const yvex_runtime_descriptor_summary *descriptor;
 
     memset(request, 0, sizeof(*request));
     request->directory = directory;
@@ -1231,14 +1238,20 @@ static int fixture_binding_request(const binding_fixture *fixture, const char *d
     request->materialization = fixture->materialization;
     request->runtime_descriptor = fixture->descriptor;
     request->attention_plan = fixture->attention;
-    if (!adapter || !adapter->execution_capabilities) return 0;
+    descriptor = yvex_runtime_descriptor_summary_get(fixture->descriptor);
+    if (!adapter || !compiler || !descriptor || !compiler->execution_capabilities ||
+        !compiler->transformer_policy || !compiler->logits_policy ||
+        !compiler->speculation_policy) return 0;
     request->family_adapter_id = adapter->adapter_id;
     request->family_adapter_version = adapter->adapter_version;
     request->artifact_format = "GGUF";
     request->artifact_format_version = 3u;
     request->logical_transform_identity =
         adapter->logical_transform_identity;
-    if (!adapter->execution_capabilities(&request->capabilities)) return 0;
+    if (!compiler->execution_capabilities(&request->capabilities) ||
+        !compiler->transformer_policy(descriptor, &request->transformer_policy) ||
+        !compiler->logits_policy(&request->logits_policy) ||
+        !compiler->speculation_policy(descriptor, &request->speculation_policy)) return 0;
     request->capabilities.moe_plan_ready = 0;
     request->capabilities.moe_router_ready = 0;
     request->capabilities.moe_routed_expert_ready = 0;

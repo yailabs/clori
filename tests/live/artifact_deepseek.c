@@ -848,8 +848,8 @@ static int artifact_variant_bind(
 {
     const yvex_model_family_api *model = yvex_model_register_deepseek_v4();
     const yvex_graph_family_api *graph = yvex_graph_lower_deepseek_v4();
-    const yvex_runtime_family_adapter *adapter =
-        yvex_runtime_family_adapter_find("deepseek4-v4-flash-dspark");
+    const yvex_family_compiler_adapter *adapter =
+        yvex_compiler_family_deepseek_v4();
     yvex_artifact *artifact = NULL;
     yvex_gguf *gguf = NULL;
     yvex_tensor_table *tensors = NULL;
@@ -884,7 +884,8 @@ static int artifact_variant_bind(
 
     yvex_error_clear(&error);
     if (!binding_directory || !binding_directory[0] || !transform || !adapter ||
-        !adapter->execution_capabilities) {
+        !adapter->execution_capabilities || !adapter->transformer_policy ||
+        !adapter->logits_policy || !adapter->speculation_policy) {
         fprintf(stderr, "variant_binding_preflight=refused\n");
         return 1;
     }
@@ -949,7 +950,14 @@ static int artifact_variant_bind(
     writer_summary = yvex_gguf_writer_plan_summary_get(writer);
     if (rc == YVEX_OK && (!writer_summary || !compatibility.physical_payload_compatible ||
                           !adapter->execution_capabilities(&prepare.capabilities) ||
-                          !yvex_runtime_capabilities_contract_valid(&prepare.capabilities)))
+                          !yvex_runtime_capabilities_contract_valid(&prepare.capabilities) ||
+                          !adapter->transformer_policy(
+                              yvex_runtime_descriptor_summary_get(descriptor),
+                              &prepare.transformer_policy) ||
+                          !adapter->logits_policy(&prepare.logits_policy) ||
+                          !adapter->speculation_policy(
+                              yvex_runtime_descriptor_summary_get(descriptor),
+                              &prepare.speculation_policy)))
         rc = YVEX_ERR_STATE;
     if (rc == YVEX_OK) {
         prepare.directory = binding_directory;

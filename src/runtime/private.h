@@ -108,9 +108,6 @@ struct yvex_runtime_cleanup_lease {
     yvex_runtime_cleanup_release_fn dependent_release;
 };
 
-const yvex_runtime_family_adapter *yvex_runtime_private_adapter_find_identity(
-    unsigned long long adapter_id, unsigned long long adapter_version);
-
 struct yvex_runtime_generation_context {
     yvex_runtime_model *model;
     yvex_runtime_execution_session *session;

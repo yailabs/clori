@@ -455,7 +455,7 @@ typedef struct {
     yvex_materialization_placement placement;
     yvex_materialization_access_mode access_mode;
 } yvex_runtime_tensor_binding;
-typedef struct {
+typedef struct yvex_runtime_descriptor_summary {
     yvex_runtime_descriptor_status status;
     char artifact_identity[YVEX_SHA256_HEX_CAP];
     char materialization_plan_identity[YVEX_MATERIALIZATION_IDENTITY_CAP];

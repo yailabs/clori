@@ -1,4 +1,5 @@
 #include <yvex/internal/decode.h>
+#include <yvex/internal/families/deepseek_v4.h>
 #include <yvex/internal/sampling.h>
 
 #include <math.h>
@@ -417,8 +418,8 @@ static int test_commit_plan(void)
 
 static int test_family_policy_compatibility(void)
 {
-    const yvex_runtime_family_adapter *adapter =
-        yvex_runtime_family_adapter_find("deepseek4-v4-flash-dspark");
+    const yvex_family_compiler_adapter *adapter =
+        yvex_compiler_family_deepseek_v4();
     yvex_runtime_descriptor_summary runtime = {0};
     yvex_speculation_family_policy policy;
 

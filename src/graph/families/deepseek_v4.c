@@ -1980,9 +1980,21 @@ static const yvex_runtime_family_adapter deepseek_adapter = {
     .operator_family_key = "deepseek", .operator_artifact_filename = YVEX_SELECTED_DEEPSEEK_ARTIFACT_FILENAME,
     .logical_transform_identity = YVEX_SELECTED_DEEPSEEK_TRANSFORM_IDENTITY,
     .mixer_family = YVEX_SEQUENCE_MIXER_SOFTMAX_ATTENTION, .mixer_capability = deepseek_mixer_capability,
-    .graph = yvex_graph_lower_deepseek_v4, .execution_capabilities = deepseek_execution_capabilities,
-    .transformer_policy = deepseek_transformer_policy, .logits_policy = deepseek_logits_policy,
+    .graph = yvex_graph_lower_deepseek_v4};
+static const yvex_family_compiler_adapter deepseek_compiler = {
+    .schema_version = YVEX_FAMILY_COMPILER_SCHEMA_V1,
+    .adapter_id = YVEX_DEEPSEEK_V4_ADAPTER_ID,
+    .adapter_version = YVEX_DEEPSEEK_V4_ADAPTER_VERSION,
+    .target_id = "deepseek4-v4-flash-dspark",
+    .logical_transform_identity = YVEX_SELECTED_DEEPSEEK_TRANSFORM_IDENTITY,
+    .graph = yvex_graph_lower_deepseek_v4,
+    .execution_capabilities = deepseek_execution_capabilities,
+    .transformer_policy = deepseek_transformer_policy,
+    .logits_policy = deepseek_logits_policy,
     .speculation_policy = deepseek_speculation_policy};
+const yvex_family_compiler_adapter *yvex_compiler_family_deepseek_v4(void) {
+    return &deepseek_compiler;
+}
 const yvex_runtime_family_adapter *yvex_runtime_family_at(unsigned long long index) {
     return index == 0ull ? &deepseek_adapter : NULL;
 }

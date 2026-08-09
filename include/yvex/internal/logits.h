@@ -14,9 +14,6 @@
 extern "C" {
 #endif
 
-#define YVEX_RUNTIME_LOGITS_SCHEMA_V3 3u
-#define YVEX_RUNTIME_LOGITS_SCHEMA_V2 YVEX_RUNTIME_LOGITS_SCHEMA_V3
-#define YVEX_RUNTIME_LOGITS_SCHEMA_V1 YVEX_RUNTIME_LOGITS_SCHEMA_V3
 #define YVEX_OUTPUT_HEAD_BATCH_SCHEMA_V1 1u
 
 typedef enum {
@@ -24,11 +21,6 @@ typedef enum {
     YVEX_LOGITS_SOURCE_DECODE = 1,
     YVEX_LOGITS_SOURCE_DRAFT = 2
 } yvex_logits_source_phase;
-
-typedef struct yvex_logits_family_policy {
-    unsigned int schema_version;
-    int separate_output_head, tied_output_head, output_head_bias;
-} yvex_logits_family_policy;
 
 typedef struct {
     unsigned int schema_version;

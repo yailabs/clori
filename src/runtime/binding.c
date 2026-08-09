@@ -703,51 +703,22 @@ int yvex_runtime_capabilities_admitted_by(const yvex_runtime_capabilities *facts
     }
     return 1;
 }
-static int binding_capabilities_match_adapter(
-    unsigned long long adapter_id, unsigned long long adapter_version,
-    const yvex_runtime_capabilities *facts)
+static int binding_boolean(int value)
 {
-    const yvex_runtime_family_adapter *adapter =
-        yvex_runtime_private_adapter_find_identity(adapter_id, adapter_version);
-    yvex_runtime_capabilities declared = {0};
-    return adapter && yvex_runtime_capabilities_contract_valid(facts) &&
-           adapter->execution_capabilities &&
-           adapter->execution_capabilities(&declared) &&
-           yvex_runtime_capabilities_admitted_by(facts, &declared);
+    return value == 0 || value == 1;
 }
-static int binding_policies_compile(
-    unsigned long long adapter_id, unsigned long long adapter_version,
-    const yvex_runtime_descriptor_summary *descriptor,
-    yvex_transformer_family_policy *transformer, yvex_logits_family_policy *logits,
-    yvex_speculation_family_policy *speculation)
+
+static int binding_policies_match_model(
+    const yvex_model_execution_descriptor *model,
+    const yvex_transformer_family_policy *transformer,
+    const yvex_logits_family_policy *logits,
+    const yvex_speculation_family_policy *speculation)
 {
-    const yvex_runtime_family_adapter *adapter =
-        yvex_runtime_private_adapter_find_identity(adapter_id, adapter_version);
-    unsigned long long expanded;
-    return adapter && descriptor && transformer && logits && speculation &&
-           adapter->transformer_policy && adapter->transformer_policy(descriptor, transformer) &&
-           adapter->logits_policy && adapter->logits_policy(logits) &&
-           adapter->speculation_policy && adapter->speculation_policy(descriptor, speculation) &&
-           transformer->schema_version == YVEX_TRANSFORMER_PLAN_SCHEMA_V2 &&
-           yvex_core_u64_mul(transformer->residual_streams, transformer->hidden_width, &expanded) &&
-           transformer->expanded_width == expanded &&
-           transformer->hidden_width == descriptor->model_execution.hidden_width &&
-           logits->schema_version == YVEX_RUNTIME_LOGITS_SCHEMA_V1 &&
-           speculation->schema_version == YVEX_SPECULATION_FAMILY_POLICY_SCHEMA_V1 &&
-           speculation->block_size == descriptor->model_execution.proposal_width &&
-           speculation->draft_layer_count == descriptor->model_execution.draft_layer_count &&
-           yvex_sha256_hex_is_valid(speculation->policy_identity);
-}
-static int binding_policies_valid(const yvex_runtime_binding *binding)
-{
-    const yvex_model_execution_descriptor *model = &binding->descriptor.model_execution;
-    const yvex_transformer_family_policy *transformer = &binding->transformer_policy;
-    const yvex_logits_family_policy *logits = &binding->logits_policy;
-    const yvex_speculation_family_policy *speculation = &binding->speculation_policy;
     unsigned long long expanded, features;
-    return transformer->schema_version == YVEX_TRANSFORMER_PLAN_SCHEMA_V2 &&
-           transformer->initial_policy == YVEX_TRANSFORMER_INITIAL_REPEAT_STREAMS &&
-           transformer->final_policy == YVEX_TRANSFORMER_FINAL_SIGMOID_MHC_RMS &&
+    return model && transformer && logits && speculation &&
+           transformer->schema_version == YVEX_TRANSFORMER_PLAN_SCHEMA_V2 &&
+           (unsigned int)transformer->initial_policy < YVEX_TRANSFORMER_INITIAL_POLICY_COUNT &&
+           (unsigned int)transformer->final_policy < YVEX_TRANSFORMER_FINAL_POLICY_COUNT &&
            transformer->residual_streams == model->residual_streams &&
            transformer->hidden_width == model->hidden_width &&
            yvex_core_u64_mul(model->residual_streams, model->hidden_width, &expanded) &&
@@ -756,11 +727,14 @@ static int binding_policies_valid(const yvex_runtime_binding *binding)
            transformer->sinkhorn_iterations == model->mhc_sinkhorn_iterations &&
            transformer->mhc_epsilon == model->mhc_epsilon &&
            transformer->output_norm_epsilon == model->normalization_epsilon &&
-           transformer->attention_then_moe && transformer->deferred_ffn_post &&
-           transformer->final_norm_after_head &&
+           binding_boolean(transformer->attention_then_moe) &&
+           binding_boolean(transformer->deferred_ffn_post) &&
+           binding_boolean(transformer->final_norm_after_head) &&
            logits->schema_version == YVEX_RUNTIME_LOGITS_SCHEMA_V1 &&
-           logits->separate_output_head && !logits->tied_output_head &&
-           !logits->output_head_bias &&
+           binding_boolean(logits->separate_output_head) &&
+           binding_boolean(logits->tied_output_head) &&
+           binding_boolean(logits->output_head_bias) &&
+           logits->separate_output_head != logits->tied_output_head &&
            speculation->schema_version == YVEX_SPECULATION_FAMILY_POLICY_SCHEMA_V1 &&
            speculation->block_size == model->proposal_width &&
            speculation->noise_token_id == model->draft_noise_token_id &&
@@ -773,17 +747,27 @@ static int binding_policies_valid(const yvex_runtime_binding *binding)
            speculation->concatenated_feature_width == features &&
            speculation->draft_layer_count == model->draft_layer_count &&
            speculation->markov_rank == model->markov_rank &&
-           speculation->accepted_prefix_maximum == model->proposal_width &&
-           speculation->feature_projection_role == YVEX_TENSOR_ROLE_DRAFT_FEATURE_PROJECTION &&
-           speculation->feature_norm_role == YVEX_TENSOR_ROLE_DRAFT_FEATURE_NORM &&
-           speculation->output_norm_role == YVEX_TENSOR_ROLE_DRAFT_OUTPUT_NORM &&
-           speculation->markov_embedding_role == YVEX_TENSOR_ROLE_DRAFT_MARKOV_EMBEDDING &&
-           speculation->markov_output_role == YVEX_TENSOR_ROLE_DRAFT_MARKOV_OUTPUT &&
-           speculation->confidence_role == YVEX_TENSOR_ROLE_DRAFT_CONFIDENCE &&
-           speculation->parallel_block_backbone && speculation->sequential_markov &&
-           speculation->confidence_available && speculation->shares_embedding &&
-           speculation->shares_output_head && speculation->target_verification_required &&
+           speculation->accepted_prefix_maximum <= model->proposal_width &&
+           (unsigned int)speculation->feature_projection_role < YVEX_TENSOR_ROLE_COUNT &&
+           (unsigned int)speculation->feature_norm_role < YVEX_TENSOR_ROLE_COUNT &&
+           (unsigned int)speculation->output_norm_role < YVEX_TENSOR_ROLE_COUNT &&
+           (unsigned int)speculation->markov_embedding_role < YVEX_TENSOR_ROLE_COUNT &&
+           (unsigned int)speculation->markov_output_role < YVEX_TENSOR_ROLE_COUNT &&
+           (unsigned int)speculation->confidence_role < YVEX_TENSOR_ROLE_COUNT &&
+           binding_boolean(speculation->parallel_block_backbone) &&
+           binding_boolean(speculation->sequential_markov) &&
+           binding_boolean(speculation->confidence_available) &&
+           binding_boolean(speculation->shares_embedding) &&
+           binding_boolean(speculation->shares_output_head) &&
+           binding_boolean(speculation->target_verification_required) &&
            yvex_sha256_hex_is_valid(speculation->policy_identity);
+}
+
+static int binding_policies_valid(const yvex_runtime_binding *binding)
+{
+    return binding && binding_policies_match_model(
+        &binding->descriptor.model_execution, &binding->transformer_policy,
+        &binding->logits_policy, &binding->speculation_policy);
 }
 static int binding_moe_unavailable_identity(
     const yvex_runtime_binding_prepare_request *request,
@@ -1068,18 +1052,24 @@ static int prepare_validate(const yvex_runtime_binding_prepare_request *request,
             failure, YVEX_RUNTIME_BINDING_FAILURE_INVALID_ARGUMENT, "request",
             request ? request->directory : NULL, 0ull, 1ull, 0ull, YVEX_ERR_INVALID_ARG,
             "runtime binding preparation requires complete typed inputs", err);
-    if (!binding_capabilities_match_adapter(
-            request->family_adapter_id, request->family_adapter_version,
-            &request->capabilities))
+    if (!yvex_runtime_capabilities_contract_valid(&request->capabilities))
         return binding_reject(
             failure, YVEX_RUNTIME_BINDING_FAILURE_COMPATIBILITY,
             "execution-capabilities", request->directory, 0ull, 1ull, 0ull,
             YVEX_ERR_STATE,
-            "runtime binding capabilities do not match the registered adapter", err);
+            "runtime binding capabilities are not a valid compiled envelope", err);
     materialization = yvex_materialization_session_summary(request->materialization);
     descriptor = yvex_runtime_descriptor_summary_get(request->runtime_descriptor);
     attention = yvex_attention_plan_summary(request->attention_plan);
     draft_attention = yvex_attention_plan_summary(request->draft_attention_plan);
+    if (!descriptor || !binding_policies_match_model(
+            &descriptor->model_execution, &request->transformer_policy,
+            &request->logits_policy, &request->speculation_policy))
+        return binding_reject(
+            failure, YVEX_RUNTIME_BINDING_FAILURE_COMPATIBILITY,
+            "execution-policies", request->directory, 0ull, 1ull, 0ull,
+            YVEX_ERR_FORMAT,
+            "runtime binding requires a valid compiled execution policy envelope", err);
     compatibility_mismatch = yvex_artifact_physical_compatibility_mismatch(
         request->physical_compatibility, request->admission,
         request->logical_transform_identity);
@@ -1457,10 +1447,7 @@ static int binding_validate(const yvex_runtime_binding *binding,
                                             capability_identity) ||
         strcmp(capability_identity,
                binding->summary.execution_capability_identity) != 0 ||
-        !binding_capabilities_match_adapter(
-            binding->summary.family_adapter_id,
-            binding->summary.family_adapter_version,
-            &binding->summary.capabilities)) {
+        !yvex_runtime_capabilities_contract_valid(&binding->summary.capabilities)) {
         *field = "execution-capabilities";
         return 0;
     }
@@ -1857,15 +1844,11 @@ int yvex_runtime_binding_prepare(const yvex_runtime_binding_prepare_request *req
             failure, YVEX_RUNTIME_BINDING_FAILURE_COMPATIBILITY,
             "physical-execution", request->directory, 0ull, 1ull, 0ull,
             (yvex_status)rc, "physical execution compilation failed", err);
-    if (rc == YVEX_OK &&
-        !binding_policies_compile(
-            request->family_adapter_id, request->family_adapter_version,
-            yvex_runtime_descriptor_summary_get(request->runtime_descriptor),
-            &transformer, &logits, &speculation))
-        rc = binding_reject(
-            failure, YVEX_RUNTIME_BINDING_FAILURE_COMPATIBILITY,
-            "execution-policies", request->directory, 0ull, 1ull, 0ull,
-            YVEX_ERR_FORMAT, "compiled execution policies are unavailable", err);
+    if (rc == YVEX_OK) {
+        transformer = request->transformer_policy;
+        logits = request->logits_policy;
+        speculation = request->speculation_policy;
+    }
     if (rc == YVEX_OK &&
         !binding_body_write(request, semantic, executable, moe_identity,
                             draft_moe_identity, physical, &transformer, &logits,

@@ -6,22 +6,16 @@
  */
 #ifndef INCLUDE_YVEX_INTERNAL_TRANSFORMER_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_TRANSFORMER_H_INCLUDED
+#include <yvex/internal/compiler.h>
 #include <yvex/internal/execution.h>
 #include <yvex/internal/moe.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
 typedef struct yvex_backend_cuda_operation_facts yvex_backend_cuda_operation_facts;
-#define YVEX_TRANSFORMER_PLAN_SCHEMA_V2 2u
 #define YVEX_TRANSFORMER_INPUT_SCHEMA_V1 1u
 #define YVEX_TRANSFORMER_INPUT_SUFFIX ".yvex-transformer-input"
 #define YVEX_TRANSFORMER_WEIGHT_COUNT 5u
-typedef enum {
-    YVEX_TRANSFORMER_INITIAL_REPEAT_STREAMS = 0
-} yvex_transformer_initial_policy;
-typedef enum {
-    YVEX_TRANSFORMER_FINAL_SIGMOID_MHC_RMS = 0
-} yvex_transformer_final_policy;
 typedef enum {
     YVEX_TRANSFORMER_WEIGHT_EMBEDDING = 0,
     YVEX_TRANSFORMER_WEIGHT_FINAL_FUNCTION,
@@ -29,15 +23,6 @@ typedef enum {
     YVEX_TRANSFORMER_WEIGHT_FINAL_SCALE,
     YVEX_TRANSFORMER_WEIGHT_OUTPUT_NORM
 } yvex_transformer_weight_slot;
-typedef struct yvex_transformer_family_policy {
-    unsigned int schema_version;
-    yvex_transformer_initial_policy initial_policy;
-    yvex_transformer_final_policy final_policy;
-    unsigned long long residual_streams, hidden_width, expanded_width;
-    unsigned long long maximum_context, sinkhorn_iterations;
-    double mhc_epsilon, output_norm_epsilon;
-    int attention_then_moe, deferred_ffn_post, final_norm_after_head;
-} yvex_transformer_family_policy;
 typedef struct {
     unsigned long long tensor_id, row_width, row_count, encoded_bytes;
     yvex_tensor_role role;

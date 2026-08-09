@@ -1,0 +1,116 @@
+/*
+ * Family compilation ends at one immutable execution envelope.
+ *
+ * The adapter supplies semantic policy while compiler-plane owners validate and persist the
+ * result. Runtime code consumes the persisted records and never invokes these callbacks.
+ */
+#ifndef INCLUDE_YVEX_INTERNAL_COMPILER_H_INCLUDED
+#define INCLUDE_YVEX_INTERNAL_COMPILER_H_INCLUDED
+
+#include <yvex/core.h>
+#include <yvex/internal/model.h>
+#include <yvex/registry.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define YVEX_FAMILY_COMPILER_SCHEMA_V1 1u
+#define YVEX_RUNTIME_EXECUTION_CAPABILITY_SCHEMA_V2 2u
+#define YVEX_TRANSFORMER_PLAN_SCHEMA_V2 2u
+#define YVEX_RUNTIME_LOGITS_SCHEMA_V3 3u
+#define YVEX_RUNTIME_LOGITS_SCHEMA_V2 YVEX_RUNTIME_LOGITS_SCHEMA_V3
+#define YVEX_RUNTIME_LOGITS_SCHEMA_V1 YVEX_RUNTIME_LOGITS_SCHEMA_V3
+#define YVEX_SPECULATION_FAMILY_POLICY_SCHEMA_V1 1u
+#define YVEX_SPECULATION_MAX_BLOCK 8u
+#define YVEX_SPECULATION_MAX_FEATURE_LAYERS YVEX_MODEL_EXECUTION_FEATURE_LAYER_CAP
+#define YVEX_SPECULATION_IDENTITY_CAP (YVEX_SHA256_HEX_BYTES + 1u)
+
+typedef struct yvex_runtime_capabilities {
+    int attention_semantics_ready, attention_core_ready, attention_envelope_ready;
+    int cpu_prefill_eager_ready, cpu_decode_eager_ready, cuda_prefill_eager_ready;
+    int cuda_decode_eager_ready;
+    int cuda_eager_implemented, cuda_piecewise_graph_implemented, cuda_full_graph_implemented;
+    int cuda_prefill_piecewise_graph_ready, cuda_decode_piecewise_graph_ready;
+    int cuda_prefill_full_graph_ready, cuda_decode_full_graph_ready;
+    int attention_weight_residency_ready, attention_workspace_ready;
+    int attention_state_delta_ready, attention_operator_ready, attention_trace_ready;
+    int attention_profile_ready, attention_benchmark_ready, mixed_attention_ready;
+    int speculative_attention_ready, persistent_kv_ready;
+    int moe_plan_ready, moe_router_ready, moe_routed_expert_ready, moe_shared_expert_ready;
+    int moe_block_ready;
+    int transformer_ready, output_head_binding_ready, output_head_projection_ready;
+    int logits_cpu_ready, logits_cuda_ready, logits_prefill_ready, logits_decode_ready;
+    int logits_full_vocabulary_ready, logits_hidden_contract_ready;
+    int logits_partial_progress_ready, logits_ready;
+    int generation_ready;
+} yvex_runtime_capabilities;
+
+typedef enum {
+    YVEX_TRANSFORMER_INITIAL_REPEAT_STREAMS = 0,
+    YVEX_TRANSFORMER_INITIAL_POLICY_COUNT
+} yvex_transformer_initial_policy;
+
+typedef enum {
+    YVEX_TRANSFORMER_FINAL_SIGMOID_MHC_RMS = 0,
+    YVEX_TRANSFORMER_FINAL_POLICY_COUNT
+} yvex_transformer_final_policy;
+
+typedef struct yvex_transformer_family_policy {
+    unsigned int schema_version;
+    yvex_transformer_initial_policy initial_policy;
+    yvex_transformer_final_policy final_policy;
+    unsigned long long residual_streams, hidden_width, expanded_width;
+    unsigned long long maximum_context, sinkhorn_iterations;
+    double mhc_epsilon, output_norm_epsilon;
+    int attention_then_moe, deferred_ffn_post, final_norm_after_head;
+} yvex_transformer_family_policy;
+
+typedef struct yvex_logits_family_policy {
+    unsigned int schema_version;
+    int separate_output_head, tied_output_head, output_head_bias;
+} yvex_logits_family_policy;
+
+typedef struct yvex_speculation_family_policy {
+    unsigned int schema_version;
+    unsigned long long block_size, noise_token_id;
+    unsigned long long target_feature_layer_count;
+    unsigned long long target_feature_layers[YVEX_SPECULATION_MAX_FEATURE_LAYERS];
+    unsigned long long target_feature_width, concatenated_feature_width;
+    unsigned long long draft_layer_count, markov_rank, accepted_prefix_maximum;
+    yvex_tensor_role feature_projection_role, feature_norm_role;
+    yvex_tensor_role output_norm_role, markov_embedding_role;
+    yvex_tensor_role markov_output_role, confidence_role;
+    int parallel_block_backbone, sequential_markov, confidence_available;
+    int shares_embedding, shares_output_head, target_verification_required;
+    char policy_identity[YVEX_SPECULATION_IDENTITY_CAP];
+} yvex_speculation_family_policy;
+
+struct yvex_graph_family_api;
+struct yvex_runtime_descriptor_summary;
+typedef struct yvex_family_compiler_adapter {
+    unsigned int schema_version;
+    unsigned long long adapter_id, adapter_version;
+    const char *target_id, *logical_transform_identity;
+    const struct yvex_graph_family_api *(*graph)(void);
+    int (*execution_capabilities)(yvex_runtime_capabilities *out);
+    int (*transformer_policy)(const struct yvex_runtime_descriptor_summary *,
+                              yvex_transformer_family_policy *);
+    int (*logits_policy)(yvex_logits_family_policy *out);
+    int (*speculation_policy)(const struct yvex_runtime_descriptor_summary *,
+                              yvex_speculation_family_policy *);
+} yvex_family_compiler_adapter;
+
+int yvex_runtime_capabilities_identity(
+    const yvex_runtime_capabilities *facts,
+    char output[YVEX_SHA256_HEX_BYTES]);
+int yvex_runtime_capabilities_admitted_by(
+    const yvex_runtime_capabilities *facts,
+    const yvex_runtime_capabilities *maximum);
+int yvex_runtime_capabilities_contract_valid(
+    const yvex_runtime_capabilities *facts);
+
+#ifdef __cplusplus
+}
+#endif
+#endif
