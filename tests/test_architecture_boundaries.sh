@@ -433,6 +433,20 @@ fi
 if rg -n -i '(families/|deepseek|minimax)' src/graph/binding_compile.c; then
     fail "generic runtime-binding compiler contains concrete family semantics"
 fi
+if rg -n 'void[[:space:]]*\*[[:space:]]*semantic_model|semantic_model_close' \
+    include/yvex/internal/compiler.h include/yvex/internal/graph.h \
+    src/graph/binding_compile.c; then
+    fail "compiler or graph boundary retains an untyped semantic model lifecycle"
+fi
+rg -n 'yvex_semantic_model_ir[[:space:]]*\*semantic_model' \
+    include/yvex/internal/compiler.h include/yvex/internal/graph.h \
+    src/graph/binding_compile.c >/dev/null ||
+    fail "binding and graph compilation no longer consume the typed Semantic Model IR"
+semantic_ir_owners=$(rg -l 'struct[[:space:]]+yvex_semantic_model_ir[[:space:]]*\{' src include)
+[ "$semantic_ir_owners" = 'src/model/compilation/semantic.c' ] || {
+    printf '%s\n' "$semantic_ir_owners" >&2
+    fail "Semantic Model IR concrete storage escaped its compiler owner"
+}
 if rg -n 'yvex_(artifact_open|gguf_open|tensor_table_from_gguf|materialization_plan_build|quant_plan_file_validate|gguf_writer_plan_build)[[:space:]]*\(' \
     src/graph/families/deepseek_v4.c; then
     fail "the DeepSeek projection owns generic runtime-binding resource lifecycle"

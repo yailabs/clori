@@ -45,6 +45,40 @@ static const yvex_graph_execution_api *attention_execution_api(void)
     return binding && binding->api == &yvex_attention_execution_api ? binding->api : NULL;
 }
 
+static int semantic_model_borrow(
+    yvex_semantic_model_ir **out, const yvex_deepseek_v4_ir *family,
+    yvex_error *err)
+{
+    const yvex_model_family_api *model = yvex_model_register_deepseek_v4();
+    yvex_model_execution_descriptor execution = {0};
+    yvex_semantic_model_ir_request request = {0};
+    char logical[YVEX_SHA256_HEX_CAP] = {0};
+    int rc;
+
+    if (out) *out = NULL;
+    if (!out || !family || !model ||
+        !model->transform.architecture_identity(family, logical)) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "attention.live.semantic-model",
+                       "complete DeepSeek semantic facts are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    rc = model->ir.execution_descriptor(family, logical, &execution, err);
+    if (rc != YVEX_OK) return rc;
+    request = (yvex_semantic_model_ir_request){
+        .schema_version = YVEX_SEMANTIC_MODEL_IR_SCHEMA_V1,
+        .family_adapter_id = YVEX_DEEPSEEK_V4_ADAPTER_ID,
+        .family_adapter_version = YVEX_DEEPSEEK_V4_ADAPTER_VERSION,
+        .target_id = "deepseek4-v4-flash-dspark",
+        .source_model_identity = execution.source_model_identity,
+        .logical_model_identity = execution.logical_model_identity,
+        .semantic_payload_identity = execution.identity,
+        .maximum_context = execution.maximum_context,
+        .original_context = execution.original_context,
+        .context_capability_present = 1,
+        .family_payload = (void *)family};
+    return yvex_semantic_model_ir_seal(out, &request, err);
+}
+
 typedef struct {
     yvex_sha256 hash;
     yvex_sha256 oracle_trace_hash;
@@ -3025,6 +3059,7 @@ int main(int argc, char **argv)
     yvex_materialization_session *session = NULL;
     yvex_materialization_failure materialization_failure;
     yvex_deepseek_v4_ir *architecture_ir = NULL;
+    yvex_semantic_model_ir *semantic_model = NULL;
     yvex_deepseek_v4_ir_failure architecture_failure;
     yvex_runtime_descriptor *descriptor = NULL;
     yvex_runtime_descriptor_failure descriptor_failure;
@@ -3153,6 +3188,13 @@ int main(int argc, char **argv)
         goto cleanup_fail;
     }
 
+    rc = semantic_model_borrow(&semantic_model, architecture_ir, &err);
+    if (rc != YVEX_OK) {
+        fprintf(stderr, "semantic_model_failure where=%s message=%s\n",
+                yvex_error_where(&err), yvex_error_message(&err));
+        goto cleanup_fail;
+    }
+
     rc = yvex_runtime_descriptor_build_deepseek(
         &descriptor, &admission, session,
         yvex_model_register_deepseek_v4()->payload.map(handoff), architecture_ir,
@@ -3163,7 +3205,7 @@ int main(int argc, char **argv)
     }
 
     rc = yvex_compiler_family_deepseek_v4()->graph()->plan_build(
-        &attention_plan, architecture_ir, session, descriptor,
+        &attention_plan, semantic_model, session, descriptor,
         &attention_failure, &err);
     if (rc != YVEX_OK) {
         print_attention_failure(&attention_failure, &err);
@@ -3177,6 +3219,7 @@ int main(int argc, char **argv)
     {
         yvex_runtime_descriptor *mutated_descriptor = NULL;
         yvex_attention_plan *mutated_plan = NULL;
+        yvex_semantic_model_ir *mutated_semantic_model = NULL;
         yvex_deepseek_v4_layer_spec *mutable_layer =
             (yvex_deepseek_v4_layer_spec *)
                 yvex_model_register_deepseek_v4()->ir.layer_at(architecture_ir, 2ull);
@@ -3227,8 +3270,10 @@ int main(int argc, char **argv)
             print_descriptor_failure("identity-mutation", &descriptor_failure, &err);
             goto identity_mutation_fail;
         }
+        rc = semantic_model_borrow(&mutated_semantic_model, architecture_ir, &err);
+        if (rc != YVEX_OK) goto identity_mutation_fail;
         rc = yvex_compiler_family_deepseek_v4()->graph()->plan_build(
-            &mutated_plan, architecture_ir, session, mutated_descriptor,
+            &mutated_plan, mutated_semantic_model, session, mutated_descriptor,
             &attention_failure, &err);
         if (rc != YVEX_OK) {
             print_attention_failure(&attention_failure, &err);
@@ -3276,6 +3321,7 @@ int main(int argc, char **argv)
         printf("attention_identity_materialization_unchanged=1\n");
         yvex_attention_plan_close(mutated_plan);
         yvex_runtime_descriptor_close(mutated_descriptor);
+        yvex_semantic_model_ir_close(&mutated_semantic_model);
         yvex_error_clear(&err);
         memset(&attention_failure, 0, sizeof(attention_failure));
         goto identity_mutation_done;
@@ -3284,6 +3330,7 @@ identity_mutation_fail:
         mutable_layer->sparse_topk.k = original_topk;
         yvex_attention_plan_close(mutated_plan);
         yvex_runtime_descriptor_close(mutated_descriptor);
+        yvex_semantic_model_ir_close(&mutated_semantic_model);
         goto cleanup_fail;
 identity_mutation_done:
         ;
@@ -4040,6 +4087,7 @@ identity_mutation_done:
     }
 
     yvex_attention_plan_close(attention_plan);
+    yvex_semantic_model_ir_close(&semantic_model);
     yvex_model_register_deepseek_v4()->ir.close(architecture_ir);
     yvex_runtime_descriptor_close(descriptor);
     yvex_materialization_session_close(session);
@@ -4052,6 +4100,7 @@ identity_mutation_done:
 
 cleanup_fail:
     yvex_attention_plan_close(attention_plan);
+    yvex_semantic_model_ir_close(&semantic_model);
     yvex_model_register_deepseek_v4()->ir.close(architecture_ir);
     yvex_runtime_descriptor_close(descriptor);
     yvex_materialization_session_close(session);

@@ -3,8 +3,10 @@
  * tensor tables without creating executable model state.
  */
 #include <string.h>
+#include <stdlib.h>
 
 #include <yvex/api.h>
+#include <yvex/internal/compiler.h>
 #include <yvex/internal/model.h>
 
 #include "tests/test.h"
@@ -183,6 +185,78 @@ static int test_attention_numeric_policy_validation(void)
     return 0;
 }
 
+static unsigned int semantic_payload_closes;
+
+static void semantic_payload_close(void *payload)
+{
+    semantic_payload_closes++;
+    free(payload);
+}
+
+static int test_semantic_model_ir(void)
+{
+    static const char source[] =
+        "1111111111111111111111111111111111111111111111111111111111111111";
+    static const char logical[] =
+        "2222222222222222222222222222222222222222222222222222222222222222";
+    static const char payload_identity[] =
+        "3333333333333333333333333333333333333333333333333333333333333333";
+    yvex_semantic_model_ir_request request = {
+        .schema_version = YVEX_SEMANTIC_MODEL_IR_SCHEMA_V1,
+        .family_adapter_id = 7ull,
+        .family_adapter_version = 3ull,
+        .target_id = "semantic-test",
+        .source_model_identity = source,
+        .logical_model_identity = logical,
+        .semantic_payload_identity = payload_identity,
+        .maximum_context = 1048576ull,
+        .original_context = 163840ull,
+        .context_capability_present = 1};
+    yvex_semantic_model_ir *first = NULL, *second = NULL;
+    const yvex_semantic_model_ir_summary *summary;
+    yvex_error err;
+    int borrowed = 7;
+    int *owned = malloc(sizeof(*owned));
+
+    YVEX_TEST_ASSERT(owned != NULL, "semantic payload allocation");
+    request.family_payload = &borrowed;
+    YVEX_TEST_ASSERT(
+        yvex_semantic_model_ir_seal(&first, &request, &err) == YVEX_OK,
+        "borrowed semantic model seals");
+    summary = yvex_semantic_model_ir_summary_get(first);
+    YVEX_TEST_ASSERT(
+        summary && summary->maximum_context == 1048576ull &&
+        summary->original_context == 163840ull &&
+        summary->context_capability_present &&
+        yvex_semantic_model_ir_family_payload(first, 7ull, 3ull) == &borrowed &&
+        !yvex_semantic_model_ir_family_payload(first, 8ull, 3ull),
+        "semantic identity and family payload are independently typed");
+    request.family_payload = owned;
+    request.family_payload_owned = 1;
+    request.family_payload_close = semantic_payload_close;
+    YVEX_TEST_ASSERT(
+        yvex_semantic_model_ir_seal(&second, &request, &err) == YVEX_OK &&
+        strcmp(summary->identity,
+               yvex_semantic_model_ir_summary_get(second)->identity) == 0,
+        "payload address and ownership do not affect semantic identity");
+    yvex_semantic_model_ir_close(&first);
+    YVEX_TEST_ASSERT(semantic_payload_closes == 0u,
+                     "borrowed semantic payload is not released");
+    yvex_semantic_model_ir_close(&second);
+    YVEX_TEST_ASSERT(semantic_payload_closes == 1u,
+                     "owned semantic payload is released exactly once");
+    request.family_payload = NULL;
+    request.family_payload_owned = 0;
+    request.family_payload_close = NULL;
+    request.maximum_context = 4096ull;
+    request.original_context = 163840ull;
+    YVEX_TEST_ASSERT(
+        yvex_semantic_model_ir_seal(&first, &request, &err) ==
+            YVEX_ERR_INVALID_ARG && !first,
+        "runtime-sized context cannot replace the semantic maximum");
+    return 0;
+}
+
 int yvex_test_model_descriptor(void)
 {
     if (test_descriptor_from_c1_fixture() != 0) {
@@ -194,5 +268,6 @@ int yvex_test_model_descriptor(void)
     if (test_attention_numeric_policy_validation() != 0) {
         return 1;
     }
+    if (test_semantic_model_ir() != 0) return 1;
     return 0;
 }

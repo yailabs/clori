@@ -1,5 +1,4 @@
-/* Speculative candidates remain untrusted until target comparison; this owner returns only a
- * committable prefix and never publishes model, RNG, tokenizer, transcript, or session state. */
+/* Speculative candidates stay untrusted until target verification and never publish transaction state. */
 #include "src/runtime/private.h"
 #include <yvex/internal/decode.h>
 #include <float.h>
@@ -355,8 +354,7 @@ int yvex_runtime_speculation_context_open(
     yvex_runtime_logits_options logits_options = {0};
     yvex_runtime_sampling_options sampling_options = {0};
     yvex_runtime_sampling_policy draft_policy = {0};
-    const yvex_transformer_plan_summary *target_plan;
-    const yvex_transformer_plan_summary *draft_plan;
+    const yvex_transformer_plan_summary *target_plan, *draft_plan;
     const yvex_speculation_family_policy *policy;
     unsigned long long draft_context_capacity;
     int rc;
@@ -381,10 +379,9 @@ int yvex_runtime_speculation_context_open(
     target_plan = yvex_transformer_plan_summary_get(
         yvex_runtime_transformer_context_plan(target_transformer));
     draft_plan = yvex_transformer_plan_summary_get(
-        context->model_view
-            ? yvex_compiled_model_plan_transformer(
-                  context->model_view->compiled_plan, 1)
-            : NULL);
+        context->model_view ? yvex_compiled_model_plan_transformer(
+                                  context->model_view->compiled_plan, 1)
+                            : NULL);
     if (context->model_view && yvex_runtime_binding_policies(
             context->model_view->compiled_binding, NULL, NULL, &policy))
         context->policy = *policy;
@@ -418,8 +415,7 @@ int yvex_runtime_speculation_context_open(
         options->execution_profile->evidence == YVEX_EXECUTION_EVIDENCE_PRODUCTION;
     transformer_options.maximum_host_bytes = options->maximum_host_bytes;
     transformer_options.maximum_device_bytes = options->maximum_device_bytes;
-    /* Draft queries attend one another, so reserve ephemeral lookahead beyond target-visible
-     * context; accepted target state remains bounded by the caller's capacity. */
+    /* Draft rows share attention; extra lookahead remains outside committed target capacity. */
     transformer_options.context_capacity = draft_context_capacity;
     transformer_options.workspace_token_capacity = context->policy.block_size + 2ull;
     transformer_options.tensor_scope = YVEX_TENSOR_SCOPE_DRAFT;

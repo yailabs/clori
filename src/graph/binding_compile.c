@@ -30,7 +30,7 @@ typedef struct {
     yvex_complete_artifact_admission admission;
     yvex_materialization_plan *materialization_plan;
     yvex_materialization_session *materialization;
-    void *semantic_model;
+    yvex_semantic_model_ir *semantic_model;
     yvex_runtime_descriptor *descriptor;
     yvex_attention_plan *attention;
     yvex_attention_plan *draft_attention;
@@ -67,7 +67,7 @@ static int pipeline_valid(const yvex_family_compiler_adapter *adapter)
            pipeline->schema_version == YVEX_FAMILY_BINDING_PIPELINE_SCHEMA_V1 &&
            pipeline->source_open && pipeline->source_close && pipeline->artifact_admit &&
            pipeline->materialization_project && pipeline->semantic_model_build &&
-           pipeline->semantic_model_close && pipeline->runtime_descriptor_build &&
+           pipeline->runtime_descriptor_build &&
            pipeline->quant_plan_default && pipeline->quant_plan_policy &&
            pipeline->writer_lowering;
 }
@@ -82,8 +82,7 @@ static void binding_compiler_close(binding_compiler *compiler)
     yvex_attention_plan_close(compiler->attention);
     yvex_attention_plan_close(compiler->draft_attention);
     yvex_runtime_descriptor_close(compiler->descriptor);
-    if (compiler->pipeline)
-        compiler->pipeline->semantic_model_close(compiler->semantic_model);
+    yvex_semantic_model_ir_close(&compiler->semantic_model);
     yvex_materialization_session_close(compiler->materialization);
     yvex_materialization_plan_close(compiler->materialization_plan);
     yvex_tensor_table_close(compiler->tensors);

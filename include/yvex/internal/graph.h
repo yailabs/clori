@@ -336,11 +336,13 @@ int yvex_attention_workspace_recipe_build(
 
 struct yvex_moe_family_api;
 typedef struct yvex_graph_compiler_api {
-    int (*plan_build)(yvex_attention_plan **out, const void *family_ir,
+    int (*plan_build)(yvex_attention_plan **out,
+                      const yvex_semantic_model_ir *semantic_model,
                       const yvex_materialization_session *session,
                       const yvex_runtime_descriptor *descriptor, yvex_attention_failure *failure,
                       yvex_error *err);
-    int (*draft_plan_build)(yvex_attention_plan **out, const void *family_ir,
+    int (*draft_plan_build)(yvex_attention_plan **out,
+                            const yvex_semantic_model_ir *semantic_model,
                             const yvex_materialization_session *session,
                             const yvex_runtime_descriptor *descriptor,
                             yvex_attention_failure *failure, yvex_error *err);

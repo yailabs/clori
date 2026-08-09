@@ -191,6 +191,44 @@ struct yvex_quant_plan;
 struct yvex_gguf_writer_lowering_api;
 struct yvex_family_compilation_products;
 
+#define YVEX_SEMANTIC_MODEL_IR_SCHEMA_V1 1u
+typedef struct yvex_semantic_model_ir yvex_semantic_model_ir;
+typedef void (*yvex_semantic_model_payload_close_fn)(void *payload);
+typedef struct {
+    unsigned int schema_version;
+    unsigned long long family_adapter_id, family_adapter_version;
+    unsigned long long maximum_context, original_context;
+    int context_capability_present;
+    char target_id[128];
+    char source_model_identity[YVEX_SHA256_HEX_BYTES];
+    char logical_model_identity[YVEX_SHA256_HEX_BYTES];
+    char semantic_payload_identity[YVEX_SHA256_HEX_BYTES];
+    char identity[YVEX_SHA256_HEX_BYTES];
+} yvex_semantic_model_ir_summary;
+typedef struct {
+    unsigned int schema_version;
+    unsigned long long family_adapter_id, family_adapter_version;
+    const char *target_id;
+    const char *source_model_identity;
+    const char *logical_model_identity;
+    const char *semantic_payload_identity;
+    unsigned long long maximum_context, original_context;
+    int context_capability_present;
+    void *family_payload;
+    int family_payload_owned;
+    yvex_semantic_model_payload_close_fn family_payload_close;
+} yvex_semantic_model_ir_request;
+int yvex_semantic_model_ir_seal(
+    yvex_semantic_model_ir **out,
+    const yvex_semantic_model_ir_request *request, yvex_error *err);
+const yvex_semantic_model_ir_summary *yvex_semantic_model_ir_summary_get(
+    const yvex_semantic_model_ir *model);
+const void *yvex_semantic_model_ir_family_payload(
+    const yvex_semantic_model_ir *model,
+    unsigned long long family_adapter_id,
+    unsigned long long family_adapter_version);
+void yvex_semantic_model_ir_close(yvex_semantic_model_ir **model);
+
 #define YVEX_FAMILY_BINDING_PIPELINE_SCHEMA_V1 1u
 typedef struct yvex_family_compilation_source {
     void *owner;
@@ -217,15 +255,15 @@ typedef struct yvex_family_binding_pipeline {
     int (*materialization_project)(const void *lowering_context,
                                    struct yvex_materialization_projection *out,
                                    yvex_error *err);
-    int (*semantic_model_build)(void **out,
+    int (*semantic_model_build)(yvex_semantic_model_ir **out,
                                 const struct yvex_source_verification *verification,
                                 yvex_error *err);
-    void (*semantic_model_close)(void *model);
     int (*runtime_descriptor_build)(
         struct yvex_runtime_descriptor **out,
         const struct yvex_complete_artifact_admission *admission,
         struct yvex_materialization_session *materialization,
-        const void *lowering_context, const void *semantic_model,
+        const void *lowering_context,
+        const yvex_semantic_model_ir *semantic_model,
         yvex_error *err);
     int (*quant_plan_default)(struct yvex_quant_plan **out,
                               const struct yvex_transform_ir *transform,
