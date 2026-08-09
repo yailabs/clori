@@ -623,9 +623,13 @@ static int test_component_admission_routing(void)
 {
     yvex_complete_artifact_admission admission;
     yvex_artifact_admission_failure failure;
+    yvex_minimax_h3_architecture architecture;
+    yvex_minimax_h3_encoder_signature invalid_geometry;
+    yvex_minimax_h3_failure family_failure;
     yvex_minimax_h3_conditioning_result conditioning;
     unsigned int token = 1u;
     float output[5120];
+    int rc;
     yvex_error err;
 
     YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->component_admit(
@@ -639,20 +643,38 @@ static int test_component_admission_routing(void)
                          YVEX_ERR_INVALID_ARG &&
                          failure.code == YVEX_ARTIFACT_ADMISSION_INVALID_ARGUMENT,
                      "component admission refuses absent generic structural views");
+    YVEX_TEST_ASSERT(yvex_model_register_minimax_h3()->architecture_canonical(
+                         &architecture, &family_failure, &err) == YVEX_OK,
+                     "component execution receives canonical family geometry");
     memset(output, 0x5a, sizeof(output));
-    YVEX_TEST_ASSERT(yvex_backend_register_minimax_h3()->text_embed_cuda(
-                         NULL, NULL, 0ull, 0u, 0ull, 0ull, 0ull, NULL, 0ull,
-                         &token, 1ull, output, 5120ull, &conditioning, &err) ==
-                         YVEX_ERR_INVALID_ARG &&
-                         !conditioning.complete && ((unsigned char *)output)[0] == 0x5a,
+    rc = yvex_backend_register_minimax_h3()->text_embed_cuda(
+        NULL, &architecture.encoder, NULL, 0ull, 0u, 0ull, 0ull, 0ull, NULL, 0ull,
+        &token, 1ull, output, 5120ull, &conditioning, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_ERR_INVALID_ARG,
+                     "CUDA conditioning reports invalid absent materialization");
+    YVEX_TEST_ASSERT(!conditioning.complete && ((unsigned char *)output)[0] == 0x5a,
+                     "CUDA conditioning does not publish a refused execution");
+    YVEX_TEST_ASSERT(strcmp(yvex_error_where(&err),
+                            "cuda.minimax-h3.text-embedding.validate") == 0,
                      "CUDA conditioning refuses absent materialization without publication");
+    invalid_geometry = architecture.encoder;
+    ++invalid_geometry.text_query_heads;
+    YVEX_TEST_ASSERT(yvex_backend_register_minimax_h3()->text_embed_cuda(
+                         NULL, &invalid_geometry, NULL, 0ull, 0u, 0ull, 0ull, 0ull,
+                         NULL, 0ull, &token, 1ull, output, 5120ull, &conditioning,
+                         &err) == YVEX_ERR_INVALID_ARG &&
+                         strcmp(yvex_error_where(&err),
+                                "cuda.minimax-h3.text-geometry") == 0,
+                     "CUDA conditioning refuses inconsistent family geometry");
     YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->text_encoder_artifact_cuda(
-                         NULL, NULL, NULL, &token, 1ull, 0ull, output, 5120ull, 1ull, 1ull,
+                         NULL, NULL, NULL, &architecture.encoder, &token, 1ull, 0ull,
+                         output, 5120ull, 1ull, 1ull,
                          &conditioning, &err) == YVEX_ERR_INVALID_ARG &&
                          !conditioning.complete && ((unsigned char *)output)[0] == 0x5a,
                      "artifact conditioning refuses absent exact component views");
     YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->text_encoder_artifact_cuda(
-                         NULL, NULL, NULL, &token, 1ull, 50ull, output, 5120ull, 1ull, 1ull,
+                         NULL, NULL, NULL, &architecture.encoder, &token, 1ull, 50ull,
+                         output, 5120ull, 1ull, 1ull,
                          &conditioning, &err) == YVEX_ERR_INVALID_ARG &&
                          !conditioning.complete && ((unsigned char *)output)[0] == 0x5a,
                      "artifact text layer refuses absent exact component views");

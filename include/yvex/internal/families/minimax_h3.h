@@ -509,8 +509,7 @@ typedef enum {
     YVEX_MINIMAX_H3_TEXT_UP_PROJECTION,
     YVEX_MINIMAX_H3_TEXT_DOWN_PROJECTION,
     YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT,
-    YVEX_MINIMAX_H3_TEXT_LAYER_WEIGHT_COUNT = YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT - 1,
-    YVEX_MINIMAX_H3_TEXT_CONDITIONING_LAYERS = 50
+    YVEX_MINIMAX_H3_TEXT_LAYER_WEIGHT_COUNT = YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT - 1
 } yvex_minimax_h3_text_weight_slot;
 typedef struct {
     const unsigned char *encoded;
@@ -518,7 +517,8 @@ typedef struct {
     unsigned int qtype;
 } yvex_minimax_h3_text_weight;
 typedef struct {
-    int (*text_embed_cuda)(yvex_backend *backend, const unsigned char *encoded,
+    int (*text_embed_cuda)(yvex_backend *backend,
+        const yvex_minimax_h3_encoder_signature *geometry, const unsigned char *encoded,
         unsigned long long encoded_bytes, unsigned int qtype, unsigned long long row_count,
         unsigned long long row_width, unsigned long long row_bytes,
         const char *residency_identity, unsigned long long resident_bytes,
@@ -526,6 +526,7 @@ typedef struct {
         unsigned long long output_capacity, yvex_minimax_h3_conditioning_result *result,
         yvex_error *err);
     int (*text_layer_cuda)(yvex_backend *backend,
+        const yvex_minimax_h3_encoder_signature *geometry,
         const yvex_minimax_h3_text_weight *weights, unsigned long long layer_count,
         const char *residency_identity, unsigned long long resident_bytes,
         const unsigned int *token_ids, unsigned long long token_count, float *output,
@@ -555,6 +556,7 @@ typedef struct {
         yvex_artifact_admission_failure *failure, yvex_error *err);
     int (*text_encoder_artifact_cuda)(
         const yvex_artifact *artifact, const yvex_gguf *gguf, const yvex_tensor_table *tensors,
+        const yvex_minimax_h3_encoder_signature *geometry,
         const unsigned int *token_ids, unsigned long long token_count,
         unsigned long long layer_count,
         float *output, unsigned long long output_capacity,

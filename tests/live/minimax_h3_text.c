@@ -120,6 +120,9 @@ static int layer_proof_execute(
 {
     const yvex_minimax_h3_graph_api *graph = yvex_graph_register_minimax_h3();
     const yvex_minimax_h3_backend_api *family = yvex_backend_register_minimax_h3();
+    const yvex_minimax_h3_api *model = yvex_model_register_minimax_h3();
+    yvex_minimax_h3_architecture architecture;
+    yvex_minimax_h3_failure architecture_failure;
     yvex_complete_artifact_admission admission;
     yvex_artifact_admission_failure admission_failure;
     yvex_materialization_options materialization_options;
@@ -137,7 +140,10 @@ static int layer_proof_execute(
     int attached = 0, rc, release_rc;
     yvex_error cleanup;
     if (!artifact || !gguf || !tensors || !token || !output || !result ||
-        !graph || !family || !family->text_layer_cuda) {
+        !graph || !family || !family->text_layer_cuda || !model ||
+        !model->architecture_canonical ||
+        model->architecture_canonical(
+            &architecture, &architecture_failure, err) != YVEX_OK) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "minimax-h3.text-proof",
                        "exact artifact views, token, output, and production backend are required");
         return YVEX_ERR_INVALID_ARG;
@@ -185,7 +191,8 @@ static int layer_proof_execute(
     }
     if (rc == YVEX_OK)
         rc = family->text_layer_cuda(
-            backend, weights, 1ull, identity, arena_bytes, token, 1ull, output,
+            backend, &architecture.encoder, weights, 1ull, identity, arena_bytes,
+            token, 1ull, output,
             TEXT_HIDDEN, result, err);
     if (attached) {
         yvex_error_clear(&cleanup);
@@ -257,6 +264,9 @@ static int output_write(const char *path, const float output[TEXT_HIDDEN])
 
 int main(int argc, char **argv)
 {
+    const yvex_minimax_h3_api *model = yvex_model_register_minimax_h3();
+    yvex_minimax_h3_architecture architecture;
+    yvex_minimax_h3_failure architecture_failure;
     yvex_artifact_options options = {0};
     yvex_artifact *artifact = NULL;
     yvex_tensor_table *tensors = NULL;
@@ -294,6 +304,11 @@ int main(int argc, char **argv)
     options.path = argv[1];
     options.readonly = 1;
     rc = yvex_artifact_open(&artifact, &options, &err);
+    if (rc == YVEX_OK)
+        rc = model && model->architecture_canonical
+                 ? model->architecture_canonical(
+                       &architecture, &architecture_failure, &err)
+                 : YVEX_ERR_STATE;
     if (rc == YVEX_OK) rc = yvex_gguf_open(&gguf, artifact, &err);
     if (rc == YVEX_OK) rc = yvex_tensor_table_from_gguf(&tensors, gguf, &err);
     if (rc == YVEX_OK) {
@@ -303,7 +318,7 @@ int main(int argc, char **argv)
                 artifact, gguf, tensors, &token, output, &result, &err);
         else
             rc = api->text_encoder_artifact_cuda(
-                artifact, gguf, tensors, &token, 1ull,
+                artifact, gguf, tensors, &architecture.encoder, &token, 1ull,
                 execution_mode == 3 ? 50ull : execution_mode == 1 ? 1ull : 0ull,
                 output, TEXT_HIDDEN, 70ull * 1024ull * 1024ull * 1024ull,
                 execution_mode ? 512ull * 1024ull * 1024ull : 256ull * 1024ull * 1024ull,

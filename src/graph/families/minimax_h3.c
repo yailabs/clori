@@ -1729,6 +1729,7 @@ static int text_layer_weights_bind(
 }
 static int text_encoder_artifact_cuda(const yvex_artifact *artifact,
     const yvex_gguf *gguf, const yvex_tensor_table *tensors,
+    const yvex_minimax_h3_encoder_signature *geometry,
     const unsigned int *token_ids, unsigned long long token_count,
     unsigned long long layer_count,
     float *output, unsigned long long output_capacity,
@@ -1758,10 +1759,10 @@ static int text_encoder_artifact_cuda(const yvex_artifact *artifact,
     int uploaded = 0, rc, cleanup_rc, residency_close_rc;
     yvex_error cleanup, residency_cleanup;
     if (result) memset(result, 0, sizeof(*result));
-    if (!artifact || !gguf || !tensors || !backend || !backend->text_embed_cuda ||
+    if (!artifact || !gguf || !tensors || !geometry || !backend || !backend->text_embed_cuda ||
         !backend->text_layer_cuda || !token_ids || !token_count || !output || !result ||
-        layer_count > YVEX_MINIMAX_H3_TEXT_CONDITIONING_LAYERS ||
-        !yvex_core_u64_mul(token_count, 5120ull, &output_values) ||
+        layer_count > geometry->text_layers ||
+        !yvex_core_u64_mul(token_count, geometry->text_width, &output_values) ||
         output_values > output_capacity ||
         !yvex_core_u64_mul(output_values, sizeof(float), &output_bytes) ||
         output_bytes > SIZE_MAX) {
@@ -1824,13 +1825,15 @@ static int text_encoder_artifact_cuda(const yvex_artifact *artifact,
             residency, &cuda, maximum_device_bytes, &uploaded, &residency_summary, err);
     if (rc == YVEX_OK && !layer_count)
         rc = backend->text_embed_cuda(
-            cuda, encoded, encoded_bytes, embedding->qtype, embedding->row_count,
+            cuda, geometry, encoded, encoded_bytes,
+            embedding->qtype, embedding->row_count,
             embedding->row_width, embedding->encoded_bytes / embedding->row_count,
             residency_summary.residency_identity, residency_summary.encoded_bytes,
             token_ids, token_count, staged, output_values, &published, err);
     if (rc == YVEX_OK && layer_count)
         rc = backend->text_layer_cuda(
-            cuda, weights, layer_count, residency_summary.residency_identity,
+            cuda, geometry, weights, layer_count,
+            residency_summary.residency_identity,
             residency_summary.encoded_bytes, token_ids, token_count, staged,
             output_values, &published, err);
     yvex_error_clear(&cleanup);
