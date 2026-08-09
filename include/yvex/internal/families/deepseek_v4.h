@@ -565,9 +565,6 @@ const yvex_gguf_writer_lowering_api *yvex_model_deepseek_writer_lowering_api(voi
 const yvex_model_family_payload_api *yvex_model_deepseek_payload_api(void);
 int yvex_transform_deepseek_architecture_identity(const yvex_deepseek_v4_ir *architecture,
                                                   char output[YVEX_DEEPSEEK_IDENTITY_CAP]);
-int yvex_gguf_map_deepseek_name(const char *native_name, char *target, size_t target_cap,
-                                yvex_tensor_role *role,
-                                yvex_weight_mapping_issue_kind *issue);
 int yvex_quant_plan_build_deepseek_profile(
     yvex_quant_plan **out, const yvex_transform_ir *ir,
     const yvex_transform_binding *binding, const yvex_deepseek_gguf_map *map,

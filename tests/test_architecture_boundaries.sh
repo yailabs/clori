@@ -314,6 +314,11 @@ if rg -n -i "(families/|$generic_family_symbol_pattern)" \
     src/gguf/quant_plan.c src/gguf/quant_policy.c include/yvex/internal/quant_numeric.h; then
     fail "generic quantization planning owns or imports concrete family semantics"
 fi
+if rg -n -i "(families/|$generic_family_symbol_pattern)" src/gguf/conversion.c; then
+    fail "generic GGUF conversion owns or imports concrete family semantics"
+fi
+rg -n 'yvex_model_conversion_projection_find' src/gguf/conversion.c >/dev/null ||
+    fail "generic GGUF conversion no longer consumes a typed family projection"
 
 family_neutral_sources=$(
     {
