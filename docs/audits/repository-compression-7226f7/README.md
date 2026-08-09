@@ -47,8 +47,7 @@ The three DeepSeek projections remain deliberately separate:
 - `src/model/families/deepseek_v4.c` owns family/source interpretation and
   logical lowering;
 - `src/graph/families/deepseek_v4.c` owns irreducible graph composition; and
-- The then-family-owned fused CUDA lowering has since moved behind the generic
-  encoded-attention job; the current owner is `src/backend/cuda/attention.c`.
+- `src/backend/cuda/families/deepseek_v4.c` owns fused CUDA lowering.
 
 No runtime family-implementation hierarchy exists. Source trust/model
 interpretation, Transformation IR/Physical Execution IR, GGUF/artifact
