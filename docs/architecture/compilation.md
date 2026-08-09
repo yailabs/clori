@@ -59,6 +59,12 @@ projection instead of branching on a target name or repeating family
 constants. Synthetic descriptor tests vary its principal dimensions to keep
 the common path model-derived.
 
+The compiler-facing family adapter supplies one bounded graph compiler. Its
+attention recipes and MoE layer projector are passed explicitly into generic
+plan construction; generic graph code does not enumerate a process-global
+family registry. The projector is consumed only while sealing the compiled
+model plan and is absent from runtime model-open and execution.
+
 Transformation execution reads only the ranges named by the sealed plan. It
 may select, concatenate, permute, aggregate, scale, convert, or quantize as
 declared. It may not rediscover axes, expert ordering, companion scales, or

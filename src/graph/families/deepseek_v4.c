@@ -135,12 +135,6 @@ static int graph_draft_plan_build(yvex_attention_plan **out, const void *family_
         .identity = graph_recipe_identity, .layer = graph_recipe_draft_layer};
     return yvex_attention_plan_build(out, &recipe, session, descriptor, failure, err);
 }
-static const yvex_graph_compiler_api deepseek_graph_compiler = {
-    .plan_build = graph_plan_build,
-    .draft_plan_build = graph_draft_plan_build};
-static const yvex_graph_compiler_api *deepseek_graph_compile(void) {
-    return &deepseek_graph_compiler;
-}
 static const yvex_model_execution_descriptor *deepseek_execution_model(const yvex_runtime_descriptor_summary *runtime) {
     return runtime && runtime->model_execution.schema_version == YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1
                ? &runtime->model_execution : NULL;
@@ -193,8 +187,12 @@ static int deepseek_moe_layer(unsigned long long index, const yvex_runtime_descr
 static const yvex_moe_family_api deepseek_moe_api = {
     .adapter_id = YVEX_DEEPSEEK_V4_ADAPTER_ID, .adapter_version = YVEX_DEEPSEEK_V4_ADAPTER_VERSION,
     .project_layer = deepseek_moe_layer};
-const yvex_moe_family_api *yvex_graph_moe_family_at(unsigned long long index) {
-    return index == 0ull ? &deepseek_moe_api : NULL;
+static const yvex_graph_compiler_api deepseek_graph_compiler = {
+    .plan_build = graph_plan_build,
+    .draft_plan_build = graph_draft_plan_build,
+    .moe = &deepseek_moe_api};
+static const yvex_graph_compiler_api *deepseek_graph_compile(void) {
+    return &deepseek_graph_compiler;
 }
 static int deepseek_execution_capabilities(yvex_runtime_capabilities *out) {
     if (!out) return 0;

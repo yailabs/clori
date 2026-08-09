@@ -16,6 +16,8 @@
 
 #include <yvex/internal/moe.h>
 #include <yvex/internal/quant_numeric.h>
+#include <yvex/internal/compiler.h>
+#include <yvex/internal/families/deepseek_v4.h>
 
 static void moe_test_identity(char output[YVEX_SHA256_HEX_CAP], unsigned int value)
 {
@@ -24,7 +26,11 @@ static void moe_test_identity(char output[YVEX_SHA256_HEX_CAP], unsigned int val
 
 static int moe_test_family_plan(void)
 {
-    const yvex_moe_family_api *family = yvex_graph_moe_family_at(0ull);
+    const yvex_family_compiler_adapter *compiler =
+        yvex_compiler_family_deepseek_v4();
+    const yvex_graph_compiler_api *graph =
+        compiler && compiler->graph ? compiler->graph() : NULL;
+    const yvex_moe_family_api *family = graph ? graph->moe : NULL;
     yvex_runtime_descriptor_summary runtime = {0};
     yvex_attention_layer_plan attention = {0};
     yvex_error err;

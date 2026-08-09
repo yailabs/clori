@@ -139,6 +139,7 @@ typedef struct {
     const struct yvex_materialization_session *materialization;
     const struct yvex_runtime_descriptor *descriptor;
     const struct yvex_attention_plan *attention, *draft_attention;
+    const struct yvex_graph_compiler_api *graph;
     unsigned long long family_adapter_id, family_adapter_version;
     yvex_runtime_capabilities capabilities;
     yvex_transformer_family_policy transformer_policy;

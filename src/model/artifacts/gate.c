@@ -1211,6 +1211,7 @@ static int prepare_deepseek_runtime_binding(
         prepare.runtime_descriptor = compiler.descriptor;
         prepare.attention_plan = compiler.attention;
         prepare.draft_attention_plan = compiler.draft_attention;
+        prepare.graph_compiler = compiler.graph;
         prepare.family_adapter_id = request->family_adapter_id;
         prepare.family_adapter_version = request->family_adapter_version;
         prepare.artifact_format = "gguf";

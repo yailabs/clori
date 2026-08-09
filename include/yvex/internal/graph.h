@@ -326,6 +326,7 @@ int yvex_attention_workspace_recipe_build(
     yvex_attention_workspace_recipe *recipe, yvex_attention_failure *failure,
     yvex_error *err);
 
+struct yvex_moe_family_api;
 typedef struct yvex_graph_compiler_api {
     int (*plan_build)(yvex_attention_plan **out, const void *family_ir,
                       const yvex_materialization_session *session,
@@ -335,6 +336,7 @@ typedef struct yvex_graph_compiler_api {
                             const yvex_materialization_session *session,
                             const yvex_runtime_descriptor *descriptor,
                             yvex_attention_failure *failure, yvex_error *err);
+    const struct yvex_moe_family_api *moe;
 } yvex_graph_compiler_api;
 
 typedef struct yvex_graph_execution_api {

@@ -297,7 +297,9 @@ outside this API.
 `include/yvex/internal/moe.h` owns the non-installed MoE plan, typed input,
 generic graph/backend execution packets, inspect context, and operator result.
 The plan imports immutable runtime descriptor and materialization facts for all
-43 layers; family policy enters through one registered projection callback.
+layers; family policy enters through the explicit compiler-facing graph adapter
+and is sealed into the pointer-free plan before runtime model-open. Generic MoE
+compilation does not discover concrete families through a global registry.
 
 `yvex_moe_input_open_memory` and `yvex_moe_input_open_file` admit the same
 schema-v1 identity chain. The bounded file form stores explicit little-endian

@@ -506,7 +506,8 @@ int yvex_compiled_model_plan_build(
     int rc;
     if (out) *out = NULL;
     if (!out || !request || !request->materialization ||
-        !request->descriptor || !request->attention)
+        !request->descriptor || !request->attention || !request->graph ||
+        !request->graph->moe)
         return model_plan_refuse(err, YVEX_ERR_INVALID_ARG,
                                  "compiled model-plan inputs are required");
     plan = (yvex_compiled_model_plan *)calloc(1u, sizeof(*plan));
@@ -530,7 +531,7 @@ int yvex_compiled_model_plan_build(
             "partial compiled execution capabilities are inconsistent");
     }
     rc = yvex_moe_plan_build(
-        &plan->moe, request->family_adapter_id,
+        &plan->moe, request->graph->moe, request->family_adapter_id,
         request->family_adapter_version, request->materialization,
         request->descriptor, request->attention, err);
     if (rc == YVEX_OK)
@@ -547,7 +548,7 @@ int yvex_compiled_model_plan_build(
             &request->logits_policy, err);
     if (rc == YVEX_OK && request->draft_attention)
         rc = yvex_moe_plan_build(
-            &plan->draft_moe, request->family_adapter_id,
+            &plan->draft_moe, request->graph->moe, request->family_adapter_id,
             request->family_adapter_version, request->materialization,
             request->descriptor, request->draft_attention, err);
     if (rc == YVEX_OK && request->draft_attention)

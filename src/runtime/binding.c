@@ -771,7 +771,8 @@ static int binding_moe_plan_identity(
     const yvex_moe_plan_summary *summary;
     yvex_moe_plan *plan = NULL;
     int rc = yvex_moe_plan_build(
-        &plan, request->family_adapter_id, request->family_adapter_version,
+        &plan, request->graph_compiler->moe, request->family_adapter_id,
+        request->family_adapter_version,
         request->materialization, request->runtime_descriptor, attention, err);
     summary = yvex_moe_plan_summary_get(plan);
     if (rc == YVEX_OK && summary)
@@ -1020,6 +1021,7 @@ static int prepare_validate(const yvex_runtime_binding_prepare_request *request,
     const char *compatibility_mismatch;
     if (!request || !request->directory || !request->directory[0] || !request->admission ||
         !request->materialization || !request->runtime_descriptor || !request->attention_plan ||
+        !request->graph_compiler || !request->graph_compiler->moe ||
         !request->family_adapter_id || !request->family_adapter_version ||
         !request->artifact_format || !request->artifact_format[0] ||
         strlen(request->artifact_format) >= sizeof(((yvex_runtime_binding_summary *)0)->artifact_format) ||
@@ -1820,11 +1822,7 @@ static yvex_runtime_binding_failure_code binding_file_code(yvex_core_file_stage 
                                     sizeof(binding_file_codes[0])
                ? binding_file_codes[stage] : YVEX_RUNTIME_BINDING_FAILURE_FORMAT;
 }
-/*
- * Publish one immutable content-addressed runtime binding transactionally.
- *
- * Sealed admitted objects, graph identities, adapter identity, and external destination directory.
- */
+/* Publish one identity-bound immutable runtime binding transactionally. */
 int yvex_runtime_binding_prepare(const yvex_runtime_binding_prepare_request *request,
                                  yvex_runtime_binding_prepare_result *result,
                                  yvex_runtime_binding_failure *failure, yvex_error *err)
@@ -1872,6 +1870,7 @@ int yvex_runtime_binding_prepare(const yvex_runtime_binding_prepare_request *req
         plan_request = (yvex_compiled_model_plan_request){
             request->materialization, request->runtime_descriptor,
             request->attention_plan, request->draft_attention_plan,
+            request->graph_compiler,
             request->family_adapter_id, request->family_adapter_version,
             request->capabilities, request->transformer_policy,
             request->logits_policy};

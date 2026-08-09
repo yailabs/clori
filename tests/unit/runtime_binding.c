@@ -1236,7 +1236,9 @@ static int fixture_binding_request(const binding_fixture *fixture, const char *d
     request->runtime_descriptor = fixture->descriptor;
     request->attention_plan = fixture->attention;
     descriptor = yvex_runtime_descriptor_summary_get(fixture->descriptor);
-    if (!execution || !compiler || !descriptor || !compiler->execution_capabilities ||
+    if (!execution || !compiler || !descriptor || !compiler->graph ||
+        !(request->graph_compiler = compiler->graph()) ||
+        !compiler->execution_capabilities ||
         !compiler->transformer_policy || !compiler->logits_policy ||
         !compiler->speculation_policy) return 0;
     request->family_adapter_id = execution->adapter_id;

@@ -43,6 +43,7 @@ recursive_cleanup_call_pattern='(system|popen)[[:space:]]*\([^;]*(rm[[:space:]]+
 conversation_literal_pattern='(<think>|</think>|｜DSML｜|<tool_result>|<｜(User|Assistant|latest_reminder)｜>)'
 family_runtime_context_pattern='(context_capacity|requested_session_context|admitted_execution_maximum|'
 family_runtime_context_pattern="${family_runtime_context_pattern}"'per_(session|request)_maximum|physical_state_pool_tokens)'
+moe_family_registry_pattern='yvex_graph_moe_family_(at|find)[[:space:]]*\('
 
 # Every expression used as a hard gate carries positive and negative probes.
 # This catches regex drift before a repository scan can produce false comfort.
@@ -94,6 +95,9 @@ if printf '%s\n' 'model.maximum_context = 1048576;' |
     rg "$family_runtime_context_pattern" >/dev/null; then
     fail "family context-capacity guard rejects a semantic model maximum"
 fi
+printf '%s\n' 'yvex_graph_moe_family_at(index);' |
+    rg "$moe_family_registry_pattern" >/dev/null ||
+    fail "MoE family-registry guard misses a global compiler-policy lookup"
 printf '%s\n' '#include <yvex/internal/source_payload.h>' |
     rg "$runtime_planning_include_pattern" >/dev/null ||
     fail "runtime planning-dependency guard misses source payload ownership"
@@ -252,6 +256,9 @@ if [ "$(rg -c "$family_preparation_callback_pattern" src/model/artifacts/gate.c)
 fi
 if rg -n "$family_preparation_leak_pattern" src/runtime src/cli/commands/graph.c; then
     fail "family-specific cold preparation leaked into common runtime/CLI owners"
+fi
+if rg -n "$moe_family_registry_pattern" src include; then
+    fail "generic MoE compilation retains a concrete family registry"
 fi
 preparation_callback_owners=$(
     rg -l 'prepare_deepseek_runtime_binding' src include | LC_ALL=C sort

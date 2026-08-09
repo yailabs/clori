@@ -72,18 +72,6 @@ int yvex_moe_router_result_identity(const yvex_moe_router_result *router,
     return 1;
 }
 
-static const yvex_moe_family_api *moe_family_find(unsigned long long adapter_id,
-                                                   unsigned long long adapter_version)
-{
-    unsigned long long index;
-    for (index = 0ull;; ++index) {
-        const yvex_moe_family_api *family = yvex_graph_moe_family_at(index);
-        if (!family) return NULL;
-        if (family->adapter_id == adapter_id && family->adapter_version == adapter_version)
-            return family;
-    }
-}
-
 static const yvex_materialized_tensor_binding *moe_binding_find(
     const yvex_materialization_session *materialization,
     const yvex_runtime_descriptor *descriptor, yvex_tensor_role role,
@@ -256,13 +244,13 @@ static int moe_plan_identity(yvex_moe_plan *plan)
     return 1;
 }
 
-int yvex_moe_plan_build(yvex_moe_plan **out, unsigned long long adapter_id,
+int yvex_moe_plan_build(yvex_moe_plan **out, const yvex_moe_family_api *family,
+                        unsigned long long adapter_id,
                         unsigned long long adapter_version,
                         const yvex_materialization_session *materialization,
                         const yvex_runtime_descriptor *descriptor,
                         const yvex_attention_plan *attention, yvex_error *err)
 {
-    const yvex_moe_family_api *family = moe_family_find(adapter_id, adapter_version);
     const yvex_runtime_descriptor_summary *descriptor_summary =
         yvex_runtime_descriptor_summary_get(descriptor);
     const yvex_attention_summary *attention_summary = yvex_attention_plan_summary(attention);
@@ -271,7 +259,8 @@ int yvex_moe_plan_build(yvex_moe_plan **out, unsigned long long adapter_id,
     yvex_moe_plan *plan = NULL;
     unsigned long long index;
     if (out) *out = NULL;
-    if (!out || !family || !family->project_layer || !descriptor_summary ||
+    if (!out || !family || family->adapter_id != adapter_id ||
+        family->adapter_version != adapter_version || !family->project_layer || !descriptor_summary ||
         !attention_summary || !material_summary || !attention_summary->layer_count)
         return moe_refuse(err, YVEX_ERR_INVALID_ARG,
                           "complete runtime facts and a typed MoE family adapter are required");

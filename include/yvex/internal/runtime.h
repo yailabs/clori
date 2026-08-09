@@ -81,6 +81,7 @@ typedef struct {
     const yvex_runtime_descriptor *runtime_descriptor;
     const yvex_attention_plan *attention_plan;
     const yvex_attention_plan *draft_attention_plan;
+    const yvex_graph_compiler_api *graph_compiler;
     unsigned long long family_adapter_id, family_adapter_version;
     const char *artifact_format;
     unsigned int artifact_format_version;
