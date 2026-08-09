@@ -471,6 +471,13 @@ int yvex_runtime_descriptor_build(yvex_runtime_descriptor **out,
                                   const yvex_materialization_session *session,
                                   const yvex_runtime_descriptor_family_facts *family,
                                   yvex_runtime_descriptor_failure *failure, yvex_error *err);
+int yvex_runtime_descriptor_build_projected(
+    yvex_runtime_descriptor **out,
+    const yvex_complete_artifact_admission *admission,
+    const yvex_materialization_session *session,
+    const yvex_runtime_descriptor_family_facts *family,
+    const yvex_materialization_projection *projection,
+    yvex_runtime_descriptor_failure *failure, yvex_error *err);
 void yvex_runtime_descriptor_close(yvex_runtime_descriptor *descriptor);
 const yvex_runtime_descriptor_summary *
 yvex_runtime_descriptor_summary_get(const yvex_runtime_descriptor *descriptor);

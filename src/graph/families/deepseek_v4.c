@@ -1621,6 +1621,176 @@ static void deepseek_compilation_source_close(void *owner)
         (yvex_deepseek_payload_handoff *)owner);
 }
 
+static int deepseek_descriptor_refuse(
+    yvex_runtime_descriptor_failure *failure,
+    yvex_runtime_descriptor_failure_code code, unsigned long long index,
+    const char *reason, yvex_status status, yvex_error *err)
+{
+    if (failure) {
+        memset(failure, 0, sizeof(*failure));
+        failure->code = code;
+        failure->tensor_index = index;
+        failure->expected = 1ull;
+        failure->reason = reason;
+    }
+    yvex_error_set(err, status, "deepseek.runtime-descriptor", reason);
+    return status;
+}
+
+static void deepseek_hash_activation(
+    yvex_sha256 *hash, const yvex_attention_activation_policy *policy)
+{
+#define HASH(MEMBER) yvex_sha256_update_u64(hash, (unsigned long long)policy->MEMBER)
+    HASH(required); HASH(stage); HASH(quantization); HASH(block_axis); HASH(block_width);
+    HASH(scale_format); HASH(scale_dtype); HASH(pre_transform); HASH(tail_policy);
+    HASH(nonfinite_policy); HASH(fake_quant_inplace); HASH(zero_pad_hadamard_to_power_of_two);
+#undef HASH
+}
+
+static void deepseek_hash_topk(
+    yvex_sha256 *hash, const yvex_attention_topk_policy *policy)
+{
+#define HASH(MEMBER) yvex_sha256_update_u64(hash, (unsigned long long)policy->MEMBER)
+    HASH(required); HASH(version); HASH(policy); HASH(k); HASH(reject_nonfinite);
+    HASH(score_descending); HASH(equal_score_ordinal_ascending); HASH(plus_zero_equals_minus_zero);
+    HASH(duplicate_ordinal_refused); HASH(output_ranked_order);
+#undef HASH
+}
+
+static int deepseek_descriptor_facts(
+    const yvex_deepseek_v4_ir *ir, yvex_runtime_descriptor_family_facts *facts,
+    yvex_model_execution_descriptor *execution, char logical[YVEX_SHA256_HEX_CAP],
+    char numeric[YVEX_SHA256_HEX_CAP], yvex_runtime_descriptor_failure *failure,
+    yvex_error *err)
+{
+    const yvex_model_family_api *api = yvex_model_register_deepseek_v4();
+    const yvex_deepseek_v4_model_spec *model = api->ir.model(ir);
+    const yvex_deepseek_v4_layer_spec *first = api->ir.layer_at(ir, 0ull);
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    yvex_sha256 hash;
+    unsigned long long count, index;
+
+    if (!model || !first || model->runtime_numeric_schema_version != 2u ||
+        model->runtime_compute_policy_count != 1ull ||
+        !model->runtime_activation_policy_count || !model->hadamard_revision[0] ||
+        !api->transform.architecture_identity(ir, logical))
+        return deepseek_descriptor_refuse(
+            failure, YVEX_RUNTIME_DESCRIPTOR_FAILURE_ARCHITECTURE,
+            YVEX_MATERIALIZATION_NO_INDEX, "runtime numeric authority is incomplete",
+            YVEX_ERR_FORMAT, err);
+    yvex_sha256_init(&hash);
+    yvex_sha256_update_text(&hash, "yvex.runtime.numeric.deepseek-v4.v2");
+    yvex_sha256_update_text(&hash, model->hadamard_revision);
+    yvex_sha256_update_text(&hash, model->sglang_revision);
+    yvex_sha256_update_u64(&hash, model->runtime_numeric_schema_version);
+    yvex_sha256_update_u64(&hash, model->runtime_compute_policy_count);
+    yvex_sha256_update_u64(&hash, model->runtime_activation_policy_count);
+    yvex_sha256_update_u64(&hash, model->runtime_sparse_topk_policy_count);
+    count = api->ir.layer_count(ir);
+    yvex_sha256_update_u64(&hash, count);
+    for (index = 0ull; index < count; ++index) {
+        const yvex_deepseek_v4_layer_spec *layer = api->ir.layer_at(ir, index);
+        if (!layer || layer->moe.routed_experts != first->moe.routed_experts ||
+            layer->moe.experts_per_token != first->moe.experts_per_token)
+            return deepseek_descriptor_refuse(
+                failure, YVEX_RUNTIME_DESCRIPTOR_FAILURE_ARCHITECTURE, index,
+                "runtime numeric layer is missing", YVEX_ERR_FORMAT, err);
+        yvex_sha256_update_u64(&hash, layer->layer_index);
+        yvex_sha256_update_u64(&hash, (unsigned long long)layer->attention_class);
+        yvex_sha256_update_u64(&hash, (unsigned long long)layer->compute_contract);
+        deepseek_hash_activation(&hash, &layer->attention_kv_activation);
+        deepseek_hash_activation(&hash, &layer->compressor_activation);
+        deepseek_hash_activation(&hash, &layer->compressor_rotated_activation);
+        deepseek_hash_activation(&hash, &layer->indexer_query_activation);
+        deepseek_hash_topk(&hash, &layer->sparse_topk);
+    }
+    if (!yvex_sha256_final(&hash, digest))
+        return deepseek_descriptor_refuse(
+            failure, YVEX_RUNTIME_DESCRIPTOR_FAILURE_ARCHITECTURE,
+            YVEX_MATERIALIZATION_NO_INDEX, "runtime numeric identity failed",
+            YVEX_ERR_STATE, err);
+    yvex_sha256_hex(digest, numeric);
+    if (!api->ir.execution_descriptor ||
+        api->ir.execution_descriptor(ir, logical, execution, err) != YVEX_OK)
+        return deepseek_descriptor_refuse(
+            failure, YVEX_RUNTIME_DESCRIPTOR_FAILURE_ARCHITECTURE,
+            YVEX_MATERIALIZATION_NO_INDEX, "model execution descriptor is incomplete",
+            YVEX_ERR_FORMAT, err);
+    *facts = (yvex_runtime_descriptor_family_facts){
+        logical, numeric, model->hadamard_revision, model->runtime_numeric_schema_version,
+        model->runtime_compute_policy_count, model->runtime_activation_policy_count,
+        model->runtime_sparse_topk_policy_count, model->main_layer_count,
+        model->auxiliary_layer_count, first->moe.routed_experts,
+        first->moe.experts_per_token, model->vocabulary_size, execution};
+    return YVEX_OK;
+}
+
+static int deepseek_terminal_find(
+    const void *context, const char *name, yvex_materialization_terminal *out)
+{
+    const yvex_model_family_lowering_api *lowering = yvex_model_deepseek_lowering_api();
+    const yvex_deepseek_gguf_map *map = (const yvex_deepseek_gguf_map *)context;
+    const yvex_deepseek_gguf_descriptor *row, *first;
+
+    if (!map || !name || !out || !lowering) return 0;
+    row = lowering->find_emitted(map, name);
+    first = lowering->at(map, 0ull);
+    if (!row || !first) return 0;
+    *out = (yvex_materialization_terminal){
+        (unsigned long long)(row - first), row->role, row->collection, row->scope,
+        row->layer_index, row->predictor_index, row->expert_count};
+    return 1;
+}
+
+int yvex_deepseek_materialization_projection(
+    const yvex_deepseek_gguf_map *map,
+    yvex_materialization_projection *out, yvex_error *err)
+{
+    const yvex_model_family_lowering_api *lowering = yvex_model_deepseek_lowering_api();
+    const yvex_deepseek_gguf_map_summary *summary =
+        map && lowering ? lowering->summary(map) : NULL;
+
+    if (!out || !summary || !summary->complete || !summary->mapping_identity) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "deepseek.materialization",
+                       "complete family lowering is required for terminal projection");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    *out = (yvex_materialization_projection){
+        YVEX_MATERIALIZATION_PROJECTION_SCHEMA_VERSION, summary->mapping_identity,
+        summary->descriptor_count, map, deepseek_terminal_find, 1};
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_runtime_descriptor_build_deepseek(
+    yvex_runtime_descriptor **out,
+    const yvex_complete_artifact_admission *admission,
+    const yvex_materialization_session *session,
+    const yvex_deepseek_gguf_map *map, const yvex_deepseek_v4_ir *ir,
+    yvex_runtime_descriptor_failure *failure, yvex_error *err)
+{
+    yvex_materialization_projection projection;
+    yvex_runtime_descriptor_family_facts facts;
+    yvex_model_execution_descriptor execution;
+    char logical[YVEX_SHA256_HEX_CAP], numeric[YVEX_SHA256_HEX_CAP];
+    int rc;
+
+    if (out) *out = NULL;
+    if (!out || !map || !ir)
+        return deepseek_descriptor_refuse(
+            failure, YVEX_RUNTIME_DESCRIPTOR_FAILURE_INVALID_ARGUMENT,
+            YVEX_MATERIALIZATION_NO_INDEX, "map and architecture are required",
+            YVEX_ERR_INVALID_ARG, err);
+    rc = yvex_deepseek_materialization_projection(map, &projection, err);
+    if (rc == YVEX_OK)
+        rc = deepseek_descriptor_facts(
+            ir, &facts, &execution, logical, numeric, failure, err);
+    return rc == YVEX_OK
+               ? yvex_runtime_descriptor_build_projected(
+                     out, admission, session, &facts, &projection, failure, err)
+               : rc;
+}
+
 static int deepseek_compilation_materialization(
     const void *context, yvex_materialization_projection *out, yvex_error *err)
 {
