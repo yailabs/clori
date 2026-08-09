@@ -11,13 +11,82 @@
 
 #include <pthread.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 typedef struct {
     yvex_server *server;
 } daemon_thread_state;
+
+typedef struct {
+    atomic_int done;
+    pthread_t thread;
+    struct timespec started;
+    int thread_ready;
+} daemon_startup_progress;
+
+static unsigned long long startup_elapsed_seconds(const daemon_startup_progress *progress)
+{
+    struct timespec now;
+    if (!progress || clock_gettime(CLOCK_MONOTONIC, &now) != 0 ||
+        now.tv_sec < progress->started.tv_sec)
+        return 0u;
+    return (unsigned long long)(now.tv_sec - progress->started.tv_sec);
+}
+
+static void *startup_progress_main(void *opaque)
+{
+    daemon_startup_progress *progress = opaque;
+    const struct timespec interval = {0, 100000000};
+    unsigned long long last_report = 0u;
+    while (!atomic_load_explicit(&progress->done, memory_order_relaxed)) {
+        unsigned long long elapsed;
+        (void)nanosleep(&interval, NULL);
+        elapsed = startup_elapsed_seconds(progress);
+        if (!atomic_load_explicit(&progress->done, memory_order_relaxed) &&
+            elapsed >= last_report + 10u) {
+            fprintf(stderr,
+                    "yvexd: model admission still in progress (elapsed %llu s)\n",
+                    elapsed);
+            (void)fflush(stderr);
+            last_report = elapsed;
+        }
+    }
+    return NULL;
+}
+
+static void startup_progress_begin(daemon_startup_progress *progress)
+{
+    memset(progress, 0, sizeof(*progress));
+    atomic_init(&progress->done, 0);
+    fprintf(stderr,
+            "yvexd: model admission in progress (elapsed 0 s); "
+            "readiness follows verification and residency\n");
+    (void)fflush(stderr);
+    if (clock_gettime(CLOCK_MONOTONIC, &progress->started) == 0 &&
+        pthread_create(&progress->thread, NULL, startup_progress_main, progress) == 0)
+        progress->thread_ready = 1;
+    else {
+        fprintf(stderr,
+                "yvexd: periodic startup progress unavailable; model admission continues\n");
+        (void)fflush(stderr);
+    }
+}
+
+static void startup_progress_end(daemon_startup_progress *progress, int status)
+{
+    unsigned long long elapsed;
+    atomic_store_explicit(&progress->done, 1, memory_order_relaxed);
+    if (progress->thread_ready) (void)pthread_join(progress->thread, NULL);
+    elapsed = startup_elapsed_seconds(progress);
+    fprintf(stderr, "yvexd: model admission %s (elapsed %llu s)%s\n",
+            status == YVEX_OK ? "complete" : "failed", elapsed,
+            status == YVEX_OK ? "; runtime listener ready" : "");
+    (void)fflush(stderr);
+}
 
 static void print_help(FILE *output)
 {
@@ -93,6 +162,7 @@ int main(int argument_count, char **arguments)
     yvex_server_options options;
     yvex_server *server = NULL;
     daemon_thread_state thread_state;
+    daemon_startup_progress startup_progress;
     pthread_t signal_thread, console_thread;
     sigset_t signals;
     yvex_error err;
@@ -237,7 +307,11 @@ int main(int argument_count, char **arguments)
     (void)sigaddset(&signals, SIGTERM);
     (void)pthread_sigmask(SIG_BLOCK, &signals, NULL);
     rc = yvex_server_create(&server, &options, &err);
-    if (rc == YVEX_OK) rc = yvex_server_start(server, &err);
+    if (rc == YVEX_OK) {
+        startup_progress_begin(&startup_progress);
+        rc = yvex_server_start(server, &err);
+        startup_progress_end(&startup_progress, rc);
+    }
     if (rc != YVEX_OK) {
         yvex_server_close(&server);
         return print_error(&err, 1);

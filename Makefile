@@ -393,14 +393,14 @@ package: client daemon config/package_manifest.tsv NOTICE.md
 	daemon_sha=$$(sha256sum '$(YVEXD_BIN)' | awk '{print $$1}'); \
 	library_sha=$$(sha256sum '$(LIBYVEX)' | awk '{print $$1}'); \
 	registry_identity=$$(cat '$(OPERATOR_REGISTRY_IDENTITY)'); \
-	package_identity=$$(printf '%s\n' "$$commit" '6' 'cpu+cuda-dynamic' \
+	package_identity=$$(printf '%s\n' "$$commit" '8' 'cpu+cuda-dynamic' \
 		"$$registry_identity" "$$client_sha" "$$daemon_sha" "$$library_sha" | \
 		sha256sum | awk '{print $$1}'); \
 	{ printf 'field\tvalue\n'; \
 	  printf 'profile\tproduct\nsource_commit\t%s\n' "$$commit"; \
 	  printf 'package_identity\t%s\n' "$$package_identity"; \
 	  printf 'protocol_version\t%s\noperator_registry_identity\t%s\nbackend\t%s\n' \
-		'6' "$$registry_identity" 'cpu+cuda-dynamic'; \
+		'8' "$$registry_identity" 'cpu+cuda-dynamic'; \
 	  printf 'yvex_sha256\t%s\nyvexd_sha256\t%s\nlibyvex_sha256\t%s\n' \
 		"$$client_sha" "$$daemon_sha" "$$library_sha"; \
 	} > "$$package_dir/share/yvex/build.tsv"
@@ -677,7 +677,7 @@ test-packaging: package
 	@test ! -e '$(BUILD_DIR)/package/product/bin/yvex-dev'
 	@test -f '$(BUILD_DIR)/package/product/share/yvex/package_manifest.tsv'
 	@test -f '$(BUILD_DIR)/package/product/share/yvex/build.tsv'
-	@grep -F 'protocol_version	7' '$(BUILD_DIR)/package/product/share/yvex/build.tsv' >/dev/null
+	@grep -F 'protocol_version	8' '$(BUILD_DIR)/package/product/share/yvex/build.tsv' >/dev/null
 	@grep -F 'source_commit	' '$(BUILD_DIR)/package/product/share/yvex/build.tsv' >/dev/null
 	@test ! -e '$(BUILD_DIR)/package/developer'
 
@@ -1397,7 +1397,7 @@ test-surface: tests/test_surface.sh
 test-source-ownership: tests/test_source_ownership.sh config/source_owners.tsv
 	sh tests/test_source_ownership.sh
 
-test-repository-layout: tests/test_repository_layout.sh Makefile
+test-repository-layout: $(LIBYVEX) tests/test_repository_layout.sh Makefile
 	sh tests/test_repository_layout.sh
 
 test-architecture-boundaries: $(LIBYVEX) $(YVEX_BIN) $(YVEXD_BIN) $(TEST_REFERENCE_OBJS) tests/test_architecture_boundaries.sh

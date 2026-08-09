@@ -73,10 +73,6 @@ typedef struct {
     const char *reason;
 } yvex_runtime_mixer_capability;
 typedef enum {
-    YVEX_RUNTIME_PHASE_ATTENTION_PREFILL = 0, YVEX_RUNTIME_PHASE_ATTENTION_DECODE,
-    YVEX_RUNTIME_PHASE_ATTENTION_MIXED, YVEX_RUNTIME_PHASE_ATTENTION_SPECULATIVE_VERIFY
-} yvex_runtime_phase;
-typedef enum {
     YVEX_RUNTIME_MODE_EAGER = 0, YVEX_RUNTIME_MODE_PIECEWISE,
     YVEX_RUNTIME_MODE_FULL, YVEX_RUNTIME_MODE_AUTO
 } yvex_runtime_execution_mode;
@@ -481,7 +477,7 @@ typedef struct {
     yvex_backend_kind backend;
     yvex_attention_probe_kind probe;
     yvex_attention_probe_scope scope;
-    yvex_runtime_phase phase;
+    yvex_execution_phase phase;
     yvex_runtime_execution_mode mode;
     yvex_runtime_execution_scope operation_scope;
     yvex_runtime_trace_policy trace_policy;

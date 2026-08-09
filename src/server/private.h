@@ -29,6 +29,8 @@ typedef int (*server_message_emit)(void *context,
                                    const yvex_client_message *message,
                                    yvex_error *err);
 
+yvex_client_failure_class yvex_server_failure_class_from_status(int status);
+
 int yvex_server_protocol_receive(int fd, yvex_client_request *request,
                                  unsigned char **owned_prompt,
                                  yvex_provider_request **owned_provider,

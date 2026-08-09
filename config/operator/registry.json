@@ -123,6 +123,8 @@
         "session_list",
         "session_new",
         "session_reset",
+        "session_state_restore",
+        "session_state_save",
         "session_show",
         "version"
       ]
@@ -158,6 +160,8 @@
       "session.list",
       "session.new",
       "session.reset",
+      "session.state.restore",
+      "session.state.save",
       "session.show"
     ],
     "renderers": [
@@ -6294,6 +6298,112 @@
       "summary": "Reset one session and its sequence state.",
       "test_owner": "tests/client_cutover.sh",
       "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [],
+      "adapter_id": "session_state_restore",
+      "aliases": [],
+      "architectural_plane": "Run",
+      "arguments": [
+        {
+          "completion_provider": "session",
+          "multiplicity": "one",
+          "name": "name",
+          "required": true,
+          "validator": "syntax.delegated",
+          "value_type": "name"
+        },
+        {
+          "completion_provider": "none",
+          "multiplicity": "one",
+          "name": "path",
+          "required": true,
+          "validator": "syntax.delegated",
+          "value_type": "path"
+        },
+        {
+          "completion_provider": "none",
+          "multiplicity": "one",
+          "name": "maximum_file_bytes",
+          "required": true,
+          "validator": "syntax.delegated",
+          "value_type": "u64"
+        }
+      ],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [
+        "session",
+        "state",
+        "restore"
+      ],
+      "daemon_requirement": "required",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "runtime-client",
+      "model_requirement": "runtime-model",
+      "operation_id": "session.state.restore",
+      "protocol_operation": "session.state.restore",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "restores compatible committed model state",
+      "slash_projection": "none",
+      "summary": "Restore an immutable model-state checkpoint at the current session position.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-advanced"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [],
+      "adapter_id": "session_state_save",
+      "aliases": [],
+      "architectural_plane": "Run",
+      "arguments": [
+        {
+          "completion_provider": "session",
+          "multiplicity": "one",
+          "name": "name",
+          "required": true,
+          "validator": "syntax.delegated",
+          "value_type": "name"
+        },
+        {
+          "completion_provider": "none",
+          "multiplicity": "one",
+          "name": "path",
+          "required": true,
+          "validator": "syntax.delegated",
+          "value_type": "path"
+        }
+      ],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [
+        "session",
+        "state",
+        "save"
+      ],
+      "daemon_requirement": "required",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "runtime-client",
+      "model_requirement": "runtime-model",
+      "operation_id": "session.state.save",
+      "protocol_operation": "session.state.save",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "writes an immutable model-state checkpoint",
+      "slash_projection": "none",
+      "summary": "Save committed model state as an immutable checkpoint.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-advanced"
     },
     {
       "CLI_projection": true,

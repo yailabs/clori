@@ -105,9 +105,9 @@ static int runtime_attention_request_validate(const yvex_graph_attention_operato
             request->mode == YVEX_RUNTIME_MODE_EAGER,
         !request->compare_backends && request->backend == YVEX_BACKEND_KIND_CPU &&
             request->mode != YVEX_RUNTIME_MODE_EAGER && request->mode != YVEX_RUNTIME_MODE_AUTO,
-        request->phase != YVEX_RUNTIME_PHASE_ATTENTION_PREFILL &&
-            request->phase != YVEX_RUNTIME_PHASE_ATTENTION_DECODE,
-        request->phase == YVEX_RUNTIME_PHASE_ATTENTION_DECODE && request->token_count > 1ull,
+        request->phase != YVEX_EXECUTION_PHASE_PREFILL &&
+            request->phase != YVEX_EXECUTION_PHASE_DECODE,
+        request->phase == YVEX_EXECUTION_PHASE_DECODE && request->token_count > 1ull,
     };
     for (rule = 0u; rule < sizeof(rejected) / sizeof(rejected[0]); ++rule)
         if (rejected[rule])
@@ -336,7 +336,7 @@ static void runtime_attention_result_initialize(const yvex_graph_attention_opera
         yvex_core_text_copy(result->runtime_binding_path, sizeof(result->runtime_binding_path),
                             request->runtime_binding_path);
     runtime_attention_name_copy(result->phase, sizeof(result->phase), runtime_attention_phase_names,
-                                YVEX_RUNTIME_PHASE_ATTENTION_SPECULATIVE_VERIFY, request->phase);
+                                YVEX_EXECUTION_PHASE_VERIFY, request->phase);
     runtime_attention_name_copy(result->requested_mode, sizeof(result->requested_mode),
                                 runtime_attention_mode_names, YVEX_RUNTIME_MODE_AUTO, request->mode);
     runtime_attention_name_copy(result->trace_policy, sizeof(result->trace_policy),
@@ -632,7 +632,7 @@ static int runtime_attention_mode_configure(const yvex_graph_attention_operator_
         if (request->capture_bucket)
             return runtime_refuse(err, YVEX_ERR_UNSUPPORTED, "runtime.attention.capture_bucket",
                                   "CUDA eager attention has no capture bucket");
-    } else if (request->phase == YVEX_RUNTIME_PHASE_ATTENTION_DECODE) {
+    } else if (request->phase == YVEX_EXECUTION_PHASE_DECODE) {
         yvex_core_text_copy(capture_bucket, sizeof(capture_bucket), "decode-1");
     } else if (snprintf(capture_bucket, sizeof(capture_bucket), "prefill-%llu",
                         request->token_count) <= 0) {
@@ -659,8 +659,7 @@ static int runtime_attention_mode_bind_descriptor(const yvex_graph_attention_ope
     yvex_runtime_execution_mode mode, const yvex_graph_attention_capacity_plan *capacity, yvex_error *err) {
     const yvex_runtime_session_view *view = yvex_runtime_session_view_get(session);
     const yvex_graph_attention_capacity_summary *summary = yvex_graph_attention_capacity_plan_summary(capacity);
-    yvex_backend_attention_phase phase = request->phase == YVEX_RUNTIME_PHASE_ATTENTION_DECODE
-            ? YVEX_BACKEND_ATTENTION_PHASE_DECODE : YVEX_BACKEND_ATTENTION_PHASE_PREFILL;
+    yvex_backend_attention_phase phase = (yvex_backend_attention_phase)request->phase;
     yvex_backend_cuda_attention_mode selected = mode == YVEX_RUNTIME_MODE_FULL
         ? YVEX_BACKEND_CUDA_ATTENTION_FULL
         : mode == YVEX_RUNTIME_MODE_PIECEWISE ? YVEX_BACKEND_CUDA_ATTENTION_PIECEWISE
@@ -1817,13 +1816,12 @@ int yvex_graph_attention_operator_execute(const yvex_graph_attention_operator_re
     unsigned long long measurement_start = 0ull, phase_started, dispatch_count;
     unsigned long long selected_layer = YVEX_ATTENTION_NO_LAYER, total_started = yvex_core_monotonic_ns();
     yvex_runtime_execution_mode selected_mode = YVEX_RUNTIME_MODE_EAGER;
-    int rc;
     if (request && request->activation_input_path)
         return yvex_runtime_activation_prefill_operator_execute(request, result, retained_cleanup, err);
     if (!result || !retained_cleanup || *retained_cleanup)
         return runtime_refuse(err, YVEX_ERR_INVALID_ARG, "runtime.attention", "result and cleanup are required");
     runtime_attention_result_initialize(request, result);
-    rc = runtime_attention_request_validate(request, err);
+    int rc = runtime_attention_request_validate(request, err);
     if (rc != YVEX_OK) {
         runtime_attention_result_refuse(result, rc, err);
         return rc;
@@ -1884,6 +1882,7 @@ int yvex_graph_attention_operator_execute(const yvex_graph_attention_operator_re
         runtime_seconds(yvex_core_monotonic_ns() - phase_started);
     memset(&probe_request, 0, sizeof(probe_request));
     probe_request.backend = request->backend;
+    probe_request.execution_phase = request->phase;
     probe_request.probe = request->probe;
     probe_request.scope = request->scope;
     probe_request.operation_scope = request->operation_scope == YVEX_RUNTIME_SCOPE_ATTENTION_CORE

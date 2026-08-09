@@ -67,13 +67,13 @@ typedef enum {
     YVEX_BACKEND_ATTENTION_SCOPE_CORE = 0,
     YVEX_BACKEND_ATTENTION_SCOPE_ENVELOPE
 } yvex_backend_attention_scope;
+/* Values mirror the cross-subsystem execution phase ABI; correction and reset are not backend
+ * attention phases and remain invalid gaps. CUDA admission asserts every shared value. */
 typedef enum {
-    YVEX_BACKEND_ATTENTION_PHASE_DECODE = 0,
-    YVEX_BACKEND_ATTENTION_PHASE_PREFILL,
-    YVEX_BACKEND_ATTENTION_PHASE_MIXED,
-    YVEX_BACKEND_ATTENTION_PHASE_SPECULATIVE_DRAFT,
-    YVEX_BACKEND_ATTENTION_PHASE_SPECULATIVE_VERIFY,
-    YVEX_BACKEND_ATTENTION_PHASE_COUNT
+    YVEX_BACKEND_ATTENTION_PHASE_PREFILL = 0, YVEX_BACKEND_ATTENTION_PHASE_DECODE = 1,
+    YVEX_BACKEND_ATTENTION_PHASE_SPECULATIVE_DRAFT = 2,
+    YVEX_BACKEND_ATTENTION_PHASE_SPECULATIVE_VERIFY = 3,
+    YVEX_BACKEND_ATTENTION_PHASE_MIXED = 6, YVEX_BACKEND_ATTENTION_PHASE_COUNT = 7
 } yvex_backend_attention_phase;
 typedef int (*yvex_backend_cancelled_fn)(void *context);
 typedef struct { yvex_backend_cancelled_fn requested; void *context; } yvex_backend_cancellation;
@@ -112,7 +112,7 @@ typedef struct {
     yvex_backend_attention_rolling main_rolling, indexer_rolling;
     const yvex_backend_cancellation *cancellation;
     unsigned int evidence_level;
-    int candidate_block_visible, retain_prefix_checkpoints;
+    int candidate_block_visible, retain_prefix_checkpoints, native_execution;
     unsigned long long max_host_bytes, max_device_bytes;
 } yvex_backend_attention_job;
 typedef struct {
@@ -126,7 +126,8 @@ typedef struct {
     unsigned long long tokens_executed, compressed_count, indexer_count;
     unsigned long long topk_count, valid_candidate_count;
     unsigned long long host_bytes, peak_host_bytes, device_bytes, peak_device_bytes;
-    unsigned long long kernel_launches, h2d_bytes, d2h_bytes, d2d_bytes, device_state_staged_bytes;
+    unsigned long long kernel_launches, tensor_core_launches, h2d_bytes, d2h_bytes, d2d_bytes;
+    unsigned long long device_state_staged_bytes;
     unsigned long long stream_synchronizations, device_synchronizations;
     unsigned long long device_execution_elapsed_ns, host_workspace_capacity;
     unsigned long long host_workspace_used, host_workspace_peak, host_workspace_allocation_count;
@@ -370,15 +371,15 @@ typedef struct yvex_backend_cuda_operation_facts {
     unsigned long long h2d_bytes, d2h_bytes, d2d_bytes, kernel_launches, upload_count;
     unsigned long long download_count, stream_synchronizations, device_synchronizations;
     unsigned long long active_weight_bytes, state_bytes;
-    unsigned long long activation_bytes, temporary_bytes;
+    unsigned long long activation_bytes, temporary_bytes, tensor_core_launches;
     int compulsory_memory_facts_available;
 } yvex_backend_cuda_operation_facts;
 int yvex_backend_cuda_encoded_matvec(yvex_backend *backend, const unsigned char *resident_encoded,
     unsigned long long encoded_bytes, unsigned int qtype, unsigned long long row_count,
     unsigned long long row_width, unsigned long long row_bytes, unsigned long long input_rows,
     const yvex_device_tensor *input, const yvex_device_tensor *input_tail, unsigned long long input_head_width,
-    const yvex_device_tensor *additive,
-    yvex_device_tensor *output, yvex_backend_cuda_operation_facts *facts, yvex_error *err);
+    const yvex_device_tensor *additive, yvex_device_tensor *output, int activation_q8,
+    yvex_backend_cuda_operation_facts *facts, yvex_error *err);
 int yvex_backend_cuda_encoded_gather(yvex_backend *backend, const unsigned char *resident_encoded,
     unsigned long long encoded_bytes, unsigned int qtype, unsigned long long row_count,
     unsigned long long row_width, unsigned long long row_bytes, const unsigned int *row_ids,
@@ -399,8 +400,7 @@ int yvex_backend_host_workspace_prepare_owned(yvex_backend *backend, unsigned lo
 int yvex_backend_host_workspace_detach(yvex_backend *backend, yvex_error *err);
 int yvex_backend_host_workspace_acquire(yvex_backend *, unsigned long long,
                                         unsigned long long, void **);
-int yvex_backend_host_workspace_summary_get(const yvex_backend *,
-                                            yvex_backend_host_workspace_summary *);
+int yvex_backend_host_workspace_summary_get(const yvex_backend *, yvex_backend_host_workspace_summary *);
 int yvex_backend_validate_rope(const yvex_device_tensor *tensor, unsigned long long *head_dim,
                                const char *where, yvex_error *err);
 int yvex_backend_validate_embed(const yvex_backend *backend,

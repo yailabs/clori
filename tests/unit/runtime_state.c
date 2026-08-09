@@ -346,11 +346,13 @@ static int test_workspace_capture_geometry(const state_plan_fixture *fixture)
 {
     const yvex_graph_family_api *family = state_family();
     yvex_attention_state_recipe_request request;
-    yvex_attention_state_recipe state;
-    yvex_attention_workspace_recipe workspace;
+    yvex_attention_state_recipe state, index_state;
+    yvex_attention_workspace_recipe workspace, index_workspace;
     const yvex_attention_workspace_component *local = NULL;
     const yvex_attention_workspace_component *current = NULL;
     const yvex_attention_workspace_component *candidate = NULL;
+    const yvex_attention_workspace_component *positions = NULL;
+    const yvex_attention_workspace_component *scores = NULL, *valid = NULL;
     yvex_attention_failure failure;
     yvex_error err;
     unsigned int index;
@@ -394,6 +396,31 @@ static int test_workspace_capture_geometry(const state_plan_fixture *fixture)
             !current->scales_with_tokens &&
             !candidate->scales_with_tokens,
         "rolling current and final delta own exact token-independent semantic extents");
+    request.layer_ordinal = 1ull;
+    request.final_position = 524288ull;
+    YVEX_TEST_ASSERT(
+        state_recipe_project(&fixture->layers[1], &request, &index_state,
+                             &failure, &err) == YVEX_OK &&
+            family->workspace_recipe(
+                &fixture->layers[1], &index_state, YVEX_ATTENTION_EXECUTION_FULL,
+                YVEX_ATTENTION_OPERATION_CORE, YVEX_ATTENTION_EVIDENCE_NONE,
+                4ull, &index_workspace, &failure, &err) == YVEX_OK,
+        "deep CSA workspace seals every index-selection scratch class");
+    for (index = 0u; index < index_workspace.component_count; ++index) {
+        const yvex_attention_workspace_component *component =
+            &index_workspace.components[index];
+        if (component->kind == YVEX_ATTENTION_WORKSPACE_TOPK_POSITIONS)
+            positions = component;
+        else if (component->kind == YVEX_ATTENTION_WORKSPACE_TOPK_SCORES)
+            scores = component;
+        else if (component->kind == YVEX_ATTENTION_WORKSPACE_TOPK_VALID_INDICES)
+            valid = component;
+    }
+    YVEX_TEST_ASSERT(
+        positions && positions->element_count == 512ull && positions->scales_with_tokens &&
+            scores && scores->element_count == 131073ull && !scores->scales_with_tokens &&
+            valid && valid->element_count == scores->element_count && !valid->scales_with_tokens,
+        "deep CSA recipe reserves selected positions and token-local candidate scratch");
     return 0;
 }
 
@@ -1590,7 +1617,7 @@ static void execution_descriptor_fixture(
     facts->probe = YVEX_ATTENTION_PROBE_CANONICAL_V2;
     facts->probe_scope = YVEX_ATTENTION_PROBE_SCOPE_FULL;
     facts->operation_scope = YVEX_RUNTIME_SCOPE_ATTENTION_ENVELOPE;
-    facts->phase = YVEX_RUNTIME_PHASE_ATTENTION_PREFILL;
+    facts->phase = YVEX_EXECUTION_PHASE_PREFILL;
     facts->backend = YVEX_BACKEND_KIND_CPU;
     facts->requested_mode = YVEX_RUNTIME_MODE_EAGER;
     facts->token_count = 4ull;
@@ -1683,7 +1710,7 @@ static int test_execution_descriptor_identity(void)
                    changed.executable_graph_identity) == 0,
         "unknown probe refuses without changing upstream identity facts");
     changed = facts;
-    changed.phase = YVEX_RUNTIME_PHASE_ATTENTION_DECODE;
+    changed.phase = YVEX_EXECUTION_PHASE_DECODE;
     YVEX_TEST_ASSERT(execution_descriptor_changed(first, &changed),
                      "phase mutation changes execution descriptor");
     changed = facts;
@@ -1820,7 +1847,7 @@ static int test_operator_missing_binding_refusal(void)
     request.backend = YVEX_BACKEND_KIND_CPU;
     request.probe = YVEX_ATTENTION_PROBE_UNSPECIFIED;
     request.scope = YVEX_ATTENTION_PROBE_SCOPE_QUICK;
-    request.phase = YVEX_RUNTIME_PHASE_ATTENTION_PREFILL;
+    request.phase = YVEX_EXECUTION_PHASE_PREFILL;
     request.mode = YVEX_RUNTIME_MODE_EAGER;
     request.operation_scope = YVEX_RUNTIME_SCOPE_ATTENTION_CORE;
     request.operator_action = YVEX_RUNTIME_OPERATOR_STATE_EXERCISE;
@@ -1882,20 +1909,119 @@ static void state_page_capacity_open(yvex_execution_capacity_plan *capacity)
     }
 }
 
+static int test_state_checkpoint_restore(const state_plan_fixture *fixture)
+{
+    state_plan_fixture single = *fixture;
+    yvex_attention_history_view layers[1];
+    char identities[1][YVEX_SHA256_HEX_CAP];
+    yvex_attention_state_checkpoint checkpoint = {0};
+    yvex_graph_attention_state_summary before, after, empty;
+    yvex_attention_failure failure;
+    yvex_error err;
+    test_state source = {0}, restored = {0};
+    const yvex_attention_history_view *view;
+    char delta[YVEX_SHA256_HEX_CAP];
+    unsigned long long position;
+    int restore_rc;
+
+    single.plan.layer_count = single.plan.summary.layer_count = 1ull;
+    single.plan.summary.csa_layer_count = single.plan.summary.hca_layer_count = 0ull;
+    yvex_error_clear(&err);
+    YVEX_TEST_ASSERT(
+        state_open(&source, state_family(), &single.plan, 1024ull * 1024ull,
+                   &failure, &err) == YVEX_OK &&
+            state_open(&restored, state_family(), &single.plan,
+                       1024ull * 1024ull, &failure, &err) == YVEX_OK &&
+            state_prepare(&source, &single.layers[0],
+                          single.plan.summary.attention_plan_identity) &&
+            state_prepare(&restored, &single.layers[0],
+                          single.plan.summary.attention_plan_identity),
+        "checkpoint providers open with identical sealed geometry");
+    for (position = 0ull; position < 3ull; ++position)
+        YVEX_TEST_ASSERT(
+            state_apply_token(&source, &single.layers[0], position, 0, delta),
+            "checkpoint source commits an exact prefix");
+    view = state_view(&source, 0ull, YVEX_ATTENTION_STATE_VIEW_COMMITTED);
+    YVEX_TEST_ASSERT(
+        view && state_summary(&source, &before, &err) == YVEX_OK &&
+            state_identity(&source, 0ull, identities[0], &err) == YVEX_OK &&
+            state_summary(&restored, &empty, &err) == YVEX_OK,
+        "checkpoint captures committed state and identities");
+    layers[0] = *view;
+    checkpoint.schema_version = YVEX_ATTENTION_STATE_CHECKPOINT_SCHEMA_V1;
+    checkpoint.layer_count = 1ull;
+    checkpoint.committed_sequence_length = before.committed_sequence_length;
+    checkpoint.layers = layers;
+    checkpoint.layer_identities =
+        (const char (*)[YVEX_SHA256_HEX_CAP])identities;
+    strcpy(checkpoint.state_layout_identity, before.state_layout_identity);
+    strcpy(checkpoint.state_content_identity, before.state_content_identity);
+    strcpy(checkpoint.capacity_plan_identity, before.capacity_plan_identity);
+    restore_rc = restored.restore
+                     ? restored.restore(restored.context, &checkpoint, &failure,
+                                        &err)
+                     : YVEX_ERR_STATE;
+    YVEX_TEST_ASSERT(
+        restored.schema_version == YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V6 &&
+            restored.restore && restore_rc == YVEX_OK &&
+            state_summary(&restored, &after, &err) == YVEX_OK &&
+            after.committed_sequence_length == 3ull &&
+            after.next_position == 3ull &&
+            strcmp(after.state_content_identity,
+                   before.state_content_identity) == 0 &&
+            state_identity(&restored, 0ull, delta, &err) == YVEX_OK &&
+            strcmp(delta, identities[0]) == 0,
+        "checkpoint restore publishes the exact committed prefix atomically");
+    identities[0][0] = identities[0][0] == '0' ? '1' : '0';
+    YVEX_TEST_ASSERT(
+        restored.reset(restored.context, &failure, &err) == YVEX_OK &&
+            restored.restore(restored.context, &checkpoint, &failure, &err) ==
+                YVEX_ERR_FORMAT &&
+            state_summary(&restored, &after, &err) == YVEX_OK &&
+            after.committed_sequence_length == 0ull &&
+            strcmp(after.state_content_identity, empty.state_content_identity) == 0,
+        "corrupt checkpoint identity refuses without publishing partial state");
+    YVEX_TEST_ASSERT(state_close(&source) && state_close(&restored),
+                     "checkpoint providers close cleanly");
+    return 0;
+}
+
 static int test_state_pages(const state_plan_fixture *fixture)
 {
     yvex_execution_capacity_plan capacity, changed;
     yvex_attention_state_recipe_request request = {0};
-    yvex_attention_state_recipe recipe;
+    yvex_attention_state_recipe recipe, initial_recipe;
     yvex_graph_attention_state_summary summary, touched;
     yvex_attention_failure failure;
-    test_state state = {0}, limited = {0};
+    test_state state = {0}, initial = {0}, reference = {0}, limited = {0};
     yvex_error err;
     const float *stable;
     char delta[YVEX_SHA256_HEX_CAP];
 
     yvex_error_clear(&err);
     state_page_capacity_open(&capacity);
+    request.layer_ordinal = 1ull;
+    request.final_position = 1ull;
+    request.attention_plan_identity = fixture->plan.summary.attention_plan_identity;
+    YVEX_TEST_ASSERT(
+        state_recipe_project(&fixture->layers[1], &request, &initial_recipe,
+                             &failure, &err) == YVEX_OK &&
+            initial_recipe.components[1].capacity == 0ull &&
+            state_open(&reference, state_family(), &fixture->plan,
+                       512ull * 1024ull, &failure, &err) == YVEX_OK &&
+            reference.prepare(reference.context, 1ull, &initial_recipe, NULL,
+                              &failure, &err) == YVEX_OK &&
+            reference.reset(reference.context, &failure, &err) == YVEX_OK &&
+            state_close(&reference) &&
+            state_open(&initial, state_family(), &fixture->plan, 512ull * 1024ull,
+                       &failure, &err) == YVEX_OK &&
+            initial.configure_pages(initial.context, &capacity, &failure, &err) == YVEX_OK &&
+            initial.prepare(initial.context, 1ull, &initial_recipe, NULL,
+                            &failure, &err) == YVEX_OK &&
+            initial.reset(initial.context, &failure, &err) == YVEX_OK &&
+            state_close(&initial),
+        "paged and reference periodic state remain valid before the first history row");
+    memset(&request, 0, sizeof(request));
     request.layer_ordinal = 1ull;
     request.final_position = capacity.per_session_maximum;
     request.attention_plan_identity = fixture->plan.summary.attention_plan_identity;
@@ -1966,6 +2092,7 @@ int yvex_test_runtime_state(void)
     if (test_state_identity_is_execution_shape_neutral(&fixture) != 0) return 1;
     if (test_candidate_prefix_compression_boundary() != 0) return 1;
     if (test_state_reset(&fixture) != 0) return 1;
+    if (test_state_checkpoint_restore(&fixture) != 0) return 1;
     if (test_summary_capacity_accounting(&fixture) != 0) return 1;
     if (test_prepare_failure_is_atomic(&fixture) != 0) return 1;
     if (test_batch_publication_is_atomic(&fixture) != 0) return 1;

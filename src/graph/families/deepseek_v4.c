@@ -1576,12 +1576,7 @@ if (context->layer->compute_contract !=
         "CUDA attention compute contract has no backend projection");
 context->job.compute_contract = YVEX_BACKEND_ATTENTION_COMPUTE_BF16_F32_RNE_V1;
 context->job.schema = YVEX_BACKEND_ATTENTION_JOB_SCHEMA;
-context->job.phase = context->layer->tensor_scope == YVEX_TENSOR_SCOPE_DRAFT
-    ? YVEX_BACKEND_ATTENTION_PHASE_SPECULATIVE_DRAFT
-    : context->opts->retain_prefix_checkpoints
-          ? YVEX_BACKEND_ATTENTION_PHASE_SPECULATIVE_VERIFY
-          : context->token_count == 1ull ? YVEX_BACKEND_ATTENTION_PHASE_DECODE
-                                         : YVEX_BACKEND_ATTENTION_PHASE_PREFILL;
+context->job.phase = (yvex_backend_attention_phase)context->opts->execution_phase;
 context->job.candidate_block_visible = context->opts->candidate_block_visible;
 context->job.retain_prefix_checkpoints = context->opts->retain_prefix_checkpoints;
 context->job.operation_scope = context->opts->operation_scope ==
@@ -1622,6 +1617,8 @@ context->job.indexer_heads = context->layer->indexer_heads;
 context->job.indexer_head_dimension = context->layer->indexer_head_dimension;
 context->job.indexer_topk = context->layer->sparse_topk.k;
 context->job.evidence_level = (unsigned int)context->opts->evidence_level;
+context->job.native_execution =
+    context->opts->execution_class == YVEX_EXECUTION_CLASS_DEVICE_NATIVE;
 context->job.residual_stream_count = context->layer->residual_stream_count;
 context->job.residual_stream_width = context->layer->residual_stream_width;
 context->job.residual_expanded_width = context->layer->residual_expanded_width;
@@ -1771,6 +1768,8 @@ if (context->rc != YVEX_OK) {
             "CUDA attention backend execution failed");
     return context->rc;
 }
+context->result->cuda_tensor_core_launches =
+    context->cuda_output.tensor_core_launches;
     return YVEX_OK;
 }
 static int graph_cuda_request_execute(const yvex_attention_plan *plan, const void *family_ir,

@@ -51,11 +51,7 @@ typedef struct {
     char prepared_content_identity[YVEX_SHA256_HEX_CAP];
     attention_state_delta delta;
 } attention_state_transaction;
-typedef struct {
-    const float *values;
-    const unsigned long long *positions;
-    unsigned long long count, width;
-} state_history_span;
+typedef yvex_graph_state_history_span state_history_span;
 static int state_hash_u64s(yvex_sha256 *hash, const unsigned long long *values,
                            size_t count) {
     size_t index;
@@ -80,33 +76,14 @@ static const yvex_graph_attention_state_summary initial_state_summary = {
     .sealed = 1, .persistent = 1, .position_consistent = 1,
     .generation = 1ull};
 static void state_close(attention_state **state_ptr);
+#define state_rolling_view yvex_graph_state_rolling_view
 static state_history_span state_history_project(
     const yvex_attention_history_view *view,
-    const yvex_attention_state_component_recipe *component) {
-    switch (component->binding) {
-    case YVEX_ATTENTION_STATE_BINDING_LOCAL_HISTORY:
-        return (state_history_span){view->local_kv, view->local_positions,
-                                    view->local_tail_count, component->value_width};
-    case YVEX_ATTENTION_STATE_BINDING_COMPRESSED_HISTORY:
-        return (state_history_span){view->compressed_kv,
-                                    view->compressed_positions,
-                                    view->compressed_entry_count,
-                                    component->value_width};
-    case YVEX_ATTENTION_STATE_BINDING_INDEXER_HISTORY:
-        return (state_history_span){view->indexer_kv, view->indexer_positions,
-                                    view->indexer_entry_count,
-                                    component->value_width};
-    default: return (state_history_span){0};
-    }
-}
-static const yvex_attention_rolling_state_view *state_rolling_view(
-    const yvex_attention_history_view *view,
-    yvex_attention_state_binding binding) {
-    if (binding == YVEX_ATTENTION_STATE_BINDING_MAIN_ROLLING)
-        return &view->main_rolling_state;
-    if (binding == YVEX_ATTENTION_STATE_BINDING_INDEXER_ROLLING)
-        return &view->indexer_rolling_state;
-    return NULL;
+    const yvex_attention_state_component_recipe *component)
+{
+    state_history_span span = {0};
+    (void)yvex_graph_state_history_project(view, component, &span);
+    return span;
 }
 static int state_reject(yvex_attention_failure *failure, unsigned long long layer,
                         unsigned long long expected, unsigned long long actual,
@@ -196,18 +173,35 @@ static int state_bank_open(attention_state *state,
                            attention_state_bank *bank,
                            attention_layer_state *layer,
                            yvex_attention_failure *failure, yvex_error *err) {
+    yvex_error cause;
+    yvex_status status;
+
     memset(bank, 0, sizeof(*bank));
     if (yvex_graph_state_bank_pages_open(
             state->page_pool,
             state->paging_configured ? &state->capacity_plan : NULL,
             yvex_attention_plan_summary(state->plan), &layer->plan,
-            &layer->recipe, bank->components, &bank->view, err) != YVEX_OK)
-        return state_reject(
-            failure, layer->plan.layer_index, 1ull, 0ull,
-            "attention state page-store allocation failed",
-            yvex_error_is_set(err) ? (yvex_status)yvex_error_code(err)
-                                   : YVEX_ERR_NOMEM,
-            err);
+            &layer->recipe, bank->components, &bank->view, err) != YVEX_OK) {
+        cause = err ? *err : (yvex_error){0};
+        status = yvex_error_is_set(&cause)
+                     ? (yvex_status)yvex_error_code(&cause)
+                     : YVEX_ERR_NOMEM;
+        if (failure) {
+            memset(failure, 0, sizeof(*failure));
+            failure->code = YVEX_ATTENTION_FAILURE_STATE_DELTA;
+            failure->layer_index = layer->plan.layer_index;
+            failure->role = YVEX_TENSOR_ROLE_UNKNOWN;
+            failure->expected = 1ull;
+            failure->reason = "attention state page-store allocation failed";
+        }
+        yvex_error_setf(
+            err, status, "graph.attention.state",
+            "attention state page-store allocation failed (layer=%llu): %s",
+            layer->plan.layer_index,
+            yvex_error_is_set(&cause) ? yvex_error_message(&cause)
+                                      : "allocation owner returned no detail");
+        return status;
+    }
     yvex_graph_state_bank_pages_bind(
         bank->components, &bank->view, &layer->recipe);
     return YVEX_OK;
@@ -300,104 +294,22 @@ static void state_bank_restore_candidate(
            sizeof(candidate->state_identity));
     layer->banks_synchronized = 1;
 }
-static int state_hash_float(yvex_sha256 *hash, float value) {
-    uint32_t bits;
-    memcpy(&bits, &value, sizeof(bits));
-    return yvex_sha256_update_u64(hash, (unsigned long long)bits);
-}
-static int state_hash_floats(yvex_sha256 *hash, const float *values,
-                             unsigned long long count) {
-    unsigned long long index;
-    if (count && !values) return 0;
-    if (!yvex_sha256_update_u64(hash, count)) return 0;
-    for (index = 0ull; index < count; ++index)
-        if (!state_hash_float(hash, values[index])) return 0;
-    return 1;
-}
-static int state_rolling_layout_hash(
-    yvex_sha256 *hash, const yvex_attention_rolling_state_view *view) {
-    const unsigned long long fields[] = {
-        view->schema_version, (unsigned long long)view->kind,
-        view->layer_index, view->ratio,
-        view->head_dimension, view->state_width, view->state_slots, view->kv_state_stride,
-        view->score_state_stride, view->kv_state_extent, view->score_state_extent,
-        (unsigned long long)view->overlap, (unsigned long long)view->rotated};
-    if (!yvex_sha256_update_u64(hash, (unsigned long long)view->present)) return 0;
-    if (!view->present) return 1;
-    return state_hash_u64s(hash, fields, sizeof(fields) / sizeof(fields[0])) &&
-           yvex_sha256_update_text(hash, view->attention_plan_identity);
-}
-/* The forensic content identity excludes allocation and bank-selection details. */
 static int state_bank_initial_identity(attention_state_bank *bank,
                                        const attention_layer_state *layer,
                                        const char *plan_identity) {
-    yvex_sha256 hash;
-    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
-    unsigned long long count, position;
-    unsigned int index;
-    yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.graph.attention.state.v3") ||
-        !yvex_sha256_update_text(&hash, plan_identity) ||
-        !yvex_sha256_update_text(&hash, layer->recipe.identity) ||
-        !yvex_sha256_update_u64(&hash, bank->view.token_count) ||
-        !yvex_sha256_update_u64(&hash, layer->recipe.component_count))
-        return 0;
-    for (index = 0u; index < layer->recipe.component_count; ++index) {
-        const yvex_attention_state_component_recipe *recipe =
-            &layer->recipe.components[index];
-        if (recipe->kind == YVEX_ATTENTION_STATE_COMPONENT_HISTORY) {
-            state_history_span span = state_history_project(&bank->view, recipe);
-            if (!yvex_core_u64_mul(span.count, span.width, &count) ||
-                !state_hash_floats(&hash, span.values, count))
-                return 0;
-            for (position = 0ull; position < span.count; ++position)
-                if (!yvex_sha256_update_u64(&hash, span.positions[position]))
-                    return 0;
-        } else {
-            const yvex_attention_rolling_state_view *view =
-                state_rolling_view(&bank->view, recipe->binding);
-            if (!view || !state_rolling_layout_hash(&hash, view) ||
-                !yvex_sha256_update_u64(&hash, view->next_token_position) ||
-                !yvex_sha256_update_u64(&hash, view->previous_fill) ||
-                !yvex_sha256_update_u64(&hash, view->current_fill) ||
-                !yvex_sha256_update_u64(&hash, view->cursor) ||
-                !state_hash_floats(&hash, view->kv_state, view->kv_state_extent) ||
-                !state_hash_floats(&hash, view->score_state,
-                                   view->score_state_extent))
-                return 0;
-        }
-    }
-    if (!yvex_sha256_final(&hash, digest)) return 0;
-    yvex_sha256_hex(digest, bank->state_identity);
-    return 1;
+    return yvex_graph_state_initial_identity(
+        &bank->view, &layer->recipe, plan_identity, bank->state_identity);
 }
 static int state_bank_advance_identity(
     attention_state_bank *bank, const attention_layer_state *layer,
     const char *plan_identity, const yvex_attention_publication *publication)
 {
-    const int token_backed = publication->token_ids != NULL;
-    const unsigned long long rows = token_backed ? publication->token_count : 1ull;
-    yvex_sha256 hash;
-    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
-    unsigned long long row;
-    if (!token_backed && !yvex_sha256_hex_valid(publication->execution_identity)) return 0;
-    for (row = 0ull; row < rows; ++row) {
-        yvex_sha256_init(&hash);
-        if (!yvex_sha256_update_text(
-                &hash, token_backed ? "yvex.graph.attention.state.v5"
-                                    : "yvex.graph.attention.state.v4") ||
-            !yvex_sha256_update_text(&hash, plan_identity) ||
-            !yvex_sha256_update_text(&hash, layer->recipe.identity) ||
-            !yvex_sha256_update_text(&hash, bank->state_identity) ||
-            !(token_backed
-                  ? yvex_sha256_update_u64(&hash, publication->token_position + row) &&
-                        yvex_sha256_update_u64(&hash, publication->token_ids[row])
-                  : yvex_sha256_update_text(&hash, publication->execution_identity) &&
-                        yvex_sha256_update_u64(&hash, bank->view.token_count)) ||
-            !yvex_sha256_final(&hash, digest)) return 0;
-        yvex_sha256_hex(digest, bank->state_identity);
-    }
-    return 1;
+    yvex_attention_publication adjusted = *publication;
+    if (!publication->token_ids)
+        adjusted.token_position = bank->view.token_count - publication->token_count;
+    return yvex_graph_state_advance_identity(
+        bank->state_identity, &layer->recipe, plan_identity, &adjusted,
+        bank->state_identity);
 }
 /* Layout identity covers geometry but never mutable history values or addresses. */
 static int state_layout_identity(const attention_state *state,
@@ -1770,6 +1682,102 @@ static int state_reset(
 done:
     return state_unlock_result(state, rc, failure, err);
 }
+static int state_restore(
+    attention_state *state, const yvex_attention_state_checkpoint *checkpoint,
+    yvex_attention_failure *failure, yvex_error *err)
+{
+    unsigned long long index, generation;
+    char content_identity[YVEX_SHA256_HEX_CAP];
+    int rc;
+    rc = state_enter(state, YVEX_ATTENTION_NO_LAYER,
+                     checkpoint ? checkpoint->layer_count : 0ull,
+                     "attention state checkpoint is invalid", failure, err);
+    if (rc != YVEX_OK) return rc;
+    if (!checkpoint ||
+        checkpoint->schema_version != YVEX_ATTENTION_STATE_CHECKPOINT_SCHEMA_V1 ||
+        checkpoint->layer_count != state->layer_count || !checkpoint->layers ||
+        !checkpoint->layer_identities || state->transaction.active ||
+        state->summary.invalidated || state->summary.cancelled ||
+        state->summary.prepared_layer_count != state->layer_count ||
+        checkpoint->committed_sequence_length > state->summary.capacity ||
+        strcmp(checkpoint->state_layout_identity,
+               state->summary.state_layout_identity) != 0 ||
+        strcmp(checkpoint->capacity_plan_identity,
+               state->summary.capacity_plan_identity) != 0 ||
+        !yvex_sha256_hex_valid(checkpoint->state_content_identity)) {
+        rc = state_reject(failure, YVEX_ATTENTION_NO_LAYER, state->layer_count,
+                          checkpoint ? checkpoint->layer_count : 0ull,
+                          "state checkpoint is incompatible with this provider",
+                          YVEX_ERR_FORMAT, err);
+        goto done;
+    }
+    if (!yvex_core_u64_add(state->summary.generation, 1ull, &generation)) {
+        rc = state_reject(failure, YVEX_ATTENTION_NO_LAYER, ULLONG_MAX, 1ull,
+                          "checkpoint restore generation overflowed",
+                          YVEX_ERR_BOUNDS, err);
+        goto done;
+    }
+    for (index = 0ull; index < state->layer_count; ++index) {
+        attention_layer_state *layer = &state->layers[index];
+        attention_state_bank *candidate = &layer->bank[1u - layer->committed_bank];
+        const yvex_attention_history_view *view = &checkpoint->layers[index];
+        rc = view->token_count == checkpoint->committed_sequence_length
+                 ? state->family->history_validate(&layer->plan, view, failure, err)
+                 : YVEX_ERR_FORMAT;
+        if (rc == YVEX_OK)
+            rc = yvex_graph_state_bank_pages_transfer(
+                candidate->components, &candidate->view, &layer->recipe,
+                view, 1, err);
+        if (rc == YVEX_OK &&
+            !yvex_sha256_hex_valid(checkpoint->layer_identities[index]))
+            rc = YVEX_ERR_FORMAT;
+        if (rc != YVEX_OK) {
+            unsigned long long dirty;
+            for (dirty = 0ull; dirty <= index; ++dirty)
+                state->layers[dirty].banks_synchronized = 0;
+            if (!yvex_error_is_set(err))
+                yvex_error_set(err, YVEX_ERR_FORMAT,
+                               "graph.attention.state.restore",
+                               "checkpoint layer identity is invalid");
+            break;
+        }
+        yvex_core_text_copy(candidate->state_identity,
+                            sizeof(candidate->state_identity),
+                            checkpoint->layer_identities[index]);
+    }
+    if (rc != YVEX_OK) goto done;
+    for (index = 0ull; index < state->layer_count; ++index)
+        state->layers[index].committed_bank =
+            1u - state->layers[index].committed_bank;
+    if (!state_content_identity(state, ULLONG_MAX, NULL, 0,
+                                state->summary.state_layout_identity,
+                                content_identity) ||
+        strcmp(content_identity, checkpoint->state_content_identity) != 0) {
+        for (index = 0ull; index < state->layer_count; ++index)
+            state->layers[index].committed_bank =
+                1u - state->layers[index].committed_bank;
+        for (index = 0ull; index < state->layer_count; ++index)
+            state->layers[index].banks_synchronized = 0;
+        rc = state_reject(failure, YVEX_ATTENTION_NO_LAYER, 1ull, 0ull,
+                          "checkpoint aggregate identity is invalid",
+                          YVEX_ERR_FORMAT, err);
+        goto done;
+    }
+    state_candidate_deltas_close(state);
+    memset(&state->transaction, 0, sizeof(state->transaction));
+    for (index = 0ull; index < state->layer_count; ++index)
+        state->layers[index].banks_synchronized = 0;
+    state->summary.generation = generation;
+    state->summary.committed_sequence_length =
+        checkpoint->committed_sequence_length;
+    state->summary.next_position = checkpoint->committed_sequence_length;
+    state->summary.position_consistent = 1;
+    yvex_core_text_copy(state->summary.state_content_identity,
+                        sizeof(state->summary.state_content_identity),
+                        content_identity);
+done:
+    return state_unlock_result(state, rc, failure, err);
+}
 static int state_invalidate(attention_state *state, yvex_error *err) {
     unsigned long long next;
     if (!state) {
@@ -1919,6 +1927,12 @@ static int provider_persistent_reset(void *context, yvex_attention_failure *fail
                                     yvex_error *err) {
     return state_reset((attention_state *)context, failure, err);
 }
+static int provider_persistent_restore(
+    void *context, const yvex_attention_state_checkpoint *checkpoint,
+    yvex_attention_failure *failure, yvex_error *err)
+{
+    return state_restore((attention_state *)context, checkpoint, failure, err);
+}
 static int provider_persistent_invalidate(void *context, yvex_error *err) {
     return state_invalidate((attention_state *)context, err);
 }
@@ -1954,7 +1968,7 @@ int yvex_attention_state_provider_open_persistent(
     rc = state_open(&state, family, plan, maximum_host_bytes, failure, err);
     if (rc != YVEX_OK) return rc;
     *out = (yvex_attention_state_provider){
-        .schema_version = YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V5,
+        .schema_version = YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V6,
         .context = state,
         .configure_pages = provider_persistent_configure_pages,
         .prepare = provider_persistent_prepare,
@@ -1970,6 +1984,7 @@ int yvex_attention_state_provider_open_persistent(
         .commit = provider_persistent_commit,
         .abort = provider_persistent_abort,
         .reset = provider_persistent_reset,
+        .restore = provider_persistent_restore,
         .invalidate = provider_persistent_invalidate,
         .release = provider_persistent_release,
     };

@@ -56,8 +56,8 @@ change. Git history preserves implementation chronology.
   output-head rows now publish complete compulsory weight, activation,
   temporary and zero-state byte facts, giving that phase a real memory lower
   bound without estimating traffic from allocation capacity. Compatible
-  width-N CUDA rows now share Q8 activation preparation and one encoded-head
-  execution, while the ordered logits result owns one aggregate physical-facts
+  width-N CUDA rows now share one encoded-head execution, while the ordered
+  logits result owns one aggregate physical-facts
   record and incompatible inputs retain an explicit row-local fallback.
   Device-native output batches now publish contiguous identity-bound logits
   row views for downstream CUDA selection without allocating or downloading a
@@ -74,9 +74,9 @@ change. Git history preserves implementation chronology.
   bytes. A proved final-stage session-stream barrier avoids a redundant wait.
   Immediate and token-local CPU/CUDA execution remain the explicit portable
   audit/reference oracles. Resident-weight oracle execution no longer reserves
-  an unused expert staging range, and full forensic evidence disables Q8
-  activation compression so live tests distinguish its tighter numerical
-  contract from the admitted production approximation.
+  an unused expert staging range. Compatible weight qtypes no longer select Q8
+  activation compression implicitly; production retains F32 activations while
+  full forensic evidence separately selects canonical-order accumulation.
 - CUDA mHC envelope gates, combination rows and Sinkhorn row/column passes now
   execute across their independent stream lanes. Ordered reductions and FP64
   source transforms remain intact, while BF16 residual-square accumulation no
@@ -98,6 +98,10 @@ change. Git history preserves implementation chronology.
   paths keep their explicit host materialization. Logical state identity is
   token- and position-derived, independent of whether the same prefix arrived
   through target-only execution, verification or accepted-prefix promotion.
+- Normal non-prefix attention now executes local, compressed and indexer value
+  history directly against pre-admitted CUDA state pages. Position and rolling
+  projections remain explicit, and local-ring wrap retains its bounded
+  workspace instead of writing beyond the resident component.
 - Short CUDA qtype rows now form geometry-selected two-, four- or eight-lane
   groups across Q8_0, Q2_K, IQ2_XXS and MXFP4 activation dots. Only integer
   terms are redistributed; every encoded block is reconstructed before the
@@ -208,6 +212,10 @@ change. Git history preserves implementation chronology.
 - Advanced the private local protocol to version 7 for typed reasoning/final/
   tool/error channels and separate reasoning/final timing and token metrics;
   every non-v7 peer is refused.
+- Advanced the private local protocol to version 8 for immutable committed
+  model-state checkpoint save/restore with an explicit restore byte bound,
+  exact-position admission, and typed identity/digest evidence; every non-v8
+  peer is refused.
 - Made hosted startup registry-first: `model list` reports complete startup
   profiles, `model select NAME` resolves one profile without path flags, and
   `runtime start` opens the selected model without environment variables.

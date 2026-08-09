@@ -48,6 +48,8 @@ entry audit:
 | Generation plan ABI | v4 | v5 | exact workload-profile identity associated with phase roofline evidence | in-process plan layout and semantic identity; result and wire layouts are unchanged | rebuilt v5 readers reject plans that cannot identify their workload profile | complete rebuild; no artifact, binding, protocol, event or public API migration | plan identity mutation, mismatched-workload refusal and live CUDA generation result validation |
 | Attention-state summary | v3 | v4 | capacity-plan identity plus virtual, resident, page-table, commit and release facts | in-process internal record layout only; no persisted or wire representation | rebuilt readers require v4 and never mix old objects | complete rebuild; the page-pool owner projects counters without a second mutable truth | 512K logical reservation, bounded resident growth, reset release and stable-address tests |
 | Attention-state provider ABI | v4 | v5 | capacity-plan configuration before persistent storage admission | in-process function-table layout only; no persisted, wire or public C incompatibility | rebuilt runtime validation rejects a provider without the configuration operation | complete rebuild; target and draft configure under one serialized session mutation and partial configuration invalidates the session | provider forwarding/failure, changed-plan refusal, pre-mutation budget refusal and abort rollback |
+| Attention-state provider ABI | v5 | v6 | exact committed-state restore with lineage and layout identities | in-process function-table layout plus versioned checkpoint payload | rebuilt runtime validation rejects a provider without restore | complete rebuild; checkpoint files remain immutable and model-bound | exact restore, corruption refusal, no partial publication |
+| Local protocol | v7 | v8 | typed model-state checkpoint path, restore bound and result evidence | private Unix framing and payload | every non-v8 peer fails handshake | atomic daemon/client cutover; no compatibility decoder | request/message roundtrip, operator reachability, non-v8 refusal |
 
 The later source-authored conversation gate earned these product-boundary
 changes. Reader and writer behavior remain separate because compatibility in
@@ -140,11 +142,21 @@ identity now advances per committed token and position, so target-only,
 verification-width and prefix-promotion paths converge on one identity for the
 same token sequence without replay or a full-state host hash.
 
+The same production path now consumes local, compressed and indexer value
+history from the session's pre-admitted CUDA candidate bank. The state
+transaction admits growth before dispatch; local-ring wrap retains the bounded
+phase workspace, while generated positions and rolling checkpoints remain
+explicitly staged. A 512K-capacity, four-token prefill plus one-token decode on
+the admitted candidate artifact completed with the same token, text digest,
+position and stop facts while reducing phase H2D from about 12.5 GB to 126 MB
+for prefill and 89 MB for decode. This is causal execution evidence, not a
+deep-context continuation or throughput claim.
+
 Compatible width-N CUDA output rows now execute through one encoded-head
 operation. Host producers use one bounded row-batch upload; device producers
 must expose one contiguous identity-compatible view. The encoded head is
-counted once, Q8 activation preparation and projection launch once for the
-complete width, and the full output block is downloaded once for the retained
+counted once, production retains F32 activations, projection launches once for
+the complete width, and the full output block is downloaded once for the retained
 host sampling consumer. Aggregate physical facts belong to the ordered logits
 execution rather than being multiplied into each row. Mixed, non-contiguous or
 invalid source directories remain on the explicit row-local reference path,
@@ -275,12 +287,14 @@ that completion without another barrier; otherwise one stream wait closes the
 stack. The independent immediate and token-local CPU/CUDA paths remain the
 audit/reference oracles. Resident weights no longer reserve an unused
 per-expert staging range, so that oracle fits the same shape-preflighted
-workspace as the width-N path. Full forensic evidence disables Q8 activation
-compression for its row dots; live admission therefore checks the production
-approximation and the tighter forensic CPU/CUDA comparison separately. Qtype
-access expectations are derived from the admitted MoE plan rather than a
-duplicated physical-variant table. The internal source ABI rebuilds atomically;
-no persisted, wire, public C, execution-profile, or state-layout schema changes.
+workspace as the width-N path. Weight qtype no longer selects Q8 activation
+compression implicitly: production and forensic MoE retain F32 activations,
+while forensic evidence separately selects canonical-order row dots. The live
+oracle covers hash routing, learned routing at layers 3 and 8, all 43 CUDA
+layers and cancellation. Qtype access expectations derive from the admitted
+MoE plan rather than a duplicated physical-variant table. The internal source
+ABI rebuilds atomically; no persisted, wire, public C, execution-profile, or
+state-layout schema changes.
 
 The shared CUDA qtype primitive now admits short-row shapes that form
 geometry-selected two-, four- or eight-lane groups for Q8_0, Q2_K, IQ2_XXS and
@@ -374,9 +388,18 @@ acceptance identity before state or RNG publication. Workspace capacity is
 derived from vocabulary and model-authored proposal width before execution;
 undersized capacity and malformed candidates refuse before a launch. CPU and
 audit/forensic execution retain the complete-distribution oracle. This changes
-only an internal operation table and helper signature; binding v8, protocol v7,
+only an internal operation table and helper signature; binding v8, protocol v8,
 events v3, compiled profile v1, generation ABI v5 and the server-construction
 API remain unchanged by this optimization.
+
+Generation admission now obtains the exact target and draft transformer
+workspace requirements from their lower owners and seals one session-owned
+CUDA arena at their maximum before execution. The capacity pass retains its
+already compiled target attention envelope for this admission rather than
+reconstructing topology in the hot path. Fixed-seed full-model stochastic
+DSpark repeats compare the semantic per-layer state digest; the separately
+reported physical state identity remains correctly bound to the measured
+capacity/layout evidence and is not a repeatability oracle.
 
 Production CUDA DSpark now selects each target-authored anchor directly from
 the resident output-head row. Greedy selection returns one bounded token/value
@@ -386,7 +409,7 @@ evidence-bearing profiles select through the same sampling owner over the host
 row, rather than reconstructing a second selection algorithm in speculation.
 The normal production profile refuses host-authored selection facts and records
 zero full-array host-scan bytes. This is an internal complete-rebuild ABI change
-only; binding v8, protocol v7, events v3, generation ABI v5 and the
+only; binding v8, protocol v8, events v3, generation ABI v5 and the
 server-construction API remain unchanged by this optimization.
 
 Source-selected target features now collapse their mHC residual streams on
@@ -462,7 +485,7 @@ non-interactive `--reasoning` policy. Only the exact model-emitted
 fails closed, arbitrary prose is never reclassified, and no hidden model state
 is exposed.
 
-Protocol v7 carries distinct reasoning, final, tool and error channels plus
+Protocol v8 carries distinct reasoning, final, tool and error channels plus
 reasoning/final token counts, rates, first-token times and total completion
 time. The REPL renders explicit reasoning incrementally and distinctly; raw
 execution writes canonical channel payload bytes without terminal decoration.
@@ -484,7 +507,7 @@ paging under the admitted per-class capacity plan and on-demand CUDA VMM state
 residency with stable device addresses.
 It does not yet establish Tensor Core execution, specialized attention,
 GB10-competitive grouped MoE, zero per-layer attention synchronization,
-full-model live qualification of target-only or DSpark device sampling,
+the complete full-model device-sampling fault and acceptance-corpus matrix,
 full-model live qualification of all reasoning modes, paged CUDA state
 real deep-context qualification, prefix persistence, continuous batching,
 competitive throughput, evaluation, benchmark qualification, release

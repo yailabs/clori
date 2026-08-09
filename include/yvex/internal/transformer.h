@@ -273,6 +273,7 @@ int yvex_runtime_transformer_context_open(yvex_runtime_transformer_context **out
                                           yvex_runtime_model *model,
                                           yvex_runtime_execution_session *session,
                                           const yvex_runtime_transformer_options *options,
+                                          unsigned long long *workspace_bytes,
                                           yvex_error *err);
 const yvex_transformer_plan *yvex_runtime_transformer_context_plan(
     const yvex_runtime_transformer_context *context);

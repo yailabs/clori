@@ -134,8 +134,12 @@ normalized and pre-normalized rows remain resident through output-head and
 confidence projection, while confidence consumes split hidden/Markov device
 views and transfers one scalar. Host Markov decode and confidence remain
 reachable only through the CPU and audit/forensic references. Full-model
-stochastic DSpark qualification remains blocked by the current machine-reserve
-refusal, not by a host p/q or residual-acceptance path.
+stochastic DSpark now admits one shared session workspace from the maximum of
+the compiled target and draft requirements before either execution owner seals
+it. Two fixed-seed eight-token CUDA runs over the candidate artifact produced
+identical tokens, proposal/acceptance facts, transfer counters and semantic
+per-layer state digest. Wider acceptance-corpus and performance qualification
+remain open; the former machine-reserve refusal is closed.
 The wave must keep prefix promotion, shape
 admission, partial-turn semantics, protocol channels and one model/session
 authority unchanged.

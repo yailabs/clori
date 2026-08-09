@@ -9,8 +9,9 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#define YVEX_LOCAL_PROTOCOL_VERSION 7u
+#define YVEX_LOCAL_PROTOCOL_VERSION 8u
 #define YVEX_CLIENT_PARTIAL_TURN_SCHEMA_V1 1u
+#define YVEX_CLIENT_STATE_CHECKPOINT_SCHEMA_V1 1u
 #define YVEX_RUNTIME_EVENT_SCHEMA_VERSION 3u
 #define YVEX_RUNTIME_METRICS_SCHEMA_VERSION 3u
 #define YVEX_SERVER_SESSION_NAME_CAP 64u
@@ -18,6 +19,7 @@ extern "C" {
 #define YVEX_SERVER_REASON_CAP 256u
 #define YVEX_SERVER_FRAGMENT_CAP 4096u
 #define YVEX_SERVER_SOCKET_PATH_CAP 512u
+#define YVEX_SERVER_STATE_PATH_CAP 512u
 #define YVEX_SERVER_FRAME_MAX_BYTES 1048576u
 typedef struct yvex_server yvex_server;
 typedef struct yvex_client yvex_client;
@@ -197,6 +199,8 @@ typedef enum {
     YVEX_CLIENT_OP_SESSION_ATTACH,
     YVEX_CLIENT_OP_SESSION_DETACH,
     YVEX_CLIENT_OP_SESSION_RESET,
+    YVEX_CLIENT_OP_SESSION_STATE_SAVE,
+    YVEX_CLIENT_OP_SESSION_STATE_RESTORE,
     YVEX_CLIENT_OP_SESSION_CLOSE,
     YVEX_CLIENT_OP_GENERATION_TURN,
     YVEX_CLIENT_OP_GENERATION_CANCEL,
@@ -310,11 +314,21 @@ typedef struct {
 } yvex_console_status;
 typedef struct {
     unsigned int schema_version;
+    unsigned long long file_bytes, scope_count, committed_sequence_length;
+    char runtime_model_identity[YVEX_SHA256_HEX_CAP];
+    char runtime_binding_identity[YVEX_SHA256_HEX_CAP];
+    char artifact_identity[YVEX_SHA256_HEX_CAP];
+    char file_digest[YVEX_SHA256_HEX_CAP];
+} yvex_client_state_checkpoint;
+typedef struct {
+    unsigned int schema_version;
     yvex_client_operation operation;
     unsigned long long request_number;
     char session_name[YVEX_SERVER_SESSION_NAME_CAP];
+    char state_path[YVEX_SERVER_STATE_PATH_CAP];
     const unsigned char *prompt;
     unsigned long long prompt_bytes, maximum_new_tokens;
+    unsigned long long maximum_state_file_bytes;
     int stochastic, seed_present;
     unsigned long long seed;
     double temperature, top_p, min_p, typical_p;
@@ -376,6 +390,7 @@ typedef struct {
     char tool_call_id[YVEX_PROVIDER_ID_CAP];
     char tool_name[YVEX_PROVIDER_TOOL_NAME_CAP];
     yvex_client_partial_turn partial_turn;
+    yvex_client_state_checkpoint state_checkpoint;
     yvex_server_summary runtime;
     yvex_console_status console;
     yvex_server_event event;

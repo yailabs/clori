@@ -341,7 +341,7 @@ int yvex_attention_workspace_recipe_seal(yvex_attention_workspace_recipe *recipe
         unsigned long long bit;
         if (component->schema_version != YVEX_ATTENTION_WORKSPACE_RECIPE_SCHEMA_V1 ||
             component->ordinal != index ||
-            component->kind > YVEX_ATTENTION_WORKSPACE_OUTPUT_LOW ||
+            component->kind > YVEX_ATTENTION_WORKSPACE_TOPK_VALID_INDICES ||
             component->lifetime > YVEX_ATTENTION_WORKSPACE_GRAPH_STABLE ||
             !component->element_count || !component->element_width ||
             !component->alignment ||
@@ -539,24 +539,26 @@ static int attention_trace_storage_open(
         float **slot = attention_trace_float_slot(trace, (attention_trace_float_field)i);
         if (float_sources && float_counts[i] && !float_sources[i])
             return YVEX_ERR_INVALID_ARG;
+        *slot = NULL;
+        if (!float_counts[i]) continue;
         *slot = workspace
             ? yvex_attention_workspace_calloc(workspace, float_counts[i], sizeof(**slot))
             : yvex_attention_calloc_array(float_counts[i], sizeof(**slot));
-        if (float_counts[i] && !*slot)
-            return YVEX_ERR_NOMEM;
-        if (float_counts[i] && float_sources)
+        if (!*slot) return YVEX_ERR_NOMEM;
+        if (float_sources)
             memcpy(*slot, float_sources[i], (size_t)float_counts[i] * sizeof(**slot));
     }
     for (i = 0u; i < ATTENTION_TRACE_U64_COUNT; ++i) {
         unsigned long long **slot = attention_trace_u64_slot(trace, (attention_trace_u64_field)i);
         if (u64_sources && u64_counts[i] && !u64_sources[i])
             return YVEX_ERR_INVALID_ARG;
+        *slot = NULL;
+        if (!u64_counts[i]) continue;
         *slot = workspace
             ? yvex_attention_workspace_calloc(workspace, u64_counts[i], sizeof(**slot))
             : yvex_attention_calloc_array(u64_counts[i], sizeof(**slot));
-        if (u64_counts[i] && !*slot)
-            return YVEX_ERR_NOMEM;
-        if (u64_counts[i] && u64_sources)
+        if (!*slot) return YVEX_ERR_NOMEM;
+        if (u64_sources)
             memcpy(*slot, u64_sources[i], (size_t)u64_counts[i] * sizeof(**slot));
     }
     *owned_bytes = total;

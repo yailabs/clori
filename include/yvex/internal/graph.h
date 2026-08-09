@@ -13,10 +13,8 @@
 #include <yvex/internal/execution.h>
 #include <yvex/internal/model.h>
 #include <yvex/registry.h>
-
 #define YVEX_ATTENTION_NO_LAYER (~0ull)
 #define YVEX_ATTENTION_NO_TENSOR_INDEX (~0ull)
-
 typedef enum {
     YVEX_GRAPH_REPORT_MODE_NORMAL = 0,
     YVEX_GRAPH_REPORT_MODE_TABLE,
@@ -300,15 +298,16 @@ typedef struct {
     yvex_attention_cancel_predicate requested;
     void *context;
 } yvex_attention_cancellation;
-
 typedef struct {
     yvex_attention_operation_scope operation_scope;
+    yvex_execution_phase execution_phase;
     const char *logical_model_identity;
     unsigned long long layer_index, token_position, token_count;
     unsigned long long local_history_tokens, compressed_history_tokens;
     unsigned long long max_q_b_rows, max_kv_rows, max_compressor_rows, max_indexer_rows;
     unsigned long long scratch_limit_bytes;
     yvex_attention_evidence_level evidence_level;
+    yvex_execution_class execution_class;
     yvex_attention_workspace *workspace;
     const float *input;
     unsigned long long input_stride;
@@ -317,9 +316,8 @@ typedef struct {
     yvex_attention_publication *publication;
     yvex_attention_execution_trace *trace;
     const yvex_attention_cancellation *cancellation;
-    int candidate_block_visible, retain_prefix_checkpoints;
+    int candidate_block_visible, retain_prefix_checkpoints, execution_phase_present;
 } yvex_attention_cpu_options;
-
 typedef struct {
     int executed, full_attention, cuda_executed;
     yvex_attention_operation_scope operation_scope;
@@ -329,7 +327,8 @@ typedef struct {
     unsigned long long compressor_rows, indexer_rows, topk_candidates, topk_selected;
     unsigned long long local_entries, compressed_entries, payload_bytes_read;
     unsigned long long state_raw_entries, state_compressed_entries, state_indexer_entries;
-    unsigned long long cuda_kernel_launches, cuda_peak_host_bytes, cuda_peak_device_bytes;
+    unsigned long long cuda_kernel_launches, cuda_tensor_core_launches, cuda_peak_host_bytes;
+    unsigned long long cuda_peak_device_bytes;
     unsigned long long cuda_h2d_bytes, cuda_d2h_bytes, cuda_d2d_bytes;
     unsigned long long cuda_stream_synchronizations, cuda_device_synchronizations;
     yvex_execution_memory_facts memory;
@@ -470,6 +469,7 @@ typedef enum {
 typedef struct {
     yvex_backend_kind backend;
     yvex_tensor_scope tensor_scope;
+    yvex_execution_phase execution_phase;
     yvex_backend *backend_context;
     const char *logical_model_identity;
     yvex_attention_probe_kind probe;
@@ -489,10 +489,11 @@ typedef struct {
     const yvex_attention_probe_state_provider *state_provider;
     yvex_attention_workspace *workspace;
     yvex_attention_evidence_level evidence_level;
+    yvex_execution_class execution_class;
     yvex_attention_probe_evidence_fn evidence;
     void *evidence_context;
     yvex_attention_transaction_disposition transaction_disposition;
-    int candidate_block_visible, retain_prefix_checkpoints;
+    int candidate_block_visible, retain_prefix_checkpoints, execution_phase_present;
 } yvex_attention_probe_request;
 typedef yvex_attention_probe_request yvex_attention_execution_request;
 typedef struct {
@@ -552,7 +553,8 @@ typedef struct {
     unsigned long long layers_executed, bindings_executed;
     unsigned long long swa_layers_executed, csa_layers_executed, hca_layers_executed;
     unsigned long long topk_selected, hca_ratio, payload_bytes_read;
-    unsigned long long kernel_launches, peak_device_bytes, comparison_values;
+    unsigned long long kernel_launches, tensor_core_launches, peak_device_bytes;
+    unsigned long long comparison_values;
     unsigned long long h2d_bytes, d2h_bytes, d2d_bytes;
     unsigned long long stream_synchronizations, device_synchronizations;
     yvex_execution_memory_facts memory;
@@ -573,7 +575,6 @@ int yvex_attention_publication_compare(
     double absolute_tolerance, double relative_tolerance,
     yvex_attention_probe_result *result, double *squared_error,
     yvex_error *err);
-
 typedef struct yvex_attention_probe_history yvex_attention_probe_history;
 int yvex_attention_probe_position_resolve(const yvex_attention_layer_plan *layer, int class_selected,
     unsigned long long offset, unsigned long long *position, yvex_error *err);
@@ -581,7 +582,6 @@ int yvex_attention_probe_history_open(yvex_attention_probe_history **out,
     const yvex_attention_layer_plan *layer, const yvex_attention_summary *summary, unsigned long long position,
     const yvex_attention_history_view **view, yvex_error *err);
 void yvex_attention_probe_history_close(yvex_attention_probe_history **history);
-
 int yvex_attention_probe_execute(const yvex_graph_family_api *family,
                                  const yvex_attention_plan *plan, const void *family_ir,
                                  yvex_materialization_session *session,

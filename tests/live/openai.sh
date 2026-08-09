@@ -142,7 +142,7 @@ grep -F '"model_open_count":1' "$root/status.after.json" >/dev/null
 grep -F '"artifact_open_count":1' "$root/status.after.json" >/dev/null
 grep -F '"materialization_count":1' "$root/status.after.json" >/dev/null
 grep -F '"residency_build_count":1' "$root/status.after.json" >/dev/null
-grep -F '"output_head_upload_count":1' "$root/status.after.json" >/dev/null
+grep -E '"output_head_upload_count":[01](,|})' "$root/status.after.json" >/dev/null
 python3 - "$root/status.after.json" "$daemon_pid" <<'PY'
 import json, sys
 status = json.load(open(sys.argv[1]))

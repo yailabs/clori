@@ -505,8 +505,8 @@ typedef struct {
 } graph_attention_action;
 
 static const graph_attention_value graph_attention_phases[] = {
-    {"prefill", YVEX_RUNTIME_PHASE_ATTENTION_PREFILL}, {"mixed", YVEX_RUNTIME_PHASE_ATTENTION_MIXED},
-{"verify", YVEX_RUNTIME_PHASE_ATTENTION_SPECULATIVE_VERIFY},
+    {"prefill", YVEX_EXECUTION_PHASE_PREFILL}, {"mixed", YVEX_EXECUTION_PHASE_MIXED},
+{"verify", YVEX_EXECUTION_PHASE_VERIFY},
 };
 static const graph_attention_value graph_attention_modes[] = {
     {"piecewise", YVEX_RUNTIME_MODE_PIECEWISE}, {"full", YVEX_RUNTIME_MODE_FULL}, {"auto", YVEX_RUNTIME_MODE_AUTO},
@@ -743,10 +743,10 @@ static int graph_cli_attention_request_build(const yvex_graph_args *args,
                              ? YVEX_ATTENTION_PROBE_SCOPE_FULL
                              : YVEX_ATTENTION_PROBE_SCOPE_QUICK;
     out->request.compare_backends = args->attention.compare_backends;
-    out->request.phase = (yvex_runtime_phase)graph_attention_value_find(
+    out->request.phase = (yvex_execution_phase)graph_attention_value_find(
         args->attention.phase, graph_attention_phases,
         sizeof(graph_attention_phases) / sizeof(graph_attention_phases[0]),
-        YVEX_RUNTIME_PHASE_ATTENTION_DECODE);
+        YVEX_EXECUTION_PHASE_DECODE);
     out->request.mode = (yvex_runtime_execution_mode)graph_attention_value_find(
         args->attention.mode, graph_attention_modes,
         sizeof(graph_attention_modes) / sizeof(graph_attention_modes[0]),

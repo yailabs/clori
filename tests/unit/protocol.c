@@ -89,16 +89,22 @@ static int test_all_operation_roundtrips(void)
         source.temperature = 1.0;
         source.top_p = 1.0;
         source.typical_p = 1.0;
+        if (source.operation == YVEX_CLIENT_OP_SESSION_STATE_SAVE ||
+            source.operation == YVEX_CLIENT_OP_SESSION_STATE_RESTORE) {
+            strcpy(source.state_path, "/tmp/session-state.yvex");
+            if (source.operation == YVEX_CLIENT_OP_SESSION_STATE_RESTORE)
+                source.maximum_state_file_bytes = 4096u;
+        }
         count = 0u;
         YVEX_TEST_ASSERT(
             yvex_protocol_request_encode(&source, frame, sizeof(frame), &count,
                                          &err) == YVEX_OK,
-            "all protocol-v7 operations encode");
+            "all protocol-v8 operations encode");
         YVEX_TEST_ASSERT(
             yvex_protocol_request_decode(frame, count, &decoded, &prompt,
                                          &provider, &err) == YVEX_OK &&
                 decoded.operation == (yvex_client_operation)value,
-            "all protocol-v7 operations decode");
+            "all protocol-v8 operations decode");
         free(prompt);
         prompt = NULL;
         yvex_provider_request_close(&provider);
@@ -343,6 +349,15 @@ static int test_message_roundtrip(void)
     source.runtime.metrics.completed_http_requests = 7u;
     source.runtime.metrics.failed_http_requests = 3u;
     source.runtime.metrics.cancelled_http_requests = 1u;
+    source.state_checkpoint.schema_version =
+        YVEX_CLIENT_STATE_CHECKPOINT_SCHEMA_V1;
+    source.state_checkpoint.file_bytes = 8192u;
+    source.state_checkpoint.scope_count = 2u;
+    source.state_checkpoint.committed_sequence_length = 64u;
+    memset(source.state_checkpoint.runtime_model_identity, 'a', 64u);
+    memset(source.state_checkpoint.runtime_binding_identity, 'b', 64u);
+    memset(source.state_checkpoint.artifact_identity, 'c', 64u);
+    memset(source.state_checkpoint.file_digest, 'd', 64u);
     rc = yvex_protocol_message_encode(&source, frame, sizeof(frame), &count, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "message encode");
     rc = yvex_protocol_message_decode(frame, count, &decoded, &err);
@@ -378,6 +393,15 @@ static int test_message_roundtrip(void)
                          decoded.runtime.metrics.failed_http_requests == 3u &&
                          decoded.runtime.metrics.cancelled_http_requests == 1u,
                      "integrated HTTP metrics roundtrip");
+    YVEX_TEST_ASSERT(
+        decoded.state_checkpoint.schema_version ==
+            YVEX_CLIENT_STATE_CHECKPOINT_SCHEMA_V1 &&
+            decoded.state_checkpoint.file_bytes == 8192u &&
+            decoded.state_checkpoint.scope_count == 2u &&
+            decoded.state_checkpoint.committed_sequence_length == 64u &&
+            strcmp(decoded.state_checkpoint.file_digest,
+                   source.state_checkpoint.file_digest) == 0,
+        "typed state checkpoint evidence roundtrip");
     memset(&source, 0, sizeof(source));
     source.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
     source.kind = YVEX_CLIENT_MESSAGE_ERROR;
@@ -637,7 +661,7 @@ static int test_v6_frame_refusal(void)
     pthread_t thread;
     v6_peer peer;
     int rc;
-    (void)snprintf(path, sizeof(path), "build/tests/protocol-v7-%lu.sock",
+    (void)snprintf(path, sizeof(path), "build/tests/protocol-v8-%lu.sock",
                    (unsigned long)getpid());
     (void)unlink(path);
     peer.listener = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -653,7 +677,7 @@ static int test_v6_frame_refusal(void)
                      "v6 peer thread");
     rc = yvex_client_connect(&client, path, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT && client == NULL &&
-                         strstr(yvex_error_message(&err), "version 7") != NULL,
+                         strstr(yvex_error_message(&err), "version 8") != NULL,
                      "v6 frame explicitly refuses");
     YVEX_TEST_ASSERT(pthread_join(thread, NULL) == 0, "v6 peer join");
     (void)close(peer.listener);

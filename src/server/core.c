@@ -75,7 +75,7 @@ static int server_refuse(yvex_error *err, yvex_status status,
     return status;
 }
 
-static yvex_client_failure_class failure_class_from_status(int status)
+yvex_client_failure_class yvex_server_failure_class_from_status(int status)
 {
     switch (status) {
     case YVEX_ERR_FORMAT:
@@ -419,7 +419,7 @@ static int protocol_error(int fd, const yvex_client_request *request,
     message.stream_channel = YVEX_CLIENT_STREAM_ERROR;
     message.failure_class = failure_class != YVEX_CLIENT_FAILURE_NONE
                                 ? failure_class
-                                : failure_class_from_status(status);
+                                : yvex_server_failure_class_from_status(status);
     message.request_number = request ? request->request_number : 0u;
     if (request)
         yvex_core_text_copy(message.session_name, sizeof(message.session_name),
@@ -470,7 +470,7 @@ static void *model_worker_main(void *opaque)
         }
         if (rc != YVEX_OK && !item->response_sent) {
             yvex_error send_error;
-            item->failure_class = failure_class_from_status(rc);
+            item->failure_class = yvex_server_failure_class_from_status(rc);
             if (protocol_error(item->fd, &item->request, rc,
                                item->failure_class,
                                yvex_error_message(&item->error),
@@ -944,7 +944,7 @@ static void *client_main(void *opaque)
             message.status = YVEX_OK;
             message.request_number = request.request_number;
             yvex_core_text_copy(message.reason, sizeof(message.reason),
-                                "protocol-v7");
+                                "protocol-v8");
             rc = yvex_server_protocol_send(fd, &message, &err);
         } else {
             server_work_item item;

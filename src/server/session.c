@@ -16,6 +16,7 @@
 #include <time.h>
 #include <yvex/internal/conversation.h>
 #include <yvex/internal/core.h>
+#include <yvex/internal/runtime_state_store.h>
 #define SESSION_SCHEMA_V1 1u
 #define SESSION_MAX_MESSAGES 128u
 #define SESSION_TRANSCRIPT_BYTES 1048576u
@@ -40,6 +41,7 @@ typedef struct {
     char generated_token_identity[YVEX_SHA256_HEX_CAP];
     char generated_text_digest[YVEX_SHA256_HEX_CAP];
     yvex_client_partial_turn partial_turn;
+    yvex_client_state_checkpoint state_checkpoint;
     yvex_runtime_sampling_policy policy;
     yvex_reasoning_policy reasoning_policy;
     int policy_set;
@@ -76,21 +78,18 @@ typedef struct {
     double queue_seconds;
     yvex_tokenizer_reasoning_stream *reasoning_stream;
 } turn_sink;
-
 static int provider_text_stream_direct(const yvex_provider_request *request)
 {
     return request && request->response_format == YVEX_PROVIDER_RESPONSE_TEXT &&
            request->stop_count == 0u && request->tool_count == 0u &&
            request->tool_choice.kind == YVEX_PROVIDER_TOOL_CHOICE_NONE;
 }
-
 static int provider_output_emit(turn_sink *sink,
                                 yvex_provider_output_kind kind,
                                 const unsigned char *bytes,
                                 unsigned long long count,
                                 const yvex_provider_tool_call *call,
                                 yvex_error *err);
-
 static unsigned long long monotonic_ns(void)
 {
     struct timespec value;
@@ -98,24 +97,6 @@ static unsigned long long monotonic_ns(void)
     return (unsigned long long)value.tv_sec * 1000000000ull +
            (unsigned long long)value.tv_nsec;
 }
-
-static yvex_client_failure_class turn_failure_class(int status)
-{
-    switch (status) {
-    case YVEX_ERR_FORMAT:
-    case YVEX_ERR_INVALID_ARG: return YVEX_CLIENT_FAILURE_INVALID_REQUEST;
-    case YVEX_ERR_UNSUPPORTED:
-        return YVEX_CLIENT_FAILURE_UNSUPPORTED_PARAMETER;
-    case YVEX_ERR_BOUNDS: return YVEX_CLIENT_FAILURE_REQUEST_TOO_LARGE;
-    case YVEX_ERR_STATE: return YVEX_CLIENT_FAILURE_INCOMPATIBLE_STATE;
-    case YVEX_ERR_CANCELLED: return YVEX_CLIENT_FAILURE_CLIENT_CANCELLED;
-    case YVEX_ERR_IO:
-    case YVEX_ERR_BACKEND: return YVEX_CLIENT_FAILURE_RUNTIME_UNAVAILABLE;
-    case YVEX_ERR_TIMEOUT: return YVEX_CLIENT_FAILURE_GATEWAY_TIMEOUT;
-    default: return YVEX_CLIENT_FAILURE_INTERNAL;
-    }
-}
-
 static int turn_output_geometry(const turn_sink *sink,
                                 unsigned long long generated_bytes,
                                 unsigned long long *final_offset,
@@ -151,7 +132,6 @@ static int turn_output_geometry(const turn_sink *sink,
     }
     return YVEX_OK;
 }
-
 static void session_partial_turn_set(
     server_session *session, const yvex_runtime_generation_result *result,
     int status)
@@ -166,7 +146,7 @@ static void session_partial_turn_set(
                                   result->generated_text_bytes;
     partial->reset_required = 1;
     partial->failure_status = status;
-    partial->failure_class = turn_failure_class(status);
+    partial->failure_class = yvex_server_failure_class_from_status(status);
     partial->stop_reason = result->stop_reason;
     partial->initial_position = result->initial_position;
     partial->final_committed_position = result->final_position;
@@ -194,7 +174,6 @@ static void session_partial_turn_set(
         partial->detokenizer_generation = runtime->detokenizer_generation;
     }
 }
-
 static int provider_usage(const yvex_runtime_generation_result *result,
                           yvex_client_message *completed, yvex_error *err)
 {
@@ -212,13 +191,11 @@ static int provider_usage(const yvex_runtime_generation_result *result,
     }
     return YVEX_OK;
 }
-
 static double elapsed_seconds(unsigned long long start,
                               unsigned long long finish)
 {
     return finish >= start ? (double)(finish - start) / 1000000000.0 : 0.0;
 }
-
 static int session_name_valid(const char *name)
 {
     size_t index, count;
@@ -235,7 +212,6 @@ static int session_name_valid(const char *name)
     }
     return 1;
 }
-
 static int session_identity(server_session_registry *registry,
                             const char *name,
                             char output[YVEX_SHA256_HEX_CAP])
@@ -256,7 +232,6 @@ static int session_identity(server_session_registry *registry,
     yvex_sha256_hex(digest, output);
     return 1;
 }
-
 static server_session *session_find_locked(server_session_registry *registry,
                                            const char *name)
 {
@@ -268,7 +243,6 @@ static server_session *session_find_locked(server_session_registry *registry,
             return &registry->sessions[index];
     return NULL;
 }
-
 static int session_message_append(server_session *session, yvex_prompt_role role,
                                   const unsigned char *bytes,
                                   unsigned long long count, yvex_error *err)
@@ -296,14 +270,12 @@ static int session_message_append(server_session *session, yvex_prompt_role role
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 static int session_cancelled(void *opaque)
 {
     server_session *session = opaque;
     return session && atomic_load_explicit(&session->cancel_requested,
                                            memory_order_acquire);
 }
-
 static int session_policy(const yvex_client_request *request,
                           yvex_runtime_sampling_policy *policy,
                           unsigned long long vocabulary_size, yvex_error *err)
@@ -340,7 +312,6 @@ static int session_policy(const yvex_client_request *request,
     policy->filter_order_version = YVEX_SAMPLING_FILTER_ORDER_V2;
     return yvex_runtime_sampling_policy_seal(policy, vocabulary_size, err);
 }
-
 static int session_generation_policy(
     server_session_registry *registry, const yvex_client_request *request,
     yvex_runtime_sampling_policy *policy, yvex_error *err)
@@ -367,7 +338,6 @@ static int session_generation_policy(
     return session_policy(request, policy,
                           yvex_tokenizer_vocab_size(view->tokenizer), err);
 }
-
 static int session_generation_open(
     server_session_registry *registry, server_session *session,
     const yvex_client_request *request,
@@ -414,7 +384,6 @@ static int session_generation_open(
     }
     return rc;
 }
-
 static int session_execution_open(server_session_registry *registry,
                                   server_session *session, yvex_error *err)
 {
@@ -803,10 +772,31 @@ static int session_message(server_message_emit emit, void *emit_context,
         yvex_runtime_identity_copy(message.generated_text_digest,
                                    session->generated_text_digest);
         message.partial_turn = session->partial_turn;
+        message.state_checkpoint = session->state_checkpoint;
     }
     yvex_core_text_copy(message.reason, sizeof(message.reason),
                         reason ? reason : "");
     return emit(emit_context, &message, err);
+}
+
+static void session_checkpoint_set(
+    server_session *session, const yvex_runtime_state_store_summary *summary)
+{
+    session->state_checkpoint.schema_version = summary->schema_version;
+    session->state_checkpoint.file_bytes = summary->file_bytes;
+    session->state_checkpoint.scope_count = summary->scope_count;
+    session->state_checkpoint.committed_sequence_length =
+        summary->committed_sequence_length;
+    yvex_runtime_identity_copy(
+        session->state_checkpoint.runtime_model_identity,
+        summary->runtime_model_identity);
+    yvex_runtime_identity_copy(
+        session->state_checkpoint.runtime_binding_identity,
+        summary->runtime_binding_identity);
+    yvex_runtime_identity_copy(session->state_checkpoint.artifact_identity,
+                               summary->artifact_identity);
+    yvex_runtime_identity_copy(session->state_checkpoint.file_digest,
+                               summary->file_digest);
 }
 
 static int session_turn_commit(server_session *session,
@@ -920,7 +910,6 @@ static unsigned long long provider_visible_bytes(
     }
     return visible;
 }
-
 static int provider_output_emit(turn_sink *sink,
                                 yvex_provider_output_kind kind,
                                 const unsigned char *bytes,
@@ -1175,7 +1164,7 @@ static int session_turn_publish(server_session_registry *registry, server_sessio
     if (provider_usage(result, &completed, err) != YVEX_OK)
         status = YVEX_ERR_BOUNDS;
     if (status != YVEX_OK)
-        completed.failure_class = turn_failure_class(status);
+        completed.failure_class = yvex_server_failure_class_from_status(status);
     completed.final_position = result->final_position;
     completed.context_used = result->final_position;
     completed.turn_count = session->turn_count;
@@ -1821,6 +1810,34 @@ int yvex_server_sessions_execute(server_session_registry *registry,
         if (rc == YVEX_OK)
             rc = session_message(emit, emit_context, YVEX_CLIENT_MESSAGE_ACK,
                                  YVEX_OK, request, session, "reset", err);
+    } else if (request->operation == YVEX_CLIENT_OP_SESSION_STATE_SAVE ||
+               request->operation == YVEX_CLIENT_OP_SESSION_STATE_RESTORE) {
+        yvex_runtime_state_store_summary summary;
+        if (atomic_load_explicit(&session->active_turn, memory_order_acquire)) {
+            rc = YVEX_ERR_STATE;
+            yvex_error_set(err, YVEX_ERR_STATE, "server.session.state",
+                           "active session state cannot be checkpointed");
+        } else if (request->operation == YVEX_CLIENT_OP_SESSION_STATE_SAVE) {
+            rc = yvex_runtime_session_state_save(
+                session->execution, request->state_path, &summary, err);
+        } else {
+            rc = yvex_runtime_session_state_restore(
+                session->execution, request->state_path,
+                request->maximum_state_file_bytes, session->committed_count,
+                &summary, err);
+        }
+        if (rc == YVEX_OK) {
+            session_checkpoint_set(session, &summary);
+            rc = session_message(
+                emit, emit_context, YVEX_CLIENT_MESSAGE_ACK, YVEX_OK,
+                request, session,
+                request->operation == YVEX_CLIENT_OP_SESSION_STATE_SAVE
+                    ? "state checkpoint saved"
+                    : "state checkpoint restored",
+                err);
+            memset(&session->state_checkpoint, 0,
+                   sizeof(session->state_checkpoint));
+        }
     } else if (request->operation == YVEX_CLIENT_OP_SESSION_CLOSE) {
         rc = session_close_locked(registry, session, err);
         if (rc == YVEX_OK)
@@ -1840,7 +1857,6 @@ done:
     (void)pthread_mutex_unlock(&registry->mutex);
     return rc;
 }
-
 /*
  * Capture one composed-console session slice under the sole registry authority.
  *

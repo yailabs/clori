@@ -104,7 +104,7 @@ not a replacement historical ledger.
 | Source and compilation | The pinned 48-shard DSpark source, tokenizer, 72,317-tensor coverage, 1,409-terminal Transformation IR, bootstrap physical policy, qtypes, and deterministic GGUF emission have typed owners and identity-bound outputs. |
 | Artifact and admission | One complete DSpark bootstrap artifact contains the target and drafter; structural, payload, roundtrip, materialization, and one binding containing target/draft/verification plans are admitted outside Git. |
 | Runtime and generation | One authenticated model opens in `yvexd`; server-owned sessions retain exact target KV/token truth and bounded candidate state; target-only and target-verified DSpark text run on CPU and the admitted mixed CUDA/host path. |
-| Application serving | Local protocol v7 and YVEX OpenAI Compatibility Profile v2 share one runtime, worker, queue, session registry, and telemetry authority. |
+| Application serving | Local protocol v8 and YVEX OpenAI Compatibility Profile v2 share one runtime, worker, queue, session registry, and telemetry authority. |
 | Product surface | `yvex` and `yvexd` are the only product executables. The former developer and OpenAI gateway executables are retired. |
 | Command architecture | `yvex.operator.registry.v1` generates immutable descriptors compiled into `yvex`; canonical operation IDs drive the truthful command taxonomy, lane-safe dispatch, help, JSON discovery, completion, and slash-command schemas. |
 | Documentation architecture | Canonical doctrine, terminology, reference and implemented architecture, family records, contracts, operations, development policy, audits, migrations, and release surfaces have separate governed owners. |
@@ -192,7 +192,7 @@ Machine-readable readiness facts retained for claim guards:
 ```text
 canonical_operation_registry_ready=1
 generated_command_descriptors_ready=1
-protocol_v7_ready=1
+protocol_v8_ready=1
 mature_repl_console_ready=1
 deepseek_dspark_source_ready=1
 target_only_generation_ready=1

@@ -353,7 +353,7 @@ static int text_weight_project(text_layer_run *run, yvex_minimax_h3_text_weight_
     int rc = yvex_backend_cuda_encoded_matvec(
         run->backend, weight->encoded, weight->encoded_bytes, weight->qtype,
         weight->row_count, weight->row_width, weight->row_bytes, run->tokens,
-        input, NULL, 0ull, additive, output, &facts, err);
+        input, NULL, 0ull, additive, output, 0, &facts, err);
     if (rc == YVEX_OK && !text_facts_add(&run->facts, &facts))
         rc = conditioning_refuse(err, YVEX_ERR_BOUNDS, "cuda.minimax-h3.text-layer.facts",
                                  "text projection accounting overflowed");

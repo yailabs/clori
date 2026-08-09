@@ -349,7 +349,7 @@ int yvex_runtime_speculation_context_open(
     yvex_runtime_execution_session *session, yvex_runtime_transformer_context *target_transformer,
     yvex_runtime_logits_context *target_logits, yvex_runtime_sampling_context *target_sampling,
     const yvex_runtime_sampling_policy *sampling_policy,
-    const yvex_runtime_speculation_options *options, yvex_error *err)
+    const yvex_runtime_speculation_options *options, unsigned long long *workspace_bytes, yvex_error *err)
 {
     yvex_runtime_speculation_context *context = NULL;
     yvex_runtime_transformer_options transformer_options = {0};
@@ -361,8 +361,9 @@ int yvex_runtime_speculation_context_open(
     unsigned long long draft_context_capacity;
     int rc;
     if (out) *out = NULL;
+    if (workspace_bytes) *workspace_bytes = 0ull;
     if (!out || !model || !session || !target_transformer || !target_logits ||
-        !target_sampling || !sampling_policy || !options ||
+        !target_sampling || !sampling_policy || !options || !workspace_bytes ||
         !options->execution_profile || !options->shape_registry ||
         (options->backend != YVEX_BACKEND_KIND_CPU &&
          options->backend != YVEX_BACKEND_KIND_CUDA) || !options->context_capacity)
@@ -427,7 +428,8 @@ int yvex_runtime_speculation_context_open(
     transformer_options.execution_profile = options->execution_profile;
     transformer_options.shape_registry = options->shape_registry;
     rc = yvex_runtime_transformer_context_open(
-        &context->draft_transformer, model, session, &transformer_options, err);
+        &context->draft_transformer, model, session, &transformer_options,
+        workspace_bytes, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_logits_admit_shared_draft_plan(
             target_logits, yvex_runtime_transformer_context_plan(context->draft_transformer), err);
@@ -534,7 +536,7 @@ static int speculation_project_target_features(yvex_runtime_speculation_context 
                 context->feature_projection.binding->qtype, context->hidden_width,
                 context->policy.concatenated_feature_width,
                 context->feature_projection.row_bytes, token_count, &input,
-                NULL, 0ull, NULL, &projected, &facts, err);
+                NULL, 0ull, NULL, &projected, 0, &facts, err);
         if (rc == YVEX_OK)
             rc = yvex_backend_op_rms_norm(
                 context->device_backend, &projected, context->device_feature_norm,
@@ -785,10 +787,9 @@ static int speculation_draft_one(
     if (rc == YVEX_OK && context->device_draft_selection)
         rc = yvex_backend_cuda_encoded_matvec(
             context->device_backend, context->markov_output.encoded,
-            context->markov_output.encoded_bytes,
-            context->markov_output.binding->qtype, context->vocabulary_size,
-            context->policy.markov_rank, context->markov_output.row_bytes,
-            1ull, &markov_input, NULL, 0ull, &additive, &adjusted_output, &device_facts, err);
+            context->markov_output.encoded_bytes, context->markov_output.binding->qtype,
+            context->vocabulary_size, context->policy.markov_rank, context->markov_output.row_bytes,
+            1ull, &markov_input, NULL, 0ull, &additive, &adjusted_output, 0, &device_facts, err);
     if (rc == YVEX_OK && context->device_draft_selection)
         context->device_adjusted_logits->is_written = 1;
     if (rc == YVEX_OK && context->device_draft_selection)
@@ -839,7 +840,7 @@ static int speculation_draft_one(
             context->confidence.encoded_bytes, context->confidence.binding->qtype,
             1ull, context->confidence.binding->row_width, context->confidence.row_bytes,
             1ull, &pre_normalized, &markov_input, context->hidden_width, NULL,
-            &device_confidence, &confidence_facts, err);
+            &device_confidence, 0, &confidence_facts, err);
     if (rc == YVEX_OK && context->device_draft_selection)
         rc = yvex_backend_tensor_read(context->device_backend, &device_confidence,
                                       confidence, sizeof(*confidence), err);
@@ -1189,7 +1190,6 @@ static int speculation_accept_device(yvex_runtime_speculation_context *context,
     if (rc == YVEX_OK) cycle->acceptance = acceptance;
     return rc;
 }
-
 static int speculation_accept_cycle(yvex_runtime_speculation_context *context,
     const yvex_runtime_speculation_cycle_request *request,
     yvex_runtime_speculation_cycle_result *result, yvex_error *err)

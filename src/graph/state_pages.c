@@ -173,22 +173,29 @@ static int pages_store_register(yvex_graph_state_page_store *store,
                                 yvex_error *err)
 {
     yvex_graph_state_page_pool *pool = store->pool;
-    unsigned long long metadata_next, resident_next, virtual_next;
+    unsigned long long metadata_next = 0ull, resident_next = 0ull, virtual_next;
     unsigned long long page_next, resident_page_next, stores_next;
     int rc = pages_lock(pool, err);
 
     if (rc != YVEX_OK) return rc;
-    if (!pages_pool_admit_locked(pool, metadata, resident) ||
-        !pages_add(pool->metadata_bytes, metadata, &metadata_next) ||
+    if (!pages_add(pool->metadata_bytes, metadata, &metadata_next) ||
         !pages_add(pool->resident_bytes, resident, &resident_next) ||
+        (pool->maximum_bytes &&
+         (metadata_next > pool->maximum_bytes ||
+          resident_next > pool->maximum_bytes - metadata_next)) ||
         !pages_add(pool->virtual_bytes, store->requested_bytes, &virtual_next) ||
         !pages_add(pool->page_count, store->page_count, &page_next) ||
         !pages_add(pool->resident_page_count,
                    store->paged ? 0ull : store->page_count,
                    &resident_page_next) ||
         !pages_add(pool->store_count, 1ull, &stores_next)) {
-        rc = pages_reject(err, YVEX_ERR_BOUNDS,
-                          "state page store exceeds its pool budget or counters");
+        yvex_error_setf(
+            err, YVEX_ERR_BOUNDS, "graph.state.pages",
+            "state page store exceeds its pool budget or counters "
+            "(metadata=%llu+%llu resident=%llu+%llu maximum=%llu virtual=%llu)",
+            pool->metadata_bytes, metadata, pool->resident_bytes, resident,
+            pool->maximum_bytes, store->requested_bytes);
+        rc = YVEX_ERR_BOUNDS;
     } else {
         pool->metadata_bytes = metadata_next;
         pool->resident_bytes = resident_next;
@@ -592,7 +599,7 @@ static int pages_component_rows(
         *rows = recipe->kind == YVEX_ATTENTION_STATE_COMPONENT_HISTORY
                     ? recipe->capacity
                     : recipe->rolling.state_slots;
-        return *rows != 0ull;
+        return *rows != 0ull || recipe->kind == YVEX_ATTENTION_STATE_COMPONENT_HISTORY;
     }
     plan = pages_component_plan(
         capacity, pages_component_class(summary, layer, recipe));
@@ -647,6 +654,9 @@ static int pages_component_open(
     storage->recipe = *recipe;
     if (recipe->kind == YVEX_ATTENTION_STATE_COMPONENT_HISTORY) {
         storage->allocated_rows = recipe->capacity;
+        /* A periodic history is part of the sealed state recipe before its first period
+         * completes. Preserve that typed component without manufacturing a physical page. */
+        if (!storage->allocated_rows) return YVEX_OK;
         if (recipe->binding == YVEX_ATTENTION_STATE_BINDING_LOCAL_HISTORY &&
             !yvex_core_u64_mul(storage->allocated_rows, 2ull,
                                &storage->allocated_rows))
@@ -694,6 +704,12 @@ failed:
 static int pages_component_reset(
     yvex_graph_state_component_storage *storage, yvex_error *err)
 {
+    if (storage &&
+        storage->recipe.kind == YVEX_ATTENTION_STATE_COMPONENT_HISTORY &&
+        !storage->recipe.capacity && !storage->value_pages) {
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
     if (!storage || !storage->value_pages)
         return pages_reject(err, YVEX_ERR_INVALID_ARG,
                             "prepared state component pages are required");

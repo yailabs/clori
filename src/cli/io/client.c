@@ -8,15 +8,12 @@
  */
 #define _POSIX_C_SOURCE 200809L
 #define _XOPEN_SOURCE 700
-
 #include <build_commit.h>
 #include <operator/registry.h>
 #include "src/cli/input/private.h"
 #include "src/cli/io/private.h"
 #include "src/cli/private.h"
-
 #include <yvex/server.h>
-
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -34,10 +31,8 @@
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
-
 #define CLIENT_REPL_LINE_MAX 65536u
 #define CLIENT_REPL_HISTORY_MAX 64u
-
 typedef struct {
     unsigned long long maximum_new_tokens, seed, top_k;
     double temperature, top_p, min_p, typical_p;
@@ -70,7 +65,6 @@ static int console_status_fetch(const char *session_name,
                                 yvex_client_message *message,
                                 yvex_error *err);
 static void render_console_status(const yvex_client_message *message, int startup);
-
 static void discovery_json_string(FILE *output, const char *value)
 {
     const unsigned char *cursor = (const unsigned char *)value;
@@ -707,19 +701,14 @@ static int runtime_events(int projection)
     yvex_client_close(&client);
     return rc == YVEX_OK ? 0 : client_error(&err);
 }
-static int administration(yvex_client_operation operation,
-                          const char *session_name, int render_mode)
+static int administration_request(yvex_client_request *request,
+                                  int render_mode)
 {
-    yvex_client_request request;
     yvex_client_message message;
     yvex_client *client = NULL;
     yvex_error err;
     int rc;
-    request_init(&request, operation);
-    if (session_name)
-        snprintf(request.session_name, sizeof(request.session_name), "%s",
-                 session_name);
-    rc = request_open(&client, &request, &err);
+    rc = request_open(&client, request, &err);
     while (rc == YVEX_OK) {
         rc = yvex_client_receive(client, &message, &err);
         if (rc != YVEX_OK) break;
@@ -735,7 +724,12 @@ static int administration(yvex_client_operation operation,
                    yvex_server_session_state_name(message.session_state),
                    message.final_position, message.turn_count);
         else if (message.kind == YVEX_CLIENT_MESSAGE_ACK) {
-            if (!render_mode)
+            if (!render_mode && message.state_checkpoint.schema_version)
+                printf("%s position=%llu bytes=%llu digest=%s\n",
+                       message.reason, message.state_checkpoint.committed_sequence_length,
+                       message.state_checkpoint.file_bytes,
+                       message.state_checkpoint.file_digest);
+            else if (!render_mode)
                 printf("%s\n", message.reason[0] ? message.reason : "ok");
             break;
         }
@@ -743,6 +737,28 @@ static int administration(yvex_client_operation operation,
     }
     yvex_client_close(&client);
     return rc == YVEX_OK ? 0 : client_error(&err);
+}
+static int administration(yvex_client_operation operation,
+                          const char *session_name, int render_mode)
+{
+    yvex_client_request request;
+    request_init(&request, operation);
+    if (session_name)
+        snprintf(request.session_name, sizeof(request.session_name), "%s",
+                 session_name);
+    return administration_request(&request, render_mode);
+}
+static int state_checkpoint(yvex_client_operation operation,
+                            const char *session_name, const char *path,
+                            unsigned long long maximum_file_bytes)
+{
+    yvex_client_request request;
+    request_init(&request, operation);
+    snprintf(request.session_name, sizeof(request.session_name), "%s",
+             session_name);
+    snprintf(request.state_path, sizeof(request.state_path), "%s", path);
+    request.maximum_state_file_bytes = maximum_file_bytes;
+    return administration_request(&request, 0);
 }
 static int generation_turn(const char *session_name,
                            const unsigned char *prompt,
@@ -947,7 +963,6 @@ static void repl_history_close(client_repl_history *history)
     for (index = 0u; index < history->count; ++index) free(history->entry[index]);
     memset(history, 0, sizeof(*history));
 }
-
 static void repl_signal_handler(int number)
 {
     sig_atomic_t interrupts = repl_signal_state & 3;
@@ -956,7 +971,6 @@ static void repl_signal_handler(int number)
     else if (interrupts < 2)
         repl_signal_state = (repl_signal_state & ~3) | (interrupts + 1);
 }
-
 static void repl_redraw(const char *prompt, const char *line, size_t count)
 {
     fputs("\r\033[2K", stdout);
@@ -964,7 +978,6 @@ static void repl_redraw(const char *prompt, const char *line, size_t count)
     if (count) (void)fwrite(line, 1u, count, stdout);
     fflush(stdout);
 }
-
 static int repl_replace_line(char **line, size_t *count, size_t *capacity,
                              const char *replacement, const char *prompt)
 {
@@ -982,7 +995,6 @@ static int repl_replace_line(char **line, size_t *count, size_t *capacity,
     repl_redraw(prompt, *line, *count);
     return 1;
 }
-
 static int repl_complete_slash(char **line, size_t *count, size_t *capacity,
                                const char *prompt)
 {
@@ -1006,7 +1018,6 @@ static int repl_complete_slash(char **line, size_t *count, size_t *capacity,
     if (matches > 1u) return 1;
     return 0;
 }
-
 static int repl_append_byte(char **line, size_t *count, size_t *capacity,
                             unsigned char byte)
 {
@@ -1025,7 +1036,6 @@ static int repl_append_byte(char **line, size_t *count, size_t *capacity,
     (*line)[*count] = '\0';
     return 1;
 }
-
 static void repl_backspace(char *line, size_t *count)
 {
     if (!*count) return;
@@ -1034,7 +1044,6 @@ static void repl_backspace(char *line, size_t *count)
         (*count)--;
     line[*count] = '\0';
 }
-
 static int repl_read_line(const char *prompt, const client_repl_history *history,
                           char **output, size_t *output_count)
 {
@@ -1148,7 +1157,6 @@ static int repl_read_line(const char *prompt, const client_repl_history *history
     }
     return result;
 }
-
 static int repl_switch_session(char current[YVEX_SERVER_SESSION_NAME_CAP],
                                const char *next, int create)
 {
@@ -1163,7 +1171,6 @@ static int repl_switch_session(char current[YVEX_SERVER_SESSION_NAME_CAP],
     printf("%ssession%s · %s\n", style.success, style.reset, current);
     return 1;
 }
-
 static const yvex_operator_descriptor *slash_descriptor(const char *line,
                                                          const char **argument)
 {
@@ -1181,7 +1188,6 @@ static const yvex_operator_descriptor *slash_descriptor(const char *line,
     }
     return NULL;
 }
-
 static void repl_reasoning_policy(
     const char *session, client_turn_options *options,
     yvex_reasoning_policy policy)
@@ -1208,7 +1214,6 @@ static void repl_reasoning_policy(
     printf("%sreasoning%s · %s for the next turn\n", style.accent,
            style.reset, name);
 }
-
 static int repl_command(const char *line, char current[YVEX_SERVER_SESSION_NAME_CAP],
                         unsigned long long *generated_session,
                         client_turn_options *options)
@@ -1318,7 +1323,6 @@ static int repl_command(const char *line, char current[YVEX_SERVER_SESSION_NAME_
     yvex_cli_operator_invocation_close(&invocation);
     return result;
 }
-
 static int chat(const char *session_name, unsigned long long maximum_new_tokens)
 {
     client_turn_options options;
@@ -1406,7 +1410,6 @@ static int chat(const char *session_name, unsigned long long maximum_new_tokens)
     (void)sigaction(SIGWINCH, &prior_resize, NULL);
     return 0;
 }
-
 static int chat_command(int argc, char **argv)
 {
     const char *session = "main";
@@ -1429,7 +1432,6 @@ static int chat_command(int argc, char **argv)
     }
     return chat(session, maximum_new_tokens);
 }
-
 /* Parse and execute one complete one-shot policy without inferring strategy. */
 static int run_command(int argc, char **argv)
 {
@@ -1510,7 +1512,6 @@ static int run_command(int argc, char **argv)
         return status;
     }
 }
-
 static int model_config_paths(char directory[PATH_MAX], char path[PATH_MAX])
 {
     const char *base = getenv("XDG_CONFIG_HOME");
@@ -1530,7 +1531,6 @@ static int model_config_paths(char directory[PATH_MAX], char path[PATH_MAX])
         return 0;
     return 1;
 }
-
 static int model_config_directory(const char *directory)
 {
     struct stat status;
@@ -1555,7 +1555,6 @@ static int model_config_directory(const char *directory)
         return 0;
     return 1;
 }
-
 static int model_config_write(const client_model_config *config)
 {
     char directory[PATH_MAX], path[PATH_MAX], temporary[PATH_MAX];
@@ -1588,7 +1587,6 @@ static int model_config_write(const client_model_config *config)
     if (!ok) (void)unlink(temporary);
     return ok;
 }
-
 static int model_config_read(client_model_config *config)
 {
     char directory[PATH_MAX], path[PATH_MAX], line[PATH_MAX + 32u];
@@ -1656,7 +1654,6 @@ static int model_config_read(client_model_config *config)
            (!strcmp(config->backend, "cpu") || !strcmp(config->backend, "cuda")) &&
            (!strcmp(config->mode, "target-only") || !strcmp(config->mode, "dspark"));
 }
-
 static int model_select_command(int argc, char **argv)
 {
     yvex_model_registry_options options;
@@ -1665,7 +1662,6 @@ static int model_select_command(int argc, char **argv)
     client_model_config config;
     yvex_error err;
     int rc;
-
     memset(&config, 0, sizeof(config));
     memset(&options, 0, sizeof(options));
     yvex_error_clear(&err);
@@ -1730,7 +1726,6 @@ static int model_select_command(int argc, char **argv)
     }
     return 0;
 }
-
 static int model_config_show(void)
 {
     client_model_config config;
@@ -1749,7 +1744,6 @@ static int model_config_show(void)
     }
     return 0;
 }
-
 static int exec_sibling_vector(const char *binary, char *const arguments[])
 {
     char executable[PATH_MAX], sibling[PATH_MAX];
@@ -1770,7 +1764,6 @@ static int exec_sibling_vector(const char *binary, char *const arguments[])
     fprintf(stderr, "yvex: cannot execute %s: %s\n", binary, strerror(errno));
     return 1;
 }
-
 static int exec_sibling(const char *binary, int argc, char **argv, int skip)
 {
     char **arguments = calloc((size_t)argc + 1u, sizeof(*arguments));
@@ -1783,7 +1776,6 @@ static int exec_sibling(const char *binary, int argc, char **argv, int skip)
     free(arguments);
     return status;
 }
-
 static int runtime_start(int argc, char **argv)
 {
     client_model_config config;
@@ -1824,7 +1816,6 @@ static int runtime_start(int argc, char **argv)
     }
     return exec_sibling_vector("yvexd", arguments);
 }
-
 static int help_command(int argc, char **argv, size_t consumed)
 {
     const char *path[16];
@@ -1844,7 +1835,6 @@ static int help_command(int argc, char **argv, size_t consumed)
     }
     return yvex_client_render_help_path(count, path, advanced, json);
 }
-
 static int console_status_fetch(const char *session_name,
                                 yvex_client_message *message,
                                 yvex_error *err)
@@ -1868,7 +1858,6 @@ static int console_status_fetch(const char *session_name,
     yvex_client_close(&client);
     return rc;
 }
-
 static void render_console_status(const yvex_client_message *message, int startup)
 {
     const yvex_console_status *status = &message->console;
@@ -1934,7 +1923,6 @@ static void render_console_status(const yvex_client_message *message, int startu
                style.reset, message->partial_turn.committed_token_count);
     putchar('\n');
 }
-
 static int console_status(const char *session_name)
 {
     yvex_client_message message;
@@ -1943,7 +1931,6 @@ static int console_status(const char *session_name)
     if (rc == YVEX_OK) render_console_status(&message, 0);
     return rc == YVEX_OK ? 0 : client_error(&err);
 }
-
 int yvex_client_dispatch(const yvex_operator_descriptor *operation, int argc,
                          char **argv, size_t consumed)
 {
@@ -1973,6 +1960,20 @@ int yvex_client_dispatch(const yvex_operator_descriptor *operation, int argc,
         return administration(YVEX_CLIENT_OP_SESSION_DETACH, name, 0);
     case YVEX_OPERATOR_RUNTIME_SESSION_RESET:
         return administration(YVEX_CLIENT_OP_SESSION_RESET, name, 0);
+    case YVEX_OPERATOR_RUNTIME_SESSION_STATE_SAVE:
+        return state_checkpoint(YVEX_CLIENT_OP_SESSION_STATE_SAVE, name,
+                                argv[consumed + 2u], 0u);
+    case YVEX_OPERATOR_RUNTIME_SESSION_STATE_RESTORE: {
+        unsigned long long maximum_file_bytes;
+        if (consumed + 3u >= (size_t)argc ||
+            !parse_u64(argv[consumed + 3u], &maximum_file_bytes, 0)) {
+            fputs("yvex: state restore requires a positive maximum file byte bound\n",
+                  stderr);
+            return 2;
+        }
+        return state_checkpoint(YVEX_CLIENT_OP_SESSION_STATE_RESTORE, name,
+                                argv[consumed + 2u], maximum_file_bytes);
+    }
     case YVEX_OPERATOR_RUNTIME_SESSION_CLOSE:
         return administration(YVEX_CLIENT_OP_SESSION_CLOSE, name, 0);
     case YVEX_OPERATOR_RUNTIME_SESSION_CANCEL:

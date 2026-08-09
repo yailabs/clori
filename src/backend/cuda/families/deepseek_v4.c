@@ -79,7 +79,7 @@ typedef struct {
     unsigned long long query_width, candidate_capacity, topk_capacity, low_count;
     unsigned long long local_extent, compressed_extent, history_index_extent;
     unsigned long long local_storage_extent, compressed_storage_extent, indexer_storage_extent;
-    unsigned long long local_capacity, compressed_capacity, indexer_capacity;
+    unsigned long long local_capacity, publication_local_capacity, compressed_capacity, indexer_capacity;
     unsigned long long index_query_extent, emission_position, topk_count, staged_valid_count;
     unsigned long long h2d_bytes, d2h_bytes, d2d_bytes, device_execution_elapsed_ns;
     unsigned long long stream_synchronizations, device_synchronizations;
@@ -121,14 +121,12 @@ static int attn_stage_layout(attn_run *run, unsigned char *base, size_t *total);
 static int attn_extent(const attn_run *run, attn_extent_kind kind, unsigned long long *out);
 static const void *attn_allocation_source(const attn_run *run, attn_source_kind source);
 static int attn_graph_mode(const attn_run *run) {
-    return run->configuration &&
-           run->configuration->mode != YVEX_BACKEND_CUDA_ATTENTION_EAGER;
+    return run->configuration && run->configuration->mode != YVEX_BACKEND_CUDA_ATTENTION_EAGER;
 }
 static int attn_run_fail(attn_run *run, yvex_backend_attention_failure_code code,
                                    const char *stage, unsigned long long expected, unsigned long long actual,
                                    yvex_status status, const char *message) {
-    return run->ops->fail(
-        run->failure, code, stage, expected, actual, run->err, status, message);
+    return run->ops->fail(run->failure, code, stage, expected, actual, run->err, status, message);
 }
 static int attn_account_d2d(attn_run *run, size_t bytes, const char *stage) {
     if (yvex_core_u64_add(run->d2d_bytes, bytes, &run->d2d_bytes)) return YVEX_OK;
@@ -548,27 +546,22 @@ static int attn_validate_derived(attn_run *run) {
     if (rc == YVEX_OK) rc = attn_alias_validate(run);
     return rc;
 }
-static const void *attn_upload_source(const attn_run *run, const CUdeviceptr *target, int *generated) {
-    size_t i;
-    for (i = 0u; i < run->upload_count; ++i) {
-        if (run->uploads[i].device != target) continue;
-        *generated = run->uploads[i].generated;
-        return run->uploads[i].staged;
-    }
+static const attn_upload *attn_upload_find(const attn_run *run, const CUdeviceptr *target) {
+    for (size_t i = 0u; i < run->upload_count; ++i)
+        if (run->uploads[i].device == target) return &run->uploads[i];
     return NULL;
 }
-/* Allocate typed device values whose cleanup remains transaction-owned. */
 static int attn_alloc_values(attn_run *run, CUdeviceptr *target,
                              unsigned long long count, size_t width,
                              const void *source, int zero, const char *stage) {
-    const void *stable_source = source, *planned_source;
+    const attn_upload *upload;
+    const void *stable_source = source;
     unsigned long long resident_address = 0ull;
     CUdeviceptr device_source = 0u;
-    size_t bytes;
-    int captured = attn_graph_mode(run);
-    int generated = 0, resident, rc;
+    size_t bytes, visible_bytes;
+    int captured = attn_graph_mode(run), persistent_input, resident, rc;
     if (*target) return YVEX_OK;
-    planned_source = attn_upload_source(run, target, &generated);
+    upload = attn_upload_find(run, target);
     if (!yvex_cuda_work_checked_bytes(count, (unsigned long long)width, &bytes))
         return attn_run_fail(
             run, YVEX_BACKEND_ATTENTION_FAILURE_BUDGET, stage, ULLONG_MAX,
@@ -576,23 +569,29 @@ static int attn_alloc_values(attn_run *run, CUdeviceptr *target,
             "CUDA attention allocation size overflowed");
     if (target == &run->phase_input)
         device_source = yvex_cuda_activation_pointer(run->backend, run->job->device_input);
-    resident = source && !device_source && !generated
-        ? yvex_backend_state_residency_resolve(run->backend, source, bytes, &resident_address)
+    visible_bytes = upload && upload->used ? (size_t)(upload->used * upload->width) : 1u;
+    /* Growth is pre-admitted; a full local ring retains its wrapped workspace instead. */
+    persistent_input = upload && (target == &run->phase_compressed || target == &run->phase_indexer ||
+        (target == &run->phase_local && run->initial_local_count + run->job->token_count <= run->local_capacity));
+    resident = source && !device_source && upload && !upload->generated && persistent_input
+        ? yvex_backend_state_residency_resolve(run->backend, source, visible_bytes,
+                                               &resident_address)
         : YVEX_BACKEND_RESIDENT_MISS;
     if (resident == YVEX_BACKEND_RESIDENT_INVALID)
         return attn_run_fail(
             run, YVEX_BACKEND_ATTENTION_FAILURE_COPY, stage, bytes, 0ull,
             YVEX_ERR_STATE, "persistent device state mapping is invalid");
-    if (resident == YVEX_BACKEND_RESIDENT_HIT)
-        device_source = (CUdeviceptr)resident_address;
+    if (resident == YVEX_BACKEND_RESIDENT_HIT) {
+        *target = (CUdeviceptr)resident_address;
+        return YVEX_OK;
+    }
     if (source && !device_source) {
         rc = run->ops->account_transfer(
             count, width, &run->h2d_bytes, stage, run->failure, run->err);
         if (rc != YVEX_OK) return rc;
     }
     if (!device_source) {
-        if (planned_source)
-            stable_source = planned_source;
+        if (upload && upload->staged) stable_source = upload->staged;
         else if (source)
             return attn_run_fail(
                 run, YVEX_BACKEND_ATTENTION_FAILURE_COPY, stage, bytes, 0ull,
@@ -769,7 +768,6 @@ static const void *attn_allocation_source(
     };
     return (unsigned int)source < sizeof(values) / sizeof(values[0]) ? values[source] : NULL;
 }
-/* Acquire and execute one bounded interval from the immutable device-allocation catalog. */
 static int attn_allocations_execute(attn_run *run,
                                               size_t first, size_t count) {
     size_t index;
@@ -837,9 +835,11 @@ static int attn_prepare(attn_run *run) {
     run->initial_compressed_count = run->job->compressed_count;
     run->initial_indexer_count = run->job->indexer_count;
     run->local_capacity = attn_graph_mode(run)
-                              ? run->configuration->local_capacity
-                              : run->job->sliding_window -
-                                    (run->job->candidate_block_visible ? 0ull : 1ull);
+                              ? yvex_cuda_attention_local_capacity(run->configuration, run->job, 0)
+                              : run->job->sliding_window;
+    run->publication_local_capacity = attn_graph_mode(run) ?
+        yvex_cuda_attention_local_capacity(run->configuration, run->job, 1) :
+        run->job->sliding_window - (run->job->candidate_block_visible ? 0ull : 1ull);
     run->compressed_capacity = run->job->attention_class == YVEX_BACKEND_ATTENTION_SWA
         ? 0ull : (attn_graph_mode(run)
                       ? run->configuration->compressed_capacity
@@ -980,8 +980,10 @@ static int attn_prepare(attn_run *run) {
     run->resources.state = run->state;
     run->resources.variant = YVEX_BACKEND_VARIANT_ATTENTION_ENCODED;
     run->resources.budget = run->job->max_device_bytes;
-    /* Full evidence trades the production activation codec for canonical-order
-     * arithmetic so the independent oracle can compare exact stage values. */
+    run->resources.activation_q8 = run->job->native_execution && run->job->evidence_level < 3u &&
+        run->state->kernel_bundle_native &&
+        run->state->q8_0_tensorcore_rows_function != NULL;
+    /* Full evidence selects canonical-order arithmetic for the stage oracles. */
     run->resources.forensic_numeric = run->job->evidence_level == 3u;
     return YVEX_OK;
 }
@@ -1031,7 +1033,6 @@ static int attn_allocate_base(attn_run *run) {
         run->initial_indexer_count * sizeof(unsigned long long);
     return YVEX_OK;
 }
-/* Bind one ordinal to disjoint arenas without materializing device dependencies. */
 static void attn_phase_bind(attn_run *run, unsigned long long ordinal) {
     yvex_backend_attention_job *job = &run->request;
     unsigned long long position = run->phase_start_position + ordinal;
@@ -1681,8 +1682,7 @@ static int attn_numerical_execute(attn_run *run) {
             "cuda.deepseek_attention.graph.mode", YVEX_BACKEND_CUDA_ATTENTION_FULL,
             run->configuration->mode, YVEX_ERR_UNSUPPORTED,
             "CUDA attention execution mode is unavailable");
-    /* Parallel draft queries require every candidate projection before reduction, so the
-     * projection boundary remains split even when ordinary attention selected full capture. */
+    /* Draft needs every projection before reduction, so candidate capture retains this split. */
     rc = attn_graph_execute(run, 0u, YVEX_CUDA_ATTENTION_STAGE_COMPRESS);
     if (rc == YVEX_OK && run->job->attention_class != YVEX_BACKEND_ATTENTION_SWA)
         rc = attn_graph_execute(
@@ -1737,7 +1737,7 @@ static int attn_synchronize(attn_run *run) {
             run->phase_indexer_positions, run->phase_main_kv, run->phase_main_score,
             run->phase_index_kv, run->phase_index_score, run->initial_local_count,
             run->initial_compressed_count, run->initial_indexer_count,
-            run->phase_compressed_count, run->phase_indexer_count, run->local_capacity,
+            run->phase_compressed_count, run->phase_indexer_count, run->publication_local_capacity,
             run->rolling[ROLL_MAIN].extent, run->rolling[ROLL_INDEX].extent};
         rc = run->ops->state_stage(
             run->backend, run->job, &sources, &state_bytes, &state_staged, run->err);
@@ -1886,7 +1886,6 @@ static int attn_stage_inputs(attn_run *run) {
     }
     return YVEX_OK;
 }
-/* Publish the fully admitted transaction as the sole caller-visible commit. */
 static int attn_publish(attn_run *run) {
     yvex_backend_host_workspace_summary workspace;
     unsigned long long backend_h2d, backend_d2h;
@@ -1928,6 +1927,7 @@ static int attn_publish(attn_run *run) {
     run->output->device_bytes = 0ull;
     run->output->peak_device_bytes = run->resources.peak_bytes;
     run->output->kernel_launches = run->resources.launches;
+    run->output->tensor_core_launches = run->resources.tensor_core_launches;
     run->output->h2d_bytes = run->h2d_bytes;
     run->output->d2h_bytes = run->d2h_bytes;
     run->output->d2d_bytes = run->d2d_bytes;

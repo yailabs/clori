@@ -215,6 +215,13 @@ physical resident bytes, allocation granularity and cumulative commit/release
 counts distinct. CUDA implementations without VMM retain the explicit bounded
 full-bank fallback.
 
+Normal non-prefix CUDA attention resolves local, compressed and indexer value
+history directly in the pre-admitted candidate bank. Generated position arrays
+and rolling checkpoints retain their explicit staging, and a local ring that
+must wrap retains the bounded phase workspace. Deep-context capacity therefore
+does not manufacture a capacity-sized history upload or temporary value array
+for an ordinary append.
+
 This device paging removes full-capacity allocation from the admitted GB10 VMM
 path; it does not by itself qualify 512K model execution. Full-model attention,
 workspace, throughput and continuation evidence at each deep-context band
@@ -250,13 +257,14 @@ class. `production`, `audit`, and `forensic` evidence are independent from
 trace verbosity: production cannot require complete hidden, state, logits, or
 probability host scans merely to derive evidence.
 
-The portable CUDA production profile keeps its admitted Q8 activation codec
-and parallel F32 reductions. Full forensic attention and token-local MoE
-comparison instead select canonical-order F64 row dots and disable activation
-compression for those operations, so the independent stage oracles measure
-semantic execution rather than the production approximation. These slower
-numerical adapters are unreachable from production and are not performance
-paths.
+The CUDA backend retains a directly tested Q8 activation codec, but compatible
+weight qtype establishes kernel capability rather than admission of that
+approximation. Production encoded projection, attention and MoE therefore keep
+F32 activations until an identity-bound execution profile passes whole-stack
+numerical admission. Full forensic attention and token-local MoE comparison
+additionally select canonical-order F64 row dots so independent stage oracles
+measure semantic execution. Those slower numerical adapters are unreachable
+from production and are not performance paths.
 
 Before target prefill/decode, draft, verification, correction, or reset, the
 runtime selects an identity-bound execution shape. The shape distinguishes
@@ -315,7 +323,7 @@ H2D/D2H/D2D movement and synchronization. Their transformer active-byte facts,
 occupancy and batched-decode facts remain unavailable, so the global
 optimization priority stays provisional. The offline generation operator
 exposes the ledger in audit and JSON projections without adding it to protocol
-v7 or making trace verbosity a numerical dependency.
+v8 or making trace verbosity a numerical dependency.
 
 Speculative prefill now merges the target transformer, resident feature
 projection and draft-core physical records before publishing its phase slot.

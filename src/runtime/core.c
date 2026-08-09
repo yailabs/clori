@@ -162,14 +162,14 @@ int yvex_runtime_private_success(yvex_error *err) {
 }
 
 static int runtime_attention_state_provider_valid(const yvex_attention_state_provider *provider) {
-    return provider && provider->schema_version == YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V5 &&
+    return provider && provider->schema_version == YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V6 &&
            provider->context && provider->configure_pages && provider->prepare &&
            provider->summary && provider->view &&
            provider->identity && provider->begin && provider->stage &&
            provider->select_prefix &&
            provider->prepare_commit && provider->publish_commit && provider->cancel_commit &&
            provider->commit && provider->abort &&
-           provider->reset && provider->invalidate && provider->release;
+           provider->reset && provider->restore && provider->invalidate && provider->release;
 }
 
 static int runtime_model_once(unsigned long long *counter, const char *phase, yvex_error *err) {
