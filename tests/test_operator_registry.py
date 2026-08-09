@@ -142,7 +142,7 @@ def test_refusals(registry: dict[str, object]) -> None:
     mutation_failure(registry, lambda row: row.update(unexpected=True), "unknown field 'unexpected'")
     mutation_failure(
         registry,
-        lambda row: operation(row, "runtime.status").update(summmary="typo"),
+        lambda row: operation(row, "server.status").update(summmary="typo"),
         "unknown field 'summmary'",
     )
     mutation_failure(
@@ -152,35 +152,35 @@ def test_refusals(registry: dict[str, object]) -> None:
     )
 
     def duplicate_path(row: dict[str, object]) -> None:
-        source = operation(row, "runtime.status")
-        target = operation(row, "runtime.model")
+        source = operation(row, "server.status")
+        target = operation(row, "server.model")
         target["command_path"] = list(source["command_path"])
 
     mutation_failure(registry, duplicate_path, "duplicate canonical path")
 
     def alias_collision(row: dict[str, object]) -> None:
-        operation(row, "runtime.status")["aliases"] = [
-            {"path": ["runtime", "model"], "deprecation": "current"}
+        operation(row, "server.status")["aliases"] = [
+            {"path": ["server", "model"], "deprecation": "current"}
         ]
 
     mutation_failure(registry, alias_collision, "alias collides")
 
     def duplicate_flag(row: dict[str, object]) -> None:
-        operation(row, "runtime.status")["flags"] = [
+        operation(row, "server.status")["flags"] = [
             {"name": "--json", "value_type": "boolean", "takes_value": False}
         ]
 
     mutation_failure(registry, duplicate_flag, "duplicate flag")
 
     def conflicting_flag_type(row: dict[str, object]) -> None:
-        operation(row, "runtime.status")["flags"] = [
+        operation(row, "server.status")["flags"] = [
             {"name": "--json", "value_type": "number", "takes_value": True}
         ]
 
     mutation_failure(registry, conflicting_flag_type, "conflicting flag types/defaults")
 
     def unknown_flag_field(row: dict[str, object]) -> None:
-        operation(row, "runtime.status")["flags"] = [
+        operation(row, "server.status")["flags"] = [
             {
                 "name": "--strict-test",
                 "value_type": "boolean",
@@ -198,7 +198,7 @@ def test_refusals(registry: dict[str, object]) -> None:
     mutation_failure(registry, unknown_argument_field, "unknown field 'surprise'")
 
     def invalid_argument_order(row: dict[str, object]) -> None:
-        operation(row, "runtime.status")["arguments"] = [
+        operation(row, "server.status")["arguments"] = [
             {"name": "optional", "multiplicity": "optional"},
             {"name": "required", "multiplicity": "one", "required": True},
         ]
@@ -206,7 +206,7 @@ def test_refusals(registry: dict[str, object]) -> None:
     mutation_failure(registry, invalid_argument_order, "required argument cannot follow")
 
     def unknown_relation(row: dict[str, object]) -> None:
-        operation(row, "runtime.status")["flags"] = [
+        operation(row, "server.status")["flags"] = [
             {
                 "name": "--extra",
                 "value_type": "boolean",
@@ -218,32 +218,32 @@ def test_refusals(registry: dict[str, object]) -> None:
     mutation_failure(registry, unknown_relation, "unknown related flag")
     mutation_failure(
         registry,
-        lambda row: operation(row, "runtime.status").update(test_owner="none"),
+        lambda row: operation(row, "server.status").update(test_owner="none"),
         "requires test and documentation owners",
     )
     mutation_failure(
         registry,
-        lambda row: operation(row, "runtime.status").update(adapter_id="graph"),
+        lambda row: operation(row, "server.status").update(adapter_id="graph"),
         "unknown runtime-client adapter",
     )
     mutation_failure(
         registry,
-        lambda row: operation(row, "runtime.status").update(protocol_operation="unknown"),
+        lambda row: operation(row, "server.status").update(protocol_operation="unknown"),
         "unknown protocol operation",
     )
     mutation_failure(
         registry,
-        lambda row: operation(row, "runtime.status").update(renderer_id="unknown"),
+        lambda row: operation(row, "server.status").update(renderer_id="unknown"),
         "unknown renderer",
     )
     mutation_failure(
         registry,
-        lambda row: operation(row, "runtime.status").update(command_path=["eval"]),
+        lambda row: operation(row, "server.status").update(command_path=["eval"]),
         "forbidden top-level namespace",
     )
     mutation_failure(
         registry,
-        lambda row: operation(row, "runtime.status").update(summary="run yvex-dev"),
+        lambda row: operation(row, "server.status").update(summary="run yvex-dev"),
         "references retired executable",
     )
     mutation_failure(
