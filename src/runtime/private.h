@@ -41,6 +41,7 @@ struct yvex_runtime_binding {
     yvex_transformer_family_policy transformer_policy;
     yvex_logits_family_policy logits_policy;
     yvex_speculation_family_policy speculation_policy;
+    yvex_tokenizer_family_policy tokenizer_policy;
     yvex_attention_summary attention, draft_attention;
     yvex_attention_layer_plan *layers, *draft_layers;
     yvex_compiled_model_plan *plan;

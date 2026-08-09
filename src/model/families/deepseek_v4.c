@@ -6,12 +6,10 @@
  * delegates reusable coverage, transformation, lowering, and payload mechanisms.
  */
 #include <yvex/internal/families/deepseek_v4.h>
-
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/conversation.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/source.h>
-
 #include <errno.h>
 #include <limits.h>
 #include <math.h>
@@ -20,7 +18,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
 #define DEEPSEEK_V4_FLASH_MAIN_LAYERS 43ull
 #define DEEPSEEK_V4_FLASH_LEGACY_NEXTN_LAYERS 1ull
 #define DEEPSEEK_V4_FLASH_DSPARK_LAYERS 3ull
@@ -32,7 +29,6 @@
 #define DEEPSEEK_V4_MHC_SCALE_WIDTH 3ull
 #define DEEPSEEK_V4_MHC_POST_MULTIPLIER 2.0
 #define DEEPSEEK_V4_RUNTIME_NUMERIC_SCHEMA_VERSION 2u
-
 static const char deepseek_v4_paper_revision[] = "arXiv:2606.19348v1";
 static const char deepseek_v4_dspark_paper_revision[] = "arXiv:2607.05147v1";
 static const char deepseek_v4_deepspec_revision[] =
@@ -107,28 +103,32 @@ static const yvex_conversation_protocol deepseek_v4_conversation = {
     .tools_prefix = deepseek_v4_tools_prefix, .tools_suffix = deepseek_v4_tools_suffix,
     .response_format_prefix = deepseek_v4_response_format,
     .drop_prior_reasoning_by_default = 1, .tools_preserve_reasoning = 1,
-    .tool_results_merge_into_user = 1};
+    .tool_results_merge_into_user = 1,
+    .tokenizer_model = "gpt2", .tokenizer_pre = "deepseek-v3",
+    .tokenizer_json_identity = "8f9f37ca37fdc4f5fd36d5cf4d3b0e8392edb4e894fd10cc0d70b4957c8633cf",
+    .tokenizer_config_identity = "6ac8c8dc065ed118161d02dd532749ae3f52c243deac27872134fae2f50d8547",
+    .vocabulary_size = 129280ull, .base_vocabulary_size = 128000ull,
+    .merge_count = 127741ull, .added_token_count = 1283ull, .special_token_count = 1230ull,
+    .bos_token_id = 0u, .eos_token_id = 1u, .pad_token_id = 1u,
+    .bos_present = 1, .eos_present = 1, .pad_present = 1};
 
 const yvex_conversation_protocol *
-yvex_model_conversation_protocol_at(unsigned long long index)
+yvex_model_deepseek_v4_conversation(void)
 {
-    return index == 0u ? &deepseek_v4_conversation : NULL;
+    return &deepseek_v4_conversation;
 }
-
 /* Private lifecycle and diagnostic operations used before their definitions. */
 static void family_ir_close(yvex_deepseek_v4_ir *ir);
 static const char *family_ir_failure_name(
     yvex_deepseek_v4_ir_failure_code code);
 static const char *family_ir_component_name(
     yvex_deepseek_v4_ir_component component);
-
 struct yvex_deepseek_v4_ir {
     yvex_deepseek_v4_ir_allocator allocator;
     yvex_deepseek_v4_model_spec model;
     yvex_deepseek_v4_layer_spec *layers;
     yvex_deepseek_v4_auxiliary_spec *auxiliary;
 };
-
 typedef struct {
     double attention_dropout;
     double hc_epsilon;

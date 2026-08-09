@@ -1,5 +1,6 @@
 #include "src/graph/private.h"
 #include <yvex/internal/families/deepseek_v4.h>
+#include <yvex/internal/tokenizer.h>
 #include <yvex/internal/graph_state.h>
 #include <yvex/internal/moe.h>
 #include <yvex/internal/runtime.h>
@@ -276,6 +277,11 @@ static int deepseek_speculation_policy(const yvex_runtime_descriptor_summary *ru
     yvex_sha256_hex(digest, out->policy_identity);
     return 1;
 }
+static int deepseek_tokenizer_policy(yvex_tokenizer_family_policy *out, yvex_error *err) {
+    return yvex_tokenizer_family_policy_compile(
+        out, yvex_model_deepseek_v4_conversation(), YVEX_TOKENIZER_KIND_GGML_GPT2,
+        YVEX_TOKENIZER_MODEL_BPE_BYTELEVEL, YVEX_TOKENIZER_PROMPT_CONVERSATION, err) == YVEX_OK;
+}
 static const yvex_graph_execution_binding deepseek_execution = {
     .schema_version = YVEX_GRAPH_EXECUTION_BINDING_SCHEMA_V1,
     .adapter_id = YVEX_DEEPSEEK_V4_ADAPTER_ID,
@@ -295,7 +301,8 @@ static const yvex_family_compiler_adapter deepseek_compiler = {
     .execution_capabilities = deepseek_execution_capabilities,
     .transformer_policy = deepseek_transformer_policy,
     .logits_policy = deepseek_logits_policy,
-    .speculation_policy = deepseek_speculation_policy};
+    .speculation_policy = deepseek_speculation_policy,
+    .tokenizer_policy = deepseek_tokenizer_policy};
 const yvex_family_compiler_adapter *yvex_compiler_family_deepseek_v4(void) {
     return &deepseek_compiler;
 }

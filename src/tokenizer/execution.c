@@ -1,5 +1,5 @@
 /*
- * Execute the admitted DeepSeek tokenizer pipeline without source sidecars or external runtimes.
+ * Execute one compiled artifact tokenizer policy without source sidecars or external runtimes.
  *
  * Accepted plans match exact tokenizer/config identities and reuse immutable bounded lookup
  * indexes. Produces numeric token sequences and prompt bytes; it never mutates model KV or chooses
@@ -14,12 +14,6 @@
 #include <string.h>
 #include <yvex/internal/core.h>
 
-#define DEEPSEEK_TOKENIZER_JSON_SHA "8f9f37ca37fdc4f5fd36d5cf4d3b0e8392edb4e894fd10cc0d70b4957c8633cf"
-#define DEEPSEEK_TOKENIZER_CONFIG_SHA "6ac8c8dc065ed118161d02dd532749ae3f52c243deac27872134fae2f50d8547"
-#define DEEPSEEK_VOCABULARY_SIZE 129280ull
-#define DEEPSEEK_BASE_VOCABULARY_SIZE 128000ull
-#define DEEPSEEK_MERGE_COUNT 127741ull
-#define DEEPSEEK_ADDED_TOKEN_COUNT 1283ull
 typedef struct {
     unsigned char *data;
     unsigned long long count, capacity;
@@ -353,8 +347,10 @@ static int merges_build(yvex_tokenizer *tokenizer, const yvex_gguf *gguf,
     unsigned long long capacity = 1u, rank;
 
     if (!value || yvex_gguf_value_array_info(value, &info) != YVEX_OK ||
-        info.element_type != YVEX_GGUF_VALUE_STRING || info.count != DEEPSEEK_MERGE_COUNT) {
-        yvex_error_set(err, YVEX_ERR_FORMAT, "tokenizer.plan.merges", "exact DeepSeek merge table is required");
+        info.element_type != YVEX_GGUF_VALUE_STRING ||
+        info.count != tokenizer->compiled_policy.merge_count) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "tokenizer.plan.merges",
+                       "merge table differs from the compiled tokenizer policy");
         return YVEX_ERR_FORMAT;
     }
     while (capacity < info.count * 2u)
@@ -439,8 +435,10 @@ static int added_tokens_build(yvex_tokenizer *tokenizer, yvex_error *err)
         if (tokenizer->tokens[index].type == YVEX_TOKEN_TYPE_CONTROL ||
             tokenizer->tokens[index].type == YVEX_TOKEN_TYPE_USER_DEFINED)
             ++added;
-    if (added != DEEPSEEK_ADDED_TOKEN_COUNT || added > SIZE_MAX / sizeof(unsigned int)) {
-        yvex_error_set(err, YVEX_ERR_FORMAT, "tokenizer.plan.added", "exact DeepSeek added-token set is required");
+    if (added != tokenizer->compiled_policy.added_token_count ||
+        added > SIZE_MAX / sizeof(unsigned int)) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "tokenizer.plan.added",
+                       "added-token set differs from the compiled tokenizer policy");
         return YVEX_ERR_FORMAT;
     }
     tokenizer->added_token_ids = malloc((size_t)added * sizeof(*tokenizer->added_token_ids));
@@ -606,25 +604,18 @@ static int plan_identity_build(yvex_tokenizer *tokenizer)
 static int exact_policy_admit(yvex_tokenizer *tokenizer, const yvex_gguf *gguf,
                               yvex_error *err)
 {
+    const yvex_tokenizer_family_policy *policy = &tokenizer->compiled_policy;
     const char *architecture, *pre, *json, *config;
     unsigned long long architecture_count, pre_count, json_count, config_count;
-    unsigned long long index;
 
-    if (!gguf_string(gguf, "general.architecture", &architecture,
-                     &architecture_count))
+    if (yvex_tokenizer_family_policy_validate(policy, NULL) != YVEX_OK ||
+        !tokenizer->conversation)
         return YVEX_ERR_UNSUPPORTED;
-    for (index = 0u; !tokenizer->conversation; ++index) {
-        const yvex_conversation_protocol *candidate =
-            yvex_model_conversation_protocol_at(index);
-        if (!candidate) break;
-        if (candidate->schema_version ==
-                YVEX_CONVERSATION_PROTOCOL_SCHEMA_V1 &&
-            architecture_count == strlen(candidate->architecture) &&
-            memcmp(architecture, candidate->architecture,
-                   (size_t)architecture_count) == 0)
-            tokenizer->conversation = candidate;
-    }
-    if (!tokenizer->conversation || !tokenizer->conversation->source_revision ||
+    if (!gguf_string(gguf, "general.architecture", &architecture,
+                     &architecture_count) ||
+        architecture_count != strlen(policy->architecture) ||
+        memcmp(architecture, policy->architecture, (size_t)architecture_count) != 0 ||
+        !tokenizer->conversation->source_revision ||
         !tokenizer->conversation->source_encoding_path ||
         !tokenizer->conversation->source_encoding_identity ||
         !tokenizer->conversation->bos || !tokenizer->conversation->eos ||
@@ -644,23 +635,26 @@ static int exact_policy_admit(yvex_tokenizer *tokenizer, const yvex_gguf *gguf,
         !tokenizer->conversation->tools_prefix ||
         !tokenizer->conversation->tools_suffix)
         return YVEX_ERR_UNSUPPORTED;
-    if (tokenizer->kind != YVEX_TOKENIZER_KIND_GGML_GPT2 ||
-        tokenizer->vocab_size != DEEPSEEK_VOCABULARY_SIZE ||
+    if (tokenizer->kind != policy->tokenizer_kind ||
+        !tokenizer->model_name || strcmp(tokenizer->model_name, policy->tokenizer_model) != 0 ||
+        tokenizer->vocab_size != policy->vocabulary_size ||
         !gguf_string(gguf, "tokenizer.ggml.pre", &pre, &pre_count) ||
-        pre_count != strlen("deepseek-v3") || memcmp(pre, "deepseek-v3", pre_count) != 0 ||
+        pre_count != strlen(policy->tokenizer_pre) ||
+        memcmp(pre, policy->tokenizer_pre, pre_count) != 0 ||
         !gguf_string(gguf, "tokenizer.huggingface.json", &json, &json_count) ||
         !gguf_string(gguf, "yvex.tokenizer.config.json", &config, &config_count) ||
         json_count > SIZE_MAX || config_count > SIZE_MAX ||
         !raw_sha256(json, (size_t)json_count, tokenizer->plan.tokenizer_json_identity) ||
         !raw_sha256(config, (size_t)config_count, tokenizer->plan.tokenizer_config_identity)) {
         yvex_error_set(err, YVEX_ERR_FORMAT, "tokenizer.plan.admission",
-                       "DeepSeek tokenizer metadata is absent or malformed");
+                       "artifact tokenizer metadata differs from the compiled policy");
         return YVEX_ERR_FORMAT;
     }
-    if (strcmp(tokenizer->plan.tokenizer_json_identity, DEEPSEEK_TOKENIZER_JSON_SHA) != 0 ||
-        strcmp(tokenizer->plan.tokenizer_config_identity, DEEPSEEK_TOKENIZER_CONFIG_SHA) != 0) {
+    if (strcmp(tokenizer->plan.tokenizer_json_identity, policy->tokenizer_json_identity) != 0 ||
+        strcmp(tokenizer->plan.tokenizer_config_identity,
+               policy->tokenizer_config_identity) != 0) {
         yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "tokenizer.plan.components",
-                       "tokenizer JSON/config component set is not the admitted DeepSeek policy");
+                       "tokenizer JSON/config identities differ from the compiled policy");
         return YVEX_ERR_UNSUPPORTED;
     }
     return YVEX_OK;
@@ -672,12 +666,13 @@ static int exact_policy_admit(yvex_tokenizer *tokenizer, const yvex_gguf *gguf,
  * Model lifetime.
  */
 int yvex_tokenizer_execution_seal(yvex_tokenizer *tokenizer, const yvex_gguf *gguf,
-                                  const yvex_model_descriptor *model, yvex_error *err)
+                                  const yvex_tokenizer_family_policy *policy,
+                                  yvex_error *err)
 {
     int rc;
-    (void)model;
     if (!tokenizer || !gguf)
         return YVEX_ERR_INVALID_ARG;
+    if (!policy) return YVEX_ERR_UNSUPPORTED;
     memset(&tokenizer->plan, 0, sizeof(tokenizer->plan));
     rc = exact_policy_admit(tokenizer, gguf, err);
     if (rc != YVEX_OK)
@@ -687,12 +682,12 @@ int yvex_tokenizer_execution_seal(yvex_tokenizer *tokenizer, const yvex_gguf *gg
     tokenizer->plan.family_adapter_version =
         tokenizer->conversation->family_adapter_version;
     tokenizer->plan.vocabulary_size = tokenizer->vocab_size;
-    tokenizer->plan.base_vocabulary_size = DEEPSEEK_BASE_VOCABULARY_SIZE;
-    tokenizer->plan.model_policy = YVEX_TOKENIZER_MODEL_BPE_BYTELEVEL;
-    tokenizer->plan.prompt_policy = YVEX_TOKENIZER_PROMPT_DEEPSEEK_V4;
-    tokenizer->plan.add_bos_token = 0;
-    tokenizer->plan.add_eos_token = 0;
-    tokenizer->plan.byte_fallback = 0;
+    tokenizer->plan.base_vocabulary_size = policy->base_vocabulary_size;
+    tokenizer->plan.model_policy = policy->model_policy;
+    tokenizer->plan.prompt_policy = policy->prompt_policy;
+    tokenizer->plan.add_bos_token = policy->add_bos_token;
+    tokenizer->plan.add_eos_token = policy->add_eos_token;
+    tokenizer->plan.byte_fallback = policy->byte_fallback;
     rc = vocabulary_build(tokenizer, err);
     if (rc == YVEX_OK)
         rc = merges_build(tokenizer, gguf, err);
@@ -731,11 +726,18 @@ int yvex_tokenizer_execution_seal(yvex_tokenizer *tokenizer, const yvex_gguf *gg
     tokenizer->plan.eos_token_id = tokenizer->eos.id;
     tokenizer->plan.pad_token_id = tokenizer->pad.id;
     tokenizer->plan.unk_token_id = tokenizer->unk.id;
-    if (rc == YVEX_OK && (!tokenizer->bos.present || tokenizer->bos.id != 0u ||
-                          !tokenizer->eos.present || tokenizer->eos.id != 1u ||
-                          !tokenizer->pad.present || tokenizer->pad.id != 1u ||
-                          tokenizer->unk.present)) {
-        yvex_error_set(err, YVEX_ERR_FORMAT, "tokenizer.plan.specials", "DeepSeek special-token policy differs");
+    if (rc == YVEX_OK &&
+        (tokenizer->plan.special_token_count != policy->special_token_count ||
+         tokenizer->bos.present != policy->bos_present ||
+         tokenizer->bos.id != policy->bos_token_id ||
+         tokenizer->eos.present != policy->eos_present ||
+         tokenizer->eos.id != policy->eos_token_id ||
+         tokenizer->pad.present != policy->pad_present ||
+         tokenizer->pad.id != policy->pad_token_id ||
+         tokenizer->unk.present != policy->unk_present ||
+         tokenizer->unk.id != policy->unk_token_id)) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "tokenizer.plan.specials",
+                       "special-token facts differ from the compiled tokenizer policy");
         rc = YVEX_ERR_FORMAT;
     }
     if (rc == YVEX_OK) {
@@ -1475,7 +1477,7 @@ static int prompt_identities(const yvex_tokenizer *tokenizer,
 }
 
 /*
- * Render admitted messages through the exact bounded DeepSeek V4 basic prompt policy.
+ * Render admitted messages through the exact bounded source-authored conversation policy.
  *
  * Rollback.
  */

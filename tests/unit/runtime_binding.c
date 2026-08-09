@@ -852,7 +852,7 @@ static int test_binding_readdress(const char *path, unsigned char *file, size_t 
         !test_binding_u64(file, count, 8u, &schema) ||
         schema != YVEX_RUNTIME_BINDING_SCHEMA_CURRENT)
         return 0;
-    domain = "yvex.runtime.binding.v10";
+    domain = "yvex.runtime.binding.v11";
     yvex_sha256_init(&hash);
     if (!yvex_sha256_update_text(&hash, domain) ||
         !yvex_sha256_update_u64(&hash, schema) ||
@@ -1227,6 +1227,7 @@ static int fixture_binding_request(const binding_fixture *fixture, const char *d
     const yvex_graph_execution_binding *execution = runtime_fixture_execution();
     const yvex_family_compiler_adapter *compiler = runtime_fixture_compiler();
     const yvex_runtime_descriptor_summary *descriptor;
+    yvex_conversation_protocol tokenizer_source;
 
     memset(request, 0, sizeof(*request));
     request->directory = directory;
@@ -1240,7 +1241,7 @@ static int fixture_binding_request(const binding_fixture *fixture, const char *d
         !(request->graph_compiler = compiler->graph()) ||
         !compiler->execution_capabilities ||
         !compiler->transformer_policy || !compiler->logits_policy ||
-        !compiler->speculation_policy) return 0;
+        !compiler->speculation_policy || !compiler->tokenizer_policy) return 0;
     request->family_adapter_id = execution->adapter_id;
     request->family_adapter_version = execution->adapter_version;
     request->artifact_format = "GGUF";
@@ -1251,6 +1252,16 @@ static int fixture_binding_request(const binding_fixture *fixture, const char *d
         !compiler->transformer_policy(descriptor, &request->transformer_policy) ||
         !compiler->logits_policy(&request->logits_policy) ||
         !compiler->speculation_policy(descriptor, &request->speculation_policy)) return 0;
+    tokenizer_source = *yvex_model_deepseek_v4_conversation();
+    tokenizer_source.vocabulary_size = descriptor->model_execution.vocabulary_size;
+    tokenizer_source.base_vocabulary_size = descriptor->model_execution.vocabulary_size;
+    tokenizer_source.merge_count = 0u;
+    tokenizer_source.added_token_count = 0u;
+    tokenizer_source.special_token_count = 0u;
+    if (yvex_tokenizer_family_policy_compile(
+            &request->tokenizer_policy, &tokenizer_source,
+            YVEX_TOKENIZER_KIND_FIXTURE_SIMPLE, YVEX_TOKENIZER_MODEL_FIXTURE,
+            YVEX_TOKENIZER_PROMPT_CONVERSATION, NULL) != YVEX_OK) return 0;
     request->capabilities.moe_plan_ready = 0;
     request->capabilities.moe_router_ready = 0;
     request->capabilities.moe_routed_expert_ready = 0;
@@ -1351,6 +1362,7 @@ static int test_prepare_reopen_import(const binding_fixture *fixture, const char
     const yvex_transformer_family_policy *transformer;
     const yvex_logits_family_policy *logits;
     const yvex_speculation_family_policy *speculation;
+    const yvex_tokenizer_family_policy *tokenizer_policy;
     const yvex_runtime_descriptor_summary *imported_descriptor;
     yvex_runtime_binding_summary summary;
     yvex_core_file_result file_result;
@@ -1448,6 +1460,15 @@ static int test_prepare_reopen_import(const binding_fixture *fixture, const char
                 imported_descriptor->model_execution.target_feature_count &&
             yvex_sha256_hex_is_valid(speculation->policy_identity),
         "binding imports authenticated compiled execution policies");
+    tokenizer_policy = yvex_runtime_binding_tokenizer_policy(*binding_out);
+    YVEX_TEST_ASSERT(
+        tokenizer_policy &&
+            tokenizer_policy->family_adapter_id == summary.family_adapter_id &&
+            tokenizer_policy->family_adapter_version == summary.family_adapter_version &&
+            tokenizer_policy->vocabulary_size ==
+                imported_descriptor->model_execution.vocabulary_size &&
+            yvex_tokenizer_family_policy_validate(tokenizer_policy, &err) == YVEX_OK,
+        "binding imports the authenticated compiled tokenizer policy");
     YVEX_TEST_ASSERT(
         strcmp(yvex_runtime_descriptor_summary_get(descriptor)->runtime_descriptor_identity,
                summary.runtime_descriptor_identity) == 0,
@@ -1565,7 +1586,7 @@ static int test_prepare_reopen_import(const binding_fixture *fixture, const char
     return 0;
 }
 
-static int test_compiled_model_binding_v10(const char *root)
+static int test_compiled_model_binding_v11(const char *root)
 {
     binding_fixture fixture;
     yvex_runtime_binding_prepare_request request;
@@ -1584,37 +1605,37 @@ static int test_compiled_model_binding_v10(const char *root)
     yvex_error err;
 
     YVEX_TEST_ASSERT(
-        variant_path(root, "model-v10", "runtime.gguf", directory, artifact_path) &&
+        variant_path(root, "model-v11", "runtime.gguf", directory, artifact_path) &&
             copy_regular_file("tests/fixtures/gguf/valid-tokenizer-simple.gguf",
                               artifact_path) &&
             rewrite_attention_artifact_fixture(artifact_path),
-        "v10 runtime artifact fixture created");
+        "v11 runtime artifact fixture created");
     YVEX_TEST_ASSERT(fixture_build(&fixture, artifact_path, 1),
-                     "v10 runtime binding fixture built");
+                     "v11 runtime binding fixture built");
     descriptor = yvex_runtime_descriptor_summary_get(fixture.descriptor);
     YVEX_TEST_ASSERT(descriptor &&
                          descriptor->model_execution.schema_version ==
                              YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1,
-                     "v10 fixture owns a sealed model execution descriptor");
+                     "v11 fixture owns a sealed model execution descriptor");
     YVEX_TEST_ASSERT(fixture_binding_request(&fixture, directory, &request) &&
                          yvex_runtime_binding_prepare(
                              &request, &prepared, &failure, &err) == YVEX_OK,
-                     "v10 runtime binding prepared");
+                     "v11 runtime binding prepared");
     YVEX_TEST_ASSERT(yvex_runtime_binding_open(
                          &binding, prepared.path, &summary, NULL, &failure, &err) == YVEX_OK &&
                          summary.schema_version == YVEX_RUNTIME_BINDING_SCHEMA_CURRENT &&
                          strcmp(summary.model_execution_identity,
                                 descriptor->model_execution.identity) == 0,
-                     "v10 reader authenticates compiled execution records");
+                     "v11 reader authenticates compiled execution records");
     yvex_runtime_binding_close(binding);
     YVEX_TEST_ASSERT(runtime_model_open_fixture(
                          &fixture, &prepared, &model, &model_failure, &err) == YVEX_OK,
-                     "v10 runtime model instantiates compiled execution geometry");
+                     "v11 runtime model instantiates compiled execution geometry");
     session_request.backend = YVEX_BACKEND_KIND_CPU;
     YVEX_TEST_ASSERT(yvex_runtime_session_open(
                          &session, model, &session_request,
                          &model_failure, &err) == YVEX_OK,
-                     "v10 runtime session opens for capacity admission");
+                     "v11 runtime session opens for capacity admission");
     generation_options.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V5;
     generation_options.backend = YVEX_BACKEND_KIND_CPU;
     generation_options.mode = YVEX_GENERATION_MODE_TARGET_ONLY;
@@ -1634,7 +1655,7 @@ static int test_compiled_model_binding_v10(const char *root)
                          &err) == YVEX_ERR_BOUNDS && !generation,
                      "semantic context maximum refuses before state mutation");
     YVEX_TEST_ASSERT(yvex_runtime_session_close(&session, &err) == YVEX_OK && !session,
-                     "v10 capacity session closes");
+                     "v11 capacity session closes");
     yvex_runtime_model_close(&model);
     fixture_close(&fixture);
     (void)unlink(prepared.path);
@@ -1648,7 +1669,7 @@ static int test_corruption_refusals(const yvex_runtime_binding_prepare_result *p
 {
     const char *basename = strrchr(prepared->path, '/');
     const char *variants[] = {
-        "truncated", "tail", "legacy-schema", "stale", "precompiled-v9"};
+        "truncated", "tail", "legacy-schema", "stale", "precompiled-v10"};
     const yvex_runtime_binding_failure_code expected[] = {
         YVEX_RUNTIME_BINDING_FAILURE_TRUNCATED,
         YVEX_RUNTIME_BINDING_FAILURE_TRAILING_DATA,
@@ -1695,12 +1716,12 @@ static int test_corruption_refusals(const yvex_runtime_binding_prepare_result *p
             YVEX_TEST_ASSERT(pwrite(fd, &value, 1u, 96) == 1,
                              "runtime binding stale byte written");
         } else {
-            unsigned char legacy_header[16] = "YVRBND9";
+            unsigned char legacy_header[16] = "YVRBND10";
             test_binding_put_u64(legacy_header, 8u,
                                  YVEX_RUNTIME_BINDING_SCHEMA_CURRENT - 1u);
             YVEX_TEST_ASSERT(pwrite(fd, legacy_header, sizeof(legacy_header), 0) ==
                                  (ssize_t)sizeof(legacy_header),
-                             "precompiled v9 header written");
+                             "precompiled v10 header written");
         }
         YVEX_TEST_ASSERT(close(fd) == 0, "runtime binding variant closed");
         rc = yvex_runtime_binding_open(&binding, paths[i], NULL, NULL, &failure, &err);
@@ -3679,7 +3700,7 @@ int yvex_test_runtime_binding(void)
     if (test_canonical_refusals(&prepared, root) != 0) goto done;
     if (test_graph_identity_refusals(&prepared, root) != 0) goto done;
     if (test_artifact_copy_portability(&fixture, &prepared, root) != 0) goto done;
-    if (test_compiled_model_binding_v10(root) != 0) goto done;
+    if (test_compiled_model_binding_v11(root) != 0) goto done;
     if (test_runtime_family_neutrality() != 0) goto done;
     if (test_runtime_model_compiled_execution(&fixture, &prepared) != 0) goto done;
     if (test_runtime_model_progress(&fixture, &prepared) != 0) goto done;

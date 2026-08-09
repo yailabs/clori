@@ -848,7 +848,9 @@ int yvex_runtime_model_open(yvex_runtime_model **out, const yvex_runtime_model_o
             out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_IMPORTED_IDENTITY, 1ull, 0ull, err,
             YVEX_ERR_FORMAT);
     }
-    rc = yvex_tokenizer_from_gguf(&model->tokenizer, model->gguf, NULL, err);
+    rc = yvex_tokenizer_from_compiled_gguf(
+        &model->tokenizer, model->gguf,
+        yvex_runtime_binding_tokenizer_policy(model->binding), err);
     if (rc == YVEX_OK && yvex_tokenizer_plan_summary_get(model->tokenizer))
         rc = yvex_tokenizer_bind_runtime(
             model->tokenizer, model->binding_summary.artifact_identity,

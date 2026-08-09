@@ -7,6 +7,8 @@
 #include "tests/test.h"
 
 #include <yvex/internal/core.h>
+#include <yvex/internal/compiler.h>
+#include <yvex/internal/families/deepseek_v4.h>
 
 #include <pthread.h>
 #include <sched.h>
@@ -118,13 +120,17 @@ static void fixture_open(yvex_tokenizer *tokenizer, yvex_token_info tokens[4])
     tokenizer->eos.id = 0u;
     tokenizer->plan.sealed = 1;
     tokenizer->plan.vocabulary_size = 4u;
-    tokenizer->plan.prompt_policy = YVEX_TOKENIZER_PROMPT_DEEPSEEK_V4;
+    tokenizer->plan.prompt_policy = YVEX_TOKENIZER_PROMPT_CONVERSATION;
     tokenizer->plan.schema_version = YVEX_TOKENIZER_PLAN_SCHEMA_V3;
     tokenizer->plan.explicit_reasoning_supported = 1;
     tokenizer->plan.maximum_reasoning_supported = 1;
     tokenizer->plan.reasoning_start_token_id = 10u;
     tokenizer->plan.reasoning_end_token_id = 11u;
-    tokenizer->conversation = yvex_model_conversation_protocol_at(0u);
+    (void)yvex_compiler_family_deepseek_v4()->tokenizer_policy(
+        &tokenizer->compiled_policy, NULL);
+    (void)yvex_tokenizer_family_policy_conversation(
+        &tokenizer->compiled_policy, &tokenizer->conversation_view);
+    tokenizer->conversation = &tokenizer->conversation_view;
     memcpy(tokenizer->plan.tokenizer_plan_identity, identity, sizeof(identity));
 }
 
@@ -134,6 +140,51 @@ static yvex_provider_span text_span(const char *text)
         .bytes = (const unsigned char *)text,
         .count = text ? (unsigned long long)strlen(text) : 0u};
     return span;
+}
+
+static int test_compiled_family_policy(void)
+{
+    const yvex_family_compiler_adapter *compiler = yvex_compiler_family_deepseek_v4();
+    yvex_tokenizer_family_policy first, decoded, changed;
+    yvex_conversation_protocol view;
+    yvex_core_bytes encoded = {0}, repeated = {0};
+    yvex_error err;
+    unsigned int reasoning_offset;
+    encoded.maximum = repeated.maximum = 16384u;
+    encoded.initial_capacity = repeated.initial_capacity = 4096u;
+    YVEX_TEST_ASSERT(
+        compiler && compiler->tokenizer_policy &&
+            compiler->tokenizer_policy(&first, &err) &&
+            yvex_tokenizer_family_policy_validate(&first, &err) == YVEX_OK &&
+            yvex_tokenizer_family_policy_encode(&first, &encoded, &err) == YVEX_OK &&
+            yvex_tokenizer_family_policy_encode(&first, &repeated, &err) == YVEX_OK &&
+            encoded.count == repeated.count &&
+            memcmp(encoded.data, repeated.data, encoded.count) == 0,
+        "family tokenizer policy compiles deterministically");
+    YVEX_TEST_ASSERT(
+        yvex_tokenizer_family_policy_decode(
+            &decoded, encoded.data, encoded.count, &err) == YVEX_OK &&
+            strcmp(decoded.policy_identity, first.policy_identity) == 0 &&
+            decoded.vocabulary_size == 129280u &&
+            decoded.prompt_policy == YVEX_TOKENIZER_PROMPT_CONVERSATION &&
+            yvex_tokenizer_family_policy_conversation(&decoded, &view) &&
+            strcmp(view.thinking_start, "<think>") == 0 &&
+            strcmp(view.thinking_end, "</think>") == 0,
+        "compiled tokenizer policy roundtrips without family lookup");
+    changed = decoded;
+    reasoning_offset = changed.text_offsets[YVEX_TOKENIZER_POLICY_THINKING_END];
+    changed.text[reasoning_offset] ^= 1;
+    YVEX_TEST_ASSERT(
+        yvex_tokenizer_family_policy_validate(&changed, &err) == YVEX_ERR_FORMAT,
+        "compiled tokenizer policy rejects source-grammar drift");
+    YVEX_TEST_ASSERT(
+        yvex_core_bytes_append(&encoded, "x", 1u) &&
+            yvex_tokenizer_family_policy_decode(
+                &changed, encoded.data, encoded.count, &err) == YVEX_ERR_FORMAT,
+        "compiled tokenizer policy rejects trailing encoding bytes");
+    free(encoded.data);
+    free(repeated.data);
+    return 0;
 }
 
 static int prompt_digest(const yvex_rendered_prompt *prompt,
@@ -891,6 +942,8 @@ static int test_candidate_transactions(void)
 
 int yvex_test_runtime_tokenizer(void)
 {
+    if (test_compiled_family_policy() != 0)
+        return 1;
     if (test_reasoning_channel() != 0)
         return 1;
     if (test_source_prompt_modes() != 0)

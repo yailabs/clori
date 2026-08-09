@@ -1180,7 +1180,8 @@ static int prepare_deepseek_runtime_binding(
         adapter->adapter_id != request->family_adapter_id ||
         adapter->adapter_version != request->family_adapter_version ||
         !adapter->execution_capabilities || !adapter->transformer_policy ||
-        !adapter->logits_policy || !adapter->speculation_policy) {
+        !adapter->logits_policy || !adapter->speculation_policy ||
+        !adapter->tokenizer_policy) {
         yvex_error_set(err, YVEX_ERR_STATE, "graph_attention_prepare",
                        "family preparation and compiler adapter registration disagree");
         rc = YVEX_ERR_STATE;
@@ -1225,7 +1226,8 @@ static int prepare_deepseek_runtime_binding(
             !adapter->logits_policy(&prepare.logits_policy) ||
             !adapter->speculation_policy(
                 yvex_runtime_descriptor_summary_get(compiler.descriptor),
-                &prepare.speculation_policy)) {
+                &prepare.speculation_policy) ||
+            !adapter->tokenizer_policy(&prepare.tokenizer_policy, err)) {
             yvex_error_set(err, YVEX_ERR_STATE, "graph_attention_prepare",
                            "family execution envelope compilation failed");
             rc = YVEX_ERR_STATE;

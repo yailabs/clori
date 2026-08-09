@@ -9,7 +9,7 @@
 
 #include <stdint.h>
 #include <yvex/gguf.h>
-#include <yvex/internal/conversation.h>
+#include <yvex/internal/tokenizer.h>
 #include <yvex/tokenizer.h>
 
 typedef struct {
@@ -40,6 +40,8 @@ struct yvex_tokenizer {
     unsigned long long chat_template_len;
     int has_huggingface_json;
 
+    yvex_tokenizer_family_policy compiled_policy;
+    yvex_conversation_protocol conversation_view;
     const yvex_conversation_protocol *conversation;
     yvex_tokenizer_plan_summary plan;
     tokenizer_vocab_slot *vocab_index;
@@ -64,6 +66,7 @@ int yvex_tokenizer_utf8_next(const unsigned char *bytes, unsigned long long coun
 unsigned int yvex_tokenizer_unicode_class(uint32_t point);
 
 int yvex_tokenizer_execution_seal(yvex_tokenizer *tokenizer, const yvex_gguf *gguf,
-                                  const yvex_model_descriptor *model, yvex_error *err);
+                                  const yvex_tokenizer_family_policy *policy,
+                                  yvex_error *err);
 void yvex_tokenizer_execution_release(yvex_tokenizer *tokenizer);
 #endif

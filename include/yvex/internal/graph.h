@@ -209,6 +209,13 @@ typedef struct {
     int history_contract_ready, state_delta_contract_ready, cpu_reference_ready;
     int cuda_execution_ready, full_execution_ready;
 } yvex_attention_summary;
+int yvex_compiled_graph_identities(
+    const yvex_materialization_summary *materialization,
+    const yvex_runtime_descriptor_summary *descriptor,
+    const yvex_attention_summary *attention,
+    const yvex_attention_summary *draft_attention,
+    char semantic[YVEX_SHA256_HEX_CAP],
+    char executable[YVEX_SHA256_HEX_CAP]);
 
 typedef struct yvex_attention_plan yvex_attention_plan;
 typedef enum {

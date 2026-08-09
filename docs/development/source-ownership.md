@@ -80,6 +80,9 @@ domain algorithms. No writer owns command output.
 - Source JSON owns bounded structured parsing primitives, without source policy.
 - Source provenance owns pinned repository/revision and manifest facts.
 - Source family adapters own raw configuration and tokenizer sidecar facts.
+- The tokenizer compilation owner converts those source-authored facts into one
+  pointer-free identity-bound policy; runtime and server consume it without
+  importing or enumerating family implementations.
 - Source inventory owns indexed or explicitly header-derived shard inventory
   and the single canonical safetensors header pass. Its retained immutable
   snapshot carries deterministic tensor identity and lookup facts to consumers.

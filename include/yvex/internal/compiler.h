@@ -107,6 +107,7 @@ typedef struct yvex_speculation_family_policy {
 
 struct yvex_graph_compiler_api;
 struct yvex_runtime_descriptor_summary;
+struct yvex_tokenizer_family_policy;
 typedef struct yvex_family_compiler_adapter {
     unsigned int schema_version;
     unsigned long long adapter_id, adapter_version;
@@ -118,6 +119,7 @@ typedef struct yvex_family_compiler_adapter {
     int (*logits_policy)(yvex_logits_family_policy *out);
     int (*speculation_policy)(const struct yvex_runtime_descriptor_summary *,
                               yvex_speculation_family_policy *);
+    int (*tokenizer_policy)(struct yvex_tokenizer_family_policy *, yvex_error *);
 } yvex_family_compiler_adapter;
 
 int yvex_runtime_capabilities_identity(

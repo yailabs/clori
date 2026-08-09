@@ -13,6 +13,7 @@
 #include <yvex/internal/execution.h>
 #include <yvex/internal/graph.h>
 #include <yvex/internal/graph_state.h>
+#include <yvex/internal/tokenizer.h>
 #include <yvex/model.h>
 #include <yvex/registry.h>
 #include <yvex/tokenizer.h>
@@ -26,7 +27,7 @@ static inline void yvex_runtime_identity_copy(char destination[YVEX_SHA256_HEX_C
     if (length) memcpy(destination, source, length);
 }
 #define YVEX_RUNTIME_REASON_CAP 256u
-#define YVEX_RUNTIME_BINDING_SCHEMA_CURRENT 10u
+#define YVEX_RUNTIME_BINDING_SCHEMA_CURRENT 11u
 #define YVEX_RUNTIME_BINDING_SUFFIX ".yvex-runtime-binding"
 typedef enum {
     YVEX_RUNTIME_BINDING_FAILURE_NONE = 0, YVEX_RUNTIME_BINDING_FAILURE_INVALID_ARGUMENT,
@@ -90,6 +91,7 @@ typedef struct {
     yvex_transformer_family_policy transformer_policy;
     yvex_logits_family_policy logits_policy;
     yvex_speculation_family_policy speculation_policy;
+    yvex_tokenizer_family_policy tokenizer_policy;
 } yvex_runtime_binding_prepare_request;
 typedef struct yvex_runtime_binding_summary {
     unsigned int schema_version;
@@ -147,6 +149,8 @@ int yvex_runtime_binding_policies(
     const yvex_transformer_family_policy **transformer,
     const yvex_logits_family_policy **logits,
     const yvex_speculation_family_policy **speculation);
+const yvex_tokenizer_family_policy *yvex_runtime_binding_tokenizer_policy(
+    const yvex_runtime_binding *binding);
 typedef enum {
     YVEX_RUNTIME_MODEL_FAILURE_NONE = 0, YVEX_RUNTIME_MODEL_FAILURE_INVALID_ARGUMENT,
     YVEX_RUNTIME_MODEL_FAILURE_ADAPTER, YVEX_RUNTIME_MODEL_FAILURE_BINDING,

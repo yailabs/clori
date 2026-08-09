@@ -162,9 +162,10 @@ The internal runtime is family-neutral. Its main objects are:
 
 Model-execution descriptor schema v1 is a non-installed fieldwise projection
 of source/family context, attention, MoE, output, DSpark and state facts.
-Runtime binding v10 persists and authenticates it together with the compiled
-model plan. Bindings v7 through v9 are refused because they cannot represent
-that execution authority. Hardware-profile, workload-profile, capacity-plan
+Runtime binding v11 persists and authenticates it together with the compiled
+model plan and pointer-free tokenizer/conversation policy. Bindings v7 through
+v10 are refused because they cannot represent that complete execution
+authority. Hardware-profile, workload-profile, capacity-plan
 and phase-roofline schemas begin at v1 as internal contracts. The installed
 server construction entrypoints and public declaration count remain unchanged.
 The source-authored conversation boundary admits provider request/wire schema
@@ -482,13 +483,15 @@ backend and execution-mode specific.
 ## Artifact-Bound Tokenizer Runtime
 
 `<yvex/tokenizer.h>` exposes the exact admitted tokenizer plan, explicit-length
-UTF-8 encoding, bounded DeepSeek message rendering, batch and incremental
+UTF-8 encoding, bounded source-authored conversation rendering, batch and incremental
 ByteLevel decoding, special/EOS classification, and a generation-local token
 append directory. Immutable vocabulary/merge/added-token indexes follow model
 lifetime; incremental decoder and append contexts are isolated mutable owners.
 Every owned result publishes only after complete success and carries field-wise
-identities. These operations do not read weights, mutate KV, append sampled
-tokens to decode, or compose generation.
+identities. The compiler-facing `<yvex/internal/tokenizer.h>` owns the canonical
+pointer-free policy and codec; runtime instantiation never searches a family
+registry. These operations do not read weights, mutate KV, append sampled tokens
+to decode, or compose generation.
 
 ## Compiled Operator Registry Boundary
 

@@ -24,6 +24,55 @@ struct yvex_compiled_model_plan {
     yvex_runtime_logits_plan_summary output_head;
 };
 
+int yvex_compiled_graph_identities(
+    const yvex_materialization_summary *materialization,
+    const yvex_runtime_descriptor_summary *descriptor,
+    const yvex_attention_summary *attention,
+    const yvex_attention_summary *draft_attention,
+    char semantic[YVEX_SHA256_HEX_CAP], char executable[YVEX_SHA256_HEX_CAP])
+{
+    char semantic_value[YVEX_SHA256_HEX_CAP] = {0};
+    char executable_value[YVEX_SHA256_HEX_CAP] = {0};
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    if (semantic) semantic[0] = '\0';
+    if (executable) executable[0] = '\0';
+    if (!materialization || !descriptor || !attention || !semantic || !executable)
+        return 0;
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.semantic-graph.v2") ||
+        !yvex_sha256_update_text(&hash, descriptor->logical_model_identity) ||
+        !yvex_sha256_update_text(&hash, descriptor->runtime_numeric_identity) ||
+        !yvex_sha256_update_text(&hash, attention->attention_plan_identity) ||
+        !yvex_sha256_update_u64(&hash, attention->layer_count) ||
+        !yvex_sha256_update_text(&hash, draft_attention
+                                           ? draft_attention->attention_plan_identity
+                                           : "draft-absent") ||
+        !yvex_sha256_update_u64(&hash, draft_attention ? draft_attention->layer_count : 0ull) ||
+        !yvex_sha256_final(&hash, digest))
+        return 0;
+    yvex_sha256_hex(digest, semantic_value);
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.executable-graph.v2") ||
+        !yvex_sha256_update_text(&hash, semantic_value) ||
+        !yvex_sha256_update_text(&hash, descriptor->runtime_descriptor_identity) ||
+        !yvex_sha256_update_text(&hash, materialization->plan_identity) ||
+        !yvex_sha256_update_u64(&hash, attention->required_binding_count) ||
+        !yvex_sha256_update_u64(&hash, attention->payload_bytes_bound) ||
+        !yvex_sha256_update_u64(&hash, draft_attention
+                                           ? draft_attention->required_binding_count
+                                           : 0ull) ||
+        !yvex_sha256_update_u64(&hash, draft_attention
+                                           ? draft_attention->payload_bytes_bound
+                                           : 0ull) ||
+        !yvex_sha256_final(&hash, digest))
+        return 0;
+    yvex_sha256_hex(digest, executable_value);
+    yvex_core_text_copy(semantic, YVEX_SHA256_HEX_CAP, semantic_value);
+    yvex_core_text_copy(executable, YVEX_SHA256_HEX_CAP, executable_value);
+    return 1;
+}
+
 static int model_plan_refuse(yvex_error *err, yvex_status status,
                              const char *reason)
 {

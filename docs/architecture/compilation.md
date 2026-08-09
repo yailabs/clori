@@ -127,12 +127,14 @@ capacity planner evaluates state geometry, artifact bytes, hardware facts and
 resource reserve. The current 4096-token DeepSeek profile is one such selected
 workload, not the model's semantic limit.
 
-Runtime binding v8 adds and authenticates the model-execution descriptor that
-v7 cannot represent. The retained v7 reference binding stays readable through
-a family-owned in-memory compatibility projection; descriptor-bearing output
-is written as v8 beside it. Physical Execution IR and compiled execution
-profiles remain schema v1 because this change does not alter their persisted
-facts.
+Runtime binding v11 persists the pointer-free compiled tokenizer and
+conversation policy beside the model/operator execution records. Source-owned
+syntax and exact tokenizer component identities enter through the family
+compiler adapter; tokenizer, runtime and server consume the authenticated
+record without enumerating a concrete family. Bindings v7 through v10 are
+refused because none can represent the current complete compilation authority.
+Physical Execution IR and compiled execution profiles remain at their existing
+schemas because this change does not alter their persisted facts.
 
 Artifact drift, binding drift, unsupported qtypes, missing roles, resource
 overflow, or incompatible runtime requirements refuse before model execution.

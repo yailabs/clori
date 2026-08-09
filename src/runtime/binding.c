@@ -22,9 +22,11 @@
 #define BINDING_MAGIC_V8 "YVRBND8\0"
 #define BINDING_MAGIC_V9 "YVRBND9\0"
 #define BINDING_MAGIC_V10 "YVRBND10"
+#define BINDING_MAGIC_V11 "YVRBND11"
 #define BINDING_SCHEMA_V7 7u
 #define BINDING_SCHEMA_V8 8u
 #define BINDING_SCHEMA_V9 9u
+#define BINDING_SCHEMA_V10 10u
 #define BINDING_MAGIC_BYTES 8u
 #define BINDING_HEADER_BYTES (BINDING_MAGIC_BYTES + 16u + 64u)
 #define BINDING_MAX_BYTES (64u * 1024u * 1024u)
@@ -745,7 +747,12 @@ static int binding_policies_valid(const yvex_runtime_binding *binding)
 {
     return binding && binding_policies_match_model(
         &binding->descriptor.model_execution, &binding->transformer_policy,
-        &binding->logits_policy, &binding->speculation_policy);
+        &binding->logits_policy, &binding->speculation_policy) &&
+        binding->tokenizer_policy.family_adapter_id == binding->summary.family_adapter_id &&
+        binding->tokenizer_policy.family_adapter_version == binding->summary.family_adapter_version &&
+        binding->tokenizer_policy.vocabulary_size ==
+            binding->descriptor.model_execution.vocabulary_size &&
+        yvex_tokenizer_family_policy_validate(&binding->tokenizer_policy, NULL) == YVEX_OK;
 }
 static int binding_moe_unavailable_identity(
     const yvex_runtime_binding_prepare_request *request,
@@ -956,56 +963,6 @@ static int binding_identity_chain_valid(
            strcmp(descriptor->runtime_numeric_identity,
                   attention->runtime_numeric_identity) == 0;
 }
-/* Derive semantic and executable graph identities from exact persisted summaries. */
-static int binding_graph_identities(
-    const yvex_materialization_summary *materialization,
-    const yvex_runtime_descriptor_summary *descriptor,
-    const yvex_attention_summary *attention,
-    const yvex_attention_summary *draft_attention,
-    char semantic[YVEX_SHA256_HEX_CAP],
-    char executable[YVEX_SHA256_HEX_CAP])
-{
-    char semantic_value[YVEX_SHA256_HEX_CAP] = {0};
-    char executable_value[YVEX_SHA256_HEX_CAP] = {0};
-    yvex_sha256 hash;
-    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
-    if (semantic) semantic[0] = '\0';
-    if (executable) executable[0] = '\0';
-    if (!materialization || !descriptor || !attention || !semantic || !executable)
-        return 0;
-    yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.semantic-graph.v2") ||
-        !yvex_sha256_update_text(&hash, descriptor->logical_model_identity) ||
-        !yvex_sha256_update_text(&hash, descriptor->runtime_numeric_identity) ||
-        !yvex_sha256_update_text(&hash, attention->attention_plan_identity) ||
-        !yvex_sha256_update_u64(&hash, attention->layer_count) ||
-        !yvex_sha256_update_text(&hash, draft_attention
-                                           ? draft_attention->attention_plan_identity
-                                           : "draft-absent") ||
-        !yvex_sha256_update_u64(&hash, draft_attention ? draft_attention->layer_count : 0ull) ||
-        !yvex_sha256_final(&hash, digest))
-        return 0;
-    yvex_sha256_hex(digest, semantic_value);
-    yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.executable-graph.v2") ||
-        !yvex_sha256_update_text(&hash, semantic_value) ||
-        !yvex_sha256_update_text(&hash, descriptor->runtime_descriptor_identity) ||
-        !yvex_sha256_update_text(&hash, materialization->plan_identity) ||
-        !yvex_sha256_update_u64(&hash, attention->required_binding_count) ||
-        !yvex_sha256_update_u64(&hash, attention->payload_bytes_bound) ||
-        !yvex_sha256_update_u64(&hash, draft_attention
-                                           ? draft_attention->required_binding_count
-                                           : 0ull) ||
-        !yvex_sha256_update_u64(&hash, draft_attention
-                                           ? draft_attention->payload_bytes_bound
-                                           : 0ull) ||
-        !yvex_sha256_final(&hash, digest))
-        return 0;
-    yvex_sha256_hex(digest, executable_value);
-    yvex_runtime_identity_copy(semantic, semantic_value);
-    yvex_runtime_identity_copy(executable, executable_value);
-    return 1;
-}
 /* Validate the sealed identity chain before external serialization starts. */
 static int prepare_validate(const yvex_runtime_binding_prepare_request *request,
                             char semantic[YVEX_SHA256_HEX_CAP],
@@ -1044,7 +1001,12 @@ static int prepare_validate(const yvex_runtime_binding_prepare_request *request,
     draft_attention = yvex_attention_plan_summary(request->draft_attention_plan);
     if (!descriptor || !binding_policies_match_model(
             &descriptor->model_execution, &request->transformer_policy,
-            &request->logits_policy, &request->speculation_policy))
+            &request->logits_policy, &request->speculation_policy) ||
+        request->tokenizer_policy.family_adapter_id != request->family_adapter_id ||
+        request->tokenizer_policy.family_adapter_version != request->family_adapter_version ||
+        request->tokenizer_policy.vocabulary_size !=
+            descriptor->model_execution.vocabulary_size ||
+        yvex_tokenizer_family_policy_validate(&request->tokenizer_policy, NULL) != YVEX_OK)
         return binding_reject(
             failure, YVEX_RUNTIME_BINDING_FAILURE_COMPATIBILITY,
             "execution-policies", request->directory, 0ull, 1ull, 0ull,
@@ -1105,7 +1067,7 @@ static int prepare_validate(const yvex_runtime_binding_prepare_request *request,
             failure, YVEX_RUNTIME_BINDING_FAILURE_IDENTITY, "identity-chain",
             request->directory, 0ull, 1ull, 0ull, YVEX_ERR_STATE,
             "runtime binding inputs do not share one immutable identity chain", err);
-    if (!binding_graph_identities(
+    if (!yvex_compiled_graph_identities(
             materialization, descriptor, attention, draft_attention,
             semantic, executable))
         return binding_reject(
@@ -1150,6 +1112,7 @@ static int binding_body_write(const yvex_runtime_binding_prepare_request *reques
                               const yvex_transformer_family_policy *transformer,
                               const yvex_logits_family_policy *logits,
                               const yvex_speculation_family_policy *speculation,
+                              const yvex_core_bytes *tokenizer_policy,
                               const yvex_core_bytes *compiled_plans,
                               binding_bytes *body)
 {
@@ -1166,6 +1129,7 @@ static int binding_body_write(const yvex_runtime_binding_prepare_request *reques
     unsigned long long adapter_id, adapter_version, format_version;
     unsigned long long tensor_count, layer_count, draft_layer_count, i;
     if (!body || !request || !transformer || !logits || !speculation ||
+        !tokenizer_policy || !tokenizer_policy->data || !tokenizer_policy->count ||
         !compiled_plans || !compiled_plans->data || !compiled_plans->count)
         return 0;
     body->maximum = BINDING_MAX_BYTES;
@@ -1188,7 +1152,7 @@ static int binding_body_write(const yvex_runtime_binding_prepare_request *reques
     layer_count = attention->layer_count;
     draft_layer_count = draft_attention ? draft_attention->layer_count : 0ull;
     if (!yvex_runtime_capabilities_identity(capabilities, capability_identity) ||
-        !bytes_put_text(body, "yvex.runtime.binding.payload.v10") ||
+        !bytes_put_text(body, "yvex.runtime.binding.payload.v11") ||
         !bytes_put_u64(body, YVEX_RUNTIME_BINDING_SCHEMA_CURRENT) ||
         !bytes_put_u64(body, adapter_id) || !bytes_put_u64(body, adapter_version) ||
         !bytes_put_text(body, format) || !bytes_put_u64(body, format_version) ||
@@ -1227,6 +1191,8 @@ static int binding_body_write(const yvex_runtime_binding_prepare_request *reques
                       FIELD_COUNT(logits_policy_fields)) ||
         !fields_write(body, speculation, speculation_policy_fields,
                       FIELD_COUNT(speculation_policy_fields)) ||
+        !bytes_put_u64(body, tokenizer_policy->count) ||
+        !yvex_core_bytes_append(body, tokenizer_policy->data, tokenizer_policy->count) ||
         !bytes_put_u64(body, compiled_plans->count) ||
         !yvex_core_bytes_append(body, compiled_plans->data,
                                 compiled_plans->count)) return 0;
@@ -1256,7 +1222,7 @@ static int binding_identity(const unsigned char *body, size_t body_bytes,
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.binding.v10") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.binding.v11") ||
         !yvex_sha256_update_u64(&hash, YVEX_RUNTIME_BINDING_SCHEMA_CURRENT) ||
         !yvex_sha256_update(&hash, body, body_bytes) ||
         !yvex_sha256_final(&hash, digest)) return 0;
@@ -1268,7 +1234,7 @@ static int build_file(const binding_bytes *body, const char *identity, binding_b
     if (!body || !identity || !file) return 0;
     file->maximum = BINDING_MAX_BYTES;
     file->initial_capacity = 4096u;
-    return yvex_core_bytes_append(file, BINDING_MAGIC_V10, BINDING_MAGIC_BYTES) &&
+    return yvex_core_bytes_append(file, BINDING_MAGIC_V11, BINDING_MAGIC_BYTES) &&
            bytes_put_u64(file, YVEX_RUNTIME_BINDING_SCHEMA_CURRENT) &&
            bytes_put_u64(file, (unsigned long long)body->count) &&
            yvex_core_bytes_append(file, identity, 64u) &&
@@ -1286,11 +1252,11 @@ static binding_parse_result parse_body(yvex_runtime_binding *binding,
     char format[16];
     unsigned long long schema, family_id, family_version, format_version;
     unsigned long long material_count, runtime_count, layer_count, draft_present;
-    unsigned long long compiled_plan_bytes;
+    unsigned long long tokenizer_policy_bytes, compiled_plan_bytes;
     unsigned long long draft_layer_count = 0ull, i;
     if (!cursor_text(&cursor, domain, sizeof(domain)) ||
         !cursor_u64(&cursor, &schema) || schema != expected_schema ||
-        strcmp(domain, "yvex.runtime.binding.payload.v10") != 0 ||
+        strcmp(domain, "yvex.runtime.binding.payload.v11") != 0 ||
         !cursor_u64(&cursor, &family_id) || !family_id ||
         !cursor_u64(&cursor, &family_version) || !family_version ||
         !cursor_text(&cursor, format, sizeof(format)) || !format[0] ||
@@ -1355,6 +1321,14 @@ static binding_parse_result parse_body(yvex_runtime_binding *binding,
         !record_read(&cursor, &binding->speculation_policy,
                      sizeof(binding->speculation_policy), speculation_policy_fields,
                      FIELD_COUNT(speculation_policy_fields)) ||
+        !cursor_u64(&cursor, &tokenizer_policy_bytes) || !tokenizer_policy_bytes ||
+        tokenizer_policy_bytes > cursor.count - cursor.offset ||
+        yvex_tokenizer_family_policy_decode(
+            &binding->tokenizer_policy, cursor.data + cursor.offset,
+            (size_t)tokenizer_policy_bytes, NULL) != YVEX_OK)
+        return BINDING_PARSE_FORMAT;
+    cursor.offset += (size_t)tokenizer_policy_bytes;
+    if (
         !cursor_u64(&cursor, &compiled_plan_bytes) || !compiled_plan_bytes ||
         compiled_plan_bytes > cursor.count - cursor.offset ||
         yvex_compiled_model_plan_decode(
@@ -1521,7 +1495,7 @@ static int binding_validate(const yvex_runtime_binding *binding,
                                         &binding->descriptor,
                                         &binding->draft_attention))))
         return 0;
-    if (!binding_graph_identities(
+    if (!yvex_compiled_graph_identities(
             &binding->materialization, &binding->descriptor, &binding->attention,
             binding->summary.draft_layer_count ? &binding->draft_attention : NULL,
             semantic, executable)) {
@@ -1645,8 +1619,10 @@ static int binding_file_decode(yvex_runtime_binding **out,
            memcmp(magic, BINDING_MAGIC_V8, sizeof(magic)) == 0) ||
           (schema == BINDING_SCHEMA_V9 &&
            memcmp(magic, BINDING_MAGIC_V9, sizeof(magic)) == 0) ||
+          (schema == BINDING_SCHEMA_V10 &&
+           memcmp(magic, BINDING_MAGIC_V10, sizeof(magic)) == 0) ||
           (schema == YVEX_RUNTIME_BINDING_SCHEMA_CURRENT &&
-           memcmp(magic, BINDING_MAGIC_V10, sizeof(magic)) == 0))) {
+           memcmp(magic, BINDING_MAGIC_V11, sizeof(magic)) == 0))) {
         rc = binding_reject(failure, YVEX_RUNTIME_BINDING_FAILURE_SCHEMA,
                             "schema-version", path, 0ull,
                             YVEX_RUNTIME_BINDING_SCHEMA_CURRENT, schema,
@@ -1829,6 +1805,7 @@ int yvex_runtime_binding_prepare(const yvex_runtime_binding_prepare_request *req
 {
     binding_bytes body = {0}, file = {0};
     yvex_core_bytes compiled_plan_bytes = {0};
+    yvex_core_bytes tokenizer_policy_bytes = {0};
     char identity[YVEX_SHA256_HEX_CAP] = {0};
     char semantic[YVEX_SHA256_HEX_CAP] = {0}, executable[YVEX_SHA256_HEX_CAP] = {0};
     char moe_identity[YVEX_SHA256_HEX_CAP] = {0};
@@ -1896,12 +1873,18 @@ int yvex_runtime_binding_prepare(const yvex_runtime_binding_prepare_request *req
     }
     compiled_plan_bytes.maximum = BINDING_MAX_BYTES;
     compiled_plan_bytes.initial_capacity = 4096u;
+    tokenizer_policy_bytes.maximum = 16384u;
+    tokenizer_policy_bytes.initial_capacity = 4096u;
+    if (rc == YVEX_OK)
+        rc = yvex_tokenizer_family_policy_encode(
+            &request->tokenizer_policy, &tokenizer_policy_bytes, err);
     if (rc == YVEX_OK)
         rc = yvex_compiled_model_plan_encode(plan, &compiled_plan_bytes, err);
     if (rc == YVEX_OK &&
         !binding_body_write(request, semantic, executable, moe_identity,
                             draft_moe_identity, physical, &transformer, &logits,
-                            &speculation, &compiled_plan_bytes, &body))
+                            &speculation, &tokenizer_policy_bytes,
+                            &compiled_plan_bytes, &body))
         rc = binding_reject(
             failure, YVEX_RUNTIME_BINDING_FAILURE_ALLOCATION, "canonical-body",
             request->directory, 0ull, BINDING_MAX_BYTES, body.count, YVEX_ERR_NOMEM,
@@ -1951,6 +1934,7 @@ done:
     yvex_compiled_model_plan_close(&plan);
     yvex_physical_execution_ir_close(&physical);
     free(compiled_plan_bytes.data);
+    free(tokenizer_policy_bytes.data);
     free(body.data);
     free(file.data);
     return rc;

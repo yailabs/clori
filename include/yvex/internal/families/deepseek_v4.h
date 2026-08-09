@@ -8,6 +8,7 @@
 #include <yvex/quant.h>
 #include <yvex/source.h>
 #include <yvex/internal/model.h>
+#include <yvex/internal/conversation.h>
 #define YVEX_DEEPSEEK_IDENTITY_CAP 65u
 #define YVEX_DEEPSEEK_V4_ADAPTER_ID 0x44535634ull
 #define YVEX_DEEPSEEK_V4_ADAPTER_VERSION 7ull
@@ -591,5 +592,6 @@ int yvex_runtime_descriptor_build_deepseek(
 int yvex_model_mapping_report_deepseek(
     const yvex_model_target_request *request, yvex_model_target_report *report, yvex_error *err);
 const yvex_model_family_api *yvex_model_register_deepseek_v4(void);
+const yvex_conversation_protocol *yvex_model_deepseek_v4_conversation(void);
 const yvex_family_compiler_adapter *yvex_compiler_family_deepseek_v4(void);
 #endif

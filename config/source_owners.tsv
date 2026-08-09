@@ -29,6 +29,7 @@ include/yvex/internal/model_target.h	model.target	model.target.internal	generic	
 include/yvex/internal/quant_numeric.h	gguf	gguf.quant_numeric	generic	private	internal-abi	artifact,model,quant,backend	interface	none
 include/yvex/internal/runtime.h	runtime	runtime.internal	generic	private	internal-abi	runtime,graph,cli	interface	none
 include/yvex/internal/runtime_state_store.h	runtime	runtime.state_store	generic	private	file-serialization	runtime,server,tests	interface	none
+include/yvex/internal/tokenizer.h	tokenizer	tokenizer.family_policy	generic	private	internal-abi	compilation,runtime,server,tokenizer	interface	none
 src/runtime/private.h	runtime	runtime.private	generic	private	internal-abi	runtime	interface	none
 include/yvex/internal/source.h	source	source.internal	generic	private	internal-abi	model,compilation	interface	none
 include/yvex/internal/source_payload.h	source	source.payload	generic	private	internal-abi	model,compilation,cli	interface	none
@@ -227,6 +228,7 @@ src/source/scan.c	source	source.scan	generic	private	bounded-parser	model,compil
 src/source/verify.c	source	source.verify	generic	private	reusable-algorithm	model,compilation	implementation	none
 src/source/write.c	source	source.write	generic	private	transactional-io	model,compilation	implementation	none
 src/tokenizer/core.c	tokenizer	tokenizer.core	generic	private	resource-lifecycle	runtime,cli	implementation	none
+src/tokenizer/compilation.c	tokenizer	tokenizer.family_policy	generic	private	file-serialization	compilation,runtime,tokenizer	implementation	none
 src/tokenizer/decode.c	tokenizer	tokenizer.decode	generic	private	resource-lifecycle	runtime,generation	implementation	none
 src/tokenizer/execution.c	tokenizer	tokenizer.execution	generic	private	reusable-algorithm	runtime,cli,generation	implementation	none
 src/tokenizer/provider.c	tokenizer	tokenizer.provider	generic	private	reusable-algorithm	server,generation,provider	implementation	none

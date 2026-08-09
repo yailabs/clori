@@ -42,6 +42,12 @@ int yvex_runtime_binding_policies(
     return 1;
 }
 
+const yvex_tokenizer_family_policy *yvex_runtime_binding_tokenizer_policy(
+    const yvex_runtime_binding *binding)
+{
+    return binding ? &binding->tokenizer_policy : NULL;
+}
+
 void yvex_runtime_binding_close(yvex_runtime_binding *binding)
 {
     if (!binding) return;
