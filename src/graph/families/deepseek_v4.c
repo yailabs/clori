@@ -1739,8 +1739,9 @@ static int runtime_binding_compiler_plan(runtime_binding_compiler *compiler,
     writer_request.input_class = YVEX_GGUF_WRITER_INPUT_COMPLETE_ARTIFACT;
     writer_request.quant_plan = compiler->quant;
     writer_request.options = &writer_options;
-    writer_request.input.complete.family_adapter = compiler->model;
     writer_request.input.complete.lowering =
+        yvex_model_deepseek_writer_lowering_api();
+    writer_request.input.complete.lowering_context =
         compiler->model->payload.map(compiler->handoff);
     writer_request.input.complete.verification =
         compiler->model->payload.verification(compiler->handoff);

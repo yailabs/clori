@@ -44,6 +44,7 @@ typedef struct yvex_model_target_report yvex_model_target_report;
 typedef struct yvex_graph_execution_api yvex_graph_execution_api;
 typedef struct yvex_graph_compiler_api yvex_graph_compiler_api;
 typedef struct yvex_family_compiler_adapter yvex_family_compiler_adapter;
+typedef struct yvex_gguf_writer_lowering_api yvex_gguf_writer_lowering_api;
 #define YVEX_DEEPSEEK_V4_IR_NO_LAYER (~0ull)
 typedef enum {
     YVEX_DEEPSEEK_V4_IR_FAILURE_NONE = 0, YVEX_DEEPSEEK_V4_IR_FAILURE_INVALID_ARGUMENT,
@@ -561,6 +562,7 @@ typedef struct yvex_model_family_api {
 const yvex_model_family_coverage_api *yvex_model_deepseek_coverage_api(void);
 const yvex_model_family_transform_api *yvex_model_deepseek_transform_api(void);
 const yvex_model_family_lowering_api *yvex_model_deepseek_lowering_api(void);
+const yvex_gguf_writer_lowering_api *yvex_model_deepseek_writer_lowering_api(void);
 const yvex_model_family_payload_api *yvex_model_deepseek_payload_api(void);
 int yvex_transform_deepseek_architecture_identity(
     const yvex_deepseek_v4_ir *architecture, char output[YVEX_DEEPSEEK_IDENTITY_CAP]);
@@ -578,8 +580,6 @@ int yvex_quant_plan_build_deepseek_policy(
     const yvex_quant_policy *policy, const char *imatrix_identity,
     const yvex_quant_plan_options *options,
     yvex_quant_failure *failure, yvex_error *err);
-const yvex_deepseek_gguf_map *yvex_quant_plan_lowering(
-    const yvex_quant_plan *plan);
 int yvex_artifact_admit_deepseek(
     const yvex_artifact *artifact, yvex_complete_artifact_admission *out,
     yvex_artifact_admission_failure *failure, yvex_error *err);

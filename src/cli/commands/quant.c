@@ -588,8 +588,8 @@ static int quant_cli_writer_build(yvex_gguf_writer_plan **out, const quant_cli_c
         return yvex_gguf_writer_plan_build(out, &request, failure, err);
     }
     request.input_class = YVEX_GGUF_WRITER_INPUT_COMPLETE_ARTIFACT;
-    request.input.complete.family_adapter = yvex_model_register_deepseek_v4();
-    request.input.complete.lowering =
+    request.input.complete.lowering = yvex_model_deepseek_writer_lowering_api();
+    request.input.complete.lowering_context =
         yvex_model_register_deepseek_v4()->payload.map(context->handoff);
     request.input.complete.verification =
         yvex_model_register_deepseek_v4()->payload.verification(context->handoff);

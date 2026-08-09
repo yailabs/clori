@@ -1707,12 +1707,3 @@ const yvex_transform_ir *yvex_quant_plan_transform_ir(const yvex_quant_plan *pla
 const yvex_transform_binding *yvex_quant_plan_binding(const yvex_quant_plan *plan) {
     return plan ? plan->binding : NULL;
 }
-
-/*
- * Expose the format lowering borrowed by a quant plan.
- *
- * Lowering stays independent from quant decision ownership.
- */
-const yvex_deepseek_gguf_map *yvex_quant_plan_lowering(const yvex_quant_plan *plan) {
-    return plan ? plan->map : NULL;
-}

@@ -11,6 +11,7 @@
 #include <yvex/internal/compilation.h>
 #include <yvex/internal/families/deepseek_v4.h>
 #include <yvex/internal/gguf.h>
+#include <yvex/internal/gguf_writer.h>
 
 #include <limits.h>
 #include <stdlib.h>
@@ -1622,6 +1623,70 @@ const yvex_model_family_lowering_api *yvex_model_deepseek_lowering_api(void)
         lowering_transform_name,
         lowering_failure_name
     };
+
+    return &api;
+}
+
+static int writer_lowering_summary(const void *context,
+                                   yvex_gguf_writer_lowering_summary *out)
+{
+    const yvex_deepseek_gguf_map_summary *summary =
+        lowering_summary((const yvex_deepseek_gguf_map *)context);
+
+    if (!summary || !out) return 0;
+    *out = (yvex_gguf_writer_lowering_summary){
+        summary->descriptor_count,
+        summary->metadata_count,
+        summary->source_identity,
+        summary->mapping_identity,
+        summary->complete};
+    return 1;
+}
+
+static int writer_lowering_tensor(const void *context, unsigned long long ordinal,
+                                  yvex_gguf_writer_lowering_tensor *out)
+{
+    const yvex_deepseek_gguf_descriptor *row =
+        lowering_at((const yvex_deepseek_gguf_map *)context, ordinal);
+
+    if (!row || !out || row->logical_rank > YVEX_GGUF_QTYPE_MAX_DIMS) return 0;
+    memset(out, 0, sizeof(*out));
+    yvex_core_text_copy(out->emitted_name, sizeof(out->emitted_name), row->emitted_name);
+    out->logical_rank = row->logical_rank;
+    memcpy(out->logical_dims, row->logical_dims,
+           row->logical_rank * sizeof(out->logical_dims[0]));
+    return 1;
+}
+
+static int writer_lowering_metadata(const void *context, unsigned long long ordinal,
+                                    yvex_gguf_writer_lowering_metadata *out)
+{
+    const yvex_deepseek_gguf_metadata *row =
+        lowering_metadata_at((const yvex_deepseek_gguf_map *)context, ordinal);
+
+    if (!row || !out || row->type > YVEX_DEEPSEEK_GGUF_METADATA_F64_ARRAY ||
+        row->array_count > 64u) return 0;
+    memset(out, 0, sizeof(*out));
+    yvex_core_text_copy(out->key, sizeof(out->key), row->key);
+    out->type = (yvex_gguf_writer_lowering_metadata_type)row->type;
+    yvex_core_text_copy(out->string_value, sizeof(out->string_value), row->string_value);
+    out->u64_value = row->u64_value;
+    out->f64_value = row->f64_value;
+    out->bool_value = row->bool_value;
+    out->array_count = row->array_count;
+    memcpy(out->array_values, row->array_values, sizeof(out->array_values));
+    memcpy(out->f64_array_values, row->f64_array_values,
+           sizeof(out->f64_array_values));
+    return 1;
+}
+
+const yvex_gguf_writer_lowering_api *yvex_model_deepseek_writer_lowering_api(void)
+{
+    static const yvex_gguf_writer_lowering_api api = {
+        "deepseek-v3",
+        writer_lowering_summary,
+        writer_lowering_tensor,
+        writer_lowering_metadata};
 
     return &api;
 }

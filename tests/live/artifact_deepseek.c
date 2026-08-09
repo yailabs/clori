@@ -101,8 +101,8 @@ static int artifact_writer_plan_build(
     request.input_class = YVEX_GGUF_WRITER_INPUT_COMPLETE_ARTIFACT;
     request.quant_plan = quant;
     request.options = options;
-    request.input.complete.family_adapter = yvex_model_register_deepseek_v4();
-    request.input.complete.lowering =
+    request.input.complete.lowering = yvex_model_deepseek_writer_lowering_api();
+    request.input.complete.lowering_context =
         yvex_model_register_deepseek_v4()->payload.map(handoff);
     request.input.complete.verification =
         yvex_model_register_deepseek_v4()->payload.verification(handoff);
@@ -938,8 +938,8 @@ static int artifact_variant_bind(
     writer_request.input_class = YVEX_GGUF_WRITER_INPUT_COMPLETE_ARTIFACT;
     writer_request.quant_plan = quant;
     writer_request.options = &writer_options;
-    writer_request.input.complete.family_adapter = model;
-    writer_request.input.complete.lowering = model->payload.map(handoff);
+    writer_request.input.complete.lowering = yvex_model_deepseek_writer_lowering_api();
+    writer_request.input.complete.lowering_context = model->payload.map(handoff);
     writer_request.input.complete.verification = model->payload.verification(handoff);
     if (rc == YVEX_OK)
         rc = yvex_gguf_writer_plan_build(

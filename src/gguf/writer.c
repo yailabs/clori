@@ -14,7 +14,6 @@
 #include <string.h>
 #include <yvex/gguf.h>
 #include <yvex/internal/core.h>
-#include <yvex/internal/families/deepseek_v4.h>
 #include <yvex/internal/gguf.h>
 #include <yvex/internal/gguf_writer.h>
 
@@ -43,7 +42,7 @@ typedef struct {
     int boolean;
     unsigned int element_type;
     unsigned long long count;
-    const yvex_deepseek_gguf_metadata *map_entry;
+    const yvex_gguf_writer_lowering_metadata *map_entry;
 } writer_metadata;
 
 typedef yvex_core_bytes writer_buffer;
@@ -51,7 +50,6 @@ typedef yvex_core_bytes writer_buffer;
 struct yvex_gguf_writer_plan {
     yvex_gguf_writer_plan_summary summary;
     const yvex_quant_plan *quant_plan;
-    const yvex_deepseek_gguf_map *map;
     yvex_gguf_tokenizer_metadata *tokenizer;
     yvex_gguf_writer_tensor *tensors;
     unsigned char *prefix;
@@ -213,7 +211,7 @@ static int writer_meta_bool(writer_metadata *entries, unsigned int *count, const
 }
 
 static int writer_meta_map(writer_metadata *entries, unsigned int *count,
-                           const yvex_deepseek_gguf_metadata *map_entry) {
+                           const yvex_gguf_writer_lowering_metadata *map_entry) {
     writer_metadata *entry;
     int custom;
     if (!map_entry)
@@ -224,34 +222,34 @@ static int writer_meta_map(writer_metadata *entries, unsigned int *count,
     entry->map_entry = map_entry;
     custom = strncmp(map_entry->key, "yvex.", 5u) == 0;
     switch (map_entry->type) {
-    case YVEX_DEEPSEEK_GGUF_METADATA_STRING:
+    case YVEX_GGUF_WRITER_LOWERING_METADATA_STRING:
         entry->type = YVEX_GGUF_VALUE_STRING;
         entry->string_bytes = (const unsigned char *)map_entry->string_value;
         entry->string_length = strlen(map_entry->string_value);
         return 1;
-    case YVEX_DEEPSEEK_GGUF_METADATA_U64:
+    case YVEX_GGUF_WRITER_LOWERING_METADATA_U64:
         if (!custom && map_entry->u64_value > UINT_MAX)
             return 0;
         entry->type = custom ? YVEX_GGUF_VALUE_UINT64 : YVEX_GGUF_VALUE_UINT32;
         entry->u64 = map_entry->u64_value;
         return 1;
-    case YVEX_DEEPSEEK_GGUF_METADATA_F64:
+    case YVEX_GGUF_WRITER_LOWERING_METADATA_F64:
         if (!isfinite(map_entry->f64_value) || fabs(map_entry->f64_value) > FLT_MAX)
             return 0;
         entry->type = custom ? YVEX_GGUF_VALUE_FLOAT64 : YVEX_GGUF_VALUE_FLOAT32;
         entry->f64 = map_entry->f64_value;
         return 1;
-    case YVEX_DEEPSEEK_GGUF_METADATA_BOOL:
+    case YVEX_GGUF_WRITER_LOWERING_METADATA_BOOL:
         entry->type = YVEX_GGUF_VALUE_BOOL;
         entry->boolean = map_entry->bool_value != 0;
         return 1;
-    case YVEX_DEEPSEEK_GGUF_METADATA_U64_ARRAY:
+    case YVEX_GGUF_WRITER_LOWERING_METADATA_U64_ARRAY:
         entry->type = YVEX_GGUF_VALUE_ARRAY;
         entry->source = WRITER_META_U64_ARRAY;
         entry->element_type = custom ? YVEX_GGUF_VALUE_UINT64 : YVEX_GGUF_VALUE_UINT32;
         entry->count = map_entry->array_count;
         return entry->count != 0u;
-    case YVEX_DEEPSEEK_GGUF_METADATA_F64_ARRAY:
+    case YVEX_GGUF_WRITER_LOWERING_METADATA_F64_ARRAY:
         entry->type = YVEX_GGUF_VALUE_ARRAY;
         entry->source = WRITER_META_F64_ARRAY;
         entry->element_type = custom ? YVEX_GGUF_VALUE_FLOAT64 : YVEX_GGUF_VALUE_FLOAT32;
@@ -967,12 +965,14 @@ build_failure:
 typedef struct {
     yvex_gguf_writer_plan *plan;
     const yvex_quant_plan *quant_plan;
-    const yvex_deepseek_gguf_map *map;
+    const yvex_gguf_writer_lowering_api *lowering;
+    const void *lowering_context;
     const yvex_source_verification *verification;
     const yvex_quant_plan_summary *quant;
-    const yvex_deepseek_gguf_map_summary *mapping;
+    yvex_gguf_writer_lowering_summary mapping;
     yvex_gguf_writer_plan_options options;
     writer_metadata metadata[WRITER_METADATA_CAP];
+    yvex_gguf_writer_lowering_metadata lowering_metadata[WRITER_METADATA_CAP];
     unsigned int metadata_count;
     const yvex_gguf_tokenizer_summary *tokenizer;
     const unsigned char *raw_json;
@@ -985,9 +985,9 @@ typedef struct {
     unsigned long long data_span;
     yvex_gguf_writer_failure *failure;
     yvex_error *err;
-} writer_deepseek_context;
+} writer_complete_context;
 
-static int writer_deepseek_plan_create(writer_deepseek_context *context) {
+static int writer_complete_plan_create(writer_complete_context *context) {
     yvex_gguf_tokenizer_failure tokenizer_failure;
     int rc;
 
@@ -996,7 +996,6 @@ static int writer_deepseek_plan_create(writer_deepseek_context *context) {
         return writer_fail(context->failure, YVEX_GGUF_WRITER_ALLOCATION, NULL, ULLONG_MAX,
                            ULLONG_MAX, sizeof(*context->plan), 0u, context->err, YVEX_ERR_NOMEM,
                            "writer plan allocation failed");
-    context->plan->map = context->map;
     writer_plan_seed(context->plan, context->quant_plan, context->quant,
                      context->quant->terminal_count, &context->options);
     context->plan->tensors = (yvex_gguf_writer_tensor *)calloc(
@@ -1007,7 +1006,8 @@ static int writer_deepseek_plan_create(writer_deepseek_context *context) {
                            YVEX_ERR_NOMEM, "writer tensor plan allocation failed");
     rc = yvex_gguf_tokenizer_metadata_load(&context->plan->tokenizer, context->verification,
                                            context->verification->tokenizer_effective_vocab_size,
-                                           "deepseek-v3", context->options.maximum_owned_bytes / 2u,
+                                           context->lowering->tokenizer_architecture,
+                                           context->options.maximum_owned_bytes / 2u,
                                            &tokenizer_failure, context->err);
     if (rc != YVEX_OK)
         return writer_fail(context->failure, YVEX_GGUF_WRITER_METADATA_INCOMPLETE,
@@ -1026,13 +1026,19 @@ static int writer_deepseek_plan_create(writer_deepseek_context *context) {
     return YVEX_OK;
 }
 
-static int writer_deepseek_add_lowering_metadata(writer_deepseek_context *context) {
+static int writer_complete_add_lowering_metadata(writer_complete_context *context) {
     unsigned long long ordinal;
 
     memset(context->metadata, 0, sizeof(context->metadata));
-    for (ordinal = 0u; ordinal < context->mapping->metadata_count; ++ordinal) {
-        const yvex_deepseek_gguf_metadata *entry =
-            yvex_model_register_deepseek_v4()->lowering.metadata_at(context->map, ordinal);
+    for (ordinal = 0u; ordinal < context->mapping.metadata_count; ++ordinal) {
+        yvex_gguf_writer_lowering_metadata *entry =
+            &context->lowering_metadata[ordinal];
+
+        if (!context->lowering->metadata_at(context->lowering_context, ordinal, entry))
+            return writer_fail(context->failure, YVEX_GGUF_WRITER_UNSUPPORTED_METADATA,
+                               NULL, ordinal, ULLONG_MAX, 1u, 0u, context->err,
+                               YVEX_ERR_FORMAT,
+                               "lowering metadata projection is incomplete");
         if (!writer_meta_map(context->metadata, &context->metadata_count, entry))
             return writer_fail(
                 context->failure,
@@ -1052,7 +1058,7 @@ static int writer_deepseek_add_lowering_metadata(writer_deepseek_context *contex
  * Appends deterministic token arrays, policy fields, and digest metadata. Embeds verified
  * tokenizer evidence without changing tokenizer identity.
  */
-static int writer_deepseek_add_tokenizer_metadata(writer_deepseek_context *context) {
+static int writer_complete_add_tokenizer_metadata(writer_complete_context *context) {
     writer_metadata *metadata = context->metadata;
     unsigned int *count = &context->metadata_count;
     const yvex_gguf_tokenizer_summary *tokenizer = context->tokenizer;
@@ -1094,7 +1100,7 @@ static int writer_deepseek_add_tokenizer_metadata(writer_deepseek_context *conte
  * Canonical identity fields from the sealed quant plan. Stages deterministic provenance keys and
  * numeric-contract version.
  */
-static int writer_deepseek_add_provenance_metadata(writer_deepseek_context *context) {
+static int writer_complete_add_provenance_metadata(writer_complete_context *context) {
     writer_metadata *metadata = context->metadata;
     unsigned int *count = &context->metadata_count;
 
@@ -1129,11 +1135,15 @@ static int writer_deepseek_add_provenance_metadata(writer_deepseek_context *cont
  * Fills one tensor row and updates qtype/payload/padding accounting. Typed refusal covers
  * divergence, qtype geometry, and arithmetic overflow.
  */
-static int writer_deepseek_tensor_add(writer_deepseek_context *context, unsigned long long ordinal,
+static int writer_complete_tensor_add(writer_complete_context *context,
+                                      unsigned long long ordinal,
                                       unsigned long long *relative) {
     const yvex_quant_decision *decision = yvex_quant_plan_decision_at(context->quant_plan, ordinal);
-    const yvex_deepseek_gguf_descriptor *descriptor =
-        yvex_model_register_deepseek_v4()->lowering.at(context->map, ordinal);
+    yvex_gguf_writer_lowering_tensor projected;
+    const yvex_gguf_writer_lowering_tensor *descriptor =
+        context->lowering->tensor_at(context->lowering_context, ordinal, &projected)
+            ? &projected
+            : NULL;
     yvex_gguf_writer_tensor *tensor = &context->plan->tensors[ordinal];
     yvex_gguf_qtype_storage_result geometry;
     unsigned long long next;
@@ -1192,14 +1202,14 @@ static int writer_deepseek_tensor_add(writer_deepseek_context *context, unsigned
     return YVEX_OK;
 }
 
-static int writer_deepseek_tensors_build(writer_deepseek_context *context) {
+static int writer_complete_tensors_build(writer_complete_context *context) {
     unsigned long long relative = 0u;
     unsigned long long ordinal;
     int unique;
     int rc;
 
     for (ordinal = 0u; ordinal < context->quant->terminal_count; ++ordinal) {
-        rc = writer_deepseek_tensor_add(context, ordinal, &relative);
+        rc = writer_complete_tensor_add(context, ordinal, &relative);
         if (rc != YVEX_OK)
             return rc;
     }
@@ -1222,7 +1232,7 @@ static int writer_deepseek_tensors_build(writer_deepseek_context *context) {
  * Complete metadata/tensor context and ownership budget. Typed refusal covers serialization,
  * arithmetic, budget, or identity failure.
  */
-static int writer_deepseek_plan_finish(writer_deepseek_context *context) {
+static int writer_complete_plan_finish(writer_complete_context *context) {
     unsigned long long tensor_bytes;
     yvex_gguf_writer_plan_summary *summary = &context->plan->summary;
 
@@ -1264,31 +1274,34 @@ static int writer_deepseek_plan_finish(writer_deepseek_context *context) {
     return YVEX_OK;
 }
 
-static int writer_plan_build_deepseek(
+static int writer_plan_build_complete(
     yvex_gguf_writer_plan **out, const yvex_quant_plan *quant_plan,
-    const yvex_deepseek_gguf_map *map, const yvex_source_verification *verification,
+    const yvex_gguf_writer_lowering_api *lowering, const void *lowering_context,
+    const yvex_source_verification *verification,
     const yvex_gguf_writer_plan_options *options, yvex_gguf_writer_failure *failure,
     yvex_error *err) {
-    writer_deepseek_context context;
+    writer_complete_context context;
     int rc;
 
     memset(&context, 0, sizeof(context));
     context.quant_plan = quant_plan;
-    context.map = map;
+    context.lowering = lowering;
+    context.lowering_context = lowering_context;
     context.verification = verification;
     context.quant = yvex_quant_plan_summary_get(quant_plan);
-    context.mapping = yvex_model_register_deepseek_v4()->lowering.summary(map);
     context.failure = failure;
     context.err = err;
     if (out)
         *out = NULL;
-    if (!out || !quant_plan || !map || !verification || !context.quant || !context.mapping ||
-        !context.quant->complete || !context.mapping->complete ||
-        yvex_quant_plan_lowering(quant_plan) != map ||
-        context.quant->terminal_count != context.mapping->descriptor_count ||
-        context.quant->terminal_count != YVEX_DEEPSEEK_GGUF_DESCRIPTOR_COUNT ||
+    if (!out || !quant_plan || !lowering || !lowering_context || !verification ||
+        !lowering->tokenizer_architecture || !lowering->tokenizer_architecture[0] ||
+        !lowering->summary || !lowering->tensor_at || !lowering->metadata_at ||
+        !lowering->summary(lowering_context, &context.mapping) || !context.quant ||
+        !context.quant->complete || !context.mapping.complete ||
+        context.quant->terminal_count != context.mapping.descriptor_count ||
         context.quant->terminal_count > SIZE_MAX / sizeof(*context.plan->tensors) ||
-        context.quant->mapping_identity != context.mapping->mapping_identity ||
+        context.mapping.metadata_count > WRITER_METADATA_CAP ||
+        context.quant->mapping_identity != context.mapping.mapping_identity ||
         context.quant->source_snapshot_identity != verification->source_snapshot_identity ||
         strcmp(context.quant->required_payload_identity, verification->manifest_payload_identity) !=
             0)
@@ -1308,25 +1321,25 @@ static int writer_plan_build_deepseek(
         return writer_fail(failure, YVEX_GGUF_WRITER_INVALID_ARGUMENT, NULL, ULLONG_MAX, ULLONG_MAX,
                            1u, 0u, err, YVEX_ERR_INVALID_ARG,
                            "writer alignment, ownership budget, or execution identity is invalid");
-    rc = writer_deepseek_plan_create(&context);
+    rc = writer_complete_plan_create(&context);
     if (rc != YVEX_OK)
         goto build_failure;
-    rc = writer_deepseek_add_lowering_metadata(&context);
+    rc = writer_complete_add_lowering_metadata(&context);
     if (rc != YVEX_OK)
         goto build_failure;
-    if (!writer_deepseek_add_tokenizer_metadata(&context) ||
-        !writer_deepseek_add_provenance_metadata(&context)) {
+    if (!writer_complete_add_tokenizer_metadata(&context) ||
+        !writer_complete_add_provenance_metadata(&context)) {
         rc = writer_fail(failure, YVEX_GGUF_WRITER_DUPLICATE_METADATA, NULL, context.metadata_count,
                          ULLONG_MAX, 1u, 0u, err, YVEX_ERR_FORMAT,
                          "required artifact metadata is duplicate or unrepresentable");
         goto build_failure;
     }
 
-    rc = writer_deepseek_tensors_build(&context);
+    rc = writer_complete_tensors_build(&context);
     if (rc != YVEX_OK)
         goto build_failure;
 
-    rc = writer_deepseek_plan_finish(&context);
+    rc = writer_complete_plan_finish(&context);
     if (rc != YVEX_OK)
         goto build_failure;
     *out = context.plan;
@@ -1354,14 +1367,9 @@ int yvex_gguf_writer_plan_build(yvex_gguf_writer_plan **out,
                            "a typed writer-plan request is required");
     switch (request->input_class) {
     case YVEX_GGUF_WRITER_INPUT_COMPLETE_ARTIFACT:
-        if (request->input.complete.family_adapter != yvex_model_register_deepseek_v4())
-            return writer_fail(failure, YVEX_GGUF_WRITER_INVALID_ARGUMENT, NULL,
-                               ULLONG_MAX, ULLONG_MAX, 1u, 0u, err,
-                               YVEX_ERR_UNSUPPORTED,
-                               "writer family adapter is unsupported");
-        return writer_plan_build_deepseek(
-            out, request->quant_plan,
-            (const yvex_deepseek_gguf_map *)request->input.complete.lowering,
+        return writer_plan_build_complete(
+            out, request->quant_plan, request->input.complete.lowering,
+            request->input.complete.lowering_context,
             request->input.complete.verification, request->options, failure, err);
     case YVEX_GGUF_WRITER_INPUT_TENSOR_PROOF:
         return writer_plan_build_tensor_proof(

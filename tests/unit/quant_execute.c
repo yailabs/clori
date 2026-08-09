@@ -1239,7 +1239,7 @@ int yvex_test_gguf_writer_artifact(void)
                          &duplicate_writer, &writer_request, &writer_failure, &err) != YVEX_OK &&
                          writer_failure.code == YVEX_GGUF_WRITER_INVALID_ARGUMENT &&
                          !duplicate_writer,
-                     "complete input without a family adapter must refuse");
+                     "complete input without a lowering projection must refuse");
 
     (void)snprintf(symlink_directory, sizeof(symlink_directory),
                    "%s/linkdir", fixture.root);

@@ -298,6 +298,10 @@ if rg -n -i "(families/|$generic_family_symbol_pattern)" \
     src/model/compilation/ir_validate.c; then
     fail "generic Transformation IR owners contain concrete family semantics"
 fi
+if rg -n -i "(families/|$generic_family_symbol_pattern)" \
+    src/gguf/writer.c include/yvex/internal/gguf_writer.h; then
+    fail "generic GGUF writer owns or imports concrete family semantics"
+fi
 
 family_neutral_sources=$(
     {
