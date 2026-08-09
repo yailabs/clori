@@ -40,7 +40,9 @@ typedef enum {
 } yvex_graph_component_failure_code;
 typedef struct {
     yvex_graph_component_failure_code code;
-    unsigned long long expected, actual; char tensor_name[256]; const char *reason;
+    unsigned long long expected, actual;
+    char tensor_name[256];
+    const char *reason;
 } yvex_graph_component_failure;
 typedef struct {
     float *data;
@@ -51,7 +53,8 @@ typedef struct {
 } yvex_graph_component_workspace;
 typedef struct {
     int (*buffer_open)(yvex_graph_component_workspace *, unsigned long long,
-                       yvex_graph_component_buffer *, yvex_graph_component_failure *, yvex_error *);
+                       yvex_graph_component_buffer *, yvex_graph_component_failure *,
+                       yvex_error *);
     void (*buffer_close)(yvex_graph_component_workspace *, yvex_graph_component_buffer *);
     const yvex_materialized_tensor_binding *(*binding_find)(
         const yvex_materialization_session *, const char *);

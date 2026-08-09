@@ -62,14 +62,18 @@
 #define TRANSFORMER_PAYLOAD_BYTES 66280430144ull
 #define TRANSFORMER_FILE_BYTES 66280465664ull
 typedef struct {
-    yvex_materialization_session *session; const yvex_minimax_h3_audio_decode_options *options;
-    yvex_minimax_h3_audio_decode_result *result; yvex_minimax_h3_component_execution_failure *failure;
+    yvex_materialization_session *session;
+    const yvex_component_execution_request *request;
+    yvex_component_execution_result *result;
+    yvex_component_failure *failure;
     yvex_error *err;
     yvex_graph_component_workspace workspace;
 } audio_execution;
 typedef struct {
-    yvex_materialization_session *session; const yvex_minimax_h3_video_decode_options *options;
-    yvex_minimax_h3_video_decode_result *result; yvex_minimax_h3_component_execution_failure *failure;
+    yvex_materialization_session *session;
+    const yvex_component_execution_request *request;
+    yvex_component_execution_result *result;
+    yvex_component_failure *failure;
     yvex_error *err;
     yvex_graph_component_workspace workspace;
     unsigned long long patches, rows;
@@ -175,7 +179,7 @@ static int minimax_scheduler_step(float *output, const float *sample, const floa
                                                 sigma_next, err);
 }
 static int audio_execution_refuse(audio_execution *execution,
-                                  yvex_minimax_h3_component_execution_code code,
+                                  yvex_component_failure_code code,
                                   const char *tensor_name, unsigned long long expected,
                                   unsigned long long actual, yvex_status status,
                                   const char *reason)
@@ -196,27 +200,27 @@ static int audio_execution_refuse(audio_execution *execution,
 }
 static int audio_cancel_check(audio_execution *execution)
 {
-    if (execution->options->cancelled &&
-        execution->options->cancelled(execution->options->cancellation_context))
-        return audio_execution_refuse(execution, YVEX_MINIMAX_H3_COMPONENT_EXECUTION_CANCELLED,
+    if (execution->request->cancelled &&
+        execution->request->cancelled(execution->request->cancellation_context))
+        return audio_execution_refuse(execution, YVEX_COMPONENT_FAILURE_CANCELLED,
                                       NULL, 0ull, 1ull, YVEX_ERR_CANCELLED,
                                       "Audio VAE execution was cancelled at a layer boundary");
     return YVEX_OK;
 }
-static yvex_minimax_h3_component_execution_code component_failure_project(
+static yvex_component_failure_code component_failure_project(
     yvex_graph_component_failure_code code)
 {
     switch (code) {
     case YVEX_GRAPH_COMPONENT_FAILURE_MISSING_TENSOR:
-        return YVEX_MINIMAX_H3_COMPONENT_EXECUTION_MISSING_TENSOR;
+        return YVEX_COMPONENT_FAILURE_MISSING_TENSOR;
     case YVEX_GRAPH_COMPONENT_FAILURE_TENSOR_CONTRACT:
-        return YVEX_MINIMAX_H3_COMPONENT_EXECUTION_TENSOR_CONTRACT;
+        return YVEX_COMPONENT_FAILURE_TENSOR_CONTRACT;
     case YVEX_GRAPH_COMPONENT_FAILURE_MATERIALIZATION:
-        return YVEX_MINIMAX_H3_COMPONENT_EXECUTION_MATERIALIZATION;
+        return YVEX_COMPONENT_FAILURE_MATERIALIZATION;
     case YVEX_GRAPH_COMPONENT_FAILURE_BUDGET:
-        return YVEX_MINIMAX_H3_COMPONENT_EXECUTION_BUDGET;
+        return YVEX_COMPONENT_FAILURE_BUDGET;
     default:
-        return YVEX_MINIMAX_H3_COMPONENT_EXECUTION_INVALID_ARGUMENT;
+        return YVEX_COMPONENT_FAILURE_INVALID_ARGUMENT;
     }
 }
 static int audio_buffer_open(audio_execution *execution, yvex_graph_component_buffer *buffer,
@@ -259,7 +263,7 @@ static int audio_name_build(audio_execution *execution, char *output, size_t cap
     int written = snprintf(output, capacity, "%s%s", prefix, suffix);
     if (written < 0 || (size_t)written >= capacity)
         return audio_execution_refuse(execution,
-                                      YVEX_MINIMAX_H3_COMPONENT_EXECUTION_TENSOR_CONTRACT,
+                                      YVEX_COMPONENT_FAILURE_TENSOR_CONTRACT,
                                       prefix, capacity, written < 0 ? 0ull : (unsigned long long)written,
                                       YVEX_ERR_BOUNDS,
                                       "Audio VAE tensor name exceeded its bounded identity field");
@@ -310,8 +314,8 @@ static int audio_conv_execute(audio_execution *execution, const char *prefix,
             bias.data, bias.count, gain.data, gain.count, output, output_count,
             execution->err);
     if (rc != YVEX_OK && execution->failure &&
-        execution->failure->code == YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NONE) {
-        execution->failure->code = YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NUMERIC;
+        execution->failure->code == YVEX_COMPONENT_FAILURE_NONE) {
+        execution->failure->code = YVEX_COMPONENT_FAILURE_NUMERIC;
         execution->failure->reason = yvex_error_message(execution->err);
         yvex_core_text_copy(execution->failure->tensor_name,
                             sizeof(execution->failure->tensor_name), prefix);
@@ -357,8 +361,8 @@ static int audio_activation_execute(audio_execution *execution, const char *pref
             input, batch, channels, length, alpha.data, beta.data, up.data,
             down.data, output, scratch, scratch_count, execution->err);
     if (rc != YVEX_OK && execution->failure &&
-        execution->failure->code == YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NONE) {
-        execution->failure->code = YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NUMERIC;
+        execution->failure->code == YVEX_COMPONENT_FAILURE_NONE) {
+        execution->failure->code = YVEX_COMPONENT_FAILURE_NUMERIC;
         execution->failure->reason = yvex_error_message(execution->err);
         yvex_core_text_copy(execution->failure->tensor_name,
                             sizeof(execution->failure->tensor_name), prefix);
@@ -402,7 +406,7 @@ static int audio_indexed_name(audio_execution *execution, char *output, size_t c
     }
     if (written < 0 || (size_t)written >= capacity)
         return audio_execution_refuse(execution,
-                                      YVEX_MINIMAX_H3_COMPONENT_EXECUTION_TENSOR_CONTRACT,
+                                      YVEX_COMPONENT_FAILURE_TENSOR_CONTRACT,
                                       NULL, capacity,
                                       written < 0 ? 0ull : (unsigned long long)written,
                                       YVEX_ERR_BOUNDS,
@@ -427,7 +431,7 @@ static int audio_resblock_execute(audio_execution *execution,
     if (!yvex_core_u64_mul(batch, channels, &values) ||
         !yvex_core_u64_mul(values, length, &values))
         return audio_execution_refuse(execution,
-                                      YVEX_MINIMAX_H3_COMPONENT_EXECUTION_BUDGET,
+                                      YVEX_COMPONENT_FAILURE_BUDGET,
                                       NULL, 1ull, 0ull, YVEX_ERR_BOUNDS,
                                       "Audio VAE residual extent overflowed");
     rc = audio_buffer_open(execution, &activation, values);
@@ -505,7 +509,7 @@ static int audio_stage_execute(audio_execution *execution, unsigned long long st
     memset(output, 0, sizeof(*output));
     if (stage >= sizeof(rates) / sizeof(rates[0]) || input_channels < 2ull)
         return audio_execution_refuse(execution,
-                                      YVEX_MINIMAX_H3_COMPONENT_EXECUTION_INVALID_ARGUMENT,
+                                      YVEX_COMPONENT_FAILURE_INVALID_ARGUMENT,
                                       NULL, 7ull, stage, YVEX_ERR_INVALID_ARG,
                                       "Audio VAE decoder stage is outside its exact recipe");
     memset(&geometry, 0, sizeof(geometry));
@@ -524,7 +528,7 @@ static int audio_stage_execute(audio_execution *execution, unsigned long long st
     if (!yvex_core_u64_mul(batch, *output_channels, &values) ||
         !yvex_core_u64_mul(values, *output_length, &values))
         return audio_execution_refuse(execution,
-                                      YVEX_MINIMAX_H3_COMPONENT_EXECUTION_BUDGET,
+                                      YVEX_COMPONENT_FAILURE_BUDGET,
                                       NULL, 1ull, 0ull, YVEX_ERR_BOUNDS,
                                       "Audio VAE decoder stage extent overflowed");
     rc = audio_buffer_open(execution, &upsampled, values);
@@ -559,8 +563,8 @@ cleanup:
     return rc;
 }
 static int audio_execution_identity(const yvex_materialization_summary *summary,
-                                    const yvex_minimax_h3_audio_decode_options *options,
-                                    yvex_minimax_h3_audio_decode_result *result)
+                                    const yvex_component_execution_request *options,
+                                    yvex_component_execution_result *result)
 {
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
@@ -568,15 +572,14 @@ static int audio_execution_identity(const yvex_materialization_summary *summary,
     yvex_sha256_init(&hash);
     if (!yvex_sha256_update_text(&hash, "yvex.minimax-h3.audio-vae.cpu.v1") ||
         !yvex_sha256_update_text(&hash, summary->artifact_identity) ||
-        !yvex_sha256_update_u64_be(&hash, options->batch) ||
-        !yvex_sha256_update_u64_be(&hash, options->latent_channels) ||
-        !yvex_sha256_update_u64_be(&hash, options->latent_steps))
+        !yvex_sha256_update_u64_be(&hash, options->plan->batch) ||
+        !yvex_sha256_update_u64_be(&hash, 32ull) ||
+        !yvex_sha256_update_u64_be(&hash, options->plan->geometry[0]))
         return 0;
-    for (index = 0ull; index < options->batch * options->latent_channels *
-                                     options->latent_steps; ++index) {
+    for (index = 0ull; index < options->plan->input_values; ++index) {
         uint32_t bits;
         unsigned char bytes[4];
-        memcpy(&bits, &options->latent[index], sizeof(bits));
+        memcpy(&bits, &options->input[index], sizeof(bits));
         bytes[0] = (unsigned char)(bits >> 24u);
         bytes[1] = (unsigned char)(bits >> 16u);
         bytes[2] = (unsigned char)(bits >> 8u);
@@ -604,57 +607,57 @@ static int audio_decode_validate(audio_execution *execution)
     unsigned long long latent_values = 0ull;
     unsigned long long output_values = 0ull;
     unsigned long long index;
-    if (!execution->options || !execution->result ||
-        !execution->options->latent || !execution->options->output ||
-        !execution->options->batch || !execution->options->latent_steps ||
-        execution->options->latent_channels != 32ull ||
-        !execution->options->max_workspace_bytes)
+    if (!execution->request || !execution->request->plan ||
+        !execution->result || !execution->request->input ||
+        !execution->request->output || !execution->request->plan->batch ||
+        execution->request->plan->geometry_rank != 1u ||
+        !execution->request->plan->geometry[0] ||
+        !execution->request->plan->workspace_bytes)
         return audio_execution_refuse(execution,
-                                      YVEX_MINIMAX_H3_COMPONENT_EXECUTION_INVALID_ARGUMENT,
-                                      NULL, 32ull,
-                                      execution->options ? execution->options->latent_channels : 0ull,
+                                      YVEX_COMPONENT_FAILURE_INVALID_ARGUMENT,
+                                      NULL, 1ull,
+                                      execution->request && execution->request->plan
+                                          ? execution->request->plan->geometry_rank : 0ull,
                                       YVEX_ERR_INVALID_ARG,
                                       "Audio VAE decode requires exact latent geometry and bounded output");
     if (!summary || !summary->committed ||
         strcmp(summary->artifact_identity, YVEX_MINIMAX_H3_AUDIO_ARTIFACT_IDENTITY) != 0)
         return audio_execution_refuse(execution,
-                                      YVEX_MINIMAX_H3_COMPONENT_EXECUTION_LIFECYCLE,
+                                      YVEX_COMPONENT_FAILURE_LIFECYCLE,
                                       NULL, 1ull,
                                       summary ? (unsigned long long)summary->committed : 0ull,
                                       YVEX_ERR_STATE,
                                       "Audio VAE decode requires the committed exact component artifact");
-    if (!yvex_core_u64_mul(execution->options->batch,
-                           execution->options->latent_channels, &latent_values) ||
-        !yvex_core_u64_mul(latent_values, execution->options->latent_steps,
-                           &latent_values) ||
-        !yvex_core_u64_mul(execution->options->batch,
-                           execution->options->latent_steps, &output_values) ||
-        !yvex_core_u64_mul(output_values, 800ull, &output_values) ||
-        execution->options->output_capacity < output_values)
+    latent_values = execution->request->plan->input_values;
+    output_values = execution->request->plan->output_values;
+    if (!latent_values || !output_values ||
+        execution->request->output_capacity < output_values)
         return audio_execution_refuse(execution,
-                                      YVEX_MINIMAX_H3_COMPONENT_EXECUTION_BUDGET,
+                                      YVEX_COMPONENT_FAILURE_BUDGET,
                                       NULL, output_values,
-                                      execution->options->output_capacity,
+                                      execution->request->output_capacity,
                                       YVEX_ERR_BOUNDS,
                                       "Audio VAE output buffer is smaller than the exact 800x ratio");
     for (index = 0ull; index < latent_values; ++index)
-        if (!isfinite(execution->options->latent[index]))
+        if (!isfinite(execution->request->input[index]))
             return audio_execution_refuse(
-                execution, YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NUMERIC,
+                execution, YVEX_COMPONENT_FAILURE_NUMERIC,
                 NULL, latent_values, index, YVEX_ERR_FORMAT,
                 "Audio VAE latent input contains a non-finite value");
-    execution->result->batch = execution->options->batch;
-    execution->result->samples_per_channel = execution->options->latent_steps * 800ull;
+    execution->result->batch = execution->request->plan->batch;
     execution->result->output_values = output_values;
+    execution->result->output_rank = execution->request->plan->output_rank;
+    memcpy(execution->result->output_dims, execution->request->plan->output_dims,
+           sizeof(execution->result->output_dims));
     yvex_core_text_copy(execution->result->artifact_identity,
                         sizeof(execution->result->artifact_identity),
                         summary->artifact_identity);
     return YVEX_OK;
 }
 static int audio_vae_decode_cpu(yvex_materialization_session *session,
-                                const yvex_minimax_h3_audio_decode_options *options,
-                                yvex_minimax_h3_audio_decode_result *result,
-                                yvex_minimax_h3_component_execution_failure *failure,
+                                const yvex_component_execution_request *options,
+                                yvex_component_execution_result *result,
+                                yvex_component_failure *failure,
                                 yvex_error *err)
 {
     audio_execution execution;
@@ -671,22 +674,22 @@ static int audio_vae_decode_cpu(yvex_materialization_session *session,
     if (failure) memset(failure, 0, sizeof(*failure));
     memset(&execution, 0, sizeof(execution));
     execution.session = session;
-    execution.options = options;
+    execution.request = options;
     execution.result = result;
     execution.failure = failure;
     execution.err = err;
-    if (!options || !result)
+    if (!options || !options->plan || !result)
         return audio_execution_refuse(&execution,
-                                      YVEX_MINIMAX_H3_COMPONENT_EXECUTION_INVALID_ARGUMENT,
+                                      YVEX_COMPONENT_FAILURE_INVALID_ARGUMENT,
                                       NULL, 2ull, 0ull, YVEX_ERR_INVALID_ARG,
                                       "Audio VAE decode requires options and result");
-    execution.workspace.maximum_bytes = options->max_workspace_bytes;
+    execution.workspace.maximum_bytes = options->plan->workspace_bytes;
     rc = audio_decode_validate(&execution);
     if (rc != YVEX_OK) return rc;
-    length = options->latent_steps;
-    rc = audio_buffer_open(&execution, &current, options->batch * channels * length);
+    length = options->plan->geometry[0];
+    rc = audio_buffer_open(&execution, &current, options->plan->batch * channels * length);
     memset(&geometry, 0, sizeof(geometry));
-    geometry.batch = options->batch;
+    geometry.batch = options->plan->batch;
     geometry.input_channels = 32ull;
     geometry.output_channels = channels;
     geometry.input_length = length;
@@ -695,8 +698,8 @@ static int audio_vae_decode_cpu(yvex_materialization_session *session,
     geometry.dilation = 1ull;
     if (rc == YVEX_OK)
         rc = audio_conv_execute(&execution, "dec_in_proj", &geometry,
-                                options->latent,
-                                options->batch * 32ull * length,
+                                options->input,
+                                options->plan->batch * 32ull * length,
                                 current.data, current.count, 0, 1);
     geometry.input_channels = channels;
     geometry.output_channels = 1024ull;
@@ -704,7 +707,7 @@ static int audio_vae_decode_cpu(yvex_materialization_session *session,
     geometry.padding = 3ull;
     channels = 1024ull;
     if (rc == YVEX_OK)
-        rc = audio_buffer_open(&execution, &next, options->batch * channels * length);
+        rc = audio_buffer_open(&execution, &next, options->plan->batch * channels * length);
     if (rc == YVEX_OK)
         rc = audio_conv_execute(&execution, "decoder.conv_pre", &geometry,
                                 current.data, current.count, next.data, next.count, 1, 1);
@@ -714,7 +717,7 @@ static int audio_vae_decode_cpu(yvex_materialization_session *session,
     for (stage = 0ull; stage < 7ull && rc == YVEX_OK; ++stage) {
         unsigned long long next_channels = 0ull;
         unsigned long long next_length = 0ull;
-        rc = audio_stage_execute(&execution, stage, &current, options->batch,
+        rc = audio_stage_execute(&execution, stage, &current, options->plan->batch,
                                  channels, length, &next, &next_channels, &next_length);
         if (rc == YVEX_OK) {
             audio_buffer_close(&execution, &current);
@@ -729,10 +732,10 @@ static int audio_vae_decode_cpu(yvex_materialization_session *session,
     if (rc == YVEX_OK) rc = audio_buffer_open(&execution, &scratch, length * 2ull);
     if (rc == YVEX_OK)
         rc = audio_activation_execute(
-            &execution, "decoder.activation_post", current.data, options->batch,
+            &execution, "decoder.activation_post", current.data, options->plan->batch,
             channels, length, activated.data, scratch.data, scratch.count);
     memset(&geometry, 0, sizeof(geometry));
-    geometry.batch = options->batch;
+    geometry.batch = options->plan->batch;
     geometry.input_channels = channels;
     geometry.output_channels = 1ull;
     geometry.input_length = length;
@@ -754,7 +757,7 @@ static int audio_vae_decode_cpu(yvex_materialization_session *session,
         }
         if (!audio_execution_identity(summary, options, result))
             rc = audio_execution_refuse(&execution,
-                                         YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NUMERIC,
+                                         YVEX_COMPONENT_FAILURE_NUMERIC,
                                          NULL, 1ull, 0ull, YVEX_ERR_STATE,
                                          "Audio VAE execution identity could not be sealed");
         else
@@ -768,7 +771,7 @@ static int audio_vae_decode_cpu(yvex_materialization_session *session,
     return rc;
 }
 static int video_execution_refuse(video_execution *execution,
-                                  yvex_minimax_h3_component_execution_code code,
+                                  yvex_component_failure_code code,
                                   const char *tensor_name, unsigned long long expected,
                                   unsigned long long actual, yvex_status status,
                                   const char *reason)
@@ -789,10 +792,10 @@ static int video_execution_refuse(video_execution *execution,
 }
 static int video_cancel_check(video_execution *execution)
 {
-    if (execution->options->cancelled &&
-        execution->options->cancelled(execution->options->cancellation_context))
+    if (execution->request->cancelled &&
+        execution->request->cancelled(execution->request->cancellation_context))
         return video_execution_refuse(
-            execution, YVEX_MINIMAX_H3_COMPONENT_EXECUTION_CANCELLED,
+            execution, YVEX_COMPONENT_FAILURE_CANCELLED,
             NULL, 0ull, 1ull, YVEX_ERR_CANCELLED,
             "Visual VAE execution was cancelled at a block boundary");
     return YVEX_OK;
@@ -837,7 +840,7 @@ static int video_name(video_execution *execution, char output[256],
     int written = snprintf(output, 256u, "%s%s", prefix, suffix);
     if (written < 0 || written >= 256)
         return video_execution_refuse(
-            execution, YVEX_MINIMAX_H3_COMPONENT_EXECUTION_TENSOR_CONTRACT,
+            execution, YVEX_COMPONENT_FAILURE_TENSOR_CONTRACT,
             prefix, 255ull, written < 0 ? 0ull : (unsigned long long)written,
             YVEX_ERR_BOUNDS, "Visual VAE tensor name exceeded its bound");
     return YVEX_OK;
@@ -863,8 +866,8 @@ static int video_linear(video_execution *execution, const char *prefix,
             weight.data, weight.count, bias.data, bias.count, output_width,
             output, rows * output_width, execution->err);
     if (rc != YVEX_OK && execution->failure &&
-        execution->failure->code == YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NONE) {
-        execution->failure->code = YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NUMERIC;
+        execution->failure->code == YVEX_COMPONENT_FAILURE_NONE) {
+        execution->failure->code = YVEX_COMPONENT_FAILURE_NUMERIC;
         execution->failure->reason = yvex_error_message(execution->err);
         yvex_core_text_copy(execution->failure->tensor_name,
                             sizeof(execution->failure->tensor_name), prefix);
@@ -888,7 +891,7 @@ static int video_rms_norm(video_execution *execution, const char *prefix,
         if (!yvex_attention_rms_norm(output + row * width, width,
                                      weight.data, 1.0e-5))
             rc = video_execution_refuse(
-                execution, YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NUMERIC,
+                execution, YVEX_COMPONENT_FAILURE_NUMERIC,
                 name, width, row, YVEX_ERR_FORMAT,
                 "Visual VAE RMSNorm produced a non-finite value");
     video_buffer_close(execution, &weight);
@@ -907,7 +910,7 @@ static int video_scale_residual(video_execution *execution, const char *name,
             float value = hidden[index] + delta[index] * scale.data[index % width];
             if (!isfinite(value)) {
                 rc = video_execution_refuse(
-                    execution, YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NUMERIC,
+                    execution, YVEX_COMPONENT_FAILURE_NUMERIC,
                     name, rows * width, index, YVEX_ERR_FORMAT,
                     "Visual VAE residual update produced a non-finite value");
                 break;
@@ -927,7 +930,7 @@ static int video_qk_normalize(video_execution *execution, float *qkv,
             if (!yvex_attention_unit_rms_norm(base, 64ull, 1.0e-5) ||
                 !yvex_attention_unit_rms_norm(base + 64ull, 64ull, 1.0e-5))
                 return video_execution_refuse(
-                    execution, YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NUMERIC,
+                    execution, YVEX_COMPONENT_FAILURE_NUMERIC,
                     NULL, rows * 32ull, row * 32ull + head, YVEX_ERR_FORMAT,
                     "Visual VAE Q/K normalization produced a non-finite value");
         }
@@ -935,7 +938,7 @@ static int video_qk_normalize(video_execution *execution, float *qkv,
 }
 static void video_rope_apply(const video_execution *execution, float *qkv)
 {
-    const yvex_minimax_h3_video_decode_options *options = execution->options;
+    const yvex_component_execution_request *options = execution->request;
     const float tau = 6.28318530717958647692f;
     unsigned long long token, head;
     for (token = 0ull; token < execution->rows; ++token) {
@@ -943,17 +946,17 @@ static void video_rope_apply(const video_execution *execution, float *qkv)
         float cosine[24], sine[24];
         unsigned long long coordinate, frequency;
         if (token < execution->patches) {
-            unsigned long long plane = options->latent_height * options->latent_width;
+            unsigned long long plane = options->plan->geometry[1] * options->plan->geometry[2];
             unsigned long long temporal = token / plane;
             unsigned long long spatial = token % plane;
-            unsigned long long height = spatial / options->latent_width;
-            unsigned long long width = spatial % options->latent_width;
+            unsigned long long height = spatial / options->plan->geometry[2];
+            unsigned long long width = spatial % options->plan->geometry[2];
             coordinates[0] = 2.0f * ((float)temporal + 0.5f) /
-                                 (float)options->latent_frames - 1.0f;
+                                 (float)options->plan->geometry[0] - 1.0f;
             coordinates[1] = 2.0f * ((float)height + 0.5f) /
-                                 (float)options->latent_height - 1.0f;
+                                 (float)options->plan->geometry[1] - 1.0f;
             coordinates[2] = 2.0f * ((float)width + 0.5f) /
-                                 (float)options->latent_width - 1.0f;
+                                 (float)options->plan->geometry[2] - 1.0f;
         }
         for (coordinate = 0ull; coordinate < 3ull; ++coordinate)
             for (frequency = 0ull; frequency < 8ull; ++frequency) {
@@ -985,7 +988,7 @@ static int video_block_name(video_execution *execution, char output[256],
                            block, suffix);
     if (written < 0 || written >= 256)
         return video_execution_refuse(
-            execution, YVEX_MINIMAX_H3_COMPONENT_EXECUTION_TENSOR_CONTRACT,
+            execution, YVEX_COMPONENT_FAILURE_TENSOR_CONTRACT,
             suffix, 255ull, written < 0 ? 0ull : (unsigned long long)written,
             YVEX_ERR_BOUNDS, "Visual VAE block tensor name exceeded its bound");
     return YVEX_OK;
@@ -1043,8 +1046,8 @@ static int video_block_execute(video_execution *execution,
         rc = video_scale_residual(execution, name, projected->data,
                                   execution->rows, 2048ull, hidden->data);
     if (rc != YVEX_OK && execution->failure &&
-        execution->failure->code == YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NONE) {
-        execution->failure->code = YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NUMERIC;
+        execution->failure->code == YVEX_COMPONENT_FAILURE_NONE) {
+        execution->failure->code = YVEX_COMPONENT_FAILURE_NUMERIC;
         execution->failure->reason = yvex_error_message(execution->err);
     }
     return rc;
@@ -1060,9 +1063,9 @@ static int video_final_norm(video_execution *execution, yvex_graph_component_buf
         rc = yvex_graph_layer_norm_f32(hidden->data, execution->rows, 2048ull,
                                        weight.data, bias.data, 1.0e-5, execution->err);
     if (rc != YVEX_OK && execution->failure &&
-        execution->failure->code == YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NONE)
+        execution->failure->code == YVEX_COMPONENT_FAILURE_NONE)
         rc = video_execution_refuse(
-            execution, YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NUMERIC,
+            execution, YVEX_COMPONENT_FAILURE_NUMERIC,
             "decoder.norm_out", execution->rows * 2048ull, 0ull, rc,
             "Visual VAE final LayerNorm failed");
     video_buffer_close(execution, &bias);
@@ -1070,8 +1073,8 @@ static int video_final_norm(video_execution *execution, yvex_graph_component_buf
     return rc;
 }
 static int video_execution_identity(const yvex_materialization_summary *summary,
-                                    const yvex_minimax_h3_video_decode_options *options,
-                                    yvex_minimax_h3_video_decode_result *result)
+                                    const yvex_component_execution_request *options,
+                                    yvex_component_execution_result *result)
 {
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
@@ -1082,18 +1085,16 @@ static int video_execution_identity(const yvex_materialization_summary *summary,
                        ? "yvex.minimax-h3.video-vae.cpu.reduced-v1"
                        : "yvex.minimax-h3.video-vae.cpu.geometry-v2") ||
         !yvex_sha256_update_text(&hash, summary->artifact_identity) ||
-        !yvex_sha256_update_u64_be(&hash, options->batch) ||
-        !yvex_sha256_update_u64_be(&hash, options->latent_channels) ||
-        !yvex_sha256_update_u64_be(&hash, options->latent_frames) ||
-        !yvex_sha256_update_u64_be(&hash, options->latent_height) ||
-        !yvex_sha256_update_u64_be(&hash, options->latent_width))
+        !yvex_sha256_update_u64_be(&hash, options->plan->batch) ||
+        !yvex_sha256_update_u64_be(&hash, 24ull) ||
+        !yvex_sha256_update_u64_be(&hash, options->plan->geometry[0]) ||
+        !yvex_sha256_update_u64_be(&hash, options->plan->geometry[1]) ||
+        !yvex_sha256_update_u64_be(&hash, options->plan->geometry[2]))
         return 0;
-    for (index = 0ull; index < result->batch * options->latent_channels *
-                                     options->latent_frames * options->latent_height *
-                                     options->latent_width; ++index) {
+    for (index = 0ull; index < options->plan->input_values; ++index) {
         uint32_t bits;
         unsigned char bytes[4];
-        memcpy(&bits, &options->latent[index], sizeof(bits));
+        memcpy(&bits, &options->input[index], sizeof(bits));
         bytes[0] = (unsigned char)(bits >> 24u);
         bytes[1] = (unsigned char)(bits >> 16u);
         bytes[2] = (unsigned char)(bits >> 8u);
@@ -1119,101 +1120,104 @@ static int video_decode_validate(video_execution *execution)
     const yvex_materialization_summary *summary =
         yvex_materialization_session_summary(execution->session);
     unsigned long long input_values = 0ull, output_values = 0ull, index;
-    if (!execution->options || !execution->result || !execution->options->latent ||
-        !execution->options->output || execution->options->batch != 1ull ||
-        execution->options->latent_channels != 24ull ||
-        !execution->options->latent_frames || !execution->options->latent_height ||
-        !execution->options->latent_width ||
-        !execution->options->max_workspace_bytes)
+    if (!execution->request || !execution->request->plan ||
+        !execution->result || !execution->request->input ||
+        !execution->request->output || execution->request->plan->batch != 1ull ||
+        execution->request->plan->geometry_rank != 3u ||
+        !execution->request->plan->geometry[0] ||
+        !execution->request->plan->geometry[1] ||
+        !execution->request->plan->geometry[2] ||
+        !execution->request->plan->workspace_bytes)
         return video_execution_refuse(
-            execution, YVEX_MINIMAX_H3_COMPONENT_EXECUTION_INVALID_ARGUMENT,
+            execution, YVEX_COMPONENT_FAILURE_INVALID_ARGUMENT,
             NULL, 1ull,
-            execution->options ? execution->options->output_capacity : 0ull,
+            execution->request ? execution->request->output_capacity : 0ull,
             YVEX_ERR_INVALID_ARG,
             "Visual VAE decode requires batch one, 24 channels, and positive latent geometry");
-    if (!yvex_core_u64_mul(execution->options->latent_frames,
-                           execution->options->latent_height, &execution->patches) ||
-        !yvex_core_u64_mul(execution->patches, execution->options->latent_width,
+    if (!yvex_core_u64_mul(execution->request->plan->geometry[0],
+                           execution->request->plan->geometry[1], &execution->patches) ||
+        !yvex_core_u64_mul(execution->patches,
+                           execution->request->plan->geometry[2],
                            &execution->patches) ||
         !yvex_core_u64_add(execution->patches, 5ull, &execution->rows) ||
-        execution->options->latent_frames > ULLONG_MAX / 4ull ||
-        execution->options->latent_height > ULLONG_MAX / 16ull ||
-        execution->options->latent_width > ULLONG_MAX / 16ull ||
+        execution->request->plan->geometry[0] > ULLONG_MAX / 4ull ||
+        execution->request->plan->geometry[1] > ULLONG_MAX / 16ull ||
+        execution->request->plan->geometry[2] > ULLONG_MAX / 16ull ||
         execution->rows > ULLONG_MAX / 16384ull ||
         !yvex_core_u64_mul(execution->patches, 24ull, &input_values) ||
         !yvex_core_u64_mul(execution->patches, 3072ull, &output_values) ||
         output_values > (unsigned long long)SIZE_MAX / sizeof(float) ||
-        execution->options->output_capacity < output_values)
+        execution->request->output_capacity < output_values)
         return video_execution_refuse(
-            execution, YVEX_MINIMAX_H3_COMPONENT_EXECUTION_INVALID_ARGUMENT,
-            NULL, output_values, execution->options->output_capacity,
+            execution, YVEX_COMPONENT_FAILURE_INVALID_ARGUMENT,
+            NULL, output_values, execution->request->output_capacity,
             YVEX_ERR_BOUNDS,
             "Visual VAE latent geometry or RGB output extent exceeded its bound");
     if (!summary || !summary->committed ||
         strcmp(summary->artifact_identity, VIDEO_ARTIFACT_IDENTITY) != 0)
         return video_execution_refuse(
-            execution, YVEX_MINIMAX_H3_COMPONENT_EXECUTION_LIFECYCLE,
+            execution, YVEX_COMPONENT_FAILURE_LIFECYCLE,
             NULL, 1ull, summary ? (unsigned long long)summary->committed : 0ull,
             YVEX_ERR_STATE,
             "Visual VAE decode requires the committed exact component artifact");
     for (index = 0ull; index < input_values; ++index)
-        if (!isfinite(execution->options->latent[index]))
+        if (!isfinite(execution->request->input[index]))
             return video_execution_refuse(
-                execution, YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NUMERIC,
+                execution, YVEX_COMPONENT_FAILURE_NUMERIC,
                 NULL, input_values, index, YVEX_ERR_FORMAT,
                 "Visual VAE latent input contains a non-finite value");
     execution->result->batch = 1ull;
-    execution->result->frames = execution->options->latent_frames * 4ull;
-    execution->result->height = execution->options->latent_height * 16ull;
-    execution->result->width = execution->options->latent_width * 16ull;
     execution->result->output_values = output_values;
+    execution->result->output_rank = execution->request->plan->output_rank;
+    memcpy(execution->result->output_dims, execution->request->plan->output_dims,
+           sizeof(execution->result->output_dims));
     yvex_core_text_copy(execution->result->artifact_identity,
                         sizeof(execution->result->artifact_identity),
                         summary->artifact_identity);
     return YVEX_OK;
 }
-static void video_latent_pack(const yvex_minimax_h3_video_decode_options *options,
+static void video_latent_pack(const yvex_component_execution_request *options,
                               unsigned long long patches, float *packed)
 {
     unsigned long long patch, channel;
     for (patch = 0ull; patch < patches; ++patch)
         for (channel = 0ull; channel < 24ull; ++channel)
-            packed[patch * 24ull + channel] = options->latent[channel * patches + patch];
+            packed[patch * 24ull + channel] = options->input[channel * patches + patch];
 }
 static void video_output_unpack(const yvex_graph_component_buffer *patch_output,
-                                const yvex_minimax_h3_video_decode_options *options,
-                                yvex_minimax_h3_video_decode_result *result)
+                                const yvex_component_execution_request *options,
+                                yvex_component_execution_result *result)
 {
     unsigned long long patch, value;
-    unsigned long long input_plane = options->latent_height * options->latent_width;
-    unsigned long long output_plane = result->height * result->width;
+    unsigned long long input_plane = options->plan->geometry[1] * options->plan->geometry[2];
+    unsigned long long output_plane = result->output_dims[3] * result->output_dims[4];
     for (patch = 0ull; patch < patch_output->count / 3072ull; ++patch) {
         unsigned long long temporal = patch / input_plane;
         unsigned long long spatial = patch % input_plane;
-        unsigned long long height = spatial / options->latent_width;
-        unsigned long long width = spatial % options->latent_width;
+        unsigned long long height = spatial / options->plan->geometry[2];
+        unsigned long long width = spatial % options->plan->geometry[2];
         for (value = 0ull; value < 3072ull; ++value) {
             unsigned long long channel = value / 1024ull;
             unsigned long long within = value % 1024ull;
             unsigned long long frame = within / 256ull;
             unsigned long long pixel = within % 256ull;
-            unsigned long long output_index = channel * result->frames * output_plane +
+            unsigned long long output_index = channel * result->output_dims[2] * output_plane +
                 (temporal * 4ull + frame) * output_plane +
-                (height * 16ull + pixel / 16ull) * result->width +
+                (height * 16ull + pixel / 16ull) * result->output_dims[4] +
                 width * 16ull + pixel % 16ull;
             options->output[output_index] = patch_output->data[patch * 3072ull + value];
         }
     }
 }
 static int video_vae_decode_cpu(yvex_materialization_session *session,
-                                const yvex_minimax_h3_video_decode_options *options,
-                                yvex_minimax_h3_video_decode_result *result,
-                                yvex_minimax_h3_component_execution_failure *failure,
+                                const yvex_component_execution_request *options,
+                                yvex_component_execution_result *result,
+                                yvex_component_failure *failure,
                                 yvex_error *err)
 {
     video_execution execution = {
         .session = session,
-        .options = options,
+        .request = options,
         .result = result,
         .failure = failure,
         .err = err,
@@ -1226,12 +1230,12 @@ static int video_vae_decode_cpu(yvex_materialization_session *session,
     int rc;
     if (result) memset(result, 0, sizeof(*result));
     if (failure) memset(failure, 0, sizeof(*failure));
-    if (!options || !result)
+    if (!options || !options->plan || !result)
         return video_execution_refuse(
-            &execution, YVEX_MINIMAX_H3_COMPONENT_EXECUTION_INVALID_ARGUMENT,
+            &execution, YVEX_COMPONENT_FAILURE_INVALID_ARGUMENT,
             NULL, 2ull, 0ull, YVEX_ERR_INVALID_ARG,
             "Visual VAE decode requires options and result");
-    execution.workspace.maximum_bytes = options->max_workspace_bytes;
+    execution.workspace.maximum_bytes = options->plan->workspace_bytes;
     rc = video_decode_validate(&execution);
     if (rc == YVEX_OK) rc = video_buffer_open(&execution, &packed, execution.patches * 24ull);
     if (rc == YVEX_OK) rc = video_buffer_open(&execution, &post, execution.patches * 24ull);
@@ -1276,7 +1280,7 @@ static int video_vae_decode_cpu(yvex_materialization_session *session,
             yvex_materialization_session_summary(session);
         if (!video_execution_identity(summary, options, result))
             rc = video_execution_refuse(
-                &execution, YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NUMERIC,
+                &execution, YVEX_COMPONENT_FAILURE_NUMERIC,
                 NULL, 1ull, 0ull, YVEX_ERR_STATE,
                 "Visual VAE execution identity could not be sealed");
         else
@@ -1449,77 +1453,6 @@ static const yvex_artifact_catalog_contract transformer_contract = {
     sizeof(transformer_metadata) / sizeof(transformer_metadata[0]), 2ull,
     TRANSFORMER_ELEMENTS, 32ull,
 };
-static int audio_vae_execute_artifact_cpu(
-    const yvex_artifact *artifact, const yvex_gguf *gguf,
-    const yvex_tensor_table *tensors,
-    const yvex_minimax_h3_audio_decode_options *options,
-    yvex_minimax_h3_audio_decode_result *result,
-    yvex_minimax_h3_component_execution_failure *failure, yvex_error *err)
-{
-    yvex_complete_artifact_admission admission;
-    yvex_artifact_admission_failure admission_failure;
-    yvex_materialization_options materialization_options;
-    yvex_materialization_failure materialization_failure;
-    yvex_materialization_plan *plan = NULL;
-    yvex_materialization_session *session = NULL;
-    yvex_runtime_residency *residency = NULL;
-    yvex_runtime_residency_options residency_options = {0};
-    yvex_runtime_residency_failure residency_failure;
-    audio_execution execution = {0};
-    int admitted = 0;
-    int rc;
-    if (result) memset(result, 0, sizeof(*result));
-    if (failure) memset(failure, 0, sizeof(*failure));
-    execution.options = options;
-    execution.result = result;
-    execution.failure = failure;
-    execution.err = err;
-    if (!artifact || !gguf || !tensors || !options || !result)
-        return audio_execution_refuse(
-            &execution, YVEX_MINIMAX_H3_COMPONENT_EXECUTION_INVALID_ARGUMENT,
-            NULL, 5ull, 0ull, YVEX_ERR_INVALID_ARG,
-            "Audio VAE artifact execution requires structural inputs and output state");
-    rc = component_admit(
-        "audio_vae", artifact, gguf, tensors, &admission, &admission_failure, err);
-    admitted = rc == YVEX_OK;
-    yvex_materialization_options_default(&materialization_options);
-    materialization_options.max_chunk_bytes = 64ull * 1024ull * 1024ull;
-    if (materialization_options.max_chunk_bytes > options->max_workspace_bytes)
-        materialization_options.max_chunk_bytes = options->max_workspace_bytes;
-    if (rc == YVEX_OK)
-        rc = yvex_materialization_plan_build(
-            &plan, &admission, artifact, gguf, tensors, NULL,
-            &materialization_options, &materialization_failure, err);
-    if (rc == YVEX_OK)
-        rc = yvex_materialization_session_open(
-            &session, plan, artifact, &materialization_options,
-            &materialization_failure, err);
-    if (rc == YVEX_OK)
-        rc = yvex_materialization_session_commit(session, &materialization_failure, err);
-    residency_options.maximum_host_bytes = admission.payload_bytes;
-    if (rc == YVEX_OK)
-        rc = yvex_runtime_component_residency_prepare(
-            &residency, session, admission.logical_component_identity,
-            &residency_options, &residency_failure, err);
-    if (rc == YVEX_OK)
-        rc = audio_vae_decode_cpu(session, options, result, failure, err);
-    if (rc != YVEX_OK && failure && failure->code == YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NONE) {
-        failure->code = admitted ? YVEX_MINIMAX_H3_COMPONENT_EXECUTION_MATERIALIZATION
-                                 : YVEX_MINIMAX_H3_COMPONENT_EXECUTION_LIFECYCLE;
-        failure->reason = yvex_error_message(err);
-    }
-    {
-        yvex_error cleanup;
-        int cleanup_rc = yvex_runtime_residency_close(&residency, &cleanup);
-        if (cleanup_rc != YVEX_OK) {
-            rc = cleanup_rc;
-            if (err) *err = cleanup;
-        }
-    }
-    yvex_materialization_session_close(session);
-    yvex_materialization_plan_close(plan);
-    return rc;
-}
 static const yvex_artifact_component_metadata video_metadata[] = {
     {"general.architecture", "minimax-h3"},
     {"general.name", "video_vae"},
@@ -1596,77 +1529,95 @@ static int component_admit(const char *component, const yvex_artifact *artifact,
     return yvex_artifact_admit_catalog(
         artifact, gguf, tensors, contract, out, failure, err);
 }
-static int video_vae_execute_artifact_cpu(
-    const yvex_artifact *artifact, const yvex_gguf *gguf,
-    const yvex_tensor_table *tensors,
-    const yvex_minimax_h3_video_decode_options *options,
-    yvex_minimax_h3_video_decode_result *result,
-    yvex_minimax_h3_component_execution_failure *failure, yvex_error *err)
+
+static int component_binding_refuse(yvex_component_failure *failure,
+                                    yvex_component_failure_code code,
+                                    unsigned long long expected,
+                                    unsigned long long actual, yvex_status status,
+                                    const char *reason, yvex_error *err)
 {
-    yvex_complete_artifact_admission admission;
-    yvex_artifact_admission_failure admission_failure;
-    yvex_materialization_options materialization_options;
-    yvex_materialization_failure materialization_failure;
-    yvex_materialization_plan *plan = NULL;
-    yvex_materialization_session *session = NULL;
-    yvex_runtime_residency *residency = NULL;
-    yvex_runtime_residency_options residency_options = {0};
-    yvex_runtime_residency_failure residency_failure;
-    video_execution execution = {0};
-    int admitted = 0;
-    int rc;
-    if (result) memset(result, 0, sizeof(*result));
-    if (failure) memset(failure, 0, sizeof(*failure));
-    execution.options = options;
-    execution.result = result;
-    execution.failure = failure;
-    execution.err = err;
-    if (!artifact || !gguf || !tensors || !options || !result)
-        return video_execution_refuse(
-            &execution, YVEX_MINIMAX_H3_COMPONENT_EXECUTION_INVALID_ARGUMENT,
-            NULL, 5ull, 0ull, YVEX_ERR_INVALID_ARG,
-            "Visual VAE artifact execution requires structural inputs and output state");
-    rc = component_admit(
-        "video_vae", artifact, gguf, tensors, &admission, &admission_failure, err);
-    admitted = rc == YVEX_OK;
-    yvex_materialization_options_default(&materialization_options);
-    materialization_options.max_chunk_bytes = 64ull * 1024ull * 1024ull;
-    if (materialization_options.max_chunk_bytes > options->max_workspace_bytes)
-        materialization_options.max_chunk_bytes = options->max_workspace_bytes;
-    if (rc == YVEX_OK)
-        rc = yvex_materialization_plan_build(
-            &plan, &admission, artifact, gguf, tensors, NULL,
-            &materialization_options, &materialization_failure, err);
-    if (rc == YVEX_OK)
-        rc = yvex_materialization_session_open(
-            &session, plan, artifact, &materialization_options,
-            &materialization_failure, err);
-    if (rc == YVEX_OK)
-        rc = yvex_materialization_session_commit(session, &materialization_failure, err);
-    residency_options.maximum_host_bytes = admission.payload_bytes;
-    if (rc == YVEX_OK)
-        rc = yvex_runtime_component_residency_prepare(
-            &residency, session, admission.logical_component_identity,
-            &residency_options, &residency_failure, err);
-    if (rc == YVEX_OK)
-        rc = video_vae_decode_cpu(session, options, result, failure, err);
-    if (rc != YVEX_OK && failure &&
-        failure->code == YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NONE) {
-        failure->code = admitted ? YVEX_MINIMAX_H3_COMPONENT_EXECUTION_MATERIALIZATION
-                                 : YVEX_MINIMAX_H3_COMPONENT_EXECUTION_LIFECYCLE;
-        failure->reason = yvex_error_message(err);
+    if (failure) {
+        memset(failure, 0, sizeof(*failure));
+        failure->code = code;
+        failure->expected = expected;
+        failure->actual = actual;
+        failure->reason = reason;
     }
-    {
-        yvex_error cleanup;
-        int cleanup_rc = yvex_runtime_residency_close(&residency, &cleanup);
-        if (cleanup_rc != YVEX_OK) {
-            rc = cleanup_rc;
-            if (err) *err = cleanup;
-        }
-    }
-    yvex_materialization_session_close(session);
-    yvex_materialization_plan_close(plan);
-    return rc;
+    yvex_error_set(err, status, "graph.minimax_h3.component.plan", reason);
+    return status;
+}
+
+static int audio_component_plan(const yvex_component_plan_request *request,
+                                yvex_component_plan *out,
+                                yvex_component_failure *failure, yvex_error *err)
+{
+    unsigned long long values;
+
+    if (!request || !out || request->geometry_rank != 1u || !request->geometry[0])
+        return component_binding_refuse(
+            failure, YVEX_COMPONENT_FAILURE_INVALID_ARGUMENT, 1ull,
+            request ? request->geometry_rank : 0ull, YVEX_ERR_INVALID_ARG,
+            "Audio VAE requires one latent-step geometry", err);
+    if (!yvex_core_u64_mul(request->batch, 32ull, &values) ||
+        !yvex_core_u64_mul(values, request->geometry[0], &out->input_values) ||
+        !yvex_core_u64_mul(request->batch, request->geometry[0], &values) ||
+        !yvex_core_u64_mul(values, 800ull, &out->output_values))
+        return component_binding_refuse(
+            failure, YVEX_COMPONENT_FAILURE_BUDGET, 1ull, 0ull,
+            YVEX_ERR_BOUNDS, "Audio VAE geometry overflowed", err);
+    out->output_rank = 3u;
+    out->output_dims[0] = request->batch;
+    out->output_dims[1] = 1ull;
+    out->output_dims[2] = request->geometry[0] * 800ull;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+static int video_component_plan(const yvex_component_plan_request *request,
+                                yvex_component_plan *out,
+                                yvex_component_failure *failure, yvex_error *err)
+{
+    unsigned long long patches, output_plane;
+
+    if (!request || !out || request->batch != 1ull ||
+        request->geometry_rank != 3u || !request->geometry[0] ||
+        !request->geometry[1] || !request->geometry[2])
+        return component_binding_refuse(
+            failure, YVEX_COMPONENT_FAILURE_INVALID_ARGUMENT, 3ull,
+            request ? request->geometry_rank : 0ull, YVEX_ERR_INVALID_ARG,
+            "Visual VAE requires batch one and three-dimensional latent geometry", err);
+    if (!yvex_core_u64_mul(request->geometry[0], request->geometry[1], &patches) ||
+        !yvex_core_u64_mul(patches, request->geometry[2], &patches) ||
+        !yvex_core_u64_mul(patches, 24ull, &out->input_values) ||
+        !yvex_core_u64_mul(patches, 3072ull, &out->output_values) ||
+        !yvex_core_u64_mul(request->geometry[1], 16ull, &output_plane) ||
+        request->geometry[0] > ULLONG_MAX / 4ull ||
+        request->geometry[2] > ULLONG_MAX / 16ull)
+        return component_binding_refuse(
+            failure, YVEX_COMPONENT_FAILURE_BUDGET, 1ull, 0ull,
+            YVEX_ERR_BOUNDS, "Visual VAE geometry overflowed", err);
+    out->output_rank = 5u;
+    out->output_dims[0] = 1ull;
+    out->output_dims[1] = 3ull;
+    out->output_dims[2] = request->geometry[0] * 4ull;
+    out->output_dims[3] = output_plane;
+    out->output_dims[4] = request->geometry[2] * 16ull;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+const yvex_component_binding *yvex_component_binding_at(unsigned long long index)
+{
+    static const yvex_component_binding bindings[] = {
+        {YVEX_COMPONENT_BINDING_SCHEMA_V1, 0x6d6d617564696f01ull, 1ull,
+         YVEX_MINIMAX_H3_TARGET_ID, "audio-vae", "audio_vae", YVEX_BACKEND_KIND_CPU,
+         audio_component_plan, component_admit, audio_vae_decode_cpu},
+        {YVEX_COMPONENT_BINDING_SCHEMA_V1, 0x6d6d766964656f01ull, 1ull,
+         YVEX_MINIMAX_H3_TARGET_ID, "video-vae", "video_vae", YVEX_BACKEND_KIND_CPU,
+         video_component_plan, component_admit, video_vae_decode_cpu},
+    };
+
+    return index < sizeof(bindings) / sizeof(bindings[0]) ? &bindings[index] : NULL;
 }
 static const char *const text_layer_weight_suffixes[YVEX_BACKEND_TEXT_LAYER_WEIGHT_COUNT] = {
     "input_layernorm.weight",
@@ -1904,8 +1855,6 @@ const yvex_minimax_h3_graph_api *yvex_graph_register_minimax_h3(void)
     static const yvex_minimax_h3_graph_api api = {
         t2va_plan_build, minimax_scheduler_step, component_admit,
         text_encoder_artifact_cuda,
-        audio_vae_decode_cpu, audio_vae_execute_artifact_cpu,
-        video_vae_decode_cpu, video_vae_execute_artifact_cpu,
     };
     return &api;
 }

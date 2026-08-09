@@ -1155,3 +1155,299 @@ int yvex_runtime_residency_invalidate(yvex_runtime_residency *residency,
     yvex_error_clear(err);
     return YVEX_OK;
 }
+
+static int component_runtime_refuse(yvex_component_failure *failure,
+                                    yvex_component_failure_code code,
+                                    unsigned long long expected,
+                                    unsigned long long actual, yvex_status status,
+                                    const char *reason, yvex_error *err)
+{
+    if (failure) {
+        memset(failure, 0, sizeof(*failure));
+        failure->code = code;
+        failure->expected = expected;
+        failure->actual = actual;
+        failure->reason = reason;
+    }
+    yvex_error_set(err, status, "runtime.component", reason);
+    return status;
+}
+
+static const yvex_component_binding *component_execution_binding_find(
+    const char *target_id, const char *component_id)
+{
+    unsigned long long index;
+
+    if (!target_id || !component_id) return NULL;
+    for (index = 0ull;; ++index) {
+        const yvex_component_binding *binding = yvex_component_binding_at(index);
+
+        if (!binding) return NULL;
+        if (binding->target_id && binding->component_id &&
+            strcmp(binding->target_id, target_id) == 0 &&
+            strcmp(binding->component_id, component_id) == 0)
+            return binding;
+    }
+}
+
+static int component_plan_identity(yvex_component_plan *plan)
+{
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    unsigned int index;
+
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.graph.component.plan.v1") ||
+        !yvex_sha256_update_u64(&hash, plan->binding_id) ||
+        !yvex_sha256_update_u64(&hash, plan->binding_version) ||
+        !yvex_sha256_update_text(&hash, plan->target_id) ||
+        !yvex_sha256_update_text(&hash, plan->component_id) ||
+        !yvex_sha256_update_u64(&hash, plan->backend) ||
+        !yvex_sha256_update_u64(&hash, plan->batch) ||
+        !yvex_sha256_update_u64(&hash, plan->geometry_rank))
+        return 0;
+    for (index = 0u; index < plan->geometry_rank; ++index)
+        if (!yvex_sha256_update_u64(&hash, plan->geometry[index])) return 0;
+    if (!yvex_sha256_update_u64(&hash, plan->input_values) ||
+        !yvex_sha256_update_u64(&hash, plan->output_values) ||
+        !yvex_sha256_update_u64(&hash, plan->workspace_bytes) ||
+        !yvex_sha256_update_u64(&hash, plan->output_rank))
+        return 0;
+    for (index = 0u; index < plan->output_rank; ++index)
+        if (!yvex_sha256_update_u64(&hash, plan->output_dims[index])) return 0;
+    if (!yvex_sha256_final(&hash, digest)) return 0;
+    yvex_sha256_hex(digest, plan->identity);
+    return 1;
+}
+
+static int component_plan_build(const yvex_component_plan_request *request,
+                                yvex_component_plan *out,
+                                yvex_component_failure *failure, yvex_error *err)
+{
+    const yvex_component_binding *binding;
+    unsigned long long fixed_bytes = 0ull;
+    int rc;
+
+    if (out) memset(out, 0, sizeof(*out));
+    if (failure) memset(failure, 0, sizeof(*failure));
+    if (!request || !out || !request->target_id || !request->target_id[0] ||
+        !request->component_id || !request->component_id[0] || !request->batch ||
+        !request->geometry_rank ||
+        request->geometry_rank > YVEX_COMPONENT_GEOMETRY_CAP ||
+        !request->maximum_host_bytes ||
+        strlen(request->target_id) >= sizeof(out->target_id) ||
+        strlen(request->component_id) >= sizeof(out->component_id))
+        return component_runtime_refuse(
+            failure, YVEX_COMPONENT_FAILURE_INVALID_ARGUMENT, 1ull, 0ull,
+            YVEX_ERR_INVALID_ARG, "component plan requires complete typed inputs", err);
+    binding = component_execution_binding_find(request->target_id,
+                                               request->component_id);
+    if (!binding || binding->schema_version != YVEX_COMPONENT_BINDING_SCHEMA_V1 ||
+        !binding->binding_id || !binding->binding_version || !binding->plan ||
+        !binding->admission_component || !binding->admission_component[0] ||
+        !binding->admit || !binding->execute)
+        return component_runtime_refuse(
+            failure, YVEX_COMPONENT_FAILURE_UNSUPPORTED, 1ull, 0ull,
+            YVEX_ERR_UNSUPPORTED,
+            "no admitted component execution binding matches target and component", err);
+    if (binding->backend != request->backend)
+        return component_runtime_refuse(
+            failure, YVEX_COMPONENT_FAILURE_UNSUPPORTED, binding->backend,
+            request->backend, YVEX_ERR_UNSUPPORTED,
+            "component execution binding does not admit the requested backend", err);
+    out->schema_version = YVEX_COMPONENT_PLAN_SCHEMA_V1;
+    out->binding_id = binding->binding_id;
+    out->binding_version = binding->binding_version;
+    out->backend = request->backend;
+    out->batch = request->batch;
+    out->geometry_rank = request->geometry_rank;
+    memcpy(out->geometry, request->geometry, sizeof(out->geometry));
+    yvex_core_text_copy(out->target_id, sizeof(out->target_id), request->target_id);
+    yvex_core_text_copy(out->component_id, sizeof(out->component_id), request->component_id);
+    rc = binding->plan(request, out, failure, err);
+    if (rc != YVEX_OK) return rc;
+    if (!out->input_values || !out->output_values || !out->output_rank ||
+        out->output_rank > YVEX_COMPONENT_OUTPUT_RANK_CAP ||
+        !yvex_core_u64_mul(out->input_values, sizeof(float), &out->input_bytes) ||
+        !yvex_core_u64_mul(out->output_values, sizeof(float), &out->output_bytes) ||
+        !yvex_core_u64_add(out->input_bytes, out->output_bytes, &fixed_bytes) ||
+        fixed_bytes >= request->maximum_host_bytes)
+        return component_runtime_refuse(
+            failure, YVEX_COMPONENT_FAILURE_BUDGET, request->maximum_host_bytes,
+            fixed_bytes, YVEX_ERR_BOUNDS,
+            "component input and output exceed the host-memory budget", err);
+    out->workspace_bytes = request->maximum_host_bytes - fixed_bytes;
+    if (!component_plan_identity(out))
+        return component_runtime_refuse(
+            failure, YVEX_COMPONENT_FAILURE_LIFECYCLE, 1ull, 0ull,
+            YVEX_ERR_STATE, "component plan identity construction failed", err);
+    out->complete = 1;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+static int component_plan_validate(const yvex_component_plan *plan,
+                                   yvex_component_failure *failure,
+                                   yvex_error *err)
+{
+    yvex_component_plan_request request;
+    yvex_component_plan canonical;
+    unsigned long long maximum_host_bytes;
+    int rc;
+
+    if (!plan || plan->schema_version != YVEX_COMPONENT_PLAN_SCHEMA_V1 ||
+        !plan->complete || !yvex_sha256_hex_valid(plan->identity) ||
+        !yvex_core_u64_add(plan->input_bytes, plan->output_bytes,
+                           &maximum_host_bytes) ||
+        !yvex_core_u64_add(maximum_host_bytes, plan->workspace_bytes,
+                           &maximum_host_bytes))
+        return component_runtime_refuse(
+            failure, YVEX_COMPONENT_FAILURE_INVALID_ARGUMENT, 1ull, 0ull,
+            YVEX_ERR_INVALID_ARG, "sealed component plan is required", err);
+    memset(&request, 0, sizeof(request));
+    request.target_id = plan->target_id;
+    request.component_id = plan->component_id;
+    request.backend = plan->backend;
+    request.batch = plan->batch;
+    request.geometry_rank = plan->geometry_rank;
+    request.maximum_host_bytes = maximum_host_bytes;
+    memcpy(request.geometry, plan->geometry, sizeof(request.geometry));
+    rc = component_plan_build(&request, &canonical, failure, err);
+    if (rc != YVEX_OK) return rc;
+    if (canonical.binding_id != plan->binding_id ||
+        canonical.binding_version != plan->binding_version ||
+        canonical.input_values != plan->input_values ||
+        canonical.input_bytes != plan->input_bytes ||
+        canonical.output_values != plan->output_values ||
+        canonical.output_bytes != plan->output_bytes ||
+        canonical.workspace_bytes != plan->workspace_bytes ||
+        canonical.output_rank != plan->output_rank ||
+        memcmp(canonical.output_dims, plan->output_dims,
+               sizeof(plan->output_dims)) != 0 ||
+        strcmp(canonical.identity, plan->identity) != 0)
+        return component_runtime_refuse(
+            failure, YVEX_COMPONENT_FAILURE_LIFECYCLE, 1ull, 0ull,
+            YVEX_ERR_FORMAT, "component plan differs from canonical lowering", err);
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+static int component_request_validate(
+    const yvex_component_execution_request *request,
+    const yvex_component_binding **binding, yvex_component_failure *failure,
+    yvex_error *err)
+{
+    int rc;
+
+    if (binding) *binding = NULL;
+    if (!request || !request->plan || !request->input || !request->output ||
+        !binding || request->output_capacity < request->plan->output_values)
+        return component_runtime_refuse(
+            failure, YVEX_COMPONENT_FAILURE_INVALID_ARGUMENT,
+            request && request->plan ? request->plan->output_values : 1ull,
+            request ? request->output_capacity : 0ull, YVEX_ERR_INVALID_ARG,
+            "component execution requires plan, buffers, and output capacity", err);
+    rc = component_plan_validate(request->plan, failure, err);
+    if (rc != YVEX_OK) return rc;
+    *binding = component_execution_binding_find(request->plan->target_id,
+                                                request->plan->component_id);
+    if (!*binding || (*binding)->binding_id != request->plan->binding_id ||
+        (*binding)->binding_version != request->plan->binding_version)
+        return component_runtime_refuse(
+            failure, YVEX_COMPONENT_FAILURE_LIFECYCLE,
+            request->plan->binding_id, *binding ? (*binding)->binding_id : 0ull,
+            YVEX_ERR_FORMAT, "component binding differs from the sealed plan", err);
+    return YVEX_OK;
+}
+
+static int component_resources_open(
+    const yvex_component_binding *binding, const yvex_artifact *artifact,
+    const yvex_gguf *gguf, const yvex_tensor_table *tensors,
+    const yvex_component_plan *component_plan,
+    yvex_materialization_plan **plan, yvex_materialization_session **session,
+    yvex_runtime_residency **residency, yvex_component_failure *failure,
+    yvex_error *err)
+{
+    yvex_complete_artifact_admission admission;
+    yvex_artifact_admission_failure admission_failure;
+    yvex_materialization_options options;
+    yvex_materialization_failure materialization_failure;
+    yvex_runtime_residency_options residency_options = {0};
+    yvex_runtime_residency_failure residency_failure;
+    int rc = binding->admit(binding->admission_component, artifact, gguf, tensors, &admission,
+                            &admission_failure, err);
+
+    yvex_materialization_options_default(&options);
+    options.max_chunk_bytes = 64ull * 1024ull * 1024ull;
+    if (options.max_chunk_bytes > component_plan->workspace_bytes)
+        options.max_chunk_bytes = component_plan->workspace_bytes;
+    if (rc == YVEX_OK)
+        rc = yvex_materialization_plan_build(
+            plan, &admission, artifact, gguf, tensors, NULL, &options,
+            &materialization_failure, err);
+    if (rc == YVEX_OK)
+        rc = yvex_materialization_session_open(
+            session, *plan, artifact, &options, &materialization_failure, err);
+    if (rc == YVEX_OK)
+        rc = yvex_materialization_session_commit(
+            *session, &materialization_failure, err);
+    residency_options.maximum_host_bytes = admission.payload_bytes;
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_component_residency_prepare(
+            residency, *session, admission.logical_component_identity,
+            &residency_options, &residency_failure, err);
+    if (rc != YVEX_OK && failure && failure->code == YVEX_COMPONENT_FAILURE_NONE) {
+        failure->code = rc == YVEX_ERR_FORMAT
+                            ? YVEX_COMPONENT_FAILURE_MATERIALIZATION
+                            : YVEX_COMPONENT_FAILURE_LIFECYCLE;
+        failure->reason = yvex_error_message(err);
+    }
+    return rc;
+}
+
+static int component_execute(
+    const yvex_artifact *artifact, const yvex_gguf *gguf,
+    const yvex_tensor_table *tensors, const yvex_component_execution_request *request,
+    yvex_component_execution_result *result, yvex_component_failure *failure,
+    yvex_error *err)
+{
+    const yvex_component_binding *binding = NULL;
+    yvex_materialization_plan *plan = NULL;
+    yvex_materialization_session *session = NULL;
+    yvex_runtime_residency *residency = NULL;
+    yvex_error primary, cleanup;
+    int rc, cleanup_rc;
+
+    if (result) memset(result, 0, sizeof(*result));
+    if (failure) memset(failure, 0, sizeof(*failure));
+    if (!artifact || !gguf || !tensors || !result)
+        return component_runtime_refuse(
+            failure, YVEX_COMPONENT_FAILURE_INVALID_ARGUMENT, 4ull, 0ull,
+            YVEX_ERR_INVALID_ARG,
+            "component execution requires admitted artifact views and output", err);
+    rc = component_request_validate(request, &binding, failure, err);
+    if (rc == YVEX_OK)
+        rc = component_resources_open(binding, artifact, gguf, tensors,
+                                      request->plan, &plan, &session, &residency,
+                                      failure, err);
+    if (rc == YVEX_OK)
+        rc = binding->execute(session, request, result, failure, err);
+    primary = err ? *err : (yvex_error){0};
+    cleanup_rc = yvex_runtime_residency_close(&residency, &cleanup);
+    yvex_materialization_session_close(session);
+    yvex_materialization_plan_close(plan);
+    if (cleanup_rc != YVEX_OK) {
+        if (err) *err = cleanup;
+        return cleanup_rc;
+    }
+    if (rc != YVEX_OK && err) *err = primary;
+    return rc;
+}
+
+const yvex_runtime_component_api *yvex_runtime_component_api_get(void)
+{
+    static const yvex_runtime_component_api api = {
+        component_plan_build, component_plan_validate, component_execute};
+
+    return &api;
+}

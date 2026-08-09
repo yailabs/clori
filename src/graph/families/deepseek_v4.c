@@ -291,6 +291,7 @@ static int deepseek_tokenizer_policy(yvex_tokenizer_family_policy *out, yvex_err
         out, yvex_model_deepseek_v4_conversation(), YVEX_TOKENIZER_KIND_GGML_GPT2,
         YVEX_TOKENIZER_MODEL_BPE_BYTELEVEL, YVEX_TOKENIZER_PROMPT_CONVERSATION, err) == YVEX_OK;
 }
+static const yvex_family_compiler_adapter deepseek_compiler;
 static const yvex_graph_execution_binding deepseek_execution = {
     .schema_version = YVEX_GRAPH_EXECUTION_BINDING_SCHEMA_V1,
     .adapter_id = YVEX_DEEPSEEK_V4_ADAPTER_ID,
@@ -299,6 +300,9 @@ static const yvex_graph_execution_binding deepseek_execution = {
     .logical_transform_identity = YVEX_SELECTED_DEEPSEEK_TRANSFORM_IDENTITY,
     .operator_family_key = "deepseek",
     .operator_artifact_filename = YVEX_SELECTED_DEEPSEEK_ARTIFACT_FILENAME,
+    .source_manifest_filename = YVEX_SOURCE_RELEASE_MANIFEST_LEAF,
+    .model = yvex_model_register_deepseek_v4,
+    .compiler = &deepseek_compiler,
     .api = &yvex_attention_execution_api};
 static int deepseek_compilation_source_open(
     yvex_family_compilation_source *out,
@@ -364,8 +368,15 @@ static const yvex_family_compiler_adapter deepseek_compiler = {
 const yvex_family_compiler_adapter *yvex_compiler_family_deepseek_v4(void) {
     return &deepseek_compiler;
 }
-const yvex_graph_execution_binding *yvex_graph_execution_at(unsigned long long index) {
-    return index == 0ull ? &deepseek_execution : NULL;
+const yvex_graph_execution_binding *yvex_graph_execution_find(
+    unsigned long long adapter_id, unsigned long long adapter_version,
+    const char *target_id)
+{
+    if ((target_id && strcmp(target_id, deepseek_execution.target_id) == 0) ||
+        (!target_id && adapter_id == deepseek_execution.adapter_id &&
+         adapter_version == deepseek_execution.adapter_version))
+        return &deepseek_execution;
+    return NULL;
 }
 static const yvex_transform_subsystem deepseek_subsystems[] = {
     YVEX_TRANSFORM_SUBSYSTEM_GLOBAL,
@@ -1840,35 +1851,6 @@ static int deepseek_compilation_quant_policy(
         out, transform, binding, (const yvex_deepseek_gguf_map *)lowering_context,
         policy, imatrix_identity, NULL, &failure, err);
 }
-static int prepare_deepseek_runtime_binding(
-    const yvex_compilation_runtime_binding_request *request,
-    yvex_compilation_runtime_binding_result *result, yvex_error *err)
-{
-    if (result) memset(result, 0, sizeof(*result));
-    if (!result) {
-        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "graph_attention_prepare",
-                       "runtime binding output is required");
-        return YVEX_ERR_INVALID_ARG;
-    }
-    return yvex_runtime_binding_compile_publish(
-        &deepseek_compiler, request, result->path, &result->published, err);
-}
-
-/*
- * Enumerate compiler-plane family preparation facts and their one typed publication callback.
- *
- * Returns immutable process-lifetime storage.
- */
-const yvex_graph_family_preparation *
-yvex_graph_family_preparation_at(unsigned long long index)
-{
-    static const yvex_graph_family_preparation preparation = {
-        YVEX_SOURCE_RELEASE_TARGET_ID, YVEX_SOURCE_RELEASE_MANIFEST_LEAF,
-        yvex_model_register_deepseek_v4, yvex_artifact_admit_deepseek,
-        prepare_deepseek_runtime_binding};
-    return index == 0ull ? &preparation : NULL;
-}
-
 static const yvex_complete_artifact_admission deepseek_selected_catalog = {
     .artifact_class = YVEX_ARTIFACT_CLASS_COMPLETE_YVEX,
     .metadata_count = 76ull,

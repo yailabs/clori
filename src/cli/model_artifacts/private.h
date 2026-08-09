@@ -38,22 +38,12 @@ void yvex_tensor_collection_help(FILE *fp);
 
 typedef struct {
     const char *status, *target, *component, *backend, *output_path;
-    char artifact_identity[65], execution_identity[65];
-    unsigned long long batch, samples_per_channel, tensor_reads;
-    unsigned long long payload_bytes_read, peak_workspace_bytes, published_bytes;
+    yvex_component_execution_result execution;
+    unsigned long long published_bytes;
     int published;
-} yvex_cli_minimax_audio_result;
-int yvex_minimax_audio_render(FILE *fp, yvex_graph_report_mode mode,
-                              const yvex_cli_minimax_audio_result *result);
-typedef struct {
-    const char *status, *target, *component, *backend, *output_path;
-    char artifact_identity[65], execution_identity[65];
-    unsigned long long batch, frames, height, width, tensor_reads;
-    unsigned long long payload_bytes_read, peak_workspace_bytes, published_bytes;
-    int published;
-} yvex_cli_minimax_video_result;
-int yvex_minimax_video_render(FILE *fp, yvex_graph_report_mode mode,
-                              const yvex_cli_minimax_video_result *result);
+} yvex_cli_component_result;
+int yvex_component_render(FILE *fp, yvex_graph_report_mode mode,
+                          const yvex_cli_component_result *result);
 
 int parse_models_download_options_from(int arg_count,
                                        char **args,

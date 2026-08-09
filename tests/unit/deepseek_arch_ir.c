@@ -220,7 +220,8 @@ static int test_arch_ir_golden_topology(void)
                      model->vocabulary_size == 129280 &&
                      model->maximum_context == 1048576,
                      "global DeepSeek-V4-Flash-DSpark geometry is normalized");
-    graph_execution = yvex_graph_execution_at(0u);
+    graph_execution = yvex_graph_execution_find(
+        0ull, 0ull, "deepseek4-v4-flash-dspark");
     YVEX_TEST_ASSERT(
         graph_execution && yvex_model_register_deepseek_v4()->transform.architecture_identity(
                        ir, logical_identity),

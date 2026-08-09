@@ -9,6 +9,7 @@
 #define INCLUDE_YVEX_INTERNAL_COMPILER_H_INCLUDED
 
 #include <yvex/core.h>
+#include <yvex/backend.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/model.h>
 #include <yvex/registry.h>
@@ -29,6 +30,70 @@ extern "C" {
 #define YVEX_SPECULATION_MAX_FEATURE_LAYERS YVEX_MODEL_EXECUTION_FEATURE_LAYER_CAP
 #define YVEX_SPECULATION_IDENTITY_CAP (YVEX_SHA256_HEX_BYTES + 1u)
 
+/* Component plans seal family geometry before generic resource execution. */
+#define YVEX_COMPONENT_BINDING_SCHEMA_V1 1u
+#define YVEX_COMPONENT_PLAN_SCHEMA_V1 1u
+#define YVEX_COMPONENT_GEOMETRY_CAP 3u
+#define YVEX_COMPONENT_OUTPUT_RANK_CAP 5u
+typedef enum {
+    YVEX_COMPONENT_FAILURE_NONE = 0,
+    YVEX_COMPONENT_FAILURE_INVALID_ARGUMENT,
+    YVEX_COMPONENT_FAILURE_UNSUPPORTED,
+    YVEX_COMPONENT_FAILURE_LIFECYCLE,
+    YVEX_COMPONENT_FAILURE_MISSING_TENSOR,
+    YVEX_COMPONENT_FAILURE_TENSOR_CONTRACT,
+    YVEX_COMPONENT_FAILURE_BUDGET,
+    YVEX_COMPONENT_FAILURE_MATERIALIZATION,
+    YVEX_COMPONENT_FAILURE_NUMERIC,
+    YVEX_COMPONENT_FAILURE_CANCELLED
+} yvex_component_failure_code;
+typedef struct {
+    yvex_component_failure_code code;
+    char tensor_name[256];
+    unsigned long long expected, actual;
+    const char *reason;
+} yvex_component_failure;
+typedef int (*yvex_component_cancelled_fn)(void *context);
+typedef struct {
+    const char *target_id, *component_id;
+    yvex_backend_kind backend;
+    unsigned long long batch;
+    unsigned int geometry_rank;
+    unsigned long long geometry[YVEX_COMPONENT_GEOMETRY_CAP];
+    unsigned long long maximum_host_bytes;
+} yvex_component_plan_request;
+typedef struct {
+    unsigned int schema_version;
+    unsigned long long binding_id, binding_version;
+    char target_id[128], component_id[64];
+    yvex_backend_kind backend;
+    unsigned long long batch;
+    unsigned int geometry_rank;
+    unsigned long long geometry[YVEX_COMPONENT_GEOMETRY_CAP];
+    unsigned long long input_values, input_bytes;
+    unsigned long long output_values, output_bytes, workspace_bytes;
+    unsigned int output_rank;
+    unsigned long long output_dims[YVEX_COMPONENT_OUTPUT_RANK_CAP];
+    char identity[YVEX_SHA256_HEX_BYTES];
+    int complete;
+} yvex_component_plan;
+typedef struct {
+    const yvex_component_plan *plan;
+    const float *input;
+    float *output;
+    unsigned long long output_capacity;
+    yvex_component_cancelled_fn cancelled;
+    void *cancellation_context;
+} yvex_component_execution_request;
+typedef struct {
+    unsigned long long batch, output_values;
+    unsigned int output_rank;
+    unsigned long long output_dims[YVEX_COMPONENT_OUTPUT_RANK_CAP];
+    unsigned long long tensor_reads, payload_bytes_read, peak_workspace_bytes;
+    char artifact_identity[YVEX_SHA256_HEX_BYTES];
+    char execution_identity[YVEX_SHA256_HEX_BYTES];
+    int complete;
+} yvex_component_execution_result;
 typedef struct yvex_runtime_capabilities {
     int attention_semantics_ready, attention_core_ready, attention_envelope_ready;
     int cpu_prefill_eager_ready, cpu_decode_eager_ready, cuda_prefill_eager_ready;

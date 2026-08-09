@@ -279,6 +279,32 @@ int yvex_runtime_residency_prepare(yvex_runtime_residency **out, yvex_runtime_mo
 int yvex_runtime_component_residency_prepare(yvex_runtime_residency **out,
     yvex_materialization_session *materialization, const char *component_identity,
     const yvex_runtime_residency_options *options, yvex_runtime_residency_failure *failure, yvex_error *err);
+typedef struct yvex_component_binding {
+    unsigned int schema_version;
+    unsigned long long binding_id, binding_version;
+    const char *target_id, *component_id, *admission_component;
+    yvex_backend_kind backend;
+    int (*plan)(const yvex_component_plan_request *, yvex_component_plan *,
+                yvex_component_failure *, yvex_error *);
+    int (*admit)(const char *, const yvex_artifact *, const yvex_gguf *,
+                 const yvex_tensor_table *,
+                 yvex_complete_artifact_admission *, yvex_artifact_admission_failure *,
+                 yvex_error *);
+    int (*execute)(yvex_materialization_session *, const yvex_component_execution_request *,
+                   yvex_component_execution_result *, yvex_component_failure *, yvex_error *);
+} yvex_component_binding;
+const yvex_component_binding *yvex_component_binding_at(unsigned long long index);
+typedef struct {
+    int (*plan_build)(const yvex_component_plan_request *, yvex_component_plan *,
+                      yvex_component_failure *, yvex_error *);
+    int (*plan_validate)(const yvex_component_plan *, yvex_component_failure *,
+                         yvex_error *);
+    int (*execute)(const yvex_artifact *, const yvex_gguf *, const yvex_tensor_table *,
+                   const yvex_component_execution_request *,
+                   yvex_component_execution_result *, yvex_component_failure *,
+                   yvex_error *);
+} yvex_runtime_component_api;
+const yvex_runtime_component_api *yvex_runtime_component_api_get(void);
 int yvex_runtime_residency_close(yvex_runtime_residency **residency, yvex_error *err);
 int yvex_runtime_residency_snapshot(const yvex_runtime_residency *residency, yvex_runtime_residency_summary *summary,
     const unsigned char **arena, unsigned long long *arena_bytes, yvex_error *err);

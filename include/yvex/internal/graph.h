@@ -10,6 +10,7 @@
 #include <yvex/backend.h>
 #include <yvex/core.h>
 #include <yvex/internal/artifact.h>
+#include <yvex/internal/compiler.h>
 #include <yvex/internal/execution.h>
 #include <yvex/internal/model.h>
 #include <yvex/registry.h>
@@ -367,14 +368,18 @@ typedef struct yvex_graph_execution_api {
 extern const yvex_graph_execution_api yvex_attention_execution_api;
 
 #define YVEX_GRAPH_EXECUTION_BINDING_SCHEMA_V1 1u
+struct yvex_family_compiler_adapter;
+struct yvex_model_family_api;
 typedef struct {
     unsigned int schema_version;
     unsigned long long adapter_id, adapter_version;
     const char *target_id, *family_name, *logical_transform_identity;
     const char *operator_family_key, *operator_artifact_filename;
+    const char *source_manifest_filename;
+    const struct yvex_model_family_api *(*model)(void);
+    const struct yvex_family_compiler_adapter *compiler;
     const yvex_graph_execution_api *api;
 } yvex_graph_execution_binding;
-const yvex_graph_execution_binding *yvex_graph_execution_at(unsigned long long index);
 const yvex_graph_execution_binding *yvex_graph_execution_find(
     unsigned long long adapter_id, unsigned long long adapter_version,
     const char *target_id);
@@ -383,21 +388,6 @@ const yvex_graph_execution_binding *yvex_graph_execution_find(
 int yvex_attention_workspace_capacity_resolve(
     const yvex_graph_execution_api *family, const yvex_attention_plan *plan,
     unsigned long long *arena_bytes, yvex_error *err);
-
-struct yvex_model_family_api;
-struct yvex_compilation_runtime_binding_request;
-struct yvex_compilation_runtime_binding_result;
-typedef struct {
-    const char *target_id, *source_manifest_filename;
-    const struct yvex_model_family_api *(*model)(void);
-    int (*admit_artifact)(const yvex_artifact *artifact, yvex_complete_artifact_admission *out,
-                          yvex_artifact_admission_failure *failure, yvex_error *err);
-    int (*prepare_runtime_binding)(
-        const struct yvex_compilation_runtime_binding_request *request,
-        struct yvex_compilation_runtime_binding_result *result, yvex_error *err);
-} yvex_graph_family_preparation;
-const yvex_graph_family_preparation *
-yvex_graph_family_preparation_at(unsigned long long index);
 
 int yvex_attention_plan_import(yvex_attention_plan **out,
                                const yvex_attention_summary *summary,

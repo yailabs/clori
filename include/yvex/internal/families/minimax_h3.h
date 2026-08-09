@@ -440,55 +440,6 @@ typedef struct {
     const yvex_source_payload_plan *(*plan)(const yvex_minimax_h3_handoff *handoff);
 } yvex_minimax_h3_handoff_api;
 
-typedef enum {
-    YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NONE = 0,
-    YVEX_MINIMAX_H3_COMPONENT_EXECUTION_INVALID_ARGUMENT,
-    YVEX_MINIMAX_H3_COMPONENT_EXECUTION_LIFECYCLE,
-    YVEX_MINIMAX_H3_COMPONENT_EXECUTION_MISSING_TENSOR,
-    YVEX_MINIMAX_H3_COMPONENT_EXECUTION_TENSOR_CONTRACT,
-    YVEX_MINIMAX_H3_COMPONENT_EXECUTION_BUDGET,
-    YVEX_MINIMAX_H3_COMPONENT_EXECUTION_MATERIALIZATION,
-    YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NUMERIC,
-    YVEX_MINIMAX_H3_COMPONENT_EXECUTION_CANCELLED
-} yvex_minimax_h3_component_execution_code;
-typedef struct {
-    yvex_minimax_h3_component_execution_code code;
-    char tensor_name[256];
-    unsigned long long expected, actual;
-    const char *reason;
-} yvex_minimax_h3_component_execution_failure;
-typedef int (*yvex_minimax_h3_cancelled_fn)(void *context);
-typedef struct {
-    const float *latent;
-    unsigned long long batch, latent_channels, latent_steps;
-    float *output;
-    unsigned long long output_capacity;
-    unsigned long long max_workspace_bytes;
-    yvex_minimax_h3_cancelled_fn cancelled;
-    void *cancellation_context;
-} yvex_minimax_h3_audio_decode_options;
-typedef struct {
-    unsigned long long batch, samples_per_channel, output_values;
-    unsigned long long tensor_reads, payload_bytes_read;
-    unsigned long long peak_workspace_bytes;
-    char artifact_identity[65], execution_identity[65];
-    int complete;
-} yvex_minimax_h3_audio_decode_result;
-typedef struct {
-    const float *latent;
-    float *output;
-    unsigned long long batch, latent_channels;
-    unsigned long long latent_frames, latent_height, latent_width;
-    unsigned long long output_capacity, max_workspace_bytes;
-    yvex_minimax_h3_cancelled_fn cancelled;
-    void *cancellation_context;
-} yvex_minimax_h3_video_decode_options;
-typedef struct {
-    unsigned long long batch, frames, height, width, output_values;
-    unsigned long long tensor_reads, payload_bytes_read, peak_workspace_bytes;
-    char artifact_identity[65], execution_identity[65];
-    int complete;
-} yvex_minimax_h3_video_decode_result;
 typedef struct {
     unsigned long long token_count, hidden_width, layer_count, resident_bytes;
     unsigned long long kernel_launches, h2d_bytes, d2h_bytes, device_bytes;
@@ -524,24 +475,6 @@ typedef struct {
         float *output, unsigned long long output_capacity,
         unsigned long long maximum_host_bytes, unsigned long long maximum_device_bytes,
         yvex_minimax_h3_conditioning_result *result, yvex_error *err);
-    int (*audio_vae_decode_cpu)(yvex_materialization_session *session,
-        const yvex_minimax_h3_audio_decode_options *options,
-        yvex_minimax_h3_audio_decode_result *result, yvex_minimax_h3_component_execution_failure *failure,
-        yvex_error *err);
-    int (*audio_vae_execute_artifact_cpu)(
-        const yvex_artifact *artifact, const yvex_gguf *gguf, const yvex_tensor_table *tensors,
-        const yvex_minimax_h3_audio_decode_options *options,
-        yvex_minimax_h3_audio_decode_result *result, yvex_minimax_h3_component_execution_failure *failure,
-        yvex_error *err);
-    int (*video_vae_decode_cpu)(yvex_materialization_session *session,
-        const yvex_minimax_h3_video_decode_options *options,
-        yvex_minimax_h3_video_decode_result *result, yvex_minimax_h3_component_execution_failure *failure,
-        yvex_error *err);
-    int (*video_vae_execute_artifact_cpu)(
-        const yvex_artifact *artifact, const yvex_gguf *gguf, const yvex_tensor_table *tensors,
-        const yvex_minimax_h3_video_decode_options *options,
-        yvex_minimax_h3_video_decode_result *result, yvex_minimax_h3_component_execution_failure *failure,
-        yvex_error *err);
 } yvex_minimax_h3_graph_api;
 const yvex_minimax_h3_api *yvex_model_register_minimax_h3(void);
 const yvex_minimax_h3_transform_api *yvex_model_minimax_h3_transform_api(void);

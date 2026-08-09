@@ -8,6 +8,7 @@
 #include <yvex/internal/backend.h>
 #include <yvex/internal/compilation.h>
 #include <yvex/internal/model_target.h>
+#include <yvex/internal/runtime.h>
 
 #include <string.h>
 
@@ -446,38 +447,6 @@ static int test_audio_numeric_primitives(void)
     return 0;
 }
 
-static int test_audio_execution_refusals(void)
-{
-    float latent[32] = {0};
-    float output[800];
-    yvex_minimax_h3_audio_decode_options options;
-    yvex_minimax_h3_audio_decode_result result;
-    yvex_minimax_h3_component_execution_failure failure;
-    yvex_error err;
-
-    memset(output, 0x5a, sizeof(output));
-    memset(&options, 0, sizeof(options));
-    options.latent = latent;
-    options.batch = 1ull;
-    options.latent_channels = 31ull;
-    options.latent_steps = 1ull;
-    options.output = output;
-    options.output_capacity = 800ull;
-    options.max_workspace_bytes = 1024ull;
-    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->audio_vae_decode_cpu(
-                         NULL, &options, &result, &failure, &err) == YVEX_ERR_INVALID_ARG &&
-                         failure.code == YVEX_MINIMAX_H3_COMPONENT_EXECUTION_INVALID_ARGUMENT,
-                     "Audio VAE decode refuses invented latent geometry");
-    options.latent_channels = 32ull;
-    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->audio_vae_decode_cpu(
-                         NULL, &options, &result, &failure, &err) == YVEX_ERR_STATE &&
-                         failure.code == YVEX_MINIMAX_H3_COMPONENT_EXECUTION_LIFECYCLE,
-                     "Audio VAE decode refuses execution without committed materialization");
-    YVEX_TEST_ASSERT(((unsigned char *)output)[0] == 0x5a,
-                     "refused Audio VAE decode does not publish output");
-    return 0;
-}
-
 static int test_video_numeric_primitives(void)
 {
     const float linear_input[4] = {1.0f, 2.0f, -1.0f, 3.0f};
@@ -534,40 +503,6 @@ static int test_video_numeric_primitives(void)
                          qkv, 2ull, 1ull, 2ull, attention, scratch, 1ull,
                          &err) == YVEX_ERR_INVALID_ARG,
                      "full attention refuses insufficient scratch");
-    return 0;
-}
-
-static int test_video_execution_refusals(void)
-{
-    float latent[24] = {0};
-    float output[3072];
-    yvex_minimax_h3_video_decode_options options;
-    yvex_minimax_h3_video_decode_result result;
-    yvex_minimax_h3_component_execution_failure failure;
-    yvex_error err;
-
-    memset(output, 0x5a, sizeof(output));
-    memset(&options, 0, sizeof(options));
-    options.latent = latent;
-    options.output = output;
-    options.output_capacity = 3072ull;
-    options.batch = 1ull;
-    options.latent_channels = 24ull;
-    options.latent_frames = 1ull;
-    options.latent_height = 1ull;
-    options.latent_width = 2ull;
-    options.max_workspace_bytes = 256ull * 1024ull * 1024ull;
-    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->video_vae_decode_cpu(
-                         NULL, &options, &result, &failure, &err) == YVEX_ERR_BOUNDS &&
-                         failure.code == YVEX_MINIMAX_H3_COMPONENT_EXECUTION_INVALID_ARGUMENT,
-                     "Visual VAE decode refuses output storage smaller than its geometry");
-    options.latent_width = 1ull;
-    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->video_vae_decode_cpu(
-                         NULL, &options, &result, &failure, &err) == YVEX_ERR_STATE &&
-                         failure.code == YVEX_MINIMAX_H3_COMPONENT_EXECUTION_LIFECYCLE,
-                     "Visual VAE decode refuses execution without committed materialization");
-    YVEX_TEST_ASSERT(((unsigned char *)output)[0] == 0x5a,
-                     "refused Visual VAE decode does not publish output");
     return 0;
 }
 
@@ -697,6 +632,82 @@ static int test_component_admission_routing(void)
     return 0;
 }
 
+static int test_component_execution_plans(void)
+{
+    yvex_component_plan_request request = {
+        .target_id = YVEX_MINIMAX_H3_TARGET_ID,
+        .component_id = "audio-vae",
+        .backend = YVEX_BACKEND_KIND_CPU,
+        .batch = 2ull,
+        .geometry_rank = 1u,
+        .geometry = {3ull},
+        .maximum_host_bytes = 16ull * 1024ull * 1024ull,
+    };
+    yvex_component_plan plan;
+    yvex_component_failure failure;
+    yvex_error err;
+    char oversized_target[129];
+
+    YVEX_TEST_ASSERT(
+        yvex_runtime_component_api_get()->plan_build(
+            &request, &plan, &failure, &err) == YVEX_OK &&
+            plan.complete && plan.input_values == 192ull &&
+            plan.output_values == 4800ull && plan.output_rank == 3u &&
+            plan.output_dims[0] == 2ull && plan.output_dims[1] == 1ull &&
+            plan.output_dims[2] == 2400ull &&
+            yvex_sha256_hex_valid(plan.identity),
+        "component compiler derives Audio VAE extents from family semantics");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_component_api_get()->plan_validate(
+            &plan, &failure, &err) == YVEX_OK,
+        "component compiler validates the sealed canonical plan");
+    ++plan.output_values;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_component_api_get()->plan_validate(
+            &plan, &failure, &err) == YVEX_ERR_FORMAT &&
+            failure.code == YVEX_COMPONENT_FAILURE_LIFECYCLE,
+        "component compiler refuses a mutated sealed plan");
+
+    request.component_id = "video-vae";
+    request.batch = 1ull;
+    request.geometry_rank = 3u;
+    request.geometry[0] = 2ull;
+    request.geometry[1] = 3ull;
+    request.geometry[2] = 4ull;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_component_api_get()->plan_build(
+            &request, &plan, &failure, &err) == YVEX_OK &&
+            plan.input_values == 576ull && plan.output_values == 73728ull &&
+            plan.output_rank == 5u && plan.output_dims[0] == 1ull &&
+            plan.output_dims[1] == 3ull && plan.output_dims[2] == 8ull &&
+            plan.output_dims[3] == 48ull && plan.output_dims[4] == 64ull,
+        "component compiler derives Visual VAE extents from family semantics");
+    request.backend = YVEX_BACKEND_KIND_CUDA;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_component_api_get()->plan_build(
+            &request, &plan, &failure, &err) ==
+                YVEX_ERR_UNSUPPORTED &&
+            failure.code == YVEX_COMPONENT_FAILURE_UNSUPPORTED,
+        "component compiler refuses an unadmitted backend explicitly");
+    request.backend = YVEX_BACKEND_KIND_CPU;
+    request.target_id = "unknown";
+    YVEX_TEST_ASSERT(
+        yvex_runtime_component_api_get()->plan_build(
+            &request, &plan, &failure, &err) ==
+                YVEX_ERR_UNSUPPORTED &&
+            failure.code == YVEX_COMPONENT_FAILURE_UNSUPPORTED,
+        "component compiler refuses an unknown target without CLI family policy");
+    memset(oversized_target, 'x', sizeof(oversized_target) - 1u);
+    oversized_target[sizeof(oversized_target) - 1u] = '\0';
+    request.target_id = oversized_target;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_component_api_get()->plan_build(
+            &request, &plan, &failure, &err) == YVEX_ERR_INVALID_ARG &&
+            failure.code == YVEX_COMPONENT_FAILURE_INVALID_ARGUMENT,
+        "component compiler refuses identifiers that cannot be sealed losslessly");
+    return 0;
+}
+
 int yvex_test_minimax_h3(void)
 {
     if (test_components() != 0) return 1;
@@ -705,10 +716,9 @@ int yvex_test_minimax_h3(void)
     if (test_component_ir() != 0) return 1;
     if (test_operator_truth() != 0) return 1;
     if (test_audio_numeric_primitives() != 0) return 1;
-    if (test_audio_execution_refusals() != 0) return 1;
     if (test_video_numeric_primitives() != 0) return 1;
-    if (test_video_execution_refusals() != 0) return 1;
     if (test_t2va_plan() != 0) return 1;
     if (test_component_admission_routing() != 0) return 1;
+    if (test_component_execution_plans() != 0) return 1;
     return 0;
 }

@@ -2082,7 +2082,6 @@ static int test_runtime_family_neutrality(void)
 {
     const yvex_graph_execution_binding *deepseek =
         yvex_graph_execution_find(0ull, 0ull, "deepseek4-v4-flash-dspark");
-    const yvex_graph_family_preparation *preparation = yvex_graph_family_preparation_at(0ull);
     const yvex_family_compiler_adapter *compiler =
         yvex_compiler_family_deepseek_v4();
     yvex_compilation_runtime_binding_request request = {0};
@@ -2091,24 +2090,18 @@ static int test_runtime_family_neutrality(void)
 
     YVEX_TEST_ASSERT(deepseek != NULL && deepseek->api != NULL,
                      "compiled family identity resolves through graph execution registry");
-    YVEX_TEST_ASSERT(strcmp(deepseek->operator_family_key, "deepseek") == 0 && preparation &&
-                         strcmp(preparation->target_id, deepseek->target_id) == 0 &&
-                         strcmp(preparation->source_manifest_filename,
+    YVEX_TEST_ASSERT(strcmp(deepseek->operator_family_key, "deepseek") == 0 &&
+                         strcmp(deepseek->source_manifest_filename,
                                 YVEX_SOURCE_RELEASE_MANIFEST_LEAF) == 0 &&
                          strcmp(deepseek->operator_artifact_filename,
                                 YVEX_SELECTED_DEEPSEEK_ARTIFACT_FILENAME) == 0 &&
-                         preparation->model && preparation->prepare_runtime_binding &&
+                         deepseek->model && deepseek->compiler == compiler &&
                          compiler && compiler->binding_pipeline &&
                          compiler->binding_compile == yvex_family_binding_compile &&
                          compiler->binding_pipeline->source_open &&
                          compiler->binding_pipeline->semantic_model_build &&
-                         preparation->model() == yvex_model_register_deepseek_v4(),
+                         deepseek->model() == yvex_model_register_deepseek_v4(),
                      "compiler preparation facts remain separate from execution facts");
-    yvex_error_clear(&err);
-    YVEX_TEST_ASSERT(preparation->prepare_runtime_binding(NULL, &rejected, &err) ==
-                             YVEX_ERR_INVALID_ARG &&
-                         !rejected.published && !rejected.path[0],
-                     "typed family preparation callback refuses incomplete compiler input");
     YVEX_TEST_ASSERT(yvex_runtime_binding_compile_publish(
                          compiler, &request, rejected.path,
                          &rejected.published, &err) == YVEX_ERR_INVALID_ARG &&

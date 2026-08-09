@@ -34,9 +34,8 @@ cuda_cpu_fallback_pattern='(cpu_chunk_execute|rolling_state_step_cpu|yvex_backen
 deprecated_digest_hash_pattern='yvex_sha256_[A-Za-z0-9_]*[[:space:]]*\([^;]*\boutput_digest\b'
 backend_digest_alias_pattern='\boutput_digest\b[^;]*\b(cpu_output_digest|cuda_output_digest)\b|\b(cpu_output_digest|cuda_output_digest)\b[^;]*\boutput_digest\b'
 cli_family_helper_pattern='yvex_(source_is_release_target|model_register_deepseek_v4)[[:space:]]*\('
-cli_family_abi_pattern='(#include[[:space:]]+[<"]yvex/internal/families/|yvex_[A-Za-z0-9_]*(deepseek|qwen|gemma|llama|kimi|mamba)[A-Za-z0-9_]*|YVEX_[A-Z0-9_]*(DEEPSEEK|QWEN|GEMMA|LLAMA|KIMI|MAMBA)[A-Z0-9_]*)'
+cli_family_abi_pattern='(#include[[:space:]]+[<"]yvex/internal/families/|yvex_[A-Za-z0-9_]*(deepseek|minimax|qwen|gemma|llama|kimi|mamba)[A-Za-z0-9_]*|YVEX_[A-Z0-9_]*(DEEPSEEK|MINIMAX|QWEN|GEMMA|LLAMA|KIMI|MAMBA)[A-Z0-9_]*)'
 cli_preparation_call_pattern='yvex_(source_payload_[A-Za-z0-9_]*|transform_[A-Za-z0-9_]*|quant_plan_[A-Za-z0-9_]*|gguf_writer_[A-Za-z0-9_]*|materialization_(plan|session)_[A-Za-z0-9_]*|runtime_descriptor_build[A-Za-z0-9_]*|artifact_physical_compatibility_[A-Za-z0-9_]*)[[:space:]]*\('
-family_preparation_callback_pattern='^static[[:space:]]+int[[:space:]]+prepare_deepseek_runtime_binding[[:space:]]*\('
 family_preparation_leak_pattern='(yvex_(model_register_deepseek_v4|graph_lower_deepseek_v4|artifact_admit_deepseek|runtime_descriptor_build_deepseek|quant_plan_build_deepseek_profile)[[:space:]]*\(|YVEX_SELECTED_DEEPSEEK_ARTIFACT_FILENAME)'
 cli_runtime_lifecycle_pattern='yvex_runtime_(model_(open|close|summary_copy|view_get)|session_(open|close|summary_copy|view_get)|residency_(prepare|close|snapshot|invalidate))[[:space:]]*\('
 recursive_cleanup_pattern='(^|[;&|()[:space:]])(command[[:space:]]+)?r'\
@@ -350,7 +349,8 @@ EOF
 if rg -n "$cli_family_helper_pattern" src/cli/commands/graph.c; then
     fail "common graph CLI bypasses typed runtime-family preparation facts"
 fi
-if rg -n -i "$cli_family_abi_pattern" src/cli/commands/graph.c; then
+if rg -n -i "$cli_family_abi_pattern" \
+    src/cli/commands/graph.c src/cli/input/graph.c src/cli/input/private.h; then
     fail "common graph CLI imports or names a concrete family ABI"
 fi
 if rg -n "$cli_preparation_call_pattern" src/cli/commands/graph.c; then
@@ -358,6 +358,18 @@ if rg -n "$cli_preparation_call_pattern" src/cli/commands/graph.c; then
 fi
 if rg -n "$cli_runtime_lifecycle_pattern" src/cli/commands/graph.c; then
     fail "common graph CLI owns runtime model, session, or residency lifecycle"
+fi
+if rg -n -i "(families/|$generic_family_symbol_pattern)" \
+    include/yvex/internal/compiler.h src/graph/component.c src/runtime/residency.c; then
+    fail "generic component compilation or runtime owns concrete family semantics"
+fi
+rg -n 'yvex_runtime_component_api_get\(\)->plan_build' src/cli/commands/graph.c >/dev/null ||
+    fail "component CLI bypasses compiled family geometry"
+rg -n 'yvex_runtime_component_api_get\(\)->execute' src/cli/commands/graph.c >/dev/null ||
+    fail "component CLI bypasses the generic runtime lifecycle"
+if rg -n '(audio|video)_vae_execute_artifact_cpu' \
+    src/graph/families/minimax_h3.c include/yvex/internal/families/minimax_h3.h; then
+    fail "MiniMax family retains generic artifact/materialization/residency execution"
 fi
 
 # Generic attention state iterates sealed family-projected components. Class
@@ -378,10 +390,10 @@ if rg -n 'yvex_runtime_attention_(state|capacity)' \
     fail "generic attention state retains the obsolete runtime-owned ABI"
 fi
 
-# DeepSeek cold preparation belongs to its compiler-facing family projection. Common artifact,
-# runtime, and CLI owners can reach it only through the typed preparation registry.
-if [ "$(rg -c "$family_preparation_callback_pattern" src/graph/families/deepseek_v4.c)" -ne 1 ]; then
-    fail "DeepSeek cold preparation callback escaped its family compiler projection"
+# DeepSeek cold preparation terminates in its compiler-facing adapter. Common artifact, runtime,
+# and CLI owners can reach only that typed compiler identity.
+if rg -n 'prepare_deepseek_runtime_binding|yvex_graph_family_preparation' src include; then
+    fail "legacy family preparation authority survived compiler-adapter cutover"
 fi
 if rg -n "$family_preparation_leak_pattern" src/runtime src/cli/commands/graph.c; then
     fail "family-specific cold preparation leaked into common runtime/CLI owners"
@@ -414,13 +426,6 @@ artifact_catalog_owners=$(rg -l 'deepseek_(selected|native_drafter)_catalog' src
 if [ "$artifact_catalog_owners" != 'src/graph/families/deepseek_v4.c' ]; then
     printf '%s\n' "$artifact_catalog_owners" >&2
     fail "DeepSeek physical artifact catalog escaped its family compiler projection"
-fi
-preparation_callback_owners=$(
-    rg -l 'prepare_deepseek_runtime_binding' src include | LC_ALL=C sort
-)
-if [ "$preparation_callback_owners" != 'src/graph/families/deepseek_v4.c' ]; then
-    printf '%s\n' "$preparation_callback_owners" >&2
-    fail "DeepSeek cold preparation callback escaped its family compiler projection"
 fi
 if rg -n -i '(families/|deepseek|minimax)' src/runtime/binding_publish.c; then
     fail "generic runtime-binding publication contains concrete family semantics"
