@@ -227,7 +227,7 @@ forbidden.
 | `src/graph/numeric.c` | reusable attention and bounded tensor numerical operations without family policy |
 | `src/graph/state.c` | immutable prior-state views, candidate deltas, and transactional attention-state lifecycle |
 | `src/graph/families/deepseek_v4.c` | DeepSeek schedule, recurrence and CPU/CUDA operation composition |
-| `src/backend/cuda/families/deepseek_v4.c` | irreducible fused CUDA lowering for the DeepSeek graph recipe; no runtime or model authority |
+| `src/backend/cuda/attention.c` | generic CUDA execution of a fully compiled encoded-attention job; no model topology or family authority |
 | `src/backend/core.c` | backend lifecycle, tensor binding and canonical qtype compute projection |
 | `src/backend/core.c` | backend lifecycle, tensor binding, canonical qtype compute projection, and typed device/context/bundle/memory reports |
 | `src/backend/cuda/capability.c` | atomic generated-bundle admission, exact CUDA capability, launch/sync demotion, and cleanup failure |

@@ -215,16 +215,15 @@ if find src/runtime -type f \( -name '*deepseek*' -o -name '*qwen*' -o -name '*g
     fail "runtime contains a concrete family source"
 fi
 
-# A family may project facts at three irreducible boundaries: model intake,
-# graph composition, and a fused backend lowering. These same-basename files
-# are distinct owners; any fourth DeepSeek implementation would instead create
-# the parallel family runtime that this DAG forbids.
+# A family projects facts only at boundaries where generic operations cannot
+# express its semantics. DeepSeek now terminates at model intake and graph
+# composition; its encoded-attention request is complete enough for the common
+# CUDA operation, so retaining a family backend would duplicate that mechanism.
 deepseek_family_sources=$(find src -path '*/families/deepseek_v4.c' -type f | sort)
-expected_deepseek_family_sources='src/backend/cuda/families/deepseek_v4.c
-src/graph/families/deepseek_v4.c
+expected_deepseek_family_sources='src/graph/families/deepseek_v4.c
 src/model/families/deepseek_v4.c'
 [ "$deepseek_family_sources" = "$expected_deepseek_family_sources" ] ||
-    fail "DeepSeek must have exactly model, graph, and fused-CUDA family projections"
+    fail "DeepSeek must terminate at its model and graph family projections"
 while IFS= read -r source; do
     awk -F '\t' -v source="$source" '$1 == source && $4 == "family" { found = 1 } END { exit !found }' \
         config/source_owners.tsv ||
@@ -232,6 +231,9 @@ while IFS= read -r source; do
 done <<EOF
 $expected_deepseek_family_sources
 EOF
+if rg -n -i '(families/|deepseek|minimax)' src/backend/cuda/attention.c; then
+    fail "generic CUDA attention execution contains concrete family semantics"
+fi
 
 if find src include -type f \( -name '*.c' -o -name '*.h' -o -name '*.cu' \) \
         ! -path 'src/model/families/*' -print0 |

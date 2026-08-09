@@ -96,14 +96,15 @@ boundaries, not aliases for directories.
 | OpenAI-compatible projection | `src/server/openai/` and `src/provider/` |
 | Command metadata and projections | `config/operator/registry.json`, generated descriptors, `src/cli/` |
 
-DeepSeek has exactly three irreducible implementation projections:
+DeepSeek has two irreducible implementation projections:
 `src/model/families/deepseek_v4.c` interprets source and logical facts,
-`src/graph/families/deepseek_v4.c` composes the family execution recipe, and
-`src/backend/cuda/families/deepseek_v4.c` owns genuinely fused CUDA lowering.
+and `src/graph/families/deepseek_v4.c` composes the family execution recipe.
+The compiled encoded-attention job is complete enough for
+`src/backend/cuda/attention.c` to execute it without recovering DeepSeek topology.
 Their shared basename identifies the same family while their directories and
 machine-readable owners identify distinct dependency levels. Runtime remains
 family-neutral; a concrete family hierarchy beneath the runtime namespace or a
-fourth family projection is forbidden.
+backend projection duplicating the common operation is forbidden.
 
 The exact source-file ownership manifest is
 [`config/source_owners.tsv`](../../config/source_owners.tsv). It is also the

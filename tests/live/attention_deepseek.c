@@ -2414,9 +2414,9 @@ static int run_cuda_live_suite(
         {"allocation", YVEX_ATTENTION_FAILURE_ALLOCATION},
         {"host-staging", YVEX_ATTENTION_FAILURE_ALLOCATION},
         {"copy-input", YVEX_ATTENTION_FAILURE_BACKEND},
-        {"cuda.deepseek_attention.q_a",
+        {"cuda.attention.q_a",
          YVEX_ATTENTION_FAILURE_BACKEND},
-        {"cuda.deepseek_attention.copy.output",
+        {"cuda.attention.copy.output",
          YVEX_ATTENTION_FAILURE_BACKEND}
     };
     unsigned int fault_index;

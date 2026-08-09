@@ -58,14 +58,14 @@ bounded result facts. Exact host stochastic sampling remains an explicitly
 named portable-reference adapter until a later device implementation preserves
 the complete target distribution.
 
-Product levels are not source directories. A model family may project its
-irreducible facts at exactly three current boundaries:
+Product levels are not source directories. A model family projects its
+irreducible facts only at boundaries required by its semantics:
 
 - `src/model/families/deepseek_v4.c` owns source interpretation, family facts,
   coverage and logical lowering;
 - `src/graph/families/deepseek_v4.c` owns the irreducible execution recipe;
-- `src/backend/cuda/families/deepseek_v4.c` owns fused CUDA lowering that cannot
-  be expressed by generic backend operations.
+- `src/backend/cuda/attention.c` consumes the complete encoded-attention job as
+  a generic backend operation and does not reconstruct family topology.
 
 The common runtime is family-neutral. A concrete family hierarchy beneath the
 runtime namespace is forbidden, as are concrete-family imports in
