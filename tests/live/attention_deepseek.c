@@ -9,6 +9,7 @@
 #include <yvex/internal/backend.h>
 #include "src/graph/private.h"
 #include <yvex/internal/families/deepseek_v4.h>
+#include <yvex/internal/model.h>
 #include <yvex/internal/runtime.h>
 #include "tests/reference/deepseek_attention.h"
 
@@ -27,6 +28,15 @@
 #define ATTENTION_CUDA_RELATIVE_TOLERANCE 5.0e-4
 #define ATTENTION_NATIVE_Q8_ABSOLUTE_TOLERANCE 4.0e-2
 #define ATTENTION_NATIVE_Q8_RELATIVE_TOLERANCE 4.0e-2
+
+static const char *attention_class_name(yvex_attention_class class_id)
+{
+    static const char *const names[] = {"swa", "csa", "hca"};
+
+    return class_id >= YVEX_ATTENTION_CLASS_SWA && class_id <= YVEX_ATTENTION_CLASS_HCA
+               ? names[class_id]
+               : "unknown";
+}
 
 static const yvex_graph_execution_api *attention_execution_api(void)
 {
@@ -3382,7 +3392,7 @@ identity_mutation_done:
         }                                                                       \
         printf("attention_cpu_first_token.layer.%llu.class=%s\n",              \
                first_token_executed,                                           \
-               yvex_model_register_deepseek_v4()->ir.attention_name(exec_result.attention_class));  \
+               attention_class_name(exec_result.attention_class));                                 \
         printf("attention_cpu_first_token.layer.%llu.index=%llu\n",            \
                first_token_executed, exec_result.layer_index);                 \
         printf("attention_cpu_first_token.layer.%llu.q_a_rows=%llu\n",         \
@@ -3441,7 +3451,7 @@ identity_mutation_done:
             goto cleanup_fail;                                                  \
         }                                                                       \
         printf("attention_cpu_chunk.layer.%llu.class=%s\n", chunk_executed,    \
-               yvex_model_register_deepseek_v4()->ir.attention_name(exec_result.attention_class));  \
+               attention_class_name(exec_result.attention_class));                                 \
         printf("attention_cpu_chunk.layer.%llu.index=%llu\n", chunk_executed,  \
                exec_result.layer_index);                                        \
         printf("attention_cpu_chunk.layer.%llu.token_start=%llu\n",            \
@@ -3550,8 +3560,7 @@ identity_mutation_done:
                 goto cleanup_fail;
             }
             printf("attention_cpu_history_chunk.layer.0.class=%s\n",
-                   yvex_model_register_deepseek_v4()->ir.attention_name(
-                       exec_result.attention_class));
+                   attention_class_name(exec_result.attention_class));
             printf("attention_cpu_history_chunk.layer.0.index=%llu\n",
                    exec_result.layer_index);
             printf("attention_cpu_history_chunk.layer.0.token_start=%llu\n",

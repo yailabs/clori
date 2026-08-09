@@ -15,7 +15,20 @@ static int graph_recipe_project(const yvex_deepseek_v4_layer_spec *layer,
                                 unsigned long long predictor,
                                 yvex_attention_layer_plan *out)
 {
+    const yvex_attention_activation_policy *policies[4];
+
     if (!layer || !out) return 0;
+    policies[0] = &layer->attention_kv_activation;
+    policies[1] = &layer->compressor_activation;
+    policies[2] = &layer->compressor_rotated_activation;
+    policies[3] = &layer->indexer_query_activation;
+    if (!yvex_model_attention_numeric_validate(
+            layer->compute_contract, YVEX_ATTENTION_COMPUTE_BF16_F32_RNE_V1,
+            policies, sizeof(policies) / sizeof(policies[0]), &layer->sparse_topk,
+            YVEX_DEEPSEEK_V4_RUNTIME_FP8_ACT_BLOCK,
+            YVEX_DEEPSEEK_V4_RUNTIME_FP4_ACT_BLOCK,
+            YVEX_DEEPSEEK_V4_RUNTIME_TOPK_POLICY_VERSION, NULL))
+        return 0;
     memset(out, 0, sizeof(*out));
     out->ordinal = ordinal;
     out->layer_index = layer->layer_index;

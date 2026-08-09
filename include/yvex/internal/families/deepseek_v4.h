@@ -11,6 +11,9 @@
 #define YVEX_DEEPSEEK_IDENTITY_CAP 65u
 #define YVEX_DEEPSEEK_V4_ADAPTER_ID 0x44535634ull
 #define YVEX_DEEPSEEK_V4_ADAPTER_VERSION 7ull
+#define YVEX_DEEPSEEK_V4_RUNTIME_FP8_ACT_BLOCK 64ull
+#define YVEX_DEEPSEEK_V4_RUNTIME_FP4_ACT_BLOCK 32ull
+#define YVEX_DEEPSEEK_V4_RUNTIME_TOPK_POLICY_VERSION 1u
 typedef struct yvex_source_verification yvex_source_verification;
 typedef struct yvex_source_tensor_snapshot yvex_source_tensor_snapshot;
 typedef struct yvex_source_payload_plan yvex_source_payload_plan;
@@ -451,16 +454,11 @@ typedef struct {
                                                            unsigned long long index);
     const char *(*failure_name)(yvex_deepseek_v4_ir_failure_code code);
     const char *(*component_name)(yvex_deepseek_v4_ir_component component);
-    const char *(*attention_name)(yvex_attention_class class_id);
     const char *(*kv_name)(yvex_deepseek_v4_kv_class class_id);
     const char *(*router_name)(yvex_deepseek_v4_router_class class_id);
     const char *(*source_weight_dtype_name)(yvex_deepseek_v4_source_weight_dtype dtype);
     const char *(*source_expert_dtype_name)(yvex_deepseek_v4_source_expert_dtype dtype);
     const char *(*source_quantization_name)(yvex_deepseek_v4_source_quantization quantization);
-    const char *(*activation_stage_name)(yvex_attention_activation_stage stage);
-    const char *(*activation_quantization_name)(yvex_attention_quantization quantization);
-    const char *(*runtime_transform_name)(yvex_attention_transform transform);
-    const char *(*sparse_topk_policy_name)(yvex_attention_topk_policy_id policy);
     unsigned long long (*recipe_count)(void);
     const yvex_deepseek_tensor_recipe *(*recipe_at)(unsigned long long index);
     int (*recipe_enabled)(const yvex_deepseek_tensor_recipe *recipe,

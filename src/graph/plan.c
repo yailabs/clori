@@ -442,10 +442,6 @@ typedef struct {
 } plan_hash_field;
 
 #define PLAN_FIELD(type, member, kind) {offsetof(type, member), kind}
-#define PLAN_POSITION_FIELD(member, kind) \
-    {offsetof(yvex_attention_layer_plan, position) + \
-         offsetof(yvex_attention_position_policy, member), kind}
-
 static const plan_hash_field plan_layer_fields[] = {
     PLAN_FIELD(yvex_attention_layer_plan, ordinal, PLAN_HASH_U64),
     PLAN_FIELD(yvex_attention_layer_plan, layer_index, PLAN_HASH_U64),
@@ -490,44 +486,6 @@ static const plan_hash_field plan_layer_fields[] = {
     PLAN_FIELD(yvex_attention_layer_plan, mhc_scale_role, PLAN_HASH_INT),
     PLAN_FIELD(yvex_attention_layer_plan, compressor_required, PLAN_HASH_INT),
     PLAN_FIELD(yvex_attention_layer_plan, indexer_required, PLAN_HASH_INT),
-    PLAN_POSITION_FIELD(rope_dimension, PLAN_HASH_U64),
-    PLAN_POSITION_FIELD(theta, PLAN_HASH_U64),
-    PLAN_POSITION_FIELD(scaling_factor, PLAN_HASH_U64),
-    PLAN_POSITION_FIELD(original_context, PLAN_HASH_U64),
-    PLAN_POSITION_FIELD(beta_fast, PLAN_HASH_U64),
-    PLAN_POSITION_FIELD(beta_slow, PLAN_HASH_U64),
-    PLAN_POSITION_FIELD(maximum_context, PLAN_HASH_U64),
-    PLAN_POSITION_FIELD(partial_rope, PLAN_HASH_INT),
-    PLAN_POSITION_FIELD(inverse_output_rotation, PLAN_HASH_INT),
-};
-
-static const plan_hash_field plan_activation_fields[] = {
-    PLAN_FIELD(yvex_attention_activation_policy, required, PLAN_HASH_INT),
-    PLAN_FIELD(yvex_attention_activation_policy, stage, PLAN_HASH_INT),
-    PLAN_FIELD(yvex_attention_activation_policy, quantization, PLAN_HASH_INT),
-    PLAN_FIELD(yvex_attention_activation_policy, block_axis, PLAN_HASH_INT),
-    PLAN_FIELD(yvex_attention_activation_policy, block_width, PLAN_HASH_U64),
-    PLAN_FIELD(yvex_attention_activation_policy, scale_format, PLAN_HASH_INT),
-    PLAN_FIELD(yvex_attention_activation_policy, scale_dtype, PLAN_HASH_INT),
-    PLAN_FIELD(yvex_attention_activation_policy, pre_transform, PLAN_HASH_INT),
-    PLAN_FIELD(yvex_attention_activation_policy, tail_policy, PLAN_HASH_INT),
-    PLAN_FIELD(yvex_attention_activation_policy, nonfinite_policy, PLAN_HASH_INT),
-    PLAN_FIELD(yvex_attention_activation_policy, fake_quant_inplace, PLAN_HASH_INT),
-    PLAN_FIELD(yvex_attention_activation_policy, zero_pad_hadamard_to_power_of_two,
-               PLAN_HASH_INT),
-};
-
-static const plan_hash_field plan_topk_fields[] = {
-    PLAN_FIELD(yvex_attention_topk_policy, required, PLAN_HASH_INT),
-    PLAN_FIELD(yvex_attention_topk_policy, version, PLAN_HASH_UINT),
-    PLAN_FIELD(yvex_attention_topk_policy, policy, PLAN_HASH_INT),
-    PLAN_FIELD(yvex_attention_topk_policy, k, PLAN_HASH_U64),
-    PLAN_FIELD(yvex_attention_topk_policy, reject_nonfinite, PLAN_HASH_INT),
-    PLAN_FIELD(yvex_attention_topk_policy, score_descending, PLAN_HASH_INT),
-    PLAN_FIELD(yvex_attention_topk_policy, equal_score_ordinal_ascending, PLAN_HASH_INT),
-    PLAN_FIELD(yvex_attention_topk_policy, plus_zero_equals_minus_zero, PLAN_HASH_INT),
-    PLAN_FIELD(yvex_attention_topk_policy, duplicate_ordinal_refused, PLAN_HASH_INT),
-    PLAN_FIELD(yvex_attention_topk_policy, output_ranked_order, PLAN_HASH_INT),
 };
 
 static const yvex_attention_summary attention_ready_summary = {
@@ -539,13 +497,7 @@ static const yvex_attention_summary attention_ready_summary = {
     .full_execution_ready = 1,
 };
 
-#undef PLAN_POSITION_FIELD
 #undef PLAN_FIELD
-
-static void plan_hash_activation_policy(yvex_sha256 *hash,
-                                        const yvex_attention_activation_policy *policy);
-static void plan_hash_sparse_topk_policy(yvex_sha256 *hash,
-                                         const yvex_attention_topk_policy *policy);
 void yvex_attention_plan_close(yvex_attention_plan *plan);
 
 /*
@@ -688,11 +640,13 @@ int yvex_attention_plan_identity_compute(
         const yvex_attention_layer_plan *layer = &layers[i];
         plan_hash_fields(&hash, layer, plan_layer_fields,
                          sizeof(plan_layer_fields) / sizeof(plan_layer_fields[0]));
-        plan_hash_activation_policy(&hash, &layer->attention_kv_activation);
-        plan_hash_activation_policy(&hash, &layer->compressor_activation);
-        plan_hash_activation_policy(&hash, &layer->compressor_rotated_activation);
-        plan_hash_activation_policy(&hash, &layer->indexer_query_activation);
-        plan_hash_sparse_topk_policy(&hash, &layer->sparse_topk);
+        (void)yvex_model_position_identity_update(&hash, &layer->position);
+        (void)yvex_model_activation_identity_update(&hash, &layer->attention_kv_activation);
+        (void)yvex_model_activation_identity_update(&hash, &layer->compressor_activation);
+        (void)yvex_model_activation_identity_update(
+            &hash, &layer->compressor_rotated_activation);
+        (void)yvex_model_activation_identity_update(&hash, &layer->indexer_query_activation);
+        (void)yvex_model_topk_identity_update(&hash, &layer->sparse_topk);
         (void)attention_hash_u64(&hash, layer->required_binding_count);
         (void)attention_hash_u64(&hash, layer->qtype_compute_refusal_count);
         (void)attention_hash_u64(&hash, layer->payload_bytes_bound);
@@ -700,26 +654,6 @@ int yvex_attention_plan_identity_compute(
     (void)yvex_sha256_final(&hash, digest);
     yvex_sha256_hex(digest, output);
     return 1;
-}
-
-static void plan_hash_activation_policy(
-    yvex_sha256 *hash,
-    const yvex_attention_activation_policy *policy)
-{
-    const yvex_attention_activation_policy empty = {0};
-
-    plan_hash_fields(hash, policy ? policy : &empty, plan_activation_fields,
-                     sizeof(plan_activation_fields) / sizeof(plan_activation_fields[0]));
-}
-
-static void plan_hash_sparse_topk_policy(
-    yvex_sha256 *hash,
-    const yvex_attention_topk_policy *policy)
-{
-    const yvex_attention_topk_policy empty = {0};
-
-    plan_hash_fields(hash, policy ? policy : &empty, plan_topk_fields,
-                     sizeof(plan_topk_fields) / sizeof(plan_topk_fields[0]));
 }
 
 static int attention_envelope_binding_count(

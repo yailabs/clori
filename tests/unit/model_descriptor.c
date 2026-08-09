@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include <yvex/api.h>
+#include <yvex/internal/model.h>
 
 #include "tests/test.h"
 
@@ -118,12 +119,79 @@ static int test_minimal_descriptor_is_unknown(void)
     return 0;
 }
 
+static int test_attention_numeric_policy_validation(void)
+{
+    yvex_attention_activation_policy activation = {
+        .required = 1,
+        .stage = YVEX_ATTENTION_ACTIVATION_KV_NON_ROPE,
+        .quantization = YVEX_ATTENTION_QUANT_FP8_E4M3_UE8M0_FAKE_DEQUANT,
+        .block_axis = YVEX_ATTENTION_AXIS_FINAL_DIMENSION,
+        .block_width = 64ull,
+        .scale_format = YVEX_ATTENTION_SCALE_UE8M0,
+        .scale_dtype = YVEX_NATIVE_DTYPE_F8_E8M0,
+        .pre_transform = YVEX_ATTENTION_TRANSFORM_NONE,
+        .tail_policy = YVEX_ATTENTION_TAIL_EXACT_OR_SHORT_FINAL_BLOCK,
+        .nonfinite_policy = YVEX_ATTENTION_NONFINITE_REFUSE,
+        .fake_quant_inplace = 1};
+    yvex_attention_topk_policy topk = {
+        .required = 1,
+        .version = 1u,
+        .policy = YVEX_ATTENTION_TOPK_SCORE_DESC_ORDINAL_ASC_V1,
+        .k = 6ull,
+        .reject_nonfinite = 1,
+        .score_descending = 1,
+        .equal_score_ordinal_ascending = 1,
+        .plus_zero_equals_minus_zero = 1,
+        .duplicate_ordinal_refused = 1,
+        .output_ranked_order = 1};
+    const yvex_attention_activation_policy *policies[] = {&activation};
+    yvex_attention_numeric_mismatch mismatch;
+
+    YVEX_TEST_ASSERT(
+        yvex_model_attention_numeric_validate(
+            YVEX_ATTENTION_COMPUTE_BF16_F32_RNE_V1,
+            YVEX_ATTENTION_COMPUTE_BF16_F32_RNE_V1, policies, 1ull, &topk,
+            64ull, 32ull, 1u, &mismatch),
+        "complete attention numeric policy validates");
+    YVEX_TEST_ASSERT(
+        !yvex_model_attention_numeric_validate(
+            YVEX_ATTENTION_COMPUTE_UNKNOWN,
+            YVEX_ATTENTION_COMPUTE_BF16_F32_RNE_V1, policies, 1ull, &topk,
+            64ull, 32ull, 1u, &mismatch) &&
+            mismatch.code == YVEX_ATTENTION_NUMERIC_MISMATCH_COMPUTE,
+        "compute mismatch is typed");
+    activation.block_width = 63ull;
+    YVEX_TEST_ASSERT(
+        !yvex_model_attention_numeric_validate(
+            YVEX_ATTENTION_COMPUTE_BF16_F32_RNE_V1,
+            YVEX_ATTENTION_COMPUTE_BF16_F32_RNE_V1, policies, 1ull, &topk,
+            64ull, 32ull, 1u, &mismatch) &&
+            mismatch.code == YVEX_ATTENTION_NUMERIC_MISMATCH_ACTIVATION &&
+            mismatch.policy_index == 0ull && mismatch.expected == 64ull &&
+            mismatch.actual == 63ull,
+        "activation block mismatch retains exact evidence");
+    activation.block_width = 64ull;
+    topk.version = 2u;
+    YVEX_TEST_ASSERT(
+        !yvex_model_attention_numeric_validate(
+            YVEX_ATTENTION_COMPUTE_BF16_F32_RNE_V1,
+            YVEX_ATTENTION_COMPUTE_BF16_F32_RNE_V1, policies, 1ull, &topk,
+            64ull, 32ull, 1u, &mismatch) &&
+            mismatch.code == YVEX_ATTENTION_NUMERIC_MISMATCH_TOPK &&
+            mismatch.expected == 1ull && mismatch.actual == 0ull,
+        "top-k mismatch retains the admitted refusal evidence");
+    return 0;
+}
+
 int yvex_test_model_descriptor(void)
 {
     if (test_descriptor_from_c1_fixture() != 0) {
         return 1;
     }
     if (test_minimal_descriptor_is_unknown() != 0) {
+        return 1;
+    }
+    if (test_attention_numeric_policy_validation() != 0) {
         return 1;
     }
     return 0;

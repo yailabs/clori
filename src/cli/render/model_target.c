@@ -12,6 +12,7 @@
 #include <yvex/internal/families/deepseek_v4.h>
 #include <yvex/internal/families/minimax_h3.h>
 #include <yvex/internal/compilation.h>
+#include <yvex/internal/model.h>
 
 #define TARGET_PTR(type_name, key_name, member, default_text) \
     {key_name, YVEX_CLI_FIELD_TEXT, offsetof(type_name, member), default_text}
@@ -23,6 +24,15 @@
     {key_name, YVEX_CLI_FIELD_BOOL, offsetof(type_name, member), NULL}
 #define TARGET_HEX(type_name, key_name, member) \
     {key_name, YVEX_CLI_FIELD_HEX64, offsetof(type_name, member), NULL}
+
+static const char *attention_class_name(yvex_attention_class class_id)
+{
+    static const char *const names[] = {"swa", "csa", "hca"};
+
+    return class_id >= YVEX_ATTENTION_CLASS_SWA && class_id <= YVEX_ATTENTION_CLASS_HCA
+               ? names[class_id]
+               : "unknown";
+}
 
 static const yvex_cli_field_spec map_report_head[] = {
     TARGET_PTR(yvex_model_target_report, "mapping_status", status, "unknown"),
@@ -496,7 +506,7 @@ static int model_target_render_deepseek_audit(
             fp,
             "layer_%llu: attention=%s ratio=%llu kv=%s router=%s mhc_entry=%s\n",
             layer->layer_index,
-            yvex_model_register_deepseek_v4()->ir.attention_name(layer->attention_class),
+            attention_class_name(layer->attention_class),
             layer->compression_ratio,
             yvex_model_register_deepseek_v4()->ir.kv_name(layer->kv.class_id),
             yvex_model_register_deepseek_v4()->ir.router_name(layer->moe.router_class),
@@ -512,7 +522,7 @@ static int model_target_render_deepseek_audit(
             "draft_%llu: layer=%llu attention=%s ratio=%llu router=%s "
             "feature_projection=%s markov=%s confidence=%s shared_head=%s\n",
             aux->predictor_index, aux->layer.layer_index,
-            yvex_model_register_deepseek_v4()->ir.attention_name(aux->layer.attention_class),
+            attention_class_name(aux->layer.attention_class),
             aux->layer.compression_ratio,
             yvex_model_register_deepseek_v4()->ir.router_name(aux->layer.moe.router_class),
             aux->has_feature_projection ? "true" : "false",
