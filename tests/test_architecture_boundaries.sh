@@ -279,7 +279,8 @@ if find src -path '*/families/*' -type f \
     fail "a family projection owns mutable Transformation IR lifecycle"
 fi
 if rg -n -i "(families/|$generic_family_symbol_pattern)" \
-    src/model/compilation/ir.c src/model/compilation/ir_identity.c \
+    src/model/compilation/binding.c src/model/compilation/ir.c \
+    src/model/compilation/ir_identity.c \
     src/model/compilation/ir_validate.c; then
     fail "generic Transformation IR owners contain concrete family semantics"
 fi
