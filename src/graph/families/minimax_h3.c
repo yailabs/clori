@@ -1345,7 +1345,7 @@ static const yvex_complete_artifact_admission audio_catalog = {
 static const yvex_artifact_component_storage audio_storage[] = {
     {YVEX_GGUF_QTYPE_F32, YVEX_MINIMAX_H3_AUDIO_TENSORS},
 };
-static const yvex_artifact_component_contract audio_contract = {
+static const yvex_artifact_catalog_contract audio_contract = {
     &audio_catalog, audio_metadata, audio_storage,
     sizeof(audio_metadata) / sizeof(audio_metadata[0]), 1ull,
     YVEX_MINIMAX_H3_AUDIO_ELEMENTS, 32ull,
@@ -1397,7 +1397,7 @@ static const yvex_complete_artifact_admission text_catalog = {
 static const yvex_artifact_component_storage text_storage[] = {
     {YVEX_GGUF_QTYPE_BF16, TEXT_TENSORS},
 };
-static const yvex_artifact_component_contract text_contract = {
+static const yvex_artifact_catalog_contract text_contract = {
     &text_catalog, text_metadata, text_storage,
     sizeof(text_metadata) / sizeof(text_metadata[0]), 1ull,
     TEXT_ELEMENTS, 32ull,
@@ -1444,7 +1444,7 @@ static const yvex_complete_artifact_admission transformer_catalog = {
 static const yvex_artifact_component_storage transformer_storage[] = {
     {YVEX_GGUF_QTYPE_F32, 13ull}, {YVEX_GGUF_QTYPE_BF16, 522ull},
 };
-static const yvex_artifact_component_contract transformer_contract = {
+static const yvex_artifact_catalog_contract transformer_contract = {
     &transformer_catalog, transformer_metadata, transformer_storage,
     sizeof(transformer_metadata) / sizeof(transformer_metadata[0]), 2ull,
     TRANSFORMER_ELEMENTS, 32ull,
@@ -1568,7 +1568,7 @@ static const yvex_complete_artifact_admission video_catalog = {
 static const yvex_artifact_component_storage video_storage[] = {
     {YVEX_GGUF_QTYPE_F32, VIDEO_TENSORS},
 };
-static const yvex_artifact_component_contract video_contract = {
+static const yvex_artifact_catalog_contract video_contract = {
     &video_catalog, video_metadata, video_storage,
     sizeof(video_metadata) / sizeof(video_metadata[0]), 1ull,
     VIDEO_ELEMENTS, 32ull,
@@ -1578,7 +1578,7 @@ static int component_admit(const char *component, const yvex_artifact *artifact,
                            yvex_complete_artifact_admission *out,
                            yvex_artifact_admission_failure *failure, yvex_error *err)
 {
-    const yvex_artifact_component_contract *contract = NULL;
+    const yvex_artifact_catalog_contract *contract = NULL;
     if (component && strcmp(component, "audio_vae") == 0) contract = &audio_contract;
     if (component && strcmp(component, "video_vae") == 0) contract = &video_contract;
     if (component && strcmp(component, "text_encoder") == 0) contract = &text_contract;
@@ -1593,7 +1593,7 @@ static int component_admit(const char *component, const yvex_artifact *artifact,
                        "unknown MiniMax-H3 weighted component");
         return YVEX_ERR_INVALID_ARG;
     }
-    return yvex_artifact_admit_component(
+    return yvex_artifact_admit_catalog(
         artifact, gguf, tensors, contract, out, failure, err);
 }
 static int video_vae_execute_artifact_cpu(

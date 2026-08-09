@@ -11,61 +11,8 @@
 #include <string.h>
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/core.h>
-#include <yvex/internal/families/deepseek_v4.h>
 #include <yvex/internal/gguf.h>
 #define ROUNDTRIP_DEFAULT_CHUNK (8u * 1024u * 1024u)
-static const yvex_complete_artifact_admission selected_deepseek_admission = {
-    .artifact_class = YVEX_ARTIFACT_CLASS_COMPLETE_YVEX,
-    .metadata_count = YVEX_SELECTED_DEEPSEEK_METADATA_COUNT, .tensor_count = YVEX_SELECTED_DEEPSEEK_TENSOR_COUNT,
-    .payload_bytes = YVEX_SELECTED_DEEPSEEK_PAYLOAD_BYTES, .file_bytes = YVEX_SELECTED_DEEPSEEK_FILE_BYTES,
-    .source_snapshot_identity = YVEX_SELECTED_DEEPSEEK_SOURCE_IDENTITY,
-    .mapping_identity = YVEX_SELECTED_DEEPSEEK_MAPPING_IDENTITY,
-    .payload_identity = YVEX_SELECTED_DEEPSEEK_PAYLOAD_IDENTITY,
-    .transform_identity = YVEX_SELECTED_DEEPSEEK_TRANSFORM_IDENTITY,
-    .profile_identity = YVEX_SELECTED_DEEPSEEK_PROFILE_IDENTITY, .profile_name = YVEX_SELECTED_DEEPSEEK_PROFILE_NAME,
-    .quant_execution_identity = YVEX_SELECTED_DEEPSEEK_EXECUTION_IDENTITY,
-    .payload_plan_identity = YVEX_SELECTED_DEEPSEEK_PAYLOAD_PLAN_IDENTITY,
-    .payload_byte_identity = YVEX_SELECTED_DEEPSEEK_PAYLOAD_BYTE_IDENTITY,
-    .writer_plan_identity = YVEX_SELECTED_DEEPSEEK_WRITER_PLAN_IDENTITY,
-    .artifact_identity = YVEX_SELECTED_DEEPSEEK_ARTIFACT_IDENTITY,
-    .official_reader_revision = YVEX_GGUF_OFFICIAL_READER_REVISION,
-    .tokenizer_complete = 1, .native_reader_accepted = 1, .official_reader_accepted = 1,
-    .payload_integrity_accepted = 1, .materialization_input_ready = 1,
-};
-static const yvex_complete_artifact_admission native_drafter_deepseek_admission = {
-    .artifact_class = YVEX_ARTIFACT_CLASS_COMPLETE_YVEX,
-    .metadata_count = 76ull,
-    .tensor_count = 1409ull,
-    .payload_bytes = 98006498296ull,
-    .file_bytes = 98018204640ull,
-    .source_snapshot_identity = YVEX_SELECTED_DEEPSEEK_SOURCE_IDENTITY,
-    .mapping_identity = YVEX_SELECTED_DEEPSEEK_MAPPING_IDENTITY,
-    .payload_identity = YVEX_SELECTED_DEEPSEEK_PAYLOAD_IDENTITY,
-    .transform_identity = YVEX_SELECTED_DEEPSEEK_TRANSFORM_IDENTITY,
-    .profile_identity =
-        "6a99e9f7c374e3f718cce705002bf2b799db9cc1b86f65091631857f52c1c587",
-    .profile_name = "deepseek-v4-flash-dspark-native-drafter-candidate",
-    .quant_execution_identity =
-        "35002244d5854a2d51b877ea31614cd985c9795d11c7e0904ed3475fec7fcb77",
-    .payload_plan_identity =
-        "e83545c729b219d327d4a437d499b73407648c94748ba7fda13905baace15c3e",
-    .payload_byte_identity =
-        "c79712bb85e31ebdcbd71ef0256709a001ae4cc62c4150ba8726d5dc5722dcd0",
-    .writer_plan_identity =
-        "2d4694925c02c04811ea846f389a94dbf524d26809a292c93f2c46ca8f05a025",
-    .artifact_identity =
-        "59c4649b19bb9f3eb7c01559e12ae52c3d4fbd067957e35de0a1a851759c7cc1",
-    .official_reader_revision = YVEX_GGUF_OFFICIAL_READER_REVISION,
-    .tokenizer_complete = 1,
-    .native_reader_accepted = 1,
-    .official_reader_accepted = 1,
-    .payload_integrity_accepted = 1,
-    .materialization_input_ready = 1,
-};
-static const yvex_complete_artifact_admission *const admitted_deepseek_artifacts[] = {
-    &selected_deepseek_admission,
-    &native_drafter_deepseek_admission,
-};
 static const char *const artifact_admission_names[] = {
     [YVEX_ARTIFACT_ADMISSION_OK] = "ok", [YVEX_ARTIFACT_ADMISSION_INVALID_ARGUMENT] = "invalid-argument",
     [YVEX_ARTIFACT_ADMISSION_WRITER_INCOMPLETE] = "writer-incomplete",
@@ -167,17 +114,28 @@ static int admission_identity_encode(const yvex_complete_artifact_admission *adm
     return 1;
 }
 
-static int admission_deepseek_identities_valid(
+static int admission_complete_catalog_valid(
     const yvex_complete_artifact_admission *admission)
 {
-    return admission && yvex_sha256_hex_is_valid(admission->artifact_identity) &&
+    return admission &&
+           admission->artifact_class == YVEX_ARTIFACT_CLASS_COMPLETE_YVEX &&
+           admission->metadata_count && admission->tensor_count &&
+           admission->payload_bytes && admission->file_bytes &&
+           admission->source_snapshot_identity && admission->mapping_identity &&
+           yvex_sha256_hex_is_valid(admission->artifact_identity) &&
            yvex_sha256_hex_is_valid(admission->profile_identity) &&
            yvex_sha256_hex_is_valid(admission->quant_execution_identity) &&
            yvex_sha256_hex_is_valid(admission->payload_plan_identity) &&
            yvex_sha256_hex_is_valid(admission->payload_byte_identity) &&
            yvex_sha256_hex_is_valid(admission->payload_identity) &&
            yvex_sha256_hex_is_valid(admission->transform_identity) &&
-           yvex_sha256_hex_is_valid(admission->writer_plan_identity);
+           yvex_sha256_hex_is_valid(admission->writer_plan_identity) &&
+           strcmp(admission->official_reader_revision,
+                  YVEX_GGUF_OFFICIAL_READER_REVISION) == 0 &&
+           admission->tokenizer_complete && admission->native_reader_accepted &&
+           admission->official_reader_accepted &&
+           admission->payload_integrity_accepted &&
+           admission->materialization_input_ready;
 }
 
 static int admission_component_catalog_valid(
@@ -202,19 +160,6 @@ static int admission_component_catalog_valid(
            !catalog->tokenizer_complete && catalog->native_reader_accepted &&
            catalog->official_reader_accepted && catalog->payload_integrity_accepted &&
            catalog->materialization_input_ready && !catalog->runtime_supported;
-}
-
-static const yvex_complete_artifact_admission *admission_deepseek_for_size(
-    unsigned long long file_bytes)
-{
-    size_t index;
-
-    for (index = 0u;
-         index < sizeof(admitted_deepseek_artifacts) / sizeof(admitted_deepseek_artifacts[0]);
-         ++index)
-        if (admitted_deepseek_artifacts[index]->file_bytes == file_bytes)
-            return admitted_deepseek_artifacts[index];
-    return NULL;
 }
 
 int yvex_complete_artifact_admit(const yvex_artifact_admission_request *request,
@@ -354,37 +299,41 @@ int yvex_complete_artifact_admit(const yvex_artifact_admission_request *request,
     return YVEX_OK;
 }
 
-int yvex_artifact_admit_deepseek(const yvex_artifact *artifact,
-                                 yvex_complete_artifact_admission *out,
-                                 yvex_artifact_admission_failure *failure, yvex_error *err) {
-    const yvex_complete_artifact_admission *admitted;
+static int artifact_admit_complete_catalog(
+    const yvex_artifact *artifact,
+    const yvex_complete_artifact_admission *catalog,
+    yvex_complete_artifact_admission *out,
+    yvex_artifact_admission_failure *failure, yvex_error *err) {
     yvex_artifact_snapshot snapshot;
     int rc;
 
     if (out)
         memset(out, 0, sizeof(*out));
-    if (!artifact || !out)
-        return admission_fail(failure, YVEX_ARTIFACT_ADMISSION_INVALID_ARGUMENT, "artifact", 1u, 0u,
-                              err, YVEX_ERR_INVALID_ARG,
-                              "opened selected artifact handle and output are required");
-    admitted = admission_deepseek_for_size(yvex_artifact_size(artifact));
-    if (!admitted)
-        return admission_fail(failure, YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH, "file-bytes",
-                              0u, yvex_artifact_size(artifact), err, YVEX_ERR_FORMAT,
-                              "DeepSeek artifact extent is not in the admitted physical catalog");
-    if (!admission_deepseek_identities_valid(admitted))
+    if (!artifact || !catalog || !out)
+        return admission_fail(
+            failure, YVEX_ARTIFACT_ADMISSION_INVALID_ARGUMENT, "catalog", 1u, 0u,
+            err, YVEX_ERR_INVALID_ARG,
+            "opened artifact, complete catalog row, and output are required");
+    if (!admission_complete_catalog_valid(catalog))
         return admission_fail(failure, YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH,
                               "pinned-identities", 1u, 0u, err, YVEX_ERR_FORMAT,
-                              "admitted DeepSeek physical identities are invalid");
+                              "complete artifact catalog identities are invalid");
+    if (yvex_artifact_size(artifact) != catalog->file_bytes)
+        return admission_fail(
+            failure, YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH, "file-bytes",
+            catalog->file_bytes, yvex_artifact_size(artifact), err, YVEX_ERR_FORMAT,
+            "artifact extent differs from its complete catalog row");
     rc = yvex_artifact_snapshot_get(artifact, &snapshot, err);
     if (rc == YVEX_OK)
         rc = yvex_artifact_snapshot_validate(artifact, NULL, err);
     if (rc != YVEX_OK)
         return admission_fail(failure, YVEX_ARTIFACT_ADMISSION_FILE_DRIFT, "file-snapshot",
-                              admitted->file_bytes, 0u, err, (yvex_status)rc,
-                              "admitted DeepSeek artifact snapshot is not stable");
+                              catalog->file_bytes, 0u, err, (yvex_status)rc,
+                              "complete catalog artifact snapshot is not stable");
 
-    *out = *admitted;
+    *out = *catalog;
+    out->artifact_bytes_hashed = 0u;
+    out->artifact_identity_verified = 0;
     out->file_snapshot = snapshot;
     yvex_core_text_copy(out->artifact_path, sizeof(out->artifact_path), yvex_artifact_path(artifact));
     if (!admission_identity_encode(out, out->admission_identity))
@@ -443,9 +392,9 @@ static int artifact_admit_component_catalog(
 }
 
 /* Reconcile a family catalog with the complete structural and storage inventory before trust. */
-int yvex_artifact_admit_component(
+int yvex_artifact_admit_catalog(
     const yvex_artifact *artifact, const yvex_gguf *gguf, const yvex_tensor_table *tensors,
-    const yvex_artifact_component_contract *contract, yvex_complete_artifact_admission *out,
+    const yvex_artifact_catalog_contract *contract, yvex_complete_artifact_admission *out,
     yvex_artifact_admission_failure *failure, yvex_error *err)
 {
     unsigned long long qtype_counts[YVEX_GGUF_QTYPE_ABI_UPSTREAM_MAX_ID + 1u] = {0};
@@ -454,6 +403,18 @@ int yvex_artifact_admit_component(
     int rc;
 
     if (out) memset(out, 0, sizeof(*out));
+    if (contract && contract->catalog &&
+        contract->catalog->artifact_class == YVEX_ARTIFACT_CLASS_COMPLETE_YVEX) {
+        if (gguf || tensors || contract->metadata || contract->storage ||
+            contract->metadata_count || contract->storage_count ||
+            contract->elements || contract->alignment)
+            return admission_fail(
+                failure, YVEX_ARTIFACT_ADMISSION_INVALID_ARGUMENT,
+                "complete-catalog-contract", 1u, 0u, err, YVEX_ERR_INVALID_ARG,
+                "complete catalog admission does not accept component structure");
+        return artifact_admit_complete_catalog(
+            artifact, contract->catalog, out, failure, err);
+    }
     if (!artifact || !gguf || !tensors || !contract || !catalog || !out ||
         !contract->metadata || !contract->metadata_count || !contract->storage ||
         !contract->storage_count || !contract->elements || !contract->alignment)

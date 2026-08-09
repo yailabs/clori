@@ -146,6 +146,32 @@ static int test_deepseek_catalog_entry(const char *root,
                      "variant catalog binds exact admitted identities");
     YVEX_TEST_ASSERT(!admission.artifact_identity_verified && admission.artifact_bytes_hashed == 0u,
                      "catalog reconstruction does not fabricate byte verification");
+    {
+        yvex_complete_artifact_admission mismatched = admission;
+        yvex_complete_artifact_admission rejected;
+        yvex_artifact_catalog_contract contract = {0};
+
+        mismatched.file_bytes++;
+        contract.catalog = &mismatched;
+        YVEX_TEST_ASSERT(
+            yvex_artifact_admit_catalog(
+                artifact, NULL, NULL, &contract, &rejected, &failure,
+                &err) == YVEX_ERR_FORMAT &&
+                failure.code == YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH &&
+                strcmp(failure.field, "file-bytes") == 0 && !rejected.complete,
+            "generic catalog admission refuses a mismatched physical extent");
+        mismatched.file_bytes--;
+        contract.catalog = &mismatched;
+        contract.alignment = 32ull;
+        YVEX_TEST_ASSERT(
+            yvex_artifact_admit_catalog(
+                artifact, NULL, NULL, &contract, &rejected, &failure,
+                &err) == YVEX_ERR_INVALID_ARG &&
+                failure.code == YVEX_ARTIFACT_ADMISSION_INVALID_ARGUMENT &&
+                strcmp(failure.field, "complete-catalog-contract") == 0 &&
+                !rejected.complete,
+            "complete catalog admission refuses component structure");
+    }
     yvex_artifact_close(artifact);
     YVEX_TEST_ASSERT(unlink(path) == 0, "variant sparse artifact cleaned");
     return 0;
@@ -237,7 +263,7 @@ static int test_component_admission_catalog(void)
         .payload_integrity_accepted = 1,
         .materialization_input_ready = 1,
     };
-    yvex_artifact_component_contract contract = {
+    yvex_artifact_catalog_contract contract = {
         &catalog, metadata, storage, 2ull, 1ull, 32ull, 32ull,
     };
     yvex_complete_artifact_admission admission;
@@ -255,7 +281,7 @@ static int test_component_admission_catalog(void)
     YVEX_TEST_ASSERT(yvex_gguf_open(&gguf, artifact, &err) == YVEX_OK &&
                          yvex_tensor_table_from_gguf(&tensors, gguf, &err) == YVEX_OK,
                      "component catalog structural views opened");
-    YVEX_TEST_ASSERT(yvex_artifact_admit_component(
+    YVEX_TEST_ASSERT(yvex_artifact_admit_catalog(
                          artifact, gguf, tensors, &contract, &admission, &failure,
                          &err) == YVEX_OK &&
                          admission.complete &&
@@ -267,21 +293,21 @@ static int test_component_admission_catalog(void)
                          yvex_sha256_hex_is_valid(admission.admission_identity),
                      "component contract reconciles structure before publishing trust");
     metadata[1].value = "wrong";
-    YVEX_TEST_ASSERT(yvex_artifact_admit_component(
+    YVEX_TEST_ASSERT(yvex_artifact_admit_catalog(
                          artifact, gguf, tensors, &contract, &admission, &failure,
                          &err) == YVEX_ERR_FORMAT &&
                          failure.code == YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH,
                      "component contract refuses metadata identity drift");
     metadata[1].value = "yvex-test";
     storage[0].tensors = 2ull;
-    YVEX_TEST_ASSERT(yvex_artifact_admit_component(
+    YVEX_TEST_ASSERT(yvex_artifact_admit_catalog(
                          artifact, gguf, tensors, &contract, &admission, &failure,
                          &err) == YVEX_ERR_FORMAT &&
                          failure.code == YVEX_ARTIFACT_ADMISSION_TENSOR_COVERAGE,
                      "component contract refuses qtype population drift");
     storage[0].tensors = 1ull;
     catalog.file_bytes++;
-    YVEX_TEST_ASSERT(yvex_artifact_admit_component(
+    YVEX_TEST_ASSERT(yvex_artifact_admit_catalog(
                          artifact, gguf, tensors, &contract, &admission, &failure,
                          &err) == YVEX_ERR_FORMAT &&
                          failure.code == YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH,
@@ -289,7 +315,7 @@ static int test_component_admission_catalog(void)
     catalog.file_bytes--;
     strcpy(catalog.artifact_identity,
            "8888888888888888888888888888888888888888888888888888888888888888");
-    YVEX_TEST_ASSERT(yvex_artifact_admit_component(
+    YVEX_TEST_ASSERT(yvex_artifact_admit_catalog(
                          artifact, gguf, tensors, &contract, &admission, &failure,
                          &err) == YVEX_ERR_FORMAT &&
                          failure.code == YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH &&

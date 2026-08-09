@@ -309,6 +309,9 @@ fi
 if rg -n "$conversation_family_registry_pattern" src include; then
     fail "generic tokenizer or server retains a concrete conversation-family registry"
 fi
+if rg -n -i '(families/|deepseek|minimax)' src/artifact/roundtrip_gate.c; then
+    fail "generic artifact roundtrip owns a concrete family catalog or ABI"
+fi
 preparation_callback_owners=$(
     rg -l 'prepare_deepseek_runtime_binding' src include | LC_ALL=C sort
 )

@@ -250,11 +250,11 @@ typedef struct {
     const yvex_artifact_component_metadata *metadata;
     const yvex_artifact_component_storage *storage;
     unsigned long long metadata_count, storage_count, elements, alignment;
-} yvex_artifact_component_contract;
-/* Reconcile a family-provided exact component contract with one unchanged opened artifact. */
-int yvex_artifact_admit_component(
+} yvex_artifact_catalog_contract;
+/* Reconcile a family-provided exact catalog row with one unchanged opened artifact. */
+int yvex_artifact_admit_catalog(
     const yvex_artifact *artifact, const yvex_gguf *gguf, const yvex_tensor_table *tensors,
-    const yvex_artifact_component_contract *contract, yvex_complete_artifact_admission *out,
+    const yvex_artifact_catalog_contract *contract, yvex_complete_artifact_admission *out,
     yvex_artifact_admission_failure *failure, yvex_error *err);
 int yvex_artifact_admission_identity_verify(
     const yvex_artifact *artifact, yvex_complete_artifact_admission *admission,
@@ -592,7 +592,6 @@ int yvex_materialization_session_expert_subview(const yvex_materialization_sessi
                                                 yvex_materialized_expert_subview *out,
                                                 yvex_materialization_failure *failure,
                                                 yvex_error *err);
-
 #ifdef __cplusplus
 }
 #endif
