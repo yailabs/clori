@@ -1242,6 +1242,7 @@ static int fixture_binding_request(const binding_fixture *fixture, const char *d
         !compiler->execution_capabilities ||
         !compiler->transformer_policy || !compiler->logits_policy ||
         !compiler->speculation_policy || !compiler->tokenizer_policy) return 0;
+    request->physical_execution_policy = compiler->physical_execution_policy;
     request->family_adapter_id = execution->adapter_id;
     request->family_adapter_version = execution->adapter_version;
     request->artifact_format = "GGUF";
@@ -1350,6 +1351,7 @@ static int test_prepare_reopen_import(const binding_fixture *fixture, const char
     yvex_runtime_binding_prepare_result mutated_result;
     yvex_artifact_physical_compatibility rejected_compatibility;
     yvex_artifact_physical_compatibility mutated_compatibility;
+    yvex_physical_execution_policy rejected_physical_policy;
     yvex_runtime_binding *mutated = NULL;
     yvex_runtime_binding_failure failure;
     yvex_materialization_options options;
@@ -1359,6 +1361,7 @@ static int test_prepare_reopen_import(const binding_fixture *fixture, const char
     yvex_attention_plan *attention = NULL;
     yvex_attention_plan *draft_attention = NULL;
     const yvex_physical_execution_ir *physical = NULL;
+    const yvex_physical_execution_decision *physical_decision;
     const yvex_transformer_family_policy *transformer;
     const yvex_logits_family_policy *logits;
     const yvex_speculation_family_policy *speculation;
@@ -1389,6 +1392,19 @@ static int test_prepare_reopen_import(const binding_fixture *fixture, const char
             !directory_has_temporary(directory) &&
             !directory_has_suffix(directory, YVEX_RUNTIME_BINDING_SUFFIX),
         "candidate validation failure publishes nothing and removes its temporary");
+    rejected_physical_policy = *request.physical_execution_policy;
+    rejected_physical_policy.dense_kernel_family = NULL;
+    mutated_request = request;
+    mutated_request.physical_execution_policy = &rejected_physical_policy;
+    memset(&rejected_result, 0, sizeof(rejected_result));
+    rc = yvex_runtime_binding_prepare(
+        &mutated_request, &rejected_result, &failure, &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_ERR_INVALID_ARG && !rejected_result.published &&
+            failure.code == YVEX_RUNTIME_BINDING_FAILURE_COMPATIBILITY &&
+            strcmp(failure.field, "physical-execution") == 0 &&
+            !directory_has_suffix(directory, YVEX_RUNTIME_BINDING_SUFFIX),
+        "incomplete physical execution policy refuses before publication");
     rc = yvex_runtime_binding_prepare(&request, prepared, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && prepared->published, "runtime binding prepared");
     YVEX_TEST_ASSERT(strlen(prepared->summary.identity) == 64u,
@@ -1440,7 +1456,9 @@ static int test_prepare_reopen_import(const binding_fixture *fixture, const char
     YVEX_TEST_ASSERT(rc == YVEX_OK && !draft_attention && physical,
                      "binding runtime graph imported without an invented draft plan");
     YVEX_TEST_ASSERT(
-        strcmp(yvex_physical_execution_ir_summary(physical)->identity,
+        yvex_physical_execution_ir_summary(physical)->schema_version ==
+                YVEX_PHYSICAL_EXECUTION_SCHEMA_V2 &&
+            strcmp(yvex_physical_execution_ir_summary(physical)->identity,
                summary.physical_execution_identity) == 0 &&
             summary.physical_execution_decision_count == summary.tensor_count,
         "binding imports persisted physical execution truth");
@@ -1449,6 +1467,7 @@ static int test_prepare_reopen_import(const binding_fixture *fixture, const char
             *binding_out, &transformer, &logits, &speculation),
         "binding exposes one compiled policy envelope");
     imported_descriptor = yvex_runtime_descriptor_summary_get(descriptor);
+    physical_decision = yvex_physical_execution_ir_decision_at(physical, 0ull);
     YVEX_TEST_ASSERT(
         transformer && imported_descriptor &&
             transformer->hidden_width == imported_descriptor->model_execution.hidden_width &&
@@ -1460,6 +1479,16 @@ static int test_prepare_reopen_import(const binding_fixture *fixture, const char
                 imported_descriptor->model_execution.target_feature_count &&
             yvex_sha256_hex_is_valid(speculation->policy_identity),
         "binding imports authenticated compiled execution policies");
+    YVEX_TEST_ASSERT(
+        physical_decision && imported_descriptor &&
+            physical_decision->maximum_context ==
+                imported_descriptor->model_execution.maximum_context &&
+            physical_decision->supported_width_mask == 2ull &&
+            physical_decision->activation ==
+                request.physical_execution_policy->activation &&
+            strcmp(physical_decision->kernel_family,
+                   request.physical_execution_policy->dense_kernel_family) == 0,
+        "physical execution derives semantic bounds and preserves selected policy");
     tokenizer_policy = yvex_runtime_binding_tokenizer_policy(*binding_out);
     YVEX_TEST_ASSERT(
         tokenizer_policy &&

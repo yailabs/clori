@@ -886,7 +886,8 @@ static int artifact_variant_bind(
     yvex_error_clear(&error);
     if (!binding_directory || !binding_directory[0] || !transform || !adapter ||
         !adapter->execution_capabilities || !adapter->transformer_policy ||
-        !adapter->logits_policy || !adapter->speculation_policy) {
+        !adapter->logits_policy || !adapter->speculation_policy ||
+        !adapter->tokenizer_policy || !graph) {
         fprintf(stderr, "variant_binding_preflight=refused\n");
         return 1;
     }
@@ -968,11 +969,17 @@ static int artifact_variant_bind(
         prepare.runtime_descriptor = descriptor;
         prepare.attention_plan = attention;
         prepare.draft_attention_plan = draft_attention;
+        prepare.graph_compiler = graph;
+        prepare.physical_execution_policy = adapter->physical_execution_policy;
         prepare.family_adapter_id = adapter->adapter_id;
         prepare.family_adapter_version = adapter->adapter_version;
         prepare.artifact_format = "gguf";
         prepare.artifact_format_version = writer_summary->gguf_version;
         prepare.logical_transform_identity = transform->transform_identity;
+        if (!adapter->tokenizer_policy(&prepare.tokenizer_policy, &error))
+            rc = YVEX_ERR_STATE;
+    }
+    if (rc == YVEX_OK) {
         rc = yvex_runtime_binding_prepare(
             &prepare, &prepared, &binding_failure, &error);
     }

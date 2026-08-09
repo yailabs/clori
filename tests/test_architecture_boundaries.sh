@@ -45,6 +45,7 @@ recursive_cleanup_call_pattern='(system|popen)[[:space:]]*\([^;]*(rm[[:space:]]+
 conversation_literal_pattern='(<think>|</think>|｜DSML｜|<tool_result>|<｜(User|Assistant|latest_reminder)｜>)'
 family_runtime_context_pattern='(context_capacity|requested_session_context|admitted_execution_maximum|'
 family_runtime_context_pattern="${family_runtime_context_pattern}"'per_(session|request)_maximum|physical_state_pool_tokens)'
+implicit_physical_envelope_pattern='decision->(supported_width_mask[[:space:]]*=[[:space:]]*0x|maximum_context[[:space:]]*=[[:space:]]*ULLONG_MAX)'
 moe_family_registry_pattern='yvex_graph_moe_family_(at|find)[[:space:]]*\('
 conversation_family_registry_pattern='yvex_model_conversation_protocol_(at|find)[[:space:]]*\('
 legacy_resolution_boolean_pattern='(host_stochastic_reference|token_local_moe_reference|eager_attention_reference)'
@@ -100,6 +101,13 @@ printf '%s\n' 'options.context_capacity = 4096;' |
 if printf '%s\n' 'model.maximum_context = 1048576;' |
     rg "$family_runtime_context_pattern" >/dev/null; then
     fail "family context-capacity guard rejects a semantic model maximum"
+fi
+printf '%s\n' 'decision->maximum_context = ULLONG_MAX;' |
+    rg "$implicit_physical_envelope_pattern" >/dev/null ||
+    fail "physical-envelope guard misses an implicit unbounded context"
+if printf '%s\n' 'decision->maximum_context = model->maximum_context;' |
+    rg "$implicit_physical_envelope_pattern" >/dev/null; then
+    fail "physical-envelope guard rejects a semantic model bound"
 fi
 printf '%s\n' 'profile.eager_attention_reference = 1;' |
     rg "$legacy_resolution_boolean_pattern" >/dev/null ||
@@ -379,6 +387,17 @@ fi
 if rg -n "$conversation_family_registry_pattern" src include; then
     fail "generic tokenizer or server retains a concrete conversation-family registry"
 fi
+if rg -n "$implicit_physical_envelope_pattern" src/graph/execution.c; then
+    fail "physical execution compilation retains an implicit width or context envelope"
+fi
+rg -n 'decision->maximum_context[[:space:]]*=[[:space:]]*model->maximum_context' \
+    src/graph/execution.c >/dev/null ||
+    fail "physical execution no longer binds the semantic context maximum"
+rg -n 'model->verification_width_maximum' src/graph/execution.c >/dev/null ||
+    fail "physical execution no longer derives admitted widths from semantic geometry"
+rg -n 'physical_execution_policy' src/runtime/binding.c \
+    include/yvex/internal/compiler.h >/dev/null ||
+    fail "physical execution policy escaped the compiler-binding boundary"
 if rg -n -i '(families/|deepseek|minimax)' src/artifact include/yvex/internal/artifact.h; then
     fail "generic artifact owners contain a concrete family catalog or ABI"
 fi

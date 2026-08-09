@@ -14,7 +14,8 @@
 extern "C" {
 #endif
 
-#define YVEX_PHYSICAL_EXECUTION_SCHEMA_V1 1u
+#define YVEX_PHYSICAL_EXECUTION_SCHEMA_V2 2u
+#define YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V1 1u
 #define YVEX_COMPILED_EXECUTION_PROFILE_SCHEMA_V2 2u
 #define YVEX_EXECUTION_HARDWARE_PROFILE_SCHEMA_V1 1u
 #define YVEX_EXECUTION_WORKLOAD_PROFILE_SCHEMA_V1 1u
@@ -108,6 +109,16 @@ typedef enum {
     YVEX_EXECUTION_BACKEND_CUDA
 } yvex_execution_backend_requirement;
 
+typedef struct yvex_physical_execution_policy {
+    unsigned int schema_version, required_compute_major, required_compute_minor;
+    yvex_execution_activation_class activation;
+    yvex_execution_backend_requirement required_backend;
+    yvex_execution_evidence_profile evidence;
+    yvex_execution_class fallback;
+    int derived_asset_required;
+    const char *dense_kernel_family, *expert_kernel_family;
+} yvex_physical_execution_policy;
+
 typedef struct {
     unsigned int schema_version;
     unsigned long long terminal_tensor_id;
@@ -148,7 +159,8 @@ int yvex_physical_execution_ir_build(
     yvex_physical_execution_ir **out,
     const yvex_materialization_session *materialization,
     const yvex_runtime_descriptor *descriptor,
-    const char *physical_variant_identity, yvex_error *err);
+    const char *physical_variant_identity,
+    const yvex_physical_execution_policy *policy, yvex_error *err);
 int yvex_physical_execution_ir_import(
     yvex_physical_execution_ir **out, const yvex_physical_execution_summary *summary,
     const yvex_physical_execution_decision *decisions, unsigned long long count,

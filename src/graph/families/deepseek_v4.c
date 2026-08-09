@@ -305,12 +305,21 @@ static int deepseek_runtime_binding_compile(
     yvex_runtime_binding_prepare_request *prepare, void **owner,
     yvex_error *err);
 static void deepseek_runtime_binding_release(void *owner);
+static const yvex_physical_execution_policy deepseek_physical_execution_policy = {
+    .schema_version = YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V1,
+    .activation = YVEX_EXECUTION_ACTIVATION_DEVICE_F32,
+    .required_backend = YVEX_EXECUTION_BACKEND_ANY,
+    .evidence = YVEX_EXECUTION_EVIDENCE_PRODUCTION,
+    .fallback = YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE,
+    .dense_kernel_family = "portable-encoded-row",
+    .expert_kernel_family = "portable-expert-row"};
 static const yvex_family_compiler_adapter deepseek_compiler = {
     .schema_version = YVEX_FAMILY_COMPILER_SCHEMA_V1,
     .adapter_id = YVEX_DEEPSEEK_V4_ADAPTER_ID,
     .adapter_version = YVEX_DEEPSEEK_V4_ADAPTER_VERSION,
     .target_id = "deepseek4-v4-flash-dspark",
     .logical_transform_identity = YVEX_SELECTED_DEEPSEEK_TRANSFORM_IDENTITY,
+    .physical_execution_policy = &deepseek_physical_execution_policy,
     .graph = deepseek_graph_compile,
     .execution_capabilities = deepseek_execution_capabilities,
     .transformer_policy = deepseek_transformer_policy,
@@ -1826,6 +1835,7 @@ static int deepseek_runtime_binding_compile(
     prepare->attention_plan = compiler->attention;
     prepare->draft_attention_plan = compiler->draft_attention;
     prepare->graph_compiler = compiler->graph;
+    prepare->physical_execution_policy = deepseek_compiler.physical_execution_policy;
     prepare->family_adapter_id = request->family_adapter_id;
     prepare->family_adapter_version = request->family_adapter_version;
     prepare->artifact_format = "gguf";

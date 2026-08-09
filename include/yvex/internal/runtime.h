@@ -83,6 +83,7 @@ typedef struct yvex_runtime_binding_prepare_request {
     const yvex_attention_plan *attention_plan;
     const yvex_attention_plan *draft_attention_plan;
     const yvex_graph_compiler_api *graph_compiler;
+    const yvex_physical_execution_policy *physical_execution_policy;
     unsigned long long family_adapter_id, family_adapter_version;
     const char *artifact_format;
     unsigned int artifact_format_version;

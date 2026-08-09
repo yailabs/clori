@@ -979,6 +979,7 @@ static int prepare_validate(const yvex_runtime_binding_prepare_request *request,
     if (!request || !request->directory || !request->directory[0] || !request->admission ||
         !request->materialization || !request->runtime_descriptor || !request->attention_plan ||
         !request->graph_compiler || !request->graph_compiler->moe ||
+        !request->physical_execution_policy ||
         !request->family_adapter_id || !request->family_adapter_version ||
         !request->artifact_format || !request->artifact_format[0] ||
         strlen(request->artifact_format) >= sizeof(((yvex_runtime_binding_summary *)0)->artifact_format) ||
@@ -1420,7 +1421,7 @@ static int binding_validate(const yvex_runtime_binding *binding,
     char semantic[YVEX_SHA256_HEX_CAP], executable[YVEX_SHA256_HEX_CAP];
     const char *compatibility;
     const physical_summary *physical;
-    unsigned long long i;
+    unsigned long long i, maximum_width, width_mask;
     *field = "canonical-body";
     *code = YVEX_RUNTIME_BINDING_FAILURE_FORMAT;
     if (!binding) return 0;
@@ -1431,6 +1432,21 @@ static int binding_validate(const yvex_runtime_binding *binding,
         *field = "physical-execution";
         *code = YVEX_RUNTIME_BINDING_FAILURE_IDENTITY;
         return 0;
+    }
+    maximum_width = binding->descriptor.model_execution.verification_width_maximum;
+    if (!maximum_width) maximum_width = 1ull;
+    if (maximum_width >= 63ull) return 0;
+    width_mask = (1ull << (maximum_width + 1ull)) - 2ull;
+    for (i = 0ull; i < physical->decision_count; ++i) {
+        const physical_decision *decision =
+            yvex_physical_execution_ir_decision_at(binding->physical_execution, i);
+        if (!decision || decision->maximum_context !=
+                             binding->descriptor.model_execution.maximum_context ||
+            decision->supported_width_mask != width_mask) {
+            *field = "physical-execution-envelope";
+            *code = YVEX_RUNTIME_BINDING_FAILURE_COMPATIBILITY;
+            return 0;
+        }
     }
     if (!yvex_runtime_capabilities_identity(&binding->summary.capabilities,
                                             capability_identity) ||
@@ -1832,7 +1848,8 @@ int yvex_runtime_binding_prepare(const yvex_runtime_binding_prepare_request *req
     }
     rc = yvex_physical_execution_ir_build(
         &physical, request->materialization, request->runtime_descriptor,
-        request->admission->profile_identity, err);
+        request->admission->profile_identity,
+        request->physical_execution_policy, err);
     if (rc != YVEX_OK)
         rc = binding_reject(
             failure, YVEX_RUNTIME_BINDING_FAILURE_COMPATIBILITY,
