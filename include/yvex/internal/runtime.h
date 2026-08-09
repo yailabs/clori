@@ -293,7 +293,8 @@ int yvex_runtime_state_residency_transition(yvex_runtime_state_residency *,
     const yvex_attention_state_provider *, const yvex_attention_publication *,
     unsigned long long, unsigned long long, yvex_runtime_state_action, yvex_error *);
 int yvex_runtime_state_residency_publish(yvex_runtime_state_residency *residency, yvex_error *err);
-void yvex_runtime_state_residency_commit(yvex_runtime_state_residency *residency);
+int yvex_runtime_state_residency_commit(yvex_runtime_state_residency *residency,
+                                        yvex_error *err);
 void yvex_runtime_state_residency_abort(yvex_runtime_state_residency *residency);
 int yvex_runtime_state_residency_reset(yvex_runtime_state_residency *residency, yvex_error *err);
 int yvex_runtime_state_residency_invalidate(yvex_runtime_state_residency *residency, yvex_error *err);

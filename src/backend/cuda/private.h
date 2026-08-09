@@ -9,6 +9,7 @@
 #include <yvex/internal/backend.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/quant_numeric.h>
+#include "src/backend/private.h"
 #ifdef __cplusplus
 extern "C" {
 #endif

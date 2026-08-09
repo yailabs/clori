@@ -3220,23 +3220,6 @@ static int test_runtime_paged_state_cuda_pack(
                          provider->prepare(provider->context, 0ull, &layer->recipe,
                                            NULL, &attention_failure, &err) == YVEX_OK,
                      "empty committed and candidate histories reserve inaccessible tails");
-    backend_options.kind = YVEX_BACKEND_KIND_CPU;
-    YVEX_TEST_ASSERT(yvex_backend_open(&backend, &backend_options, &err) == YVEX_OK,
-                     "host-backed backend opens for deterministic CUDA staging test");
-    backend->kind = YVEX_BACKEND_KIND_CUDA;
-    YVEX_TEST_ASSERT(yvex_runtime_state_residency_prepare(
-                         &residency, backend, attention_capacity, provider,
-                         0ull, ULLONG_MAX, 0ull, ULLONG_MAX, &err) == YVEX_OK &&
-                         yvex_runtime_state_residency_summary_copy(
-                             residency, &summary, &err) == YVEX_OK &&
-                         summary.cuda_ready && summary.upload_count == 2ull &&
-                         summary.upload_bytes == summary.device_bytes,
-                     "CUDA staging copies only visible history while retaining full addresses");
-    YVEX_TEST_ASSERT(yvex_runtime_state_residency_close(&residency, &err) == YVEX_OK,
-                     "paged CUDA residency staging releases exactly");
-    backend->kind = YVEX_BACKEND_KIND_CPU;
-    YVEX_TEST_ASSERT(yvex_backend_close_checked(&backend, &err) == YVEX_OK,
-                     "host-backed staging backend closes");
     backend_options.kind = YVEX_BACKEND_KIND_CUDA;
     if (yvex_backend_open(&backend, &backend_options, &err) == YVEX_OK) {
         unsigned long long committed_pages;
@@ -3246,7 +3229,7 @@ static int test_runtime_paged_state_cuda_pack(
                              yvex_runtime_state_residency_summary_copy(
                                  residency, &summary, &err) == YVEX_OK,
                          "native CUDA state residency prepares from provider pages");
-        if (backend->virtual_tensor_ready) {
+        if (yvex_backend_virtual_tensor_supported(backend)) {
             YVEX_TEST_ASSERT(summary.paged && !summary.host_bytes,
                              "native CUDA state uses page-backed device storage");
             YVEX_TEST_ASSERT(summary.virtual_device_bytes && summary.page_granularity,
@@ -3348,7 +3331,8 @@ static int test_runtime_cuda_session_cleanup_retry(
     descriptor.dims[0] = descriptor.bytes = 32ull;
     YVEX_TEST_ASSERT(
         yvex_backend_open(&owner, &options, &err) == YVEX_OK &&
-            owner->vtable->resident_alloc(owner, &descriptor, &weights, &host, &err) == YVEX_OK &&
+            yvex_backend_resident_alloc(
+                owner, &descriptor, &weights, &host, &err) == YVEX_OK &&
             yvex_backend_resident_attach(
                 owner, host, descriptor.bytes, weights, 1ull, &err) == YVEX_OK &&
             yvex_backend_open_shared_cuda(&first, owner, 0ull, &err) == YVEX_OK &&

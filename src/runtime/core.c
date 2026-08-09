@@ -316,7 +316,8 @@ int yvex_runtime_private_session_invalidate(yvex_runtime_execution_session *sess
             if (err) *err = cleanup;
         }
     }
-    if (session->backend && session->backend->kind == YVEX_BACKEND_KIND_CUDA) {
+    if (session->backend &&
+        yvex_backend_kind_of(session->backend) == YVEX_BACKEND_KIND_CUDA) {
         yvex_error_clear(&cleanup);
         graph_rc = yvex_backend_cuda_attention_graph_registry_apply(
             session->backend, YVEX_BACKEND_CUDA_GRAPH_REGISTRY_INVALIDATE, &affected, &cleanup);

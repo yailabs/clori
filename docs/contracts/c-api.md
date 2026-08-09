@@ -133,6 +133,13 @@ only after complete discharge and retains it when cleanup must be retried;
 `yvex_backend_close` remains the best-effort compatibility projection for
 callers without a failure channel.
 
+The concrete backend object and dispatch table are source-local backend ABI.
+Graph and runtime owners hold an opaque `yvex_backend` and use typed operations
+for allocation, transfer, capability queries, residency mappings and workspace
+access. In particular, session-state publication advances the backend-visible
+residency generation through a checked operation; callers cannot mutate backend
+dispatch, placement or generation fields directly.
+
 The generated CUDA bundle, Driver API module/function resolution and CUDA Graph
 objects are repository-internal backend contracts. They are not installed C
 ABI and they do not imply a model-generation path.

@@ -484,13 +484,8 @@ static int residency_register_cuda(yvex_runtime_residency *residency,
     descriptor.dtype = YVEX_DTYPE_I8;
     descriptor.rank = 1u;
     descriptor.dims[0] = descriptor.bytes = residency->summary.encoded_bytes;
-    if (!backend->vtable || !backend->vtable->resident_alloc) {
-        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "runtime.residency.register",
-                       "backend has no CUDA-addressable host placement");
-        return YVEX_ERR_UNSUPPORTED;
-    }
     registered = residency->arena;
-    rc = backend->vtable->resident_alloc(
+    rc = yvex_backend_resident_alloc(
         backend, &descriptor, tensor, &registered, err);
     if (rc != YVEX_OK) return rc;
     if (registered != residency->arena) {

@@ -172,13 +172,8 @@ static int layer_proof_execute(
     descriptor.rank = 1u;
     descriptor.dims[0] = descriptor.bytes = arena_bytes;
     registered = arena;
-    if (rc == YVEX_OK && (!backend->vtable || !backend->vtable->resident_alloc)) {
-        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "minimax-h3.text-proof.residency",
-                       "the CUDA backend cannot register selected proof weights");
-        rc = YVEX_ERR_UNSUPPORTED;
-    }
     if (rc == YVEX_OK)
-        rc = backend->vtable->resident_alloc(
+        rc = yvex_backend_resident_alloc(
             backend, &descriptor, &resident, &registered, err);
     if (rc == YVEX_OK && registered != arena) {
         yvex_error_set(err, YVEX_ERR_STATE, "minimax-h3.text-proof.residency",

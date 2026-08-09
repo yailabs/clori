@@ -50,6 +50,8 @@ src/artifact/materialize.c	artifact	artifact.materialize	generic	private	resourc
 src/artifact/roundtrip_gate.c	artifact	artifact.roundtrip	generic	private	reusable-algorithm	gguf,model,runtime	implementation	none
 src/backend/core.c	backend	backend.core	generic	private	resource-lifecycle	graph,runtime	implementation	none
 src/backend/cpu.c	backend	backend.cpu	backend	private	backend-implementation	backend,graph,runtime	implementation	none
+src/backend/private.h	backend	backend.private	generic	private	private-interface	backend,backend.cuda	interface	none
+src/backend/residency.c	backend	backend.residency	generic	private	resource-lifecycle	runtime,graph	implementation	none
 src/backend/cuda/backend.c	backend.cuda	backend.cuda.backend	backend	private	reusable-algorithm	backend,graph	implementation	none
 src/backend/cuda/capability.c	backend.cuda	backend.cuda.capability	backend	private	reusable-algorithm	backend,graph	implementation	none
 src/backend/cuda/errors.c	backend.cuda	backend.cuda.errors	backend	private	reusable-algorithm	backend,graph	implementation	none

@@ -1158,6 +1158,17 @@ static const plan_backend_capability plan_backend_capabilities[] = {
      {YVEX_BACKEND_VARIANT_ATTENTION_CAUSAL_F32}, 1u},
 };
 
+static int plan_backend_variant_supported(
+    const yvex_backend *backend, yvex_backend_operation_variant variant)
+{
+    yvex_backend_capability_result capability;
+    yvex_error err;
+    yvex_error_clear(&err);
+    return yvex_backend_query_capability(
+               backend, variant, &capability, &err) == YVEX_OK &&
+           capability.state == YVEX_BACKEND_CAPABILITY_SUPPORTED;
+}
+
 static void plan_backend_capabilities_fill(yvex_plan *plan, const yvex_backend *backend)
 {
     size_t capability, variant;
@@ -1168,7 +1179,7 @@ static void plan_backend_capabilities_fill(yvex_plan *plan, const yvex_backend *
         int supported = 1;
         for (variant = 0u; variant < plan_backend_capabilities[capability].variant_count;
              ++variant)
-            supported &= backend_variant_supported(
+            supported &= plan_backend_variant_supported(
                 backend, plan_backend_capabilities[capability].variants[variant]);
         memcpy((unsigned char *)plan + plan_backend_capabilities[capability].plan_offset,
                &supported, sizeof(supported));

@@ -805,7 +805,7 @@ int yvex_runtime_session_finish_scope(
                      : provider->abort(provider->context, &state_failure,
                                        &state_error);
         if (rc == YVEX_OK && committing && residency)
-            yvex_runtime_state_residency_commit(residency);
+            rc = yvex_runtime_state_residency_commit(residency, &state_error);
         else if (!committing && residency)
             yvex_runtime_state_residency_abort(residency);
         if (rc != YVEX_OK) {
@@ -929,13 +929,16 @@ int yvex_runtime_session_finish_coordinated(
         prepared[index] = cleanup_rc == YVEX_OK;
     }
     if (rc == YVEX_OK && cleanup_rc == YVEX_OK) {
-        for (index = 0ull; index < 2ull; ++index) {
+        for (index = 0ull; index < 2ull; ++index)
             providers[index]->publish_commit(providers[index]->context);
+        for (index = 0ull; cleanup_rc == YVEX_OK && index < 2ull; ++index)
             if (residencies[index])
-                yvex_runtime_state_residency_commit(residencies[index]);
-        }
-        if (participant_prepared) participant->publish(participant->context);
-        session->summary.execution_count = counter_next;
+                cleanup_rc = yvex_runtime_state_residency_commit(
+                    residencies[index], &cleanup);
+        if (cleanup_rc == YVEX_OK && participant_prepared)
+            participant->publish(participant->context);
+        if (cleanup_rc == YVEX_OK)
+            session->summary.execution_count = counter_next;
     } else {
         for (index = 2ull; index-- > 0ull;)
             if (prepared[index])

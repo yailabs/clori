@@ -7,6 +7,7 @@
  */
 
 #include <yvex/internal/backend.h>
+#include "src/backend/private.h"
 #include <yvex/internal/quant_numeric.h>
 
 #include <limits.h>

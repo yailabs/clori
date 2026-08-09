@@ -48,6 +48,7 @@ family_runtime_context_pattern="${family_runtime_context_pattern}"'per_(session|
 moe_family_registry_pattern='yvex_graph_moe_family_(at|find)[[:space:]]*\('
 conversation_family_registry_pattern='yvex_model_conversation_protocol_(at|find)[[:space:]]*\('
 legacy_resolution_boolean_pattern='(host_stochastic_reference|token_local_moe_reference|eager_attention_reference)'
+backend_representation_pattern='\bbackend->(vtable|virtual_tensor_ready|state_residency_generation|resident_host_base|workspace_device_tensor)'
 
 # Every expression used as a hard gate carries positive and negative probes.
 # This catches regex drift before a repository scan can produce false comfort.
@@ -146,6 +147,13 @@ if printf '%s\n' 'model.graph;' |
     rg "$runtime_family_dispatch_pattern" >/dev/null; then
     fail "runtime family-dispatch guard rejects the generic graph capability"
 fi
+printf '%s\n' 'backend->vtable->tensor_alloc(backend);' |
+    rg -- "$backend_representation_pattern" >/dev/null ||
+    fail "backend-encapsulation guard misses concrete dispatch state"
+if printf '%s\n' 'yvex_backend_tensor_alloc(backend, &desc, &tensor, &err);' |
+    rg -- "$backend_representation_pattern" >/dev/null; then
+    fail "backend-encapsulation guard rejects a typed backend operation"
+fi
 printf '%s\n' 'CUfunction deepseek_decode_function;' |
     rg -i "$generic_family_symbol_pattern" >/dev/null ||
     fail "generic backend family-symbol guard misses a concrete kernel handle"
@@ -234,6 +242,21 @@ if rg -n "$legacy_resolution_boolean_pattern" src include; then
 fi
 if rg -n 'YVEX_EXECUTION_RESOLUTION_' src/backend; then
     fail "a backend selects execution capability policy"
+fi
+
+# Concrete dispatch, placement mappings and backend allocation state remain a
+# source-local backend implementation contract. Runtime and graph consumers use
+# typed operations and cannot couple their lifecycle to vtable or struct layout.
+if rg -n 'struct[[:space:]]+yvex_backend[[:space:]]*\{' include; then
+    fail "concrete backend representation escaped into a cross-subsystem header"
+fi
+if find src include -type f \( -name '*.c' -o -name '*.h' -o -name '*.cu' \) \
+        ! -path 'src/backend/*' -print0 |
+    xargs -0 rg -n '#include[[:space:]]+"src/backend/private[.]h"'; then
+    fail "non-backend owner imports the concrete backend representation"
+fi
+if rg -n -- "$backend_representation_pattern" src/runtime src/graph; then
+    fail "runtime or graph owner manipulates concrete backend state"
 fi
 
 family_neutral_sources=$(

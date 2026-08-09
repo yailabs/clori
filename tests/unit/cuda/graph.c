@@ -898,7 +898,7 @@ static int test_attention_graph_configuration(yvex_backend *backend)
                      "full graph mode refuses without stable residency and workspace");
 
     make_desc(&desc, "attention_resident");
-    rc = backend->vtable->resident_alloc(
+    rc = yvex_backend_resident_alloc(
         backend, &desc, &resident, &resident_data, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "allocate stable managed resident range");
     memset(resident_data, 0, (size_t)desc.bytes);
@@ -1333,12 +1333,17 @@ static int test_attention_graph_configuration(yvex_backend *backend)
     YVEX_TEST_ASSERT(rc == YVEX_OK && full_key[0] != '\0' &&
                      strcmp(first_key, full_key) != 0,
                      "full canonical attention stage interval is admitted distinctly");
-    backend->state_residency_generation = 7ull;
+    rc = yvex_backend_state_residency_publish_generation(backend, 7ull, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK,
+                     "publish state generation through the backend residency owner");
     rc = yvex_cuda_attention_graph_key(
         backend, &job, 0u, YVEX_CUDA_ATTENTION_STAGE_COUNT, dynamic_key, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && strcmp(full_key, dynamic_key) == 0,
                      "persistent-state generation preserves allocation-stable graph compatibility");
-    backend->state_residency_generation = 0ull;
+    rc = yvex_backend_state_residency_publish_generation(backend, 6ull, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_ERR_STATE,
+                     "backend residency owner refuses generation regression");
+    yvex_backend_state_residency_detach(backend);
     job.token_position = 3ull;
     job.local_count = 3ull;
     job.compressed_count = 1ull;

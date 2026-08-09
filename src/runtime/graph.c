@@ -675,7 +675,8 @@ static int runtime_attention_graph_summary(yvex_runtime_execution_session *sessi
     const yvex_runtime_session_view *view = yvex_runtime_session_view_get(session);
     yvex_backend *backend = view ? view->backend : NULL;
     int rc;
-    if (!backend || backend->kind != YVEX_BACKEND_KIND_CUDA) return YVEX_OK;
+    if (!backend || yvex_backend_kind_of(backend) != YVEX_BACKEND_KIND_CUDA)
+        return YVEX_OK;
     rc = yvex_backend_cuda_attention_graph_summary_get(backend, &summary, err);
     if (rc != YVEX_OK) return rc;
     if (require_execution && summary.selected_mode != YVEX_BACKEND_CUDA_ATTENTION_EAGER &&

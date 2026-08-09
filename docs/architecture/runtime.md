@@ -370,6 +370,12 @@ Mutable session resources remain isolated while immutable model caches may be
 shared. Allocation, transfer, synchronization, execution, and cleanup failures
 retain separate typed classes.
 
+The runtime owns the logical session-state and model-residency lifecycles. It
+projects their admitted mappings into an opaque backend through typed attach,
+resolve, transfer and generation-publication operations. Concrete backend
+allocation state and dispatch remain source-local to `src/backend/`; graph and
+runtime owners cannot coordinate their lifecycle by inspecting backend fields.
+
 ## Worker, queue, and concurrency
 
 One bounded model worker serializes admitted generation work from native and

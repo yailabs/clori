@@ -660,19 +660,25 @@ static int execution_test_shape(void)
 
 static int execution_test_device_view(void)
 {
-    yvex_backend backend = {0};
-    yvex_device_tensor tensor = {0};
+    yvex_backend *backend = NULL;
+    yvex_device_tensor *tensor = NULL;
+    yvex_backend_tensor_desc descriptor = {0};
     yvex_execution_device_view view = {0};
     yvex_error err;
 
-    tensor.owner = &backend;
-    tensor.owner_id = 1ull;
-    tensor.dtype = YVEX_DTYPE_F32;
-    tensor.bytes = 48ull;
+    descriptor.name = "execution-device-view";
+    descriptor.dtype = YVEX_DTYPE_F32;
+    descriptor.rank = 1u;
+    descriptor.dims[0] = 12ull;
+    descriptor.bytes = 48ull;
+    YVEX_TEST_ASSERT(
+        yvex_backend_open_cpu(&backend, &err) == YVEX_OK &&
+            yvex_backend_tensor_alloc(backend, &descriptor, &tensor, &err) == YVEX_OK,
+        "device view uses one real backend-owned tensor");
     view.schema_version = YVEX_EXECUTION_DEVICE_VIEW_SCHEMA_V1;
     view.kind = YVEX_EXECUTION_DEVICE_LOGITS;
-    view.backend = &backend;
-    view.tensor = &tensor;
+    view.backend = backend;
+    view.tensor = tensor;
     view.element_offset = 4ull;
     view.model_generation = 1ull;
     view.session_generation = 1ull;
@@ -690,6 +696,10 @@ static int execution_test_device_view(void)
     YVEX_TEST_ASSERT(yvex_execution_device_view_validate(&view, &err) ==
                          YVEX_ERR_FORMAT,
                      "device view with a mismatched extent should refuse");
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_release(backend, &tensor, &err) == YVEX_OK &&
+            yvex_backend_close_checked(&backend, &err) == YVEX_OK,
+        "device view releases exact backend ownership");
     return 0;
 }
 
