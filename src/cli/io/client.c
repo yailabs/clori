@@ -677,10 +677,10 @@ static int runtime_events(int projection)
                style.accent, style.reset);
         yvex_cli_watch_renderer_open(&watch);
     }
-    request_init(&request, projection ? YVEX_CLIENT_OP_RUNTIME_TRACE
-                                      : YVEX_CLIENT_OP_RUNTIME_WATCH);
-    request.trace_level = projection ? YVEX_SERVER_TRACE_FULL
-                                     : YVEX_SERVER_TRACE_STAGES;
+    if (projection == 1)
+        puts("trace · full live event stream · Ctrl-C to stop");
+    request_init(&request, projection ? YVEX_CLIENT_OP_RUNTIME_TRACE : YVEX_CLIENT_OP_RUNTIME_WATCH);
+    request.trace_level = projection ? YVEX_SERVER_TRACE_FULL : YVEX_SERVER_TRACE_STAGES;
     rc = request_open(&client, &request, &err);
     while (rc == YVEX_OK) {
         rc = yvex_client_receive(client, &message, &err);
@@ -1779,6 +1779,7 @@ static int exec_sibling(const char *binary, int argc, char **argv, int skip)
 static int runtime_start(int argc, char **argv)
 {
     client_model_config config;
+    yvex_cli_terminal_style style;
     char context[32];
     char *arguments[16];
     int count = 0;
@@ -1804,16 +1805,14 @@ static int runtime_start(int argc, char **argv)
     arguments[count++] = "--context";
     arguments[count++] = context;
     arguments[count] = NULL;
-    {
-        yvex_cli_terminal_style style;
-        yvex_cli_terminal_style_get(stdout, &style);
-        printf("%sYVEX runtime%s · %sloading selected model%s %s · target %s · %s · %s · "
-               "context %llu\n",
-               style.strong, style.reset, style.accent, style.reset, config.name,
-               config.target, !strcmp(config.backend, "cuda") ? "CUDA" : "CPU",
-               !strcmp(config.mode, "dspark") ? "DSpark" : "target-only", config.context);
-        (void)fflush(stdout);
-    }
+    yvex_cli_terminal_style_get(stdout, &style);
+    printf("%sYVEX runtime%s · %sstarting selected model%s %s\n"
+           "  target %s · %s · %s · context %llu\n"
+           "  foreground host · leave this terminal open · readiness follows model admission\n",
+           style.strong, style.reset, style.accent, style.reset, config.name, config.target,
+           !strcmp(config.backend, "cuda") ? "CUDA" : "CPU",
+           !strcmp(config.mode, "dspark") ? "DSpark" : "target-only", config.context);
+    (void)fflush(stdout);
     return exec_sibling_vector("yvexd", arguments);
 }
 static int help_command(int argc, char **argv, size_t consumed)

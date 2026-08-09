@@ -263,8 +263,10 @@ EOF
 chmod 700 "$root/product-bin/yvexd"
 HOME="$home_root" YVEX_TEST_DAEMON_ARGS="$root/daemon-arguments" \
     "$root/product-bin/yvex" runtime start >"$root/start.out"
-grep -F 'loading selected model current-model-runtime-profile' "$root/start.out" >/dev/null
+grep -F 'starting selected model current-model-runtime-profile' "$root/start.out" >/dev/null
 grep -F 'target deepseek4-v4-flash-dspark · CUDA · DSpark · context 4096' \
+    "$root/start.out" >/dev/null
+grep -F 'foreground host · leave this terminal open · readiness follows model admission' \
     "$root/start.out" >/dev/null
 cat >"$root/expected-daemon-arguments" <<EOF
 --model

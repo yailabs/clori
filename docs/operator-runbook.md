@@ -130,10 +130,12 @@ one daemon owns the model, sessions, KV, worker, local socket, OpenAI listener,
 and telemetry.
 
 Before the potentially long admission begins, the command prints the complete
-selected startup identity in one line, for example:
+selected startup identity and states that the host remains in the foreground:
 
 ```text
-YVEX runtime · loading selected model deepseek4-v4-flash-dspark-runtime-iq2xxs · target deepseek4-v4-flash-dspark · CUDA · DSpark · context 4096
+YVEX runtime · starting selected model deepseek4-v4-flash-dspark-runtime-iq2xxs
+  target deepseek4-v4-flash-dspark · CUDA · DSpark · context 4096
+  foreground host · leave this terminal open · readiness follows model admission
 ```
 
 This is the model the new daemon is about to open. It is not a projection of a

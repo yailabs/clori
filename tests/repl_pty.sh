@@ -489,6 +489,7 @@ grep -E 'RUNTIME[[:space:]]+runtime shutdown complete' "$root/watch" >/dev/null
 ! grep -F 'client disconnected' "$root/watch" >/dev/null
 ! grep -E '^#[0-9]+' "$root/watch" >/dev/null
 grep -E '^#[0-9]+ info[[:space:]]+request started' "$root/trace" >/dev/null
+grep -F 'trace · full live event stream · Ctrl-C to stop' "$root/trace" >/dev/null
 grep -F 'phase launches · kernel launches 4511 · stream syncs 63' "$root/trace" >/dev/null
 ! grep -E '(^|[[:space:]])[ab]=' "$root/watch" >/dev/null
 ! grep -E '(^|[[:space:]])[ab]=' "$root/trace" >/dev/null

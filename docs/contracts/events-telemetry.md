@@ -70,9 +70,10 @@ prefill, first-token, speculative-commit, completion, cancellation, and failure
 events while suppressing connection churn, uncontended queue admission,
 fragments, intermediate draft/verification steps, and profile rows. It renders
 bytes in human units, speculative acceptance as accepted/proposed, and stop
-codes as their named contract values. Human `runtime trace` retains the full
-subscribed event sequence and adds sequence, severity, turn, phase, timing, and
-rate. Neither renderer exposes generic positional counter names. Native prefill
+codes as their named contract values. Human `runtime trace` identifies itself
+as a live stream before blocking, retains the full subscribed event sequence,
+and adds sequence, severity, turn, phase, timing, and rate. Neither renderer
+exposes generic positional counter names. Native prefill
 progress sent to the REPL is another projection of the sealed event, not a
 synthetic client event.
 
