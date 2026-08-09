@@ -382,6 +382,17 @@ def declarations(unit: CUnit) -> set[str]:
     return found
 
 
+def data_declarations(unit: CUnit) -> set[str]:
+    found: set[str] = set()
+    expression = re.compile(
+        r"\bextern\s+(?:const\s+)?(?:struct\s+)?[A-Za-z_][A-Za-z0-9_]*"
+        r"(?:\s*\*\s*|\s+)(yvex_[A-Za-z0-9_]+)(?:\s*\[[^;]*\])?\s*;"
+    )
+    for match in expression.finditer(unit.masked):
+        found.add(match.group(1))
+    return found
+
+
 def strongly_connected(graph: dict[str, set[str]]) -> list[list[str]]:
     index = 0
     indices: dict[str, int] = {}
@@ -843,7 +854,7 @@ class Audit:
             symbol
             for name, unit in self.headers.items()
             if self.header_tier(name) in {"internal", "source"}
-            for symbol in declarations(unit)
+            for symbol in declarations(unit) | data_declarations(unit)
         }
 
     def symbol_snapshot(self) -> dict[str, object]:

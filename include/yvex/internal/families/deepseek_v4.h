@@ -594,5 +594,4 @@ int yvex_model_mapping_report_deepseek(
     const yvex_model_target_request *request, yvex_model_target_report *report, yvex_error *err);
 const yvex_model_family_api *yvex_model_register_deepseek_v4(void);
 const yvex_family_compiler_adapter *yvex_compiler_family_deepseek_v4(void);
-const yvex_graph_execution_api *yvex_graph_lower_deepseek_v4(void);
 #endif

@@ -483,7 +483,7 @@ for object in $reference_objects; do
         while IFS= read -r symbol; do
             case "$symbol" in
                 yvex_core_allocate|\
-                yvex_error_clear|yvex_graph_lower_deepseek_v4|\
+                yvex_error_clear|\
                 yvex_materialization_session_read|yvex_model_register_deepseek_v4|\
                 yvex_runtime_descriptor_find_role|yvex_sha256_*)
                     ;;

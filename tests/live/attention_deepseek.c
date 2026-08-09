@@ -28,6 +28,13 @@
 #define ATTENTION_NATIVE_Q8_ABSOLUTE_TOLERANCE 4.0e-2
 #define ATTENTION_NATIVE_Q8_RELATIVE_TOLERANCE 4.0e-2
 
+static const yvex_graph_execution_api *attention_execution_api(void)
+{
+    const yvex_graph_execution_binding *binding =
+        yvex_graph_execution_find(0ull, 0ull, "deepseek4-v4-flash-dspark");
+    return binding && binding->api == &yvex_attention_execution_api ? binding->api : NULL;
+}
+
 typedef struct {
     yvex_sha256 hash;
     yvex_sha256 oracle_trace_hash;
@@ -267,7 +274,7 @@ static int runtime_oracle_compare_publication(
                        "independent reference lost the exact immutable prior state");
         return YVEX_ERR_STATE;
     }
-    yvex_graph_lower_deepseek_v4()->cpu_options_default(&options);
+    attention_execution_api()->cpu_options_default(&options);
     options.operation_scope = YVEX_ATTENTION_OPERATION_CORE;
     options.layer_index = production->layer_index;
     options.token_position = production->token_position;
@@ -645,7 +652,7 @@ static int run_topk_contract_cases(void)
         scores, positions, 3ull, 1ull, production, &production_count,
         NULL, &failure, &err);
     if (rc == YVEX_OK ||
-        failure.code != YVEX_DEEPSEEK_ATTENTION_FAILURE_NUMERIC ||
+        failure.code != YVEX_ATTENTION_FAILURE_NUMERIC ||
         yvex_test_attention_reference_topk(
             scores, positions, 3ull, 1ull, reference, &reference_count))
         return 0;
@@ -656,7 +663,7 @@ static int run_topk_contract_cases(void)
         scores, duplicate_positions, 3ull, 1ull, production,
         &production_count, NULL, &failure, &err);
     if (rc == YVEX_OK ||
-        failure.code != YVEX_DEEPSEEK_ATTENTION_FAILURE_NUMERIC ||
+        failure.code != YVEX_ATTENTION_FAILURE_NUMERIC ||
         yvex_test_attention_reference_topk(
             scores, duplicate_positions, 3ull, 1ull, reference,
             &reference_count))
@@ -725,7 +732,7 @@ static int run_reference_compare(
     production_options = effective_options;
     production_options.publication = &production;
     production_options.trace = NULL;
-    rc = yvex_graph_lower_deepseek_v4()->cpu_chunk_execute(
+    rc = attention_execution_api()->cpu_chunk_execute(
         plan, ir, session, descriptor, &production_options,
         production_result, failure, err);
     if (rc != YVEX_OK) goto cleanup;
@@ -864,7 +871,7 @@ static int run_real_mutation_proof(
             ATTENTION_CPU_ABSOLUTE_TOLERANCE,
             ATTENTION_CPU_RELATIVE_TOLERANCE))
         return YVEX_ERR_STATE;
-    rc = yvex_graph_lower_deepseek_v4()->cpu_chunk_execute(
+    rc = attention_execution_api()->cpu_chunk_execute(
         plan, ir, session, descriptor, &production_options, &result,
         failure, err);
     if (rc != YVEX_OK) goto cleanup;
@@ -968,7 +975,7 @@ static int run_cuda_reference_compare(
         return YVEX_ERR_STATE;
     production_options.publication = &production;
     production_options.trace = NULL;
-    rc = yvex_graph_lower_deepseek_v4()->cuda_token_execute(
+    rc = attention_execution_api()->cuda_token_execute(
         plan, ir, session, descriptor, backend, &production_options,
         production_result, failure, err);
     if (rc != YVEX_OK) goto cleanup;
@@ -1243,7 +1250,7 @@ static int run_cuda_fault_case(
         (void)yvex_backend_close_checked(&backend, err);
         return 0;
     }
-    rc = yvex_graph_lower_deepseek_v4()->cuda_token_execute(
+    rc = attention_execution_api()->cuda_token_execute(
         plan, ir, session, descriptor, backend, &options, &result, &failure,
         err);
     if (environment) (void)unsetenv(environment);
@@ -1377,9 +1384,9 @@ static int live_rolling_init(
     const char *plan_identity)
 {
     unsigned long long head_dimension =
-        kind == YVEX_DEEPSEEK_ATTENTION_ROLLING_INDEXER
+        kind == YVEX_ATTENTION_ROLLING_INDEXER
             ? layer->indexer_head_dimension : layer->head_dimension;
-    int overlap = kind == YVEX_DEEPSEEK_ATTENTION_ROLLING_INDEXER ||
+    int overlap = kind == YVEX_ATTENTION_ROLLING_INDEXER ||
                   layer->attention_class == YVEX_ATTENTION_CLASS_CSA;
     unsigned long long width = head_dimension * (overlap ? 2ull : 1ull);
     unsigned long long slots = layer->compression_ratio *
@@ -1394,7 +1401,7 @@ static int live_rolling_init(
     for (slot = 0ull; slot < extent; ++slot) (*score_out)[slot] = -INFINITY;
     memset(state, 0, sizeof(*state));
     state->present = 1;
-    state->schema_version = YVEX_DEEPSEEK_ATTENTION_ROLLING_STATE_SCHEMA_V1;
+    state->schema_version = YVEX_ATTENTION_ROLLING_STATE_SCHEMA_V1;
     state->kind = kind;
     state->attention_class = layer->attention_class;
     state->layer_index = layer->layer_index;
@@ -1414,7 +1421,7 @@ static int live_rolling_init(
     state->kv_state = *kv_out;
     state->score_state = *score_out;
     state->overlap = overlap;
-    state->rotated = kind == YVEX_DEEPSEEK_ATTENTION_ROLLING_INDEXER;
+    state->rotated = kind == YVEX_ATTENTION_ROLLING_INDEXER;
     (void)snprintf(state->attention_plan_identity,
                    sizeof(state->attention_plan_identity), "%s",
                    plan_identity);
@@ -1534,13 +1541,13 @@ static int live_history_init(
     if (layer->attention_class != YVEX_ATTENTION_CLASS_SWA &&
         !live_rolling_init(&history->view.main_rolling_state,
                            &history->main_kv, &history->main_score, layer,
-                           YVEX_DEEPSEEK_ATTENTION_ROLLING_MAIN,
+                           YVEX_ATTENTION_ROLLING_MAIN,
                            token_position, summary->attention_plan_identity))
         goto fail;
     if (layer->attention_class == YVEX_ATTENTION_CLASS_CSA &&
         !live_rolling_init(&history->view.indexer_rolling_state,
                            &history->index_kv, &history->index_score, layer,
-                           YVEX_DEEPSEEK_ATTENTION_ROLLING_INDEXER,
+                           YVEX_ATTENTION_ROLLING_INDEXER,
                            token_position, summary->attention_plan_identity))
         goto fail;
     return 1;
@@ -1662,7 +1669,7 @@ static int run_cuda_core_input_regression(
         goto cleanup;
     }
     fill_history_values(residual, layer->residual_expanded_width, 9107ull);
-    yvex_graph_lower_deepseek_v4()->cpu_options_default(&options);
+    attention_execution_api()->cpu_options_default(&options);
     options.operation_scope = YVEX_ATTENTION_OPERATION_ENVELOPE;
     options.layer_index = csa_layer;
     options.token_count = 1ull;
@@ -1670,11 +1677,11 @@ static int run_cuda_core_input_regression(
     options.input_stride = layer->residual_expanded_width;
     options.history = &history.view;
     options.publication = &cpu_trace;
-    rc = yvex_graph_lower_deepseek_v4()->cpu_chunk_execute(
+    rc = attention_execution_api()->cpu_chunk_execute(
         plan, ir, session, descriptor, &options, &cpu_result, failure, err);
     if (rc != YVEX_OK) goto cleanup;
     options.publication = &cuda_trace;
-    rc = yvex_graph_lower_deepseek_v4()->cuda_token_execute(
+    rc = attention_execution_api()->cuda_token_execute(
         plan, ir, session, descriptor, backend, &options, &cuda_result, failure, err);
     if (rc != YVEX_OK) goto cleanup;
     if (!cpu_trace.complete || !cuda_trace.complete || !cpu_trace.input || !cuda_trace.input ||
@@ -1717,12 +1724,12 @@ static int run_cuda_core_input_regression(
     direct_options.input = cpu_trace.input;
     direct_options.input_stride = layer->hidden_dimension;
     direct_options.publication = &cpu_direct_trace;
-    rc = yvex_graph_lower_deepseek_v4()->cpu_chunk_execute(
+    rc = attention_execution_api()->cpu_chunk_execute(
         plan, ir, session, descriptor, &direct_options, &cpu_result, failure, err);
     if (rc != YVEX_OK) goto cleanup;
     direct_options.input = cuda_trace.input;
     direct_options.publication = &cuda_direct_trace;
-    rc = yvex_graph_lower_deepseek_v4()->cuda_token_execute(
+    rc = attention_execution_api()->cuda_token_execute(
         plan, ir, session, descriptor, backend, &direct_options,
         &cuda_result, failure, err);
     if (rc != YVEX_OK) goto cleanup;
@@ -2389,19 +2396,19 @@ static int run_cuda_live_suite(
     unsigned long long peak_total_host_owned_bytes = 0ull;
     unsigned long long mutation_detected = 0ull;
     attention_cuda_workspace_evidence workspace_evidence = {0};
-    char repeat_identity[YVEX_DEEPSEEK_ATTENTION_IDENTITY_CAP];
+    char repeat_identity[YVEX_ATTENTION_IDENTITY_CAP];
     char evidence_identity[YVEX_SHA256_HEX_CAP];
     static const struct {
         const char *seam;
         yvex_attention_failure_code expected_failure;
     } fault_cases[] = {
-        {"allocation", YVEX_DEEPSEEK_ATTENTION_FAILURE_ALLOCATION},
-        {"host-staging", YVEX_DEEPSEEK_ATTENTION_FAILURE_ALLOCATION},
-        {"copy-input", YVEX_DEEPSEEK_ATTENTION_FAILURE_BACKEND},
+        {"allocation", YVEX_ATTENTION_FAILURE_ALLOCATION},
+        {"host-staging", YVEX_ATTENTION_FAILURE_ALLOCATION},
+        {"copy-input", YVEX_ATTENTION_FAILURE_BACKEND},
         {"cuda.deepseek_attention.q_a",
-         YVEX_DEEPSEEK_ATTENTION_FAILURE_BACKEND},
+         YVEX_ATTENTION_FAILURE_BACKEND},
         {"cuda.deepseek_attention.copy.output",
-         YVEX_DEEPSEEK_ATTENTION_FAILURE_BACKEND}
+         YVEX_ATTENTION_FAILURE_BACKEND}
     };
     unsigned int fault_index;
     unsigned int qtype;
@@ -2459,7 +2466,7 @@ static int run_cuda_live_suite(
             goto cleanup;
         }
         fill_history_values(input, input_extent, 401ull + layer_index);
-        yvex_graph_lower_deepseek_v4()->cpu_options_default(&options);
+        attention_execution_api()->cpu_options_default(&options);
         configured_host_scratch_bytes = options.scratch_limit_bytes;
         options.layer_index = layer_index;
         options.token_position = 0ull;
@@ -2537,7 +2544,7 @@ static int run_cuda_live_suite(
 #ifdef YVEX_HAVE_CUDA_KERNEL_CUBIN
     layer = yvex_attention_plan_layer_at(plan, swa_layer);
     fill_history_values(input, input_extent, 1401ull);
-    yvex_graph_lower_deepseek_v4()->cpu_options_default(&options);
+    attention_execution_api()->cpu_options_default(&options);
     options.layer_index = swa_layer;
     options.token_position = 0ull;
     options.token_count = 1ull;
@@ -2574,7 +2581,7 @@ static int run_cuda_live_suite(
     printf("attention_cuda_envelope_core_input_regression=1\n");
 
     fill_history_values(input, input_extent, 401ull + swa_layer);
-    yvex_graph_lower_deepseek_v4()->cpu_options_default(&options);
+    attention_execution_api()->cpu_options_default(&options);
     options.layer_index = swa_layer;
     options.token_position = 0ull;
     options.token_count = 1ull;
@@ -2587,27 +2594,27 @@ static int run_cuda_live_suite(
     if (rc != YVEX_OK) goto cleanup;
 
     options.input = NULL;
-    rc = yvex_graph_lower_deepseek_v4()->cpu_chunk_execute(
+    rc = attention_execution_api()->cpu_chunk_execute(
         plan, ir, session, descriptor, &options, &cpu_result, failure, err);
     if (rc != YVEX_ERR_INVALID_ARG || cpu_result.executed ||
-        failure->code != YVEX_DEEPSEEK_ATTENTION_FAILURE_INVALID_ARGUMENT) {
+        failure->code != YVEX_ATTENTION_FAILURE_INVALID_ARGUMENT) {
         rc = YVEX_ERR_STATE;
         goto cleanup;
     }
     options.input = input;
     options.token_position = 1ull;
-    rc = yvex_graph_lower_deepseek_v4()->cpu_chunk_execute(
+    rc = attention_execution_api()->cpu_chunk_execute(
         plan, ir, session, descriptor, &options, &cpu_result, failure, err);
     if (rc != YVEX_ERR_STATE || cpu_result.executed ||
-        failure->code != YVEX_DEEPSEEK_ATTENTION_FAILURE_HISTORY) {
+        failure->code != YVEX_ATTENTION_FAILURE_HISTORY) {
         rc = YVEX_ERR_STATE;
         goto cleanup;
     }
-    rc = yvex_graph_lower_deepseek_v4()->cuda_token_execute(
+    rc = attention_execution_api()->cuda_token_execute(
         plan, ir, session, descriptor, backend, &options, &cuda_result,
         failure, err);
     if (rc != YVEX_ERR_STATE || cuda_result.executed ||
-        failure->code != YVEX_DEEPSEEK_ATTENTION_FAILURE_HISTORY) {
+        failure->code != YVEX_ATTENTION_FAILURE_HISTORY) {
         rc = YVEX_ERR_STATE;
         goto cleanup;
     }
@@ -2621,14 +2628,14 @@ static int run_cuda_live_suite(
         input[0] = NAN;
         memset(&failed_trace, 0, sizeof(failed_trace));
         options.trace = &failed_trace;
-        rc = yvex_graph_lower_deepseek_v4()->cuda_token_execute(
+        rc = attention_execution_api()->cuda_token_execute(
             plan, ir, session, descriptor, backend, &options, &cuda_result,
             failure, err);
         options.trace = NULL;
         input[0] = finite_input;
         if (rc != YVEX_ERR_FORMAT || failed_trace.owned ||
             cuda_result.executed ||
-            failure->code != YVEX_DEEPSEEK_ATTENTION_FAILURE_NUMERIC) {
+            failure->code != YVEX_ATTENTION_FAILURE_NUMERIC) {
             fprintf(stderr,
                     "attention_cuda_nonfinite_ingress_not_refused rc=%d "
                     "failure=%u owned=%d executed=%d\n",
@@ -2651,7 +2658,7 @@ static int run_cuda_live_suite(
             goto cleanup;
         }
         options.trace = &failed_trace;
-        rc = yvex_graph_lower_deepseek_v4()->cuda_token_execute(
+        rc = attention_execution_api()->cuda_token_execute(
             plan, ir, session, descriptor, backend, &options, &cuda_result,
             failure, err);
         (void)unsetenv("YVEX_TEST_CUDA_ATTENTION_FAILURE");
@@ -2691,17 +2698,17 @@ static int run_cuda_live_suite(
     if (!run_cuda_fault_case(
             plan, ir, session, descriptor, &options,
             "YVEX_TEST_CUDA_SYNC_FAILURE", "encoded-attention", 0ull,
-            YVEX_DEEPSEEK_ATTENTION_FAILURE_BACKEND, err) ||
+            YVEX_ATTENTION_FAILURE_BACKEND, err) ||
         !run_cuda_fault_case(
             plan, ir, session, descriptor, &options,
             "YVEX_TEST_CUDA_CLEANUP_FAILURE", "encoded-attention", 0ull,
-            YVEX_DEEPSEEK_ATTENTION_FAILURE_CLEANUP, err) ||
+            YVEX_ATTENTION_FAILURE_CLEANUP, err) ||
         !run_cuda_fault_case(
             plan, ir, session, descriptor, &options, NULL, NULL, 1ull,
-            YVEX_DEEPSEEK_ATTENTION_FAILURE_CANCELLED, err) ||
+            YVEX_ATTENTION_FAILURE_CANCELLED, err) ||
         !run_cuda_fault_case(
             plan, ir, session, descriptor, &options, NULL, NULL, 6ull,
-            YVEX_DEEPSEEK_ATTENTION_FAILURE_CANCELLED, err) ||
+            YVEX_ATTENTION_FAILURE_CANCELLED, err) ||
         !run_cuda_bundle_refusal(err) ||
         !run_cuda_workspace_cleanup_fault(plan, err)) {
         fprintf(stderr, "attention_cuda_fault_matrix_failed=1\n");
@@ -2716,7 +2723,7 @@ static int run_cuda_live_suite(
         goto cleanup;
     }
     fill_history_values(input, input_extent, 503ull);
-    yvex_graph_lower_deepseek_v4()->cpu_options_default(&options);
+    attention_execution_api()->cpu_options_default(&options);
     options.layer_index = csa_layer;
     options.token_position = 2052ull;
     options.token_count = 1ull;
@@ -2727,30 +2734,30 @@ static int run_cuda_live_suite(
         yvex_attention_history_view stale = history.view;
         stale.main_rolling_state.current_fill++;
         options.history = &stale;
-        rc = yvex_graph_lower_deepseek_v4()->cpu_chunk_execute(
+        rc = attention_execution_api()->cpu_chunk_execute(
             plan, ir, session, descriptor, &options, &cpu_result, failure,
             err);
         if (rc != YVEX_ERR_STATE || cpu_result.executed ||
-            failure->code != YVEX_DEEPSEEK_ATTENTION_FAILURE_HISTORY) {
+            failure->code != YVEX_ATTENTION_FAILURE_HISTORY) {
             rc = YVEX_ERR_STATE;
             goto cleanup;
         }
-        rc = yvex_graph_lower_deepseek_v4()->cuda_token_execute(
+        rc = attention_execution_api()->cuda_token_execute(
             plan, ir, session, descriptor, backend, &options, &cuda_result,
             failure, err);
         if (rc != YVEX_ERR_STATE || cuda_result.executed ||
-            failure->code != YVEX_DEEPSEEK_ATTENTION_FAILURE_HISTORY) {
+            failure->code != YVEX_ATTENTION_FAILURE_HISTORY) {
             rc = YVEX_ERR_STATE;
             goto cleanup;
         }
         stale = history.view;
         stale.main_rolling_state.previous_fill--;
         options.history = &stale;
-        rc = yvex_graph_lower_deepseek_v4()->cuda_token_execute(
+        rc = attention_execution_api()->cuda_token_execute(
             plan, ir, session, descriptor, backend, &options, &cuda_result,
             failure, err);
         if (rc != YVEX_ERR_STATE || cuda_result.executed ||
-            failure->code != YVEX_DEEPSEEK_ATTENTION_FAILURE_HISTORY) {
+            failure->code != YVEX_ATTENTION_FAILURE_HISTORY) {
             rc = YVEX_ERR_STATE;
             goto cleanup;
         }
@@ -2796,7 +2803,7 @@ static int run_cuda_live_suite(
         goto cleanup;
     }
     fill_history_values(input, input_extent, 607ull);
-    yvex_graph_lower_deepseek_v4()->cpu_options_default(&options);
+    attention_execution_api()->cpu_options_default(&options);
     options.layer_index = hca_layer;
     options.token_position = 127ull;
     options.token_count = 1ull;
@@ -3217,7 +3224,7 @@ int main(int argc, char **argv)
             goto identity_mutation_fail;
         bytes_before = canonical_materialization->payload_bytes_accessed;
         memset(&stale_result, 0, sizeof(stale_result));
-        yvex_graph_lower_deepseek_v4()->cpu_options_default(&stale_options);
+        attention_execution_api()->cpu_options_default(&stale_options);
         stale_options.layer_index = 2ull;
         stale_options.token_position = 0ull;
         stale_input = (float *)calloc(
@@ -3225,12 +3232,12 @@ int main(int argc, char **argv)
         if (!stale_input) goto identity_mutation_fail;
         stale_options.input = stale_input;
         stale_options.input_stride = canonical_layer->hidden_dimension;
-        rc = yvex_graph_lower_deepseek_v4()->cpu_chunk_execute(
+        rc = attention_execution_api()->cpu_chunk_execute(
             attention_plan, architecture_ir, session, descriptor,
             &stale_options, &stale_result, &attention_failure, &err);
         if (rc == YVEX_OK ||
             attention_failure.code !=
-                YVEX_DEEPSEEK_ATTENTION_FAILURE_DESCRIPTOR ||
+                YVEX_ATTENTION_FAILURE_DESCRIPTOR ||
             stale_result.executed ||
             canonical_materialization->payload_bytes_accessed != bytes_before)
             goto identity_mutation_fail;
@@ -3339,7 +3346,7 @@ identity_mutation_done:
         double first_token_checksum = 0.0;
         double chunk_checksum = 0.0;
         double history_chunk_checksum = 0.0;
-        char chunk_identity[3][YVEX_DEEPSEEK_ATTENTION_IDENTITY_CAP];
+        char chunk_identity[3][YVEX_ATTENTION_IDENTITY_CAP];
         int cuda_only = getenv("YVEX_ATTENTION_CUDA_ONLY") != NULL;
 
         memset(chunk_identity, 0, sizeof(chunk_identity));
@@ -3361,7 +3368,7 @@ identity_mutation_done:
         if (!cuda_only) {
 #define RUN_FIRST_TOKEN(layer_id) do {                                          \
     if ((layer_id) != ~0ull) {                                                  \
-        yvex_graph_lower_deepseek_v4()->cpu_options_default(&exec_options);             \
+        attention_execution_api()->cpu_options_default(&exec_options);             \
         exec_options.layer_index = (layer_id);                                  \
         exec_options.token_position = 0ull;                                     \
         exec_options.token_count = 1ull;                                         \
@@ -3421,7 +3428,7 @@ identity_mutation_done:
 #undef RUN_FIRST_TOKEN
 #define RUN_CHUNK(layer_id, token_start, tokens) do {                          \
     if ((layer_id) != ~0ull) {                                                  \
-        yvex_graph_lower_deepseek_v4()->cpu_options_default(&exec_options);             \
+        attention_execution_api()->cpu_options_default(&exec_options);             \
         exec_options.layer_index = (layer_id);                                  \
         exec_options.token_position = (token_start);                            \
         exec_options.token_count = (tokens);                                    \
@@ -3476,7 +3483,7 @@ identity_mutation_done:
 #undef RUN_CHUNK
 #define RUN_CHUNK_REPEAT(layer_id, token_start, tokens) do {                   \
     if ((layer_id) != ~0ull) {                                                  \
-        yvex_graph_lower_deepseek_v4()->cpu_options_default(&exec_options);             \
+        attention_execution_api()->cpu_options_default(&exec_options);             \
         exec_options.layer_index = (layer_id);                                  \
         exec_options.token_position = (token_start);                            \
         exec_options.token_count = (tokens);                                    \
@@ -3528,7 +3535,7 @@ identity_mutation_done:
             history.local_kv = history_values;
             history.local_kv_stride = layer->head_dimension;
             history.local_positions = history_positions;
-            yvex_graph_lower_deepseek_v4()->cpu_options_default(&exec_options);
+            attention_execution_api()->cpu_options_default(&exec_options);
             exec_options.layer_index = first_swa;
             exec_options.token_position = 2ull;
             exec_options.token_count = 2ull;
@@ -3571,7 +3578,7 @@ identity_mutation_done:
             yvex_attention_cpu_result changed_result;
             yvex_attention_execution_trace selection_trace;
             double baseline_checksum;
-            char baseline_identity[YVEX_DEEPSEEK_ATTENTION_IDENTITY_CAP];
+            char baseline_identity[YVEX_ATTENTION_IDENTITY_CAP];
             unsigned long long selected_index = ~0ull;
             unsigned long long unselected_index = ~0ull;
             unsigned long long csa_reference_values = 0ull;
@@ -3582,7 +3589,7 @@ identity_mutation_done:
             if (!layer || !live_history_init(
                     &history, layer, attention_summary, 2052ull))
                 goto cleanup_fail;
-            yvex_graph_lower_deepseek_v4()->cpu_options_default(&exec_options);
+            attention_execution_api()->cpu_options_default(&exec_options);
             exec_options.layer_index = first_csa;
             exec_options.token_position = 2052ull;
             exec_options.token_count = 1ull;
@@ -3709,7 +3716,7 @@ identity_mutation_done:
                     &masked_trace, NULL, &attention_failure, &err);
                 if (rc == YVEX_OK ||
                     attention_failure.code !=
-                        YVEX_DEEPSEEK_ATTENTION_FAILURE_HISTORY ||
+                        YVEX_ATTENTION_FAILURE_HISTORY ||
                     masked_trace.owned || exec_result.executed) {
                     yvex_attention_execution_trace_release(
                         &masked_trace);
@@ -3744,18 +3751,18 @@ identity_mutation_done:
             memset(&boundary_trace, 0, sizeof(boundary_trace));
             if (!layer) goto cleanup_fail;
             wrong_ratio = *layer;
-            wrong_ratio.compression_ratio = 127ull;
+            wrong_ratio.compression_ratio = 0ull;
             rc = yvex_attention_class_geometry_validate(
-                &wrong_ratio, 4ull, 128ull, &attention_failure, &err);
+                &wrong_ratio, &attention_failure, &err);
             if (rc == YVEX_OK ||
                 attention_failure.code !=
-                    YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION)
+                    YVEX_ATTENTION_FAILURE_DIMENSION)
                 goto cleanup_fail;
             printf("attention_hca_wrong_ratio_refused=1\n");
             if (!layer || !live_history_init(
                     &boundary_history, layer, attention_summary, 127ull))
                 goto cleanup_fail;
-            yvex_graph_lower_deepseek_v4()->cpu_options_default(&exec_options);
+            attention_execution_api()->cpu_options_default(&exec_options);
             exec_options.layer_index = first_hca;
             exec_options.token_position = 127ull;
             exec_options.token_count = 1ull;
@@ -3812,7 +3819,7 @@ identity_mutation_done:
             boundary_history.view.compressed_kv_stride =
                 layer->head_dimension;
             live_history_bind_next_state(&boundary_history, &boundary_trace);
-            yvex_graph_lower_deepseek_v4()->cpu_options_default(&exec_options);
+            attention_execution_api()->cpu_options_default(&exec_options);
             exec_options.layer_index = first_hca;
             exec_options.token_position = 128ull;
             exec_options.token_count = 1ull;
@@ -3843,7 +3850,7 @@ identity_mutation_done:
                 fprintf(stderr, "attention_hca_multi_history_init=fail\n");
                 goto cleanup_fail;
             }
-            yvex_graph_lower_deepseek_v4()->cpu_options_default(&exec_options);
+            attention_execution_api()->cpu_options_default(&exec_options);
             exec_options.layer_index = first_hca;
             exec_options.token_position = 384ull;
             exec_options.token_count = 1ull;
@@ -3946,7 +3953,7 @@ identity_mutation_done:
                  ++i) {
                 if (i == first_swa || i == first_csa || i == first_hca)
                     continue;
-                yvex_graph_lower_deepseek_v4()->cpu_options_default(&exec_options);
+                attention_execution_api()->cpu_options_default(&exec_options);
                 exec_options.layer_index = i;
                 exec_options.token_position = 0ull;
                 exec_options.token_count = 1ull;

@@ -147,19 +147,19 @@ struct yvex_plan {
 };
 
 typedef enum {
-    YVEX_DEEPSEEK_ATTENTION_COMPONENT_ATTENTION_OUTPUT = 0, YVEX_DEEPSEEK_ATTENTION_COMPONENT_RAW_LOCAL_KV,
-    YVEX_DEEPSEEK_ATTENTION_COMPONENT_COMPRESSED_MAIN_KV, YVEX_DEEPSEEK_ATTENTION_COMPONENT_INDEXER_KV,
-    YVEX_DEEPSEEK_ATTENTION_COMPONENT_MAIN_KV_STATE, YVEX_DEEPSEEK_ATTENTION_COMPONENT_MAIN_SCORE_STATE,
-    YVEX_DEEPSEEK_ATTENTION_COMPONENT_INDEXER_KV_STATE, YVEX_DEEPSEEK_ATTENTION_COMPONENT_INDEXER_SCORE_STATE,
-    YVEX_DEEPSEEK_ATTENTION_COMPONENT_ENVELOPE_OUTPUT,
-    YVEX_DEEPSEEK_ATTENTION_COMPONENT_COUNT
+    YVEX_ATTENTION_COMPONENT_ATTENTION_OUTPUT = 0, YVEX_ATTENTION_COMPONENT_RAW_LOCAL_KV,
+    YVEX_ATTENTION_COMPONENT_COMPRESSED_MAIN_KV, YVEX_ATTENTION_COMPONENT_INDEXER_KV,
+    YVEX_ATTENTION_COMPONENT_MAIN_KV_STATE, YVEX_ATTENTION_COMPONENT_MAIN_SCORE_STATE,
+    YVEX_ATTENTION_COMPONENT_INDEXER_KV_STATE, YVEX_ATTENTION_COMPONENT_INDEXER_SCORE_STATE,
+    YVEX_ATTENTION_COMPONENT_ENVELOPE_OUTPUT,
+    YVEX_ATTENTION_COMPONENT_COUNT
 } yvex_attention_component_kind;
 typedef enum {
-    YVEX_DEEPSEEK_ATTENTION_COMPONENT_STORAGE_F32 = 1
+    YVEX_ATTENTION_COMPONENT_STORAGE_F32 = 1
 } yvex_attention_component_storage;
 typedef enum {
-    YVEX_DEEPSEEK_ATTENTION_TRANSACTION_EMPTY = 0, YVEX_DEEPSEEK_ATTENTION_TRANSACTION_BEGUN,
-    YVEX_DEEPSEEK_ATTENTION_TRANSACTION_ABORTED, YVEX_DEEPSEEK_ATTENTION_TRANSACTION_COMMITTED
+    YVEX_ATTENTION_TRANSACTION_EMPTY = 0, YVEX_ATTENTION_TRANSACTION_BEGUN,
+    YVEX_ATTENTION_TRANSACTION_ABORTED, YVEX_ATTENTION_TRANSACTION_COMMITTED
 } yvex_attention_transaction_status;
 typedef struct {
     yvex_attention_component_kind kind;
@@ -182,8 +182,8 @@ typedef struct {
     yvex_attention_workspace *workspace;
     yvex_attention_memory_sink_options options;
     yvex_attention_component_span committed[
-        YVEX_DEEPSEEK_ATTENTION_COMPONENT_COUNT];
-    char committed_identity[YVEX_DEEPSEEK_ATTENTION_IDENTITY_CAP];
+        YVEX_ATTENTION_COMPONENT_COUNT];
+    char committed_identity[YVEX_ATTENTION_IDENTITY_CAP];
 } yvex_attention_memory_sink;
 typedef struct {
     yvex_attention_transaction_status status;
@@ -191,10 +191,10 @@ typedef struct {
     unsigned long long layer_index;
     yvex_attention_class attention_class;
     unsigned long long token_position, token_count;
-    char previous_state_identity[YVEX_DEEPSEEK_ATTENTION_IDENTITY_CAP],
-        transaction_identity[YVEX_DEEPSEEK_ATTENTION_IDENTITY_CAP];
+    char previous_state_identity[YVEX_ATTENTION_IDENTITY_CAP],
+        transaction_identity[YVEX_ATTENTION_IDENTITY_CAP];
     yvex_attention_component_span components[
-        YVEX_DEEPSEEK_ATTENTION_COMPONENT_COUNT];
+        YVEX_ATTENTION_COMPONENT_COUNT];
 } yvex_attention_state_transaction;
 typedef struct {
     unsigned long long limit_bytes;
@@ -235,8 +235,8 @@ int yvex_attention_cuda_reject(
     yvex_status status, const char *reason);
 int yvex_attention_cancel_check(const yvex_attention_cancellation *cancellation,
     unsigned long long layer_index, const char *safe_point, yvex_attention_failure *failure, yvex_error *err);
-int yvex_attention_class_geometry_validate(const yvex_attention_layer_plan *layer,
-    unsigned long long csa_ratio, unsigned long long hca_ratio,
+int yvex_attention_class_geometry_validate(
+    const yvex_attention_layer_plan *layer,
     yvex_attention_failure *failure, yvex_error *err);
 int yvex_attention_history_validate(const yvex_attention_layer_plan *layer,
     const yvex_attention_history_view *history, yvex_attention_failure *failure, yvex_error *err);
@@ -336,7 +336,6 @@ int yvex_attention_execution_admit(
     const yvex_attention_plan *plan, const char *logical_identity,
     yvex_materialization_session *session, const yvex_runtime_descriptor *descriptor,
     const yvex_attention_cpu_options *options, const char *cancel_stage,
-    unsigned long long csa_ratio, unsigned long long hca_ratio,
     const yvex_attention_layer_plan **layer, yvex_attention_failure *failure,
     yvex_error *err);
 const yvex_runtime_tensor_binding *yvex_attention_binding_find(const yvex_runtime_descriptor *descriptor,

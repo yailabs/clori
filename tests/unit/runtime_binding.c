@@ -1016,7 +1016,7 @@ static int fixture_attention_build(binding_fixture *fixture)
     if (!materialization || !runtime) return 0;
     memset(&summary, 0, sizeof(summary));
     memset(&layer, 0, sizeof(layer));
-    summary.status = YVEX_DEEPSEEK_ATTENTION_STATUS_EXECUTION_READY;
+    summary.status = YVEX_ATTENTION_STATUS_EXECUTION_READY;
     summary.tensor_scope = YVEX_TENSOR_SCOPE_MAIN_LAYER;
     (void)snprintf(summary.artifact_identity, sizeof(summary.artifact_identity), "%s",
                    runtime->artifact_identity);

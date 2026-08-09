@@ -13,8 +13,8 @@
     "source_special_boundaries": ["platform-interface", "backend-kernel", "generated-abi"]
   },
   "limits": {
-    "production_files": 232,
-    "translation_units": 175,
+    "production_files": 233,
+    "translation_units": 176,
     "headers": 57,
     "public_headers": 14,
     "internal_headers": 31,
@@ -27,7 +27,7 @@
     "physical_lines": 192717,
     "code_lines": 179772,
     "executable_lines": 116360,
-    "semantic_owners": 217,
+    "semantic_owners": 218,
     "public_function_declarations": 401,
     "library_global_symbols": 1251,
     "nonpublic_global_symbols": 850,
@@ -120,7 +120,7 @@
   "symbols": {
     "namespace": "yvex_",
     "forbidden_public_fragments": ["_fixture_", "_reference_", "_test_", "_render_", "_deepseek_"],
-    "family_entrypoints": ["yvex_model_register_deepseek_v4", "yvex_compiler_family_deepseek_v4", "yvex_graph_lower_deepseek_v4", "yvex_graph_register_minimax_h3", "yvex_backend_register_minimax_h3", "yvex_backend_attention_execute"]
+    "family_entrypoints": ["yvex_model_register_deepseek_v4", "yvex_compiler_family_deepseek_v4", "yvex_graph_register_minimax_h3", "yvex_backend_register_minimax_h3", "yvex_backend_attention_execute"]
   },
   "archive": {
     "path": "build/lib/libyvex.a",
@@ -136,7 +136,7 @@
     {"text": "attention_core_ready", "roots": ["src/runtime"]},
     {"text": "yvex_attention_hadamard_cpu", "roots": ["src/graph"]},
     {"text": "yvex_attention_topk_select", "roots": ["src/graph"]},
-    {"text": "yvex_graph_lower_deepseek_v4", "roots": ["src/graph"]},
+    {"text": "yvex_attention_execution_api", "roots": ["src/graph"]},
     {"text": "graph_plan_build", "roots": ["src/graph/families"]},
     {"text": "yvex_backend_attention_execute", "roots": ["src/backend"]},
     {"text": "yvex_test_attention_reference_execute", "roots": ["tests/reference"]},

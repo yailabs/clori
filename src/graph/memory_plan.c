@@ -273,8 +273,8 @@ static int attention_rolling_view_init(const yvex_attention_layer_plan *layer,
                                        unsigned long long next_token_position, float *kv_state,
                                        float *score_state, yvex_attention_rolling_state_view *out);
 static const yvex_attention_memory_sink_options memory_sink_defaults = {
-    .fail_acquire_kind = YVEX_DEEPSEEK_ATTENTION_COMPONENT_COUNT,
-    .fail_seal_kind = YVEX_DEEPSEEK_ATTENTION_COMPONENT_COUNT};
+    .fail_acquire_kind = YVEX_ATTENTION_COMPONENT_COUNT,
+    .fail_seal_kind = YVEX_ATTENTION_COMPONENT_COUNT};
 
 static int attention_memory_reject(
     yvex_attention_failure *failure, yvex_attention_failure_code code,
@@ -467,7 +467,7 @@ static const attention_rolling_field attention_rolling_fields[] = {
      offsetof(yvex_attention_rolling_state_output, rotated), sizeof(int)},
     {offsetof(yvex_attention_rolling_state_view, attention_plan_identity),
      offsetof(yvex_attention_rolling_state_output, attention_plan_identity),
-     YVEX_DEEPSEEK_ATTENTION_IDENTITY_CAP},
+     YVEX_ATTENTION_IDENTITY_CAP},
 };
 
 static void attention_rolling_transfer(void *destination, const void *source, int output_to_view)
@@ -697,7 +697,7 @@ static int attention_cuda_load_weight(yvex_materialization_session *session,
     if (!session || !runtime_binding || !runtime_binding->binding || !owned || !job ||
         slot >= YVEX_BACKEND_ATTENTION_WEIGHT_COUNT)
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_INVALID_ARGUMENT, runtime_binding,
+            failure, YVEX_ATTENTION_FAILURE_INVALID_ARGUMENT, runtime_binding,
             YVEX_ATTENTION_NO_LAYER,
             runtime_binding ? runtime_binding->role : YVEX_TENSOR_ROLE_UNKNOWN, 1ull, 0ull, err,
             YVEX_ERR_INVALID_ARG, "CUDA attention weight load requires a typed binding and slot");
@@ -705,7 +705,7 @@ static int attention_cuda_load_weight(yvex_materialization_session *session,
     if (!binding->row_width || !binding->row_count || !binding->block_size ||
         !binding->bytes_per_block || binding->row_width % binding->block_size != 0ull ||
         binding->encoded_bytes > (unsigned long long)SIZE_MAX)
-        return yvex_attention_reject(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION,
+        return yvex_attention_reject(failure, YVEX_ATTENTION_FAILURE_DIMENSION,
                                      runtime_binding, binding->layer_index, binding->role,
                                      binding->block_size, binding->row_width, err, YVEX_ERR_BOUNDS,
                                      "CUDA attention encoded tensor geometry is invalid");
@@ -713,7 +713,7 @@ static int attention_cuda_load_weight(yvex_materialization_session *session,
     if (!yvex_core_u64_mul(blocks, binding->bytes_per_block, &row_bytes) ||
         !yvex_core_u64_mul(row_bytes, binding->row_count, &expected) ||
         expected != binding->encoded_bytes)
-        return yvex_attention_reject(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION,
+        return yvex_attention_reject(failure, YVEX_ATTENTION_FAILURE_DIMENSION,
                                      runtime_binding, binding->layer_index, binding->role,
                                      binding->encoded_bytes, expected, err, YVEX_ERR_FORMAT,
                                      "CUDA attention encoded tensor range is not row-exact");
@@ -726,7 +726,7 @@ static int attention_cuda_load_weight(yvex_materialization_session *session,
         owned->owned[slot] = (unsigned char *)malloc((size_t)binding->encoded_bytes);
         if (!owned->owned[slot])
             return yvex_attention_reject(
-                failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_ALLOCATION, runtime_binding,
+                failure, YVEX_ATTENTION_FAILURE_ALLOCATION, runtime_binding,
                 binding->layer_index, binding->role, binding->encoded_bytes, 0ull, err,
                 YVEX_ERR_NOMEM, "CUDA attention encoded weight allocation failed");
         rc = yvex_materialization_session_read(
@@ -740,8 +740,8 @@ static int attention_cuda_load_weight(yvex_materialization_session *session,
     }
     if (rc != YVEX_OK)
         return yvex_attention_reject(
-            failure, rc == YVEX_ERR_BOUNDS ? YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION
-                                           : YVEX_DEEPSEEK_ATTENTION_FAILURE_READ,
+            failure, rc == YVEX_ERR_BOUNDS ? YVEX_ATTENTION_FAILURE_DIMENSION
+                                           : YVEX_ATTENTION_FAILURE_READ,
             runtime_binding, binding->layer_index, binding->role, binding->encoded_bytes,
             0ull, err, (yvex_status)rc,
             rc == YVEX_ERR_BOUNDS ? "CUDA attention payload-byte accounting overflowed"
@@ -766,7 +766,7 @@ int yvex_attention_cuda_role_load(yvex_materialization_session *session,
     const yvex_runtime_tensor_binding *binding =
         yvex_attention_binding_find(descriptor, role, layer);
     if (!binding)
-        return yvex_attention_reject(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_MISSING_BINDING, NULL,
+        return yvex_attention_reject(failure, YVEX_ATTENTION_FAILURE_MISSING_BINDING, NULL,
                                      layer ? layer->layer_index : YVEX_ATTENTION_NO_LAYER,
                                      role, 1ull, 0ull, err, YVEX_ERR_FORMAT,
                                      "CUDA attention required typed role binding is absent");
@@ -843,7 +843,7 @@ static void cuda_rolling_commit(const yvex_attention_rolling_state_view *before,
 
 static int cuda_output_identity(const yvex_attention_plan *plan,
                                 const yvex_attention_execution_trace *trace,
-                                char out[YVEX_DEEPSEEK_ATTENTION_IDENTITY_CAP]) {
+                                char out[YVEX_ATTENTION_IDENTITY_CAP]) {
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     const yvex_attention_summary *summary = yvex_attention_plan_summary(plan);
@@ -944,13 +944,13 @@ int yvex_attention_cuda_publish(attention_cuda_context *context)
         !yvex_core_u64_mul(context->token_count, context->trace.envelope_output_width,
                            &envelope))
         return yvex_attention_cuda_reject(
-            context, YVEX_DEEPSEEK_ATTENTION_FAILURE_BACKEND,
+            context, YVEX_ATTENTION_FAILURE_BACKEND,
             context->token_count, context->cuda_output.tokens_executed,
             YVEX_ERR_STATE,
             "CUDA attention backend did not complete the admitted token range");
     if (!attention_cuda_memory_facts(context))
         return yvex_attention_cuda_reject(
-            context, YVEX_DEEPSEEK_ATTENTION_FAILURE_SCRATCH,
+            context, YVEX_ATTENTION_FAILURE_SCRATCH,
             ULLONG_MAX, context->token_count, YVEX_ERR_BOUNDS,
             "CUDA attention compulsory memory extent overflowed");
     context->trace.compressed_count = context->cuda_output.compressed_count;
@@ -966,7 +966,7 @@ int yvex_attention_cuda_publish(attention_cuda_context *context)
         unsigned long long semantic_stride = context->cuda_output.topk_count;
         if (semantic_stride > storage_stride)
             return yvex_attention_cuda_reject(
-                context, YVEX_DEEPSEEK_ATTENTION_FAILURE_BACKEND,
+                context, YVEX_ATTENTION_FAILURE_BACKEND,
                 storage_stride, semantic_stride, YVEX_ERR_BOUNDS,
                 "CUDA attention top-k publication exceeded its storage stride");
         if (context->trace.topk_positions && semantic_stride < storage_stride)
@@ -1010,7 +1010,7 @@ int yvex_attention_cuda_publish(attention_cuda_context *context)
                            context->cuda_output.peak_host_bytes,
                            &context->result->cuda_peak_host_bytes))
         return yvex_attention_cuda_reject(
-            context, YVEX_DEEPSEEK_ATTENTION_FAILURE_SCRATCH,
+            context, YVEX_ATTENTION_FAILURE_SCRATCH,
             context->opts->scratch_limit_bytes, ULLONG_MAX, YVEX_ERR_BOUNDS,
             "CUDA attention peak host accounting overflowed");
     context->result->cuda_peak_device_bytes = context->cuda_output.peak_device_bytes;
@@ -1040,7 +1040,7 @@ int yvex_attention_cuda_publish(attention_cuda_context *context)
     if (context->trace.evidence_level && !cuda_output_identity(
             context->plan, &context->trace, context->result->output_identity))
         return yvex_attention_cuda_reject(
-            context, YVEX_DEEPSEEK_ATTENTION_FAILURE_STATE_DELTA,
+            context, YVEX_ATTENTION_FAILURE_STATE_DELTA,
             1ull, 0ull, YVEX_ERR_STATE,
             "CUDA attention output identity construction failed");
     if (context->history->main_rolling_state.present)
@@ -1127,8 +1127,8 @@ int yvex_attention_cuda_trace_open(yvex_attention_publication *trace,
         if (rc != YVEX_OK) {
             yvex_attention_execution_trace_release(trace);
             return attention_memory_reject(
-                failure, rc == YVEX_ERR_NOMEM ? YVEX_DEEPSEEK_ATTENTION_FAILURE_ALLOCATION
-                                              : YVEX_DEEPSEEK_ATTENTION_FAILURE_SCRATCH,
+                failure, rc == YVEX_ERR_NOMEM ? YVEX_ATTENTION_FAILURE_ALLOCATION
+                                              : YVEX_ATTENTION_FAILURE_SCRATCH,
                 layer->layer_index, limit_bytes, *owned_bytes, err, (yvex_status)rc,
                 rc == YVEX_ERR_NOMEM ? "CUDA attention trace allocation failed"
                                      : "CUDA attention trace exceeds its host budget");
@@ -1148,13 +1148,13 @@ int yvex_attention_cuda_trace_open(yvex_attention_publication *trace,
     return YVEX_OK;
 invalid:
     return attention_memory_reject(
-        failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_INVALID_ARGUMENT,
+        failure, YVEX_ATTENTION_FAILURE_INVALID_ARGUMENT,
         layer ? layer->layer_index : YVEX_ATTENTION_NO_LAYER, 1ull, 0ull, err,
         YVEX_ERR_INVALID_ARG, "CUDA attention trace requires history and a bounded token range");
 fail:
     yvex_attention_execution_trace_release(trace);
     return attention_memory_reject(
-        failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_SCRATCH,
+        failure, YVEX_ATTENTION_FAILURE_SCRATCH,
         layer ? layer->layer_index : YVEX_ATTENTION_NO_LAYER, limit_bytes, 0ull, err,
         YVEX_ERR_BOUNDS, "CUDA attention trace geometry exceeds its host budget");
 }
@@ -1189,7 +1189,7 @@ int yvex_attention_rolling_storage_acquire(const yvex_attention_layer_plan *laye
                                          &overlap, &rotated) ||
         !yvex_core_u64_mul(state_slots, state_width, &extent))
         return attention_memory_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_HISTORY,
+            failure, YVEX_ATTENTION_FAILURE_HISTORY,
             layer ? layer->layer_index : YVEX_ATTENTION_NO_LAYER, 1ull, 0ull, err, YVEX_ERR_FORMAT,
             "DeepSeek attention could not derive empty rolling-state geometry");
     kv_state = workspace
@@ -1200,14 +1200,14 @@ int yvex_attention_rolling_storage_acquire(const yvex_attention_layer_plan *laye
         : (float *)yvex_attention_calloc_array(extent, sizeof(float));
     if (!kv_state || !score_state) {
         rc = attention_memory_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_ALLOCATION, layer->layer_index,
+            failure, YVEX_ATTENTION_FAILURE_ALLOCATION, layer->layer_index,
             extent, 0ull, err, YVEX_ERR_NOMEM,
             "DeepSeek attention empty rolling-state allocation failed");
         goto fail;
     }
     if (!attention_rolling_view_init(layer, kind, token_position, kv_state, score_state, &view)) {
         rc = attention_memory_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_HISTORY, layer->layer_index,
+            failure, YVEX_ATTENTION_FAILURE_HISTORY, layer->layer_index,
             extent, 0ull, err, YVEX_ERR_FORMAT,
             "DeepSeek attention empty rolling-state initialization failed");
         goto fail;
@@ -1251,7 +1251,7 @@ static int attention_rolling_view_init(const yvex_attention_layer_plan *layer,
     }
     memset(out, 0, sizeof(*out));
     out->present = 1;
-    out->schema_version = YVEX_DEEPSEEK_ATTENTION_ROLLING_STATE_SCHEMA_V1;
+    out->schema_version = YVEX_ATTENTION_ROLLING_STATE_SCHEMA_V1;
     out->kind = kind;
     out->attention_class = layer->attention_class;
     out->layer_index = layer->layer_index;
@@ -1436,7 +1436,7 @@ static void attention_transaction_release_staging(yvex_attention_state_transacti
     unsigned int i;
     if (!transaction)
         return;
-    for (i = 0u; i < YVEX_DEEPSEEK_ATTENTION_COMPONENT_COUNT; ++i)
+    for (i = 0u; i < YVEX_ATTENTION_COMPONENT_COUNT; ++i)
         attention_component_release(&transaction->components[i]);
 }
 /* Construct component prepare f32 with checked geometry and explicit ownership. */
@@ -1461,7 +1461,7 @@ static int attention_component_prepare_f32(yvex_attention_component_span *span,
         return 0;
     memset(span, 0, sizeof(*span));
     span->kind = kind;
-    span->storage = YVEX_DEEPSEEK_ATTENTION_COMPONENT_STORAGE_F32;
+    span->storage = YVEX_ATTENTION_COMPONENT_STORAGE_F32;
     span->rank = rank;
     span->dims[0] = dim0;
     span->dims[1] = rank > 1u ? dim1 : 0ull;
@@ -1509,24 +1509,24 @@ typedef struct {
     const char *failure;
 } attention_component_spec;
 static const attention_component_spec attention_component_specs[] = {
-    {YVEX_DEEPSEEK_ATTENTION_COMPONENT_ATTENTION_OUTPUT, ATTENTION_LAYOUT_ALWAYS,
+    {YVEX_ATTENTION_COMPONENT_ATTENTION_OUTPUT, ATTENTION_LAYOUT_ALWAYS,
      ATTENTION_EXTENT_TOKEN_HIDDEN, "DeepSeek attention state transaction output extent overflowed"},
-    {YVEX_DEEPSEEK_ATTENTION_COMPONENT_RAW_LOCAL_KV, ATTENTION_LAYOUT_ALWAYS,
+    {YVEX_ATTENTION_COMPONENT_RAW_LOCAL_KV, ATTENTION_LAYOUT_ALWAYS,
      ATTENTION_EXTENT_TOKEN_KV, "DeepSeek attention state transaction output extent overflowed"},
-    {YVEX_DEEPSEEK_ATTENTION_COMPONENT_ENVELOPE_OUTPUT, ATTENTION_LAYOUT_ENVELOPE,
+    {YVEX_ATTENTION_COMPONENT_ENVELOPE_OUTPUT, ATTENTION_LAYOUT_ENVELOPE,
      ATTENTION_EXTENT_TOKEN_ENVELOPE, "attention envelope transaction extent overflowed"},
-    {YVEX_DEEPSEEK_ATTENTION_COMPONENT_MAIN_KV_STATE, ATTENTION_LAYOUT_COMPRESSED,
+    {YVEX_ATTENTION_COMPONENT_MAIN_KV_STATE, ATTENTION_LAYOUT_COMPRESSED,
      ATTENTION_EXTENT_MAIN_KV, "DeepSeek attention main rolling-state extent overflowed"},
-    {YVEX_DEEPSEEK_ATTENTION_COMPONENT_MAIN_SCORE_STATE, ATTENTION_LAYOUT_COMPRESSED,
+    {YVEX_ATTENTION_COMPONENT_MAIN_SCORE_STATE, ATTENTION_LAYOUT_COMPRESSED,
      ATTENTION_EXTENT_MAIN_SCORE, "DeepSeek attention main rolling-state extent overflowed"},
-    {YVEX_DEEPSEEK_ATTENTION_COMPONENT_COMPRESSED_MAIN_KV,
+    {YVEX_ATTENTION_COMPONENT_COMPRESSED_MAIN_KV,
      ATTENTION_LAYOUT_COMPRESSED_EMISSION, ATTENTION_EXTENT_COMPRESSED_KV,
      "DeepSeek attention compressed KV extent overflowed"},
-    {YVEX_DEEPSEEK_ATTENTION_COMPONENT_INDEXER_KV_STATE, ATTENTION_LAYOUT_CSA,
+    {YVEX_ATTENTION_COMPONENT_INDEXER_KV_STATE, ATTENTION_LAYOUT_CSA,
      ATTENTION_EXTENT_INDEX_KV, "DeepSeek attention indexer rolling-state extent overflowed"},
-    {YVEX_DEEPSEEK_ATTENTION_COMPONENT_INDEXER_SCORE_STATE, ATTENTION_LAYOUT_CSA,
+    {YVEX_ATTENTION_COMPONENT_INDEXER_SCORE_STATE, ATTENTION_LAYOUT_CSA,
      ATTENTION_EXTENT_INDEX_SCORE, "DeepSeek attention indexer rolling-state extent overflowed"},
-    {YVEX_DEEPSEEK_ATTENTION_COMPONENT_INDEXER_KV, ATTENTION_LAYOUT_CSA_EMISSION,
+    {YVEX_ATTENTION_COMPONENT_INDEXER_KV, ATTENTION_LAYOUT_CSA_EMISSION,
      ATTENTION_EXTENT_INDEXER_KV, "DeepSeek attention indexer KV extent overflowed"},
 };
 /* Derive every transaction component from one canonical typed layout table. */
@@ -1538,7 +1538,7 @@ static int attention_transaction_layout(
 {
     unsigned long long emitted = 0ull, total = 0ull;
     unsigned int i;
-    memset(spans, 0, sizeof(*spans) * YVEX_DEEPSEEK_ATTENTION_COMPONENT_COUNT);
+    memset(spans, 0, sizeof(*spans) * YVEX_ATTENTION_COMPONENT_COUNT);
     if (layer->attention_class != YVEX_ATTENTION_CLASS_SWA &&
         !attention_emission_count(position, tokens, layer->compression_ratio, &emitted)) {
         if (failure) *failure = "DeepSeek attention compression emission count overflowed";
@@ -1606,7 +1606,7 @@ int yvex_attention_transaction_scratch_elements(
     yvex_attention_operation_scope scope, unsigned long long token_position,
     unsigned long long token_count, unsigned long long *elements)
 {
-    yvex_attention_component_span spans[YVEX_DEEPSEEK_ATTENTION_COMPONENT_COUNT];
+    yvex_attention_component_span spans[YVEX_ATTENTION_COMPONENT_COUNT];
     if (elements) *elements = 0ull;
     if (!layer || !history || !elements || !token_count ||
         (scope != YVEX_ATTENTION_OPERATION_CORE && scope != YVEX_ATTENTION_OPERATION_ENVELOPE))
@@ -1619,7 +1619,7 @@ static int attention_transaction_allocate_staging(yvex_attention_state_transacti
                                                   yvex_attention_failure *failure,
                                                   yvex_error *err) {
     unsigned int i;
-    for (i = 0u; i < YVEX_DEEPSEEK_ATTENTION_COMPONENT_COUNT; ++i) {
+    for (i = 0u; i < YVEX_ATTENTION_COMPONENT_COUNT; ++i) {
         yvex_attention_component_span *span = &transaction->components[i];
         if (!span->required)
             continue;
@@ -1630,7 +1630,7 @@ static int attention_transaction_allocate_staging(yvex_attention_state_transacti
         if (!span->data) {
             attention_transaction_release_staging(transaction);
             return attention_memory_reject(
-                failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_ALLOCATION, transaction->layer_index,
+                failure, YVEX_ATTENTION_FAILURE_ALLOCATION, transaction->layer_index,
                 span->byte_extent, 0ull, err, YVEX_ERR_NOMEM,
                 "DeepSeek attention state transaction staging allocation failed");
         }
@@ -1639,7 +1639,7 @@ static int attention_transaction_allocate_staging(yvex_attention_state_transacti
 }
 /* Derive the deterministic transaction identity identity from explicit semantic fields. */
 static int attention_transaction_identity(const yvex_attention_state_transaction *transaction,
-                                          char out[YVEX_DEEPSEEK_ATTENTION_IDENTITY_CAP]) {
+                                          char out[YVEX_ATTENTION_IDENTITY_CAP]) {
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     unsigned int i;
@@ -1653,7 +1653,7 @@ static int attention_transaction_identity(const yvex_attention_state_transaction
         !attention_hash_u64(&hash, transaction->token_count) ||
         !attention_hash_text(&hash, transaction->previous_state_identity))
         return 0;
-    for (i = 0u; i < YVEX_DEEPSEEK_ATTENTION_COMPONENT_COUNT; ++i) {
+    for (i = 0u; i < YVEX_ATTENTION_COMPONENT_COUNT; ++i) {
         const yvex_attention_component_span *span = &transaction->components[i];
         if (!span->required)
             continue;
@@ -1676,10 +1676,10 @@ static int attention_transaction_identity(const yvex_attention_state_transaction
 static int attention_component_values_are_finite(const yvex_attention_component_span *span) {
     const float *values;
     unsigned long long i;
-    if (!span || span->storage != YVEX_DEEPSEEK_ATTENTION_COMPONENT_STORAGE_F32 || !span->data)
+    if (!span || span->storage != YVEX_ATTENTION_COMPONENT_STORAGE_F32 || !span->data)
         return 0;
-    if (span->kind == YVEX_DEEPSEEK_ATTENTION_COMPONENT_MAIN_SCORE_STATE ||
-        span->kind == YVEX_DEEPSEEK_ATTENTION_COMPONENT_INDEXER_SCORE_STATE)
+    if (span->kind == YVEX_ATTENTION_COMPONENT_MAIN_SCORE_STATE ||
+        span->kind == YVEX_ATTENTION_COMPONENT_INDEXER_SCORE_STATE)
         return 1;
     values = (const float *)span->data;
     for (i = 0ull; i < span->expected_elements; ++i) {
@@ -1694,7 +1694,7 @@ int yvex_attention_memory_sink_init(yvex_attention_memory_sink *sink,
                                     yvex_attention_failure *failure, yvex_error *err) {
     if (!sink)
         return attention_memory_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_INVALID_ARGUMENT, YVEX_ATTENTION_NO_LAYER,
+            failure, YVEX_ATTENTION_FAILURE_INVALID_ARGUMENT, YVEX_ATTENTION_NO_LAYER,
             1ull, 0ull, err, YVEX_ERR_INVALID_ARG,
             "DeepSeek attention memory sink requires caller storage");
     memset(sink, 0, sizeof(*sink));
@@ -1708,7 +1708,7 @@ void yvex_attention_memory_sink_release(yvex_attention_memory_sink *sink) {
     unsigned int i;
     if (!sink)
         return;
-    for (i = 0u; i < YVEX_DEEPSEEK_ATTENTION_COMPONENT_COUNT; ++i)
+    for (i = 0u; i < YVEX_ATTENTION_COMPONENT_COUNT; ++i)
         attention_component_release(&sink->committed[i]);
     memset(sink, 0, sizeof(*sink));
 }
@@ -1727,28 +1727,28 @@ int yvex_attention_state_transaction_begin_scope(
     if (!sink || !sink->initialized || !layer || !history || !transaction || token_count == 0ull ||
         (scope != YVEX_ATTENTION_OPERATION_CORE && scope != YVEX_ATTENTION_OPERATION_ENVELOPE))
         return attention_memory_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_INVALID_ARGUMENT,
+            failure, YVEX_ATTENTION_FAILURE_INVALID_ARGUMENT,
             layer ? layer->layer_index : YVEX_ATTENTION_NO_LAYER, 1ull, token_count, err,
             YVEX_ERR_INVALID_ARG,
             "DeepSeek attention state transaction requires sink, layer, history, and tokens");
     if (sink->options.fail_begin)
         return attention_memory_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_STATE_DELTA, layer->layer_index, 1ull, 0ull,
+            failure, YVEX_ATTENTION_FAILURE_STATE_DELTA, layer->layer_index, 1ull, 0ull,
             err, YVEX_ERR_STATE, "DeepSeek attention memory sink injected begin failure");
     rc = yvex_attention_history_validate(layer, history, failure, err);
     if (rc != YVEX_OK)
         return rc;
     if (history->token_count != token_position)
         return attention_memory_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_HISTORY, layer->layer_index,
+            failure, YVEX_ATTENTION_FAILURE_HISTORY, layer->layer_index,
             history->token_count, token_position, err, YVEX_ERR_STATE,
             "DeepSeek attention state transaction token position is not contiguous");
     if (token_position > ULLONG_MAX - token_count)
         return attention_memory_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_STATE_DELTA, layer->layer_index, ULLONG_MAX,
+            failure, YVEX_ATTENTION_FAILURE_STATE_DELTA, layer->layer_index, ULLONG_MAX,
             token_position, err, YVEX_ERR_BOUNDS,
             "DeepSeek attention state transaction token range overflows");
-    transaction->status = YVEX_DEEPSEEK_ATTENTION_TRANSACTION_BEGUN;
+    transaction->status = YVEX_ATTENTION_TRANSACTION_BEGUN;
     transaction->sink = sink;
     transaction->layer_index = layer->layer_index;
     transaction->attention_class = layer->attention_class;
@@ -1761,7 +1761,7 @@ int yvex_attention_state_transaction_begin_scope(
                                       transaction->components, NULL, &layout_failure,
                                       &layout_expected))
         return attention_memory_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_STATE_DELTA, layer->layer_index,
+            failure, YVEX_ATTENTION_FAILURE_STATE_DELTA, layer->layer_index,
             layout_expected, 0ull, err, YVEX_ERR_BOUNDS,
             layout_failure ? layout_failure : "DeepSeek attention state layout overflowed");
     rc = attention_transaction_allocate_staging(transaction, failure, err);
@@ -1777,23 +1777,23 @@ int yvex_attention_state_transaction_acquire(yvex_attention_state_transaction *t
     yvex_attention_component_span *span;
     if (out)
         memset(out, 0, sizeof(*out));
-    if (!transaction || transaction->status != YVEX_DEEPSEEK_ATTENTION_TRANSACTION_BEGUN ||
-        kind >= YVEX_DEEPSEEK_ATTENTION_COMPONENT_COUNT)
+    if (!transaction || transaction->status != YVEX_ATTENTION_TRANSACTION_BEGUN ||
+        kind >= YVEX_ATTENTION_COMPONENT_COUNT)
         return attention_memory_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_STATE_DELTA,
+            failure, YVEX_ATTENTION_FAILURE_STATE_DELTA,
             transaction ? transaction->layer_index : YVEX_ATTENTION_NO_LAYER,
-            YVEX_DEEPSEEK_ATTENTION_TRANSACTION_BEGUN,
-            transaction ? transaction->status : YVEX_DEEPSEEK_ATTENTION_TRANSACTION_EMPTY, err,
+            YVEX_ATTENTION_TRANSACTION_BEGUN,
+            transaction ? transaction->status : YVEX_ATTENTION_TRANSACTION_EMPTY, err,
             YVEX_ERR_STATE, "DeepSeek attention state transaction acquire requires begun state");
     span = &transaction->components[kind];
     if (!span->required || !span->data || span->acquired)
         return attention_memory_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_STATE_DELTA, transaction->layer_index,
+            failure, YVEX_ATTENTION_FAILURE_STATE_DELTA, transaction->layer_index,
             1ull, span->acquired, err, YVEX_ERR_STATE,
             "DeepSeek attention state component is absent or already acquired");
     if (transaction->sink && transaction->sink->options.fail_acquire_kind == kind)
         return attention_memory_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_STATE_DELTA, transaction->layer_index,
+            failure, YVEX_ATTENTION_FAILURE_STATE_DELTA, transaction->layer_index,
             1ull, 0ull, err, YVEX_ERR_STATE,
             "DeepSeek attention memory sink injected acquire failure");
     span->acquired = 1;
@@ -1807,29 +1807,29 @@ int yvex_attention_state_transaction_seal(yvex_attention_state_transaction *tran
                                           unsigned long long produced_elements,
                                           yvex_attention_failure *failure, yvex_error *err) {
     yvex_attention_component_span *span;
-    if (!transaction || transaction->status != YVEX_DEEPSEEK_ATTENTION_TRANSACTION_BEGUN ||
-        kind >= YVEX_DEEPSEEK_ATTENTION_COMPONENT_COUNT)
+    if (!transaction || transaction->status != YVEX_ATTENTION_TRANSACTION_BEGUN ||
+        kind >= YVEX_ATTENTION_COMPONENT_COUNT)
         return attention_memory_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_STATE_DELTA,
+            failure, YVEX_ATTENTION_FAILURE_STATE_DELTA,
             transaction ? transaction->layer_index : YVEX_ATTENTION_NO_LAYER,
-            YVEX_DEEPSEEK_ATTENTION_TRANSACTION_BEGUN,
-            transaction ? transaction->status : YVEX_DEEPSEEK_ATTENTION_TRANSACTION_EMPTY, err,
+            YVEX_ATTENTION_TRANSACTION_BEGUN,
+            transaction ? transaction->status : YVEX_ATTENTION_TRANSACTION_EMPTY, err,
             YVEX_ERR_STATE, "DeepSeek attention state transaction seal requires begun state");
     span = &transaction->components[kind];
     if (!span->required || !span->acquired || span->sealed ||
         produced_elements != span->expected_elements)
         return attention_memory_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_STATE_DELTA, transaction->layer_index,
+            failure, YVEX_ATTENTION_FAILURE_STATE_DELTA, transaction->layer_index,
             span->expected_elements, produced_elements, err,
             YVEX_ERR_BOUNDS, "DeepSeek attention state component seal has wrong element count");
     if (transaction->sink && transaction->sink->options.fail_seal_kind == kind)
         return attention_memory_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_STATE_DELTA, transaction->layer_index,
+            failure, YVEX_ATTENTION_FAILURE_STATE_DELTA, transaction->layer_index,
             1ull, 0ull, err, YVEX_ERR_STATE,
             "DeepSeek attention memory sink injected seal failure");
     if (!attention_component_values_are_finite(span))
         return attention_memory_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_NUMERIC, transaction->layer_index,
+            failure, YVEX_ATTENTION_FAILURE_NUMERIC, transaction->layer_index,
             1ull, 0ull, err, YVEX_ERR_FORMAT,
             "DeepSeek attention state component contains non-finite values");
     span->produced_elements = produced_elements;
@@ -1840,35 +1840,35 @@ int yvex_attention_state_transaction_seal(yvex_attention_state_transaction *tran
 
 int yvex_attention_state_transaction_commit(yvex_attention_state_transaction *transaction,
                                             yvex_attention_failure *failure, yvex_error *err) {
-    yvex_attention_component_span next[YVEX_DEEPSEEK_ATTENTION_COMPONENT_COUNT];
+    yvex_attention_component_span next[YVEX_ATTENTION_COMPONENT_COUNT];
     unsigned int i;
     memset(next, 0, sizeof(next));
-    if (!transaction || transaction->status != YVEX_DEEPSEEK_ATTENTION_TRANSACTION_BEGUN ||
+    if (!transaction || transaction->status != YVEX_ATTENTION_TRANSACTION_BEGUN ||
         !transaction->sink || !transaction->sink->initialized)
         return attention_memory_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_STATE_DELTA,
+            failure, YVEX_ATTENTION_FAILURE_STATE_DELTA,
             transaction ? transaction->layer_index : YVEX_ATTENTION_NO_LAYER,
-            YVEX_DEEPSEEK_ATTENTION_TRANSACTION_BEGUN,
-            transaction ? transaction->status : YVEX_DEEPSEEK_ATTENTION_TRANSACTION_EMPTY, err,
+            YVEX_ATTENTION_TRANSACTION_BEGUN,
+            transaction ? transaction->status : YVEX_ATTENTION_TRANSACTION_EMPTY, err,
             YVEX_ERR_STATE, "DeepSeek attention state transaction commit requires begun state");
     if (transaction->sink->options.fail_commit)
         return attention_memory_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_STATE_DELTA, transaction->layer_index,
+            failure, YVEX_ATTENTION_FAILURE_STATE_DELTA, transaction->layer_index,
             1ull, 0ull, err, YVEX_ERR_STATE,
             "DeepSeek attention memory sink injected commit failure");
-    for (i = 0u; i < YVEX_DEEPSEEK_ATTENTION_COMPONENT_COUNT; ++i) {
+    for (i = 0u; i < YVEX_ATTENTION_COMPONENT_COUNT; ++i) {
         const yvex_attention_component_span *span = &transaction->components[i];
         if (!span->required)
             continue;
         if (!span->acquired || !span->written || !span->sealed ||
             span->produced_elements != span->expected_elements)
             return attention_memory_reject(
-                failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_STATE_DELTA, transaction->layer_index,
+                failure, YVEX_ATTENTION_FAILURE_STATE_DELTA, transaction->layer_index,
                 span->expected_elements,
                 span->produced_elements, err, YVEX_ERR_STATE,
                 "DeepSeek attention state transaction cannot commit incomplete component");
     }
-    for (i = 0u; i < YVEX_DEEPSEEK_ATTENTION_COMPONENT_COUNT; ++i) {
+    for (i = 0u; i < YVEX_ATTENTION_COMPONENT_COUNT; ++i) {
         const yvex_attention_component_span *span = &transaction->components[i];
         if (!span->required)
             continue;
@@ -1876,23 +1876,23 @@ int yvex_attention_state_transaction_commit(yvex_attention_state_transaction *tr
         if (!attention_storage_copy(&next[i].data, span->expected_elements, span->data,
                                     span->expected_elements, sizeof(float), next[i].workspace)) {
             unsigned int j;
-            for (j = 0u; j < YVEX_DEEPSEEK_ATTENTION_COMPONENT_COUNT; ++j)
+            for (j = 0u; j < YVEX_ATTENTION_COMPONENT_COUNT; ++j)
                 attention_component_release(&next[j]);
             return attention_memory_reject(
-                failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_ALLOCATION, transaction->layer_index,
+                failure, YVEX_ATTENTION_FAILURE_ALLOCATION, transaction->layer_index,
                 span->byte_extent, 0ull, err, YVEX_ERR_NOMEM,
                 "DeepSeek attention state commit allocation failed");
         }
     }
     if (!attention_transaction_identity(transaction, transaction->transaction_identity)) {
-        for (i = 0u; i < YVEX_DEEPSEEK_ATTENTION_COMPONENT_COUNT; ++i)
+        for (i = 0u; i < YVEX_ATTENTION_COMPONENT_COUNT; ++i)
             attention_component_release(&next[i]);
         return attention_memory_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_STATE_DELTA, transaction->layer_index,
+            failure, YVEX_ATTENTION_FAILURE_STATE_DELTA, transaction->layer_index,
             1ull, 0ull, err, YVEX_ERR_FORMAT,
             "DeepSeek attention state transaction identity failed");
     }
-    for (i = 0u; i < YVEX_DEEPSEEK_ATTENTION_COMPONENT_COUNT; ++i) {
+    for (i = 0u; i < YVEX_ATTENTION_COMPONENT_COUNT; ++i) {
         attention_component_release(&transaction->sink->committed[i]);
         transaction->sink->committed[i] = next[i];
         memset(&next[i], 0, sizeof(next[i]));
@@ -1902,24 +1902,24 @@ int yvex_attention_state_transaction_commit(yvex_attention_state_transaction *tr
                         transaction->transaction_identity);
     transaction->sink->has_committed = 1;
     attention_transaction_release_staging(transaction);
-    transaction->status = YVEX_DEEPSEEK_ATTENTION_TRANSACTION_COMMITTED;
+    transaction->status = YVEX_ATTENTION_TRANSACTION_COMMITTED;
     return yvex_attention_accept(failure, err);
 }
 
 int yvex_attention_state_transaction_abort(yvex_attention_state_transaction *transaction,
                                            yvex_attention_failure *failure, yvex_error *err) {
-    if (!transaction || transaction->status != YVEX_DEEPSEEK_ATTENTION_TRANSACTION_BEGUN)
+    if (!transaction || transaction->status != YVEX_ATTENTION_TRANSACTION_BEGUN)
         return attention_memory_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_STATE_DELTA,
+            failure, YVEX_ATTENTION_FAILURE_STATE_DELTA,
             transaction ? transaction->layer_index : YVEX_ATTENTION_NO_LAYER,
-            YVEX_DEEPSEEK_ATTENTION_TRANSACTION_BEGUN,
-            transaction ? transaction->status : YVEX_DEEPSEEK_ATTENTION_TRANSACTION_EMPTY, err,
+            YVEX_ATTENTION_TRANSACTION_BEGUN,
+            transaction ? transaction->status : YVEX_ATTENTION_TRANSACTION_EMPTY, err,
             YVEX_ERR_STATE, "DeepSeek attention state transaction abort requires begun state");
     attention_transaction_release_staging(transaction);
-    transaction->status = YVEX_DEEPSEEK_ATTENTION_TRANSACTION_ABORTED;
+    transaction->status = YVEX_ATTENTION_TRANSACTION_ABORTED;
     if (transaction->sink && transaction->sink->options.fail_abort)
         return attention_memory_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_STATE_DELTA, transaction->layer_index,
+            failure, YVEX_ATTENTION_FAILURE_STATE_DELTA, transaction->layer_index,
             1ull, 0ull, err, YVEX_ERR_STATE,
             "DeepSeek attention memory sink injected abort failure");
     return yvex_attention_accept(failure, err);
@@ -1929,7 +1929,7 @@ const yvex_attention_component_span *
 yvex_attention_memory_sink_committed_component(const yvex_attention_memory_sink *sink,
                                                yvex_attention_component_kind kind) {
     if (!sink || !sink->initialized || !sink->has_committed ||
-        kind >= YVEX_DEEPSEEK_ATTENTION_COMPONENT_COUNT || !sink->committed[kind].required)
+        kind >= YVEX_ATTENTION_COMPONENT_COUNT || !sink->committed[kind].required)
         return NULL;
     return &sink->committed[kind];
 }

@@ -113,7 +113,7 @@ static int test_cpu_resource_guards(void)
         &row_bytes, &failure, &err);
     YVEX_TEST_ASSERT(
         rc == YVEX_ERR_BOUNDS && row_bytes == 0ull && !trace.owned &&
-            failure.code == YVEX_DEEPSEEK_ATTENTION_FAILURE_SCRATCH,
+            failure.code == YVEX_ATTENTION_FAILURE_SCRATCH,
         "CUDA trace refuses budget minus one before allocation");
     rc = yvex_attention_cuda_trace_open(
         &trace, &layer, YVEX_ATTENTION_OPERATION_CORE, &history, 0ull, 1ull,
@@ -192,10 +192,10 @@ static void init_rolling_view(
     float *score)
 {
     unsigned long long ratio = layer->compression_ratio;
-    int overlap = kind == YVEX_DEEPSEEK_ATTENTION_ROLLING_INDEXER ||
+    int overlap = kind == YVEX_ATTENTION_ROLLING_INDEXER ||
                   layer->attention_class == YVEX_ATTENTION_CLASS_CSA;
     unsigned long long head_dim =
-        kind == YVEX_DEEPSEEK_ATTENTION_ROLLING_INDEXER
+        kind == YVEX_ATTENTION_ROLLING_INDEXER
             ? layer->indexer_head_dimension
             : layer->head_dimension;
     unsigned long long width = head_dim * (overlap ? 2ull : 1ull);
@@ -208,7 +208,7 @@ static void init_rolling_view(
     }
     memset(state, 0, sizeof(*state));
     state->present = 1;
-    state->schema_version = YVEX_DEEPSEEK_ATTENTION_ROLLING_STATE_SCHEMA_V1;
+    state->schema_version = YVEX_ATTENTION_ROLLING_STATE_SCHEMA_V1;
     state->kind = kind;
     state->attention_class = layer->attention_class;
     state->layer_index = layer->layer_index;
@@ -228,7 +228,7 @@ static void init_rolling_view(
     state->kv_state = kv;
     state->score_state = score;
     state->overlap = overlap;
-    state->rotated = kind == YVEX_DEEPSEEK_ATTENTION_ROLLING_INDEXER;
+    state->rotated = kind == YVEX_ATTENTION_ROLLING_INDEXER;
     for (i = 0ull; i < state->previous_fill; ++i) {
         unsigned long long lane;
         for (lane = 0ull; lane < head_dim; ++lane) {
@@ -324,8 +324,8 @@ static void memory_sink_options_reset(
     yvex_attention_memory_sink_options *options)
 {
     memset(options, 0, sizeof(*options));
-    options->fail_acquire_kind = YVEX_DEEPSEEK_ATTENTION_COMPONENT_COUNT;
-    options->fail_seal_kind = YVEX_DEEPSEEK_ATTENTION_COMPONENT_COUNT;
+    options->fail_acquire_kind = YVEX_ATTENTION_COMPONENT_COUNT;
+    options->fail_seal_kind = YVEX_ATTENTION_COMPONENT_COUNT;
 }
 
 static int compare_float_ranges(const float *left,
@@ -337,11 +337,11 @@ static int test_execution_status_names(void)
 {
     YVEX_TEST_ASSERT_STREQ(
         yvex_test_attention_status_name(
-            YVEX_DEEPSEEK_ATTENTION_STATUS_EXECUTION_READY),
+            YVEX_ATTENTION_STATUS_EXECUTION_READY),
         "execution-ready", "execution-ready status name");
     YVEX_TEST_ASSERT_STREQ(
         yvex_test_attention_failure_name(
-            YVEX_DEEPSEEK_ATTENTION_FAILURE_HISTORY),
+            YVEX_ATTENTION_FAILURE_HISTORY),
         "history", "history failure name");
     return 0;
 }
@@ -365,27 +365,27 @@ static int test_execution_geometry_and_cancellation(void)
     yvex_error_clear(&err);
     YVEX_TEST_ASSERT(
         yvex_attention_class_geometry_validate(
-            &swa, 4ull, 128ull, &failure, &err) == YVEX_OK &&
+            &swa, &failure, &err) == YVEX_OK &&
         yvex_attention_class_geometry_validate(
-            &csa, 4ull, 128ull, &failure, &err) == YVEX_OK &&
+            &csa, &failure, &err) == YVEX_OK &&
         yvex_attention_class_geometry_validate(
-            &hca, 4ull, 128ull, &failure, &err) == YVEX_OK,
-        "SWA, CSA, and ratio-128 HCA geometry admit exactly");
-    hca.compression_ratio = 127ull;
+            &hca, &failure, &err) == YVEX_OK,
+        "SWA, CSA, and family-selected HCA geometry admit exactly");
+    hca.compression_ratio = 0ull;
     YVEX_TEST_ASSERT(
         yvex_attention_class_geometry_validate(
-            &hca, 4ull, 128ull, &failure, &err) == YVEX_ERR_FORMAT &&
-        failure.code == YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION,
-        "HCA ratio other than 128 refuses");
+            &hca, &failure, &err) == YVEX_ERR_FORMAT &&
+            failure.code == YVEX_ATTENTION_FAILURE_DIMENSION,
+        "HCA without a family-selected compression ratio refuses");
     csa.sparse_topk.k = 0ull;
     YVEX_TEST_ASSERT(
         yvex_attention_class_geometry_validate(
-            &csa, 4ull, 128ull, &failure, &err) == YVEX_ERR_FORMAT,
+            &csa, &failure, &err) == YVEX_ERR_FORMAT,
         "CSA without its exact sparse selection contract refuses");
     swa.compressor_required = 1;
     YVEX_TEST_ASSERT(
         yvex_attention_class_geometry_validate(
-            &swa, 4ull, 128ull, &failure, &err) == YVEX_ERR_FORMAT,
+            &swa, &failure, &err) == YVEX_ERR_FORMAT,
         "SWA compressor state refuses");
     YVEX_TEST_ASSERT(
         yvex_attention_cancel_check(
@@ -401,14 +401,14 @@ static int test_execution_geometry_and_cancellation(void)
         yvex_attention_cancel_check(
             &cancellation, 0ull, "second safe point", &failure, &err) ==
             YVEX_ERR_CANCELLED &&
-        failure.code == YVEX_DEEPSEEK_ATTENTION_FAILURE_CANCELLED &&
+        failure.code == YVEX_ATTENTION_FAILURE_CANCELLED &&
         strcmp(yvex_test_attention_failure_name(failure.code), "cancelled") == 0,
         "requested cancellation returns its typed result");
     YVEX_TEST_ASSERT_STREQ(
-        yvex_test_attention_failure_name(YVEX_DEEPSEEK_ATTENTION_FAILURE_SCRATCH),
+        yvex_test_attention_failure_name(YVEX_ATTENTION_FAILURE_SCRATCH),
         "scratch", "scratch budget has a distinct typed result");
     YVEX_TEST_ASSERT_STREQ(
-        yvex_test_attention_failure_name(YVEX_DEEPSEEK_ATTENTION_FAILURE_CLEANUP),
+        yvex_test_attention_failure_name(YVEX_ATTENTION_FAILURE_CLEANUP),
         "cleanup", "cleanup failure has a distinct typed result");
     return 0;
 }
@@ -427,7 +427,7 @@ static int test_plan_requires_committed_inputs(void)
                      "attention plan refuses missing inputs");
     YVEX_TEST_ASSERT(plan == NULL, "refused plan publishes nothing");
     YVEX_TEST_ASSERT(
-        failure.code == YVEX_DEEPSEEK_ATTENTION_FAILURE_INVALID_ARGUMENT,
+        failure.code == YVEX_ATTENTION_FAILURE_INVALID_ARGUMENT,
         "invalid plan refusal code");
     return 0;
 }
@@ -488,7 +488,7 @@ static int test_history_contracts(void)
         &csa, &history, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_BOUNDS,
                      "history over sliding window refuses");
-    YVEX_TEST_ASSERT(failure.code == YVEX_DEEPSEEK_ATTENTION_FAILURE_HISTORY,
+    YVEX_TEST_ASSERT(failure.code == YVEX_ATTENTION_FAILURE_HISTORY,
                      "history bounds failure code");
 
     history.local_tail_count = 127ull;
@@ -519,10 +519,10 @@ static int test_history_contracts(void)
     history.local_kv = local_kv;
     history.local_positions = local_positions;
     init_rolling_view(&history.main_rolling_state,
-                      YVEX_DEEPSEEK_ATTENTION_ROLLING_MAIN, &csa, 12ull,
+                      YVEX_ATTENTION_ROLLING_MAIN, &csa, 12ull,
                       main_state_kv, main_state_score);
     init_rolling_view(&history.indexer_rolling_state,
-                      YVEX_DEEPSEEK_ATTENTION_ROLLING_INDEXER, &csa, 12ull,
+                      YVEX_ATTENTION_ROLLING_INDEXER, &csa, 12ull,
                       indexer_state_kv, indexer_state_score);
     rc = yvex_attention_history_validate(
         &csa, &history, &failure, &err);
@@ -677,7 +677,7 @@ static int test_csa_selection_scratch_budget(void)
         &selected, &selected_count, &valid_count, &scratch, &failure, &err);
     YVEX_TEST_ASSERT(
         rc == YVEX_ERR_BOUNDS &&
-            failure.code == YVEX_DEEPSEEK_ATTENTION_FAILURE_SCRATCH &&
+            failure.code == YVEX_ATTENTION_FAILURE_SCRATCH &&
             scratch.live_bytes == 0u && scratch.peak_bytes == 20u &&
             selected_count == 0ull,
         "CSA ranking refuses budget minus one and releases base scratch");
@@ -708,8 +708,8 @@ static int test_transactional_memory_sink(void)
     yvex_attention_component_span raw;
     const yvex_attention_component_span *committed;
     const char *identity;
-    char first_identity[YVEX_DEEPSEEK_ATTENTION_IDENTITY_CAP];
-    char second_identity[YVEX_DEEPSEEK_ATTENTION_IDENTITY_CAP];
+    char first_identity[YVEX_ATTENTION_IDENTITY_CAP];
+    char second_identity[YVEX_ATTENTION_IDENTITY_CAP];
     yvex_attention_failure failure;
     yvex_error err;
     cancellation_fixture cancel_fixture = {0u, 1u};
@@ -737,13 +737,13 @@ static int test_transactional_memory_sink(void)
     YVEX_TEST_ASSERT(rc == YVEX_OK, "memory sink transaction begins");
     YVEX_TEST_ASSERT(
         yvex_attention_memory_sink_committed_component(
-            &sink, YVEX_DEEPSEEK_ATTENTION_COMPONENT_ATTENTION_OUTPUT) == NULL,
+            &sink, YVEX_ATTENTION_COMPONENT_ATTENTION_OUTPUT) == NULL,
         "component is invisible before commit");
     YVEX_TEST_ASSERT(yvex_attention_memory_sink_identity(&sink) ==
                          NULL,
                      "sink identity is invisible before commit");
     rc = yvex_attention_state_transaction_acquire(
-        &transaction, YVEX_DEEPSEEK_ATTENTION_COMPONENT_ATTENTION_OUTPUT,
+        &transaction, YVEX_ATTENTION_COMPONENT_ATTENTION_OUTPUT,
         &output, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "attention output span acquired");
     copy = (float *)calloc((size_t)output.expected_elements, sizeof(float));
@@ -755,15 +755,15 @@ static int test_transactional_memory_sink(void)
         "attention output span exposes its exact byte extent");
     memcpy(output.data, copy, (size_t)output.byte_extent);
     rc = yvex_attention_state_transaction_seal(
-        &transaction, YVEX_DEEPSEEK_ATTENTION_COMPONENT_ATTENTION_OUTPUT,
+        &transaction, YVEX_ATTENTION_COMPONENT_ATTENTION_OUTPUT,
         output.expected_elements - 1ull, &failure, &err);
     YVEX_TEST_ASSERT(
         rc == YVEX_ERR_BOUNDS &&
             !transaction.components[
-                YVEX_DEEPSEEK_ATTENTION_COMPONENT_ATTENTION_OUTPUT].sealed,
+                YVEX_ATTENTION_COMPONENT_ATTENTION_OUTPUT].sealed,
         "attention output refuses a short direct write before sealing");
     rc = yvex_attention_state_transaction_seal(
-        &transaction, YVEX_DEEPSEEK_ATTENTION_COMPONENT_ATTENTION_OUTPUT,
+        &transaction, YVEX_ATTENTION_COMPONENT_ATTENTION_OUTPUT,
         output.expected_elements, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "attention output component seals");
     rc = yvex_attention_state_transaction_commit(
@@ -774,18 +774,18 @@ static int test_transactional_memory_sink(void)
                          NULL,
                      "incomplete commit publishes no identity");
     rc = yvex_attention_state_transaction_acquire(
-        &transaction, YVEX_DEEPSEEK_ATTENTION_COMPONENT_RAW_LOCAL_KV,
+        &transaction, YVEX_ATTENTION_COMPONENT_RAW_LOCAL_KV,
         &raw, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "raw local KV span acquired");
     rc = yvex_attention_state_transaction_seal(
-        &transaction, YVEX_DEEPSEEK_ATTENTION_COMPONENT_RAW_LOCAL_KV,
+        &transaction, YVEX_ATTENTION_COMPONENT_RAW_LOCAL_KV,
         raw.expected_elements, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "raw local KV component seals");
     rc = yvex_attention_state_transaction_commit(
         &transaction, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "complete transaction commits");
     committed = yvex_attention_memory_sink_committed_component(
-        &sink, YVEX_DEEPSEEK_ATTENTION_COMPONENT_ATTENTION_OUTPUT);
+        &sink, YVEX_ATTENTION_COMPONENT_ATTENTION_OUTPUT);
     YVEX_TEST_ASSERT(committed != NULL && committed->data != NULL,
                      "committed attention output is visible");
     YVEX_TEST_ASSERT(compare_float_ranges(
@@ -797,9 +797,9 @@ static int test_transactional_memory_sink(void)
                      "committed sink has semantic identity");
     strncpy(first_identity, identity, sizeof(first_identity) - 1u);
     YVEX_TEST_ASSERT(
-        transaction.components[YVEX_DEEPSEEK_ATTENTION_COMPONENT_ATTENTION_OUTPUT]
+        transaction.components[YVEX_ATTENTION_COMPONENT_ATTENTION_OUTPUT]
                 .data == NULL &&
-            transaction.components[YVEX_DEEPSEEK_ATTENTION_COMPONENT_RAW_LOCAL_KV]
+            transaction.components[YVEX_ATTENTION_COMPONENT_RAW_LOCAL_KV]
                     .data == NULL,
         "commit releases all transaction staging");
 
@@ -813,7 +813,7 @@ static int test_transactional_memory_sink(void)
         &transaction, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "second transaction begins");
     rc = yvex_attention_state_transaction_acquire(
-        &transaction, YVEX_DEEPSEEK_ATTENTION_COMPONENT_ATTENTION_OUTPUT,
+        &transaction, YVEX_ATTENTION_COMPONENT_ATTENTION_OUTPUT,
         &output, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "abort transaction output acquired");
     ((float *)output.data)[0] = 99.0f;
@@ -821,17 +821,17 @@ static int test_transactional_memory_sink(void)
         &cancellation, swa.layer_index, "cancel before commit", &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_CANCELLED &&
                          failure.code ==
-                             YVEX_DEEPSEEK_ATTENTION_FAILURE_CANCELLED,
+                             YVEX_ATTENTION_FAILURE_CANCELLED,
                      "transaction observes cancellation before commit");
     rc = yvex_attention_state_transaction_abort(
         &transaction, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "aborted transaction succeeds");
     YVEX_TEST_ASSERT(
-        transaction.components[YVEX_DEEPSEEK_ATTENTION_COMPONENT_ATTENTION_OUTPUT]
+        transaction.components[YVEX_ATTENTION_COMPONENT_ATTENTION_OUTPUT]
                 .data == NULL,
         "abort releases transaction staging");
     committed = yvex_attention_memory_sink_committed_component(
-        &sink, YVEX_DEEPSEEK_ATTENTION_COMPONENT_ATTENTION_OUTPUT);
+        &sink, YVEX_ATTENTION_COMPONENT_ATTENTION_OUTPUT);
     YVEX_TEST_ASSERT(((const float *)committed->data)[0] == copy[0],
                      "abort preserves previous committed output");
     YVEX_TEST_ASSERT(strcmp(yvex_attention_memory_sink_identity(&sink),
@@ -841,7 +841,7 @@ static int test_transactional_memory_sink(void)
 
     memory_sink_options_reset(&options);
     options.fail_acquire_kind =
-        YVEX_DEEPSEEK_ATTENTION_COMPONENT_RAW_LOCAL_KV;
+        YVEX_ATTENTION_COMPONENT_RAW_LOCAL_KV;
     rc = yvex_attention_memory_sink_init(
         &sink, &options, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "failure-injection sink initializes");
@@ -854,7 +854,7 @@ static int test_transactional_memory_sink(void)
         &transaction, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "failure-injection transaction begins");
     rc = yvex_attention_state_transaction_acquire(
-        &transaction, YVEX_DEEPSEEK_ATTENTION_COMPONENT_RAW_LOCAL_KV,
+        &transaction, YVEX_ATTENTION_COMPONENT_RAW_LOCAL_KV,
         &raw, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_STATE,
                      "injected acquire failure is reported");
@@ -876,11 +876,11 @@ static int test_transactional_memory_sink(void)
     YVEX_TEST_ASSERT(
         seal_zero_component(
             &transaction,
-            YVEX_DEEPSEEK_ATTENTION_COMPONENT_ATTENTION_OUTPUT,
+            YVEX_ATTENTION_COMPONENT_ATTENTION_OUTPUT,
             &failure, &err) &&
             seal_zero_component(
                 &transaction,
-                YVEX_DEEPSEEK_ATTENTION_COMPONENT_RAW_LOCAL_KV,
+                YVEX_ATTENTION_COMPONENT_RAW_LOCAL_KV,
                 &failure, &err),
         "commit-failure transaction components seal");
     rc = yvex_attention_state_transaction_commit(
@@ -889,7 +889,7 @@ static int test_transactional_memory_sink(void)
                      "injected commit failure is reported");
     YVEX_TEST_ASSERT(
         yvex_attention_memory_sink_committed_component(
-            &sink, YVEX_DEEPSEEK_ATTENTION_COMPONENT_ATTENTION_OUTPUT) == NULL,
+            &sink, YVEX_ATTENTION_COMPONENT_ATTENTION_OUTPUT) == NULL,
         "failed commit publishes nothing");
     YVEX_TEST_ASSERT(yvex_attention_memory_sink_identity(&sink) ==
                          NULL,
@@ -899,7 +899,7 @@ static int test_transactional_memory_sink(void)
     YVEX_TEST_ASSERT(rc == YVEX_OK,
                      "commit-failure transaction aborts cleanly");
     YVEX_TEST_ASSERT(
-        transaction.components[YVEX_DEEPSEEK_ATTENTION_COMPONENT_ATTENTION_OUTPUT]
+        transaction.components[YVEX_ATTENTION_COMPONENT_ATTENTION_OUTPUT]
                 .data == NULL,
         "commit-failure abort releases staging");
     yvex_attention_memory_sink_release(&sink);
@@ -915,7 +915,7 @@ static int test_transactional_memory_sink(void)
     YVEX_TEST_ASSERT(rc == YVEX_OK,
                      "determinism transaction begins");
     rc = yvex_attention_state_transaction_acquire(
-        &transaction, YVEX_DEEPSEEK_ATTENTION_COMPONENT_ATTENTION_OUTPUT,
+        &transaction, YVEX_ATTENTION_COMPONENT_ATTENTION_OUTPUT,
         &output, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK,
                      "determinism output span acquired");
@@ -924,14 +924,14 @@ static int test_transactional_memory_sink(void)
         "determinism span preserves its exact byte extent");
     memcpy(output.data, copy, (size_t)output.byte_extent);
     rc = yvex_attention_state_transaction_seal(
-        &transaction, YVEX_DEEPSEEK_ATTENTION_COMPONENT_ATTENTION_OUTPUT,
+        &transaction, YVEX_ATTENTION_COMPONENT_ATTENTION_OUTPUT,
         output.expected_elements, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK,
                      "determinism output component seals");
     YVEX_TEST_ASSERT(
         seal_zero_component(
             &transaction,
-            YVEX_DEEPSEEK_ATTENTION_COMPONENT_RAW_LOCAL_KV,
+            YVEX_ATTENTION_COMPONENT_RAW_LOCAL_KV,
             &failure, &err),
         "determinism raw component seals");
     rc = yvex_attention_state_transaction_commit(
@@ -1001,17 +1001,17 @@ static int run_rolling_sequence(
     yvex_attention_failure failure;
     yvex_error err;
     unsigned long long head_dim =
-        kind == YVEX_DEEPSEEK_ATTENTION_ROLLING_INDEXER
+        kind == YVEX_ATTENTION_ROLLING_INDEXER
             ? layer->indexer_head_dimension
             : layer->head_dimension;
     unsigned long long width =
-        head_dim * ((kind == YVEX_DEEPSEEK_ATTENTION_ROLLING_INDEXER ||
+        head_dim * ((kind == YVEX_ATTENTION_ROLLING_INDEXER ||
                      layer->attention_class == YVEX_ATTENTION_CLASS_CSA)
                         ? 2ull
                         : 1ull);
     unsigned long long slots =
         layer->compression_ratio *
-        ((kind == YVEX_DEEPSEEK_ATTENTION_ROLLING_INDEXER ||
+        ((kind == YVEX_ATTENTION_ROLLING_INDEXER ||
           layer->attention_class == YVEX_ATTENTION_CLASS_CSA)
              ? 2ull
              : 1ull);
@@ -1027,7 +1027,7 @@ static int run_rolling_sequence(
     init_rolling_view(&before, kind, layer, 0ull, state_a_kv, state_a_score);
     if (layer->attention_class == YVEX_ATTENTION_CLASS_CSA)
         init_rolling_view(&index_before,
-                          YVEX_DEEPSEEK_ATTENTION_ROLLING_INDEXER, layer,
+                          YVEX_ATTENTION_ROLLING_INDEXER, layer,
                           0ull, index_a_kv, index_a_score);
     if (yvex_attention_memory_sink_init(
             &sink, NULL, &failure, &err) != YVEX_OK)
@@ -1095,20 +1095,20 @@ static int run_rolling_sequence(
                 goto cleanup;
             if (!seal_zero_component(
                     &transaction,
-                    YVEX_DEEPSEEK_ATTENTION_COMPONENT_ATTENTION_OUTPUT,
+                    YVEX_ATTENTION_COMPONENT_ATTENTION_OUTPUT,
                     &failure, &err) ||
                 !seal_zero_component(
                     &transaction,
-                    YVEX_DEEPSEEK_ATTENTION_COMPONENT_RAW_LOCAL_KV,
+                    YVEX_ATTENTION_COMPONENT_RAW_LOCAL_KV,
                     &failure, &err))
                 goto cleanup;
             if (yvex_attention_state_transaction_acquire(
                     &transaction,
-                    YVEX_DEEPSEEK_ATTENTION_COMPONENT_MAIN_KV_STATE,
+                    YVEX_ATTENTION_COMPONENT_MAIN_KV_STATE,
                     &main_kv_span, &failure, &err) != YVEX_OK ||
                 yvex_attention_state_transaction_acquire(
                     &transaction,
-                    YVEX_DEEPSEEK_ATTENTION_COMPONENT_MAIN_SCORE_STATE,
+                    YVEX_ATTENTION_COMPONENT_MAIN_SCORE_STATE,
                     &main_score_span, &failure, &err) != YVEX_OK)
                 goto cleanup;
             init_rolling_output(&after, &before,
@@ -1118,7 +1118,7 @@ static int run_rolling_sequence(
             if (((token + 1ull) % layer->compression_ratio) == 0ull &&
                 yvex_attention_state_transaction_acquire(
                     &transaction,
-                    YVEX_DEEPSEEK_ATTENTION_COMPONENT_COMPRESSED_MAIN_KV,
+                    YVEX_ATTENTION_COMPONENT_COMPRESSED_MAIN_KV,
                     &compressed_span, &failure, &err) != YVEX_OK)
                 goto cleanup;
             if (yvex_attention_rolling_state_step_cpu(
@@ -1130,19 +1130,19 @@ static int run_rolling_sequence(
             if (emitted) {
                 if (yvex_attention_state_transaction_seal(
                         &transaction,
-                        YVEX_DEEPSEEK_ATTENTION_COMPONENT_COMPRESSED_MAIN_KV,
+                        YVEX_ATTENTION_COMPONENT_COMPRESSED_MAIN_KV,
                         compressed_span.expected_elements, &failure,
                         &err) != YVEX_OK)
                     goto cleanup;
             }
             if (yvex_attention_state_transaction_seal(
                     &transaction,
-                    YVEX_DEEPSEEK_ATTENTION_COMPONENT_MAIN_KV_STATE,
+                    YVEX_ATTENTION_COMPONENT_MAIN_KV_STATE,
                     main_kv_span.expected_elements, &failure, &err) !=
                     YVEX_OK ||
                 yvex_attention_state_transaction_seal(
                     &transaction,
-                    YVEX_DEEPSEEK_ATTENTION_COMPONENT_MAIN_SCORE_STATE,
+                    YVEX_ATTENTION_COMPONENT_MAIN_SCORE_STATE,
                     main_score_span.expected_elements, &failure, &err) !=
                     YVEX_OK)
                 goto cleanup;
@@ -1155,11 +1155,11 @@ static int run_rolling_sequence(
                             token % layer->compression_ratio, 97ull);
                 if (yvex_attention_state_transaction_acquire(
                         &transaction,
-                        YVEX_DEEPSEEK_ATTENTION_COMPONENT_INDEXER_KV_STATE,
+                        YVEX_ATTENTION_COMPONENT_INDEXER_KV_STATE,
                         &index_kv_span, &failure, &err) != YVEX_OK ||
                     yvex_attention_state_transaction_acquire(
                         &transaction,
-                        YVEX_DEEPSEEK_ATTENTION_COMPONENT_INDEXER_SCORE_STATE,
+                        YVEX_ATTENTION_COMPONENT_INDEXER_SCORE_STATE,
                         &index_score_span, &failure, &err) != YVEX_OK)
                     goto cleanup;
                 init_rolling_output(&index_after, &index_before,
@@ -1169,7 +1169,7 @@ static int run_rolling_sequence(
                 if (emitted &&
                     yvex_attention_state_transaction_acquire(
                         &transaction,
-                        YVEX_DEEPSEEK_ATTENTION_COMPONENT_INDEXER_KV,
+                        YVEX_ATTENTION_COMPONENT_INDEXER_KV,
                         &index_emit_span, &failure, &err) != YVEX_OK)
                     goto cleanup;
                 if (yvex_attention_rolling_state_step_cpu(
@@ -1183,18 +1183,18 @@ static int run_rolling_sequence(
                 if (index_emitted &&
                     yvex_attention_state_transaction_seal(
                         &transaction,
-                        YVEX_DEEPSEEK_ATTENTION_COMPONENT_INDEXER_KV,
+                        YVEX_ATTENTION_COMPONENT_INDEXER_KV,
                         index_emit_span.expected_elements, &failure,
                         &err) != YVEX_OK)
                     goto cleanup;
                 if (yvex_attention_state_transaction_seal(
                         &transaction,
-                        YVEX_DEEPSEEK_ATTENTION_COMPONENT_INDEXER_KV_STATE,
+                        YVEX_ATTENTION_COMPONENT_INDEXER_KV_STATE,
                         index_kv_span.expected_elements, &failure, &err) !=
                         YVEX_OK ||
                     yvex_attention_state_transaction_seal(
                         &transaction,
-                        YVEX_DEEPSEEK_ATTENTION_COMPONENT_INDEXER_SCORE_STATE,
+                        YVEX_ATTENTION_COMPONENT_INDEXER_SCORE_STATE,
                         index_score_span.expected_elements, &failure, &err) !=
                         YVEX_OK)
                     goto cleanup;
@@ -1204,16 +1204,16 @@ static int run_rolling_sequence(
                 goto cleanup;
             committed_kv =
                 yvex_attention_memory_sink_committed_component(
-                    &sink, YVEX_DEEPSEEK_ATTENTION_COMPONENT_MAIN_KV_STATE);
+                    &sink, YVEX_ATTENTION_COMPONENT_MAIN_KV_STATE);
             committed_score =
                 yvex_attention_memory_sink_committed_component(
-                    &sink, YVEX_DEEPSEEK_ATTENTION_COMPONENT_MAIN_SCORE_STATE);
+                    &sink, YVEX_ATTENTION_COMPONENT_MAIN_SCORE_STATE);
             if (!committed_kv || !committed_score) goto cleanup;
             if (emitted) {
                 const yvex_attention_component_span *committed_emit =
                     yvex_attention_memory_sink_committed_component(
                         &sink,
-                        YVEX_DEEPSEEK_ATTENTION_COMPONENT_COMPRESSED_MAIN_KV);
+                        YVEX_ATTENTION_COMPONENT_COMPRESSED_MAIN_KV);
                 if (!committed_emit) goto cleanup;
                 memcpy(emissions + (*emission_count * head_dim),
                        committed_emit->data,
@@ -1226,11 +1226,11 @@ static int run_rolling_sequence(
                 const yvex_attention_component_span *ikv =
                     yvex_attention_memory_sink_committed_component(
                         &sink,
-                        YVEX_DEEPSEEK_ATTENTION_COMPONENT_INDEXER_KV_STATE);
+                        YVEX_ATTENTION_COMPONENT_INDEXER_KV_STATE);
                 const yvex_attention_component_span *iscore =
                     yvex_attention_memory_sink_committed_component(
                         &sink,
-                        YVEX_DEEPSEEK_ATTENTION_COMPONENT_INDEXER_SCORE_STATE);
+                        YVEX_ATTENTION_COMPONENT_INDEXER_SCORE_STATE);
                 if (!ikv || !iscore) goto cleanup;
                 output_to_committed_view(&index_before, &index_after, ikv,
                                          iscore);
@@ -1247,7 +1247,7 @@ static int run_rolling_sequence(
 
 cleanup:
     if (!result && transaction.status ==
-                       YVEX_DEEPSEEK_ATTENTION_TRANSACTION_BEGUN)
+                       YVEX_ATTENTION_TRANSACTION_BEGUN)
         (void)yvex_attention_state_transaction_abort(
             &transaction, &failure, &err);
     yvex_attention_memory_sink_release(&sink);
@@ -1274,12 +1274,12 @@ static int test_rolling_state_chunk_invariance(void)
     unsigned long long b_count;
 
     YVEX_TEST_ASSERT(
-        run_rolling_sequence(&csa, YVEX_DEEPSEEK_ATTENTION_ROLLING_MAIN,
+        run_rolling_sequence(&csa, YVEX_ATTENTION_ROLLING_MAIN,
                              one_chunk, 1ull, 10ull, a_kv, a_score, a_emit,
                              &a_count),
         "CSA rolling state one-chunk execution succeeds");
     YVEX_TEST_ASSERT(
-        run_rolling_sequence(&csa, YVEX_DEEPSEEK_ATTENTION_ROLLING_MAIN,
+        run_rolling_sequence(&csa, YVEX_ATTENTION_ROLLING_MAIN,
                              irregular, 4ull, 10ull, b_kv, b_score, b_emit,
                              &b_count),
         "CSA rolling state irregular execution succeeds");
@@ -1296,12 +1296,12 @@ static int test_rolling_state_chunk_invariance(void)
                      "CSA final rolling state is chunk invariant");
 
     YVEX_TEST_ASSERT(
-        run_rolling_sequence(&hca, YVEX_DEEPSEEK_ATTENTION_ROLLING_MAIN,
+        run_rolling_sequence(&hca, YVEX_ATTENTION_ROLLING_MAIN,
                              hca_one, 1ull, 130ull, a_kv, a_score, a_emit,
                              &a_count),
         "HCA rolling state one-chunk execution succeeds");
     YVEX_TEST_ASSERT(
-        run_rolling_sequence(&hca, YVEX_DEEPSEEK_ATTENTION_ROLLING_MAIN,
+        run_rolling_sequence(&hca, YVEX_ATTENTION_ROLLING_MAIN,
                              hca_irregular, 4ull, 130ull, b_kv, b_score,
                              b_emit, &b_count),
         "HCA rolling state irregular execution succeeds");
@@ -1422,13 +1422,13 @@ static int test_external_semantic_conformance(void)
         "production CSA ordering matches the unique-score external literal");
     YVEX_TEST_ASSERT(
         yvex_attention_class_geometry_validate(
-            &hca, 4ull, vectors->hca_ratio, &failure, &error) == YVEX_OK,
+            &hca, &failure, &error) == YVEX_OK,
         "production HCA geometry admits the externally pinned ratio 128");
-    hca.compression_ratio = 127ull;
+    hca.compression_ratio = 0ull;
     YVEX_TEST_ASSERT(
         yvex_attention_class_geometry_validate(
-            &hca, 4ull, vectors->hca_ratio, &failure, &error) != YVEX_OK,
-        "production HCA geometry refuses a ratio mutation");
+            &hca, &failure, &error) != YVEX_OK,
+        "production HCA geometry refuses a missing family ratio");
 
     memset(&hca, 0, sizeof(hca));
     hca.compute_contract = YVEX_ATTENTION_COMPUTE_BF16_F32_RNE_V1;
@@ -1508,7 +1508,7 @@ static int test_runtime_hadamard_policy(void)
         yvex_attention_hadamard_cpu(
             input, 3ull, 0.5f, 1, production, &scratch, &failure, &err) ==
             YVEX_ERR_BOUNDS &&
-            failure.code == YVEX_DEEPSEEK_ATTENTION_FAILURE_SCRATCH &&
+            failure.code == YVEX_ATTENTION_FAILURE_SCRATCH &&
             scratch.live_bytes == 0u && scratch.peak_bytes == 0u,
         "Hadamard CPU refuses budget minus one before allocation");
     return 0;
@@ -1548,7 +1548,7 @@ static int test_runtime_activation_scratch_budget(void)
         YVEX_TENSOR_ROLE_ATTENTION_COMPRESSOR_KV, &scratch, &failure, &err);
     YVEX_TEST_ASSERT(
         rc == YVEX_ERR_BOUNDS &&
-            failure.code == YVEX_DEEPSEEK_ATTENTION_FAILURE_SCRATCH &&
+            failure.code == YVEX_ATTENTION_FAILURE_SCRATCH &&
             scratch.live_bytes == 0u && scratch.peak_bytes == 16u &&
             memcmp(values, original, sizeof(values)) == 0,
         "activation fake quant refuses budget minus one without publication");
@@ -1843,9 +1843,9 @@ static int test_independent_reference_detects_stage_mutations(void)
     production.topk_positions = topk_positions;
     production.next_main_rolling_state.present = 1;
     production.next_main_rolling_state.schema_version =
-        YVEX_DEEPSEEK_ATTENTION_ROLLING_STATE_SCHEMA_V1;
+        YVEX_ATTENTION_ROLLING_STATE_SCHEMA_V1;
     production.next_main_rolling_state.kind =
-        YVEX_DEEPSEEK_ATTENTION_ROLLING_MAIN;
+        YVEX_ATTENTION_ROLLING_MAIN;
     production.next_main_rolling_state.attention_class =
         YVEX_ATTENTION_CLASS_CSA;
     production.next_main_rolling_state.layer_index = 2ull;
@@ -2049,7 +2049,7 @@ static void state_comparison_rolling_init(
 {
     memset(state, 0, sizeof(*state));
     state->present = 1;
-    state->schema_version = YVEX_DEEPSEEK_ATTENTION_ROLLING_STATE_SCHEMA_V1;
+    state->schema_version = YVEX_ATTENTION_ROLLING_STATE_SCHEMA_V1;
     state->kind = kind;
     state->attention_class = YVEX_ATTENTION_CLASS_CSA;
     state->layer_index = 7ull;
@@ -2103,11 +2103,11 @@ static void state_comparison_fixture_init(attention_state_comparison_fixture *fi
     fixture->left.indexer_positions = fixture->left_indexer_position;
     state_comparison_rolling_init(
         &fixture->left.next_main_rolling_state,
-        YVEX_DEEPSEEK_ATTENTION_ROLLING_MAIN, fixture->left_main_kv, 2ull,
+        YVEX_ATTENTION_ROLLING_MAIN, fixture->left_main_kv, 2ull,
         fixture->left_main_score, 1ull);
     state_comparison_rolling_init(
         &fixture->left.next_indexer_rolling_state,
-        YVEX_DEEPSEEK_ATTENTION_ROLLING_INDEXER, fixture->left_indexer_kv,
+        YVEX_ATTENTION_ROLLING_INDEXER, fixture->left_indexer_kv,
         1ull, fixture->left_indexer_score, 1ull);
     fixture->right = fixture->left;
     fixture->right.raw_kv = fixture->right_raw;
@@ -2351,7 +2351,7 @@ static int test_attention_envelope_numeric_contract(void)
     layer.mhc_scale_width = 2ull;
     YVEX_TEST_ASSERT(
         yvex_attention_mhc_pre(&pre, &failure, &error) == YVEX_ERR_BOUNDS &&
-            failure.code == YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION,
+            failure.code == YVEX_ATTENTION_FAILURE_DIMENSION,
         "malformed mHC geometry refuses before arithmetic");
     YVEX_TEST_ASSERT(layer.mhc_function_role == YVEX_TENSOR_ROLE_HC_ATTENTION_FUNCTION,
                      "attention envelope owns no FFN or MoE binding");

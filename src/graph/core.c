@@ -229,7 +229,6 @@ int yvex_attention_execution_admit(
     const yvex_attention_plan *plan, const char *logical_identity,
     yvex_materialization_session *session, const yvex_runtime_descriptor *descriptor,
     const yvex_attention_cpu_options *options, const char *cancel_stage,
-    unsigned long long csa_ratio, unsigned long long hca_ratio,
     const yvex_attention_layer_plan **layer, yvex_attention_failure *failure,
     yvex_error *err)
 {
@@ -240,7 +239,7 @@ int yvex_attention_execution_admit(
         (options->publication && options->publication->owned) ||
         (options->trace && options->trace->owned))
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_INVALID_ARGUMENT, NULL,
+            failure, YVEX_ATTENTION_FAILURE_INVALID_ARGUMENT, NULL,
             options ? options->layer_index : YVEX_ATTENTION_NO_LAYER,
             YVEX_TENSOR_ROLE_UNKNOWN, 0ull, 1ull, err, YVEX_ERR_STATE,
             "attention publication must be singular and released before reuse");
@@ -251,7 +250,7 @@ int yvex_attention_execution_admit(
     *layer = yvex_attention_plan_layer_find(plan, options->layer_index);
     if (!*layer)
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_ARCHITECTURE, NULL,
+            failure, YVEX_ATTENTION_FAILURE_ARCHITECTURE, NULL,
             options->layer_index, YVEX_TENSOR_ROLE_UNKNOWN, 1ull, 0ull, err,
             YVEX_ERR_BOUNDS, "attention execution layer is absent");
     if (options->candidate_block_visible &&
@@ -266,7 +265,7 @@ int yvex_attention_execution_admit(
     if (options->operation_scope != YVEX_ATTENTION_OPERATION_CORE &&
         options->operation_scope != YVEX_ATTENTION_OPERATION_ENVELOPE)
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_INVALID_ARGUMENT, NULL,
+            failure, YVEX_ATTENTION_FAILURE_INVALID_ARGUMENT, NULL,
             options->layer_index, YVEX_TENSOR_ROLE_UNKNOWN,
             YVEX_ATTENTION_OPERATION_ENVELOPE, options->operation_scope, err,
             YVEX_ERR_FORMAT, "attention operation scope is invalid");
@@ -274,12 +273,11 @@ int yvex_attention_execution_admit(
         (options->operation_scope == YVEX_ATTENTION_OPERATION_ENVELOPE
              ? (*layer)->residual_expanded_width : (*layer)->hidden_dimension))
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION, NULL,
+            failure, YVEX_ATTENTION_FAILURE_DIMENSION, NULL,
             options->layer_index, YVEX_TENSOR_ROLE_UNKNOWN,
             (*layer)->hidden_dimension, options->input_stride, err,
             YVEX_ERR_BOUNDS, "attention input stride is shorter than its scope");
-    rc = yvex_attention_class_geometry_validate(
-        *layer, csa_ratio, hca_ratio, failure, err);
+    rc = yvex_attention_class_geometry_validate(*layer, failure, err);
     return rc == YVEX_OK
                ? yvex_attention_cancel_check(options->cancellation,
                                               options->layer_index, cancel_stage,
@@ -515,7 +513,7 @@ static int reduce_select(const attention_reduce_context *context, unsigned long 
         return YVEX_OK;
     if (*selected_count > context->trace_topk_stride ||
         (*selected_count && (!selected || !context->trace_topk_positions)))
-        return yvex_attention_reject(context->failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_STATE_DELTA,
+        return yvex_attention_reject(context->failure, YVEX_ATTENTION_FAILURE_STATE_DELTA,
                                      NULL, context->layer->layer_index, YVEX_TENSOR_ROLE_UNKNOWN,
                                      context->trace_topk_stride, *selected_count, context->err,
                                      YVEX_ERR_BOUNDS,
@@ -537,7 +535,7 @@ static int reduce_context_validate(attention_reduce_context *context) {
     if (!context->layer || !context->query || !context->history || !context->current_kv ||
         !context->sinks || !context->out || !context->token_count)
         return yvex_attention_reject(
-            context->failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_INVALID_ARGUMENT, NULL,
+            context->failure, YVEX_ATTENTION_FAILURE_INVALID_ARGUMENT, NULL,
             context->layer ? context->layer->layer_index : YVEX_ATTENTION_NO_LAYER,
             YVEX_TENSOR_ROLE_UNKNOWN, 1ull, 0ull, context->err, YVEX_ERR_INVALID_ARG,
             "sparse attention requires plan, history, query, KV, and output");
@@ -546,13 +544,13 @@ static int reduce_context_validate(attention_reduce_context *context) {
         context->current_kv_stride < context->layer->head_dimension ||
         !yvex_core_u64_add(context->token_position, context->token_count - 1ull, &last_position))
         return yvex_attention_reject(
-            context->failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION, NULL,
+            context->failure, YVEX_ATTENTION_FAILURE_DIMENSION, NULL,
             context->layer->layer_index, YVEX_TENSOR_ROLE_UNKNOWN, ULLONG_MAX,
             context->token_position, context->err, YVEX_ERR_BOUNDS,
             "attention query width, KV stride, or position extent overflowed");
     if (!yvex_core_u64_add(context->history->compressed_entry_count,
                            context->current_compressed_count, &context->compressed_total))
-        return yvex_attention_reject(context->failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION,
+        return yvex_attention_reject(context->failure, YVEX_ATTENTION_FAILURE_DIMENSION,
                                      NULL, context->layer->layer_index, YVEX_TENSOR_ROLE_UNKNOWN,
                                      ULLONG_MAX, context->history->compressed_entry_count,
                                      context->err, YVEX_ERR_BOUNDS,
@@ -561,7 +559,7 @@ static int reduce_context_validate(attention_reduce_context *context) {
         (!context->current_compressed || !context->current_compressed_positions ||
          context->current_compressed_stride < context->layer->head_dimension))
         return yvex_attention_reject(
-            context->failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_HISTORY, NULL,
+            context->failure, YVEX_ATTENTION_FAILURE_HISTORY, NULL,
             context->layer->layer_index, YVEX_TENSOR_ROLE_ATTENTION_COMPRESSOR_KV,
             context->layer->head_dimension, context->current_compressed_stride, context->err,
             YVEX_ERR_FORMAT, "current compressed attention entries are incomplete");
@@ -572,7 +570,7 @@ static int reduce_context_validate(attention_reduce_context *context) {
            !context->index_query || !context->index_weights ||
            context->current_indexer_stride < context->layer->indexer_head_dimension))))
         return yvex_attention_reject(
-            context->failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_HISTORY, NULL,
+            context->failure, YVEX_ATTENTION_FAILURE_HISTORY, NULL,
             context->layer->layer_index, YVEX_TENSOR_ROLE_INDEXER_COMPRESSOR_KV,
             context->current_compressed_count, context->current_indexer_count, context->err,
             YVEX_ERR_FORMAT, "CSA current compressed and indexer entries are not paired");
@@ -638,7 +636,7 @@ int yvex_attention_reduce_chunk(
         if (!yvex_attention_scratch_reserve(scratch, selected_capacity, sizeof(*selected),
                                             &selected_reserved))
             return yvex_attention_reject(
-                failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_SCRATCH, NULL, layer->layer_index,
+                failure, YVEX_ATTENTION_FAILURE_SCRATCH, NULL, layer->layer_index,
                 YVEX_TENSOR_ROLE_UNKNOWN, scratch ? scratch->limit_bytes : 0ull,
                 scratch ? (unsigned long long)scratch->live_bytes : 0ull, err, YVEX_ERR_BOUNDS,
                 "sparse selection exceeds the attention scratch budget");
@@ -646,7 +644,7 @@ int yvex_attention_reduce_chunk(
             scratch, selected_capacity, sizeof(*selected));
         if (!selected) {
             attention_scratch_release(scratch, selected_reserved);
-            return yvex_attention_reject(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_ALLOCATION, NULL,
+            return yvex_attention_reject(failure, YVEX_ATTENTION_FAILURE_ALLOCATION, NULL,
                                          layer->layer_index, YVEX_TENSOR_ROLE_UNKNOWN,
                                          context.compressed_total, 0ull, err, YVEX_ERR_NOMEM,
                                          "sparse attention selection allocation failed");
@@ -661,7 +659,7 @@ int yvex_attention_reduce_chunk(
         for (head = 0ull; head < layer->query_heads; ++head) {
             if (!reduce_head(&context, token, head, selected, selected_count)) {
                 rc = yvex_attention_reject(
-                    failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_NUMERIC, NULL, layer->layer_index,
+                    failure, YVEX_ATTENTION_FAILURE_NUMERIC, NULL, layer->layer_index,
                     YVEX_TENSOR_ROLE_UNKNOWN, 1ull, token, err, YVEX_ERR_FORMAT,
                     "sparse attention score, softmax, or reduction became non-finite");
                 break;
@@ -695,26 +693,26 @@ int yvex_attention_output_project(
         !group_input_width || !rank || !hidden_width || output_stride < hidden_width ||
         compute_contract != YVEX_ATTENTION_COMPUTE_BF16_F32_RNE_V1)
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_INVALID_ARGUMENT, out_a,
+            failure, YVEX_ATTENTION_FAILURE_INVALID_ARGUMENT, out_a,
             YVEX_ATTENTION_NO_LAYER, YVEX_TENSOR_ROLE_ATTENTION_OUT_A, 1ull, 0ull, err,
             YVEX_ERR_INVALID_ARG,
             "attention batch output projection requires bindings and buffers");
     if (!yvex_core_u64_mul(group_count, group_input_width, &attention_width) ||
         attention_stride < attention_width || !yvex_core_u64_mul(group_count, rank, &low_stride) ||
         !yvex_core_u64_mul(token_count, low_stride, &low_elements))
-        return yvex_attention_reject(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION, out_a,
+        return yvex_attention_reject(failure, YVEX_ATTENTION_FAILURE_DIMENSION, out_a,
                                      out_a->layer_index, YVEX_TENSOR_ROLE_ATTENTION_OUT_A,
                                      ULLONG_MAX, attention_stride, err, YVEX_ERR_BOUNDS,
                                      "attention output projection geometry overflowed");
     if (!yvex_attention_scratch_reserve(scratch, low_elements, sizeof(float), &low_bytes))
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_SCRATCH, out_a, out_a->layer_index,
+            failure, YVEX_ATTENTION_FAILURE_SCRATCH, out_a, out_a->layer_index,
             YVEX_TENSOR_ROLE_ATTENTION_OUT_A, scratch ? scratch->limit_bytes : 0ull,
             scratch ? (unsigned long long)scratch->live_bytes : 0ull, err, YVEX_ERR_BOUNDS,
             "attention output projection scratch budget exceeded");
     low = (float *)yvex_attention_scratch_calloc(scratch, low_elements, sizeof(float));
     if (!low)
-        rc = yvex_attention_reject(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_ALLOCATION, out_a,
+        rc = yvex_attention_reject(failure, YVEX_ATTENTION_FAILURE_ALLOCATION, out_a,
                                    out_a->layer_index, YVEX_TENSOR_ROLE_ATTENTION_OUT_A,
                                    low_elements, 0ull, err, YVEX_ERR_NOMEM,
                                    "failed to allocate attention batch output scratch");
@@ -729,14 +727,14 @@ int yvex_attention_output_project(
             goto cleanup;
         if (rows != rank) {
             rc = yvex_attention_reject(
-                failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION, out_a, out_a->layer_index,
+                failure, YVEX_ATTENTION_FAILURE_DIMENSION, out_a, out_a->layer_index,
                 YVEX_TENSOR_ROLE_ATTENTION_OUT_A, rank, rows, err, YVEX_ERR_FORMAT,
                 "attention batch output A projection did not produce full group rank");
             goto cleanup;
         }
     }
     if (!yvex_attention_compute_round(compute_contract, low, low_elements)) {
-        rc = yvex_attention_reject(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_NUMERIC, out_a,
+        rc = yvex_attention_reject(failure, YVEX_ATTENTION_FAILURE_NUMERIC, out_a,
                                    out_a->layer_index, YVEX_TENSOR_ROLE_ATTENTION_OUT_A,
                                    low_elements, 0ull, err, YVEX_ERR_FORMAT,
                                    "attention output A projection could not publish BF16 values");
@@ -747,7 +745,7 @@ int yvex_attention_output_project(
                                   err);
     if (rc == YVEX_OK && rows != hidden_width)
         rc = yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION, out_b, out_b->layer_index,
+            failure, YVEX_ATTENTION_FAILURE_DIMENSION, out_b, out_b->layer_index,
             YVEX_TENSOR_ROLE_ATTENTION_OUT_B, hidden_width, rows, err, YVEX_ERR_FORMAT,
             "attention batch output B projection did not produce full hidden width");
     if (rc == YVEX_OK) {
@@ -756,7 +754,7 @@ int yvex_attention_output_project(
             if (!yvex_attention_compute_round(compute_contract, out + token * output_stride,
                                               hidden_width)) {
                 rc = yvex_attention_reject(
-                    failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_NUMERIC, out_b, out_b->layer_index,
+                    failure, YVEX_ATTENTION_FAILURE_NUMERIC, out_b, out_b->layer_index,
                     YVEX_TENSOR_ROLE_ATTENTION_OUT_B, hidden_width, token, err, YVEX_ERR_FORMAT,
                     "attention output B projection could not publish BF16 values");
                 break;
@@ -780,14 +778,14 @@ int yvex_attention_decode_flat(yvex_materialization_session *session,
     int rc;
     if (!session || !runtime_binding || !runtime_binding->binding || !out)
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_INVALID_ARGUMENT, runtime_binding,
+            failure, YVEX_ATTENTION_FAILURE_INVALID_ARGUMENT, runtime_binding,
             YVEX_ATTENTION_NO_LAYER,
             runtime_binding ? runtime_binding->role : YVEX_TENSOR_ROLE_UNKNOWN, 1ull, 0ull, err,
             YVEX_ERR_INVALID_ARG, "attention flat decode requires session, binding, and output");
     binding = runtime_binding->binding;
     if (!yvex_core_u64_mul(binding->row_width, binding->row_count, &total) ||
         total != expected_elements)
-        return yvex_attention_reject(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION,
+        return yvex_attention_reject(failure, YVEX_ATTENTION_FAILURE_DIMENSION,
                                      runtime_binding, binding->layer_index, binding->role,
                                      expected_elements, total, err, YVEX_ERR_BOUNDS,
                                      "attention flat decode expected element count mismatch");
@@ -817,18 +815,18 @@ int yvex_attention_activation_apply(const yvex_attention_activation_policy *poli
     if (!policy || !policy->required)
         return YVEX_OK;
     if (!values || count == 0ull || policy->block_width == 0ull)
-        return yvex_attention_reject(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_INVALID_ARGUMENT,
+        return yvex_attention_reject(failure, YVEX_ATTENTION_FAILURE_INVALID_ARGUMENT,
                                      NULL, layer_index, role, 1ull, 0ull, err, YVEX_ERR_INVALID_ARG,
                                      "runtime activation policy requires values and block width");
     if (policy->block_axis != YVEX_ATTENTION_AXIS_FINAL_DIMENSION)
-        return yvex_attention_reject(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_NUMERIC, NULL,
+        return yvex_attention_reject(failure, YVEX_ATTENTION_FAILURE_NUMERIC, NULL,
                                      layer_index, role, YVEX_ATTENTION_AXIS_FINAL_DIMENSION,
                                      (unsigned long long)policy->block_axis, err, YVEX_ERR_FORMAT,
                                      "runtime activation policy axis is unsupported");
     if (policy->pre_transform == YVEX_ATTENTION_TRANSFORM_DAO_FHT_V1_1_0_POST2) {
         float scale = 1.0f / sqrtf((float)count);
         if (!yvex_attention_scratch_reserve(budget, count, sizeof(*scratch), &scratch_bytes))
-            return yvex_attention_reject(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_SCRATCH, NULL,
+            return yvex_attention_reject(failure, YVEX_ATTENTION_FAILURE_SCRATCH, NULL,
                                          layer_index, role, budget ? budget->limit_bytes : 0ull,
                                          budget ? (unsigned long long)budget->live_bytes : 0ull,
                                          err, YVEX_ERR_BOUNDS,
@@ -836,7 +834,7 @@ int yvex_attention_activation_apply(const yvex_attention_activation_policy *poli
         scratch = (float *)yvex_attention_scratch_calloc(budget, count, sizeof(*scratch));
         if (!scratch) {
             attention_scratch_release(budget, scratch_bytes);
-            return yvex_attention_reject(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_ALLOCATION, NULL,
+            return yvex_attention_reject(failure, YVEX_ATTENTION_FAILURE_ALLOCATION, NULL,
                                          layer_index, role, count, 0ull, err, YVEX_ERR_NOMEM,
                                          "runtime activation Hadamard scratch allocation failed");
         }
@@ -845,7 +843,7 @@ int yvex_attention_activation_apply(const yvex_attention_activation_policy *poli
             goto cleanup;
         memcpy(values, scratch, (size_t)count * sizeof(*values));
     } else if (policy->pre_transform != YVEX_ATTENTION_TRANSFORM_NONE) {
-        rc = yvex_attention_reject(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_NUMERIC, NULL,
+        rc = yvex_attention_reject(failure, YVEX_ATTENTION_FAILURE_NUMERIC, NULL,
                                    layer_index, role, 0ull,
                                    (unsigned long long)policy->pre_transform, err, YVEX_ERR_FORMAT,
                                    "runtime activation transform is unsupported");
@@ -853,14 +851,14 @@ int yvex_attention_activation_apply(const yvex_attention_activation_policy *poli
     }
     block_width = policy->block_width;
     if (count % block_width != 0ull) {
-        rc = yvex_attention_reject(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION, NULL,
+        rc = yvex_attention_reject(failure, YVEX_ATTENTION_FAILURE_DIMENSION, NULL,
                                    layer_index, role, block_width, count, err, YVEX_ERR_BOUNDS,
                                    "runtime activation policy requires exact block divisibility");
         goto cleanup;
     }
     if (!yvex_attention_scratch_reserve(budget, block_width, sizeof(*block_out),
                                         &block_out_bytes)) {
-        rc = yvex_attention_reject(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_SCRATCH, NULL,
+        rc = yvex_attention_reject(failure, YVEX_ATTENTION_FAILURE_SCRATCH, NULL,
                                    layer_index, role, budget ? budget->limit_bytes : 0ull,
                                    budget ? (unsigned long long)budget->live_bytes : 0ull, err,
                                    YVEX_ERR_BOUNDS,
@@ -870,13 +868,13 @@ int yvex_attention_activation_apply(const yvex_attention_activation_policy *poli
     block_out = (float *)yvex_attention_scratch_calloc(
         budget, block_width, sizeof(*block_out));
     if (!block_out) {
-        rc = yvex_attention_reject(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_ALLOCATION, NULL,
+        rc = yvex_attention_reject(failure, YVEX_ATTENTION_FAILURE_ALLOCATION, NULL,
                                    layer_index, role, block_width, 0ull, err, YVEX_ERR_NOMEM,
                                    "runtime activation dequantized block allocation failed");
         goto cleanup;
     }
     if (!yvex_attention_scratch_reserve(budget, block_width, sizeof(*codes), &codes_bytes)) {
-        rc = yvex_attention_reject(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_SCRATCH, NULL,
+        rc = yvex_attention_reject(failure, YVEX_ATTENTION_FAILURE_SCRATCH, NULL,
                                    layer_index, role, budget ? budget->limit_bytes : 0ull,
                                    budget ? (unsigned long long)budget->live_bytes : 0ull, err,
                                    YVEX_ERR_BOUNDS,
@@ -886,7 +884,7 @@ int yvex_attention_activation_apply(const yvex_attention_activation_policy *poli
     codes = (unsigned char *)yvex_attention_scratch_calloc(
         budget, block_width, sizeof(*codes));
     if (!codes) {
-        rc = yvex_attention_reject(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_ALLOCATION, NULL,
+        rc = yvex_attention_reject(failure, YVEX_ATTENTION_FAILURE_ALLOCATION, NULL,
                                    layer_index, role, block_width, 0ull, err, YVEX_ERR_NOMEM,
                                    "runtime activation code block allocation failed");
         goto cleanup;
@@ -901,7 +899,7 @@ int yvex_attention_activation_apply(const yvex_attention_activation_policy *poli
                                                      &scale_code, failure, err);
         } else {
             rc = yvex_attention_reject(
-                failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_NUMERIC, NULL, layer_index, role, 0ull,
+                failure, YVEX_ATTENTION_FAILURE_NUMERIC, NULL, layer_index, role, 0ull,
                 (unsigned long long)policy->quantization, err, YVEX_ERR_FORMAT,
                 "runtime activation quantization is unsupported");
         }
@@ -953,31 +951,31 @@ static int attention_row_geometry(const yvex_materialized_tensor_binding *bindin
     unsigned long long row_bytes;
     unsigned long long encoded_bytes = 0ull;
     if (!binding || !row_bytes_out || !row_count_out)
-        return yvex_attention_reject(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_INVALID_ARGUMENT,
+        return yvex_attention_reject(failure, YVEX_ATTENTION_FAILURE_INVALID_ARGUMENT,
                                      NULL, YVEX_ATTENTION_NO_LAYER, YVEX_TENSOR_ROLE_UNKNOWN, 1ull,
                                      0ull, err, YVEX_ERR_INVALID_ARG,
                                      "attention row-byte calculation requires binding and outputs");
     if (!binding->row_width || !binding->row_count || !binding->block_size ||
         !binding->bytes_per_block || binding->row_width % binding->block_size != 0ull)
-        return yvex_attention_reject(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION, NULL,
+        return yvex_attention_reject(failure, YVEX_ATTENTION_FAILURE_DIMENSION, NULL,
                                      binding->layer_index, binding->role, binding->block_size,
                                      binding->row_width, err, YVEX_ERR_FORMAT,
                                      "attention binding row geometry is invalid");
     blocks = binding->row_width / binding->block_size;
     if (!yvex_core_u64_mul(blocks, binding->bytes_per_block, &row_bytes) || row_bytes == 0ull ||
         row_bytes > (unsigned long long)SIZE_MAX)
-        return yvex_attention_reject(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION, NULL,
+        return yvex_attention_reject(failure, YVEX_ATTENTION_FAILURE_DIMENSION, NULL,
                                      binding->layer_index, binding->role, ULLONG_MAX, row_bytes,
                                      err, YVEX_ERR_BOUNDS,
                                      "attention binding row byte size overflowed");
     if (!yvex_core_u64_mul(row_bytes, binding->row_count, &encoded_bytes))
-        return yvex_attention_reject(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION, NULL,
+        return yvex_attention_reject(failure, YVEX_ATTENTION_FAILURE_DIMENSION, NULL,
                                      binding->layer_index, binding->role, ULLONG_MAX,
                                      binding->encoded_bytes, err, YVEX_ERR_BOUNDS,
                                      "attention binding encoded byte geometry overflowed");
     if (binding->encoded_bytes != encoded_bytes)
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION, NULL, binding->layer_index,
+            failure, YVEX_ATTENTION_FAILURE_DIMENSION, NULL, binding->layer_index,
             binding->role, encoded_bytes, binding->encoded_bytes, err, YVEX_ERR_BOUNDS,
             "attention binding encoded bytes do not exactly match declared rows");
     *row_bytes_out = row_bytes;
@@ -993,7 +991,7 @@ static int attention_payload_account(yvex_attention_cpu_result *result, unsigned
         return YVEX_OK;
     if (!yvex_core_u64_add(result->payload_bytes_read, bytes, &total))
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION, binding,
+            failure, YVEX_ATTENTION_FAILURE_DIMENSION, binding,
             binding && binding->binding ? binding->binding->layer_index : YVEX_ATTENTION_NO_LAYER,
             binding ? binding->role : YVEX_TENSOR_ROLE_UNKNOWN, ULLONG_MAX, bytes, err,
             YVEX_ERR_BOUNDS, "attention payload byte accounting overflowed");
@@ -1018,7 +1016,7 @@ int yvex_attention_decode_row(yvex_materialization_session *session,
     int rc;
     if (!session || !runtime_binding || !runtime_binding->binding || !out)
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_INVALID_ARGUMENT, runtime_binding,
+            failure, YVEX_ATTENTION_FAILURE_INVALID_ARGUMENT, runtime_binding,
             YVEX_ATTENTION_NO_LAYER,
             runtime_binding ? runtime_binding->role : YVEX_TENSOR_ROLE_UNKNOWN, 1ull, 0ull, err,
             YVEX_ERR_INVALID_ARG, "attention row decode requires session, binding, and output");
@@ -1027,19 +1025,19 @@ int yvex_attention_decode_row(yvex_materialization_session *session,
     if (rc != YVEX_OK)
         return rc;
     if (row_index >= row_count || out_elements != binding->row_width)
-        return yvex_attention_reject(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION,
+        return yvex_attention_reject(failure, YVEX_ATTENTION_FAILURE_DIMENSION,
                                      runtime_binding, binding->layer_index, binding->role,
                                      binding->row_width, out_elements, err, YVEX_ERR_BOUNDS,
                                      "attention row decode output shape does not match tensor row");
     if (!yvex_attention_scratch_reserve(scratch, row_bytes, 1u, &encoded_scratch))
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_SCRATCH, runtime_binding, binding->layer_index,
+            failure, YVEX_ATTENTION_FAILURE_SCRATCH, runtime_binding, binding->layer_index,
             binding->role, scratch ? scratch->limit_bytes : 0ull,
             scratch ? (unsigned long long)scratch->live_bytes : 0ull, err, YVEX_ERR_BOUNDS,
             "attention encoded row scratch budget exceeded");
     encoded = (unsigned char *)yvex_attention_scratch_calloc(scratch, row_bytes, 1ull);
     if (!encoded)
-        rc = yvex_attention_reject(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_ALLOCATION,
+        rc = yvex_attention_reject(failure, YVEX_ATTENTION_FAILURE_ALLOCATION,
                                    runtime_binding, binding->layer_index, binding->role, row_bytes,
                                    0ull, err, YVEX_ERR_NOMEM,
                                    "failed to allocate attention encoded row scratch");
@@ -1050,7 +1048,7 @@ int yvex_attention_decode_row(yvex_materialization_session *session,
     rc = yvex_materialization_session_read(session, binding, row_index * row_bytes, encoded,
                                            (size_t)row_bytes, NULL, err);
     if (rc != YVEX_OK) {
-        rc = yvex_attention_reject(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_READ, runtime_binding,
+        rc = yvex_attention_reject(failure, YVEX_ATTENTION_FAILURE_READ, runtime_binding,
                                    binding->layer_index, binding->role, row_bytes, 0ull, err, rc,
                                    "failed to read attention encoded row");
         goto cleanup;
@@ -1066,7 +1064,7 @@ int yvex_attention_decode_row(yvex_materialization_session *session,
             (size_t)binding->bytes_per_block, out + (block * binding->block_size),
             binding->block_size, &qfailure, err);
         if (rc != YVEX_OK) {
-            rc = yvex_attention_reject(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_NUMERIC,
+            rc = yvex_attention_reject(failure, YVEX_ATTENTION_FAILURE_NUMERIC,
                                        runtime_binding, binding->layer_index, binding->role,
                                        binding->block_size, qfailure.actual, err, rc,
                                        "failed to decode attention qtype row");
@@ -1099,7 +1097,7 @@ int yvex_attention_dot_batch(yvex_materialization_session *session,
     if (!session || !runtime_binding || !runtime_binding->binding || !vectors || !out ||
         !rows_out || token_count == 0ull || vector_stride < vector_len)
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_INVALID_ARGUMENT, runtime_binding,
+            failure, YVEX_ATTENTION_FAILURE_INVALID_ARGUMENT, runtime_binding,
             YVEX_ATTENTION_NO_LAYER,
             runtime_binding ? runtime_binding->role : YVEX_TENSOR_ROLE_UNKNOWN, 1ull, 0ull, err,
             YVEX_ERR_INVALID_ARG,
@@ -1110,29 +1108,29 @@ int yvex_attention_dot_batch(yvex_materialization_session *session,
         return rc;
     if (vector_len != binding->row_width)
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION, runtime_binding,
+            failure, YVEX_ATTENTION_FAILURE_DIMENSION, runtime_binding,
             binding->layer_index, binding->role, binding->row_width, vector_len, err,
             YVEX_ERR_BOUNDS, "attention batch dot vector length does not match tensor row width");
     if (start_row >= row_count)
-        return yvex_attention_reject(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION,
+        return yvex_attention_reject(failure, YVEX_ATTENTION_FAILURE_DIMENSION,
                                      runtime_binding, binding->layer_index, binding->role,
                                      row_count, start_row, err, YVEX_ERR_BOUNDS,
                                      "attention batch dot row range starts beyond tensor rows");
     rows =
         attention_min_u64(max_rows ? max_rows : row_count - start_row, row_count - start_row);
     if (rows == 0ull)
-        return yvex_attention_reject(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION,
+        return yvex_attention_reject(failure, YVEX_ATTENTION_FAILURE_DIMENSION,
                                      runtime_binding, binding->layer_index, binding->role, 1ull,
                                      0ull, err, YVEX_ERR_BOUNDS,
                                      "attention batch dot requires at least one output row");
     if (output_stride < rows)
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION, runtime_binding,
+            failure, YVEX_ATTENTION_FAILURE_DIMENSION, runtime_binding,
             binding->layer_index, binding->role, rows, output_stride, err, YVEX_ERR_BOUNDS,
             "attention batch dot output stride is smaller than produced rows");
     if (!yvex_attention_scratch_reserve(scratch, row_bytes, 1u, &encoded_scratch)) {
         attention_scratch_release(scratch, encoded_scratch);
-        return yvex_attention_reject(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_SCRATCH,
+        return yvex_attention_reject(failure, YVEX_ATTENTION_FAILURE_SCRATCH,
                                      runtime_binding, binding->layer_index, binding->role,
                                      scratch ? scratch->limit_bytes : 0ull,
                                      scratch ? (unsigned long long)scratch->live_bytes : 0ull, err,
@@ -1140,7 +1138,7 @@ int yvex_attention_dot_batch(yvex_materialization_session *session,
     }
     encoded = (unsigned char *)yvex_attention_scratch_calloc(scratch, row_bytes, 1ull);
     if (!encoded) {
-        rc = yvex_attention_reject(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_ALLOCATION,
+        rc = yvex_attention_reject(failure, YVEX_ATTENTION_FAILURE_ALLOCATION,
                                    runtime_binding, binding->layer_index, binding->role, row_bytes,
                                    0ull, err, YVEX_ERR_NOMEM,
                                    "failed to allocate attention batch dot row scratch");
@@ -1152,7 +1150,7 @@ int yvex_attention_dot_batch(yvex_materialization_session *session,
         rc = yvex_materialization_session_read(session, binding, (start_row + row) * row_bytes,
                                                encoded, (size_t)row_bytes, NULL, err);
         if (rc != YVEX_OK) {
-            rc = yvex_attention_reject(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_READ,
+            rc = yvex_attention_reject(failure, YVEX_ATTENTION_FAILURE_READ,
                                        runtime_binding, binding->layer_index, binding->role,
                                        row_bytes, 0ull, err, rc,
                                        "failed to read attention batch dot encoded row");
@@ -1167,7 +1165,7 @@ int yvex_attention_dot_batch(yvex_materialization_session *session,
             rc = yvex_quant_cpu_dot(binding->qtype, encoded, (size_t)row_bytes, vector, vector_len,
                                     dst, &qfailure, err);
             if (rc != YVEX_OK) {
-                rc = yvex_attention_reject(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_NUMERIC,
+                rc = yvex_attention_reject(failure, YVEX_ATTENTION_FAILURE_NUMERIC,
                                            runtime_binding, binding->layer_index, binding->role,
                                            vector_len, qfailure.actual, err, rc,
                                            "attention batch encoded row dot failed");
@@ -1175,7 +1173,7 @@ int yvex_attention_dot_batch(yvex_materialization_session *session,
             }
             if (!isfinite(*dst)) {
                 rc = yvex_attention_reject(
-                    failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_NUMERIC, runtime_binding,
+                    failure, YVEX_ATTENTION_FAILURE_NUMERIC, runtime_binding,
                     binding->layer_index, binding->role, 1ull, row, err, YVEX_ERR_FORMAT,
                     "attention batch encoded row dot produced non-finite output");
                 goto cleanup;
