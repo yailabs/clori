@@ -1724,33 +1724,19 @@ static int minimax_handoff_plan_build(
     const yvex_source_payload_budget *budget,
     yvex_minimax_h3_handoff_failure *failure, yvex_error *err)
 {
-    unsigned long long *indices;
-    unsigned long long index;
+    const yvex_transform_binding_summary *binding =
+        yvex_transform_binding_summary_get(handoff->binding);
     int rc;
 
-    indices = (unsigned long long *)calloc((size_t)component->tensor_count,
-                                           sizeof(indices[0]));
-    if (!indices)
-        return minimax_handoff_refuse(failure, YVEX_MINIMAX_H3_HANDOFF_ALLOCATION,
-                                      YVEX_ERR_NOMEM, err,
-                                      "payload-plan index allocation failed");
-    for (index = 0u; index < component->tensor_count; ++index) {
-        const yvex_transform_source_value *source =
-            yvex_transform_ir_source_at(handoff->transform_ir, index);
-        if (!source) {
-            free(indices);
-            return minimax_handoff_refuse(
-                failure, YVEX_MINIMAX_H3_HANDOFF_TRANSFORMATION, YVEX_ERR_STATE, err,
-                "component Transformation IR source is absent");
-        }
-        indices[index] = source->source_tensor_index;
-    }
-    rc = yvex_source_payload_plan_build(
-        &handoff->plan, handoff->session, indices, component->tensor_count,
+    if (!binding || !binding->complete || binding->source_count != component->tensor_count)
+        return minimax_handoff_refuse(
+            failure, YVEX_MINIMAX_H3_HANDOFF_TRANSFORMATION, YVEX_ERR_STATE, err,
+            "component transform binding does not cover its exact source set");
+    rc = yvex_transform_binding_payload_plan_build(
+        &handoff->plan, handoff->binding,
         options->chunk_bytes ? options->chunk_bytes : budget->chunk_bytes,
         options->page_bytes ? options->page_bytes : budget->page_bytes,
         failure ? &failure->payload_failure : NULL, err);
-    free(indices);
     if (rc != YVEX_OK && failure)
         failure->code = YVEX_MINIMAX_H3_HANDOFF_PAYLOAD_PLAN;
     return rc;

@@ -201,6 +201,27 @@ int yvex_transform_binding_readable_validate(const yvex_transform_binding *bindi
     return YVEX_OK;
 }
 
+int yvex_transform_binding_payload_plan_build(
+    yvex_source_payload_plan **out, const yvex_transform_binding *binding, size_t chunk_bytes,
+    size_t page_bytes, yvex_source_payload_failure *failure, yvex_error *err) {
+    if (out)
+        *out = NULL;
+    if (failure)
+        memset(failure, 0, sizeof(*failure));
+    yvex_error_clear(err);
+    if (!out || !binding || !binding->session || !binding->summary.complete ||
+        binding->summary.source_count == 0u) {
+        if (failure)
+            failure->code = YVEX_SOURCE_PAYLOAD_FAILURE_INVALID_ARGUMENT;
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "transform_binding_payload_plan",
+                       "one complete transform binding is required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    return yvex_source_payload_plan_build(out, binding->session, binding->tensor_indices,
+                                          binding->summary.source_count, chunk_bytes, page_bytes,
+                                          failure, err);
+}
+
 void yvex_transform_binding_release(yvex_transform_binding **binding_ptr) {
     yvex_transform_binding *binding;
     yvex_transform_allocator allocator;
@@ -240,12 +261,6 @@ yvex_transform_binding_terminal_operation(const yvex_transform_binding *binding,
                                           unsigned long long ordinal) {
     const yvex_transform_value *terminal = yvex_transform_binding_terminal_at(binding, ordinal);
     return terminal ? yvex_transform_ir_node_at(binding->ir, terminal->producer_node_id) : NULL;
-}
-
-const yvex_transform_source_value *
-yvex_transform_binding_source_at(const yvex_transform_binding *binding,
-                                 unsigned long long source_index) {
-    return binding ? yvex_transform_ir_source_at(binding->ir, source_index) : NULL;
 }
 
 const yvex_source_payload_range *

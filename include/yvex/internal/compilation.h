@@ -478,9 +478,6 @@ const yvex_transform_value *yvex_transform_binding_terminal_at(
 const yvex_transform_node *yvex_transform_binding_terminal_operation(
     const yvex_transform_binding *binding,
     unsigned long long ordinal);
-const yvex_transform_source_value *yvex_transform_binding_source_at(
-    const yvex_transform_binding *binding,
-    unsigned long long source_index);
 const yvex_source_payload_range *yvex_transform_binding_range_at(
     const yvex_transform_binding *binding,
     unsigned long long source_index);
@@ -493,6 +490,14 @@ int yvex_transform_binding_decision_validate(
 int yvex_transform_binding_readable_validate(
     const yvex_transform_binding *binding,
     yvex_transform_failure *failure,
+    yvex_error *err);
+/* The caller owns the returned plan; its ranges are exactly the sealed binding source set. */
+int yvex_transform_binding_payload_plan_build(
+    yvex_source_payload_plan **out,
+    const yvex_transform_binding *binding,
+    size_t chunk_bytes,
+    size_t page_bytes,
+    yvex_source_payload_failure *failure,
     yvex_error *err);
 
 /* Runtime-binding publication is a preparation-plane operation.  The CLI

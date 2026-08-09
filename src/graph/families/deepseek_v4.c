@@ -1220,18 +1220,20 @@ static int handoff_resolve(yvex_deepseek_payload_handoff *handoff,
     const yvex_model_family_api *family = yvex_model_register_deepseek_v4();
     const yvex_model_family_lowering_api *lowering = yvex_model_deepseek_lowering_api();
     const yvex_deepseek_gguf_map_summary *map_summary = lowering->summary(handoff->map);
-    unsigned long long *tensor_indices;
+    const yvex_transform_binding_summary *binding_summary =
+        yvex_transform_binding_summary_get(handoff->binding);
     unsigned long long contribution_index;
     unsigned long long descriptor_index;
     char identity_message[192];
     int rc;
 
-    if (!map_summary || !map_summary->complete ||
+    if (!map_summary || !map_summary->complete || !binding_summary || !binding_summary->complete ||
         map_summary->mapping_identity != YVEX_DEEPSEEK_PAYLOAD_MAPPING_IDENTITY ||
-        map_summary->source_identity != handoff->verification.source_snapshot_identity) {
+        map_summary->source_identity != handoff->verification.source_snapshot_identity ||
+        binding_summary->source_count != map_summary->source_contribution_count) {
         (void)snprintf(
             identity_message, sizeof(identity_message),
-            "canonical DeepSeek mapping identity mismatch: expected=%016llx actual=%016llx "
+            "canonical DeepSeek mapping or binding mismatch: expected=%016llx actual=%016llx "
             "source=%016llx verified_source=%016llx",
             (unsigned long long)YVEX_DEEPSEEK_PAYLOAD_MAPPING_IDENTITY,
             map_summary ? map_summary->mapping_identity : 0ull,
@@ -1240,19 +1242,6 @@ static int handoff_resolve(yvex_deepseek_payload_handoff *handoff,
         return handoff_reject(failure, YVEX_DEEPSEEK_PAYLOAD_FAILURE_MAPPING_IDENTITY, ULLONG_MAX,
                               ULLONG_MAX, YVEX_ERR_FORMAT, err,
                               identity_message);
-    }
-    if (map_summary->source_contribution_count >
-        (unsigned long long)(SIZE_MAX / sizeof(tensor_indices[0]))) {
-        return handoff_reject(failure, YVEX_DEEPSEEK_PAYLOAD_FAILURE_ALLOCATION, ULLONG_MAX,
-                              ULLONG_MAX, YVEX_ERR_BOUNDS, err,
-                              "mapping contribution index allocation overflow");
-    }
-    tensor_indices = (unsigned long long *)calloc((size_t)map_summary->source_contribution_count,
-                                                  sizeof(tensor_indices[0]));
-    if (!tensor_indices) {
-        return handoff_reject(failure, YVEX_DEEPSEEK_PAYLOAD_FAILURE_ALLOCATION, ULLONG_MAX,
-                              ULLONG_MAX, YVEX_ERR_NOMEM, err,
-                              "mapping contribution index allocation failed");
     }
     handoff->summary.mapping_identity = map_summary->mapping_identity;
     yvex_core_text_copy(
@@ -1271,7 +1260,6 @@ static int handoff_resolve(yvex_deepseek_payload_handoff *handoff,
         const yvex_deepseek_gguf_descriptor *descriptor;
 
         if (!contribution || contribution->descriptor_index >= map_summary->descriptor_count) {
-            free(tensor_indices);
             return handoff_reject(failure, YVEX_DEEPSEEK_PAYLOAD_FAILURE_CONTRIBUTION, ULLONG_MAX,
                                   contribution_index, YVEX_ERR_FORMAT, err,
                                   "mapping contribution is incomplete");
@@ -1285,13 +1273,11 @@ static int handoff_resolve(yvex_deepseek_payload_handoff *handoff,
             range->source_snapshot_identity != map_summary->source_identity ||
             range->dtype != contribution->source_dtype ||
             range->rank != contribution->source_rank) {
-            free(tensor_indices);
             return handoff_reject(
                 failure, YVEX_DEEPSEEK_PAYLOAD_FAILURE_RANGE, contribution->descriptor_index,
                 contribution_index, YVEX_ERR_FORMAT, err,
                 "mapping contribution does not resolve to its exact source range");
         }
-        tensor_indices[contribution_index] = range->source_tensor_index;
         handoff->summary.contributions_resolved++;
         if (descriptor->transform == YVEX_DEEPSEEK_GGUF_TRANSFORM_DIRECT)
             handoff->summary.direct_contributions++;
@@ -1304,7 +1290,6 @@ static int handoff_resolve(yvex_deepseek_payload_handoff *handoff,
         if (contribution->kind == YVEX_DEEPSEEK_GGUF_CONTRIBUTION_EXPERT_WEIGHT ||
             contribution->kind == YVEX_DEEPSEEK_GGUF_CONTRIBUTION_EXPERT_SCALE) {
             if (ULLONG_MAX - handoff->summary.routed_expert_logical_bytes < range->byte_length) {
-                free(tensor_indices);
                 return handoff_reject(failure, YVEX_DEEPSEEK_PAYLOAD_FAILURE_RANGE,
                                       contribution->descriptor_index, contribution_index,
                                       YVEX_ERR_BOUNDS, err,
@@ -1324,7 +1309,6 @@ static int handoff_resolve(yvex_deepseek_payload_handoff *handoff,
             handoff->summary.shared_expert_contributions++;
         if (descriptor->role == YVEX_TENSOR_ROLE_OUTPUT_HEAD) {
             if (ULLONG_MAX - handoff->summary.output_head_logical_bytes < range->byte_length) {
-                free(tensor_indices);
                 return handoff_reject(failure, YVEX_DEEPSEEK_PAYLOAD_FAILURE_RANGE,
                                       contribution->descriptor_index, contribution_index,
                                       YVEX_ERR_BOUNDS, err,
@@ -1344,24 +1328,21 @@ static int handoff_resolve(yvex_deepseek_payload_handoff *handoff,
 
         if (!descriptor || descriptor->contribution_count == 0u ||
             ULLONG_MAX - descriptor->contribution_offset < descriptor->contribution_count) {
-            free(tensor_indices);
             return handoff_reject(failure, YVEX_DEEPSEEK_PAYLOAD_FAILURE_CONTRIBUTION,
                                   descriptor_index, ULLONG_MAX, YVEX_ERR_FORMAT, err,
                                   "logical descriptor has no bounded source contribution set");
         }
         end = descriptor->contribution_offset + descriptor->contribution_count;
         if (end > handoff->summary.contributions_resolved) {
-            free(tensor_indices);
             return handoff_reject(failure, YVEX_DEEPSEEK_PAYLOAD_FAILURE_CONTRIBUTION,
                                   descriptor_index, end, YVEX_ERR_FORMAT, err,
                                   "logical descriptor contribution span exceeds resolved mapping");
         }
         handoff->summary.descriptors_covered++;
     }
-    rc = yvex_source_payload_plan_build(
-        &handoff->plan, handoff->session, tensor_indices, map_summary->source_contribution_count,
-        options->chunk_bytes, options->page_bytes, failure ? &failure->payload_failure : NULL, err);
-    free(tensor_indices);
+    rc = yvex_transform_binding_payload_plan_build(
+        &handoff->plan, handoff->binding, options->chunk_bytes, options->page_bytes,
+        failure ? &failure->payload_failure : NULL, err);
     if (rc != YVEX_OK) {
         if (failure)
             failure->code = YVEX_DEEPSEEK_PAYLOAD_FAILURE_PLAN;
