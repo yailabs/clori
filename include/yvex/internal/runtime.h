@@ -251,6 +251,7 @@ typedef struct {
 typedef struct {
     const yvex_runtime_residency *residency;
     const yvex_runtime_binding *compiled_binding;
+    const yvex_compiled_model_plan *compiled_plan;
     const yvex_runtime_binding_summary *binding;
     const yvex_graph_execution_binding *execution;
     const yvex_attention_plan *attention, *draft_attention;

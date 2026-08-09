@@ -639,6 +639,8 @@ int yvex_compiled_model_plan_admit(
     const yvex_compiled_model_plan *plans,
     const yvex_compiled_model_plan_admission *admission)
 {
+    yvex_compiled_context_envelope context;
+    yvex_error err;
     const yvex_moe_plan_summary *moe;
     const yvex_moe_plan_summary *draft_moe;
     const yvex_transformer_plan_summary *transformer;
@@ -657,7 +659,9 @@ int yvex_compiled_model_plan_admit(
                !admission->capabilities->moe_plan_ready &&
                !admission->capabilities->transformer_ready &&
                !admission->capabilities->logits_ready;
-    if (!admission->capabilities->moe_plan_ready ||
+    if (yvex_compiled_model_plan_context_envelope(
+            plans, admission->model, &context, &err) != YVEX_OK ||
+        !admission->capabilities->moe_plan_ready ||
         !admission->capabilities->transformer_ready ||
         !admission->capabilities->logits_ready ||
         moe->family_adapter_id != admission->family_adapter_id ||
@@ -696,6 +700,81 @@ int yvex_compiled_model_plan_admit(
                   draft_moe->attention_plan_identity) == 0 &&
            strcmp(draft_transformer->transformer_plan_identity,
                   admission->draft_transformer_plan_identity) == 0;
+}
+
+int yvex_compiled_model_plan_context_envelope(
+    const yvex_compiled_model_plan *plan,
+    const yvex_model_execution_descriptor *model,
+    yvex_compiled_context_envelope *envelope, yvex_error *err)
+{
+    const yvex_transformer_plan_summary *target =
+        yvex_transformer_plan_summary_get(
+            yvex_compiled_model_plan_transformer(plan, 0));
+    const yvex_transformer_plan_summary *draft =
+        yvex_transformer_plan_summary_get(
+            yvex_compiled_model_plan_transformer(plan, 1));
+    if (envelope) memset(envelope, 0, sizeof(*envelope));
+    if (!envelope || !model ||
+        model->schema_version != YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1 ||
+        !model->maximum_context || !yvex_sha256_hex_valid(model->identity) ||
+        !target || target->maximum_context != model->maximum_context ||
+        !yvex_sha256_hex_valid(target->transformer_plan_identity) ||
+        (!!draft != !!model->draft_layer_count) ||
+        (draft && (draft->maximum_context != model->maximum_context ||
+                   !yvex_sha256_hex_valid(draft->transformer_plan_identity))))
+        return model_plan_refuse(
+            err, YVEX_ERR_FORMAT,
+            "compiled context envelope does not match semantic model capability");
+    envelope->schema_version = YVEX_COMPILED_CONTEXT_ENVELOPE_SCHEMA_V1;
+    envelope->semantic_maximum_context = model->maximum_context;
+    envelope->target_maximum_context = target->maximum_context;
+    envelope->draft_available = draft != NULL;
+    envelope->draft_maximum_context = draft ? draft->maximum_context : 0ull;
+    yvex_core_text_copy(envelope->model_execution_identity,
+                        sizeof(envelope->model_execution_identity), model->identity);
+    yvex_core_text_copy(envelope->target_transformer_identity,
+                        sizeof(envelope->target_transformer_identity),
+                        target->transformer_plan_identity);
+    if (draft)
+        yvex_core_text_copy(envelope->draft_transformer_identity,
+                            sizeof(envelope->draft_transformer_identity),
+                            draft->transformer_plan_identity);
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_compiled_context_envelope_admit(
+    const yvex_compiled_context_envelope *envelope,
+    unsigned long long requested_context, int require_draft, yvex_error *err)
+{
+    unsigned long long maximum;
+    if (!envelope ||
+        envelope->schema_version != YVEX_COMPILED_CONTEXT_ENVELOPE_SCHEMA_V1 ||
+        !envelope->semantic_maximum_context || !envelope->target_maximum_context ||
+        envelope->semantic_maximum_context != envelope->target_maximum_context ||
+        !yvex_sha256_hex_valid(envelope->model_execution_identity) ||
+        !yvex_sha256_hex_valid(envelope->target_transformer_identity) ||
+        (envelope->draft_available &&
+         (envelope->draft_maximum_context != envelope->semantic_maximum_context ||
+          !yvex_sha256_hex_valid(envelope->draft_transformer_identity))) ||
+        (!envelope->draft_available &&
+         (envelope->draft_maximum_context || envelope->draft_transformer_identity[0])) ||
+        (require_draft != 0 && require_draft != 1) || !requested_context)
+        return model_plan_refuse(
+            err, YVEX_ERR_INVALID_ARG,
+            "compiled context admission requires one bounded runtime request");
+    if (require_draft && !envelope->draft_available)
+        return model_plan_refuse(
+            err, YVEX_ERR_UNSUPPORTED,
+            "compiled context envelope does not admit draft execution");
+    maximum = require_draft ? envelope->draft_maximum_context
+                            : envelope->target_maximum_context;
+    if (requested_context > maximum)
+        return model_plan_refuse(
+            err, YVEX_ERR_BOUNDS,
+            "requested context exceeds the compiled semantic maximum");
+    yvex_error_clear(err);
+    return YVEX_OK;
 }
 
 const yvex_moe_plan *yvex_compiled_model_plan_moe(

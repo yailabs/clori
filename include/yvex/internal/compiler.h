@@ -23,6 +23,7 @@ extern "C" {
 #define YVEX_RUNTIME_LOGITS_SCHEMA_V2 YVEX_RUNTIME_LOGITS_SCHEMA_V3
 #define YVEX_RUNTIME_LOGITS_SCHEMA_V1 YVEX_RUNTIME_LOGITS_SCHEMA_V3
 #define YVEX_SPECULATION_FAMILY_POLICY_SCHEMA_V1 1u
+#define YVEX_COMPILED_CONTEXT_ENVELOPE_SCHEMA_V1 1u
 #define YVEX_SPECULATION_MAX_BLOCK 8u
 #define YVEX_SPECULATION_MAX_FEATURE_LAYERS YVEX_MODEL_EXECUTION_FEATURE_LAYER_CAP
 #define YVEX_SPECULATION_IDENTITY_CAP (YVEX_SHA256_HEX_BYTES + 1u)
@@ -146,6 +147,7 @@ typedef struct {
 typedef struct {
     unsigned long long family_adapter_id, family_adapter_version;
     unsigned long long tensor_count, layer_count, draft_layer_count;
+    const yvex_model_execution_descriptor *model;
     const yvex_runtime_capabilities *capabilities;
     const char *artifact_identity, *materialization_identity;
     const char *runtime_descriptor_identity;
@@ -154,6 +156,15 @@ typedef struct {
     const char *transformer_plan_identity, *draft_transformer_plan_identity;
     const char *output_head_plan_identity;
 } yvex_compiled_model_plan_admission;
+typedef struct {
+    unsigned int schema_version;
+    unsigned long long semantic_maximum_context;
+    unsigned long long target_maximum_context, draft_maximum_context;
+    int draft_available;
+    char model_execution_identity[YVEX_SHA256_HEX_BYTES];
+    char target_transformer_identity[YVEX_SHA256_HEX_BYTES];
+    char draft_transformer_identity[YVEX_SHA256_HEX_BYTES];
+} yvex_compiled_context_envelope;
 int yvex_compiled_model_plan_build(
     yvex_compiled_model_plan **out,
     const yvex_compiled_model_plan_request *request, yvex_error *err);
@@ -166,6 +177,13 @@ int yvex_compiled_model_plan_decode(
 int yvex_compiled_model_plan_admit(
     const yvex_compiled_model_plan *plan,
     const yvex_compiled_model_plan_admission *admission);
+int yvex_compiled_model_plan_context_envelope(
+    const yvex_compiled_model_plan *plan,
+    const yvex_model_execution_descriptor *model,
+    yvex_compiled_context_envelope *envelope, yvex_error *err);
+int yvex_compiled_context_envelope_admit(
+    const yvex_compiled_context_envelope *envelope,
+    unsigned long long requested_context, int require_draft, yvex_error *err);
 const struct yvex_moe_plan *yvex_compiled_model_plan_moe(
     const yvex_compiled_model_plan *plan, int draft);
 const struct yvex_transformer_plan *yvex_compiled_model_plan_transformer(

@@ -1630,7 +1630,7 @@ static int test_compiled_model_binding_v10(const char *root)
     YVEX_TEST_ASSERT(yvex_runtime_generation_context_open(
                          &generation, model, session, &generation_options,
                          &err) == YVEX_ERR_BOUNDS && !generation,
-                     "model-authored context maximum refuses before state mutation");
+                     "semantic context maximum refuses before state mutation");
     YVEX_TEST_ASSERT(yvex_runtime_session_close(&session, &err) == YVEX_OK && !session,
                      "v10 capacity session closes");
     yvex_runtime_model_close(&model);

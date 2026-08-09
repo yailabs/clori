@@ -476,21 +476,28 @@ static int generation_capacity_build(
         runtime && runtime->model_execution.schema_version
             ? &runtime->model_execution
             : NULL;
+    yvex_compiled_context_envelope context_envelope;
     yvex_runtime_residency_summary residency;
     generation_capacity_geometry geometry;
     yvex_execution_state_class_request states[YVEX_MODEL_STATE_CLASS_COUNT];
     yvex_execution_capacity_plan_request request = {0};
     unsigned long long workspace, sampling_workspace = 0ull, index, count = 0ull;
     if (generation_capacity_hardware(context, err) != YVEX_OK) return yvex_error_code(err);
-    if (!model)
+    if (!model || !context->model_view->compiled_plan)
         return generation_context_refuse(
             err, YVEX_ERR_STATE,
-            "generation requires a sealed model execution descriptor");
+            "generation requires one sealed semantic model and compiled execution plan");
     if (generation_capacity_workload(context, err) != YVEX_OK) return yvex_error_code(err);
     if (context->options.context_capacity > model->maximum_context)
         return generation_context_refuse(
             err, YVEX_ERR_BOUNDS,
-            "requested context exceeds the model-authored maximum");
+            "requested context exceeds the model-authored semantic maximum");
+    if (yvex_compiled_model_plan_context_envelope(
+            context->model_view->compiled_plan, model, &context_envelope, err) != YVEX_OK ||
+        yvex_compiled_context_envelope_admit(
+            &context_envelope, context->options.context_capacity,
+            context->options.mode == YVEX_GENERATION_MODE_DSPARK, err) != YVEX_OK)
+        return yvex_error_code(err);
     if (generation_capacity_graph_geometry(
             context, model, &geometry, workspace_capacity, err) != YVEX_OK ||
         yvex_runtime_residency_snapshot(context->model_view->residency, &residency,

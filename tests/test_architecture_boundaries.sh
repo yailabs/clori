@@ -39,6 +39,8 @@ recursive_cleanup_pattern='(^|[;&|()[:space:]])(command[[:space:]]+)?r'\
 'm[[:space:]]+([^#;]*[[:space:]])?(-[[:alpha:]]*[rR][[:alpha:]]*|--recursive)([[:space:]]|$)'
 recursive_cleanup_call_pattern='(system|popen)[[:space:]]*\([^;]*(rm[[:space:]]+-[[:alpha:]]*[rR]|rm[[:space:]]+--recursive)'
 conversation_literal_pattern='(<think>|</think>|｜DSML｜|<tool_result>|<｜(User|Assistant|latest_reminder)｜>)'
+family_runtime_context_pattern='(context_capacity|requested_session_context|admitted_execution_maximum|'
+family_runtime_context_pattern="${family_runtime_context_pattern}"'per_(session|request)_maximum|physical_state_pool_tokens)'
 
 # Every expression used as a hard gate carries positive and negative probes.
 # This catches regex drift before a repository scan can produce false comfort.
@@ -82,6 +84,13 @@ printf '%s\n' '<think>' |
 if printf '%s\n' 'conversation->thinking_start' |
     rg "$conversation_literal_pattern" >/dev/null; then
     fail "conversation-literal guard rejects a typed family fact"
+fi
+printf '%s\n' 'options.context_capacity = 4096;' |
+    rg "$family_runtime_context_pattern" >/dev/null ||
+    fail "family context-capacity guard misses a runtime-selected capacity"
+if printf '%s\n' 'model.maximum_context = 1048576;' |
+    rg "$family_runtime_context_pattern" >/dev/null; then
+    fail "family context-capacity guard rejects a semantic model maximum"
 fi
 printf '%s\n' '#include <yvex/internal/source_payload.h>' |
     rg "$runtime_planning_include_pattern" >/dev/null ||
@@ -175,6 +184,12 @@ if find src include -type f \( -name '*.c' -o -name '*.h' -o -name '*.cu' \) \
         ! -path 'src/model/families/*' -print0 |
     xargs -0 rg -n "$conversation_literal_pattern"; then
     fail "source-authored conversation literal escaped the model-family projection"
+fi
+
+if find src -path '*/families/*' -type f \
+        \( -name '*.c' -o -name '*.h' -o -name '*.cu' \) -print0 |
+    xargs -0 rg -n "$family_runtime_context_pattern"; then
+    fail "a family projection owns runtime-selected context capacity"
 fi
 
 family_neutral_sources=$(

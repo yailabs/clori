@@ -65,6 +65,7 @@ int yvex_runtime_private_compiled_plan_valid(
     admission.tensor_count = binding->summary.tensor_count;
     admission.layer_count = binding->summary.layer_count;
     admission.draft_layer_count = binding->summary.draft_layer_count;
+    admission.model = &binding->descriptor.model_execution;
     admission.capabilities = &binding->summary.capabilities;
     admission.artifact_identity = binding->admission.artifact_identity;
     admission.materialization_identity = binding->materialization.plan_identity;

@@ -112,6 +112,15 @@ to the kernel bundle, hardware, context capacity, mode, workload, evidence
 profile, and portable or device-native adapter class. The warm runtime reopens
 and authenticates admitted facts rather than rebuilding compiler plans.
 
+Context has two authorities at this boundary. The Semantic Model IR owns the
+source-authored maximum. The immutable compiled model plan projects that fact
+through target and optional draft transformer plans as a typed context
+envelope. A selected startup or request capacity is instead a workload fact:
+runtime may admit it only inside the compiled envelope, then the generic
+capacity planner evaluates state geometry, artifact bytes, hardware facts and
+resource reserve. The current 4096-token DeepSeek profile is one such selected
+workload, not the model's semantic limit.
+
 Runtime binding v8 adds and authenticates the model-execution descriptor that
 v7 cannot represent. The retained v7 reference binding stays readable through
 a family-owned in-memory compatibility projection; descriptor-bearing output

@@ -701,6 +701,7 @@ static void runtime_model_view_bind(yvex_runtime_model *model)
 {
     model->view.binding = &model->binding_summary;
     model->view.compiled_binding = model->binding;
+    model->view.compiled_plan = model->binding->plan;
     model->view.execution = model->execution;
     model->view.attention = model->attention;
     model->view.draft_attention = model->draft_attention;

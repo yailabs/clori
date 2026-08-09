@@ -171,6 +171,11 @@ workload profiles plus one capacity plan. Context limits, pooled state,
 candidate and prefix reserves, logical batching, physical row geometry,
 workspace and system reserve remain separately identified. Persistent-state
 page tokens are a per-state-class planning result, not a global runtime flag.
+The model-authored maximum is sealed upstream in Semantic Model IR and must
+match the target/draft maxima in the compiled context envelope. Requested
+context is owned by the workload profile; hardware-fit admission remains the
+generic capacity planner's responsibility. No family projection owns selected
+capacity or a machine-memory constant.
 
 Target prefill/decode, draft width five, verification widths two through six,
 correction, and reset select an execution shape before mutation. The key binds

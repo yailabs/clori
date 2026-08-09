@@ -103,6 +103,32 @@ static int transformer_test_family(void)
     return 0;
 }
 
+static int transformer_test_context_envelope(void)
+{
+    yvex_compiled_context_envelope envelope = {
+        .schema_version = YVEX_COMPILED_CONTEXT_ENVELOPE_SCHEMA_V1,
+        .semantic_maximum_context = 1048576ull,
+        .target_maximum_context = 1048576ull};
+    yvex_error err;
+    transformer_test_identity(envelope.model_execution_identity, 10u);
+    transformer_test_identity(envelope.target_transformer_identity, 11u);
+    YVEX_TEST_ASSERT(
+        yvex_compiled_context_envelope_admit(
+            &envelope, 4096ull, 0, &err) == YVEX_OK &&
+            yvex_compiled_context_envelope_admit(
+                &envelope, 1048576ull, 0, &err) == YVEX_OK,
+        "runtime-selected context remains inside the compiled semantic envelope");
+    YVEX_TEST_ASSERT(
+        yvex_compiled_context_envelope_admit(
+            &envelope, 1048577ull, 0, &err) == YVEX_ERR_BOUNDS,
+        "compiled semantic maximum refuses an oversized runtime selection");
+    YVEX_TEST_ASSERT(
+        yvex_compiled_context_envelope_admit(
+            &envelope, 4096ull, 1, &err) == YVEX_ERR_UNSUPPORTED,
+        "target-only compiled envelope does not invent draft capacity");
+    return 0;
+}
+
 static int transformer_test_numeric(void)
 {
     yvex_transformer_plan *plan = NULL;
@@ -290,6 +316,7 @@ static int transformer_test_block_api_refusal(void)
 int yvex_test_runtime_transformer(void)
 {
     if (transformer_test_family() != 0) return 1;
+    if (transformer_test_context_envelope() != 0) return 1;
     if (transformer_test_numeric() != 0) return 1;
     if (transformer_test_router_identity() != 0) return 1;
     if (transformer_test_input() != 0) return 1;
