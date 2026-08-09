@@ -1513,7 +1513,7 @@ int yvex_runtime_moe_operator_execute(const yvex_moe_operator_request *request,
         yvex_core_text_copy(result->command, sizeof(result->command), "execute moe");
         yvex_core_text_copy(result->target, sizeof(result->target), request->target);
         yvex_core_text_copy(result->family, sizeof(result->family),
-                            model_view->adapter->family_name);
+                            model_view->execution->family_name);
         yvex_core_text_copy(result->backend, sizeof(result->backend),
                             request->backend == YVEX_BACKEND_KIND_CUDA ? "cuda" : "cpu");
         yvex_runtime_identity_copy(result->artifact_identity,

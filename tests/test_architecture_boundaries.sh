@@ -24,6 +24,7 @@ family_branch_pattern="(${family_compare_pattern}[^;]*${family_name_pattern}|${f
 runtime_planning_include_pattern='#include[[:space:]]+[<"]yvex/internal/(compilation|source|source_payload|gguf_writer)[.]h[>"]'
 runtime_planning_call_pattern='yvex_(source_payload_[A-Za-z0-9_]*|transform_[A-Za-z0-9_]*|quant_plan_[A-Za-z0-9_]*|gguf_writer_[A-Za-z0-9_]*)[[:space:]]*\('
 runtime_planning_symbol_pattern='^yvex_(source_payload_[A-Za-z0-9_]*|transform_[A-Za-z0-9_]*|quant_plan_[A-Za-z0-9_]*|gguf_writer_[A-Za-z0-9_]*)$'
+runtime_family_dispatch_pattern='(yvex_runtime_family_adapter|[.]adapter->graph|[.]adapter[[:space:]]*=)'
 fallback_ptx_pattern='(fallback_ptx|ptx_fallback|"[[:space:]]*[.]version[[:space:]]+[0-9])'
 cuda_cpu_fallback_pattern='(cpu_chunk_execute|rolling_state_step_cpu|yvex_backend_open_cpu(_impl)?|yvex_quant_cpu_[A-Za-z0-9_]*|yvex_attention_[A-Za-z0-9_]*_cpu)[[:space:]]*\('
 deprecated_digest_hash_pattern='yvex_sha256_[A-Za-z0-9_]*[[:space:]]*\([^;]*\boutput_digest\b'
@@ -98,6 +99,13 @@ printf '%s\n' 'yvex_gguf_writer_plan_release' |
 if printf '%s\n' 'yvex_quant_f16_decode' |
     rg "$runtime_planning_symbol_pattern" >/dev/null; then
     fail "runtime link-dependency guard rejects the canonical scalar codec"
+fi
+printf '%s\n' 'model.adapter->graph();' |
+    rg "$runtime_family_dispatch_pattern" >/dev/null ||
+    fail "runtime family-dispatch guard misses a concrete adapter callback"
+if printf '%s\n' 'model.execution->api;' |
+    rg "$runtime_family_dispatch_pattern" >/dev/null; then
+    fail "runtime family-dispatch guard rejects compiled execution binding"
 fi
 printf '%s\n' 'static const char fallback_ptx[] = ".version 8.0";' |
     rg -i "$fallback_ptx_pattern" >/dev/null ||
@@ -434,6 +442,10 @@ if rg -n \
     '(cpu_chunk_execute|cuda_token_execute|rolling_state_step_cpu)|yvex_attention_(activation_apply|compute_round|csa_select|hadamard_cpu|history_validate|output_project|reduce_chunk|rms_norm|rope_apply|topk_select|unit_rms_norm)[[:space:]]*\(' \
     "$oracle_source"; then
     fail "attention oracle calls a production numeric or composition owner"
+fi
+
+if rg -n "$runtime_family_dispatch_pattern" src/runtime include/yvex/internal/runtime.h; then
+    fail "runtime retains a family adapter or model-name execution callback"
 fi
 
 for product in "${YVEX_LIB:-build/lib/libyvex.a}" "${YVEX_BIN:-./yvex}"; do

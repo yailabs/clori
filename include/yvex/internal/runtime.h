@@ -48,29 +48,7 @@ typedef struct yvex_runtime_binding_failure {
     const char *reason;
 } yvex_runtime_binding_failure;
 #define YVEX_RUNTIME_MODEL_SCHEMA_V1 1u
-#define YVEX_RUNTIME_FAMILY_ADAPTER_SCHEMA_V3 3u
 #define YVEX_RUNTIME_EXECUTION_DESCRIPTOR_SCHEMA_V2 2u
-typedef enum {
-    YVEX_SEQUENCE_MIXER_SOFTMAX_ATTENTION = 0, YVEX_SEQUENCE_MIXER_RECURRENT_LINEAR, YVEX_SEQUENCE_MIXER_STATE_SPACE
-} yvex_sequence_mixer_family;
-typedef enum {
-    YVEX_SEQUENCE_MIXER_DENSE_MHA = 0, YVEX_SEQUENCE_MIXER_GROUPED_QUERY,
-    YVEX_SEQUENCE_MIXER_MULTI_QUERY, YVEX_SEQUENCE_MIXER_SLIDING_WINDOW,
-    YVEX_SEQUENCE_MIXER_LATENT_ATTENTION, YVEX_SEQUENCE_MIXER_SPARSE_ATTENTION,
-    YVEX_SEQUENCE_MIXER_COMPRESSED_SPARSE, YVEX_SEQUENCE_MIXER_HIERARCHICAL_COMPRESSED,
-    YVEX_SEQUENCE_MIXER_CROSS_ATTENTION, YVEX_SEQUENCE_MIXER_DELTANET,
-    YVEX_SEQUENCE_MIXER_GATED_DELTANET, YVEX_SEQUENCE_MIXER_KIMI_DELTA, YVEX_SEQUENCE_MIXER_MAMBA
-} yvex_sequence_mixer_semantics;
-typedef enum {
-    YVEX_RUNTIME_MIXER_UNSUPPORTED = 0, YVEX_RUNTIME_MIXER_SUPPORTED,
-    YVEX_RUNTIME_MIXER_NOT_IMPLEMENTED, YVEX_RUNTIME_MIXER_NOT_ADMITTED
-} yvex_runtime_mixer_capability_state;
-typedef struct {
-    yvex_sequence_mixer_family family;
-    yvex_sequence_mixer_semantics semantics;
-    yvex_runtime_mixer_capability_state state;
-    const char *reason;
-} yvex_runtime_mixer_capability;
 typedef enum {
     YVEX_RUNTIME_MODE_EAGER = 0, YVEX_RUNTIME_MODE_PIECEWISE,
     YVEX_RUNTIME_MODE_FULL, YVEX_RUNTIME_MODE_AUTO
@@ -95,16 +73,6 @@ typedef enum {
 } yvex_runtime_lifecycle_phase;
 typedef int (*yvex_runtime_progress_callback)(void *, yvex_runtime_lifecycle_phase, unsigned long long,
                                               unsigned long long);
-const struct yvex_runtime_family_adapter *yvex_runtime_family_at(unsigned long long index);
-typedef struct yvex_runtime_family_adapter {
-    unsigned int schema_version;
-    unsigned long long adapter_id, adapter_version;
-    const char *target_id, *family_name, *operator_family_key;
-    const char *operator_artifact_filename, *logical_transform_identity;
-    yvex_sequence_mixer_family mixer_family;
-    int (*mixer_capability)(yvex_sequence_mixer_semantics, yvex_runtime_mixer_capability *);
-    const yvex_graph_execution_api *(*graph)(void);
-} yvex_runtime_family_adapter;
 typedef struct {
     const char *directory;
     const yvex_complete_artifact_admission *admission;
@@ -284,7 +252,7 @@ typedef struct {
     const yvex_runtime_residency *residency;
     const yvex_runtime_binding *compiled_binding;
     const yvex_runtime_binding_summary *binding;
-    const yvex_runtime_family_adapter *adapter;
+    const yvex_graph_execution_binding *execution;
     const yvex_attention_plan *attention, *draft_attention;
     const yvex_moe_plan *moe, *draft_moe;
     const yvex_transformer_plan *transformer, *draft_transformer;
@@ -325,7 +293,6 @@ int yvex_runtime_state_residency_invalidate(yvex_runtime_state_residency *reside
 int yvex_runtime_state_residency_close(yvex_runtime_state_residency **residency, yvex_error *err);
 int yvex_runtime_state_residency_summary_copy(const yvex_runtime_state_residency *residency,
                                               yvex_runtime_state_residency_summary *out, yvex_error *err);
-const yvex_runtime_family_adapter *yvex_runtime_family_adapter_find(const char *target_id);
 /* A cleanup failure may publish an unpublished model in out; close retries exact ownership. */
 int yvex_runtime_model_open(yvex_runtime_model **out, const yvex_runtime_model_open_request *request,
                             yvex_runtime_model_failure *failure, yvex_error *err);

@@ -55,7 +55,7 @@ int yvex_runtime_private_compiled_plan_valid(
     const yvex_runtime_binding *binding);
 
 struct yvex_runtime_model {
-    const yvex_runtime_family_adapter *adapter;
+    const yvex_graph_execution_binding *execution;
     yvex_runtime_binding *binding;
     yvex_runtime_binding_summary binding_summary;
     yvex_artifact *artifact;

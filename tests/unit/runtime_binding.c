@@ -153,9 +153,9 @@ static void *runtime_open_thread_main(void *argument)
     return NULL;
 }
 
-static const yvex_runtime_family_adapter *runtime_fixture_adapter(void)
+static const yvex_graph_execution_binding *runtime_fixture_execution(void)
 {
-    return yvex_runtime_family_adapter_find("deepseek4-v4-flash-dspark");
+    return yvex_graph_execution_find(0ull, 0ull, "deepseek4-v4-flash-dspark");
 }
 
 static const yvex_family_compiler_adapter *runtime_fixture_compiler(void)
@@ -977,7 +977,7 @@ static void fixture_compatibility_build(binding_fixture *fixture)
                    admission->payload_identity);
     (void)snprintf(value->writer_transform_identity,
                    sizeof(value->writer_transform_identity), "%s",
-                   runtime_fixture_adapter()->logical_transform_identity);
+                   runtime_fixture_execution()->logical_transform_identity);
     (void)snprintf(value->admitted_transform_identity,
                    sizeof(value->admitted_transform_identity), "%s",
                    admission->transform_identity);
@@ -1224,7 +1224,7 @@ static int directory_has_temporary(const char *path)
 static int fixture_binding_request(const binding_fixture *fixture, const char *directory,
                                    yvex_runtime_binding_prepare_request *request)
 {
-    const yvex_runtime_family_adapter *adapter = runtime_fixture_adapter();
+    const yvex_graph_execution_binding *execution = runtime_fixture_execution();
     const yvex_family_compiler_adapter *compiler = runtime_fixture_compiler();
     const yvex_runtime_descriptor_summary *descriptor;
 
@@ -1236,15 +1236,15 @@ static int fixture_binding_request(const binding_fixture *fixture, const char *d
     request->runtime_descriptor = fixture->descriptor;
     request->attention_plan = fixture->attention;
     descriptor = yvex_runtime_descriptor_summary_get(fixture->descriptor);
-    if (!adapter || !compiler || !descriptor || !compiler->execution_capabilities ||
+    if (!execution || !compiler || !descriptor || !compiler->execution_capabilities ||
         !compiler->transformer_policy || !compiler->logits_policy ||
         !compiler->speculation_policy) return 0;
-    request->family_adapter_id = adapter->adapter_id;
-    request->family_adapter_version = adapter->adapter_version;
+    request->family_adapter_id = execution->adapter_id;
+    request->family_adapter_version = execution->adapter_version;
     request->artifact_format = "GGUF";
     request->artifact_format_version = 3u;
     request->logical_transform_identity =
-        adapter->logical_transform_identity;
+        execution->logical_transform_identity;
     if (!compiler->execution_capabilities(&request->capabilities) ||
         !compiler->transformer_policy(descriptor, &request->transformer_policy) ||
         !compiler->logits_policy(&request->logits_policy) ||
@@ -1412,7 +1412,7 @@ static int test_prepare_reopen_import(const binding_fixture *fixture, const char
     YVEX_TEST_ASSERT(
         strcmp(summary.artifact_transform_identity, fixture->admission.transform_identity) == 0 &&
             strcmp(summary.logical_transform_identity,
-                   runtime_fixture_adapter()->logical_transform_identity) == 0,
+                   runtime_fixture_execution()->logical_transform_identity) == 0,
         "runtime binding separates artifact and logical transform identities");
     YVEX_TEST_ASSERT(summary.tensor_count == 1ull && summary.layer_count == 1ull,
                      "reopened runtime binding record counts");
@@ -1917,7 +1917,7 @@ static int runtime_model_open_fixture(const binding_fixture *fixture,
     memset(&request, 0, sizeof(request));
     request.artifact_path = yvex_artifact_path(fixture->artifact);
     request.runtime_binding_path = prepared->path;
-    request.target_id = runtime_fixture_adapter()->target_id;
+    request.target_id = runtime_fixture_execution()->target_id;
     return yvex_runtime_model_open(model, &request, failure, err);
 }
 
@@ -1960,7 +1960,7 @@ static int test_runtime_model_progress(
     memset(&progress, 0, sizeof(progress));
     request.artifact_path = yvex_artifact_path(fixture->artifact);
     request.runtime_binding_path = prepared->path;
-    request.target_id = runtime_fixture_adapter()->target_id;
+    request.target_id = runtime_fixture_execution()->target_id;
     request.progress = runtime_progress_collect;
     request.progress_context = &progress;
     YVEX_TEST_ASSERT(yvex_runtime_model_open(
@@ -2028,15 +2028,14 @@ static int test_runtime_model_progress(
 
 static int test_runtime_family_neutrality(void)
 {
-    const yvex_runtime_family_adapter *deepseek =
-        yvex_runtime_family_adapter_find("deepseek4-v4-flash-dspark");
+    const yvex_graph_execution_binding *deepseek =
+        yvex_graph_execution_find(0ull, 0ull, "deepseek4-v4-flash-dspark");
     const yvex_graph_family_preparation *preparation = yvex_graph_family_preparation_at(0ull);
     yvex_compilation_runtime_binding_result rejected = {0};
-    yvex_runtime_mixer_capability capability;
     yvex_error err;
 
-    YVEX_TEST_ASSERT(deepseek != NULL && deepseek->mixer_capability != NULL,
-                     "registered family resolves through common adapter registry");
+    YVEX_TEST_ASSERT(deepseek != NULL && deepseek->api != NULL,
+                     "compiled family identity resolves through graph execution registry");
     YVEX_TEST_ASSERT(strcmp(deepseek->operator_family_key, "deepseek") == 0 && preparation &&
                          strcmp(preparation->target_id, deepseek->target_id) == 0 &&
                          strcmp(preparation->source_manifest_filename,
@@ -2045,31 +2044,19 @@ static int test_runtime_family_neutrality(void)
                                 YVEX_SELECTED_DEEPSEEK_ARTIFACT_FILENAME) == 0 &&
                          preparation->model && preparation->prepare_runtime_binding &&
                          preparation->model() == yvex_model_register_deepseek_v4(),
-                     "compiler preparation facts remain separate from runtime adapter facts");
+                     "compiler preparation facts remain separate from execution facts");
     yvex_error_clear(&err);
     YVEX_TEST_ASSERT(preparation->prepare_runtime_binding(NULL, &rejected, &err) ==
                              YVEX_ERR_INVALID_ARG &&
                          !rejected.published && !rejected.path[0],
                      "typed family preparation callback refuses incomplete compiler input");
-    YVEX_TEST_ASSERT(yvex_runtime_family_adapter_find("not-a-runtime-family") == NULL,
-                     "unknown runtime family refused");
-    YVEX_TEST_ASSERT(runtime_fixture_adapter()->mixer_capability(
-                         YVEX_SEQUENCE_MIXER_SLIDING_WINDOW, &capability) &&
-                         capability.state == YVEX_RUNTIME_MIXER_SUPPORTED,
-                     "fixture sliding-window mixer admitted");
-    YVEX_TEST_ASSERT(runtime_fixture_adapter()->mixer_capability(
-                         YVEX_SEQUENCE_MIXER_HIERARCHICAL_COMPRESSED, &capability) &&
-                         capability.state == YVEX_RUNTIME_MIXER_SUPPORTED,
-                     "registered DeepSeek hierarchy mixer is admitted");
-    YVEX_TEST_ASSERT(deepseek->mixer_capability(
-                         YVEX_SEQUENCE_MIXER_COMPRESSED_SPARSE, &capability) &&
-                         capability.family == YVEX_SEQUENCE_MIXER_SOFTMAX_ATTENTION &&
-                         capability.state == YVEX_RUNTIME_MIXER_SUPPORTED,
-                     "DeepSeek compressed sparse mixer admitted through adapter");
-    YVEX_TEST_ASSERT(deepseek->mixer_capability(
-                         YVEX_SEQUENCE_MIXER_KIMI_DELTA, &capability) &&
-                         capability.state == YVEX_RUNTIME_MIXER_NOT_ADMITTED,
-                     "future recurrent mixer not admitted by DeepSeek adapter");
+    YVEX_TEST_ASSERT(yvex_graph_execution_find(
+                         deepseek->adapter_id, deepseek->adapter_version, NULL) == deepseek,
+                     "compiled adapter identity selects one immutable execution binding");
+    YVEX_TEST_ASSERT(yvex_graph_execution_find(
+                         0ull, 0ull, "not-a-runtime-family") == NULL &&
+                         yvex_graph_execution_find(deepseek->adapter_id, 0ull, NULL) == NULL,
+                     "unknown target and execution version are refused");
     return 0;
 }
 
@@ -2848,7 +2835,7 @@ static int test_runtime_cleanup_lease_retry(
     memset(&model_request, 0, sizeof(model_request));
     model_request.artifact_path = yvex_artifact_path(fixture->artifact);
     model_request.runtime_binding_path = prepared->path;
-    model_request.target_id = runtime_fixture_adapter()->target_id;
+    model_request.target_id = runtime_fixture_execution()->target_id;
     memset(&session_request, 0, sizeof(session_request));
     session_request.backend = YVEX_BACKEND_KIND_CPU;
     YVEX_TEST_ASSERT(
@@ -3560,7 +3547,7 @@ static int test_runtime_model_adapter_refusal(
                      "runtime model resolves the registered adapter from caller target text");
     memset(target, 'x', sizeof(target) - 1u);
     target[sizeof(target) - 1u] = '\0';
-    YVEX_TEST_ASSERT(strcmp(yvex_runtime_model_view_get(model)->adapter->target_id,
+    YVEX_TEST_ASSERT(strcmp(yvex_runtime_model_view_get(model)->execution->target_id,
                             "deepseek4-v4-flash-dspark") == 0,
                      "sealed runtime model retains canonical immutable registry storage");
     yvex_runtime_model_close(&model);

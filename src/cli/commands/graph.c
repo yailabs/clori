@@ -662,7 +662,7 @@ static const yvex_graph_family_preparation *graph_family_preparation_find(const 
 
 static int graph_attention_prepare_paths(const yvex_graph_args *args,
                                          graph_attention_request *out,
-                                         const yvex_runtime_family_adapter *adapter,
+                                         const yvex_graph_execution_binding *adapter,
                                          const char *gguf_dir, yvex_error *err)
 {
     const yvex_graph_family_preparation *preparation =
@@ -720,7 +720,7 @@ static int graph_attention_prepare_paths(const yvex_graph_args *args,
 static int graph_cli_attention_request_build(const yvex_graph_args *args,
                                              graph_attention_request *out, yvex_error *err) {
     yvex_paths paths = {0};
-    const yvex_runtime_family_adapter *adapter;
+    const yvex_graph_execution_binding *adapter;
     const yvex_graph_execution_api *graph;
     char gguf_dir[YVEX_PATH_CAP];
     char registry_runtime_dir[YVEX_PATH_CAP];
@@ -781,7 +781,7 @@ static int graph_cli_attention_request_build(const yvex_graph_args *args,
            2u * sizeof(unsigned long long));
     out->request.require_mode = args->attention.require_mode;
     out->request.backend = YVEX_BACKEND_KIND_CPU;
-    adapter = yvex_runtime_family_adapter_find(args->attention.target);
+    adapter = yvex_graph_execution_find(0ull, 0ull, args->attention.target);
     if (!adapter)
         return YVEX_OK;
     if (!adapter->operator_family_key || !adapter->operator_family_key[0] ||
@@ -790,7 +790,7 @@ static int graph_cli_attention_request_build(const yvex_graph_args *args,
                        "runtime family adapter lacks operator artifact facts");
         return YVEX_ERR_STATE;
     }
-    graph = adapter->graph ? adapter->graph() : NULL;
+    graph = adapter->api;
     if (!graph || !graph->selection_key_resolve) {
         yvex_error_set(err, YVEX_ERR_STATE, "graph_attention_cli",
                        "runtime family adapter lacks selection-key resolution");
@@ -874,7 +874,7 @@ static int graph_attention_binding_prepare(
     const graph_attention_request *request,
     yvex_compilation_runtime_binding_result *result, yvex_error *err)
 {
-    const yvex_runtime_family_adapter *adapter;
+    const yvex_graph_execution_binding *adapter;
     const yvex_graph_family_preparation *preparation;
     yvex_compilation_runtime_binding_request prepare = {0};
 
@@ -886,7 +886,7 @@ static int graph_attention_binding_prepare(
                        "source, artifact, binding directory, and result are required");
         return YVEX_ERR_INVALID_ARG;
     }
-    adapter = yvex_runtime_family_adapter_find(request->request.target);
+    adapter = yvex_graph_execution_find(0ull, 0ull, request->request.target);
     preparation = graph_family_preparation_find(request->request.target);
     if (!adapter || !preparation || !preparation->prepare_runtime_binding) {
         yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "graph_attention_prepare",
@@ -961,8 +961,8 @@ static void graph_attention_result_init(
     const graph_attention_binding *binding, const char *binding_path,
     graph_attention_result *result)
 {
-    const yvex_runtime_family_adapter *adapter =
-        yvex_runtime_family_adapter_find(args->attention.target);
+    const yvex_graph_execution_binding *adapter =
+        yvex_graph_execution_find(0ull, 0ull, args->attention.target);
 
     memset(result, 0, sizeof(*result));
     yvex_core_text_copy(result->status, sizeof(result->status), "complete");
@@ -1011,7 +1011,7 @@ static int graph_cli_attention_prepare(const yvex_graph_args *args, yvex_error *
     memset(&request, 0, sizeof(request));
     memset(&prepared, 0, sizeof(prepared));
     memset(&binding_failure, 0, sizeof(binding_failure));
-    if (!yvex_runtime_family_adapter_find(args->attention.target)) {
+    if (!yvex_graph_execution_find(0ull, 0ull, args->attention.target)) {
         yvex_error_setf(err, YVEX_ERR_UNSUPPORTED, "graph_attention_cli",
                         "unsupported attention target: %s", args->attention.target);
         return graph_cli_print_runtime_error(err, exit_for_status(YVEX_ERR_UNSUPPORTED));

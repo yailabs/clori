@@ -834,7 +834,7 @@ int yvex_runtime_decode_operator_execute(
     result->step_count = result->decode.completed_steps;
     if (plan && model_view) {
         yvex_core_text_copy(result->family, sizeof(result->family),
-                            model_view->adapter->family_name);
+                            model_view->execution->family_name);
         yvex_runtime_identity_copy(result->artifact_identity,
                                    model_view->binding->artifact_identity);
         yvex_runtime_identity_copy(result->runtime_binding_identity,

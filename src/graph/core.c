@@ -15,6 +15,22 @@ struct yvex_attention_workspace {
     yvex_attention_workspace_summary summary;
 };
 
+const yvex_graph_execution_binding *yvex_graph_execution_find(
+    unsigned long long adapter_id, unsigned long long adapter_version,
+    const char *target_id)
+{
+    unsigned long long index;
+    for (index = 0ull;; ++index) {
+        const yvex_graph_execution_binding *binding = yvex_graph_execution_at(index);
+        if (!binding) return NULL;
+        if ((target_id && binding->target_id &&
+             strcmp(binding->target_id, target_id) == 0) ||
+            (!target_id && binding->adapter_id == adapter_id &&
+             binding->adapter_version == adapter_version))
+            return binding;
+    }
+}
+
 /*
  * Derive the reusable numerical graph arena from family scratch policy.
  *

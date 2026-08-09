@@ -212,12 +212,11 @@ static void runtime_model_timing(yvex_runtime_model *model, yvex_runtime_lifecyc
 }
 
 static int runtime_model_identity_build(const yvex_runtime_binding_summary *binding,
-                                        const yvex_runtime_family_adapter *adapter,
                                         char output[YVEX_SHA256_HEX_CAP]) {
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     yvex_sha256_init(&hash);
-    if (!binding || !adapter ||
+    if (!binding ||
         !yvex_sha256_update_text(&hash, "yvex.runtime.model.v1") ||
         !yvex_sha256_update_u64(&hash, YVEX_RUNTIME_MODEL_SCHEMA_V1) ||
         !yvex_sha256_update_text(&hash, binding->identity) ||
@@ -228,26 +227,12 @@ static int runtime_model_identity_build(const yvex_runtime_binding_summary *bind
         !yvex_sha256_update_text(&hash, binding->runtime_descriptor_identity) ||
         !yvex_sha256_update_text(&hash, binding->semantic_graph_identity) ||
         !yvex_sha256_update_text(&hash, binding->executable_graph_identity) ||
-        !yvex_sha256_update_u64(&hash, adapter->adapter_id) ||
-        !yvex_sha256_update_u64(&hash, adapter->adapter_version) ||
+        !yvex_sha256_update_u64(&hash, binding->family_adapter_id) ||
+        !yvex_sha256_update_u64(&hash, binding->family_adapter_version) ||
         !yvex_sha256_final(&hash, digest))
         return 0;
     yvex_sha256_hex(digest, output);
     return 1;
-}
-
-const yvex_runtime_family_adapter *yvex_runtime_family_adapter_find(const char *target_id) {
-    unsigned long long index;
-    if (!target_id)
-        return NULL;
-    for (index = 0ull;; ++index) {
-        const yvex_runtime_family_adapter *adapter = yvex_runtime_family_at(index);
-        if (!adapter)
-            break;
-        if (adapter->target_id && strcmp(adapter->target_id, target_id) == 0)
-            return adapter;
-    }
-    return NULL;
 }
 
 static int runtime_model_session_reserve(yvex_runtime_model *model,
@@ -716,7 +701,7 @@ static void runtime_model_view_bind(yvex_runtime_model *model)
 {
     model->view.binding = &model->binding_summary;
     model->view.compiled_binding = model->binding;
-    model->view.adapter = model->adapter;
+    model->view.execution = model->execution;
     model->view.attention = model->attention;
     model->view.draft_attention = model->draft_attention;
     model->view.moe = yvex_compiled_model_plan_moe(model->binding->plan, 0);
@@ -736,7 +721,7 @@ static void runtime_model_view_bind(yvex_runtime_model *model)
 int yvex_runtime_model_open(yvex_runtime_model **out, const yvex_runtime_model_open_request *request,
                             yvex_runtime_model_failure *failure, yvex_error *err) {
     yvex_runtime_model *model = NULL;
-    const yvex_runtime_family_adapter *adapter;
+    const yvex_graph_execution_binding *execution;
     const yvex_runtime_descriptor_summary *descriptor_summary;
     const yvex_attention_summary *attention_summary;
     const yvex_attention_summary *draft_attention_summary;
@@ -750,12 +735,6 @@ int yvex_runtime_model_open(yvex_runtime_model **out, const yvex_runtime_model_o
     if (failure) memset(failure, 0, sizeof(*failure));
     if (!out || !request || !request->artifact_path || !request->runtime_binding_path || !request->target_id)
         return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_MODEL_OPEN_REQUEST, 1ull, 0ull, err);
-    adapter = yvex_runtime_family_adapter_find(request->target_id);
-    if (!adapter || adapter->schema_version != YVEX_RUNTIME_FAMILY_ADAPTER_SCHEMA_V3 ||
-        !adapter->adapter_id ||
-        !adapter->graph || !yvex_sha256_hex_is_valid(adapter->logical_transform_identity))
-        return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_FAMILY_ADAPTER,
-                              YVEX_RUNTIME_FAMILY_ADAPTER_SCHEMA_V3, 0ull, err);
     model = (yvex_runtime_model *)calloc(1u, sizeof(*model));
     if (!model)
         return yvex_runtime_private_refuse(
@@ -766,7 +745,6 @@ int yvex_runtime_model_open(yvex_runtime_model **out, const yvex_runtime_model_o
         return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_MODEL_LOCK_INITIALIZATION, 1ull, 0ull, err);
     }
     model->lifecycle_mutex_ready = 1;
-    model->adapter = adapter;
     total_started = yvex_core_monotonic_ns();
     memset(&binding_failure, 0, sizeof(binding_failure));
     phase_started = yvex_core_monotonic_ns();
@@ -782,13 +760,19 @@ int yvex_runtime_model_open(yvex_runtime_model **out, const yvex_runtime_model_o
     if (rc != YVEX_OK)
         return runtime_model_open_fail(
             out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_BINDING, 1ull, 0ull, err, (yvex_status)rc);
-    if (model->binding_summary.family_adapter_id != adapter->adapter_id ||
-        model->binding_summary.family_adapter_version != adapter->adapter_version)
+    execution = yvex_graph_execution_find(
+        model->binding_summary.family_adapter_id,
+        model->binding_summary.family_adapter_version, NULL);
+    if (!execution || execution->schema_version != YVEX_GRAPH_EXECUTION_BINDING_SCHEMA_V1 ||
+        !execution->api || !execution->target_id ||
+        strcmp(execution->target_id, request->target_id) != 0)
         return runtime_model_open_fail(
-            out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_ADAPTER, adapter->adapter_id,
+            out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_ADAPTER,
+            model->binding_summary.family_adapter_id,
             model->binding_summary.family_adapter_id, err, YVEX_ERR_FORMAT);
+    model->execution = execution;
     if (strcmp(model->binding_summary.logical_transform_identity,
-               adapter->logical_transform_identity) != 0)
+               execution->logical_transform_identity) != 0)
         return runtime_model_open_fail(
             out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_LOGICAL_TRANSFORM, 1ull, 0ull, err,
             YVEX_ERR_FORMAT);
@@ -869,7 +853,7 @@ int yvex_runtime_model_open(yvex_runtime_model **out, const yvex_runtime_model_o
          (!draft_attention_summary ||
           strcmp(draft_attention_summary->attention_plan_identity,
                  model->binding_summary.draft_attention_plan_identity) != 0)) ||
-        !runtime_model_identity_build(&model->binding_summary, model->adapter,
+        !runtime_model_identity_build(&model->binding_summary,
                                       model->summary.runtime_model_identity)) {
         return runtime_model_open_fail(
             out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_IMPORTED_IDENTITY, 1ull, 0ull, err,
@@ -1461,7 +1445,7 @@ int yvex_runtime_session_open(yvex_runtime_execution_session **out,
     session->maximum_host_bytes = request->maximum_host_bytes;
     session->maximum_device_bytes = request->maximum_device_bytes;
     session->summary.backend = request->backend;
-    graph = model->view.adapter ? model->view.adapter->graph() : NULL;
+    graph = model->view.execution ? model->view.execution->api : NULL;
     if (model->residency) {
         rc = yvex_runtime_residency_snapshot(model->residency, &residency_storage,
                                              NULL, NULL, err);

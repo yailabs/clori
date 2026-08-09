@@ -204,7 +204,7 @@ static int test_arch_ir_golden_topology(void)
     const yvex_deepseek_v4_auxiliary_spec *draft_first;
     const yvex_deepseek_v4_auxiliary_spec *draft_middle;
     const yvex_deepseek_v4_auxiliary_spec *draft_final;
-    const yvex_runtime_family_adapter *adapter;
+    const yvex_graph_execution_binding *graph_execution;
     yvex_model_execution_descriptor execution;
     yvex_error err;
     int execution_rc;
@@ -220,17 +220,17 @@ static int test_arch_ir_golden_topology(void)
                      model->vocabulary_size == 129280 &&
                      model->maximum_context == 1048576,
                      "global DeepSeek-V4-Flash-DSpark geometry is normalized");
-    adapter = yvex_runtime_family_at(0u);
+    graph_execution = yvex_graph_execution_at(0u);
     YVEX_TEST_ASSERT(
-        adapter && yvex_model_register_deepseek_v4()->transform.architecture_identity(
+        graph_execution && yvex_model_register_deepseek_v4()->transform.architecture_identity(
                        ir, logical_identity),
-        "runtime adapter and logical architecture identities are available");
+        "compiled execution and logical architecture identities are available");
     YVEX_TEST_ASSERT_STREQ(
-        adapter->logical_transform_identity,
+        graph_execution->logical_transform_identity,
         YVEX_SELECTED_DEEPSEEK_TRANSFORM_IDENTITY,
-        "runtime adapter is bound to the admitted DSpark Transformation IR");
+        "execution binding is bound to the admitted DSpark Transformation IR");
     YVEX_TEST_ASSERT(
-        strcmp(logical_identity, adapter->logical_transform_identity) != 0,
+        strcmp(logical_identity, graph_execution->logical_transform_identity) != 0,
         "logical architecture and Transformation IR identities remain distinct");
     YVEX_TEST_ASSERT(
         strcmp(logical_identity,

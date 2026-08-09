@@ -1867,24 +1867,6 @@ static const yvex_moe_family_api deepseek_moe_api = {
 const yvex_moe_family_api *yvex_graph_moe_family_at(unsigned long long index) {
     return index == 0ull ? &deepseek_moe_api : NULL;
 }
-static int deepseek_mixer_capability(yvex_sequence_mixer_semantics semantics,
-                                     yvex_runtime_mixer_capability *out) {
-    if (!out) return 0;
-    out->family = YVEX_SEQUENCE_MIXER_SOFTMAX_ATTENTION;
-    out->semantics = semantics;
-    out->state = YVEX_RUNTIME_MIXER_NOT_IMPLEMENTED;
-    out->reason = "sequence-mixer semantics are not implemented by this family adapter";
-    if (semantics == YVEX_SEQUENCE_MIXER_SLIDING_WINDOW ||
-        semantics == YVEX_SEQUENCE_MIXER_COMPRESSED_SPARSE ||
-        semantics == YVEX_SEQUENCE_MIXER_HIERARCHICAL_COMPRESSED) {
-        out->state = YVEX_RUNTIME_MIXER_SUPPORTED;
-        out->reason = "admitted DeepSeek attention semantics";
-    } else if (semantics >= YVEX_SEQUENCE_MIXER_DELTANET) {
-        out->state = YVEX_RUNTIME_MIXER_NOT_ADMITTED;
-        out->reason = "sequence-mixer family is outside the admitted DeepSeek softmax adapter";
-    }
-    return 1;
-}
 static int deepseek_execution_capabilities(yvex_runtime_capabilities *out) {
     if (!out) return 0;
     *out = (yvex_runtime_capabilities){
@@ -1967,14 +1949,15 @@ static int deepseek_speculation_policy(const yvex_runtime_descriptor_summary *ru
     yvex_sha256_hex(digest, out->policy_identity);
     return 1;
 }
-static const yvex_runtime_family_adapter deepseek_adapter = {
-    .schema_version = YVEX_RUNTIME_FAMILY_ADAPTER_SCHEMA_V3, .adapter_id = YVEX_DEEPSEEK_V4_ADAPTER_ID,
+static const yvex_graph_execution_binding deepseek_execution = {
+    .schema_version = YVEX_GRAPH_EXECUTION_BINDING_SCHEMA_V1,
+    .adapter_id = YVEX_DEEPSEEK_V4_ADAPTER_ID,
     .adapter_version = YVEX_DEEPSEEK_V4_ADAPTER_VERSION,
     .target_id = "deepseek4-v4-flash-dspark", .family_name = "deepseek-v4-flash-dspark",
-    .operator_family_key = "deepseek", .operator_artifact_filename = YVEX_SELECTED_DEEPSEEK_ARTIFACT_FILENAME,
     .logical_transform_identity = YVEX_SELECTED_DEEPSEEK_TRANSFORM_IDENTITY,
-    .mixer_family = YVEX_SEQUENCE_MIXER_SOFTMAX_ATTENTION, .mixer_capability = deepseek_mixer_capability,
-    .graph = yvex_graph_lower_deepseek_v4};
+    .operator_family_key = "deepseek",
+    .operator_artifact_filename = YVEX_SELECTED_DEEPSEEK_ARTIFACT_FILENAME,
+    .api = &deepseek_graph_api};
 static const yvex_family_compiler_adapter deepseek_compiler = {
     .schema_version = YVEX_FAMILY_COMPILER_SCHEMA_V1,
     .adapter_id = YVEX_DEEPSEEK_V4_ADAPTER_ID,
@@ -1989,6 +1972,6 @@ static const yvex_family_compiler_adapter deepseek_compiler = {
 const yvex_family_compiler_adapter *yvex_compiler_family_deepseek_v4(void) {
     return &deepseek_compiler;
 }
-const yvex_runtime_family_adapter *yvex_runtime_family_at(unsigned long long index) {
-    return index == 0ull ? &deepseek_adapter : NULL;
+const yvex_graph_execution_binding *yvex_graph_execution_at(unsigned long long index) {
+    return index == 0ull ? &deepseek_execution : NULL;
 }

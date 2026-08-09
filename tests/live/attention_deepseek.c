@@ -1844,8 +1844,8 @@ static int run_runtime_oracle_mode(
     if (!result || !model_view || !session_view || !plan || !summary ||
         !capacity_summary || !ir ||
         !model_view->materialization || !model_view->descriptor ||
-        !model_view->binding || !model_view->adapter ||
-        !model_view->adapter->graph || !session_view->backend ||
+        !model_view->binding || !model_view->execution ||
+        !model_view->execution->api || !session_view->backend ||
         !session_view->attention_workspace ||
         capacity_summary->selected_layer_count != 3ull ||
         strcmp(capacity_summary->attention_plan_identity,

@@ -387,6 +387,19 @@ typedef struct yvex_graph_execution_api {
                              yvex_error *err);
 } yvex_graph_execution_api;
 
+#define YVEX_GRAPH_EXECUTION_BINDING_SCHEMA_V1 1u
+typedef struct {
+    unsigned int schema_version;
+    unsigned long long adapter_id, adapter_version;
+    const char *target_id, *family_name, *logical_transform_identity;
+    const char *operator_family_key, *operator_artifact_filename;
+    const yvex_graph_execution_api *api;
+} yvex_graph_execution_binding;
+const yvex_graph_execution_binding *yvex_graph_execution_at(unsigned long long index);
+const yvex_graph_execution_binding *yvex_graph_execution_find(
+    unsigned long long adapter_id, unsigned long long adapter_version,
+    const char *target_id);
+
 /* Resolve the reusable graph numerical arena independently of backend staging. */
 int yvex_attention_workspace_capacity_resolve(
     const yvex_graph_execution_api *family, const yvex_attention_plan *plan,
