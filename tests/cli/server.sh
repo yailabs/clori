@@ -6,8 +6,9 @@ set -eu
 
 YVEXD_BIN=${YVEXD_BIN:-./yvexd}
 OUT_DIR=${YVEX_TEST_OUT_DIR:-build/tests/cli-server}
+SOCKET_PATH=${TMPDIR:-/tmp}/yvex-cli-server-$$.sock
 
-yvex_test_cleanup "$OUT_DIR"
+yvex_test_cleanup "$OUT_DIR" "$SOCKET_PATH"
 mkdir -p "$OUT_DIR"
 
 fail()
@@ -47,6 +48,11 @@ mode_status=$?
 "$YVEXD_BIN" --model missing --runtime-binding missing \
     --target deepseek4-v4-flash >"$OUT_DIR/retired.out" 2>"$OUT_DIR/retired.err"
 retired_status=$?
+"$YVEXD_BIN" --model "$SOCKET_PATH.gguf" \
+    --runtime-binding "$SOCKET_PATH.binding" \
+    --socket "$SOCKET_PATH" --openai off \
+    >"$OUT_DIR/admission.out" 2>"$OUT_DIR/admission.err"
+admission_status=$?
 set -e
 test "$missing_status" -eq 2
 test "$remote_status" -eq 2
@@ -54,10 +60,14 @@ test "$port_status" -eq 2
 test "$duplicate_status" -eq 2
 test "$mode_status" -eq 2
 test "$retired_status" -eq 2
+test "$admission_status" -eq 1
 contains "$OUT_DIR/missing.err" '--model and --runtime-binding are required'
 contains "$OUT_DIR/port.err" 'invalid or duplicate --openai-port'
 contains "$OUT_DIR/duplicate.err" 'duplicate --openai option'
 contains "$OUT_DIR/mode.err" '--generation-mode requires target-only or dspark'
 contains "$OUT_DIR/retired.err" 'target deepseek4-v4-flash was replaced; use deepseek4-v4-flash-dspark'
+contains "$OUT_DIR/admission.err" 'model admission in progress (elapsed 0 s)'
+contains "$OUT_DIR/admission.err" 'model admission failed (elapsed '
+yvex_test_cleanup "$SOCKET_PATH"
 
 printf 'cli server grammar: ok\n'

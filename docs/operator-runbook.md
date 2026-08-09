@@ -141,10 +141,12 @@ previously running daemon and it is flushed before control passes to `yvexd`.
 
 Startup authenticates the selected artifact and binding, creates the immutable
 runtime model, builds residency once, and only then publishes the local socket.
-Large models can spend several minutes in this phase. From a second terminal,
-`yvex runtime status` refuses while the socket is absent and reports `ready`
-only after admission completes. A refusal or startup failure leaves no
-partially ready listener.
+Large models can spend several minutes in this phase. The foreground daemon
+prints an elapsed-time heartbeat every ten seconds until admission completes or
+fails; it does not claim a percentage that the admission pipeline cannot prove.
+From a second terminal, `yvex runtime status` refuses while the socket is absent
+and reports `ready` only after admission completes. A refusal or startup failure
+leaves no partially ready listener.
 
 ## What “load the model” means
 
