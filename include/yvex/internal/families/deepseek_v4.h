@@ -1,8 +1,4 @@
-/*
- * Private contract composing the bounded DeepSeek architecture, lowering, and graph recipe.
- * Family facts remain one identity-preserving registration boundary, never a generic registry or
- * runtime-generation admission claim.
- */
+/* Private DeepSeek architecture, lowering, and graph-recipe contract. */
 #ifndef INCLUDE_YVEX_INTERNAL_FAMILIES_DEEPSEEK_V4_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_FAMILIES_DEEPSEEK_V4_H_INCLUDED
 #include <stddef.h>
@@ -593,8 +589,7 @@ int yvex_runtime_descriptor_build_deepseek(
     const yvex_deepseek_gguf_map *map, const yvex_deepseek_v4_ir *ir,
     yvex_runtime_descriptor_failure *failure, yvex_error *err);
 int yvex_model_mapping_report_deepseek(
-    const yvex_model_target_request *request, yvex_model_target_report *report,
-    yvex_error *err);
+    const yvex_model_target_request *request, yvex_model_target_report *report, yvex_error *err);
 const yvex_model_family_api *yvex_model_register_deepseek_v4(void);
 const yvex_graph_family_api *yvex_graph_lower_deepseek_v4(void);
 #endif

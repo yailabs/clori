@@ -883,10 +883,69 @@ int yvex_artifact_physical_compatibility_validate(
     out->physical_payload_compatible = 1;
     out->artifact_rebuild_required = 0;
     out->materialization_rebuild_required = 0;
+    if (yvex_artifact_physical_compatibility_mismatch(
+            out, admission, plan->transform_identity))
+        return compatibility_fail(&check, YVEX_ARTIFACT_COMPATIBILITY_IDENTITY,
+                                  "sealed-compatibility", 1u, 0u, YVEX_ERR_FORMAT);
     if (failure)
         memset(failure, 0, sizeof(*failure));
     yvex_error_clear(err);
     return YVEX_OK;
+}
+
+const char *yvex_artifact_physical_compatibility_mismatch(
+    const yvex_artifact_physical_compatibility *proof,
+    const yvex_complete_artifact_admission *admission,
+    const char *logical_transform_identity)
+{
+    const char *identities[11];
+    size_t index;
+    if (!proof || !admission || !logical_transform_identity) return "record";
+    identities[0] = proof->writer_plan_identity;
+    identities[1] = proof->admitted_writer_plan_identity;
+    identities[2] = proof->artifact_identity;
+    identities[3] = proof->payload_identity;
+    identities[4] = proof->writer_transform_identity;
+    identities[5] = proof->admitted_transform_identity;
+    identities[6] = proof->writer_profile_identity;
+    identities[7] = proof->admitted_profile_identity;
+    identities[8] = proof->quant_execution_identity;
+    identities[9] = proof->payload_plan_identity;
+    identities[10] = proof->payload_byte_identity;
+    if (proof->schema_version != YVEX_ARTIFACT_PHYSICAL_COMPATIBILITY_SCHEMA_VERSION)
+        return "schema-version";
+    for (index = 0u; index < sizeof(identities) / sizeof(identities[0]); ++index)
+        if (!yvex_sha256_hex_is_valid(identities[index])) return "identity-encoding";
+    if (proof->source_snapshot_identity != admission->source_snapshot_identity)
+        return "source-snapshot-identity";
+    if (proof->mapping_identity != admission->mapping_identity) return "mapping-identity";
+    if (proof->tensor_count != admission->tensor_count ||
+        proof->tensors_compared != admission->tensor_count) return "tensor-count";
+    if (proof->payload_bytes != admission->payload_bytes || proof->payload_bytes_read)
+        return "payload-bytes";
+    if (strcmp(proof->admitted_writer_plan_identity, admission->writer_plan_identity) != 0)
+        return "admitted-writer-plan-identity";
+    if (strcmp(proof->artifact_identity, admission->artifact_identity) != 0)
+        return "artifact-identity";
+    if (strcmp(proof->payload_identity, admission->payload_identity) != 0)
+        return "payload-identity";
+    if (strcmp(proof->writer_transform_identity, logical_transform_identity) != 0)
+        return "writer-transform-identity";
+    if (strcmp(proof->admitted_transform_identity, admission->transform_identity) != 0)
+        return "admitted-transform-identity";
+    if (strcmp(proof->admitted_profile_identity, admission->profile_identity) != 0)
+        return "admitted-profile-identity";
+    if (strcmp(proof->quant_execution_identity, admission->quant_execution_identity) != 0)
+        return "quant-execution-identity";
+    if (strcmp(proof->payload_plan_identity, admission->payload_plan_identity) != 0)
+        return "payload-plan-identity";
+    if (strcmp(proof->payload_byte_identity, admission->payload_byte_identity) != 0)
+        return "payload-byte-identity";
+    if (!proof->physical_payload_compatible || proof->artifact_rebuild_required ||
+        proof->materialization_rebuild_required || !proof->tensor_inventory_equal ||
+        !proof->qtype_equal || !proof->layout_equal || !proof->offset_equal ||
+        !proof->payload_digest_equal) return "compatibility-verdict";
+    return NULL;
 }
 
 const char *yvex_artifact_admission_code_name(yvex_artifact_admission_code code) {

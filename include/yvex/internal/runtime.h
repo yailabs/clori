@@ -25,9 +25,7 @@ static inline void yvex_runtime_identity_copy(char destination[YVEX_SHA256_HEX_C
     if (length) memcpy(destination, source, length);
 }
 #define YVEX_RUNTIME_REASON_CAP 256u
-#define YVEX_RUNTIME_BINDING_SCHEMA_V7 7u
-#define YVEX_RUNTIME_BINDING_SCHEMA_V8 8u
-#define YVEX_RUNTIME_BINDING_SCHEMA_CURRENT YVEX_RUNTIME_BINDING_SCHEMA_V8
+#define YVEX_RUNTIME_BINDING_SCHEMA_CURRENT 9u
 #define YVEX_RUNTIME_BINDING_SUFFIX ".yvex-runtime-binding"
 typedef enum {
     YVEX_RUNTIME_BINDING_FAILURE_NONE = 0, YVEX_RUNTIME_BINDING_FAILURE_INVALID_ARGUMENT,
@@ -123,7 +121,6 @@ int yvex_runtime_capabilities_admitted_by(const yvex_runtime_capabilities *facts
                                           const yvex_runtime_capabilities *maximum);
 int yvex_runtime_capabilities_contract_valid(const yvex_runtime_capabilities *facts);
 const struct yvex_runtime_family_adapter *yvex_runtime_family_at(unsigned long long index);
-struct yvex_model_family_api;
 struct yvex_transformer_family_policy;
 struct yvex_logits_family_policy;
 struct yvex_speculation_family_policy;
@@ -158,7 +155,7 @@ typedef struct yvex_runtime_binding_summary {
     unsigned int schema_version;
     unsigned long long family_adapter_id, family_adapter_version;
     unsigned long long tensor_count, layer_count, draft_layer_count, file_bytes;
-    unsigned long long source_snapshot_identity, mapping_identity;
+    unsigned long long physical_execution_decision_count, source_snapshot_identity, mapping_identity;
     unsigned int artifact_format_version;
     char artifact_format[16];
     char identity[YVEX_SHA256_HEX_CAP];
@@ -170,6 +167,7 @@ typedef struct yvex_runtime_binding_summary {
     char materialization_identity[YVEX_SHA256_HEX_CAP], logical_model_identity[YVEX_SHA256_HEX_CAP];
     char runtime_numeric_identity[YVEX_SHA256_HEX_CAP];
     char runtime_descriptor_identity[YVEX_SHA256_HEX_CAP], model_execution_identity[YVEX_SHA256_HEX_CAP];
+    char physical_execution_identity[YVEX_SHA256_HEX_CAP];
     char attention_plan_identity[YVEX_SHA256_HEX_CAP], moe_plan_identity[YVEX_SHA256_HEX_CAP];
     char draft_attention_plan_identity[YVEX_SHA256_HEX_CAP];
     char draft_moe_plan_identity[YVEX_SHA256_HEX_CAP];
@@ -199,8 +197,13 @@ int yvex_runtime_binding_import_materialization(
 int yvex_runtime_binding_import_graph(
     const yvex_runtime_binding *binding, const yvex_materialization_session *session,
     yvex_runtime_descriptor **descriptor_out, yvex_attention_plan **attention_out,
-    yvex_attention_plan **draft_attention_out,
+    yvex_attention_plan **draft_attention_out, const yvex_physical_execution_ir **physical_execution_out,
     yvex_runtime_binding_failure *failure, yvex_error *err);
+int yvex_runtime_binding_policies(
+    const yvex_runtime_binding *binding,
+    const struct yvex_transformer_family_policy **transformer,
+    const struct yvex_logits_family_policy **logits,
+    const struct yvex_speculation_family_policy **speculation);
 typedef enum {
     YVEX_RUNTIME_MODEL_FAILURE_NONE = 0, YVEX_RUNTIME_MODEL_FAILURE_INVALID_ARGUMENT,
     YVEX_RUNTIME_MODEL_FAILURE_ADAPTER, YVEX_RUNTIME_MODEL_FAILURE_BINDING,
@@ -208,8 +211,8 @@ typedef enum {
     YVEX_RUNTIME_MODEL_FAILURE_MATERIALIZATION, YVEX_RUNTIME_MODEL_FAILURE_DESCRIPTOR,
     YVEX_RUNTIME_MODEL_FAILURE_GRAPH, YVEX_RUNTIME_MODEL_FAILURE_BACKEND,
     YVEX_RUNTIME_MODEL_FAILURE_DRIFT, YVEX_RUNTIME_MODEL_FAILURE_BUSY,
-    YVEX_RUNTIME_MODEL_FAILURE_CANCELLED,
-    YVEX_RUNTIME_MODEL_FAILURE_ALLOCATION, YVEX_RUNTIME_MODEL_FAILURE_CLEANUP
+    YVEX_RUNTIME_MODEL_FAILURE_CANCELLED, YVEX_RUNTIME_MODEL_FAILURE_ALLOCATION,
+    YVEX_RUNTIME_MODEL_FAILURE_CLEANUP
 } yvex_runtime_model_failure_code;
 typedef struct yvex_runtime_model_failure {
     yvex_runtime_model_failure_code code;
@@ -303,6 +306,7 @@ typedef struct {
 } yvex_runtime_state_residency_summary;
 typedef struct {
     const yvex_runtime_residency *residency;
+    const yvex_runtime_binding *compiled_binding;
     const yvex_runtime_binding_summary *binding;
     const yvex_runtime_family_adapter *adapter;
     const yvex_attention_plan *attention, *draft_attention;

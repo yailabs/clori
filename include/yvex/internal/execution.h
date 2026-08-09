@@ -141,8 +141,14 @@ int yvex_physical_execution_ir_build(
     const yvex_materialization_session *materialization,
     const yvex_runtime_descriptor *descriptor,
     const char *physical_variant_identity, yvex_error *err);
+int yvex_physical_execution_ir_import(
+    yvex_physical_execution_ir **out, const yvex_physical_execution_summary *summary,
+    const yvex_physical_execution_decision *decisions, unsigned long long count,
+    yvex_error *err);
 const yvex_physical_execution_summary *yvex_physical_execution_ir_summary(
     const yvex_physical_execution_ir *ir);
+const yvex_physical_execution_decision *yvex_physical_execution_ir_decision_at(
+    const yvex_physical_execution_ir *ir, unsigned long long index);
 void yvex_physical_execution_ir_close(yvex_physical_execution_ir **ir);
 
 typedef struct {

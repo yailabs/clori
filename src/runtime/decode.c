@@ -282,8 +282,7 @@ static int decode_structure_valid(
                            &routed) ||
         result->routed_experts != routed)
         return 0;
-    if (!execution) return 1;
-    return result->swa_layers == execution->swa_layers &&
+    return execution && result->swa_layers == execution->swa_layers &&
            result->csa_layers == execution->csa_layers &&
            result->hca_layers == execution->hca_layers &&
            result->hash_routers == execution->hash_router_layer_count &&

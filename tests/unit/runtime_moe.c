@@ -73,13 +73,11 @@ static int moe_test_family_plan(void)
     memset(&runtime.model_execution, 0, sizeof(runtime.model_execution));
     attention.ordinal = attention.layer_index = 0ull;
     {
-        yvex_moe_layer_plan legacy;
+        yvex_moe_layer_plan rejected;
         YVEX_TEST_ASSERT(
-            family->project_layer(0ull, &runtime, &attention, &legacy, &err) == YVEX_OK &&
-                legacy.router_class == YVEX_MOE_ROUTER_HASH_TOKEN_ID &&
-                legacy.shared_experts == 1ull &&
-                legacy.expert_intermediate_width == 2048ull,
-            "binding v7 retains its exact family-owned MoE projection");
+            family->project_layer(0ull, &runtime, &attention, &rejected, &err) ==
+                YVEX_ERR_INVALID_ARG,
+            "MoE projection refuses an uncompiled execution descriptor");
     }
     return 0;
 }

@@ -39,7 +39,6 @@ struct yvex_runtime_transformer_context {
     float *embedding, *expanded_a, *expanded_b, *candidate_hidden;
     float *moe_combined, *moe_post, *moe_combination, *moe_routed, *moe_shared;
     unsigned long long token_capacity, host_bytes, final_weight_bytes, execution_count, moe_workspace_bytes;
-    char workspace_identity[YVEX_SHA256_HEX_CAP];
     pthread_mutex_t mutex;
     int mutex_ready, busy, invalidated;
 };
@@ -256,20 +255,22 @@ static int transformer_runtime_plan_facts(
     const yvex_runtime_model_view *view, yvex_tensor_scope scope,
     yvex_transformer_plan_facts *facts, yvex_error *err)
 {
-    const yvex_runtime_descriptor_summary *runtime = view
-        ? yvex_runtime_descriptor_summary_get(view->descriptor) : NULL;
-    const yvex_materialization_summary *material = view
-        ? yvex_materialization_session_summary(view->materialization) : NULL;
+    const yvex_runtime_descriptor_summary *runtime =
+        view ? yvex_runtime_descriptor_summary_get(view->descriptor) : NULL;
+    const yvex_materialization_summary *material =
+        view ? yvex_materialization_session_summary(view->materialization) : NULL;
     const yvex_attention_plan *attention = transformer_runtime_attention(view, scope);
     const yvex_attention_summary *attention_summary = yvex_attention_plan_summary(attention);
+    const yvex_transformer_family_policy *policy = NULL;
     const yvex_attention_layer_plan *last;
     unsigned long long slot;
     memset(facts, 0, sizeof(*facts));
-    if (!view || !runtime || !view->adapter || !view->adapter->transformer_policy ||
-        !view->adapter->transformer_policy(runtime, &facts->policy) || !material ||
+    if (!view || !runtime || !view->adapter ||
+        !yvex_runtime_binding_policies(view->compiled_binding, &policy, NULL, NULL) || !material ||
         !attention_summary || !attention_summary->layer_count)
         return transformer_runtime_refuse(err, YVEX_ERR_FORMAT,
                                           "transformer runtime plan facts are unavailable");
+    facts->policy = *policy;
     facts->family_adapter_id = view->adapter->adapter_id;
     facts->family_adapter_version = view->adapter->adapter_version;
     /* Runtime GLOBAL selects the target execution lane; its per-layer
@@ -1178,7 +1179,6 @@ static int transformer_prepare(yvex_runtime_transformer_context *context,
                 "transformer CUDA workspace did not publish stable ownership");
     }
     if (rc != YVEX_OK) return rc;
-    yvex_runtime_identity_copy(context->workspace_identity, session.workspace_identity);
     return transformer_shape_admit(context, input, request, state, &session, err);
 }
 static int transformer_core_features_execute(

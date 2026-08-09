@@ -1818,19 +1818,8 @@ static const yvex_graph_family_api deepseek_graph_api = {
     .cpu_chunk_execute = graph_cpu_chunk_execute
 };
 const yvex_graph_family_api *yvex_graph_lower_deepseek_v4(void) { return &deepseek_graph_api; }
-static const yvex_model_execution_descriptor deepseek_legacy_execution = {
-    .schema_version = YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1, .maximum_context = 1048576ull,
-    .hidden_width = 4096ull, .residual_streams = 4ull, .mhc_sinkhorn_iterations = 20ull,
-    .mhc_epsilon = 1e-6, .normalization_epsilon = 1e-6, .shared_experts = 1ull,
-    .hash_router_layer_count = 3ull, .routed_ffn_width = 2048ull, .shared_ffn_width = 2048ull,
-    .routed_scaling_factor = 1.5, .activation_limit = 10.0, .proposal_width = 5ull,
-    .draft_noise_token_id = 128799ull, .target_feature_count = 3ull,
-    .target_feature_layers = {40ull, 41ull, 42ull}, .target_feature_width = 4096ull,
-    .draft_layer_count = 3ull, .markov_rank = 256ull};
 static const yvex_model_execution_descriptor *deepseek_execution_model(const yvex_runtime_descriptor_summary *runtime) {
-    if (!runtime) return NULL;
-    if (!runtime->model_execution.schema_version) return &deepseek_legacy_execution;
-    return runtime->model_execution.schema_version == YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1
+    return runtime && runtime->model_execution.schema_version == YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1
                ? &runtime->model_execution : NULL;
 }
 static int deepseek_moe_layer(unsigned long long index, const yvex_runtime_descriptor_summary *runtime,

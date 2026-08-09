@@ -124,13 +124,13 @@ static int logits_plan_build(yvex_runtime_logits_plan *plan,
     const yvex_materialized_tensor_binding *binding;
     const yvex_gguf_qtype_geometry *geometry;
     const yvex_quant_numeric_capability *numeric;
-    yvex_logits_family_policy policy;
+    const yvex_logits_family_policy *policy;
     unsigned long long blocks, row_bytes, encoded_bytes;
-    if (!plan || !view || !view->adapter || !view->adapter->logits_policy ||
-        !view->adapter->logits_policy(&policy) ||
-        policy.schema_version != YVEX_RUNTIME_LOGITS_SCHEMA_V1 ||
-        !policy.separate_output_head || policy.tied_output_head ||
-        policy.output_head_bias)
+    if (!plan || !view || !view->adapter ||
+        !yvex_runtime_binding_policies(view->compiled_binding, NULL, &policy, NULL) ||
+        policy->schema_version != YVEX_RUNTIME_LOGITS_SCHEMA_V1 ||
+        !policy->separate_output_head || policy->tied_output_head ||
+        policy->output_head_bias)
         return logits_refuse(err, YVEX_ERR_FORMAT,
                              "family output-head policy is unavailable or incompatible");
     runtime = yvex_runtime_descriptor_summary_get(view->descriptor);
@@ -176,8 +176,8 @@ static int logits_plan_build(yvex_runtime_logits_plan *plan,
     plan->summary.encoded_bytes = encoded_bytes;
     plan->summary.vocabulary_size = transformer->vocabulary_size;
     plan->summary.hidden_width = transformer->hidden_width;
-    plan->summary.separate_output_head = policy.separate_output_head;
-    plan->summary.output_head_bias = policy.output_head_bias;
+    plan->summary.separate_output_head = policy->separate_output_head;
+    plan->summary.output_head_bias = policy->output_head_bias;
     yvex_runtime_identity_copy(plan->summary.artifact_identity,
                                view->binding->artifact_identity);
     yvex_runtime_identity_copy(plan->summary.materialization_identity,
@@ -355,12 +355,12 @@ int yvex_runtime_logits_admit_shared_draft_plan(
     const yvex_runtime_descriptor_summary *runtime =
         context && context->model_view
             ? yvex_runtime_descriptor_summary_get(context->model_view->descriptor) : NULL;
-    yvex_speculation_family_policy policy;
-    if (!context || !draft || !runtime || !context->model_view || !context->model_view->adapter ||
-        !context->model_view->adapter->speculation_policy ||
-        !context->model_view->adapter->speculation_policy(runtime, &policy) ||
-        policy.schema_version != YVEX_SPECULATION_FAMILY_POLICY_SCHEMA_V1 ||
-        !policy.shares_output_head || draft->tensor_scope != YVEX_TENSOR_SCOPE_DRAFT ||
+    const yvex_speculation_family_policy *policy = NULL;
+    if (!context || !draft || !runtime || !context->model_view ||
+        !yvex_runtime_binding_policies(
+            context->model_view->compiled_binding, NULL, NULL, &policy) ||
+        policy->schema_version != YVEX_SPECULATION_FAMILY_POLICY_SCHEMA_V1 ||
+        !policy->shares_output_head || draft->tensor_scope != YVEX_TENSOR_SCOPE_DRAFT ||
         draft->hidden_width != context->plan.summary.hidden_width ||
         draft->vocabulary_size != context->plan.summary.vocabulary_size ||
         strcmp(draft->logical_model_identity,

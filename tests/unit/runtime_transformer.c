@@ -97,10 +97,8 @@ static int transformer_test_family(void)
                          policy.final_norm_after_head,
                      "DeepSeek adapter fixes exact four-stream ordered backbone semantics");
     memset(&runtime.model_execution, 0, sizeof(runtime.model_execution));
-    YVEX_TEST_ASSERT(adapter->transformer_policy(&runtime, &policy) &&
-                         policy.hidden_width == 4096ull &&
-                         policy.maximum_context == 1048576ull,
-                     "binding v7 retains its exact family-owned transformer projection");
+    YVEX_TEST_ASSERT(!adapter->transformer_policy(&runtime, &policy),
+                     "transformer policy refuses an uncompiled execution descriptor");
     return 0;
 }
 

@@ -2,7 +2,7 @@
  * Persist portable runtime-model inputs; reopened local snapshots are leases, never identity or
  * cache authority.
  */
-#include <yvex/internal/runtime.h>
+#include "src/runtime/private.h"
 #include <yvex/internal/core.h>
 #include <yvex/internal/moe.h>
 #include <errno.h>
@@ -23,6 +23,9 @@
 #endif
 #define BINDING_MAGIC_V7 "YVRBND7\0"
 #define BINDING_MAGIC_V8 "YVRBND8\0"
+#define BINDING_MAGIC_V9 "YVRBND9\0"
+#define BINDING_SCHEMA_V7 7u
+#define BINDING_SCHEMA_V8 8u
 #define BINDING_MAGIC_BYTES 8u
 #define BINDING_HEADER_BYTES (BINDING_MAGIC_BYTES + 16u + 64u)
 #define BINDING_MAX_BYTES (64u * 1024u * 1024u)
@@ -65,62 +68,32 @@ static const yvex_runtime_binding_failure_code binding_file_codes[] = {
     YVEX_RUNTIME_BINDING_FAILURE_TRUNCATED, YVEX_RUNTIME_BINDING_FAILURE_PUBLISH,
     YVEX_RUNTIME_BINDING_FAILURE_FORMAT,
 };
-struct yvex_runtime_binding {
-    yvex_runtime_binding_summary summary;
-    yvex_complete_artifact_admission admission;
-    yvex_materialization_summary materialization;
-    yvex_materialized_tensor_binding *materialized;
-    yvex_runtime_descriptor_summary descriptor;
-    yvex_runtime_tensor_binding *runtime;
-    yvex_attention_summary attention;
-    yvex_attention_layer_plan *layers;
-    yvex_attention_summary draft_attention;
-    yvex_attention_layer_plan *draft_layers;
-};
-static void binding_failure_set(yvex_runtime_binding_failure *failure,
-                                yvex_runtime_binding_failure_code code,
-                                const char *field, const char *path,
-                                unsigned long long record, unsigned long long expected,
-                                unsigned long long actual, const char *reason)
+int yvex_runtime_private_binding_refuse(
+    yvex_runtime_binding_failure *failure, yvex_runtime_binding_failure_code code,
+    const char *field, const char *path, unsigned long long record,
+    unsigned long long expected, unsigned long long actual, yvex_status status,
+    const char *reason, yvex_error *err)
 {
-    if (!failure) return;
-    memset(failure, 0, sizeof(*failure));
-    failure->code = code;
-    failure->record_index = record;
-    failure->expected = expected;
-    failure->actual = actual;
-    failure->reason = reason;
-    if (field) yvex_core_text_copy(failure->field, sizeof(failure->field), field);
-    if (path) yvex_core_text_copy(failure->path, sizeof(failure->path), path);
-}
-static int binding_reject(yvex_runtime_binding_failure *failure,
-                          yvex_runtime_binding_failure_code code,
-                          const char *field, const char *path,
-                          unsigned long long record, unsigned long long expected,
-                          unsigned long long actual, yvex_status status,
-                          const char *reason, yvex_error *err)
-{
-    binding_failure_set(failure, code, field, path, record, expected, actual, reason);
+    if (failure) {
+        memset(failure, 0, sizeof(*failure));
+        failure->code = code;
+        failure->record_index = record;
+        failure->expected = expected;
+        failure->actual = actual;
+        failure->reason = reason;
+        if (field) yvex_core_text_copy(failure->field, sizeof(failure->field), field);
+        if (path) yvex_core_text_copy(failure->path, sizeof(failure->path), path);
+    }
     yvex_error_set(err, status, "runtime.binding", reason);
     return status;
 }
+#define binding_reject yvex_runtime_private_binding_refuse
 static int bytes_put_u64(binding_bytes *bytes, unsigned long long value)
 {
     unsigned char encoded[8];
     unsigned int i;
     for (i = 0u; i < 8u; ++i) encoded[i] = (unsigned char)(value >> (i * 8u));
     return yvex_core_bytes_append(bytes, encoded, sizeof(encoded));
-}
-static int bytes_put_i64(binding_bytes *bytes, long long value)
-{
-    return bytes_put_u64(bytes, (unsigned long long)value);
-}
-static int bytes_put_f64(binding_bytes *bytes, double value)
-{
-    unsigned long long bits = 0ull;
-    if (sizeof(value) != sizeof(bits)) return 0;
-    memcpy(&bits, &value, sizeof(bits));
-    return bytes_put_u64(bytes, bits);
 }
 static int bytes_put_text(binding_bytes *bytes, const char *text)
 {
@@ -144,20 +117,6 @@ static int cursor_u64(binding_cursor *cursor, unsigned long long *out)
     if (!out || !cursor_take(cursor, encoded, sizeof(encoded))) return 0;
     for (i = 0u; i < 8u; ++i) value |= (unsigned long long)encoded[i] << (i * 8u);
     *out = value;
-    return 1;
-}
-static int cursor_i64(binding_cursor *cursor, long long *out)
-{
-    unsigned long long bits;
-    if (!out || !cursor_u64(cursor, &bits)) return 0;
-    memcpy(out, &bits, sizeof(bits));
-    return 1;
-}
-static int cursor_f64(binding_cursor *cursor, double *out)
-{
-    unsigned long long bits;
-    if (!out || sizeof(*out) != sizeof(bits) || !cursor_u64(cursor, &bits)) return 0;
-    memcpy(out, &bits, sizeof(bits));
     return 1;
 }
 static int cursor_text(binding_cursor *cursor, char *out, size_t capacity)
@@ -288,11 +247,12 @@ static int fields_write(binding_bytes *bytes, const void *object,
             } else if (field->kind == BINDING_FIELD_SIGNED) {
                 if (field->width != sizeof(signed_value)) return 0;
                 memcpy(&signed_value, value, sizeof(signed_value));
-                if (!bytes_put_i64(bytes, signed_value)) return 0;
+                if (!bytes_put_u64(bytes, (unsigned long long)signed_value)) return 0;
             } else {
                 if (field->width != sizeof(floating)) return 0;
                 memcpy(&floating, value, sizeof(floating));
-                if (!bytes_put_f64(bytes, floating)) return 0;
+                memcpy(&number, &floating, sizeof(number));
+                if (!bytes_put_u64(bytes, number)) return 0;
             }
         }
     }
@@ -320,10 +280,12 @@ static int fields_read(binding_cursor *cursor, void *object,
                     !field_unsigned_store(value, field->width, number)) return 0;
             } else if (field->kind == BINDING_FIELD_SIGNED) {
                 if (field->width != sizeof(signed_value) ||
-                    !cursor_i64(cursor, &signed_value)) return 0;
+                    !cursor_u64(cursor, &number)) return 0;
+                memcpy(&signed_value, &number, sizeof(signed_value));
                 memcpy(value, &signed_value, sizeof(signed_value));
             } else {
-                if (field->width != sizeof(floating) || !cursor_f64(cursor, &floating)) return 0;
+                if (field->width != sizeof(floating) || !cursor_u64(cursor, &number)) return 0;
+                memcpy(&floating, &number, sizeof(floating));
                 memcpy(value, &floating, sizeof(floating));
             }
         }
@@ -395,13 +357,6 @@ static const binding_field physical_compatibility_fields[] = {
     FIELD_U(yvex_artifact_physical_compatibility, offset_equal),
     FIELD_U(yvex_artifact_physical_compatibility, payload_digest_equal),
 };
-static yvex_materialization_summary materialization_canonical(
-    const yvex_materialization_summary *source)
-{
-    yvex_materialization_summary value = *source;
-    value.status = YVEX_MATERIALIZATION_STATUS_PLANNED;
-    return value;
-}
 static const binding_field material_summary_fields[] = {
     FIELD_T(yvex_materialization_summary, artifact_identity),
     FIELD_T(yvex_materialization_summary, plan_identity),
@@ -598,6 +553,76 @@ static const binding_field capability_fields[] = {
     FIELD_U(yvex_runtime_capabilities, logits_ready),
     FIELD_U(yvex_runtime_capabilities, generation_ready),
 };
+static const binding_field transformer_policy_fields[] = {
+    FIELD_U(yvex_transformer_family_policy, schema_version),
+    FIELD_U(yvex_transformer_family_policy, initial_policy),
+    FIELD_U(yvex_transformer_family_policy, final_policy),
+    FIELD_U(yvex_transformer_family_policy, residual_streams),
+    FIELD_U(yvex_transformer_family_policy, hidden_width),
+    FIELD_U(yvex_transformer_family_policy, expanded_width),
+    FIELD_U(yvex_transformer_family_policy, maximum_context),
+    FIELD_U(yvex_transformer_family_policy, sinkhorn_iterations),
+    FIELD_F(yvex_transformer_family_policy, mhc_epsilon),
+    FIELD_F(yvex_transformer_family_policy, output_norm_epsilon),
+    FIELD_U(yvex_transformer_family_policy, attention_then_moe),
+    FIELD_U(yvex_transformer_family_policy, deferred_ffn_post),
+    FIELD_U(yvex_transformer_family_policy, final_norm_after_head),
+};
+static const binding_field logits_policy_fields[] = {
+    FIELD_U(yvex_logits_family_policy, schema_version),
+    FIELD_U(yvex_logits_family_policy, separate_output_head),
+    FIELD_U(yvex_logits_family_policy, tied_output_head),
+    FIELD_U(yvex_logits_family_policy, output_head_bias),
+};
+static const binding_field speculation_policy_fields[] = {
+    FIELD_U(yvex_speculation_family_policy, schema_version),
+    FIELD_U(yvex_speculation_family_policy, block_size),
+    FIELD_U(yvex_speculation_family_policy, noise_token_id),
+    FIELD_U(yvex_speculation_family_policy, target_feature_layer_count),
+    FIELD_A(yvex_speculation_family_policy, target_feature_layers),
+    FIELD_U(yvex_speculation_family_policy, target_feature_width),
+    FIELD_U(yvex_speculation_family_policy, concatenated_feature_width),
+    FIELD_U(yvex_speculation_family_policy, draft_layer_count),
+    FIELD_U(yvex_speculation_family_policy, markov_rank),
+    FIELD_U(yvex_speculation_family_policy, accepted_prefix_maximum),
+    FIELD_U(yvex_speculation_family_policy, feature_projection_role),
+    FIELD_U(yvex_speculation_family_policy, feature_norm_role),
+    FIELD_U(yvex_speculation_family_policy, output_norm_role),
+    FIELD_U(yvex_speculation_family_policy, markov_embedding_role),
+    FIELD_U(yvex_speculation_family_policy, markov_output_role),
+    FIELD_U(yvex_speculation_family_policy, confidence_role),
+    FIELD_U(yvex_speculation_family_policy, parallel_block_backbone),
+    FIELD_U(yvex_speculation_family_policy, sequential_markov),
+    FIELD_U(yvex_speculation_family_policy, confidence_available),
+    FIELD_U(yvex_speculation_family_policy, shares_embedding),
+    FIELD_U(yvex_speculation_family_policy, shares_output_head),
+    FIELD_U(yvex_speculation_family_policy, target_verification_required),
+    FIELD_T(yvex_speculation_family_policy, policy_identity),
+};
+typedef yvex_physical_execution_summary physical_summary;
+typedef yvex_physical_execution_decision physical_decision;
+#define PHYSICAL_U(member) FIELD_U(physical_decision, member)
+#define PHYSICAL_T(member) FIELD_T(physical_decision, member)
+static const binding_field physical_summary_fields[] = {
+    FIELD_U(physical_summary, schema_version), FIELD_U(physical_summary, decision_count),
+    FIELD_U(physical_summary, encoded_bytes), FIELD_A(physical_summary, consumer_counts),
+    FIELD_A(physical_summary, layout_counts), FIELD_A(physical_summary, placement_counts),
+    FIELD_T(physical_summary, physical_variant_identity), FIELD_T(physical_summary, identity),
+};
+static const binding_field physical_decision_fields[] = {
+    PHYSICAL_U(schema_version), PHYSICAL_U(terminal_tensor_id), PHYSICAL_U(role), PHYSICAL_U(scope),
+    PHYSICAL_U(layer_index), PHYSICAL_U(predictor_index), PHYSICAL_U(expert_count),
+    PHYSICAL_U(canonical_qtype), PHYSICAL_U(canonical_row_width),
+    PHYSICAL_U(canonical_row_count), PHYSICAL_U(encoded_offset), PHYSICAL_U(encoded_bytes),
+    PHYSICAL_U(alignment), PHYSICAL_U(consumer), PHYSICAL_U(layout), PHYSICAL_U(placement),
+    PHYSICAL_U(sharing), PHYSICAL_U(activation), PHYSICAL_U(supported_width_mask),
+    PHYSICAL_U(maximum_context), PHYSICAL_U(required_backend),
+    PHYSICAL_U(required_compute_major), PHYSICAL_U(required_compute_minor), PHYSICAL_U(evidence),
+    PHYSICAL_U(fallback), PHYSICAL_U(derived_asset_required), PHYSICAL_T(kernel_family),
+    PHYSICAL_T(terminal_identity), PHYSICAL_T(decision_identity),
+};
+#undef PHYSICAL_U
+#undef PHYSICAL_T
 int yvex_runtime_capabilities_contract_valid(const yvex_runtime_capabilities *facts)
 {
     return facts && (!facts->attention_core_ready || facts->attention_semantics_ready) &&
@@ -682,19 +707,83 @@ static int binding_capabilities_match_adapter(
     unsigned long long adapter_id, unsigned long long adapter_version,
     const yvex_runtime_capabilities *facts)
 {
-    unsigned long long index;
-    if (!yvex_runtime_capabilities_contract_valid(facts)) return 0;
-    for (index = 0ull;; ++index) {
-        const yvex_runtime_family_adapter *adapter = yvex_runtime_family_at(index);
-        yvex_runtime_capabilities declared = {0};
-        if (!adapter) return 0;
-        if (adapter->adapter_id != adapter_id ||
-            adapter->adapter_version != adapter_version)
-            continue;
-        return adapter->execution_capabilities &&
-               adapter->execution_capabilities(&declared) &&
-               yvex_runtime_capabilities_admitted_by(facts, &declared);
-    }
+    const yvex_runtime_family_adapter *adapter =
+        yvex_runtime_private_adapter_find_identity(adapter_id, adapter_version);
+    yvex_runtime_capabilities declared = {0};
+    return adapter && yvex_runtime_capabilities_contract_valid(facts) &&
+           adapter->execution_capabilities &&
+           adapter->execution_capabilities(&declared) &&
+           yvex_runtime_capabilities_admitted_by(facts, &declared);
+}
+static int binding_policies_compile(
+    unsigned long long adapter_id, unsigned long long adapter_version,
+    const yvex_runtime_descriptor_summary *descriptor,
+    yvex_transformer_family_policy *transformer, yvex_logits_family_policy *logits,
+    yvex_speculation_family_policy *speculation)
+{
+    const yvex_runtime_family_adapter *adapter =
+        yvex_runtime_private_adapter_find_identity(adapter_id, adapter_version);
+    unsigned long long expanded;
+    return adapter && descriptor && transformer && logits && speculation &&
+           adapter->transformer_policy && adapter->transformer_policy(descriptor, transformer) &&
+           adapter->logits_policy && adapter->logits_policy(logits) &&
+           adapter->speculation_policy && adapter->speculation_policy(descriptor, speculation) &&
+           transformer->schema_version == YVEX_TRANSFORMER_PLAN_SCHEMA_V2 &&
+           yvex_core_u64_mul(transformer->residual_streams, transformer->hidden_width, &expanded) &&
+           transformer->expanded_width == expanded &&
+           transformer->hidden_width == descriptor->model_execution.hidden_width &&
+           logits->schema_version == YVEX_RUNTIME_LOGITS_SCHEMA_V1 &&
+           speculation->schema_version == YVEX_SPECULATION_FAMILY_POLICY_SCHEMA_V1 &&
+           speculation->block_size == descriptor->model_execution.proposal_width &&
+           speculation->draft_layer_count == descriptor->model_execution.draft_layer_count &&
+           yvex_sha256_hex_is_valid(speculation->policy_identity);
+}
+static int binding_policies_valid(const yvex_runtime_binding *binding)
+{
+    const yvex_model_execution_descriptor *model = &binding->descriptor.model_execution;
+    const yvex_transformer_family_policy *transformer = &binding->transformer_policy;
+    const yvex_logits_family_policy *logits = &binding->logits_policy;
+    const yvex_speculation_family_policy *speculation = &binding->speculation_policy;
+    unsigned long long expanded, features;
+    return transformer->schema_version == YVEX_TRANSFORMER_PLAN_SCHEMA_V2 &&
+           transformer->initial_policy == YVEX_TRANSFORMER_INITIAL_REPEAT_STREAMS &&
+           transformer->final_policy == YVEX_TRANSFORMER_FINAL_SIGMOID_MHC_RMS &&
+           transformer->residual_streams == model->residual_streams &&
+           transformer->hidden_width == model->hidden_width &&
+           yvex_core_u64_mul(model->residual_streams, model->hidden_width, &expanded) &&
+           transformer->expanded_width == expanded &&
+           transformer->maximum_context == model->maximum_context &&
+           transformer->sinkhorn_iterations == model->mhc_sinkhorn_iterations &&
+           transformer->mhc_epsilon == model->mhc_epsilon &&
+           transformer->output_norm_epsilon == model->normalization_epsilon &&
+           transformer->attention_then_moe && transformer->deferred_ffn_post &&
+           transformer->final_norm_after_head &&
+           logits->schema_version == YVEX_RUNTIME_LOGITS_SCHEMA_V1 &&
+           logits->separate_output_head && !logits->tied_output_head &&
+           !logits->output_head_bias &&
+           speculation->schema_version == YVEX_SPECULATION_FAMILY_POLICY_SCHEMA_V1 &&
+           speculation->block_size == model->proposal_width &&
+           speculation->noise_token_id == model->draft_noise_token_id &&
+           speculation->target_feature_layer_count == model->target_feature_count &&
+           memcmp(speculation->target_feature_layers, model->target_feature_layers,
+                  sizeof(model->target_feature_layers)) == 0 &&
+           speculation->target_feature_width == model->target_feature_width &&
+           yvex_core_u64_mul(model->target_feature_count, model->target_feature_width,
+                             &features) &&
+           speculation->concatenated_feature_width == features &&
+           speculation->draft_layer_count == model->draft_layer_count &&
+           speculation->markov_rank == model->markov_rank &&
+           speculation->accepted_prefix_maximum == model->proposal_width &&
+           speculation->feature_projection_role == YVEX_TENSOR_ROLE_DRAFT_FEATURE_PROJECTION &&
+           speculation->feature_norm_role == YVEX_TENSOR_ROLE_DRAFT_FEATURE_NORM &&
+           speculation->output_norm_role == YVEX_TENSOR_ROLE_DRAFT_OUTPUT_NORM &&
+           speculation->markov_embedding_role == YVEX_TENSOR_ROLE_DRAFT_MARKOV_EMBEDDING &&
+           speculation->markov_output_role == YVEX_TENSOR_ROLE_DRAFT_MARKOV_OUTPUT &&
+           speculation->confidence_role == YVEX_TENSOR_ROLE_DRAFT_CONFIDENCE &&
+           speculation->parallel_block_backbone && speculation->sequential_markov &&
+           speculation->confidence_available && speculation->shares_embedding &&
+           speculation->shares_output_head && speculation->target_verification_required &&
+           yvex_sha256_hex_is_valid(speculation->policy_identity);
 }
 static int binding_moe_unavailable_identity(
     const yvex_runtime_binding_prepare_request *request,
@@ -830,54 +919,49 @@ static int read_attention_layer(binding_cursor *cursor, yvex_attention_layer_pla
            fields_read(cursor, &value->sparse_topk, topk_fields, FIELD_COUNT(topk_fields)) &&
            fields_read(cursor, value, layer_tail_fields, FIELD_COUNT(layer_tail_fields));
 }
-/* Identify the first contradiction in a persisted physical-compatibility proof. */
-static const char *physical_compatibility_mismatch(
-    const yvex_artifact_physical_compatibility *proof,
-    const yvex_complete_artifact_admission *admission,
-    const char *logical_transform_identity)
+static int write_physical_execution(binding_bytes *body,
+                                    const yvex_physical_execution_ir *physical)
 {
-    const unsigned char *proof_bytes = (const unsigned char *)proof;
-    size_t index;
-    if (!proof || !admission || !logical_transform_identity) return "record";
-    if (proof->schema_version != YVEX_ARTIFACT_PHYSICAL_COMPATIBILITY_SCHEMA_VERSION)
-        return "schema-version";
-    for (index = 0u; index < FIELD_COUNT(physical_compatibility_fields); ++index)
-        if (physical_compatibility_fields[index].kind == BINDING_FIELD_TEXT &&
-            !yvex_sha256_hex_is_valid(
-                (const char *)(proof_bytes + physical_compatibility_fields[index].offset)))
-            return "identity-encoding";
-    if (proof->source_snapshot_identity != admission->source_snapshot_identity)
-        return "source-snapshot-identity";
-    if (proof->mapping_identity != admission->mapping_identity) return "mapping-identity";
-    if (proof->tensor_count != admission->tensor_count ||
-        proof->tensors_compared != admission->tensor_count)
-        return "tensor-count";
-    if (proof->payload_bytes != admission->payload_bytes || proof->payload_bytes_read)
-        return "payload-bytes";
-    if (strcmp(proof->admitted_writer_plan_identity, admission->writer_plan_identity) != 0)
-        return "admitted-writer-plan-identity";
-    if (strcmp(proof->artifact_identity, admission->artifact_identity) != 0)
-        return "artifact-identity";
-    if (strcmp(proof->payload_identity, admission->payload_identity) != 0)
-        return "payload-identity";
-    if (strcmp(proof->writer_transform_identity, logical_transform_identity) != 0)
-        return "writer-transform-identity";
-    if (strcmp(proof->admitted_transform_identity, admission->transform_identity) != 0)
-        return "admitted-transform-identity";
-    if (strcmp(proof->admitted_profile_identity, admission->profile_identity) != 0)
-        return "admitted-profile-identity";
-    if (strcmp(proof->quant_execution_identity, admission->quant_execution_identity) != 0)
-        return "quant-execution-identity";
-    if (strcmp(proof->payload_plan_identity, admission->payload_plan_identity) != 0)
-        return "payload-plan-identity";
-    if (strcmp(proof->payload_byte_identity, admission->payload_byte_identity) != 0)
-        return "payload-byte-identity";
-    if (!proof->physical_payload_compatible || proof->artifact_rebuild_required ||
-        proof->materialization_rebuild_required || !proof->tensor_inventory_equal ||
-        !proof->qtype_equal || !proof->layout_equal || !proof->offset_equal ||
-        !proof->payload_digest_equal)
-        return "compatibility-verdict";
-    return NULL;
+    const physical_summary *summary = yvex_physical_execution_ir_summary(physical);
+    unsigned long long index;
+    if (!summary || !fields_write(body, summary, physical_summary_fields,
+                                  FIELD_COUNT(physical_summary_fields))) return 0;
+    for (index = 0ull; index < summary->decision_count; ++index) {
+        const physical_decision *decision =
+            yvex_physical_execution_ir_decision_at(physical, index);
+        if (!decision || !fields_write(body, decision, physical_decision_fields,
+                                       FIELD_COUNT(physical_decision_fields))) return 0;
+    }
+    return 1;
+}
+static binding_parse_result read_physical_execution(
+    binding_cursor *cursor, yvex_physical_execution_ir **out,
+    unsigned long long expected_count)
+{
+    physical_summary summary;
+    physical_decision *decisions;
+    yvex_error err;
+    unsigned long long index;
+    if (!record_read(cursor, &summary, sizeof(summary), physical_summary_fields,
+                     FIELD_COUNT(physical_summary_fields)) ||
+        summary.decision_count != expected_count ||
+        !record_count_fits(cursor, expected_count, sizeof(*decisions)))
+        return BINDING_PARSE_FORMAT;
+    decisions = calloc((size_t)expected_count, sizeof(*decisions));
+    if (!decisions) return BINDING_PARSE_ALLOCATION;
+    for (index = 0ull; index < expected_count; ++index)
+        if (!record_read(cursor, &decisions[index], sizeof(decisions[index]),
+                         physical_decision_fields, FIELD_COUNT(physical_decision_fields))) {
+            free(decisions);
+            return BINDING_PARSE_FORMAT;
+        }
+    if (yvex_physical_execution_ir_import(out, &summary, decisions,
+                                          expected_count, &err) != YVEX_OK) {
+        free(decisions);
+        return BINDING_PARSE_FORMAT;
+    }
+    free(decisions);
+    return BINDING_PARSE_OK;
 }
 static int binding_admission_ready(const yvex_complete_artifact_admission *admission) {
     return admission && admission->complete && admission->materialization_input_ready &&
@@ -996,7 +1080,7 @@ static int prepare_validate(const yvex_runtime_binding_prepare_request *request,
     descriptor = yvex_runtime_descriptor_summary_get(request->runtime_descriptor);
     attention = yvex_attention_plan_summary(request->attention_plan);
     draft_attention = yvex_attention_plan_summary(request->draft_attention_plan);
-    compatibility_mismatch = physical_compatibility_mismatch(
+    compatibility_mismatch = yvex_artifact_physical_compatibility_mismatch(
         request->physical_compatibility, request->admission,
         request->logical_transform_identity);
     if (compatibility_mismatch)
@@ -1009,6 +1093,8 @@ static int prepare_validate(const yvex_runtime_binding_prepare_request *request,
         !materialization || !materialization->committed ||
         materialization->status != YVEX_MATERIALIZATION_STATUS_COMMITTED ||
         !descriptor || descriptor->status != YVEX_RUNTIME_DESCRIPTOR_STATUS_READY ||
+        descriptor->model_execution.schema_version !=
+            YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1 ||
         !binding_attention_ready(attention) ||
         (descriptor && descriptor->draft_layer_count &&
          !binding_attention_ready(draft_attention)))
@@ -1090,7 +1176,11 @@ static int binding_body_write(const yvex_runtime_binding_prepare_request *reques
                               const char *semantic, const char *executable,
                               const char *moe_identity,
                               const char *draft_moe_identity,
-                              unsigned int schema, binding_bytes *body)
+                              const yvex_physical_execution_ir *physical,
+                              const yvex_transformer_family_policy *transformer,
+                              const yvex_logits_family_policy *logits,
+                              const yvex_speculation_family_policy *speculation,
+                              binding_bytes *body)
 {
     yvex_materialization_summary canonical;
     const yvex_artifact_physical_compatibility *compatibility;
@@ -1104,13 +1194,11 @@ static int binding_body_write(const yvex_runtime_binding_prepare_request *reques
     char capability_identity[YVEX_SHA256_HEX_CAP];
     unsigned long long adapter_id, adapter_version, format_version;
     unsigned long long tensor_count, layer_count, draft_layer_count, i;
-    if (!body || !request ||
-        (schema != YVEX_RUNTIME_BINDING_SCHEMA_V7 &&
-         schema != YVEX_RUNTIME_BINDING_SCHEMA_V8)) return 0;
+    if (!body || !request || !transformer || !logits || !speculation) return 0;
     body->maximum = BINDING_MAX_BYTES;
     body->initial_capacity = 4096u;
-    canonical = materialization_canonical(
-        yvex_materialization_session_summary(request->materialization));
+    canonical = *yvex_materialization_session_summary(request->materialization);
+    canonical.status = YVEX_MATERIALIZATION_STATUS_PLANNED;
     compatibility = request->physical_compatibility;
     admission = request->admission;
     materialization = &canonical;
@@ -1127,10 +1215,8 @@ static int binding_body_write(const yvex_runtime_binding_prepare_request *reques
     layer_count = attention->layer_count;
     draft_layer_count = draft_attention ? draft_attention->layer_count : 0ull;
     if (!yvex_runtime_capabilities_identity(capabilities, capability_identity) ||
-        !bytes_put_text(body, schema == YVEX_RUNTIME_BINDING_SCHEMA_V8
-                                  ? "yvex.runtime.binding.payload.v8"
-                                  : "yvex.runtime.binding.payload.v7") ||
-        !bytes_put_u64(body, schema) ||
+        !bytes_put_text(body, "yvex.runtime.binding.payload.v9") ||
+        !bytes_put_u64(body, YVEX_RUNTIME_BINDING_SCHEMA_CURRENT) ||
         !bytes_put_u64(body, adapter_id) || !bytes_put_u64(body, adapter_version) ||
         !bytes_put_text(body, format) || !bytes_put_u64(body, format_version) ||
         !bytes_put_text(body, logical) || !bytes_put_text(body, semantic) ||
@@ -1153,8 +1239,7 @@ static int binding_body_write(const yvex_runtime_binding_prepare_request *reques
                                      FIELD_COUNT(material_record_fields))) return 0;
     }
     if (!fields_write(body, descriptor, descriptor_fields, FIELD_COUNT(descriptor_fields)) ||
-        (schema == YVEX_RUNTIME_BINDING_SCHEMA_V8 &&
-         !model_execution_write(body, &descriptor->model_execution)) ||
+        !model_execution_write(body, &descriptor->model_execution) ||
         !bytes_put_u64(body, tensor_count)) return 0;
     for (i = 0ull; i < tensor_count; ++i) {
         const yvex_runtime_tensor_binding *record =
@@ -1162,6 +1247,13 @@ static int binding_body_write(const yvex_runtime_binding_prepare_request *reques
         if (!record || !fields_write(body, record, runtime_record_fields,
                                      FIELD_COUNT(runtime_record_fields))) return 0;
     }
+    if (!write_physical_execution(body, physical) ||
+        !fields_write(body, transformer, transformer_policy_fields,
+                      FIELD_COUNT(transformer_policy_fields)) ||
+        !fields_write(body, logits, logits_policy_fields,
+                      FIELD_COUNT(logits_policy_fields)) ||
+        !fields_write(body, speculation, speculation_policy_fields,
+                      FIELD_COUNT(speculation_policy_fields))) return 0;
     if (!fields_write(body, attention, attention_summary_fields,
                       FIELD_COUNT(attention_summary_fields)) ||
         !bytes_put_u64(body, layer_count)) return 0;
@@ -1182,33 +1274,26 @@ static int binding_body_write(const yvex_runtime_binding_prepare_request *reques
     }
     return 1;
 }
-static int binding_identity(unsigned int schema, const unsigned char *body, size_t body_bytes,
+static int binding_identity(const unsigned char *body, size_t body_bytes,
                             char output[YVEX_SHA256_HEX_CAP])
 {
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     yvex_sha256_init(&hash);
-    if ((schema != YVEX_RUNTIME_BINDING_SCHEMA_V7 &&
-         schema != YVEX_RUNTIME_BINDING_SCHEMA_V8) ||
-        !yvex_sha256_update_text(&hash, schema == YVEX_RUNTIME_BINDING_SCHEMA_V8
-                                            ? "yvex.runtime.binding.v8"
-                                            : "yvex.runtime.binding.v7") ||
-        !yvex_sha256_update_u64(&hash, schema) ||
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.binding.v9") ||
+        !yvex_sha256_update_u64(&hash, YVEX_RUNTIME_BINDING_SCHEMA_CURRENT) ||
         !yvex_sha256_update(&hash, body, body_bytes) ||
         !yvex_sha256_final(&hash, digest)) return 0;
     yvex_sha256_hex(digest, output);
     return 1;
 }
-static int build_file(const binding_bytes *body, const char *identity, unsigned int schema,
-                      binding_bytes *file)
+static int build_file(const binding_bytes *body, const char *identity, binding_bytes *file)
 {
     if (!body || !identity || !file) return 0;
     file->maximum = BINDING_MAX_BYTES;
     file->initial_capacity = 4096u;
-    return yvex_core_bytes_append(file, schema == YVEX_RUNTIME_BINDING_SCHEMA_V8
-                                            ? BINDING_MAGIC_V8 : BINDING_MAGIC_V7,
-                                  BINDING_MAGIC_BYTES) &&
-           bytes_put_u64(file, schema) &&
+    return yvex_core_bytes_append(file, BINDING_MAGIC_V9, BINDING_MAGIC_BYTES) &&
+           bytes_put_u64(file, YVEX_RUNTIME_BINDING_SCHEMA_CURRENT) &&
            bytes_put_u64(file, (unsigned long long)body->count) &&
            yvex_core_bytes_append(file, identity, 64u) &&
            yvex_core_bytes_append(file, body->data, body->count);
@@ -1228,10 +1313,7 @@ static binding_parse_result parse_body(yvex_runtime_binding *binding,
     unsigned long long draft_layer_count = 0ull, i;
     if (!cursor_text(&cursor, domain, sizeof(domain)) ||
         !cursor_u64(&cursor, &schema) || schema != expected_schema ||
-        !((schema == YVEX_RUNTIME_BINDING_SCHEMA_V7 &&
-           strcmp(domain, "yvex.runtime.binding.payload.v7") == 0) ||
-          (schema == YVEX_RUNTIME_BINDING_SCHEMA_V8 &&
-           strcmp(domain, "yvex.runtime.binding.payload.v8") == 0)) ||
+        strcmp(domain, "yvex.runtime.binding.payload.v9") != 0 ||
         !cursor_u64(&cursor, &family_id) || !family_id ||
         !cursor_u64(&cursor, &family_version) || !family_version ||
         !cursor_text(&cursor, format, sizeof(format)) || !format[0] ||
@@ -1272,8 +1354,7 @@ static binding_parse_result parse_body(yvex_runtime_binding *binding,
             return BINDING_PARSE_FORMAT;
     if (!record_read(&cursor, &binding->descriptor, sizeof(binding->descriptor),
                      descriptor_fields, FIELD_COUNT(descriptor_fields)) ||
-        (schema == YVEX_RUNTIME_BINDING_SCHEMA_V8 &&
-         !model_execution_read(&cursor, &binding->descriptor.model_execution)) ||
+        !model_execution_read(&cursor, &binding->descriptor.model_execution) ||
         !cursor_u64(&cursor, &runtime_count) || runtime_count != material_count)
         return BINDING_PARSE_FORMAT;
     if (!record_count_fits(&cursor, runtime_count, sizeof(*binding->runtime)))
@@ -1285,6 +1366,19 @@ static binding_parse_result parse_body(yvex_runtime_binding *binding,
         if (!record_read(&cursor, &binding->runtime[i], sizeof(binding->runtime[i]),
                          runtime_record_fields, FIELD_COUNT(runtime_record_fields)))
             return BINDING_PARSE_FORMAT;
+    if (read_physical_execution(&cursor, &binding->physical_execution,
+                                runtime_count) != BINDING_PARSE_OK)
+        return BINDING_PARSE_FORMAT;
+    if (!record_read(&cursor, &binding->transformer_policy,
+                     sizeof(binding->transformer_policy), transformer_policy_fields,
+                     FIELD_COUNT(transformer_policy_fields)) ||
+        !record_read(&cursor, &binding->logits_policy,
+                     sizeof(binding->logits_policy), logits_policy_fields,
+                     FIELD_COUNT(logits_policy_fields)) ||
+        !record_read(&cursor, &binding->speculation_policy,
+                     sizeof(binding->speculation_policy), speculation_policy_fields,
+                     FIELD_COUNT(speculation_policy_fields)))
+        return BINDING_PARSE_FORMAT;
     if (!record_read(&cursor, &binding->attention, sizeof(binding->attention),
                      attention_summary_fields, FIELD_COUNT(attention_summary_fields)) ||
         !cursor_u64(&cursor, &layer_count))
@@ -1346,10 +1440,19 @@ static int binding_validate(const yvex_runtime_binding *binding,
     char capability_identity[YVEX_SHA256_HEX_CAP];
     char semantic[YVEX_SHA256_HEX_CAP], executable[YVEX_SHA256_HEX_CAP];
     const char *compatibility;
+    const physical_summary *physical;
     unsigned long long i;
     *field = "canonical-body";
     *code = YVEX_RUNTIME_BINDING_FAILURE_FORMAT;
     if (!binding) return 0;
+    physical = yvex_physical_execution_ir_summary(binding->physical_execution);
+    if (!physical || physical->decision_count != binding->summary.tensor_count ||
+        strcmp(physical->physical_variant_identity,
+               binding->admission.profile_identity) != 0) {
+        *field = "physical-execution";
+        *code = YVEX_RUNTIME_BINDING_FAILURE_IDENTITY;
+        return 0;
+    }
     if (!yvex_runtime_capabilities_identity(&binding->summary.capabilities,
                                             capability_identity) ||
         strcmp(capability_identity,
@@ -1361,7 +1464,7 @@ static int binding_validate(const yvex_runtime_binding *binding,
         *field = "execution-capabilities";
         return 0;
     }
-    compatibility = physical_compatibility_mismatch(
+    compatibility = yvex_artifact_physical_compatibility_mismatch(
         &binding->summary.physical_compatibility, &binding->admission,
         binding->summary.logical_transform_identity);
     if (compatibility) {
@@ -1388,20 +1491,18 @@ static int binding_validate(const yvex_runtime_binding *binding,
         binding->materialization.committed_bindings != 0ull ||
         binding->materialization.aborted_bindings != 0ull ||
         binding->descriptor.status != YVEX_RUNTIME_DESCRIPTOR_STATUS_READY ||
-        (binding->summary.schema_version == YVEX_RUNTIME_BINDING_SCHEMA_V8 &&
-         (binding->descriptor.model_execution.schema_version !=
-              YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1 ||
-          !yvex_sha256_hex_is_valid(binding->descriptor.model_execution.identity) ||
-          strcmp(binding->descriptor.logical_model_identity,
-                 binding->descriptor.model_execution.logical_model_identity) != 0 ||
-          binding->descriptor.layer_count !=
-              binding->descriptor.model_execution.layer_count ||
-          binding->descriptor.draft_layer_count !=
-              binding->descriptor.model_execution.draft_layer_count ||
-          binding->descriptor.vocabulary_size !=
-              binding->descriptor.model_execution.vocabulary_size)) ||
-        (binding->summary.schema_version == YVEX_RUNTIME_BINDING_SCHEMA_V7 &&
-         binding->descriptor.model_execution.schema_version != 0u) ||
+        binding->descriptor.model_execution.schema_version !=
+            YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1 ||
+        !yvex_sha256_hex_is_valid(binding->descriptor.model_execution.identity) ||
+        strcmp(binding->descriptor.logical_model_identity,
+               binding->descriptor.model_execution.logical_model_identity) != 0 ||
+        binding->descriptor.layer_count !=
+            binding->descriptor.model_execution.layer_count ||
+        binding->descriptor.draft_layer_count !=
+            binding->descriptor.model_execution.draft_layer_count ||
+        binding->descriptor.vocabulary_size !=
+            binding->descriptor.model_execution.vocabulary_size ||
+        !binding_policies_valid(binding) ||
         !binding_attention_ready(&binding->attention) ||
         binding->attention.tensor_scope != YVEX_TENSOR_SCOPE_MAIN_LAYER ||
         binding->attention.required_binding_count == 0ull ||
@@ -1535,15 +1636,25 @@ static int binding_file_decode(yvex_runtime_binding **out,
         goto done;
     }
     if (!cursor_u64(&header, &schema) ||
-        !((schema == YVEX_RUNTIME_BINDING_SCHEMA_V7 &&
+        !((schema == BINDING_SCHEMA_V7 &&
            memcmp(magic, BINDING_MAGIC_V7, sizeof(magic)) == 0) ||
-          (schema == YVEX_RUNTIME_BINDING_SCHEMA_V8 &&
-           memcmp(magic, BINDING_MAGIC_V8, sizeof(magic)) == 0))) {
+          (schema == BINDING_SCHEMA_V8 &&
+           memcmp(magic, BINDING_MAGIC_V8, sizeof(magic)) == 0) ||
+          (schema == YVEX_RUNTIME_BINDING_SCHEMA_CURRENT &&
+           memcmp(magic, BINDING_MAGIC_V9, sizeof(magic)) == 0))) {
         rc = binding_reject(failure, YVEX_RUNTIME_BINDING_FAILURE_SCHEMA,
                             "schema-version", path, 0ull,
                             YVEX_RUNTIME_BINDING_SCHEMA_CURRENT, schema,
                             YVEX_ERR_FORMAT,
                             "runtime binding schema is unsupported", err);
+        goto done;
+    }
+    if (schema != YVEX_RUNTIME_BINDING_SCHEMA_CURRENT) {
+        rc = binding_reject(
+            failure, YVEX_RUNTIME_BINDING_FAILURE_COMPATIBILITY,
+            "model-execution", path, 0ull, YVEX_RUNTIME_BINDING_SCHEMA_CURRENT,
+            schema, YVEX_ERR_FORMAT,
+            "runtime binding predates compiled physical execution and must be rebuilt", err);
         goto done;
     }
     if (!cursor_u64(&header, &body_bytes) ||
@@ -1569,8 +1680,7 @@ static int binding_file_decode(yvex_runtime_binding **out,
             err);
         goto done;
     }
-    if (!binding_identity((unsigned int)schema, file + BINDING_HEADER_BYTES,
-                          (size_t)body_bytes,
+    if (!binding_identity(file + BINDING_HEADER_BYTES, (size_t)body_bytes,
                           computed_identity) ||
         strcmp(stored_identity, computed_identity) != 0 ||
         (expected_identity && strcmp(expected_identity, computed_identity) != 0)) {
@@ -1625,6 +1735,13 @@ static int binding_file_decode(yvex_runtime_binding **out,
                        ? &binding->draft_attention : NULL,
                    binding->summary.logical_transform_identity,
                    computed_identity, file_count);
+    {
+        const physical_summary *physical =
+            yvex_physical_execution_ir_summary(binding->physical_execution);
+        binding->summary.physical_execution_decision_count = physical->decision_count;
+        yvex_runtime_identity_copy(binding->summary.physical_execution_identity,
+                                   physical->identity);
+    }
     *out = binding;
     binding = NULL;
     rc = YVEX_OK;
@@ -1646,58 +1763,6 @@ typedef struct {
  * Allocates one byte snapshot after proving regular-file identity and stability. Short reads, size
  * mismatch, drift, or allocation failure publish no snapshot.
  */
-static int binding_candidate_read(int descriptor, size_t expected_count,
-                                  unsigned char **out,
-                                  yvex_runtime_binding_failure *failure,
-                                  const char *path, yvex_error *err)
-{
-    struct stat before = {0}, after = {0};
-    unsigned char *file = NULL;
-    size_t offset = 0u;
-    if (out) *out = NULL;
-    if (!out || descriptor < 0 || !expected_count ||
-        expected_count > BINDING_MAX_BYTES ||
-        fstat(descriptor, &before) != 0 || !S_ISREG(before.st_mode) ||
-        before.st_size < 0 ||
-        (unsigned long long)before.st_size != expected_count)
-        return binding_reject(
-            failure, YVEX_RUNTIME_BINDING_FAILURE_FORMAT,
-            "candidate-snapshot", path, 0ull, expected_count,
-            before.st_size > 0 ? (unsigned long long)before.st_size : 0ull,
-            YVEX_ERR_IO,
-            "runtime binding publication candidate is not the expected regular file", err);
-    file = (unsigned char *)malloc(expected_count + 1u);
-    if (!file)
-        return binding_reject(
-            failure, YVEX_RUNTIME_BINDING_FAILURE_ALLOCATION,
-            "candidate-snapshot", path, 0ull, expected_count + 1ull, 0ull,
-            YVEX_ERR_NOMEM,
-            "runtime binding publication candidate allocation failed", err);
-    while (offset < expected_count) {
-        ssize_t got = pread(descriptor, file + offset, expected_count - offset,
-                            (off_t)offset);
-        if (got < 0 && errno == EINTR) continue;
-        if (got <= 0) break;
-        offset += (size_t)got;
-    }
-    if (offset != expected_count || fstat(descriptor, &after) != 0 ||
-        before.st_dev != after.st_dev || before.st_ino != after.st_ino ||
-        before.st_size != after.st_size ||
-        before.st_mtim.tv_sec != after.st_mtim.tv_sec ||
-        before.st_mtim.tv_nsec != after.st_mtim.tv_nsec ||
-        before.st_ctim.tv_sec != after.st_ctim.tv_sec ||
-        before.st_ctim.tv_nsec != after.st_ctim.tv_nsec) {
-        free(file);
-        return binding_reject(
-            failure, YVEX_RUNTIME_BINDING_FAILURE_FORMAT,
-            "candidate-snapshot", path, 0ull, expected_count, offset,
-            YVEX_ERR_IO,
-            "runtime binding publication candidate changed or read incompletely", err);
-    }
-    file[expected_count] = '\0';
-    *out = file;
-    return YVEX_OK;
-}
 /*
  * Authenticate the exact fsynced candidate reopened by the file lifecycle.
  *
@@ -1710,6 +1775,7 @@ static int binding_candidate_validate(int descriptor, size_t count,
     binding_candidate_context *context = (binding_candidate_context *)opaque;
     yvex_runtime_binding *binding = NULL;
     unsigned char *file = NULL;
+    yvex_core_file_result snapshot = {0};
     int rc;
     if (!context || !context->path || !context->expected_identity)
         return binding_reject(
@@ -1718,8 +1784,16 @@ static int binding_candidate_validate(int descriptor, size_t count,
             "candidate-validation", context ? context->path : NULL,
             0ull, 1ull, 0ull, YVEX_ERR_INVALID_ARG,
             "runtime binding candidate validator context is incomplete", err);
-    rc = binding_candidate_read(descriptor, count, &file, context->failure,
-                                context->path, err);
+    rc = count <= BINDING_MAX_BYTES
+             ? yvex_core_file_read_descriptor_snapshot(
+                   descriptor, count, &file, &snapshot, err)
+             : YVEX_ERR_BOUNDS;
+    if (rc != YVEX_OK)
+        rc = binding_reject(
+            context->failure, YVEX_RUNTIME_BINDING_FAILURE_FORMAT,
+            "candidate-snapshot", context->path, 0ull, count, snapshot.actual,
+            (yvex_status)rc,
+            "runtime binding publication candidate changed or read incompletely", err);
     if (rc == YVEX_OK)
         rc = binding_file_decode(&binding, file, count, context->path,
                                  context->expected_identity, 0,
@@ -1760,7 +1834,10 @@ int yvex_runtime_binding_prepare(const yvex_runtime_binding_prepare_request *req
     char final_name[96], final_path[YVEX_PATH_CAP];
     yvex_core_file_result file_result;
     binding_candidate_context candidate;
-    unsigned int schema;
+    yvex_physical_execution_ir *physical = NULL;
+    yvex_transformer_family_policy transformer = {0};
+    yvex_logits_family_policy logits = {0};
+    yvex_speculation_family_policy speculation = {0};
     int rc;
     if (result) memset(result, 0, sizeof(*result));
     rc = prepare_validate(request, semantic, executable, moe_identity,
@@ -1772,18 +1849,33 @@ int yvex_runtime_binding_prepare(const yvex_runtime_binding_prepare_request *req
                                 "runtime binding result is required", err);
         return rc;
     }
-    schema = yvex_runtime_descriptor_summary_get(request->runtime_descriptor)
-                         ->model_execution.schema_version
-                 ? YVEX_RUNTIME_BINDING_SCHEMA_V8
-                 : YVEX_RUNTIME_BINDING_SCHEMA_V7;
-    if (!binding_body_write(request, semantic, executable, moe_identity,
-                            draft_moe_identity, schema, &body))
+    rc = yvex_physical_execution_ir_build(
+        &physical, request->materialization, request->runtime_descriptor,
+        request->admission->profile_identity, err);
+    if (rc != YVEX_OK)
+        rc = binding_reject(
+            failure, YVEX_RUNTIME_BINDING_FAILURE_COMPATIBILITY,
+            "physical-execution", request->directory, 0ull, 1ull, 0ull,
+            (yvex_status)rc, "physical execution compilation failed", err);
+    if (rc == YVEX_OK &&
+        !binding_policies_compile(
+            request->family_adapter_id, request->family_adapter_version,
+            yvex_runtime_descriptor_summary_get(request->runtime_descriptor),
+            &transformer, &logits, &speculation))
+        rc = binding_reject(
+            failure, YVEX_RUNTIME_BINDING_FAILURE_COMPATIBILITY,
+            "execution-policies", request->directory, 0ull, 1ull, 0ull,
+            YVEX_ERR_FORMAT, "compiled execution policies are unavailable", err);
+    if (rc == YVEX_OK &&
+        !binding_body_write(request, semantic, executable, moe_identity,
+                            draft_moe_identity, physical, &transformer, &logits,
+                            &speculation, &body))
         rc = binding_reject(
             failure, YVEX_RUNTIME_BINDING_FAILURE_ALLOCATION, "canonical-body",
             request->directory, 0ull, BINDING_MAX_BYTES, body.count, YVEX_ERR_NOMEM,
             "runtime binding canonical body exceeded its allocation budget", err);
-    if (rc != YVEX_OK || !binding_identity(schema, body.data, body.count, identity) ||
-        !build_file(&body, identity, schema, &file)) {
+    if (rc != YVEX_OK || !binding_identity(body.data, body.count, identity) ||
+        !build_file(&body, identity, &file)) {
         if (rc == YVEX_OK)
             rc = binding_reject(failure, YVEX_RUNTIME_BINDING_FAILURE_ALLOCATION,
                                 "file", request->directory, 0ull, BINDING_MAX_BYTES,
@@ -1824,6 +1916,7 @@ int yvex_runtime_binding_prepare(const yvex_runtime_binding_prepare_request *req
     yvex_error_clear(err);
     if (failure) memset(failure, 0, sizeof(*failure));
 done:
+    yvex_physical_execution_ir_close(&physical);
     free(body.data);
     free(file.data);
     return rc;
@@ -1873,120 +1966,10 @@ done:
 void yvex_runtime_binding_close(yvex_runtime_binding *binding)
 {
     if (!binding) return;
+    yvex_physical_execution_ir_close(&binding->physical_execution);
     free(binding->materialized);
     free(binding->runtime);
     free(binding->layers);
     free(binding->draft_layers);
     free(binding);
-}
-int yvex_runtime_binding_import_materialization(
-    const yvex_runtime_binding *binding, const yvex_artifact *artifact,
-    const yvex_materialization_options *options, yvex_materialization_plan **plan_out,
-    yvex_materialization_session **session_out, yvex_runtime_binding_failure *failure,
-    yvex_error *err)
-{
-    yvex_complete_artifact_admission local_admission;
-    yvex_artifact_snapshot snapshot;
-    yvex_materialization_failure material_failure;
-    int rc;
-    if (plan_out) *plan_out = NULL;
-    if (session_out) *session_out = NULL;
-    if (!binding || !artifact || !plan_out || !session_out)
-        return binding_reject(failure, YVEX_RUNTIME_BINDING_FAILURE_INVALID_ARGUMENT,
-                              "materialization-import", NULL, 0ull, 1ull, 0ull,
-                              YVEX_ERR_INVALID_ARG,
-                              "runtime binding materialization import arguments are required", err);
-    memset(&snapshot, 0, sizeof(snapshot));
-    if (yvex_artifact_snapshot_get(artifact, &snapshot, err) != YVEX_OK ||
-        yvex_artifact_snapshot_validate(artifact, NULL, err) != YVEX_OK ||
-        snapshot.size != binding->admission.file_bytes)
-        return binding_reject(
-            failure, YVEX_RUNTIME_BINDING_FAILURE_ARTIFACT, "artifact-snapshot", NULL,
-            0ull, binding->admission.file_bytes, snapshot.size,
-            YVEX_ERR_STATE, "runtime binding artifact snapshot is stale or mismatched", err);
-    local_admission = binding->admission;
-    local_admission.file_snapshot = snapshot;
-    yvex_core_text_copy(local_admission.artifact_path,
-                        sizeof(local_admission.artifact_path), yvex_artifact_path(artifact));
-    memset(&material_failure, 0, sizeof(material_failure));
-    rc = yvex_materialization_plan_import(
-        plan_out, &local_admission, &binding->materialization, binding->materialized,
-        binding->summary.tensor_count, &material_failure, err);
-    if (rc == YVEX_OK)
-        rc = yvex_materialization_session_open(session_out, *plan_out, artifact, options,
-                                               &material_failure, err);
-    if (rc == YVEX_OK)
-        rc = yvex_materialization_session_commit(*session_out, &material_failure, err);
-    if (rc != YVEX_OK) {
-        yvex_materialization_session_close(*session_out);
-        yvex_materialization_plan_close(*plan_out);
-        *session_out = NULL;
-        *plan_out = NULL;
-        return binding_reject(
-            failure, YVEX_RUNTIME_BINDING_FAILURE_MATERIALIZATION,
-            yvex_materialization_failure_name(material_failure.code), NULL,
-            material_failure.tensor_index, material_failure.expected, material_failure.actual,
-            (yvex_status)rc, "runtime binding materialization import was refused", err);
-    }
-    if (failure) memset(failure, 0, sizeof(*failure));
-    return YVEX_OK;
-}
-/* Import one descriptor and semantic attention graph as an atomic runtime unit. */
-int yvex_runtime_binding_import_graph(
-    const yvex_runtime_binding *binding, const yvex_materialization_session *session,
-    yvex_runtime_descriptor **descriptor_out, yvex_attention_plan **attention_out,
-    yvex_attention_plan **draft_attention_out,
-    yvex_runtime_binding_failure *failure, yvex_error *err)
-{
-    yvex_runtime_descriptor_failure descriptor_failure;
-    yvex_attention_failure attention_failure;
-    yvex_runtime_descriptor *descriptor = NULL;
-    yvex_attention_plan *attention = NULL;
-    yvex_attention_plan *draft_attention = NULL;
-    int rc;
-    if (descriptor_out) *descriptor_out = NULL;
-    if (attention_out) *attention_out = NULL;
-    if (draft_attention_out) *draft_attention_out = NULL;
-    if (!binding || !session || !descriptor_out || !attention_out ||
-        !draft_attention_out)
-        return binding_reject(failure, YVEX_RUNTIME_BINDING_FAILURE_INVALID_ARGUMENT,
-                              "runtime-graph-import", NULL, 0ull, 1ull, 0ull,
-                              YVEX_ERR_INVALID_ARG,
-                              "runtime binding graph import arguments are required", err);
-    memset(&descriptor_failure, 0, sizeof(descriptor_failure));
-    rc = yvex_runtime_descriptor_import(
-        &descriptor, &binding->descriptor, binding->runtime,
-        binding->summary.tensor_count, session, &descriptor_failure, err);
-    if (rc != YVEX_OK)
-        return binding_reject(
-            failure, YVEX_RUNTIME_BINDING_FAILURE_DESCRIPTOR,
-            yvex_runtime_descriptor_failure_name(descriptor_failure.code), NULL,
-            descriptor_failure.tensor_index, descriptor_failure.expected,
-            descriptor_failure.actual, (yvex_status)rc,
-            "runtime binding descriptor import was refused", err);
-    memset(&attention_failure, 0, sizeof(attention_failure));
-    rc = yvex_attention_plan_import(&attention, &binding->attention, binding->layers,
-                                    binding->summary.layer_count, session, descriptor,
-                                    &attention_failure, err);
-    if (rc == YVEX_OK && binding->summary.draft_layer_count)
-        rc = yvex_attention_plan_import(
-            &draft_attention, &binding->draft_attention, binding->draft_layers,
-            binding->summary.draft_layer_count, session, descriptor,
-            &attention_failure, err);
-    if (rc != YVEX_OK) {
-        yvex_attention_plan_close(draft_attention);
-        yvex_attention_plan_close(attention);
-        yvex_runtime_descriptor_close(descriptor);
-        return binding_reject(
-            failure, YVEX_RUNTIME_BINDING_FAILURE_ATTENTION,
-            attention_failure.reason ? attention_failure.reason : "attention", NULL,
-            attention_failure.layer_index, attention_failure.expected,
-            attention_failure.actual, (yvex_status)rc,
-            "runtime binding attention import was refused", err);
-    }
-    *descriptor_out = descriptor;
-    *attention_out = attention;
-    *draft_attention_out = draft_attention;
-    if (failure) memset(failure, 0, sizeof(*failure));
-    return YVEX_OK;
 }

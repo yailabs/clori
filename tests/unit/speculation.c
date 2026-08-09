@@ -423,12 +423,8 @@ static int test_family_policy_compatibility(void)
     yvex_speculation_family_policy policy;
 
     YVEX_TEST_ASSERT(adapter && adapter->speculation_policy &&
-                         adapter->speculation_policy(&runtime, &policy) &&
-                         policy.block_size == 5ull &&
-                         policy.target_feature_layer_count == 3ull &&
-                         policy.target_feature_layers[0] == 40ull &&
-                         policy.target_feature_layers[2] == 42ull,
-                     "binding v7 retains its exact family-owned DSpark projection");
+                         !adapter->speculation_policy(&runtime, &policy),
+                     "DSpark policy refuses an uncompiled execution descriptor");
     runtime.model_execution.schema_version = YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1;
     runtime.model_execution.proposal_width = 4ull;
     runtime.model_execution.draft_noise_token_id = 17ull;

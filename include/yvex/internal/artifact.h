@@ -221,6 +221,10 @@ int yvex_artifact_physical_compatibility_validate(
     const yvex_gguf_writer_plan *writer_plan, const yvex_complete_artifact_admission *admission,
     const yvex_artifact *artifact, const yvex_gguf *gguf, yvex_artifact_physical_compatibility *out,
     yvex_artifact_compatibility_failure *failure, yvex_error *err);
+const char *yvex_artifact_physical_compatibility_mismatch(
+    const yvex_artifact_physical_compatibility *proof,
+    const yvex_complete_artifact_admission *admission,
+    const char *logical_transform_identity);
 typedef enum {
     YVEX_ARTIFACT_DESCRIPTOR_REFUSED = 0,
     YVEX_ARTIFACT_DESCRIPTOR_REPORT_ONLY = 1,

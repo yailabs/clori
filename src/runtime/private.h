@@ -30,6 +30,27 @@ static inline yvex_attention_evidence_level runtime_attention_evidence(
 #define YVEX_GENERATION_LIFECYCLE_CLOSING 2u
 #define YVEX_GENERATION_LIFECYCLE_CLOSED 6u
 
+struct yvex_runtime_binding {
+    yvex_runtime_binding_summary summary;
+    yvex_complete_artifact_admission admission;
+    yvex_materialization_summary materialization;
+    yvex_materialized_tensor_binding *materialized;
+    yvex_runtime_descriptor_summary descriptor;
+    yvex_runtime_tensor_binding *runtime;
+    yvex_physical_execution_ir *physical_execution;
+    yvex_transformer_family_policy transformer_policy;
+    yvex_logits_family_policy logits_policy;
+    yvex_speculation_family_policy speculation_policy;
+    yvex_attention_summary attention, draft_attention;
+    yvex_attention_layer_plan *layers, *draft_layers;
+};
+
+int yvex_runtime_private_binding_refuse(
+    yvex_runtime_binding_failure *failure, yvex_runtime_binding_failure_code code,
+    const char *field, const char *path, unsigned long long record,
+    unsigned long long expected, unsigned long long actual, yvex_status status,
+    const char *reason, yvex_error *err);
+
 struct yvex_runtime_model {
     const yvex_runtime_family_adapter *adapter;
     yvex_runtime_binding *binding;
@@ -41,7 +62,7 @@ struct yvex_runtime_model {
     yvex_materialization_plan *materialization_plan;
     yvex_materialization_session *materialization;
     yvex_runtime_descriptor *descriptor;
-    yvex_physical_execution_ir *physical_execution;
+    const yvex_physical_execution_ir *physical_execution;
     yvex_attention_plan *attention;
     yvex_attention_plan *draft_attention;
     yvex_tokenizer *tokenizer;
@@ -86,6 +107,9 @@ struct yvex_runtime_cleanup_lease {
     void *dependent_context;
     yvex_runtime_cleanup_release_fn dependent_release;
 };
+
+const yvex_runtime_family_adapter *yvex_runtime_private_adapter_find_identity(
+    unsigned long long adapter_id, unsigned long long adapter_version);
 
 struct yvex_runtime_generation_context {
     yvex_runtime_model *model;

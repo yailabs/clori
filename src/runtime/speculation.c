@@ -19,7 +19,6 @@ typedef struct {
     unsigned long long encoded_bytes, row_bytes;
 } speculation_weight;
 struct yvex_runtime_speculation_context {
-    yvex_runtime_model *model;
     yvex_runtime_execution_session *session;
     const yvex_runtime_model_view *model_view;
     yvex_runtime_transformer_context *target_transformer, *draft_transformer;
@@ -358,6 +357,7 @@ int yvex_runtime_speculation_context_open(
     yvex_runtime_sampling_policy draft_policy = {0};
     const yvex_transformer_plan_summary *target_plan;
     const yvex_runtime_descriptor_summary *descriptor;
+    const yvex_speculation_family_policy *policy;
     unsigned long long draft_context_capacity;
     int rc;
     if (out) *out = NULL;
@@ -371,7 +371,6 @@ int yvex_runtime_speculation_context_open(
     context = yvex_core_calloc(1u, sizeof(*context));
     if (!context)
         return speculation_refuse(err, YVEX_ERR_NOMEM, "DSpark context allocation failed");
-    context->model = model;
     context->session = session;
     context->model_view = yvex_runtime_model_view_get(model);
     context->target_transformer = target_transformer;
@@ -383,10 +382,11 @@ int yvex_runtime_speculation_context_open(
         context->model_view->descriptor) : NULL;
     target_plan = yvex_transformer_plan_summary_get(
         yvex_runtime_transformer_context_plan(target_transformer));
+    if (context->model_view && yvex_runtime_binding_policies(
+            context->model_view->compiled_binding, NULL, NULL, &policy))
+        context->policy = *policy;
     if (!context->model_view || !descriptor || !target_plan ||
         yvex_runtime_transformer_context_session(target_transformer) != session ||
-        !context->model_view->adapter || !context->model_view->adapter->speculation_policy ||
-        !context->model_view->adapter->speculation_policy(descriptor, &context->policy) ||
         context->policy.schema_version != YVEX_SPECULATION_FAMILY_POLICY_SCHEMA_V1 ||
         !context->policy.target_verification_required || !context->policy.parallel_block_backbone ||
         !context->policy.sequential_markov || !context->policy.shares_output_head ||
