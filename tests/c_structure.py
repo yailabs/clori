@@ -1242,6 +1242,14 @@ class Audit:
 
     def stale_path_violations(self) -> list[str]:
         errors: list[str] = []
+        with (ROOT / "config/documentation_owners.tsv").open(
+            encoding="utf-8", newline=""
+        ) as stream:
+            frozen_documents = {
+                row["path"]
+                for row in csv.DictReader(stream, delimiter="\t")
+                if row["authority_mode"] == "frozen"
+            }
         documents = [
             ROOT / name
             for name in ("AGENTS.md", "ROADMAP.md", "CONTRIBUTING.md", "README.md")
@@ -1250,6 +1258,8 @@ class Audit:
         expression = re.compile(r"`((?:src|include|tests|config)/[^` ]+)`")
         for document in documents:
             if not document.is_file():
+                continue
+            if relative(document) in frozen_documents:
                 continue
             for number, line in enumerate(document.read_text(errors="ignore").splitlines(), 1):
                 for reference in expression.findall(line):
