@@ -189,10 +189,73 @@ struct yvex_transform_binding;
 struct yvex_source_verification;
 struct yvex_quant_policy;
 struct yvex_quant_plan;
+struct yvex_gguf_writer_plan;
+struct yvex_imatrix_data;
 struct yvex_gguf_writer_lowering_api;
 struct yvex_family_compilation_products;
+typedef struct yvex_family_compiler_adapter yvex_family_compiler_adapter;
 typedef struct yvex_operator_graph_ir yvex_operator_graph_ir;
 typedef struct yvex_compiled_model_plan yvex_compiled_model_plan;
+
+#define YVEX_PHYSICAL_VARIANT_SESSION_SCHEMA_V1 1u
+typedef enum {
+    YVEX_PHYSICAL_VARIANT_COMPLETE_MODEL = 1,
+    YVEX_PHYSICAL_VARIANT_COMPONENT
+} yvex_physical_variant_kind;
+typedef struct {
+    const char *target_id, *source_path, *models_root, *source_manifest_path;
+    const char *quant_preset_name, *quant_policy_path, *imatrix_path, *backend;
+    const char *component_id;
+    unsigned int worker_count;
+} yvex_physical_variant_request;
+typedef struct {
+    unsigned int schema_version;
+    yvex_physical_variant_kind kind;
+    char target_id[128], family[64], component_id[64], source_revision[65];
+    char source_snapshot_identity[65], component_identity[65], transform_identity[65];
+    unsigned long long shards, tensors, elements, payload_execution_bytes_read;
+    unsigned int worker_count;
+    int source_verified;
+} yvex_physical_variant_summary;
+typedef struct {
+    const char *source_path, *component_id;
+} yvex_component_variant_source_request;
+typedef struct {
+    void *owner;
+    void (*close)(void *owner);
+    const struct yvex_transform_ir *transform_ir;
+    const struct yvex_transform_binding *transform_binding;
+    char architecture[64], target_id[128], component_id[64];
+    char source_snapshot_identity[65], component_identity[65];
+    char component_manifest_identity[65], architecture_identity[65], role_map_identity[65];
+    unsigned long long source_snapshot_key;
+    yvex_physical_variant_summary summary;
+} yvex_component_variant_source;
+struct yvex_physical_variant_api;
+typedef struct {
+    unsigned int schema_version;
+    const char *target_id, *family, *source_revision, *profile_name;
+    int (*source_open)(yvex_component_variant_source *out,
+                       const yvex_component_variant_source_request *request,
+                       yvex_error *err);
+    const struct yvex_physical_variant_api *(*physical_variant)(void);
+} yvex_component_variant_adapter;
+typedef struct yvex_physical_variant_session yvex_physical_variant_session;
+typedef struct {
+    const yvex_physical_variant_summary *summary;
+    const struct yvex_quant_plan *plan;
+    const struct yvex_gguf_writer_plan *writer;
+    const struct yvex_imatrix_data *imatrix;
+} yvex_physical_variant_view;
+typedef struct yvex_physical_variant_api {
+    unsigned int schema_version;
+    int (*open)(yvex_physical_variant_session **out,
+                const yvex_physical_variant_request *request,
+                yvex_error *err);
+    void (*close)(yvex_physical_variant_session **session);
+    const yvex_physical_variant_view *(*view)(
+        const yvex_physical_variant_session *session);
+} yvex_physical_variant_api;
 
 #define YVEX_SEMANTIC_MODEL_IR_SCHEMA_V1 1u
 typedef struct yvex_semantic_model_ir yvex_semantic_model_ir;
@@ -285,10 +348,10 @@ typedef struct yvex_family_binding_pipeline {
     unsigned int imatrix_producer_version;
 } yvex_family_binding_pipeline;
 
-typedef struct yvex_family_compiler_adapter {
+struct yvex_family_compiler_adapter {
     unsigned int schema_version;
     unsigned long long adapter_id, adapter_version;
-    const char *target_id, *logical_transform_identity;
+    const char *target_id, *family, *logical_transform_identity;
     const struct yvex_physical_execution_policy *physical_execution_policy;
     const struct yvex_graph_compiler_api *(*graph)(void);
     int (*operator_graph_build)(
@@ -305,13 +368,14 @@ typedef struct yvex_family_compiler_adapter {
     int (*speculation_policy)(const struct yvex_runtime_descriptor_summary *,
                               yvex_speculation_family_policy *);
     int (*tokenizer_policy)(struct yvex_tokenizer_family_policy *, yvex_error *);
+    const yvex_physical_variant_api *(*physical_variant)(void);
     const yvex_family_binding_pipeline *binding_pipeline;
     int (*binding_compile)(
         const struct yvex_family_compiler_adapter *adapter,
         const struct yvex_compilation_runtime_binding_request *request,
         struct yvex_family_compilation_products *products, void **owner,
         yvex_error *err);
-} yvex_family_compiler_adapter;
+};
 
 /*
  * A successful compile lends every product from owner through release. The compile callback sets

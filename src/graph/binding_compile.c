@@ -5,6 +5,8 @@
  * artifact, materialization, graph, quant, and writer resources in one deterministic order; it
  * never identifies a concrete family or reconstructs its topology.
  */
+#include "src/graph/private.h"
+
 #include <yvex/artifact.h>
 #include <yvex/gguf.h>
 #include <yvex/internal/artifact.h>
@@ -64,11 +66,13 @@ static int pipeline_valid(const yvex_family_compiler_adapter *adapter)
     const yvex_family_binding_pipeline *pipeline = adapter ? adapter->binding_pipeline : NULL;
 
     return adapter && adapter->schema_version == YVEX_FAMILY_COMPILER_SCHEMA_V2 &&
-           adapter->adapter_id && adapter->adapter_version && adapter->graph &&
+           adapter->adapter_id && adapter->adapter_version && adapter->target_id &&
+           adapter->family && adapter->graph &&
            adapter->operator_graph_build && adapter->physical_execution_policy &&
            adapter->execution_capabilities &&
            adapter->transformer_policy && adapter->logits_policy &&
-           adapter->speculation_policy && adapter->tokenizer_policy && pipeline &&
+           adapter->speculation_policy && adapter->tokenizer_policy &&
+           adapter->physical_variant && pipeline &&
            pipeline->schema_version == YVEX_FAMILY_BINDING_PIPELINE_SCHEMA_V1 &&
            pipeline->source_open && pipeline->source_close && pipeline->artifact_admit &&
            pipeline->materialization_project && pipeline->semantic_model_build &&
@@ -255,16 +259,15 @@ static int binding_compiler_quant(
         compiler->source.transform_binding, compiler->source.lowering_context, err);
 }
 
-static int binding_compiler_writer(
-    binding_compiler *compiler,
-    const yvex_compilation_runtime_binding_request *request, yvex_error *err)
+static int binding_compiler_writer_build(
+    binding_compiler *compiler, const char *required_execution_identity,
+    yvex_error *err)
 {
     yvex_gguf_writer_plan_options options;
     yvex_gguf_writer_plan_request writer = {0};
 
     yvex_gguf_writer_plan_options_default(&options);
-    options.required_execution_identity =
-        request->physical_variant_plan_path ? NULL : compiler->admission.quant_execution_identity;
+    options.required_execution_identity = required_execution_identity;
     writer.input_class = YVEX_GGUF_WRITER_INPUT_COMPLETE_ARTIFACT;
     writer.quant_plan = compiler->quant;
     writer.options = &options;
@@ -278,6 +281,17 @@ static int binding_compiler_writer(
     }
     return yvex_gguf_writer_plan_build(
         &compiler->writer, &writer, &compiler->writer_failure, err);
+}
+
+static int binding_compiler_writer(
+    binding_compiler *compiler,
+    const yvex_compilation_runtime_binding_request *request, yvex_error *err)
+{
+    const char *required = request->physical_variant_plan_path
+                               ? NULL
+                               : compiler->admission.quant_execution_identity;
+
+    return binding_compiler_writer_build(compiler, required, err);
 }
 
 static int binding_compiler_prepare(
@@ -415,4 +429,329 @@ static void family_runtime_binding_release(void *owner)
     if (!compiler) return;
     binding_compiler_close(compiler);
     free(compiler);
+}
+
+struct yvex_physical_variant_session {
+    binding_compiler complete;
+    yvex_component_variant_source component;
+    yvex_quant_plan *component_quant;
+    yvex_gguf_writer_plan *component_writer;
+    yvex_physical_variant_summary summary;
+    yvex_physical_variant_view view;
+};
+
+static int variant_refuse(yvex_status status, const char *reason, yvex_error *err)
+{
+    yvex_error_set(err, status, "compilation.physical-variant", reason);
+    return status;
+}
+
+static void variant_release(yvex_physical_variant_session *session)
+{
+    if (!session) return;
+    yvex_gguf_writer_plan_release(&session->component_writer);
+    yvex_quant_plan_release(&session->component_quant);
+    if (session->component.close) session->component.close(session->component.owner);
+    binding_compiler_close(&session->complete);
+    memset(session, 0, sizeof(*session));
+}
+
+static int variant_backend_validate(const char *backend, const yvex_quant_plan *plan,
+                                    yvex_error *err)
+{
+    const yvex_quant_plan_summary *summary = yvex_quant_plan_summary_get(plan);
+    unsigned long long ordinal;
+    int compatible;
+
+    if (!backend) return YVEX_OK;
+    compatible = summary && summary->complete;
+    for (ordinal = 0u; compatible && ordinal < summary->decision_count; ++ordinal) {
+        const yvex_quant_decision *decision =
+            yvex_quant_plan_decision_at(plan, ordinal);
+
+        compatible = decision &&
+                     ((strcmp(backend, "cpu") == 0 && decision->cpu_compute_available) ||
+                      (strcmp(backend, "cuda") == 0 && decision->cuda_compute_available));
+    }
+    if (compatible) return YVEX_OK;
+    yvex_error_setf(err, YVEX_ERR_UNSUPPORTED, "compilation.physical-variant.backend",
+                    "physical variant is not executable on requested backend: %s", backend);
+    return YVEX_ERR_UNSUPPORTED;
+}
+
+static int variant_complete_request_validate(
+    const yvex_physical_variant_request *request, yvex_error *err)
+{
+    if (request->component_id)
+        return variant_refuse(
+            YVEX_ERR_INVALID_ARG,
+            "complete-model preparation does not accept a component", err);
+    if (!!request->quant_preset_name == !!request->quant_policy_path)
+        return variant_refuse(
+            YVEX_ERR_INVALID_ARG,
+            "complete-model preparation requires exactly one quant preset or policy", err);
+    if (request->backend && strcmp(request->backend, "cpu") != 0 &&
+        strcmp(request->backend, "cuda") != 0)
+        return variant_refuse(
+            YVEX_ERR_INVALID_ARG,
+            "complete-model backend must be cpu or cuda", err);
+    return YVEX_OK;
+}
+
+static int variant_complete_quant(
+    yvex_physical_variant_session *session,
+    const yvex_physical_variant_request *request,
+    const yvex_compilation_runtime_binding_request *source,
+    yvex_error *err)
+{
+    binding_compiler *compiler = &session->complete;
+    yvex_imatrix_data_summary imatrix = {0};
+    int rc;
+
+    rc = request->quant_preset_name
+             ? yvex_quant_policy_preset_open(
+                   &compiler->quant_policy, request->quant_preset_name, err)
+             : yvex_quant_policy_open(
+                   &compiler->quant_policy, request->quant_policy_path, err);
+    if (rc == YVEX_OK) rc = binding_compiler_imatrix(compiler, source, &imatrix, err);
+    if (rc == YVEX_OK)
+        rc = compiler->pipeline->quant_plan_policy(
+            &compiler->quant, compiler->source.transform_ir,
+            compiler->source.transform_binding, compiler->source.lowering_context,
+            compiler->quant_policy, imatrix.complete ? imatrix.imatrix_identity : NULL, err);
+    if (rc == YVEX_OK)
+        rc = variant_backend_validate(request->backend, compiler->quant, err);
+    if (rc == YVEX_OK) rc = binding_compiler_writer_build(compiler, NULL, err);
+    return rc;
+}
+
+static int variant_complete_open(
+    yvex_physical_variant_session *session,
+    const yvex_graph_execution_binding *execution,
+    const yvex_physical_variant_request *request,
+    yvex_error *err)
+{
+    binding_compiler *compiler = &session->complete;
+    yvex_compilation_runtime_binding_request source = {0};
+    const yvex_transform_ir_summary *transform;
+    int rc;
+
+    rc = variant_complete_request_validate(request, err);
+    if (rc != YVEX_OK) return rc;
+    if (!pipeline_valid(execution->compiler))
+        return variant_refuse(YVEX_ERR_STATE,
+                              "target published an invalid compiler adapter", err);
+    compiler->adapter = execution->compiler;
+    compiler->pipeline = execution->compiler->binding_pipeline;
+    source.source_path = request->source_path;
+    source.models_root = request->models_root;
+    source.source_manifest_path = request->source_manifest_path;
+    source.quant_policy_path = request->quant_policy_path;
+    source.quant_preset_name = request->quant_preset_name;
+    source.imatrix_path = request->imatrix_path;
+    rc = compiler->pipeline->source_open(&compiler->source, &source, err);
+    if (rc == YVEX_OK &&
+        (!compiler->source.verification || !compiler->source.verification->verified))
+        rc = variant_refuse(YVEX_ERR_STATE,
+                            "family source did not publish verified source facts", err);
+    if (rc == YVEX_OK) rc = variant_complete_quant(session, request, &source, err);
+    transform = rc == YVEX_OK
+                    ? yvex_transform_ir_summary_get(compiler->source.transform_ir)
+                    : NULL;
+    if (rc == YVEX_OK && !transform)
+        rc = variant_refuse(YVEX_ERR_STATE,
+                            "family source did not publish a sealed transformation", err);
+    if (rc == YVEX_OK) {
+        session->summary.schema_version = YVEX_PHYSICAL_VARIANT_SESSION_SCHEMA_V1;
+        session->summary.kind = YVEX_PHYSICAL_VARIANT_COMPLETE_MODEL;
+        session->summary.worker_count = request->worker_count;
+        session->summary.source_verified =
+            compiler->source.verification && compiler->source.verification->verified;
+        yvex_core_text_copy(session->summary.target_id,
+                            sizeof(session->summary.target_id), execution->target_id);
+        yvex_core_text_copy(session->summary.family,
+                            sizeof(session->summary.family), execution->compiler->family);
+        yvex_core_text_copy(session->summary.transform_identity,
+                            sizeof(session->summary.transform_identity),
+                            transform->transform_identity);
+    }
+    return rc;
+}
+
+static int variant_component_adapter_validate(
+    const yvex_component_variant_adapter *adapter,
+    const yvex_physical_variant_request *request, yvex_error *err)
+{
+    if (!adapter ||
+        adapter->schema_version != YVEX_PHYSICAL_VARIANT_SESSION_SCHEMA_V1 ||
+        !adapter->target_id || strcmp(adapter->target_id, request->target_id) != 0 ||
+        !adapter->family || !adapter->family[0] ||
+        !adapter->source_revision || !adapter->source_revision[0] ||
+        !adapter->profile_name || !adapter->profile_name[0] ||
+        !adapter->source_open || !adapter->physical_variant)
+        return variant_refuse(YVEX_ERR_STATE,
+                              "target published an invalid component compiler adapter", err);
+    return YVEX_OK;
+}
+
+static int variant_component_source_validate(
+    const yvex_component_variant_source *source,
+    const yvex_component_variant_adapter *adapter,
+    const yvex_physical_variant_request *request, yvex_error *err)
+{
+    const yvex_physical_variant_summary *summary = &source->summary;
+
+    if (!source->owner || !source->close || !source->transform_ir ||
+        !source->transform_binding || !source->architecture[0] ||
+        strcmp(source->target_id, adapter->target_id) != 0 ||
+        strcmp(source->component_id, request->component_id) != 0 ||
+        !source->source_snapshot_identity[0] || !source->component_identity[0] ||
+        !source->component_manifest_identity[0] || !source->architecture_identity[0] ||
+        !source->role_map_identity[0] ||
+        summary->schema_version != YVEX_PHYSICAL_VARIANT_SESSION_SCHEMA_V1 ||
+        summary->kind != YVEX_PHYSICAL_VARIANT_COMPONENT ||
+        strcmp(summary->target_id, adapter->target_id) != 0 ||
+        strcmp(summary->component_id, request->component_id) != 0 ||
+        !summary->source_verified)
+        return variant_refuse(YVEX_ERR_STATE,
+                              "component compiler adapter published incomplete source facts", err);
+    return YVEX_OK;
+}
+
+static int variant_component_writer(yvex_physical_variant_session *session,
+                                    yvex_error *err)
+{
+    yvex_gguf_writer_plan_options options;
+    yvex_gguf_writer_plan_request writer = {0};
+    yvex_gguf_writer_failure failure = {0};
+
+    yvex_gguf_writer_plan_options_default(&options);
+    writer.input_class = YVEX_GGUF_WRITER_INPUT_LOGICAL_COMPONENT;
+    writer.quant_plan = session->component_quant;
+    writer.options = &options;
+    writer.input.component.architecture = session->component.architecture;
+    writer.input.component.target_id = session->component.target_id;
+    writer.input.component.component_id = session->component.component_id;
+    writer.input.component.source_snapshot_identity =
+        session->component.source_snapshot_identity;
+    writer.input.component.source_snapshot_key = session->component.source_snapshot_key;
+    writer.input.component.component_identity = session->component.component_identity;
+    writer.input.component.component_manifest_identity =
+        session->component.component_manifest_identity;
+    writer.input.component.architecture_identity =
+        session->component.architecture_identity;
+    writer.input.component.role_map_identity = session->component.role_map_identity;
+    return yvex_gguf_writer_plan_build(
+        &session->component_writer, &writer, &failure, err);
+}
+
+static int variant_component_open(
+    yvex_physical_variant_session *session,
+    const yvex_component_variant_adapter *adapter,
+    const yvex_physical_variant_request *request,
+    yvex_error *err)
+{
+    yvex_component_variant_source_request source = {
+        request->source_path, request->component_id};
+    yvex_quant_failure failure = {0};
+    int rc;
+
+    if (!request->component_id || request->models_root ||
+        request->source_manifest_path || request->quant_preset_name ||
+        request->quant_policy_path || request->imatrix_path || request->backend)
+        return variant_refuse(
+            YVEX_ERR_INVALID_ARG,
+            "component preparation accepts only source and component", err);
+    rc = variant_component_adapter_validate(adapter, request, err);
+    if (rc == YVEX_OK) rc = adapter->source_open(&session->component, &source, err);
+    if (rc == YVEX_OK)
+        rc = variant_component_source_validate(
+            &session->component, adapter, request, err);
+    if (rc == YVEX_OK)
+        rc = yvex_quant_plan_build_source_faithful(
+            &session->component_quant, session->component.transform_ir,
+            session->component.transform_binding, adapter->profile_name,
+            yvex_transform_hash_string(session->component.component_identity),
+            NULL, &failure, err);
+    if (rc == YVEX_OK) rc = variant_component_writer(session, err);
+    if (rc == YVEX_OK) {
+        session->summary = session->component.summary;
+        session->summary.worker_count = request->worker_count;
+    }
+    return rc;
+}
+
+static int physical_variant_session_open(
+    yvex_physical_variant_session **out,
+    const yvex_physical_variant_request *request,
+    yvex_error *err)
+{
+    const yvex_graph_execution_binding *execution;
+    const yvex_component_variant_adapter *component;
+    yvex_physical_variant_session *session;
+    int rc;
+
+    if (out) *out = NULL;
+    yvex_error_clear(err);
+    if (!out || !request || !request->target_id || !request->target_id[0] ||
+        !request->source_path || !request->source_path[0] ||
+        request->worker_count == 0u || request->worker_count > 64u)
+        return variant_refuse(YVEX_ERR_INVALID_ARG,
+                              "target, source, output, and bounded workers are required", err);
+    execution = yvex_graph_execution_find(0u, 0u, request->target_id);
+    component = execution ? NULL : yvex_graph_component_variant_find(request->target_id);
+    if (!execution && !component)
+        return variant_refuse(
+            YVEX_ERR_UNSUPPORTED,
+            "target has no physical-variant compiler adapter", err);
+    session = (yvex_physical_variant_session *)calloc(1u, sizeof(*session));
+    if (!session)
+        return variant_refuse(YVEX_ERR_NOMEM, "session allocation failed", err);
+    rc = execution ? variant_complete_open(session, execution, request, err)
+                   : variant_component_open(session, component, request, err);
+    if (rc != YVEX_OK) {
+        variant_release(session);
+        free(session);
+        return rc;
+    }
+    session->view.summary = &session->summary;
+    session->view.plan = session->summary.kind == YVEX_PHYSICAL_VARIANT_COMPONENT
+                             ? session->component_quant
+                             : session->complete.quant;
+    session->view.writer = session->summary.kind == YVEX_PHYSICAL_VARIANT_COMPONENT
+                               ? session->component_writer
+                               : session->complete.writer;
+    session->view.imatrix = session->summary.kind == YVEX_PHYSICAL_VARIANT_COMPLETE_MODEL
+                                ? session->complete.imatrix
+                                : NULL;
+    *out = session;
+    return YVEX_OK;
+}
+
+static void physical_variant_session_close(yvex_physical_variant_session **address)
+{
+    yvex_physical_variant_session *session;
+
+    if (!address || !*address) return;
+    session = *address;
+    *address = NULL;
+    variant_release(session);
+    free(session);
+}
+
+static const yvex_physical_variant_view *physical_variant_session_view(
+    const yvex_physical_variant_session *session)
+{
+    return session ? &session->view : NULL;
+}
+
+const yvex_physical_variant_api *yvex_graph_physical_variant_api_get(void)
+{
+    static const yvex_physical_variant_api api = {
+        YVEX_PHYSICAL_VARIANT_SESSION_SCHEMA_V1,
+        physical_variant_session_open,
+        physical_variant_session_close,
+        physical_variant_session_view};
+
+    return &api;
 }

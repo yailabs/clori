@@ -68,6 +68,7 @@ typedef struct {
                                float, float, float, yvex_error *);
 } yvex_graph_component_api;
 const yvex_graph_component_api *yvex_graph_component_api_get(void);
+const yvex_physical_variant_api *yvex_graph_physical_variant_api_get(void);
 /* Stable virtual spans commit physical state pages only as graph publication reaches them. */
 typedef struct yvex_graph_state_page_pool yvex_graph_state_page_pool;
 typedef struct yvex_graph_state_page_store yvex_graph_state_page_store;
@@ -596,5 +597,4 @@ int yvex_graph_full_attention_f32(
     const float *qkv, unsigned long long rows, unsigned long long heads,
     unsigned long long head_width, float *output, float *scratch,
     unsigned long long scratch_count, yvex_error *err);
-
 #endif

@@ -370,6 +370,9 @@ fi
 if rg -n -i "$cli_family_representation_pattern" src/cli/render/model_target.c; then
     fail "model-target rendering imports or names a concrete family ABI"
 fi
+if rg -n -i "$cli_family_representation_pattern" src/cli/commands/quant.c; then
+    fail "physical-variant CLI imports or names a concrete family ABI"
+fi
 if rg -n -i "$cli_family_representation_pattern" \
     src/model/target/report.c src/model/target/mapping_gate.c; then
     fail "model-target coordination imports or names a concrete family ABI"
@@ -453,6 +456,20 @@ if rg -n -i '(families/|deepseek|minimax)' src/runtime/binding_publish.c; then
 fi
 if rg -n -i '(families/|deepseek|minimax)' src/graph/binding_compile.c; then
     fail "generic runtime-binding compiler contains concrete family semantics"
+fi
+physical_variant_owner=$(rg -l \
+    '^struct[[:space:]]+yvex_physical_variant_session[[:space:]]*\{' src)
+[ "$physical_variant_owner" = 'src/graph/binding_compile.c' ] || {
+    printf '%s\n' "$physical_variant_owner" >&2
+    fail "physical-variant resource lifecycle escaped execution compilation"
+}
+physical_variant_api_consumers=$(rg -l 'yvex_graph_physical_variant_api_get' src --glob '*.c' |
+    LC_ALL=C sort)
+if [ "$physical_variant_api_consumers" != 'src/graph/binding_compile.c
+src/graph/families/deepseek_v4.c
+src/graph/families/minimax_h3.c' ]; then
+    printf '%s\n' "$physical_variant_api_consumers" >&2
+    fail "family physical variants do not share one generic compiler API"
 fi
 if rg -n 'void[[:space:]]*\*[[:space:]]*semantic_model|semantic_model_close' \
     include/yvex/internal/compiler.h include/yvex/internal/graph.h \

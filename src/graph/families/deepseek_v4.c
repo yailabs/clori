@@ -365,6 +365,7 @@ static const yvex_family_compiler_adapter deepseek_compiler = {
     .adapter_id = YVEX_DEEPSEEK_V4_ADAPTER_ID,
     .adapter_version = YVEX_DEEPSEEK_V4_ADAPTER_VERSION,
     .target_id = "deepseek4-v4-flash-dspark",
+    .family = "deepseek-v4",
     .logical_transform_identity = YVEX_SELECTED_DEEPSEEK_TRANSFORM_IDENTITY,
     .physical_execution_policy = &deepseek_physical_execution_policy,
     .graph = deepseek_graph_compile,
@@ -374,6 +375,7 @@ static const yvex_family_compiler_adapter deepseek_compiler = {
     .logits_policy = deepseek_logits_policy,
     .speculation_policy = deepseek_speculation_policy,
     .tokenizer_policy = deepseek_tokenizer_policy,
+    .physical_variant = yvex_graph_physical_variant_api_get,
     .binding_pipeline = &deepseek_binding_pipeline,
     .binding_compile = yvex_family_binding_compile};
 const yvex_family_compiler_adapter *yvex_compiler_family_deepseek_v4(void) {
@@ -1190,7 +1192,6 @@ static const char *const payload_failure_names[] = {"none",
                                                     "allocation-failure"};
 
 /* Payload handoff resolves typed family inputs through the common source ABI. */
-
 /* Local composed lifecycle operation used by construction-failure unwinds. */
 static void payload_close(yvex_deepseek_payload_handoff *handoff);
 

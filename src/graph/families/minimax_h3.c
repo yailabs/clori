@@ -6,6 +6,7 @@
  * consumes this admission later; it cannot infer source or model identity from tensor names.
  */
 #include <yvex/internal/artifact.h>
+#include <yvex/internal/compiler.h>
 #include <yvex/internal/families/minimax_h3.h>
 #include <yvex/internal/runtime.h>
 #include "src/graph/private.h"
@@ -1741,4 +1742,127 @@ const yvex_minimax_h3_graph_api *yvex_graph_register_minimax_h3(void)
         text_encoder_artifact_cuda,
     };
     return &api;
+}
+
+static int component_variant_id(const char *name, yvex_minimax_h3_component_id *out)
+{
+    static const yvex_minimax_h3_component_id weighted[] = {
+        YVEX_MINIMAX_H3_COMPONENT_TEXT_ENCODER,
+        YVEX_MINIMAX_H3_COMPONENT_TRANSFORMER,
+        YVEX_MINIMAX_H3_COMPONENT_VIDEO_VAE,
+        YVEX_MINIMAX_H3_COMPONENT_AUDIO_VAE};
+    const yvex_minimax_h3_api *family = yvex_model_register_minimax_h3();
+    size_t index;
+
+    if (!name || !out) return 0;
+    for (index = 0u; index < sizeof(weighted) / sizeof(weighted[0]); ++index) {
+        if (strcmp(name, family->component_name(weighted[index])) == 0) {
+            *out = weighted[index];
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void component_variant_close(void *owner)
+{
+    yvex_minimax_h3_handoff *handoff = (yvex_minimax_h3_handoff *)owner;
+
+    yvex_model_minimax_h3_handoff_api()->close(&handoff);
+}
+
+static int component_variant_open(
+    yvex_component_variant_source *out,
+    const yvex_component_variant_source_request *request,
+    yvex_error *err)
+{
+    const yvex_minimax_h3_handoff_api *handoff_api =
+        yvex_model_minimax_h3_handoff_api();
+    const yvex_minimax_h3_api *family = yvex_model_register_minimax_h3();
+    yvex_minimax_h3_handoff_options options = {0};
+    yvex_minimax_h3_handoff_failure failure = {0};
+    yvex_minimax_h3_handoff *handoff = NULL;
+    yvex_minimax_h3_component_id component_id;
+    const yvex_minimax_h3_handoff_summary *source;
+    const yvex_minimax_h3_target *target;
+    const yvex_minimax_h3_summary *summary;
+    const yvex_minimax_h3_component *component;
+    int rc;
+
+    if (out) memset(out, 0, sizeof(*out));
+    if (!out || !request || !component_variant_id(request->component_id, &component_id)) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "minimax-h3.component-variant",
+                       "component must be text_encoder, transformer, video_vae, or audio_vae");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    options.source_root = request->source_path;
+    options.component = component_id;
+    yvex_source_payload_budget_default(&options.budget);
+    options.budget.maximum_open_handles = 4u;
+    options.budget.maximum_streams = 1u;
+    options.budget.maximum_inflight_host_bytes = options.budget.chunk_bytes;
+    options.chunk_bytes = options.budget.chunk_bytes;
+    options.page_bytes = options.budget.page_bytes;
+    rc = handoff_api->open(&handoff, &options, &failure, err);
+    target = handoff ? handoff_api->target(handoff) : NULL;
+    source = handoff ? handoff_api->summary(handoff) : NULL;
+    summary = target ? family->summary(target) : NULL;
+    component = target ? family->component_at(target, component_id) : NULL;
+    if (rc == YVEX_OK && (!source || !summary || !component)) {
+        yvex_error_set(err, YVEX_ERR_STATE, "minimax-h3.component-variant",
+                       "weighted component disappeared after source admission");
+        rc = YVEX_ERR_STATE;
+    }
+    if (rc != YVEX_OK) {
+        handoff_api->close(&handoff);
+        return rc;
+    }
+    out->owner = handoff;
+    out->close = component_variant_close;
+    out->transform_ir = handoff_api->transform_ir(handoff);
+    out->transform_binding = handoff_api->binding(handoff);
+#define COPY(field, value) yvex_core_text_copy(out->field, sizeof(out->field), (value))
+    COPY(architecture, "minimax-h3");
+    COPY(target_id, YVEX_MINIMAX_H3_TARGET_ID);
+    COPY(component_id, component->canonical_id);
+    COPY(source_snapshot_identity, summary->source_snapshot_identity);
+    COPY(component_identity, component->identity);
+    COPY(component_manifest_identity, summary->component_manifest_identity);
+    COPY(architecture_identity, summary->architecture_identity);
+    COPY(role_map_identity, summary->role_map_identity);
+#undef COPY
+    out->source_snapshot_key = summary->source_snapshot_key;
+    out->summary.schema_version = YVEX_PHYSICAL_VARIANT_SESSION_SCHEMA_V1;
+    out->summary.kind = YVEX_PHYSICAL_VARIANT_COMPONENT;
+    out->summary.shards = source->shards;
+    out->summary.tensors = source->tensors;
+    out->summary.elements = source->elements;
+    out->summary.payload_execution_bytes_read = source->payload_execution_bytes_read;
+    out->summary.source_verified = source->complete;
+#define COPY_SUMMARY(field, value) \
+    yvex_core_text_copy(out->summary.field, sizeof(out->summary.field), (value))
+    COPY_SUMMARY(target_id, YVEX_MINIMAX_H3_TARGET_ID);
+    COPY_SUMMARY(family, "minimax-h3");
+    COPY_SUMMARY(component_id, component->canonical_id);
+    COPY_SUMMARY(source_revision, YVEX_MINIMAX_H3_REVISION);
+    COPY_SUMMARY(source_snapshot_identity, source->source_snapshot_identity);
+    COPY_SUMMARY(component_identity, source->component_identity);
+    COPY_SUMMARY(transform_identity, source->transform_identity);
+#undef COPY_SUMMARY
+    return YVEX_OK;
+}
+
+const yvex_component_variant_adapter *yvex_graph_component_variant_find(
+    const char *target_id)
+{
+    static const yvex_component_variant_adapter adapter = {
+        .schema_version = YVEX_PHYSICAL_VARIANT_SESSION_SCHEMA_V1,
+        .target_id = YVEX_MINIMAX_H3_TARGET_ID,
+        .family = "minimax-h3",
+        .source_revision = YVEX_MINIMAX_H3_REVISION,
+        .profile_name = "minimax-h3-source-faithful-v1",
+        .source_open = component_variant_open,
+        .physical_variant = yvex_graph_physical_variant_api_get};
+
+    return target_id && strcmp(target_id, adapter.target_id) == 0 ? &adapter : NULL;
 }
