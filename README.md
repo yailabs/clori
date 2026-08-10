@@ -10,10 +10,10 @@ variants from verified source snapshots, admits complete artifacts, and runs
 them through one long-lived host with isolated sessions.
 
 The current complete vertical is DeepSeek-V4-Flash-DSpark on CPU and the
-admitted mixed NVIDIA GB10 CUDA path. One `yvexd` model owns target-only and
-target-verified speculative generation; `yvex` provides the public command
-surface; local applications may use the bounded `yvex.openai.compat.v2`
-HTTP/SSE profile in the same daemon. Performance optimization, evaluation,
+admitted mixed NVIDIA GB10 CUDA path. One foreground `yvex server` process owns
+target-only and target-verified speculative generation; `yvex` also provides
+the client and offline command surfaces. Local applications may use the bounded
+`yvex.openai.compat.v2` HTTP/SSE profile in the same server. Performance optimization, evaluation,
 release benchmarking, and release qualification remain open.
 
 ## Why YVEX
@@ -48,55 +48,52 @@ preserves exact earlier progress.
 make -j4 all
 ```
 
-### 2. Select a registered model
+### 2. Find a registered model
 
 The model registry owns the artifact path, runtime binding, target, backend,
-and context. Normal startup does not require environment variables or model
-paths. List the local entries, inspect one whose `STARTUP` column is `yes`, and
-select its alias:
+and startup context. Normal startup does not require environment variables or
+model paths. List the local entries and inspect one whose `STARTUP` column is
+`yes`:
 
 ```sh
 ./yvex model list
 ./yvex model show deepseek4-v4-flash-dspark-runtime-iq2xxs
-./yvex model select deepseek4-v4-flash-dspark-runtime-iq2xxs
-./yvex model selected
 ```
 
 The alias above is an example; use an alias printed by `model list`. If no
 startup-ready model is listed, follow the runbook's one-time
 [model registration](docs/operator-runbook.md#registering-an-existing-model)
-procedure. Selection only configures the next host start; it never changes a
-model that is already running.
+procedure. The profile name is supplied explicitly when the server starts.
 
-### 3. Start the runtime and load the selected model
+### 3. Run the model server
 
-If `./yvex runtime status` already reports `ready`, do not start a second host;
+If `./yvex server status` already reports `ready`, do not start a second host;
 continue with step 4. Otherwise, run this in the first terminal:
 
 ```sh
-./yvex runtime start
+./yvex server deepseek4-v4-flash-dspark-runtime-iq2xxs
 ```
 
-There is no separate model-load command. `runtime start` starts `yvexd`, reads
-the selected registry profile, authenticates its artifact and binding, copies
-the encoded weights into the daemon's process-lifetime host arena, builds
-runtime residency, and keeps that runtime model open. Before admission starts,
-it prints the selected profile, target, backend, mode, and context on one line,
-so the foreground terminal identifies the model being loaded during a long
-startup. Leave that terminal running. A large model can take several minutes
-before the local runtime becomes ready.
+There is no separate model-load command. `server MODEL` directly enters the
+foreground server lifecycle, authenticates the named profile's artifact and
+binding, copies the encoded weights into its process-lifetime host arena,
+builds runtime residency, and keeps that runtime model open. Before admission
+starts it prints the profile, target, backend, mode, requested context,
+artifact, binding, endpoint, and stop instruction. Use `--ctx N` for an
+explicit startup capacity override. Leave that terminal running. A large model
+can take several minutes before the server becomes ready.
 
-### 4. Verify the resident runtime
+### 4. Verify the resident server
 
 In a second terminal:
 
 ```sh
-./yvex runtime status
-./yvex runtime model
-./yvex runtime memory
+./yvex server status
+./yvex server model
+./yvex server memory
 ```
 
-These commands report readiness, the model actually open in `yvexd`, and its
+These commands report readiness, the model actually open in the server, and its
 current host/device memory accounting. They do not load another model.
 
 ### 5. Start chat
@@ -127,8 +124,7 @@ three-terminal observation, sessions, shutdown, configuration, and recovery.
 
 | Component | Responsibility |
 | --- | --- |
-| `yvex` | Public REPL, one-shot and administrative protocol client, plus finite offline compile, artifact, inspect, execute, profile, and system operations |
-| `yvexd` | One long-lived model, worker, queue, session/KV registry, private protocol, loopback OpenAI adapter, and telemetry authority |
+| `yvex` | Explicit foreground model server, public REPL, one-shot and administrative protocol client, plus finite offline compile, artifact, inspect, execute, profile, and system operations |
 | `libyvex` | Reusable compilation, artifact, runtime, graph, backend, tokenizer, and generation implementation |
 
 Runtime-facing `yvex` operations always cross private local protocol v8. The
@@ -137,7 +133,7 @@ One compiled operation registry drives command paths, syntax, help, JSON
 discovery, completion, and slash schemas without becoming a domain-policy
 owner.
 
-The daemon-backed console uses one `yvex>` prompt, one compact vertical
+The server-backed console uses one `yvex>` prompt, one compact vertical
 attachment view, an immediately visible registry-derived slash catalog,
 in-place server-authored prefill progress, one compact turn summary, semantic
 TTY color, a categorized operational watch, and a detailed human trace.
@@ -181,7 +177,7 @@ YVEX does not currently claim:
 - public or remote serving, authentication, TLS, or remote security;
 - complete OpenAI API or another provider compatibility surface;
 - multi-model hosting, hot reload, continuous batching, or distributed serving;
-- session persistence across daemon restart;
+- session persistence across server restart;
 - complete accelerator residency, device-side sampling, or tokenizer execution;
 - optimized DSpark execution or production load-aware confidence scheduling;
 - model behavior or quality evaluation;

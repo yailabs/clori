@@ -667,10 +667,11 @@ assert "ATTENTION_PRESENCE_TEXT" in baseline_rule
 assert "delta_seconds" not in rules
 PY
 
-expect_status 5 "$YVEX_BIN" execute attention run \
+expect_status 2 "$YVEX_BIN" execute attention run \
     --target qwen3-8b --backend cpu --scope quick --output json \
     >"$OUT_DIR/target-refusal.json" 2>"$OUT_DIR/target-refusal.err"
-contains "$OUT_DIR/target-refusal.err" "unsupported attention target: qwen3-8b"
+contains "$OUT_DIR/target-refusal.err" \
+    "artifact and immutable runtime binding are required"
 python3 - "$OUT_DIR/target-refusal.json" <<'PY'
 import json
 import sys
@@ -679,11 +680,11 @@ with open(sys.argv[1], encoding="utf-8") as stream:
     result = json.load(stream)
 assert result["status"] == "refused"
 assert result["target"] == "qwen3-8b"
-assert result["failure_code"] == "YVEX_ERR_UNSUPPORTED"
+assert result["failure_code"] == "YVEX_ERR_INVALID_ARG"
 assert result["failure_where"] == "runtime.attention"
 assert result["operator_command_available"] is True
 assert result["runtime_generation_ready"] is False
-assert "family" not in result
+assert result["family"] == "qwen3-8b"
 assert "execution_class" not in result
 assert "weights_class" not in result
 assert "layers_executed" not in result

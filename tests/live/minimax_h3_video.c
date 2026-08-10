@@ -8,6 +8,7 @@
 #include <yvex/gguf.h>
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/families/minimax_h3.h>
+#include <yvex/internal/runtime.h>
 
 static int file_read_exact(const char *path, void *output, size_t bytes)
 {
@@ -123,34 +124,44 @@ int main(int argc, char **argv)
     if (rc == YVEX_OK) rc = yvex_gguf_open(&gguf, artifact, &err);
     if (rc == YVEX_OK) rc = yvex_tensor_table_from_gguf(&tensors, gguf, &err);
     if (decode && rc == YVEX_OK) {
-        yvex_minimax_h3_video_decode_options decode_options;
-        yvex_minimax_h3_video_decode_result result;
-        yvex_minimax_h3_component_execution_failure execution_failure;
+        yvex_component_plan_request plan_request = {0};
+        yvex_component_plan plan;
+        yvex_component_execution_request execution_request = {0};
+        yvex_component_execution_result result;
+        yvex_component_failure execution_failure;
         unsigned long long patches = frames * height * width;
         size_t latent_values = (size_t)(patches * 24ull);
         size_t output_values = (size_t)(patches * 3072ull);
         float *latent = (float *)malloc(latent_values * sizeof(*latent));
         float *output = (float *)malloc(output_values * sizeof(*output));
 
-        memset(&decode_options, 0, sizeof(decode_options));
         memset(&execution_failure, 0, sizeof(execution_failure));
         if (!latent || !output ||
             !file_read_exact(latent_path, latent, latent_values * sizeof(*latent))) {
             fprintf(stderr, "video_vae_latent_read=refused\n");
             rc = YVEX_ERR_FORMAT;
         }
-        decode_options.latent = latent;
-        decode_options.output = output;
-        decode_options.output_capacity = output_values;
-        decode_options.batch = 1ull;
-        decode_options.latent_channels = 24ull;
-        decode_options.latent_frames = frames;
-        decode_options.latent_height = height;
-        decode_options.latent_width = width;
-        decode_options.max_workspace_bytes = 256ull * 1024ull * 1024ull;
+        plan_request.target_id = YVEX_MINIMAX_H3_TARGET_ID;
+        plan_request.component_id = "video-vae";
+        plan_request.backend = YVEX_BACKEND_KIND_CPU;
+        plan_request.batch = 1ull;
+        plan_request.geometry_rank = 3u;
+        plan_request.geometry[0] = frames;
+        plan_request.geometry[1] = height;
+        plan_request.geometry[2] = width;
+        plan_request.maximum_host_bytes =
+            256ull * 1024ull * 1024ull +
+            (unsigned long long)(latent_values + output_values) * sizeof(float);
         if (rc == YVEX_OK)
-            rc = yvex_graph_register_minimax_h3()->video_vae_execute_artifact_cpu(
-                artifact, gguf, tensors, &decode_options, &result,
+            rc = yvex_runtime_component_api_get()->plan_build(
+                &plan_request, &plan, &execution_failure, &err);
+        execution_request.plan = &plan;
+        execution_request.input = latent;
+        execution_request.output = output;
+        execution_request.output_capacity = output_values;
+        if (rc == YVEX_OK)
+            rc = yvex_runtime_component_api_get()->execute(
+                artifact, gguf, tensors, &execution_request, &result,
                 &execution_failure, &err);
         if (rc != YVEX_OK) {
             fprintf(stderr,
@@ -165,7 +176,8 @@ int main(int argc, char **argv)
         } else {
             printf("video_vae_decode=accepted\n");
             printf("output_shape=1x3x%llux%llux%llu\n",
-                   result.frames, result.height, result.width);
+                   result.output_dims[2], result.output_dims[3],
+                   result.output_dims[4]);
             printf("tensor_reads=%llu\n", result.tensor_reads);
             printf("payload_bytes_read=%llu\n", result.payload_bytes_read);
             printf("peak_workspace_bytes=%llu\n", result.peak_workspace_bytes);

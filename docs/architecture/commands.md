@@ -12,12 +12,11 @@ semantic watch, human trace, and machine JSONL projections.
 
 | Binary | Owner | Engine linkage | Terminal authority |
 | --- | --- | --- | --- |
-| `yvexd` | runtime host and server adapters | yes | optional raw JSONL console, loopback HTTP/SSE, and fatal stderr |
-| `yvex` | unified public command | runtime lane: no; offline lane: yes | conversation, compact status, watch, trace, and explicit offline evidence |
+| `yvex` | unified public command and explicit foreground server mode | client lane: no; server/offline lanes: yes | server lifecycle, conversation, compact status, logs, and explicit offline evidence |
 
 Runtime and model code never writes product output. It publishes typed facts or
-typed events. Client renderers own layout; only client I/O owners and daemon
-entrypoint write terminal streams.
+typed events. CLI renderers own layout; only CLI I/O owners, including the
+explicit server entrypoint, write terminal streams.
 
 ## Product grammar
 
@@ -26,9 +25,10 @@ yvex
 yvex chat [--session NAME] [--max-new-tokens N]
 yvex run [options] TEXT
 
-yvex runtime start|stop|status|model|memory|watch|trace
+yvex server MODEL [--ctx N] [server options]
+yvex server stop|status|model|memory|log [--json]
 yvex session new|list|show|attach|detach|reset|close|cancel
-yvex model list|show|selected|select
+yvex model list|show
 yvex compile ...
 yvex artifact show|verify|materialize
 yvex help [PATH...]
@@ -38,40 +38,40 @@ yvex completion bash|zsh|fish
 yvex version
 ```
 
-The runtime-facing lane has no dependency edge to engine execution. Direct
-component execution, materialization, tokenizer conformance, metadata,
-tensor-map, and target-report operations enter a separately guarded finite
-offline lane in the same ELF. Retired top-level namespaces refuse with a
-migration hint and never execute hidden aliases.
+Runtime-client controls have no dependency edge to engine execution. The
+`server MODEL` entrypoint is a separately guarded engine-linked foreground
+lane in the same ELF; it is not a client wrapper and does not execute a sibling
+binary. Direct component execution, materialization, tokenizer conformance,
+metadata, tensor-map, and target-report operations enter the finite offline
+lane. Retired top-level namespaces refuse with a migration hint and never
+execute hidden aliases.
 
 The local model registry owns complete startup profiles: artifact, runtime
-binding, target, backend, and context. `model list` marks which entries have a
-complete readable profile, and `model select NAME` atomically copies one into
-the private XDG selection for a later `runtime start`. Selection never opens
-the model and cannot hot-switch a running daemon. `model show` inspects a
-registry entry, `model selected` reads the inert selection, and `runtime model`
-reads the model actually open in `yvexd`.
+binding, target, backend, generation mode, and startup context. `model list`
+marks which entries have a complete readable profile and `model show` inspects
+one entry. `server MODEL` names that profile explicitly; no persisted selection
+is required or consulted. `server model` reads the model actually open in the
+resident server.
 
 ### Hosted startup semantics
 
 There is no independent hosted `load` operation. In the normal product path,
-`yvex runtime start` reads the selected profile and executes the sibling
-`yvexd` in the foreground. The daemon authenticates those identities, creates
-one immutable runtime model, establishes host/device residency, then publishes
-readiness. The client prints and flushes the selected profile, target, backend,
-generation mode, and context before executing the daemon, so a long admission
-never begins without identifying the model being opened. Direct daemon options
-remain an advanced administration boundary, not the normal model-selection
-workflow.
+`yvex server MODEL` directly enters the server lifecycle and remains in the
+foreground. It resolves and authenticates the named profile, creates one
+immutable runtime model, establishes host/device residency, then publishes
+readiness. Before admission begins it prints and flushes the profile, target,
+backend, generation mode, requested context, artifact, binding, endpoint, and
+shutdown instruction. `--ctx N` overrides only the startup workload capacity;
+it does not alter the model-family semantic maximum.
 `yvex chat` and `yvex run` are protocol clients of that resident model; they do
 not link into runtime execution or open weights locally. The complete operator
 sequence and memory interpretation live in the
 [local runtime runbook](../operator-runbook.md).
 
 `yvex` and `yvex chat` require a TTY. `yvex run` is the noninteractive one-shot
-form. A missing daemon produces one concise refusal plus the exact runtime-start
-hint. Unknown and duplicate options follow the product parser's typed refusal
-policy.
+form. A missing server produces one concise refusal plus the exact
+`yvex server MODEL` hint. Unknown and duplicate options follow the product
+parser's typed refusal policy.
 
 The REPL owns bounded in-memory history, UTF-8 code-point deletion, bracketed
 multiline paste, resize redraw, and two-stage SIGINT/EOF behavior. History is
@@ -116,7 +116,7 @@ retain semantic validation and defaults.
 
 ### Conversation
 
-The REPL is a linear client attached to the already resident daemon. A compact
+The REPL is a linear client attached to the already resident server. A compact
 vertical attachment block separates the live target, physical variant, runtime,
 session, context, memory, and OpenAI-listener facts instead of relying on
 terminal wrapping. The complete slash catalog then projects one registry-owned
@@ -159,7 +159,7 @@ It includes at most one blocker and one actionable hint.
 
 ### Operational stream
 
-`yvex runtime watch` first renders the current bounded runtime snapshot, then
+`yvex server log` first renders the current bounded runtime snapshot, then
 subscribes to retained operational history and live events. Fixed semantic
 categories make startup, readiness, sessions, requests, prefill, DSpark, and
 generation visually distinguishable. The stream retains queue events only
@@ -172,16 +172,15 @@ turn, and phase detail. Content remains excluded by default.
 
 ### Raw stream
 
-`yvexd --console raw` and `yvex runtime trace --json` serialize the same event
-sequence as JSONL. `yvex runtime trace` is the detailed human projection: it
-adds sequence, severity, turn, phase, timing, rate, and the same semantic
-counter names used by watch. Raw means complete event records, not tensor,
-hidden, logits, KV, or memory dumps. Text content is excluded unless
-`--trace-content` is explicitly enabled at the host.
+`yvex server log --json` serializes the event sequence as canonical JSONL.
+Without `--json`, the same public operation renders the compact operational
+view. Raw means complete event records, not tensor, hidden, logits, KV, or
+memory dumps. Text content is excluded unless `--trace-content` is explicitly
+enabled when starting the server.
 
 ### Machine status
 
-`yvex runtime status --json` is a stable protocol-derived object. Human prose
+`yvex server status --json` is a stable protocol-derived object. Human prose
 never shares its stdout. Developer owners may expose their own explicitly
 versioned JSON or evidence-file schemas.
 
@@ -193,10 +192,11 @@ refusals are nonzero without turning diagnostic evidence into normal output.
 
 ### Application protocol
 
-The OpenAI adapter inside `yvexd` is not a third terminal renderer. It returns
+The OpenAI adapter inside the foreground `yvex server` process is not a third
+terminal renderer. It returns
 the documented compatibility JSON or SSE schema over loopback HTTP. Its
 response objects project typed provider and YVEX protocol facts; they never
-scrape `yvex` or daemon-console text. The exact profile lives in
+scrape CLI or server-console text. The exact profile lives in
 [`openai-compatibility.md`](../openai-compatibility.md).
 
 ## Typed event fan-out

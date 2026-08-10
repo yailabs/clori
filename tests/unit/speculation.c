@@ -1,4 +1,5 @@
 #include <yvex/internal/decode.h>
+#include <yvex/internal/families/deepseek_v4.h>
 #include <yvex/internal/sampling.h>
 
 #include <math.h>
@@ -417,18 +418,14 @@ static int test_commit_plan(void)
 
 static int test_family_policy_compatibility(void)
 {
-    const yvex_runtime_family_adapter *adapter =
-        yvex_runtime_family_adapter_find("deepseek4-v4-flash-dspark");
+    const yvex_family_compiler_adapter *adapter =
+        yvex_compiler_family_deepseek_v4();
     yvex_runtime_descriptor_summary runtime = {0};
     yvex_speculation_family_policy policy;
 
     YVEX_TEST_ASSERT(adapter && adapter->speculation_policy &&
-                         adapter->speculation_policy(&runtime, &policy) &&
-                         policy.block_size == 5ull &&
-                         policy.target_feature_layer_count == 3ull &&
-                         policy.target_feature_layers[0] == 40ull &&
-                         policy.target_feature_layers[2] == 42ull,
-                     "binding v7 retains its exact family-owned DSpark projection");
+                         !adapter->speculation_policy(&runtime, &policy),
+                     "DSpark policy refuses an uncompiled execution descriptor");
     runtime.model_execution.schema_version = YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1;
     runtime.model_execution.proposal_width = 4ull;
     runtime.model_execution.draft_noise_token_id = 17ull;

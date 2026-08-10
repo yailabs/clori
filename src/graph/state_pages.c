@@ -117,13 +117,18 @@ int yvex_graph_state_page_pool_bind_capacity(
     yvex_graph_state_page_pool *pool,
     const yvex_execution_capacity_plan *capacity, yvex_error *err)
 {
-    unsigned long long budget, required;
+    unsigned long long budget, required, state_budget;
     int rc = pages_lock(pool, err);
 
     if (rc != YVEX_OK) return rc;
     if (!capacity ||
         !pages_add(capacity->state_pool_bytes,
-                   capacity->candidate_reserve_bytes, &budget) ||
+                   capacity->candidate_reserve_bytes, &state_budget) ||
+        /* Graph state stores reserve virtual extents independently. The graph reserve owns
+         * host-page rounding and store metadata; excluding it makes a logically admitted
+         * small state class impossible to commit even though the total capacity plan already
+         * charged those physical graph resources. */
+        !pages_add(state_budget, capacity->graph_bytes, &budget) ||
         !pages_add(pool->metadata_bytes, pool->resident_bytes, &required)) {
         rc = pages_reject(err, YVEX_ERR_INVALID_ARG,
                           "state capacity budget is invalid");

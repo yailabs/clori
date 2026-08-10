@@ -15,13 +15,13 @@ change. Git history preserves implementation chronology.
 - DeepSeek-V4-Flash-DSpark as the sole current DeepSeek source target, with
   target-only reference generation and target-verified speculative generation
   in the same resident runtime model and session authority.
-- Complete daemon-backed DeepSeek-V4-Flash source-to-streamed-text execution
+- Complete server-backed DeepSeek-V4-Flash source-to-streamed-text execution
   through native and bounded OpenAI-compatible local surfaces.
 - Exact server-owned multi-turn sessions with committed-prefix reuse,
   cancellation, partial-progress truth, and one persistent model lifecycle.
 - Registry-driven command discovery, advanced help, JSON discovery, and Bash,
   Zsh, and Fish completion.
-- A daemon-backed `yvex>` console with composed attachment state, live prefill
+- A server-backed `yvex>` console with composed attachment state, live prefill
   progress, direct streamed output, typed turn metrics, registry-derived slash
   completion, semantic watch/human trace, and clean Ctrl-C/Ctrl-D handling.
 - Exact source-authored chat/non-think, think-high and think-max conversation
@@ -167,6 +167,9 @@ change. Git history preserves implementation chronology.
 
 ### Changed
 
+- Model hosting is now the explicit foreground `yvex server MODEL [--ctx N]`
+  operation. Status, model, memory, logs and shutdown use the same public
+  `server` noun; `server log [--json]` is the sole observability stream.
 - Generation plan ABI v5 now binds the compiled workload-profile identity, so
   CUDA phase-roofline evidence validates against its actual workload instead
   of being rejected against the distinct per-request profiling identity.
@@ -242,6 +245,8 @@ change. Git history preserves implementation chronology.
 
 ### Removed
 
+- The separate `yvexd` product, implicit persisted model selection,
+  `runtime start`, and duplicate public `watch`/`trace` grammar.
 - Retired the separate `yvex-dev` and `yvex-openai` product executables.
 - Removed the old top-level `evidence`, `graph`, `quant`, `source`, `tensor`,
   and `tokenizer` command namespaces; migration hints do not execute hidden

@@ -134,7 +134,7 @@ static int runtime_session_workspace_requirements(
     static const yvex_attention_operation_scope graph_scopes[] = {
         YVEX_ATTENTION_OPERATION_CORE, YVEX_ATTENTION_OPERATION_ENVELOPE, YVEX_ATTENTION_OPERATION_RELEASE_SET};
     const yvex_graph_attention_capacity_summary *summary = yvex_graph_attention_capacity_plan_summary(capacity);
-    const yvex_graph_family_api *graph = session->model->adapter->graph();
+    const yvex_graph_execution_api *graph = session->model->graph;
     const yvex_attention_summary *draft_summary =
         yvex_attention_plan_summary(session->model->draft_attention);
     const yvex_attention_plan *attention =
@@ -147,7 +147,7 @@ static int runtime_session_workspace_requirements(
     yvex_attention_operation_scope graph_scope;
     unsigned long long count = yvex_attention_plan_layer_count(attention), index;
     memset(requirements, 0, sizeof(*requirements));
-    if (!summary || !graph || !graph->workspace_recipe ||
+    if (!summary || !graph ||
         strcmp(summary->attention_plan_identity,
                yvex_attention_plan_summary(attention)->attention_plan_identity) != 0)
         return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_WORKSPACE_STATE, 1ull, 0ull, err);
@@ -177,7 +177,8 @@ static int runtime_session_workspace_requirements(
         if (rc != YVEX_OK) return rc;
         memset(&recipe, 0, sizeof(recipe));
         memset(&graph_failure, 0, sizeof(graph_failure));
-        rc = graph->workspace_recipe(layer, &envelope, graph_mode, graph_scope, evidence_level,
+        rc = yvex_attention_workspace_recipe_build(
+            layer, &envelope, graph_mode, graph_scope, evidence_level,
             summary->maximum_token_count, &recipe, &graph_failure, err);
         if (rc == YVEX_OK)
             rc = yvex_backend_attention_workspace_required_from_recipe(&recipe, &layer_bytes, err);
@@ -804,7 +805,7 @@ int yvex_runtime_session_finish_scope(
                      : provider->abort(provider->context, &state_failure,
                                        &state_error);
         if (rc == YVEX_OK && committing && residency)
-            yvex_runtime_state_residency_commit(residency);
+            rc = yvex_runtime_state_residency_commit(residency, &state_error);
         else if (!committing && residency)
             yvex_runtime_state_residency_abort(residency);
         if (rc != YVEX_OK) {
@@ -928,13 +929,16 @@ int yvex_runtime_session_finish_coordinated(
         prepared[index] = cleanup_rc == YVEX_OK;
     }
     if (rc == YVEX_OK && cleanup_rc == YVEX_OK) {
-        for (index = 0ull; index < 2ull; ++index) {
+        for (index = 0ull; index < 2ull; ++index)
             providers[index]->publish_commit(providers[index]->context);
+        for (index = 0ull; cleanup_rc == YVEX_OK && index < 2ull; ++index)
             if (residencies[index])
-                yvex_runtime_state_residency_commit(residencies[index]);
-        }
-        if (participant_prepared) participant->publish(participant->context);
-        session->summary.execution_count = counter_next;
+                cleanup_rc = yvex_runtime_state_residency_commit(
+                    residencies[index], &cleanup);
+        if (cleanup_rc == YVEX_OK && participant_prepared)
+            participant->publish(participant->context);
+        if (cleanup_rc == YVEX_OK)
+            session->summary.execution_count = counter_next;
     } else {
         for (index = 2ull; index-- > 0ull;)
             if (prepared[index])

@@ -86,6 +86,22 @@ int yvex_gguf_layout_map_shape_supported(yvex_tensor_role role,
                                          const unsigned long long *dims,
                                          const char **reason);
 
+/*
+ * Conversion consumes a family-owned lexical projection without selecting a family itself.
+ * The returned descriptor is immutable process-lifetime storage. Semantic context is metadata
+ * for the proof artifact; runtime-selected capacity never enters this contract.
+ */
+typedef struct {
+    const char *canonical_architecture;
+    const char *context_metadata_key;
+    unsigned int semantic_maximum_context;
+    int (*map_name)(const char *native_name, char *target, size_t target_cap,
+                    yvex_tensor_role *role,
+                    yvex_weight_mapping_issue_kind *issue);
+} yvex_gguf_conversion_projection;
+const yvex_gguf_conversion_projection *
+yvex_model_conversion_projection_find(const char *architecture);
+
 /* Tokenizer Metadata. */
 #define YVEX_GGUF_TOKENIZER_SHA256_CAP 65u
 typedef enum {

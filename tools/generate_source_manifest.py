@@ -80,7 +80,6 @@ def classify_production(rows: list[list[str]]) -> dict[str, list[str]]:
         "OWNED_PRODUCTION_HEADERS": [],
         "CORE_SRCS": [],
         "YVEX_SRCS": [],
-        "DAEMON_SRCS": [],
         "OPENAI_ADAPTER_SRCS": [],
         "CUDA_SRCS": [],
         "CUDA_CU_SRCS": [],
@@ -109,8 +108,6 @@ def classify_production(rows: list[list[str]]) -> dict[str, list[str]]:
                 classes["CLI_RENDER_SRCS"].append(path)
             elif path.startswith("src/cli/io/") and not path.endswith("/client.c"):
                 classes["CLI_IO_SRCS"].append(path)
-        elif path == "src/daemon/yvexd.c":
-            classes["DAEMON_SRCS"].append(path)
         elif path.startswith("src/server/openai/"):
             classes["OPENAI_ADAPTER_SRCS"].append(path)
         elif path.startswith("src/backend/cuda/") and suffix == ".cu":
@@ -123,7 +120,6 @@ def classify_production(rows: list[list[str]]) -> dict[str, list[str]]:
     product = (
         classes["CORE_SRCS"]
         + classes["YVEX_SRCS"]
-        + classes["DAEMON_SRCS"]
         + classes["OPENAI_ADAPTER_SRCS"]
         + classes["CUDA_SRCS"]
         + classes["CUDA_CU_SRCS"]

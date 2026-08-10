@@ -158,7 +158,7 @@ int yvex_test_attention_reference_hadamard(const float *input,
                                            int reject_nonfinite,
                                            float *output);
 int yvex_test_attention_reference_execute(
-    const yvex_attention_plan *plan,
+    const yvex_attention_layer_plan *layer,
     const yvex_deepseek_v4_ir *ir,
     yvex_materialization_session *session,
     const yvex_runtime_descriptor *descriptor,

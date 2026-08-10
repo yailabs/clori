@@ -74,7 +74,7 @@ static int command_text(int argc, char **argv, char output[256])
     return count != 0u;
 }
 
-static size_t command_distance(const char *left, const char *right)
+size_t yvex_cli_command_distance(const char *left, const char *right)
 {
     size_t prior[256], next[256], left_count = strlen(left), right_count = strlen(right);
     size_t row, column;
@@ -106,7 +106,7 @@ static const char *nearest_command(int argc, char **argv, char input[256])
         size_t distance;
         if (!candidate->cli_projection || candidate->visibility == YVEX_OPERATOR_VISIBILITY_REMOVED)
             continue;
-        distance = command_distance(input, candidate->command_path);
+        distance = yvex_cli_command_distance(input, candidate->command_path);
         if (distance < best_distance) {
             best_distance = distance;
             best = candidate->command_path;
@@ -276,6 +276,8 @@ int main(int argc, char **argv)
         return yvex_client_dispatch(operation, argc, argv, consumed);
     if (operation->lane == YVEX_OPERATOR_LANE_OFFLINE_ENGINE)
         return offline_dispatch(operation, argc, argv, consumed);
+    if (operation->lane == YVEX_OPERATOR_LANE_DAEMON_ENTRYPOINT)
+        return yvex_cli_server_dispatch(argc, argv, consumed);
     yvex_cli_out_writef(stderr, "yvex: operation is not available on the CLI: %s\n",
                         operation->operation_id);
     return 2;

@@ -15,7 +15,6 @@
 #include <yvex/backend.h>
 #include <yvex/gguf.h>
 #include <yvex/internal/core.h>
-#include <yvex/internal/families/deepseek_v4.h>
 #include <yvex/internal/gguf.h>
 #include <yvex/internal/io.h>
 #include <yvex/model.h>
@@ -65,7 +64,8 @@ static const char *const mapping_issue_names[] = {
 };
 
 static const char *conversion_default_qtype(yvex_tensor_role role);
-static int conversion_map_tensor(const char *arch, const yvex_native_weight_info *native,
+static int conversion_map_tensor(const yvex_gguf_conversion_projection *projection,
+                                 const yvex_native_weight_info *native,
                                  const char *target_qtype, yvex_conversion_tensor_plan *out,
                                  yvex_error *err);
 static int conversion_read_payload(const char *native_source_dir,
@@ -76,6 +76,7 @@ static int conversion_convert_payload(const unsigned char *src, unsigned long lo
                                       const yvex_conversion_tensor_plan *plan, unsigned char **out,
                                       unsigned long long *out_len, yvex_error *err);
 static int conversion_write_single_gguf(const yvex_conversion_options *options,
+                                        const yvex_gguf_conversion_projection *projection,
                                         const yvex_conversion_tensor_plan *plan,
                                         const unsigned char *payload,
                                         unsigned long long payload_len,
@@ -114,7 +115,8 @@ int yvex_conversion_suggest_artifact_name(char *out, unsigned long long out_size
                                       qprofile, calibration, producer, schema, err);
 }
 
-static int conversion_map_tensor(const char *arch, const yvex_native_weight_info *native,
+static int conversion_map_tensor(const yvex_gguf_conversion_projection *projection,
+                                 const yvex_native_weight_info *native,
                                  const char *target_qtype, yvex_conversion_tensor_plan *out,
                                  yvex_error *err) {
     yvex_weight_mapping_issue_kind issue = YVEX_WEIGHT_MAPPING_ISSUE_NONE;
@@ -122,26 +124,17 @@ static int conversion_map_tensor(const char *arch, const yvex_native_weight_info
     int mapped;
     const yvex_qtype_support_info *support;
 
-    if (!arch || !native || !out) {
+    if (!projection || !projection->map_name || !native || !out) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "conversion_map",
-                       "arch, native and out are required");
+                       "family conversion projection, native tensor and output are required");
         return YVEX_ERR_INVALID_ARG;
     }
     memset(out, 0, sizeof(*out));
     snprintf(out->native_name, sizeof(out->native_name), "%s", native->name ? native->name : "");
     out->native = native;
 
-    if (strcmp(arch, "qwen3") == 0 || strcmp(arch, "qwen") == 0) {
-        mapped = yvex_qwen_adapter_map_name(native->name, out->target_name,
-                                            sizeof(out->target_name), &out->role, &issue);
-    } else if (strcmp(arch, "deepseek4") == 0 || strcmp(arch, "deepseek") == 0) {
-        mapped = yvex_gguf_map_deepseek_name(native->name, out->target_name,
-                                             sizeof(out->target_name), &out->role, &issue);
-    } else {
-        yvex_error_setf(err, YVEX_ERR_INVALID_ARG, "conversion_map", "unsupported architecture: %s",
-                        arch);
-        return YVEX_ERR_INVALID_ARG;
-    }
+    mapped = projection->map_name(native->name, out->target_name,
+                                  sizeof(out->target_name), &out->role, &issue);
 
     if (!mapped) {
         out->status = YVEX_CONVERT_TENSOR_STATUS_UNMAPPED;
@@ -183,6 +176,7 @@ static int conversion_map_tensor(const char *arch, const yvex_native_weight_info
  */
 int yvex_conversion_emit_gguf(const yvex_conversion_options *options,
                               yvex_conversion_summary *summary_out, yvex_error *err) {
+    const yvex_gguf_conversion_projection *projection;
     yvex_native_weight_options no;
     yvex_native_weight_table *native = NULL;
     const yvex_native_weight_info *info;
@@ -204,6 +198,13 @@ int yvex_conversion_emit_gguf(const yvex_conversion_options *options,
     summary_out->out_path = options->out_path;
     summary_out->execution_ready = 0;
 
+    projection = yvex_model_conversion_projection_find(options->architecture);
+    if (!projection) {
+        summary_out->status = YVEX_CONVERSION_STATUS_FAILED;
+        yvex_error_setf(err, YVEX_ERR_INVALID_ARG, "conversion_emit",
+                        "unsupported architecture: %s", options->architecture);
+        return YVEX_ERR_INVALID_ARG;
+    }
     memset(&no, 0, sizeof(no));
     no.source_dir = options->native_source_dir;
     no.recursive = 1;
@@ -220,7 +221,7 @@ int yvex_conversion_emit_gguf(const yvex_conversion_options *options,
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "conversion_emit", "selected tensor not found");
         return YVEX_ERR_INVALID_ARG;
     }
-    rc = conversion_map_tensor(options->architecture, info, options->target_qtype, &plan, err);
+    rc = conversion_map_tensor(projection, info, options->target_qtype, &plan, err);
     if (rc == YVEX_OK && plan.status == YVEX_CONVERT_TENSOR_STATUS_UNSUPPORTED_QTYPE) {
         summary_out->status = YVEX_CONVERSION_STATUS_FAILED;
         summary_out->unsupported_qtype_count = 1;
@@ -245,8 +246,8 @@ int yvex_conversion_emit_gguf(const yvex_conversion_options *options,
     if (rc == YVEX_OK) {
         summary_out->planned_tensor_count = 1;
         summary_out->bytes_read = raw_len;
-        rc = conversion_write_single_gguf(options, &plan, converted, converted_len, summary_out,
-                                          err);
+        rc = conversion_write_single_gguf(options, projection, &plan, converted, converted_len,
+                                          summary_out, err);
     }
     free(raw);
     free(converted);
@@ -460,6 +461,7 @@ static int conversion_convert_payload(const unsigned char *src, unsigned long lo
 int yvex_conversion_plan_write_json(const yvex_conversion_options *options,
                                     const char *plan_out_path, yvex_conversion_summary *summary_out,
                                     yvex_error *err) {
+    const yvex_gguf_conversion_projection *projection;
     yvex_native_weight_options no;
     yvex_native_weight_table *native = NULL;
     yvex_conversion_tensor_plan *plans = NULL;
@@ -479,6 +481,13 @@ int yvex_conversion_plan_write_json(const yvex_conversion_options *options,
     summary_out->architecture = options->architecture;
     summary_out->out_path = plan_out_path;
     summary_out->execution_ready = 0;
+    projection = yvex_model_conversion_projection_find(options->architecture);
+    if (!projection) {
+        summary_out->status = YVEX_CONVERSION_STATUS_FAILED;
+        yvex_error_setf(err, YVEX_ERR_INVALID_ARG, "conversion_plan",
+                        "unsupported architecture: %s", options->architecture);
+        return YVEX_ERR_INVALID_ARG;
+    }
     memset(&no, 0, sizeof(no));
     no.source_dir = options->native_source_dir;
     no.recursive = 1;
@@ -504,7 +513,7 @@ int yvex_conversion_plan_write_json(const yvex_conversion_options *options,
             continue;
         if (options->limit_tensors && plan_count >= options->limit_tensors)
             break;
-        rc = conversion_map_tensor(options->architecture, info, qtype, &plan, err);
+        rc = conversion_map_tensor(projection, info, qtype, &plan, err);
         if (rc != YVEX_OK)
             break;
         plans[plan_count++] = plan;
@@ -656,6 +665,7 @@ static int conversion_validate_roundtrip(const char *path, yvex_error *err) {
 }
 
 static int conversion_write_single_gguf(const yvex_conversion_options *options,
+                                        const yvex_gguf_conversion_projection *projection,
                                         const yvex_conversion_tensor_plan *plan,
                                         const unsigned char *payload,
                                         unsigned long long payload_len,
@@ -664,9 +674,8 @@ static int conversion_write_single_gguf(const yvex_conversion_options *options,
     const yvex_native_weight_info *native;
     unsigned int i;
     long bytes;
-    const char *arch_meta;
 
-    if (!options || !plan || !payload || !summary || !options->out_path) {
+    if (!options || !projection || !plan || !payload || !summary || !options->out_path) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "conversion_gguf", "invalid emit arguments");
         return YVEX_ERR_INVALID_ARG;
     }
@@ -682,16 +691,15 @@ static int conversion_write_single_gguf(const yvex_conversion_options *options,
                         strerror(errno));
         return YVEX_ERR_IO;
     }
-    arch_meta = (options->architecture && strncmp(options->architecture, "qwen", 4) == 0)
-                    ? "qwen"
-                    : "deepseek";
     if (w32(fp, YVEX_GGUF_MAGIC, err) != YVEX_OK || w32(fp, 3u, err) != YVEX_OK ||
         w64(fp, 1ull, err) != YVEX_OK || w64(fp, 5ull, err) != YVEX_OK ||
-        meta_string(fp, "general.architecture", arch_meta, err) != YVEX_OK ||
+        meta_string(fp, "general.architecture", projection->canonical_architecture, err) !=
+            YVEX_OK ||
         meta_string(fp, "general.name", "yvex-converted-selected-tensor", err) != YVEX_OK ||
         meta_u32(fp, "general.alignment", 32u, err) != YVEX_OK ||
         meta_u32(fp, "general.file_type", plan->ggml_type, err) != YVEX_OK ||
-        meta_u32(fp, "qwen.context_length", 32768u, err) != YVEX_OK ||
+        meta_u32(fp, projection->context_metadata_key, projection->semantic_maximum_context, err) !=
+            YVEX_OK ||
         wstr(fp, plan->target_name, err) != YVEX_OK || w32(fp, native->rank, err) != YVEX_OK) {
         fclose(fp);
         return YVEX_ERR_IO;
@@ -757,12 +765,6 @@ static int conversion_report_plan_json(FILE *fp, const yvex_conversion_options *
     }
     fprintf(fp, "  ]\n}\n");
     return ferror(fp) ? YVEX_ERR_IO : YVEX_OK;
-}
-
-static int wm_supported_arch(const char *architecture) {
-    return architecture &&
-           (strcmp(architecture, "deepseek4") == 0 || strcmp(architecture, "deepseek") == 0 ||
-            strcmp(architecture, "qwen3") == 0 || strcmp(architecture, "qwen") == 0);
 }
 
 const char *yvex_weight_mapping_status_name(yvex_weight_mapping_status status) {
@@ -907,7 +909,9 @@ static int wm_open_template(yvex_weight_mapping_table *table, const char *templa
 
 static int wm_map_native_row(yvex_weight_mapping_table *table,
                              const yvex_native_weight_info *native,
-                             const yvex_weight_mapping_options *options, yvex_error *err) {
+                             const yvex_weight_mapping_options *options,
+                             const yvex_gguf_conversion_projection *projection,
+                             yvex_error *err) {
     char target_candidate[256];
     yvex_tensor_role role = YVEX_TENSOR_ROLE_UNKNOWN;
     yvex_weight_mapping_issue_kind issue = YVEX_WEIGHT_MAPPING_ISSUE_NONE;
@@ -916,13 +920,8 @@ static int wm_map_native_row(yvex_weight_mapping_table *table,
     int requires_transpose = 0;
     int mapped;
 
-    if (strcmp(options->architecture, "qwen3") == 0 || strcmp(options->architecture, "qwen") == 0) {
-        mapped = yvex_qwen_adapter_map_name(native->name, target_candidate,
-                                            sizeof(target_candidate), &role, &issue);
-    } else {
-        mapped = yvex_gguf_map_deepseek_name(native->name, target_candidate,
-                                             sizeof(target_candidate), &role, &issue);
-    }
+    mapped = projection->map_name(native->name, target_candidate,
+                                  sizeof(target_candidate), &role, &issue);
     if (!mapped) {
         return mapping_table_add(table, native, options->architecture, "unknown",
                                  YVEX_TENSOR_ROLE_UNKNOWN, YVEX_WEIGHT_MAPPING_STATUS_UNMAPPED,
@@ -953,6 +952,7 @@ static int wm_map_native_row(yvex_weight_mapping_table *table,
 /* Build a deterministic compatibility mapping table for admitted native headers. */
 int yvex_weight_mapping_table_build(yvex_weight_mapping_table **out,
                                     const yvex_weight_mapping_options *options, yvex_error *err) {
+    const yvex_gguf_conversion_projection *projection;
     yvex_weight_mapping_table *table;
     yvex_native_weight_options native_options;
     unsigned long long i;
@@ -964,7 +964,8 @@ int yvex_weight_mapping_table_build(yvex_weight_mapping_table **out,
         return YVEX_ERR_INVALID_ARG;
     }
     *out = NULL;
-    if (!wm_supported_arch(options->architecture)) {
+    projection = yvex_model_conversion_projection_find(options->architecture);
+    if (!projection) {
         yvex_error_setf(err, YVEX_ERR_INVALID_ARG, "weight_mapping_build",
                         "unsupported architecture: %s", options->architecture);
         return YVEX_ERR_INVALID_ARG;
@@ -991,7 +992,7 @@ int yvex_weight_mapping_table_build(yvex_weight_mapping_table **out,
 
     for (i = 0; i < yvex_native_weight_table_count(table->native); ++i) {
         const yvex_native_weight_info *native = yvex_native_weight_table_at(table->native, i);
-        rc = wm_map_native_row(table, native, options, err);
+        rc = wm_map_native_row(table, native, options, projection, err);
         if (rc != YVEX_OK) {
             yvex_weight_mapping_table_close(table);
             return rc;
@@ -1088,300 +1089,4 @@ yvex_weight_mapping_table_find_native(const yvex_weight_mapping_table *table,
         }
     }
     return NULL;
-}
-
-static int ds_set(char *target, size_t target_cap, yvex_tensor_role *role,
-                  yvex_weight_mapping_issue_kind *issue, yvex_tensor_role value, const char *name) {
-    if (!target || target_cap == 0 || !role || !issue || !name) {
-        return 0;
-    }
-    if (snprintf(target, target_cap, "%s", name) >= (int)target_cap) {
-        *role = YVEX_TENSOR_ROLE_UNKNOWN;
-        *issue = YVEX_WEIGHT_MAPPING_ISSUE_UNKNOWN_TEMPLATE_NAME;
-        return 0;
-    }
-    *role = value;
-    *issue = YVEX_WEIGHT_MAPPING_ISSUE_NONE;
-    return 1;
-}
-
-static int text_ends_with(const char *text, const char *suffix) {
-    size_t text_len;
-    size_t suffix_len;
-
-    if (!text || !suffix)
-        return 0;
-    text_len = strlen(text);
-    suffix_len = strlen(suffix);
-    return suffix_len <= text_len && strcmp(text + text_len - suffix_len, suffix) == 0;
-}
-
-static int ds_layer_suffix(const char *native_name, int plain,
-                           const char *suffix, unsigned int *layer_out) {
-    unsigned int layer;
-    int consumed, matched;
-
-    matched = plain ? sscanf(native_name, "layers.%u.%n", &layer, &consumed)
-                    : sscanf(native_name, "model.layers.%u.%n", &layer, &consumed);
-    if (matched != 1) {
-        return 0;
-    }
-    if (strcmp(native_name + consumed, suffix) != 0) {
-        return 0;
-    }
-    *layer_out = layer;
-    return 1;
-}
-
-static int ds_expert_suffix(const char *native_name, int plain,
-                            const char *suffix, unsigned int *layer_out,
-                            unsigned int *expert_out) {
-    unsigned int layer;
-    unsigned int expert;
-    int consumed, matched;
-
-    matched = plain
-                  ? sscanf(native_name, "layers.%u.ffn.experts.%u.%n",
-                           &layer, &expert, &consumed)
-                  : sscanf(native_name, "model.layers.%u.mlp.experts.%u.%n",
-                           &layer, &expert, &consumed);
-    if (matched != 2) {
-        return 0;
-    }
-    if (strcmp(native_name + consumed, suffix) != 0) {
-        return 0;
-    }
-    *layer_out = layer;
-    *expert_out = expert;
-    return 1;
-}
-
-typedef struct {
-    const char *source;
-    const char *target;
-    yvex_tensor_role role;
-} adapter_exact_rule;
-
-typedef struct {
-    const char *source_suffix;
-    const char *target_suffix;
-    yvex_tensor_role role;
-    int expert_only;
-} adapter_suffix_rule;
-
-static const adapter_exact_rule ds_template_exact[] = {
-    {"token_embd.weight", "token_embd.weight", YVEX_TENSOR_ROLE_TOKEN_EMBEDDING},
-    {"output_norm.weight", "output_norm.weight", YVEX_TENSOR_ROLE_OUTPUT_NORM},
-    {"output.weight", "output.weight", YVEX_TENSOR_ROLE_OUTPUT_HEAD},
-};
-
-static const adapter_suffix_rule ds_template_suffix[] = {
-    {".attn_q.weight", NULL, YVEX_TENSOR_ROLE_ATTENTION_Q, 0},
-    {".attn_k.weight", NULL, YVEX_TENSOR_ROLE_ATTENTION_K, 0},
-    {".attn_v.weight", NULL, YVEX_TENSOR_ROLE_ATTENTION_V, 0},
-    {".attn_output.weight", NULL, YVEX_TENSOR_ROLE_ATTENTION_OUT, 0},
-    {".attn_norm.weight", NULL, YVEX_TENSOR_ROLE_ATTENTION_NORM, 0},
-    {".ffn_norm.weight", NULL, YVEX_TENSOR_ROLE_FFN_NORM, 0},
-    {".ffn_gate.weight", NULL, YVEX_TENSOR_ROLE_FFN_GATE, 0},
-    {".ffn_up.weight", NULL, YVEX_TENSOR_ROLE_FFN_UP, 0},
-    {".ffn_down.weight", NULL, YVEX_TENSOR_ROLE_FFN_DOWN, 0},
-    {".ffn_gate_inp.weight", NULL, YVEX_TENSOR_ROLE_MOE_ROUTER, 0},
-    {".gate.weight", NULL, YVEX_TENSOR_ROLE_MOE_EXPERT_GATE, 1},
-    {".up.weight", NULL, YVEX_TENSOR_ROLE_MOE_EXPERT_UP, 1},
-    {".down.weight", NULL, YVEX_TENSOR_ROLE_MOE_EXPERT_DOWN, 1},
-};
-
-static const adapter_exact_rule qwen_exact_rules[] = {
-    {"model.embed_tokens.weight", "token_embd.weight", YVEX_TENSOR_ROLE_TOKEN_EMBEDDING},
-    {"model.norm.weight", "output_norm.weight", YVEX_TENSOR_ROLE_OUTPUT_NORM},
-    {"lm_head.weight", "output.weight", YVEX_TENSOR_ROLE_OUTPUT_HEAD},
-};
-
-static const adapter_suffix_rule qwen_layer_rules[] = {
-    {".self_attn.q_proj.weight", "attn_q.weight", YVEX_TENSOR_ROLE_ATTENTION_Q, 0},
-    {".self_attn.k_proj.weight", "attn_k.weight", YVEX_TENSOR_ROLE_ATTENTION_K, 0},
-    {".self_attn.v_proj.weight", "attn_v.weight", YVEX_TENSOR_ROLE_ATTENTION_V, 0},
-    {".self_attn.o_proj.weight", "attn_output.weight", YVEX_TENSOR_ROLE_ATTENTION_OUT, 0},
-    {".input_layernorm.weight", "attn_norm.weight", YVEX_TENSOR_ROLE_ATTENTION_NORM, 0},
-    {".post_attention_layernorm.weight", "ffn_norm.weight", YVEX_TENSOR_ROLE_FFN_NORM, 0},
-    {".mlp.gate_proj.weight", "ffn_gate.weight", YVEX_TENSOR_ROLE_FFN_GATE, 0},
-    {".mlp.up_proj.weight", "ffn_up.weight", YVEX_TENSOR_ROLE_FFN_UP, 0},
-    {".mlp.down_proj.weight", "ffn_down.weight", YVEX_TENSOR_ROLE_FFN_DOWN, 0},
-};
-
-static int ds_template_style(const char *native_name, char *target, size_t target_cap,
-                             yvex_tensor_role *role, yvex_weight_mapping_issue_kind *issue) {
-    size_t i;
-
-    for (i = 0; i < sizeof(ds_template_exact) / sizeof(ds_template_exact[0]); ++i) {
-        if (strcmp(native_name, ds_template_exact[i].source) == 0)
-            return ds_set(target, target_cap, role, issue, ds_template_exact[i].role,
-                          ds_template_exact[i].target);
-    }
-    if (strncmp(native_name, "blk.", 4u) != 0)
-        return 0;
-    for (i = 0; i < sizeof(ds_template_suffix) / sizeof(ds_template_suffix[0]); ++i) {
-        const adapter_suffix_rule *rule = &ds_template_suffix[i];
-        if ((!rule->expert_only || strstr(native_name, ".ffn.experts.")) &&
-            text_ends_with(native_name, rule->source_suffix))
-            return ds_set(target, target_cap, role, issue, rule->role, native_name);
-    }
-    return 0;
-}
-
-static const adapter_exact_rule ds_native_exact[] = {
-    {"embed.weight", "token_embd.weight", YVEX_TENSOR_ROLE_TOKEN_EMBEDDING},
-    {"model.embed_tokens.weight", "token_embd.weight", YVEX_TENSOR_ROLE_TOKEN_EMBEDDING},
-    {"norm.weight", "output_norm.weight", YVEX_TENSOR_ROLE_OUTPUT_NORM},
-    {"model.norm.weight", "output_norm.weight", YVEX_TENSOR_ROLE_OUTPUT_NORM},
-    {"lm_head.weight", "output.weight", YVEX_TENSOR_ROLE_OUTPUT_HEAD},
-    {"output.weight", "output.weight", YVEX_TENSOR_ROLE_OUTPUT_HEAD},
-};
-
-static const adapter_suffix_rule ds_layer_rules[] = {
-    {"self_attn.q_proj.weight", "attn_q.weight", YVEX_TENSOR_ROLE_ATTENTION_Q, 0},
-    {"self_attn.k_proj.weight", "attn_k.weight", YVEX_TENSOR_ROLE_ATTENTION_K, 0},
-    {"self_attn.v_proj.weight", "attn_v.weight", YVEX_TENSOR_ROLE_ATTENTION_V, 0},
-    {"self_attn.o_proj.weight", "attn_output.weight", YVEX_TENSOR_ROLE_ATTENTION_OUT, 0},
-    {"input_layernorm.weight", "attn_norm.weight", YVEX_TENSOR_ROLE_ATTENTION_NORM, 0},
-    {"post_attention_layernorm.weight", "ffn_norm.weight", YVEX_TENSOR_ROLE_FFN_NORM, 0},
-    {"mlp.gate_proj.weight", "ffn_gate.weight", YVEX_TENSOR_ROLE_FFN_GATE, 0},
-    {"mlp.up_proj.weight", "ffn_up.weight", YVEX_TENSOR_ROLE_FFN_UP, 0},
-    {"mlp.down_proj.weight", "ffn_down.weight", YVEX_TENSOR_ROLE_FFN_DOWN, 0},
-    {"mlp.gate.weight", "ffn_gate_inp.weight", YVEX_TENSOR_ROLE_MOE_ROUTER, 0},
-};
-
-static const adapter_suffix_rule ds_plain_layer_rules[] = {
-    {"attn_norm.weight", "attn_norm.weight", YVEX_TENSOR_ROLE_ATTENTION_NORM, 0},
-    {"ffn_norm.weight", "ffn_norm.weight", YVEX_TENSOR_ROLE_FFN_NORM, 0},
-    {"ffn.gate.weight", "ffn_gate_inp.weight", YVEX_TENSOR_ROLE_MOE_ROUTER, 0},
-    {"ffn.gate.bias", "ffn_gate_inp.weight", YVEX_TENSOR_ROLE_MOE_ROUTER, 0},
-};
-
-static const adapter_suffix_rule ds_expert_rules[] = {
-    {"gate_proj.weight", "gate.weight", YVEX_TENSOR_ROLE_MOE_EXPERT_GATE, 0},
-    {"up_proj.weight", "up.weight", YVEX_TENSOR_ROLE_MOE_EXPERT_UP, 0},
-    {"down_proj.weight", "down.weight", YVEX_TENSOR_ROLE_MOE_EXPERT_DOWN, 0},
-};
-
-static const adapter_suffix_rule ds_plain_expert_rules[] = {
-    {"w1.weight", "gate.weight", YVEX_TENSOR_ROLE_MOE_EXPERT_GATE, 0},
-    {"w2.weight", "down.weight", YVEX_TENSOR_ROLE_MOE_EXPERT_DOWN, 0},
-    {"w3.weight", "up.weight", YVEX_TENSOR_ROLE_MOE_EXPERT_UP, 0},
-};
-
-static int ds_set_layer(char *target, size_t target_cap, yvex_tensor_role *role,
-                        yvex_weight_mapping_issue_kind *issue, unsigned int layer,
-                        const adapter_suffix_rule *rule) {
-    snprintf(target, target_cap, "blk.%u.%s", layer, rule->target_suffix);
-    *role = rule->role;
-    *issue = YVEX_WEIGHT_MAPPING_ISSUE_NONE;
-    return 1;
-}
-
-static int ds_set_expert(char *target, size_t target_cap, yvex_tensor_role *role,
-                         yvex_weight_mapping_issue_kind *issue, unsigned int layer,
-                         unsigned int expert, const adapter_suffix_rule *rule) {
-    snprintf(target, target_cap, "blk.%u.ffn.experts.%u.%s", layer, expert, rule->target_suffix);
-    *role = rule->role;
-    *issue = YVEX_WEIGHT_MAPPING_ISSUE_NONE;
-    return 1;
-}
-
-/* Map one legacy DeepSeek native name through deterministic typed rule tables. */
-int yvex_gguf_map_deepseek_name(const char *native_name, char *target, size_t target_cap,
-                                yvex_tensor_role *role, yvex_weight_mapping_issue_kind *issue) {
-    unsigned int layer;
-    unsigned int expert;
-    size_t i;
-
-    if (!native_name || !target || target_cap == 0 || !role || !issue) {
-        return 0;
-    }
-    target[0] = '\0';
-    *role = YVEX_TENSOR_ROLE_UNKNOWN;
-    *issue = YVEX_WEIGHT_MAPPING_ISSUE_UNKNOWN_NATIVE_NAME;
-
-    if (ds_template_style(native_name, target, target_cap, role, issue)) {
-        return 1;
-    }
-    for (i = 0; i < sizeof(ds_native_exact) / sizeof(ds_native_exact[0]); ++i)
-        if (strcmp(native_name, ds_native_exact[i].source) == 0)
-            return ds_set(target, target_cap, role, issue, ds_native_exact[i].role,
-                          ds_native_exact[i].target);
-    for (i = 0; i < sizeof(ds_layer_rules) / sizeof(ds_layer_rules[0]); ++i)
-        if (ds_layer_suffix(native_name, 0, ds_layer_rules[i].source_suffix, &layer))
-            return ds_set_layer(target, target_cap, role, issue, layer, &ds_layer_rules[i]);
-    for (i = 0; i < sizeof(ds_plain_layer_rules) / sizeof(ds_plain_layer_rules[0]); ++i)
-        if (ds_layer_suffix(native_name, 1, ds_plain_layer_rules[i].source_suffix, &layer))
-            return ds_set_layer(target, target_cap, role, issue, layer, &ds_plain_layer_rules[i]);
-    for (i = 0; i < sizeof(ds_expert_rules) / sizeof(ds_expert_rules[0]); ++i)
-        if (ds_expert_suffix(native_name, 0, ds_expert_rules[i].source_suffix,
-                             &layer, &expert))
-            return ds_set_expert(target, target_cap, role, issue, layer, expert,
-                                 &ds_expert_rules[i]);
-    for (i = 0; i < sizeof(ds_plain_expert_rules) / sizeof(ds_plain_expert_rules[0]); ++i)
-        if (ds_expert_suffix(native_name, 1, ds_plain_expert_rules[i].source_suffix,
-                             &layer, &expert))
-            return ds_set_expert(target, target_cap, role, issue, layer, expert,
-                                 &ds_plain_expert_rules[i]);
-
-    return 0;
-}
-
-static int extract_layer(const char *name, unsigned int *layer) {
-    return name && sscanf(name, "model.layers.%u.", layer) == 1;
-}
-
-static int set_target(char *target, size_t cap, const char *suffix, unsigned int layer) {
-    int n = snprintf(target, cap, "blk.%u.%s", layer, suffix);
-    return n > 0 && (size_t)n < cap;
-}
-
-/*
- * Map one legacy Qwen native name through deterministic typed rule tables.
- *
- * Bounded Qwen engineering evidence, not release artifact support.
- */
-int yvex_qwen_adapter_map_name(const char *native_name, char *target, size_t target_cap,
-                               yvex_tensor_role *role, yvex_weight_mapping_issue_kind *issue) {
-    unsigned int layer = 0;
-    size_t i;
-
-    if (role)
-        *role = YVEX_TENSOR_ROLE_UNKNOWN;
-    if (issue)
-        *issue = YVEX_WEIGHT_MAPPING_ISSUE_NONE;
-    if (!native_name || !target || target_cap == 0) {
-        if (issue)
-            *issue = YVEX_WEIGHT_MAPPING_ISSUE_UNKNOWN_NATIVE_NAME;
-        return 0;
-    }
-
-    for (i = 0; i < sizeof(qwen_exact_rules) / sizeof(qwen_exact_rules[0]); ++i) {
-        if (strcmp(native_name, qwen_exact_rules[i].source) == 0) {
-            if (role)
-                *role = qwen_exact_rules[i].role;
-            snprintf(target, target_cap, "%s", qwen_exact_rules[i].target);
-            return 1;
-        }
-    }
-
-    if (!extract_layer(native_name, &layer)) {
-        if (issue)
-            *issue = YVEX_WEIGHT_MAPPING_ISSUE_UNKNOWN_NATIVE_NAME;
-        return 0;
-    }
-
-    for (i = 0; i < sizeof(qwen_layer_rules) / sizeof(qwen_layer_rules[0]); ++i) {
-        if (text_ends_with(native_name, qwen_layer_rules[i].source_suffix)) {
-            if (role)
-                *role = qwen_layer_rules[i].role;
-            return set_target(target, target_cap, qwen_layer_rules[i].target_suffix, layer);
-        }
-    }
-
-    if (issue)
-        *issue = YVEX_WEIGHT_MAPPING_ISSUE_UNKNOWN_NATIVE_NAME;
-    return 0;
 }

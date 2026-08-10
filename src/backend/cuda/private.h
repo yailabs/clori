@@ -9,6 +9,7 @@
 #include <yvex/internal/backend.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/quant_numeric.h>
+#include "src/backend/private.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -245,18 +246,18 @@ typedef struct {
     CUfunction sample_stochastic_f32_function;
     CUfunction speculation_stochastic_f32_function;
     CUfunction q8_quantize_function;
-    CUfunction deepseek_decode_function;
-    CUfunction deepseek_weighted_norm_function;
-    CUfunction deepseek_unit_norm_function;
-    CUfunction deepseek_rope_function;
-    CUfunction deepseek_activation_function;
-    CUfunction deepseek_mhc_pre_function;
-    CUfunction deepseek_mhc_post_function;
+    CUfunction encoded_row_decode_function;
+    CUfunction attention_weighted_norm_function;
+    CUfunction attention_unit_norm_function;
+    CUfunction attention_yarn_rope_function;
+    CUfunction attention_activation_quantize_function;
+    CUfunction residual_mhc_pre_function;
+    CUfunction residual_mhc_post_function;
     CUfunction transformer_feature_mean_function;
-    CUfunction deepseek_transformer_final_function;
-    CUfunction deepseek_rolling_function;
-    CUfunction deepseek_topk_function;
-    CUfunction deepseek_reduce_function;
+    CUfunction transformer_final_function;
+    CUfunction attention_rolling_state_function;
+    CUfunction attention_topk_function;
+    CUfunction attention_reduce_function;
     CUfunction moe_route_function;
     CUfunction moe_route_rows_function;
     CUfunction moe_pair_order_function;

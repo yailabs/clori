@@ -9,7 +9,7 @@ and [Events Contract](../contracts/events-telemetry.md).
 
 ## Hosted lifecycle
 
-One `yvexd` process owns one immutable runtime model from startup until
+One foreground `yvex server MODEL` process owns one immutable runtime model from startup until
 shutdown. Startup authenticates the complete artifact and runtime binding,
 imports descriptors and Physical Execution IR, seals the compiled execution
 profile, builds model-lifetime host and accelerator resources, prepares
@@ -31,11 +31,16 @@ The immutable runtime model retains:
 
 - the authenticated artifact and binding;
 - the Physical Execution IR and compiled execution profile;
-- imported family-neutral descriptors and the typed family adapter;
+- imported family-neutral descriptors, compiled model plan, and generic graph capability;
 - read-only encoded weights and model-lifetime backend resources;
 - the tokenizer plan and output-head residency;
 - target and DSpark draft/verification plans, their shared resources, and
   executable capability and identity facts.
+
+Model open does not resolve a concrete family adapter. Family policy terminates
+in the authenticated binding and compiled model plan; runtime instantiates those
+facts and uses the common graph execution contract. The explicit startup target
+is retained as an immutable product label, not as an execution-policy selector.
 
 Each server session owns one mutable execution session, committed token ledger,
 transcript, incremental decoder, sampling/RNG state, turn state, and persistent
@@ -253,7 +258,10 @@ never rewinds published state by decrementing counters.
 One compiled execution profile binds logical model, physical variant, Physical
 Execution IR, artifact, materialization, runtime binding, kernel bundle,
 hardware, context, generation mode, workload, evidence profile and execution
-class. `production`, `audit`, and `forensic` evidence are independent from
+class. Its typed attention, MoE, and sampling resolutions make every admitted
+portable/eager/reference path visible and identity-bearing. Backend code reports
+facts; the execution-policy owner chooses `exact` or `compatible-degraded`
+before dispatch. `production`, `audit`, and `forensic` evidence are independent from
 trace verbosity: production cannot require complete hidden, state, logits, or
 probability host scans merely to derive evidence.
 
@@ -361,6 +369,12 @@ mutation. Process admission therefore does not depend on the Linux OOM killer.
 Mutable session resources remain isolated while immutable model caches may be
 shared. Allocation, transfer, synchronization, execution, and cleanup failures
 retain separate typed classes.
+
+The runtime owns the logical session-state and model-residency lifecycles. It
+projects their admitted mappings into an opaque backend through typed attach,
+resolve, transfer and generation-publication operations. Concrete backend
+allocation state and dispatch remain source-local to `src/backend/`; graph and
+runtime owners cannot coordinate their lifecycle by inspecting backend fields.
 
 ## Worker, queue, and concurrency
 

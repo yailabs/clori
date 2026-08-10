@@ -24,7 +24,7 @@ extern "C" __global__ void yvex_f32_to_bf16(
     output[index] = (unsigned short)((encoded.bits + rounding) >> 16u);
 }
 
-/* Preserve the BF16 cast between Qwen-style normalization and affine weighting. */
+/* Preserve the BF16 cast between unit normalization and affine weighting. */
 extern "C" __global__ void yvex_rms_norm_bf16_policy_f32(
     const float *input, const float *weight, float *output,
     unsigned long long hidden_size, unsigned long long row_count, float epsilon)

@@ -146,6 +146,32 @@ static int test_deepseek_catalog_entry(const char *root,
                      "variant catalog binds exact admitted identities");
     YVEX_TEST_ASSERT(!admission.artifact_identity_verified && admission.artifact_bytes_hashed == 0u,
                      "catalog reconstruction does not fabricate byte verification");
+    {
+        yvex_complete_artifact_admission mismatched = admission;
+        yvex_complete_artifact_admission rejected;
+        yvex_artifact_catalog_contract contract = {0};
+
+        mismatched.file_bytes++;
+        contract.catalog = &mismatched;
+        YVEX_TEST_ASSERT(
+            yvex_artifact_admit_catalog(
+                artifact, NULL, NULL, &contract, &rejected, &failure,
+                &err) == YVEX_ERR_FORMAT &&
+                failure.code == YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH &&
+                strcmp(failure.field, "file-bytes") == 0 && !rejected.complete,
+            "generic catalog admission refuses a mismatched physical extent");
+        mismatched.file_bytes--;
+        contract.catalog = &mismatched;
+        contract.alignment = 32ull;
+        YVEX_TEST_ASSERT(
+            yvex_artifact_admit_catalog(
+                artifact, NULL, NULL, &contract, &rejected, &failure,
+                &err) == YVEX_ERR_INVALID_ARG &&
+                failure.code == YVEX_ARTIFACT_ADMISSION_INVALID_ARGUMENT &&
+                strcmp(failure.field, "complete-catalog-contract") == 0 &&
+                !rejected.complete,
+            "complete catalog admission refuses component structure");
+    }
     yvex_artifact_close(artifact);
     YVEX_TEST_ASSERT(unlink(path) == 0, "variant sparse artifact cleaned");
     return 0;
@@ -157,13 +183,19 @@ static int test_deepseek_variant_admission_catalog(void)
     const deepseek_catalog_fixture selected = {
         .filename = "selected.gguf",
         .file_bytes = YVEX_SELECTED_DEEPSEEK_FILE_BYTES,
-        .payload_bytes = YVEX_SELECTED_DEEPSEEK_PAYLOAD_BYTES,
-        .profile_identity = YVEX_SELECTED_DEEPSEEK_PROFILE_IDENTITY,
-        .artifact_identity = YVEX_SELECTED_DEEPSEEK_ARTIFACT_IDENTITY,
-        .quant_execution_identity = YVEX_SELECTED_DEEPSEEK_EXECUTION_IDENTITY,
-        .payload_plan_identity = YVEX_SELECTED_DEEPSEEK_PAYLOAD_PLAN_IDENTITY,
-        .payload_byte_identity = YVEX_SELECTED_DEEPSEEK_PAYLOAD_BYTE_IDENTITY,
-        .writer_plan_identity = YVEX_SELECTED_DEEPSEEK_WRITER_PLAN_IDENTITY,
+        .payload_bytes = 108274154488ull,
+        .profile_identity =
+            "a48d43c8594999a1af3a5b1f572b34a5823042cb767832d558642bb804b036c5",
+        .artifact_identity =
+            "bf80bd7372e9ff754cd61d8f6e849ca8eff2177fad40840a2dad8e840b35690a",
+        .quant_execution_identity =
+            "777559149e4e8421c34299da78f63f6b0d296a91005d7670196164c3c72b62af",
+        .payload_plan_identity =
+            "8d1a89e794363c0aaf1c721b07c0661ea03f9680691d0113543b2540297b69e7",
+        .payload_byte_identity =
+            "6dce1edb82810715687d40c6d62273e992cfe9e0aa610cb9598447e06fb7099f",
+        .writer_plan_identity =
+            "1ba1ceaa709862145b1a145e938cf03327cd58da27bca42ade2f884e2b2fc635",
         .admission_identity =
             "d8966a5222ef10f612595c657cbcf0a9cf557e277cb28bb44d85ad89c3bf42a0",
     };
@@ -237,7 +269,7 @@ static int test_component_admission_catalog(void)
         .payload_integrity_accepted = 1,
         .materialization_input_ready = 1,
     };
-    yvex_artifact_component_contract contract = {
+    yvex_artifact_catalog_contract contract = {
         &catalog, metadata, storage, 2ull, 1ull, 32ull, 32ull,
     };
     yvex_complete_artifact_admission admission;
@@ -255,7 +287,7 @@ static int test_component_admission_catalog(void)
     YVEX_TEST_ASSERT(yvex_gguf_open(&gguf, artifact, &err) == YVEX_OK &&
                          yvex_tensor_table_from_gguf(&tensors, gguf, &err) == YVEX_OK,
                      "component catalog structural views opened");
-    YVEX_TEST_ASSERT(yvex_artifact_admit_component(
+    YVEX_TEST_ASSERT(yvex_artifact_admit_catalog(
                          artifact, gguf, tensors, &contract, &admission, &failure,
                          &err) == YVEX_OK &&
                          admission.complete &&
@@ -267,21 +299,21 @@ static int test_component_admission_catalog(void)
                          yvex_sha256_hex_is_valid(admission.admission_identity),
                      "component contract reconciles structure before publishing trust");
     metadata[1].value = "wrong";
-    YVEX_TEST_ASSERT(yvex_artifact_admit_component(
+    YVEX_TEST_ASSERT(yvex_artifact_admit_catalog(
                          artifact, gguf, tensors, &contract, &admission, &failure,
                          &err) == YVEX_ERR_FORMAT &&
                          failure.code == YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH,
                      "component contract refuses metadata identity drift");
     metadata[1].value = "yvex-test";
     storage[0].tensors = 2ull;
-    YVEX_TEST_ASSERT(yvex_artifact_admit_component(
+    YVEX_TEST_ASSERT(yvex_artifact_admit_catalog(
                          artifact, gguf, tensors, &contract, &admission, &failure,
                          &err) == YVEX_ERR_FORMAT &&
                          failure.code == YVEX_ARTIFACT_ADMISSION_TENSOR_COVERAGE,
                      "component contract refuses qtype population drift");
     storage[0].tensors = 1ull;
     catalog.file_bytes++;
-    YVEX_TEST_ASSERT(yvex_artifact_admit_component(
+    YVEX_TEST_ASSERT(yvex_artifact_admit_catalog(
                          artifact, gguf, tensors, &contract, &admission, &failure,
                          &err) == YVEX_ERR_FORMAT &&
                          failure.code == YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH,
@@ -289,7 +321,7 @@ static int test_component_admission_catalog(void)
     catalog.file_bytes--;
     strcpy(catalog.artifact_identity,
            "8888888888888888888888888888888888888888888888888888888888888888");
-    YVEX_TEST_ASSERT(yvex_artifact_admit_component(
+    YVEX_TEST_ASSERT(yvex_artifact_admit_catalog(
                          artifact, gguf, tensors, &contract, &admission, &failure,
                          &err) == YVEX_ERR_FORMAT &&
                          failure.code == YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH &&

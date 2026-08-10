@@ -4,6 +4,7 @@
 #include <stdlib.h>
 
 #include <yvex/api.h>
+#include <yvex/internal/families/deepseek_v4.h>
 #include <yvex/internal/quant_numeric.h>
 
 #include "tests/test.h"
@@ -132,6 +133,11 @@ static int write_policy_v2(const char *path, unsigned int priority)
 
 static int test_policy_v2_and_presets(void)
 {
+    static const char *const preset_identities[] = {
+        "84a934800f49b2cb7cf031eb18c8c1660ef8250da751e0ea34f65852d7c5333f",
+        "adb3f1549440ad39adb2cc08826e659e91ac95c289b9ce75a0efc3dbf89d60a3",
+        "5942d4c1bc6ae5d140c72387ff93da14e5ed9a77a6ded3f41ac3f7e9596a0f24",
+    };
     const char *path = "build/tests/quant-policy/v2.json";
     const char *roundtrip = "build/tests/quant-policy/v2-roundtrip.json";
     const char *mutated = "build/tests/quant-policy/v2-mutated.json";
@@ -203,6 +209,8 @@ static int test_policy_v2_and_presets(void)
                              summary.status == YVEX_QUANT_POLICY_STATUS_VALID &&
                              yvex_quant_policy_identity_validate(policy, &err) == YVEX_OK,
                          "built-in preset is sealed");
+        YVEX_TEST_ASSERT_STREQ(summary.policy_identity, preset_identities[preset],
+                               "family-owned preset preserves admitted identity");
         yvex_quant_policy_close(policy);
     }
     return 0;
@@ -223,9 +231,9 @@ static int test_dspark_bootstrap_policy(void)
     unsigned long long index, role_index;
     int have_draft_default = 0;
 
-    YVEX_TEST_ASSERT(strlen(YVEX_QUANT_DSPARK_IMATRIX_SOURCE_IDENTITY) == 64u,
+    YVEX_TEST_ASSERT(strlen(YVEX_DEEPSEEK_QUANT_IMATRIX_SOURCE_IDENTITY) == 64u,
                      "DSpark bootstrap calibration has an explicit source identity");
-    YVEX_TEST_ASSERT(YVEX_QUANT_DSPARK_IMATRIX_DATASET_IDENTITY[0] != '\0',
+    YVEX_TEST_ASSERT(YVEX_DEEPSEEK_QUANT_IMATRIX_DATASET_IDENTITY[0] != '\0',
                      "DSpark bootstrap calibration has an explicit dataset identity");
 
     YVEX_TEST_ASSERT(

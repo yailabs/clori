@@ -1563,40 +1563,48 @@ void yvex_fullmodel_help(FILE *fp)
     yvex_cli_out_lines(fp, literal_lines_43, sizeof(literal_lines_43) / sizeof(literal_lines_43[0]));
 }
 
-#define MINIMAX_AUDIO_FIELD(KEY, KIND, MEMBER) \
-    {KEY, KIND, offsetof(yvex_cli_minimax_audio_result, MEMBER), ""}
+#define COMPONENT_FIELD(KEY, KIND, MEMBER) \
+    {KEY, KIND, offsetof(yvex_cli_component_result, MEMBER), ""}
+#define COMPONENT_EXECUTION_FIELD(KEY, KIND, MEMBER)                         \
+    {KEY, KIND, offsetof(yvex_cli_component_result, execution) +             \
+                    offsetof(yvex_component_execution_result, MEMBER), ""}
 
-int yvex_minimax_audio_render(FILE *fp, yvex_graph_report_mode mode,
-                              const yvex_cli_minimax_audio_result *result)
+int yvex_component_render(FILE *fp, yvex_graph_report_mode mode,
+                          const yvex_cli_component_result *result)
 {
     static const yvex_cli_field_spec fields[] = {
-        MINIMAX_AUDIO_FIELD("status", YVEX_CLI_FIELD_TEXT, status),
-        MINIMAX_AUDIO_FIELD("target", YVEX_CLI_FIELD_TEXT, target),
-        MINIMAX_AUDIO_FIELD("component", YVEX_CLI_FIELD_TEXT, component),
-        MINIMAX_AUDIO_FIELD("backend", YVEX_CLI_FIELD_TEXT, backend),
-        MINIMAX_AUDIO_FIELD("artifact_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
-                            artifact_identity),
-        MINIMAX_AUDIO_FIELD("execution_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
-                            execution_identity),
-        MINIMAX_AUDIO_FIELD("batch", YVEX_CLI_FIELD_U64, batch),
-        MINIMAX_AUDIO_FIELD("samples_per_channel", YVEX_CLI_FIELD_U64,
-                            samples_per_channel),
-        MINIMAX_AUDIO_FIELD("tensor_reads", YVEX_CLI_FIELD_U64, tensor_reads),
-        MINIMAX_AUDIO_FIELD("payload_bytes_read", YVEX_CLI_FIELD_U64,
-                            payload_bytes_read),
-        MINIMAX_AUDIO_FIELD("peak_workspace_bytes", YVEX_CLI_FIELD_U64,
-                            peak_workspace_bytes),
-        MINIMAX_AUDIO_FIELD("output_path", YVEX_CLI_FIELD_TEXT, output_path),
-        MINIMAX_AUDIO_FIELD("published_bytes", YVEX_CLI_FIELD_U64, published_bytes),
-        MINIMAX_AUDIO_FIELD("published", YVEX_CLI_FIELD_BOOL, published),
+        COMPONENT_FIELD("status", YVEX_CLI_FIELD_TEXT, status),
+        COMPONENT_FIELD("target", YVEX_CLI_FIELD_TEXT, target),
+        COMPONENT_FIELD("component", YVEX_CLI_FIELD_TEXT, component),
+        COMPONENT_FIELD("backend", YVEX_CLI_FIELD_TEXT, backend),
+        COMPONENT_EXECUTION_FIELD("artifact_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
+                                  artifact_identity),
+        COMPONENT_EXECUTION_FIELD("execution_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
+                                  execution_identity),
+        COMPONENT_EXECUTION_FIELD("batch", YVEX_CLI_FIELD_U64, batch),
+        COMPONENT_EXECUTION_FIELD("output_values", YVEX_CLI_FIELD_U64,
+                                  output_values),
+        COMPONENT_EXECUTION_FIELD("output_rank", YVEX_CLI_FIELD_U32,
+                                  output_rank),
+        COMPONENT_EXECUTION_FIELD("tensor_reads", YVEX_CLI_FIELD_U64,
+                                  tensor_reads),
+        COMPONENT_EXECUTION_FIELD("payload_bytes_read", YVEX_CLI_FIELD_U64,
+                                  payload_bytes_read),
+        COMPONENT_EXECUTION_FIELD("peak_workspace_bytes", YVEX_CLI_FIELD_U64,
+                                  peak_workspace_bytes),
+        COMPONENT_FIELD("output_path", YVEX_CLI_FIELD_TEXT, output_path),
+        COMPONENT_FIELD("published_bytes", YVEX_CLI_FIELD_U64, published_bytes),
+        COMPONENT_FIELD("published", YVEX_CLI_FIELD_BOOL, published),
     };
 
     if (!fp || !result) return YVEX_ERR_INVALID_ARG;
     if (mode == YVEX_GRAPH_REPORT_MODE_NORMAL)
         return yvex_cli_out_writef(
-                   fp, "MiniMax-H3 Audio VAE: %s samples=%llu output=%s identity=%s\n",
-                   result->status, result->samples_per_channel,
-                   result->output_path, result->execution_identity) < 0
+                   fp, "Component execution: %s target=%s component=%s values=%llu "
+                       "output=%s identity=%s\n",
+                   result->status, result->target, result->component,
+                   result->execution.output_values, result->output_path,
+                   result->execution.execution_identity) < 0
                    ? YVEX_ERR_IO : YVEX_OK;
     if (mode == YVEX_GRAPH_REPORT_MODE_JSON) {
         yvex_cli_json_begin(fp);
@@ -1610,54 +1618,5 @@ int yvex_minimax_audio_render(FILE *fp, yvex_graph_report_mode mode,
                ? YVEX_OK : YVEX_ERR_IO;
 }
 
-#undef MINIMAX_AUDIO_FIELD
-
-#define MINIMAX_VIDEO_FIELD(KEY, KIND, MEMBER) \
-    {KEY, KIND, offsetof(yvex_cli_minimax_video_result, MEMBER), ""}
-
-int yvex_minimax_video_render(FILE *fp, yvex_graph_report_mode mode,
-                              const yvex_cli_minimax_video_result *result)
-{
-    static const yvex_cli_field_spec fields[] = {
-        MINIMAX_VIDEO_FIELD("status", YVEX_CLI_FIELD_TEXT, status),
-        MINIMAX_VIDEO_FIELD("target", YVEX_CLI_FIELD_TEXT, target),
-        MINIMAX_VIDEO_FIELD("component", YVEX_CLI_FIELD_TEXT, component),
-        MINIMAX_VIDEO_FIELD("backend", YVEX_CLI_FIELD_TEXT, backend),
-        MINIMAX_VIDEO_FIELD("artifact_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
-                            artifact_identity),
-        MINIMAX_VIDEO_FIELD("execution_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
-                            execution_identity),
-        MINIMAX_VIDEO_FIELD("batch", YVEX_CLI_FIELD_U64, batch),
-        MINIMAX_VIDEO_FIELD("frames", YVEX_CLI_FIELD_U64, frames),
-        MINIMAX_VIDEO_FIELD("height", YVEX_CLI_FIELD_U64, height),
-        MINIMAX_VIDEO_FIELD("width", YVEX_CLI_FIELD_U64, width),
-        MINIMAX_VIDEO_FIELD("tensor_reads", YVEX_CLI_FIELD_U64, tensor_reads),
-        MINIMAX_VIDEO_FIELD("payload_bytes_read", YVEX_CLI_FIELD_U64,
-                            payload_bytes_read),
-        MINIMAX_VIDEO_FIELD("peak_workspace_bytes", YVEX_CLI_FIELD_U64,
-                            peak_workspace_bytes),
-        MINIMAX_VIDEO_FIELD("output_path", YVEX_CLI_FIELD_TEXT, output_path),
-        MINIMAX_VIDEO_FIELD("published_bytes", YVEX_CLI_FIELD_U64, published_bytes),
-        MINIMAX_VIDEO_FIELD("published", YVEX_CLI_FIELD_BOOL, published),
-    };
-
-    if (!fp || !result) return YVEX_ERR_INVALID_ARG;
-    if (mode == YVEX_GRAPH_REPORT_MODE_NORMAL)
-        return yvex_cli_out_writef(
-                   fp, "MiniMax-H3 Visual VAE: %s shape=%llux%llux%llu output=%s identity=%s\n",
-                   result->status, result->frames, result->height, result->width,
-                   result->output_path, result->execution_identity) < 0
-                   ? YVEX_ERR_IO : YVEX_OK;
-    if (mode == YVEX_GRAPH_REPORT_MODE_JSON) {
-        yvex_cli_json_begin(fp);
-        if (yvex_cli_json_fields(fp, result, fields,
-                                 sizeof(fields) / sizeof(fields[0]), 0) != 0)
-            return YVEX_ERR_IO;
-        yvex_cli_json_end(fp);
-        return YVEX_OK;
-    }
-    return yvex_cli_out_fields(fp, result, fields, sizeof(fields) / sizeof(fields[0])) == 0
-               ? YVEX_OK : YVEX_ERR_IO;
-}
-
-#undef MINIMAX_VIDEO_FIELD
+#undef COMPONENT_EXECUTION_FIELD
+#undef COMPONENT_FIELD

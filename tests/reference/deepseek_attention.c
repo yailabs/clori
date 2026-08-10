@@ -13,6 +13,7 @@
 #include <string.h>
 
 #include <yvex/qtype.h>
+#include <yvex/internal/artifact_lowering.h>
 
 #define REF_PI 3.14159265358979323846264338327950288
 
@@ -25,11 +26,11 @@ typedef struct {
 const char *yvex_test_attention_status_name(yvex_attention_status status)
 {
     switch (status) {
-    case YVEX_DEEPSEEK_ATTENTION_STATUS_REFUSED: return "refused";
-    case YVEX_DEEPSEEK_ATTENTION_STATUS_PLANNED: return "planned";
-    case YVEX_DEEPSEEK_ATTENTION_STATUS_EXECUTION_UNSUPPORTED:
+    case YVEX_ATTENTION_STATUS_REFUSED: return "refused";
+    case YVEX_ATTENTION_STATUS_PLANNED: return "planned";
+    case YVEX_ATTENTION_STATUS_EXECUTION_UNSUPPORTED:
         return "execution-unsupported";
-    case YVEX_DEEPSEEK_ATTENTION_STATUS_EXECUTION_READY:
+    case YVEX_ATTENTION_STATUS_EXECUTION_READY:
         return "execution-ready";
     default: return "unknown";
     }
@@ -38,28 +39,28 @@ const char *yvex_test_attention_status_name(yvex_attention_status status)
 const char *yvex_test_attention_failure_name(yvex_attention_failure_code code)
 {
     switch (code) {
-    case YVEX_DEEPSEEK_ATTENTION_FAILURE_NONE: return "none";
-    case YVEX_DEEPSEEK_ATTENTION_FAILURE_INVALID_ARGUMENT:
+    case YVEX_ATTENTION_FAILURE_NONE: return "none";
+    case YVEX_ATTENTION_FAILURE_INVALID_ARGUMENT:
         return "invalid-argument";
-    case YVEX_DEEPSEEK_ATTENTION_FAILURE_ARCHITECTURE: return "architecture";
-    case YVEX_DEEPSEEK_ATTENTION_FAILURE_MATERIALIZATION:
+    case YVEX_ATTENTION_FAILURE_ARCHITECTURE: return "architecture";
+    case YVEX_ATTENTION_FAILURE_MATERIALIZATION:
         return "materialization";
-    case YVEX_DEEPSEEK_ATTENTION_FAILURE_DESCRIPTOR: return "descriptor";
-    case YVEX_DEEPSEEK_ATTENTION_FAILURE_MISSING_BINDING:
+    case YVEX_ATTENTION_FAILURE_DESCRIPTOR: return "descriptor";
+    case YVEX_ATTENTION_FAILURE_MISSING_BINDING:
         return "missing-binding";
-    case YVEX_DEEPSEEK_ATTENTION_FAILURE_QTYPE: return "qtype";
-    case YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION: return "dimension";
-    case YVEX_DEEPSEEK_ATTENTION_FAILURE_HISTORY: return "history";
-    case YVEX_DEEPSEEK_ATTENTION_FAILURE_EXECUTION_UNSUPPORTED:
+    case YVEX_ATTENTION_FAILURE_QTYPE: return "qtype";
+    case YVEX_ATTENTION_FAILURE_DIMENSION: return "dimension";
+    case YVEX_ATTENTION_FAILURE_HISTORY: return "history";
+    case YVEX_ATTENTION_FAILURE_EXECUTION_UNSUPPORTED:
         return "execution-unsupported";
-    case YVEX_DEEPSEEK_ATTENTION_FAILURE_READ: return "read";
-    case YVEX_DEEPSEEK_ATTENTION_FAILURE_NUMERIC: return "numeric";
-    case YVEX_DEEPSEEK_ATTENTION_FAILURE_STATE_DELTA: return "state-delta";
-    case YVEX_DEEPSEEK_ATTENTION_FAILURE_ALLOCATION: return "allocation";
-    case YVEX_DEEPSEEK_ATTENTION_FAILURE_SCRATCH: return "scratch";
-    case YVEX_DEEPSEEK_ATTENTION_FAILURE_CANCELLED: return "cancelled";
-    case YVEX_DEEPSEEK_ATTENTION_FAILURE_CLEANUP: return "cleanup";
-    case YVEX_DEEPSEEK_ATTENTION_FAILURE_BACKEND: return "backend";
+    case YVEX_ATTENTION_FAILURE_READ: return "read";
+    case YVEX_ATTENTION_FAILURE_NUMERIC: return "numeric";
+    case YVEX_ATTENTION_FAILURE_STATE_DELTA: return "state-delta";
+    case YVEX_ATTENTION_FAILURE_ALLOCATION: return "allocation";
+    case YVEX_ATTENTION_FAILURE_SCRATCH: return "scratch";
+    case YVEX_ATTENTION_FAILURE_CANCELLED: return "cancelled";
+    case YVEX_ATTENTION_FAILURE_CLEANUP: return "cleanup";
+    case YVEX_ATTENTION_FAILURE_BACKEND: return "backend";
     default: return "unknown";
     }
 }
@@ -137,7 +138,7 @@ static const yvex_runtime_tensor_binding *ref_binding(
 {
     return yvex_runtime_descriptor_find_role(
         descriptor, role, YVEX_TENSOR_SCOPE_MAIN_LAYER, layer,
-        YVEX_DEEPSEEK_GGUF_NO_INDEX);
+        YVEX_ARTIFACT_LOWERING_NO_INDEX);
 }
 
 static int ref_row_bytes(const yvex_materialized_tensor_binding *binding,
@@ -904,11 +905,11 @@ static int ref_rolling_view_complete(
 
     if (!layer || !view || !view->present || !layer->compression_ratio)
         return 0;
-    head_dimension = kind == YVEX_DEEPSEEK_ATTENTION_ROLLING_INDEXER
+    head_dimension = kind == YVEX_ATTENTION_ROLLING_INDEXER
         ? layer->indexer_head_dimension : layer->head_dimension;
-    overlap = kind == YVEX_DEEPSEEK_ATTENTION_ROLLING_INDEXER ||
+    overlap = kind == YVEX_ATTENTION_ROLLING_INDEXER ||
         layer->attention_class == YVEX_ATTENTION_CLASS_CSA;
-    rotated = kind == YVEX_DEEPSEEK_ATTENTION_ROLLING_INDEXER;
+    rotated = kind == YVEX_ATTENTION_ROLLING_INDEXER;
     if (!head_dimension ||
         !ref_mul(head_dimension, overlap ? 2ull : 1ull, &width) ||
         !ref_mul(layer->compression_ratio, overlap ? 2ull : 1ull, &slots) ||
@@ -920,7 +921,7 @@ static int ref_rolling_view_complete(
     expected_previous = overlap && token_position >= layer->compression_ratio
         ? layer->compression_ratio : 0ull;
     return view->schema_version ==
-               YVEX_DEEPSEEK_ATTENTION_ROLLING_STATE_SCHEMA_V1 &&
+               YVEX_ATTENTION_ROLLING_STATE_SCHEMA_V1 &&
         view->kind == kind &&
         view->attention_class == layer->attention_class &&
         view->layer_index == layer->layer_index &&
@@ -951,11 +952,11 @@ static int ref_rolling_init(
     memset(state, 0, sizeof(*state));
     state->ratio = layer->compression_ratio;
     state->head_dimension =
-        kind == YVEX_DEEPSEEK_ATTENTION_ROLLING_INDEXER
+        kind == YVEX_ATTENTION_ROLLING_INDEXER
             ? layer->indexer_head_dimension
             : layer->head_dimension;
     state->overlap =
-        kind == YVEX_DEEPSEEK_ATTENTION_ROLLING_INDEXER ||
+        kind == YVEX_ATTENTION_ROLLING_INDEXER ||
         layer->attention_class == YVEX_ATTENTION_CLASS_CSA;
     state->width = state->head_dimension * (state->overlap ? 2ull : 1ull);
     state->slots = state->ratio * (state->overlap ? 2ull : 1ull);
@@ -1087,7 +1088,7 @@ static int ref_rolling_export(
         return 0;
     memset(out, 0, sizeof(*out));
     out->present = 1;
-    out->schema_version = YVEX_DEEPSEEK_ATTENTION_ROLLING_STATE_SCHEMA_V1;
+    out->schema_version = YVEX_ATTENTION_ROLLING_STATE_SCHEMA_V1;
     out->kind = kind;
     out->attention_class = layer->attention_class;
     out->layer_index = layer->layer_index;
@@ -1106,7 +1107,7 @@ static int ref_rolling_export(
     out->kv_state = state->kv;
     out->score_state = state->score;
     out->overlap = state->overlap;
-    out->rotated = kind == YVEX_DEEPSEEK_ATTENTION_ROLLING_INDEXER;
+    out->rotated = kind == YVEX_ATTENTION_ROLLING_INDEXER;
     if (before)
         memcpy(out->attention_plan_identity,
                before->attention_plan_identity,
@@ -1251,19 +1252,19 @@ static int ref_compressor_execute(
     char reason[YVEX_TEST_ATTENTION_REFERENCE_REASON_CAP])
 {
     yvex_tensor_role kv_role =
-        kind == YVEX_DEEPSEEK_ATTENTION_ROLLING_INDEXER
+        kind == YVEX_ATTENTION_ROLLING_INDEXER
             ? YVEX_TENSOR_ROLE_INDEXER_COMPRESSOR_KV
             : YVEX_TENSOR_ROLE_ATTENTION_COMPRESSOR_KV;
     yvex_tensor_role gate_role =
-        kind == YVEX_DEEPSEEK_ATTENTION_ROLLING_INDEXER
+        kind == YVEX_ATTENTION_ROLLING_INDEXER
             ? YVEX_TENSOR_ROLE_INDEXER_COMPRESSOR_GATE
             : YVEX_TENSOR_ROLE_ATTENTION_COMPRESSOR_GATE;
     yvex_tensor_role ape_role =
-        kind == YVEX_DEEPSEEK_ATTENTION_ROLLING_INDEXER
+        kind == YVEX_ATTENTION_ROLLING_INDEXER
             ? YVEX_TENSOR_ROLE_INDEXER_COMPRESSOR_APE
             : YVEX_TENSOR_ROLE_ATTENTION_COMPRESSOR_APE;
     yvex_tensor_role norm_role =
-        kind == YVEX_DEEPSEEK_ATTENTION_ROLLING_INDEXER
+        kind == YVEX_ATTENTION_ROLLING_INDEXER
             ? YVEX_TENSOR_ROLE_INDEXER_COMPRESSOR_NORM
             : YVEX_TENSOR_ROLE_ATTENTION_COMPRESSOR_NORM;
     const yvex_runtime_tensor_binding *wkv =
@@ -1366,7 +1367,7 @@ static int ref_compressor_execute(
             ref_reason(reason, "reference compressor RoPE failed");
             goto cleanup;
         }
-        if (kind == YVEX_DEEPSEEK_ATTENTION_ROLLING_INDEXER) {
+        if (kind == YVEX_ATTENTION_ROLLING_INDEXER) {
             if (!ref_activation(&layer->compressor_rotated_activation,
                                 destination, state.head_dimension)) {
                 ref_reason(reason,
@@ -1616,14 +1617,14 @@ static int ref_history_validate(
         }
     } else if (supplied &&
                !ref_rolling_view_complete(
-                   layer, YVEX_DEEPSEEK_ATTENTION_ROLLING_MAIN,
+                   layer, YVEX_ATTENTION_ROLLING_MAIN,
                    &history->main_rolling_state, history->token_count)) {
         ref_reason(reason, "reference main rolling history is incomplete");
         return 0;
     } else if (layer->attention_class == YVEX_ATTENTION_CLASS_CSA &&
                supplied &&
                !ref_rolling_view_complete(
-                   layer, YVEX_DEEPSEEK_ATTENTION_ROLLING_INDEXER,
+                   layer, YVEX_ATTENTION_ROLLING_INDEXER,
                    &history->indexer_rolling_state, history->token_count)) {
         ref_reason(reason,
                    "reference indexer rolling history is incomplete");
@@ -1934,7 +1935,7 @@ static int ref_output_projection(
 }
 
 int yvex_test_attention_reference_execute(
-    const yvex_attention_plan *plan,
+    const yvex_attention_layer_plan *layer,
     const yvex_deepseek_v4_ir *ir,
     yvex_materialization_session *session,
     const yvex_runtime_descriptor *descriptor,
@@ -1943,7 +1944,6 @@ int yvex_test_attention_reference_execute(
     char reason[YVEX_TEST_ATTENTION_REFERENCE_REASON_CAP])
 {
     const yvex_attention_cpu_options *opts = options;
-    const yvex_attention_layer_plan *layer;
     const yvex_deepseek_v4_layer_spec *architecture;
     const yvex_runtime_tensor_binding *q_a;
     const yvex_runtime_tensor_binding *q_a_norm;
@@ -1992,7 +1992,7 @@ int yvex_test_attention_reference_execute(
     memset(&next_main_state, 0, sizeof(next_main_state));
     memset(&next_indexer_state, 0, sizeof(next_indexer_state));
     if (reason) reason[0] = '\0';
-    if (!plan || !ir || !session || !descriptor || !opts || !opts->input ||
+    if (!layer || !ir || !session || !descriptor || !opts || !opts->input ||
         !trace || trace->owned) {
         ref_reason(reason, "reference execution arguments are invalid");
         return 0;
@@ -2002,9 +2002,8 @@ int yvex_test_attention_reference_execute(
         return 0;
     }
     token_count = opts->token_count ? opts->token_count : 1ull;
-    layer = yvex_graph_lower_deepseek_v4()->plan_layer_at(plan, opts->layer_index);
     architecture = yvex_model_register_deepseek_v4()->ir.layer_at(ir, opts->layer_index);
-    if (!layer || !architecture || !token_count) {
+    if (layer->layer_index != opts->layer_index || !architecture || !token_count) {
         ref_reason(reason, "reference execution layer is absent");
         return 0;
     }
@@ -2159,7 +2158,7 @@ int yvex_test_attention_reference_execute(
     if (layer->attention_class != YVEX_ATTENTION_CLASS_SWA &&
         !ref_compressor_execute(
             session, descriptor, layer, architecture,
-            YVEX_DEEPSEEK_ATTENTION_ROLLING_MAIN,
+            YVEX_ATTENTION_ROLLING_MAIN,
             opts->history ? &history->main_rolling_state : NULL, input,
             token_count, hidden_width, opts->token_position, &compressed,
             &compressed_positions, &compressed_count, &next_main_state,
@@ -2178,7 +2177,7 @@ int yvex_test_attention_reference_execute(
 
         if (!ref_compressor_execute(
                 session, descriptor, layer, architecture,
-                YVEX_DEEPSEEK_ATTENTION_ROLLING_INDEXER,
+                YVEX_ATTENTION_ROLLING_INDEXER,
                 opts->history ? &history->indexer_rolling_state : NULL,
                 input, token_count, hidden_width, opts->token_position,
                 &indexer, &indexer_positions, &indexer_count,

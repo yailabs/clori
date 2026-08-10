@@ -41,10 +41,15 @@ typedef struct {
     int drop_prior_reasoning_by_default;
     int tools_preserve_reasoning;
     int tool_results_merge_into_user;
+    const char *tokenizer_model;
+    const char *tokenizer_pre;
+    const char *tokenizer_json_identity;
+    const char *tokenizer_config_identity;
+    unsigned long long vocabulary_size, base_vocabulary_size, merge_count;
+    unsigned long long added_token_count, special_token_count;
+    unsigned int bos_token_id, eos_token_id, pad_token_id, unk_token_id;
+    int bos_present, eos_present, pad_present, unk_present;
+    int add_bos_token, add_eos_token, byte_fallback;
 } yvex_conversation_protocol;
-
-/* Generic consumers enumerate this model-owned registry and match architecture facts. */
-const yvex_conversation_protocol *
-yvex_model_conversation_protocol_at(unsigned long long index);
 
 #endif /* INCLUDE_YVEX_INTERNAL_CONVERSATION_H_INCLUDED */

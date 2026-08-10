@@ -62,6 +62,11 @@ expect_rc 1 "$YVEX_BIN" compile quant plan --target minimax-h3-fl2va \
     > "$OUT_DIR/minimax-component.out" 2> "$OUT_DIR/minimax-component.err"
 grep 'component must be text_encoder, transformer, video_vae, or audio_vae' \
     "$OUT_DIR/minimax-component.err" >/dev/null || fail "MiniMax component refusal missing"
+expect_rc 1 "$YVEX_BIN" compile quant plan --target unknown-physical-target \
+    --source /does/not/exist --component transformer --out-plan "$OUT_DIR/unknown.plan" \
+    > "$OUT_DIR/unknown-target.out" 2> "$OUT_DIR/unknown-target.err"
+grep 'target has no physical-variant compiler adapter' \
+    "$OUT_DIR/unknown-target.err" >/dev/null || fail "unknown target adapter refusal missing"
 expect_rc 2 "$YVEX_BIN" compile quant nope > "$OUT_DIR/bad-action.out" 2> "$OUT_DIR/bad-action.err"
 
 printf 'physical variant cli: ok\n'

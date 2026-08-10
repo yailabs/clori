@@ -76,125 +76,6 @@ static int logits_refuse(yvex_error *err, yvex_status status, const char *reason
     return status;
 }
 
-/*
- * Derive the pointer-free output-head plan identity.
- *
- * Publishes only its canonical identity field.
- */
-static int logits_plan_identity(yvex_runtime_logits_plan_summary *summary)
-{
-    yvex_sha256 hash;
-    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
-    if (!summary) return 0;
-    yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.logits.plan.v1") ||
-        !yvex_sha256_update_u64(&hash, summary->schema_version) ||
-        !yvex_sha256_update_u64(&hash, summary->family_adapter_id) ||
-        !yvex_sha256_update_u64(&hash, summary->family_adapter_version) ||
-        !yvex_sha256_update_text(&hash, summary->artifact_identity) ||
-        !yvex_sha256_update_text(&hash, summary->materialization_identity) ||
-        !yvex_sha256_update_text(&hash, summary->logical_model_identity) ||
-        !yvex_sha256_update_text(&hash, summary->runtime_numeric_identity) ||
-        !yvex_sha256_update_text(&hash, summary->runtime_descriptor_identity) ||
-        !yvex_sha256_update_text(&hash, summary->transformer_plan_identity) ||
-        !yvex_sha256_update_u64(&hash, summary->output_head_tensor_id) ||
-        !yvex_sha256_update_u64(&hash, summary->role) ||
-        !yvex_sha256_update_u64(&hash, summary->qtype) ||
-        !yvex_sha256_update_u64(&hash, summary->row_width) ||
-        !yvex_sha256_update_u64(&hash, summary->row_count) ||
-        !yvex_sha256_update_u64(&hash, summary->row_bytes) ||
-        !yvex_sha256_update_u64(&hash, summary->encoded_bytes) ||
-        !yvex_sha256_update_u64(&hash, summary->vocabulary_size) ||
-        !yvex_sha256_update_u64(&hash, summary->hidden_width) ||
-        !yvex_sha256_update_u64(&hash, (unsigned int)summary->separate_output_head) ||
-        !yvex_sha256_update_u64(&hash, (unsigned int)summary->output_head_bias) ||
-        !yvex_sha256_final(&hash, digest)) return 0;
-    yvex_sha256_hex(digest, summary->output_head_plan_identity);
-    return 1;
-}
-static int logits_plan_build(yvex_runtime_logits_plan *plan,
-                             const yvex_runtime_model_view *view,
-                             const yvex_transformer_plan *transformer_plan,
-                             yvex_error *err)
-{
-    const yvex_runtime_descriptor_summary *runtime;
-    const yvex_transformer_plan_summary *transformer;
-    const yvex_runtime_tensor_binding *row;
-    const yvex_runtime_tensor_binding *embedding;
-    const yvex_materialized_tensor_binding *binding;
-    const yvex_gguf_qtype_geometry *geometry;
-    const yvex_quant_numeric_capability *numeric;
-    yvex_logits_family_policy policy;
-    unsigned long long blocks, row_bytes, encoded_bytes;
-    if (!plan || !view || !view->adapter || !view->adapter->logits_policy ||
-        !view->adapter->logits_policy(&policy) ||
-        policy.schema_version != YVEX_RUNTIME_LOGITS_SCHEMA_V1 ||
-        !policy.separate_output_head || policy.tied_output_head ||
-        policy.output_head_bias)
-        return logits_refuse(err, YVEX_ERR_FORMAT,
-                             "family output-head policy is unavailable or incompatible");
-    runtime = yvex_runtime_descriptor_summary_get(view->descriptor);
-    transformer = yvex_transformer_plan_summary_get(transformer_plan);
-    row = yvex_runtime_descriptor_find_role(
-        view->descriptor, YVEX_TENSOR_ROLE_OUTPUT_HEAD, YVEX_TENSOR_SCOPE_GLOBAL,
-        YVEX_MATERIALIZATION_NO_INDEX, YVEX_MATERIALIZATION_NO_INDEX);
-    embedding = yvex_runtime_descriptor_find_role(
-        view->descriptor, YVEX_TENSOR_ROLE_TOKEN_EMBEDDING, YVEX_TENSOR_SCOPE_GLOBAL,
-        YVEX_MATERIALIZATION_NO_INDEX, YVEX_MATERIALIZATION_NO_INDEX);
-    binding = row ? yvex_materialization_session_tensor_at(
-                        view->materialization, row->tensor_id) : NULL;
-    geometry = binding ? yvex_gguf_qtype_geometry_find(binding->qtype) : NULL;
-    numeric = binding ? yvex_quant_numeric_capability_at(binding->qtype) : NULL;
-    if (!runtime || !transformer || !row || !binding || !embedding ||
-        binding->tensor_id == embedding->tensor_id ||
-        binding->role != YVEX_TENSOR_ROLE_OUTPUT_HEAD ||
-        binding->row_width != transformer->hidden_width ||
-        binding->row_count != transformer->vocabulary_size ||
-        !geometry || !geometry->block_size || !geometry->bytes_per_block ||
-        binding->row_width % geometry->block_size ||
-        !numeric || !numeric->dedicated_cpu_compute_available ||
-        !numeric->dedicated_cuda_compute_available)
-        return logits_refuse(err, YVEX_ERR_FORMAT,
-                             "exact separate output-head binding or qtype compute is unavailable");
-    blocks = binding->row_width / geometry->block_size;
-    if (!yvex_core_u64_mul(blocks, geometry->bytes_per_block, &row_bytes) ||
-        !yvex_core_u64_mul(row_bytes, binding->row_count, &encoded_bytes) ||
-        encoded_bytes != binding->encoded_bytes)
-        return logits_refuse(err, YVEX_ERR_FORMAT,
-                             "output-head encoded geometry is inconsistent");
-    memset(plan, 0, sizeof(*plan));
-    plan->binding = binding;
-    plan->summary.schema_version = YVEX_RUNTIME_LOGITS_SCHEMA_V1;
-    plan->summary.family_adapter_id = view->adapter->adapter_id;
-    plan->summary.family_adapter_version = view->adapter->adapter_version;
-    plan->summary.output_head_tensor_id = binding->tensor_id;
-    plan->summary.role = binding->role;
-    plan->summary.qtype = binding->qtype;
-    plan->summary.row_width = binding->row_width;
-    plan->summary.row_count = binding->row_count;
-    plan->summary.row_bytes = row_bytes;
-    plan->summary.encoded_bytes = encoded_bytes;
-    plan->summary.vocabulary_size = transformer->vocabulary_size;
-    plan->summary.hidden_width = transformer->hidden_width;
-    plan->summary.separate_output_head = policy.separate_output_head;
-    plan->summary.output_head_bias = policy.output_head_bias;
-    yvex_runtime_identity_copy(plan->summary.artifact_identity,
-                               view->binding->artifact_identity);
-    yvex_runtime_identity_copy(plan->summary.materialization_identity,
-                               view->binding->materialization_identity);
-    yvex_runtime_identity_copy(plan->summary.logical_model_identity,
-                               runtime->logical_model_identity);
-    yvex_runtime_identity_copy(plan->summary.runtime_numeric_identity,
-                               runtime->runtime_numeric_identity);
-    yvex_runtime_identity_copy(plan->summary.runtime_descriptor_identity,
-                               runtime->runtime_descriptor_identity);
-    yvex_runtime_identity_copy(plan->summary.transformer_plan_identity,
-                               transformer->transformer_plan_identity);
-    if (!logits_plan_identity(&plan->summary))
-        return logits_refuse(err, YVEX_ERR_STATE,
-                             "output-head plan identity derivation failed");
-    return YVEX_OK;
-}
 static int logits_device_open(yvex_runtime_logits_context *context,
                               yvex_device_tensor **out, const char *name,
                               unsigned long long elements, yvex_error *err)
@@ -256,9 +137,31 @@ int yvex_runtime_logits_context_open(
                            "logits model/session pairing is invalid");
         goto failure;
     }
-    rc = logits_plan_build(&context->plan, context->model_view,
-                           transformer_plan, err);
-    if (rc != YVEX_OK) goto failure;
+    {
+        const yvex_transformer_plan_summary *transformer =
+            yvex_transformer_plan_summary_get(transformer_plan);
+        const yvex_runtime_logits_plan_summary *compiled =
+            context->model_view->output_head;
+        const yvex_materialized_tensor_binding *binding = compiled
+            ? yvex_materialization_session_tensor_at(
+                  context->model_view->materialization,
+                  compiled->output_head_tensor_id)
+            : NULL;
+        if (!transformer || !compiled || !binding ||
+            strcmp(compiled->transformer_plan_identity,
+                   transformer->transformer_plan_identity) != 0 ||
+            strcmp(compiled->output_head_plan_identity,
+                   context->model_view->binding->output_head_plan_identity) != 0 ||
+            binding->tensor_id != compiled->output_head_tensor_id ||
+            binding->role != compiled->role || binding->qtype != compiled->qtype ||
+            binding->encoded_bytes != compiled->encoded_bytes) {
+            rc = logits_refuse(err, YVEX_ERR_STATE,
+                               "runtime binding output-head plan is stale");
+            goto failure;
+        }
+        context->plan.summary = *compiled;
+        context->plan.binding = binding;
+    }
     rc = yvex_runtime_residency_snapshot(
         context->model_view->residency, &residency, NULL, NULL, err);
     if (rc != YVEX_OK || !residency.output_head_complete ||
@@ -352,15 +255,12 @@ int yvex_runtime_logits_admit_shared_draft_plan(
 {
     const yvex_transformer_plan_summary *draft =
         yvex_transformer_plan_summary_get(draft_plan);
-    const yvex_runtime_descriptor_summary *runtime =
-        context && context->model_view
-            ? yvex_runtime_descriptor_summary_get(context->model_view->descriptor) : NULL;
-    yvex_speculation_family_policy policy;
-    if (!context || !draft || !runtime || !context->model_view || !context->model_view->adapter ||
-        !context->model_view->adapter->speculation_policy ||
-        !context->model_view->adapter->speculation_policy(runtime, &policy) ||
-        policy.schema_version != YVEX_SPECULATION_FAMILY_POLICY_SCHEMA_V1 ||
-        !policy.shares_output_head || draft->tensor_scope != YVEX_TENSOR_SCOPE_DRAFT ||
+    const yvex_speculation_family_policy *policy = NULL;
+    if (!context || !draft || !context->model_view ||
+        !yvex_runtime_binding_policies(
+            context->model_view->compiled_binding, NULL, NULL, &policy) ||
+        policy->schema_version != YVEX_SPECULATION_FAMILY_POLICY_SCHEMA_V1 ||
+        !policy->shares_output_head || draft->tensor_scope != YVEX_TENSOR_SCOPE_DRAFT ||
         draft->hidden_width != context->plan.summary.hidden_width ||
         draft->vocabulary_size != context->plan.summary.vocabulary_size ||
         strcmp(draft->logical_model_identity,
@@ -1712,7 +1612,7 @@ static void logits_operator_publish_facts(
             yvex_runtime_logits_plan_summary_get(logits_context);
         if (logits_plan) result->plan = *logits_plan;
         yvex_core_text_copy(result->family, sizeof(result->family),
-                            model_view->adapter->family_name);
+                            model_view->target_id);
         yvex_runtime_identity_copy(result->artifact_identity,
                                    model_view->binding->artifact_identity);
         yvex_runtime_identity_copy(result->runtime_binding_identity,

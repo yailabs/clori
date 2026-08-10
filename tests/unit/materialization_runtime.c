@@ -27,6 +27,24 @@ typedef struct {
     unsigned long long iterations;
     int failed;
 } fixture_resident_read_thread;
+typedef struct {
+    int mismatch;
+} fixture_terminal_projection;
+
+static int fixture_terminal_find(
+    const void *context, const char *name, yvex_materialization_terminal *out)
+{
+    const fixture_terminal_projection *fixture =
+        (const fixture_terminal_projection *)context;
+
+    if (!fixture || !name || !out || strcmp(name, "token_embd.weight") != 0) return 0;
+    *out = (yvex_materialization_terminal){
+        0ull,
+        fixture->mismatch ? YVEX_TENSOR_ROLE_OUTPUT_HEAD : YVEX_TENSOR_ROLE_TOKEN_EMBEDDING,
+        YVEX_TENSOR_COLLECTION_GLOBAL, YVEX_TENSOR_SCOPE_GLOBAL,
+        YVEX_MATERIALIZATION_NO_INDEX, YVEX_MATERIALIZATION_NO_INDEX, 0ull};
+    return 1;
+}
 
 static int fixture_resident_resolve(const void *context,
                                     const yvex_materialized_tensor_binding *binding,
@@ -142,6 +160,10 @@ static int test_materialization_fixture(void)
     yvex_tensor_table *tensors = NULL;
     yvex_complete_artifact_admission admission;
     yvex_materialization_options options;
+    fixture_terminal_projection projection_context = {0};
+    yvex_materialization_projection projection = {
+        YVEX_MATERIALIZATION_PROJECTION_SCHEMA_VERSION, 1ull, 1ull,
+        &projection_context, fixture_terminal_find, 1};
     yvex_materialization_plan *plan = NULL;
     yvex_materialization_session *session = NULL;
     yvex_materialization_failure failure;
@@ -158,11 +180,12 @@ static int test_materialization_fixture(void)
     YVEX_TEST_ASSERT(open_fixture(&artifact, &gguf, &tensors) == 0,
                      "open materialization fixture");
     fill_fixture_admission(artifact, tensors, &admission);
+    admission.mapping_identity = projection.mapping_identity;
     yvex_materialization_options_default(&options);
     options.max_chunk_bytes = 16u;
 
     rc = yvex_materialization_plan_build(
-        &plan, &admission, artifact, gguf, tensors, NULL, &options,
+        &plan, &admission, artifact, gguf, tensors, &projection, &options,
         &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "plan builds");
     summary = yvex_materialization_plan_summary(plan);
@@ -210,8 +233,9 @@ static int test_materialization_fixture(void)
     family.runtime_hadamard_revision =
         "Dao-AILab/fast-hadamard-transform:v1.1.0.post2:"
         "e7706faf8d1c3b9f241e36860640ad1dac644ede";
-    rc = yvex_runtime_descriptor_build(
-        &descriptor, &admission, session, &family, &descriptor_failure, &err);
+    rc = yvex_runtime_descriptor_build_projected(
+        &descriptor, &admission, session, &family, &projection,
+        &descriptor_failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "runtime descriptor builds");
     descriptor_summary = yvex_runtime_descriptor_summary_get(descriptor);
     YVEX_TEST_ASSERT(descriptor_summary != NULL, "descriptor summary");
@@ -233,6 +257,15 @@ static int test_materialization_fixture(void)
                      "descriptor preserves canonical tensor order");
 
     yvex_runtime_descriptor_close(descriptor);
+    descriptor = NULL;
+    projection_context.mismatch = 1;
+    rc = yvex_runtime_descriptor_build_projected(
+        &descriptor, &admission, session, &family, &projection,
+        &descriptor_failure, &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_ERR_FORMAT && !descriptor &&
+            descriptor_failure.code == YVEX_RUNTIME_DESCRIPTOR_FAILURE_ARCHITECTURE,
+        "runtime descriptor refuses a terminal projection that changes semantic role");
     yvex_materialization_session_close(session);
     yvex_materialization_plan_close(plan);
     yvex_tensor_table_close(tensors);

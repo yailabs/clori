@@ -8,9 +8,9 @@ project these facts but do not own event meaning.
 ## Producer and consumers
 
 Runtime, server, session, generation, listener, and shutdown owners publish one
-ordered event stream. Consumers are the daemon raw console, local protocol
-subscribers, status/metrics accumulation, `runtime watch`, `runtime trace`, and
-the interactive console.
+ordered event stream. Consumers are the server raw console, local protocol
+subscribers, status/metrics accumulation, `server log`, and the interactive
+console.
 
 No consumer scrapes another renderer's text.
 
@@ -61,18 +61,19 @@ runtime model.
 
 ## Projections
 
-`yvexd --console raw` and `yvex runtime trace --json` emit canonical JSONL for
-the admitted trace schema. `runtime status` is a bounded snapshot rather than
-an event replay. Human `runtime watch` prefixes its subscription with that
+`yvex server MODEL --console raw` and `yvex server log --json` emit canonical
+JSONL for the admitted trace schema. `server status` is a bounded snapshot
+rather than an event replay. Human `server log` prefixes its subscription with that
 snapshot and renders retained history plus live events in stable semantic
 categories. It retains operator-significant lifecycle, contended queue,
 prefill, first-token, speculative-commit, completion, cancellation, and failure
 events while suppressing connection churn, uncontended queue admission,
 fragments, intermediate draft/verification steps, and profile rows. It renders
 bytes in human units, speculative acceptance as accepted/proposed, and stop
-codes as their named contract values. Human `runtime trace` retains the full
-subscribed event sequence and adds sequence, severity, turn, phase, timing, and
-rate. Neither renderer exposes generic positional counter names. Native prefill
+codes as their named contract values. The `--json` projection retains the full
+subscribed event sequence with sequence, severity, turn, phase, timing, and
+rate. Neither projection
+exposes generic positional counter names. Native prefill
 progress sent to the REPL is another projection of the sealed event, not a
 synthetic client event.
 
@@ -80,9 +81,9 @@ Speculative events carry availability-bearing named generation mode, cycle,
 candidate extent, selected-verification, accepted, rejected, stop-discarded,
 correction/bonus, promoted, replay, verification, confidence, timing, and
 policy-identity facts. Legacy generic event counters remain part of the
-versioned base event record but do not encode DSpark meaning. Human watch
-groups each request and its cycle summary; detailed trace preserves the
-individual events. Neither surface publishes draft token text.
+versioned base event record but do not encode DSpark meaning. The human log
+groups each request and its cycle summary; JSONL preserves the individual
+events. Neither projection publishes draft token text.
 
 ## Privacy and content
 

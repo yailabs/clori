@@ -7,6 +7,7 @@
 #include <yvex/gguf.h>
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/families/minimax_h3.h>
+#include <yvex/internal/runtime.h>
 
 static int fail(const char *phase, const yvex_artifact_admission_failure *failure,
                 const yvex_error *err)
@@ -53,10 +54,6 @@ int main(int argc, char **argv)
     yvex_artifact *artifact = NULL;
     yvex_tensor_table *tensors = NULL;
     yvex_gguf *gguf = NULL;
-    yvex_materialization_plan *plan = NULL;
-    yvex_materialization_session *session = NULL;
-    yvex_materialization_options materialization_options;
-    yvex_materialization_failure materialization_failure;
     yvex_error err;
     int expect_refused = 0;
     int decode = 0;
@@ -106,9 +103,19 @@ int main(int argc, char **argv)
     } else if (rc != YVEX_OK) {
         (void)fail("component_admission", &failure, &err);
     } else if (decode) {
-        yvex_minimax_h3_audio_decode_options decode_options;
-        yvex_minimax_h3_audio_decode_result result;
-        yvex_minimax_h3_component_execution_failure execution_failure;
+        yvex_component_plan_request plan_request = {
+            .target_id = YVEX_MINIMAX_H3_TARGET_ID,
+            .component_id = "audio-vae",
+            .backend = YVEX_BACKEND_KIND_CPU,
+            .batch = 1ull,
+            .geometry_rank = 1u,
+            .geometry = {1ull},
+            .maximum_host_bytes = 256ull * 1024ull * 1024ull,
+        };
+        yvex_component_plan component_plan;
+        yvex_component_execution_request execution_request = {0};
+        yvex_component_execution_result result;
+        yvex_component_failure execution_failure;
         float latent[32];
         float output[800];
         FILE *file = fopen(latent_path, "rb");
@@ -122,29 +129,16 @@ int main(int argc, char **argv)
             rc = YVEX_ERR_FORMAT;
         } else {
             fclose(file);
-            yvex_materialization_options_default(&materialization_options);
-            materialization_options.max_chunk_bytes = 64ull * 1024ull * 1024ull;
-            rc = yvex_materialization_plan_build(
-                &plan, &admission, artifact, gguf, tensors, NULL,
-                &materialization_options, &materialization_failure, &err);
+            rc = yvex_runtime_component_api_get()->plan_build(
+                &plan_request, &component_plan, &execution_failure, &err);
+            execution_request.plan = &component_plan;
+            execution_request.input = latent;
+            execution_request.output = output;
+            execution_request.output_capacity = 800ull;
             if (rc == YVEX_OK)
-                rc = yvex_materialization_session_open(
-                    &session, plan, artifact, &materialization_options,
-                    &materialization_failure, &err);
-            if (rc == YVEX_OK)
-                rc = yvex_materialization_session_commit(
-                    session, &materialization_failure, &err);
-            memset(&decode_options, 0, sizeof(decode_options));
-            decode_options.latent = latent;
-            decode_options.batch = 1ull;
-            decode_options.latent_channels = 32ull;
-            decode_options.latent_steps = 1ull;
-            decode_options.output = output;
-            decode_options.output_capacity = 800ull;
-            decode_options.max_workspace_bytes = 256ull * 1024ull * 1024ull;
-            if (rc == YVEX_OK)
-                rc = yvex_graph_register_minimax_h3()->audio_vae_decode_cpu(
-                    session, &decode_options, &result, &execution_failure, &err);
+                rc = yvex_runtime_component_api_get()->execute(
+                    artifact, gguf, tensors, &execution_request, &result,
+                    &execution_failure, &err);
             if (rc != YVEX_OK) {
                 fprintf(stderr,
                         "audio_vae_decode=refused code=%d tensor=%s expected=%llu actual=%llu "
@@ -166,7 +160,7 @@ int main(int argc, char **argv)
                         rc = YVEX_ERR_IO;
                     } else {
                         printf("audio_vae_decode=accepted\n");
-                        printf("samples=%llu\n", result.samples_per_channel);
+                        printf("samples=%llu\n", result.output_dims[2]);
                         printf("tensor_reads=%llu\n", result.tensor_reads);
                         printf("payload_bytes_read=%llu\n", result.payload_bytes_read);
                         printf("peak_workspace_bytes=%llu\n", result.peak_workspace_bytes);
@@ -188,8 +182,6 @@ int main(int argc, char **argv)
         printf("artifact_bytes_hashed=%llu\n", admission.artifact_bytes_hashed);
         printf("artifact_identity_verified=%d\n", admission.artifact_identity_verified);
     }
-    yvex_materialization_session_close(session);
-    yvex_materialization_plan_close(plan);
     yvex_tensor_table_close(tensors);
     yvex_gguf_close(gguf);
     yvex_artifact_close(artifact);

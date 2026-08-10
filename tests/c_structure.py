@@ -382,6 +382,17 @@ def declarations(unit: CUnit) -> set[str]:
     return found
 
 
+def data_declarations(unit: CUnit) -> set[str]:
+    found: set[str] = set()
+    expression = re.compile(
+        r"\bextern\s+(?:const\s+)?(?:struct\s+)?[A-Za-z_][A-Za-z0-9_]*"
+        r"(?:\s*\*\s*|\s+)(yvex_[A-Za-z0-9_]+)(?:\s*\[[^;]*\])?\s*;"
+    )
+    for match in expression.finditer(unit.masked):
+        found.add(match.group(1))
+    return found
+
+
 def strongly_connected(graph: dict[str, set[str]]) -> list[list[str]]:
     index = 0
     indices: dict[str, int] = {}
@@ -843,7 +854,7 @@ class Audit:
             symbol
             for name, unit in self.headers.items()
             if self.header_tier(name) in {"internal", "source"}
-            for symbol in declarations(unit)
+            for symbol in declarations(unit) | data_declarations(unit)
         }
 
     def symbol_snapshot(self) -> dict[str, object]:
@@ -1231,6 +1242,14 @@ class Audit:
 
     def stale_path_violations(self) -> list[str]:
         errors: list[str] = []
+        with (ROOT / "config/documentation_owners.tsv").open(
+            encoding="utf-8", newline=""
+        ) as stream:
+            frozen_documents = {
+                row["path"]
+                for row in csv.DictReader(stream, delimiter="\t")
+                if row["authority_mode"] == "frozen"
+            }
         documents = [
             ROOT / name
             for name in ("AGENTS.md", "ROADMAP.md", "CONTRIBUTING.md", "README.md")
@@ -1239,6 +1258,8 @@ class Audit:
         expression = re.compile(r"`((?:src|include|tests|config)/[^` ]+)`")
         for document in documents:
             if not document.is_file():
+                continue
+            if relative(document) in frozen_documents:
                 continue
             for number, line in enumerate(document.read_text(errors="ignore").splitlines(), 1):
                 for reference in expression.findall(line):
@@ -1380,9 +1401,13 @@ class Audit:
             if len(consumers) < 2:
                 errors.append(f"non-public global lacks cross-TU consumer: {symbol}: {consumers}")
 
-        for entrypoint in self.policy["symbols"]["family_entrypoints"]:
+        required_entrypoints = (
+            self.policy["symbols"]["family_entrypoints"]
+            + self.policy["symbols"]["required_internal_entrypoints"]
+        )
+        for entrypoint in required_entrypoints:
             if len(definitions.get(entrypoint, [])) != 1:
-                errors.append(f"family entrypoint cardinality: {entrypoint}")
+                errors.append(f"required entrypoint cardinality: {entrypoint}")
         return errors
 
     def natural_violations(self) -> list[str]:

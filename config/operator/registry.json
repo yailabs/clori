@@ -29,11 +29,6 @@
       },
       {
         "command_id": "cli.yvex.model.use",
-        "flag": "--backend",
-        "rationale": "resolve startup facts from the selected registry profile"
-      },
-      {
-        "command_id": "cli.yvex.model.use",
         "flag": "--context",
         "rationale": "resolve startup facts from the selected registry profile"
       },
@@ -51,6 +46,31 @@
         "command_id": "cli.yvex.runtime.trace",
         "flag": "--follow",
         "rationale": "trace is already a continuous subscription"
+      },
+      {
+        "command_id": "daemon.yvexd",
+        "flag": "--context",
+        "rationale": "replace the retired daemon spelling with the canonical server --ctx option"
+      },
+      {
+        "command_id": "daemon.yvexd",
+        "flag": "--model",
+        "rationale": "replace separate startup paths with the explicit MODEL profile argument"
+      },
+      {
+        "command_id": "daemon.yvexd",
+        "flag": "--runtime-binding",
+        "rationale": "resolve the admitted binding from the explicit MODEL profile"
+      },
+      {
+        "command_id": "daemon.yvexd",
+        "flag": "--target",
+        "rationale": "resolve the target from the explicit MODEL profile"
+      },
+      {
+        "command_id": "daemon.yvexd",
+        "flag": "--version",
+        "rationale": "retain version reporting at the single yvex executable boundary"
       }
     ]
   },
@@ -103,19 +123,15 @@
         "completion",
         "console_status",
         "help",
-        "model_select",
-        "model_selected",
         "reasoning_disabled",
         "reasoning_enabled",
         "reasoning_maximum",
         "run",
-        "runtime_memory",
-        "runtime_model",
-        "runtime_start",
-        "runtime_status",
-        "runtime_stop",
-        "runtime_trace",
-        "runtime_watch",
+        "server_memory",
+        "server_model",
+        "server_status",
+        "server_stop",
+        "server_log",
         "session_attach",
         "session_cancel",
         "session_close",
@@ -746,7 +762,7 @@
         "--backend",
         "--calibration",
         "--class",
-        "--context",
+        "--ctx",
         "--family",
         "--generation-mode",
         "--model",
@@ -1176,7 +1192,7 @@
         "value_type": "number"
       }
     ],
-    "cli_yvex_runtime_status": {
+    "cli_yvex_server_status": {
       "booleans": [
         "--json"
       ],
@@ -1191,29 +1207,78 @@
       "repeatable_values": [],
       "values": []
     },
-    "daemon_yvexd": {
-      "booleans": [
-        "--trace-content",
-        "--version"
-      ],
-      "repeatable_values": [],
-      "values": [
-        "--backend",
-        "--console",
-        "--context",
-        "--generation-mode",
-        "--max-new-tokens",
-        "--model",
-        "--openai",
-        "--openai-port",
-        "--openai-timeout-ms",
-        "--prefill-chunk",
-        "--runtime-binding",
-        "--socket",
-        "--target",
-        "--trace-level"
-      ]
-    },
+    "cli_yvex_server": [
+      {
+        "enum_values": ["cpu", "cuda"],
+        "name": "--backend",
+        "takes_value": true,
+        "value_type": "enum"
+      },
+      {
+        "enum_values": ["off", "raw"],
+        "name": "--console",
+        "takes_value": true,
+        "value_type": "enum"
+      },
+      {
+        "name": "--ctx",
+        "range": "1..18446744073709551615",
+        "takes_value": true,
+        "value_type": "u64"
+      },
+      {
+        "enum_values": ["target-only", "dspark"],
+        "name": "--generation-mode",
+        "takes_value": true,
+        "value_type": "enum"
+      },
+      {
+        "name": "--max-new-tokens",
+        "range": "1..18446744073709551615",
+        "takes_value": true,
+        "value_type": "u64"
+      },
+      {
+        "enum_values": ["on", "off"],
+        "name": "--openai",
+        "takes_value": true,
+        "value_type": "enum"
+      },
+      {
+        "name": "--openai-port",
+        "range": "1..65535",
+        "takes_value": true,
+        "value_type": "u64"
+      },
+      {
+        "name": "--openai-timeout-ms",
+        "range": "100..86400000",
+        "takes_value": true,
+        "value_type": "u64"
+      },
+      {
+        "name": "--prefill-chunk",
+        "range": "1..18446744073709551615",
+        "takes_value": true,
+        "value_type": "u64"
+      },
+      {
+        "name": "--socket",
+        "takes_value": true,
+        "value_type": "path"
+      },
+      {
+        "name": "--trace-content",
+        "takes_value": false,
+        "value_type": "boolean"
+      },
+      {
+        "enum_values": ["summary", "stages", "tokens", "full"],
+        "name": "--trace-level",
+        "takes_value": true,
+        "value_type": "enum"
+      }
+    ],
     "help": [
       {
         "aliases": [
@@ -1224,7 +1289,7 @@
         "value_type": "boolean"
       }
     ],
-    "runtime_trace": {
+    "server_log": {
       "booleans": [
         "--json"
       ],
@@ -1293,6 +1358,180 @@
       "superseded_by": [
         "artifact.inspect"
       ],
+      "test_owner": "tests/test_operator_registry.py",
+      "visibility": "removed"
+    },
+    {
+      "CLI_projection": false,
+      "adapter_argv": [],
+      "adapter_id": "none",
+      "aliases": [],
+      "architectural_plane": "Run",
+      "arguments": [],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "removed",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "API-only",
+      "model_requirement": "none",
+      "operation_id": "runtime.host",
+      "protocol_operation": "none",
+      "renderer_id": "none",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Retired hidden daemon entrypoint.",
+      "superseded_by": ["server.host"],
+      "test_owner": "tests/test_operator_registry.py",
+      "visibility": "removed"
+    },
+    {
+      "CLI_projection": false,
+      "adapter_argv": [],
+      "adapter_id": "none",
+      "aliases": [],
+      "architectural_plane": "Run",
+      "arguments": [],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "removed",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "API-only",
+      "model_requirement": "none",
+      "operation_id": "runtime.start",
+      "protocol_operation": "none",
+      "renderer_id": "none",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Retired implicit runtime launch.",
+      "superseded_by": ["server.host"],
+      "test_owner": "tests/test_operator_registry.py",
+      "visibility": "removed"
+    },
+    {
+      "CLI_projection": false,
+      "adapter_argv": [],
+      "adapter_id": "none",
+      "aliases": [],
+      "architectural_plane": "Run",
+      "arguments": [],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "removed",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "API-only",
+      "model_requirement": "none",
+      "operation_id": "runtime.status",
+      "protocol_operation": "none",
+      "renderer_id": "none",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Retired public runtime status noun.",
+      "superseded_by": ["server.status"],
+      "test_owner": "tests/test_operator_registry.py",
+      "visibility": "removed"
+    },
+    {
+      "CLI_projection": false,
+      "adapter_argv": [],
+      "adapter_id": "none",
+      "aliases": [],
+      "architectural_plane": "Run",
+      "arguments": [],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "removed",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "API-only",
+      "model_requirement": "none",
+      "operation_id": "runtime.stop",
+      "protocol_operation": "none",
+      "renderer_id": "none",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Retired public runtime stop noun.",
+      "superseded_by": ["server.stop"],
+      "test_owner": "tests/test_operator_registry.py",
+      "visibility": "removed"
+    },
+    {
+      "CLI_projection": false,
+      "adapter_argv": [],
+      "adapter_id": "none",
+      "aliases": [],
+      "architectural_plane": "Run",
+      "arguments": [],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "removed",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "API-only",
+      "model_requirement": "none",
+      "operation_id": "runtime.trace",
+      "protocol_operation": "none",
+      "renderer_id": "none",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Retired public runtime trace noun.",
+      "superseded_by": ["server.log"],
+      "test_owner": "tests/test_operator_registry.py",
+      "visibility": "removed"
+    },
+    {
+      "CLI_projection": false,
+      "adapter_argv": [],
+      "adapter_id": "none",
+      "aliases": [],
+      "architectural_plane": "Run",
+      "arguments": [],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "removed",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "API-only",
+      "model_requirement": "none",
+      "operation_id": "runtime.watch",
+      "protocol_operation": "none",
+      "renderer_id": "none",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Retired public runtime watch noun.",
+      "superseded_by": ["server.log"],
       "test_owner": "tests/test_operator_registry.py",
       "visibility": "removed"
     },
@@ -1758,7 +1997,7 @@
       "slash_projection": "none",
       "summary": "Removed false model status facade.",
       "superseded_by": [
-        "runtime.model"
+        "server.model"
       ],
       "test_owner": "tests/test_operator_registry.py",
       "visibility": "removed"
@@ -1787,9 +2026,9 @@
       "result_schema": "human.v1",
       "side_effects": "read-only",
       "slash_projection": "none",
-      "summary": "Superseded by complete selected startup configuration.",
+      "summary": "Superseded by explicit foreground server launch.",
       "superseded_by": [
-        "model.select"
+        "server.host"
       ],
       "test_owner": "tests/test_operator_registry.py",
       "visibility": "removed"
@@ -1851,43 +2090,45 @@
       "visibility": "product-default"
     },
     {
-      "CLI_projection": false,
+      "CLI_projection": true,
       "adapter_argv": [],
       "adapter_id": "host",
       "aliases": [],
       "architectural_plane": "Run",
       "arguments": [
         {
-          "completion_provider": "none",
-          "multiplicity": "many",
-          "name": "arguments",
-          "required": false,
-          "validator": "syntax.delegated",
-          "value_type": "text"
+          "completion_provider": "model-registry",
+          "multiplicity": "one",
+          "name": "MODEL",
+          "required": true,
+          "validator": "syntax.name",
+          "value_type": "name"
         }
       ],
-      "artifact_requirement": "none",
-      "backend_requirement": "none",
-      "command_path": [],
+      "artifact_requirement": "runtime-binding",
+      "backend_requirement": "required",
+      "command_path": [
+        "server"
+      ],
       "daemon_requirement": "absent",
       "default_providers": [],
       "deprecation_state": "current",
       "documentation_owner": "docs/operator-runbook.md",
       "flag_sets": [
-        "daemon_yvexd"
+        "cli_yvex_server"
       ],
       "input_schema": "argv.v1",
       "lane": "daemon-entrypoint",
-      "model_requirement": "none",
-      "operation_id": "runtime.host",
+      "model_requirement": "registry-model",
+      "operation_id": "server.host",
       "protocol_operation": "none",
       "renderer_id": "human",
       "result_schema": "human.v1",
       "side_effects": "persistent runtime host",
       "slash_projection": "none",
-      "summary": "Host the sole resident model runtime.",
-      "test_owner": "tests/test_server.sh",
-      "visibility": "product-advanced"
+      "summary": "Run one model server in the foreground.",
+      "test_owner": "tests/cli/server.sh",
+      "visibility": "product-default"
     },
     {
       "CLI_projection": true,
@@ -5202,77 +5443,6 @@
     },
     {
       "CLI_projection": true,
-      "adapter_argv": [],
-      "adapter_id": "model_select",
-      "aliases": [],
-      "architectural_plane": "Run",
-      "arguments": [
-        {
-          "completion_provider": "model-registry",
-          "multiplicity": "one",
-          "name": "name",
-          "required": true,
-          "validator": "syntax.delegated",
-          "value_type": "name"
-        }
-      ],
-      "artifact_requirement": "none",
-      "backend_requirement": "none",
-      "command_path": [
-        "model",
-        "select"
-      ],
-      "daemon_requirement": "absent",
-      "default_providers": [],
-      "deprecation_state": "current",
-      "documentation_owner": "docs/operator-runbook.md",
-      "flag_sets": [],
-      "input_schema": "argv.v1",
-      "lane": "runtime-client",
-      "model_requirement": "registry-model",
-      "operation_id": "model.select",
-      "protocol_operation": "none",
-      "renderer_id": "human",
-      "result_schema": "human.v1",
-      "side_effects": "writes selected startup configuration",
-      "slash_projection": "none",
-      "summary": "Select one registered startup profile.",
-      "test_owner": "tests/client_cutover.sh",
-      "visibility": "product-default"
-    },
-    {
-      "CLI_projection": true,
-      "adapter_argv": [],
-      "adapter_id": "model_selected",
-      "aliases": [],
-      "architectural_plane": "Run",
-      "arguments": [],
-      "artifact_requirement": "none",
-      "backend_requirement": "none",
-      "command_path": [
-        "model",
-        "selected"
-      ],
-      "daemon_requirement": "absent",
-      "default_providers": [],
-      "deprecation_state": "current",
-      "documentation_owner": "docs/operator-runbook.md",
-      "flag_sets": [],
-      "input_schema": "argv.v1",
-      "lane": "runtime-client",
-      "model_requirement": "selected-config",
-      "operation_id": "model.selected",
-      "protocol_operation": "none",
-      "renderer_id": "human",
-      "result_schema": "human.v1",
-      "side_effects": "read-only",
-      "slash_projection": "none",
-      "summary": "Show the selected startup configuration.",
-      "test_owner": "tests/client_cutover.sh",
-      "visibility": "product-default"
-    },
-    {
-      "CLI_projection": true,
       "adapter_argv": [
         "models",
         "inspect"
@@ -5786,21 +5956,21 @@
       "result_schema": "human.v1",
       "side_effects": "session and generation",
       "slash_projection": "none",
-      "summary": "Run one streamed daemon-backed turn.",
+      "summary": "Run one streamed server-backed turn.",
       "test_owner": "tests/client_cutover.sh",
       "visibility": "product-default"
     },
     {
       "CLI_projection": true,
       "adapter_argv": [],
-      "adapter_id": "runtime_memory",
+      "adapter_id": "server_memory",
       "aliases": [],
       "architectural_plane": "Run",
       "arguments": [],
       "artifact_requirement": "none",
       "backend_requirement": "none",
       "command_path": [
-        "runtime",
+        "server",
         "memory"
       ],
       "daemon_requirement": "required",
@@ -5811,27 +5981,27 @@
       "input_schema": "argv.v1",
       "lane": "runtime-client",
       "model_requirement": "runtime-model",
-      "operation_id": "runtime.memory",
+      "operation_id": "server.memory",
       "protocol_operation": "runtime.status",
       "renderer_id": "human-or-json",
       "result_schema": "human.v1",
       "side_effects": "read-only",
       "slash_projection": "/memory",
-      "summary": "Show authoritative runtime memory facts.",
+      "summary": "Show authoritative server memory facts.",
       "test_owner": "tests/client_cutover.sh",
       "visibility": "product-default"
     },
     {
       "CLI_projection": true,
       "adapter_argv": [],
-      "adapter_id": "runtime_model",
+      "adapter_id": "server_model",
       "aliases": [],
       "architectural_plane": "Run",
       "arguments": [],
       "artifact_requirement": "none",
       "backend_requirement": "none",
       "command_path": [
-        "runtime",
+        "server",
         "model"
       ],
       "daemon_requirement": "required",
@@ -5842,71 +6012,27 @@
       "input_schema": "argv.v1",
       "lane": "runtime-client",
       "model_requirement": "runtime-model",
-      "operation_id": "runtime.model",
+      "operation_id": "server.model",
       "protocol_operation": "runtime.status",
       "renderer_id": "human-or-json",
       "result_schema": "human.v1",
       "side_effects": "read-only",
       "slash_projection": "/model",
-      "summary": "Show identities of the live runtime model.",
+      "summary": "Show identities of the model hosted by the server.",
       "test_owner": "tests/client_cutover.sh",
       "visibility": "product-default"
     },
     {
       "CLI_projection": true,
       "adapter_argv": [],
-      "adapter_id": "runtime_start",
-      "aliases": [],
-      "architectural_plane": "Run",
-      "arguments": [
-        {
-          "completion_provider": "none",
-          "multiplicity": "many",
-          "name": "daemon-options",
-          "required": false,
-          "validator": "syntax.delegated",
-          "value_type": "text"
-        }
-      ],
-      "artifact_requirement": "none",
-      "backend_requirement": "none",
-      "command_path": [
-        "runtime",
-        "start"
-      ],
-      "daemon_requirement": "optional",
-      "default_providers": [
-        "runtime.configuration"
-      ],
-      "deprecation_state": "current",
-      "documentation_owner": "docs/operator-runbook.md",
-      "flag_sets": [
-        "daemon_yvexd"
-      ],
-      "input_schema": "argv.v1",
-      "lane": "runtime-client",
-      "model_requirement": "none",
-      "operation_id": "runtime.start",
-      "protocol_operation": "none",
-      "renderer_id": "human",
-      "result_schema": "human.v1",
-      "side_effects": "executes daemon",
-      "slash_projection": "none",
-      "summary": "Start the resident runtime host.",
-      "test_owner": "tests/client_cutover.sh",
-      "visibility": "product-default"
-    },
-    {
-      "CLI_projection": true,
-      "adapter_argv": [],
-      "adapter_id": "runtime_status",
+      "adapter_id": "server_status",
       "aliases": [],
       "architectural_plane": "Run",
       "arguments": [],
       "artifact_requirement": "none",
       "backend_requirement": "none",
       "command_path": [
-        "runtime",
+        "server",
         "status"
       ],
       "daemon_requirement": "required",
@@ -5914,32 +6040,32 @@
       "deprecation_state": "current",
       "documentation_owner": "docs/operator-runbook.md",
       "flag_sets": [
-        "cli_yvex_runtime_status"
+        "cli_yvex_server_status"
       ],
       "input_schema": "argv.v1",
       "lane": "runtime-client",
       "model_requirement": "runtime-model",
-      "operation_id": "runtime.status",
+      "operation_id": "server.status",
       "protocol_operation": "runtime.status",
       "renderer_id": "human-or-json",
       "result_schema": "human.v1",
       "side_effects": "read-only",
-      "slash_projection": "/runtime",
-      "summary": "Show the authoritative runtime snapshot.",
+      "slash_projection": "none",
+      "summary": "Show the authoritative server snapshot.",
       "test_owner": "tests/client_cutover.sh",
       "visibility": "product-default"
     },
     {
       "CLI_projection": true,
       "adapter_argv": [],
-      "adapter_id": "runtime_stop",
+      "adapter_id": "server_stop",
       "aliases": [],
       "architectural_plane": "Run",
       "arguments": [],
       "artifact_requirement": "none",
       "backend_requirement": "none",
       "command_path": [
-        "runtime",
+        "server",
         "stop"
       ],
       "daemon_requirement": "required",
@@ -5950,77 +6076,46 @@
       "input_schema": "argv.v1",
       "lane": "runtime-client",
       "model_requirement": "none",
-      "operation_id": "runtime.stop",
+      "operation_id": "server.stop",
       "protocol_operation": "runtime.stop",
       "renderer_id": "human",
       "result_schema": "human.v1",
-      "side_effects": "daemon shutdown",
+      "side_effects": "server shutdown",
       "slash_projection": "none",
-      "summary": "Stop the resident runtime host.",
+      "summary": "Stop the resident model server.",
       "test_owner": "tests/client_cutover.sh",
       "visibility": "product-default"
     },
     {
       "CLI_projection": true,
       "adapter_argv": [],
-      "adapter_id": "runtime_trace",
+      "adapter_id": "server_log",
       "aliases": [],
       "architectural_plane": "Run",
       "arguments": [],
       "artifact_requirement": "none",
       "backend_requirement": "none",
       "command_path": [
-        "runtime",
-        "trace"
+        "server",
+        "log"
       ],
       "daemon_requirement": "required",
       "default_providers": [],
       "deprecation_state": "current",
       "documentation_owner": "docs/operator-runbook.md",
       "flag_sets": [
-        "runtime_trace"
+        "server_log"
       ],
       "input_schema": "argv.v1",
       "lane": "runtime-client",
       "model_requirement": "runtime-model",
-      "operation_id": "runtime.trace",
+      "operation_id": "server.log",
       "protocol_operation": "runtime.trace",
       "renderer_id": "stream",
       "result_schema": "human.v1",
       "side_effects": "continuous subscription",
       "slash_projection": "none",
-      "summary": "Subscribe to detailed typed runtime events.",
-      "test_owner": "tests/client_cutover.sh",
-      "visibility": "product-default"
-    },
-    {
-      "CLI_projection": true,
-      "adapter_argv": [],
-      "adapter_id": "runtime_watch",
-      "aliases": [],
-      "architectural_plane": "Run",
-      "arguments": [],
-      "artifact_requirement": "none",
-      "backend_requirement": "none",
-      "command_path": [
-        "runtime",
-        "watch"
-      ],
-      "daemon_requirement": "required",
-      "default_providers": [],
-      "deprecation_state": "current",
-      "documentation_owner": "docs/operator-runbook.md",
-      "flag_sets": [],
-      "input_schema": "argv.v1",
-      "lane": "runtime-client",
-      "model_requirement": "runtime-model",
-      "operation_id": "runtime.watch",
-      "protocol_operation": "runtime.watch",
-      "renderer_id": "stream",
-      "result_schema": "human.v1",
-      "side_effects": "continuous subscription",
-      "slash_projection": "none",
-      "summary": "Subscribe to compact runtime events.",
+      "summary": "Follow typed server events; use --json for canonical JSONL.",
       "test_owner": "tests/client_cutover.sh",
       "visibility": "product-default"
     },
@@ -6214,7 +6309,7 @@
       "result_schema": "human.v1",
       "side_effects": "read-only",
       "slash_projection": "/sessions",
-      "summary": "List daemon-owned sessions.",
+      "summary": "List server-owned sessions.",
       "test_owner": "tests/client_cutover.sh",
       "visibility": "product-default"
     },
@@ -6254,7 +6349,7 @@
       "result_schema": "human.v1",
       "side_effects": "creates session",
       "slash_projection": "/new",
-      "summary": "Create a daemon-owned session.",
+      "summary": "Create a server-owned session.",
       "test_owner": "tests/client_cutover.sh",
       "visibility": "product-default"
     },
@@ -6451,7 +6546,7 @@
         }
       ],
       "slash_projection": "/session",
-      "summary": "Show one daemon-owned session.",
+      "summary": "Show one server-owned session.",
       "test_owner": "tests/client_cutover.sh",
       "visibility": "product-default"
     },
@@ -6679,10 +6774,73 @@
       ]
     },
     {
-      "hint": "use `yvex model select NAME`",
+      "hint": "use `yvex server MODEL`",
       "path": [
         "model",
         "use"
+      ]
+    },
+    {
+      "hint": "use `yvex server MODEL`",
+      "path": [
+        "model",
+        "select"
+      ]
+    },
+    {
+      "hint": "choose MODEL explicitly with `yvex server MODEL`",
+      "path": [
+        "model",
+        "selected"
+      ]
+    },
+    {
+      "hint": "use `yvex server MODEL`",
+      "path": [
+        "runtime",
+        "start"
+      ]
+    },
+    {
+      "hint": "use `yvex server status`",
+      "path": [
+        "runtime",
+        "status"
+      ]
+    },
+    {
+      "hint": "use `yvex server model`",
+      "path": [
+        "runtime",
+        "model"
+      ]
+    },
+    {
+      "hint": "use `yvex server memory`",
+      "path": [
+        "runtime",
+        "memory"
+      ]
+    },
+    {
+      "hint": "use `yvex server log`",
+      "path": [
+        "runtime",
+        "watch"
+      ]
+    },
+    {
+      "hint": "use `yvex server log --json`",
+      "path": [
+        "runtime",
+        "trace"
+      ]
+    },
+    {
+      "hint": "use `yvex server stop`",
+      "path": [
+        "runtime",
+        "stop"
       ]
     },
     {
@@ -6703,14 +6861,6 @@
       "path": [
         "runtime",
         "input"
-      ]
-    },
-    {
-      "hint": "`yvex runtime trace` already streams until cancellation",
-      "path": [
-        "runtime",
-        "trace",
-        "--follow"
       ]
     },
     {

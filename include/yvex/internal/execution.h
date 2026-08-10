@@ -14,8 +14,9 @@
 extern "C" {
 #endif
 
-#define YVEX_PHYSICAL_EXECUTION_SCHEMA_V1 1u
-#define YVEX_COMPILED_EXECUTION_PROFILE_SCHEMA_V1 1u
+#define YVEX_PHYSICAL_EXECUTION_SCHEMA_V2 2u
+#define YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V1 1u
+#define YVEX_COMPILED_EXECUTION_PROFILE_SCHEMA_V2 2u
 #define YVEX_EXECUTION_HARDWARE_PROFILE_SCHEMA_V1 1u
 #define YVEX_EXECUTION_WORKLOAD_PROFILE_SCHEMA_V1 1u
 #define YVEX_EXECUTION_CAPACITY_PLAN_SCHEMA_V1 1u
@@ -36,6 +37,14 @@ typedef enum {
     YVEX_EXECUTION_CLASS_DEVICE_NATIVE,
     YVEX_EXECUTION_CLASS_FORENSIC_REFERENCE
 } yvex_execution_class;
+
+typedef enum {
+    YVEX_EXECUTION_RESOLUTION_EXACT = 0,
+    YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED,
+    YVEX_EXECUTION_RESOLUTION_TEMPORARILY_RESOURCE_LIMITED,
+    YVEX_EXECUTION_RESOLUTION_UNSUPPORTED,
+    YVEX_EXECUTION_RESOLUTION_TRUST_FAILURE
+} yvex_execution_resolution;
 
 typedef enum {
     YVEX_EXECUTION_CONSUMER_EMBEDDING = 0,
@@ -100,6 +109,16 @@ typedef enum {
     YVEX_EXECUTION_BACKEND_CUDA
 } yvex_execution_backend_requirement;
 
+typedef struct yvex_physical_execution_policy {
+    unsigned int schema_version, required_compute_major, required_compute_minor;
+    yvex_execution_activation_class activation;
+    yvex_execution_backend_requirement required_backend;
+    yvex_execution_evidence_profile evidence;
+    yvex_execution_class fallback;
+    int derived_asset_required;
+    const char *dense_kernel_family, *expert_kernel_family;
+} yvex_physical_execution_policy;
+
 typedef struct {
     unsigned int schema_version;
     unsigned long long terminal_tensor_id;
@@ -140,9 +159,16 @@ int yvex_physical_execution_ir_build(
     yvex_physical_execution_ir **out,
     const yvex_materialization_session *materialization,
     const yvex_runtime_descriptor *descriptor,
-    const char *physical_variant_identity, yvex_error *err);
+    const char *physical_variant_identity,
+    const yvex_physical_execution_policy *policy, yvex_error *err);
+int yvex_physical_execution_ir_import(
+    yvex_physical_execution_ir **out, const yvex_physical_execution_summary *summary,
+    const yvex_physical_execution_decision *decisions, unsigned long long count,
+    yvex_error *err);
 const yvex_physical_execution_summary *yvex_physical_execution_ir_summary(
     const yvex_physical_execution_ir *ir);
+const yvex_physical_execution_decision *yvex_physical_execution_ir_decision_at(
+    const yvex_physical_execution_ir *ir, unsigned long long index);
 void yvex_physical_execution_ir_close(yvex_physical_execution_ir **ir);
 
 typedef struct {
@@ -217,10 +243,10 @@ typedef struct {
     unsigned long long promotion_fragmentation_bytes;
     int shared, copy_on_write;
 } yvex_execution_state_class_plan;
-
 typedef struct {
     unsigned int schema_version;
-    const yvex_model_execution_descriptor *model;
+    const char *model_execution_identity;
+    unsigned long long semantic_maximum_context, candidate_width, semantic_state_class_mask;
     const yvex_execution_hardware_profile *hardware;
     const yvex_execution_workload_profile *workload;
     unsigned long long model_bytes, derived_layout_bytes;
@@ -408,9 +434,9 @@ typedef struct {
     yvex_execution_workload_class workload;
     yvex_execution_evidence_profile evidence;
     yvex_execution_class execution_class;
-    int host_stochastic_reference;
-    int token_local_moe_reference;
-    int eager_attention_reference;
+    yvex_execution_resolution attention_resolution;
+    yvex_execution_resolution moe_resolution;
+    yvex_execution_resolution sampling_resolution;
 } yvex_compiled_execution_profile_request;
 
 typedef struct {
@@ -422,9 +448,10 @@ typedef struct {
     yvex_execution_workload_class workload;
     yvex_execution_evidence_profile evidence;
     yvex_execution_class execution_class;
-    int host_stochastic_reference;
-    int token_local_moe_reference;
-    int eager_attention_reference;
+    yvex_execution_resolution resolution;
+    yvex_execution_resolution attention_resolution;
+    yvex_execution_resolution moe_resolution;
+    yvex_execution_resolution sampling_resolution;
     char hardware_profile[YVEX_EXECUTION_TEXT_CAP];
     char kernel_bundle_identity[YVEX_SHA256_HEX_CAP];
     char identity[YVEX_SHA256_HEX_CAP];

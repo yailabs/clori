@@ -27,7 +27,7 @@ src/graph/private.h
 src/graph/attention.c
 src/graph/numeric.c
 src/graph/families/deepseek_v4.c
-src/backend/cuda/families/deepseek_v4.c
+src/backend/cuda/attention.c
 src/gguf/core.c
 src/gguf/writer.c
 src/artifact/materialize.c
@@ -118,12 +118,12 @@ for filter in provider openai; do
     }
 done
 grep -A16 '^test-runtime-asan:' Makefile |
-  grep -F 'test-runtime client daemon test-openai' >/dev/null || {
+  grep -F 'test-runtime client test-openai' >/dev/null || {
     echo "source layout: ASan omits the in-process OpenAI adapter" >&2
     exit 1
   }
 grep -A16 '^test-runtime-ubsan:' Makefile |
-  grep -F 'test-runtime client daemon test-openai' >/dev/null || {
+  grep -F 'test-runtime client test-openai' >/dev/null || {
     echo "source layout: UBSan omits the in-process OpenAI adapter" >&2
     exit 1
   }

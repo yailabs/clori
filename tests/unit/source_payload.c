@@ -710,6 +710,9 @@ static int test_payload_transform_binding(
     yvex_transform_ir *mismatch = NULL;
     yvex_transform_binding *binding = NULL;
     yvex_transform_binding_summary const *summary;
+    yvex_source_payload_plan *binding_plan = NULL;
+    const yvex_source_payload_plan_summary *binding_plan_summary;
+    yvex_source_payload_failure payload_failure;
     yvex_transform_physical_decision decision;
     yvex_transform_failure failure;
     yvex_transform_allocator allocator;
@@ -771,12 +774,20 @@ static int test_payload_transform_binding(
                          summary->payload_readable_at_bind &&
                          yvex_transform_binding_terminal_at(binding, 0u) &&
                          yvex_transform_binding_terminal_operation(binding, 0u) &&
-                         yvex_transform_binding_source_at(binding, 0u) &&
                          yvex_transform_binding_range_at(binding, 0u),
                      "quantizer boundary exposes immutable terminal dependencies");
     YVEX_TEST_ASSERT(yvex_transform_binding_readable_validate(
                          binding, &failure, &err) == YVEX_OK,
                      "ready session passes execution-time identity revalidation");
+    YVEX_TEST_ASSERT(yvex_transform_binding_payload_plan_build(
+                         &binding_plan, binding, 4096u, 4096u, &payload_failure,
+                         &err) == YVEX_OK && binding_plan,
+                     "transform binding projects its exact payload range plan");
+    binding_plan_summary = yvex_source_payload_plan_summary_get(binding_plan);
+    YVEX_TEST_ASSERT(binding_plan_summary && binding_plan_summary->range_count == 1u &&
+                         binding_plan_summary->logical_bytes == 8192u,
+                     "binding payload plan preserves the admitted source selection");
+    yvex_source_payload_plan_close(binding_plan);
     memset(&decision, 0, sizeof(decision));
     decision.physical_class = YVEX_TRANSFORM_PHYSICAL_BF16;
     decision.encoding_id = 7u;

@@ -1,5 +1,5 @@
-/* The local client and yvexd exchange bounded versioned frames without sharing engine pointers.
- * The daemon alone owns model, worker, queue, session, and KV lifetimes. */
+/* Local clients and the foreground server exchange bounded versioned frames without sharing
+ * engine pointers. The server alone owns model, worker, queue, session, and KV lifetimes. */
 #ifndef YVEX_SERVER_H
 #define YVEX_SERVER_H
 #include <yvex/artifact.h>

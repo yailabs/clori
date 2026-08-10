@@ -339,7 +339,7 @@ static int live_device_profile(live_logits *execution, yvex_runtime_model *model
                        "hardware-profile rendering overflowed");
         return YVEX_ERR_BOUNDS;
     }
-    request.schema_version = YVEX_COMPILED_EXECUTION_PROFILE_SCHEMA_V1;
+    request.schema_version = YVEX_COMPILED_EXECUTION_PROFILE_SCHEMA_V2;
     request.logical_model_identity = binding->logical_model_identity;
     request.physical_variant_identity = binding->profile_identity;
     request.physical_execution_identity = physical->identity;
@@ -357,8 +357,9 @@ static int live_device_profile(live_logits *execution, yvex_runtime_model *model
     request.workload = YVEX_EXECUTION_WORKLOAD_QUALIFICATION;
     request.evidence = YVEX_EXECUTION_EVIDENCE_PRODUCTION;
     request.execution_class = YVEX_EXECUTION_CLASS_DEVICE_NATIVE;
-    request.token_local_moe_reference = 1;
-    request.eager_attention_reference = 1;
+    request.attention_resolution = YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
+    request.moe_resolution = YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
+    request.sampling_resolution = YVEX_EXECUTION_RESOLUTION_EXACT;
     return yvex_compiled_execution_profile_seal(&request, profile, err);
 }
 
