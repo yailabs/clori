@@ -172,7 +172,7 @@ static int assert_grouped_moe(yvex_backend *backend)
     descriptor.dtype = YVEX_DTYPE_I8;
     descriptor.rank = 1u;
     descriptor.dims[0] = descriptor.bytes = 128ull * sizeof(*fixture.arena);
-    YVEX_TEST_ASSERT(backend->vtable->resident_alloc(
+    YVEX_TEST_ASSERT(yvex_backend_resident_alloc(
                          backend, &descriptor, &anchor,
                          (unsigned char **)&fixture.arena, &err) == YVEX_OK,
                      "allocate grouped MoE managed fixture");
@@ -456,14 +456,14 @@ int yvex_cuda_test_info(void)
     static const char *attention_symbols[] = {
         "yvex_attention_bf16_round",
         "yvex_qtype_matvec",
-        "yvex_deepseek_decode",
-        "yvex_deepseek_weighted_norm",
-        "yvex_deepseek_unit_norm",
-        "yvex_deepseek_rope",
-        "yvex_deepseek_activation",
-        "yvex_deepseek_rolling",
-        "yvex_deepseek_topk",
-        "yvex_deepseek_reduce"
+        "yvex_encoded_row_decode",
+        "yvex_attention_weighted_norm",
+        "yvex_attention_unit_norm",
+        "yvex_attention_yarn_rope",
+        "yvex_attention_activation_quantize",
+        "yvex_attention_rolling_state",
+        "yvex_attention_topk",
+        "yvex_attention_reduce"
     };
     size_t symbol_index;
     unsigned char *imported = NULL, *mapped = NULL;
@@ -526,7 +526,7 @@ int yvex_cuda_test_info(void)
     YVEX_TEST_ASSERT(mlock(imported, 4096u) == 0,
                      "lock imported host residency before CUDA registration");
     mapped = imported;
-    YVEX_TEST_ASSERT(backend->vtable->resident_alloc(
+    YVEX_TEST_ASSERT(yvex_backend_resident_alloc(
                          backend, &descriptor, &resident, &mapped, &err) == YVEX_OK &&
                          mapped == imported,
                      "register existing host residency without replacement");
@@ -543,7 +543,7 @@ int yvex_cuda_test_info(void)
                      "unlock imported host residency after CUDA unregister");
     free(imported);
     imported = mapped = NULL;
-    YVEX_TEST_ASSERT(backend->vtable->resident_alloc(
+    YVEX_TEST_ASSERT(yvex_backend_resident_alloc(
                          backend, &descriptor, &resident, &mapped, &err) == YVEX_OK,
                      "allocate exact managed residency");
     memset(mapped, 0x5a, 4096u);

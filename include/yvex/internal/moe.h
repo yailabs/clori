@@ -89,18 +89,21 @@ typedef struct {
     char moe_plan_identity[YVEX_SHA256_HEX_CAP];
 } yvex_moe_plan_summary;
 typedef struct yvex_moe_plan yvex_moe_plan;
-typedef struct {
+typedef struct yvex_moe_family_api {
     unsigned long long adapter_id, adapter_version;
     int (*project_layer)(unsigned long long, const yvex_runtime_descriptor_summary *,
                          const yvex_attention_layer_plan *, yvex_moe_layer_plan *,
                          yvex_error *);
 } yvex_moe_family_api;
-const yvex_moe_family_api *yvex_graph_moe_family_at(unsigned long long index);
-int yvex_moe_plan_build(yvex_moe_plan **out, unsigned long long adapter_id,
+int yvex_moe_plan_build(yvex_moe_plan **out, const yvex_moe_family_api *family,
+                        unsigned long long adapter_id,
                         unsigned long long adapter_version,
                         const yvex_materialization_session *materialization,
                         const yvex_runtime_descriptor *descriptor,
                         const yvex_attention_plan *attention, yvex_error *err);
+int yvex_moe_plan_import(yvex_moe_plan **out,
+                         const yvex_moe_plan_summary *summary,
+                         const yvex_moe_layer_plan *layers, yvex_error *err);
 const yvex_moe_plan_summary *yvex_moe_plan_summary_get(const yvex_moe_plan *plan);
 const yvex_moe_layer_plan *yvex_moe_plan_layer_at(const yvex_moe_plan *plan,
                                                    unsigned long long ordinal);

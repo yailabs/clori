@@ -197,6 +197,25 @@ typedef struct {
     unsigned long long required_uses;
 } yvex_transform_source_spec;
 typedef struct {
+    const char *source_name;
+    yvex_native_dtype source_dtype;
+    yvex_transform_dtype value_dtype;
+    yvex_transform_shape shape;
+    unsigned long long requirement_index;
+    yvex_transform_scope scope;
+    yvex_transform_subsystem subsystem;
+    yvex_tensor_role role_hint;
+    unsigned long long component_identity;
+    unsigned long long semantic_role;
+    unsigned long long phase_identity;
+    unsigned long long lifetime_identity;
+    unsigned long long unresolved_requirement_identity;
+    unsigned long long layer_index;
+    unsigned long long auxiliary_index;
+    unsigned long long expert_index;
+    unsigned long long required_uses;
+} yvex_transform_source_requirement;
+typedef struct {
     yvex_transform_value_kind kind;
     unsigned long long semantic_id;
     unsigned long long canonical_ordinal;
@@ -324,6 +343,7 @@ typedef struct {
 typedef struct yvex_transform_builder_options {
     yvex_transform_allocator allocator;
     yvex_transform_budget budget;
+    const yvex_source_tensor_snapshot *source_snapshot;
 } yvex_transform_builder_options;
 typedef struct {
     unsigned int schema_version;
@@ -408,6 +428,7 @@ const yvex_transform_value *yvex_transform_ir_terminal_at(
 const yvex_transform_value *yvex_transform_ir_node_input_at(
     const yvex_transform_ir *ir, const yvex_transform_node *node,
     unsigned long long ordinal);
+
 int yvex_transform_logical_key_equal(
     const yvex_transform_logical_key *left,
     const yvex_transform_logical_key *right);
@@ -416,7 +437,62 @@ int yvex_transform_shape_element_count(
     unsigned long long *out,
     yvex_transform_failure *failure,
     yvex_error *err);
-const char *yvex_transform_failure_name(yvex_transform_failure_code code);
+
+typedef struct yvex_transform_recipe_sink yvex_transform_recipe_sink;
+typedef struct {
+    const yvex_transform_source_spec *sources;
+    unsigned long long source_count;
+    yvex_transform_value_spec terminal;
+    yvex_transform_node_spec operation;
+} yvex_transform_recipe;
+typedef int (*yvex_transform_recipe_project_fn)(
+    void *context, yvex_transform_recipe_sink *sink,
+    yvex_transform_failure *failure, yvex_error *err);
+int yvex_transform_recipe_compile(
+    yvex_transform_ir **out, const yvex_transform_header *header,
+    yvex_transform_recipe_project_fn project, void *context,
+    const yvex_transform_builder_options *options,
+    yvex_transform_failure *failure, yvex_error *err);
+int yvex_transform_recipe_sink_add(
+    yvex_transform_recipe_sink *sink, const yvex_transform_recipe *recipe,
+    yvex_transform_failure *failure, yvex_error *err);
+int yvex_transform_recipe_sink_resolve_source(
+    yvex_transform_recipe_sink *sink,
+    const yvex_transform_source_requirement *requirement,
+    yvex_transform_source_spec *resolved,
+    yvex_transform_failure *failure, yvex_error *err);
+typedef struct {
+    const char *source_name;
+    yvex_tensor_role role;
+    yvex_tensor_collection collection;
+    yvex_tensor_scope scope;
+    unsigned long long layer, auxiliary, expert, requirement_index;
+    yvex_native_dtype source_dtype;
+    yvex_transform_shape shape;
+    int packed_fp4, checked_cast;
+} yvex_transform_direct_recipe;
+typedef struct {
+    const char *base_name;
+    yvex_tensor_role role;
+    yvex_tensor_collection collection;
+    yvex_tensor_scope scope;
+    unsigned long long layer, auxiliary, rows, columns;
+    unsigned long long block_rows, block_columns, requirement_index;
+} yvex_transform_scale_pair_recipe;
+int yvex_transform_recipe_add_direct(
+    yvex_transform_recipe_sink *sink, const yvex_transform_direct_recipe *recipe,
+    yvex_transform_failure *failure, yvex_error *err);
+int yvex_transform_recipe_add_scale_pair(
+    yvex_transform_recipe_sink *sink, const yvex_transform_scale_pair_recipe *recipe,
+    yvex_transform_failure *failure, yvex_error *err);
+int yvex_transform_recipe_add_terminal(
+    yvex_transform_recipe_sink *sink, yvex_tensor_role role,
+    yvex_tensor_collection collection, yvex_tensor_scope scope, unsigned long long layer,
+    unsigned long long auxiliary, const yvex_transform_source_spec *sources,
+    unsigned long long source_count, const yvex_transform_shape *shape,
+    yvex_transform_dtype dtype, const yvex_transform_precision_constraint *precision,
+    const yvex_transform_node_spec *operation, yvex_transform_failure *failure,
+    yvex_error *err);
 
 /* Binding. */
 typedef struct yvex_transform_binding yvex_transform_binding;
@@ -459,9 +535,6 @@ const yvex_transform_value *yvex_transform_binding_terminal_at(
 const yvex_transform_node *yvex_transform_binding_terminal_operation(
     const yvex_transform_binding *binding,
     unsigned long long ordinal);
-const yvex_transform_source_value *yvex_transform_binding_source_at(
-    const yvex_transform_binding *binding,
-    unsigned long long source_index);
 const yvex_source_payload_range *yvex_transform_binding_range_at(
     const yvex_transform_binding *binding,
     unsigned long long source_index);
@@ -474,6 +547,14 @@ int yvex_transform_binding_decision_validate(
 int yvex_transform_binding_readable_validate(
     const yvex_transform_binding *binding,
     yvex_transform_failure *failure,
+    yvex_error *err);
+/* The caller owns the returned plan; its ranges are exactly the sealed binding source set. */
+int yvex_transform_binding_payload_plan_build(
+    yvex_source_payload_plan **out,
+    const yvex_transform_binding *binding,
+    size_t chunk_bytes,
+    size_t page_bytes,
+    yvex_source_payload_failure *failure,
     yvex_error *err);
 
 /* Runtime-binding publication is a preparation-plane operation.  The CLI
@@ -497,66 +578,7 @@ typedef struct yvex_compilation_runtime_binding_result {
     int published;
 } yvex_compilation_runtime_binding_result;
 
-typedef struct {
-    unsigned long long hash;
-    unsigned long long value_plus_one;
-} yvex_transform_index_slot;
-typedef struct {
-    yvex_transform_node node;
-    unsigned long long provisional_id;
-} yvex_transform_builder_node;
-struct yvex_transform_builder {
-    yvex_transform_ir_state state;
-    yvex_transform_allocator allocator;
-    yvex_transform_budget budget;
-    yvex_transform_header header;
-    char logical_model_identity[YVEX_TRANSFORM_IR_IDENTITY_CAP];
-    char required_payload_identity[YVEX_TRANSFORM_IR_IDENTITY_CAP];
-    char payload_trust_class[40];
-    char component_manifest_identity[YVEX_TRANSFORM_IR_IDENTITY_CAP];
-    char architecture_identity[YVEX_TRANSFORM_IR_IDENTITY_CAP];
-    char role_map_identity[YVEX_TRANSFORM_IR_IDENTITY_CAP];
-    char unresolved_requirements_identity[YVEX_TRANSFORM_IR_IDENTITY_CAP];
-    yvex_transform_source_value *sources;
-    yvex_transform_value *values;
-    yvex_transform_builder_node *nodes;
-    unsigned long long *edges;
-    unsigned long long source_count;
-    unsigned long long source_capacity;
-    unsigned long long value_count;
-    unsigned long long value_capacity;
-    unsigned long long node_count;
-    unsigned long long node_capacity;
-    unsigned long long edge_count;
-    unsigned long long edge_capacity;
-    unsigned long long terminal_count;
-    size_t owned_bytes;
-    size_t peak_bytes;
-};
-struct yvex_transform_ir {
-    yvex_transform_allocator allocator;
-    yvex_transform_source_value *sources;
-    yvex_transform_value *values;
-    yvex_transform_node *nodes;
-    unsigned long long *edges;
-    unsigned long long *topological_order;
-    unsigned long long *terminal_values;
-    yvex_transform_index_slot *source_index;
-    yvex_transform_index_slot *terminal_index;
-    unsigned long long source_index_capacity;
-    unsigned long long terminal_index_capacity;
-    yvex_transform_ir_summary summary;
-};
-void *yvex_transform_allocate_zero(yvex_transform_allocator *allocator,
-                                   size_t size);
 unsigned long long yvex_transform_hash_string(const char *text);
-unsigned long long yvex_transform_hash_logical_key(
-    const yvex_transform_logical_key *key);
-unsigned long long yvex_transform_index_capacity(unsigned long long count);
-int yvex_transform_index_insert(yvex_transform_index_slot *slots,
-                                unsigned long long capacity,
-                                unsigned long long hash,
-                                unsigned long long value);
 int yvex_transform_fail(yvex_transform_failure *failure,
                         yvex_transform_failure_code code,
                         unsigned long long value_id,
@@ -569,14 +591,6 @@ int yvex_transform_fail(yvex_transform_failure *failure,
                         unsigned int axis,
                         yvex_error *err,
                         const char *where);
-int yvex_transform_ir_validate_and_seal(
-    yvex_transform_builder *builder,
-    yvex_transform_ir **out,
-    yvex_transform_failure *failure,
-    yvex_error *err);
-int yvex_transform_ir_compute_identity(yvex_transform_ir *ir,
-                                       yvex_transform_failure *failure,
-                                       yvex_error *err);
 
 #ifdef __cplusplus
 }

@@ -626,6 +626,69 @@ int yvex_runtime_descriptor_build(
 }
 
 /*
+ * Validate the descriptor against the same sealed terminal projection used by materialization.
+ * This keeps family tensor naming outside runtime while making coordinate agreement generic.
+ */
+int yvex_runtime_descriptor_build_projected(
+    yvex_runtime_descriptor **out,
+    const yvex_complete_artifact_admission *admission,
+    const yvex_materialization_session *session,
+    const yvex_runtime_descriptor_family_facts *family,
+    const yvex_materialization_projection *projection,
+    yvex_runtime_descriptor_failure *failure, yvex_error *err)
+{
+    yvex_runtime_descriptor *descriptor = NULL;
+    unsigned long long index;
+    int rc;
+
+    if (out) *out = NULL;
+    if (!out || !projection ||
+        projection->schema_version != YVEX_MATERIALIZATION_PROJECTION_SCHEMA_VERSION ||
+        !projection->complete || !projection->mapping_identity || !projection->find) {
+        return runtime_reject(
+            failure, YVEX_RUNTIME_DESCRIPTOR_FAILURE_INVALID_ARGUMENT, NULL,
+            YVEX_MATERIALIZATION_NO_INDEX, 1ull, 0ull, err, YVEX_ERR_INVALID_ARG,
+            "runtime descriptor requires a complete terminal projection");
+    }
+    rc = yvex_runtime_descriptor_build(
+        &descriptor, admission, session, family, failure, err);
+    if (rc != YVEX_OK) return rc;
+    if (projection->descriptor_count != descriptor->count) {
+        rc = runtime_reject(
+            failure, YVEX_RUNTIME_DESCRIPTOR_FAILURE_MATERIALIZATION, NULL,
+            YVEX_MATERIALIZATION_NO_INDEX, projection->descriptor_count,
+            descriptor->count, err, YVEX_ERR_FORMAT,
+            "runtime descriptor count differs from terminal projection");
+        goto fail;
+    }
+    for (index = 0ull; index < descriptor->count; ++index) {
+        const yvex_runtime_tensor_binding *row = &descriptor->bindings[index];
+        yvex_materialization_terminal terminal;
+
+        if (!row->binding || !projection->find(
+                projection->context, row->binding->name, &terminal) ||
+            terminal.descriptor_index != row->descriptor_index ||
+            terminal.role != row->role || terminal.collection != row->collection ||
+            terminal.scope != row->scope || terminal.layer_index != row->layer_index ||
+            terminal.predictor_index != row->predictor_index ||
+            terminal.expert_count != row->binding->expert_count) {
+            rc = runtime_reject(
+                failure, YVEX_RUNTIME_DESCRIPTOR_FAILURE_ARCHITECTURE,
+                row->binding ? row->binding->name : NULL, index, 1ull, 0ull,
+                err, YVEX_ERR_FORMAT,
+                "runtime binding does not match the terminal projection");
+            goto fail;
+        }
+    }
+    *out = descriptor;
+    return YVEX_OK;
+
+fail:
+    yvex_runtime_descriptor_close(descriptor);
+    return rc;
+}
+
+/*
  * Restore an immutable runtime descriptor from authenticated runtime-binding facts.
  *
  * Coordinate or identity disagreement releases all candidate state.

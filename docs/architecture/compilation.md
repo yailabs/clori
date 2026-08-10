@@ -11,13 +11,15 @@ artifact requirements are in the [Artifact and Admission Contract](../contracts/
 ```text
 verified source snapshot
   -> logical model and canonical tensor roles
-  -> sealed model-execution descriptor
+  -> sealed Semantic Model IR and model-execution descriptor
   -> immutable transformation plan
   -> policy-selected physical variant
   -> deterministic transformation execution
   -> complete GGUF artifact
   -> artifact admission
-  -> Physical Execution IR and materialization
+  -> canonical Operator Graph IR
+  -> canonicalization and validation
+  -> Physical Execution IR, compiled execution envelope and materialization
   -> content-addressed runtime binding
 ```
 
@@ -52,12 +54,29 @@ roles. The transformation plan then binds every terminal output tensor to its
 ordered source contributions and typed operations. Plan construction is
 artifact-neutral and payload-free.
 
-The family projection also seals source-authored context, attention, MoE,
-output, DSpark and persistent-state geometry into one pointer-free
-model-execution descriptor. Common planning consumes that identity-bound
-projection instead of branching on a target name or repeating family
-constants. Synthetic descriptor tests vary its principal dimensions to keep
-the common path model-derived.
+Each family projects immutable source and terminal recipes through the bounded
+compiler sink. The generic compilation owner alone allocates mutable builder
+state, assigns canonical value and node ordinals, validates expected source and
+terminal populations, seals the IR, and releases failed construction. Family
+code cannot manipulate or persist the mutable builder representation.
+
+The family projection seals source-authored context, MoE, output, DSpark and
+persistent-state geometry into one pointer-free model-execution descriptor. It
+also projects every main and draft attention layer, together with the numeric
+contract required to interpret it, into compiler-owned Semantic Model IR
+storage. Common planning consumes those identity-bound facts instead of
+branching on a target name, retaining process-local family payload, or
+repeating family constants. Synthetic descriptor tests vary the principal
+dimensions and mutate the source projection after sealing to prove that the
+common path remains model-derived and immutable.
+
+The compiler-facing family adapter supplies one bounded graph compiler and the
+family's operator-composition callback. Family projectors are consumed only
+while sealing Semantic Model IR. Generic graph lowering reads the sealed
+attention topology and converts it into graph-owned physical plan records;
+generic graph code does not enumerate a process-global family registry or
+choose a transformer-shaped composition. Family projection callbacks are
+absent from runtime model-open and execution.
 
 Transformation execution reads only the ranges named by the sealed plan. It
 may select, concatenate, permute, aggregate, scale, convert, or quantize as
@@ -112,15 +131,42 @@ to the kernel bundle, hardware, context capacity, mode, workload, evidence
 profile, and portable or device-native adapter class. The warm runtime reopens
 and authenticates admitted facts rather than rebuilding compiler plans.
 
-Runtime binding v8 adds and authenticates the model-execution descriptor that
-v7 cannot represent. The retained v7 reference binding stays readable through
-a family-owned in-memory compatibility projection; descriptor-bearing output
-is written as v8 beside it. Physical Execution IR and compiled execution
-profiles remain schema v1 because this change does not alter their persisted
-facts.
+Context has two authorities at this boundary. The Semantic Model IR owns the
+source-authored maximum. The immutable compiled model plan projects that fact
+through target and optional draft transformer plans as a typed context
+envelope. A selected startup or request capacity is instead a workload fact:
+runtime may admit it only inside the compiled envelope, then the generic
+capacity planner evaluates state geometry, artifact bytes, hardware facts and
+resource reserve. The current 4096-token DeepSeek profile is one such selected
+workload, not the model's semantic limit.
+
+Runtime binding v12 persists the canonical operator graph identity and the pointer-free compiled
+tokenizer and conversation policy beside the model/operator execution records. Source-owned syntax
+and exact tokenizer component identities enter through the family compiler adapter; tokenizer,
+runtime and server consume the authenticated record without enumerating a concrete family. Bindings
+v7 through v11 are refused because none can represent the current complete compilation authority.
+Physical Execution IR remains at its existing schema. Compiled execution
+profile v2 replaces three fallback booleans with identity-bearing attention,
+MoE, and sampling resolutions; this is an incompatible internal contract change
+because v1 cannot represent why an admitted execution differs from the exact
+path.
 
 Artifact drift, binding drift, unsupported qtypes, missing roles, resource
 overflow, or incompatible runtime requirements refuse before model execution.
+
+## Executable composition oracle
+
+The CPU-only tiny vertical is the fast composition oracle for this pipeline. Its focused test
+owner deterministically generates an untracked GGUF, admits it through the production artifact
+contract, compiles the semantic model, operator graph, Physical Execution IR and runtime binding,
+then launches the real foreground server. The production `server status`, `run`, `server log` and
+`server stop` paths must return the expected context, text, typed completion event and clean
+lifecycle. A second build must reproduce the artifact and binding identities, while a corrupted
+artifact must refuse before model-open.
+
+The fixture adds no production model family and does not establish support, quality, CUDA or
+performance for a real model. Its generated artifact and binding remain temporary build evidence,
+never repository authority.
 
 ## Current DeepSeek compilation
 

@@ -6,6 +6,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <yvex/internal/artifact.h>
+#include <yvex/internal/compiler_source.h>
 #include <yvex/internal/runtime.h>
 #include <yvex/internal/families/deepseek_v4.h>
 
@@ -152,8 +153,7 @@ int main(int argc, char **argv)
     yvex_materialization_failure materialization_failure;
     yvex_runtime_descriptor *descriptor = NULL;
     yvex_runtime_descriptor_failure descriptor_failure;
-    yvex_deepseek_v4_ir *architecture_ir = NULL;
-    yvex_deepseek_v4_ir_failure architecture_failure;
+    yvex_semantic_model_ir *semantic_model = NULL;
     const yvex_materialization_summary *plan_summary;
     const yvex_materialization_summary *session_summary;
     const yvex_runtime_descriptor_summary *descriptor_summary;
@@ -200,17 +200,12 @@ int main(int argc, char **argv)
                 yvex_error_message(&err));
         return 1;
     }
-    rc = yvex_model_register_deepseek_v4()->ir.build(
-        &architecture_ir, yvex_model_register_deepseek_v4()->payload.verification(handoff),
-        &architecture_failure, &err);
+    rc = yvex_compiler_family_deepseek_v4()->binding_pipeline->semantic_model_build(
+        &semantic_model,
+        yvex_model_register_deepseek_v4()->payload.verification(handoff), &err);
     if (rc != YVEX_OK) {
-        fprintf(stderr,
-                "architecture_failure=%s component=%s field=%s layer=%llu expected=%llu actual=%llu message=%s\n",
-                yvex_model_register_deepseek_v4()->ir.failure_name(architecture_failure.code),
-                yvex_model_register_deepseek_v4()->ir.component_name(architecture_failure.component),
-                architecture_failure.field ? architecture_failure.field : "",
-                architecture_failure.layer_index, architecture_failure.expected,
-                architecture_failure.actual, yvex_error_message(&err));
+        fprintf(stderr, "semantic_model_failure where=%s message=%s\n",
+                yvex_error_where(&err), yvex_error_message(&err));
         yvex_model_register_deepseek_v4()->payload.close(handoff);
         return 1;
     }
@@ -231,8 +226,8 @@ int main(int argc, char **argv)
     if (rc != YVEX_OK) {
         fprintf(stderr, "artifact_open_failure where=%s message=%s\n",
                 yvex_error_where(&err), yvex_error_message(&err));
+        yvex_semantic_model_ir_close(&semantic_model);
         yvex_model_register_deepseek_v4()->payload.close(handoff);
-        yvex_model_register_deepseek_v4()->ir.close(architecture_ir);
         yvex_tensor_table_close(tensors);
         yvex_gguf_close(gguf);
         yvex_artifact_close(artifact);
@@ -255,7 +250,7 @@ int main(int argc, char **argv)
     options.backend_resident_budget_bytes = 0ull;
     options.future_graph_scratch_reserve_bytes = 2ull * 1024ull * 1024ull * 1024ull;
     options.future_kv_reserve_bytes = 2ull * 1024ull * 1024ull * 1024ull;
-    rc = yvex_deepseek_materialization_projection(
+    rc = yvex_materialization_project_artifact_lowering(
         yvex_model_register_deepseek_v4()->payload.map(handoff), &projection, &err);
     if (rc == YVEX_OK)
         rc = yvex_materialization_plan_build(
@@ -321,7 +316,7 @@ int main(int argc, char **argv)
         goto cleanup_fail;
     rc = yvex_runtime_descriptor_build_deepseek(
         &descriptor, &admission, session,
-        yvex_model_register_deepseek_v4()->payload.map(handoff), architecture_ir,
+        yvex_model_register_deepseek_v4()->payload.map(handoff), semantic_model,
         &descriptor_failure, &err);
     if (rc != YVEX_OK) {
         print_descriptor_failure("descriptor", &descriptor_failure, &err);
@@ -361,7 +356,7 @@ int main(int argc, char **argv)
     yvex_tensor_table_close(tensors);
     yvex_gguf_close(gguf);
     yvex_artifact_close(artifact);
-    yvex_model_register_deepseek_v4()->ir.close(architecture_ir);
+    yvex_semantic_model_ir_close(&semantic_model);
     yvex_model_register_deepseek_v4()->payload.close(handoff);
     return 0;
 
@@ -373,7 +368,7 @@ cleanup_fail:
     yvex_tensor_table_close(tensors);
     yvex_gguf_close(gguf);
     yvex_artifact_close(artifact);
-    yvex_model_register_deepseek_v4()->ir.close(architecture_ir);
+    yvex_semantic_model_ir_close(&semantic_model);
     yvex_model_register_deepseek_v4()->payload.close(handoff);
     return 1;
 }

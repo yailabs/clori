@@ -15,8 +15,6 @@ extern "C" {
 #endif
 
 typedef struct yvex_gguf_tokenizer_metadata yvex_gguf_tokenizer_metadata;
-typedef struct yvex_model_family_api yvex_model_family_api;
-
 /* Immutable writer plans. */
 #define YVEX_GGUF_WRITER_SCHEMA_VERSION 1u
 #define YVEX_GGUF_WRITER_IDENTITY_CAP 65u
@@ -105,10 +103,48 @@ typedef enum {
     YVEX_GGUF_WRITER_INPUT_LOGICAL_COMPONENT,
     YVEX_GGUF_WRITER_INPUT_TENSOR_PROOF
 } yvex_gguf_writer_input_class;
+typedef enum {
+    YVEX_GGUF_WRITER_LOWERING_METADATA_STRING = 0,
+    YVEX_GGUF_WRITER_LOWERING_METADATA_U64,
+    YVEX_GGUF_WRITER_LOWERING_METADATA_F64,
+    YVEX_GGUF_WRITER_LOWERING_METADATA_BOOL,
+    YVEX_GGUF_WRITER_LOWERING_METADATA_U64_ARRAY,
+    YVEX_GGUF_WRITER_LOWERING_METADATA_F64_ARRAY
+} yvex_gguf_writer_lowering_metadata_type;
 typedef struct {
-    const yvex_model_family_api *family_adapter;
-    const void *lowering;
+    unsigned long long descriptor_count, metadata_count;
+    unsigned long long source_identity, mapping_identity;
+    int complete;
+} yvex_gguf_writer_lowering_summary;
+typedef struct {
+    char emitted_name[YVEX_GGUF_WRITER_NAME_CAP];
+    unsigned int logical_rank;
+    unsigned long long logical_dims[YVEX_GGUF_QTYPE_MAX_DIMS];
+} yvex_gguf_writer_lowering_tensor;
+typedef struct {
+    char key[128];
+    yvex_gguf_writer_lowering_metadata_type type;
+    char string_value[YVEX_GGUF_WRITER_NAME_CAP];
+    unsigned long long u64_value;
+    double f64_value;
+    int bool_value;
+    unsigned long long array_values[64];
+    double f64_array_values[64];
+    unsigned int array_count;
+} yvex_gguf_writer_lowering_metadata;
+typedef struct yvex_gguf_writer_lowering_api {
+    int (*summary)(const void *context, yvex_gguf_writer_lowering_summary *out);
+    int (*tensor_at)(const void *context, unsigned long long ordinal,
+                     yvex_gguf_writer_lowering_tensor *out);
+    int (*metadata_at)(const void *context, unsigned long long ordinal,
+                       yvex_gguf_writer_lowering_metadata *out);
+} yvex_gguf_writer_lowering_api;
+const yvex_gguf_writer_lowering_api *yvex_gguf_writer_artifact_lowering_api(void);
+typedef struct {
+    const yvex_gguf_writer_lowering_api *lowering;
+    const void *lowering_context;
     const yvex_source_verification *verification;
+    const char *tokenizer_architecture;
 } yvex_gguf_writer_complete_input;
 typedef struct {
     const yvex_gguf_writer_proof_tensor *tensors;

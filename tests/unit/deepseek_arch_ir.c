@@ -204,7 +204,7 @@ static int test_arch_ir_golden_topology(void)
     const yvex_deepseek_v4_auxiliary_spec *draft_first;
     const yvex_deepseek_v4_auxiliary_spec *draft_middle;
     const yvex_deepseek_v4_auxiliary_spec *draft_final;
-    const yvex_runtime_family_adapter *adapter;
+    const yvex_graph_execution_binding *graph_execution;
     yvex_model_execution_descriptor execution;
     yvex_error err;
     int execution_rc;
@@ -220,21 +220,22 @@ static int test_arch_ir_golden_topology(void)
                      model->vocabulary_size == 129280 &&
                      model->maximum_context == 1048576,
                      "global DeepSeek-V4-Flash-DSpark geometry is normalized");
-    adapter = yvex_runtime_family_at(0u);
+    graph_execution = yvex_graph_execution_find(
+        0ull, 0ull, "deepseek4-v4-flash-dspark");
     YVEX_TEST_ASSERT(
-        adapter && yvex_model_register_deepseek_v4()->transform.architecture_identity(
+        graph_execution && yvex_model_register_deepseek_v4()->transform.architecture_identity(
                        ir, logical_identity),
-        "runtime adapter and logical architecture identities are available");
+        "compiled execution and logical architecture identities are available");
     YVEX_TEST_ASSERT_STREQ(
-        adapter->logical_transform_identity,
+        graph_execution->logical_transform_identity,
         YVEX_SELECTED_DEEPSEEK_TRANSFORM_IDENTITY,
-        "runtime adapter is bound to the admitted DSpark Transformation IR");
+        "execution binding is bound to the admitted DSpark Transformation IR");
     YVEX_TEST_ASSERT(
-        strcmp(logical_identity, adapter->logical_transform_identity) != 0,
+        strcmp(logical_identity, graph_execution->logical_transform_identity) != 0,
         "logical architecture and Transformation IR identities remain distinct");
     YVEX_TEST_ASSERT(
         strcmp(logical_identity,
-               YVEX_QUANT_DSPARK_IMATRIX_SOURCE_IDENTITY) != 0,
+               YVEX_DEEPSEEK_QUANT_IMATRIX_SOURCE_IDENTITY) != 0,
         "current DSpark identity cannot impersonate retained predecessor calibration");
     execution_rc = yvex_model_register_deepseek_v4()->ir.execution_descriptor
                        ? yvex_model_register_deepseek_v4()->ir.execution_descriptor(
@@ -795,6 +796,10 @@ static int test_arch_ir_report_consumer_and_family_preservation(void)
 {
     yvex_model_target_request request;
     yvex_model_target_report report;
+    yvex_source_verification source;
+    const yvex_family_compiler_adapter *compiler =
+        yvex_compiler_family_deepseek_v4();
+    yvex_semantic_model_ir *semantic = NULL;
     yvex_error err;
 
     memset(&request, 0, sizeof(request));
@@ -822,6 +827,30 @@ static int test_arch_ir_report_consumer_and_family_preservation(void)
                          &request, &report, &err) == YVEX_OK &&
                      report_has(&report, "gemma-source-model-class-profile"),
                      "Gemma evidence path remains intact");
+    yvex_model_target_report_close(&report);
+
+    arch_ir_verification_fixture(&source);
+    YVEX_TEST_ASSERT(compiler && compiler->binding_pipeline &&
+                         compiler->binding_pipeline->semantic_model_build(
+                             &semantic, &source, &err) == YVEX_OK,
+                     "DeepSeek fixture compiles to generic Semantic Model IR");
+    memset(&report, 0, sizeof(report));
+    YVEX_TEST_ASSERT(
+        yvex_model_target_report_project_semantic_detail(
+            &report, semantic, &source, NULL, &err) == YVEX_OK &&
+            report.detail_kind == YVEX_MODEL_TARGET_DETAIL_MODEL_ARCHITECTURE &&
+            report.detail.architecture.maximum_context == source.max_position_embeddings &&
+            report.detail.architecture.layer_count == source.num_hidden_layers &&
+            report.detail.architecture.draft_count == source.dspark_inference_layer_count &&
+            report.detail.architecture.routed_experts == source.n_routed_experts &&
+            report.detail.architecture.experts_per_token == source.num_experts_per_tok &&
+            strcmp(report.detail.architecture.paper_revision, "arXiv:2606.19348v1") == 0 &&
+            strcmp(report.detail.architecture.sglang_revision,
+                   "96a04cb13f9c3ed86028e090784a9eb059cf5318") == 0 &&
+            strcmp(report.detail.architecture.vllm_revision,
+                   "8df14cfc8c8a09b4e57f082e59593a3abce4ffb3") == 0,
+        "family-neutral report projection retains source-authored architecture facts");
+    yvex_semantic_model_ir_close(&semantic);
     yvex_model_target_report_close(&report);
     return 0;
 }

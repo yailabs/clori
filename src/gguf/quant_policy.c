@@ -90,11 +90,6 @@ static const char *const collection_names[] = {
     "routed_expert", "shared_expert", "auxiliary",
 };
 static const char *const scope_names[] = {"global", "main_layer", "draft"};
-static const char *const preset_names[] = {
-    "source-faithful",
-    YVEX_QUANT_RELEASE_PROFILE_NAME,
-    YVEX_QUANT_DSPARK_PROFILE_NAME,
-};
 
 static int policy_name_value(const policy_name *rows, size_t count, const char *name,
                              int fallback) {
@@ -527,153 +522,37 @@ int yvex_quant_policy_identity_validate(const yvex_quant_policy *policy, yvex_er
     return YVEX_OK;
 }
 
-unsigned long long yvex_quant_policy_preset_count(void) {
-    return sizeof(preset_names) / sizeof(preset_names[0]);
-}
-
-/*
- * Borrow one stable preset spelling from the closed catalog.
- *
- * Returns borrowed process-lifetime text.
- */
-const char *yvex_quant_policy_preset_name(unsigned long long index) {
-    return index < yvex_quant_policy_preset_count() ? preset_names[index] : NULL;
-}
-
-static int policy_preset_add(yvex_quant_policy *policy, unsigned long long match_mask,
-                             yvex_tensor_role role, yvex_quant_policy_operation operation,
-                             yvex_tensor_scope scope,
-                             yvex_quant_policy_physical_class physical_class,
-                             yvex_quant_qtype qtype, int imatrix, unsigned int priority,
-                             const char *label, yvex_error *err) {
-    yvex_quant_policy_rule rule;
-
-    memset(&rule, 0, sizeof(rule));
-    rule.schema_version = YVEX_QUANT_POLICY_SCHEMA_VERSION;
-    rule.match_mask = match_mask;
-    rule.role = role;
-    rule.operation = operation;
-    rule.scope = scope;
-    rule.physical_class = physical_class;
-    rule.qtype = qtype;
-    rule.requires_imatrix = imatrix;
-    rule.requires_cpu_compute = 1;
-    rule.requires_cuda_compute = 1;
-    rule.priority = priority;
-    rule.label = label;
-    return policy_add_rule_v2(policy, &rule, err);
-}
-
-static int policy_preset_add_dspark(yvex_quant_policy *policy, yvex_error *err)
-{
-    static const yvex_tensor_role exact_roles[] = {
-        YVEX_TENSOR_ROLE_DRAFT_FEATURE_NORM,
-        YVEX_TENSOR_ROLE_DRAFT_OUTPUT_NORM,
-        YVEX_TENSOR_ROLE_DRAFT_MARKOV_EMBEDDING,
-        YVEX_TENSOR_ROLE_DRAFT_MARKOV_OUTPUT,
-        YVEX_TENSOR_ROLE_DRAFT_CONFIDENCE,
-    };
-    unsigned long long index;
-    int rc = policy_preset_add(
-        policy, YVEX_QUANT_MATCH_SCOPE | YVEX_QUANT_MATCH_PHYSICAL_CLASS,
-        YVEX_TENSOR_ROLE_UNKNOWN, YVEX_QUANT_POLICY_OPERATION_ANY,
-        YVEX_TENSOR_SCOPE_DRAFT, YVEX_QUANT_POLICY_PHYSICAL_QUANTIZABLE,
-        YVEX_QUANT_QTYPE_Q8_0, 0, 150u,
-        "conservative DSpark draft representation", err);
-    for (index = 0ull; rc == YVEX_OK &&
-                         index < sizeof(exact_roles) / sizeof(exact_roles[0]);
-         ++index)
-        rc = policy_preset_add(
-            policy, YVEX_QUANT_MATCH_ROLE | YVEX_QUANT_MATCH_SCOPE,
-            exact_roles[index], YVEX_QUANT_POLICY_OPERATION_ANY,
-            YVEX_TENSOR_SCOPE_DRAFT, YVEX_QUANT_POLICY_PHYSICAL_ANY,
-            YVEX_QUANT_QTYPE_BF16, 0, 250u,
-            "exact DSpark norm, Markov, and confidence control", err);
-    return rc;
-}
-
-int yvex_quant_policy_preset_open(yvex_quant_policy **out, const char *name, yvex_error *err) {
+int yvex_quant_policy_create_definition(
+    yvex_quant_policy **out, const yvex_quant_policy_definition *definition, yvex_error *err) {
     yvex_quant_policy *policy;
+    unsigned long long ordinal;
     int rc = YVEX_OK;
 
-    if (!out || !name) {
-        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "quant_policy_preset",
-                       "out and preset name are required");
+    if (!out || !definition || !definition->name || !definition->architecture ||
+        !definition->source_kind || !definition->rules || !definition->rule_count) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "quant_policy_definition",
+                       "complete policy definition is required");
         return YVEX_ERR_INVALID_ARG;
     }
     *out = NULL;
-    if (policy_table_index(preset_names, sizeof(preset_names) / sizeof(preset_names[0]), name, -1) <
-        0) {
-        yvex_error_setf(err, YVEX_ERR_UNSUPPORTED, "quant_policy_preset",
-                        "unknown quantization preset: %s", name);
-        return YVEX_ERR_UNSUPPORTED;
-    }
     policy = (yvex_quant_policy *)calloc(1, sizeof(*policy));
     if (!policy) {
-        yvex_error_set(err, YVEX_ERR_NOMEM, "quant_policy_preset", "policy allocation failed");
+        yvex_error_set(err, YVEX_ERR_NOMEM, "quant_policy_definition",
+                       "policy allocation failed");
         return YVEX_ERR_NOMEM;
     }
     policy->schema_version = YVEX_QUANT_POLICY_SCHEMA_VERSION;
-    policy->name = yvex_core_strdup(name);
-    policy->architecture = yvex_core_strdup("deepseek4-v4-flash-dspark");
-    policy->preset_name = yvex_core_strdup(name);
-    policy->source_kind = yvex_core_strdup("built-in-preset");
+    policy->name = yvex_core_strdup(definition->name);
+    policy->architecture = yvex_core_strdup(definition->architecture);
+    policy->preset_name = yvex_core_strdup(definition->name);
+    policy->source_kind = yvex_core_strdup(definition->source_kind);
     if (!policy->name || !policy->architecture || !policy->preset_name || !policy->source_kind) {
         rc = YVEX_ERR_NOMEM;
-        yvex_error_set(err, rc, "quant_policy_preset", "preset string allocation failed");
+        yvex_error_set(err, rc, "quant_policy_definition", "policy string allocation failed");
         goto done;
     }
-    if (strcmp(name, "source-faithful") == 0) {
-        rc = policy_preset_add(policy, YVEX_QUANT_MATCH_PHYSICAL_CLASS,
-                               YVEX_TENSOR_ROLE_UNKNOWN, YVEX_QUANT_POLICY_OPERATION_ANY,
-                               YVEX_TENSOR_SCOPE_GLOBAL,
-                               YVEX_QUANT_POLICY_PHYSICAL_QUANTIZABLE,
-                               YVEX_QUANT_QTYPE_SOURCE, 0, 10u,
-                               "preserve the admitted source physical representation", err);
-    } else {
-        rc = policy_preset_add(policy, YVEX_QUANT_MATCH_PHYSICAL_CLASS,
-                               YVEX_TENSOR_ROLE_UNKNOWN, YVEX_QUANT_POLICY_OPERATION_ANY,
-                               YVEX_TENSOR_SCOPE_GLOBAL,
-                               YVEX_QUANT_POLICY_PHYSICAL_QUANTIZABLE,
-                               YVEX_QUANT_QTYPE_Q8_0, 0, 10u,
-                               "default approximable terminal representation", err);
-        if (rc == YVEX_OK && strcmp(name, YVEX_QUANT_RELEASE_PROFILE_NAME) == 0)
-            rc = policy_preset_add(policy, YVEX_QUANT_MATCH_OPERATION,
-                                   YVEX_TENSOR_ROLE_UNKNOWN,
-                                   YVEX_QUANT_POLICY_OPERATION_EXPERT_AGGREGATE,
-                                   YVEX_TENSOR_SCOPE_GLOBAL,
-                                   YVEX_QUANT_POLICY_PHYSICAL_ANY, YVEX_QUANT_QTYPE_Q2_K, 0, 100u,
-                                   "verified release routed-expert aggregate", err);
-        if (rc == YVEX_OK && strcmp(name, YVEX_QUANT_DSPARK_PROFILE_NAME) == 0)
-            rc = policy_preset_add(policy,
-                                   YVEX_QUANT_MATCH_ROLE | YVEX_QUANT_MATCH_SCOPE |
-                                       YVEX_QUANT_MATCH_OPERATION,
-                                   YVEX_TENSOR_ROLE_MOE_EXPERT_GATE,
-                                   YVEX_QUANT_POLICY_OPERATION_EXPERT_AGGREGATE,
-                                   YVEX_TENSOR_SCOPE_MAIN_LAYER,
-                                   YVEX_QUANT_POLICY_PHYSICAL_ANY, YVEX_QUANT_QTYPE_IQ2_XXS, 1,
-                                   200u, "imatrix-weighted routed expert gate", err);
-        if (rc == YVEX_OK && strcmp(name, YVEX_QUANT_DSPARK_PROFILE_NAME) == 0)
-            rc = policy_preset_add(policy,
-                                   YVEX_QUANT_MATCH_ROLE | YVEX_QUANT_MATCH_SCOPE |
-                                       YVEX_QUANT_MATCH_OPERATION,
-                                   YVEX_TENSOR_ROLE_MOE_EXPERT_UP,
-                                   YVEX_QUANT_POLICY_OPERATION_EXPERT_AGGREGATE,
-                                   YVEX_TENSOR_SCOPE_MAIN_LAYER,
-                                   YVEX_QUANT_POLICY_PHYSICAL_ANY, YVEX_QUANT_QTYPE_IQ2_XXS, 1,
-                                   200u, "imatrix-weighted routed expert up", err);
-        if (rc == YVEX_OK && strcmp(name, YVEX_QUANT_DSPARK_PROFILE_NAME) == 0)
-            rc = policy_preset_add(policy,
-                                   YVEX_QUANT_MATCH_ROLE | YVEX_QUANT_MATCH_SCOPE |
-                                       YVEX_QUANT_MATCH_OPERATION,
-                                   YVEX_TENSOR_ROLE_MOE_EXPERT_DOWN,
-                                   YVEX_QUANT_POLICY_OPERATION_EXPERT_AGGREGATE,
-                                   YVEX_TENSOR_SCOPE_MAIN_LAYER,
-                                   YVEX_QUANT_POLICY_PHYSICAL_ANY, YVEX_QUANT_QTYPE_Q2_K, 1, 200u,
-                                   "imatrix-covered routed expert down", err);
-        if (rc == YVEX_OK && strcmp(name, YVEX_QUANT_DSPARK_PROFILE_NAME) == 0)
-            rc = policy_preset_add_dspark(policy, err);
-    }
+    for (ordinal = 0u; rc == YVEX_OK && ordinal < definition->rule_count; ++ordinal)
+        rc = policy_add_rule_v2(policy, &definition->rules[ordinal], err);
     if (rc == YVEX_OK)
         rc = yvex_quant_policy_validate(policy, NULL, err);
     if (rc == YVEX_OK) {

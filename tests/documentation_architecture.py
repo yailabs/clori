@@ -304,6 +304,7 @@ def check_project_control() -> None:
         "V010.REBASE.DEEPSEEK.DSPARK.0": "complete",
         "V010.PRODUCT.ARCHITECTURE.REFOUNDATION.0": "complete",
         "V010.REPO.ARCHITECTURE.COMPRESSION.0": "complete",
+        "V010.CORE.COMPILATION.FAMILY.CONSOLIDATION.0": "complete",
         "V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0": "active",
         "V010.EVAL.DEEPSEEK.0": "blocked",
         "V010.BENCH.DEEPSEEK.0": "not-measured",
@@ -484,8 +485,8 @@ def check_content(rows: list[dict[str, str]]) -> None:
         if "unsupported runtime family" not in text:
             fail(f"{family} record does not state unsupported runtime stage")
 
-    if "The daemon-backed console uses one `yvex>` prompt" not in readme:
-        fail("README does not describe the current daemon-backed console")
+    if "The server-backed console uses one `yvex>` prompt" not in readme:
+        fail("README does not describe the current server-backed console")
     if "Ctrl-D exits cleanly" not in readme:
         fail("README omits the current console EOF contract")
     if "functional but transitional" in readme:

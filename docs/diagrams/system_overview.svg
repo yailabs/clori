@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="820" viewBox="0 0 1600 820" role="img" aria-labelledby="title desc">
   <title id="title">YVEX system overview</title>
-  <desc id="desc">Verified sources pass through the YVEX compiler into an identity-bound physical artifact. One long-lived yvexd host owns the model worker, sessions, persistent KV, private protocol, integrated loopback OpenAI adapter, and typed events. CPU or CUDA executes the model while yvex and OpenAI-compatible applications use the same runtime authority.</desc>
+  <desc id="desc">Verified sources pass through the YVEX compiler into an identity-bound physical artifact. One foreground YVEX server owns the model worker, sessions, persistent KV, private protocol, integrated loopback OpenAI adapter, and typed events. CPU or CUDA executes the model while YVEX clients and OpenAI-compatible applications use the same runtime authority.</desc>
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
       <path d="M0 0L0 6L9 3z" class="arrow-fill"/>
@@ -49,7 +49,7 @@
 
   <text class="section" x="655" y="126" fill="#6d28d9">B. Run</text>
   <rect class="run-panel" x="645" y="145" width="445" height="510" rx="15"/>
-  <text class="text" x="867" y="181">yvexd · long-lived runtime host</text>
+  <text class="text" x="867" y="181">yvex server MODEL · foreground host</text>
   <rect class="box" x="680" y="205" width="375" height="70" rx="10"/>
   <text class="text" x="867" y="234">Server listeners</text>
   <text class="small" x="867" y="257">private Unix protocol · loopback HTTP/SSE</text>

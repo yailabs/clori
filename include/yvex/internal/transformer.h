@@ -6,22 +6,16 @@
  */
 #ifndef INCLUDE_YVEX_INTERNAL_TRANSFORMER_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_TRANSFORMER_H_INCLUDED
+#include <yvex/internal/compiler.h>
 #include <yvex/internal/execution.h>
 #include <yvex/internal/moe.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
 typedef struct yvex_backend_cuda_operation_facts yvex_backend_cuda_operation_facts;
-#define YVEX_TRANSFORMER_PLAN_SCHEMA_V2 2u
 #define YVEX_TRANSFORMER_INPUT_SCHEMA_V1 1u
 #define YVEX_TRANSFORMER_INPUT_SUFFIX ".yvex-transformer-input"
 #define YVEX_TRANSFORMER_WEIGHT_COUNT 5u
-typedef enum {
-    YVEX_TRANSFORMER_INITIAL_REPEAT_STREAMS = 0
-} yvex_transformer_initial_policy;
-typedef enum {
-    YVEX_TRANSFORMER_FINAL_SIGMOID_MHC_RMS = 0
-} yvex_transformer_final_policy;
 typedef enum {
     YVEX_TRANSFORMER_WEIGHT_EMBEDDING = 0,
     YVEX_TRANSFORMER_WEIGHT_FINAL_FUNCTION,
@@ -29,15 +23,6 @@ typedef enum {
     YVEX_TRANSFORMER_WEIGHT_FINAL_SCALE,
     YVEX_TRANSFORMER_WEIGHT_OUTPUT_NORM
 } yvex_transformer_weight_slot;
-typedef struct yvex_transformer_family_policy {
-    unsigned int schema_version;
-    yvex_transformer_initial_policy initial_policy;
-    yvex_transformer_final_policy final_policy;
-    unsigned long long residual_streams, hidden_width, expanded_width;
-    unsigned long long maximum_context, sinkhorn_iterations;
-    double mhc_epsilon, output_norm_epsilon;
-    int attention_then_moe, deferred_ffn_post, final_norm_after_head;
-} yvex_transformer_family_policy;
 typedef struct {
     unsigned long long tensor_id, row_width, row_count, encoded_bytes;
     yvex_tensor_role role;
@@ -72,20 +57,15 @@ typedef struct {
     char transformer_plan_identity[YVEX_SHA256_HEX_CAP];
     yvex_transformer_weight_binding weights[YVEX_TRANSFORMER_WEIGHT_COUNT];
 } yvex_transformer_plan_summary;
-typedef struct {
-    yvex_transformer_family_policy policy;
-    yvex_tensor_scope tensor_scope;
-    unsigned long long family_adapter_id, family_adapter_version;
-    unsigned long long layer_count, vocabulary_size;
-    const char *artifact_identity, *materialization_identity, *logical_model_identity;
-    const char *runtime_numeric_identity, *runtime_descriptor_identity;
-    yvex_transformer_weight_binding weights[YVEX_TRANSFORMER_WEIGHT_COUNT];
-} yvex_transformer_plan_facts;
 typedef struct yvex_transformer_plan yvex_transformer_plan;
-int yvex_transformer_plan_build(yvex_transformer_plan **out,
-                                const yvex_transformer_plan_facts *facts,
-                                const yvex_attention_plan *attention,
-                                const yvex_moe_plan *moe, yvex_error *err);
+int yvex_transformer_plan_compile(
+    yvex_transformer_plan **out, const yvex_transformer_family_policy *policy,
+    unsigned long long family_adapter_id,
+    unsigned long long family_adapter_version,
+    const yvex_materialization_session *materialization,
+    const yvex_runtime_descriptor *descriptor,
+    const yvex_attention_plan *attention, const yvex_moe_plan *moe,
+    yvex_tensor_scope execution_scope, yvex_error *err);
 int yvex_transformer_plan_import(yvex_transformer_plan **out,
                                  const yvex_transformer_plan_summary *summary,
                                  const yvex_transformer_layer_plan *layers,
@@ -95,6 +75,8 @@ int yvex_transformer_plan_seal(yvex_transformer_plan_summary *summary,
                                yvex_error *err);
 const yvex_transformer_plan_summary *yvex_transformer_plan_summary_get(
     const yvex_transformer_plan *plan);
+const yvex_transformer_layer_plan *yvex_transformer_plan_layer_at(
+    const yvex_transformer_plan *plan, unsigned long long ordinal);
 void yvex_transformer_plan_close(yvex_transformer_plan **plan);
 typedef struct {
     unsigned int schema_version;

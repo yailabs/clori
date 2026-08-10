@@ -122,7 +122,7 @@ static int daemon_status(const openai_gateway *gateway,
                           message.status != YVEX_OK ||
                           !message.runtime.runtime_ready)) {
         yvex_error_set(err, YVEX_ERR_STATE, "server.openai.runtime",
-                       "yvexd is not ready");
+                       "YVEX server is not ready");
         rc = YVEX_ERR_STATE;
     }
     if (rc == YVEX_OK && summary) *summary = message.runtime;
@@ -797,7 +797,7 @@ static int handle_read(openai_gateway *gateway, int fd,
                        openai_endpoint endpoint, const char *requested_model)
 {
     static const unsigned char healthy[] =
-        "{\"status\":\"ok\",\"adapter\":\"ready\",\"yvexd\":\"ready\","
+        "{\"status\":\"ok\",\"adapter\":\"ready\",\"server\":\"ready\","
         "\"profile\":\"" OPENAI_COMPAT_PROFILE "\"}";
     yvex_server_summary summary;
     unsigned char *json = NULL;
@@ -805,7 +805,7 @@ static int handle_read(openai_gateway *gateway, int fd,
     yvex_error err;
     int rc = daemon_status(gateway, &summary, &err);
     if (rc != YVEX_OK)
-        return send_error(fd, 503, "yvexd is unavailable or not ready");
+        return send_error(fd, 503, "YVEX server is unavailable or not ready");
     if (endpoint == OPENAI_ENDPOINT_HEALTH)
         return openai_http_json(fd, 200, healthy, sizeof(healthy) - 1u, &err);
     if (endpoint == OPENAI_ENDPOINT_MODEL &&
@@ -841,7 +841,7 @@ static int handle_generation(openai_gateway *gateway, int fd,
     int created_session = 0, generation_started = 0, peer_closed = 0, rc;
     yvex_error err, failure_error;
     rc = daemon_status(gateway, &summary, &err);
-    if (rc != YVEX_OK) return send_error(fd, 503, "yvexd is unavailable or not ready");
+    if (rc != YVEX_OK) return send_error(fd, 503, "YVEX server is unavailable or not ready");
     rc = openai_json_admit(http, endpoint, summary.target_id, &admitted, &err);
     if (rc != YVEX_OK)
         return send_error(fd, http_status(rc, YVEX_CLIENT_FAILURE_NONE),

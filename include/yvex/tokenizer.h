@@ -76,7 +76,7 @@ typedef enum {
 
 typedef enum {
     YVEX_TOKENIZER_PROMPT_NONE = 0,
-    YVEX_TOKENIZER_PROMPT_DEEPSEEK_V4
+    YVEX_TOKENIZER_PROMPT_CONVERSATION
 } yvex_tokenizer_prompt_policy;
 
 typedef struct {

@@ -32,7 +32,7 @@ source snapshot
   -> transformation and physical policy
   -> complete artifact contract
   -> Physical Execution IR, materialization and runtime binding
-  -> runtime descriptor and family adapter
+  -> sealed runtime descriptor and compiled model plan
   -> backend and graph admission
   -> prefill and persistent state
   -> decode, logits, sampling, tokenizer
@@ -100,7 +100,9 @@ source projections when each owns a genuinely different dependency boundary:
 The repeated family basename is intentional namespace continuity, not
 duplicate ownership. The directory and `config/source_owners.tsv` identify the
 level. A family-specific runtime source or directory is forbidden: the common
-runtime consumes typed adapters and execution plans.
+runtime consumes the sealed compiled plan and common graph capability. Family
+adapter callbacks terminate at compilation and are not resolved again by
+model-open or generation.
 
 Across those projections the family may own:
 

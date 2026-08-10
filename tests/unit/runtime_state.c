@@ -200,16 +200,6 @@ malformed:
     return YVEX_ERR_FORMAT;
 }
 
-static const yvex_graph_family_api *state_family(void)
-{
-    static const yvex_graph_family_api family = {
-        .state_recipe = state_recipe_project,
-        .workspace_recipe = yvex_attention_workspace_recipe_build,
-        .history_validate = yvex_attention_history_validate,
-        .rolling_state_step_cpu = yvex_attention_rolling_state_step_cpu};
-    return &family;
-}
-
 static unsigned long long state_recipe_capacity(
     const yvex_attention_state_recipe *recipe,
     yvex_attention_state_binding binding)
@@ -344,7 +334,6 @@ static int test_workspace_recipe_identity(void)
 
 static int test_workspace_capture_geometry(const state_plan_fixture *fixture)
 {
-    const yvex_graph_family_api *family = state_family();
     yvex_attention_state_recipe_request request;
     yvex_attention_state_recipe state, index_state;
     yvex_attention_workspace_recipe workspace, index_workspace;
@@ -367,7 +356,7 @@ static int test_workspace_capture_geometry(const state_plan_fixture *fixture)
         state_recipe_project(&fixture->layers[2], &request, &state,
                              &failure, &err) == YVEX_OK &&
             yvex_attention_state_recipe_seal(&state, &err) == YVEX_OK &&
-            family->workspace_recipe(
+            yvex_attention_workspace_recipe_build(
                 &fixture->layers[2], &state, YVEX_ATTENTION_EXECUTION_FULL,
                 YVEX_ATTENTION_OPERATION_CORE, YVEX_ATTENTION_EVIDENCE_FULL,
                 4ull, &workspace, &failure, &err) == YVEX_OK,
@@ -401,7 +390,7 @@ static int test_workspace_capture_geometry(const state_plan_fixture *fixture)
     YVEX_TEST_ASSERT(
         state_recipe_project(&fixture->layers[1], &request, &index_state,
                              &failure, &err) == YVEX_OK &&
-            family->workspace_recipe(
+            yvex_attention_workspace_recipe_build(
                 &fixture->layers[1], &index_state, YVEX_ATTENTION_EXECUTION_FULL,
                 YVEX_ATTENTION_OPERATION_CORE, YVEX_ATTENTION_EVIDENCE_NONE,
                 4ull, &index_workspace, &failure, &err) == YVEX_OK,
@@ -427,7 +416,6 @@ static int test_workspace_capture_geometry(const state_plan_fixture *fixture)
 /* Prove one immutable capacity plan owns selection, exact per-layer geometry, and identity. */
 static int test_capacity_plan(const state_plan_fixture *fixture)
 {
-    const yvex_graph_family_api *family = state_family();
     yvex_graph_attention_capacity_plan *first = NULL, *second = NULL;
     yvex_graph_attention_capacity_request request;
     const yvex_graph_attention_capacity_summary *summary;
@@ -441,7 +429,7 @@ static int test_capacity_plan(const state_plan_fixture *fixture)
     request.execution_count = 2ull;
     yvex_error_clear(&err);
     YVEX_TEST_ASSERT(yvex_graph_attention_capacity_plan_build(
-                         &first, family, &fixture->plan, &request, &err) == YVEX_OK,
+                         &first, &fixture->plan, &request, &err) == YVEX_OK,
                      "quick capacity plan seals without state allocation");
     summary = yvex_graph_attention_capacity_plan_summary(first);
     swa = yvex_graph_attention_capacity_plan_layer(first, 0ull);
@@ -488,14 +476,14 @@ static int test_capacity_plan(const state_plan_fixture *fixture)
                      "quick capacity plan derives exact canonical class positions");
     (void)snprintf(identity, sizeof(identity), "%s", summary->identity);
     YVEX_TEST_ASSERT(yvex_graph_attention_capacity_plan_build(
-                         &second, family, &fixture->plan, &request, &err) == YVEX_OK &&
+                         &second, &fixture->plan, &request, &err) == YVEX_OK &&
                          strcmp(identity,
                                 yvex_graph_attention_capacity_plan_summary(second)->identity) == 0,
                      "equivalent capacity facts produce one deterministic identity");
     yvex_graph_attention_capacity_plan_close(&second);
     request.execution_count++;
     YVEX_TEST_ASSERT(yvex_graph_attention_capacity_plan_build(
-                         &second, family, &fixture->plan, &request, &err) == YVEX_OK &&
+                         &second, &fixture->plan, &request, &err) == YVEX_OK &&
                          strcmp(identity,
                                 yvex_graph_attention_capacity_plan_summary(second)->identity) != 0,
                      "execution extent mutation changes capacity identity");
@@ -506,7 +494,7 @@ static int test_capacity_plan(const state_plan_fixture *fixture)
     request.select_selection_key = 1;
     request.selection_key = (unsigned long long)YVEX_ATTENTION_CLASS_CSA + 1ull;
     YVEX_TEST_ASSERT(yvex_graph_attention_capacity_plan_build(
-                         &second, family, &fixture->plan, &request, &err) == YVEX_OK &&
+                         &second, &fixture->plan, &request, &err) == YVEX_OK &&
                          yvex_graph_attention_capacity_plan_summary(second)->selected_layer_count == 1ull &&
                          state_recipe_capacity(
                              &yvex_graph_attention_capacity_plan_layer(second, 1ull)->recipe,
@@ -518,14 +506,14 @@ static int test_capacity_plan(const state_plan_fixture *fixture)
     yvex_graph_attention_capacity_plan_close(&second);
     request.start_position++;
     YVEX_TEST_ASSERT(yvex_graph_attention_capacity_plan_build(
-                         &second, family, &fixture->plan, &request, &err) == YVEX_ERR_INVALID_ARG && !second,
+                         &second, &fixture->plan, &request, &err) == YVEX_ERR_INVALID_ARG && !second,
                      "history and start-position mismatch refuses before allocation");
     memset(&request, 0, sizeof(request));
     request.scope = YVEX_ATTENTION_PROBE_SCOPE_FULL;
     request.token_count = 1ull;
     request.execution_count = 23ull;
     YVEX_TEST_ASSERT(yvex_graph_attention_capacity_plan_build(
-                         &second, family, &fixture->plan, &request, &err) == YVEX_OK,
+                         &second, &fixture->plan, &request, &err) == YVEX_OK,
                      "mixed-class 23-dispatch capacity plan seals");
     summary = yvex_graph_attention_capacity_plan_summary(second);
     swa = yvex_graph_attention_capacity_plan_layer(second, 0ull);
@@ -580,7 +568,6 @@ static int state_token_rolling(const yvex_attention_layer_plan *layer,
                                yvex_attention_rolling_state_output *after,
                                float compressed[2], int *emitted)
 {
-    const yvex_graph_family_api *family = state_family();
     float *values = NULL, *scores = NULL, *ape = NULL;
     unsigned long long index, extent;
     yvex_attention_failure failure;
@@ -610,7 +597,7 @@ static int state_token_rolling(const yvex_attention_layer_plan *layer,
         ape[index] = (float)(index % 3ull) / 32.0f;
     }
     yvex_error_clear(&err);
-    rc = family->rolling_state_step_cpu(layer, before, values, scores, ape, after,
+    rc = yvex_attention_rolling_state_step_cpu(layer, before, values, scores, ape, after,
                                         compressed, layer->head_dimension, emitted,
                                         &failure, &err);
     free(values);
@@ -677,13 +664,12 @@ fail:
 
 typedef yvex_attention_state_provider test_state;
 
-static int state_open(test_state *state, const yvex_graph_family_api *family,
-                      const yvex_attention_plan *plan,
+static int state_open(test_state *state, const yvex_attention_plan *plan,
                       unsigned long long maximum_host_bytes,
                       yvex_attention_failure *failure, yvex_error *err)
 {
     return yvex_attention_state_provider_open_persistent(
-        family, plan, maximum_host_bytes, state, failure, err);
+        plan, maximum_host_bytes, state, failure, err);
 }
 
 static int state_close(test_state *state)
@@ -825,7 +811,6 @@ static int state_stage_prefix(test_state *state,
 
 static int test_state_prefix_promotion(const state_plan_fixture *fixture)
 {
-    const yvex_graph_family_api *family = state_family();
     const yvex_attention_layer_plan *layer = &fixture->layers[0];
     unsigned long long accepted;
 
@@ -840,7 +825,7 @@ static int test_state_prefix_promotion(const state_plan_fixture *fixture)
 
         yvex_error_clear(&err);
         YVEX_TEST_ASSERT(
-            state_open(&state, family, &fixture->plan, 1024ull * 1024ull,
+            state_open(&state, &fixture->plan, 1024ull * 1024ull,
                        &failure, &err) == YVEX_OK &&
                 state_prepare(&state, layer,
                               fixture->plan.summary.attention_plan_identity),
@@ -882,7 +867,6 @@ static int test_state_prefix_promotion(const state_plan_fixture *fixture)
 
 static int test_state_prefix_extension(const state_plan_fixture *fixture)
 {
-    const yvex_graph_family_api *family = state_family();
     const yvex_attention_layer_plan *layer = &fixture->layers[0];
     test_state state = {0};
     yvex_graph_attention_state_summary summary;
@@ -894,7 +878,7 @@ static int test_state_prefix_extension(const state_plan_fixture *fixture)
 
     yvex_error_clear(&err);
     YVEX_TEST_ASSERT(
-        state_open(&state, family, &fixture->plan, 1024ull * 1024ull,
+        state_open(&state, &fixture->plan, 1024ull * 1024ull,
                    &failure, &err) == YVEX_OK &&
             state_prepare(&state, layer,
                           fixture->plan.summary.attention_plan_identity) &&
@@ -927,7 +911,6 @@ static int test_state_prefix_extension(const state_plan_fixture *fixture)
 static int test_state_identity_is_execution_shape_neutral(
     const state_plan_fixture *fixture)
 {
-    const yvex_graph_family_api *family = state_family();
     const yvex_attention_layer_plan *layer = &fixture->layers[0];
     test_state sequential = {0}, verified = {0};
     yvex_graph_attention_state_summary left, right;
@@ -939,11 +922,11 @@ static int test_state_identity_is_execution_shape_neutral(
 
     yvex_error_clear(&err);
     YVEX_TEST_ASSERT(
-        state_open(&sequential, family, &fixture->plan, 1024ull * 1024ull,
+        state_open(&sequential, &fixture->plan, 1024ull * 1024ull,
                    &failure, &err) == YVEX_OK &&
             state_prepare(&sequential, layer,
                           fixture->plan.summary.attention_plan_identity) &&
-            state_open(&verified, family, &fixture->plan, 1024ull * 1024ull,
+            state_open(&verified, &fixture->plan, 1024ull * 1024ull,
                        &failure, &err) == YVEX_OK &&
             state_prepare(&verified, layer,
                           fixture->plan.summary.attention_plan_identity),
@@ -1070,7 +1053,6 @@ static int state_identity_sample(
     char layout[YVEX_SHA256_HEX_CAP], char committed[YVEX_SHA256_HEX_CAP],
     char delta_identity[YVEX_SHA256_HEX_CAP])
 {
-    const yvex_graph_family_api *family = state_family();
     const yvex_attention_layer_plan *layer = &fixture->layers[layer_index];
     test_state state = {0};
     yvex_graph_attention_state_summary summary;
@@ -1079,7 +1061,7 @@ static int state_identity_sample(
     int ok = 0;
 
     yvex_error_clear(&err);
-    if (state_open(&state, family, &fixture->plan, 16ull * 1024ull * 1024ull,
+    if (state_open(&state, &fixture->plan, 16ull * 1024ull * 1024ull,
                    &failure, &err) != YVEX_OK ||
         !state_prepare(&state, layer, fixture->plan.summary.attention_plan_identity) ||
         state_summary(&state, &summary, &err) != YVEX_OK ||
@@ -1130,7 +1112,6 @@ static int state_phase_equivalence(const state_plan_fixture *fixture,
                                    unsigned long long layer_index,
                                    unsigned long long token_count)
 {
-    const yvex_graph_family_api *family = state_family();
     const yvex_attention_layer_plan *layer = &fixture->layers[layer_index];
     test_state chunk = {0}, decode = {0};
     char chunk_delta[YVEX_SHA256_HEX_CAP], decode_delta[YVEX_SHA256_HEX_CAP];
@@ -1142,9 +1123,9 @@ static int state_phase_equivalence(const state_plan_fixture *fixture,
     int result = 0;
 
     yvex_error_clear(&err);
-    if (state_open(&chunk, family, &fixture->plan, 16ull * 1024ull * 1024ull,
+    if (state_open(&chunk, &fixture->plan, 16ull * 1024ull * 1024ull,
                    &failure, &err) != YVEX_OK ||
-        state_open(&decode, family, &fixture->plan, 16ull * 1024ull * 1024ull,
+        state_open(&decode, &fixture->plan, 16ull * 1024ull * 1024ull,
                    &failure, &err) != YVEX_OK ||
         !state_prepare(&chunk, layer, fixture->plan.summary.attention_plan_identity) ||
         !state_prepare(&decode, layer, fixture->plan.summary.attention_plan_identity) ||
@@ -1208,7 +1189,6 @@ done:
 
 static int test_state_lifecycle(const state_plan_fixture *fixture)
 {
-    const yvex_graph_family_api *family = state_family();
     test_state state = {0};
     char delta[YVEX_SHA256_HEX_CAP];
     yvex_graph_attention_state_summary transaction_summary;
@@ -1223,7 +1203,7 @@ static int test_state_lifecycle(const state_plan_fixture *fixture)
     cancellation.requested = state_cancel_requested;
     cancellation.context = &cancel_requested;
     YVEX_TEST_ASSERT(
-        state_open(&state, family, &fixture->plan, 1024ull * 1024ull,
+        state_open(&state, &fixture->plan, 1024ull * 1024ull,
                    &failure, &err) == YVEX_OK &&
             state_prepare(&state, &fixture->layers[0],
                           fixture->plan.summary.attention_plan_identity),
@@ -1289,7 +1269,6 @@ static int test_state_lifecycle(const state_plan_fixture *fixture)
 
 static int test_state_reset(const state_plan_fixture *fixture)
 {
-    const yvex_graph_family_api *family = state_family();
     test_state state = {0};
     char delta[YVEX_SHA256_HEX_CAP];
     yvex_graph_attention_state_summary before, after;
@@ -1299,7 +1278,7 @@ static int test_state_reset(const state_plan_fixture *fixture)
 
     yvex_error_clear(&err);
     YVEX_TEST_ASSERT(
-        state_open(&state, family, &fixture->plan, 16ull * 1024ull * 1024ull,
+        state_open(&state, &fixture->plan, 16ull * 1024ull * 1024ull,
                    &failure, &err) == YVEX_OK &&
             state_prepare(&state, &fixture->layers[1],
                           fixture->plan.summary.attention_plan_identity) &&
@@ -1350,7 +1329,6 @@ static int test_state_reset(const state_plan_fixture *fixture)
 /* Prove a failed later-layer preparation cannot publish or corrupt prior state ownership. */
 static int test_prepare_failure_is_atomic(const state_plan_fixture *fixture)
 {
-    const yvex_graph_family_api *family = state_family();
     test_state state = {0};
     yvex_attention_state_recipe_request request;
     yvex_attention_state_recipe recipe;
@@ -1362,7 +1340,7 @@ static int test_prepare_failure_is_atomic(const state_plan_fixture *fixture)
 
     yvex_error_clear(&err);
     YVEX_TEST_ASSERT(
-        state_open(&state, family, &fixture->plan, 4096ull,
+        state_open(&state, &fixture->plan, 4096ull,
                    &failure, &err) == YVEX_OK &&
             state_prepare(&state, &fixture->layers[0],
                           fixture->plan.summary.attention_plan_identity) &&
@@ -1403,7 +1381,6 @@ static int test_prepare_failure_is_atomic(const state_plan_fixture *fixture)
 /* Prove a multi-layer batch flips no selector until one atomic publish. */
 static int test_batch_publication_is_atomic(const state_plan_fixture *fixture)
 {
-    const yvex_graph_family_api *family = state_family();
     test_state state = {0};
     char delta[YVEX_SHA256_HEX_CAP];
     yvex_graph_attention_state_summary summary;
@@ -1417,7 +1394,7 @@ static int test_batch_publication_is_atomic(const state_plan_fixture *fixture)
 
     yvex_error_clear(&err);
     YVEX_TEST_ASSERT(
-        state_open(&state, family, &fixture->plan, 16ull * 1024ull * 1024ull,
+        state_open(&state, &fixture->plan, 16ull * 1024ull * 1024ull,
                    &failure, &err) == YVEX_OK &&
             state_prepare(&state, &fixture->layers[0],
                           fixture->plan.summary.attention_plan_identity) &&
@@ -1543,7 +1520,6 @@ static int test_batch_publication_is_atomic(const state_plan_fixture *fixture)
 /* Prove aggregate capacity accounting remains distinct from one-layer capture maxima. */
 static int test_summary_capacity_accounting(const state_plan_fixture *fixture)
 {
-    const yvex_graph_family_api *family = state_family();
     test_state state = {0};
     yvex_graph_attention_state_summary summary;
     yvex_graph_attention_state_summary initial;
@@ -1553,7 +1529,7 @@ static int test_summary_capacity_accounting(const state_plan_fixture *fixture)
 
     yvex_error_clear(&err);
     YVEX_TEST_ASSERT(
-        state_open(&state, family, &fixture->plan, 1024ull * 1024ull,
+        state_open(&state, &fixture->plan, 1024ull * 1024ull,
                    &failure, &err) == YVEX_OK,
         "capacity-accounting fixture opens");
     YVEX_TEST_ASSERT(
@@ -1928,9 +1904,9 @@ static int test_state_checkpoint_restore(const state_plan_fixture *fixture)
     single.plan.summary.csa_layer_count = single.plan.summary.hca_layer_count = 0ull;
     yvex_error_clear(&err);
     YVEX_TEST_ASSERT(
-        state_open(&source, state_family(), &single.plan, 1024ull * 1024ull,
+        state_open(&source, &single.plan, 1024ull * 1024ull,
                    &failure, &err) == YVEX_OK &&
-            state_open(&restored, state_family(), &single.plan,
+            state_open(&restored, &single.plan,
                        1024ull * 1024ull, &failure, &err) == YVEX_OK &&
             state_prepare(&source, &single.layers[0],
                           single.plan.summary.attention_plan_identity) &&
@@ -2007,13 +1983,13 @@ static int test_state_pages(const state_plan_fixture *fixture)
         state_recipe_project(&fixture->layers[1], &request, &initial_recipe,
                              &failure, &err) == YVEX_OK &&
             initial_recipe.components[1].capacity == 0ull &&
-            state_open(&reference, state_family(), &fixture->plan,
+            state_open(&reference, &fixture->plan,
                        512ull * 1024ull, &failure, &err) == YVEX_OK &&
             reference.prepare(reference.context, 1ull, &initial_recipe, NULL,
                               &failure, &err) == YVEX_OK &&
             reference.reset(reference.context, &failure, &err) == YVEX_OK &&
             state_close(&reference) &&
-            state_open(&initial, state_family(), &fixture->plan, 512ull * 1024ull,
+            state_open(&initial, &fixture->plan, 512ull * 1024ull,
                        &failure, &err) == YVEX_OK &&
             initial.configure_pages(initial.context, &capacity, &failure, &err) == YVEX_OK &&
             initial.prepare(initial.context, 1ull, &initial_recipe, NULL,
@@ -2026,7 +2002,7 @@ static int test_state_pages(const state_plan_fixture *fixture)
     request.final_position = capacity.per_session_maximum;
     request.attention_plan_identity = fixture->plan.summary.attention_plan_identity;
     YVEX_TEST_ASSERT(
-        state_open(&state, state_family(), &fixture->plan, 512ull * 1024ull,
+        state_open(&state, &fixture->plan, 512ull * 1024ull,
                    &failure, &err) == YVEX_OK &&
             state.configure_pages(state.context, &capacity, &failure, &err) == YVEX_OK &&
             state_recipe_project(&fixture->layers[1], &request, &recipe,
@@ -2062,7 +2038,7 @@ static int test_state_pages(const state_plan_fixture *fixture)
         "reset releases physical pages without relocating the admitted state span");
     capacity.state_pool_bytes = 4096ull;
     YVEX_TEST_ASSERT(
-        state_open(&limited, state_family(), &fixture->plan, 512ull * 1024ull,
+        state_open(&limited, &fixture->plan, 512ull * 1024ull,
                    &failure, &err) == YVEX_OK &&
             limited.configure_pages(limited.context, &capacity, &failure, &err) == YVEX_OK &&
             limited.prepare(limited.context, 1ull, &recipe, NULL,

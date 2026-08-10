@@ -202,10 +202,14 @@ int main(int argc, char **argv)
         fprintf(stderr, "usage: %s ARTIFACT RUNTIME_BINDING ID,ID,ID\n", argv[0]);
         return 2;
     }
-    rc = yvex_model_context_open_tokenizer(argv[1], &context, &err);
+    rc = yvex_model_context_open(argv[1], &context, &err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_binding_open(&binding, argv[2], &binding_summary,
                                        &admission, &binding_failure, &err);
+    if (rc == YVEX_OK)
+        rc = yvex_tokenizer_from_compiled_gguf(
+            &context.tokenizer, context.gguf,
+            yvex_runtime_binding_tokenizer_policy(binding), &err);
     if (rc == YVEX_OK) {
         int refusal = yvex_tokenizer_bind_runtime(context.tokenizer, "invalid",
                                                    binding_summary.logical_model_identity,

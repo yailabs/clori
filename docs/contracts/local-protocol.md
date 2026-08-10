@@ -10,9 +10,10 @@ field layout and bounds.
 
 ## Producer and consumer
 
-`yvexd` is the server and runtime authority. Runtime-client adapters in `yvex`
-and the in-process OpenAI adapter are clients. The protocol is carried over one
-private UID-owned Unix-domain socket and is not a public network API.
+The foreground `yvex server` mode is the server and runtime authority.
+Runtime-client adapters in the same executable and the in-process OpenAI
+adapter are clients. The protocol is carried over one private UID-owned
+Unix-domain socket and is not a public network API.
 
 ## Framing and negotiation
 
@@ -60,7 +61,7 @@ result, control/event, or error. Output kind and stream channel must agree;
 diagnostic text cannot reclassify a fragment.
 
 Native generation connections receive identity-sealed tokenizer and prefill
-events from the same telemetry authority as watch and trace. Prefill-start,
+events from the same telemetry authority as `server log`. Prefill-start,
 per-chunk progress, and completion facts let the console update one truthful
 line without timing the asynchronous request locally. Provider/OpenAI requests
 retain their provider stream contract and do not receive these native console
@@ -93,8 +94,8 @@ a server-composed snapshot containing, where authoritative:
 - session position, turn count, context and KV use;
 - active phase, progress, cancellation, and last terminal facts.
 
-Selected startup configuration and the live runtime model are distinct. Values
-the server cannot own are explicitly unavailable.
+The named registry profile and the live runtime model are distinct. Values the
+server cannot own are explicitly unavailable.
 
 ## Turn result
 
@@ -128,7 +129,7 @@ progress. A partial session refuses an ordinary turn until reset.
 The protocol may create/reset/close sessions, enqueue/cancel generation,
 commit runtime state through the worker, save one immutable model-state
 checkpoint, restore it at the exact current semantic-session position, publish
-events, or initiate bounded daemon shutdown. State checkpoint messages carry
+events, or initiate bounded server shutdown. State checkpoint messages carry
 the file digest, byte extent, scope count, committed position, and bound model,
 binding, and artifact identities. Parsing and status operations do not open
 artifacts or execute model work locally in the client.
@@ -138,7 +139,7 @@ artifacts or execute model work locally in the client.
 Failures preserve typed application, input, runtime, capability, resource,
 timeout, cancellation, transport, and internal classes. A malformed client,
 write failure, or disconnect closes only its connection and correlated work as
-required. The daemon and other sessions survive.
+required. The server and other sessions survive.
 
 Cancellation during draft or verification discards uncommitted candidate
 state. If an accepted prefix committed before cancellation, the terminal

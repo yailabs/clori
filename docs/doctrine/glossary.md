@@ -73,7 +73,7 @@ must not redefine these terms. Qualify *model*, *support*, *complete*,
 | evidence command bucket | the semantic `inspect`, `execute`, `profile`, or `system` operation |
 | graph command bucket | the operation-specific `inspect`, `execute`, or `profile` projection |
 | developer binary | engineering operation in the finite offline lane of `yvex` |
-| OpenAI gateway | in-process OpenAI-compatible adapter owned by `yvexd` |
+| OpenAI gateway | in-process OpenAI-compatible adapter owned by the foreground YVEX server |
 
 Historical audits and migrations preserve their original vocabulary. Living
 documents use the canonical replacement unless they are explicitly explaining

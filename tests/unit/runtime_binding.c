@@ -6,6 +6,7 @@
 #include <yvex/artifact.h>
 #include <yvex/gguf.h>
 #include <yvex/internal/artifact.h>
+#include <yvex/internal/artifact_lowering.h>
 #include <yvex/internal/backend.h>
 #include <yvex/internal/compilation.h>
 #include <yvex/internal/core.h>
@@ -13,6 +14,7 @@
 #include <yvex/internal/generation.h>
 #include <yvex/internal/graph.h>
 #include <yvex/internal/graph_state.h>
+#include <yvex/internal/operator_graph.h>
 #include <yvex/internal/runtime.h>
 #include <yvex/internal/runtime_state_store.h>
 
@@ -39,13 +41,21 @@ typedef struct {
     yvex_artifact *artifact;
     yvex_gguf *gguf;
     yvex_tensor_table *tensors;
-    yvex_deepseek_gguf_map *map;
+    yvex_artifact_lowering_map *map;
     yvex_complete_artifact_admission admission;
     yvex_artifact_physical_compatibility compatibility;
     yvex_materialization_plan *materialization_plan;
     yvex_materialization_session *materialization;
     yvex_runtime_descriptor *descriptor;
+    yvex_semantic_model_ir *semantic_model;
+    yvex_operator_graph_ir *operator_graph;
+    yvex_physical_execution_ir *physical_execution;
+    yvex_compiled_model_plan *compiled_plan;
     yvex_attention_plan *attention;
+    yvex_runtime_capabilities capabilities;
+    yvex_transformer_family_policy transformer_policy;
+    yvex_logits_family_policy logits_policy;
+    yvex_speculation_family_policy speculation_policy;
 } binding_fixture;
 
 static int runtime_model_open_fixture(
@@ -153,9 +163,14 @@ static void *runtime_open_thread_main(void *argument)
     return NULL;
 }
 
-static const yvex_runtime_family_adapter *runtime_fixture_adapter(void)
+static const yvex_graph_execution_binding *runtime_fixture_execution(void)
 {
-    return yvex_runtime_family_adapter_find("deepseek4-v4-flash-dspark");
+    return yvex_graph_execution_find(0ull, 0ull, "deepseek4-v4-flash-dspark");
+}
+
+static const yvex_family_compiler_adapter *runtime_fixture_compiler(void)
+{
+    return yvex_compiler_family_deepseek_v4();
 }
 
 static int runtime_state_prepare_fixture(
@@ -164,7 +179,6 @@ static int runtime_state_prepare_fixture(
     unsigned long long layer_index, yvex_attention_failure *failure,
     yvex_error *err)
 {
-    const yvex_runtime_family_adapter *adapter = runtime_fixture_adapter();
     const yvex_runtime_model_view *view = yvex_runtime_model_view_get(model);
     const yvex_attention_summary *summary = view
         ? yvex_attention_plan_summary(view->attention) : NULL;
@@ -172,16 +186,15 @@ static int runtime_state_prepare_fixture(
         ? yvex_attention_plan_layer_at(view->attention, layer_index) : NULL;
     yvex_attention_state_recipe_request request = {0};
     yvex_attention_state_recipe recipe = {0};
-    const yvex_graph_family_api *graph = adapter && adapter->graph
-        ? adapter->graph() : NULL;
     int rc;
 
-    if (!graph || !graph->state_recipe || !summary || !layer) return YVEX_ERR_STATE;
+    if (!summary || !layer) return YVEX_ERR_STATE;
     request.layer_ordinal = layer_index;
     request.final_position = layer->sliding_window
                                  ? layer->sliding_window - 1ull : 1ull;
     request.attention_plan_identity = summary->attention_plan_identity;
-    rc = graph->state_recipe(layer, &request, &recipe, failure, err);
+    rc = yvex_attention_state_recipe_build(
+        layer, &request, &recipe, failure, err);
     if (rc != YVEX_OK) return rc;
     return provider && provider->prepare
                ? provider->prepare(provider->context, layer_index, &recipe,
@@ -477,14 +490,13 @@ static int injected_state_release(void **context, yvex_error *err)
 }
 
 static int injected_state_factory_open(
-    void *context, const yvex_graph_family_api *family,
-    const yvex_attention_plan *plan, unsigned long long maximum_host_bytes,
+    void *context, const yvex_attention_plan *plan,
+    unsigned long long maximum_host_bytes,
     yvex_attention_state_provider *out,
     yvex_attention_failure *failure, yvex_error *err)
 {
     injected_state_control *control = (injected_state_control *)context;
     injected_state *state;
-    (void)family;
     (void)plan;
     (void)maximum_host_bytes;
     (void)failure;
@@ -841,13 +853,19 @@ static int test_binding_readdress(const char *path, unsigned char *file, size_t 
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     char identity[YVEX_SHA256_HEX_CAP], directory[YVEX_PATH_CAP];
     const char *slash = strrchr(path, '/');
+    const char *domain;
+    unsigned long long schema;
     int descriptor, result = 0;
     size_t offset = 0u, directory_length;
 
-    if (!slash || count < TEST_BINDING_HEADER_BYTES) return 0;
+    if (!slash || count < TEST_BINDING_HEADER_BYTES ||
+        !test_binding_u64(file, count, 8u, &schema) ||
+        schema != YVEX_RUNTIME_BINDING_SCHEMA_CURRENT)
+        return 0;
+    domain = "yvex.runtime.binding.v12";
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.binding.v7") ||
-        !yvex_sha256_update_u64(&hash, YVEX_RUNTIME_BINDING_SCHEMA_V7) ||
+    if (!yvex_sha256_update_text(&hash, domain) ||
+        !yvex_sha256_update_u64(&hash, schema) ||
         !yvex_sha256_update(&hash, file + TEST_BINDING_HEADER_BYTES,
                             count - TEST_BINDING_HEADER_BYTES) ||
         !yvex_sha256_final(&hash, digest))
@@ -969,7 +987,7 @@ static void fixture_compatibility_build(binding_fixture *fixture)
                    admission->payload_identity);
     (void)snprintf(value->writer_transform_identity,
                    sizeof(value->writer_transform_identity), "%s",
-                   runtime_fixture_adapter()->logical_transform_identity);
+                   runtime_fixture_execution()->logical_transform_identity);
     (void)snprintf(value->admitted_transform_identity,
                    sizeof(value->admitted_transform_identity), "%s",
                    admission->transform_identity);
@@ -1008,7 +1026,7 @@ static int fixture_attention_build(binding_fixture *fixture)
     if (!materialization || !runtime) return 0;
     memset(&summary, 0, sizeof(summary));
     memset(&layer, 0, sizeof(layer));
-    summary.status = YVEX_DEEPSEEK_ATTENTION_STATUS_EXECUTION_READY;
+    summary.status = YVEX_ATTENTION_STATUS_EXECUTION_READY;
     summary.tensor_scope = YVEX_TENSOR_SCOPE_MAIN_LAYER;
     (void)snprintf(summary.artifact_identity, sizeof(summary.artifact_identity), "%s",
                    runtime->artifact_identity);
@@ -1099,6 +1117,64 @@ static int fixture_model_execution_build(
     return yvex_model_execution_descriptor_seal(&request, model, err) == YVEX_OK;
 }
 
+static void fixture_disable_unavailable_execution(
+    yvex_runtime_capabilities *capabilities)
+{
+    capabilities->moe_plan_ready = 0;
+    capabilities->moe_router_ready = 0;
+    capabilities->moe_routed_expert_ready = 0;
+    capabilities->moe_shared_expert_ready = 0;
+    capabilities->moe_block_ready = 0;
+    capabilities->transformer_ready = 0;
+    capabilities->output_head_binding_ready = 0;
+    capabilities->output_head_projection_ready = 0;
+    capabilities->logits_cpu_ready = 0;
+    capabilities->logits_cuda_ready = 0;
+    capabilities->logits_prefill_ready = 0;
+    capabilities->logits_decode_ready = 0;
+    capabilities->logits_full_vocabulary_ready = 0;
+    capabilities->logits_hidden_contract_ready = 0;
+    capabilities->logits_partial_progress_ready = 0;
+    capabilities->logits_ready = 0;
+}
+
+static int fixture_execution_compile(binding_fixture *fixture, yvex_error *err)
+{
+    const yvex_family_compiler_adapter *compiler = runtime_fixture_compiler();
+    const yvex_runtime_descriptor_summary *descriptor =
+        yvex_runtime_descriptor_summary_get(fixture->descriptor);
+    yvex_compiled_model_plan_request plan = {0};
+    if (!compiler || !descriptor || !compiler->execution_capabilities ||
+        !compiler->transformer_policy || !compiler->logits_policy ||
+        !compiler->speculation_policy || !compiler->graph ||
+        !compiler->execution_capabilities(&fixture->capabilities) ||
+        !compiler->transformer_policy(
+            descriptor, &fixture->transformer_policy) ||
+        !compiler->logits_policy(&fixture->logits_policy) ||
+        !compiler->speculation_policy(
+            descriptor, &fixture->speculation_policy))
+        return 0;
+    fixture_disable_unavailable_execution(&fixture->capabilities);
+    if (!yvex_runtime_capabilities_contract_valid(&fixture->capabilities) ||
+        yvex_physical_execution_ir_build(
+            &fixture->physical_execution, fixture->materialization,
+            fixture->descriptor, fixture->admission.profile_identity,
+            compiler->physical_execution_policy, err) != YVEX_OK)
+        return 0;
+    plan.operator_graph = fixture->operator_graph;
+    plan.materialization = fixture->materialization;
+    plan.descriptor = fixture->descriptor;
+    plan.attention = fixture->attention;
+    plan.graph = compiler->graph();
+    plan.family_adapter_id = compiler->adapter_id;
+    plan.family_adapter_version = compiler->adapter_version;
+    plan.capabilities = fixture->capabilities;
+    plan.transformer_policy = fixture->transformer_policy;
+    plan.logits_policy = fixture->logits_policy;
+    return yvex_compiled_model_plan_build(
+               &fixture->compiled_plan, &plan, err) == YVEX_OK;
+}
+
 static int fixture_build(binding_fixture *fixture, const char *artifact_path,
                          int include_model_execution)
 {
@@ -1116,7 +1192,7 @@ static int fixture_build(binding_fixture *fixture, const char *artifact_path,
         return 0;
     if (yvex_test_deepseek_map_fixture_build(&fixture->map) != YVEX_OK || !fixture->map)
         return 0;
-    rc = yvex_deepseek_materialization_projection(fixture->map, &projection, &err);
+    rc = yvex_materialization_project_artifact_lowering(fixture->map, &projection, &err);
     if (rc != YVEX_OK || !fixture_admission_build(fixture)) return 0;
     fixture->admission.mapping_identity = projection.mapping_identity;
     fixture_compatibility_build(fixture);
@@ -1160,18 +1236,49 @@ static int fixture_build(binding_fixture *fixture, const char *artifact_path,
     if (rc != YVEX_OK && fixture->materialization)
         fprintf(stderr, "runtime binding descriptor build failed: %s\n",
                 yvex_error_message(&err));
-    return rc == YVEX_OK && fixture_attention_build(fixture);
+    if (rc == YVEX_OK && !fixture_attention_build(fixture)) rc = YVEX_ERR_STATE;
+    if (rc == YVEX_OK) {
+        const yvex_family_compiler_adapter *compiler = runtime_fixture_compiler();
+        const yvex_runtime_descriptor_summary *summary =
+            yvex_runtime_descriptor_summary_get(fixture->descriptor);
+        yvex_semantic_model_ir_request semantic = {
+            .schema_version = YVEX_SEMANTIC_MODEL_IR_SCHEMA_V1,
+            .family_adapter_id = compiler ? compiler->adapter_id : 0ull,
+            .family_adapter_version = compiler ? compiler->adapter_version : 0ull,
+            .target_id = "runtime-binding-fixture",
+            .source_model_identity = summary
+                ? summary->model_execution.source_model_identity : NULL,
+            .logical_model_identity = summary
+                ? summary->model_execution.logical_model_identity : NULL,
+            .semantic_payload_identity = summary
+                ? summary->model_execution.identity : NULL,
+            .execution_descriptor = summary
+                ? &summary->model_execution : NULL};
+        rc = yvex_semantic_model_ir_seal(
+            &fixture->semantic_model, &semantic, &err);
+        if (rc == YVEX_OK)
+            rc = yvex_operator_graph_ir_build_transformer(
+                &fixture->operator_graph, fixture->semantic_model,
+                fixture->attention, NULL, &err);
+        if (rc == YVEX_OK && !fixture_execution_compile(fixture, &err))
+            rc = YVEX_ERR_STATE;
+    }
+    return rc == YVEX_OK;
 }
 
 static void fixture_close(binding_fixture *fixture)
 {
     if (!fixture) return;
+    yvex_operator_graph_ir_close(&fixture->operator_graph);
+    yvex_semantic_model_ir_close(&fixture->semantic_model);
+    yvex_compiled_model_plan_close(&fixture->compiled_plan);
+    yvex_physical_execution_ir_close(&fixture->physical_execution);
     yvex_attention_plan_close(fixture->attention);
     yvex_runtime_descriptor_close(fixture->descriptor);
     yvex_materialization_session_close(fixture->materialization);
     yvex_materialization_plan_close(fixture->materialization_plan);
     if (fixture->map)
-        yvex_model_register_deepseek_v4()->lowering.close(fixture->map);
+        yvex_model_register_deepseek_v4()->lowering.map->close(fixture->map);
     yvex_tensor_table_close(fixture->tensors);
     yvex_gguf_close(fixture->gguf);
     yvex_artifact_close(fixture->artifact);
@@ -1216,7 +1323,10 @@ static int directory_has_temporary(const char *path)
 static int fixture_binding_request(const binding_fixture *fixture, const char *directory,
                                    yvex_runtime_binding_prepare_request *request)
 {
-    const yvex_runtime_family_adapter *adapter = runtime_fixture_adapter();
+    const yvex_graph_execution_binding *execution = runtime_fixture_execution();
+    const yvex_family_compiler_adapter *compiler = runtime_fixture_compiler();
+    const yvex_runtime_descriptor_summary *descriptor;
+    yvex_conversation_protocol tokenizer_source;
 
     memset(request, 0, sizeof(*request));
     request->directory = directory;
@@ -1224,31 +1334,36 @@ static int fixture_binding_request(const binding_fixture *fixture, const char *d
     request->physical_compatibility = &fixture->compatibility;
     request->materialization = fixture->materialization;
     request->runtime_descriptor = fixture->descriptor;
+    request->operator_graph = fixture->operator_graph;
+    request->physical_execution = fixture->physical_execution;
+    request->compiled_plan = fixture->compiled_plan;
     request->attention_plan = fixture->attention;
-    if (!adapter || !adapter->execution_capabilities) return 0;
-    request->family_adapter_id = adapter->adapter_id;
-    request->family_adapter_version = adapter->adapter_version;
+    descriptor = yvex_runtime_descriptor_summary_get(fixture->descriptor);
+    if (!execution || !compiler || !descriptor || !compiler->graph ||
+        !compiler->graph() ||
+        !compiler->execution_capabilities ||
+        !compiler->transformer_policy || !compiler->logits_policy ||
+        !compiler->speculation_policy || !compiler->tokenizer_policy) return 0;
+    request->family_adapter_id = execution->adapter_id;
+    request->family_adapter_version = execution->adapter_version;
     request->artifact_format = "GGUF";
     request->artifact_format_version = 3u;
     request->logical_transform_identity =
-        adapter->logical_transform_identity;
-    if (!adapter->execution_capabilities(&request->capabilities)) return 0;
-    request->capabilities.moe_plan_ready = 0;
-    request->capabilities.moe_router_ready = 0;
-    request->capabilities.moe_routed_expert_ready = 0;
-    request->capabilities.moe_shared_expert_ready = 0;
-    request->capabilities.moe_block_ready = 0;
-    request->capabilities.transformer_ready = 0;
-    request->capabilities.output_head_binding_ready = 0;
-    request->capabilities.output_head_projection_ready = 0;
-    request->capabilities.logits_cpu_ready = 0;
-    request->capabilities.logits_cuda_ready = 0;
-    request->capabilities.logits_prefill_ready = 0;
-    request->capabilities.logits_decode_ready = 0;
-    request->capabilities.logits_full_vocabulary_ready = 0;
-    request->capabilities.logits_hidden_contract_ready = 0;
-    request->capabilities.logits_partial_progress_ready = 0;
-    request->capabilities.logits_ready = 0;
+        execution->logical_transform_identity;
+    request->capabilities = fixture->capabilities;
+    request->transformer_policy = fixture->transformer_policy;
+    request->logits_policy = fixture->logits_policy;
+    request->speculation_policy = fixture->speculation_policy;
+    tokenizer_source = *yvex_model_deepseek_v4_conversation();
+    tokenizer_source.vocabulary_size = descriptor->model_execution.vocabulary_size;
+    tokenizer_source.base_vocabulary_size = descriptor->model_execution.vocabulary_size;
+    tokenizer_source.merge_count = 0u;
+    tokenizer_source.added_token_count = 0u;
+    tokenizer_source.special_token_count = 0u;
+    if (yvex_tokenizer_family_policy_compile(
+            &request->tokenizer_policy, &tokenizer_source,
+            YVEX_TOKENIZER_KIND_FIXTURE_SIMPLE, YVEX_TOKENIZER_MODEL_FIXTURE,
+            YVEX_TOKENIZER_PROMPT_CONVERSATION, NULL) != YVEX_OK) return 0;
     return
            yvex_runtime_capabilities_contract_valid(&request->capabilities);
 }
@@ -1329,6 +1444,13 @@ static int test_prepare_reopen_import(const binding_fixture *fixture, const char
     yvex_runtime_descriptor *descriptor = NULL;
     yvex_attention_plan *attention = NULL;
     yvex_attention_plan *draft_attention = NULL;
+    const yvex_physical_execution_ir *physical = NULL;
+    const yvex_physical_execution_decision *physical_decision;
+    const yvex_transformer_family_policy *transformer;
+    const yvex_logits_family_policy *logits;
+    const yvex_speculation_family_policy *speculation;
+    const yvex_tokenizer_family_policy *tokenizer_policy;
+    const yvex_runtime_descriptor_summary *imported_descriptor;
     yvex_runtime_binding_summary summary;
     yvex_core_file_result file_result;
     unsigned char *before = NULL, *after = NULL;
@@ -1337,6 +1459,23 @@ static int test_prepare_reopen_import(const binding_fixture *fixture, const char
     char capability_identity[YVEX_SHA256_HEX_CAP];
     int rc;
 
+    {
+        const yvex_operator_graph_summary *operators =
+            yvex_operator_graph_ir_summary(fixture->operator_graph);
+        const yvex_operator_node *attention_node =
+            yvex_operator_graph_ir_node_at(fixture->operator_graph, 1ull);
+        YVEX_TEST_ASSERT(
+            operators && operators->maximum_context == 4ull &&
+                operators->target_layer_count == 1ull &&
+                operators->draft_layer_count == 0ull &&
+                operators->node_count == 5ull && operators->edge_count == 6ull &&
+                operators->state_class_mask ==
+                    YVEX_MODEL_STATE_CLASS_BIT(YVEX_MODEL_STATE_SWA_RING) &&
+                attention_node && attention_node->kind == YVEX_OPERATOR_ATTENTION &&
+                attention_node->state_read_mask ==
+                    YVEX_MODEL_STATE_CLASS_BIT(YVEX_MODEL_STATE_SWA_RING),
+            "canonical operator graph owns target topology and mutable state edges");
+    }
     YVEX_TEST_ASSERT(fixture_binding_request(fixture, directory, &request),
                      "runtime binding request declares adapter capabilities");
     memset(&rejected_result, 0, sizeof(rejected_result));
@@ -1354,6 +1493,55 @@ static int test_prepare_reopen_import(const binding_fixture *fixture, const char
             !directory_has_temporary(directory) &&
             !directory_has_suffix(directory, YVEX_RUNTIME_BINDING_SUFFIX),
         "candidate validation failure publishes nothing and removes its temporary");
+    mutated_request = request;
+    mutated_request.physical_execution = NULL;
+    memset(&rejected_result, 0, sizeof(rejected_result));
+    rc = yvex_runtime_binding_prepare(
+        &mutated_request, &rejected_result, &failure, &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_ERR_INVALID_ARG && !rejected_result.published &&
+            failure.code == YVEX_RUNTIME_BINDING_FAILURE_INVALID_ARGUMENT &&
+            strcmp(failure.field, "request") == 0 &&
+            !directory_has_suffix(directory, YVEX_RUNTIME_BINDING_SUFFIX),
+        "runtime binding refuses an uncompiled physical execution input");
+    {
+        const yvex_runtime_descriptor_summary *fixture_descriptor =
+            yvex_runtime_descriptor_summary_get(fixture->descriptor);
+        const yvex_family_compiler_adapter *compiler = runtime_fixture_compiler();
+        yvex_semantic_model_ir_request semantic_request = {
+            .schema_version = YVEX_SEMANTIC_MODEL_IR_SCHEMA_V1,
+            .family_adapter_id = compiler->adapter_id,
+            .family_adapter_version = compiler->adapter_version,
+            .target_id = "runtime-binding-identity-mismatch",
+            .source_model_identity =
+                fixture_descriptor->model_execution.source_model_identity,
+            .logical_model_identity =
+                fixture_descriptor->model_execution.logical_model_identity,
+            .semantic_payload_identity =
+                fixture_descriptor->model_execution.identity,
+            .execution_descriptor = &fixture_descriptor->model_execution};
+        yvex_semantic_model_ir *other_semantic = NULL;
+        yvex_operator_graph_ir *other_graph = NULL;
+        YVEX_TEST_ASSERT(
+            yvex_semantic_model_ir_seal(
+                &other_semantic, &semantic_request, &err) == YVEX_OK &&
+            yvex_operator_graph_ir_build_transformer(
+                &other_graph, other_semantic, fixture->attention,
+                NULL, &err) == YVEX_OK,
+            "distinct canonical operator graph fixture built");
+        mutated_request = request;
+        mutated_request.operator_graph = other_graph;
+        memset(&rejected_result, 0, sizeof(rejected_result));
+        rc = yvex_runtime_binding_prepare(
+            &mutated_request, &rejected_result, &failure, &err);
+        YVEX_TEST_ASSERT(
+            rc == YVEX_ERR_STATE && !rejected_result.published &&
+                failure.code == YVEX_RUNTIME_BINDING_FAILURE_IDENTITY &&
+                strcmp(failure.field, "operator-graph") == 0,
+            "runtime binding refuses an operator graph not sealed by its compiled plan");
+        yvex_operator_graph_ir_close(&other_graph);
+        yvex_semantic_model_ir_close(&other_semantic);
+    }
     rc = yvex_runtime_binding_prepare(&request, prepared, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && prepared->published, "runtime binding prepared");
     YVEX_TEST_ASSERT(strlen(prepared->summary.identity) == 64u,
@@ -1363,11 +1551,14 @@ static int test_prepare_reopen_import(const binding_fixture *fixture, const char
     YVEX_TEST_ASSERT(rc == YVEX_OK, "runtime binding reopened");
     YVEX_TEST_ASSERT(strcmp(summary.identity, prepared->summary.identity) == 0,
                      "reopened runtime binding identity");
-    YVEX_TEST_ASSERT(summary.schema_version == YVEX_RUNTIME_BINDING_SCHEMA_V7,
+    YVEX_TEST_ASSERT(summary.schema_version == YVEX_RUNTIME_BINDING_SCHEMA_CURRENT,
                      "reopened runtime binding schema");
     YVEX_TEST_ASSERT(
         yvex_sha256_hex_is_valid(summary.semantic_graph_identity) &&
             yvex_sha256_hex_is_valid(summary.executable_graph_identity) &&
+            strcmp(summary.semantic_graph_identity,
+                   yvex_operator_graph_ir_summary(
+                       fixture->operator_graph)->identity) == 0 &&
             strcmp(summary.semantic_graph_identity,
                    summary.executable_graph_identity) != 0,
         "runtime binding owner derives distinct graph identities without caller assertions");
@@ -1391,7 +1582,7 @@ static int test_prepare_reopen_import(const binding_fixture *fixture, const char
     YVEX_TEST_ASSERT(
         strcmp(summary.artifact_transform_identity, fixture->admission.transform_identity) == 0 &&
             strcmp(summary.logical_transform_identity,
-                   runtime_fixture_adapter()->logical_transform_identity) == 0,
+                   runtime_fixture_execution()->logical_transform_identity) == 0,
         "runtime binding separates artifact and logical transform identities");
     YVEX_TEST_ASSERT(summary.tensor_count == 1ull && summary.layer_count == 1ull,
                      "reopened runtime binding record counts");
@@ -1401,9 +1592,53 @@ static int test_prepare_reopen_import(const binding_fixture *fixture, const char
     YVEX_TEST_ASSERT(rc == YVEX_OK, "binding materialization imported");
     rc = yvex_runtime_binding_import_graph(
         *binding_out, session, &descriptor, &attention, &draft_attention,
-        &failure, &err);
-    YVEX_TEST_ASSERT(rc == YVEX_OK && !draft_attention,
+        &physical, &failure, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && !draft_attention && physical,
                      "binding runtime graph imported without an invented draft plan");
+    YVEX_TEST_ASSERT(
+        yvex_physical_execution_ir_summary(physical)->schema_version ==
+                YVEX_PHYSICAL_EXECUTION_SCHEMA_V2 &&
+            strcmp(yvex_physical_execution_ir_summary(physical)->identity,
+               summary.physical_execution_identity) == 0 &&
+            summary.physical_execution_decision_count == summary.tensor_count,
+        "binding imports persisted physical execution truth");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_binding_policies(
+            *binding_out, &transformer, &logits, &speculation),
+        "binding exposes one compiled policy envelope");
+    imported_descriptor = yvex_runtime_descriptor_summary_get(descriptor);
+    physical_decision = yvex_physical_execution_ir_decision_at(physical, 0ull);
+    YVEX_TEST_ASSERT(
+        transformer && imported_descriptor &&
+            transformer->hidden_width == imported_descriptor->model_execution.hidden_width &&
+            transformer->residual_streams ==
+                imported_descriptor->model_execution.residual_streams && logits &&
+            logits->separate_output_head && speculation &&
+            speculation->block_size == imported_descriptor->model_execution.proposal_width &&
+            speculation->target_feature_layer_count ==
+                imported_descriptor->model_execution.target_feature_count &&
+            yvex_sha256_hex_is_valid(speculation->policy_identity),
+        "binding imports authenticated compiled execution policies");
+    YVEX_TEST_ASSERT(
+        physical_decision && imported_descriptor &&
+            physical_decision->maximum_context ==
+                imported_descriptor->model_execution.maximum_context &&
+            physical_decision->supported_width_mask == 2ull &&
+            physical_decision->activation ==
+                runtime_fixture_compiler()->physical_execution_policy->activation &&
+            strcmp(physical_decision->kernel_family,
+                   runtime_fixture_compiler()->physical_execution_policy
+                       ->dense_kernel_family) == 0,
+        "physical execution derives semantic bounds and preserves selected policy");
+    tokenizer_policy = yvex_runtime_binding_tokenizer_policy(*binding_out);
+    YVEX_TEST_ASSERT(
+        tokenizer_policy &&
+            tokenizer_policy->family_adapter_id == summary.family_adapter_id &&
+            tokenizer_policy->family_adapter_version == summary.family_adapter_version &&
+            tokenizer_policy->vocabulary_size ==
+                imported_descriptor->model_execution.vocabulary_size &&
+            yvex_tokenizer_family_policy_validate(tokenizer_policy, &err) == YVEX_OK,
+        "binding imports the authenticated compiled tokenizer policy");
     YVEX_TEST_ASSERT(
         strcmp(yvex_runtime_descriptor_summary_get(descriptor)->runtime_descriptor_identity,
                summary.runtime_descriptor_identity) == 0,
@@ -1521,7 +1756,7 @@ static int test_prepare_reopen_import(const binding_fixture *fixture, const char
     return 0;
 }
 
-static int test_model_execution_binding_v8(const char *root)
+static int test_compiled_model_binding_v12(const char *root)
 {
     binding_fixture fixture;
     yvex_runtime_binding_prepare_request request;
@@ -1540,37 +1775,39 @@ static int test_model_execution_binding_v8(const char *root)
     yvex_error err;
 
     YVEX_TEST_ASSERT(
-        variant_path(root, "model-v8", "runtime.gguf", directory, artifact_path) &&
+        variant_path(root, "model-v12", "runtime.gguf", directory, artifact_path) &&
             copy_regular_file("tests/fixtures/gguf/valid-tokenizer-simple.gguf",
                               artifact_path) &&
             rewrite_attention_artifact_fixture(artifact_path),
-        "v8 runtime artifact fixture created");
+        "v12 runtime artifact fixture created");
     YVEX_TEST_ASSERT(fixture_build(&fixture, artifact_path, 1),
-                     "v8 runtime binding fixture built");
+                     "v12 runtime binding fixture built");
     descriptor = yvex_runtime_descriptor_summary_get(fixture.descriptor);
     YVEX_TEST_ASSERT(descriptor &&
                          descriptor->model_execution.schema_version ==
                              YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1,
-                     "v8 fixture owns a sealed model execution descriptor");
+                     "v12 fixture owns a sealed model execution descriptor");
     YVEX_TEST_ASSERT(fixture_binding_request(&fixture, directory, &request) &&
                          yvex_runtime_binding_prepare(
                              &request, &prepared, &failure, &err) == YVEX_OK,
-                     "v8 runtime binding prepared");
+                     "v12 runtime binding prepared");
     YVEX_TEST_ASSERT(yvex_runtime_binding_open(
                          &binding, prepared.path, &summary, NULL, &failure, &err) == YVEX_OK &&
-                         summary.schema_version == YVEX_RUNTIME_BINDING_SCHEMA_V8 &&
+                         summary.schema_version == YVEX_RUNTIME_BINDING_SCHEMA_CURRENT &&
                          strcmp(summary.model_execution_identity,
-                                descriptor->model_execution.identity) == 0,
-                     "v8 reader authenticates the model-derived execution record");
+                                descriptor->model_execution.identity) == 0 &&
+                         summary.semantic_maximum_context ==
+                             descriptor->model_execution.maximum_context,
+                     "v12 reader authenticates canonical operator and execution records");
     yvex_runtime_binding_close(binding);
     YVEX_TEST_ASSERT(runtime_model_open_fixture(
                          &fixture, &prepared, &model, &model_failure, &err) == YVEX_OK,
-                     "v8 runtime model imports model-derived execution geometry");
+                     "v12 runtime model instantiates compiled execution geometry");
     session_request.backend = YVEX_BACKEND_KIND_CPU;
     YVEX_TEST_ASSERT(yvex_runtime_session_open(
                          &session, model, &session_request,
                          &model_failure, &err) == YVEX_OK,
-                     "v8 runtime session opens for capacity admission");
+                     "v12 runtime session opens for capacity admission");
     generation_options.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V5;
     generation_options.backend = YVEX_BACKEND_KIND_CPU;
     generation_options.mode = YVEX_GENERATION_MODE_TARGET_ONLY;
@@ -1588,9 +1825,9 @@ static int test_model_execution_binding_v8(const char *root)
     YVEX_TEST_ASSERT(yvex_runtime_generation_context_open(
                          &generation, model, session, &generation_options,
                          &err) == YVEX_ERR_BOUNDS && !generation,
-                     "model-authored context maximum refuses before state mutation");
+                     "semantic context maximum refuses before state mutation");
     YVEX_TEST_ASSERT(yvex_runtime_session_close(&session, &err) == YVEX_OK && !session,
-                     "v8 capacity session closes");
+                     "v12 capacity session closes");
     yvex_runtime_model_close(&model);
     fixture_close(&fixture);
     (void)unlink(prepared.path);
@@ -1603,20 +1840,22 @@ static int test_corruption_refusals(const yvex_runtime_binding_prepare_result *p
                                     const char *root)
 {
     const char *basename = strrchr(prepared->path, '/');
-    const char *variants[] = {"truncated", "tail", "legacy-schema", "stale"};
+    const char *variants[] = {
+        "truncated", "tail", "legacy-schema", "stale", "preoperator-v11"};
     const yvex_runtime_binding_failure_code expected[] = {
         YVEX_RUNTIME_BINDING_FAILURE_TRUNCATED,
         YVEX_RUNTIME_BINDING_FAILURE_TRAILING_DATA,
         YVEX_RUNTIME_BINDING_FAILURE_SCHEMA,
-        YVEX_RUNTIME_BINDING_FAILURE_IDENTITY};
-    char directories[4][YVEX_PATH_CAP];
-    char paths[4][YVEX_PATH_CAP];
+        YVEX_RUNTIME_BINDING_FAILURE_IDENTITY,
+        YVEX_RUNTIME_BINDING_FAILURE_COMPATIBILITY};
+    char directories[5][YVEX_PATH_CAP];
+    char paths[5][YVEX_PATH_CAP];
     struct stat status;
     unsigned char value;
     unsigned int i;
 
     basename = basename ? basename + 1 : prepared->path;
-    for (i = 0u; i < 4u; ++i) {
+    for (i = 0u; i < 5u; ++i) {
         int fd;
         yvex_runtime_binding *binding = NULL;
         yvex_runtime_binding_failure failure;
@@ -1642,12 +1881,19 @@ static int test_corruption_refusals(const yvex_runtime_binding_prepare_result *p
             value = 3u;
             YVEX_TEST_ASSERT(pwrite(fd, &value, 1u, 8) == 1,
                              "legacy runtime binding schema written");
-        } else {
+        } else if (i == 3u) {
             YVEX_TEST_ASSERT(pread(fd, &value, 1u, 96) == 1,
                              "runtime binding stale byte read");
             value ^= 0x5au;
             YVEX_TEST_ASSERT(pwrite(fd, &value, 1u, 96) == 1,
                              "runtime binding stale byte written");
+        } else {
+            unsigned char legacy_header[16] = "YVRBND11";
+            test_binding_put_u64(legacy_header, 8u,
+                                 YVEX_RUNTIME_BINDING_SCHEMA_CURRENT - 1u);
+            YVEX_TEST_ASSERT(pwrite(fd, legacy_header, sizeof(legacy_header), 0) ==
+                                 (ssize_t)sizeof(legacy_header),
+                             "pre-operator-graph v11 header written");
         }
         YVEX_TEST_ASSERT(close(fd) == 0, "runtime binding variant closed");
         rc = yvex_runtime_binding_open(&binding, paths[i], NULL, NULL, &failure, &err);
@@ -1866,7 +2112,7 @@ static int runtime_model_open_fixture(const binding_fixture *fixture,
     memset(&request, 0, sizeof(request));
     request.artifact_path = yvex_artifact_path(fixture->artifact);
     request.runtime_binding_path = prepared->path;
-    request.target_id = runtime_fixture_adapter()->target_id;
+    request.target_id = runtime_fixture_execution()->target_id;
     return yvex_runtime_model_open(model, &request, failure, err);
 }
 
@@ -1909,7 +2155,7 @@ static int test_runtime_model_progress(
     memset(&progress, 0, sizeof(progress));
     request.artifact_path = yvex_artifact_path(fixture->artifact);
     request.runtime_binding_path = prepared->path;
-    request.target_id = runtime_fixture_adapter()->target_id;
+    request.target_id = runtime_fixture_execution()->target_id;
     request.progress = runtime_progress_collect;
     request.progress_context = &progress;
     YVEX_TEST_ASSERT(yvex_runtime_model_open(
@@ -1977,48 +2223,40 @@ static int test_runtime_model_progress(
 
 static int test_runtime_family_neutrality(void)
 {
-    const yvex_runtime_family_adapter *deepseek =
-        yvex_runtime_family_adapter_find("deepseek4-v4-flash-dspark");
-    const yvex_graph_family_preparation *preparation = yvex_graph_family_preparation_at(0ull);
+    const yvex_graph_execution_binding *deepseek =
+        yvex_graph_execution_find(0ull, 0ull, "deepseek4-v4-flash-dspark");
+    const yvex_family_compiler_adapter *compiler =
+        yvex_compiler_family_deepseek_v4();
+    yvex_compilation_runtime_binding_request request = {0};
     yvex_compilation_runtime_binding_result rejected = {0};
-    yvex_runtime_mixer_capability capability;
     yvex_error err;
 
-    YVEX_TEST_ASSERT(deepseek != NULL && deepseek->mixer_capability != NULL,
-                     "registered family resolves through common adapter registry");
-    YVEX_TEST_ASSERT(strcmp(deepseek->operator_family_key, "deepseek") == 0 && preparation &&
-                         strcmp(preparation->target_id, deepseek->target_id) == 0 &&
-                         strcmp(preparation->source_manifest_filename,
+    YVEX_TEST_ASSERT(deepseek != NULL && deepseek->api != NULL,
+                     "compiled family identity resolves through graph execution registry");
+    YVEX_TEST_ASSERT(strcmp(deepseek->operator_family_key, "deepseek") == 0 &&
+                         strcmp(deepseek->source_manifest_filename,
                                 YVEX_SOURCE_RELEASE_MANIFEST_LEAF) == 0 &&
                          strcmp(deepseek->operator_artifact_filename,
                                 YVEX_SELECTED_DEEPSEEK_ARTIFACT_FILENAME) == 0 &&
-                         preparation->model && preparation->prepare_runtime_binding &&
-                         preparation->model() == yvex_model_register_deepseek_v4(),
-                     "compiler preparation facts remain separate from runtime adapter facts");
-    yvex_error_clear(&err);
-    YVEX_TEST_ASSERT(preparation->prepare_runtime_binding(NULL, &rejected, &err) ==
-                             YVEX_ERR_INVALID_ARG &&
+                         deepseek->model && deepseek->compiler == compiler &&
+                         compiler && compiler->binding_pipeline &&
+                         compiler->binding_compile == yvex_family_binding_compile &&
+                         compiler->binding_pipeline->source_open &&
+                         compiler->binding_pipeline->semantic_model_build &&
+                         deepseek->model() == yvex_model_register_deepseek_v4(),
+                     "compiler preparation facts remain separate from execution facts");
+    YVEX_TEST_ASSERT(yvex_runtime_binding_compile_publish(
+                         compiler, &request, rejected.path,
+                         &rejected.published, &err) == YVEX_ERR_INVALID_ARG &&
                          !rejected.published && !rejected.path[0],
-                     "typed family preparation callback refuses incomplete compiler input");
-    YVEX_TEST_ASSERT(yvex_runtime_family_adapter_find("not-a-runtime-family") == NULL,
-                     "unknown runtime family refused");
-    YVEX_TEST_ASSERT(runtime_fixture_adapter()->mixer_capability(
-                         YVEX_SEQUENCE_MIXER_SLIDING_WINDOW, &capability) &&
-                         capability.state == YVEX_RUNTIME_MIXER_SUPPORTED,
-                     "fixture sliding-window mixer admitted");
-    YVEX_TEST_ASSERT(runtime_fixture_adapter()->mixer_capability(
-                         YVEX_SEQUENCE_MIXER_HIERARCHICAL_COMPRESSED, &capability) &&
-                         capability.state == YVEX_RUNTIME_MIXER_SUPPORTED,
-                     "registered DeepSeek hierarchy mixer is admitted");
-    YVEX_TEST_ASSERT(deepseek->mixer_capability(
-                         YVEX_SEQUENCE_MIXER_COMPRESSED_SPARSE, &capability) &&
-                         capability.family == YVEX_SEQUENCE_MIXER_SOFTMAX_ATTENTION &&
-                         capability.state == YVEX_RUNTIME_MIXER_SUPPORTED,
-                     "DeepSeek compressed sparse mixer admitted through adapter");
-    YVEX_TEST_ASSERT(deepseek->mixer_capability(
-                         YVEX_SEQUENCE_MIXER_KIMI_DELTA, &capability) &&
-                         capability.state == YVEX_RUNTIME_MIXER_NOT_ADMITTED,
-                     "future recurrent mixer not admitted by DeepSeek adapter");
+                     "generic publication owner refuses incomplete family compiler products");
+    YVEX_TEST_ASSERT(yvex_graph_execution_find(
+                         deepseek->adapter_id, deepseek->adapter_version, NULL) == deepseek,
+                     "compiled adapter identity selects one immutable execution binding");
+    YVEX_TEST_ASSERT(yvex_graph_execution_find(
+                         0ull, 0ull, "not-a-runtime-family") == NULL &&
+                         yvex_graph_execution_find(deepseek->adapter_id, 0ull, NULL) == NULL,
+                     "unknown target and execution version are refused");
     return 0;
 }
 
@@ -2663,7 +2901,7 @@ static int test_runtime_injected_state_provider(
         yvex_runtime_session_open(
             &session, model, &partial_request, &failure, &err) == YVEX_OK &&
             injected_state_factory_open(
-                &partial_draft, NULL, NULL, 0ull,
+                &partial_draft, NULL, 0ull,
                 &session->draft_attention_state_provider, &state_failure,
                 &err) == YVEX_OK,
         "session opens independently owned target and draft state providers");
@@ -2797,7 +3035,7 @@ static int test_runtime_cleanup_lease_retry(
     memset(&model_request, 0, sizeof(model_request));
     model_request.artifact_path = yvex_artifact_path(fixture->artifact);
     model_request.runtime_binding_path = prepared->path;
-    model_request.target_id = runtime_fixture_adapter()->target_id;
+    model_request.target_id = runtime_fixture_execution()->target_id;
     memset(&session_request, 0, sizeof(session_request));
     session_request.backend = YVEX_BACKEND_KIND_CPU;
     YVEX_TEST_ASSERT(
@@ -2918,8 +3156,7 @@ static int test_runtime_probe_consumer_boundary(
     capacity_request.layer_start = 0ull;
     YVEX_TEST_ASSERT(
         yvex_graph_attention_capacity_plan_build(
-            &capacity, runtime_fixture_adapter()->graph(),
-            yvex_runtime_model_view_get(model)->attention,
+            &capacity, yvex_runtime_model_view_get(model)->attention,
             &capacity_request, &err) == YVEX_OK,
         "one-layer capacity plan seals for the runtime consumer");
     YVEX_TEST_ASSERT(
@@ -3152,8 +3389,7 @@ static int test_runtime_paged_state_cuda_pack(
     attention_request.execution_count = 1ull;
     attention_request.select_layer = 1;
     YVEX_TEST_ASSERT(yvex_graph_attention_capacity_plan_build(
-                         &attention_capacity, runtime_fixture_adapter()->graph(),
-                         yvex_runtime_model_view_get(model)->attention,
+                         &attention_capacity, yvex_runtime_model_view_get(model)->attention,
                          &attention_request, &err) == YVEX_OK,
                      "one-layer paged state capacity seals");
     layer = yvex_graph_attention_capacity_plan_layer(attention_capacity, 0ull);
@@ -3161,23 +3397,6 @@ static int test_runtime_paged_state_cuda_pack(
                          provider->prepare(provider->context, 0ull, &layer->recipe,
                                            NULL, &attention_failure, &err) == YVEX_OK,
                      "empty committed and candidate histories reserve inaccessible tails");
-    backend_options.kind = YVEX_BACKEND_KIND_CPU;
-    YVEX_TEST_ASSERT(yvex_backend_open(&backend, &backend_options, &err) == YVEX_OK,
-                     "host-backed backend opens for deterministic CUDA staging test");
-    backend->kind = YVEX_BACKEND_KIND_CUDA;
-    YVEX_TEST_ASSERT(yvex_runtime_state_residency_prepare(
-                         &residency, backend, attention_capacity, provider,
-                         0ull, ULLONG_MAX, 0ull, ULLONG_MAX, &err) == YVEX_OK &&
-                         yvex_runtime_state_residency_summary_copy(
-                             residency, &summary, &err) == YVEX_OK &&
-                         summary.cuda_ready && summary.upload_count == 2ull &&
-                         summary.upload_bytes == summary.device_bytes,
-                     "CUDA staging copies only visible history while retaining full addresses");
-    YVEX_TEST_ASSERT(yvex_runtime_state_residency_close(&residency, &err) == YVEX_OK,
-                     "paged CUDA residency staging releases exactly");
-    backend->kind = YVEX_BACKEND_KIND_CPU;
-    YVEX_TEST_ASSERT(yvex_backend_close_checked(&backend, &err) == YVEX_OK,
-                     "host-backed staging backend closes");
     backend_options.kind = YVEX_BACKEND_KIND_CUDA;
     if (yvex_backend_open(&backend, &backend_options, &err) == YVEX_OK) {
         unsigned long long committed_pages;
@@ -3187,7 +3406,7 @@ static int test_runtime_paged_state_cuda_pack(
                              yvex_runtime_state_residency_summary_copy(
                                  residency, &summary, &err) == YVEX_OK,
                          "native CUDA state residency prepares from provider pages");
-        if (backend->virtual_tensor_ready) {
+        if (yvex_backend_virtual_tensor_supported(backend)) {
             YVEX_TEST_ASSERT(summary.paged && !summary.host_bytes,
                              "native CUDA state uses page-backed device storage");
             YVEX_TEST_ASSERT(summary.virtual_device_bytes && summary.page_granularity,
@@ -3289,7 +3508,8 @@ static int test_runtime_cuda_session_cleanup_retry(
     descriptor.dims[0] = descriptor.bytes = 32ull;
     YVEX_TEST_ASSERT(
         yvex_backend_open(&owner, &options, &err) == YVEX_OK &&
-            owner->vtable->resident_alloc(owner, &descriptor, &weights, &host, &err) == YVEX_OK &&
+            yvex_backend_resident_alloc(
+                owner, &descriptor, &weights, &host, &err) == YVEX_OK &&
             yvex_backend_resident_attach(
                 owner, host, descriptor.bytes, weights, 1ull, &err) == YVEX_OK &&
             yvex_backend_open_shared_cuda(&first, owner, 0ull, &err) == YVEX_OK &&
@@ -3384,8 +3604,7 @@ static int test_runtime_cuda_workspace_transaction(
     capacity_request.token_count = 1ull;
     capacity_request.execution_count = 1ull;
     YVEX_TEST_ASSERT(yvex_graph_attention_capacity_plan_build(
-                         &capacity, runtime_fixture_adapter()->graph(),
-                         yvex_runtime_model_view_get(model)->attention,
+                         &capacity, yvex_runtime_model_view_get(model)->attention,
                          &capacity_request, &err) == YVEX_OK,
                      "transactional workspace capacity plan seals");
     YVEX_TEST_ASSERT(yvex_runtime_session_summary_copy(session, &before, &err) == YVEX_OK,
@@ -3489,32 +3708,34 @@ static int test_runtime_cuda_workspace_transaction(
     return 0;
 }
 
-static int test_runtime_model_adapter_refusal(
+static int test_runtime_model_compiled_execution(
     const binding_fixture *fixture, const yvex_runtime_binding_prepare_result *prepared)
 {
     yvex_runtime_model_open_request request;
     yvex_runtime_model *model = NULL;
     yvex_runtime_model_failure failure;
-    char target[] = "deepseek4-v4-flash-dspark";
+    char target[] = "compiled-fixture";
     yvex_error err;
 
     memset(&request, 0, sizeof(request));
     request.artifact_path = yvex_artifact_path(fixture->artifact);
     request.runtime_binding_path = prepared->path;
-    request.target_id = "not-a-runtime-family";
+    request.target_id = "";
     YVEX_TEST_ASSERT(yvex_runtime_model_open(
                          &model, &request, &failure, &err) != YVEX_OK && !model &&
-                         failure.code == YVEX_RUNTIME_MODEL_FAILURE_ADAPTER,
-                     "runtime model refuses an unregistered target before artifact work");
+                         failure.code == YVEX_RUNTIME_MODEL_FAILURE_INVALID_ARGUMENT,
+                     "runtime model refuses a missing presentation target before artifact work");
     request.target_id = target;
     YVEX_TEST_ASSERT(yvex_runtime_model_open(
                          &model, &request, &failure, &err) == YVEX_OK && model,
-                     "runtime model resolves the registered adapter from caller target text");
+                     "runtime model instantiates compiled execution without family lookup");
     memset(target, 'x', sizeof(target) - 1u);
     target[sizeof(target) - 1u] = '\0';
-    YVEX_TEST_ASSERT(strcmp(yvex_runtime_model_view_get(model)->adapter->target_id,
-                            "deepseek4-v4-flash-dspark") == 0,
-                     "sealed runtime model retains canonical immutable registry storage");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_model_view_get(model)->graph == &yvex_attention_execution_api &&
+            strcmp(yvex_runtime_model_view_get(model)->target_id,
+                   "compiled-fixture") == 0,
+        "sealed runtime model owns its presentation target and generic execution API");
     yvex_runtime_model_close(&model);
     return 0;
 }
@@ -3618,13 +3839,21 @@ static int test_runtime_model_snapshot_drift(
 int yvex_test_runtime_binding(void)
 {
     binding_fixture fixture;
+    yvex_materialization_projection projection = {0};
     yvex_runtime_binding_prepare_result prepared;
     yvex_runtime_binding *binding = NULL;
     char root[] = "/tmp/yvex-runtime-binding-test-XXXXXX";
     char artifact_path[YVEX_PATH_CAP];
+    yvex_error err;
     int rc = 1;
 
     memset(&prepared, 0, sizeof(prepared));
+    yvex_error_clear(&err);
+    YVEX_TEST_ASSERT(
+        yvex_materialization_project_artifact_lowering(NULL, &projection, &err) ==
+                YVEX_ERR_INVALID_ARG &&
+            strcmp(yvex_error_where(&err), "materialization.lowering") == 0,
+        "materialization projection refuses a missing generic lowering map");
     YVEX_TEST_ASSERT(mkdtemp(root) != NULL, "runtime binding temporary root");
     YVEX_TEST_ASSERT(snprintf(artifact_path, sizeof(artifact_path), "%s/runtime.gguf", root) <
                          (int)sizeof(artifact_path) &&
@@ -3632,7 +3861,7 @@ int yvex_test_runtime_binding(void)
                                            artifact_path) &&
                          rewrite_attention_artifact_fixture(artifact_path),
                      "runtime artifact fixture copied and bound to one attention tensor");
-    YVEX_TEST_ASSERT(fixture_build(&fixture, artifact_path, 0),
+    YVEX_TEST_ASSERT(fixture_build(&fixture, artifact_path, 1),
                      "runtime binding fixture built");
     if (test_runtime_capability_contract() != 0) goto done;
     if (test_prepare_reopen_import(&fixture, root, &prepared, &binding) != 0) goto done;
@@ -3640,9 +3869,9 @@ int yvex_test_runtime_binding(void)
     if (test_canonical_refusals(&prepared, root) != 0) goto done;
     if (test_graph_identity_refusals(&prepared, root) != 0) goto done;
     if (test_artifact_copy_portability(&fixture, &prepared, root) != 0) goto done;
-    if (test_model_execution_binding_v8(root) != 0) goto done;
+    if (test_compiled_model_binding_v12(root) != 0) goto done;
     if (test_runtime_family_neutrality() != 0) goto done;
-    if (test_runtime_model_adapter_refusal(&fixture, &prepared) != 0) goto done;
+    if (test_runtime_model_compiled_execution(&fixture, &prepared) != 0) goto done;
     if (test_runtime_model_progress(&fixture, &prepared) != 0) goto done;
     if (test_runtime_model_session_reuse(&fixture, &prepared) != 0) goto done;
     if (test_runtime_concurrent_session_isolation(&fixture, &prepared) != 0) goto done;

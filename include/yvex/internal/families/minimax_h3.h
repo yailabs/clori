@@ -440,98 +440,12 @@ typedef struct {
     const yvex_source_payload_plan *(*plan)(const yvex_minimax_h3_handoff *handoff);
 } yvex_minimax_h3_handoff_api;
 
-typedef enum {
-    YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NONE = 0,
-    YVEX_MINIMAX_H3_COMPONENT_EXECUTION_INVALID_ARGUMENT,
-    YVEX_MINIMAX_H3_COMPONENT_EXECUTION_LIFECYCLE,
-    YVEX_MINIMAX_H3_COMPONENT_EXECUTION_MISSING_TENSOR,
-    YVEX_MINIMAX_H3_COMPONENT_EXECUTION_TENSOR_CONTRACT,
-    YVEX_MINIMAX_H3_COMPONENT_EXECUTION_BUDGET,
-    YVEX_MINIMAX_H3_COMPONENT_EXECUTION_MATERIALIZATION,
-    YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NUMERIC,
-    YVEX_MINIMAX_H3_COMPONENT_EXECUTION_CANCELLED
-} yvex_minimax_h3_component_execution_code;
-typedef struct {
-    yvex_minimax_h3_component_execution_code code;
-    char tensor_name[256];
-    unsigned long long expected, actual;
-    const char *reason;
-} yvex_minimax_h3_component_execution_failure;
-typedef int (*yvex_minimax_h3_cancelled_fn)(void *context);
-typedef struct {
-    const float *latent;
-    unsigned long long batch, latent_channels, latent_steps;
-    float *output;
-    unsigned long long output_capacity;
-    unsigned long long max_workspace_bytes;
-    yvex_minimax_h3_cancelled_fn cancelled;
-    void *cancellation_context;
-} yvex_minimax_h3_audio_decode_options;
-typedef struct {
-    unsigned long long batch, samples_per_channel, output_values;
-    unsigned long long tensor_reads, payload_bytes_read;
-    unsigned long long peak_workspace_bytes;
-    char artifact_identity[65], execution_identity[65];
-    int complete;
-} yvex_minimax_h3_audio_decode_result;
-typedef struct {
-    const float *latent;
-    float *output;
-    unsigned long long batch, latent_channels;
-    unsigned long long latent_frames, latent_height, latent_width;
-    unsigned long long output_capacity, max_workspace_bytes;
-    yvex_minimax_h3_cancelled_fn cancelled;
-    void *cancellation_context;
-} yvex_minimax_h3_video_decode_options;
-typedef struct {
-    unsigned long long batch, frames, height, width, output_values;
-    unsigned long long tensor_reads, payload_bytes_read, peak_workspace_bytes;
-    char artifact_identity[65], execution_identity[65];
-    int complete;
-} yvex_minimax_h3_video_decode_result;
 typedef struct {
     unsigned long long token_count, hidden_width, layer_count, resident_bytes;
     unsigned long long kernel_launches, h2d_bytes, d2h_bytes, device_bytes;
     char residency_identity[65], execution_identity[65];
     int complete;
 } yvex_minimax_h3_conditioning_result;
-typedef enum {
-    YVEX_MINIMAX_H3_TEXT_EMBEDDING = 0,
-    YVEX_MINIMAX_H3_TEXT_INPUT_NORM,
-    YVEX_MINIMAX_H3_TEXT_Q_PROJECTION,
-    YVEX_MINIMAX_H3_TEXT_K_PROJECTION,
-    YVEX_MINIMAX_H3_TEXT_V_PROJECTION,
-    YVEX_MINIMAX_H3_TEXT_O_PROJECTION,
-    YVEX_MINIMAX_H3_TEXT_Q_NORM,
-    YVEX_MINIMAX_H3_TEXT_K_NORM,
-    YVEX_MINIMAX_H3_TEXT_POST_NORM,
-    YVEX_MINIMAX_H3_TEXT_GATE_PROJECTION,
-    YVEX_MINIMAX_H3_TEXT_UP_PROJECTION,
-    YVEX_MINIMAX_H3_TEXT_DOWN_PROJECTION,
-    YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT,
-    YVEX_MINIMAX_H3_TEXT_LAYER_WEIGHT_COUNT = YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT - 1,
-    YVEX_MINIMAX_H3_TEXT_CONDITIONING_LAYERS = 50
-} yvex_minimax_h3_text_weight_slot;
-typedef struct {
-    const unsigned char *encoded;
-    unsigned long long encoded_bytes, row_count, row_width, row_bytes;
-    unsigned int qtype;
-} yvex_minimax_h3_text_weight;
-typedef struct {
-    int (*text_embed_cuda)(yvex_backend *backend, const unsigned char *encoded,
-        unsigned long long encoded_bytes, unsigned int qtype, unsigned long long row_count,
-        unsigned long long row_width, unsigned long long row_bytes,
-        const char *residency_identity, unsigned long long resident_bytes,
-        const unsigned int *token_ids, unsigned long long token_count, float *output,
-        unsigned long long output_capacity, yvex_minimax_h3_conditioning_result *result,
-        yvex_error *err);
-    int (*text_layer_cuda)(yvex_backend *backend,
-        const yvex_minimax_h3_text_weight *weights, unsigned long long layer_count,
-        const char *residency_identity, unsigned long long resident_bytes,
-        const unsigned int *token_ids, unsigned long long token_count, float *output,
-        unsigned long long output_capacity, yvex_minimax_h3_conditioning_result *result,
-        yvex_error *err);
-} yvex_minimax_h3_backend_api;
 typedef struct {
     unsigned long long text_tokens, frames, width, height;
     unsigned long long video_latent_frames, video_latent_height, video_latent_width;
@@ -555,33 +469,15 @@ typedef struct {
         yvex_artifact_admission_failure *failure, yvex_error *err);
     int (*text_encoder_artifact_cuda)(
         const yvex_artifact *artifact, const yvex_gguf *gguf, const yvex_tensor_table *tensors,
+        const yvex_minimax_h3_encoder_signature *geometry,
         const unsigned int *token_ids, unsigned long long token_count,
         unsigned long long layer_count,
         float *output, unsigned long long output_capacity,
         unsigned long long maximum_host_bytes, unsigned long long maximum_device_bytes,
         yvex_minimax_h3_conditioning_result *result, yvex_error *err);
-    int (*audio_vae_decode_cpu)(yvex_materialization_session *session,
-        const yvex_minimax_h3_audio_decode_options *options,
-        yvex_minimax_h3_audio_decode_result *result, yvex_minimax_h3_component_execution_failure *failure,
-        yvex_error *err);
-    int (*audio_vae_execute_artifact_cpu)(
-        const yvex_artifact *artifact, const yvex_gguf *gguf, const yvex_tensor_table *tensors,
-        const yvex_minimax_h3_audio_decode_options *options,
-        yvex_minimax_h3_audio_decode_result *result, yvex_minimax_h3_component_execution_failure *failure,
-        yvex_error *err);
-    int (*video_vae_decode_cpu)(yvex_materialization_session *session,
-        const yvex_minimax_h3_video_decode_options *options,
-        yvex_minimax_h3_video_decode_result *result, yvex_minimax_h3_component_execution_failure *failure,
-        yvex_error *err);
-    int (*video_vae_execute_artifact_cpu)(
-        const yvex_artifact *artifact, const yvex_gguf *gguf, const yvex_tensor_table *tensors,
-        const yvex_minimax_h3_video_decode_options *options,
-        yvex_minimax_h3_video_decode_result *result, yvex_minimax_h3_component_execution_failure *failure,
-        yvex_error *err);
 } yvex_minimax_h3_graph_api;
 const yvex_minimax_h3_api *yvex_model_register_minimax_h3(void);
 const yvex_minimax_h3_transform_api *yvex_model_minimax_h3_transform_api(void);
 const yvex_minimax_h3_handoff_api *yvex_model_minimax_h3_handoff_api(void);
 const yvex_minimax_h3_graph_api *yvex_graph_register_minimax_h3(void);
-const yvex_minimax_h3_backend_api *yvex_backend_register_minimax_h3(void);
 #endif /* INCLUDE_YVEX_INTERNAL_FAMILIES_MINIMAX_H3_H_INCLUDED */

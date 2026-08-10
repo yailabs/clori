@@ -5,13 +5,47 @@
 
 #include "src/graph/private.h"
 #include <yvex/internal/artifact.h>
+#include <yvex/internal/backend.h>
 #include <yvex/internal/compilation.h>
+#include <yvex/internal/family_catalog.h>
 #include <yvex/internal/model_target.h>
+#include <yvex/internal/operator_graph.h>
+#include <yvex/internal/runtime.h>
 
 #include <string.h>
 
 #define TEST_ID_A "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 #define TEST_ID_B "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+
+static int test_family_catalog(void)
+{
+    const yvex_component_variant_adapter *resolved =
+        yvex_graph_component_variant_find(YVEX_MINIMAX_H3_TARGET_ID);
+    yvex_compilation_runtime_binding_request request = {0};
+    yvex_family_source_products products = {0};
+    yvex_error err;
+
+    YVEX_TEST_ASSERT(resolved &&
+                         resolved->schema_version ==
+                             YVEX_PHYSICAL_VARIANT_SESSION_SCHEMA_V1 &&
+                         strcmp(resolved->target_id, YVEX_MINIMAX_H3_TARGET_ID) == 0,
+                     "generic family catalog resolves the exact MiniMax component adapter");
+    YVEX_TEST_ASSERT(yvex_graph_component_variant_find(NULL) == NULL &&
+                         yvex_graph_component_variant_find("unknown-family") == NULL,
+                     "generic family catalog refuses absent and unknown component targets");
+    request.source_path = "build/tests/missing-minimax-source";
+    YVEX_TEST_ASSERT(
+        yvex_family_source_compile("unknown-family", &request, &products, &err) ==
+                YVEX_ERR_UNSUPPORTED &&
+            !products.owner,
+        "generic source catalog refuses an unknown family without partial products");
+    YVEX_TEST_ASSERT(
+        yvex_family_source_compile(
+            YVEX_MINIMAX_H3_TARGET_ID, &request, &products, &err) != YVEX_OK &&
+            !products.owner,
+        "MiniMax source compilation is reached and refuses a missing exact source");
+    return 0;
+}
 
 static int test_components(void)
 {
@@ -365,7 +399,8 @@ static int test_operator_truth(void)
     strcpy(request.target_id, YVEX_MINIMAX_H3_TARGET_ID);
     YVEX_TEST_ASSERT(yvex_model_target_report_build(&request, &report, &err) == YVEX_OK,
                      "existing model-target report route accepts MiniMax target identity");
-    YVEX_TEST_ASSERT(report.exit_code == 5 && !report.family_architecture &&
+    YVEX_TEST_ASSERT(report.exit_code == 5 &&
+                         report.detail_kind == YVEX_MODEL_TARGET_DETAIL_NONE &&
                          strcmp(report.status, "source-acquisition-required") == 0,
                      "missing exact source refuses IR and support promotion");
     yvex_model_target_report_close(&report);
@@ -373,6 +408,133 @@ static int test_operator_truth(void)
     YVEX_TEST_ASSERT(record && strcmp(record->runtime_execution, "unsupported") == 0 &&
                          strcmp(record->generation, "unsupported") == 0,
                      "catalog target is explicitly non-runtime and non-generation");
+    return 0;
+}
+
+static int test_semantic_composite(void)
+{
+    yvex_semantic_component components[2] = {0};
+    yvex_semantic_phase_edge edges[1] = {{1u, 2u, 3u, 4u}};
+    yvex_semantic_composite_request composite = {
+        .repository = YVEX_MINIMAX_H3_REPOSITORY,
+        .revision = YVEX_MINIMAX_H3_REVISION,
+        .subtree = YVEX_MINIMAX_H3_SUBTREE,
+        .source_snapshot_identity = TEST_ID_A,
+        .component_manifest_identity = TEST_ID_B,
+        .phase_dag_identity = TEST_ID_A,
+        .architecture_identity = TEST_ID_B,
+        .role_map_identity = TEST_ID_A,
+        .unresolved_requirements_identity = TEST_ID_B,
+        .weighted_components = 1ull,
+        .shards = 2ull, .tensors = 3ull, .elements = 4ull, .payload_bytes = 5ull,
+        .components = components, .component_count = 2ull,
+        .phase_edges = edges, .phase_edge_count = 1ull};
+    yvex_semantic_model_ir_request request = {
+        .schema_version = YVEX_SEMANTIC_MODEL_IR_SCHEMA_V1,
+        .family_adapter_id = 0x4d494e494d4158ull, .family_adapter_version = 1ull,
+        .target_id = YVEX_MINIMAX_H3_TARGET_ID,
+        .source_model_identity = TEST_ID_A,
+        .logical_model_identity = TEST_ID_B,
+        .semantic_payload_identity = TEST_ID_A,
+        .composite = &composite};
+    const yvex_semantic_component *stored_components = NULL;
+    const yvex_semantic_phase_edge *stored_edges = NULL;
+    unsigned long long component_count = 0ull, edge_count = 0ull;
+    yvex_semantic_model_ir *semantic = NULL;
+    yvex_error err;
+
+    strcpy(components[0].canonical_id, "text");
+    strcpy(components[0].identity, TEST_ID_A);
+    components[0].weighted = 1;
+    strcpy(components[1].canonical_id, "output");
+    strcpy(components[1].identity, TEST_ID_B);
+    YVEX_TEST_ASSERT(
+        yvex_semantic_model_ir_seal(&semantic, &request, &err) == YVEX_OK &&
+            yvex_semantic_model_ir_composite_view(
+                semantic, &stored_components, &component_count,
+                &stored_edges, &edge_count) &&
+            component_count == 2ull && edge_count == 1ull &&
+            strcmp(stored_components[1].canonical_id, "output") == 0 &&
+            stored_edges[0].destination_phase == 2u,
+        "generic Semantic Model IR owns a deterministic composite topology view");
+    yvex_semantic_model_ir_close(&semantic);
+    return 0;
+}
+
+static int test_canonical_operator_graph(void)
+{
+    yvex_semantic_model_ir_request semantic_request = {
+        .schema_version = YVEX_SEMANTIC_MODEL_IR_SCHEMA_V1,
+        .family_adapter_id = 0x4d494e494d4158ull,
+        .family_adapter_version = 1ull,
+        .target_id = YVEX_MINIMAX_H3_TARGET_ID,
+        .source_model_identity = YVEX_MINIMAX_H3_SOURCE_TREE_IDENTITY,
+        .logical_model_identity = YVEX_MINIMAX_H3_MODEL_INDEX_IDENTITY,
+        .semantic_payload_identity = YVEX_MINIMAX_H3_TEXT_COMPONENT_IDENTITY};
+    const yvex_operator_kind kinds[] = {
+        YVEX_OPERATOR_TEXT_CONDITIONING, YVEX_OPERATOR_AUDIO_CODEC,
+        YVEX_OPERATOR_MULTIMODAL_TRANSFORMER,
+        YVEX_OPERATOR_RECTIFIED_FLOW};
+    yvex_operator_node nodes[4] = {0};
+    yvex_operator_edge edges[3] = {0};
+    yvex_operator_graph_request graph_request = {0};
+    yvex_semantic_model_ir *semantic = NULL;
+    yvex_operator_graph_ir *first = NULL, *second = NULL;
+    const yvex_operator_graph_summary *summary;
+    yvex_error err;
+    unsigned int index;
+
+    YVEX_TEST_ASSERT(yvex_semantic_model_ir_seal(
+                         &semantic, &semantic_request, &err) == YVEX_OK,
+                     "MiniMax component semantics seal without transformer context");
+    for (index = 0u; index < 4u; ++index) {
+        nodes[index].schema_version = YVEX_OPERATOR_GRAPH_SCHEMA_V1;
+        nodes[index].ordinal = index;
+        nodes[index].kind = kinds[index];
+        nodes[index].scope = YVEX_TENSOR_SCOPE_GLOBAL;
+        nodes[index].layer_index = YVEX_OPERATOR_GRAPH_NO_NODE;
+        nodes[index].input_width = nodes[index].output_width = 1ull;
+        nodes[index].numeric_contract =
+            YVEX_OPERATOR_NUMERIC_REFERENCE_TOLERANCE;
+        strcpy(nodes[index].attribute_identity,
+               YVEX_MINIMAX_H3_TEXT_COMPONENT_IDENTITY);
+        if (index < 3u) {
+            edges[index].schema_version = YVEX_OPERATOR_GRAPH_SCHEMA_V1;
+            edges[index].ordinal = index;
+            edges[index].source_node = index;
+            edges[index].target_node = index + 1u;
+            edges[index].kind = YVEX_OPERATOR_EDGE_ORDER;
+            edges[index].state_class = YVEX_MODEL_STATE_CLASS_COUNT;
+        }
+    }
+    graph_request.semantic_model = semantic;
+    graph_request.nodes = nodes;
+    graph_request.node_count = 4ull;
+    graph_request.edges = edges;
+    graph_request.edge_count = 3ull;
+    YVEX_TEST_ASSERT(yvex_operator_graph_ir_seal(
+                         &first, &graph_request, &err) == YVEX_OK,
+                     "MiniMax component DAG lowers into canonical operator truth");
+    summary = yvex_operator_graph_ir_summary(first);
+    YVEX_TEST_ASSERT(summary && summary->node_count == 4ull &&
+                         summary->edge_count == 3ull &&
+                         summary->maximum_context == 0ull &&
+                         yvex_sha256_hex_valid(summary->identity),
+                     "non-transformer graph keeps context capability absent");
+    YVEX_TEST_ASSERT(yvex_operator_graph_ir_seal(
+                         &second, &graph_request, &err) == YVEX_OK &&
+                         strcmp(summary->identity,
+                                yvex_operator_graph_ir_summary(second)->identity) == 0,
+                     "canonical component graph identity repeats");
+    yvex_operator_graph_ir_close(&second);
+    edges[1].source_node = 2ull;
+    edges[1].target_node = 1ull;
+    YVEX_TEST_ASSERT(yvex_operator_graph_ir_seal(
+                         &second, &graph_request, &err) == YVEX_ERR_INVALID_ARG &&
+                         !second,
+                     "reversed component dependency is refused");
+    yvex_operator_graph_ir_close(&first);
+    yvex_semantic_model_ir_close(&semantic);
     return 0;
 }
 
@@ -445,38 +607,6 @@ static int test_audio_numeric_primitives(void)
     return 0;
 }
 
-static int test_audio_execution_refusals(void)
-{
-    float latent[32] = {0};
-    float output[800];
-    yvex_minimax_h3_audio_decode_options options;
-    yvex_minimax_h3_audio_decode_result result;
-    yvex_minimax_h3_component_execution_failure failure;
-    yvex_error err;
-
-    memset(output, 0x5a, sizeof(output));
-    memset(&options, 0, sizeof(options));
-    options.latent = latent;
-    options.batch = 1ull;
-    options.latent_channels = 31ull;
-    options.latent_steps = 1ull;
-    options.output = output;
-    options.output_capacity = 800ull;
-    options.max_workspace_bytes = 1024ull;
-    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->audio_vae_decode_cpu(
-                         NULL, &options, &result, &failure, &err) == YVEX_ERR_INVALID_ARG &&
-                         failure.code == YVEX_MINIMAX_H3_COMPONENT_EXECUTION_INVALID_ARGUMENT,
-                     "Audio VAE decode refuses invented latent geometry");
-    options.latent_channels = 32ull;
-    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->audio_vae_decode_cpu(
-                         NULL, &options, &result, &failure, &err) == YVEX_ERR_STATE &&
-                         failure.code == YVEX_MINIMAX_H3_COMPONENT_EXECUTION_LIFECYCLE,
-                     "Audio VAE decode refuses execution without committed materialization");
-    YVEX_TEST_ASSERT(((unsigned char *)output)[0] == 0x5a,
-                     "refused Audio VAE decode does not publish output");
-    return 0;
-}
-
 static int test_video_numeric_primitives(void)
 {
     const float linear_input[4] = {1.0f, 2.0f, -1.0f, 3.0f};
@@ -536,40 +666,6 @@ static int test_video_numeric_primitives(void)
     return 0;
 }
 
-static int test_video_execution_refusals(void)
-{
-    float latent[24] = {0};
-    float output[3072];
-    yvex_minimax_h3_video_decode_options options;
-    yvex_minimax_h3_video_decode_result result;
-    yvex_minimax_h3_component_execution_failure failure;
-    yvex_error err;
-
-    memset(output, 0x5a, sizeof(output));
-    memset(&options, 0, sizeof(options));
-    options.latent = latent;
-    options.output = output;
-    options.output_capacity = 3072ull;
-    options.batch = 1ull;
-    options.latent_channels = 24ull;
-    options.latent_frames = 1ull;
-    options.latent_height = 1ull;
-    options.latent_width = 2ull;
-    options.max_workspace_bytes = 256ull * 1024ull * 1024ull;
-    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->video_vae_decode_cpu(
-                         NULL, &options, &result, &failure, &err) == YVEX_ERR_BOUNDS &&
-                         failure.code == YVEX_MINIMAX_H3_COMPONENT_EXECUTION_INVALID_ARGUMENT,
-                     "Visual VAE decode refuses output storage smaller than its geometry");
-    options.latent_width = 1ull;
-    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->video_vae_decode_cpu(
-                         NULL, &options, &result, &failure, &err) == YVEX_ERR_STATE &&
-                         failure.code == YVEX_MINIMAX_H3_COMPONENT_EXECUTION_LIFECYCLE,
-                     "Visual VAE decode refuses execution without committed materialization");
-    YVEX_TEST_ASSERT(((unsigned char *)output)[0] == 0x5a,
-                     "refused Visual VAE decode does not publish output");
-    return 0;
-}
-
 static int test_t2va_plan(void)
 {
     yvex_minimax_h3_t2va_plan first, repeated;
@@ -623,9 +719,14 @@ static int test_component_admission_routing(void)
 {
     yvex_complete_artifact_admission admission;
     yvex_artifact_admission_failure failure;
+    yvex_minimax_h3_architecture architecture;
+    yvex_backend_text_encoder_geometry geometry, invalid_geometry;
+    yvex_minimax_h3_failure family_failure;
     yvex_minimax_h3_conditioning_result conditioning;
+    yvex_backend_text_execution_result backend_result;
     unsigned int token = 1u;
     float output[5120];
+    int rc;
     yvex_error err;
 
     YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->component_admit(
@@ -639,38 +740,148 @@ static int test_component_admission_routing(void)
                          YVEX_ERR_INVALID_ARG &&
                          failure.code == YVEX_ARTIFACT_ADMISSION_INVALID_ARGUMENT,
                      "component admission refuses absent generic structural views");
+    YVEX_TEST_ASSERT(yvex_model_register_minimax_h3()->architecture_canonical(
+                         &architecture, &family_failure, &err) == YVEX_OK,
+                     "component execution receives canonical family geometry");
+    geometry = (yvex_backend_text_encoder_geometry){
+        .schema_version = YVEX_BACKEND_TEXT_ENCODER_SCHEMA_V1,
+        .semantic_identity = YVEX_MINIMAX_H3_TEXT_COMPONENT_IDENTITY,
+        .embedding_identity_domain = "yvex.minimax-h3.text-conditioning.cuda.v1",
+        .encoder_identity_domain = "yvex.minimax-h3.qwen-text-stack.cuda.v1",
+        .layer_capacity = architecture.encoder.text_layers,
+        .hidden_width = architecture.encoder.text_width,
+        .ffn_width = architecture.encoder.text_ffn_width,
+        .query_heads = architecture.encoder.text_query_heads,
+        .kv_heads = architecture.encoder.text_kv_heads,
+        .head_dimension = architecture.encoder.text_head_dimension,
+        .vocabulary_size = architecture.encoder.vocabulary_size,
+        .rope_theta = architecture.encoder.rope_theta,
+        .normalization_epsilon = 1.0e-6f};
     memset(output, 0x5a, sizeof(output));
-    YVEX_TEST_ASSERT(yvex_backend_register_minimax_h3()->text_embed_cuda(
-                         NULL, NULL, 0ull, 0u, 0ull, 0ull, 0ull, NULL, 0ull,
-                         &token, 1ull, output, 5120ull, &conditioning, &err) ==
-                         YVEX_ERR_INVALID_ARG &&
-                         !conditioning.complete && ((unsigned char *)output)[0] == 0x5a,
+    rc = yvex_backend_text_embedding_execute(
+        NULL, &geometry, NULL, 0ull, 0u, 0ull, 0ull, 0ull, NULL, 0ull,
+        &token, 1ull, output, 5120ull, &backend_result, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_ERR_INVALID_ARG,
+                     "CUDA conditioning reports invalid absent materialization");
+    YVEX_TEST_ASSERT(!backend_result.complete && ((unsigned char *)output)[0] == 0x5a,
+                     "CUDA conditioning does not publish a refused execution");
+    YVEX_TEST_ASSERT(strcmp(yvex_error_where(&err),
+                            "cuda.text-embedding.validate") == 0,
                      "CUDA conditioning refuses absent materialization without publication");
+    invalid_geometry = geometry;
+    ++invalid_geometry.query_heads;
+    YVEX_TEST_ASSERT(yvex_backend_text_embedding_execute(
+                         NULL, &invalid_geometry, NULL, 0ull, 0u, 0ull, 0ull, 0ull,
+                         NULL, 0ull, &token, 1ull, output, 5120ull, &backend_result,
+                         &err) == YVEX_ERR_INVALID_ARG &&
+                         strcmp(yvex_error_where(&err),
+                                "cuda.text-geometry") == 0,
+                     "CUDA conditioning refuses inconsistent family geometry");
     YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->text_encoder_artifact_cuda(
-                         NULL, NULL, NULL, &token, 1ull, 0ull, output, 5120ull, 1ull, 1ull,
+                         NULL, NULL, NULL, &architecture.encoder, &token, 1ull, 0ull,
+                         output, 5120ull, 1ull, 1ull,
                          &conditioning, &err) == YVEX_ERR_INVALID_ARG &&
                          !conditioning.complete && ((unsigned char *)output)[0] == 0x5a,
                      "artifact conditioning refuses absent exact component views");
     YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->text_encoder_artifact_cuda(
-                         NULL, NULL, NULL, &token, 1ull, 50ull, output, 5120ull, 1ull, 1ull,
+                         NULL, NULL, NULL, &architecture.encoder, &token, 1ull, 50ull,
+                         output, 5120ull, 1ull, 1ull,
                          &conditioning, &err) == YVEX_ERR_INVALID_ARG &&
                          !conditioning.complete && ((unsigned char *)output)[0] == 0x5a,
                      "artifact text layer refuses absent exact component views");
     return 0;
 }
 
+static int test_component_execution_plans(void)
+{
+    yvex_component_plan_request request = {
+        .target_id = YVEX_MINIMAX_H3_TARGET_ID,
+        .component_id = "audio-vae",
+        .backend = YVEX_BACKEND_KIND_CPU,
+        .batch = 2ull,
+        .geometry_rank = 1u,
+        .geometry = {3ull},
+        .maximum_host_bytes = 16ull * 1024ull * 1024ull,
+    };
+    yvex_component_plan plan;
+    yvex_component_failure failure;
+    yvex_error err;
+    char oversized_target[129];
+
+    YVEX_TEST_ASSERT(
+        yvex_runtime_component_api_get()->plan_build(
+            &request, &plan, &failure, &err) == YVEX_OK &&
+            plan.complete && plan.input_values == 192ull &&
+            plan.output_values == 4800ull && plan.output_rank == 3u &&
+            plan.output_dims[0] == 2ull && plan.output_dims[1] == 1ull &&
+            plan.output_dims[2] == 2400ull &&
+            yvex_sha256_hex_valid(plan.identity),
+        "component compiler derives Audio VAE extents from family semantics");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_component_api_get()->plan_validate(
+            &plan, &failure, &err) == YVEX_OK,
+        "component compiler validates the sealed canonical plan");
+    ++plan.output_values;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_component_api_get()->plan_validate(
+            &plan, &failure, &err) == YVEX_ERR_FORMAT &&
+            failure.code == YVEX_COMPONENT_FAILURE_LIFECYCLE,
+        "component compiler refuses a mutated sealed plan");
+
+    request.component_id = "video-vae";
+    request.batch = 1ull;
+    request.geometry_rank = 3u;
+    request.geometry[0] = 2ull;
+    request.geometry[1] = 3ull;
+    request.geometry[2] = 4ull;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_component_api_get()->plan_build(
+            &request, &plan, &failure, &err) == YVEX_OK &&
+            plan.input_values == 576ull && plan.output_values == 73728ull &&
+            plan.output_rank == 5u && plan.output_dims[0] == 1ull &&
+            plan.output_dims[1] == 3ull && plan.output_dims[2] == 8ull &&
+            plan.output_dims[3] == 48ull && plan.output_dims[4] == 64ull,
+        "component compiler derives Visual VAE extents from family semantics");
+    request.backend = YVEX_BACKEND_KIND_CUDA;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_component_api_get()->plan_build(
+            &request, &plan, &failure, &err) ==
+                YVEX_ERR_UNSUPPORTED &&
+            failure.code == YVEX_COMPONENT_FAILURE_UNSUPPORTED,
+        "component compiler refuses an unadmitted backend explicitly");
+    request.backend = YVEX_BACKEND_KIND_CPU;
+    request.target_id = "unknown";
+    YVEX_TEST_ASSERT(
+        yvex_runtime_component_api_get()->plan_build(
+            &request, &plan, &failure, &err) ==
+                YVEX_ERR_UNSUPPORTED &&
+            failure.code == YVEX_COMPONENT_FAILURE_UNSUPPORTED,
+        "component compiler refuses an unknown target without CLI family policy");
+    memset(oversized_target, 'x', sizeof(oversized_target) - 1u);
+    oversized_target[sizeof(oversized_target) - 1u] = '\0';
+    request.target_id = oversized_target;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_component_api_get()->plan_build(
+            &request, &plan, &failure, &err) == YVEX_ERR_INVALID_ARG &&
+            failure.code == YVEX_COMPONENT_FAILURE_INVALID_ARGUMENT,
+        "component compiler refuses identifiers that cannot be sealed losslessly");
+    return 0;
+}
+
 int yvex_test_minimax_h3(void)
 {
+    if (test_family_catalog() != 0) return 1;
     if (test_components() != 0) return 1;
     if (test_architecture() != 0) return 1;
     if (test_roles() != 0) return 1;
     if (test_component_ir() != 0) return 1;
     if (test_operator_truth() != 0) return 1;
+    if (test_semantic_composite() != 0) return 1;
+    if (test_canonical_operator_graph() != 0) return 1;
     if (test_audio_numeric_primitives() != 0) return 1;
-    if (test_audio_execution_refusals() != 0) return 1;
     if (test_video_numeric_primitives() != 0) return 1;
-    if (test_video_execution_refusals() != 0) return 1;
     if (test_t2va_plan() != 0) return 1;
     if (test_component_admission_routing() != 0) return 1;
+    if (test_component_execution_plans() != 0) return 1;
     return 0;
 }

@@ -1,8 +1,7 @@
 
 #include <string.h>
 
-#include <yvex/gguf.h>
-#include <yvex/internal/families/deepseek_v4.h>
+#include <yvex/internal/compiler_source.h>
 #include <yvex/internal/gguf.h>
 
 #include "tests/test.h"
@@ -10,10 +9,13 @@
 static int expect_map(const char *native, yvex_tensor_role role, const char *target)
 {
     char out[256];
+    const yvex_gguf_conversion_projection *projection;
     yvex_tensor_role got_role;
     yvex_weight_mapping_issue_kind issue;
 
-    YVEX_TEST_ASSERT(yvex_gguf_map_deepseek_name(native, out, sizeof(out), &got_role, &issue) == 1,
+    projection = yvex_model_conversion_projection_find("deepseek4");
+    YVEX_TEST_ASSERT(projection &&
+                         projection->map_name(native, out, sizeof(out), &got_role, &issue) == 1,
                      "native name maps");
     YVEX_TEST_ASSERT(got_role == role, "role matches");
     YVEX_TEST_ASSERT(strcmp(out, target) == 0, "target matches");
@@ -50,13 +52,44 @@ static int test_deepseek_patterns(void)
 static int test_unknown(void)
 {
     char out[256];
+    const yvex_gguf_conversion_projection *projection;
     yvex_tensor_role role;
     yvex_weight_mapping_issue_kind issue;
 
-    YVEX_TEST_ASSERT(yvex_gguf_map_deepseek_name("unknown.weight", out, sizeof(out), &role, &issue) == 0,
+    projection = yvex_model_conversion_projection_find("deepseek");
+    YVEX_TEST_ASSERT(projection &&
+                         projection->map_name("unknown.weight", out, sizeof(out), &role, &issue) ==
+                             0,
                      "unknown native name unmapped");
     YVEX_TEST_ASSERT(role == YVEX_TENSOR_ROLE_UNKNOWN, "unknown role");
     YVEX_TEST_ASSERT(issue == YVEX_WEIGHT_MAPPING_ISSUE_UNKNOWN_NATIVE_NAME, "unknown native issue");
+    return 0;
+}
+
+static int test_compilation_source_contract(void)
+{
+    yvex_compilation_source_failure failure = {0};
+    yvex_error err = {0};
+    int rc;
+
+    YVEX_TEST_ASSERT(yvex_compilation_source_operations.open != NULL,
+                     "compilation-source open operation available");
+    YVEX_TEST_ASSERT(yvex_compilation_source_operations.close != NULL,
+                     "compilation-source close operation available");
+    YVEX_TEST_ASSERT(yvex_compilation_source_operations.summary != NULL,
+                     "compilation-source summary operation available");
+    YVEX_TEST_ASSERT(yvex_compilation_source_operations.failure_name != NULL,
+                     "compilation-source failure naming available");
+    rc = yvex_compilation_source_operations.open(NULL, NULL, NULL, &failure, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_ERR_INVALID_ARG,
+                     "compilation-source refuses an empty projection");
+    YVEX_TEST_ASSERT(failure.code == YVEX_COMPILATION_SOURCE_FAILURE_INVALID_ARGUMENT,
+                     "compilation-source refusal is typed");
+    YVEX_TEST_ASSERT(strcmp(yvex_error_where(&err), "compilation.source") == 0,
+                     "compilation-source refusal owns its stage");
+    YVEX_TEST_ASSERT(strcmp(yvex_compilation_source_operations.failure_name(failure.code),
+                            "invalid-argument") == 0,
+                     "compilation-source failure name is stable");
     return 0;
 }
 
@@ -64,5 +97,6 @@ int yvex_test_deepseek_adapter(void)
 {
     if (test_deepseek_patterns() != 0) return 1;
     if (test_unknown() != 0) return 1;
+    if (test_compilation_source_contract() != 0) return 1;
     return 0;
 }

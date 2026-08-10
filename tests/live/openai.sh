@@ -1,9 +1,8 @@
 #!/bin/sh
-# One resident daemon must serve Unix and OpenAI Chat/Responses/SSE without reopening the model.
+# One resident server must serve Unix and OpenAI Chat/Responses/SSE without reopening the model.
 set -eu
 
 YVEX_BIN=${YVEX_BIN:-./yvex}
-YVEXD_BIN=${YVEXD_BIN:-./yvexd}
 ARTIFACT=${YVEX_MODEL_ARTIFACT:?YVEX_MODEL_ARTIFACT is required}
 BINDING=${YVEX_RUNTIME_BINDING:?YVEX_RUNTIME_BINDING is required}
 . tests/support/cleanup.sh
@@ -12,7 +11,23 @@ test -f "$ARTIFACT"
 test -f "$BINDING"
 root=$(mktemp -d "${TMPDIR:-/tmp}/yvex-openai-live.XXXXXX")
 runtime="$root/runtime"
-mkdir -m 700 "$runtime"
+home="$root/home"
+mkdir -m 700 "$runtime" "$home"
+mkdir -p "$home/.local/share/yvex"
+cat >"$home/.local/share/yvex/models.local.json" <<EOF
+{
+  "schema": "yvex.models.local.v3",
+  "models": [{
+    "alias": "deepseek-openai-live",
+    "path": "$ARTIFACT",
+    "runtime_binding": "$BINDING",
+    "runtime_target": "deepseek4-v4-flash-dspark",
+    "runtime_backend": "cuda",
+    "runtime_mode": "dspark",
+    "runtime_context": 512
+  }]
+}
+EOF
 socket="$runtime/yvex/yvexd.sock"
 daemon_pid=
 cleanup()
@@ -20,7 +35,7 @@ cleanup()
     status=$?
     trap - EXIT HUP INT TERM
     if test -n "$daemon_pid" && kill -0 "$daemon_pid" 2>/dev/null; then
-        XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" runtime stop >/dev/null 2>&1 || true
+        XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server stop >/dev/null 2>&1 || true
         kill "$daemon_pid" 2>/dev/null || true
         wait "$daemon_pid" 2>/dev/null || true
     fi
@@ -43,8 +58,8 @@ cleanup()
 trap cleanup EXIT HUP INT TERM
 
 port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
-XDG_RUNTIME_DIR="$runtime" "$YVEXD_BIN" --model "$ARTIFACT" \
-    --runtime-binding "$BINDING" --backend cuda --context 512 \
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server deepseek-openai-live \
+    --backend cuda --ctx 512 \
     --console raw --trace-level stages --openai on --openai-port "$port" \
     --openai-timeout-ms 3600000 >"$root/raw.jsonl" 2>"$root/daemon.err" &
 daemon_pid=$!
@@ -52,7 +67,7 @@ daemon_pid=$!
 ready=0
 attempt=0
 while test "$attempt" -lt 3600; do
-    if XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" runtime status --json \
+    if XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server status --json \
         >"$root/status.json" 2>/dev/null; then
         ready=1
         break
@@ -111,7 +126,7 @@ python3 - "$root" <<'PY'
 import json, pathlib, sys
 root = pathlib.Path(sys.argv[1])
 health = json.load(open(root / 'health.json'))
-assert health['adapter'] == 'ready' and health['yvexd'] == 'ready'
+assert health['adapter'] == 'ready' and health['server'] == 'ready'
 chat = json.load(open(root / 'chat.json'))
 assert chat['object'] == 'chat.completion' and chat['usage']['total_tokens'] >= 1
 assert chat['choices'][0]['finish_reason'] in ('stop', 'length')
@@ -137,7 +152,7 @@ curl --max-time 0.2 -sS -N -H 'Content-Type: application/json' \
     "$base/v1/chat/completions" \
     -d "{\"model\":\"$model\",\"messages\":[{\"role\":\"user\",\"content\":\"Write a long answer.\"}],\"temperature\":0,\"max_completion_tokens\":64,\"stream\":true}" \
     >"$root/cancel.sse" 2>"$root/cancel.err" || true
-XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" runtime status --json >"$root/status.after.json"
+XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server status --json >"$root/status.after.json"
 grep -F '"model_open_count":1' "$root/status.after.json" >/dev/null
 grep -F '"artifact_open_count":1' "$root/status.after.json" >/dev/null
 grep -F '"materialization_count":1' "$root/status.after.json" >/dev/null
@@ -166,7 +181,7 @@ grep -F '"provider":"openai"' "$root/raw.jsonl" >/dev/null
 ! grep -F 'Reply briefly.' "$root/raw.jsonl" >/dev/null
 
 served_pid=$daemon_pid
-XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" runtime stop >/dev/null
+XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server stop >/dev/null
 wait "$daemon_pid"
 daemon_pid=
 grep -F '"kind":"runtime.shutdown.complete"' "$root/raw.jsonl" >/dev/null

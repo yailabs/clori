@@ -3,7 +3,9 @@
  * source delivery is not conversion, artifact emission, or runtime support.
  */
 #define _POSIX_C_SOURCE 200809L
+#include <yvex/internal/artifact_lowering.h>
 #include <yvex/internal/compilation.h>
+#include <yvex/internal/compiler_source.h>
 #include <yvex/internal/families/deepseek_v4.h>
 
 #include <stdio.h>
@@ -101,7 +103,7 @@ int main(int argc, char **argv)
     const yvex_source_payload_plan_summary *plan_summary;
     const yvex_transform_ir_summary *transform_summary;
     const yvex_transform_binding_summary *binding_summary;
-    const yvex_deepseek_gguf_map_summary *map_summary;
+    const yvex_artifact_lowering_summary *map_summary;
     const yvex_source_verification *verification;
     yvex_source_payload_session *session;
     yvex_source_payload_session_facts facts;
@@ -154,7 +156,7 @@ int main(int argc, char **argv)
         yvex_model_register_deepseek_v4()->payload.transform_ir(handoff));
     binding_summary = yvex_transform_binding_summary_get(
         yvex_model_register_deepseek_v4()->payload.binding(handoff));
-    map_summary = yvex_model_register_deepseek_v4()->lowering.summary(
+    map_summary = yvex_model_register_deepseek_v4()->lowering.map->summary(
         yvex_model_register_deepseek_v4()->payload.map(handoff));
     verification = yvex_model_register_deepseek_v4()->payload.verification(handoff);
     session = yvex_model_register_deepseek_v4()->payload.session(handoff);

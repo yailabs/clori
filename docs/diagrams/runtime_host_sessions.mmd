@@ -6,7 +6,7 @@ flowchart LR
         apps[SDKs / applications]
     end
 
-    subgraph host[yvexd — long-lived runtime host]
+    subgraph host[yvex server MODEL — foreground runtime host]
         protocol[Private local protocol]
         openai[In-process OpenAI adapter]
         resources[Immutable model, tokenizer,<br/>binding, and residency]

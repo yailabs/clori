@@ -48,6 +48,7 @@ docs/migrations/deepseek-dspark-source.md	migration	canonical	contributors	retai
 docs/migrations/documentation-architecture-v1.md	migration	canonical	contributors	retained	documentation_architecture_v1_migration
 docs/milestones/code-commentary.md	milestone	canonical	contributors	accepted	code_commentary_boundary
 docs/milestones/command-architecture.md	milestone	canonical	contributors	accepted	command_architecture_boundary
+docs/milestones/core-compilation-consolidation.md	milestone	canonical	contributors	accepted	core_compilation_family_consolidation_boundary
 docs/milestones/deepseek-dspark-rebase.md	milestone	canonical	contributors	accepted	deepseek_dspark_rebase_boundary
 docs/milestones/documentation-architecture.md	milestone	canonical	contributors	accepted	documentation_architecture_boundary
 docs/milestones/gb10-optimization.md	milestone	canonical	contributors	planned	gb10_optimization_boundary

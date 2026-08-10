@@ -39,8 +39,8 @@ src/runtime/             family-neutral immutable model, sessions, execution and
 
 ```text
 registry JSON -> strict build validation -> immutable compiled descriptors -> yvex dispatch/help
-product argv -> protocol v8 -> yvexd worker/session -> typed events/results -> client render
-application -> OpenAI profile -> provider contract -> local protocol -> same yvexd worker/session
+product argv -> protocol v8 -> server worker/session -> typed events/results -> client render
+application -> OpenAI profile -> provider contract -> local protocol -> same server worker/session
 engineering argv -> nested owner route -> report/domain -> engineering render -> cli/io
 
 file writer -> explicit local files only
@@ -80,6 +80,9 @@ domain algorithms. No writer owns command output.
 - Source JSON owns bounded structured parsing primitives, without source policy.
 - Source provenance owns pinned repository/revision and manifest facts.
 - Source family adapters own raw configuration and tokenizer sidecar facts.
+- The tokenizer compilation owner converts those source-authored facts into one
+  pointer-free identity-bound policy; runtime and server consume it without
+  importing or enumerating family implementations.
 - Source inventory owns indexed or explicitly header-derived shard inventory
   and the single canonical safetensors header pass. Its retained immutable
   snapshot carries deterministic tensor identity and lookup facts to consumers.
@@ -164,7 +167,7 @@ domain algorithms. No writer owns command output.
 | `src/gguf/core.c` | file-backed reader lifecycle, policy defaults, typed failure ABI, decoding, metadata admission, and owned container view |
 | `src/gguf/writer.c` | transactional GGUF v3 writer planning and emission |
 | `src/artifact/roundtrip_gate.c` | writer-reader equivalence boundary |
-| `src/model/target/tensor_naming.c` | emitted GGUF tensor names and layout projection |
+| `src/graph/families/deepseek_v4.c` | DeepSeek tensor roles, emitted GGUF names, and family lowering policy |
 | `src/gguf/descriptor.c` | GGUF descriptor facts |
 
 ## Artifact and materialization ownership map
@@ -224,7 +227,7 @@ forbidden.
 | `src/graph/numeric.c` | reusable attention and bounded tensor numerical operations without family policy |
 | `src/graph/state.c` | immutable prior-state views, candidate deltas, and transactional attention-state lifecycle |
 | `src/graph/families/deepseek_v4.c` | DeepSeek schedule, recurrence and CPU/CUDA operation composition |
-| `src/backend/cuda/families/deepseek_v4.c` | irreducible fused CUDA lowering for the DeepSeek graph recipe; no runtime or model authority |
+| `src/backend/cuda/attention.c` | generic CUDA execution of a fully compiled encoded-attention job; no model topology or family authority |
 | `src/backend/core.c` | backend lifecycle, tensor binding and canonical qtype compute projection |
 | `src/backend/core.c` | backend lifecycle, tensor binding, canonical qtype compute projection, and typed device/context/bundle/memory reports |
 | `src/backend/cuda/capability.c` | atomic generated-bundle admission, exact CUDA capability, launch/sync demotion, and cleanup failure |
@@ -245,7 +248,7 @@ forbidden.
 | Registry validation and deterministic C projection | `tools/generate_operator_registry.py` |
 | Generated immutable descriptor data | `build/generated/operator/*` |
 | Product entry, REPL and compact render | `src/cli/io/client.c` |
-| Runtime-host entry | `src/daemon/yvexd.c` |
+| Foreground server entry | `src/cli/io/server.c` |
 | Local protocol and host | `src/server/*` |
 | Provider-neutral application contract | `include/yvex/provider.h`, `src/provider/core.c` |
 | OpenAI compatibility adapter | `src/server/openai/*` |

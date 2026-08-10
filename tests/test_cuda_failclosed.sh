@@ -23,18 +23,18 @@ fi
 for contract in \
     'max_host_bytes' \
     'peak_host_bytes' \
-    'cuda.deepseek_attention.validate.geometry' \
-    'cuda.deepseek_attention.validate.alias' \
-    'cuda.deepseek_attention.validate.host_budget' \
-    'cuda.deepseek_attention.context'; do
+    'cuda.attention.validate.geometry' \
+    'cuda.attention.validate.alias' \
+    'cuda.attention.validate.host_budget' \
+    'cuda.attention.context'; do
     grep -R -F "$contract" include/yvex/backend.h \
-        src/backend/cuda/families/deepseek_v4.c >/dev/null ||
+        src/backend/cuda/attention.c >/dev/null ||
         fail "encoded-attention admission missing: $contract"
 done
 grep -F 'atomicCAS(status, 0, 2)' src/backend/cuda/kernels.cu >/dev/null ||
     fail "encoded-attention kernels do not publish contract failures"
 if grep -E 'yvex_(attention|graph)|cpu_(chunk|probe|reference)' \
-    src/backend/cuda/families/deepseek_v4.c >/dev/null; then
+    src/backend/cuda/attention.c >/dev/null; then
     fail "encoded-attention CUDA owner contains a CPU numerical fallback"
 fi
 

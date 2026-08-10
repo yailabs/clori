@@ -495,10 +495,10 @@ int yvex_model_registry_default_path(char *out,
 }
 
 /*
- * Validate the persisted facts needed to construct one future yvexd invocation.
+ * Validate the persisted facts needed to construct one future server invocation.
  *
- * This deliberately stops before artifact or binding admission: selection is inert, while the
- * daemon remains the only owner allowed to authenticate and open the runtime model.
+ * This deliberately stops before artifact or binding admission: registry inspection is inert,
+ * while the server remains the only owner allowed to authenticate and open the runtime model.
  */
 int yvex_model_registry_startup_validate(const yvex_model_registry_entry *entry,
                                          yvex_error *err)

@@ -48,6 +48,124 @@ typedef struct {
     unsigned long long live;
 } quant_execute_allocator;
 
+static int fixture_lowering_summary(const void *context, yvex_quant_lowering_summary *out)
+{
+    const yvex_transform_ir_summary *summary =
+        yvex_transform_ir_summary_get((const yvex_transform_ir *)context);
+
+    if (!summary || !out) return 0;
+    *out = (yvex_quant_lowering_summary){
+        summary->source_value_count, summary->terminal_count,
+        summary->source_snapshot_identity, 0xf00dcafeu, summary->complete};
+    return 1;
+}
+
+static int fixture_lowering_tensor(const void *context, unsigned long long ordinal,
+                                   yvex_quant_lowering_tensor *out)
+{
+    const yvex_transform_ir *ir = (const yvex_transform_ir *)context;
+    const yvex_transform_value *terminal = yvex_transform_ir_terminal_at(ir, ordinal);
+    const yvex_transform_node *node =
+        terminal ? yvex_transform_ir_node_at(ir, terminal->producer_node_id) : NULL;
+    unsigned long long prior;
+    unsigned int dimension;
+
+    if (!terminal || !node || !out) return 0;
+    memset(out, 0, sizeof(*out));
+    out->role = terminal->logical_key.role;
+    out->collection = YVEX_TENSOR_COLLECTION_GLOBAL;
+    out->scope = terminal->logical_key.scope == YVEX_TRANSFORM_SCOPE_GLOBAL
+                     ? YVEX_TENSOR_SCOPE_GLOBAL
+                 : terminal->logical_key.scope == YVEX_TRANSFORM_SCOPE_MAIN_LAYER
+                     ? YVEX_TENSOR_SCOPE_MAIN_LAYER
+                     : YVEX_TENSOR_SCOPE_DRAFT;
+    out->layer_index = terminal->logical_key.layer_index;
+    out->predictor_index = terminal->logical_key.auxiliary_index;
+    out->expert_count = node->expert_count;
+    (void)snprintf(out->emitted_name, sizeof(out->emitted_name), "fixture.%llu", ordinal);
+    out->operation = node->kind;
+    out->source_faithful_qtype = node->kind == YVEX_TRANSFORM_OP_EXPERT_AGGREGATE
+                                    ? YVEX_GGUF_QTYPE_MXFP4
+                                : node->kind == YVEX_TRANSFORM_OP_DECODE_SCALE_PAIR
+                                    ? YVEX_GGUF_QTYPE_Q8_0
+                                : node->kind == YVEX_TRANSFORM_OP_CHECKED_CAST
+                                    ? YVEX_GGUF_QTYPE_I32
+                                    : YVEX_GGUF_QTYPE_F32;
+    out->release_qtype = node->kind == YVEX_TRANSFORM_OP_EXPERT_AGGREGATE
+                             ? YVEX_GGUF_QTYPE_Q2_K
+                         : node->kind == YVEX_TRANSFORM_OP_CHECKED_CAST
+                             ? YVEX_GGUF_QTYPE_I32
+                             : YVEX_GGUF_QTYPE_Q8_0;
+    out->profile_qtype_required = node->kind == YVEX_TRANSFORM_OP_EXPERT_AGGREGATE ||
+                                  node->kind == YVEX_TRANSFORM_OP_CHECKED_CAST;
+    out->logical_rank = terminal->shape.rank;
+    for (dimension = 0u; dimension < terminal->shape.rank; ++dimension) {
+        unsigned int terminal_axis = terminal->shape.rank - dimension - 1u;
+        out->logical_dims[dimension] = terminal->shape.dims[terminal_axis];
+        out->source_axis_for_logical[dimension] = terminal_axis;
+        if (node->kind == YVEX_TRANSFORM_OP_EXPERT_AGGREGATE)
+            out->source_axis_for_logical[dimension] =
+                terminal_axis == node->axis ? UINT_MAX
+                : terminal_axis > node->axis ? terminal_axis - 1u : terminal_axis;
+    }
+    for (prior = 0u; prior < ordinal; ++prior) {
+        const yvex_transform_value *value = yvex_transform_ir_terminal_at(ir, prior);
+        const yvex_transform_node *operation =
+            value ? yvex_transform_ir_node_at(ir, value->producer_node_id) : NULL;
+        if (!operation) return 0;
+        out->contribution_offset += operation->input_count;
+    }
+    out->contribution_count = node->input_count;
+    return 1;
+}
+
+static int fixture_lowering_contribution(const void *context, unsigned long long ordinal,
+                                         yvex_quant_lowering_contribution *out)
+{
+    const yvex_transform_ir *ir = (const yvex_transform_ir *)context;
+    unsigned long long terminal_ordinal;
+    unsigned long long offset = 0u;
+
+    if (!out) return 0;
+    for (terminal_ordinal = 0u; terminal_ordinal < QUANT_EXEC_TERMINAL_COUNT;
+         ++terminal_ordinal) {
+        const yvex_transform_value *terminal =
+            yvex_transform_ir_terminal_at(ir, terminal_ordinal);
+        const yvex_transform_node *node =
+            terminal ? yvex_transform_ir_node_at(ir, terminal->producer_node_id) : NULL;
+        const yvex_transform_value *input;
+        const yvex_transform_source_value *source;
+        if (!node) return 0;
+        if (ordinal >= offset + node->input_count) {
+            offset += node->input_count;
+            continue;
+        }
+        input = yvex_transform_ir_node_input_at(ir, node, ordinal - offset);
+        source = input ? yvex_transform_ir_source_at(ir, input->source_index) : NULL;
+        if (!source) return 0;
+        memset(out, 0, sizeof(*out));
+        (void)snprintf(out->source_name, sizeof(out->source_name), "%s",
+                       source->source_name);
+        out->source_dtype = source->source_dtype;
+        out->tensor_ordinal = terminal_ordinal;
+        out->expert_index = source->expert_index;
+        return 1;
+    }
+    return 0;
+}
+
+static const yvex_quant_lowering_api fixture_lowering = {
+    "fixture-source-v1", "fixture-release-v1",
+    fixture_lowering_summary, fixture_lowering_tensor, fixture_lowering_contribution};
+
+static int fixture_lowering_incomplete_summary(const void *context,
+                                               yvex_quant_lowering_summary *out)
+{
+    if (!fixture_lowering_summary(context, out)) return 0;
+    out->tensor_count--;
+    return 1;
+}
+
 /* Injects one deterministic executor allocation failure without retaining bytes. */
 static void *quant_execute_allocate(size_t size, void *context)
 {
@@ -789,6 +907,62 @@ static int quant_fixture_execute(
     return rc == YVEX_OK;
 }
 
+static int quant_test_family_neutral_lowering(void)
+{
+    static const yvex_quant_lowering_api incomplete_lowering = {
+        "fixture-source-v1", "fixture-release-v1",
+        fixture_lowering_incomplete_summary,
+        fixture_lowering_tensor,
+        fixture_lowering_contribution};
+    static const yvex_quant_lowering_api unnamed_lowering = {
+        "", "fixture-release-v1", fixture_lowering_summary, fixture_lowering_tensor,
+        fixture_lowering_contribution};
+    quant_execute_fixture fixture;
+    yvex_quant_plan *projected = NULL;
+    yvex_quant_failure failure;
+    const yvex_quant_plan_summary *expected;
+    const yvex_quant_plan_summary *actual;
+    yvex_error err;
+    unsigned long long ordinal;
+
+    yvex_error_clear(&err);
+    YVEX_TEST_ASSERT(quant_fixture_create(&fixture, "lowering", 0, 0, &err),
+                     "family-neutral lowering fixture must construct");
+    YVEX_TEST_ASSERT(
+        yvex_quant_plan_build_profile(
+            &projected, fixture.ir, fixture.binding, &fixture_lowering, fixture.ir,
+            YVEX_QUANT_PROFILE_RELEASE_Q8_Q2, NULL, &failure, &err) == YVEX_OK && projected,
+        "typed lowering projection must build one complete generic quant plan");
+    expected = yvex_quant_plan_summary_get(fixture.plan);
+    actual = yvex_quant_plan_summary_get(projected);
+    YVEX_TEST_ASSERT(expected && actual && actual->complete &&
+                         actual->mapping_identity == 0xf00dcafeu &&
+                         actual->decision_count == expected->decision_count &&
+                         actual->encoded_bytes == expected->encoded_bytes,
+                     "projected quant plan must preserve physical accounting");
+    for (ordinal = 0u; ordinal < actual->decision_count; ++ordinal) {
+        const yvex_quant_decision *left = yvex_quant_plan_decision_at(fixture.plan, ordinal);
+        const yvex_quant_decision *right = yvex_quant_plan_decision_at(projected, ordinal);
+        YVEX_TEST_ASSERT(left && right && left->qtype == right->qtype &&
+                             left->encoded_bytes == right->encoded_bytes &&
+                             strcmp(left->decision_identity, right->decision_identity) == 0,
+                         "family-neutral projection must preserve each physical decision");
+    }
+    yvex_quant_plan_release(&projected);
+    YVEX_TEST_ASSERT(
+        yvex_quant_plan_build_profile(
+            &projected, fixture.ir, fixture.binding, &incomplete_lowering, fixture.ir,
+            YVEX_QUANT_PROFILE_RELEASE_Q8_Q2, NULL, &failure, &err) != YVEX_OK && !projected,
+        "generic quant planning must refuse incomplete family projections");
+    YVEX_TEST_ASSERT(
+        yvex_quant_plan_build_profile(
+            &projected, fixture.ir, fixture.binding, &unnamed_lowering, fixture.ir,
+            YVEX_QUANT_PROFILE_SOURCE_FAITHFUL, NULL, &failure, &err) != YVEX_OK && !projected,
+        "generic quant planning must refuse unnamed physical profiles");
+    quant_fixture_release(&fixture);
+    return 0;
+}
+
 static int quant_test_executor_success(void)
 {
     quant_execute_fixture fixture;
@@ -1239,7 +1413,7 @@ int yvex_test_gguf_writer_artifact(void)
                          &duplicate_writer, &writer_request, &writer_failure, &err) != YVEX_OK &&
                          writer_failure.code == YVEX_GGUF_WRITER_INVALID_ARGUMENT &&
                          !duplicate_writer,
-                     "complete input without a family adapter must refuse");
+                     "complete input without a lowering projection must refuse");
 
     (void)snprintf(symlink_directory, sizeof(symlink_directory),
                    "%s/linkdir", fixture.root);
@@ -1819,6 +1993,7 @@ int yvex_test_gguf_writer_artifact(void)
 
 int yvex_test_quant_execute(void)
 {
+    if (quant_test_family_neutral_lowering() != 0) return 1;
     if (quant_test_executor_success() != 0) return 1;
     if (quant_test_variant_file() != 0) return 1;
     if (quant_test_payload_recipe_identity() != 0) return 1;

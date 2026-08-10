@@ -936,14 +936,6 @@ static int graph_parse_component(int argc, char **argv, yvex_graph_args *out,
         return graph_arg_error(
             err, video ? "yvex: video-vae requires latent frames, height, and width"
                        : "yvex: audio-vae requires latent steps");
-    if (video && out->component.batch != 1ull)
-        return graph_arg_error(err, "yvex: Visual VAE currently admits only batch 1");
-    if (strcmp(out->component.target, YVEX_MINIMAX_H3_TARGET_ID) != 0)
-        return graph_arg_errorf(err, "yvex: %s component requires minimax-h3-fl2va",
-                                out->component.name);
-    if (strcmp(out->component.backend, "cpu") != 0)
-        return graph_arg_errorf(err, "yvex: %s currently admits only backend cpu",
-                                video ? "Visual VAE" : "Audio VAE");
     yvex_error_clear(err);
     return YVEX_OK;
 }
