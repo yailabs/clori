@@ -199,6 +199,7 @@ src/runtime/state_store.c	runtime	runtime.state_store	generic	private	file-seria
 include/yvex/internal/graph_state.h	graph	graph.state	generic	private	resource-lifecycle	graph,runtime,tests	interface	none
 src/graph/state.c	graph	graph.state	generic	private	resource-lifecycle	graph,runtime,tests	implementation	none
 src/model/target/catalog.c	model.target	model.target.catalog	generic	private	reusable-algorithm	model,cli	implementation	none
+src/model/target/family_view.c	model.target	model.target.family_view	generic	private	typed-projection	model,cli	implementation	none
 src/model/target/mapping_gate.c	model.target	model.target.mapping_gate	generic	private	reusable-algorithm	model,cli	implementation	none
 src/model/target/missing_role.c	model.target	model.target.missing_role	generic	private	reusable-algorithm	model,cli	implementation	none
 src/model/target/output_head_map.c	model.target	model.target.output_head_map	generic	private	reusable-algorithm	model,cli	implementation	none

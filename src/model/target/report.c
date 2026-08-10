@@ -132,6 +132,12 @@ int yvex_model_target_report_release_coverage(
         return YVEX_OK;
     }
     report->family_coverage = coverage;
+    rc = yvex_model_target_report_project_family_detail(report, err);
+    if (rc != YVEX_OK) {
+        family->coverage.close(coverage);
+        report->family_coverage = NULL;
+        return rc;
+    }
     {
         const yvex_model_target_report_profile profile = {
             .status = success_status, .target_id = request->target_id,
@@ -1507,8 +1513,6 @@ static int class_profile_path_suffix(const char *path, const char *suffix)
     return path_length >= suffix_length &&
            strcmp(path + path_length - suffix_length, suffix) == 0;
 }
-
-
 static int class_profile_deepseek_models_root(
     const yvex_model_target_request *request,
     char *out,
@@ -1520,7 +1524,6 @@ static int class_profile_deepseek_models_root(
     size_t suffix_length = sizeof(suffix) - 1u;
 
     int n;
-
     if (!request || !out || cap == 0u) return 0;
     out[0] = '\0';
     if (request->models_root[0]) {
@@ -1582,7 +1585,6 @@ static int class_profile_deepseek_from_verification(
     yvex_deepseek_v4_ir_failure failure;
     yvex_deepseek_v4_ir *architecture = NULL;
     int rc;
-
     if (!request || !verification || !report ||
         !yvex_source_is_release_target(request->target_id)) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG,
@@ -1600,6 +1602,13 @@ static int class_profile_deepseek_from_verification(
     report->family_architecture = architecture;
     report->family_architecture_kind =
         YVEX_MODEL_TARGET_FAMILY_ARCHITECTURE_DEEPSEEK;
+    rc = yvex_model_target_report_project_family_detail(report, err);
+    if (rc != YVEX_OK) {
+        yvex_model_register_deepseek_v4()->ir.close(architecture);
+        report->family_architecture = NULL;
+        report->family_architecture_kind = YVEX_MODEL_TARGET_FAMILY_ARCHITECTURE_NONE;
+        return rc;
+    }
     {
         const yvex_model_target_report_profile profile = {
             .status = "typed-architecture-specified",
@@ -1628,7 +1637,6 @@ static int class_profile_minimax_report_build(
     yvex_minimax_h3_target *target = NULL;
     yvex_transform_ir *transformation = NULL;
     int rc;
-
     if (!request->source_path[0]) {
         report->status = "source-acquisition-required";
         report->exit_code = 5;
@@ -1681,6 +1689,15 @@ static int class_profile_minimax_report_build(
     report->family_transformation = transformation;
     report->family_architecture_kind =
         YVEX_MODEL_TARGET_FAMILY_ARCHITECTURE_MINIMAX_H3;
+    rc = yvex_model_target_report_project_family_detail(report, err);
+    if (rc != YVEX_OK) {
+        yvex_transform_ir_release(&transformation);
+        api->close(&target);
+        report->family_architecture = NULL;
+        report->family_transformation = NULL;
+        report->family_architecture_kind = YVEX_MODEL_TARGET_FAMILY_ARCHITECTURE_NONE;
+        return rc;
+    }
     {
         const yvex_model_target_report_profile profile = {
             .status = "transformation-ir-admitted",
@@ -1978,20 +1995,6 @@ void yvex_model_target_report_close(yvex_model_target_report *report)
     if (!report) {
         return;
     }
-    yvex_model_register_deepseek_v4()->lowering.close(
-        (yvex_deepseek_gguf_map *)report->family_lowering);
-    yvex_model_register_deepseek_v4()->coverage.close(
-        (yvex_deepseek_tensor_coverage *)report->family_coverage);
-    yvex_transform_ir_release((yvex_transform_ir **)&report->family_transformation);
-    if (report->family_architecture_kind ==
-        YVEX_MODEL_TARGET_FAMILY_ARCHITECTURE_DEEPSEEK) {
-        yvex_model_register_deepseek_v4()->ir.close(
-            (yvex_deepseek_v4_ir *)report->family_architecture);
-    } else if (report->family_architecture_kind ==
-               YVEX_MODEL_TARGET_FAMILY_ARCHITECTURE_MINIMAX_H3) {
-        yvex_minimax_h3_target *target =
-            (yvex_minimax_h3_target *)report->family_architecture;
-        yvex_model_register_minimax_h3()->close(&target);
-    }
+    yvex_model_target_report_close_family_detail(report);
     memset(report, 0, sizeof(*report));
 }

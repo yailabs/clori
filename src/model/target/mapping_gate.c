@@ -567,6 +567,14 @@ cleanup:
     }
     report->family_coverage = coverage;
     report->family_lowering = map;
+    rc = yvex_model_target_report_project_family_detail(report, err);
+    if (rc != YVEX_OK) {
+        yvex_model_register_deepseek_v4()->lowering.close(map);
+        yvex_model_register_deepseek_v4()->coverage.close(coverage);
+        report->family_coverage = NULL;
+        report->family_lowering = NULL;
+        return rc;
+    }
     {
         const yvex_model_target_report_profile profile = {
             .status = "deepseek-gguf-mapping-complete",

@@ -796,6 +796,9 @@ static int test_arch_ir_report_consumer_and_family_preservation(void)
 {
     yvex_model_target_request request;
     yvex_model_target_report report;
+    yvex_source_verification source;
+    yvex_deepseek_v4_ir *ir = NULL;
+    yvex_deepseek_v4_ir_failure failure;
     yvex_error err;
 
     memset(&request, 0, sizeof(request));
@@ -823,6 +826,24 @@ static int test_arch_ir_report_consumer_and_family_preservation(void)
                          &request, &report, &err) == YVEX_OK &&
                      report_has(&report, "gemma-source-model-class-profile"),
                      "Gemma evidence path remains intact");
+    yvex_model_target_report_close(&report);
+
+    arch_ir_verification_fixture(&source);
+    YVEX_TEST_ASSERT(yvex_model_register_deepseek_v4()->ir.build(
+                         &ir, &source, &failure, &err) == YVEX_OK,
+                     "DeepSeek architecture fixture builds for report projection");
+    memset(&report, 0, sizeof(report));
+    report.family_architecture = ir;
+    report.family_architecture_kind = YVEX_MODEL_TARGET_FAMILY_ARCHITECTURE_DEEPSEEK;
+    YVEX_TEST_ASSERT(
+        yvex_model_target_report_project_family_detail(&report, &err) == YVEX_OK &&
+            report.detail_kind == YVEX_MODEL_TARGET_DETAIL_MODEL_ARCHITECTURE &&
+            report.detail.architecture.maximum_context == source.max_position_embeddings &&
+            report.detail.architecture.layer_count == source.num_hidden_layers &&
+            report.detail.architecture.draft_count == source.dspark_inference_layer_count &&
+            report.detail.architecture.routed_experts == source.n_routed_experts &&
+            report.detail.architecture.experts_per_token == source.num_experts_per_tok,
+        "family-neutral report projection retains source-authored architecture facts");
     yvex_model_target_report_close(&report);
     return 0;
 }

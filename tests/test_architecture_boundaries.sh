@@ -35,6 +35,7 @@ deprecated_digest_hash_pattern='yvex_sha256_[A-Za-z0-9_]*[[:space:]]*\([^;]*\bou
 backend_digest_alias_pattern='\boutput_digest\b[^;]*\b(cpu_output_digest|cuda_output_digest)\b|\b(cpu_output_digest|cuda_output_digest)\b[^;]*\boutput_digest\b'
 cli_family_helper_pattern='yvex_(source_is_release_target|model_register_deepseek_v4)[[:space:]]*\('
 cli_family_abi_pattern='(#include[[:space:]]+[<"]yvex/internal/families/|yvex_[A-Za-z0-9_]*(deepseek|minimax|qwen|gemma|llama|kimi|mamba)[A-Za-z0-9_]*|YVEX_[A-Z0-9_]*(DEEPSEEK|MINIMAX|QWEN|GEMMA|LLAMA|KIMI|MAMBA)[A-Z0-9_]*)'
+cli_family_representation_pattern='(#include[[:space:]]+[<"]yvex/internal/families/|yvex_[A-Za-z0-9_]*(deepseek|minimax)[A-Za-z0-9_]*|YVEX_[A-Z0-9_]*(DEEPSEEK|MINIMAX)[A-Z0-9_]*)'
 cli_preparation_call_pattern='yvex_(source_payload_[A-Za-z0-9_]*|transform_[A-Za-z0-9_]*|quant_plan_[A-Za-z0-9_]*|gguf_writer_[A-Za-z0-9_]*|materialization_(plan|session)_[A-Za-z0-9_]*|runtime_descriptor_build[A-Za-z0-9_]*|artifact_physical_compatibility_[A-Za-z0-9_]*)[[:space:]]*\('
 family_preparation_leak_pattern='(yvex_(model_register_deepseek_v4|graph_lower_deepseek_v4|artifact_admit_deepseek|runtime_descriptor_build_deepseek|quant_plan_build_deepseek_profile)[[:space:]]*\(|YVEX_SELECTED_DEEPSEEK_ARTIFACT_FILENAME)'
 cli_runtime_lifecycle_pattern='yvex_runtime_(model_(open|close|summary_copy|view_get)|session_(open|close|summary_copy|view_get)|residency_(prepare|close|snapshot|invalidate))[[:space:]]*\('
@@ -365,6 +366,9 @@ fi
 if rg -n -i "$cli_family_abi_pattern" \
     src/cli/commands/graph.c src/cli/input/graph.c src/cli/input/private.h; then
     fail "common graph CLI imports or names a concrete family ABI"
+fi
+if rg -n -i "$cli_family_representation_pattern" src/cli/render/model_target.c; then
+    fail "model-target rendering imports or names a concrete family ABI"
 fi
 if rg -n "$cli_preparation_call_pattern" src/cli/commands/graph.c; then
     fail "common graph CLI directly constructs compiler preparation truth"

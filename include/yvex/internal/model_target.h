@@ -53,6 +53,101 @@ typedef struct {
     unsigned int column_count;
     char columns[YVEX_MODEL_TARGET_TABLE_COL_CAP][YVEX_MODEL_TARGET_TEXT_CAP];
 } yvex_model_target_table_row;
+/* Family projections expose report facts without lending concrete family representations. */
+#define YVEX_MODEL_TARGET_COLLECTION_CAP YVEX_MODEL_TARGET_TABLE_ROW_CAP
+#define YVEX_MODEL_TARGET_LAYER_CAP YVEX_MODEL_TARGET_TABLE_ROW_CAP
+#define YVEX_MODEL_TARGET_COMPONENT_CAP YVEX_MODEL_TARGET_TABLE_ROW_CAP
+#define YVEX_MODEL_TARGET_EDGE_CAP YVEX_MODEL_TARGET_TABLE_ROW_CAP
+#define YVEX_MODEL_TARGET_FEATURE_CAP YVEX_MODEL_TARGET_TABLE_ROW_CAP
+typedef enum {
+    YVEX_MODEL_TARGET_DETAIL_NONE = 0,
+    YVEX_MODEL_TARGET_DETAIL_TENSOR_MAP,
+    YVEX_MODEL_TARGET_DETAIL_TENSOR_COVERAGE,
+    YVEX_MODEL_TARGET_DETAIL_MODEL_ARCHITECTURE,
+    YVEX_MODEL_TARGET_DETAIL_COMPOSITE_ARCHITECTURE
+} yvex_model_target_detail_kind;
+typedef struct {
+    char name[32];
+    unsigned long long count;
+} yvex_model_target_named_count;
+typedef struct {
+    unsigned long long source_contributions, descriptors, trunk_descriptors;
+    unsigned long long draft_descriptors, pinned_standard_names, semantic_standard_names;
+    unsigned long long extension_names, metadata, header_scans, payload_bytes;
+    unsigned long long source_identity, coverage_identity, mapping_identity;
+    unsigned int collection_count;
+    yvex_model_target_named_count collections[YVEX_MODEL_TARGET_COLLECTION_CAP];
+} yvex_model_target_map_projection;
+typedef struct {
+    unsigned long long source_tensors, required_tensors, matched_tensors;
+    unsigned long long missing_tensors, ambiguous_tensors, unexpected_tensors;
+    unsigned long long header_scans, payload_bytes, source_lookups;
+    unsigned long long source_collisions, source_maximum_probe;
+    unsigned long long source_identity, coverage_identity;
+    unsigned int collection_count;
+    yvex_model_target_named_count collections[YVEX_MODEL_TARGET_COLLECTION_CAP];
+} yvex_model_target_coverage_projection;
+typedef struct {
+    unsigned long long index, compression_ratio;
+    char attention[16], kv[32], router[32], mhc_entry[32];
+} yvex_model_target_layer_projection;
+typedef struct {
+    unsigned long long predictor_index, layer_index, compression_ratio;
+    char attention[16], router[32];
+    int feature_projection, markov, confidence, shared_head;
+} yvex_model_target_draft_projection;
+typedef struct {
+    char target_id[128], family[64], architecture[64], repository[128], revision[64];
+    char verification_stage[64], paper_revision[64], sglang_revision[64], vllm_revision[64];
+    char source_weight_dtype[32], source_expert_dtype[32], source_quantization[32];
+    char tokenizer_class[64], tokenizer_model_type[64];
+    unsigned long long hidden_size, vocabulary_size, maximum_context;
+    unsigned long long target_layers, draft_layers, swa_layers, csa_layers, hca_layers;
+    unsigned long long hash_router_layers, learned_router_layers;
+    unsigned long long query_heads, kv_heads, head_dimension, rope_head_dimension;
+    unsigned long long routed_experts, experts_per_token, shared_experts;
+    unsigned long long dspark_block_size, dspark_noise_token_id, dspark_markov_rank;
+    unsigned long long dspark_feature_layers[YVEX_MODEL_TARGET_FEATURE_CAP];
+    unsigned int dspark_feature_layer_count;
+    int dspark_confidence_available;
+    unsigned long long mhc_residual_streams, mhc_expanded_width, mhc_mixing_rows;
+    unsigned long long mhc_mixing_columns, mhc_sinkhorn_iterations;
+    int final_mhc_post_required, final_mhc_head_required, final_norm_after_mhc_head;
+    unsigned long long tokenizer_vocabulary_size, tokenizer_base_vocab_entries;
+    unsigned long long tokenizer_added_token_entries, bos_token_id, eos_token_id;
+    int output_head_required, output_head_tied;
+    unsigned long long source_quant_block_rows, source_quant_block_columns;
+    unsigned long long source_header_scans, source_header_tensors, source_payload_bytes;
+    unsigned int layer_count, draft_count;
+    yvex_model_target_layer_projection layers[YVEX_MODEL_TARGET_LAYER_CAP];
+    yvex_model_target_draft_projection drafts[YVEX_MODEL_TARGET_LAYER_CAP];
+} yvex_model_target_architecture_projection;
+typedef struct {
+    char canonical_id[64], identity[65];
+    unsigned long long shards, tensors;
+    unsigned int phase;
+    int weighted, release_after_phase;
+} yvex_model_target_component_projection;
+typedef struct {
+    unsigned int source_phase, destination_phase, data_classes, lifetime;
+} yvex_model_target_edge_projection;
+typedef struct {
+    char repository[128], revision[64], subtree[128];
+    char source_snapshot_identity[65], component_manifest_identity[65];
+    char phase_dag_identity[65], architecture_identity[65], role_map_identity[65];
+    char transformation_identity[65], unresolved_requirements_identity[65];
+    unsigned long long components, weighted_components, phase_edges, shards;
+    unsigned long long tensors, elements, payload_bytes, payload_execution_bytes;
+    unsigned int component_count, edge_count;
+    yvex_model_target_component_projection component[YVEX_MODEL_TARGET_COMPONENT_CAP];
+    yvex_model_target_edge_projection edge[YVEX_MODEL_TARGET_EDGE_CAP];
+} yvex_model_target_composite_projection;
+typedef union {
+    yvex_model_target_map_projection map;
+    yvex_model_target_coverage_projection coverage;
+    yvex_model_target_architecture_projection architecture;
+    yvex_model_target_composite_projection composite;
+} yvex_model_target_detail;
 typedef struct yvex_model_target_request {
     yvex_model_target_command_kind kind;
     yvex_model_target_render_mode mode;
@@ -109,6 +204,8 @@ typedef struct yvex_model_target_report {
     unsigned long error_row_count;
     yvex_model_target_table_row table_rows[YVEX_MODEL_TARGET_TABLE_ROW_CAP];
     unsigned long table_row_count;
+    yvex_model_target_detail_kind detail_kind;
+    yvex_model_target_detail detail;
     void *family_architecture;
     yvex_model_target_family_architecture_kind family_architecture_kind;
     void *family_transformation;
@@ -188,6 +285,10 @@ void yvex_model_target_report_prepare(
 int yvex_model_target_report_add_row(yvex_model_target_report *report,
                                      const char *fmt,
                                      ...);
+int yvex_model_target_report_project_family_detail(
+    yvex_model_target_report *report, yvex_error *err);
+void yvex_model_target_report_close_family_detail(
+    yvex_model_target_report *report);
 void yvex_model_target_report_add_rows(yvex_model_target_report *report,
                                        const char *const *rows,
                                        size_t row_count);
