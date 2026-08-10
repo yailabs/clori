@@ -460,6 +460,80 @@ static int sampling_test_rng_vectors(void)
     return 0;
 }
 
+static int sampling_test_checkpoint(void)
+{
+    const float logits[8] = {3.0f, 2.0f, 1.5f, 1.0f, 0.5f, 0.0f, -1.0f, -2.0f};
+    yvex_runtime_logits_plan_summary plan;
+    yvex_runtime_logits_row_result row;
+    yvex_runtime_sampling_policy policy = sampling_test_neutral_stochastic();
+    yvex_runtime_sampling_options options = {
+        .maximum_vocabulary_size = 8ull, .maximum_rows = 2ull};
+    yvex_runtime_sampling_context *context = NULL, *incompatible = NULL;
+    yvex_runtime_sampling_transaction *transaction = NULL;
+    yvex_runtime_sampling_source source;
+    yvex_runtime_sampling_result initial, expected, advanced, restored;
+    yvex_runtime_sampling_checkpoint checkpoint, corrupt;
+    yvex_runtime_sampling_context_summary before, after;
+    yvex_error err;
+    sampling_test_plan(&plan, 8ull);
+    YVEX_TEST_ASSERT(
+        sampling_test_row(&plan, logits, 8ull, 1ull, &row) &&
+            yvex_runtime_sampling_policy_seal(&policy, 8ull, &err) == YVEX_OK &&
+            yvex_runtime_sampling_context_open(
+                &context, &plan, &policy, &options, &err) == YVEX_OK &&
+            yvex_runtime_sampling_source_from_logits(
+                context, &source, logits, 8ull, &row, &err) == YVEX_OK &&
+            yvex_runtime_sampling_select(
+                context, NULL, &source, &initial, &err) == YVEX_OK &&
+            yvex_runtime_sampling_context_checkpoint(
+                context, &checkpoint, &err) == YVEX_OK &&
+            yvex_runtime_sampling_select(
+                context, NULL, &source, &expected, &err) == YVEX_OK &&
+            yvex_runtime_sampling_select(
+                context, NULL, &source, &advanced, &err) == YVEX_OK,
+        "sampling checkpoint fixture advances beyond a sealed RNG state");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_sampling_context_restore(context, &checkpoint, &err) == YVEX_OK &&
+            yvex_runtime_sampling_select(
+                context, NULL, &source, &restored, &err) == YVEX_OK &&
+            expected.selected_token_id == restored.selected_token_id &&
+            strcmp(expected.execution_identity, restored.execution_identity) == 0 &&
+            strcmp(expected.rng_state_after_identity,
+                   restored.rng_state_after_identity) == 0,
+        "restored sampling checkpoint reproduces the exact next stochastic selection");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_sampling_context_snapshot(context, &before, &err) == YVEX_OK,
+        "sampling checkpoint refusal fixture snapshots its committed authority");
+    corrupt = checkpoint;
+    corrupt.rng_state++;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_sampling_context_restore(context, &corrupt, &err) == YVEX_ERR_FORMAT &&
+            yvex_runtime_sampling_context_snapshot(context, &after, &err) == YVEX_OK &&
+            strcmp(before.rng_state_identity, after.rng_state_identity) == 0,
+        "corrupt sampling checkpoint refuses without changing RNG authority");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_sampling_transaction_begin(context, &transaction, &err) == YVEX_OK &&
+            yvex_runtime_sampling_context_checkpoint(context, &corrupt, &err) ==
+                YVEX_ERR_STATE &&
+            yvex_runtime_sampling_context_restore(context, &checkpoint, &err) ==
+                YVEX_ERR_STATE &&
+            yvex_runtime_sampling_transaction_abort(&transaction, &err) == YVEX_OK,
+        "open RNG transaction prevents checkpoint capture and restore");
+    policy.seed++;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_sampling_policy_seal(&policy, 8ull, &err) == YVEX_OK &&
+            yvex_runtime_sampling_context_open(
+                &incompatible, &plan, &policy, &options, &err) == YVEX_OK &&
+            yvex_runtime_sampling_context_restore(incompatible, &checkpoint, &err) ==
+                YVEX_ERR_FORMAT,
+        "sampling checkpoint refuses a different immutable policy identity");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_sampling_context_close(&context, &err) == YVEX_OK &&
+            yvex_runtime_sampling_context_close(&incompatible, &err) == YVEX_OK,
+        "sampling checkpoint fixture contexts close");
+    return 0;
+}
+
 static int sampling_test_rng_transactions(void)
 {
     const float logits[8] = {0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f};
@@ -967,6 +1041,7 @@ int yvex_test_runtime_sampling(void)
     if (sampling_test_filter_matrix()) return 1;
     if (sampling_test_stochastic()) return 1;
     if (sampling_test_rng_vectors()) return 1;
+    if (sampling_test_checkpoint()) return 1;
     if (sampling_test_rng_transactions()) return 1;
     if (sampling_test_lifecycle()) return 1;
     if (sampling_test_close_entry_race()) return 1;

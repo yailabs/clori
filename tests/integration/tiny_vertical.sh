@@ -98,10 +98,20 @@ grep -F '"context_capacity":8' "$root/status.json" >/dev/null
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server log --json \
     >"$root/server.log.jsonl" 2>"$root/server.log.err" &
 log_pid=$!
-HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run a \
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session new persisted \
+    >"$root/session.new"
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --session persisted a \
     --strategy greedy --max-new-tokens 1 >"$root/run.out" 2>"$root/run.err"
 grep -Fx 'ok' "$root/run.out" >/dev/null
 grep -F 'generation 1 token' "$root/run.err" >/dev/null
+state_path="$root/persisted-state.yvex"
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session state save \
+    persisted "$state_path" >"$root/state.save"
+test -s "$state_path"
+grep -E '^state checkpoint saved position=[1-9][0-9]* bytes=[1-9][0-9]* digest=[0-9a-f]{64}$' \
+    "$root/state.save" >/dev/null
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session show persisted \
+    >"$root/session.before"
 
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server stop >/dev/null
 wait "$server_pid"
@@ -109,6 +119,51 @@ server_pid=
 wait "$log_pid"
 log_pid=
 grep -F '"kind":"generation.completed"' "$root/server.log.jsonl" >/dev/null
+
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server tiny-executable-cpu-complete \
+    --backend cpu --ctx 8 --generation-mode target-only --max-new-tokens 1 \
+    --console off --openai off >>"$root/server.out" 2>>"$root/server.err" &
+server_pid=$!
+ready=0
+attempt=0
+while test "$attempt" -lt 100; do
+    if HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server status --json \
+        >"$root/status.restart.json" 2>"$root/status.restart.err"; then
+        ready=1
+        break
+    fi
+    kill -0 "$server_pid" 2>/dev/null || break
+    attempt=$((attempt + 1))
+    sleep 0.05
+done
+test "$ready" -eq 1
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session new persisted \
+    >"$root/session.restart.new"
+if HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session state restore \
+    persisted "$state_path" 1 >"$root/state.restore.bounded" 2>&1; then
+    printf 'bounded state restore unexpectedly succeeded\n' >&2
+    exit 1
+fi
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session state restore \
+    persisted "$state_path" 1048576 >"$root/state.restore"
+grep -E '^state checkpoint restored position=[1-9][0-9]* bytes=[1-9][0-9]* digest=[0-9a-f]{64}$' \
+    "$root/state.restore" >/dev/null
+test "$(sed -n 's/^.* digest=//p' "$root/state.save")" = \
+    "$(sed -n 's/^.* digest=//p' "$root/state.restore")"
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session show persisted \
+    >"$root/session.after"
+test "$(sed -n 's/^.*position=\([0-9][0-9]*\) turns=\([0-9][0-9]*\).*$/\1:\2/p' \
+        "$root/session.before")" = \
+    "$(sed -n 's/^.*position=\([0-9][0-9]*\) turns=\([0-9][0-9]*\).*$/\1:\2/p' \
+        "$root/session.after")"
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --session persisted a \
+    --strategy greedy --max-new-tokens 1 \
+    >"$root/run.after-restore.out" 2>"$root/run.after-restore.err"
+grep -Fx 'ok' "$root/run.after-restore.out" >/dev/null
+grep -E '[1-9][0-9]* reused' "$root/run.after-restore.err" >/dev/null
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server stop >/dev/null
+wait "$server_pid"
+server_pid=
 
 python3 "$TINY_GENERATOR" "$corrupt/tiny.gguf" --corrupt
 corrupt_artifact=$(realpath "$corrupt/tiny.gguf")

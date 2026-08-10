@@ -224,6 +224,8 @@ typedef struct injected_state_control injected_state_control;
 typedef struct {
     injected_state_control *control;
     yvex_graph_attention_state_summary summary;
+    yvex_execution_capacity_plan capacity;
+    yvex_attention_state_recipe recipe;
     int commit_prepared;
 } injected_state;
 struct injected_state_control {
@@ -248,6 +250,7 @@ static int injected_state_prepare(
     state->summary.layer_count = 1ull;
     state->summary.prepared_layer_count = 1ull;
     state->summary.allocated_bytes = 1ull;
+    state->recipe = *recipe;
     yvex_error_clear(err);
     return YVEX_OK;
 }
@@ -268,6 +271,21 @@ static int injected_state_summary(void *context,
     *out = state->summary;
     yvex_error_clear(err);
     return YVEX_OK;
+}
+
+static const yvex_execution_capacity_plan *injected_state_capacity(void *context)
+{
+    injected_state *state = (injected_state *)context;
+    return state && state->capacity.schema_version ? &state->capacity : NULL;
+}
+
+static const yvex_attention_state_recipe *injected_state_recipe(
+    void *context, unsigned long long layer_index)
+{
+    injected_state *state = (injected_state *)context;
+    return state && layer_index == 0ull && state->recipe.schema_version
+               ? &state->recipe
+               : NULL;
 }
 
 static int injected_state_identity(void *context, unsigned long long layer_index,
@@ -437,6 +455,7 @@ static int injected_state_configure_pages(
     }
     state->summary.paged = 1;
     state->summary.paging_configured = 1;
+    state->capacity = *capacity;
     yvex_core_text_copy(
         state->summary.capacity_plan_identity,
         sizeof(state->summary.capacity_plan_identity), capacity->identity);
@@ -511,11 +530,13 @@ static int injected_state_factory_open(
     control->active = state;
     control->opens++;
     *out = (yvex_attention_state_provider){
-        .schema_version = YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V6,
+        .schema_version = YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V7,
         .context = state,
         .configure_pages = injected_state_configure_pages,
         .prepare = injected_state_prepare,
         .summary = injected_state_summary,
+        .capacity = injected_state_capacity,
+        .recipe = injected_state_recipe,
         .view = injected_state_view,
         .identity = injected_state_identity,
         .begin = injected_state_begin,
@@ -3104,6 +3125,76 @@ static int test_runtime_cleanup_lease_retry(
     return 0;
 }
 
+static int runtime_state_store_capacity_fixture(
+    const char *model_execution_identity,
+    yvex_execution_capacity_plan *capacity, yvex_error *err)
+{
+    yvex_execution_hardware_profile hardware = {0};
+    yvex_execution_workload_profile workload = {0};
+    yvex_execution_capacity_plan_request request = {0};
+    yvex_execution_state_class_request states[YVEX_MODEL_STATE_CLASS_COUNT] = {{0}};
+    unsigned long long index;
+
+    hardware.schema_version = YVEX_EXECUTION_HARDWARE_PROFILE_SCHEMA_V1;
+    hardware.backend = YVEX_BACKEND_KIND_CPU;
+    hardware.admitted_fact_mask =
+        YVEX_EXECUTION_HARDWARE_FACT_BIT(YVEX_EXECUTION_HARDWARE_FACT_MEMORY) |
+        YVEX_EXECUTION_HARDWARE_FACT_BIT(YVEX_EXECUTION_HARDWARE_FACT_PAGING);
+    hardware.total_memory_bytes = 16ull * 1024ull * 1024ull * 1024ull;
+    hardware.usable_memory_bytes = 12ull * 1024ull * 1024ull * 1024ull;
+    hardware.host_page_bytes = hardware.device_page_bytes = 4096ull;
+    memcpy(hardware.name, "state-store-cpu", sizeof("state-store-cpu"));
+    if (yvex_execution_hardware_profile_seal(&hardware, err) != YVEX_OK)
+        return yvex_error_code(err);
+
+    workload.schema_version = YVEX_EXECUTION_WORKLOAD_PROFILE_SCHEMA_V1;
+    workload.kind = YVEX_EXECUTION_WORKLOAD_INTERACTIVE_LATENCY;
+    workload.minimum_session_context = 8ull;
+    workload.requested_session_context = 128ull;
+    workload.concurrent_sequences = 1ull;
+    workload.logical_batch_tokens = workload.prefill_chunk_tokens = 8ull;
+    workload.attention_microbatch_rows = workload.moe_row_tile = 1ull;
+    workload.output_head_rows = 1ull;
+    workload.system_reserve_bytes = YVEX_EXECUTION_MINIMUM_SYSTEM_RESERVE;
+    workload.latency_priority = 1;
+    workload.durable_state = 1;
+    memcpy(workload.name, "state-store", sizeof("state-store"));
+    if (yvex_execution_workload_profile_seal(&workload, err) != YVEX_OK)
+        return yvex_error_code(err);
+
+    for (index = 0ull; index < YVEX_MODEL_STATE_CLASS_COUNT; ++index) {
+        states[index].state_class = (yvex_model_state_class)index;
+        states[index].extent = YVEX_EXECUTION_STATE_EXTENT_CONTEXT;
+        states[index].logical_block_tokens = 1ull;
+        states[index].bytes_per_block = 4096ull;
+        states[index].alignment_bytes = 4096ull;
+        states[index].kernel_tile_tokens = 1ull;
+        states[index].promotion_granularity_tokens = 1ull;
+        states[index].page_table_entry_bytes = 8ull;
+    }
+    states[YVEX_MODEL_STATE_CANDIDATE_DELTA].extent =
+        YVEX_EXECUTION_STATE_EXTENT_CANDIDATE;
+    states[YVEX_MODEL_STATE_PREFIX_CHECKPOINT].extent =
+        YVEX_EXECUTION_STATE_EXTENT_PREFIX_BUDGET;
+    states[YVEX_MODEL_STATE_PREFIX_CHECKPOINT].shared = 1;
+    states[YVEX_MODEL_STATE_PREFIX_CHECKPOINT].copy_on_write = 1;
+
+    request.schema_version = YVEX_EXECUTION_CAPACITY_PLAN_SCHEMA_V1;
+    request.model_execution_identity = model_execution_identity;
+    request.semantic_maximum_context = 128ull;
+    request.candidate_width = 1ull;
+    request.semantic_state_class_mask =
+        (1ull << YVEX_MODEL_STATE_CLASS_COUNT) - 1ull;
+    request.hardware = &hardware;
+    request.workload = &workload;
+    request.model_bytes = 1024ull * 1024ull;
+    request.state_classes = states;
+    request.state_class_count = YVEX_MODEL_STATE_CLASS_COUNT;
+    request.workspace_bytes = 1024ull * 1024ull;
+    request.scheduler_bytes = request.graph_bytes = 4096ull;
+    return yvex_execution_capacity_plan_build(&request, capacity, err);
+}
+
 static int test_runtime_probe_consumer_boundary(
     const binding_fixture *fixture, const yvex_runtime_binding_prepare_result *prepared,
     const char *root)
@@ -3121,6 +3212,8 @@ static int test_runtime_probe_consumer_boundary(
     yvex_graph_attention_state_summary state_before, state_after;
     yvex_runtime_state_residency_summary state_residency;
     yvex_runtime_state_store_summary saved_state, restored_state;
+    yvex_runtime_state_store_payload inspected_payload = {0};
+    yvex_execution_capacity_plan persisted_capacity;
     yvex_runtime_session_summary session_summary;
     const yvex_attention_history_view *stable_view;
     const yvex_attention_layer_plan *state_layer;
@@ -3128,6 +3221,8 @@ static int test_runtime_probe_consumer_boundary(
     yvex_attention_publication publication = {0};
     float state_values[4] = {0.25f, -0.25f, 0.5f, -0.5f};
     unsigned int state_token = 7u;
+    static const unsigned char semantic_payload[] =
+        "session-prefix-and-rng-checkpoint";
     char state_delta[YVEX_SHA256_HEX_CAP];
     yvex_error err;
     char state_path[YVEX_PATH_CAP], corrupt_path[YVEX_PATH_CAP];
@@ -3148,6 +3243,13 @@ static int test_runtime_probe_consumer_boundary(
             strcmp(model_view->binding->executable_graph_identity,
                    prepared->summary.executable_graph_identity) == 0,
         "runtime model retains its immutable binding summary after open returns");
+    YVEX_TEST_ASSERT(
+        runtime_state_store_capacity_fixture(
+            model_view->binding->model_execution_identity,
+            &persisted_capacity, &err) == YVEX_OK &&
+            yvex_runtime_session_configure_persistent_pages(
+                session, &persisted_capacity, &model_failure, &err) == YVEX_OK,
+        "state checkpoint fixture admits canonical physical capacity before storage");
     memset(&capacity_request, 0, sizeof(capacity_request));
     capacity_request.scope = YVEX_ATTENTION_PROBE_SCOPE_QUICK;
     capacity_request.token_count = 1ull;
@@ -3163,10 +3265,13 @@ static int test_runtime_probe_consumer_boundary(
         yvex_runtime_session_prepare_attention_probe_state(
             session, NULL, capacity, &attention_failure, &err) == YVEX_ERR_STATE,
         "state preparation refuses a session/model mismatch");
-    YVEX_TEST_ASSERT(
-        yvex_runtime_session_prepare_attention_probe_state(
-            session, model, capacity, &attention_failure, &err) == YVEX_OK,
-        "matching runtime owners prepare canonical probe state");
+    rc = yvex_runtime_session_prepare_attention_probe_state(
+        session, model, capacity, &attention_failure, &err);
+    if (rc != YVEX_OK)
+        fprintf(stderr, "state checkpoint fixture preparation failed: %s\n",
+                yvex_error_message(&err));
+    YVEX_TEST_ASSERT(rc == YVEX_OK,
+                     "matching runtime owners prepare canonical probe state");
     stable_view = yvex_runtime_session_view_get(session)->attention_state_provider->view(
         yvex_runtime_session_view_get(session)->attention_state_provider->context, 0ull,
         YVEX_ATTENTION_STATE_VIEW_COMMITTED);
@@ -3271,22 +3376,43 @@ static int test_runtime_probe_consumer_boundary(
             snprintf(corrupt_path, sizeof(corrupt_path), "%s/state-corrupt.yvex", root) <
                 (int)sizeof(corrupt_path),
         "state checkpoint fixture paths are bounded");
-    rc = yvex_runtime_session_state_save(session, state_path, &saved_state, &err);
+    rc = yvex_runtime_session_state_save(
+        session, state_path, semantic_payload, sizeof(semantic_payload),
+        &saved_state, &err);
+    if (rc != YVEX_OK)
+        fprintf(stderr, "state checkpoint save failed: %s\n",
+                yvex_error_message(&err));
+    YVEX_TEST_ASSERT(rc == YVEX_OK,
+                     "state checkpoint publishes one immutable file");
     YVEX_TEST_ASSERT(
-        rc == YVEX_OK &&
-            saved_state.schema_version == YVEX_RUNTIME_STATE_STORE_SCHEMA_V1 &&
+        saved_state.schema_version == YVEX_RUNTIME_STATE_STORE_SCHEMA_V2 &&
             saved_state.scope_count == 1ull &&
             saved_state.committed_sequence_length == 1ull &&
-            yvex_sha256_hex_valid(saved_state.file_digest) &&
-            yvex_runtime_session_state_save(session, state_path, &restored_state,
-                                            &err) == YVEX_ERR_STATE,
-        "state checkpoint publishes once with exact model-bound evidence");
+            saved_state.payload_bytes == sizeof(semantic_payload) &&
+            yvex_sha256_hex_valid(saved_state.payload_identity) &&
+            yvex_sha256_hex_valid(saved_state.file_digest),
+        "state checkpoint reports exact model-bound evidence");
     YVEX_TEST_ASSERT(
+        yvex_runtime_session_state_save(
+            session, state_path, NULL, 0ull, &restored_state,
+            &err) == YVEX_ERR_STATE,
+        "state checkpoint refuses replacement publication");
+    YVEX_TEST_ASSERT(
+            yvex_runtime_session_state_inspect(
+                session, state_path, saved_state.file_bytes,
+                &inspected_payload, &restored_state, &err) == YVEX_OK &&
+            inspected_payload.byte_count == sizeof(semantic_payload) &&
+            memcmp(inspected_payload.bytes, semantic_payload,
+                   sizeof(semantic_payload)) == 0 &&
+            strcmp(inspected_payload.payload_identity,
+                   saved_state.payload_identity) == 0 &&
             yvex_runtime_session_reset_persistent_state(
             session, &model_failure, &err) == YVEX_OK &&
             yvex_runtime_session_state_restore(
                 session, state_path, saved_state.file_bytes,
-                saved_state.committed_sequence_length, &restored_state,
+                saved_state.committed_sequence_length,
+                saved_state.file_digest, saved_state.payload_identity,
+                &restored_state,
                 &err) == YVEX_OK &&
             restored_state.committed_sequence_length == 1ull &&
             strcmp(restored_state.file_digest, saved_state.file_digest) == 0 &&
@@ -3297,6 +3423,7 @@ static int test_runtime_probe_consumer_boundary(
             strcmp(state_after.state_content_identity,
                    state_before.state_content_identity) == 0,
         "state checkpoint restores the exact committed prefix after reset");
+    yvex_runtime_state_store_payload_close(&inspected_payload);
     YVEX_TEST_ASSERT(copy_regular_file(state_path, corrupt_path),
                      "state checkpoint corruption fixture copies");
     {
@@ -3307,7 +3434,8 @@ static int test_runtime_probe_consumer_boundary(
                 close(descriptor) == 0 &&
                 yvex_runtime_session_state_restore(
                     session, corrupt_path, saved_state.file_bytes,
-                    saved_state.committed_sequence_length, &restored_state,
+                    saved_state.committed_sequence_length, NULL, NULL,
+                    &restored_state,
                     &err) == YVEX_ERR_FORMAT &&
                 yvex_runtime_session_view_get(session)->attention_state_provider->summary(
                     yvex_runtime_session_view_get(session)->attention_state_provider->context,

@@ -392,7 +392,7 @@ done:
     return rc;
 }
 
-int yvex_runtime_session_prepare_persistent_scope_state(
+int yvex_runtime_private_session_prepare_persistent_scope_state_locked(
     yvex_runtime_execution_session *session, yvex_tensor_scope scope,
     const yvex_graph_attention_capacity_plan *capacity,
     yvex_runtime_model_failure *failure, yvex_error *err)
@@ -404,9 +404,7 @@ int yvex_runtime_session_prepare_persistent_scope_state(
     unsigned long long prior_host, prior_device;
     int ready, rc;
     if (!session || !capacity ||
-        (scope != YVEX_TENSOR_SCOPE_GLOBAL && scope != YVEX_TENSOR_SCOPE_DRAFT) ||
-        !session->lifecycle_mutex_ready ||
-        pthread_mutex_lock(&session->lifecycle_mutex) != 0)
+        (scope != YVEX_TENSOR_SCOPE_GLOBAL && scope != YVEX_TENSOR_SCOPE_DRAFT))
         return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_WORKSPACE_LOCK, 1ull, 0ull, err);
     provider = scope == YVEX_TENSOR_SCOPE_DRAFT
                    ? &session->draft_attention_state_provider
@@ -492,6 +490,21 @@ int yvex_runtime_session_prepare_persistent_scope_state(
             }
         }
     }
+    return rc;
+}
+
+int yvex_runtime_session_prepare_persistent_scope_state(
+    yvex_runtime_execution_session *session, yvex_tensor_scope scope,
+    const yvex_graph_attention_capacity_plan *capacity,
+    yvex_runtime_model_failure *failure, yvex_error *err)
+{
+    int rc;
+    if (!session || !session->lifecycle_mutex_ready ||
+        pthread_mutex_lock(&session->lifecycle_mutex) != 0)
+        return yvex_runtime_private_refuse(
+            failure, YVEX_RUNTIME_REFUSE_WORKSPACE_LOCK, 1ull, 0ull, err);
+    rc = yvex_runtime_private_session_prepare_persistent_scope_state_locked(
+        session, scope, capacity, failure, err);
     (void)pthread_mutex_unlock(&session->lifecycle_mutex);
     return rc;
 }

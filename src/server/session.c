@@ -17,37 +17,6 @@
 #include <yvex/internal/core.h>
 #include <yvex/internal/runtime_state_store.h>
 #include <yvex/internal/tokenizer.h>
-#define SESSION_SCHEMA_V1 1u
-#define SESSION_MAX_MESSAGES 128u
-#define SESSION_TRANSCRIPT_BYTES 1048576u
-typedef struct {
-    char name[YVEX_SERVER_SESSION_NAME_CAP];
-    char identity[YVEX_SHA256_HEX_CAP];
-    yvex_server_session_state state;
-    yvex_runtime_execution_session *execution;
-    yvex_runtime_generation_context *generation;
-    yvex_prompt_message messages[SESSION_MAX_MESSAGES];
-    unsigned long long message_count;
-    unsigned char *transcript;
-    unsigned long long transcript_count, transcript_capacity;
-    unsigned int *committed_tokens, *prompt_tokens;
-    unsigned long long committed_count, token_capacity;
-    yvex_runtime_generation_token_result *token_results;
-    unsigned char *turn_text;
-    unsigned long long text_capacity, turn_count, attached_clients;
-    unsigned long long message_history_generation, transcript_generation;
-    char last_turn_identity[YVEX_SHA256_HEX_CAP];
-    char state_digest[YVEX_SHA256_HEX_CAP];
-    char generated_token_identity[YVEX_SHA256_HEX_CAP];
-    char generated_text_digest[YVEX_SHA256_HEX_CAP];
-    yvex_client_partial_turn partial_turn;
-    yvex_client_state_checkpoint state_checkpoint;
-    yvex_runtime_sampling_policy policy;
-    yvex_reasoning_policy reasoning_policy;
-    int policy_set;
-    atomic_int cancel_requested;
-    atomic_int active_turn;
-} server_session;
 struct server_session_registry {
     pthread_mutex_t mutex;
     yvex_runtime_model *model;
@@ -344,13 +313,15 @@ static int session_generation_open(
     const yvex_runtime_sampling_policy *policy, yvex_error *err)
 {
     yvex_runtime_generation_options options;
+    yvex_error primary;
     int rc;
+    if (session->policy_set &&
+        strcmp(policy->policy_identity, session->policy.policy_identity) != 0) {
+        yvex_error_set(err, YVEX_ERR_STATE, "server.session.policy",
+                       "sampling policy is immutable until session reset");
+        return YVEX_ERR_STATE;
+    }
     if (session->generation) {
-        if (strcmp(policy->policy_identity, session->policy.policy_identity) != 0) {
-            yvex_error_set(err, YVEX_ERR_STATE, "server.session.policy",
-                           "sampling policy is immutable until session reset");
-            return YVEX_ERR_STATE;
-        }
         session->reasoning_policy = request->reasoning_policy;
         return YVEX_OK;
     }
@@ -377,6 +348,14 @@ static int session_generation_open(
     rc = yvex_runtime_generation_context_open(
         &session->generation, registry->model, session->execution,
         &options, err);
+    if (rc == YVEX_OK)
+        rc = yvex_server_session_generation_state_restore(session, err);
+    if (rc != YVEX_OK && session->generation) {
+        yvex_error_clear(&primary);
+        if (err) primary = *err;
+        (void)yvex_runtime_generation_context_close(&session->generation, NULL);
+        if (err) *err = primary;
+    }
     if (rc == YVEX_OK) {
         session->policy = *policy;
         session->policy_set = 1;
@@ -421,6 +400,9 @@ static int session_execution_rebase(server_session_registry *registry,
     session->committed_count = 0u;
     session->policy_set = 0;
     memset(&session->policy, 0, sizeof(session->policy));
+    memset(&session->pending_generation_checkpoint, 0,
+           sizeof(session->pending_generation_checkpoint));
+    session->pending_generation_checkpoint_present = 0;
     session->reasoning_policy = YVEX_REASONING_DISABLED;
     memset(session->state_digest, 0, sizeof(session->state_digest));
     session->state = session->attached_clients ? YVEX_SERVER_SESSION_READY
@@ -782,7 +764,8 @@ static int session_message(server_message_emit emit, void *emit_context,
 static void session_checkpoint_set(
     server_session *session, const yvex_runtime_state_store_summary *summary)
 {
-    session->state_checkpoint.schema_version = summary->schema_version;
+    session->state_checkpoint.schema_version =
+        YVEX_CLIENT_STATE_CHECKPOINT_SCHEMA_V1;
     session->state_checkpoint.file_bytes = summary->file_bytes;
     session->state_checkpoint.scope_count = summary->scope_count;
     session->state_checkpoint.committed_sequence_length =
@@ -1625,6 +1608,9 @@ static int session_reset(server_session_registry *registry,
     session->transcript_generation = next_transcript_generation;
     session->policy_set = 0;
     memset(&session->policy, 0, sizeof(session->policy));
+    memset(&session->pending_generation_checkpoint, 0,
+           sizeof(session->pending_generation_checkpoint));
+    session->pending_generation_checkpoint_present = 0;
     session->reasoning_policy = YVEX_REASONING_DISABLED;
     memset(session->last_turn_identity, 0, sizeof(session->last_turn_identity));
     memset(session->state_digest, 0, sizeof(session->state_digest));
@@ -1799,19 +1785,25 @@ int yvex_server_sessions_execute(server_session_registry *registry,
                                  YVEX_OK, request, session, "reset", err);
     } else if (request->operation == YVEX_CLIENT_OP_SESSION_STATE_SAVE ||
                request->operation == YVEX_CLIENT_OP_SESSION_STATE_RESTORE) {
+        const yvex_runtime_model_view *view =
+            yvex_runtime_model_view_get(registry->model);
         yvex_runtime_state_store_summary summary;
         if (atomic_load_explicit(&session->active_turn, memory_order_acquire)) {
             rc = YVEX_ERR_STATE;
             yvex_error_set(err, YVEX_ERR_STATE, "server.session.state",
                            "active session state cannot be checkpointed");
         } else if (request->operation == YVEX_CLIENT_OP_SESSION_STATE_SAVE) {
-            rc = yvex_runtime_session_state_save(
-                session->execution, request->state_path, &summary, err);
+            rc = yvex_server_session_state_save(
+                session, request->state_path, &summary, err);
+        } else if (!view || !view->tokenizer) {
+            rc = YVEX_ERR_STATE;
+            yvex_error_set(err, rc, "server.session.state",
+                           "runtime tokenizer is unavailable");
         } else {
-            rc = yvex_runtime_session_state_restore(
-                session->execution, request->state_path,
-                request->maximum_state_file_bytes, session->committed_count,
-                &summary, err);
+            rc = yvex_server_session_state_restore(
+                session, request->state_path,
+                request->maximum_state_file_bytes,
+                yvex_tokenizer_vocab_size(view->tokenizer), &summary, err);
         }
         if (rc == YVEX_OK) {
             session_checkpoint_set(session, &summary);

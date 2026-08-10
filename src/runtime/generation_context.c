@@ -18,6 +18,7 @@
 #include <yvex/internal/core.h>
 #include <yvex/internal/execution.h>
 #include <yvex/internal/moe.h>
+#include <yvex/internal/runtime_state_store.h>
 
 static int generation_context_refuse(yvex_error *err, yvex_status status,
                                      const char *reason)
@@ -1034,6 +1035,83 @@ const yvex_runtime_generation_plan_summary *yvex_runtime_generation_plan_summary
     const yvex_runtime_generation_context *context)
 {
     return context ? &context->plan : NULL;
+}
+
+static int generation_checkpoint_identity(
+    const yvex_runtime_generation_checkpoint *checkpoint,
+    char output[YVEX_SHA256_HEX_CAP])
+{
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    yvex_sha256_init(&hash);
+    if (!checkpoint ||
+        !yvex_sha256_update_text(&hash,
+                                 "yvex.runtime.generation.checkpoint.v1") ||
+        !yvex_sha256_update_u64(&hash, checkpoint->schema_version) ||
+        !yvex_sha256_update_text(&hash,
+                                 checkpoint->generation_plan_identity) ||
+        !yvex_sha256_update_text(&hash,
+                                 checkpoint->sampling.checkpoint_identity) ||
+        !yvex_sha256_final(&hash, digest))
+        return 0;
+    yvex_sha256_hex(digest, output);
+    return 1;
+}
+
+int yvex_runtime_generation_context_checkpoint(
+    yvex_runtime_generation_context *context,
+    yvex_runtime_generation_checkpoint *checkpoint, yvex_error *err)
+{
+    int rc;
+    if (checkpoint) memset(checkpoint, 0, sizeof(*checkpoint));
+    if (!context || !checkpoint)
+        return generation_context_refuse(
+            err, YVEX_ERR_INVALID_ARG,
+            "generation checkpoint output is required");
+    rc = yvex_runtime_private_generation_enter(context, err);
+    if (rc != YVEX_OK) return rc;
+    checkpoint->schema_version = YVEX_RUNTIME_GENERATION_CHECKPOINT_SCHEMA_V1;
+    yvex_runtime_identity_copy(checkpoint->generation_plan_identity,
+                               context->plan.generation_plan_identity);
+    rc = yvex_runtime_sampling_context_checkpoint(
+        context->sampling, &checkpoint->sampling, err);
+    if (rc == YVEX_OK &&
+        !generation_checkpoint_identity(checkpoint,
+                                        checkpoint->checkpoint_identity))
+        rc = generation_context_refuse(
+            err, YVEX_ERR_STATE, "generation checkpoint identity failed");
+    if (rc != YVEX_OK) memset(checkpoint, 0, sizeof(*checkpoint));
+    yvex_runtime_private_generation_leave(context, rc, 0);
+    if (rc == YVEX_OK) yvex_error_clear(err);
+    return rc;
+}
+
+int yvex_runtime_generation_context_restore(
+    yvex_runtime_generation_context *context,
+    const yvex_runtime_generation_checkpoint *checkpoint, yvex_error *err)
+{
+    char identity[YVEX_SHA256_HEX_CAP];
+    int rc;
+    if (!context || !checkpoint)
+        return generation_context_refuse(err, YVEX_ERR_INVALID_ARG,
+                                         "generation checkpoint is required");
+    rc = yvex_runtime_private_generation_enter(context, err);
+    if (rc != YVEX_OK) return rc;
+    if (checkpoint->schema_version !=
+            YVEX_RUNTIME_GENERATION_CHECKPOINT_SCHEMA_V1 ||
+        strcmp(checkpoint->generation_plan_identity,
+               context->plan.generation_plan_identity) != 0 ||
+        !generation_checkpoint_identity(checkpoint, identity) ||
+        strcmp(identity, checkpoint->checkpoint_identity) != 0)
+        rc = generation_context_refuse(
+            err, YVEX_ERR_FORMAT,
+            "generation checkpoint is incompatible or corrupt");
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_sampling_context_restore(
+            context->sampling, &checkpoint->sampling, err);
+    yvex_runtime_private_generation_leave(context, rc, 0);
+    if (rc == YVEX_OK) yvex_error_clear(err);
+    return rc;
 }
 
 int yvex_runtime_generation_context_close(

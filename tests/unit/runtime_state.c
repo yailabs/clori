@@ -1938,7 +1938,7 @@ static int test_state_checkpoint_restore(const state_plan_fixture *fixture)
                                         &err)
                      : YVEX_ERR_STATE;
     YVEX_TEST_ASSERT(
-        restored.schema_version == YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V6 &&
+        restored.schema_version == YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V7 &&
             restored.restore && restore_rc == YVEX_OK &&
             state_summary(&restored, &after, &err) == YVEX_OK &&
             after.committed_sequence_length == 3ull &&

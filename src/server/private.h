@@ -7,12 +7,49 @@
 #ifndef SRC_SERVER_PRIVATE_H_INCLUDED
 #define SRC_SERVER_PRIVATE_H_INCLUDED
 
+#include <stdatomic.h>
+
 #include <yvex/internal/generation.h>
+#include <yvex/internal/runtime_state_store.h>
 #include <yvex/server.h>
 
 typedef struct server_telemetry server_telemetry;
 typedef struct server_session_registry server_session_registry;
 typedef struct server_openai_listener server_openai_listener;
+
+#define SESSION_SCHEMA_V1 1u
+#define SESSION_MAX_MESSAGES 128u
+#define SESSION_TRANSCRIPT_BYTES 1048576u
+
+typedef struct server_session {
+    char name[YVEX_SERVER_SESSION_NAME_CAP];
+    char identity[YVEX_SHA256_HEX_CAP];
+    yvex_server_session_state state;
+    yvex_runtime_execution_session *execution;
+    yvex_runtime_generation_context *generation;
+    yvex_prompt_message messages[SESSION_MAX_MESSAGES];
+    unsigned long long message_count;
+    unsigned char *transcript;
+    unsigned long long transcript_count, transcript_capacity;
+    unsigned int *committed_tokens, *prompt_tokens;
+    unsigned long long committed_count, token_capacity;
+    yvex_runtime_generation_token_result *token_results;
+    unsigned char *turn_text;
+    unsigned long long text_capacity, turn_count, attached_clients;
+    unsigned long long message_history_generation, transcript_generation;
+    char last_turn_identity[YVEX_SHA256_HEX_CAP];
+    char state_digest[YVEX_SHA256_HEX_CAP];
+    char generated_token_identity[YVEX_SHA256_HEX_CAP];
+    char generated_text_digest[YVEX_SHA256_HEX_CAP];
+    yvex_client_partial_turn partial_turn;
+    yvex_client_state_checkpoint state_checkpoint;
+    yvex_runtime_sampling_policy policy;
+    yvex_reasoning_policy reasoning_policy;
+    yvex_runtime_generation_checkpoint pending_generation_checkpoint;
+    int policy_set, pending_generation_checkpoint_present;
+    atomic_int cancel_requested;
+    atomic_int active_turn;
+} server_session;
 
 typedef struct {
     const char *yvex_socket;
@@ -28,6 +65,61 @@ typedef struct {
 typedef int (*server_message_emit)(void *context,
                                    const yvex_client_message *message,
                                    yvex_error *err);
+
+#define YVEX_SERVER_SESSION_STORE_SCHEMA_V1 1u
+typedef struct {
+    const yvex_prompt_message *messages;
+    const unsigned int *committed_tokens;
+    unsigned long long message_count, committed_count, turn_count;
+    unsigned long long message_history_generation, transcript_generation;
+    yvex_runtime_sampling_policy policy;
+    yvex_reasoning_policy reasoning_policy;
+    yvex_runtime_generation_checkpoint generation_checkpoint;
+    int policy_set, generation_checkpoint_present;
+    char last_turn_identity[YVEX_SHA256_HEX_CAP];
+    char state_digest[YVEX_SHA256_HEX_CAP];
+    char generated_token_identity[YVEX_SHA256_HEX_CAP];
+    char generated_text_digest[YVEX_SHA256_HEX_CAP];
+} server_session_store_view;
+
+typedef struct {
+    yvex_prompt_message *messages;
+    unsigned char *transcript;
+    unsigned int *committed_tokens;
+    unsigned long long message_count, transcript_count, committed_count;
+    unsigned long long turn_count, message_history_generation, transcript_generation;
+    yvex_runtime_sampling_policy policy;
+    yvex_reasoning_policy reasoning_policy;
+    yvex_runtime_generation_checkpoint generation_checkpoint;
+    int policy_set, generation_checkpoint_present;
+    char last_turn_identity[YVEX_SHA256_HEX_CAP];
+    char state_digest[YVEX_SHA256_HEX_CAP];
+    char generated_token_identity[YVEX_SHA256_HEX_CAP];
+    char generated_text_digest[YVEX_SHA256_HEX_CAP];
+    char payload_identity[YVEX_SHA256_HEX_CAP];
+} server_session_store_state;
+
+int yvex_server_session_store_encode(
+    const server_session_store_view *view, unsigned char **bytes,
+    unsigned long long *byte_count,
+    char payload_identity[YVEX_SHA256_HEX_CAP], yvex_error *err);
+int yvex_server_session_store_decode(
+    const unsigned char *bytes, unsigned long long byte_count,
+    unsigned long long maximum_messages,
+    unsigned long long maximum_transcript_bytes,
+    unsigned long long maximum_tokens, unsigned long long vocabulary_size,
+    server_session_store_state *state, yvex_error *err);
+void yvex_server_session_store_bytes_close(unsigned char **bytes);
+void yvex_server_session_store_close(server_session_store_state *state);
+int yvex_server_session_state_save(
+    server_session *session, const char *path,
+    yvex_runtime_state_store_summary *summary, yvex_error *err);
+int yvex_server_session_state_restore(
+    server_session *session, const char *path,
+    unsigned long long maximum_file_bytes, unsigned long long vocabulary_size,
+    yvex_runtime_state_store_summary *summary, yvex_error *err);
+int yvex_server_session_generation_state_restore(
+    server_session *session, yvex_error *err);
 
 yvex_client_failure_class yvex_server_failure_class_from_status(int status);
 

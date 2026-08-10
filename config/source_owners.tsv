@@ -227,6 +227,7 @@ src/server/private.h	server	server.shared	generic	private	private-interface	serv
 src/server/protocol.c	server	server.protocol	generic	private	public-protocol	client,daemon	implementation	none
 src/server/transport.c	server	server.local_transport	generic	private	resource-lifecycle	client,daemon	implementation	none
 src/server/session.c	server	server.session	generic	private	resource-lifecycle	server.core	implementation	none
+src/server/state_store.c	server	server.session_state_store	generic	private	persisted-schema	server.session,tests	implementation	none
 src/server/telemetry.c	server	server.telemetry	generic	private	resource-lifecycle	server.core,server.session	implementation	none
 src/source/inventory.c	source	source.inventory	generic	private	reusable-algorithm	model,compilation	implementation	none
 src/core/json.c	core	core.json	generic	private	bounded-parser	source,gguf	implementation	none

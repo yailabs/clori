@@ -171,6 +171,15 @@ typedef struct {
     char rng_state_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_sampling_context_summary;
 
+#define YVEX_RUNTIME_SAMPLING_CHECKPOINT_SCHEMA_V1 1u
+typedef struct {
+    unsigned int schema_version;
+    unsigned long long rng_state, rng_increment, successful_draws;
+    char policy_identity[YVEX_SHA256_HEX_CAP];
+    char rng_state_identity[YVEX_SHA256_HEX_CAP];
+    char checkpoint_identity[YVEX_SHA256_HEX_CAP];
+} yvex_runtime_sampling_checkpoint;
+
 typedef struct {
     unsigned int schema_version;
     int completed;
@@ -237,6 +246,12 @@ int yvex_runtime_sampling_execute(
 int yvex_runtime_sampling_context_snapshot(
     const yvex_runtime_sampling_context *context,
     yvex_runtime_sampling_context_summary *summary, yvex_error *err);
+int yvex_runtime_sampling_context_checkpoint(
+    yvex_runtime_sampling_context *context,
+    yvex_runtime_sampling_checkpoint *checkpoint, yvex_error *err);
+int yvex_runtime_sampling_context_restore(
+    yvex_runtime_sampling_context *context,
+    const yvex_runtime_sampling_checkpoint *checkpoint, yvex_error *err);
 int yvex_runtime_sampling_context_close(
     yvex_runtime_sampling_context **context, yvex_error *err);
 

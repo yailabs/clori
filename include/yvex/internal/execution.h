@@ -276,9 +276,10 @@ typedef struct {
     char identity[YVEX_SHA256_HEX_CAP];
 } yvex_execution_capacity_plan;
 
-int yvex_execution_capacity_plan_build(
-    const yvex_execution_capacity_plan_request *request,
+int yvex_execution_capacity_plan_build(const yvex_execution_capacity_plan_request *request,
     yvex_execution_capacity_plan *plan, yvex_error *err);
+int yvex_execution_capacity_plan_validate(const yvex_execution_capacity_plan *plan,
+                                          yvex_error *err);
 
 typedef enum {
     YVEX_EXECUTION_ROOFLINE_PREFILL_LAYER = 0,
@@ -591,8 +592,7 @@ int yvex_execution_shape_registry_select(
 int yvex_execution_shape_registry_summary_copy(
     const yvex_execution_shape_registry *registry,
     yvex_execution_shape_registry_summary *summary, yvex_error *err);
-void yvex_execution_shape_registry_close(
-    yvex_execution_shape_registry **registry);
+void yvex_execution_shape_registry_close(yvex_execution_shape_registry **registry);
 
 #ifdef __cplusplus
 }

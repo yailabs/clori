@@ -13,8 +13,8 @@
 
 #include "src/graph/private.h"
 
-static int recipe_hash_u64s(yvex_sha256 *hash,
-                            const unsigned long long *values, size_t count)
+int yvex_graph_state_hash_u64s(yvex_sha256 *hash,
+                               const unsigned long long *values, size_t count)
 {
     size_t index;
     for (index = 0u; index < count; ++index)
@@ -79,7 +79,8 @@ static int recipe_rolling_layout_hash(
         (unsigned long long)view->overlap, (unsigned long long)view->rotated};
     if (!yvex_sha256_update_u64(hash, (unsigned long long)view->present)) return 0;
     return !view->present ||
-           (recipe_hash_u64s(hash, fields, sizeof(fields) / sizeof(fields[0])) &&
+           (yvex_graph_state_hash_u64s(
+                hash, fields, sizeof(fields) / sizeof(fields[0])) &&
             yvex_sha256_update_text(hash, view->attention_plan_identity));
 }
 
@@ -245,7 +246,8 @@ static int recipe_component_hash(
         (unsigned long long)rolling->rotated};
     return yvex_sha256_update_text(
                hash, "yvex.graph.attention.state-component.v1") &&
-           recipe_hash_u64s(hash, fields, sizeof(fields) / sizeof(fields[0])) &&
+           yvex_graph_state_hash_u64s(
+               hash, fields, sizeof(fields) / sizeof(fields[0])) &&
            yvex_sha256_update_text(hash, rolling->attention_plan_identity);
 }
 
@@ -335,4 +337,59 @@ mismatch:
     yvex_error_set(err, YVEX_ERR_STATE, "graph.attention.state.recipe",
                    "state recipe identity does not match its fields");
     return YVEX_ERR_STATE;
+}
+
+int yvex_attention_state_checkpoint_validate(
+    const yvex_attention_state_checkpoint *checkpoint,
+    const yvex_graph_attention_state_summary *provider, yvex_error *err)
+{
+    unsigned long long layer;
+    if (!checkpoint ||
+        checkpoint->schema_version != YVEX_ATTENTION_STATE_CHECKPOINT_SCHEMA_V1 ||
+        !checkpoint->layer_count || !checkpoint->layers ||
+        !checkpoint->layer_identities ||
+        !yvex_sha256_hex_valid(checkpoint->state_layout_identity) ||
+        !yvex_sha256_hex_valid(checkpoint->state_content_identity) ||
+        (checkpoint->capacity_plan_identity[0] &&
+         !yvex_sha256_hex_valid(checkpoint->capacity_plan_identity))) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "graph.attention.state.checkpoint",
+                       "state checkpoint structure or identity is invalid");
+        return YVEX_ERR_FORMAT;
+    }
+    for (layer = 0ull; layer < checkpoint->layer_count; ++layer)
+        if (!yvex_sha256_hex_valid(checkpoint->layer_identities[layer]) ||
+            checkpoint->layers[layer].token_count !=
+                checkpoint->committed_sequence_length) {
+            yvex_error_set(err, YVEX_ERR_FORMAT,
+                           "graph.attention.state.checkpoint",
+                           "state checkpoint layer identity or position is invalid");
+            return YVEX_ERR_FORMAT;
+        }
+    if (!provider) {
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    if (provider->transaction_active || provider->invalidated ||
+        provider->cancelled ||
+        provider->prepared_layer_count != provider->layer_count) {
+        yvex_error_set(err, YVEX_ERR_STATE, "graph.attention.state.checkpoint",
+                       "state checkpoint requires a prepared idle provider");
+        return YVEX_ERR_STATE;
+    }
+    if (checkpoint->layer_count != provider->layer_count ||
+        strcmp(checkpoint->state_layout_identity,
+               provider->state_layout_identity) != 0 ||
+        strcmp(checkpoint->capacity_plan_identity,
+               provider->capacity_plan_identity) != 0) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "graph.attention.state.checkpoint",
+                       "state checkpoint layout is incompatible with its provider");
+        return YVEX_ERR_FORMAT;
+    }
+    if (checkpoint->committed_sequence_length > provider->capacity) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "graph.attention.state.checkpoint",
+                       "state checkpoint exceeds provider capacity");
+        return YVEX_ERR_BOUNDS;
+    }
+    yvex_error_clear(err);
+    return YVEX_OK;
 }

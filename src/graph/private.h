@@ -92,6 +92,8 @@ typedef struct {
     const unsigned long long *positions;
     unsigned long long count, width;
 } yvex_graph_state_history_span;
+int yvex_graph_state_hash_u64s(
+    yvex_sha256 *hash, const unsigned long long *values, size_t count);
 int yvex_graph_state_history_project(
     const yvex_attention_history_view *view,
     const yvex_attention_state_component_recipe *component,

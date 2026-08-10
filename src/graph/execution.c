@@ -1043,6 +1043,132 @@ int yvex_execution_capacity_plan_build(
     return YVEX_OK;
 }
 
+static int capacity_plan_structure_valid(
+    const yvex_execution_capacity_plan *plan)
+{
+    unsigned long long required = 0ull, state_bytes = 0ull;
+    unsigned long long candidate_bytes = 0ull, logical_tokens;
+    unsigned long long index;
+    if (!plan->model_maximum_context || !plan->admitted_execution_maximum ||
+        plan->admitted_execution_maximum > plan->model_maximum_context ||
+        plan->per_session_maximum != plan->admitted_execution_maximum ||
+        plan->per_request_maximum != plan->admitted_execution_maximum ||
+        !plan->concurrent_sequences || !plan->logical_batch_tokens ||
+        !plan->attention_microbatch_rows || !plan->moe_row_tile ||
+        !plan->output_head_rows || !plan->model_bytes || !plan->workspace_bytes ||
+        !yvex_core_u64_mul(plan->admitted_execution_maximum,
+                           plan->concurrent_sequences, &logical_tokens) ||
+        logical_tokens != plan->total_logical_context_tokens ||
+        plan->physical_state_pool_tokens != plan->total_logical_context_tokens)
+        return 0;
+    for (index = 0ull; index < plan->state_class_count; ++index) {
+        const yvex_execution_state_class_plan *state =
+            &plan->state_classes[index];
+        unsigned long long page_bytes, rounded_tokens, data_bytes;
+        unsigned long long pool_tokens, fragmentation, cow_bytes;
+        if (state->state_class >= YVEX_MODEL_STATE_CLASS_COUNT ||
+            state->extent > YVEX_EXECUTION_STATE_EXTENT_PREFIX_BUDGET ||
+            (index && state->state_class <=
+                          plan->state_classes[index - 1ull].state_class) ||
+            !state->logical_block_tokens || !state->bytes_per_block ||
+            !state->page_tokens ||
+            state->page_tokens % state->logical_block_tokens ||
+            !yvex_core_u64_mul(
+                state->page_tokens / state->logical_block_tokens,
+                state->bytes_per_block, &page_bytes) ||
+            page_bytes != state->page_bytes ||
+            (state->shared != 0 && state->shared != 1) ||
+            (state->copy_on_write != 0 && state->copy_on_write != 1) ||
+            !yvex_core_u64_mul(state->page_count, state->page_tokens,
+                               &rounded_tokens))
+            return 0;
+        if (state->extent == YVEX_EXECUTION_STATE_EXTENT_PREFIX_BUDGET) {
+            if (state->tokens_per_sequence ||
+                rounded_tokens != state->pool_tokens ||
+                state->pool_bytes != plan->prefix_cache_bytes ||
+                state->promotion_fragmentation_bytes ||
+                state->copy_on_write_tail_bytes !=
+                    (state->copy_on_write ? state->page_bytes : 0ull))
+                return 0;
+            continue;
+        }
+        if (!state->tokens_per_sequence ||
+            !yvex_core_u64_mul(state->tokens_per_sequence,
+                               plan->concurrent_sequences, &pool_tokens) ||
+            pool_tokens != state->pool_tokens || rounded_tokens < pool_tokens ||
+            rounded_tokens % state->logical_block_tokens ||
+            !yvex_core_u64_mul(
+                rounded_tokens / state->logical_block_tokens,
+                state->bytes_per_block, &data_bytes) ||
+            !yvex_core_u64_mul(
+                (rounded_tokens - pool_tokens) / state->logical_block_tokens,
+                state->bytes_per_block, &fragmentation) ||
+            state->pool_bytes < data_bytes ||
+            state->pool_bytes - data_bytes != state->page_table_bytes ||
+            fragmentation != state->tail_fragmentation_bytes ||
+            !yvex_core_u64_mul(state->page_bytes, plan->concurrent_sequences,
+                               &cow_bytes) ||
+            state->copy_on_write_tail_bytes !=
+                (state->copy_on_write ? cow_bytes : 0ull) ||
+            state->promotion_fragmentation_bytes !=
+                (state->extent == YVEX_EXECUTION_STATE_EXTENT_CANDIDATE
+                     ? fragmentation : 0ull) ||
+            !capacity_add(
+                state->extent == YVEX_EXECUTION_STATE_EXTENT_CANDIDATE
+                    ? &candidate_bytes : &state_bytes,
+                state->pool_bytes))
+            return 0;
+    }
+    if (state_bytes != plan->state_pool_bytes ||
+        candidate_bytes != plan->candidate_reserve_bytes ||
+        !capacity_add(&required, plan->model_bytes) ||
+        !capacity_add(&required, plan->derived_layout_bytes) ||
+        !capacity_add(&required, plan->state_pool_bytes) ||
+        !capacity_add(&required, plan->candidate_reserve_bytes) ||
+        !capacity_add(&required, plan->workspace_bytes) ||
+        !capacity_add(&required, plan->scheduler_bytes) ||
+        !capacity_add(&required, plan->graph_bytes) ||
+        !capacity_add(&required, plan->prefix_cache_bytes) ||
+        !capacity_add(&required, plan->persistent_state_bytes) ||
+        !capacity_add(&required, plan->system_reserve_bytes) ||
+        required != plan->required_bytes || required > plan->usable_memory_bytes ||
+        plan->unreserved_bytes != plan->usable_memory_bytes - required)
+        return 0;
+    return 1;
+}
+
+int yvex_execution_capacity_plan_validate(
+    const yvex_execution_capacity_plan *plan, yvex_error *err)
+{
+    yvex_execution_capacity_plan candidate;
+    char expected[YVEX_SHA256_HEX_CAP];
+    if (!plan ||
+        plan->schema_version != YVEX_EXECUTION_CAPACITY_PLAN_SCHEMA_V1 ||
+        !plan->state_class_count ||
+        plan->state_class_count > YVEX_MODEL_STATE_CLASS_COUNT ||
+        !yvex_sha256_hex_valid(plan->model_execution_identity) ||
+        !yvex_sha256_hex_valid(plan->hardware_profile_identity) ||
+        !yvex_sha256_hex_valid(plan->workload_profile_identity) ||
+        !yvex_sha256_hex_valid(plan->identity) ||
+        !capacity_plan_structure_valid(plan))
+        return execution_refuse(err, YVEX_ERR_FORMAT,
+                                "runtime.execution.capacity",
+                                "persisted capacity plan is incomplete");
+    candidate = *plan;
+    candidate.identity[0] = '\0';
+    if (!capacity_plan_identity(&candidate))
+        return execution_refuse(err, YVEX_ERR_STATE,
+                                "runtime.execution.capacity",
+                                "capacity plan identity derivation failed");
+    yvex_core_text_copy(expected, sizeof(expected), candidate.identity);
+    if (strcmp(expected, plan->identity) != 0)
+        return execution_refuse(err, YVEX_ERR_FORMAT,
+                                "runtime.execution.capacity",
+                                "persisted capacity plan identity mismatched");
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
 static int roofline_rate(unsigned long long bytes, unsigned long long duration,
                          unsigned long long scale, unsigned long long *result)
 {

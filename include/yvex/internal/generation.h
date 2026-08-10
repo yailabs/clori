@@ -489,6 +489,7 @@ typedef struct {
     char token_sequence_identity[YVEX_SHA256_HEX_CAP];
     char rng_state_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_generation_context_summary;
+
 typedef struct yvex_runtime_generation_context yvex_runtime_generation_context;
 int yvex_runtime_generation_bytes_digest(
     const char *domain, const unsigned char *bytes, unsigned long long count,

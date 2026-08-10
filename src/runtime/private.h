@@ -148,6 +148,11 @@ struct yvex_runtime_generation_context {
     int device_selection;
 };
 
+int yvex_runtime_private_generation_enter(
+    yvex_runtime_generation_context *context, yvex_error *err);
+void yvex_runtime_private_generation_leave(
+    yvex_runtime_generation_context *context, int rc, int executed);
+
 typedef enum {
     YVEX_RUNTIME_REFUSE_MODEL_LOCK_UNAVAILABLE = 0,
     YVEX_RUNTIME_REFUSE_MODEL_INVALID_OR_DRAINING,
@@ -232,6 +237,10 @@ int yvex_runtime_private_session_capabilities_bind(
     yvex_runtime_execution_session *session,
     yvex_runtime_model_failure *failure, int require_workspace,
     yvex_error *err);
+int yvex_runtime_private_session_prepare_persistent_scope_state_locked(
+    yvex_runtime_execution_session *session, yvex_tensor_scope scope,
+    const yvex_graph_attention_capacity_plan *capacity,
+    yvex_runtime_model_failure *failure, yvex_error *err);
 int yvex_runtime_private_state_residency_resolve(
     const void *context, const void *host, unsigned long long bytes,
     unsigned long long *device_address);

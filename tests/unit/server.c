@@ -3,6 +3,7 @@
  * defaults, and idempotent graceful close without requiring a model artifact.
  */
 #include <string.h>
+#include <stdlib.h>
 
 #include <arpa/inet.h>
 #include <sys/socket.h>
@@ -27,6 +28,107 @@ static void test_options(yvex_server_options *options)
     options->maximum_output_bytes = 4096u;
     options->maximum_sessions = 2u;
     options->request_queue_capacity = 2u;
+}
+
+static void server_test_identity(char identity[YVEX_SHA256_HEX_CAP], char digit)
+{
+    memset(identity, digit, YVEX_SHA256_HEX_CAP - 1u);
+    identity[YVEX_SHA256_HEX_CAP - 1u] = '\0';
+}
+
+static int test_session_store(void)
+{
+    static const char second_message[] = {'o', 'k', '\0', '!'};
+    yvex_prompt_message messages[2] = {
+        {.role = YVEX_PROMPT_ROLE_USER, .content = "ciao", .content_len = 4ull},
+        {.role = YVEX_PROMPT_ROLE_ASSISTANT,
+         .content = second_message, .content_len = sizeof(second_message)}};
+    unsigned int tokens[3] = {1u, 7u, 2u};
+    server_session_store_view view = {0};
+    server_session_store_state restored = {0};
+    unsigned char *bytes = NULL, *corrupt = NULL, *rejected = NULL;
+    unsigned long long byte_count = 0ull, rejected_count = 0ull;
+    char payload_identity[YVEX_SHA256_HEX_CAP];
+    yvex_error err;
+    view.messages = messages;
+    view.message_count = 2ull;
+    view.committed_tokens = tokens;
+    view.committed_count = 3ull;
+    view.turn_count = 1ull;
+    view.message_history_generation = 2ull;
+    view.transcript_generation = 2ull;
+    view.policy_set = 1;
+    view.reasoning_policy = YVEX_REASONING_ENABLED;
+    view.policy.schema_version = YVEX_RUNTIME_SAMPLING_SCHEMA_V1;
+    view.policy.strategy = YVEX_SAMPLING_STRATEGY_STOCHASTIC;
+    view.policy.temperature = 0.8;
+    view.policy.top_p = 1.0;
+    view.policy.typical_p = 1.0;
+    view.policy.seed_present = 1;
+    view.policy.seed = 42ull;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_sampling_policy_seal(&view.policy, 8ull, &err) == YVEX_OK,
+        "session checkpoint sampling policy seals");
+    view.generation_checkpoint_present = 1;
+    view.generation_checkpoint.schema_version =
+        YVEX_RUNTIME_GENERATION_CHECKPOINT_SCHEMA_V1;
+    view.generation_checkpoint.sampling.schema_version =
+        YVEX_RUNTIME_SAMPLING_CHECKPOINT_SCHEMA_V1;
+    view.generation_checkpoint.sampling.rng_state = 9ull;
+    view.generation_checkpoint.sampling.rng_increment = 3ull;
+    view.generation_checkpoint.sampling.successful_draws = 4ull;
+    yvex_runtime_identity_copy(
+        view.generation_checkpoint.sampling.policy_identity,
+        view.policy.policy_identity);
+    server_test_identity(view.generation_checkpoint.sampling.rng_state_identity, '2');
+    server_test_identity(view.generation_checkpoint.sampling.checkpoint_identity, '3');
+    server_test_identity(view.generation_checkpoint.generation_plan_identity, '4');
+    server_test_identity(view.generation_checkpoint.checkpoint_identity, '5');
+    server_test_identity(view.last_turn_identity, '6');
+    server_test_identity(view.state_digest, '7');
+    server_test_identity(view.generated_token_identity, '8');
+    server_test_identity(view.generated_text_digest, '9');
+    YVEX_TEST_ASSERT(
+        yvex_server_session_store_encode(
+            &view, &bytes, &byte_count, payload_identity, &err) == YVEX_OK &&
+            bytes && byte_count > 0ull && yvex_sha256_hex_valid(payload_identity) &&
+            yvex_server_session_store_decode(
+                bytes, byte_count, 2ull, 64ull, 3ull, 8ull,
+                &restored, &err) == YVEX_OK &&
+            restored.message_count == 2ull && restored.committed_count == 3ull &&
+            restored.turn_count == 1ull && restored.policy_set &&
+            restored.reasoning_policy == YVEX_REASONING_ENABLED &&
+            memcmp(restored.committed_tokens, tokens, sizeof(tokens)) == 0 &&
+            restored.messages[1].content_len == sizeof(second_message) &&
+            memcmp(restored.messages[1].content, second_message,
+                   sizeof(second_message)) == 0 &&
+            strcmp(restored.payload_identity, payload_identity) == 0,
+        "session checkpoint roundtrips messages, tokens, policy, and RNG facts");
+    yvex_server_session_store_close(&restored);
+    view.generation_checkpoint.sampling.policy_identity[0] = '0';
+    YVEX_TEST_ASSERT(
+        yvex_server_session_store_encode(
+            &view, &rejected, &rejected_count, payload_identity, &err) ==
+            YVEX_ERR_INVALID_ARG && !rejected && !rejected_count,
+        "session checkpoint rejects RNG state bound to another policy");
+    yvex_runtime_identity_copy(
+        view.generation_checkpoint.sampling.policy_identity,
+        view.policy.policy_identity);
+    corrupt = malloc((size_t)byte_count);
+    YVEX_TEST_ASSERT(corrupt != NULL, "session checkpoint corruption copy allocates");
+    memcpy(corrupt, bytes, (size_t)byte_count);
+    corrupt[byte_count / 2ull] ^= 1u;
+    YVEX_TEST_ASSERT(
+        yvex_server_session_store_decode(
+            corrupt, byte_count, 2ull, 64ull, 3ull, 8ull,
+            &restored, &err) == YVEX_ERR_FORMAT &&
+            yvex_server_session_store_decode(
+                bytes, byte_count, 2ull, 64ull, 2ull, 8ull,
+                &restored, &err) == YVEX_ERR_FORMAT,
+        "session checkpoint corruption and capacity mismatch refuse before publication");
+    free(corrupt);
+    yvex_server_session_store_bytes_close(&bytes);
+    return 0;
 }
 
 static int test_configured_summary_and_event(void)
@@ -358,6 +460,7 @@ static int test_provider_telemetry(void)
 
 int yvex_test_server(void)
 {
+    if (test_session_store() != 0) return 1;
     if (test_configured_summary_and_event() != 0) return 1;
     if (test_model_open_refusal() != 0) return 1;
     if (test_bounded_telemetry_overflow() != 0) return 1;

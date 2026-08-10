@@ -225,7 +225,7 @@ static int generation_state_summary(const yvex_runtime_execution_session *sessio
                                  "persistent generation state is unavailable");
     return YVEX_OK;
 }
-static int generation_enter(yvex_runtime_generation_context *context, yvex_error *err)
+int yvex_runtime_private_generation_enter(yvex_runtime_generation_context *context, yvex_error *err)
 {
     unsigned int expected = 0u;
     if (context && atomic_compare_exchange_strong_explicit(
@@ -242,7 +242,7 @@ static int generation_enter(yvex_runtime_generation_context *context, yvex_error
                                  : "generation context is already in use");
 }
 /* Release exclusive admission and wake the close owner after accounting; context stays owned. */
-static void generation_leave(yvex_runtime_generation_context *context, int rc, int executed)
+void yvex_runtime_private_generation_leave(yvex_runtime_generation_context *context, int rc, int executed)
 {
     unsigned int observed;
     if (!context) return;
@@ -281,7 +281,7 @@ int yvex_runtime_generation_context_summary_copy(
         return generation_refuse(
             err, YVEX_ERR_INVALID_ARG,
             "generation context and snapshot output are required");
-    rc = generation_enter(mutable, err);
+    rc = yvex_runtime_private_generation_enter(mutable, err);
     if (rc != YVEX_OK) return rc;
     memset(summary, 0, sizeof(*summary));
     rc = yvex_runtime_sampling_context_snapshot(context->sampling, &sampling, err);
@@ -310,7 +310,7 @@ int yvex_runtime_generation_context_summary_copy(
         yvex_runtime_identity_copy(summary->rng_state_identity,
                                    sampling.rng_state_identity);
     }
-    generation_leave(mutable, rc, 0);
+    yvex_runtime_private_generation_leave(mutable, rc, 0);
     if (rc == YVEX_OK) yvex_error_clear(err);
     return rc;
 }
@@ -1878,7 +1878,7 @@ int yvex_runtime_generation_turn_execute(
         text_capacity < context->options.maximum_output_bytes)
         return generation_refuse(err, YVEX_ERR_INVALID_ARG,
                                  "generation outputs do not satisfy sealed capacities");
-    rc = generation_enter(context, err);
+    rc = yvex_runtime_private_generation_enter(context, err);
     if (rc != YVEX_OK) return rc;
     memset(context->phase_measurements, 0, sizeof(context->phase_measurements));
     context->phase_measurement_count = 0ull;
@@ -1994,7 +1994,7 @@ int yvex_runtime_generation_turn_execute(
     yvex_tokenizer_encode_result_clear(&encoded);
     yvex_rendered_prompt_free(&rendered);
     context->continuation_allowed = rc == YVEX_OK;
-    generation_leave(context, rc, 1);
+    yvex_runtime_private_generation_leave(context, rc, 1);
     if (rc == YVEX_OK) yvex_error_clear(err);
     return rc;
 }

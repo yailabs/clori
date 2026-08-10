@@ -187,15 +187,22 @@ typedef enum {
 typedef struct {
     unsigned int schema_version;
     unsigned long long layer_count, committed_sequence_length;
+    const yvex_execution_capacity_plan *capacity;
+    const yvex_attention_state_recipe *recipes;
     const yvex_attention_history_view *layers;
     const char (*layer_identities)[YVEX_SHA256_HEX_CAP];
     char state_layout_identity[YVEX_SHA256_HEX_CAP];
     char state_content_identity[YVEX_SHA256_HEX_CAP];
     char capacity_plan_identity[YVEX_SHA256_HEX_CAP];
 } yvex_attention_state_checkpoint;
+int yvex_attention_state_checkpoint_validate(
+    const yvex_attention_state_checkpoint *checkpoint,
+    const yvex_graph_attention_state_summary *provider,
+    yvex_error *err);
 
 #define YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V5 5u
 #define YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V6 6u
+#define YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V7 7u
 typedef struct yvex_attention_state_provider {
     unsigned int schema_version;
     void *context;
@@ -208,6 +215,9 @@ typedef struct yvex_attention_state_provider {
                    yvex_attention_failure *failure, yvex_error *err);
     int (*summary)(void *context, yvex_graph_attention_state_summary *out,
                    yvex_error *err);
+    const yvex_execution_capacity_plan *(*capacity)(void *context);
+    const yvex_attention_state_recipe *(*recipe)(
+        void *context, unsigned long long layer_index);
     const yvex_attention_history_view *(*view)(
         void *context, unsigned long long layer_index,
         yvex_attention_state_view_kind kind);

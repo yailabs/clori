@@ -245,6 +245,13 @@ static int execution_test_planning(void)
                          &capacity_request, &repeated, &err) == YVEX_OK &&
                          strcmp(capacity.identity, repeated.identity) == 0,
                      "capacity plan identity should be deterministic");
+    repeated = capacity;
+    repeated.per_session_maximum--;
+    YVEX_TEST_ASSERT(
+        yvex_execution_capacity_plan_validate(&capacity, &err) == YVEX_OK &&
+            yvex_execution_capacity_plan_validate(&repeated, &err) ==
+                YVEX_ERR_FORMAT,
+        "persisted capacity validation refuses noncanonical unhashed fields");
     hardware.device_page_bytes = 4096ull;
     states[YVEX_MODEL_STATE_SWA_RING].bytes_per_block = 4104ull;
     YVEX_TEST_ASSERT(yvex_execution_hardware_profile_seal(&hardware, &err) == YVEX_OK &&

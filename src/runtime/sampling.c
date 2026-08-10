@@ -182,6 +182,22 @@ static int sampling_rng_identity(const yvex_runtime_sampling_context *context,
            yvex_sha256_update_u64(&hash, draws) &&
            sampling_hash_finish(&hash, output);
 }
+static int sampling_checkpoint_identity(
+    const yvex_runtime_sampling_checkpoint *checkpoint,
+    char output[YVEX_SHA256_HEX_CAP])
+{
+    yvex_sha256 hash;
+    yvex_sha256_init(&hash);
+    return checkpoint &&
+           yvex_sha256_update_text(&hash, "yvex.runtime.sampling.checkpoint.v1") &&
+           yvex_sha256_update_u64(&hash, checkpoint->schema_version) &&
+           yvex_sha256_update_u64(&hash, checkpoint->rng_state) &&
+           yvex_sha256_update_u64(&hash, checkpoint->rng_increment) &&
+           yvex_sha256_update_u64(&hash, checkpoint->successful_draws) &&
+           yvex_sha256_update_text(&hash, checkpoint->policy_identity) &&
+           yvex_sha256_update_text(&hash, checkpoint->rng_state_identity) &&
+           sampling_hash_finish(&hash, output);
+}
 /* Open one fixed-workspace sampling context without model/session ownership. */
 int yvex_runtime_sampling_context_open(
     yvex_runtime_sampling_context **out, const yvex_runtime_logits_plan_summary *logits_plan,
@@ -1714,6 +1730,76 @@ int yvex_runtime_sampling_context_snapshot(
     sampling_leave(mutable, YVEX_OK, 0ull);
     yvex_error_clear(err);
     return YVEX_OK;
+}
+int yvex_runtime_sampling_context_checkpoint(
+    yvex_runtime_sampling_context *context,
+    yvex_runtime_sampling_checkpoint *checkpoint, yvex_error *err)
+{
+    int rc;
+    if (checkpoint) memset(checkpoint, 0, sizeof(*checkpoint));
+    if (!context || !checkpoint)
+        return sampling_refuse(err, YVEX_ERR_INVALID_ARG,
+                               "sampling checkpoint output is required");
+    rc = sampling_enter(context, err);
+    if (rc != YVEX_OK) return rc;
+    if (atomic_load_explicit(&context->open_transactions, memory_order_acquire))
+        rc = sampling_refuse(err, YVEX_ERR_STATE,
+                             "sampling checkpoint requires no open transaction");
+    checkpoint->schema_version = YVEX_RUNTIME_SAMPLING_CHECKPOINT_SCHEMA_V1;
+    checkpoint->rng_state = context->rng_state;
+    checkpoint->rng_increment = context->rng_increment;
+    checkpoint->successful_draws = context->successful_draws;
+    yvex_runtime_identity_copy(checkpoint->policy_identity,
+                               context->policy.policy_identity);
+    if (rc == YVEX_OK &&
+        (!sampling_rng_identity(context, checkpoint->rng_state,
+                                checkpoint->successful_draws,
+                                checkpoint->rng_state_identity) ||
+         !sampling_checkpoint_identity(checkpoint,
+                                       checkpoint->checkpoint_identity)))
+        rc = sampling_refuse(err, YVEX_ERR_STATE,
+                             "sampling checkpoint identity failed");
+    if (rc != YVEX_OK) memset(checkpoint, 0, sizeof(*checkpoint));
+    sampling_leave(context, rc, 0ull);
+    if (rc == YVEX_OK) yvex_error_clear(err);
+    return rc;
+}
+int yvex_runtime_sampling_context_restore(
+    yvex_runtime_sampling_context *context,
+    const yvex_runtime_sampling_checkpoint *checkpoint, yvex_error *err)
+{
+    char rng_identity[YVEX_SHA256_HEX_CAP], checkpoint_identity[YVEX_SHA256_HEX_CAP];
+    int rc;
+    if (!context || !checkpoint)
+        return sampling_refuse(err, YVEX_ERR_INVALID_ARG,
+                               "sampling checkpoint is required");
+    rc = sampling_enter(context, err);
+    if (rc != YVEX_OK) return rc;
+    if (atomic_load_explicit(&context->open_transactions, memory_order_acquire))
+        rc = sampling_refuse(err, YVEX_ERR_STATE,
+                             "sampling restore requires no open transaction");
+    else if (checkpoint->schema_version !=
+                 YVEX_RUNTIME_SAMPLING_CHECKPOINT_SCHEMA_V1 ||
+             checkpoint->rng_increment != context->rng_increment ||
+             strcmp(checkpoint->policy_identity,
+                    context->policy.policy_identity) != 0 ||
+             !sampling_rng_identity(context, checkpoint->rng_state,
+                                    checkpoint->successful_draws, rng_identity) ||
+             strcmp(rng_identity, checkpoint->rng_state_identity) != 0 ||
+             !sampling_checkpoint_identity(checkpoint, checkpoint_identity) ||
+             strcmp(checkpoint_identity, checkpoint->checkpoint_identity) != 0)
+        rc = sampling_refuse(err, YVEX_ERR_FORMAT,
+                             "sampling checkpoint is incompatible or corrupt");
+    if (rc == YVEX_OK) {
+        context->rng_state = checkpoint->rng_state;
+        context->successful_draws = checkpoint->successful_draws;
+        context->summary.stochastic_draws = checkpoint->successful_draws;
+        yvex_runtime_identity_copy(context->summary.rng_state_identity,
+                                   checkpoint->rng_state_identity);
+        yvex_error_clear(err);
+    }
+    sampling_leave(context, rc, 0ull);
+    return rc;
 }
 /* Close is idempotent; unique close ownership drains active sampling transactions. */
 int yvex_runtime_sampling_context_close(
