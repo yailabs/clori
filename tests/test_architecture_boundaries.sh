@@ -485,6 +485,18 @@ semantic_ir_owners=$(rg -l 'struct[[:space:]]+yvex_semantic_model_ir[[:space:]]*
     printf '%s\n' "$semantic_ir_owners" >&2
     fail "Semantic Model IR concrete storage escaped its compiler owner"
 }
+rg -n 'yvex_model_execution_descriptor[[:space:]]+execution_descriptor' \
+    include/yvex/internal/compiler.h >/dev/null ||
+    fail "Semantic Model IR no longer owns sealed execution geometry"
+rg -n 'semantic->execution_descriptor' src/graph/operator_ir.c >/dev/null ||
+    fail "operator lowering no longer consumes Semantic Model IR geometry"
+if rg -n 'const[[:space:]]+yvex_model_execution_descriptor[[:space:]]+\*model' \
+    include/yvex/internal/operator_graph.h include/yvex/internal/compiler.h; then
+    fail "operator lowering accepts a second model-geometry authority"
+fi
+if rg -n 'descriptor_summary->model_execution' src/graph/binding_compile.c; then
+    fail "binding compilation reconstructs semantic geometry from the runtime descriptor"
+fi
 if rg -n 'yvex_(artifact_open|gguf_open|tensor_table_from_gguf|materialization_plan_build|quant_plan_file_validate|gguf_writer_plan_build)[[:space:]]*\(' \
     src/graph/families/deepseek_v4.c; then
     fail "the DeepSeek projection owns generic runtime-binding resource lifecycle"

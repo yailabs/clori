@@ -1838,9 +1838,7 @@ static int deepseek_compilation_semantic_model(
         request.source_model_identity = execution.source_model_identity;
         request.logical_model_identity = execution.logical_model_identity;
         request.semantic_payload_identity = execution.identity;
-        request.maximum_context = execution.maximum_context;
-        request.original_context = execution.original_context;
-        request.context_capability_present = 1;
+        request.execution_descriptor = &execution;
         request.family_payload = semantic;
         request.family_payload_owned = 1;
         request.family_payload_close = deepseek_compilation_semantic_close;

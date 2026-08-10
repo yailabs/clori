@@ -866,9 +866,7 @@ static int artifact_semantic_model_build(
         .source_model_identity = execution.source_model_identity,
         .logical_model_identity = execution.logical_model_identity,
         .semantic_payload_identity = execution.identity,
-        .maximum_context = execution.maximum_context,
-        .original_context = execution.original_context,
-        .context_capability_present = 1,
+        .execution_descriptor = &execution,
         .family_payload = (void *)architecture};
     return yvex_semantic_model_ir_seal(out, &request, err);
 }
@@ -977,9 +975,7 @@ static int artifact_variant_bind(
             &attention_failure, &error);
     if (rc == YVEX_OK)
         rc = yvex_operator_graph_ir_build_transformer(
-            &operator_graph, semantic_model,
-            &yvex_runtime_descriptor_summary_get(descriptor)->model_execution,
-            attention, draft_attention, &error);
+            &operator_graph, semantic_model, attention, draft_attention, &error);
     yvex_gguf_writer_plan_options_default(&writer_options);
     writer_request.input_class = YVEX_GGUF_WRITER_INPUT_COMPLETE_ARTIFACT;
     writer_request.quant_plan = quant;

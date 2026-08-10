@@ -180,7 +180,8 @@ int yvex_operator_graph_ir_seal(
     graph->summary.schema_version = YVEX_OPERATOR_GRAPH_SCHEMA_V1;
     graph->summary.family_adapter_id = semantic->family_adapter_id;
     graph->summary.family_adapter_version = semantic->family_adapter_version;
-    graph->summary.maximum_context = semantic->maximum_context;
+    graph->summary.maximum_context =
+        semantic->execution_descriptor.maximum_context;
     graph->summary.node_count = request->node_count;
     graph->summary.edge_count = request->edge_count;
     graph->summary.target_layer_count = request->target_layer_count;
@@ -418,12 +419,13 @@ static int transformer_graph_nodes(
 int yvex_operator_graph_ir_build_transformer(
     yvex_operator_graph_ir **out,
     const yvex_semantic_model_ir *semantic_model,
-    const yvex_model_execution_descriptor *model,
     const yvex_attention_plan *attention,
     const yvex_attention_plan *draft_attention, yvex_error *err)
 {
     const yvex_semantic_model_ir_summary *semantic =
         yvex_semantic_model_ir_summary_get(semantic_model);
+    const yvex_model_execution_descriptor *model =
+        semantic ? &semantic->execution_descriptor : NULL;
     transformer_graph_builder builder = {0};
     yvex_operator_graph_request request = {0};
     unsigned long long layers, node_capacity, edge_capacity;
@@ -432,7 +434,6 @@ int yvex_operator_graph_ir_build_transformer(
     if (!out || !semantic || !model || !attention ||
         model->schema_version != YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1 ||
         strcmp(model->identity, semantic->semantic_payload_identity) != 0 ||
-        model->maximum_context != semantic->maximum_context ||
         yvex_attention_plan_layer_count(attention) != model->layer_count ||
         ((draft_attention != NULL) != (model->draft_layer_count != 0ull)) ||
         (draft_attention && yvex_attention_plan_layer_count(draft_attention) !=

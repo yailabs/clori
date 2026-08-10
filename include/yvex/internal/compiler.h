@@ -263,8 +263,7 @@ typedef void (*yvex_semantic_model_payload_close_fn)(void *payload);
 typedef struct {
     unsigned int schema_version;
     unsigned long long family_adapter_id, family_adapter_version;
-    unsigned long long maximum_context, original_context;
-    int context_capability_present;
+    yvex_model_execution_descriptor execution_descriptor;
     char target_id[128];
     char source_model_identity[YVEX_SHA256_HEX_BYTES];
     char logical_model_identity[YVEX_SHA256_HEX_BYTES];
@@ -278,8 +277,7 @@ typedef struct {
     const char *source_model_identity;
     const char *logical_model_identity;
     const char *semantic_payload_identity;
-    unsigned long long maximum_context, original_context;
-    int context_capability_present;
+    const yvex_model_execution_descriptor *execution_descriptor;
     void *family_payload;
     int family_payload_owned;
     yvex_semantic_model_payload_close_fn family_payload_close;
@@ -357,7 +355,6 @@ struct yvex_family_compiler_adapter {
     int (*operator_graph_build)(
         yvex_operator_graph_ir **out,
         const yvex_semantic_model_ir *semantic_model,
-        const yvex_model_execution_descriptor *model,
         const struct yvex_attention_plan *attention,
         const struct yvex_attention_plan *draft_attention,
         yvex_error *err);

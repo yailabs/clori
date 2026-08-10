@@ -1251,17 +1251,14 @@ static int fixture_build(binding_fixture *fixture, const char *artifact_path,
                 ? summary->model_execution.logical_model_identity : NULL,
             .semantic_payload_identity = summary
                 ? summary->model_execution.identity : NULL,
-            .maximum_context = summary
-                ? summary->model_execution.maximum_context : 0ull,
-            .original_context = summary
-                ? summary->model_execution.original_context : 0ull,
-            .context_capability_present = 1};
+            .execution_descriptor = summary
+                ? &summary->model_execution : NULL};
         rc = yvex_semantic_model_ir_seal(
             &fixture->semantic_model, &semantic, &err);
         if (rc == YVEX_OK)
             rc = yvex_operator_graph_ir_build_transformer(
                 &fixture->operator_graph, fixture->semantic_model,
-                &summary->model_execution, fixture->attention, NULL, &err);
+                fixture->attention, NULL, &err);
         if (rc == YVEX_OK && !fixture_execution_compile(fixture, &err))
             rc = YVEX_ERR_STATE;
     }
@@ -1521,20 +1518,15 @@ static int test_prepare_reopen_import(const binding_fixture *fixture, const char
                 fixture_descriptor->model_execution.logical_model_identity,
             .semantic_payload_identity =
                 fixture_descriptor->model_execution.identity,
-            .maximum_context =
-                fixture_descriptor->model_execution.maximum_context,
-            .original_context =
-                fixture_descriptor->model_execution.original_context,
-            .context_capability_present = 1};
+            .execution_descriptor = &fixture_descriptor->model_execution};
         yvex_semantic_model_ir *other_semantic = NULL;
         yvex_operator_graph_ir *other_graph = NULL;
         YVEX_TEST_ASSERT(
             yvex_semantic_model_ir_seal(
                 &other_semantic, &semantic_request, &err) == YVEX_OK &&
-                yvex_operator_graph_ir_build_transformer(
-                    &other_graph, other_semantic,
-                    &fixture_descriptor->model_execution,
-                    fixture->attention, NULL, &err) == YVEX_OK,
+            yvex_operator_graph_ir_build_transformer(
+                &other_graph, other_semantic, fixture->attention,
+                NULL, &err) == YVEX_OK,
             "distinct canonical operator graph fixture built");
         mutated_request = request;
         mutated_request.operator_graph = other_graph;

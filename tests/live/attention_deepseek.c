@@ -72,9 +72,7 @@ static int semantic_model_borrow(
         .source_model_identity = execution.source_model_identity,
         .logical_model_identity = execution.logical_model_identity,
         .semantic_payload_identity = execution.identity,
-        .maximum_context = execution.maximum_context,
-        .original_context = execution.original_context,
-        .context_capability_present = 1,
+        .execution_descriptor = &execution,
         .family_payload = (void *)family};
     return yvex_semantic_model_ir_seal(out, &request, err);
 }

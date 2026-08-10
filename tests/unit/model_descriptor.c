@@ -199,19 +199,36 @@ static int test_semantic_model_ir(void)
         "1111111111111111111111111111111111111111111111111111111111111111";
     static const char logical[] =
         "2222222222222222222222222222222222222222222222222222222222222222";
-    static const char payload_identity[] =
+    static const char schedule[] =
         "3333333333333333333333333333333333333333333333333333333333333333";
-    yvex_semantic_model_ir_request request = {
-        .schema_version = YVEX_SEMANTIC_MODEL_IR_SCHEMA_V1,
-        .family_adapter_id = 7ull,
-        .family_adapter_version = 3ull,
-        .target_id = "semantic-test",
-        .source_model_identity = source,
+    static const char state[] =
+        "4444444444444444444444444444444444444444444444444444444444444444";
+    yvex_model_execution_descriptor_request execution_request = {
+        .schema_version = YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1,
         .logical_model_identity = logical,
-        .semantic_payload_identity = payload_identity,
+        .source_model_identity = source,
+        .attention_schedule_identity = schedule,
+        .persistent_state_identity = state,
         .maximum_context = 1048576ull,
         .original_context = 163840ull,
-        .context_capability_present = 1};
+        .rope_scaling = YVEX_MODEL_ROPE_SCALING_NONE,
+        .rope_theta = 10000ull,
+        .rope_scaling_factor = 1ull,
+        .layer_count = 1ull,
+        .hidden_width = 4ull,
+        .vocabulary_size = 8ull,
+        .attention_heads = 1ull,
+        .kv_heads = 1ull,
+        .head_width = 4ull,
+        .swa_layers = 1ull,
+        .sliding_window = 4ull,
+        .normalization_epsilon = 1e-6,
+        .output_input_width = 4ull,
+        .output_vocabulary_size = 8ull,
+        .persistent_state_class_mask =
+            YVEX_MODEL_STATE_CLASS_BIT(YVEX_MODEL_STATE_SWA_RING)};
+    yvex_model_execution_descriptor execution = {0}, mutated;
+    yvex_semantic_model_ir_request request = {0};
     yvex_semantic_model_ir *first = NULL, *second = NULL;
     const yvex_semantic_model_ir_summary *summary;
     yvex_error err;
@@ -219,15 +236,28 @@ static int test_semantic_model_ir(void)
     int *owned = malloc(sizeof(*owned));
 
     YVEX_TEST_ASSERT(owned != NULL, "semantic payload allocation");
+    YVEX_TEST_ASSERT(
+        yvex_model_execution_descriptor_seal(
+            &execution_request, &execution, &err) == YVEX_OK,
+        "semantic execution descriptor seals");
+    request = (yvex_semantic_model_ir_request){
+        .schema_version = YVEX_SEMANTIC_MODEL_IR_SCHEMA_V1,
+        .family_adapter_id = 7ull,
+        .family_adapter_version = 3ull,
+        .target_id = "semantic-test",
+        .source_model_identity = source,
+        .logical_model_identity = logical,
+        .semantic_payload_identity = execution.identity,
+        .execution_descriptor = &execution};
     request.family_payload = &borrowed;
     YVEX_TEST_ASSERT(
         yvex_semantic_model_ir_seal(&first, &request, &err) == YVEX_OK,
         "borrowed semantic model seals");
     summary = yvex_semantic_model_ir_summary_get(first);
     YVEX_TEST_ASSERT(
-        summary && summary->maximum_context == 1048576ull &&
-        summary->original_context == 163840ull &&
-        summary->context_capability_present &&
+        summary && summary->execution_descriptor.maximum_context == 1048576ull &&
+        summary->execution_descriptor.original_context == 163840ull &&
+        strcmp(summary->execution_descriptor.identity, execution.identity) == 0 &&
         yvex_semantic_model_ir_family_payload(first, 7ull, 3ull) == &borrowed &&
         !yvex_semantic_model_ir_family_payload(first, 8ull, 3ull),
         "semantic identity and family payload are independently typed");
@@ -248,8 +278,9 @@ static int test_semantic_model_ir(void)
     request.family_payload = NULL;
     request.family_payload_owned = 0;
     request.family_payload_close = NULL;
-    request.maximum_context = 4096ull;
-    request.original_context = 163840ull;
+    mutated = execution;
+    mutated.maximum_context = 4096ull;
+    request.execution_descriptor = &mutated;
     YVEX_TEST_ASSERT(
         yvex_semantic_model_ir_seal(&first, &request, &err) ==
             YVEX_ERR_INVALID_ARG && !first,

@@ -15,8 +15,7 @@ struct yvex_semantic_model_ir {
     yvex_semantic_model_payload_close_fn family_payload_close;
 };
 
-static int semantic_refuse(yvex_error *err, yvex_status status,
-                           const char *reason)
+static int semantic_refuse(yvex_error *err, yvex_status status, const char *reason)
 {
     yvex_error_set(err, status, "compilation.semantic-model", reason);
     return status;
@@ -35,14 +34,34 @@ static int semantic_identity(yvex_semantic_model_ir_summary *summary)
         !yvex_sha256_update_text(&hash, summary->source_model_identity) ||
         !yvex_sha256_update_text(&hash, summary->logical_model_identity) ||
         !yvex_sha256_update_text(&hash, summary->semantic_payload_identity) ||
-        !yvex_sha256_update_u64(
-            &hash, (unsigned int)summary->context_capability_present) ||
-        !yvex_sha256_update_u64(&hash, summary->maximum_context) ||
-        !yvex_sha256_update_u64(&hash, summary->original_context) ||
+        !yvex_sha256_update_u64(&hash, summary->execution_descriptor.schema_version != 0u) ||
+        !yvex_sha256_update_u64(&hash, summary->execution_descriptor.maximum_context) ||
+        !yvex_sha256_update_u64(&hash, summary->execution_descriptor.original_context) ||
         !yvex_sha256_final(&hash, digest))
         return 0;
     yvex_sha256_hex(digest, summary->identity);
     return 1;
+}
+
+static int semantic_execution_validate(
+    const yvex_semantic_model_ir_request *request, yvex_error *err)
+{
+    unsigned char wire[YVEX_MODEL_EXECUTION_WIRE_BYTES];
+    yvex_model_execution_descriptor decoded;
+    const yvex_model_execution_descriptor *execution = request->execution_descriptor;
+    int rc;
+
+    if (!execution) return YVEX_OK;
+    rc = yvex_model_execution_descriptor_encode(execution, wire, err);
+    if (rc == YVEX_OK)
+        rc = yvex_model_execution_descriptor_decode(wire, sizeof(wire), &decoded, err);
+    if (rc != YVEX_OK) return rc;
+    if (strcmp(execution->identity, request->semantic_payload_identity) != 0 ||
+        strcmp(execution->source_model_identity, request->source_model_identity) != 0 ||
+        strcmp(execution->logical_model_identity, request->logical_model_identity) != 0)
+        return semantic_refuse(err, YVEX_ERR_INVALID_ARG,
+            "execution geometry must match the sealed semantic identities");
+    return YVEX_OK;
 }
 
 int yvex_semantic_model_ir_seal(
@@ -60,11 +79,6 @@ int yvex_semantic_model_ir_seal(
         !yvex_sha256_hex_valid(request->source_model_identity) ||
         !yvex_sha256_hex_valid(request->logical_model_identity) ||
         !yvex_sha256_hex_valid(request->semantic_payload_identity) ||
-        (request->context_capability_present &&
-         (!request->maximum_context || !request->original_context ||
-          request->original_context > request->maximum_context)) ||
-        (!request->context_capability_present &&
-         (request->maximum_context || request->original_context)) ||
         (!request->family_payload &&
          (request->family_payload_owned || request->family_payload_close)) ||
         (request->family_payload_owned && !request->family_payload_close) ||
@@ -72,18 +86,18 @@ int yvex_semantic_model_ir_seal(
         return semantic_refuse(
             err, YVEX_ERR_INVALID_ARG,
             "complete immutable semantic facts and balanced payload ownership are required");
+    int rc = semantic_execution_validate(request, err);
+    if (rc != YVEX_OK) return rc;
     model = calloc(1u, sizeof(*model));
     if (!model)
-        return semantic_refuse(err, YVEX_ERR_NOMEM,
-                               "semantic model allocation failed");
+        return semantic_refuse(err, YVEX_ERR_NOMEM, "semantic model allocation failed");
     model->summary.schema_version = YVEX_SEMANTIC_MODEL_IR_SCHEMA_V1;
     model->summary.family_adapter_id = request->family_adapter_id;
     model->summary.family_adapter_version = request->family_adapter_version;
-    model->summary.maximum_context = request->maximum_context;
-    model->summary.original_context = request->original_context;
-    model->summary.context_capability_present = request->context_capability_present;
-    yvex_core_text_copy(model->summary.target_id,
-                        sizeof(model->summary.target_id), request->target_id);
+    if (request->execution_descriptor)
+        model->summary.execution_descriptor = *request->execution_descriptor;
+    yvex_core_text_copy(model->summary.target_id, sizeof(model->summary.target_id),
+                        request->target_id);
     yvex_core_text_copy(model->summary.source_model_identity,
                         sizeof(model->summary.source_model_identity),
                         request->source_model_identity);
@@ -99,8 +113,8 @@ int yvex_semantic_model_ir_seal(
                                "semantic model identity derivation failed");
     }
     model->family_payload = request->family_payload;
-    model->family_payload_close = request->family_payload_owned
-                                      ? request->family_payload_close : NULL;
+    model->family_payload_close =
+        request->family_payload_owned ? request->family_payload_close : NULL;
     *out = model;
     yvex_error_clear(err);
     return YVEX_OK;

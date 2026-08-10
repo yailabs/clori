@@ -93,7 +93,6 @@ int yvex_operator_graph_ir_seal(
 int yvex_operator_graph_ir_build_transformer(
     yvex_operator_graph_ir **out,
     const yvex_semantic_model_ir *semantic_model,
-    const yvex_model_execution_descriptor *model,
     const struct yvex_attention_plan *attention,
     const struct yvex_attention_plan *draft_attention, yvex_error *err);
 const yvex_operator_graph_summary *yvex_operator_graph_ir_summary(
