@@ -17,6 +17,7 @@ typedef struct yvex_backend yvex_backend;
 typedef struct yvex_runtime_component_session yvex_runtime_component_session;
 typedef struct yvex_runtime_latent_request yvex_runtime_latent_request;
 typedef struct yvex_runtime_latent_result yvex_runtime_latent_result;
+typedef struct yvex_runtime_latent_evaluator_result yvex_runtime_latent_evaluator_result;
 typedef struct yvex_runtime_av_layout_output yvex_runtime_av_layout_output;
 typedef struct yvex_runtime_av_layout_result yvex_runtime_av_layout_result;
 #define YVEX_MINIMAX_H3_TARGET_ID "minimax-h3-fl2va"
@@ -38,29 +39,20 @@ typedef struct yvex_runtime_av_layout_result yvex_runtime_av_layout_result;
 #define YVEX_MINIMAX_H3_NO_COORDINATE (~0ull)
 /* Exact source-faithful Audio VAE physical boundary emitted by YVEX. */
 #define YVEX_MINIMAX_H3_AUDIO_COMPONENT_IDENTITY "be921beb8581b44624aaad452f30f77f1e204159ae8fe11da455d5208dc4e62b"
-#define YVEX_MINIMAX_H3_AUDIO_SOURCE_SNAPSHOT_IDENTITY                                \
-    "897ceaff08708f431132c6643bc8f1041ace8c0444a3ea248bbf727fc7da9943"
-#define YVEX_MINIMAX_H3_AUDIO_COMPONENT_MANIFEST_IDENTITY                             \
-    "715f2359aaff048ccca8207976421af5f9f76b08b6f24986b3cc186d2822bc0e"
+#define YVEX_MINIMAX_H3_AUDIO_SNAPSHOT_IDENTITY "897ceaff08708f431132c6643bc8f1041ace8c0444a3ea248bbf727fc7da9943"
+#define YVEX_MINIMAX_H3_AUDIO_MANIFEST_IDENTITY "715f2359aaff048ccca8207976421af5f9f76b08b6f24986b3cc186d2822bc0e"
 #define YVEX_MINIMAX_H3_AUDIO_ARCHITECTURE_IDENTITY "47a03bbac2b5346771f70ae39155920f9b1c6e6cec17f2639dd0cbedfa90b517"
 #define YVEX_MINIMAX_H3_AUDIO_ROLE_MAP_IDENTITY "61e7a2cfc29e6dd3da966878f5388f1472a406d7e33ba34ef65f44b61f08f013"
 #define YVEX_MINIMAX_H3_AUDIO_UNRESOLVED_IDENTITY "935ae0a2371b15131b8920a879462484ebd3f5526ff5a97ef95c4e0af7b7cc1d"
 #define YVEX_MINIMAX_H3_AUDIO_TRANSFORM_IDENTITY "e6f8f3ac2ae01157a57049f0db2439271585966174c0bfe202a5546471361ab3"
 #define YVEX_MINIMAX_H3_AUDIO_PROFILE_NAME "minimax-h3-source-faithful-v1"
-#define YVEX_MINIMAX_H3_AUDIO_PROFILE_IDENTITY                                        \
-    "b8b5aa330a617b0fa33fdd1428e5fea9e8edcdd7f6a2ba6f530d378fbaddaa65"
-#define YVEX_MINIMAX_H3_AUDIO_QUANT_EXECUTION_IDENTITY                                \
-    "551609d790bd9af9a51297bacbc7d476bbe436239ee0ce86fb1daa896fccd2ec"
-#define YVEX_MINIMAX_H3_AUDIO_PAYLOAD_PLAN_IDENTITY                                   \
-    "c42dee2e548b9452707cb3327e55f09e3e9262bfc3d3d3665170bc9cfce1ffe4"
-#define YVEX_MINIMAX_H3_AUDIO_PAYLOAD_BYTE_IDENTITY                                   \
-    "59850eaaecfc00f777bbeb2506a231e57313940a4c0e00b4501472cbc1a5cbf2"
-#define YVEX_MINIMAX_H3_AUDIO_PAYLOAD_IDENTITY                                        \
-    "7eec5b07bbb6427611553b16670f9dc31969ae8ba602a79c0c7a2693a5fa168a"
-#define YVEX_MINIMAX_H3_AUDIO_WRITER_PLAN_IDENTITY                                    \
-    "40c89b292935ae03708df9a131d92fbd2fc2de6428550ade6f8c436294217271"
-#define YVEX_MINIMAX_H3_AUDIO_ARTIFACT_IDENTITY                                       \
-    "52a10c9f6f6e3b9b81569a95329f503fcb3cbddb224d12bf7851b4929d02e1c1"
+#define YVEX_MINIMAX_H3_AUDIO_PROFILE_IDENTITY "b8b5aa330a617b0fa33fdd1428e5fea9e8edcdd7f6a2ba6f530d378fbaddaa65"
+#define YVEX_MINIMAX_H3_AUDIO_QUANT_IDENTITY "551609d790bd9af9a51297bacbc7d476bbe436239ee0ce86fb1daa896fccd2ec"
+#define YVEX_MINIMAX_H3_AUDIO_PAYLOAD_PLAN_IDENTITY "c42dee2e548b9452707cb3327e55f09e3e9262bfc3d3d3665170bc9cfce1ffe4"
+#define YVEX_MINIMAX_H3_AUDIO_PAYLOAD_BYTE_IDENTITY "59850eaaecfc00f777bbeb2506a231e57313940a4c0e00b4501472cbc1a5cbf2"
+#define YVEX_MINIMAX_H3_AUDIO_PAYLOAD_IDENTITY "7eec5b07bbb6427611553b16670f9dc31969ae8ba602a79c0c7a2693a5fa168a"
+#define YVEX_MINIMAX_H3_AUDIO_WRITER_PLAN_IDENTITY "40c89b292935ae03708df9a131d92fbd2fc2de6428550ade6f8c436294217271"
+#define YVEX_MINIMAX_H3_AUDIO_ARTIFACT_IDENTITY "52a10c9f6f6e3b9b81569a95329f503fcb3cbddb224d12bf7851b4929d02e1c1"
 #define YVEX_MINIMAX_H3_AUDIO_SOURCE_SNAPSHOT_KEY 9907051661387403075ull
 #define YVEX_MINIMAX_H3_AUDIO_MAPPING_IDENTITY 15010405512422704850ull
 #define YVEX_MINIMAX_H3_AUDIO_TENSORS 1087ull
@@ -540,15 +532,19 @@ typedef struct {
         unsigned long long resident_bytes, const yvex_minimax_h3_omni_transformer_request *request,
         yvex_minimax_h3_omni_transformer_result *result, yvex_error *err);
 } yvex_minimax_h3_backend_api;
+typedef struct yvex_runtime_av_plan yvex_minimax_h3_t2va_plan;
 typedef struct {
-    unsigned long long text_tokens, frames, width, height;
-    unsigned long long video_latent_frames, video_latent_height, video_latent_width;
-    unsigned long long audio_latent_steps, audio_rows, video_rows, packed_rows;
-    float video_sigmas[65], audio_sigmas[65];
-    unsigned int sigma_grid_points, model_evaluations;
-    char identity[65];
-    int complete;
-} yvex_minimax_h3_t2va_plan;
+    yvex_runtime_component_session *transformer_session;
+    const float *conditioning;
+    unsigned long long conditioning_capacity;
+    const yvex_runtime_av_layout_output *layout;
+    const yvex_runtime_av_layout_result *layout_result;
+    unsigned int *timestep_indices;
+    unsigned long long timestep_capacity, block_count;
+    const char *conditioning_identity;
+    yvex_minimax_h3_cancelled_fn cancelled; void *cancellation_context;
+} yvex_minimax_h3_t2va_omni_context;
+typedef yvex_runtime_latent_evaluator_result yvex_minimax_h3_t2va_omni_result;
 typedef struct {
     int (*t2va_plan_build)(yvex_minimax_h3_t2va_plan *, unsigned long long,
         unsigned long long, unsigned long long, unsigned long long, unsigned int, yvex_error *);
@@ -556,8 +552,9 @@ typedef struct {
                           unsigned long long values, float timestep, float sigma,
                           float sigma_next, yvex_error *err);
     int (*t2va_latent_execute)(const yvex_minimax_h3_t2va_plan *,
-        const yvex_runtime_latent_request *, float *, unsigned long long,
-        float *, unsigned long long, yvex_runtime_latent_result *, yvex_error *);
+        const yvex_minimax_h3_t2va_omni_context *, unsigned long long, unsigned long long,
+        float *, unsigned long long, float *, unsigned long long, yvex_runtime_latent_result *,
+        yvex_minimax_h3_t2va_omni_result *, yvex_error *);
     int (*t2va_layout_build)(const yvex_minimax_h3_t2va_plan *, const yvex_runtime_av_layout_output *,
         yvex_runtime_av_layout_result *, yvex_error *);
     int (*component_admit)(const char *component,

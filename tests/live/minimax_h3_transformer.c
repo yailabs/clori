@@ -1,5 +1,6 @@
 /* Compare the exact MiniMax-H3 Transformer envelope with an independent CUDA oracle. */
 #include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,6 +12,7 @@
 #include <yvex/internal/backend.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/families/minimax_h3.h>
+#include <yvex/internal/latent.h>
 #include <yvex/internal/runtime.h>
 
 enum { VIDEO_VALUES = 96u, AUDIO_VALUES = 32u, CONDITION_VALUES = 5120u };
@@ -318,6 +320,109 @@ static int execute_artifact(const yvex_artifact *artifact, const yvex_gguf *gguf
     return rc;
 }
 
+static int float_identity(const char *domain, const float *values,
+                          unsigned long long count, char output[65])
+{
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    unsigned long long index;
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, domain) || !yvex_sha256_update_u64(&hash, count)) return 0;
+    for (index = 0ull; index < count; ++index) {
+        uint32_t bits;
+        memcpy(&bits, values + index, sizeof(bits));
+        if (!yvex_sha256_update_u64(&hash, bits)) return 0;
+    }
+    if (!yvex_sha256_final(&hash, digest)) return 0;
+    yvex_sha256_hex(digest, output);
+    return 1;
+}
+
+static int execute_latent(const char *path, const char *conditioning_path,
+                          unsigned long long block_count, unsigned int steps)
+{
+    const yvex_minimax_h3_graph_api *graph = yvex_graph_register_minimax_h3();
+    yvex_artifact_options options = {.path = path, .readonly = 1};
+    yvex_artifact *artifact = NULL;
+    yvex_gguf *gguf = NULL;
+    yvex_tensor_table *tensors = NULL;
+    yvex_complete_artifact_admission admission;
+    yvex_artifact_admission_failure failure;
+    yvex_runtime_component_session *session = NULL;
+    yvex_minimax_h3_t2va_plan plan;
+    yvex_runtime_av_layout_result layout_result;
+    yvex_runtime_latent_result latent_result;
+    yvex_minimax_h3_t2va_omni_result omni_result;
+    float conditioning[CONDITION_VALUES], positions[57], video[192], audio[512];
+    unsigned int tags[19], video_indices[2], audio_indices[16], text_indices[1];
+    unsigned int timestep_indices[19];
+    yvex_runtime_av_layout_output layout = {
+        positions, 57ull, tags, video_indices, audio_indices, text_indices,
+        19ull, 2ull, 16ull, 1ull,
+    };
+    yvex_minimax_h3_t2va_omni_context context = {0};
+    char conditioning_identity[65];
+    yvex_error err, cleanup;
+    int rc, cleanup_rc;
+    if (!path || !conditioning_path || !block_count || block_count > 50ull ||
+        !steps || steps > 64u || !file_read(conditioning_path, conditioning, CONDITION_VALUES) ||
+        !float_identity("yvex.minimax-h3.conditioning.fixture.v1", conditioning,
+                        CONDITION_VALUES, conditioning_identity))
+        return 2;
+    yvex_error_clear(&err);
+    rc = yvex_artifact_open(&artifact, &options, &err);
+    if (rc == YVEX_OK) rc = yvex_gguf_open(&gguf, artifact, &err);
+    if (rc == YVEX_OK) rc = yvex_tensor_table_from_gguf(&tensors, gguf, &err);
+    if (rc == YVEX_OK)
+        rc = graph->component_admit("transformer", artifact, gguf, tensors,
+                                    &admission, &failure, &err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_component_session_open(
+            &session, &admission, artifact, gguf, tensors, YVEX_BACKEND_KIND_CUDA,
+            80ull * 1024ull * 1024ull * 1024ull, 4ull * 1024ull * 1024ull * 1024ull, &err);
+    if (rc == YVEX_OK)
+        rc = graph->t2va_plan_build(&plan, 1ull, 32ull, 32ull, 5ull, steps, &err);
+    if (rc == YVEX_OK) rc = graph->t2va_layout_build(&plan, &layout, &layout_result, &err);
+    context.transformer_session = session;
+    context.conditioning = conditioning;
+    context.conditioning_capacity = CONDITION_VALUES;
+    context.layout = &layout;
+    context.layout_result = &layout_result;
+    context.timestep_indices = timestep_indices;
+    context.timestep_capacity = 19ull;
+    context.block_count = block_count;
+    context.conditioning_identity = conditioning_identity;
+    if (rc == YVEX_OK)
+        rc = graph->t2va_latent_execute(
+            &plan, &context, 42ull, (192ull + 512ull) * sizeof(float) * 4ull,
+            video, 192ull, audio, 512ull, &latent_result, &omni_result, &err);
+    if (rc == YVEX_OK && (!latent_result.completed || !omni_result.complete ||
+                          omni_result.model_evaluations != steps)) {
+        yvex_error_set(&err, YVEX_ERR_STATE, "minimax-h3.latent-proof",
+                       "the exact resident latent iteration did not complete");
+        rc = YVEX_ERR_STATE;
+    }
+    if (rc == YVEX_OK)
+        printf("t2va_latent=accepted steps=%u blocks=%llu packed_rows=%llu\n"
+               "kernel_launches=%llu peak_device_bytes=%llu\nplan_identity=%s\n"
+               "layout_identity=%s\nevaluator_identity=%s\nlatent_identity=%s\n"
+               "transformer_chain_identity=%s\nresidency_identity=%s\n",
+               steps, block_count, plan.packed_rows, omni_result.kernel_launches,
+               omni_result.peak_device_bytes, plan.identity, layout_result.layout_identity,
+               omni_result.evaluator_identity, latent_result.execution_identity,
+               omni_result.execution_chain_identity, omni_result.residency_identity);
+    else
+        fprintf(stderr, "t2va_latent=refused where=%s message=%s\n",
+                yvex_error_where(&err), yvex_error_message(&err));
+    yvex_error_clear(&cleanup);
+    cleanup_rc = yvex_runtime_component_session_close(&session, &cleanup);
+    if (cleanup_rc != YVEX_OK && rc == YVEX_OK) rc = cleanup_rc;
+    yvex_tensor_table_close(tensors);
+    yvex_gguf_close(gguf);
+    yvex_artifact_close(artifact);
+    return rc == YVEX_OK ? 0 : 1;
+}
+
 int main(int argc, char **argv)
 {
     yvex_artifact_options options = {0};
@@ -339,6 +444,14 @@ int main(int argc, char **argv)
     char *blocks_end = NULL;
     unsigned long long block_count = blocks_text ? strtoull(blocks_text, &blocks_end, 10) : 1ull;
     int rc = YVEX_OK;
+    if (argc == 6 && strcmp(argv[2], "latent") == 0) {
+        char *latent_blocks_end = NULL, *steps_end = NULL;
+        unsigned long long latent_blocks = strtoull(argv[4], &latent_blocks_end, 10);
+        unsigned long long latent_steps = strtoull(argv[5], &steps_end, 10);
+        if (!latent_blocks_end || *latent_blocks_end || !steps_end || *steps_end ||
+            latent_steps > UINT_MAX) return 2;
+        return execute_latent(argv[1], argv[3], latent_blocks, (unsigned int)latent_steps);
+    }
     if (argc != 9) {
         fprintf(stderr, "usage: minimax_h3_transformer GGUF VIDEO AUDIO CONDITIONING "
                         "VIDEO_OUT AUDIO_OUT VIDEO_REFERENCE AUDIO_REFERENCE\n");

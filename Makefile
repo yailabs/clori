@@ -66,7 +66,7 @@
 	test-minimax-video-artifact-live test-minimax-text-conditioning-live \
 	test-minimax-text-layer-live test-minimax-omni-block-live \
 	test-minimax-omni-transformer-live test-minimax-omni-transformer-artifact-live \
-	test-minimax-tokenizer-live \
+	test-minimax-latent-live test-minimax-tokenizer-live \
 	test-attention test-attention-fixture-isolation \
 	test-attention-live-plan test-attention-live test-attention-cli-live \
 	test-attention-cuda test-quant test-quant-asan test-quant-ubsan \
@@ -159,6 +159,8 @@ YVEX_RUNTIME_BENCHMARK_DIR ?=
 YVEX_RUNTIME_BINDING ?=
 YVEX_TOKENIZER_REFERENCE_PYTHON ?= /tmp/yvex-tokenizer-oracle/bin/python
 MINIMAX_H3_TEXT_ENCODER_TOKENS ?= 1
+MINIMAX_H3_LATENT_BLOCKS ?= 50
+MINIMAX_H3_LATENT_STEPS ?= 1
 PINNED_GGML_ROOT ?= /tmp/yvex-ggml-af97976
 PINNED_GGML_BUILD ?= $(PINNED_GGML_ROOT)/build-yvex
 
@@ -884,6 +886,15 @@ test-minimax-omni-transformer-artifact-live: $(MINIMAX_TRANSFORMER_LIVE_RUNNER)
 		"$(BUILD_DIR)/tests/minimax_h3_omni_audio.f32" \
 		"$(MINIMAX_H3_OMNI_FIXTURE_ROOT)/omni.transformer.video.oracle.f32" \
 		"$(MINIMAX_H3_OMNI_FIXTURE_ROOT)/omni.transformer.audio.oracle.f32"
+
+test-minimax-latent-live: $(MINIMAX_TRANSFORMER_LIVE_RUNNER)
+	@test -n "$(MINIMAX_H3_TRANSFORMER_ARTIFACT)" || { \
+		echo "MINIMAX_H3_TRANSFORMER_ARTIFACT is required" >&2; exit 2; }
+	@test -n "$(MINIMAX_H3_OMNI_FIXTURE_ROOT)" || { \
+		echo "MINIMAX_H3_OMNI_FIXTURE_ROOT is required" >&2; exit 2; }
+	$(MINIMAX_TRANSFORMER_LIVE_RUNNER) "$(MINIMAX_H3_TRANSFORMER_ARTIFACT)" latent \
+		"$(MINIMAX_H3_OMNI_FIXTURE_ROOT)/omni.transformer.conditioning.f32" \
+		"$(MINIMAX_H3_LATENT_BLOCKS)" "$(MINIMAX_H3_LATENT_STEPS)"
 
 test-minimax-tokenizer-live: $(YVEX_BIN) tests/cli/minimax_tokenizer.sh
 	@test -n "$(MINIMAX_H3_TEXT_ARTIFACT)" || { \

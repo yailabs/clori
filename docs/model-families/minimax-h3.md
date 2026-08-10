@@ -7,8 +7,8 @@ readers; complete Audio VAE and bounded multi-patch Visual VAE CPU decodes
 numerically conform; exact artifact-bound Qwen2 tokenization and 50-layer
 text-only Qwen3-VL prompt conditioning plus the complete 50-block
 Omni-Transformer component envelope execute on GB10; exact target-only packed
-layout and transactional paired latent scheduling are admitted; not an
-executable family
+layout and transactional two-step Omni-driven paired latent generation execute
+on GB10; not an executable family
 
 This record owns current YVEX facts for MiniMax-H3 Base FL2VA. YVEX now admits
 the complete immutable FL2VA source through its production source owner and
@@ -25,9 +25,9 @@ independent numerical conformance evidence for both. A staged Text Encoder
 residency registers the exact BF16 component with CUDA, tokenizes an ASCII
 `t2va` prompt from artifact-bound Qwen2 metadata, and executes the selected
 50-layer causal text stack against an independent Transformers oracle. It does
-not add a family runtime, multimodal Qwen vision conditioning, iterative latent
-generation, full-scale Visual qualification, or synchronized media
-path, or release obligation. The frozen quantitative intake evidence is the
+not add a family runtime, multimodal Qwen vision conditioning, full-scale
+latent or Visual qualification, a synchronized media path, or a release
+obligation. The frozen quantitative intake evidence is the
 [FL2VA intake audit](../audits/minimax-h3-fl2va-b8b09e3/README.md); the common
 promotion rules remain in the [family integration contract](integration.md).
 
@@ -39,8 +39,8 @@ promotion rules remain in the [family integration contract](integration.md).
 | Branch status | open |
 | Branch completion | first YVEX-authored playable synchronized MiniMax-H3 FL2VA audio-video output |
 | Current wave | `R010.MINIMAX.H3.FL2VA.END_TO_END.0` |
-| Current boundary | exact component artifacts admitted; complete Audio and bounded Visual CPU decodes conform; prompt conditioning and the 50-block Omni envelope conform on GB10; exact packed layout plus paired latent RNG, schedule, solver, and transaction semantics are admitted |
-| Next expected boundary | bind the resident Omni evaluator into the transactional latent loop, then complete VAE composition and synchronized media publication |
+| Current boundary | exact component artifacts admitted; complete Audio and bounded Visual CPU decodes conform; prompt conditioning and the 50-block Omni envelope conform on GB10; the resident 50-block evaluator completes a two-step transactional paired latent run on one exact residency |
+| Next expected boundary | compose committed video/audio latents with both VAE decoders, then synchronize and publish playable media |
 
 The branch preserves the accepted intake history and remains open across all
 later source, artifact, graph, backend, residency, latent, VAE, media, and
@@ -66,7 +66,7 @@ or rename the branch.
 | Tensor-role-map identity | `61e7a2cfc29e6dd3da966878f5388f1472a406d7e33ba34ef65f44b61f08f013` |
 | Transformation IR identity | `bd941103d754df8c1eb02ff9b90db4ba86b7e389691f2d0c4027343eccbc0b0b` |
 | Aggregate derivation identity | `cc2886a388a475c2df246558dfb41c8d66e549afd4c4e34d19e2bbd3b70a3ff5` |
-| Evidence stage | exact source verified; architecture, tensor roles, and Transformation IR admitted; all four weighted artifacts admitted; Audio and bounded Visual decodes numerically conform; ASCII prompt conditioning and the 50-block Omni envelope conform on GB10; exact packed target layout and transactional paired latent evolution are admitted |
+| Evidence stage | exact source verified; architecture, tensor roles, and Transformation IR admitted; all four weighted artifacts admitted; Audio and bounded Visual decodes numerically conform; ASCII prompt conditioning and a two-step 50-block Omni latent evolution execute on GB10 through the exact packed target layout |
 
 The external evidence directory used during the intake was
 `/home/dgmothx/lab/models/intake/minimax-h3/<FULL_REVISION>/`. That path is an
@@ -858,20 +858,38 @@ repeat construction is byte-identical, and insufficient workspace leaves every
 caller buffer unchanged.
 
 The Transformer graph now consumes a generic component execution session, so
-the admitted 66,280,430,144-byte residency can remain open across every latent
-iteration. A live one-block execution through this persistent-session boundary
-retained residency identity
-`8fabd88629b671abf1ca8dd3d659d7ec9f173996039082d7354ff73371ef7308`
-and passed its existing independent oracle tolerance. This establishes the
-required lifecycle boundary, not a completed multi-step model run.
+the admitted 66,280,430,144-byte residency remains open across every latent
+iteration. The generic runtime records one stable residency, ordered evaluator
+execution identities, transfer accounting, peak device workspace, and an
+identity for the complete evaluator chain; a residency change during a chain
+is refused.
+
+A live two-step execution used all 50 Transformer blocks at each step. The
+second evaluation exercised distinct video and audio timesteps while text
+inherited the video timestep. It retained residency identity
+`8fabd88629b671abf1ca8dd3d659d7ec9f173996039082d7354ff73371ef7308`,
+launched 3,695 kernels, and reported 9,549,056 peak device bytes. Its exact
+identities are:
+
+| Evidence | Identity |
+| --- | --- |
+| Plan | `51ffc069c3a7a37ef410078ed00ee1f748747e14f65709fa1cb59ecfaf60c35e` |
+| Packed layout | `f4192ae47efd9f4ca3a13e89f8138177a34e79d3c00ce91a955c59d418ac934d` |
+| Evaluator binding | `a95e7a439a79fe4af40246d452391d9b5e1321c7d552602fea3525185cda71b2` |
+| Final paired latent execution | `9a04fb4986a11d5176068c9281170d28cbf4ddfd628f12d3ec6a9e8e6b59e955` |
+| Ordered Transformer chain | `7d6ae25d7e5d4064de33b6799ee75926bf7e11dd3262a00cf4b020510c1459c1` |
+
+This bounded 32x32, five-frame, two-step run proves composition and residency;
+it is not a quality, useful-resolution, or source-RNG-parity claim.
 
 `production_capability_available: true` for deterministic transactional latent
-initialization and iteration with a supplied admitted evaluator.
+initialization and real resident 50-block Omni iteration at the admitted
+bounded geometry.
 `production_api_available: true` through the generic latent ABI and the family
-graph composition. `internal_live_runner_available: true` for the resident
-Transformer boundary. `operator_command_available: false` and
-`end_user_path_available: false`: real Omni-driven iteration, both final VAE
-decodes, and media publication remain downstream.
+graph composition. `internal_live_runner_available: true` through
+`test-minimax-latent-live`. `operator_command_available: false` and
+`end_user_path_available: false`: both final VAE decodes and media publication
+remain downstream.
 
 ## Progression and non-claims
 
@@ -893,10 +911,10 @@ requires an eligibility conclusion.
 
 This implementation boundary does not prove:
 
-- multimodal Qwen3-VL vision conditioning or complete iterative latent generation;
+- multimodal Qwen3-VL vision conditioning or source-default/full-scale latent generation;
 - complete composite-artifact support or Physical Execution IR;
-- GB10 Omni/VAE pipeline execution or simultaneous/staged runtime residency;
-- real Omni-driven multi-step latent generation or PyTorch seed-stream parity;
+- GB10 staged Omni-to-VAE pipeline execution or complete multi-component residency;
+- PyTorch seed-stream parity or model-quality usefulness of the bounded latent run;
 - full-scale/tiled Visual VAE qualification or either VAE in the complete latent and media pipeline;
 - audio/video synchronization, playable media output, or hosted serving;
 - Diffusers, SGLang, or vLLM parity;

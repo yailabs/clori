@@ -54,7 +54,8 @@ static yvex_runtime_latent_request latent_request(latent_fixture *fixture)
         .seed = 42ull, .video_values = 3ull, .audio_values = 2ull, .step_count = 2ull,
         .maximum_workspace_bytes = 5ull * sizeof(float) * 4ull,
         .video_sigmas = video_sigmas, .audio_sigmas = audio_sigmas,
-        .plan_identity = identity, .evaluate = latent_evaluate, .advance = latent_advance,
+        .plan_identity = identity, .evaluator_identity = identity,
+        .evaluate = latent_evaluate, .advance = latent_advance,
         .execution_context = fixture, .cancel_requested = latent_cancel,
         .cancel_context = fixture,
     };
@@ -134,6 +135,61 @@ static int test_packed_av_layout(void)
     return 0;
 }
 
+static int test_evaluator_evidence(void)
+{
+    static const char identity_a[] =
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    static const char identity_b[] =
+        "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+    const char *identities[2] = {identity_a, identity_b};
+    unsigned long long facts[2] = {50ull, 66280430144ull};
+    yvex_runtime_latent_evaluator_evidence first = {0}, repeated = {0};
+    yvex_runtime_latent_evaluator_result first_result, repeated_result;
+    char binding[65], repeated_binding[65];
+    yvex_error err;
+
+    YVEX_TEST_ASSERT(
+        yvex_runtime_latent_binding_identity(
+            "test.latent.binding.v1", identities, 2ull, facts, 2ull, binding, &err) == YVEX_OK &&
+            yvex_runtime_latent_binding_identity(
+                "test.latent.binding.v1", identities, 2ull, facts, 2ull,
+                repeated_binding, &err) == YVEX_OK && strcmp(binding, repeated_binding) == 0,
+        "latent evaluator binding identity is deterministic");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_latent_evaluator_begin(
+            &first, "test.latent.chain.v1", binding, &err) == YVEX_OK &&
+            yvex_runtime_latent_evaluator_record(
+                &first, identity_a, identity_a, 10ull, 20ull, 30ull, 40ull, &err) == YVEX_OK &&
+            yvex_runtime_latent_evaluator_record(
+                &first, identity_a, identity_b, 11ull, 21ull, 31ull, 41ull, &err) == YVEX_OK &&
+            yvex_runtime_latent_evaluator_finish(&first, 2ull, &first_result, &err) == YVEX_OK &&
+            first_result.complete && first_result.model_evaluations == 2ull &&
+            first_result.kernel_launches == 21ull && first_result.h2d_bytes == 41ull &&
+            first_result.d2h_bytes == 61ull && first_result.peak_device_bytes == 41ull,
+        "latent evaluator evidence seals exact execution and resource facts");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_latent_evaluator_begin(
+            &repeated, "test.latent.chain.v1", binding, &err) == YVEX_OK &&
+            yvex_runtime_latent_evaluator_record(
+                &repeated, identity_a, identity_a, 10ull, 20ull, 30ull, 40ull, &err) == YVEX_OK &&
+            yvex_runtime_latent_evaluator_record(
+                &repeated, identity_a, identity_b, 11ull, 21ull, 31ull, 41ull, &err) == YVEX_OK &&
+            yvex_runtime_latent_evaluator_finish(
+                &repeated, 2ull, &repeated_result, &err) == YVEX_OK &&
+            strcmp(first_result.execution_chain_identity,
+                   repeated_result.execution_chain_identity) == 0,
+        "latent evaluator evidence is deterministic across independent executions");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_latent_evaluator_begin(
+            &repeated, "test.latent.chain.v1", binding, &err) == YVEX_OK &&
+            yvex_runtime_latent_evaluator_record(
+                &repeated, identity_a, identity_a, 1ull, 1ull, 1ull, 1ull, &err) == YVEX_OK &&
+            yvex_runtime_latent_evaluator_record(
+                &repeated, identity_b, identity_b, 1ull, 1ull, 1ull, 1ull, &err) == YVEX_ERR_STATE,
+        "latent evaluator evidence refuses a residency transition within one chain");
+    return 0;
+}
+
 int yvex_test_runtime_latent(void)
 {
     latent_fixture first_fixture = {0}, second_fixture = {0}, cancelled = {.cancelled = 1};
@@ -173,5 +229,6 @@ int yvex_test_runtime_latent(void)
                                     &refused, &err) == YVEX_ERR_BOUNDS && !refused.completed,
         "paired latent execution refuses an undersized workspace budget");
     if (test_packed_av_layout() != 0) return 1;
+    if (test_evaluator_evidence() != 0) return 1;
     return 0;
 }

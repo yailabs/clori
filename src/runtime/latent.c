@@ -16,6 +16,13 @@ static int latent_refuse(yvex_error *err, yvex_status status, const char *messag
     return status;
 }
 
+static int packed_layout_identity(
+    const yvex_runtime_av_layout_request *request, const float *positions,
+    const unsigned int *tags, const unsigned int *video_indices,
+    const unsigned int *audio_indices, const unsigned int *text_indices,
+    unsigned long long video_rows, unsigned long long audio_rows,
+    char output[YVEX_SHA256_HEX_CAP]);
+
 static int latent_hash_f32(yvex_sha256 *hash, float value)
 {
     uint32_t bits;
@@ -51,6 +58,7 @@ static int latent_request_validate(
         request->video_values > video_capacity || request->audio_values > audio_capacity ||
         !request->video_sigmas || !request->audio_sigmas ||
         !request->plan_identity || !yvex_sha256_hex_valid(request->plan_identity) ||
+        !request->evaluator_identity || !yvex_sha256_hex_valid(request->evaluator_identity) ||
         !request->evaluate || !request->advance ||
         !yvex_core_u64_add(request->video_values, request->audio_values, total) ||
         !yvex_core_u64_mul(*total, sizeof(float), bytes) ||
@@ -85,6 +93,7 @@ static int latent_execution_identity(
     yvex_sha256_init(&hash);
     if (!yvex_sha256_update_text(&hash, "yvex.runtime.latent.execution.v1") ||
         !yvex_sha256_update_text(&hash, request->plan_identity) ||
+        !yvex_sha256_update_text(&hash, request->evaluator_identity) ||
         !yvex_sha256_update_u64(&hash, request->seed) ||
         !yvex_sha256_update_u64(&hash, request->video_values) ||
         !yvex_sha256_update_u64(&hash, request->audio_values) ||
@@ -100,7 +109,7 @@ static int latent_execution_identity(
     return 1;
 }
 
-int yvex_runtime_latent_shifted_sigmas(
+static int latent_shifted_sigmas(
     float *output, unsigned int points, float shift, yvex_error *err)
 {
     unsigned int index;
@@ -115,7 +124,7 @@ int yvex_runtime_latent_shifted_sigmas(
     return YVEX_OK;
 }
 
-int yvex_runtime_latent_plan_identity(
+static int latent_plan_identity(
     const char *domain, const char *target, const char *source_revision,
     const unsigned long long *facts, unsigned long long fact_count,
     const float *video_sigmas, const float *audio_sigmas, unsigned int points,
@@ -149,6 +158,322 @@ int yvex_runtime_latent_plan_identity(
     if (!yvex_sha256_final(&hash, digest))
         return latent_refuse(err, YVEX_ERR_STATE, "latent plan identity finalization failed");
     yvex_sha256_hex(digest, output);
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_runtime_latent_binding_identity(
+    const char *domain, const char *const *identities, unsigned long long identity_count,
+    const unsigned long long *facts, unsigned long long fact_count,
+    char output[YVEX_SHA256_HEX_CAP], yvex_error *err)
+{
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    unsigned long long index;
+    if (!domain || !domain[0] || !identities || !identity_count || identity_count > 16ull ||
+        (!facts && fact_count) || fact_count > 16ull || !output)
+        return latent_refuse(err, YVEX_ERR_INVALID_ARG,
+                             "bounded latent binding identity facts are required");
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.latent.binding.v1") ||
+        !yvex_sha256_update_text(&hash, domain) ||
+        !yvex_sha256_update_u64_be(&hash, identity_count))
+        return latent_refuse(err, YVEX_ERR_STATE, "latent binding identity initialization failed");
+    for (index = 0ull; index < identity_count; ++index)
+        if (!yvex_sha256_hex_valid(identities[index]) ||
+            !yvex_sha256_update_text(&hash, identities[index]))
+            return latent_refuse(err, YVEX_ERR_FORMAT, "latent binding identity is malformed");
+    if (!yvex_sha256_update_u64_be(&hash, fact_count))
+        return latent_refuse(err, YVEX_ERR_STATE, "latent binding fact count failed");
+    for (index = 0ull; index < fact_count; ++index)
+        if (!yvex_sha256_update_u64_be(&hash, facts[index]))
+            return latent_refuse(err, YVEX_ERR_STATE, "latent binding fact identity failed");
+    if (!yvex_sha256_final(&hash, digest))
+        return latent_refuse(err, YVEX_ERR_STATE, "latent binding identity finalization failed");
+    yvex_sha256_hex(digest, output);
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_runtime_latent_evaluator_begin(
+    yvex_runtime_latent_evaluator_evidence *evidence, const char *domain,
+    const char *evaluator_identity, yvex_error *err)
+{
+    char identity[YVEX_SHA256_HEX_CAP];
+    if (!evidence || !domain || !domain[0] || !yvex_sha256_hex_valid(evaluator_identity))
+        return latent_refuse(err, YVEX_ERR_INVALID_ARG,
+                             "latent evaluator evidence requires an exact identity domain");
+    memcpy(identity, evaluator_identity, sizeof(identity));
+    memset(evidence, 0, sizeof(*evidence));
+    evidence->staged.schema_version = YVEX_RUNTIME_LATENT_EVALUATOR_SCHEMA_V1;
+    memcpy(evidence->staged.evaluator_identity, identity, sizeof(identity));
+    yvex_sha256_init(&evidence->chain);
+    if (!yvex_sha256_update_text(&evidence->chain, "yvex.runtime.latent.evaluator-chain.v1") ||
+        !yvex_sha256_update_text(&evidence->chain, domain) ||
+        !yvex_sha256_update_text(&evidence->chain, evaluator_identity))
+        return latent_refuse(err, YVEX_ERR_STATE, "latent evaluator evidence initialization failed");
+    evidence->active = 1;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_runtime_latent_evaluator_record(
+    yvex_runtime_latent_evaluator_evidence *evidence, const char *residency_identity,
+    const char *execution_identity, unsigned long long kernel_launches,
+    unsigned long long h2d_bytes, unsigned long long d2h_bytes,
+    unsigned long long device_bytes, yvex_error *err)
+{
+    unsigned long long evaluations, launches, host_to_device, device_to_host;
+    if (!evidence || !evidence->active || !yvex_sha256_hex_valid(residency_identity) ||
+        !yvex_sha256_hex_valid(execution_identity) ||
+        (evidence->staged.model_evaluations &&
+         strcmp(evidence->staged.residency_identity, residency_identity) != 0))
+        return latent_refuse(err, YVEX_ERR_STATE,
+                             "latent evaluator evidence changed resident identity");
+    if (!yvex_core_u64_add(evidence->staged.model_evaluations, 1ull, &evaluations) ||
+        !yvex_core_u64_add(evidence->staged.kernel_launches, kernel_launches, &launches) ||
+        !yvex_core_u64_add(evidence->staged.h2d_bytes, h2d_bytes, &host_to_device) ||
+        !yvex_core_u64_add(evidence->staged.d2h_bytes, d2h_bytes, &device_to_host) ||
+        !yvex_sha256_update_text(&evidence->chain, execution_identity))
+        return latent_refuse(err, YVEX_ERR_BOUNDS,
+                             "latent evaluator evidence accounting overflowed");
+    if (!evidence->staged.model_evaluations)
+        memcpy(evidence->staged.residency_identity, residency_identity, YVEX_SHA256_HEX_CAP);
+    evidence->staged.model_evaluations = evaluations;
+    evidence->staged.kernel_launches = launches;
+    evidence->staged.h2d_bytes = host_to_device;
+    evidence->staged.d2h_bytes = device_to_host;
+    if (device_bytes > evidence->staged.peak_device_bytes)
+        evidence->staged.peak_device_bytes = device_bytes;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_runtime_latent_evaluator_finish(
+    yvex_runtime_latent_evaluator_evidence *evidence,
+    unsigned long long expected_evaluations,
+    yvex_runtime_latent_evaluator_result *result, yvex_error *err)
+{
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    if (result) memset(result, 0, sizeof(*result));
+    if (!evidence || !evidence->active || !expected_evaluations || !result ||
+        evidence->staged.model_evaluations != expected_evaluations ||
+        !yvex_sha256_final(&evidence->chain, digest))
+        return latent_refuse(err, YVEX_ERR_STATE,
+                             "complete latent evaluator evidence is required");
+    yvex_sha256_hex(digest, evidence->staged.execution_chain_identity);
+    evidence->staged.complete = 1;
+    evidence->active = 0;
+    *result = evidence->staged;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_runtime_av_plan_build(
+    const yvex_runtime_av_plan_policy *policy, unsigned long long text_tokens,
+    unsigned long long width, unsigned long long height, unsigned long long frames,
+    unsigned int inference_steps, yvex_runtime_av_plan *out, yvex_error *err)
+{
+    unsigned long long blocks, spatial_rows, canvas_height, canvas_width, rounded_audio;
+    unsigned long long facts[32], fact_count = 0ull, index, temporal_bits, spatial_bits;
+    int rc;
+    if (!policy || policy->schema_version != YVEX_RUNTIME_AV_PLAN_SCHEMA_V1 || !out ||
+        !text_tokens || !policy->frame_period || !policy->frame_remainder ||
+        !policy->video_latents_per_period || !policy->video_latent_remainder ||
+        !policy->spatial_ratio || !policy->patch_height || !policy->patch_width ||
+        !policy->audio_rate_numerator || !policy->audio_rate_denominator ||
+        policy->audio_channels != 2ull || !policy->video_value_width ||
+        !policy->audio_value_width || !policy->temporal_pattern_count ||
+        policy->temporal_pattern_count > YVEX_RUNTIME_AV_TEMPORAL_PATTERN_CAP ||
+        !policy->maximum_steps || policy->maximum_steps > 64u || !inference_steps ||
+        inference_steps > policy->maximum_steps || !isfinite(policy->video_sigma_shift) ||
+        policy->video_sigma_shift <= 0.0f || !isfinite(policy->audio_sigma_shift) ||
+        policy->audio_sigma_shift <= 0.0f || !isfinite(policy->temporal_scale) ||
+        policy->temporal_scale <= 0.0 || !isfinite(policy->spatial_scale) ||
+        policy->spatial_scale <= 0.0 || !policy->identity_domain || !policy->target_identity ||
+        !policy->source_revision || frames < policy->frame_remainder ||
+        (frames - policy->frame_remainder) % policy->frame_period ||
+        !yvex_core_u64_mul(policy->spatial_ratio, policy->patch_height, &canvas_height) ||
+        !yvex_core_u64_mul(policy->spatial_ratio, policy->patch_width, &canvas_width) ||
+        height < canvas_height || width < canvas_width || height % canvas_height ||
+        width % canvas_width || policy->text_tag == policy->audio_tag ||
+        policy->text_tag == policy->video_tag || policy->audio_tag == policy->video_tag)
+        return latent_refuse(err, YVEX_ERR_INVALID_ARG,
+                             "a complete bounded audio-video plan policy is required");
+    for (index = 0ull; index < policy->temporal_pattern_count; ++index)
+        if (!policy->temporal_pattern[index])
+            return latent_refuse(err, YVEX_ERR_FORMAT,
+                                 "audio-video plan temporal spans must be positive");
+    memset(out, 0, sizeof(*out));
+    out->schema_version = YVEX_RUNTIME_AV_PLAN_SCHEMA_V1;
+    out->text_tokens = text_tokens; out->frames = frames; out->width = width; out->height = height;
+    blocks = (frames - policy->frame_remainder) / policy->frame_period;
+    if (!yvex_core_u64_mul(blocks, policy->video_latents_per_period,
+                           &out->video_latent_frames) ||
+        !yvex_core_u64_add(out->video_latent_frames, policy->video_latent_remainder,
+                           &out->video_latent_frames) ||
+        !yvex_core_u64_mul(frames, policy->audio_rate_numerator, &rounded_audio) ||
+        !yvex_core_u64_add(rounded_audio, policy->audio_rate_denominator / 2ull,
+                           &rounded_audio))
+        return latent_refuse(err, YVEX_ERR_BOUNDS, "audio-video temporal geometry overflowed");
+    out->audio_latent_steps = rounded_audio / policy->audio_rate_denominator;
+    out->video_latent_height = height / policy->spatial_ratio;
+    out->video_latent_width = width / policy->spatial_ratio;
+    if (!yvex_core_u64_mul(out->video_latent_height / policy->patch_height,
+                           out->video_latent_width / policy->patch_width, &spatial_rows) ||
+        !yvex_core_u64_mul(spatial_rows, out->video_latent_frames, &out->video_rows) ||
+        !yvex_core_u64_mul(out->audio_latent_steps, policy->audio_channels, &out->audio_rows) ||
+        !yvex_core_u64_add(text_tokens, out->audio_rows, &out->packed_rows) ||
+        !yvex_core_u64_add(out->packed_rows, out->video_rows, &out->packed_rows) ||
+        out->packed_rows > UINT_MAX)
+        return latent_refuse(err, YVEX_ERR_BOUNDS, "audio-video packed geometry overflowed");
+    out->patch_height = policy->patch_height; out->patch_width = policy->patch_width;
+    out->audio_channels = policy->audio_channels;
+    out->video_value_width = policy->video_value_width;
+    out->audio_value_width = policy->audio_value_width;
+    out->text_tag = policy->text_tag; out->audio_tag = policy->audio_tag;
+    out->video_tag = policy->video_tag; out->temporal_pattern_count = policy->temporal_pattern_count;
+    out->temporal_scale = policy->temporal_scale; out->spatial_scale = policy->spatial_scale;
+    memcpy(out->temporal_pattern, policy->temporal_pattern,
+           policy->temporal_pattern_count * sizeof(*out->temporal_pattern));
+    out->model_evaluations = inference_steps; out->sigma_grid_points = inference_steps + 1u;
+    rc = latent_shifted_sigmas(
+        out->video_sigmas, out->sigma_grid_points, policy->video_sigma_shift, err);
+    if (rc == YVEX_OK)
+        rc = latent_shifted_sigmas(
+            out->audio_sigmas, out->sigma_grid_points, policy->audio_sigma_shift, err);
+    facts[fact_count++] = text_tokens; facts[fact_count++] = width;
+    facts[fact_count++] = height; facts[fact_count++] = frames;
+    facts[fact_count++] = out->sigma_grid_points; facts[fact_count++] = out->model_evaluations;
+    facts[fact_count++] = policy->frame_period; facts[fact_count++] = policy->frame_remainder;
+    facts[fact_count++] = policy->video_latents_per_period;
+    facts[fact_count++] = policy->video_latent_remainder;
+    facts[fact_count++] = policy->spatial_ratio; facts[fact_count++] = policy->patch_height;
+    facts[fact_count++] = policy->patch_width; facts[fact_count++] = policy->audio_rate_numerator;
+    facts[fact_count++] = policy->audio_rate_denominator;
+    facts[fact_count++] = policy->audio_channels; facts[fact_count++] = policy->video_value_width;
+    facts[fact_count++] = policy->audio_value_width; facts[fact_count++] = policy->text_tag;
+    facts[fact_count++] = policy->audio_tag; facts[fact_count++] = policy->video_tag;
+    facts[fact_count++] = policy->temporal_pattern_count;
+    for (index = 0ull; index < policy->temporal_pattern_count; ++index)
+        facts[fact_count++] = policy->temporal_pattern[index];
+    memcpy(&temporal_bits, &policy->temporal_scale, sizeof(temporal_bits));
+    memcpy(&spatial_bits, &policy->spatial_scale, sizeof(spatial_bits));
+    facts[fact_count++] = temporal_bits; facts[fact_count++] = spatial_bits;
+    if (rc == YVEX_OK)
+        rc = latent_plan_identity(
+            policy->identity_domain, policy->target_identity, policy->source_revision,
+            facts, fact_count, out->video_sigmas, out->audio_sigmas,
+            out->sigma_grid_points, out->identity, err);
+    if (rc != YVEX_OK) return rc;
+    out->complete = 1;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_runtime_av_scheduler_step(
+    float *output, const float *sample, const float *velocity,
+    unsigned long long values, float timestep, float sigma, float sigma_next,
+    yvex_error *err)
+{
+    unsigned long long index;
+    if (!output || !sample || !velocity || !values || !isfinite(timestep) ||
+        !isfinite(sigma) || !isfinite(sigma_next) || timestep < 0.0f || timestep >= 1.0f ||
+        sigma <= 0.0f || sigma_next < 0.0f || sigma_next >= sigma)
+        return latent_refuse(err, YVEX_ERR_INVALID_ARG,
+                             "a finite decreasing audio-video scheduler interval is required");
+    for (index = 0ull; index < values; ++index)
+        if (!isfinite(sample[index]) || !isfinite(velocity[index]))
+            return latent_refuse(err, YVEX_ERR_FORMAT,
+                                 "audio-video scheduler input contains a non-finite value");
+    for (index = 0ull; index < values; ++index) {
+        float denoised = sample[index] + (1.0f - timestep) * velocity[index];
+        float ratio = sigma_next / sigma;
+        output[index] = ratio * sample[index] + (1.0f - ratio) * denoised;
+    }
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_runtime_av_latent_execute(
+    const yvex_runtime_av_plan *plan, const yvex_runtime_latent_request *template,
+    float *video, unsigned long long video_capacity, float *audio,
+    unsigned long long audio_capacity, yvex_runtime_latent_result *result, yvex_error *err)
+{
+    yvex_runtime_latent_request request;
+    unsigned long long video_values, audio_values;
+    if (!plan || plan->schema_version != YVEX_RUNTIME_AV_PLAN_SCHEMA_V1 || !plan->complete ||
+        !template || !yvex_core_u64_mul(plan->video_rows, plan->video_value_width, &video_values) ||
+        !yvex_core_u64_mul(plan->audio_rows, plan->audio_value_width, &audio_values))
+        return latent_refuse(err, YVEX_ERR_BOUNDS, "a complete bounded audio-video plan is required");
+    request = *template; request.schema_version = YVEX_RUNTIME_LATENT_SCHEMA_V1;
+    request.video_values = video_values; request.audio_values = audio_values;
+    request.step_count = plan->model_evaluations; request.video_sigmas = plan->video_sigmas;
+    request.audio_sigmas = plan->audio_sigmas; request.plan_identity = plan->identity;
+    request.advance = yvex_runtime_av_scheduler_step;
+    return yvex_runtime_latent_execute(
+        &request, video, video_capacity, audio, audio_capacity, result, err);
+}
+
+int yvex_runtime_av_layout_from_plan(
+    const yvex_runtime_av_plan *plan, const yvex_runtime_av_layout_output *output,
+    yvex_runtime_av_layout_result *result, yvex_error *err)
+{
+    unsigned long long audio_width_indices[2], workspace_bytes;
+    yvex_runtime_av_layout_request request = {0};
+    if (!plan || plan->schema_version != YVEX_RUNTIME_AV_PLAN_SCHEMA_V1 || !plan->complete ||
+        plan->audio_channels != 2ull || plan->video_latent_width < plan->patch_width ||
+        !yvex_core_u64_mul(plan->packed_rows, 5ull * sizeof(float), &workspace_bytes))
+        return latent_refuse(err, YVEX_ERR_INVALID_ARG, "a complete patchable audio-video plan is required");
+    audio_width_indices[0] = 0ull;
+    audio_width_indices[1] = plan->video_latent_width / plan->patch_width - 1ull;
+    request.schema_version = YVEX_RUNTIME_AV_LAYOUT_SCHEMA_V1;
+    request.text_tag = plan->text_tag; request.audio_tag = plan->audio_tag;
+    request.video_tag = plan->video_tag; request.text_rows = plan->text_tokens;
+    request.audio_steps = plan->audio_latent_steps; request.audio_channels = plan->audio_channels;
+    request.video_frames = plan->video_latent_frames;
+    request.latent_height = plan->video_latent_height; request.latent_width = plan->video_latent_width;
+    request.patch_height = plan->patch_height; request.patch_width = plan->patch_width;
+    request.text_start = 0ull; request.audio_start = plan->text_tokens;
+    request.video_start = plan->text_tokens + plan->audio_rows; request.packed_rows = plan->packed_rows;
+    request.audio_width_indices = audio_width_indices; request.temporal_pattern = plan->temporal_pattern;
+    request.temporal_pattern_count = plan->temporal_pattern_count;
+    request.temporal_scale = plan->temporal_scale; request.spatial_scale = plan->spatial_scale;
+    request.media_time_origin = (double)plan->text_tokens; request.plan_identity = plan->identity;
+    request.maximum_workspace_bytes = workspace_bytes;
+    return yvex_runtime_av_layout_build(&request, output, result, err);
+}
+
+int yvex_runtime_av_layout_matches_plan(
+    const yvex_runtime_av_plan *plan, const yvex_runtime_av_layout_output *output,
+    const yvex_runtime_av_layout_result *result, yvex_error *err)
+{
+    unsigned long long position_values;
+    yvex_runtime_av_layout_request request = {0};
+    char observed_identity[YVEX_SHA256_HEX_CAP];
+    if (!plan || plan->schema_version != YVEX_RUNTIME_AV_PLAN_SCHEMA_V1 || !plan->complete ||
+        !output || !result || result->schema_version != YVEX_RUNTIME_AV_LAYOUT_SCHEMA_V1 ||
+        !result->complete || !yvex_sha256_hex_valid(result->layout_identity) ||
+        result->packed_rows != plan->packed_rows || result->video_rows != plan->video_rows ||
+        result->audio_rows != plan->audio_rows || result->text_rows != plan->text_tokens ||
+        !output->position_ids || !output->token_tags || !output->video_indices ||
+        !output->audio_indices || !output->text_indices ||
+        !yvex_core_u64_mul(plan->packed_rows, 3ull, &position_values) ||
+        output->position_capacity < position_values || output->tag_capacity < plan->packed_rows ||
+        output->video_capacity < plan->video_rows || output->audio_capacity < plan->audio_rows ||
+        output->text_capacity < plan->text_tokens)
+        return latent_refuse(err, YVEX_ERR_INVALID_ARG,
+                             "layout output does not cover the admitted audio-video plan");
+    request.plan_identity = plan->identity;
+    request.packed_rows = plan->packed_rows;
+    request.text_rows = plan->text_tokens;
+    if (!packed_layout_identity(
+            &request, output->position_ids, output->token_tags, output->video_indices,
+            output->audio_indices, output->text_indices, plan->video_rows,
+            plan->audio_rows, observed_identity) ||
+        strcmp(observed_identity, result->layout_identity) != 0)
+        return latent_refuse(err, YVEX_ERR_FORMAT,
+                             "layout values do not match their admitted identity");
     yvex_error_clear(err);
     return YVEX_OK;
 }

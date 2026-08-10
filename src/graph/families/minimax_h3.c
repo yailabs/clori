@@ -75,138 +75,23 @@ static int t2va_plan_build(yvex_minimax_h3_t2va_plan *out,
                            unsigned long long height, unsigned long long frames,
                            unsigned int inference_steps, yvex_error *err)
 {
-    unsigned long long frame_blocks, spatial_rows, facts[6];
-    int rc;
-    if (!out || !text_tokens || width < 32ull || height < 32ull ||
-        width % 32ull || height % 32ull || frames < 5ull ||
-        !inference_steps || inference_steps > 64u ||
-        (frames - 5ull) % 17ull) {
-        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "graph.minimax_h3.t2va.plan",
-                       "t2va requires bounded steps, 32-aligned geometry, and 17k+5 frames");
-        return YVEX_ERR_INVALID_ARG;
-    }
-    memset(out, 0, sizeof(*out));
-    out->text_tokens = text_tokens;
-    out->frames = frames;
-    out->width = width;
-    out->height = height;
-    frame_blocks = (frames - 5ull) / 17ull;
-    if (!yvex_core_u64_mul(frame_blocks, 5ull, &out->video_latent_frames) ||
-        !yvex_core_u64_add(out->video_latent_frames, 2ull,
-                           &out->video_latent_frames) ||
-        !yvex_core_u64_mul(frames, 5ull, &out->audio_latent_steps) ||
-        !yvex_core_u64_add(out->audio_latent_steps, 1ull,
-                           &out->audio_latent_steps)) {
-        yvex_error_set(err, YVEX_ERR_BOUNDS, "graph.minimax_h3.t2va.plan",
-                       "t2va temporal geometry overflowed");
-        return YVEX_ERR_BOUNDS;
-    }
-    out->audio_latent_steps /= 3ull;
-    out->video_latent_height = height / 16ull;
-    out->video_latent_width = width / 16ull;
-    if (!yvex_core_u64_mul(out->video_latent_height / 2ull,
-                           out->video_latent_width / 2ull, &spatial_rows) ||
-        !yvex_core_u64_mul(spatial_rows, out->video_latent_frames,
-                           &out->video_rows) ||
-        !yvex_core_u64_mul(out->audio_latent_steps, 2ull, &out->audio_rows) ||
-        !yvex_core_u64_add(text_tokens, out->audio_rows, &out->packed_rows) ||
-        !yvex_core_u64_add(out->packed_rows, out->video_rows, &out->packed_rows)) {
-        yvex_error_set(err, YVEX_ERR_BOUNDS, "graph.minimax_h3.t2va.plan",
-                       "t2va packed sequence overflowed");
-        return YVEX_ERR_BOUNDS;
-    }
-    out->model_evaluations = inference_steps;
-    out->sigma_grid_points = inference_steps + 1u;
-    rc = yvex_runtime_latent_shifted_sigmas(
-        out->video_sigmas, out->sigma_grid_points, 12.0f, err);
-    if (rc == YVEX_OK)
-        rc = yvex_runtime_latent_shifted_sigmas(
-            out->audio_sigmas, out->sigma_grid_points, 3.0f, err);
-    facts[0] = text_tokens; facts[1] = width; facts[2] = height; facts[3] = frames;
-    facts[4] = out->sigma_grid_points; facts[5] = out->model_evaluations;
-    if (rc == YVEX_OK)
-        rc = yvex_runtime_latent_plan_identity(
-            "yvex.minimax-h3.t2va.res-multistep.v2", YVEX_MINIMAX_H3_TARGET_ID,
-            YVEX_MINIMAX_H3_REVISION, facts, 6ull, out->video_sigmas, out->audio_sigmas,
-            out->sigma_grid_points, out->identity, err);
-    if (rc != YVEX_OK) return rc;
-    out->complete = 1;
-    yvex_error_clear(err);
-    return YVEX_OK;
-}
-/* Advance one modality while retaining H3's data-ward velocity sign and F32 blend order. */
-static int scheduler_step(float *output, const float *sample, const float *velocity,
-                          unsigned long long values, float timestep, float sigma,
-                          float sigma_next, yvex_error *err)
-{
-    unsigned long long index;
-    if (!output || !sample || !velocity || !values || !isfinite(timestep) ||
-        !isfinite(sigma) || !isfinite(sigma_next) || timestep < 0.0f ||
-        timestep >= 1.0f || sigma <= 0.0f || sigma_next < 0.0f ||
-        sigma_next >= sigma) {
-        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "graph.minimax_h3.scheduler.step",
-                       "H3 scheduler step requires finite state and a decreasing sigma interval");
-        return YVEX_ERR_INVALID_ARG;
-    }
-    for (index = 0ull; index < values; ++index)
-        if (!isfinite(sample[index]) || !isfinite(velocity[index])) {
-            yvex_error_set(err, YVEX_ERR_FORMAT, "graph.minimax_h3.scheduler.step",
-                           "H3 scheduler input contains a non-finite value");
-            return YVEX_ERR_FORMAT;
-        }
-    for (index = 0ull; index < values; ++index) {
-        float denoised = sample[index] + (1.0f - timestep) * velocity[index];
-        float ratio = sigma_next / sigma;
-        output[index] = ratio * sample[index] + (1.0f - ratio) * denoised;
-    }
-    yvex_error_clear(err);
-    return YVEX_OK;
-}
-static int t2va_latent_execute(const yvex_minimax_h3_t2va_plan *plan,
-    const yvex_runtime_latent_request *template, float *video, unsigned long long video_capacity,
-    float *audio, unsigned long long audio_capacity, yvex_runtime_latent_result *result, yvex_error *err)
-{
-    yvex_runtime_latent_request request;
-    unsigned long long video_values, audio_values;
-    if (!plan || !plan->complete || !template ||
-        !yvex_core_u64_mul(plan->video_rows, 96ull, &video_values) ||
-        !yvex_core_u64_mul(plan->audio_rows, 32ull, &audio_values)) {
-        yvex_error_set(err, YVEX_ERR_BOUNDS, "graph.minimax_h3.t2va.latent",
-                       "a complete bounded family latent plan is required");
-        return YVEX_ERR_BOUNDS;
-    }
-    request = *template; request.schema_version = YVEX_RUNTIME_LATENT_SCHEMA_V1;
-    request.video_values = video_values; request.audio_values = audio_values;
-    request.step_count = plan->model_evaluations; request.video_sigmas = plan->video_sigmas;
-    request.audio_sigmas = plan->audio_sigmas; request.plan_identity = plan->identity;
-    request.advance = scheduler_step;
-    return yvex_runtime_latent_execute(&request, video, video_capacity, audio, audio_capacity, result, err);
-}
-static int t2va_layout_build(const yvex_minimax_h3_t2va_plan *plan,
-    const yvex_runtime_av_layout_output *output, yvex_runtime_av_layout_result *result, yvex_error *err)
-{
-    static const unsigned int temporal_pattern[5] = {1u, 4u, 4u, 4u, 4u};
-    unsigned long long audio_width_indices[2];
-    yvex_runtime_av_layout_request request = {0};
-    if (!plan || !plan->complete || plan->video_latent_width < 2ull) {
-        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "graph.minimax_h3.t2va.layout", "patchable plan required");
-        return YVEX_ERR_INVALID_ARG;
-    }
-    audio_width_indices[0] = 0ull; audio_width_indices[1] = plan->video_latent_width / 2ull - 1ull;
-    request.schema_version = YVEX_RUNTIME_AV_LAYOUT_SCHEMA_V1;
-    request.text_tag = 1u; request.audio_tag = 2u; request.video_tag = 0u;
-    request.text_rows = plan->text_tokens; request.audio_steps = plan->audio_latent_steps;
-    request.audio_channels = 2ull; request.video_frames = plan->video_latent_frames;
-    request.latent_height = plan->video_latent_height; request.latent_width = plan->video_latent_width;
-    request.patch_height = 2ull; request.patch_width = 2ull;
-    request.text_start = 0ull; request.audio_start = plan->text_tokens;
-    request.video_start = plan->text_tokens + plan->audio_rows;
-    request.packed_rows = plan->packed_rows; request.audio_width_indices = audio_width_indices;
-    request.temporal_pattern = temporal_pattern; request.temporal_pattern_count = 5ull;
-    request.temporal_scale = 5.0 / 3.0; request.spatial_scale = 32.0;
-    request.media_time_origin = (double)plan->text_tokens; request.plan_identity = plan->identity;
-    request.maximum_workspace_bytes = plan->packed_rows * 5ull * sizeof(float);
-    return yvex_runtime_av_layout_build(&request, output, result, err);
+    static const yvex_runtime_av_plan_policy policy = {
+        .schema_version = YVEX_RUNTIME_AV_PLAN_SCHEMA_V1, .maximum_steps = 64u,
+        .text_tag = 1u, .audio_tag = 2u, .video_tag = 0u,
+        .frame_period = 17ull, .frame_remainder = 5ull,
+        .video_latents_per_period = 5ull, .video_latent_remainder = 2ull,
+        .spatial_ratio = 16ull, .patch_height = 2ull, .patch_width = 2ull,
+        .audio_rate_numerator = 5ull, .audio_rate_denominator = 3ull,
+        .audio_channels = 2ull, .video_value_width = 96ull, .audio_value_width = 32ull,
+        .temporal_pattern = {1u, 4u, 4u, 4u, 4u}, .temporal_pattern_count = 5u,
+        .video_sigma_shift = 12.0f, .audio_sigma_shift = 3.0f,
+        .temporal_scale = 5.0 / 3.0, .spatial_scale = 32.0,
+        .identity_domain = "yvex.minimax-h3.t2va.res-multistep-layout.v3",
+        .target_identity = YVEX_MINIMAX_H3_TARGET_ID,
+        .source_revision = YVEX_MINIMAX_H3_REVISION,
+    };
+    return yvex_runtime_av_plan_build(
+        &policy, text_tokens, width, height, frames, inference_steps, out, err);
 }
 static int audio_execution_refuse(audio_execution *execution,
                                   yvex_minimax_h3_component_execution_code code,
@@ -1460,10 +1345,10 @@ static const yvex_artifact_component_metadata audio_metadata[] = {
     {"general.name", "audio_vae"},
     {"yvex.logical.target", YVEX_MINIMAX_H3_TARGET_ID},
     {"yvex.logical.component", "audio_vae"},
-    {"yvex.source.snapshot.identity", YVEX_MINIMAX_H3_AUDIO_SOURCE_SNAPSHOT_IDENTITY},
+    {"yvex.source.snapshot.identity", YVEX_MINIMAX_H3_AUDIO_SNAPSHOT_IDENTITY},
     {"yvex.logical.component.identity", YVEX_MINIMAX_H3_AUDIO_COMPONENT_IDENTITY},
     {"yvex.logical.component_manifest.identity",
-     YVEX_MINIMAX_H3_AUDIO_COMPONENT_MANIFEST_IDENTITY},
+     YVEX_MINIMAX_H3_AUDIO_MANIFEST_IDENTITY},
     {"yvex.logical.architecture.identity", YVEX_MINIMAX_H3_AUDIO_ARCHITECTURE_IDENTITY},
     {"yvex.logical.role_map.identity", YVEX_MINIMAX_H3_AUDIO_ROLE_MAP_IDENTITY},
     {"yvex.logical.unresolved_requirements.identity",
@@ -1487,7 +1372,7 @@ static const yvex_complete_artifact_admission audio_catalog = {
     .transform_identity = YVEX_MINIMAX_H3_AUDIO_TRANSFORM_IDENTITY,
     .profile_identity = YVEX_MINIMAX_H3_AUDIO_PROFILE_IDENTITY,
     .profile_name = YVEX_MINIMAX_H3_AUDIO_PROFILE_NAME,
-    .quant_execution_identity = YVEX_MINIMAX_H3_AUDIO_QUANT_EXECUTION_IDENTITY,
+    .quant_execution_identity = YVEX_MINIMAX_H3_AUDIO_QUANT_IDENTITY,
     .payload_plan_identity = YVEX_MINIMAX_H3_AUDIO_PAYLOAD_PLAN_IDENTITY,
     .payload_byte_identity = YVEX_MINIMAX_H3_AUDIO_PAYLOAD_BYTE_IDENTITY,
     .writer_plan_identity = YVEX_MINIMAX_H3_AUDIO_WRITER_PLAN_IDENTITY,
@@ -1987,10 +1872,125 @@ static int transformer_component_cuda(yvex_runtime_component_session *session,
     free(blocks);
     return rc;
 }
+typedef struct {
+    const yvex_minimax_h3_t2va_plan *plan;
+    const yvex_minimax_h3_t2va_omni_context *context;
+    yvex_runtime_latent_evaluator_evidence evidence;
+} t2va_omni_execution;
+static int t2va_omni_identity(const yvex_minimax_h3_t2va_plan *plan,
+    const yvex_minimax_h3_t2va_omni_context *context,
+    const yvex_runtime_residency_summary *summary, char output[65], yvex_error *err)
+{
+    const char *identities[4] = {plan->identity, summary->residency_identity,
+                                 context->conditioning_identity,
+                                 context->layout_result->layout_identity};
+    unsigned long long facts[2] = {context->block_count, summary->encoded_bytes};
+    return yvex_runtime_latent_binding_identity(
+        "yvex.minimax-h3.t2va.omni-evaluator.v1", identities, 4ull,
+        facts, 2ull, output, err);
+}
+static int t2va_omni_evaluate(void *opaque, const float *video,
+    unsigned long long video_values, const float *audio, unsigned long long audio_values,
+    float video_timestep, float audio_timestep, float *video_velocity,
+    float *audio_velocity, yvex_error *err)
+{
+    t2va_omni_execution *execution = opaque;
+    const yvex_minimax_h3_t2va_plan *plan = execution ? execution->plan : NULL;
+    const yvex_minimax_h3_t2va_omni_context *context = execution ? execution->context : NULL;
+    yvex_minimax_h3_omni_transformer_request request = {0};
+    yvex_minimax_h3_omni_transformer_result result = {0};
+    float timesteps[2]; unsigned long long row, expected_video, expected_audio;
+    int rc;
+    if (!plan || !context || video_timestep > audio_timestep ||
+        !yvex_core_u64_mul(plan->video_rows, plan->video_value_width, &expected_video) ||
+        !yvex_core_u64_mul(plan->audio_rows, plan->audio_value_width, &expected_audio) ||
+        video_values != expected_video || audio_values != expected_audio) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "graph.minimax_h3.t2va.omni",
+                       "latent evaluation does not match the admitted FL2VA plan");
+        return YVEX_ERR_FORMAT;
+    }
+    timesteps[0] = video_timestep; timesteps[1] = audio_timestep;
+    for (row = 0ull; row < plan->packed_rows; ++row) {
+        unsigned int tag = context->layout->token_tags[row];
+        if (tag != plan->text_tag && tag != plan->audio_tag && tag != plan->video_tag) {
+            yvex_error_set(err, YVEX_ERR_FORMAT, "graph.minimax_h3.t2va.omni",
+                           "packed FL2VA row has an unknown modality tag");
+            return YVEX_ERR_FORMAT;
+        }
+        context->timestep_indices[row] =
+            tag == plan->audio_tag && audio_timestep != video_timestep ? 1u : 0u;
+    }
+    request.video = video; request.audio = audio; request.conditioning = context->conditioning;
+    request.timesteps = timesteps; request.position_ids = context->layout->position_ids;
+    request.video_indices = context->layout->video_indices;
+    request.audio_indices = context->layout->audio_indices;
+    request.text_indices = context->layout->text_indices;
+    request.timestep_indices = context->timestep_indices;
+    request.token_tags = context->layout->token_tags;
+    request.video_rows = plan->video_rows; request.audio_rows = plan->audio_rows;
+    request.text_rows = plan->text_tokens; request.packed_rows = plan->packed_rows;
+    request.timestep_count = audio_timestep == video_timestep ? 1ull : 2ull;
+    request.block_count = context->block_count; request.video_output = video_velocity;
+    request.audio_output = audio_velocity; request.video_output_capacity = video_values;
+    request.audio_output_capacity = audio_values;
+    rc = transformer_component_cuda(context->transformer_session, &request, &result, err);
+    if (rc != YVEX_OK) return rc;
+    return yvex_runtime_latent_evaluator_record(
+        &execution->evidence, result.residency_identity, result.execution_identity,
+        result.kernel_launches, result.h2d_bytes, result.d2h_bytes, result.device_bytes, err);
+}
+static int t2va_latent_execute(const yvex_minimax_h3_t2va_plan *plan,
+    const yvex_minimax_h3_t2va_omni_context *context, unsigned long long seed,
+    unsigned long long maximum_workspace_bytes, float *video, unsigned long long video_capacity,
+    float *audio, unsigned long long audio_capacity, yvex_runtime_latent_result *latent_result,
+    yvex_minimax_h3_t2va_omni_result *omni_result, yvex_error *err)
+{
+    const yvex_runtime_residency_summary *summary;
+    yvex_runtime_latent_request request = {0}; t2va_omni_execution execution = {0};
+    unsigned long long conditioning_values;
+    int rc;
+    if (latent_result) memset(latent_result, 0, sizeof(*latent_result));
+    if (omni_result) memset(omni_result, 0, sizeof(*omni_result));
+    rc = yvex_runtime_av_layout_matches_plan(
+        plan, context ? context->layout : NULL, context ? context->layout_result : NULL, err);
+    if (rc != YVEX_OK) return rc;
+    summary = yvex_runtime_component_session_summary(context->transformer_session);
+    if (!latent_result || !omni_result || !summary || !summary->sealed ||
+        !summary->cuda_ready || summary->invalidated ||
+        !yvex_sha256_hex_valid(summary->residency_identity) || !context->conditioning ||
+        !context->conditioning_identity || !yvex_sha256_hex_valid(context->conditioning_identity) ||
+        !yvex_core_u64_mul(plan->text_tokens, 5120ull, &conditioning_values) ||
+        context->conditioning_capacity < conditioning_values || !context->timestep_indices ||
+        context->timestep_capacity < plan->packed_rows || !context->block_count ||
+        context->block_count > 50ull) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "graph.minimax_h3.t2va.latent",
+                       "one exact resident Transformer and packed FL2VA layout are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    execution.plan = plan; execution.context = context;
+    rc = t2va_omni_identity(plan, context, summary, execution.evidence.staged.evaluator_identity, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_latent_evaluator_begin(
+            &execution.evidence, "yvex.minimax-h3.t2va.transformer-chain.v1",
+            execution.evidence.staged.evaluator_identity, err);
+    request.seed = seed; request.maximum_workspace_bytes = maximum_workspace_bytes;
+    request.evaluator_identity = execution.evidence.staged.evaluator_identity;
+    request.evaluate = t2va_omni_evaluate; request.execution_context = &execution;
+    request.cancel_requested = context->cancelled; request.cancel_context = context->cancellation_context;
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_av_latent_execute(plan, &request, video, video_capacity,
+                                             audio, audio_capacity, latent_result, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_latent_evaluator_finish(
+            &execution.evidence, plan->model_evaluations, omni_result, err);
+    if (rc != YVEX_OK) memset(latent_result, 0, sizeof(*latent_result));
+    return rc;
+}
 const yvex_minimax_h3_graph_api *yvex_graph_register_minimax_h3(void)
 {
     static const yvex_minimax_h3_graph_api api = {
-        t2va_plan_build, scheduler_step, t2va_latent_execute, t2va_layout_build,
+        t2va_plan_build, yvex_runtime_av_scheduler_step,
+        t2va_latent_execute, yvex_runtime_av_layout_from_plan,
         component_admit, text_encoder_artifact_cuda,
         transformer_component_cuda,
         audio_vae_decode_cpu, audio_vae_execute_artifact_cpu,

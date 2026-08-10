@@ -589,6 +589,7 @@ static int test_t2va_plan(void)
     yvex_minimax_h3_t2va_plan first, repeated, minimal;
     yvex_runtime_latent_request latent_request = {0};
     yvex_runtime_latent_result latent_result;
+    yvex_minimax_h3_t2va_omni_result omni_result;
     yvex_runtime_av_layout_result layout_result;
     float video_latent[192], audio_latent[512];
     float positions[57];
@@ -656,16 +657,32 @@ static int test_t2va_plan(void)
             positions[17ull * 3ull] == 1.0f &&
             fabsf(positions[18ull * 3ull] - (float)(1.0 + 5.0 / 3.0)) < 1.0e-6f,
         "family composition binds exact target-only packed row and rotary policy");
+    tags[1] = 0u;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_av_layout_matches_plan(
+            &minimal, &layout_output, &layout_result, &err) == YVEX_ERR_FORMAT,
+        "family layout admission refuses values changed after identity publication");
+    tags[1] = 2u;
     latent_request.seed = 42ull;
     latent_request.maximum_workspace_bytes = (192ull + 512ull) * sizeof(float) * 4ull;
+    latent_request.evaluator_identity = TEST_ID_A;
     latent_request.evaluate = test_latent_evaluate;
     YVEX_TEST_ASSERT(
-        yvex_graph_register_minimax_h3()->t2va_latent_execute(
+        yvex_runtime_av_latent_execute(
             &minimal, &latent_request, video_latent, 192ull, audio_latent, 512ull,
             &latent_result, &err) == YVEX_OK && latent_result.completed &&
             latent_result.video_values == 192ull && latent_result.audio_values == 512ull &&
             latent_result.completed_steps == 1ull,
-        "family latent composition binds exact geometry, schedule, RNG, and solver semantics");
+        "generic latent composition binds family geometry, schedule, RNG, and solver semantics");
+    memset(video_latent, 0x5a, sizeof(video_latent));
+    memset(&omni_result, 0x5a, sizeof(omni_result));
+    YVEX_TEST_ASSERT(
+        yvex_graph_register_minimax_h3()->t2va_latent_execute(
+            &minimal, NULL, 42ull, latent_request.maximum_workspace_bytes,
+            video_latent, 192ull, audio_latent, 512ull, &latent_result,
+            &omni_result, &err) == YVEX_ERR_INVALID_ARG && !latent_result.completed &&
+            !omni_result.complete && ((unsigned char *)video_latent)[0] == 0x5a,
+        "family latent execution refuses an absent resident Transformer without publication");
     YVEX_TEST_ASSERT(
         yvex_graph_register_minimax_h3()->t2va_plan_build(
             &minimal, 1ull, 32ull, 32ull, 5ull, 0u, &err) == YVEX_ERR_INVALID_ARG &&
