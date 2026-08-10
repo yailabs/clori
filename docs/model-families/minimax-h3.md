@@ -891,21 +891,40 @@ graph composition. `internal_live_runner_available: true` through
 `end_user_path_available: false`: both final VAE decodes and media publication
 remain downstream.
 
+## Exact Visual VAE reconstruction schedule
+
+The generic AV runtime now admits the source reconstruction schedule before any
+pixel buffer can be published. For the minimum real 124-frame, 768x768 target,
+37 latent frames become seven overlapping temporal decode windows. Each window
+contains seven latent frames and produces 28 candidate frames; the source
+contract retains five-frame output overlaps. Spatially, each 768-pixel axis is
+split into four 256-pixel tiles starting at 0, 160, 336, and 512, with overlaps
+96, 80, and 80. The complete plan therefore owns 112 inner decoder calls.
+
+The plan refuses a mismatched latent duration, a non-latent-aligned canvas, a
+zero-window synthetic duration, excessive tile counts, and arithmetic overflow.
+Its deterministic identity is
+`6c4ae7302490072c4afd87ccbf7062d5e83898050af7c32aebc70e0d18686226`.
+This establishes reconstruction order and bounds only: numeric tiled decode,
+overlap blending, ImageNet output denormalization, and full-scale CUDA evidence
+remain required before RGB frame publication.
+
 ## Progression and non-claims
 
 `progression_decision: proceed`
 
 `downstream_safe: true`
 
-The downstream consumer is exact iterative latent generation from the admitted
-multi-token `t2va` conditioning and complete Transformer envelope on
-`feature/minimax-h3`. There is no gate blocker, boundary incompleteness,
-evidence gap, or current external blocker in the admitted bounded component,
-embedding, tokenizer, layer-zero, or 50-layer text-stack execution contracts.
-Visual tiling, exact Unicode NFC normalization, complete staged phase residency,
-synchronized media transaction, evaluation, and benchmark are deferred depth
-with explicit later consumers. They do not weaken the admitted component
-execution identities, and none is claimed by them.
+The downstream consumer is numeric execution of the admitted Visual VAE
+reconstruction schedule and Audio VAE over final latent state, followed by
+synchronized media publication. There is no gate blocker, boundary
+incompleteness, evidence gap, or current external blocker in the admitted
+bounded component, embedding, tokenizer, layer-zero, 50-layer text-stack,
+latent-controller, or reconstruction-plan contracts. Visual tile execution,
+exact Unicode NFC normalization, complete staged phase residency, synchronized
+media transaction, evaluation, and benchmark are deferred depth with explicit
+later consumers. They do not weaken the admitted component execution
+identities, and none is claimed by them.
 License review remains an external authorization prerequisite for any use that
 requires an eligibility conclusion.
 

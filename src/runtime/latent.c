@@ -647,6 +647,174 @@ int yvex_runtime_av_unpack(
     return rc;
 }
 
+static int av_video_split_tiles(
+    unsigned long long length, unsigned long long tile_size,
+    unsigned long long minimum_overlap, unsigned long long spatial_ratio,
+    unsigned long long *count, unsigned long long starts[YVEX_RUNTIME_AV_TILE_CAP],
+    unsigned long long lengths[YVEX_RUNTIME_AV_TILE_CAP],
+    unsigned long long overlaps[YVEX_RUNTIME_AV_TILE_CAP - 1u], yvex_error *err)
+{
+    unsigned long long tiles, covered, remaining, index, rounded_length;
+    if (tile_size >= length) {
+        *count = 1ull; starts[0] = 0ull; lengths[0] = length;
+        return YVEX_OK;
+    }
+    if (!yvex_core_u64_add(length, tile_size - 1ull, &rounded_length))
+        return latent_refuse(err, YVEX_ERR_BOUNDS,
+                             "video reconstruction tile extent overflowed");
+    tiles = rounded_length / tile_size;
+    for (;;) {
+        if (tiles > YVEX_RUNTIME_AV_TILE_CAP ||
+            tiles - 1ull > ULLONG_MAX / minimum_overlap ||
+            tiles > ULLONG_MAX / tile_size)
+            return latent_refuse(err, YVEX_ERR_BOUNDS,
+                                 "video reconstruction tile count exceeded its bound");
+        covered = tile_size * tiles - minimum_overlap * (tiles - 1ull);
+        if (covered >= length) break;
+        tiles++;
+    }
+    remaining = covered - length;
+    if (remaining % spatial_ratio)
+        return latent_refuse(err, YVEX_ERR_FORMAT,
+                             "video reconstruction tile slack is not latent-aligned");
+    memset(overlaps, 0, (YVEX_RUNTIME_AV_TILE_CAP - 1u) * sizeof(*overlaps));
+    for (index = 0ull; index + 1ull < tiles; ++index) overlaps[index] = minimum_overlap;
+    for (index = 0ull; index < remaining / spatial_ratio; ++index)
+        overlaps[index % (tiles - 1ull)] += spatial_ratio;
+    starts[0] = 0ull;
+    for (index = 0ull; index < tiles; ++index) {
+        lengths[index] = tile_size;
+        if (index) starts[index] = starts[index - 1ull] + tile_size - overlaps[index - 1ull];
+    }
+    *count = tiles;
+    return YVEX_OK;
+}
+
+static int av_video_reconstruction_identity(
+    const yvex_runtime_av_video_reconstruction_request *request,
+    const yvex_runtime_av_video_reconstruction_plan *plan,
+    char output[YVEX_SHA256_HEX_CAP])
+{
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    const unsigned long long facts[] = {
+        plan->frames, plan->width, plan->height, plan->latent_frames,
+        plan->latent_height, plan->latent_width, request->temporal_ratio,
+        request->clip_length, request->token_drop, request->spatial_ratio,
+        request->tile_size, request->minimum_tile_overlap, plan->tokens_per_chunk,
+        plan->token_overlap, plan->frame_pre_padding, plan->frame_overlap,
+        plan->temporal_chunks, plan->decode_latent_frames, plan->decode_frames,
+        plan->pad_tokens, plan->tile_y_count, plan->tile_x_count,
+        plan->total_decode_calls,
+    };
+    unsigned long long index;
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.av.video-reconstruction.v1") ||
+        !yvex_sha256_update_text(&hash, request->source_identity)) return 0;
+    for (index = 0ull; index < sizeof(facts) / sizeof(facts[0]); ++index)
+        if (!yvex_sha256_update_u64_be(&hash, facts[index])) return 0;
+    for (index = 0ull; index < plan->tile_y_count; ++index)
+        if (!yvex_sha256_update_u64_be(&hash, plan->tile_y_start[index]) ||
+            !yvex_sha256_update_u64_be(&hash, plan->tile_y_length[index]) ||
+            (index + 1ull < plan->tile_y_count &&
+             !yvex_sha256_update_u64_be(&hash, plan->tile_y_overlap[index]))) return 0;
+    for (index = 0ull; index < plan->tile_x_count; ++index)
+        if (!yvex_sha256_update_u64_be(&hash, plan->tile_x_start[index]) ||
+            !yvex_sha256_update_u64_be(&hash, plan->tile_x_length[index]) ||
+            (index + 1ull < plan->tile_x_count &&
+             !yvex_sha256_update_u64_be(&hash, plan->tile_x_overlap[index]))) return 0;
+    if (!yvex_sha256_final(&hash, digest)) return 0;
+    yvex_sha256_hex(digest, output);
+    return 1;
+}
+
+int yvex_runtime_av_video_reconstruction_plan_build(
+    const yvex_runtime_av_video_reconstruction_request *request,
+    yvex_runtime_av_video_reconstruction_plan *plan, yvex_error *err)
+{
+    yvex_runtime_av_video_reconstruction_plan staged = {0};
+    unsigned long long blocks, expected_latents, num_tokens, padded_tokens, calls;
+    unsigned long long rounded_clip;
+    int rc;
+    if (plan) memset(plan, 0, sizeof(*plan));
+    if (!request || request->schema_version != YVEX_RUNTIME_AV_VIDEO_RECONSTRUCTION_SCHEMA_V1 ||
+        !plan || !request->frames || !request->width || !request->height ||
+        !request->latent_frames || !request->latent_height || !request->latent_width ||
+        !request->temporal_ratio || !request->clip_length || !request->token_drop ||
+        !request->spatial_ratio || !request->tile_size || !request->minimum_tile_overlap ||
+        request->tile_size <= request->minimum_tile_overlap ||
+        request->width % request->spatial_ratio || request->height % request->spatial_ratio ||
+        request->latent_width != request->width / request->spatial_ratio ||
+        request->latent_height != request->height / request->spatial_ratio ||
+        request->tile_size % request->spatial_ratio ||
+        request->minimum_tile_overlap % request->spatial_ratio ||
+        !request->source_identity || !yvex_sha256_hex_valid(request->source_identity))
+        return latent_refuse(err, YVEX_ERR_INVALID_ARG,
+                             "exact bounded video reconstruction facts are required");
+    if (!yvex_core_u64_add(request->clip_length, request->temporal_ratio - 1ull,
+                           &rounded_clip))
+        return latent_refuse(err, YVEX_ERR_BOUNDS,
+                             "video reconstruction temporal extent overflowed");
+    staged.tokens_per_chunk = rounded_clip / request->temporal_ratio;
+    if (request->token_drop >= staged.tokens_per_chunk ||
+        request->frames < staged.tokens_per_chunk ||
+        (request->frames - staged.tokens_per_chunk) % request->clip_length)
+        return latent_refuse(err, YVEX_ERR_FORMAT,
+                             "video frames do not match the admitted temporal chunk geometry");
+    blocks = (request->frames - staged.tokens_per_chunk) / request->clip_length;
+    if (!yvex_core_u64_mul(blocks, staged.tokens_per_chunk, &expected_latents) ||
+        !yvex_core_u64_add(expected_latents,
+                           staged.tokens_per_chunk - request->token_drop, &expected_latents) ||
+        expected_latents != request->latent_frames ||
+        !yvex_core_u64_add(request->latent_frames, request->token_drop, &num_tokens))
+        return latent_refuse(err, YVEX_ERR_FORMAT,
+                             "video latent frames do not match the admitted pixel frames");
+    staged.token_overlap =
+        (staged.tokens_per_chunk - request->token_drop % staged.tokens_per_chunk) %
+        staged.tokens_per_chunk;
+    staged.frame_pre_padding =
+        (request->temporal_ratio - request->clip_length % request->temporal_ratio) %
+        request->temporal_ratio;
+    staged.frame_overlap = staged.token_overlap * request->temporal_ratio;
+    staged.frame_overlap = staged.frame_overlap > staged.frame_pre_padding
+                               ? staged.frame_overlap - staged.frame_pre_padding : 0ull;
+    staged.pad_tokens = (staged.tokens_per_chunk - num_tokens % staged.tokens_per_chunk) %
+                        staged.tokens_per_chunk;
+    if (!yvex_core_u64_add(num_tokens, staged.pad_tokens, &padded_tokens) ||
+        padded_tokens / staged.tokens_per_chunk <= 1ull)
+        return latent_refuse(err, YVEX_ERR_FORMAT,
+                             "video reconstruction requires at least one complete temporal chunk");
+    staged.temporal_chunks = padded_tokens / staged.tokens_per_chunk - 1ull;
+    staged.decode_latent_frames = staged.tokens_per_chunk + staged.token_overlap;
+    if (!yvex_core_u64_mul(staged.decode_latent_frames, request->temporal_ratio,
+                           &staged.decode_frames))
+        return latent_refuse(err, YVEX_ERR_BOUNDS,
+                             "video reconstruction decode extent overflowed");
+    rc = av_video_split_tiles(
+        request->height, request->tile_size, request->minimum_tile_overlap,
+        request->spatial_ratio, &staged.tile_y_count, staged.tile_y_start,
+        staged.tile_y_length, staged.tile_y_overlap, err);
+    if (rc == YVEX_OK)
+        rc = av_video_split_tiles(
+            request->width, request->tile_size, request->minimum_tile_overlap,
+            request->spatial_ratio, &staged.tile_x_count, staged.tile_x_start,
+            staged.tile_x_length, staged.tile_x_overlap, err);
+    if (rc != YVEX_OK) return rc;
+    if (!yvex_core_u64_mul(staged.temporal_chunks, staged.tile_y_count, &calls) ||
+        !yvex_core_u64_mul(calls, staged.tile_x_count, &staged.total_decode_calls))
+        return latent_refuse(err, YVEX_ERR_BOUNDS,
+                             "video reconstruction call count overflowed");
+    staged.schema_version = YVEX_RUNTIME_AV_VIDEO_RECONSTRUCTION_SCHEMA_V1;
+    staged.frames = request->frames; staged.width = request->width;
+    staged.height = request->height; staged.latent_frames = request->latent_frames;
+    staged.latent_height = request->latent_height; staged.latent_width = request->latent_width;
+    if (!av_video_reconstruction_identity(request, &staged, staged.identity))
+        return latent_refuse(err, YVEX_ERR_STATE,
+                             "video reconstruction identity could not be sealed");
+    staged.complete = 1; *plan = staged; yvex_error_clear(err);
+    return YVEX_OK;
+}
+
 static int packed_layout_extents(
     const yvex_runtime_av_layout_request *request,
     unsigned long long capacities[5], unsigned long long *workspace_bytes,

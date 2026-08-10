@@ -14,7 +14,9 @@ extern "C" {
 #define YVEX_RUNTIME_AV_LAYOUT_SCHEMA_V1 1u
 #define YVEX_RUNTIME_AV_PLAN_SCHEMA_V1 1u
 #define YVEX_RUNTIME_AV_UNPACK_SCHEMA_V1 1u
+#define YVEX_RUNTIME_AV_VIDEO_RECONSTRUCTION_SCHEMA_V1 1u
 #define YVEX_RUNTIME_AV_TEMPORAL_PATTERN_CAP 8u
+#define YVEX_RUNTIME_AV_TILE_CAP 16u
 #define YVEX_RUNTIME_LATENT_EVALUATOR_SCHEMA_V1 1u
 
 typedef struct yvex_runtime_av_plan_policy {
@@ -151,6 +153,33 @@ typedef struct yvex_runtime_av_unpack_result {
     int complete;
 } yvex_runtime_av_unpack_result;
 
+typedef struct yvex_runtime_av_video_reconstruction_request {
+    unsigned int schema_version;
+    unsigned long long frames, width, height;
+    unsigned long long latent_frames, latent_height, latent_width;
+    unsigned long long temporal_ratio, clip_length, token_drop;
+    unsigned long long spatial_ratio, tile_size, minimum_tile_overlap;
+    const char *source_identity;
+} yvex_runtime_av_video_reconstruction_request;
+
+typedef struct yvex_runtime_av_video_reconstruction_plan {
+    unsigned int schema_version;
+    unsigned long long frames, width, height;
+    unsigned long long latent_frames, latent_height, latent_width;
+    unsigned long long tokens_per_chunk, token_overlap, frame_pre_padding;
+    unsigned long long frame_overlap, temporal_chunks, decode_latent_frames;
+    unsigned long long decode_frames, pad_tokens, tile_y_count, tile_x_count;
+    unsigned long long tile_y_start[YVEX_RUNTIME_AV_TILE_CAP];
+    unsigned long long tile_y_length[YVEX_RUNTIME_AV_TILE_CAP];
+    unsigned long long tile_y_overlap[YVEX_RUNTIME_AV_TILE_CAP - 1u];
+    unsigned long long tile_x_start[YVEX_RUNTIME_AV_TILE_CAP];
+    unsigned long long tile_x_length[YVEX_RUNTIME_AV_TILE_CAP];
+    unsigned long long tile_x_overlap[YVEX_RUNTIME_AV_TILE_CAP - 1u];
+    unsigned long long total_decode_calls;
+    char identity[YVEX_SHA256_HEX_CAP];
+    int complete;
+} yvex_runtime_av_video_reconstruction_plan;
+
 int yvex_runtime_latent_execute(
     const yvex_runtime_latent_request *request,
     float *video_output, unsigned long long video_capacity,
@@ -198,6 +227,9 @@ int yvex_runtime_av_unpack(
     const yvex_runtime_av_unpack_request *request,
     const yvex_runtime_av_unpack_output *output,
     yvex_runtime_av_unpack_result *result, yvex_error *err);
+int yvex_runtime_av_video_reconstruction_plan_build(
+    const yvex_runtime_av_video_reconstruction_request *request,
+    yvex_runtime_av_video_reconstruction_plan *plan, yvex_error *err);
 
 #ifdef __cplusplus
 }

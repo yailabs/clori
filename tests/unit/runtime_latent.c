@@ -265,6 +265,55 @@ static int test_av_unpack(void)
     return 0;
 }
 
+static int test_video_reconstruction_plan(void)
+{
+    static const char source_identity[] =
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    yvex_runtime_av_video_reconstruction_request request = {
+        .schema_version = YVEX_RUNTIME_AV_VIDEO_RECONSTRUCTION_SCHEMA_V1,
+        .frames = 124ull, .width = 768ull, .height = 768ull,
+        .latent_frames = 37ull, .latent_width = 48ull, .latent_height = 48ull,
+        .temporal_ratio = 4ull, .clip_length = 17ull, .token_drop = 3ull,
+        .spatial_ratio = 16ull, .tile_size = 256ull, .minimum_tile_overlap = 64ull,
+        .source_identity = source_identity,
+    };
+    yvex_runtime_av_video_reconstruction_plan first, repeated, refused;
+    yvex_error err;
+
+    YVEX_TEST_ASSERT(
+        yvex_runtime_av_video_reconstruction_plan_build(&request, &first, &err) == YVEX_OK &&
+            yvex_runtime_av_video_reconstruction_plan_build(&request, &repeated, &err) == YVEX_OK &&
+            first.complete && first.tokens_per_chunk == 5ull && first.token_overlap == 2ull &&
+            first.frame_pre_padding == 3ull && first.frame_overlap == 5ull &&
+            first.temporal_chunks == 7ull && first.decode_latent_frames == 7ull &&
+            first.decode_frames == 28ull && first.pad_tokens == 0ull &&
+            first.tile_y_count == 4ull && first.tile_x_count == 4ull &&
+            first.tile_y_start[0] == 0ull && first.tile_y_start[1] == 160ull &&
+            first.tile_y_start[2] == 336ull && first.tile_y_start[3] == 512ull &&
+            first.tile_y_overlap[0] == 96ull && first.tile_y_overlap[1] == 80ull &&
+            first.tile_y_overlap[2] == 80ull && first.total_decode_calls == 112ull &&
+            strcmp(first.identity,
+                   "6c4ae7302490072c4afd87ccbf7062d5e83898050af7c32aebc70e0d18686226") == 0 &&
+            strcmp(first.identity, repeated.identity) == 0,
+        "video reconstruction plan preserves exact temporal chunks and spatial tiles");
+    request.latent_frames = 36ull;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_av_video_reconstruction_plan_build(&request, &refused, &err) ==
+            YVEX_ERR_FORMAT && !refused.complete,
+        "video reconstruction plan refuses mismatched latent duration");
+    request.latent_frames = 37ull; request.frames = 5ull;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_av_video_reconstruction_plan_build(&request, &refused, &err) ==
+            YVEX_ERR_FORMAT && !refused.complete,
+        "video reconstruction plan refuses a zero-chunk synthetic duration");
+    request.frames = 124ull; request.width = 770ull;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_av_video_reconstruction_plan_build(&request, &refused, &err) ==
+            YVEX_ERR_INVALID_ARG && !refused.complete,
+        "video reconstruction plan refuses a non-latent-aligned canvas");
+    return 0;
+}
+
 int yvex_test_runtime_latent(void)
 {
     latent_fixture first_fixture = {0}, second_fixture = {0}, cancelled = {.cancelled = 1};
@@ -306,5 +355,6 @@ int yvex_test_runtime_latent(void)
     if (test_packed_av_layout() != 0) return 1;
     if (test_evaluator_evidence() != 0) return 1;
     if (test_av_unpack() != 0) return 1;
+    if (test_video_reconstruction_plan() != 0) return 1;
     return 0;
 }
