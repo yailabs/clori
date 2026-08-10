@@ -66,7 +66,7 @@ extern "C" __global__ void yvex_rotary_half_f32(
     unsigned long long half = rotary_dim / 2ull;
     unsigned long long vector_count = tokens * heads;
     unsigned long long vector, lane, token, base;
-    float first, second, cosine, sine;
+    float first, second, cosine, sine, first_product, second_product;
     if (!values || !cosines || !sines || !tokens || !heads || !half ||
         rotary_dim > head_dim ||
         pair >= vector_count * half) return;
@@ -78,8 +78,12 @@ extern "C" __global__ void yvex_rotary_half_f32(
     sine = sines[token * rotary_dim + lane];
     first = values[base + lane];
     second = values[base + half + lane];
-    values[base + lane] = float_to_bf16_rne(first * cosine - second * sine);
-    values[base + half + lane] = float_to_bf16_rne(second * cosine + first * sine);
+    first_product = float_to_bf16_rne(first * cosine);
+    second_product = float_to_bf16_rne(second * sine);
+    values[base + lane] = float_to_bf16_rne(first_product - second_product);
+    first_product = float_to_bf16_rne(second * cosine);
+    second_product = float_to_bf16_rne(first * sine);
+    values[base + half + lane] = float_to_bf16_rne(first_product + second_product);
 }
 
 /* Execute bounded grouped-query attention without materializing a score matrix. */

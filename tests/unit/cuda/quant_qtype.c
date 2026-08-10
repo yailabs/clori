@@ -947,9 +947,9 @@ static int quant_cuda_dense_transformer(yvex_backend *backend)
     yvex_device_tensor *query = NULL, *key = NULL, *value = NULL, *attention = NULL;
     yvex_device_tensor *gate = NULL, *up = NULL, *product = NULL;
     yvex_device_tensor *norm_input = NULL, *norm_weight = NULL, *norm_output = NULL;
-    float rotary_input[4] = {1.0f, 2.0f, 3.0f, 4.0f};
-    float cosine_input[2] = {0.0f, 0.0f};
-    float sine_input[2] = {1.0f, 1.0f};
+    float rotary_input[4] = {-1.34375f, -2.0625f, 3.0f, 4.0f};
+    float cosine_input[2] = {0.63671875f, 0.63671875f};
+    float sine_input[2] = {0.546875f, 0.546875f};
     float rotary_output[4], query_input[8], key_input[4], value_input[4];
     float attention_output[8], gate_input[4] = {-2.0f, -0.5f, 0.5f, 2.0f};
     float up_input[4] = {3.0f, 4.0f, 5.0f, 6.0f}, product_output[4];
@@ -982,14 +982,28 @@ static int quant_cuda_dense_transformer(yvex_backend *backend)
         "dense transformer rotary tensors allocate");
     rc = yvex_cuda_transformer_rotary_half(
         backend, rotary, cosines, sines, 1ull, 1ull, 4ull, 2ull, &facts, &err);
-    YVEX_TEST_ASSERT(
-        rc == YVEX_OK && facts.kernel_launches == 1ull &&
-            facts.device_synchronizations == 1ull &&
-            yvex_backend_tensor_read(
-                backend, rotary, rotary_output, sizeof(rotary_output), &err) == YVEX_OK &&
-            rotary_output[0] == -2.0f && rotary_output[1] == 1.0f &&
-            rotary_output[2] == 3.0f && rotary_output[3] == 4.0f,
-        "explicit rotate-half tables preserve the non-rotary head suffix");
+    {
+        float first_cosine = yvex_quant_bf16_decode(
+            yvex_quant_bf16_encode(rotary_input[0] * cosine_input[0]));
+        float second_sine = yvex_quant_bf16_decode(
+            yvex_quant_bf16_encode(rotary_input[1] * sine_input[0]));
+        float second_cosine = yvex_quant_bf16_decode(
+            yvex_quant_bf16_encode(rotary_input[1] * cosine_input[0]));
+        float first_sine = yvex_quant_bf16_decode(
+            yvex_quant_bf16_encode(rotary_input[0] * sine_input[0]));
+        float expected_first = yvex_quant_bf16_decode(
+            yvex_quant_bf16_encode(first_cosine - second_sine));
+        float expected_second = yvex_quant_bf16_decode(
+            yvex_quant_bf16_encode(second_cosine + first_sine));
+        YVEX_TEST_ASSERT(
+            rc == YVEX_OK && facts.kernel_launches == 1ull &&
+                facts.device_synchronizations == 1ull &&
+                yvex_backend_tensor_read(
+                    backend, rotary, rotary_output, sizeof(rotary_output), &err) == YVEX_OK &&
+                rotary_output[0] == expected_first && rotary_output[1] == expected_second &&
+                rotary_output[2] == 3.0f && rotary_output[3] == 4.0f,
+            "rotate-half matches staged BF16 products and preserves the non-rotary suffix");
+    }
     YVEX_TEST_ASSERT(
         quant_cuda_tensor(backend, "norm-input", YVEX_DTYPE_F32, norm_values,
                           sizeof(norm_values), &norm_input, &err) &&
