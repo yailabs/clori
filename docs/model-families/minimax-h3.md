@@ -575,23 +575,35 @@ establishes the CPU conformance contract without masking cross-backend F32
 reduction differences. The run read the same 441 tensors and used 135,373,020
 bytes of peak tracked workspace.
 
-`production_capability_available: true` for budget-bounded CPU Visual VAE
-decode. `production_api_available: true` through the internal family graph ABI.
-`internal_live_runner_available: true`. `operator_command_available: true`
+The same exact decoder now has a resident GB10 CUDA path. On the accepted
+`[1,24,1,1,1]` fixture it executed 36 blocks in 978 kernel launches, produced
+execution identity
+`785fcefb8ab5389e82016a8297235901aa5d95adc0fc59353d0f24e66654bfbf`
+and residency identity
+`ed532eca4dbecbebcae5cc4fefa72b122cd244a867b50ff690cb7d1592cc7fcd`,
+and differed from the accepted CPU oracle by at most `8.34465027e-7` under the
+existing `1e-5` tolerance. The result is a correctness fixture, not a component
+benchmark or full-scale residency claim.
+
+`production_capability_available: true` for budget-bounded CPU and CUDA Visual
+VAE decode. `production_api_available: true` through the internal family graph
+ABI. `internal_live_runner_available: true`. `operator_command_available: true`
 through:
 
 ```sh
 yvex execute component video-vae \
-  --target minimax-h3-fl2va --artifact <VIDEO_VAE_GGUF> --backend cpu \
+  --target minimax-h3-fl2va --artifact <VIDEO_VAE_GGUF> --backend cpu|cuda \
   --input-file <LATENT_F32> --batch 1 \
   --latent-frames <T> --latent-height <H> --latent-width <W> \
+  [--max-device-bytes <BYTES>] \
   --out <RGB_F32> --output json
 ```
 
 The command authenticates the complete artifact, bounds all tracked workspace,
-executes the production decoder, and publishes the exact output extent without
-replacing an existing file. `end_user_path_available: false`: raw F32 RGB frames
-are not a playable video, and no audio synchronization or media container exists.
+requires an explicit device budget for CUDA, executes the production decoder,
+and publishes the exact output extent without replacing an existing file.
+`end_user_path_available: false`: raw F32 RGB frames are not a playable video,
+and no audio synchronization or media container exists.
 
 ## Text Encoder artifact and embedding boundary
 

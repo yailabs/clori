@@ -280,6 +280,21 @@ typedef struct {
 int yvex_cuda_transformer_dense_decoder_execute(
     yvex_backend *backend, const yvex_transformer_dense_decoder_request *request,
     yvex_transformer_dense_decoder_result *result, yvex_error *err);
+typedef struct yvex_runtime_component_session yvex_runtime_component_session;
+typedef int (*yvex_transformer_decoder_weight_name_fn)(
+    void *context, unsigned long long block, unsigned int slot,
+    char output[256], yvex_error *err);
+typedef struct {
+    yvex_transformer_decoder_weight_name_fn block_weight_name;
+    void *block_weight_name_context;
+    const char *final_norm_weight_name, *final_norm_bias_name;
+    const char *output_weight_name, *output_bias_name;
+    yvex_transformer_dense_decoder_request execution;
+} yvex_transformer_resident_decoder_request;
+int yvex_runtime_component_dense_decoder_cuda(
+    const yvex_runtime_component_session *session,
+    const yvex_transformer_resident_decoder_request *request,
+    yvex_transformer_dense_decoder_result *result, yvex_error *err);
 typedef struct yvex_runtime_transformer_context yvex_runtime_transformer_context;
 typedef enum {
     YVEX_TRANSFORMER_PHASE_PREFILL = 0,

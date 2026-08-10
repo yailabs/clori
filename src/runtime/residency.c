@@ -17,6 +17,7 @@
 #include <yvex/internal/core.h>
 #include <yvex/internal/backend.h>
 #include <yvex/internal/runtime.h>
+#include <yvex/internal/transformer.h>
 typedef enum {
     RESIDENCY_BINDING_CORE = YVEX_ATTENTION_BINDING_CORE,
     RESIDENCY_BINDING_ENVELOPE = YVEX_ATTENTION_BINDING_ENVELOPE,
@@ -1011,6 +1012,119 @@ const yvex_runtime_residency_summary *yvex_runtime_component_session_summary(
     const yvex_runtime_component_session *session)
 {
     return session ? &session->summary : NULL;
+}
+
+static const yvex_materialized_tensor_binding *component_tensor_find(
+    const yvex_runtime_component_session *session, const char *name)
+{
+    unsigned long long index;
+    if (!session || !session->materialization || !name || !name[0]) return NULL;
+    for (index = 0ull;; ++index) {
+        const yvex_materialized_tensor_binding *binding =
+            yvex_materialization_session_tensor_at(session->materialization, index);
+        if (!binding || strcmp(binding->name, name) == 0) return binding;
+    }
+}
+
+static int component_decoder_weight_bind(
+    const yvex_runtime_component_session *session, const char *name,
+    yvex_transformer_encoded_weight *weight, yvex_error *err)
+{
+    const yvex_materialized_tensor_binding *binding = component_tensor_find(session, name);
+    unsigned long long elements, bytes;
+    if (!binding || binding->qtype != YVEX_GGUF_QTYPE_F32 ||
+        (binding->rank != 1u && binding->rank != 2u)) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "runtime.component.dense-decoder.binding",
+                       "one exact F32 vector or source-ordered matrix binding is required");
+        return YVEX_ERR_FORMAT;
+    }
+    weight->row_count = binding->rank == 1u ? 1ull : binding->dims[0];
+    weight->row_width = binding->rank == 1u ? binding->dims[0] : binding->dims[1];
+    if (!weight->row_count || !weight->row_width ||
+        !yvex_core_u64_mul(weight->row_count, weight->row_width, &elements) ||
+        !yvex_core_u64_mul(elements, sizeof(float), &bytes) ||
+        bytes != binding->encoded_bytes) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "runtime.component.dense-decoder.binding",
+                       "resident F32 binding disagrees with its logical source shape");
+        return YVEX_ERR_FORMAT;
+    }
+    if (yvex_runtime_residency_binding_view(
+            session->residency, binding, &weight->encoded,
+            &weight->encoded_bytes, err) != YVEX_OK)
+        return yvex_error_code(err);
+    weight->row_bytes = weight->row_width * sizeof(float);
+    weight->qtype = binding->qtype;
+    return YVEX_OK;
+}
+
+int yvex_runtime_component_dense_decoder_cuda(
+    const yvex_runtime_component_session *session,
+    const yvex_transformer_resident_decoder_request *request,
+    yvex_transformer_dense_decoder_result *result, yvex_error *err)
+{
+    yvex_transformer_dense_decoder_request execution;
+    yvex_transformer_encoded_weight *blocks = NULL;
+    yvex_transformer_encoded_weight final_norm = {0}, final_bias = {0};
+    yvex_transformer_encoded_weight output_weight = {0}, output_bias = {0};
+    unsigned long long weight_count, index;
+    int rc;
+    if (result) memset(result, 0, sizeof(*result));
+    if (!session || !request || !result || !request->block_weight_name ||
+        !request->final_norm_weight_name || !request->final_norm_bias_name ||
+        !request->output_weight_name || !request->output_bias_name ||
+        !request->execution.block_count || !session->backend || !session->residency ||
+        yvex_backend_kind_of(session->backend) != YVEX_BACKEND_KIND_CUDA ||
+        !session->summary.sealed || !session->summary.cuda_ready ||
+        session->summary.invalidated ||
+        !yvex_core_u64_mul(request->execution.block_count,
+                           YVEX_TRANSFORMER_DENSE_DECODER_BLOCK_WEIGHT_COUNT,
+                           &weight_count) || weight_count > SIZE_MAX / sizeof(*blocks)) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.component.dense-decoder",
+                       "one sealed CUDA component and complete named decoder recipe are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    blocks = (yvex_transformer_encoded_weight *)calloc(
+        (size_t)weight_count, sizeof(*blocks));
+    if (!blocks) {
+        yvex_error_set(err, YVEX_ERR_NOMEM, "runtime.component.dense-decoder",
+                       "resident decoder binding directory allocation failed");
+        return YVEX_ERR_NOMEM;
+    }
+    rc = YVEX_OK;
+    for (index = 0ull; index < weight_count && rc == YVEX_OK; ++index) {
+        char name[256];
+        unsigned long long block =
+            index / YVEX_TRANSFORMER_DENSE_DECODER_BLOCK_WEIGHT_COUNT;
+        unsigned int slot = (unsigned int)(
+            index % YVEX_TRANSFORMER_DENSE_DECODER_BLOCK_WEIGHT_COUNT);
+        rc = request->block_weight_name(
+            request->block_weight_name_context, block, slot, name, err);
+        if (rc == YVEX_OK)
+            rc = component_decoder_weight_bind(session, name, blocks + index, err);
+    }
+    if (rc == YVEX_OK)
+        rc = component_decoder_weight_bind(
+            session, request->final_norm_weight_name, &final_norm, err);
+    if (rc == YVEX_OK)
+        rc = component_decoder_weight_bind(
+            session, request->final_norm_bias_name, &final_bias, err);
+    if (rc == YVEX_OK)
+        rc = component_decoder_weight_bind(
+            session, request->output_weight_name, &output_weight, err);
+    if (rc == YVEX_OK)
+        rc = component_decoder_weight_bind(
+            session, request->output_bias_name, &output_bias, err);
+    execution = request->execution;
+    execution.block_weights = blocks;
+    execution.final_norm_weight = &final_norm;
+    execution.final_norm_bias = &final_bias;
+    execution.output_weight = &output_weight;
+    execution.output_bias = &output_bias;
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_transformer_dense_decoder_execute(
+            session->backend, &execution, result, err);
+    free(blocks);
+    return rc;
 }
 /*
  * Register one model-owned host arena and attach an isolated session backend.

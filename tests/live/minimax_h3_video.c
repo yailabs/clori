@@ -81,18 +81,22 @@ int main(int argc, char **argv)
     yvex_error err;
     const char *latent_path = NULL, *output_path = NULL, *reference_path = NULL;
     unsigned long long frames = 1ull, height = 1ull, width = 1ull;
-    int expect_refused = 0, decode = 0;
+    int expect_refused = 0, decode = 0, cuda = 0;
     int rc;
 
-    if ((argc == 5 || argc == 6) && strcmp(argv[1], "--decode") == 0) {
+    if ((argc == 5 || argc == 6) &&
+        (strcmp(argv[1], "--decode") == 0 || strcmp(argv[1], "--decode-cuda") == 0)) {
         decode = 1;
+        cuda = strcmp(argv[1], "--decode-cuda") == 0;
         options.path = argv[2];
         latent_path = argv[3];
         output_path = argv[4];
         if (argc == 6) reference_path = argv[5];
     } else if ((argc == 8 || argc == 9) &&
-               strcmp(argv[1], "--decode-geometry") == 0) {
+               (strcmp(argv[1], "--decode-geometry") == 0 ||
+                strcmp(argv[1], "--decode-geometry-cuda") == 0)) {
         decode = 1;
+        cuda = strcmp(argv[1], "--decode-geometry-cuda") == 0;
         options.path = argv[2];
         latent_path = argv[3];
         output_path = argv[4];
@@ -115,7 +119,8 @@ int main(int argc, char **argv)
                 "       minimax_h3_video --decode VIDEO_VAE_GGUF LATENT_F32 OUTPUT_F32 "
                 "[REFERENCE_F32]\n"
                 "       minimax_h3_video --decode-geometry VIDEO_VAE_GGUF LATENT_F32 "
-                "OUTPUT_F32 T H W [REFERENCE_F32]\n");
+                "OUTPUT_F32 T H W [REFERENCE_F32]\n"
+                "       replace --decode with --decode-cuda for resident CUDA execution\n");
         return 2;
     }
     options.readonly = 1;
@@ -148,10 +153,14 @@ int main(int argc, char **argv)
         decode_options.latent_height = height;
         decode_options.latent_width = width;
         decode_options.max_workspace_bytes = 256ull * 1024ull * 1024ull;
-        if (rc == YVEX_OK)
+        if (rc == YVEX_OK && !cuda)
             rc = yvex_graph_register_minimax_h3()->video_vae_execute_artifact_cpu(
                 artifact, gguf, tensors, &decode_options, &result,
                 &execution_failure, &err);
+        if (rc == YVEX_OK && cuda)
+            rc = yvex_graph_register_minimax_h3()->video_vae_execute_artifact_cuda(
+                artifact, gguf, tensors, &decode_options, 16ull * 1024ull * 1024ull * 1024ull,
+                &result, &execution_failure, &err);
         if (rc != YVEX_OK) {
             fprintf(stderr,
                     "video_vae_decode=refused code=%d tensor=%s expected=%llu actual=%llu "
@@ -169,6 +178,11 @@ int main(int argc, char **argv)
             printf("tensor_reads=%llu\n", result.tensor_reads);
             printf("payload_bytes_read=%llu\n", result.payload_bytes_read);
             printf("peak_workspace_bytes=%llu\n", result.peak_workspace_bytes);
+            printf("kernel_launches=%llu\n", result.kernel_launches);
+            printf("h2d_bytes=%llu\n", result.h2d_bytes);
+            printf("d2h_bytes=%llu\n", result.d2h_bytes);
+            printf("device_bytes=%llu\n", result.device_bytes);
+            printf("residency_identity=%s\n", result.residency_identity);
             printf("execution_identity=%s\n", result.execution_identity);
             if (reference_path && compare_reference(reference_path, output, output_values) != 0)
                 rc = YVEX_ERR_FORMAT;

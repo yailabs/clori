@@ -914,6 +914,10 @@ static int graph_parse_component(int argc, char **argv, yvex_graph_args *out,
             if (!parse_positive_ull(value, &out->component.maximum_host_bytes))
                 return graph_arg_error(err,
                                        "yvex: --max-host-bytes requires a positive integer");
+        } else if (strcmp(flag, "--max-device-bytes") == 0) {
+            if (!parse_positive_ull(value, &out->component.maximum_device_bytes))
+                return graph_arg_error(err,
+                                       "yvex: --max-device-bytes requires a positive integer");
         } else if (strcmp(flag, "--output") == 0) {
             if (!graph_parse_output_mode(value, 1, &out->render_mode))
                 return graph_arg_errorf(err, "yvex: unsupported graph output mode: %s", value);
@@ -941,9 +945,15 @@ static int graph_parse_component(int argc, char **argv, yvex_graph_args *out,
     if (strcmp(out->component.target, YVEX_MINIMAX_H3_TARGET_ID) != 0)
         return graph_arg_errorf(err, "yvex: %s component requires minimax-h3-fl2va",
                                 out->component.name);
-    if (strcmp(out->component.backend, "cpu") != 0)
-        return graph_arg_errorf(err, "yvex: %s currently admits only backend cpu",
+    if ((!video && strcmp(out->component.backend, "cpu") != 0) ||
+        (video && strcmp(out->component.backend, "cpu") != 0 &&
+         strcmp(out->component.backend, "cuda") != 0))
+        return graph_arg_errorf(err, "yvex: unsupported %s backend",
                                 video ? "Visual VAE" : "Audio VAE");
+    if (out->component.maximum_device_bytes && strcmp(out->component.backend, "cpu") == 0)
+        return graph_arg_error(err, "yvex: --max-device-bytes requires backend cuda");
+    if (!out->component.maximum_device_bytes && strcmp(out->component.backend, "cuda") == 0)
+        return graph_arg_error(err, "yvex: Visual VAE backend cuda requires --max-device-bytes");
     yvex_error_clear(err);
     return YVEX_OK;
 }

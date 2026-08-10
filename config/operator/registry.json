@@ -571,6 +571,7 @@
         "--latent-frames",
         "--latent-height",
         "--latent-width",
+        "--max-device-bytes",
         "--max-host-bytes",
         "--out",
         "--output",

@@ -33,6 +33,7 @@ contains "$OUT_DIR/help.out" "operation: execute.graph.component.video-vae"
 contains "$OUT_DIR/help.out" "--latent-frames"
 contains "$OUT_DIR/help.out" "--latent-height"
 contains "$OUT_DIR/help.out" "--latent-width"
+contains "$OUT_DIR/help.out" "--max-device-bytes"
 
 run_code missing 2 "$YVEX_BIN" execute component video-vae
 contains "$OUT_DIR/missing.err" \
@@ -52,10 +53,17 @@ run_code wrong_target 2 "$YVEX_BIN" execute component video-vae \
 contains "$OUT_DIR/wrong_target.err" "video-vae component requires minimax-h3-fl2va"
 
 run_code wrong_backend 2 "$YVEX_BIN" execute component video-vae \
-    --target minimax-h3-fl2va --artifact /tmp/missing.gguf --backend cuda \
+    --target minimax-h3-fl2va --artifact /tmp/missing.gguf --backend metal \
     --input-file /tmp/missing.f32 --latent-frames 1 --latent-height 1 --latent-width 1 \
     --out "$OUT_DIR/wrong-backend.f32"
-contains "$OUT_DIR/wrong_backend.err" "Visual VAE currently admits only backend cpu"
+contains "$OUT_DIR/wrong_backend.err" "unsupported Visual VAE backend"
+
+run_code cuda_missing_budget 2 "$YVEX_BIN" execute component video-vae \
+    --target minimax-h3-fl2va --artifact /tmp/missing.gguf --backend cuda \
+    --input-file /tmp/missing.f32 --latent-frames 1 --latent-height 1 --latent-width 1 \
+    --out "$OUT_DIR/cuda-missing-budget.f32"
+contains "$OUT_DIR/cuda_missing_budget.err" \
+    "Visual VAE backend cuda requires --max-device-bytes"
 
 run_code unsafe_input 3 "$YVEX_BIN" execute component video-vae \
     --target minimax-h3-fl2va --artifact /tmp/missing.gguf --backend cpu \

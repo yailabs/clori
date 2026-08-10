@@ -10,6 +10,49 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+
+static int graph_hash_f32_values(yvex_sha256 *hash, const float *values,
+                                 unsigned long long count)
+{
+    unsigned long long index;
+    if ((count && !values) || count > SIZE_MAX / sizeof(float)) return 0;
+    for (index = 0ull; index < count; ++index) {
+        uint32_t bits;
+        unsigned char bytes[4];
+        if (!isfinite(values[index])) return 0;
+        memcpy(&bits, values + index, sizeof(bits));
+        bytes[0] = (unsigned char)(bits >> 24u);
+        bytes[1] = (unsigned char)(bits >> 16u);
+        bytes[2] = (unsigned char)(bits >> 8u);
+        bytes[3] = (unsigned char)bits;
+        if (!yvex_sha256_update(hash, bytes, sizeof(bytes))) return 0;
+    }
+    return 1;
+}
+
+int yvex_graph_f32_execution_identity(
+    const char *domain, const char *artifact_identity,
+    const unsigned long long *geometry, unsigned long long geometry_count,
+    const float *input, unsigned long long input_count,
+    const float *output, unsigned long long output_count, char identity[65])
+{
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    unsigned long long index;
+    if (!domain || !domain[0] || !yvex_sha256_hex_valid(artifact_identity) ||
+        !geometry || !geometry_count || !input || !input_count || !output ||
+        !output_count || !identity) return 0;
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, domain) ||
+        !yvex_sha256_update_text(&hash, artifact_identity)) return 0;
+    for (index = 0ull; index < geometry_count; ++index)
+        if (!yvex_sha256_update_u64_be(&hash, geometry[index])) return 0;
+    if (!graph_hash_f32_values(&hash, input, input_count) ||
+        !graph_hash_f32_values(&hash, output, output_count) ||
+        !yvex_sha256_final(&hash, digest)) return 0;
+    yvex_sha256_hex(digest, identity);
+    return 1;
+}
 struct yvex_attention_workspace {
     unsigned char *arena;
     yvex_attention_workspace_summary summary;

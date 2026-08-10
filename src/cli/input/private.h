@@ -195,7 +195,7 @@ typedef struct {
     struct {
         const char *name, *target, *artifact_path, *backend, *input_file, *output_file;
         unsigned long long batch, latent_steps, latent_frames, latent_height, latent_width;
-        unsigned long long maximum_host_bytes;
+        unsigned long long maximum_host_bytes, maximum_device_bytes;
         int active;
     } component;
     int help_requested;

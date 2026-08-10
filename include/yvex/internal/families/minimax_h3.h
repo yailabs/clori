@@ -15,7 +15,6 @@ typedef struct yvex_artifact_admission_failure yvex_artifact_admission_failure;
 typedef struct yvex_materialization_session yvex_materialization_session;
 typedef struct yvex_backend yvex_backend;
 typedef struct yvex_runtime_component_session yvex_runtime_component_session;
-typedef struct yvex_runtime_latent_request yvex_runtime_latent_request;
 typedef struct yvex_runtime_latent_result yvex_runtime_latent_result;
 typedef struct yvex_runtime_latent_evaluator_result yvex_runtime_latent_evaluator_result;
 typedef struct yvex_runtime_av_layout_output yvex_runtime_av_layout_output;
@@ -432,8 +431,9 @@ typedef struct {
 } yvex_minimax_h3_video_decode_options;
 typedef struct {
     unsigned long long batch, frames, height, width, output_values;
-    unsigned long long tensor_reads, payload_bytes_read, peak_workspace_bytes;
-    char artifact_identity[65], execution_identity[65];
+    unsigned long long tensor_reads, payload_bytes_read, peak_workspace_bytes, kernel_launches;
+    unsigned long long h2d_bytes, d2h_bytes, device_bytes;
+    char artifact_identity[65], execution_identity[65], residency_identity[65];
     int complete;
 } yvex_minimax_h3_video_decode_result;
 typedef struct {
@@ -443,18 +443,12 @@ typedef struct {
     int complete;
 } yvex_minimax_h3_conditioning_result;
 typedef enum {
-    YVEX_MINIMAX_H3_TEXT_EMBEDDING = 0,
-    YVEX_MINIMAX_H3_TEXT_INPUT_NORM,
-    YVEX_MINIMAX_H3_TEXT_Q_PROJECTION,
-    YVEX_MINIMAX_H3_TEXT_K_PROJECTION,
-    YVEX_MINIMAX_H3_TEXT_V_PROJECTION,
-    YVEX_MINIMAX_H3_TEXT_O_PROJECTION,
-    YVEX_MINIMAX_H3_TEXT_Q_NORM,
-    YVEX_MINIMAX_H3_TEXT_K_NORM,
-    YVEX_MINIMAX_H3_TEXT_POST_NORM,
-    YVEX_MINIMAX_H3_TEXT_GATE_PROJECTION,
-    YVEX_MINIMAX_H3_TEXT_UP_PROJECTION,
-    YVEX_MINIMAX_H3_TEXT_DOWN_PROJECTION,
+    YVEX_MINIMAX_H3_TEXT_EMBEDDING = 0, YVEX_MINIMAX_H3_TEXT_INPUT_NORM,
+    YVEX_MINIMAX_H3_TEXT_Q_PROJECTION, YVEX_MINIMAX_H3_TEXT_K_PROJECTION,
+    YVEX_MINIMAX_H3_TEXT_V_PROJECTION, YVEX_MINIMAX_H3_TEXT_O_PROJECTION,
+    YVEX_MINIMAX_H3_TEXT_Q_NORM, YVEX_MINIMAX_H3_TEXT_K_NORM,
+    YVEX_MINIMAX_H3_TEXT_POST_NORM, YVEX_MINIMAX_H3_TEXT_GATE_PROJECTION,
+    YVEX_MINIMAX_H3_TEXT_UP_PROJECTION, YVEX_MINIMAX_H3_TEXT_DOWN_PROJECTION,
     YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT,
     YVEX_MINIMAX_H3_TEXT_LAYER_WEIGHT_COUNT = YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT - 1,
     YVEX_MINIMAX_H3_TEXT_CONDITIONING_LAYERS = 50
@@ -589,6 +583,11 @@ typedef struct {
         const yvex_minimax_h3_video_decode_options *options,
         yvex_minimax_h3_video_decode_result *result, yvex_minimax_h3_component_execution_failure *failure,
         yvex_error *err);
+    int (*video_vae_execute_artifact_cuda)(
+        const yvex_artifact *, const yvex_gguf *, const yvex_tensor_table *,
+        const yvex_minimax_h3_video_decode_options *, unsigned long long,
+        yvex_minimax_h3_video_decode_result *, yvex_minimax_h3_component_execution_failure *,
+        yvex_error *);
 } yvex_minimax_h3_graph_api;
 const yvex_minimax_h3_api *yvex_model_register_minimax_h3(void);
 const yvex_minimax_h3_transform_api *yvex_model_minimax_h3_transform_api(void);

@@ -1824,3 +1824,135 @@ int yvex_graph_full_attention_f32(
     yvex_error_clear(err);
     return YVEX_OK;
 }
+
+int yvex_graph_interleaved_qk_norm_f32(
+    float *qkv, unsigned long long rows, unsigned long long heads,
+    unsigned long long head_width, double epsilon, yvex_error *err)
+{
+    unsigned long long qkv_width, row, head;
+    if (!qkv || !rows || !heads || !head_width || !isfinite(epsilon) || epsilon <= 0.0 ||
+        !yvex_core_u64_mul(heads, head_width, &qkv_width) ||
+        !yvex_core_u64_mul(qkv_width, 3ull, &qkv_width))
+        return graph_numeric_reject(err, YVEX_ERR_INVALID_ARG,
+                                    "interleaved Q/K normalization requires bounded geometry");
+    for (row = 0ull; row < rows; ++row)
+        for (head = 0ull; head < heads; ++head) {
+            float *base = qkv + row * qkv_width + head * head_width * 3ull;
+            if (!yvex_attention_unit_rms_norm(base, head_width, epsilon) ||
+                !yvex_attention_unit_rms_norm(base + head_width, head_width, epsilon))
+                return graph_numeric_reject(
+                    err, YVEX_ERR_FORMAT,
+                    "interleaved Q/K normalization produced a non-finite value");
+        }
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+static int graph_rope_half_f32(
+    float *values, unsigned long long heads, unsigned long long head_width,
+    unsigned long long rotary_width, const float *cosines,
+    const float *sines, yvex_error *err)
+{
+    unsigned long long head, lane, half = rotary_width / 2ull;
+    if (!values || !heads || !head_width || !rotary_width || rotary_width > head_width ||
+        rotary_width % 2ull || !cosines || !sines)
+        return graph_numeric_reject(err, YVEX_ERR_INVALID_ARG,
+                                    "half-split RoPE requires bounded even geometry");
+    for (head = 0ull; head < heads; ++head)
+        for (lane = 0ull; lane < half; ++lane) {
+            float *value = values + head * head_width;
+            float first = value[lane], second = value[half + lane];
+            float rotated_first = first * cosines[lane] - second * sines[lane];
+            float rotated_second = second * cosines[lane] + first * sines[lane];
+            if (!isfinite(rotated_first) || !isfinite(rotated_second))
+                return graph_numeric_reject(err, YVEX_ERR_FORMAT,
+                                            "half-split RoPE produced a non-finite value");
+            value[lane] = rotated_first;
+            value[half + lane] = rotated_second;
+        }
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_graph_rope_3d_row_f32(
+    unsigned long long token, unsigned long long frames,
+    unsigned long long height, unsigned long long width,
+    unsigned long long frequencies, float base,
+    float *cosines, float *sines, yvex_error *err)
+{
+    const float tau = 6.28318530717958647692f;
+    float coordinates[3] = {0.0f, 0.0f, 0.0f};
+    unsigned long long plane, patches, coordinate, frequency;
+    if (!frames || !height || !width || !frequencies || !isfinite(base) || base <= 0.0f ||
+        !cosines || !sines || !yvex_core_u64_mul(height, width, &plane) ||
+        !yvex_core_u64_mul(frames, plane, &patches))
+        return graph_numeric_reject(err, YVEX_ERR_INVALID_ARG,
+                                    "3D RoPE row requires bounded normalized geometry");
+    if (token < patches) {
+        unsigned long long spatial = token % plane;
+        coordinates[0] = 2.0f * ((float)(token / plane) + 0.5f) / (float)frames - 1.0f;
+        coordinates[1] = 2.0f * ((float)(spatial / width) + 0.5f) / (float)height - 1.0f;
+        coordinates[2] = 2.0f * ((float)(spatial % width) + 0.5f) / (float)width - 1.0f;
+    }
+    for (coordinate = 0ull; coordinate < 3ull; ++coordinate)
+        for (frequency = 0ull; frequency < frequencies; ++frequency) {
+            unsigned long long index = coordinate * frequencies + frequency;
+            float angle = tau * coordinates[coordinate] *
+                          powf(base, -(float)frequency / (float)frequencies);
+            cosines[index] = cosf(angle);
+            sines[index] = sinf(angle);
+        }
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_graph_rope_3d_interleaved_qk_f32(
+    float *qkv, unsigned long long rows, unsigned long long frames,
+    unsigned long long height, unsigned long long width,
+    unsigned long long heads, unsigned long long head_width,
+    unsigned long long frequencies, float base, yvex_error *err)
+{
+    float cosines[96], sines[96];
+    unsigned long long rotary_width, qkv_width, row, head, kind;
+    if (!qkv || !rows || !heads || !head_width || !frequencies || frequencies > 32ull ||
+        !yvex_core_u64_mul(frequencies, 6ull, &rotary_width) ||
+        rotary_width > head_width || !yvex_core_u64_mul(heads, head_width, &qkv_width) ||
+        !yvex_core_u64_mul(qkv_width, 3ull, &qkv_width))
+        return graph_numeric_reject(err, YVEX_ERR_INVALID_ARG,
+                                    "interleaved 3D RoPE requires bounded Q/K geometry");
+    for (row = 0ull; row < rows; ++row) {
+        int rc = yvex_graph_rope_3d_row_f32(
+            row, frames, height, width, frequencies, base, cosines, sines, err);
+        if (rc != YVEX_OK) return rc;
+        for (head = 0ull; head < heads; ++head)
+            for (kind = 0ull; kind < 2ull; ++kind) {
+                float *values = qkv + row * qkv_width + head * head_width * 3ull +
+                                kind * head_width;
+                rc = graph_rope_half_f32(
+                    values, 1ull, head_width, rotary_width, cosines, sines, err);
+                if (rc != YVEX_OK) return rc;
+            }
+    }
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_graph_scaled_residual_f32(
+    float *hidden, const float *delta, const float *scale,
+    unsigned long long rows, unsigned long long width, yvex_error *err)
+{
+    unsigned long long count, index;
+    if (!hidden || !delta || !scale || !rows || !width ||
+        !yvex_core_u64_mul(rows, width, &count))
+        return graph_numeric_reject(err, YVEX_ERR_INVALID_ARG,
+                                    "scaled residual requires bounded nonempty tensors");
+    for (index = 0ull; index < count; ++index) {
+        float value = hidden[index] + delta[index] * scale[index % width];
+        if (!isfinite(value))
+            return graph_numeric_reject(err, YVEX_ERR_FORMAT,
+                                        "scaled residual produced a non-finite value");
+        hidden[index] = value;
+    }
+    yvex_error_clear(err);
+    return YVEX_OK;
+}

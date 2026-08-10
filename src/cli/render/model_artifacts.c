@@ -1627,6 +1627,8 @@ int yvex_minimax_video_render(FILE *fp, yvex_graph_report_mode mode,
                             artifact_identity),
         MINIMAX_VIDEO_FIELD("execution_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
                             execution_identity),
+        MINIMAX_VIDEO_FIELD("residency_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
+                            residency_identity),
         MINIMAX_VIDEO_FIELD("batch", YVEX_CLI_FIELD_U64, batch),
         MINIMAX_VIDEO_FIELD("frames", YVEX_CLI_FIELD_U64, frames),
         MINIMAX_VIDEO_FIELD("height", YVEX_CLI_FIELD_U64, height),
@@ -1636,6 +1638,10 @@ int yvex_minimax_video_render(FILE *fp, yvex_graph_report_mode mode,
                             payload_bytes_read),
         MINIMAX_VIDEO_FIELD("peak_workspace_bytes", YVEX_CLI_FIELD_U64,
                             peak_workspace_bytes),
+        MINIMAX_VIDEO_FIELD("kernel_launches", YVEX_CLI_FIELD_U64, kernel_launches),
+        MINIMAX_VIDEO_FIELD("h2d_bytes", YVEX_CLI_FIELD_U64, h2d_bytes),
+        MINIMAX_VIDEO_FIELD("d2h_bytes", YVEX_CLI_FIELD_U64, d2h_bytes),
+        MINIMAX_VIDEO_FIELD("device_bytes", YVEX_CLI_FIELD_U64, device_bytes),
         MINIMAX_VIDEO_FIELD("output_path", YVEX_CLI_FIELD_TEXT, output_path),
         MINIMAX_VIDEO_FIELD("published_bytes", YVEX_CLI_FIELD_U64, published_bytes),
         MINIMAX_VIDEO_FIELD("published", YVEX_CLI_FIELD_BOOL, published),
@@ -1644,8 +1650,9 @@ int yvex_minimax_video_render(FILE *fp, yvex_graph_report_mode mode,
     if (!fp || !result) return YVEX_ERR_INVALID_ARG;
     if (mode == YVEX_GRAPH_REPORT_MODE_NORMAL)
         return yvex_cli_out_writef(
-                   fp, "MiniMax-H3 Visual VAE: %s shape=%llux%llux%llu output=%s identity=%s\n",
-                   result->status, result->frames, result->height, result->width,
+                   fp, "MiniMax-H3 Visual VAE: %s backend=%s shape=%llux%llux%llu "
+                       "output=%s identity=%s\n",
+                   result->status, result->backend, result->frames, result->height, result->width,
                    result->output_path, result->execution_identity) < 0
                    ? YVEX_ERR_IO : YVEX_OK;
     if (mode == YVEX_GRAPH_REPORT_MODE_JSON) {

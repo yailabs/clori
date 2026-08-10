@@ -521,26 +521,29 @@ the native CPU decoder, and publishes the output without replacing an existing
 file. Raw component samples are numerical evidence, not synchronized media or
 an admitted MiniMax generation path.
 
-The MiniMax-H3 Visual VAE CPU component is reachable through the same lane:
+The MiniMax-H3 Visual VAE CPU and CUDA component paths are reachable through
+the same lane:
 
 ```sh
 ./yvex execute component video-vae \
   --target minimax-h3-fl2va \
   --artifact /srv/yvex/artifacts/minimax-h3/video_vae.gguf \
-  --backend cpu \
+  --backend cuda \
   --input-file /srv/yvex/evidence/video-latent.f32 \
   --batch 1 \
   --latent-frames 1 \
   --latent-height 1 \
   --latent-width 1 \
+  --max-device-bytes 17179869184 \
   --out /srv/yvex/evidence/rgb-frames.f32
 ```
 
 The input is contiguous F32 `[1,24,T,H,W]`; the output is contiguous F32
 `[1,3,T*4,H*16,W*16]`. The three latent dimensions on the command must match
 the input file. The command authenticates the complete Visual VAE artifact,
-bounds workspace, executes all 36 native CPU decoder blocks with exact partial
-3D RoPE, and publishes the output without replacing an existing file. Only
+bounds workspace and CUDA residency, executes all 36 native decoder blocks with
+exact partial 3D RoPE, and publishes the output without replacing an existing
+file. Use `--backend cpu` and omit `--max-device-bytes` for the CPU path. Only
 bounded small geometry has live qualification; this does not admit full-scale
 or tiled execution. Raw RGB frames are numerical evidence, not a playable video
 or synchronized media path.

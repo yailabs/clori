@@ -505,6 +505,16 @@ static int test_video_numeric_primitives(void)
     };
     float attention[4];
     float scratch[2];
+    float normalized_qkv[6] = {1.0f, 1.0f, 2.0f, 2.0f, 3.0f, 4.0f};
+    float rope_qkv[18] = {
+        1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f,
+        7.0f, 8.0f, 9.0f, 10.0f, 11.0f, 12.0f,
+        13.0f, 14.0f, 15.0f, 16.0f, 17.0f, 18.0f,
+    };
+    float rope_cosines[3], rope_sines[3];
+    float residual[4] = {1.0f, 2.0f, 3.0f, 4.0f};
+    const float delta[4] = {2.0f, 3.0f, 4.0f, 5.0f};
+    const float scale[2] = {0.5f, -1.0f};
     float selected = expf(1.0f / sqrtf(2.0f));
     float expected_first = (selected * 1.0f + 3.0f) / (selected + 1.0f);
     yvex_error err;
@@ -544,6 +554,32 @@ static int test_video_numeric_primitives(void)
                          qkv, 2ull, 1ull, 2ull, attention, scratch, 1ull,
                          &err) == YVEX_ERR_INVALID_ARG,
                      "full attention refuses insufficient scratch");
+    YVEX_TEST_ASSERT(yvex_graph_interleaved_qk_norm_f32(
+                         normalized_qkv, 1ull, 1ull, 2ull, 1.0e-5, &err) == YVEX_OK &&
+                         fabsf(normalized_qkv[0] - normalized_qkv[1]) < 1.0e-6f &&
+                         fabsf(normalized_qkv[2] - normalized_qkv[3]) < 1.0e-6f &&
+                         normalized_qkv[4] == 3.0f && normalized_qkv[5] == 4.0f,
+                     "interleaved Q/K normalization preserves V and normalizes each head");
+    YVEX_TEST_ASSERT(yvex_graph_rope_3d_row_f32(
+                         0ull, 2ull, 1ull, 1ull, 1ull, 100.0f,
+                         rope_cosines, rope_sines, &err) == YVEX_OK &&
+                         fabsf(rope_cosines[0] + 1.0f) < 1.0e-6f &&
+                         fabsf(rope_cosines[1] - 1.0f) < 1.0e-6f &&
+                         fabsf(rope_cosines[2] - 1.0f) < 1.0e-6f,
+                     "normalized 3D RoPE derives the exact temporal and spatial coordinates");
+    YVEX_TEST_ASSERT(yvex_graph_rope_3d_interleaved_qk_f32(
+                         rope_qkv, 1ull, 2ull, 1ull, 1ull, 1ull, 6ull,
+                         1ull, 100.0f, &err) == YVEX_OK &&
+                         fabsf(rope_qkv[0] + 1.0f) < 1.0e-5f &&
+                         fabsf(rope_qkv[3] + 4.0f) < 1.0e-5f &&
+                         fabsf(rope_qkv[6] + 7.0f) < 1.0e-5f &&
+                         fabsf(rope_qkv[9] + 10.0f) < 1.0e-5f && rope_qkv[12] == 13.0f,
+                     "3D RoPE rotates Q and K while leaving V unchanged");
+    YVEX_TEST_ASSERT(yvex_graph_scaled_residual_f32(
+                         residual, delta, scale, 2ull, 2ull, &err) == YVEX_OK &&
+                         residual[0] == 2.0f && residual[1] == -1.0f &&
+                         residual[2] == 5.0f && residual[3] == -1.0f,
+                     "scaled residual applies one learned scale vector across rows");
     return 0;
 }
 
