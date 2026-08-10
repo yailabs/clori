@@ -370,6 +370,9 @@ fi
 if rg -n -i "$cli_family_representation_pattern" src/cli/render/model_target.c; then
     fail "model-target rendering imports or names a concrete family ABI"
 fi
+if rg -n -i "$cli_family_representation_pattern" src/model/target/report.c; then
+    fail "model-target report coordination imports or names a concrete family ABI"
+fi
 if rg -n "$cli_preparation_call_pattern" src/cli/commands/graph.c; then
     fail "common graph CLI directly constructs compiler preparation truth"
 fi
