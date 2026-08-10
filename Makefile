@@ -50,7 +50,7 @@
 	test-runtime-state test-runtime-prefill test-runtime-profile test-runtime-benchmark \
 	test-runtime-moe test-runtime-transformer test-runtime-decode test-runtime-logits \
 	test-runtime-sampling test-runtime-speculation test-runtime-generation \
-	test-runtime-tokenizer \
+	test-runtime-tokenizer test-tiny-vertical \
 	test-runtime-benchmark-chart-live update-runtime-benchmark-charts \
 	test-runtime-attention-live test-runtime-deepseek-kv-live \
 	test-runtime-deepseek-prefill-live test-runtime-deepseek-moe-live \
@@ -255,6 +255,7 @@ TOKENIZER_LIVE_RUNNER := $(TEST_DIR)/tokenizer_deepseek
 GENERATION_LIVE_RUNNER := $(TEST_DIR)/generation_deepseek
 OPENAI_FAKE_HOST := $(TEST_DIR)/openai_host
 OPENAI_ADAPTER_HOST := $(TEST_DIR)/openai_adapter
+TINY_VERTICAL_COMPILER := $(TEST_DIR)/tiny_compile
 OFFICIAL_GGUF_CHECKER := $(TEST_DIR)/ggml_gguf_check
 CUDA_TEST_RUNNER := $(TEST_DIR)/test_cuda
 
@@ -296,6 +297,7 @@ TOKENIZER_LIVE_OBJ := $(OBJ_DIR)/tests/live/tokenizer_deepseek.o
 GENERATION_LIVE_OBJ := $(OBJ_DIR)/tests/live/generation_deepseek.o
 OPENAI_FAKE_HOST_OBJ := $(OBJ_DIR)/tests/integration/openai_host.o
 OPENAI_ADAPTER_HOST_OBJ := $(OBJ_DIR)/tests/integration/openai_adapter.o
+TINY_VERTICAL_COMPILER_OBJ := $(OBJ_DIR)/tests/integration/tiny_compile.o
 
 RUNNER_OBJS := $(TEST_MAIN_OBJ) $(QUANT_TEST_RUNNER_OBJ) \
 	$(ARTIFACT_TEST_RUNNER_OBJ) $(CUDA_TEST_MAIN_OBJ) \
@@ -304,7 +306,8 @@ RUNNER_OBJS := $(TEST_MAIN_OBJ) $(QUANT_TEST_RUNNER_OBJ) \
 	$(ATTENTION_LIVE_OBJ) \
 	$(PREFILL_LIVE_OBJ) $(MOE_LIVE_OBJ) \
 	$(TRANSFORMER_LIVE_OBJ) $(DECODE_LIVE_OBJ) $(LOGITS_LIVE_OBJ) $(TOKENIZER_LIVE_OBJ) \
-	$(GENERATION_LIVE_OBJ) $(OPENAI_FAKE_HOST_OBJ) $(OPENAI_ADAPTER_HOST_OBJ)
+	$(GENERATION_LIVE_OBJ) $(OPENAI_FAKE_HOST_OBJ) $(OPENAI_ADAPTER_HOST_OBJ) \
+	$(TINY_VERTICAL_COMPILER_OBJ)
 DEPENDENCY_FILES := $(CORE_OBJS:.o=.d) $(YVEX_OBJS:.o=.d) \
 	$(OPENAI_ADAPTER_OBJS:.o=.d) $(TEST_UNIT_OBJS:.o=.d) \
 	$(TEST_REFERENCE_OBJS:.o=.d) $(QUANT_TEST_UNIT_OBJS:.o=.d) \
@@ -315,6 +318,7 @@ CLIENT_CUTOVER_TEST := tests/client_cutover.sh
 REPL_PTY_TEST := tests/repl_pty.sh
 CLIENT_REFOUNDATION_LIVE_TEST := tests/live/client_refoundation.sh
 OPENAI_INTEGRATION_TEST := tests/integration/openai.sh
+TINY_VERTICAL_TEST := tests/integration/tiny_vertical.sh
 
 info:
 	@echo "yvex: native C/CUDA verified-artifact inference system"
@@ -652,6 +656,10 @@ test-protocol: $(TEST_RUNNER)
 test-runtime-host: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=server $(TEST_RUNNER)
 
+test-tiny-vertical: client $(TINY_VERTICAL_COMPILER) $(TINY_VERTICAL_TEST)
+	YVEX_BIN='$(YVEX_BIN)' TINY_COMPILER='$(TINY_VERTICAL_COMPILER)' \
+		TINY_GENERATOR='tests/integration/tiny_model.py' sh $(TINY_VERTICAL_TEST)
+
 test-runtime-streaming: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=protocol $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_generation $(TEST_RUNNER)
@@ -692,7 +700,7 @@ test-runtime-asan:
 			NVCC=__yvex_nvcc_unavailable__ \
 			CFLAGS='$(CFLAGS) -O1 -g -fno-omit-frame-pointer -fsanitize=address,leak' \
 			LDFLAGS='$(LDFLAGS) -fsanitize=address,leak' \
-			test-runtime client test-openai; \
+			test-runtime client test-openai test-tiny-vertical; \
 	ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:strict_string_checks=1 \
 		YVEX_BIN="$$build_dir/yvex" \
 		YVEX_TEST_HOST="$$build_dir/tests/openai_host" sh $(REPL_PTY_TEST); \
@@ -740,7 +748,7 @@ test-runtime-ubsan:
 		CFLAGS='$(CFLAGS) -O1 -g -fno-omit-frame-pointer -fsanitize=undefined \
 			-fno-sanitize-recover=undefined' \
 			LDFLAGS='$(LDFLAGS) -fsanitize=undefined' \
-			test-runtime client test-openai; \
+			test-runtime client test-openai test-tiny-vertical; \
 	UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
 		YVEX_BIN="$$build_dir/yvex" \
 		YVEX_TEST_HOST="$$build_dir/tests/openai_host" sh $(REPL_PTY_TEST); \
@@ -1351,7 +1359,7 @@ test-artifact-live: $(ARTIFACT_LIVE_RUNNER) $(OFFICIAL_GGUF_CHECKER)
 test-source-payload-live: $(SOURCE_PAYLOAD_LIVE_RUNNER)
 	$(SOURCE_PAYLOAD_LIVE_RUNNER) "$(DEEPSEEK_SOURCE)" "$(DEEPSEEK_MODELS_ROOT)" "$(DEEPSEEK_SOURCE_MANIFEST)"
 
-test: test-core test-cli
+test: test-core test-cli test-tiny-vertical
 
 test-gguf-artifact-abi: $(TEST_RUNNER) tests/test_gguf_artifact_abi.sh
 	YVEX_TEST_FILTER=gguf_artifact_abi $(TEST_RUNNER)
@@ -1528,6 +1536,11 @@ $(OPENAI_FAKE_HOST): $(OPENAI_FAKE_HOST_OBJ) $(LIBYVEX)
 $(OPENAI_ADAPTER_HOST): $(OPENAI_ADAPTER_HOST_OBJ) $(OPENAI_ADAPTER_OBJS) $(LIBYVEX)
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $(OPENAI_ADAPTER_HOST_OBJ) $(OPENAI_ADAPTER_OBJS) $(LIBYVEX) \
+		$(LDFLAGS) $(LDLIBS) -o $@
+
+$(TINY_VERTICAL_COMPILER): $(TINY_VERTICAL_COMPILER_OBJ) $(LIBYVEX)
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) $(TINY_VERTICAL_COMPILER_OBJ) $(LIBYVEX) \
 		$(LDFLAGS) $(LDLIBS) -o $@
 
 $(SOURCE_PAYLOAD_LIVE_RUNNER): $(SOURCE_PAYLOAD_LIVE_OBJ) $(LIBYVEX)

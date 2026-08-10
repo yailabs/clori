@@ -529,7 +529,7 @@ static void render_status(const yvex_server_summary *status, int json)
     if (json) {
         printf("{\"protocol\":%u,\"status\":%u,\"target\":\"%s\","
                "\"backend\":%u,\"generation_mode\":\"%s\","
-               "\"ready\":%s,\"uptime_ns\":%llu,"
+               "\"ready\":%s,\"context_capacity\":%llu,\"uptime_ns\":%llu,"
                "\"model_open_count\":%llu,\"model_close_count\":%llu,"
                "\"artifact_open_count\":%llu,\"binding_open_count\":%llu,"
                "\"materialization_count\":%llu,\"residency_build_count\":%llu,"
@@ -553,7 +553,8 @@ static void render_status(const yvex_server_summary *status, int json)
                status->generation_mode == YVEX_SERVER_GENERATION_DSPARK
                    ? "dspark" : "target-only",
                status->runtime_ready ? "true" : "false",
-               status->metrics.uptime_ns, status->metrics.model_open_count,
+               status->context_capacity, status->metrics.uptime_ns,
+               status->metrics.model_open_count,
                status->metrics.model_close_count,
                status->metrics.artifact_open_count,
                status->metrics.binding_open_count,
@@ -589,13 +590,14 @@ static void render_status(const yvex_server_summary *status, int json)
         yvex_cli_terminal_style style;
         int ready = status->status == YVEX_SERVER_STATUS_READY;
         yvex_cli_terminal_style_get(stdout, &style);
-        printf("%sYVEX runtime%s · %s%s%s · %s · %s · %s · %llu session%s · "
+        printf("%sYVEX server%s · %s%s%s · %s · %s · %s · ctx %llu · %llu session%s · "
                "queue %llu/%llu · model opened %llu×",
                style.strong, style.reset, ready ? style.success : style.warning,
                ready ? "● ready" : "● starting", style.reset,
                status->target_id[0] ? status->target_id : "no model",
                backend_name(status->backend), generation_mode_name(status->generation_mode),
-               status->session_count, status->session_count == 1u ? "" : "s",
+               status->context_capacity, status->session_count,
+               status->session_count == 1u ? "" : "s",
                status->metrics.queue_depth, status->metrics.queue_capacity,
                status->metrics.model_open_count);
         if (status->openai_listener_enabled)
@@ -650,10 +652,10 @@ static int server_model(void)
     if (rc == YVEX_OK) {
         yvex_cli_terminal_style style;
         yvex_cli_terminal_style_get(stdout, &style);
-        printf("%slive runtime model%s · %s · %s · %s · model %s · variant %s · "
+        printf("%slive runtime model%s · %s · %s · %s · ctx %llu · model %s · variant %s · "
                "artifact %s · binding %s\n",
                style.strong, style.reset, summary.target_id, backend_name(summary.backend),
-               generation_mode_name(summary.generation_mode),
+               generation_mode_name(summary.generation_mode), summary.context_capacity,
                summary.runtime_model_identity, summary.physical_variant_identity,
                summary.artifact_identity, summary.runtime_binding_identity);
     }

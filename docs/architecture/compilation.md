@@ -154,6 +154,20 @@ path.
 Artifact drift, binding drift, unsupported qtypes, missing roles, resource
 overflow, or incompatible runtime requirements refuse before model execution.
 
+## Executable composition oracle
+
+The CPU-only tiny vertical is the fast composition oracle for this pipeline. Its focused test
+owner deterministically generates an untracked GGUF, admits it through the production artifact
+contract, compiles the semantic model, operator graph, Physical Execution IR and runtime binding,
+then launches the real foreground server. The production `server status`, `run`, `server log` and
+`server stop` paths must return the expected context, text, typed completion event and clean
+lifecycle. A second build must reproduce the artifact and binding identities, while a corrupted
+artifact must refuse before model-open.
+
+The fixture adds no production model family and does not establish support, quality, CUDA or
+performance for a real model. Its generated artifact and binding remain temporary build evidence,
+never repository authority.
+
 ## Current DeepSeek compilation
 
 The current `deepseek4-v4-flash-dspark` source inventory contains 72,317

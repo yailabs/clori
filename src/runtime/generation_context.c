@@ -887,6 +887,8 @@ int yvex_runtime_generation_context_open(
     context->model_view = yvex_runtime_model_view_get(model);
     context->tokenizer = context->model_view ? context->model_view->tokenizer : NULL;
     context->options = *options;
+    if (context->options.prefill_chunk_tokens > context->options.context_capacity)
+        context->options.prefill_chunk_tokens = context->options.context_capacity;
     atomic_init(&context->lifecycle, 0u);
     atomic_init(&context->admission_failures, 0ull);
     if (!context->model_view || !context->tokenizer ||
@@ -917,7 +919,7 @@ int yvex_runtime_generation_context_open(
         &context->execution_shapes, 128ull, err);
     if (rc != YVEX_OK) goto failure;
     rc = generation_execution_owners_open(
-        context, options, &logits_plan, &execution_workspace, err);
+        context, &context->options, &logits_plan, &execution_workspace, err);
     if (rc != YVEX_OK) goto failure;
     if (context->options.backend == YVEX_BACKEND_KIND_CUDA)
         rc = yvex_runtime_session_prepare_attention_workspace(

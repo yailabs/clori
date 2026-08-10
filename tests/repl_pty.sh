@@ -479,7 +479,7 @@ grep -F 'live aaaaaaaaaaaa' "$root/completion.typescript" >/dev/null
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server log >"$root/log"
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server log --json >"$root/log.jsonl"
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server status >"$root/status"
-grep -F 'YVEX runtime ·' "$root/log" >/dev/null
+grep -F 'YVEX server ·' "$root/log" >/dev/null
 grep -F 'server log · operational history and live events · Ctrl-C to stop' \
     "$root/log" >/dev/null
 grep -E 'REQUEST[[:space:]]+fixture/fixture-request' "$root/log" >/dev/null
