@@ -462,6 +462,38 @@ int yvex_transform_recipe_sink_resolve_source(
     const yvex_transform_source_requirement *requirement,
     yvex_transform_source_spec *resolved,
     yvex_transform_failure *failure, yvex_error *err);
+typedef struct {
+    const char *source_name;
+    yvex_tensor_role role;
+    yvex_tensor_collection collection;
+    yvex_tensor_scope scope;
+    unsigned long long layer, auxiliary, expert, requirement_index;
+    yvex_native_dtype source_dtype;
+    yvex_transform_shape shape;
+    int packed_fp4, checked_cast;
+} yvex_transform_direct_recipe;
+typedef struct {
+    const char *base_name;
+    yvex_tensor_role role;
+    yvex_tensor_collection collection;
+    yvex_tensor_scope scope;
+    unsigned long long layer, auxiliary, rows, columns;
+    unsigned long long block_rows, block_columns, requirement_index;
+} yvex_transform_scale_pair_recipe;
+int yvex_transform_recipe_add_direct(
+    yvex_transform_recipe_sink *sink, const yvex_transform_direct_recipe *recipe,
+    yvex_transform_failure *failure, yvex_error *err);
+int yvex_transform_recipe_add_scale_pair(
+    yvex_transform_recipe_sink *sink, const yvex_transform_scale_pair_recipe *recipe,
+    yvex_transform_failure *failure, yvex_error *err);
+int yvex_transform_recipe_add_terminal(
+    yvex_transform_recipe_sink *sink, yvex_tensor_role role,
+    yvex_tensor_collection collection, yvex_tensor_scope scope, unsigned long long layer,
+    unsigned long long auxiliary, const yvex_transform_source_spec *sources,
+    unsigned long long source_count, const yvex_transform_shape *shape,
+    yvex_transform_dtype dtype, const yvex_transform_precision_constraint *precision,
+    const yvex_transform_node_spec *operation, yvex_transform_failure *failure,
+    yvex_error *err);
 
 /* Binding. */
 typedef struct yvex_transform_binding yvex_transform_binding;

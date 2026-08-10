@@ -167,7 +167,7 @@ domain algorithms. No writer owns command output.
 | `src/gguf/core.c` | file-backed reader lifecycle, policy defaults, typed failure ABI, decoding, metadata admission, and owned container view |
 | `src/gguf/writer.c` | transactional GGUF v3 writer planning and emission |
 | `src/artifact/roundtrip_gate.c` | writer-reader equivalence boundary |
-| `src/model/target/tensor_naming.c` | emitted GGUF tensor names and layout projection |
+| `src/graph/families/deepseek_v4.c` | DeepSeek tensor roles, emitted GGUF names, and family lowering policy |
 | `src/gguf/descriptor.c` | GGUF descriptor facts |
 
 ## Artifact and materialization ownership map

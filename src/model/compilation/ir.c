@@ -1264,6 +1264,234 @@ int yvex_transform_recipe_sink_add(
     return rc;
 }
 
+static yvex_transform_scope transform_recipe_scope(yvex_tensor_scope scope)
+{
+    if (scope == YVEX_TENSOR_SCOPE_MAIN_LAYER) return YVEX_TRANSFORM_SCOPE_MAIN_LAYER;
+    if (scope == YVEX_TENSOR_SCOPE_DRAFT) return YVEX_TRANSFORM_SCOPE_AUXILIARY;
+    return YVEX_TRANSFORM_SCOPE_GLOBAL;
+}
+
+static yvex_transform_subsystem transform_recipe_subsystem(
+    yvex_tensor_collection collection)
+{
+    static const yvex_transform_subsystem subsystems[] = {
+        YVEX_TRANSFORM_SUBSYSTEM_GLOBAL,
+        YVEX_TRANSFORM_SUBSYSTEM_ATTENTION,
+        YVEX_TRANSFORM_SUBSYSTEM_COMPRESSOR,
+        YVEX_TRANSFORM_SUBSYSTEM_INDEXER,
+        YVEX_TRANSFORM_SUBSYSTEM_NORMALIZATION,
+        YVEX_TRANSFORM_SUBSYSTEM_RESIDUAL,
+        YVEX_TRANSFORM_SUBSYSTEM_ROUTER,
+        YVEX_TRANSFORM_SUBSYSTEM_ROUTED_EXPERT,
+        YVEX_TRANSFORM_SUBSYSTEM_SHARED_EXPERT,
+        YVEX_TRANSFORM_SUBSYSTEM_AUXILIARY};
+
+    return collection < YVEX_TENSOR_COLLECTION_COUNT
+               ? subsystems[collection] : YVEX_TRANSFORM_SUBSYSTEM_COUNT;
+}
+
+static yvex_transform_dtype transform_recipe_dtype(yvex_native_dtype dtype, int packed_fp4)
+{
+    if (packed_fp4) return YVEX_TRANSFORM_DTYPE_PACKED_FP4;
+    switch (dtype) {
+    case YVEX_NATIVE_DTYPE_F32: return YVEX_TRANSFORM_DTYPE_F32;
+    case YVEX_NATIVE_DTYPE_F16: return YVEX_TRANSFORM_DTYPE_F16;
+    case YVEX_NATIVE_DTYPE_BF16: return YVEX_TRANSFORM_DTYPE_BF16;
+    case YVEX_NATIVE_DTYPE_I32: return YVEX_TRANSFORM_DTYPE_I32;
+    case YVEX_NATIVE_DTYPE_I64: return YVEX_TRANSFORM_DTYPE_I64;
+    case YVEX_NATIVE_DTYPE_F8_E4M3: return YVEX_TRANSFORM_DTYPE_FP8_E4M3;
+    case YVEX_NATIVE_DTYPE_F8_E8M0: return YVEX_TRANSFORM_DTYPE_E8M0_SCALE;
+    default: return YVEX_TRANSFORM_DTYPE_UNKNOWN;
+    }
+}
+
+static unsigned int transform_recipe_physical_classes(yvex_transform_dtype dtype)
+{
+    switch (dtype) {
+    case YVEX_TRANSFORM_DTYPE_F32: return YVEX_TRANSFORM_PHYSICAL_F32;
+    case YVEX_TRANSFORM_DTYPE_F16:
+        return YVEX_TRANSFORM_PHYSICAL_F16 | YVEX_TRANSFORM_PHYSICAL_F32;
+    case YVEX_TRANSFORM_DTYPE_BF16:
+        return YVEX_TRANSFORM_PHYSICAL_BF16 | YVEX_TRANSFORM_PHYSICAL_F32;
+    case YVEX_TRANSFORM_DTYPE_I32: return YVEX_TRANSFORM_PHYSICAL_I32;
+    default:
+        return YVEX_TRANSFORM_PHYSICAL_F32 | YVEX_TRANSFORM_PHYSICAL_F16 |
+               YVEX_TRANSFORM_PHYSICAL_BF16 | YVEX_TRANSFORM_PHYSICAL_QUANTIZED;
+    }
+}
+
+static int transform_recipe_resolve_source(
+    yvex_transform_recipe_sink *sink, const char *source_name, yvex_tensor_role role,
+    yvex_tensor_collection collection, yvex_tensor_scope scope, unsigned long long layer,
+    unsigned long long auxiliary, unsigned long long expert,
+    unsigned long long requirement_index, yvex_native_dtype source_dtype, int packed_fp4,
+    const yvex_transform_shape *shape, yvex_transform_source_spec *resolved,
+    yvex_transform_failure *failure, yvex_error *err)
+{
+    yvex_transform_source_requirement requirement = {0};
+
+    if (!shape || !shape->rank)
+        return yvex_transform_fail(
+            failure, YVEX_TRANSFORM_FAILURE_INVALID_SHAPE,
+            YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
+            YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
+            YVEX_TRANSFORM_IR_NO_ID, 1u, 0u, 0u, err,
+            "transform_recipe_source");
+    requirement.source_name = source_name;
+    requirement.requirement_index = requirement_index;
+    requirement.source_dtype = source_dtype;
+    requirement.value_dtype = transform_recipe_dtype(source_dtype, packed_fp4);
+    requirement.shape = *shape;
+    requirement.scope = transform_recipe_scope(scope);
+    requirement.subsystem = transform_recipe_subsystem(collection);
+    requirement.role_hint = role;
+    requirement.layer_index = layer;
+    requirement.auxiliary_index = auxiliary;
+    requirement.expert_index = expert;
+    requirement.required_uses = 1u;
+    return yvex_transform_recipe_sink_resolve_source(
+        sink, &requirement, resolved, failure, err);
+}
+
+int yvex_transform_recipe_add_terminal(
+    yvex_transform_recipe_sink *sink, yvex_tensor_role role,
+    yvex_tensor_collection collection, yvex_tensor_scope scope, unsigned long long layer,
+    unsigned long long auxiliary, const yvex_transform_source_spec *sources,
+    unsigned long long source_count, const yvex_transform_shape *shape,
+    yvex_transform_dtype dtype, const yvex_transform_precision_constraint *precision,
+    const yvex_transform_node_spec *operation, yvex_transform_failure *failure,
+    yvex_error *err)
+{
+    yvex_transform_recipe recipe = {0};
+    unsigned long long semantic = 1469598103934665603ull;
+
+    semantic = yvex_core_hash_mix_u64(semantic, (unsigned long long)scope);
+    semantic = yvex_core_hash_mix_u64(semantic, (unsigned long long)collection);
+    semantic = yvex_core_hash_mix_u64(semantic, (unsigned long long)role);
+    semantic = yvex_core_hash_mix_u64(semantic, layer);
+    semantic = yvex_core_hash_mix_u64(semantic, auxiliary);
+    recipe.sources = sources;
+    recipe.source_count = source_count;
+    recipe.terminal.semantic_id = semantic;
+    recipe.terminal.shape = *shape;
+    recipe.terminal.dtype = dtype;
+    recipe.terminal.precision = *precision;
+    recipe.terminal.logical_key.scope = transform_recipe_scope(scope);
+    recipe.terminal.logical_key.subsystem = transform_recipe_subsystem(collection);
+    recipe.terminal.logical_key.role = role;
+    recipe.terminal.logical_key.layer_index = scope == YVEX_TENSOR_SCOPE_GLOBAL
+                                                    ? YVEX_TRANSFORM_IR_NO_ID : layer;
+    recipe.terminal.logical_key.auxiliary_index = scope == YVEX_TENSOR_SCOPE_DRAFT
+                                                        ? auxiliary : YVEX_TRANSFORM_IR_NO_ID;
+    recipe.operation = *operation;
+    return yvex_transform_recipe_sink_add(sink, &recipe, failure, err);
+}
+
+int yvex_transform_recipe_add_direct(
+    yvex_transform_recipe_sink *sink, const yvex_transform_direct_recipe *recipe,
+    yvex_transform_failure *failure, yvex_error *err)
+{
+    yvex_transform_precision_constraint precision = {0};
+    yvex_transform_node_spec node = {0};
+    yvex_transform_source_spec source;
+    yvex_transform_dtype output_dtype;
+    int rc;
+
+    if (!recipe)
+        return yvex_transform_fail(
+            failure, YVEX_TRANSFORM_FAILURE_INVALID_ARGUMENT,
+            YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
+            YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
+            YVEX_TRANSFORM_IR_NO_ID, 1u, 0u, 0u, err,
+            "transform_recipe_direct");
+    rc = transform_recipe_resolve_source(
+        sink, recipe->source_name, recipe->role, recipe->collection, recipe->scope,
+        recipe->layer, recipe->auxiliary, recipe->expert, recipe->requirement_index,
+        recipe->source_dtype, recipe->packed_fp4, &recipe->shape, &source, failure, err);
+    if (rc != YVEX_OK) return rc;
+    output_dtype = recipe->checked_cast ? YVEX_TRANSFORM_DTYPE_I32
+                                        : transform_recipe_dtype(
+                                              recipe->source_dtype, recipe->packed_fp4);
+    precision.allowed_physical_classes = transform_recipe_physical_classes(output_dtype);
+    if (recipe->checked_cast) {
+        precision.flags = YVEX_TRANSFORM_PRECISION_LOSSLESS |
+                          YVEX_TRANSFORM_PRECISION_RANGE_PROOF |
+                          YVEX_TRANSFORM_PRECISION_INTEGER_ONLY;
+        precision.range_proof_required = 1;
+    } else {
+        precision.flags = YVEX_TRANSFORM_PRECISION_EXACT;
+    }
+    node.kind = recipe->checked_cast ? YVEX_TRANSFORM_OP_CHECKED_CAST
+                                     : YVEX_TRANSFORM_OP_IDENTITY;
+    node.numeric = recipe->checked_cast ? YVEX_TRANSFORM_NUMERIC_RANGE_PROOF
+                                        : YVEX_TRANSFORM_NUMERIC_EXACT;
+    node.ordering = YVEX_TRANSFORM_ORDER_INPUT;
+    node.payload_execution_required = 1;
+    return yvex_transform_recipe_add_terminal(
+        sink, recipe->role, recipe->collection, recipe->scope, recipe->layer,
+        recipe->auxiliary, &source, 1u, &recipe->shape, output_dtype,
+        &precision, &node, failure, err);
+}
+
+int yvex_transform_recipe_add_scale_pair(
+    yvex_transform_recipe_sink *sink, const yvex_transform_scale_pair_recipe *recipe,
+    yvex_transform_failure *failure, yvex_error *err)
+{
+    char weight[YVEX_TRANSFORM_IR_SOURCE_NAME_CAP];
+    char scale[YVEX_TRANSFORM_IR_SOURCE_NAME_CAP];
+    yvex_transform_precision_constraint precision = {0};
+    yvex_transform_node_spec node = {0};
+    yvex_transform_shape shape, scale_shape;
+    yvex_transform_source_spec sources[2];
+    int rc;
+
+    if (!recipe || !recipe->base_name || !recipe->block_rows ||
+        !recipe->block_columns || recipe->rows % recipe->block_rows != 0u ||
+        recipe->columns % recipe->block_columns != 0u)
+        return yvex_transform_fail(
+            failure, YVEX_TRANSFORM_FAILURE_INVALID_SHAPE,
+            YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
+            YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
+            YVEX_TRANSFORM_IR_NO_ID, 1u, 0u, 0u, err,
+            "transform_recipe_scale_pair");
+    (void)snprintf(weight, sizeof(weight), "%s.weight", recipe->base_name);
+    (void)snprintf(scale, sizeof(scale), "%s.scale", recipe->base_name);
+    shape = (yvex_transform_shape){.rank = 2u,
+                                   .dims = {recipe->rows, recipe->columns}};
+    scale_shape = (yvex_transform_shape){
+        .rank = 2u,
+        .dims = {recipe->rows / recipe->block_rows,
+                 recipe->columns / recipe->block_columns}};
+    rc = transform_recipe_resolve_source(
+        sink, weight, recipe->role, recipe->collection, recipe->scope, recipe->layer,
+        recipe->auxiliary, YVEX_TRANSFORM_IR_NO_ID, recipe->requirement_index,
+        YVEX_NATIVE_DTYPE_F8_E4M3, 0, &shape, &sources[0], failure, err);
+    if (rc == YVEX_OK)
+        rc = transform_recipe_resolve_source(
+            sink, scale, recipe->role, recipe->collection, recipe->scope, recipe->layer,
+            recipe->auxiliary, YVEX_TRANSFORM_IR_NO_ID, recipe->requirement_index + 1u,
+            YVEX_NATIVE_DTYPE_F8_E8M0, 0, &scale_shape, &sources[1], failure, err);
+    if (rc != YVEX_OK) return rc;
+    precision.flags = YVEX_TRANSFORM_PRECISION_SCALE_PAIRED |
+                      YVEX_TRANSFORM_PRECISION_QUANTIZABLE_WEIGHT |
+                      YVEX_TRANSFORM_PRECISION_REFERENCE_COMPUTE;
+    precision.allowed_physical_classes =
+        YVEX_TRANSFORM_PHYSICAL_F32 | YVEX_TRANSFORM_PHYSICAL_F16 |
+        YVEX_TRANSFORM_PHYSICAL_BF16 | YVEX_TRANSFORM_PHYSICAL_QUANTIZED;
+    precision.approximation_allowed = 1;
+    precision.reference_compute_required = 1;
+    node.kind = YVEX_TRANSFORM_OP_DECODE_SCALE_PAIR;
+    node.scale_block_rows = recipe->block_rows;
+    node.scale_block_columns = recipe->block_columns;
+    node.numeric = YVEX_TRANSFORM_NUMERIC_LOSSLESS;
+    node.ordering = YVEX_TRANSFORM_ORDER_INPUT;
+    node.payload_execution_required = 1;
+    return yvex_transform_recipe_add_terminal(
+        sink, recipe->role, recipe->collection, recipe->scope, recipe->layer,
+        recipe->auxiliary, sources, 2u, &shape, YVEX_TRANSFORM_DTYPE_REAL,
+        &precision, &node, failure, err);
+}
+
 int yvex_transform_recipe_compile(
     yvex_transform_ir **out, const yvex_transform_header *header,
     yvex_transform_recipe_project_fn project, void *context,
