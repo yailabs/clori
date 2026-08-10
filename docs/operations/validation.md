@@ -115,9 +115,11 @@ make check-cuda
 make test-cuda-native-sm121
 ```
 
-The native target builds in `build/sm121`, verifies the CUBIN contains an
-`sm_121` ELF image and SASS functions, opens it on the real device, and refuses
-success if the backend selected PTX instead.
+The native target builds in `build/sm121`, verifies the Tensor Core CUBIN
+contains the admitted Q8 row entrypoint and `IMMA.16816.S8.S8` SASS, opens the
+native bundle on the real device, and refuses success if the backend selected
+PTX instead. Its qtype lane also requires an accounted Tensor Core launch and
+numerical agreement with the independent codec oracle.
 
 ## Artifact Guardrail
 

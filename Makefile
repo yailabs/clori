@@ -42,7 +42,7 @@
 	check-source-manifest generate-operator-registry \
 	generate-command-migration \
 	check-operator-registry test-operator-registry cuda-info cuda-kernels cuda test-cuda test-cuda-graph \
-	test-cuda-native-sm121 \
+	test-cuda-native-sm121 test-cuda-native-sm121-sass \
 	test-cuda-no-nvcc smoke-cuda check-cuda test test-core test-cli test-materialize \
 	test-runtime-descriptor test-runtime-binding test-runtime-model-session \
 	test-runtime-residency test-runtime-phases test-runtime-envelope \
@@ -419,10 +419,19 @@ test-cuda: cuda
 test-cuda-graph: cuda
 	YVEX_CUDA_TEST_FILTER=graph $(CUDA_TEST_RUNNER)
 
-test-cuda-native-sm121:
+test-cuda-native-sm121-sass: build/sm121/obj/src/backend/cuda/tensorcore.cubin
+	@$(CUOBJDUMP) --dump-sass $< | grep -F 'Function : yvex_q8_0_tensorcore_rows' \
+		>/dev/null || { echo "native Tensor Core entrypoint is absent: $<" >&2; exit 1; }
+	@$(CUOBJDUMP) --dump-sass $< | grep -E 'IMMA[.]16816[.]S8[.]S8' \
+		>/dev/null || { echo "native Tensor Core IMMA instruction is absent: $<" >&2; exit 1; }
+	@echo "yvex native sm_121 Tensor Core SASS: admitted"
+
+test-cuda-native-sm121: test-cuda-native-sm121-sass
 	$(MAKE) BUILD_DIR=build/sm121 YVEX_CUDA_ARCH=sm_121 \
 		build/sm121/tests/test_cuda
 	YVEX_REQUIRE_NATIVE_CUDA_TEST=sm_121 YVEX_CUDA_TEST_FILTER=info \
+		build/sm121/tests/test_cuda
+	YVEX_REQUIRE_NATIVE_CUDA_TEST=sm_121 YVEX_CUDA_TEST_FILTER=quant_qtype \
 		build/sm121/tests/test_cuda
 
 smoke-cuda: cuda $(YVEX_BIN)
@@ -1382,7 +1391,7 @@ test-code-natural: tests/test_code_natural.sh
 test-project-control: tests/test_project_control.sh ROADMAP.md CONTRIBUTING.md
 	sh tests/test_project_control.sh
 
-test-docs-surface: tests/test_docs_surface.sh
+test-docs-surface: $(YVEX_BIN) tests/test_docs_surface.sh
 	sh tests/test_docs_surface.sh
 
 test-documentation-architecture: tests/documentation_architecture.py \

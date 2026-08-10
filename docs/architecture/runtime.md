@@ -151,8 +151,12 @@ an independently identified native CUBIN. Module admission selects the native
 image only when the runtime device is capability 12.1 and includes image class,
 architecture and ordered module bytes in kernel-bundle identity v3. A
 competitive native gate refuses PTX-only selection. Binary inspection proves
-native SASS but no admitted MMA instruction evidence, so this establishes
-native code without making a Tensor Core claim.
+that the Q8_0-weight/Q8_K-activation row kernel exports the admitted native
+entrypoint and contains `IMMA.16816.S8.S8` instructions. Native device tests
+require the backend to account a Tensor Core launch and compare decoded output
+against the independent qtype codec oracle. This admits that exact integer
+Tensor Core operation; it does not imply that every CUDA operation, qtype or
+family path uses Tensor Cores.
 
 ## Persistent state
 

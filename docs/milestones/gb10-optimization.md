@@ -18,10 +18,14 @@ the current persistence, wire, layout, or binary boundary. The frozen
 [contract matrix](../audits/gb10-optimization-691814/contracts.tsv) records the
 reader, writer, migration, and test consequences for every considered change.
 
-Runtime binding v8 is the first admitted persisted change. It authenticates the
-source-derived model-execution descriptor that v7 cannot carry. V7 remains
-readable as the retained reference profile; v8 is emitted beside it. The
-source-authored conversation product path earns local protocol v7, provider
+Runtime binding v8 was the first admitted persisted GB10 change because it
+authenticated source-derived execution geometry that v7 could not carry. The
+compiler/family consolidation subsequently admitted binding v12 as the sole
+complete compiler authority; readers now refuse v7-v11 because those versions
+cannot represent the sealed semantic model, operator graph and physical
+execution plan. The frozen contract matrix remains historical entry evidence,
+not the current writer contract. The source-authored conversation product path
+earns local protocol v7, provider
 request/wire v2, tokenizer plan v3, tokenizer provider result v2 and OpenAI
 compatibility profile v2. The installed server-construction API and public
 declaration count remain unchanged. Runtime events remain schema v3, Physical
@@ -497,15 +501,20 @@ tool sequence. These are explicit model outputs, not inferred chain of thought.
 
 ## Non-claims
 
-The currently admitted code establishes model-derived geometry, v7/v8 binding
-coexistence, typed capacity/page planning, pre-materialization memory refusal,
+The currently admitted code establishes model-derived geometry, binding v12 as
+the sole complete compiler authority, typed capacity/page planning,
+pre-materialization memory refusal,
 the availability-aware production phase ledger, and identity-bound native
 SM121 CUBIN admission. It also establishes identity-bound width-N CUDA logits
 publication and greedy/stochastic DSpark target-anchor selection without
 full-vocabulary host materialization, plus stable-address host graph-state
 paging under the admitted per-class capacity plan and on-demand CUDA VMM state
 residency with stable device addresses.
-It does not yet establish Tensor Core execution, specialized attention,
+It also admits one exact native integer Tensor Core path for Q8_0 weights and
+Q8_K activations: the SM121 CUBIN must expose its production entrypoint and
+contain `IMMA.16816.S8.S8`, while a native device test accounts the launch and
+checks numerical agreement. It does not yet establish specialized Tensor Core
+coverage for all competitive operation classes, specialized attention,
 GB10-competitive grouped MoE, zero per-layer attention synchronization,
 the complete full-model device-sampling fault and acceptance-corpus matrix,
 full-model live qualification of all reasoning modes, paged CUDA state
