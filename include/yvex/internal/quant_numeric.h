@@ -13,12 +13,11 @@
 #include <yvex/qtype.h>
 #include <yvex/quant.h>
 #include <yvex/source.h>
+#include <yvex/internal/artifact_lowering.h>
 #include <yvex/internal/compilation.h>
-
 #ifdef __cplusplus
 extern "C" {
 #endif
-
 /* Quant Numeric. */
 #define YVEX_QUANT_NUMERIC_CONTRACT_VERSION 1u
 #define YVEX_QUANT_Q8_0_ELEMENTS 32u
@@ -357,6 +356,17 @@ typedef struct yvex_quant_lowering_api {
                            yvex_quant_lowering_contribution *out);
 } yvex_quant_lowering_api;
 typedef struct {
+    yvex_artifact_lowering_transform transform;
+    yvex_transform_operation_kind operation;
+    unsigned int source_faithful_qtype, release_qtype;
+    int profile_qtype_required;
+} yvex_quant_artifact_lowering_rule;
+typedef struct {
+    const char *source_profile_name, *release_profile_name;
+    const yvex_quant_artifact_lowering_rule *rules;
+    unsigned long long rule_count;
+} yvex_quant_artifact_lowering_policy;
+typedef struct {
     const char *name, *architecture, *source_kind;
     const yvex_quant_policy_rule *rules;
     unsigned long long rule_count;
@@ -398,12 +408,18 @@ int yvex_quant_plan_build_profile(
     const yvex_transform_binding *binding, const yvex_quant_lowering_api *lowering,
     const void *lowering_context, yvex_quant_profile_kind profile,
     const yvex_quant_plan_options *options, yvex_quant_failure *failure, yvex_error *err);
-int yvex_quant_plan_build_policy(
+int yvex_quant_plan_build_artifact_lowering_profile(
     yvex_quant_plan **out, const yvex_transform_ir *ir,
-    const yvex_transform_binding *binding, const yvex_quant_lowering_api *lowering,
-    const void *lowering_context, const yvex_quant_policy *policy,
-    const char *imatrix_identity, const yvex_quant_plan_options *options,
+    const yvex_transform_binding *binding, const yvex_artifact_lowering_map *map,
+    const yvex_quant_artifact_lowering_policy *policy,
+    yvex_quant_profile_kind profile, const yvex_quant_plan_options *options,
     yvex_quant_failure *failure, yvex_error *err);
+int yvex_quant_plan_build_artifact_lowering_policy(
+    yvex_quant_plan **out, const yvex_transform_ir *ir,
+    const yvex_transform_binding *binding, const yvex_artifact_lowering_map *map,
+    const yvex_quant_artifact_lowering_policy *lowering_policy,
+    const yvex_quant_policy *policy, const char *imatrix_identity,
+    const yvex_quant_plan_options *options, yvex_quant_failure *failure, yvex_error *err);
 void yvex_quant_plan_release(yvex_quant_plan **plan);
 const yvex_quant_plan_summary *yvex_quant_plan_summary_get(
     const yvex_quant_plan *plan);

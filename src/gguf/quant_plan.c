@@ -18,6 +18,115 @@ typedef struct {
     unsigned long long ordinal_plus_one;
 } quant_plan_slot;
 
+typedef struct {
+    const yvex_artifact_lowering_map *map;
+    const yvex_quant_artifact_lowering_policy *policy;
+} quant_artifact_lowering_context;
+
+static const yvex_quant_artifact_lowering_rule *quant_artifact_rule_find(
+    const yvex_quant_artifact_lowering_policy *policy,
+    yvex_artifact_lowering_transform transform)
+{
+    unsigned long long index;
+
+    if (!policy || !policy->rules) return NULL;
+    for (index = 0u; index < policy->rule_count; ++index)
+        if (policy->rules[index].transform == transform) return &policy->rules[index];
+    return NULL;
+}
+
+static int quant_artifact_lowering_summary(
+    const void *opaque, yvex_quant_lowering_summary *out)
+{
+    const quant_artifact_lowering_context *context = opaque;
+    const yvex_artifact_lowering_summary *summary = context
+        ? yvex_artifact_lowering_operations.summary(context->map) : NULL;
+
+    if (!summary || !out) return 0;
+    *out = (yvex_quant_lowering_summary){
+        summary->source_contribution_count, summary->descriptor_count,
+        summary->source_identity, summary->mapping_identity, summary->complete};
+    return 1;
+}
+
+static int quant_artifact_lowering_tensor(
+    const void *opaque, unsigned long long ordinal, yvex_quant_lowering_tensor *out)
+{
+    const quant_artifact_lowering_context *context = opaque;
+    const yvex_artifact_lowering_descriptor *row = context
+        ? yvex_artifact_lowering_operations.descriptor_at(context->map, ordinal) : NULL;
+    const yvex_quant_artifact_lowering_rule *rule = row
+        ? quant_artifact_rule_find(context->policy, row->transform) : NULL;
+
+    if (!row || !rule || !out || row->logical_rank > YVEX_GGUF_QTYPE_MAX_DIMS)
+        return 0;
+    memset(out, 0, sizeof(*out));
+    out->role = row->role;
+    out->collection = row->collection;
+    out->scope = row->scope;
+    out->layer_index = row->layer_index;
+    out->predictor_index = row->predictor_index;
+    out->expert_count = row->expert_count;
+    yvex_core_text_copy(out->emitted_name, sizeof(out->emitted_name), row->emitted_name);
+    out->operation = rule->operation;
+    out->source_faithful_qtype = rule->source_faithful_qtype;
+    out->release_qtype = rule->release_qtype;
+    out->profile_qtype_required = rule->profile_qtype_required;
+    out->logical_rank = row->logical_rank;
+    memcpy(out->logical_dims, row->logical_dims, sizeof(out->logical_dims));
+    memcpy(out->source_axis_for_logical, row->source_axis_for_logical,
+           sizeof(out->source_axis_for_logical));
+    out->contribution_offset = row->contribution_offset;
+    out->contribution_count = row->contribution_count;
+    return 1;
+}
+
+static int quant_artifact_lowering_contribution(
+    const void *opaque, unsigned long long ordinal,
+    yvex_quant_lowering_contribution *out)
+{
+    const quant_artifact_lowering_context *context = opaque;
+    const yvex_artifact_lowering_contribution *row = context
+        ? yvex_artifact_lowering_operations.contribution_at(context->map, ordinal) : NULL;
+
+    if (!row || !out) return 0;
+    memset(out, 0, sizeof(*out));
+    yvex_core_text_copy(out->source_name, sizeof(out->source_name), row->source_name);
+    out->source_dtype = row->source_dtype;
+    out->tensor_ordinal = row->descriptor_index;
+    out->expert_index = row->expert_index;
+    return 1;
+}
+
+static int quant_artifact_lowering_api(
+    const yvex_artifact_lowering_map *map,
+    const yvex_quant_artifact_lowering_policy *policy,
+    quant_artifact_lowering_context *context, yvex_quant_lowering_api *api)
+{
+    unsigned long long index, other;
+
+    if (!map || !policy || !context || !api || !policy->source_profile_name ||
+        !policy->source_profile_name[0] || !policy->release_profile_name ||
+        !policy->release_profile_name[0] || !policy->rules || !policy->rule_count)
+        return 0;
+    for (index = 0u; index < policy->rule_count; ++index) {
+        const yvex_quant_artifact_lowering_rule *rule = &policy->rules[index];
+
+        if (rule->operation >= YVEX_TRANSFORM_OP_COUNT ||
+            !yvex_quant_numeric_capability_at(rule->source_faithful_qtype) ||
+            !yvex_quant_numeric_capability_at(rule->release_qtype))
+            return 0;
+        for (other = index + 1u; other < policy->rule_count; ++other)
+            if (rule->transform == policy->rules[other].transform) return 0;
+    }
+    *context = (quant_artifact_lowering_context){map, policy};
+    *api = (yvex_quant_lowering_api){
+        policy->source_profile_name, policy->release_profile_name,
+        quant_artifact_lowering_summary, quant_artifact_lowering_tensor,
+        quant_artifact_lowering_contribution};
+    return 1;
+}
+
 static const unsigned int exact_qtypes[YVEX_TRANSFORM_DTYPE_REAL + 1u] = {
     [YVEX_TRANSFORM_DTYPE_F32] = YVEX_GGUF_QTYPE_F32,
     [YVEX_TRANSFORM_DTYPE_F16] = YVEX_GGUF_QTYPE_F16,
@@ -1433,7 +1542,7 @@ static int quant_lowered_policy_decision_build(
 }
 
 /* Resolve one sealed family policy over every projected terminal without payload reads. */
-int yvex_quant_plan_build_policy(
+static int quant_plan_build_policy(
     yvex_quant_plan **out, const yvex_transform_ir *ir,
     const yvex_transform_binding *binding, const yvex_quant_lowering_api *lowering,
     const void *lowering_context, const yvex_quant_policy *policy,
@@ -1648,6 +1757,43 @@ int yvex_quant_plan_build_profile(
         memset(failure, 0, sizeof(*failure));
     yvex_error_clear(err);
     return YVEX_OK;
+}
+
+int yvex_quant_plan_build_artifact_lowering_profile(
+    yvex_quant_plan **out, const yvex_transform_ir *ir,
+    const yvex_transform_binding *binding, const yvex_artifact_lowering_map *map,
+    const yvex_quant_artifact_lowering_policy *policy,
+    yvex_quant_profile_kind profile, const yvex_quant_plan_options *options,
+    yvex_quant_failure *failure, yvex_error *err)
+{
+    quant_artifact_lowering_context context;
+    yvex_quant_lowering_api api;
+
+    if (!quant_artifact_lowering_api(map, policy, &context, &api))
+        return yvex_quant_plan_build_profile(
+            out, ir, binding, NULL, NULL, profile, options, failure, err);
+    return yvex_quant_plan_build_profile(
+        out, ir, binding, &api, &context, profile, options, failure, err);
+}
+
+int yvex_quant_plan_build_artifact_lowering_policy(
+    yvex_quant_plan **out, const yvex_transform_ir *ir,
+    const yvex_transform_binding *binding, const yvex_artifact_lowering_map *map,
+    const yvex_quant_artifact_lowering_policy *lowering_policy,
+    const yvex_quant_policy *policy, const char *imatrix_identity,
+    const yvex_quant_plan_options *options, yvex_quant_failure *failure,
+    yvex_error *err)
+{
+    quant_artifact_lowering_context context;
+    yvex_quant_lowering_api api;
+
+    if (!quant_artifact_lowering_api(map, lowering_policy, &context, &api))
+        return quant_plan_build_policy(
+            out, ir, binding, NULL, NULL, policy, imatrix_identity,
+            options, failure, err);
+    return quant_plan_build_policy(
+        out, ir, binding, &api, &context, policy, imatrix_identity,
+        options, failure, err);
 }
 
 void yvex_quant_plan_release(yvex_quant_plan **plan_address) {
