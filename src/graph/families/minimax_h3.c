@@ -7,6 +7,7 @@
  */
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/compiler.h>
+#include <yvex/internal/family_catalog.h>
 #include <yvex/internal/families/minimax_h3.h>
 #include <yvex/internal/runtime.h>
 #include "src/graph/private.h"
@@ -1852,8 +1853,7 @@ static int component_variant_open(
     return YVEX_OK;
 }
 
-const yvex_component_variant_adapter *yvex_graph_component_variant_find(
-    const char *target_id)
+const yvex_component_variant_adapter *yvex_graph_minimax_h3_component_adapter(void)
 {
     static const yvex_component_variant_adapter adapter = {
         .schema_version = YVEX_PHYSICAL_VARIANT_SESSION_SCHEMA_V1,
@@ -1864,5 +1864,5 @@ const yvex_component_variant_adapter *yvex_graph_component_variant_find(
         .source_open = component_variant_open,
         .physical_variant = yvex_graph_physical_variant_api_get};
 
-    return target_id && strcmp(target_id, adapter.target_id) == 0 ? &adapter : NULL;
+    return &adapter;
 }

@@ -15,6 +15,7 @@ include/yvex/internal/compiler.h	model.compilation	model.compilation.family_adap
 include/yvex/internal/core.h	core	core.internal	generic	private	internal-abi	repository	interface	none
 include/yvex/internal/decode.h	runtime	runtime.decode	generic	private	internal-abi	runtime,cli,tests	interface	none
 include/yvex/internal/execution.h	graph	graph.execution	generic	private	internal-abi	compilation,artifact,runtime,backend,tests	interface	none
+include/yvex/internal/family_catalog.h	graph	graph.family_catalog	generic	private	internal-abi	graph.family,graph	interface	none
 include/yvex/internal/generation.h	runtime	runtime.generation	generic	private	internal-abi	runtime,cli,tests	interface	none
 include/yvex/internal/logits.h	runtime	runtime.logits	generic	private	internal-abi	runtime,cli,tests	interface	none
 include/yvex/internal/sampling.h	runtime	runtime.sampling	generic	private	internal-abi	runtime,cli,tests	interface	none
@@ -139,6 +140,7 @@ src/gguf/writer.c	gguf	gguf.writer	generic	private	transactional-io	artifact,mod
 src/graph/attention.c	graph	graph.attention	generic	private	reusable-algorithm	runtime,cli	implementation	none
 src/graph/attention_execute.c	graph	graph.attention_execution	generic	private	reusable-algorithm	graph.family,runtime,tests	implementation	none
 src/graph/binding_compile.c	graph	graph.binding_compiler	generic	private	resource-lifecycle	model.family,runtime	implementation	none
+src/graph/catalog.c	graph	graph.family_catalog	generic	private	immutable-planning	model.family,compilation,runtime,cli	implementation	none
 src/graph/candidate.c	graph	graph.candidate	generic	private	resource-lifecycle	graph,runtime,tests	implementation	none
 src/graph/component.c	graph	graph.component	generic	private	reusable-algorithm	graph.family,tests	implementation	none
 src/graph/moe.c	graph	graph.moe	generic	private	reusable-algorithm	runtime,backend,cli,tests	implementation	none

@@ -16,6 +16,22 @@
 #define TEST_ID_A "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 #define TEST_ID_B "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
 
+static int test_family_catalog(void)
+{
+    const yvex_component_variant_adapter *resolved =
+        yvex_graph_component_variant_find(YVEX_MINIMAX_H3_TARGET_ID);
+
+    YVEX_TEST_ASSERT(resolved &&
+                         resolved->schema_version ==
+                             YVEX_PHYSICAL_VARIANT_SESSION_SCHEMA_V1 &&
+                         strcmp(resolved->target_id, YVEX_MINIMAX_H3_TARGET_ID) == 0,
+                     "generic family catalog resolves the exact MiniMax component adapter");
+    YVEX_TEST_ASSERT(yvex_graph_component_variant_find(NULL) == NULL &&
+                         yvex_graph_component_variant_find("unknown-family") == NULL,
+                     "generic family catalog refuses absent and unknown component targets");
+    return 0;
+}
+
 static int test_components(void)
 {
     yvex_minimax_h3_component first[YVEX_MINIMAX_H3_COMPONENT_COUNT];
@@ -788,6 +804,7 @@ static int test_component_execution_plans(void)
 
 int yvex_test_minimax_h3(void)
 {
+    if (test_family_catalog() != 0) return 1;
     if (test_components() != 0) return 1;
     if (test_architecture() != 0) return 1;
     if (test_roles() != 0) return 1;

@@ -240,6 +240,16 @@ expected_deepseek_family_sources='src/graph/families/deepseek_v4.c
 src/model/families/deepseek_v4.c'
 [ "$deepseek_family_sources" = "$expected_deepseek_family_sources" ] ||
     fail "DeepSeek must terminate at its model and graph family projections"
+if rg -n 'yvex_graph_execution_find[[:space:]]*\(' src/graph/families; then
+    fail "a family projection owns the common execution catalog lookup"
+fi
+if rg -n 'yvex_graph_component_variant_find[[:space:]]*\(' src/graph/families; then
+    fail "a family projection owns the common component catalog lookup"
+fi
+rg -n 'yvex_graph_deepseek_v4_execution_binding' src/graph/catalog.c >/dev/null ||
+    fail "graph catalog no longer composes the DeepSeek execution binding"
+rg -n 'yvex_graph_minimax_h3_component_adapter' src/graph/catalog.c >/dev/null ||
+    fail "graph catalog no longer composes the MiniMax component adapter"
 while IFS= read -r source; do
     awk -F '\t' -v source="$source" '$1 == source && $4 == "family" { found = 1 } END { exit !found }' \
         config/source_owners.tsv ||

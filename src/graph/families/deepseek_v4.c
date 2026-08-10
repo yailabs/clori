@@ -5,6 +5,7 @@
  */
 #include "src/graph/private.h"
 #include <yvex/internal/families/deepseek_v4.h>
+#include <yvex/internal/family_catalog.h>
 #include <yvex/internal/tokenizer.h>
 #include <yvex/internal/graph_state.h>
 #include <yvex/internal/moe.h>
@@ -381,15 +382,9 @@ static const yvex_family_compiler_adapter deepseek_compiler = {
 const yvex_family_compiler_adapter *yvex_compiler_family_deepseek_v4(void) {
     return &deepseek_compiler;
 }
-const yvex_graph_execution_binding *yvex_graph_execution_find(
-    unsigned long long adapter_id, unsigned long long adapter_version,
-    const char *target_id)
+const yvex_graph_execution_binding *yvex_graph_deepseek_v4_execution_binding(void)
 {
-    if ((target_id && strcmp(target_id, deepseek_execution.target_id) == 0) ||
-        (!target_id && adapter_id == deepseek_execution.adapter_id &&
-         adapter_version == deepseek_execution.adapter_version))
-        return &deepseek_execution;
-    return NULL;
+    return &deepseek_execution;
 }
 static const yvex_transform_subsystem deepseek_subsystems[] = {
     YVEX_TRANSFORM_SUBSYSTEM_GLOBAL,
