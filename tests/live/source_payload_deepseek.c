@@ -5,6 +5,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include <yvex/internal/artifact_lowering.h>
 #include <yvex/internal/compilation.h>
+#include <yvex/internal/compiler_source.h>
 #include <yvex/internal/families/deepseek_v4.h>
 
 #include <stdio.h>

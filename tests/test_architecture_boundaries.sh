@@ -53,6 +53,7 @@ backend_representation_pattern='\bbackend->(vtable|virtual_tensor_ready|state_re
 family_transform_builder_pattern='yvex_transform_builder_(create|add_source|declare_value|add_node|seal|release)[[:space:]]*\('
 generic_family_operator_lowering_pattern='yvex_operator_graph_ir_build_transformer[[:space:]]*\('
 legacy_family_lowering_representation_pattern='yvex_deepseek_gguf_(map(_failure|_allocator|_summary)?|descriptor|contribution|metadata|transform)\b|YVEX_DEEPSEEK_GGUF_(MAP|TRANSFORM|CONTRIBUTION|METADATA)_'
+source_compilation_lifecycle_pattern='yvex_(source_verify_with_snapshot|source_payload_session_open|transform_binding_create|transform_binding_payload_plan_build)[[:space:]]*\('
 
 # Every expression used as a hard gate carries positive and negative probes.
 # This catches regex drift before a repository scan can produce false comfort.
@@ -117,6 +118,13 @@ printf '%s\n' 'yvex_deepseek_gguf_map_failure failure;' |
 if printf '%s\n' 'YVEX_DEEPSEEK_GGUF_MAPPING_IDENTITY' |
     rg "$legacy_family_lowering_representation_pattern" >/dev/null; then
     fail "artifact-lowering ownership guard rejects a family mapping identity"
+fi
+printf '%s\n' 'yvex_source_payload_session_open(&session, &options, &failure, &err);' |
+    rg "$source_compilation_lifecycle_pattern" >/dev/null ||
+    fail "source-compilation guard misses a family-owned payload lifecycle"
+if printf '%s\n' 'projection->lower(&transform, &lowering, verification, snapshot, &failure, &err);' |
+    rg "$source_compilation_lifecycle_pattern" >/dev/null; then
+    fail "source-compilation guard rejects typed family lowering"
 fi
 printf '%s\n' 'profile.eager_attention_reference = 1;' |
     rg "$legacy_resolution_boolean_pattern" >/dev/null ||
@@ -335,6 +343,12 @@ fi
 if rg -n "$legacy_family_lowering_representation_pattern" src include; then
     fail "artifact-lowering representation remains owned by a concrete family"
 fi
+if rg -n "$source_compilation_lifecycle_pattern" src/graph/families/deepseek_v4.c; then
+    fail "DeepSeek graph family owns generic source-compilation lifecycle"
+fi
+rg -n 'struct[[:space:]]+yvex_compilation_source_session[[:space:]]*\{' \
+    src/graph/source_compile.c >/dev/null ||
+    fail "compiler-source lifecycle lacks its canonical generic owner"
 if rg -n -i "(families/|$generic_family_symbol_pattern)" \
     src/gguf/writer.c include/yvex/internal/gguf_writer.h; then
     fail "generic GGUF writer owns or imports concrete family semantics"

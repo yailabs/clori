@@ -6,6 +6,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <yvex/internal/artifact.h>
+#include <yvex/internal/compiler_source.h>
 #include <yvex/internal/runtime.h>
 #include <yvex/internal/families/deepseek_v4.h>
 

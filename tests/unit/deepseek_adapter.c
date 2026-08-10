@@ -1,6 +1,7 @@
 
 #include <string.h>
 
+#include <yvex/internal/compiler_source.h>
 #include <yvex/internal/gguf.h>
 
 #include "tests/test.h"
@@ -65,9 +66,37 @@ static int test_unknown(void)
     return 0;
 }
 
+static int test_compilation_source_contract(void)
+{
+    yvex_compilation_source_failure failure = {0};
+    yvex_error err = {0};
+    int rc;
+
+    YVEX_TEST_ASSERT(yvex_compilation_source_operations.open != NULL,
+                     "compilation-source open operation available");
+    YVEX_TEST_ASSERT(yvex_compilation_source_operations.close != NULL,
+                     "compilation-source close operation available");
+    YVEX_TEST_ASSERT(yvex_compilation_source_operations.summary != NULL,
+                     "compilation-source summary operation available");
+    YVEX_TEST_ASSERT(yvex_compilation_source_operations.failure_name != NULL,
+                     "compilation-source failure naming available");
+    rc = yvex_compilation_source_operations.open(NULL, NULL, NULL, &failure, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_ERR_INVALID_ARG,
+                     "compilation-source refuses an empty projection");
+    YVEX_TEST_ASSERT(failure.code == YVEX_COMPILATION_SOURCE_FAILURE_INVALID_ARGUMENT,
+                     "compilation-source refusal is typed");
+    YVEX_TEST_ASSERT(strcmp(yvex_error_where(&err), "compilation.source") == 0,
+                     "compilation-source refusal owns its stage");
+    YVEX_TEST_ASSERT(strcmp(yvex_compilation_source_operations.failure_name(failure.code),
+                            "invalid-argument") == 0,
+                     "compilation-source failure name is stable");
+    return 0;
+}
+
 int yvex_test_deepseek_adapter(void)
 {
     if (test_deepseek_patterns() != 0) return 1;
     if (test_unknown() != 0) return 1;
+    if (test_compilation_source_contract() != 0) return 1;
     return 0;
 }

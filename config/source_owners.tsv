@@ -13,6 +13,7 @@ include/yvex/internal/backend.h	backend	backend.internal	generic	private	interna
 include/yvex/internal/benchmark.h	runtime	runtime.benchmark	generic	private	internal-abi	runtime,cli,tests	interface	none
 include/yvex/internal/compilation.h	model.compilation	model.compilation.internal	generic	private	internal-abi	model.family,quant	interface	none
 include/yvex/internal/compiler.h	model.compilation	model.compilation.family_adapter	generic	private	internal-abi	model.family,artifact,runtime	interface	none
+include/yvex/internal/compiler_source.h	graph	graph.source_compiler	generic	private	internal-abi	model.family,graph	interface	none
 include/yvex/internal/core.h	core	core.internal	generic	private	internal-abi	repository	interface	none
 include/yvex/internal/decode.h	runtime	runtime.decode	generic	private	internal-abi	runtime,cli,tests	interface	none
 include/yvex/internal/execution.h	graph	graph.execution	generic	private	internal-abi	compilation,artifact,runtime,backend,tests	interface	none
@@ -160,6 +161,7 @@ src/graph/plan.c	graph	graph.plan	generic	private	immutable-planning	runtime,cli
 src/graph/private.h	graph	graph.private	generic	private	private-interface	runtime,cli	interface	none
 src/graph/state_recipe.c	graph	graph.state_recipe	generic	private	immutable-planning	model,graph,runtime,tests	implementation	none
 src/graph/state_pages.c	graph	graph.state_pages	generic	private	resource-lifecycle	graph.state,runtime,tests	implementation	none
+src/graph/source_compile.c	graph	graph.source_compiler	generic	private	resource-lifecycle	model.family,graph	implementation	none
 src/io/writer.c	io	io.writer	generic	private	transactional-io	repository	implementation	none
 src/model/artifacts/gate.c	model.artifacts	model.artifacts.gate	generic	private	reusable-algorithm	cli,artifact	implementation	none
 src/model/artifacts/ref.c	model.artifacts	model.artifacts.ref	generic	private	reusable-algorithm	cli,artifact	implementation	none

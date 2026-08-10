@@ -6,6 +6,7 @@
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/artifact_lowering.h>
 #include <yvex/internal/compilation.h>
+#include <yvex/internal/compiler_source.h>
 #include <yvex/internal/quant_numeric.h>
 #include <yvex/internal/families/deepseek_v4.h>
 

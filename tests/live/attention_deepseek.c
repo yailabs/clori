@@ -7,6 +7,7 @@
 
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/backend.h>
+#include <yvex/internal/compiler_source.h>
 #include "src/graph/private.h"
 #include <yvex/internal/families/deepseek_v4.h>
 #include <yvex/internal/model.h>

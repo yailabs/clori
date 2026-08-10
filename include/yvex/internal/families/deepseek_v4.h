@@ -290,39 +290,25 @@ typedef struct {
 #define YVEX_DEEPSEEK_QUANT_IMATRIX_DATASET_IDENTITY "deepseek-v4-flash-chat-v2-rendered-prompts-v1"
 #define YVEX_DEEPSEEK_PAYLOAD_MAPPING_IDENTITY \
     YVEX_DEEPSEEK_GGUF_MAPPING_IDENTITY
-typedef enum {
-    YVEX_DEEPSEEK_PAYLOAD_FAILURE_NONE = 0, YVEX_DEEPSEEK_PAYLOAD_FAILURE_INVALID_ARGUMENT,
-    YVEX_DEEPSEEK_PAYLOAD_FAILURE_SOURCE, YVEX_DEEPSEEK_PAYLOAD_FAILURE_ARCHITECTURE,
-    YVEX_DEEPSEEK_PAYLOAD_FAILURE_TRANSFORM_IR, YVEX_DEEPSEEK_PAYLOAD_FAILURE_MAPPING,
+typedef unsigned int yvex_deepseek_payload_failure_code;
+enum {
+    YVEX_DEEPSEEK_PAYLOAD_FAILURE_NONE = 0,
+    YVEX_DEEPSEEK_PAYLOAD_FAILURE_INVALID_ARGUMENT,
+    YVEX_DEEPSEEK_PAYLOAD_FAILURE_SOURCE,
+    YVEX_DEEPSEEK_PAYLOAD_FAILURE_ARCHITECTURE,
+    YVEX_DEEPSEEK_PAYLOAD_FAILURE_TRANSFORM_IR,
+    YVEX_DEEPSEEK_PAYLOAD_FAILURE_MAPPING,
     YVEX_DEEPSEEK_PAYLOAD_FAILURE_MAPPING_IDENTITY,
-    YVEX_DEEPSEEK_PAYLOAD_FAILURE_CONTRIBUTION, YVEX_DEEPSEEK_PAYLOAD_FAILURE_RANGE,
-    YVEX_DEEPSEEK_PAYLOAD_FAILURE_BINDING, YVEX_DEEPSEEK_PAYLOAD_FAILURE_PLAN,
+    YVEX_DEEPSEEK_PAYLOAD_FAILURE_CONTRIBUTION,
+    YVEX_DEEPSEEK_PAYLOAD_FAILURE_RANGE,
+    YVEX_DEEPSEEK_PAYLOAD_FAILURE_BINDING,
+    YVEX_DEEPSEEK_PAYLOAD_FAILURE_PLAN,
     YVEX_DEEPSEEK_PAYLOAD_FAILURE_ALLOCATION
-} yvex_deepseek_payload_failure_code;
-typedef struct {
-    yvex_deepseek_payload_failure_code code;
-    unsigned long long descriptor_index, contribution_index;
-    yvex_source_payload_failure payload_failure;
-} yvex_deepseek_payload_failure;
-typedef struct {
-    unsigned long long mapping_identity;
-    char transform_identity[YVEX_DEEPSEEK_IDENTITY_CAP];
-    unsigned long long source_snapshot_identity, descriptor_count, descriptors_covered;
-    unsigned long long contribution_count, contributions_resolved, direct_contributions;
-    unsigned long long fp8_weight_contributions, e8m0_scale_contributions, expert_contributions;
-    unsigned long long i64_router_contributions, global_contributions, norm_contributions;
-    unsigned long long shared_expert_contributions, output_head_contributions, draft_contributions;
-    unsigned long long routed_expert_logical_bytes, output_head_logical_bytes, range_lookup_count;
-    int complete;
-} yvex_deepseek_payload_handoff_summary;
-typedef struct yvex_deepseek_payload_handoff yvex_deepseek_payload_handoff;
-typedef struct {
-    const char *source_path;
-    const char *models_root;
-    const char *manifest_path;
-    yvex_source_payload_budget budget;
-    size_t chunk_bytes, page_bytes;
-} yvex_deepseek_payload_handoff_options;
+};
+typedef struct yvex_compilation_source_failure yvex_deepseek_payload_failure;
+typedef struct yvex_compilation_source_summary yvex_deepseek_payload_handoff_summary;
+typedef struct yvex_compilation_source_session yvex_deepseek_payload_handoff;
+typedef struct yvex_compilation_source_options yvex_deepseek_payload_handoff_options;
 typedef struct {
     int (*build)(yvex_deepseek_v4_ir **out, const struct yvex_source_verification *verification,
                  yvex_deepseek_v4_ir_failure *failure, yvex_error *err);
