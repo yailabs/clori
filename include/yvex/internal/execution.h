@@ -245,7 +245,7 @@ typedef struct {
 } yvex_execution_state_class_plan;
 typedef struct {
     unsigned int schema_version;
-    const char *semantic_model_identity;
+    const char *model_execution_identity;
     unsigned long long semantic_maximum_context, candidate_width, semantic_state_class_mask;
     const yvex_execution_hardware_profile *hardware;
     const yvex_execution_workload_profile *workload;

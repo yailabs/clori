@@ -477,7 +477,7 @@ typedef struct {
 typedef struct {
     unsigned long long family_adapter_id, family_adapter_version;
     unsigned long long tensor_count, layer_count, draft_layer_count;
-    const char *semantic_model_identity;
+    const char *model_execution_identity;
     unsigned long long semantic_maximum_context;
     const yvex_runtime_capabilities *capabilities;
     const char *artifact_identity, *materialization_identity;
@@ -510,7 +510,7 @@ int yvex_compiled_model_plan_admit(
     const yvex_compiled_model_plan_admission *admission);
 int yvex_compiled_model_plan_context_envelope(
     const yvex_compiled_model_plan *plan,
-    const char *semantic_model_identity,
+    const char *model_execution_identity,
     unsigned long long semantic_maximum_context,
     yvex_compiled_context_envelope *envelope, yvex_error *err);
 int yvex_compiled_context_envelope_admit(

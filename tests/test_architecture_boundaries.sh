@@ -500,6 +500,15 @@ rg -n 'yvex_model_execution_descriptor[[:space:]]+execution_descriptor' \
     fail "Semantic Model IR no longer owns sealed execution geometry"
 rg -n 'semantic->execution_descriptor' src/graph/operator_ir.c >/dev/null ||
     fail "operator lowering no longer consumes Semantic Model IR geometry"
+if rg -n 'semantic_model_identity' include/yvex/internal/compiler.h \
+    include/yvex/internal/execution.h src/graph/compiled_plan.c \
+    src/graph/execution.c src/runtime; then
+    fail "runtime context capacity confuses Semantic Model IR with model-execution identity"
+fi
+rg -n 'model_execution_identity' include/yvex/internal/compiler.h \
+    include/yvex/internal/execution.h src/graph/compiled_plan.c \
+    src/graph/execution.c src/runtime/generation_context.c >/dev/null ||
+    fail "runtime context capacity no longer binds the compiled model-execution identity"
 if rg -n 'semantic_model_ir_family_payload|family_payload_(owned|close)' \
     include/yvex/internal/compiler.h src/model/compilation/semantic.c \
     src/graph/families; then

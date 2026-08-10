@@ -179,7 +179,7 @@ static int execution_test_planning(void)
                      "bounded serving workload should seal");
 
     capacity_request.schema_version = YVEX_EXECUTION_CAPACITY_PLAN_SCHEMA_V1;
-    capacity_request.semantic_model_identity = model.identity;
+    capacity_request.model_execution_identity = model.identity;
     capacity_request.semantic_maximum_context = model.maximum_context;
     capacity_request.candidate_width = model.proposal_width + 1ull;
     capacity_request.semantic_state_class_mask =

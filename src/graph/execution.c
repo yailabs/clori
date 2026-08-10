@@ -855,7 +855,7 @@ static int capacity_request_validate(
     if (!request || !(*hardware = request->hardware) ||
         !(*workload = request->workload) ||
         request->schema_version != YVEX_EXECUTION_CAPACITY_PLAN_SCHEMA_V1 ||
-        !yvex_sha256_hex_valid(request->semantic_model_identity) ||
+        !yvex_sha256_hex_valid(request->model_execution_identity) ||
         !request->semantic_maximum_context || !request->candidate_width ||
         !request->semantic_state_class_mask ||
         (request->semantic_state_class_mask &
@@ -1030,7 +1030,7 @@ int yvex_execution_capacity_plan_build(
     plan->state_class_count = request->state_class_count;
     yvex_core_text_copy(plan->model_execution_identity,
                         sizeof(plan->model_execution_identity),
-                        request->semantic_model_identity);
+                        request->model_execution_identity);
     yvex_core_text_copy(plan->hardware_profile_identity,
                         sizeof(plan->hardware_profile_identity), hardware->identity);
     yvex_core_text_copy(plan->workload_profile_identity,

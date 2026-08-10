@@ -541,7 +541,7 @@ static int generation_capacity_build(
     context->sampling_workspace_bytes = sampling_workspace;
     if (sampling_workspace > workspace) workspace = sampling_workspace;
     request.schema_version = YVEX_EXECUTION_CAPACITY_PLAN_SCHEMA_V1;
-    request.semantic_model_identity = semantic.identity;
+    request.model_execution_identity = semantic.identity;
     request.semantic_maximum_context = semantic.maximum_context;
     request.candidate_width = semantic.candidate_width;
     request.hardware = &context->hardware_profile;
