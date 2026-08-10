@@ -589,7 +589,14 @@ static int test_t2va_plan(void)
     yvex_minimax_h3_t2va_plan first, repeated, minimal;
     yvex_runtime_latent_request latent_request = {0};
     yvex_runtime_latent_result latent_result;
+    yvex_runtime_av_layout_result layout_result;
     float video_latent[192], audio_latent[512];
+    float positions[57];
+    unsigned int tags[19], video_indices[2], audio_indices[16], text_indices[1];
+    yvex_runtime_av_layout_output layout_output = {
+        positions, 57ull, tags, video_indices, audio_indices, text_indices,
+        19ull, 2ull, 16ull, 1ull,
+    };
     float sample[2] = {0.5f, -1.0f}, velocity[2] = {2.0f, 4.0f};
     float stepped[2] = {13.0f, 13.0f};
     yvex_error err;
@@ -638,6 +645,17 @@ static int test_t2va_plan(void)
             &minimal, 1ull, 32ull, 32ull, 5ull, 1u, &err) == YVEX_OK &&
             minimal.video_rows == 2ull && minimal.audio_rows == 16ull,
         "t2va plan admits a bounded exact one-step execution geometry");
+    YVEX_TEST_ASSERT(
+        yvex_graph_register_minimax_h3()->t2va_layout_build(
+            &minimal, &layout_output, &layout_result, &err) == YVEX_OK &&
+            layout_result.complete && layout_result.packed_rows == 19ull &&
+            layout_result.video_rows == 2ull && layout_result.audio_rows == 16ull &&
+            text_indices[0] == 0u && audio_indices[0] == 1u && audio_indices[15] == 16u &&
+            video_indices[0] == 17u && video_indices[1] == 18u &&
+            tags[0] == 1u && tags[1] == 2u && tags[17] == 0u &&
+            positions[17ull * 3ull] == 1.0f &&
+            fabsf(positions[18ull * 3ull] - (float)(1.0 + 5.0 / 3.0)) < 1.0e-6f,
+        "family composition binds exact target-only packed row and rotary policy");
     latent_request.seed = 42ull;
     latent_request.maximum_workspace_bytes = (192ull + 512ull) * sizeof(float) * 4ull;
     latent_request.evaluate = test_latent_evaluate;

@@ -1,5 +1,4 @@
-/* Bind the exact FL2VA source, logical target, component graph, and bounded execution without
- * promoting a family runtime, solver, complete model, or media capability. */
+/* Bind exact FL2VA facts and bounded execution without promoting a family runtime. */
 #ifndef INCLUDE_YVEX_INTERNAL_FAMILIES_MINIMAX_H3_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_FAMILIES_MINIMAX_H3_H_INCLUDED
 #include <stddef.h>
@@ -18,6 +17,8 @@ typedef struct yvex_backend yvex_backend;
 typedef struct yvex_runtime_component_session yvex_runtime_component_session;
 typedef struct yvex_runtime_latent_request yvex_runtime_latent_request;
 typedef struct yvex_runtime_latent_result yvex_runtime_latent_result;
+typedef struct yvex_runtime_av_layout_output yvex_runtime_av_layout_output;
+typedef struct yvex_runtime_av_layout_result yvex_runtime_av_layout_result;
 #define YVEX_MINIMAX_H3_TARGET_ID "minimax-h3-fl2va"
 #define YVEX_MINIMAX_H3_REPOSITORY "MiniMaxAI/MiniMax-H3"
 #define YVEX_MINIMAX_H3_REVISION "b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08"
@@ -42,12 +43,9 @@ typedef struct yvex_runtime_latent_result yvex_runtime_latent_result;
 #define YVEX_MINIMAX_H3_AUDIO_COMPONENT_MANIFEST_IDENTITY                             \
     "715f2359aaff048ccca8207976421af5f9f76b08b6f24986b3cc186d2822bc0e"
 #define YVEX_MINIMAX_H3_AUDIO_ARCHITECTURE_IDENTITY "47a03bbac2b5346771f70ae39155920f9b1c6e6cec17f2639dd0cbedfa90b517"
-#define YVEX_MINIMAX_H3_AUDIO_ROLE_MAP_IDENTITY                                       \
-    "61e7a2cfc29e6dd3da966878f5388f1472a406d7e33ba34ef65f44b61f08f013"
-#define YVEX_MINIMAX_H3_AUDIO_UNRESOLVED_IDENTITY                                     \
-    "935ae0a2371b15131b8920a879462484ebd3f5526ff5a97ef95c4e0af7b7cc1d"
-#define YVEX_MINIMAX_H3_AUDIO_TRANSFORM_IDENTITY                                      \
-    "e6f8f3ac2ae01157a57049f0db2439271585966174c0bfe202a5546471361ab3"
+#define YVEX_MINIMAX_H3_AUDIO_ROLE_MAP_IDENTITY "61e7a2cfc29e6dd3da966878f5388f1472a406d7e33ba34ef65f44b61f08f013"
+#define YVEX_MINIMAX_H3_AUDIO_UNRESOLVED_IDENTITY "935ae0a2371b15131b8920a879462484ebd3f5526ff5a97ef95c4e0af7b7cc1d"
+#define YVEX_MINIMAX_H3_AUDIO_TRANSFORM_IDENTITY "e6f8f3ac2ae01157a57049f0db2439271585966174c0bfe202a5546471361ab3"
 #define YVEX_MINIMAX_H3_AUDIO_PROFILE_NAME "minimax-h3-source-faithful-v1"
 #define YVEX_MINIMAX_H3_AUDIO_PROFILE_IDENTITY                                        \
     "b8b5aa330a617b0fa33fdd1428e5fea9e8edcdd7f6a2ba6f530d378fbaddaa65"
@@ -560,6 +558,8 @@ typedef struct {
     int (*t2va_latent_execute)(const yvex_minimax_h3_t2va_plan *,
         const yvex_runtime_latent_request *, float *, unsigned long long,
         float *, unsigned long long, yvex_runtime_latent_result *, yvex_error *);
+    int (*t2va_layout_build)(const yvex_minimax_h3_t2va_plan *, const yvex_runtime_av_layout_output *,
+        yvex_runtime_av_layout_result *, yvex_error *);
     int (*component_admit)(const char *component,
         const yvex_artifact *artifact, const yvex_gguf *gguf,
         const yvex_tensor_table *tensors, yvex_complete_artifact_admission *out,

@@ -75,10 +75,8 @@ static int t2va_plan_build(yvex_minimax_h3_t2va_plan *out,
                            unsigned long long height, unsigned long long frames,
                            unsigned int inference_steps, yvex_error *err)
 {
-    yvex_sha256 hash;
-    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
-    unsigned long long frame_blocks, spatial_rows;
-    unsigned int step;
+    unsigned long long frame_blocks, spatial_rows, facts[6];
+    int rc;
     if (!out || !text_tokens || width < 32ull || height < 32ull ||
         width % 32ull || height % 32ull || frames < 5ull ||
         !inference_steps || inference_steps > 64u ||
@@ -119,43 +117,19 @@ static int t2va_plan_build(yvex_minimax_h3_t2va_plan *out,
     }
     out->model_evaluations = inference_steps;
     out->sigma_grid_points = inference_steps + 1u;
-    for (step = 0u; step < out->sigma_grid_points; ++step) {
-        float base = (float)(out->sigma_grid_points - 1u - step) /
-                     (float)(out->sigma_grid_points - 1u);
-        out->video_sigmas[step] = 12.0f * base / (1.0f + 11.0f * base);
-        out->audio_sigmas[step] = 3.0f * base / (1.0f + 2.0f * base);
-    }
-    yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.minimax-h3.t2va.res-multistep.v2") ||
-        !yvex_sha256_update_text(&hash, YVEX_MINIMAX_H3_TARGET_ID) ||
-        !yvex_sha256_update_text(&hash, YVEX_MINIMAX_H3_REVISION) ||
-        !yvex_sha256_update_u64_be(&hash, text_tokens) ||
-        !yvex_sha256_update_u64_be(&hash, width) ||
-        !yvex_sha256_update_u64_be(&hash, height) ||
-        !yvex_sha256_update_u64_be(&hash, frames) ||
-        !yvex_sha256_update_u64_be(&hash, out->sigma_grid_points) ||
-        !yvex_sha256_update_u64_be(&hash, out->model_evaluations)) {
-        yvex_error_set(err, YVEX_ERR_STATE, "graph.minimax_h3.t2va.plan",
-                       "t2va plan identity construction failed");
-        return YVEX_ERR_STATE;
-    }
-    for (step = 0u; step < out->sigma_grid_points; ++step) {
-        uint32_t video_bits, audio_bits;
-        memcpy(&video_bits, &out->video_sigmas[step], sizeof(video_bits));
-        memcpy(&audio_bits, &out->audio_sigmas[step], sizeof(audio_bits));
-        if (!yvex_sha256_update_u64_be(&hash, video_bits) ||
-            !yvex_sha256_update_u64_be(&hash, audio_bits)) {
-            yvex_error_set(err, YVEX_ERR_STATE, "graph.minimax_h3.t2va.plan",
-                           "t2va schedule identity construction failed");
-            return YVEX_ERR_STATE;
-        }
-    }
-    if (!yvex_sha256_final(&hash, digest)) {
-        yvex_error_set(err, YVEX_ERR_STATE, "graph.minimax_h3.t2va.plan",
-                       "t2va plan identity finalization failed");
-        return YVEX_ERR_STATE;
-    }
-    yvex_sha256_hex(digest, out->identity);
+    rc = yvex_runtime_latent_shifted_sigmas(
+        out->video_sigmas, out->sigma_grid_points, 12.0f, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_latent_shifted_sigmas(
+            out->audio_sigmas, out->sigma_grid_points, 3.0f, err);
+    facts[0] = text_tokens; facts[1] = width; facts[2] = height; facts[3] = frames;
+    facts[4] = out->sigma_grid_points; facts[5] = out->model_evaluations;
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_latent_plan_identity(
+            "yvex.minimax-h3.t2va.res-multistep.v2", YVEX_MINIMAX_H3_TARGET_ID,
+            YVEX_MINIMAX_H3_REVISION, facts, 6ull, out->video_sigmas, out->audio_sigmas,
+            out->sigma_grid_points, out->identity, err);
+    if (rc != YVEX_OK) return rc;
     out->complete = 1;
     yvex_error_clear(err);
     return YVEX_OK;
@@ -190,8 +164,7 @@ static int scheduler_step(float *output, const float *sample, const float *veloc
 }
 static int t2va_latent_execute(const yvex_minimax_h3_t2va_plan *plan,
     const yvex_runtime_latent_request *template, float *video, unsigned long long video_capacity,
-    float *audio, unsigned long long audio_capacity, yvex_runtime_latent_result *result,
-    yvex_error *err)
+    float *audio, unsigned long long audio_capacity, yvex_runtime_latent_result *result, yvex_error *err)
 {
     yvex_runtime_latent_request request;
     unsigned long long video_values, audio_values;
@@ -208,6 +181,32 @@ static int t2va_latent_execute(const yvex_minimax_h3_t2va_plan *plan,
     request.audio_sigmas = plan->audio_sigmas; request.plan_identity = plan->identity;
     request.advance = scheduler_step;
     return yvex_runtime_latent_execute(&request, video, video_capacity, audio, audio_capacity, result, err);
+}
+static int t2va_layout_build(const yvex_minimax_h3_t2va_plan *plan,
+    const yvex_runtime_av_layout_output *output, yvex_runtime_av_layout_result *result, yvex_error *err)
+{
+    static const unsigned int temporal_pattern[5] = {1u, 4u, 4u, 4u, 4u};
+    unsigned long long audio_width_indices[2];
+    yvex_runtime_av_layout_request request = {0};
+    if (!plan || !plan->complete || plan->video_latent_width < 2ull) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "graph.minimax_h3.t2va.layout", "patchable plan required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    audio_width_indices[0] = 0ull; audio_width_indices[1] = plan->video_latent_width / 2ull - 1ull;
+    request.schema_version = YVEX_RUNTIME_AV_LAYOUT_SCHEMA_V1;
+    request.text_tag = 1u; request.audio_tag = 2u; request.video_tag = 0u;
+    request.text_rows = plan->text_tokens; request.audio_steps = plan->audio_latent_steps;
+    request.audio_channels = 2ull; request.video_frames = plan->video_latent_frames;
+    request.latent_height = plan->video_latent_height; request.latent_width = plan->video_latent_width;
+    request.patch_height = 2ull; request.patch_width = 2ull;
+    request.text_start = 0ull; request.audio_start = plan->text_tokens;
+    request.video_start = plan->text_tokens + plan->audio_rows;
+    request.packed_rows = plan->packed_rows; request.audio_width_indices = audio_width_indices;
+    request.temporal_pattern = temporal_pattern; request.temporal_pattern_count = 5ull;
+    request.temporal_scale = 5.0 / 3.0; request.spatial_scale = 32.0;
+    request.media_time_origin = (double)plan->text_tokens; request.plan_identity = plan->identity;
+    request.maximum_workspace_bytes = plan->packed_rows * 5ull * sizeof(float);
+    return yvex_runtime_av_layout_build(&request, output, result, err);
 }
 static int audio_execution_refuse(audio_execution *execution,
                                   yvex_minimax_h3_component_execution_code code,
@@ -1991,7 +1990,8 @@ static int transformer_component_cuda(yvex_runtime_component_session *session,
 const yvex_minimax_h3_graph_api *yvex_graph_register_minimax_h3(void)
 {
     static const yvex_minimax_h3_graph_api api = {
-        t2va_plan_build, scheduler_step, t2va_latent_execute, component_admit, text_encoder_artifact_cuda,
+        t2va_plan_build, scheduler_step, t2va_latent_execute, t2va_layout_build,
+        component_admit, text_encoder_artifact_cuda,
         transformer_component_cuda,
         audio_vae_decode_cpu, audio_vae_execute_artifact_cpu,
         video_vae_decode_cpu, video_vae_execute_artifact_cpu,

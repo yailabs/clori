@@ -6,7 +6,9 @@ Encoder component artifacts admitted through native and pinned official
 readers; complete Audio VAE and bounded multi-patch Visual VAE CPU decodes
 numerically conform; exact artifact-bound Qwen2 tokenization and 50-layer
 text-only Qwen3-VL prompt conditioning plus the complete 50-block
-Omni-Transformer component envelope execute on GB10; not an executable family
+Omni-Transformer component envelope execute on GB10; exact target-only packed
+layout and transactional paired latent scheduling are admitted; not an
+executable family
 
 This record owns current YVEX facts for MiniMax-H3 Base FL2VA. YVEX now admits
 the complete immutable FL2VA source through its production source owner and
@@ -37,8 +39,8 @@ promotion rules remain in the [family integration contract](integration.md).
 | Branch status | open |
 | Branch completion | first YVEX-authored playable synchronized MiniMax-H3 FL2VA audio-video output |
 | Current wave | `R010.MINIMAX.H3.FL2VA.END_TO_END.0` |
-| Current boundary | exact component artifacts admitted; complete Audio and bounded Visual CPU decodes conform; prompt conditioning and the 50-block Omni envelope conform on GB10; paired latent RNG, schedule, solver, and transaction semantics are admitted |
-| Next expected boundary | bind exact packed position layout and the resident Omni evaluator into the latent loop, then complete VAE composition and synchronized media publication |
+| Current boundary | exact component artifacts admitted; complete Audio and bounded Visual CPU decodes conform; prompt conditioning and the 50-block Omni envelope conform on GB10; exact packed layout plus paired latent RNG, schedule, solver, and transaction semantics are admitted |
+| Next expected boundary | bind the resident Omni evaluator into the transactional latent loop, then complete VAE composition and synchronized media publication |
 
 The branch preserves the accepted intake history and remains open across all
 later source, artifact, graph, backend, residency, latent, VAE, media, and
@@ -64,7 +66,7 @@ or rename the branch.
 | Tensor-role-map identity | `61e7a2cfc29e6dd3da966878f5388f1472a406d7e33ba34ef65f44b61f08f013` |
 | Transformation IR identity | `bd941103d754df8c1eb02ff9b90db4ba86b7e389691f2d0c4027343eccbc0b0b` |
 | Aggregate derivation identity | `cc2886a388a475c2df246558dfb41c8d66e549afd4c4e34d19e2bbd3b70a3ff5` |
-| Evidence stage | exact source verified; architecture, tensor roles, and Transformation IR admitted; all four weighted artifacts admitted; Audio and bounded Visual decodes numerically conform; ASCII prompt conditioning and the 50-block Omni envelope conform on GB10; transactional paired latent evolution is admitted |
+| Evidence stage | exact source verified; architecture, tensor roles, and Transformation IR admitted; all four weighted artifacts admitted; Audio and bounded Visual decodes numerically conform; ASCII prompt conditioning and the 50-block Omni envelope conform on GB10; exact packed target layout and transactional paired latent evolution are admitted |
 
 The external evidence directory used during the intake was
 `/home/dgmothx/lab/models/intake/minimax-h3/<FULL_REVISION>/`. That path is an
@@ -202,31 +204,30 @@ If their inputs are timestep-only, an identity-bound precompute could replace
 those resident matrices with 9,676,800 BF16 bytes per iteration. That cache
 property still requires numerical confirmation.
 
-For dimensions divisible by the declared ratios, visual latent geometry is
-approximately `[B, 24, ceil(F/4), ceil(H/16), ceil(W/16)]`; patch tokens are
-`ceil(F/4) * ceil(H/32) * ceil(W/32)`. Audio latent cadence is mechanically
-40 steps per second from `32000 / 800`. Boundary padding can change exact
-ceilings and is not yet admitted.
+For an admitted `17n+5` frame count, visual latent geometry is exactly
+`[B,24,5n+2,H/16,W/16]`; 1x2x2 patching produces
+`(5n+2)*(H/32)*(W/32)` video rows. Audio cadence is 40 latent steps per second,
+rounded from `frames/24*40`, with two channel-major rows per step.
 
-### Inferences awaiting numerical confirmation
+### Admitted iterative source semantics
 
-Tensor widths and the common DiT owner suggest that conditioning, patched
-video latents, and audio latents enter one joint full-attention sequence. Names
-and widths suggest gated SiLU FFNs, timestep-driven AdaLN shift/scale/gates,
-and separate final projections back to audio and video latent layouts. These
-are strong lowering hypotheses, not executable contracts.
-
-The source class and sigma shifts imply an iterative diffusion or flow-style
-latent process. The admitted metadata does not establish the noise
-distribution, seed algorithm, solver, timestep sequence, update equation,
-guidance rule, or iteration count. No YVEX implementation may invent them.
+Target-only `t2va` packs `[text | audio | video]` into one unmasked
+full-attention sequence. Text rows use unit time coordinates, audio is
+channel-major at 40 latent steps per second, and video is frame-major with
+1x2x2 patches. The three modality tags are video 0, text 1, and audio 2.
+Spatial rotary coordinates are constructed in FP64 on an aspect-normalized
+grid scaled by 32 and narrowed to F32 at the Transformer boundary. Video time
+advances by `5/3 * (1,4,4,4,4)` cyclically; both media clocks begin after the
+last text row. Video and audio use terminal-zero sigma grids shifted by 12 and
+3, respectively, and one model evaluation advances both candidate domains
+transactionally. There is no classifier-free guidance pass.
 
 ### Unknowns at this evidence boundary
 
-- exact Omni MM-RoPE axis allocation, replication, and interleave policy;
-- exact attention masks and conditioning-token placement;
-- latent initialization and candidate-update equation;
-- solver, timestep schedule, step count, and cancellation safe points;
+- equivalence between the explicit YVEX seed stream and an upstream PyTorch
+  seed value;
+- complete resident Transformer evaluation inside every transactional latent
+  step;
 - output frame count, frame rate, width, height, and duration defaults;
 - exact video temporal padding/reconstruction at clip boundaries;
 - exact audio/video duration alignment and timestamp policy;
@@ -264,9 +265,9 @@ not a media serializer or runtime transaction implementation.
 | request -> processor | UTF-8 text; optional RGB/media tensors; source metadata only | request-owned, discard after encoding | host preprocessing; no serialization | invalid media or template publishes no request |
 | processor -> Qwen3-VL | token IDs plus patch/grid descriptors | encoder input, immutable for one context phase | staged host/device | token/grid refusal releases encoder stage |
 | Qwen3-VL -> conditioning | width 5,120; runtime dtype unconfirmed | immutable request cache, retained through DiT | device-preferred; no file format selected | failed encoding publishes no conditioning identity |
-| controller -> latent initialization | video 24-channel and audio 32-channel; exact extents/dtype unknown | mutable request candidates | device-preferred; seed and state must be identity-bound | cancellation rolls RNG and both latent candidates back |
-| latents -> Omni input | video patch width 96, audio width 32, projected to 5,376 | mutable candidate plus immutable condition | same execution device; staged component residency | shape/mask/MM-RoPE refusal starts no iteration |
-| iteration `i` -> `i+1` | same video/audio latent geometry; update equation unknown | one candidate transaction per step | no serialization; optional derived modulation cache | audio and video advance together or neither advances |
+| controller -> latent initialization | exact video rows x 96 and channel-major audio rows x 32 in F32 | mutable paired request candidates | one identity-bound seed stream initializes video then audio | cancellation rolls RNG and both latent candidates back |
+| latents -> Omni input | `[text | audio | video]`; video width 96 and audio width 32 projected to 5,376 | mutable candidate plus immutable condition and layout | same execution device; staged component residency | shape, tag, index, timestep, or rotary refusal starts no iteration |
+| iteration `i` -> `i+1` | separate shifted video/audio timesteps and exact rectified-flow blend | one candidate transaction per step | no serialization; persistent Transformer residency | audio and video advance together or neither advances |
 | committed video -> visual VAE | 24-channel latent; source F32 weights | discard latent after successful frame decode | VAE may be late staged; tiled workspace | partial frames remain unpublished |
 | committed audio -> audio VAE | 32-channel latent to two 32 kHz channels | discard latent after successful waveform decode | VAE may be late staged | partial samples remain unpublished |
 | decoders -> packager | RGB frames plus stereo samples; timing unknown | request output transaction | host/device transfer and media serialization required | mismatched duration or serializer failure publishes nothing |
@@ -846,6 +847,16 @@ values and exercises family geometry, paired scheduling, seeded initialization,
 and atomic publication. Independent generic tests cover deterministic normal
 vectors, repeated execution, cancellation rollback, and workspace refusal.
 
+The same family plan now lowers into the exact target-only packed layout. A
+generic transactional layout owner receives the family-selected row order,
+tags, 1x2x2 patch, stereo width endpoints, FP64 spatial policy, and temporal
+cycle. It publishes positions, tags, and the three complete index partitions
+only after their capacities and workspace bound reconcile. Its independent
+24-row fixture has layout identity
+`87d07a2b731bd7ebc7c48b4d3ddd3207e04102e4648dd010cb1e3fa237039eb3`;
+repeat construction is byte-identical, and insufficient workspace leaves every
+caller buffer unchanged.
+
 The Transformer graph now consumes a generic component execution session, so
 the admitted 66,280,430,144-byte residency can remain open across every latent
 iteration. A live one-block execution through this persistent-session boundary
@@ -859,9 +870,8 @@ initialization and iteration with a supplied admitted evaluator.
 `production_api_available: true` through the generic latent ABI and the family
 graph composition. `internal_live_runner_available: true` for the resident
 Transformer boundary. `operator_command_available: false` and
-`end_user_path_available: false`: exact packed position construction, real
-Omni-driven iteration, both final VAE decodes, and media publication remain
-downstream.
+`end_user_path_available: false`: real Omni-driven iteration, both final VAE
+decodes, and media publication remain downstream.
 
 ## Progression and non-claims
 
