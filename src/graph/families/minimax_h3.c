@@ -1535,48 +1535,30 @@ static int video_vae_execute_artifact_cpu(
     return component_execute_artifact_cpu(
         "video_vae", 1, artifact, gguf, tensors, options, result, failure, err);
 }
-static int video_vae_execute_artifact_cuda(
-    const yvex_artifact *artifact, const yvex_gguf *gguf,
-    const yvex_tensor_table *tensors,
+static int video_vae_decode_cuda_session(
+    yvex_runtime_component_session *session,
     const yvex_minimax_h3_video_decode_options *options,
-    unsigned long long maximum_device_bytes,
     yvex_minimax_h3_video_decode_result *result,
     yvex_minimax_h3_component_execution_failure *failure, yvex_error *err)
 {
-    yvex_complete_artifact_admission admission;
-    yvex_artifact_admission_failure admission_failure;
-    yvex_runtime_component_session *session = NULL;
     yvex_transformer_resident_decoder_request request = {0};
     yvex_transformer_dense_decoder_result decoder = {0};
     video_execution execution = {0};
     component_buffer hidden = {0}, cosines = {0}, sines = {0}, patch_output = {0};
     const yvex_runtime_residency_summary *summary = NULL;
-    int admitted = 0, rc, cleanup_rc;
-    yvex_error cleanup;
+    int rc;
     if (result) memset(result, 0, sizeof(*result));
     if (failure) memset(failure, 0, sizeof(*failure));
-    execution.options = options;
-    execution.result = result;
-    execution.failure = failure;
-    execution.err = err;
-    if (!artifact || !gguf || !tensors || !options || !result ||
-        !maximum_device_bytes)
+    execution.options = options; execution.result = result;
+    execution.failure = failure; execution.err = err;
+    if (!session || !options || !result)
         return video_execution_refuse(
             &execution, YVEX_MINIMAX_H3_COMPONENT_EXECUTION_INVALID_ARGUMENT,
-            NULL, 6ull, 0ull, YVEX_ERR_INVALID_ARG,
-            "Visual VAE CUDA execution requires artifact, geometry, and device budget");
-    rc = component_admit(
-        "video_vae", artifact, gguf, tensors, &admission, &admission_failure, err);
-    admitted = rc == YVEX_OK;
-    if (rc == YVEX_OK)
-        rc = yvex_runtime_component_session_open(
-            &session, &admission, artifact, gguf, tensors, YVEX_BACKEND_KIND_CUDA,
-            admission.payload_bytes, maximum_device_bytes, err);
-    if (rc == YVEX_OK) {
-        execution.session = yvex_runtime_component_session_materialization(session);
-        summary = yvex_runtime_component_session_summary(session);
-        rc = video_decode_validate(&execution);
-    }
+            NULL, 3ull, 0ull, YVEX_ERR_INVALID_ARG,
+            "Visual VAE CUDA decode requires one resident component session");
+    execution.session = yvex_runtime_component_session_materialization(session);
+    summary = yvex_runtime_component_session_summary(session);
+    rc = video_decode_validate(&execution);
     if (rc == YVEX_OK) rc = video_prefix_prepare(&execution, &hidden);
     if (rc == YVEX_OK)
         rc = video_buffer_open(&execution, &cosines, execution.rows * 48ull);
@@ -1634,14 +1616,46 @@ static int video_vae_execute_artifact_cuda(
         result->complete = 1;
         yvex_error_clear(err);
     } else if (failure && failure->code == YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NONE) {
-        failure->code = admitted ? YVEX_MINIMAX_H3_COMPONENT_EXECUTION_MATERIALIZATION
-                                 : YVEX_MINIMAX_H3_COMPONENT_EXECUTION_LIFECYCLE;
+        failure->code = YVEX_MINIMAX_H3_COMPONENT_EXECUTION_MATERIALIZATION;
         failure->reason = yvex_error_message(err);
     }
     video_buffer_close(&execution, &patch_output);
     video_buffer_close(&execution, &sines);
     video_buffer_close(&execution, &cosines);
     video_buffer_close(&execution, &hidden);
+    return rc;
+}
+static int video_vae_execute_artifact_cuda(
+    const yvex_artifact *artifact, const yvex_gguf *gguf, const yvex_tensor_table *tensors,
+    const yvex_minimax_h3_video_decode_options *options, unsigned long long maximum_device_bytes,
+    yvex_minimax_h3_video_decode_result *result,
+    yvex_minimax_h3_component_execution_failure *failure, yvex_error *err)
+{
+    yvex_complete_artifact_admission admission;
+    yvex_artifact_admission_failure admission_failure;
+    yvex_runtime_component_session *session = NULL;
+    int rc, cleanup_rc;
+    yvex_error cleanup;
+    if (result) memset(result, 0, sizeof(*result));
+    if (failure) memset(failure, 0, sizeof(*failure));
+    if (!artifact || !gguf || !tensors || !options || !result || !maximum_device_bytes) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "graph.minimax_h3.video_vae.execute",
+                       "Visual VAE CUDA execution requires artifact, geometry, and device budget");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    rc = component_admit(
+        "video_vae", artifact, gguf, tensors, &admission, &admission_failure, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_component_session_open(
+            &session, &admission, artifact, gguf, tensors, YVEX_BACKEND_KIND_CUDA,
+            admission.payload_bytes, maximum_device_bytes, err);
+    if (rc == YVEX_OK)
+        rc = video_vae_decode_cuda_session(session, options, result, failure, err);
+    if (rc != YVEX_OK && failure &&
+        failure->code == YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NONE) {
+        failure->code = YVEX_MINIMAX_H3_COMPONENT_EXECUTION_LIFECYCLE;
+        failure->reason = yvex_error_message(err);
+    }
     yvex_error_clear(&cleanup);
     cleanup_rc = yvex_runtime_component_session_close(&session, &cleanup);
     if (cleanup_rc != YVEX_OK) { rc = cleanup_rc; if (err) *err = cleanup; }
@@ -1978,7 +1992,7 @@ const yvex_minimax_h3_graph_api *yvex_graph_register_minimax_h3(void)
         transformer_component_cuda,
         audio_vae_decode_cpu, audio_vae_execute_artifact_cpu,
         audio_vae_execute_artifact_cuda,
-        video_vae_decode_cpu, video_vae_execute_artifact_cpu,
+        video_vae_decode_cpu, video_vae_decode_cuda_session, video_vae_execute_artifact_cpu,
         video_vae_execute_artifact_cuda,
     };
     return &api;

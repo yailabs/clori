@@ -8,6 +8,42 @@
 #include <yvex/gguf.h>
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/families/minimax_h3.h>
+#include <yvex/internal/latent.h>
+#include <yvex/internal/runtime.h>
+
+typedef struct {
+    yvex_runtime_component_session *session;
+    yvex_minimax_h3_component_execution_failure failure;
+} reconstruction_context;
+
+static int reconstruction_decode(
+    void *opaque, const yvex_runtime_av_video_decode_window *window,
+    yvex_runtime_av_video_decode_evidence *evidence, yvex_error *err)
+{
+    reconstruction_context *context = opaque;
+    yvex_minimax_h3_video_decode_options options = {0};
+    yvex_minimax_h3_video_decode_result result;
+    int rc;
+    options.latent = window->latent; options.output = window->output;
+    options.batch = 1ull; options.latent_channels = window->latent_channels;
+    options.latent_frames = window->latent_frames;
+    options.latent_height = window->latent_height; options.latent_width = window->latent_width;
+    options.output_capacity = window->output_capacity;
+    options.max_workspace_bytes = 256ull * 1024ull * 1024ull;
+    rc = yvex_graph_register_minimax_h3()->video_vae_decode_cuda(
+        context->session, &options, &result, &context->failure, err);
+    if (rc == YVEX_OK) {
+        memset(evidence, 0, sizeof(*evidence));
+        evidence->output_values = result.output_values;
+        evidence->kernel_launches = result.kernel_launches;
+        evidence->h2d_bytes = result.h2d_bytes; evidence->d2h_bytes = result.d2h_bytes;
+        evidence->device_bytes = result.device_bytes;
+        memcpy(evidence->execution_identity, result.execution_identity,
+               sizeof(evidence->execution_identity));
+        evidence->complete = result.complete;
+    }
+    return rc;
+}
 
 static int file_read_exact(const char *path, void *output, size_t bytes)
 {
@@ -81,7 +117,7 @@ int main(int argc, char **argv)
     yvex_error err;
     const char *latent_path = NULL, *output_path = NULL, *reference_path = NULL;
     unsigned long long frames = 1ull, height = 1ull, width = 1ull;
-    int expect_refused = 0, decode = 0, cuda = 0;
+    int expect_refused = 0, decode = 0, cuda = 0, reconstruct = 0;
     int rc;
 
     if ((argc == 5 || argc == 6) &&
@@ -108,6 +144,9 @@ int main(int argc, char **argv)
             return 2;
         }
         if (argc == 9) reference_path = argv[8];
+    } else if (argc == 5 && strcmp(argv[1], "--reconstruct-cuda") == 0) {
+        reconstruct = 1; cuda = 1; options.path = argv[2];
+        latent_path = argv[3]; output_path = argv[4];
     } else if (argc == 3 && strcmp(argv[1], "--expect-refused") == 0) {
         expect_refused = 1;
         options.path = argv[2];
@@ -120,6 +159,8 @@ int main(int argc, char **argv)
                 "[REFERENCE_F32]\n"
                 "       minimax_h3_video --decode-geometry VIDEO_VAE_GGUF LATENT_F32 "
                 "OUTPUT_F32 T H W [REFERENCE_F32]\n"
+                "       minimax_h3_video --reconstruct-cuda VIDEO_VAE_GGUF LATENT_F32 "
+                "OUTPUT_F32\n"
                 "       replace --decode with --decode-cuda for resident CUDA execution\n");
         return 2;
     }
@@ -127,7 +168,72 @@ int main(int argc, char **argv)
     rc = yvex_artifact_open(&artifact, &options, &err);
     if (rc == YVEX_OK) rc = yvex_gguf_open(&gguf, artifact, &err);
     if (rc == YVEX_OK) rc = yvex_tensor_table_from_gguf(&tensors, gguf, &err);
-    if (decode && rc == YVEX_OK) {
+    if (reconstruct && rc == YVEX_OK) {
+        static const char source_identity[] =
+            "897ceaff08708f431132c6643bc8f1041ace8c0444a3ea248bbf727fc7da9943";
+        yvex_runtime_av_video_reconstruction_request plan_request = {
+            .schema_version = YVEX_RUNTIME_AV_VIDEO_RECONSTRUCTION_SCHEMA_V1,
+            .frames = 124ull, .width = 32ull, .height = 32ull,
+            .latent_frames = 37ull, .latent_width = 2ull, .latent_height = 2ull,
+            .temporal_ratio = 4ull, .clip_length = 17ull, .token_drop = 3ull,
+            .spatial_ratio = 16ull, .tile_size = 256ull, .minimum_tile_overlap = 64ull,
+            .source_identity = source_identity,
+        };
+        yvex_runtime_av_video_reconstruction_plan plan;
+        yvex_runtime_av_video_reconstruction_execution execution = {0};
+        yvex_runtime_av_video_reconstruction_result result;
+        reconstruction_context context = {0};
+        const yvex_minimax_h3_latent_normalization *normalization =
+            yvex_model_register_minimax_h3()->latent_normalization();
+        yvex_complete_artifact_admission component;
+        yvex_artifact_admission_failure failure;
+        unsigned long long latent_values = 24ull * 37ull * 2ull * 2ull;
+        unsigned long long output_values = 3ull * 124ull * 32ull * 32ull;
+        float *latent = malloc((size_t)(latent_values * sizeof(float)));
+        float *output = malloc((size_t)(output_values * sizeof(float)));
+        if (!latent || !output ||
+            !file_read_exact(latent_path, latent, (size_t)(latent_values * sizeof(float)))) {
+            fprintf(stderr, "video_reconstruction_latent_read=refused\n");
+            rc = YVEX_ERR_FORMAT;
+        }
+        if (rc == YVEX_OK)
+            rc = yvex_runtime_av_video_reconstruction_plan_build(&plan_request, &plan, &err);
+        if (rc == YVEX_OK)
+            rc = yvex_graph_register_minimax_h3()->component_admit(
+                "video_vae", artifact, gguf, tensors, &component, &failure, &err);
+        if (rc == YVEX_OK)
+            rc = yvex_runtime_component_session_open(
+                &context.session, &component, artifact, gguf, tensors, YVEX_BACKEND_KIND_CUDA,
+                component.payload_bytes, 16ull * 1024ull * 1024ull * 1024ull, &err);
+        execution.schema_version = YVEX_RUNTIME_AV_VIDEO_RECONSTRUCTION_SCHEMA_V1;
+        execution.plan = &plan; execution.latent = latent;
+        execution.latent_channels = 24ull; execution.latent_capacity = latent_values;
+        execution.maximum_workspace_bytes = 64ull * 1024ull * 1024ull;
+        execution.output_channel_mean = normalization->pixel_mean;
+        execution.output_channel_std = normalization->pixel_std;
+        execution.output_channel_count = normalization->pixel_channels;
+        execution.decode = reconstruction_decode; execution.decode_context = &context;
+        if (rc == YVEX_OK)
+            rc = yvex_runtime_av_video_reconstruct(
+                &execution, output, output_values, &result, &err);
+        if (rc == YVEX_OK && !output_write(output_path, output, (size_t)output_values))
+            rc = YVEX_ERR_IO;
+        if (rc == YVEX_OK)
+            printf("video_reconstruction=accepted shape=1x3x124x32x32 calls=%llu "
+                   "kernels=%llu workspace=%llu device=%llu identity=%s\n",
+                   result.decode_calls, result.kernel_launches, result.peak_workspace_bytes,
+                   result.peak_device_bytes, result.execution_identity);
+        else
+            fprintf(stderr, "video_reconstruction=refused code=%d where=%s message=%s\n",
+                    context.failure.code, yvex_error_where(&err), yvex_error_message(&err));
+        {
+            yvex_error cleanup;
+            yvex_error_clear(&cleanup);
+            if (yvex_runtime_component_session_close(&context.session, &cleanup) != YVEX_OK &&
+                rc == YVEX_OK) { rc = yvex_error_code(&cleanup); err = cleanup; }
+        }
+        free(output); free(latent);
+    } else if (decode && rc == YVEX_OK) {
         yvex_minimax_h3_video_decode_options decode_options;
         yvex_minimax_h3_video_decode_result result;
         yvex_minimax_h3_component_execution_failure execution_failure;

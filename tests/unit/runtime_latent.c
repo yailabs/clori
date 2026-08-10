@@ -314,6 +314,150 @@ static int test_video_reconstruction_plan(void)
     return 0;
 }
 
+typedef struct {
+    unsigned long long calls;
+    int cancel_after_first, cancelled, invalid_evidence, input_mismatch;
+} video_reconstruction_fixture;
+
+static int video_reconstruction_cancel(void *context)
+{
+    return ((video_reconstruction_fixture *)context)->cancelled;
+}
+
+static int video_reconstruction_decode(
+    void *context, const yvex_runtime_av_video_decode_window *window,
+    yvex_runtime_av_video_decode_evidence *evidence, yvex_error *err)
+{
+    static const char identity[] =
+        "89abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234567";
+    video_reconstruction_fixture *fixture = context;
+    unsigned long long channel, frame, row, column, expected_tile = fixture->calls % 4ull;
+    unsigned long long chunk = fixture->calls / 4ull;
+    float expected = (float)(chunk * 500ull + (expected_tile / 2ull) * 10ull + expected_tile % 2ull);
+    if (!window || window->latent_channels != 1ull || window->latent_frames != 7ull ||
+        window->latent_height != 2ull || window->latent_width != 2ull ||
+        window->output_capacity != 3ull * 28ull * 4ull * 4ull || window->latent[0] != expected) {
+        fixture->input_mismatch = 1;
+        yvex_error_set(err, YVEX_ERR_FORMAT, "test.video-reconstruction",
+                       "the runtime did not provide the expected latent tile");
+        return YVEX_ERR_FORMAT;
+    }
+    for (channel = 0ull; channel < 3ull; ++channel)
+        for (frame = 0ull; frame < 28ull; ++frame)
+            for (row = 0ull; row < 4ull; ++row)
+                for (column = 0ull; column < 4ull; ++column)
+                    window->output[((channel * 28ull + frame) * 4ull + row) * 4ull + column] =
+                        expected + (float)frame + (float)(channel * 10000ull);
+    memset(evidence, 0, sizeof(*evidence));
+    evidence->output_values = window->output_capacity;
+    evidence->kernel_launches = 2ull; evidence->h2d_bytes = 3ull;
+    evidence->d2h_bytes = 4ull; evidence->device_bytes = 5ull;
+    memcpy(evidence->execution_identity, identity, sizeof(identity));
+    evidence->complete = !fixture->invalid_evidence;
+    fixture->calls++;
+    if (fixture->cancel_after_first) fixture->cancelled = 1;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+static int test_video_reconstruction_execution(void)
+{
+    static const char source_identity[] =
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    yvex_runtime_av_video_reconstruction_request plan_request = {
+        .schema_version = YVEX_RUNTIME_AV_VIDEO_RECONSTRUCTION_SCHEMA_V1,
+        .frames = 124ull, .width = 6ull, .height = 6ull,
+        .latent_frames = 37ull, .latent_width = 3ull, .latent_height = 3ull,
+        .temporal_ratio = 4ull, .clip_length = 17ull, .token_drop = 3ull,
+        .spatial_ratio = 2ull, .tile_size = 4ull, .minimum_tile_overlap = 2ull,
+        .source_identity = source_identity,
+    };
+    yvex_runtime_av_video_reconstruction_plan plan;
+    yvex_runtime_av_video_reconstruction_execution execution = {0};
+    yvex_runtime_av_video_reconstruction_result first, repeated, refused;
+    video_reconstruction_fixture first_fixture = {0}, repeated_fixture = {0};
+    video_reconstruction_fixture cancelled_fixture = {.cancel_after_first = 1};
+    video_reconstruction_fixture invalid_fixture = {.invalid_evidence = 1};
+    float latent[37 * 3 * 3], first_output[3 * 124 * 6 * 6], repeated_output[3 * 124 * 6 * 6];
+    float refused_output[3 * 124 * 6 * 6];
+    const float output_mean[3] = {0.1f, 0.2f, 0.3f};
+    const float output_std[3] = {0.1f, 0.1f, 0.1f};
+    unsigned long long frame, row, column, index;
+    yvex_error err;
+    for (frame = 0ull; frame < 37ull; ++frame)
+        for (row = 0ull; row < 3ull; ++row)
+            for (column = 0ull; column < 3ull; ++column)
+                latent[(frame * 3ull + row) * 3ull + column] =
+                    (float)(frame * 100ull + row * 10ull + column);
+    YVEX_TEST_ASSERT(
+        yvex_runtime_av_video_reconstruction_plan_build(&plan_request, &plan, &err) == YVEX_OK &&
+            plan.spatial_ratio == 2ull && plan.tile_y_count == 2ull && plan.tile_x_count == 2ull &&
+            plan.total_decode_calls == 28ull,
+        "video reconstruction fixture admits temporal and spatial composition");
+    execution.schema_version = YVEX_RUNTIME_AV_VIDEO_RECONSTRUCTION_SCHEMA_V1;
+    execution.plan = &plan; execution.latent = latent; execution.latent_channels = 1ull;
+    execution.latent_capacity = 37ull * 3ull * 3ull;
+    execution.maximum_workspace_bytes = 1024ull * 1024ull;
+    execution.output_channel_mean = output_mean; execution.output_channel_std = output_std;
+    execution.output_channel_count = 3ull;
+    execution.decode = video_reconstruction_decode;
+    execution.decode_context = &first_fixture;
+    execution.cancel_requested = video_reconstruction_cancel;
+    execution.cancel_context = &first_fixture;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_av_video_reconstruct(&execution, first_output,
+            3ull * 124ull * 6ull * 6ull, &first, &err) == YVEX_OK && first.complete &&
+            first.decode_calls == 28ull && first.kernel_launches == 56ull &&
+            first.h2d_bytes == 84ull && first.d2h_bytes == 112ull &&
+            first.peak_device_bytes == 5ull && !first_fixture.input_mismatch &&
+            first_output[0] == 0.4f && first_output[2] == 0.4f &&
+            first_output[3] == 0.45f && first_output[4] == 0.5f &&
+            first_output[6ull * 3ull + 3ull] == 1.0f &&
+            first_output[17ull * 36ull] == 1.0f &&
+            first_output[18ull * 36ull] == 1.0f &&
+            first_output[21ull * 36ull] == 1.0f &&
+            first_output[22ull * 36ull] == 1.0f &&
+            first_output[123ull * 36ull] == 1.0f,
+        "video reconstruction executes exact spatial and temporal source blending");
+    execution.decode_context = &repeated_fixture; execution.cancel_context = &repeated_fixture;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_av_video_reconstruct(&execution, repeated_output,
+            3ull * 124ull * 6ull * 6ull, &repeated, &err) == YVEX_OK && repeated.complete &&
+            memcmp(first_output, repeated_output, sizeof(first_output)) == 0 &&
+            strcmp(first.execution_identity, repeated.execution_identity) == 0,
+        "video reconstruction repeats byte-identically with one stable execution identity");
+    memset(refused_output, 0x5a, sizeof(refused_output));
+    execution.decode_context = &cancelled_fixture; execution.cancel_context = &cancelled_fixture;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_av_video_reconstruct(&execution, refused_output,
+            3ull * 124ull * 6ull * 6ull, &refused, &err) == YVEX_ERR_CANCELLED &&
+            !refused.complete && ((unsigned char *)refused_output)[0] == 0x5a,
+        "video reconstruction cancellation does not publish partial frames");
+    memset(refused_output, 0x5a, sizeof(refused_output));
+    execution.decode_context = &invalid_fixture; execution.cancel_context = &invalid_fixture;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_av_video_reconstruct(&execution, refused_output,
+            3ull * 124ull * 6ull * 6ull, &refused, &err) == YVEX_ERR_STATE &&
+            !refused.complete && ((unsigned char *)refused_output)[0] == 0x5a,
+        "video reconstruction refuses incomplete decoder evidence transactionally");
+    execution.maximum_workspace_bytes = 1ull;
+    for (index = 0ull; index < sizeof(refused_output); ++index)
+        ((unsigned char *)refused_output)[index] = 0x5a;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_av_video_reconstruct(&execution, refused_output,
+            3ull * 124ull * 6ull * 6ull, &refused, &err) == YVEX_ERR_BOUNDS &&
+            !refused.complete && ((unsigned char *)refused_output)[0] == 0x5a,
+        "video reconstruction refuses insufficient workspace before decoding");
+    execution.maximum_workspace_bytes = 1024ull * 1024ull;
+    execution.output_channel_count = 2ull;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_av_video_reconstruct(&execution, refused_output,
+            3ull * 124ull * 6ull * 6ull, &refused, &err) == YVEX_ERR_INVALID_ARG &&
+            !refused.complete && ((unsigned char *)refused_output)[0] == 0x5a,
+        "video reconstruction refuses incomplete output normalization facts");
+    return 0;
+}
+
 int yvex_test_runtime_latent(void)
 {
     latent_fixture first_fixture = {0}, second_fixture = {0}, cancelled = {.cancelled = 1};
@@ -355,6 +499,6 @@ int yvex_test_runtime_latent(void)
     if (test_packed_av_layout() != 0) return 1;
     if (test_evaluator_evidence() != 0) return 1;
     if (test_av_unpack() != 0) return 1;
-    if (test_video_reconstruction_plan() != 0) return 1;
+    if (test_video_reconstruction_plan() != 0 || test_video_reconstruction_execution() != 0) return 1;
     return 0;
 }

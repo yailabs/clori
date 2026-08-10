@@ -921,40 +921,55 @@ graph composition. `internal_live_runner_available: true` through
 `end_user_path_available: false`: both final VAE decodes and media publication
 remain downstream.
 
-## Exact Visual VAE reconstruction schedule
+## Transactional Visual VAE reconstruction
 
-The generic AV runtime now admits the source reconstruction schedule before any
-pixel buffer can be published. For the minimum real 124-frame, 768x768 target,
+The generic AV runtime admits and executes the source reconstruction schedule
+before any pixel buffer can be published. For the minimum real 124-frame,
+768x768 target,
 37 latent frames become seven overlapping temporal decode windows. Each window
 contains seven latent frames and produces 28 candidate frames; the source
 contract retains five-frame output overlaps. Spatially, each 768-pixel axis is
 split into four 256-pixel tiles starting at 0, 160, 336, and 512, with overlaps
 96, 80, and 80. The complete plan therefore owns 112 inner decoder calls.
 
+One generic transaction now slices every temporal/spatial latent window, calls
+the admitted decoder, blends top then left spatial overlaps with the source
+weighting order, crops bottom/right overlap regions, composes the seven temporal
+windows, applies the source ImageNet output denormalization, clamps RGB to
+`[0,1]`, and publishes only the complete frame tensor. The decoder callback
+retains one component session across all calls, so 10.4 GB of Visual VAE weights
+are not reopened for every tile. Cancellation, incomplete decoder evidence,
+non-finite values, invalid normalization, and insufficient workspace publish no
+partial output.
+
 The plan refuses a mismatched latent duration, a non-latent-aligned canvas, a
 zero-window synthetic duration, excessive tile counts, and arithmetic overflow.
 Its deterministic identity is
 `6c4ae7302490072c4afd87ccbf7062d5e83898050af7c32aebc70e0d18686226`.
-This establishes reconstruction order and bounds only: numeric tiled decode,
-overlap blending, ImageNet output denormalization, and full-scale CUDA evidence
-remain required before RGB frame publication.
+An independent synthetic 124-frame fixture exercises 28 decode windows over a
+two-by-two tile grid and repeats byte-identically. A live 32x32 source-artifact
+attempt completed artifact admission and materialization but CUDA context
+creation returned `CUDA_ERROR_OUT_OF_MEMORY` while an unrelated GPU process and
+concurrent host workloads remained active. No process was stopped. Therefore
+the source-artifact full reconstruction remains an evidence gap; the generic
+numeric composition itself is implemented and tested.
 
 ## Progression and non-claims
 
-`progression_decision: proceed`
+`progression_decision: complete_evidence`
 
-`downstream_safe: true`
+`downstream_safe: false`
 
-The downstream consumer is numeric execution of the admitted Visual VAE
-reconstruction schedule and Audio VAE over final latent state, followed by
-synchronized media publication. There is no gate blocker, boundary
-incompleteness, evidence gap, or current external blocker in the admitted
+The downstream consumer is live source-artifact Visual VAE reconstruction and
+Audio VAE over final latent state, followed by synchronized media publication.
+There is no gate blocker or boundary incompleteness in the admitted
 bounded component, embedding, tokenizer, layer-zero, 50-layer text-stack,
-latent-controller, or reconstruction-plan contracts. Visual tile execution,
-exact Unicode NFC normalization, complete staged phase residency, synchronized
-media transaction, evaluation, and benchmark are deferred depth with explicit
-later consumers. They do not weaken the admitted component execution
-identities, and none is claimed by them.
+latent-controller, reconstruction-plan, or generic reconstruction contracts.
+The live source-artifact reconstruction is an evidence gap owned by the next
+available exclusive CUDA run. Exact Unicode NFC normalization, complete staged
+phase residency, synchronized media transaction, evaluation, and benchmark are
+deferred depth with explicit later consumers. They do not weaken the admitted
+component execution identities, and none is claimed by them.
 License review remains an external authorization prerequisite for any use that
 requires an eligibility conclusion.
 
@@ -964,7 +979,7 @@ This implementation boundary does not prove:
 - complete composite-artifact support or Physical Execution IR;
 - GB10 staged Omni-to-VAE pipeline execution or complete multi-component residency;
 - PyTorch seed-stream parity or model-quality usefulness of the bounded latent run;
-- full-scale/tiled Visual VAE qualification or either VAE in the complete latent and media pipeline;
+- source-artifact tiled Visual VAE qualification or either VAE in the complete latent and media pipeline;
 - audio/video synchronization, playable media output, or hosted serving;
 - Diffusers, SGLang, or vLLM parity;
 - model quality, generation speed, practical 768p, or 2K generation;

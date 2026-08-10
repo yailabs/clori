@@ -808,11 +808,427 @@ int yvex_runtime_av_video_reconstruction_plan_build(
     staged.frames = request->frames; staged.width = request->width;
     staged.height = request->height; staged.latent_frames = request->latent_frames;
     staged.latent_height = request->latent_height; staged.latent_width = request->latent_width;
+    staged.spatial_ratio = request->spatial_ratio;
     if (!av_video_reconstruction_identity(request, &staged, staged.identity))
         return latent_refuse(err, YVEX_ERR_STATE,
                              "video reconstruction identity could not be sealed");
     staged.complete = 1; *plan = staged; yvex_error_clear(err);
     return YVEX_OK;
+}
+
+typedef struct {
+    unsigned long long output_values, tile_values, blended_values;
+    unsigned long long chunk_values, latent_tile_values, overlap_values;
+    unsigned long long tile_count, maximum_tile_height, maximum_tile_width;
+    unsigned long long workspace_values, workspace_bytes;
+    unsigned long long temporal_ratio, main_frames, overlap_start, overlap_frames;
+} av_video_reconstruction_extents;
+
+static int av_video_reconstruction_extents_build(
+    const yvex_runtime_av_video_reconstruction_execution *execution,
+    unsigned long long output_capacity, av_video_reconstruction_extents *extents,
+    yvex_error *err)
+{
+    const yvex_runtime_av_video_reconstruction_plan *plan = execution ? execution->plan : NULL;
+    unsigned long long index, latent_values, tile_frame_values, values, overlap_end;
+    memset(extents, 0, sizeof(*extents));
+    if (!execution || execution->schema_version != YVEX_RUNTIME_AV_VIDEO_RECONSTRUCTION_SCHEMA_V1 ||
+        !plan || plan->schema_version != YVEX_RUNTIME_AV_VIDEO_RECONSTRUCTION_SCHEMA_V1 ||
+        !plan->complete || !yvex_sha256_hex_valid(plan->identity) || !execution->latent ||
+        !execution->latent_channels || !execution->decode || !plan->frames || !plan->width ||
+        !plan->height || !plan->latent_frames || !plan->latent_height || !plan->latent_width ||
+        !plan->spatial_ratio || plan->height % plan->latent_height ||
+        plan->width % plan->latent_width ||
+        plan->height / plan->latent_height != plan->spatial_ratio ||
+        plan->width / plan->latent_width != plan->spatial_ratio ||
+        !plan->temporal_chunks || !plan->decode_latent_frames || !plan->decode_frames ||
+        !plan->tile_y_count || !plan->tile_x_count || plan->tile_y_count > YVEX_RUNTIME_AV_TILE_CAP ||
+        plan->tile_x_count > YVEX_RUNTIME_AV_TILE_CAP ||
+        (!!execution->output_channel_mean != !!execution->output_channel_std) ||
+        (execution->output_channel_mean && execution->output_channel_count != 3ull) ||
+        plan->decode_frames % plan->decode_latent_frames)
+        return latent_refuse(err, YVEX_ERR_INVALID_ARG,
+                             "a complete bounded video reconstruction execution is required");
+    extents->temporal_ratio = plan->decode_frames / plan->decode_latent_frames;
+    if (!extents->temporal_ratio ||
+        !yvex_core_u64_mul(plan->tokens_per_chunk, extents->temporal_ratio,
+                           &extents->overlap_start) ||
+        !yvex_core_u64_add(extents->overlap_start, plan->frame_pre_padding,
+                           &overlap_end) ||
+        overlap_end > plan->decode_frames || plan->frame_pre_padding >= extents->overlap_start) {
+        return latent_refuse(err, YVEX_ERR_FORMAT,
+                             "video reconstruction temporal splits are inconsistent");
+    }
+    extents->main_frames = extents->overlap_start - plan->frame_pre_padding;
+    extents->overlap_start = overlap_end;
+    extents->overlap_frames = plan->decode_frames - overlap_end;
+    if (extents->overlap_frames != plan->frame_overlap ||
+        !yvex_core_u64_mul(execution->latent_channels, plan->latent_frames, &latent_values) ||
+        !yvex_core_u64_mul(latent_values, plan->latent_height, &latent_values) ||
+        !yvex_core_u64_mul(latent_values, plan->latent_width, &latent_values) ||
+        latent_values != execution->latent_capacity ||
+        !yvex_core_u64_mul(3ull, plan->frames, &extents->output_values) ||
+        !yvex_core_u64_mul(extents->output_values, plan->height, &extents->output_values) ||
+        !yvex_core_u64_mul(extents->output_values, plan->width, &extents->output_values) ||
+        output_capacity < extents->output_values)
+        return latent_refuse(err, YVEX_ERR_BOUNDS,
+                             "video reconstruction input or output extent is inconsistent");
+    for (index = 0ull; index < plan->tile_y_count; ++index) {
+        if (!plan->tile_y_length[index] || plan->tile_y_length[index] % plan->spatial_ratio ||
+            plan->tile_y_start[index] % plan->spatial_ratio ||
+            plan->tile_y_start[index] > plan->height ||
+            plan->tile_y_length[index] > plan->height - plan->tile_y_start[index])
+            return latent_refuse(err, YVEX_ERR_FORMAT,
+                                 "video reconstruction height tiles are invalid");
+        if (plan->tile_y_length[index] > extents->maximum_tile_height)
+            extents->maximum_tile_height = plan->tile_y_length[index];
+    }
+    for (index = 0ull; index < plan->tile_x_count; ++index) {
+        if (!plan->tile_x_length[index] || plan->tile_x_length[index] % plan->spatial_ratio ||
+            plan->tile_x_start[index] % plan->spatial_ratio ||
+            plan->tile_x_start[index] > plan->width ||
+            plan->tile_x_length[index] > plan->width - plan->tile_x_start[index])
+            return latent_refuse(err, YVEX_ERR_FORMAT,
+                                 "video reconstruction width tiles are invalid");
+        if (plan->tile_x_length[index] > extents->maximum_tile_width)
+            extents->maximum_tile_width = plan->tile_x_length[index];
+    }
+    if (!yvex_core_u64_mul(plan->tile_y_count, plan->tile_x_count, &extents->tile_count) ||
+        !yvex_core_u64_mul(3ull, plan->decode_frames, &tile_frame_values) ||
+        !yvex_core_u64_mul(tile_frame_values, extents->maximum_tile_height, &values) ||
+        !yvex_core_u64_mul(values, extents->maximum_tile_width, &extents->blended_values) ||
+        !yvex_core_u64_mul(extents->blended_values, extents->tile_count,
+                           &extents->tile_values) ||
+        !yvex_core_u64_mul(tile_frame_values, plan->height, &extents->chunk_values) ||
+        !yvex_core_u64_mul(extents->chunk_values, plan->width, &extents->chunk_values) ||
+        !yvex_core_u64_mul(execution->latent_channels, plan->decode_latent_frames,
+                           &extents->latent_tile_values) ||
+        !yvex_core_u64_mul(extents->latent_tile_values,
+                           extents->maximum_tile_height / plan->spatial_ratio,
+                           &extents->latent_tile_values) ||
+        !yvex_core_u64_mul(extents->latent_tile_values,
+                           extents->maximum_tile_width / plan->spatial_ratio,
+                           &extents->latent_tile_values) ||
+        !yvex_core_u64_mul(3ull, extents->overlap_frames, &extents->overlap_values) ||
+        !yvex_core_u64_mul(extents->overlap_values, plan->height, &extents->overlap_values) ||
+        !yvex_core_u64_mul(extents->overlap_values, plan->width, &extents->overlap_values) ||
+        !yvex_core_u64_add(extents->output_values, extents->tile_values,
+                           &extents->workspace_values) ||
+        !yvex_core_u64_add(extents->workspace_values, extents->blended_values,
+                           &extents->workspace_values) ||
+        !yvex_core_u64_add(extents->workspace_values, extents->chunk_values,
+                           &extents->workspace_values) ||
+        !yvex_core_u64_add(extents->workspace_values, extents->latent_tile_values,
+                           &extents->workspace_values) ||
+        !yvex_core_u64_add(extents->workspace_values, extents->overlap_values,
+                           &extents->workspace_values) ||
+        !yvex_core_u64_mul(extents->workspace_values, sizeof(float),
+                           &extents->workspace_bytes) ||
+        extents->workspace_bytes > execution->maximum_workspace_bytes ||
+        extents->workspace_bytes > SIZE_MAX)
+        return latent_refuse(err, YVEX_ERR_BOUNDS,
+                             "video reconstruction exceeds its transactional workspace budget");
+    if (execution->output_channel_mean)
+        for (index = 0ull; index < execution->output_channel_count; ++index)
+            if (!isfinite(execution->output_channel_mean[index]) ||
+                !isfinite(execution->output_channel_std[index]) ||
+                execution->output_channel_std[index] <= 0.0f)
+                return latent_refuse(err, YVEX_ERR_FORMAT,
+                                     "video output normalization facts are invalid");
+    return YVEX_OK;
+}
+
+static void av_video_latent_tile_copy(
+    const yvex_runtime_av_video_reconstruction_execution *execution,
+    const av_video_reconstruction_extents *extents, unsigned long long chunk,
+    unsigned long long tile_y, unsigned long long tile_x, float *destination)
+{
+    const yvex_runtime_av_video_reconstruction_plan *plan = execution->plan;
+    unsigned long long latent_y = plan->tile_y_start[tile_y] / plan->spatial_ratio;
+    unsigned long long latent_x = plan->tile_x_start[tile_x] / plan->spatial_ratio;
+    unsigned long long height = plan->tile_y_length[tile_y] / plan->spatial_ratio;
+    unsigned long long width = plan->tile_x_length[tile_x] / plan->spatial_ratio;
+    unsigned long long channel, frame, row, column;
+    for (channel = 0ull; channel < execution->latent_channels; ++channel)
+        for (frame = 0ull; frame < plan->decode_latent_frames; ++frame) {
+            unsigned long long source_frame = chunk * plan->tokens_per_chunk + frame;
+            if (source_frame >= plan->latent_frames) source_frame = plan->latent_frames - 1ull;
+            for (row = 0ull; row < height; ++row)
+                for (column = 0ull; column < width; ++column) {
+                    unsigned long long source =
+                        ((channel * plan->latent_frames + source_frame) * plan->latent_height +
+                         latent_y + row) * plan->latent_width + latent_x + column;
+                    unsigned long long target =
+                        ((channel * plan->decode_latent_frames + frame) * height + row) *
+                        width + column;
+                    destination[target] = execution->latent[source];
+                }
+        }
+    (void)extents;
+}
+
+static void av_video_blend_axis(
+    float *destination, const float *prior, unsigned long long channels,
+    unsigned long long frames, unsigned long long height, unsigned long long width,
+    unsigned long long prior_height, unsigned long long prior_width,
+    unsigned long long extent, int vertical)
+{
+    unsigned long long channel, frame, row, column;
+    if (!extent) return;
+    for (channel = 0ull; channel < channels; ++channel)
+        for (frame = 0ull; frame < frames; ++frame)
+            for (row = 0ull; row < height; ++row)
+                for (column = 0ull; column < width; ++column) {
+                    unsigned long long position = vertical ? row : column;
+                    unsigned long long prior_row = vertical ? prior_height - extent + row : row;
+                    unsigned long long prior_column = vertical ? column : prior_width - extent + column;
+                    unsigned long long destination_index, prior_index;
+                    float weight;
+                    if (position >= extent) continue;
+                    destination_index = ((channel * frames + frame) * height + row) * width + column;
+                    prior_index = ((channel * frames + frame) * prior_height + prior_row) *
+                                  prior_width + prior_column;
+                    weight = (float)position / (float)extent;
+                    destination[destination_index] =
+                        prior[prior_index] * (1.0f - weight) +
+                        destination[destination_index] * weight;
+                }
+}
+
+static void av_video_tile_publish(
+    const yvex_runtime_av_video_reconstruction_plan *plan,
+    const av_video_reconstruction_extents *extents, const float *tiles,
+    float *blended, float *chunk_output, unsigned long long tile_y,
+    unsigned long long tile_x)
+{
+    unsigned long long tile_index = tile_y * plan->tile_x_count + tile_x;
+    unsigned long long height = plan->tile_y_length[tile_y];
+    unsigned long long width = plan->tile_x_length[tile_x];
+    unsigned long long kept_height = height;
+    unsigned long long kept_width = width;
+    unsigned long long values = 3ull * plan->decode_frames * height * width;
+    unsigned long long channel, frame, row, column;
+    const float *current = tiles + tile_index * extents->blended_values;
+    memcpy(blended, current, (size_t)(values * sizeof(float)));
+    if (tile_y) {
+        const float *prior = tiles + ((tile_y - 1ull) * plan->tile_x_count + tile_x) *
+                                    extents->blended_values;
+        av_video_blend_axis(blended, prior, 3ull, plan->decode_frames, height, width,
+                            plan->tile_y_length[tile_y - 1ull], width,
+                            plan->tile_y_overlap[tile_y - 1ull], 1);
+    }
+    if (tile_x) {
+        const float *prior = tiles + (tile_index - 1ull) * extents->blended_values;
+        av_video_blend_axis(blended, prior, 3ull, plan->decode_frames, height, width,
+                            height, plan->tile_x_length[tile_x - 1ull],
+                            plan->tile_x_overlap[tile_x - 1ull], 0);
+    }
+    if (tile_y + 1ull < plan->tile_y_count) kept_height -= plan->tile_y_overlap[tile_y];
+    if (tile_x + 1ull < plan->tile_x_count) kept_width -= plan->tile_x_overlap[tile_x];
+    for (channel = 0ull; channel < 3ull; ++channel)
+        for (frame = 0ull; frame < plan->decode_frames; ++frame)
+            for (row = 0ull; row < kept_height; ++row)
+                for (column = 0ull; column < kept_width; ++column) {
+                    unsigned long long source =
+                        ((channel * plan->decode_frames + frame) * height + row) * width + column;
+                    unsigned long long target =
+                        ((channel * plan->decode_frames + frame) * plan->height +
+                         plan->tile_y_start[tile_y] + row) * plan->width +
+                        plan->tile_x_start[tile_x] + column;
+                    chunk_output[target] = blended[source];
+                }
+}
+
+static void av_video_temporal_blend(
+    float *chunk, const float *overlap,
+    const yvex_runtime_av_video_reconstruction_plan *plan,
+    const av_video_reconstruction_extents *extents)
+{
+    unsigned long long channel, frame, pixel;
+    unsigned long long pixels = plan->height * plan->width;
+    for (channel = 0ull; channel < 3ull; ++channel)
+        for (frame = 0ull; frame < extents->overlap_frames; ++frame) {
+            float weight = (float)frame / (float)extents->overlap_frames;
+            for (pixel = 0ull; pixel < pixels; ++pixel) {
+                unsigned long long target =
+                    (channel * plan->decode_frames + plan->frame_pre_padding + frame) * pixels + pixel;
+                unsigned long long source =
+                    (channel * extents->overlap_frames + frame) * pixels + pixel;
+                chunk[target] = overlap[source] * (1.0f - weight) + chunk[target] * weight;
+            }
+        }
+}
+
+static void av_video_temporal_copy(
+    float *destination, unsigned long long *write_frame, const float *source,
+    unsigned long long source_total_frames, unsigned long long source_start,
+    unsigned long long source_frames,
+    const yvex_runtime_av_video_reconstruction_plan *plan)
+{
+    unsigned long long channel, frame, pixel, pixels = plan->height * plan->width;
+    unsigned long long copy_frames = source_frames;
+    if (*write_frame >= plan->frames) copy_frames = 0ull;
+    else if (copy_frames > plan->frames - *write_frame) copy_frames = plan->frames - *write_frame;
+    for (channel = 0ull; channel < 3ull; ++channel)
+        for (frame = 0ull; frame < copy_frames; ++frame)
+            for (pixel = 0ull; pixel < pixels; ++pixel)
+                destination[(channel * plan->frames + *write_frame + frame) * pixels + pixel] =
+                    source[(channel * source_total_frames + source_start + frame) * pixels + pixel];
+    *write_frame += copy_frames;
+}
+
+int yvex_runtime_av_video_reconstruct(
+    const yvex_runtime_av_video_reconstruction_execution *execution,
+    float *output, unsigned long long output_capacity,
+    yvex_runtime_av_video_reconstruction_result *result, yvex_error *err)
+{
+    const yvex_runtime_av_video_reconstruction_plan *plan = execution ? execution->plan : NULL;
+    av_video_reconstruction_extents extents;
+    yvex_runtime_av_video_reconstruction_result staged = {0};
+    yvex_runtime_av_video_decode_window window = {0};
+    yvex_runtime_av_video_decode_evidence evidence;
+    yvex_sha256 identity;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    float *workspace = NULL, *published, *tiles, *blended, *chunk_output, *latent_tile, *overlap;
+    unsigned long long chunk, tile_y, tile_x, index, write_frame = 0ull;
+    int rc;
+    if (result) memset(result, 0, sizeof(*result));
+    if (!output || !result)
+        return latent_refuse(err, YVEX_ERR_INVALID_ARG,
+                             "video reconstruction output and result are required");
+    rc = av_video_reconstruction_extents_build(execution, output_capacity, &extents, err);
+    if (rc != YVEX_OK) return rc;
+    workspace = yvex_core_malloc((size_t)extents.workspace_bytes);
+    if (!workspace) return latent_refuse(err, YVEX_ERR_NOMEM,
+                                         "video reconstruction workspace allocation failed");
+    memset(workspace, 0, (size_t)extents.workspace_bytes);
+    published = workspace;
+    tiles = published + extents.output_values;
+    blended = tiles + extents.tile_values;
+    chunk_output = blended + extents.blended_values;
+    latent_tile = chunk_output + extents.chunk_values;
+    overlap = latent_tile + extents.latent_tile_values;
+    yvex_sha256_init(&identity);
+    if (!yvex_sha256_update_text(&identity, "yvex.runtime.av.video-reconstruction.execution.v1") ||
+        !yvex_sha256_update_text(&identity, plan->identity) ||
+        !yvex_sha256_update_u64_be(&identity, execution->latent_channels) ||
+        !yvex_sha256_update_u64_be(&identity, execution->latent_capacity) ||
+        !yvex_sha256_update_u64_be(&identity, execution->output_channel_count))
+        rc = latent_refuse(err, YVEX_ERR_STATE,
+                           "video reconstruction execution identity initialization failed");
+    for (index = 0ull; rc == YVEX_OK && index < execution->latent_capacity; ++index)
+        if (!isfinite(execution->latent[index]) || !latent_hash_f32(&identity, execution->latent[index]))
+            rc = latent_refuse(err, YVEX_ERR_FORMAT,
+                               "video reconstruction latent contains a non-finite value");
+    for (chunk = 0ull; rc == YVEX_OK && chunk < plan->temporal_chunks; ++chunk) {
+        memset(chunk_output, 0, (size_t)(extents.chunk_values * sizeof(float)));
+        for (tile_y = 0ull; rc == YVEX_OK && tile_y < plan->tile_y_count; ++tile_y)
+            for (tile_x = 0ull; rc == YVEX_OK && tile_x < plan->tile_x_count; ++tile_x) {
+                unsigned long long tile_index = tile_y * plan->tile_x_count + tile_x;
+                unsigned long long latent_height =
+                    plan->tile_y_length[tile_y] / plan->spatial_ratio;
+                unsigned long long latent_width =
+                    plan->tile_x_length[tile_x] / plan->spatial_ratio;
+                unsigned long long output_values = 3ull * plan->decode_frames *
+                                                    plan->tile_y_length[tile_y] *
+                                                    plan->tile_x_length[tile_x];
+                float *tile_output = tiles + tile_index * extents.blended_values;
+                if (execution->cancel_requested && execution->cancel_requested(execution->cancel_context)) {
+                    rc = latent_refuse(err, YVEX_ERR_CANCELLED,
+                                       "video reconstruction was cancelled between decode calls");
+                    break;
+                }
+                av_video_latent_tile_copy(execution, &extents, chunk, tile_y, tile_x, latent_tile);
+                memset(&evidence, 0, sizeof(evidence));
+                window.latent = latent_tile; window.latent_channels = execution->latent_channels;
+                window.latent_frames = plan->decode_latent_frames;
+                window.latent_height = latent_height; window.latent_width = latent_width;
+                window.output = tile_output; window.output_capacity = output_values;
+                rc = execution->decode(execution->decode_context, &window, &evidence, err);
+                if (rc == YVEX_OK && (!evidence.complete || evidence.output_values != output_values ||
+                    !yvex_sha256_hex_valid(evidence.execution_identity)))
+                    rc = latent_refuse(err, YVEX_ERR_STATE,
+                                       "video decoder did not publish exact execution evidence");
+                for (index = 0ull; rc == YVEX_OK && index < output_values; ++index)
+                    if (!isfinite(tile_output[index]))
+                        rc = latent_refuse(err, YVEX_ERR_FORMAT,
+                                           "video decoder published a non-finite value");
+                if (rc == YVEX_OK &&
+                    (!yvex_sha256_update_text(&identity, evidence.execution_identity) ||
+                     !yvex_core_u64_add(staged.kernel_launches, evidence.kernel_launches,
+                                        &staged.kernel_launches) ||
+                     !yvex_core_u64_add(staged.h2d_bytes, evidence.h2d_bytes,
+                                        &staged.h2d_bytes) ||
+                     !yvex_core_u64_add(staged.d2h_bytes, evidence.d2h_bytes,
+                                        &staged.d2h_bytes)))
+                    rc = latent_refuse(err, YVEX_ERR_BOUNDS,
+                                       "video reconstruction evidence accounting overflowed");
+                if (evidence.device_bytes > staged.peak_device_bytes)
+                    staged.peak_device_bytes = evidence.device_bytes;
+                staged.decode_calls++;
+            }
+        for (tile_y = 0ull; rc == YVEX_OK && tile_y < plan->tile_y_count; ++tile_y)
+            for (tile_x = 0ull; tile_x < plan->tile_x_count; ++tile_x)
+                av_video_tile_publish(plan, &extents, tiles, blended, chunk_output, tile_y, tile_x);
+        if (rc == YVEX_OK && chunk) av_video_temporal_blend(chunk_output, overlap, plan, &extents);
+        if (rc == YVEX_OK)
+            av_video_temporal_copy(published, &write_frame, chunk_output,
+                                   plan->decode_frames, plan->frame_pre_padding,
+                                   extents.main_frames, plan);
+        if (rc == YVEX_OK) {
+            unsigned long long channel, frame, pixel, pixels = plan->height * plan->width;
+            for (channel = 0ull; channel < 3ull; ++channel)
+                for (frame = 0ull; frame < extents.overlap_frames; ++frame)
+                    for (pixel = 0ull; pixel < pixels; ++pixel)
+                        overlap[(channel * extents.overlap_frames + frame) * pixels + pixel] =
+                            chunk_output[(channel * plan->decode_frames + extents.overlap_start + frame) *
+                                         pixels + pixel];
+        }
+    }
+    if (rc == YVEX_OK)
+        av_video_temporal_copy(published, &write_frame, overlap,
+                               extents.overlap_frames, 0ull, extents.overlap_frames, plan);
+    if (rc == YVEX_OK && (write_frame != plan->frames || staged.decode_calls != plan->total_decode_calls))
+        rc = latent_refuse(err, YVEX_ERR_STATE,
+                           "video reconstruction did not reconcile its frame or call plan");
+    if (rc == YVEX_OK && execution->output_channel_mean) {
+        unsigned long long channel, values_per_channel = plan->frames * plan->height * plan->width;
+        for (channel = 0ull; channel < execution->output_channel_count; ++channel) {
+            float mean = execution->output_channel_mean[channel];
+            float std = execution->output_channel_std[channel];
+            if (!latent_hash_f32(&identity, mean) || !latent_hash_f32(&identity, std)) {
+                rc = latent_refuse(err, YVEX_ERR_STATE,
+                                   "video output normalization identity failed");
+                break;
+            }
+            for (index = 0ull; index < values_per_channel; ++index) {
+                float value = published[channel * values_per_channel + index] * std + mean;
+                published[channel * values_per_channel + index] =
+                    value < 0.0f ? 0.0f : (value > 1.0f ? 1.0f : value);
+            }
+        }
+    }
+    for (index = 0ull; rc == YVEX_OK && index < extents.output_values; ++index)
+        if (!latent_hash_f32(&identity, published[index]))
+            rc = latent_refuse(err, YVEX_ERR_STATE,
+                               "video reconstruction output identity failed");
+    if (rc == YVEX_OK && execution->cancel_requested &&
+        execution->cancel_requested(execution->cancel_context))
+        rc = latent_refuse(err, YVEX_ERR_CANCELLED,
+                           "video reconstruction publication was cancelled");
+    if (rc == YVEX_OK && !yvex_sha256_final(&identity, digest))
+        rc = latent_refuse(err, YVEX_ERR_STATE,
+                           "video reconstruction execution identity finalization failed");
+    if (rc == YVEX_OK) {
+        yvex_sha256_hex(digest, staged.execution_identity);
+        memcpy(output, published, (size_t)(extents.output_values * sizeof(float)));
+        staged.schema_version = YVEX_RUNTIME_AV_VIDEO_RECONSTRUCTION_SCHEMA_V1;
+        staged.output_values = extents.output_values;
+        staged.peak_workspace_bytes = extents.workspace_bytes;
+        staged.complete = 1; *result = staged; yvex_error_clear(err);
+    }
+    yvex_core_free(workspace);
+    return rc;
 }
 
 static int packed_layout_extents(

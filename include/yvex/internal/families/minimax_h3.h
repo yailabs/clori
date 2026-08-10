@@ -290,8 +290,8 @@ typedef struct {
     int source_verified, architecture_admitted, roles_complete;
 } yvex_minimax_h3_summary;
 typedef struct {
-    const float *video_mean, *video_std, *audio_mean, *audio_std;
-    unsigned long long video_channels, audio_channels;
+    const float *video_mean, *video_std, *audio_mean, *audio_std, *pixel_mean, *pixel_std;
+    unsigned long long video_channels, audio_channels, pixel_channels;
 } yvex_minimax_h3_latent_normalization;
 typedef struct yvex_minimax_h3_target yvex_minimax_h3_target;
 typedef struct { const char *source_root; } yvex_minimax_h3_open_options;
@@ -399,8 +399,7 @@ typedef enum {
     YVEX_MINIMAX_H3_COMPONENT_EXECUTION_CANCELLED
 } yvex_minimax_h3_component_execution_code;
 typedef struct {
-    yvex_minimax_h3_component_execution_code code;
-    char tensor_name[256];
+    yvex_minimax_h3_component_execution_code code; char tensor_name[256];
     unsigned long long expected, actual;
     const char *reason;
 } yvex_minimax_h3_component_execution_failure;
@@ -579,6 +578,9 @@ typedef struct {
         const yvex_minimax_h3_video_decode_options *options,
         yvex_minimax_h3_video_decode_result *result, yvex_minimax_h3_component_execution_failure *failure,
         yvex_error *err);
+    int (*video_vae_decode_cuda)(yvex_runtime_component_session *,
+        const yvex_minimax_h3_video_decode_options *, yvex_minimax_h3_video_decode_result *,
+        yvex_minimax_h3_component_execution_failure *, yvex_error *);
     int (*video_vae_execute_artifact_cpu)(
         const yvex_artifact *artifact, const yvex_gguf *gguf, const yvex_tensor_table *tensors,
         const yvex_minimax_h3_video_decode_options *options,

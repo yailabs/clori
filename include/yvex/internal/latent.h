@@ -166,6 +166,7 @@ typedef struct yvex_runtime_av_video_reconstruction_plan {
     unsigned int schema_version;
     unsigned long long frames, width, height;
     unsigned long long latent_frames, latent_height, latent_width;
+    unsigned long long spatial_ratio;
     unsigned long long tokens_per_chunk, token_overlap, frame_pre_padding;
     unsigned long long frame_overlap, temporal_chunks, decode_latent_frames;
     unsigned long long decode_frames, pad_tokens, tile_y_count, tile_x_count;
@@ -179,6 +180,44 @@ typedef struct yvex_runtime_av_video_reconstruction_plan {
     char identity[YVEX_SHA256_HEX_CAP];
     int complete;
 } yvex_runtime_av_video_reconstruction_plan;
+
+typedef struct yvex_runtime_av_video_decode_window {
+    const float *latent;
+    unsigned long long latent_channels, latent_frames, latent_height, latent_width;
+    float *output;
+    unsigned long long output_capacity;
+} yvex_runtime_av_video_decode_window;
+
+typedef struct yvex_runtime_av_video_decode_evidence {
+    unsigned long long output_values, kernel_launches, h2d_bytes, d2h_bytes, device_bytes;
+    char execution_identity[YVEX_SHA256_HEX_CAP];
+    int complete;
+} yvex_runtime_av_video_decode_evidence;
+
+typedef int (*yvex_runtime_av_video_decode_fn)(
+    void *context, const yvex_runtime_av_video_decode_window *window,
+    yvex_runtime_av_video_decode_evidence *evidence, yvex_error *err);
+
+typedef struct yvex_runtime_av_video_reconstruction_execution {
+    unsigned int schema_version;
+    const yvex_runtime_av_video_reconstruction_plan *plan;
+    const float *latent;
+    unsigned long long latent_channels, latent_capacity, maximum_workspace_bytes;
+    const float *output_channel_mean, *output_channel_std;
+    unsigned long long output_channel_count;
+    yvex_runtime_av_video_decode_fn decode;
+    void *decode_context;
+    int (*cancel_requested)(void *context);
+    void *cancel_context;
+} yvex_runtime_av_video_reconstruction_execution;
+
+typedef struct yvex_runtime_av_video_reconstruction_result {
+    unsigned int schema_version;
+    unsigned long long output_values, decode_calls, peak_workspace_bytes;
+    unsigned long long kernel_launches, h2d_bytes, d2h_bytes, peak_device_bytes;
+    char execution_identity[YVEX_SHA256_HEX_CAP];
+    int complete;
+} yvex_runtime_av_video_reconstruction_result;
 
 int yvex_runtime_latent_execute(
     const yvex_runtime_latent_request *request,
@@ -230,6 +269,10 @@ int yvex_runtime_av_unpack(
 int yvex_runtime_av_video_reconstruction_plan_build(
     const yvex_runtime_av_video_reconstruction_request *request,
     yvex_runtime_av_video_reconstruction_plan *plan, yvex_error *err);
+int yvex_runtime_av_video_reconstruct(
+    const yvex_runtime_av_video_reconstruction_execution *execution,
+    float *output, unsigned long long output_capacity,
+    yvex_runtime_av_video_reconstruction_result *result, yvex_error *err);
 
 #ifdef __cplusplus
 }

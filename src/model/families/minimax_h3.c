@@ -767,7 +767,6 @@ static int architecture_build(yvex_minimax_h3_target *target,
                         architecture->identity);
     target->summary.architecture_admitted = 1;
     return YVEX_OK;
-
 fail:
     return family_refuse(failure, YVEX_MINIMAX_H3_FAILURE_ARCHITECTURE,
                          YVEX_MINIMAX_H3_COMPONENT_COUNT, 0, 0u, NULL,
@@ -775,6 +774,8 @@ fail:
 }
 static const yvex_minimax_h3_latent_normalization *latent_normalization(void)
 {
+    static const float pixel_mean[3] = {0.485f, 0.456f, 0.406f};
+    static const float pixel_std[3] = {0.229f, 0.224f, 0.225f};
     static const float video_mean[24] = {
         0.858090341f, -0.960659146f, 1.06616402f, -0.509032547f,
         -0.272758186f, -1.36754143f, -0.255325496f, -0.269075543f,
@@ -812,7 +813,7 @@ static const yvex_minimax_h3_latent_normalization *latent_normalization(void)
         1.71804595f, 1.63072193f, 1.8661226f, 1.56137681f,
     };
     static const yvex_minimax_h3_latent_normalization facts = {
-        video_mean, video_std, audio_mean, audio_std, 24ull, 32ull};
+        video_mean, video_std, audio_mean, audio_std, pixel_mean, pixel_std, 24ull, 32ull, 3ull};
     return &facts;
 }
 static int architecture_canonical(yvex_minimax_h3_architecture *architecture,
@@ -830,7 +831,6 @@ static int architecture_canonical(yvex_minimax_h3_architecture *architecture,
     if (rc == YVEX_OK) *architecture = target.architecture;
     return rc;
 }
-
 static int unresolved_requirements_build(yvex_minimax_h3_target *target,
                                          yvex_minimax_h3_failure *failure,
                                          yvex_error *err)
