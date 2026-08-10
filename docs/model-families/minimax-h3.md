@@ -37,8 +37,8 @@ promotion rules remain in the [family integration contract](integration.md).
 | Branch status | open |
 | Branch completion | first YVEX-authored playable synchronized MiniMax-H3 FL2VA audio-video output |
 | Current wave | `R010.MINIMAX.H3.FL2VA.END_TO_END.0` |
-| Current boundary | exact Audio VAE, Visual VAE, Text Encoder, and Transformer component artifacts admitted; complete Audio and bounded multi-patch Visual CPU decodes conform; prompt conditioning and the complete 50-block Omni-Transformer envelope conform on GB10 |
-| Next expected boundary | exact iterative latent-controller composition, followed by complete VAE composition and synchronized media publication |
+| Current boundary | exact component artifacts admitted; complete Audio and bounded Visual CPU decodes conform; prompt conditioning and the 50-block Omni envelope conform on GB10; paired latent RNG, schedule, solver, and transaction semantics are admitted |
+| Next expected boundary | bind exact packed position layout and the resident Omni evaluator into the latent loop, then complete VAE composition and synchronized media publication |
 
 The branch preserves the accepted intake history and remains open across all
 later source, artifact, graph, backend, residency, latent, VAE, media, and
@@ -64,7 +64,7 @@ or rename the branch.
 | Tensor-role-map identity | `61e7a2cfc29e6dd3da966878f5388f1472a406d7e33ba34ef65f44b61f08f013` |
 | Transformation IR identity | `bd941103d754df8c1eb02ff9b90db4ba86b7e389691f2d0c4027343eccbc0b0b` |
 | Aggregate derivation identity | `cc2886a388a475c2df246558dfb41c8d66e549afd4c4e34d19e2bbd3b70a3ff5` |
-| Evidence stage | exact source verified; architecture, tensor roles, and Transformation IR admitted; all four weighted component artifacts emitted and admitted; complete Audio and bounded multi-patch Visual CPU decodes numerically conform; exact ASCII Qwen2 BPE, multi-token 50-layer text conditioning, and the complete 50-block Omni-Transformer envelope conform on GB10 |
+| Evidence stage | exact source verified; architecture, tensor roles, and Transformation IR admitted; all four weighted artifacts admitted; Audio and bounded Visual decodes numerically conform; ASCII prompt conditioning and the 50-block Omni envelope conform on GB10; transactional paired latent evolution is admitted |
 
 The external evidence directory used during the intake was
 `/home/dgmothx/lab/models/intake/minimax-h3/<FULL_REVISION>/`. That path is an
@@ -822,6 +822,47 @@ backend ABIs. `internal_live_runner_available: true`.
 iterative latent ownership, VAE composition, and media publication remain the
 downstream consumer.
 
+## Transactional FL2VA latent-controller boundary
+
+The family plan now accepts an explicit operator-selected inference count from
+1 through 64 and constructs paired terminal-zero sigma grids using the exact
+data-ward shifts 12 for video and 3 for audio. Each model timestep is
+`1 - sigma`. The family-owned solver retains the source F32 evaluation order:
+`denoised = sample + (1 - timestep) * velocity`, followed by the decreasing
+sigma blend into the next candidate.
+
+The generic runtime owns one transaction over both latent domains. A versioned
+PCG XSH-RR stream followed by Box-Muller F32 publication initializes every
+video value first and then every audio value. This is an explicit deterministic
+YVEX RNG contract; it is not a claim that one numeric seed reproduces
+PyTorch's generator stream. Cancellation, malformed grids, insufficient
+workspace, evaluator failure, or solver failure publish neither domain.
+Successful execution identities bind the plan, seed, ordered sigma grids,
+initial state, and final paired state.
+
+The exact bounded conformance geometry uses one text row, 32x32 output, five
+frames, and one model evaluation. It produces 192 video values and 512 audio
+values and exercises family geometry, paired scheduling, seeded initialization,
+and atomic publication. Independent generic tests cover deterministic normal
+vectors, repeated execution, cancellation rollback, and workspace refusal.
+
+The Transformer graph now consumes a generic component execution session, so
+the admitted 66,280,430,144-byte residency can remain open across every latent
+iteration. A live one-block execution through this persistent-session boundary
+retained residency identity
+`8fabd88629b671abf1ca8dd3d659d7ec9f173996039082d7354ff73371ef7308`
+and passed its existing independent oracle tolerance. This establishes the
+required lifecycle boundary, not a completed multi-step model run.
+
+`production_capability_available: true` for deterministic transactional latent
+initialization and iteration with a supplied admitted evaluator.
+`production_api_available: true` through the generic latent ABI and the family
+graph composition. `internal_live_runner_available: true` for the resident
+Transformer boundary. `operator_command_available: false` and
+`end_user_path_available: false`: exact packed position construction, real
+Omni-driven iteration, both final VAE decodes, and media publication remain
+downstream.
+
 ## Progression and non-claims
 
 `progression_decision: proceed`
@@ -845,7 +886,7 @@ This implementation boundary does not prove:
 - multimodal Qwen3-VL vision conditioning or complete iterative latent generation;
 - complete composite-artifact support or Physical Execution IR;
 - GB10 Omni/VAE pipeline execution or simultaneous/staged runtime residency;
-- solver, timestep-loop, latent-RNG, or complete scheduler composition correctness;
+- real Omni-driven multi-step latent generation or PyTorch seed-stream parity;
 - full-scale/tiled Visual VAE qualification or either VAE in the complete latent and media pipeline;
 - audio/video synchronization, playable media output, or hosted serving;
 - Diffusers, SGLang, or vLLM parity;

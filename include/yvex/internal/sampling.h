@@ -190,6 +190,13 @@ typedef struct {
     char draw_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_sampling_uniform_result;
 
+typedef struct {
+    unsigned int schema_version, rng_algorithm, rng_version;
+    int completed;
+    unsigned long long seed, value_count, uniform_draw_count, workspace_bytes;
+    char normal_identity[YVEX_SHA256_HEX_CAP];
+} yvex_runtime_sampling_normal_result;
+
 typedef struct yvex_runtime_sampling_context yvex_runtime_sampling_context;
 typedef struct yvex_runtime_sampling_transaction yvex_runtime_sampling_transaction;
 
@@ -223,6 +230,11 @@ int yvex_runtime_sampling_transaction_uniforms(
     yvex_runtime_sampling_transaction *transaction, double *values,
     unsigned long long value_count,
     yvex_runtime_sampling_uniform_result *result, yvex_error *err);
+int yvex_runtime_sampling_normal_f32(
+    float *values, unsigned long long value_capacity,
+    unsigned long long value_count, unsigned long long seed,
+    unsigned long long maximum_workspace_bytes,
+    yvex_runtime_sampling_normal_result *result, yvex_error *err);
 int yvex_runtime_sampling_transaction_prepare_commit(
     yvex_runtime_sampling_transaction *transaction, yvex_error *err);
 void yvex_runtime_sampling_transaction_publish_commit(

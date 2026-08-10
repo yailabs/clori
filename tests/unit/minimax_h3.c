@@ -2,6 +2,7 @@
 #include "tests/test.h"
 
 #include <yvex/internal/families/minimax_h3.h>
+#include <yvex/internal/latent.h>
 
 #include "src/graph/private.h"
 #include <yvex/internal/artifact.h>
@@ -571,15 +572,30 @@ static int test_video_execution_refusals(void)
     return 0;
 }
 
+static int test_latent_evaluate(
+    void *context, const float *video, unsigned long long video_values,
+    const float *audio, unsigned long long audio_values, float video_timestep,
+    float audio_timestep, float *video_velocity, float *audio_velocity, yvex_error *err)
+{
+    (void)context; (void)video; (void)audio; (void)video_timestep; (void)audio_timestep;
+    memset(video_velocity, 0, (size_t)video_values * sizeof(*video_velocity));
+    memset(audio_velocity, 0, (size_t)audio_values * sizeof(*audio_velocity));
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
 static int test_t2va_plan(void)
 {
-    yvex_minimax_h3_t2va_plan first, repeated;
+    yvex_minimax_h3_t2va_plan first, repeated, minimal;
+    yvex_runtime_latent_request latent_request = {0};
+    yvex_runtime_latent_result latent_result;
+    float video_latent[192], audio_latent[512];
     float sample[2] = {0.5f, -1.0f}, velocity[2] = {2.0f, 4.0f};
     float stepped[2] = {13.0f, 13.0f};
     yvex_error err;
 
     YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->t2va_plan_build(
-                         &first, 16ull, 1344ull, 768ull, 124ull, &err) == YVEX_OK &&
+                         &first, 16ull, 1344ull, 768ull, 124ull, 19u, &err) == YVEX_OK &&
                          first.complete && first.video_latent_frames == 37ull &&
                          first.video_latent_height == 48ull &&
                          first.video_latent_width == 84ull &&
@@ -607,16 +623,37 @@ static int test_t2va_plan(void)
                          stepped[1] == -0.4f,
                      "t2va scheduler validates every value before publishing output");
     YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->t2va_plan_build(
-                         &repeated, 16ull, 1344ull, 768ull, 124ull, &err) == YVEX_OK &&
+                         &repeated, 16ull, 1344ull, 768ull, 124ull, 19u, &err) == YVEX_OK &&
                          strcmp(first.identity, repeated.identity) == 0,
                      "t2va plan identity is deterministic");
     YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->t2va_plan_build(
-                         &repeated, 16ull, 1344ull, 768ull, 123ull, &err) ==
+                         &repeated, 16ull, 1344ull, 768ull, 123ull, 19u, &err) ==
                          YVEX_ERR_INVALID_ARG &&
                          yvex_graph_register_minimax_h3()->t2va_plan_build(
-                             &repeated, 16ull, 1343ull, 768ull, 124ull, &err) ==
+                             &repeated, 16ull, 1343ull, 768ull, 124ull, 19u, &err) ==
                          YVEX_ERR_INVALID_ARG,
                      "t2va plan refuses invalid temporal and spatial grids");
+    YVEX_TEST_ASSERT(
+        yvex_graph_register_minimax_h3()->t2va_plan_build(
+            &minimal, 1ull, 32ull, 32ull, 5ull, 1u, &err) == YVEX_OK &&
+            minimal.video_rows == 2ull && minimal.audio_rows == 16ull,
+        "t2va plan admits a bounded exact one-step execution geometry");
+    latent_request.seed = 42ull;
+    latent_request.maximum_workspace_bytes = (192ull + 512ull) * sizeof(float) * 4ull;
+    latent_request.evaluate = test_latent_evaluate;
+    YVEX_TEST_ASSERT(
+        yvex_graph_register_minimax_h3()->t2va_latent_execute(
+            &minimal, &latent_request, video_latent, 192ull, audio_latent, 512ull,
+            &latent_result, &err) == YVEX_OK && latent_result.completed &&
+            latent_result.video_values == 192ull && latent_result.audio_values == 512ull &&
+            latent_result.completed_steps == 1ull,
+        "family latent composition binds exact geometry, schedule, RNG, and solver semantics");
+    YVEX_TEST_ASSERT(
+        yvex_graph_register_minimax_h3()->t2va_plan_build(
+            &minimal, 1ull, 32ull, 32ull, 5ull, 0u, &err) == YVEX_ERR_INVALID_ARG &&
+            yvex_graph_register_minimax_h3()->t2va_plan_build(
+                &minimal, 1ull, 32ull, 32ull, 5ull, 65u, &err) == YVEX_ERR_INVALID_ARG,
+        "t2va plan refuses absent or excessive operator-selected iteration counts");
     return 0;
 }
 
@@ -663,10 +700,10 @@ static int test_component_admission_routing(void)
                          NULL, NULL, NULL, NULL, 0ull, NULL, &transformer, &err) ==
                          YVEX_ERR_INVALID_ARG && !transformer.complete,
                      "CUDA Omni Transformer refuses absent exact inputs without publication");
-    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->transformer_artifact_cuda(
-                         NULL, NULL, NULL, NULL, 1ull, 1ull, &transformer, &err) ==
-                         YVEX_ERR_INVALID_ARG && !transformer.complete,
-                     "artifact Transformer refuses absent exact component views");
+    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->transformer_component_cuda(
+                         NULL, NULL, &transformer, &err) == YVEX_ERR_INVALID_ARG &&
+                         !transformer.complete,
+                     "Transformer execution refuses an absent resident component session");
     YVEX_TEST_ASSERT(yvex_runtime_component_session_open(
                          NULL, NULL, NULL, NULL, NULL, YVEX_BACKEND_KIND_CPU,
                          0ull, 0ull, &err) == YVEX_ERR_INVALID_ARG,

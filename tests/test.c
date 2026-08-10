@@ -173,6 +173,7 @@ static int run_runtime_console(void)
     if (run_test("runtime_execution", yvex_test_runtime_execution) != 0) return 1;
     if (run_test("runtime_logits", yvex_test_runtime_logits) != 0) return 1;
     if (run_test("runtime_sampling", yvex_test_runtime_sampling) != 0) return 1;
+    if (run_test("runtime_latent", yvex_test_runtime_latent) != 0) return 1;
     if (run_test("runtime_speculation", yvex_test_runtime_speculation) != 0) return 1;
     if (run_test("runtime_generation", yvex_test_runtime_generation) != 0) return 1;
     if (run_test("runtime_tokenizer", yvex_test_runtime_tokenizer) != 0) return 1;

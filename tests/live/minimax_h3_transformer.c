@@ -11,6 +11,7 @@
 #include <yvex/internal/backend.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/families/minimax_h3.h>
+#include <yvex/internal/runtime.h>
 
 enum { VIDEO_VALUES = 96u, AUDIO_VALUES = 32u, CONDITION_VALUES = 5120u };
 
@@ -298,9 +299,23 @@ static int execute_artifact(const yvex_artifact *artifact, const yvex_gguf *gguf
                             yvex_minimax_h3_omni_transformer_result *result, yvex_error *err)
 {
     const yvex_minimax_h3_graph_api *graph = yvex_graph_register_minimax_h3();
-    return graph->transformer_artifact_cuda(
-        artifact, gguf, tensors, request, 80ull * 1024ull * 1024ull * 1024ull,
-        4ull * 1024ull * 1024ull * 1024ull, result, err);
+    yvex_complete_artifact_admission admission;
+    yvex_artifact_admission_failure failure;
+    yvex_runtime_component_session *session = NULL;
+    yvex_error cleanup;
+    int rc = graph->component_admit(
+        "transformer", artifact, gguf, tensors, &admission, &failure, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_component_session_open(
+            &session, &admission, artifact, gguf, tensors, YVEX_BACKEND_KIND_CUDA,
+            80ull * 1024ull * 1024ull * 1024ull, 4ull * 1024ull * 1024ull * 1024ull, err);
+    if (rc == YVEX_OK) rc = graph->transformer_component_cuda(session, request, result, err);
+    yvex_error_clear(&cleanup);
+    if (yvex_runtime_component_session_close(&session, &cleanup) != YVEX_OK && rc == YVEX_OK) {
+        rc = yvex_error_code(&cleanup);
+        if (err) *err = cleanup;
+    }
+    return rc;
 }
 
 int main(int argc, char **argv)

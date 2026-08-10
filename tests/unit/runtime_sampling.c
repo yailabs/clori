@@ -460,6 +460,39 @@ static int sampling_test_rng_vectors(void)
     return 0;
 }
 
+static int sampling_test_normal_vectors(void)
+{
+    float first[5] = {0}, repeated[5] = {0}, refused[5];
+    yvex_runtime_sampling_normal_result a, b, failure;
+    yvex_error err;
+
+    memset(refused, 0x5a, sizeof(refused));
+    YVEX_TEST_ASSERT(
+        yvex_runtime_sampling_normal_f32(
+            first, 5ull, 5ull, 42ull, sizeof(first), &a, &err) == YVEX_OK &&
+            yvex_runtime_sampling_normal_f32(
+                repeated, 5ull, 5ull, 42ull, sizeof(repeated), &b, &err) == YVEX_OK &&
+            a.completed && a.value_count == 5ull && a.uniform_draw_count == 6ull &&
+            a.workspace_bytes == sizeof(first) &&
+            memcmp(first, repeated, sizeof(first)) == 0 &&
+            strcmp(a.normal_identity, b.normal_identity) == 0 &&
+            fabsf(first[0] + 0.642473459f) < 1.0e-7f &&
+            fabsf(first[4] + 0.241338655f) < 1.0e-7f,
+        "seeded normal initialization has stable PCG Box-Muller vectors");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_sampling_normal_f32(
+            refused, 5ull, 5ull, 42ull, sizeof(refused) - 1ull, &failure, &err) ==
+                YVEX_ERR_BOUNDS &&
+            !failure.completed && ((unsigned char *)refused)[0] == 0x5a,
+        "normal initialization refuses insufficient workspace without publication");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_sampling_normal_f32(
+            repeated, 5ull, 5ull, 41ull, sizeof(repeated), &b, &err) == YVEX_OK &&
+            strcmp(a.normal_identity, b.normal_identity) != 0,
+        "normal initialization binds its seed into values and identity");
+    return 0;
+}
+
 static int sampling_test_rng_transactions(void)
 {
     const float logits[8] = {0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f};
@@ -967,6 +1000,7 @@ int yvex_test_runtime_sampling(void)
     if (sampling_test_filter_matrix()) return 1;
     if (sampling_test_stochastic()) return 1;
     if (sampling_test_rng_vectors()) return 1;
+    if (sampling_test_normal_vectors()) return 1;
     if (sampling_test_rng_transactions()) return 1;
     if (sampling_test_lifecycle()) return 1;
     if (sampling_test_close_entry_race()) return 1;

@@ -15,16 +15,16 @@ typedef struct yvex_complete_artifact_admission yvex_complete_artifact_admission
 typedef struct yvex_artifact_admission_failure yvex_artifact_admission_failure;
 typedef struct yvex_materialization_session yvex_materialization_session;
 typedef struct yvex_backend yvex_backend;
+typedef struct yvex_runtime_component_session yvex_runtime_component_session;
+typedef struct yvex_runtime_latent_request yvex_runtime_latent_request;
+typedef struct yvex_runtime_latent_result yvex_runtime_latent_result;
 #define YVEX_MINIMAX_H3_TARGET_ID "minimax-h3-fl2va"
 #define YVEX_MINIMAX_H3_REPOSITORY "MiniMaxAI/MiniMax-H3"
 #define YVEX_MINIMAX_H3_REVISION "b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08"
 #define YVEX_MINIMAX_H3_SUBTREE "FL2VA"
-#define YVEX_MINIMAX_H3_SOURCE_TREE_IDENTITY \
-    "91972f8e4e6562562456c339b43eed1fba5f7b9d7fb13987f495b416a5109b5e"
-#define YVEX_MINIMAX_H3_SOURCE_INVENTORY_IDENTITY \
-    "c37f859ce8cccf2465adcd0e31f0d21d603ec41cccd15301c8cf467d651625e3"
-#define YVEX_MINIMAX_H3_MODEL_INDEX_IDENTITY \
-    "d1113e0f123c69f79cd0de35ca1771606ebc3ec924270d257b771f96f584aa6b"
+#define YVEX_MINIMAX_H3_SOURCE_TREE_IDENTITY "91972f8e4e6562562456c339b43eed1fba5f7b9d7fb13987f495b416a5109b5e"
+#define YVEX_MINIMAX_H3_SOURCE_INVENTORY_IDENTITY "c37f859ce8cccf2465adcd0e31f0d21d603ec41cccd15301c8cf467d651625e3"
+#define YVEX_MINIMAX_H3_MODEL_INDEX_IDENTITY "d1113e0f123c69f79cd0de35ca1771606ebc3ec924270d257b771f96f584aa6b"
 #define YVEX_MINIMAX_H3_LOGICAL_COMPONENTS 8ull
 #define YVEX_MINIMAX_H3_WEIGHTED_COMPONENTS 4ull
 #define YVEX_MINIMAX_H3_PHASE_EDGES 7ull
@@ -36,14 +36,12 @@ typedef struct yvex_backend yvex_backend;
 #define YVEX_MINIMAX_H3_SOURCE_BYTES 144051204180ull
 #define YVEX_MINIMAX_H3_NO_COORDINATE (~0ull)
 /* Exact source-faithful Audio VAE physical boundary emitted by YVEX. */
-#define YVEX_MINIMAX_H3_AUDIO_COMPONENT_IDENTITY                                      \
-    "be921beb8581b44624aaad452f30f77f1e204159ae8fe11da455d5208dc4e62b"
+#define YVEX_MINIMAX_H3_AUDIO_COMPONENT_IDENTITY "be921beb8581b44624aaad452f30f77f1e204159ae8fe11da455d5208dc4e62b"
 #define YVEX_MINIMAX_H3_AUDIO_SOURCE_SNAPSHOT_IDENTITY                                \
     "897ceaff08708f431132c6643bc8f1041ace8c0444a3ea248bbf727fc7da9943"
 #define YVEX_MINIMAX_H3_AUDIO_COMPONENT_MANIFEST_IDENTITY                             \
     "715f2359aaff048ccca8207976421af5f9f76b08b6f24986b3cc186d2822bc0e"
-#define YVEX_MINIMAX_H3_AUDIO_ARCHITECTURE_IDENTITY                                   \
-    "47a03bbac2b5346771f70ae39155920f9b1c6e6cec17f2639dd0cbedfa90b517"
+#define YVEX_MINIMAX_H3_AUDIO_ARCHITECTURE_IDENTITY "47a03bbac2b5346771f70ae39155920f9b1c6e6cec17f2639dd0cbedfa90b517"
 #define YVEX_MINIMAX_H3_AUDIO_ROLE_MAP_IDENTITY                                       \
     "61e7a2cfc29e6dd3da966878f5388f1472a406d7e33ba34ef65f44b61f08f013"
 #define YVEX_MINIMAX_H3_AUDIO_UNRESOLVED_IDENTITY                                     \
@@ -548,17 +546,20 @@ typedef struct {
     unsigned long long text_tokens, frames, width, height;
     unsigned long long video_latent_frames, video_latent_height, video_latent_width;
     unsigned long long audio_latent_steps, audio_rows, video_rows, packed_rows;
-    float video_sigmas[20], audio_sigmas[20];
+    float video_sigmas[65], audio_sigmas[65];
     unsigned int sigma_grid_points, model_evaluations;
     char identity[65];
     int complete;
 } yvex_minimax_h3_t2va_plan;
 typedef struct {
     int (*t2va_plan_build)(yvex_minimax_h3_t2va_plan *, unsigned long long,
-                           unsigned long long, unsigned long long, unsigned long long, yvex_error *);
+        unsigned long long, unsigned long long, unsigned long long, unsigned int, yvex_error *);
     int (*scheduler_step)(float *output, const float *sample, const float *velocity,
                           unsigned long long values, float timestep, float sigma,
                           float sigma_next, yvex_error *err);
+    int (*t2va_latent_execute)(const yvex_minimax_h3_t2va_plan *,
+        const yvex_runtime_latent_request *, float *, unsigned long long,
+        float *, unsigned long long, yvex_runtime_latent_result *, yvex_error *);
     int (*component_admit)(const char *component,
         const yvex_artifact *artifact, const yvex_gguf *gguf,
         const yvex_tensor_table *tensors, yvex_complete_artifact_admission *out,
@@ -569,10 +570,9 @@ typedef struct {
         float *output, unsigned long long output_capacity,
         unsigned long long maximum_host_bytes, unsigned long long maximum_device_bytes,
         yvex_minimax_h3_conditioning_result *result, yvex_error *err);
-    int (*transformer_artifact_cuda)(
-        const yvex_artifact *, const yvex_gguf *, const yvex_tensor_table *,
-        const yvex_minimax_h3_omni_transformer_request *, unsigned long long,
-        unsigned long long, yvex_minimax_h3_omni_transformer_result *, yvex_error *);
+    int (*transformer_component_cuda)(yvex_runtime_component_session *,
+        const yvex_minimax_h3_omni_transformer_request *,
+        yvex_minimax_h3_omni_transformer_result *, yvex_error *);
     int (*audio_vae_decode_cpu)(yvex_materialization_session *session,
         const yvex_minimax_h3_audio_decode_options *options,
         yvex_minimax_h3_audio_decode_result *result, yvex_minimax_h3_component_execution_failure *failure,

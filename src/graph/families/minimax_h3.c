@@ -1,12 +1,7 @@
-/*
- * Bind MiniMax-H3 component execution recipes to exact physical inputs.
- *
- * Component metadata remains insufficient until the complete file identity and independently
- * derived payload identity agree with this family-owned physical boundary. Numerical execution
- * consumes this admission later; it cannot infer source or model identity from tensor names.
- */
+/* Bind MiniMax-H3 execution recipes only after exact component payload identity is admitted. */
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/families/minimax_h3.h>
+#include <yvex/internal/latent.h>
 #include <yvex/internal/runtime.h>
 #include "src/graph/private.h"
 #include <math.h>
@@ -78,7 +73,7 @@ typedef struct {
 static int t2va_plan_build(yvex_minimax_h3_t2va_plan *out,
                            unsigned long long text_tokens, unsigned long long width,
                            unsigned long long height, unsigned long long frames,
-                           yvex_error *err)
+                           unsigned int inference_steps, yvex_error *err)
 {
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
@@ -86,9 +81,10 @@ static int t2va_plan_build(yvex_minimax_h3_t2va_plan *out,
     unsigned int step;
     if (!out || !text_tokens || width < 32ull || height < 32ull ||
         width % 32ull || height % 32ull || frames < 5ull ||
+        !inference_steps || inference_steps > 64u ||
         (frames - 5ull) % 17ull) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "graph.minimax_h3.t2va.plan",
-                       "t2va requires text, 32-aligned geometry, and a 17k+5 frame count");
+                       "t2va requires bounded steps, 32-aligned geometry, and 17k+5 frames");
         return YVEX_ERR_INVALID_ARG;
     }
     memset(out, 0, sizeof(*out));
@@ -121,8 +117,8 @@ static int t2va_plan_build(yvex_minimax_h3_t2va_plan *out,
                        "t2va packed sequence overflowed");
         return YVEX_ERR_BOUNDS;
     }
-    out->sigma_grid_points = 20u;
-    out->model_evaluations = out->sigma_grid_points - 1u;
+    out->model_evaluations = inference_steps;
+    out->sigma_grid_points = inference_steps + 1u;
     for (step = 0u; step < out->sigma_grid_points; ++step) {
         float base = (float)(out->sigma_grid_points - 1u - step) /
                      (float)(out->sigma_grid_points - 1u);
@@ -191,6 +187,27 @@ static int scheduler_step(float *output, const float *sample, const float *veloc
     }
     yvex_error_clear(err);
     return YVEX_OK;
+}
+static int t2va_latent_execute(const yvex_minimax_h3_t2va_plan *plan,
+    const yvex_runtime_latent_request *template, float *video, unsigned long long video_capacity,
+    float *audio, unsigned long long audio_capacity, yvex_runtime_latent_result *result,
+    yvex_error *err)
+{
+    yvex_runtime_latent_request request;
+    unsigned long long video_values, audio_values;
+    if (!plan || !plan->complete || !template ||
+        !yvex_core_u64_mul(plan->video_rows, 96ull, &video_values) ||
+        !yvex_core_u64_mul(plan->audio_rows, 32ull, &audio_values)) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "graph.minimax_h3.t2va.latent",
+                       "a complete bounded family latent plan is required");
+        return YVEX_ERR_BOUNDS;
+    }
+    request = *template; request.schema_version = YVEX_RUNTIME_LATENT_SCHEMA_V1;
+    request.video_values = video_values; request.audio_values = audio_values;
+    request.step_count = plan->model_evaluations; request.video_sigmas = plan->video_sigmas;
+    request.audio_sigmas = plan->audio_sigmas; request.plan_identity = plan->identity;
+    request.advance = scheduler_step;
+    return yvex_runtime_latent_execute(&request, video, video_capacity, audio, audio_capacity, result, err);
 }
 static int audio_execution_refuse(audio_execution *execution,
                                   yvex_minimax_h3_component_execution_code code,
@@ -1940,53 +1957,42 @@ static int transformer_weights_bind(const yvex_materialization_session *session,
         }
     return rc;
 }
-static int transformer_artifact_cuda(const yvex_artifact *artifact, const yvex_gguf *gguf,
-    const yvex_tensor_table *tensors, const yvex_minimax_h3_omni_transformer_request *request,
-    unsigned long long maximum_host_bytes, unsigned long long maximum_device_bytes,
+static int transformer_component_cuda(yvex_runtime_component_session *session,
+    const yvex_minimax_h3_omni_transformer_request *request,
     yvex_minimax_h3_omni_transformer_result *result, yvex_error *err)
 {
     const yvex_minimax_h3_backend_api *api = yvex_backend_register_minimax_h3();
+    const yvex_runtime_residency_summary *summary;
     yvex_minimax_h3_encoded_weight external[YVEX_MINIMAX_H3_OMNI_EXTERNAL_WEIGHT_COUNT] = {{0}};
-    yvex_minimax_h3_encoded_weight *blocks = NULL; yvex_runtime_component_session *owned = NULL;
-    yvex_complete_artifact_admission admission; yvex_artifact_admission_failure failure;
-    unsigned long long count = 0ull; int rc, cleanup_rc; yvex_error cleanup;
+    yvex_minimax_h3_encoded_weight *blocks = NULL;
+    unsigned long long count = 0ull;
+    int rc;
     if (result) memset(result, 0, sizeof(*result));
-    if (!artifact || !gguf || !tensors || !request || !result || !api ||
-        !api->omni_transformer_cuda || !request->block_count || request->block_count > 50ull ||
+    if (!session || !request || !result || !api || !api->omni_transformer_cuda ||
+        !request->block_count || request->block_count > 50ull ||
         !yvex_core_u64_mul(request->block_count, YVEX_MINIMAX_H3_OMNI_BLOCK_WEIGHT_COUNT, &count) ||
-        count > SIZE_MAX / sizeof(*blocks)) {
-        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "minimax-h3.transformer.artifact",
-                       "an exact bounded Transformer artifact request is required");
+        count > SIZE_MAX / sizeof(*blocks) ||
+        !(blocks = calloc((size_t)count, sizeof(*blocks)))) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "minimax-h3.transformer.session",
+                       "a resident component and bounded Transformer request are required");
         return YVEX_ERR_INVALID_ARG;
     }
-    blocks = calloc((size_t)count, sizeof(*blocks));
-    if (!blocks) {
-        yvex_error_set(err, YVEX_ERR_NOMEM, "minimax-h3.transformer.artifact",
-                       "Transformer weight binding allocation failed");
-        return YVEX_ERR_NOMEM;
-    }
-    rc = component_admit("transformer", artifact, gguf, tensors, &admission, &failure, err);
+    summary = yvex_runtime_component_session_summary(session);
+    rc = transformer_weights_bind(yvex_runtime_component_session_materialization(session),
+        yvex_runtime_component_session_residency(session), external, blocks,
+        request->block_count, err);
     if (rc == YVEX_OK)
-        rc = yvex_runtime_component_session_open(&owned, &admission, artifact, gguf, tensors,
-            YVEX_BACKEND_KIND_CUDA, maximum_host_bytes, maximum_device_bytes, err);
-    if (rc == YVEX_OK)
-        rc = transformer_weights_bind(yvex_runtime_component_session_materialization(owned),
-            yvex_runtime_component_session_residency(owned), external, blocks,
-            request->block_count, err);
-    if (rc == YVEX_OK)
-        rc = api->omni_transformer_cuda(yvex_runtime_component_session_backend(owned),
-            external, blocks, yvex_runtime_component_session_summary(owned)->residency_identity,
-            yvex_runtime_component_session_summary(owned)->encoded_bytes, request, result, err);
-    yvex_error_clear(&cleanup);
-    cleanup_rc = yvex_runtime_component_session_close(&owned, &cleanup);
-    if (cleanup_rc != YVEX_OK) { rc = cleanup_rc; if (err) *err = cleanup; }
-    free(blocks); return rc;
+        rc = api->omni_transformer_cuda(yvex_runtime_component_session_backend(session),
+            external, blocks, summary->residency_identity, summary->encoded_bytes,
+            request, result, err);
+    free(blocks);
+    return rc;
 }
 const yvex_minimax_h3_graph_api *yvex_graph_register_minimax_h3(void)
 {
     static const yvex_minimax_h3_graph_api api = {
-        t2va_plan_build, scheduler_step, component_admit, text_encoder_artifact_cuda,
-        transformer_artifact_cuda,
+        t2va_plan_build, scheduler_step, t2va_latent_execute, component_admit, text_encoder_artifact_cuda,
+        transformer_component_cuda,
         audio_vae_decode_cpu, audio_vae_execute_artifact_cpu,
         video_vae_decode_cpu, video_vae_execute_artifact_cpu,
     };
