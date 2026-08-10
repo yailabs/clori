@@ -17,6 +17,8 @@ extern "C" {
 
 #define YVEX_ARTIFACT_LOWERING_NO_INDEX (~0ull)
 #define YVEX_ARTIFACT_LOWERING_AGGREGATED_AXIS (~0u)
+#define YVEX_ARTIFACT_LOWERING_POLICY_SCHEMA_V1 1u
+#define YVEX_ARTIFACT_LOWERING_METADATA_CAP 64u
 
 typedef unsigned int yvex_artifact_lowering_transform;
 enum {
@@ -110,6 +112,23 @@ typedef struct yvex_artifact_lowering_metadata {
     double f64_array_values[64];
     unsigned int array_count;
 } yvex_artifact_lowering_metadata;
+
+/*
+ * Families project exact container policy before generic lowering begins. The policy is borrowed
+ * only for construction; the resulting immutable map owns copies of its metadata values.
+ */
+typedef struct yvex_artifact_lowering_policy {
+    unsigned int schema_version;
+    unsigned long long source_contribution_count;
+    unsigned long long descriptor_count;
+    unsigned long long trunk_descriptor_count;
+    unsigned long long draft_descriptor_count;
+    unsigned long long pinned_standard_count;
+    unsigned long long extension_count;
+    unsigned long long trunk_collection_counts[YVEX_TENSOR_COLLECTION_COUNT];
+    const yvex_artifact_lowering_metadata *metadata;
+    unsigned long long metadata_count;
+} yvex_artifact_lowering_policy;
 
 typedef struct yvex_artifact_lowering_summary {
     unsigned long long source_contribution_count, descriptor_count, trunk_descriptor_count;

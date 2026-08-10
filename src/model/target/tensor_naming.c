@@ -38,12 +38,17 @@ static const yvex_artifact_lowering_failure cleared_map_failure = {
 
 /* GGUF lowering projects the sealed IR without becoming semantic identity. */
 
-#define MAP_METADATA_CAP 64u
-
 /* Local lowering lifecycle and diagnostic operations used before definition. */
 static void lowering_close(yvex_artifact_lowering_map *map);
 static const char *lowering_failure_name(yvex_artifact_lowering_failure_code code);
 static yvex_tensor_scope map_scope(yvex_transform_scope scope);
+static int lowering_build_with_allocator(
+    yvex_artifact_lowering_map **out,
+    const yvex_deepseek_v4_ir *architecture,
+    const yvex_transform_ir *transform_ir,
+    const yvex_artifact_lowering_allocator *allocator,
+    yvex_artifact_lowering_failure *failure,
+    yvex_error *err);
 
 static const yvex_model_family_ir_api *lowering_family_ir(void)
 {
@@ -65,14 +70,14 @@ struct yvex_artifact_lowering_map {
     unsigned long long source_index_capacity;
     unsigned long long emitted_index_capacity;
     unsigned long long role_index_capacity;
-    yvex_artifact_lowering_metadata metadata[MAP_METADATA_CAP];
+    yvex_artifact_lowering_metadata metadata[YVEX_ARTIFACT_LOWERING_METADATA_CAP];
     yvex_artifact_lowering_summary summary;
 };
 
 typedef struct {
     yvex_artifact_lowering_map *map;
-    const yvex_deepseek_v4_ir *architecture;
     const yvex_transform_ir *transform_ir;
+    const yvex_artifact_lowering_policy *policy;
     yvex_artifact_lowering_failure *failure;
     yvex_error *err;
 } map_builder;
@@ -142,26 +147,6 @@ static const map_collection_expectation map_trunk_expectations[] = {
     {YVEX_TENSOR_COLLECTION_ROUTER, 86u},
     {YVEX_TENSOR_COLLECTION_COMPRESSOR, 164u},
     {YVEX_TENSOR_COLLECTION_INDEXER, 126u}
-};
-
-typedef struct {
-    size_t offset;
-    unsigned long long count;
-} map_summary_expectation;
-
-static const map_summary_expectation map_summary_expectations[] = {
-    {offsetof(yvex_artifact_lowering_summary, source_contribution_count),
-     YVEX_DEEPSEEK_GGUF_SOURCE_COUNT},
-    {offsetof(yvex_artifact_lowering_summary, descriptor_count),
-     YVEX_DEEPSEEK_GGUF_DESCRIPTOR_COUNT},
-    {offsetof(yvex_artifact_lowering_summary, trunk_descriptor_count),
-     YVEX_DEEPSEEK_GGUF_TRUNK_DESCRIPTOR_COUNT},
-    {offsetof(yvex_artifact_lowering_summary, draft_descriptor_count),
-     YVEX_DEEPSEEK_GGUF_DRAFT_DESCRIPTOR_COUNT},
-    {offsetof(yvex_artifact_lowering_summary, pinned_standard_count),
-     YVEX_DEEPSEEK_GGUF_TRUNK_DESCRIPTOR_COUNT},
-    {offsetof(yvex_artifact_lowering_summary, extension_count),
-     YVEX_DEEPSEEK_GGUF_DRAFT_DESCRIPTOR_COUNT}
 };
 
 typedef enum {
@@ -610,8 +595,8 @@ static int map_descriptor_add_source(
             descriptor->emitted_name, 1u, 0u);
     source = yvex_transform_ir_source_at(
         builder->transform_ir, value->source_index);
-    if (!source || index >= YVEX_DEEPSEEK_GGUF_SOURCE_COUNT ||
-        source->requirement_index >= YVEX_DEEPSEEK_GGUF_SOURCE_COUNT ||
+    if (!source || index >= builder->policy->source_contribution_count ||
+        source->requirement_index >= builder->policy->source_contribution_count ||
         source->shape.rank > 2u || source->role_hint != descriptor->role ||
         map_scope(source->scope) != descriptor->scope ||
         map_collection(source->subsystem) != descriptor->collection) {
@@ -655,13 +640,13 @@ static int map_build_descriptors(map_builder *builder)
 
     if (!summary || !summary->complete ||
         summary->state != YVEX_TRANSFORM_IR_STATE_SEALED ||
-        summary->source_value_count != YVEX_DEEPSEEK_GGUF_SOURCE_COUNT ||
-        summary->terminal_count != YVEX_DEEPSEEK_GGUF_DESCRIPTOR_COUNT ||
-        summary->edge_count != YVEX_DEEPSEEK_GGUF_SOURCE_COUNT ||
+        summary->source_value_count != builder->policy->source_contribution_count ||
+        summary->terminal_count != builder->policy->descriptor_count ||
+        summary->edge_count != builder->policy->source_contribution_count ||
         summary->payload_bytes_read != 0u) {
         return map_reject_global(
             builder, YVEX_ARTIFACT_LOWERING_FAILURE_TRANSFORM_IR, NULL,
-            YVEX_DEEPSEEK_GGUF_DESCRIPTOR_COUNT,
+            builder->policy->descriptor_count,
             summary ? summary->terminal_count : 0u);
     }
     for (ordinal = 0u; ordinal < summary->terminal_count; ++ordinal) {
@@ -703,9 +688,9 @@ static int map_metadata_begin(map_builder *builder,
     yvex_artifact_lowering_map *map = builder->map;
     unsigned long long index;
 
-    if (!key || map->summary.metadata_count >= MAP_METADATA_CAP)
+    if (!key || map->summary.metadata_count >= YVEX_ARTIFACT_LOWERING_METADATA_CAP)
         return map_reject_global(builder, YVEX_ARTIFACT_LOWERING_FAILURE_METADATA,
-                                 key, MAP_METADATA_CAP,
+                                 key, YVEX_ARTIFACT_LOWERING_METADATA_CAP,
                                  map->summary.metadata_count + 1u);
     for (index = 0u; index < map->summary.metadata_count; ++index)
         if (strcmp(map->metadata[index].key, key) == 0)
@@ -717,15 +702,14 @@ static int map_metadata_begin(map_builder *builder,
     return YVEX_OK;
 }
 
-static int map_add_metadata_spec(map_builder *builder,
-                                 const map_metadata_spec *spec,
-                                 const model_t *model,
-                                 const layer_t *first,
-                                 const layer_t *first_csa,
-                                 const unsigned long long *ratios,
-                                 const double *clamp)
+static int deepseek_metadata_project(yvex_artifact_lowering_metadata *entry,
+                                     const map_metadata_spec *spec,
+                                     const model_t *model,
+                                     const layer_t *first,
+                                     const layer_t *first_csa,
+                                     const unsigned long long *ratios,
+                                     const double *clamp)
 {
-    yvex_artifact_lowering_metadata *entry = NULL;
     const void *owner = spec->owner == M_MODEL
         ? (const void *)model
         : (spec->owner == M_CSA ||
@@ -733,13 +717,13 @@ static int map_add_metadata_spec(map_builder *builder,
             ? (const void *)first_csa : (const void *)first;
     const char *field = owner ? (const char *)owner + spec->offset : NULL;
     unsigned int count = (unsigned int)model->main_layer_count;
-    int rc;
 
-    if (!count || count > 64u)
-        return map_reject_global(builder, YVEX_ARTIFACT_LOWERING_FAILURE_METADATA,
-                                 spec->key, 64u, count);
-    rc = map_metadata_begin(builder, spec->key, &entry);
-    if (rc != YVEX_OK) return rc;
+    if (!entry || !spec || !model || !first || !first_csa || !count ||
+        count > YVEX_ARTIFACT_LOWERING_METADATA_CAP ||
+        (!field && spec->owner != M_LIT))
+        return 0;
+    memset(entry, 0, sizeof(*entry));
+    yvex_core_text_copy(entry->key, sizeof(entry->key), spec->key);
     entry->type = spec->type;
     if (spec->type == M_STR) {
         const char *value = spec->owner == M_LIT
@@ -758,6 +742,7 @@ static int map_add_metadata_spec(map_builder *builder,
     } else if (spec->type == M_U64S) {
         if (spec->owner == M_DSPARK_LAYERS) {
             count = (unsigned int)model->dspark.target_layer_count;
+            if (count > YVEX_ARTIFACT_LOWERING_METADATA_CAP) return 0;
             memcpy(entry->array_values, model->dspark.target_layer_ids,
                    (size_t)count * sizeof(entry->array_values[0]));
         } else {
@@ -770,33 +755,78 @@ static int map_add_metadata_spec(map_builder *builder,
     }
     entry->array_count = spec->type >= M_U64S
         ? count : 0u;
-    return YVEX_OK;
+    return 1;
 }
 
-static int map_build_metadata(map_builder *builder)
+static int deepseek_lowering_policy_build(
+    yvex_artifact_lowering_policy *policy,
+    yvex_artifact_lowering_metadata metadata[YVEX_ARTIFACT_LOWERING_METADATA_CAP],
+    const yvex_deepseek_v4_ir *architecture)
 {
-    const model_t *model =
-        lowering_family_ir()->model(builder->architecture);
-    const layer_t *first =
-        lowering_family_ir()->layer_at(builder->architecture, 0u);
-    const layer_t *first_csa =
-        lowering_family_ir()->layer_at(builder->architecture, 2u);
-    unsigned long long ratios[64];
-    double clamp[64];
+    const model_t *model = lowering_family_ir()->model(architecture);
+    const layer_t *first = lowering_family_ir()->layer_at(architecture, 0u);
+    const layer_t *first_csa = lowering_family_ir()->layer_at(architecture, 2u);
+    unsigned long long ratios[YVEX_ARTIFACT_LOWERING_METADATA_CAP];
+    double clamp[YVEX_ARTIFACT_LOWERING_METADATA_CAP];
     unsigned long long index;
-    int rc;
+
+    if (!policy || !metadata || !model || !first || !first_csa ||
+        model->main_layer_count != 43u || model->auxiliary_layer_count != 3u ||
+        model->main_layer_count > YVEX_ARTIFACT_LOWERING_METADATA_CAP)
+        return 0;
+    memset(policy, 0, sizeof(*policy));
+    memset(metadata, 0, YVEX_ARTIFACT_LOWERING_METADATA_CAP * sizeof(*metadata));
     for (index = 0u; index < model->main_layer_count; ++index) {
-        const layer_t *layer =
-            lowering_family_ir()->layer_at(builder->architecture, index);
+        const layer_t *layer = lowering_family_ir()->layer_at(architecture, index);
+        if (!layer) return 0;
         ratios[index] = layer->compression_ratio;
         clamp[index] = layer->moe.activation_limit;
     }
     for (index = 0u;
          index < sizeof(map_metadata_specs) / sizeof(map_metadata_specs[0]);
          ++index) {
-        rc = map_add_metadata_spec(builder, &map_metadata_specs[index], model,
-                                   first, first_csa, ratios, clamp);
+        if (!deepseek_metadata_project(&metadata[index], &map_metadata_specs[index], model,
+                                       first, first_csa, ratios, clamp))
+            return 0;
+    }
+    policy->schema_version = YVEX_ARTIFACT_LOWERING_POLICY_SCHEMA_V1;
+    policy->source_contribution_count = YVEX_DEEPSEEK_GGUF_SOURCE_COUNT;
+    policy->descriptor_count = YVEX_DEEPSEEK_GGUF_DESCRIPTOR_COUNT;
+    policy->trunk_descriptor_count = YVEX_DEEPSEEK_GGUF_TRUNK_DESCRIPTOR_COUNT;
+    policy->draft_descriptor_count = YVEX_DEEPSEEK_GGUF_DRAFT_DESCRIPTOR_COUNT;
+    policy->pinned_standard_count = YVEX_DEEPSEEK_GGUF_TRUNK_DESCRIPTOR_COUNT;
+    policy->extension_count = YVEX_DEEPSEEK_GGUF_DRAFT_DESCRIPTOR_COUNT;
+    for (index = 0u;
+         index < sizeof(map_trunk_expectations) / sizeof(map_trunk_expectations[0]); ++index)
+        policy->trunk_collection_counts[map_trunk_expectations[index].collection] =
+            map_trunk_expectations[index].count;
+    policy->metadata = metadata;
+    policy->metadata_count = sizeof(map_metadata_specs) / sizeof(map_metadata_specs[0]);
+    return 1;
+}
+
+static int map_build_metadata(map_builder *builder)
+{
+    unsigned long long index;
+
+    if (!builder->policy->metadata ||
+        builder->policy->metadata_count > YVEX_ARTIFACT_LOWERING_METADATA_CAP)
+        return map_reject_global(builder, YVEX_ARTIFACT_LOWERING_FAILURE_METADATA, NULL,
+                                 YVEX_ARTIFACT_LOWERING_METADATA_CAP,
+                                 builder->policy->metadata_count);
+    for (index = 0u; index < builder->policy->metadata_count; ++index) {
+        const yvex_artifact_lowering_metadata *source = &builder->policy->metadata[index];
+        yvex_artifact_lowering_metadata *entry = NULL;
+        int rc;
+
+        if (source->type > YVEX_ARTIFACT_LOWERING_METADATA_F64_ARRAY ||
+            source->array_count > YVEX_ARTIFACT_LOWERING_METADATA_CAP)
+            return map_reject_global(builder, YVEX_ARTIFACT_LOWERING_FAILURE_METADATA,
+                                     source->key, YVEX_ARTIFACT_LOWERING_METADATA_CAP,
+                                     source->array_count);
+        rc = map_metadata_begin(builder, source->key, &entry);
         if (rc != YVEX_OK) return rc;
+        *entry = *source;
     }
     return YVEX_OK;
 }
@@ -808,16 +838,15 @@ static int map_finalize(map_builder *builder)
     unsigned long long identity = 1469598103934665603ull;
     unsigned long long index;
 
-    for (index = 0u;
-         index < sizeof(map_summary_expectations) / sizeof(map_summary_expectations[0]);
-         ++index)
-        if (*(const unsigned long long *)((const char *)&map->summary +
-                                          map_summary_expectations[index].offset) !=
-            map_summary_expectations[index].count)
-            return map_reject_global(
-                builder, YVEX_ARTIFACT_LOWERING_FAILURE_ACCOUNTING, NULL,
-                YVEX_DEEPSEEK_GGUF_DESCRIPTOR_COUNT,
-                map->summary.descriptor_count);
+    if (map->summary.source_contribution_count != builder->policy->source_contribution_count ||
+        map->summary.descriptor_count != builder->policy->descriptor_count ||
+        map->summary.trunk_descriptor_count != builder->policy->trunk_descriptor_count ||
+        map->summary.draft_descriptor_count != builder->policy->draft_descriptor_count ||
+        map->summary.pinned_standard_count != builder->policy->pinned_standard_count ||
+        map->summary.extension_count != builder->policy->extension_count)
+        return map_reject_global(builder, YVEX_ARTIFACT_LOWERING_FAILURE_ACCOUNTING, NULL,
+                                 builder->policy->descriptor_count,
+                                 map->summary.descriptor_count);
     for (index = 0u; index < map->summary.descriptor_count; ++index) {
         const yvex_artifact_lowering_descriptor *descriptor =
             &map->descriptors[index];
@@ -825,16 +854,14 @@ static int map_finalize(map_builder *builder)
             trunk[descriptor->collection]++;
         identity = yvex_core_hash_mix_u64(identity, descriptor->identity);
     }
-    for (index = 0u;
-         index < sizeof(map_trunk_expectations) / sizeof(map_trunk_expectations[0]);
-         ++index)
-        if (trunk[map_trunk_expectations[index].collection] !=
-            map_trunk_expectations[index].count)
+    for (index = 0u; index < YVEX_TENSOR_COLLECTION_COUNT; ++index)
+        if (trunk[index] != builder->policy->trunk_collection_counts[index])
             return map_reject(
                 builder, YVEX_ARTIFACT_LOWERING_FAILURE_ACCOUNTING,
                 YVEX_TENSOR_ROLE_UNKNOWN, YVEX_TENSOR_SCOPE_MAIN_LAYER,
                 YVEX_ARTIFACT_LOWERING_NO_INDEX, YVEX_ARTIFACT_LOWERING_NO_INDEX,
-                YVEX_ARTIFACT_LOWERING_NO_INDEX, NULL, NULL, 1328u, 0u);
+                YVEX_ARTIFACT_LOWERING_NO_INDEX, NULL, NULL,
+                builder->policy->trunk_collection_counts[index], trunk[index]);
     identity = yvex_core_hash_mix_u64(identity, map->summary.source_identity);
     identity = yvex_core_hash_mix_u64(identity, map->summary.coverage_identity);
     map->summary.mapping_identity = identity;
@@ -842,15 +869,14 @@ static int map_finalize(map_builder *builder)
     return YVEX_OK;
 }
 
-static int lowering_build_with_allocator(
+static int artifact_lowering_build_with_allocator(
     yvex_artifact_lowering_map **out,
-    const yvex_deepseek_v4_ir *architecture,
     const yvex_transform_ir *transform_ir,
+    const yvex_artifact_lowering_policy *policy,
     const yvex_artifact_lowering_allocator *allocator,
     yvex_artifact_lowering_failure *failure,
     yvex_error *err)
 {
-    const model_t *model;
     const yvex_transform_ir_summary *transform_summary;
     yvex_artifact_lowering_map *map;
     map_builder builder;
@@ -863,28 +889,28 @@ static int lowering_build_with_allocator(
     memset(&builder, 0, sizeof(builder));
     builder.failure = failure;
     builder.err = err;
-    if (!out || !architecture || !transform_ir || !allocator ||
+    if (!out || !transform_ir || !policy || !allocator ||
         !allocator->allocate || !allocator->release) {
         return map_reject_global(
             &builder, YVEX_ARTIFACT_LOWERING_FAILURE_INVALID_ARGUMENT,
             NULL, 1u, 0u);
     }
-    model = lowering_family_ir()->model(architecture);
     transform_summary = yvex_transform_ir_summary_get(transform_ir);
-    if (!model || model->main_layer_count != 43u ||
-        model->auxiliary_layer_count != 3u) {
+    if (policy->schema_version != YVEX_ARTIFACT_LOWERING_POLICY_SCHEMA_V1 ||
+        !policy->source_contribution_count || !policy->descriptor_count ||
+        policy->trunk_descriptor_count + policy->draft_descriptor_count !=
+            policy->descriptor_count ||
+        policy->pinned_standard_count + policy->extension_count > policy->descriptor_count) {
         return map_reject_global(
-            &builder, YVEX_ARTIFACT_LOWERING_FAILURE_ARCHITECTURE, NULL, 46u,
-            model ? model->main_layer_count + model->auxiliary_layer_count : 0u);
+            &builder, YVEX_ARTIFACT_LOWERING_FAILURE_ARCHITECTURE, NULL,
+            YVEX_ARTIFACT_LOWERING_POLICY_SCHEMA_V1, policy->schema_version);
     }
     if (!transform_summary || !transform_summary->complete ||
-        transform_summary->source_value_count !=
-            YVEX_DEEPSEEK_GGUF_SOURCE_COUNT ||
-        transform_summary->terminal_count !=
-            YVEX_DEEPSEEK_GGUF_DESCRIPTOR_COUNT) {
+        transform_summary->source_value_count != policy->source_contribution_count ||
+        transform_summary->terminal_count != policy->descriptor_count) {
         return map_reject_global(
             &builder, YVEX_ARTIFACT_LOWERING_FAILURE_TRANSFORM_IR, NULL,
-            YVEX_DEEPSEEK_GGUF_DESCRIPTOR_COUNT,
+            policy->descriptor_count,
             transform_summary ? transform_summary->terminal_count : 0u);
     }
     map = (yvex_artifact_lowering_map *)allocator->allocate(
@@ -896,11 +922,11 @@ static int lowering_build_with_allocator(
     memset(map, 0, sizeof(*map));
     map->allocator = *allocator;
     builder.map = map;
-    if (!yvex_core_power_of_two_capacity(YVEX_DEEPSEEK_GGUF_SOURCE_COUNT, 8ull,
+    if (!yvex_core_power_of_two_capacity(policy->source_contribution_count, 8ull,
                                          1ull, 2ull, &map->source_index_capacity) ||
-        !yvex_core_power_of_two_capacity(YVEX_DEEPSEEK_GGUF_DESCRIPTOR_COUNT, 8ull,
+        !yvex_core_power_of_two_capacity(policy->descriptor_count, 8ull,
                                          1ull, 2ull, &map->emitted_index_capacity) ||
-        !yvex_core_power_of_two_capacity(YVEX_DEEPSEEK_GGUF_DESCRIPTOR_COUNT, 8ull,
+        !yvex_core_power_of_two_capacity(policy->descriptor_count, 8ull,
                                          1ull, 2ull, &map->role_index_capacity))
     {
         rc = map_reject_global(
@@ -910,19 +936,17 @@ static int lowering_build_with_allocator(
         return rc;
     }
     map->descriptors = (yvex_artifact_lowering_descriptor *)map_allocate_zero(
-        map, (size_t)YVEX_DEEPSEEK_GGUF_DESCRIPTOR_COUNT *
-             sizeof(*map->descriptors));
+        map, (size_t)policy->descriptor_count * sizeof(*map->descriptors));
     map->contributions = (yvex_artifact_lowering_contribution *)map_allocate_zero(
-        map, (size_t)YVEX_DEEPSEEK_GGUF_SOURCE_COUNT *
-             sizeof(*map->contributions));
+        map, (size_t)policy->source_contribution_count * sizeof(*map->contributions));
     bytes = (size_t)map->source_index_capacity * sizeof(*map->source_index);
     map->source_index = (map_index_slot *)map_allocate_zero(map, bytes);
     bytes = (size_t)map->emitted_index_capacity * sizeof(*map->emitted_index);
     map->emitted_index = (map_index_slot *)map_allocate_zero(map, bytes);
     bytes = (size_t)map->role_index_capacity * sizeof(*map->role_index);
     map->role_index = (map_index_slot *)map_allocate_zero(map, bytes);
-    builder.architecture = architecture;
     builder.transform_ir = transform_ir;
+    builder.policy = policy;
     if (!map->descriptors || !map->contributions || !map->source_index ||
         !map->emitted_index || !map->role_index) {
         rc = map_reject_global(
@@ -958,8 +982,35 @@ static int lowering_build(
     allocator.allocate = map_default_allocate;
     allocator.release = map_default_release;
     allocator.context = NULL;
-    return lowering_build_with_allocator(
-        out, architecture, transform_ir, &allocator, failure, err);
+    return lowering_build_with_allocator(out, architecture, transform_ir, &allocator,
+                                         failure, err);
+}
+
+static int lowering_build_with_allocator(
+    yvex_artifact_lowering_map **out,
+    const yvex_deepseek_v4_ir *architecture,
+    const yvex_transform_ir *transform_ir,
+    const yvex_artifact_lowering_allocator *allocator,
+    yvex_artifact_lowering_failure *failure,
+    yvex_error *err)
+{
+    yvex_artifact_lowering_metadata metadata[YVEX_ARTIFACT_LOWERING_METADATA_CAP];
+    yvex_artifact_lowering_policy policy;
+
+    if (!out || !architecture || !transform_ir || !allocator ||
+        !allocator->allocate || !allocator->release)
+        return artifact_lowering_build_with_allocator(out, transform_ir, NULL, allocator,
+                                                      failure, err);
+    if (!deepseek_lowering_policy_build(&policy, metadata, architecture)) {
+        map_builder builder;
+        memset(&builder, 0, sizeof(builder));
+        builder.failure = failure;
+        builder.err = err;
+        return map_reject_global(&builder, YVEX_ARTIFACT_LOWERING_FAILURE_ARCHITECTURE,
+                                 NULL, 1u, 0u);
+    }
+    return artifact_lowering_build_with_allocator(out, transform_ir, &policy, allocator,
+                                                  failure, err);
 }
 
 static void lowering_close(yvex_artifact_lowering_map *map)
