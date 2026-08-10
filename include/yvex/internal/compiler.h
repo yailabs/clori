@@ -269,6 +269,14 @@ typedef struct {
                        yvex_error *err);
     const struct yvex_physical_variant_api *(*physical_variant)(void);
 } yvex_component_variant_adapter;
+#define YVEX_QUANT_PRESET_CATALOG_SCHEMA_V1 1u
+typedef struct {
+    unsigned int schema_version;
+    const char *target_id;
+    unsigned long long (*count)(void);
+    const char *(*name)(unsigned long long index);
+    int (*open)(struct yvex_quant_policy **out, const char *name, yvex_error *err);
+} yvex_quant_preset_catalog;
 typedef struct yvex_physical_variant_session yvex_physical_variant_session;
 typedef struct {
     const yvex_physical_variant_summary *summary;

@@ -14,6 +14,7 @@
 #include <yvex/internal/runtime.h>
 #include <yvex/internal/logits.h>
 #include <yvex/internal/operator_graph.h>
+#include <yvex/internal/quant_numeric.h>
 #include <yvex/internal/transformer.h>
 #include <limits.h>
 #include <stdio.h>
@@ -1604,6 +1605,167 @@ static int deepseek_compilation_quant_policy(
         out, transform, binding, (const yvex_artifact_lowering_map *)lowering_context,
         policy, imatrix_identity, NULL, &failure, err);
 }
+
+static const yvex_quant_artifact_lowering_rule deepseek_quant_lowering_rules[] = {
+    {YVEX_ARTIFACT_LOWERING_TRANSFORM_DIRECT, YVEX_TRANSFORM_OP_IDENTITY,
+     YVEX_GGUF_QTYPE_F32, YVEX_GGUF_QTYPE_Q8_0, 0},
+    {YVEX_ARTIFACT_LOWERING_TRANSFORM_FP8_E4M3_E8M0,
+     YVEX_TRANSFORM_OP_DECODE_SCALE_PAIR,
+     YVEX_GGUF_QTYPE_F32, YVEX_GGUF_QTYPE_Q8_0, 0},
+    {YVEX_ARTIFACT_LOWERING_TRANSFORM_EXPERT_MXFP4,
+     YVEX_TRANSFORM_OP_EXPERT_AGGREGATE,
+     YVEX_GGUF_QTYPE_MXFP4, YVEX_GGUF_QTYPE_Q2_K, 1},
+    {YVEX_ARTIFACT_LOWERING_TRANSFORM_I64_TO_I32, YVEX_TRANSFORM_OP_CHECKED_CAST,
+     YVEX_GGUF_QTYPE_I32, YVEX_GGUF_QTYPE_I32, 1}};
+
+static const yvex_quant_artifact_lowering_policy deepseek_quant_lowering_policy = {
+    YVEX_DEEPSEEK_QUANT_SOURCE_PROFILE_NAME,
+    YVEX_DEEPSEEK_QUANT_RELEASE_PROFILE_NAME,
+    deepseek_quant_lowering_rules,
+    sizeof(deepseek_quant_lowering_rules) / sizeof(deepseek_quant_lowering_rules[0])};
+
+int yvex_quant_plan_build_deepseek_profile(
+    yvex_quant_plan **out, const yvex_transform_ir *ir,
+    const yvex_transform_binding *binding, const yvex_artifact_lowering_map *map,
+    yvex_quant_profile_kind profile, const yvex_quant_plan_options *options,
+    yvex_quant_failure *failure, yvex_error *err)
+{
+    return yvex_quant_plan_build_artifact_lowering_profile(
+        out, ir, binding, map, &deepseek_quant_lowering_policy,
+        profile, options, failure, err);
+}
+
+int yvex_quant_plan_build_deepseek_policy(
+    yvex_quant_plan **out, const yvex_transform_ir *ir,
+    const yvex_transform_binding *binding, const yvex_artifact_lowering_map *map,
+    const yvex_quant_policy *policy, const char *imatrix_identity,
+    const yvex_quant_plan_options *options, yvex_quant_failure *failure, yvex_error *err)
+{
+    return yvex_quant_plan_build_artifact_lowering_policy(
+        out, ir, binding, map, &deepseek_quant_lowering_policy,
+        policy, imatrix_identity, options, failure, err);
+}
+
+static void deepseek_preset_rule(
+    yvex_quant_policy_rule *rule, unsigned long long match_mask, yvex_tensor_role role,
+    yvex_quant_policy_operation operation, yvex_tensor_scope scope,
+    yvex_quant_policy_physical_class physical_class, yvex_quant_qtype qtype, int imatrix,
+    unsigned int priority, const char *label)
+{
+    memset(rule, 0, sizeof(*rule));
+    rule->schema_version = YVEX_QUANT_POLICY_SCHEMA_VERSION;
+    rule->match_mask = match_mask;
+    rule->role = role;
+    rule->operation = operation;
+    rule->scope = scope;
+    rule->physical_class = physical_class;
+    rule->qtype = qtype;
+    rule->requires_imatrix = imatrix;
+    rule->requires_cpu_compute = 1;
+    rule->requires_cuda_compute = 1;
+    rule->priority = priority;
+    rule->label = label;
+}
+
+static unsigned long long deepseek_quant_preset_count(void)
+{
+    return 3u;
+}
+
+static const char *deepseek_quant_preset_name(unsigned long long index)
+{
+    static const char *const names[] = {
+        "source-faithful", YVEX_DEEPSEEK_QUANT_RELEASE_PROFILE_NAME,
+        YVEX_DEEPSEEK_QUANT_DSPARK_PROFILE_NAME};
+
+    return index < sizeof(names) / sizeof(names[0]) ? names[index] : NULL;
+}
+
+static int deepseek_quant_preset_open(
+    yvex_quant_policy **out, const char *name, yvex_error *err)
+{
+    static const yvex_tensor_role exact_roles[] = {
+        YVEX_TENSOR_ROLE_DRAFT_FEATURE_NORM, YVEX_TENSOR_ROLE_DRAFT_OUTPUT_NORM,
+        YVEX_TENSOR_ROLE_DRAFT_MARKOV_EMBEDDING, YVEX_TENSOR_ROLE_DRAFT_MARKOV_OUTPUT,
+        YVEX_TENSOR_ROLE_DRAFT_CONFIDENCE};
+    yvex_quant_policy_rule rules[10];
+    yvex_quant_policy_definition definition;
+    unsigned long long count = 0u;
+    unsigned long long index;
+
+    if (out) *out = NULL;
+    if (!out || !name) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "quant_policy_preset",
+                       "out and preset name are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    if (strcmp(name, "source-faithful") != 0 &&
+        strcmp(name, YVEX_DEEPSEEK_QUANT_RELEASE_PROFILE_NAME) != 0 &&
+        strcmp(name, YVEX_DEEPSEEK_QUANT_DSPARK_PROFILE_NAME) != 0) {
+        yvex_error_setf(err, YVEX_ERR_UNSUPPORTED, "quant_policy_preset",
+                        "unknown quantization preset: %s", name);
+        return YVEX_ERR_UNSUPPORTED;
+    }
+    deepseek_preset_rule(
+        &rules[count++], YVEX_QUANT_MATCH_PHYSICAL_CLASS, YVEX_TENSOR_ROLE_UNKNOWN,
+        YVEX_QUANT_POLICY_OPERATION_ANY, YVEX_TENSOR_SCOPE_GLOBAL,
+        YVEX_QUANT_POLICY_PHYSICAL_QUANTIZABLE,
+        strcmp(name, "source-faithful") == 0 ? YVEX_QUANT_QTYPE_SOURCE : YVEX_QUANT_QTYPE_Q8_0,
+        0, 10u, strcmp(name, "source-faithful") == 0
+                      ? "preserve the admitted source physical representation"
+                      : "default approximable terminal representation");
+    if (strcmp(name, YVEX_DEEPSEEK_QUANT_RELEASE_PROFILE_NAME) == 0)
+        deepseek_preset_rule(
+            &rules[count++], YVEX_QUANT_MATCH_OPERATION, YVEX_TENSOR_ROLE_UNKNOWN,
+            YVEX_QUANT_POLICY_OPERATION_EXPERT_AGGREGATE, YVEX_TENSOR_SCOPE_GLOBAL,
+            YVEX_QUANT_POLICY_PHYSICAL_ANY, YVEX_QUANT_QTYPE_Q2_K, 0, 100u,
+            "verified release routed-expert aggregate");
+    if (strcmp(name, YVEX_DEEPSEEK_QUANT_DSPARK_PROFILE_NAME) == 0) {
+        static const yvex_tensor_role expert_roles[] = {
+            YVEX_TENSOR_ROLE_MOE_EXPERT_GATE, YVEX_TENSOR_ROLE_MOE_EXPERT_UP,
+            YVEX_TENSOR_ROLE_MOE_EXPERT_DOWN};
+        static const yvex_quant_qtype expert_qtypes[] = {
+            YVEX_QUANT_QTYPE_IQ2_XXS, YVEX_QUANT_QTYPE_IQ2_XXS, YVEX_QUANT_QTYPE_Q2_K};
+        static const char *const expert_labels[] = {
+            "imatrix-weighted routed expert gate", "imatrix-weighted routed expert up",
+            "imatrix-covered routed expert down"};
+
+        for (index = 0u; index < 3u; ++index)
+            deepseek_preset_rule(
+                &rules[count++], YVEX_QUANT_MATCH_ROLE | YVEX_QUANT_MATCH_SCOPE |
+                                     YVEX_QUANT_MATCH_OPERATION,
+                expert_roles[index], YVEX_QUANT_POLICY_OPERATION_EXPERT_AGGREGATE,
+                YVEX_TENSOR_SCOPE_MAIN_LAYER, YVEX_QUANT_POLICY_PHYSICAL_ANY,
+                expert_qtypes[index], 1, 200u, expert_labels[index]);
+        deepseek_preset_rule(
+            &rules[count++], YVEX_QUANT_MATCH_SCOPE | YVEX_QUANT_MATCH_PHYSICAL_CLASS,
+            YVEX_TENSOR_ROLE_UNKNOWN, YVEX_QUANT_POLICY_OPERATION_ANY,
+            YVEX_TENSOR_SCOPE_DRAFT, YVEX_QUANT_POLICY_PHYSICAL_QUANTIZABLE,
+            YVEX_QUANT_QTYPE_Q8_0, 0, 150u, "conservative DSpark draft representation");
+        for (index = 0u; index < sizeof(exact_roles) / sizeof(exact_roles[0]); ++index)
+            deepseek_preset_rule(
+                &rules[count++], YVEX_QUANT_MATCH_ROLE | YVEX_QUANT_MATCH_SCOPE,
+                exact_roles[index], YVEX_QUANT_POLICY_OPERATION_ANY, YVEX_TENSOR_SCOPE_DRAFT,
+                YVEX_QUANT_POLICY_PHYSICAL_ANY, YVEX_QUANT_QTYPE_BF16, 0, 250u,
+                "exact DSpark norm, Markov, and confidence control");
+    }
+    definition = (yvex_quant_policy_definition){
+        name, "deepseek4-v4-flash-dspark", "built-in-preset", rules, count};
+    return yvex_quant_policy_create_definition(out, &definition, err);
+}
+
+const yvex_quant_preset_catalog *yvex_graph_deepseek_v4_quant_presets(void)
+{
+    static const yvex_quant_preset_catalog catalog = {
+        YVEX_QUANT_PRESET_CATALOG_SCHEMA_V1,
+        "deepseek4-v4-flash-dspark",
+        deepseek_quant_preset_count,
+        deepseek_quant_preset_name,
+        deepseek_quant_preset_open};
+
+    return &catalog;
+}
+
 static const yvex_complete_artifact_admission deepseek_selected_catalog = {
     .artifact_class = YVEX_ARTIFACT_CLASS_COMPLETE_YVEX,
     .metadata_count = 76ull,
