@@ -193,6 +193,37 @@ struct yvex_gguf_writer_plan;
 struct yvex_imatrix_data;
 struct yvex_gguf_writer_lowering_api;
 struct yvex_family_compilation_products;
+typedef struct {
+    unsigned long long ordinal, layer_index, predictor_index;
+    yvex_tensor_scope tensor_scope;
+    yvex_attention_class attention_class;
+    yvex_attention_compute_contract compute_contract;
+    unsigned long long compression_ratio, sliding_window, query_heads, kv_heads;
+    unsigned long long head_dimension, rope_head_dimension, query_lora_rank;
+    unsigned long long output_lora_rank, output_groups, output_group_input_width;
+    unsigned long long hidden_dimension;
+    unsigned long long indexer_heads, indexer_head_dimension, indexer_topk;
+    unsigned long long compressor_ape_columns, indexer_ape_columns;
+    double rms_norm_epsilon;
+    unsigned long long residual_stream_count, residual_stream_width, residual_expanded_width;
+    unsigned long long mhc_mixing_rows, mhc_mixing_columns, mhc_base_width, mhc_scale_width;
+    unsigned long long mhc_sinkhorn_iterations, attention_input_norm_width;
+    double mhc_epsilon, mhc_residual_post_multiplier;
+    unsigned int mhc_entry_policy;
+    int mhc_attention_pre_and_post, attention_input_norm_required;
+    yvex_tensor_role attention_input_norm_role, mhc_function_role, mhc_base_role;
+    yvex_tensor_role mhc_scale_role;
+    int compressor_required, indexer_required;
+    yvex_attention_position_policy position;
+    yvex_attention_activation_policy attention_kv_activation;
+    yvex_attention_activation_policy compressor_activation;
+    yvex_attention_activation_policy compressor_rotated_activation;
+    yvex_attention_activation_policy indexer_query_activation;
+    yvex_attention_topk_policy sparse_topk;
+} yvex_semantic_attention_layer;
+typedef int (*yvex_semantic_attention_layer_fn)(
+    const void *context, unsigned long long index,
+    yvex_semantic_attention_layer *output);
 typedef struct yvex_family_compiler_adapter yvex_family_compiler_adapter;
 typedef struct yvex_operator_graph_ir yvex_operator_graph_ir;
 typedef struct yvex_compiled_model_plan yvex_compiled_model_plan;
@@ -258,12 +289,23 @@ typedef struct yvex_physical_variant_api {
 } yvex_physical_variant_api;
 
 #define YVEX_SEMANTIC_MODEL_IR_SCHEMA_V1 1u
+#define YVEX_SEMANTIC_NUMERIC_CONTRACT_SCHEMA_V1 1u
+typedef struct {
+    unsigned int schema_version;
+    unsigned int numeric_schema_version;
+    char identity[YVEX_SHA256_HEX_BYTES];
+    char algorithm_revision[128];
+    unsigned long long compute_policy_count;
+    unsigned long long activation_policy_count;
+    unsigned long long sparse_topk_policy_count;
+} yvex_semantic_numeric_contract;
 typedef struct yvex_semantic_model_ir yvex_semantic_model_ir;
-typedef void (*yvex_semantic_model_payload_close_fn)(void *payload);
 typedef struct {
     unsigned int schema_version;
     unsigned long long family_adapter_id, family_adapter_version;
+    unsigned long long attention_layer_count, draft_attention_layer_count;
     yvex_model_execution_descriptor execution_descriptor;
+    yvex_semantic_numeric_contract numeric_contract;
     char target_id[128];
     char source_model_identity[YVEX_SHA256_HEX_BYTES];
     char logical_model_identity[YVEX_SHA256_HEX_BYTES];
@@ -278,19 +320,22 @@ typedef struct {
     const char *logical_model_identity;
     const char *semantic_payload_identity;
     const yvex_model_execution_descriptor *execution_descriptor;
-    void *family_payload;
-    int family_payload_owned;
-    yvex_semantic_model_payload_close_fn family_payload_close;
+    const yvex_semantic_numeric_contract *numeric_contract;
+    const void *attention_context;
+    yvex_semantic_attention_layer_fn attention_layer;
+    unsigned long long attention_layer_count;
+    yvex_semantic_attention_layer_fn draft_attention_layer;
+    unsigned long long draft_attention_layer_count;
 } yvex_semantic_model_ir_request;
 int yvex_semantic_model_ir_seal(
     yvex_semantic_model_ir **out,
     const yvex_semantic_model_ir_request *request, yvex_error *err);
 const yvex_semantic_model_ir_summary *yvex_semantic_model_ir_summary_get(
     const yvex_semantic_model_ir *model);
-const void *yvex_semantic_model_ir_family_payload(
-    const yvex_semantic_model_ir *model,
-    unsigned long long family_adapter_id,
-    unsigned long long family_adapter_version);
+int yvex_semantic_model_ir_attention_view(
+    const yvex_semantic_model_ir *model, yvex_tensor_scope tensor_scope,
+    const yvex_semantic_attention_layer **layers,
+    unsigned long long *layer_count);
 void yvex_semantic_model_ir_close(yvex_semantic_model_ir **model);
 
 #define YVEX_FAMILY_BINDING_PIPELINE_SCHEMA_V1 1u

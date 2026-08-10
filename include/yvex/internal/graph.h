@@ -24,7 +24,7 @@ typedef enum {
     YVEX_GRAPH_REPORT_MODE_CSV
 } yvex_graph_report_mode;
 
-typedef struct {
+typedef struct yvex_attention_layer_plan {
     unsigned long long ordinal, layer_index, predictor_index;
     yvex_tensor_scope tensor_scope;
     yvex_attention_class attention_class;
@@ -220,6 +220,12 @@ int yvex_compiled_graph_identities(
     char executable[YVEX_SHA256_HEX_CAP]);
 
 typedef struct yvex_attention_plan yvex_attention_plan;
+int yvex_attention_plan_build_semantic(
+    yvex_attention_plan **out, const yvex_semantic_model_ir *semantic_model,
+    yvex_tensor_scope tensor_scope,
+    const yvex_materialization_session *session,
+    const yvex_runtime_descriptor *descriptor,
+    yvex_attention_failure *failure, yvex_error *err);
 typedef enum {
     YVEX_ATTENTION_BINDING_NOT_REQUIRED = 0,
     YVEX_ATTENTION_BINDING_CORE,

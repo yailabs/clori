@@ -60,20 +60,23 @@ state, assigns canonical value and node ordinals, validates expected source and
 terminal populations, seals the IR, and releases failed construction. Family
 code cannot manipulate or persist the mutable builder representation.
 
-The family projection also seals source-authored context, attention, MoE,
-output, DSpark and persistent-state geometry into one pointer-free
-model-execution descriptor. Common planning consumes that identity-bound
-projection instead of branching on a target name or repeating family
-constants. Synthetic descriptor tests vary its principal dimensions to keep
-the common path model-derived.
+The family projection seals source-authored context, MoE, output, DSpark and
+persistent-state geometry into one pointer-free model-execution descriptor. It
+also projects every main and draft attention layer, together with the numeric
+contract required to interpret it, into compiler-owned Semantic Model IR
+storage. Common planning consumes those identity-bound facts instead of
+branching on a target name, retaining process-local family payload, or
+repeating family constants. Synthetic descriptor tests vary the principal
+dimensions and mutate the source projection after sealing to prove that the
+common path remains model-derived and immutable.
 
 The compiler-facing family adapter supplies one bounded graph compiler and the
-family's operator-composition callback. Its attention recipes and MoE layer
-projector are passed explicitly into generic plan construction; generic graph
-code does not enumerate a process-global family registry or choose a
-transformer-shaped composition. These projectors are consumed only while
-sealing the canonical operator graph and compiled model plan and are absent
-from runtime model-open and execution.
+family's operator-composition callback. Family projectors are consumed only
+while sealing Semantic Model IR. Generic graph lowering reads the sealed
+attention topology and converts it into graph-owned physical plan records;
+generic graph code does not enumerate a process-global family registry or
+choose a transformer-shaped composition. Family projection callbacks are
+absent from runtime model-open and execution.
 
 Transformation execution reads only the ranges named by the sealed plan. It
 may select, concatenate, permute, aggregate, scale, convert, or quantize as

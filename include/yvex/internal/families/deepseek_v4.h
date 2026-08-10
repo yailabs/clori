@@ -44,6 +44,7 @@ typedef struct yvex_model_target_report yvex_model_target_report;
 typedef struct yvex_graph_execution_api yvex_graph_execution_api;
 typedef struct yvex_graph_compiler_api yvex_graph_compiler_api;
 typedef struct yvex_family_compiler_adapter yvex_family_compiler_adapter;
+typedef struct yvex_semantic_model_ir yvex_semantic_model_ir;
 typedef struct yvex_gguf_writer_lowering_api yvex_gguf_writer_lowering_api;
 #define YVEX_DEEPSEEK_V4_IR_NO_LAYER (~0ull)
 typedef enum {
@@ -517,7 +518,8 @@ int yvex_runtime_descriptor_build_deepseek(
     yvex_runtime_descriptor **out,
     const yvex_complete_artifact_admission *admission,
     const yvex_materialization_session *session,
-    const yvex_deepseek_gguf_map *map, const yvex_deepseek_v4_ir *ir,
+    const yvex_deepseek_gguf_map *map,
+    const yvex_semantic_model_ir *semantic_model,
     yvex_runtime_descriptor_failure *failure, yvex_error *err);
 const yvex_model_family_api *yvex_model_register_deepseek_v4(void);
 const yvex_conversation_protocol *yvex_model_deepseek_v4_conversation(void);

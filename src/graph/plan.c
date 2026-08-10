@@ -901,7 +901,142 @@ static int attention_bind_required_layer_roles(
     return YVEX_OK;
 }
 
-int yvex_attention_plan_build(
+typedef struct {
+    const yvex_semantic_model_ir *model;
+    const yvex_semantic_attention_layer *layers;
+    unsigned long long layer_count;
+} semantic_attention_recipe;
+
+static int attention_plan_build(
+    yvex_attention_plan **out, const yvex_attention_recipe *recipe,
+    const yvex_materialization_session *session,
+    const yvex_runtime_descriptor *descriptor,
+    yvex_attention_failure *failure, yvex_error *err);
+
+static int semantic_attention_identity(const void *context, char output[65])
+{
+    const semantic_attention_recipe *recipe = context;
+    const yvex_semantic_model_ir_summary *summary =
+        recipe ? yvex_semantic_model_ir_summary_get(recipe->model) : NULL;
+
+    if (!summary || !yvex_sha256_hex_valid(summary->logical_model_identity))
+        return 0;
+    yvex_core_text_copy(output, 65u, summary->logical_model_identity);
+    return 1;
+}
+
+static int semantic_attention_layer(
+    const void *context, unsigned long long index,
+    yvex_attention_layer_plan *output)
+{
+    const semantic_attention_recipe *recipe = context;
+    const yvex_semantic_attention_layer *input;
+
+    if (!recipe || !output || index >= recipe->layer_count) return 0;
+    input = &recipe->layers[index];
+    *output = (yvex_attention_layer_plan){
+        .ordinal = input->ordinal,
+        .layer_index = input->layer_index,
+        .predictor_index = input->predictor_index,
+        .tensor_scope = input->tensor_scope,
+        .attention_class = input->attention_class,
+        .compute_contract = input->compute_contract,
+        .compression_ratio = input->compression_ratio,
+        .sliding_window = input->sliding_window,
+        .query_heads = input->query_heads,
+        .kv_heads = input->kv_heads,
+        .head_dimension = input->head_dimension,
+        .rope_head_dimension = input->rope_head_dimension,
+        .query_lora_rank = input->query_lora_rank,
+        .output_lora_rank = input->output_lora_rank,
+        .output_groups = input->output_groups,
+        .output_group_input_width = input->output_group_input_width,
+        .hidden_dimension = input->hidden_dimension,
+        .indexer_heads = input->indexer_heads,
+        .indexer_head_dimension = input->indexer_head_dimension,
+        .indexer_topk = input->indexer_topk,
+        .compressor_ape_columns = input->compressor_ape_columns,
+        .indexer_ape_columns = input->indexer_ape_columns,
+        .rms_norm_epsilon = input->rms_norm_epsilon,
+        .residual_stream_count = input->residual_stream_count,
+        .residual_stream_width = input->residual_stream_width,
+        .residual_expanded_width = input->residual_expanded_width,
+        .mhc_mixing_rows = input->mhc_mixing_rows,
+        .mhc_mixing_columns = input->mhc_mixing_columns,
+        .mhc_base_width = input->mhc_base_width,
+        .mhc_scale_width = input->mhc_scale_width,
+        .mhc_sinkhorn_iterations = input->mhc_sinkhorn_iterations,
+        .attention_input_norm_width = input->attention_input_norm_width,
+        .mhc_epsilon = input->mhc_epsilon,
+        .mhc_residual_post_multiplier = input->mhc_residual_post_multiplier,
+        .mhc_entry_policy = input->mhc_entry_policy,
+        .mhc_attention_pre_and_post = input->mhc_attention_pre_and_post,
+        .attention_input_norm_required = input->attention_input_norm_required,
+        .attention_input_norm_role = input->attention_input_norm_role,
+        .mhc_function_role = input->mhc_function_role,
+        .mhc_base_role = input->mhc_base_role,
+        .mhc_scale_role = input->mhc_scale_role,
+        .compressor_required = input->compressor_required,
+        .indexer_required = input->indexer_required,
+        .position = input->position,
+        .attention_kv_activation = input->attention_kv_activation,
+        .compressor_activation = input->compressor_activation,
+        .compressor_rotated_activation = input->compressor_rotated_activation,
+        .indexer_query_activation = input->indexer_query_activation,
+        .sparse_topk = input->sparse_topk};
+    return 1;
+}
+
+int yvex_attention_plan_build_semantic(
+    yvex_attention_plan **out, const yvex_semantic_model_ir *semantic_model,
+    yvex_tensor_scope tensor_scope,
+    const yvex_materialization_session *session,
+    const yvex_runtime_descriptor *descriptor,
+    yvex_attention_failure *failure, yvex_error *err)
+{
+    const yvex_semantic_model_ir_summary *semantic =
+        yvex_semantic_model_ir_summary_get(semantic_model);
+    const yvex_model_execution_descriptor *execution =
+        semantic ? &semantic->execution_descriptor : NULL;
+    semantic_attention_recipe context = {0};
+    yvex_attention_recipe recipe = {0};
+
+    if (out) *out = NULL;
+    if (!out || !semantic_model || !session || !descriptor ||
+        (tensor_scope != YVEX_TENSOR_SCOPE_MAIN_LAYER &&
+         tensor_scope != YVEX_TENSOR_SCOPE_DRAFT))
+        return yvex_attention_reject(
+            failure, YVEX_ATTENTION_FAILURE_INVALID_ARGUMENT, NULL,
+            YVEX_ATTENTION_NO_LAYER, YVEX_TENSOR_ROLE_UNKNOWN, 1ull, 0ull,
+            err, YVEX_ERR_INVALID_ARG,
+            "semantic attention planning requires model, scope, session, and descriptor");
+    if (!execution || !yvex_semantic_model_ir_attention_view(
+                          semantic_model, tensor_scope, &context.layers,
+                          &context.layer_count))
+        return yvex_attention_reject(
+            failure, YVEX_ATTENTION_FAILURE_ARCHITECTURE, NULL,
+            YVEX_ATTENTION_NO_LAYER, YVEX_TENSOR_ROLE_UNKNOWN, 1ull, 0ull,
+            err, YVEX_ERR_FORMAT,
+            "semantic model has no admitted attention topology for this scope");
+    context.model = semantic_model;
+    recipe = (yvex_attention_recipe){
+        .context = &context,
+        .layer_count = context.layer_count,
+        .auxiliary_layer_count = execution->draft_layer_count,
+        .swa_layer_count = tensor_scope == YVEX_TENSOR_SCOPE_DRAFT
+                               ? context.layer_count : execution->swa_layers,
+        .csa_layer_count = tensor_scope == YVEX_TENSOR_SCOPE_DRAFT
+                               ? 0ull : execution->csa_layers,
+        .hca_layer_count = tensor_scope == YVEX_TENSOR_SCOPE_DRAFT
+                               ? 0ull : execution->hca_layers,
+        .tensor_scope = tensor_scope,
+        .identity = semantic_attention_identity,
+        .layer = semantic_attention_layer};
+    return attention_plan_build(
+        out, &recipe, session, descriptor, failure, err);
+}
+
+static int attention_plan_build(
     yvex_attention_plan **out,
     const yvex_attention_recipe *recipe,
     const yvex_materialization_session *session,

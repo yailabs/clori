@@ -316,9 +316,6 @@ struct yvex_attention_plan {
     unsigned long long layer_count;
     yvex_attention_summary summary;
 };
-int yvex_attention_plan_build(yvex_attention_plan **out, const yvex_attention_recipe *recipe,
-    const yvex_materialization_session *session, const yvex_runtime_descriptor *descriptor,
-    yvex_attention_failure *failure, yvex_error *err);
 const yvex_attention_summary *yvex_attention_plan_summary(const yvex_attention_plan *plan);
 unsigned long long yvex_attention_plan_layer_count(const yvex_attention_plan *plan);
 const yvex_attention_layer_plan *yvex_attention_plan_layer_at(const yvex_attention_plan *plan,

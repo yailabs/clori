@@ -843,32 +843,15 @@ cleanup:
 }
 
 static int artifact_semantic_model_build(
-    yvex_semantic_model_ir **out, const yvex_deepseek_v4_ir *architecture,
+    yvex_semantic_model_ir **out, const yvex_source_verification *verification,
     yvex_error *err)
 {
-    const yvex_model_family_api *model = yvex_model_register_deepseek_v4();
-    yvex_model_execution_descriptor execution = {0};
-    yvex_semantic_model_ir_request request = {0};
-    char logical[YVEX_SHA256_HEX_CAP] = {0};
-    int rc;
-    if (out) *out = NULL;
-    if (!out || !architecture ||
-        !model->transform.architecture_identity(architecture, logical))
-        return YVEX_ERR_INVALID_ARG;
-    rc = model->ir.execution_descriptor(
-        architecture, logical, &execution, err);
-    if (rc != YVEX_OK) return rc;
-    request = (yvex_semantic_model_ir_request){
-        .schema_version = YVEX_SEMANTIC_MODEL_IR_SCHEMA_V1,
-        .family_adapter_id = YVEX_DEEPSEEK_V4_ADAPTER_ID,
-        .family_adapter_version = YVEX_DEEPSEEK_V4_ADAPTER_VERSION,
-        .target_id = "deepseek4-v4-flash-dspark",
-        .source_model_identity = execution.source_model_identity,
-        .logical_model_identity = execution.logical_model_identity,
-        .semantic_payload_identity = execution.identity,
-        .execution_descriptor = &execution,
-        .family_payload = (void *)architecture};
-    return yvex_semantic_model_ir_seal(out, &request, err);
+    const yvex_family_compiler_adapter *adapter = yvex_compiler_family_deepseek_v4();
+    const yvex_family_binding_pipeline *pipeline =
+        adapter ? adapter->binding_pipeline : NULL;
+
+    if (!pipeline || !pipeline->semantic_model_build) return YVEX_ERR_STATE;
+    return pipeline->semantic_model_build(out, verification, err);
 }
 
 static int artifact_variant_bind(
@@ -886,7 +869,6 @@ static int artifact_variant_bind(
     yvex_tensor_table *tensors = NULL;
     yvex_materialization_plan *materialization_plan = NULL;
     yvex_materialization_session *materialization = NULL;
-    yvex_deepseek_v4_ir *architecture = NULL;
     yvex_semantic_model_ir *semantic_model = NULL;
     yvex_operator_graph_ir *operator_graph = NULL;
     yvex_physical_execution_ir *physical_execution = NULL;
@@ -900,7 +882,6 @@ static int artifact_variant_bind(
     yvex_materialization_projection materialization_projection;
     yvex_materialization_failure materialization_failure = {0};
     yvex_runtime_descriptor_failure descriptor_failure = {0};
-    yvex_deepseek_v4_ir_failure architecture_failure = {0};
     yvex_attention_failure attention_failure = {0};
     yvex_gguf_writer_failure writer_failure = {0};
     yvex_artifact_compatibility_failure compatibility_failure = {0};
@@ -955,16 +936,12 @@ static int artifact_variant_bind(
         rc = yvex_materialization_session_commit(
             materialization, &materialization_failure, &error);
     if (rc == YVEX_OK)
-        rc = model->ir.build(
-            &architecture, model->payload.verification(handoff),
-            &architecture_failure, &error);
-    if (rc == YVEX_OK)
         rc = artifact_semantic_model_build(
-            &semantic_model, architecture, &error);
+            &semantic_model, model->payload.verification(handoff), &error);
     if (rc == YVEX_OK)
         rc = yvex_runtime_descriptor_build_deepseek(
             &descriptor, &emitted->admission, materialization, model->payload.map(handoff),
-            architecture, &descriptor_failure, &error);
+            semantic_model, &descriptor_failure, &error);
     if (rc == YVEX_OK)
         rc = graph->plan_build(
             &attention, semantic_model, materialization, descriptor,
@@ -1071,7 +1048,6 @@ static int artifact_variant_bind(
     yvex_attention_plan_close(attention);
     yvex_attention_plan_close(draft_attention);
     yvex_runtime_descriptor_close(descriptor);
-    if (model) model->ir.close(architecture);
     yvex_materialization_session_close(materialization);
     yvex_materialization_plan_close(materialization_plan);
     yvex_tensor_table_close(tensors);

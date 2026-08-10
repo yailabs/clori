@@ -500,6 +500,18 @@ rg -n 'yvex_model_execution_descriptor[[:space:]]+execution_descriptor' \
     fail "Semantic Model IR no longer owns sealed execution geometry"
 rg -n 'semantic->execution_descriptor' src/graph/operator_ir.c >/dev/null ||
     fail "operator lowering no longer consumes Semantic Model IR geometry"
+if rg -n 'semantic_model_ir_family_payload|family_payload_(owned|close)' \
+    include/yvex/internal/compiler.h src/model/compilation/semantic.c \
+    src/graph/families; then
+    fail "Semantic Model IR retains process-local concrete family state"
+fi
+rg -n 'yvex_semantic_model_ir_attention_view' \
+    src/graph/plan.c src/graph/families/deepseek_v4.c >/dev/null ||
+    fail "attention lowering no longer consumes compiler-owned semantic topology"
+deepseek_semantic_plan_calls=$(rg -c 'yvex_attention_plan_build_semantic' \
+    src/graph/families/deepseek_v4.c)
+[ "$deepseek_semantic_plan_calls" -eq 2 ] ||
+    fail "DeepSeek graph execution reconstructs family topology after semantic sealing"
 if rg -n 'const[[:space:]]+yvex_model_execution_descriptor[[:space:]]+\*model' \
     include/yvex/internal/operator_graph.h include/yvex/internal/compiler.h; then
     fail "operator lowering accepts a second model-geometry authority"

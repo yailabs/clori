@@ -17,15 +17,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-static int graph_recipe_identity(const void *context, char output[65])
-{
-    return yvex_model_register_deepseek_v4()->transform.architecture_identity(
-        (const yvex_deepseek_v4_ir *)context, output);
-}
 static int graph_recipe_project(const yvex_deepseek_v4_layer_spec *layer,
                                 unsigned long long ordinal, yvex_tensor_scope scope,
                                 unsigned long long predictor,
-                                yvex_attention_layer_plan *out)
+                                yvex_semantic_attention_layer *out)
 {
     const yvex_attention_activation_policy *policies[4];
 
@@ -94,69 +89,40 @@ static int graph_recipe_project(const yvex_deepseek_v4_layer_spec *layer,
     return 1;
 }
 static int graph_recipe_layer(const void *context, unsigned long long index,
-                              yvex_attention_layer_plan *out)
+                              yvex_semantic_attention_layer *out)
 {
-    const yvex_deepseek_v4_layer_spec *layer =
-        yvex_model_register_deepseek_v4()->ir.layer_at(
-            (const yvex_deepseek_v4_ir *)context, index);
-    return graph_recipe_project(layer, index, YVEX_TENSOR_SCOPE_MAIN_LAYER,
+    const yvex_deepseek_v4_ir *ir = context;
+    return graph_recipe_project(yvex_model_register_deepseek_v4()->ir.layer_at(ir, index),
+                                index, YVEX_TENSOR_SCOPE_MAIN_LAYER,
                                 YVEX_ATTENTION_NO_TENSOR_INDEX, out);
 }
 static int graph_recipe_draft_layer(const void *context, unsigned long long index,
-                                    yvex_attention_layer_plan *out)
+                                    yvex_semantic_attention_layer *out)
 {
     const yvex_deepseek_v4_auxiliary_spec *draft =
-        yvex_model_register_deepseek_v4()->ir.auxiliary_at(
-            (const yvex_deepseek_v4_ir *)context, index);
+        yvex_model_register_deepseek_v4()->ir.auxiliary_at(context, index);
     return draft && graph_recipe_project(&draft->layer, index, YVEX_TENSOR_SCOPE_DRAFT,
                                          draft->predictor_index, out);
 }
-static const yvex_deepseek_v4_ir *deepseek_semantic_payload(
-    const yvex_semantic_model_ir *semantic_model)
-{
-    return (const yvex_deepseek_v4_ir *)yvex_semantic_model_ir_family_payload(
-        semantic_model, YVEX_DEEPSEEK_V4_ADAPTER_ID,
-        YVEX_DEEPSEEK_V4_ADAPTER_VERSION);
-}
-static int graph_plan_build(yvex_attention_plan **out,
-    const yvex_semantic_model_ir *semantic_model,
+static int graph_plan_build(
+    yvex_attention_plan **out, const yvex_semantic_model_ir *semantic_model,
     const yvex_materialization_session *session, const yvex_runtime_descriptor *descriptor,
     yvex_attention_failure *failure, yvex_error *err)
 {
-    const yvex_deepseek_v4_ir *ir = deepseek_semantic_payload(semantic_model);
-    const yvex_deepseek_v4_model_spec *model = ir
-        ? yvex_model_register_deepseek_v4()->ir.model(ir) : NULL;
-    yvex_attention_recipe recipe;
-    if (!model) return yvex_attention_plan_build(out, NULL, session, descriptor, failure, err);
-    recipe = (yvex_attention_recipe){
-        .context = ir, .layer_count = yvex_model_register_deepseek_v4()->ir.layer_count(ir),
-        .auxiliary_layer_count = model->auxiliary_layer_count,
-        .swa_layer_count = model->swa_layer_count, .csa_layer_count = model->csa_layer_count,
-        .hca_layer_count = model->hca_layer_count,
-        .tensor_scope = YVEX_TENSOR_SCOPE_MAIN_LAYER,
-        .identity = graph_recipe_identity, .layer = graph_recipe_layer};
-    return yvex_attention_plan_build(out, &recipe, session, descriptor, failure, err);
+    return yvex_attention_plan_build_semantic(out, semantic_model,
+        YVEX_TENSOR_SCOPE_MAIN_LAYER, session, descriptor, failure, err);
 }
-static int graph_draft_plan_build(yvex_attention_plan **out,
-    const yvex_semantic_model_ir *semantic_model,
+static int graph_draft_plan_build(
+    yvex_attention_plan **out, const yvex_semantic_model_ir *semantic_model,
     const yvex_materialization_session *session, const yvex_runtime_descriptor *descriptor,
     yvex_attention_failure *failure, yvex_error *err)
 {
-    const yvex_deepseek_v4_ir *ir = deepseek_semantic_payload(semantic_model);
-    const yvex_deepseek_v4_model_spec *model =
-        ir ? yvex_model_register_deepseek_v4()->ir.model(ir) : NULL;
-    yvex_attention_recipe recipe;
-    if (!model || !model->dspark.present)
-        return yvex_attention_plan_build(out, NULL, session, descriptor, failure, err);
-    recipe = (yvex_attention_recipe){
-        .context = ir, .layer_count = model->dspark.draft_layer_count,
-        .auxiliary_layer_count = model->dspark.draft_layer_count,
-        .swa_layer_count = model->dspark.draft_layer_count,
-        .tensor_scope = YVEX_TENSOR_SCOPE_DRAFT,
-        .identity = graph_recipe_identity, .layer = graph_recipe_draft_layer};
-    return yvex_attention_plan_build(out, &recipe, session, descriptor, failure, err);
+    return yvex_attention_plan_build_semantic(out, semantic_model,
+        YVEX_TENSOR_SCOPE_DRAFT, session, descriptor, failure, err);
 }
-static const yvex_model_execution_descriptor *deepseek_execution_model(const yvex_runtime_descriptor_summary *runtime) {
+static const yvex_model_execution_descriptor *deepseek_execution_model(
+    const yvex_runtime_descriptor_summary *runtime)
+{
     return runtime && runtime->model_execution.schema_version == YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1
                ? &runtime->model_execution : NULL;
 }
@@ -324,7 +290,6 @@ static int deepseek_compilation_materialization(
 static int deepseek_compilation_semantic_model(
     yvex_semantic_model_ir **out,
     const yvex_source_verification *verification, yvex_error *err);
-static void deepseek_compilation_semantic_close(void *model);
 static int deepseek_compilation_descriptor(
     yvex_runtime_descriptor **out, const yvex_complete_artifact_admission *admission,
     yvex_materialization_session *materialization, const void *lowering_context,
@@ -1615,13 +1580,11 @@ static int deepseek_compilation_source_open(
     }
     return YVEX_OK;
 }
-
 static void deepseek_compilation_source_close(void *owner)
 {
     yvex_model_register_deepseek_v4()->payload.close(
         (yvex_deepseek_payload_handoff *)owner);
 }
-
 static int deepseek_descriptor_refuse(
     yvex_runtime_descriptor_failure *failure,
     yvex_runtime_descriptor_failure_code code, unsigned long long index,
@@ -1638,31 +1601,10 @@ static int deepseek_descriptor_refuse(
     return status;
 }
 
-static void deepseek_hash_activation(
-    yvex_sha256 *hash, const yvex_attention_activation_policy *policy)
-{
-#define HASH(MEMBER) yvex_sha256_update_u64(hash, (unsigned long long)policy->MEMBER)
-    HASH(required); HASH(stage); HASH(quantization); HASH(block_axis); HASH(block_width);
-    HASH(scale_format); HASH(scale_dtype); HASH(pre_transform); HASH(tail_policy);
-    HASH(nonfinite_policy); HASH(fake_quant_inplace); HASH(zero_pad_hadamard_to_power_of_two);
-#undef HASH
-}
-
-static void deepseek_hash_topk(
-    yvex_sha256 *hash, const yvex_attention_topk_policy *policy)
-{
-#define HASH(MEMBER) yvex_sha256_update_u64(hash, (unsigned long long)policy->MEMBER)
-    HASH(required); HASH(version); HASH(policy); HASH(k); HASH(reject_nonfinite);
-    HASH(score_descending); HASH(equal_score_ordinal_ascending); HASH(plus_zero_equals_minus_zero);
-    HASH(duplicate_ordinal_refused); HASH(output_ranked_order);
-#undef HASH
-}
-
-static int deepseek_descriptor_facts(
-    const yvex_deepseek_v4_ir *ir, yvex_runtime_descriptor_family_facts *facts,
-    yvex_model_execution_descriptor *execution, char logical[YVEX_SHA256_HEX_CAP],
-    char numeric[YVEX_SHA256_HEX_CAP], yvex_runtime_descriptor_failure *failure,
-    yvex_error *err)
+static int deepseek_numeric_contract_build(
+    const yvex_deepseek_v4_ir *ir,
+    yvex_semantic_numeric_contract *contract,
+    yvex_runtime_descriptor_failure *failure, yvex_error *err)
 {
     const yvex_model_family_api *api = yvex_model_register_deepseek_v4();
     const yvex_deepseek_v4_model_spec *model = api->ir.model(ir);
@@ -1671,10 +1613,10 @@ static int deepseek_descriptor_facts(
     yvex_sha256 hash;
     unsigned long long count, index;
 
-    if (!model || !first || model->runtime_numeric_schema_version != 2u ||
+    if (!contract || !model || !first ||
+        model->runtime_numeric_schema_version != 2u ||
         model->runtime_compute_policy_count != 1ull ||
-        !model->runtime_activation_policy_count || !model->hadamard_revision[0] ||
-        !api->transform.architecture_identity(ir, logical))
+        !model->runtime_activation_policy_count || !model->hadamard_revision[0])
         return deepseek_descriptor_refuse(
             failure, YVEX_RUNTIME_DESCRIPTOR_FAILURE_ARCHITECTURE,
             YVEX_MATERIALIZATION_NO_INDEX, "runtime numeric authority is incomplete",
@@ -1699,30 +1641,76 @@ static int deepseek_descriptor_facts(
         yvex_sha256_update_u64(&hash, layer->layer_index);
         yvex_sha256_update_u64(&hash, (unsigned long long)layer->attention_class);
         yvex_sha256_update_u64(&hash, (unsigned long long)layer->compute_contract);
-        deepseek_hash_activation(&hash, &layer->attention_kv_activation);
-        deepseek_hash_activation(&hash, &layer->compressor_activation);
-        deepseek_hash_activation(&hash, &layer->compressor_rotated_activation);
-        deepseek_hash_activation(&hash, &layer->indexer_query_activation);
-        deepseek_hash_topk(&hash, &layer->sparse_topk);
+        if (!yvex_model_activation_identity_update(
+                &hash, &layer->attention_kv_activation) ||
+            !yvex_model_activation_identity_update(
+                &hash, &layer->compressor_activation) ||
+            !yvex_model_activation_identity_update(
+                &hash, &layer->compressor_rotated_activation) ||
+            !yvex_model_activation_identity_update(
+                &hash, &layer->indexer_query_activation) ||
+            !yvex_model_topk_identity_update(&hash, &layer->sparse_topk))
+            return deepseek_descriptor_refuse(
+                failure, YVEX_RUNTIME_DESCRIPTOR_FAILURE_ARCHITECTURE, index,
+                "runtime numeric identity update failed", YVEX_ERR_STATE, err);
     }
     if (!yvex_sha256_final(&hash, digest))
         return deepseek_descriptor_refuse(
             failure, YVEX_RUNTIME_DESCRIPTOR_FAILURE_ARCHITECTURE,
             YVEX_MATERIALIZATION_NO_INDEX, "runtime numeric identity failed",
             YVEX_ERR_STATE, err);
-    yvex_sha256_hex(digest, numeric);
-    if (!api->ir.execution_descriptor ||
-        api->ir.execution_descriptor(ir, logical, execution, err) != YVEX_OK)
+    memset(contract, 0, sizeof(*contract));
+    contract->schema_version = YVEX_SEMANTIC_NUMERIC_CONTRACT_SCHEMA_V1;
+    contract->numeric_schema_version = model->runtime_numeric_schema_version;
+    contract->compute_policy_count = model->runtime_compute_policy_count;
+    contract->activation_policy_count = model->runtime_activation_policy_count;
+    contract->sparse_topk_policy_count = model->runtime_sparse_topk_policy_count;
+    yvex_core_text_copy(contract->algorithm_revision, sizeof(contract->algorithm_revision),
+                        model->hadamard_revision);
+    yvex_sha256_hex(digest, contract->identity);
+    return YVEX_OK;
+}
+
+static int deepseek_descriptor_facts(
+    const yvex_semantic_model_ir *semantic_model,
+    yvex_runtime_descriptor_family_facts *facts,
+    yvex_runtime_descriptor_failure *failure, yvex_error *err)
+{
+    const yvex_semantic_model_ir_summary *semantic =
+        yvex_semantic_model_ir_summary_get(semantic_model);
+    const yvex_semantic_attention_layer *layers = NULL;
+    const yvex_model_execution_descriptor *execution =
+        semantic ? &semantic->execution_descriptor : NULL;
+    const yvex_semantic_numeric_contract *numeric =
+        semantic ? &semantic->numeric_contract : NULL;
+    unsigned long long layer_count = 0ull;
+
+    if (!semantic || !execution || !numeric ||
+        numeric->schema_version != YVEX_SEMANTIC_NUMERIC_CONTRACT_SCHEMA_V1 ||
+        !yvex_sha256_hex_valid(numeric->identity) ||
+        !yvex_semantic_model_ir_attention_view(
+            semantic_model, YVEX_TENSOR_SCOPE_MAIN_LAYER,
+            &layers, &layer_count) ||
+        layer_count != execution->layer_count || !layers)
         return deepseek_descriptor_refuse(
             failure, YVEX_RUNTIME_DESCRIPTOR_FAILURE_ARCHITECTURE,
-            YVEX_MATERIALIZATION_NO_INDEX, "model execution descriptor is incomplete",
+            YVEX_MATERIALIZATION_NO_INDEX,
+            "semantic execution descriptor and attention topology are incomplete",
             YVEX_ERR_FORMAT, err);
     *facts = (yvex_runtime_descriptor_family_facts){
-        logical, numeric, model->hadamard_revision, model->runtime_numeric_schema_version,
-        model->runtime_compute_policy_count, model->runtime_activation_policy_count,
-        model->runtime_sparse_topk_policy_count, model->main_layer_count,
-        model->auxiliary_layer_count, first->moe.routed_experts,
-        first->moe.experts_per_token, model->vocabulary_size, execution};
+        .logical_model_identity = execution->logical_model_identity,
+        .runtime_numeric_identity = numeric->identity,
+        .runtime_hadamard_revision = numeric->algorithm_revision,
+        .runtime_numeric_schema_version = numeric->numeric_schema_version,
+        .runtime_compute_policy_count = numeric->compute_policy_count,
+        .runtime_activation_policy_count = numeric->activation_policy_count,
+        .runtime_sparse_topk_policy_count = numeric->sparse_topk_policy_count,
+        .layer_count = execution->layer_count,
+        .draft_layer_count = execution->draft_layer_count,
+        .routed_experts = execution->routed_experts,
+        .experts_per_token = execution->experts_per_row,
+        .vocabulary_size = execution->vocabulary_size,
+        .model_execution = execution};
     return YVEX_OK;
 }
 
@@ -1767,25 +1755,25 @@ int yvex_runtime_descriptor_build_deepseek(
     yvex_runtime_descriptor **out,
     const yvex_complete_artifact_admission *admission,
     const yvex_materialization_session *session,
-    const yvex_deepseek_gguf_map *map, const yvex_deepseek_v4_ir *ir,
+    const yvex_deepseek_gguf_map *map,
+    const yvex_semantic_model_ir *semantic_model,
     yvex_runtime_descriptor_failure *failure, yvex_error *err)
 {
     yvex_materialization_projection projection;
     yvex_runtime_descriptor_family_facts facts;
-    yvex_model_execution_descriptor execution;
-    char logical[YVEX_SHA256_HEX_CAP], numeric[YVEX_SHA256_HEX_CAP];
     int rc;
 
     if (out) *out = NULL;
-    if (!out || !map || !ir)
+    if (!out || !map || !semantic_model)
         return deepseek_descriptor_refuse(
             failure, YVEX_RUNTIME_DESCRIPTOR_FAILURE_INVALID_ARGUMENT,
-            YVEX_MATERIALIZATION_NO_INDEX, "map and architecture are required",
+            YVEX_MATERIALIZATION_NO_INDEX,
+            "map and sealed semantic model are required",
             YVEX_ERR_INVALID_ARG, err);
     rc = yvex_deepseek_materialization_projection(map, &projection, err);
     if (rc == YVEX_OK)
         rc = deepseek_descriptor_facts(
-            ir, &facts, &execution, logical, numeric, failure, err);
+            semantic_model, &facts, failure, err);
     return rc == YVEX_OK
                ? yvex_runtime_descriptor_build_projected(
                      out, admission, session, &facts, &projection, failure, err)
@@ -1799,34 +1787,36 @@ static int deepseek_compilation_materialization(
         (const yvex_deepseek_gguf_map *)context, out, err);
 }
 
-static int deepseek_compilation_semantic_model(
-    yvex_semantic_model_ir **out,
-    const yvex_source_verification *verification, yvex_error *err)
+static int deepseek_semantic_model_build(
+    yvex_semantic_model_ir **out, const yvex_deepseek_v4_ir *semantic,
+    yvex_error *err)
 {
     const yvex_model_family_api *model = yvex_model_register_deepseek_v4();
-    yvex_deepseek_v4_ir_failure failure = {0};
-    yvex_deepseek_v4_ir *semantic = NULL;
+    yvex_runtime_descriptor_failure failure = {0};
     yvex_model_execution_descriptor execution = {0};
+    yvex_semantic_numeric_contract numeric = {0};
     yvex_semantic_model_ir_request request = {0};
     char logical[YVEX_SHA256_HEX_CAP];
     int rc;
 
     if (out) *out = NULL;
-    if (!out || !model) {
+    if (!out || !model || !semantic) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "deepseek.semantic-model",
-                       "semantic model output and family are required");
+                       "semantic model output and family architecture are required");
         return YVEX_ERR_INVALID_ARG;
     }
-    rc = model->ir.build(&semantic, verification, &failure, err);
-    if (rc == YVEX_OK &&
-        !model->transform.architecture_identity(semantic, logical)) {
+    rc = model->transform.architecture_identity(semantic, logical)
+             ? YVEX_OK : YVEX_ERR_STATE;
+    if (rc != YVEX_OK) {
         yvex_error_set(err, YVEX_ERR_STATE, "deepseek.semantic-model",
                        "logical model identity derivation failed");
-        rc = YVEX_ERR_STATE;
     }
     if (rc == YVEX_OK)
         rc = model->ir.execution_descriptor(
             semantic, logical, &execution, err);
+    if (rc == YVEX_OK)
+        rc = deepseek_numeric_contract_build(
+            semantic, &numeric, &failure, err);
     if (rc == YVEX_OK) {
         request.schema_version = YVEX_SEMANTIC_MODEL_IR_SCHEMA_V1;
         request.family_adapter_id = YVEX_DEEPSEEK_V4_ADAPTER_ID;
@@ -1836,18 +1826,33 @@ static int deepseek_compilation_semantic_model(
         request.logical_model_identity = execution.logical_model_identity;
         request.semantic_payload_identity = execution.identity;
         request.execution_descriptor = &execution;
-        request.family_payload = semantic;
-        request.family_payload_owned = 1;
-        request.family_payload_close = deepseek_compilation_semantic_close;
+        request.numeric_contract = &numeric;
+        request.attention_context = semantic;
+        request.attention_layer = graph_recipe_layer;
+        request.attention_layer_count = model->ir.layer_count(semantic);
+        request.draft_attention_layer = graph_recipe_draft_layer;
+        request.draft_attention_layer_count =
+            model->ir.auxiliary_count(semantic);
         rc = yvex_semantic_model_ir_seal(out, &request, err);
     }
-    if (rc != YVEX_OK) model->ir.close(semantic);
     return rc;
 }
 
-static void deepseek_compilation_semantic_close(void *model)
+static int deepseek_compilation_semantic_model(
+    yvex_semantic_model_ir **out,
+    const yvex_source_verification *verification, yvex_error *err)
 {
-    yvex_model_register_deepseek_v4()->ir.close((yvex_deepseek_v4_ir *)model);
+    const yvex_model_family_api *model = yvex_model_register_deepseek_v4();
+    yvex_deepseek_v4_ir_failure failure = {0};
+    yvex_deepseek_v4_ir *semantic = NULL;
+    int rc;
+
+    if (out) *out = NULL;
+    rc = model->ir.build(&semantic, verification, &failure, err);
+    if (rc == YVEX_OK)
+        rc = deepseek_semantic_model_build(out, semantic, err);
+    model->ir.close(semantic);
+    return rc;
 }
 
 static int deepseek_compilation_descriptor(
@@ -1856,12 +1861,11 @@ static int deepseek_compilation_descriptor(
     const yvex_semantic_model_ir *semantic_model, yvex_error *err)
 {
     yvex_runtime_descriptor_failure failure = {0};
-    const yvex_deepseek_v4_ir *family = deepseek_semantic_payload(semantic_model);
 
     return yvex_runtime_descriptor_build_deepseek(
         out, admission, materialization,
         (const yvex_deepseek_gguf_map *)lowering_context,
-        family, &failure, err);
+        semantic_model, &failure, err);
 }
 
 static int deepseek_compilation_quant_default(

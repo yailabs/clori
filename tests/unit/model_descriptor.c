@@ -185,12 +185,15 @@ static int test_attention_numeric_policy_validation(void)
     return 0;
 }
 
-static unsigned int semantic_payload_closes;
-
-static void semantic_payload_close(void *payload)
+static int semantic_attention_layer(
+    const void *context, unsigned long long index,
+    yvex_semantic_attention_layer *output)
 {
-    semantic_payload_closes++;
-    free(payload);
+    const yvex_semantic_attention_layer *layers = context;
+
+    if (!layers || !output || index != 0ull) return 0;
+    *output = layers[index];
+    return 1;
 }
 
 static int test_semantic_model_ir(void)
@@ -228,14 +231,18 @@ static int test_semantic_model_ir(void)
         .persistent_state_class_mask =
             YVEX_MODEL_STATE_CLASS_BIT(YVEX_MODEL_STATE_SWA_RING)};
     yvex_model_execution_descriptor execution = {0}, mutated;
+    yvex_semantic_attention_layer layer = {
+        .ordinal = 0ull,
+        .layer_index = 3ull,
+        .tensor_scope = YVEX_TENSOR_SCOPE_MAIN_LAYER,
+        .attention_class = YVEX_ATTENTION_CLASS_SWA,
+        .hidden_dimension = 4ull};
+    const yvex_semantic_attention_layer *sealed_layers = NULL;
+    unsigned long long sealed_layer_count = 0ull;
     yvex_semantic_model_ir_request request = {0};
     yvex_semantic_model_ir *first = NULL, *second = NULL;
     const yvex_semantic_model_ir_summary *summary;
     yvex_error err;
-    int borrowed = 7;
-    int *owned = malloc(sizeof(*owned));
-
-    YVEX_TEST_ASSERT(owned != NULL, "semantic payload allocation");
     YVEX_TEST_ASSERT(
         yvex_model_execution_descriptor_seal(
             &execution_request, &execution, &err) == YVEX_OK,
@@ -248,36 +255,46 @@ static int test_semantic_model_ir(void)
         .source_model_identity = source,
         .logical_model_identity = logical,
         .semantic_payload_identity = execution.identity,
-        .execution_descriptor = &execution};
-    request.family_payload = &borrowed;
+        .execution_descriptor = &execution,
+        .attention_context = &layer,
+        .attention_layer = semantic_attention_layer,
+        .attention_layer_count = 1ull};
     YVEX_TEST_ASSERT(
         yvex_semantic_model_ir_seal(&first, &request, &err) == YVEX_OK,
-        "borrowed semantic model seals");
+        "semantic model seals");
     summary = yvex_semantic_model_ir_summary_get(first);
     YVEX_TEST_ASSERT(
         summary && summary->execution_descriptor.maximum_context == 1048576ull &&
         summary->execution_descriptor.original_context == 163840ull &&
+        summary->attention_layer_count == 1ull &&
+        summary->draft_attention_layer_count == 0ull &&
         strcmp(summary->execution_descriptor.identity, execution.identity) == 0 &&
-        yvex_semantic_model_ir_family_payload(first, 7ull, 3ull) == &borrowed &&
-        !yvex_semantic_model_ir_family_payload(first, 8ull, 3ull),
-        "semantic identity and family payload are independently typed");
-    request.family_payload = owned;
-    request.family_payload_owned = 1;
-    request.family_payload_close = semantic_payload_close;
+        yvex_semantic_model_ir_attention_view(
+            first, YVEX_TENSOR_SCOPE_MAIN_LAYER, &sealed_layers,
+            &sealed_layer_count) &&
+        sealed_layer_count == 1ull && sealed_layers[0].layer_index == 3ull,
+        "semantic identity and attention topology are independently typed");
     YVEX_TEST_ASSERT(
         yvex_semantic_model_ir_seal(&second, &request, &err) == YVEX_OK &&
         strcmp(summary->identity,
                yvex_semantic_model_ir_summary_get(second)->identity) == 0,
-        "payload address and ownership do not affect semantic identity");
-    yvex_semantic_model_ir_close(&first);
-    YVEX_TEST_ASSERT(semantic_payload_closes == 0u,
-                     "borrowed semantic payload is not released");
+        "equivalent semantic facts retain one identity");
     yvex_semantic_model_ir_close(&second);
-    YVEX_TEST_ASSERT(semantic_payload_closes == 1u,
-                     "owned semantic payload is released exactly once");
-    request.family_payload = NULL;
-    request.family_payload_owned = 0;
-    request.family_payload_close = NULL;
+    layer.layer_index = 9ull;
+    YVEX_TEST_ASSERT(
+        yvex_semantic_model_ir_seal(&second, &request, &err) == YVEX_OK &&
+        strcmp(summary->identity,
+               yvex_semantic_model_ir_summary_get(second)->identity) != 0 &&
+        sealed_layers[0].layer_index == 3ull,
+        "semantic topology content is immutable and identity-bearing");
+    yvex_semantic_model_ir_close(&second);
+    yvex_semantic_model_ir_close(&first);
+    request.attention_layer = NULL;
+    YVEX_TEST_ASSERT(
+        yvex_semantic_model_ir_seal(&first, &request, &err) ==
+            YVEX_ERR_INVALID_ARG && !first,
+        "semantic topology count without a projector refuses");
+    request.attention_layer = semantic_attention_layer;
     mutated = execution;
     mutated.maximum_context = 4096ull;
     request.execution_descriptor = &mutated;
