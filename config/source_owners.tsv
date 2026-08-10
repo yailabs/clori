@@ -76,6 +76,7 @@ src/cli/commands/artifact.c	cli.commands	cli.commands.artifact	generic	private	r
 src/cli/commands/backend.c	cli.commands	cli.commands.backend	generic	private	reusable-algorithm	cli	implementation	none
 src/cli/commands/gguf.c	cli.commands	cli.commands.gguf	generic	private	reusable-algorithm	cli	implementation	none
 src/cli/commands/graph.c	cli.commands	cli.commands.graph	generic	private	reusable-algorithm	cli	implementation	none
+src/cli/commands/media.c	cli.commands	cli.commands.media	generic	private	reusable-algorithm	cli	implementation	none
 src/cli/commands/quant.c	cli.commands	cli.commands.quant	generic	private	reusable-algorithm	cli	implementation	none
 src/cli/commands/model_artifacts.c	cli.commands	cli.commands.model_artifacts	generic	private	reusable-algorithm	cli	implementation	none
 src/cli/commands/model_target.c	cli.commands	cli.commands.model_target	generic	private	reusable-algorithm	cli	implementation	none
@@ -106,6 +107,7 @@ src/cli/model_artifacts/tensors.c	cli.model_artifacts	cli.model_artifacts.tensor
 src/cli/render/backend.c	cli.render	cli.render.backend	generic	private	typed-projection	cli.commands,cli.model_artifacts	implementation	none
 src/cli/render/common.c	cli.render	cli.render.common	generic	private	typed-projection	cli.commands,cli.model_artifacts	implementation	none
 src/cli/render/graph.c	cli.render	cli.render.graph	generic	private	typed-projection	cli.commands,cli.model_artifacts	implementation	none
+src/cli/render/media.c	cli.render	cli.render.media	generic	private	typed-projection	cli.commands	implementation	none
 src/cli/render/model_artifacts.c	cli.render	cli.render.model_artifacts	generic	private	typed-projection	cli.commands,cli.model_artifacts	implementation	none
 src/cli/render/model_target.c	cli.render	cli.render.model_target	generic	private	typed-projection	cli.commands,cli.model_artifacts	implementation	none
 src/cli/render/private.h	cli.render	cli.render.private	generic	private	private-interface	cli	interface	none
@@ -150,6 +152,7 @@ src/graph/plan.c	graph	graph.plan	generic	private	immutable-planning	runtime,cli
 src/graph/private.h	graph	graph.private	generic	private	private-interface	runtime,cli	interface	none
 src/graph/state_recipe.c	graph	graph.state_recipe	generic	private	immutable-planning	model,graph,runtime,tests	implementation	none
 src/graph/state_pages.c	graph	graph.state_pages	generic	private	resource-lifecycle	graph.state,runtime,tests	implementation	none
+src/io/media.c	io	io.media	generic	private	file-serialization	runtime,cli,tests	implementation	none
 src/io/writer.c	io	io.writer	generic	private	transactional-io	repository	implementation	none
 src/model/artifacts/gate.c	model.artifacts	model.artifacts.gate	generic	private	reusable-algorithm	cli,artifact	implementation	none
 src/model/artifacts/ref.c	model.artifacts	model.artifacts.ref	generic	private	reusable-algorithm	cli,artifact	implementation	none

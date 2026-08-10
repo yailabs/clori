@@ -198,10 +198,18 @@ typedef struct {
         unsigned long long maximum_host_bytes, maximum_device_bytes;
         int active;
     } component;
+    struct {
+        const char *video_file, *audio_file, *output_file;
+        unsigned long long frames, width, height, fps_numerator, fps_denominator;
+        unsigned long long audio_channels, audio_samples, audio_sample_rate;
+        unsigned long long maximum_host_bytes, maximum_output_bytes;
+        int active;
+    } media;
     int help_requested;
     int help_exit_code;
 } yvex_graph_args;
 int yvex_graph_args_parse(int argc, char **argv, yvex_graph_args *out, yvex_error *err);
+int yvex_media_publish_command(const yvex_graph_args *args, yvex_error *err);
 
 /* Model-target arguments. */
 typedef struct {

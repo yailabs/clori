@@ -36,6 +36,7 @@ int yvex_test_graph(void);
 int yvex_test_protocol(void);
 int yvex_test_imatrix(void);
 int yvex_test_log(void);
+int yvex_test_media(void);
 int yvex_test_materialization_runtime(void);
 int yvex_test_materialize_cpu(void);
 int yvex_test_materialize_gate(void);

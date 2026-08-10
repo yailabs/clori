@@ -549,3 +549,25 @@ file. Use `--backend cpu` and omit `--max-device-bytes` for the CPU path. Only
 bounded small geometry has live qualification; this does not admit full-scale
 or tiled execution. Raw RGB frames are numerical evidence, not a playable video
 or synchronized media path.
+
+Decoded video and audio can be synchronized and atomically published through
+the native finite offline lane:
+
+```sh
+./yvex execute media publish \
+  --video-file /srv/yvex/evidence/rgb-frames.f32 \
+  --frames 124 --width 32 --height 32 \
+  --fps-numerator 24 --fps-denominator 1 \
+  --audio-file /srv/yvex/evidence/audio-stereo.f32 \
+  --audio-channels 2 --audio-samples 165600 --sample-rate 32000 \
+  --max-host-bytes 1073741824 --max-output-bytes 4294967296 \
+  --out /srv/yvex/evidence/minimax-h3.avi --output audit
+```
+
+The input files are contiguous planar F32 `[3,frames,height,width]` RGB and
+`[channels,samples]` PCM. The native AVI writer stores uncompressed BGR24 video
+and PCM S16LE audio, trims surplus PCM to the exact rational video duration,
+validates the finished RIFF structure, and publishes without replacing an
+existing destination. Its identities exclude the local paths. This command is
+playable decoded-media publication, not MiniMax prompt-to-video generation; the
+model phases remain separate until the end-to-end composition is admitted.

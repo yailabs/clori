@@ -11,6 +11,7 @@
 #include <yvex/internal/decode.h>
 #include <yvex/internal/generation.h>
 #include <yvex/internal/logits.h>
+#include <yvex/internal/io.h>
 #include <yvex/internal/graph.h>
 #include <yvex/internal/model_artifact.h>
 #include <yvex/internal/model_target.h>
@@ -33,6 +34,16 @@ typedef struct {
     FILE *fp;
     yvex_render_mode mode;
 } yvex_render_out;
+
+typedef struct {
+    const char *output_path;
+    unsigned long long width, height, fps_numerator, fps_denominator;
+    unsigned long long audio_channels, audio_sample_rate;
+    yvex_media_avi_result publication;
+} yvex_cli_media_report;
+
+int yvex_media_publish_render(FILE *fp, yvex_graph_report_mode mode,
+                              const yvex_cli_media_report *report);
 /* Read one immutable collection counter selected by a renderer table. */
 static inline unsigned long long cli_collection_value(
     const yvex_fullmodel_collections *collections, size_t offset) {

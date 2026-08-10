@@ -8,7 +8,8 @@ numerically conform; exact artifact-bound Qwen2 tokenization and 50-layer
 text-only Qwen3-VL prompt conditioning plus the complete 50-block
 Omni-Transformer component envelope execute on GB10; exact target-only packed
 layout and transactional two-step Omni-driven paired latent generation execute
-on GB10; not an executable family
+on GB10; decoded F32 video and audio publish through a deterministic native
+synchronized-media transaction; not an executable family
 
 This record owns current YVEX facts for MiniMax-H3 Base FL2VA. YVEX now admits
 the complete immutable FL2VA source through its production source owner and
@@ -26,7 +27,7 @@ residency registers the exact BF16 component with CUDA, tokenizes an ASCII
 `t2va` prompt from artifact-bound Qwen2 metadata, and executes the selected
 50-layer causal text stack against an independent Transformers oracle. It does
 not add a family runtime, multimodal Qwen vision conditioning, full-scale
-latent or Visual qualification, a synchronized media path, or a release
+latent or Visual qualification, prompt-to-media execution, or a release
 obligation. The frozen quantitative intake evidence is the
 [FL2VA intake audit](../audits/minimax-h3-fl2va-b8b09e3/README.md); the common
 promotion rules remain in the [family integration contract](integration.md).
@@ -39,8 +40,8 @@ promotion rules remain in the [family integration contract](integration.md).
 | Branch status | open |
 | Branch completion | first YVEX-authored playable synchronized MiniMax-H3 FL2VA audio-video output |
 | Current wave | `R010.MINIMAX.H3.FL2VA.END_TO_END.0` |
-| Current boundary | exact component artifacts admitted; complete Audio CPU/CUDA and bounded Visual CPU/CUDA decodes conform; prompt conditioning and the 50-block Omni envelope conform on GB10; the resident 50-block evaluator completes a two-step transactional paired latent run on one exact residency |
-| Next expected boundary | compose committed video/audio latents with both VAE decoders, then synchronize and publish playable media |
+| Current boundary | exact component artifacts admitted; complete Audio CPU/CUDA and bounded Visual CPU/CUDA decodes conform; prompt conditioning and the 50-block Omni envelope conform on GB10; the resident 50-block evaluator completes a two-step transactional paired latent run on one exact residency; decoded video and audio publish as synchronized native AVI |
+| Next expected boundary | compose prompt conditioning, committed video/audio latents, both VAE decoders, and native media publication in one staged operator transaction |
 
 The branch preserves the accepted intake history and remains open across all
 later source, artifact, graph, backend, residency, latent, VAE, media, and
@@ -508,6 +509,11 @@ kernels, transferred 128 input bytes and 3,200 output bytes, and observed
 204,800 bytes of peak decoder workspace beyond resident weights. A complete
 `[2,32,200]` latent run emitted 160,000 samples per batch entry with execution
 identity `2fcf1219d4ecabb7c016552c7a79e8d92cfe788669ea2a6ed86436f28147de60`.
+The same final-scale geometry also completed through the CPU operator path with
+execution identity
+`b5a4dade0da37303fc79e71c765e72f2fb2c237033f40406cdcac897fedddc0c`.
+Its 1,280,000-byte output has SHA-256
+`a309e46b074ec42abe17cfc33a195f0c6b1ab09569796d69cab51c174226eb43`.
 These correctness-run facts are not a performance benchmark.
 
 `production_capability_available: true` for bounded CPU/CUDA Audio VAE component
@@ -954,21 +960,60 @@ concurrent host workloads remained active. No process was stopped. Therefore
 the source-artifact full reconstruction remains an evidence gap; the generic
 numeric composition itself is implemented and tested.
 
+## Native synchronized media publication
+
+The generic I/O owner now publishes decoded planar F32 RGB frames and planar
+F32 mono or stereo audio as one native AVI 1.0 file. Video is stored as
+uncompressed bottom-up BGR24 and audio as PCM S16LE. This codec-free first
+container keeps production execution inside YVEX and provides an independently
+playable output without adding FFmpeg, Diffusers, or another external engine.
+
+The transaction derives the exact video duration from the rational frame rate
+and trims only surplus decoded PCM samples to that duration. Insufficient audio,
+non-finite decoded values, invalid geometry, cancellation, a file-size budget
+violation, or an existing destination refuses publication. The complete RIFF
+structure is validated before an atomic no-replace rename. Source video, source
+audio, execution, file, and publication identities exclude local paths and are
+deterministic over semantic inputs and emitted bytes.
+
+Two independent publications from the same three-frame fixture were
+byte-identical. GStreamer 1.24.2 independently discovered both uncompressed RGB
+video and stereo 32 kHz PCM with the exact 0.125-second duration, then completed
+preroll and end-of-stream playback through independent fake audio/video sinks.
+The operator command is:
+
+```sh
+yvex execute media publish \
+  --video-file <PLANAR_RGB_F32> --frames <FRAMES> \
+  --width <WIDTH> --height <HEIGHT> \
+  --fps-numerator 24 --fps-denominator 1 \
+  --audio-file <PLANAR_PCM_F32> --audio-channels 2 \
+  --audio-samples <DECODED_SAMPLES> --sample-rate 32000 \
+  --out <OUTPUT_AVI>
+```
+
+`production_capability_available: true` for native decoded-media publication.
+`production_api_available: true` through the internal generic I/O ABI.
+`internal_live_runner_available: false`. `operator_command_available: true`.
+`end_user_path_available: false`: the command consumes already decoded component
+outputs; it does not yet execute the prompt, conditioning, latent, or VAE phases.
+
 ## Progression and non-claims
 
 `progression_decision: complete_evidence`
 
 `downstream_safe: false`
 
-The downstream consumer is live source-artifact Visual VAE reconstruction and
-Audio VAE over final latent state, followed by synchronized media publication.
+The downstream consumer is one staged prompt-to-media execution that performs
+live source-artifact Visual VAE reconstruction and Audio VAE decode over final
+latent state, then supplies both decoded outputs to the admitted media transaction.
 There is no gate blocker or boundary incompleteness in the admitted
 bounded component, embedding, tokenizer, layer-zero, 50-layer text-stack,
 latent-controller, reconstruction-plan, or generic reconstruction contracts.
 The live source-artifact reconstruction is an evidence gap owned by the next
 available exclusive CUDA run. Exact Unicode NFC normalization, complete staged
-phase residency, synchronized media transaction, evaluation, and benchmark are
-deferred depth with explicit later consumers. They do not weaken the admitted
+phase residency, compressed codecs, evaluation, and benchmark are deferred
+depth with explicit later consumers. They do not weaken the admitted
 component execution identities, and none is claimed by them.
 License review remains an external authorization prerequisite for any use that
 requires an eligibility conclusion.
@@ -980,7 +1025,8 @@ This implementation boundary does not prove:
 - GB10 staged Omni-to-VAE pipeline execution or complete multi-component residency;
 - PyTorch seed-stream parity or model-quality usefulness of the bounded latent run;
 - source-artifact tiled Visual VAE qualification or either VAE in the complete latent and media pipeline;
-- audio/video synchronization, playable media output, or hosted serving;
+- prompt-derived audio/video synchronization, model-generated playable media,
+  compressed-codec output, or hosted serving;
 - Diffusers, SGLang, or vLLM parity;
 - model quality, generation speed, practical 768p, or 2K generation;
 - Ref2VA, H3-Context-IR, H3-Regenerate-2K, or the complete hosted system;
