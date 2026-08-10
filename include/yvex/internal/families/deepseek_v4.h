@@ -588,8 +588,6 @@ int yvex_runtime_descriptor_build_deepseek(
     const yvex_materialization_session *session,
     const yvex_deepseek_gguf_map *map, const yvex_deepseek_v4_ir *ir,
     yvex_runtime_descriptor_failure *failure, yvex_error *err);
-int yvex_model_mapping_report_deepseek(
-    const yvex_model_target_request *request, yvex_model_target_report *report, yvex_error *err);
 const yvex_model_family_api *yvex_model_register_deepseek_v4(void);
 const yvex_conversation_protocol *yvex_model_deepseek_v4_conversation(void);
 const yvex_family_compiler_adapter *yvex_compiler_family_deepseek_v4(void);

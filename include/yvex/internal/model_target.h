@@ -294,6 +294,10 @@ int yvex_model_target_family_class_profile_build(
     yvex_model_target_report *report,
     int *handled,
     yvex_error *err);
+int yvex_model_target_family_mapping_report_build(
+    const yvex_model_target_request *request,
+    yvex_model_target_report *report,
+    yvex_error *err);
 void yvex_model_target_report_add_rows(yvex_model_target_report *report,
                                        const char *const *rows,
                                        size_t row_count);

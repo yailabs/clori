@@ -406,6 +406,140 @@ int yvex_model_target_family_class_profile_build(
     return YVEX_OK;
 }
 
+int yvex_model_target_family_mapping_report_build(
+    const yvex_model_target_request *request,
+    yvex_model_target_report *report,
+    yvex_error *err)
+{
+    const yvex_model_family_api *family = yvex_model_register_deepseek_v4();
+    yvex_source_verify_options source_options;
+    yvex_source_verification verification;
+    yvex_source_tensor_snapshot *snapshot = NULL;
+    yvex_deepseek_v4_ir *architecture = NULL;
+    yvex_deepseek_tensor_coverage *coverage = NULL;
+    yvex_transform_ir *transform_ir = NULL;
+    yvex_deepseek_gguf_map *map = NULL;
+    yvex_deepseek_v4_ir_failure architecture_failure;
+    yvex_deepseek_tensor_coverage_failure coverage_failure;
+    yvex_transform_failure transform_failure;
+    yvex_deepseek_gguf_map_failure map_failure;
+    const char *refusal_stage = NULL;
+    const char *refusal_reason = NULL;
+    const char *refusal_source = "none";
+    const char *refusal_emitted = "none";
+    char models_root[512];
+    char source_path[512];
+    int rc;
+
+    if (!yvex_model_target_release_source_paths(
+            request, models_root, sizeof(models_root), source_path,
+            sizeof(source_path))) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "mapping_gate_report",
+                       "DeepSeek source path exceeds report bounds");
+        return YVEX_ERR_BOUNDS;
+    }
+    memset(&source_options, 0, sizeof(source_options));
+    memset(&verification, 0, sizeof(verification));
+    memset(&architecture_failure, 0, sizeof(architecture_failure));
+    memset(&coverage_failure, 0, sizeof(coverage_failure));
+    memset(&transform_failure, 0, sizeof(transform_failure));
+    memset(&map_failure, 0, sizeof(map_failure));
+    source_options.identity = yvex_source_release_identity();
+    source_options.source_path = source_path;
+    source_options.models_root = models_root;
+    source_options.promote_manifest = 0;
+    rc = yvex_source_verify_with_snapshot(
+        &source_options, &verification, &snapshot, err);
+    if (rc != YVEX_OK || !verification.verified || !snapshot) {
+        refusal_stage = "source-verification";
+        refusal_reason = yvex_source_verification_status(&verification);
+        refusal_source = source_path;
+        if (rc == YVEX_OK) rc = YVEX_ERR_STATE;
+        goto cleanup;
+    }
+    rc = family->ir.build(&architecture, &verification, &architecture_failure, err);
+    if (rc != YVEX_OK) {
+        refusal_stage = "architecture";
+        refusal_reason = family->ir.failure_name(architecture_failure.code);
+        refusal_source = architecture_failure.field
+                             ? architecture_failure.field
+                             : "architecture-ir";
+        goto cleanup;
+    }
+    rc = family->coverage.build(
+        &coverage, &verification, architecture, snapshot, NULL,
+        &coverage_failure, err);
+    if (rc != YVEX_OK) {
+        refusal_stage = "source-coverage";
+        refusal_reason = family->coverage.failure_name(coverage_failure.code);
+        refusal_source = coverage_failure.tensor_name[0]
+                             ? coverage_failure.tensor_name
+                             : "source-tensor";
+        goto cleanup;
+    }
+    rc = family->transform.build(
+        &transform_ir, &verification, architecture, coverage, NULL,
+        &transform_failure, err);
+    if (rc != YVEX_OK) {
+        refusal_stage = "transformation-ir";
+        refusal_reason = yvex_transform_failure_name(transform_failure.code);
+        goto cleanup;
+    }
+    rc = family->lowering.build(&map, architecture, transform_ir, &map_failure, err);
+    if (rc != YVEX_OK) {
+        refusal_stage = "gguf-lowering";
+        refusal_reason = family->lowering.failure_name(map_failure.code);
+        refusal_source = map_failure.source_name[0] ? map_failure.source_name : "none";
+        refusal_emitted = map_failure.emitted_name[0] ? map_failure.emitted_name : "none";
+    }
+
+cleanup:
+    yvex_transform_ir_release(&transform_ir);
+    family->ir.close(architecture);
+    yvex_source_tensor_snapshot_release(snapshot);
+    if (rc != YVEX_OK) {
+        family->lowering.close(map);
+        family->coverage.close(coverage);
+        report->status = "mapping-plan-blocked";
+        report->exit_code = 5;
+        yvex_model_target_report_add_error(
+            report,
+            "model-target mapping-gate: DeepSeek %s refused: %s source=%s emitted=%s",
+            refusal_stage ? refusal_stage : "mapping-plan",
+            refusal_reason ? refusal_reason : "invalid-lifecycle-state",
+            refusal_source, refusal_emitted);
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    report->family_coverage = coverage;
+    report->family_lowering = map;
+    rc = yvex_model_target_report_project_family_detail(report, err);
+    if (rc != YVEX_OK) {
+        family->lowering.close(map);
+        family->coverage.close(coverage);
+        report->family_coverage = NULL;
+        report->family_lowering = NULL;
+        return rc;
+    }
+    {
+        const yvex_model_target_report_profile profile = {
+            .status = "deepseek-gguf-mapping-complete",
+            .target_id = request->target_id,
+            .family = "deepseek",
+            .stage = "header-only",
+            .tensor_map_status = "complete",
+            .runtime_status = "unsupported",
+            .generation_status = "unsupported",
+            .next_row = "V010.SOURCE.PAYLOAD.STREAM.0",
+            .boundary = "logical GGUF names, shapes, source contributions, transforms, "
+                        "and metadata are complete; no payload, writer, artifact, or runtime "
+                        "claim"};
+
+        yvex_model_target_report_prepare(report, request, &profile);
+    }
+    return YVEX_OK;
+}
+
 static int project_map(yvex_model_target_report *report, yvex_error *err)
 {
     const yvex_model_family_api *family = yvex_model_register_deepseek_v4();

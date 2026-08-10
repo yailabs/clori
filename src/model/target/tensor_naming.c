@@ -447,7 +447,7 @@ int yvex_tensor_naming_report_build(
         return YVEX_ERR_INVALID_ARG;
     }
     if (strcmp(request->target_id, "deepseek4-v4-flash-dspark") == 0) {
-        return yvex_model_mapping_report_deepseek(request, report, err);
+        return yvex_model_target_family_mapping_report_build(request, report, err);
     }
     if (!naming_validate(request, report)) {
         return YVEX_OK;
