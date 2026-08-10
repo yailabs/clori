@@ -581,6 +581,32 @@
         "--width"
       ]
     },
+    "cli_offline_graph_media_generate": {
+      "booleans": [],
+      "repeatable_values": [],
+      "values": [
+        "--audio-artifact",
+        "--blocks",
+        "--fps-denominator",
+        "--fps-numerator",
+        "--frames",
+        "--height",
+        "--max-device-bytes",
+        "--max-host-bytes",
+        "--max-output-bytes",
+        "--max-workspace-bytes",
+        "--out",
+        "--output",
+        "--prompt",
+        "--seed",
+        "--steps",
+        "--target",
+        "--text-artifact",
+        "--transformer-artifact",
+        "--video-artifact",
+        "--width"
+      ]
+    },
     "cli_offline_graph_video_component": {
       "booleans": [],
       "repeatable_values": [],
@@ -3216,6 +3242,44 @@
       "side_effects": "finite synchronized media serialization and atomic publication",
       "slash_projection": "none",
       "summary": "Publish synchronized decoded video and PCM as native AVI.",
+      "test_owner": "tests/cli/media.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "graph",
+        "media",
+        "generate"
+      ],
+      "adapter_id": "graph",
+      "aliases": [],
+      "architectural_plane": "Execute",
+      "arguments": [],
+      "artifact_requirement": "admitted-artifact",
+      "backend_requirement": "required",
+      "command_path": [
+        "execute",
+        "media",
+        "generate"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_graph_media_generate"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "execute.media.generate",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite staged model execution and atomic synchronized media publication",
+      "slash_projection": "none",
+      "summary": "Generate synchronized MiniMax-H3 FL2VA media from a text prompt.",
       "test_owner": "tests/cli/media.sh",
       "visibility": "engineering"
     },

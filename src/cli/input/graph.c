@@ -50,7 +50,12 @@ static void graph_args_defaults(yvex_graph_args *out) {
     out->media.fps_denominator = 1ull;
     out->media.audio_channels = 2ull;
     out->media.audio_sample_rate = 32000ull;
+    out->media.inference_steps = 1ull;
+    out->media.transformer_blocks = 50ull;
+    out->media.seed = 42ull;
     out->media.maximum_host_bytes = 256ull * 1024ull * 1024ull;
+    out->media.maximum_device_bytes = 16ull * 1024ull * 1024ull * 1024ull;
+    out->media.maximum_workspace_bytes = 4ull * 1024ull * 1024ull * 1024ull;
     out->media.maximum_output_bytes = 4ull * 1024ull * 1024ull * 1024ull;
     out->transformer.phase = "prefill";
     out->transformer.input_class = "token-ids";
@@ -967,9 +972,12 @@ static int graph_parse_media(int argc, char **argv, yvex_graph_args *out,
                              yvex_error *err)
 {
     int index;
-    if (argc < 4 || strcmp(argv[3], "publish") != 0)
-        return graph_arg_error(err, "yvex: graph media requires the publish action");
+    if (argc < 4 || (strcmp(argv[3], "publish") != 0 && strcmp(argv[3], "generate") != 0))
+        return graph_arg_error(err, "yvex: graph media requires publish or generate");
     out->media.active = 1;
+    out->media.generate = strcmp(argv[3], "generate") == 0;
+    if (out->media.generate)
+        out->media.maximum_host_bytes = 96ull * 1024ull * 1024ull * 1024ull;
     for (index = 4; index < argc; ++index) {
         const char *flag = argv[index];
         const char *value;
@@ -982,6 +990,13 @@ static int graph_parse_media(int argc, char **argv, yvex_graph_args *out,
         if (strcmp(flag, "--video-file") == 0) out->media.video_file = value;
         else if (strcmp(flag, "--audio-file") == 0) out->media.audio_file = value;
         else if (strcmp(flag, "--out") == 0) out->media.output_file = value;
+        else if (strcmp(flag, "--target") == 0) out->media.target = value;
+        else if (strcmp(flag, "--prompt") == 0) out->media.prompt = value;
+        else if (strcmp(flag, "--text-artifact") == 0) out->media.text_artifact = value;
+        else if (strcmp(flag, "--transformer-artifact") == 0)
+            out->media.transformer_artifact = value;
+        else if (strcmp(flag, "--video-artifact") == 0) out->media.video_artifact = value;
+        else if (strcmp(flag, "--audio-artifact") == 0) out->media.audio_artifact = value;
         else if (strcmp(flag, "--frames") == 0) {
             if (!parse_positive_ull(value, &out->media.frames))
                 return graph_arg_error(err, "yvex: --frames requires a positive integer");
@@ -1009,9 +1024,25 @@ static int graph_parse_media(int argc, char **argv, yvex_graph_args *out,
         } else if (strcmp(flag, "--max-host-bytes") == 0) {
             if (!parse_positive_ull(value, &out->media.maximum_host_bytes))
                 return graph_arg_error(err, "yvex: --max-host-bytes requires a positive integer");
+        } else if (strcmp(flag, "--max-device-bytes") == 0) {
+            if (!parse_positive_ull(value, &out->media.maximum_device_bytes))
+                return graph_arg_error(err, "yvex: --max-device-bytes requires a positive integer");
+        } else if (strcmp(flag, "--max-workspace-bytes") == 0) {
+            if (!parse_positive_ull(value, &out->media.maximum_workspace_bytes))
+                return graph_arg_error(err, "yvex: --max-workspace-bytes requires a positive integer");
         } else if (strcmp(flag, "--max-output-bytes") == 0) {
             if (!parse_positive_ull(value, &out->media.maximum_output_bytes))
                 return graph_arg_error(err, "yvex: --max-output-bytes requires a positive integer");
+        } else if (strcmp(flag, "--steps") == 0) {
+            if (!parse_positive_ull(value, &out->media.inference_steps) ||
+                out->media.inference_steps > UINT_MAX)
+                return graph_arg_error(err, "yvex: --steps requires a bounded positive integer");
+        } else if (strcmp(flag, "--blocks") == 0) {
+            if (!parse_positive_ull(value, &out->media.transformer_blocks))
+                return graph_arg_error(err, "yvex: --blocks requires a positive integer");
+        } else if (strcmp(flag, "--seed") == 0) {
+            if (!parse_ull_allow_zero(value, &out->media.seed))
+                return graph_arg_error(err, "yvex: --seed requires an unsigned integer");
         } else if (strcmp(flag, "--output") == 0) {
             if (!graph_parse_output_mode(value, 1, &out->render_mode))
                 return graph_arg_errorf(err, "yvex: unsupported graph output mode: %s", value);
@@ -1019,14 +1050,21 @@ static int graph_parse_media(int argc, char **argv, yvex_graph_args *out,
             return graph_arg_errorf(err, "yvex: unknown graph media option: %s", flag);
         }
     }
-    if (!out->media.video_file || !out->media.audio_file || !out->media.output_file ||
-        !out->media.frames || !out->media.width || !out->media.height ||
-        !out->media.audio_samples)
+    if (!out->media.output_file || !out->media.frames || !out->media.width || !out->media.height)
+        return graph_arg_error(err, "yvex: media requires frame geometry and an output path");
+    if (!out->media.generate &&
+        (!out->media.video_file || !out->media.audio_file || !out->media.audio_samples))
         return graph_arg_error(
             err, "yvex: media publish requires video file, audio file, frame geometry, "
                  "audio samples, and output path");
-    if (out->media.audio_channels > 2ull)
+    if (!out->media.generate && out->media.audio_channels > 2ull)
         return graph_arg_error(err, "yvex: media publish supports mono or stereo PCM");
+    if (out->media.generate &&
+        (!out->media.target || !out->media.prompt || !out->media.text_artifact ||
+         !out->media.transformer_artifact || !out->media.video_artifact ||
+         !out->media.audio_artifact))
+        return graph_arg_error(
+            err, "yvex: media generate requires target, prompt, and all four component artifacts");
     yvex_error_clear(err);
     return YVEX_OK;
 }

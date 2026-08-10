@@ -1,16 +1,304 @@
-/* Adapt bounded decoded media files into one native transactional publication request. */
+/* Bind operator requests to the staged runtime and native transactional publication owners. */
 #include "src/cli/input/private.h"
 #include "src/cli/render/private.h"
 
+#include <signal.h>
 #include <stdlib.h>
+#include <string.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/io.h>
+#include <yvex/internal/media.h>
+
+static volatile sig_atomic_t media_signal_seen;
+
+static void media_signal_handler(int signal_number)
+{
+    media_signal_seen = signal_number;
+}
+
+static int media_cancel_requested(void *context)
+{
+    (void)context;
+    return media_signal_seen != 0;
+}
+
+static int media_signals_install(
+    struct sigaction *old_interrupt, struct sigaction *old_terminate, yvex_error *err)
+{
+    struct sigaction action;
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = media_signal_handler;
+    sigemptyset(&action.sa_mask);
+    if (sigaction(SIGINT, &action, old_interrupt) != 0) {
+        yvex_error_set(err, YVEX_ERR_IO, "media.generate.signals",
+                       "generation signal handlers could not be installed");
+        return YVEX_ERR_IO;
+    }
+    if (sigaction(SIGTERM, &action, old_terminate) != 0) {
+        (void)sigaction(SIGINT, old_interrupt, NULL);
+        yvex_error_set(err, YVEX_ERR_IO, "media.generate.signals",
+                       "generation signal handlers could not be installed");
+        return YVEX_ERR_IO;
+    }
+    return YVEX_OK;
+}
+
+static int media_signals_restore(
+    const struct sigaction *old_interrupt, const struct sigaction *old_terminate,
+    yvex_error *err)
+{
+    if (sigaction(SIGINT, old_interrupt, NULL) != 0 ||
+        sigaction(SIGTERM, old_terminate, NULL) != 0) {
+        yvex_error_set(err, YVEX_ERR_IO, "media.generate.signals",
+                       "generation signal handlers could not be restored");
+        return YVEX_ERR_IO;
+    }
+    return YVEX_OK;
+}
+
+static int family_condition(
+    void *opaque, const yvex_artifact *artifact, const yvex_gguf *gguf,
+    const yvex_tensor_table *tensors, const unsigned int *tokens,
+    unsigned long long token_count, float *output, unsigned long long output_capacity,
+    unsigned long long maximum_host_bytes, unsigned long long maximum_device_bytes,
+    yvex_runtime_av_conditioning_result *result, yvex_error *err)
+{
+    const yvex_minimax_h3_graph_api *api = opaque;
+    yvex_minimax_h3_conditioning_result family = {0};
+    int rc = api->text_encoder_artifact_cuda(
+        artifact, gguf, tensors, tokens, token_count, 50ull, output, output_capacity,
+        maximum_host_bytes, maximum_device_bytes, &family, err);
+    if (rc == YVEX_OK) {
+        result->token_count = family.token_count;
+        result->hidden_width = family.hidden_width;
+        result->layer_count = family.layer_count;
+        result->resident_bytes = family.resident_bytes;
+        result->kernel_launches = family.kernel_launches;
+        result->h2d_bytes = family.h2d_bytes;
+        result->d2h_bytes = family.d2h_bytes;
+        result->device_bytes = family.device_bytes;
+        yvex_core_text_copy(result->residency_identity, sizeof(result->residency_identity),
+                            family.residency_identity);
+        yvex_core_text_copy(result->execution_identity, sizeof(result->execution_identity),
+                            family.execution_identity);
+        result->complete = family.complete;
+    }
+    return rc;
+}
+
+static int family_latent(
+    void *opaque, yvex_runtime_component_session *session,
+    const yvex_runtime_av_plan *plan, const float *conditioning,
+    unsigned long long conditioning_capacity, const char *conditioning_identity,
+    const yvex_runtime_av_layout_output *layout,
+    const yvex_runtime_av_layout_result *layout_result,
+    unsigned int *timestep_indices, unsigned long long timestep_capacity,
+    unsigned long long blocks, unsigned long long seed,
+    unsigned long long maximum_workspace_bytes, float *video,
+    unsigned long long video_capacity, float *audio, unsigned long long audio_capacity,
+    yvex_runtime_latent_result *latent_result,
+    yvex_runtime_latent_evaluator_result *evaluator_result, yvex_error *err)
+{
+    const yvex_minimax_h3_graph_api *api = opaque;
+    yvex_minimax_h3_t2va_omni_context context = {0};
+    context.transformer_session = session;
+    context.conditioning = conditioning;
+    context.conditioning_capacity = conditioning_capacity;
+    context.layout = layout;
+    context.layout_result = layout_result;
+    context.timestep_indices = timestep_indices;
+    context.timestep_capacity = timestep_capacity;
+    context.block_count = blocks;
+    context.conditioning_identity = conditioning_identity;
+    context.cancelled = media_cancel_requested;
+    return api->t2va_latent_execute(
+        plan, &context, seed, maximum_workspace_bytes, video, video_capacity,
+        audio, audio_capacity, latent_result, evaluator_result, err);
+}
+
+static int family_video(
+    void *opaque, yvex_runtime_component_session *session,
+    const yvex_runtime_av_video_decode_window *window,
+    unsigned long long maximum_workspace_bytes, int (*cancel_requested)(void *),
+    void *cancel_context, yvex_runtime_av_video_decode_evidence *evidence,
+    yvex_error *err)
+{
+    const yvex_minimax_h3_graph_api *api = opaque;
+    yvex_minimax_h3_video_decode_options options = {0};
+    yvex_minimax_h3_video_decode_result result = {0};
+    yvex_minimax_h3_component_execution_failure failure = {0};
+    int rc;
+    options.latent = window->latent;
+    options.output = window->output;
+    options.batch = 1ull;
+    options.latent_channels = window->latent_channels;
+    options.latent_frames = window->latent_frames;
+    options.latent_height = window->latent_height;
+    options.latent_width = window->latent_width;
+    options.output_capacity = window->output_capacity;
+    options.max_workspace_bytes = maximum_workspace_bytes;
+    options.cancelled = cancel_requested;
+    options.cancellation_context = cancel_context;
+    rc = api->video_vae_decode_cuda(session, &options, &result, &failure, err);
+    if (rc == YVEX_OK) {
+        evidence->output_values = result.output_values;
+        evidence->kernel_launches = result.kernel_launches;
+        evidence->h2d_bytes = result.h2d_bytes;
+        evidence->d2h_bytes = result.d2h_bytes;
+        evidence->device_bytes = result.device_bytes;
+        yvex_core_text_copy(evidence->execution_identity,
+                            sizeof(evidence->execution_identity), result.execution_identity);
+        evidence->complete = result.complete;
+    }
+    return rc;
+}
+
+static int family_audio(
+    void *opaque, const yvex_artifact *artifact, const yvex_gguf *gguf,
+    const yvex_tensor_table *tensors, const float *latent,
+    unsigned long long batch, unsigned long long latent_steps, float *output,
+    unsigned long long output_capacity, unsigned long long maximum_workspace_bytes,
+    unsigned long long maximum_device_bytes, int (*cancel_requested)(void *),
+    void *cancel_context, yvex_runtime_av_audio_result *result, yvex_error *err)
+{
+    const yvex_minimax_h3_graph_api *api = opaque;
+    yvex_minimax_h3_audio_decode_options options = {0};
+    yvex_minimax_h3_audio_decode_result family = {0};
+    yvex_minimax_h3_component_execution_failure failure = {0};
+    int rc;
+    options.latent = latent;
+    options.batch = batch;
+    options.latent_channels = 32ull;
+    options.latent_steps = latent_steps;
+    options.output = output;
+    options.output_capacity = output_capacity;
+    options.max_workspace_bytes = maximum_workspace_bytes;
+    options.cancelled = cancel_requested;
+    options.cancellation_context = cancel_context;
+    rc = api->audio_vae_execute_artifact_cuda(
+        artifact, gguf, tensors, &options, maximum_device_bytes, &family, &failure, err);
+    if (rc == YVEX_OK) {
+        result->batch = family.batch;
+        result->samples_per_channel = family.samples_per_channel;
+        result->output_values = family.output_values;
+        result->kernel_launches = family.kernel_launches;
+        result->h2d_bytes = family.h2d_bytes;
+        result->d2h_bytes = family.d2h_bytes;
+        result->device_bytes = family.device_bytes;
+        yvex_core_text_copy(result->residency_identity, sizeof(result->residency_identity),
+                            family.residency_identity);
+        yvex_core_text_copy(result->execution_identity, sizeof(result->execution_identity),
+                            family.execution_identity);
+        result->complete = family.complete;
+    }
+    return rc;
+}
 
 static int media_command_error(const yvex_error *err)
 {
     yvex_cli_out_writef(yvex_cli_out_stderr(), "yvex: %s: %s\n",
                         yvex_error_where(err), yvex_error_message(err));
     return exit_for_status(yvex_error_code(err));
+}
+
+int yvex_media_generate_command(const yvex_graph_args *args, yvex_error *err)
+{
+    const yvex_minimax_h3_api *model = yvex_model_register_minimax_h3();
+    const yvex_minimax_h3_graph_api *graph = yvex_graph_register_minimax_h3();
+    const yvex_minimax_h3_latent_normalization *normalization;
+    yvex_minimax_h3_architecture architecture;
+    yvex_minimax_h3_failure failure;
+    yvex_runtime_av_generation_request request = {0};
+    yvex_runtime_av_generation_result result;
+    struct sigaction old_interrupt, old_terminate;
+    yvex_error restore_error;
+    int rc, restore_rc, render_rc, signals_installed = 0;
+    if (!args || !args->media.generate ||
+        strcmp(args->media.target, YVEX_MINIMAX_H3_TARGET_ID) != 0 || !model || !graph) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "media.generate.cli",
+                       "only the admitted MiniMax-H3 FL2VA target is available");
+        return media_command_error(err);
+    }
+    memset(&architecture, 0, sizeof(architecture));
+    memset(&failure, 0, sizeof(failure));
+    rc = model->architecture_canonical(&architecture, &failure, err);
+    normalization = rc == YVEX_OK ? model->latent_normalization() : NULL;
+    if (rc == YVEX_OK && !normalization) {
+        yvex_error_set(err, YVEX_ERR_STATE, "media.generate.cli",
+                       "MiniMax-H3 latent normalization is unavailable");
+        rc = YVEX_ERR_STATE;
+    }
+    request.schema_version = YVEX_RUNTIME_AV_GENERATION_SCHEMA_V1;
+    request.target = args->media.target;
+    request.prompt = args->media.prompt;
+    request.output_path = args->media.output_file;
+    request.text_artifact_path = args->media.text_artifact;
+    request.transformer_artifact_path = args->media.transformer_artifact;
+    request.video_artifact_path = args->media.video_artifact;
+    request.audio_artifact_path = args->media.audio_artifact;
+    request.source_identity = YVEX_MINIMAX_H3_SOURCE_TREE_IDENTITY;
+    request.frames = args->media.frames;
+    request.width = args->media.width;
+    request.height = args->media.height;
+    request.fps_numerator = args->media.fps_numerator;
+    request.fps_denominator = args->media.fps_denominator;
+    request.audio_sample_rate = architecture.audio_vae.sample_rate;
+    request.inference_steps = (unsigned int)args->media.inference_steps;
+    request.transformer_blocks = args->media.transformer_blocks;
+    request.seed = args->media.seed;
+    request.maximum_host_bytes = args->media.maximum_host_bytes;
+    request.maximum_device_bytes = args->media.maximum_device_bytes;
+    request.maximum_workspace_bytes = args->media.maximum_workspace_bytes;
+    request.maximum_file_bytes = args->media.maximum_output_bytes;
+    request.component_backend = YVEX_BACKEND_KIND_CUDA;
+    request.video_temporal_ratio = architecture.video_vae.temporal_ratio;
+    request.video_clip_length = architecture.video_vae.clip_length;
+    request.video_token_drop = architecture.video_vae.token_drop;
+    request.video_spatial_ratio = architecture.video_vae.spatial_ratio;
+    request.video_tile_size = architecture.video_vae.tile_size;
+    request.video_minimum_tile_overlap = architecture.video_vae.tile_overlap;
+    request.video_mean = normalization ? normalization->video_mean : NULL;
+    request.video_std = normalization ? normalization->video_std : NULL;
+    request.audio_mean = normalization ? normalization->audio_mean : NULL;
+    request.audio_std = normalization ? normalization->audio_std : NULL;
+    request.pixel_mean = normalization ? normalization->pixel_mean : NULL;
+    request.pixel_std = normalization ? normalization->pixel_std : NULL;
+    request.video_channels = normalization ? normalization->video_channels : 0ull;
+    request.audio_channels = normalization ? normalization->audio_channels : 0ull;
+    request.pixel_channels = normalization ? normalization->pixel_channels : 0ull;
+    request.audio_output_channels = architecture.audio_vae.output_channels;
+    request.audio_samples_per_step = architecture.audio_vae.decoder_rate_product;
+    request.family_context = (void *)graph;
+    request.plan_build = graph->t2va_plan_build;
+    request.layout_build = graph->t2va_layout_build;
+    request.component_admit = graph->component_admit;
+    request.condition = family_condition;
+    request.latent = family_latent;
+    request.video_decode = family_video;
+    request.audio_decode = family_audio;
+    request.cancel_requested = media_cancel_requested;
+    media_signal_seen = 0;
+    if (rc == YVEX_OK) {
+        rc = media_signals_install(&old_interrupt, &old_terminate, err);
+        signals_installed = rc == YVEX_OK;
+    }
+    if (rc == YVEX_OK) rc = yvex_runtime_av_generate(&request, &result, err);
+    if (signals_installed) {
+        yvex_error_clear(&restore_error);
+        restore_rc = media_signals_restore(&old_interrupt, &old_terminate, &restore_error);
+        if (restore_rc != YVEX_OK) { rc = restore_rc; *err = restore_error; }
+    }
+    media_signal_seen = 0;
+    if (rc == YVEX_OK) {
+        render_rc = yvex_media_generate_render(
+            yvex_cli_out_stdout(), args->render_mode, args->media.output_file, &result);
+        if (render_rc != YVEX_OK) {
+            yvex_error_set(err, render_rc, "media.generate.cli",
+                           "generation result rendering failed after publication");
+            rc = render_rc;
+        }
+    }
+    return rc == YVEX_OK ? 0 : media_command_error(err);
 }
 
 int yvex_media_publish_command(const yvex_graph_args *args, yvex_error *err)

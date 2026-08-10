@@ -12,6 +12,7 @@
 #include <yvex/internal/generation.h>
 #include <yvex/internal/logits.h>
 #include <yvex/internal/io.h>
+#include <yvex/internal/media.h>
 #include <yvex/internal/graph.h>
 #include <yvex/internal/model_artifact.h>
 #include <yvex/internal/model_target.h>
@@ -44,6 +45,8 @@ typedef struct {
 
 int yvex_media_publish_render(FILE *fp, yvex_graph_report_mode mode,
                               const yvex_cli_media_report *report);
+int yvex_media_generate_render(FILE *, yvex_graph_report_mode, const char *,
+                               const yvex_runtime_av_generation_result *);
 /* Read one immutable collection counter selected by a renderer table. */
 static inline unsigned long long cli_collection_value(
     const yvex_fullmodel_collections *collections, size_t offset) {

@@ -27,6 +27,25 @@ contains "$OUT_DIR/help.out" "--video-file"
 contains "$OUT_DIR/help.out" "--audio-file"
 contains "$OUT_DIR/help.out" "--audio-samples"
 
+"$YVEX_BIN" execute media generate --help >"$OUT_DIR/generate-help.out"
+contains "$OUT_DIR/generate-help.out" "operation: execute.media.generate"
+contains "$OUT_DIR/generate-help.out" "--prompt"
+contains "$OUT_DIR/generate-help.out" "--transformer-artifact"
+contains "$OUT_DIR/generate-help.out" "--steps"
+
+set +e
+"$YVEX_BIN" execute media generate \
+    --target refused-family --prompt hello \
+    --text-artifact missing --transformer-artifact missing \
+    --video-artifact missing --audio-artifact missing \
+    --frames 124 --width 32 --height 32 --out "$OUT_DIR/refused.avi" \
+    >"$OUT_DIR/generate-refused.out" 2>"$OUT_DIR/generate-refused.err"
+status=$?
+set -e
+[ "$status" -ne 0 ] || fail "unknown generation target was admitted"
+contains "$OUT_DIR/generate-refused.err" "only the admitted MiniMax-H3 FL2VA target is available"
+[ ! -e "$OUT_DIR/refused.avi" ] || fail "refused generation published media"
+
 "$YVEX_BIN" execute media publish \
     --video-file "$OUT_DIR/video.f32" --audio-file "$OUT_DIR/audio.f32" \
     --frames 3 --width 2 --height 2 --audio-samples 4005 \

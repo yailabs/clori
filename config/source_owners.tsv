@@ -20,6 +20,7 @@ include/yvex/internal/generation.h	runtime	runtime.generation	generic	private	in
 include/yvex/internal/logits.h	runtime	runtime.logits	generic	private	internal-abi	runtime,cli,tests	interface	none
 include/yvex/internal/sampling.h	runtime	runtime.sampling	generic	private	internal-abi	runtime,cli,tests	interface	none
 include/yvex/internal/latent.h	runtime	runtime.latent	generic	private	internal-abi	runtime,graph,tests	interface	none
+include/yvex/internal/media.h	runtime	runtime.media	generic	private	internal-abi	graph.family,cli,tests	interface	none
 include/yvex/internal/graph.h	graph	graph.internal	generic	private	internal-abi	runtime,backend,cli	interface	none
 include/yvex/internal/moe.h	graph	graph.moe	generic	private	internal-abi	graph,runtime,backend,cli,tests	interface	none
 include/yvex/internal/gguf.h	gguf	gguf.internal	generic	private	internal-abi	artifact,model,quant	interface	none
@@ -179,6 +180,7 @@ src/runtime/speculation.c	runtime	runtime.speculation	generic	private	proposal-v
 src/runtime/logits.c	runtime	runtime.logits	generic	private	transactional-execution	runtime,backend,cli,tests	implementation	none
 src/runtime/sampling.c	runtime	runtime.sampling	generic	private	transactional-execution	runtime,cli,tests	implementation	none
 src/runtime/latent.c	runtime	runtime.latent	generic	private	transactional-execution	runtime,graph,tests	implementation	none
+src/runtime/media.c	runtime	runtime.media	generic	private	transactional-execution	graph.family,cli,tests	implementation	none
 src/runtime/session.c	runtime	runtime.session_transactions	generic	private	transactional-execution	runtime,generation,graph,tests	implementation	none
 src/runtime/moe.c	runtime	runtime.moe	generic	private	transactional-execution	runtime,graph,backend,cli,tests	implementation	none
 src/runtime/moe_input.c	runtime	runtime.moe_input	generic	private	file-serialization	runtime,cli,tests	implementation	none
