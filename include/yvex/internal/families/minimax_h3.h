@@ -202,31 +202,20 @@ typedef struct {
 } yvex_minimax_h3_failure;
 typedef struct {
     yvex_minimax_h3_component_id id;
-    const char *canonical_id;
-    const char *implementation_class;
-    const char *configuration_path;
+    const char *canonical_id, *implementation_class, *configuration_path;
     char identity[65];
-    unsigned int dependency_mask;
-    unsigned int input_classes;
-    unsigned int output_classes;
+    unsigned int dependency_mask, input_classes, output_classes;
     yvex_minimax_h3_phase phase;
     yvex_minimax_h3_lifetime lifetime;
-    unsigned long long file_count;
-    unsigned long long shard_count;
-    unsigned long long tensor_count;
-    unsigned long long element_count;
-    unsigned long long payload_bytes;
-    int weighted;
-    int release_after_phase;
-    int request_local;
+    unsigned long long file_count, shard_count, tensor_count, element_count, payload_bytes;
+    int weighted, release_after_phase, request_local;
 } yvex_minimax_h3_component;
 typedef struct {
     const char *json_path, *config_path, *pre_tokenizer, *prompt_policy;
     unsigned long long token_count;
 } yvex_minimax_h3_tokenizer_spec;
 typedef struct {
-    yvex_minimax_h3_phase source_phase;
-    yvex_minimax_h3_phase destination_phase;
+    yvex_minimax_h3_phase source_phase, destination_phase;
     unsigned int data_classes;
     yvex_minimax_h3_lifetime lifetime;
 } yvex_minimax_h3_phase_edge;
@@ -281,25 +270,19 @@ typedef struct {
     yvex_minimax_h3_omni_signature omni;
     yvex_minimax_h3_video_vae_signature video_vae;
     yvex_minimax_h3_audio_vae_signature audio_vae;
-    unsigned long long bf16_tensors;
-    unsigned long long f32_tensors;
+    unsigned long long bf16_tensors, f32_tensors;
     char identity[65];
 } yvex_minimax_h3_architecture;
 typedef struct {
     yvex_minimax_h3_component_id component;
     yvex_minimax_h3_role role;
-    const char *source_name;
-    const char *shard_name;
+    const char *source_name, *shard_name;
     yvex_native_dtype source_dtype;
     unsigned int rank;
     unsigned long long source_shape[YVEX_NATIVE_WEIGHT_MAX_DIMS];
     unsigned long long logical_shape[YVEX_NATIVE_WEIGHT_MAX_DIMS];
-    unsigned long long relative_begin;
-    unsigned long long relative_end;
-    unsigned long long elements;
-    unsigned long long layer_index;
-    unsigned long long subcomponent_index;
-    unsigned long long repeated_index;
+    unsigned long long relative_begin, relative_end, elements;
+    unsigned long long layer_index, subcomponent_index, repeated_index;
     yvex_minimax_h3_phase phase;
     yvex_minimax_h3_lifetime lifetime;
     unsigned long long unresolved_requirement_identity;
@@ -308,34 +291,18 @@ typedef struct {
     char destination_identity[65];
 } yvex_minimax_h3_tensor_role;
 typedef struct {
-    char source_acquisition_identity[65];
-    char source_snapshot_identity[65];
-    char component_manifest_identity[65];
-    char phase_dag_identity[65];
-    char architecture_identity[65];
-    char role_map_identity[65];
-    char target_identity[65];
-    char unresolved_requirements_identity[65];
-    unsigned long long source_snapshot_key;
-    unsigned long long component_count;
-    unsigned long long weighted_component_count;
-    unsigned long long phase_edge_count;
-    unsigned long long source_file_count;
-    unsigned long long shard_count;
-    unsigned long long tensor_count;
-    unsigned long long element_count;
-    unsigned long long payload_bytes;
-    unsigned long long unmapped_tensors;
-    unsigned long long duplicate_mappings;
+    char source_acquisition_identity[65], source_snapshot_identity[65];
+    char component_manifest_identity[65], phase_dag_identity[65];
+    char architecture_identity[65], role_map_identity[65];
+    char target_identity[65], unresolved_requirements_identity[65];
+    unsigned long long source_snapshot_key, component_count, weighted_component_count;
+    unsigned long long phase_edge_count, source_file_count, shard_count, tensor_count;
+    unsigned long long element_count, payload_bytes, unmapped_tensors, duplicate_mappings;
     unsigned int output_classes;
-    int source_verified;
-    int architecture_admitted;
-    int roles_complete;
+    int source_verified, architecture_admitted, roles_complete;
 } yvex_minimax_h3_summary;
 typedef struct yvex_minimax_h3_target yvex_minimax_h3_target;
-typedef struct {
-    const char *source_root;
-} yvex_minimax_h3_open_options;
+typedef struct { const char *source_root; } yvex_minimax_h3_open_options;
 typedef struct {
     int (*open)(yvex_minimax_h3_target **out,
                 const yvex_minimax_h3_open_options *options,
@@ -383,7 +350,6 @@ typedef struct {
                            yvex_minimax_h3_component_id component,
                            yvex_error *err);
 } yvex_minimax_h3_transform_api;
-
 typedef enum {
     YVEX_MINIMAX_H3_HANDOFF_NONE = 0,
     YVEX_MINIMAX_H3_HANDOFF_INVALID_ARGUMENT,
@@ -432,7 +398,6 @@ typedef struct {
     yvex_source_payload_session *(*session)(yvex_minimax_h3_handoff *handoff);
     const yvex_source_payload_plan *(*plan)(const yvex_minimax_h3_handoff *handoff);
 } yvex_minimax_h3_handoff_api;
-
 typedef enum {
     YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NONE = 0,
     YVEX_MINIMAX_H3_COMPONENT_EXECUTION_INVALID_ARGUMENT,
@@ -517,12 +482,41 @@ typedef enum {
     YVEX_MINIMAX_H3_OMNI_FC1, YVEX_MINIMAX_H3_OMNI_FC2, YVEX_MINIMAX_H3_OMNI_ADALN_WEIGHT,
     YVEX_MINIMAX_H3_OMNI_ADALN_BIAS, YVEX_MINIMAX_H3_OMNI_BLOCK_WEIGHT_COUNT
 } yvex_minimax_h3_omni_weight_slot;
+typedef enum {
+    YVEX_MINIMAX_H3_OMNI_AUDIO_WEIGHT = 0, YVEX_MINIMAX_H3_OMNI_AUDIO_BIAS,
+    YVEX_MINIMAX_H3_OMNI_VIDEO_WEIGHT, YVEX_MINIMAX_H3_OMNI_VIDEO_BIAS,
+    YVEX_MINIMAX_H3_OMNI_CONDITION_WEIGHT, YVEX_MINIMAX_H3_OMNI_CONDITION_BIAS,
+    YVEX_MINIMAX_H3_OMNI_TIME_IN_WEIGHT, YVEX_MINIMAX_H3_OMNI_TIME_IN_BIAS,
+    YVEX_MINIMAX_H3_OMNI_TIME_OUT_WEIGHT, YVEX_MINIMAX_H3_OMNI_TIME_OUT_BIAS,
+    YVEX_MINIMAX_H3_OMNI_REFINER_WEIGHTS,
+    YVEX_MINIMAX_H3_OMNI_REFINER_FINAL = YVEX_MINIMAX_H3_OMNI_REFINER_WEIGHTS + 16,
+    YVEX_MINIMAX_H3_OMNI_ROPE_INV_FREQ,
+    YVEX_MINIMAX_H3_OMNI_FINAL_NORM, YVEX_MINIMAX_H3_OMNI_FINAL_ADALN_WEIGHT,
+    YVEX_MINIMAX_H3_OMNI_FINAL_ADALN_BIAS, YVEX_MINIMAX_H3_OMNI_VIDEO_OUT_WEIGHT,
+    YVEX_MINIMAX_H3_OMNI_VIDEO_OUT_BIAS, YVEX_MINIMAX_H3_OMNI_AUDIO_OUT_WEIGHT,
+    YVEX_MINIMAX_H3_OMNI_AUDIO_OUT_BIAS, YVEX_MINIMAX_H3_OMNI_EXTERNAL_WEIGHT_COUNT
+} yvex_minimax_h3_omni_external_slot;
 typedef struct {
     unsigned long long packed_rows, block_count, resident_bytes, kernel_launches;
     unsigned long long h2d_bytes, d2h_bytes, device_bytes;
     char residency_identity[65], execution_identity[65];
     int complete;
 } yvex_minimax_h3_omni_result;
+typedef struct {
+    const float *video, *audio, *conditioning, *timesteps, *position_ids;
+    const unsigned int *video_indices, *audio_indices, *text_indices;
+    const unsigned int *timestep_indices, *token_tags;
+    unsigned long long video_rows, audio_rows, text_rows, timestep_count, packed_rows;
+    unsigned long long block_count;
+    float *video_output, *audio_output;
+    unsigned long long video_output_capacity, audio_output_capacity;
+} yvex_minimax_h3_omni_transformer_request;
+typedef struct {
+    unsigned long long video_rows, audio_rows, text_rows, packed_rows, block_count;
+    unsigned long long resident_bytes, kernel_launches, h2d_bytes, d2h_bytes, device_bytes;
+    char residency_identity[65], execution_identity[65];
+    int complete;
+} yvex_minimax_h3_omni_transformer_result;
 typedef struct {
     int (*text_embed_cuda)(yvex_backend *backend, const unsigned char *encoded,
         unsigned long long encoded_bytes, unsigned int qtype, unsigned long long row_count,
@@ -544,6 +538,11 @@ typedef struct {
         const float *position_ids, const unsigned int *adaln_indices, unsigned long long packed_rows,
         float *output, unsigned long long output_capacity,
         yvex_minimax_h3_omni_result *result, yvex_error *err);
+    int (*omni_transformer_cuda)(yvex_backend *backend,
+        const yvex_minimax_h3_encoded_weight *external_weights,
+        const yvex_minimax_h3_encoded_weight *block_weights, const char *residency_identity,
+        unsigned long long resident_bytes, const yvex_minimax_h3_omni_transformer_request *request,
+        yvex_minimax_h3_omni_transformer_result *result, yvex_error *err);
 } yvex_minimax_h3_backend_api;
 typedef struct {
     unsigned long long text_tokens, frames, width, height;
@@ -555,10 +554,8 @@ typedef struct {
     int complete;
 } yvex_minimax_h3_t2va_plan;
 typedef struct {
-    int (*t2va_plan_build)(yvex_minimax_h3_t2va_plan *out,
-                           unsigned long long text_tokens, unsigned long long width,
-                           unsigned long long height, unsigned long long frames,
-                           yvex_error *err);
+    int (*t2va_plan_build)(yvex_minimax_h3_t2va_plan *, unsigned long long,
+                           unsigned long long, unsigned long long, unsigned long long, yvex_error *);
     int (*scheduler_step)(float *output, const float *sample, const float *velocity,
                           unsigned long long values, float timestep, float sigma,
                           float sigma_next, yvex_error *err);
@@ -568,11 +565,14 @@ typedef struct {
         yvex_artifact_admission_failure *failure, yvex_error *err);
     int (*text_encoder_artifact_cuda)(
         const yvex_artifact *artifact, const yvex_gguf *gguf, const yvex_tensor_table *tensors,
-        const unsigned int *token_ids, unsigned long long token_count,
-        unsigned long long layer_count,
+        const unsigned int *token_ids, unsigned long long token_count, unsigned long long layer_count,
         float *output, unsigned long long output_capacity,
         unsigned long long maximum_host_bytes, unsigned long long maximum_device_bytes,
         yvex_minimax_h3_conditioning_result *result, yvex_error *err);
+    int (*transformer_artifact_cuda)(
+        const yvex_artifact *, const yvex_gguf *, const yvex_tensor_table *,
+        const yvex_minimax_h3_omni_transformer_request *, unsigned long long,
+        unsigned long long, yvex_minimax_h3_omni_transformer_result *, yvex_error *);
     int (*audio_vae_decode_cpu)(yvex_materialization_session *session,
         const yvex_minimax_h3_audio_decode_options *options,
         yvex_minimax_h3_audio_decode_result *result, yvex_minimax_h3_component_execution_failure *failure,

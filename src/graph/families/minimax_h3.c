@@ -268,6 +268,24 @@ component_binding_find(const yvex_materialization_session *session, const char *
         if (strcmp(binding->name, name) == 0) return binding;
     }
 }
+static int component_weight_bind(const yvex_materialization_session *session,
+    const yvex_runtime_residency *residency, const char *name,
+    yvex_minimax_h3_encoded_weight *weight, yvex_error *err)
+{
+    const yvex_materialized_tensor_binding *binding = component_binding_find(session, name);
+    if (!binding || !binding->row_count) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "minimax-h3.component.binding",
+                       "an exact component weight binding is unavailable");
+        return YVEX_ERR_FORMAT;
+    }
+    if (yvex_runtime_residency_binding_view(
+            residency, binding, &weight->encoded, &weight->encoded_bytes, err) != YVEX_OK)
+        return yvex_error_code(err);
+    weight->qtype = binding->qtype; weight->row_count = binding->row_count;
+    weight->row_width = binding->row_width;
+    weight->row_bytes = binding->encoded_bytes / binding->row_count;
+    return YVEX_OK;
+}
 static int audio_tensor_load(audio_execution *execution, const char *name,
                              unsigned int rank, const unsigned long long *dims,
                              component_buffer *buffer)
@@ -1589,16 +1607,10 @@ static int audio_vae_execute_artifact_cpu(
 {
     yvex_complete_artifact_admission admission;
     yvex_artifact_admission_failure admission_failure;
-    yvex_materialization_options materialization_options;
-    yvex_materialization_failure materialization_failure;
-    yvex_materialization_plan *plan = NULL;
-    yvex_materialization_session *session = NULL;
-    yvex_runtime_residency *residency = NULL;
-    yvex_runtime_residency_options residency_options = {0};
-    yvex_runtime_residency_failure residency_failure;
+    yvex_runtime_component_session *session = NULL;
     audio_execution execution = {0};
-    int admitted = 0;
-    int rc;
+    int admitted = 0, rc, cleanup_rc;
+    yvex_error cleanup;
     if (result) memset(result, 0, sizeof(*result));
     if (failure) memset(failure, 0, sizeof(*failure));
     execution.options = options;
@@ -1613,42 +1625,21 @@ static int audio_vae_execute_artifact_cpu(
     rc = component_admit(
         "audio_vae", artifact, gguf, tensors, &admission, &admission_failure, err);
     admitted = rc == YVEX_OK;
-    yvex_materialization_options_default(&materialization_options);
-    materialization_options.max_chunk_bytes = 64ull * 1024ull * 1024ull;
-    if (materialization_options.max_chunk_bytes > options->max_workspace_bytes)
-        materialization_options.max_chunk_bytes = options->max_workspace_bytes;
     if (rc == YVEX_OK)
-        rc = yvex_materialization_plan_build(
-            &plan, &admission, artifact, gguf, tensors, NULL,
-            &materialization_options, &materialization_failure, err);
+        rc = yvex_runtime_component_session_open(
+            &session, &admission, artifact, gguf, tensors, YVEX_BACKEND_KIND_CPU,
+            admission.payload_bytes, 0ull, err);
     if (rc == YVEX_OK)
-        rc = yvex_materialization_session_open(
-            &session, plan, artifact, &materialization_options,
-            &materialization_failure, err);
-    if (rc == YVEX_OK)
-        rc = yvex_materialization_session_commit(session, &materialization_failure, err);
-    residency_options.maximum_host_bytes = admission.payload_bytes;
-    if (rc == YVEX_OK)
-        rc = yvex_runtime_component_residency_prepare(
-            &residency, session, admission.logical_component_identity,
-            &residency_options, &residency_failure, err);
-    if (rc == YVEX_OK)
-        rc = audio_vae_decode_cpu(session, options, result, failure, err);
+        rc = audio_vae_decode_cpu(yvex_runtime_component_session_materialization(session),
+                                  options, result, failure, err);
     if (rc != YVEX_OK && failure && failure->code == YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NONE) {
         failure->code = admitted ? YVEX_MINIMAX_H3_COMPONENT_EXECUTION_MATERIALIZATION
                                  : YVEX_MINIMAX_H3_COMPONENT_EXECUTION_LIFECYCLE;
         failure->reason = yvex_error_message(err);
     }
-    {
-        yvex_error cleanup;
-        int cleanup_rc = yvex_runtime_residency_close(&residency, &cleanup);
-        if (cleanup_rc != YVEX_OK) {
-            rc = cleanup_rc;
-            if (err) *err = cleanup;
-        }
-    }
-    yvex_materialization_session_close(session);
-    yvex_materialization_plan_close(plan);
+    yvex_error_clear(&cleanup);
+    cleanup_rc = yvex_runtime_component_session_close(&session, &cleanup);
+    if (cleanup_rc != YVEX_OK) { rc = cleanup_rc; if (err) *err = cleanup; }
     return rc;
 }
 static const yvex_artifact_component_metadata video_metadata[] = {
@@ -1736,16 +1727,10 @@ static int video_vae_execute_artifact_cpu(
 {
     yvex_complete_artifact_admission admission;
     yvex_artifact_admission_failure admission_failure;
-    yvex_materialization_options materialization_options;
-    yvex_materialization_failure materialization_failure;
-    yvex_materialization_plan *plan = NULL;
-    yvex_materialization_session *session = NULL;
-    yvex_runtime_residency *residency = NULL;
-    yvex_runtime_residency_options residency_options = {0};
-    yvex_runtime_residency_failure residency_failure;
+    yvex_runtime_component_session *session = NULL;
     video_execution execution = {0};
-    int admitted = 0;
-    int rc;
+    int admitted = 0, rc, cleanup_rc;
+    yvex_error cleanup;
     if (result) memset(result, 0, sizeof(*result));
     if (failure) memset(failure, 0, sizeof(*failure));
     execution.options = options;
@@ -1760,79 +1745,41 @@ static int video_vae_execute_artifact_cpu(
     rc = component_admit(
         "video_vae", artifact, gguf, tensors, &admission, &admission_failure, err);
     admitted = rc == YVEX_OK;
-    yvex_materialization_options_default(&materialization_options);
-    materialization_options.max_chunk_bytes = 64ull * 1024ull * 1024ull;
-    if (materialization_options.max_chunk_bytes > options->max_workspace_bytes)
-        materialization_options.max_chunk_bytes = options->max_workspace_bytes;
     if (rc == YVEX_OK)
-        rc = yvex_materialization_plan_build(
-            &plan, &admission, artifact, gguf, tensors, NULL,
-            &materialization_options, &materialization_failure, err);
+        rc = yvex_runtime_component_session_open(
+            &session, &admission, artifact, gguf, tensors, YVEX_BACKEND_KIND_CPU,
+            admission.payload_bytes, 0ull, err);
     if (rc == YVEX_OK)
-        rc = yvex_materialization_session_open(
-            &session, plan, artifact, &materialization_options,
-            &materialization_failure, err);
-    if (rc == YVEX_OK)
-        rc = yvex_materialization_session_commit(session, &materialization_failure, err);
-    residency_options.maximum_host_bytes = admission.payload_bytes;
-    if (rc == YVEX_OK)
-        rc = yvex_runtime_component_residency_prepare(
-            &residency, session, admission.logical_component_identity,
-            &residency_options, &residency_failure, err);
-    if (rc == YVEX_OK)
-        rc = video_vae_decode_cpu(session, options, result, failure, err);
+        rc = video_vae_decode_cpu(yvex_runtime_component_session_materialization(session),
+                                  options, result, failure, err);
     if (rc != YVEX_OK && failure &&
         failure->code == YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NONE) {
         failure->code = admitted ? YVEX_MINIMAX_H3_COMPONENT_EXECUTION_MATERIALIZATION
                                  : YVEX_MINIMAX_H3_COMPONENT_EXECUTION_LIFECYCLE;
         failure->reason = yvex_error_message(err);
     }
-    {
-        yvex_error cleanup;
-        int cleanup_rc = yvex_runtime_residency_close(&residency, &cleanup);
-        if (cleanup_rc != YVEX_OK) {
-            rc = cleanup_rc;
-            if (err) *err = cleanup;
-        }
-    }
-    yvex_materialization_session_close(session);
-    yvex_materialization_plan_close(plan);
+    yvex_error_clear(&cleanup);
+    cleanup_rc = yvex_runtime_component_session_close(&session, &cleanup);
+    if (cleanup_rc != YVEX_OK) { rc = cleanup_rc; if (err) *err = cleanup; }
     return rc;
 }
 static const char *const text_layer_weight_suffixes[YVEX_MINIMAX_H3_TEXT_LAYER_WEIGHT_COUNT] = {
-    "input_layernorm.weight",
-    "self_attn.q_proj.weight",
-    "self_attn.k_proj.weight",
-    "self_attn.v_proj.weight",
-    "self_attn.o_proj.weight",
-    "self_attn.q_norm.weight",
-    "self_attn.k_norm.weight",
-    "post_attention_layernorm.weight",
-    "mlp.gate_proj.weight",
-    "mlp.up_proj.weight",
-    "mlp.down_proj.weight",
+    "input_layernorm.weight", "self_attn.q_proj.weight", "self_attn.k_proj.weight",
+    "self_attn.v_proj.weight", "self_attn.o_proj.weight", "self_attn.q_norm.weight",
+    "self_attn.k_norm.weight", "post_attention_layernorm.weight", "mlp.gate_proj.weight",
+    "mlp.up_proj.weight", "mlp.down_proj.weight",
 };
 static int text_layer_weights_bind(
     const yvex_materialization_session *session, const yvex_runtime_residency *residency,
     yvex_minimax_h3_encoded_weight *weights, unsigned long long layer_count, yvex_error *err)
 {
-    unsigned long long index, layer, slot = 0ull;
+    unsigned long long index, layer, slot;
     char name[160];
-    const yvex_materialized_tensor_binding *binding =
-        component_binding_find(session, "model.language_model.embed_tokens.weight");
-    if (!binding || !binding->row_count ||
-        yvex_runtime_residency_binding_view(
-            residency, binding, &weights[0].encoded, &weights[0].encoded_bytes, err) != YVEX_OK) {
-        yvex_error_set(err, YVEX_ERR_FORMAT, "minimax-h3.text-layer.binding",
-                       "the exact Qwen embedding binding is unavailable");
-        return YVEX_ERR_FORMAT;
-    }
-    weights[0].qtype = binding->qtype;
-    weights[0].row_count = binding->row_count;
-    weights[0].row_width = binding->row_width;
-    weights[0].row_bytes = binding->encoded_bytes / binding->row_count;
+    int rc = component_weight_bind(session, residency,
+                                   "model.language_model.embed_tokens.weight", weights, err);
     for (layer = 0ull; layer < layer_count; ++layer) {
-        for (index = 0ull; index < YVEX_MINIMAX_H3_TEXT_LAYER_WEIGHT_COUNT; ++index) {
+        for (index = 0ull; rc == YVEX_OK &&
+                           index < YVEX_MINIMAX_H3_TEXT_LAYER_WEIGHT_COUNT; ++index) {
             int length = snprintf(name, sizeof(name), "model.language_model.layers.%llu.%s",
                                   layer, text_layer_weight_suffixes[index]);
             slot = 1ull + layer * YVEX_MINIMAX_H3_TEXT_LAYER_WEIGHT_COUNT + index;
@@ -1841,22 +1788,10 @@ static int text_layer_weights_bind(
                                "a Qwen layer binding name exceeded its bounded representation");
                 return YVEX_ERR_BOUNDS;
             }
-            binding = component_binding_find(session, name);
-            if (!binding || !binding->row_count ||
-                yvex_runtime_residency_binding_view(
-                    residency, binding, &weights[slot].encoded,
-                    &weights[slot].encoded_bytes, err) != YVEX_OK) {
-                yvex_error_set(err, YVEX_ERR_FORMAT, "minimax-h3.text-layer.binding",
-                               "an exact Qwen BF16 layer binding is unavailable");
-                return YVEX_ERR_FORMAT;
-            }
-            weights[slot].qtype = binding->qtype;
-            weights[slot].row_count = binding->row_count;
-            weights[slot].row_width = binding->row_width;
-            weights[slot].row_bytes = binding->encoded_bytes / binding->row_count;
+            rc = component_weight_bind(session, residency, name, weights + slot, err);
         }
     }
-    return YVEX_OK;
+    return rc;
 }
 static int text_encoder_artifact_cuda(const yvex_artifact *artifact,
     const yvex_gguf *gguf, const yvex_tensor_table *tensors,
@@ -1871,23 +1806,18 @@ static int text_encoder_artifact_cuda(const yvex_artifact *artifact,
     yvex_minimax_h3_encoded_weight *weights = NULL;
     yvex_complete_artifact_admission admission;
     yvex_artifact_admission_failure admission_failure;
-    yvex_materialization_options options;
-    yvex_materialization_failure failure;
-    yvex_materialization_plan *plan = NULL;
+    yvex_runtime_component_session *component_session = NULL;
     yvex_materialization_session *session = NULL;
-    yvex_runtime_residency_options residency_options = {0};
-    yvex_runtime_residency_failure residency_failure;
-    yvex_runtime_residency_summary residency_summary;
-    yvex_runtime_residency *residency = NULL;
-    yvex_backend_options backend_options = {0};
+    const yvex_runtime_residency_summary *residency_summary = NULL;
+    const yvex_runtime_residency *residency = NULL;
     yvex_backend *cuda = NULL;
     const unsigned char *encoded = NULL;
     unsigned long long encoded_bytes = 0ull, output_values = 0ull, output_bytes = 0ull;
     unsigned long long weight_count = 0ull;
     float *staged = NULL;
     yvex_minimax_h3_conditioning_result published = {0};
-    int uploaded = 0, rc, cleanup_rc, residency_close_rc;
-    yvex_error cleanup, residency_cleanup;
+    int rc, cleanup_rc;
+    yvex_error cleanup;
     if (result) memset(result, 0, sizeof(*result));
     if (!artifact || !gguf || !tensors || !backend || !backend->text_embed_cuda ||
         !backend->text_layer_cuda || !token_ids || !token_count || !output || !result ||
@@ -1918,21 +1848,18 @@ static int text_encoder_artifact_cuda(const yvex_artifact *artifact,
                        "bounded Qwen conditioning weight bindings could not be allocated");
         return YVEX_ERR_NOMEM;
     }
-    backend_options.kind = YVEX_BACKEND_KIND_CUDA;
-    backend_options.memory_limit_bytes = maximum_device_bytes;
-    rc = yvex_backend_open(&cuda, &backend_options, err);
+    rc = component_admit(
+        "text_encoder", artifact, gguf, tensors, &admission, &admission_failure, err);
     if (rc == YVEX_OK)
-        rc = component_admit(
-            "text_encoder", artifact, gguf, tensors, &admission, &admission_failure, err);
-    yvex_materialization_options_default(&options);
-    options.max_chunk_bytes = 64ull * 1024ull * 1024ull;
-    if (rc == YVEX_OK)
-        rc = yvex_materialization_plan_build(
-            &plan, &admission, artifact, gguf, tensors, NULL, &options, &failure, err);
-    if (rc == YVEX_OK)
-        rc = yvex_materialization_session_open(
-            &session, plan, artifact, &options, &failure, err);
-    if (rc == YVEX_OK) rc = yvex_materialization_session_commit(session, &failure, err);
+        rc = yvex_runtime_component_session_open(
+            &component_session, &admission, artifact, gguf, tensors, YVEX_BACKEND_KIND_CUDA,
+            maximum_host_bytes, maximum_device_bytes, err);
+    if (rc == YVEX_OK) {
+        session = yvex_runtime_component_session_materialization(component_session);
+        residency = yvex_runtime_component_session_residency(component_session);
+        residency_summary = yvex_runtime_component_session_summary(component_session);
+        cuda = yvex_runtime_component_session_backend(component_session);
+    }
     embedding = rc == YVEX_OK
         ? component_binding_find(session, "model.language_model.embed_tokens.weight") : NULL;
     if (rc == YVEX_OK && !embedding) {
@@ -1940,44 +1867,25 @@ static int text_encoder_artifact_cuda(const yvex_artifact *artifact,
                        "admitted text component lacks its embedding binding");
         rc = YVEX_ERR_FORMAT;
     }
-    residency_options.maximum_host_bytes = maximum_host_bytes;
-    if (rc == YVEX_OK)
-        rc = yvex_runtime_component_residency_prepare(
-            &residency, session, admission.logical_component_identity,
-            &residency_options, &residency_failure, err);
     if (rc == YVEX_OK && !layer_count)
         rc = yvex_runtime_residency_binding_view(
             residency, embedding, &encoded, &encoded_bytes, err);
     if (rc == YVEX_OK && layer_count)
         rc = text_layer_weights_bind(session, residency, weights, layer_count, err);
-    if (rc == YVEX_OK)
-        rc = yvex_runtime_residency_cuda_session_attach(
-            residency, &cuda, maximum_device_bytes, &uploaded, &residency_summary, err);
     if (rc == YVEX_OK && !layer_count)
         rc = backend->text_embed_cuda(
             cuda, encoded, encoded_bytes, embedding->qtype, embedding->row_count,
             embedding->row_width, embedding->encoded_bytes / embedding->row_count,
-            residency_summary.residency_identity, residency_summary.encoded_bytes,
+            residency_summary->residency_identity, residency_summary->encoded_bytes,
             token_ids, token_count, staged, output_values, &published, err);
     if (rc == YVEX_OK && layer_count)
         rc = backend->text_layer_cuda(
-            cuda, weights, layer_count, residency_summary.residency_identity,
-            residency_summary.encoded_bytes, token_ids, token_count, staged,
+            cuda, weights, layer_count, residency_summary->residency_identity,
+            residency_summary->encoded_bytes, token_ids, token_count, staged,
             output_values, &published, err);
     yvex_error_clear(&cleanup);
-    cleanup_rc = yvex_backend_close_checked(&cuda, &cleanup);
-    yvex_error_clear(&residency_cleanup);
-    residency_close_rc = yvex_runtime_residency_close(&residency, &residency_cleanup);
-    if (cleanup_rc == YVEX_OK && residency_close_rc != YVEX_OK) {
-        cleanup_rc = residency_close_rc;
-        cleanup = residency_cleanup;
-    }
-    if (cleanup_rc != YVEX_OK) {
-        rc = cleanup_rc;
-        if (err) *err = cleanup;
-    }
-    yvex_materialization_session_close(session);
-    yvex_materialization_plan_close(plan);
+    cleanup_rc = yvex_runtime_component_session_close(&component_session, &cleanup);
+    if (cleanup_rc != YVEX_OK) { rc = cleanup_rc; if (err) *err = cleanup; }
     if (rc == YVEX_OK) {
         memcpy(output, staged, (size_t)output_bytes);
         *result = published;
@@ -1987,10 +1895,98 @@ static int text_encoder_artifact_cuda(const yvex_artifact *artifact,
     free(weights);
     return rc;
 }
+static const char *const transformer_external_names[YVEX_MINIMAX_H3_OMNI_EXTERNAL_WEIGHT_COUNT] = {
+    "audio_patch_proj.weight", "audio_patch_proj.bias", "video_patch_proj.weight",
+    "video_patch_proj.bias", "condition_proj.weight", "condition_proj.bias",
+    "time_embedder.proj_in.weight", "time_embedder.proj_in.bias",
+    "time_embedder.proj_out.weight", "time_embedder.proj_out.bias",
+    "token_refiner.blocks.0.norm1.weight", "token_refiner.blocks.0.attn.qkv_proj.weight",
+    "token_refiner.blocks.0.attn.q_norm.weight", "token_refiner.blocks.0.attn.k_norm.weight",
+    "token_refiner.blocks.0.attn.out_proj.weight", "token_refiner.blocks.0.norm2.weight",
+    "token_refiner.blocks.0.mlp.fc1.weight", "token_refiner.blocks.0.mlp.fc2.weight",
+    "token_refiner.blocks.1.norm1.weight", "token_refiner.blocks.1.attn.qkv_proj.weight",
+    "token_refiner.blocks.1.attn.q_norm.weight", "token_refiner.blocks.1.attn.k_norm.weight",
+    "token_refiner.blocks.1.attn.out_proj.weight", "token_refiner.blocks.1.norm2.weight",
+    "token_refiner.blocks.1.mlp.fc1.weight", "token_refiner.blocks.1.mlp.fc2.weight",
+    "token_refiner.final_norm.weight", "rope.inv_freq", "final_layer.norm.weight",
+    "final_layer.adaln_proj.linear.weight", "final_layer.adaln_proj.linear.bias",
+    "final_layer.video_out.weight", "final_layer.video_out.bias",
+    "final_layer.audio_out.weight", "final_layer.audio_out.bias",
+};
+static const char *const transformer_block_suffixes[YVEX_MINIMAX_H3_OMNI_BLOCK_WEIGHT_COUNT] = {
+    "norm1.weight", "attn.qkv_proj.weight", "attn.q_norm.weight", "attn.k_norm.weight",
+    "attn.out_proj.weight", "norm2.weight", "mlp.fc1.weight", "mlp.fc2.weight",
+    "adaln_proj.linear.weight", "adaln_proj.linear.bias",
+};
+static int transformer_weights_bind(const yvex_materialization_session *session,
+    const yvex_runtime_residency *residency, yvex_minimax_h3_encoded_weight *external,
+    yvex_minimax_h3_encoded_weight *blocks, unsigned long long block_count, yvex_error *err)
+{
+    unsigned long long index, block; char name[96]; int rc = YVEX_OK;
+    for (index = 0ull; rc == YVEX_OK && index < YVEX_MINIMAX_H3_OMNI_EXTERNAL_WEIGHT_COUNT; ++index)
+        rc = component_weight_bind(session, residency, transformer_external_names[index],
+                                   external + index, err);
+    for (block = 0ull; rc == YVEX_OK && block < block_count; ++block)
+        for (index = 0ull; rc == YVEX_OK && index < YVEX_MINIMAX_H3_OMNI_BLOCK_WEIGHT_COUNT; ++index) {
+            int length = snprintf(name, sizeof(name), "blocks.%llu.%s", block,
+                                  transformer_block_suffixes[index]);
+            if (length < 0 || (size_t)length >= sizeof(name)) {
+                yvex_error_set(err, YVEX_ERR_BOUNDS, "minimax-h3.transformer.binding",
+                               "a Transformer block binding name exceeded its bound");
+                return YVEX_ERR_BOUNDS;
+            }
+            rc = component_weight_bind(session, residency, name,
+                blocks + block * YVEX_MINIMAX_H3_OMNI_BLOCK_WEIGHT_COUNT + index, err);
+        }
+    return rc;
+}
+static int transformer_artifact_cuda(const yvex_artifact *artifact, const yvex_gguf *gguf,
+    const yvex_tensor_table *tensors, const yvex_minimax_h3_omni_transformer_request *request,
+    unsigned long long maximum_host_bytes, unsigned long long maximum_device_bytes,
+    yvex_minimax_h3_omni_transformer_result *result, yvex_error *err)
+{
+    const yvex_minimax_h3_backend_api *api = yvex_backend_register_minimax_h3();
+    yvex_minimax_h3_encoded_weight external[YVEX_MINIMAX_H3_OMNI_EXTERNAL_WEIGHT_COUNT] = {{0}};
+    yvex_minimax_h3_encoded_weight *blocks = NULL; yvex_runtime_component_session *owned = NULL;
+    yvex_complete_artifact_admission admission; yvex_artifact_admission_failure failure;
+    unsigned long long count = 0ull; int rc, cleanup_rc; yvex_error cleanup;
+    if (result) memset(result, 0, sizeof(*result));
+    if (!artifact || !gguf || !tensors || !request || !result || !api ||
+        !api->omni_transformer_cuda || !request->block_count || request->block_count > 50ull ||
+        !yvex_core_u64_mul(request->block_count, YVEX_MINIMAX_H3_OMNI_BLOCK_WEIGHT_COUNT, &count) ||
+        count > SIZE_MAX / sizeof(*blocks)) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "minimax-h3.transformer.artifact",
+                       "an exact bounded Transformer artifact request is required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    blocks = calloc((size_t)count, sizeof(*blocks));
+    if (!blocks) {
+        yvex_error_set(err, YVEX_ERR_NOMEM, "minimax-h3.transformer.artifact",
+                       "Transformer weight binding allocation failed");
+        return YVEX_ERR_NOMEM;
+    }
+    rc = component_admit("transformer", artifact, gguf, tensors, &admission, &failure, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_component_session_open(&owned, &admission, artifact, gguf, tensors,
+            YVEX_BACKEND_KIND_CUDA, maximum_host_bytes, maximum_device_bytes, err);
+    if (rc == YVEX_OK)
+        rc = transformer_weights_bind(yvex_runtime_component_session_materialization(owned),
+            yvex_runtime_component_session_residency(owned), external, blocks,
+            request->block_count, err);
+    if (rc == YVEX_OK)
+        rc = api->omni_transformer_cuda(yvex_runtime_component_session_backend(owned),
+            external, blocks, yvex_runtime_component_session_summary(owned)->residency_identity,
+            yvex_runtime_component_session_summary(owned)->encoded_bytes, request, result, err);
+    yvex_error_clear(&cleanup);
+    cleanup_rc = yvex_runtime_component_session_close(&owned, &cleanup);
+    if (cleanup_rc != YVEX_OK) { rc = cleanup_rc; if (err) *err = cleanup; }
+    free(blocks); return rc;
+}
 const yvex_minimax_h3_graph_api *yvex_graph_register_minimax_h3(void)
 {
     static const yvex_minimax_h3_graph_api api = {
         t2va_plan_build, scheduler_step, component_admit, text_encoder_artifact_cuda,
+        transformer_artifact_cuda,
         audio_vae_decode_cpu, audio_vae_execute_artifact_cpu,
         video_vae_decode_cpu, video_vae_execute_artifact_cpu,
     };

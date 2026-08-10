@@ -41,6 +41,13 @@ struct yvex_runtime_residency {
     pthread_mutex_t access_mutex;
     int access_mutex_ready, arena_locked, arena_mapped, arena_registered;
 };
+struct yvex_runtime_component_session {
+    yvex_materialization_plan *plan;
+    yvex_materialization_session *materialization;
+    yvex_runtime_residency *residency;
+    yvex_backend *backend;
+    yvex_runtime_residency_summary summary;
+};
 static int residency_reject(yvex_runtime_residency_failure *failure,
                             yvex_runtime_residency_failure_code code,
                             const yvex_runtime_tensor_binding *binding,
@@ -893,6 +900,117 @@ int yvex_runtime_component_residency_prepare(
     *out = residency;
     yvex_error_clear(err);
     return YVEX_OK;
+}
+
+int yvex_runtime_component_session_close(yvex_runtime_component_session **session,
+                                         yvex_error *err)
+{
+    yvex_runtime_component_session *owned;
+    yvex_error cleanup;
+    int rc = YVEX_OK, cleanup_rc;
+    if (!session || !*session) {
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    owned = *session;
+    *session = NULL;
+    yvex_error_clear(&cleanup);
+    cleanup_rc = yvex_backend_close_checked(&owned->backend, &cleanup);
+    if (cleanup_rc != YVEX_OK) { rc = cleanup_rc; if (err) *err = cleanup; }
+    yvex_error_clear(&cleanup);
+    cleanup_rc = yvex_runtime_residency_close(&owned->residency, &cleanup);
+    if (cleanup_rc != YVEX_OK) { rc = cleanup_rc; if (err) *err = cleanup; }
+    yvex_materialization_session_close(owned->materialization);
+    yvex_materialization_plan_close(owned->plan);
+    free(owned);
+    if (rc == YVEX_OK) yvex_error_clear(err);
+    return rc;
+}
+
+int yvex_runtime_component_session_open(
+    yvex_runtime_component_session **out, const yvex_complete_artifact_admission *admission,
+    const yvex_artifact *artifact, const yvex_gguf *gguf, const yvex_tensor_table *tensors,
+    yvex_backend_kind backend_kind, unsigned long long maximum_host_bytes,
+    unsigned long long maximum_device_bytes, yvex_error *err)
+{
+    yvex_runtime_component_session *session = NULL;
+    yvex_materialization_options options;
+    yvex_materialization_failure materialization_failure;
+    yvex_runtime_residency_options residency_options = {0};
+    yvex_runtime_residency_failure residency_failure;
+    yvex_error primary, cleanup;
+    int uploaded = 0, rc, cleanup_rc;
+    if (out) *out = NULL;
+    if (!out || !admission || !artifact || !gguf || !tensors ||
+        (backend_kind != YVEX_BACKEND_KIND_CPU && backend_kind != YVEX_BACKEND_KIND_CUDA)) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.component-session",
+                       "admitted component inputs and CPU or CUDA placement are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    session = (yvex_runtime_component_session *)calloc(1u, sizeof(*session));
+    if (!session) {
+        yvex_error_set(err, YVEX_ERR_NOMEM, "runtime.component-session",
+                       "component execution session allocation failed");
+        return YVEX_ERR_NOMEM;
+    }
+    yvex_materialization_options_default(&options);
+    options.max_chunk_bytes = 64ull * 1024ull * 1024ull;
+    if (maximum_host_bytes && maximum_host_bytes < options.max_chunk_bytes)
+        options.max_chunk_bytes = (size_t)maximum_host_bytes;
+    rc = yvex_materialization_plan_build(&session->plan, admission, artifact, gguf, tensors,
+                                         NULL, &options, &materialization_failure, err);
+    if (rc == YVEX_OK)
+        rc = yvex_materialization_session_open(&session->materialization, session->plan,
+                                                artifact, &options, &materialization_failure, err);
+    if (rc == YVEX_OK)
+        rc = yvex_materialization_session_commit(session->materialization,
+                                                  &materialization_failure, err);
+    residency_options.maximum_host_bytes = maximum_host_bytes;
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_component_residency_prepare(
+            &session->residency, session->materialization, admission->logical_component_identity,
+            &residency_options, &residency_failure, err);
+    if (rc == YVEX_OK && backend_kind == YVEX_BACKEND_KIND_CUDA)
+        rc = yvex_runtime_residency_cuda_session_attach(
+            session->residency, &session->backend, maximum_device_bytes, &uploaded,
+            &session->summary, err);
+    if (rc == YVEX_OK && backend_kind == YVEX_BACKEND_KIND_CPU)
+        rc = yvex_runtime_residency_snapshot(session->residency, &session->summary,
+                                             NULL, NULL, err);
+    if (rc != YVEX_OK) {
+        primary = err ? *err : (yvex_error){0};
+        yvex_error_clear(&cleanup);
+        cleanup_rc = yvex_runtime_component_session_close(&session, &cleanup);
+        if (cleanup_rc != YVEX_OK) { if (err) *err = cleanup; return cleanup_rc; }
+        if (err) *err = primary;
+        return rc;
+    }
+    *out = session;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+yvex_materialization_session *yvex_runtime_component_session_materialization(
+    const yvex_runtime_component_session *session)
+{
+    return session ? session->materialization : NULL;
+}
+
+const yvex_runtime_residency *yvex_runtime_component_session_residency(
+    const yvex_runtime_component_session *session)
+{
+    return session ? session->residency : NULL;
+}
+
+yvex_backend *yvex_runtime_component_session_backend(const yvex_runtime_component_session *session)
+{
+    return session ? session->backend : NULL;
+}
+
+const yvex_runtime_residency_summary *yvex_runtime_component_session_summary(
+    const yvex_runtime_component_session *session)
+{
+    return session ? &session->summary : NULL;
 }
 /*
  * Register one model-owned host arena and attach an isolated session backend.

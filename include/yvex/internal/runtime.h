@@ -107,18 +107,15 @@ typedef struct {
     int attention_state_delta_ready, attention_operator_ready, attention_trace_ready;
     int attention_profile_ready, attention_benchmark_ready, mixed_attention_ready;
     int speculative_attention_ready, persistent_kv_ready;
-    int moe_plan_ready, moe_router_ready, moe_routed_expert_ready, moe_shared_expert_ready,
-        moe_block_ready;
+    int moe_plan_ready, moe_router_ready, moe_routed_expert_ready, moe_shared_expert_ready, moe_block_ready;
     int transformer_ready, output_head_binding_ready, output_head_projection_ready;
-    int logits_cpu_ready, logits_cuda_ready, logits_prefill_ready, logits_decode_ready,
-        logits_full_vocabulary_ready, logits_hidden_contract_ready,
-        logits_partial_progress_ready, logits_ready;
+    int logits_cpu_ready, logits_cuda_ready, logits_prefill_ready, logits_decode_ready;
+    int logits_full_vocabulary_ready, logits_hidden_contract_ready, logits_partial_progress_ready, logits_ready;
     int generation_ready;
 } yvex_runtime_capabilities;
 #define YVEX_RUNTIME_EXECUTION_CAPABILITY_SCHEMA_V2 2u
-int yvex_runtime_capabilities_identity(
-    const yvex_runtime_capabilities *facts,
-    char output[YVEX_SHA256_HEX_CAP]);
+int yvex_runtime_capabilities_identity(const yvex_runtime_capabilities *facts,
+                                       char output[YVEX_SHA256_HEX_CAP]);
 int yvex_runtime_capabilities_admitted_by(const yvex_runtime_capabilities *facts,
                                           const yvex_runtime_capabilities *maximum);
 int yvex_runtime_capabilities_contract_valid(const yvex_runtime_capabilities *facts);
@@ -293,6 +290,7 @@ typedef struct {
 } yvex_runtime_residency_summary;
 typedef struct yvex_runtime_residency yvex_runtime_residency;
 typedef struct yvex_runtime_state_residency yvex_runtime_state_residency;
+typedef struct yvex_runtime_component_session yvex_runtime_component_session;
 typedef struct {
     int sealed, cuda_ready, paged, invalidated;
     unsigned long long layer_count, host_bytes, device_bytes, virtual_device_bytes;
@@ -313,18 +311,24 @@ typedef struct {
 } yvex_runtime_model_view;
 int yvex_runtime_residency_prepare(yvex_runtime_residency **out, yvex_runtime_model *model,
     const yvex_runtime_residency_options *options, yvex_runtime_residency_failure *failure, yvex_error *err);
-int yvex_runtime_component_residency_prepare(yvex_runtime_residency **out,
-    yvex_materialization_session *materialization, const char *component_identity,
-    const yvex_runtime_residency_options *options, yvex_runtime_residency_failure *failure, yvex_error *err);
+int yvex_runtime_component_residency_prepare(yvex_runtime_residency **, yvex_materialization_session *,
+    const char *, const yvex_runtime_residency_options *, yvex_runtime_residency_failure *, yvex_error *);
 int yvex_runtime_residency_close(yvex_runtime_residency **residency, yvex_error *err);
 int yvex_runtime_residency_snapshot(const yvex_runtime_residency *residency, yvex_runtime_residency_summary *summary,
     const unsigned char **arena, unsigned long long *arena_bytes, yvex_error *err);
-int yvex_runtime_residency_binding_view(const yvex_runtime_residency *residency,
-    const yvex_materialized_tensor_binding *binding, const unsigned char **data,
-    unsigned long long *bytes, yvex_error *err);
+int yvex_runtime_residency_binding_view(const yvex_runtime_residency *,
+    const yvex_materialized_tensor_binding *, const unsigned char **, unsigned long long *, yvex_error *);
 /* A non-null backend is consumed as an already-open CUDA owner before a large arena is registered. */
 int yvex_runtime_residency_cuda_session_attach(yvex_runtime_residency *residency, yvex_backend **backend,
     unsigned long long maximum_device_bytes, int *uploaded, yvex_runtime_residency_summary *summary, yvex_error *err);
+int yvex_runtime_component_session_open(yvex_runtime_component_session **,
+    const yvex_complete_artifact_admission *, const yvex_artifact *, const yvex_gguf *,
+    const yvex_tensor_table *, yvex_backend_kind, unsigned long long, unsigned long long, yvex_error *);
+int yvex_runtime_component_session_close(yvex_runtime_component_session **, yvex_error *);
+yvex_materialization_session *yvex_runtime_component_session_materialization(const yvex_runtime_component_session *);
+const yvex_runtime_residency *yvex_runtime_component_session_residency(const yvex_runtime_component_session *);
+yvex_backend *yvex_runtime_component_session_backend(const yvex_runtime_component_session *);
+const yvex_runtime_residency_summary *yvex_runtime_component_session_summary(const yvex_runtime_component_session *);
 int yvex_runtime_residency_invalidate(yvex_runtime_residency *residency, yvex_error *err);
 int yvex_runtime_state_residency_prepare(yvex_runtime_state_residency **out, yvex_backend *backend,
     const yvex_graph_attention_capacity_plan *capacity, const yvex_attention_state_provider *provider,

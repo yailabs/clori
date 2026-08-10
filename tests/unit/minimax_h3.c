@@ -7,6 +7,7 @@
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/compilation.h>
 #include <yvex/internal/model_target.h>
+#include <yvex/internal/runtime.h>
 
 #include <string.h>
 
@@ -624,6 +625,7 @@ static int test_component_admission_routing(void)
     yvex_complete_artifact_admission admission;
     yvex_artifact_admission_failure failure;
     yvex_minimax_h3_conditioning_result conditioning;
+    yvex_minimax_h3_omni_transformer_result transformer;
     unsigned int token = 1u;
     float output[5120];
     yvex_error err;
@@ -656,6 +658,19 @@ static int test_component_admission_routing(void)
                          &conditioning, &err) == YVEX_ERR_INVALID_ARG &&
                          !conditioning.complete && ((unsigned char *)output)[0] == 0x5a,
                      "artifact text layer refuses absent exact component views");
+    memset(&transformer, 0x5a, sizeof(transformer));
+    YVEX_TEST_ASSERT(yvex_backend_register_minimax_h3()->omni_transformer_cuda(
+                         NULL, NULL, NULL, NULL, 0ull, NULL, &transformer, &err) ==
+                         YVEX_ERR_INVALID_ARG && !transformer.complete,
+                     "CUDA Omni Transformer refuses absent exact inputs without publication");
+    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->transformer_artifact_cuda(
+                         NULL, NULL, NULL, NULL, 1ull, 1ull, &transformer, &err) ==
+                         YVEX_ERR_INVALID_ARG && !transformer.complete,
+                     "artifact Transformer refuses absent exact component views");
+    YVEX_TEST_ASSERT(yvex_runtime_component_session_open(
+                         NULL, NULL, NULL, NULL, NULL, YVEX_BACKEND_KIND_CPU,
+                         0ull, 0ull, &err) == YVEX_ERR_INVALID_ARG,
+                     "generic component execution session refuses absent admission inputs");
     return 0;
 }
 

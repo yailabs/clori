@@ -5,7 +5,8 @@ Transformation IR admitted; source-faithful Audio VAE, Visual VAE, and Text
 Encoder component artifacts admitted through native and pinned official
 readers; complete Audio VAE and bounded multi-patch Visual VAE CPU decodes
 numerically conform; exact artifact-bound Qwen2 tokenization and 50-layer
-text-only Qwen3-VL prompt conditioning execute on GB10; not an executable family
+text-only Qwen3-VL prompt conditioning plus the complete 50-block
+Omni-Transformer component envelope execute on GB10; not an executable family
 
 This record owns current YVEX facts for MiniMax-H3 Base FL2VA. YVEX now admits
 the complete immutable FL2VA source through its production source owner and
@@ -22,8 +23,8 @@ independent numerical conformance evidence for both. A staged Text Encoder
 residency registers the exact BF16 component with CUDA, tokenizes an ASCII
 `t2va` prompt from artifact-bound Qwen2 metadata, and executes the selected
 50-layer causal text stack against an independent Transformers oracle. It does
-not add a family runtime, multimodal Qwen vision conditioning, full-scale Visual
-qualification, Omni latent generation, synchronized media
+not add a family runtime, multimodal Qwen vision conditioning, iterative latent
+generation, full-scale Visual qualification, or synchronized media
 path, or release obligation. The frozen quantitative intake evidence is the
 [FL2VA intake audit](../audits/minimax-h3-fl2va-b8b09e3/README.md); the common
 promotion rules remain in the [family integration contract](integration.md).
@@ -36,8 +37,8 @@ promotion rules remain in the [family integration contract](integration.md).
 | Branch status | open |
 | Branch completion | first YVEX-authored playable synchronized MiniMax-H3 FL2VA audio-video output |
 | Current wave | `R010.MINIMAX.H3.FL2VA.END_TO_END.0` |
-| Current boundary | exact Audio VAE, Visual VAE, and Text Encoder component artifacts admitted; complete Audio and bounded multi-patch Visual CPU decodes conform; artifact-bound Qwen2 tokenization and exact multi-token 50-layer text-only Qwen3-VL conditioning conform on GB10 |
-| Next expected boundary | exact Omni-Transformer latent generation, followed by complete VAE composition and synchronized media publication |
+| Current boundary | exact Audio VAE, Visual VAE, Text Encoder, and Transformer component artifacts admitted; complete Audio and bounded multi-patch Visual CPU decodes conform; prompt conditioning and the complete 50-block Omni-Transformer envelope conform on GB10 |
+| Next expected boundary | exact iterative latent-controller composition, followed by complete VAE composition and synchronized media publication |
 
 The branch preserves the accepted intake history and remains open across all
 later source, artifact, graph, backend, residency, latent, VAE, media, and
@@ -63,7 +64,7 @@ or rename the branch.
 | Tensor-role-map identity | `61e7a2cfc29e6dd3da966878f5388f1472a406d7e33ba34ef65f44b61f08f013` |
 | Transformation IR identity | `bd941103d754df8c1eb02ff9b90db4ba86b7e389691f2d0c4027343eccbc0b0b` |
 | Aggregate derivation identity | `cc2886a388a475c2df246558dfb41c8d66e549afd4c4e34d19e2bbd3b70a3ff5` |
-| Evidence stage | exact source verified; architecture, tensor roles, and Transformation IR admitted; Audio VAE, Visual VAE, and Text Encoder component artifacts emitted and admitted; complete Audio and bounded multi-patch Visual CPU decodes numerically conform; exact ASCII Qwen2 BPE and multi-token 50-layer text-only conditioning conform on GB10 |
+| Evidence stage | exact source verified; architecture, tensor roles, and Transformation IR admitted; all four weighted component artifacts emitted and admitted; complete Audio and bounded multi-patch Visual CPU decodes numerically conform; exact ASCII Qwen2 BPE, multi-token 50-layer text conditioning, and the complete 50-block Omni-Transformer envelope conform on GB10 |
 
 The external evidence directory used during the intake was
 `/home/dgmothx/lab/models/intake/minimax-h3/<FULL_REVISION>/`. That path is an
@@ -784,14 +785,51 @@ encoding; conditioning remains an internal live runner.
 `end_user_path_available: false`: Omni latent execution and synchronized media
 publication remain downstream.
 
+## Complete Omni-Transformer component boundary
+
+The Transformer artifact binds all 535 source tensors and 66,280,430,144
+payload bytes before execution. The GB10 path projects video, audio, and
+5,120-wide text conditioning, executes both token-refiner blocks, constructs
+the source F32 timestep embedding, applies source-bound three-axis MM-RoPE,
+executes all 50 width-5,376 Transformer blocks, and publishes the separate
+96-wide video and 32-wide audio velocity rows through the two final heads.
+The timestep embedding remains immutable across the stack; every block derives
+its own BF16 AdaLN table from that same value.
+
+The complete three-row conformance fixture consumed residency identity
+`8fabd88629b671abf1ca8dd3d659d7ec9f173996039082d7354ff73371ef7308`
+and produced execution identity
+`d31fb77001f31d05769260f5d9b04618f07683f3f7bf642aa57e9da1ea204561`.
+It launched 1,822 CUDA kernels with 2,132,224 bytes of reusable device
+workspace. The YVEX video and audio result identities are
+`0a8abfa4394b76cd7bc933268801646dea0912a8b9bc41729f80ff258411aaf5`
+and `10d1a85c08811fb59c6054eeeb64cfce8ef7a99a2b064b941c8ee642a4975a54`.
+
+The independent manual PyTorch BF16 oracle identities are
+`b420b634ae1ed5c558c8d0c020424bbce05a3bf103991292fb39f502721a0fb6`
+for video and
+`b03b9fd89bfee17dfec809fbf7fadba37bd285ca7ce99758f56133af661bb875`
+for audio. Different dense-reduction orders yield video relative L2 error
+0.00653678, cosine similarity 0.999978647, and scaled maximum error 0.0107755;
+the audio values are 0.0283194, 0.999627354, and 0.0348805. A separate
+one-block contract retains tighter bounds so the aggregate 50-block allowance
+cannot hide a local semantic error.
+
+`production_capability_available: true` for the admitted Transformer component
+envelope. `production_api_available: true` through the internal graph and CUDA
+backend ABIs. `internal_live_runner_available: true`.
+`operator_command_available: false` and `end_user_path_available: false`:
+iterative latent ownership, VAE composition, and media publication remain the
+downstream consumer.
+
 ## Progression and non-claims
 
 `progression_decision: proceed`
 
 `downstream_safe: true`
 
-The downstream consumer is exact Omni latent generation from the admitted
-multi-token `t2va` conditioning on
+The downstream consumer is exact iterative latent generation from the admitted
+multi-token `t2va` conditioning and complete Transformer envelope on
 `feature/minimax-h3`. There is no gate blocker, boundary incompleteness,
 evidence gap, or current external blocker in the admitted bounded component,
 embedding, tokenizer, layer-zero, or 50-layer text-stack execution contracts.
@@ -804,10 +842,10 @@ requires an eligibility conclusion.
 
 This implementation boundary does not prove:
 
-- multimodal Qwen3-VL vision conditioning or any Omni-Transformer numerical execution;
+- multimodal Qwen3-VL vision conditioning or complete iterative latent generation;
 - complete composite-artifact support or Physical Execution IR;
 - GB10 Omni/VAE pipeline execution or simultaneous/staged runtime residency;
-- Omni-Transformer, solver, timestep, or MM-RoPE numerical correctness;
+- solver, timestep-loop, latent-RNG, or complete scheduler composition correctness;
 - full-scale/tiled Visual VAE qualification or either VAE in the complete latent and media pipeline;
 - audio/video synchronization, playable media output, or hosted serving;
 - Diffusers, SGLang, or vLLM parity;
