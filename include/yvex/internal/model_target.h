@@ -210,7 +210,6 @@ typedef struct yvex_model_target_report {
     yvex_model_target_family_architecture_kind family_architecture_kind;
     void *family_transformation;
     char family_derivation_identity[65];
-    void *family_coverage;
     void *family_lowering;
     int exit_code;
 } yvex_model_target_report;

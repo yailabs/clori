@@ -972,9 +972,241 @@ const char *yvex_transform_failure_name(yvex_transform_failure_code code)
 
 struct yvex_transform_recipe_sink {
     yvex_transform_builder *builder;
+    const yvex_source_tensor_snapshot *source_snapshot;
     unsigned long long source_count;
     unsigned long long terminal_ordinal;
 };
+
+int yvex_transform_recipe_sink_resolve_source(
+    yvex_transform_recipe_sink *sink,
+    const yvex_transform_source_requirement *requirement,
+    yvex_transform_source_spec *resolved,
+    yvex_transform_failure *failure, yvex_error *err)
+{
+    const yvex_native_weight_info *source;
+    yvex_source_tensor_snapshot_facts facts = {0};
+    unsigned long long source_index;
+    unsigned int dimension;
+
+    if (resolved) memset(resolved, 0, sizeof(*resolved));
+    if (!sink || !sink->builder || !sink->source_snapshot || !requirement ||
+        !resolved || !requirement->source_name ||
+        !yvex_source_tensor_snapshot_find_index(
+            sink->source_snapshot, requirement->source_name, &source_index))
+        return yvex_transform_fail(
+            failure, requirement && requirement->source_name
+                         ? YVEX_TRANSFORM_FAILURE_MISSING_SOURCE
+                         : YVEX_TRANSFORM_FAILURE_INVALID_ARGUMENT,
+            YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
+            YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
+            YVEX_TRANSFORM_IR_NO_ID, 1ull, 0ull, 0u, err,
+            "transform_recipe_resolve_source");
+    source = yvex_source_tensor_snapshot_at(sink->source_snapshot, source_index);
+    if (!source ||
+        yvex_source_tensor_snapshot_facts_get(
+            sink->source_snapshot, &facts, err) != YVEX_OK ||
+        facts.identity != sink->builder->header.source_snapshot_identity)
+        return yvex_transform_fail(
+            failure, YVEX_TRANSFORM_FAILURE_SOURCE_IDENTITY_MISMATCH,
+            YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID, source_index,
+            YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
+            sink->builder->header.source_snapshot_identity, facts.identity,
+            0u, err, "transform_recipe_resolve_source");
+    if (source->dtype != requirement->source_dtype)
+        return yvex_transform_fail(
+            failure, YVEX_TRANSFORM_FAILURE_UNSUPPORTED_SOURCE_DTYPE,
+            YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID, source_index,
+            YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
+            requirement->source_dtype, source->dtype, 0u, err,
+            "transform_recipe_resolve_source");
+    if (source->rank != requirement->shape.rank)
+        return yvex_transform_fail(
+            failure, YVEX_TRANSFORM_FAILURE_INVALID_RANK,
+            YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID, source_index,
+            YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
+            requirement->shape.rank, source->rank, 0u, err,
+            "transform_recipe_resolve_source");
+    for (dimension = 0u; dimension < source->rank; ++dimension)
+        if (source->dims[dimension] != requirement->shape.dims[dimension])
+            return yvex_transform_fail(
+                failure, YVEX_TRANSFORM_FAILURE_INVALID_SHAPE,
+                YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
+                source_index, YVEX_TRANSFORM_IR_NO_ID,
+                YVEX_TRANSFORM_IR_NO_ID, requirement->shape.dims[dimension],
+                source->dims[dimension], dimension, err,
+                "transform_recipe_resolve_source");
+    *resolved = (yvex_transform_source_spec){
+        .source_name = source->name,
+        .shard_name = source->shard_path,
+        .source_tensor_index = source_index,
+        .requirement_index = requirement->requirement_index,
+        .source_snapshot_identity = facts.identity,
+        .source_dtype = source->dtype,
+        .value_dtype = requirement->value_dtype,
+        .shape = requirement->shape,
+        .relative_begin = source->data_start,
+        .relative_end = source->data_end,
+        .scope = requirement->scope,
+        .subsystem = requirement->subsystem,
+        .role_hint = requirement->role_hint,
+        .component_identity = requirement->component_identity,
+        .semantic_role = requirement->semantic_role,
+        .phase_identity = requirement->phase_identity,
+        .lifetime_identity = requirement->lifetime_identity,
+        .unresolved_requirement_identity =
+            requirement->unresolved_requirement_identity,
+        .layer_index = requirement->layer_index,
+        .auxiliary_index = requirement->auxiliary_index,
+        .expert_index = requirement->expert_index,
+        .required_uses = requirement->required_uses};
+    return YVEX_OK;
+}
+
+static const char *transform_coverage_scope_name(yvex_transform_scope scope)
+{
+    static const char *const names[] = {"global", "main-layer", "draft"};
+
+    return scope <= YVEX_TRANSFORM_SCOPE_AUXILIARY ? names[scope] : NULL;
+}
+
+static const char *transform_coverage_subsystem_name(
+    yvex_transform_subsystem subsystem)
+{
+    static const char *const names[] = {
+        "global", "attention", "compressor", "indexer", "norm", "mhc",
+        "router", "routed-expert", "shared-expert", "output", "auxiliary"};
+
+    return subsystem < YVEX_TRANSFORM_SUBSYSTEM_COUNT ? names[subsystem] : NULL;
+}
+
+static int transform_recipe_source_coverage_finalize(
+    yvex_transform_recipe_sink *sink, yvex_transform_failure *failure,
+    yvex_error *err)
+{
+    yvex_transform_builder *builder = sink->builder;
+    yvex_source_tensor_snapshot_facts facts = {0};
+    yvex_transform_source_value **requirements = NULL;
+    unsigned long long coverage = 1469598103934665603ull;
+    unsigned long long index;
+    size_t bytes;
+    int rc = YVEX_OK;
+
+    if (!sink->source_snapshot) return YVEX_OK;
+    if (yvex_source_tensor_snapshot_facts_get(
+            sink->source_snapshot, &facts, err) != YVEX_OK ||
+        facts.identity != builder->header.source_snapshot_identity ||
+        facts.tensor_count != builder->source_count)
+        return yvex_transform_fail(
+            failure, facts.identity != builder->header.source_snapshot_identity
+                         ? YVEX_TRANSFORM_FAILURE_SOURCE_IDENTITY_MISMATCH
+                         : YVEX_TRANSFORM_FAILURE_COVERAGE_INCOMPLETE,
+            YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
+            YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
+            YVEX_TRANSFORM_IR_NO_ID, facts.tensor_count,
+            builder->source_count, 0u, err,
+            "transform_recipe_source_coverage");
+    if (builder->source_count > SIZE_MAX / sizeof(*requirements))
+        return yvex_transform_fail(
+            failure, YVEX_TRANSFORM_FAILURE_RESOURCE_BUDGET,
+            YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
+            YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
+            YVEX_TRANSFORM_IR_NO_ID, SIZE_MAX, builder->source_count, 0u,
+            err, "transform_recipe_source_coverage");
+    bytes = (size_t)builder->source_count * sizeof(*requirements);
+    requirements = builder->allocator.allocate(
+        bytes, builder->allocator.context);
+    if (!requirements)
+        return yvex_transform_fail(
+            failure, YVEX_TRANSFORM_FAILURE_ALLOCATION,
+            YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
+            YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
+            YVEX_TRANSFORM_IR_NO_ID, bytes, 0u, 0u, err,
+            "transform_recipe_source_coverage");
+    memset(requirements, 0, bytes);
+    for (index = 0u; index < builder->source_count; ++index) {
+        yvex_transform_source_value *source = &builder->sources[index];
+        const yvex_native_weight_info *actual =
+            yvex_source_tensor_snapshot_at(
+                sink->source_snapshot, source->source_tensor_index);
+        unsigned int dimension;
+        int shape_matches = actual && actual->rank == source->shape.rank;
+
+        for (dimension = 0u; shape_matches && dimension < actual->rank;
+             ++dimension)
+            shape_matches = actual->dims[dimension] ==
+                            source->shape.dims[dimension];
+        if (source->requirement_index >= builder->source_count ||
+            (source->requirement_index < builder->source_count &&
+             requirements[source->requirement_index]) || !actual ||
+            strcmp(actual->name, source->source_name) != 0 ||
+            actual->dtype != source->source_dtype || !shape_matches ||
+            !actual->shard_path || !source->shard_name[0] ||
+            strcmp(actual->shard_path, source->shard_name) != 0 ||
+            actual->data_start != source->relative_begin ||
+            actual->data_end != source->relative_end) {
+            rc = yvex_transform_fail(
+                failure, source->requirement_index < builder->source_count &&
+                                 requirements[source->requirement_index]
+                             ? YVEX_TRANSFORM_FAILURE_DUPLICATE_SOURCE
+                             : YVEX_TRANSFORM_FAILURE_UNEXPECTED_SOURCE,
+                source->value_id, YVEX_TRANSFORM_IR_NO_ID,
+                source->source_tensor_index, YVEX_TRANSFORM_IR_NO_ID,
+                YVEX_TRANSFORM_IR_NO_ID, builder->source_count,
+                source->requirement_index, 0u, err,
+                "transform_recipe_source_coverage");
+            break;
+        }
+        requirements[source->requirement_index] = source;
+    }
+    coverage = yvex_core_hash_mix_u64(coverage, facts.identity);
+    for (index = 0u; rc == YVEX_OK && index < builder->source_count; ++index) {
+        yvex_transform_source_value *source = requirements[index];
+        const char *subsystem = source
+            ? transform_coverage_subsystem_name(source->subsystem) : NULL;
+        const char *scope = source
+            ? transform_coverage_scope_name(source->scope) : NULL;
+        if (!source || !subsystem || !scope) {
+            rc = yvex_transform_fail(
+                failure, YVEX_TRANSFORM_FAILURE_COVERAGE_INCOMPLETE,
+                YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
+                YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
+                YVEX_TRANSFORM_IR_NO_ID, 1u, 0u, 0u, err,
+                "transform_recipe_source_coverage");
+            break;
+        }
+        coverage = yvex_core_hash_mix_bytes(
+            coverage, source->source_name, strlen(source->source_name) + 1u);
+        coverage = yvex_core_hash_mix_bytes(
+            coverage, subsystem, strlen(subsystem) + 1u);
+        coverage = yvex_core_hash_mix_bytes(
+            coverage, scope, strlen(scope) + 1u);
+        coverage = yvex_core_hash_mix_u64(coverage, source->layer_index);
+        coverage = yvex_core_hash_mix_u64(coverage, source->expert_index);
+    }
+    if (rc == YVEX_OK && builder->header.coverage_identity &&
+        builder->header.coverage_identity != coverage)
+        rc = yvex_transform_fail(
+            failure, YVEX_TRANSFORM_FAILURE_COVERAGE_INCOMPLETE,
+            YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
+            YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
+            YVEX_TRANSFORM_IR_NO_ID, builder->header.coverage_identity,
+            coverage, 0u, err, "transform_recipe_source_coverage");
+    if (rc == YVEX_OK) {
+        builder->header.coverage_identity = coverage;
+        for (index = 0u; index < builder->source_count; ++index) {
+            yvex_transform_source_value *source = requirements[index];
+            unsigned long long identity =
+                yvex_transform_hash_string(source->source_name);
+            identity = yvex_core_hash_mix_u64(identity, coverage);
+            source->requirement_identity =
+                yvex_core_hash_mix_u64(identity, index);
+            builder->values[source->value_id].semantic_id =
+                source->requirement_identity;
+        }
+    }
+    builder->allocator.release(requirements, builder->allocator.context);
+    return rc;
+}
 
 int yvex_transform_recipe_sink_add(
     yvex_transform_recipe_sink *sink, const yvex_transform_recipe *recipe,
@@ -1050,6 +1282,7 @@ int yvex_transform_recipe_compile(
             YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
             YVEX_TRANSFORM_IR_NO_ID, 1ull, 0ull, 0u, err,
             "transform_recipe_compile");
+    sink.source_snapshot = options ? options->source_snapshot : NULL;
     rc = yvex_transform_builder_create(
         &sink.builder, header, options, failure, err);
     if (rc == YVEX_OK) rc = project(context, &sink, failure, err);
@@ -1062,6 +1295,8 @@ int yvex_transform_recipe_compile(
             YVEX_TRANSFORM_IR_NO_ID, sink.terminal_ordinal,
             YVEX_TRANSFORM_IR_NO_ID, header->expected_terminal_count,
             sink.terminal_ordinal, 0u, err, "transform_recipe_compile");
+    if (rc == YVEX_OK)
+        rc = transform_recipe_source_coverage_finalize(&sink, failure, err);
     if (rc == YVEX_OK)
         rc = yvex_transform_builder_seal(sink.builder, out, failure, err);
     yvex_transform_builder_release(&sink.builder);

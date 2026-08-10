@@ -1987,7 +1987,6 @@ const yvex_model_family_api *yvex_model_register_deepseek_v4(void)
         while (atomic_flag_test_and_set_explicit(&lock, memory_order_acquire)) {
         }
         if (!atomic_load_explicit(&ready, memory_order_relaxed)) {
-            api.coverage = *yvex_model_deepseek_coverage_api();
             api.transform = *yvex_model_deepseek_transform_api();
             api.lowering = *yvex_model_deepseek_lowering_api();
             api.payload = *yvex_model_deepseek_payload_api();

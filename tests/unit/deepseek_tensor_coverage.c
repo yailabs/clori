@@ -525,36 +525,6 @@ fail:
                : yvex_error_code(&fixture.err);
 }
 
-static int fixture_build_case(
-    fixture_mutation mutation,
-    int globals_last,
-    yvex_deepseek_tensor_coverage **coverage,
-    yvex_deepseek_tensor_coverage_failure *failure)
-{
-    yvex_source_verification verification;
-    yvex_source_tensor_snapshot *snapshot = NULL;
-    yvex_deepseek_v4_ir *ir = NULL;
-    yvex_deepseek_v4_ir_failure ir_failure;
-    yvex_error err;
-    int rc;
-
-    fixture_verification(&verification);
-    yvex_error_clear(&err);
-    rc = yvex_model_register_deepseek_v4()->ir.build(&ir, &verification, &ir_failure, &err);
-    if (rc == YVEX_OK &&
-        fixture_snapshot(&snapshot, &verification, mutation, globals_last) !=
-            YVEX_OK) {
-        rc = YVEX_ERR_FORMAT;
-    }
-    if (rc == YVEX_OK) {
-        rc = yvex_model_register_deepseek_v4()->coverage.build(
-            coverage, &verification, ir, snapshot, NULL, failure, &err);
-    }
-    yvex_model_register_deepseek_v4()->ir.close(ir);
-    yvex_source_tensor_snapshot_release(snapshot);
-    return rc;
-}
-
 typedef struct {
     unsigned int calls;
     unsigned int fail_at;
@@ -583,172 +553,6 @@ static void fixture_release(void *allocation, void *context)
     allocator->live--;
 }
 
-static int test_valid_target_scale(void)
-{
-    yvex_deepseek_tensor_coverage *first = NULL;
-    yvex_deepseek_tensor_coverage *shuffled = NULL;
-    yvex_deepseek_tensor_coverage_failure failure;
-    const yvex_deepseek_tensor_coverage_summary *summary;
-    unsigned long long identity;
-
-    {
-        int fixture_rc = fixture_build_case(FIXTURE_VALID, 0, &first, &failure);
-        YVEX_TEST_ASSERT(fixture_rc == YVEX_OK && first,
-                     "72,317-entry coverage fixture closes");
-    }
-    summary = yvex_model_register_deepseek_v4()->coverage.summary(first);
-    YVEX_TEST_ASSERT(summary->complete && summary->source_tensor_count == 72317u &&
-                     summary->main_layer_count == 43u &&
-                     summary->auxiliary_layer_count == 3u &&
-                     summary->required_tensor_count == 72317u &&
-                     summary->matched_tensor_count == 72317u &&
-                     summary->missing_count == 0u &&
-                     summary->unexpected_count == 0u,
-                     "target-scale one-to-one summary is exact");
-    YVEX_TEST_ASSERT(summary->collection_counts[
-                         YVEX_TENSOR_COLLECTION_ROUTED_EXPERT] ==
-                         70656u &&
-                     summary->collection_counts[
-                         YVEX_TENSOR_COLLECTION_ATTENTION] == 598u &&
-                     summary->collection_counts[
-                         YVEX_TENSOR_COLLECTION_AUXILIARY] == 10u,
-                     "major collection counts include target and DSpark tensors");
-    YVEX_TEST_ASSERT(summary->header_scan_count == 1u &&
-                     summary->payload_bytes_read == 0u &&
-                     summary->source_lookup_count < 3u * 72317u &&
-                     summary->source_collision_count > 0u &&
-                     summary->source_maximum_probe > 0u &&
-                     summary->source_maximum_probe < 64u,
-                     "indexed reconciliation is linear and payload-free");
-    YVEX_TEST_ASSERT(yvex_model_register_deepseek_v4()->coverage.find(
-                         first, "layers.2.attn.indexer.wq_b.scale") != NULL &&
-                     yvex_model_register_deepseek_v4()->coverage.find(
-                         first, "mtp.2.hc_head_fn") != NULL,
-                     "CSA scale and DSpark head are typed requirements");
-    identity = summary->coverage_identity;
-    YVEX_TEST_ASSERT(fixture_build_case(FIXTURE_VALID, 1, &shuffled, &failure) ==
-                         YVEX_OK && shuffled,
-                     "shuffled insertion order closes");
-    YVEX_TEST_ASSERT(yvex_model_register_deepseek_v4()->coverage.summary(shuffled)->
-                             coverage_identity == identity,
-                     "coverage identity is insertion-order invariant");
-    yvex_model_register_deepseek_v4()->coverage.close(shuffled);
-    yvex_model_register_deepseek_v4()->coverage.close(first);
-    return 0;
-}
-
-static int test_mutations(void)
-{
-    const struct {
-        fixture_mutation mutation;
-        yvex_deepseek_tensor_coverage_failure_code expected;
-    } cases[] = {
-        {FIXTURE_MISSING, YVEX_DEEPSEEK_COVERAGE_FAILURE_MISSING_REQUIREMENT},
-        {FIXTURE_MISSING_SCALE,
-         YVEX_DEEPSEEK_COVERAGE_FAILURE_SCALE_COMPANION},
-        {FIXTURE_RANK, YVEX_DEEPSEEK_COVERAGE_FAILURE_RANK_MISMATCH},
-        {FIXTURE_SHAPE, YVEX_DEEPSEEK_COVERAGE_FAILURE_SHAPE_MISMATCH},
-        {FIXTURE_DTYPE, YVEX_DEEPSEEK_COVERAGE_FAILURE_DTYPE_MISMATCH},
-        {FIXTURE_SCALE, YVEX_DEEPSEEK_COVERAGE_FAILURE_SHAPE_MISMATCH},
-        {FIXTURE_UNEXPECTED,
-         YVEX_DEEPSEEK_COVERAGE_FAILURE_UNEXPECTED_SOURCE},
-        {FIXTURE_INVALID_LAYER,
-         YVEX_DEEPSEEK_COVERAGE_FAILURE_INVALID_INDEX},
-        {FIXTURE_INVALID_EXPERT,
-         YVEX_DEEPSEEK_COVERAGE_FAILURE_INVALID_INDEX},
-        {FIXTURE_INDEX_OVERFLOW,
-         YVEX_DEEPSEEK_COVERAGE_FAILURE_ARITHMETIC_OVERFLOW},
-        {FIXTURE_MISSING_FINAL,
-         YVEX_DEEPSEEK_COVERAGE_FAILURE_MISSING_REQUIREMENT},
-        {FIXTURE_MISSING_DRAFT_SHARED,
-         YVEX_DEEPSEEK_COVERAGE_FAILURE_MISSING_REQUIREMENT},
-        {FIXTURE_MISSING_DRAFT_SCALE,
-         YVEX_DEEPSEEK_COVERAGE_FAILURE_SCALE_COMPANION},
-        {FIXTURE_MISSING_MARKOV,
-         YVEX_DEEPSEEK_COVERAGE_FAILURE_MISSING_REQUIREMENT},
-        {FIXTURE_MISSING_CONFIDENCE,
-         YVEX_DEEPSEEK_COVERAGE_FAILURE_MISSING_REQUIREMENT}
-    };
-    size_t i;
-
-    for (i = 0u; i < sizeof(cases) / sizeof(cases[0]); ++i) {
-        yvex_deepseek_tensor_coverage *coverage = NULL;
-        yvex_deepseek_tensor_coverage_failure failure;
-        YVEX_TEST_ASSERT(fixture_build_case(cases[i].mutation, 0, &coverage,
-                                            &failure) != YVEX_OK && !coverage,
-                         "mutated inventory refuses coverage");
-        YVEX_TEST_ASSERT(failure.code == cases[i].expected,
-                         "mutation returns stable typed reason");
-    }
-    return 0;
-}
-
-static int test_limits_and_allocation(void)
-{
-    yvex_source_verification verification;
-    yvex_source_tensor_snapshot *snapshot = NULL;
-    yvex_deepseek_v4_ir *ir = NULL;
-    yvex_deepseek_v4_ir_failure ir_failure;
-    yvex_deepseek_tensor_coverage_failure failure;
-    yvex_deepseek_tensor_coverage *coverage = NULL;
-    yvex_deepseek_tensor_coverage_options options;
-    yvex_error err;
-    unsigned int fail_at;
-
-    fixture_verification(&verification);
-    YVEX_TEST_ASSERT(fixture_snapshot(&snapshot, &verification,
-                                      FIXTURE_VALID, 0) == YVEX_OK,
-                     "allocation test snapshot builds");
-    yvex_error_clear(&err);
-    YVEX_TEST_ASSERT(yvex_model_register_deepseek_v4()->ir.build(
-                         &ir, &verification, &ir_failure, &err) == YVEX_OK,
-                     "allocation test IR builds");
-    fixture_copy(verification.inventory_authority,
-                 sizeof(verification.inventory_authority), "header-derived");
-    YVEX_TEST_ASSERT(yvex_model_register_deepseek_v4()->coverage.build(
-                         &coverage, &verification, ir, snapshot, NULL,
-                         &failure, &err) != YVEX_OK && !coverage &&
-                     failure.code ==
-                         YVEX_DEEPSEEK_COVERAGE_FAILURE_INVENTORY_AUTHORITY,
-                     "non-pinned inventory authority refuses coverage");
-    fixture_copy(verification.inventory_authority,
-                 sizeof(verification.inventory_authority), "upstream-index");
-    verification.header_tensor_count--;
-    YVEX_TEST_ASSERT(yvex_model_register_deepseek_v4()->coverage.build(
-                         &coverage, &verification, ir, snapshot, NULL,
-                         &failure, &err) != YVEX_OK && !coverage &&
-                     failure.code ==
-                         YVEX_DEEPSEEK_COVERAGE_FAILURE_INVENTORY_DRIFT,
-                     "snapshot and verification count drift refuses coverage");
-    verification.header_tensor_count++;
-    memset(&options, 0, sizeof(options));
-    options.maximum_tensors = 72316u;
-    YVEX_TEST_ASSERT(yvex_model_register_deepseek_v4()->coverage.build(
-                         &coverage, &verification, ir, snapshot, &options,
-                         &failure, &err) != YVEX_OK && !coverage &&
-                     failure.code ==
-                         YVEX_DEEPSEEK_COVERAGE_FAILURE_RESOURCE_LIMIT,
-                     "resource limit fails before construction");
-    for (fail_at = 0u; fail_at < 4u; ++fail_at) {
-        fixture_allocator allocator;
-        memset(&allocator, 0, sizeof(allocator));
-        allocator.fail_at = fail_at;
-        memset(&options, 0, sizeof(options));
-        options.allocate = fixture_allocate;
-        options.release = fixture_release;
-        options.context = &allocator;
-        YVEX_TEST_ASSERT(yvex_model_register_deepseek_v4()->coverage.build(
-                             &coverage, &verification, ir, snapshot, &options,
-                             &failure, &err) != YVEX_OK && !coverage,
-                         "injected allocation failure refuses");
-        YVEX_TEST_ASSERT(allocator.live == 0u,
-                         "partial coverage allocation rolls back");
-    }
-    yvex_model_register_deepseek_v4()->ir.close(ir);
-    yvex_source_tensor_snapshot_release(snapshot);
-    return 0;
-}
-
 static int fixture_build_map(int globals_last,
                              yvex_deepseek_gguf_map **map,
                              yvex_deepseek_gguf_map_failure *failure,
@@ -758,8 +562,6 @@ static int fixture_build_map(int globals_last,
     yvex_source_tensor_snapshot *snapshot = NULL;
     yvex_deepseek_v4_ir *ir = NULL;
     yvex_deepseek_v4_ir_failure ir_failure;
-    yvex_deepseek_tensor_coverage *coverage = NULL;
-    yvex_deepseek_tensor_coverage_failure coverage_failure;
     yvex_transform_ir *transform_ir = NULL;
     yvex_transform_failure transform_failure;
     yvex_error err;
@@ -771,12 +573,8 @@ static int fixture_build_map(int globals_last,
     yvex_error_clear(&err);
     rc = yvex_model_register_deepseek_v4()->ir.build(&ir, &verification, &ir_failure, &err);
     if (rc == YVEX_OK)
-        rc = yvex_model_register_deepseek_v4()->coverage.build(
-            &coverage, &verification, ir, snapshot, NULL, &coverage_failure,
-            &err);
-    if (rc == YVEX_OK)
         rc = yvex_model_register_deepseek_v4()->transform.build(
-            &transform_ir, &verification, ir, coverage, NULL,
+            &transform_ir, &verification, ir, snapshot, NULL,
             &transform_failure, &err);
     if (rc == YVEX_OK) {
         rc = allocator
@@ -786,7 +584,6 @@ static int fixture_build_map(int globals_last,
                        map, ir, transform_ir, failure, &err);
     }
     yvex_transform_ir_release(&transform_ir);
-    yvex_model_register_deepseek_v4()->coverage.close(coverage);
     yvex_model_register_deepseek_v4()->ir.close(ir);
     yvex_source_tensor_snapshot_release(snapshot);
     return rc;
@@ -810,8 +607,6 @@ static int fixture_build_transform(
     yvex_source_tensor_snapshot *snapshot = NULL;
     yvex_deepseek_v4_ir *architecture = NULL;
     yvex_deepseek_v4_ir_failure architecture_failure;
-    yvex_deepseek_tensor_coverage *coverage = NULL;
-    yvex_deepseek_tensor_coverage_failure coverage_failure;
     yvex_error err;
     int rc;
 
@@ -825,14 +620,9 @@ static int fixture_build_transform(
     rc = yvex_model_register_deepseek_v4()->ir.build(
         &architecture, &verification, &architecture_failure, &err);
     if (rc == YVEX_OK)
-        rc = yvex_model_register_deepseek_v4()->coverage.build(
-            &coverage, &verification, architecture, snapshot, NULL,
-            &coverage_failure, &err);
-    if (rc == YVEX_OK)
         rc = yvex_model_register_deepseek_v4()->transform.build(
-            transform_ir, &verification, architecture, coverage, options,
+            transform_ir, &verification, architecture, snapshot, options,
             failure, &err);
-    yvex_model_register_deepseek_v4()->coverage.close(coverage);
     yvex_model_register_deepseek_v4()->ir.close(architecture);
     yvex_source_tensor_snapshot_release(snapshot);
     return rc;
@@ -1389,84 +1179,72 @@ static int test_mapping_typed_owner_refusals(void)
     return 0;
 }
 
-static int test_transform_stale_coverage_refusals(void)
+static int test_transform_source_refusals(void)
 {
     yvex_source_verification verification;
     yvex_source_tensor_snapshot *snapshot = NULL;
     yvex_deepseek_v4_ir *ir = NULL;
     yvex_deepseek_v4_ir_failure ir_failure;
-    yvex_deepseek_tensor_coverage *coverage = NULL;
-    yvex_deepseek_tensor_coverage_failure coverage_failure;
     yvex_transform_ir *transform_ir = NULL;
     yvex_transform_failure failure;
     yvex_deepseek_gguf_map *map = NULL;
     yvex_deepseek_gguf_map_failure map_failure;
     yvex_transform_node *node;
     yvex_transform_operation_kind saved_kind;
-    yvex_deepseek_tensor_coverage_row *row;
     yvex_native_weight_info *source;
     yvex_native_dtype saved_dtype;
-    yvex_tensor_scope saved_scope;
-    unsigned long long saved_expert;
+    unsigned long long saved_dimension;
+    unsigned long long saved_identity;
     yvex_error err;
 
     fixture_verification(&verification);
     YVEX_TEST_ASSERT(fixture_snapshot(&snapshot, &verification,
                                       FIXTURE_VALID, 0) == YVEX_OK,
-                     "stale-coverage fixture snapshot builds");
+                     "transform source fixture snapshot builds");
     yvex_error_clear(&err);
     YVEX_TEST_ASSERT(yvex_model_register_deepseek_v4()->ir.build(
                          &ir, &verification, &ir_failure, &err) == YVEX_OK,
-                     "stale-coverage fixture IR builds");
-    YVEX_TEST_ASSERT(yvex_model_register_deepseek_v4()->coverage.build(
-                         &coverage, &verification, ir, snapshot, NULL,
-                         &coverage_failure, &err) == YVEX_OK,
-                     "stale-coverage fixture closes before mutation");
+                     "transform source fixture IR builds");
 
-    row = (yvex_deepseek_tensor_coverage_row *)
-        yvex_model_register_deepseek_v4()->coverage.find(coverage, "head.weight");
-    source = row ? (yvex_native_weight_info *)row->source : NULL;
+    source = (yvex_native_weight_info *)yvex_source_tensor_snapshot_find(
+        snapshot, "head.weight");
     YVEX_TEST_ASSERT(source != NULL, "dtype mutation source is addressable");
     saved_dtype = source->dtype;
     source->dtype = YVEX_NATIVE_DTYPE_F32;
     YVEX_TEST_ASSERT(yvex_model_register_deepseek_v4()->transform.build(
-                         &transform_ir, &verification, ir, coverage, NULL,
+                         &transform_ir, &verification, ir, snapshot, NULL,
                          &failure, &err) != YVEX_OK && !transform_ir &&
                          failure.code ==
                              YVEX_TRANSFORM_FAILURE_UNSUPPORTED_SOURCE_DTYPE,
-                     "post-coverage source dtype drift refuses IR construction");
+                     "source dtype drift refuses IR construction");
     source->dtype = saved_dtype;
 
-    row = (yvex_deepseek_tensor_coverage_row *)
-        yvex_model_register_deepseek_v4()->coverage.find(
-            coverage, "layers.0.ffn.experts.1.w1.weight");
-    YVEX_TEST_ASSERT(row != NULL, "expert mutation row is addressable");
-    saved_expert = row->expert_index;
-    row->expert_index = 2u;
+    source = (yvex_native_weight_info *)yvex_source_tensor_snapshot_find(
+        snapshot, "layers.0.ffn.experts.1.w1.weight");
+    YVEX_TEST_ASSERT(source != NULL, "shape mutation source is addressable");
+    saved_dimension = source->dims[0];
+    source->dims[0]++;
     YVEX_TEST_ASSERT(yvex_model_register_deepseek_v4()->transform.build(
-                         &transform_ir, &verification, ir, coverage, NULL,
+                         &transform_ir, &verification, ir, snapshot, NULL,
                          &failure, &err) != YVEX_OK && !transform_ir &&
-                         failure.code == YVEX_TRANSFORM_FAILURE_UNEXPECTED_SOURCE,
-                     "post-coverage expert sequence drift refuses IR construction");
-    row->expert_index = saved_expert;
+                         failure.code == YVEX_TRANSFORM_FAILURE_INVALID_SHAPE,
+                     "source shape drift refuses IR construction");
+    source->dims[0] = saved_dimension;
 
-    row = (yvex_deepseek_tensor_coverage_row *)
-        yvex_model_register_deepseek_v4()->coverage.find(coverage,
-                                           "layers.0.attn_norm.weight");
-    YVEX_TEST_ASSERT(row != NULL, "scope mutation row is addressable");
-    saved_scope = row->scope;
-    row->scope = YVEX_TENSOR_SCOPE_GLOBAL;
+    saved_identity = verification.source_snapshot_identity;
+    verification.source_snapshot_identity ^= 1u;
     YVEX_TEST_ASSERT(yvex_model_register_deepseek_v4()->transform.build(
-                         &transform_ir, &verification, ir, coverage, NULL,
+                         &transform_ir, &verification, ir, snapshot, NULL,
                          &failure, &err) != YVEX_OK && !transform_ir &&
-                         failure.code == YVEX_TRANSFORM_FAILURE_UNEXPECTED_SOURCE,
-                     "post-coverage typed scope drift refuses IR construction");
-    row->scope = saved_scope;
+                         failure.code ==
+                             YVEX_TRANSFORM_FAILURE_SOURCE_IDENTITY_MISMATCH,
+                     "source identity drift refuses IR construction");
+    verification.source_snapshot_identity = saved_identity;
 
     YVEX_TEST_ASSERT(yvex_model_register_deepseek_v4()->transform.build(
-                         &transform_ir, &verification, ir, coverage, NULL,
+                         &transform_ir, &verification, ir, snapshot, NULL,
                          &failure, &err) == YVEX_OK && transform_ir,
-                     "restored coverage seals one valid Transformation IR");
+                     "restored source facts seal one valid Transformation IR");
     node = (yvex_transform_node *)yvex_transform_ir_node_at(transform_ir, 0u);
     YVEX_TEST_ASSERT(node != NULL,
                      "sealed lowering fixture exposes an immutable node view");
@@ -1481,7 +1259,6 @@ static int test_transform_stale_coverage_refusals(void)
     node->kind = saved_kind;
 
     yvex_transform_ir_release(&transform_ir);
-    yvex_model_register_deepseek_v4()->coverage.close(coverage);
     yvex_model_register_deepseek_v4()->ir.close(ir);
     yvex_source_tensor_snapshot_release(snapshot);
     return 0;
@@ -1489,14 +1266,11 @@ static int test_transform_stale_coverage_refusals(void)
 
 int yvex_test_deepseek_tensor_coverage(void)
 {
-    if (test_valid_target_scale() != 0) return 1;
-    if (test_mutations() != 0) return 1;
-    if (test_limits_and_allocation() != 0) return 1;
     if (test_transform_target_scale() != 0) return 1;
     if (test_mapping_target_scale() != 0) return 1;
     if (test_mapping_allocation_rollback() != 0) return 1;
     if (test_mapping_refusal_boundary() != 0) return 1;
     if (test_mapping_typed_owner_refusals() != 0) return 1;
-    if (test_transform_stale_coverage_refusals() != 0) return 1;
+    if (test_transform_source_refusals() != 0) return 1;
     return 0;
 }

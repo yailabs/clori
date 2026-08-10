@@ -241,52 +241,7 @@ typedef struct {
     void *context;
 } yvex_deepseek_v4_ir_allocator;
 typedef struct yvex_deepseek_v4_ir yvex_deepseek_v4_ir;
-typedef enum {
-    YVEX_DEEPSEEK_COVERAGE_FAILURE_NONE = 0, YVEX_DEEPSEEK_COVERAGE_FAILURE_INVALID_ARGUMENT,
-    YVEX_DEEPSEEK_COVERAGE_FAILURE_SOURCE_IDENTITY, YVEX_DEEPSEEK_COVERAGE_FAILURE_INVENTORY_AUTHORITY,
-    YVEX_DEEPSEEK_COVERAGE_FAILURE_INVENTORY_DRIFT, YVEX_DEEPSEEK_COVERAGE_FAILURE_ARCHITECTURE_INCOMPLETE,
-    YVEX_DEEPSEEK_COVERAGE_FAILURE_MISSING_REQUIREMENT, YVEX_DEEPSEEK_COVERAGE_FAILURE_AMBIGUOUS_MATCH,
-    YVEX_DEEPSEEK_COVERAGE_FAILURE_UNEXPECTED_SOURCE, YVEX_DEEPSEEK_COVERAGE_FAILURE_INVALID_INDEX,
-    YVEX_DEEPSEEK_COVERAGE_FAILURE_RANK_MISMATCH, YVEX_DEEPSEEK_COVERAGE_FAILURE_SHAPE_MISMATCH,
-    YVEX_DEEPSEEK_COVERAGE_FAILURE_DTYPE_MISMATCH, YVEX_DEEPSEEK_COVERAGE_FAILURE_SCALE_COMPANION,
-    YVEX_DEEPSEEK_COVERAGE_FAILURE_ARITHMETIC_OVERFLOW, YVEX_DEEPSEEK_COVERAGE_FAILURE_RESOURCE_LIMIT,
-    YVEX_DEEPSEEK_COVERAGE_FAILURE_ALLOCATION
-} yvex_deepseek_tensor_coverage_failure_code;
 #define YVEX_DEEPSEEK_TENSOR_NO_INDEX (~0ull)
-typedef struct {
-    yvex_deepseek_tensor_coverage_failure_code code;
-    yvex_tensor_collection collection;
-    yvex_tensor_scope scope;
-    char tensor_name[256];
-    unsigned long long layer_index, expert_index, dimension_index, expected, actual;
-} yvex_deepseek_tensor_coverage_failure;
-typedef struct {
-    const yvex_native_weight_info *source;
-    yvex_tensor_collection collection;
-    yvex_tensor_scope scope;
-    unsigned long long layer_index, expert_index;
-} yvex_deepseek_tensor_coverage_row;
-typedef struct {
-    unsigned long long source_tensor_count, required_tensor_count, matched_tensor_count;
-    unsigned long long missing_count, ambiguous_count, unexpected_count;
-    unsigned long long collection_counts[YVEX_TENSOR_COLLECTION_COUNT];
-    unsigned long long main_layer_count, auxiliary_layer_count, routed_expert_count;
-    unsigned long long shared_expert_count, header_scan_count, payload_bytes_read;
-    unsigned long long source_lookup_count, source_collision_count, source_maximum_probe;
-    unsigned long long source_identity, coverage_identity;
-    int complete;
-} yvex_deepseek_tensor_coverage_summary;
-typedef void *(*yvex_deepseek_tensor_coverage_allocate_fn)(size_t size,
-                                                            void *context);
-typedef void (*yvex_deepseek_tensor_coverage_release_fn)(void *allocation,
-                                                         void *context);
-typedef struct {
-    yvex_deepseek_tensor_coverage_allocate_fn allocate;
-    yvex_deepseek_tensor_coverage_release_fn release;
-    void *context;
-    unsigned long long maximum_tensors;
-} yvex_deepseek_tensor_coverage_options;
-typedef struct yvex_deepseek_tensor_coverage yvex_deepseek_tensor_coverage;
 typedef enum {
     YVEX_DEEPSEEK_RECIPE_DIRECT = 0, YVEX_DEEPSEEK_RECIPE_FP8_PAIR,
     YVEX_DEEPSEEK_RECIPE_CHECKED_CAST
@@ -411,8 +366,8 @@ typedef struct yvex_deepseek_gguf_map yvex_deepseek_gguf_map;
 typedef enum {
     YVEX_DEEPSEEK_PAYLOAD_FAILURE_NONE = 0, YVEX_DEEPSEEK_PAYLOAD_FAILURE_INVALID_ARGUMENT,
     YVEX_DEEPSEEK_PAYLOAD_FAILURE_SOURCE, YVEX_DEEPSEEK_PAYLOAD_FAILURE_ARCHITECTURE,
-    YVEX_DEEPSEEK_PAYLOAD_FAILURE_COVERAGE, YVEX_DEEPSEEK_PAYLOAD_FAILURE_TRANSFORM_IR,
-    YVEX_DEEPSEEK_PAYLOAD_FAILURE_MAPPING, YVEX_DEEPSEEK_PAYLOAD_FAILURE_MAPPING_IDENTITY,
+    YVEX_DEEPSEEK_PAYLOAD_FAILURE_TRANSFORM_IR, YVEX_DEEPSEEK_PAYLOAD_FAILURE_MAPPING,
+    YVEX_DEEPSEEK_PAYLOAD_FAILURE_MAPPING_IDENTITY,
     YVEX_DEEPSEEK_PAYLOAD_FAILURE_CONTRIBUTION, YVEX_DEEPSEEK_PAYLOAD_FAILURE_RANGE,
     YVEX_DEEPSEEK_PAYLOAD_FAILURE_BINDING, YVEX_DEEPSEEK_PAYLOAD_FAILURE_PLAN,
     YVEX_DEEPSEEK_PAYLOAD_FAILURE_ALLOCATION
@@ -475,33 +430,11 @@ typedef struct {
                                            const yvex_deepseek_v4_model_spec *model);
 } yvex_model_family_ir_api;
 typedef struct {
-    int (*build)(yvex_deepseek_tensor_coverage **out, const yvex_source_verification *verification,
-                 const yvex_deepseek_v4_ir *ir, yvex_source_tensor_snapshot *snapshot,
-                 const yvex_deepseek_tensor_coverage_options *options,
-                 yvex_deepseek_tensor_coverage_failure *failure, yvex_error *err);
-    int (*open_verified_source)(yvex_deepseek_tensor_coverage **out,
-                                yvex_source_verification *verification, const char *source_path,
-                                const char *models_root,
-                                yvex_deepseek_tensor_coverage_failure *failure, yvex_error *err);
-    void (*close)(yvex_deepseek_tensor_coverage *coverage);
-    const yvex_deepseek_tensor_coverage_summary *(*summary)(const yvex_deepseek_tensor_coverage *coverage);
-    const yvex_deepseek_tensor_coverage_row *(*at)(const yvex_deepseek_tensor_coverage *coverage,
-                                                   unsigned long long index);
-    const yvex_deepseek_tensor_coverage_row *(*find)(const yvex_deepseek_tensor_coverage *coverage,
-                                                     const char *source_name);
-    int (*find_index)(const yvex_deepseek_tensor_coverage *coverage, const char *source_name,
-                      unsigned long long *row_index);
-    int (*find_source_index)(const yvex_deepseek_tensor_coverage *coverage,
-                             const char *source_name, unsigned long long *source_index);
-    const char *(*collection_name)(yvex_tensor_collection collection);
-    const char *(*failure_name)(yvex_deepseek_tensor_coverage_failure_code code);
-} yvex_model_family_coverage_api;
-typedef struct {
     int (*architecture_identity)(const yvex_deepseek_v4_ir *architecture,
                                  char output[YVEX_DEEPSEEK_IDENTITY_CAP]);
     int (*build)(yvex_transform_ir **out, const yvex_source_verification *verification,
                  const yvex_deepseek_v4_ir *architecture,
-                 const yvex_deepseek_tensor_coverage *coverage,
+                 yvex_source_tensor_snapshot *snapshot,
                  const yvex_transform_builder_options *options, yvex_transform_failure *failure,
                  yvex_error *err);
 } yvex_model_family_transform_api;
@@ -553,12 +486,10 @@ typedef struct yvex_model_family_api {
     unsigned int schema_version;
     const char *family_key;
     yvex_model_family_ir_api ir;
-    yvex_model_family_coverage_api coverage;
     yvex_model_family_transform_api transform;
     yvex_model_family_lowering_api lowering;
     yvex_model_family_payload_api payload;
 } yvex_model_family_api;
-const yvex_model_family_coverage_api *yvex_model_deepseek_coverage_api(void);
 const yvex_model_family_transform_api *yvex_model_deepseek_transform_api(void);
 const yvex_model_family_lowering_api *yvex_model_deepseek_lowering_api(void);
 const yvex_gguf_writer_lowering_api *yvex_model_deepseek_writer_lowering_api(void);

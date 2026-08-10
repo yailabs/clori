@@ -197,6 +197,25 @@ typedef struct {
     unsigned long long required_uses;
 } yvex_transform_source_spec;
 typedef struct {
+    const char *source_name;
+    yvex_native_dtype source_dtype;
+    yvex_transform_dtype value_dtype;
+    yvex_transform_shape shape;
+    unsigned long long requirement_index;
+    yvex_transform_scope scope;
+    yvex_transform_subsystem subsystem;
+    yvex_tensor_role role_hint;
+    unsigned long long component_identity;
+    unsigned long long semantic_role;
+    unsigned long long phase_identity;
+    unsigned long long lifetime_identity;
+    unsigned long long unresolved_requirement_identity;
+    unsigned long long layer_index;
+    unsigned long long auxiliary_index;
+    unsigned long long expert_index;
+    unsigned long long required_uses;
+} yvex_transform_source_requirement;
+typedef struct {
     yvex_transform_value_kind kind;
     unsigned long long semantic_id;
     unsigned long long canonical_ordinal;
@@ -324,6 +343,7 @@ typedef struct {
 typedef struct yvex_transform_builder_options {
     yvex_transform_allocator allocator;
     yvex_transform_budget budget;
+    const yvex_source_tensor_snapshot *source_snapshot;
 } yvex_transform_builder_options;
 typedef struct {
     unsigned int schema_version;
@@ -435,6 +455,11 @@ int yvex_transform_recipe_compile(
     yvex_transform_failure *failure, yvex_error *err);
 int yvex_transform_recipe_sink_add(
     yvex_transform_recipe_sink *sink, const yvex_transform_recipe *recipe,
+    yvex_transform_failure *failure, yvex_error *err);
+int yvex_transform_recipe_sink_resolve_source(
+    yvex_transform_recipe_sink *sink,
+    const yvex_transform_source_requirement *requirement,
+    yvex_transform_source_spec *resolved,
     yvex_transform_failure *failure, yvex_error *err);
 
 /* Binding. */

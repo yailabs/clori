@@ -29,6 +29,10 @@ static int projection_refuse(yvex_error *err, const char *reason)
     return YVEX_ERR_BOUNDS;
 }
 
+static int project_transform_coverage(
+    yvex_model_target_report *report, const yvex_transform_ir *transform,
+    const yvex_source_tensor_snapshot_facts *facts, yvex_error *err);
+
 int yvex_model_target_report_release_coverage(
     const yvex_model_target_request *request,
     yvex_model_target_report *report,
@@ -39,9 +43,14 @@ int yvex_model_target_report_release_coverage(
     yvex_error *err)
 {
     const yvex_model_family_api *family = yvex_model_register_deepseek_v4();
+    yvex_source_verify_options source_options = {0};
     yvex_source_verification verification;
-    yvex_deepseek_tensor_coverage *coverage = NULL;
-    yvex_deepseek_tensor_coverage_failure failure;
+    yvex_source_tensor_snapshot *snapshot = NULL;
+    yvex_source_tensor_snapshot_facts facts = {0};
+    yvex_deepseek_v4_ir *architecture = NULL;
+    yvex_deepseek_v4_ir_failure architecture_failure = {0};
+    yvex_transform_ir *transform = NULL;
+    yvex_transform_failure transform_failure = {0};
     char models_root[512];
     char source_path[512];
     int rc;
@@ -59,26 +68,44 @@ int yvex_model_target_report_release_coverage(
                        "DeepSeek source path exceeds report bounds");
         return YVEX_ERR_BOUNDS;
     }
-    rc = family->coverage.open_verified_source(
-        &coverage, &verification, source_path, models_root, &failure, err);
-    if (rc != YVEX_OK) {
+    memset(&verification, 0, sizeof(verification));
+    source_options.identity = yvex_source_release_identity();
+    source_options.source_path = source_path;
+    source_options.models_root = models_root;
+    rc = yvex_source_verify_with_snapshot(
+        &source_options, &verification, &snapshot, err);
+    if (rc == YVEX_OK && verification.verified && snapshot)
+        rc = family->ir.build(
+            &architecture, &verification, &architecture_failure, err);
+    if (rc == YVEX_OK)
+        rc = family->transform.build(
+            &transform, &verification, architecture, snapshot, NULL,
+            &transform_failure, err);
+    if (rc == YVEX_OK)
+        rc = yvex_source_tensor_snapshot_facts_get(snapshot, &facts, err);
+    if (rc != YVEX_OK || !verification.verified || !snapshot) {
         report->status = "tensor-coverage-blocked";
         report->exit_code = 5;
         yvex_model_target_report_add_error(
             report,
-            "model-target %s: DeepSeek coverage refused: %s tensor=%s",
-            operation, family->coverage.failure_name(failure.code),
-            failure.tensor_name[0] ? failure.tensor_name : "none");
+            "model-target %s: compiled source coverage refused: %s",
+            operation,
+            transform_failure.code
+                ? yvex_transform_failure_name(transform_failure.code)
+                : (architecture_failure.code
+                       ? family->ir.failure_name(architecture_failure.code)
+                       : yvex_source_verification_status(&verification)));
+        yvex_transform_ir_release(&transform);
+        family->ir.close(architecture);
+        yvex_source_tensor_snapshot_release(snapshot);
         yvex_error_clear(err);
         return YVEX_OK;
     }
-    report->family_coverage = coverage;
-    rc = yvex_model_target_report_project_family_detail(report, err);
-    if (rc != YVEX_OK) {
-        family->coverage.close(coverage);
-        report->family_coverage = NULL;
-        return rc;
-    }
+    rc = project_transform_coverage(report, transform, &facts, err);
+    yvex_transform_ir_release(&transform);
+    family->ir.close(architecture);
+    yvex_source_tensor_snapshot_release(snapshot);
+    if (rc != YVEX_OK) return rc;
     {
         const yvex_model_target_report_profile profile = {
             .status = success_status,
@@ -416,11 +443,9 @@ int yvex_model_target_family_mapping_report_build(
     yvex_source_verification verification;
     yvex_source_tensor_snapshot *snapshot = NULL;
     yvex_deepseek_v4_ir *architecture = NULL;
-    yvex_deepseek_tensor_coverage *coverage = NULL;
     yvex_transform_ir *transform_ir = NULL;
     yvex_deepseek_gguf_map *map = NULL;
     yvex_deepseek_v4_ir_failure architecture_failure;
-    yvex_deepseek_tensor_coverage_failure coverage_failure;
     yvex_transform_failure transform_failure;
     yvex_deepseek_gguf_map_failure map_failure;
     const char *refusal_stage = NULL;
@@ -441,7 +466,6 @@ int yvex_model_target_family_mapping_report_build(
     memset(&source_options, 0, sizeof(source_options));
     memset(&verification, 0, sizeof(verification));
     memset(&architecture_failure, 0, sizeof(architecture_failure));
-    memset(&coverage_failure, 0, sizeof(coverage_failure));
     memset(&transform_failure, 0, sizeof(transform_failure));
     memset(&map_failure, 0, sizeof(map_failure));
     source_options.identity = yvex_source_release_identity();
@@ -466,19 +490,8 @@ int yvex_model_target_family_mapping_report_build(
                              : "architecture-ir";
         goto cleanup;
     }
-    rc = family->coverage.build(
-        &coverage, &verification, architecture, snapshot, NULL,
-        &coverage_failure, err);
-    if (rc != YVEX_OK) {
-        refusal_stage = "source-coverage";
-        refusal_reason = family->coverage.failure_name(coverage_failure.code);
-        refusal_source = coverage_failure.tensor_name[0]
-                             ? coverage_failure.tensor_name
-                             : "source-tensor";
-        goto cleanup;
-    }
     rc = family->transform.build(
-        &transform_ir, &verification, architecture, coverage, NULL,
+        &transform_ir, &verification, architecture, snapshot, NULL,
         &transform_failure, err);
     if (rc != YVEX_OK) {
         refusal_stage = "transformation-ir";
@@ -499,7 +512,6 @@ cleanup:
     yvex_source_tensor_snapshot_release(snapshot);
     if (rc != YVEX_OK) {
         family->lowering.close(map);
-        family->coverage.close(coverage);
         report->status = "mapping-plan-blocked";
         report->exit_code = 5;
         yvex_model_target_report_add_error(
@@ -511,13 +523,10 @@ cleanup:
         yvex_error_clear(err);
         return YVEX_OK;
     }
-    report->family_coverage = coverage;
     report->family_lowering = map;
     rc = yvex_model_target_report_project_family_detail(report, err);
     if (rc != YVEX_OK) {
         family->lowering.close(map);
-        family->coverage.close(coverage);
-        report->family_coverage = NULL;
         report->family_lowering = NULL;
         return rc;
     }
@@ -573,36 +582,77 @@ static int project_map(yvex_model_target_report *report, yvex_error *err)
     return YVEX_OK;
 }
 
-static int project_coverage(yvex_model_target_report *report, yvex_error *err)
+static const char *transform_collection_name(unsigned int collection)
 {
-    const yvex_model_family_api *family = yvex_model_register_deepseek_v4();
-    const yvex_deepseek_tensor_coverage_summary *source = family->coverage.summary(
-        (const yvex_deepseek_tensor_coverage *)report->family_coverage);
-    yvex_model_target_coverage_projection *out = &report->detail.coverage;
+    static const char *const names[] = {
+        "global", "attention", "compressor", "indexer", "norm", "mhc",
+        "router", "routed-expert", "shared-expert", "auxiliary"};
+
+    return collection < sizeof(names) / sizeof(names[0])
+               ? names[collection]
+               : NULL;
+}
+
+static int transform_collection_index(
+    yvex_transform_subsystem subsystem, unsigned int *collection)
+{
+    if (!collection) return 0;
+    if (subsystem <= YVEX_TRANSFORM_SUBSYSTEM_SHARED_EXPERT) {
+        *collection = (unsigned int)subsystem;
+        return 1;
+    }
+    if (subsystem == YVEX_TRANSFORM_SUBSYSTEM_OUTPUT) {
+        *collection = YVEX_TENSOR_COLLECTION_GLOBAL;
+        return 1;
+    }
+    if (subsystem == YVEX_TRANSFORM_SUBSYSTEM_AUXILIARY) {
+        *collection = YVEX_TENSOR_COLLECTION_AUXILIARY;
+        return 1;
+    }
+    return 0;
+}
+
+static int project_transform_coverage(
+    yvex_model_target_report *report, const yvex_transform_ir *transform,
+    const yvex_source_tensor_snapshot_facts *facts, yvex_error *err)
+{
+    const yvex_transform_ir_summary *source =
+        yvex_transform_ir_summary_get(transform);
+    yvex_model_target_coverage_projection *out;
+    unsigned long long source_index;
     unsigned int index;
 
-    if (!source || YVEX_TENSOR_COLLECTION_COUNT > YVEX_MODEL_TARGET_COLLECTION_CAP)
+    if (!report || !source || !facts || !source->complete ||
+        YVEX_TENSOR_COLLECTION_COUNT > YVEX_MODEL_TARGET_COLLECTION_CAP)
         return projection_refuse(err, "tensor-coverage projection exceeds its bounded view");
+    out = &report->detail.coverage;
     memset(out, 0, sizeof(*out));
-    out->source_tensors = source->source_tensor_count;
-    out->required_tensors = source->required_tensor_count;
-    out->matched_tensors = source->matched_tensor_count;
-    out->missing_tensors = source->missing_count;
-    out->ambiguous_tensors = source->ambiguous_count;
-    out->unexpected_tensors = source->unexpected_count;
+    out->source_tensors = facts->tensor_count;
+    out->required_tensors = source->source_value_count;
+    out->matched_tensors = source->source_value_count;
     out->header_scans = source->header_scan_count;
     out->payload_bytes = source->payload_bytes_read;
-    out->source_lookups = source->source_lookup_count;
-    out->source_collisions = source->source_collision_count;
-    out->source_maximum_probe = source->source_maximum_probe;
-    out->source_identity = source->source_identity;
+    out->source_lookups = facts->lookup_count;
+    out->source_collisions = facts->collision_count;
+    out->source_maximum_probe = facts->maximum_probe;
+    out->source_identity = source->source_snapshot_identity;
     out->coverage_identity = source->coverage_identity;
     out->collection_count = YVEX_TENSOR_COLLECTION_COUNT;
     for (index = 0u; index < out->collection_count; ++index) {
         yvex_core_text_copy(out->collections[index].name,
                             sizeof(out->collections[index].name),
-                            family->coverage.collection_name((yvex_tensor_collection)index));
-        out->collections[index].count = source->collection_counts[index];
+                            transform_collection_name(index));
+    }
+    for (source_index = 0u; source_index < source->source_value_count;
+         ++source_index) {
+        const yvex_transform_source_value *value =
+            yvex_transform_ir_source_at(transform, source_index);
+        unsigned int collection;
+
+        if (!value || !transform_collection_index(value->subsystem, &collection))
+            return projection_refuse(
+                err, "compiled source has no bounded tensor collection");
+        out->collections[collection].count++;
     }
     report->detail_kind = YVEX_MODEL_TARGET_DETAIL_TENSOR_COVERAGE;
     yvex_error_clear(err);
@@ -812,7 +862,6 @@ int yvex_model_target_report_project_family_detail(
     report->detail_kind = YVEX_MODEL_TARGET_DETAIL_NONE;
     memset(&report->detail, 0, sizeof(report->detail));
     if (report->family_lowering) return project_map(report, err);
-    if (report->family_coverage) return project_coverage(report, err);
     if (report->family_architecture_kind == YVEX_MODEL_TARGET_FAMILY_ARCHITECTURE_DEEPSEEK)
         return project_architecture(report, err);
     if (report->family_architecture_kind == YVEX_MODEL_TARGET_FAMILY_ARCHITECTURE_MINIMAX_H3)
@@ -826,8 +875,6 @@ void yvex_model_target_report_close_family_detail(yvex_model_target_report *repo
     if (!report) return;
     yvex_model_register_deepseek_v4()->lowering.close(
         (yvex_deepseek_gguf_map *)report->family_lowering);
-    yvex_model_register_deepseek_v4()->coverage.close(
-        (yvex_deepseek_tensor_coverage *)report->family_coverage);
     yvex_transform_ir_release((yvex_transform_ir **)&report->family_transformation);
     if (report->family_architecture_kind == YVEX_MODEL_TARGET_FAMILY_ARCHITECTURE_DEEPSEEK) {
         yvex_model_register_deepseek_v4()->ir.close(
