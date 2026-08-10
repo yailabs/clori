@@ -41,7 +41,6 @@ typedef struct yvex_artifact_admission_failure yvex_artifact_admission_failure;
 typedef struct yvex_complete_artifact_admission yvex_complete_artifact_admission;
 typedef struct yvex_materialization_failure yvex_materialization_failure;
 typedef struct yvex_materialization_options yvex_materialization_options;
-typedef struct yvex_materialization_projection yvex_materialization_projection;
 typedef struct yvex_materialization_plan yvex_materialization_plan;
 typedef struct yvex_materialization_session yvex_materialization_session;
 typedef struct yvex_quant_failure yvex_quant_failure;
@@ -403,9 +402,6 @@ int yvex_quant_plan_build_deepseek_policy(
 int yvex_artifact_admit_deepseek(
     const yvex_artifact *artifact, yvex_complete_artifact_admission *out,
     yvex_artifact_admission_failure *failure, yvex_error *err);
-int yvex_deepseek_materialization_projection(
-    const yvex_artifact_lowering_map *map, yvex_materialization_projection *out,
-    yvex_error *err);
 int yvex_runtime_descriptor_build_deepseek(
     yvex_runtime_descriptor **out,
     const yvex_complete_artifact_admission *admission,

@@ -3134,7 +3134,7 @@ int main(int argc, char **argv)
     materialization_options.future_kv_reserve_bytes =
         2ull * 1024ull * 1024ull * 1024ull;
 
-    rc = yvex_deepseek_materialization_projection(
+    rc = yvex_materialization_project_artifact_lowering(
         yvex_model_register_deepseek_v4()->payload.map(handoff),
         &materialization_projection, &err);
     if (rc == YVEX_OK)

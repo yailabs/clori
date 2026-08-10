@@ -180,7 +180,6 @@ struct yvex_artifact;
 struct yvex_complete_artifact_admission;
 struct yvex_artifact_admission_failure;
 struct yvex_artifact_physical_compatibility;
-struct yvex_materialization_projection;
 struct yvex_materialization_session;
 struct yvex_runtime_descriptor;
 struct yvex_attention_plan;
@@ -361,9 +360,6 @@ typedef struct yvex_family_binding_pipeline {
                           struct yvex_complete_artifact_admission *out,
                           struct yvex_artifact_admission_failure *failure,
                           yvex_error *err);
-    int (*materialization_project)(const void *lowering_context,
-                                   struct yvex_materialization_projection *out,
-                                   yvex_error *err);
     int (*semantic_model_build)(yvex_semantic_model_ir **out,
                                 const struct yvex_source_verification *verification,
                                 yvex_error *err);

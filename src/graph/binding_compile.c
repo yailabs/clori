@@ -75,7 +75,7 @@ static int pipeline_valid(const yvex_family_compiler_adapter *adapter)
            adapter->physical_variant && pipeline &&
            pipeline->schema_version == YVEX_FAMILY_BINDING_PIPELINE_SCHEMA_V1 &&
            pipeline->source_open && pipeline->source_close && pipeline->artifact_admit &&
-           pipeline->materialization_project && pipeline->semantic_model_build &&
+           pipeline->semantic_model_build &&
            pipeline->runtime_descriptor_build &&
            pipeline->quant_plan_default && pipeline->quant_plan_policy &&
            pipeline->writer_lowering;
@@ -140,7 +140,7 @@ static int binding_compiler_materialize(binding_compiler *compiler, yvex_error *
         2ull * 1024ull * 1024ull * 1024ull;
     compiler->materialization_options.future_kv_reserve_bytes =
         2ull * 1024ull * 1024ull * 1024ull;
-    rc = compiler->pipeline->materialization_project(
+    rc = yvex_materialization_project_artifact_lowering(
         compiler->source.lowering_context, &compiler->materialization_projection, err);
     if (rc == YVEX_OK)
         rc = yvex_materialization_plan_build(

@@ -250,7 +250,7 @@ int main(int argc, char **argv)
     options.backend_resident_budget_bytes = 0ull;
     options.future_graph_scratch_reserve_bytes = 2ull * 1024ull * 1024ull * 1024ull;
     options.future_kv_reserve_bytes = 2ull * 1024ull * 1024ull * 1024ull;
-    rc = yvex_deepseek_materialization_projection(
+    rc = yvex_materialization_project_artifact_lowering(
         yvex_model_register_deepseek_v4()->payload.map(handoff), &projection, &err);
     if (rc == YVEX_OK)
         rc = yvex_materialization_plan_build(

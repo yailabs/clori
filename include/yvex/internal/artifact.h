@@ -318,6 +318,10 @@ typedef struct yvex_materialization_projection {
     int complete;
 } yvex_materialization_projection;
 #define YVEX_MATERIALIZATION_PROJECTION_SCHEMA_VERSION 1u
+struct yvex_artifact_lowering_map;
+int yvex_materialization_project_artifact_lowering(
+    const struct yvex_artifact_lowering_map *map,
+    yvex_materialization_projection *out, yvex_error *err);
 typedef struct {
     unsigned long long tensor_id;
     unsigned long long descriptor_index;

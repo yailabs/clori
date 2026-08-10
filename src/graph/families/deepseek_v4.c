@@ -287,8 +287,6 @@ static int deepseek_compilation_source_open(
     yvex_family_compilation_source *out,
     const yvex_compilation_runtime_binding_request *request, yvex_error *err);
 static void deepseek_compilation_source_close(void *owner);
-static int deepseek_compilation_materialization(
-    const void *context, yvex_materialization_projection *out, yvex_error *err);
 static int deepseek_compilation_semantic_model(
     yvex_semantic_model_ir **out,
     const yvex_source_verification *verification, yvex_error *err);
@@ -318,7 +316,6 @@ static const yvex_family_binding_pipeline deepseek_binding_pipeline = {
     .source_open = deepseek_compilation_source_open,
     .source_close = deepseek_compilation_source_close,
     .artifact_admit = yvex_artifact_admit_deepseek,
-    .materialization_project = deepseek_compilation_materialization,
     .semantic_model_build = deepseek_compilation_semantic_model,
     .runtime_descriptor_build = deepseek_compilation_descriptor,
     .quant_plan_default = deepseek_compilation_quant_default,
@@ -1473,43 +1470,6 @@ static int deepseek_descriptor_facts(
     return YVEX_OK;
 }
 
-static int deepseek_terminal_find(
-    const void *context, const char *name, yvex_materialization_terminal *out)
-{
-    const yvex_model_family_lowering_api *lowering = yvex_model_deepseek_lowering_api();
-    const yvex_artifact_lowering_map *map = (const yvex_artifact_lowering_map *)context;
-    const yvex_artifact_lowering_descriptor *row, *first;
-
-    if (!map || !name || !out || !lowering) return 0;
-    row = lowering->map->find_emitted(map, name);
-    first = lowering->map->descriptor_at(map, 0ull);
-    if (!row || !first) return 0;
-    *out = (yvex_materialization_terminal){
-        (unsigned long long)(row - first), row->role, row->collection, row->scope,
-        row->layer_index, row->predictor_index, row->expert_count};
-    return 1;
-}
-
-int yvex_deepseek_materialization_projection(
-    const yvex_artifact_lowering_map *map,
-    yvex_materialization_projection *out, yvex_error *err)
-{
-    const yvex_model_family_lowering_api *lowering = yvex_model_deepseek_lowering_api();
-    const yvex_artifact_lowering_summary *summary =
-        map && lowering ? lowering->map->summary(map) : NULL;
-
-    if (!out || !summary || !summary->complete || !summary->mapping_identity) {
-        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "deepseek.materialization",
-                       "complete family lowering is required for terminal projection");
-        return YVEX_ERR_INVALID_ARG;
-    }
-    *out = (yvex_materialization_projection){
-        YVEX_MATERIALIZATION_PROJECTION_SCHEMA_VERSION, summary->mapping_identity,
-        summary->descriptor_count, map, deepseek_terminal_find, 1};
-    yvex_error_clear(err);
-    return YVEX_OK;
-}
-
 int yvex_runtime_descriptor_build_deepseek(
     yvex_runtime_descriptor **out,
     const yvex_complete_artifact_admission *admission,
@@ -1529,7 +1489,7 @@ int yvex_runtime_descriptor_build_deepseek(
             YVEX_MATERIALIZATION_NO_INDEX,
             "map and sealed semantic model are required",
             YVEX_ERR_INVALID_ARG, err);
-    rc = yvex_deepseek_materialization_projection(map, &projection, err);
+    rc = yvex_materialization_project_artifact_lowering(map, &projection, err);
     if (rc == YVEX_OK)
         rc = deepseek_descriptor_facts(
             semantic_model, &facts, failure, err);
@@ -1537,13 +1497,6 @@ int yvex_runtime_descriptor_build_deepseek(
                ? yvex_runtime_descriptor_build_projected(
                      out, admission, session, &facts, &projection, failure, err)
                : rc;
-}
-
-static int deepseek_compilation_materialization(
-    const void *context, yvex_materialization_projection *out, yvex_error *err)
-{
-    return yvex_deepseek_materialization_projection(
-        (const yvex_artifact_lowering_map *)context, out, err);
 }
 
 static int deepseek_semantic_model_build(

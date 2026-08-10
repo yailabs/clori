@@ -1192,7 +1192,7 @@ static int fixture_build(binding_fixture *fixture, const char *artifact_path,
         return 0;
     if (yvex_test_deepseek_map_fixture_build(&fixture->map) != YVEX_OK || !fixture->map)
         return 0;
-    rc = yvex_deepseek_materialization_projection(fixture->map, &projection, &err);
+    rc = yvex_materialization_project_artifact_lowering(fixture->map, &projection, &err);
     if (rc != YVEX_OK || !fixture_admission_build(fixture)) return 0;
     fixture->admission.mapping_identity = projection.mapping_identity;
     fixture_compatibility_build(fixture);
@@ -3839,13 +3839,21 @@ static int test_runtime_model_snapshot_drift(
 int yvex_test_runtime_binding(void)
 {
     binding_fixture fixture;
+    yvex_materialization_projection projection = {0};
     yvex_runtime_binding_prepare_result prepared;
     yvex_runtime_binding *binding = NULL;
     char root[] = "/tmp/yvex-runtime-binding-test-XXXXXX";
     char artifact_path[YVEX_PATH_CAP];
+    yvex_error err;
     int rc = 1;
 
     memset(&prepared, 0, sizeof(prepared));
+    yvex_error_clear(&err);
+    YVEX_TEST_ASSERT(
+        yvex_materialization_project_artifact_lowering(NULL, &projection, &err) ==
+                YVEX_ERR_INVALID_ARG &&
+            strcmp(yvex_error_where(&err), "materialization.lowering") == 0,
+        "materialization projection refuses a missing generic lowering map");
     YVEX_TEST_ASSERT(mkdtemp(root) != NULL, "runtime binding temporary root");
     YVEX_TEST_ASSERT(snprintf(artifact_path, sizeof(artifact_path), "%s/runtime.gguf", root) <
                          (int)sizeof(artifact_path) &&

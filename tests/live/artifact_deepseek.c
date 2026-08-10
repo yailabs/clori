@@ -922,7 +922,7 @@ static int artifact_variant_bind(
     materialization_options.future_kv_reserve_bytes =
         2ull * 1024ull * 1024ull * 1024ull;
     if (rc == YVEX_OK)
-        rc = yvex_deepseek_materialization_projection(
+        rc = yvex_materialization_project_artifact_lowering(
             model->payload.map(handoff), &materialization_projection, &error);
     if (rc == YVEX_OK)
         rc = yvex_materialization_plan_build(
