@@ -53,7 +53,7 @@ static const yvex_materialized_tensor_binding *binding_find(
 static int proof_weights_load(
     yvex_materialization_session *session, unsigned char **arena_out,
     unsigned long long *arena_bytes_out,
-    yvex_minimax_h3_text_weight weights[YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT],
+    yvex_minimax_h3_encoded_weight weights[YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT],
     char identity[65], yvex_error *err)
 {
     const yvex_materialized_tensor_binding *bindings[YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT];
@@ -131,7 +131,7 @@ static int layer_proof_execute(
     yvex_materialization_failure materialization_failure;
     yvex_materialization_plan *plan = NULL;
     yvex_materialization_session *session = NULL;
-    yvex_minimax_h3_text_weight weights[YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT] = {{0}};
+    yvex_minimax_h3_encoded_weight weights[YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT] = {{0}};
     yvex_backend_options backend_options = {0};
     yvex_backend_tensor_desc descriptor = {0};
     yvex_backend *backend = NULL;

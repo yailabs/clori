@@ -50,12 +50,12 @@
 #define TEXT_FILE_BYTES 66727837152ull
 #define TRANSFORMER_COMPONENT_IDENTITY "9745fc5bbf42a0a5d2d42209e50e64f5a58704c7602bce0f71f3225431304318"
 #define TRANSFORMER_TRANSFORM_IDENTITY "8f3b16dff00769261df2d5f59c915c114874cb3abfb54ddc11d537875caec58a"
-#define TRANSFORMER_PROFILE_IDENTITY "43e82bc972981d6c3c6a879fc34972ee27083f8aad96e98c69ff2818aeda50a6"
-#define TRANSFORMER_QUANT_EXECUTION_IDENTITY "6ffc46df955c106fb627ecbda599c7380522f67651617c897d843edb91c3142c"
-#define TRANSFORMER_PAYLOAD_PLAN_IDENTITY "8bdeafd4f1e2345a9e593002cd00c97027909fdf16c1840d884836583e8335e6"
+#define TRANSFORMER_PROFILE_IDENTITY "a5441084c92644d91b9285001cf455aa49ac4e3e6c9a779a90f47caab0f29162"
+#define TRANSFORMER_QUANT_EXECUTION_IDENTITY "d47a261b45c2411d579b80f7626dee042f687e0454e18dba42fe891a060ec057"
+#define TRANSFORMER_PAYLOAD_PLAN_IDENTITY "f14e2bb7963f267b8d2a26e440e344594b557ff3e951ad94302f8a396b5524ae"
 #define TRANSFORMER_PAYLOAD_BYTE_IDENTITY "b261084e21a0098eb6947e65a05d559fa9b649d88e88f167120406634c786e85"
-#define TRANSFORMER_WRITER_PLAN_IDENTITY "72464d996bb662fdc7311258e5689c4e2f5255c91c9b01a5c88930fe2782f8f6"
-#define TRANSFORMER_ARTIFACT_IDENTITY "d274449dae245d86d391f255a9043c64f9d1d14be8b37466962e89a69d5af955"
+#define TRANSFORMER_WRITER_PLAN_IDENTITY "1dcd8cb25b82bf341f880ea42b7b0e2105ae3ea45a864e4ca6a49ce58b90dcde"
+#define TRANSFORMER_ARTIFACT_IDENTITY "aa1c84ac801a50f8806b591fb419e60513f0e6bd312b5e3abc5352194a31b992"
 #define TRANSFORMER_MAPPING_IDENTITY 17862857563445514422ull
 #define TRANSFORMER_TENSORS 535ull
 #define TRANSFORMER_ELEMENTS 33122992912ull
@@ -1814,7 +1814,7 @@ static const char *const text_layer_weight_suffixes[YVEX_MINIMAX_H3_TEXT_LAYER_W
 };
 static int text_layer_weights_bind(
     const yvex_materialization_session *session, const yvex_runtime_residency *residency,
-    yvex_minimax_h3_text_weight *weights, unsigned long long layer_count, yvex_error *err)
+    yvex_minimax_h3_encoded_weight *weights, unsigned long long layer_count, yvex_error *err)
 {
     unsigned long long index, layer, slot = 0ull;
     char name[160];
@@ -1868,7 +1868,7 @@ static int text_encoder_artifact_cuda(const yvex_artifact *artifact,
 {
     const yvex_minimax_h3_backend_api *backend = yvex_backend_register_minimax_h3();
     const yvex_materialized_tensor_binding *embedding = NULL;
-    yvex_minimax_h3_text_weight *weights = NULL;
+    yvex_minimax_h3_encoded_weight *weights = NULL;
     yvex_complete_artifact_admission admission;
     yvex_artifact_admission_failure admission_failure;
     yvex_materialization_options options;
@@ -1911,7 +1911,7 @@ static int text_encoder_artifact_cuda(const yvex_artifact *artifact,
                             &weight_count) ||
          !yvex_core_u64_add(weight_count, 1ull, &weight_count) ||
          weight_count > SIZE_MAX / sizeof(*weights) ||
-         !(weights = (yvex_minimax_h3_text_weight *)calloc((size_t)weight_count,
+         !(weights = (yvex_minimax_h3_encoded_weight *)calloc((size_t)weight_count,
                                                             sizeof(*weights))))) {
         free(staged);
         yvex_error_set(err, YVEX_ERR_NOMEM, "minimax-h3.text-conditioning.weights",

@@ -948,8 +948,8 @@ static int quant_cuda_dense_transformer(yvex_backend *backend)
     yvex_device_tensor *gate = NULL, *up = NULL, *product = NULL;
     yvex_device_tensor *norm_input = NULL, *norm_weight = NULL, *norm_output = NULL;
     float rotary_input[4] = {1.0f, 2.0f, 3.0f, 4.0f};
-    float cosine_input[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-    float sine_input[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    float cosine_input[2] = {0.0f, 0.0f};
+    float sine_input[2] = {1.0f, 1.0f};
     float rotary_output[4], query_input[8], key_input[4], value_input[4];
     float attention_output[8], gate_input[4] = {-2.0f, -0.5f, 0.5f, 2.0f};
     float up_input[4] = {3.0f, 4.0f, 5.0f, 6.0f}, product_output[4];
@@ -981,15 +981,15 @@ static int quant_cuda_dense_transformer(yvex_backend *backend)
                               sizeof(sine_input), &sines, &err),
         "dense transformer rotary tensors allocate");
     rc = yvex_cuda_transformer_rotary_half(
-        backend, rotary, cosines, sines, 1ull, 1ull, 4ull, &facts, &err);
+        backend, rotary, cosines, sines, 1ull, 1ull, 4ull, 2ull, &facts, &err);
     YVEX_TEST_ASSERT(
         rc == YVEX_OK && facts.kernel_launches == 1ull &&
             facts.device_synchronizations == 1ull &&
             yvex_backend_tensor_read(
                 backend, rotary, rotary_output, sizeof(rotary_output), &err) == YVEX_OK &&
-            rotary_output[0] == -3.0f && rotary_output[1] == -4.0f &&
-            rotary_output[2] == 1.0f && rotary_output[3] == 2.0f,
-        "explicit rotate-half tables preserve paired source values");
+            rotary_output[0] == -2.0f && rotary_output[1] == 1.0f &&
+            rotary_output[2] == 3.0f && rotary_output[3] == 4.0f,
+        "explicit rotate-half tables preserve the non-rotary head suffix");
     YVEX_TEST_ASSERT(
         quant_cuda_tensor(backend, "norm-input", YVEX_DTYPE_F32, norm_values,
                           sizeof(norm_values), &norm_input, &err) &&
@@ -1023,7 +1023,7 @@ static int quant_cuda_dense_transformer(yvex_backend *backend)
                               sizeof(attention_output), &attention, &err),
         "dense transformer GQA tensors allocate");
     rc = yvex_cuda_transformer_gqa(
-        backend, query, key, value, attention, 2ull, 2ull, 1ull, 2ull, &facts, &err);
+        backend, query, key, value, attention, 2ull, 2ull, 1ull, 2ull, 1, &facts, &err);
     YVEX_TEST_ASSERT(
         rc == YVEX_OK && facts.kernel_launches == 1ull &&
             facts.device_synchronizations == 1ull &&
@@ -1042,6 +1042,18 @@ static int quant_cuda_dense_transformer(yvex_backend *backend)
             YVEX_TEST_ASSERT(fabsf(attention_output[index * 2ull] - expected0) < 1e-6f &&
                                  fabsf(attention_output[index * 2ull + 1ull] - expected1) < 1e-6f,
                              "second causal row uses stable grouped-query softmax");
+        rc = yvex_cuda_transformer_gqa(
+            backend, query, key, value, attention, 2ull, 2ull, 1ull, 2ull, 0,
+            &facts, &err);
+        YVEX_TEST_ASSERT(
+            rc == YVEX_OK && yvex_backend_tensor_read(
+                                 backend, attention, attention_output,
+                                 sizeof(attention_output), &err) == YVEX_OK,
+            "full grouped-query attention publishes one bounded output");
+        for (index = 0ull; index < 4ull; ++index)
+            YVEX_TEST_ASSERT(fabsf(attention_output[index * 2ull] - expected0) < 1e-6f &&
+                                 fabsf(attention_output[index * 2ull + 1ull] - expected1) < 1e-6f,
+                             "non-causal rows attend the complete packed sequence");
     }
     YVEX_TEST_ASSERT(
         quant_cuda_tensor(backend, "gate", YVEX_DTYPE_F32, gate_input,
@@ -1093,6 +1105,151 @@ static int quant_cuda_dense_transformer(yvex_backend *backend)
             yvex_backend_tensor_release(backend, &up, &err) == YVEX_OK &&
             yvex_backend_tensor_release(backend, &product, &err) == YVEX_OK,
         "dense transformer test tensors release cleanly");
+    return 0;
+}
+
+static int quant_cuda_omni_transformer(yvex_backend *backend)
+{
+    yvex_device_tensor *input = NULL, *output = NULL, *first = NULL, *second = NULL;
+    yvex_device_tensor *third = NULL, *table = NULL, *update = NULL, *residual = NULL;
+    float silu_input[4] = {-2.0f, -0.5f, 0.5f, 2.0f}, silu_output[4];
+    float split_input[12] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+    float swiglu_input[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+    float split_first[4], split_second[4], split_third[4], swiglu_output[4];
+    float modulation_input[4] = {1, 2, 3, 4}, modulation_output[4];
+    float modulation_table[24] = {
+        0.25f, -0.5f, 0.5f, 0.25f, 2, 3, 0, 0, 0, 0, 0, 0,
+        -1, 1, -0.25f, 0.75f, -2, 4, 0, 0, 0, 0, 0, 0,
+    };
+    float update_values[4] = {2, 3, 4, 5}, residual_values[4] = {10, 20, 30, 40};
+    float gated_output[4];
+    unsigned int indices[2] = {1u, 0u};
+    yvex_backend_cuda_operation_facts facts;
+    yvex_error err;
+    unsigned long long index;
+
+    YVEX_TEST_ASSERT(
+        quant_cuda_tensor(backend, "omni-silu-input", YVEX_DTYPE_F32, silu_input,
+                          sizeof(silu_input), &input, &err) &&
+            quant_cuda_tensor(backend, "omni-silu-output", YVEX_DTYPE_F32, NULL,
+                              sizeof(silu_output), &output, &err) &&
+            yvex_cuda_transformer_silu(
+                backend, input, output, 4ull, 1, &facts, &err) == YVEX_OK &&
+            yvex_backend_tensor_read(
+                backend, output, silu_output, sizeof(silu_output), &err) == YVEX_OK,
+        "Omni timestep/AdaLN SiLU executes with explicit BF16 publication");
+    for (index = 0ull; index < 4ull; ++index) {
+        float expected = yvex_quant_bf16_decode(yvex_quant_bf16_encode(
+            silu_input[index] / (1.0f + expf(-silu_input[index]))));
+        YVEX_TEST_ASSERT(silu_output[index] == expected,
+                         "Omni SiLU matches the independent BF16 scalar policy");
+    }
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_release(backend, &output, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &input, &err) == YVEX_OK &&
+            quant_cuda_tensor(backend, "omni-split-input", YVEX_DTYPE_F32, split_input,
+                              sizeof(split_input), &input, &err) &&
+            quant_cuda_tensor(backend, "omni-split-first", YVEX_DTYPE_F32, NULL,
+                              sizeof(split_first), &first, &err) &&
+            quant_cuda_tensor(backend, "omni-split-second", YVEX_DTYPE_F32, NULL,
+                              sizeof(split_second), &second, &err) &&
+            quant_cuda_tensor(backend, "omni-split-third", YVEX_DTYPE_F32, NULL,
+                              sizeof(split_third), &third, &err) &&
+            yvex_cuda_transformer_split_three(
+                backend, input, first, second, third, 2ull, 2ull, &facts, &err) == YVEX_OK &&
+            yvex_backend_tensor_read(
+                backend, first, split_first, sizeof(split_first), &err) == YVEX_OK &&
+            yvex_backend_tensor_read(
+                backend, second, split_second, sizeof(split_second), &err) == YVEX_OK &&
+            yvex_backend_tensor_read(
+                backend, third, split_third, sizeof(split_third), &err) == YVEX_OK,
+        "Omni fused QKV rows split without crossing row boundaries");
+    YVEX_TEST_ASSERT(
+        split_first[0] == 1 && split_first[1] == 2 && split_first[2] == 7 && split_first[3] == 8 &&
+            split_second[0] == 3 && split_second[1] == 4 && split_second[2] == 9 && split_second[3] == 10 &&
+            split_third[0] == 5 && split_third[1] == 6 && split_third[2] == 11 && split_third[3] == 12,
+        "Omni fused QKV split preserves each terminal role");
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_release(backend, &input, &err) == YVEX_OK &&
+            quant_cuda_tensor(backend, "omni-swiglu-input", YVEX_DTYPE_F32,
+                              swiglu_input, sizeof(swiglu_input), &input, &err) &&
+        yvex_cuda_transformer_swiglu_split_bf16(
+            backend, input, first, 2ull, 2ull, &facts, &err) == YVEX_OK &&
+            yvex_backend_tensor_read(
+                backend, first, swiglu_output, sizeof(swiglu_output), &err) == YVEX_OK,
+        "Omni combined FFN projection executes source-order SwiGLU");
+    for (index = 0ull; index < 4ull; ++index) {
+        unsigned long long row = index / 2ull, column = index % 2ull;
+        float hidden = swiglu_input[row * 4ull + column];
+        float gate = swiglu_input[row * 4ull + 2ull + column];
+        float activated = yvex_quant_bf16_decode(yvex_quant_bf16_encode(
+            gate / (1.0f + expf(-gate))));
+        float expected = yvex_quant_bf16_decode(yvex_quant_bf16_encode(hidden * activated));
+        YVEX_TEST_ASSERT(swiglu_output[index] == expected,
+                         "Omni source-order SwiGLU matches the BF16 scalar policy");
+    }
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_release(backend, &third, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &second, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &first, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &input, &err) == YVEX_OK &&
+            quant_cuda_tensor(backend, "omni-modulation-input", YVEX_DTYPE_F32,
+                              modulation_input, sizeof(modulation_input), &input, &err) &&
+            quant_cuda_tensor(backend, "omni-modulation-table", YVEX_DTYPE_F32,
+                              modulation_table, sizeof(modulation_table), &table, &err) &&
+            quant_cuda_tensor(backend, "omni-modulation-output", YVEX_DTYPE_F32, NULL,
+                              sizeof(modulation_output), &output, &err) &&
+            yvex_cuda_transformer_modulate_bf16(
+                backend, input, table, indices, output, 2ull, 2ull, 2ull, 6ull,
+                0u, 1u, &facts, &err) == YVEX_OK && facts.h2d_bytes == sizeof(indices) &&
+            yvex_backend_tensor_read(backend, output, modulation_output,
+                                     sizeof(modulation_output), &err) == YVEX_OK,
+        "Omni row-indexed AdaLN modulation executes transactionally");
+    for (index = 0ull; index < 4ull; ++index) {
+        unsigned long long row = index / 2ull, column = index % 2ull;
+        unsigned long long base = indices[row] * 12ull;
+        float factor = yvex_quant_bf16_decode(yvex_quant_bf16_encode(
+            1.0f + modulation_table[base + 2ull + column]));
+        float value = yvex_quant_bf16_decode(yvex_quant_bf16_encode(
+            modulation_input[index] * factor));
+        float expected = yvex_quant_bf16_decode(yvex_quant_bf16_encode(
+            value + modulation_table[base + column]));
+        YVEX_TEST_ASSERT(modulation_output[index] == expected,
+                         "Omni AdaLN modulation matches the selected BF16 table row");
+    }
+    YVEX_TEST_ASSERT(
+        quant_cuda_tensor(backend, "omni-update", YVEX_DTYPE_F32, update_values,
+                          sizeof(update_values), &update, &err) &&
+            quant_cuda_tensor(backend, "omni-residual", YVEX_DTYPE_F32, residual_values,
+                              sizeof(residual_values), &residual, &err) &&
+            yvex_cuda_transformer_gated_residual_bf16(
+                backend, residual, table, indices, update, output, 2ull, 2ull, 2ull, 6ull,
+                2u, &facts, &err) == YVEX_OK &&
+            yvex_backend_tensor_read(
+                backend, output, gated_output, sizeof(gated_output), &err) == YVEX_OK,
+        "Omni row-indexed gated residual executes transactionally");
+    for (index = 0ull; index < 4ull; ++index) {
+        unsigned long long row = index / 2ull, column = index % 2ull;
+        unsigned long long base = indices[row] * 12ull + 4ull + column;
+        float gated = yvex_quant_bf16_decode(yvex_quant_bf16_encode(
+            modulation_table[base] * update_values[index]));
+        float expected = yvex_quant_bf16_decode(yvex_quant_bf16_encode(
+            residual_values[index] + gated));
+        YVEX_TEST_ASSERT(gated_output[index] == expected,
+                         "Omni gated residual matches the selected BF16 table row");
+    }
+    YVEX_TEST_ASSERT(
+        yvex_cuda_transformer_modulate_bf16(
+            backend, input, table, (unsigned int[]){2u, 0u}, output,
+            2ull, 2ull, 2ull, 6ull, 0u, 1u, &facts, &err) == YVEX_ERR_FORMAT,
+        "Omni AdaLN refuses an out-of-range row before device mutation");
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_release(backend, &residual, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &update, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &output, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &table, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &input, &err) == YVEX_OK,
+        "Omni transformer activation tensors release cleanly");
     return 0;
 }
 
@@ -1297,6 +1454,8 @@ int yvex_cuda_test_quant_qtype(void)
                      "transformer envelope physical facts");
     YVEX_TEST_ASSERT(quant_cuda_dense_transformer(backend) == 0,
                      "dense transformer activation primitives");
+    YVEX_TEST_ASSERT(quant_cuda_omni_transformer(backend) == 0,
+                     "Omni transformer activation primitives");
     yvex_backend_close(backend);
     return quant_cuda_refusals(&options);
 }
