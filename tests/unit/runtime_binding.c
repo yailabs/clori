@@ -6,6 +6,7 @@
 #include <yvex/artifact.h>
 #include <yvex/gguf.h>
 #include <yvex/internal/artifact.h>
+#include <yvex/internal/artifact_lowering.h>
 #include <yvex/internal/backend.h>
 #include <yvex/internal/compilation.h>
 #include <yvex/internal/core.h>
@@ -1277,7 +1278,7 @@ static void fixture_close(binding_fixture *fixture)
     yvex_materialization_session_close(fixture->materialization);
     yvex_materialization_plan_close(fixture->materialization_plan);
     if (fixture->map)
-        yvex_model_register_deepseek_v4()->lowering.close(fixture->map);
+        yvex_model_register_deepseek_v4()->lowering.map->close(fixture->map);
     yvex_tensor_table_close(fixture->tensors);
     yvex_gguf_close(fixture->gguf);
     yvex_artifact_close(fixture->artifact);

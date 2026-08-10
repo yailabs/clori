@@ -149,6 +149,44 @@ typedef struct yvex_artifact_lowering_allocator {
 } yvex_artifact_lowering_allocator;
 
 typedef struct yvex_artifact_lowering_map yvex_artifact_lowering_map;
+struct yvex_transform_ir;
+
+typedef struct yvex_artifact_lowering_api {
+    int (*build)(yvex_artifact_lowering_map **out,
+                 const struct yvex_transform_ir *transform_ir,
+                 const yvex_artifact_lowering_policy *policy,
+                 yvex_artifact_lowering_failure *failure,
+                 yvex_error *err);
+    int (*build_with_allocator)(yvex_artifact_lowering_map **out,
+                                const struct yvex_transform_ir *transform_ir,
+                                const yvex_artifact_lowering_policy *policy,
+                                const yvex_artifact_lowering_allocator *allocator,
+                                yvex_artifact_lowering_failure *failure,
+                                yvex_error *err);
+    void (*close)(yvex_artifact_lowering_map *map);
+    const yvex_artifact_lowering_summary *(*summary)(
+        const yvex_artifact_lowering_map *map);
+    const yvex_artifact_lowering_descriptor *(*descriptor_at)(
+        const yvex_artifact_lowering_map *map, unsigned long long index);
+    const yvex_artifact_lowering_contribution *(*contribution_at)(
+        const yvex_artifact_lowering_map *map, unsigned long long index);
+    const yvex_artifact_lowering_descriptor *(*find_source)(
+        const yvex_artifact_lowering_map *map, const char *source_name);
+    const yvex_artifact_lowering_descriptor *(*find_emitted)(
+        const yvex_artifact_lowering_map *map, const char *emitted_name);
+    const yvex_artifact_lowering_descriptor *(*find_role)(
+        const yvex_artifact_lowering_map *map, yvex_tensor_role role,
+        yvex_tensor_scope scope, unsigned long long layer_index,
+        unsigned long long predictor_index);
+    const yvex_artifact_lowering_metadata *(*metadata_at)(
+        const yvex_artifact_lowering_map *map, unsigned long long index);
+    const yvex_artifact_lowering_metadata *(*metadata_find)(
+        const yvex_artifact_lowering_map *map, const char *key);
+    const char *(*transform_name)(yvex_artifact_lowering_transform transform);
+    const char *(*failure_name)(yvex_artifact_lowering_failure_code code);
+} yvex_artifact_lowering_api;
+
+extern const yvex_artifact_lowering_api yvex_artifact_lowering_operations;
 
 #ifdef __cplusplus
 }

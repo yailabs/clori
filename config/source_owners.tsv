@@ -6,7 +6,7 @@ include/yvex/core.h	abi	abi.core	generic	public	public-abi	repository	interface	
 include/yvex/gguf.h	abi	abi.gguf	generic	public	public-abi	repository	interface	none
 include/yvex/graph.h	abi	abi.graph	generic	public	public-abi	repository	interface	none
 include/yvex/internal/artifact.h	artifact	artifact.internal	generic	private	internal-abi	gguf,model,runtime	interface	none
-include/yvex/internal/artifact_lowering.h	model.compilation	model.compilation.artifact_lowering	generic	private	internal-abi	model.family,model.target,graph.family,quant	interface	none
+include/yvex/internal/artifact_lowering.h	gguf	gguf.artifact_lowering	generic	private	internal-abi	model.family,model.target,graph.family,quant	interface	none
 include/yvex/internal/conversation.h	model	model.conversation_protocol	generic	private	internal-abi	model.family,tokenizer,server	interface	none
 include/yvex/internal/candidate.h	graph	graph.candidate	generic	private	internal-abi	graph,runtime,tests	interface	none
 include/yvex/internal/backend.h	backend	backend.internal	generic	private	internal-abi	graph,runtime,cli	interface	none
@@ -124,6 +124,7 @@ src/gguf/descriptor.c	gguf	gguf.descriptor	generic	private	reusable-algorithm	ar
 src/gguf/file_sink.c	gguf	gguf.file_sink	generic	private	transactional-io	artifact,model,quant	implementation	none
 src/gguf/imatrix.c	gguf	gguf.imatrix	generic	private	file-serialization	artifact,model,quant	implementation	none
 src/gguf/layout_integrity.c	gguf	gguf.layout_integrity	generic	private	reusable-algorithm	artifact,model,quant	implementation	none
+src/gguf/lowering.c	gguf	gguf.artifact_lowering	generic	private	resource-lifecycle	model.family,model.target,graph.family,quant	implementation	none
 src/gguf/qtype.c	gguf	gguf.qtype	generic	private	reusable-algorithm	artifact,model,quant	implementation	none
 src/gguf/quant_block.c	gguf	gguf.quant_block	generic	private	reusable-algorithm	artifact,model,quant	implementation	none
 src/gguf/quant_compute.c	gguf	gguf.quant_compute	generic	private	reusable-algorithm	artifact,model,quant	implementation	none

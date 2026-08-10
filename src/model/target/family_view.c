@@ -6,6 +6,7 @@
  */
 #include <yvex/internal/model_target.h>
 
+#include <yvex/internal/artifact_lowering.h>
 #include <yvex/internal/compilation.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/families/deepseek_v4.h>
@@ -501,7 +502,7 @@ int yvex_model_target_family_mapping_report_build(
     rc = family->lowering.build(&map, architecture, transform_ir, &map_failure, err);
     if (rc != YVEX_OK) {
         refusal_stage = "gguf-lowering";
-        refusal_reason = family->lowering.failure_name(map_failure.code);
+        refusal_reason = family->lowering.map->failure_name(map_failure.code);
         refusal_source = map_failure.source_name[0] ? map_failure.source_name : "none";
         refusal_emitted = map_failure.emitted_name[0] ? map_failure.emitted_name : "none";
     }
@@ -511,7 +512,7 @@ cleanup:
     family->ir.close(architecture);
     yvex_source_tensor_snapshot_release(snapshot);
     if (rc != YVEX_OK) {
-        family->lowering.close(map);
+        family->lowering.map->close(map);
         report->status = "mapping-plan-blocked";
         report->exit_code = 5;
         yvex_model_target_report_add_error(
@@ -526,7 +527,7 @@ cleanup:
     report->family_lowering = map;
     rc = yvex_model_target_report_project_family_detail(report, err);
     if (rc != YVEX_OK) {
-        family->lowering.close(map);
+        family->lowering.map->close(map);
         report->family_lowering = NULL;
         return rc;
     }
@@ -552,7 +553,7 @@ cleanup:
 static int project_map(yvex_model_target_report *report, yvex_error *err)
 {
     const yvex_model_family_api *family = yvex_model_register_deepseek_v4();
-    const yvex_artifact_lowering_summary *source = family->lowering.summary(
+    const yvex_artifact_lowering_summary *source = family->lowering.map->summary(
         (const yvex_artifact_lowering_map *)report->family_lowering);
     yvex_model_target_map_projection *out = &report->detail.map;
     unsigned int index;
@@ -873,7 +874,7 @@ int yvex_model_target_report_project_family_detail(
 void yvex_model_target_report_close_family_detail(yvex_model_target_report *report)
 {
     if (!report) return;
-    yvex_model_register_deepseek_v4()->lowering.close(
+    yvex_model_register_deepseek_v4()->lowering.map->close(
         (yvex_artifact_lowering_map *)report->family_lowering);
     yvex_transform_ir_release((yvex_transform_ir **)&report->family_transformation);
     if (report->family_architecture_kind == YVEX_MODEL_TARGET_FAMILY_ARCHITECTURE_DEEPSEEK) {

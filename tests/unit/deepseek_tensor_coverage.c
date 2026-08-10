@@ -1,6 +1,7 @@
 /* Exact DeepSeek tensor coverage, mutation, scale, and lifetime tests. */
 #include "tests/test.h"
 
+#include <yvex/internal/artifact_lowering.h>
 #include <yvex/internal/compilation.h>
 #include <yvex/internal/families/deepseek_v4.h>
 #include <yvex/internal/gguf.h>
@@ -836,7 +837,7 @@ static int test_mapping_target_scale(void)
     YVEX_TEST_ASSERT(fixture_build_map(0, &map, &failure, NULL) == YVEX_OK &&
                          map,
                      "complete source-to-GGUF mapping builds");
-    summary = yvex_model_register_deepseek_v4()->lowering.summary(map);
+    summary = yvex_model_register_deepseek_v4()->lowering.map->summary(map);
     YVEX_TEST_ASSERT(summary && summary->complete &&
                          summary->source_contribution_count == 72317u &&
                          summary->descriptor_count == 1409u &&
@@ -853,15 +854,15 @@ static int test_mapping_target_scale(void)
     for (descriptor_index = 0u;
          descriptor_index < summary->descriptor_count; ++descriptor_index) {
         const yvex_artifact_lowering_descriptor *current =
-            yvex_model_register_deepseek_v4()->lowering.at(map, descriptor_index);
+            yvex_model_register_deepseek_v4()->lowering.map->descriptor_at(map, descriptor_index);
         unsigned long long local;
         YVEX_TEST_ASSERT(current && current->logical_rank > 0u &&
                              current->logical_rank <= YVEX_TENSOR_MAX_DIMS &&
                              current->contribution_count > 0u,
                          "every descriptor has logical geometry and sources");
-        YVEX_TEST_ASSERT(yvex_model_register_deepseek_v4()->lowering.find_emitted(
+        YVEX_TEST_ASSERT(yvex_model_register_deepseek_v4()->lowering.map->find_emitted(
                              map, current->emitted_name) == current &&
-                             yvex_model_register_deepseek_v4()->lowering.find_role(
+                             yvex_model_register_deepseek_v4()->lowering.map->find_role(
                                  map, current->role, current->scope,
                                  current->layer_index,
                                  current->predictor_index) == current,
@@ -898,12 +899,12 @@ static int test_mapping_target_scale(void)
         }
         for (local = 0u; local < current->contribution_count; ++local) {
             const yvex_artifact_lowering_contribution *contribution =
-                yvex_model_register_deepseek_v4()->lowering.contribution_at(
+                yvex_model_register_deepseek_v4()->lowering.map->contribution_at(
                     map, current->contribution_offset + local);
             YVEX_TEST_ASSERT(contribution &&
                                  contribution->descriptor_index ==
                                      descriptor_index &&
-                                 yvex_model_register_deepseek_v4()->lowering.find_source(
+                                 yvex_model_register_deepseek_v4()->lowering.map->find_source(
                                      map, contribution->source_name) == current,
                              "every source contribution resolves to one descriptor");
             if (current->transform ==
@@ -920,10 +921,10 @@ static int test_mapping_target_scale(void)
         if (current->transform ==
             YVEX_ARTIFACT_LOWERING_TRANSFORM_FP8_E4M3_E8M0) {
             const yvex_artifact_lowering_contribution *primary =
-                yvex_model_register_deepseek_v4()->lowering.contribution_at(
+                yvex_model_register_deepseek_v4()->lowering.map->contribution_at(
                     map, current->contribution_offset);
             const yvex_artifact_lowering_contribution *scale =
-                yvex_model_register_deepseek_v4()->lowering.contribution_at(
+                yvex_model_register_deepseek_v4()->lowering.map->contribution_at(
                     map, current->contribution_offset + 1u);
             YVEX_TEST_ASSERT(current->contribution_count == 2u && primary &&
                                  scale &&
@@ -940,7 +941,7 @@ static int test_mapping_target_scale(void)
         if (current->transform !=
             YVEX_ARTIFACT_LOWERING_TRANSFORM_EXPERT_MXFP4) {
             const yvex_artifact_lowering_contribution *primary =
-                yvex_model_register_deepseek_v4()->lowering.contribution_at(
+                yvex_model_register_deepseek_v4()->lowering.map->contribution_at(
                     map, current->contribution_offset);
             unsigned int dimension;
 
@@ -974,7 +975,7 @@ static int test_mapping_target_scale(void)
          reference_index < sizeof(pinned_names) / sizeof(pinned_names[0]);
          ++reference_index) {
         const yvex_artifact_lowering_descriptor *reference =
-            yvex_model_register_deepseek_v4()->lowering.find_role(
+            yvex_model_register_deepseek_v4()->lowering.map->find_role(
                 map, pinned_names[reference_index].role,
                 pinned_names[reference_index].scope,
                 pinned_names[reference_index].layer,
@@ -989,12 +990,12 @@ static int test_mapping_target_scale(void)
          contribution_index < summary->source_contribution_count;
          ++contribution_index) {
         const yvex_artifact_lowering_contribution *contribution =
-            yvex_model_register_deepseek_v4()->lowering.contribution_at(map, contribution_index);
+            yvex_model_register_deepseek_v4()->lowering.map->contribution_at(map, contribution_index);
         YVEX_TEST_ASSERT(contribution &&
                              contribution->source_row_index < 72317u,
                          "descriptor index iteration covers all source rows");
     }
-    descriptor = yvex_model_register_deepseek_v4()->lowering.find_source(
+    descriptor = yvex_model_register_deepseek_v4()->lowering.map->find_source(
         map, "layers.2.ffn.experts.255.w1.scale");
     YVEX_TEST_ASSERT(descriptor &&
                          descriptor->role == YVEX_TENSOR_ROLE_MOE_EXPERT_GATE &&
@@ -1011,7 +1012,7 @@ static int test_mapping_target_scale(void)
                          strcmp(descriptor->emitted_name,
                                 "blk.2.ffn_gate_exps.weight") == 0,
                      "routed experts aggregate and repack to official MXFP4 shape");
-    descriptor = yvex_model_register_deepseek_v4()->lowering.find_emitted(
+    descriptor = yvex_model_register_deepseek_v4()->lowering.map->find_emitted(
         map, "blk.0.ffn_gate_tid2eid.weight");
     YVEX_TEST_ASSERT(descriptor &&
                          descriptor->transform ==
@@ -1020,7 +1021,7 @@ static int test_mapping_target_scale(void)
                          descriptor->logical_dims[0] == 6u &&
                          descriptor->logical_dims[1] == 129280u,
                      "hash routing table has checked official I32 projection");
-    descriptor = yvex_model_register_deepseek_v4()->lowering.find_role(
+    descriptor = yvex_model_register_deepseek_v4()->lowering.map->find_role(
         map, YVEX_TENSOR_ROLE_ATTENTION_Q_A,
         YVEX_TENSOR_SCOPE_MAIN_LAYER, 42u,
         YVEX_ARTIFACT_LOWERING_NO_INDEX);
@@ -1032,7 +1033,7 @@ static int test_mapping_target_scale(void)
                          descriptor->name_provenance ==
                              YVEX_GGUF_NAME_PINNED_STANDARD,
                      "official attention name and logical axes match loader");
-    descriptor = yvex_model_register_deepseek_v4()->lowering.find_source(map, "mtp.0.main_proj.scale");
+    descriptor = yvex_model_register_deepseek_v4()->lowering.map->find_source(map, "mtp.0.main_proj.scale");
     YVEX_TEST_ASSERT(descriptor &&
                          descriptor->scope == YVEX_TENSOR_SCOPE_DRAFT &&
                          descriptor->name_provenance ==
@@ -1040,7 +1041,7 @@ static int test_mapping_target_scale(void)
                          strncmp(descriptor->emitted_name, "yvex.draft.v1.0.",
                                  strlen("yvex.draft.v1.0.")) == 0,
                      "DSpark survives under an explicit versioned extension");
-    metadata = yvex_model_register_deepseek_v4()->lowering.metadata_find(
+    metadata = yvex_model_register_deepseek_v4()->lowering.map->metadata_find(
         map, "deepseek4.attention.compress_ratios");
     YVEX_TEST_ASSERT(metadata &&
                          metadata->type == YVEX_ARTIFACT_LOWERING_METADATA_U64_ARRAY &&
@@ -1048,25 +1049,25 @@ static int test_mapping_target_scale(void)
                          metadata->array_values[2] == 4u &&
                          metadata->array_values[3] == 128u,
                      "metadata plan preserves the complete trunk schedule");
-    metadata = yvex_model_register_deepseek_v4()->lowering.metadata_find(
+    metadata = yvex_model_register_deepseek_v4()->lowering.map->metadata_find(
         map, "yvex.deepseek4.dspark.runtime_supported");
     YVEX_TEST_ASSERT(metadata &&
                          metadata->type == YVEX_ARTIFACT_LOWERING_METADATA_BOOL &&
                          metadata->bool_value,
                      "DSpark metadata records the admitted target and draft runtime contract");
-    metadata = yvex_model_register_deepseek_v4()->lowering.metadata_find(
+    metadata = yvex_model_register_deepseek_v4()->lowering.map->metadata_find(
         map, "deepseek4.attention.layer_norm_rms_epsilon");
     YVEX_TEST_ASSERT(metadata &&
                          metadata->type == YVEX_ARTIFACT_LOWERING_METADATA_F64 &&
                          metadata->f64_value > 0.0,
                      "official loader RMS epsilon is planned");
-    metadata = yvex_model_register_deepseek_v4()->lowering.metadata_find(
+    metadata = yvex_model_register_deepseek_v4()->lowering.map->metadata_find(
         map, "deepseek4.expert_gating_func");
     YVEX_TEST_ASSERT(metadata &&
                          metadata->type == YVEX_ARTIFACT_LOWERING_METADATA_U64 &&
                          metadata->u64_value == 4u,
                      "official sqrt-softplus expert gating enum is planned");
-    metadata = yvex_model_register_deepseek_v4()->lowering.metadata_find(
+    metadata = yvex_model_register_deepseek_v4()->lowering.map->metadata_find(
         map, "deepseek4.swiglu_clamp_exp");
     YVEX_TEST_ASSERT(
         metadata &&
@@ -1074,23 +1075,23 @@ static int test_mapping_target_scale(void)
             metadata->array_count == 43u &&
             metadata->f64_array_values[0] > 0.0,
         "official per-layer expert clamp metadata is complete");
-    metadata = yvex_model_register_deepseek_v4()->lowering.metadata_find(
+    metadata = yvex_model_register_deepseek_v4()->lowering.map->metadata_find(
         map, "deepseek4.hyper_connection.count");
     YVEX_TEST_ASSERT(metadata && metadata->u64_value == 4u &&
-                         !yvex_model_register_deepseek_v4()->lowering.metadata_find(
+                         !yvex_model_register_deepseek_v4()->lowering.map->metadata_find(
                              map, "deepseek4.hyper_connection_count"),
                      "hyper-connection metadata uses the pinned canonical key");
     for (descriptor_index = 0u;
          descriptor_index < summary->metadata_count; ++descriptor_index) {
         unsigned long long other;
         const yvex_artifact_lowering_metadata *entry =
-            yvex_model_register_deepseek_v4()->lowering.metadata_at(map, descriptor_index);
+            yvex_model_register_deepseek_v4()->lowering.map->metadata_at(map, descriptor_index);
         YVEX_TEST_ASSERT(entry && entry->key[0],
                          "every planned metadata entry has a key");
         for (other = descriptor_index + 1u;
              other < summary->metadata_count; ++other) {
             const yvex_artifact_lowering_metadata *candidate =
-                yvex_model_register_deepseek_v4()->lowering.metadata_at(map, other);
+                yvex_model_register_deepseek_v4()->lowering.map->metadata_at(map, other);
             YVEX_TEST_ASSERT(candidate && strcmp(entry->key, candidate->key) != 0,
                              "metadata keys are unique");
         }
@@ -1098,11 +1099,11 @@ static int test_mapping_target_scale(void)
     identity = summary->mapping_identity;
     YVEX_TEST_ASSERT(fixture_build_map(1, &shuffled, &failure, NULL) == YVEX_OK &&
                          shuffled &&
-                         yvex_model_register_deepseek_v4()->lowering.summary(shuffled)->
+                         yvex_model_register_deepseek_v4()->lowering.map->summary(shuffled)->
                                  mapping_identity == identity,
                      "mapping identity is source-discovery-order invariant");
-    yvex_model_register_deepseek_v4()->lowering.close(shuffled);
-    yvex_model_register_deepseek_v4()->lowering.close(map);
+    yvex_model_register_deepseek_v4()->lowering.map->close(shuffled);
+    yvex_model_register_deepseek_v4()->lowering.map->close(map);
     return 0;
 }
 

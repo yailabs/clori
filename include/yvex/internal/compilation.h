@@ -9,7 +9,6 @@
 #include <yvex/core.h>
 #include <yvex/model.h>
 #include <yvex/source.h>
-#include <yvex/internal/artifact_lowering.h>
 #include <yvex/internal/source_payload.h>
 
 #ifdef __cplusplus

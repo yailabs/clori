@@ -13,6 +13,7 @@
 #include <string.h>
 
 #include <yvex/qtype.h>
+#include <yvex/internal/artifact_lowering.h>
 
 #define REF_PI 3.14159265358979323846264338327950288
 

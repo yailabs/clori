@@ -4,6 +4,7 @@
  * supplies only source roles, topology, numerical policy, and operator composition.
  */
 #include "src/graph/private.h"
+#include <yvex/internal/artifact_lowering.h>
 #include <yvex/internal/families/deepseek_v4.h>
 #include <yvex/internal/family_catalog.h>
 #include <yvex/internal/tokenizer.h>
@@ -1216,7 +1217,7 @@ static int handoff_resolve(yvex_deepseek_payload_handoff *handoff,
                            const yvex_deepseek_payload_handoff_options *options,
                            yvex_deepseek_payload_failure *failure, yvex_error *err) {
     const yvex_model_family_lowering_api *lowering = yvex_model_deepseek_lowering_api();
-    const yvex_artifact_lowering_summary *map_summary = lowering->summary(handoff->map);
+    const yvex_artifact_lowering_summary *map_summary = lowering->map->summary(handoff->map);
     const yvex_transform_binding_summary *binding_summary =
         yvex_transform_binding_summary_get(handoff->binding);
     unsigned long long contribution_index;
@@ -1251,7 +1252,7 @@ static int handoff_resolve(yvex_deepseek_payload_handoff *handoff,
     for (contribution_index = 0u; contribution_index < map_summary->source_contribution_count;
          ++contribution_index) {
         const yvex_artifact_lowering_contribution *contribution =
-            lowering->contribution_at(handoff->map, contribution_index);
+            lowering->map->contribution_at(handoff->map, contribution_index);
         const yvex_source_payload_range *range;
         const yvex_transform_source_value *source;
         const yvex_artifact_lowering_descriptor *descriptor;
@@ -1261,7 +1262,7 @@ static int handoff_resolve(yvex_deepseek_payload_handoff *handoff,
                                   contribution_index, YVEX_ERR_FORMAT, err,
                                   "mapping contribution is incomplete");
         }
-        descriptor = lowering->at(handoff->map, contribution->descriptor_index);
+        descriptor = lowering->map->descriptor_at(handoff->map, contribution->descriptor_index);
         source = yvex_transform_ir_source_find(
             handoff->transform_ir, contribution->source_name);
         range = yvex_source_payload_range_find(handoff->session, contribution->source_name);
@@ -1323,7 +1324,7 @@ static int handoff_resolve(yvex_deepseek_payload_handoff *handoff,
     for (descriptor_index = 0u; descriptor_index < map_summary->descriptor_count;
          ++descriptor_index) {
         const yvex_artifact_lowering_descriptor *descriptor =
-            lowering->at(handoff->map, descriptor_index);
+            lowering->map->descriptor_at(handoff->map, descriptor_index);
         unsigned long long end;
 
         if (!descriptor || descriptor->contribution_count == 0u ||
@@ -1484,7 +1485,7 @@ static void payload_close(yvex_deepseek_payload_handoff *handoff) {
     yvex_source_payload_plan_close(handoff->plan);
     yvex_transform_binding_release(&handoff->binding);
     (void)yvex_source_payload_session_release(&handoff->session, NULL, NULL);
-    lowering->close(handoff->map);
+    lowering->map->close(handoff->map);
     yvex_transform_ir_release(&handoff->transform_ir);
     free(handoff->manifest_path);
     free(handoff->models_root);
@@ -1722,8 +1723,8 @@ static int deepseek_terminal_find(
     const yvex_artifact_lowering_descriptor *row, *first;
 
     if (!map || !name || !out || !lowering) return 0;
-    row = lowering->find_emitted(map, name);
-    first = lowering->at(map, 0ull);
+    row = lowering->map->find_emitted(map, name);
+    first = lowering->map->descriptor_at(map, 0ull);
     if (!row || !first) return 0;
     *out = (yvex_materialization_terminal){
         (unsigned long long)(row - first), row->role, row->collection, row->scope,
@@ -1737,7 +1738,7 @@ int yvex_deepseek_materialization_projection(
 {
     const yvex_model_family_lowering_api *lowering = yvex_model_deepseek_lowering_api();
     const yvex_artifact_lowering_summary *summary =
-        map && lowering ? lowering->summary(map) : NULL;
+        map && lowering ? lowering->map->summary(map) : NULL;
 
     if (!out || !summary || !summary->complete || !summary->mapping_identity) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "deepseek.materialization",

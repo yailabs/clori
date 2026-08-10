@@ -4,6 +4,7 @@
  */
 #define _POSIX_C_SOURCE 200809L
 #include <yvex/internal/artifact.h>
+#include <yvex/internal/artifact_lowering.h>
 #include <yvex/internal/compilation.h>
 #include <yvex/internal/quant_numeric.h>
 #include <yvex/internal/families/deepseek_v4.h>
@@ -87,7 +88,7 @@ static void quant_print_terminal_context(
     if (!handoff || ordinal == ULLONG_MAX) return;
     terminal = yvex_transform_ir_terminal_at(
         yvex_model_register_deepseek_v4()->payload.transform_ir(handoff), ordinal);
-    descriptor = yvex_model_register_deepseek_v4()->lowering.at(
+    descriptor = yvex_model_register_deepseek_v4()->lowering.map->descriptor_at(
         yvex_model_register_deepseek_v4()->payload.map(handoff), ordinal);
     if (!terminal || !descriptor) return;
     fprintf(stderr,
