@@ -64,7 +64,7 @@
 	test-runtime-sanitizers-live test-materialize-live-plan \
 	test-materialize-live test-minimax-audio-artifact-live \
 	test-minimax-video-artifact-live test-minimax-text-conditioning-live \
-	test-minimax-text-layer-live \
+	test-minimax-text-layer-live test-minimax-tokenizer-live \
 	test-attention test-attention-fixture-isolation \
 	test-attention-live-plan test-attention-live test-attention-cli-live \
 	test-attention-cuda test-quant test-quant-asan test-quant-ubsan \
@@ -156,6 +156,7 @@ YVEX_VARIANT_BINDING_DIR ?=
 YVEX_RUNTIME_BENCHMARK_DIR ?=
 YVEX_RUNTIME_BINDING ?=
 YVEX_TOKENIZER_REFERENCE_PYTHON ?= /tmp/yvex-tokenizer-oracle/bin/python
+MINIMAX_H3_TEXT_ENCODER_TOKENS ?= 1
 PINNED_GGML_ROOT ?= /tmp/yvex-ggml-af97976
 PINNED_GGML_BUILD ?= $(PINNED_GGML_ROOT)/build-yvex
 
@@ -831,9 +832,16 @@ test-minimax-text-encoder-live: $(MINIMAX_TEXT_LIVE_RUNNER)
 		echo "MINIMAX_H3_TEXT_ARTIFACT is required" >&2; exit 2; }
 	@test -n "$(MINIMAX_H3_TEXT_ENCODER_REFERENCE)" || { \
 		echo "MINIMAX_H3_TEXT_ENCODER_REFERENCE is required" >&2; exit 2; }
-	$(MINIMAX_TEXT_LIVE_RUNNER) "$(MINIMAX_H3_TEXT_ARTIFACT)" 1 \
+	$(MINIMAX_TEXT_LIVE_RUNNER) "$(MINIMAX_H3_TEXT_ARTIFACT)" \
+		"$(MINIMAX_H3_TEXT_ENCODER_TOKENS)" \
 		"$(BUILD_DIR)/tests/minimax_h3_text_encoder.f32" \
 		"$(MINIMAX_H3_TEXT_ENCODER_REFERENCE)" encoder50
+
+test-minimax-tokenizer-live: $(YVEX_BIN) tests/cli/minimax_tokenizer.sh
+	@test -n "$(MINIMAX_H3_TEXT_ARTIFACT)" || { \
+		echo "MINIMAX_H3_TEXT_ARTIFACT is required" >&2; exit 2; }
+	YVEX_BIN="$(YVEX_BIN)" MINIMAX_H3_TEXT_ARTIFACT="$(MINIMAX_H3_TEXT_ARTIFACT)" \
+		sh tests/cli/minimax_tokenizer.sh
 
 test-attention: $(TEST_RUNNER) test-attention-fixture-isolation
 	$(TEST_RUNNER)

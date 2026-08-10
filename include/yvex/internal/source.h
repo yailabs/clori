@@ -470,8 +470,7 @@ typedef struct {
     unsigned long long payload_bytes_read;
     int complete;
 } yvex_source_acquisition_facts;
-void yvex_source_acquisition_options_default(
-    yvex_source_acquisition_options *options);
+void yvex_source_acquisition_options_default(yvex_source_acquisition_options *options);
 int yvex_source_acquisition_open(
     yvex_source_acquisition **out,
     const yvex_source_acquisition_options *options,
@@ -481,8 +480,11 @@ void yvex_source_acquisition_release(yvex_source_acquisition **acquisition);
 const yvex_source_acquisition_facts *yvex_source_acquisition_facts_get(
     const yvex_source_acquisition *acquisition);
 const yvex_source_acquisition_file *yvex_source_acquisition_file_at(
-    const yvex_source_acquisition *acquisition,
-    unsigned long long index);
+    const yvex_source_acquisition *acquisition, unsigned long long index);
+int yvex_source_acquisition_metadata_read(const yvex_source_acquisition *acquisition,
+                                          const char *source_root, const char *canonical_path,
+                                          size_t maximum_bytes, yvex_source_metadata_blob *out,
+                                          yvex_error *err);
 typedef struct {
     const char *component;
     const char *index_path;
@@ -584,10 +586,7 @@ void yvex_source_verification_add_blocker(yvex_source_verification *out,
 int yvex_source_verification_has_blocker(
     const yvex_source_verification *out,
     const char *reason);
-int yvex_source_path_join(char *out,
-                          size_t cap,
-                          const char *left,
-                          const char *right);
+int yvex_source_path_join(char *out, size_t cap, const char *left, const char *right);
 char *yvex_source_path_alloc(const char *left, const char *right);
 int yvex_source_ends_with(const char *text, const char *suffix);
 int yvex_source_regular_file(const char *path, unsigned long long *size);

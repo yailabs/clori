@@ -56,6 +56,7 @@ typedef struct {
     yvex_imatrix_data *imatrix;
     yvex_quant_plan *plan;
     yvex_gguf_writer_plan *writer;
+    const char *minimax_source_root;
     yvex_imatrix_data_summary imatrix_summary;
 } quant_cli_context;
 
@@ -319,6 +320,7 @@ static int quant_cli_context_open_minimax(
     int rc;
 
     memset(context, 0, sizeof(*context));
+    context->minimax_source_root = options->source;
     if (!quant_cli_minimax_component_find(options->component,
                                           &context->minimax_component)) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "quant_cli_minimax",
@@ -567,6 +569,7 @@ static int quant_cli_writer_build(yvex_gguf_writer_plan **out, const quant_cli_c
         const yvex_minimax_h3_summary *summary = family->summary(target);
         const yvex_minimax_h3_component *component =
             family->component_at(target, context->minimax_component);
+        yvex_gguf_writer_tokenizer_input tokenizer = {0};
 
         if (!summary || !component) {
             yvex_error_set(err, YVEX_ERR_STATE, "quant_cli_writer",
@@ -585,6 +588,17 @@ static int quant_cli_writer_build(yvex_gguf_writer_plan **out, const quant_cli_c
             summary->component_manifest_identity;
         request.input.component.architecture_identity = summary->architecture_identity;
         request.input.component.role_map_identity = summary->role_map_identity;
+        if (context->minimax_component == YVEX_MINIMAX_H3_COMPONENT_TEXT_ENCODER) {
+            const yvex_minimax_h3_tokenizer_spec *spec = family->tokenizer_spec();
+            tokenizer.acquisition = family->acquisition(target);
+            tokenizer.source_root = context->minimax_source_root;
+            tokenizer.json_path = spec ? spec->json_path : NULL;
+            tokenizer.config_path = spec ? spec->config_path : NULL;
+            tokenizer.pre_tokenizer = spec ? spec->pre_tokenizer : NULL;
+            tokenizer.prompt_policy = spec ? spec->prompt_policy : NULL;
+            tokenizer.token_count = spec ? spec->token_count : 0u;
+            request.input.component.tokenizer = &tokenizer;
+        }
         return yvex_gguf_writer_plan_build(out, &request, failure, err);
     }
     request.input_class = YVEX_GGUF_WRITER_INPUT_COMPLETE_ARTIFACT;

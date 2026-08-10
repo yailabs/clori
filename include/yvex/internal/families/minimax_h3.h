@@ -223,6 +223,10 @@ typedef struct {
     int release_after_phase;
     int request_local;
 } yvex_minimax_h3_component;
+typedef struct {
+    const char *json_path, *config_path, *pre_tokenizer, *prompt_policy;
+    unsigned long long token_count;
+} yvex_minimax_h3_tokenizer_spec;
 
 typedef struct {
     yvex_minimax_h3_phase source_phase;
@@ -356,6 +360,7 @@ typedef struct {
         const yvex_minimax_h3_target *target);
     const yvex_minimax_h3_component *(*component_at)(
         const yvex_minimax_h3_target *target, unsigned long long index);
+    const yvex_minimax_h3_tokenizer_spec *(*tokenizer_spec)(void);
     const yvex_minimax_h3_phase_edge *(*phase_edge_at)(unsigned long long index);
     const yvex_minimax_h3_tensor_role *(*role_at)(
         const yvex_minimax_h3_target *target, unsigned long long index);

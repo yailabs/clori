@@ -275,6 +275,52 @@ static int writer_meta_dynamic_array(writer_metadata *entries, unsigned int *cou
     return 1;
 }
 
+static int writer_tokenizer_metadata_add(
+    writer_metadata *metadata, unsigned int *count,
+    const yvex_gguf_tokenizer_summary *tokenizer, const unsigned char *raw_json,
+    size_t raw_json_bytes, const unsigned char *raw_config, size_t raw_config_bytes,
+    const char *prompt_policy, int standalone)
+{
+    int ok = (!standalone || writer_meta_text(metadata, count, "tokenizer.ggml.model", "gpt2")) &&
+        writer_meta_text(metadata, count, "tokenizer.ggml.pre", tokenizer->pre_tokenizer) &&
+        writer_meta_dynamic_array(metadata, count, "tokenizer.ggml.tokens",
+                                  WRITER_META_TOKEN_ARRAY, YVEX_GGUF_VALUE_STRING,
+                                  tokenizer->token_count) &&
+        writer_meta_dynamic_array(metadata, count, "tokenizer.ggml.token_type",
+                                  WRITER_META_TOKEN_TYPE_ARRAY, YVEX_GGUF_VALUE_INT32,
+                                  tokenizer->token_count) &&
+        writer_meta_dynamic_array(metadata, count, "tokenizer.ggml.merges",
+                                  WRITER_META_MERGE_ARRAY, YVEX_GGUF_VALUE_STRING,
+                                  tokenizer->merge_count);
+    if (ok && standalone && tokenizer->bos_token_present)
+        ok = writer_meta_u32(metadata, count, "tokenizer.ggml.bos_token_id",
+                             tokenizer->bos_token_id);
+    if (ok && standalone && tokenizer->eos_token_present)
+        ok = writer_meta_u32(metadata, count, "tokenizer.ggml.eos_token_id",
+                             tokenizer->eos_token_id);
+    if (ok && tokenizer->pad_token_present)
+        ok = writer_meta_u32(metadata, count, "tokenizer.ggml.padding_token_id",
+                             tokenizer->pad_token_id);
+    return ok && writer_meta_bool(metadata, count, "tokenizer.ggml.add_bos_token",
+                                  tokenizer->add_bos_token) &&
+           writer_meta_bool(metadata, count, "tokenizer.ggml.add_eos_token",
+                            tokenizer->add_eos_token) &&
+           (!standalone || writer_meta_text(metadata, count, "yvex.tokenizer.prompt_policy",
+                                             prompt_policy)) &&
+           writer_meta_string(metadata, count, "tokenizer.huggingface.json", raw_json,
+                              raw_json_bytes) &&
+           writer_meta_string(metadata, count, "yvex.tokenizer.config.json", raw_config,
+                              raw_config_bytes) &&
+           writer_meta_text(metadata, count, "yvex.tokenizer.json.sha256",
+                            tokenizer->tokenizer_json_sha256) &&
+           writer_meta_text(metadata, count, "yvex.tokenizer.config.sha256",
+                            tokenizer->tokenizer_config_sha256) &&
+           writer_meta_text(metadata, count, "yvex.tokenizer.json.git_oid",
+                            tokenizer->tokenizer_json_git_oid) &&
+           writer_meta_text(metadata, count, "yvex.tokenizer.config.git_oid",
+                            tokenizer->tokenizer_config_git_oid);
+}
+
 /*
  * Serialize one staged GGUF metadata key/value pair.
  *
@@ -666,6 +712,9 @@ typedef struct {
     const yvex_quant_plan_summary *quant;
     const yvex_transform_ir *ir;
     const yvex_transform_ir_summary *transform;
+    const yvex_gguf_tokenizer_summary *tokenizer;
+    const unsigned char *raw_json, *raw_config;
+    size_t raw_json_bytes, raw_config_bytes;
     yvex_gguf_writer_plan_options options;
     yvex_gguf_writer_plan *plan;
     writer_metadata metadata[WRITER_METADATA_CAP];
@@ -676,6 +725,40 @@ typedef struct {
     yvex_gguf_writer_failure *failure;
     yvex_error *err;
 } writer_component_context;
+
+static int writer_component_tokenizer_build(writer_component_context *context)
+{
+    const yvex_gguf_writer_tokenizer_input *input = context->input->tokenizer;
+    yvex_gguf_tokenizer_failure failure;
+    int rc;
+
+    if (!input) return YVEX_OK;
+    if (!input->acquisition || !input->source_root || !input->json_path ||
+        !input->config_path || !input->pre_tokenizer || !input->prompt_policy ||
+        !input->prompt_policy[0] || !input->token_count)
+        return writer_fail(context->failure, YVEX_GGUF_WRITER_INVALID_ARGUMENT,
+                           "tokenizer", ULLONG_MAX, ULLONG_MAX, 1u, 0u,
+                           context->err, YVEX_ERR_INVALID_ARG,
+                           "complete acquired tokenizer input is required");
+    memset(&failure, 0, sizeof(failure));
+    rc = yvex_gguf_tokenizer_metadata_load_acquired(
+        &context->plan->tokenizer, input->acquisition, input->source_root,
+        input->json_path, input->config_path, input->token_count,
+        input->pre_tokenizer, context->options.maximum_owned_bytes / 2u,
+        &failure, context->err);
+    context->tokenizer = yvex_gguf_tokenizer_summary_get(context->plan->tokenizer);
+    if (rc != YVEX_OK || !context->tokenizer ||
+        !yvex_gguf_tokenizer_raw_json(context->plan->tokenizer, &context->raw_json,
+                                      &context->raw_json_bytes) ||
+        !yvex_gguf_tokenizer_raw_config(context->plan->tokenizer, &context->raw_config,
+                                        &context->raw_config_bytes))
+        return writer_fail(context->failure, YVEX_GGUF_WRITER_METADATA_INCOMPLETE,
+                           failure.field, failure.record_index, ULLONG_MAX,
+                           failure.expected, failure.actual, context->err,
+                           rc == YVEX_OK ? YVEX_ERR_FORMAT : (yvex_status)rc,
+                           "verified component tokenizer metadata did not seal");
+    return YVEX_OK;
+}
 
 static int writer_component_shape_matches(const yvex_transform_shape *logical,
                                           const yvex_quant_decision *physical,
@@ -751,9 +834,10 @@ static int writer_component_validate(writer_component_context *context) {
 
 static int writer_component_metadata_build(writer_component_context *context) {
     const yvex_gguf_writer_component_input *input = context->input;
+    int ok;
 
     memset(context->metadata, 0, sizeof(context->metadata));
-    return writer_meta_text(context->metadata, &context->metadata_count,
+    ok = writer_meta_text(context->metadata, &context->metadata_count,
                             "general.architecture", input->architecture) &&
            writer_meta_u32(context->metadata, &context->metadata_count,
                            "general.alignment", context->options.alignment) &&
@@ -799,6 +883,10 @@ static int writer_component_metadata_build(writer_component_context *context) {
             writer_meta_text(context->metadata, &context->metadata_count,
                              "yvex.physical.shape.policy",
                              "reverse-logical-fold-outer-v1"));
+    return ok && (!context->tokenizer || writer_tokenizer_metadata_add(
+        context->metadata, &context->metadata_count, context->tokenizer,
+        context->raw_json, context->raw_json_bytes, context->raw_config,
+        context->raw_config_bytes, input->tokenizer->prompt_policy, 1));
 }
 
 static writer_fixture_tensor_status writer_component_tensors_build(
@@ -894,6 +982,9 @@ static int writer_plan_build_component(
         goto allocation_failure;
     writer_plan_seed(context.plan, quant_plan, context.quant,
                      context.transform->terminal_count, &context.options);
+    rc = writer_component_tokenizer_build(&context);
+    if (rc != YVEX_OK)
+        goto build_failure;
     tensor_status = writer_component_tensors_build(&context, &failed_ordinal);
     if (tensor_status == WRITER_FIXTURE_TENSOR_INVALID)
         goto tensor_failure;
@@ -909,12 +1000,19 @@ static int writer_plan_build_component(
         goto metadata_failure;
     context.buffer.maximum = context.options.maximum_owned_bytes;
     if (!writer_prefix_serialize(&context.buffer, context.metadata,
-                                 context.metadata_count, NULL, context.plan->tensors,
+                                 context.metadata_count, context.plan->tokenizer,
+                                 context.plan->tensors,
                                  context.transform->terminal_count) ||
         !writer_prefix_finish(context.plan, &context.buffer, context.options.alignment,
                               context.data_span))
         goto serialization_failure;
     context.plan->summary.metadata_count = context.metadata_count;
+    if (context.tokenizer) {
+        context.plan->summary.tokenizer_token_count = context.tokenizer->token_count;
+        context.plan->summary.tokenizer_merge_count = context.tokenizer->merge_count;
+        context.plan->summary.tokenizer_embedded_bytes =
+            context.raw_json_bytes + context.raw_config_bytes;
+    }
     if (!yvex_core_u64_mul(context.transform->terminal_count,
                            sizeof(*context.plan->tensors), &tensor_bytes) ||
         !yvex_core_u64_add(sizeof(*context.plan), tensor_bytes,
@@ -922,6 +1020,10 @@ static int writer_plan_build_component(
         !yvex_core_u64_add(context.plan->summary.owned_bytes,
                            context.plan->prefix_bytes,
                            &context.plan->summary.owned_bytes) ||
+        (context.tokenizer &&
+         !yvex_core_u64_add(context.plan->summary.owned_bytes,
+                            context.tokenizer->owned_bytes,
+                            &context.plan->summary.owned_bytes)) ||
         context.plan->summary.owned_bytes > context.options.maximum_owned_bytes ||
         context.plan->summary.tensor_payload_bytes != context.quant->encoded_bytes ||
         !writer_plan_identity(context.plan))
@@ -1055,37 +1157,12 @@ static int writer_deepseek_add_lowering_metadata(writer_deepseek_context *contex
 static int writer_deepseek_add_tokenizer_metadata(writer_deepseek_context *context) {
     writer_metadata *metadata = context->metadata;
     unsigned int *count = &context->metadata_count;
-    const yvex_gguf_tokenizer_summary *tokenizer = context->tokenizer;
 
     return writer_meta_u32(metadata, count, "general.alignment", context->options.alignment) &&
-           writer_meta_text(metadata, count, "tokenizer.ggml.pre", tokenizer->pre_tokenizer) &&
-           writer_meta_dynamic_array(metadata, count, "tokenizer.ggml.tokens",
-                                     WRITER_META_TOKEN_ARRAY, YVEX_GGUF_VALUE_STRING,
-                                     tokenizer->token_count) &&
-           writer_meta_dynamic_array(metadata, count, "tokenizer.ggml.token_type",
-                                     WRITER_META_TOKEN_TYPE_ARRAY, YVEX_GGUF_VALUE_INT32,
-                                     tokenizer->token_count) &&
-           writer_meta_dynamic_array(metadata, count, "tokenizer.ggml.merges",
-                                     WRITER_META_MERGE_ARRAY, YVEX_GGUF_VALUE_STRING,
-                                     tokenizer->merge_count) &&
-           writer_meta_u32(metadata, count, "tokenizer.ggml.padding_token_id",
-                           tokenizer->pad_token_id) &&
-           writer_meta_bool(metadata, count, "tokenizer.ggml.add_bos_token",
-                            tokenizer->add_bos_token) &&
-           writer_meta_bool(metadata, count, "tokenizer.ggml.add_eos_token",
-                            tokenizer->add_eos_token) &&
-           writer_meta_string(metadata, count, "tokenizer.huggingface.json", context->raw_json,
-                              context->raw_json_bytes) &&
-           writer_meta_string(metadata, count, "yvex.tokenizer.config.json", context->raw_config,
-                              context->raw_config_bytes) &&
-           writer_meta_text(metadata, count, "yvex.tokenizer.json.sha256",
-                            tokenizer->tokenizer_json_sha256) &&
-           writer_meta_text(metadata, count, "yvex.tokenizer.config.sha256",
-                            tokenizer->tokenizer_config_sha256) &&
-           writer_meta_text(metadata, count, "yvex.tokenizer.json.git_oid",
-                            tokenizer->tokenizer_json_git_oid) &&
-           writer_meta_text(metadata, count, "yvex.tokenizer.config.git_oid",
-                            tokenizer->tokenizer_config_git_oid);
+           writer_tokenizer_metadata_add(
+               metadata, count, context->tokenizer, context->raw_json,
+               context->raw_json_bytes, context->raw_config,
+               context->raw_config_bytes, NULL, 0);
 }
 
 /*

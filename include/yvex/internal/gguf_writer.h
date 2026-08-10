@@ -115,6 +115,11 @@ typedef struct {
     unsigned long long tensor_count;
 } yvex_gguf_writer_proof_input;
 typedef struct {
+    const yvex_source_acquisition *acquisition;
+    const char *source_root, *json_path, *config_path, *pre_tokenizer, *prompt_policy;
+    unsigned long long token_count;
+} yvex_gguf_writer_tokenizer_input;
+typedef struct {
     const char *architecture;
     const char *target_id;
     const char *component_id;
@@ -124,6 +129,7 @@ typedef struct {
     const char *component_manifest_identity;
     const char *architecture_identity;
     const char *role_map_identity;
+    const yvex_gguf_writer_tokenizer_input *tokenizer;
 } yvex_gguf_writer_component_input;
 typedef union {
     yvex_gguf_writer_complete_input complete;

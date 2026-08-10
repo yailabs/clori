@@ -122,6 +122,8 @@ typedef struct {
     unsigned int pad_token_id;
     int add_bos_token;
     int add_eos_token;
+    int bos_token_present, eos_token_present, pad_token_present;
+    int add_bos_token_declared, add_eos_token_declared;
     int chat_template_present;
     char pre_tokenizer[32];
     char tokenizer_json_sha256[YVEX_GGUF_TOKENIZER_SHA256_CAP];
@@ -139,6 +141,12 @@ int yvex_gguf_tokenizer_metadata_load(
     size_t maximum_owned_bytes,
     yvex_gguf_tokenizer_failure *failure,
     yvex_error *err);
+int yvex_gguf_tokenizer_metadata_load_acquired(
+    yvex_gguf_tokenizer_metadata **out, const yvex_source_acquisition *acquisition,
+    const char *source_root, const char *tokenizer_json_path,
+    const char *tokenizer_config_path, unsigned long long expected_vocab_size,
+    const char *pre_tokenizer, size_t maximum_owned_bytes,
+    yvex_gguf_tokenizer_failure *failure, yvex_error *err);
 void yvex_gguf_tokenizer_metadata_release(
     yvex_gguf_tokenizer_metadata **metadata);
 const yvex_gguf_tokenizer_summary *yvex_gguf_tokenizer_summary_get(

@@ -1804,3 +1804,118 @@ const yvex_source_acquisition_file *yvex_source_acquisition_file_at(
                ? &acquisition->files[index]
                : NULL;
 }
+
+/* Retain one already admitted acquisition metadata file without weakening its snapshot identity. */
+int yvex_source_acquisition_metadata_read(
+    const yvex_source_acquisition *acquisition, const char *source_root,
+    const char *canonical_path, size_t maximum_bytes,
+    yvex_source_metadata_blob *out, yvex_error *err)
+{
+    const yvex_source_acquisition_file *file = NULL;
+    yvex_source_metadata_blob blob = {0};
+    struct stat root_status, before, after;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    char digest_hex[65], git_oid[41];
+    yvex_sha256 hash;
+    unsigned long long index;
+    size_t offset = 0u;
+    int root_fd = -1, fd = -1, symlink_refused = 0;
+    int rc = YVEX_ERR_FORMAT;
+
+    if (out) memset(out, 0, sizeof(*out));
+    if (!acquisition || !acquisition->facts.complete || !source_root ||
+        !canonical_path || !maximum_bytes || !out ||
+        !source_acquisition_path_valid(canonical_path))
+        return provenance_refuse(err, YVEX_ERR_INVALID_ARG,
+                                 "source_acquisition_metadata_read",
+                                 "complete acquisition, canonical path, and budget are required");
+    for (index = 0u; index < acquisition->facts.file_count; ++index) {
+        const yvex_source_acquisition_file *candidate = &acquisition->files[index];
+        if (strcmp(candidate->path, canonical_path) != 0) continue;
+        if (file)
+            return provenance_refuse(err, YVEX_ERR_FORMAT,
+                                     "source_acquisition_metadata_read",
+                                     "metadata path is not unique in the acquisition");
+        file = candidate;
+    }
+    if (!file || file->classification != YVEX_SOURCE_ACQUISITION_FILE_METADATA ||
+        !file->local_identity_verified || file->actual_size > maximum_bytes ||
+        file->actual_size > SIZE_MAX || strlen(file->git_oid) != 40u)
+        return provenance_refuse(err, file && file->actual_size > maximum_bytes
+                                          ? YVEX_ERR_BOUNDS : YVEX_ERR_FORMAT,
+                                 "source_acquisition_metadata_read",
+                                 "metadata is absent, untrusted, or exceeds its budget");
+    if (lstat(source_root, &root_status) != 0 || !S_ISDIR(root_status.st_mode) ||
+        S_ISLNK(root_status.st_mode) ||
+        (root_fd = open(source_root, O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW)) < 0)
+        return provenance_refuse(err, YVEX_ERR_IO, "source_acquisition_metadata_read",
+                                 "source root is not a real readable directory");
+    fd = source_acquisition_open_relative(root_fd, canonical_path, &symlink_refused);
+    close(root_fd);
+    root_fd = -1;
+    if (fd < 0 || fstat(fd, &before) != 0 || !S_ISREG(before.st_mode) ||
+        before.st_size < 0 || (unsigned long long)before.st_size != file->actual_size ||
+        (unsigned long long)before.st_dev != file->verified_device ||
+        (unsigned long long)before.st_ino != file->verified_inode ||
+        (long long)before.st_mtim.tv_sec != file->verified_mtime_seconds ||
+        before.st_mtim.tv_nsec != file->verified_mtime_nanoseconds ||
+        (long long)before.st_ctim.tv_sec != file->verified_ctime_seconds ||
+        before.st_ctim.tv_nsec != file->verified_ctime_nanoseconds) {
+        if (fd >= 0) close(fd);
+        return provenance_refuse(err, YVEX_ERR_FORMAT,
+                                 "source_acquisition_metadata_read",
+                                 symlink_refused ? "metadata path contains a symlink"
+                                                 : "metadata file identity drifted before read");
+    }
+    blob.byte_count = (size_t)file->actual_size;
+    blob.bytes = (unsigned char *)malloc(blob.byte_count ? blob.byte_count : 1u);
+    if (!blob.bytes) {
+        close(fd);
+        return provenance_refuse(err, YVEX_ERR_NOMEM, "source_acquisition_metadata_read",
+                                 "metadata buffer allocation failed");
+    }
+    while (offset < blob.byte_count) {
+        ssize_t got = read(fd, blob.bytes + offset, blob.byte_count - offset);
+        if (got < 0 && errno == EINTR) continue;
+        if (got <= 0) goto failure;
+        offset += (size_t)got;
+    }
+    if (fstat(fd, &after) != 0 || before.st_dev != after.st_dev ||
+        before.st_ino != after.st_ino || before.st_size != after.st_size ||
+        before.st_mtim.tv_sec != after.st_mtim.tv_sec ||
+        before.st_mtim.tv_nsec != after.st_mtim.tv_nsec ||
+        before.st_ctim.tv_sec != after.st_ctim.tv_sec ||
+        before.st_ctim.tv_nsec != after.st_ctim.tv_nsec)
+        goto failure;
+    close(fd);
+    fd = -1;
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update(&hash, blob.bytes, blob.byte_count) ||
+        !yvex_sha256_final(&hash, digest) ||
+        !source_git_blob_oid_bytes(blob.bytes, blob.byte_count, git_oid))
+        goto failure;
+    yvex_sha256_hex(digest, digest_hex);
+    if (strcmp(digest_hex, file->actual_sha256) != 0 || strcmp(git_oid, file->git_oid) != 0)
+        goto failure;
+    yvex_core_text_copy(blob.identity.canonical_name,
+                        sizeof(blob.identity.canonical_name), canonical_path);
+    yvex_core_text_copy(blob.identity.revision, sizeof(blob.identity.revision),
+                        acquisition->facts.revision);
+    yvex_core_text_copy(blob.identity.expected_git_blob_oid,
+                        sizeof(blob.identity.expected_git_blob_oid), file->git_oid);
+    yvex_core_text_copy(blob.identity.observed_git_blob_oid,
+                        sizeof(blob.identity.observed_git_blob_oid), git_oid);
+    blob.identity.file_bytes = file->actual_size;
+    blob.identity.revision_matches = 1;
+    blob.identity.identity_verified = 1;
+    *out = blob;
+    yvex_error_clear(err);
+    return YVEX_OK;
+
+failure:
+    if (fd >= 0) close(fd);
+    yvex_source_metadata_blob_release(&blob);
+    yvex_error_set(err, rc, "source_acquisition_metadata_read",
+                   "metadata exact read or retained identity verification failed");
+    return rc;
+}

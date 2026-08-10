@@ -96,7 +96,10 @@ static int command_tokenizer(int arg_count, char **args)
         yvex_cli_out_writef(stdout, "tokenizer_json_identity: %s\n", plan->tokenizer_json_identity);
         yvex_cli_out_writef(stdout, "tokenizer_config_identity: %s\n", plan->tokenizer_config_identity);
         yvex_cli_out_writef(stdout, "tokenizer_plan_identity: %s\n", plan->tokenizer_plan_identity);
-        yvex_cli_out_writef(stdout, "chat_template: deepseek-v4-family-policy\n");
+        yvex_cli_out_writef(
+            stdout, "chat_template: %s\n",
+            plan->prompt_policy == YVEX_TOKENIZER_PROMPT_DEEPSEEK_V4
+                ? "deepseek-v4-family-policy" : "verbatim-no-special");
     } else {
         yvex_cli_out_writef(stdout, "runtime_support: unavailable\n");
         yvex_cli_out_writef(stdout, "chat_template: absent\n");

@@ -4,8 +4,8 @@ Status: source acquired and verified; logical architecture, tensor roles, and
 Transformation IR admitted; source-faithful Audio VAE, Visual VAE, and Text
 Encoder component artifacts admitted through native and pinned official
 readers; complete Audio VAE and bounded multi-patch Visual VAE CPU decodes
-numerically conform; one exact Qwen3-VL embedding row executes on GB10; not an
-executable family
+numerically conform; exact artifact-bound Qwen2 tokenization and 50-layer
+text-only Qwen3-VL prompt conditioning execute on GB10; not an executable family
 
 This record owns current YVEX facts for MiniMax-H3 Base FL2VA. YVEX now admits
 the complete immutable FL2VA source through its production source owner and
@@ -19,10 +19,11 @@ snapshot, physical plan, aggregate payload, and whole-file identities before
 materialization. The graph owner executes the complete Audio VAE decoder and
 all 36 Visual VAE decoder blocks for checked latent geometries, with
 independent numerical conformance evidence for both. A staged Text Encoder
-residency registers the exact BF16 component with CUDA and gathers a checked
-token embedding with zero error against independent source bytes. This does
-not execute any of the 64 Qwen text layers. It does not add a family runtime,
-full-scale Visual qualification, complete conditioning, synchronized media
+residency registers the exact BF16 component with CUDA, tokenizes an ASCII
+`t2va` prompt from artifact-bound Qwen2 metadata, and executes the selected
+50-layer causal text stack against an independent Transformers oracle. It does
+not add a family runtime, multimodal Qwen vision conditioning, full-scale Visual
+qualification, Omni latent generation, synchronized media
 path, or release obligation. The frozen quantitative intake evidence is the
 [FL2VA intake audit](../audits/minimax-h3-fl2va-b8b09e3/README.md); the common
 promotion rules remain in the [family integration contract](integration.md).
@@ -35,8 +36,8 @@ promotion rules remain in the [family integration contract](integration.md).
 | Branch status | open |
 | Branch completion | first YVEX-authored playable synchronized MiniMax-H3 FL2VA audio-video output |
 | Current wave | `R010.MINIMAX.H3.FL2VA.END_TO_END.0` |
-| Current boundary | exact Audio VAE, Visual VAE, and Text Encoder component artifacts admitted; complete Audio and bounded multi-patch Visual CPU decodes conform; the exact 50-layer text-only Qwen3-VL conditioning stack conforms on GB10 |
-| Next expected boundary | exact prompt tokenization and multi-token `t2va` conditioning, followed by Omni latent generation and synchronized media publication |
+| Current boundary | exact Audio VAE, Visual VAE, and Text Encoder component artifacts admitted; complete Audio and bounded multi-patch Visual CPU decodes conform; artifact-bound Qwen2 tokenization and exact multi-token 50-layer text-only Qwen3-VL conditioning conform on GB10 |
+| Next expected boundary | exact Omni-Transformer latent generation, followed by complete VAE composition and synchronized media publication |
 
 The branch preserves the accepted intake history and remains open across all
 later source, artifact, graph, backend, residency, latent, VAE, media, and
@@ -62,7 +63,7 @@ or rename the branch.
 | Tensor-role-map identity | `61e7a2cfc29e6dd3da966878f5388f1472a406d7e33ba34ef65f44b61f08f013` |
 | Transformation IR identity | `bd941103d754df8c1eb02ff9b90db4ba86b7e389691f2d0c4027343eccbc0b0b` |
 | Aggregate derivation identity | `cc2886a388a475c2df246558dfb41c8d66e549afd4c4e34d19e2bbd3b70a3ff5` |
-| Evidence stage | exact source verified; architecture, tensor roles, and Transformation IR admitted; Audio VAE, Visual VAE, and Text Encoder component artifacts emitted and admitted; complete Audio and bounded multi-patch Visual CPU decodes numerically conform; one exact Text embedding row conforms on GB10 |
+| Evidence stage | exact source verified; architecture, tensor roles, and Transformation IR admitted; Audio VAE, Visual VAE, and Text Encoder component artifacts emitted and admitted; complete Audio and bounded multi-patch Visual CPU decodes numerically conform; exact ASCII Qwen2 BPE and multi-token 50-layer text-only conditioning conform on GB10 |
 
 The external evidence directory used during the intake was
 `/home/dgmothx/lab/models/intake/minimax-h3/<FULL_REVISION>/`. That path is an
@@ -607,13 +608,14 @@ preserve encoded row semantics.
 | Transformation identity | `4e940d589f14194ee827be627afac91ee28ee2a45f1add22753d9ed3dae3962a` |
 | Physical variant identity | `5b534130f5114f096db93b96cce26fc6def534c95b6d338b87a668591c20b78f` |
 | Payload-plan identity | `214f0afd6fd2718e8184ce169e55018bc1b93598d34e8930e0514e7fe91328c0` |
-| Writer-plan identity | `6bc51d17fa1d9fdc173764478853a16f503dd97dbf014ca47a55d4d7cbc60045` |
+| Writer-plan identity | `ce5d96a027635da6802ca7184c0079206e7c9ba9322412a34064ac1cd7c4dc2c` |
 | Quant-execution identity | `50fe7545f9fa204dd636fbdf44e660fc92dd52740d2f39b04118a83d72d058ee` |
-| Artifact identity / SHA-256 | `fd3178c1addbc325c17f23cf6aae9a46dfe0e152211cc7181e9fa512f4046021` |
+| Artifact identity / SHA-256 | `61407a737bf019cef8f0d786394986d419af957bd23a120f6dcc070128abb7ff` |
 | Aggregate payload-byte identity | `c95ade3aef89252f46fb190b8d6d80dbbc6c335bef8fab3d2610dc688bcc326f` |
 | Tensor and element coverage | 1,058 of 1,058; 33,357,390,064 elements |
 | Source and physical dtype | BF16 |
-| Payload / GGUF file bytes | 66,714,780,128 / 66,714,871,392 |
+| Payload / GGUF file bytes | 66,714,780,128 / 66,727,837,152 |
+| GGUF metadata | 34 entries; exact tokenizer JSON and config retained |
 | Native and pinned official-reader admission | accepted; official revision `af97976c7810cdabb1863172f31c432dab767de7` |
 | Runtime/media readiness | false |
 
@@ -693,8 +695,8 @@ The same component residency now executes the source-selected unnormalized
 the final RMSNorm or vocabulary output head. The independently frozen Diffusers
 reference at `f53d552036a0d1bd5570782a39cd40cfabf112bc` establishes that
 MiniMax-H3 consumes this exact intermediate state. Text-only prompts use no chat
-template or special tokens; tokenizer execution itself remains the next
-consumer and is not bypassed by this one-token numerical proof.
+template or special tokens. The one-token proof remains the bounded numerical
+baseline consumed by the multi-token prompt path below.
 
 The independent Torch 2.11 / Transformers 5.14 CUDA oracle for token ID 1 has
 SHA-256 `397afc1a72b0a4c817d7ae07715632395427eec39d1fbd6ddeb46424da01be32`.
@@ -717,9 +719,70 @@ The layer-zero proof output remains byte-identical after the stack extension.
 `production_capability_available: true` for exact token-ID-to-50-layer text-only
 conditioning. `production_api_available: true` through the internal graph and
 backend family ABIs. `internal_live_runner_available: true`.
-`operator_command_available: false` and `end_user_path_available: false`:
-prompt tokenization, multi-token MM-RoPE and causal attention, Omni execution,
-latent generation, VAE composition, and media publication remain downstream.
+`operator_command_available: false` for this historical one-token boundary and
+`end_user_path_available: false`.
+
+## Exact tokenizer and multi-token prompt conditioning
+
+The Text Encoder artifact now retains the verified source `tokenizer.json` and
+`tokenizer_config.json` bytes and their SHA-256 identities
+`a5d85b6dcc535e6b93115a9ef287e6132fdbf30270da6218194ba742261173c7`
+and `a07e942ac874baa13758de8d1fbdb186683cc03416b5589e1b6671c6b3057c68`.
+Its deterministic tokenizer plan identity is
+`7811376a0a0b3f4e33e5ba1f122a885b522c80c13df0e4af6a9e213aa226fafb`.
+The admitted Qwen2 byte-level BPE has 151,643 base tokens, 151,387 merges,
+26 added tokens, and 14 special tokens. FL2VA `t2va` encodes the prompt
+verbatim with no BOS, chat template, or other inserted special token; EOS is
+151,645 and padding is 151,643.
+
+The operator command
+
+```text
+yvex execute tokenizer encode TEXT_ENCODER_GGUF --text 'A red fox jumps over a blue river.'
+```
+
+produces the exact nine-token sequence
+`32 2518 38835 34208 916 264 6303 14796 13`. Repeated executions are
+byte-identical, and focused vectors cover contractions, digit splitting,
+whitespace runs, and adjacent letter/number runs. Non-ASCII input remains
+fail-closed until the generic tokenizer owner admits exact source-declared NFC
+normalization; this limitation is not silently treated as ASCII equivalence.
+
+For those nine tokens, the bounded layer-zero residency agrees with the
+independent causal Transformers CUDA oracle at maximum absolute error 0.0625
+and RMSE 0.0019139041. The YVEX and oracle output SHA-256 identities are
+`09d8e75be6a85a341f6fa4b808113c47b506e2313a219272733579ed89229dad`
+and `d5615ea0d0acf224a79fb470c807d58718002f2fc8effecbc4d4558b387186d9`.
+The production result used residency identity
+`2bd48af426a85d2b8d0399642f46c24b53d28b606fa3afbf9a1267eefac117db`
+and execution identity
+`5efe3ce2c8636d4c3ce139716d0b488df43f131e8119e6ec8e88da30a7082d47`.
+
+The complete 50-layer output is deterministic at SHA-256
+`247611e02248bd79348d78706cba093dc4ccd1855e3b5bc92f6f67ac21d939ad`.
+The independent causal oracle is
+`83c846af80ffcc19cbabfdb6e8a1c6c52c42d8d968dd86553957dc7867ee2d17`.
+Different BF16 dense-reduction orders produce maximum absolute error 64 on an
+approximately 15,000-valued outlier, RMSE 0.304108353, relative L2 error
+0.00425595374, cosine similarity 0.999999444619, and scaled maximum error
+0.00421940908. Acceptance requires the absolute/RMSE envelope or all three
+scale-aware bounds; it does not suppress or omit the absolute result.
+
+This run consumed all 1,058 tensors and 66,714,780,128 resident payload bytes,
+launched 1,701 CUDA kernels, transferred 461,636 H2D bytes and 188,124 D2H
+bytes, and allocated 4,012,032 activation bytes. Residency identity is
+`10156a49fc1be7cd049013408def40e0265c3d6e5148ac2afaaaddfcae7ded49`;
+execution identity is
+`e151f9e4bb1db707c9990413c7d33a8aa597845efa6f5d0c929b4cd40068d96b`.
+These are correctness-run facts, not a performance benchmark.
+
+`production_capability_available: true` for exact admitted ASCII prompt to
+multi-token text-only conditioning. `production_api_available: true` through
+the tokenizer, graph, and CUDA backend owners. `internal_live_runner_available:
+true`. `operator_command_available: true` for tokenizer inspection and
+encoding; conditioning remains an internal live runner.
+`end_user_path_available: false`: Omni latent execution and synchronized media
+publication remain downstream.
 
 ## Progression and non-claims
 
@@ -727,23 +790,23 @@ latent generation, VAE composition, and media publication remain downstream.
 
 `downstream_safe: true`
 
-The downstream consumer is exact prompt tokenization and multi-token `t2va`
-conditioning, then Omni latent generation on
+The downstream consumer is exact Omni latent generation from the admitted
+multi-token `t2va` conditioning on
 `feature/minimax-h3`. There is no gate blocker, boundary incompleteness,
 evidence gap, or current external blocker in the admitted bounded component,
-embedding, layer-zero, or 50-layer text-stack execution contracts. Visual tiling, the exact Omni scheduler and
-MM-RoPE contracts, complete staged phase residency, synchronized media
-transaction, evaluation, and benchmark are deferred depth with explicit later
-consumers. They do not weaken the two admitted execution identities, and none
-is claimed by them.
+embedding, tokenizer, layer-zero, or 50-layer text-stack execution contracts.
+Visual tiling, exact Unicode NFC normalization, complete staged phase residency,
+synchronized media transaction, evaluation, and benchmark are deferred depth
+with explicit later consumers. They do not weaken the admitted component
+execution identities, and none is claimed by them.
 License review remains an external authorization prerequisite for any use that
 requires an eligibility conclusion.
 
 This implementation boundary does not prove:
 
-- complete prompt-to-Qwen3-VL conditioning or any Omni-Transformer numerical execution;
+- multimodal Qwen3-VL vision conditioning or any Omni-Transformer numerical execution;
 - complete composite-artifact support or Physical Execution IR;
-- GB10 backend support or simultaneous/staged runtime residency;
+- GB10 Omni/VAE pipeline execution or simultaneous/staged runtime residency;
 - Omni-Transformer, solver, timestep, or MM-RoPE numerical correctness;
 - full-scale/tiled Visual VAE qualification or either VAE in the complete latent and media pipeline;
 - audio/video synchronization, playable media output, or hosted serving;

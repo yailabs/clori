@@ -609,6 +609,8 @@ static int tokenizer_config_special(yvex_gguf_tokenizer_metadata *metadata, toke
     char key[64];
 
     tokenizer_json_space(json);
+    if (json->cursor < json->end && *json->cursor == 'n')
+        return tokenizer_json_literal(json, "null");
     if (json->cursor < json->end && *json->cursor == '"') {
         const unsigned char *begin;
         const unsigned char *end;
@@ -684,10 +686,12 @@ static int tokenizer_parse_config(yvex_gguf_tokenizer_metadata *metadata,
         if (strcmp(key, "add_bos_token") == 0) {
             if ((seen & 1u) || !tokenizer_config_bool(&json, &metadata->summary.add_bos_token))
                 goto malformed;
+            metadata->summary.add_bos_token_declared = 1;
             seen |= 1u;
         } else if (strcmp(key, "add_eos_token") == 0) {
             if ((seen & 2u) || !tokenizer_config_bool(&json, &metadata->summary.add_eos_token))
                 goto malformed;
+            metadata->summary.add_eos_token_declared = 1;
             seen |= 2u;
         } else if (strcmp(key, "bos_token") == 0) {
             if ((seen & 4u) || !tokenizer_config_special(metadata, &json, &metadata->config_bos))
@@ -730,7 +734,7 @@ static int tokenizer_parse_config(yvex_gguf_tokenizer_metadata *metadata,
             goto malformed;
     }
     tokenizer_json_space(&json);
-    if (json.cursor != json.end || (seen & 31u) != 31u)
+    if (json.cursor != json.end || (seen & 29u) != 29u)
         goto malformed;
     return YVEX_OK;
 malformed:
@@ -763,56 +767,48 @@ static int tokenizer_blob_sha(const yvex_source_metadata_blob *blob,
     return 1;
 }
 
-/*
- * Construct immutable target-scale tokenizer metadata from verified sidecar facts.
- *
- * Identity, JSON, cardinality, special-token, digest, bounds, or allocation unwind fully.
- */
-int yvex_gguf_tokenizer_metadata_load(yvex_gguf_tokenizer_metadata **out,
-                                      const yvex_source_verification *verification,
-                                      unsigned long long expected_vocab_size,
-                                      const char *pre_tokenizer, size_t maximum_owned_bytes,
-                                      yvex_gguf_tokenizer_failure *failure, yvex_error *err) {
+static yvex_gguf_tokenizer_metadata *tokenizer_metadata_allocate(
+    unsigned long long expected_vocab_size, const char *pre_tokenizer,
+    size_t maximum_owned_bytes, yvex_gguf_tokenizer_failure *failure,
+    yvex_error *err) {
     yvex_gguf_tokenizer_metadata *metadata;
+
+    if (!expected_vocab_size || expected_vocab_size > UINT_MAX || !pre_tokenizer ||
+        !pre_tokenizer[0] || strlen(pre_tokenizer) >= 32u ||
+        maximum_owned_bytes < 1024u ||
+        expected_vocab_size > SIZE_MAX / sizeof(tokenizer_string_ref) ||
+        expected_vocab_size > SIZE_MAX / sizeof(int)) {
+        tokenizer_fail(failure, YVEX_GGUF_TOKENIZER_INVALID_ARGUMENT, "load", ULLONG_MAX,
+                       1u, 0u, err, YVEX_ERR_INVALID_ARG,
+                       "vocabulary, pre-tokenizer, and bounded budget are required");
+        return NULL;
+    }
+    metadata = (yvex_gguf_tokenizer_metadata *)calloc(1u, sizeof(*metadata));
+    if (!metadata) {
+        tokenizer_fail(failure, YVEX_GGUF_TOKENIZER_ALLOCATION, "metadata", ULLONG_MAX,
+                       sizeof(*metadata), 0u, err, YVEX_ERR_NOMEM,
+                       "tokenizer metadata allocation failed");
+        return NULL;
+    }
+    metadata->summary.token_count = expected_vocab_size;
+    metadata->arena.maximum = maximum_owned_bytes;
+    metadata->arena.initial_capacity = 4096u;
+    yvex_core_text_copy(metadata->summary.pre_tokenizer,
+                        sizeof(metadata->summary.pre_tokenizer), pre_tokenizer);
+    return metadata;
+}
+
+static int tokenizer_metadata_finish(yvex_gguf_tokenizer_metadata **out,
+                                     yvex_gguf_tokenizer_metadata *metadata,
+                                     size_t maximum_owned_bytes,
+                                     yvex_gguf_tokenizer_failure *failure,
+                                     yvex_error *err) {
     size_t token_bytes;
     size_t type_bytes;
     int rc;
 
-    if (out)
-        *out = NULL;
-    if (!out || !verification || !verification->tokenizer_json_valid ||
-        !verification->tokenizer_config_valid || !expected_vocab_size ||
-        expected_vocab_size > UINT_MAX || !pre_tokenizer || !pre_tokenizer[0] ||
-        strlen(pre_tokenizer) >= 32u || maximum_owned_bytes < 1024u ||
-        expected_vocab_size > SIZE_MAX / sizeof(tokenizer_string_ref) ||
-        expected_vocab_size > SIZE_MAX / sizeof(int))
-        return tokenizer_fail(
-            failure, YVEX_GGUF_TOKENIZER_INVALID_ARGUMENT, "load", ULLONG_MAX, 1u, 0u, err,
-            YVEX_ERR_INVALID_ARG,
-            "verified tokenizer facts, vocabulary, pre-tokenizer, and budget are required");
-    metadata = (yvex_gguf_tokenizer_metadata *)calloc(1u, sizeof(*metadata));
-    if (!metadata)
-        return tokenizer_fail(failure, YVEX_GGUF_TOKENIZER_ALLOCATION, "metadata", ULLONG_MAX,
-                              sizeof(*metadata), 0u, err, YVEX_ERR_NOMEM,
-                              "tokenizer metadata allocation failed");
-    metadata->summary.token_count = expected_vocab_size;
-    metadata->arena.maximum = maximum_owned_bytes;
-    metadata->arena.initial_capacity = 4096u;
-    yvex_core_text_copy(metadata->summary.pre_tokenizer, sizeof(metadata->summary.pre_tokenizer), pre_tokenizer);
-    rc = yvex_source_provenance_metadata_read(verification, "tokenizer.json", TOKENIZER_JSON_LIMIT,
-                                              &metadata->tokenizer_json, err);
-    if (rc == YVEX_OK)
-        rc = yvex_source_provenance_metadata_read(verification, "tokenizer_config.json",
-                                                  TOKENIZER_CONFIG_LIMIT,
-                                                  &metadata->tokenizer_config, err);
-    if (rc != YVEX_OK) {
-        yvex_gguf_tokenizer_metadata_release(&metadata);
-        return tokenizer_fail(failure, YVEX_GGUF_TOKENIZER_SOURCE_IDENTITY, "sidecar", ULLONG_MAX,
-                              1u, 0u, err, (yvex_status)rc,
-                              "tokenizer sidecar identity or exact read failed");
-    }
-    token_bytes = (size_t)expected_vocab_size * sizeof(*metadata->tokens);
-    type_bytes = (size_t)expected_vocab_size * sizeof(*metadata->token_types);
+    token_bytes = (size_t)metadata->summary.token_count * sizeof(*metadata->tokens);
+    type_bytes = (size_t)metadata->summary.token_count * sizeof(*metadata->token_types);
     if (token_bytes > maximum_owned_bytes || type_bytes > maximum_owned_bytes - token_bytes) {
         yvex_gguf_tokenizer_metadata_release(&metadata);
         return tokenizer_fail(failure, YVEX_GGUF_TOKENIZER_RESOURCE_LIMIT, "vocabulary", ULLONG_MAX,
@@ -821,9 +817,11 @@ int yvex_gguf_tokenizer_metadata_load(yvex_gguf_tokenizer_metadata **out,
     }
     metadata->arena.maximum = maximum_owned_bytes - token_bytes - type_bytes;
     metadata->tokens =
-        (tokenizer_string_ref *)calloc((size_t)expected_vocab_size, sizeof(*metadata->tokens));
+        (tokenizer_string_ref *)calloc((size_t)metadata->summary.token_count,
+                                       sizeof(*metadata->tokens));
     metadata->token_types =
-        (int *)calloc((size_t)expected_vocab_size, sizeof(*metadata->token_types));
+        (int *)calloc((size_t)metadata->summary.token_count,
+                      sizeof(*metadata->token_types));
     if (!metadata->tokens || !metadata->token_types) {
         yvex_gguf_tokenizer_metadata_release(&metadata);
         return tokenizer_fail(failure, YVEX_GGUF_TOKENIZER_ALLOCATION, "vocabulary", ULLONG_MAX,
@@ -833,12 +831,21 @@ int yvex_gguf_tokenizer_metadata_load(yvex_gguf_tokenizer_metadata **out,
     rc = tokenizer_parse_json(metadata, failure, err);
     if (rc == YVEX_OK)
         rc = tokenizer_parse_config(metadata, failure, err);
+    metadata->summary.bos_token_present = metadata->config_bos.present;
+    metadata->summary.eos_token_present = metadata->config_eos.present;
+    metadata->summary.pad_token_present = metadata->config_pad.present;
     if (rc == YVEX_OK &&
-        (!tokenizer_find_token(metadata, metadata->config_bos, &metadata->summary.bos_token_id) ||
-         !tokenizer_find_token(metadata, metadata->config_eos, &metadata->summary.eos_token_id) ||
-         !tokenizer_find_token(metadata, metadata->config_pad, &metadata->summary.pad_token_id))) {
+        ((metadata->config_bos.present &&
+          !tokenizer_find_token(metadata, metadata->config_bos,
+                                &metadata->summary.bos_token_id)) ||
+         (metadata->config_eos.present &&
+          !tokenizer_find_token(metadata, metadata->config_eos,
+                                &metadata->summary.eos_token_id)) ||
+         (metadata->config_pad.present &&
+          !tokenizer_find_token(metadata, metadata->config_pad,
+                                &metadata->summary.pad_token_id)))) {
         rc = tokenizer_fail(failure, YVEX_GGUF_TOKENIZER_SPECIAL_TOKEN, "special_token", ULLONG_MAX,
-                            3u, 0u, err, YVEX_ERR_FORMAT,
+                            1u, 0u, err, YVEX_ERR_FORMAT,
                             "tokenizer special-token content has no vocabulary id");
     }
     if (rc != YVEX_OK ||
@@ -880,6 +887,73 @@ int yvex_gguf_tokenizer_metadata_load(yvex_gguf_tokenizer_metadata **out,
     yvex_error_clear(err);
     *out = metadata;
     return YVEX_OK;
+}
+
+/* Construct target-scale tokenizer metadata from legacy verified source sidecars. */
+int yvex_gguf_tokenizer_metadata_load(yvex_gguf_tokenizer_metadata **out,
+                                      const yvex_source_verification *verification,
+                                      unsigned long long expected_vocab_size,
+                                      const char *pre_tokenizer, size_t maximum_owned_bytes,
+                                      yvex_gguf_tokenizer_failure *failure, yvex_error *err) {
+    yvex_gguf_tokenizer_metadata *metadata;
+    int rc;
+
+    if (out) *out = NULL;
+    if (!out || !verification || !verification->tokenizer_json_valid ||
+        !verification->tokenizer_config_valid)
+        return tokenizer_fail(failure, YVEX_GGUF_TOKENIZER_INVALID_ARGUMENT, "load",
+                              ULLONG_MAX, 1u, 0u, err, YVEX_ERR_INVALID_ARG,
+                              "verified tokenizer source facts are required");
+    metadata = tokenizer_metadata_allocate(expected_vocab_size, pre_tokenizer,
+                                           maximum_owned_bytes, failure, err);
+    if (!metadata) return yvex_error_code(err);
+    rc = yvex_source_provenance_metadata_read(
+        verification, "tokenizer.json", TOKENIZER_JSON_LIMIT,
+        &metadata->tokenizer_json, err);
+    if (rc == YVEX_OK)
+        rc = yvex_source_provenance_metadata_read(
+            verification, "tokenizer_config.json", TOKENIZER_CONFIG_LIMIT,
+            &metadata->tokenizer_config, err);
+    if (rc == YVEX_OK)
+        return tokenizer_metadata_finish(out, metadata, maximum_owned_bytes, failure, err);
+    yvex_gguf_tokenizer_metadata_release(&metadata);
+    return tokenizer_fail(failure, YVEX_GGUF_TOKENIZER_SOURCE_IDENTITY, "sidecar",
+                          ULLONG_MAX, 1u, 0u, err, (yvex_status)rc,
+                          "tokenizer sidecar identity or exact read failed");
+}
+
+/* Construct tokenizer metadata from one completely verified immutable source acquisition. */
+int yvex_gguf_tokenizer_metadata_load_acquired(
+    yvex_gguf_tokenizer_metadata **out, const yvex_source_acquisition *acquisition,
+    const char *source_root, const char *tokenizer_json_path,
+    const char *tokenizer_config_path, unsigned long long expected_vocab_size,
+    const char *pre_tokenizer, size_t maximum_owned_bytes,
+    yvex_gguf_tokenizer_failure *failure, yvex_error *err) {
+    yvex_gguf_tokenizer_metadata *metadata;
+    int rc;
+
+    if (out) *out = NULL;
+    if (!out || !acquisition || !source_root || !tokenizer_json_path ||
+        !tokenizer_config_path)
+        return tokenizer_fail(failure, YVEX_GGUF_TOKENIZER_INVALID_ARGUMENT, "load",
+                              ULLONG_MAX, 1u, 0u, err, YVEX_ERR_INVALID_ARG,
+                              "verified acquisition and tokenizer paths are required");
+    metadata = tokenizer_metadata_allocate(expected_vocab_size, pre_tokenizer,
+                                           maximum_owned_bytes, failure, err);
+    if (!metadata) return yvex_error_code(err);
+    rc = yvex_source_acquisition_metadata_read(
+        acquisition, source_root, tokenizer_json_path, TOKENIZER_JSON_LIMIT,
+        &metadata->tokenizer_json, err);
+    if (rc == YVEX_OK)
+        rc = yvex_source_acquisition_metadata_read(
+            acquisition, source_root, tokenizer_config_path, TOKENIZER_CONFIG_LIMIT,
+            &metadata->tokenizer_config, err);
+    if (rc == YVEX_OK)
+        return tokenizer_metadata_finish(out, metadata, maximum_owned_bytes, failure, err);
+    yvex_gguf_tokenizer_metadata_release(&metadata);
+    return tokenizer_fail(failure, YVEX_GGUF_TOKENIZER_SOURCE_IDENTITY, "sidecar",
+                          ULLONG_MAX, 1u, 0u, err, (yvex_status)rc,
+                          "acquired tokenizer identity or exact read failed");
 }
 
 /*

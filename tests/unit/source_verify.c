@@ -624,6 +624,7 @@ static int source_verify_acquisition(void)
     yvex_source_acquisition *acquisition = NULL;
     const yvex_source_acquisition_facts *facts;
     const yvex_source_acquisition_file *file;
+    yvex_source_metadata_blob blob;
     yvex_error err;
     char path[512];
     int rc;
@@ -652,6 +653,22 @@ static int source_verify_acquisition(void)
                          facts->payload_bytes_read == strlen(payload) && file &&
                          file->local_identity_verified && file->verified_inode,
                      "source admission binds complete bytes and their local file identity");
+    memset(&blob, 0, sizeof(blob));
+    YVEX_TEST_ASSERT(
+        yvex_source_acquisition_metadata_read(acquisition, root, "FL2VA/config.json",
+                                              strlen(payload), &blob, &err) == YVEX_OK &&
+            blob.byte_count == strlen(payload) &&
+            memcmp(blob.bytes, payload, strlen(payload)) == 0 &&
+            blob.identity.identity_verified && blob.identity.revision_matches &&
+            strcmp(blob.identity.expected_git_blob_oid,
+                   blob.identity.observed_git_blob_oid) == 0,
+        "verified acquisition metadata is read exactly through its retained local identity");
+    yvex_source_metadata_blob_release(&blob);
+    YVEX_TEST_ASSERT(
+        yvex_source_acquisition_metadata_read(acquisition, root, "FL2VA/config.json",
+                                              strlen(payload) - 1u, &blob, &err) ==
+            YVEX_ERR_BOUNDS && !blob.bytes,
+        "verified acquisition metadata refuses a caller budget below its exact size");
     yvex_source_acquisition_release(&acquisition);
 
     options.expected_repository = "Example/Wrong";

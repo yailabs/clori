@@ -41,13 +41,13 @@
 #define TEXT_QUANT_EXECUTION_IDENTITY "50fe7545f9fa204dd636fbdf44e660fc92dd52740d2f39b04118a83d72d058ee"
 #define TEXT_PAYLOAD_PLAN_IDENTITY "214f0afd6fd2718e8184ce169e55018bc1b93598d34e8930e0514e7fe91328c0"
 #define TEXT_PAYLOAD_BYTE_IDENTITY "c95ade3aef89252f46fb190b8d6d80dbbc6c335bef8fab3d2610dc688bcc326f"
-#define TEXT_WRITER_PLAN_IDENTITY "6bc51d17fa1d9fdc173764478853a16f503dd97dbf014ca47a55d4d7cbc60045"
-#define TEXT_ARTIFACT_IDENTITY "fd3178c1addbc325c17f23cf6aae9a46dfe0e152211cc7181e9fa512f4046021"
+#define TEXT_WRITER_PLAN_IDENTITY "ce5d96a027635da6802ca7184c0079206e7c9ba9322412a34064ac1cd7c4dc2c"
+#define TEXT_ARTIFACT_IDENTITY "61407a737bf019cef8f0d786394986d419af957bd23a120f6dcc070128abb7ff"
 #define TEXT_MAPPING_IDENTITY 17587980532596554443ull
 #define TEXT_TENSORS 1058ull
 #define TEXT_ELEMENTS 33357390064ull
 #define TEXT_PAYLOAD_BYTES 66714780128ull
-#define TEXT_FILE_BYTES 66714871392ull
+#define TEXT_FILE_BYTES 66727837152ull
 #define TRANSFORMER_COMPONENT_IDENTITY "9745fc5bbf42a0a5d2d42209e50e64f5a58704c7602bce0f71f3225431304318"
 #define TRANSFORMER_TRANSFORM_IDENTITY "8f3b16dff00769261df2d5f59c915c114874cb3abfb54ddc11d537875caec58a"
 #define TRANSFORMER_PROFILE_IDENTITY "43e82bc972981d6c3c6a879fc34972ee27083f8aad96e98c69ff2818aeda50a6"
@@ -1496,10 +1496,16 @@ static const yvex_artifact_component_metadata text_metadata[] = {
     {"yvex.payload.identity", VIDEO_PAYLOAD_IDENTITY},
     {"yvex.evidence.stage", "component-artifact-planned"},
     {"yvex.physical.shape.policy", "reverse-logical-fold-outer-v1"},
+    {"tokenizer.ggml.model", "gpt2"}, {"tokenizer.ggml.pre", "qwen2"},
+    {"yvex.tokenizer.prompt_policy", "verbatim-no-special-v1"},
+    {"yvex.tokenizer.json.sha256", "a5d85b6dcc535e6b93115a9ef287e6132fdbf30270da6218194ba742261173c7"},
+    {"yvex.tokenizer.config.sha256", "a07e942ac874baa13758de8d1fbdb186683cc03416b5589e1b6671c6b3057c68"},
+    {"yvex.tokenizer.json.git_oid", "c6cc1014128b19d1fc46b1d30a23e3b1d35db421"},
+    {"yvex.tokenizer.config.git_oid", "204d76f78dac6dedc820418c30bf01145de78a21"},
 };
 static const yvex_complete_artifact_admission text_catalog = {
     .artifact_class = YVEX_ARTIFACT_CLASS_COMPONENT_YVEX,
-    .metadata_count = 18ull, .tensor_count = TEXT_TENSORS,
+    .metadata_count = 34ull, .tensor_count = TEXT_TENSORS,
     .payload_bytes = TEXT_PAYLOAD_BYTES, .file_bytes = TEXT_FILE_BYTES,
     .source_snapshot_identity = VIDEO_SOURCE_SNAPSHOT_KEY,
     .mapping_identity = TEXT_MAPPING_IDENTITY,

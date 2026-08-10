@@ -97,6 +97,9 @@ static const char *const failure_names[] = {
     "architecture", "tensor-role", "shape", "dtype", "source-range",
     "transformation", "resource-budget", "allocation"
 };
+static const yvex_minimax_h3_tokenizer_spec tokenizer_spec = {
+    "FL2VA/tokenizer/tokenizer.json", "FL2VA/tokenizer/tokenizer_config.json",
+    "qwen2", "verbatim-no-special-v1", 151669ull};
 
 static const char *family_component_name(yvex_minimax_h3_component_id component)
 {
@@ -1406,6 +1409,11 @@ static const yvex_minimax_h3_component *target_component_at(
                ? &target->components[index] : NULL;
 }
 
+static const yvex_minimax_h3_tokenizer_spec *target_tokenizer_spec(void)
+{
+    return &tokenizer_spec;
+}
+
 static const yvex_minimax_h3_phase_edge *target_phase_edge_at(unsigned long long index)
 {
     return index < YVEX_MINIMAX_H3_PHASE_EDGES ? &phase_edges[index] : NULL;
@@ -1421,7 +1429,7 @@ const yvex_minimax_h3_api *yvex_model_register_minimax_h3(void)
 {
     static const yvex_minimax_h3_api api = {
         target_open, target_close, target_summary, target_acquisition, target_architecture,
-        target_component_at, target_phase_edge_at, target_role_at,
+        target_component_at, target_tokenizer_spec, target_phase_edge_at, target_role_at,
         family_failure_name, family_role_name, family_component_name,
         components_canonical, component_graph_validate, phase_graph_validate,
         architecture_canonical, tensor_classify
