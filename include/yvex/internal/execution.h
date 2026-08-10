@@ -21,6 +21,7 @@ extern "C" {
 #define YVEX_EXECUTION_WORKLOAD_PROFILE_SCHEMA_V1 1u
 #define YVEX_EXECUTION_CAPACITY_PLAN_SCHEMA_V1 1u
 #define YVEX_EXECUTION_PHASE_ROOFLINE_SCHEMA_V1 1u
+#define YVEX_EXECUTION_SHAPE_MAX_WIDTH 64ull
 #define YVEX_EXECUTION_SHAPE_SCHEMA_V1 1u
 #define YVEX_EXECUTION_DEVICE_VIEW_SCHEMA_V1 1u
 #define YVEX_EXECUTION_TEXT_CAP 64u
@@ -527,7 +528,6 @@ typedef enum {
     YVEX_EXECUTION_OPERATION_ENVELOPE,
     YVEX_EXECUTION_OPERATION_RELEASE_SET
 } yvex_execution_operation_scope;
-
 typedef struct {
     unsigned int schema_version;
     yvex_execution_target_scope target_scope;

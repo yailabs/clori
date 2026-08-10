@@ -425,6 +425,44 @@ static int generation_capacity_workload(
         &context->workload_profile, err);
 }
 
+static int generation_shape_registry_capacity(
+    const yvex_runtime_generation_context *context,
+    unsigned long long *capacity, yvex_error *err)
+{
+    const yvex_speculation_family_policy *speculation = NULL;
+    unsigned long long width, draft_width = 0ull, classes;
+    if (capacity) *capacity = 0ull;
+    if (!context || !capacity || !context->model_view ||
+        !context->model_view->compiled_binding ||
+        !context->options.prefill_chunk_tokens ||
+        !yvex_runtime_binding_policies(
+            context->model_view->compiled_binding, NULL, NULL, &speculation))
+        return generation_context_refuse(
+            err, YVEX_ERR_STATE,
+            "compiled execution-shape envelope is unavailable");
+    width = context->options.prefill_chunk_tokens;
+    if (context->options.mode == YVEX_GENERATION_MODE_DSPARK &&
+        (!speculation ||
+         !yvex_core_u64_add(speculation->block_size, 2ull, &draft_width)))
+        return generation_context_refuse(
+            err, YVEX_ERR_BOUNDS,
+            "compiled speculative execution width is invalid");
+    if (draft_width > width) width = draft_width;
+    /* Workspace generations replace, rather than multiply, this admitted class envelope. */
+    if (width > YVEX_EXECUTION_SHAPE_MAX_WIDTH ||
+        !yvex_core_u64_mul(width, YVEX_EXECUTION_PHASE_COUNT, &classes) ||
+        !yvex_core_u64_mul(classes, YVEX_EXECUTION_CONTEXT_NEAR_CAPACITY + 1ull,
+                           &classes) ||
+        !yvex_core_u64_mul(classes, 2ull, &classes) ||
+        !yvex_core_u64_mul(classes, 2ull, &classes))
+        return generation_context_refuse(
+            err, YVEX_ERR_BOUNDS,
+            "compiled execution-shape envelope exceeds bounded geometry");
+    *capacity = classes;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
 static int generation_sampling_workspace(
     const yvex_runtime_generation_context *context, yvex_backend *backend,
     unsigned long long vocabulary_size, unsigned long long proposal_width,
@@ -864,6 +902,7 @@ int yvex_runtime_generation_context_open(
     yvex_tokenizer_decode_options decoder_options = {0};
     const yvex_runtime_logits_plan_summary *logits_plan = NULL;
     unsigned long long hidden_bytes, logits_bytes, execution_workspace = 0ull;
+    unsigned long long shape_capacity = 0ull;
     int rc = YVEX_OK;
     if (out) *out = NULL;
     if (!out || !model || !session || !options ||
@@ -916,8 +955,10 @@ int yvex_runtime_generation_context_open(
             session, &context->capacity_plan, &state_failure, err);
         if (rc != YVEX_OK) goto failure;
     }
-    rc = yvex_execution_shape_registry_open(
-        &context->execution_shapes, 128ull, err);
+    rc = generation_shape_registry_capacity(context, &shape_capacity, err);
+    if (rc == YVEX_OK)
+        rc = yvex_execution_shape_registry_open(
+            &context->execution_shapes, shape_capacity, err);
     if (rc != YVEX_OK) goto failure;
     rc = generation_execution_owners_open(
         context, &context->options, &logits_plan, &execution_workspace, err);

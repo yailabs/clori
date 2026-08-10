@@ -13,7 +13,6 @@
 
 #include <yvex/internal/backend.h>
 #include <yvex/internal/core.h>
-
 struct yvex_physical_execution_ir {
     yvex_physical_execution_decision *decisions;
     yvex_physical_execution_summary summary;
@@ -26,6 +25,9 @@ struct yvex_execution_shape_registry {
 
 static int execution_shape_equal(const yvex_execution_shape *left,
                                  const yvex_execution_shape *right);
+static int execution_shape_key_equal(const yvex_execution_shape *left,
+                                     const yvex_execution_shape *right,
+                                     int ignore_workspace);
 static int physical_ir_identity(yvex_physical_execution_ir *ir,
                                 yvex_error *err);
 
@@ -1684,7 +1686,6 @@ identity_failed:
                             "runtime.execution.profile",
                             "compiled execution profile identity derivation failed");
 }
-
 int yvex_execution_device_view_validate(
     const yvex_execution_device_view *view, yvex_error *err)
 {
@@ -1710,7 +1711,6 @@ int yvex_execution_device_view_validate(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 int yvex_execution_shape_seal(yvex_execution_shape *shape, yvex_error *err)
 {
     yvex_sha256 hash;
@@ -1718,7 +1718,7 @@ int yvex_execution_shape_seal(yvex_execution_shape *shape, yvex_error *err)
         shape->target_scope > YVEX_EXECUTION_SCOPE_DRAFT ||
         shape->phase > YVEX_EXECUTION_PHASE_RESET ||
         shape->operation_scope > YVEX_EXECUTION_OPERATION_RELEASE_SET ||
-        !shape->token_width || shape->token_width > 64ull ||
+        !shape->token_width || shape->token_width > YVEX_EXECUTION_SHAPE_MAX_WIDTH ||
         shape->context_band > YVEX_EXECUTION_CONTEXT_NEAR_CAPACITY ||
         shape->evidence > YVEX_EXECUTION_EVIDENCE_FORENSIC ||
         !shape->candidate_capacity || !shape->context_capacity ||
@@ -1762,7 +1762,6 @@ int yvex_execution_shape_seal(yvex_execution_shape *shape, yvex_error *err)
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 int yvex_execution_shape_registry_open(
     yvex_execution_shape_registry **out, unsigned long long capacity,
     yvex_error *err)
@@ -1775,8 +1774,7 @@ int yvex_execution_shape_registry_open(
                                 "bounded shape registry capacity is required");
     registry = calloc(1u, sizeof(*registry));
     if (registry)
-        registry->shapes = calloc((size_t)capacity,
-                                  sizeof(*registry->shapes));
+        registry->shapes = calloc((size_t)capacity, sizeof(*registry->shapes));
     if (!registry || !registry->shapes) {
         yvex_execution_shape_registry_close(&registry);
         return execution_refuse(err, YVEX_ERR_NOMEM,
@@ -1788,7 +1786,6 @@ int yvex_execution_shape_registry_open(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 int yvex_execution_shape_registry_register(
     yvex_execution_shape_registry *registry,
     const yvex_execution_shape *shape, yvex_error *err)
@@ -1808,6 +1805,16 @@ int yvex_execution_shape_registry_register(
                                     "runtime.execution.shape-registry",
                                     "shape identity collision was refused");
         }
+        if (execution_shape_key_equal(&registry->shapes[index], shape, 1)) {
+            if (shape->workspace_generation <=
+                registry->shapes[index].workspace_generation)
+                return execution_refuse(
+                    err, YVEX_ERR_STATE, "runtime.execution.shape-registry",
+                    "stale workspace shape replacement was refused");
+            registry->shapes[index] = *shape;
+            yvex_error_clear(err);
+            return YVEX_OK;
+        }
     }
     if (registry->count == registry->capacity)
         return execution_refuse(err, YVEX_ERR_BOUNDS,
@@ -1817,7 +1824,6 @@ int yvex_execution_shape_registry_register(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 static int execution_shape_equal(const yvex_execution_shape *left,
                                  const yvex_execution_shape *right)
 {
@@ -1848,9 +1854,9 @@ static int execution_shape_equal(const yvex_execution_shape *left,
            strcmp(left->workspace_identity, right->workspace_identity) == 0 &&
            strcmp(left->identity, right->identity) == 0;
 }
-
 static int execution_shape_key_equal(const yvex_execution_shape *left,
-                                     const yvex_execution_shape *right)
+                                     const yvex_execution_shape *right,
+                                     int ignore_workspace)
 {
     return left->target_scope == right->target_scope &&
            left->phase == right->phase &&
@@ -1859,7 +1865,6 @@ static int execution_shape_key_equal(const yvex_execution_shape *left,
            left->candidate_visible == right->candidate_visible &&
            left->context_band == right->context_band &&
            left->context_capacity == right->context_capacity &&
-           left->workspace_generation == right->workspace_generation &&
            left->evidence == right->evidence &&
            strcmp(left->execution_profile_identity,
                   right->execution_profile_identity) == 0 &&
@@ -1869,12 +1874,12 @@ static int execution_shape_key_equal(const yvex_execution_shape *left,
                   right->state_layout_identity) == 0 &&
            strcmp(left->kernel_bundle_identity,
                   right->kernel_bundle_identity) == 0 &&
-           strcmp(left->workspace_identity, right->workspace_identity) == 0;
+           (ignore_workspace ||
+            (left->workspace_generation == right->workspace_generation &&
+             strcmp(left->workspace_identity, right->workspace_identity) == 0));
 }
-
 static int execution_shape_capacity(
-    const yvex_execution_shape *configured,
-    const yvex_execution_shape *required,
+    const yvex_execution_shape *configured, const yvex_execution_shape *required,
     yvex_execution_shape_failure *failure)
 {
     const struct {
@@ -1906,10 +1911,8 @@ static int execution_shape_capacity(
     }
     return 1;
 }
-
 int yvex_execution_shape_registry_select(
-    yvex_execution_shape_registry *registry,
-    const yvex_execution_shape *request,
+    yvex_execution_shape_registry *registry, const yvex_execution_shape *request,
     const yvex_execution_shape **selected,
     yvex_execution_shape_failure *failure, yvex_error *err)
 {
@@ -1923,7 +1926,7 @@ int yvex_execution_shape_registry_select(
                                 "sealed shape request and output are required");
     for (index = 0ull; index < registry->count; ++index) {
         const yvex_execution_shape *candidate = &registry->shapes[index];
-        if (!execution_shape_key_equal(candidate, request)) continue;
+        if (!execution_shape_key_equal(candidate, request, 0)) continue;
         if (!execution_shape_capacity(candidate, request, failure)) {
             if (failure) {
                 failure->position = request->position;
@@ -1971,7 +1974,6 @@ int yvex_execution_shape_registry_select(
                             "runtime.execution.shape-registry",
                             "no compatible execution shape is admitted");
 }
-
 int yvex_execution_shape_registry_summary_copy(
     const yvex_execution_shape_registry *registry,
     yvex_execution_shape_registry_summary *summary, yvex_error *err)
@@ -1987,7 +1989,6 @@ int yvex_execution_shape_registry_summary_copy(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 void yvex_execution_shape_registry_close(
     yvex_execution_shape_registry **registry)
 {

@@ -970,13 +970,14 @@ static int transformer_shape_admit(
     if (rc == YVEX_OK)
         rc = yvex_execution_shape_registry_register(
             context->options.shape_registry, &admitted, err);
+    if (rc != YVEX_OK) return rc;
     required = admitted;
     required.position = input->token_start;
     required.candidate_capacity = width;
-    if (rc == YVEX_OK) rc = yvex_execution_shape_seal(&required, err);
-    if (rc == YVEX_OK)
-        rc = yvex_execution_shape_registry_select(
-            context->options.shape_registry, &required, &selected, &failure, err);
+    rc = yvex_execution_shape_seal(&required, err);
+    if (rc != YVEX_OK) return rc;
+    rc = yvex_execution_shape_registry_select(
+        context->options.shape_registry, &required, &selected, &failure, err);
     if (rc != YVEX_OK) {
         const char *component = failure.component <
                                         sizeof(capacity_names) / sizeof(capacity_names[0])
