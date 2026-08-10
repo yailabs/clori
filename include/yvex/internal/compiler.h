@@ -190,7 +190,6 @@ struct yvex_quant_policy;
 struct yvex_quant_plan;
 struct yvex_gguf_writer_plan;
 struct yvex_imatrix_data;
-struct yvex_gguf_writer_lowering_api;
 struct yvex_family_compilation_products;
 typedef struct {
     unsigned long long ordinal, layer_index, predictor_index;
@@ -380,7 +379,7 @@ typedef struct yvex_family_binding_pipeline {
                              const void *lowering_context,
                              const struct yvex_quant_policy *policy,
                              const char *imatrix_identity, yvex_error *err);
-    const struct yvex_gguf_writer_lowering_api *(*writer_lowering)(void);
+    const char *tokenizer_architecture;
     const char *imatrix_source_identity;
     const char *imatrix_dataset_identity;
     const char *imatrix_producer;

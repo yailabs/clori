@@ -5,6 +5,7 @@
  */
 #define _POSIX_C_SOURCE 200809L
 #include <yvex/internal/artifact.h>
+#include <yvex/internal/compiler.h>
 #include <yvex/internal/compiler_source.h>
 #include <yvex/internal/gguf_writer.h>
 #include <yvex/internal/graph.h>
@@ -103,11 +104,13 @@ static int artifact_writer_plan_build(
     request.input_class = YVEX_GGUF_WRITER_INPUT_COMPLETE_ARTIFACT;
     request.quant_plan = quant;
     request.options = options;
-    request.input.complete.lowering = yvex_model_deepseek_writer_lowering_api();
+    request.input.complete.lowering = yvex_gguf_writer_artifact_lowering_api();
     request.input.complete.lowering_context =
         yvex_model_register_deepseek_v4()->payload.map(handoff);
     request.input.complete.verification =
         yvex_model_register_deepseek_v4()->payload.verification(handoff);
+    request.input.complete.tokenizer_architecture =
+        yvex_compiler_family_deepseek_v4()->binding_pipeline->tokenizer_architecture;
     return yvex_gguf_writer_plan_build(out, &request, failure, error);
 }
 
@@ -958,9 +961,11 @@ static int artifact_variant_bind(
     writer_request.input_class = YVEX_GGUF_WRITER_INPUT_COMPLETE_ARTIFACT;
     writer_request.quant_plan = quant;
     writer_request.options = &writer_options;
-    writer_request.input.complete.lowering = yvex_model_deepseek_writer_lowering_api();
+    writer_request.input.complete.lowering = yvex_gguf_writer_artifact_lowering_api();
     writer_request.input.complete.lowering_context = model->payload.map(handoff);
     writer_request.input.complete.verification = model->payload.verification(handoff);
+    writer_request.input.complete.tokenizer_architecture =
+        adapter->binding_pipeline->tokenizer_architecture;
     if (rc == YVEX_OK)
         rc = yvex_gguf_writer_plan_build(
             &writer, &writer_request, &writer_failure, &error);

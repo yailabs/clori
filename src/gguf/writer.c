@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <yvex/gguf.h>
+#include <yvex/internal/artifact_lowering.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/gguf.h>
 #include <yvex/internal/gguf_writer.h>
@@ -968,6 +969,7 @@ typedef struct {
     const yvex_gguf_writer_lowering_api *lowering;
     const void *lowering_context;
     const yvex_source_verification *verification;
+    const char *tokenizer_architecture;
     const yvex_quant_plan_summary *quant;
     yvex_gguf_writer_lowering_summary mapping;
     yvex_gguf_writer_plan_options options;
@@ -986,6 +988,69 @@ typedef struct {
     yvex_gguf_writer_failure *failure;
     yvex_error *err;
 } writer_complete_context;
+
+static int writer_artifact_lowering_summary(
+    const void *context, yvex_gguf_writer_lowering_summary *out)
+{
+    const yvex_artifact_lowering_summary *summary =
+        yvex_artifact_lowering_operations.summary(context);
+
+    if (!summary || !out) return 0;
+    *out = (yvex_gguf_writer_lowering_summary){
+        summary->descriptor_count, summary->metadata_count,
+        summary->source_identity, summary->mapping_identity, summary->complete};
+    return 1;
+}
+
+static int writer_artifact_lowering_tensor(
+    const void *context, unsigned long long ordinal,
+    yvex_gguf_writer_lowering_tensor *out)
+{
+    const yvex_artifact_lowering_descriptor *row =
+        yvex_artifact_lowering_operations.descriptor_at(context, ordinal);
+
+    if (!row || !out || row->logical_rank > YVEX_GGUF_QTYPE_MAX_DIMS) return 0;
+    memset(out, 0, sizeof(*out));
+    yvex_core_text_copy(out->emitted_name, sizeof(out->emitted_name), row->emitted_name);
+    out->logical_rank = row->logical_rank;
+    memcpy(out->logical_dims, row->logical_dims,
+           row->logical_rank * sizeof(out->logical_dims[0]));
+    return 1;
+}
+
+static int writer_artifact_lowering_metadata(
+    const void *context, unsigned long long ordinal,
+    yvex_gguf_writer_lowering_metadata *out)
+{
+    const yvex_artifact_lowering_metadata *row =
+        yvex_artifact_lowering_operations.metadata_at(context, ordinal);
+
+    if (!row || !out || row->type > YVEX_ARTIFACT_LOWERING_METADATA_F64_ARRAY ||
+        row->array_count > YVEX_ARTIFACT_LOWERING_METADATA_CAP)
+        return 0;
+    memset(out, 0, sizeof(*out));
+    yvex_core_text_copy(out->key, sizeof(out->key), row->key);
+    out->type = (yvex_gguf_writer_lowering_metadata_type)row->type;
+    yvex_core_text_copy(out->string_value, sizeof(out->string_value), row->string_value);
+    out->u64_value = row->u64_value;
+    out->f64_value = row->f64_value;
+    out->bool_value = row->bool_value;
+    out->array_count = row->array_count;
+    memcpy(out->array_values, row->array_values, sizeof(out->array_values));
+    memcpy(out->f64_array_values, row->f64_array_values,
+           sizeof(out->f64_array_values));
+    return 1;
+}
+
+const yvex_gguf_writer_lowering_api *yvex_gguf_writer_artifact_lowering_api(void)
+{
+    static const yvex_gguf_writer_lowering_api api = {
+        writer_artifact_lowering_summary,
+        writer_artifact_lowering_tensor,
+        writer_artifact_lowering_metadata};
+
+    return &api;
+}
 
 static int writer_complete_plan_create(writer_complete_context *context) {
     yvex_gguf_tokenizer_failure tokenizer_failure;
@@ -1006,7 +1071,7 @@ static int writer_complete_plan_create(writer_complete_context *context) {
                            YVEX_ERR_NOMEM, "writer tensor plan allocation failed");
     rc = yvex_gguf_tokenizer_metadata_load(&context->plan->tokenizer, context->verification,
                                            context->verification->tokenizer_effective_vocab_size,
-                                           context->lowering->tokenizer_architecture,
+                                           context->tokenizer_architecture,
                                            context->options.maximum_owned_bytes / 2u,
                                            &tokenizer_failure, context->err);
     if (rc != YVEX_OK)
@@ -1277,7 +1342,7 @@ static int writer_complete_plan_finish(writer_complete_context *context) {
 static int writer_plan_build_complete(
     yvex_gguf_writer_plan **out, const yvex_quant_plan *quant_plan,
     const yvex_gguf_writer_lowering_api *lowering, const void *lowering_context,
-    const yvex_source_verification *verification,
+    const yvex_source_verification *verification, const char *tokenizer_architecture,
     const yvex_gguf_writer_plan_options *options, yvex_gguf_writer_failure *failure,
     yvex_error *err) {
     writer_complete_context context;
@@ -1288,13 +1353,14 @@ static int writer_plan_build_complete(
     context.lowering = lowering;
     context.lowering_context = lowering_context;
     context.verification = verification;
+    context.tokenizer_architecture = tokenizer_architecture;
     context.quant = yvex_quant_plan_summary_get(quant_plan);
     context.failure = failure;
     context.err = err;
     if (out)
         *out = NULL;
     if (!out || !quant_plan || !lowering || !lowering_context || !verification ||
-        !lowering->tokenizer_architecture || !lowering->tokenizer_architecture[0] ||
+        !tokenizer_architecture || !tokenizer_architecture[0] ||
         !lowering->summary || !lowering->tensor_at || !lowering->metadata_at ||
         !lowering->summary(lowering_context, &context.mapping) || !context.quant ||
         !context.quant->complete || !context.mapping.complete ||
@@ -1370,7 +1436,9 @@ int yvex_gguf_writer_plan_build(yvex_gguf_writer_plan **out,
         return writer_plan_build_complete(
             out, request->quant_plan, request->input.complete.lowering,
             request->input.complete.lowering_context,
-            request->input.complete.verification, request->options, failure, err);
+            request->input.complete.verification,
+            request->input.complete.tokenizer_architecture,
+            request->options, failure, err);
     case YVEX_GGUF_WRITER_INPUT_TENSOR_PROOF:
         return writer_plan_build_tensor_proof(
             out, request->quant_plan, request->input.tensor_proof.tensors,

@@ -133,17 +133,18 @@ typedef struct {
     unsigned int array_count;
 } yvex_gguf_writer_lowering_metadata;
 typedef struct yvex_gguf_writer_lowering_api {
-    const char *tokenizer_architecture;
     int (*summary)(const void *context, yvex_gguf_writer_lowering_summary *out);
     int (*tensor_at)(const void *context, unsigned long long ordinal,
                      yvex_gguf_writer_lowering_tensor *out);
     int (*metadata_at)(const void *context, unsigned long long ordinal,
                        yvex_gguf_writer_lowering_metadata *out);
 } yvex_gguf_writer_lowering_api;
+const yvex_gguf_writer_lowering_api *yvex_gguf_writer_artifact_lowering_api(void);
 typedef struct {
     const yvex_gguf_writer_lowering_api *lowering;
     const void *lowering_context;
     const yvex_source_verification *verification;
+    const char *tokenizer_architecture;
 } yvex_gguf_writer_complete_input;
 typedef struct {
     const yvex_gguf_writer_proof_tensor *tensors;

@@ -54,7 +54,6 @@ typedef struct yvex_graph_execution_api yvex_graph_execution_api;
 typedef struct yvex_graph_compiler_api yvex_graph_compiler_api;
 typedef struct yvex_family_compiler_adapter yvex_family_compiler_adapter;
 typedef struct yvex_semantic_model_ir yvex_semantic_model_ir;
-typedef struct yvex_gguf_writer_lowering_api yvex_gguf_writer_lowering_api;
 #define YVEX_DEEPSEEK_V4_IR_NO_LAYER (~0ull)
 typedef enum {
     YVEX_DEEPSEEK_V4_IR_FAILURE_NONE = 0, YVEX_DEEPSEEK_V4_IR_FAILURE_INVALID_ARGUMENT,
@@ -384,7 +383,6 @@ typedef struct yvex_model_family_api {
 } yvex_model_family_api;
 const yvex_model_family_transform_api *yvex_model_deepseek_transform_api(void);
 const yvex_model_family_lowering_api *yvex_model_deepseek_lowering_api(void);
-const yvex_gguf_writer_lowering_api *yvex_model_deepseek_writer_lowering_api(void);
 const yvex_model_family_payload_api *yvex_model_deepseek_payload_api(void);
 int yvex_transform_deepseek_architecture_identity(const yvex_deepseek_v4_ir *architecture,
                                                   char output[YVEX_DEEPSEEK_IDENTITY_CAP]);

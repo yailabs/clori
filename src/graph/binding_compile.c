@@ -78,7 +78,7 @@ static int pipeline_valid(const yvex_family_compiler_adapter *adapter)
            pipeline->semantic_model_build &&
            pipeline->runtime_descriptor_build &&
            pipeline->quant_plan_default && pipeline->quant_plan_policy &&
-           pipeline->writer_lowering;
+           pipeline->tokenizer_architecture && pipeline->tokenizer_architecture[0];
 }
 
 static void binding_compiler_close(binding_compiler *compiler)
@@ -261,14 +261,10 @@ static int binding_compiler_writer_build(
     writer.input_class = YVEX_GGUF_WRITER_INPUT_COMPLETE_ARTIFACT;
     writer.quant_plan = compiler->quant;
     writer.options = &options;
-    writer.input.complete.lowering = compiler->pipeline->writer_lowering();
+    writer.input.complete.lowering = yvex_gguf_writer_artifact_lowering_api();
     writer.input.complete.lowering_context = compiler->source.lowering_context;
     writer.input.complete.verification = compiler->source.verification;
-    if (!writer.input.complete.lowering) {
-        yvex_error_set(err, YVEX_ERR_STATE, "compilation.runtime-binding",
-                       "family writer lowering is unavailable");
-        return YVEX_ERR_STATE;
-    }
+    writer.input.complete.tokenizer_architecture = compiler->pipeline->tokenizer_architecture;
     return yvex_gguf_writer_plan_build(
         &compiler->writer, &writer, &compiler->writer_failure, err);
 }
