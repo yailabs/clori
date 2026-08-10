@@ -304,6 +304,7 @@ def check_project_control() -> None:
         "V010.REBASE.DEEPSEEK.DSPARK.0": "complete",
         "V010.PRODUCT.ARCHITECTURE.REFOUNDATION.0": "complete",
         "V010.REPO.ARCHITECTURE.COMPRESSION.0": "complete",
+        "V010.CORE.COMPILATION.FAMILY.CONSOLIDATION.0": "complete",
         "V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0": "active",
         "V010.EVAL.DEEPSEEK.0": "blocked",
         "V010.BENCH.DEEPSEEK.0": "not-measured",
