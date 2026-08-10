@@ -52,6 +52,7 @@ legacy_resolution_boolean_pattern='(host_stochastic_reference|token_local_moe_re
 backend_representation_pattern='\bbackend->(vtable|virtual_tensor_ready|state_residency_generation|resident_host_base|workspace_device_tensor)'
 family_transform_builder_pattern='yvex_transform_builder_(create|add_source|declare_value|add_node|seal|release)[[:space:]]*\('
 generic_family_operator_lowering_pattern='yvex_operator_graph_ir_build_transformer[[:space:]]*\('
+legacy_family_lowering_representation_pattern='yvex_deepseek_gguf_(map(_failure|_allocator|_summary)?|descriptor|contribution|metadata|transform)\b|YVEX_DEEPSEEK_GGUF_(MAP|TRANSFORM|CONTRIBUTION|METADATA)_'
 
 # Every expression used as a hard gate carries positive and negative probes.
 # This catches regex drift before a repository scan can produce false comfort.
@@ -109,6 +110,13 @@ printf '%s\n' 'decision->maximum_context = ULLONG_MAX;' |
 if printf '%s\n' 'decision->maximum_context = model->maximum_context;' |
     rg "$implicit_physical_envelope_pattern" >/dev/null; then
     fail "physical-envelope guard rejects a semantic model bound"
+fi
+printf '%s\n' 'yvex_deepseek_gguf_map_failure failure;' |
+    rg "$legacy_family_lowering_representation_pattern" >/dev/null ||
+    fail "artifact-lowering ownership guard misses a concrete family representation"
+if printf '%s\n' 'YVEX_DEEPSEEK_GGUF_MAPPING_IDENTITY' |
+    rg "$legacy_family_lowering_representation_pattern" >/dev/null; then
+    fail "artifact-lowering ownership guard rejects a family mapping identity"
 fi
 printf '%s\n' 'profile.eager_attention_reference = 1;' |
     rg "$legacy_resolution_boolean_pattern" >/dev/null ||
@@ -323,6 +331,9 @@ if rg -n -i "(families/|$generic_family_symbol_pattern)" \
     src/model/compilation/ir_identity.c \
     src/model/compilation/ir_validate.c; then
     fail "generic Transformation IR owners contain concrete family semantics"
+fi
+if rg -n "$legacy_family_lowering_representation_pattern" src include; then
+    fail "artifact-lowering representation remains owned by a concrete family"
 fi
 if rg -n -i "(families/|$generic_family_symbol_pattern)" \
     src/gguf/writer.c include/yvex/internal/gguf_writer.h; then

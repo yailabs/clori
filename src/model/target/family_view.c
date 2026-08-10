@@ -444,10 +444,10 @@ int yvex_model_target_family_mapping_report_build(
     yvex_source_tensor_snapshot *snapshot = NULL;
     yvex_deepseek_v4_ir *architecture = NULL;
     yvex_transform_ir *transform_ir = NULL;
-    yvex_deepseek_gguf_map *map = NULL;
+    yvex_artifact_lowering_map *map = NULL;
     yvex_deepseek_v4_ir_failure architecture_failure;
     yvex_transform_failure transform_failure;
-    yvex_deepseek_gguf_map_failure map_failure;
+    yvex_artifact_lowering_failure map_failure;
     const char *refusal_stage = NULL;
     const char *refusal_reason = NULL;
     const char *refusal_source = "none";
@@ -552,8 +552,8 @@ cleanup:
 static int project_map(yvex_model_target_report *report, yvex_error *err)
 {
     const yvex_model_family_api *family = yvex_model_register_deepseek_v4();
-    const yvex_deepseek_gguf_map_summary *source = family->lowering.summary(
-        (const yvex_deepseek_gguf_map *)report->family_lowering);
+    const yvex_artifact_lowering_summary *source = family->lowering.summary(
+        (const yvex_artifact_lowering_map *)report->family_lowering);
     yvex_model_target_map_projection *out = &report->detail.map;
     unsigned int index;
 
@@ -874,7 +874,7 @@ void yvex_model_target_report_close_family_detail(yvex_model_target_report *repo
 {
     if (!report) return;
     yvex_model_register_deepseek_v4()->lowering.close(
-        (yvex_deepseek_gguf_map *)report->family_lowering);
+        (yvex_artifact_lowering_map *)report->family_lowering);
     yvex_transform_ir_release((yvex_transform_ir **)&report->family_transformation);
     if (report->family_architecture_kind == YVEX_MODEL_TARGET_FAMILY_ARCHITECTURE_DEEPSEEK) {
         yvex_model_register_deepseek_v4()->ir.close(

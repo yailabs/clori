@@ -40,7 +40,7 @@ typedef struct {
     yvex_artifact *artifact;
     yvex_gguf *gguf;
     yvex_tensor_table *tensors;
-    yvex_deepseek_gguf_map *map;
+    yvex_artifact_lowering_map *map;
     yvex_complete_artifact_admission admission;
     yvex_artifact_physical_compatibility compatibility;
     yvex_materialization_plan *materialization_plan;

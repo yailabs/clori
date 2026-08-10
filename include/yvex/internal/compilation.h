@@ -9,6 +9,7 @@
 #include <yvex/core.h>
 #include <yvex/model.h>
 #include <yvex/source.h>
+#include <yvex/internal/artifact_lowering.h>
 #include <yvex/internal/source_payload.h>
 
 #ifdef __cplusplus
@@ -428,6 +429,7 @@ const yvex_transform_value *yvex_transform_ir_terminal_at(
 const yvex_transform_value *yvex_transform_ir_node_input_at(
     const yvex_transform_ir *ir, const yvex_transform_node *node,
     unsigned long long ordinal);
+
 int yvex_transform_logical_key_equal(
     const yvex_transform_logical_key *left,
     const yvex_transform_logical_key *right);

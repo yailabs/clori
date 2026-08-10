@@ -137,7 +137,7 @@ static const yvex_runtime_tensor_binding *ref_binding(
 {
     return yvex_runtime_descriptor_find_role(
         descriptor, role, YVEX_TENSOR_SCOPE_MAIN_LAYER, layer,
-        YVEX_DEEPSEEK_GGUF_NO_INDEX);
+        YVEX_ARTIFACT_LOWERING_NO_INDEX);
 }
 
 static int ref_row_bytes(const yvex_materialized_tensor_binding *binding,

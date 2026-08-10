@@ -101,7 +101,7 @@ int main(int argc, char **argv)
     const yvex_source_payload_plan_summary *plan_summary;
     const yvex_transform_ir_summary *transform_summary;
     const yvex_transform_binding_summary *binding_summary;
-    const yvex_deepseek_gguf_map_summary *map_summary;
+    const yvex_artifact_lowering_summary *map_summary;
     const yvex_source_verification *verification;
     yvex_source_payload_session *session;
     yvex_source_payload_session_facts facts;

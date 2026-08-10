@@ -26,6 +26,15 @@ typedef struct yvex_transform_ir yvex_transform_ir;
 typedef struct yvex_transform_binding yvex_transform_binding;
 typedef struct yvex_transform_builder_options yvex_transform_builder_options;
 typedef struct yvex_transform_failure yvex_transform_failure;
+typedef struct yvex_artifact_lowering_map yvex_artifact_lowering_map;
+typedef struct yvex_artifact_lowering_failure yvex_artifact_lowering_failure;
+typedef struct yvex_artifact_lowering_allocator yvex_artifact_lowering_allocator;
+typedef struct yvex_artifact_lowering_summary yvex_artifact_lowering_summary;
+typedef struct yvex_artifact_lowering_descriptor yvex_artifact_lowering_descriptor;
+typedef struct yvex_artifact_lowering_contribution yvex_artifact_lowering_contribution;
+typedef struct yvex_artifact_lowering_metadata yvex_artifact_lowering_metadata;
+typedef unsigned int yvex_artifact_lowering_transform;
+typedef unsigned int yvex_artifact_lowering_failure_code;
 typedef struct yvex_artifact yvex_artifact;
 typedef struct yvex_artifact_admission_failure yvex_artifact_admission_failure;
 typedef struct yvex_complete_artifact_admission yvex_complete_artifact_admission;
@@ -267,8 +276,6 @@ typedef struct {
 #define YVEX_DEEPSEEK_TRANSFORM_TERMINAL_COUNT 1409ull
 #define YVEX_DEEPSEEK_TRANSFORM_MAIN_TERMINAL_COUNT 1328ull
 #define YVEX_DEEPSEEK_TRANSFORM_AUX_TERMINAL_COUNT 81ull
-#define YVEX_DEEPSEEK_GGUF_NO_INDEX (~0ull)
-#define YVEX_DEEPSEEK_GGUF_AGGREGATED_AXIS (~0u)
 #define YVEX_DEEPSEEK_GGUF_DESCRIPTOR_COUNT 1409ull
 #define YVEX_DEEPSEEK_GGUF_TRUNK_DESCRIPTOR_COUNT 1328ull
 #define YVEX_DEEPSEEK_GGUF_DRAFT_DESCRIPTOR_COUNT 81ull
@@ -280,88 +287,6 @@ typedef struct {
 #define YVEX_DEEPSEEK_QUANT_IMATRIX_SOURCE_IDENTITY \
     "cc774dffb6aa3a8e9f507b1dd454fbf7f5c68187138736f9a330ee9eaec07067"
 #define YVEX_DEEPSEEK_QUANT_IMATRIX_DATASET_IDENTITY "deepseek-v4-flash-chat-v2-rendered-prompts-v1"
-typedef enum {
-    YVEX_DEEPSEEK_GGUF_TRANSFORM_DIRECT = 0, YVEX_DEEPSEEK_GGUF_TRANSFORM_FP8_E4M3_E8M0,
-    YVEX_DEEPSEEK_GGUF_TRANSFORM_EXPERT_MXFP4, YVEX_DEEPSEEK_GGUF_TRANSFORM_I64_TO_I32
-} yvex_deepseek_gguf_transform;
-typedef enum {
-    YVEX_DEEPSEEK_GGUF_CONTRIBUTION_PRIMARY = 0, YVEX_DEEPSEEK_GGUF_CONTRIBUTION_SCALE,
-    YVEX_DEEPSEEK_GGUF_CONTRIBUTION_EXPERT_WEIGHT, YVEX_DEEPSEEK_GGUF_CONTRIBUTION_EXPERT_SCALE,
-    YVEX_DEEPSEEK_GGUF_CONTRIBUTION_ROUTING_TABLE
-} yvex_deepseek_gguf_contribution_kind;
-typedef enum {
-    YVEX_DEEPSEEK_GGUF_METADATA_STRING = 0, YVEX_DEEPSEEK_GGUF_METADATA_U64,
-    YVEX_DEEPSEEK_GGUF_METADATA_F64, YVEX_DEEPSEEK_GGUF_METADATA_BOOL,
-    YVEX_DEEPSEEK_GGUF_METADATA_U64_ARRAY, YVEX_DEEPSEEK_GGUF_METADATA_F64_ARRAY
-} yvex_deepseek_gguf_metadata_type;
-typedef enum {
-    YVEX_DEEPSEEK_GGUF_MAP_FAILURE_NONE = 0, YVEX_DEEPSEEK_GGUF_MAP_FAILURE_INVALID_ARGUMENT,
-    YVEX_DEEPSEEK_GGUF_MAP_FAILURE_ARCHITECTURE, YVEX_DEEPSEEK_GGUF_MAP_FAILURE_COVERAGE_ROW,
-    YVEX_DEEPSEEK_GGUF_MAP_FAILURE_MISSING_SOURCE, YVEX_DEEPSEEK_GGUF_MAP_FAILURE_DUPLICATE_SOURCE,
-    YVEX_DEEPSEEK_GGUF_MAP_FAILURE_SOURCE_DTYPE, YVEX_DEEPSEEK_GGUF_MAP_FAILURE_EXPERT_SEQUENCE,
-    YVEX_DEEPSEEK_GGUF_MAP_FAILURE_NAME, YVEX_DEEPSEEK_GGUF_MAP_FAILURE_DUPLICATE_NAME,
-    YVEX_DEEPSEEK_GGUF_MAP_FAILURE_LAYOUT, YVEX_DEEPSEEK_GGUF_MAP_FAILURE_METADATA,
-    YVEX_DEEPSEEK_GGUF_MAP_FAILURE_ACCOUNTING, YVEX_DEEPSEEK_GGUF_MAP_FAILURE_ARITHMETIC_OVERFLOW,
-    YVEX_DEEPSEEK_GGUF_MAP_FAILURE_ALLOCATION, YVEX_DEEPSEEK_GGUF_MAP_FAILURE_TRANSFORM_IR,
-    YVEX_DEEPSEEK_GGUF_MAP_FAILURE_LOWERING_DIVERGENCE, YVEX_DEEPSEEK_GGUF_MAP_FAILURE_MAPPING_IDENTITY
-} yvex_deepseek_gguf_map_failure_code;
-typedef struct {
-    yvex_deepseek_gguf_map_failure_code code;
-    yvex_tensor_role role;
-    yvex_tensor_scope scope;
-    unsigned long long layer_index, predictor_index, expert_index, expected, actual;
-    char source_name[256];
-    char emitted_name[192];
-} yvex_deepseek_gguf_map_failure;
-typedef struct {
-    char source_name[256];
-    yvex_native_dtype source_dtype;
-    unsigned int source_rank;
-    unsigned long long source_dims[2];
-    yvex_deepseek_gguf_contribution_kind kind;
-    unsigned long long source_row_index, descriptor_index, expert_index;
-} yvex_deepseek_gguf_contribution;
-typedef struct {
-    yvex_tensor_role role;
-    yvex_tensor_collection collection;
-    yvex_tensor_scope scope;
-    unsigned long long layer_index, predictor_index, expert_count;
-    char emitted_name[192];
-    yvex_deepseek_gguf_transform transform;
-    yvex_gguf_name_provenance name_provenance;
-    unsigned int forced_qtype, logical_rank;
-    unsigned long long logical_dims[YVEX_TENSOR_MAX_DIMS];
-    unsigned int source_axis_for_logical[YVEX_TENSOR_MAX_DIMS];
-    unsigned long long contribution_offset, contribution_count, identity;
-} yvex_deepseek_gguf_descriptor;
-typedef struct {
-    char key[128];
-    yvex_deepseek_gguf_metadata_type type;
-    char string_value[192];
-    unsigned long long u64_value;
-    double f64_value;
-    int bool_value;
-    unsigned long long array_values[64];
-    double f64_array_values[64];
-    unsigned int array_count;
-} yvex_deepseek_gguf_metadata;
-typedef struct {
-    unsigned long long source_contribution_count, descriptor_count, trunk_descriptor_count;
-    unsigned long long draft_descriptor_count, pinned_standard_count, semantic_standard_count;
-    unsigned long long extension_count;
-    unsigned long long collection_counts[YVEX_TENSOR_COLLECTION_COUNT];
-    unsigned long long metadata_count, header_scan_count, payload_bytes_read, source_identity;
-    unsigned long long coverage_identity, mapping_identity;
-    int complete;
-} yvex_deepseek_gguf_map_summary;
-typedef void *(*yvex_deepseek_gguf_map_allocate_fn)(size_t, void *);
-typedef void (*yvex_deepseek_gguf_map_release_fn)(void *, void *);
-typedef struct {
-    yvex_deepseek_gguf_map_allocate_fn allocate;
-    yvex_deepseek_gguf_map_release_fn release;
-    void *context;
-} yvex_deepseek_gguf_map_allocator;
-typedef struct yvex_deepseek_gguf_map yvex_deepseek_gguf_map;
 #define YVEX_DEEPSEEK_PAYLOAD_MAPPING_IDENTITY \
     YVEX_DEEPSEEK_GGUF_MAPPING_IDENTITY
 typedef enum {
@@ -440,34 +365,34 @@ typedef struct {
                  yvex_error *err);
 } yvex_model_family_transform_api;
 typedef struct {
-    int (*build)(yvex_deepseek_gguf_map **out, const yvex_deepseek_v4_ir *ir,
+    int (*build)(yvex_artifact_lowering_map **out, const yvex_deepseek_v4_ir *ir,
                  const yvex_transform_ir *transform_ir,
-                 yvex_deepseek_gguf_map_failure *failure, yvex_error *err);
-    int (*build_with_allocator)(yvex_deepseek_gguf_map **out, const yvex_deepseek_v4_ir *ir,
+                 yvex_artifact_lowering_failure *failure, yvex_error *err);
+    int (*build_with_allocator)(yvex_artifact_lowering_map **out, const yvex_deepseek_v4_ir *ir,
                                 const yvex_transform_ir *transform_ir,
-                                const yvex_deepseek_gguf_map_allocator *allocator,
-                                yvex_deepseek_gguf_map_failure *failure, yvex_error *err);
-    void (*close)(yvex_deepseek_gguf_map *map);
-    const yvex_deepseek_gguf_map_summary *(*summary)(const yvex_deepseek_gguf_map *map);
-    const yvex_deepseek_gguf_descriptor *(*at)(const yvex_deepseek_gguf_map *map,
+                                const yvex_artifact_lowering_allocator *allocator,
+                                yvex_artifact_lowering_failure *failure, yvex_error *err);
+    void (*close)(yvex_artifact_lowering_map *map);
+    const yvex_artifact_lowering_summary *(*summary)(const yvex_artifact_lowering_map *map);
+    const yvex_artifact_lowering_descriptor *(*at)(const yvex_artifact_lowering_map *map,
                                                unsigned long long index);
-    const yvex_deepseek_gguf_contribution *(*contribution_at)(const yvex_deepseek_gguf_map *map,
+    const yvex_artifact_lowering_contribution *(*contribution_at)(const yvex_artifact_lowering_map *map,
                                                               unsigned long long index);
-    const yvex_deepseek_gguf_descriptor *(*find_source)(const yvex_deepseek_gguf_map *map,
+    const yvex_artifact_lowering_descriptor *(*find_source)(const yvex_artifact_lowering_map *map,
                                                         const char *source_name);
-    const yvex_deepseek_gguf_descriptor *(*find_emitted)(const yvex_deepseek_gguf_map *map,
+    const yvex_artifact_lowering_descriptor *(*find_emitted)(const yvex_artifact_lowering_map *map,
                                                          const char *emitted_name);
-    const yvex_deepseek_gguf_descriptor *(*find_role)(const yvex_deepseek_gguf_map *map,
+    const yvex_artifact_lowering_descriptor *(*find_role)(const yvex_artifact_lowering_map *map,
                                                       yvex_tensor_role role,
                                                       yvex_tensor_scope scope,
                                                       unsigned long long layer_index,
                                                       unsigned long long predictor_index);
-    const yvex_deepseek_gguf_metadata *(*metadata_at)(const yvex_deepseek_gguf_map *map,
+    const yvex_artifact_lowering_metadata *(*metadata_at)(const yvex_artifact_lowering_map *map,
                                                       unsigned long long index);
-    const yvex_deepseek_gguf_metadata *(*metadata_find)(const yvex_deepseek_gguf_map *map,
+    const yvex_artifact_lowering_metadata *(*metadata_find)(const yvex_artifact_lowering_map *map,
                                                         const char *key);
-    const char *(*transform_name)(yvex_deepseek_gguf_transform transform);
-    const char *(*failure_name)(yvex_deepseek_gguf_map_failure_code code);
+    const char *(*transform_name)(yvex_artifact_lowering_transform transform);
+    const char *(*failure_name)(yvex_artifact_lowering_failure_code code);
 } yvex_model_family_lowering_api;
 typedef struct {
     int (*open)(yvex_deepseek_payload_handoff **out,
@@ -476,7 +401,7 @@ typedef struct {
     void (*close)(yvex_deepseek_payload_handoff *handoff);
     const yvex_deepseek_payload_handoff_summary *(*summary)(const yvex_deepseek_payload_handoff *handoff);
     const yvex_source_verification *(*verification)(const yvex_deepseek_payload_handoff *handoff);
-    const yvex_deepseek_gguf_map *(*map)(const yvex_deepseek_payload_handoff *handoff);
+    const yvex_artifact_lowering_map *(*map)(const yvex_deepseek_payload_handoff *handoff);
     const yvex_transform_ir *(*transform_ir)(const yvex_deepseek_payload_handoff *handoff);
     const yvex_transform_binding *(*binding)(const yvex_deepseek_payload_handoff *handoff);
     yvex_source_payload_session *(*session)(yvex_deepseek_payload_handoff *handoff);
@@ -499,12 +424,12 @@ int yvex_transform_deepseek_architecture_identity(const yvex_deepseek_v4_ir *arc
                                                   char output[YVEX_DEEPSEEK_IDENTITY_CAP]);
 int yvex_quant_plan_build_deepseek_profile(
     yvex_quant_plan **out, const yvex_transform_ir *ir,
-    const yvex_transform_binding *binding, const yvex_deepseek_gguf_map *map,
+    const yvex_transform_binding *binding, const yvex_artifact_lowering_map *map,
     yvex_quant_profile_kind profile, const yvex_quant_plan_options *options,
     yvex_quant_failure *failure, yvex_error *err);
 int yvex_quant_plan_build_deepseek_policy(
     yvex_quant_plan **out, const yvex_transform_ir *ir,
-    const yvex_transform_binding *binding, const yvex_deepseek_gguf_map *map,
+    const yvex_transform_binding *binding, const yvex_artifact_lowering_map *map,
     const yvex_quant_policy *policy, const char *imatrix_identity,
     const yvex_quant_plan_options *options,
     yvex_quant_failure *failure, yvex_error *err);
@@ -512,13 +437,13 @@ int yvex_artifact_admit_deepseek(
     const yvex_artifact *artifact, yvex_complete_artifact_admission *out,
     yvex_artifact_admission_failure *failure, yvex_error *err);
 int yvex_deepseek_materialization_projection(
-    const yvex_deepseek_gguf_map *map, yvex_materialization_projection *out,
+    const yvex_artifact_lowering_map *map, yvex_materialization_projection *out,
     yvex_error *err);
 int yvex_runtime_descriptor_build_deepseek(
     yvex_runtime_descriptor **out,
     const yvex_complete_artifact_admission *admission,
     const yvex_materialization_session *session,
-    const yvex_deepseek_gguf_map *map,
+    const yvex_artifact_lowering_map *map,
     const yvex_semantic_model_ir *semantic_model,
     yvex_runtime_descriptor_failure *failure, yvex_error *err);
 const yvex_model_family_api *yvex_model_register_deepseek_v4(void);

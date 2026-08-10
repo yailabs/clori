@@ -82,7 +82,7 @@ static void quant_print_terminal_context(
     unsigned long long ordinal)
 {
     const yvex_transform_value *terminal;
-    const yvex_deepseek_gguf_descriptor *descriptor;
+    const yvex_artifact_lowering_descriptor *descriptor;
 
     if (!handoff || ordinal == ULLONG_MAX) return;
     terminal = yvex_transform_ir_terminal_at(

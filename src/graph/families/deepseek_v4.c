@@ -1178,7 +1178,7 @@ struct yvex_deepseek_payload_handoff {
     yvex_source_verify_options source_options;
     yvex_source_verification verification;
     yvex_transform_ir *transform_ir;
-    yvex_deepseek_gguf_map *map;
+    yvex_artifact_lowering_map *map;
     yvex_source_payload_session *session;
     yvex_transform_binding *binding;
     yvex_source_payload_plan *plan;
@@ -1216,7 +1216,7 @@ static int handoff_resolve(yvex_deepseek_payload_handoff *handoff,
                            const yvex_deepseek_payload_handoff_options *options,
                            yvex_deepseek_payload_failure *failure, yvex_error *err) {
     const yvex_model_family_lowering_api *lowering = yvex_model_deepseek_lowering_api();
-    const yvex_deepseek_gguf_map_summary *map_summary = lowering->summary(handoff->map);
+    const yvex_artifact_lowering_summary *map_summary = lowering->summary(handoff->map);
     const yvex_transform_binding_summary *binding_summary =
         yvex_transform_binding_summary_get(handoff->binding);
     unsigned long long contribution_index;
@@ -1250,11 +1250,11 @@ static int handoff_resolve(yvex_deepseek_payload_handoff *handoff,
     handoff->summary.contribution_count = map_summary->source_contribution_count;
     for (contribution_index = 0u; contribution_index < map_summary->source_contribution_count;
          ++contribution_index) {
-        const yvex_deepseek_gguf_contribution *contribution =
+        const yvex_artifact_lowering_contribution *contribution =
             lowering->contribution_at(handoff->map, contribution_index);
         const yvex_source_payload_range *range;
         const yvex_transform_source_value *source;
-        const yvex_deepseek_gguf_descriptor *descriptor;
+        const yvex_artifact_lowering_descriptor *descriptor;
 
         if (!contribution || contribution->descriptor_index >= map_summary->descriptor_count) {
             return handoff_reject(failure, YVEX_DEEPSEEK_PAYLOAD_FAILURE_CONTRIBUTION, ULLONG_MAX,
@@ -1279,16 +1279,16 @@ static int handoff_resolve(yvex_deepseek_payload_handoff *handoff,
                 "mapping contribution does not resolve to its exact source range");
         }
         handoff->summary.contributions_resolved++;
-        if (descriptor->transform == YVEX_DEEPSEEK_GGUF_TRANSFORM_DIRECT)
+        if (descriptor->transform == YVEX_ARTIFACT_LOWERING_TRANSFORM_DIRECT)
             handoff->summary.direct_contributions++;
-        if (contribution->kind == YVEX_DEEPSEEK_GGUF_CONTRIBUTION_PRIMARY &&
+        if (contribution->kind == YVEX_ARTIFACT_LOWERING_CONTRIBUTION_PRIMARY &&
             contribution->source_dtype == YVEX_NATIVE_DTYPE_F8_E4M3)
             handoff->summary.fp8_weight_contributions++;
-        if (contribution->kind == YVEX_DEEPSEEK_GGUF_CONTRIBUTION_SCALE &&
+        if (contribution->kind == YVEX_ARTIFACT_LOWERING_CONTRIBUTION_SCALE &&
             contribution->source_dtype == YVEX_NATIVE_DTYPE_F8_E8M0)
             handoff->summary.e8m0_scale_contributions++;
-        if (contribution->kind == YVEX_DEEPSEEK_GGUF_CONTRIBUTION_EXPERT_WEIGHT ||
-            contribution->kind == YVEX_DEEPSEEK_GGUF_CONTRIBUTION_EXPERT_SCALE) {
+        if (contribution->kind == YVEX_ARTIFACT_LOWERING_CONTRIBUTION_EXPERT_WEIGHT ||
+            contribution->kind == YVEX_ARTIFACT_LOWERING_CONTRIBUTION_EXPERT_SCALE) {
             if (ULLONG_MAX - handoff->summary.routed_expert_logical_bytes < range->byte_length) {
                 return handoff_reject(failure, YVEX_DEEPSEEK_PAYLOAD_FAILURE_RANGE,
                                       contribution->descriptor_index, contribution_index,
@@ -1298,7 +1298,7 @@ static int handoff_resolve(yvex_deepseek_payload_handoff *handoff,
             handoff->summary.expert_contributions++;
             handoff->summary.routed_expert_logical_bytes += range->byte_length;
         }
-        if (descriptor->transform == YVEX_DEEPSEEK_GGUF_TRANSFORM_I64_TO_I32 &&
+        if (descriptor->transform == YVEX_ARTIFACT_LOWERING_TRANSFORM_I64_TO_I32 &&
             contribution->source_dtype == YVEX_NATIVE_DTYPE_I64)
             handoff->summary.i64_router_contributions++;
         if (descriptor->collection == YVEX_TENSOR_COLLECTION_GLOBAL)
@@ -1322,7 +1322,7 @@ static int handoff_resolve(yvex_deepseek_payload_handoff *handoff,
     }
     for (descriptor_index = 0u; descriptor_index < map_summary->descriptor_count;
          ++descriptor_index) {
-        const yvex_deepseek_gguf_descriptor *descriptor =
+        const yvex_artifact_lowering_descriptor *descriptor =
             lowering->at(handoff->map, descriptor_index);
         unsigned long long end;
 
@@ -1375,7 +1375,7 @@ static int payload_open(yvex_deepseek_payload_handoff **out,
     yvex_source_tensor_snapshot *snapshot = NULL;
     yvex_deepseek_v4_ir *ir = NULL;
     yvex_deepseek_v4_ir_failure ir_failure;
-    yvex_deepseek_gguf_map_failure map_failure;
+    yvex_artifact_lowering_failure map_failure;
     yvex_transform_failure transform_failure;
     yvex_source_payload_open_options payload_options;
     int rc;
@@ -1502,7 +1502,7 @@ payload_verification(const yvex_deepseek_payload_handoff *handoff) {
     return handoff ? &handoff->verification : NULL;
 }
 
-static const yvex_deepseek_gguf_map *payload_map(const yvex_deepseek_payload_handoff *handoff) {
+static const yvex_artifact_lowering_map *payload_map(const yvex_deepseek_payload_handoff *handoff) {
     return handoff ? handoff->map : NULL;
 }
 
@@ -1718,8 +1718,8 @@ static int deepseek_terminal_find(
     const void *context, const char *name, yvex_materialization_terminal *out)
 {
     const yvex_model_family_lowering_api *lowering = yvex_model_deepseek_lowering_api();
-    const yvex_deepseek_gguf_map *map = (const yvex_deepseek_gguf_map *)context;
-    const yvex_deepseek_gguf_descriptor *row, *first;
+    const yvex_artifact_lowering_map *map = (const yvex_artifact_lowering_map *)context;
+    const yvex_artifact_lowering_descriptor *row, *first;
 
     if (!map || !name || !out || !lowering) return 0;
     row = lowering->find_emitted(map, name);
@@ -1732,11 +1732,11 @@ static int deepseek_terminal_find(
 }
 
 int yvex_deepseek_materialization_projection(
-    const yvex_deepseek_gguf_map *map,
+    const yvex_artifact_lowering_map *map,
     yvex_materialization_projection *out, yvex_error *err)
 {
     const yvex_model_family_lowering_api *lowering = yvex_model_deepseek_lowering_api();
-    const yvex_deepseek_gguf_map_summary *summary =
+    const yvex_artifact_lowering_summary *summary =
         map && lowering ? lowering->summary(map) : NULL;
 
     if (!out || !summary || !summary->complete || !summary->mapping_identity) {
@@ -1755,7 +1755,7 @@ int yvex_runtime_descriptor_build_deepseek(
     yvex_runtime_descriptor **out,
     const yvex_complete_artifact_admission *admission,
     const yvex_materialization_session *session,
-    const yvex_deepseek_gguf_map *map,
+    const yvex_artifact_lowering_map *map,
     const yvex_semantic_model_ir *semantic_model,
     yvex_runtime_descriptor_failure *failure, yvex_error *err)
 {
@@ -1784,7 +1784,7 @@ static int deepseek_compilation_materialization(
     const void *context, yvex_materialization_projection *out, yvex_error *err)
 {
     return yvex_deepseek_materialization_projection(
-        (const yvex_deepseek_gguf_map *)context, out, err);
+        (const yvex_artifact_lowering_map *)context, out, err);
 }
 
 static int deepseek_semantic_model_build(
@@ -1864,7 +1864,7 @@ static int deepseek_compilation_descriptor(
 
     return yvex_runtime_descriptor_build_deepseek(
         out, admission, materialization,
-        (const yvex_deepseek_gguf_map *)lowering_context,
+        (const yvex_artifact_lowering_map *)lowering_context,
         semantic_model, &failure, err);
 }
 
@@ -1876,7 +1876,7 @@ static int deepseek_compilation_quant_default(
     yvex_quant_failure failure = {0};
 
     return yvex_quant_plan_build_deepseek_profile(
-        out, transform, binding, (const yvex_deepseek_gguf_map *)lowering_context,
+        out, transform, binding, (const yvex_artifact_lowering_map *)lowering_context,
         YVEX_QUANT_PROFILE_RELEASE_Q8_Q2, NULL, &failure, err);
 }
 
@@ -1889,7 +1889,7 @@ static int deepseek_compilation_quant_policy(
     yvex_quant_failure failure = {0};
 
     return yvex_quant_plan_build_deepseek_policy(
-        out, transform, binding, (const yvex_deepseek_gguf_map *)lowering_context,
+        out, transform, binding, (const yvex_artifact_lowering_map *)lowering_context,
         policy, imatrix_identity, NULL, &failure, err);
 }
 static const yvex_complete_artifact_admission deepseek_selected_catalog = {
