@@ -193,6 +193,73 @@ static int cuda_blas_bf16_projection(
     yvex_error_clear(err);
     return YVEX_OK;
 }
+
+/* Execute one admitted row-major F32 matrix batch through cuBLAS. */
+static int cuda_blas_f32_projection(
+    yvex_backend *backend, yvex_cuda_backend_state *state,
+    CUdeviceptr encoded, unsigned long long encoded_bytes,
+    unsigned long long row_count, unsigned long long row_width,
+    unsigned long long input_rows, const yvex_device_tensor *input,
+    const yvex_device_tensor *additive, yvex_device_tensor *output,
+    unsigned long long activation_bytes, yvex_backend_cuda_operation_facts *facts,
+    yvex_error *err)
+{
+    const float alpha = 1.0f, beta = additive ? 1.0f : 0.0f;
+    CUdeviceptr input_ptr = (CUdeviceptr)input->data;
+    CUdeviceptr output_ptr = (CUdeviceptr)output->data;
+    unsigned long long output_bytes;
+    int rc = YVEX_OK, blas_status;
+
+    if (!state->blas.ready || row_count > INT_MAX || row_width > INT_MAX ||
+        input_rows > INT_MAX ||
+        !yvex_core_u64_mul(row_count, input_rows, &output_bytes) ||
+        !yvex_core_u64_mul(output_bytes, sizeof(float), &output_bytes) ||
+        output_bytes > SIZE_MAX) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "cuda.encoded-gemm",
+                       "F32 projection exceeds cuBLAS integer geometry");
+        return YVEX_ERR_BOUNDS;
+    }
+    if (additive) {
+        CUdeviceptr additive_ptr = (CUdeviceptr)additive->data;
+        int driver_status = state->driver.cuMemcpyDtoDAsync_v2
+                                ? state->driver.cuMemcpyDtoDAsync_v2(
+                                      output_ptr, additive_ptr, (size_t)output_bytes,
+                                      state->execution_stream)
+                                : state->driver.cuMemcpyDtoD_v2(
+                                      output_ptr, additive_ptr, (size_t)output_bytes);
+        if (driver_status != YVEX_CUDA_SUCCESS)
+            rc = yvex_cuda_status(&state->driver, driver_status,
+                                  "cuda.encoded-gemm.additive", err);
+    }
+    blas_status = rc == YVEX_OK
+        ? state->blas.gemm_ex(
+              state->blas.handle, CUDA_BLAS_OP_T, CUDA_BLAS_OP_N,
+              (int)row_count, (int)input_rows, (int)row_width, &alpha,
+              (const void *)(uintptr_t)encoded, CUDA_BLAS_R_32F, (int)row_width,
+              (const void *)(uintptr_t)input_ptr, CUDA_BLAS_R_32F, (int)row_width,
+              &beta, (void *)(uintptr_t)output_ptr, CUDA_BLAS_R_32F, (int)row_count,
+              CUDA_BLAS_COMPUTE_32F, CUDA_BLAS_DEFAULT)
+        : 0;
+    if (rc == YVEX_OK && blas_status != 0) {
+        yvex_error_setf(err, YVEX_ERR_BACKEND, "cuda.encoded-gemm",
+                        "cuBLAS F32 projection failed with status %d", blas_status);
+        rc = YVEX_ERR_BACKEND;
+    }
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_synchronize(
+            backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+            "cuda.encoded-gemm.sync", err);
+    if (rc != YVEX_OK) return rc;
+    output->is_written = 1;
+    facts->d2d_bytes = additive ? output_bytes : 0ull;
+    facts->kernel_launches = 1ull;
+    facts->device_synchronizations = 1ull;
+    facts->active_weight_bytes = encoded_bytes;
+    facts->activation_bytes = activation_bytes;
+    facts->compulsory_memory_facts_available = 1;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
 /*
  * Project one resident encoded matrix through the generic CUDA qtype matvec.
  *
@@ -285,6 +352,11 @@ int yvex_backend_cuda_encoded_matvec(
     if (rc == YVEX_OK && !split_input && input_rows > 1ull &&
         qtype == YVEX_GGUF_QTYPE_BF16 && state->blas.ready)
         return cuda_blas_bf16_projection(
+            backend, state, encoded_ptr, encoded_bytes, row_count, row_width,
+            input_rows, input, additive, output, activation_bytes, facts, err);
+    if (rc == YVEX_OK && !split_input && input_rows > 1ull &&
+        qtype == YVEX_GGUF_QTYPE_F32 && state->blas.ready)
+        return cuda_blas_f32_projection(
             backend, state, encoded_ptr, encoded_bytes, row_count, row_width,
             input_rows, input, additive, output, activation_bytes, facts, err);
     work.backend = backend;

@@ -601,6 +601,86 @@ static int quant_cuda_bf16_gemm(yvex_backend *backend)
     return 0;
 }
 
+static int quant_cuda_f32_gemm(yvex_backend *backend)
+{
+    enum { ROWS = 7, INPUT_ROWS = 4, WIDTH = 96 };
+    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    yvex_backend_tensor_desc descriptor = {0};
+    yvex_device_tensor *resident = NULL, *input = NULL, *output = NULL;
+    unsigned char *mapped = NULL;
+    float weights[ROWS * WIDTH], inputs[INPUT_ROWS * WIDTH];
+    float expected[INPUT_ROWS * ROWS], actual[INPUT_ROWS * ROWS];
+    yvex_backend_cuda_operation_facts facts;
+    yvex_error err;
+    unsigned long long row, input_row, column;
+    int rc;
+
+    YVEX_TEST_ASSERT(state && state->blas.ready,
+                     "cuBLAS F32 projection is admitted on the CUDA host");
+    for (column = 0ull; column < ROWS * WIDTH; ++column)
+        weights[column] = (float)((int)((column * 11ull + 5ull) % 41ull) - 20) /
+                          (float)(7ull + column % 5ull);
+    for (column = 0ull; column < INPUT_ROWS * WIDTH; ++column)
+        inputs[column] = (float)((int)((column * 3ull + 2ull) % 31ull) - 15) /
+                         (float)(6ull + column % 7ull);
+    for (input_row = 0ull; input_row < INPUT_ROWS; ++input_row)
+        for (row = 0ull; row < ROWS; ++row) {
+            double value = 0.0;
+            for (column = 0ull; column < WIDTH; ++column)
+                value += (double)weights[row * WIDTH + column] *
+                         (double)inputs[input_row * WIDTH + column];
+            expected[input_row * ROWS + row] = (float)value;
+        }
+    descriptor.name = "f32_gemm_resident";
+    descriptor.dtype = YVEX_DTYPE_I8;
+    descriptor.rank = 1u;
+    descriptor.dims[0] = descriptor.bytes = sizeof(weights);
+    YVEX_TEST_ASSERT(backend->vtable->resident_alloc(
+                         backend, &descriptor, &resident, &mapped, &err) == YVEX_OK,
+                     "F32 GEMM resident matrix allocates");
+    memcpy(mapped, weights, sizeof(weights));
+    YVEX_TEST_ASSERT(yvex_backend_resident_attach(
+                         backend, mapped, sizeof(weights), resident, 19ull, &err) == YVEX_OK,
+                     "F32 GEMM resident matrix attaches");
+    descriptor.name = "f32_gemm_input";
+    descriptor.dtype = YVEX_DTYPE_F32;
+    descriptor.dims[0] = INPUT_ROWS * WIDTH;
+    descriptor.bytes = sizeof(inputs);
+    YVEX_TEST_ASSERT(yvex_backend_tensor_alloc(backend, &descriptor, &input, &err) == YVEX_OK &&
+                         yvex_backend_tensor_write(
+                             backend, input, inputs, sizeof(inputs), &err) == YVEX_OK,
+                     "F32 GEMM input becomes device resident");
+    descriptor.name = "f32_gemm_output";
+    descriptor.dims[0] = INPUT_ROWS * ROWS;
+    descriptor.bytes = sizeof(actual);
+    YVEX_TEST_ASSERT(yvex_backend_tensor_alloc(backend, &descriptor, &output, &err) == YVEX_OK,
+                     "F32 GEMM output allocates");
+    rc = yvex_backend_cuda_encoded_matvec(
+        backend, mapped, sizeof(weights), YVEX_GGUF_QTYPE_F32,
+        ROWS, WIDTH, WIDTH * sizeof(float), INPUT_ROWS, input, NULL, 0ull,
+        NULL, output, 0, &facts, &err);
+    if (rc != YVEX_OK)
+        fprintf(stderr, "F32 cuBLAS refusal: %s (%s)\n",
+                yvex_error_message(&err), yvex_error_where(&err));
+    YVEX_TEST_ASSERT(rc == YVEX_OK && facts.kernel_launches == 1ull &&
+                         !facts.d2h_bytes && !facts.temporary_bytes &&
+                         facts.device_synchronizations == 1ull,
+                     "F32 row batch selects one cuBLAS GEMM");
+    YVEX_TEST_ASSERT(yvex_backend_tensor_read(
+                         backend, output, actual, sizeof(actual), &err) == YVEX_OK,
+                     "F32 GEMM result downloads");
+    for (column = 0ull; column < INPUT_ROWS * ROWS; ++column)
+        YVEX_TEST_ASSERT(fabs((double)actual[column] - expected[column]) <=
+                             2e-5 * (1.0 + fabs((double)expected[column])),
+                         "cuBLAS F32 GEMM matches the independent reference");
+    YVEX_TEST_ASSERT(yvex_backend_resident_detach(backend, &err) == YVEX_OK &&
+                         yvex_backend_tensor_release(backend, &output, &err) == YVEX_OK &&
+                         yvex_backend_tensor_release(backend, &input, &err) == YVEX_OK &&
+                         yvex_backend_tensor_release(backend, &resident, &err) == YVEX_OK,
+                     "F32 GEMM releases all CUDA ownership");
+    return 0;
+}
+
 static int quant_cuda_tensor(yvex_backend *backend, const char *name,
                              unsigned int dtype, const void *source,
                              unsigned long long bytes,
@@ -1122,6 +1202,283 @@ static int quant_cuda_dense_transformer(yvex_backend *backend)
     return 0;
 }
 
+static int quant_cuda_video_transformer(yvex_backend *backend)
+{
+    yvex_device_tensor *input = NULL, *first = NULL, *second = NULL, *third = NULL;
+    yvex_device_tensor *cosines = NULL, *sines = NULL, *fused_device = NULL;
+    yvex_device_tensor *swiglu_device = NULL, *residual_device = NULL, *output = NULL;
+    yvex_device_tensor *scale = NULL, *weight = NULL, *bias = NULL;
+    float interleaved[12] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+    float first_values[4], second_values[4], third_values[4];
+    float cosine_values[2] = {0.75f, 0.75f}, sine_values[2] = {0.5f, 0.5f};
+    float fused[4] = {-1.0f, 2.0f, 3.0f, -4.0f}, values[4];
+    float residual[4] = {10.0f, 20.0f, 30.0f, 40.0f};
+    float scales[2] = {0.5f, -2.0f};
+    float norm_weight[2] = {1.5f, 0.5f}, norm_bias[2] = {-0.25f, 0.75f};
+    yvex_backend_cuda_operation_facts facts;
+    yvex_error err;
+    unsigned long long index;
+
+    YVEX_TEST_ASSERT(
+        quant_cuda_tensor(backend, "video-interleaved", YVEX_DTYPE_F32,
+                          interleaved, sizeof(interleaved), &input, &err) &&
+            quant_cuda_tensor(backend, "video-first", YVEX_DTYPE_F32,
+                              NULL, sizeof(first_values), &first, &err) &&
+            quant_cuda_tensor(backend, "video-second", YVEX_DTYPE_F32,
+                              NULL, sizeof(second_values), &second, &err) &&
+            quant_cuda_tensor(backend, "video-third", YVEX_DTYPE_F32,
+                              NULL, sizeof(third_values), &third, &err) &&
+            yvex_cuda_transformer_split_interleaved_three(
+                backend, input, first, second, third, 1ull, 2ull, 2ull,
+                &facts, &err) == YVEX_OK &&
+            yvex_backend_tensor_read(backend, first, first_values,
+                                     sizeof(first_values), &err) == YVEX_OK &&
+            yvex_backend_tensor_read(backend, second, second_values,
+                                     sizeof(second_values), &err) == YVEX_OK &&
+            yvex_backend_tensor_read(backend, third, third_values,
+                                     sizeof(third_values), &err) == YVEX_OK,
+        "video per-head Q/K/V split executes");
+    YVEX_TEST_ASSERT(
+        first_values[0] == 1.0f && first_values[1] == 2.0f &&
+            first_values[2] == 7.0f && first_values[3] == 8.0f &&
+            second_values[0] == 3.0f && second_values[2] == 9.0f &&
+            third_values[0] == 5.0f && third_values[2] == 11.0f,
+        "video split preserves interleaved head order");
+    YVEX_TEST_ASSERT(
+        quant_cuda_tensor(backend, "video-cosines", YVEX_DTYPE_F32,
+                          cosine_values, sizeof(cosine_values), &cosines, &err) &&
+            quant_cuda_tensor(backend, "video-sines", YVEX_DTYPE_F32,
+                              sine_values, sizeof(sine_values), &sines, &err) &&
+            yvex_cuda_transformer_rotary_half_f32(
+                backend, first, cosines, sines, 1ull, 2ull, 2ull, 2ull,
+                &facts, &err) == YVEX_OK &&
+            yvex_backend_tensor_read(backend, first, first_values,
+                                     sizeof(first_values), &err) == YVEX_OK,
+        "video F32 rotate-half executes");
+    YVEX_TEST_ASSERT(first_values[0] == -0.25f && first_values[1] == 2.0f &&
+                         first_values[2] == 1.25f && first_values[3] == 9.5f,
+                     "video F32 rotate-half matches the scalar reference");
+    YVEX_TEST_ASSERT(
+        quant_cuda_tensor(backend, "video-fused", YVEX_DTYPE_F32,
+                          fused, sizeof(fused), &fused_device, &err) &&
+            quant_cuda_tensor(backend, "video-swiglu", YVEX_DTYPE_F32,
+                              NULL, 2ull * sizeof(float), &swiglu_device, &err) &&
+            yvex_cuda_transformer_swiglu_split_f32(
+                backend, fused_device, swiglu_device, 1ull, 2ull, 1, &facts, &err) == YVEX_OK &&
+            yvex_backend_tensor_read(backend, swiglu_device, values,
+                                     2ull * sizeof(float), &err) == YVEX_OK,
+        "video gate-first F32 SwiGLU executes");
+    for (index = 0ull; index < 2ull; ++index) {
+        float expected = fused[index] / (1.0f + expf(-fused[index])) * fused[2ull + index];
+        YVEX_TEST_ASSERT(fabsf(values[index] - expected) < 1e-6f,
+                         "video gate-first SwiGLU matches the scalar reference");
+    }
+    YVEX_TEST_ASSERT(
+        quant_cuda_tensor(backend, "video-residual", YVEX_DTYPE_F32,
+                          residual, sizeof(residual), &residual_device, &err) &&
+            quant_cuda_tensor(backend, "video-scale", YVEX_DTYPE_F32,
+                              scales, sizeof(scales), &scale, &err) &&
+            quant_cuda_tensor(backend, "video-output", YVEX_DTYPE_F32,
+                              NULL, sizeof(values), &output, &err) &&
+            yvex_cuda_transformer_scaled_residual_f32(
+                backend, residual_device, fused_device, scale, output,
+                2ull, 2ull, &facts, &err) == YVEX_OK &&
+            yvex_backend_tensor_read(backend, output, values, sizeof(values), &err) == YVEX_OK,
+        "video scaled residual executes");
+    for (index = 0ull; index < 4ull; ++index)
+        YVEX_TEST_ASSERT(values[index] == residual[index] + fused[index] * scales[index % 2ull],
+                         "video scaled residual matches the scalar reference");
+    YVEX_TEST_ASSERT(
+        quant_cuda_tensor(backend, "video-norm-weight", YVEX_DTYPE_F32,
+                          norm_weight, sizeof(norm_weight), &weight, &err) &&
+            quant_cuda_tensor(backend, "video-norm-bias", YVEX_DTYPE_F32,
+                              norm_bias, sizeof(norm_bias), &bias, &err) &&
+            yvex_cuda_transformer_layer_norm_f32(
+                backend, residual_device, weight, bias, output, 2ull, 2ull, 1e-5f,
+                &facts, &err) == YVEX_OK &&
+            yvex_backend_tensor_read(backend, output, values, sizeof(values), &err) == YVEX_OK,
+        "video affine LayerNorm executes");
+    for (index = 0ull; index < 4ull; ++index) {
+        unsigned long long row = index / 2ull, lane = index % 2ull;
+        float mean = (residual[row * 2ull] + residual[row * 2ull + 1ull]) * 0.5f;
+        float delta = residual[index] - mean;
+        float expected = delta / sqrtf(delta * delta + 1e-5f) *
+                         norm_weight[lane] + norm_bias[lane];
+        YVEX_TEST_ASSERT(fabsf(values[index] - expected) < 1e-6f,
+                         "video affine LayerNorm matches the scalar reference");
+    }
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_release(backend, &bias, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &weight, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &scale, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &output, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &residual_device, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &swiglu_device, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &fused_device, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &sines, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &cosines, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &third, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &second, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &first, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &input, &err) == YVEX_OK,
+        "video transformer primitive tensors release cleanly");
+    return 0;
+}
+
+static float *quant_dense_weight(yvex_transformer_encoded_weight *weight,
+                                 float **cursor, unsigned long long rows,
+                                 unsigned long long width, float value)
+{
+    float *start = *cursor;
+    unsigned long long index, elements = rows * width;
+    for (index = 0ull; index < elements; ++index) start[index] = value;
+    weight->encoded = (const unsigned char *)start;
+    weight->encoded_bytes = elements * sizeof(float);
+    weight->row_count = rows;
+    weight->row_width = width;
+    weight->row_bytes = width * sizeof(float);
+    weight->qtype = YVEX_GGUF_QTYPE_F32;
+    *cursor += elements;
+    return start;
+}
+
+static int quant_dense_cancel(void *context)
+{
+    return context && *(const int *)context;
+}
+
+static int quant_cuda_dense_decoder(yvex_backend *backend)
+{
+    enum { ROWS = 2, WIDTH = 2, HEADS = 1, HEAD_DIM = 2, FFN = 2, OUTPUT = 1 };
+    enum { WEIGHT_VALUES = 57 };
+    yvex_backend_tensor_desc descriptor = {0};
+    yvex_device_tensor *resident = NULL;
+    yvex_transformer_encoded_weight weights[
+        YVEX_TRANSFORMER_DENSE_DECODER_BLOCK_WEIGHT_COUNT] = {0};
+    yvex_transformer_encoded_weight final_norm = {0}, final_bias = {0};
+    yvex_transformer_encoded_weight output_weight = {0}, output_bias = {0};
+    yvex_transformer_dense_decoder_request request = {0};
+    yvex_transformer_dense_decoder_result result;
+    unsigned char *mapped = NULL;
+    float *cursor, *projection;
+    float hidden[ROWS * WIDTH] = {1.0f, 3.0f, 4.0f, 0.0f};
+    float cosines[ROWS * HEAD_DIM] = {1.0f, 1.0f, 1.0f, 1.0f};
+    float sines[ROWS * HEAD_DIM] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float output[ROWS * OUTPUT] = {7.0f, 9.0f};
+    float expected[ROWS * OUTPUT];
+    unsigned long long row;
+    int cancel = 0;
+    yvex_error err;
+    int rc;
+
+    descriptor.name = "dense-decoder-weights";
+    descriptor.dtype = YVEX_DTYPE_I8;
+    descriptor.rank = 1u;
+    descriptor.dims[0] = descriptor.bytes = WEIGHT_VALUES * sizeof(float);
+    YVEX_TEST_ASSERT(
+        backend->vtable->resident_alloc(
+            backend, &descriptor, &resident, &mapped, &err) == YVEX_OK,
+        "dense decoder resident F32 weights allocate");
+    cursor = (float *)mapped;
+    quant_dense_weight(weights + YVEX_TRANSFORMER_DENSE_NORM1,
+                       &cursor, 1ull, WIDTH, 1.0f);
+    quant_dense_weight(weights + YVEX_TRANSFORMER_DENSE_QKV_WEIGHT,
+                       &cursor, 3ull * WIDTH, WIDTH, 0.0f);
+    quant_dense_weight(weights + YVEX_TRANSFORMER_DENSE_QKV_BIAS,
+                       &cursor, 1ull, 3ull * WIDTH, 0.0f);
+    quant_dense_weight(weights + YVEX_TRANSFORMER_DENSE_ATTENTION_WEIGHT,
+                       &cursor, WIDTH, WIDTH, 0.0f);
+    quant_dense_weight(weights + YVEX_TRANSFORMER_DENSE_ATTENTION_BIAS,
+                       &cursor, 1ull, WIDTH, 0.0f);
+    quant_dense_weight(weights + YVEX_TRANSFORMER_DENSE_SCALE1,
+                       &cursor, 1ull, WIDTH, 1.0f);
+    quant_dense_weight(weights + YVEX_TRANSFORMER_DENSE_NORM2,
+                       &cursor, 1ull, WIDTH, 1.0f);
+    quant_dense_weight(weights + YVEX_TRANSFORMER_DENSE_FF1_WEIGHT,
+                       &cursor, 2ull * FFN, WIDTH, 0.0f);
+    quant_dense_weight(weights + YVEX_TRANSFORMER_DENSE_FF1_BIAS,
+                       &cursor, 1ull, 2ull * FFN, 0.0f);
+    quant_dense_weight(weights + YVEX_TRANSFORMER_DENSE_FF2_WEIGHT,
+                       &cursor, WIDTH, FFN, 0.0f);
+    quant_dense_weight(weights + YVEX_TRANSFORMER_DENSE_FF2_BIAS,
+                       &cursor, 1ull, WIDTH, 0.0f);
+    quant_dense_weight(weights + YVEX_TRANSFORMER_DENSE_SCALE2,
+                       &cursor, 1ull, WIDTH, 1.0f);
+    quant_dense_weight(&final_norm, &cursor, 1ull, WIDTH, 1.0f);
+    quant_dense_weight(&final_bias, &cursor, 1ull, WIDTH, 0.0f);
+    projection = quant_dense_weight(&output_weight, &cursor, OUTPUT, WIDTH, 0.0f);
+    projection[0] = 1.0f;
+    projection[1] = -1.0f;
+    quant_dense_weight(&output_bias, &cursor, 1ull, OUTPUT, 0.5f);
+    YVEX_TEST_ASSERT((unsigned char *)cursor == mapped + descriptor.bytes,
+                     "dense decoder fixture accounts every resident weight byte");
+    YVEX_TEST_ASSERT(
+        yvex_backend_resident_attach(
+            backend, mapped, descriptor.bytes, resident, 29ull, &err) == YVEX_OK,
+        "dense decoder weights attach as one immutable residency");
+    request.block_weights = weights;
+    request.final_norm_weight = &final_norm;
+    request.final_norm_bias = &final_bias;
+    request.output_weight = &output_weight;
+    request.output_bias = &output_bias;
+    request.hidden = hidden;
+    request.cosines = cosines;
+    request.sines = sines;
+    request.rows = ROWS;
+    request.output_rows = ROWS;
+    request.width = WIDTH;
+    request.heads = HEADS;
+    request.head_dim = HEAD_DIM;
+    request.rotary_dim = HEAD_DIM;
+    request.ffn_width = FFN;
+    request.block_count = 1ull;
+    request.output_width = OUTPUT;
+    request.output_capacity = ROWS * OUTPUT;
+    request.epsilon = 1.0e-5f;
+    request.output = output;
+    request.cancel_requested = quant_dense_cancel;
+    request.cancel_context = &cancel;
+    rc = yvex_cuda_transformer_dense_decoder_execute(
+        backend, &request, &result, &err);
+    if (rc != YVEX_OK)
+        fprintf(stderr, "dense decoder failed: %s (%s)\n",
+                yvex_error_message(&err), yvex_error_where(&err));
+    YVEX_TEST_ASSERT(rc == YVEX_OK && result.complete && result.rows == ROWS &&
+                         result.output_rows == ROWS && result.block_count == 1ull &&
+                         result.output_values == ROWS * OUTPUT &&
+                         result.kernel_launches > 0ull && result.device_bytes > 0ull,
+                     "one dense video decoder block executes transactionally");
+    for (row = 0ull; row < ROWS; ++row) {
+        float mean = (hidden[row * WIDTH] + hidden[row * WIDTH + 1ull]) * 0.5f;
+        float first = hidden[row * WIDTH] - mean;
+        float second = hidden[row * WIDTH + 1ull] - mean;
+        float variance = (first * first + second * second) * 0.5f;
+        expected[row] = (first - second) / sqrtf(variance + request.epsilon) + 0.5f;
+        YVEX_TEST_ASSERT(fabsf(output[row] - expected[row]) < 1.0e-5f,
+                         "dense decoder CUDA output matches independent F32 LayerNorm reference");
+    }
+    cancel = 1;
+    output[0] = 7.0f;
+    output[1] = 9.0f;
+    rc = yvex_cuda_transformer_dense_decoder_execute(
+        backend, &request, &result, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_ERR_CANCELLED && !result.complete &&
+                         output[0] == 7.0f && output[1] == 9.0f,
+                     "dense decoder cancellation preserves transactional output");
+    cancel = 0;
+    output_weight.row_width++;
+    rc = yvex_cuda_transformer_dense_decoder_execute(
+        backend, &request, &result, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_ERR_INVALID_ARG && !result.complete,
+                     "dense decoder refuses mismatched physical weight geometry");
+    output_weight.row_width--;
+    YVEX_TEST_ASSERT(
+        yvex_backend_resident_detach(backend, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &resident, &err) == YVEX_OK,
+        "dense decoder releases resident and activation ownership");
+    return 0;
+}
+
 static int quant_cuda_omni_transformer(yvex_backend *backend)
 {
     yvex_device_tensor *input = NULL, *output = NULL, *first = NULL, *second = NULL;
@@ -1462,12 +1819,18 @@ int yvex_cuda_test_quant_qtype(void)
     }
     YVEX_TEST_ASSERT(quant_cuda_bf16_gemm(backend) == 0,
                      "BF16 production row batch GEMM");
+    YVEX_TEST_ASSERT(quant_cuda_f32_gemm(backend) == 0,
+                     "F32 production row batch GEMM");
     YVEX_TEST_ASSERT(quant_cuda_encoded_gather(backend) == 0,
                      "resident qtype row gather");
     YVEX_TEST_ASSERT(quant_cuda_transformer_facts(backend) == 0,
                      "transformer envelope physical facts");
     YVEX_TEST_ASSERT(quant_cuda_dense_transformer(backend) == 0,
                      "dense transformer activation primitives");
+    YVEX_TEST_ASSERT(quant_cuda_video_transformer(backend) == 0,
+                     "video transformer activation primitives");
+    YVEX_TEST_ASSERT(quant_cuda_dense_decoder(backend) == 0,
+                     "resident dense video decoder execution");
     YVEX_TEST_ASSERT(quant_cuda_omni_transformer(backend) == 0,
                      "Omni transformer activation primitives");
     yvex_backend_close(backend);

@@ -271,9 +271,11 @@ typedef struct {
     CUfunction moe_accumulate_function;
     CUfunction mlp_function;
     CUfunction attention_function;
-    CUfunction rotary_half_function, gqa_function, silu_product_function;
-    CUfunction silu_function, split_three_function, swiglu_split_function;
+    CUfunction rotary_half_function, rotary_half_plain_function, gqa_function;
+    CUfunction silu_product_function, silu_function, split_three_function;
+    CUfunction split_interleaved_function, swiglu_split_function, swiglu_split_f32_function;
     CUfunction modulation_function, gated_residual_function, bias_function;
+    CUfunction scaled_residual_f32_function, layer_norm_f32_function;
     yvex_cuda_kernel_bundle_state kernel_bundle_state;
     yvex_backend_capability_reason kernel_bundle_reason;
     yvex_backend_operation_variant kernel_bundle_failure_variant;

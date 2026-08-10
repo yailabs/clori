@@ -86,6 +86,32 @@ extern "C" __global__ void yvex_rotary_half_f32(
     values[base + half + lane] = float_to_bf16_rne(first_product + second_product);
 }
 
+extern "C" __global__ void yvex_rotary_half_plain_f32(
+    float *values, const float *cosines, const float *sines,
+    unsigned long long tokens, unsigned long long heads,
+    unsigned long long head_dim, unsigned long long rotary_dim)
+{
+    unsigned long long pair =
+        ((unsigned long long)blockIdx.x * (unsigned long long)blockDim.x) +
+        (unsigned long long)threadIdx.x;
+    unsigned long long half = rotary_dim / 2ull;
+    unsigned long long vector_count = tokens * heads;
+    unsigned long long vector, lane, token, base;
+    float first, second, cosine, sine;
+    if (!values || !cosines || !sines || !tokens || !heads || !half ||
+        rotary_dim > head_dim || pair >= vector_count * half) return;
+    vector = pair / half;
+    lane = pair % half;
+    token = vector / heads;
+    base = vector * head_dim;
+    cosine = cosines[token * rotary_dim + lane];
+    sine = sines[token * rotary_dim + lane];
+    first = values[base + lane];
+    second = values[base + half + lane];
+    values[base + lane] = first * cosine - second * sine;
+    values[base + half + lane] = second * cosine + first * sine;
+}
+
 /* Execute bounded grouped-query attention without materializing a score matrix. */
 extern "C" __global__ void yvex_gqa_f32(
     const float *query, const float *key, const float *value, float *output,
@@ -190,6 +216,27 @@ extern "C" __global__ void yvex_split_three_f32(
     third[index] = input[input_base + 2ull * width];
 }
 
+extern "C" __global__ void yvex_split_interleaved_three_f32(
+    const float *input, float *first, float *second, float *third,
+    unsigned long long rows, unsigned long long heads,
+    unsigned long long head_dim)
+{
+    unsigned long long index =
+        (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned long long width = heads * head_dim;
+    unsigned long long row, within, head, lane, input_base;
+    if (!input || !first || !second || !third || !heads || !head_dim ||
+        index >= rows * width) return;
+    row = index / width;
+    within = index % width;
+    head = within / head_dim;
+    lane = within % head_dim;
+    input_base = row * 3ull * width + head * 3ull * head_dim + lane;
+    first[index] = input[input_base];
+    second[index] = input[input_base + head_dim];
+    third[index] = input[input_base + 2ull * head_dim];
+}
+
 extern "C" __global__ void yvex_swiglu_split_bf16_f32(
     const float *input, float *output, unsigned long long rows, unsigned long long width)
 {
@@ -205,6 +252,71 @@ extern "C" __global__ void yvex_swiglu_split_bf16_f32(
     gate = input[base + width];
     gate = float_to_bf16_rne(gate / (1.0f + expf(-gate)));
     output[index] = float_to_bf16_rne(hidden * gate);
+}
+
+extern "C" __global__ void yvex_swiglu_split_f32(
+    const float *input, float *output, unsigned long long rows,
+    unsigned long long width, int gate_first)
+{
+    unsigned long long index =
+        (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned long long row, column, base;
+    float hidden, gate;
+    if (!input || !output || !width || (gate_first != 0 && gate_first != 1) ||
+        index >= rows * width) return;
+    row = index / width;
+    column = index % width;
+    base = row * 2ull * width + column;
+    gate = input[base + (gate_first ? 0ull : width)];
+    hidden = input[base + (gate_first ? width : 0ull)];
+    output[index] = gate / (1.0f + expf(-gate)) * hidden;
+}
+
+extern "C" __global__ void yvex_scaled_residual_f32(
+    const float *residual, const float *update, const float *scale,
+    float *output, unsigned long long rows, unsigned long long width)
+{
+    unsigned long long index =
+        (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (!residual || !update || !scale || !output || !width ||
+        index >= rows * width) return;
+    output[index] = residual[index] + update[index] * scale[index % width];
+}
+
+extern "C" __global__ void yvex_layer_norm_f32(
+    const float *input, const float *weight, const float *bias, float *output,
+    unsigned long long rows, unsigned long long width, float epsilon)
+{
+    extern __shared__ float scratch[];
+    unsigned int lane = threadIdx.x;
+    unsigned long long row = (unsigned long long)blockIdx.x;
+    unsigned long long index, offset;
+    float sum = 0.0f, mean, variance = 0.0f, inverse;
+    if (!input || !weight || !bias || !output || !width || row >= rows || epsilon <= 0.0f)
+        return;
+    offset = row * width;
+    for (index = lane; index < width; index += blockDim.x) sum += input[offset + index];
+    scratch[lane] = sum;
+    __syncthreads();
+    for (unsigned int stride = blockDim.x >> 1; stride; stride >>= 1) {
+        if (lane < stride) scratch[lane] += scratch[lane + stride];
+        __syncthreads();
+    }
+    mean = scratch[0] / (float)width;
+    for (index = lane; index < width; index += blockDim.x) {
+        float centered = input[offset + index] - mean;
+        variance += centered * centered;
+    }
+    scratch[lane] = variance;
+    __syncthreads();
+    for (unsigned int stride = blockDim.x >> 1; stride; stride >>= 1) {
+        if (lane < stride) scratch[lane] += scratch[lane + stride];
+        __syncthreads();
+    }
+    inverse = rsqrtf(scratch[0] / (float)width + epsilon);
+    for (index = lane; index < width; index += blockDim.x)
+        output[offset + index] =
+            (input[offset + index] - mean) * inverse * weight[index] + bias[index];
 }
 
 extern "C" __global__ void yvex_modulation_bf16_f32(
