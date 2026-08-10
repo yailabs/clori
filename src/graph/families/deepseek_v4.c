@@ -1147,9 +1147,11 @@ static int deepseek_compilation_source_open(
     out->verification = payload->verification(handoff);
     out->transform_ir = payload->transform_ir(handoff);
     out->transform_binding = payload->binding(handoff);
+    out->artifact_lowering = payload->map(handoff);
+    out->source_summary = payload->summary(handoff);
     out->lowering_context = payload->map(handoff);
     if (!out->verification || !out->transform_ir || !out->transform_binding ||
-        !out->lowering_context) {
+        !out->artifact_lowering || !out->source_summary || !out->lowering_context) {
         payload->close(handoff);
         memset(out, 0, sizeof(*out));
         yvex_error_set(err, YVEX_ERR_STATE, "deepseek.compilation-source",
@@ -1330,11 +1332,13 @@ static int deepseek_semantic_model_build(
     yvex_model_execution_descriptor execution = {0};
     yvex_semantic_numeric_contract numeric = {0};
     yvex_semantic_model_ir_request request = {0};
+    yvex_semantic_reference_request references[3];
+    const yvex_deepseek_v4_model_spec *facts = model ? model->ir.model(semantic) : NULL;
     char logical[YVEX_SHA256_HEX_CAP];
     int rc;
 
     if (out) *out = NULL;
-    if (!out || !model || !semantic) {
+    if (!out || !model || !semantic || !facts) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "deepseek.semantic-model",
                        "semantic model output and family architecture are required");
         return YVEX_ERR_INVALID_ARG;
@@ -1352,6 +1356,12 @@ static int deepseek_semantic_model_build(
         rc = deepseek_numeric_contract_build(
             semantic, &numeric, &failure, err);
     if (rc == YVEX_OK) {
+        references[0] = (yvex_semantic_reference_request){
+            "architecture-paper", facts->paper_revision};
+        references[1] = (yvex_semantic_reference_request){
+            "sglang-reference", facts->sglang_revision};
+        references[2] = (yvex_semantic_reference_request){
+            "vllm-reference", facts->vllm_revision};
         request.schema_version = YVEX_SEMANTIC_MODEL_IR_SCHEMA_V1;
         request.family_adapter_id = YVEX_DEEPSEEK_V4_ADAPTER_ID;
         request.family_adapter_version = YVEX_DEEPSEEK_V4_ADAPTER_VERSION;
@@ -1367,6 +1377,8 @@ static int deepseek_semantic_model_build(
         request.draft_attention_layer = graph_recipe_draft_layer;
         request.draft_attention_layer_count =
             model->ir.auxiliary_count(semantic);
+        request.references = references;
+        request.reference_count = sizeof(references) / sizeof(references[0]);
         rc = yvex_semantic_model_ir_seal(out, &request, err);
     }
     return rc;

@@ -299,6 +299,7 @@ static int source_session_open(
 {
     yvex_compilation_source_session *session;
     yvex_source_tensor_snapshot *snapshot = NULL;
+    yvex_source_tensor_snapshot_facts snapshot_facts = {0};
     yvex_source_payload_open_options payload_options = {0};
     yvex_transform_failure transform_failure = {0};
     int rc;
@@ -343,6 +344,17 @@ static int source_session_open(
         yvex_error_set(err, YVEX_ERR_STATE, "compilation.source",
                        "source verification did not retain its snapshot");
         rc = YVEX_ERR_STATE;
+    }
+    if (rc == YVEX_OK)
+        rc = yvex_source_tensor_snapshot_facts_get(snapshot, &snapshot_facts, err);
+    if (rc == YVEX_OK) {
+        session->summary.source_tensor_count = snapshot_facts.tensor_count;
+        session->summary.source_shard_count = snapshot_facts.shard_count;
+        session->summary.source_header_scan_count = snapshot_facts.header_scan_count;
+        session->summary.source_payload_bytes_read = snapshot_facts.payload_bytes_read;
+        session->summary.source_lookup_count = snapshot_facts.lookup_count;
+        session->summary.source_collision_count = snapshot_facts.collision_count;
+        session->summary.source_maximum_probe = snapshot_facts.maximum_probe;
     }
     if (rc != YVEX_OK && failure)
         failure->code = YVEX_COMPILATION_SOURCE_FAILURE_SOURCE;

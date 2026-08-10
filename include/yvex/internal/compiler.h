@@ -191,6 +191,7 @@ struct yvex_quant_plan;
 struct yvex_gguf_writer_plan;
 struct yvex_imatrix_data;
 struct yvex_family_compilation_products;
+struct yvex_compilation_source_summary;
 typedef struct {
     unsigned long long ordinal, layer_index, predictor_index;
     yvex_tensor_scope tensor_scope;
@@ -305,6 +306,38 @@ typedef struct {
     unsigned long long activation_policy_count;
     unsigned long long sparse_topk_policy_count;
 } yvex_semantic_numeric_contract;
+typedef struct {
+    char canonical_id[64], identity[YVEX_SHA256_HEX_BYTES];
+    unsigned long long shards, tensors;
+    unsigned int phase;
+    int weighted, release_after_phase;
+} yvex_semantic_component;
+typedef struct {
+    unsigned int source_phase, destination_phase, data_classes, lifetime;
+} yvex_semantic_phase_edge;
+typedef struct {
+    const char *repository, *revision, *subtree;
+    const char *source_snapshot_identity, *component_manifest_identity;
+    const char *phase_dag_identity, *architecture_identity, *role_map_identity;
+    const char *unresolved_requirements_identity;
+    unsigned long long weighted_components, shards, tensors, elements, payload_bytes;
+    const yvex_semantic_component *components;
+    unsigned long long component_count;
+    const yvex_semantic_phase_edge *phase_edges;
+    unsigned long long phase_edge_count;
+} yvex_semantic_composite_request;
+typedef struct {
+    char repository[128], revision[64], subtree[128];
+    char source_snapshot_identity[YVEX_SHA256_HEX_BYTES];
+    char component_manifest_identity[YVEX_SHA256_HEX_BYTES];
+    char phase_dag_identity[YVEX_SHA256_HEX_BYTES], architecture_identity[YVEX_SHA256_HEX_BYTES];
+    char role_map_identity[YVEX_SHA256_HEX_BYTES];
+    char unresolved_requirements_identity[YVEX_SHA256_HEX_BYTES];
+    unsigned long long component_count, weighted_component_count, phase_edge_count;
+    unsigned long long shards, tensors, elements, payload_bytes;
+} yvex_semantic_composite_summary;
+typedef struct { const char *key, *value; } yvex_semantic_reference_request;
+typedef struct { char key[48], value[128]; } yvex_semantic_reference;
 typedef struct yvex_semantic_model_ir yvex_semantic_model_ir;
 typedef struct {
     unsigned int schema_version;
@@ -317,6 +350,7 @@ typedef struct {
     char logical_model_identity[YVEX_SHA256_HEX_BYTES];
     char semantic_payload_identity[YVEX_SHA256_HEX_BYTES];
     char identity[YVEX_SHA256_HEX_BYTES];
+    yvex_semantic_composite_summary composite;
 } yvex_semantic_model_ir_summary;
 typedef struct {
     unsigned int schema_version;
@@ -332,6 +366,9 @@ typedef struct {
     unsigned long long attention_layer_count;
     yvex_semantic_attention_layer_fn draft_attention_layer;
     unsigned long long draft_attention_layer_count;
+    const yvex_semantic_composite_request *composite;
+    const yvex_semantic_reference_request *references;
+    unsigned long long reference_count;
 } yvex_semantic_model_ir_request;
 int yvex_semantic_model_ir_seal(
     yvex_semantic_model_ir **out,
@@ -342,6 +379,12 @@ int yvex_semantic_model_ir_attention_view(
     const yvex_semantic_model_ir *model, yvex_tensor_scope tensor_scope,
     const yvex_semantic_attention_layer **layers,
     unsigned long long *layer_count);
+int yvex_semantic_model_ir_composite_view(
+    const yvex_semantic_model_ir *model,
+    const yvex_semantic_component **components, unsigned long long *component_count,
+    const yvex_semantic_phase_edge **phase_edges, unsigned long long *phase_edge_count);
+const char *yvex_semantic_model_ir_reference(
+    const yvex_semantic_model_ir *model, const char *key);
 void yvex_semantic_model_ir_close(yvex_semantic_model_ir **model);
 
 #define YVEX_FAMILY_BINDING_PIPELINE_SCHEMA_V1 1u
@@ -350,6 +393,8 @@ typedef struct yvex_family_compilation_source {
     const struct yvex_source_verification *verification;
     const struct yvex_transform_ir *transform_ir;
     const struct yvex_transform_binding *transform_binding;
+    const struct yvex_artifact_lowering_map *artifact_lowering;
+    const struct yvex_compilation_source_summary *source_summary;
     const void *lowering_context;
 } yvex_family_compilation_source;
 

@@ -8,9 +8,10 @@
 
 #include <yvex/internal/artifact_lowering.h>
 #include <yvex/internal/compilation.h>
+#include <yvex/internal/compiler.h>
+#include <yvex/internal/compiler_source.h>
 #include <yvex/internal/core.h>
-#include <yvex/internal/families/deepseek_v4.h>
-#include <yvex/internal/families/minimax_h3.h>
+#include <yvex/internal/family_catalog.h>
 #include <yvex/source.h>
 
 #include <stdio.h>
@@ -32,7 +33,10 @@ static int projection_refuse(yvex_error *err, const char *reason)
 
 static int project_transform_coverage(
     yvex_model_target_report *report, const yvex_transform_ir *transform,
-    const yvex_source_tensor_snapshot_facts *facts, yvex_error *err);
+    const yvex_compilation_source_summary *source, yvex_error *err);
+static int project_map(
+    yvex_model_target_report *report,
+    const yvex_artifact_lowering_map *map, yvex_error *err);
 
 int yvex_model_target_report_release_coverage(
     const yvex_model_target_request *request,
@@ -43,21 +47,14 @@ int yvex_model_target_report_release_coverage(
     const char *success_boundary,
     yvex_error *err)
 {
-    const yvex_model_family_api *family = yvex_model_register_deepseek_v4();
-    yvex_source_verify_options source_options = {0};
-    yvex_source_verification verification;
-    yvex_source_tensor_snapshot *snapshot = NULL;
-    yvex_source_tensor_snapshot_facts facts = {0};
-    yvex_deepseek_v4_ir *architecture = NULL;
-    yvex_deepseek_v4_ir_failure architecture_failure = {0};
-    yvex_transform_ir *transform = NULL;
-    yvex_transform_failure transform_failure = {0};
+    yvex_family_source_products products = {0};
+    yvex_compilation_runtime_binding_request compilation = {0};
     char models_root[512];
     char source_path[512];
     int rc;
 
     if (!request || !report || !operation || !error_where || !success_status ||
-        !success_boundary || !family) {
+        !success_boundary) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "model_target_report",
                        "DeepSeek coverage report arguments are required");
         return YVEX_ERR_INVALID_ARG;
@@ -69,43 +66,25 @@ int yvex_model_target_report_release_coverage(
                        "DeepSeek source path exceeds report bounds");
         return YVEX_ERR_BOUNDS;
     }
-    memset(&verification, 0, sizeof(verification));
-    source_options.identity = yvex_source_release_identity();
-    source_options.source_path = source_path;
-    source_options.models_root = models_root;
-    rc = yvex_source_verify_with_snapshot(
-        &source_options, &verification, &snapshot, err);
-    if (rc == YVEX_OK && verification.verified && snapshot)
-        rc = family->ir.build(
-            &architecture, &verification, &architecture_failure, err);
-    if (rc == YVEX_OK)
-        rc = family->transform.build(
-            &transform, &verification, architecture, snapshot, NULL,
-            &transform_failure, err);
-    if (rc == YVEX_OK)
-        rc = yvex_source_tensor_snapshot_facts_get(snapshot, &facts, err);
-    if (rc != YVEX_OK || !verification.verified || !snapshot) {
+    compilation.source_path = source_path;
+    compilation.models_root = models_root;
+    rc = yvex_family_source_compile(
+        request->target_id, &compilation, &products, err);
+    if (rc != YVEX_OK || !products.source_summary || !products.transform_ir) {
         report->status = "tensor-coverage-blocked";
         report->exit_code = 5;
         yvex_model_target_report_add_error(
             report,
             "model-target %s: compiled source coverage refused: %s",
-            operation,
-            transform_failure.code
-                ? yvex_transform_failure_name(transform_failure.code)
-                : (architecture_failure.code
-                       ? family->ir.failure_name(architecture_failure.code)
-                       : yvex_source_verification_status(&verification)));
-        yvex_transform_ir_release(&transform);
-        family->ir.close(architecture);
-        yvex_source_tensor_snapshot_release(snapshot);
+            operation, yvex_error_is_set(err)
+                           ? yvex_error_message(err) : "source-compiler-incomplete");
+        yvex_family_source_products_release(&products);
         yvex_error_clear(err);
         return YVEX_OK;
     }
-    rc = project_transform_coverage(report, transform, &facts, err);
-    yvex_transform_ir_release(&transform);
-    family->ir.close(architecture);
-    yvex_source_tensor_snapshot_release(snapshot);
+    rc = project_transform_coverage(
+        report, products.transform_ir, products.source_summary, err);
+    yvex_family_source_products_release(&products);
     if (rc != YVEX_OK) return rc;
     {
         const yvex_model_target_report_profile profile = {
@@ -183,28 +162,15 @@ static int deepseek_source(
         out, cap, models_root, yvex_source_release_identity());
 }
 
-static void deepseek_ir_refusal(
-    const yvex_deepseek_v4_ir_failure *failure,
-    yvex_model_target_report *report)
-{
-    report->status = "architecture-ir-refused";
-    report->exit_code = 5;
-    yvex_model_target_report_add_error(
-        report,
-        "model-target class-profile: architecture IR refused: %s:%s field=%s layer=%llu",
-        yvex_model_register_deepseek_v4()->ir.component_name(failure->component),
-        yvex_model_register_deepseek_v4()->ir.failure_name(failure->code),
-        failure->field ? failure->field : "none", failure->layer_index);
-}
-
 static int deepseek_from_verification(
     const yvex_model_target_request *request,
     const yvex_source_verification *verification,
     yvex_model_target_report *report,
     yvex_error *err)
 {
-    yvex_deepseek_v4_ir_failure failure;
-    yvex_deepseek_v4_ir *architecture = NULL;
+    const yvex_graph_execution_binding *execution;
+    const yvex_family_binding_pipeline *pipeline;
+    yvex_semantic_model_ir *semantic = NULL;
     int rc;
 
     if (!request || !verification || !report ||
@@ -213,22 +179,29 @@ static int deepseek_from_verification(
                        "canonical target, verification, and report are required");
         return YVEX_ERR_INVALID_ARG;
     }
-    rc = yvex_model_register_deepseek_v4()->ir.build(
-        &architecture, verification, &failure, err);
+    execution = yvex_graph_execution_find(0ull, 0ull, request->target_id);
+    pipeline = execution && execution->compiler
+                   ? execution->compiler->binding_pipeline : NULL;
+    if (!pipeline || !pipeline->semantic_model_build) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "deepseek_architecture_profile",
+                       "target has no semantic compiler adapter");
+        rc = YVEX_ERR_UNSUPPORTED;
+    } else {
+        rc = pipeline->semantic_model_build(&semantic, verification, err);
+    }
     if (rc != YVEX_OK) {
-        deepseek_ir_refusal(&failure, report);
+        report->status = "architecture-ir-refused";
+        report->exit_code = 5;
+        yvex_model_target_report_add_error(
+            report, "model-target class-profile: Semantic Model IR refused: %s",
+            yvex_error_is_set(err) ? yvex_error_message(err) : "compiler-refusal");
         yvex_error_clear(err);
         return YVEX_OK;
     }
-    report->family_architecture = architecture;
-    report->family_architecture_kind = YVEX_MODEL_TARGET_FAMILY_ARCHITECTURE_DEEPSEEK;
-    rc = yvex_model_target_report_project_family_detail(report, err);
-    if (rc != YVEX_OK) {
-        yvex_model_register_deepseek_v4()->ir.close(architecture);
-        report->family_architecture = NULL;
-        report->family_architecture_kind = YVEX_MODEL_TARGET_FAMILY_ARCHITECTURE_NONE;
-        return rc;
-    }
+    rc = yvex_model_target_report_project_semantic_detail(
+        report, semantic, verification, NULL, err);
+    yvex_semantic_model_ir_close(&semantic);
+    if (rc != YVEX_OK) return rc;
     {
         const yvex_model_target_report_profile profile = {
             .status = "typed-architecture-specified",
@@ -252,11 +225,8 @@ static int minimax_class_profile(
     yvex_model_target_report *report,
     yvex_error *err)
 {
-    const yvex_minimax_h3_api *api = yvex_model_register_minimax_h3();
-    yvex_minimax_h3_open_options options;
-    yvex_minimax_h3_failure failure;
-    yvex_minimax_h3_target *target = NULL;
-    yvex_transform_ir *transformation = NULL;
+    yvex_compilation_runtime_binding_request compilation = {0};
+    yvex_family_source_products products = {0};
     int rc;
 
     if (!request->source_path[0]) {
@@ -266,8 +236,9 @@ static int minimax_class_profile(
             report, "model-target class-profile: MiniMax-H3 requires --source DIR");
         return YVEX_OK;
     }
-    options.source_root = request->source_path;
-    rc = api->open(&target, &options, &failure, err);
+    compilation.source_path = request->source_path;
+    rc = yvex_family_source_compile(
+        request->target_id, &compilation, &products, err);
     if (rc != YVEX_OK) {
         report->status = "source-or-transformation-ir-refused";
         report->exit_code = 5;
@@ -277,48 +248,25 @@ static int minimax_class_profile(
                 "{\"status\":\"source-or-transformation-ir-refused\","
                 "\"target_id\":\"%s\",\"failure\":\"%s\","
                 "\"runtime\":\"unsupported\",\"generation\":\"unsupported\"}",
-                request->target_id, api->failure_name(failure.code));
+                request->target_id,
+                yvex_error_is_set(err) ? yvex_error_message(err) : "compiler-refusal");
         } else {
             yvex_model_target_report_add_error(
-                report, "model-target class-profile: MiniMax-H3 refused: %s tensor=%s",
-                api->failure_name(failure.code),
-                failure.source_name[0] ? failure.source_name : "none");
+                report, "model-target class-profile: MiniMax-H3 refused: %s",
+                yvex_error_is_set(err) ? yvex_error_message(err) : "compiler-refusal");
         }
+        yvex_family_source_products_release(&products);
         yvex_error_clear(err);
         return YVEX_OK;
     }
-    rc = yvex_model_minimax_h3_transform_api()->build(
-        &transformation, report->family_derivation_identity, target, err);
-    if (rc != YVEX_OK) {
-        api->close(&target);
-        report->status = "transformation-ir-refused";
-        report->exit_code = 5;
-        if (request->mode == YVEX_MODEL_TARGET_OUTPUT_JSON) {
-            yvex_model_target_report_add_row(
-                report,
-                "{\"status\":\"transformation-ir-refused\","
-                "\"target_id\":\"%s\",\"runtime\":\"unsupported\","
-                "\"generation\":\"unsupported\"}",
-                request->target_id);
-        } else {
-            yvex_model_target_report_add_error(
-                report, "model-target class-profile: MiniMax-H3 Transformation IR refused");
-        }
-        yvex_error_clear(err);
-        return YVEX_OK;
-    }
-    report->family_architecture = target;
-    report->family_transformation = transformation;
-    report->family_architecture_kind = YVEX_MODEL_TARGET_FAMILY_ARCHITECTURE_MINIMAX_H3;
-    rc = yvex_model_target_report_project_family_detail(report, err);
-    if (rc != YVEX_OK) {
-        yvex_transform_ir_release(&transformation);
-        api->close(&target);
-        report->family_architecture = NULL;
-        report->family_transformation = NULL;
-        report->family_architecture_kind = YVEX_MODEL_TARGET_FAMILY_ARCHITECTURE_NONE;
-        return rc;
-    }
+    rc = yvex_model_target_report_project_semantic_detail(
+        report, products.semantic_model, products.verification,
+        products.transform_ir, err);
+    yvex_core_text_copy(report->derivation_identity,
+                        sizeof(report->derivation_identity),
+                        products.derivation_identity);
+    yvex_family_source_products_release(&products);
+    if (rc != YVEX_OK) return rc;
     {
         const yvex_model_target_report_profile profile = {
             .status = "transformation-ir-admitted",
@@ -427,7 +375,7 @@ int yvex_model_target_family_class_profile_build(
     *handled = 1;
     if (yvex_source_is_release_target(request->target_id))
         return deepseek_class_profile(request, report, err);
-    if (strcmp(request->target_id, YVEX_MINIMAX_H3_TARGET_ID) == 0)
+    if (strcmp(yvex_model_target_family_key(request->target_id), "minimax-h3") == 0)
         return minimax_class_profile(request, report, err);
     *handled = 0;
     yvex_error_clear(err);
@@ -439,20 +387,8 @@ int yvex_model_target_family_mapping_report_build(
     yvex_model_target_report *report,
     yvex_error *err)
 {
-    const yvex_model_family_api *family = yvex_model_register_deepseek_v4();
-    yvex_source_verify_options source_options;
-    yvex_source_verification verification;
-    yvex_source_tensor_snapshot *snapshot = NULL;
-    yvex_deepseek_v4_ir *architecture = NULL;
-    yvex_transform_ir *transform_ir = NULL;
-    yvex_artifact_lowering_map *map = NULL;
-    yvex_deepseek_v4_ir_failure architecture_failure;
-    yvex_transform_failure transform_failure;
-    yvex_artifact_lowering_failure map_failure;
-    const char *refusal_stage = NULL;
-    const char *refusal_reason = NULL;
-    const char *refusal_source = "none";
-    const char *refusal_emitted = "none";
+    yvex_compilation_runtime_binding_request compilation = {0};
+    yvex_family_source_products products = {0};
     char models_root[512];
     char source_path[512];
     int rc;
@@ -464,73 +400,25 @@ int yvex_model_target_family_mapping_report_build(
                        "DeepSeek source path exceeds report bounds");
         return YVEX_ERR_BOUNDS;
     }
-    memset(&source_options, 0, sizeof(source_options));
-    memset(&verification, 0, sizeof(verification));
-    memset(&architecture_failure, 0, sizeof(architecture_failure));
-    memset(&transform_failure, 0, sizeof(transform_failure));
-    memset(&map_failure, 0, sizeof(map_failure));
-    source_options.identity = yvex_source_release_identity();
-    source_options.source_path = source_path;
-    source_options.models_root = models_root;
-    source_options.promote_manifest = 0;
-    rc = yvex_source_verify_with_snapshot(
-        &source_options, &verification, &snapshot, err);
-    if (rc != YVEX_OK || !verification.verified || !snapshot) {
-        refusal_stage = "source-verification";
-        refusal_reason = yvex_source_verification_status(&verification);
-        refusal_source = source_path;
-        if (rc == YVEX_OK) rc = YVEX_ERR_STATE;
-        goto cleanup;
-    }
-    rc = family->ir.build(&architecture, &verification, &architecture_failure, err);
-    if (rc != YVEX_OK) {
-        refusal_stage = "architecture";
-        refusal_reason = family->ir.failure_name(architecture_failure.code);
-        refusal_source = architecture_failure.field
-                             ? architecture_failure.field
-                             : "architecture-ir";
-        goto cleanup;
-    }
-    rc = family->transform.build(
-        &transform_ir, &verification, architecture, snapshot, NULL,
-        &transform_failure, err);
-    if (rc != YVEX_OK) {
-        refusal_stage = "transformation-ir";
-        refusal_reason = yvex_transform_failure_name(transform_failure.code);
-        goto cleanup;
-    }
-    rc = family->lowering.build(&map, architecture, transform_ir, &map_failure, err);
-    if (rc != YVEX_OK) {
-        refusal_stage = "gguf-lowering";
-        refusal_reason = family->lowering.map->failure_name(map_failure.code);
-        refusal_source = map_failure.source_name[0] ? map_failure.source_name : "none";
-        refusal_emitted = map_failure.emitted_name[0] ? map_failure.emitted_name : "none";
-    }
-
-cleanup:
-    yvex_transform_ir_release(&transform_ir);
-    family->ir.close(architecture);
-    yvex_source_tensor_snapshot_release(snapshot);
-    if (rc != YVEX_OK) {
-        family->lowering.map->close(map);
+    compilation.source_path = source_path;
+    compilation.models_root = models_root;
+    rc = yvex_family_source_compile(
+        request->target_id, &compilation, &products, err);
+    if (rc != YVEX_OK || !products.lowering) {
         report->status = "mapping-plan-blocked";
         report->exit_code = 5;
         yvex_model_target_report_add_error(
             report,
-            "model-target mapping-gate: DeepSeek %s refused: %s source=%s emitted=%s",
-            refusal_stage ? refusal_stage : "mapping-plan",
-            refusal_reason ? refusal_reason : "invalid-lifecycle-state",
-            refusal_source, refusal_emitted);
+            "model-target mapping-gate: compiled lowering refused: %s",
+            yvex_error_is_set(err) ? yvex_error_message(err)
+                                   : "lowering-projection-absent");
+        yvex_family_source_products_release(&products);
         yvex_error_clear(err);
         return YVEX_OK;
     }
-    report->family_lowering = map;
-    rc = yvex_model_target_report_project_family_detail(report, err);
-    if (rc != YVEX_OK) {
-        family->lowering.map->close(map);
-        report->family_lowering = NULL;
-        return rc;
-    }
+    rc = project_map(report, products.lowering, err);
+    yvex_family_source_products_release(&products);
+    if (rc != YVEX_OK) return rc;
     {
         const yvex_model_target_report_profile profile = {
             .status = "deepseek-gguf-mapping-complete",
@@ -550,11 +438,12 @@ cleanup:
     return YVEX_OK;
 }
 
-static int project_map(yvex_model_target_report *report, yvex_error *err)
+static int project_map(
+    yvex_model_target_report *report,
+    const yvex_artifact_lowering_map *map, yvex_error *err)
 {
-    const yvex_model_family_api *family = yvex_model_register_deepseek_v4();
-    const yvex_artifact_lowering_summary *source = family->lowering.map->summary(
-        (const yvex_artifact_lowering_map *)report->family_lowering);
+    const yvex_artifact_lowering_summary *source =
+        yvex_artifact_lowering_operations.summary(map);
     yvex_model_target_map_projection *out = &report->detail.map;
     unsigned int index;
 
@@ -615,7 +504,7 @@ static int transform_collection_index(
 
 static int project_transform_coverage(
     yvex_model_target_report *report, const yvex_transform_ir *transform,
-    const yvex_source_tensor_snapshot_facts *facts, yvex_error *err)
+    const yvex_compilation_source_summary *compiled_source, yvex_error *err)
 {
     const yvex_transform_ir_summary *source =
         yvex_transform_ir_summary_get(transform);
@@ -623,19 +512,20 @@ static int project_transform_coverage(
     unsigned long long source_index;
     unsigned int index;
 
-    if (!report || !source || !facts || !source->complete ||
+    if (!report || !source || !compiled_source || !compiled_source->complete ||
+        !source->complete ||
         YVEX_TENSOR_COLLECTION_COUNT > YVEX_MODEL_TARGET_COLLECTION_CAP)
         return projection_refuse(err, "tensor-coverage projection exceeds its bounded view");
     out = &report->detail.coverage;
     memset(out, 0, sizeof(*out));
-    out->source_tensors = facts->tensor_count;
+    out->source_tensors = compiled_source->source_tensor_count;
     out->required_tensors = source->source_value_count;
     out->matched_tensors = source->source_value_count;
-    out->header_scans = source->header_scan_count;
-    out->payload_bytes = source->payload_bytes_read;
-    out->source_lookups = facts->lookup_count;
-    out->source_collisions = facts->collision_count;
-    out->source_maximum_probe = facts->maximum_probe;
+    out->header_scans = compiled_source->source_header_scan_count;
+    out->payload_bytes = compiled_source->source_payload_bytes_read;
+    out->source_lookups = compiled_source->source_lookup_count;
+    out->source_collisions = compiled_source->source_collision_count;
+    out->source_maximum_probe = compiled_source->source_maximum_probe;
     out->source_identity = source->source_snapshot_identity;
     out->coverage_identity = source->coverage_identity;
     out->collection_count = YVEX_TENSOR_COLLECTION_COUNT;
@@ -662,150 +552,186 @@ static int project_transform_coverage(
 
 static void project_architecture_model(
     yvex_model_target_architecture_projection *out,
-    const yvex_deepseek_v4_model_spec *source)
+    const yvex_semantic_model_ir *model_ir,
+    const yvex_semantic_model_ir_summary *semantic,
+    const yvex_source_verification *source,
+    const yvex_semantic_attention_layer *last)
 {
-#define COPY_TEXT(member) \
-    yvex_core_text_copy(out->member, sizeof(out->member), source->member)
-    COPY_TEXT(target_id);
-    COPY_TEXT(family);
-    COPY_TEXT(architecture);
-    COPY_TEXT(repository);
-    COPY_TEXT(revision);
-    COPY_TEXT(verification_stage);
-    COPY_TEXT(paper_revision);
-    COPY_TEXT(sglang_revision);
-    COPY_TEXT(vllm_revision);
-#undef COPY_TEXT
+#define COPY_TEXT(member, value) \
+    yvex_core_text_copy(out->member, sizeof(out->member), (value))
+    const yvex_model_execution_descriptor *model = &semantic->execution_descriptor;
+
+    COPY_TEXT(target_id, semantic->target_id);
+    COPY_TEXT(family, yvex_model_target_family_key(semantic->target_id));
+    COPY_TEXT(architecture, source->architecture);
+    COPY_TEXT(repository, source->repository_id);
+    COPY_TEXT(revision, source->revision);
+    COPY_TEXT(verification_stage, source->verification_stage);
+    COPY_TEXT(source_weight_dtype, source->torch_dtype);
+    COPY_TEXT(source_expert_dtype, source->expert_dtype);
+    COPY_TEXT(source_quantization, source->quant_method[0]
+                                       ? source->quant_method : source->quant_format);
+    COPY_TEXT(paper_revision,
+              yvex_semantic_model_ir_reference(model_ir, "architecture-paper"));
+    COPY_TEXT(sglang_revision,
+              yvex_semantic_model_ir_reference(model_ir, "sglang-reference"));
+    COPY_TEXT(vllm_revision,
+              yvex_semantic_model_ir_reference(model_ir, "vllm-reference"));
     yvex_core_text_copy(out->tokenizer_class, sizeof(out->tokenizer_class),
-                        source->tokenizer.tokenizer_class);
+                        source->tokenizer_class);
     yvex_core_text_copy(out->tokenizer_model_type, sizeof(out->tokenizer_model_type),
-                        source->tokenizer.model_type);
-    out->hidden_size = source->hidden_size;
-    out->vocabulary_size = source->vocabulary_size;
-    out->maximum_context = source->maximum_context;
-    out->target_layers = source->main_layer_count;
-    out->draft_layers = source->auxiliary_layer_count;
-    out->swa_layers = source->swa_layer_count;
-    out->csa_layers = source->csa_layer_count;
-    out->hca_layers = source->hca_layer_count;
-    out->hash_router_layers = source->hash_router_layer_count;
-    out->learned_router_layers = source->learned_router_layer_count;
-    out->dspark_block_size = source->dspark.block_size;
-    out->dspark_noise_token_id = source->dspark.noise_token_id;
-    out->dspark_markov_rank = source->dspark.markov_rank;
-    out->dspark_confidence_available = source->dspark.confidence_available;
-    out->mhc_residual_streams = source->final_mhc.residual_streams;
-    out->mhc_expanded_width = source->final_mhc.expanded_width;
-    out->mhc_mixing_rows = source->final_mhc.mixing_rows;
-    out->mhc_mixing_columns = source->final_mhc.mixing_columns;
-    out->mhc_sinkhorn_iterations = source->final_mhc.sinkhorn_iterations;
-    out->final_mhc_post_required = source->final_mhc_post_required;
-    out->final_mhc_head_required = source->final_mhc_head_required;
-    out->final_norm_after_mhc_head = source->final_norm_after_mhc_head;
-    out->tokenizer_vocabulary_size = source->tokenizer.vocabulary_size;
-    out->tokenizer_base_vocab_entries = source->tokenizer.base_vocab_entries;
-    out->tokenizer_added_token_entries = source->tokenizer.added_token_entries;
-    out->bos_token_id = source->tokenizer.bos_token_id;
-    out->eos_token_id = source->tokenizer.eos_token_id;
-    out->output_head_required = source->output.required;
-    out->output_head_tied = source->output.tied_to_embedding;
-    out->source_quant_block_rows = source->source_constraint.quant_block_rows;
-    out->source_quant_block_columns = source->source_constraint.quant_block_columns;
-    out->source_header_scans = source->source_header_scan_count;
-    out->source_header_tensors = source->source_header_tensor_count;
-    out->source_payload_bytes = source->source_payload_bytes_read;
+                        source->tokenizer_model_type);
+#undef COPY_TEXT
+    out->hidden_size = model->hidden_width;
+    out->vocabulary_size = model->vocabulary_size;
+    out->maximum_context = model->maximum_context;
+    out->target_layers = model->layer_count;
+    out->draft_layers = model->draft_layer_count;
+    out->swa_layers = model->swa_layers;
+    out->csa_layers = model->csa_layers;
+    out->hca_layers = model->hca_layers;
+    out->hash_router_layers = model->hash_router_layer_count;
+    out->learned_router_layers = model->layer_count - model->hash_router_layer_count;
+    out->query_heads = model->attention_heads;
+    out->kv_heads = model->kv_heads;
+    out->head_dimension = model->head_width;
+    out->rope_head_dimension = last ? last->rope_head_dimension : 0ull;
+    out->routed_experts = model->routed_experts;
+    out->experts_per_token = model->experts_per_row;
+    out->shared_experts = model->shared_experts;
+    out->dspark_block_size = model->proposal_width;
+    out->dspark_noise_token_id = model->draft_noise_token_id;
+    out->dspark_markov_rank = model->markov_rank;
+    out->dspark_confidence_available = model->confidence_width != 0ull;
+    if (last) {
+        out->mhc_residual_streams = last->residual_stream_count;
+        out->mhc_expanded_width = last->residual_expanded_width;
+        out->mhc_mixing_rows = last->mhc_mixing_rows;
+        out->mhc_mixing_columns = last->mhc_mixing_columns;
+        out->mhc_sinkhorn_iterations = last->mhc_sinkhorn_iterations;
+        out->final_mhc_post_required = last->mhc_attention_pre_and_post;
+        out->final_mhc_head_required = last->residual_stream_count > 1ull;
+        out->final_norm_after_mhc_head = last->attention_input_norm_required;
+    }
+    out->tokenizer_vocabulary_size = source->tokenizer_effective_vocab_size;
+    out->tokenizer_base_vocab_entries = source->tokenizer_base_vocab_count;
+    out->tokenizer_added_token_entries = source->tokenizer_added_token_count;
+    out->bos_token_id = model->bos_token_id;
+    out->eos_token_id = model->eos_token_id;
+    out->output_head_required = model->output_vocabulary_size != 0ull;
+    out->output_head_tied = source->tie_word_embeddings;
+    out->source_quant_block_rows = source->quant_block_rows;
+    out->source_quant_block_columns = source->quant_block_columns;
+    out->source_header_scans = source->header_scan_count;
+    out->source_header_tensors = source->header_tensor_count;
+    out->source_payload_bytes = 0ull;
 }
 
-static int project_architecture(yvex_model_target_report *report, yvex_error *err)
+static const char *state_name(yvex_attention_class attention)
 {
-    const yvex_model_family_api *family = yvex_model_register_deepseek_v4();
-    const yvex_deepseek_v4_ir *ir = report->family_architecture;
-    const yvex_deepseek_v4_model_spec *model = family->ir.model(ir);
+    static const char *const names[] = {
+        "swa-state", "csa-state-core-indexer", "hca-state-core"};
+
+    return attention <= YVEX_ATTENTION_CLASS_HCA ? names[attention] : "unknown";
+}
+
+static int project_architecture(
+    yvex_model_target_report *report, const yvex_semantic_model_ir *semantic,
+    const yvex_source_verification *verification, yvex_error *err)
+{
+    const yvex_semantic_model_ir_summary *summary =
+        yvex_semantic_model_ir_summary_get(semantic);
+    const yvex_model_execution_descriptor *model =
+        summary ? &summary->execution_descriptor : NULL;
+    const yvex_semantic_attention_layer *layers = NULL, *drafts = NULL;
+    unsigned long long layer_count = 0ull, draft_count = 0ull;
     yvex_model_target_architecture_projection *out = &report->detail.architecture;
     unsigned long long index;
 
-    if (!model || family->ir.layer_count(ir) > YVEX_MODEL_TARGET_LAYER_CAP ||
-        family->ir.auxiliary_count(ir) > YVEX_MODEL_TARGET_LAYER_CAP ||
-        model->dspark.target_layer_count > YVEX_MODEL_TARGET_FEATURE_CAP)
+    if (!summary || !verification || !verification->verified ||
+        model->schema_version != YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1 ||
+        !yvex_semantic_model_ir_attention_view(
+            semantic, YVEX_TENSOR_SCOPE_MAIN_LAYER, &layers, &layer_count) ||
+        !yvex_semantic_model_ir_attention_view(
+            semantic, YVEX_TENSOR_SCOPE_DRAFT, &drafts, &draft_count) ||
+        layer_count > YVEX_MODEL_TARGET_LAYER_CAP ||
+        draft_count > YVEX_MODEL_TARGET_LAYER_CAP ||
+        model->target_feature_count > YVEX_MODEL_TARGET_FEATURE_CAP)
         return projection_refuse(err, "architecture projection exceeds its bounded view");
     memset(out, 0, sizeof(*out));
-    project_architecture_model(out, model);
-    yvex_core_text_copy(out->source_weight_dtype, sizeof(out->source_weight_dtype),
-                        family->ir.source_weight_dtype_name(model->source_constraint.weight_dtype));
-    yvex_core_text_copy(out->source_expert_dtype, sizeof(out->source_expert_dtype),
-                        family->ir.source_expert_dtype_name(model->source_constraint.expert_dtype));
-    yvex_core_text_copy(out->source_quantization, sizeof(out->source_quantization),
-                        family->ir.source_quantization_name(model->source_constraint.quantization));
-    out->dspark_feature_layer_count = (unsigned int)model->dspark.target_layer_count;
-    memcpy(out->dspark_feature_layers, model->dspark.target_layer_ids,
+    project_architecture_model(
+        out, semantic, summary, verification, &layers[layer_count - 1ull]);
+    out->dspark_feature_layer_count = (unsigned int)model->target_feature_count;
+    memcpy(out->dspark_feature_layers, model->target_feature_layers,
            out->dspark_feature_layer_count * sizeof(out->dspark_feature_layers[0]));
-    out->layer_count = (unsigned int)family->ir.layer_count(ir);
+    out->layer_count = (unsigned int)layer_count;
     for (index = 0u; index < out->layer_count; ++index) {
-        const yvex_deepseek_v4_layer_spec *source = family->ir.layer_at(ir, index);
+        const yvex_semantic_attention_layer *source = &layers[index];
         yvex_model_target_layer_projection *layer = &out->layers[index];
 
         layer->index = source->layer_index;
         layer->compression_ratio = source->compression_ratio;
         yvex_core_text_copy(layer->attention, sizeof(layer->attention),
                             attention_name(source->attention_class));
-        yvex_core_text_copy(layer->kv, sizeof(layer->kv), family->ir.kv_name(source->kv.class_id));
+        yvex_core_text_copy(layer->kv, sizeof(layer->kv),
+                            state_name(source->attention_class));
         yvex_core_text_copy(layer->router, sizeof(layer->router),
-                            family->ir.router_name(source->moe.router_class));
+                            source->layer_index < model->hash_router_layer_count
+                                ? "hash-token-id" : "learned-hidden-noaux-tc");
         yvex_core_text_copy(layer->mhc_entry, sizeof(layer->mhc_entry),
-                            source->mhc.entry == YVEX_DEEPSEEK_V4_MHC_STANDALONE_PRE
+                            source->mhc_entry_policy == 0u
                                 ? "standalone-pre" : "fused-prior-post-pre");
-        if (!index) {
-            out->query_heads = source->query_heads;
-            out->kv_heads = source->kv_heads;
-            out->head_dimension = source->head_dimension;
-            out->rope_head_dimension = source->rope_head_dimension;
-            out->routed_experts = source->moe.routed_experts;
-            out->experts_per_token = source->moe.experts_per_token;
-            out->shared_experts = source->moe.shared_experts;
-        }
     }
-    out->draft_count = (unsigned int)family->ir.auxiliary_count(ir);
+    out->draft_count = (unsigned int)draft_count;
     for (index = 0u; index < out->draft_count; ++index) {
-        const yvex_deepseek_v4_auxiliary_spec *source = family->ir.auxiliary_at(ir, index);
+        const yvex_semantic_attention_layer *source = &drafts[index];
         yvex_model_target_draft_projection *draft = &out->drafts[index];
 
         draft->predictor_index = source->predictor_index;
-        draft->layer_index = source->layer.layer_index;
-        draft->compression_ratio = source->layer.compression_ratio;
+        draft->layer_index = source->layer_index;
+        draft->compression_ratio = source->compression_ratio;
         yvex_core_text_copy(draft->attention, sizeof(draft->attention),
-                            attention_name(source->layer.attention_class));
+                            attention_name(source->attention_class));
         yvex_core_text_copy(draft->router, sizeof(draft->router),
-                            family->ir.router_name(source->layer.moe.router_class));
-        draft->feature_projection = source->has_feature_projection;
-        draft->markov = source->has_markov_head;
-        draft->confidence = source->has_confidence_head;
-        draft->shared_head = source->shares_output_head;
+                            "learned-hidden-noaux-tc");
+        draft->feature_projection = model->target_feature_count != 0ull;
+        draft->markov = model->markov_rank != 0ull;
+        draft->confidence = model->confidence_width != 0ull;
+        draft->shared_head = model->output_vocabulary_size != 0ull;
     }
     report->detail_kind = YVEX_MODEL_TARGET_DETAIL_MODEL_ARCHITECTURE;
     yvex_error_clear(err);
     return YVEX_OK;
 }
 
-static int project_composite(yvex_model_target_report *report, yvex_error *err)
+static int project_composite(
+    yvex_model_target_report *report, const yvex_semantic_model_ir *semantic,
+    const yvex_transform_ir *transformation, yvex_error *err)
 {
-    const yvex_minimax_h3_api *api = yvex_model_register_minimax_h3();
-    const yvex_minimax_h3_target *target = report->family_architecture;
-    const yvex_minimax_h3_summary *source = api->summary(target);
-    const yvex_transform_ir_summary *transform = yvex_transform_ir_summary_get(
-        (const yvex_transform_ir *)report->family_transformation);
+    const yvex_semantic_model_ir_summary *semantic_summary =
+        yvex_semantic_model_ir_summary_get(semantic);
+    const yvex_semantic_composite_summary *source =
+        semantic_summary ? &semantic_summary->composite : NULL;
+    const yvex_transform_ir_summary *transform =
+        yvex_transform_ir_summary_get(transformation);
+    const yvex_semantic_component *components = NULL;
+    const yvex_semantic_phase_edge *edges = NULL;
+    unsigned long long component_count = 0ull, edge_count = 0ull;
     yvex_model_target_composite_projection *out = &report->detail.composite;
     unsigned long long index;
 
-    if (!source || !api->architecture(target) || !transform ||
+    if (!source || !transform ||
+        !yvex_semantic_model_ir_composite_view(
+            semantic, &components, &component_count, &edges, &edge_count) ||
         source->component_count > YVEX_MODEL_TARGET_COMPONENT_CAP ||
         source->phase_edge_count > YVEX_MODEL_TARGET_EDGE_CAP)
         return projection_refuse(err, "composite architecture exceeds its bounded view");
     memset(out, 0, sizeof(*out));
 #define COPY_TEXT(destination, value) \
     yvex_core_text_copy((destination), sizeof(destination), (value))
-    COPY_TEXT(out->repository, YVEX_MINIMAX_H3_REPOSITORY);
-    COPY_TEXT(out->revision, YVEX_MINIMAX_H3_REVISION);
-    COPY_TEXT(out->subtree, YVEX_MINIMAX_H3_SUBTREE);
+    COPY_TEXT(out->repository, source->repository);
+    COPY_TEXT(out->revision, source->revision);
+    COPY_TEXT(out->subtree, source->subtree);
     COPY_TEXT(out->source_snapshot_identity, source->source_snapshot_identity);
     COPY_TEXT(out->component_manifest_identity, source->component_manifest_identity);
     COPY_TEXT(out->phase_dag_identity, source->phase_dag_identity);
@@ -814,76 +740,59 @@ static int project_composite(yvex_model_target_report *report, yvex_error *err)
     COPY_TEXT(out->transformation_identity, transform->transform_identity);
     COPY_TEXT(out->unresolved_requirements_identity, source->unresolved_requirements_identity);
 #undef COPY_TEXT
-    out->components = source->component_count;
+    out->components = component_count;
     out->weighted_components = source->weighted_component_count;
-    out->phase_edges = source->phase_edge_count;
-    out->shards = source->shard_count;
-    out->tensors = source->tensor_count;
-    out->elements = source->element_count;
+    out->phase_edges = edge_count;
+    out->shards = source->shards;
+    out->tensors = source->tensors;
+    out->elements = source->elements;
     out->payload_bytes = source->payload_bytes;
     out->payload_execution_bytes = transform->payload_bytes_read;
-    out->component_count = (unsigned int)source->component_count;
+    out->component_count = (unsigned int)component_count;
     for (index = 0u; index < out->component_count; ++index) {
-        const yvex_minimax_h3_component *component = api->component_at(target, index);
+        const yvex_semantic_component *component = &components[index];
         yvex_model_target_component_projection *row = &out->component[index];
 
-        if (!component) return projection_refuse(err, "composite component projection is absent");
         yvex_core_text_copy(row->canonical_id, sizeof(row->canonical_id), component->canonical_id);
         yvex_core_text_copy(row->identity, sizeof(row->identity), component->identity);
-        row->shards = component->shard_count;
-        row->tensors = component->tensor_count;
-        row->phase = (unsigned int)component->phase;
+        row->shards = component->shards;
+        row->tensors = component->tensors;
+        row->phase = component->phase;
         row->weighted = component->weighted;
         row->release_after_phase = component->release_after_phase;
     }
-    out->edge_count = (unsigned int)source->phase_edge_count;
+    out->edge_count = (unsigned int)edge_count;
     for (index = 0u; index < out->edge_count; ++index) {
-        const yvex_minimax_h3_phase_edge *edge = api->phase_edge_at(index);
+        const yvex_semantic_phase_edge *edge = &edges[index];
         yvex_model_target_edge_projection *row = &out->edge[index];
 
-        if (!edge) return projection_refuse(err, "composite phase-edge projection is absent");
-        row->source_phase = (unsigned int)edge->source_phase;
-        row->destination_phase = (unsigned int)edge->destination_phase;
+        row->source_phase = edge->source_phase;
+        row->destination_phase = edge->destination_phase;
         row->data_classes = edge->data_classes;
-        row->lifetime = (unsigned int)edge->lifetime;
+        row->lifetime = edge->lifetime;
     }
     report->detail_kind = YVEX_MODEL_TARGET_DETAIL_COMPOSITE_ARCHITECTURE;
     yvex_error_clear(err);
     return YVEX_OK;
 }
 
-int yvex_model_target_report_project_family_detail(
-    yvex_model_target_report *report, yvex_error *err)
+int yvex_model_target_report_project_semantic_detail(
+    yvex_model_target_report *report,
+    const yvex_semantic_model_ir *semantic,
+    const yvex_source_verification *verification,
+    const yvex_transform_ir *transform, yvex_error *err)
 {
-    if (!report) {
+    const yvex_semantic_model_ir_summary *summary =
+        yvex_semantic_model_ir_summary_get(semantic);
+
+    if (!report || !summary) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "model_target_family_projection",
-                       "report is required");
+                       "report and sealed Semantic Model IR are required");
         return YVEX_ERR_INVALID_ARG;
     }
     report->detail_kind = YVEX_MODEL_TARGET_DETAIL_NONE;
     memset(&report->detail, 0, sizeof(report->detail));
-    if (report->family_lowering) return project_map(report, err);
-    if (report->family_architecture_kind == YVEX_MODEL_TARGET_FAMILY_ARCHITECTURE_DEEPSEEK)
-        return project_architecture(report, err);
-    if (report->family_architecture_kind == YVEX_MODEL_TARGET_FAMILY_ARCHITECTURE_MINIMAX_H3)
-        return project_composite(report, err);
-    yvex_error_clear(err);
-    return YVEX_OK;
-}
-
-void yvex_model_target_report_close_family_detail(yvex_model_target_report *report)
-{
-    if (!report) return;
-    yvex_model_register_deepseek_v4()->lowering.map->close(
-        (yvex_artifact_lowering_map *)report->family_lowering);
-    yvex_transform_ir_release((yvex_transform_ir **)&report->family_transformation);
-    if (report->family_architecture_kind == YVEX_MODEL_TARGET_FAMILY_ARCHITECTURE_DEEPSEEK) {
-        yvex_model_register_deepseek_v4()->ir.close(
-            (yvex_deepseek_v4_ir *)report->family_architecture);
-    } else if (report->family_architecture_kind ==
-               YVEX_MODEL_TARGET_FAMILY_ARCHITECTURE_MINIMAX_H3) {
-        yvex_minimax_h3_target *target = report->family_architecture;
-
-        yvex_model_register_minimax_h3()->close(&target);
-    }
+    if (summary->composite.component_count)
+        return project_composite(report, semantic, transform, err);
+    return project_architecture(report, semantic, verification, err);
 }

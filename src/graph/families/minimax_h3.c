@@ -6,6 +6,7 @@
  * consumes this admission later; it cannot infer source or model identity from tensor names.
  */
 #include <yvex/internal/artifact.h>
+#include <yvex/internal/compilation.h>
 #include <yvex/internal/compiler.h>
 #include <yvex/internal/family_catalog.h>
 #include <yvex/internal/families/minimax_h3.h>
@@ -1864,5 +1865,135 @@ const yvex_component_variant_adapter *yvex_graph_minimax_h3_component_adapter(vo
         .source_open = component_variant_open,
         .physical_variant = yvex_graph_physical_variant_api_get};
 
+    return &adapter;
+}
+
+typedef struct {
+    yvex_semantic_model_ir *semantic_model;
+    yvex_transform_ir *transform_ir;
+} minimax_source_owner;
+static void minimax_source_release(void *pointer)
+{
+    minimax_source_owner *owner = pointer;
+    if (!owner) return;
+    yvex_semantic_model_ir_close(&owner->semantic_model);
+    yvex_transform_ir_release(&owner->transform_ir);
+    free(owner);
+}
+
+static int minimax_source_compile(
+    yvex_family_source_products *out,
+    const yvex_compilation_runtime_binding_request *request, yvex_error *err)
+{
+    const yvex_minimax_h3_api *family = yvex_model_register_minimax_h3();
+    yvex_minimax_h3_open_options options = {0};
+    yvex_minimax_h3_failure failure = {0};
+    yvex_minimax_h3_target *target = NULL;
+    minimax_source_owner *owner = NULL;
+    yvex_semantic_component components[YVEX_MINIMAX_H3_COMPONENT_COUNT] = {0};
+    yvex_semantic_phase_edge edges[YVEX_MINIMAX_H3_PHASE_EDGES] = {0};
+    yvex_semantic_composite_request composite = {0};
+    yvex_semantic_model_ir_request semantic = {0};
+    const yvex_minimax_h3_summary *summary;
+    unsigned long long index;
+    char derivation[YVEX_SHA256_HEX_BYTES] = {0};
+    int rc;
+    if (out) memset(out, 0, sizeof(*out));
+    if (!out || !request || !request->source_path || !request->source_path[0]) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "minimax-h3.source-compiler",
+                       "exact MiniMax source path is required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    options.source_root = request->source_path;
+    rc = family->open(&target, &options, &failure, err);
+    summary = rc == YVEX_OK ? family->summary(target) : NULL;
+    if (rc != YVEX_OK || !summary) goto cleanup;
+    owner = calloc(1u, sizeof(*owner));
+    if (!owner) {
+        yvex_error_set(err, YVEX_ERR_NOMEM, "minimax-h3.source-compiler",
+                       "source compiler ownership allocation failed");
+        rc = YVEX_ERR_NOMEM;
+        goto cleanup;
+    }
+    rc = yvex_model_minimax_h3_transform_api()->build(
+        &owner->transform_ir, derivation, target, err);
+    for (index = 0ull; rc == YVEX_OK && index < summary->component_count; ++index) {
+        const yvex_minimax_h3_component *source = family->component_at(target, index);
+        if (!source) {
+            yvex_error_set(err, YVEX_ERR_STATE, "minimax-h3.source-compiler",
+                           "semantic component disappeared after source admission");
+            rc = YVEX_ERR_STATE;
+            break;
+        }
+        yvex_core_text_copy(components[index].canonical_id,
+                            sizeof(components[index].canonical_id), source->canonical_id);
+        yvex_core_text_copy(components[index].identity,
+                            sizeof(components[index].identity), source->identity);
+        components[index].shards = source->shard_count;
+        components[index].tensors = source->tensor_count;
+        components[index].phase = (unsigned int)source->phase;
+        components[index].weighted = source->weighted;
+        components[index].release_after_phase = source->release_after_phase;
+    }
+    for (index = 0ull; rc == YVEX_OK && index < summary->phase_edge_count; ++index) {
+        const yvex_minimax_h3_phase_edge *source = family->phase_edge_at(index);
+        if (!source) {
+            yvex_error_set(err, YVEX_ERR_STATE, "minimax-h3.source-compiler",
+                           "semantic phase edge disappeared after source admission");
+            rc = YVEX_ERR_STATE;
+            break;
+        }
+        edges[index].source_phase = (unsigned int)source->source_phase;
+        edges[index].destination_phase = (unsigned int)source->destination_phase;
+        edges[index].data_classes = source->data_classes;
+        edges[index].lifetime = (unsigned int)source->lifetime;
+    }
+    composite = (yvex_semantic_composite_request){
+        .repository = YVEX_MINIMAX_H3_REPOSITORY,
+        .revision = YVEX_MINIMAX_H3_REVISION,
+        .subtree = YVEX_MINIMAX_H3_SUBTREE,
+        .source_snapshot_identity = summary->source_snapshot_identity,
+        .component_manifest_identity = summary->component_manifest_identity,
+        .phase_dag_identity = summary->phase_dag_identity,
+        .architecture_identity = summary->architecture_identity,
+        .role_map_identity = summary->role_map_identity,
+        .unresolved_requirements_identity = summary->unresolved_requirements_identity,
+        .weighted_components = summary->weighted_component_count,
+        .shards = summary->shard_count, .tensors = summary->tensor_count,
+        .elements = summary->element_count, .payload_bytes = summary->payload_bytes,
+        .components = components, .component_count = summary->component_count,
+        .phase_edges = edges, .phase_edge_count = summary->phase_edge_count};
+    semantic = (yvex_semantic_model_ir_request){
+        .schema_version = YVEX_SEMANTIC_MODEL_IR_SCHEMA_V1,
+        .family_adapter_id = 0x4d494e494d4158ull, .family_adapter_version = 1ull,
+        .target_id = YVEX_MINIMAX_H3_TARGET_ID,
+        .source_model_identity = summary->source_snapshot_identity,
+        .logical_model_identity = summary->target_identity,
+        .semantic_payload_identity = summary->architecture_identity,
+        .composite = &composite};
+    if (rc == YVEX_OK)
+        rc = yvex_semantic_model_ir_seal(&owner->semantic_model, &semantic, err);
+    if (rc == YVEX_OK) {
+        out->owner = owner;
+        out->release = minimax_source_release;
+        out->semantic_model = owner->semantic_model;
+        out->transform_ir = owner->transform_ir;
+        yvex_core_text_copy(out->derivation_identity,
+                            sizeof(out->derivation_identity), derivation);
+        owner = NULL;
+    }
+cleanup:
+    family->close(&target);
+    minimax_source_release(owner);
+    return rc;
+}
+
+const yvex_family_source_adapter *yvex_graph_minimax_h3_source_adapter(void)
+{
+    static const yvex_family_source_adapter adapter = {
+        .schema_version = YVEX_FAMILY_SOURCE_ADAPTER_SCHEMA_V1,
+        .target_id = YVEX_MINIMAX_H3_TARGET_ID,
+        .family = "minimax-h3",
+        .compile = minimax_source_compile};
     return &adapter;
 }

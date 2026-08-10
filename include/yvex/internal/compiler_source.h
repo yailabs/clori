@@ -42,6 +42,9 @@ typedef struct yvex_compilation_source_failure {
 typedef struct yvex_compilation_source_summary {
     unsigned long long mapping_identity;
     char transform_identity[YVEX_SHA256_HEX_BYTES];
+    unsigned long long source_tensor_count, source_shard_count, source_header_scan_count;
+    unsigned long long source_payload_bytes_read, source_lookup_count;
+    unsigned long long source_collision_count, source_maximum_probe;
     unsigned long long source_snapshot_identity, descriptor_count, descriptors_covered;
     unsigned long long contribution_count, contributions_resolved, direct_contributions;
     unsigned long long fp8_weight_contributions, e8m0_scale_contributions;

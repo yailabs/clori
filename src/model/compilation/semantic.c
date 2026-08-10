@@ -18,6 +18,12 @@ struct yvex_semantic_model_ir {
     unsigned long long attention_layer_count;
     yvex_semantic_attention_layer *draft_attention_layers;
     unsigned long long draft_attention_layer_count;
+    yvex_semantic_component *components;
+    unsigned long long component_count;
+    yvex_semantic_phase_edge *phase_edges;
+    unsigned long long phase_edge_count;
+    yvex_semantic_reference *references;
+    unsigned long long reference_count;
 };
 
 static int semantic_refuse(yvex_error *err, yvex_status status, const char *reason)
@@ -111,6 +117,53 @@ static int semantic_topology_identity(
     return 1;
 }
 
+static int semantic_composite_identity(
+    yvex_sha256 *hash, const yvex_semantic_model_ir *model)
+{
+    const yvex_semantic_composite_summary *summary = &model->summary.composite;
+    unsigned long long index;
+
+    if (!summary->component_count) return 1;
+    if (!yvex_sha256_update_text(hash, "composite") ||
+        !yvex_sha256_update_text(hash, summary->repository) ||
+        !yvex_sha256_update_text(hash, summary->revision) ||
+        !yvex_sha256_update_text(hash, summary->subtree) ||
+        !yvex_sha256_update_text(hash, summary->source_snapshot_identity) ||
+        !yvex_sha256_update_text(hash, summary->component_manifest_identity) ||
+        !yvex_sha256_update_text(hash, summary->phase_dag_identity) ||
+        !yvex_sha256_update_text(hash, summary->architecture_identity) ||
+        !yvex_sha256_update_text(hash, summary->role_map_identity) ||
+        !yvex_sha256_update_text(hash, summary->unresolved_requirements_identity) ||
+        !yvex_sha256_update_u64(hash, summary->component_count) ||
+        !yvex_sha256_update_u64(hash, summary->weighted_component_count) ||
+        !yvex_sha256_update_u64(hash, summary->phase_edge_count) ||
+        !yvex_sha256_update_u64(hash, summary->shards) ||
+        !yvex_sha256_update_u64(hash, summary->tensors) ||
+        !yvex_sha256_update_u64(hash, summary->elements) ||
+        !yvex_sha256_update_u64(hash, summary->payload_bytes)) return 0;
+    for (index = 0ull; index < model->component_count; ++index) {
+        const yvex_semantic_component *component = &model->components[index];
+
+        if (!yvex_sha256_update_text(hash, component->canonical_id) ||
+            !yvex_sha256_update_text(hash, component->identity) ||
+            !yvex_sha256_update_u64(hash, component->shards) ||
+            !yvex_sha256_update_u64(hash, component->tensors) ||
+            !yvex_sha256_update_u64(hash, component->phase) ||
+            !yvex_sha256_update_u64(hash, (unsigned int)component->weighted) ||
+            !yvex_sha256_update_u64(hash, (unsigned int)component->release_after_phase))
+            return 0;
+    }
+    for (index = 0ull; index < model->phase_edge_count; ++index) {
+        const yvex_semantic_phase_edge *edge = &model->phase_edges[index];
+
+        if (!yvex_sha256_update_u64(hash, edge->source_phase) ||
+            !yvex_sha256_update_u64(hash, edge->destination_phase) ||
+            !yvex_sha256_update_u64(hash, edge->data_classes) ||
+            !yvex_sha256_update_u64(hash, edge->lifetime)) return 0;
+    }
+    return 1;
+}
+
 static int semantic_identity(yvex_semantic_model_ir *model)
 {
     yvex_semantic_model_ir_summary *summary = &model->summary;
@@ -143,6 +196,7 @@ static int semantic_identity(yvex_semantic_model_ir *model)
         !semantic_topology_identity(
             &hash, "draft", model->draft_attention_layers,
             model->draft_attention_layer_count) ||
+        !semantic_composite_identity(&hash, model) ||
         !yvex_sha256_final(&hash, digest))
         return 0;
     yvex_sha256_hex(digest, summary->identity);
@@ -210,6 +264,112 @@ static int semantic_layers_build(
     return YVEX_OK;
 }
 
+static int semantic_composite_build(
+    yvex_semantic_model_ir *model,
+    const yvex_semantic_composite_request *source, yvex_error *err)
+{
+    yvex_semantic_composite_summary *summary = &model->summary.composite;
+    unsigned long long index;
+
+    if (!source) return YVEX_OK;
+    if (!source->repository || !source->repository[0] || !source->revision ||
+        !source->revision[0] || !source->subtree || !source->subtree[0] ||
+        !yvex_sha256_hex_valid(source->source_snapshot_identity) ||
+        !yvex_sha256_hex_valid(source->component_manifest_identity) ||
+        !yvex_sha256_hex_valid(source->phase_dag_identity) ||
+        !yvex_sha256_hex_valid(source->architecture_identity) ||
+        !yvex_sha256_hex_valid(source->role_map_identity) ||
+        !yvex_sha256_hex_valid(source->unresolved_requirements_identity) ||
+        !source->component_count || source->weighted_components > source->component_count ||
+        !source->components || (!!source->phase_edges != !!source->phase_edge_count))
+        return semantic_refuse(err, YVEX_ERR_INVALID_ARG,
+                               "composite semantic topology is incomplete");
+    for (index = 0ull; index < source->component_count; ++index)
+        if (!source->components[index].canonical_id[0] ||
+            !yvex_sha256_hex_valid(source->components[index].identity))
+            return semantic_refuse(err, YVEX_ERR_INVALID_ARG,
+                                   "composite component identity is incomplete");
+    model->components = calloc((size_t)source->component_count, sizeof(*model->components));
+    if (source->phase_edge_count)
+        model->phase_edges = calloc((size_t)source->phase_edge_count,
+                                    sizeof(*model->phase_edges));
+    if (!model->components || (source->phase_edge_count && !model->phase_edges))
+        return semantic_refuse(err, YVEX_ERR_NOMEM,
+                               "composite semantic topology allocation failed");
+    memcpy(model->components, source->components,
+           (size_t)source->component_count * sizeof(*model->components));
+    if (source->phase_edge_count)
+        memcpy(model->phase_edges, source->phase_edges,
+               (size_t)source->phase_edge_count * sizeof(*model->phase_edges));
+    model->component_count = source->component_count;
+    model->phase_edge_count = source->phase_edge_count;
+#define COPY(field) yvex_core_text_copy(summary->field, sizeof(summary->field), source->field)
+    COPY(repository); COPY(revision); COPY(subtree); COPY(source_snapshot_identity);
+    COPY(component_manifest_identity); COPY(phase_dag_identity); COPY(architecture_identity);
+    COPY(role_map_identity); COPY(unresolved_requirements_identity);
+#undef COPY
+    summary->component_count = source->component_count;
+    summary->weighted_component_count = source->weighted_components;
+    summary->phase_edge_count = source->phase_edge_count;
+    summary->shards = source->shards;
+    summary->tensors = source->tensors;
+    summary->elements = source->elements;
+    summary->payload_bytes = source->payload_bytes;
+    return YVEX_OK;
+}
+
+static int semantic_references_build(
+    yvex_semantic_model_ir *model, const yvex_semantic_model_ir_request *request,
+    yvex_error *err)
+{
+    unsigned long long index, prior;
+
+    if (!request->reference_count)
+        return request->references
+                   ? semantic_refuse(err, YVEX_ERR_INVALID_ARG,
+                                     "semantic references have no count")
+                   : YVEX_OK;
+    if (!request->references ||
+        request->reference_count > (unsigned long long)SIZE_MAX / sizeof(*model->references))
+        return semantic_refuse(err, YVEX_ERR_INVALID_ARG,
+                               "semantic references are unbounded");
+    model->references = calloc((size_t)request->reference_count, sizeof(*model->references));
+    if (!model->references)
+        return semantic_refuse(err, YVEX_ERR_NOMEM,
+                               "semantic reference allocation failed");
+    for (index = 0ull; index < request->reference_count; ++index) {
+        const yvex_semantic_reference_request *source = &request->references[index];
+
+        if (!source->key || !source->key[0] || !source->value || !source->value[0] ||
+            strlen(source->key) >= sizeof(model->references[index].key) ||
+            strlen(source->value) >= sizeof(model->references[index].value))
+            return semantic_refuse(err, YVEX_ERR_INVALID_ARG,
+                                   "semantic reference is invalid");
+        for (prior = 0ull; prior < index; ++prior)
+            if (strcmp(model->references[prior].key, source->key) == 0)
+                return semantic_refuse(err, YVEX_ERR_INVALID_ARG,
+                                       "semantic reference key is duplicated");
+        yvex_core_text_copy(model->references[index].key,
+                            sizeof(model->references[index].key), source->key);
+        yvex_core_text_copy(model->references[index].value,
+                            sizeof(model->references[index].value), source->value);
+    }
+    model->reference_count = request->reference_count;
+    return YVEX_OK;
+}
+
+static void semantic_model_release(yvex_semantic_model_ir *model)
+{
+    if (!model) return;
+    free(model->attention_layers);
+    free(model->draft_attention_layers);
+    free(model->components);
+    free(model->phase_edges);
+    free(model->references);
+    memset(model, 0, sizeof(*model));
+    free(model);
+}
+
 int yvex_semantic_model_ir_seal(
     yvex_semantic_model_ir **out,
     const yvex_semantic_model_ir_request *request, yvex_error *err)
@@ -266,18 +426,18 @@ int yvex_semantic_model_ir_seal(
             &model->draft_attention_layers, request->attention_context,
             request->draft_attention_layer,
             request->draft_attention_layer_count, err);
+    if (rc == YVEX_OK)
+        rc = semantic_composite_build(model, request->composite, err);
+    if (rc == YVEX_OK)
+        rc = semantic_references_build(model, request, err);
     if (rc != YVEX_OK) {
-        free(model->attention_layers);
-        free(model->draft_attention_layers);
-        free(model);
+        semantic_model_release(model);
         return rc;
     }
     model->attention_layer_count = request->attention_layer_count;
     model->draft_attention_layer_count = request->draft_attention_layer_count;
     if (!semantic_identity(model)) {
-        free(model->attention_layers);
-        free(model->draft_attention_layers);
-        free(model);
+        semantic_model_release(model);
         return semantic_refuse(err, YVEX_ERR_STATE,
                                "semantic model identity derivation failed");
     }
@@ -307,6 +467,36 @@ int yvex_semantic_model_ir_attention_view(
     return *layers != NULL && *layer_count != 0ull;
 }
 
+int yvex_semantic_model_ir_composite_view(
+    const yvex_semantic_model_ir *model,
+    const yvex_semantic_component **components, unsigned long long *component_count,
+    const yvex_semantic_phase_edge **phase_edges, unsigned long long *phase_edge_count)
+{
+    if (components) *components = NULL;
+    if (component_count) *component_count = 0ull;
+    if (phase_edges) *phase_edges = NULL;
+    if (phase_edge_count) *phase_edge_count = 0ull;
+    if (!model || !components || !component_count || !phase_edges || !phase_edge_count ||
+        !model->components || !model->component_count) return 0;
+    *components = model->components;
+    *component_count = model->component_count;
+    *phase_edges = model->phase_edges;
+    *phase_edge_count = model->phase_edge_count;
+    return 1;
+}
+
+const char *yvex_semantic_model_ir_reference(
+    const yvex_semantic_model_ir *model, const char *key)
+{
+    unsigned long long index;
+
+    if (!model || !key || !key[0]) return NULL;
+    for (index = 0ull; index < model->reference_count; ++index)
+        if (strcmp(model->references[index].key, key) == 0)
+            return model->references[index].value;
+    return NULL;
+}
+
 const yvex_semantic_model_ir_summary *yvex_semantic_model_ir_summary_get(
     const yvex_semantic_model_ir *model)
 {
@@ -318,9 +508,6 @@ void yvex_semantic_model_ir_close(yvex_semantic_model_ir **model)
     yvex_semantic_model_ir *owner;
     if (!model || !*model) return;
     owner = *model;
-    free(owner->attention_layers);
-    free(owner->draft_attention_layers);
-    memset(owner, 0, sizeof(*owner));
-    free(owner);
+    semantic_model_release(owner);
     *model = NULL;
 }

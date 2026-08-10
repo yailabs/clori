@@ -41,11 +41,6 @@ typedef enum {
     YVEX_MODEL_TARGET_COMMAND_INSPECT,
     YVEX_MODEL_TARGET_COMMAND_UNKNOWN
 } yvex_model_target_command_kind;
-typedef enum {
-    YVEX_MODEL_TARGET_FAMILY_ARCHITECTURE_NONE = 0,
-    YVEX_MODEL_TARGET_FAMILY_ARCHITECTURE_DEEPSEEK,
-    YVEX_MODEL_TARGET_FAMILY_ARCHITECTURE_MINIMAX_H3
-} yvex_model_target_family_architecture_kind;
 typedef struct {
     char value[YVEX_MODEL_TARGET_TEXT_CAP];
 } yvex_model_target_text_value;
@@ -206,11 +201,7 @@ typedef struct yvex_model_target_report {
     unsigned long table_row_count;
     yvex_model_target_detail_kind detail_kind;
     yvex_model_target_detail detail;
-    void *family_architecture;
-    yvex_model_target_family_architecture_kind family_architecture_kind;
-    void *family_transformation;
-    char family_derivation_identity[65];
-    void *family_lowering;
+    char derivation_identity[65];
     int exit_code;
 } yvex_model_target_report;
 typedef struct {
@@ -284,10 +275,13 @@ void yvex_model_target_report_prepare(
 int yvex_model_target_report_add_row(yvex_model_target_report *report,
                                      const char *fmt,
                                      ...);
-int yvex_model_target_report_project_family_detail(
-    yvex_model_target_report *report, yvex_error *err);
-void yvex_model_target_report_close_family_detail(
-    yvex_model_target_report *report);
+struct yvex_semantic_model_ir;
+struct yvex_transform_ir;
+int yvex_model_target_report_project_semantic_detail(
+    yvex_model_target_report *report,
+    const struct yvex_semantic_model_ir *semantic,
+    const yvex_source_verification *verification,
+    const struct yvex_transform_ir *transform, yvex_error *err);
 int yvex_model_target_family_class_profile_build(
     const yvex_model_target_request *request,
     yvex_model_target_report *report,

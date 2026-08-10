@@ -1626,6 +1626,5 @@ void yvex_model_target_report_close(yvex_model_target_report *report)
     if (!report) {
         return;
     }
-    yvex_model_target_report_close_family_detail(report);
     memset(report, 0, sizeof(*report));
 }

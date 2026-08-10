@@ -7,6 +7,7 @@
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/backend.h>
 #include <yvex/internal/compilation.h>
+#include <yvex/internal/family_catalog.h>
 #include <yvex/internal/model_target.h>
 #include <yvex/internal/operator_graph.h>
 #include <yvex/internal/runtime.h>
@@ -20,6 +21,9 @@ static int test_family_catalog(void)
 {
     const yvex_component_variant_adapter *resolved =
         yvex_graph_component_variant_find(YVEX_MINIMAX_H3_TARGET_ID);
+    yvex_compilation_runtime_binding_request request = {0};
+    yvex_family_source_products products = {0};
+    yvex_error err;
 
     YVEX_TEST_ASSERT(resolved &&
                          resolved->schema_version ==
@@ -29,6 +33,17 @@ static int test_family_catalog(void)
     YVEX_TEST_ASSERT(yvex_graph_component_variant_find(NULL) == NULL &&
                          yvex_graph_component_variant_find("unknown-family") == NULL,
                      "generic family catalog refuses absent and unknown component targets");
+    request.source_path = "build/tests/missing-minimax-source";
+    YVEX_TEST_ASSERT(
+        yvex_family_source_compile("unknown-family", &request, &products, &err) ==
+                YVEX_ERR_UNSUPPORTED &&
+            !products.owner,
+        "generic source catalog refuses an unknown family without partial products");
+    YVEX_TEST_ASSERT(
+        yvex_family_source_compile(
+            YVEX_MINIMAX_H3_TARGET_ID, &request, &products, &err) != YVEX_OK &&
+            !products.owner,
+        "MiniMax source compilation is reached and refuses a missing exact source");
     return 0;
 }
 
@@ -384,7 +399,8 @@ static int test_operator_truth(void)
     strcpy(request.target_id, YVEX_MINIMAX_H3_TARGET_ID);
     YVEX_TEST_ASSERT(yvex_model_target_report_build(&request, &report, &err) == YVEX_OK,
                      "existing model-target report route accepts MiniMax target identity");
-    YVEX_TEST_ASSERT(report.exit_code == 5 && !report.family_architecture &&
+    YVEX_TEST_ASSERT(report.exit_code == 5 &&
+                         report.detail_kind == YVEX_MODEL_TARGET_DETAIL_NONE &&
                          strcmp(report.status, "source-acquisition-required") == 0,
                      "missing exact source refuses IR and support promotion");
     yvex_model_target_report_close(&report);
@@ -392,6 +408,56 @@ static int test_operator_truth(void)
     YVEX_TEST_ASSERT(record && strcmp(record->runtime_execution, "unsupported") == 0 &&
                          strcmp(record->generation, "unsupported") == 0,
                      "catalog target is explicitly non-runtime and non-generation");
+    return 0;
+}
+
+static int test_semantic_composite(void)
+{
+    yvex_semantic_component components[2] = {0};
+    yvex_semantic_phase_edge edges[1] = {{1u, 2u, 3u, 4u}};
+    yvex_semantic_composite_request composite = {
+        .repository = YVEX_MINIMAX_H3_REPOSITORY,
+        .revision = YVEX_MINIMAX_H3_REVISION,
+        .subtree = YVEX_MINIMAX_H3_SUBTREE,
+        .source_snapshot_identity = TEST_ID_A,
+        .component_manifest_identity = TEST_ID_B,
+        .phase_dag_identity = TEST_ID_A,
+        .architecture_identity = TEST_ID_B,
+        .role_map_identity = TEST_ID_A,
+        .unresolved_requirements_identity = TEST_ID_B,
+        .weighted_components = 1ull,
+        .shards = 2ull, .tensors = 3ull, .elements = 4ull, .payload_bytes = 5ull,
+        .components = components, .component_count = 2ull,
+        .phase_edges = edges, .phase_edge_count = 1ull};
+    yvex_semantic_model_ir_request request = {
+        .schema_version = YVEX_SEMANTIC_MODEL_IR_SCHEMA_V1,
+        .family_adapter_id = 0x4d494e494d4158ull, .family_adapter_version = 1ull,
+        .target_id = YVEX_MINIMAX_H3_TARGET_ID,
+        .source_model_identity = TEST_ID_A,
+        .logical_model_identity = TEST_ID_B,
+        .semantic_payload_identity = TEST_ID_A,
+        .composite = &composite};
+    const yvex_semantic_component *stored_components = NULL;
+    const yvex_semantic_phase_edge *stored_edges = NULL;
+    unsigned long long component_count = 0ull, edge_count = 0ull;
+    yvex_semantic_model_ir *semantic = NULL;
+    yvex_error err;
+
+    strcpy(components[0].canonical_id, "text");
+    strcpy(components[0].identity, TEST_ID_A);
+    components[0].weighted = 1;
+    strcpy(components[1].canonical_id, "output");
+    strcpy(components[1].identity, TEST_ID_B);
+    YVEX_TEST_ASSERT(
+        yvex_semantic_model_ir_seal(&semantic, &request, &err) == YVEX_OK &&
+            yvex_semantic_model_ir_composite_view(
+                semantic, &stored_components, &component_count,
+                &stored_edges, &edge_count) &&
+            component_count == 2ull && edge_count == 1ull &&
+            strcmp(stored_components[1].canonical_id, "output") == 0 &&
+            stored_edges[0].destination_phase == 2u,
+        "generic Semantic Model IR owns a deterministic composite topology view");
+    yvex_semantic_model_ir_close(&semantic);
     return 0;
 }
 
@@ -810,6 +876,7 @@ int yvex_test_minimax_h3(void)
     if (test_roles() != 0) return 1;
     if (test_component_ir() != 0) return 1;
     if (test_operator_truth() != 0) return 1;
+    if (test_semantic_composite() != 0) return 1;
     if (test_canonical_operator_graph() != 0) return 1;
     if (test_audio_numeric_primitives() != 0) return 1;
     if (test_video_numeric_primitives() != 0) return 1;

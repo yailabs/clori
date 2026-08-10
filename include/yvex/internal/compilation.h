@@ -437,7 +437,6 @@ int yvex_transform_shape_element_count(
     unsigned long long *out,
     yvex_transform_failure *failure,
     yvex_error *err);
-const char *yvex_transform_failure_name(yvex_transform_failure_code code);
 
 typedef struct yvex_transform_recipe_sink yvex_transform_recipe_sink;
 typedef struct {

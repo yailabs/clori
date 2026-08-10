@@ -17,6 +17,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+static const char *transform_failure_name(yvex_transform_failure_code code);
+
 #define TRANSFORM_DEFAULT_MAX_SOURCES 100000ull
 #define TRANSFORM_DEFAULT_MAX_VALUES 120000ull
 #define TRANSFORM_DEFAULT_MAX_NODES 10000ull
@@ -185,7 +187,7 @@ int yvex_transform_fail(yvex_transform_failure *failure,
     }
     yvex_error_setf(err, status, where ? where : "transform_ir",
                     "%s value=%llu node=%llu source=%llu terminal=%llu input=%llu expected=%llu actual=%llu axis=%u",
-                    yvex_transform_failure_name(code), value_id, node_id,
+                    transform_failure_name(code), value_id, node_id,
                     source_index, terminal_ordinal, input_index,
                     expected, actual, axis);
     return status;
@@ -960,7 +962,7 @@ int yvex_transform_shape_element_count(
     return YVEX_OK;
 }
 
-const char *yvex_transform_failure_name(yvex_transform_failure_code code)
+static const char *transform_failure_name(yvex_transform_failure_code code)
 {
     size_t count = sizeof(transform_failure_names) /
                    sizeof(transform_failure_names[0]);

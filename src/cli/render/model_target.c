@@ -551,7 +551,7 @@ static int model_target_render_composite(
             summary->component_manifest_identity, summary->phase_dag_identity,
             summary->architecture_identity,
             summary->role_map_identity, summary->transformation_identity,
-            report->family_derivation_identity, summary->payload_execution_bytes,
+            report->derivation_identity, summary->payload_execution_bytes,
             report->next_row);
     }
     if (mode == YVEX_MODEL_TARGET_OUTPUT_TABLE) {
@@ -609,7 +609,7 @@ static int model_target_render_composite(
         rc |= yvex_cli_out_writef(fp, "transformation_ir_identity: %s\n",
                                   summary->transformation_identity);
         rc |= yvex_cli_out_writef(fp, "derivation_identity: %s\n",
-                                  report->family_derivation_identity);
+                                  report->derivation_identity);
         rc |= yvex_cli_out_writef(
             fp, "unresolved_requirements_identity: %s\npayload_execution_bytes: %llu\n",
             summary->unresolved_requirements_identity,
