@@ -10,6 +10,7 @@
 #include <yvex/gguf.h>
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/backend.h>
+#include <yvex/internal/component.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/families/minimax_h3.h>
 #include <yvex/tokenizer.h>

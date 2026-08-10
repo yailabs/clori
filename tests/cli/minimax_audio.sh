@@ -31,6 +31,7 @@ contains() {
 run_code help 0 "$YVEX_BIN" execute component audio-vae --help
 contains "$OUT_DIR/help.out" "operation: execute.graph.component.audio-vae"
 contains "$OUT_DIR/help.out" "--latent-steps"
+contains "$OUT_DIR/help.out" "--max-device-bytes"
 
 run_code missing 2 "$YVEX_BIN" execute component audio-vae
 contains "$OUT_DIR/missing.err" \
@@ -42,9 +43,20 @@ run_code wrong_target 2 "$YVEX_BIN" execute component audio-vae \
 contains "$OUT_DIR/wrong_target.err" "audio-vae component requires minimax-h3-fl2va"
 
 run_code wrong_backend 2 "$YVEX_BIN" execute component audio-vae \
-    --target minimax-h3-fl2va --artifact /tmp/missing.gguf --backend cuda \
+    --target minimax-h3-fl2va --artifact /tmp/missing.gguf --backend vulkan \
     --input-file /tmp/missing.f32 --latent-steps 1 --out "$OUT_DIR/wrong-backend.f32"
-contains "$OUT_DIR/wrong_backend.err" "Audio VAE currently admits only backend cpu"
+contains "$OUT_DIR/wrong_backend.err" "unsupported Audio VAE backend"
+
+run_code cuda_budget 2 "$YVEX_BIN" execute component audio-vae \
+    --target minimax-h3-fl2va --artifact /tmp/missing.gguf --backend cuda \
+    --input-file /tmp/missing.f32 --latent-steps 1 --out "$OUT_DIR/cuda-budget.f32"
+contains "$OUT_DIR/cuda_budget.err" "component backend cuda requires --max-device-bytes"
+
+run_code cpu_device_budget 2 "$YVEX_BIN" execute component audio-vae \
+    --target minimax-h3-fl2va --artifact /tmp/missing.gguf --backend cpu \
+    --input-file /tmp/missing.f32 --latent-steps 1 --max-device-bytes 1 \
+    --out "$OUT_DIR/cpu-device-budget.f32"
+contains "$OUT_DIR/cpu_device_budget.err" "--max-device-bytes requires backend cuda"
 
 run_code unsafe_input 3 "$YVEX_BIN" execute component audio-vae \
     --target minimax-h3-fl2va --artifact /tmp/missing.gguf --backend cpu \

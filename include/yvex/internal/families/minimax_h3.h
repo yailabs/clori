@@ -19,6 +19,7 @@ typedef struct yvex_runtime_latent_result yvex_runtime_latent_result;
 typedef struct yvex_runtime_latent_evaluator_result yvex_runtime_latent_evaluator_result;
 typedef struct yvex_runtime_av_layout_output yvex_runtime_av_layout_output;
 typedef struct yvex_runtime_av_layout_result yvex_runtime_av_layout_result;
+typedef struct yvex_component_encoded_weight yvex_minimax_h3_encoded_weight;
 #define YVEX_MINIMAX_H3_TARGET_ID "minimax-h3-fl2va"
 #define YVEX_MINIMAX_H3_REPOSITORY "MiniMaxAI/MiniMax-H3"
 #define YVEX_MINIMAX_H3_REVISION "b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08"
@@ -415,9 +416,9 @@ typedef struct {
 } yvex_minimax_h3_audio_decode_options;
 typedef struct {
     unsigned long long batch, samples_per_channel, output_values;
-    unsigned long long tensor_reads, payload_bytes_read;
-    unsigned long long peak_workspace_bytes;
-    char artifact_identity[65], execution_identity[65];
+    unsigned long long tensor_reads, payload_bytes_read, peak_workspace_bytes, kernel_launches;
+    unsigned long long h2d_bytes, d2h_bytes, device_bytes;
+    char artifact_identity[65], execution_identity[65], residency_identity[65];
     int complete;
 } yvex_minimax_h3_audio_decode_result;
 typedef struct {
@@ -453,11 +454,6 @@ typedef enum {
     YVEX_MINIMAX_H3_TEXT_LAYER_WEIGHT_COUNT = YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT - 1,
     YVEX_MINIMAX_H3_TEXT_CONDITIONING_LAYERS = 50
 } yvex_minimax_h3_text_weight_slot;
-typedef struct {
-    const unsigned char *encoded;
-    unsigned long long encoded_bytes, row_count, row_width, row_bytes;
-    unsigned int qtype;
-} yvex_minimax_h3_encoded_weight;
 typedef enum {
     YVEX_MINIMAX_H3_OMNI_NORM1 = 0, YVEX_MINIMAX_H3_OMNI_QKV,
     YVEX_MINIMAX_H3_OMNI_Q_NORM, YVEX_MINIMAX_H3_OMNI_K_NORM,
@@ -574,6 +570,11 @@ typedef struct {
         const yvex_minimax_h3_audio_decode_options *options,
         yvex_minimax_h3_audio_decode_result *result, yvex_minimax_h3_component_execution_failure *failure,
         yvex_error *err);
+    int (*audio_vae_execute_artifact_cuda)(
+        const yvex_artifact *, const yvex_gguf *, const yvex_tensor_table *,
+        const yvex_minimax_h3_audio_decode_options *, unsigned long long,
+        yvex_minimax_h3_audio_decode_result *, yvex_minimax_h3_component_execution_failure *,
+        yvex_error *);
     int (*video_vae_decode_cpu)(yvex_materialization_session *session,
         const yvex_minimax_h3_video_decode_options *options,
         yvex_minimax_h3_video_decode_result *result, yvex_minimax_h3_component_execution_failure *failure,

@@ -554,6 +554,7 @@
         "--batch",
         "--input-file",
         "--latent-steps",
+        "--max-device-bytes",
         "--max-host-bytes",
         "--out",
         "--output",

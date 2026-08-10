@@ -124,9 +124,14 @@ static int graph_cli_minimax_audio_execute(
     decode_options.output_capacity = output_values;
     decode_options.max_workspace_bytes = workspace_bytes;
     decode_options.cancelled = graph_attention_cancel_requested;
-    if (rc == YVEX_OK)
+    if (rc == YVEX_OK && strcmp(args->component.backend, "cpu") == 0)
         rc = yvex_graph_register_minimax_h3()->audio_vae_execute_artifact_cpu(
             artifact, gguf, tensors, &decode_options, &decode_result,
+            &execution_failure, err);
+    else if (rc == YVEX_OK)
+        rc = yvex_graph_register_minimax_h3()->audio_vae_execute_artifact_cuda(
+            artifact, gguf, tensors, &decode_options,
+            args->component.maximum_device_bytes, &decode_result,
             &execution_failure, err);
     if (signals_installed) {
         yvex_error restore_error;
@@ -155,12 +160,18 @@ static int graph_cli_minimax_audio_execute(
         report.tensor_reads = decode_result.tensor_reads;
         report.payload_bytes_read = decode_result.payload_bytes_read;
         report.peak_workspace_bytes = decode_result.peak_workspace_bytes;
+        report.kernel_launches = decode_result.kernel_launches;
+        report.h2d_bytes = decode_result.h2d_bytes;
+        report.d2h_bytes = decode_result.d2h_bytes;
+        report.device_bytes = decode_result.device_bytes;
         report.published_bytes = output_bytes;
         report.published = 1;
         yvex_core_text_copy(report.artifact_identity, sizeof(report.artifact_identity),
                             decode_result.artifact_identity);
         yvex_core_text_copy(report.execution_identity, sizeof(report.execution_identity),
                             decode_result.execution_identity);
+        yvex_core_text_copy(report.residency_identity, sizeof(report.residency_identity),
+                            decode_result.residency_identity);
         render_rc = yvex_minimax_audio_render(
             yvex_cli_out_stdout(), args->render_mode, &report);
         if (render_rc != YVEX_OK) {

@@ -3,7 +3,7 @@
 Status: source acquired and verified; logical architecture, tensor roles, and
 Transformation IR admitted; source-faithful Audio VAE, Visual VAE, and Text
 Encoder component artifacts admitted through native and pinned official
-readers; complete Audio VAE and bounded multi-patch Visual VAE CPU decodes
+readers; complete Audio VAE CPU/CUDA and bounded Visual VAE CPU/CUDA decodes
 numerically conform; exact artifact-bound Qwen2 tokenization and 50-layer
 text-only Qwen3-VL prompt conditioning plus the complete 50-block
 Omni-Transformer component envelope execute on GB10; exact target-only packed
@@ -19,8 +19,8 @@ artifact-neutral Transformation IR schema v2. YVEX emits independently
 identified Audio VAE, Visual VAE, and Text Encoder component GGUF files without
 changing source dtype. The graph-family recipe binds each file to the exact component, source
 snapshot, physical plan, aggregate payload, and whole-file identities before
-materialization. The graph owner executes the complete Audio VAE decoder and
-all 36 Visual VAE decoder blocks for checked latent geometries, with
+materialization. The graph and CUDA backend owners execute the complete Audio
+VAE decoder and all 36 Visual VAE decoder blocks for checked latent geometries, with
 independent numerical conformance evidence for both. A staged Text Encoder
 residency registers the exact BF16 component with CUDA, tokenizes an ASCII
 `t2va` prompt from artifact-bound Qwen2 metadata, and executes the selected
@@ -39,7 +39,7 @@ promotion rules remain in the [family integration contract](integration.md).
 | Branch status | open |
 | Branch completion | first YVEX-authored playable synchronized MiniMax-H3 FL2VA audio-video output |
 | Current wave | `R010.MINIMAX.H3.FL2VA.END_TO_END.0` |
-| Current boundary | exact component artifacts admitted; complete Audio and bounded Visual CPU decodes conform; prompt conditioning and the 50-block Omni envelope conform on GB10; the resident 50-block evaluator completes a two-step transactional paired latent run on one exact residency |
+| Current boundary | exact component artifacts admitted; complete Audio CPU/CUDA and bounded Visual CPU/CUDA decodes conform; prompt conditioning and the 50-block Omni envelope conform on GB10; the resident 50-block evaluator completes a two-step transactional paired latent run on one exact residency |
 | Next expected boundary | compose committed video/audio latents with both VAE decoders, then synchronize and publish playable media |
 
 The branch preserves the accepted intake history and remains open across all
@@ -474,40 +474,58 @@ publication all fail closed.
 ## Audio VAE numerical component boundary
 
 The family graph recipe consumes a committed materialization of the exact
-component artifact and executes the complete 32 kHz BigVGAN decoder natively in
-C. It includes the 32-to-2,048 latent projection, weight-normalized Conv1D and
-transposed Conv1D, seven 800x aggregate upsampling stages, all 21 AMP residual
+component artifact and executes the complete 32 kHz BigVGAN decoder natively on
+CPU or CUDA. It includes the 32-to-2,048 latent projection, weight-normalized
+Conv1D and transposed Conv1D, seven 800x aggregate upsampling stages, all 21 AMP residual
 blocks, stored anti-alias filters, log-parameterized SnakeBeta activations, the
 final projection, and the declared clamp. Weights are read per operation and
-released after use; the implementation does not retain the complete 605 MB
-component payload.
+released after use; the CPU implementation does not retain the complete 605 MB
+component payload. The CUDA path binds the same family recipe to generic
+resident F32 convolution and alias-free activation operations and publishes
+only after every stage, final clamp, device-to-host transfer, and identity seal
+succeeds.
 
 The frozen external oracle input has SHA-256
 `3e6c38768994c033027be3423831469d1a6123911265e7bc144d41a4efae2b97`.
 For shape `[1,32,1]`, pinned upstream source produced 800 F32 samples with
 SHA-256 `7485f79d5abf97ca7374696d413dbb88fe5ffdac4e6b054549d0846039575f4e`.
-Two YVEX runs produced execution identity
+Two CPU YVEX runs produced execution identity
 `a0d94960d6717785cd96ac1128b07e64fb1eb5ff8d3bb83f3fcc66a6f1c16ce3`,
 read 914 decoder tensors and 259,757,412 payload bytes, and used 58,740,736
 bytes of peak tracked workspace. Maximum absolute error was
 `3.87430191e-7` against a `1e-5` acceptance tolerance. Timing from this
 correctness run is not a component benchmark or performance claim.
 
-`production_capability_available: true` for bounded CPU Audio VAE component
+Two CUDA operator runs were byte-identical at SHA-256
+`95b82eae8ea5fce6ac8b3b6f69a83ea4d8e70e300bb1bdfcd29e9edc983004c2`
+with execution identity
+`39778cb460607460ee5de24602cd2645c618d6abd4a40400ea8ed1b56c7b0346`
+and residency identity
+`dcbafb73e908e813c0ea220bef473e2115d7731d15790ae5114a706ab2ea8e4e`.
+The maximum absolute error against the independent upstream output was
+`3.7252903e-7` at the same `1e-5` tolerance. The one-step run launched 638
+kernels, transferred 128 input bytes and 3,200 output bytes, and observed
+204,800 bytes of peak decoder workspace beyond resident weights. A complete
+`[2,32,200]` latent run emitted 160,000 samples per batch entry with execution
+identity `2fcf1219d4ecabb7c016552c7a79e8d92cfe788669ea2a6ed86436f28147de60`.
+These correctness-run facts are not a performance benchmark.
+
+`production_capability_available: true` for bounded CPU/CUDA Audio VAE component
 decode. `production_api_available: true` through the internal family graph ABI.
 `internal_live_runner_available: true`. `operator_command_available: true`
 through:
 
 ```sh
 yvex execute component audio-vae \
-  --target minimax-h3-fl2va --artifact <AUDIO_VAE_GGUF> --backend cpu \
-  --input-file <LATENT_F32> --batch 1 --latent-steps 1 --out <OUTPUT_F32>
+  --target minimax-h3-fl2va --artifact <AUDIO_VAE_GGUF> --backend cuda \
+  --input-file <LATENT_F32> --batch 1 --latent-steps 1 \
+  --max-device-bytes <CUDA_BUDGET> --out <OUTPUT_F32>
 ```
 
 The same real artifact and oracle latent produced the identity and conformance
 result above through this command, then atomically published 3,200 bytes.
 `end_user_path_available: false`: the output is raw component F32, not an audio
-container. No runtime, CUDA, stereo publication, or audio-video capability is
+container. No stereo publication or audio-video capability is
 admitted by this component evidence.
 
 ## Visual VAE physical and CPU numerical boundary

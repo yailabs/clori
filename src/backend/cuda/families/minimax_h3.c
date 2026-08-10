@@ -2,6 +2,7 @@
 #include "src/backend/cuda/private.h"
 #include <yvex/backend.h>
 #include <yvex/internal/backend.h>
+#include <yvex/internal/component.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/families/minimax_h3.h>
 #include <yvex/internal/quant_numeric.h>
@@ -1990,7 +1991,6 @@ static int omni_transformer_cuda(
     free(text_embed); free(audio_embed); free(video_embed);
     return rc;
 }
-
 const yvex_minimax_h3_backend_api *yvex_backend_register_minimax_h3(void)
 {
     static const yvex_minimax_h3_backend_api api = {

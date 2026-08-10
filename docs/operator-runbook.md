@@ -507,19 +507,21 @@ The admitted MiniMax-H3 Audio VAE component is reachable through that lane:
 ./yvex execute component audio-vae \
   --target minimax-h3-fl2va \
   --artifact /srv/yvex/artifacts/minimax-h3/audio_vae.gguf \
-  --backend cpu \
+  --backend cuda \
   --input-file /srv/yvex/evidence/audio-latent.f32 \
   --batch 1 \
   --latent-steps 1 \
+  --max-device-bytes 2147483648 \
   --out /srv/yvex/evidence/audio-samples.f32
 ```
 
 The input is contiguous F32 `[batch,32,latent_steps]`; the output is contiguous
 mono F32 `[batch,800*latent_steps]` at the source-declared 32 kHz rate. The
-command authenticates the exact component artifact, bounds workspace, executes
-the native CPU decoder, and publishes the output without replacing an existing
-file. Raw component samples are numerical evidence, not synchronized media or
-an admitted MiniMax generation path.
+command authenticates the exact component artifact, bounds host workspace and
+CUDA residency, executes the native decoder, and publishes the output without
+replacing an existing file. Use `--backend cpu` and omit
+`--max-device-bytes` for the CPU path. Raw component samples are numerical
+evidence, not synchronized media or an admitted MiniMax generation path.
 
 The MiniMax-H3 Visual VAE CPU and CUDA component paths are reachable through
 the same lane:

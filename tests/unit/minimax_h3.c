@@ -6,7 +6,9 @@
 
 #include "src/graph/private.h"
 #include <yvex/internal/artifact.h>
+#include <yvex/internal/component.h>
 #include <yvex/internal/compilation.h>
+#include <yvex/internal/convolution.h>
 #include <yvex/internal/model_target.h>
 #include <yvex/internal/runtime.h>
 
@@ -488,6 +490,68 @@ static int test_audio_execution_refusals(void)
     return 0;
 }
 
+static int test_audio_cuda_contract(void)
+{
+    const yvex_alias_decoder_name_templates names = {
+        "dec_in_proj", "decoder.conv_pre", "decoder.ups", "decoder.resblocks",
+        "decoder.activation_post", "decoder.conv_post",
+    };
+    yvex_component_f32_buffer buffer = {0};
+    yvex_minimax_h3_audio_decode_result result;
+    yvex_minimax_h3_component_execution_failure failure;
+    yvex_error err;
+    unsigned long long live = 0ull, peak = 0ull;
+    float latent[32] = {0}, output[800];
+    yvex_minimax_h3_audio_decode_options options = {
+        .latent = latent, .batch = 1ull, .latent_channels = 32ull,
+        .latent_steps = 1ull, .output = output, .output_capacity = 800ull,
+        .max_workspace_bytes = 4096ull,
+    };
+    char first[256], repeated[256];
+
+    YVEX_TEST_ASSERT(
+        yvex_alias_decoder_template_name(
+            (void *)&names, YVEX_ALIAS_DECODER_UP_WEIGHT, 2ull, 0ull, 0ull,
+            first, &err) == YVEX_OK && strcmp(first, "decoder.ups.2.0.weight_v") == 0 &&
+        yvex_alias_decoder_template_name(
+            (void *)&names, YVEX_ALIAS_DECODER_UP_WEIGHT, 2ull, 0ull, 0ull,
+            repeated, &err) == YVEX_OK && strcmp(first, repeated) == 0,
+        "alias decoder names are exact and deterministic");
+    YVEX_TEST_ASSERT(
+        yvex_alias_decoder_template_name(
+            (void *)&names, YVEX_ALIAS_DECODER_RES2_BIAS, 1ull, 2ull, 2ull,
+            first, &err) == YVEX_OK &&
+        strcmp(first, "decoder.resblocks.5.convs2.2.bias") == 0,
+        "alias decoder names preserve family stage, block, and layer coordinates");
+    YVEX_TEST_ASSERT(
+        yvex_alias_decoder_template_name(
+            (void *)&names, YVEX_ALIAS_DECODER_WEIGHT_ROLE_COUNT,
+            0ull, 0ull, 0ull, first, &err) == YVEX_ERR_INVALID_ARG,
+        "alias decoder naming refuses an unknown tensor role");
+    YVEX_TEST_ASSERT(
+        yvex_component_buffer_open(
+            &buffer, 4ull, 16ull, &live, &peak, "test.component", "fixture", &err) == YVEX_OK &&
+        live == 16ull && peak == 16ull && buffer.count == 4ull,
+        "generic component workspace publishes exact budget accounting");
+    YVEX_TEST_ASSERT(
+        yvex_component_buffer_open(
+            &(yvex_component_f32_buffer){0}, 1ull, 16ull, &live, &peak,
+            "test.component", "fixture", &err) == YVEX_ERR_BOUNDS && live == 16ull,
+        "generic component workspace refuses budget overflow without accounting drift");
+    yvex_component_buffer_close(&buffer, &live);
+    YVEX_TEST_ASSERT(live == 0ull && !buffer.data && !buffer.count,
+                     "generic component workspace releases all owned state");
+    memset(output, 0x5a, sizeof(output));
+    YVEX_TEST_ASSERT(
+        yvex_graph_register_minimax_h3()->audio_vae_execute_artifact_cuda(
+            NULL, NULL, NULL, &options, 1024ull, &result, &failure, &err) ==
+            YVEX_ERR_INVALID_ARG &&
+        failure.code == YVEX_MINIMAX_H3_COMPONENT_EXECUTION_INVALID_ARGUMENT &&
+        !result.complete && ((unsigned char *)output)[0] == 0x5a,
+        "Audio VAE CUDA refuses absent admitted state without output publication");
+    return 0;
+}
+
 static int test_video_numeric_primitives(void)
 {
     const float linear_input[4] = {1.0f, 2.0f, -1.0f, 3.0f};
@@ -800,6 +864,7 @@ int yvex_test_minimax_h3(void)
     if (test_operator_truth() != 0) return 1;
     if (test_audio_numeric_primitives() != 0) return 1;
     if (test_audio_execution_refusals() != 0) return 1;
+    if (test_audio_cuda_contract() != 0) return 1;
     if (test_video_numeric_primitives() != 0) return 1;
     if (test_video_execution_refusals() != 0) return 1;
     if (test_t2va_plan() != 0) return 1;

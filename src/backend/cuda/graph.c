@@ -230,6 +230,8 @@ static const char *kernel_function_identity(const yvex_cuda_backend_state *state
     MATCH(moe_grouped_up_rows_function); MATCH(moe_grouped_down_rows_function);
     MATCH(moe_reduce_rows_function); MATCH(moe_combine_rows_function);
     MATCH(moe_swiglu_function); MATCH(moe_accumulate_function);
+    MATCH(conv_scale_function); MATCH(conv1d_function); MATCH(alias_up_function);
+    MATCH(alias_down_function); MATCH(vector_update_function); MATCH(clamp_function);
     MATCH(mlp_function); MATCH(attention_function);
 #undef MATCH
     return NULL;
