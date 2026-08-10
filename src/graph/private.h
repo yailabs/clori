@@ -18,6 +18,7 @@
 #include <yvex/internal/core.h>
 #include <yvex/internal/backend.h>
 #include <yvex/internal/artifact.h>
+#include <yvex/internal/compiler.h>
 #include <yvex/internal/graph.h>
 #include <yvex/internal/graph_state.h>
 #include <yvex/internal/quant_numeric.h>
@@ -29,21 +30,6 @@
 typedef struct {
     unsigned int input_ids[4], output_ids[4];
 } yvex_graph_op_edges;
-
-typedef enum {
-    YVEX_GRAPH_COMPONENT_FAILURE_NONE = 0,
-    YVEX_GRAPH_COMPONENT_FAILURE_INVALID_ARGUMENT,
-    YVEX_GRAPH_COMPONENT_FAILURE_MISSING_TENSOR,
-    YVEX_GRAPH_COMPONENT_FAILURE_TENSOR_CONTRACT,
-    YVEX_GRAPH_COMPONENT_FAILURE_BUDGET,
-    YVEX_GRAPH_COMPONENT_FAILURE_MATERIALIZATION
-} yvex_graph_component_failure_code;
-typedef struct {
-    yvex_graph_component_failure_code code;
-    unsigned long long expected, actual;
-    char tensor_name[256];
-    const char *reason;
-} yvex_graph_component_failure;
 typedef struct {
     float *data;
     unsigned long long count;
@@ -52,21 +38,36 @@ typedef struct {
     unsigned long long maximum_bytes, live_bytes, peak_bytes;
 } yvex_graph_component_workspace;
 typedef struct {
-    int (*buffer_open)(yvex_graph_component_workspace *, unsigned long long,
-                       yvex_graph_component_buffer *, yvex_graph_component_failure *,
-                       yvex_error *);
-    void (*buffer_close)(yvex_graph_component_workspace *, yvex_graph_component_buffer *);
+    yvex_materialization_session *session;
+    const yvex_component_execution_request *request;
+    yvex_component_execution_result *result;
+    yvex_component_failure *failure;
+    yvex_error *err;
+    yvex_graph_component_workspace workspace;
+    const char *failure_where;
+} yvex_graph_component_execution;
+typedef struct {
+    void (*execution_open)(yvex_graph_component_execution *, yvex_materialization_session *,
+                           const yvex_component_execution_request *,
+                           yvex_component_execution_result *, yvex_component_failure *,
+                           yvex_error *, const char *);
+    int (*execution_refuse)(yvex_graph_component_execution *, yvex_component_failure_code,
+                            const char *, unsigned long long, unsigned long long, yvex_status,
+                            const char *);
+    int (*cancel_check)(yvex_graph_component_execution *, const char *);
+    int (*buffer_open)(yvex_graph_component_execution *, unsigned long long,
+                       yvex_graph_component_buffer *);
+    void (*buffer_close)(yvex_graph_component_execution *, yvex_graph_component_buffer *);
     const yvex_materialized_tensor_binding *(*binding_find)(
         const yvex_materialization_session *, const char *);
-    int (*tensor_load_f32)(yvex_materialization_session *, const char *, unsigned int,
-                           const unsigned long long *, yvex_graph_component_workspace *,
-                           yvex_graph_component_buffer *, unsigned long long *,
-                           yvex_graph_component_failure *, yvex_error *);
+    int (*tensor_load_f32)(yvex_graph_component_execution *, const char *, unsigned int,
+                           const unsigned long long *, yvex_graph_component_buffer *);
+    int (*name_build)(yvex_graph_component_execution *, char *, size_t, const char *,
+                      const char *, unsigned long long, const char *);
     int (*rectified_flow_step)(float *, const float *, const float *, unsigned long long,
                                float, float, float, yvex_error *);
 } yvex_graph_component_api;
 const yvex_graph_component_api *yvex_graph_component_api_get(void);
-
 /* Stable virtual spans commit physical state pages only as graph publication reaches them. */
 typedef struct yvex_graph_state_page_pool yvex_graph_state_page_pool;
 typedef struct yvex_graph_state_page_store yvex_graph_state_page_store;

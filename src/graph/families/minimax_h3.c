@@ -61,21 +61,9 @@
 #define TRANSFORMER_ELEMENTS 33122992912ull
 #define TRANSFORMER_PAYLOAD_BYTES 66280430144ull
 #define TRANSFORMER_FILE_BYTES 66280465664ull
+typedef yvex_graph_component_execution audio_execution;
 typedef struct {
-    yvex_materialization_session *session;
-    const yvex_component_execution_request *request;
-    yvex_component_execution_result *result;
-    yvex_component_failure *failure;
-    yvex_error *err;
-    yvex_graph_component_workspace workspace;
-} audio_execution;
-typedef struct {
-    yvex_materialization_session *session;
-    const yvex_component_execution_request *request;
-    yvex_component_execution_result *result;
-    yvex_component_failure *failure;
-    yvex_error *err;
-    yvex_graph_component_workspace workspace;
+    yvex_graph_component_execution component;
     unsigned long long patches, rows;
 } video_execution;
 static const yvex_graph_component_api *component_api(void)
@@ -184,90 +172,36 @@ static int audio_execution_refuse(audio_execution *execution,
                                   unsigned long long actual, yvex_status status,
                                   const char *reason)
 {
-    if (execution && execution->failure) {
-        memset(execution->failure, 0, sizeof(*execution->failure));
-        execution->failure->code = code;
-        execution->failure->expected = expected;
-        execution->failure->actual = actual;
-        execution->failure->reason = reason;
-        if (tensor_name)
-            yvex_core_text_copy(execution->failure->tensor_name,
-                                sizeof(execution->failure->tensor_name), tensor_name);
-    }
-    yvex_error_set(execution ? execution->err : NULL, status,
-                   "graph.minimax_h3.audio_vae.execute", reason);
-    return status;
+    return component_api()->execution_refuse(
+        execution ? execution : NULL, code, tensor_name, expected, actual, status,
+        reason);
 }
 static int audio_cancel_check(audio_execution *execution)
 {
-    if (execution->request->cancelled &&
-        execution->request->cancelled(execution->request->cancellation_context))
-        return audio_execution_refuse(execution, YVEX_COMPONENT_FAILURE_CANCELLED,
-                                      NULL, 0ull, 1ull, YVEX_ERR_CANCELLED,
-                                      "Audio VAE execution was cancelled at a layer boundary");
-    return YVEX_OK;
-}
-static yvex_component_failure_code component_failure_project(
-    yvex_graph_component_failure_code code)
-{
-    switch (code) {
-    case YVEX_GRAPH_COMPONENT_FAILURE_MISSING_TENSOR:
-        return YVEX_COMPONENT_FAILURE_MISSING_TENSOR;
-    case YVEX_GRAPH_COMPONENT_FAILURE_TENSOR_CONTRACT:
-        return YVEX_COMPONENT_FAILURE_TENSOR_CONTRACT;
-    case YVEX_GRAPH_COMPONENT_FAILURE_MATERIALIZATION:
-        return YVEX_COMPONENT_FAILURE_MATERIALIZATION;
-    case YVEX_GRAPH_COMPONENT_FAILURE_BUDGET:
-        return YVEX_COMPONENT_FAILURE_BUDGET;
-    default:
-        return YVEX_COMPONENT_FAILURE_INVALID_ARGUMENT;
-    }
+    return component_api()->cancel_check(
+        execution, "Audio VAE execution was cancelled at a layer boundary");
 }
 static int audio_buffer_open(audio_execution *execution, yvex_graph_component_buffer *buffer,
                              unsigned long long count)
 {
-    yvex_graph_component_failure failure;
-    int rc = component_api()->buffer_open(&execution->workspace, count, buffer, &failure,
-                                          execution->err);
-    execution->result->peak_workspace_bytes = execution->workspace.peak_bytes;
-    return rc == YVEX_OK
-               ? YVEX_OK
-               : audio_execution_refuse(execution, component_failure_project(failure.code),
-                                         failure.tensor_name, failure.expected, failure.actual,
-                                         (yvex_status)rc, failure.reason);
+    return component_api()->buffer_open(execution, count, buffer);
 }
 static void audio_buffer_close(audio_execution *execution, yvex_graph_component_buffer *buffer)
 {
-    component_api()->buffer_close(&execution->workspace, buffer);
+    component_api()->buffer_close(execution, buffer);
 }
 static int audio_tensor_load(audio_execution *execution, const char *name,
                              unsigned int rank, const unsigned long long *dims,
                              yvex_graph_component_buffer *buffer)
 {
-    yvex_graph_component_failure failure;
-    int rc = component_api()->tensor_load_f32(
-        execution->session, name, rank, dims, &execution->workspace, buffer,
-        &execution->result->payload_bytes_read, &failure, execution->err);
-    execution->result->peak_workspace_bytes = execution->workspace.peak_bytes;
-    if (rc == YVEX_OK) {
-        execution->result->tensor_reads++;
-        return YVEX_OK;
-    }
-    return audio_execution_refuse(execution, component_failure_project(failure.code),
-                                  failure.tensor_name, failure.expected, failure.actual,
-                                  (yvex_status)rc, failure.reason);
+    return component_api()->tensor_load_f32(execution, name, rank, dims, buffer);
 }
 static int audio_name_build(audio_execution *execution, char *output, size_t capacity,
                             const char *prefix, const char *suffix)
 {
-    int written = snprintf(output, capacity, "%s%s", prefix, suffix);
-    if (written < 0 || (size_t)written >= capacity)
-        return audio_execution_refuse(execution,
-                                      YVEX_COMPONENT_FAILURE_TENSOR_CONTRACT,
-                                      prefix, capacity, written < 0 ? 0ull : (unsigned long long)written,
-                                      YVEX_ERR_BOUNDS,
-                                      "Audio VAE tensor name exceeded its bounded identity field");
-    return YVEX_OK;
+    return component_api()->name_build(
+        execution, output, capacity, prefix, suffix, capacity,
+        "Audio VAE tensor name exceeded its bounded identity field");
 }
 static int audio_conv_execute(audio_execution *execution, const char *prefix,
                               const yvex_graph_conv1d_geometry *geometry,
@@ -670,20 +604,14 @@ static int audio_vae_decode_cpu(yvex_materialization_session *session,
     unsigned long long length;
     unsigned long long stage;
     int rc;
-    if (result) memset(result, 0, sizeof(*result));
-    if (failure) memset(failure, 0, sizeof(*failure));
-    memset(&execution, 0, sizeof(execution));
-    execution.session = session;
-    execution.request = options;
-    execution.result = result;
-    execution.failure = failure;
-    execution.err = err;
+    component_api()->execution_open(
+        &execution, session, options, result, failure, err,
+        "graph.minimax_h3.audio_vae.execute");
     if (!options || !options->plan || !result)
         return audio_execution_refuse(&execution,
                                       YVEX_COMPONENT_FAILURE_INVALID_ARGUMENT,
                                       NULL, 2ull, 0ull, YVEX_ERR_INVALID_ARG,
                                       "Audio VAE decode requires options and result");
-    execution.workspace.maximum_bytes = options->plan->workspace_bytes;
     rc = audio_decode_validate(&execution);
     if (rc != YVEX_OK) return rc;
     length = options->plan->geometry[0];
@@ -776,74 +704,35 @@ static int video_execution_refuse(video_execution *execution,
                                   unsigned long long actual, yvex_status status,
                                   const char *reason)
 {
-    if (execution && execution->failure) {
-        memset(execution->failure, 0, sizeof(*execution->failure));
-        execution->failure->code = code;
-        execution->failure->expected = expected;
-        execution->failure->actual = actual;
-        execution->failure->reason = reason;
-        if (tensor_name)
-            yvex_core_text_copy(execution->failure->tensor_name,
-                                sizeof(execution->failure->tensor_name), tensor_name);
-    }
-    yvex_error_set(execution ? execution->err : NULL, status,
-                   "graph.minimax_h3.video_vae.execute", reason);
-    return status;
+    return component_api()->execution_refuse(
+        execution ? &execution->component : NULL, code, tensor_name, expected, actual, status,
+        reason);
 }
 static int video_cancel_check(video_execution *execution)
 {
-    if (execution->request->cancelled &&
-        execution->request->cancelled(execution->request->cancellation_context))
-        return video_execution_refuse(
-            execution, YVEX_COMPONENT_FAILURE_CANCELLED,
-            NULL, 0ull, 1ull, YVEX_ERR_CANCELLED,
-            "Visual VAE execution was cancelled at a block boundary");
-    return YVEX_OK;
+    return component_api()->cancel_check(
+        &execution->component, "Visual VAE execution was cancelled at a block boundary");
 }
 static int video_buffer_open(video_execution *execution, yvex_graph_component_buffer *buffer,
                              unsigned long long count)
 {
-    yvex_graph_component_failure failure;
-    int rc = component_api()->buffer_open(&execution->workspace, count, buffer, &failure,
-                                          execution->err);
-    execution->result->peak_workspace_bytes = execution->workspace.peak_bytes;
-    return rc == YVEX_OK
-               ? YVEX_OK
-               : video_execution_refuse(execution, component_failure_project(failure.code),
-                                         failure.tensor_name, failure.expected, failure.actual,
-                                         (yvex_status)rc, failure.reason);
+    return component_api()->buffer_open(&execution->component, count, buffer);
 }
 static void video_buffer_close(video_execution *execution, yvex_graph_component_buffer *buffer)
 {
-    component_api()->buffer_close(&execution->workspace, buffer);
+    component_api()->buffer_close(&execution->component, buffer);
 }
 static int video_tensor_load(video_execution *execution, const char *name,
                              unsigned int rank, const unsigned long long *dims,
                              yvex_graph_component_buffer *buffer)
 {
-    yvex_graph_component_failure failure;
-    int rc = component_api()->tensor_load_f32(
-        execution->session, name, rank, dims, &execution->workspace, buffer,
-        &execution->result->payload_bytes_read, &failure, execution->err);
-    execution->result->peak_workspace_bytes = execution->workspace.peak_bytes;
-    if (rc == YVEX_OK) {
-        execution->result->tensor_reads++;
-        return YVEX_OK;
-    }
-    return video_execution_refuse(execution, component_failure_project(failure.code),
-                                  failure.tensor_name, failure.expected, failure.actual,
-                                  (yvex_status)rc, failure.reason);
+    return component_api()->tensor_load_f32(&execution->component, name, rank, dims, buffer);
 }
 static int video_name(video_execution *execution, char output[256],
                       const char *prefix, const char *suffix)
 {
-    int written = snprintf(output, 256u, "%s%s", prefix, suffix);
-    if (written < 0 || written >= 256)
-        return video_execution_refuse(
-            execution, YVEX_COMPONENT_FAILURE_TENSOR_CONTRACT,
-            prefix, 255ull, written < 0 ? 0ull : (unsigned long long)written,
-            YVEX_ERR_BOUNDS, "Visual VAE tensor name exceeded its bound");
-    return YVEX_OK;
+    return component_api()->name_build(&execution->component, output, 256u, prefix, suffix,
+                                       255ull, "Visual VAE tensor name exceeded its bound");
 }
 static int video_linear(video_execution *execution, const char *prefix,
                         unsigned int weight_rank, const float *input,
@@ -864,13 +753,13 @@ static int video_linear(video_execution *execution, const char *prefix,
         rc = yvex_graph_linear_source_f32(
             input, rows * input_width, rows, input_width,
             weight.data, weight.count, bias.data, bias.count, output_width,
-            output, rows * output_width, execution->err);
-    if (rc != YVEX_OK && execution->failure &&
-        execution->failure->code == YVEX_COMPONENT_FAILURE_NONE) {
-        execution->failure->code = YVEX_COMPONENT_FAILURE_NUMERIC;
-        execution->failure->reason = yvex_error_message(execution->err);
-        yvex_core_text_copy(execution->failure->tensor_name,
-                            sizeof(execution->failure->tensor_name), prefix);
+            output, rows * output_width, execution->component.err);
+    if (rc != YVEX_OK && execution->component.failure &&
+        execution->component.failure->code == YVEX_COMPONENT_FAILURE_NONE) {
+        execution->component.failure->code = YVEX_COMPONENT_FAILURE_NUMERIC;
+        execution->component.failure->reason = yvex_error_message(execution->component.err);
+        yvex_core_text_copy(execution->component.failure->tensor_name,
+                            sizeof(execution->component.failure->tensor_name), prefix);
     }
     video_buffer_close(execution, &bias);
     video_buffer_close(execution, &weight);
@@ -938,7 +827,7 @@ static int video_qk_normalize(video_execution *execution, float *qkv,
 }
 static void video_rope_apply(const video_execution *execution, float *qkv)
 {
-    const yvex_component_execution_request *options = execution->request;
+    const yvex_component_execution_request *options = execution->component.request;
     const float tau = 6.28318530717958647692f;
     unsigned long long token, head;
     for (token = 0ull; token < execution->rows; ++token) {
@@ -1016,7 +905,7 @@ static int video_block_execute(video_execution *execution,
     if (rc == YVEX_OK)
         rc = yvex_graph_full_attention_f32(
             qkv->data, execution->rows, 32ull, 64ull, attention->data,
-            scratch->data, scratch->count, execution->err);
+            scratch->data, scratch->count, execution->component.err);
     if (rc == YVEX_OK)
         rc = video_block_name(execution, name, block, ".attn.to_out");
     if (rc == YVEX_OK)
@@ -1036,7 +925,7 @@ static int video_block_execute(video_execution *execution,
                           execution->rows, 2048ull, 16384ull, fused->data);
     if (rc == YVEX_OK)
         rc = yvex_graph_silu_gate_f32(fused->data, execution->rows, 8192ull,
-                                      gated->data, execution->err);
+                                      gated->data, execution->component.err);
     if (rc == YVEX_OK) rc = video_block_name(execution, name, block, ".ff.w2");
     if (rc == YVEX_OK)
         rc = video_linear(execution, name, 2u, gated->data,
@@ -1045,10 +934,10 @@ static int video_block_execute(video_execution *execution,
     if (rc == YVEX_OK)
         rc = video_scale_residual(execution, name, projected->data,
                                   execution->rows, 2048ull, hidden->data);
-    if (rc != YVEX_OK && execution->failure &&
-        execution->failure->code == YVEX_COMPONENT_FAILURE_NONE) {
-        execution->failure->code = YVEX_COMPONENT_FAILURE_NUMERIC;
-        execution->failure->reason = yvex_error_message(execution->err);
+    if (rc != YVEX_OK && execution->component.failure &&
+        execution->component.failure->code == YVEX_COMPONENT_FAILURE_NONE) {
+        execution->component.failure->code = YVEX_COMPONENT_FAILURE_NUMERIC;
+        execution->component.failure->reason = yvex_error_message(execution->component.err);
     }
     return rc;
 }
@@ -1061,9 +950,9 @@ static int video_final_norm(video_execution *execution, yvex_graph_component_buf
         rc = video_tensor_load(execution, "decoder.norm_out.bias", 1u, dims, &bias);
     if (rc == YVEX_OK)
         rc = yvex_graph_layer_norm_f32(hidden->data, execution->rows, 2048ull,
-                                       weight.data, bias.data, 1.0e-5, execution->err);
-    if (rc != YVEX_OK && execution->failure &&
-        execution->failure->code == YVEX_COMPONENT_FAILURE_NONE)
+                                       weight.data, bias.data, 1.0e-5, execution->component.err);
+    if (rc != YVEX_OK && execution->component.failure &&
+        execution->component.failure->code == YVEX_COMPONENT_FAILURE_NONE)
         rc = video_execution_refuse(
             execution, YVEX_COMPONENT_FAILURE_NUMERIC,
             "decoder.norm_out", execution->rows * 2048ull, 0ull, rc,
@@ -1118,39 +1007,39 @@ static int video_execution_identity(const yvex_materialization_summary *summary,
 static int video_decode_validate(video_execution *execution)
 {
     const yvex_materialization_summary *summary =
-        yvex_materialization_session_summary(execution->session);
+        yvex_materialization_session_summary(execution->component.session);
     unsigned long long input_values = 0ull, output_values = 0ull, index;
-    if (!execution->request || !execution->request->plan ||
-        !execution->result || !execution->request->input ||
-        !execution->request->output || execution->request->plan->batch != 1ull ||
-        execution->request->plan->geometry_rank != 3u ||
-        !execution->request->plan->geometry[0] ||
-        !execution->request->plan->geometry[1] ||
-        !execution->request->plan->geometry[2] ||
-        !execution->request->plan->workspace_bytes)
+    if (!execution->component.request || !execution->component.request->plan ||
+        !execution->component.result || !execution->component.request->input ||
+        !execution->component.request->output || execution->component.request->plan->batch != 1ull ||
+        execution->component.request->plan->geometry_rank != 3u ||
+        !execution->component.request->plan->geometry[0] ||
+        !execution->component.request->plan->geometry[1] ||
+        !execution->component.request->plan->geometry[2] ||
+        !execution->component.request->plan->workspace_bytes)
         return video_execution_refuse(
             execution, YVEX_COMPONENT_FAILURE_INVALID_ARGUMENT,
             NULL, 1ull,
-            execution->request ? execution->request->output_capacity : 0ull,
+            execution->component.request ? execution->component.request->output_capacity : 0ull,
             YVEX_ERR_INVALID_ARG,
             "Visual VAE decode requires batch one, 24 channels, and positive latent geometry");
-    if (!yvex_core_u64_mul(execution->request->plan->geometry[0],
-                           execution->request->plan->geometry[1], &execution->patches) ||
+    if (!yvex_core_u64_mul(execution->component.request->plan->geometry[0],
+                           execution->component.request->plan->geometry[1], &execution->patches) ||
         !yvex_core_u64_mul(execution->patches,
-                           execution->request->plan->geometry[2],
+                           execution->component.request->plan->geometry[2],
                            &execution->patches) ||
         !yvex_core_u64_add(execution->patches, 5ull, &execution->rows) ||
-        execution->request->plan->geometry[0] > ULLONG_MAX / 4ull ||
-        execution->request->plan->geometry[1] > ULLONG_MAX / 16ull ||
-        execution->request->plan->geometry[2] > ULLONG_MAX / 16ull ||
+        execution->component.request->plan->geometry[0] > ULLONG_MAX / 4ull ||
+        execution->component.request->plan->geometry[1] > ULLONG_MAX / 16ull ||
+        execution->component.request->plan->geometry[2] > ULLONG_MAX / 16ull ||
         execution->rows > ULLONG_MAX / 16384ull ||
         !yvex_core_u64_mul(execution->patches, 24ull, &input_values) ||
         !yvex_core_u64_mul(execution->patches, 3072ull, &output_values) ||
         output_values > (unsigned long long)SIZE_MAX / sizeof(float) ||
-        execution->request->output_capacity < output_values)
+        execution->component.request->output_capacity < output_values)
         return video_execution_refuse(
             execution, YVEX_COMPONENT_FAILURE_INVALID_ARGUMENT,
-            NULL, output_values, execution->request->output_capacity,
+            NULL, output_values, execution->component.request->output_capacity,
             YVEX_ERR_BOUNDS,
             "Visual VAE latent geometry or RGB output extent exceeded its bound");
     if (!summary || !summary->committed ||
@@ -1161,18 +1050,18 @@ static int video_decode_validate(video_execution *execution)
             YVEX_ERR_STATE,
             "Visual VAE decode requires the committed exact component artifact");
     for (index = 0ull; index < input_values; ++index)
-        if (!isfinite(execution->request->input[index]))
+        if (!isfinite(execution->component.request->input[index]))
             return video_execution_refuse(
                 execution, YVEX_COMPONENT_FAILURE_NUMERIC,
                 NULL, input_values, index, YVEX_ERR_FORMAT,
                 "Visual VAE latent input contains a non-finite value");
-    execution->result->batch = 1ull;
-    execution->result->output_values = output_values;
-    execution->result->output_rank = execution->request->plan->output_rank;
-    memcpy(execution->result->output_dims, execution->request->plan->output_dims,
-           sizeof(execution->result->output_dims));
-    yvex_core_text_copy(execution->result->artifact_identity,
-                        sizeof(execution->result->artifact_identity),
+    execution->component.result->batch = 1ull;
+    execution->component.result->output_values = output_values;
+    execution->component.result->output_rank = execution->component.request->plan->output_rank;
+    memcpy(execution->component.result->output_dims, execution->component.request->plan->output_dims,
+           sizeof(execution->component.result->output_dims));
+    yvex_core_text_copy(execution->component.result->artifact_identity,
+                        sizeof(execution->component.result->artifact_identity),
                         summary->artifact_identity);
     return YVEX_OK;
 }
@@ -1215,27 +1104,22 @@ static int video_vae_decode_cpu(yvex_materialization_session *session,
                                 yvex_component_failure *failure,
                                 yvex_error *err)
 {
-    video_execution execution = {
-        .session = session,
-        .request = options,
-        .result = result,
-        .failure = failure,
-        .err = err,
-    };
+    video_execution execution;
     yvex_graph_component_buffer packed = {0}, post = {0}, hidden = {0}, normalized = {0}, qkv = {0};
     yvex_graph_component_buffer projected = {0}, fused = {0}, gated = {0};
     yvex_graph_component_buffer attention = {0}, scratch = {0}, registers = {0}, patch_output = {0};
     unsigned long long register_dims[3] = {1ull, 4ull, 2048ull};
     unsigned long long block;
     int rc;
-    if (result) memset(result, 0, sizeof(*result));
-    if (failure) memset(failure, 0, sizeof(*failure));
+    memset(&execution, 0, sizeof(execution));
+    component_api()->execution_open(
+        &execution.component, session, options, result, failure, err,
+        "graph.minimax_h3.video_vae.execute");
     if (!options || !options->plan || !result)
         return video_execution_refuse(
             &execution, YVEX_COMPONENT_FAILURE_INVALID_ARGUMENT,
             NULL, 2ull, 0ull, YVEX_ERR_INVALID_ARG,
             "Visual VAE decode requires options and result");
-    execution.workspace.maximum_bytes = options->plan->workspace_bytes;
     rc = video_decode_validate(&execution);
     if (rc == YVEX_OK) rc = video_buffer_open(&execution, &packed, execution.patches * 24ull);
     if (rc == YVEX_OK) rc = video_buffer_open(&execution, &post, execution.patches * 24ull);
