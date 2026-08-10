@@ -725,50 +725,29 @@ static int architecture_build(yvex_minimax_h3_target *target,
         {1u, 2u, 2u}, 1u, 32u, 256u, 5376u, 2688u, 96768u, 10752u, 96u, 32u, 1
     };
     architecture->video_vae = (yvex_minimax_h3_video_vae_signature){
-        .latent_channels = 24u,
-        .media_channels = 3u,
-        .base_channels = 128u,
-        .stage_count = 6u,
+        .latent_channels = 24u, .media_channels = 3u,
+        .base_channels = 128u, .stage_count = 6u,
         .channel_multipliers = {1u, 2u, 2u, 4u, 4u, 8u},
         .spatial_down = {2u, 2u, 2u, 2u, 1u, 1u},
         .spatial_up = {1u, 2u, 2u, 2u, 2u, 1u},
         .temporal_down = {1u, 2u, 2u, 1u, 1u, 1u},
-        .spatial_ratio = 16u,
-        .temporal_ratio = 4u,
-        .residual_blocks = 2u,
-        .decoder_blocks = 36u,
-        .decoder_heads = 32u,
-        .decoder_head_dimension = 64u,
-        .decoder_rope_ratio_numerator = 3u,
-        .decoder_rope_ratio_denominator = 4u,
-        .decoder_rope_theta = 100u,
-        .tile_size = 256u,
-        .tile_overlap = 64u,
-        .clip_length = 17u,
-        .token_drop = 3u,
-        .conv3d = 1,
-        .isolated_temporal_group_norm = 1,
-        .encoder_tiling = 1,
-        .decoder_tiling = 1,
-        .parallel_tiling = 1,
-        .causal_encoder = 1,
-        .causal_decoder = 0
+        .spatial_ratio = 16u, .temporal_ratio = 4u, .residual_blocks = 2u,
+        .decoder_blocks = 36u, .decoder_heads = 32u, .decoder_head_dimension = 64u,
+        .decoder_rope_ratio_numerator = 3u, .decoder_rope_ratio_denominator = 4u,
+        .decoder_rope_theta = 100u, .tile_size = 256u, .tile_overlap = 64u,
+        .clip_length = 17u, .token_drop = 3u, .conv3d = 1,
+        .isolated_temporal_group_norm = 1, .encoder_tiling = 1, .decoder_tiling = 1,
+        .parallel_tiling = 1, .causal_encoder = 1, .causal_decoder = 0
     };
     architecture->audio_vae = (yvex_minimax_h3_audio_vae_signature){
-        .latent_channels = 32u,
-        .output_channels = 2u,
-        .sample_rate = 32000u,
-        .encoder_width = 64u,
-        .decoder_width = 1024u,
-        .latent_projection_width = 2048u,
+        .latent_channels = 32u, .output_channels = 2u, .sample_rate = 32000u,
+        .encoder_width = 64u, .decoder_width = 1024u, .latent_projection_width = 2048u,
         .encoder_stage_count = 5u,
         .encoder_rates = {2u, 4u, 4u, 5u, 5u},
         .decoder_stage_count = 7u,
         .decoder_rates = {5u, 5u, 2u, 2u, 2u, 2u, 2u},
-        .encoder_rate_product = 800u,
-        .decoder_rate_product = 800u,
-        .latent_steps_per_second = 40u,
-        .attention_projection = 1
+        .encoder_rate_product = 800u, .decoder_rate_product = 800u,
+        .latent_steps_per_second = 40u, .attention_projection = 1
     };
     architecture->bf16_tensors = 1580u;
     architecture->f32_tensors = 1660u;
@@ -794,14 +773,53 @@ fail:
                          YVEX_MINIMAX_H3_COMPONENT_COUNT, 0, 0u, NULL,
                          YVEX_ERR_STATE, err, "architecture identity construction failed");
 }
-
-static int architecture_canonical(
-    yvex_minimax_h3_architecture *architecture,
+static const yvex_minimax_h3_latent_normalization *latent_normalization(void)
+{
+    static const float video_mean[24] = {
+        0.858090341f, -0.960659146f, 1.06616402f, -0.509032547f,
+        -0.272758186f, -1.36754143f, -0.255325496f, -0.269075543f,
+        -0.537684083f, -0.0464097299f, 0.665737033f, 0.196901277f,
+        -0.546060801f, -0.403534204f, -0.236830249f, 0.259284526f,
+        -0.301339447f, 0.211341992f, -1.12068486f, 0.358193338f,
+        -0.0422514379f, 0.260482997f, 0.228640929f, 0.705603182f,
+    };
+    static const float video_std[24] = {
+        1.22237742f, 1.27672637f, 1.68317747f, 1.75494552f,
+        1.56362164f, 2.19414353f, 0.965313792f, 1.0569886f,
+        0.841948926f, 0.772995293f, 1.89559376f, 0.946841836f,
+        0.799680948f, 0.449889004f, 0.719739974f, 0.693629324f,
+        2.96109509f, 2.76941991f, 3.04961848f, 2.10880542f,
+        3.27622628f, 3.1627357f, 2.2816813f, 2.61278439f,
+    };
+    static const float audio_mean[32] = {
+        -0.0202116873f, 0.387646645f, -0.0439827964f, -0.285915136f,
+        0.0817968622f, -0.357826412f, 0.0406238101f, -0.0155253448f,
+        -0.223362476f, 0.182100683f, 0.29417789f, -0.0790116787f,
+        -0.0568150729f, -0.369902819f, -0.316163152f, 0.590595126f,
+        -0.0521395691f, 0.0136731602f, -0.0369164795f, 0.0973266065f,
+        -0.339466244f, -0.306856781f, -0.24504599f, -0.0346985236f,
+        0.0286803227f, -0.212177798f, -0.16782631f, 0.322128803f,
+        -0.122305587f, 0.435660481f, -0.0502599217f, 0.397925824f,
+    };
+    static const float audio_std[32] = {
+        1.68955243f, 2.76263738f, 1.79453444f, 1.68016815f,
+        1.63902271f, 2.77882981f, 1.76590896f, 1.61997581f,
+        2.63365245f, 1.85393572f, 2.50564981f, 1.81101918f,
+        1.95796573f, 1.66854978f, 1.49224699f, 3.29867029f,
+        1.94918048f, 1.87200034f, 1.833408f, 1.64880705f,
+        1.61769581f, 1.91314495f, 1.56952453f, 1.69436598f,
+        1.83184206f, 1.5540638f, 1.93449306f, 1.59919822f,
+        1.71804595f, 1.63072193f, 1.8661226f, 1.56137681f,
+    };
+    static const yvex_minimax_h3_latent_normalization facts = {
+        video_mean, video_std, audio_mean, audio_std, 24ull, 32ull};
+    return &facts;
+}
+static int architecture_canonical(yvex_minimax_h3_architecture *architecture,
     yvex_minimax_h3_failure *failure, yvex_error *err)
 {
     yvex_minimax_h3_target target;
     int rc;
-
     if (!architecture) {
         return family_refuse(failure, YVEX_MINIMAX_H3_FAILURE_INVALID_ARGUMENT,
                              YVEX_MINIMAX_H3_COMPONENT_COUNT, 0, 0u, NULL,
@@ -1432,7 +1450,7 @@ const yvex_minimax_h3_api *yvex_model_register_minimax_h3(void)
         target_component_at, target_tokenizer_spec, target_phase_edge_at, target_role_at,
         family_failure_name, family_role_name, family_component_name,
         components_canonical, component_graph_validate, phase_graph_validate,
-        architecture_canonical, tensor_classify
+        architecture_canonical, latent_normalization, tensor_classify
     };
 
     return &api;

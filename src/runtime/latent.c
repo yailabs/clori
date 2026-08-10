@@ -478,6 +478,175 @@ int yvex_runtime_av_layout_matches_plan(
     return YVEX_OK;
 }
 
+static int av_unpack_identity(
+    const yvex_runtime_av_unpack_request *request,
+    const yvex_runtime_av_unpack_result *result, const float *video,
+    const float *audio, char output[YVEX_SHA256_HEX_CAP])
+{
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    unsigned long long index;
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.av.unpack.v1") ||
+        !yvex_sha256_update_text(&hash, request->plan->identity) ||
+        !yvex_sha256_update_text(&hash, request->latent_execution_identity) ||
+        !yvex_sha256_update_u64(&hash, result->video_channels) ||
+        !yvex_sha256_update_u64(&hash, result->video_frames) ||
+        !yvex_sha256_update_u64(&hash, result->video_height) ||
+        !yvex_sha256_update_u64(&hash, result->video_width) ||
+        !yvex_sha256_update_u64(&hash, result->audio_batch) ||
+        !yvex_sha256_update_u64(&hash, result->audio_channels) ||
+        !yvex_sha256_update_u64(&hash, result->audio_steps))
+        return 0;
+    for (index = 0ull; index < request->video_channel_count; ++index)
+        if (!latent_hash_f32(&hash, request->video_channel_mean[index]) ||
+            !latent_hash_f32(&hash, request->video_channel_std[index]))
+            return 0;
+    for (index = 0ull; index < request->audio_channel_count; ++index)
+        if (!latent_hash_f32(&hash, request->audio_channel_mean[index]) ||
+            !latent_hash_f32(&hash, request->audio_channel_std[index]))
+            return 0;
+    for (index = 0ull; index < result->video_values; ++index)
+        if (!latent_hash_f32(&hash, video[index])) return 0;
+    for (index = 0ull; index < result->audio_values; ++index)
+        if (!latent_hash_f32(&hash, audio[index])) return 0;
+    if (!yvex_sha256_final(&hash, digest)) return 0;
+    yvex_sha256_hex(digest, output);
+    return 1;
+}
+
+static int av_unpack_extents(
+    const yvex_runtime_av_unpack_request *request,
+    yvex_runtime_av_unpack_result *staged, unsigned long long *workspace_bytes,
+    yvex_error *err)
+{
+    const yvex_runtime_av_plan *plan = request ? request->plan : NULL;
+    unsigned long long patch_values, video_rows, audio_rows, values;
+    if (!request || request->schema_version != YVEX_RUNTIME_AV_UNPACK_SCHEMA_V1 ||
+        !plan || plan->schema_version != YVEX_RUNTIME_AV_PLAN_SCHEMA_V1 || !plan->complete ||
+        !request->video_rows || !request->audio_rows || !request->video_channel_mean ||
+        !request->video_channel_std || !request->audio_channel_mean ||
+        !request->audio_channel_std || !request->latent_execution_identity ||
+        !yvex_sha256_hex_valid(request->latent_execution_identity) ||
+        !yvex_core_u64_mul(plan->patch_height, plan->patch_width, &patch_values) ||
+        !patch_values || plan->video_value_width % patch_values ||
+        request->video_channel_count != plan->video_value_width / patch_values ||
+        request->audio_channel_count != plan->audio_value_width ||
+        !yvex_core_u64_mul(plan->video_rows, plan->video_value_width, &video_rows) ||
+        !yvex_core_u64_mul(plan->audio_rows, plan->audio_value_width, &audio_rows) ||
+        request->video_row_capacity < video_rows || request->audio_row_capacity < audio_rows)
+        return latent_refuse(err, YVEX_ERR_INVALID_ARG,
+                             "exact packed audio-video rows and channel facts are required");
+    staged->video_channels = request->video_channel_count;
+    staged->video_frames = plan->video_latent_frames;
+    staged->video_height = plan->video_latent_height;
+    staged->video_width = plan->video_latent_width;
+    staged->video_values = video_rows;
+    staged->audio_batch = plan->audio_channels;
+    staged->audio_channels = request->audio_channel_count;
+    staged->audio_steps = plan->audio_latent_steps;
+    staged->audio_values = audio_rows;
+    if (!yvex_core_u64_add(video_rows, audio_rows, &values) ||
+        !yvex_core_u64_mul(values, sizeof(float), workspace_bytes) ||
+        *workspace_bytes > request->maximum_workspace_bytes || *workspace_bytes > SIZE_MAX)
+        return latent_refuse(err, YVEX_ERR_BOUNDS,
+                             "audio-video unpack workspace exceeded its bound");
+    return YVEX_OK;
+}
+
+int yvex_runtime_av_unpack(
+    const yvex_runtime_av_unpack_request *request,
+    const yvex_runtime_av_unpack_output *output,
+    yvex_runtime_av_unpack_result *result, yvex_error *err)
+{
+    yvex_runtime_av_unpack_result staged = {0};
+    const yvex_runtime_av_plan *plan = request ? request->plan : NULL;
+    unsigned long long workspace_bytes = 0ull, frame, tile_y, tile_x, channel, y, x, step;
+    unsigned long long patch_values, grid_height, grid_width, batch, source, destination;
+    float *storage = NULL, *video, *audio;
+    int rc;
+    if (result) memset(result, 0, sizeof(*result));
+    if (!output || !output->video || !output->audio || !result)
+        return latent_refuse(err, YVEX_ERR_INVALID_ARG,
+                             "audio-video component input outputs are required");
+    rc = av_unpack_extents(request, &staged, &workspace_bytes, err);
+    if (rc != YVEX_OK) return rc;
+    if (output->video_capacity < staged.video_values ||
+        output->audio_capacity < staged.audio_values)
+        return latent_refuse(err, YVEX_ERR_BOUNDS,
+                             "audio-video component input capacity is insufficient");
+    for (channel = 0ull; channel < staged.video_channels; ++channel)
+        if (!isfinite(request->video_channel_mean[channel]) ||
+            !isfinite(request->video_channel_std[channel]) ||
+            request->video_channel_std[channel] <= 0.0f)
+            return latent_refuse(err, YVEX_ERR_FORMAT,
+                                 "video latent normalization is invalid");
+    for (channel = 0ull; channel < staged.audio_channels; ++channel)
+        if (!isfinite(request->audio_channel_mean[channel]) ||
+            !isfinite(request->audio_channel_std[channel]) ||
+            request->audio_channel_std[channel] <= 0.0f)
+            return latent_refuse(err, YVEX_ERR_FORMAT,
+                                 "audio latent normalization is invalid");
+    storage = yvex_core_malloc((size_t)workspace_bytes);
+    if (!storage) return latent_refuse(err, YVEX_ERR_NOMEM,
+                                       "audio-video unpack allocation failed");
+    video = storage;
+    audio = video + staged.video_values;
+    patch_values = plan->patch_height * plan->patch_width;
+    grid_height = plan->video_latent_height / plan->patch_height;
+    grid_width = plan->video_latent_width / plan->patch_width;
+    for (frame = 0ull; frame < plan->video_latent_frames; ++frame)
+        for (tile_y = 0ull; tile_y < grid_height; ++tile_y)
+            for (tile_x = 0ull; tile_x < grid_width; ++tile_x)
+                for (channel = 0ull; channel < staged.video_channels; ++channel)
+                    for (y = 0ull; y < plan->patch_height; ++y)
+                        for (x = 0ull; x < plan->patch_width; ++x) {
+                            source = (((frame * grid_height + tile_y) * grid_width + tile_x) *
+                                      plan->video_value_width) + channel * patch_values +
+                                     y * plan->patch_width + x;
+                            destination = ((((channel * plan->video_latent_frames + frame) *
+                                             plan->video_latent_height +
+                                             tile_y * plan->patch_height + y) *
+                                            plan->video_latent_width) +
+                                           tile_x * plan->patch_width + x);
+                            video[destination] = request->video_rows[source] *
+                                request->video_channel_std[channel] +
+                                request->video_channel_mean[channel];
+                        }
+    for (batch = 0ull; batch < plan->audio_channels; ++batch)
+        for (step = 0ull; step < plan->audio_latent_steps; ++step)
+            for (channel = 0ull; channel < staged.audio_channels; ++channel) {
+                source = (batch * plan->audio_latent_steps + step) *
+                         plan->audio_value_width + channel;
+                destination = (batch * staged.audio_channels + channel) *
+                              plan->audio_latent_steps + step;
+                audio[destination] = request->audio_rows[source] *
+                    request->audio_channel_std[channel] +
+                    request->audio_channel_mean[channel];
+            }
+    for (source = 0ull; source < staged.video_values + staged.audio_values; ++source)
+        if (!isfinite(storage[source])) {
+            rc = latent_refuse(err, YVEX_ERR_FORMAT,
+                               "audio-video component input became non-finite");
+            break;
+        }
+    staged.schema_version = YVEX_RUNTIME_AV_UNPACK_SCHEMA_V1;
+    staged.peak_workspace_bytes = workspace_bytes;
+    if (rc == YVEX_OK &&
+        !av_unpack_identity(request, &staged, video, audio, staged.input_identity))
+        rc = latent_refuse(err, YVEX_ERR_STATE,
+                           "audio-video component input identity failed");
+    if (rc == YVEX_OK) {
+        memcpy(output->video, video, (size_t)(staged.video_values * sizeof(float)));
+        memcpy(output->audio, audio, (size_t)(staged.audio_values * sizeof(float)));
+        staged.complete = 1;
+        *result = staged;
+        yvex_error_clear(err);
+    }
+    yvex_core_free(storage);
+    return rc;
+}
+
 static int packed_layout_extents(
     const yvex_runtime_av_layout_request *request,
     unsigned long long capacities[5], unsigned long long *workspace_bytes,

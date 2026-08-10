@@ -342,6 +342,8 @@ static int execute_latent(const char *path, const char *conditioning_path,
                           unsigned long long block_count, unsigned int steps)
 {
     const yvex_minimax_h3_graph_api *graph = yvex_graph_register_minimax_h3();
+    const yvex_minimax_h3_latent_normalization *normalization =
+        yvex_model_register_minimax_h3()->latent_normalization();
     yvex_artifact_options options = {.path = path, .readonly = 1};
     yvex_artifact *artifact = NULL;
     yvex_gguf *gguf = NULL;
@@ -353,18 +355,28 @@ static int execute_latent(const char *path, const char *conditioning_path,
     yvex_runtime_av_layout_result layout_result;
     yvex_runtime_latent_result latent_result;
     yvex_minimax_h3_t2va_omni_result omni_result;
+    yvex_runtime_av_unpack_result unpack_result;
     float conditioning[CONDITION_VALUES], positions[57], video[192], audio[512];
+    float video_input[192], audio_input[512];
     unsigned int tags[19], video_indices[2], audio_indices[16], text_indices[1];
     unsigned int timestep_indices[19];
     yvex_runtime_av_layout_output layout = {
         positions, 57ull, tags, video_indices, audio_indices, text_indices,
         19ull, 2ull, 16ull, 1ull,
     };
+    yvex_runtime_av_unpack_output component_inputs = {
+        video_input, audio_input, 192ull, 512ull,
+    };
+    yvex_runtime_av_unpack_request unpack = {
+        .schema_version = YVEX_RUNTIME_AV_UNPACK_SCHEMA_V1,
+        .video_row_capacity = 192ull, .audio_row_capacity = 512ull,
+        .maximum_workspace_bytes = (192ull + 512ull) * sizeof(float),
+    };
     yvex_minimax_h3_t2va_omni_context context = {0};
     char conditioning_identity[65];
     yvex_error err, cleanup;
     int rc, cleanup_rc;
-    if (!path || !conditioning_path || !block_count || block_count > 50ull ||
+    if (!path || !conditioning_path || !normalization || !block_count || block_count > 50ull ||
         !steps || steps > 64u || !file_read(conditioning_path, conditioning, CONDITION_VALUES) ||
         !float_identity("yvex.minimax-h3.conditioning.fixture.v1", conditioning,
                         CONDITION_VALUES, conditioning_identity))
@@ -402,15 +414,34 @@ static int execute_latent(const char *path, const char *conditioning_path,
                        "the exact resident latent iteration did not complete");
         rc = YVEX_ERR_STATE;
     }
+    if (rc == YVEX_OK) {
+        unpack.plan = &plan; unpack.video_rows = video; unpack.audio_rows = audio;
+        unpack.video_channel_mean = normalization->video_mean;
+        unpack.video_channel_std = normalization->video_std;
+        unpack.audio_channel_mean = normalization->audio_mean;
+        unpack.audio_channel_std = normalization->audio_std;
+        unpack.video_channel_count = normalization->video_channels;
+        unpack.audio_channel_count = normalization->audio_channels;
+        unpack.latent_execution_identity = latent_result.execution_identity;
+        rc = yvex_runtime_av_unpack(&unpack, &component_inputs, &unpack_result, &err);
+    }
+    if (rc == YVEX_OK && (!unpack_result.complete || unpack_result.video_values != 192ull ||
+                          unpack_result.audio_values != 512ull)) {
+        yvex_error_set(&err, YVEX_ERR_STATE, "minimax-h3.vae-input-proof",
+                       "the final latents did not become exact VAE component inputs");
+        rc = YVEX_ERR_STATE;
+    }
     if (rc == YVEX_OK)
         printf("t2va_latent=accepted steps=%u blocks=%llu packed_rows=%llu\n"
                "kernel_launches=%llu peak_device_bytes=%llu\nplan_identity=%s\n"
                "layout_identity=%s\nevaluator_identity=%s\nlatent_identity=%s\n"
-               "transformer_chain_identity=%s\nresidency_identity=%s\n",
+               "transformer_chain_identity=%s\nresidency_identity=%s\n"
+               "vae_input_identity=%s\n",
                steps, block_count, plan.packed_rows, omni_result.kernel_launches,
                omni_result.peak_device_bytes, plan.identity, layout_result.layout_identity,
                omni_result.evaluator_identity, latent_result.execution_identity,
-               omni_result.execution_chain_identity, omni_result.residency_identity);
+               omni_result.execution_chain_identity, omni_result.residency_identity,
+               unpack_result.input_identity);
     else
         fprintf(stderr, "t2va_latent=refused where=%s message=%s\n",
                 yvex_error_where(&err), yvex_error_message(&err));

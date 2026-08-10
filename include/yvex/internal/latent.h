@@ -13,6 +13,7 @@ extern "C" {
 #define YVEX_RUNTIME_LATENT_SCHEMA_V1 1u
 #define YVEX_RUNTIME_AV_LAYOUT_SCHEMA_V1 1u
 #define YVEX_RUNTIME_AV_PLAN_SCHEMA_V1 1u
+#define YVEX_RUNTIME_AV_UNPACK_SCHEMA_V1 1u
 #define YVEX_RUNTIME_AV_TEMPORAL_PATTERN_CAP 8u
 #define YVEX_RUNTIME_LATENT_EVALUATOR_SCHEMA_V1 1u
 
@@ -124,6 +125,32 @@ typedef struct yvex_runtime_av_layout_output {
     unsigned long long tag_capacity, video_capacity, audio_capacity, text_capacity;
 } yvex_runtime_av_layout_output;
 
+typedef struct yvex_runtime_av_unpack_request {
+    unsigned int schema_version;
+    const yvex_runtime_av_plan *plan;
+    const float *video_rows, *audio_rows;
+    unsigned long long video_row_capacity, audio_row_capacity;
+    const float *video_channel_mean, *video_channel_std;
+    const float *audio_channel_mean, *audio_channel_std;
+    unsigned long long video_channel_count, audio_channel_count;
+    unsigned long long maximum_workspace_bytes;
+    const char *latent_execution_identity;
+} yvex_runtime_av_unpack_request;
+
+typedef struct yvex_runtime_av_unpack_output {
+    float *video, *audio;
+    unsigned long long video_capacity, audio_capacity;
+} yvex_runtime_av_unpack_output;
+
+typedef struct yvex_runtime_av_unpack_result {
+    unsigned int schema_version;
+    unsigned long long video_channels, video_frames, video_height, video_width;
+    unsigned long long video_values, audio_batch, audio_channels, audio_steps, audio_values;
+    unsigned long long peak_workspace_bytes;
+    char input_identity[YVEX_SHA256_HEX_CAP];
+    int complete;
+} yvex_runtime_av_unpack_result;
+
 int yvex_runtime_latent_execute(
     const yvex_runtime_latent_request *request,
     float *video_output, unsigned long long video_capacity,
@@ -167,6 +194,10 @@ int yvex_runtime_av_layout_build(
     const yvex_runtime_av_layout_request *request,
     const yvex_runtime_av_layout_output *output,
     yvex_runtime_av_layout_result *result, yvex_error *err);
+int yvex_runtime_av_unpack(
+    const yvex_runtime_av_unpack_request *request,
+    const yvex_runtime_av_unpack_output *output,
+    yvex_runtime_av_unpack_result *result, yvex_error *err);
 
 #ifdef __cplusplus
 }

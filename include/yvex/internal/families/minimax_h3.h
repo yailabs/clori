@@ -289,6 +289,10 @@ typedef struct {
     unsigned int output_classes;
     int source_verified, architecture_admitted, roles_complete;
 } yvex_minimax_h3_summary;
+typedef struct {
+    const float *video_mean, *video_std, *audio_mean, *audio_std;
+    unsigned long long video_channels, audio_channels;
+} yvex_minimax_h3_latent_normalization;
 typedef struct yvex_minimax_h3_target yvex_minimax_h3_target;
 typedef struct { const char *source_root; } yvex_minimax_h3_open_options;
 typedef struct {
@@ -310,21 +314,18 @@ typedef struct {
     const char *(*failure_name)(yvex_minimax_h3_failure_code code);
     const char *(*role_name)(yvex_minimax_h3_role role);
     const char *(*component_name)(yvex_minimax_h3_component_id component);
-    int (*components_canonical)(
-        yvex_minimax_h3_component components[YVEX_MINIMAX_H3_COMPONENT_COUNT],
-        char manifest_identity[65], yvex_minimax_h3_failure *failure,
-        yvex_error *err);
+    int (*components_canonical)(yvex_minimax_h3_component components[YVEX_MINIMAX_H3_COMPONENT_COUNT],
+        char manifest_identity[65], yvex_minimax_h3_failure *failure, yvex_error *err);
     int (*component_graph_validate)(
         const yvex_minimax_h3_component *components, size_t component_count,
         yvex_minimax_h3_failure *failure, yvex_error *err);
     int (*phase_graph_validate)(
         const yvex_minimax_h3_phase_edge *edges, size_t edge_count,
         yvex_minimax_h3_failure *failure, yvex_error *err);
-    int (*architecture_canonical)(
-        yvex_minimax_h3_architecture *architecture,
+    int (*architecture_canonical)(yvex_minimax_h3_architecture *architecture,
         yvex_minimax_h3_failure *failure, yvex_error *err);
-    int (*tensor_classify)(
-        const yvex_native_weight_info *tensor, yvex_minimax_h3_tensor_role *role,
+    const yvex_minimax_h3_latent_normalization *(*latent_normalization)(void);
+    int (*tensor_classify)(const yvex_native_weight_info *tensor, yvex_minimax_h3_tensor_role *role,
         yvex_minimax_h3_failure *failure, yvex_error *err);
 } yvex_minimax_h3_api;
 typedef struct {

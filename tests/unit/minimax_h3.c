@@ -119,9 +119,11 @@ static int test_architecture(void)
 {
     yvex_minimax_h3_architecture first;
     yvex_minimax_h3_architecture second;
+    const yvex_minimax_h3_latent_normalization *normalization;
     yvex_minimax_h3_failure failure;
     yvex_error err;
 
+    normalization = yvex_model_register_minimax_h3()->latent_normalization();
     YVEX_TEST_ASSERT(yvex_model_register_minimax_h3()->architecture_canonical(
                          &first, &failure, &err) == YVEX_OK,
                      "canonical architecture is available");
@@ -151,6 +153,13 @@ static int test_architecture(void)
                          first.audio_vae.encoder_rates[4] == 5u &&
                          first.audio_vae.decoder_rates[6] == 2u,
                      "VAE signatures retain exact source geometry");
+    YVEX_TEST_ASSERT(normalization && normalization->video_channels == 24ull &&
+                         normalization->audio_channels == 32ull &&
+                         normalization->video_mean[0] == 0.858090341f &&
+                         normalization->video_std[23] == 2.61278439f &&
+                         normalization->audio_mean[31] == 0.397925824f &&
+                         normalization->audio_std[0] == 1.68955243f,
+                     "VAE bridge retains exact source latent normalization");
     return 0;
 }
 

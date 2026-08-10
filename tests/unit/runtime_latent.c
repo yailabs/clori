@@ -190,6 +190,81 @@ static int test_evaluator_evidence(void)
     return 0;
 }
 
+static int test_av_unpack(void)
+{
+    static const char identity[] =
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    yvex_runtime_av_plan plan = {
+        .schema_version = YVEX_RUNTIME_AV_PLAN_SCHEMA_V1,
+        .video_latent_frames = 1ull, .video_latent_height = 2ull,
+        .video_latent_width = 2ull, .audio_latent_steps = 2ull,
+        .audio_rows = 4ull, .video_rows = 1ull, .patch_height = 2ull,
+        .patch_width = 2ull, .audio_channels = 2ull,
+        .video_value_width = 8ull, .audio_value_width = 3ull,
+        .complete = 1,
+    };
+    const float video_rows[8] = {0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f};
+    const float audio_rows[12] = {
+        0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f,
+        6.0f, 7.0f, 8.0f, 9.0f, 10.0f, 11.0f,
+    };
+    const float video_mean[2] = {10.0f, 20.0f}, video_std[2] = {2.0f, 3.0f};
+    const float audio_mean[3] = {100.0f, 200.0f, 300.0f};
+    float audio_std[3] = {1.0f, 2.0f, 3.0f};
+    const float expected_video[8] = {10.0f, 12.0f, 14.0f, 16.0f, 32.0f, 35.0f, 38.0f, 41.0f};
+    const float expected_audio[12] = {
+        100.0f, 103.0f, 202.0f, 208.0f, 306.0f, 315.0f,
+        106.0f, 109.0f, 214.0f, 220.0f, 324.0f, 333.0f,
+    };
+    yvex_runtime_av_unpack_request request = {
+        .schema_version = YVEX_RUNTIME_AV_UNPACK_SCHEMA_V1,
+        .plan = &plan, .video_rows = video_rows, .audio_rows = audio_rows,
+        .video_row_capacity = 8ull, .audio_row_capacity = 12ull,
+        .video_channel_mean = video_mean, .video_channel_std = video_std,
+        .audio_channel_mean = audio_mean, .audio_channel_std = audio_std,
+        .video_channel_count = 2ull, .audio_channel_count = 3ull,
+        .maximum_workspace_bytes = 20ull * sizeof(float),
+        .latent_execution_identity = identity,
+    };
+    float first_video[8], first_audio[12], second_video[8], second_audio[12];
+    float refused_video[8], refused_audio[12];
+    yvex_runtime_av_unpack_output first_output = {first_video, first_audio, 8ull, 12ull};
+    yvex_runtime_av_unpack_output second_output = {second_video, second_audio, 8ull, 12ull};
+    yvex_runtime_av_unpack_output refused_output = {refused_video, refused_audio, 8ull, 12ull};
+    yvex_runtime_av_unpack_result first, second, refused;
+    yvex_error err;
+
+    memcpy(plan.identity, identity, sizeof(identity));
+    YVEX_TEST_ASSERT(
+        yvex_runtime_av_unpack(&request, &first_output, &first, &err) == YVEX_OK &&
+            yvex_runtime_av_unpack(&request, &second_output, &second, &err) == YVEX_OK &&
+            first.complete && first.video_channels == 2ull && first.video_frames == 1ull &&
+            first.video_height == 2ull && first.video_width == 2ull &&
+            first.audio_batch == 2ull && first.audio_channels == 3ull &&
+            first.audio_steps == 2ull && first.peak_workspace_bytes == 20ull * sizeof(float) &&
+            memcmp(first_video, expected_video, sizeof(expected_video)) == 0 &&
+            memcmp(first_audio, expected_audio, sizeof(expected_audio)) == 0 &&
+            memcmp(first_video, second_video, sizeof(first_video)) == 0 &&
+            memcmp(first_audio, second_audio, sizeof(first_audio)) == 0 &&
+            strcmp(first.input_identity, second.input_identity) == 0,
+        "packed audio-video latents unpack, denormalize, and identify deterministically");
+    memset(refused_video, 0x5a, sizeof(refused_video));
+    memset(refused_audio, 0x5a, sizeof(refused_audio));
+    request.maximum_workspace_bytes--;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_av_unpack(&request, &refused_output, &refused, &err) == YVEX_ERR_BOUNDS &&
+            !refused.complete && ((unsigned char *)refused_video)[0] == 0x5a &&
+            ((unsigned char *)refused_audio)[0] == 0x5a,
+        "audio-video unpack refuses insufficient workspace without publication");
+    request.maximum_workspace_bytes++;
+    audio_std[1] = 0.0f;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_av_unpack(&request, &refused_output, &refused, &err) == YVEX_ERR_FORMAT &&
+            !refused.complete && ((unsigned char *)refused_video)[0] == 0x5a,
+        "audio-video unpack refuses invalid source normalization");
+    return 0;
+}
+
 int yvex_test_runtime_latent(void)
 {
     latent_fixture first_fixture = {0}, second_fixture = {0}, cancelled = {.cancelled = 1};
@@ -230,5 +305,6 @@ int yvex_test_runtime_latent(void)
         "paired latent execution refuses an undersized workspace budget");
     if (test_packed_av_layout() != 0) return 1;
     if (test_evaluator_evidence() != 0) return 1;
+    if (test_av_unpack() != 0) return 1;
     return 0;
 }
