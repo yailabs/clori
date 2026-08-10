@@ -54,7 +54,7 @@ static void graph_args_defaults(yvex_graph_args *out) {
     out->media.transformer_blocks = 50ull;
     out->media.seed = 42ull;
     out->media.maximum_host_bytes = 256ull * 1024ull * 1024ull;
-    out->media.maximum_device_bytes = 16ull * 1024ull * 1024ull * 1024ull;
+    out->media.maximum_device_bytes = 4ull * 1024ull * 1024ull * 1024ull;
     out->media.maximum_workspace_bytes = 4ull * 1024ull * 1024ull * 1024ull;
     out->media.maximum_output_bytes = 4ull * 1024ull * 1024ull * 1024ull;
     out->transformer.phase = "prefill";
