@@ -14,6 +14,7 @@
 #include <yvex/internal/execution.h>
 #include <yvex/internal/model.h>
 #include <yvex/registry.h>
+struct yvex_backend_attention_completion;
 #define YVEX_ATTENTION_NO_LAYER (~0ull)
 #define YVEX_ATTENTION_NO_TENSOR_INDEX (~0ull)
 typedef enum {
@@ -166,7 +167,7 @@ typedef struct yvex_attention_workspace_recipe yvex_attention_workspace_recipe;
 int yvex_attention_state_recipe_seal(yvex_attention_state_recipe *recipe,
                                      yvex_error *err);
 typedef struct yvex_attention_publication {
-    int owned, complete, prefix_addressable, device_state_staged;
+    int owned, complete, prefix_addressable, device_state_staged, device_completion_pending;
     struct yvex_attention_workspace *workspace;
     unsigned int evidence_level;
     char execution_identity[YVEX_SHA256_HEX_CAP];
@@ -260,9 +261,10 @@ typedef struct {
     unsigned long long generation;
     int open, active;
 } yvex_attention_workspace_summary;
-int yvex_attention_workspace_open(yvex_attention_workspace **out,
-                                  unsigned long long capacity_bytes,
+int yvex_attention_workspace_open(yvex_attention_workspace **out, unsigned long long capacity_bytes,
                                   yvex_error *err);
+int yvex_attention_deferred_workspace_required(unsigned long long, unsigned long long,
+                                                unsigned long long *, yvex_error *);
 int yvex_attention_workspace_begin(yvex_attention_workspace *workspace,
                                    yvex_error *err);
 unsigned long long yvex_attention_workspace_mark(
@@ -293,6 +295,7 @@ typedef struct {
     yvex_attention_evidence_level evidence_level;
     yvex_execution_class execution_class;
     yvex_attention_workspace *workspace;
+    struct yvex_backend_attention_completion *device_completion;
     const float *input;
     unsigned long long input_stride;
     const yvex_device_tensor *device_input; yvex_device_tensor *device_output;
@@ -576,5 +579,22 @@ int yvex_attention_execute(
     const yvex_attention_execution_request *request,
     yvex_attention_probe_result *result,
     yvex_attention_failure *failure, yvex_error *err);
+int yvex_attention_device_completion_resolve(
+    yvex_backend *backend, struct yvex_backend_attention_completion *completion,
+    yvex_attention_publication *publication, yvex_attention_cpu_result *evidence,
+    const yvex_attention_probe_state_provider *provider,
+    const yvex_attention_cancellation *cancellation, int barrier_observed,
+    char state_delta_identity[YVEX_SHA256_HEX_CAP],
+    yvex_attention_failure *failure, yvex_error *err);
+int yvex_attention_state_provider_abort(
+    const yvex_attention_probe_state_provider *provider, int primary_status,
+    yvex_attention_failure *failure, yvex_error *err);
+int yvex_attention_publication_identity_build(
+    const char *plan_identity, const char *logical_model_identity,
+    const char *input_identity, yvex_attention_operation_scope scope,
+    int candidate_visible, int retain_prefix,
+    yvex_attention_publication *publication);
+void yvex_attention_comparison_failure_publish(
+    yvex_attention_probe_result *result, const yvex_attention_probe_result *candidate);
 
 #endif

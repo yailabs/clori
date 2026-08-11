@@ -106,6 +106,22 @@ struct yvex_runtime_execution_session {
     int state_resolver_attached;
 };
 
+typedef struct {
+    const yvex_attention_state_provider *provider;
+    yvex_runtime_state_residency *residency;
+    yvex_attention_operation_scope operation_scope;
+    yvex_sha256 output_hash;
+    unsigned long long output_values, active_layer_ordinal;
+    unsigned long long pending_layer_ordinal, pending_layer_count;
+    int hash_output, layer_active;
+    char last_delta_identity[YVEX_SHA256_HEX_CAP];
+} runtime_attention_state_bridge;
+
+yvex_attention_probe_state_provider yvex_runtime_private_attention_state_provider(
+    runtime_attention_state_bridge *bridge);
+int yvex_runtime_private_attention_state_abort(
+    void *context, yvex_attention_failure *failure, yvex_error *err);
+
 struct yvex_runtime_cleanup_lease {
     yvex_runtime_model *model;
     yvex_runtime_execution_session *session;

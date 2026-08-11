@@ -11,6 +11,8 @@
 #include <yvex/qtype.h>
 #include <yvex/internal/backend.h>
 #include <yvex/internal/moe.h>
+
+#include "src/backend/cuda/private.h"
 #include "tests/test.h"
 
 static int assert_supported_variant(const yvex_backend *backend,
@@ -442,6 +444,102 @@ static int assert_grouped_moe(yvex_backend *backend)
                      "release grouped MoE fixture ownership");
     return 0;
 }
+
+static int assert_deferred_attention_completion(yvex_backend *backend)
+{
+    yvex_backend_attention_completion completion;
+    float staged = 4.5f, published = -1.0f;
+    int status = 0;
+    yvex_error err;
+    int rc;
+
+    memset(&completion, 0, sizeof(completion));
+    completion.pending = 1;
+    completion.host_status = &status;
+    completion.attention_class = YVEX_BACKEND_ATTENTION_SWA;
+    completion.token_count = 1ull;
+    completion.transfer_count = 1u;
+    completion.transfers[0] = (yvex_backend_attention_completion_transfer){
+        .output = &published,
+        .staged = &staged,
+        .capacity = 1ull,
+        .output_capacity = 1ull,
+        .used = 1ull,
+        .width = sizeof(staged),
+        .stage = "test.cuda.attention.complete"};
+    YVEX_TEST_ASSERT(published == -1.0f,
+                     "deferred attention keeps staged output unpublished");
+    rc = yvex_backend_attention_complete(backend, &completion, 0, &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_OK && !completion.pending && published == staged &&
+            completion.barrier_observed &&
+            completion.output.stream_synchronizations == 1ull &&
+            !completion.output.device_synchronizations,
+        "first deferred attention completion publishes after one stream barrier");
+
+    published = -1.0f;
+    completion.pending = 1;
+    completion.barrier_observed = 0;
+    completion.output.stream_synchronizations = 0ull;
+    rc = yvex_backend_attention_complete(backend, &completion, 1, &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_OK && published == staged && completion.barrier_observed &&
+            !completion.output.stream_synchronizations &&
+            !completion.output.device_synchronizations,
+        "ordered attention completions reuse one already observed barrier");
+
+    completion.pending = 1;
+    completion.transfers[0].output_capacity = 0ull;
+    rc = yvex_backend_attention_complete(backend, &completion, 1, &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_ERR_BOUNDS && !completion.pending &&
+            completion.failure.code == YVEX_BACKEND_ATTENTION_FAILURE_COPY,
+        "deferred attention publication refuses an invalid host extent");
+    completion.transfers[0].output_capacity = 1ull;
+
+    completion.pending = 1;
+    status = 1;
+    rc = yvex_backend_attention_complete(backend, &completion, 1, &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_ERR_FORMAT && !completion.pending &&
+            completion.failure.code == YVEX_BACKEND_ATTENTION_FAILURE_NUMERIC,
+        "deferred attention publication refuses device numerical failure");
+    status = 0;
+
+    return 0;
+}
+
+static int assert_deferred_attention_sync_failure(void)
+{
+    yvex_backend_attention_completion completion = {0};
+    yvex_backend_options options = {0};
+    yvex_backend *backend = NULL;
+    yvex_error err;
+    int status = 0;
+    int rc;
+
+    options.kind = YVEX_BACKEND_KIND_CUDA;
+    YVEX_TEST_ASSERT(yvex_backend_open(&backend, &options, &err) == YVEX_OK,
+                     "open isolated CUDA attention completion backend");
+    completion.pending = 1;
+    completion.host_status = &status;
+    completion.attention_class = YVEX_BACKEND_ATTENTION_SWA;
+    completion.token_count = 1ull;
+    YVEX_TEST_ASSERT(
+        setenv("YVEX_TEST_CUDA_SYNC_FAILURE", "encoded-attention", 1) == 0,
+        "inject deferred attention completion synchronization failure");
+    rc = yvex_backend_attention_complete(backend, &completion, 0, &err);
+    YVEX_TEST_ASSERT(unsetenv("YVEX_TEST_CUDA_SYNC_FAILURE") == 0,
+                     "clear deferred attention synchronization failure");
+    YVEX_TEST_ASSERT(
+        rc == YVEX_ERR_BACKEND && !completion.pending &&
+            !completion.barrier_observed &&
+            completion.failure.code == YVEX_BACKEND_ATTENTION_FAILURE_SYNCHRONIZE,
+        "deferred attention completion fails closed before publication");
+    yvex_backend_close(backend);
+    return 0;
+}
+
 int yvex_cuda_test_info(void)
 {
     yvex_backend *backend = NULL;
@@ -489,6 +587,12 @@ int yvex_cuda_test_info(void)
                          kernel_summary.kernel_bundle_architecture[0] &&
                          yvex_sha256_hex_valid(kernel_summary.cuda_build_identity),
                      "query admitted CUDA kernel image identity");
+    YVEX_TEST_ASSERT(
+        strcmp(yvex_cuda_kernel_function_identity(
+                   yvex_cuda_state(backend),
+                   yvex_cuda_state(backend)->q8_0_tensorcore_rows_function),
+               "yvex_q8_0_tensorcore_rows") == 0,
+        "graph identity resolves the admitted Tensor Core kernel from bundle authority");
     if (required_native && required_native[0]) {
         YVEX_TEST_ASSERT(kernel_summary.kernel_bundle_native,
                          "native CUDA validation refuses a PTX-only bundle");
@@ -562,6 +666,8 @@ int yvex_cuda_test_info(void)
     mapped = NULL;
     YVEX_TEST_ASSERT(assert_grouped_moe(backend) == 0,
                      "grouped direct-address MoE matches audit execution");
+    YVEX_TEST_ASSERT(assert_deferred_attention_completion(backend) == 0,
+                     "deferred attention owns one ordered publication barrier");
     for (rc = 0; rc < (int)YVEX_BACKEND_VARIANT_COUNT; ++rc) {
         YVEX_TEST_ASSERT(assert_supported_variant(
                              backend, (yvex_backend_operation_variant)rc) == 0,
@@ -584,6 +690,9 @@ int yvex_cuda_test_info(void)
             "deferred MoE completion fails closed before physical facts publish");
     }
     yvex_backend_close(backend);
+    backend = NULL;
+    YVEX_TEST_ASSERT(assert_deferred_attention_sync_failure() == 0,
+                     "deferred attention synchronization failure is isolated and typed");
     YVEX_TEST_ASSERT(assert_bundle_rollback(
                          "module",
                          YVEX_BACKEND_CAPABILITY_REASON_KERNEL_BUNDLE_REJECTED,

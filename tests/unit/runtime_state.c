@@ -14,6 +14,7 @@
 #include <yvex/internal/runtime.h>
 
 #include "src/graph/private.h"
+#include "src/runtime/private.h"
 
 typedef struct {
     yvex_attention_publication publication;
@@ -1517,6 +1518,126 @@ static int test_batch_publication_is_atomic(const state_plan_fixture *fixture)
     return 0;
 }
 
+/* A deferred CUDA stack may queue layers, but only ordered completions may stage state. */
+static int test_deferred_state_publication(const state_plan_fixture *fixture)
+{
+    test_state state = {0};
+    state_token token[2];
+    yvex_graph_attention_state_summary summary;
+    yvex_attention_failure failure;
+    runtime_attention_state_bridge bridge = {0};
+    yvex_attention_probe_state_provider provider;
+    yvex_error err;
+    char delta[YVEX_SHA256_HEX_CAP];
+    unsigned long long required;
+    unsigned long long layer;
+    int rc = 0;
+
+    memset(token, 0, sizeof(token));
+    yvex_error_clear(&err);
+    YVEX_TEST_ASSERT(
+        yvex_attention_deferred_workspace_required(
+            2ull, 4096ull, &required, &err) == YVEX_OK && required > 4096ull,
+        "deferred attention capacity includes every retained layer record");
+    YVEX_TEST_ASSERT(
+        yvex_attention_deferred_workspace_required(
+            ULLONG_MAX, ULLONG_MAX, &required, &err) == YVEX_ERR_BOUNDS,
+        "deferred attention capacity refuses arithmetic overflow before mutation");
+    yvex_error_clear(&err);
+    YVEX_TEST_ASSERT(
+        state_open(&state, &fixture->plan, 16ull * 1024ull * 1024ull,
+                   &failure, &err) == YVEX_OK &&
+            state_prepare(&state, &fixture->layers[0],
+                          fixture->plan.summary.attention_plan_identity) &&
+            state_prepare(&state, &fixture->layers[1],
+                          fixture->plan.summary.attention_plan_identity),
+        "deferred state fixture opens two ordered layers");
+    bridge.provider = &state;
+    bridge.operation_scope = YVEX_ATTENTION_OPERATION_CORE;
+    provider = yvex_runtime_private_attention_state_provider(&bridge);
+    for (layer = 0ull; layer < 2ull; ++layer) {
+        const yvex_attention_history_view *history;
+        YVEX_TEST_ASSERT(
+            provider.begin(provider.context, layer, &fixture->layers[layer],
+                           NULL, 0ull, 1ull, NULL, &history,
+                           &failure, &err) == YVEX_OK,
+            "deferred layer begins without waiting for an earlier device completion");
+        YVEX_TEST_ASSERT(
+            history && state_token_open(
+                           &token[layer], &fixture->layers[layer], history, 0ull),
+            "deferred layer retains one complete private publication");
+        token[layer].publication.device_completion_pending = 1;
+        delta[0] = '\0';
+        YVEX_TEST_ASSERT(
+            provider.stage(provider.context, &token[layer].publication, NULL,
+                           delta, &failure, &err) == YVEX_OK && !delta[0],
+            "provisional device publication exposes no state identity");
+    }
+    YVEX_TEST_ASSERT(
+        state_summary(&state, &summary, &err) == YVEX_OK &&
+            summary.transaction_active && !summary.candidate_active &&
+            bridge.pending_layer_count == 2ull && !bridge.layer_active &&
+            !summary.staged_layer_count &&
+            state_view(&state, 0ull,
+                       YVEX_ATTENTION_STATE_VIEW_COMMITTED)->token_count == 0ull &&
+            state_view(&state, 1ull,
+                       YVEX_ATTENTION_STATE_VIEW_COMMITTED)->token_count == 0ull,
+        "queued device publications mutate neither committed nor staged state");
+    token[1].publication.device_completion_pending = 0;
+    YVEX_TEST_ASSERT(
+        provider.stage(provider.context, &token[1].publication, NULL, delta,
+                       &failure, &err) == YVEX_ERR_FORMAT &&
+            provider.abort(provider.context, &failure, &err) == YVEX_OK &&
+            state_summary(&state, &summary, &err) == YVEX_OK &&
+            !summary.transaction_active && !summary.staged_layer_count &&
+            !bridge.pending_layer_count,
+        "out-of-order completion refuses and abort clears every pending layer");
+    for (layer = 0ull; layer < 2ull; ++layer)
+        state_token_release(&token[layer]);
+
+    for (layer = 0ull; layer < 2ull; ++layer) {
+        const yvex_attention_history_view *history;
+        if (provider.begin(provider.context, layer, &fixture->layers[layer],
+                           NULL, 0ull, 1ull, NULL, &history,
+                           &failure, &err) != YVEX_OK)
+            rc = 1;
+        if (rc || !history ||
+            !state_token_open(&token[layer], &fixture->layers[layer], history, 0ull))
+            rc = 1;
+        if (!rc) {
+            token[layer].publication.device_completion_pending = 1;
+            delta[0] = '\0';
+            if (provider.stage(provider.context, &token[layer].publication,
+                               NULL, delta, &failure, &err) != YVEX_OK ||
+                delta[0])
+                rc = 1;
+        }
+    }
+    for (layer = 0ull; !rc && layer < 2ull; ++layer) {
+        token[layer].publication.device_completion_pending = 0;
+        if (provider.stage(provider.context, &token[layer].publication, NULL,
+                           delta, &failure, &err) != YVEX_OK ||
+            !yvex_sha256_hex_valid(delta))
+            rc = 1;
+    }
+    YVEX_TEST_ASSERT(
+        !rc && state_summary(&state, &summary, &err) == YVEX_OK &&
+            !summary.candidate_active && summary.staged_layer_count == 2ull &&
+            summary.staged_batch_complete && !bridge.pending_layer_count &&
+            yvex_sha256_hex_valid(bridge.last_delta_identity) &&
+            state.commit(state.context, &failure, &err) == YVEX_OK &&
+            state_view(&state, 0ull,
+                       YVEX_ATTENTION_STATE_VIEW_COMMITTED)->token_count == 1ull &&
+            state_view(&state, 1ull,
+                       YVEX_ATTENTION_STATE_VIEW_COMMITTED)->token_count == 1ull,
+        "ordered completions stage and publish the complete state batch exactly once");
+    for (layer = 0ull; layer < 2ull; ++layer)
+        state_token_release(&token[layer]);
+    YVEX_TEST_ASSERT(state_close(&state),
+                     "deferred state fixture releases all retained ownership");
+    return 0;
+}
+
 /* Prove aggregate capacity accounting remains distinct from one-layer capture maxima. */
 static int test_summary_capacity_accounting(const state_plan_fixture *fixture)
 {
@@ -2072,6 +2193,7 @@ int yvex_test_runtime_state(void)
     if (test_summary_capacity_accounting(&fixture) != 0) return 1;
     if (test_prepare_failure_is_atomic(&fixture) != 0) return 1;
     if (test_batch_publication_is_atomic(&fixture) != 0) return 1;
+    if (test_deferred_state_publication(&fixture) != 0) return 1;
     YVEX_TEST_ASSERT(state_phase_equivalence(&fixture, 0ull, 6ull),
                      "SWA chunk and ordered decode preserve rollover state exactly");
     YVEX_TEST_ASSERT(state_phase_equivalence(&fixture, 1ull, 2052ull),

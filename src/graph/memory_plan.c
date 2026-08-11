@@ -936,6 +936,14 @@ int yvex_attention_cuda_publish(attention_cuda_context *context)
 {
     unsigned long long q_low, query, raw, output, envelope;
     unsigned long long token;
+    int completion_pending = context->opts->device_completion &&
+                             context->opts->device_completion->pending;
+    if (completion_pending && context->opts->evidence_level != YVEX_ATTENTION_EVIDENCE_NONE)
+        return yvex_attention_cuda_reject(
+            context, YVEX_ATTENTION_FAILURE_BACKEND,
+            YVEX_ATTENTION_EVIDENCE_NONE, context->opts->evidence_level,
+            YVEX_ERR_STATE,
+            "deferred CUDA attention completion requires production evidence scope");
     if (context->cuda_output.tokens_executed != context->token_count ||
         !yvex_core_u64_mul(context->token_count, context->trace.q_rank, &q_low) ||
         !yvex_core_u64_mul(context->token_count, context->trace.query_width, &query) ||
@@ -961,7 +969,8 @@ int yvex_attention_cuda_publish(attention_cuda_context *context)
                                            ? context->layer->head_dimension : 0ull;
     context->trace.indexer_stride = context->trace.indexer_count
                                         ? context->layer->indexer_head_dimension : 0ull;
-    if (context->layer->attention_class == YVEX_ATTENTION_CLASS_CSA) {
+    if (!completion_pending &&
+        context->layer->attention_class == YVEX_ATTENTION_CLASS_CSA) {
         unsigned long long storage_stride = context->trace.topk_stride;
         unsigned long long semantic_stride = context->cuda_output.topk_count;
         if (semantic_stride > storage_stride)
@@ -977,6 +986,7 @@ int yvex_attention_cuda_publish(attention_cuda_context *context)
         context->trace.topk_stride = semantic_stride;
     }
     context->trace.complete = 1;
+    context->trace.device_completion_pending = completion_pending;
     context->result->executed = 1;
     context->result->full_attention = 1;
     context->result->cuda_executed = 1;

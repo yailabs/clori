@@ -642,6 +642,7 @@ static int test_shared_graph_completion(yvex_backend *backend)
     rope_graph_fixture fixture = {0};
     rope_graph_fixture next_piece = {0};
     yvex_error err;
+    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     int device_wide = 1;
     int rc;
 
@@ -680,7 +681,8 @@ static int test_shared_graph_completion(yvex_backend *backend)
     rc = yvex_cuda_launch_synchronize(
         backend, YVEX_BACKEND_VARIANT_ROPE_F32, &device_wide,
         "cuda.test.shared-graph.capture", &err);
-    YVEX_TEST_ASSERT(rc == YVEX_OK && device_wide == 0,
+    YVEX_TEST_ASSERT(rc == YVEX_OK && device_wide == 0 &&
+                         state && !state->shared_stream_in_flight,
                      "shared-stream graph completes through one scoped barrier");
 
     fixture.position = 8ull;
@@ -691,6 +693,7 @@ static int test_shared_graph_completion(yvex_backend *backend)
         &info, &err);
     YVEX_TEST_ASSERT(
         rc == YVEX_OK && info.shared_launch_stream && info.completion_pending &&
+            state->shared_stream_in_flight &&
             info.capture_count == 1ull && info.replay_count == 2ull &&
             info.synchronize_count == 0ull,
         "warm shared-stream replay updates parameters without a graph-local barrier");

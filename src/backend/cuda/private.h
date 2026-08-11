@@ -284,6 +284,7 @@ typedef struct {
     yvex_backend_cuda_graph *parameter_update_owner;
     CUstream capture_stream;
     CUstream execution_stream;
+    int shared_stream_in_flight;
     CUevent timing_start;
     CUevent timing_stop;
     int timing_ready;
@@ -424,7 +425,6 @@ int yvex_cuda_graph_kernel_update(yvex_backend *, yvex_backend_operation_variant
     unsigned int, unsigned int, unsigned int, void **, const char *, yvex_error *);
 int yvex_cuda_attention_graph_key(const yvex_backend *, const yvex_backend_attention_job *,
                                   unsigned int, unsigned int, char[160], yvex_error *);
-/* Derive one representable host byte extent for a CUDA work range. */
 static inline int yvex_cuda_work_checked_bytes(unsigned long long count,
                                                unsigned long long width,
                                                size_t *out) {
@@ -523,6 +523,7 @@ typedef struct {
 } yvex_cuda_attention_operations;
 const yvex_cuda_attention_operations *yvex_cuda_attention_operations_get(void);
 int yvex_cuda_kernel_bundle_admit(yvex_backend *backend, yvex_error *err);
+const char *yvex_cuda_kernel_function_identity(const yvex_cuda_backend_state *, CUfunction);
 int yvex_cuda_kernel_bundle_close(yvex_backend *backend, yvex_error *err);
 int yvex_cuda_query_capability(const yvex_backend *, yvex_backend_operation_variant,
                                yvex_backend_capability_result *, yvex_error *);

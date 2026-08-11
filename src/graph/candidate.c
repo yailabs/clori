@@ -133,6 +133,7 @@ int yvex_attention_candidate_delta_open(
     yvex_attention_publication *copy;
     if (out) *out = NULL;
     if (!out || !publication || !publication->complete ||
+        publication->device_completion_pending ||
         !publication->token_count ||
         !publication->raw_kv || !publication->kv_width ||
         (publication->prefix_addressable &&

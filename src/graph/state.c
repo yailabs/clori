@@ -22,7 +22,7 @@ typedef struct {
     yvex_attention_state_recipe recipe;
     attention_state_bank bank[2];
     unsigned int committed_bank;
-    int prepared, staged, banks_synchronized;
+    int prepared, staged, banks_synchronized, completion_pending;
     yvex_attention_candidate_delta **candidate_deltas;
     unsigned long long candidate_delta_count, candidate_delta_capacity;
     unsigned long long candidate_delta_limit, candidate_delta_bytes;
@@ -67,10 +67,8 @@ static const yvex_graph_attention_state_summary initial_state_summary = {
     .generation = 1ull};
 static void state_close(attention_state **state_ptr);
 #define state_rolling_view yvex_graph_state_rolling_view
-static state_history_span state_history_project(
-    const yvex_attention_history_view *view,
-    const yvex_attention_state_component_recipe *component)
-{
+static state_history_span state_history_project(const yvex_attention_history_view *view,
+    const yvex_attention_state_component_recipe *component) {
     state_history_span span = {0};
     (void)yvex_graph_state_history_project(view, component, &span);
     return span;
@@ -100,8 +98,8 @@ static int state_lock(attention_state *state, unsigned long long layer,
     return state_reject(failure, layer, 1ull, 0ull,
                         "attention state synchronization is unavailable", YVEX_ERR_STATE, err);
 }
-static int state_enter(attention_state *state, unsigned long long layer,
-                       unsigned long long actual, const char *invalid_reason,
+static int state_enter(attention_state *state, unsigned long long layer, unsigned long long actual,
+                       const char *invalid_reason,
                        yvex_attention_failure *failure, yvex_error *err) {
     if (!state)
         return state_reject(failure, layer, 1ull, actual, invalid_reason,
@@ -148,13 +146,11 @@ static void state_bank_release(attention_state_bank *bank) {
 }
 static int state_bank_initial_identity(attention_state_bank *bank,
                                        const attention_layer_state *layer,
-                                       const char *plan_identity)
-{
+                                       const char *plan_identity) {
     return yvex_graph_state_initial_identity(
         &bank->view, &layer->recipe, plan_identity, bank->state_identity);
 }
-static int state_bank_reset(attention_state_bank *bank,
-                            const attention_layer_state *layer,
+static int state_bank_reset(attention_state_bank *bank, const attention_layer_state *layer,
                             const char *plan_identity, yvex_error *err) {
     if (yvex_graph_state_bank_pages_reset(
             bank->components, &bank->view, &layer->recipe, err) != YVEX_OK)
@@ -163,8 +159,7 @@ static int state_bank_reset(attention_state_bank *bank,
         bank->components, &bank->view, &layer->recipe);
     return state_bank_initial_identity(bank, layer, plan_identity);
 }
-static int state_bank_open(attention_state *state,
-                           attention_state_bank *bank,
+static int state_bank_open(attention_state *state, attention_state_bank *bank,
                            attention_layer_state *layer,
                            yvex_attention_failure *failure, yvex_error *err) {
     yvex_error cause;
@@ -224,10 +219,9 @@ static void state_bank_rolling_copy(attention_state_bank *destination,
         *target_view = *source_view;
     }
 }
-static void state_bank_restore_candidate(
-    attention_state_bank *candidate, const attention_state_bank *committed,
-    attention_layer_state *layer)
-{
+static void state_bank_restore_candidate(attention_state_bank *candidate,
+    const attention_state_bank *committed,
+    attention_layer_state *layer) {
     unsigned long long added = 0ull;
     unsigned int component;
     for (component = 0u; component < layer->candidate_delta_count; ++component)
@@ -280,10 +274,9 @@ static void state_bank_restore_candidate(
            sizeof(candidate->state_identity));
     layer->banks_synchronized = 1;
 }
-static int state_bank_advance_identity(
-    attention_state_bank *bank, const attention_layer_state *layer,
-    const char *plan_identity, const yvex_attention_publication *publication)
-{
+static int state_bank_advance_identity(attention_state_bank *bank,
+    const attention_layer_state *layer,
+    const char *plan_identity, const yvex_attention_publication *publication) {
     yvex_attention_publication adjusted = *publication;
     if (!publication->token_ids)
         adjusted.token_position = bank->view.token_count - publication->token_count;
@@ -292,8 +285,7 @@ static int state_bank_advance_identity(
         bank->state_identity);
 }
 /* Layout identity covers geometry but never mutable history values or addresses. */
-static int state_layout_identity(const attention_state *state,
-                                 unsigned long long candidate_index,
+static int state_layout_identity(const attention_state *state, unsigned long long candidate_index,
                                  const attention_layer_state *candidate,
                                  char output[YVEX_SHA256_HEX_CAP]) {
     const yvex_attention_summary *summary = yvex_attention_plan_summary(state->plan);
@@ -329,9 +321,7 @@ static int state_layout_identity(const attention_state *state,
 }
 static int state_content_identity(const attention_state *state,
                                   unsigned long long candidate_index,
-                                  const attention_layer_state *candidate,
-                                  int staged,
-                                  const char *layout_identity,
+                                  const attention_layer_state *candidate, int staged, const char *layout_identity,
                                   char output[YVEX_SHA256_HEX_CAP]) {
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
@@ -359,8 +349,7 @@ static int state_content_identity(const attention_state *state,
     yvex_sha256_hex(digest, output);
     return 1;
 }
-static int state_rolling_apply(yvex_attention_rolling_state_view *view,
-                               float *kv, float *score,
+static int state_rolling_apply(yvex_attention_rolling_state_view *view, float *kv, float *score,
                                const yvex_attention_rolling_state_output *output) {
     if (!output->present) return !view->present;
     if (!view->present || !kv || !score || !output->kv_state ||
@@ -391,8 +380,7 @@ static const yvex_attention_state_component_recipe *state_component_recipe_find(
             return &layer->recipe.components[index];
     return NULL;
 }
-static state_history_span state_publication_history(
-    const yvex_attention_publication *publication,
+static state_history_span state_publication_history(const yvex_attention_publication *publication,
     yvex_attention_state_binding binding) {
     switch (binding) {
     case YVEX_ATTENTION_STATE_BINDING_LOCAL_HISTORY:
@@ -422,10 +410,9 @@ static unsigned long long *state_history_count(
         return &view->indexer_entry_count;
     return NULL;
 }
-static int state_history_prepare_deltas(
-    attention_state_bank *bank, const attention_layer_state *layer,
-    yvex_error *err)
-{
+static int state_history_prepare_deltas(attention_state_bank *bank,
+    const attention_layer_state *layer,
+    yvex_error *err) {
     yvex_attention_publication aggregate = {0};
     const yvex_attention_publication *single[1] = {&aggregate};
     unsigned long long index;
@@ -540,12 +527,9 @@ static void state_history_append(attention_state_bank *bank,
         }
     }
 }
-static int state_bank_apply_publication(
-    attention_state *state, attention_layer_state *layer,
-    attention_state_bank *candidate,
-    const yvex_attention_publication *publication,
-    yvex_attention_failure *failure, yvex_error *err)
-{
+static int state_bank_apply_publication(attention_state *state, attention_layer_state *layer,
+    attention_state_bank *candidate, const yvex_attention_publication *publication,
+    yvex_attention_failure *failure, yvex_error *err) {
     unsigned int component;
     const yvex_attention_publication *publications[1] = {publication};
     if (yvex_graph_state_pages_prepare_publications(
@@ -591,10 +575,9 @@ static int state_bank_apply_publication(
             "attention candidate state identity failed", YVEX_ERR_STATE, err);
     return YVEX_OK;
 }
-static int state_layer_delta_projection_validate(
-    const attention_layer_state *layer, const attention_state_bank *committed,
-    yvex_error *err)
-{
+static int state_layer_delta_projection_validate(const attention_layer_state *layer,
+    const attention_state_bank *committed,
+    yvex_error *err) {
     unsigned int index;
     unsigned long long expected = committed->view.token_count;
     for (index = 0u; index < layer->candidate_delta_count; ++index) {
@@ -670,8 +653,7 @@ static int state_delta_identity(attention_state_transaction *transaction) {
     yvex_sha256_hex(digest, transaction->delta.state_delta_identity);
     return 1;
 }
-static int state_open(
-    attention_state **out, const yvex_attention_plan *plan,
+static int state_open(attention_state **out, const yvex_attention_plan *plan,
     unsigned long long maximum_host_bytes,
     yvex_attention_failure *failure, yvex_error *err) {
     attention_state *state;
@@ -729,10 +711,9 @@ static int state_open(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-static int state_configure_pages(
-    attention_state *state, const yvex_execution_capacity_plan *capacity,
-    yvex_attention_failure *failure, yvex_error *err)
-{
+static int state_configure_pages(attention_state *state,
+    const yvex_execution_capacity_plan *capacity,
+    yvex_attention_failure *failure, yvex_error *err) {
     char layout_identity[YVEX_SHA256_HEX_CAP];
     char content_identity[YVEX_SHA256_HEX_CAP];
     unsigned long long generation;
@@ -808,8 +789,7 @@ static int state_configure_pages(
 done:
     return state_unlock_result(state, rc, failure, err);
 }
-static int state_prepare(
-    attention_state *state, unsigned long long layer_index,
+static int state_prepare(attention_state *state, unsigned long long layer_index,
     const yvex_attention_state_recipe *recipe,
     const yvex_attention_history_view *initial_history,
     yvex_attention_failure *failure, yvex_error *err) {
@@ -946,8 +926,8 @@ static int state_prepare(
 done:
     return state_unlock_result(state, rc, failure, err);
 }
-static const yvex_attention_history_view *state_view(
-    const attention_state *state, unsigned long long layer_index,
+static const yvex_attention_history_view *state_view(const attention_state *state,
+    unsigned long long layer_index,
     yvex_attention_state_view_kind kind) {
     attention_state *mutable_state = (attention_state *)state;
     const attention_layer_state *layer;
@@ -971,8 +951,7 @@ static const yvex_attention_history_view *state_view(
     (void)pthread_mutex_unlock(&mutable_state->mutex);
     return view;
 }
-static int state_summary_add(unsigned long long entries,
-                             unsigned long long capacity,
+static int state_summary_add(unsigned long long entries, unsigned long long capacity,
                              yvex_graph_attention_state_component_summary *summary) {
     if (!yvex_core_u64_add(summary->entry_count, entries,
                            &summary->entry_count) ||
@@ -983,8 +962,7 @@ static int state_summary_add(unsigned long long entries,
         summary->maximum_capacity = capacity;
     return 1;
 }
-static int state_identity_copy(
-    attention_state *state, unsigned long long layer_index,
+static int state_identity_copy(attention_state *state, unsigned long long layer_index,
     char output[YVEX_SHA256_HEX_CAP], yvex_error *err) {
     attention_layer_state *layer;
     if (output) output[0] = '\0';
@@ -1008,8 +986,7 @@ static int state_identity_copy(
     yvex_core_text_copy(output, YVEX_SHA256_HEX_CAP, layer->bank[layer->committed_bank].state_identity);
     return state_unlock_result(state, YVEX_OK, NULL, err);
 }
-static int state_summary_copy(
-    const attention_state *state,
+static int state_summary_copy(const attention_state *state,
     yvex_graph_attention_state_summary *out, yvex_error *err) {
     attention_state *mutable_state = (attention_state *)state;
     yvex_graph_state_page_summary pages;
@@ -1105,8 +1082,7 @@ static int state_summary_copy(
     }
     return state_unlock_result(mutable_state, YVEX_OK, NULL, err);
 }
-static void state_candidate_deltas_close(attention_state *state)
-{
+static void state_candidate_deltas_close(attention_state *state) {
     unsigned long long index;
     unsigned long long delta;
     if (!state) return;
@@ -1146,7 +1122,8 @@ static int state_begin(
     }
     layer = &state->layers[layer_index];
     extending = state->transaction.active && state->transaction.prefix_selected;
-    if (!layer->prepared || state->transaction.candidate_active ||
+    if (!layer->prepared || layer->completion_pending ||
+        state->transaction.candidate_active ||
         state->transaction.failed || layer->staged || state->summary.cancelled ||
         state->summary.invalidated || !state->summary.position_consistent ||
         (!extending && !layer->banks_synchronized) ||
@@ -1158,6 +1135,8 @@ static int state_begin(
                                     ? "attention state provider is cancelled"
                               : !layer->prepared
                                     ? "attention state layer is not prepared"
+                              : layer->completion_pending
+                                    ? "attention state layer completion is pending"
                               : state->transaction.candidate_active
                                     ? "another attention state candidate is active"
                               : state->transaction.failed
@@ -1288,9 +1267,7 @@ static int state_candidate_delta_reserve(
                &layer->candidate_delta_bytes,
                layer->candidate_delta_limit, err) == YVEX_OK;
 }
-static int state_apply(
-    attention_state *state,
-    const yvex_attention_publication *publication,
+static int state_apply(attention_state *state, const yvex_attention_publication *publication,
     const yvex_attention_cancellation *cancellation,
     char delta_identity_output[YVEX_SHA256_HEX_CAP],
     yvex_attention_failure *failure, yvex_error *err) {
@@ -1304,6 +1281,30 @@ static int state_apply(
                      "attention state provider is required", failure, err);
     if (rc != YVEX_OK) return rc;
     transaction = &state->transaction;
+    if (transaction->active && !transaction->candidate_active && !transaction->failed && publication &&
+        !publication->device_completion_pending) {
+        unsigned long long ordinal;
+        for (ordinal = 0ull; ordinal < state->layer_count; ++ordinal)
+            if (state->layers[ordinal].completion_pending) break;
+        if (ordinal < state->layer_count && state->layers[ordinal].plan.layer_index ==
+                                                publication->layer_index) {
+            attention_state_bank *base;
+            layer = &state->layers[ordinal];
+            base = &layer->bank[layer->committed_bank];
+            transaction->candidate_active = 1;
+            transaction->layer = layer;
+            transaction->layer_ordinal = ordinal;
+            transaction->token_position = publication->token_position;
+            transaction->token_count = publication->token_count;
+            transaction->applied_tokens = 0ull;
+            transaction->delta.layer_index = ordinal;
+            transaction->delta.token_position = publication->token_position;
+            transaction->delta.token_count = publication->token_count;
+            transaction->delta.requires_commit = 1;
+            yvex_core_text_copy(transaction->delta.prior_state_identity,
+                sizeof(transaction->delta.prior_state_identity), base->state_identity);
+        }
+    }
     if (!transaction->active || !transaction->candidate_active || transaction->failed ||
         !state_publication_validate(transaction, publication)) {
         if (transaction->active) transaction->failed = 1;
@@ -1323,6 +1324,11 @@ static int state_apply(
         goto done;
     }
     layer = transaction->layer;
+    if (publication->device_completion_pending) {
+        layer->completion_pending = 1;
+        state_candidate_clear(transaction);
+        goto done;
+    }
     committed = &layer->bank[layer->committed_bank];
     candidate = &layer->bank[1u - layer->committed_bank];
     if (!state_candidate_delta_reserve(state, layer, err) ||
@@ -1365,6 +1371,7 @@ static int state_apply(
         }
         transaction->staged_count = next;
         transaction->layer->staged = 1;
+        transaction->layer->completion_pending = 0;
         state_candidate_clear(transaction);
     }
 done:
@@ -1374,8 +1381,7 @@ done:
 static int state_select_prefix(
     attention_state *state, unsigned long long prefix_count,
     unsigned long long extension_count,
-    yvex_attention_failure *failure, yvex_error *err)
-{
+    yvex_attention_failure *failure, yvex_error *err) {
     attention_state_transaction *transaction;
     unsigned long long index, staged = 0ull, final_count;
     int rc = YVEX_OK;
@@ -1585,6 +1591,7 @@ static int state_abort(
                 &layer->bank[1u - layer->committed_bank],
                 &layer->bank[layer->committed_bank], layer);
         layer->staged = 0;
+        layer->completion_pending = 0;
     }
     state_candidate_deltas_close(state);
     memset(&state->transaction, 0, sizeof(state->transaction));
@@ -1665,8 +1672,7 @@ done:
 }
 static int state_restore(
     attention_state *state, const yvex_attention_state_checkpoint *checkpoint,
-    yvex_attention_failure *failure, yvex_error *err)
-{
+    yvex_attention_failure *failure, yvex_error *err) {
     unsigned long long index, generation;
     char content_identity[YVEX_SHA256_HEX_CAP];
     int rc;
@@ -1832,10 +1838,9 @@ static int provider_persistent_prepare(void *context, unsigned long long layer_i
     return state_prepare((attention_state *)context, layer_index, recipe, initial_history,
                          failure, err);
 }
-static int provider_persistent_configure_pages(
-    void *context, const yvex_execution_capacity_plan *capacity,
-    yvex_attention_failure *failure, yvex_error *err)
-{
+static int provider_persistent_configure_pages(void *context,
+    const yvex_execution_capacity_plan *capacity,
+    yvex_attention_failure *failure, yvex_error *err) {
     return state_configure_pages(
         (attention_state *)context, capacity, failure, err);
 }
@@ -1843,15 +1848,12 @@ static int provider_persistent_summary(void *context, yvex_graph_attention_state
                                       yvex_error *err) {
     return state_summary_copy((const attention_state *)context, out, err);
 }
-static const yvex_execution_capacity_plan *provider_persistent_capacity(
-    void *context)
-{
+static const yvex_execution_capacity_plan *provider_persistent_capacity(void *context) {
     const attention_state *state = (const attention_state *)context;
     return state && state->paging_configured ? &state->capacity_plan : NULL;
 }
 static const yvex_attention_state_recipe *provider_persistent_recipe(
-    void *context, unsigned long long layer_index)
-{
+    void *context, unsigned long long layer_index) {
     const attention_state *state = (const attention_state *)context;
     return state && layer_index < state->layer_count &&
                    state->layers[layer_index].prepared
@@ -1894,19 +1896,16 @@ static int provider_persistent_begin(void *context, unsigned long long layer_ord
     }
     return rc;
 }
-static int provider_persistent_stage(void *context,
-    const yvex_attention_publication *publication,
+static int provider_persistent_stage(void *context, const yvex_attention_publication *publication,
     const yvex_attention_cancellation *cancellation,
     char state_delta_identity[YVEX_SHA256_HEX_CAP],
     yvex_attention_failure *failure, yvex_error *err) {
     return state_apply((attention_state *)context, publication, cancellation,
                        state_delta_identity, failure, err);
 }
-static int provider_persistent_select_prefix(
-    void *context, unsigned long long prefix_count,
+static int provider_persistent_select_prefix(void *context, unsigned long long prefix_count,
     unsigned long long extension_count, yvex_attention_failure *failure,
-    yvex_error *err)
-{
+    yvex_error *err) {
     return state_select_prefix((attention_state *)context, prefix_count,
                                extension_count, failure, err);
 }
@@ -1932,10 +1931,9 @@ static int provider_persistent_reset(void *context, yvex_attention_failure *fail
                                     yvex_error *err) {
     return state_reset((attention_state *)context, failure, err);
 }
-static int provider_persistent_restore(
-    void *context, const yvex_attention_state_checkpoint *checkpoint,
-    yvex_attention_failure *failure, yvex_error *err)
-{
+static int provider_persistent_restore(void *context,
+    const yvex_attention_state_checkpoint *checkpoint,
+    yvex_attention_failure *failure, yvex_error *err) {
     return state_restore((attention_state *)context, checkpoint, failure, err);
 }
 static int provider_persistent_invalidate(void *context, yvex_error *err) {

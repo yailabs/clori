@@ -1524,6 +1524,45 @@ int main(int argc, char **argv)
              index < production.result.sampled_token_count; ++index)
             printf("%s%u", index ? "," : "", production.tokens[index].sampled_token_id);
         printf("\n");
+        printf(
+            "generation_profile identity=%s kernel_launches=%llu graph_launches=%llu "
+            "graph_captures=%llu graph_replays=%llu stream_syncs=%llu event_syncs=%llu "
+            "device_syncs=%llu h2d_bytes=%llu d2h_bytes=%llu d2d_bytes=%llu "
+            "target_forwards=%llu target_rows=%llu row_expert_pairs=%llu "
+            "unique_experts=%llu expert_bytes=%llu output_head_rows=%llu "
+            "logits_d2h_bytes=%llu replayed_accepted_rows=%llu "
+            "attention_ns=%llu moe_ns=%llu output_sampling_ns=%llu sync_wait_ns=%llu "
+            "prefill_ns=%llu first_decode_ns=%llu subsequent_decode_ns=%llu "
+            "generation_ns=%llu\n",
+            production.result.profile.profile_identity,
+            production.result.profile.counters[YVEX_RUNTIME_PROFILE_KERNEL_LAUNCHES],
+            production.result.profile.counters[YVEX_RUNTIME_PROFILE_GRAPH_LAUNCHES],
+            production.result.profile.counters[YVEX_RUNTIME_PROFILE_GRAPH_CAPTURES],
+            production.result.profile.counters[YVEX_RUNTIME_PROFILE_GRAPH_REPLAYS],
+            production.result.profile.counters[YVEX_RUNTIME_PROFILE_STREAM_SYNCHRONIZATIONS],
+            production.result.profile.counters[YVEX_RUNTIME_PROFILE_EVENT_SYNCHRONIZATIONS],
+            production.result.profile.counters[YVEX_RUNTIME_PROFILE_DEVICE_SYNCHRONIZATIONS],
+            production.result.profile.counters[YVEX_RUNTIME_PROFILE_H2D_BYTES],
+            production.result.profile.counters[YVEX_RUNTIME_PROFILE_D2H_BYTES],
+            production.result.profile.counters[YVEX_RUNTIME_PROFILE_D2D_BYTES],
+            production.result.profile.counters[YVEX_RUNTIME_PROFILE_TARGET_FORWARDS],
+            production.result.profile.counters[YVEX_RUNTIME_PROFILE_TARGET_ROWS],
+            production.result.profile.counters[YVEX_RUNTIME_PROFILE_ROW_EXPERT_PAIRS],
+            production.result.profile.counters[YVEX_RUNTIME_PROFILE_UNIQUE_EXPERTS],
+            production.result.profile.counters[YVEX_RUNTIME_PROFILE_EXPERT_BYTES],
+            production.result.profile.counters[YVEX_RUNTIME_PROFILE_OUTPUT_HEAD_ROWS],
+            production.result.profile.counters[YVEX_RUNTIME_PROFILE_LOGITS_D2H_BYTES],
+            production.result.profile.counters[
+                YVEX_RUNTIME_PROFILE_REPLAYED_ACCEPTED_TARGET_ROWS],
+            production.result.profile.phase_ns[YVEX_RUNTIME_PROFILE_ATTENTION],
+            production.result.profile.phase_ns[YVEX_RUNTIME_PROFILE_MOE_TOTAL],
+            production.result.profile.phase_ns[YVEX_RUNTIME_PROFILE_OUTPUT_HEAD] +
+                production.result.profile.phase_ns[YVEX_RUNTIME_PROFILE_SAMPLING],
+            production.result.profile.phase_ns[YVEX_RUNTIME_PROFILE_SYNCHRONIZATION_WAIT],
+            production.result.profile.phase_ns[YVEX_RUNTIME_PROFILE_TOTAL_PREFILL],
+            production.result.profile.phase_ns[YVEX_RUNTIME_PROFILE_FIRST_DECODE],
+            production.result.profile.phase_ns[YVEX_RUNTIME_PROFILE_SUBSEQUENT_DECODE],
+            production.result.profile.phase_ns[YVEX_RUNTIME_PROFILE_TOTAL_GENERATION]);
     }
     yvex_runtime_model_close(&model);
     return rc == YVEX_OK ? 0 : 1;

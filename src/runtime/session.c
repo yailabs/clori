@@ -146,6 +146,8 @@ static int runtime_session_workspace_requirements(
     yvex_attention_execution_mode graph_mode;
     yvex_attention_operation_scope graph_scope;
     unsigned long long count = yvex_attention_plan_layer_count(attention), index;
+    unsigned long long deferred_staging = 0ull;
+    int deferred;
     memset(requirements, 0, sizeof(*requirements));
     if (!summary || !graph ||
         strcmp(summary->attention_plan_identity,
@@ -157,6 +159,8 @@ static int runtime_session_workspace_requirements(
         return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_WORKSPACE_REQUEST, 1ull, 0ull, err);
     graph_mode = graph_modes[mode];
     graph_scope = graph_scopes[scope];
+    deferred = yvex_backend_kind_of(session->backend) == YVEX_BACKEND_KIND_CUDA &&
+               evidence_level == YVEX_ATTENTION_EVIDENCE_NONE;
     for (index = 0ull; index < count; ++index) {
         const yvex_attention_layer_plan *layer =
             yvex_attention_plan_layer_at(attention, index);
@@ -183,8 +187,21 @@ static int runtime_session_workspace_requirements(
         if (rc == YVEX_OK)
             rc = yvex_backend_attention_workspace_required_from_recipe(&recipe, &layer_bytes, err);
         if (rc != YVEX_OK) return rc;
-        if (layer_bytes > requirements->required) requirements->required = layer_bytes;
+        if (deferred) {
+            if (!yvex_core_u64_add(deferred_staging, layer_bytes,
+                                   &deferred_staging)) {
+                yvex_error_set(err, YVEX_ERR_BOUNDS, "runtime.session.workspace",
+                               "deferred attention staging extent overflowed");
+                return YVEX_ERR_BOUNDS;
+            }
+        } else if (layer_bytes > requirements->required) {
+            requirements->required = layer_bytes;
+        }
     }
+    if (deferred && yvex_attention_deferred_workspace_required(
+                        count, deferred_staging, &requirements->required,
+                        err) != YVEX_OK)
+        return yvex_error_code(err);
     if (minimum_bytes > requirements->required) requirements->required = minimum_bytes;
     /* The session owns one physical arena for both target and draft plans. Rebinding a
      * smaller logical recipe must not resize or duplicate that arena. */

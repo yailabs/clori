@@ -1519,6 +1519,7 @@ yvex_attention_cuda_activation_project(
 context->job.input = context->opts->input;
 context->job.device_input = context->opts->device_input;
 context->job.device_output = context->opts->device_output;
+context->job.device_completion = context->opts->device_completion;
 context->job.local_kv = context->history->local_kv;
 context->job.local_positions = context->history->local_positions;
 context->job.local_count = context->history->local_tail_count;

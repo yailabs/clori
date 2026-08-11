@@ -77,6 +77,7 @@ typedef int (*yvex_backend_cancelled_fn)(void *context);
 typedef struct { yvex_backend_cancelled_fn requested; void *context; } yvex_backend_cancellation;
 typedef struct { float *data; unsigned long long capacity; } yvex_backend_float_span;
 typedef struct { unsigned long long *data, capacity; } yvex_backend_u64_span;
+typedef struct yvex_backend_attention_completion yvex_backend_attention_completion;
 typedef struct {
     int present, overlap;
     unsigned long long next_token_position, ratio, head_dimension, state_width, state_slots;
@@ -109,6 +110,7 @@ typedef struct {
     unsigned long long indexer_count, indexer_stride;
     yvex_backend_attention_rolling main_rolling, indexer_rolling;
     const yvex_backend_cancellation *cancellation;
+    yvex_backend_attention_completion *device_completion;
     unsigned int evidence_level;
     int candidate_block_visible, retain_prefix_checkpoints, native_execution;
     unsigned long long max_host_bytes, max_device_bytes;
@@ -149,6 +151,25 @@ typedef struct {
     const char *stage;
     unsigned long long expected, actual;
 } yvex_backend_attention_failure;
+#define YVEX_BACKEND_ATTENTION_COMPLETION_TRANSFER_CAP 20u
+typedef struct {
+    void *output, *staged;
+    unsigned long long capacity, output_capacity, used;
+    size_t width;
+    const char *stage;
+} yvex_backend_attention_completion_transfer;
+struct yvex_backend_attention_completion {
+    int defer, stack_start, pending, barrier_observed;
+    yvex_backend_attention_output output;
+    yvex_backend_attention_failure failure;
+    int *host_status;
+    unsigned long long *host_selected_counts, *host_candidate_counts;
+    unsigned int attention_class;
+    unsigned long long token_count, indexer_topk, candidate_capacity;
+    unsigned int transfer_count;
+    yvex_backend_attention_completion_transfer
+        transfers[YVEX_BACKEND_ATTENTION_COMPLETION_TRANSFER_CAP];
+};
 #define YVEX_BACKEND_BANDWIDTH_SCHEMA_V1 1u
 #define YVEX_BACKEND_BANDWIDTH_SAMPLE_COUNT 5u
 typedef struct {
@@ -164,6 +185,9 @@ typedef struct {
 int yvex_backend_attention_execute(yvex_backend *backend, const yvex_backend_attention_job *job,
                                    yvex_backend_attention_output *output,
                                    yvex_backend_attention_failure *failure, yvex_error *err);
+int yvex_backend_attention_complete(yvex_backend *backend,
+                                    yvex_backend_attention_completion *completion,
+                                    int barrier_observed, yvex_error *err);
 
 /* A family compiler supplies this complete text-stack geometry and semantic identity. The CUDA
  * operation executes it without recovering a source architecture or selecting family policy. */

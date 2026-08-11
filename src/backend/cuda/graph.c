@@ -72,6 +72,14 @@ struct yvex_backend_cuda_graph {
 static int graph_info(const yvex_backend_cuda_graph *graph,
                       yvex_backend_cuda_graph_info *out, yvex_error *err);
 static int graph_release(yvex_backend_cuda_graph **graph, yvex_error *err);
+
+static void graph_shared_completion_refresh(yvex_backend_cuda_graph *graph)
+{
+    const yvex_cuda_backend_state *state =
+        graph && graph->backend ? yvex_cuda_state(graph->backend) : NULL;
+    if (graph && !graph->stream_owned && state && !state->shared_stream_in_flight)
+        graph->in_flight = 0;
+}
 static const char *const graph_reason_names[] = {
     "none", "not-cuda", "context-unavailable", "backend-failed",
     "stream-api-unavailable", "graph-api-unavailable", "update-api-unavailable", "busy",
@@ -207,41 +215,13 @@ static int identity_finish(yvex_sha256 *sha, char output[65], yvex_error *err)
     return YVEX_OK;
 }
 
-static const char *kernel_function_identity(const yvex_cuda_backend_state *state,
-                                            CUfunction function)
-{
-#define MATCH(MEMBER) if (function == state->MEMBER) return #MEMBER
-    MATCH(embed_function); MATCH(embed_f16_function); MATCH(rms_norm_f32_function);
-    MATCH(rms_norm_f16_function); MATCH(rope_function); MATCH(matmul_function);
-    MATCH(qtype_row_dot_function); MATCH(attention_bf16_round_function);
-    MATCH(qtype_matvec_function); MATCH(qtype_split_matvec_function);
-    MATCH(qtype_gather_function); MATCH(q8_quantize_function);
-    MATCH(encoded_row_decode_function); MATCH(attention_weighted_norm_function);
-    MATCH(attention_unit_norm_function); MATCH(attention_yarn_rope_function);
-    MATCH(attention_activation_quantize_function); MATCH(residual_mhc_pre_function);
-    MATCH(residual_mhc_post_function); MATCH(transformer_feature_mean_function);
-    MATCH(transformer_final_function);
-    MATCH(attention_rolling_state_function);
-    MATCH(attention_topk_function); MATCH(attention_reduce_function);
-    MATCH(argmax_f32_function); MATCH(sample_stochastic_f32_function);
-    MATCH(speculation_stochastic_f32_function);
-    MATCH(moe_route_function); MATCH(moe_route_rows_function); MATCH(moe_pair_order_function);
-    MATCH(moe_grouped_up_function); MATCH(moe_grouped_down_function);
-    MATCH(moe_grouped_up_rows_function); MATCH(moe_grouped_down_rows_function);
-    MATCH(moe_reduce_rows_function); MATCH(moe_combine_rows_function);
-    MATCH(moe_swiglu_function); MATCH(moe_accumulate_function);
-    MATCH(mlp_function); MATCH(attention_function);
-#undef MATCH
-    return NULL;
-}
-
 static int kernel_signature(const yvex_backend *backend, yvex_backend_operation_variant variant,
                             CUfunction function, unsigned int grid, unsigned int block,
                             unsigned int shared_bytes,
                             const char *stage, char output[65], yvex_error *err)
 {
     const yvex_cuda_backend_state *state = yvex_cuda_state(backend);
-    const char *function_identity = state ? kernel_function_identity(state, function) : NULL;
+    const char *function_identity = yvex_cuda_kernel_function_identity(state, function);
     yvex_sha256 sha;
     if (!state || !function_identity || !stage || !stage[0] || !grid || !block ||
         !yvex_sha256_hex_valid(state->kernel_bundle_identity)) {
@@ -1114,6 +1094,8 @@ static int graph_launch(yvex_backend_cuda_graph *graph, yvex_error *err)
         rc = yvex_cuda_status(&state->driver,
                               state->driver.cuGraphLaunch(graph->exec, graph->stream),
                               "cuda.graph.launch", err);
+        if (rc == YVEX_OK && !graph->stream_owned)
+            state->shared_stream_in_flight = 1;
     }
     if (rc != YVEX_OK) {
         graph_mark_failed(graph, YVEX_BACKEND_CUDA_GRAPH_REASON_LAUNCH_FAILED);
@@ -1162,6 +1144,7 @@ static int graph_quiesce(yvex_backend_cuda_graph *graph, yvex_error *err)
 {
     yvex_cuda_backend_state *state;
     int rc;
+    graph_shared_completion_refresh(graph);
     if (!graph->in_flight)
         return YVEX_OK;
     state = yvex_cuda_state(graph->backend);
@@ -1175,6 +1158,7 @@ static int graph_quiesce(yvex_backend_cuda_graph *graph, yvex_error *err)
                               "cuda.graph.quiesce", err);
     if (rc != YVEX_OK) return graph_cleanup_result(graph, rc);
     graph->in_flight = 0;
+    if (!graph->stream_owned) state->shared_stream_in_flight = 0;
     graph->synchronize_count++;
     return YVEX_OK;
 }
@@ -1307,6 +1291,7 @@ int yvex_cuda_graph_execute(yvex_backend *backend, const char *compatibility_ide
     rc = backend_dispatch_admit(backend, "cuda.graph.execute", err);
     if (rc != YVEX_OK) return rc;
     graph = graph_find(state, compatibility_identity, shared_launch_stream);
+    graph_shared_completion_refresh(graph);
     if (graph && graph->state != YVEX_BACKEND_CUDA_GRAPH_INSTANTIATED &&
         graph->state != YVEX_BACKEND_CUDA_GRAPH_OPEN &&
         graph->state != YVEX_BACKEND_CUDA_GRAPH_INVALIDATED) {
@@ -1325,8 +1310,7 @@ int yvex_cuda_graph_execute(yvex_backend *backend, const char *compatibility_ide
             return rc;
         created = 1;
     }
-    if ((graph->state != YVEX_BACKEND_CUDA_GRAPH_INSTANTIATED || graph->update_requested) &&
-        graph->in_flight) {
+    if (graph->in_flight) {
         rc = graph_quiesce(graph, err);
         if (rc != YVEX_OK) goto failed;
     }
@@ -1614,6 +1598,8 @@ static int graph_invalidate(yvex_backend_cuda_graph *graph, yvex_error *err)
 static int graph_info(const yvex_backend_cuda_graph *graph,
                       yvex_backend_cuda_graph_info *out, yvex_error *err)
 {
+    const yvex_cuda_backend_state *state =
+        graph && graph->backend ? yvex_cuda_state(graph->backend) : NULL;
     if (!graph || !out) {
         return graph_reject(err, YVEX_ERR_INVALID_ARG, "cuda.graph.info",
                             "graph and info output are required");
@@ -1625,7 +1611,9 @@ static int graph_info(const yvex_backend_cuda_graph *graph,
     out->capture_mode = graph->capture_mode;
     out->uploaded = graph->uploaded;
     out->shared_launch_stream = !graph->stream_owned;
-    out->completion_pending = graph->in_flight;
+    out->completion_pending = graph->in_flight &&
+                              (graph->stream_owned ||
+                               (state && state->shared_stream_in_flight));
     out->inventory = graph->inventory;
     out->capture_count = graph->capture_count;
     out->instantiate_count = graph->instantiate_count;

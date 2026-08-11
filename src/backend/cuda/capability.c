@@ -127,6 +127,18 @@ static CUfunction *cuda_function_slot(yvex_cuda_backend_state *state, size_t off
     return (CUfunction *)((unsigned char *)state + offset);
 }
 
+const char *yvex_cuda_kernel_function_identity(
+    const yvex_cuda_backend_state *state, CUfunction function)
+{
+    size_t index;
+    if (!state || !function) return NULL;
+    for (index = 0u; index < CUDA_KERNEL_BINDING_COUNT; ++index)
+        if (*cuda_function_slot((yvex_cuda_backend_state *)state,
+                                cuda_kernel_bindings[index].state_offset) == function)
+            return cuda_kernel_bindings[index].symbol;
+    return NULL;
+}
+
 static void cuda_bundle_clear_handles(yvex_cuda_backend_state *state)
 {
     size_t index;
@@ -635,7 +647,9 @@ int yvex_cuda_synchronize(yvex_backend *backend,
         return YVEX_ERR_BACKEND;
     }
     rc = yvex_cuda_status(&state->driver, state->driver.cuCtxSynchronize(), where, err);
-    if (rc != YVEX_OK) {
+    if (rc == YVEX_OK) {
+        state->shared_stream_in_flight = 0;
+    } else {
         cuda_capability_fail(backend, variant,
                              YVEX_BACKEND_CAPABILITY_REASON_SYNCHRONIZATION_FAILED);
     }
@@ -683,7 +697,9 @@ int yvex_cuda_launch_synchronize(yvex_backend *backend,
         return YVEX_ERR_BACKEND;
     }
     rc = yvex_cuda_status(&state->driver, state->driver.cuStreamSynchronize(stream), where, err);
-    if (rc != YVEX_OK)
+    if (rc == YVEX_OK)
+        state->shared_stream_in_flight = 0;
+    else
         cuda_capability_fail(backend, variant,
                              YVEX_BACKEND_CAPABILITY_REASON_SYNCHRONIZATION_FAILED);
     return rc;
