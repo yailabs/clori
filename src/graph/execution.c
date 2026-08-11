@@ -579,8 +579,7 @@ int yvex_execution_workload_profile_seal(
         (profile->continuous_batching != 0 && profile->continuous_batching != 1) ||
         (profile->prefix_sharing != 0 && profile->prefix_sharing != 1) ||
         (profile->durable_state != 0 && profile->durable_state != 1) ||
-        profile->system_reserve_bytes < YVEX_EXECUTION_MINIMUM_SYSTEM_RESERVE ||
-        (!profile->continuous_batching && profile->concurrent_sequences != 1ull))
+        profile->system_reserve_bytes < YVEX_EXECUTION_MINIMUM_SYSTEM_RESERVE)
         return execution_refuse(err, YVEX_ERR_INVALID_ARG,
                                 "runtime.execution.workload",
                                 "complete bounded workload profile facts are required");

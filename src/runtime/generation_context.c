@@ -349,6 +349,18 @@ static int generation_capacity_hardware(
     context->hardware_profile.compute_minor = device.compute_capability_minor;
     context->hardware_profile.total_memory_bytes = total;
     context->hardware_profile.usable_memory_bytes = total;
+    if (device.kind == YVEX_BACKEND_KIND_CUDA &&
+        context->options.maximum_device_bytes &&
+        context->options.maximum_device_bytes <
+            context->hardware_profile.usable_memory_bytes)
+        context->hardware_profile.usable_memory_bytes =
+            context->options.maximum_device_bytes;
+    if (device.kind == YVEX_BACKEND_KIND_CPU &&
+        context->options.maximum_host_bytes &&
+        context->options.maximum_host_bytes <
+            context->hardware_profile.usable_memory_bytes)
+        context->hardware_profile.usable_memory_bytes =
+            context->options.maximum_host_bytes;
     context->hardware_profile.host_page_bytes = (unsigned long long)page_bytes;
     context->hardware_profile.device_page_bytes = (unsigned long long)page_bytes;
     context->hardware_profile.unified_addressing = device.unified_addressing;
@@ -416,6 +428,10 @@ static int generation_capacity_hardware(
 static int generation_capacity_workload(
     yvex_runtime_generation_context *context, yvex_error *err)
 {
+    static const char *const names[] = {
+        "interactive-latency", "balanced-serving", "long-context",
+        "deep-context", "full-model-research"
+    };
     const yvex_speculation_family_policy *speculation =
         context->speculation
             ? yvex_runtime_speculation_policy_get(context->speculation)
@@ -423,13 +439,13 @@ static int generation_capacity_workload(
     memset(&context->workload_profile, 0, sizeof(context->workload_profile));
     context->workload_profile.schema_version =
         YVEX_EXECUTION_WORKLOAD_PROFILE_SCHEMA_V1;
-    context->workload_profile.kind =
-        YVEX_EXECUTION_WORKLOAD_INTERACTIVE_LATENCY;
+    context->workload_profile.kind = context->options.workload_kind;
     context->workload_profile.minimum_session_context =
         context->options.context_capacity;
     context->workload_profile.requested_session_context =
         context->options.context_capacity;
-    context->workload_profile.concurrent_sequences = 1ull;
+    context->workload_profile.concurrent_sequences =
+        context->options.concurrent_sequences;
     context->workload_profile.logical_batch_tokens =
         context->options.prefill_chunk_tokens;
     context->workload_profile.prefill_chunk_tokens =
@@ -443,10 +459,14 @@ static int generation_capacity_workload(
                     : 1ull;
     context->workload_profile.system_reserve_bytes =
         YVEX_EXECUTION_MINIMUM_SYSTEM_RESERVE;
-    context->workload_profile.latency_priority = 1;
+    context->workload_profile.latency_priority =
+        context->options.workload_kind ==
+        YVEX_EXECUTION_WORKLOAD_INTERACTIVE_LATENCY;
+    context->workload_profile.continuous_batching =
+        context->options.continuous_batching;
     yvex_core_text_copy(context->workload_profile.name,
                         sizeof(context->workload_profile.name),
-                        "interactive-latency");
+                        names[context->options.workload_kind]);
     return yvex_execution_workload_profile_seal(
         &context->workload_profile, err);
 }
@@ -538,6 +558,7 @@ static int generation_capacity_build(
     yvex_execution_state_class_request states[YVEX_MODEL_STATE_CLASS_COUNT];
     yvex_execution_capacity_plan_request request = {0};
     unsigned long long workspace, sampling_workspace = 0ull, index, count = 0ull;
+    unsigned long long graph_bytes, scheduler_bytes;
     if (generation_capacity_hardware(context, err) != YVEX_OK) return yvex_error_code(err);
     memset(&semantic, 0, sizeof(semantic));
     if (!context->model_view->binding ||
@@ -614,9 +635,20 @@ static int generation_capacity_build(
     request.model_bytes = residency.encoded_bytes;
     request.state_classes = states;
     request.state_class_count = count;
-    request.workspace_bytes = workspace;
-    request.scheduler_bytes = 1024ull * 1024ull;
-    request.graph_bytes = 1024ull * 1024ull;
+    if (!yvex_core_u64_mul(workspace,
+                           context->workload_profile.concurrent_sequences,
+                           &request.workspace_bytes) ||
+        !yvex_core_u64_mul(1024ull * 1024ull,
+                           context->workload_profile.concurrent_sequences,
+                           &graph_bytes) ||
+        !yvex_core_u64_mul(1024ull * 1024ull,
+                           context->workload_profile.concurrent_sequences,
+                           &scheduler_bytes))
+        return generation_context_refuse(
+            err, YVEX_ERR_BOUNDS,
+            "multi-sequence fixed-resource accounting overflowed");
+    request.scheduler_bytes = scheduler_bytes;
+    request.graph_bytes = graph_bytes;
     if (!request.model_bytes)
         return generation_context_refuse(
             err, YVEX_ERR_STATE,
@@ -915,6 +947,61 @@ static int generation_execution_owners_open(
     return rc;
 }
 
+int yvex_runtime_generation_context_summary_copy(
+    const yvex_runtime_generation_context *context,
+    yvex_runtime_generation_context_summary *summary, yvex_error *err)
+{
+    yvex_runtime_generation_context *mutable =
+        (yvex_runtime_generation_context *)context;
+    yvex_runtime_sampling_context_summary sampling;
+    yvex_token_sequence_summary sequence;
+    unsigned int lifecycle;
+    int rc;
+    if (!context || !summary)
+        return generation_context_refuse(
+            err, YVEX_ERR_INVALID_ARG,
+            "generation context and snapshot output are required");
+    rc = yvex_runtime_private_generation_enter(mutable, err);
+    if (rc != YVEX_OK) return rc;
+    memset(summary, 0, sizeof(*summary));
+    rc = yvex_runtime_sampling_context_snapshot(context->sampling, &sampling, err);
+    if (rc == YVEX_OK)
+        rc = yvex_token_sequence_summary_get(context->sequence, &sequence, err);
+    lifecycle = atomic_load_explicit(&context->lifecycle, memory_order_acquire);
+    if (rc == YVEX_OK) {
+        summary->schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V3;
+        summary->open = !(lifecycle & YVEX_GENERATION_LIFECYCLE_CLOSING);
+        summary->busy = 0;
+        summary->closing =
+            (lifecycle & YVEX_GENERATION_LIFECYCLE_CLOSING) != 0u;
+        summary->execution_count = context->execution_count;
+        summary->failure_count = context->failure_count +
+            atomic_load_explicit(&context->admission_failures,
+                                 memory_order_relaxed);
+        summary->cancellation_count = context->cancellation_count;
+        summary->token_capacity = context->options.maximum_new_tokens;
+        summary->text_capacity = context->options.maximum_output_bytes;
+        summary->workspace_bytes = context->workspace_bytes +
+                                   sampling.workspace_bytes;
+        summary->concurrent_sequences = context->capacity_plan.concurrent_sequences;
+        summary->capacity_required_bytes = context->capacity_plan.required_bytes;
+        summary->capacity_unreserved_bytes = context->capacity_plan.unreserved_bytes;
+        summary->continuous_batching =
+            context->workload_profile.continuous_batching;
+        yvex_runtime_identity_copy(summary->generation_plan_identity,
+                                   context->plan.generation_plan_identity);
+        yvex_runtime_identity_copy(summary->capacity_plan_identity,
+                                   context->capacity_plan.identity);
+        yvex_runtime_identity_copy(summary->token_sequence_identity,
+                                   sequence.state_identity);
+        yvex_runtime_identity_copy(summary->rng_state_identity,
+                                   sampling.rng_state_identity);
+    }
+    yvex_runtime_private_generation_leave(mutable, rc, 0);
+    if (rc == YVEX_OK) yvex_error_clear(err);
+    return rc;
+}
+
 int yvex_runtime_generation_context_open(
     yvex_runtime_generation_context **out, yvex_runtime_model *model,
     yvex_runtime_execution_session *session,
@@ -936,10 +1023,13 @@ int yvex_runtime_generation_context_open(
         (options->backend != YVEX_BACKEND_KIND_CPU &&
          options->backend != YVEX_BACKEND_KIND_CUDA) ||
         options->mode > YVEX_GENERATION_MODE_DSPARK ||
+        options->workload_kind > YVEX_EXECUTION_WORKLOAD_FULL_MODEL_RESEARCH ||
         !options->context_capacity || !options->prefill_chunk_tokens ||
         !options->maximum_new_tokens || !options->maximum_output_bytes ||
         options->trace_policy > YVEX_RUNTIME_TRACE_FULL ||
-        options->evidence_profile > YVEX_EXECUTION_EVIDENCE_FORENSIC)
+        options->evidence_profile > YVEX_EXECUTION_EVIDENCE_FORENSIC ||
+        (options->continuous_batching != 0 &&
+         options->continuous_batching != 1))
         return generation_context_refuse(
             err, YVEX_ERR_INVALID_ARG,
             "complete bounded generation options are required");
@@ -953,6 +1043,8 @@ int yvex_runtime_generation_context_open(
     context->model_view = yvex_runtime_model_view_get(model);
     context->tokenizer = context->model_view ? context->model_view->tokenizer : NULL;
     context->options = *options;
+    if (!context->options.concurrent_sequences)
+        context->options.concurrent_sequences = 1ull;
     if (context->options.prefill_chunk_tokens > context->options.context_capacity)
         context->options.prefill_chunk_tokens = context->options.context_capacity;
     atomic_init(&context->lifecycle, 0u);

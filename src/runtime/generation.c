@@ -267,53 +267,6 @@ void yvex_runtime_private_generation_leave(yvex_runtime_generation_context *cont
                                     ~YVEX_GENERATION_LIFECYCLE_ACTIVE,
                                     memory_order_release);
 }
-int yvex_runtime_generation_context_summary_copy(
-    const yvex_runtime_generation_context *context,
-    yvex_runtime_generation_context_summary *summary, yvex_error *err)
-{
-    yvex_runtime_generation_context *mutable =
-        (yvex_runtime_generation_context *)context;
-    yvex_runtime_sampling_context_summary sampling;
-    yvex_token_sequence_summary sequence;
-    unsigned int lifecycle;
-    int rc;
-    if (!context || !summary)
-        return generation_refuse(
-            err, YVEX_ERR_INVALID_ARG,
-            "generation context and snapshot output are required");
-    rc = yvex_runtime_private_generation_enter(mutable, err);
-    if (rc != YVEX_OK) return rc;
-    memset(summary, 0, sizeof(*summary));
-    rc = yvex_runtime_sampling_context_snapshot(context->sampling, &sampling, err);
-    if (rc == YVEX_OK)
-        rc = yvex_token_sequence_summary_get(context->sequence, &sequence, err);
-    lifecycle = atomic_load_explicit(&context->lifecycle, memory_order_acquire);
-    if (rc == YVEX_OK) {
-        summary->schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V3;
-        summary->open = !(lifecycle & YVEX_GENERATION_LIFECYCLE_CLOSING);
-        summary->busy = 0;
-        summary->closing =
-            (lifecycle & YVEX_GENERATION_LIFECYCLE_CLOSING) != 0u;
-        summary->execution_count = context->execution_count;
-        summary->failure_count = context->failure_count +
-            atomic_load_explicit(&context->admission_failures,
-                                 memory_order_relaxed);
-        summary->cancellation_count = context->cancellation_count;
-        summary->token_capacity = context->options.maximum_new_tokens;
-        summary->text_capacity = context->options.maximum_output_bytes;
-        summary->workspace_bytes = context->workspace_bytes +
-                                   sampling.workspace_bytes;
-        yvex_runtime_identity_copy(summary->generation_plan_identity,
-                                   context->plan.generation_plan_identity);
-        yvex_runtime_identity_copy(summary->token_sequence_identity,
-                                   sequence.state_identity);
-        yvex_runtime_identity_copy(summary->rng_state_identity,
-                                   sampling.rng_state_identity);
-    }
-    yvex_runtime_private_generation_leave(mutable, rc, 0);
-    if (rc == YVEX_OK) yvex_error_clear(err);
-    return rc;
-}
 static int generation_cancelled(const yvex_runtime_generation_context *context, yvex_error *err)
 {
     if (context->options.cancel_requested &&

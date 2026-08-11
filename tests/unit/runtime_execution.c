@@ -20,7 +20,7 @@ static int execution_test_planning(void)
     yvex_model_execution_descriptor_request model_request = {0};
     yvex_model_execution_descriptor model, changed;
     yvex_execution_hardware_profile hardware = {0};
-    yvex_execution_workload_profile workload = {0};
+    yvex_execution_workload_profile workload = {0}, independently_scheduled;
     yvex_execution_capacity_plan_request capacity_request = {0};
     yvex_execution_capacity_plan capacity, repeated;
     yvex_execution_state_class_request states[YVEX_MODEL_STATE_CLASS_COUNT] = {{0}};
@@ -177,6 +177,14 @@ static int execution_test_planning(void)
     memcpy(workload.name, "balanced-serving", sizeof("balanced-serving"));
     YVEX_TEST_ASSERT(yvex_execution_workload_profile_seal(&workload, &err) == YVEX_OK,
                      "bounded serving workload should seal");
+    independently_scheduled = workload;
+    independently_scheduled.continuous_batching = 0;
+    independently_scheduled.identity[0] = '\0';
+    YVEX_TEST_ASSERT(
+        yvex_execution_workload_profile_seal(
+            &independently_scheduled, &err) == YVEX_OK &&
+            strcmp(workload.identity, independently_scheduled.identity) != 0,
+        "multi-sequence admission must remain distinct from physical row batching");
 
     capacity_request.schema_version = YVEX_EXECUTION_CAPACITY_PLAN_SCHEMA_V1;
     capacity_request.model_execution_identity = model.identity;

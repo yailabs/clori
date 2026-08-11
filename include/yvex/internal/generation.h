@@ -295,7 +295,8 @@ typedef struct {
     unsigned int schema_version;
     yvex_backend_kind backend;
     yvex_runtime_generation_mode mode;
-    unsigned long long context_capacity, prefill_chunk_tokens, maximum_new_tokens;
+    yvex_execution_workload_profile_kind workload_kind;
+    unsigned long long context_capacity, prefill_chunk_tokens, maximum_new_tokens, concurrent_sequences;
     unsigned long long maximum_output_bytes, maximum_host_bytes, maximum_device_bytes;
     yvex_runtime_trace_policy trace_policy;
     yvex_execution_evidence_profile evidence_profile;
@@ -304,6 +305,7 @@ typedef struct {
     unsigned long long additional_stop_token_count;
     int (*cancel_requested)(void *context);
     void *cancel_context;
+    int continuous_batching;
 } yvex_runtime_generation_options;
 typedef struct {
     unsigned int schema_version;
@@ -379,7 +381,6 @@ typedef struct {
     char token_ledger_identity[YVEX_SHA256_HEX_CAP];
     char published_text_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_partial_turn;
-
 typedef struct {
     unsigned int schema_version;
     yvex_runtime_generation_mode execution_mode;
@@ -482,15 +483,15 @@ typedef struct {
 } yvex_runtime_generation_turn_request;
 typedef struct {
     unsigned int schema_version;
-    int open, busy, closing;
+    int open, busy, closing, continuous_batching;
     unsigned long long execution_count, failure_count, cancellation_count;
-    unsigned long long token_capacity, text_capacity, workspace_bytes;
+    unsigned long long token_capacity, text_capacity, workspace_bytes, concurrent_sequences;
+    unsigned long long capacity_required_bytes, capacity_unreserved_bytes;
     unsigned long long artifact_reopens, model_rebuilds, output_head_reuploads;
-    char generation_plan_identity[YVEX_SHA256_HEX_CAP];
-    char token_sequence_identity[YVEX_SHA256_HEX_CAP];
-    char rng_state_identity[YVEX_SHA256_HEX_CAP];
+    char generation_plan_identity[YVEX_SHA256_HEX_CAP],
+        capacity_plan_identity[YVEX_SHA256_HEX_CAP];
+    char token_sequence_identity[YVEX_SHA256_HEX_CAP], rng_state_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_generation_context_summary;
-
 typedef struct yvex_runtime_generation_context yvex_runtime_generation_context;
 int yvex_runtime_generation_bytes_digest(
     const char *domain, const unsigned char *bytes, unsigned long long count,
@@ -515,8 +516,7 @@ int yvex_runtime_generation_execution_identity(
     const yvex_runtime_generation_result *result,
     const yvex_runtime_generation_token_result *tokens,
     char output[YVEX_SHA256_HEX_CAP]);
-int yvex_runtime_generation_context_summary_copy(
-    const yvex_runtime_generation_context *context,
+int yvex_runtime_generation_context_summary_copy(const yvex_runtime_generation_context *context,
     yvex_runtime_generation_context_summary *summary, yvex_error *err);
 int yvex_runtime_generation_context_open(
     yvex_runtime_generation_context **out, yvex_runtime_model *model,
