@@ -1408,8 +1408,13 @@ static int test_attention_graph_configuration(yvex_backend *backend)
     job.local_count = 6ull;
     rc = yvex_cuda_attention_graph_key(
         backend, &job, 0u, YVEX_CUDA_ATTENTION_STAGE_COUNT, dynamic_key, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK,
+                     "candidate-visible graph admits its bounded ephemeral row");
+    job.local_count = 7ull;
+    rc = yvex_cuda_attention_graph_key(
+        backend, &job, 0u, YVEX_CUDA_ATTENTION_STAGE_COUNT, dynamic_key, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_BOUNDS,
-                     "candidate-visible history beyond the sliding window refuses");
+                     "candidate-visible history beyond its ephemeral capacity refuses");
     memset(&job, 0, sizeof(job));
     rc = yvex_cuda_attention_graph_key(
         backend, &job, 0u, YVEX_CUDA_ATTENTION_STAGE_COUNT + 1u, full_key, &err);

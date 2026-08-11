@@ -1419,10 +1419,8 @@ int yvex_cuda_attention_graph_key(const yvex_backend *backend,
     const yvex_cuda_backend_state *state =
         backend && backend->kind == YVEX_BACKEND_KIND_CUDA ? yvex_cuda_state(backend) : NULL;
     const uintptr_t base = backend ? (uintptr_t)backend->resident_host_base : 0u;
-    const yvex_cuda_attention_configuration *configuration =
-        state && job
-            ? yvex_cuda_attention_configuration_active(state, job->phase)
-            : NULL;
+    const yvex_cuda_attention_configuration *configuration = state && job
+        ? yvex_cuda_attention_configuration_active(state, job->phase) : NULL;
     const double numeric[] = {job ? job->rms_epsilon : 0.0,
                               job ? job->position.theta : 0.0,
                               job ? job->position.scaling_factor : 0.0};
@@ -1439,12 +1437,14 @@ int yvex_cuda_attention_graph_key(const yvex_backend *backend,
             "phase-bound CUDA attention residency and stage interval are required");
     }
     if (configuration->mode != YVEX_BACKEND_CUDA_ATTENTION_EAGER &&
-        (job->local_count > yvex_cuda_attention_local_capacity(configuration, job, 0) ||
+        ((job->local_count > yvex_cuda_attention_local_capacity(configuration, job, 0) &&
+          (!job->candidate_block_visible ||
+           job->local_count - yvex_cuda_attention_local_capacity(configuration, job, 0) >
+               job->token_count)) ||
          job->compressed_count > configuration->compressed_capacity ||
-         job->indexer_count > configuration->indexer_capacity)) {
+         job->indexer_count > configuration->indexer_capacity))
         return graph_reject(err, YVEX_ERR_BOUNDS, "cuda.attention.graph_key",
                             "CUDA attention history exceeds its admitted capture bucket");
-    }
     activations[0] = &job->attention_kv_activation;
     activations[1] = &job->compressor_activation;
     activations[2] = &job->compressor_rotated_activation;
