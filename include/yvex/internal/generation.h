@@ -15,7 +15,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#define YVEX_RUNTIME_PROFILE_SCHEMA_V2 2u
+#define YVEX_RUNTIME_PROFILE_SCHEMA_V3 3u
 typedef enum {
     YVEX_RUNTIME_PROFILE_OFF = 0, YVEX_RUNTIME_PROFILE_SUMMARY, YVEX_RUNTIME_PROFILE_STAGES,
     YVEX_RUNTIME_PROFILE_DETAILED
@@ -45,6 +45,7 @@ typedef enum {
     YVEX_RUNTIME_PROFILE_UPLOADS, YVEX_RUNTIME_PROFILE_DOWNLOADS, YVEX_RUNTIME_PROFILE_CACHE_HITS,
     YVEX_RUNTIME_PROFILE_CACHE_MISSES, YVEX_RUNTIME_PROFILE_CACHE_EVICTIONS,
     YVEX_RUNTIME_PROFILE_EXPERT_SUBVIEWS, YVEX_RUNTIME_PROFILE_KERNEL_LAUNCHES,
+    YVEX_RUNTIME_PROFILE_TENSOR_CORE_LAUNCHES,
     YVEX_RUNTIME_PROFILE_GRAPH_LAUNCHES, YVEX_RUNTIME_PROFILE_GRAPH_CAPTURES,
     YVEX_RUNTIME_PROFILE_GRAPH_REPLAYS, YVEX_RUNTIME_PROFILE_STREAM_SYNCHRONIZATIONS,
     YVEX_RUNTIME_PROFILE_EVENT_SYNCHRONIZATIONS, YVEX_RUNTIME_PROFILE_DEVICE_SYNCHRONIZATIONS,
@@ -96,7 +97,7 @@ static inline int runtime_profile_identity(const yvex_runtime_profile_record *re
     unsigned long long index;
     yvex_sha256_init(&hash);
     if (!record || !output ||
-        !yvex_sha256_update_text(&hash, "yvex.runtime.profile.v2") ||
+        !yvex_sha256_update_text(&hash, "yvex.runtime.profile.v3") ||
         !yvex_sha256_update_u64(&hash, record->schema_version) ||
         !yvex_sha256_update_u64(&hash, record->mode) ||
         !yvex_sha256_update_u64(&hash, record->scope) ||
@@ -142,7 +143,7 @@ static inline int runtime_profile_begin(yvex_runtime_profile_record *record,
         !runtime_profile_identity_copy(record->workload_identity, workload_identity))
         return runtime_profile_refuse(err, YVEX_ERR_INVALID_ARG,
                                       "profile mode, scope, and exact identities are required");
-    record->schema_version = YVEX_RUNTIME_PROFILE_SCHEMA_V2;
+    record->schema_version = YVEX_RUNTIME_PROFILE_SCHEMA_V3;
     record->mode = mode;
     record->scope = scope;
     record->backend = backend;
@@ -158,7 +159,7 @@ static inline int runtime_profile_begin(yvex_runtime_profile_record *record,
 static inline int runtime_profile_counter_add(yvex_runtime_profile_record *record,
     yvex_runtime_profile_counter counter, unsigned long long value, yvex_error *err)
 {
-    if (!record || record->schema_version != YVEX_RUNTIME_PROFILE_SCHEMA_V2 ||
+    if (!record || record->schema_version != YVEX_RUNTIME_PROFILE_SCHEMA_V3 ||
         record->sealed || counter >= YVEX_RUNTIME_PROFILE_COUNTER_COUNT)
         return runtime_profile_refuse(err, YVEX_ERR_STATE,
                                       "profile counter mutation is invalid");
@@ -171,7 +172,7 @@ static inline int runtime_profile_counter_add(yvex_runtime_profile_record *recor
 static inline int runtime_profile_phase_add(yvex_runtime_profile_record *record,
     yvex_runtime_profile_phase phase, unsigned long long elapsed_ns, yvex_error *err)
 {
-    if (!record || record->schema_version != YVEX_RUNTIME_PROFILE_SCHEMA_V2 ||
+    if (!record || record->schema_version != YVEX_RUNTIME_PROFILE_SCHEMA_V3 ||
         record->sealed || phase >= YVEX_RUNTIME_PROFILE_PHASE_COUNT || !elapsed_ns)
         return runtime_profile_refuse(err, YVEX_ERR_STATE,
                                       "profile phase mutation is invalid");
@@ -186,7 +187,7 @@ static inline int runtime_profile_phase_add(yvex_runtime_profile_record *record,
 }
 static inline int runtime_profile_finish(yvex_runtime_profile_record *record, yvex_error *err)
 {
-    if (!record || record->schema_version != YVEX_RUNTIME_PROFILE_SCHEMA_V2 || record->sealed)
+    if (!record || record->schema_version != YVEX_RUNTIME_PROFILE_SCHEMA_V3 || record->sealed)
         return runtime_profile_refuse(err, YVEX_ERR_STATE, "profile finish is invalid");
     record->completed_ns = yvex_core_monotonic_ns();
     if (record->completed_ns <= record->started_ns ||
@@ -204,7 +205,7 @@ static inline int runtime_profile_validate(const yvex_runtime_profile_record *re
                                            yvex_error *err)
 {
     char identity[YVEX_SHA256_HEX_BYTES];
-    if (!record || record->schema_version != YVEX_RUNTIME_PROFILE_SCHEMA_V2 ||
+    if (!record || record->schema_version != YVEX_RUNTIME_PROFILE_SCHEMA_V3 ||
         !record->sealed || record->mode > YVEX_RUNTIME_PROFILE_DETAILED ||
         record->scope > YVEX_RUNTIME_PROFILE_GENERATION ||
         record->completed_ns <= record->started_ns ||
@@ -245,6 +246,7 @@ static inline const char *runtime_profile_counter_name(yvex_runtime_profile_coun
     static const char *const names[] = {"host_payload_reads", "mapped_bytes_touched",
         "h2d_bytes", "d2h_bytes", "d2d_bytes", "managed_prefetch_bytes", "uploads", "downloads",
         "cache_hits", "cache_misses", "cache_evictions", "expert_subviews", "kernel_launches",
+        "tensor_core_launches",
         "graph_launches", "graph_captures", "graph_replays", "stream_synchronizations",
         "event_synchronizations", "device_synchronizations", "device_allocations", "host_allocations",
         "workspace_resets", "prompt_tokens", "reused_tokens", "new_prefill_tokens",
@@ -357,7 +359,6 @@ typedef struct {
     char decoder_fragment_identity[YVEX_SHA256_HEX_CAP];
     char token_step_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_generation_token_result;
-
 /*
  * A failed turn reports the exact committed boundary independently of its failure class. Facts
  * without a current owner remain explicitly unavailable instead of being inferred from counters.

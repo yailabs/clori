@@ -266,9 +266,9 @@ static int attention_matvec(yvex_cuda_work *work,
     unsigned long long tensorcore_grid = 0ull;
     unsigned int matvec_grid, matvec_block;
     q8_path = weight && work->activation_q8 && !work->forensic_numeric &&
-              weight->qtype == YVEX_GGUF_QTYPE_Q8_0 &&
               weight->row_width % 256ull == 0ull &&
-              work->state->q8_0_tensorcore_rows_function;
+              yvex_cuda_q8_activation_eligible(weight->qtype) &&
+              work->state->qtype_tensorcore_rows_function;
     if (!weight || !weight->present || !device_weight || !vector || !out ||
         !rows || !input_rows || start_row > weight->row_count ||
         rows > weight->row_count - start_row ||
@@ -319,9 +319,10 @@ static int attention_matvec(yvex_cuda_work *work,
             void *params[] = {
                 &device_weight, (void *)&weight->row_bytes,
                 (void *)&weight->row_width, &start_row, &rows, &input_rows,
-                &quantized, &additive, &out, &output_bf16, &status};
+                (void *)&weight->qtype, &quantized, &additive, &out,
+                &output_bf16, &status};
             rc = attention_launch(
-                work, work->state->q8_0_tensorcore_rows_function,
+                work, work->state->qtype_tensorcore_rows_function,
                 (unsigned int)tensorcore_grid, 32u, 0u, params, stage,
                 failure, err);
             if (rc == YVEX_OK) work->tensor_core_launches++;
@@ -730,7 +731,6 @@ static int attention_validate_alias(
 #undef READ
     return attention_spans_disjoint(writes, transfer_count, reads, read_count);
 }
-
 static int attention_cancel(yvex_backend *backend,
                             const yvex_backend_attention_job *job,
                             const char *stage, int pending,

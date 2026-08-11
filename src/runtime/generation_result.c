@@ -117,6 +117,8 @@ int yvex_runtime_generation_profile_transformer(
     COUNTER(YVEX_RUNTIME_PROFILE_FULL_ARRAY_HOST_SCAN_BYTES,
             value->full_array_host_scan_bytes);
     COUNTER(YVEX_RUNTIME_PROFILE_KERNEL_LAUNCHES, value->kernel_launches);
+    COUNTER(YVEX_RUNTIME_PROFILE_TENSOR_CORE_LAUNCHES,
+            value->tensor_core_launches);
     COUNTER(YVEX_RUNTIME_PROFILE_STREAM_SYNCHRONIZATIONS,
             value->stream_synchronizations);
     COUNTER(YVEX_RUNTIME_PROFILE_DEVICE_SYNCHRONIZATIONS,
@@ -601,7 +603,7 @@ int yvex_runtime_generation_result_validate(
         result->reusable_prefix_token_count > result->prompt_token_count ||
         result->new_prefill_token_count !=
             result->prompt_token_count - result->reusable_prefix_token_count ||
-        result->profile.schema_version != YVEX_RUNTIME_PROFILE_SCHEMA_V2 ||
+        result->profile.schema_version != YVEX_RUNTIME_PROFILE_SCHEMA_V3 ||
         runtime_profile_validate(&result->profile, NULL) != YVEX_OK ||
         !generation_roofline_validate(plan, result) ||
         !yvex_sha256_hex_valid(result->reusable_prefix_identity) ||

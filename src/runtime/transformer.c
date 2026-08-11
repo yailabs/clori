@@ -105,6 +105,8 @@ int yvex_runtime_transformer_cuda_facts_add(yvex_runtime_transformer_result *res
         !yvex_core_u64_add(result->d2h_bytes, facts->d2h_bytes, &result->d2h_bytes) ||
         !yvex_core_u64_add(result->d2d_bytes, facts->d2d_bytes, &result->d2d_bytes) ||
         !yvex_core_u64_add(result->kernel_launches, facts->kernel_launches, &result->kernel_launches) ||
+        !yvex_core_u64_add(result->tensor_core_launches, facts->tensor_core_launches,
+                           &result->tensor_core_launches) ||
         !yvex_core_u64_add(result->upload_count, uploads, &result->upload_count) ||
         !yvex_core_u64_add(result->download_count, downloads, &result->download_count) ||
         !yvex_core_u64_add(result->stream_synchronizations, facts->stream_synchronizations,
@@ -649,6 +651,7 @@ int yvex_runtime_transformer_execute_block(
     result->d2h_bytes = moe_result.d2h_bytes;
     result->d2d_bytes = moe_result.d2d_bytes;
     result->kernel_launches = moe_result.kernel_launches;
+    result->tensor_core_launches = moe_result.tensor_core_launches;
     result->upload_count = moe_result.upload_count;
     result->download_count = moe_result.download_count;
     result->cache_hits = moe_result.cache_hits;
@@ -749,6 +752,7 @@ static int transformer_layer_evidence(void *opaque, yvex_backend_kind backend,
     chunk->result->stream_synchronizations += block.stream_synchronizations;
     chunk->result->device_synchronizations += block.device_synchronizations;
     chunk->result->kernel_launches += block.kernel_launches;
+    chunk->result->tensor_core_launches += block.tensor_core_launches;
     chunk->result->moe_ns += block.moe_ns;
     chunk->result->synchronization_ns += block.synchronization_ns;
     chunk->result->layers_executed++;
@@ -1708,6 +1712,7 @@ int yvex_runtime_transformer_execute(yvex_runtime_transformer_context *context,
             result->stream_synchronizations += attention_result.stream_synchronizations;
             result->device_synchronizations += attention_result.device_synchronizations;
             result->kernel_launches += attention_result.kernel_launches;
+            result->tensor_core_launches += attention_result.tensor_core_launches;
             result->attention_device_ns += attention_result.cuda_device_execution_elapsed_ns;
             result->chunk_count++;
             offset += count;

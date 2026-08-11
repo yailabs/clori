@@ -977,7 +977,7 @@ static int attn_prepare(attn_run *run) {
     run->resources.budget = run->job->max_device_bytes;
     run->resources.activation_q8 = run->job->native_execution && run->job->evidence_level < 3u &&
         run->state->kernel_bundle_native &&
-        run->state->q8_0_tensorcore_rows_function != NULL;
+        run->state->qtype_tensorcore_rows_function != NULL;
     /* Full evidence selects canonical-order arithmetic for the stage oracles. */
     run->resources.forensic_numeric = run->job->evidence_level == 3u;
     return YVEX_OK;

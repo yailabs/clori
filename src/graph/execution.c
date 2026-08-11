@@ -4,25 +4,21 @@
  * optimized backends can consume without changing model semantics.
  */
 #include <yvex/internal/execution.h>
-
 #include <limits.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-
 #include <yvex/internal/backend.h>
 #include <yvex/internal/core.h>
 struct yvex_physical_execution_ir {
     yvex_physical_execution_decision *decisions;
     yvex_physical_execution_summary summary;
 };
-
 struct yvex_execution_shape_registry {
     yvex_execution_shape *shapes;
     unsigned long long count, capacity, hit_count, miss_count;
 };
-
 static int execution_shape_equal(const yvex_execution_shape *left,
                                  const yvex_execution_shape *right);
 static int execution_shape_key_equal(const yvex_execution_shape *left,
@@ -30,11 +26,14 @@ static int execution_shape_key_equal(const yvex_execution_shape *left,
                                      int ignore_workspace);
 static int physical_ir_identity(yvex_physical_execution_ir *ir,
                                 yvex_error *err);
-
 static int physical_policy_valid(const yvex_physical_execution_policy *policy)
 {
     return policy &&
-           policy->schema_version == YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V1 &&
+           (policy->schema_version == YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V1 ||
+            policy->schema_version == YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V2) &&
+           (policy->schema_version == YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V2 ||
+            !policy->encoded_activation_consumer_mask) &&
+           !(policy->encoded_activation_consumer_mask >> YVEX_EXECUTION_CONSUMER_COUNT) &&
            policy->activation <= YVEX_EXECUTION_ACTIVATION_DEVICE_ENCODED &&
            policy->required_backend <= YVEX_EXECUTION_BACKEND_CUDA &&
            policy->evidence <= YVEX_EXECUTION_EVIDENCE_FORENSIC &&
@@ -44,14 +43,12 @@ static int physical_policy_valid(const yvex_physical_execution_policy *policy)
            policy->expert_kernel_family && policy->expert_kernel_family[0] &&
            strlen(policy->expert_kernel_family) < YVEX_EXECUTION_TEXT_CAP;
 }
-
 static int execution_refuse(yvex_error *err, yvex_status status,
                             const char *where, const char *reason)
 {
     yvex_error_set(err, status, where, reason);
     return status;
 }
-
 static int execution_hash_finish(yvex_sha256 *hash,
                                  char output[YVEX_SHA256_HEX_CAP])
 {
@@ -60,7 +57,6 @@ static int execution_hash_finish(yvex_sha256 *hash,
     yvex_sha256_hex(digest, output);
     return 1;
 }
-
 static yvex_execution_consumer_class execution_consumer(yvex_tensor_role role)
 {
     switch (role) {
@@ -113,7 +109,6 @@ static yvex_execution_consumer_class execution_consumer(yvex_tensor_role role)
                    : YVEX_EXECUTION_CONSUMER_DRAFT_BACKBONE;
     }
 }
-
 static yvex_execution_placement_class execution_placement(
     yvex_materialization_placement placement)
 {
@@ -127,7 +122,6 @@ static yvex_execution_placement_class execution_placement(
         return YVEX_EXECUTION_PLACEMENT_FILE_BACKED;
     }
 }
-
 static int physical_execution_decision_seal(
     yvex_physical_execution_decision *decision, yvex_error *err)
 {
@@ -224,7 +218,12 @@ static void execution_decision_from_binding(
     decision->sharing = binding->scope == YVEX_TENSOR_SCOPE_GLOBAL
                             ? YVEX_EXECUTION_SHARING_MODEL_READ_ONLY
                             : YVEX_EXECUTION_SHARING_EXCLUSIVE;
-    decision->activation = policy->activation;
+    decision->activation =
+        policy->schema_version == YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V2 &&
+                (policy->encoded_activation_consumer_mask &
+                 (1ull << (unsigned int)decision->consumer))
+            ? YVEX_EXECUTION_ACTIVATION_DEVICE_ENCODED
+            : policy->activation;
     decision->supported_width_mask = (1ull << (maximum_width + 1ull)) - 2ull;
     decision->maximum_context = model->maximum_context;
     decision->required_backend = policy->required_backend;

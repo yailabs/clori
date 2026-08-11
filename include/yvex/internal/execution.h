@@ -16,6 +16,7 @@ extern "C" {
 
 #define YVEX_PHYSICAL_EXECUTION_SCHEMA_V2 2u
 #define YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V1 1u
+#define YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V2 2u
 #define YVEX_COMPILED_EXECUTION_PROFILE_SCHEMA_V2 2u
 #define YVEX_EXECUTION_HARDWARE_PROFILE_SCHEMA_V1 1u
 #define YVEX_EXECUTION_WORKLOAD_PROFILE_SCHEMA_V1 1u
@@ -113,6 +114,7 @@ typedef enum {
 typedef struct yvex_physical_execution_policy {
     unsigned int schema_version, required_compute_major, required_compute_minor;
     yvex_execution_activation_class activation;
+    unsigned long long encoded_activation_consumer_mask;
     yvex_execution_backend_requirement required_backend;
     yvex_execution_evidence_profile evidence;
     yvex_execution_class fallback;
@@ -570,9 +572,7 @@ typedef struct {
     char workspace_identity[YVEX_SHA256_HEX_CAP];
     char state_layout_identity[YVEX_SHA256_HEX_CAP];
 } yvex_execution_shape_failure;
-
 typedef struct yvex_execution_shape_registry yvex_execution_shape_registry;
-
 typedef struct {
     unsigned long long count, capacity, hit_count, miss_count;
 } yvex_execution_shape_registry_summary;

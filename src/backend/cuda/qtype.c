@@ -231,8 +231,7 @@ int yvex_backend_cuda_encoded_matvec(
     }
     q8_path = activation_q8 && !split_input && row_width % 256ull == 0ull &&
               yvex_cuda_q8_activation_eligible(qtype);
-    tensorcore_path = q8_path && qtype == YVEX_GGUF_QTYPE_Q8_0 &&
-                      state && state->q8_0_tensorcore_rows_function;
+    tensorcore_path = q8_path && state && state->qtype_tensorcore_rows_function;
     if (!state || !resident_encoded || !encoded_bytes || !row_count || !input_rows ||
         !row_width || !row_bytes || !facts || split_input != (input_head_width != 0ull) ||
         (split_input && input_head_width >= row_width) ||
@@ -330,8 +329,8 @@ int yvex_backend_cuda_encoded_matvec(
                              &output_bf16, &status};
         void *tensorcore_params[] = {
             &encoded_ptr, &row_bytes, &row_width, &start_row, &row_count,
-            &input_rows, &quantized, &additive_ptr, &output_ptr, &output_bf16,
-            &status};
+            &input_rows, &qtype, &quantized, &additive_ptr, &output_ptr,
+            &output_bf16, &status};
         void *split_params[] = {&encoded_ptr, &row_bytes, &row_width, &start_row,
                                 &row_count, &input_rows, &qtype, &input_ptr,
                                 &input_tail_ptr, &input_head_width, &additive_ptr,
@@ -339,7 +338,7 @@ int yvex_backend_cuda_encoded_matvec(
         q8_input = q8_path;
         rc = yvex_cuda_launch(
             backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
-            tensorcore_path ? state->q8_0_tensorcore_rows_function
+            tensorcore_path ? state->qtype_tensorcore_rows_function
                             : split_input ? state->qtype_split_matvec_function
                                           : state->qtype_matvec_function,
             tensorcore_path ? (unsigned int)tensorcore_grid : matvec_grid,

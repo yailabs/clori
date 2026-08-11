@@ -1587,7 +1587,7 @@ static int generation_result_finish(
     result->first_incomplete_token = result->has_incomplete_token
                                          ? result->sampled_token_count - 1ull
                                          : result->sampled_token_count;
-    if (result->profile.schema_version == YVEX_RUNTIME_PROFILE_SCHEMA_V2) {
+    if (result->profile.schema_version == YVEX_RUNTIME_PROFILE_SCHEMA_V3) {
         unsigned long long completed = yvex_core_monotonic_ns();
         if (result->draft_cycle_count)
             result->mean_accepted_prefix =

@@ -1445,6 +1445,45 @@ static int test_runtime_capability_contract(void)
     return 0;
 }
 
+static int test_physical_activation_policy(const binding_fixture *fixture)
+{
+    const yvex_family_compiler_adapter *compiler = runtime_fixture_compiler();
+    const yvex_physical_execution_decision *base;
+    const yvex_physical_execution_decision *encoded_decision;
+    yvex_physical_execution_ir *encoded = NULL;
+    yvex_physical_execution_policy policy;
+    yvex_error err;
+    int rc;
+
+    base = yvex_physical_execution_ir_decision_at(fixture->physical_execution, 0ull);
+    YVEX_TEST_ASSERT(compiler && compiler->physical_execution_policy && base,
+                     "physical activation fixture has one compiled decision");
+    policy = *compiler->physical_execution_policy;
+    policy.schema_version = YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V2;
+    policy.activation = YVEX_EXECUTION_ACTIVATION_DEVICE_F32;
+    policy.encoded_activation_consumer_mask = 1ull << (unsigned int)base->consumer;
+    rc = yvex_physical_execution_ir_build(
+        &encoded, fixture->materialization, fixture->descriptor,
+        fixture->admission.profile_identity, &policy, &err);
+    encoded_decision = yvex_physical_execution_ir_decision_at(encoded, 0ull);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_OK && encoded_decision &&
+            encoded_decision->consumer == base->consumer &&
+            encoded_decision->activation == YVEX_EXECUTION_ACTIVATION_DEVICE_ENCODED &&
+            strcmp(yvex_physical_execution_ir_summary(encoded)->identity,
+                   yvex_physical_execution_ir_summary(fixture->physical_execution)->identity) != 0,
+        "V2 physical policy seals consumer-selected encoded activation into identity");
+    yvex_physical_execution_ir_close(&encoded);
+    policy.schema_version = YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V1;
+    rc = yvex_physical_execution_ir_build(
+        &encoded, fixture->materialization, fixture->descriptor,
+        fixture->admission.profile_identity, &policy, &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_ERR_INVALID_ARG && !encoded,
+        "V1 physical policy refuses an unrepresentable encoded consumer mask");
+    return 0;
+}
+
 /* Validate prepare, independent reopen, all three imports, and atomic conflict. */
 static int test_prepare_reopen_import(const binding_fixture *fixture, const char *directory,
                                       yvex_runtime_binding_prepare_result *prepared,
@@ -1480,6 +1519,8 @@ static int test_prepare_reopen_import(const binding_fixture *fixture, const char
     char capability_identity[YVEX_SHA256_HEX_CAP];
     int rc;
 
+    YVEX_TEST_ASSERT(test_physical_activation_policy(fixture) == 0,
+                     "physical activation policy is versioned and identity-bound");
     {
         const yvex_operator_graph_summary *operators =
             yvex_operator_graph_ir_summary(fixture->operator_graph);

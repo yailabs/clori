@@ -10,6 +10,8 @@
 #include <yvex/internal/core.h>
 #include <yvex/internal/quant_numeric.h>
 #include "src/backend/private.h"
+#define YVEX_CUDA_Q8_K_BLOCK 256ull
+#define YVEX_CUDA_Q8_K_BYTES 292ull
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -240,7 +242,7 @@ typedef struct {
     CUfunction bf16_pack_function;
     CUfunction qtype_matvec_function;
     CUfunction qtype_split_matvec_function;
-    CUfunction q8_0_tensorcore_rows_function;
+    CUfunction qtype_tensorcore_rows_function;
     CUfunction qtype_gather_function;
     CUfunction argmax_f32_function;
     CUfunction sample_stochastic_f32_function;
@@ -263,8 +265,8 @@ typedef struct {
     CUfunction moe_pair_order_function;
     CUfunction moe_grouped_up_function;
     CUfunction moe_grouped_down_function;
-    CUfunction moe_grouped_up_rows_function;
-    CUfunction moe_grouped_down_rows_function;
+    CUfunction moe_grouped_up_rows_function, moe_grouped_up_tensorcore_function;
+    CUfunction moe_grouped_down_rows_function, moe_grouped_down_tensorcore_function;
     CUfunction moe_reduce_rows_function;
     CUfunction moe_combine_rows_function;
     CUfunction moe_swiglu_function;
@@ -309,7 +311,6 @@ typedef struct {
     const yvex_backend *context_owner;
     int context_borrowed;
 } yvex_cuda_backend_state;
-
 const yvex_cuda_attention_configuration *yvex_cuda_attention_configuration_active(
     const yvex_cuda_backend_state *state, yvex_backend_attention_phase phase);
 static inline unsigned long long yvex_cuda_attention_local_capacity(
@@ -317,7 +318,6 @@ static inline unsigned long long yvex_cuda_attention_local_capacity(
     const yvex_backend_attention_job *job, int publication) {
     return shape->local_capacity + (!publication && shape->local_capacity < job->sliding_window);
 }
-
 /* These formats can consume the canonical Q8_K activation workspace. Runtime
  * admission remains a separate explicit decision because weight qtype alone
  * cannot establish whole-stack numerical compatibility. */

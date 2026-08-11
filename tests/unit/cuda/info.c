@@ -3,6 +3,7 @@
  * driver/device is available. Returns 77 when CUDA is unavailable.
  */
 #include <limits.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,6 +12,7 @@
 #include <yvex/qtype.h>
 #include <yvex/internal/backend.h>
 #include <yvex/internal/moe.h>
+#include <yvex/internal/quant_numeric.h>
 
 #include "src/backend/cuda/private.h"
 #include "tests/test.h"
@@ -131,6 +133,345 @@ static void moe_fixture_result(yvex_moe_layer_result *result, float combined[2],
     result->post_capacity = 1ull;
     result->combination = combination;
     result->combination_capacity = 1ull;
+}
+
+typedef struct {
+    unsigned char *arena;
+    unsigned long long used, capacity, device_base;
+} moe_encoded_fixture;
+
+static int moe_encoded_reserve(moe_encoded_fixture *fixture,
+                               unsigned long long bytes,
+                               unsigned long long *offset)
+{
+    unsigned long long aligned;
+    if (!fixture || !bytes || !offset ||
+        !yvex_core_u64_add(fixture->used, 15ull, &aligned)) return 0;
+    aligned &= ~15ull;
+    if (aligned > fixture->capacity || bytes > fixture->capacity - aligned) return 0;
+    *offset = aligned;
+    fixture->used = aligned + bytes;
+    return 1;
+}
+
+static int moe_encoded_f32_weight(
+    moe_encoded_fixture *fixture, yvex_moe_weight_view *view,
+    yvex_tensor_role role, unsigned long long rows,
+    unsigned long long width, const float *values)
+{
+    unsigned long long elements, bytes, offset;
+    if (!fixture || !view || !rows || !width || !values ||
+        !yvex_core_u64_mul(rows, width, &elements) ||
+        !yvex_core_u64_mul(elements, sizeof(*values), &bytes) ||
+        bytes > SIZE_MAX || !moe_encoded_reserve(fixture, bytes, &offset)) return 0;
+    memcpy(fixture->arena + offset, values, (size_t)bytes);
+    memset(view, 0, sizeof(*view));
+    view->tensor_id = offset + 1ull;
+    view->expert_index = YVEX_MOE_NO_TENSOR;
+    view->role = role;
+    view->qtype = YVEX_GGUF_QTYPE_F32;
+    view->activation = YVEX_EXECUTION_ACTIVATION_DEVICE_F32;
+    view->encoded = fixture->arena + offset;
+    view->encoded_bytes = (size_t)bytes;
+    view->row_bytes = width * sizeof(*values);
+    view->row_width = width;
+    view->row_count = rows;
+    view->device_address = fixture->device_base + offset;
+    return 1;
+}
+
+static int moe_encoded_weight(
+    moe_encoded_fixture *fixture, yvex_moe_weight_view *view,
+    yvex_tensor_role role, yvex_gguf_qtype_id qtype, unsigned long long rows,
+    unsigned long long width, const float *row_values)
+{
+    const yvex_gguf_qtype_geometry *geometry =
+        yvex_gguf_qtype_geometry_find(qtype);
+    yvex_quant_failure failure;
+    yvex_error err;
+    float calibration[YVEX_QUANT_IQ2_XXS_ELEMENTS];
+    unsigned long long row_bytes, bytes, offset, row, block;
+    if (!fixture || !view || !geometry || !rows || !width || !row_values ||
+        width % geometry->block_size ||
+        !yvex_core_u64_mul(width / geometry->block_size,
+                           geometry->bytes_per_block, &row_bytes) ||
+        !yvex_core_u64_mul(rows, row_bytes, &bytes) ||
+        bytes > SIZE_MAX || !moe_encoded_reserve(fixture, bytes, &offset)) return 0;
+    for (block = 0ull; block < YVEX_QUANT_IQ2_XXS_ELEMENTS; ++block)
+        calibration[block] = 1.0f;
+    for (row = 0ull; row < rows; ++row)
+        for (block = 0ull; block < width / geometry->block_size; ++block) {
+            size_t wrote = 0u;
+            const float *source = row_values + block * geometry->block_size;
+            unsigned char *destination = fixture->arena + offset + row * row_bytes +
+                                         block * geometry->bytes_per_block;
+            int rc = qtype == YVEX_GGUF_QTYPE_IQ2_XXS
+                         ? yvex_quant_encode_block_weighted(
+                               qtype, source, calibration, geometry->block_size, destination,
+                               geometry->bytes_per_block, &wrote, &failure, &err)
+                         : yvex_quant_encode_block(qtype, source, geometry->block_size,
+                                                   destination, geometry->bytes_per_block,
+                                                   &wrote, &failure, &err);
+            if (rc != YVEX_OK ||
+                wrote != geometry->bytes_per_block) return 0;
+        }
+    memset(view, 0, sizeof(*view));
+    view->tensor_id = offset + 1ull;
+    view->expert_index = YVEX_MOE_NO_TENSOR;
+    view->role = role;
+    view->qtype = qtype;
+    view->activation = YVEX_EXECUTION_ACTIVATION_DEVICE_F32;
+    view->encoded = fixture->arena + offset;
+    view->encoded_bytes = (size_t)bytes;
+    view->row_bytes = row_bytes;
+    view->row_width = width;
+    view->row_count = rows;
+    view->device_address = fixture->device_base + offset;
+    return 1;
+}
+
+static void moe_encoded_output(
+    yvex_moe_row_batch_output *output, float *combined,
+    float *routed, float *shared, float *post, float *combination,
+    unsigned long long *selected, float *weights,
+    unsigned long long rows, unsigned long long hidden,
+    unsigned long long streams, unsigned long long pairs)
+{
+    memset(output, 0, sizeof(*output));
+    output->combined_rows = combined;
+    output->combined_capacity = rows * hidden;
+    output->routed_rows = routed;
+    output->routed_capacity = rows * hidden;
+    output->shared_rows = shared;
+    output->shared_capacity = rows * hidden;
+    output->post_rows = post;
+    output->post_capacity = rows * streams;
+    output->combination_rows = combination;
+    output->combination_capacity = rows * streams * streams;
+    output->selected_experts = selected;
+    output->selected_weights = weights;
+    output->selection_capacity = pairs;
+}
+
+static int assert_tensorcore_moe(yvex_backend *backend)
+{
+    enum { ROWS = 2, WIDTH = 256, EXPERTS = 2, PAIRS = 2 };
+    yvex_backend_tensor_desc descriptor = {0};
+    yvex_device_tensor *anchor = NULL, *input = NULL;
+    yvex_device_tensor *reference_output = NULL, *encoded_output = NULL;
+    yvex_device_tensor *workspace = NULL;
+    yvex_moe_layer_plan layer = {0};
+    yvex_moe_layer_job job = {0};
+    yvex_moe_row_batch rows = {0};
+    yvex_moe_row_batch_output output = {0};
+    yvex_moe_row_batch_result result = {0};
+    const yvex_backend_moe_operations *operations;
+    moe_encoded_fixture fixture = {0};
+    yvex_error err;
+    float mhc[3 * WIDTH] = {0};
+    float scale[3] = {1.0f, 1.0f, 1.0f};
+    float base[3] = {0};
+    float norm[WIDTH], router[EXPERTS * WIDTH], expert_row[WIDTH];
+    float input_rows[ROWS * WIDTH], reference[ROWS * WIDTH], encoded[ROWS * WIDTH];
+    float combined[ROWS * WIDTH], routed[ROWS * WIDTH], shared[ROWS * WIDTH];
+    float post[ROWS], combination[ROWS], selected_weights[PAIRS];
+    unsigned long long selected[PAIRS];
+    unsigned int token_ids[ROWS] = {7u, 11u};
+    unsigned long long address = 0ull, workspace_bytes = 0ull, slot, index;
+    float maximum_error = 0.0f;
+    int native, rc;
+
+    operations = yvex_backend_moe_operations_get(backend);
+    YVEX_TEST_ASSERT(operations, "obtain CUDA width-N MoE operations");
+    for (index = 0ull; index < WIDTH; ++index) {
+        norm[index] = 1.0f;
+        expert_row[index] = index == 0ull ? 0.5f : 0.0f;
+        input_rows[index] = 1.0f;
+        input_rows[WIDTH + index] = -1.0f;
+    }
+    memset(router, 0, sizeof(router));
+    router[0] = 1.0f;
+    router[WIDTH] = -1.0f;
+
+    descriptor.name = "tensorcore-moe-residency";
+    descriptor.dtype = YVEX_DTYPE_I8;
+    descriptor.rank = 1u;
+    descriptor.dims[0] = descriptor.bytes = 2ull * 1024ull * 1024ull;
+    YVEX_TEST_ASSERT(
+        yvex_backend_resident_alloc(backend, &descriptor, &anchor,
+                                    &fixture.arena, &err) == YVEX_OK,
+        "allocate encoded MoE residency");
+    fixture.capacity = descriptor.bytes;
+    memset(fixture.arena, 0, (size_t)fixture.capacity);
+    YVEX_TEST_ASSERT(
+        yvex_backend_resident_attach(backend, fixture.arena, fixture.capacity,
+                                     anchor, 19ull, &err) == YVEX_OK &&
+            yvex_backend_resident_resolve(backend, fixture.arena, fixture.capacity,
+                                          &address) == YVEX_BACKEND_RESIDENT_HIT,
+        "attach encoded MoE residency once");
+    fixture.device_base = address;
+
+    layer.schema_version = YVEX_MOE_PLAN_SCHEMA_V1;
+    layer.router_class = YVEX_MOE_ROUTER_LEARNED_HIDDEN_STATE;
+    layer.scoring = YVEX_MOE_SCORING_SQRT_SOFTPLUS;
+    layer.topk_policy = YVEX_MOE_TOPK_NOAUX_TC;
+    layer.activation = YVEX_MOE_ACTIVATION_SILU;
+    layer.hidden_width = layer.expanded_width = WIDTH;
+    layer.residual_streams = 1ull;
+    layer.mhc_mixing_rows = 3ull;
+    layer.mhc_sinkhorn_iterations = 1ull;
+    layer.routed_experts = EXPERTS;
+    layer.shared_experts = layer.experts_per_token = 1ull;
+    layer.expert_intermediate_width = layer.shared_intermediate_width = WIDTH;
+    layer.correction_bias_width = EXPERTS;
+    layer.rms_epsilon = layer.mhc_epsilon = 0.00001;
+    layer.mhc_post_multiplier = layer.routed_scaling_factor = 1.0;
+    layer.activation_limit = 10.0;
+    layer.requires_correction_bias = layer.normalize_topk_probabilities = 1;
+    for (slot = 0ull; slot < YVEX_MOE_WEIGHT_COUNT; ++slot)
+        layer.tensor_ids[slot] = YVEX_MOE_NO_TENSOR;
+    job.layer = &layer;
+    job.expanded_input = input_rows;
+    job.token_id_present = 1;
+    job.evidence_level = YVEX_ATTENTION_EVIDENCE_SUMMARY;
+    YVEX_TEST_ASSERT(
+        moe_encoded_f32_weight(&fixture, &job.weights[YVEX_MOE_WEIGHT_MHC_FUNCTION],
+                                YVEX_TENSOR_ROLE_HC_FFN_FUNCTION, 3ull, WIDTH, mhc) &&
+            moe_encoded_f32_weight(&fixture, &job.weights[YVEX_MOE_WEIGHT_MHC_SCALE],
+                                    YVEX_TENSOR_ROLE_HC_FFN_SCALE, 1ull, 3ull, scale) &&
+            moe_encoded_f32_weight(&fixture, &job.weights[YVEX_MOE_WEIGHT_MHC_BASE],
+                                    YVEX_TENSOR_ROLE_HC_FFN_BASE, 1ull, 3ull, base) &&
+            moe_encoded_f32_weight(&fixture, &job.weights[YVEX_MOE_WEIGHT_FFN_NORM],
+                                    YVEX_TENSOR_ROLE_FFN_NORM, 1ull, WIDTH, norm) &&
+            moe_encoded_f32_weight(&fixture, &job.weights[YVEX_MOE_WEIGHT_ROUTER],
+                                    YVEX_TENSOR_ROLE_MOE_ROUTER, EXPERTS, WIDTH, router) &&
+            moe_encoded_f32_weight(&fixture, &job.weights[YVEX_MOE_WEIGHT_ROUTER_BIAS],
+                                    YVEX_TENSOR_ROLE_MOE_ROUTER_BIAS, 1ull, EXPERTS, base),
+        "encode auxiliary MoE weights");
+    YVEX_TEST_ASSERT(
+        moe_encoded_weight(&fixture, &job.weights[YVEX_MOE_WEIGHT_ROUTED_GATE],
+                           YVEX_TENSOR_ROLE_MOE_EXPERT_GATE,
+                           YVEX_GGUF_QTYPE_IQ2_XXS,
+                           EXPERTS * WIDTH, WIDTH, expert_row) &&
+            moe_encoded_weight(&fixture, &job.weights[YVEX_MOE_WEIGHT_ROUTED_UP],
+                               YVEX_TENSOR_ROLE_MOE_EXPERT_UP,
+                               YVEX_GGUF_QTYPE_IQ2_XXS,
+                               EXPERTS * WIDTH, WIDTH, expert_row) &&
+            moe_encoded_weight(&fixture, &job.weights[YVEX_MOE_WEIGHT_ROUTED_DOWN],
+                               YVEX_TENSOR_ROLE_MOE_EXPERT_DOWN,
+                               YVEX_GGUF_QTYPE_Q2_K,
+                               EXPERTS * WIDTH, WIDTH, expert_row) &&
+            moe_encoded_weight(&fixture, &job.weights[YVEX_MOE_WEIGHT_SHARED_GATE],
+                               YVEX_TENSOR_ROLE_MOE_SHARED_EXPERT_GATE,
+                               YVEX_GGUF_QTYPE_MXFP4,
+                               WIDTH, WIDTH, expert_row) &&
+            moe_encoded_weight(&fixture, &job.weights[YVEX_MOE_WEIGHT_SHARED_UP],
+                               YVEX_TENSOR_ROLE_MOE_SHARED_EXPERT_UP,
+                               YVEX_GGUF_QTYPE_MXFP4,
+                               WIDTH, WIDTH, expert_row) &&
+            moe_encoded_weight(&fixture, &job.weights[YVEX_MOE_WEIGHT_SHARED_DOWN],
+                               YVEX_TENSOR_ROLE_MOE_SHARED_EXPERT_DOWN,
+                               YVEX_GGUF_QTYPE_Q8_0,
+                               WIDTH, WIDTH, expert_row),
+        "encode mixed low-bit expert-major MoE weights");
+    for (slot = 0ull; slot < YVEX_MOE_WEIGHT_COUNT; ++slot)
+        if (job.weights[slot].device_address)
+            layer.tensor_ids[slot] = job.weights[slot].tensor_id;
+    YVEX_TEST_ASSERT(
+        operations->workspace_required(&layer, ROWS, &workspace_bytes, &err) == YVEX_OK &&
+            workspace_bytes != 0ull,
+        "derive encoded MoE workspace");
+
+#define ALLOCATE_ENCODED_TENSOR(owner_, name_, bytes_)                                     \
+    do {                                                                                   \
+        memset(&descriptor, 0, sizeof(descriptor));                                        \
+        descriptor.name = (name_);                                                         \
+        descriptor.dtype = YVEX_DTYPE_F32;                                                 \
+        descriptor.rank = 1u;                                                              \
+        descriptor.dims[0] = (bytes_) / sizeof(float);                                     \
+        descriptor.bytes = (bytes_);                                                       \
+        YVEX_TEST_ASSERT(                                                                  \
+            yvex_backend_tensor_alloc(backend, &descriptor, &(owner_), &err) == YVEX_OK,  \
+            "allocate encoded MoE device tensor");                                      \
+    } while (0)
+    ALLOCATE_ENCODED_TENSOR(input, "tensorcore-moe-input", sizeof(input_rows));
+    ALLOCATE_ENCODED_TENSOR(reference_output, "tensorcore-moe-reference",
+                            sizeof(reference));
+    ALLOCATE_ENCODED_TENSOR(encoded_output, "tensorcore-moe-encoded", sizeof(encoded));
+    ALLOCATE_ENCODED_TENSOR(workspace, "tensorcore-moe-workspace", workspace_bytes);
+#undef ALLOCATE_ENCODED_TENSOR
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_write(backend, input, input_rows, sizeof(input_rows), &err) ==
+                YVEX_OK &&
+            yvex_backend_workspace_attach(backend, workspace, 2ull, &err) == YVEX_OK,
+        "prepare encoded MoE device state");
+    rows.schema_version = YVEX_MOE_ROW_BATCH_SCHEMA_V1;
+    rows.row_count = ROWS;
+    rows.row_width = rows.row_stride = WIDTH;
+    rows.expanded_rows = input_rows;
+    rows.device_rows = input;
+    rows.device_outputs = reference_output;
+    rows.token_ids = token_ids;
+    rows.token_ids_present = 1;
+    rows.execution_class = YVEX_EXECUTION_CLASS_DEVICE_NATIVE;
+    moe_encoded_output(&output, combined, routed, shared, post, combination,
+                       selected, selected_weights, ROWS, WIDTH, 1ull, PAIRS);
+    rc = operations->execute_rows(backend, &job, &rows, &output, &result, &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_OK && result.schema_version == YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V2 &&
+            result.tensor_core_launches == 0ull &&
+            yvex_backend_tensor_read(backend, reference_output, reference,
+                                     sizeof(reference), &err) == YVEX_OK,
+        "execute portable low-bit width-N MoE oracle");
+
+    for (slot = YVEX_MOE_WEIGHT_ROUTED_GATE;
+         slot <= YVEX_MOE_WEIGHT_SHARED_DOWN; ++slot)
+        job.weights[slot].activation = YVEX_EXECUTION_ACTIVATION_DEVICE_ENCODED;
+    native = yvex_cuda_state(backend)->kernel_bundle_native;
+    rows.device_outputs = encoded_output;
+    memset(&result, 0, sizeof(result));
+    rc = operations->execute_rows(backend, &job, &rows, &output, &result, &err);
+    if (native) {
+        YVEX_TEST_ASSERT(
+            rc == YVEX_OK && result.schema_version == YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V2 &&
+                result.tensor_core_launches == 4ull &&
+                yvex_device_tensor_is_written(encoded_output) &&
+                yvex_backend_tensor_read(backend, encoded_output, encoded,
+                                         sizeof(encoded), &err) == YVEX_OK,
+            "execute native grouped Tensor Core MoE");
+        for (index = 0ull; index < ROWS * WIDTH; ++index) {
+            float difference = fabsf(reference[index] - encoded[index]);
+            if (difference > maximum_error) maximum_error = difference;
+        }
+        YVEX_TEST_ASSERT(maximum_error <= 0.01f,
+                         "native grouped Tensor Core MoE matches portable oracle");
+    } else {
+        YVEX_TEST_ASSERT(
+            rc == YVEX_ERR_UNSUPPORTED && !result.completed &&
+                !yvex_device_tensor_is_written(encoded_output),
+            "portable bundle refuses compiled Tensor Core MoE without fallback");
+    }
+
+    job.weights[YVEX_MOE_WEIGHT_ROUTED_UP].activation =
+        YVEX_EXECUTION_ACTIVATION_DEVICE_F32;
+    encoded_output->is_written = 0;
+    memset(&result, 0, sizeof(result));
+    rc = operations->execute_rows(backend, &job, &rows, &output, &result, &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_ERR_FORMAT && !result.completed &&
+            !yvex_device_tensor_is_written(encoded_output),
+        "mixed compiled gate/up activation refuses before publication");
+
+    yvex_backend_workspace_detach(backend);
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_release(backend, &workspace, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &encoded_output, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &reference_output, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &input, &err) == YVEX_OK &&
+            yvex_backend_resident_detach(backend, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &anchor, &err) == YVEX_OK,
+        "release encoded MoE fixture ownership");
+    return 0;
 }
 
 static int assert_grouped_moe(yvex_backend *backend)
@@ -590,8 +931,8 @@ int yvex_cuda_test_info(void)
     YVEX_TEST_ASSERT(
         strcmp(yvex_cuda_kernel_function_identity(
                    yvex_cuda_state(backend),
-                   yvex_cuda_state(backend)->q8_0_tensorcore_rows_function),
-               "yvex_q8_0_tensorcore_rows") == 0,
+                   yvex_cuda_state(backend)->qtype_tensorcore_rows_function),
+               "yvex_qtype_tensorcore_rows") == 0,
         "graph identity resolves the admitted Tensor Core kernel from bundle authority");
     if (required_native && required_native[0]) {
         YVEX_TEST_ASSERT(kernel_summary.kernel_bundle_native,
@@ -666,6 +1007,8 @@ int yvex_cuda_test_info(void)
     mapped = NULL;
     YVEX_TEST_ASSERT(assert_grouped_moe(backend) == 0,
                      "grouped direct-address MoE matches audit execution");
+    YVEX_TEST_ASSERT(assert_tensorcore_moe(backend) == 0,
+                     "compiled encoded MoE is native and fail-closed");
     YVEX_TEST_ASSERT(assert_deferred_attention_completion(backend) == 0,
                      "deferred attention owns one ordered publication barrier");
     for (rc = 0; rc < (int)YVEX_BACKEND_VARIANT_COUNT; ++rc) {

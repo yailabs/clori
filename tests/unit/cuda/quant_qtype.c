@@ -291,8 +291,7 @@ static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
         ROWS, WIDTH, row_bytes, INPUT_ROWS, input, NULL, 0ull, NULL,
         output, 1, &facts, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && facts.kernel_launches == 2ull &&
-                         facts.tensor_core_launches ==
-                             (qtype == YVEX_GGUF_QTYPE_Q8_0 ? 1ull : 0ull) &&
+                         facts.tensor_core_launches == 1ull &&
                          facts.d2h_bytes == sizeof(int) &&
                          facts.device_synchronizations == 1ull &&
                          facts.compulsory_memory_facts_available &&
@@ -346,8 +345,7 @@ static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
         backend, mapped, ROWS * row_bytes, qtype, ROWS, WIDTH, row_bytes,
         INPUT_ROWS, input, NULL, 0ull, additive, output, 1, &facts, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && facts.kernel_launches == 2ull &&
-                         facts.tensor_core_launches ==
-                             (qtype == YVEX_GGUF_QTYPE_Q8_0 ? 1ull : 0ull) &&
+                         facts.tensor_core_launches == 1ull &&
                          facts.d2h_bytes == sizeof(int) &&
                          facts.device_synchronizations == 1ull &&
                          facts.activation_bytes == sizeof(vectors) + 2ull * sizeof(actual) &&

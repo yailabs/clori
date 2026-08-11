@@ -305,8 +305,12 @@ static int deepseek_compilation_quant_policy(
     const yvex_quant_policy *policy, const char *imatrix_identity,
     yvex_error *err);
 static const yvex_physical_execution_policy deepseek_physical_execution_policy = {
-    .schema_version = YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V1,
+    .schema_version = YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V2,
     .activation = YVEX_EXECUTION_ACTIVATION_DEVICE_F32,
+    .encoded_activation_consumer_mask =
+        (1ull << YVEX_EXECUTION_CONSUMER_ROUTED_GATE_UP) |
+        (1ull << YVEX_EXECUTION_CONSUMER_ROUTED_DOWN) |
+        (1ull << YVEX_EXECUTION_CONSUMER_SHARED_EXPERT),
     .required_backend = YVEX_EXECUTION_BACKEND_ANY,
     .evidence = YVEX_EXECUTION_EVIDENCE_PRODUCTION,
     .fallback = YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE,

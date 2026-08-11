@@ -420,8 +420,12 @@ test-cuda-graph: cuda
 	YVEX_CUDA_TEST_FILTER=graph $(CUDA_TEST_RUNNER)
 
 test-cuda-native-sm121-sass: build/sm121/obj/src/backend/cuda/tensorcore.cubin
-	@$(CUOBJDUMP) --dump-sass $< | grep -F 'Function : yvex_q8_0_tensorcore_rows' \
-		>/dev/null || { echo "native Tensor Core entrypoint is absent: $<" >&2; exit 1; }
+	@for symbol in yvex_qtype_tensorcore_rows yvex_moe_grouped_up_tensorcore \
+		yvex_moe_grouped_down_tensorcore; do \
+		$(CUOBJDUMP) --dump-sass $< | grep -F "Function : $$symbol" >/dev/null || { \
+			echo "native Tensor Core entrypoint $$symbol is absent: $<" >&2; exit 1; \
+		}; \
+	done
 	@$(CUOBJDUMP) --dump-sass $< | grep -E 'IMMA[.]16816[.]S8[.]S8' \
 		>/dev/null || { echo "native Tensor Core IMMA instruction is absent: $<" >&2; exit 1; }
 	@echo "yvex native sm_121 Tensor Core SASS: admitted"
