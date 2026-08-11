@@ -266,8 +266,7 @@ typedef struct {
     CUfunction moe_pair_order_function;
     CUfunction moe_grouped_up_function;
     CUfunction moe_grouped_down_function;
-    CUfunction moe_grouped_up_rows_function, moe_grouped_up_tensorcore_function;
-    CUfunction moe_grouped_down_rows_function, moe_grouped_down_tensorcore_function;
+    CUfunction moe_grouped_up_rows_function, moe_grouped_down_rows_function;
     CUfunction moe_reduce_rows_function;
     CUfunction moe_combine_rows_function;
     CUfunction moe_swiglu_function;

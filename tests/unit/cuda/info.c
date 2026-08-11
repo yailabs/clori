@@ -253,13 +253,13 @@ static void moe_encoded_output(
     output->selection_capacity = pairs;
 }
 
-static int assert_tensorcore_moe(yvex_backend *backend)
+static int assert_encoded_moe(yvex_backend *backend)
 {
-    enum { ROWS = 2, WIDTH = 256, EXPERTS = 2, PAIRS = 2 };
+    enum { ROWS = 32, WIDTH = 256, EXPERTS = 2, PAIRS = 32 };
     yvex_backend_tensor_desc descriptor = {0};
-    yvex_device_tensor *anchor = NULL, *input = NULL;
+    yvex_device_tensor *anchor = NULL, *input = NULL, *small_input = NULL;
     yvex_device_tensor *reference_output = NULL, *encoded_output = NULL;
-    yvex_device_tensor *workspace = NULL;
+    yvex_device_tensor *small_output = NULL, *workspace = NULL;
     yvex_moe_layer_plan layer = {0};
     yvex_moe_layer_job job = {0};
     yvex_moe_row_batch rows = {0};
@@ -293,7 +293,7 @@ static int assert_tensorcore_moe(yvex_backend *backend)
     router[0] = 1.0f;
     router[WIDTH] = -1.0f;
 
-    descriptor.name = "tensorcore-moe-residency";
+    descriptor.name = "encoded-moe-residency";
     descriptor.dtype = YVEX_DTYPE_I8;
     descriptor.rank = 1u;
     descriptor.dims[0] = descriptor.bytes = 2ull * 1024ull * 1024ull;
@@ -394,15 +394,21 @@ static int assert_tensorcore_moe(yvex_backend *backend)
             yvex_backend_tensor_alloc(backend, &descriptor, &(owner_), &err) == YVEX_OK,  \
             "allocate encoded MoE device tensor");                                      \
     } while (0)
-    ALLOCATE_ENCODED_TENSOR(input, "tensorcore-moe-input", sizeof(input_rows));
-    ALLOCATE_ENCODED_TENSOR(reference_output, "tensorcore-moe-reference",
+    ALLOCATE_ENCODED_TENSOR(input, "encoded-moe-input", sizeof(input_rows));
+    ALLOCATE_ENCODED_TENSOR(small_input, "encoded-moe-small-input",
+                            2ull * WIDTH * sizeof(float));
+    ALLOCATE_ENCODED_TENSOR(reference_output, "encoded-moe-reference",
                             sizeof(reference));
-    ALLOCATE_ENCODED_TENSOR(encoded_output, "tensorcore-moe-encoded", sizeof(encoded));
-    ALLOCATE_ENCODED_TENSOR(workspace, "tensorcore-moe-workspace", workspace_bytes);
+    ALLOCATE_ENCODED_TENSOR(encoded_output, "encoded-moe-output", sizeof(encoded));
+    ALLOCATE_ENCODED_TENSOR(small_output, "encoded-moe-small-output",
+                            2ull * WIDTH * sizeof(float));
+    ALLOCATE_ENCODED_TENSOR(workspace, "encoded-moe-workspace", workspace_bytes);
 #undef ALLOCATE_ENCODED_TENSOR
     YVEX_TEST_ASSERT(
         yvex_backend_tensor_write(backend, input, input_rows, sizeof(input_rows), &err) ==
                 YVEX_OK &&
+            yvex_backend_tensor_write(backend, small_input, input_rows,
+                                      2ull * WIDTH * sizeof(float), &err) == YVEX_OK &&
             yvex_backend_workspace_attach(backend, workspace, 2ull, &err) == YVEX_OK,
         "prepare encoded MoE device state");
     rows.schema_version = YVEX_MOE_ROW_BATCH_SCHEMA_V1;
@@ -428,30 +434,55 @@ static int assert_tensorcore_moe(yvex_backend *backend)
          slot <= YVEX_MOE_WEIGHT_SHARED_DOWN; ++slot)
         job.weights[slot].activation = YVEX_EXECUTION_ACTIVATION_DEVICE_ENCODED;
     native = yvex_cuda_state(backend)->kernel_bundle_native;
-    rows.device_outputs = encoded_output;
+    rows.row_count = 2ull;
+    rows.device_rows = small_input;
+    rows.device_outputs = small_output;
     memset(&result, 0, sizeof(result));
     rc = operations->execute_rows(backend, &job, &rows, &output, &result, &err);
     if (native) {
         YVEX_TEST_ASSERT(
             rc == YVEX_OK && result.schema_version == YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V2 &&
-                result.tensor_core_launches == 4ull &&
+                result.tensor_core_launches == 0ull &&
+                yvex_device_tensor_is_written(small_output) &&
+                yvex_backend_tensor_read(backend, small_output, encoded,
+                                         2ull * WIDTH * sizeof(float), &err) == YVEX_OK,
+            "select source-faithful encoded MoE for a sparse row batch");
+        for (index = 0ull; index < 2ull * WIDTH; ++index) {
+            float difference = fabsf(reference[index] - encoded[index]);
+            if (difference > maximum_error) maximum_error = difference;
+        }
+        YVEX_TEST_ASSERT(maximum_error <= 0.01f,
+                         "native small-row encoded MoE matches portable oracle");
+        rows.row_count = ROWS;
+        rows.device_rows = input;
+        rows.device_outputs = encoded_output;
+        encoded_output->is_written = 0;
+        memset(&result, 0, sizeof(result));
+        rc = operations->execute_rows(backend, &job, &rows, &output, &result, &err);
+        YVEX_TEST_ASSERT(
+            rc == YVEX_OK && result.schema_version == YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V2 &&
+                result.tensor_core_launches == 0ull &&
                 yvex_device_tensor_is_written(encoded_output) &&
                 yvex_backend_tensor_read(backend, encoded_output, encoded,
                                          sizeof(encoded), &err) == YVEX_OK,
-            "execute native grouped Tensor Core MoE");
+            "preserve source-faithful encoded MoE across a complete row batch");
+        maximum_error = 0.0f;
         for (index = 0ull; index < ROWS * WIDTH; ++index) {
             float difference = fabsf(reference[index] - encoded[index]);
             if (difference > maximum_error) maximum_error = difference;
         }
         YVEX_TEST_ASSERT(maximum_error <= 0.01f,
-                         "native grouped Tensor Core MoE matches portable oracle");
+                         "native grouped encoded MoE matches portable oracle");
     } else {
         YVEX_TEST_ASSERT(
             rc == YVEX_ERR_UNSUPPORTED && !result.completed &&
-                !yvex_device_tensor_is_written(encoded_output),
-            "portable bundle refuses compiled Tensor Core MoE without fallback");
+                !yvex_device_tensor_is_written(small_output),
+            "portable bundle refuses compiled encoded MoE without fallback");
     }
 
+    rows.row_count = ROWS;
+    rows.device_rows = input;
+    rows.device_outputs = encoded_output;
     job.weights[YVEX_MOE_WEIGHT_ROUTED_UP].activation =
         YVEX_EXECUTION_ACTIVATION_DEVICE_F32;
     encoded_output->is_written = 0;
@@ -465,8 +496,10 @@ static int assert_tensorcore_moe(yvex_backend *backend)
     yvex_backend_workspace_detach(backend);
     YVEX_TEST_ASSERT(
         yvex_backend_tensor_release(backend, &workspace, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &small_output, &err) == YVEX_OK &&
             yvex_backend_tensor_release(backend, &encoded_output, &err) == YVEX_OK &&
             yvex_backend_tensor_release(backend, &reference_output, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &small_input, &err) == YVEX_OK &&
             yvex_backend_tensor_release(backend, &input, &err) == YVEX_OK &&
             yvex_backend_resident_detach(backend, &err) == YVEX_OK &&
             yvex_backend_tensor_release(backend, &anchor, &err) == YVEX_OK,
@@ -1018,7 +1051,7 @@ int yvex_cuda_test_info(void)
     mapped = NULL;
     YVEX_TEST_ASSERT(assert_grouped_moe(backend) == 0,
                      "grouped direct-address MoE matches audit execution");
-    YVEX_TEST_ASSERT(assert_tensorcore_moe(backend) == 0,
+    YVEX_TEST_ASSERT(assert_encoded_moe(backend) == 0,
                      "compiled encoded MoE is native and fail-closed");
     YVEX_TEST_ASSERT(assert_deferred_attention_completion(backend) == 0,
                      "deferred attention owns one ordered publication barrier");
