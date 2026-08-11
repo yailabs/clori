@@ -191,6 +191,8 @@ server_pid=
 wait "$log_pid"
 log_pid=
 grep -F '"kind":"generation.completed"' "$root/server.log.jsonl" >/dev/null
+grep -F '"phase":"graphs"' "$root/server.log.jsonl" >/dev/null
+grep -F '"phase":"tensorcore"' "$root/server.log.jsonl" >/dev/null
 
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server tiny-executable-cpu-complete \
     --backend cpu --ctx 8 --generation-mode target-only --max-new-tokens 1 \

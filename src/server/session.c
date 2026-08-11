@@ -1183,6 +1183,16 @@ static int session_profile_publish(server_session_registry *registry,
             profile->counters[YVEX_RUNTIME_PROFILE_DEVICE_SYNCHRONIZATIONS],
             profile->phase_ns[YVEX_RUNTIME_PROFILE_SYNCHRONIZATION_WAIT]);
     if (rc == YVEX_OK)
+        rc = PROFILE_EVENT("graphs",
+            profile->counters[YVEX_RUNTIME_PROFILE_GRAPH_LAUNCHES],
+            profile->counters[YVEX_RUNTIME_PROFILE_GRAPH_CAPTURES],
+            profile->counters[YVEX_RUNTIME_PROFILE_GRAPH_REPLAYS], 0ull);
+    if (rc == YVEX_OK)
+        rc = PROFILE_EVENT("tensorcore",
+            profile->counters[YVEX_RUNTIME_PROFILE_TENSOR_CORE_LAUNCHES],
+            profile->counters[YVEX_RUNTIME_PROFILE_KERNEL_LAUNCHES],
+            profile->counters[YVEX_RUNTIME_PROFILE_UNIQUE_EXPERTS], 0ull);
+    if (rc == YVEX_OK)
         rc = PROFILE_EVENT("attention",
             profile->phase_calls[YVEX_RUNTIME_PROFILE_ATTENTION],
             profile->counters[YVEX_RUNTIME_PROFILE_CACHE_HITS],
