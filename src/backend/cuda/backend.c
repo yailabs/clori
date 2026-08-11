@@ -989,7 +989,6 @@ static int cuda_tensor_alloc(yvex_backend *backend,
     yvex_error cleanup_error, primary_error;
     CUdeviceptr ptr = 0;
     unsigned int i;
-    int cleanup_rc;
     int rc;
     memset(&work, 0, sizeof(work));
     if (!backend || !state || !out) {
@@ -1050,7 +1049,6 @@ static int cuda_tensor_alloc(yvex_backend *backend,
     tensor->bytes = desc->bytes;
     tensor->data = (unsigned char *)(uintptr_t)ptr;
     work.count = 0u;
-    work.current_bytes = 0ull;
     (void)yvex_cuda_refresh_memory_info(backend, err);
     *out = tensor;
     yvex_error_clear(err);
@@ -1060,9 +1058,11 @@ allocation_failure:
         primary_error = *err;
     else
         yvex_error_clear(&primary_error);
-    cleanup_rc = yvex_cuda_work_cleanup(&work, &cleanup_error);
-    (void)cleanup_rc;
-    if (err)
+    (void)yvex_cuda_work_cleanup(&work, &cleanup_error);
+    if (err && rc == YVEX_ERR_NOMEM)
+        yvex_error_setf(err, rc, "cuda.tensor_alloc", "%s allocation of %llu bytes failed: %s",
+                        desc->name, desc->bytes, yvex_error_message(&primary_error));
+    else if (err)
         *err = primary_error;
     return rc;
 }
