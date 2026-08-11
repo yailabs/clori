@@ -318,8 +318,8 @@ static int generation_capacity_hardware(
     yvex_backend_cuda_attention_graph_summary cuda = {0};
     yvex_runtime_residency_summary residency = {0};
     const char *placement = "host";
-    long pages, page_bytes;
-    unsigned long long total, available;
+    long page_bytes;
+    unsigned long long system_total, total, available, reserve_basis;
     int process_limited, rc;
     if (!live_available || !view || !view->backend ||
         yvex_backend_get_device_info(view->backend, &device, err) != YVEX_OK ||
@@ -336,22 +336,19 @@ static int generation_capacity_hardware(
         return generation_context_refuse(
             err, YVEX_ERR_STATE,
             "model residency placement facts are unavailable");
-    if (!yvex_runtime_private_available_memory(&available, &process_limited))
+    if (!yvex_runtime_private_memory_capacity(
+            &system_total, &available, &process_limited))
         return generation_context_refuse(
             err, YVEX_ERR_STATE,
             "live process memory capacity is unavailable");
     if (device.kind == YVEX_BACKEND_KIND_CUDA) {
         total = device.total_memory_bytes;
+        if (residency.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED &&
+            system_total < total) total = system_total;
         if (device.free_memory_bytes < available)
             available = device.free_memory_bytes;
     } else {
-        pages = sysconf(_SC_PHYS_PAGES);
-        if (pages <= 0 ||
-            !yvex_core_u64_mul((unsigned long long)pages,
-                               (unsigned long long)page_bytes, &total))
-            return generation_context_refuse(
-                err, YVEX_ERR_STATE,
-                "host memory extent is unavailable");
+        total = system_total;
     }
     *live_available = available;
     memset(&context->hardware_profile, 0, sizeof(context->hardware_profile));
@@ -372,12 +369,20 @@ static int generation_capacity_hardware(
             context->hardware_profile.usable_memory_bytes)
         context->hardware_profile.usable_memory_bytes =
             context->options.maximum_device_bytes;
-    if (device.kind == YVEX_BACKEND_KIND_CPU &&
+    if ((device.kind == YVEX_BACKEND_KIND_CPU ||
+         residency.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED) &&
         context->options.maximum_host_bytes &&
         context->options.maximum_host_bytes <
             context->hardware_profile.usable_memory_bytes)
         context->hardware_profile.usable_memory_bytes =
             context->options.maximum_host_bytes;
+    reserve_basis = system_total;
+    if (context->options.maximum_host_bytes &&
+        context->options.maximum_host_bytes < reserve_basis)
+        reserve_basis = context->options.maximum_host_bytes;
+    context->system_capacity_bytes = reserve_basis;
+    context->system_reserve_bytes =
+        yvex_runtime_private_system_reserve(reserve_basis);
     context->hardware_profile.host_page_bytes = (unsigned long long)page_bytes;
     context->hardware_profile.device_page_bytes = (unsigned long long)page_bytes;
     context->hardware_profile.unified_addressing = device.unified_addressing;
@@ -466,8 +471,12 @@ static int generation_capacity_workload(
     context->workload_profile.output_head_rows =
         speculation ? speculation->block_size + 1ull
                     : 1ull;
+    if (!context->system_capacity_bytes || !context->system_reserve_bytes)
+        return generation_context_refuse(
+            err, YVEX_ERR_STATE,
+            "runtime system-reserve capacity is unavailable");
     context->workload_profile.system_reserve_bytes =
-        YVEX_EXECUTION_MINIMUM_SYSTEM_RESERVE;
+        context->system_reserve_bytes;
     context->workload_profile.latency_priority =
         context->options.workload_kind ==
         YVEX_EXECUTION_WORKLOAD_INTERACTIVE_LATENCY;

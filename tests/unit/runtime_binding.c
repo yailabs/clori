@@ -2264,7 +2264,7 @@ static int runtime_model_open_fixture(const binding_fixture *fixture,
 typedef struct {
     unsigned long long events[YVEX_RUNTIME_LIFECYCLE_COUNT];
     unsigned long long hash_completed, hash_total;
-    int cancel_hash;
+    int cancel_hash, restrict_memory_after_hash, memory_restricted;
 } runtime_progress_fixture;
 
 static int runtime_progress_collect(void *opaque, yvex_runtime_lifecycle_phase phase,
@@ -2279,6 +2279,10 @@ static int runtime_progress_collect(void *opaque, yvex_runtime_lifecycle_phase p
     if (phase == YVEX_RUNTIME_LIFECYCLE_ARTIFACT_HASH) {
         progress->hash_completed = completed;
         progress->hash_total = total;
+        if (progress->restrict_memory_after_hash && total && completed == total &&
+            !progress->memory_restricted &&
+            setenv("YVEX_TEST_RUNTIME_AVAILABLE_MEMORY_BYTES", "1", 1) == 0)
+            progress->memory_restricted = 1;
         if (progress->cancel_hash && completed)
             return 0;
     }
@@ -2294,6 +2298,7 @@ static int test_runtime_model_progress(
     yvex_runtime_model *model = NULL;
     yvex_runtime_model_summary summary;
     yvex_error err;
+    unsigned long long reserve;
     int capacity_rc;
 
     memset(&request, 0, sizeof(request));
@@ -2324,17 +2329,41 @@ static int test_runtime_model_progress(
                      "runtime model retains typed phase timing");
     yvex_runtime_model_close(&model);
     memset(&progress, 0, sizeof(progress));
+    reserve = yvex_runtime_private_system_reserve(128ull * 1024ull * 1024ull * 1024ull);
+    YVEX_TEST_ASSERT(
+        reserve == 16ull * 1024ull * 1024ull * 1024ull &&
+            setenv("YVEX_TEST_RUNTIME_TOTAL_MEMORY_BYTES", "137438953472", 1) == 0 &&
+            setenv("YVEX_TEST_RUNTIME_AVAILABLE_MEMORY_BYTES", "137438953472", 1) == 0,
+        "model admission installs deterministic proportional reserve facts");
     request.maximum_host_bytes = fixture->admission.payload_bytes +
                                  YVEX_EXECUTION_MINIMUM_SYSTEM_RESERVE - 1ull;
     YVEX_TEST_ASSERT(
         yvex_runtime_model_open(&model, &request, &failure, &err) == YVEX_ERR_BOUNDS &&
             !model && failure.code == YVEX_RUNTIME_MODEL_FAILURE_ALLOCATION &&
             strcmp(failure.field, "model-host-budget") == 0 &&
-            failure.expected > fixture->admission.payload_bytes &&
+            failure.expected == fixture->admission.payload_bytes +
+                                    YVEX_EXECUTION_MINIMUM_SYSTEM_RESERVE &&
             failure.actual == request.maximum_host_bytes &&
             progress.events[YVEX_RUNTIME_LIFECYCLE_ARTIFACT_OPEN] == 0ull,
-        "model open preserves the reserve inside a configured host budget");
+        "model open preserves the minimum reserve inside a configured host budget");
     request.maximum_host_bytes = 0ull;
+    memset(&progress, 0, sizeof(progress));
+    YVEX_TEST_ASSERT(
+        setenv("YVEX_TEST_RUNTIME_AVAILABLE_MEMORY_BYTES", "17179869183", 1) == 0,
+        "inject capacity below the proportional system reserve");
+    capacity_rc = yvex_runtime_model_open(&model, &request, &failure, &err);
+    YVEX_TEST_ASSERT(
+        capacity_rc == YVEX_ERR_BOUNDS && !model &&
+            failure.code == YVEX_RUNTIME_MODEL_FAILURE_ALLOCATION &&
+            strcmp(failure.field, "system-memory-capacity") == 0 &&
+            failure.expected == fixture->admission.payload_bytes + reserve &&
+            failure.actual == 17179869183ull &&
+            progress.events[YVEX_RUNTIME_LIFECYCLE_ARTIFACT_OPEN] == 0ull,
+        "model open derives a proportional reserve from effective system capacity");
+    YVEX_TEST_ASSERT(
+        unsetenv("YVEX_TEST_RUNTIME_TOTAL_MEMORY_BYTES") == 0 &&
+            unsetenv("YVEX_TEST_RUNTIME_AVAILABLE_MEMORY_BYTES") == 0,
+        "model admission clears deterministic proportional reserve facts");
     memset(&progress, 0, sizeof(progress));
     YVEX_TEST_ASSERT(setenv("YVEX_TEST_RUNTIME_AVAILABLE_MEMORY_BYTES", "1", 1) == 0,
                      "inject system memory capacity refusal");
@@ -2365,6 +2394,26 @@ static int test_runtime_model_progress(
             failure.expected > fixture->admission.payload_bytes && failure.actual == 1ull &&
             progress.events[YVEX_RUNTIME_LIFECYCLE_ARTIFACT_OPEN] == 0ull,
         "model open preserves the cgroup reserve before artifact mutation");
+    memset(&progress, 0, sizeof(progress));
+    progress.restrict_memory_after_hash = 1;
+    YVEX_TEST_ASSERT(
+        setenv("YVEX_TEST_RUNTIME_TOTAL_MEMORY_BYTES", "137438953472", 1) == 0 &&
+            setenv("YVEX_TEST_RUNTIME_AVAILABLE_MEMORY_BYTES", "137438953472", 1) == 0,
+        "inject sufficient first-pass memory capacity");
+    capacity_rc = yvex_runtime_model_open(&model, &request, &failure, &err);
+    YVEX_TEST_ASSERT(
+        unsetenv("YVEX_TEST_RUNTIME_TOTAL_MEMORY_BYTES") == 0 &&
+            unsetenv("YVEX_TEST_RUNTIME_AVAILABLE_MEMORY_BYTES") == 0,
+        "clear just-in-time memory-capacity injection");
+    YVEX_TEST_ASSERT(
+        capacity_rc == YVEX_ERR_BOUNDS && !model && progress.memory_restricted &&
+            failure.code == YVEX_RUNTIME_MODEL_FAILURE_ALLOCATION &&
+            strcmp(failure.field, "system-memory-capacity") == 0 &&
+            failure.actual == 1ull &&
+            progress.events[YVEX_RUNTIME_LIFECYCLE_ARTIFACT_OPEN] == 1ull &&
+            progress.events[YVEX_RUNTIME_LIFECYCLE_ARTIFACT_HASH] > 1ull &&
+            progress.events[YVEX_RUNTIME_LIFECYCLE_RESIDENCY] == 0ull,
+        "model open rechecks live capacity after hashing and before residency mutation");
     memset(&progress, 0, sizeof(progress));
     progress.cancel_hash = 1;
     YVEX_TEST_ASSERT(setenv("YVEX_TEST_RUNTIME_MODEL_CLEANUP_FAILURE", "1", 1) == 0,

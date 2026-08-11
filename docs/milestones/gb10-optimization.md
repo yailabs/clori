@@ -97,12 +97,14 @@ page-table cost, fragmentation, copy-on-write and promotion granularity.
 Model residency is preflighted after bounded binding admission and before
 artifact open or materialization. The admitted resident payload must fit both
 the caller's host budget and the tighter of currently available system memory
-and the process cgroup-v2 hierarchy while preserving at least 8 GiB inside the
-budget. Refusal reports configured or available bytes against required bytes
-before the model candidate mutates artifact or residency state. Generation
-rechecks live system/cgroup and CUDA availability against the stable capacity
-plan's non-weight resources without making transient free bytes part of page
-geometry, plan identity or durable-state compatibility.
+and the process cgroup-v2 hierarchy while preserving the greater of 8 GiB and
+one eighth of the effective admitted capacity. The preflight runs again after
+artifact authentication and immediately before residency allocation. Refusal
+reports configured or available bytes against required bytes before the model
+candidate mutates residency state. Generation retains the same derived reserve
+in its workload/capacity plan and rechecks live system/cgroup and CUDA
+availability against non-weight resources without making transient free bytes
+part of page geometry, plan identity or durable-state compatibility.
 
 ## Causal optimization
 

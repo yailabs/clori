@@ -148,6 +148,7 @@ struct yvex_runtime_generation_context {
     yvex_backend_bandwidth_evidence bandwidth_evidence;
     yvex_execution_workload_profile workload_profile;
     yvex_execution_capacity_plan capacity_plan;
+    unsigned long long system_capacity_bytes, system_reserve_bytes;
     unsigned long long sampling_workspace_bytes;
     yvex_execution_shape_registry *execution_shapes;
     yvex_execution_phase_measurement phase_measurements[YVEX_EXECUTION_ROOFLINE_PHASE_COUNT];
@@ -246,8 +247,11 @@ int yvex_runtime_private_refuse(
     yvex_runtime_model_failure *failure, yvex_runtime_private_refusal_id id,
     unsigned long long expected, unsigned long long actual, yvex_error *err);
 int yvex_runtime_private_success(yvex_error *err);
-int yvex_runtime_private_available_memory(
-    unsigned long long *bytes, int *process_limited);
+int yvex_runtime_private_memory_capacity(
+    unsigned long long *total_bytes, unsigned long long *available_bytes,
+    int *process_limited);
+unsigned long long yvex_runtime_private_system_reserve(
+    unsigned long long capacity_bytes);
 int yvex_runtime_private_session_invalidate(
     yvex_runtime_execution_session *session, int include_state, yvex_error *err);
 int yvex_runtime_private_session_workspace_discard(

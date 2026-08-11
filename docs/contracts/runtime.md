@@ -33,14 +33,17 @@ qtype/backend prerequisites, compiled profile, and resource budgets before
 readiness. The runtime imports compiler facts; it does not reconstruct
 transformation or writer plans.
 
-Startup performs bounded binding admission before artifact open. When the
-binding's admitted resident payload exceeds either the caller's host budget or
-available memory after the mandatory 8 GiB reserve, opening refuses with the
-exact capacity component and byte extents. The effective available extent is
-the tighter of system availability and the process's complete cgroup-v2
-`memory.max`/`memory.high` hierarchy. The configured host budget includes the
-reserve rather than applying only to weight bytes. No artifact handle,
-materialization arena or model residency is created before that refusal.
+Startup performs bounded binding admission before artifact open. The retained
+system reserve is the greater of 8 GiB and one eighth of the effective memory
+capacity, where the effective capacity is constrained by the caller's host
+budget and the process's complete cgroup-v2 `memory.max`/`memory.high`
+hierarchy. When the binding's admitted resident payload plus that reserve
+exceeds the configured or currently available extent, opening refuses with the
+exact capacity component and byte extents. The same live check runs again after
+artifact authentication and immediately before residency allocation, so memory
+consumed during a long hash cannot turn a previously valid observation into an
+OOM allocation. No materialization arena or model residency is created after
+either refusal.
 
 The model owns model-lifetime artifact/binding handles, encoded weights,
 backend resources, tokenizer plan, output-head residency, immutable execution
