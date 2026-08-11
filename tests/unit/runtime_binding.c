@@ -2295,10 +2295,14 @@ static int test_runtime_model_progress(
     yvex_runtime_model_open_request request;
     yvex_runtime_model_failure failure;
     runtime_progress_fixture progress;
+    yvex_runtime_binding *binding = NULL;
+    yvex_runtime_binding_summary binding_summary;
+    yvex_complete_artifact_admission binding_admission;
+    yvex_runtime_binding_failure binding_failure;
     yvex_runtime_model *model = NULL;
     yvex_runtime_model_summary summary;
     yvex_error err;
-    unsigned long long reserve;
+    unsigned long long reserve, transient, baseline_required;
     int capacity_rc;
 
     memset(&request, 0, sizeof(request));
@@ -2328,6 +2332,16 @@ static int test_runtime_model_progress(
                              YVEX_RUNTIME_LIFECYCLE_MATERIALIZATION_OPEN] >= 0.0,
                      "runtime model retains typed phase timing");
     yvex_runtime_model_close(&model);
+    memset(&binding_failure, 0, sizeof(binding_failure));
+    YVEX_TEST_ASSERT(
+        yvex_runtime_binding_open(
+            &binding, prepared->path, &binding_summary, &binding_admission,
+            &binding_failure, &err) == YVEX_OK && binding &&
+            yvex_runtime_private_binding_maximum_tensor_bytes(
+                binding, &transient),
+        "runtime binding exposes one exact transient tensor extent");
+    yvex_runtime_binding_close(binding);
+    binding = NULL;
     memset(&progress, 0, sizeof(progress));
     reserve = yvex_runtime_private_system_reserve(128ull * 1024ull * 1024ull * 1024ull);
     YVEX_TEST_ASSERT(
@@ -2335,14 +2349,14 @@ static int test_runtime_model_progress(
             setenv("YVEX_TEST_RUNTIME_TOTAL_MEMORY_BYTES", "137438953472", 1) == 0 &&
             setenv("YVEX_TEST_RUNTIME_AVAILABLE_MEMORY_BYTES", "137438953472", 1) == 0,
         "model admission installs deterministic proportional reserve facts");
-    request.maximum_host_bytes = fixture->admission.payload_bytes +
-                                 YVEX_EXECUTION_MINIMUM_SYSTEM_RESERVE - 1ull;
+    baseline_required = fixture->admission.payload_bytes +
+                        YVEX_EXECUTION_MINIMUM_SYSTEM_RESERVE + transient;
+    request.maximum_host_bytes = baseline_required - 1ull;
     YVEX_TEST_ASSERT(
         yvex_runtime_model_open(&model, &request, &failure, &err) == YVEX_ERR_BOUNDS &&
             !model && failure.code == YVEX_RUNTIME_MODEL_FAILURE_ALLOCATION &&
             strcmp(failure.field, "model-host-budget") == 0 &&
-            failure.expected == fixture->admission.payload_bytes +
-                                    YVEX_EXECUTION_MINIMUM_SYSTEM_RESERVE &&
+            failure.expected == baseline_required &&
             failure.actual == request.maximum_host_bytes &&
             progress.events[YVEX_RUNTIME_LIFECYCLE_ARTIFACT_OPEN] == 0ull,
         "model open preserves the minimum reserve inside a configured host budget");
@@ -2356,7 +2370,7 @@ static int test_runtime_model_progress(
         capacity_rc == YVEX_ERR_BOUNDS && !model &&
             failure.code == YVEX_RUNTIME_MODEL_FAILURE_ALLOCATION &&
             strcmp(failure.field, "system-memory-capacity") == 0 &&
-            failure.expected == fixture->admission.payload_bytes + reserve &&
+            failure.expected == fixture->admission.payload_bytes + reserve + transient &&
             failure.actual == 17179869183ull &&
             progress.events[YVEX_RUNTIME_LIFECYCLE_ARTIFACT_OPEN] == 0ull,
         "model open derives a proportional reserve from effective system capacity");

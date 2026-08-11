@@ -291,7 +291,7 @@ typedef enum {
     YVEX_GENERATION_STATUS_CANCELLED,
     YVEX_GENERATION_STATUS_FAILED
 } yvex_runtime_generation_status;
-typedef struct {
+typedef struct yvex_runtime_generation_options {
     unsigned int schema_version;
     yvex_backend_kind backend;
     yvex_runtime_generation_mode mode;

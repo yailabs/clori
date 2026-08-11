@@ -228,6 +228,10 @@ typedef struct {
 } yvex_graph_attention_capacity_layer;
 
 typedef struct yvex_graph_attention_capacity_plan yvex_graph_attention_capacity_plan;
+int yvex_graph_attention_capacity_plan_build_compiled(
+    yvex_graph_attention_capacity_plan **out, const yvex_attention_summary *summary,
+    const yvex_attention_layer_plan *layers, unsigned long long layer_count,
+    const yvex_graph_attention_capacity_request *request, yvex_error *err);
 int yvex_graph_attention_capacity_plan_build(
     yvex_graph_attention_capacity_plan **out, const yvex_attention_plan *attention,
     const yvex_graph_attention_capacity_request *request, yvex_error *err);

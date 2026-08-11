@@ -11,6 +11,8 @@
 #include <yvex/internal/runtime.h>
 #include <yvex/internal/tokenizer.h>
 
+#include "src/runtime/private.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -662,6 +664,23 @@ static int tiny_compile(const char *artifact_path, const char *directory,
     return rc;
 }
 
+typedef struct {
+    unsigned long long events[YVEX_RUNTIME_LIFECYCLE_COUNT];
+} tiny_capacity_progress;
+
+static int tiny_capacity_progress_collect(
+    void *opaque, yvex_runtime_lifecycle_phase phase,
+    unsigned long long completed, unsigned long long total)
+{
+    tiny_capacity_progress *progress = (tiny_capacity_progress *)opaque;
+    (void)completed;
+    (void)total;
+    if (!progress || (unsigned int)phase >= YVEX_RUNTIME_LIFECYCLE_COUNT)
+        return 0;
+    progress->events[phase]++;
+    return 1;
+}
+
 static int tiny_generation_capacity_refusal(
     const char *artifact_path, const char *binding_path, yvex_error *err)
 {
@@ -692,13 +711,62 @@ static int tiny_generation_capacity_refusal(
         },
     };
     yvex_runtime_model_failure failure = {0};
+    yvex_runtime_binding_failure binding_failure = {0};
+    yvex_runtime_binding_summary binding_summary = {0};
+    yvex_complete_artifact_admission admission = {0};
+    yvex_runtime_binding *binding = NULL;
     yvex_runtime_model *model = NULL;
     yvex_runtime_execution_session *session = NULL;
     yvex_runtime_generation_context *generation = NULL;
+    tiny_capacity_progress progress = {0};
     yvex_error cleanup;
+    char available_text[32];
+    unsigned long long transient, baseline;
     int injected_system = 0, injected_process = 0;
-    int rc = yvex_runtime_model_open(
-        &model, &model_request, &failure, err);
+    int rc = yvex_runtime_binding_open(
+        &binding, binding_path, &binding_summary, &admission,
+        &binding_failure, err);
+    if (rc == YVEX_OK &&
+        (!yvex_runtime_private_binding_maximum_tensor_bytes(
+             binding, &transient) ||
+         !yvex_core_u64_add(
+             admission.payload_bytes,
+             yvex_runtime_private_system_reserve(128ull * 1024ull * 1024ull * 1024ull),
+             &baseline) ||
+         !yvex_core_u64_add(baseline, transient, &baseline) ||
+         snprintf(available_text, sizeof(available_text), "%llu", baseline) <= 0 ||
+         setenv("YVEX_TEST_RUNTIME_TOTAL_MEMORY_BYTES", "137438953472", 1) != 0 ||
+         setenv("YVEX_TEST_RUNTIME_AVAILABLE_MEMORY_BYTES", available_text, 1) != 0)) {
+        rc = YVEX_ERR_IO;
+        yvex_error_set(err, rc, "tiny.capacity",
+                       "startup capacity injection failed");
+    }
+    model_request.startup_generation = &options;
+    model_request.progress = tiny_capacity_progress_collect;
+    model_request.progress_context = &progress;
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_model_open(&model, &model_request, &failure, err);
+    (void)unsetenv("YVEX_TEST_RUNTIME_TOTAL_MEMORY_BYTES");
+    (void)unsetenv("YVEX_TEST_RUNTIME_AVAILABLE_MEMORY_BYTES");
+    if (rc == YVEX_ERR_BOUNDS && !model &&
+        failure.code == YVEX_RUNTIME_MODEL_FAILURE_ALLOCATION &&
+        strcmp(failure.field, "startup-execution-capacity") == 0 &&
+        failure.expected > baseline && failure.actual == baseline &&
+        progress.events[YVEX_RUNTIME_LIFECYCLE_ARTIFACT_OPEN] == 0ull) {
+        rc = YVEX_OK;
+        yvex_error_clear(err);
+    } else if (rc == YVEX_OK) {
+        rc = YVEX_ERR_STATE;
+        yvex_error_set(err, rc, "tiny.capacity",
+                       "startup capacity reached artifact mutation");
+    }
+    yvex_runtime_binding_close(binding);
+    if (rc == YVEX_OK) {
+        memset(&progress, 0, sizeof(progress));
+        memset(&failure, 0, sizeof(failure));
+        rc = yvex_runtime_model_open(
+            &model, &model_request, &failure, err);
+    }
     if (rc == YVEX_OK)
         rc = yvex_runtime_session_open(
             &session, model, &session_request, &failure, err);

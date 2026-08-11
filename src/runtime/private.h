@@ -47,6 +47,21 @@ struct yvex_runtime_binding {
     yvex_compiled_model_plan *plan;
 };
 
+static inline int yvex_runtime_private_binding_maximum_tensor_bytes(
+    const yvex_runtime_binding *binding, unsigned long long *maximum)
+{
+    unsigned long long index;
+    if (!binding || !maximum || !binding->materialized ||
+        !binding->summary.tensor_count) return 0;
+    *maximum = 0ull;
+    for (index = 0ull; index < binding->summary.tensor_count; ++index) {
+        unsigned long long bytes = binding->materialized[index].encoded_bytes;
+        if (!bytes) return 0;
+        if (bytes > *maximum) *maximum = bytes;
+    }
+    return *maximum != 0ull;
+}
+
 int yvex_runtime_private_binding_refuse(
     yvex_runtime_binding_failure *failure, yvex_runtime_binding_failure_code code,
     const char *field, const char *path, unsigned long long record,
@@ -219,6 +234,7 @@ typedef enum {
     YVEX_RUNTIME_REFUSE_OPEN_HOST_BUDGET,
     YVEX_RUNTIME_REFUSE_OPEN_PROCESS_MEMORY,
     YVEX_RUNTIME_REFUSE_OPEN_SYSTEM_MEMORY,
+    YVEX_RUNTIME_REFUSE_OPEN_STARTUP_CAPACITY,
     YVEX_RUNTIME_REFUSE_OPEN_ARTIFACT,
     YVEX_RUNTIME_REFUSE_OPEN_MATERIALIZATION,
     YVEX_RUNTIME_REFUSE_OPEN_IMPORT,
@@ -252,6 +268,11 @@ int yvex_runtime_private_memory_capacity(
     int *process_limited);
 unsigned long long yvex_runtime_private_system_reserve(
     unsigned long long capacity_bytes);
+int yvex_runtime_private_generation_capacity_preflight(
+    const yvex_runtime_binding *binding, yvex_backend *backend,
+    const yvex_runtime_generation_options *options,
+    unsigned long long *required_bytes, unsigned long long *available_bytes,
+    yvex_error *err);
 int yvex_runtime_private_session_invalidate(
     yvex_runtime_execution_session *session, int include_state, yvex_error *err);
 int yvex_runtime_private_session_workspace_discard(

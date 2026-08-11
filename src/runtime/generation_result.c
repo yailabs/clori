@@ -849,16 +849,6 @@ int yvex_runtime_generation_operator_execute(
                         sizeof(result->sampling_execution_kind), "common-host");
     yvex_core_text_copy(result->tokenizer_execution_kind,
                         sizeof(result->tokenizer_execution_kind), "common-host");
-    model_request.artifact_path = request->artifact_path;
-    model_request.runtime_binding_path = request->runtime_binding_path;
-    model_request.target_id = request->target;
-    model_request.maximum_host_bytes = request->maximum_host_bytes;
-    session_request.backend = request->backend;
-    session_request.maximum_host_bytes = request->maximum_host_bytes;
-    session_request.maximum_device_bytes = request->maximum_device_bytes;
-    rc = yvex_runtime_cleanup_lease_acquire(
-        &cleanup, &model_request, &session_request, &model, &session,
-        &failure, err);
     options.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V5;
     options.backend = request->backend;
     options.mode = request->mode;
@@ -873,6 +863,19 @@ int yvex_runtime_generation_operator_execute(
     options.sampling_policy = request->sampling_policy;
     options.cancel_requested = request->cancel_requested;
     options.cancel_context = request->cancel_context;
+    model_request.artifact_path = request->artifact_path;
+    model_request.runtime_binding_path = request->runtime_binding_path;
+    model_request.target_id = request->target;
+    model_request.startup_generation = &options;
+    model_request.residency_backend = request->backend;
+    model_request.maximum_host_bytes = request->maximum_host_bytes;
+    model_request.maximum_device_bytes = request->maximum_device_bytes;
+    session_request.backend = request->backend;
+    session_request.maximum_host_bytes = request->maximum_host_bytes;
+    session_request.maximum_device_bytes = request->maximum_device_bytes;
+    rc = yvex_runtime_cleanup_lease_acquire(
+        &cleanup, &model_request, &session_request, &model, &session,
+        &failure, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_generation_context_open(
             &context, model, session, &options, err);

@@ -112,6 +112,9 @@ static const runtime_refusal_spec runtime_refusals[] = {
      "process memory control cannot preserve the required system reserve after model residency"},
     {YVEX_RUNTIME_MODEL_FAILURE_ALLOCATION, YVEX_ERR_BOUNDS, "system-memory-capacity",
      "available system memory cannot preserve the required system reserve after model residency"},
+    {YVEX_RUNTIME_MODEL_FAILURE_ALLOCATION, YVEX_ERR_BOUNDS,
+     "startup-execution-capacity",
+     "startup workload peak cannot preserve the required system reserve before model residency"},
     {YVEX_RUNTIME_MODEL_FAILURE_ARTIFACT, YVEX_ERR_FORMAT, "artifact-open", "artifact admission failed"},
     {YVEX_RUNTIME_MODEL_FAILURE_MATERIALIZATION, YVEX_ERR_FORMAT, "runtime-materialization",
      "runtime binding materialization could not be reopened"},
@@ -684,14 +687,17 @@ unsigned long long yvex_runtime_private_system_reserve(
 
 static int runtime_model_memory_preflight(
     const yvex_runtime_model_open_request *request,
+    const yvex_runtime_binding *binding,
     const yvex_complete_artifact_admission *admission,
     yvex_runtime_private_refusal_id *refusal,
     unsigned long long *required, unsigned long long *available)
 {
-    unsigned long long total, reserve, reserve_basis;
+    unsigned long long total, reserve, reserve_basis, transient;
     int process_limited;
-    if (!request || !admission || !refusal || !required || !available ||
-        !admission->payload_bytes) return YVEX_ERR_INVALID_ARG;
+    if (!request || !binding || !admission || !refusal || !required || !available ||
+        !admission->payload_bytes ||
+        !yvex_runtime_private_binding_maximum_tensor_bytes(binding, &transient))
+        return YVEX_ERR_INVALID_ARG;
     *required = 0ull;
     *available = 0ull;
     if (!yvex_runtime_private_memory_capacity(
@@ -700,7 +706,8 @@ static int runtime_model_memory_preflight(
                             request->maximum_host_bytes < total
                         ? request->maximum_host_bytes : total;
     reserve = yvex_runtime_private_system_reserve(reserve_basis);
-    if (!yvex_core_u64_add(admission->payload_bytes, reserve, required))
+    if (!yvex_core_u64_add(admission->payload_bytes, reserve, required) ||
+        !yvex_core_u64_add(*required, transient, required))
         return YVEX_ERR_STATE;
     if (request->maximum_host_bytes &&
         *required > request->maximum_host_bytes) {
@@ -876,7 +883,10 @@ int yvex_runtime_model_open(yvex_runtime_model **out, const yvex_runtime_model_o
     if (failure) memset(failure, 0, sizeof(*failure));
     if (!out || !request || !request->artifact_path || !request->runtime_binding_path ||
         !request->target_id || !request->target_id[0] ||
-        strlen(request->target_id) >= sizeof(model->target_id))
+        strlen(request->target_id) >= sizeof(model->target_id) ||
+        request->residency_backend > YVEX_BACKEND_KIND_CUDA ||
+        (request->startup_generation &&
+         request->startup_generation->backend != request->residency_backend))
         return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_MODEL_OPEN_REQUEST, 1ull, 0ull, err);
     model = (yvex_runtime_model *)calloc(1u, sizeof(*model));
     if (!model)
@@ -906,15 +916,12 @@ int yvex_runtime_model_open(yvex_runtime_model **out, const yvex_runtime_model_o
     model->graph = &yvex_attention_execution_api;
     yvex_core_text_copy(model->target_id, sizeof(model->target_id), request->target_id);
     rc = runtime_model_memory_preflight(
-        request, &model->admission, &capacity_refusal, &required_bytes, &available_bytes);
+        request, model->binding, &model->admission, &capacity_refusal,
+        &required_bytes, &available_bytes);
     if (rc != YVEX_OK)
         return runtime_model_open_fail(
             out, model, failure, capacity_refusal, required_bytes, available_bytes,
             err, (yvex_status)rc);
-    rc = runtime_model_artifact_open(model, request, &model->binding_summary, failure, err);
-    if (rc != YVEX_OK)
-        return runtime_model_open_fail(
-            out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_ARTIFACT, 1ull, 0ull, err, (yvex_status)rc);
     if (request->residency_backend == YVEX_BACKEND_KIND_CUDA) {
         yvex_backend_options backend_options = {
             .kind = YVEX_BACKEND_KIND_CUDA,
@@ -927,6 +934,19 @@ int yvex_runtime_model_open(yvex_runtime_model **out, const yvex_runtime_model_o
                 out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_RESIDENCY,
                 1ull, 0ull, err, (yvex_status)rc);
     }
+    if (request->startup_generation) {
+        rc = yvex_runtime_private_generation_capacity_preflight(
+            model->binding, model->opening_backend,
+            request->startup_generation, &required_bytes, &available_bytes, err);
+        if (rc != YVEX_OK)
+            return runtime_model_open_fail(
+                out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_STARTUP_CAPACITY,
+                required_bytes, available_bytes, err, (yvex_status)rc);
+    }
+    rc = runtime_model_artifact_open(model, request, &model->binding_summary, failure, err);
+    if (rc != YVEX_OK)
+        return runtime_model_open_fail(
+            out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_ARTIFACT, 1ull, 0ull, err, (yvex_status)rc);
     phase_started = yvex_core_monotonic_ns();
     rc = runtime_model_progress(
         request, YVEX_RUNTIME_LIFECYCLE_MATERIALIZATION_OPEN, 0ull, 1ull, err);
@@ -1019,13 +1039,20 @@ int yvex_runtime_model_open(yvex_runtime_model **out, const yvex_runtime_model_o
             out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_CAPABILITIES, 1ull, 0ull, err,
             (yvex_status)rc);
     runtime_model_view_bind(model);
-    rc = runtime_model_memory_preflight(
-        request, &model->admission, &capacity_refusal,
-        &required_bytes, &available_bytes);
+    rc = request->startup_generation
+             ? yvex_runtime_private_generation_capacity_preflight(
+                   model->binding, model->opening_backend,
+                   request->startup_generation, &required_bytes,
+                   &available_bytes, err)
+             : runtime_model_memory_preflight(
+                   request, model->binding, &model->admission,
+                   &capacity_refusal, &required_bytes, &available_bytes);
     if (rc != YVEX_OK)
         return runtime_model_open_fail(
-            out, model, failure, capacity_refusal, required_bytes, available_bytes,
-            err, (yvex_status)rc);
+            out, model, failure,
+            request->startup_generation
+                ? YVEX_RUNTIME_REFUSE_OPEN_STARTUP_CAPACITY : capacity_refusal,
+            required_bytes, available_bytes, err, (yvex_status)rc);
     rc = runtime_model_residency_open(model, request, descriptor_summary,
                                       attention_summary, &residency_refusal, err);
     if (rc != YVEX_OK)

@@ -174,8 +174,10 @@ typedef struct yvex_runtime_model_failure {
     char field[64];
     const char *reason;
 } yvex_runtime_model_failure;
+struct yvex_runtime_generation_options;
 typedef struct {
     const char *artifact_path, *runtime_binding_path, *target_id;
+    const struct yvex_runtime_generation_options *startup_generation;
     yvex_backend_kind residency_backend;
     unsigned long long maximum_host_bytes, maximum_device_bytes;
     yvex_runtime_progress_callback progress;

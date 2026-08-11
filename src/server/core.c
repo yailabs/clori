@@ -480,6 +480,38 @@ static void model_work_execute(void *context, void *work)
     (void)pthread_mutex_unlock(&item->mutex);
 }
 
+static void server_generation_options(
+    const yvex_server *server, yvex_runtime_generation_options *options)
+{
+    memset(options, 0, sizeof(*options));
+    options->schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V5;
+    options->backend = server->options.backend;
+    options->mode = server->options.generation_mode == YVEX_SERVER_GENERATION_DSPARK
+                        ? YVEX_GENERATION_MODE_DSPARK
+                        : YVEX_GENERATION_MODE_TARGET_ONLY;
+    options->workload_kind = server->options.concurrent_sequences > 1ull
+                                 ? YVEX_EXECUTION_WORKLOAD_BALANCED_SERVING
+                                 : YVEX_EXECUTION_WORKLOAD_INTERACTIVE_LATENCY;
+    options->context_capacity = server->options.context_capacity;
+    options->prefill_chunk_tokens = server->options.prefill_chunk_tokens;
+    options->maximum_new_tokens = server->options.maximum_new_tokens;
+    options->maximum_output_bytes = server->options.maximum_output_bytes;
+    options->maximum_host_bytes = server->options.maximum_host_bytes;
+    options->maximum_device_bytes = server->options.maximum_device_bytes;
+    options->concurrent_sequences = server->options.concurrent_sequences;
+    options->trace_policy = server->options.trace_level == YVEX_SERVER_TRACE_FULL
+                                ? YVEX_RUNTIME_TRACE_FULL
+                                : YVEX_RUNTIME_TRACE_STAGES;
+    options->evidence_profile = YVEX_EXECUTION_EVIDENCE_PRODUCTION;
+    options->sampling_policy.schema_version = YVEX_RUNTIME_SAMPLING_SCHEMA_V1;
+    options->sampling_policy.strategy = YVEX_SAMPLING_STRATEGY_STOCHASTIC;
+    options->sampling_policy.temperature = 1.0;
+    options->sampling_policy.top_p = 1.0;
+    options->sampling_policy.typical_p = 1.0;
+    options->sampling_policy.seed_present = 1;
+    options->sampling_policy.seed = server->options.sampling_seed;
+}
+
 static int server_execution_prepare(yvex_server *server,
                                     yvex_runtime_residency_summary *summary,
                                     yvex_error *err)
@@ -504,33 +536,7 @@ static int server_execution_prepare(yvex_server *server,
     request.maximum_device_bytes = server->options.maximum_device_bytes;
     rc = yvex_runtime_session_open(&session, server->model, &request,
                                    &failure, err);
-    memset(&options, 0, sizeof(options));
-    options.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V5;
-    options.backend = server->options.backend;
-    options.mode = server->options.generation_mode == YVEX_SERVER_GENERATION_DSPARK
-                       ? YVEX_GENERATION_MODE_DSPARK
-                       : YVEX_GENERATION_MODE_TARGET_ONLY;
-    options.workload_kind = server->options.concurrent_sequences > 1ull
-                                ? YVEX_EXECUTION_WORKLOAD_BALANCED_SERVING
-                                : YVEX_EXECUTION_WORKLOAD_INTERACTIVE_LATENCY;
-    options.context_capacity = server->options.context_capacity;
-    options.prefill_chunk_tokens = server->options.prefill_chunk_tokens;
-    options.maximum_new_tokens = server->options.maximum_new_tokens;
-    options.maximum_output_bytes = server->options.maximum_output_bytes;
-    options.maximum_host_bytes = server->options.maximum_host_bytes;
-    options.maximum_device_bytes = server->options.maximum_device_bytes;
-    options.concurrent_sequences = server->options.concurrent_sequences;
-    options.trace_policy = server->options.trace_level == YVEX_SERVER_TRACE_FULL
-                               ? YVEX_RUNTIME_TRACE_FULL
-                               : YVEX_RUNTIME_TRACE_STAGES;
-    options.evidence_profile = YVEX_EXECUTION_EVIDENCE_PRODUCTION;
-    options.sampling_policy.schema_version = YVEX_RUNTIME_SAMPLING_SCHEMA_V1;
-    options.sampling_policy.strategy = YVEX_SAMPLING_STRATEGY_STOCHASTIC;
-    options.sampling_policy.temperature = 1.0;
-    options.sampling_policy.top_p = 1.0;
-    options.sampling_policy.typical_p = 1.0;
-    options.sampling_policy.seed_present = 1;
-    options.sampling_policy.seed = server->options.sampling_seed;
+    server_generation_options(server, &options);
     if (rc == YVEX_OK)
         rc = yvex_runtime_generation_context_open(
             &generation, server->model, session, &options, err);
@@ -587,6 +593,7 @@ static int server_execution_prepare(yvex_server *server,
 int yvex_server_start(yvex_server *server, yvex_error *err)
 {
     yvex_runtime_model_open_request request;
+    yvex_runtime_generation_options startup_options;
     yvex_runtime_model_failure failure;
     yvex_runtime_model_summary model;
     yvex_runtime_residency_summary residency;
@@ -619,6 +626,8 @@ int yvex_server_start(yvex_server *server, yvex_error *err)
     request.artifact_path = server->artifact_path;
     request.runtime_binding_path = server->runtime_binding_path;
     request.target_id = server->target_id;
+    server_generation_options(server, &startup_options);
+    request.startup_generation = &startup_options;
     request.residency_backend = server->options.backend;
     request.maximum_host_bytes = server->options.maximum_host_bytes;
     request.maximum_device_bytes = server->options.maximum_device_bytes;
