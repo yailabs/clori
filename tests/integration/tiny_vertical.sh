@@ -119,6 +119,18 @@ wait "$second_run_pid"
 grep -Fx 'ok' "$root/run.out" >/dev/null
 grep -Fx 'ok' "$root/run.independent.out" >/dev/null
 grep -F 'generation 1 token' "$root/run.err" >/dev/null
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session new reasoning-limit \
+    >"$root/session.reasoning.new"
+if HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run \
+    --session reasoning-limit --reasoning high --strategy greedy \
+    --max-new-tokens 1 a >"$root/reasoning-limit.out" \
+    2>"$root/reasoning-limit.err"; then
+    printf 'unfinished tiny reasoning unexpectedly succeeded\n' >&2
+    exit 1
+fi
+grep -F 'thinking ended before its source delimiter; reset and retry with a larger token limit' \
+    "$root/reasoning-limit.err" >/dev/null
+grep -F 'partial · 1 committed token' "$root/reasoning-limit.err" >/dev/null
 state_path="$root/persisted-state.yvex"
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session state save \
     persisted "$state_path" >"$root/state.save"

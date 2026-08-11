@@ -168,7 +168,7 @@ int yvex_tokenizer_reasoning_stream_finish(
     stream->finished = 1;
     if (rc == YVEX_OK && incomplete) {
         yvex_error_set(err, YVEX_ERR_FORMAT, "tokenizer.reasoning",
-                       "thinking completion is missing its source delimiter");
+                       "thinking ended before its source delimiter; reset and retry with a larger token limit");
         rc = YVEX_ERR_FORMAT;
     } else if (rc == YVEX_OK) {
         yvex_error_clear(err);
