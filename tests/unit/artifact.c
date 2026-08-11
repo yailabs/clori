@@ -218,12 +218,33 @@ static int test_deepseek_variant_admission_catalog(void)
         .admission_identity =
             "9a6f6844e47dd7214b4bf12dd14a1ec34f0e88bc85c68cb00bba59fb674df6d9",
     };
+    const deepseek_catalog_fixture compact_mxfp4 = {
+        .filename = "compact-mxfp4.gguf",
+        .file_bytes = 95050210304ull,
+        .payload_bytes = 95038503928ull,
+        .profile_identity =
+            "b9825a070028a66af28cdb25614f7a86c6ad1ec396eed6ae961039db1507ce0e",
+        .artifact_identity =
+            "d27b87a9e7c7959c442b0231621588d274f22a8aa916cb05750508cd39ff6f53",
+        .quant_execution_identity =
+            "ca591438ac7296fa9b3d1ad74415508d57d92835ab783d01b7da9bfec561e8d7",
+        .payload_plan_identity =
+            "2cf8c2c41cb13ad228a2193e55ae56da210a7b06d356ec74ad79155a3e1cd1e0",
+        .payload_byte_identity =
+            "85b52eae100a482f557611ac9b5e84e9bd133525d01a3a7a27fc7520aa819fd5",
+        .writer_plan_identity =
+            "c4484184f0d4b3aeba9ae306b3247f4e3134e734ecfa6cd0f5d79ac24c524bce",
+        .admission_identity =
+            "fba17e4b1b50ba8a73ee7ab2c8c0ace1e021feb01a57aa91001c9b459b8ac161",
+    };
 
     YVEX_TEST_ASSERT(mkdtemp(root) != NULL, "variant catalog root created");
     YVEX_TEST_ASSERT(test_deepseek_catalog_entry(root, &selected) == 0,
                      "selected DeepSeek catalog entry is exact");
     YVEX_TEST_ASSERT(test_deepseek_catalog_entry(root, &native_drafter) == 0,
                      "native-drafter DeepSeek catalog entry is exact");
+    YVEX_TEST_ASSERT(test_deepseek_catalog_entry(root, &compact_mxfp4) == 0,
+                     "compact MXFP4 DeepSeek catalog entry is exact");
     YVEX_TEST_ASSERT(rmdir(root) == 0, "variant catalog root cleaned");
     return 0;
 }
