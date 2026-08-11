@@ -135,7 +135,7 @@ static int frame_receive(int fd, unsigned int expected_kind,
     if (get_u16(header + 4u) != YVEX_LOCAL_PROTOCOL_VERSION)
         return transport_refuse(
             err, YVEX_ERR_FORMAT,
-            "local protocol version is incompatible; version 8 is required");
+            "local protocol version is incompatible; version 9 is required");
     if (length) {
         bytes = malloc(length);
         if (!bytes)
@@ -234,13 +234,13 @@ int yvex_client_connect(yvex_client **out, const char *socket_path,
     if (yvex_client_send(client, &handshake, err) != YVEX_OK ||
         yvex_client_receive(client, &response, err) != YVEX_OK ||
         response.kind != YVEX_CLIENT_MESSAGE_ACK ||
-        response.status != YVEX_OK || strcmp(response.reason, "protocol-v8") != 0) {
+        response.status != YVEX_OK || strcmp(response.reason, "protocol-v9") != 0) {
         (void)close(client->fd);
         memset(client, 0, sizeof(*client));
         free(client);
         if (yvex_error_code(err) == YVEX_OK)
             yvex_error_set(err, YVEX_ERR_FORMAT, "server.protocol.handshake",
-                           "daemon did not admit local protocol version 8");
+                           "server did not admit local protocol version 9");
         return yvex_error_code(err);
     }
     if (yvex_client_timeout_set(client, 0u, err) != YVEX_OK) {

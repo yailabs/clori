@@ -529,7 +529,10 @@ static void render_status(const yvex_server_summary *status, int json)
     if (json) {
         printf("{\"protocol\":%u,\"status\":%u,\"target\":\"%s\","
                "\"backend\":%u,\"generation_mode\":\"%s\","
-               "\"ready\":%s,\"context_capacity\":%llu,\"uptime_ns\":%llu,"
+               "\"ready\":%s,\"context_capacity\":%llu,\"parallel\":%llu,"
+               "\"independent_session_scheduling\":%s,\"continuous_batching\":%s,"
+               "\"capacity_required_bytes\":%llu,\"capacity_unreserved_bytes\":%llu,"
+               "\"uptime_ns\":%llu,"
                "\"model_open_count\":%llu,\"model_close_count\":%llu,"
                "\"artifact_open_count\":%llu,\"binding_open_count\":%llu,"
                "\"materialization_count\":%llu,\"residency_build_count\":%llu,"
@@ -547,13 +550,18 @@ static void render_status(const yvex_server_summary *status, int json)
                "\"peak_rss_bytes\":%llu,\"mapped_artifact_bytes\":%llu,"
                "\"resident_host_bytes\":%llu,\"resident_device_bytes\":%llu,"
                "\"model_identity\":\"%s\",\"binding_identity\":\"%s\","
-               "\"artifact_identity\":\"%s\",\"variant_identity\":\"%s\"}\n",
+               "\"artifact_identity\":\"%s\",\"variant_identity\":\"%s\","
+               "\"capacity_plan_identity\":\"%s\"}\n",
                YVEX_LOCAL_PROTOCOL_VERSION, (unsigned int)status->status,
                status->target_id, (unsigned int)status->backend,
                status->generation_mode == YVEX_SERVER_GENERATION_DSPARK
                    ? "dspark" : "target-only",
                status->runtime_ready ? "true" : "false",
-               status->context_capacity, status->metrics.uptime_ns,
+               status->context_capacity, status->concurrent_sequences,
+               status->independent_session_scheduling_ready ? "true" : "false",
+               status->continuous_batching_ready ? "true" : "false",
+               status->capacity_required_bytes, status->capacity_unreserved_bytes,
+               status->metrics.uptime_ns,
                status->metrics.model_open_count,
                status->metrics.model_close_count,
                status->metrics.artifact_open_count,
@@ -583,20 +591,26 @@ static void render_status(const yvex_server_summary *status, int json)
                status->runtime_model_identity,
                status->runtime_binding_identity,
                status->artifact_identity,
-               status->physical_variant_identity);
+               status->physical_variant_identity,
+               status->capacity_plan_identity);
         return;
     }
     {
         yvex_cli_terminal_style style;
         int ready = status->status == YVEX_SERVER_STATUS_READY;
         yvex_cli_terminal_style_get(stdout, &style);
-        printf("%sYVEX server%s · %s%s%s · %s · %s · %s · ctx %llu · %llu session%s · "
+        printf("%sYVEX server%s · %s%s%s · %s · %s · %s · ctx %llu · parallel %llu %s · "
+               "%llu session%s · "
                "queue %llu/%llu · model opened %llu×",
                style.strong, style.reset, ready ? style.success : style.warning,
                ready ? "● ready" : "● starting", style.reset,
                status->target_id[0] ? status->target_id : "no model",
                backend_name(status->backend), generation_mode_name(status->generation_mode),
-               status->context_capacity, status->session_count,
+               status->context_capacity, status->concurrent_sequences,
+               status->continuous_batching_ready ? "continuous"
+                   : (status->independent_session_scheduling_ready
+                          ? "independent" : "serialized"),
+               status->session_count,
                status->session_count == 1u ? "" : "s",
                status->metrics.queue_depth, status->metrics.queue_capacity,
                status->metrics.model_open_count);
@@ -670,13 +684,16 @@ static int server_memory(void)
         yvex_cli_terminal_style style;
         yvex_cli_terminal_style_get(stdout, &style);
         printf("%sserver memory%s · %.2f GiB host · %.2f GiB device · "
-               "%.2f GiB mapped · %.2f GiB RSS · %.2f GiB peak RSS\n",
+               "%.2f GiB mapped · %.2f GiB RSS · %.2f GiB peak RSS · "
+               "capacity %.2f GiB required/%.2f GiB unreserved\n",
                style.strong, style.reset,
                (double)summary.metrics.resident_host_bytes / 1073741824.0,
                (double)summary.metrics.resident_device_bytes / 1073741824.0,
                (double)summary.metrics.mapped_artifact_bytes / 1073741824.0,
                (double)summary.metrics.current_rss_bytes / 1073741824.0,
-               (double)summary.metrics.peak_rss_bytes / 1073741824.0);
+               (double)summary.metrics.peak_rss_bytes / 1073741824.0,
+               (double)summary.capacity_required_bytes / 1073741824.0,
+               (double)summary.capacity_unreserved_bytes / 1073741824.0);
     }
     return rc == YVEX_OK ? 0 : client_error(&err);
 }

@@ -99,12 +99,12 @@ static int test_all_operation_roundtrips(void)
         YVEX_TEST_ASSERT(
             yvex_protocol_request_encode(&source, frame, sizeof(frame), &count,
                                          &err) == YVEX_OK,
-            "all protocol-v8 operations encode");
+            "all protocol-v9 operations encode");
         YVEX_TEST_ASSERT(
             yvex_protocol_request_decode(frame, count, &decoded, &prompt,
                                          &provider, &err) == YVEX_OK &&
                 decoded.operation == (yvex_client_operation)value,
-            "all protocol-v8 operations decode");
+            "all protocol-v9 operations decode");
         free(prompt);
         prompt = NULL;
         yvex_provider_request_close(&provider);
@@ -333,6 +333,7 @@ static int test_message_roundtrip(void)
     source.runtime.openai_listener_enabled = 1;
     source.runtime.openai_listener_ready = 1;
     source.runtime.explicit_reasoning_channel_supported = 1;
+    source.runtime.independent_session_scheduling_ready = 1;
     source.runtime.openai_port = 8001u;
     source.runtime.context_capacity = 4096u;
     source.runtime.prefill_chunk_tokens = 64u;
@@ -340,6 +341,10 @@ static int test_message_roundtrip(void)
     source.runtime.maximum_output_bytes = 1048576u;
     source.runtime.maximum_sessions = 8u;
     source.runtime.request_queue_capacity = 16u;
+    source.runtime.concurrent_sequences = 4u;
+    source.runtime.capacity_required_bytes = 1024u;
+    source.runtime.capacity_unreserved_bytes = 2048u;
+    memset(source.runtime.capacity_plan_identity, 'e', 64u);
     source.runtime.openai_timeout_ms = 600000u;
     source.runtime.trace_level = YVEX_SERVER_TRACE_STAGES;
     source.runtime.metrics.model_open_count = 1u;
@@ -384,6 +389,13 @@ static int test_message_roundtrip(void)
                          decoded.runtime.maximum_output_bytes == 1048576u &&
                          decoded.runtime.maximum_sessions == 8u &&
                          decoded.runtime.request_queue_capacity == 16u &&
+                         decoded.runtime.concurrent_sequences == 4u &&
+                         decoded.runtime.capacity_required_bytes == 1024u &&
+                         decoded.runtime.capacity_unreserved_bytes == 2048u &&
+                         decoded.runtime.independent_session_scheduling_ready &&
+                         !decoded.runtime.continuous_batching_ready &&
+                         strcmp(decoded.runtime.capacity_plan_identity,
+                                source.runtime.capacity_plan_identity) == 0 &&
                          decoded.runtime.openai_timeout_ms == 600000u &&
                          decoded.runtime.trace_level == YVEX_SERVER_TRACE_STAGES &&
                          decoded.runtime.explicit_reasoning_channel_supported,
@@ -393,6 +405,20 @@ static int test_message_roundtrip(void)
                          decoded.runtime.metrics.failed_http_requests == 3u &&
                          decoded.runtime.metrics.cancelled_http_requests == 1u,
                      "integrated HTTP metrics roundtrip");
+    source.runtime.capacity_plan_identity[0] = 'x';
+    source.runtime.capacity_plan_identity[1] = '\0';
+    YVEX_TEST_ASSERT(
+        yvex_protocol_message_encode(&source, frame, sizeof(frame), &count,
+                                     &err) == YVEX_ERR_INVALID_ARG,
+        "ready status refuses an invalid capacity-plan identity");
+    memset(source.runtime.capacity_plan_identity, 'e', 64u);
+    source.runtime.capacity_plan_identity[64] = '\0';
+    source.runtime.concurrent_sequences = 0u;
+    YVEX_TEST_ASSERT(
+        yvex_protocol_message_encode(&source, frame, sizeof(frame), &count,
+                                     &err) == YVEX_ERR_INVALID_ARG,
+        "ready status refuses zero admitted concurrency");
+    source.runtime.concurrent_sequences = 4u;
     YVEX_TEST_ASSERT(
         decoded.state_checkpoint.schema_version ==
             YVEX_CLIENT_STATE_CHECKPOINT_SCHEMA_V1 &&
@@ -661,7 +687,7 @@ static int test_v6_frame_refusal(void)
     pthread_t thread;
     v6_peer peer;
     int rc;
-    (void)snprintf(path, sizeof(path), "build/tests/protocol-v8-%lu.sock",
+    (void)snprintf(path, sizeof(path), "build/tests/protocol-v9-%lu.sock",
                    (unsigned long)getpid());
     (void)unlink(path);
     peer.listener = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -677,7 +703,7 @@ static int test_v6_frame_refusal(void)
                      "v6 peer thread");
     rc = yvex_client_connect(&client, path, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT && client == NULL &&
-                         strstr(yvex_error_message(&err), "version 8") != NULL,
+                         strstr(yvex_error_message(&err), "version 9") != NULL,
                      "v6 frame explicitly refuses");
     YVEX_TEST_ASSERT(pthread_join(thread, NULL) == 0, "v6 peer join");
     (void)close(peer.listener);

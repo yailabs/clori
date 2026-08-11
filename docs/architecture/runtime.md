@@ -380,12 +380,15 @@ resolve, transfer and generation-publication operations. Concrete backend
 allocation state and dispatch remain source-local to `src/backend/`; graph and
 runtime owners cannot coordinate their lifecycle by inspecting backend fields.
 
-## Worker, queue, and concurrency
+## Scheduler, queue, and concurrency
 
-One bounded model worker serializes admitted generation work from native and
-HTTP clients. Socket/listener threads parse and project requests but do not
-mutate model state directly. Continuous batching, multiple hosted models, and
-distributed serving are not implemented.
+One bounded keyed scheduler owns queue order and active-session mutation.
+Socket/listener threads parse and project requests but do not mutate model
+state directly. A configured worker set can execute independent sessions in
+parallel, while one serialization key never has two active operations. The
+capacity compiler admits the total sequence count before readiness. Physical
+compatible-row continuous batching, multiple hosted models, and distributed
+serving are not implemented.
 
 ## Publication and observability
 

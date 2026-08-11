@@ -2,7 +2,7 @@
  * Convert client turns into reusable generation turns without reopening the model.
  *
  * One registry row owns one execution session and exact committed token prefix. The sole
- * server-side conversation/session authority used by the model worker.
+ * server-side conversation/session authority used by keyed scheduler workers.
  */
 #define _POSIX_C_SOURCE 200809L
 #include "src/server/private.h"

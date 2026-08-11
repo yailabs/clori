@@ -118,12 +118,12 @@ by `model list`:
 Then start the host in the first terminal:
 
 ```sh
-./yvex server deepseek4-v4-flash-dspark-runtime-iq2xxs
+./yvex server deepseek4-v4-flash-dspark-runtime-iq2xxs --parallel 2
 ```
 
 `server MODEL` directly enters the server entrypoint in the `yvex` process.
 Foreground operation is intentional: keep this terminal open. Exactly one
-server owns the model, sessions, KV, worker, local socket, OpenAI listener, and
+server owns the model, sessions, KV, keyed scheduler, local socket, OpenAI listener, and
 telemetry.
 
 Before the potentially long admission begins, the command prints the complete
@@ -132,7 +132,9 @@ selected startup identity and states that the host remains in the foreground:
 ```text
 YVEX server · foreground
   profile deepseek4-v4-flash-dspark-runtime-iq2xxs
-  target deepseek4-v4-flash-dspark · backend cuda · mode dspark · requested ctx 4096
+  target deepseek4-v4-flash-dspark · backend=cuda · mode=dspark · requested ctx=4096 · parallel=2
+  artifact /absolute/path/to/model.gguf
+  binding /absolute/path/to/model.yvex-runtime-binding
   local endpoint .../yvexd.sock · OpenAI 127.0.0.1:8001
   stop with Ctrl-C here or `yvex server stop` from another terminal
 ```
@@ -142,6 +144,9 @@ previously running process and it is flushed before admission begins.
 
 Startup authenticates the selected artifact and binding, creates the immutable
 runtime model, builds residency once, and only then publishes the local socket.
+`--parallel N` admits capacity for N independently scheduled sessions before
+readiness. Requests for one named session stay serialized; this option does not
+claim compatible-row continuous batching.
 Large models can spend several minutes in this phase. The foreground server
 prints an elapsed-time heartbeat every ten seconds until admission completes or
 fails; it does not claim a percentage that the admission pipeline cannot prove.
@@ -209,7 +214,7 @@ server in the first and run `server status`, then `chat`, in the second.
 Chat opens one concise attachment view and the stable prompt:
 
 ```text
-YVEX 0.1.0 · protocol 8
+YVEX 0.1.0 · protocol 9
 
   model      deepseek4-v4-flash-dspark
   variant    abcdef012345
@@ -342,7 +347,7 @@ state, and persistent KV while sharing immutable model resources:
 
 Client disconnect and detach do not close the model. A partial or cancelled
 turn can retain model-committed state and is never silently marked complete.
-Protocol v8 reports the exact committed position, token/text counts, state
+Protocol v9 reports the exact committed position, token/text counts, state
 generations, failure class, and reset requirement. Reset clears the session KV,
 tokens, transcript, decoder, and RNG policy without closing the host.
 

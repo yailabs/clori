@@ -48,6 +48,7 @@ EOF
 contains "$OUT_DIR/help.out" 'usage: yvex server MODEL [options]'
 contains "$OUT_DIR/help.out" 'Run one model server in the foreground.'
 contains "$OUT_DIR/help.out" '--ctx'
+contains "$OUT_DIR/help.out" '--parallel'
 ! grep -F -- '--context' "$OUT_DIR/help.out" >/dev/null
 contains "$OUT_DIR/help.out" '--openai'
 
@@ -72,7 +73,7 @@ HOME="$HOME_ROOT" "$YVEX_BIN" server current-model-runtime-profile --context 819
     >"$OUT_DIR/context.out" 2>"$OUT_DIR/context.err"
 context_status=$?
 HOME="$HOME_ROOT" "$YVEX_BIN" server current-model-runtime-profile \
-    --ctx 8192 --socket "$SOCKET_PATH" --openai off \
+    --ctx 8192 --parallel 2 --socket "$SOCKET_PATH" --openai off \
     >"$OUT_DIR/admission.out" 2>"$OUT_DIR/admission.err"
 admission_status=$?
 set -e
@@ -94,7 +95,7 @@ contains "$OUT_DIR/mode.err" 'invalid value for --generation-mode: invalid'
 contains "$OUT_DIR/context.err" 'unknown flag: --context'
 contains "$OUT_DIR/admission.out" 'YVEX server · foreground'
 contains "$OUT_DIR/admission.out" 'profile current-model-runtime-profile'
-contains "$OUT_DIR/admission.out" 'backend=cpu · mode=target-only · requested ctx=8192'
+contains "$OUT_DIR/admission.out" 'backend=cpu · mode=target-only · requested ctx=8192 · parallel=2'
 contains "$OUT_DIR/admission.out" "artifact $artifact"
 contains "$OUT_DIR/admission.out" "binding $binding"
 contains "$OUT_DIR/admission.out" 'stop with Ctrl-C or `yvex server stop`'

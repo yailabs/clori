@@ -1,5 +1,5 @@
 /* Local clients and the foreground server exchange bounded versioned frames without sharing
- * engine pointers. The server alone owns model, worker, queue, session, and KV lifetimes. */
+ * engine pointers. The server alone owns model, scheduler, queue, session, and KV lifetimes. */
 #ifndef YVEX_SERVER_H
 #define YVEX_SERVER_H
 #include <yvex/artifact.h>
@@ -9,7 +9,8 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#define YVEX_LOCAL_PROTOCOL_VERSION 8u
+#define YVEX_LOCAL_PROTOCOL_VERSION 9u
+#define YVEX_SERVER_OPTIONS_SCHEMA_V2 2u
 #define YVEX_CLIENT_PARTIAL_TURN_SCHEMA_V1 1u
 #define YVEX_CLIENT_STATE_CHECKPOINT_SCHEMA_V1 1u
 #define YVEX_RUNTIME_EVENT_SCHEMA_VERSION 3u
@@ -148,6 +149,7 @@ typedef struct {
     unsigned long long telemetry_dropped;
 } yvex_server_metrics;
 typedef struct {
+    unsigned int schema_version;
     const char *artifact_path;
     const char *runtime_binding_path;
     const char *target_id;
@@ -157,7 +159,7 @@ typedef struct {
     unsigned long long context_capacity, prefill_chunk_tokens;
     unsigned long long maximum_new_tokens, maximum_output_bytes;
     unsigned long long maximum_host_bytes, maximum_device_bytes;
-    unsigned long long maximum_sessions, request_queue_capacity;
+    unsigned long long maximum_sessions, request_queue_capacity, concurrent_sequences;
     unsigned long long sampling_seed;
     unsigned long long openai_timeout_ms;
     unsigned short openai_port;
@@ -176,16 +178,20 @@ typedef struct {
     char runtime_binding_identity[YVEX_SHA256_HEX_CAP];
     char artifact_identity[YVEX_SHA256_HEX_CAP];
     char physical_variant_identity[YVEX_SHA256_HEX_CAP];
+    char capacity_plan_identity[YVEX_SHA256_HEX_CAP];
     unsigned long long context_capacity, session_count, request_count;
     unsigned long long prefill_chunk_tokens, maximum_new_tokens;
     unsigned long long maximum_output_bytes, maximum_sessions;
-    unsigned long long request_queue_capacity, openai_timeout_ms;
+    unsigned long long request_queue_capacity, concurrent_sequences;
+    unsigned long long capacity_required_bytes, capacity_unreserved_bytes;
+    unsigned long long openai_timeout_ms;
     unsigned short openai_port;
     yvex_server_trace_level trace_level;
     yvex_server_metrics metrics;
     int runtime_ready, generation_ready, public_server_ready;
     int openai_listener_enabled, openai_listener_ready;
     int explicit_reasoning_channel_supported;
+    int independent_session_scheduling_ready, continuous_batching_ready;
 } yvex_server_summary;
 typedef enum {
     YVEX_CLIENT_OP_HANDSHAKE = 0,

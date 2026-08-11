@@ -16,6 +16,28 @@
 typedef struct server_telemetry server_telemetry;
 typedef struct server_session_registry server_session_registry;
 typedef struct server_openai_listener server_openai_listener;
+typedef struct server_scheduler server_scheduler;
+
+typedef void (*server_scheduler_execute)(void *context, void *work);
+typedef void (*server_scheduler_observe)(void *context,
+                                         unsigned long long queued,
+                                         unsigned long long capacity,
+                                         unsigned long long active);
+
+int yvex_server_scheduler_open(
+    server_scheduler **out, unsigned long long queue_capacity,
+    unsigned long long worker_count, server_scheduler_execute execute,
+    server_scheduler_observe observe, void *context, yvex_error *err);
+int yvex_server_scheduler_start(server_scheduler *scheduler, yvex_error *err);
+int yvex_server_scheduler_submit(server_scheduler *scheduler, void *work,
+                                 const char *serialization_key,
+                                 unsigned long long *queued, yvex_error *err);
+void yvex_server_scheduler_request_stop(server_scheduler *scheduler);
+int yvex_server_scheduler_finish(server_scheduler *scheduler, yvex_error *err);
+void yvex_server_scheduler_snapshot(const server_scheduler *scheduler,
+                                    unsigned long long *queued,
+                                    unsigned long long *active);
+void yvex_server_scheduler_close(server_scheduler **scheduler);
 
 #define SESSION_SCHEMA_V1 1u
 #define SESSION_MAX_MESSAGES 128u

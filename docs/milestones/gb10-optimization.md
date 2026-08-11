@@ -33,7 +33,11 @@ Execution IR and compiled profiles remain schema v1. Generation plan ABI v5
 binds the exact workload-profile identity needed to validate its phase roofline
 ledger; result schema v4 and its wire projections remain unchanged. Every
 admitted change has a concrete fact and compatibility rule in the
-contract matrix; the size of this milestone alone earns no version bump.
+contract matrix; state checkpoints subsequently earned protocol v8 and the
+admitted capacity/scheduler projection earns protocol v9. Server options earn
+schema v2 because the concrete `yvex server --parallel` consumer must pass an
+explicit concurrent-sequence request into startup admission. The size of this
+milestone alone earns no version bump.
 
 An implementation-discovered identity change is admitted beside that frozen
 entry audit:
@@ -54,6 +58,8 @@ entry audit:
 | Attention-state provider ABI | v4 | v5 | capacity-plan configuration before persistent storage admission | in-process function-table layout only; no persisted, wire or public C incompatibility | rebuilt runtime validation rejects a provider without the configuration operation | complete rebuild; target and draft configure under one serialized session mutation and partial configuration invalidates the session | provider forwarding/failure, changed-plan refusal, pre-mutation budget refusal and abort rollback |
 | Attention-state provider ABI | v5 | v6 | exact committed-state restore with lineage and layout identities | in-process function-table layout plus versioned checkpoint payload | rebuilt runtime validation rejects a provider without restore | complete rebuild; checkpoint files remain immutable and model-bound | exact restore, corruption refusal, no partial publication |
 | Local protocol | v7 | v8 | typed model-state checkpoint path, restore bound and result evidence | private Unix framing and payload | every non-v8 peer fails handshake | atomic daemon/client cutover; no compatibility decoder | request/message roundtrip, operator reachability, non-v8 refusal |
+| Local protocol | v8 | v9 | startup capacity-plan identity and bytes, admitted concurrent sequences, and distinct independent-scheduling versus continuous-batching readiness | private Unix framing and payload | every non-v9 peer fails handshake | atomic server/client cutover; no compatibility decoder | complete roundtrip, invalid capacity identity, zero concurrency and non-v9 refusal |
+| Server options | v1 | v2 | explicit concurrent-sequence request consumed by startup capacity admission and the keyed scheduler | installed C structure layout | v1 writers cannot express concurrency and refuse at schema admission | complete pre-v0.1 rebuild; entrypoint name is unchanged and no side-by-side options authority remains | old-schema refusal, concurrency/session bound, CLI startup and tiny vertical |
 
 The later source-authored conversation gate earned these product-boundary
 changes. Reader and writer behavior remain separate because compatibility in
@@ -67,7 +73,7 @@ one direction does not imply compatibility in the other.
 | Provider request/wire | v1 | v2 | assistant reasoning, policy/drop facts, presence facts and ordered multiple tool calls | installed C layout, request identity and serialized bytes | old binary rejects or cannot represent v2; current reader admits both | v1 emits only disabled reasoning and one call | retain v1 within exact limits; new facts require v2 | v1/v2 clone, seal, roundtrip, truncation, malformed refusal |
 | Local protocol | v6 | v7 | typed error channel and separate reasoning/final metrics | private Unix framing and payload | every non-v7 peer fails handshake | v6 cannot carry the new terminal facts | atomic daemon/client cutover; no compatibility decoder | message/status roundtrip and non-v7 refusal |
 | OpenAI compatibility | v1 | v2 | reasoning policy, `reasoning_content`, reasoning SSE and multiple calls | documented HTTP JSON profile | v1 clients can consume shared additive fields | cannot express the new contract | v2 documents the YVEX-specific projections | Chat/Responses, SSE, tools, usage, cancellation |
-| Public server construction | v1 | v1 | none; no concrete scheduler-construction consumer exists | none | unchanged | unchanged | current entrypoints converge on new internals | declaration count and ABI guard |
+| Public server entrypoints | v1 | v1 | the existing entrypoints consume server-options v2; no second constructor is required | none in the function ABI | rebuilt caller uses options v2 | rebuilt product writes options v2 | one constructor remains canonical | declaration count, schema refusal and CLI reachability |
 
 ## Planning authority
 
@@ -392,9 +398,9 @@ acceptance identity before state or RNG publication. Workspace capacity is
 derived from vocabulary and model-authored proposal width before execution;
 undersized capacity and malformed candidates refuse before a launch. CPU and
 audit/forensic execution retain the complete-distribution oracle. This changes
-only an internal operation table and helper signature; binding v8, protocol v8,
-events v3, compiled profile v1, generation ABI v5 and the server-construction
-API remain unchanged by this optimization.
+only an internal operation table and helper signature; it did not change the
+persisted binding, local wire, event schema, compiled profile, generation ABI,
+or server-construction API.
 
 Generation admission now obtains the exact target and draft transformer
 workspace requirements from their lower owners and seals one session-owned
@@ -413,8 +419,8 @@ evidence-bearing profiles select through the same sampling owner over the host
 row, rather than reconstructing a second selection algorithm in speculation.
 The normal production profile refuses host-authored selection facts and records
 zero full-array host-scan bytes. This is an internal complete-rebuild ABI change
-only; binding v8, protocol v8, events v3, generation ABI v5 and the
-server-construction API remain unchanged by this optimization.
+only; it did not change the persisted binding, local wire, event schema,
+generation ABI or server-construction API.
 
 Source-selected target features now collapse their mHC residual streams on
 CUDA. Production CUDA execution publishes reduced rows only into the
@@ -469,8 +475,9 @@ Continuous serving has one scheduler authority and one serialized mutation
 domain. Thread count is not part of that semantic contract. Independently
 admitted execution and I/O workers may be used when ownership, cancellation,
 publication, fairness and cleanup remain exact. The public server API is not
-versioned speculatively; its current entrypoints must converge on the admitted
-scheduler before a concrete external consumer may justify a new ABI.
+versioned speculatively. The existing constructor now consumes options schema
+v2 because the product's `--parallel` input is a concrete consumer; no second
+constructor or compatibility alias is introduced.
 
 ## Source-authored conversation protocol
 
@@ -489,7 +496,7 @@ non-interactive `--reasoning` policy. Only the exact model-emitted
 fails closed, arbitrary prose is never reclassified, and no hidden model state
 is exposed.
 
-Protocol v8 carries distinct reasoning, final, tool and error channels plus
+Protocol v9 carries distinct reasoning, final, tool and error channels plus
 reasoning/final token counts, rates, first-token times and total completion
 time. The REPL renders explicit reasoning incrementally and distinctly; raw
 execution writes canonical channel payload bytes without terminal decoration.

@@ -76,7 +76,7 @@ EOF
 
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server tiny-executable-cpu-complete \
     --backend cpu --ctx 8 --generation-mode target-only --max-new-tokens 1 \
-    --console off --openai off >"$root/server.out" 2>"$root/server.err" &
+    --parallel 2 --console off --openai off >"$root/server.out" 2>"$root/server.err" &
 server_pid=$!
 
 ready=0
@@ -94,15 +94,30 @@ done
 test "$ready" -eq 1
 grep -F '"model_open_count":1' "$root/status.json" >/dev/null
 grep -F '"context_capacity":8' "$root/status.json" >/dev/null
+grep -F '"parallel":2' "$root/status.json" >/dev/null
+grep -F '"independent_session_scheduling":true' "$root/status.json" >/dev/null
+grep -F '"continuous_batching":false' "$root/status.json" >/dev/null
+grep -E '"capacity_plan_identity":"[0-9a-f]{64}"' "$root/status.json" >/dev/null
+grep -F 'requested ctx=8 · parallel=2' "$root/server.out" >/dev/null
 
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server log --json \
     >"$root/server.log.jsonl" 2>"$root/server.log.err" &
 log_pid=$!
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session new persisted \
     >"$root/session.new"
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session new independent \
+    >"$root/session.independent.new"
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --session persisted a \
-    --strategy greedy --max-new-tokens 1 >"$root/run.out" 2>"$root/run.err"
+    --strategy greedy --max-new-tokens 1 >"$root/run.out" 2>"$root/run.err" &
+first_run_pid=$!
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --session independent a \
+    --strategy greedy --max-new-tokens 1 \
+    >"$root/run.independent.out" 2>"$root/run.independent.err" &
+second_run_pid=$!
+wait "$first_run_pid"
+wait "$second_run_pid"
 grep -Fx 'ok' "$root/run.out" >/dev/null
+grep -Fx 'ok' "$root/run.independent.out" >/dev/null
 grep -F 'generation 1 token' "$root/run.err" >/dev/null
 state_path="$root/persisted-state.yvex"
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session state save \
@@ -122,7 +137,7 @@ grep -F '"kind":"generation.completed"' "$root/server.log.jsonl" >/dev/null
 
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server tiny-executable-cpu-complete \
     --backend cpu --ctx 8 --generation-mode target-only --max-new-tokens 1 \
-    --console off --openai off >>"$root/server.out" 2>>"$root/server.err" &
+    --parallel 2 --console off --openai off >>"$root/server.out" 2>>"$root/server.err" &
 server_pid=$!
 ready=0
 attempt=0

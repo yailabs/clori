@@ -227,8 +227,9 @@ src/server/openai/json.c	server.openai	server.openai.json	generic	private	reusab
 src/server/openai/private.h	server.openai	server.openai.shared	generic	private	source-local-interface	server.openai.lifecycle,server.openai.http,server.openai.json,server.openai.render,server.openai.state	interface	none
 src/server/openai/render.c	server.openai	server.openai.render	generic	private	reusable-algorithm	server.openai.lifecycle	implementation	none
 src/server/openai/state.c	server.openai	server.openai.state	generic	private	resource-lifecycle	server.openai.lifecycle	implementation	none
-src/server/private.h	server	server.shared	generic	private	private-interface	server.core,server.protocol,server.local_transport,server.session,server.telemetry,server.openai.lifecycle	interface	none
+src/server/private.h	server	server.shared	generic	private	private-interface	server.core,server.protocol,server.local_transport,server.session,server.scheduler,server.telemetry,server.openai.lifecycle	interface	none
 src/server/protocol.c	server	server.protocol	generic	private	public-protocol	client,daemon	implementation	none
+src/server/scheduler.c	server	server.scheduler	generic	private	resource-lifecycle	server.core,server.session	implementation	none
 src/server/transport.c	server	server.local_transport	generic	private	resource-lifecycle	client,daemon	implementation	none
 src/server/session.c	server	server.session	generic	private	resource-lifecycle	server.core	implementation	none
 src/server/state_store.c	server	server.session_state_store	generic	private	persisted-schema	server.session,tests	implementation	none

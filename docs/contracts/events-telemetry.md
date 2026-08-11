@@ -55,7 +55,7 @@ metrics, and human renderers. Low-priority progress may be coalesced or dropped
 under pressure, and overflow remains an explicit fact. Lifecycle and terminal
 events may not disappear silently.
 
-Subscription failure or a slow client cannot block the model worker
+Subscription failure or a slow client cannot block scheduler workers
 indefinitely. Disconnect releases subscriber resources without closing the
 runtime model.
 

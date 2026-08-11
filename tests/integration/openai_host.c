@@ -1,5 +1,5 @@
 /*
- * Provide deterministic status, session, text, JSON, and tool-call protocol-v8 facts. Never
+ * Provide deterministic status, session, text, JSON, and tool-call protocol-v9 facts. Never
  * enters production objects.
  */
 
@@ -56,7 +56,7 @@ static int send_ack(int fd, const yvex_client_request *request,
 {
     yvex_client_message message;
     message_base(&message, YVEX_CLIENT_MESSAGE_ACK, request);
-    strcpy(message.reason, "protocol-v8");
+    strcpy(message.reason, "protocol-v9");
     return yvex_server_protocol_send(fd, &message, err);
 }
 
@@ -70,6 +70,9 @@ static int send_status(int fd, const yvex_client_request *request,
     message.runtime.runtime_ready = 1;
     message.runtime.generation_ready = 1;
     message.runtime.explicit_reasoning_channel_supported = 1;
+    message.runtime.concurrent_sequences = 1u;
+    message.runtime.capacity_required_bytes = 4096u;
+    message.runtime.capacity_unreserved_bytes = 8192u;
     strcpy(message.runtime.target_id, "deepseek4-v4-flash-dspark");
     memset(message.runtime.runtime_model_identity, 'a', 64u);
     message.runtime.runtime_model_identity[64] = '\0';
@@ -79,6 +82,8 @@ static int send_status(int fd, const yvex_client_request *request,
     message.runtime.artifact_identity[64] = '\0';
     memset(message.runtime.physical_variant_identity, 'd', 64u);
     message.runtime.physical_variant_identity[64] = '\0';
+    memset(message.runtime.capacity_plan_identity, 'e', 64u);
+    message.runtime.capacity_plan_identity[64] = '\0';
     message.runtime.context_capacity = 4096u;
     message.runtime.metrics.model_open_count = 1u;
     message.runtime.metrics.artifact_open_count = 1u;
@@ -96,6 +101,9 @@ static int send_console_status(int fd, const yvex_client_request *request,
     message.runtime.runtime_ready = 1;
     message.runtime.generation_ready = 1;
     message.runtime.explicit_reasoning_channel_supported = 1;
+    message.runtime.concurrent_sequences = 1u;
+    message.runtime.capacity_required_bytes = 4096u;
+    message.runtime.capacity_unreserved_bytes = 8192u;
     message.runtime.backend = YVEX_BACKEND_KIND_CUDA;
     message.runtime.context_capacity = 4096u;
     strcpy(message.runtime.target_id, "deepseek4-v4-flash-dspark");
@@ -103,6 +111,8 @@ static int send_console_status(int fd, const yvex_client_request *request,
     message.runtime.runtime_model_identity[64] = '\0';
     memset(message.runtime.physical_variant_identity, 'd', 64u);
     message.runtime.physical_variant_identity[64] = '\0';
+    memset(message.runtime.capacity_plan_identity, 'e', 64u);
+    message.runtime.capacity_plan_identity[64] = '\0';
     message.console.schema_version = 1u;
     message.console.backend = YVEX_BACKEND_KIND_CUDA;
     message.console.session_state = YVEX_SERVER_SESSION_READY;

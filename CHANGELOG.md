@@ -19,6 +19,9 @@ change. Git history preserves implementation chronology.
   through native and bounded OpenAI-compatible local surfaces.
 - Exact server-owned multi-turn sessions with committed-prefix reuse,
   cancellation, partial-progress truth, and one persistent model lifecycle.
+- Capacity-admitted independent-session scheduling with one keyed mutation
+  authority, bounded worker concurrency, explicit `--parallel N` startup, and
+  protocol v9 facts that distinguish it from still-open continuous batching.
 - Registry-driven command discovery, advanced help, JSON discovery, and Bash,
   Zsh, and Fish completion.
 - A server-backed `yvex>` console with composed attachment state, live prefill

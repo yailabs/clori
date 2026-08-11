@@ -1,8 +1,8 @@
 /*
  * Keep immutable model resources resident while local clients submit typed work.
  *
- * One host opens at most one model and only its worker invokes session/model mutation. Yvexd
- * process orchestration over admitted runtime/session/protocol owners.
+ * One host opens at most one model. Its scheduler serializes per-session mutation while bounded
+ * workers execute independent sessions over admitted runtime/session/protocol owners.
  */
 #define _GNU_SOURCE
 #include "src/server/private.h"
@@ -42,8 +42,8 @@ typedef struct {
     int fd, active, subscriber;
 } server_client_slot;
 struct yvex_server {
-    pthread_mutex_t state_mutex, queue_mutex, clients_mutex;
-    pthread_cond_t queue_condition, clients_condition;
+    pthread_mutex_t state_mutex, clients_mutex;
+    pthread_cond_t clients_condition;
     yvex_server_options options;
     yvex_server_summary summary;
     char artifact_path[YVEX_PATH_CAP];
@@ -52,21 +52,27 @@ struct yvex_server {
     char socket_path[YVEX_SERVER_SOCKET_PATH_CAP];
     char lock_path[YVEX_SERVER_SOCKET_PATH_CAP];
     yvex_runtime_model *model;
+    yvex_runtime_generation_context_summary capacity_summary;
+    yvex_runtime_generation_context *warm_generation;
     yvex_runtime_execution_session *warm_session;
     server_telemetry *telemetry;
     server_session_registry *sessions;
+    server_scheduler *scheduler;
     server_openai_listener *openai;
-    server_work_item **queue;
-    unsigned long long queue_capacity, queue_head, queue_count, next_request_id;
+    unsigned long long next_request_id;
     server_client_slot *clients;
     unsigned long long client_capacity, active_clients;
-    pthread_t worker;
-    int listen_fd, lock_fd, lock_owned, worker_ready;
+    int listen_fd, lock_fd, lock_owned;
     atomic_int stopping;
-    int state_mutex_ready, queue_mutex_ready, queue_condition_ready;
+    int state_mutex_ready;
     int clients_mutex_ready, clients_condition_ready;
     int finish_started, finish_completed;
 };
+
+static void model_work_execute(void *context, void *work);
+static void scheduler_observe(void *context, unsigned long long queued,
+                              unsigned long long capacity,
+                              unsigned long long active);
 
 static int server_refuse(yvex_error *err, yvex_status status,
                          const char *reason)
@@ -130,7 +136,8 @@ static int server_options_admit(yvex_server *server,
                                 yvex_error *err)
 {
     char canonical[YVEX_SERVER_SOCKET_PATH_CAP];
-    if (!options || !options->artifact_path || !options->runtime_binding_path ||
+    if (!options || options->schema_version != YVEX_SERVER_OPTIONS_SCHEMA_V2 ||
+        !options->artifact_path || !options->runtime_binding_path ||
         !options->target_id ||
         (options->backend != YVEX_BACKEND_KIND_CPU &&
          options->backend != YVEX_BACKEND_KIND_CUDA) ||
@@ -138,7 +145,8 @@ static int server_options_admit(yvex_server *server,
         !options->context_capacity || !options->prefill_chunk_tokens ||
         !options->maximum_new_tokens || !options->maximum_output_bytes ||
         !options->maximum_sessions || !options->request_queue_capacity ||
-        options->request_queue_capacity > SIZE_MAX / sizeof(server_work_item *) ||
+        !options->concurrent_sequences ||
+        options->concurrent_sequences > options->maximum_sessions ||
         options->maximum_sessions > SERVER_CLIENT_CAPACITY ||
         (options->openai_enabled &&
          (!options->openai_port || options->openai_timeout_ms < 100u ||
@@ -184,14 +192,6 @@ static int server_synchronization_open(yvex_server *server, yvex_error *err)
         return server_refuse(err, YVEX_ERR_STATE,
                              "host state mutex initialization failed");
     server->state_mutex_ready = 1;
-    if (pthread_mutex_init(&server->queue_mutex, NULL) != 0)
-        return server_refuse(err, YVEX_ERR_STATE,
-                             "request queue mutex initialization failed");
-    server->queue_mutex_ready = 1;
-    if (pthread_cond_init(&server->queue_condition, NULL) != 0)
-        return server_refuse(err, YVEX_ERR_STATE,
-                             "request queue condition initialization failed");
-    server->queue_condition_ready = 1;
     if (pthread_mutex_init(&server->clients_mutex, NULL) != 0)
         return server_refuse(err, YVEX_ERR_STATE,
                              "client mutex initialization failed");
@@ -222,16 +222,18 @@ int yvex_server_create(yvex_server **out, const yvex_server_options *options,
     rc = server_options_admit(server, options, err);
     if (rc == YVEX_OK) rc = server_synchronization_open(server, err);
     if (rc == YVEX_OK) {
-        server->queue_capacity = options->request_queue_capacity;
         server->client_capacity = SERVER_CLIENT_CAPACITY;
-        server->queue = calloc((size_t)server->queue_capacity,
-                               sizeof(*server->queue));
         server->clients = calloc((size_t)server->client_capacity,
                                  sizeof(*server->clients));
-        if (!server->queue || !server->clients)
+        if (!server->clients)
             rc = server_refuse(err, YVEX_ERR_NOMEM,
-                               "host queue or connection allocation failed");
+                               "host connection allocation failed");
     }
+    if (rc == YVEX_OK)
+        rc = yvex_server_scheduler_open(
+            &server->scheduler, options->request_queue_capacity,
+            options->concurrent_sequences,
+            model_work_execute, scheduler_observe, server, err);
     if (rc == YVEX_OK)
         rc = yvex_server_telemetry_open(&server->telemetry,
                                    SERVER_TELEMETRY_CAPACITY,
@@ -239,7 +241,7 @@ int yvex_server_create(yvex_server **out, const yvex_server_options *options,
                                    NULL, NULL, NULL, err);
     if (rc == YVEX_OK)
         yvex_server_telemetry_queue(server->telemetry, 0u,
-                                    server->queue_capacity);
+                                    options->request_queue_capacity);
     if (rc == YVEX_OK && options->openai_enabled) {
         server_openai_options openai = {
             .yvex_socket = server->socket_path,
@@ -264,6 +266,7 @@ int yvex_server_create(yvex_server **out, const yvex_server_options *options,
     server->summary.maximum_output_bytes = options->maximum_output_bytes;
     server->summary.maximum_sessions = options->maximum_sessions;
     server->summary.request_queue_capacity = options->request_queue_capacity;
+    server->summary.concurrent_sequences = options->concurrent_sequences;
     server->summary.openai_timeout_ms = options->openai_timeout_ms;
     server->summary.trace_level = options->trace_level;
     server->summary.explicit_reasoning_channel_supported = 0;
@@ -429,112 +432,145 @@ static int protocol_error(int fd, const yvex_client_request *request,
     return yvex_server_protocol_send(fd, &message, err);
 }
 
-static void *model_worker_main(void *opaque)
+static void scheduler_observe(void *context, unsigned long long queued,
+                              unsigned long long capacity,
+                              unsigned long long active)
 {
-    yvex_server *server = opaque;
-    for (;;) {
-        server_work_item *item;
-        unsigned long long slot;
-        int rc;
-        (void)pthread_mutex_lock(&server->queue_mutex);
-        while (!server->queue_count &&
-               !atomic_load_explicit(&server->stopping, memory_order_acquire))
-            (void)pthread_cond_wait(&server->queue_condition,
-                                    &server->queue_mutex);
-        if (!server->queue_count &&
-            atomic_load_explicit(&server->stopping, memory_order_acquire)) {
-            (void)pthread_mutex_unlock(&server->queue_mutex);
-            break;
-        }
-        slot = server->queue_head;
-        item = server->queue[slot];
-        server->queue[slot] = NULL;
-        server->queue_head = (server->queue_head + 1u) % server->queue_capacity;
-        server->queue_count--;
-        yvex_server_telemetry_queue(server->telemetry, server->queue_count,
-                               server->queue_capacity);
-        (void)pthread_mutex_unlock(&server->queue_mutex);
-        yvex_server_telemetry_request(server->telemetry, 1, 0, 0, 0);
-        if (atomic_load_explicit(&server->stopping, memory_order_acquire)) {
-            rc = server_refuse(&item->error, YVEX_ERR_CANCELLED,
-                               "queued request cancelled by runtime shutdown");
-        } else {
-            unsigned long long started = server_monotonic_ns();
-            double queue_seconds = started >= item->enqueued_ns
-                                       ? (double)(started - item->enqueued_ns) /
-                                             1000000000.0
-                                       : 0.0;
-            rc = yvex_server_sessions_execute(
-                server->sessions, &item->request, item->request_id, queue_seconds,
-                work_emit, item, &item->error);
-        }
-        if (rc != YVEX_OK && !item->response_sent) {
-            yvex_error send_error;
-            item->failure_class = yvex_server_failure_class_from_status(rc);
-            if (protocol_error(item->fd, &item->request, rc,
-                               item->failure_class,
-                               yvex_error_message(&item->error),
-                               &send_error) == YVEX_OK)
-                item->response_sent = 1;
-        }
-        yvex_server_telemetry_request(server->telemetry, -1, rc == YVEX_OK,
-                                 rc != YVEX_OK && rc != YVEX_ERR_CANCELLED,
-                                 rc == YVEX_ERR_CANCELLED);
-        (void)pthread_mutex_lock(&item->mutex);
-        item->status = rc;
-        item->done = 1;
-        (void)pthread_cond_broadcast(&item->condition);
-        (void)pthread_mutex_unlock(&item->mutex);
-    }
-    return NULL;
+    yvex_server *server = context;
+    (void)active;
+    if (server && server->telemetry)
+        yvex_server_telemetry_queue(server->telemetry, queued, capacity);
 }
 
-static int server_cuda_prepare(yvex_server *server,
-                               yvex_runtime_residency_summary *summary,
-                               yvex_error *err)
+static void model_work_execute(void *context, void *work)
+{
+    yvex_server *server = context;
+    server_work_item *item = work;
+    int rc;
+    yvex_server_telemetry_request(server->telemetry, 1, 0, 0, 0);
+    if (atomic_load_explicit(&server->stopping, memory_order_acquire)) {
+        rc = server_refuse(&item->error, YVEX_ERR_CANCELLED,
+                           "queued request cancelled by server shutdown");
+    } else {
+        unsigned long long started = server_monotonic_ns();
+        double queue_seconds = started >= item->enqueued_ns
+                                   ? (double)(started - item->enqueued_ns) /
+                                         1000000000.0
+                                   : 0.0;
+        rc = yvex_server_sessions_execute(
+            server->sessions, &item->request, item->request_id, queue_seconds,
+            work_emit, item, &item->error);
+    }
+    if (rc != YVEX_OK && !item->response_sent) {
+        yvex_error send_error;
+        item->failure_class = yvex_server_failure_class_from_status(rc);
+        if (protocol_error(item->fd, &item->request, rc,
+                           item->failure_class,
+                           yvex_error_message(&item->error),
+                           &send_error) == YVEX_OK)
+            item->response_sent = 1;
+    }
+    yvex_server_telemetry_request(server->telemetry, -1, rc == YVEX_OK,
+                             rc != YVEX_OK && rc != YVEX_ERR_CANCELLED,
+                             rc == YVEX_ERR_CANCELLED);
+    (void)pthread_mutex_lock(&item->mutex);
+    item->status = rc;
+    item->done = 1;
+    (void)pthread_cond_broadcast(&item->condition);
+    (void)pthread_mutex_unlock(&item->mutex);
+}
+
+static int server_execution_prepare(yvex_server *server,
+                                    yvex_runtime_residency_summary *summary,
+                                    yvex_error *err)
 {
     const yvex_runtime_model_view *view = server && server->model
                                               ? yvex_runtime_model_view_get(server->model)
                                               : NULL;
     yvex_runtime_execution_session *session = NULL;
+    yvex_runtime_generation_context *generation = NULL;
     yvex_runtime_session_open_request request;
+    yvex_runtime_generation_options options;
     yvex_runtime_model_failure failure;
-    yvex_runtime_session_summary session_summary;
     yvex_error primary, cleanup;
-    int rc, cleanup_rc;
+    int rc, generation_cleanup_rc, session_cleanup_rc;
     if (!server || !summary || !view || !view->residency)
         return server_refuse(err, YVEX_ERR_STATE,
                              "runtime residency is unavailable during startup");
-    if (server->options.backend != YVEX_BACKEND_KIND_CUDA)
-        return yvex_runtime_residency_snapshot(view->residency, summary,
-                                               NULL, NULL, err);
     memset(&request, 0, sizeof(request));
     memset(&failure, 0, sizeof(failure));
-    request.backend = YVEX_BACKEND_KIND_CUDA;
+    request.backend = server->options.backend;
     request.maximum_host_bytes = server->options.maximum_host_bytes;
     request.maximum_device_bytes = server->options.maximum_device_bytes;
     rc = yvex_runtime_session_open(&session, server->model, &request,
                                    &failure, err);
+    memset(&options, 0, sizeof(options));
+    options.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V5;
+    options.backend = server->options.backend;
+    options.mode = server->options.generation_mode == YVEX_SERVER_GENERATION_DSPARK
+                       ? YVEX_GENERATION_MODE_DSPARK
+                       : YVEX_GENERATION_MODE_TARGET_ONLY;
+    options.workload_kind = server->options.concurrent_sequences > 1ull
+                                ? YVEX_EXECUTION_WORKLOAD_BALANCED_SERVING
+                                : YVEX_EXECUTION_WORKLOAD_INTERACTIVE_LATENCY;
+    options.context_capacity = server->options.context_capacity;
+    options.prefill_chunk_tokens = server->options.prefill_chunk_tokens;
+    options.maximum_new_tokens = server->options.maximum_new_tokens;
+    options.maximum_output_bytes = server->options.maximum_output_bytes;
+    options.maximum_host_bytes = server->options.maximum_host_bytes;
+    options.maximum_device_bytes = server->options.maximum_device_bytes;
+    options.concurrent_sequences = server->options.concurrent_sequences;
+    options.trace_policy = server->options.trace_level == YVEX_SERVER_TRACE_FULL
+                               ? YVEX_RUNTIME_TRACE_FULL
+                               : YVEX_RUNTIME_TRACE_STAGES;
+    options.evidence_profile = YVEX_EXECUTION_EVIDENCE_PRODUCTION;
+    options.sampling_policy.schema_version = YVEX_RUNTIME_SAMPLING_SCHEMA_V1;
+    options.sampling_policy.strategy = YVEX_SAMPLING_STRATEGY_STOCHASTIC;
+    options.sampling_policy.temperature = 1.0;
+    options.sampling_policy.top_p = 1.0;
+    options.sampling_policy.typical_p = 1.0;
+    options.sampling_policy.seed_present = 1;
+    options.sampling_policy.seed = server->options.sampling_seed;
     if (rc == YVEX_OK)
-        rc = yvex_runtime_session_summary_copy(session, &session_summary, err);
+        rc = yvex_runtime_generation_context_open(
+            &generation, server->model, session, &options, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_generation_context_summary_copy(
+            generation, &server->capacity_summary, err);
+    if (rc == YVEX_OK &&
+        (server->capacity_summary.concurrent_sequences !=
+             server->options.concurrent_sequences ||
+         server->capacity_summary.continuous_batching))
+        rc = server_refuse(
+            err, YVEX_ERR_STATE,
+            "startup capacity plan does not match independent-session scheduling");
     if (rc == YVEX_OK)
         rc = yvex_runtime_residency_snapshot(view->residency, summary,
                                              NULL, NULL, err);
     primary = err ? *err : (yvex_error){0};
     yvex_error_clear(&cleanup);
-    cleanup_rc = yvex_runtime_session_close(&session, &cleanup);
-    if (cleanup_rc != YVEX_OK) {
+    generation_cleanup_rc = yvex_runtime_generation_context_close(
+        &generation, &cleanup);
+    if (generation_cleanup_rc != YVEX_OK) {
+        server->warm_generation = generation;
         server->warm_session = session;
         if (err) *err = cleanup;
-        return cleanup_rc;
+        return generation_cleanup_rc;
+    }
+    session_cleanup_rc = yvex_runtime_session_close(&session, &cleanup);
+    if (session_cleanup_rc != YVEX_OK) {
+        server->warm_session = session;
+        if (err) *err = cleanup;
+        return session_cleanup_rc;
     }
     if (rc != YVEX_OK) {
         if (err) *err = primary;
         return rc;
     }
-    if (!summary->cuda_ready ||
+    if (server->options.backend == YVEX_BACKEND_KIND_CUDA &&
+        (!summary->cuda_ready ||
         (!summary->cuda_upload_count && !summary->cuda_host_registration_count &&
-         !summary->cuda_managed_prefetch_count))
+         !summary->cuda_managed_prefetch_count)))
         return server_refuse(err, YVEX_ERR_STATE,
                              "CUDA residency did not complete before readiness");
     if (err) *err = primary;
@@ -543,9 +579,9 @@ static int server_cuda_prepare(yvex_server *server,
 }
 
 /*
- * Open the model once, then sessions, worker, and listener before READY.
+ * Open the model once, then sessions, scheduler workers, and listener before READY.
  *
- * Opens immutable runtime, registry, worker, and UDS ownership. Marks FAILED and leaves all
+ * Opens immutable runtime, registry, scheduler, and UDS ownership. Marks FAILED and leaves all
  * acquired owners for deterministic close.
  */
 int yvex_server_start(yvex_server *server, yvex_error *err)
@@ -600,7 +636,7 @@ int yvex_server_start(yvex_server *server, yvex_error *err)
         server->summary.explicit_reasoning_channel_supported =
             tokenizer && tokenizer->explicit_reasoning_supported;
         cuda_started = server_monotonic_ns();
-        rc = server_cuda_prepare(server, &residency, err);
+        rc = server_execution_prepare(server, &residency, err);
         if (rc == YVEX_OK)
             cuda_seconds = server_elapsed_seconds(cuda_started,
                                                   server_monotonic_ns());
@@ -647,6 +683,12 @@ int yvex_server_start(yvex_server *server, yvex_error *err)
                                    model.artifact_identity);
         yvex_runtime_identity_copy(server->summary.physical_variant_identity,
                                    view->binding->profile_identity);
+        yvex_runtime_identity_copy(server->summary.capacity_plan_identity,
+                                   server->capacity_summary.capacity_plan_identity);
+        server->summary.capacity_required_bytes =
+            server->capacity_summary.capacity_required_bytes;
+        server->summary.capacity_unreserved_bytes =
+            server->capacity_summary.capacity_unreserved_bytes;
         rc = yvex_server_telemetry_emit(
             server->telemetry, YVEX_SERVER_EVENT_ARTIFACT_OPEN_COMPLETE,
             YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "startup",
@@ -657,18 +699,15 @@ int yvex_server_start(yvex_server *server, yvex_error *err)
         rc = yvex_server_sessions_open(
             &server->sessions, server->model, &server->options,
             server->telemetry, err);
-    if (rc == YVEX_OK && pthread_create(&server->worker, NULL,
-                                         model_worker_main, server) != 0)
-        rc = server_refuse(err, YVEX_ERR_STATE,
-                           "model worker creation failed");
-    else if (rc == YVEX_OK)
-        server->worker_ready = 1;
+    if (rc == YVEX_OK)
+        rc = yvex_server_scheduler_start(server->scheduler, err);
     if (rc == YVEX_OK) rc = listener_open(server, err);
     if (rc == YVEX_OK)
         rc = yvex_server_telemetry_emit(
             server->telemetry, YVEX_SERVER_EVENT_LISTENER_READY,
             YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "listener",
-            0600u, server->queue_capacity, server->options.maximum_sessions,
+            0600u, server->options.request_queue_capacity,
+            server->options.maximum_sessions,
             0.0, 0.0, err);
     if (rc == YVEX_OK && server->openai)
         rc = yvex_server_openai_start(server->openai, err);
@@ -692,6 +731,9 @@ int yvex_server_start(yvex_server *server, yvex_error *err)
         server->summary.runtime_ready = 1;
         server->summary.generation_ready = 1;
         server->summary.public_server_ready = 0;
+        server->summary.independent_session_scheduling_ready =
+            server->options.concurrent_sequences > 1ull;
+        server->summary.continuous_batching_ready = 0;
         server->summary.openai_listener_enabled = openai.enabled;
         server->summary.openai_listener_ready = openai.ready;
         server->summary.openai_port = openai.port;
@@ -710,53 +752,43 @@ int yvex_server_start(yvex_server *server, yvex_error *err)
 /*
  * Enqueue one request pointer while its transport thread retains stack ownership.
  *
- * Appends to the bounded queue and signals worker.
+ * The session name is the serialization key. Global operations use the empty key and therefore
+ * remain ordered with one another without preventing independent named sessions from executing.
  */
 static int request_enqueue(yvex_server *server, server_work_item *item,
                            yvex_error *err)
 {
-    unsigned long long tail;
-    if (pthread_mutex_lock(&server->queue_mutex) != 0)
+    unsigned long long depth = 0ull;
+    int rc;
+    if (pthread_mutex_lock(&server->state_mutex) != 0)
         return server_refuse(err, YVEX_ERR_STATE,
-                             "request queue lock failed");
-    if (atomic_load_explicit(&server->stopping, memory_order_acquire) ||
-        server->queue_count == server->queue_capacity) {
-        int stopping = atomic_load_explicit(&server->stopping,
-                                            memory_order_acquire);
-        (void)pthread_mutex_unlock(&server->queue_mutex);
-        item->failure_class = stopping
-                                  ? YVEX_CLIENT_FAILURE_RUNTIME_UNAVAILABLE
-                                  : YVEX_CLIENT_FAILURE_QUEUE_FULL;
-        return server_refuse(err, stopping ? YVEX_ERR_STATE : YVEX_ERR_BOUNDS,
-                             stopping ? "runtime is stopping"
-                                      : "bounded request queue is full");
-    }
+                             "request identity lock failed");
     server->next_request_id++;
     (void)snprintf(item->request_id, sizeof(item->request_id), "r%llu",
                    server->next_request_id);
+    (void)pthread_mutex_unlock(&server->state_mutex);
     if (yvex_server_telemetry_emit_provider(
             server->telemetry, YVEX_SERVER_EVENT_REQUEST_RECEIVED,
             YVEX_SERVER_SEVERITY_INFO, item->request.session_name,
             item->request_id, NULL, "queue", item->request.prompt_bytes,
             0u, 0u, 0.0, 0.0, NULL, item->request.provider_request, NULL,
-            err) != YVEX_OK) {
-        (void)pthread_mutex_unlock(&server->queue_mutex);
+            err) != YVEX_OK)
         return yvex_error_code(err);
-    }
-    tail = (server->queue_head + server->queue_count) % server->queue_capacity;
-    server->queue[tail] = item;
     item->enqueued_ns = server_monotonic_ns();
-    server->queue_count++;
-    yvex_server_telemetry_queue(server->telemetry, server->queue_count,
-                           server->queue_capacity);
+    rc = yvex_server_scheduler_submit(
+        server->scheduler, item, item->request.session_name, &depth, err);
+    if (rc != YVEX_OK) {
+        item->failure_class = rc == YVEX_ERR_BOUNDS
+                                  ? YVEX_CLIENT_FAILURE_QUEUE_FULL
+                                  : YVEX_CLIENT_FAILURE_RUNTIME_UNAVAILABLE;
+        return rc;
+    }
     (void)yvex_server_telemetry_emit_provider(
         server->telemetry, YVEX_SERVER_EVENT_REQUEST_QUEUED,
         YVEX_SERVER_SEVERITY_INFO, item->request.session_name,
-        item->request_id, NULL, "queue", server->queue_count,
-        server->queue_capacity, 0u, 0.0, 0.0,
+        item->request_id, NULL, "queue", depth,
+        server->options.request_queue_capacity, 0u, 0.0, 0.0,
         NULL, item->request.provider_request, NULL, err);
-    (void)pthread_cond_signal(&server->queue_condition);
-    (void)pthread_mutex_unlock(&server->queue_mutex);
     return YVEX_OK;
 }
 
@@ -945,7 +977,7 @@ static void *client_main(void *opaque)
             message.status = YVEX_OK;
             message.request_number = request.request_number;
             yvex_core_text_copy(message.reason, sizeof(message.reason),
-                                "protocol-v8");
+                                "protocol-v9");
             rc = yvex_server_protocol_send(fd, &message, &err);
         } else {
             server_work_item item;
@@ -1087,6 +1119,7 @@ int yvex_server_serve(yvex_server *server, yvex_error *err)
 int yvex_server_stop(yvex_server *server, yvex_error *err)
 {
     yvex_error openai_error = {0};
+    unsigned long long queued = 0ull, active = 0ull;
     int rc = YVEX_OK;
     if (!server || !server->state_mutex_ready ||
         pthread_mutex_lock(&server->state_mutex) != 0)
@@ -1107,19 +1140,18 @@ int yvex_server_stop(yvex_server *server, yvex_error *err)
         rc = yvex_server_openai_finish(server->openai, &openai_error);
     }
     atomic_store_explicit(&server->stopping, 1, memory_order_release);
+    yvex_server_scheduler_snapshot(server->scheduler, &queued, &active);
     (void)yvex_server_telemetry_emit(
         server->telemetry, YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_START,
         YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "shutdown",
-        server->queue_count, server->active_clients, 0u, 0.0, 0.0, err);
+        queued, server->active_clients, active, 0.0, 0.0, err);
     if (server->listen_fd >= 0) {
         (void)shutdown(server->listen_fd, SHUT_RDWR);
         (void)close(server->listen_fd);
         server->listen_fd = -1;
     }
     yvex_server_sessions_cancel_all(server->sessions);
-    (void)pthread_mutex_lock(&server->queue_mutex);
-    (void)pthread_cond_broadcast(&server->queue_condition);
-    (void)pthread_mutex_unlock(&server->queue_mutex);
+    yvex_server_scheduler_request_stop(server->scheduler);
     if (rc != YVEX_OK) {
         if (err) *err = openai_error;
         return rc;
@@ -1131,7 +1163,7 @@ int yvex_server_stop(yvex_server *server, yvex_error *err)
 /*
  * Drain graph work and close sessions/model while telemetry remains readable.
  *
- * Joins the worker, closes runtime ownership, emits shutdown.complete, and leaves
+ * Joins scheduler workers, closes runtime ownership, emits shutdown.complete, and leaves
  * protocol/telemetry storage alive for final subscribers. Concurrent finish refuses and cleanup
  * preserves the first causal error.
  */
@@ -1157,23 +1189,30 @@ int yvex_server_finish(yvex_server *server, yvex_error *err)
     server->finish_started = 1;
     (void)pthread_mutex_unlock(&server->state_mutex);
     rc = yvex_server_stop(server, &primary);
-    if (server->worker_ready) {
-        if (pthread_join(server->worker, NULL) != 0 && rc == YVEX_OK)
-            rc = server_refuse(&primary, YVEX_ERR_STATE,
-                               "runtime worker join failed");
-        server->worker_ready = 0;
+    cleanup_rc = yvex_server_scheduler_finish(server->scheduler, &cleanup);
+    if (cleanup_rc != YVEX_OK && rc == YVEX_OK) {
+        rc = cleanup_rc;
+        primary = cleanup;
     }
     cleanup_rc = yvex_server_sessions_close(&server->sessions, &cleanup);
     if (cleanup_rc != YVEX_OK && rc == YVEX_OK) {
         rc = cleanup_rc;
         primary = cleanup;
     }
-    cleanup_rc = yvex_runtime_session_close(&server->warm_session, &cleanup);
+    cleanup_rc = yvex_runtime_generation_context_close(
+        &server->warm_generation, &cleanup);
     if (cleanup_rc != YVEX_OK && rc == YVEX_OK) {
         rc = cleanup_rc;
         primary = cleanup;
     }
-    if (server->model && !server->warm_session) {
+    if (!server->warm_generation) {
+        cleanup_rc = yvex_runtime_session_close(&server->warm_session, &cleanup);
+        if (cleanup_rc != YVEX_OK && rc == YVEX_OK) {
+            rc = cleanup_rc;
+            primary = cleanup;
+        }
+    }
+    if (server->model && !server->warm_generation && !server->warm_session) {
         yvex_runtime_model_close(&server->model);
         yvex_server_telemetry_model_closed(server->telemetry);
     }
@@ -1285,19 +1324,15 @@ void yvex_server_close(yvex_server **server)
     if (owner->lock_owned && owner->lock_path[0])
         (void)unlink(owner->lock_path);
     yvex_server_openai_close(&owner->openai);
+    yvex_server_scheduler_close(&owner->scheduler);
     yvex_server_telemetry_close(&owner->telemetry);
     if (owner->clients_condition_ready)
         (void)pthread_cond_destroy(&owner->clients_condition);
     if (owner->clients_mutex_ready)
         (void)pthread_mutex_destroy(&owner->clients_mutex);
-    if (owner->queue_condition_ready)
-        (void)pthread_cond_destroy(&owner->queue_condition);
-    if (owner->queue_mutex_ready)
-        (void)pthread_mutex_destroy(&owner->queue_mutex);
     if (owner->state_mutex_ready)
         (void)pthread_mutex_destroy(&owner->state_mutex);
     free(owner->clients);
-    free(owner->queue);
     memset(owner, 0, sizeof(*owner));
     free(owner);
     *server = NULL;

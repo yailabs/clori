@@ -1257,6 +1257,12 @@
         "value_type": "u64"
       },
       {
+        "name": "--parallel",
+        "range": "1..64",
+        "takes_value": true,
+        "value_type": "u64"
+      },
+      {
         "name": "--prefill-chunk",
         "range": "1..18446744073709551615",
         "takes_value": true,

@@ -11,7 +11,7 @@ flowchart LR
         openai[In-process OpenAI adapter]
         resources[Immutable model, tokenizer,<br/>binding, and residency]
         queue[Bounded request queue]
-        worker[Single model worker]
+        worker[Keyed scheduler workers]
         registry[Session registry]
 
         subgraph session[Server-owned conversation session]

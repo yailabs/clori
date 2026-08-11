@@ -233,10 +233,13 @@ caches, or prevent reset and a subsequent request.
 
 ## Resource and concurrency rules
 
-The server owns one bounded queue and one model worker. Listener threads admit,
-frame, and project requests but never mutate model state directly. One active
-generation request is executed at a time unless a later independently admitted
-scheduler changes that contract.
+The server owns one bounded queue and one scheduler mutation authority.
+Listener threads admit, frame, and project requests but never mutate model
+state directly. A bounded worker set may execute distinct session keys
+concurrently; requests sharing a session key remain strictly serialized. This
+is independent-session scheduling, not compatible-row continuous batching.
+The startup capacity plan accounts the admitted worker count before readiness
+and the protocol exposes both capabilities separately.
 
 Prepared warm execution reuses immutable weights, output-head residency,
 workspace, persistent-state allocation, and stable execution resources within
@@ -287,7 +290,7 @@ refusals or failures. None may become a successful target-only turn.
 
 ## Compatibility
 
-The runtime behavior is consumed through private local protocol v8 and the
+The runtime behavior is consumed through private local protocol v9 and the
 bounded OpenAI compatibility profile v2. Public C ABI and internal ABI follow
 their header/version contracts. Pre-v0.1 private protocol versions may be
 refused rather than decoded compatibly.

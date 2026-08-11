@@ -243,6 +243,7 @@ static void options_defaults(yvex_server_options *options,
                              const cli_server_profile *profile)
 {
     memset(options, 0, sizeof(*options));
+    options->schema_version = YVEX_SERVER_OPTIONS_SCHEMA_V2;
     options->artifact_path = profile->artifact;
     options->runtime_binding_path = profile->binding;
     options->target_id = profile->target;
@@ -257,6 +258,7 @@ static void options_defaults(yvex_server_options *options,
     options->maximum_output_bytes = 1048576u;
     options->maximum_sessions = 8u;
     options->request_queue_capacity = 16u;
+    options->concurrent_sequences = 1u;
     options->trace_level = YVEX_SERVER_TRACE_STAGES;
     options->openai_enabled = 1;
     options->openai_port = 8001u;
@@ -280,6 +282,11 @@ static int option_parse(yvex_server_options *options, const char *flag,
         return parse_u64(value, &options->prefill_chunk_tokens);
     else if (!strcmp(flag, "--max-new-tokens"))
         return parse_u64(value, &options->maximum_new_tokens);
+    else if (!strcmp(flag, "--parallel")) {
+        if (!parse_u64(value, &options->concurrent_sequences)) return 0;
+        if (options->maximum_sessions < options->concurrent_sequences)
+            options->maximum_sessions = options->concurrent_sequences;
+    }
     else if (!strcmp(flag, "--console"))
         options->console = !strcmp(value, "raw") ? YVEX_SERVER_CONSOLE_RAW
                                                   : YVEX_SERVER_CONSOLE_OFF;
@@ -329,7 +336,7 @@ static void startup_announce(const cli_server_profile *profile,
         endpoint = socket_path;
     printf("YVEX server · foreground\n"
            "  profile %s\n"
-           "  target %s · backend=%s · mode=%s · requested ctx=%llu\n"
+           "  target %s · backend=%s · mode=%s · requested ctx=%llu · parallel=%llu\n"
            "  artifact %s\n"
            "  binding %s\n"
            "  local endpoint %s",
@@ -337,7 +344,8 @@ static void startup_announce(const cli_server_profile *profile,
            options->backend == YVEX_BACKEND_KIND_CUDA ? "cuda" : "cpu",
            options->generation_mode == YVEX_SERVER_GENERATION_DSPARK
                ? "dspark" : "target-only",
-           options->context_capacity, profile->artifact, profile->binding,
+           options->context_capacity, options->concurrent_sequences,
+           profile->artifact, profile->binding,
            endpoint ? endpoint : "unavailable");
     if (options->openai_enabled)
         printf(" · OpenAI 127.0.0.1:%u", (unsigned int)options->openai_port);

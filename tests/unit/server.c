@@ -6,6 +6,7 @@
 #include <stdlib.h>
 
 #include <arpa/inet.h>
+#include <pthread.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -17,6 +18,7 @@
 static void test_options(yvex_server_options *options)
 {
     memset(options, 0, sizeof(*options));
+    options->schema_version = YVEX_SERVER_OPTIONS_SCHEMA_V2;
     options->artifact_path = "/definitely-absent/yvex-model.gguf";
     options->runtime_binding_path = "/definitely-absent/yvex-binding";
     options->target_id = "deepseek4-v4-flash-dspark";
@@ -28,12 +30,94 @@ static void test_options(yvex_server_options *options)
     options->maximum_output_bytes = 4096u;
     options->maximum_sessions = 2u;
     options->request_queue_capacity = 2u;
+    options->concurrent_sequences = 1u;
 }
 
 static void server_test_identity(char identity[YVEX_SHA256_HEX_CAP], char digit)
 {
     memset(identity, digit, YVEX_SHA256_HEX_CAP - 1u);
     identity[YVEX_SHA256_HEX_CAP - 1u] = '\0';
+}
+
+typedef struct {
+    pthread_mutex_t mutex;
+    pthread_cond_t condition;
+    unsigned long long active, peak, completed;
+    int release, first_active, third_active, first_done, violation;
+} scheduler_probe;
+
+typedef struct {
+    scheduler_probe *probe;
+    int id;
+} scheduler_probe_work;
+
+static void scheduler_probe_execute(void *context, void *opaque)
+{
+    scheduler_probe *probe = context;
+    scheduler_probe_work *work = opaque;
+    (void)pthread_mutex_lock(&probe->mutex);
+    if (work->id == 2 && !probe->first_done) probe->violation = 1;
+    probe->active++;
+    if (probe->active > probe->peak) probe->peak = probe->active;
+    if (work->id == 1) probe->first_active = 1;
+    if (work->id == 3) probe->third_active = 1;
+    (void)pthread_cond_broadcast(&probe->condition);
+    while (!probe->release)
+        (void)pthread_cond_wait(&probe->condition, &probe->mutex);
+    probe->active--;
+    if (work->id == 1) probe->first_done = 1;
+    probe->completed++;
+    (void)pthread_cond_broadcast(&probe->condition);
+    (void)pthread_mutex_unlock(&probe->mutex);
+}
+
+static int test_scheduler_serialization(void)
+{
+    scheduler_probe probe = {0};
+    scheduler_probe_work work[] = {
+        {&probe, 1}, {&probe, 2}, {&probe, 3}
+    };
+    server_scheduler *scheduler = NULL;
+    unsigned long long queued = 0ull, active = 0ull;
+    yvex_error err;
+    YVEX_TEST_ASSERT(pthread_mutex_init(&probe.mutex, NULL) == 0 &&
+                         pthread_cond_init(&probe.condition, NULL) == 0,
+                     "scheduler probe synchronization opens");
+    YVEX_TEST_ASSERT(
+        yvex_server_scheduler_open(
+            &scheduler, 3ull, 2ull, scheduler_probe_execute, NULL,
+            &probe, &err) == YVEX_OK && scheduler &&
+            yvex_server_scheduler_start(scheduler, &err) == YVEX_OK,
+        "two-worker scheduler opens and starts");
+    YVEX_TEST_ASSERT(
+        yvex_server_scheduler_submit(
+            scheduler, &work[0], "same", NULL, &err) == YVEX_OK &&
+            yvex_server_scheduler_submit(
+                scheduler, &work[1], "same", NULL, &err) == YVEX_OK &&
+            yvex_server_scheduler_submit(
+                scheduler, &work[2], "other", NULL, &err) == YVEX_OK,
+        "scheduler accepts bounded keyed work");
+    (void)pthread_mutex_lock(&probe.mutex);
+    while (probe.active < 2ull)
+        (void)pthread_cond_wait(&probe.condition, &probe.mutex);
+    YVEX_TEST_ASSERT(probe.first_active && probe.third_active &&
+                         probe.peak == 2ull && !probe.violation,
+                     "independent keys execute while one same-key request waits");
+    probe.release = 1;
+    (void)pthread_cond_broadcast(&probe.condition);
+    while (probe.completed < 3ull)
+        (void)pthread_cond_wait(&probe.condition, &probe.mutex);
+    (void)pthread_mutex_unlock(&probe.mutex);
+    YVEX_TEST_ASSERT(
+        yvex_server_scheduler_finish(scheduler, &err) == YVEX_OK,
+        "scheduler drains and joins workers");
+    yvex_server_scheduler_snapshot(scheduler, &queued, &active);
+    YVEX_TEST_ASSERT(!queued && !active && !probe.violation && probe.first_done,
+                     "same-key work starts only after its predecessor completes");
+    yvex_server_scheduler_close(&scheduler);
+    (void)pthread_cond_destroy(&probe.condition);
+    (void)pthread_mutex_destroy(&probe.mutex);
+    return 0;
 }
 
 static int test_session_store(void)
@@ -226,6 +310,16 @@ static int test_model_open_refusal(void)
     yvex_server *server = NULL;
     yvex_error err;
     int rc;
+    test_options(&options);
+    options.schema_version = 1u;
+    rc = yvex_server_create(&server, &options, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_ERR_INVALID_ARG && !server,
+                     "old server-options schema refuses");
+    test_options(&options);
+    options.concurrent_sequences = options.maximum_sessions + 1ull;
+    rc = yvex_server_create(&server, &options, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_ERR_INVALID_ARG && !server,
+                     "execution concurrency above session capacity refuses");
     test_options(&options);
     rc = yvex_server_create(&server, &options, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "refusal host create");
@@ -460,6 +554,7 @@ static int test_provider_telemetry(void)
 
 int yvex_test_server(void)
 {
+    if (test_scheduler_serialization() != 0) return 1;
     if (test_session_store() != 0) return 1;
     if (test_configured_summary_and_event() != 0) return 1;
     if (test_model_open_refusal() != 0) return 1;

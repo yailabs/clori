@@ -91,6 +91,9 @@ NVCCFLAGS ?= -O3
 CUDA_LDFLAGS ?=
 YVEX_CUDA_ARCH ?= auto
 NVCC_AVAILABLE := $(shell command -v $(NVCC) >/dev/null 2>&1 && echo yes || echo no)
+YVEX_PROTOCOL_VERSION := $(shell sed -n \
+	's/^#define YVEX_LOCAL_PROTOCOL_VERSION \([0-9][0-9]*\)u$$/\1/p' \
+	include/yvex/server.h)
 
 CPPFLAGS ?= -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L -Iinclude -I.
 YVEX_BUILD_COMMIT ?= $(shell git rev-parse --verify HEAD 2>/dev/null || printf unknown)
@@ -388,14 +391,14 @@ package: client config/package_manifest.tsv NOTICE.md
 	client_sha=$$(sha256sum '$(YVEX_BIN)' | awk '{print $$1}'); \
 	library_sha=$$(sha256sum '$(LIBYVEX)' | awk '{print $$1}'); \
 	registry_identity=$$(cat '$(OPERATOR_REGISTRY_IDENTITY)'); \
-	package_identity=$$(printf '%s\n' "$$commit" '8' 'cpu+cuda-dynamic' \
+	package_identity=$$(printf '%s\n' "$$commit" '$(YVEX_PROTOCOL_VERSION)' 'cpu+cuda-dynamic' \
 		"$$registry_identity" "$$client_sha" "$$library_sha" | \
 		sha256sum | awk '{print $$1}'); \
 	{ printf 'field\tvalue\n'; \
 	  printf 'profile\tproduct\nsource_commit\t%s\n' "$$commit"; \
 	  printf 'package_identity\t%s\n' "$$package_identity"; \
 	  printf 'protocol_version\t%s\noperator_registry_identity\t%s\nbackend\t%s\n' \
-		'8' "$$registry_identity" 'cpu+cuda-dynamic'; \
+		'$(YVEX_PROTOCOL_VERSION)' "$$registry_identity" 'cpu+cuda-dynamic'; \
 	  printf 'yvex_sha256\t%s\nlibyvex_sha256\t%s\n' \
 		"$$client_sha" "$$library_sha"; \
 	} > "$$package_dir/share/yvex/build.tsv"
@@ -688,7 +691,8 @@ test-packaging: package
 	@test ! -e '$(BUILD_DIR)/package/product/bin/yvex-dev'
 	@test -f '$(BUILD_DIR)/package/product/share/yvex/package_manifest.tsv'
 	@test -f '$(BUILD_DIR)/package/product/share/yvex/build.tsv'
-	@grep -F 'protocol_version	8' '$(BUILD_DIR)/package/product/share/yvex/build.tsv' >/dev/null
+	@grep -F 'protocol_version	$(YVEX_PROTOCOL_VERSION)' \
+		'$(BUILD_DIR)/package/product/share/yvex/build.tsv' >/dev/null
 	@grep -F 'source_commit	' '$(BUILD_DIR)/package/product/share/yvex/build.tsv' >/dev/null
 	@test ! -e '$(BUILD_DIR)/package/developer'
 
