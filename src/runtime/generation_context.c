@@ -1054,7 +1054,6 @@ static int generation_execution_profile_build(
             : YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
     request.attention_resolution =
         context->options.backend == YVEX_BACKEND_KIND_CUDA &&
-                context->options.mode != YVEX_GENERATION_MODE_DSPARK &&
                 binding->capabilities.cuda_full_graph_implemented &&
                 graph.state == YVEX_BACKEND_CUDA_GRAPH_OPEN &&
                 graph.edge_inventory_available && graph.async_memory_available &&

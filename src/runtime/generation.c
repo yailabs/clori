@@ -472,6 +472,28 @@ static int generation_profile_count(yvex_runtime_profile_record *profile,
     return !value || runtime_profile_counter_add(profile, counter, value, err) == YVEX_OK
                ? YVEX_OK : yvex_error_code(err);
 }
+static int generation_profile_graph_delta(yvex_runtime_profile_record *profile,
+    const yvex_backend_cuda_attention_graph_summary *before,
+    const yvex_backend_cuda_attention_graph_summary *after, yvex_error *err)
+{
+    const unsigned long long prior[] = {before->launch_count, before->capture_count,
+                                        before->replay_count};
+    const unsigned long long current[] = {after->launch_count, after->capture_count,
+                                          after->replay_count};
+    const yvex_runtime_profile_counter counters[] = {
+        YVEX_RUNTIME_PROFILE_GRAPH_LAUNCHES, YVEX_RUNTIME_PROFILE_GRAPH_CAPTURES,
+        YVEX_RUNTIME_PROFILE_GRAPH_REPLAYS};
+    size_t index;
+    for (index = 0u; index < sizeof(prior) / sizeof(prior[0]); ++index) {
+        if (current[index] < prior[index])
+            return generation_refuse(err, YVEX_ERR_STATE,
+                "CUDA graph evidence regressed during one generation turn");
+        if (generation_profile_count(
+                profile, counters[index], current[index] - prior[index], err) != YVEX_OK)
+            return yvex_error_code(err);
+    }
+    return YVEX_OK;
+}
 /* Derive token-step identity from published fields, never pointers, padding, or object bytes. */
 static int generation_project_logits(
     yvex_runtime_generation_context *context, const yvex_runtime_transformer_result *prefill,
@@ -1813,12 +1835,13 @@ int yvex_runtime_generation_turn_execute(
     yvex_tokenizer_encode_result encoded;
     yvex_rendered_prompt rendered;
     yvex_runtime_transformer_result prefill;
+    yvex_backend_cuda_attention_graph_summary graph_before = {0}, graph_after = {0};
     float *prefill_hidden = NULL;
     unsigned long long prefill_values = 0ull, prefill_chunks = 0ull;
     unsigned long long turn_maximum = turn ? turn->maximum_new_tokens : 0ull;
     unsigned long long started, completed;
     char workload_identity[YVEX_SHA256_HEX_CAP];
-    int rc, prompt_stage = 1;
+    int rc, graph_profiled = 0, prompt_stage = 1;
     if (result) memset(result, 0, sizeof(*result));
     if (!context || !turn ||
         turn->schema_version != YVEX_RUNTIME_GENERATION_TURN_SCHEMA_V1 ||
@@ -1860,6 +1883,18 @@ int yvex_runtime_generation_turn_execute(
                    context->plan.generation_plan_identity, workload_identity, err)
              : generation_refuse(err, YVEX_ERR_STATE,
                                  "generation workload identity derivation failed");
+    if (rc == YVEX_OK && result->profile.mode != YVEX_RUNTIME_PROFILE_OFF &&
+        context->options.backend == YVEX_BACKEND_KIND_CUDA) {
+        const yvex_runtime_session_view *view =
+            yvex_runtime_session_view_get(context->session);
+        rc = view && view->backend
+                 ? yvex_backend_cuda_attention_graph_summary_get(
+                       view->backend, &graph_before, err)
+                 : generation_refuse(
+                       err, YVEX_ERR_STATE,
+                       "CUDA graph evidence owner is unavailable");
+        graph_profiled = rc == YVEX_OK;
+    }
     started = yvex_core_monotonic_ns();
     if (rc == YVEX_OK)
         rc = generation_turn_prepare(context, turn, &encoded, &rendered,
@@ -1940,6 +1975,18 @@ int yvex_runtime_generation_turn_execute(
             rc = cleanup_rc;
             if (err) *err = cleanup;
         } else if (err) *err = primary;
+    }
+    if (rc == YVEX_OK && graph_profiled) {
+        const yvex_runtime_session_view *view =
+            yvex_runtime_session_view_get(context->session);
+        rc = view && view->backend &&
+                     yvex_backend_cuda_attention_graph_summary_get(
+                         view->backend, &graph_after, err) == YVEX_OK
+                 ? generation_profile_graph_delta(
+                       &result->profile, &graph_before, &graph_after, err)
+                 : generation_refuse(
+                       err, YVEX_ERR_STATE,
+                       "CUDA graph evidence could not close the generation turn");
     }
     rc = generation_result_finish(context, tokens, text, text_capacity,
                                   result, rc, err);
