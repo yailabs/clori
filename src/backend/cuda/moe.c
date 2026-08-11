@@ -1033,28 +1033,31 @@ static int moe_cuda_batch_ranges(moe_cuda_batch *batch,
     rc = moe_cuda_batch_allocate(batch, &batch->status, 1ull, sizeof(int), 1,
                                  "cuda.moe.rows.status", err);
     RANGE(expanded, expanded, sizeof(float), 0, "cuda.moe.rows.expanded");
-    RANGE(normalized, hidden, sizeof(float), 1, "cuda.moe.rows.normalized");
-    RANGE(post, post, sizeof(float), 1, "cuda.moe.rows.post");
-    RANGE(combination, combination, sizeof(float), 1, "cuda.moe.rows.combination");
-    RANGE(mix, mix, sizeof(float), 1, "cuda.moe.rows.mix");
-    RANGE(scale, 3ull, sizeof(float), 1, "cuda.moe.rows.scale");
-    RANGE(base, layer->mhc_mixing_rows, sizeof(float), 1, "cuda.moe.rows.base");
-    RANGE(logits, logits, sizeof(float), 1, "cuda.moe.rows.logits");
-    RANGE(scores, logits, sizeof(float), 1, "cuda.moe.rows.scores");
-    RANGE(selected, pairs, sizeof(unsigned long long), 1, "cuda.moe.rows.selected");
-    RANGE(weights, pairs, sizeof(float), 1, "cuda.moe.rows.weights");
+    /* Every range below is a terminal kernel output before its first read. Keeping
+     * them uninitialized removes one captured memset per range and layer; status
+     * remains the sole zero-initialized control word above. */
+    RANGE(normalized, hidden, sizeof(float), 0, "cuda.moe.rows.normalized");
+    RANGE(post, post, sizeof(float), 0, "cuda.moe.rows.post");
+    RANGE(combination, combination, sizeof(float), 0, "cuda.moe.rows.combination");
+    RANGE(mix, mix, sizeof(float), 0, "cuda.moe.rows.mix");
+    RANGE(scale, 3ull, sizeof(float), 0, "cuda.moe.rows.scale");
+    RANGE(base, layer->mhc_mixing_rows, sizeof(float), 0, "cuda.moe.rows.base");
+    RANGE(logits, logits, sizeof(float), 0, "cuda.moe.rows.logits");
+    RANGE(scores, logits, sizeof(float), 0, "cuda.moe.rows.scores");
+    RANGE(selected, pairs, sizeof(unsigned long long), 0, "cuda.moe.rows.selected");
+    RANGE(weights, pairs, sizeof(float), 0, "cuda.moe.rows.weights");
     RANGE(tokens, rows->row_count, sizeof(unsigned int), 0, "cuda.moe.rows.tokens");
-    RANGE(order, pairs, sizeof(unsigned long long), 1, "cuda.moe.rows.order");
-    RANGE(unique, 1ull, sizeof(unsigned long long), 1, "cuda.moe.rows.unique");
-    RANGE(routed_intermediate, routed_intermediate, sizeof(float), 1,
+    RANGE(order, pairs, sizeof(unsigned long long), 0, "cuda.moe.rows.order");
+    RANGE(unique, 1ull, sizeof(unsigned long long), 0, "cuda.moe.rows.unique");
+    RANGE(routed_intermediate, routed_intermediate, sizeof(float), 0,
           "cuda.moe.rows.routed-intermediate");
-    RANGE(routed_pairs, pair_outputs, sizeof(float), 1, "cuda.moe.rows.routed-pairs");
-    RANGE(routed, hidden, sizeof(float), 1, "cuda.moe.rows.routed");
-    RANGE(shared_intermediate, shared_intermediate, sizeof(float), 1,
+    RANGE(routed_pairs, pair_outputs, sizeof(float), 0, "cuda.moe.rows.routed-pairs");
+    RANGE(routed, hidden, sizeof(float), 0, "cuda.moe.rows.routed");
+    RANGE(shared_intermediate, shared_intermediate, sizeof(float), 0,
           "cuda.moe.rows.shared-intermediate");
-    RANGE(shared_pairs, hidden, sizeof(float), 1, "cuda.moe.rows.shared-pairs");
-    RANGE(shared, hidden, sizeof(float), 1, "cuda.moe.rows.shared");
-    RANGE(combined, hidden, sizeof(float), 1, "cuda.moe.rows.combined");
+    RANGE(shared_pairs, hidden, sizeof(float), 0, "cuda.moe.rows.shared-pairs");
+    RANGE(shared, hidden, sizeof(float), 0, "cuda.moe.rows.shared");
+    RANGE(combined, hidden, sizeof(float), 0, "cuda.moe.rows.combined");
     if (q8_normalized)
         RANGE(q8_normalized, 1ull, (size_t)q8_normalized, 0,
               "cuda.moe.rows.q8-normalized");

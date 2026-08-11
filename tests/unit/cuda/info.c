@@ -257,6 +257,7 @@ static int assert_encoded_moe(yvex_backend *backend)
 {
     enum { ROWS = 32, WIDTH = 256, EXPERTS = 2, PAIRS = 32 };
     yvex_backend_tensor_desc descriptor = {0};
+    unsigned char *workspace_poison = NULL;
     yvex_device_tensor *anchor = NULL, *input = NULL, *small_input = NULL;
     yvex_device_tensor *reference_output = NULL, *encoded_output = NULL;
     yvex_device_tensor *small_output = NULL, *workspace = NULL;
@@ -404,13 +405,20 @@ static int assert_encoded_moe(yvex_backend *backend)
                             2ull * WIDTH * sizeof(float));
     ALLOCATE_ENCODED_TENSOR(workspace, "encoded-moe-workspace", workspace_bytes);
 #undef ALLOCATE_ENCODED_TENSOR
+    workspace_poison = malloc((size_t)workspace_bytes);
+    YVEX_TEST_ASSERT(workspace_poison, "allocate encoded MoE workspace poison");
+    memset(workspace_poison, 0xa5, (size_t)workspace_bytes);
     YVEX_TEST_ASSERT(
         yvex_backend_tensor_write(backend, input, input_rows, sizeof(input_rows), &err) ==
                 YVEX_OK &&
             yvex_backend_tensor_write(backend, small_input, input_rows,
                                       2ull * WIDTH * sizeof(float), &err) == YVEX_OK &&
+            yvex_backend_tensor_write(backend, workspace, workspace_poison,
+                                      workspace_bytes, &err) == YVEX_OK &&
             yvex_backend_workspace_attach(backend, workspace, 2ull, &err) == YVEX_OK,
         "prepare encoded MoE device state");
+    free(workspace_poison);
+    workspace_poison = NULL;
     rows.schema_version = YVEX_MOE_ROW_BATCH_SCHEMA_V1;
     rows.row_count = ROWS;
     rows.row_width = rows.row_stride = WIDTH;
