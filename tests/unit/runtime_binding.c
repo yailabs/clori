@@ -778,6 +778,60 @@ static void test_binding_put_u32(unsigned char *bytes, size_t offset,
         bytes[offset + index] = (unsigned char)(value >> (index * 8u));
 }
 
+static int rewrite_state_file_fixture(const char *path, size_t offset,
+                                      unsigned int mode,
+                                      unsigned long long value)
+{
+    yvex_core_file_result snapshot_result = {0};
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    unsigned char *snapshot = NULL;
+    size_t snapshot_count = 0u, cursor = 0u;
+    int descriptor = -1, result = 0;
+
+    if (!path ||
+        yvex_core_file_read_snapshot(path, 64u * 1024u * 1024u,
+                                     &snapshot, &snapshot_count,
+                                     &snapshot_result, NULL) != YVEX_OK ||
+        snapshot_count < YVEX_SHA256_DIGEST_BYTES ||
+        mode > 2u || offset >= snapshot_count - YVEX_SHA256_DIGEST_BYTES ||
+        (mode == 0u &&
+         8u > snapshot_count - YVEX_SHA256_DIGEST_BYTES - offset))
+        goto done;
+    if (mode == 1u)
+        snapshot[offset] = snapshot[offset] == (unsigned char)'0'
+                               ? (unsigned char)'1'
+                               : (unsigned char)'0';
+    else if (mode == 0u)
+        test_binding_put_u64(snapshot, offset, value);
+    else snapshot[offset] = 0xffu;
+    if (mode < 2u) {
+        yvex_sha256_init(&hash);
+        if (!yvex_sha256_update(&hash, snapshot,
+                                snapshot_count - YVEX_SHA256_DIGEST_BYTES) ||
+            !yvex_sha256_final(&hash, digest))
+            goto done;
+        memcpy(snapshot + snapshot_count - sizeof(digest), digest,
+               sizeof(digest));
+    }
+    descriptor = open(path, O_WRONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (descriptor < 0) goto done;
+    while (cursor < snapshot_count) {
+        ssize_t written = pwrite(descriptor, snapshot + cursor,
+                                 snapshot_count - cursor, (off_t)cursor);
+        if (written < 0 && errno == EINTR) continue;
+        if (written <= 0) goto done;
+        cursor += (size_t)written;
+    }
+    result = fsync(descriptor) == 0 && close(descriptor) == 0;
+    descriptor = -1;
+
+done:
+    if (descriptor >= 0) (void)close(descriptor);
+    free(snapshot);
+    return result;
+}
+
 static int rewrite_attention_artifact_fixture(const char *path)
 {
     static const char original_name[] = "token_embd.weight";
@@ -3267,6 +3321,9 @@ static int test_runtime_probe_consumer_boundary(
     char state_delta[YVEX_SHA256_HEX_CAP];
     yvex_error err;
     char state_path[YVEX_PATH_CAP], corrupt_path[YVEX_PATH_CAP];
+    static const size_t fault_offsets[] = {8u, 48u, 336u, 256u};
+    static const unsigned int fault_modes[] = {0u, 1u, 1u, 2u};
+    unsigned int fault;
     int rc;
 
     YVEX_TEST_ASSERT(runtime_model_open_fixture(
@@ -3465,32 +3522,29 @@ static int test_runtime_probe_consumer_boundary(
                    state_before.state_content_identity) == 0,
         "state checkpoint restores the exact committed prefix after reset");
     yvex_runtime_state_store_payload_close(&inspected_payload);
-    YVEX_TEST_ASSERT(copy_regular_file(state_path, corrupt_path),
-                     "state checkpoint corruption fixture copies");
-    {
-        int descriptor = open(corrupt_path, O_RDWR | O_CLOEXEC);
-        unsigned char byte = 0xffu;
+    for (fault = 0u; fault < 4u; ++fault) {
         YVEX_TEST_ASSERT(
-            descriptor >= 0 && pwrite(descriptor, &byte, 1u, 256) == 1 &&
-                close(descriptor) == 0 &&
+            copy_regular_file(state_path, corrupt_path) &&
+                rewrite_state_file_fixture(
+                    corrupt_path, fault_offsets[fault], fault_modes[fault], 99ull) &&
                 yvex_runtime_session_state_restore(
                     session, corrupt_path, saved_state.file_bytes,
                     saved_state.committed_sequence_length, NULL, NULL,
-                    &restored_state,
-                    &err) == YVEX_ERR_FORMAT &&
+                    &restored_state, &err) == YVEX_ERR_FORMAT &&
                 yvex_runtime_session_view_get(session)->attention_state_provider->summary(
                     yvex_runtime_session_view_get(session)->attention_state_provider->context,
                     &state_after, &err) == YVEX_OK &&
                 state_after.committed_sequence_length == 1ull &&
                 strcmp(state_after.state_content_identity,
-                       state_before.state_content_identity) == 0,
-            "corrupt checkpoint refuses before mutating committed state");
+                       state_before.state_content_identity) == 0 &&
+                unlink(corrupt_path) == 0,
+            "state checkpoint mismatch refuses without partial publication");
     }
     yvex_graph_attention_capacity_plan_close(&capacity);
     YVEX_TEST_ASSERT(yvex_runtime_session_close(&session, &err) == YVEX_OK && !session,
                      "probe consumer session closes without staged state");
     yvex_runtime_model_close(&model);
-    YVEX_TEST_ASSERT(unlink(state_path) == 0 && unlink(corrupt_path) == 0,
+    YVEX_TEST_ASSERT(unlink(state_path) == 0,
                      "state checkpoint fixtures clean up");
     return 0;
 }

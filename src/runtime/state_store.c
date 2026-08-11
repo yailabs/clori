@@ -1353,7 +1353,7 @@ static int state_file_parser_scope(
                                     "state checkpoint layer position diverged",
                                     err);
     return yvex_attention_state_checkpoint_validate(
-        &scope->checkpoint, NULL, err);
+        &scope->checkpoint, current.prepared_layer_count == current.layer_count ? &current : NULL, err);
 }
 
 static int state_file_parser_header(
