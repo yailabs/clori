@@ -16,6 +16,9 @@ extern "C" {
 #define YVEX_MOE_INPUT_SCHEMA_V1 1u
 #define YVEX_MOE_ROW_BATCH_SCHEMA_V1 1u
 #define YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V2 2u
+#define YVEX_MOE_KERNEL_PORTABLE_ENCODED_ROW "portable-encoded-row"
+#define YVEX_MOE_KERNEL_PORTABLE_EXPERT_ROW "portable-expert-row"
+#define YVEX_MOE_KERNEL_SM121_TENSORCORE_EXPERT "sm121-int8-tensorcore-expert"
 #define YVEX_MOE_INPUT_SUFFIX ".yvex-moe-input"
 #define YVEX_MOE_NO_TENSOR ULLONG_MAX
 #define YVEX_MOE_MAX_SELECTED 16u
@@ -51,6 +54,7 @@ typedef struct {
     yvex_tensor_role role;
     unsigned int qtype;
     yvex_execution_activation_class activation;
+    const char *kernel_family;
     const unsigned char *encoded;
     size_t encoded_bytes;
     unsigned long long row_bytes, row_width, row_count, device_address;

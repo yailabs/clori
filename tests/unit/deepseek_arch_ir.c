@@ -7,6 +7,7 @@
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/compilation.h>
 #include <yvex/internal/families/deepseek_v4.h>
+#include <yvex/internal/moe.h>
 #include <yvex/internal/model_target.h>
 #include <yvex/internal/quant_numeric.h>
 #include <yvex/internal/runtime.h>
@@ -830,7 +831,14 @@ static int test_arch_ir_report_consumer_and_family_preservation(void)
     yvex_model_target_report_close(&report);
 
     arch_ir_verification_fixture(&source);
-    YVEX_TEST_ASSERT(compiler && compiler->binding_pipeline &&
+    YVEX_TEST_ASSERT(
+        compiler && compiler->physical_execution_policy &&
+            strcmp(compiler->physical_execution_policy->expert_kernel_family,
+                   YVEX_MOE_KERNEL_SM121_TENSORCORE_EXPERT) == 0 &&
+            (compiler->physical_execution_policy->encoded_activation_consumer_mask &
+             (1ull << YVEX_EXECUTION_CONSUMER_SHARED_EXPERT)) != 0ull,
+        "DeepSeek compilation selects the admitted SM121 expert capability");
+    YVEX_TEST_ASSERT(compiler->binding_pipeline &&
                          compiler->binding_pipeline->semantic_model_build(
                              &semantic, &source, &err) == YVEX_OK,
                      "DeepSeek fixture compiles to generic Semantic Model IR");

@@ -61,12 +61,13 @@ static const yvex_materialized_tensor_binding *runtime_moe_binding(
 static int runtime_moe_activation(
     const yvex_runtime_moe_context *context,
     const yvex_materialized_tensor_binding *binding,
-    yvex_execution_activation_class *activation, yvex_error *err)
+    yvex_execution_activation_class *activation,
+    const char **kernel_family, yvex_error *err)
 {
     const yvex_physical_execution_summary *summary = context && context->model_view
         ? yvex_physical_execution_ir_summary(context->model_view->physical_execution) : NULL;
     unsigned long long index;
-    if (!summary || !binding || !activation)
+    if (!summary || !binding || !activation || !kernel_family)
         return runtime_moe_refuse(
             err, YVEX_ERR_INVALID_ARG, "MoE physical activation owners are unavailable");
     for (index = 0ull; index < summary->decision_count; ++index) {
@@ -81,6 +82,7 @@ static int runtime_moe_activation(
             return runtime_moe_refuse(
                 err, YVEX_ERR_STATE, "MoE physical execution decision is stale");
         *activation = decision->activation;
+        *kernel_family = decision->kernel_family;
         return YVEX_OK;
     }
     return runtime_moe_refuse(
@@ -101,6 +103,7 @@ static int runtime_moe_weight(yvex_moe_weight_view *out,
                               unsigned long long row_count, unsigned long long expert,
                               unsigned long long device_address,
                               yvex_execution_activation_class activation,
+                              const char *kernel_family,
                               yvex_error *err)
 {
     unsigned long long row_bytes, expected;
@@ -115,6 +118,7 @@ static int runtime_moe_weight(yvex_moe_weight_view *out,
     out->role = binding->role;
     out->qtype = binding->qtype;
     out->activation = activation;
+    out->kernel_family = kernel_family;
     out->encoded = bytes;
     out->encoded_bytes = (size_t)encoded_bytes;
     out->row_bytes = row_bytes;
@@ -333,9 +337,11 @@ static int runtime_moe_load_layer(yvex_runtime_moe_context *context,
         unsigned long long device_address = 0ull;
         unsigned long long offset = 0ull, bytes, rows;
         yvex_execution_activation_class activation;
+        const char *kernel_family;
         if (layer->tensor_ids[slot] == YVEX_MOE_NO_TENSOR) continue;
         binding = runtime_moe_binding(context, layer, (yvex_moe_weight_slot)slot);
-        if (runtime_moe_activation(context, binding, &activation, err) != YVEX_OK)
+        if (runtime_moe_activation(
+                context, binding, &activation, &kernel_family, err) != YVEX_OK)
             return yvex_error_code(err);
         if (slot >= YVEX_MOE_WEIGHT_ROUTED_GATE &&
             slot <= YVEX_MOE_WEIGHT_ROUTED_DOWN) {
@@ -347,6 +353,7 @@ static int runtime_moe_load_layer(yvex_runtime_moe_context *context,
             job->weights[slot].role = binding->role;
             job->weights[slot].qtype = binding->qtype;
             job->weights[slot].activation = activation;
+            job->weights[slot].kernel_family = kernel_family;
             job->weights[slot].encoded = data;
             job->weights[slot].encoded_bytes = (size_t)binding->encoded_bytes;
             job->weights[slot].row_width = binding->row_width;
@@ -371,7 +378,8 @@ static int runtime_moe_load_layer(yvex_runtime_moe_context *context,
         if (runtime_moe_access(context, binding, offset, bytes, &context->fixed[slot],
                                &data, &device_address, err) != YVEX_OK ||
             runtime_moe_weight(&job->weights[slot], binding, data, bytes, rows,
-                               YVEX_MOE_NO_TENSOR, device_address, activation, err) != YVEX_OK)
+                               YVEX_MOE_NO_TENSOR, device_address, activation,
+                               kernel_family, err) != YVEX_OK)
             return yvex_error_code(err);
         *bytes_read += bytes;
     }
@@ -394,6 +402,7 @@ static int runtime_moe_load_expert(yvex_runtime_moe_context *context,
         unsigned long long device_address = 0ull;
         unsigned long long offset, rows;
         yvex_execution_activation_class activation;
+        const char *kernel_family;
         memset(&failure, 0, sizeof(failure));
         if (yvex_materialization_session_expert_subview(
                 context->model_view->materialization, binding, expert, &subview,
@@ -401,12 +410,14 @@ static int runtime_moe_load_expert(yvex_runtime_moe_context *context,
             return yvex_error_code(err);
         offset = subview.absolute_offset - binding->absolute_offset;
         rows = binding->row_count / binding->expert_count;
-        if (runtime_moe_activation(context, binding, &activation, err) != YVEX_OK)
+        if (runtime_moe_activation(
+                context, binding, &activation, &kernel_family, err) != YVEX_OK)
             return yvex_error_code(err);
         if (runtime_moe_access(context, binding, offset, subview.encoded_bytes,
                                &context->selected[index], &data, &device_address, err) != YVEX_OK ||
             runtime_moe_weight(&views[index], binding, data, subview.encoded_bytes,
-                               rows, expert, device_address, activation, err) != YVEX_OK)
+                               rows, expert, device_address, activation,
+                               kernel_family, err) != YVEX_OK)
             return yvex_error_code(err);
         *bytes_read += subview.encoded_bytes;
     }

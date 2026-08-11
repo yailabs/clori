@@ -255,7 +255,7 @@ static void moe_encoded_output(
 
 static int assert_encoded_moe(yvex_backend *backend)
 {
-    enum { ROWS = 32, WIDTH = 256, EXPERTS = 256, TOPK = 6, PAIRS = ROWS * TOPK };
+    enum { ROWS = 32, WIDTH = 512, EXPERTS = 256, TOPK = 6, PAIRS = ROWS * TOPK };
     yvex_backend_tensor_desc descriptor = {0};
     unsigned char *workspace_poison = NULL;
     yvex_device_tensor *anchor = NULL, *input = NULL, *small_input = NULL;
@@ -274,6 +274,7 @@ static int assert_encoded_moe(yvex_backend *backend)
     float base[3] = {0};
     float norm[WIDTH], router[EXPERTS * WIDTH], router_bias[EXPERTS] = {0}, expert_row[WIDTH];
     float input_rows[ROWS * WIDTH], reference[ROWS * WIDTH], encoded[ROWS * WIDTH];
+    float tensorcore[ROWS * WIDTH];
     float combined[ROWS * WIDTH], routed[ROWS * WIDTH], shared[ROWS * WIDTH];
     float post[ROWS], combination[ROWS], selected_weights[PAIRS];
     unsigned long long selected[PAIRS];
@@ -285,9 +286,9 @@ static int assert_encoded_moe(yvex_backend *backend)
     YVEX_TEST_ASSERT(operations, "obtain CUDA width-N MoE operations");
     for (index = 0ull; index < WIDTH; ++index) {
         norm[index] = 1.0f;
-        expert_row[index] = index == 0ull ? 0.5f : 0.0f;
+        expert_row[index] = ((float)((index * 11ull + 5ull) % 31ull) - 15.0f) / 32.0f;
         for (row = 0ull; row < ROWS; ++row)
-            input_rows[row * WIDTH + index] = row & 1ull ? -1.0f : 1.0f;
+            input_rows[row * WIDTH + index] = (row + index * 7ull) & 1ull ? -1.0f : 1.0f;
     }
     memset(router, 0, sizeof(router));
     router[0] = 1.0f;
@@ -295,7 +296,7 @@ static int assert_encoded_moe(yvex_backend *backend)
     descriptor.name = "encoded-moe-residency";
     descriptor.dtype = YVEX_DTYPE_I8;
     descriptor.rank = 1u;
-    descriptor.dims[0] = descriptor.bytes = 32ull * 1024ull * 1024ull;
+    descriptor.dims[0] = descriptor.bytes = 96ull * 1024ull * 1024ull;
     YVEX_TEST_ASSERT(
         yvex_backend_resident_alloc(backend, &descriptor, &anchor,
                                     &fixture.arena, &err) == YVEX_OK,
@@ -448,8 +449,10 @@ static int assert_encoded_moe(yvex_backend *backend)
                 "CUDA route selection and weights match the CPU oracle");
     }
     for (slot = YVEX_MOE_WEIGHT_ROUTED_GATE;
-         slot <= YVEX_MOE_WEIGHT_SHARED_DOWN; ++slot)
+         slot <= YVEX_MOE_WEIGHT_SHARED_DOWN; ++slot) {
         job.weights[slot].activation = YVEX_EXECUTION_ACTIVATION_DEVICE_ENCODED;
+        job.weights[slot].kernel_family = YVEX_MOE_KERNEL_PORTABLE_EXPERT_ROW;
+    }
     native = yvex_cuda_state(backend)->kernel_bundle_native;
     rows.row_count = 2ull;
     rows.device_rows = small_input;
@@ -463,7 +466,7 @@ static int assert_encoded_moe(yvex_backend *backend)
                 yvex_device_tensor_is_written(small_output) &&
                 yvex_backend_tensor_read(backend, small_output, encoded,
                                          2ull * WIDTH * sizeof(float), &err) == YVEX_OK,
-            "select source-faithful encoded MoE for a sparse row batch");
+            "execute source-faithful encoded DP4A MoE for a sparse row batch");
         for (index = 0ull; index < 2ull * WIDTH; ++index) {
             float difference = fabsf(reference[index] - encoded[index]);
             if (difference > maximum_error) maximum_error = difference;
@@ -482,7 +485,7 @@ static int assert_encoded_moe(yvex_backend *backend)
                 yvex_device_tensor_is_written(encoded_output) &&
                 yvex_backend_tensor_read(backend, encoded_output, encoded,
                                          sizeof(encoded), &err) == YVEX_OK,
-            "preserve source-faithful encoded MoE across a complete row batch");
+            "preserve source-faithful encoded DP4A MoE across a complete row batch");
         maximum_error = 0.0f;
         for (index = 0ull; index < ROWS * WIDTH; ++index) {
             float difference = fabsf(reference[index] - encoded[index]);
@@ -490,6 +493,38 @@ static int assert_encoded_moe(yvex_backend *backend)
         }
         YVEX_TEST_ASSERT(maximum_error <= 0.01f,
                          "native grouped encoded MoE matches portable oracle");
+        for (slot = YVEX_MOE_WEIGHT_ROUTED_GATE;
+             slot <= YVEX_MOE_WEIGHT_SHARED_DOWN; ++slot)
+            job.weights[slot].kernel_family =
+                YVEX_MOE_KERNEL_SM121_TENSORCORE_EXPERT;
+        rows.device_outputs = reference_output;
+        reference_output->is_written = 0;
+        memset(&result, 0, sizeof(result));
+        rc = operations->execute_rows(backend, &job, &rows, &output, &result, &err);
+        YVEX_TEST_ASSERT(
+            rc == YVEX_OK && result.schema_version == YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V2 &&
+                result.tensor_core_launches == 4ull &&
+                yvex_device_tensor_is_written(reference_output) &&
+                yvex_backend_tensor_read(backend, reference_output, tensorcore,
+                                         sizeof(tensorcore), &err) == YVEX_OK,
+            "execute compiler-selected native grouped Tensor Core MoE");
+        maximum_error = 0.0f;
+        for (index = 0ull; index < ROWS * WIDTH; ++index) {
+            float difference = fabsf(encoded[index] - tensorcore[index]);
+            if (difference > maximum_error) maximum_error = difference;
+        }
+        YVEX_TEST_ASSERT(maximum_error <= 1e-6f,
+                         "Tensor Core MoE matches the encoded DP4A oracle");
+        job.weights[YVEX_MOE_WEIGHT_ROUTED_GATE].kernel_family = "unadmitted-expert-kernel";
+        reference_output->is_written = 0;
+        memset(&result, 0, sizeof(result));
+        rc = operations->execute_rows(backend, &job, &rows, &output, &result, &err);
+        YVEX_TEST_ASSERT(
+            rc == YVEX_ERR_FORMAT && !result.completed &&
+                !yvex_device_tensor_is_written(reference_output),
+            "mismatched compiler-selected expert kernels refuse without fallback");
+        job.weights[YVEX_MOE_WEIGHT_ROUTED_GATE].kernel_family =
+            YVEX_MOE_KERNEL_SM121_TENSORCORE_EXPERT;
     } else {
         YVEX_TEST_ASSERT(
             rc == YVEX_ERR_UNSUPPORTED && !result.completed &&

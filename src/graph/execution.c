@@ -234,7 +234,9 @@ static void execution_decision_from_binding(
     decision->derived_asset_required = policy->derived_asset_required;
     yvex_core_text_copy(decision->kernel_family,
                         sizeof(decision->kernel_family),
-                        physical->expert_count > 1ull
+                        (decision->consumer == YVEX_EXECUTION_CONSUMER_ROUTED_GATE_UP ||
+                         decision->consumer == YVEX_EXECUTION_CONSUMER_ROUTED_DOWN ||
+                         decision->consumer == YVEX_EXECUTION_CONSUMER_SHARED_EXPERT)
                             ? policy->expert_kernel_family
                             : policy->dense_kernel_family);
     {
