@@ -30,9 +30,45 @@ static int write_policy(const char *path, const char *qtype)
 static int test_names(void)
 {
     YVEX_TEST_ASSERT_STREQ(yvex_quant_qtype_name(YVEX_QUANT_QTYPE_Q8_0), "Q8_0", "qtype name");
+    YVEX_TEST_ASSERT_STREQ(yvex_quant_qtype_name(YVEX_QUANT_QTYPE_MXFP4), "MXFP4",
+                           "MXFP4 policy name");
     YVEX_TEST_ASSERT_STREQ(yvex_quant_selector_kind_name(YVEX_QUANT_SELECTOR_ROLE), "role", "selector name");
     YVEX_TEST_ASSERT_STREQ(yvex_quant_policy_status_name(YVEX_QUANT_POLICY_STATUS_PARTIAL), "quant-policy-partial", "status name");
     YVEX_TEST_ASSERT_STREQ(yvex_quant_policy_issue_kind_name(YVEX_QUANT_POLICY_ISSUE_UNKNOWN_QTYPE), "unknown_qtype", "issue name");
+    return 0;
+}
+
+static int test_mxfp4_policy(void)
+{
+    const char *path = "build/tests/quant-policy/mxfp4.json";
+    const char *out = "build/tests/quant-policy/mxfp4-written.json";
+    yvex_quant_policy *policy = NULL;
+    yvex_quant_policy *opened = NULL;
+    yvex_quant_policy_summary summary;
+    const yvex_quant_policy_rule *rule;
+    yvex_error err;
+
+    YVEX_TEST_ASSERT(write_policy(path, "MXFP4"), "write MXFP4 policy");
+    yvex_error_clear(&err);
+    YVEX_TEST_ASSERT(yvex_quant_policy_open(&policy, path, &err) == YVEX_OK,
+                     "open MXFP4 policy");
+    YVEX_TEST_ASSERT(yvex_quant_policy_get_summary(policy, &summary, &err) == YVEX_OK &&
+                         summary.status == YVEX_QUANT_POLICY_STATUS_VALID &&
+                         summary.storage_supported_count == 2u &&
+                         summary.compute_supported_count == 2u,
+                     "MXFP4 policy consumes canonical storage and compute capability");
+    rule = yvex_quant_policy_rule_at(policy, 0u);
+    YVEX_TEST_ASSERT(rule && rule->qtype == YVEX_QUANT_QTYPE_MXFP4,
+                     "MXFP4 policy action parsed");
+    YVEX_TEST_ASSERT(yvex_quant_policy_write_json(out, policy, &err) == YVEX_OK,
+                     "write MXFP4 policy");
+    YVEX_TEST_ASSERT(yvex_quant_policy_open(&opened, out, &err) == YVEX_OK,
+                     "reopen MXFP4 policy");
+    rule = yvex_quant_policy_rule_at(opened, 0u);
+    YVEX_TEST_ASSERT(rule && rule->qtype == YVEX_QUANT_QTYPE_MXFP4,
+                     "MXFP4 policy roundtrip");
+    yvex_quant_policy_close(opened);
+    yvex_quant_policy_close(policy);
     return 0;
 }
 
@@ -278,6 +314,7 @@ int yvex_test_quant_policy(void)
 {
     if (test_names() != 0) return 1;
     if (test_open_validate_write() != 0) return 1;
+    if (test_mxfp4_policy() != 0) return 1;
     if (test_reject_unknown_qtype() != 0) return 1;
     if (test_derive_fixture() != 0) return 1;
     if (test_policy_v2_and_presets() != 0) return 1;

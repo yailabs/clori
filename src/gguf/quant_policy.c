@@ -135,6 +135,8 @@ const char *yvex_quant_qtype_name(yvex_quant_qtype qtype) {
         return "SOURCE";
     if (qtype == YVEX_QUANT_QTYPE_OTHER)
         return "OTHER";
+    if (qtype == YVEX_QUANT_QTYPE_MXFP4)
+        return "MXFP4";
     dtype = qtype_to_dtype(qtype);
     return dtype == YVEX_DTYPE_UNKNOWN ? "UNKNOWN" : yvex_dtype_name(dtype);
 }
@@ -148,6 +150,8 @@ static yvex_quant_qtype qtype_from_name(const char *name) {
         return YVEX_QUANT_QTYPE_OTHER;
     if (strcmp(name, "SOURCE") == 0)
         return YVEX_QUANT_QTYPE_SOURCE;
+    if (strcmp(name, "MXFP4") == 0)
+        return YVEX_QUANT_QTYPE_MXFP4;
     for (qtype = YVEX_QUANT_QTYPE_F32; qtype < YVEX_QUANT_QTYPE_OTHER;
          qtype = (yvex_quant_qtype)(qtype + 1)) {
         if (strcmp(name, yvex_quant_qtype_name(qtype)) == 0)

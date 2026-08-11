@@ -255,7 +255,8 @@ typedef enum {
     YVEX_QUANT_QTYPE_IQ4_NL,
     YVEX_QUANT_QTYPE_I32,
     YVEX_QUANT_QTYPE_SOURCE,
-    YVEX_QUANT_QTYPE_OTHER
+    YVEX_QUANT_QTYPE_OTHER,
+    YVEX_QUANT_QTYPE_MXFP4
 } yvex_quant_qtype;
 
 typedef enum {
