@@ -23,7 +23,7 @@
 #include <time.h>
 
 typedef struct {
-    char name[YVEX_SERVER_SESSION_NAME_CAP];
+    char name[256];
     char artifact[PATH_MAX];
     char binding[PATH_MAX];
     char target[128];

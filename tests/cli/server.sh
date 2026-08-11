@@ -8,6 +8,7 @@ YVEX_BIN=${YVEX_BIN:-./yvex}
 OUT_DIR=${YVEX_TEST_OUT_DIR:-build/tests/cli-server}
 HOME_ROOT=$OUT_DIR/home
 SOCKET_PATH=${TMPDIR:-/tmp}/yvex-cli-server-$$.sock
+PROFILE=deepseek4-v4-flash-dspark-runtime-iq2xxs-q2k-mxfp4-b9825a07-sm121-tc
 
 yvex_test_cleanup "$OUT_DIR" "$SOCKET_PATH"
 mkdir -p "$OUT_DIR" "$HOME_ROOT/.local/share/yvex"
@@ -33,7 +34,7 @@ cat >"$HOME_ROOT/.local/share/yvex/models.local.json" <<EOF
 {
   "schema": "yvex.models.local.v3",
   "models": [{
-    "alias": "current-model-runtime-profile",
+    "alias": "$PROFILE",
     "path": "$artifact",
     "runtime_binding": "$binding",
     "runtime_target": "deepseek4-v4-flash-dspark",
@@ -57,22 +58,22 @@ HOME="$HOME_ROOT" "$YVEX_BIN" server >"$OUT_DIR/missing.out" 2>"$OUT_DIR/missing
 missing_status=$?
 HOME="$HOME_ROOT" "$YVEX_BIN" server absent >"$OUT_DIR/absent.out" 2>"$OUT_DIR/absent.err"
 absent_status=$?
-HOME="$HOME_ROOT" "$YVEX_BIN" server current-model-runtime-profile --openai remote \
+HOME="$HOME_ROOT" "$YVEX_BIN" server "$PROFILE" --openai remote \
     >"$OUT_DIR/remote.out" 2>"$OUT_DIR/remote.err"
 remote_status=$?
-HOME="$HOME_ROOT" "$YVEX_BIN" server current-model-runtime-profile --openai-port 0 \
+HOME="$HOME_ROOT" "$YVEX_BIN" server "$PROFILE" --openai-port 0 \
     >"$OUT_DIR/port.out" 2>"$OUT_DIR/port.err"
 port_status=$?
-HOME="$HOME_ROOT" "$YVEX_BIN" server current-model-runtime-profile --openai on --openai off \
+HOME="$HOME_ROOT" "$YVEX_BIN" server "$PROFILE" --openai on --openai off \
     >"$OUT_DIR/duplicate.out" 2>"$OUT_DIR/duplicate.err"
 duplicate_status=$?
-HOME="$HOME_ROOT" "$YVEX_BIN" server current-model-runtime-profile --generation-mode invalid \
+HOME="$HOME_ROOT" "$YVEX_BIN" server "$PROFILE" --generation-mode invalid \
     >"$OUT_DIR/mode.out" 2>"$OUT_DIR/mode.err"
 mode_status=$?
-HOME="$HOME_ROOT" "$YVEX_BIN" server current-model-runtime-profile --context 8192 \
+HOME="$HOME_ROOT" "$YVEX_BIN" server "$PROFILE" --context 8192 \
     >"$OUT_DIR/context.out" 2>"$OUT_DIR/context.err"
 context_status=$?
-HOME="$HOME_ROOT" "$YVEX_BIN" server current-model-runtime-profile \
+HOME="$HOME_ROOT" "$YVEX_BIN" server "$PROFILE" \
     --ctx 8192 --parallel 2 --socket "$SOCKET_PATH" --openai off \
     >"$OUT_DIR/admission.out" 2>"$OUT_DIR/admission.err"
 admission_status=$?
@@ -94,7 +95,7 @@ contains "$OUT_DIR/duplicate.err" 'duplicate flag: --openai'
 contains "$OUT_DIR/mode.err" 'invalid value for --generation-mode: invalid'
 contains "$OUT_DIR/context.err" 'unknown flag: --context'
 contains "$OUT_DIR/admission.out" 'YVEX server · foreground'
-contains "$OUT_DIR/admission.out" 'profile current-model-runtime-profile'
+contains "$OUT_DIR/admission.out" "profile $PROFILE"
 contains "$OUT_DIR/admission.out" 'backend=cpu · mode=target-only · requested ctx=8192 · parallel=2'
 contains "$OUT_DIR/admission.out" "artifact $artifact"
 contains "$OUT_DIR/admission.out" "binding $binding"
