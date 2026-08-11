@@ -33,8 +33,9 @@ Execution IR and compiled profiles remain schema v1. Generation plan ABI v5
 binds the exact workload-profile identity needed to validate its phase roofline
 ledger; result schema v4 and its wire projections remain unchanged. Every
 admitted change has a concrete fact and compatibility rule in the
-contract matrix; state checkpoints subsequently earned protocol v8 and the
-admitted capacity/scheduler projection earns protocol v9. Server options earn
+contract matrix; state checkpoints subsequently earned protocol v8, the
+admitted capacity/scheduler projection earned protocol v9, and the explicit
+copy-on-write session-fork request earns protocol v10. Server options earn
 schema v2 because the concrete `yvex server --parallel` consumer must pass an
 explicit concurrent-sequence request into startup admission. The size of this
 milestone alone earns no version bump.
@@ -61,6 +62,7 @@ entry audit:
 | Attention-state provider ABI | v7 | v8 | immutable committed-prefix capture and compatible copy-on-write attachment | in-process function-table layout plus an opaque in-memory prefix owner; no persisted, wire or public C incompatibility | rebuilt runtime validation rejects a provider without both prefix operations | complete rebuild; the durable state-store schema is unchanged and does not deserialize an in-memory prefix owner | byte-budget refusal, exact identity, shared references, copy-on-write isolation, incompatible attach, reset and cleanup |
 | Local protocol | v7 | v8 | typed model-state checkpoint path, restore bound and result evidence | private Unix framing and payload | every non-v8 peer fails handshake | atomic daemon/client cutover; no compatibility decoder | request/message roundtrip, operator reachability, non-v8 refusal |
 | Local protocol | v8 | v9 | startup capacity-plan identity and bytes, admitted concurrent sequences, and distinct independent-scheduling versus continuous-batching readiness | private Unix framing and payload | every non-v9 peer fails handshake | atomic server/client cutover; no compatibility decoder | complete roundtrip, invalid capacity identity, zero concurrency and non-v9 refusal |
+| Local protocol | v9 | v10 | source session, child session and explicit maximum shared-prefix bytes for transactional fork | private Unix framing and payload | every non-v10 peer fails handshake and cannot express fork admission | atomic server/client cutover; no compatibility decoder | all-operation roundtrip, fork-only field refusal, bounded tiny-vertical fork, parent/child isolation |
 | Server options | v1 | v2 | explicit concurrent-sequence request consumed by startup capacity admission and the keyed scheduler | installed C structure layout | v1 writers cannot express concurrency and refuse at schema admission | complete pre-v0.1 rebuild; entrypoint name is unchanged and no side-by-side options authority remains | old-schema refusal, concurrency/session bound, CLI startup and tiny vertical |
 
 The later source-authored conversation gate earned these product-boundary

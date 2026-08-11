@@ -159,7 +159,7 @@ clear=$(printf '\033[2J\033[H')
 redrawn=$(printf '\033[2J\033[H\r\033[2K\033[38;5;81myvex>\033[0m draft')
 sed "s/${esc}\\[[0-9;]*m//g" "$root/typescript" | tr -d '\r' \
     >"$root/typescript.plain"
-grep -F 'YVEX 0.1.0 · protocol 9' "$root/typescript.plain" >/dev/null
+grep -F 'YVEX 0.1.0 · protocol 10' "$root/typescript.plain" >/dev/null
 grep -F '  model      deepseek4-v4-flash-dspark' \
     "$root/typescript.plain" >/dev/null
 grep -F '  variant    dddddddddddd' "$root/typescript.plain" >/dev/null

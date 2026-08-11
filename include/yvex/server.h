@@ -9,7 +9,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#define YVEX_LOCAL_PROTOCOL_VERSION 9u
+#define YVEX_LOCAL_PROTOCOL_VERSION 10u
 #define YVEX_SERVER_OPTIONS_SCHEMA_V2 2u
 #define YVEX_CLIENT_PARTIAL_TURN_SCHEMA_V1 1u
 #define YVEX_CLIENT_STATE_CHECKPOINT_SCHEMA_V1 1u
@@ -207,6 +207,7 @@ typedef enum {
     YVEX_CLIENT_OP_SESSION_RESET,
     YVEX_CLIENT_OP_SESSION_STATE_SAVE,
     YVEX_CLIENT_OP_SESSION_STATE_RESTORE,
+    YVEX_CLIENT_OP_SESSION_FORK,
     YVEX_CLIENT_OP_SESSION_CLOSE,
     YVEX_CLIENT_OP_GENERATION_TURN,
     YVEX_CLIENT_OP_GENERATION_CANCEL,
@@ -331,10 +332,12 @@ typedef struct {
     yvex_client_operation operation;
     unsigned long long request_number;
     char session_name[YVEX_SERVER_SESSION_NAME_CAP];
+    char fork_session_name[YVEX_SERVER_SESSION_NAME_CAP];
     char state_path[YVEX_SERVER_STATE_PATH_CAP];
     const unsigned char *prompt;
     unsigned long long prompt_bytes, maximum_new_tokens;
     unsigned long long maximum_state_file_bytes;
+    unsigned long long maximum_prefix_bytes;
     int stochastic, seed_present;
     unsigned long long seed;
     double temperature, top_p, min_p, typical_p;

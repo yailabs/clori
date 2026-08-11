@@ -1,5 +1,5 @@
 /*
- * Provide deterministic status, session, text, JSON, and tool-call protocol-v9 facts. Never
+ * Provide deterministic status, session, text, JSON, and tool-call protocol facts. Never
  * enters production objects.
  */
 
@@ -56,7 +56,8 @@ static int send_ack(int fd, const yvex_client_request *request,
 {
     yvex_client_message message;
     message_base(&message, YVEX_CLIENT_MESSAGE_ACK, request);
-    strcpy(message.reason, "protocol-v9");
+    (void)snprintf(message.reason, sizeof(message.reason), "protocol-v%u",
+                   YVEX_LOCAL_PROTOCOL_VERSION);
     return yvex_server_protocol_send(fd, &message, err);
 }
 

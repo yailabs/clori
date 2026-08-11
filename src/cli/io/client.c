@@ -797,6 +797,18 @@ static int state_checkpoint(yvex_client_operation operation,
     request.maximum_state_file_bytes = maximum_file_bytes;
     return administration_request(&request, 0);
 }
+
+static int session_fork(const char *source, const char *child,
+                        unsigned long long maximum_prefix_bytes)
+{
+    yvex_client_request request;
+    request_init(&request, YVEX_CLIENT_OP_SESSION_FORK);
+    snprintf(request.session_name, sizeof(request.session_name), "%s", source);
+    snprintf(request.fork_session_name, sizeof(request.fork_session_name),
+             "%s", child);
+    request.maximum_prefix_bytes = maximum_prefix_bytes;
+    return administration_request(&request, 0);
+}
 static int generation_turn(const char *session_name,
                            const unsigned char *prompt,
                            unsigned long long prompt_bytes,
@@ -1324,6 +1336,8 @@ static int repl_command(const char *line, char current[YVEX_SERVER_SESSION_NAME_
     case YVEX_OPERATOR_RUNTIME_SESSION_DETACH:
         result = 2;
         break;
+    case YVEX_OPERATOR_RUNTIME_SESSION_FORK:
+        break;
     case YVEX_OPERATOR_RUNTIME_SESSION_RESET:
         (void)administration(YVEX_CLIENT_OP_SESSION_RESET, current, 0);
         break;
@@ -1691,6 +1705,17 @@ int yvex_client_dispatch(const yvex_operator_descriptor *operation, int argc,
         return administration(YVEX_CLIENT_OP_SESSION_DETACH, name, 0);
     case YVEX_OPERATOR_RUNTIME_SESSION_RESET:
         return administration(YVEX_CLIENT_OP_SESSION_RESET, name, 0);
+    case YVEX_OPERATOR_RUNTIME_SESSION_FORK: {
+        unsigned long long maximum_prefix_bytes;
+        if (consumed + 3u >= (size_t)argc ||
+            !parse_u64(argv[consumed + 3u], &maximum_prefix_bytes, 0)) {
+            fputs("yvex: session fork requires a positive shared-prefix byte bound\n",
+                  stderr);
+            return 2;
+        }
+        return session_fork(name, argv[consumed + 2u],
+                            maximum_prefix_bytes);
+    }
     case YVEX_OPERATOR_RUNTIME_SESSION_STATE_SAVE:
         return state_checkpoint(YVEX_CLIENT_OP_SESSION_STATE_SAVE, name,
                                 argv[consumed + 2u], 0u);

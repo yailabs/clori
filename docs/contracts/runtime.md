@@ -163,10 +163,11 @@ child extension cannot mutate its source or another child. Incompatible
 geometry, identity, capacity or destination state refuses before attachment.
 Reset, invalidation and close release references through the prefix owner.
 
-This in-memory prefix contract is not durable persistence and does not itself
-create a session fork. Persisted state continues to use the versioned
-checkpoint/store contract, and a runtime session owner must coordinate prefix
-attachment with its independent token ledger, RNG, decoder and transcript.
+This in-memory prefix contract is not durable persistence. The server session
+lifecycle combines it with a deep semantic clone of the token ledger, RNG,
+decoder, transcript and conversation state, then publishes one child only after
+both physical and semantic extents agree. Persisted state continues to use the
+separate versioned checkpoint/store contract.
 
 ## Execution and evidence admission
 
@@ -316,7 +317,7 @@ refusals or failures. None may become a successful target-only turn.
 
 ## Compatibility
 
-The runtime behavior is consumed through private local protocol v9 and the
+The runtime behavior is consumed through private local protocol v10 and the
 bounded OpenAI compatibility profile v2. Public C ABI and internal ABI follow
 their header/version contracts. Pre-v0.1 private protocol versions may be
 refused rather than decoded compatibly.

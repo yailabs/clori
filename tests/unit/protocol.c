@@ -95,16 +95,25 @@ static int test_all_operation_roundtrips(void)
             if (source.operation == YVEX_CLIENT_OP_SESSION_STATE_RESTORE)
                 source.maximum_state_file_bytes = 4096u;
         }
+        if (source.operation == YVEX_CLIENT_OP_SESSION_FORK) {
+            strcpy(source.fork_session_name, "child");
+            source.maximum_prefix_bytes = 8192u;
+        }
         count = 0u;
         YVEX_TEST_ASSERT(
             yvex_protocol_request_encode(&source, frame, sizeof(frame), &count,
                                          &err) == YVEX_OK,
-            "all protocol-v9 operations encode");
+            "all protocol-v10 operations encode");
         YVEX_TEST_ASSERT(
             yvex_protocol_request_decode(frame, count, &decoded, &prompt,
                                          &provider, &err) == YVEX_OK &&
                 decoded.operation == (yvex_client_operation)value,
-            "all protocol-v9 operations decode");
+            "all protocol-v10 operations decode");
+        if (source.operation == YVEX_CLIENT_OP_SESSION_FORK)
+            YVEX_TEST_ASSERT(
+                strcmp(decoded.fork_session_name, "child") == 0 &&
+                    decoded.maximum_prefix_bytes == 8192u,
+                "session fork fields roundtrip");
         free(prompt);
         prompt = NULL;
         yvex_provider_request_close(&provider);
@@ -160,6 +169,26 @@ static int test_schema_refusals(void)
                                      &err) == YVEX_ERR_INVALID_ARG,
         "unknown reasoning policy refuses");
     request.reasoning_policy = YVEX_REASONING_DISABLED;
+    request.operation = YVEX_CLIENT_OP_SESSION_FORK;
+    strcpy(request.fork_session_name, "child");
+    YVEX_TEST_ASSERT(
+        yvex_protocol_request_encode(&request, frame, sizeof(frame), &count,
+                                     &err) == YVEX_ERR_INVALID_ARG,
+        "session fork without an explicit byte bound refuses");
+    request.maximum_prefix_bytes = 4096u;
+    request.fork_session_name[0] = '\0';
+    YVEX_TEST_ASSERT(
+        yvex_protocol_request_encode(&request, frame, sizeof(frame), &count,
+                                     &err) == YVEX_ERR_INVALID_ARG,
+        "session fork without a child identity refuses");
+    strcpy(request.fork_session_name, "child");
+    request.operation = YVEX_CLIENT_OP_RUNTIME_STATUS;
+    YVEX_TEST_ASSERT(
+        yvex_protocol_request_encode(&request, frame, sizeof(frame), &count,
+                                     &err) == YVEX_ERR_INVALID_ARG,
+        "non-fork operations refuse fork-only fields");
+    request.fork_session_name[0] = '\0';
+    request.maximum_prefix_bytes = 0u;
     request.temperature = NAN;
     YVEX_TEST_ASSERT(
         yvex_protocol_request_encode(&request, frame, sizeof(frame), &count,
@@ -687,7 +716,7 @@ static int test_v6_frame_refusal(void)
     pthread_t thread;
     v6_peer peer;
     int rc;
-    (void)snprintf(path, sizeof(path), "build/tests/protocol-v9-%lu.sock",
+    (void)snprintf(path, sizeof(path), "build/tests/protocol-v10-%lu.sock",
                    (unsigned long)getpid());
     (void)unlink(path);
     peer.listener = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -703,7 +732,7 @@ static int test_v6_frame_refusal(void)
                      "v6 peer thread");
     rc = yvex_client_connect(&client, path, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT && client == NULL &&
-                         strstr(yvex_error_message(&err), "version 9") != NULL,
+                         strstr(yvex_error_message(&err), "version 10") != NULL,
                      "v6 frame explicitly refuses");
     YVEX_TEST_ASSERT(pthread_join(thread, NULL) == 0, "v6 peer join");
     (void)close(peer.listener);

@@ -650,6 +650,26 @@ static void session_store_view_set(
                                session->generated_text_digest);
 }
 
+static int session_store_checkpoint_capture(
+    server_session *session, server_session_store_view *view, yvex_error *err)
+{
+    int rc = YVEX_OK;
+    if (session->generation) {
+        rc = yvex_runtime_generation_context_checkpoint(
+            session->generation, &view->generation_checkpoint, err);
+        if (rc == YVEX_OK) view->generation_checkpoint_present = 1;
+    } else if (session->pending_generation_checkpoint_present) {
+        view->generation_checkpoint = session->pending_generation_checkpoint;
+        view->generation_checkpoint_present = 1;
+    }
+    if (rc == YVEX_OK && session->committed_count &&
+        !view->generation_checkpoint_present)
+        rc = session_store_refuse(
+            err, YVEX_ERR_STATE,
+            "committed session state has no reproducible generation checkpoint");
+    return rc;
+}
+
 int yvex_server_session_state_save(
     server_session *session, const char *path,
     yvex_runtime_state_store_summary *summary, yvex_error *err)
@@ -663,21 +683,10 @@ int yvex_server_session_state_save(
         return session_store_refuse(err, YVEX_ERR_INVALID_ARG,
                                     "session checkpoint save is invalid");
     session_store_view_set(session, &view);
-    if (session->generation) {
-        rc = yvex_runtime_generation_context_checkpoint(
-            session->generation, &view.generation_checkpoint, err);
-        if (rc != YVEX_OK) return rc;
-        view.generation_checkpoint_present = 1;
-    } else if (session->pending_generation_checkpoint_present) {
-        view.generation_checkpoint = session->pending_generation_checkpoint;
-        view.generation_checkpoint_present = 1;
-    }
-    if (session->committed_count && !view.generation_checkpoint_present)
-        return session_store_refuse(
-            err, YVEX_ERR_STATE,
-            "committed session state has no reproducible generation checkpoint");
-    rc = yvex_server_session_store_encode(
-        &view, &payload, &payload_bytes, payload_identity, err);
+    rc = session_store_checkpoint_capture(session, &view, err);
+    if (rc == YVEX_OK)
+        rc = yvex_server_session_store_encode(
+            &view, &payload, &payload_bytes, payload_identity, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_session_state_save(
             session->execution, path, payload, payload_bytes, summary, err);
@@ -758,6 +767,43 @@ static void session_store_state_apply(
     atomic_store_explicit(&session->cancel_requested, 0, memory_order_release);
     session->state = session->attached_clients ? YVEX_SERVER_SESSION_READY
                                                : YVEX_SERVER_SESSION_DETACHED;
+}
+
+int yvex_server_session_state_clone(
+    server_session *source, server_session *destination,
+    unsigned long long vocabulary_size, yvex_error *err)
+{
+    server_session_store_view view;
+    server_session_store_state state = {0};
+    unsigned char *payload = NULL;
+    unsigned long long payload_bytes = 0ull;
+    char payload_identity[YVEX_SHA256_HEX_CAP];
+    int rc;
+    if (!source || !destination || source == destination || !vocabulary_size ||
+        destination->generation || destination->message_count ||
+        destination->committed_count || destination->transcript_count)
+        return session_store_refuse(err, YVEX_ERR_INVALID_ARG,
+                                    "session clone endpoints are invalid");
+    session_store_view_set(source, &view);
+    rc = session_store_checkpoint_capture(source, &view, err);
+    if (rc == YVEX_OK)
+        rc = yvex_server_session_store_encode(
+            &view, &payload, &payload_bytes, payload_identity, err);
+    if (rc == YVEX_OK)
+        rc = yvex_server_session_store_decode(
+            payload, payload_bytes, SESSION_MAX_MESSAGES,
+            destination->transcript_capacity, destination->token_capacity,
+            vocabulary_size, &state, err);
+    if (rc == YVEX_OK &&
+        (state.committed_count != source->committed_count ||
+         !session_store_state_fits(destination, &state)))
+        rc = session_store_refuse(
+            err, YVEX_ERR_FORMAT,
+            "cloned semantic session extent diverged from its source");
+    if (rc == YVEX_OK) session_store_state_apply(destination, &state);
+    yvex_server_session_store_close(&state);
+    yvex_server_session_store_bytes_close(&payload);
+    return rc;
 }
 
 int yvex_server_session_state_restore(

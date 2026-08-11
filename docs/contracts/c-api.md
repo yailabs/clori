@@ -180,7 +180,7 @@ explicit concurrent-sequence request consumed by startup capacity admission;
 schema v1 cannot represent that fact and refuses after an atomic pre-v0.1
 product rebuild.
 The source-authored conversation boundary admits provider request/wire schema
-v2, tokenizer plan v3, tokenizer provider result v2, and local protocol v9.
+v2, tokenizer plan v3, tokenizer provider result v2, and local protocol v10.
 Runtime event schema v3, Physical Execution IR v1 and compiled profile v2
 remain unchanged. Generation plan ABI v5 adds the workload-profile identity
 required to bind phase evidence to the compiled workload; generation result
@@ -519,7 +519,7 @@ Domain APIs retain semantic validation and lifecycle. Runtime-client adapter
 objects remain protocol-only, while finite offline adapters may consume the
 non-installed engine interfaces already documented here.
 
-## Application Provider And Local Protocol v9
+## Application Provider And Local Protocol v10
 
 `<yvex/provider.h>` is the installed transport-neutral application request and
 result ABI. Provider schema v2 binds separate assistant reasoning content,
@@ -530,17 +530,19 @@ reasoning, at most one assistant tool call, and its original field semantics.
 Clone and wire-decode publish only a complete owned request graph. The provider
 owner neither parses HTTP nor renders model-family prompt syntax.
 
-`<yvex/server.h>` protocol v9 carries the sealed provider request through the
+`<yvex/server.h>` protocol v10 carries the sealed provider request through the
 private Unix socket. Provider output messages distinguish assistant text,
 explicit reasoning, function calls, usage, terminal completion, and failure.
 Typed events bind the provider adapter, provider-request identity, and external
 correlation ID while excluding prompt and output content.
 
-Protocol v9 carries selected generation mode, speculative lifecycle events,
+Protocol v10 carries selected generation mode, speculative lifecycle events,
 accepted-prefix facts, exact proposal/verification/commit accounting, turn
 timing and cancellation classes, an exact partial-turn schema, source-authored
 reasoning policy, typed reasoning/final/tool/error channels, and separate
-reasoning/final count, rate and first-token timing facts. It
+reasoning/final count, rate and first-token timing facts. It also carries the
+explicit source session, child name, and shared-prefix byte bound required for
+one transactional copy-on-write session fork. It
 retains the typed `console.status` and the removal of former
 model/artifact facades introduced by the preceding protocol. Facts that are
 not authoritative, including selected client configuration, active

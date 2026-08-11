@@ -32,6 +32,8 @@ enum {
     TAG_REASONING_POLICY,
     TAG_STATE_PATH,
     TAG_MAXIMUM_STATE_FILE_BYTES,
+    TAG_FORK_SESSION_NAME,
+    TAG_MAXIMUM_PREFIX_BYTES,
     TAG_MESSAGE_KIND = 32,
     TAG_STATUS,
     TAG_REASON,
@@ -389,6 +391,16 @@ static int request_state_fields_valid(const yvex_client_request *request)
                : request->maximum_state_file_bytes != 0u;
 }
 
+static int request_fork_fields_valid(const yvex_client_request *request)
+{
+    if (!memchr(request->fork_session_name, '\0',
+                sizeof(request->fork_session_name)))
+        return 0;
+    if (request->operation != YVEX_CLIENT_OP_SESSION_FORK)
+        return !request->fork_session_name[0] && !request->maximum_prefix_bytes;
+    return request->fork_session_name[0] && request->maximum_prefix_bytes;
+}
+
 int yvex_protocol_request_encode(const yvex_client_request *request,
                                  unsigned char *output,
                                  unsigned long long capacity,
@@ -409,6 +421,7 @@ int yvex_protocol_request_encode(const yvex_client_request *request,
         request->trace_level > YVEX_SERVER_TRACE_FULL ||
         request->reasoning_policy > YVEX_REASONING_MAXIMUM ||
         !request_state_fields_valid(request) ||
+        !request_fork_fields_valid(request) ||
         (request->stochastic != 0 && request->stochastic != 1) ||
         (request->seed_present != 0 && request->seed_present != 1) ||
         (request->trace_content != 0 && request->trace_content != 1) ||
@@ -456,6 +469,10 @@ int yvex_protocol_request_encode(const yvex_client_request *request,
         !writer_text(&writer, TAG_STATE_PATH, request->state_path) ||
         !writer_u64(&writer, TAG_MAXIMUM_STATE_FILE_BYTES,
                     request->maximum_state_file_bytes) ||
+        !writer_text(&writer, TAG_FORK_SESSION_NAME,
+                     request->fork_session_name) ||
+        !writer_u64(&writer, TAG_MAXIMUM_PREFIX_BYTES,
+                    request->maximum_prefix_bytes) ||
         !writer_field(&writer, TAG_PROVIDER_REQUEST, provider_bytes,
                       provider_count)) {
         free(provider_bytes);
@@ -555,11 +572,20 @@ int yvex_protocol_request_decode(const unsigned char *input,
             valid = reader_u64(bytes, count,
                                &candidate.maximum_state_file_bytes);
             break;
+        case TAG_FORK_SESSION_NAME:
+            valid = reader_text(bytes, count, candidate.fork_session_name,
+                                sizeof(candidate.fork_session_name));
+            break;
+        case TAG_MAXIMUM_PREFIX_BYTES:
+            valid = reader_u64(bytes, count,
+                               &candidate.maximum_prefix_bytes);
+            break;
         default: valid = 0; break;
         }
     }
     if (next < 0 || !valid || !have_operation ||
         !request_state_fields_valid(&candidate) ||
+        !request_fork_fields_valid(&candidate) ||
         (candidate.prompt_bytes && candidate.provider_request)) {
         free(prompt);
         yvex_provider_request_close(&provider);

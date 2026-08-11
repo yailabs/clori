@@ -1,8 +1,8 @@
-# Local Protocol v9
+# Local Protocol v10
 
 Status: normative private protocol contract
 
-Schema/version: `YVEX_LOCAL_PROTOCOL_VERSION = 9`.
+Schema/version: `YVEX_LOCAL_PROTOCOL_VERSION = 10`.
 
 Authority: `include/yvex/server.h` and `src/server/protocol.c`. This document
 explains the wire and lifecycle contract; code remains authoritative for exact
@@ -17,21 +17,22 @@ Unix-domain socket and is not a public network API.
 
 ## Framing and negotiation
 
-Every connection negotiates version 9 and exchanges bounded typed frames.
+Every connection negotiates version 10 and exchanges bounded typed frames.
 Lengths, enums, strings, arrays, message/tool fields, and correlations are
 validated before dispatch. Oversized, truncated, duplicate, unknown, or
 malformed fields refuse without entering the server scheduler.
 
-Every earlier version, including v8, is refused explicitly. There is no private
+Every earlier version, including v9, is refused explicitly. There is no private
 pre-v0.1 compatibility decoder. Unknown operations and response kinds fail
 closed.
 
 ## Operations
 
-Protocol v9 carries server status/stop, live model and memory
+Protocol v10 carries server status/stop, live model and memory
 facts, selected target-only or DSpark generation mode, session lifecycle,
-generation turns and cancellation, speculative lifecycle events, event
-subscriptions, and composed console status. Offline compile, artifact,
+bounded copy-on-write session fork, generation turns and cancellation,
+speculative lifecycle events, event subscriptions, and composed console status.
+Offline compile, artifact,
 inspect, execute, profile, and system operations do not cross this protocol.
 
 The removed model/artifact facade operation values are absent. Artifact
@@ -131,7 +132,9 @@ progress. A partial session refuses an ordinary turn until reset.
 
 ## Side effects
 
-The protocol may create/reset/close sessions, enqueue/cancel generation,
+The protocol may create/reset/close sessions, fork one idle committed session
+into an independently mutable child under an explicit shared-byte budget,
+enqueue/cancel generation,
 commit runtime state through the keyed scheduler, save one immutable model-state
 checkpoint, restore it at the exact current semantic-session position, publish
 events, or initiate bounded server shutdown. State checkpoint messages carry
@@ -163,9 +166,9 @@ format.
 
 ## Non-claims
 
-Protocol v9 is not a public remote API, authentication protocol, TLS transport,
+Protocol v10 is not a public remote API, authentication protocol, TLS transport,
 stable cross-version SDK promise, distributed serving protocol, or model
-quality contract. The current checkpoint operation preserves committed model
-state only. It does not yet persist the server transcript, token ledger,
-detokenizer, or RNG authority and therefore cannot claim cross-restart session
-continuation.
+quality contract. Versioned checkpoints preserve the admitted model and
+semantic-session state across restart; the in-memory fork does not create a
+durable shared-prefix namespace, CUDA-shared state cache, or cross-process
+copy-on-write authority.

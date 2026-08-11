@@ -214,7 +214,7 @@ server in the first and run `server status`, then `chat`, in the second.
 Chat opens one concise attachment view and the stable prompt:
 
 ```text
-YVEX 0.1.0 · protocol 9
+YVEX 0.1.0 · protocol 10
 
   model      deepseek4-v4-flash-dspark
   variant    abcdef012345
@@ -302,6 +302,20 @@ intended:
 ```sh
 ./yvex run --session main "Continue more briefly."
 ```
+
+Fork an idle committed session only with an explicit upper bound for shared
+prefix backing:
+
+```sh
+./yvex session fork main experiment 1073741824
+./yvex run --session experiment "Continue independently."
+```
+
+The child starts at the exact committed position and receives independent RNG,
+token ledger, decoder, transcript and conversation state. Shared state pages
+remain immutable and become private on write. The command refuses an active or
+partial source, a duplicate child name, incompatible state geometry, or a
+prefix exceeding the supplied byte bound.
 
 ## OpenAI-compatible application provider
 

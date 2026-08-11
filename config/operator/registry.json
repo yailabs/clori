@@ -136,6 +136,7 @@
         "session_cancel",
         "session_close",
         "session_detach",
+        "session_fork",
         "session_list",
         "session_new",
         "session_reset",
@@ -173,6 +174,7 @@
       "session.attach",
       "session.close",
       "session.detach",
+      "session.fork",
       "session.list",
       "session.new",
       "session.reset",
@@ -6287,6 +6289,62 @@
       "summary": "Detach the client from one session.",
       "test_owner": "tests/client_cutover.sh",
       "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [],
+      "adapter_id": "session_fork",
+      "aliases": [],
+      "architectural_plane": "Run",
+      "arguments": [
+        {
+          "completion_provider": "session",
+          "multiplicity": "one",
+          "name": "source",
+          "required": true,
+          "validator": "syntax.delegated",
+          "value_type": "name"
+        },
+        {
+          "completion_provider": "none",
+          "multiplicity": "one",
+          "name": "child",
+          "required": true,
+          "validator": "syntax.name",
+          "value_type": "name"
+        },
+        {
+          "completion_provider": "none",
+          "multiplicity": "one",
+          "name": "maximum_shared_bytes",
+          "required": true,
+          "validator": "syntax.u64",
+          "value_type": "u64"
+        }
+      ],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [
+        "session",
+        "fork"
+      ],
+      "daemon_requirement": "required",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "runtime-client",
+      "model_requirement": "runtime-model",
+      "operation_id": "session.fork",
+      "protocol_operation": "session.fork",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "creates copy-on-write session fork",
+      "slash_projection": "none",
+      "summary": "Fork one committed session into an independent copy-on-write child.",
+      "test_owner": "tests/integration/tiny_vertical.sh",
+      "visibility": "product-advanced"
     },
     {
       "CLI_projection": true,

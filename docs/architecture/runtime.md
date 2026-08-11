@@ -225,10 +225,12 @@ references. Capture and attach preflight the complete bank set before changing
 provider visibility; reset and close drop mappings and references without
 making shared state mutable.
 
-This is the graph-state resource boundary required by future prefix banks and
-session forks. It does not yet provide a persistent prefix namespace, durable
-serialization, CUDA-state sharing, operator-visible fork semantics or warm
-prefix TTFT qualification.
+The server session owner now consumes this graph-state boundary to expose one
+bounded operator-visible session fork. It deep-clones semantic session state,
+attaches the immutable backing to an empty child, and publishes the child only
+after physical and semantic positions agree. This does not yet provide a
+persistent prefix namespace, durable shared-prefix serialization, CUDA-state
+sharing or warm prefix TTFT qualification.
 
 On CUDA Driver-VMM hardware, the session residency owner projects the same
 logical envelope into two stable virtual device banks per selected layer. It

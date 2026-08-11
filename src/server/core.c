@@ -976,8 +976,8 @@ static void *client_main(void *opaque)
             message.kind = YVEX_CLIENT_MESSAGE_ACK;
             message.status = YVEX_OK;
             message.request_number = request.request_number;
-            yvex_core_text_copy(message.reason, sizeof(message.reason),
-                                "protocol-v9");
+            (void)snprintf(message.reason, sizeof(message.reason), "protocol-v%u",
+                           YVEX_LOCAL_PROTOCOL_VERSION);
             rc = yvex_server_protocol_send(fd, &message, &err);
         } else {
             server_work_item item;

@@ -19,6 +19,9 @@ change. Git history preserves implementation chronology.
   through native and bounded OpenAI-compatible local surfaces.
 - Exact server-owned multi-turn sessions with committed-prefix reuse,
   cancellation, partial-progress truth, and one persistent model lifecycle.
+- Bounded copy-on-write session fork through `yvex session fork SOURCE CHILD
+  MAXIMUM_SHARED_BYTES`: immutable committed state pages are shared while token,
+  RNG, decoder, transcript and conversation state remain independently mutable.
 - Capacity-admitted independent-session scheduling with one keyed mutation
   authority, bounded worker concurrency, explicit `--parallel N` startup, and
   protocol v9 facts that distinguish it from still-open continuous batching.

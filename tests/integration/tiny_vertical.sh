@@ -119,6 +119,38 @@ wait "$second_run_pid"
 grep -Fx 'ok' "$root/run.out" >/dev/null
 grep -Fx 'ok' "$root/run.independent.out" >/dev/null
 grep -F 'generation 1 token' "$root/run.err" >/dev/null
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session show persisted \
+    >"$root/prefix.source.before"
+if HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session fork \
+    persisted fork-too-small 1 >"$root/prefix.small.out" \
+    2>"$root/prefix.small.err"; then
+    printf 'bounded prefix fork unexpectedly succeeded\n' >&2
+    exit 1
+fi
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session fork \
+    persisted forked 1048576 >"$root/prefix.fork.out"
+grep -E '^forked[[:space:]]+(ready|detached)[[:space:]]+position=[1-9][0-9]* turns=[1-9][0-9]*$' \
+    "$root/prefix.fork.out" >/dev/null
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session show forked \
+    >"$root/prefix.child.before"
+source_position=$(sed -n 's/^.*position=\([0-9][0-9]*\).*$/\1/p' \
+    "$root/prefix.source.before")
+child_position=$(sed -n 's/^.*position=\([0-9][0-9]*\).*$/\1/p' \
+    "$root/prefix.child.before")
+test -n "$source_position" && test "$source_position" = "$child_position"
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --session forked a \
+    --strategy greedy --max-new-tokens 1 \
+    >"$root/run.forked.out" 2>"$root/run.forked.err"
+grep -Fx 'ok' "$root/run.forked.out" >/dev/null
+grep -E '[1-9][0-9]* reused' "$root/run.forked.err" >/dev/null
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session show persisted \
+    >"$root/prefix.source.after"
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session show forked \
+    >"$root/prefix.child.after"
+test "$source_position" = "$(sed -n 's/^.*position=\([0-9][0-9]*\).*$/\1/p' \
+    "$root/prefix.source.after")"
+test "$(sed -n 's/^.*position=\([0-9][0-9]*\).*$/\1/p' \
+    "$root/prefix.child.after")" -gt "$child_position"
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session new reasoning-limit \
     >"$root/session.reasoning.new"
 if HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run \

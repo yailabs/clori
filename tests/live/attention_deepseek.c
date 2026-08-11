@@ -2436,8 +2436,7 @@ static int run_cuda_live_suite(
         {"copy-input", YVEX_ATTENTION_FAILURE_BACKEND},
         {"cuda.attention.q_a",
          YVEX_ATTENTION_FAILURE_BACKEND},
-        {"cuda.attention.copy.output",
-         YVEX_ATTENTION_FAILURE_BACKEND}
+        {"copy-output", YVEX_ATTENTION_FAILURE_BACKEND}
     };
     unsigned int fault_index;
     unsigned int qtype;
@@ -2694,6 +2693,14 @@ static int run_cuda_live_suite(
         options.trace = NULL;
         if (rc == YVEX_OK || failed_trace.owned || cuda_result.executed ||
             failure->code != fault_cases[fault_index].expected_failure) {
+            fprintf(stderr,
+                    "attention_cuda_injected_fault_failed seam=%s rc=%d expected=%u "
+                    "actual=%u trace_owned=%d executed=%d where=%s message=%s\n",
+                    fault_cases[fault_index].seam, rc,
+                    (unsigned int)fault_cases[fault_index].expected_failure,
+                    (unsigned int)failure->code, failed_trace.owned,
+                    cuda_result.executed, yvex_error_where(err),
+                    yvex_error_message(err));
             rc = YVEX_ERR_STATE;
             goto cleanup;
         }

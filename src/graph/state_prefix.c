@@ -295,10 +295,18 @@ int yvex_graph_attention_state_prefix_attach(
                              YVEX_ERR_INVALID_ARG,
                              "valid prefix and destination state are required",
                              err);
+    /* A freshly prepared provider starts at its recipe-authored origin, which
+     * need not be token zero.  Attaching replaces both committed and candidate
+     * banks, so admit only that pristine origin rather than assuming zero. */
     if (state->transaction.active || state->summary.cancelled ||
         state->summary.invalidated ||
+        !state->summary.position_consistent || !state->layer_count ||
         state->summary.prepared_layer_count != state->layer_count ||
-        state->summary.committed_sequence_length || state->summary.next_position ||
+        !state->layers[0].prepared ||
+        state->summary.committed_sequence_length !=
+            state->layers[0].recipe.initial_position ||
+        state->summary.next_position !=
+            state->layers[0].recipe.initial_position ||
         summary.layer_count != state->layer_count ||
         summary.committed_sequence_length > state->summary.capacity ||
         strcmp(summary.state_layout_identity,

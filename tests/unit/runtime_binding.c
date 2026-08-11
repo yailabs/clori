@@ -16,6 +16,7 @@
 #include <yvex/internal/graph_state.h>
 #include <yvex/internal/operator_graph.h>
 #include <yvex/internal/runtime.h>
+#include <yvex/internal/runtime_prefix.h>
 #include <yvex/internal/runtime_state_store.h>
 
 #include <dirent.h>
@@ -3342,6 +3343,8 @@ static int test_runtime_probe_consumer_boundary(
 {
     yvex_runtime_model *model = NULL;
     yvex_runtime_execution_session *session = NULL;
+    yvex_runtime_execution_session *forked_session = NULL;
+    yvex_runtime_session_prefix *prefix = NULL;
     const yvex_runtime_model_view *model_view;
     yvex_graph_attention_capacity_plan *capacity = NULL;
     yvex_runtime_session_open_request session_request;
@@ -3350,9 +3353,10 @@ static int test_runtime_probe_consumer_boundary(
     yvex_attention_probe_result result;
     yvex_runtime_model_failure model_failure;
     yvex_attention_failure attention_failure;
-    yvex_graph_attention_state_summary state_before, state_after;
+    yvex_graph_attention_state_summary state_before, state_after, forked_state;
     yvex_runtime_state_residency_summary state_residency;
     yvex_runtime_state_store_summary saved_state, restored_state;
+    yvex_runtime_session_prefix_summary prefix_summary, attached_prefix;
     yvex_runtime_state_store_payload inspected_payload = {0};
     yvex_execution_capacity_plan persisted_capacity;
     yvex_runtime_session_summary session_summary;
@@ -3514,6 +3518,63 @@ static int test_runtime_probe_consumer_boundary(
                 &state_before, &err) == YVEX_OK &&
             state_before.committed_sequence_length == 1ull,
         "successful state transaction commits one prefix before persistence");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_session_prefix_capture(
+            session, 1ull, &prefix, &prefix_summary, &model_failure, &err) ==
+                YVEX_ERR_BOUNDS &&
+            !prefix,
+        "runtime prefix capture refuses an insufficient explicit byte budget");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_session_prefix_capture(
+            session, 1ull << 20u, &prefix, &prefix_summary,
+            &model_failure, &err) == YVEX_OK &&
+            prefix && prefix_summary.schema_version ==
+                          YVEX_RUNTIME_SESSION_PREFIX_SCHEMA_V1 &&
+            prefix_summary.scope_count == 1ull &&
+            prefix_summary.committed_sequence_length == 1ull &&
+            prefix_summary.shared_bytes &&
+            yvex_sha256_hex_valid(prefix_summary.prefix_identity),
+        "runtime captures one identity-bound committed target prefix");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_session_open(
+            &forked_session, model, &session_request, &model_failure, &err) ==
+            YVEX_OK,
+        "empty runtime session opens before prefix attachment");
+    rc = yvex_runtime_session_prefix_attach(
+        forked_session, prefix, &attached_prefix, &model_failure, &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_OK &&
+            strcmp(attached_prefix.prefix_identity,
+                   prefix_summary.prefix_identity) == 0,
+        "empty runtime session attaches the identity-bound prefix");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_session_view_get(forked_session)
+                    ->attention_state_provider->summary(
+                        yvex_runtime_session_view_get(forked_session)
+                            ->attention_state_provider->context,
+                        &forked_state, &err) == YVEX_OK &&
+            forked_state.committed_sequence_length == 1ull &&
+            strcmp(forked_state.state_content_identity,
+                   state_before.state_content_identity) == 0,
+        "attached runtime prefix preserves committed state content");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_session_prepare_persistent_state(
+            forked_session, capacity, &model_failure, &err) == YVEX_OK,
+        "forked prefix seals its independent runtime residency before execution");
+    yvex_runtime_session_prefix_close(&prefix);
+    YVEX_TEST_ASSERT(
+        yvex_runtime_session_reset_persistent_state(
+            forked_session, &model_failure, &err) == YVEX_OK &&
+            yvex_runtime_session_view_get(session)->attention_state_provider->summary(
+                yvex_runtime_session_view_get(session)
+                    ->attention_state_provider->context,
+                &state_after, &err) == YVEX_OK &&
+            state_after.committed_sequence_length == 1ull &&
+            strcmp(state_after.state_content_identity,
+                   state_before.state_content_identity) == 0 &&
+            yvex_runtime_session_close(&forked_session, &err) == YVEX_OK &&
+            !forked_session,
+        "forked state survives prefix-handle close and resets without mutating source");
     YVEX_TEST_ASSERT(
         snprintf(state_path, sizeof(state_path), "%s/state.yvex", root) <
                 (int)sizeof(state_path) &&

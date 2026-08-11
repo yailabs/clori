@@ -7,9 +7,11 @@
 #ifndef SRC_SERVER_PRIVATE_H_INCLUDED
 #define SRC_SERVER_PRIVATE_H_INCLUDED
 
+#include <pthread.h>
 #include <stdatomic.h>
 
 #include <yvex/internal/generation.h>
+#include <yvex/internal/runtime_prefix.h>
 #include <yvex/internal/runtime_state_store.h>
 #include <yvex/server.h>
 
@@ -72,6 +74,16 @@ typedef struct server_session {
     atomic_int cancel_requested;
     atomic_int active_turn;
 } server_session;
+
+struct server_session_registry {
+    pthread_mutex_t mutex;
+    yvex_runtime_model *model;
+    yvex_server_options options;
+    server_telemetry *telemetry;
+    server_session *sessions;
+    unsigned long long capacity, count, next_id;
+    int mutex_ready, closing;
+};
 
 typedef struct {
     const char *yvex_socket;
@@ -142,6 +154,29 @@ int yvex_server_session_state_restore(
     yvex_runtime_state_store_summary *summary, yvex_error *err);
 int yvex_server_session_generation_state_restore(
     server_session *session, yvex_error *err);
+int yvex_server_session_state_clone(
+    server_session *source, server_session *destination,
+    unsigned long long vocabulary_size, yvex_error *err);
+
+server_session *yvex_server_session_find_locked(
+    server_session_registry *registry, const char *name);
+int yvex_server_session_execution_open(
+    server_session_registry *registry, server_session *session,
+    yvex_error *err);
+int yvex_server_session_create_locked(
+    server_session_registry *registry, const char *requested,
+    server_session **created, yvex_error *err);
+int yvex_server_session_fork_locked(
+    server_session_registry *registry, server_session *source,
+    const char *requested, unsigned long long maximum_shared_bytes,
+    server_session **created,
+    yvex_runtime_session_prefix_summary *prefix_summary, yvex_error *err);
+int yvex_server_session_reset_locked(
+    server_session_registry *registry, server_session *session,
+    yvex_error *err);
+int yvex_server_session_close_locked(
+    server_session_registry *registry, server_session *session,
+    yvex_error *err);
 
 yvex_client_failure_class yvex_server_failure_class_from_status(int status);
 
