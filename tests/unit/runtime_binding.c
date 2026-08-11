@@ -2295,15 +2295,16 @@ static int test_runtime_model_progress(
                      "runtime model retains typed phase timing");
     yvex_runtime_model_close(&model);
     memset(&progress, 0, sizeof(progress));
-    request.maximum_host_bytes = fixture->admission.payload_bytes - 1ull;
+    request.maximum_host_bytes = fixture->admission.payload_bytes +
+                                 YVEX_EXECUTION_MINIMUM_SYSTEM_RESERVE - 1ull;
     YVEX_TEST_ASSERT(
         yvex_runtime_model_open(&model, &request, &failure, &err) == YVEX_ERR_BOUNDS &&
             !model && failure.code == YVEX_RUNTIME_MODEL_FAILURE_ALLOCATION &&
             strcmp(failure.field, "model-host-budget") == 0 &&
-            failure.expected == fixture->admission.payload_bytes &&
+            failure.expected > fixture->admission.payload_bytes &&
             failure.actual == request.maximum_host_bytes &&
             progress.events[YVEX_RUNTIME_LIFECYCLE_ARTIFACT_OPEN] == 0ull,
-        "model open refuses a configured host budget before artifact mutation");
+        "model open preserves the reserve inside a configured host budget");
     request.maximum_host_bytes = 0ull;
     memset(&progress, 0, sizeof(progress));
     YVEX_TEST_ASSERT(setenv("YVEX_TEST_RUNTIME_AVAILABLE_MEMORY_BYTES", "1", 1) == 0,
@@ -2318,6 +2319,23 @@ static int test_runtime_model_progress(
             failure.expected > fixture->admission.payload_bytes && failure.actual == 1ull &&
             progress.events[YVEX_RUNTIME_LIFECYCLE_ARTIFACT_OPEN] == 0ull,
         "model open preserves the system reserve before artifact mutation");
+    memset(&progress, 0, sizeof(progress));
+    YVEX_TEST_ASSERT(
+        setenv("YVEX_TEST_RUNTIME_AVAILABLE_MEMORY_BYTES", "18446744073709551615", 1) == 0 &&
+            setenv("YVEX_TEST_RUNTIME_CGROUP_AVAILABLE_MEMORY_BYTES", "1", 1) == 0,
+        "inject process memory capacity refusal");
+    capacity_rc = yvex_runtime_model_open(&model, &request, &failure, &err);
+    YVEX_TEST_ASSERT(
+        unsetenv("YVEX_TEST_RUNTIME_AVAILABLE_MEMORY_BYTES") == 0 &&
+            unsetenv("YVEX_TEST_RUNTIME_CGROUP_AVAILABLE_MEMORY_BYTES") == 0,
+        "clear process memory capacity refusal");
+    YVEX_TEST_ASSERT(
+        capacity_rc == YVEX_ERR_BOUNDS && !model &&
+            failure.code == YVEX_RUNTIME_MODEL_FAILURE_ALLOCATION &&
+            strcmp(failure.field, "process-memory-capacity") == 0 &&
+            failure.expected > fixture->admission.payload_bytes && failure.actual == 1ull &&
+            progress.events[YVEX_RUNTIME_LIFECYCLE_ARTIFACT_OPEN] == 0ull,
+        "model open preserves the cgroup reserve before artifact mutation");
     memset(&progress, 0, sizeof(progress));
     progress.cancel_hash = 1;
     YVEX_TEST_ASSERT(setenv("YVEX_TEST_RUNTIME_MODEL_CLEANUP_FAILURE", "1", 1) == 0,

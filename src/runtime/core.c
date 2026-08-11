@@ -107,7 +107,9 @@ static const runtime_refusal_spec runtime_refusals[] = {
     {YVEX_RUNTIME_MODEL_FAILURE_IDENTITY, YVEX_ERR_FORMAT, "logical-transform-identity",
      "runtime binding logical Transformation IR identity is stale"},
     {YVEX_RUNTIME_MODEL_FAILURE_ALLOCATION, YVEX_ERR_BOUNDS, "model-host-budget",
-     "configured model host budget is smaller than admitted resident weights"},
+     "configured model host budget cannot preserve the reserve after model residency"},
+    {YVEX_RUNTIME_MODEL_FAILURE_ALLOCATION, YVEX_ERR_BOUNDS, "process-memory-capacity",
+     "process memory control cannot preserve the minimum reserve after model residency"},
     {YVEX_RUNTIME_MODEL_FAILURE_ALLOCATION, YVEX_ERR_BOUNDS, "system-memory-capacity",
      "available system memory cannot preserve the minimum reserve after model residency"},
     {YVEX_RUNTIME_MODEL_FAILURE_ARTIFACT, YVEX_ERR_FORMAT, "artifact-open", "artifact admission failed"},
@@ -518,45 +520,113 @@ static int runtime_model_artifact_open(
     return rc;
 }
 
-static int runtime_model_available_memory(unsigned long long *bytes)
+static int runtime_model_memory_value(const char *text, unsigned long long *value)
+{
+    char *tail = NULL;
+    unsigned long long parsed;
+    if (!text || !value || !text[0] || text[0] == '-' || !strncmp(text, "max", 3u)) return 0;
+    errno = 0;
+    parsed = strtoull(text, &tail, 10);
+    if (errno || tail == text) return 0;
+    while (*tail == ' ' || *tail == '\t' || *tail == '\r' || *tail == '\n') ++tail;
+    if (*tail) return 0;
+    *value = parsed;
+    return 1;
+}
+
+/* Return the tightest remaining cgroup-v2 memory extent across the process hierarchy. */
+static int runtime_model_cgroup_available_memory(unsigned long long *bytes)
+{
+    const char *injected = getenv("YVEX_TEST_RUNTIME_CGROUP_AVAILABLE_MEMORY_BYTES");
+    static const char *const controls[] = {"memory.max", "memory.high"};
+    const char *root = "/sys/fs/cgroup";
+    char group[PATH_MAX], directory[PATH_MAX], path[PATH_MAX], text[128];
+    char *relative, *newline, *slash;
+    unsigned long long available = ULLONG_MAX;
+    size_t control, root_length = strlen(root);
+    int found = 0, written;
+    if (!bytes) return -1;
+    if (injected)
+        return runtime_model_memory_value(injected, bytes) ? 1 : -1;
+    if (!yvex_core_file_read_text_prefix("/proc/self/cgroup", group, sizeof(group)) ||
+        !(relative = strstr(group, "0::")) ||
+        (relative != group && relative[-1] != '\n') ||
+        relative[3] != '/' || strstr(relative + 3, ".."))
+        return 0;
+    relative += 3;
+    if ((newline = strchr(relative, '\n'))) *newline = '\0';
+    written = snprintf(directory, sizeof(directory), "%s%s", root, relative);
+    if (written <= 0 || (size_t)written >= sizeof(directory)) return -1;
+    for (;;) {
+        unsigned long long current;
+        int current_known;
+        written = snprintf(path, sizeof(path), "%s/memory.current", directory);
+        if (written <= 0 || (size_t)written >= sizeof(path)) return -1;
+        current_known = yvex_core_file_read_text_prefix(path, text, sizeof(text)) &&
+                        runtime_model_memory_value(text, &current);
+        for (control = 0u; current_known && control < 2u; ++control) {
+            unsigned long long limit, remaining;
+            written = snprintf(path, sizeof(path), "%s/%s", directory, controls[control]);
+            if (written <= 0 || (size_t)written >= sizeof(path)) return -1;
+            if (!yvex_core_file_read_text_prefix(path, text, sizeof(text)) ||
+                !runtime_model_memory_value(text, &limit)) continue;
+            remaining = current < limit ? limit - current : 0ull;
+            if (!found || remaining < available) available = remaining;
+            found = 1;
+        }
+        if (!strcmp(directory, root)) break;
+        slash = strrchr(directory, '/');
+        if (!slash || (size_t)(slash - directory) < root_length) return -1;
+        *slash = '\0';
+    }
+    if (found) *bytes = available;
+    return found;
+}
+
+int yvex_runtime_private_available_memory(unsigned long long *bytes,
+                                          int *process_limited)
 {
     const char *injected = getenv("YVEX_TEST_RUNTIME_AVAILABLE_MEMORY_BYTES");
-    char *tail = NULL;
     char line[128];
     FILE *meminfo;
-    unsigned long long value;
+    unsigned long long value, process_available;
     long pages, page_bytes;
+    int cgroup;
 
-    if (!bytes) return 0;
+    if (!bytes || !process_limited) return 0;
+    *process_limited = 0;
     if (injected) {
-        errno = 0;
-        value = strtoull(injected, &tail, 10);
-        if (errno || tail == injected || !tail || *tail != '\0') return 0;
-        *bytes = value;
-        return 1;
-    }
-    meminfo = fopen("/proc/meminfo", "r");
-    if (meminfo) {
+        if (!runtime_model_memory_value(injected, &value)) return 0;
+    } else if ((meminfo = fopen("/proc/meminfo", "r"))) {
+        value = 0ull;
         while (fgets(line, sizeof(line), meminfo)) {
             if (sscanf(line, "MemAvailable: %llu kB", &value) == 1) {
-                int closed = fclose(meminfo) == 0;
-                return closed && yvex_core_u64_mul(value, 1024ull, bytes);
+                if (!yvex_core_u64_mul(value, 1024ull, &value)) value = 0ull;
+                break;
             }
         }
-        (void)fclose(meminfo);
-    }
+        if (fclose(meminfo) != 0 || !value) return 0;
+    } else {
 #ifdef _SC_AVPHYS_PAGES
-    pages = sysconf(_SC_AVPHYS_PAGES);
-    page_bytes = sysconf(_SC_PAGESIZE);
-    if (pages <= 0 || page_bytes <= 0 ||
-        !yvex_core_u64_mul((unsigned long long)pages,
-                           (unsigned long long)page_bytes, bytes)) return 0;
-    return 1;
+        pages = sysconf(_SC_AVPHYS_PAGES);
+        page_bytes = sysconf(_SC_PAGESIZE);
+        if (pages <= 0 || page_bytes <= 0 ||
+            !yvex_core_u64_mul((unsigned long long)pages,
+                               (unsigned long long)page_bytes, &value)) return 0;
 #else
-    (void)pages;
-    (void)page_bytes;
-    return 0;
+        (void)pages;
+        (void)page_bytes;
+        return 0;
 #endif
+    }
+    cgroup = runtime_model_cgroup_available_memory(&process_available);
+    if (cgroup < 0) return 0;
+    if (cgroup > 0 && process_available < value) {
+        value = process_available;
+        *process_limited = 1;
+    }
+    *bytes = value;
+    return 1;
 }
 
 static int runtime_model_memory_preflight(
@@ -565,21 +635,24 @@ static int runtime_model_memory_preflight(
     yvex_runtime_private_refusal_id *refusal,
     unsigned long long *required, unsigned long long *available)
 {
+    int process_limited;
     if (!request || !admission || !refusal || !required || !available ||
         !admission->payload_bytes) return YVEX_ERR_INVALID_ARG;
     *required = 0ull;
     *available = 0ull;
+    if (!yvex_core_u64_add(admission->payload_bytes,
+                           YVEX_EXECUTION_MINIMUM_SYSTEM_RESERVE, required))
+        return YVEX_ERR_STATE;
     if (request->maximum_host_bytes &&
-        admission->payload_bytes > request->maximum_host_bytes) {
+        *required > request->maximum_host_bytes) {
         *refusal = YVEX_RUNTIME_REFUSE_OPEN_HOST_BUDGET;
-        *required = admission->payload_bytes;
         *available = request->maximum_host_bytes;
         return YVEX_ERR_BOUNDS;
     }
-    *refusal = YVEX_RUNTIME_REFUSE_OPEN_SYSTEM_MEMORY;
-    if (!yvex_core_u64_add(admission->payload_bytes,
-                           YVEX_EXECUTION_MINIMUM_SYSTEM_RESERVE, required) ||
-        !runtime_model_available_memory(available)) return YVEX_ERR_STATE;
+    if (!yvex_runtime_private_available_memory(available, &process_limited))
+        return YVEX_ERR_STATE;
+    *refusal = process_limited ? YVEX_RUNTIME_REFUSE_OPEN_PROCESS_MEMORY
+                               : YVEX_RUNTIME_REFUSE_OPEN_SYSTEM_MEMORY;
     return *required <= *available ? YVEX_OK : YVEX_ERR_BOUNDS;
 }
 

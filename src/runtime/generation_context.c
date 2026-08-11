@@ -309,7 +309,8 @@ static int generation_capacity_graph_geometry(
 }
 
 static int generation_capacity_hardware(
-    yvex_runtime_generation_context *context, yvex_error *err)
+    yvex_runtime_generation_context *context,
+    unsigned long long *live_available, yvex_error *err)
 {
     const yvex_runtime_session_view *view =
         yvex_runtime_session_view_get(context->session);
@@ -318,16 +319,31 @@ static int generation_capacity_hardware(
     yvex_runtime_residency_summary residency = {0};
     const char *placement = "host";
     long pages, page_bytes;
-    unsigned long long total;
-    int rc;
-    if (!view || !view->backend ||
+    unsigned long long total, available;
+    int process_limited, rc;
+    if (!live_available || !view || !view->backend ||
         yvex_backend_get_device_info(view->backend, &device, err) != YVEX_OK ||
         (page_bytes = sysconf(_SC_PAGESIZE)) <= 0)
         return generation_context_refuse(
             err, YVEX_ERR_STATE,
             "memory-admission hardware facts are unavailable");
+    rc = context->model_view && context->model_view->residency
+             ? yvex_runtime_residency_snapshot(
+                   context->model_view->residency, &residency,
+                   NULL, NULL, err)
+             : YVEX_ERR_STATE;
+    if (rc != YVEX_OK || residency.encoded_bytes == 0ull)
+        return generation_context_refuse(
+            err, YVEX_ERR_STATE,
+            "model residency placement facts are unavailable");
+    if (!yvex_runtime_private_available_memory(&available, &process_limited))
+        return generation_context_refuse(
+            err, YVEX_ERR_STATE,
+            "live process memory capacity is unavailable");
     if (device.kind == YVEX_BACKEND_KIND_CUDA) {
         total = device.total_memory_bytes;
+        if (device.free_memory_bytes < available)
+            available = device.free_memory_bytes;
     } else {
         pages = sysconf(_SC_PHYS_PAGES);
         if (pages <= 0 ||
@@ -337,6 +353,7 @@ static int generation_capacity_hardware(
                 err, YVEX_ERR_STATE,
                 "host memory extent is unavailable");
     }
+    *live_available = available;
     memset(&context->hardware_profile, 0, sizeof(context->hardware_profile));
     context->hardware_profile.schema_version =
         YVEX_EXECUTION_HARDWARE_PROFILE_SCHEMA_V1;
@@ -376,15 +393,6 @@ static int generation_capacity_hardware(
         rc = yvex_backend_bandwidth_probe(
             view->backend, &context->bandwidth_evidence, err);
         if (rc != YVEX_OK) return rc;
-        rc = context->model_view && context->model_view->residency
-                 ? yvex_runtime_residency_snapshot(
-                       context->model_view->residency, &residency,
-                       NULL, NULL, err)
-                 : YVEX_ERR_STATE;
-        if (rc != YVEX_OK)
-            return generation_context_refuse(
-                err, YVEX_ERR_STATE,
-                "model residency placement facts are unavailable");
         if (residency.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED &&
             residency.cuda_managed_bytes == residency.encoded_bytes &&
             residency.cuda_managed_prefetch_bytes == residency.encoded_bytes &&
@@ -421,6 +429,7 @@ static int generation_capacity_hardware(
                             sizeof(context->hardware_profile.name),
                             "cpu-memory");
     }
+    (void)process_limited;
     return yvex_execution_hardware_profile_seal(
         &context->hardware_profile, err);
 }
@@ -558,8 +567,10 @@ static int generation_capacity_build(
     yvex_execution_state_class_request states[YVEX_MODEL_STATE_CLASS_COUNT];
     yvex_execution_capacity_plan_request request = {0};
     unsigned long long workspace, sampling_workspace = 0ull, index, count = 0ull;
-    unsigned long long graph_bytes, scheduler_bytes;
-    if (generation_capacity_hardware(context, err) != YVEX_OK) return yvex_error_code(err);
+    unsigned long long graph_bytes, scheduler_bytes, live_available, future_required;
+    int rc;
+    if (generation_capacity_hardware(context, &live_available, err) != YVEX_OK)
+        return yvex_error_code(err);
     memset(&semantic, 0, sizeof(semantic));
     if (!context->model_view->binding ||
         !context->model_view->compiled_plan ||
@@ -653,8 +664,19 @@ static int generation_capacity_build(
         return generation_context_refuse(
             err, YVEX_ERR_STATE,
             "resident model byte extent is unavailable for capacity admission");
-    return yvex_execution_capacity_plan_build(
+    rc = yvex_execution_capacity_plan_build(
         &request, &context->capacity_plan, err);
+    if (rc != YVEX_OK) return rc;
+    if (context->capacity_plan.required_bytes < request.model_bytes)
+        return generation_context_refuse(
+            err, YVEX_ERR_STATE,
+            "capacity plan does not cover resident model bytes");
+    future_required = context->capacity_plan.required_bytes - request.model_bytes;
+    if (future_required > live_available)
+        return generation_context_refuse(
+            err, YVEX_ERR_BOUNDS,
+            "live process memory cannot preserve the admitted runtime reserve");
+    return YVEX_OK;
 }
 
 static int generation_stops_open(yvex_runtime_generation_context *context,

@@ -365,10 +365,18 @@ resources. Status reports host and accelerator bytes separately. A placement
 counter is a memory fact, not by itself a causal performance diagnosis.
 
 Before opening the complete artifact, startup reads the bounded binding and
-admits its encoded payload against both the configured host budget and current
-system availability while preserving at least 8 GiB. Refusal reports the
+admits its encoded payload against the configured host budget and the tighter
+of current system availability and the process's cgroup-v2 memory hierarchy,
+while preserving at least 8 GiB inside that budget. Refusal reports the
 configured or available extent and required bytes before artifact or residency
 mutation. Process admission therefore does not depend on the Linux OOM killer.
+
+Generation retains a stable identity-bearing hardware/capacity plan, then
+checks its future state, workspace, graph, scheduler and reserve bytes against
+live system/cgroup availability and current CUDA free memory. Live availability
+is deliberately not hashed into page geometry or capacity identity, so ordinary
+memory fluctuation cannot invalidate durable state or change an admitted
+session layout.
 
 Mutable session resources remain isolated while immutable model caches may be
 shared. Allocation, transfer, synchronization, execution, and cleanup failures

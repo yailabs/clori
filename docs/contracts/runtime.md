@@ -36,8 +36,11 @@ transformation or writer plans.
 Startup performs bounded binding admission before artifact open. When the
 binding's admitted resident payload exceeds either the caller's host budget or
 available memory after the mandatory 8 GiB reserve, opening refuses with the
-exact capacity component and byte extents. No artifact handle, materialization
-arena or model residency is created before that refusal.
+exact capacity component and byte extents. The effective available extent is
+the tighter of system availability and the process's complete cgroup-v2
+`memory.max`/`memory.high` hierarchy. The configured host budget includes the
+reserve rather than applying only to weight bytes. No artifact handle,
+materialization arena or model residency is created before that refusal.
 
 The model owns model-lifetime artifact/binding handles, encoded weights,
 backend resources, tokenizer plan, output-head residency, immutable execution
@@ -182,6 +185,14 @@ match the target/draft maxima in the compiled context envelope. Requested
 context is owned by the workload profile; hardware-fit admission remains the
 generic capacity planner's responsibility. No family projection owns selected
 capacity or a machine-memory constant.
+
+The identity-bearing capacity plan uses stable physical and configured-budget
+facts. Before generation allocates session state or workspace, a separate
+transient preflight compares the plan's non-weight requirement with current
+system/cgroup availability and, for CUDA, current free device memory. Transient
+free bytes therefore prevent overcommit without changing page geometry,
+capacity identity, or persistent-state compatibility between requests and
+restarts.
 
 Target prefill/decode, draft width five, verification widths two through six,
 correction, and reset select an execution shape before mutation. The key binds

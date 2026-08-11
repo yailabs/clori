@@ -3,6 +3,7 @@
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/compiler.h>
 #include <yvex/internal/execution.h>
+#include <yvex/internal/generation.h>
 #include <yvex/internal/graph.h>
 #include <yvex/internal/model.h>
 #include <yvex/internal/moe.h>
@@ -661,6 +662,85 @@ static int tiny_compile(const char *artifact_path, const char *directory,
     return rc;
 }
 
+static int tiny_generation_capacity_refusal(
+    const char *artifact_path, const char *binding_path, yvex_error *err)
+{
+    yvex_runtime_model_open_request model_request = {
+        .artifact_path = artifact_path,
+        .runtime_binding_path = binding_path,
+        .target_id = "tiny-executable",
+        .residency_backend = YVEX_BACKEND_KIND_CPU,
+    };
+    yvex_runtime_session_open_request session_request = {
+        .backend = YVEX_BACKEND_KIND_CPU,
+    };
+    yvex_runtime_generation_options options = {
+        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V5,
+        .backend = YVEX_BACKEND_KIND_CPU,
+        .mode = YVEX_GENERATION_MODE_TARGET_ONLY,
+        .context_capacity = 8ull,
+        .prefill_chunk_tokens = 1ull,
+        .maximum_new_tokens = 1ull,
+        .maximum_output_bytes = 64ull,
+        .evidence_profile = YVEX_EXECUTION_EVIDENCE_PRODUCTION,
+        .sampling_policy = {
+            .schema_version = YVEX_RUNTIME_SAMPLING_SCHEMA_V1,
+            .strategy = YVEX_SAMPLING_STRATEGY_GREEDY,
+            .temperature = 1.0,
+            .top_p = 1.0,
+            .typical_p = 1.0,
+        },
+    };
+    yvex_runtime_model_failure failure = {0};
+    yvex_runtime_model *model = NULL;
+    yvex_runtime_execution_session *session = NULL;
+    yvex_runtime_generation_context *generation = NULL;
+    yvex_error cleanup;
+    int injected_system = 0, injected_process = 0;
+    int rc = yvex_runtime_model_open(
+        &model, &model_request, &failure, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_session_open(
+            &session, model, &session_request, &failure, err);
+    if (rc == YVEX_OK) {
+        injected_system = setenv(
+            "YVEX_TEST_RUNTIME_AVAILABLE_MEMORY_BYTES",
+            "18446744073709551615", 1) == 0;
+        injected_process = setenv(
+            "YVEX_TEST_RUNTIME_CGROUP_AVAILABLE_MEMORY_BYTES", "1", 1) == 0;
+        if (!injected_system || !injected_process) {
+            rc = YVEX_ERR_IO;
+            yvex_error_set(err, rc, "tiny.capacity",
+                           "process memory injection failed");
+        }
+    }
+    if (rc == YVEX_OK) {
+        rc = yvex_runtime_generation_context_open(
+            &generation, model, session, &options, err);
+        if (rc == YVEX_ERR_BOUNDS && !generation &&
+            strcmp(yvex_error_where(err), "runtime.generation") == 0 &&
+            strcmp(yvex_error_message(err),
+                   "live process memory cannot preserve the admitted runtime reserve") == 0) {
+            rc = YVEX_OK;
+            yvex_error_clear(err);
+        } else if (rc == YVEX_OK) {
+            rc = YVEX_ERR_STATE;
+            yvex_error_set(err, rc, "tiny.capacity",
+                           "generation ignored live process memory capacity");
+        }
+    }
+    if (injected_system)
+        (void)unsetenv("YVEX_TEST_RUNTIME_AVAILABLE_MEMORY_BYTES");
+    if (injected_process)
+        (void)unsetenv("YVEX_TEST_RUNTIME_CGROUP_AVAILABLE_MEMORY_BYTES");
+    if (generation)
+        (void)yvex_runtime_generation_context_close(&generation, &cleanup);
+    if (session)
+        (void)yvex_runtime_session_close(&session, &cleanup);
+    yvex_runtime_model_close(&model);
+    return rc;
+}
+
 int main(int argc, char **argv)
 {
     yvex_runtime_binding_prepare_result result = {0};
@@ -672,6 +752,8 @@ int main(int argc, char **argv)
     }
     yvex_error_clear(&err);
     rc = tiny_compile(argv[1], argv[2], &result, &err);
+    if (rc == YVEX_OK)
+        rc = tiny_generation_capacity_refusal(argv[1], result.path, &err);
     if (rc != YVEX_OK) {
         fprintf(stderr, "tiny compile failed: %s: %s\n",
                 yvex_error_where(&err), yvex_error_message(&err));

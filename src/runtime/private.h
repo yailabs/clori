@@ -216,6 +216,7 @@ typedef enum {
     YVEX_RUNTIME_REFUSE_OPEN_ADAPTER,
     YVEX_RUNTIME_REFUSE_OPEN_LOGICAL_TRANSFORM,
     YVEX_RUNTIME_REFUSE_OPEN_HOST_BUDGET,
+    YVEX_RUNTIME_REFUSE_OPEN_PROCESS_MEMORY,
     YVEX_RUNTIME_REFUSE_OPEN_SYSTEM_MEMORY,
     YVEX_RUNTIME_REFUSE_OPEN_ARTIFACT,
     YVEX_RUNTIME_REFUSE_OPEN_MATERIALIZATION,
@@ -245,6 +246,8 @@ int yvex_runtime_private_refuse(
     yvex_runtime_model_failure *failure, yvex_runtime_private_refusal_id id,
     unsigned long long expected, unsigned long long actual, yvex_error *err);
 int yvex_runtime_private_success(yvex_error *err);
+int yvex_runtime_private_available_memory(
+    unsigned long long *bytes, int *process_limited);
 int yvex_runtime_private_session_invalidate(
     yvex_runtime_execution_session *session, int include_state, yvex_error *err);
 int yvex_runtime_private_session_workspace_discard(
