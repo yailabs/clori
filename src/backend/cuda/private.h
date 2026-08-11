@@ -492,7 +492,7 @@ typedef struct {
     int (*stage_layout)(unsigned char *, yvex_cuda_attention_upload *, size_t,
                         yvex_cuda_attention_transfer *, size_t,
                         unsigned long long, int **, unsigned long long **,
-                        unsigned long long **, size_t *);
+                        unsigned long long **, size_t *, size_t *);
     int (*allocate)(yvex_cuda_work *, CUdeviceptr *, size_t, const void *, int,
                     const char *, yvex_backend_attention_failure *, yvex_error *);
     int (*initialize)(yvex_cuda_work *, CUdeviceptr, size_t, const void *, int,

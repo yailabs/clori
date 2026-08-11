@@ -63,12 +63,12 @@ typedef struct {
     yvex_backend_attention_job *job; yvex_backend_attention_output *output;
     yvex_backend_attention_failure *failure; yvex_error *err;
     yvex_backend_attention_completion *completion;
-    unsigned char *host_stage; size_t host_stage_bytes;
+    unsigned char *host_stage; size_t host_stage_bytes, download_stage_bytes;
     attn_transfer transfers[YVEX_CUDA_ATTN_TRANSFERS]; size_t transfer_count;
     attn_upload uploads[YVEX_CUDA_ATTN_UPLOADS]; size_t upload_count;
     attn_initializer initializers[YVEX_CUDA_ATTN_INITIALIZERS]; size_t initializer_count;
     CUdeviceptr weight[YVEX_BACKEND_ATTENTION_WEIGHT_COUNT];
-    CUdeviceptr input, core_input, q_low, query, raw_kv;
+    CUdeviceptr input, core_input, q_low, query, raw_kv, download_stage;
     CUdeviceptr sinks, attention, low, final_output, envelope_output;
     CUdeviceptr mhc_mix, mhc_scale, mhc_base, mhc_post, mhc_combination;
     attn_rolling_run rolling[ROLL_COUNT];
@@ -135,6 +135,16 @@ static int attn_account_d2d(attn_run *run, size_t bytes, const char *stage) {
                          ULLONG_MAX, bytes, YVEX_ERR_BOUNDS,
                          "CUDA attention D2D accounting overflowed");
 }
+static int attn_device_copy(attn_run *run, CUdeviceptr target, CUdeviceptr source,
+                            size_t bytes, const char *stage) {
+    CUstream stream = yvex_cuda_launch_stream(run->backend);
+    CUresult copied = stream && run->state->driver.cuMemcpyDtoDAsync_v2
+                          ? run->state->driver.cuMemcpyDtoDAsync_v2(target, source, bytes, stream)
+                          : !stream ? run->state->driver.cuMemcpyDtoD_v2(target, source, bytes)
+                                    : (CUresult)1;
+    int rc = yvex_cuda_status(&run->state->driver, copied, stage, run->err);
+    return rc == YVEX_OK ? attn_account_d2d(run, bytes, stage) : rc;
+}
 static int attn_cancel(attn_run *run, const char *stage, int device_work_pending) {
     return run->ops->cancel(
         run->backend, run->job, stage, device_work_pending,
@@ -157,8 +167,7 @@ static int attn_transfer_add(attn_run *run, CUdeviceptr *device, void *output,
             "CUDA attention output span is absent, invalid, or undersized");
     transfer = &run->transfers[run->transfer_count++];
     *transfer = (attn_transfer){device, output, NULL, capacity, output_capacity, used, width, stage};
-    return run->ops->account_transfer(
-        capacity, width, &run->d2h_bytes, stage, run->failure, run->err);
+    return YVEX_OK;
 }
 typedef enum { SPAN_FLOAT = 0, SPAN_U64 } attn_span_kind;
 typedef struct {
@@ -204,21 +213,7 @@ static const attn_transfer_spec attn_transfers[] = {
 #undef T
 static int attn_transfer_plan(attn_run *run) {
     size_t index;
-    int rc;
-    rc = run->ops->account_transfer(
-        1ull, sizeof(int), &run->d2h_bytes,
-        "cuda.attention.copy.status", run->failure, run->err);
-    if (rc == YVEX_OK && run->job->attention_class == YVEX_BACKEND_ATTENTION_CSA)
-        rc = run->ops->account_transfer(
-            run->job->token_count, sizeof(unsigned long long),
-            &run->d2h_bytes, "cuda.attention.copy.counts",
-            run->failure, run->err);
-    if (rc == YVEX_OK && run->job->attention_class == YVEX_BACKEND_ATTENTION_CSA)
-        rc = run->ops->account_transfer(
-            run->job->token_count, sizeof(unsigned long long),
-            &run->d2h_bytes, "cuda.attention.copy.counts",
-            run->failure, run->err);
-    if (rc != YVEX_OK) return rc;
+    int rc = YVEX_OK;
     for (index = 0u; index < sizeof(attn_transfers) /
                                   sizeof(attn_transfers[0]); ++index) {
         const attn_transfer_spec *spec = &attn_transfers[index];
@@ -613,17 +608,7 @@ static int attn_alloc_values(attn_run *run, CUdeviceptr *target,
                             run->failure, run->err);
     if (rc != YVEX_OK || run->resources.prepare_only || !device_source)
         return rc;
-    {
-        CUstream stream = yvex_cuda_launch_stream(run->backend);
-        CUresult copy = stream && run->state->driver.cuMemcpyDtoDAsync_v2
-                            ? run->state->driver.cuMemcpyDtoDAsync_v2(
-                                  *target, device_source, bytes, stream)
-                            : !stream
-                                  ? run->state->driver.cuMemcpyDtoD_v2(*target, device_source, bytes)
-                                  : (CUresult)1;
-        rc = yvex_cuda_status(&run->state->driver, copy, stage, run->err);
-        return rc == YVEX_OK ? attn_account_d2d(run, bytes, stage) : rc;
-    }
+    return attn_device_copy(run, *target, device_source, bytes, stage);
 }
 typedef struct {
     size_t target_offset;
@@ -1514,35 +1499,43 @@ static int attn_initializers_enqueue(attn_run *run) {
     return YVEX_OK;
 }
 static int attn_downloads_enqueue(attn_run *run) {
-    size_t i;
-    int rc = run->ops->download(
-        &run->resources, run->staged_status, run->device_status,
-        sizeof(*run->staged_status), "cuda.attention.copy.status",
-        run->failure, run->err);
-    if (rc == YVEX_OK && run->job->attention_class == YVEX_BACKEND_ATTENTION_CSA)
-        rc = run->ops->download(
-            &run->resources, run->staged_selected_count, run->phase_selected_count,
-            (size_t)run->job->token_count * sizeof(*run->staged_selected_count),
-            "cuda.attention.copy.selected_count", run->failure,
-            run->err);
-    if (rc == YVEX_OK && run->job->attention_class == YVEX_BACKEND_ATTENTION_CSA)
-        rc = run->ops->download(
-            &run->resources, run->staged_candidate_count, run->phase_valid_count,
-            (size_t)run->job->token_count * sizeof(*run->staged_candidate_count),
-            "cuda.attention.copy.valid_count", run->failure, run->err);
-    for (i = 0u; rc == YVEX_OK && i < run->transfer_count; ++i) {
-        attn_transfer *transfer = &run->transfers[i];
-        size_t bytes;
-        if (!yvex_cuda_work_checked_bytes(
-                transfer->capacity, transfer->width, &bytes))
-            return attn_run_fail(
-                run, YVEX_BACKEND_ATTENTION_FAILURE_COPY, transfer->stage,
-                transfer->capacity, 0ull, YVEX_ERR_BOUNDS,
-                "CUDA attention output staging extent overflowed");
-        rc = run->ops->download(
-            &run->resources, transfer->staged, *transfer->device, bytes,
-            transfer->stage, run->failure, run->err);
+    attn_transfer spans[YVEX_CUDA_ATTN_TRANSFERS + 3u] = {
+        {&run->device_status, run->staged_status, NULL, 1ull, 1ull, NULL,
+         sizeof(*run->staged_status), "cuda.attention.copy.status"}};
+    size_t count = 1u, i;
+    int rc = run->ops->allocate(
+        &run->resources, &run->download_stage, run->download_stage_bytes,
+        NULL, 1, "cuda.attention.copy.packed.allocate", run->failure, run->err);
+    if (run->job->attention_class == YVEX_BACKEND_ATTENTION_CSA) {
+        spans[count++] = (attn_transfer){&run->phase_selected_count, run->staged_selected_count,
+            NULL, run->job->token_count, run->job->token_count, NULL,
+            sizeof(*run->staged_selected_count), "cuda.attention.copy.selected_count"};
+        spans[count++] = (attn_transfer){&run->phase_valid_count, run->staged_candidate_count,
+            NULL, run->job->token_count, run->job->token_count, NULL,
+            sizeof(*run->staged_candidate_count), "cuda.attention.copy.valid_count"};
     }
+    for (i = 0u; i < run->transfer_count; ++i)
+        spans[count++] = run->transfers[i];
+    for (i = 0u; rc == YVEX_OK && i < count; ++i) {
+        attn_transfer *span = &spans[i];
+        const unsigned char *host = span->staged ? span->staged : span->output;
+        size_t bytes, offset = (size_t)(host - run->host_stage);
+        if (!yvex_cuda_work_checked_bytes(span->capacity, span->width, &bytes))
+            return attn_run_fail(run, YVEX_BACKEND_ATTENTION_FAILURE_COPY, span->stage,
+                                 span->capacity, 0ull, YVEX_ERR_BOUNDS,
+                                 "CUDA attention output staging extent overflowed");
+        if (offset > run->download_stage_bytes ||
+            bytes > run->download_stage_bytes - offset)
+            return attn_run_fail(run, YVEX_BACKEND_ATTENTION_FAILURE_COPY, span->stage,
+                                 run->download_stage_bytes, offset, YVEX_ERR_BOUNDS,
+                                 "CUDA attention packed publication layout drifted");
+        rc = attn_device_copy(run, run->download_stage + offset, *span->device,
+                              bytes, "cuda.attention.copy.packed.stage");
+    }
+    if (rc == YVEX_OK)
+        rc = run->ops->download(&run->resources, run->host_stage, run->download_stage,
+                                run->download_stage_bytes, "cuda.attention.copy.packed",
+                                run->failure, run->err);
     return rc;
 }
 static int attn_graph_enqueue(void *opaque, int enqueue_kernels, yvex_error *err) {
@@ -1825,7 +1818,8 @@ static int attn_stage_layout(attn_run *run, unsigned char *base, size_t *total) 
     return run->ops->stage_layout(
         base, run->uploads, run->upload_count, run->transfers,
         run->transfer_count, csa_tokens, &run->staged_status,
-        &run->staged_selected_count, &run->staged_candidate_count, total);
+        &run->staged_selected_count, &run->staged_candidate_count, total,
+        &run->download_stage_bytes);
 }
 static int attn_stage_allocate(attn_run *run) {
     const char *injected = getenv("YVEX_TEST_CUDA_ATTENTION_FAILURE");
@@ -1837,8 +1831,10 @@ static int attn_stage_allocate(attn_run *run) {
         run->failure, run->err);
     if (rc != YVEX_OK) return rc;
     if (attn_stage_layout(run, run->host_stage, &actual) &&
-        actual == run->host_stage_bytes)
+        actual == run->host_stage_bytes && run->download_stage_bytes) {
+        run->d2h_bytes = run->download_stage_bytes;
         return YVEX_OK;
+    }
     return attn_run_fail(
         run, YVEX_BACKEND_ATTENTION_FAILURE_ALLOCATION,
         "cuda.attention.host_stage.layout", run->host_stage_bytes,

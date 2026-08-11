@@ -74,11 +74,7 @@ static int attention_account_transfer(
     *total = next;
     return YVEX_OK;
 }
-/*
- * Acquire one bounded CUDA attention work range.
- *
- * Generic transaction resource; no family-specific geometry.
- */
+/* Acquire one bounded, family-neutral attention transaction range. */
 static int attention_allocate(yvex_cuda_work *work,
                                  CUdeviceptr *out,
                                  size_t bytes,
@@ -189,11 +185,7 @@ static int attention_download(yvex_cuda_work *work, void *target,
         failure, YVEX_BACKEND_ATTENTION_FAILURE_COPY, stage, bytes, 0ull, err,
         (yvex_status)rc, "CUDA attention staged output copy failed");
 }
-/*
- * Launch one admitted generic attention kernel.
- *
- * Launch only; family transaction owns synchronization and publication.
- */
+/* Launch only; the family transaction retains synchronization and publication. */
 static int attention_launch(yvex_cuda_work *work,
                                CUfunction function,
                                unsigned int grid,
@@ -822,15 +814,12 @@ static int attention_stage_layout(
     unsigned char *base, yvex_cuda_attention_upload *uploads, size_t upload_count,
     yvex_cuda_attention_transfer *transfers, size_t transfer_count,
     unsigned long long csa_tokens, int **status, unsigned long long **selected,
-    unsigned long long **candidates, size_t *total)
+    unsigned long long **candidates, size_t *total, size_t *download_total)
 {
     size_t cursor = 0u, i;
-    if (!uploads || !transfers || !status || !selected || !candidates || !total)
+    if (!uploads || !transfers || !status || !selected || !candidates || !total ||
+        !download_total)
         return 0;
-    for (i = 0u; i < upload_count; ++i)
-        if (!attention_stage_range(base, &cursor, uploads[i].count,
-                                   uploads[i].width, &uploads[i].staged))
-            return 0;
     if (!attention_stage_range(base, &cursor, 1ull, sizeof(int), (void **)status) ||
         !attention_stage_range(base, &cursor, csa_tokens, sizeof(**selected),
                                (void **)selected) ||
@@ -840,6 +829,11 @@ static int attention_stage_layout(
     for (i = 0u; i < transfer_count; ++i)
         if (!attention_stage_range(base, &cursor, transfers[i].capacity,
                                    transfers[i].width, &transfers[i].staged))
+            return 0;
+    *download_total = cursor;
+    for (i = 0u; i < upload_count; ++i)
+        if (!attention_stage_range(base, &cursor, uploads[i].count,
+                                   uploads[i].width, &uploads[i].staged))
             return 0;
     *total = cursor;
     return 1;
@@ -1207,6 +1201,8 @@ int yvex_backend_attention_workspace_required_from_recipe(
             goto overflow;
         if (!yvex_core_u64_mul(count, scale, &count) ||
             !yvex_core_u64_mul(count, component->element_width, &bytes) ||
+            (component->lifetime != YVEX_ATTENTION_WORKSPACE_GRAPH_STABLE &&
+             !yvex_core_u64_add(bytes, bytes, &bytes)) ||
             cursor > ULLONG_MAX - mask) goto overflow;
         aligned = (cursor + mask) & ~mask;
         if (aligned > ULLONG_MAX - bytes) goto overflow;
