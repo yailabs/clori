@@ -491,6 +491,32 @@ static int injected_state_restore(
     return YVEX_ERR_UNSUPPORTED;
 }
 
+static int injected_state_prefix_capture(
+    void *context, unsigned long long maximum_bytes,
+    yvex_attention_state_prefix **prefix, yvex_attention_failure *failure,
+    yvex_error *err)
+{
+    (void)context;
+    (void)maximum_bytes;
+    (void)failure;
+    if (prefix) *prefix = NULL;
+    yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "test.state.prefix",
+                   "injected provider does not share prefixes");
+    return YVEX_ERR_UNSUPPORTED;
+}
+
+static int injected_state_prefix_attach(
+    void *context, const yvex_attention_state_prefix *prefix,
+    yvex_attention_failure *failure, yvex_error *err)
+{
+    (void)context;
+    (void)prefix;
+    (void)failure;
+    yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "test.state.prefix",
+                   "injected provider does not attach prefixes");
+    return YVEX_ERR_UNSUPPORTED;
+}
+
 static int injected_state_release(void **context, yvex_error *err)
 {
     injected_state *state = context ? (injected_state *)*context : NULL;
@@ -530,7 +556,7 @@ static int injected_state_factory_open(
     control->active = state;
     control->opens++;
     *out = (yvex_attention_state_provider){
-        .schema_version = YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V7,
+        .schema_version = YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V8,
         .context = state,
         .configure_pages = injected_state_configure_pages,
         .prepare = injected_state_prepare,
@@ -549,6 +575,8 @@ static int injected_state_factory_open(
         .abort = injected_state_abort,
         .reset = injected_state_reset,
         .restore = injected_state_restore,
+        .prefix_capture = injected_state_prefix_capture,
+        .prefix_attach = injected_state_prefix_attach,
         .invalidate = injected_state_invalidate,
         .release = injected_state_release};
     if (control->malformed_success) {

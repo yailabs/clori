@@ -11,12 +11,29 @@
 #include "src/graph/private.h"
 
 #include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <unistd.h>
+
+#ifndef MFD_CLOEXEC
+#define MFD_CLOEXEC 0x0001u
+#endif
+#ifndef MFD_ALLOW_SEALING
+#define MFD_ALLOW_SEALING 0x0002u
+#endif
+#ifndef F_ADD_SEALS
+#define F_ADD_SEALS 1033
+#define F_SEAL_SEAL 0x0001
+#define F_SEAL_SHRINK 0x0002
+#define F_SEAL_GROW 0x0004
+#define F_SEAL_WRITE 0x0008
+#endif
 
 struct yvex_graph_state_page_pool {
     pthread_mutex_t mutex;
@@ -26,17 +43,44 @@ struct yvex_graph_state_page_pool {
     int mutex_ready;
 };
 
+typedef struct state_shared_backing {
+    atomic_ullong references;
+    int fd;
+    unsigned char *committed, *system_committed;
+    unsigned long long element_count, element_width, page_elements;
+    unsigned long long mapped_bytes, requested_bytes, page_count;
+    unsigned long long system_page_bytes;
+    unsigned long long committed_bytes, system_page_count;
+    unsigned long long system_committed_bytes, resident_bytes;
+    unsigned long long resident_pages, resident_system_pages;
+    char identity[YVEX_SHA256_HEX_CAP];
+} state_shared_backing;
+
 struct yvex_graph_state_page_store {
     yvex_graph_state_page_pool *pool;
+    state_shared_backing *shared;
     void *address;
     unsigned char *committed, *system_committed;
+    unsigned char *private_committed, *private_system_committed;
     unsigned long long element_count, element_width, page_elements;
     unsigned long long requested_bytes, mapped_bytes, page_count;
     unsigned long long committed_bytes, system_page_count;
     unsigned long long system_committed_bytes, resident_system_pages;
+    unsigned long long private_committed_bytes, private_system_committed_bytes;
     unsigned long long metadata_charge, resident_bytes, resident_pages;
     unsigned long long system_page_bytes;
     int paged;
+};
+
+struct yvex_graph_state_bank_prefix {
+    yvex_attention_state_recipe recipe;
+    yvex_attention_history_view view;
+    unsigned long long starts[YVEX_ATTENTION_STATE_BINDING_COUNT];
+    state_shared_backing *values[YVEX_ATTENTION_STATE_BINDING_COUNT];
+    state_shared_backing *positions[YVEX_ATTENTION_STATE_BINDING_COUNT];
+    state_shared_backing *auxiliary[YVEX_ATTENTION_STATE_BINDING_COUNT];
+    unsigned long long shared_bytes, mapped_bytes;
+    char identity[YVEX_SHA256_HEX_CAP];
 };
 
 static int pages_reject(yvex_error *err, yvex_status status, const char *reason)
@@ -252,13 +296,17 @@ static int pages_store_open(
         return pages_reject(err, YVEX_ERR_BOUNDS,
                             "state page-store geometry overflowed");
     }
+    store->system_page_count =
+        store->mapped_bytes / store->system_page_bytes;
     if (paged) {
         bitmap_bytes = (store->page_count + 7ull) / 8ull;
-        store->system_page_count =
-            store->mapped_bytes / store->system_page_bytes;
         system_bitmap_bytes = (store->system_page_count + 7ull) / 8ull;
         store->committed = (unsigned char *)calloc((size_t)bitmap_bytes, 1u);
         store->system_committed =
+            (unsigned char *)calloc((size_t)system_bitmap_bytes, 1u);
+        store->private_committed =
+            (unsigned char *)calloc((size_t)bitmap_bytes, 1u);
+        store->private_system_committed =
             (unsigned char *)calloc((size_t)system_bitmap_bytes, 1u);
 #ifdef MAP_NORESERVE
         flags |= MAP_NORESERVE;
@@ -266,29 +314,42 @@ static int pages_store_open(
         store->address = mmap(NULL, (size_t)store->mapped_bytes, PROT_NONE,
                               flags, -1, 0);
         if (!store->committed || !store->system_committed ||
+            !store->private_committed || !store->private_system_committed ||
             store->address == MAP_FAILED) {
             if (store->address != MAP_FAILED && store->address)
                 (void)munmap(store->address, (size_t)store->mapped_bytes);
             free(store->committed);
             free(store->system_committed);
+            free(store->private_committed);
+            free(store->private_system_committed);
             free(store);
             return pages_reject(err, YVEX_ERR_NOMEM,
                                 "state virtual page reservation failed");
         }
         store->committed_bytes = bitmap_bytes;
         store->system_committed_bytes = system_bitmap_bytes;
+        store->private_committed_bytes = bitmap_bytes;
+        store->private_system_committed_bytes = system_bitmap_bytes;
         if (!pages_add(bitmap_bytes, system_bitmap_bytes,
+                       &store->metadata_charge) ||
+            !pages_add(store->metadata_charge, bitmap_bytes,
+                       &store->metadata_charge) ||
+            !pages_add(store->metadata_charge, system_bitmap_bytes,
                        &store->metadata_charge)) {
             (void)munmap(store->address, (size_t)store->mapped_bytes);
             free(store->committed);
             free(store->system_committed);
+            free(store->private_committed);
+            free(store->private_system_committed);
             free(store);
             return pages_reject(err, YVEX_ERR_BOUNDS,
                                 "state page metadata extent overflowed");
         }
     } else {
-        store->address = calloc(1u, (size_t)store->requested_bytes);
-        if (!store->address) {
+        store->address = mmap(NULL, (size_t)store->mapped_bytes,
+                              PROT_READ | PROT_WRITE, flags, -1, 0);
+        if (store->address == MAP_FAILED) {
+            store->address = NULL;
             free(store);
             return pages_reject(err, YVEX_ERR_NOMEM,
                                 "reference state storage allocation failed");
@@ -299,12 +360,11 @@ static int pages_store_open(
     rc = pages_store_register(store, store->metadata_charge,
                               store->resident_bytes, err);
     if (rc != YVEX_OK) {
-        if (store->paged)
-            (void)munmap(store->address, (size_t)store->mapped_bytes);
-        else
-            free(store->address);
+        (void)munmap(store->address, (size_t)store->mapped_bytes);
         free(store->committed);
         free(store->system_committed);
+        free(store->private_committed);
+        free(store->private_system_committed);
         free(store);
         return rc;
     }
@@ -326,13 +386,271 @@ static void pages_bit_set(unsigned char *bitmap,
     bitmap[page / 8ull] |= (unsigned char)(1u << (page % 8ull));
 }
 
+static unsigned long long pages_bit_count(const unsigned char *bitmap,
+                                          unsigned long long count)
+{
+    unsigned long long index, total = 0ull;
+    if (!bitmap) return 0ull;
+    for (index = 0ull; index < count; ++index)
+        total += (unsigned long long)pages_bit_get(bitmap, index);
+    return total;
+}
+
+static void pages_bits_fill(unsigned char *bitmap, unsigned long long count)
+{
+    unsigned long long index;
+    for (index = 0ull; index < count; ++index) pages_bit_set(bitmap, index);
+}
+
+static void pages_shared_retain(state_shared_backing *backing)
+{
+    if (backing)
+        (void)atomic_fetch_add_explicit(
+            &backing->references, 1ull, memory_order_relaxed);
+}
+
+static void pages_shared_release(state_shared_backing **owner)
+{
+    state_shared_backing *backing = owner ? *owner : NULL;
+    if (!backing) return;
+    *owner = NULL;
+    if (atomic_fetch_sub_explicit(
+            &backing->references, 1ull, memory_order_acq_rel) != 1ull)
+        return;
+    if (backing->fd >= 0) (void)close(backing->fd);
+    free(backing->committed);
+    free(backing->system_committed);
+    memset(backing, 0, sizeof(*backing));
+    free(backing);
+}
+
+static int pages_pwrite_exact(int fd, const unsigned char *bytes,
+                              size_t count, off_t offset)
+{
+    size_t written = 0u;
+    while (written < count) {
+        ssize_t result = pwrite(fd, bytes + written, count - written,
+                                offset + (off_t)written);
+        if (result < 0 && errno == EINTR) continue;
+        if (result <= 0) return 0;
+        written += (size_t)result;
+    }
+    return 1;
+}
+
+static int pages_shared_identity(state_shared_backing *backing,
+                                 const yvex_graph_state_page_store *store)
+{
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    unsigned long long page;
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.graph.state.shared-backing.v1") ||
+        !yvex_sha256_update_u64(&hash, store->element_count) ||
+        !yvex_sha256_update_u64(&hash, store->element_width) ||
+        !yvex_sha256_update_u64(&hash, store->page_elements) ||
+        !yvex_sha256_update_u64(&hash, store->system_page_bytes) ||
+        !yvex_sha256_update_u64(&hash, store->requested_bytes) ||
+        !yvex_sha256_update_u64(&hash, store->mapped_bytes) ||
+        !yvex_sha256_update_u64(&hash, backing->resident_system_pages) ||
+        !yvex_sha256_update(
+            &hash, backing->system_committed,
+            (size_t)backing->system_committed_bytes))
+        return 0;
+    for (page = 0ull; page < backing->system_page_count; ++page) {
+        const unsigned char *bytes;
+        if (!pages_bit_get(backing->system_committed, page)) continue;
+        bytes = (const unsigned char *)store->address +
+                (size_t)(page * store->system_page_bytes);
+        if (!yvex_sha256_update_u64(&hash, page) ||
+            !yvex_sha256_update(&hash, bytes,
+                                (size_t)store->system_page_bytes))
+            return 0;
+    }
+    if (!yvex_sha256_final(&hash, digest)) return 0;
+    yvex_sha256_hex(digest, backing->identity);
+    return 1;
+}
+
+static int pages_shared_open(const yvex_graph_state_page_store *store,
+                             state_shared_backing **out, yvex_error *err)
+{
+    state_shared_backing *backing = NULL;
+    unsigned long long page;
+    int fd = -1;
+    if (out) *out = NULL;
+    if (!store || !out || !store->address || !store->mapped_bytes)
+        return pages_reject(err, YVEX_ERR_INVALID_ARG,
+                            "state prefix backing source is invalid");
+    backing = calloc(1u, sizeof(*backing));
+    if (!backing) goto nomem;
+    backing->fd = -1;
+    backing->element_count = store->element_count;
+    backing->element_width = store->element_width;
+    backing->page_elements = store->page_elements;
+    backing->mapped_bytes = store->mapped_bytes;
+    backing->requested_bytes = store->requested_bytes;
+    backing->page_count = store->page_count;
+    backing->system_page_bytes = store->system_page_bytes;
+    backing->system_page_count = store->mapped_bytes / store->system_page_bytes;
+    backing->committed_bytes = (backing->page_count + 7ull) / 8ull;
+    backing->system_committed_bytes =
+        (backing->system_page_count + 7ull) / 8ull;
+    backing->committed = calloc((size_t)backing->committed_bytes, 1u);
+    backing->system_committed =
+        calloc((size_t)backing->system_committed_bytes, 1u);
+    if (!backing->committed || !backing->system_committed) goto nomem;
+    if (store->paged) {
+        memcpy(backing->committed, store->committed,
+               (size_t)backing->committed_bytes);
+        memcpy(backing->system_committed, store->system_committed,
+               (size_t)backing->system_committed_bytes);
+    } else {
+        pages_bits_fill(backing->committed, backing->page_count);
+        pages_bits_fill(backing->system_committed,
+                        backing->system_page_count);
+    }
+    backing->resident_pages =
+        pages_bit_count(backing->committed, backing->page_count);
+    backing->resident_system_pages =
+        pages_bit_count(backing->system_committed,
+                        backing->system_page_count);
+    if (!yvex_core_u64_mul(backing->resident_system_pages,
+                           store->system_page_bytes,
+                           &backing->resident_bytes))
+        goto overflow;
+    fd = memfd_create("yvex-state-prefix", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+    if (fd < 0 || ftruncate(fd, (off_t)backing->mapped_bytes) != 0)
+        goto io;
+    for (page = 0ull; page < backing->system_page_count; ++page) {
+        const unsigned char *bytes;
+        if (!pages_bit_get(backing->system_committed, page)) continue;
+        bytes = (const unsigned char *)store->address +
+                (size_t)(page * store->system_page_bytes);
+        if (!pages_pwrite_exact(fd, bytes, (size_t)store->system_page_bytes,
+                                (off_t)(page * store->system_page_bytes)))
+            goto io;
+    }
+    backing->fd = fd;
+    fd = -1;
+    if (!pages_shared_identity(backing, store) ||
+        fcntl(backing->fd, F_ADD_SEALS,
+              F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE | F_SEAL_SEAL) != 0)
+        goto io;
+    atomic_init(&backing->references, 1ull);
+    *out = backing;
+    yvex_error_clear(err);
+    return YVEX_OK;
+nomem:
+    pages_reject(err, YVEX_ERR_NOMEM,
+                 "state prefix backing allocation failed");
+    goto failed;
+overflow:
+    pages_reject(err, YVEX_ERR_BOUNDS,
+                 "state prefix backing byte extent overflowed");
+    goto failed;
+io:
+    pages_reject(err, YVEX_ERR_IO,
+                 "immutable state prefix backing creation failed");
+failed:
+    if (fd >= 0) (void)close(fd);
+    if (backing) {
+        if (backing->fd >= 0) (void)close(backing->fd);
+        free(backing->committed);
+        free(backing->system_committed);
+        free(backing);
+    }
+    return (int)yvex_error_code(err);
+}
+
+static int pages_store_install_shared(yvex_graph_state_page_store *store,
+                                      state_shared_backing *backing,
+                                      yvex_error *err)
+{
+    unsigned long long committed_bytes, system_bytes, page;
+    unsigned long long releases;
+    void *mapping = MAP_FAILED;
+    int rc;
+    if (!store || !backing || !store->paged || !store->committed ||
+        !store->system_committed || !store->private_committed ||
+        !store->private_system_committed ||
+        backing->element_count != store->element_count ||
+        backing->element_width != store->element_width ||
+        backing->page_elements != store->page_elements ||
+        backing->mapped_bytes != store->mapped_bytes ||
+        backing->requested_bytes != store->requested_bytes ||
+        backing->page_count != store->page_count ||
+        backing->system_page_bytes != store->system_page_bytes)
+        return pages_reject(err, YVEX_ERR_FORMAT,
+                            "state prefix backing geometry is incompatible");
+    committed_bytes = (store->page_count + 7ull) / 8ull;
+    system_bytes = (store->system_page_count + 7ull) / 8ull;
+    mapping = mmap(NULL, (size_t)store->mapped_bytes, PROT_NONE,
+                   MAP_PRIVATE, backing->fd, 0);
+    if (mapping == MAP_FAILED) {
+        pages_reject(err, YVEX_ERR_NOMEM,
+                     "state prefix mapping installation failed");
+        goto failed;
+    }
+    for (page = 0ull; page < backing->system_page_count; ++page)
+        if (pages_bit_get(backing->system_committed, page) &&
+            mprotect((unsigned char *)mapping +
+                         (size_t)(page * store->system_page_bytes),
+                     (size_t)store->system_page_bytes, PROT_READ) != 0) {
+            pages_reject(err, YVEX_ERR_NOMEM,
+                         "state prefix page protection failed");
+            goto failed;
+        }
+    rc = pages_lock(store->pool, err);
+    if (rc != YVEX_OK) goto failed;
+    releases = store->pool->page_release_count;
+    if (!pages_add(releases, store->resident_pages, &releases) ||
+        store->pool->resident_bytes < store->resident_bytes ||
+        store->pool->resident_page_count < store->resident_pages) {
+        (void)pthread_mutex_unlock(&store->pool->mutex);
+        pages_reject(err, YVEX_ERR_BOUNDS,
+                     "state prefix release accounting overflowed");
+        goto failed;
+    }
+    if (mremap(mapping, (size_t)store->mapped_bytes,
+               (size_t)store->mapped_bytes,
+               MREMAP_MAYMOVE | MREMAP_FIXED, store->address) == MAP_FAILED) {
+        (void)pthread_mutex_unlock(&store->pool->mutex);
+        pages_reject(err, YVEX_ERR_NOMEM,
+                     "state prefix mapping replacement failed");
+        goto failed;
+    }
+    mapping = MAP_FAILED;
+    store->pool->resident_bytes -= store->resident_bytes;
+    store->pool->resident_page_count -= store->resident_pages;
+    store->pool->page_release_count = releases;
+    (void)pthread_mutex_unlock(&store->pool->mutex);
+    memcpy(store->committed, backing->committed, (size_t)committed_bytes);
+    memcpy(store->system_committed, backing->system_committed,
+           (size_t)system_bytes);
+    memset(store->private_committed, 0, (size_t)committed_bytes);
+    memset(store->private_system_committed, 0, (size_t)system_bytes);
+    pages_shared_retain(backing);
+    pages_shared_release(&store->shared);
+    store->shared = backing;
+    store->resident_bytes = store->resident_pages =
+        store->resident_system_pages = 0ull;
+    yvex_error_clear(err);
+    return YVEX_OK;
+failed:
+    if (mapping != MAP_FAILED)
+        (void)munmap(mapping, (size_t)store->mapped_bytes);
+    return (int)yvex_error_code(err);
+}
+
 static int pages_store_touch(
     yvex_graph_state_page_store *store, unsigned long long element_start,
     unsigned long long element_count, yvex_error *err)
 {
     yvex_graph_state_page_pool *pool;
-    unsigned long long end, first, last, page, new_pages = 0ull;
+    unsigned long long end, first, last, page, new_pages = 0ull, cow_pages = 0ull;
     unsigned long long system_first, system_last, new_system_pages = 0ull;
+    unsigned long long cow_system_pages = 0ull;
     unsigned long long additional;
     unsigned long long byte_start, byte_end, protect_start, protect_end;
     unsigned long long pool_resident_next, pool_pages_next, commits_next;
@@ -344,7 +662,7 @@ static int pages_store_touch(
         end > store->element_count)
         return pages_reject(err, YVEX_ERR_BOUNDS,
                             "state page touch exceeds its virtual extent");
-    if (!store->paged) {
+    if (!store->paged && !store->shared) {
         yvex_error_clear(err);
         return YVEX_OK;
     }
@@ -374,6 +692,12 @@ static int pages_store_touch(
                 rc = pages_reject(err, YVEX_ERR_BOUNDS,
                                   "state page commitment accounting overflowed");
                 goto done;
+        } else if (store->shared && pages_bit_get(store->committed, page) &&
+                   !pages_bit_get(store->private_committed, page) &&
+                   !pages_add(cow_pages, 1ull, &cow_pages)) {
+            rc = pages_reject(err, YVEX_ERR_BOUNDS,
+                              "state page COW accounting overflowed");
+            goto done;
         }
         if (page == last) break;
     }
@@ -383,10 +707,18 @@ static int pages_store_touch(
             rc = pages_reject(err, YVEX_ERR_BOUNDS,
                               "host page commitment accounting overflowed");
             goto done;
+        } else if (store->shared &&
+                   pages_bit_get(store->system_committed, page) &&
+                   !pages_bit_get(store->private_system_committed, page) &&
+                   !pages_add(cow_system_pages, 1ull, &cow_system_pages)) {
+            rc = pages_reject(err, YVEX_ERR_BOUNDS,
+                              "host page COW accounting overflowed");
+            goto done;
         }
         if (page == system_last) break;
     }
-    if (!yvex_core_u64_mul(new_system_pages, store->system_page_bytes,
+    if (!pages_add(new_system_pages, cow_system_pages, &additional) ||
+        !yvex_core_u64_mul(additional, store->system_page_bytes,
                            &additional)) {
         rc = pages_reject(err, YVEX_ERR_BOUNDS,
                           "host page commitment byte extent overflowed");
@@ -394,11 +726,13 @@ static int pages_store_touch(
     }
     if (!pages_pool_admit_locked(pool, 0ull, additional) ||
         !pages_add(pool->resident_bytes, additional, &pool_resident_next) ||
-        !pages_add(pool->resident_page_count, new_pages, &pool_pages_next) ||
-        !pages_add(pool->page_commit_count, new_pages, &commits_next) ||
+        !pages_add(new_pages, cow_pages, &page) ||
+        !pages_add(pool->resident_page_count, page, &pool_pages_next) ||
+        !pages_add(pool->page_commit_count, page, &commits_next) ||
         !pages_add(store->resident_bytes, additional, &store_resident_next) ||
-        !pages_add(store->resident_pages, new_pages, &store_pages_next) ||
-        !pages_add(store->resident_system_pages, new_system_pages,
+        !pages_add(store->resident_pages, page, &store_pages_next) ||
+        !pages_add(new_system_pages, cow_system_pages, &page) ||
+        !pages_add(store->resident_system_pages, page,
                    &system_pages_next)) {
         rc = pages_reject(err, YVEX_ERR_BOUNDS,
                           "state page commitment exceeds its budget or counters");
@@ -418,12 +752,21 @@ static int pages_store_touch(
                 (volatile unsigned char *)store->address +
                 (size_t)(page * store->system_page_bytes);
             *byte = 0u;
+        } else if (store->shared &&
+                   !pages_bit_get(store->private_system_committed, page)) {
+            volatile unsigned char *byte =
+                (volatile unsigned char *)store->address +
+                (size_t)(page * store->system_page_bytes);
+            unsigned char value = *byte;
+            *byte = value;
         }
+        if (store->shared) pages_bit_set(store->private_system_committed, page);
         if (page == system_last) break;
     }
     for (page = first;; ++page) {
         if (!pages_bit_get(store->committed, page))
             pages_bit_set(store->committed, page);
+        if (store->shared) pages_bit_set(store->private_committed, page);
         if (page == last) break;
     }
     for (page = system_first;; ++page) {
@@ -444,17 +787,41 @@ done:
     return rc;
 }
 
+static int pages_store_replace_anonymous(yvex_graph_state_page_store *store,
+                                         int protection, yvex_error *err)
+{
+    int flags = MAP_PRIVATE | MAP_ANONYMOUS;
+    void *mapping;
+
+#ifdef MAP_NORESERVE
+    if (protection == PROT_NONE) flags |= MAP_NORESERVE;
+#endif
+    mapping = mmap(NULL, (size_t)store->mapped_bytes, protection, flags, -1, 0);
+    if (mapping == MAP_FAILED ||
+        mremap(mapping, (size_t)store->mapped_bytes,
+               (size_t)store->mapped_bytes,
+               MREMAP_MAYMOVE | MREMAP_FIXED, store->address) == MAP_FAILED) {
+        if (mapping != MAP_FAILED)
+            (void)munmap(mapping, (size_t)store->mapped_bytes);
+        return pages_reject(err, YVEX_ERR_NOMEM,
+                            "state anonymous mapping replacement failed");
+    }
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
 static int pages_store_reset(yvex_graph_state_page_store *store,
                              yvex_error *err)
 {
     yvex_graph_state_page_pool *pool;
-    unsigned long long releases_next;
+    unsigned long long base_resident, target_resident, target_pages;
+    unsigned long long next_resident, next_pages, releases_next;
     int rc;
 
     if (!store)
         return pages_reject(err, YVEX_ERR_INVALID_ARG,
                             "state page store is required");
-    if (!store->paged) {
+    if (!store->paged && !store->shared) {
         memset(store->address, 0, (size_t)store->requested_bytes);
         yvex_error_clear(err);
         return YVEX_OK;
@@ -462,29 +829,57 @@ static int pages_store_reset(yvex_graph_state_page_store *store,
     pool = store->pool;
     rc = pages_lock(pool, err);
     if (rc != YVEX_OK) return rc;
-    if (!pages_add(pool->page_release_count, store->resident_pages,
-                   &releases_next)) {
+    target_resident = store->paged ? 0ull : store->requested_bytes;
+    target_pages = store->paged ? 0ull : store->page_count;
+    if (pool->resident_bytes < store->resident_bytes ||
+        pool->resident_page_count < store->resident_pages) {
+        rc = pages_reject(err, YVEX_ERR_STATE,
+                          "state page reset accounting is inconsistent");
+    } else if (!pages_add(pool->page_release_count, store->resident_pages,
+                          &releases_next) ||
+               !pages_add(pool->resident_bytes - store->resident_bytes,
+                          target_resident, &next_resident) ||
+               !pages_add(pool->resident_page_count - store->resident_pages,
+                          target_pages, &next_pages)) {
         rc = pages_reject(err, YVEX_ERR_BOUNDS,
                           "state page release counter overflowed");
-    } else if (madvise(store->address, (size_t)store->mapped_bytes,
-                MADV_DONTNEED) != 0 ||
-        mprotect(store->address, (size_t)store->mapped_bytes, PROT_NONE) != 0) {
-        rc = pages_reject(err, YVEX_ERR_STATE,
-                          "state page release failed");
+    } else if ((pool->maximum_bytes &&
+                (pool->metadata_bytes > pool->maximum_bytes ||
+                 next_resident > pool->maximum_bytes - pool->metadata_bytes))) {
+        rc = pages_reject(err, YVEX_ERR_BOUNDS,
+                          "state page reset exceeds its host budget");
+    } else if (pages_store_replace_anonymous(
+                   store, store->paged ? PROT_NONE : PROT_READ | PROT_WRITE,
+                   err) != YVEX_OK) {
+        rc = (int)yvex_error_code(err);
     } else {
-        memset(store->committed, 0, (size_t)store->committed_bytes);
-        memset(store->system_committed, 0,
-               (size_t)store->system_committed_bytes);
-        pool->resident_bytes -= store->resident_bytes;
-        pool->resident_page_count -= store->resident_pages;
+        base_resident = pool->resident_bytes - store->resident_bytes;
+        pool->resident_bytes = base_resident + target_resident;
+        pool->resident_page_count = next_pages;
         pool->page_release_count = releases_next;
-        store->resident_bytes = 0ull;
-        store->resident_pages = 0ull;
+        if (store->committed)
+            memset(store->committed, 0, (size_t)store->committed_bytes);
+        if (store->system_committed)
+            memset(store->system_committed, 0,
+                   (size_t)store->system_committed_bytes);
+        if (store->private_committed)
+            memset(store->private_committed, 0,
+                   (size_t)store->private_committed_bytes);
+        if (store->private_system_committed)
+            memset(store->private_system_committed, 0,
+                   (size_t)store->private_system_committed_bytes);
+        store->resident_bytes = target_resident;
+        store->resident_pages = target_pages;
         store->resident_system_pages = 0ull;
+        pages_shared_release(&store->shared);
         rc = YVEX_OK;
     }
     (void)pthread_mutex_unlock(&pool->mutex);
-    if (rc == YVEX_OK) yvex_error_clear(err);
+    if (rc == YVEX_OK) {
+        if (!store->paged)
+            memset(store->address, 0, (size_t)store->requested_bytes);
+        yvex_error_clear(err);
+    }
     return rc;
 }
 
@@ -508,12 +903,12 @@ static void pages_store_close(yvex_graph_state_page_store **owner)
         pool->store_count--;
         (void)pthread_mutex_unlock(&pool->mutex);
     }
-    if (store->paged)
-        (void)munmap(store->address, (size_t)store->mapped_bytes);
-    else
-        free(store->address);
+    (void)munmap(store->address, (size_t)store->mapped_bytes);
+    pages_shared_release(&store->shared);
     free(store->committed);
     free(store->system_committed);
+    free(store->private_committed);
+    free(store->private_system_committed);
     memset(store, 0, sizeof(*store));
     free(store);
     *owner = NULL;
@@ -1008,6 +1403,308 @@ failed:
     yvex_graph_state_bank_pages_close(components);
     memset(view, 0, sizeof(*view));
     return (int)yvex_error_code(err);
+}
+
+static yvex_graph_state_page_store *pages_component_store(
+    yvex_graph_state_component_storage *storage, unsigned int kind)
+{
+    if (kind == 0u) return storage->value_pages;
+    if (kind == 1u) return storage->position_pages;
+    return storage->auxiliary_pages;
+}
+
+static state_shared_backing **pages_prefix_backing(
+    yvex_graph_state_bank_prefix *prefix, yvex_attention_state_binding binding,
+    unsigned int kind)
+{
+    if (kind == 0u) return &prefix->values[binding];
+    if (kind == 1u) return &prefix->positions[binding];
+    return &prefix->auxiliary[binding];
+}
+
+static int pages_prefix_store_capture(yvex_graph_state_page_store *store,
+                                      state_shared_backing **out,
+                                      yvex_error *err)
+{
+    if (out) *out = NULL;
+    if (!store || !out) {
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    if (!store->paged)
+        return pages_reject(err, YVEX_ERR_UNSUPPORTED,
+                            "state prefixes require paged storage");
+    if (store->shared &&
+        !pages_bit_count(store->private_system_committed,
+                         store->system_page_count)) {
+        pages_shared_retain(store->shared);
+        *out = store->shared;
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    return pages_shared_open(store, out, err);
+}
+
+static int pages_bank_prefix_identity(
+    const yvex_graph_state_bank_prefix *prefix,
+    char output[YVEX_SHA256_HEX_CAP])
+{
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    unsigned int index, kind;
+    const unsigned long long view_fields[] = {
+        prefix->view.token_count, prefix->view.local_tail_count,
+        prefix->view.compressed_entry_count,
+        prefix->view.indexer_entry_count,
+        (unsigned long long)prefix->view.main_rolling_state.present,
+        prefix->view.main_rolling_state.next_token_position,
+        prefix->view.main_rolling_state.previous_fill,
+        prefix->view.main_rolling_state.current_fill,
+        prefix->view.main_rolling_state.cursor,
+        (unsigned long long)prefix->view.indexer_rolling_state.present,
+        prefix->view.indexer_rolling_state.next_token_position,
+        prefix->view.indexer_rolling_state.previous_fill,
+        prefix->view.indexer_rolling_state.current_fill,
+        prefix->view.indexer_rolling_state.cursor};
+
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.graph.state.bank-prefix.v1") ||
+        !yvex_sha256_update_text(&hash, prefix->recipe.identity) ||
+        !yvex_graph_state_hash_u64s(
+            &hash, view_fields, sizeof(view_fields) / sizeof(view_fields[0])))
+        return 0;
+    for (index = 0u; index < prefix->recipe.component_count; ++index) {
+        yvex_attention_state_binding binding =
+            prefix->recipe.components[index].binding;
+        if (!yvex_sha256_update_u64(&hash, binding) ||
+            !yvex_sha256_update_u64(&hash, prefix->starts[binding]))
+            return 0;
+        for (kind = 0u; kind < 3u; ++kind) {
+            state_shared_backing *backing = *pages_prefix_backing(
+                (yvex_graph_state_bank_prefix *)prefix, binding, kind);
+            if (!yvex_sha256_update_text(
+                    &hash, backing ? backing->identity : "absent"))
+                return 0;
+        }
+    }
+    if (!yvex_sha256_final(&hash, digest)) return 0;
+    yvex_sha256_hex(digest, output);
+    return 1;
+}
+
+int yvex_graph_state_bank_prefix_measure(
+    yvex_graph_state_component_storage
+        components[YVEX_ATTENTION_STATE_BINDING_COUNT],
+    const yvex_attention_state_recipe *recipe, unsigned long long *bytes,
+    yvex_error *err)
+{
+    unsigned long long total = 0ull;
+    unsigned int index, kind;
+    if (bytes) *bytes = 0ull;
+    if (!components || !recipe || !bytes || !yvex_sha256_hex_valid(recipe->identity))
+        return pages_reject(err, YVEX_ERR_INVALID_ARG,
+                            "state prefix measurement arguments are invalid");
+    for (index = 0u; index < recipe->component_count; ++index) {
+        yvex_graph_state_component_storage *storage =
+            &components[recipe->components[index].binding];
+        for (kind = 0u; kind < 3u; ++kind) {
+            yvex_graph_state_page_store *store =
+                pages_component_store(storage, kind);
+            unsigned long long system_pages, extent;
+            if (!store) continue;
+            if (!store->paged)
+                return pages_reject(err, YVEX_ERR_UNSUPPORTED,
+                                    "state prefixes require paged storage");
+            system_pages = store->paged
+                               ? pages_bit_count(store->system_committed,
+                                                 store->system_page_count)
+                               : store->system_page_count;
+            if (!yvex_core_u64_mul(system_pages, store->system_page_bytes,
+                                   &extent) ||
+                !pages_add(total, extent, &total))
+                return pages_reject(err, YVEX_ERR_BOUNDS,
+                                    "state prefix measurement overflowed");
+        }
+    }
+    *bytes = total;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_graph_state_bank_prefix_capture(
+    yvex_graph_state_bank_prefix **out,
+    yvex_graph_state_component_storage
+        components[YVEX_ATTENTION_STATE_BINDING_COUNT],
+    yvex_attention_history_view *view,
+    const yvex_attention_state_recipe *recipe, yvex_error *err)
+{
+    yvex_graph_state_bank_prefix *prefix = NULL;
+    unsigned int index, kind;
+    if (out) *out = NULL;
+    if (!out || !components || !view || !recipe ||
+        !yvex_sha256_hex_valid(recipe->identity))
+        return pages_reject(err, YVEX_ERR_INVALID_ARG,
+                            "state prefix capture arguments are invalid");
+    prefix = calloc(1u, sizeof(*prefix));
+    if (!prefix)
+        return pages_reject(err, YVEX_ERR_NOMEM,
+                            "state prefix owner allocation failed");
+    prefix->recipe = *recipe;
+    prefix->view = *view;
+    for (index = 0u; index < recipe->component_count; ++index) {
+        yvex_attention_state_binding binding = recipe->components[index].binding;
+        yvex_graph_state_component_storage *storage = &components[binding];
+        prefix->starts[binding] = storage->start;
+        for (kind = 0u; kind < 3u; ++kind) {
+            state_shared_backing **backing =
+                pages_prefix_backing(prefix, binding, kind);
+            yvex_graph_state_page_store *store =
+                pages_component_store(storage, kind);
+            if (pages_prefix_store_capture(store, backing, err) != YVEX_OK)
+                goto failed;
+            if (*backing &&
+                (!pages_add(prefix->shared_bytes, (*backing)->resident_bytes,
+                            &prefix->shared_bytes) ||
+                 !pages_add(prefix->mapped_bytes, (*backing)->mapped_bytes,
+                            &prefix->mapped_bytes))) {
+                pages_reject(err, YVEX_ERR_BOUNDS,
+                             "state prefix byte accounting overflowed");
+                goto failed;
+            }
+        }
+    }
+    if (!pages_bank_prefix_identity(prefix, prefix->identity)) {
+        pages_reject(err, YVEX_ERR_STATE,
+                     "state prefix identity construction failed");
+        goto failed;
+    }
+    *out = prefix;
+    yvex_error_clear(err);
+    return YVEX_OK;
+failed:
+    yvex_graph_state_bank_prefix_close(&prefix);
+    return (int)yvex_error_code(err);
+}
+
+static int pages_prefix_store_compatible(
+    const yvex_graph_state_page_store *store,
+    const state_shared_backing *backing)
+{
+    if (!store || !backing) return !store && !backing;
+    return store->paged && store->committed && store->system_committed &&
+           store->private_committed && store->private_system_committed &&
+           store->element_count == backing->element_count &&
+           store->element_width == backing->element_width &&
+           store->page_elements == backing->page_elements &&
+           store->requested_bytes == backing->requested_bytes &&
+           store->mapped_bytes == backing->mapped_bytes &&
+           store->page_count == backing->page_count &&
+           store->system_page_bytes == backing->system_page_bytes;
+}
+
+int yvex_graph_state_bank_prefix_compatible(
+    const yvex_graph_state_bank_prefix *prefix,
+    yvex_graph_state_component_storage
+        components[YVEX_ATTENTION_STATE_BINDING_COUNT],
+    const yvex_attention_state_recipe *recipe, yvex_error *err)
+{
+    char identity[YVEX_SHA256_HEX_CAP];
+    unsigned int index, kind;
+    if (!prefix || !components || !recipe ||
+        strcmp(prefix->recipe.identity, recipe->identity) != 0 ||
+        !pages_bank_prefix_identity(prefix, identity) ||
+        strcmp(identity, prefix->identity) != 0)
+        return pages_reject(err, YVEX_ERR_FORMAT,
+                            "state prefix identity or recipe is incompatible");
+    for (index = 0u; index < recipe->component_count; ++index) {
+        yvex_attention_state_binding binding = recipe->components[index].binding;
+        yvex_graph_state_component_storage *storage = &components[binding];
+        for (kind = 0u; kind < 3u; ++kind)
+            if (!pages_prefix_store_compatible(
+                    pages_component_store(storage, kind),
+                    *pages_prefix_backing(
+                        (yvex_graph_state_bank_prefix *)prefix, binding,
+                        kind)))
+                return pages_reject(
+                    err, YVEX_ERR_FORMAT,
+                    "state prefix physical geometry is incompatible");
+    }
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_graph_state_bank_prefix_attach(
+    const yvex_graph_state_bank_prefix *prefix,
+    yvex_graph_state_component_storage
+        components[YVEX_ATTENTION_STATE_BINDING_COUNT],
+    yvex_attention_history_view *view,
+    const yvex_attention_state_recipe *recipe, yvex_error *err)
+{
+    unsigned int index, kind;
+    if (!view || yvex_graph_state_bank_prefix_compatible(
+                     prefix, components, recipe, err) != YVEX_OK)
+        return (int)yvex_error_code(err);
+    for (index = 0u; index < recipe->component_count; ++index) {
+        yvex_attention_state_binding binding = recipe->components[index].binding;
+        yvex_graph_state_component_storage *storage = &components[binding];
+        for (kind = 0u; kind < 3u; ++kind) {
+            yvex_graph_state_page_store *store =
+                pages_component_store(storage, kind);
+            state_shared_backing *backing = *pages_prefix_backing(
+                (yvex_graph_state_bank_prefix *)prefix, binding, kind);
+            if (store && pages_store_install_shared(store, backing, err) != YVEX_OK)
+                return (int)yvex_error_code(err);
+        }
+        storage->start = prefix->starts[binding];
+    }
+    *view = prefix->view;
+    yvex_graph_state_bank_pages_bind(components, view, recipe);
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+void yvex_graph_state_bank_prefix_summary(
+    const yvex_graph_state_bank_prefix *prefix,
+    unsigned long long *shared_bytes, unsigned long long *mapped_bytes,
+    unsigned long long *reference_count, const char **identity)
+{
+    unsigned long long references = ULLONG_MAX;
+    unsigned int binding, kind;
+    if (shared_bytes) *shared_bytes = prefix ? prefix->shared_bytes : 0ull;
+    if (mapped_bytes) *mapped_bytes = prefix ? prefix->mapped_bytes : 0ull;
+    if (identity) *identity = prefix ? prefix->identity : NULL;
+    if (prefix)
+        for (binding = 0u; binding < YVEX_ATTENTION_STATE_BINDING_COUNT;
+             ++binding)
+            for (kind = 0u; kind < 3u; ++kind) {
+                state_shared_backing *backing = *pages_prefix_backing(
+                    (yvex_graph_state_bank_prefix *)prefix,
+                    (yvex_attention_state_binding)binding, kind);
+                unsigned long long current;
+                if (!backing) continue;
+                current = atomic_load_explicit(&backing->references,
+                                               memory_order_acquire);
+                if (current < references) references = current;
+            }
+    if (reference_count)
+        *reference_count = references == ULLONG_MAX ? (prefix ? 1ull : 0ull)
+                                                    : references;
+}
+
+void yvex_graph_state_bank_prefix_close(yvex_graph_state_bank_prefix **owner)
+{
+    yvex_graph_state_bank_prefix *prefix = owner ? *owner : NULL;
+    unsigned int binding;
+    if (!prefix) return;
+    *owner = NULL;
+    for (binding = 0u; binding < YVEX_ATTENTION_STATE_BINDING_COUNT;
+         ++binding) {
+        pages_shared_release(&prefix->values[binding]);
+        pages_shared_release(&prefix->positions[binding]);
+        pages_shared_release(&prefix->auxiliary[binding]);
+    }
+    memset(prefix, 0, sizeof(*prefix));
+    free(prefix);
 }
 
 int yvex_graph_state_bank_pages_reset(

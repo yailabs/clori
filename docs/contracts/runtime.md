@@ -153,6 +153,21 @@ executed correction or bonus token defined by the algorithm. Accepted target
 rows are not replayed, rejected suffixes are discarded, and rollback never
 means decrementing counters after publication.
 
+An idle, complete paged provider may capture its committed attention state as
+an immutable in-memory prefix. Capture is admitted against an explicit byte
+budget and seals the state-layout, capacity-plan, content and backing
+identities before publication. A compatible empty provider may attach that
+backing without charging it as private residency. Shared pages remain
+immutable; the first write to an attached tail faults a private copy, so a
+child extension cannot mutate its source or another child. Incompatible
+geometry, identity, capacity or destination state refuses before attachment.
+Reset, invalidation and close release references through the prefix owner.
+
+This in-memory prefix contract is not durable persistence and does not itself
+create a session fork. Persisted state continues to use the versioned
+checkpoint/store contract, and a runtime session owner must coordinate prefix
+attachment with its independent token ledger, RNG, decoder and transcript.
+
 ## Execution and evidence admission
 
 Every request consumes one immutable compiled execution profile binding the

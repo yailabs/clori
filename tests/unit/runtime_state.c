@@ -2059,7 +2059,7 @@ static int test_state_checkpoint_restore(const state_plan_fixture *fixture)
                                         &err)
                      : YVEX_ERR_STATE;
     YVEX_TEST_ASSERT(
-        restored.schema_version == YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V7 &&
+        restored.schema_version == YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V8 &&
             restored.restore && restore_rc == YVEX_OK &&
             state_summary(&restored, &after, &err) == YVEX_OK &&
             after.committed_sequence_length == 3ull &&
@@ -2080,6 +2080,137 @@ static int test_state_checkpoint_restore(const state_plan_fixture *fixture)
         "corrupt checkpoint identity refuses without publishing partial state");
     YVEX_TEST_ASSERT(state_close(&source) && state_close(&restored),
                      "checkpoint providers close cleanly");
+    return 0;
+}
+
+static int test_state_shared_prefix(const state_plan_fixture *fixture)
+{
+    state_plan_fixture single = *fixture;
+    yvex_execution_capacity_plan capacity, incompatible_capacity;
+    yvex_attention_state_prefix *prefix = NULL;
+    yvex_attention_state_prefix_summary prefix_before, prefix_after;
+    yvex_graph_attention_state_summary source_before, source_after;
+    yvex_graph_attention_state_summary child_before, child_after;
+    yvex_graph_attention_state_summary incompatible_after;
+    yvex_attention_failure failure;
+    yvex_error err;
+    test_state reference = {0}, source = {0}, child = {0}, incompatible = {0};
+    const yvex_attention_history_view *source_view, *child_view;
+    char delta[YVEX_SHA256_HEX_CAP];
+    unsigned long long position;
+
+    single.plan.layer_count = single.plan.summary.layer_count = 1ull;
+    single.plan.summary.csa_layer_count = single.plan.summary.hca_layer_count = 0ull;
+    state_page_capacity_open(&capacity);
+    yvex_error_clear(&err);
+    YVEX_TEST_ASSERT(
+        state_open(&reference, &single.plan, 1024ull * 1024ull,
+                   &failure, &err) == YVEX_OK &&
+            state_prepare(&reference, &single.layers[0],
+                          single.plan.summary.attention_plan_identity) &&
+            reference.prefix_capture(
+                reference.context, 1024ull * 1024ull, &prefix,
+                &failure, &err) == YVEX_ERR_UNSUPPORTED &&
+            prefix == NULL && state_close(&reference),
+        "shared-prefix capture refuses the eager reference provider");
+    YVEX_TEST_ASSERT(
+        state_open(&source, &single.plan, 1024ull * 1024ull,
+                   &failure, &err) == YVEX_OK &&
+            state_open(&child, &single.plan, 1024ull * 1024ull,
+                       &failure, &err) == YVEX_OK &&
+            source.configure_pages(source.context, &capacity, &failure, &err) ==
+                YVEX_OK &&
+            child.configure_pages(child.context, &capacity, &failure, &err) ==
+                YVEX_OK &&
+            state_prepare(&source, &single.layers[0],
+                          single.plan.summary.attention_plan_identity) &&
+            state_prepare(&child, &single.layers[0],
+                          single.plan.summary.attention_plan_identity),
+        "shared-prefix providers admit identical paged geometry");
+    for (position = 0ull; position < 3ull; ++position)
+        YVEX_TEST_ASSERT(
+            state_apply_token(&source, &single.layers[0], position, 0, delta),
+            "shared-prefix source commits an exact prefix");
+    YVEX_TEST_ASSERT(
+        state_summary(&source, &source_before, &err) == YVEX_OK &&
+            state_summary(&child, &child_before, &err) == YVEX_OK &&
+            source.prefix_capture && source.prefix_attach &&
+            source.prefix_capture(source.context, 1ull, &prefix, &failure,
+                                  &err) == YVEX_ERR_BOUNDS &&
+            prefix == NULL &&
+            source.prefix_capture(source.context, 1024ull * 1024ull, &prefix,
+                                  &failure, &err) == YVEX_OK &&
+            prefix &&
+            yvex_attention_state_prefix_summary_copy(
+                prefix, &prefix_before, &err) == YVEX_OK &&
+            prefix_before.schema_version ==
+                YVEX_ATTENTION_STATE_PREFIX_SCHEMA_V1 &&
+            prefix_before.layer_count == 1ull &&
+            prefix_before.committed_sequence_length == 3ull &&
+            prefix_before.shared_bytes &&
+            prefix_before.mapped_bytes >= prefix_before.shared_bytes &&
+            prefix_before.reference_count >= 3ull,
+        "prefix capture enforces budget and publishes immutable shared backing");
+    YVEX_TEST_ASSERT(
+        child.prefix_attach(child.context, prefix, &failure, &err) == YVEX_OK &&
+            state_summary(&child, &child_after, &err) == YVEX_OK &&
+            child_after.committed_sequence_length == 3ull &&
+            child_after.next_position == 3ull &&
+            child_after.resident_bytes == 0ull &&
+            strcmp(child_after.state_content_identity,
+                   source_before.state_content_identity) == 0 &&
+            yvex_attention_state_prefix_summary_copy(
+                prefix, &prefix_after, &err) == YVEX_OK &&
+            prefix_after.reference_count >= 5ull,
+        "prefix attach shares physical backing without charging private state");
+    source_view = state_view(&source, 0ull, YVEX_ATTENTION_STATE_VIEW_COMMITTED);
+    child_view = state_view(&child, 0ull, YVEX_ATTENTION_STATE_VIEW_COMMITTED);
+    YVEX_TEST_ASSERT(
+        source_view && child_view && source_view->token_count == 3ull &&
+            child_view->token_count == 3ull &&
+            source_view->local_kv[0] == child_view->local_kv[0] &&
+            source_view->local_positions[0] == child_view->local_positions[0],
+        "source and child expose the same immutable semantic prefix");
+    YVEX_TEST_ASSERT(
+        state_apply_token(&child, &single.layers[0], 3ull, 0, delta) &&
+            state_summary(&source, &source_after, &err) == YVEX_OK &&
+            state_summary(&child, &child_after, &err) == YVEX_OK &&
+            source_after.committed_sequence_length == 3ull &&
+            child_after.committed_sequence_length == 4ull &&
+            child_after.resident_bytes > child_before.resident_bytes &&
+            strcmp(source_after.state_content_identity,
+                   source_before.state_content_identity) == 0 &&
+            strcmp(child_after.state_content_identity,
+                   source_after.state_content_identity) != 0,
+        "child extension faults private COW pages without mutating the source");
+    incompatible_capacity = capacity;
+    incompatible_capacity.identity[0] =
+        incompatible_capacity.identity[0] == '0' ? '1' : '0';
+    YVEX_TEST_ASSERT(
+        state_open(&incompatible, &single.plan, 1024ull * 1024ull,
+                   &failure, &err) == YVEX_OK &&
+            incompatible.configure_pages(
+                incompatible.context, &incompatible_capacity, &failure,
+                &err) == YVEX_OK &&
+            state_prepare(&incompatible, &single.layers[0],
+                          single.plan.summary.attention_plan_identity) &&
+            incompatible.prefix_attach(
+                incompatible.context, prefix, &failure, &err) ==
+                YVEX_ERR_FORMAT &&
+            state_summary(&incompatible, &incompatible_after, &err) == YVEX_OK &&
+            incompatible_after.committed_sequence_length == 0ull &&
+            !incompatible_after.invalidated,
+        "incompatible prefix identity refuses before destination mutation");
+    YVEX_TEST_ASSERT(
+        child.reset(child.context, &failure, &err) == YVEX_OK &&
+            yvex_attention_state_prefix_summary_copy(
+                prefix, &prefix_after, &err) == YVEX_OK &&
+            prefix_after.reference_count == prefix_before.reference_count &&
+            state_close(&source) && state_close(&child) &&
+            state_close(&incompatible),
+        "reset releases child sharing and all providers close cleanly");
+    yvex_attention_state_prefix_close(&prefix);
+    YVEX_TEST_ASSERT(prefix == NULL, "prefix close releases immutable backing");
     return 0;
 }
 
@@ -2213,6 +2344,7 @@ int yvex_test_runtime_state(void)
     if (test_candidate_prefix_compression_boundary() != 0) return 1;
     if (test_state_reset(&fixture) != 0) return 1;
     if (test_state_checkpoint_restore(&fixture) != 0) return 1;
+    if (test_state_shared_prefix(&fixture) != 0) return 1;
     if (test_summary_capacity_accounting(&fixture) != 0) return 1;
     if (test_prepare_failure_is_atomic(&fixture) != 0) return 1;
     if (test_batch_publication_is_atomic(&fixture) != 0) return 1;

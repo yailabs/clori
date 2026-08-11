@@ -214,6 +214,22 @@ candidate writes or committed publication. Reset releases physical pages with
 the virtual address unchanged. Reference providers without a capacity plan
 retain the bounded eager allocation oracle.
 
+Committed host pages can also move under an immutable prefix owner. Capture
+converts the exact committed bank extents into sealed shared backing and binds
+them to the provider layout, capacity plan and content identity. An empty
+compatible provider maps the same backing privately: reads share physical
+pages, while the first write to an extended or modified page establishes
+copy-on-write private residency. Prefix accounting therefore distinguishes
+shared backing bytes, mapped bytes, private resident bytes and live
+references. Capture and attach preflight the complete bank set before changing
+provider visibility; reset and close drop mappings and references without
+making shared state mutable.
+
+This is the graph-state resource boundary required by future prefix banks and
+session forks. It does not yet provide a persistent prefix namespace, durable
+serialization, CUDA-state sharing, operator-visible fork semantics or warm
+prefix TTFT qualification.
+
 On CUDA Driver-VMM hardware, the session residency owner projects the same
 logical envelope into two stable virtual device banks per selected layer. It
 maps physical allocation granules only for provider-visible committed spans and

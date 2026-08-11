@@ -19,11 +19,13 @@
 #include <yvex/internal/backend.h>
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/compiler.h>
+#include <yvex/internal/candidate.h>
 #include <yvex/internal/graph.h>
 #include <yvex/internal/graph_state.h>
 #include <yvex/internal/quant_numeric.h>
 #include <limits.h>
 #include <math.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -69,100 +71,6 @@ typedef struct {
 } yvex_graph_component_api;
 const yvex_graph_component_api *yvex_graph_component_api_get(void);
 const yvex_physical_variant_api *yvex_graph_physical_variant_api_get(void);
-/* Stable virtual spans commit physical state pages only as graph publication reaches them. */
-typedef struct yvex_graph_state_page_pool yvex_graph_state_page_pool;
-typedef struct yvex_graph_state_page_store yvex_graph_state_page_store;
-typedef struct {
-    yvex_attention_state_component_recipe recipe;
-    float *values;
-    unsigned long long *positions;
-    float *auxiliary;
-    unsigned long long start, allocated_rows;
-    yvex_graph_state_page_store *value_pages;
-    yvex_graph_state_page_store *position_pages;
-    yvex_graph_state_page_store *auxiliary_pages;
-} yvex_graph_state_component_storage;
-typedef struct {
-    unsigned long long allocated_bytes, metadata_bytes, virtual_bytes;
-    unsigned long long resident_bytes, page_count, resident_page_count;
-    unsigned long long page_commit_count, page_release_count;
-} yvex_graph_state_page_summary;
-typedef struct {
-    const float *values;
-    const unsigned long long *positions;
-    unsigned long long count, width;
-} yvex_graph_state_history_span;
-int yvex_graph_state_hash_u64s(
-    yvex_sha256 *hash, const unsigned long long *values, size_t count);
-int yvex_graph_state_history_project(
-    const yvex_attention_history_view *view,
-    const yvex_attention_state_component_recipe *component,
-    yvex_graph_state_history_span *out);
-const yvex_attention_rolling_state_view *yvex_graph_state_rolling_view(
-    const yvex_attention_history_view *view,
-    yvex_attention_state_binding binding);
-int yvex_graph_state_page_pool_open(
-    yvex_graph_state_page_pool **out, unsigned long long maximum_bytes,
-    yvex_error *err);
-int yvex_graph_state_page_pool_bind_capacity(
-    yvex_graph_state_page_pool *pool,
-    const yvex_execution_capacity_plan *capacity, yvex_error *err);
-void yvex_graph_state_page_pool_release(
-    yvex_graph_state_page_pool *pool, unsigned long long bytes);
-int yvex_graph_state_page_pool_summary(
-    const yvex_graph_state_page_pool *pool,
-    yvex_graph_state_page_summary *out, yvex_error *err);
-void yvex_graph_state_page_pool_close(yvex_graph_state_page_pool **pool);
-int yvex_graph_state_capacity_plan_valid(
-    const yvex_execution_capacity_plan *capacity);
-int yvex_graph_state_bank_pages_open(
-    yvex_graph_state_page_pool *pool,
-    const yvex_execution_capacity_plan *capacity,
-    const yvex_attention_summary *summary,
-    const yvex_attention_layer_plan *layer,
-    const yvex_attention_state_recipe *recipe,
-    yvex_graph_state_component_storage
-        components[YVEX_ATTENTION_STATE_BINDING_COUNT],
-    yvex_attention_history_view *view, yvex_error *err);
-int yvex_graph_state_bank_pages_reset(
-    yvex_graph_state_component_storage
-        components[YVEX_ATTENTION_STATE_BINDING_COUNT],
-    yvex_attention_history_view *view,
-    const yvex_attention_state_recipe *recipe, yvex_error *err);
-void yvex_graph_state_bank_pages_bind(
-    yvex_graph_state_component_storage
-        components[YVEX_ATTENTION_STATE_BINDING_COUNT],
-    yvex_attention_history_view *view,
-    const yvex_attention_state_recipe *recipe);
-int yvex_graph_state_bank_pages_transfer(
-    yvex_graph_state_component_storage
-        components[YVEX_ATTENTION_STATE_BINDING_COUNT],
-    yvex_attention_history_view *view,
-    const yvex_attention_state_recipe *recipe,
-    const yvex_attention_history_view *source,
-    int validate_storage, yvex_error *err);
-void yvex_graph_state_bank_pages_close(
-    yvex_graph_state_component_storage
-        components[YVEX_ATTENTION_STATE_BINDING_COUNT]);
-int yvex_graph_state_pages_prepare_publications(
-    yvex_attention_history_view *view,
-    yvex_graph_state_component_storage
-        components[YVEX_ATTENTION_STATE_BINDING_COUNT],
-    const yvex_attention_state_recipe *recipe,
-    const yvex_attention_publication *const *publications,
-    unsigned long long publication_count, yvex_error *err);
-int yvex_graph_state_pointer_table_reserve(
-    yvex_graph_state_page_pool *pool, void ***table,
-    unsigned long long *capacity, unsigned long long *bytes,
-    unsigned long long limit, yvex_error *err);
-int yvex_graph_state_initial_identity(
-    const yvex_attention_history_view *view,
-    const yvex_attention_state_recipe *recipe, const char *plan_identity,
-    char output[YVEX_SHA256_HEX_CAP]);
-int yvex_graph_state_advance_identity(
-    const char *prior_identity, const yvex_attention_state_recipe *recipe,
-    const char *plan_identity, const yvex_attention_publication *publication,
-    char output[YVEX_SHA256_HEX_CAP]);
 struct yvex_graph {
     yvex_graph_status status;
     char *architecture, *model_name;
@@ -186,6 +94,62 @@ struct yvex_plan {
     yvex_graph *graph;
     yvex_memory_plan *memory;
 };
+
+typedef yvex_graph_state_component_storage state_component_storage;
+typedef struct {
+    yvex_attention_history_view view;
+    state_component_storage components[YVEX_ATTENTION_STATE_BINDING_COUNT];
+    char state_identity[YVEX_SHA256_HEX_CAP];
+} attention_state_bank;
+typedef struct {
+    yvex_attention_layer_plan plan;
+    yvex_attention_state_recipe recipe;
+    attention_state_bank bank[2];
+    unsigned int committed_bank;
+    int prepared, staged, banks_synchronized, completion_pending;
+    yvex_attention_candidate_delta **candidate_deltas;
+    unsigned long long candidate_delta_count, candidate_delta_capacity;
+    unsigned long long candidate_delta_limit, candidate_delta_bytes;
+} attention_layer_state;
+typedef struct {
+    unsigned long long layer_index, token_position, token_count, next_position;
+    unsigned long long component_entries[YVEX_ATTENTION_STATE_BINDING_COUNT];
+    char prior_state_identity[YVEX_SHA256_HEX_CAP];
+    char candidate_state_identity[YVEX_SHA256_HEX_CAP];
+    char state_delta_identity[YVEX_SHA256_HEX_CAP];
+    int requires_commit;
+} attention_state_delta;
+typedef struct {
+    attention_layer_state *layer;
+    unsigned long long layer_ordinal, token_position, token_count, applied_tokens, staged_count;
+    unsigned long long batch_position, batch_token_count;
+    unsigned long long prepared_commit_count, prepared_generation, prepared_next_position;
+    int active, candidate_active, failed, publication_prepared, prefix_selected;
+    unsigned long long selected_prefix_count, extension_token_count;
+    yvex_attention_cancellation cancellation;
+    int cancellation_bound;
+    char state_layout_identity[YVEX_SHA256_HEX_CAP];
+    char prepared_content_identity[YVEX_SHA256_HEX_CAP];
+    attention_state_delta delta;
+} attention_state_transaction;
+typedef struct {
+    const yvex_attention_plan *plan;
+    attention_layer_state *layers;
+    unsigned long long layer_count;
+    yvex_graph_state_page_pool *page_pool;
+    yvex_execution_capacity_plan capacity_plan;
+    yvex_graph_attention_state_summary summary;
+    attention_state_transaction transaction;
+    pthread_mutex_t mutex;
+    int mutex_ready, paging_configured;
+} attention_state;
+int yvex_graph_attention_state_content_identity(
+    const attention_state *, const char *, char[YVEX_SHA256_HEX_CAP]);
+void yvex_graph_attention_state_candidate_clear(attention_state *);
+int yvex_graph_attention_state_prefix_capture(void *, unsigned long long,
+    yvex_attention_state_prefix **, yvex_attention_failure *, yvex_error *);
+int yvex_graph_attention_state_prefix_attach(void *, const yvex_attention_state_prefix *,
+    yvex_attention_failure *, yvex_error *);
 
 typedef enum {
     YVEX_ATTENTION_COMPONENT_ATTENTION_OUTPUT = 0, YVEX_ATTENTION_COMPONENT_RAW_LOCAL_KV,

@@ -459,7 +459,7 @@ static int state_save_scope_prepare(
     unsigned long long bytes = STATE_FILE_SCOPE_HEADER_BYTES;
     char identity[YVEX_SHA256_HEX_CAP];
     if (!scope || !provider ||
-        provider->schema_version != YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V7 ||
+        provider->schema_version != YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V8 ||
         !provider->summary || !provider->capacity || !provider->recipe ||
         !provider->view || !provider->identity ||
         !provider->restore ||
@@ -1307,7 +1307,7 @@ static int state_file_parser_scope(
         scope->scope != expected_scope || layer_count != current.layer_count ||
         (schema != YVEX_RUNTIME_STATE_STORE_SCHEMA_V1 &&
          schema != YVEX_RUNTIME_STATE_STORE_SCHEMA_V2) ||
-        provider->schema_version != YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V7 ||
+        provider->schema_version != YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V8 ||
         !provider->configure_pages || !provider->prepare ||
         layer_count > SIZE_MAX / sizeof(*scope->layers) ||
         layer_count > SIZE_MAX / sizeof(*scope->recipes) ||
