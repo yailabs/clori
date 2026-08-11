@@ -750,7 +750,7 @@ int yvex_runtime_residency_prepare(yvex_runtime_residency **out, yvex_runtime_mo
     if (rc == YVEX_OK)
         rc = residency_identity_build(residency, &model_summary, attention, err);
     if (rc == YVEX_OK) residency->summary.generation = 1ull;
-    if (rc == YVEX_OK && model->opening_backend)
+    if (rc == YVEX_OK && (model->opening_backend || residency->cuda_backend))
         rc = residency_claim_cuda(residency, &model->opening_backend, err);
     if (rc == YVEX_OK) {
         provider.context = residency;
