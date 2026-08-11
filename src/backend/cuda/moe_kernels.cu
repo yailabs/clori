@@ -172,13 +172,13 @@ extern "C" __global__ void yvex_moe_route_rows(
     int normalize, double scaling, float *scores,
     unsigned long long *selected, float *weights, int *status)
 {
-    __shared__ int active;
+    __shared__ float route_scores[256], rank_scores[256];
+    __shared__ unsigned long long rank_experts[256];
     unsigned long long row = (unsigned long long)blockIdx.x;
     unsigned int thread = threadIdx.x;
     if (!status || row >= row_count) return;
     if (thread == 0u) {
-        active = *status == 0;
-        if (active && (!logits || !scores || !selected || !weights || !row_count ||
+        if (*status == 0 && (!logits || !scores || !selected || !weights || !row_count ||
             !routed_experts || routed_experts > 256ull || !topk || topk > 16ull ||
             topk > routed_experts || router_class > 1u || !isfinite(scaling) ||
             scaling <= 0.0 || (router_class == 0u &&
@@ -186,62 +186,82 @@ extern "C" __global__ void yvex_moe_route_rows(
              hash_row_bytes < hash_columns * sizeof(int32_t))) ||
             (router_class == 1u && !bias))) {
             atomicCAS(status, 0, 2);
-            active = 0;
         }
     }
     __syncthreads();
-    if (!active) return;
+    if (*status) return;
     const float *row_logits = logits + row * routed_experts;
-    float *row_scores = scores + row * routed_experts;
+    float *row_scores = scores + row * routed_experts, *row_weights = weights + row * topk;
     unsigned long long *row_selected = selected + row * topk;
-    float *row_weights = weights + row * topk;
-    /* Score evaluation is independent by expert and dominates serial routing.
-     * Selection stays on one lane so source tie-breaking and double accumulation
-     * remain byte-for-byte identical to the retained oracle. */
+    /* Learned top-k stays expert-parallel with source tie-breaking and weight rank order. */
     for (unsigned long long expert = thread; expert < routed_experts;
          expert += blockDim.x) {
         double value = (double)row_logits[expert];
         double softplus = value > 0.0 ? value + log1p(exp(-value)) : log1p(exp(value));
-        double score = sqrt(softplus);
-        if (!isfinite(score)) {
-            atomicCAS(status, 0, 1);
-            atomicExch(&active, 0);
-        }
-        row_scores[expert] = (float)score;
+        float score = (float)sqrt(softplus);
+        if (!isfinite(score)) atomicCAS(status, 0, 1);
+        route_scores[expert] = score;
+        row_scores[expert] = score;
     }
     __syncthreads();
-    if (!active || thread) return;
-    for (unsigned long long rank = 0ull; rank < topk; ++rank) {
-        unsigned long long chosen = ~0ull;
-        if (router_class == 0u) {
+    if (*status) return;
+    if (router_class == 0u && thread) return;
+    if (router_class == 0u) {
+        for (unsigned long long rank = 0ull; rank < topk; ++rank) {
             unsigned int token = token_ids[row];
             if ((unsigned long long)token >= hash_rows) {
                 atomicCAS(status, 0, 2);
                 return;
             }
-            const int32_t *hash_row = (const int32_t *)
-                ((const unsigned char *)hash_table + (unsigned long long)token * hash_row_bytes);
-            int32_t value = hash_row[rank];
-            chosen = value < 0 ? ~0ull : (unsigned long long)value;
-        } else {
-            for (unsigned long long candidate = 0ull; candidate < routed_experts; ++candidate) {
-                int used = 0;
-                for (unsigned long long prior = 0ull; prior < rank; ++prior)
-                    if (row_selected[prior] == candidate) used = 1;
-                double candidate_score = (double)row_scores[candidate] + (double)bias[candidate];
-                double chosen_score = chosen == ~0ull
-                    ? -INFINITY : (double)row_scores[chosen] + (double)bias[chosen];
-                if (!used && (chosen == ~0ull || candidate_score > chosen_score ||
-                              (candidate_score == chosen_score && candidate < chosen)))
-                    chosen = candidate;
-            }
+            const int32_t *hash_row = (const int32_t *)((const unsigned char *)hash_table +
+                (unsigned long long)token * hash_row_bytes);
+            unsigned long long chosen = hash_row[rank] < 0 ? ~0ull : (unsigned long long)hash_row[rank];
+            if (chosen >= routed_experts) { atomicCAS(status, 0, 2); return; }
+            for (unsigned long long prior = 0ull; prior < rank; ++prior)
+                if (row_selected[prior] == chosen) {
+                    atomicCAS(status, 0, 2);
+                    return;
+                }
+            row_selected[rank] = chosen;
+            row_weights[rank] = route_scores[chosen];
         }
-        if (chosen >= routed_experts) { atomicCAS(status, 0, 2); return; }
-        for (unsigned long long prior = 0ull; prior < rank; ++prior)
-            if (row_selected[prior] == chosen) { atomicCAS(status, 0, 2); return; }
-        row_selected[rank] = chosen;
-        row_weights[rank] = row_scores[chosen];
+    } else {
+        for (unsigned long long rank = 0ull; rank < topk; ++rank) {
+            int used = 0;
+            if ((unsigned long long)thread < routed_experts)
+                for (unsigned long long prior = 0ull; prior < rank; ++prior)
+                    if (row_selected[prior] == (unsigned long long)thread) used = 1;
+            rank_scores[thread] = !used && (unsigned long long)thread < routed_experts
+                                      ? route_scores[thread] + bias[thread] : -INFINITY;
+            rank_experts[thread] = (unsigned long long)thread;
+            __syncthreads();
+            for (unsigned int stride = blockDim.x >> 1u; stride; stride >>= 1u) {
+                if (thread < stride) {
+                    float right_score = rank_scores[thread + stride];
+                    unsigned long long right_expert = rank_experts[thread + stride];
+                    if (right_score > rank_scores[thread] ||
+                        (right_score == rank_scores[thread] &&
+                         right_expert < rank_experts[thread])) {
+                        rank_scores[thread] = right_score;
+                        rank_experts[thread] = right_expert;
+                    }
+                }
+                __syncthreads();
+            }
+            if (thread == 0u) {
+                unsigned long long chosen = rank_experts[0];
+                if (chosen >= routed_experts || !isfinite(rank_scores[0]))
+                    atomicCAS(status, 0, 2);
+                else {
+                    row_selected[rank] = chosen;
+                    row_weights[rank] = route_scores[chosen];
+                }
+            }
+            __syncthreads();
+            if (*status) return;
+        }
     }
+    if (thread) return;
     double total = 0.0;
     for (unsigned long long rank = 0ull; rank < topk; ++rank)
         total += (double)row_weights[rank];

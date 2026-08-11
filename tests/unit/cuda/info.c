@@ -255,7 +255,7 @@ static void moe_encoded_output(
 
 static int assert_encoded_moe(yvex_backend *backend)
 {
-    enum { ROWS = 32, WIDTH = 256, EXPERTS = 2, PAIRS = 32 };
+    enum { ROWS = 32, WIDTH = 256, EXPERTS = 256, TOPK = 6, PAIRS = ROWS * TOPK };
     yvex_backend_tensor_desc descriptor = {0};
     unsigned char *workspace_poison = NULL;
     yvex_device_tensor *anchor = NULL, *input = NULL, *small_input = NULL;
@@ -272,32 +272,30 @@ static int assert_encoded_moe(yvex_backend *backend)
     float mhc[3 * WIDTH] = {0};
     float scale[3] = {1.0f, 1.0f, 1.0f};
     float base[3] = {0};
-    float norm[WIDTH], router[EXPERTS * WIDTH], expert_row[WIDTH];
+    float norm[WIDTH], router[EXPERTS * WIDTH], router_bias[EXPERTS] = {0}, expert_row[WIDTH];
     float input_rows[ROWS * WIDTH], reference[ROWS * WIDTH], encoded[ROWS * WIDTH];
     float combined[ROWS * WIDTH], routed[ROWS * WIDTH], shared[ROWS * WIDTH];
     float post[ROWS], combination[ROWS], selected_weights[PAIRS];
     unsigned long long selected[PAIRS];
     unsigned int token_ids[ROWS] = {7u, 11u};
-    unsigned long long address = 0ull, workspace_bytes = 0ull, slot, index;
+    unsigned long long address = 0ull, workspace_bytes = 0ull, slot, index, row;
     float maximum_error = 0.0f;
     int native, rc;
-
     operations = yvex_backend_moe_operations_get(backend);
     YVEX_TEST_ASSERT(operations, "obtain CUDA width-N MoE operations");
     for (index = 0ull; index < WIDTH; ++index) {
         norm[index] = 1.0f;
         expert_row[index] = index == 0ull ? 0.5f : 0.0f;
-        input_rows[index] = 1.0f;
-        input_rows[WIDTH + index] = -1.0f;
+        for (row = 0ull; row < ROWS; ++row)
+            input_rows[row * WIDTH + index] = row & 1ull ? -1.0f : 1.0f;
     }
     memset(router, 0, sizeof(router));
     router[0] = 1.0f;
     router[WIDTH] = -1.0f;
-
     descriptor.name = "encoded-moe-residency";
     descriptor.dtype = YVEX_DTYPE_I8;
     descriptor.rank = 1u;
-    descriptor.dims[0] = descriptor.bytes = 2ull * 1024ull * 1024ull;
+    descriptor.dims[0] = descriptor.bytes = 32ull * 1024ull * 1024ull;
     YVEX_TEST_ASSERT(
         yvex_backend_resident_alloc(backend, &descriptor, &anchor,
                                     &fixture.arena, &err) == YVEX_OK,
@@ -311,7 +309,6 @@ static int assert_encoded_moe(yvex_backend *backend)
                                           &address) == YVEX_BACKEND_RESIDENT_HIT,
         "attach encoded MoE residency once");
     fixture.device_base = address;
-
     layer.schema_version = YVEX_MOE_PLAN_SCHEMA_V1;
     layer.router_class = YVEX_MOE_ROUTER_LEARNED_HIDDEN_STATE;
     layer.scoring = YVEX_MOE_SCORING_SQRT_SOFTPLUS;
@@ -322,7 +319,8 @@ static int assert_encoded_moe(yvex_backend *backend)
     layer.mhc_mixing_rows = 3ull;
     layer.mhc_sinkhorn_iterations = 1ull;
     layer.routed_experts = EXPERTS;
-    layer.shared_experts = layer.experts_per_token = 1ull;
+    layer.shared_experts = 1ull;
+    layer.experts_per_token = TOPK;
     layer.expert_intermediate_width = layer.shared_intermediate_width = WIDTH;
     layer.correction_bias_width = EXPERTS;
     layer.rms_epsilon = layer.mhc_epsilon = 0.00001;
@@ -347,7 +345,8 @@ static int assert_encoded_moe(yvex_backend *backend)
             moe_encoded_f32_weight(&fixture, &job.weights[YVEX_MOE_WEIGHT_ROUTER],
                                     YVEX_TENSOR_ROLE_MOE_ROUTER, EXPERTS, WIDTH, router) &&
             moe_encoded_f32_weight(&fixture, &job.weights[YVEX_MOE_WEIGHT_ROUTER_BIAS],
-                                    YVEX_TENSOR_ROLE_MOE_ROUTER_BIAS, 1ull, EXPERTS, base),
+                                    YVEX_TENSOR_ROLE_MOE_ROUTER_BIAS, 1ull, EXPERTS,
+                                    router_bias),
         "encode auxiliary MoE weights");
     YVEX_TEST_ASSERT(
         moe_encoded_weight(&fixture, &job.weights[YVEX_MOE_WEIGHT_ROUTED_GATE],
@@ -382,7 +381,6 @@ static int assert_encoded_moe(yvex_backend *backend)
         operations->workspace_required(&layer, ROWS, &workspace_bytes, &err) == YVEX_OK &&
             workspace_bytes != 0ull,
         "derive encoded MoE workspace");
-
 #define ALLOCATE_ENCODED_TENSOR(owner_, name_, bytes_)                                     \
     do {                                                                                   \
         memset(&descriptor, 0, sizeof(descriptor));                                        \
@@ -437,7 +435,18 @@ static int assert_encoded_moe(yvex_backend *backend)
             yvex_backend_tensor_read(backend, reference_output, reference,
                                      sizeof(reference), &err) == YVEX_OK,
         "execute portable low-bit width-N MoE oracle");
-
+    for (row = 0ull; row < ROWS; ++row) {
+        yvex_moe_router_result cpu_router = {0};
+        YVEX_TEST_ASSERT(yvex_moe_route_cpu(&job, input_rows + row * WIDTH,
+                                            &cpu_router, &err) == YVEX_OK,
+                         "execute independent CPU router oracle");
+        for (index = 0ull; index < TOPK; ++index)
+            YVEX_TEST_ASSERT(
+                selected[row * TOPK + index] == cpu_router.selected_experts[index] &&
+                    fabsf(selected_weights[row * TOPK + index] - cpu_router.selected_weights[index]) <=
+                        1e-6f,
+                "CUDA route selection and weights match the CPU oracle");
+    }
     for (slot = YVEX_MOE_WEIGHT_ROUTED_GATE;
          slot <= YVEX_MOE_WEIGHT_SHARED_DOWN; ++slot)
         job.weights[slot].activation = YVEX_EXECUTION_ACTIVATION_DEVICE_ENCODED;
