@@ -727,7 +727,7 @@ static int tiny_generation_capacity_refusal(
         &binding, binding_path, &binding_summary, &admission,
         &binding_failure, err);
     if (rc == YVEX_OK &&
-        (!yvex_runtime_private_binding_maximum_tensor_bytes(
+        (!runtime_binding_maximum_tensor_bytes(
              binding, &transient) ||
          !yvex_core_u64_add(
              admission.payload_bytes,

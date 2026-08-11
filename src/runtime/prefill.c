@@ -982,7 +982,8 @@ static int activation_prefill_prepare(
     if (rc == YVEX_OK)
         rc = yvex_runtime_session_prepare_attention_workspace(
             session, request->mode, request->operation_scope,
-            YVEX_ATTENTION_EVIDENCE_NONE, workspace_capacity, 0ull, failure, err);
+            YVEX_ATTENTION_EVIDENCE_NONE, workspace_capacity,
+            workspace_tokens, 0ull, failure, err);
     yvex_graph_attention_capacity_plan_close(&workspace_capacity);
     return rc;
 }

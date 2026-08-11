@@ -1770,8 +1770,8 @@ int yvex_graph_attention_operator_execute(const yvex_graph_attention_operator_re
     if (rc == YVEX_OK && (request->compare_backends || request->backend == YVEX_BACKEND_KIND_CUDA))
         rc = yvex_runtime_session_prepare_attention_workspace(
             session, selected_mode, request->operation_scope,
-            runtime_attention_evidence_levels[request->trace_policy], capacity, 0ull,
-            &failure, err);
+            runtime_attention_evidence_levels[request->trace_policy], capacity,
+            request->token_count, 0ull, &failure, err);
     if (rc == YVEX_OK)
         rc = runtime_attention_execution_descriptor_identity(
             request, model, session, capacity, result, result->execution_descriptor_identity, err);

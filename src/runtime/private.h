@@ -47,7 +47,7 @@ struct yvex_runtime_binding {
     yvex_compiled_model_plan *plan;
 };
 
-static inline int yvex_runtime_private_binding_maximum_tensor_bytes(
+static inline int runtime_binding_maximum_tensor_bytes(
     const yvex_runtime_binding *binding, unsigned long long *maximum)
 {
     unsigned long long index;
@@ -273,6 +273,15 @@ int yvex_runtime_private_generation_capacity_preflight(
     const yvex_runtime_generation_options *options,
     unsigned long long *required_bytes, unsigned long long *available_bytes,
     yvex_error *err);
+int yvex_runtime_private_attention_workspace_required(
+    const yvex_attention_summary *summary,
+    const yvex_attention_layer_plan *layers, unsigned long long layer_count,
+    const yvex_graph_attention_capacity_plan *capacity,
+    yvex_attention_execution_mode mode,
+    yvex_attention_operation_scope scope,
+    yvex_attention_evidence_level evidence_level,
+    unsigned long long physical_row_capacity, int deferred,
+    unsigned long long *required_bytes, yvex_error *err);
 int yvex_runtime_private_session_invalidate(
     yvex_runtime_execution_session *session, int include_state, yvex_error *err);
 int yvex_runtime_private_session_workspace_discard(

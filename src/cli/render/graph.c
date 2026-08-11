@@ -1443,6 +1443,7 @@ int yvex_graph_generation_render(FILE *fp, yvex_graph_report_mode mode,
         yvex_cli_json_begin(fp);
         yvex_cli_json_field_str(fp, "command", result->command, 1);
         yvex_cli_json_field_str(fp, "status", result->status, 1);
+        yvex_cli_json_field_str(fp, "reason", result->reason, 1);
         yvex_cli_json_field_str(fp, "target", result->target, 1);
         yvex_cli_json_field_str(fp, "family", result->family, 1);
         yvex_cli_json_field_str(fp, "backend", result->backend, 1);
@@ -1550,13 +1551,14 @@ int yvex_graph_generation_render(FILE *fp, yvex_graph_report_mode mode,
                 "status: %s\nprompt_tokens: %llu\nsampled_tokens: %llu\n"
                 "model_committed_tokens: %llu\nexecution_mode: %s\n"
                 "generated_text_bytes: %llu\n"
-                "generated_text_digest: %s\nstop_reason: %s\n",
+                "generated_text_digest: %s\nstop_reason: %s\nreason: %s\n",
                 result->status, run->prompt_token_count, run->sampled_token_count,
                 run->model_committed_token_count,
                 run->execution_mode == YVEX_GENERATION_MODE_DSPARK
                     ? "dspark" : "target-only",
                 run->generated_text_bytes, run->generated_text_digest,
-                yvex_runtime_generation_stop_reason_name(run->stop_reason)) < 0)
+                yvex_runtime_generation_stop_reason_name(run->stop_reason),
+                result->reason[0] ? result->reason : "none") < 0)
             return YVEX_ERR_IO;
         if (run->execution_mode == YVEX_GENERATION_MODE_DSPARK &&
             yvex_cli_out_writef(

@@ -1083,7 +1083,8 @@ static int transformer_prepare(yvex_runtime_transformer_context *context,
         if (rc == YVEX_OK)
             rc = yvex_runtime_session_prepare_attention_workspace(
                 context->session, mode, YVEX_RUNTIME_SCOPE_ATTENTION_ENVELOPE,
-                YVEX_ATTENTION_EVIDENCE_NONE, capacity, workspace_bytes, &failure, err);
+                YVEX_ATTENTION_EVIDENCE_NONE, capacity, workspace_tokens,
+                workspace_bytes, &failure, err);
         yvex_graph_attention_capacity_plan_close(&capacity);
         if (rc == YVEX_OK)
             rc = yvex_runtime_session_summary_copy(context->session, &session, err);

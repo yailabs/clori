@@ -59,6 +59,19 @@ test -f "$binding_path"
 
 artifact=$(realpath "$first/tiny.gguf")
 binding=$(realpath "$binding_path")
+if "$YVEX_BIN" execute transformer generate \
+    --target tiny-executable --artifact "$artifact" \
+    --runtime-binding "$binding" --backend cpu \
+    --generation-mode target-only --text a --context-capacity 9 \
+    --prefill-chunk-tokens 1 --max-new-tokens 1 --max-output-bytes 16 \
+    --strategy greedy --progress off --output json \
+    >"$root/context-refusal.json" 2>"$root/context-refusal.err"; then
+    printf 'oversized tiny context was admitted\n' >&2
+    exit 1
+fi
+grep -F '"status": "refused"' "$root/context-refusal.json" >/dev/null
+grep -F '"reason": "requested context exceeds the model-authored semantic maximum"' \
+    "$root/context-refusal.json" >/dev/null
 cat >"$home/.local/share/yvex/models.local.json" <<EOF
 {
   "schema": "yvex.models.local.v3",

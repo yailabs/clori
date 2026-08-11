@@ -394,7 +394,7 @@ int yvex_runtime_session_prepare_attention_workspace(yvex_runtime_execution_sess
     yvex_runtime_execution_mode mode, yvex_runtime_execution_scope scope,
     yvex_attention_evidence_level evidence_level,
     const yvex_graph_attention_capacity_plan *capacity,
-    unsigned long long minimum_bytes,
+    unsigned long long physical_row_capacity, unsigned long long minimum_bytes,
     yvex_runtime_model_failure *failure, yvex_error *err);
 int yvex_runtime_session_summary_copy(const yvex_runtime_execution_session *session,
                                       yvex_runtime_session_summary *out, yvex_error *err);

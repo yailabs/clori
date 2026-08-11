@@ -2271,7 +2271,7 @@ static int run_runtime_graph_oracle_suite(
         rc = yvex_runtime_session_prepare_attention_workspace(
             runtime_session, YVEX_RUNTIME_MODE_PIECEWISE,
             YVEX_RUNTIME_SCOPE_ATTENTION_CORE, YVEX_ATTENTION_EVIDENCE_FULL,
-            capacity, 0ull, &failure, err);
+            capacity, capacity_request.token_count, 0ull, &failure, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_session_prepare_attention_probe_state(
             runtime_session, model, capacity, &attention_failure, err);
@@ -2297,7 +2297,7 @@ static int run_runtime_graph_oracle_suite(
         rc = yvex_runtime_session_prepare_attention_workspace(
             runtime_session, YVEX_RUNTIME_MODE_FULL,
             YVEX_RUNTIME_SCOPE_ATTENTION_CORE, YVEX_ATTENTION_EVIDENCE_FULL,
-            capacity, 0ull, &failure, err);
+            capacity, capacity_request.token_count, 0ull, &failure, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_session_prepare_attention_probe_state(
             runtime_session, model, capacity, &attention_failure, err);
