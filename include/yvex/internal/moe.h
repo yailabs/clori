@@ -161,9 +161,14 @@ int yvex_moe_router_result_identity(const yvex_moe_router_result *router,
                                     unsigned long long routed_experts,
                                     char output[YVEX_SHA256_HEX_CAP]);
 typedef struct {
+    unsigned long long unique_experts, row_count, row_expert_pairs;
+    unsigned long long routed_experts, active_base_bytes, active_per_expert_bytes;
+    unsigned long long activation_bytes, temporary_bytes;
+    int status, pending;
+} yvex_moe_device_completion_slot;
+typedef struct {
     int defer;
-    int *host_status;
-    unsigned long long *host_unique_experts;
+    yvex_moe_device_completion_slot *host;
 } yvex_moe_device_completion;
 typedef struct {
     const yvex_moe_layer_plan *layer;
@@ -318,6 +323,7 @@ int yvex_runtime_moe_context_open(yvex_runtime_moe_context **out, yvex_runtime_m
                                   unsigned long long *cuda_workspace_bytes,
                                   yvex_error *err);
 const yvex_moe_plan *yvex_runtime_moe_context_plan(const yvex_runtime_moe_context *context);
+int yvex_runtime_moe_host_workspace_bind(yvex_runtime_moe_context *, yvex_error *);
 int yvex_runtime_moe_execute(yvex_runtime_moe_context *context,
                              const yvex_moe_input *input,
                              yvex_runtime_moe_output *output,

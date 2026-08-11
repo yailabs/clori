@@ -345,6 +345,8 @@ int yvex_backend_host_workspace_prepare_owned(yvex_backend *backend, unsigned lo
 int yvex_backend_host_workspace_detach(yvex_backend *backend, yvex_error *err);
 int yvex_backend_host_workspace_acquire(yvex_backend *, unsigned long long,
                                         unsigned long long, void **);
+int yvex_backend_host_workspace_reserve(yvex_backend *, unsigned long long,
+                                        unsigned long long, void **);
 int yvex_backend_host_workspace_summary_get(const yvex_backend *, yvex_backend_host_workspace_summary *);
 int yvex_backend_validate_rope(const yvex_device_tensor *tensor, unsigned long long *head_dim,
                                const char *where, yvex_error *err);

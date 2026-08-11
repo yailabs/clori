@@ -966,8 +966,7 @@ static int moe_cuda_rows_geometry(const yvex_moe_layer_job *job,
         !backend_tensor_f32_elements(rows->device_outputs, expanded) ||
         ((job->device_completion &&
           (!job->device_completion->defer ||
-           !job->device_completion->host_status ||
-           !job->device_completion->host_unique_experts)) ||
+           !job->device_completion->host)) ||
          (!job->device_completion &&
           (!output->selected_experts || !output->selected_weights ||
            output->selection_capacity < *pairs))) ||
@@ -1377,11 +1376,11 @@ static int moe_cuda_batch_publish(moe_cuda_batch *batch,
         if (rc == YVEX_OK) { batch->d2h += (bytes_); batch->downloads++; }                 \
     } while (0)
     if (deferred) {
-        DOWNLOAD(job->device_completion->host_unique_experts, batch->unique,
-                 sizeof(*job->device_completion->host_unique_experts),
+        DOWNLOAD(&job->device_completion->host->unique_experts, batch->unique,
+                 sizeof(job->device_completion->host->unique_experts),
                  "cuda.moe.rows.unique-download");
-        DOWNLOAD(job->device_completion->host_status, batch->status,
-                 sizeof(*job->device_completion->host_status),
+        DOWNLOAD(&job->device_completion->host->status, batch->status,
+                 sizeof(job->device_completion->host->status),
                  "cuda.moe.rows.status-download");
     } else {
         DOWNLOAD(output->selected_experts, batch->selected,

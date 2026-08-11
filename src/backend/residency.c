@@ -332,6 +332,7 @@ int yvex_backend_host_workspace_detach(yvex_backend *backend, yvex_error *err)
         return rc;
     backend->host_workspace_base = NULL;
     backend->host_workspace_bytes = 0ull;
+    backend->host_workspace_reserved = 0ull;
     backend->host_workspace_cursor = 0ull;
     backend->host_workspace_peak = 0ull;
     backend->host_workspace_generation = 0ull;
@@ -379,6 +380,42 @@ int yvex_backend_host_workspace_acquire(yvex_backend *backend,
     if (backend->host_workspace_cursor > backend->host_workspace_peak)
         backend->host_workspace_peak = backend->host_workspace_cursor;
     return YVEX_BACKEND_RESIDENT_HIT;
+}
+
+/*
+ * Seal one aligned prefix for completion records that outlive transient phase
+ * acquisitions. Resets preserve this prefix and repeated binding must name the
+ * same extent.
+ */
+int yvex_backend_host_workspace_reserve(yvex_backend *backend,
+                                        unsigned long long bytes,
+                                        unsigned long long alignment,
+                                        void **address)
+{
+    unsigned long long prior_peak;
+    int rc;
+    if (address) *address = NULL;
+    if (!backend || !address)
+        return YVEX_BACKEND_RESIDENT_INVALID;
+    if (backend->host_workspace_reserved) {
+        if (bytes != backend->host_workspace_reserved)
+            return YVEX_BACKEND_RESIDENT_MISS;
+        *address = backend->host_workspace_base;
+        return YVEX_BACKEND_RESIDENT_HIT;
+    }
+    if (backend->host_workspace_cursor)
+        return YVEX_BACKEND_RESIDENT_MISS;
+    prior_peak = backend->host_workspace_peak;
+    rc = yvex_backend_host_workspace_acquire(backend, bytes, alignment, address);
+    if (rc == YVEX_BACKEND_RESIDENT_HIT && *address == backend->host_workspace_base)
+        backend->host_workspace_reserved = bytes;
+    else if (rc == YVEX_BACKEND_RESIDENT_HIT) {
+        backend->host_workspace_cursor = 0ull;
+        backend->host_workspace_peak = prior_peak;
+        *address = NULL;
+        rc = YVEX_BACKEND_RESIDENT_INVALID;
+    }
+    return rc;
 }
 
 int yvex_backend_host_workspace_summary_get(

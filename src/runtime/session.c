@@ -203,6 +203,19 @@ static int runtime_session_workspace_requirements(
                         err) != YVEX_OK)
         return yvex_error_code(err);
     if (minimum_bytes > requirements->required) requirements->required = minimum_bytes;
+    if (deferred) {
+        const yvex_moe_plan_summary *target =
+            yvex_moe_plan_summary_get(session->model->view.moe);
+        const yvex_moe_plan_summary *draft =
+            yvex_moe_plan_summary_get(session->model->view.draft_moe);
+        unsigned long long layers = target ? target->layer_count : 0ull, bytes;
+        if (draft && draft->layer_count > layers) layers = draft->layer_count;
+        if (layers &&
+            (!yvex_core_u64_mul(layers, sizeof(yvex_moe_device_completion_slot), &bytes) ||
+             !yvex_core_u64_add(requirements->required, bytes, &requirements->required)))
+            return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_WORKSPACE_BUDGET,
+                                                ULLONG_MAX, 0ull, err);
+    }
     /* The session owns one physical arena for both target and draft plans. Rebinding a
      * smaller logical recipe must not resize or duplicate that arena. */
     if (session->summary.host_workspace_bytes > requirements->required)

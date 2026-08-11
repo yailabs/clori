@@ -1435,6 +1435,7 @@ static int test_host_workspace_lifecycle(yvex_backend *backend)
 {
     yvex_backend_host_workspace_summary summary;
     void *first = NULL;
+    void *mismatched = (void *)1;
     void *second = NULL;
     yvex_error err;
     int rc;
@@ -1448,8 +1449,14 @@ static int test_host_workspace_lifecycle(yvex_backend *backend)
             summary.peak == 0ull && summary.generation == 1ull &&
             summary.allocation_count == 1ull,
         "owned host arena exposes exact cold preparation facts");
+    rc = yvex_backend_host_workspace_reserve(backend, 32ull, 16ull, &second);
+    YVEX_TEST_ASSERT(rc == YVEX_BACKEND_RESIDENT_HIT && second,
+                     "reserve stable host completion tail");
+    rc = yvex_backend_host_workspace_reserve(backend, 16ull, 16ull, &mismatched);
+    YVEX_TEST_ASSERT(rc == YVEX_BACKEND_RESIDENT_MISS && !mismatched,
+                     "refuse a conflicting stable host reservation");
     rc = yvex_backend_host_workspace_acquire(backend, 32ull, 16ull, &first);
-    YVEX_TEST_ASSERT(rc == YVEX_BACKEND_RESIDENT_HIT && first,
+    YVEX_TEST_ASSERT(rc == YVEX_BACKEND_RESIDENT_HIT && first && first != second,
                      "acquire aligned host staging range");
     YVEX_TEST_ASSERT(
         yvex_backend_host_workspace_acquire(backend, 257ull, 1ull,
@@ -1463,13 +1470,13 @@ static int test_host_workspace_lifecycle(yvex_backend *backend)
             !second,
         "host staging refuses non-power-of-two alignment");
     backend_host_workspace_reset(backend);
-    rc = yvex_backend_host_workspace_acquire(backend, 257ull, 1ull, &second);
+    rc = yvex_backend_host_workspace_acquire(backend, 32ull, 16ull, &second);
     YVEX_TEST_ASSERT(rc == YVEX_BACKEND_RESIDENT_HIT && second == first,
                      "warm rewind reuses the exact owned address");
     backend_host_workspace_reset(backend);
     YVEX_TEST_ASSERT(
         yvex_backend_host_workspace_summary_get(backend, &summary) &&
-            summary.used == 0ull && summary.peak == 257ull &&
+            summary.used == 32ull && summary.peak == 64ull &&
             summary.allocation_count == 1ull,
         "two acquisitions preserve one allocation and exact peak evidence");
     rc = yvex_backend_host_workspace_detach(backend, &err);

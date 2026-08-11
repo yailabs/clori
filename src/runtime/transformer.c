@@ -1093,6 +1093,8 @@ static int transformer_prepare(yvex_runtime_transformer_context *context,
                 "transformer CUDA workspace did not publish stable ownership");
     }
     if (rc != YVEX_OK) return rc;
+    rc = yvex_runtime_moe_host_workspace_bind(context->moe, err);
+    if (rc != YVEX_OK) return rc;
     return transformer_shape_admit(context, input, request, state, &session, err);
 }
 static int transformer_core_features_execute(

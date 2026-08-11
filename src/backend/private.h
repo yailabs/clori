@@ -78,7 +78,8 @@ struct yvex_backend {
     unsigned long long workspace_device_address, workspace_bytes, workspace_cursor;
     unsigned long long workspace_peak, workspace_generation;
     unsigned char *host_workspace_base;
-    unsigned long long host_workspace_bytes, host_workspace_cursor, host_workspace_peak;
+    unsigned long long host_workspace_bytes, host_workspace_reserved, host_workspace_cursor;
+    unsigned long long host_workspace_peak;
     unsigned long long host_workspace_generation, host_workspace_allocation_count;
     int host_workspace_owned, host_workspace_pinned, shared_owner_registered;
     int virtual_tensor_ready;
@@ -155,7 +156,7 @@ static inline void backend_workspace_reset(yvex_backend *backend)
 
 static inline void backend_host_workspace_reset(yvex_backend *backend)
 {
-    if (backend) backend->host_workspace_cursor = 0ull;
+    if (backend) backend->host_workspace_cursor = backend->host_workspace_reserved;
 }
 
 #endif /* SRC_BACKEND_PRIVATE_H_INCLUDED */

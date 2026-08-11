@@ -17,12 +17,6 @@ typedef struct {
     unsigned char *data;
     unsigned long long capacity;
 } moe_byte_buffer;
-typedef struct {
-    unsigned long long unique_experts, row_count, row_expert_pairs;
-    unsigned long long routed_experts, active_base_bytes, active_per_expert_bytes;
-    unsigned long long activation_bytes, temporary_bytes;
-    int status, pending;
-} moe_pending_layer;
 struct yvex_runtime_moe_context {
     yvex_runtime_model *model;
     yvex_runtime_execution_session *session;
@@ -36,7 +30,7 @@ struct yvex_runtime_moe_context {
     float *expert, *routed, *shared, *combined;
     unsigned long long hidden_capacity, residual_capacity;
     unsigned long long cuda_workspace_bytes;
-    moe_pending_layer *pending_layers;
+    yvex_moe_device_completion_slot *pending_layers;
     unsigned long long pending_layer_capacity, pending_layer_count;
     int pending_active;
     float *candidate_combined, *candidate_post, *candidate_combination;
@@ -254,16 +248,14 @@ static int runtime_moe_buffer_plan(yvex_runtime_moe_context *context, yvex_error
         !yvex_core_u64_add(total, scratch_bytes, &total))
         goto overflow;
     if (cuda) {
-        unsigned long long pending_bytes;
-        if (!yvex_core_u64_mul(summary->layer_count,
-                               sizeof(*context->pending_layers),
-                               &pending_bytes) ||
-            !yvex_core_u64_add(total, pending_bytes, &total))
-            goto overflow;
-        context->pending_layers = yvex_core_calloc(
-            (size_t)summary->layer_count, sizeof(*context->pending_layers));
-        if (!context->pending_layers) goto allocation;
-        context->pending_layer_capacity = summary->layer_count;
+        const yvex_moe_plan_summary *target =
+            yvex_moe_plan_summary_get(context->model_view->moe);
+        const yvex_moe_plan_summary *draft =
+            yvex_moe_plan_summary_get(context->model_view->draft_moe);
+        unsigned long long layers = target ? target->layer_count : 0ull;
+        if (draft && draft->layer_count > layers) layers = draft->layer_count;
+        if (!layers) goto overflow;
+        context->pending_layer_capacity = layers;
     }
     if (context->options.maximum_host_bytes && total > context->options.maximum_host_bytes)
         return runtime_moe_refuse(err, YVEX_ERR_BOUNDS, "MoE host buffers exceed their budget");
@@ -700,6 +692,25 @@ const yvex_moe_plan *yvex_runtime_moe_context_plan(const yvex_runtime_moe_contex
     return context ? context->plan : NULL;
 }
 
+int yvex_runtime_moe_host_workspace_bind(yvex_runtime_moe_context *context,
+                                         yvex_error *err)
+{
+    unsigned long long bytes;
+    void *slots = NULL;
+    if (!context || !context->pending_layer_capacity ||
+        !yvex_core_u64_mul(context->pending_layer_capacity,
+                           sizeof(*context->pending_layers), &bytes) ||
+        yvex_backend_host_workspace_reserve(
+            context->session_view->backend, bytes,
+            _Alignof(yvex_moe_device_completion_slot), &slots) !=
+            YVEX_BACKEND_RESIDENT_HIT)
+        return runtime_moe_refuse(err, YVEX_ERR_BOUNDS,
+                                  "MoE completion ledger is not admitted");
+    context->pending_layers = slots;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
 static int runtime_moe_publication_prepare(yvex_runtime_moe_context *context,
                                            unsigned long long layers,
                                            unsigned long long tokens,
@@ -1097,7 +1108,7 @@ static int runtime_moe_execute_layer_rows(
         ? yvex_backend_moe_operations_get(context->session_view->backend) : NULL;
     yvex_moe_layer_job batch_job;
     yvex_moe_device_completion completion = {0};
-    moe_pending_layer *pending = NULL;
+    yvex_moe_device_completion_slot *pending = NULL;
     yvex_moe_row_batch_output staged_output;
     yvex_sha256 routing_hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES], *seen = NULL;
@@ -1143,7 +1154,8 @@ static int runtime_moe_execute_layer_rows(
     context->busy = 1;
     if (batch->execution_class == YVEX_EXECUTION_CLASS_DEVICE_NATIVE && !context->pending_active) {
         if (layer->ordinal != 0ull || !context->pending_layers ||
-            !context->pending_layer_capacity || !backend_operations->complete_rows) {
+            !context->pending_layer_capacity ||
+            !backend_operations->complete_rows) {
             rc = runtime_moe_refuse(err, YVEX_ERR_STATE, "MoE row transaction cannot begin");
             goto done;
         }
@@ -1182,8 +1194,7 @@ static int runtime_moe_execute_layer_rows(
             if (deferred) {
                 pending = &context->pending_layers[layer->ordinal];
                 completion.defer = 1;
-                completion.host_status = &pending->status;
-                completion.host_unique_experts = &pending->unique_experts;
+                completion.host = pending;
                 batch_job.device_completion = &completion;
             }
             rc = backend_operations->execute_rows(
@@ -1321,7 +1332,7 @@ static int runtime_moe_rows_complete(yvex_runtime_moe_context *context,
         context->session_view->backend, barrier_observed, &backend, err);
     for (index = 0ull; rc == YVEX_OK &&
                          index < context->pending_layer_capacity; ++index) {
-        moe_pending_layer *pending = &context->pending_layers[index];
+        yvex_moe_device_completion_slot *pending = &context->pending_layers[index];
         unsigned long long active;
         if (!pending->pending) continue;
         found++;
@@ -1436,7 +1447,6 @@ int yvex_runtime_moe_context_close(yvex_runtime_moe_context **context, yvex_erro
         free((*context)->fixed[index].data);
     for (index = 0ull; index < 3ull; ++index) free((*context)->selected[index].data);
     free((*context)->scratch);
-    yvex_core_free((*context)->pending_layers);
     free((*context)->candidate_combined);
     free((*context)->candidate_post);
     free((*context)->candidate_combination);

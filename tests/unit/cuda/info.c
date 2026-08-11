@@ -506,10 +506,10 @@ static int assert_grouped_moe(yvex_backend *backend)
     float batch_combined[4] = {0}, batch_routed[4] = {0}, batch_shared[4] = {0};
     float batch_post[2] = {0}, batch_combination[2] = {0}, batch_weights[2] = {0};
     unsigned long long batch_selected[2] = {0};
-    unsigned long long deferred_unique = 0ull;
+    yvex_moe_device_completion_slot deferred = {0};
     unsigned long long address = 0ull, expert, workspace_bytes = 0ull, slot;
     unsigned long long immediate_active_bytes;
-    int deferred_status = 0, rc;
+    int rc;
     memset(&descriptor, 0, sizeof(descriptor));
     descriptor.name = "grouped-moe-anchor";
     descriptor.dtype = YVEX_DTYPE_I8;
@@ -733,8 +733,7 @@ static int assert_grouped_moe(yvex_backend *backend)
     batch_selected[0] = batch_selected[1] = ULLONG_MAX;
     batch_weights[0] = batch_weights[1] = -99.0f;
     device_completion.defer = 1;
-    device_completion.host_status = &deferred_status;
-    device_completion.host_unique_experts = &deferred_unique;
+    device_completion.host = &deferred;
     job.device_completion = &device_completion;
     batch_output->is_written = 0;
     rc = row_operations->execute_rows(
@@ -745,7 +744,7 @@ static int assert_grouped_moe(yvex_backend *backend)
             yvex_device_tensor_is_written(batch_output) &&
             !row_result.stream_synchronizations &&
             !row_result.device_synchronizations &&
-            row_result.d2h_bytes == sizeof(deferred_status) + sizeof(deferred_unique) &&
+            row_result.d2h_bytes == sizeof(deferred.status) + sizeof(deferred.unique_experts) &&
             !row_result.memory.complete && row_result.memory.activation_bytes != 0ull &&
             batch_selected[0] == ULLONG_MAX && batch_selected[1] == ULLONG_MAX &&
             batch_weights[0] == -99.0f && batch_weights[1] == -99.0f,
@@ -757,12 +756,12 @@ static int assert_grouped_moe(yvex_backend *backend)
     rc = row_operations->complete_rows(
         backend, 0, &completion_result, &err);
     YVEX_TEST_ASSERT(
-        rc == YVEX_OK && completion_result.completed && deferred_status == 0 &&
-            deferred_unique >= 1ull &&
+        rc == YVEX_OK && completion_result.completed && deferred.status == 0 &&
+            deferred.unique_experts >= 1ull &&
             completion_result.stream_synchronizations == 1ull &&
             completion_result.device_synchronizations == 0ull &&
             row_result.active_weight_base_bytes +
-                    row_result.active_weight_per_unique_expert_bytes * deferred_unique ==
+                    row_result.active_weight_per_unique_expert_bytes * deferred.unique_experts ==
                 immediate_active_bytes,
         "one phase completion validates deferred MoE and restores exact active bytes");
     rc = row_operations->complete_rows(backend, 1, &completion_result, &err);
