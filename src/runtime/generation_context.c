@@ -315,6 +315,8 @@ static int generation_capacity_hardware(
         yvex_runtime_session_view_get(context->session);
     yvex_backend_device_info device;
     yvex_backend_cuda_attention_graph_summary cuda = {0};
+    yvex_runtime_residency_summary residency = {0};
+    const char *placement = "host";
     long pages, page_bytes;
     unsigned long long total;
     int rc;
@@ -362,8 +364,32 @@ static int generation_capacity_hardware(
         rc = yvex_backend_bandwidth_probe(
             view->backend, &context->bandwidth_evidence, err);
         if (rc != YVEX_OK) return rc;
-        context->hardware_profile.sustainable_read_bytes_per_second =
-            context->bandwidth_evidence.sustainable_read_bytes_per_second;
+        rc = context->model_view && context->model_view->residency
+                 ? yvex_runtime_residency_snapshot(
+                       context->model_view->residency, &residency,
+                       NULL, NULL, err)
+                 : YVEX_ERR_STATE;
+        if (rc != YVEX_OK)
+            return generation_context_refuse(
+                err, YVEX_ERR_STATE,
+                "model residency placement facts are unavailable");
+        if (residency.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED &&
+            residency.cuda_managed_bytes == residency.encoded_bytes &&
+            residency.cuda_managed_prefetch_bytes == residency.encoded_bytes &&
+            residency.cuda_managed_prefetch_count == 1ull) {
+            context->hardware_profile.sustainable_read_bytes_per_second =
+                context->bandwidth_evidence.sustainable_read_bytes_per_second;
+            placement = "managed";
+        } else if (residency.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_HOST_LOCKED &&
+                   residency.cuda_host_registration_count == 1ull) {
+            context->hardware_profile.sustainable_read_bytes_per_second =
+                context->bandwidth_evidence.sustainable_coherent_host_bytes_per_second;
+            placement = "hostmap";
+        } else {
+            return generation_context_refuse(
+                err, YVEX_ERR_STATE,
+                "model residency has no admitted bandwidth placement");
+        }
         context->hardware_profile.sustainable_copy_bytes_per_second =
             context->bandwidth_evidence.sustainable_copy_bytes_per_second;
         context->hardware_profile.admitted_fact_mask |=
@@ -377,7 +403,7 @@ static int generation_capacity_hardware(
                     YVEX_EXECUTION_HARDWARE_FACT_NATIVE_CODE);
         (void)snprintf(context->hardware_profile.name,
                        sizeof(context->hardware_profile.name),
-                       "cuda-%s", cuda.kernel_bundle_architecture);
+                       "cuda-%s-%s", cuda.kernel_bundle_architecture, placement);
     } else {
         yvex_core_text_copy(context->hardware_profile.name,
                             sizeof(context->hardware_profile.name),

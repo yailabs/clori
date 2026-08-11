@@ -16,6 +16,8 @@ typedef struct yvex_backend_vtable {
                         yvex_device_tensor **, yvex_error *);
     int (*resident_alloc)(yvex_backend *, const yvex_backend_tensor_desc *,
                           yvex_device_tensor **, unsigned char **, yvex_error *);
+    int (*resident_prefetch)(yvex_backend *, yvex_device_tensor *,
+                             unsigned long long *, yvex_error *);
     int (*tensor_reserve)(yvex_backend *, const yvex_backend_tensor_desc *,
                           yvex_device_tensor **, unsigned long long *, yvex_error *);
     int (*tensor_commit)(yvex_backend *, yvex_device_tensor *, unsigned long long,

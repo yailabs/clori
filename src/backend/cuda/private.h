@@ -124,6 +124,7 @@ typedef struct {
     CUresult (*cuMemGetInfo_v2)(size_t *free_bytes, size_t *total_bytes);
     CUresult (*cuMemAlloc_v2)(CUdeviceptr *dptr, size_t bytesize);
     CUresult (*cuMemAllocManaged)(CUdeviceptr *dptr, size_t bytesize, unsigned int flags);
+    CUresult (*cuMemPrefetchAsync_v2)(CUdeviceptr, size_t, CUmemLocation, unsigned int, CUstream);
     CUresult (*cuMemAddressReserve)(CUdeviceptr *, size_t, size_t, CUdeviceptr,
                                    unsigned long long);
     CUresult (*cuMemAddressFree)(CUdeviceptr ptr, size_t size);
@@ -402,6 +403,10 @@ int yvex_cuda_set_current(const yvex_backend *backend, const char *where, yvex_e
 int yvex_cuda_refresh_memory_info(yvex_backend *backend, yvex_error *err);
 CUdeviceptr yvex_cuda_tensor_ptr(const yvex_device_tensor *tensor);
 CUstream yvex_cuda_launch_stream(const yvex_backend *backend);
+int yvex_cuda_resident_alloc(yvex_backend *, const yvex_backend_tensor_desc *,
+                             yvex_device_tensor **, unsigned char **, yvex_error *);
+int yvex_cuda_resident_prefetch(yvex_backend *, yvex_device_tensor *,
+                                unsigned long long *, yvex_error *);
 typedef enum {
     YVEX_CUDA_TIMING_BEGIN = 0,
     YVEX_CUDA_TIMING_FINISH,
@@ -572,17 +577,11 @@ int yvex_cuda_transformer_rms_norm_bf16(yvex_backend *backend, const yvex_device
     const yvex_device_tensor *weight, yvex_device_tensor *output, unsigned long long rows,
     unsigned long long width, float epsilon, yvex_backend_cuda_operation_facts *facts,
     yvex_error *err);
-int yvex_cuda_op_attention(yvex_backend *backend,
-                           const yvex_device_tensor *query,
-                           const yvex_device_tensor *keys,
-                           const yvex_device_tensor *values,
-                           unsigned long long seq_len,
-                           unsigned long long position,
-                           float scale,
-                           int causal,
-                           yvex_device_tensor *score_scratch,
-                           yvex_device_tensor *probability_scratch,
-                           yvex_device_tensor *out,
+int yvex_cuda_op_attention(yvex_backend *backend, const yvex_device_tensor *query,
+                           const yvex_device_tensor *keys, const yvex_device_tensor *values,
+                           unsigned long long seq_len, unsigned long long position, float scale,
+                           int causal, yvex_device_tensor *score_scratch,
+                           yvex_device_tensor *probability_scratch, yvex_device_tensor *out,
                            yvex_error *err);
 /* Qtype. */
 int yvex_cuda_quant_row_dot(yvex_backend *backend,

@@ -68,6 +68,8 @@ int yvex_cuda_driver_load(yvex_cuda_driver *driver, yvex_error *err)
     YVEX_LOAD_REQUIRED(driver, cuMemGetInfo_v2);
     YVEX_LOAD_REQUIRED(driver, cuMemAlloc_v2);
     YVEX_LOAD_REQUIRED(driver, cuMemAllocManaged);
+    load_optional_symbol(driver->library, (void **)&driver->cuMemPrefetchAsync_v2,
+                         "cuMemPrefetchAsync_v2", NULL);
     YVEX_LOAD_REQUIRED(driver, cuMemFree_v2);
     YVEX_LOAD_REQUIRED(driver, cuMemsetD8_v2);
     YVEX_LOAD_REQUIRED(driver, cuMemcpyHtoD_v2);

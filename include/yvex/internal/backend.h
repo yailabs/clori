@@ -273,6 +273,12 @@ int yvex_backend_resident_alloc(yvex_backend *backend,
                                 yvex_device_tensor **out,
                                 unsigned char **host,
                                 yvex_error *err);
+/* Move one initialized backend-owned managed range to its admitted execution device.
+ * The caller retains tensor ownership; success is synchronous and reports migrated bytes. */
+int yvex_backend_resident_prefetch(yvex_backend *backend,
+                                   yvex_device_tensor *tensor,
+                                   unsigned long long *prefetched_bytes,
+                                   yvex_error *err);
 int yvex_backend_tensor_copy_async(yvex_backend *backend,
                                    yvex_device_tensor *destination,
                                    const yvex_device_tensor *source,

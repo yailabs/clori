@@ -2057,12 +2057,16 @@ static int run_runtime_residency_close_order(yvex_runtime_model *model,
         yvex_runtime_residency_snapshot(
             view->residency, &before, NULL, NULL, err) != YVEX_OK ||
         !before.cuda_ready || !before.binding_count ||
-        before.host_resident_bytes != before.encoded_bytes ||
-        before.device_resident_bytes ||
+        before.placement != YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED ||
+        before.host_resident_bytes ||
+        before.device_resident_bytes != before.encoded_bytes ||
         before.cuda_addressable_bytes != before.encoded_bytes ||
         before.cuda_upload_bytes || before.cuda_upload_count ||
-        before.cuda_host_registration_count != 1ull ||
-        before.cuda_managed_bytes || before.cuda_managed_allocation_count) {
+        before.cuda_host_registration_count ||
+        before.cuda_managed_bytes != before.encoded_bytes ||
+        before.cuda_managed_allocation_count != 1ull ||
+        before.cuda_managed_prefetch_bytes != before.encoded_bytes ||
+        before.cuda_managed_prefetch_count != 1ull) {
         yvex_error_set(err, YVEX_ERR_STATE, "attention.runtime_residency.close_order",
                        "one populated live CUDA residency is required");
         return YVEX_ERR_STATE;
@@ -2091,6 +2095,7 @@ static int run_runtime_residency_close_order(yvex_runtime_model *model,
         return YVEX_ERR_STATE;
     }
     if (after.schema_version != before.schema_version ||
+        after.placement != before.placement ||
         after.sealed != before.sealed || after.attached != before.attached ||
         after.host_ready != before.host_ready ||
         after.host_locked != before.host_locked ||
@@ -2112,6 +2117,8 @@ static int run_runtime_residency_close_order(yvex_runtime_model *model,
         after.cuda_host_registration_count != before.cuda_host_registration_count ||
         after.cuda_managed_bytes != before.cuda_managed_bytes ||
         after.cuda_managed_allocation_count != before.cuda_managed_allocation_count ||
+        after.cuda_managed_prefetch_bytes != before.cuda_managed_prefetch_bytes ||
+        after.cuda_managed_prefetch_count != before.cuda_managed_prefetch_count ||
         memcmp(after.qtype_binding_counts, before.qtype_binding_counts,
                sizeof(before.qtype_binding_counts)) != 0 ||
         memcmp(after.qtype_bytes, before.qtype_bytes,

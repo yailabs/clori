@@ -469,6 +469,29 @@ int yvex_backend_resident_alloc(yvex_backend *backend,
     return backend->vtable->resident_alloc(backend, desc, out, host, err);
 }
 
+int yvex_backend_resident_prefetch(yvex_backend *backend,
+                                   yvex_device_tensor *tensor,
+                                   unsigned long long *prefetched_bytes,
+                                   yvex_error *err)
+{
+    int rc;
+    if (prefetched_bytes) *prefetched_bytes = 0ull;
+    if (!backend || !tensor || !prefetched_bytes) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "backend.resident.prefetch",
+                       "backend, managed tensor, and byte output are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    rc = backend_dispatch_admit(backend, "backend.resident.prefetch", err);
+    if (rc != YVEX_OK) return rc;
+    if (!backend->vtable || !backend->vtable->resident_prefetch) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "backend.resident.prefetch",
+                       "backend has no managed-residency prefetch operation");
+        return YVEX_ERR_UNSUPPORTED;
+    }
+    return backend->vtable->resident_prefetch(
+        backend, tensor, prefetched_bytes, err);
+}
+
 int yvex_backend_tensor_reserve(yvex_backend *backend, const yvex_backend_tensor_desc *desc,
                                 yvex_device_tensor **out, unsigned long long *granularity,
                                 yvex_error *err)

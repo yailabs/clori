@@ -72,6 +72,7 @@ src/backend/cuda/tensorcore.cu	backend.cuda	backend.cuda.tensorcore	backend	priv
 src/backend/cuda/ops.c	backend.cuda	backend.cuda.ops	backend	private	reusable-algorithm	backend,graph	implementation	none
 src/backend/cuda/private.h	backend.cuda	backend.cuda.private	backend	private	platform-interface	backend,graph	interface	none
 src/backend/cuda/qtype.c	backend.cuda	backend.cuda.qtype	backend	private	reusable-algorithm	backend,graph	implementation	none
+src/backend/cuda/residency.c	backend.cuda	backend.cuda.residency	backend	private	resource-lifecycle	runtime,backend	implementation	none
 src/backend/cuda/sampling.c	backend.cuda	backend.cuda.sampling	backend	private	backend-implementation	runtime,generation	implementation	none
 src/backend/cuda/transformer.c	backend.cuda	backend.cuda.transformer	backend	private	reusable-algorithm	graph.family,backend.cuda.family	implementation	none
 src/backend/cuda/transformer_kernels.cu	backend.cuda	backend.cuda.transformer	backend	private	backend-kernel	graph.family,backend.cuda.family	backend-kernel	none

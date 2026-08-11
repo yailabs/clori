@@ -533,7 +533,8 @@ static int server_cuda_prepare(yvex_server *server,
         return rc;
     }
     if (!summary->cuda_ready ||
-        (!summary->cuda_upload_count && !summary->cuda_host_registration_count))
+        (!summary->cuda_upload_count && !summary->cuda_host_registration_count &&
+         !summary->cuda_managed_prefetch_count))
         return server_refuse(err, YVEX_ERR_STATE,
                              "CUDA residency did not complete before readiness");
     if (err) *err = primary;

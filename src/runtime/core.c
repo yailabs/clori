@@ -668,6 +668,9 @@ static int runtime_model_residency_open(
                                 0ull, attention_summary->required_binding_count, err);
     memset(&options, 0, sizeof(options));
     options.maximum_host_bytes = request->maximum_host_bytes;
+    options.placement = request->residency_backend == YVEX_BACKEND_KIND_CUDA
+                            ? YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED
+                            : YVEX_RUNTIME_WEIGHT_PLACEMENT_HOST_LOCKED;
     memset(&residency_failure, 0, sizeof(residency_failure));
     if (rc == YVEX_OK)
         rc = yvex_runtime_residency_prepare(&model->residency, model, &options,
@@ -677,7 +680,13 @@ static int runtime_model_residency_open(
     model->view.residency = model->residency;
     memset(&summary, 0, sizeof(summary));
     rc = yvex_runtime_residency_snapshot(model->residency, &summary, NULL, NULL, err);
-    if (rc != YVEX_OK || !summary.model_complete || !summary.host_locked ||
+    if (rc != YVEX_OK || !summary.model_complete ||
+        (!summary.host_locked &&
+         !(summary.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED &&
+           summary.cuda_managed_allocation_count == 1ull &&
+           summary.cuda_managed_bytes == summary.encoded_bytes &&
+           summary.cuda_managed_prefetch_count == 1ull &&
+           summary.cuda_managed_prefetch_bytes == summary.encoded_bytes)) ||
         (request->residency_backend == YVEX_BACKEND_KIND_CUDA && !summary.cuda_ready) ||
         summary.binding_count != descriptor_summary->tensor_count ||
         summary.encoded_bytes != descriptor_summary->payload_bytes ||

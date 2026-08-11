@@ -906,7 +906,7 @@ int yvex_cuda_test_info(void)
     };
     size_t symbol_index;
     unsigned char *imported = NULL, *mapped = NULL;
-    unsigned long long mapped_address = 0ull;
+    unsigned long long mapped_address = 0ull, prefetched_bytes = 0ull;
     int rc;
     memset(&options, 0, sizeof(options));
     options.kind = YVEX_BACKEND_KIND_CUDA;
@@ -992,6 +992,18 @@ int yvex_cuda_test_info(void)
                          backend, &descriptor, &resident, &mapped, &err) == YVEX_OK,
                      "allocate exact managed residency");
     memset(mapped, 0x5a, 4096u);
+    YVEX_TEST_ASSERT(setenv("YVEX_TEST_CUDA_MANAGED_PREFETCH_FAILURE", "1", 1) == 0,
+                     "install managed prefetch failure injection");
+    YVEX_TEST_ASSERT(yvex_backend_resident_prefetch(
+                         backend, resident, &prefetched_bytes, &err) == YVEX_ERR_BACKEND &&
+                         prefetched_bytes == 0ull,
+                     "managed prefetch failure publishes no migrated bytes");
+    YVEX_TEST_ASSERT(unsetenv("YVEX_TEST_CUDA_MANAGED_PREFETCH_FAILURE") == 0,
+                     "clear managed prefetch failure injection");
+    YVEX_TEST_ASSERT(yvex_backend_resident_prefetch(
+                         backend, resident, &prefetched_bytes, &err) == YVEX_OK &&
+                         prefetched_bytes == 4096ull,
+                     "prefetch initialized managed residency to the execution device");
     rc = yvex_backend_resident_attach(backend, mapped, 4096ull, resident, 1ull, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK &&
                          yvex_backend_resident_resolve(

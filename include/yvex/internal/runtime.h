@@ -207,7 +207,11 @@ typedef struct {
 typedef struct yvex_runtime_model yvex_runtime_model;
 typedef struct yvex_runtime_execution_session yvex_runtime_execution_session;
 typedef struct yvex_runtime_cleanup_lease yvex_runtime_cleanup_lease;
-#define YVEX_RUNTIME_RESIDENCY_SCHEMA_V4 4u
+#define YVEX_RUNTIME_RESIDENCY_SCHEMA_V5 5u
+typedef enum {
+    YVEX_RUNTIME_WEIGHT_PLACEMENT_HOST_LOCKED = 0,
+    YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED
+} yvex_runtime_weight_placement;
 typedef enum {
     YVEX_RUNTIME_RESIDENCY_FAILURE_NONE = 0,
     YVEX_RUNTIME_RESIDENCY_FAILURE_INVALID_ARGUMENT,
@@ -230,9 +234,11 @@ typedef struct {
 } yvex_runtime_residency_failure;
 typedef struct {
     unsigned long long maximum_host_bytes;
+    yvex_runtime_weight_placement placement;
 } yvex_runtime_residency_options;
 typedef struct {
     unsigned int schema_version;
+    yvex_runtime_weight_placement placement;
     int sealed, attached, host_ready, host_locked, cuda_ready, invalidated;
     int model_complete, core_complete, envelope_complete, output_head_complete;
     unsigned long long generation, expected_model_binding_count, model_binding_count, expected_core_binding_count;
@@ -241,6 +247,7 @@ typedef struct {
     unsigned long long accelerator_encoded_bytes, encoded_bytes, host_resident_bytes, device_resident_bytes;
     unsigned long long cuda_addressable_bytes, cuda_upload_bytes, cuda_upload_count, cuda_host_registration_count;
     unsigned long long cuda_managed_bytes, cuda_managed_allocation_count;
+    unsigned long long cuda_managed_prefetch_bytes, cuda_managed_prefetch_count;
     unsigned long long cold_artifact_read_calls, cold_artifact_bytes_read;
     unsigned long long resident_read_calls, resident_bytes_read;
     unsigned long long qtype_binding_counts[YVEX_RUNTIME_DESCRIPTOR_QTYPE_CAP];
