@@ -394,10 +394,13 @@ Process admission therefore does not depend on the Linux OOM killer.
 
 Generation retains the derived reserve in its identity-bearing workload and
 capacity plans, then checks future state, workspace, graph, scheduler and
-reserve bytes against live system/cgroup availability and current CUDA free
-memory. Live availability is deliberately not hashed into page geometry or
-capacity identity, so ordinary memory fluctuation cannot invalidate durable
-state or change an admitted session layout.
+reserve bytes against live system/cgroup availability. Dedicated CUDA memory
+also constrains the check by current CUDA free memory. Managed placement may
+instead use reclaimable system availability only when typed backend facts
+prove unified managed access and the same physical capacity. Live availability
+is deliberately not hashed
+into page geometry or capacity identity, so ordinary memory fluctuation cannot
+invalidate durable state or change an admitted session layout.
 
 Mutable session resources remain isolated while immutable model caches may be
 shared. Allocation, transfer, synchronization, execution, and cleanup failures

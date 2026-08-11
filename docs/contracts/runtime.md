@@ -45,6 +45,15 @@ consumed during a long hash cannot turn a previously valid observation into an
 OOM allocation. No materialization arena or model residency is created after
 either refusal.
 
+CUDA free memory is a separate constraint unless backend facts prove that the
+selected managed placement and the host use one physical memory domain. That
+proof requires unified addressing, managed access, and an exact match between
+effective system and device capacity. In the shared-domain case Linux `MemAvailable`,
+already bounded by the cgroup hierarchy, owns reclaimable-capacity admission;
+`cuMemGetInfo` is not allowed to turn reclaimable page cache into a false
+refusal. A shared CUDA session inherits the same immutable domain facts from
+its model-owned context.
+
 The model owns model-lifetime artifact/binding handles, encoded weights,
 backend resources, tokenizer plan, output-head residency, immutable execution
 descriptors, target and draft plans, and shared caches. A DSpark plan shares the

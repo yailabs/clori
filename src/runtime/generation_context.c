@@ -351,7 +351,7 @@ static int generation_capacity_hardware(
     const char *placement_name = "host";
     long page_bytes;
     unsigned long long system_total, total, available, reserve_basis;
-    int process_limited, rc;
+    int process_limited, shared_system_domain = 0, rc;
     if (!context || !live_available ||
         (context->options.backend == YVEX_BACKEND_KIND_CUDA && !backend) ||
         (backend && yvex_backend_get_device_info(backend, &device, err) != YVEX_OK) ||
@@ -370,10 +370,10 @@ static int generation_capacity_hardware(
             err, YVEX_ERR_STATE,
             "live process memory capacity is unavailable");
     if (device.kind == YVEX_BACKEND_KIND_CUDA) {
-        total = device.total_memory_bytes;
-        if (placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED &&
-            system_total < total) total = system_total;
-        if (device.free_memory_bytes < available)
+        shared_system_domain = placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED &&
+            device.unified_addressing && device.managed_memory && device.total_memory_bytes == system_total;
+        total = shared_system_domain ? system_total : device.total_memory_bytes;
+        if (!shared_system_domain && device.free_memory_bytes < available)
             available = device.free_memory_bytes;
     } else {
         total = system_total;
@@ -414,7 +414,7 @@ static int generation_capacity_hardware(
     context->hardware_profile.host_page_bytes = (unsigned long long)page_bytes;
     context->hardware_profile.device_page_bytes = (unsigned long long)page_bytes;
     context->hardware_profile.unified_addressing = device.unified_addressing;
-    context->hardware_profile.coherent_host_memory = device.managed_memory;
+    context->hardware_profile.coherent_host_memory = shared_system_domain;
     if (device.kind == YVEX_BACKEND_KIND_CUDA && resident) {
         if (yvex_backend_cuda_attention_graph_summary_get(
                 backend, &cuda, err) != YVEX_OK ||
