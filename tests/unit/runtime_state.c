@@ -2090,7 +2090,8 @@ static int test_state_pages(const state_plan_fixture *fixture)
     yvex_attention_state_recipe recipe, initial_recipe;
     yvex_graph_attention_state_summary summary, touched;
     yvex_attention_failure failure;
-    test_state state = {0}, initial = {0}, reference = {0}, limited = {0};
+    test_state state = {0}, model_maximum = {0}, initial = {0};
+    test_state reference = {0}, limited = {0};
     yvex_error err;
     const float *stable;
     char delta[YVEX_SHA256_HEX_CAP];
@@ -2157,6 +2158,28 @@ static int test_state_pages(const state_plan_fixture *fixture)
             state_view(&state, 1ull, YVEX_ATTENTION_STATE_VIEW_COMMITTED)->local_kv == stable &&
             state_close(&state),
         "reset releases physical pages without relocating the admitted state span");
+    state_page_capacity_open(&capacity);
+    capacity.per_session_maximum = 1048576ull;
+    (void)snprintf(capacity.identity, sizeof(capacity.identity), "%064x", 0x106u);
+    request.final_position = capacity.per_session_maximum;
+    YVEX_TEST_ASSERT(
+        state_open(&model_maximum, &fixture->plan, 512ull * 1024ull,
+                   &failure, &err) == YVEX_OK &&
+            model_maximum.configure_pages(model_maximum.context, &capacity,
+                                          &failure, &err) == YVEX_OK &&
+            state_recipe_project(&fixture->layers[1], &request, &recipe,
+                                 &failure, &err) == YVEX_OK &&
+            model_maximum.prepare(model_maximum.context, 1ull, &recipe, NULL,
+                                  &failure, &err) == YVEX_OK &&
+            state_summary(&model_maximum, &summary, &err) == YVEX_OK &&
+            summary.paged && summary.virtual_bytes > summary.resident_bytes &&
+            state_apply_token(&model_maximum, &fixture->layers[1], 0ull, 0,
+                              delta) &&
+            state_summary(&model_maximum, &touched, &err) == YVEX_OK &&
+            touched.resident_bytes > summary.resident_bytes &&
+            touched.next_position == 1ull && state_close(&model_maximum),
+        "model-authored 1M state extent remains virtual until its first semantic page");
+    state_page_capacity_open(&capacity);
     capacity.state_pool_bytes = 4096ull;
     YVEX_TEST_ASSERT(
         state_open(&limited, &fixture->plan, 512ull * 1024ull,
