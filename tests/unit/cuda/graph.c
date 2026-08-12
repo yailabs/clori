@@ -873,6 +873,7 @@ static int test_attention_graph_configuration(yvex_backend *backend)
     };
     unsigned long long count = 0ull;
     unsigned long long failed_synchronize_count = 0ull;
+    unsigned long long layout_address = 0ull;
     unsigned long long configuration_hits;
     unsigned int configuration_count;
     size_t fault_index;
@@ -1310,6 +1311,7 @@ static int test_attention_graph_configuration(yvex_backend *backend)
     rc = yvex_backend_cuda_attention_graph_registry_count(backend, &count, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && count == 0ull,
                      "released attention registry is empty");
+    backend_workspace_reset(backend);
     memset(&job, 0, sizeof(job));
     job.phase = YVEX_BACKEND_ATTENTION_PHASE_PREFILL;
     for (stage = 0u; stage < YVEX_CUDA_ATTENTION_STAGE_COUNT; ++stage) {
@@ -1330,6 +1332,19 @@ static int test_attention_graph_configuration(yvex_backend *backend)
     YVEX_TEST_ASSERT(rc == YVEX_OK && full_key[0] != '\0' &&
                      strcmp(first_key, full_key) != 0,
                      "full canonical attention stage interval is admitted distinctly");
+    YVEX_TEST_ASSERT(
+        yvex_backend_workspace_acquire(backend, 8ull, 8ull, &layout_address) ==
+            YVEX_BACKEND_RESIDENT_HIT,
+        "reserve a distinct physical attention base layout");
+    rc = yvex_cuda_attention_graph_key(
+        backend, &job, 0u, YVEX_CUDA_ATTENTION_STAGE_COUNT, dynamic_key, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && strcmp(full_key, dynamic_key) != 0,
+                     "physical base cursor separates incompatible attention graph layouts");
+    backend_workspace_reset(backend);
+    rc = yvex_cuda_attention_graph_key(
+        backend, &job, 0u, YVEX_CUDA_ATTENTION_STAGE_COUNT, dynamic_key, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && strcmp(full_key, dynamic_key) == 0,
+                     "restored physical base cursor recovers graph compatibility");
     yvex_backend_workspace_detach(backend);
     rc = yvex_backend_workspace_attach(backend, workspace, 10ull, &err);
     if (rc == YVEX_OK)

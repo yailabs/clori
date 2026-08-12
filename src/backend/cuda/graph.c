@@ -1352,8 +1352,11 @@ int yvex_cuda_graph_execute(yvex_backend *backend, const char *compatibility_ide
         if (rc != YVEX_OK)
             return rc;
         if (backend->workspace_cursor != graph->workspace_cursor) {
-            return graph_reject(err, YVEX_ERR_STATE, "cuda.graph.execute",
-                                "CUDA graph replay workspace layout is not stable");
+            yvex_error_setf(
+                err, YVEX_ERR_STATE, "cuda.graph.execute",
+                "CUDA graph replay workspace layout is not stable: identity=%s expected_cursor=%llu actual_cursor=%llu",
+                compatibility_identity, graph->workspace_cursor, backend->workspace_cursor);
+            return YVEX_ERR_STATE;
         }
     }
     replay_started = yvex_core_monotonic_ns();
@@ -1452,12 +1455,16 @@ int yvex_cuda_attention_graph_key(const yvex_backend *backend,
     yvex_sha256_init(&hash);
 #define HASH(value) \
     do { if (!yvex_sha256_update_u64(&hash, (unsigned long long)(value))) goto failed; } while (0)
-    if (!yvex_sha256_update_text(&hash, "yvex.cuda.attention-topology.v7") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.cuda.attention-topology.v8") ||
         !yvex_sha256_update_text(&hash, configuration->compatibility_identity) ||
         !yvex_sha256_update_text(&hash, configuration->capture_bucket))
         goto failed;
     HASH(backend->resident_generation);
-    /* Logical target/draft recipes share one sealed workspace; replay validates its cursor. */
+    /* State pages may replace a copied history range with a direct resident view. The resulting
+     * base cursor is physical launch topology: kernels update their current pointers, while lazy
+     * activation ranges must begin at the same offset as the graph they replay. */
+    HASH(backend->workspace_cursor);
+    /* Logical target/draft recipes share one sealed host workspace. */
     HASH(backend->host_workspace_generation);
     HASH(configuration->mode); HASH(YVEX_CUDA_ATTENTION_STAGE_COUNT);
     HASH(first); HASH(last);
