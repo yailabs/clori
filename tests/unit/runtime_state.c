@@ -1605,6 +1605,7 @@ static int test_deferred_state_publication(const state_plan_fixture *fixture)
             !state_token_open(&token[layer], &fixture->layers[layer], history, 0ull))
             rc = 1;
         if (!rc) {
+            token[layer].publication.prefix_addressable = layer == 0ull;
             token[layer].publication.device_completion_pending = 1;
             delta[0] = '\0';
             if (provider.stage(provider.context, &token[layer].publication,
@@ -1630,7 +1631,7 @@ static int test_deferred_state_publication(const state_plan_fixture *fixture)
                        YVEX_ATTENTION_STATE_VIEW_COMMITTED)->token_count == 1ull &&
             state_view(&state, 1ull,
                        YVEX_ATTENTION_STATE_VIEW_COMMITTED)->token_count == 1ull,
-        "ordered completions stage and publish the complete state batch exactly once");
+        "ordered completions admit a prefix-addressable state publication");
     for (layer = 0ull; layer < 2ull; ++layer)
         state_token_release(&token[layer]);
     YVEX_TEST_ASSERT(state_close(&state),

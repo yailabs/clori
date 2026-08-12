@@ -1860,8 +1860,7 @@ int yvex_attention_execute(
         request->scope == YVEX_ATTENTION_PROBE_SCOPE_FULL && !request->select_layer &&
         request->state_provider && request->device_view && request->workspace &&
         request->evidence_level == YVEX_ATTENTION_EVIDENCE_NONE &&
-        request->execution_class == YVEX_EXECUTION_CLASS_DEVICE_NATIVE &&
-        !request->candidate_block_visible && !request->retain_prefix_checkpoints;
+        request->execution_class == YVEX_EXECUTION_CLASS_DEVICE_NATIVE;
     context.candidate.comparison_available = request->compare_backends;
     context.candidate.first_failing_layer = YVEX_ATTENTION_NO_LAYER;
     context.candidate.first_failing_coordinate = YVEX_ATTENTION_NO_LAYER;

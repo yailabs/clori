@@ -118,7 +118,8 @@ static int bridge_stage(
         bridge->layer_active = 0;
         return YVEX_OK;
     }
-    if (bridge->residency)
+    /* Prefix selection stages the physical bank; staging here would publish rejected suffixes. */
+    if (bridge->residency && !publication->prefix_addressable)
         rc = yvex_runtime_state_residency_transition(
             bridge->residency, bridge->provider, publication, ordinal, 0ull,
             YVEX_RUNTIME_STATE_STAGE, err);
