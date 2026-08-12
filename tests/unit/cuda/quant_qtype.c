@@ -187,7 +187,7 @@ static void quant_q8_reference(const float *input, float *output,
 
 static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
 {
-    enum { ROWS = 5, INPUT_ROWS = 3, WIDTH = 4096, HEAD = 173 };
+    enum { ROWS = 5, SPARSE_INPUT_ROWS = 3, INPUT_ROWS = 16, WIDTH = 4096, HEAD = 173 };
     yvex_backend_tensor_desc descriptor = {0};
     yvex_device_tensor *resident = NULL, *input = NULL, *additive = NULL, *output = NULL;
     yvex_device_tensor *split_head = NULL, *split_tail = NULL;
@@ -207,6 +207,9 @@ static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
     unsigned int input_index, row_index;
     int rc;
 
+    YVEX_TEST_ASSERT(!cuda_qtype_tensorcore_eligible(15ull) &&
+                         cuda_qtype_tensorcore_eligible(16ull),
+                     "dense Tensor Core selection follows the native MMA row tile");
     for (input_index = 0u; input_index < INPUT_ROWS; ++input_index) {
         for (index = 0ull; index < WIDTH; ++index)
             vectors[input_index * WIDTH + index] =
@@ -280,7 +283,7 @@ static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
                      "Q8 activation output allocates");
     rc = yvex_backend_cuda_encoded_matvec(
         backend, mapped, ROWS * row_bytes, qtype, ROWS, WIDTH, row_bytes,
-        INPUT_ROWS, input, NULL, 0ull, NULL, output, 1, &facts, &err);
+        SPARSE_INPUT_ROWS, input, NULL, 0ull, NULL, output, 1, &facts, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT && !facts.kernel_launches,
                      "encoded matvec refuses an unpublished input before launch");
     YVEX_TEST_ASSERT(yvex_backend_tensor_write(
@@ -288,22 +291,26 @@ static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
                      "Q8 activation row batch uploads once");
     rc = yvex_backend_cuda_encoded_matvec(
         backend, mapped, descriptor.bytes ? ROWS * row_bytes : 0u, qtype,
-        ROWS, WIDTH, row_bytes, INPUT_ROWS, input, NULL, 0ull, NULL,
+        ROWS, WIDTH, row_bytes, SPARSE_INPUT_ROWS, input, NULL, 0ull, NULL,
         output, 1, &facts, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && facts.kernel_launches == 2ull &&
-                         facts.tensor_core_launches == 1ull &&
+                         facts.tensor_core_launches == 0ull,
+                     "sparse Q8 activation rows retain one DP4A projection launch");
+    YVEX_TEST_ASSERT(
                          facts.d2h_bytes == sizeof(int) &&
                          facts.device_synchronizations == 1ull &&
                          facts.compulsory_memory_facts_available &&
                          facts.active_weight_bytes == ROWS * row_bytes &&
                          facts.state_bytes == 0ull &&
-                         facts.activation_bytes == sizeof(vectors) + sizeof(actual) &&
+                         facts.activation_bytes ==
+                             SPARSE_INPUT_ROWS * (WIDTH + ROWS) * sizeof(float) &&
                          facts.temporary_bytes ==
-                             sizeof(int) + INPUT_ROWS * (WIDTH / 256u) * 292u &&
-                         yvex_backend_tensor_read(
-                             backend, output, actual, sizeof(actual), &err) == YVEX_OK,
-                     "Q8 activation production row batch uses one quantize and projection launch");
-    for (index = 0ull; index < INPUT_ROWS * ROWS; ++index) {
+                             sizeof(int) + SPARSE_INPUT_ROWS * (WIDTH / 256u) * 292u,
+                     "sparse DP4A projection reports compulsory memory movement");
+    YVEX_TEST_ASSERT(yvex_backend_tensor_read(
+                         backend, output, actual, sizeof(actual), &err) == YVEX_OK,
+                     "sparse DP4A output returns for numerical comparison");
+    for (index = 0ull; index < SPARSE_INPUT_ROWS * ROWS; ++index) {
         double difference = fabs((double)actual[index] - expected[index]);
         double exact_difference = fabs((double)actual[index] - exact[index]);
         double approximation = 0.1 * (1.0 + fabs((double)exact[index]));
@@ -314,14 +321,29 @@ static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
     }
     rc = yvex_backend_cuda_encoded_matvec(
         backend, mapped, ROWS * row_bytes, qtype, ROWS, WIDTH, row_bytes,
-        INPUT_ROWS, input, NULL, 0ull, NULL, output, 0, &facts, &err);
+        INPUT_ROWS, input, NULL, 0ull, NULL, output, 1, &facts, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && facts.kernel_launches == 2ull &&
+                         facts.tensor_core_launches == 1ull &&
+                         facts.activation_bytes == sizeof(vectors) + sizeof(actual) &&
+                         facts.temporary_bytes ==
+                             sizeof(int) + INPUT_ROWS * (WIDTH / 256u) * 292u &&
+                         yvex_backend_tensor_read(
+                             backend, output, actual, sizeof(actual), &err) == YVEX_OK,
+                     "full MMA row tile selects the native Tensor Core projection");
+    for (index = 0ull; index < INPUT_ROWS * ROWS; ++index)
+        YVEX_TEST_ASSERT(fabs((double)actual[index] - expected[index]) <=
+                                 1e-5 * (1.0 + fabs((double)expected[index])),
+                             "Tensor Core row tile matches the independent codec reference");
+    rc = yvex_backend_cuda_encoded_matvec(
+        backend, mapped, ROWS * row_bytes, qtype, ROWS, WIDTH, row_bytes,
+        SPARSE_INPUT_ROWS, input, NULL, 0ull, NULL, output, 0, &facts, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && facts.kernel_launches == 1ull &&
                          facts.tensor_core_launches == 0ull &&
                          facts.temporary_bytes == sizeof(int) &&
                          yvex_backend_tensor_read(
                              backend, output, actual, sizeof(actual), &err) == YVEX_OK,
                      "F32 activation policy selects one uncompressed projection launch");
-    for (index = 0ull; index < INPUT_ROWS * ROWS; ++index)
+    for (index = 0ull; index < SPARSE_INPUT_ROWS * ROWS; ++index)
         YVEX_TEST_ASSERT(fabs((double)actual[index] - exact[index]) <=
                                  1e-5 * (1.0 + fabs((double)exact[index])),
                              "F32 activation CUDA row batch matches the reference tolerance");

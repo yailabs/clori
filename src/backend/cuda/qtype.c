@@ -231,7 +231,8 @@ int yvex_backend_cuda_encoded_matvec(
     }
     q8_path = activation_q8 && !split_input && row_width % 256ull == 0ull &&
               yvex_cuda_q8_activation_eligible(qtype);
-    tensorcore_path = q8_path && state && state->qtype_tensorcore_rows_function;
+    tensorcore_path = q8_path && state && state->qtype_tensorcore_rows_function &&
+                      cuda_qtype_tensorcore_eligible(input_rows);
     if (!state || !resident_encoded || !encoded_bytes || !row_count || !input_rows ||
         !row_width || !row_bytes || !facts || split_input != (input_head_width != 0ull) ||
         (split_input && input_head_width >= row_width) ||

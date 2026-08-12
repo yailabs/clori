@@ -254,13 +254,15 @@ static int attention_matvec(yvex_cuda_work *work,
                                yvex_error *err)
 {
     CUdeviceptr additive = 0ull;
-    int block_row = 0, q8_path, q8_input = 0;
+    int block_row = 0, q8_path, q8_input = 0, tensorcore_path;
     unsigned long long tensorcore_grid = 0ull;
     unsigned int matvec_grid, matvec_block;
     q8_path = weight && work->activation_q8 && !work->forensic_numeric &&
               weight->row_width % 256ull == 0ull &&
               yvex_cuda_q8_activation_eligible(weight->qtype) &&
-              work->state->qtype_tensorcore_rows_function;
+              work->state->q8_quantize_function && work->state->qtype_matvec_function;
+    tensorcore_path = q8_path && work->state->qtype_tensorcore_rows_function &&
+                      cuda_qtype_tensorcore_eligible(input_rows);
     if (!weight || !weight->present || !device_weight || !vector || !out ||
         !rows || !input_rows || start_row > weight->row_count ||
         rows > weight->row_count - start_row ||
@@ -272,7 +274,7 @@ static int attention_matvec(yvex_cuda_work *work,
             failure, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT, stage,
             weight ? weight->row_count : 0ull, start_row + rows, err,
             YVEX_ERR_BOUNDS, "CUDA attention matvec geometry is invalid");
-    if (q8_path &&
+    if (tensorcore_path &&
         (!yvex_core_u64_mul((rows + 15ull) / 16ull,
                             (input_rows + 15ull) / 16ull, &tensorcore_grid) ||
          tensorcore_grid > UINT_MAX))
@@ -307,7 +309,7 @@ static int attention_matvec(yvex_cuda_work *work,
                                   (unsigned int)quantize_tasks, CUDA_ATTENTION_BLOCK, 0u,
                                   params, "cuda.q8-activation", failure, err);
         }
-        if (rc == YVEX_OK) {
+        if (rc == YVEX_OK && tensorcore_path) {
             void *params[] = {
                 &device_weight, (void *)&weight->row_bytes,
                 (void *)&weight->row_width, &start_row, &rows, &input_rows,
@@ -318,6 +320,16 @@ static int attention_matvec(yvex_cuda_work *work,
                 (unsigned int)tensorcore_grid, 32u, 0u, params, stage,
                 failure, err);
             if (rc == YVEX_OK) work->tensor_core_launches++;
+        } else if (rc == YVEX_OK) {
+            q8_input = 1;
+            void *params[] = {
+                &device_weight, (void *)&weight->row_bytes,
+                (void *)&weight->row_width, &start_row, &rows, &input_rows,
+                (void *)&weight->qtype, &quantized, &q8_input, &block_row,
+                &work->forensic_numeric, &additive, &out, &output_bf16, &status};
+            rc = attention_launch(work, work->state->qtype_matvec_function,
+                                  matvec_grid, matvec_block, 0u, params, stage,
+                                  failure, err);
         }
         return rc;
     }
