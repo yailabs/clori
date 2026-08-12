@@ -7,11 +7,14 @@ set -eu
 YVEX_BIN=${YVEX_BIN:-./yvex}
 OUT_DIR=${YVEX_TEST_OUT_DIR:-build/tests/cli-server}
 HOME_ROOT=$OUT_DIR/home
-SOCKET_PATH=${TMPDIR:-/tmp}/yvex-cli-server-$$.sock
+SOCKET_ROOT=$OUT_DIR/runtime
+SOCKET_PATH=$SOCKET_ROOT/yvex.sock
 PROFILE=deepseek4-v4-flash-dspark-runtime-iq2xxs-q2k-mxfp4-b9825a07-sm121-tc
 
 yvex_test_cleanup "$OUT_DIR" "$SOCKET_PATH"
-mkdir -p "$OUT_DIR" "$HOME_ROOT/.local/share/yvex"
+mkdir -p "$OUT_DIR" "$HOME_ROOT/.local/share/yvex" "$SOCKET_ROOT"
+chmod 0700 "$SOCKET_ROOT"
+SOCKET_PATH=$(realpath "$SOCKET_ROOT")/yvex.sock
 
 fail()
 {
@@ -100,8 +103,7 @@ contains "$OUT_DIR/admission.out" 'backend=cpu · mode=target-only · requested 
 contains "$OUT_DIR/admission.out" "artifact $artifact"
 contains "$OUT_DIR/admission.out" "binding $binding"
 contains "$OUT_DIR/admission.out" 'stop with Ctrl-C or `yvex server stop`'
-contains "$OUT_DIR/admission.err" 'model admission in progress (elapsed 0 s)'
-contains "$OUT_DIR/admission.err" 'model admission failed (elapsed '
+contains "$OUT_DIR/admission.err" 'startup refused before readiness (elapsed '
 yvex_test_cleanup "$SOCKET_PATH"
 
 printf 'cli server grammar: ok\n'

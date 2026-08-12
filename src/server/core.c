@@ -359,8 +359,7 @@ static int listener_open(yvex_server *server, yvex_error *err)
     int fd;
     if (socket_directory_prepare(server->socket_path, err) != YVEX_OK)
         return yvex_error_code(err);
-    server->lock_fd = open(server->lock_path,
-                           O_RDWR | O_CREAT | O_NOFOLLOW, 0600);
+    server->lock_fd = open(server->lock_path, O_RDWR | O_CREAT | O_NOFOLLOW, 0600);
     if (server->lock_fd < 0 || fstat(server->lock_fd, &lock_info) != 0 ||
         !S_ISREG(lock_info.st_mode) || lock_info.st_uid != getuid() ||
         flock(server->lock_fd, LOCK_EX | LOCK_NB) != 0)
@@ -586,9 +585,7 @@ static int server_execution_prepare(yvex_server *server,
 
 /*
  * Open the model once, then sessions, scheduler workers, and listener before READY.
- *
- * Opens immutable runtime, registry, scheduler, and UDS ownership. Marks FAILED and leaves all
- * acquired owners for deterministic close.
+ * Failed starts retain acquired owners for deterministic close.
  */
 int yvex_server_start(yvex_server *server, yvex_error *err)
 {
@@ -600,11 +597,12 @@ int yvex_server_start(yvex_server *server, yvex_error *err)
     const yvex_runtime_model_view *view;
     unsigned long long startup_started, cuda_started = 0u, startup_completed;
     double cuda_seconds = 0.0, startup_seconds;
-    int rc;
+    int rc = YVEX_OK;
     if (!server || !server->state_mutex_ready ||
+        (rc = socket_directory_prepare(server->socket_path, err)) != YVEX_OK ||
         pthread_mutex_lock(&server->state_mutex) != 0)
-        return server_refuse(err, YVEX_ERR_INVALID_ARG,
-                             "configured host is required");
+        return rc != YVEX_OK ? rc : server_refuse(
+            err, YVEX_ERR_INVALID_ARG, "configured host is required");
     if (server->summary.status != YVEX_SERVER_STATUS_CONFIGURED || server->model) {
         (void)pthread_mutex_unlock(&server->state_mutex);
         return server_refuse(err, YVEX_ERR_STATE,

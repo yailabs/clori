@@ -321,14 +321,20 @@ static int test_model_open_refusal(void)
     YVEX_TEST_ASSERT(rc == YVEX_ERR_INVALID_ARG && !server,
                      "execution concurrency above session capacity refuses");
     test_options(&options);
+    options.socket_path = "/tmp/yvex-unsafe.sock";
+    rc = yvex_server_create(&server, &options, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && server, "unsafe socket host create");
+    rc = yvex_server_start(server, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_ERR_IO, "unsafe socket refuses before model start");
+    yvex_server_close(&server);
+    test_options(&options);
     rc = yvex_server_create(&server, &options, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "refusal host create");
     rc = yvex_server_start(server, &err);
     YVEX_TEST_ASSERT(rc != YVEX_OK, "missing artifact refuses start");
     rc = yvex_server_get_summary(server, &summary, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "failed summary remains available");
-    YVEX_TEST_ASSERT(summary.status == YVEX_SERVER_STATUS_FAILED,
-                     "failed start status");
+    YVEX_TEST_ASSERT(summary.status == YVEX_SERVER_STATUS_FAILED, "failed start status");
     YVEX_TEST_ASSERT(summary.metrics.model_open_count == 0u,
                      "failed start does not count model open");
     yvex_server_close(&server);

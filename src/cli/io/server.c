@@ -78,10 +78,6 @@ static void startup_progress_begin(cli_server_startup_progress *progress)
 {
     memset(progress, 0, sizeof(*progress));
     atomic_init(&progress->done, 0);
-    fprintf(stderr,
-            "yvex server: model admission in progress (elapsed 0 s); "
-            "readiness follows verification and residency\n");
-    (void)fflush(stderr);
     if (clock_gettime(CLOCK_MONOTONIC, &progress->started) == 0 &&
         pthread_create(&progress->thread, NULL, startup_progress_main, progress) == 0)
         progress->thread_ready = 1;
@@ -98,9 +94,12 @@ static void startup_progress_end(cli_server_startup_progress *progress, int stat
     atomic_store_explicit(&progress->done, 1, memory_order_relaxed);
     if (progress->thread_ready) (void)pthread_join(progress->thread, NULL);
     elapsed = startup_elapsed_seconds(progress);
-    fprintf(stderr, "yvex server: model admission %s (elapsed %llu s)%s\n",
-            status == YVEX_OK ? "complete" : "failed", elapsed,
-            status == YVEX_OK ? "; local server ready" : "");
+    if (status != YVEX_OK)
+        fprintf(stderr, "yvex server: startup refused before readiness (elapsed %llu s)\n",
+                elapsed);
+    else
+        fprintf(stderr, "yvex server: model admission complete (elapsed %llu s); "
+                        "local server ready\n", elapsed);
     (void)fflush(stderr);
 }
 
