@@ -285,8 +285,7 @@ typedef struct {
     yvex_backend_cuda_graph *graphs;
     yvex_backend_cuda_graph *capture_owner;
     yvex_backend_cuda_graph *parameter_update_owner;
-    CUstream capture_stream;
-    CUstream execution_stream;
+    CUstream capture_stream, execution_stream;
     int shared_stream_in_flight;
     CUevent timing_start;
     CUevent timing_stop;
@@ -302,7 +301,7 @@ typedef struct {
     unsigned int deferred_release_count;
     unsigned long long deferred_release_bytes;
     void *registered_host;
-    CUdeviceptr registered_device;
+    CUdeviceptr registered_device, deferred_status;
     unsigned long long registered_bytes;
     int kernel_bundle_native;
     char kernel_bundle_identity[YVEX_SHA256_HEX_BYTES];
@@ -355,9 +354,9 @@ typedef struct {
     yvex_backend *backend;
     yvex_cuda_backend_state *state;
     yvex_backend_operation_variant variant;
-    CUdeviceptr pointers[YVEX_CUDA_WORK_MAX_RANGES], q8_input;
+    CUdeviceptr pointers[YVEX_CUDA_WORK_MAX_RANGES], q8_input, status;
     unsigned long long sizes[YVEX_CUDA_WORK_MAX_RANGES];
-    unsigned char workspace_owned[YVEX_CUDA_WORK_MAX_RANGES];
+    unsigned char workspace_owned[YVEX_CUDA_WORK_MAX_RANGES], status_deferred;
     int prepare_only, raw_only, forensic_numeric, activation_q8;
     unsigned int count;
     unsigned long long current_bytes, peak_bytes, budget, launches, q8_capacity;

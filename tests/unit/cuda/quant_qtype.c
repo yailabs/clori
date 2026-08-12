@@ -722,7 +722,9 @@ static int quant_cuda_transformer_facts(yvex_backend *backend)
     yvex_device_tensor *base_device = NULL, *scale_device = NULL;
     yvex_device_tensor *norm_device = NULL, *pre_device = NULL, *output_device = NULL;
     yvex_device_tensor *feature_device = NULL, *resident_feature_device = NULL;
+    yvex_device_tensor *workspace_device = NULL;
     unsigned char *row = NULL, *encoded = NULL;
+    unsigned char workspace[256] = {0};
     float source[TOKENS * HIDDEN] = {0};
     float embedding[TOKENS * HIDDEN], expanded[TOKENS * HIDDEN * STREAMS];
     float function[STREAMS * STREAMS * HIDDEN] = {0};
@@ -805,7 +807,8 @@ static int quant_cuda_transformer_facts(yvex_backend *backend)
             facts.temporary_bytes == sizeof(int) &&
             facts.d2h_bytes == sizeof(features) + sizeof(int) &&
             facts.kernel_launches == 1ull && facts.download_count == 2ull &&
-            facts.device_synchronizations == 1ull && feature_device->is_written &&
+            facts.stream_synchronizations + facts.device_synchronizations == 1ull &&
+            feature_device->is_written &&
             resident_feature_device->is_written &&
             yvex_backend_tensor_read(backend, resident_feature_device,
                                      resident_features,
@@ -830,7 +833,8 @@ static int quant_cuda_transformer_facts(yvex_backend *backend)
                 resident_feature_device, 0ull, HIDDEN * 2ull, HIDDEN,
                 NULL, &facts, &err) == YVEX_OK &&
             facts.d2h_bytes == sizeof(int) && facts.download_count == 1ull &&
-            facts.kernel_launches == 1ull && facts.device_synchronizations == 1ull &&
+            facts.kernel_launches == 1ull &&
+            facts.stream_synchronizations + facts.device_synchronizations == 1ull &&
             yvex_backend_tensor_read(backend, feature_device, features,
                                      sizeof(features), &err) == YVEX_OK &&
             yvex_backend_tensor_read(backend, resident_feature_device,
@@ -922,9 +926,40 @@ static int quant_cuda_transformer_facts(yvex_backend *backend)
                              output[index] == reference_output[index],
                          "transformer final preserves pre-normalized and normalized rows");
 
+    YVEX_TEST_ASSERT(
+        quant_cuda_tensor(backend, "transformer_workspace", YVEX_DTYPE_I8,
+                          workspace, sizeof(workspace), &workspace_device, &err) &&
+            yvex_backend_workspace_attach(backend, workspace_device, 1ull, &err) == YVEX_OK,
+        "transformer status workspace attaches");
+    YVEX_TEST_ASSERT(
+        yvex_backend_transformer_cuda_initial(
+            backend, encoded_device, YVEX_GGUF_QTYPE_Q8_0, TOKENS, HIDDEN, STREAMS,
+            embedding_device, expanded_device, &facts, &err) == YVEX_OK &&
+            !facts.d2h_bytes && !facts.download_count && !facts.stream_synchronizations &&
+            !facts.device_synchronizations,
+        "transformer initial defers bounded status publication");
+    YVEX_TEST_ASSERT(
+        yvex_backend_transformer_cuda_feature_mean(
+            backend, expanded_device, TOKENS, HIDDEN, STREAMS, feature_device,
+            resident_feature_device, 0ull, HIDDEN * 2ull, HIDDEN,
+            NULL, &facts, &err) == YVEX_OK &&
+            !facts.d2h_bytes && !facts.download_count && !facts.stream_synchronizations &&
+            !facts.device_synchronizations,
+        "transformer feature reduction retains deferred status");
+    YVEX_TEST_ASSERT(
+        yvex_backend_transformer_cuda_final(
+            backend, expanded_device, function_device, base_device, scale_device,
+            norm_device, TOKENS, HIDDEN, STREAMS, 1e-6, 1e-6, pre_device,
+            output_device, &facts, &err) == YVEX_OK &&
+            facts.d2h_bytes == sizeof(int) && facts.download_count == 1ull &&
+            facts.stream_synchronizations + facts.device_synchronizations == 1ull,
+        "transformer final publishes one aggregate status transaction");
+    yvex_backend_workspace_detach(backend);
+
     free(encoded);
     YVEX_TEST_ASSERT(
-        yvex_backend_tensor_release(backend, &resident_feature_device, &err) == YVEX_OK &&
+        yvex_backend_tensor_release(backend, &workspace_device, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &resident_feature_device, &err) == YVEX_OK &&
             yvex_backend_tensor_release(backend, &feature_device, &err) == YVEX_OK &&
             yvex_backend_tensor_release(backend, &output_device, &err) == YVEX_OK &&
             yvex_backend_tensor_release(backend, &pre_device, &err) == YVEX_OK &&

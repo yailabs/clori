@@ -171,7 +171,6 @@ int yvex_cuda_work_cleanup(yvex_cuda_work *work, yvex_error *err)
     if (result == YVEX_OK) yvex_error_clear(err);
     return result;
 }
-
 static int parse_device_index(const char *text, int *out, yvex_error *err)
 {
     long value = 0;
