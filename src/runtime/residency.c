@@ -253,20 +253,12 @@ static int residency_add_record(yvex_runtime_residency *residency,
     residency->summary.binding_count++;
     return YVEX_OK;
 }
-/* Hash exact resident payload bytes and immutable range boundaries. */
-static int residency_load_and_hash(yvex_runtime_residency *residency,
-                                   yvex_runtime_residency_failure *failure, yvex_error *err)
+/* Populate one arena from the already authenticated immutable artifact snapshot. */
+static int residency_load(yvex_runtime_residency *residency,
+                          yvex_runtime_residency_failure *failure, yvex_error *err)
 {
-    yvex_sha256 hash;
-    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
-    char tensor_digest[YVEX_SHA256_HEX_CAP];
     unsigned long long index;
-    yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.resident.payload.v3") ||
-        !yvex_sha256_update_u64(&hash, residency->summary.binding_count))
-        return residency_reject(failure, YVEX_RUNTIME_RESIDENCY_FAILURE_LIFECYCLE, NULL,
-                                1ull, 0ull, "resident payload hash initialization failed",
-                                YVEX_ERR_STATE, err);
+
     for (index = 0ull; index < residency->summary.binding_count; ++index) {
         const residency_record *record = &residency->records[index];
         const yvex_materialized_tensor_binding *binding = record->binding;
@@ -288,27 +280,59 @@ static int residency_load_and_hash(yvex_runtime_residency *residency,
                 failure, YVEX_RUNTIME_RESIDENCY_FAILURE_LIFECYCLE, NULL,
                 ULLONG_MAX, binding->encoded_bytes,
                 "resident cold-read accounting overflowed", YVEX_ERR_BOUNDS, err);
-        rc = yvex_artifact_sha256_hex_bytes(
-            destination, binding->encoded_bytes, tensor_digest, err);
-        if (rc != YVEX_OK)
-            return residency_reject(failure, YVEX_RUNTIME_RESIDENCY_FAILURE_LIFECYCLE, NULL,
-                                    binding->encoded_bytes, 0ull,
-                                    "resident tensor payload digest failed",
-                                    (yvex_status)rc, err);
+    }
+    return YVEX_OK;
+}
+
+/*
+ * Bind resident content to the verified artifact and exact copied byte ranges.
+ *
+ * Rehashing the destination would repeat the complete artifact trust pass while protecting only
+ * one instant of mutable memory. The artifact identity, stable snapshot reads, materialization
+ * identity, and exact source/destination ranges instead seal the same immutable content without a
+ * second model-sized SHA pass.
+ */
+static int residency_payload_digest_build(yvex_runtime_residency *residency,
+                                          const char *artifact_identity,
+                                          const char *materialization_identity,
+                                          yvex_error *err)
+{
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    unsigned long long index;
+
+    if (!residency || !yvex_sha256_hex_valid(artifact_identity) ||
+        !yvex_sha256_hex_valid(materialization_identity)) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.residency.payload",
+                       "verified artifact and materialization identities are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.resident.payload.v4") ||
+        !yvex_sha256_update_text(&hash, artifact_identity) ||
+        !yvex_sha256_update_text(&hash, materialization_identity) ||
+        !yvex_sha256_update_u64(&hash, residency->summary.binding_count) ||
+        !yvex_sha256_update_u64(&hash, residency->summary.encoded_bytes))
+        goto failed;
+    for (index = 0ull; index < residency->summary.binding_count; ++index) {
+        const residency_record *record = &residency->records[index];
+        const yvex_materialized_tensor_binding *binding = record->binding;
+
         if (!yvex_sha256_update_u64(&hash, binding->tensor_id) ||
             !yvex_sha256_update_u64(&hash, binding->qtype) ||
+            !yvex_sha256_update_u64(&hash, binding->absolute_offset) ||
             !yvex_sha256_update_u64(&hash, binding->encoded_bytes) ||
-            !yvex_sha256_update_text(&hash, tensor_digest))
-            return residency_reject(failure, YVEX_RUNTIME_RESIDENCY_FAILURE_LIFECYCLE, NULL,
-                                    1ull, 0ull, "resident payload hash update failed",
-                                    YVEX_ERR_STATE, err);
+            !yvex_sha256_update_u64(&hash, record->arena_offset))
+            goto failed;
     }
-    if (!yvex_sha256_final(&hash, digest))
-        return residency_reject(failure, YVEX_RUNTIME_RESIDENCY_FAILURE_LIFECYCLE, NULL,
-                                1ull, 0ull, "resident payload hash finalization failed",
-                                YVEX_ERR_STATE, err);
+    if (!yvex_sha256_final(&hash, digest)) goto failed;
     yvex_sha256_hex(digest, residency->summary.payload_digest);
     return YVEX_OK;
+
+failed:
+    yvex_error_set(err, YVEX_ERR_STATE, "runtime.residency.payload",
+                   "resident payload derivation identity failed");
+    return YVEX_ERR_STATE;
 }
 /*
  * Derive residency identity from semantic range order and exact encoded payload.
@@ -324,8 +348,8 @@ static int residency_identity_build(yvex_runtime_residency *residency,
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     unsigned long long index;
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.residency.v5") ||
-        !yvex_sha256_update_u64(&hash, YVEX_RUNTIME_RESIDENCY_SCHEMA_V5) ||
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.residency.v6") ||
+        !yvex_sha256_update_u64(&hash, YVEX_RUNTIME_RESIDENCY_SCHEMA_V6) ||
         !yvex_sha256_update_text(&hash, model->runtime_model_identity) ||
         !yvex_sha256_update_text(&hash, model->artifact_identity) ||
         !yvex_sha256_update_text(&hash, model->materialization_identity) ||
@@ -353,7 +377,7 @@ static int residency_identity_build(yvex_runtime_residency *residency,
         goto failed;
     yvex_sha256_hex(digest, residency->summary.residency_identity);
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.output-head.residency.v1") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.output-head.residency.v2") ||
         !yvex_sha256_update_text(&hash, model->runtime_model_identity) ||
         !yvex_sha256_update_u64(&hash, residency->summary.output_head_binding_count) ||
         !yvex_sha256_update_u64(&hash, residency->summary.output_head_encoded_bytes) ||
@@ -379,8 +403,8 @@ static int residency_component_identity_build(
     unsigned long long index;
 
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.component-residency.v1") ||
-        !yvex_sha256_update_u64(&hash, 4ull) ||
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.component-residency.v2") ||
+        !yvex_sha256_update_u64(&hash, 5ull) ||
         !yvex_sha256_update_text(&hash, component_identity) ||
         !yvex_sha256_update_text(&hash, materialization->artifact_identity) ||
         !yvex_sha256_update_text(&hash, materialization->plan_identity) ||
@@ -488,7 +512,7 @@ static int residency_arena_prepare(yvex_runtime_residency *residency,
         residency->arena_mapped = 1;
         residency->summary.placement = YVEX_RUNTIME_WEIGHT_PLACEMENT_HOST_LOCKED;
     }
-    rc = residency_load_and_hash(residency, failure, err);
+    rc = residency_load(residency, failure, err);
     if (rc != YVEX_OK) return rc;
     if (residency->arena_managed) return YVEX_OK;
     if (mlock(residency->arena, (size_t)residency->summary.encoded_bytes) != 0)
@@ -748,6 +772,10 @@ int yvex_runtime_residency_prepare(yvex_runtime_residency **out, yvex_runtime_mo
         rc = residency_arena_prepare(
             residency, &model->opening_backend, options, failure, err);
     if (rc == YVEX_OK)
+        rc = residency_payload_digest_build(
+            residency, model_summary.artifact_identity,
+            model_summary.materialization_identity, err);
+    if (rc == YVEX_OK)
         rc = residency_identity_build(residency, &model_summary, attention, err);
     if (rc == YVEX_OK) residency->summary.generation = 1ull;
     if (rc == YVEX_OK && (model->opening_backend || residency->cuda_backend))
@@ -778,7 +806,7 @@ int yvex_runtime_residency_prepare(yvex_runtime_residency **out, yvex_runtime_mo
         if (err) *err = primary;
         return rc;
     }
-    residency->summary.schema_version = YVEX_RUNTIME_RESIDENCY_SCHEMA_V5;
+    residency->summary.schema_version = YVEX_RUNTIME_RESIDENCY_SCHEMA_V6;
     residency->summary.generation = 1ull;
     if (!residency->arena_managed)
         residency->summary.host_resident_bytes = residency->summary.encoded_bytes;
@@ -896,6 +924,9 @@ int yvex_runtime_component_residency_prepare(
         rc = residency_arena_prepare(residency, NULL, options, failure, err);
     }
     if (rc == YVEX_OK)
+        rc = residency_payload_digest_build(
+            residency, source->artifact_identity, source->plan_identity, err);
+    if (rc == YVEX_OK)
         rc = residency_component_identity_build(residency, source, component_identity, err);
     if (rc == YVEX_OK) {
         residency->summary.generation = 1ull;
@@ -923,7 +954,7 @@ int yvex_runtime_component_residency_prepare(
         if (err) *err = primary;
         return rc;
     }
-    residency->summary.schema_version = YVEX_RUNTIME_RESIDENCY_SCHEMA_V5;
+    residency->summary.schema_version = YVEX_RUNTIME_RESIDENCY_SCHEMA_V6;
     residency->summary.host_resident_bytes = residency->summary.encoded_bytes;
     residency->summary.sealed = 1;
     residency->summary.attached = 1;

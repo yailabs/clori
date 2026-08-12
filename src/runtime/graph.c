@@ -398,7 +398,9 @@ static int runtime_attention_result_bind(const yvex_runtime_model *model,
                                 "admitted_external_artifact");
     result->artifact_hash_passes = model_summary.artifact_hash_passes;
     result->artifact_bytes_hashed = model_summary.artifact_bytes_hashed;
-    result->artifact_identity_verified = model_summary.artifact_hash_passes == 1ull;
+    result->artifact_identity_verified =
+        model_summary.artifact_hash_passes == 1ull ||
+        model_summary.artifact_verified_reopen_passes == 1ull;
     memcpy(&result->runtime_model_builds, &model_summary.runtime_model_builds, 4u * sizeof(unsigned long long));
     memcpy(result->lifecycle_seconds, model_summary.lifecycle_seconds, sizeof(result->lifecycle_seconds));
     return 1;

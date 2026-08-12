@@ -252,13 +252,18 @@ writers cannot represent model geometry; v7 readers reject v8 as expected.
 The rebuilt reader admits both versions and refuses malformed, truncated or
 identity-mismatched descriptor payloads.
 
-One runtime model performs one complete artifact hash and one GGUF directory
-admission. It then owns one anonymous host arena containing every encoded
-descriptor tensor; a compact accelerator prefix is uploaded and shared under
-the admitted backend contract. Warm operations reuse the same verified handle,
-immutable descriptor, attention graph and complete resident weight pack.
-Before and after execution, snapshot drift invalidates the model, sessions,
-residency, workspace, graph executables and candidate state.
+One first runtime-model admission performs a complete artifact hash and one
+GGUF directory admission. A later open of the exact local filesystem snapshot
+may consume a rebuildable verified-reopen lease and records zero payload bytes
+hashed for that open; an absent, malformed, or stale lease falls back to the
+complete hash. The model then owns one anonymous host arena containing every
+encoded descriptor tensor; residency schema v6 seals its verified artifact,
+materialization, source-range and arena-range derivation without rehashing the
+complete copied payload. A compact accelerator prefix is uploaded and shared
+under the admitted backend contract. Warm operations reuse the same verified
+handle, immutable descriptor, attention graph and complete resident weight
+pack. Before and after execution, snapshot drift invalidates the model,
+sessions, residency, workspace, graph executables and candidate state.
 
 Sessions own mutable state. `yvex_runtime_session_prepare_persistent_state`
 seals the provider layout and CPU/CUDA residency for an exact capacity;

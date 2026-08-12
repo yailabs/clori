@@ -106,6 +106,13 @@ in its workload/capacity plan and rechecks live system/cgroup and CUDA
 availability against non-weight resources without making transient free bytes
 part of page geometry, plan identity or durable-state compatibility.
 
+Full artifact admission publishes a rebuildable verified-reopen lease bound to
+the exact artifact identity and filesystem snapshot. An unchanged local reopen
+still validates the snapshot but skips the repeated model-sized payload hash;
+invalid cache evidence falls back to full authentication. Residency schema v6
+then binds the authenticated artifact, materialization and exact copied ranges
+without hashing the complete destination arena a second time.
+
 ## Causal optimization
 
 The phase roofline ledger is the priority authority. For prefill layer, decode

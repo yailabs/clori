@@ -52,6 +52,7 @@ src/artifact/descriptor.c	artifact	artifact.descriptor	generic	private	reusable-
 src/artifact/identity.c	artifact	artifact.identity	generic	private	canonical-identity	gguf,model,runtime	implementation	none
 src/artifact/integrity.c	artifact	artifact.integrity	generic	private	reusable-algorithm	gguf,model,runtime	implementation	none
 src/artifact/materialize.c	artifact	artifact.materialize	generic	private	resource-lifecycle	gguf,model,runtime	implementation	none
+src/artifact/reopen.c	artifact	artifact.reopen	generic	private	file-serialization	runtime	implementation	none
 src/artifact/roundtrip_gate.c	artifact	artifact.roundtrip	generic	private	reusable-algorithm	gguf,model,runtime	implementation	none
 src/backend/core.c	backend	backend.core	generic	private	resource-lifecycle	graph,runtime	implementation	none
 src/backend/cpu.c	backend	backend.cpu	backend	private	backend-implementation	backend,graph,runtime	implementation	none

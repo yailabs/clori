@@ -475,9 +475,11 @@ static int runtime_model_artifact_open(
     const yvex_runtime_binding_summary *binding, yvex_runtime_model_failure *failure,
     yvex_error *err) {
     yvex_artifact_admission_failure admission_failure;
+    yvex_artifact_reopen_lease reopen_lease;
     yvex_artifact_options options;
+    yvex_error reopen_error;
     unsigned long long started;
-    int rc;
+    int rc, verified_reopen = 0;
     if (!model->admission.file_bytes || !model->admission.tensor_count)
         return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_BINDING_ADMISSION, 1ull, 0ull, err);
     memset(&options, 0, sizeof(options));
@@ -503,18 +505,42 @@ static int runtime_model_artifact_open(
     if (rc == YVEX_OK &&
         strcmp(model->admission.artifact_identity, binding->artifact_identity) != 0)
         rc = yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_ARTIFACT_IDENTITY, 1ull, 0ull, err);
-    started = yvex_core_monotonic_ns();
-    if (rc == YVEX_OK)
-        rc = runtime_model_progress(request, YVEX_RUNTIME_LIFECYCLE_ARTIFACT_HASH,
-                                    0ull, yvex_artifact_size(model->artifact), err);
-    if (rc == YVEX_OK)
-        rc = yvex_artifact_admission_identity_verify(
-            model->artifact, &model->admission, runtime_model_hash_progress,
-            (void *)request, &admission_failure, err);
-    if (rc == YVEX_OK)
-        rc = runtime_model_once(&model->summary.artifact_hash_passes,
-                                "runtime.model.artifact-hash", err);
-    runtime_model_timing(model, YVEX_RUNTIME_LIFECYCLE_ARTIFACT_HASH, started);
+    memset(&reopen_lease, 0, sizeof(reopen_lease));
+    yvex_error_clear(&reopen_error);
+    if (rc == YVEX_OK && request->artifact_reopen_cache_root) {
+        int reopen_rc = yvex_artifact_reopen_lease_check(
+            model->artifact, binding->artifact_identity,
+            request->artifact_reopen_cache_root, &reopen_lease, &reopen_error);
+        if (reopen_rc == YVEX_OK)
+            verified_reopen = reopen_lease.verified;
+        else
+            model->summary.artifact_reopen_cache_failures++;
+    }
+    if (rc == YVEX_OK && verified_reopen) {
+        model->admission.artifact_bytes_hashed = model->admission.file_bytes;
+        model->admission.artifact_identity_verified = 1;
+        rc = runtime_model_once(&model->summary.artifact_verified_reopen_passes,
+                                "runtime.model.artifact-verified-reopen", err);
+    } else {
+        started = yvex_core_monotonic_ns();
+        if (rc == YVEX_OK)
+            rc = runtime_model_progress(request, YVEX_RUNTIME_LIFECYCLE_ARTIFACT_HASH,
+                                        0ull, yvex_artifact_size(model->artifact), err);
+        if (rc == YVEX_OK)
+            rc = yvex_artifact_admission_identity_verify(
+                model->artifact, &model->admission, runtime_model_hash_progress,
+                (void *)request, &admission_failure, err);
+        if (rc == YVEX_OK)
+            rc = runtime_model_once(&model->summary.artifact_hash_passes,
+                                    "runtime.model.artifact-hash", err);
+        runtime_model_timing(model, YVEX_RUNTIME_LIFECYCLE_ARTIFACT_HASH, started);
+        if (rc == YVEX_OK && request->artifact_reopen_cache_root &&
+            yvex_artifact_reopen_lease_publish(
+                model->artifact, binding->artifact_identity,
+                request->artifact_reopen_cache_root, &reopen_lease,
+                &reopen_error) != YVEX_OK)
+            model->summary.artifact_reopen_cache_failures++;
+    }
     started = yvex_core_monotonic_ns();
     if (rc == YVEX_OK)
         rc = yvex_gguf_open(&model->gguf, model->artifact, err);
@@ -771,7 +797,8 @@ static void runtime_model_summary_bind(
                                model->binding_summary.semantic_graph_identity);
     yvex_runtime_identity_copy(model->summary.executable_graph_identity,
                                model->binding_summary.executable_graph_identity);
-    model->summary.artifact_bytes_hashed = model->admission.artifact_bytes_hashed;
+    model->summary.artifact_bytes_hashed =
+        model->summary.artifact_hash_passes ? model->admission.artifact_bytes_hashed : 0ull;
     model->summary.tensor_count = model->binding_summary.tensor_count;
     model->summary.attention_layer_count = model->binding_summary.layer_count;
     model->summary.draft_attention_layer_count =

@@ -176,7 +176,7 @@ typedef struct yvex_runtime_model_failure {
 } yvex_runtime_model_failure;
 struct yvex_runtime_generation_options;
 typedef struct {
-    const char *artifact_path, *runtime_binding_path, *target_id;
+    const char *artifact_path, *runtime_binding_path, *target_id, *artifact_reopen_cache_root;
     const struct yvex_runtime_generation_options *startup_generation;
     yvex_backend_kind residency_backend;
     unsigned long long maximum_host_bytes, maximum_device_bytes;
@@ -195,7 +195,8 @@ typedef struct {
     char semantic_graph_identity[YVEX_SHA256_HEX_CAP];
     char executable_graph_identity[YVEX_SHA256_HEX_CAP];
     char physical_execution_identity[YVEX_SHA256_HEX_CAP];
-    unsigned long long artifact_hash_passes, artifact_bytes_hashed;
+    unsigned long long artifact_hash_passes, artifact_verified_reopen_passes;
+    unsigned long long artifact_reopen_cache_failures, artifact_bytes_hashed;
     unsigned long long gguf_directory_parses, runtime_binding_parses;
     unsigned long long runtime_model_builds, runtime_descriptor_builds;
     unsigned long long semantic_graph_builds, executable_graph_builds;
@@ -209,7 +210,7 @@ typedef struct {
 typedef struct yvex_runtime_model yvex_runtime_model;
 typedef struct yvex_runtime_execution_session yvex_runtime_execution_session;
 typedef struct yvex_runtime_cleanup_lease yvex_runtime_cleanup_lease;
-#define YVEX_RUNTIME_RESIDENCY_SCHEMA_V5 5u
+#define YVEX_RUNTIME_RESIDENCY_SCHEMA_V6 6u
 typedef enum {
     YVEX_RUNTIME_WEIGHT_PLACEMENT_HOST_LOCKED = 0,
     YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED

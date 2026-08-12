@@ -354,6 +354,7 @@ static int test_component_residency(void)
     yvex_materialization_access_summary before, after;
     const yvex_materialized_tensor_binding *binding;
     const unsigned char *arena = NULL, *resident = NULL, *borrowed = NULL;
+    unsigned char expected[128];
     unsigned long long arena_bytes = 0ull, resident_bytes = 0ull;
     yvex_error err;
     int uploaded = 0, rc;
@@ -377,6 +378,10 @@ static int test_component_residency(void)
     YVEX_TEST_ASSERT(binding && binding->encoded_bytes == 128ull,
                      "component residency binding is exact");
     YVEX_TEST_ASSERT(
+        yvex_artifact_read_at(artifact, binding->absolute_offset, expected,
+                              sizeof(expected), &err) == YVEX_OK,
+        "component residency reference bytes are readable");
+    YVEX_TEST_ASSERT(
         yvex_runtime_component_residency_prepare(
             &first, session, "mutable-component", &options, &failure, &err) ==
                 YVEX_ERR_INVALID_ARG && !first &&
@@ -399,7 +404,7 @@ static int test_component_residency(void)
         yvex_runtime_residency_snapshot(
             first, &first_summary, &arena, &arena_bytes, &err) == YVEX_OK &&
             first_summary.sealed && first_summary.attached && first_summary.host_ready &&
-            first_summary.schema_version == YVEX_RUNTIME_RESIDENCY_SCHEMA_V5 &&
+            first_summary.schema_version == YVEX_RUNTIME_RESIDENCY_SCHEMA_V6 &&
             first_summary.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_HOST_LOCKED &&
             first_summary.host_locked && first_summary.model_complete &&
             first_summary.binding_count == 1ull && first_summary.model_binding_count == 1ull &&
@@ -419,7 +424,8 @@ static int test_component_residency(void)
     YVEX_TEST_ASSERT(
         yvex_runtime_residency_binding_view(
             first, binding, &resident, &resident_bytes, &err) == YVEX_OK &&
-            resident == arena && resident_bytes == binding->encoded_bytes,
+            resident == arena && resident_bytes == binding->encoded_bytes &&
+            memcmp(resident, expected, sizeof(expected)) == 0,
         "component residency resolves the exact encoded tensor span");
     YVEX_TEST_ASSERT(
         yvex_materialization_session_access_summary(session, &before, &err) == YVEX_OK &&

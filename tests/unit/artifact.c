@@ -2,6 +2,7 @@
  * Exercises artifact layer artifact opening and range checking against tiny checked-in fixtures.
  * No model downloads or real model files are required.
  */
+#include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <stdlib.h>
@@ -14,6 +15,111 @@
 #include <yvex/internal/families/deepseek_v4.h>
 
 #include "tests/test.h"
+
+static int copy_fixture(const char *source, const char *destination)
+{
+    unsigned char buffer[4096];
+    int input = -1, output = -1, result = 0;
+    ssize_t count;
+
+    input = open(source, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    output = open(destination, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    if (input < 0 || output < 0) goto done;
+    for (;;) {
+        do {
+            count = read(input, buffer, sizeof(buffer));
+        } while (count < 0 && errno == EINTR);
+        if (count <= 0) break;
+        size_t offset = 0u;
+        while (offset < (size_t)count) {
+            ssize_t written;
+            do {
+                written = write(output, buffer + offset, (size_t)count - offset);
+            } while (written < 0 && errno == EINTR);
+            if (written <= 0) goto done;
+            offset += (size_t)written;
+        }
+    }
+    result = count == 0 && fsync(output) == 0;
+done:
+    if (input >= 0) (void)close(input);
+    if (output >= 0 && close(output) != 0) result = 0;
+    return result;
+}
+
+static int test_verified_reopen_lease(void)
+{
+    char root[] = "/tmp/yvex-artifact-reopen-XXXXXX";
+    char artifact_path[YVEX_ARTIFACT_PATH_CAP], cache_root[YVEX_ARTIFACT_PATH_CAP];
+    char artifact_dir[YVEX_ARTIFACT_PATH_CAP], lease_path[YVEX_ARTIFACT_PATH_CAP];
+    char receipt_root[YVEX_ARTIFACT_PATH_CAP];
+    yvex_artifact_options options = {0};
+    yvex_artifact_file_identity identity;
+    yvex_artifact_reopen_lease lease;
+    yvex_artifact *artifact = NULL;
+    yvex_error err;
+    unsigned char corrupt = 0u;
+    int artifact_count, cache_count, descriptor;
+
+    YVEX_TEST_ASSERT(mkdtemp(root) != NULL, "verified-reopen root is isolated");
+    artifact_count = snprintf(artifact_path, sizeof(artifact_path), "%s/model.gguf", root);
+    cache_count = snprintf(cache_root, sizeof(cache_root), "%s/cache", root);
+    YVEX_TEST_ASSERT(artifact_count > 0 &&
+                         artifact_count < (int)sizeof(artifact_path) && cache_count > 0 &&
+                         cache_count < (int)sizeof(cache_root) &&
+                         copy_fixture("tests/fixtures/gguf/valid-minimal.gguf", artifact_path),
+                     "verified-reopen fixture is isolated");
+    options.path = artifact_path;
+    options.readonly = 1;
+    YVEX_TEST_ASSERT(yvex_artifact_open(&artifact, &options, &err) == YVEX_OK &&
+                         yvex_artifact_identity_read_open(artifact, &identity, &err) == YVEX_OK,
+                     "verified-reopen fixture owns one complete identity");
+    YVEX_TEST_ASSERT(yvex_artifact_reopen_lease_check(
+                         artifact, identity.sha256, cache_root, &lease, &err) == YVEX_OK &&
+                         !lease.verified && !lease.receipt_present,
+                     "missing verified-reopen lease requires a full hash");
+    YVEX_TEST_ASSERT(yvex_artifact_reopen_lease_publish(
+                         artifact, identity.sha256, cache_root, &lease, &err) == YVEX_OK &&
+                         lease.verified && lease.receipt_valid,
+                     "complete verification publishes one content-addressed lease");
+    YVEX_TEST_ASSERT(snprintf(lease_path, sizeof(lease_path), "%s", lease.path) > 0 &&
+                         strlen(lease.path) < sizeof(lease_path),
+                     "verified-reopen lease path is bounded");
+    YVEX_TEST_ASSERT(yvex_artifact_reopen_lease_check(
+                         artifact, identity.sha256, cache_root, &lease, &err) == YVEX_OK &&
+                         lease.verified && lease.receipt_present && lease.receipt_valid,
+                     "unchanged artifact snapshot admits verified reopen");
+    descriptor = open(lease.path, O_WRONLY | O_CLOEXEC | O_NOFOLLOW);
+    YVEX_TEST_ASSERT(descriptor >= 0 && pwrite(descriptor, &corrupt, 1u, 0) == 1 &&
+                         fsync(descriptor) == 0 && close(descriptor) == 0,
+                     "verified-reopen corruption fixture is durable");
+    YVEX_TEST_ASSERT(yvex_artifact_reopen_lease_check(
+                         artifact, identity.sha256, cache_root, &lease, &err) == YVEX_OK &&
+                         !lease.verified && lease.receipt_present && !lease.receipt_valid,
+                     "corrupt verified-reopen lease falls back to a full hash");
+    yvex_artifact_close(artifact);
+    artifact = NULL;
+    descriptor = open(artifact_path, O_WRONLY | O_CLOEXEC | O_NOFOLLOW);
+    YVEX_TEST_ASSERT(descriptor >= 0 && pwrite(descriptor, "X", 1u, 0) == 1 &&
+                         fsync(descriptor) == 0 && close(descriptor) == 0 &&
+                         yvex_artifact_open(&artifact, &options, &err) == YVEX_OK &&
+                         yvex_artifact_reopen_lease_check(
+                             artifact, identity.sha256, cache_root, &lease, &err) == YVEX_OK &&
+                         !lease.verified && !lease.receipt_present,
+                     "artifact snapshot drift cannot reuse the prior lease");
+    yvex_artifact_close(artifact);
+    artifact_count = snprintf(artifact_dir, sizeof(artifact_dir),
+                              "%s/artifact-reopen/%s", cache_root, identity.sha256);
+    cache_count = snprintf(receipt_root, sizeof(receipt_root), "%s/artifact-reopen",
+                           cache_root);
+    YVEX_TEST_ASSERT(artifact_count > 0 && artifact_count < (int)sizeof(artifact_dir) &&
+                         cache_count > 0 && cache_count < (int)sizeof(receipt_root) &&
+                         unlink(lease_path) == 0 && unlink(artifact_path) == 0 &&
+                         rmdir(artifact_dir) == 0 && rmdir(receipt_root) == 0 &&
+                         rmdir(cache_root) == 0 && rmdir(root) == 0,
+                     "verified-reopen fixture is cleaned narrowly");
+    return 0;
+}
 
 static int test_artifact_symlink_refusal(void)
 {
@@ -368,6 +474,8 @@ int yvex_test_artifact(void)
                      "DeepSeek physical catalog admits the exact candidate");
     YVEX_TEST_ASSERT(test_component_admission_catalog() == 0,
                      "component physical catalog admits exact component facts");
+    YVEX_TEST_ASSERT(test_verified_reopen_lease() == 0,
+                     "verified reopen is exact, rebuildable, and fail closed");
 
     memset(&options, 0, sizeof(options));
     options.path = fixture;

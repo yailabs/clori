@@ -2486,6 +2486,82 @@ static int test_runtime_family_neutrality(void)
     return 0;
 }
 
+static int test_runtime_model_verified_reopen(
+    const binding_fixture *fixture, const yvex_runtime_binding_prepare_result *prepared,
+    const char *root)
+{
+    char cache_root[YVEX_PATH_CAP], receipt_root[YVEX_PATH_CAP], artifact_dir[YVEX_PATH_CAP];
+    yvex_runtime_model_open_request request;
+    yvex_runtime_model_failure failure;
+    runtime_progress_fixture progress;
+    yvex_runtime_model *model = NULL;
+    yvex_runtime_model_summary summary;
+    yvex_artifact_reopen_lease lease;
+    yvex_error err;
+    unsigned char corrupt = 0u;
+    int count, descriptor;
+
+    count = snprintf(cache_root, sizeof(cache_root), "%s/reopen-cache", root);
+    YVEX_TEST_ASSERT(count > 0 && count < (int)sizeof(cache_root),
+                     "runtime verified-reopen cache root is bounded");
+    memset(&request, 0, sizeof(request));
+    request.artifact_path = yvex_artifact_path(fixture->artifact);
+    request.runtime_binding_path = prepared->path;
+    request.target_id = runtime_fixture_execution()->target_id;
+    request.artifact_reopen_cache_root = cache_root;
+    request.progress = runtime_progress_collect;
+    request.progress_context = &progress;
+    memset(&progress, 0, sizeof(progress));
+    YVEX_TEST_ASSERT(yvex_runtime_model_open(
+                         &model, &request, &failure, &err) == YVEX_OK && model &&
+                         yvex_runtime_model_summary_copy(model, &summary, &err) == YVEX_OK &&
+                         summary.artifact_hash_passes == 1ull &&
+                         summary.artifact_verified_reopen_passes == 0ull &&
+                         summary.artifact_reopen_cache_failures == 0ull &&
+                         progress.events[YVEX_RUNTIME_LIFECYCLE_ARTIFACT_HASH] > 1ull,
+                     "first runtime open verifies every artifact byte and publishes a lease");
+    yvex_runtime_model_close(&model);
+    memset(&progress, 0, sizeof(progress));
+    YVEX_TEST_ASSERT(yvex_runtime_model_open(
+                         &model, &request, &failure, &err) == YVEX_OK && model &&
+                         yvex_runtime_model_summary_copy(model, &summary, &err) == YVEX_OK &&
+                         summary.artifact_hash_passes == 0ull &&
+                         summary.artifact_verified_reopen_passes == 1ull &&
+                         summary.artifact_reopen_cache_failures == 0ull &&
+                         summary.artifact_bytes_hashed == 0ull &&
+                         progress.events[YVEX_RUNTIME_LIFECYCLE_ARTIFACT_HASH] == 0ull,
+                     "unchanged runtime open consumes exact prior verification without rehashing");
+    yvex_runtime_model_close(&model);
+    YVEX_TEST_ASSERT(yvex_artifact_reopen_lease_check(
+                         fixture->artifact, fixture->admission.artifact_identity,
+                         cache_root, &lease, &err) == YVEX_OK && lease.verified,
+                     "runtime published lease remains independently verifiable");
+    descriptor = open(lease.path, O_WRONLY | O_CLOEXEC | O_NOFOLLOW);
+    YVEX_TEST_ASSERT(descriptor >= 0 && pwrite(descriptor, &corrupt, 1u, 0) == 1 &&
+                         fsync(descriptor) == 0 && close(descriptor) == 0,
+                     "runtime verified-reopen corruption is durable");
+    memset(&progress, 0, sizeof(progress));
+    YVEX_TEST_ASSERT(yvex_runtime_model_open(
+                         &model, &request, &failure, &err) == YVEX_OK && model &&
+                         yvex_runtime_model_summary_copy(model, &summary, &err) == YVEX_OK &&
+                         summary.artifact_hash_passes == 1ull &&
+                         summary.artifact_verified_reopen_passes == 0ull &&
+                         summary.artifact_reopen_cache_failures == 1ull &&
+                         progress.events[YVEX_RUNTIME_LIFECYCLE_ARTIFACT_HASH] > 1ull,
+                     "invalid runtime lease falls back to complete verification visibly");
+    yvex_runtime_model_close(&model);
+    count = snprintf(artifact_dir, sizeof(artifact_dir), "%s/artifact-reopen/%s",
+                     cache_root, fixture->admission.artifact_identity);
+    YVEX_TEST_ASSERT(count > 0 && count < (int)sizeof(artifact_dir),
+                     "runtime verified-reopen artifact directory is bounded");
+    count = snprintf(receipt_root, sizeof(receipt_root), "%s/artifact-reopen", cache_root);
+    YVEX_TEST_ASSERT(count > 0 && count < (int)sizeof(receipt_root) &&
+                         unlink(lease.path) == 0 && rmdir(artifact_dir) == 0 &&
+                         rmdir(receipt_root) == 0 && rmdir(cache_root) == 0,
+                     "runtime verified-reopen cache is cleaned narrowly");
+    return 0;
+}
+
 static int test_runtime_model_session_reuse(
     const binding_fixture *fixture, const yvex_runtime_binding_prepare_result *prepared)
 {
@@ -4340,6 +4416,7 @@ int yvex_test_runtime_binding(void)
     if (test_runtime_family_neutrality() != 0) goto done;
     if (test_runtime_model_compiled_execution(&fixture, &prepared) != 0) goto done;
     if (test_runtime_model_progress(&fixture, &prepared) != 0) goto done;
+    if (test_runtime_model_verified_reopen(&fixture, &prepared, root) != 0) goto done;
     if (test_runtime_model_session_reuse(&fixture, &prepared) != 0) goto done;
     if (test_runtime_concurrent_session_isolation(&fixture, &prepared) != 0) goto done;
     if (test_runtime_concurrent_close_drain(&fixture, &prepared) != 0) goto done;

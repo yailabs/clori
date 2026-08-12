@@ -617,6 +617,8 @@ int yvex_server_start(yvex_server *server, yvex_error *err)
     yvex_runtime_model_failure failure;
     yvex_runtime_model_summary model;
     yvex_runtime_residency_summary residency;
+    yvex_paths paths;
+    yvex_error path_error;
     const yvex_runtime_model_view *view;
     unsigned long long startup_started, cuda_started = 0u, startup_completed;
     double cuda_seconds = 0.0, startup_seconds;
@@ -647,6 +649,9 @@ int yvex_server_start(yvex_server *server, yvex_error *err)
     request.artifact_path = server->artifact_path;
     request.runtime_binding_path = server->runtime_binding_path;
     request.target_id = server->target_id;
+    yvex_error_clear(&path_error);
+    if (yvex_paths_default(&paths, &path_error) == YVEX_OK)
+        request.artifact_reopen_cache_root = paths.cache_dir;
     server_generation_options(server, &startup_options);
     request.startup_generation = &startup_options;
     request.residency_backend = server->options.backend;

@@ -33,6 +33,13 @@ qtype/backend prerequisites, compiled profile, and resource budgets before
 readiness. The runtime imports compiler facts; it does not reconstruct
 transformation or writer plans.
 
+A first admission hashes the complete artifact. A later open may skip that
+model-sized hash only when a rebuildable local verified-reopen lease binds the
+expected artifact identity to the same device, inode, size, modification time,
+and change time. The runtime still opens and validates the live snapshot;
+missing, malformed, or stale lease data falls back to complete authentication.
+The lease is neither an artifact identity authority nor portable evidence.
+
 Startup performs bounded binding admission before artifact open. The retained
 system reserve is the greater of 8 GiB and one eighth of the effective memory
 capacity, where the effective capacity is constrained by the caller's host
@@ -60,6 +67,13 @@ descriptors, target and draft plans, and shared caches. A DSpark plan shares the
 target model, tokenizer, output head, backend context, and immutable residency;
 it is not a second runtime model. Readiness is published only after every
 requirement of the selected generation mode and the worker is usable.
+
+Residency copies every admitted encoded range from that stable authenticated
+snapshot. Residency schema v6 seals the artifact and materialization
+identities plus exact tensor source and arena ranges; it does not repeat a
+second full-payload hash over the destination arena. Snapshot drift and read
+failure remain typed refusals, and the resident bytes remain immutable for the
+model lifetime.
 
 Failure during opening publishes no ready model and releases every acquired
 resource transactionally. Shutdown closes the model once after request/session

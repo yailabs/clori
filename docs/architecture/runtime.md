@@ -388,9 +388,18 @@ of current system availability and the process's cgroup-v2 memory hierarchy.
 It preserves the greater of 8 GiB and one eighth of that effective capacity;
 this scales with the admitted machine or process envelope rather than assuming
 128 GiB. Refusal reports configured or available bytes against required bytes
-before artifact mutation. A second live check immediately before the resident
-arena allocation closes the race introduced by artifact hashing and import.
-Process admission therefore does not depend on the Linux OOM killer.
+before artifact mutation. First admission authenticates every artifact byte.
+Later opens may consume one content-addressed local lease only when the expected
+artifact identity and complete filesystem snapshot are unchanged; invalid or
+missing cache evidence returns to the full hash. A second live check immediately
+before the resident arena allocation closes the race introduced by artifact
+authentication and import. Process admission therefore does not depend on the
+Linux OOM killer.
+
+The resident arena is populated by exact stable-snapshot range reads. Its
+identity binds the verified artifact and materialization identities with each
+source and destination extent, avoiding a second model-sized hash over the
+newly copied arena while retaining byte-read, drift, and cleanup refusal.
 
 Generation retains the derived reserve in its identity-bearing workload and
 capacity plans, then checks future state, workspace, graph, scheduler and
