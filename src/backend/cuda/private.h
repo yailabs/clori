@@ -301,9 +301,9 @@ typedef struct {
     unsigned int deferred_release_count;
     unsigned long long deferred_release_bytes;
     void *registered_host;
-    CUdeviceptr registered_device, deferred_status;
+    CUdeviceptr registered_device, transformer_status;
     unsigned long long registered_bytes;
-    int kernel_bundle_native;
+    int kernel_bundle_native, status_transaction_active;
     char kernel_bundle_identity[YVEX_SHA256_HEX_BYTES];
     char kernel_bundle_architecture[16];
     yvex_backend_bandwidth_evidence bandwidth_evidence;

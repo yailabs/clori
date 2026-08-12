@@ -493,6 +493,14 @@ static int cuda_close(yvex_backend *backend, yvex_error *err)
     rc = cuda_execution_stream_close(backend, err);
     if (rc != YVEX_OK)
         return rc;
+    if (state->transformer_status) {
+        rc = yvex_cuda_temporary_free(
+            backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+            &state->transformer_status, sizeof(int), 0,
+            "cuda.transformer.status.close", err);
+        if (rc != YVEX_OK) return rc;
+        state->status_transaction_active = 0;
+    }
     rc = cuda_timing_close(backend, err);
     if (rc != YVEX_OK)
         return rc;

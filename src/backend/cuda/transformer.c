@@ -8,12 +8,26 @@
 
 enum { TRANSFORMER_BLOCK = 128u };
 
+static int status_storage_ensure(yvex_backend *backend, yvex_cuda_backend_state *state,
+                                 const char *stage, yvex_error *err)
+{
+    int rc;
+    if (state->transformer_status) return YVEX_OK;
+    rc = yvex_backend_memory_can_add(backend, sizeof(int), "CUDA", stage, err);
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_status(&state->driver,
+                              state->driver.cuMemAlloc_v2(
+                                  &state->transformer_status, sizeof(int)),
+                              stage, err);
+    if (rc == YVEX_OK) backend_memory_acquire(backend, sizeof(int));
+    return rc;
+}
+
 static int status_transaction_open(yvex_backend *backend, yvex_cuda_work *work,
                                       int begin, const char *stage, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
-    unsigned long long address = 0ull;
-    int acquired, rc;
+    int rc;
     if (!backend || !state || !work || (begin != 0 && begin != 1)) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, stage,
                        "CUDA status transaction owner is invalid");
@@ -21,28 +35,19 @@ static int status_transaction_open(yvex_backend *backend, yvex_cuda_work *work,
     }
     *work = (yvex_cuda_work){.backend = backend, .state = state,
                              .variant = YVEX_BACKEND_VARIANT_ATTENTION_ENCODED};
-    if (!begin && state->deferred_status) {
-        work->status = state->deferred_status;
+    if (!begin && state->status_transaction_active) {
+        work->status = state->transformer_status;
         work->status_deferred = 1;
         return YVEX_OK;
     }
-    acquired = begin && backend->workspace_device_tensor
-        ? yvex_backend_workspace_acquire(backend, sizeof(int), 256ull, &address)
-        : YVEX_BACKEND_RESIDENT_MISS;
-    if (acquired == YVEX_BACKEND_RESIDENT_HIT) {
-        work->status = (CUdeviceptr)address;
-        rc = yvex_cuda_work_initialize(work, work->status, sizeof(int), NULL, 1, stage, err);
-        if (rc == YVEX_OK) {
-            state->deferred_status = work->status;
-            work->status_deferred = 1;
-        }
-        return rc;
-    }
     if (begin && backend->workspace_device_tensor) {
-        yvex_error_set(err, acquired == YVEX_BACKEND_RESIDENT_INVALID
-                                ? YVEX_ERR_BOUNDS : YVEX_ERR_NOMEM,
-                       stage, "CUDA status transaction exceeds the sealed workspace");
-        return yvex_error_code(err);
+        rc = status_storage_ensure(backend, state, stage, err);
+        if (rc != YVEX_OK) return rc;
+        work->status = state->transformer_status;
+        rc = yvex_cuda_work_initialize(work, work->status, sizeof(int), NULL, 1, stage, err);
+        state->status_transaction_active = rc == YVEX_OK;
+        work->status_deferred = rc == YVEX_OK;
+        return rc;
     }
     return yvex_cuda_work_allocate(
         work, &work->status, sizeof(int), NULL, 1, stage, NULL, err);
@@ -72,7 +77,7 @@ static int status_transaction_close(yvex_cuda_work *work, int wait, int complete
                                   &host_status, work->status, sizeof(host_status)),
                               stage, err);
     if ((complete || rc != YVEX_OK) && work->status_deferred)
-        state->deferred_status = 0ull;
+        state->status_transaction_active = 0;
     if (rc == YVEX_OK && host_status) {
         yvex_error_set(err, YVEX_ERR_FORMAT, stage,
                        "CUDA status transaction reported invalid numerics");

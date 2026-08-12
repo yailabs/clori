@@ -938,6 +938,12 @@ static int quant_cuda_transformer_facts(yvex_backend *backend)
             !facts.d2h_bytes && !facts.download_count && !facts.stream_synchronizations &&
             !facts.device_synchronizations,
         "transformer initial defers bounded status publication");
+    backend_workspace_reset(backend);
+    memset(workspace, 0xff, sizeof(workspace));
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_write(backend, workspace_device, workspace,
+                                  sizeof(workspace), &err) == YVEX_OK,
+        "transformer status survives intervening reusable workspace ownership");
     YVEX_TEST_ASSERT(
         yvex_backend_transformer_cuda_feature_mean(
             backend, expanded_device, TOKENS, HIDDEN, STREAMS, feature_device,
