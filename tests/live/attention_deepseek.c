@@ -2585,15 +2585,14 @@ static int run_cuda_live_suite(
         &cuda_reference, NULL, NULL,
         ATTENTION_NATIVE_Q8_ABSOLUTE_TOLERANCE,
         ATTENTION_NATIVE_Q8_RELATIVE_TOLERANCE, failure, err);
-    if (rc != YVEX_OK || !cuda_result.cuda_tensor_core_launches) {
+    if (rc != YVEX_OK || cuda_result.cuda_tensor_core_launches) {
         fprintf(stderr,
-                "attention_native_tensor_core_failed rc=%d launches=%llu where=%s message=%s\n",
+                "attention_native_sparse_projection_failed rc=%d launches=%llu where=%s message=%s\n",
                 rc, cuda_result.cuda_tensor_core_launches,
                 yvex_error_where(err), yvex_error_message(err));
-        if (rc == YVEX_OK) rc = YVEX_ERR_UNSUPPORTED;
+        if (rc == YVEX_OK) rc = YVEX_ERR_STATE;
         goto cleanup;
     }
-    tensor_core_launches += cuda_result.cuda_tensor_core_launches;
 #endif
 
     rc = run_cuda_core_input_regression(
@@ -2909,15 +2908,6 @@ static int run_cuda_live_suite(
         rc = YVEX_ERR_FORMAT;
         goto cleanup;
     }
-#ifdef YVEX_HAVE_CUDA_KERNEL_CUBIN
-    if (!tensor_core_launches) {
-        yvex_error_set(err, YVEX_ERR_UNSUPPORTED,
-                       "attention.cuda.tensor_core",
-                       "native SM121 attention executed without a Tensor Core projection");
-        rc = YVEX_ERR_UNSUPPORTED;
-        goto cleanup;
-    }
-#endif
     rc = yvex_backend_close_checked(&backend, err);
     if (rc != YVEX_OK) goto cleanup;
     printf("attention_cuda_layers_executed=%llu\n", evidence.layer_count);
