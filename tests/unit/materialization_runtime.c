@@ -404,7 +404,7 @@ static int test_component_residency(void)
         yvex_runtime_residency_snapshot(
             first, &first_summary, &arena, &arena_bytes, &err) == YVEX_OK &&
             first_summary.sealed && first_summary.attached && first_summary.host_ready &&
-            first_summary.schema_version == YVEX_RUNTIME_RESIDENCY_SCHEMA_V6 &&
+            first_summary.schema_version == YVEX_RUNTIME_RESIDENCY_SCHEMA_V7 &&
             first_summary.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_HOST_LOCKED &&
             first_summary.host_locked && first_summary.model_complete &&
             first_summary.binding_count == 1ull && first_summary.model_binding_count == 1ull &&

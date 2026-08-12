@@ -469,7 +469,7 @@ void yvex_server_telemetry_identities(server_telemetry *telemetry,
  * Telemetry, mapped/resident bytes, and elapsed startup time.
  */
 void yvex_server_telemetry_model_opened(server_telemetry *telemetry,
-                                   unsigned long long artifact_bytes,
+                                   unsigned long long mapped_artifact_bytes,
                                    unsigned long long host_bytes,
                                    unsigned long long device_bytes,
                                    unsigned long long uploads)
@@ -480,7 +480,7 @@ void yvex_server_telemetry_model_opened(server_telemetry *telemetry,
     telemetry->metrics.binding_open_count++;
     telemetry->metrics.materialization_count++;
     telemetry->metrics.residency_build_count++;
-    telemetry->metrics.mapped_artifact_bytes = artifact_bytes;
+    telemetry->metrics.mapped_artifact_bytes = mapped_artifact_bytes;
     telemetry->metrics.resident_host_bytes = host_bytes;
     telemetry->metrics.resident_device_bytes = device_bytes;
     telemetry->metrics.output_head_upload_count = uploads;

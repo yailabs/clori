@@ -15,17 +15,11 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-/* Driver. */
 typedef int CUresult;
 typedef int CUdevice;
-typedef void *CUcontext;
-typedef void *CUmodule;
-typedef void *CUfunction;
-typedef void *CUstream;
-typedef void *CUevent;
-typedef void *CUgraph;
-typedef void *CUgraphExec;
-typedef void *CUgraphNode;
+typedef void *CUcontext, *CUmodule, *CUfunction;
+typedef void *CUstream, *CUevent, *CUgraph;
+typedef void *CUgraphExec, *CUgraphNode;
 typedef unsigned long long CUdeviceptr;
 typedef unsigned long long CUmemGenericAllocationHandle;
 typedef struct { int type, id; } CUmemLocation;
@@ -101,6 +95,8 @@ typedef struct {
 #define YVEX_CUDA_MEMHOSTREGISTER_DEVICEMAP 0x02u
 #define YVEX_CUDA_MEM_ACCESS_READ_WRITE 0x03
 #define YVEX_CUDA_MEM_LOCATION_DEVICE 0x01
+#define YVEX_CUDA_MEM_ADVISE_SET_READ_MOSTLY 1
+#define YVEX_CUDA_MEM_ADVISE_SET_PREFERRED_LOCATION 3
 #define YVEX_CUDA_MEM_ALLOCATION_PINNED 0x01
 #define YVEX_CUDA_MEM_GRANULARITY_MINIMUM 0x00
 #define YVEX_CUDA_DEVICE_ATTRIBUTE_CAN_MAP_HOST_MEMORY 19
@@ -125,6 +121,7 @@ typedef struct {
     CUresult (*cuMemAlloc_v2)(CUdeviceptr *dptr, size_t bytesize);
     CUresult (*cuMemAllocManaged)(CUdeviceptr *dptr, size_t bytesize, unsigned int flags);
     CUresult (*cuMemPrefetchAsync_v2)(CUdeviceptr, size_t, CUmemLocation, unsigned int, CUstream);
+    CUresult (*cuMemAdvise_v2)(CUdeviceptr, size_t, int, CUmemLocation);
     CUresult (*cuMemAddressReserve)(CUdeviceptr *, size_t, size_t, CUdeviceptr,
                                    unsigned long long);
     CUresult (*cuMemAddressFree)(CUdeviceptr ptr, size_t size);
@@ -404,6 +401,9 @@ CUdeviceptr yvex_cuda_tensor_ptr(const yvex_device_tensor *tensor);
 CUstream yvex_cuda_launch_stream(const yvex_backend *backend);
 int yvex_cuda_resident_alloc(yvex_backend *, const yvex_backend_tensor_desc *,
                              yvex_device_tensor **, unsigned char **, yvex_error *);
+int yvex_cuda_resident_map_supported(const yvex_backend *);
+int yvex_cuda_resident_map_readonly(yvex_backend *, const yvex_backend_tensor_desc *,
+                                    const unsigned char *, yvex_device_tensor **, yvex_error *);
 int yvex_cuda_resident_prefetch(yvex_backend *, yvex_device_tensor *,
                                 unsigned long long *, yvex_error *);
 typedef enum {

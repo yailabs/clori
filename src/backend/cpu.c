@@ -103,6 +103,8 @@ static const yvex_backend_vtable cpu_vtable = {
     NULL,
     NULL,
     NULL,
+    NULL,
+    NULL,
     cpu_tensor_free,
     cpu_tensor_write,
     cpu_tensor_read,

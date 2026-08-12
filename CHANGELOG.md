@@ -175,9 +175,11 @@ change. Git history preserves implementation chronology.
 
 - Hosted startup now reuses a content-addressed verified-reopen lease for an
   unchanged local artifact snapshot and falls back to complete authentication
-  when cache evidence is absent, malformed, or stale. Resident weight identity
-  binds the authenticated artifact, materialization, and exact copied ranges
-  without a second full-model hash over the destination arena.
+  when cache evidence is absent, malformed, or stale. On admitted pageable
+  CUDA hardware the authenticated GGUF remains immutable execution backing,
+  eliminating the complete anonymous model copy and eager prefetch. Memory
+  status distinguishes mapped artifact extent, non-artifact host residency,
+  accelerator residency and process RSS.
 - Model hosting is now the explicit foreground `yvex server MODEL [--ctx N]`
   operation. Status, model, memory, logs and shutdown use the same public
   `server` noun; `server log [--json]` is the sole observability stream.

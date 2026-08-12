@@ -8,6 +8,82 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+int yvex_cuda_resident_map_supported(const yvex_backend *backend)
+{
+    const yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    return state && !state->context_borrowed && backend->device_info.unified_addressing &&
+           backend->pageable_memory_access && backend->pageable_uses_host_page_tables &&
+           state->driver.cuMemAdvise_v2;
+}
+
+int yvex_cuda_resident_map_readonly(yvex_backend *backend,
+                                    const yvex_backend_tensor_desc *desc,
+                                    const unsigned char *host,
+                                    yvex_device_tensor **out,
+                                    yvex_error *err)
+{
+    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    yvex_device_tensor *tensor = NULL;
+    CUmemLocation location = {0};
+    unsigned int index;
+    int rc;
+    if (out) *out = NULL;
+    if (!state || !desc || !host || !out || !desc->name || !desc->rank ||
+        desc->rank > YVEX_TENSOR_MAX_DIMS || !desc->bytes ||
+        desc->bytes > (unsigned long long)SIZE_MAX ||
+        !yvex_cuda_resident_map_supported(backend)) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "cuda.residency.map",
+                       "immutable pageable CUDA mapping is unavailable");
+        return YVEX_ERR_UNSUPPORTED;
+    }
+    for (index = 0u; index < desc->rank; ++index) {
+        if (!desc->dims[index]) {
+            yvex_error_set(err, YVEX_ERR_INVALID_ARG, "cuda.residency.map",
+                           "mapped residency dimensions must be non-zero");
+            return YVEX_ERR_INVALID_ARG;
+        }
+    }
+    rc = yvex_cuda_set_current(backend, "cuda.residency.map", err);
+    location.type = YVEX_CUDA_MEM_LOCATION_DEVICE;
+    location.id = state->device_index;
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_status(
+            &state->driver,
+            state->driver.cuMemAdvise_v2((CUdeviceptr)(uintptr_t)host, (size_t)desc->bytes,
+                                         YVEX_CUDA_MEM_ADVISE_SET_READ_MOSTLY, location),
+            "cuda.residency.map.read-mostly", err);
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_status(
+            &state->driver,
+            state->driver.cuMemAdvise_v2(
+                (CUdeviceptr)(uintptr_t)host, (size_t)desc->bytes,
+                YVEX_CUDA_MEM_ADVISE_SET_PREFERRED_LOCATION, location),
+            "cuda.residency.map.preferred-location", err);
+    if (rc != YVEX_OK) return rc;
+    tensor = (yvex_device_tensor *)calloc(1u, sizeof(*tensor));
+    if (tensor) tensor->name = yvex_core_strdup(desc->name);
+    if (!tensor || !tensor->name) {
+        free(tensor);
+        yvex_error_set(err, YVEX_ERR_NOMEM, "cuda.residency.map",
+                       "mapped residency metadata allocation failed");
+        return YVEX_ERR_NOMEM;
+    }
+    tensor->owner = backend;
+    tensor->owner_id = backend->tensor_id_next++;
+    tensor->dtype = desc->dtype;
+    tensor->rank = desc->rank;
+    for (index = 0u; index < desc->rank; ++index) tensor->dims[index] = desc->dims[index];
+    tensor->bytes = desc->bytes;
+    tensor->data = (unsigned char *)(uintptr_t)host;
+    tensor->host_data = tensor->data;
+    tensor->host_accessible = 1;
+    tensor->borrowed_host = 1;
+    tensor->is_written = 1;
+    *out = tensor;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
 int yvex_cuda_resident_alloc(yvex_backend *backend,
                              const yvex_backend_tensor_desc *desc,
                              yvex_device_tensor **out,

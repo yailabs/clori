@@ -16,6 +16,9 @@ typedef struct yvex_backend_vtable {
                         yvex_device_tensor **, yvex_error *);
     int (*resident_alloc)(yvex_backend *, const yvex_backend_tensor_desc *,
                           yvex_device_tensor **, unsigned char **, yvex_error *);
+    int (*resident_map_supported)(const yvex_backend *);
+    int (*resident_map_readonly)(yvex_backend *, const yvex_backend_tensor_desc *,
+                                 const unsigned char *, yvex_device_tensor **, yvex_error *);
     int (*resident_prefetch)(yvex_backend *, yvex_device_tensor *,
                              unsigned long long *, yvex_error *);
     int (*tensor_reserve)(yvex_backend *, const yvex_backend_tensor_desc *,
@@ -68,6 +71,7 @@ struct yvex_backend {
     struct yvex_backend *resource_owner;
     _Atomic unsigned long long lifecycle;
     unsigned long long tensor_id_next, resident_host_bytes;
+    int pageable_memory_access, pageable_uses_host_page_tables;
     const unsigned char *resident_host_base;
     const yvex_device_tensor *resident_device_tensor;
     unsigned long long resident_device_address, resident_generation;

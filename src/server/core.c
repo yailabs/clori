@@ -598,7 +598,7 @@ static int server_execution_prepare(yvex_server *server,
     if (server->options.backend == YVEX_BACKEND_KIND_CUDA &&
         (!summary->cuda_ready ||
         (!summary->cuda_upload_count && !summary->cuda_host_registration_count &&
-         !summary->cuda_managed_prefetch_count)))
+         !summary->cuda_managed_prefetch_count && !summary->cuda_pageable_map_count)))
         return server_refuse(err, YVEX_ERR_STATE,
                              "CUDA residency did not complete before readiness");
     if (err) *err = primary;
@@ -683,7 +683,7 @@ int yvex_server_start(yvex_server *server, yvex_error *err)
                                     model.artifact_identity,
                                     view->binding->profile_identity);
         yvex_server_telemetry_model_opened(
-            server->telemetry, model.artifact_bytes_hashed,
+            server->telemetry, residency.artifact_backed_bytes,
             residency.host_resident_bytes, residency.device_resident_bytes,
             residency.cuda_upload_count);
         rc = yvex_server_telemetry_emit(

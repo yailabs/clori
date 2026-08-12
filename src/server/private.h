@@ -221,7 +221,7 @@ void yvex_server_telemetry_identities(server_telemetry *telemetry,
                                  const char *artifact_identity,
                                  const char *variant_identity);
 void yvex_server_telemetry_model_opened(server_telemetry *telemetry,
-                                   unsigned long long artifact_bytes,
+                                   unsigned long long mapped_artifact_bytes,
                                    unsigned long long host_bytes,
                                    unsigned long long device_bytes,
                                    unsigned long long uploads);

@@ -370,8 +370,12 @@ static int generation_capacity_hardware(
             err, YVEX_ERR_STATE,
             "live process memory capacity is unavailable");
     if (device.kind == YVEX_BACKEND_KIND_CUDA) {
-        shared_system_domain = placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED &&
-            device.unified_addressing && device.managed_memory && device.total_memory_bytes == system_total;
+        shared_system_domain =
+            device.unified_addressing && device.total_memory_bytes == system_total &&
+            ((placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED &&
+              device.managed_memory) ||
+             (placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED &&
+              yvex_backend_resident_map_readonly_supported(backend)));
         total = shared_system_domain ? system_total : device.total_memory_bytes;
         if (!shared_system_domain && device.free_memory_bytes < available)
             available = device.free_memory_bytes;
@@ -398,7 +402,8 @@ static int generation_capacity_hardware(
         context->hardware_profile.usable_memory_bytes =
             context->options.maximum_device_bytes;
     if ((device.kind == YVEX_BACKEND_KIND_CPU ||
-         placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED) &&
+         placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED ||
+         placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED) &&
         context->options.maximum_host_bytes &&
         context->options.maximum_host_bytes <
             context->hardware_profile.usable_memory_bytes)
@@ -430,6 +435,10 @@ static int generation_capacity_hardware(
             context->hardware_profile.sustainable_read_bytes_per_second =
                 context->bandwidth_evidence.sustainable_read_bytes_per_second;
             placement_name = "managed";
+        } else if (placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED) {
+            context->hardware_profile.sustainable_read_bytes_per_second =
+                context->bandwidth_evidence.sustainable_coherent_host_bytes_per_second;
+            placement_name = "artifact-map";
         } else if (placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_HOST_LOCKED) {
             context->hardware_profile.sustainable_read_bytes_per_second =
                 context->bandwidth_evidence.sustainable_coherent_host_bytes_per_second;
@@ -935,8 +944,10 @@ int yvex_runtime_private_generation_capacity_preflight(
     rc = generation_capacity_build_for(
         &context, backend,
         options->backend == YVEX_BACKEND_KIND_CUDA
-            ? YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED
-            : YVEX_RUNTIME_WEIGHT_PLACEMENT_HOST_LOCKED,
+            ? (yvex_backend_resident_map_readonly_supported(backend)
+                   ? YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED
+                   : YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED)
+            : YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED,
         binding->admission.payload_bytes, 0, transient_bytes,
         &workspace_capacity, required_bytes, available_bytes, err);
     yvex_graph_attention_capacity_plan_close(&workspace_capacity);

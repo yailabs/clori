@@ -1059,7 +1059,8 @@ int yvex_cuda_test_info(void)
         "yvex_attention_reduce"
     };
     size_t symbol_index;
-    unsigned char *imported = NULL, *mapped = NULL;
+    unsigned char *imported = NULL, *mapped = NULL, *pageable = NULL;
+    unsigned char mapped_readback[4096];
     unsigned long long mapped_address = 0ull, prefetched_bytes = 0ull;
     int rc;
     memset(&options, 0, sizeof(options));
@@ -1171,6 +1172,41 @@ int yvex_cuda_test_info(void)
                          yvex_backend_tensor_release(backend, &resident, &err) == YVEX_OK,
                      "release exact CUDA managed residency");
     mapped = NULL;
+    if (yvex_backend_resident_map_readonly_supported(backend)) {
+        pageable = mmap(NULL, 4096u, PROT_READ | PROT_WRITE,
+                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        YVEX_TEST_ASSERT(pageable != MAP_FAILED,
+                         "allocate pageable immutable residency fixture");
+        memset(pageable, 0x69, 4096u);
+        YVEX_TEST_ASSERT(mprotect(pageable, 4096u, PROT_READ) == 0,
+                         "seal pageable residency fixture read-only");
+        YVEX_TEST_ASSERT(
+            yvex_backend_resident_map_readonly(
+                backend, &descriptor, pageable, &resident, &err) == YVEX_OK && resident &&
+                yvex_backend_resident_attach(
+                    backend, pageable, 4096ull, resident, 2ull, &err) == YVEX_OK &&
+                yvex_backend_resident_resolve(
+                    backend, pageable, 4096ull, &mapped_address) ==
+                    YVEX_BACKEND_RESIDENT_HIT && mapped_address != 0ull,
+            "attach immutable pageable residency without allocation or registration");
+        memset(mapped_readback, 0, sizeof(mapped_readback));
+        YVEX_TEST_ASSERT(
+            yvex_backend_tensor_read(
+                backend, resident, mapped_readback, sizeof(mapped_readback), &err) == YVEX_OK &&
+                memcmp(mapped_readback, pageable, sizeof(mapped_readback)) == 0,
+            "CUDA reads exact bytes through the host page-table mapping");
+        YVEX_TEST_ASSERT(
+            yvex_backend_tensor_write(
+                backend, resident, mapped_readback, sizeof(mapped_readback), &err) ==
+                YVEX_ERR_UNSUPPORTED,
+            "immutable pageable residency refuses device writes");
+        YVEX_TEST_ASSERT(
+            yvex_backend_resident_detach(backend, &err) == YVEX_OK &&
+                yvex_backend_tensor_release(backend, &resident, &err) == YVEX_OK &&
+                munmap(pageable, 4096u) == 0,
+            "release borrowed pageable metadata without freeing artifact bytes");
+        pageable = NULL;
+    }
     YVEX_TEST_ASSERT(assert_grouped_moe(backend) == 0,
                      "grouped direct-address MoE matches audit execution");
     YVEX_TEST_ASSERT(assert_encoded_moe(backend) == 0,

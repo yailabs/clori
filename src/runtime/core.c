@@ -485,6 +485,7 @@ static int runtime_model_artifact_open(
     memset(&options, 0, sizeof(options));
     options.path = request->artifact_path;
     options.readonly = 1;
+    options.map = 1;
     started = yvex_core_monotonic_ns();
     rc = runtime_model_progress(request, YVEX_RUNTIME_LIFECYCLE_ARTIFACT_OPEN,
                                 0ull, 0ull, err);
@@ -836,8 +837,11 @@ static int runtime_model_residency_open(
     memset(&options, 0, sizeof(options));
     options.maximum_host_bytes = request->maximum_host_bytes;
     options.placement = request->residency_backend == YVEX_BACKEND_KIND_CUDA
-                            ? YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED
-                            : YVEX_RUNTIME_WEIGHT_PLACEMENT_HOST_LOCKED;
+                            ? (yvex_backend_resident_map_readonly_supported(
+                                   model->opening_backend)
+                                   ? YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED
+                                   : YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED)
+                            : YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED;
     memset(&residency_failure, 0, sizeof(residency_failure));
     if (rc == YVEX_OK)
         rc = yvex_runtime_residency_prepare(&model->residency, model, &options,
@@ -848,7 +852,7 @@ static int runtime_model_residency_open(
     memset(&summary, 0, sizeof(summary));
     rc = yvex_runtime_residency_snapshot(model->residency, &summary, NULL, NULL, err);
     if (rc != YVEX_OK || !summary.model_complete ||
-        (!summary.host_locked &&
+        (!summary.host_locked && !summary.artifact_backed_bytes &&
          !(summary.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED &&
            summary.cuda_managed_allocation_count == 1ull &&
            summary.cuda_managed_bytes == summary.encoded_bytes &&

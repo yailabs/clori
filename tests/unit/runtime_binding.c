@@ -3946,7 +3946,7 @@ static int runtime_cuda_test_ready(int *ready)
     return rc;
 }
 
-static int test_runtime_model_managed_residency_claim(
+static int test_runtime_model_cuda_residency_claim(
     const binding_fixture *fixture, const yvex_runtime_binding_prepare_result *prepared)
 {
     yvex_runtime_model_open_request request = {0};
@@ -3957,30 +3957,46 @@ static int test_runtime_model_managed_residency_claim(
     yvex_error err;
     int ready, rc = runtime_cuda_test_ready(&ready);
 
-    YVEX_TEST_ASSERT(rc == YVEX_OK, "CUDA managed model test probes the native bundle");
+    YVEX_TEST_ASSERT(rc == YVEX_OK, "CUDA model residency test probes the native bundle");
     if (!ready) {
-        fprintf(stderr, "SKIP: CUDA unavailable for managed runtime model residency\n");
+        fprintf(stderr, "SKIP: CUDA unavailable for runtime model residency\n");
         return 0;
     }
     request.artifact_path = yvex_artifact_path(fixture->artifact);
     request.runtime_binding_path = prepared->path;
     request.target_id = runtime_fixture_execution()->target_id;
     request.residency_backend = YVEX_BACKEND_KIND_CUDA;
-    YVEX_TEST_ASSERT(yvex_runtime_model_open(
-                         &model, &request, &failure, &err) == YVEX_OK && model,
-                     "managed runtime model claims its transferred CUDA owner");
+    rc = yvex_runtime_model_open(&model, &request, &failure, &err);
+    if (rc != YVEX_OK)
+        fprintf(stderr, "CUDA runtime residency open failed: %s (%s)\n",
+                yvex_error_message(&err), yvex_error_where(&err));
+    YVEX_TEST_ASSERT(rc == YVEX_OK && model,
+                     "runtime model claims its admitted CUDA residency owner");
     view = yvex_runtime_model_view_get(model);
     YVEX_TEST_ASSERT(view && view->residency &&
                          yvex_runtime_residency_snapshot(
                              view->residency, &summary, NULL, NULL, &err) == YVEX_OK &&
-                         summary.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED &&
-                         summary.cuda_ready && !summary.host_resident_bytes &&
-                         summary.device_resident_bytes == summary.encoded_bytes &&
-                         summary.cuda_managed_allocation_count == 1ull &&
-                         summary.cuda_managed_bytes == summary.encoded_bytes &&
-                         summary.cuda_managed_prefetch_count == 1ull &&
-                         summary.cuda_managed_prefetch_bytes == summary.encoded_bytes,
-                     "managed runtime model publishes exact prefetch and readiness facts");
+                         summary.cuda_ready &&
+                         ((summary.placement ==
+                               YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED &&
+                           summary.artifact_backed_bytes &&
+                           !summary.host_resident_bytes &&
+                           !summary.device_resident_bytes &&
+                           summary.cuda_pageable_map_count == 1ull &&
+                           summary.cuda_pageable_map_bytes ==
+                               summary.artifact_backed_bytes &&
+                           !summary.cuda_managed_allocation_count &&
+                           !summary.cuda_managed_prefetch_count) ||
+                          (summary.placement ==
+                               YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED &&
+                           !summary.host_resident_bytes &&
+                           summary.device_resident_bytes == summary.encoded_bytes &&
+                           summary.cuda_managed_allocation_count == 1ull &&
+                           summary.cuda_managed_bytes == summary.encoded_bytes &&
+                           summary.cuda_managed_prefetch_count == 1ull &&
+                           summary.cuda_managed_prefetch_bytes ==
+                               summary.encoded_bytes)),
+                     "runtime model publishes exact mapped or managed CUDA residency facts");
     yvex_runtime_model_close(&model);
     return 0;
 }
@@ -4427,7 +4443,7 @@ int yvex_test_runtime_binding(void)
     if (test_runtime_cleanup_lease_retry(&fixture, &prepared) != 0) goto done;
     if (test_runtime_probe_consumer_boundary(&fixture, &prepared, root) != 0) goto done;
     if (test_runtime_paged_state_cuda_pack(&fixture, &prepared) != 0) goto done;
-    if (test_runtime_model_managed_residency_claim(&fixture, &prepared) != 0) goto done;
+    if (test_runtime_model_cuda_residency_claim(&fixture, &prepared) != 0) goto done;
     if (test_runtime_cuda_session_cleanup_retry(&fixture, &prepared) != 0) goto done;
     if (test_runtime_cuda_workspace_transaction(&fixture, &prepared) != 0) goto done;
     if (test_runtime_model_snapshot_drift(&fixture, &prepared) != 0) goto done;

@@ -1109,7 +1109,7 @@ static int cuda_tensor_free(yvex_backend *backend,
         tensor->data = NULL;
     }
     pointer = yvex_cuda_tensor_ptr(tensor);
-    if (tensor->virtual_reserved) {
+    if (tensor->virtual_reserved || tensor->borrowed_host) {
         rc = YVEX_OK;
     } else if (tensor->host_data && state->registered_host == tensor->host_data &&
         state->registered_device == pointer && state->registered_bytes == tensor->bytes) {
@@ -1149,6 +1149,11 @@ static int cuda_tensor_write(yvex_backend *backend,
                            yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    if (tensor && tensor->borrowed_host) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "cuda.tensor_write",
+                       "immutable artifact-backed tensor cannot be written");
+        return YVEX_ERR_UNSUPPORTED;
+    }
     int rc = yvex_backend_tensor_rw_validate(
         "yvex_backend_tensor_write", backend, tensor, len, err);
     if (rc != YVEX_OK) {
@@ -1590,6 +1595,8 @@ static const yvex_backend_vtable cuda_vtable = {
     cuda_bandwidth_probe,
     cuda_tensor_alloc,
     yvex_cuda_resident_alloc,
+    yvex_cuda_resident_map_supported,
+    yvex_cuda_resident_map_readonly,
     yvex_cuda_resident_prefetch,
     cuda_tensor_reserve,
     cuda_tensor_commit,
@@ -1661,10 +1668,15 @@ int yvex_backend_open_cuda_impl(yvex_backend **out,
                                 unsigned long long memory_limit_bytes,
                                 yvex_error *err)
 {
+    enum {
+        CUDA_DEVICE_ATTRIBUTE_PAGEABLE_MEMORY_ACCESS = 88,
+        CUDA_DEVICE_ATTRIBUTE_PAGEABLE_USES_HOST_PAGE_TABLES = 100
+    };
     yvex_backend *backend = NULL;
     yvex_cuda_backend_state *state = NULL;
     int device_index = 0, device_count = 0, unified = 0, managed = 0;
     int can_map_host = 0, virtual_memory_management = 0;
+    int pageable_memory_access = 0, pageable_uses_host_page_tables = 0;
     size_t global_bytes = 0;
     int rc;
     if (!out) {
@@ -1741,6 +1753,12 @@ int yvex_backend_open_cuda_impl(yvex_backend **out,
                                              YVEX_CUDA_DEVICE_ATTRIBUTE_MANAGED_MEMORY,
                                              state->device);
     (void)state->driver.cuDeviceGetAttribute(
+        &pageable_memory_access,
+        CUDA_DEVICE_ATTRIBUTE_PAGEABLE_MEMORY_ACCESS, state->device);
+    (void)state->driver.cuDeviceGetAttribute(
+        &pageable_uses_host_page_tables,
+        CUDA_DEVICE_ATTRIBUTE_PAGEABLE_USES_HOST_PAGE_TABLES, state->device);
+    (void)state->driver.cuDeviceGetAttribute(
         &virtual_memory_management,
         YVEX_CUDA_DEVICE_ATTRIBUTE_VIRTUAL_MEMORY_MANAGEMENT,
         state->device);
@@ -1750,6 +1768,8 @@ int yvex_backend_open_cuda_impl(yvex_backend **out,
         state->driver.cuMemRelease && state->driver.cuMemMap &&
         state->driver.cuMemUnmap && state->driver.cuMemSetAccess &&
         state->driver.cuMemGetAllocationGranularity;
+    backend->pageable_memory_access = pageable_memory_access != 0;
+    backend->pageable_uses_host_page_tables = pageable_uses_host_page_tables != 0;
     backend->virtual_tensor_ready = state->virtual_memory_management;
     backend->status = YVEX_BACKEND_STATUS_CONTEXT_READY;
     backend->stats.memory_limit_bytes = memory_limit_bytes;

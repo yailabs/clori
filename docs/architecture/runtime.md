@@ -377,10 +377,15 @@ CUDA-addressable host storage, accelerator-resident storage, session KV,
 workspace, and transient staging. Physical unified memory does not collapse
 these placement and accounting classes.
 
-The current complete encoded payload is copied into a process-lifetime host
-arena. A bounded accelerator placement contains the admitted CUDA-resident
-resources. Status reports host and accelerator bytes separately. A placement
-counter is a memory fact, not by itself a causal performance diagnosis.
+The current GB10 path keeps the authenticated GGUF mapping as immutable
+model-lifetime backing. Binding ranges become typed tensor views over exact file
+offsets, and CUDA consumes the mapping through admitted pageable host-page-table
+access. No complete anonymous model copy, host registration, or eager full-model
+prefetch is required. Managed CUDA and locked host arenas remain explicit
+fallback placements when that capability is absent. Status reports mapped
+artifact extent, non-artifact host residency, accelerator residency and process
+RSS separately. A placement counter is a memory fact, not by itself a causal
+performance diagnosis.
 
 Before opening the complete artifact, startup reads the bounded binding and
 admits its encoded payload against the configured host budget and the tighter
@@ -392,22 +397,23 @@ before artifact mutation. First admission authenticates every artifact byte.
 Later opens may consume one content-addressed local lease only when the expected
 artifact identity and complete filesystem snapshot are unchanged; invalid or
 missing cache evidence returns to the full hash. A second live check immediately
-before the resident arena allocation closes the race introduced by artifact
+before residency construction closes the race introduced by artifact
 authentication and import. Process admission therefore does not depend on the
 Linux OOM killer.
 
-The resident arena is populated by exact stable-snapshot range reads. Its
-identity binds the verified artifact and materialization identities with each
-source and destination extent, avoiding a second model-sized hash over the
-newly copied arena while retaining byte-read, drift, and cleanup refusal.
+Residency schema v7 binds the verified artifact and materialization identities,
+selected placement and each source/backing extent. Artifact-backed placement
+borrows the stable mapping and preserves its lifetime beneath every tensor view;
+copied placements retain exact range reads. Both paths retain snapshot-drift,
+integrity and cleanup refusal.
 
 Generation retains the derived reserve in its identity-bearing workload and
 capacity plans, then checks future state, workspace, graph, scheduler and
 reserve bytes against live system/cgroup availability. Dedicated CUDA memory
-also constrains the check by current CUDA free memory. Managed placement may
-instead use reclaimable system availability only when typed backend facts
-prove unified managed access and the same physical capacity. Live availability
-is deliberately not hashed
+also constrains the check by current CUDA free memory. Managed or
+artifact-backed placement may instead use reclaimable system availability only
+when typed backend facts prove the required access and the same physical
+capacity. Live availability is deliberately not hashed
 into page geometry or capacity identity, so ordinary memory fluctuation cannot
 invalidate durable state or change an admitted session layout.
 

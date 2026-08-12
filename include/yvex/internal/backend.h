@@ -264,7 +264,7 @@ struct yvex_device_tensor {
     void *backend_allocation;
     unsigned long long resident_bytes;
     int virtual_reserved;
-    int is_written, host_accessible;
+    int is_written, host_accessible, borrowed_host;
 };
 int yvex_backend_tensor_owned_by(const yvex_backend *backend,
                                  const yvex_device_tensor *tensor);
@@ -273,6 +273,12 @@ int yvex_backend_resident_alloc(yvex_backend *backend,
                                 yvex_device_tensor **out,
                                 unsigned char **host,
                                 yvex_error *err);
+int yvex_backend_resident_map_readonly_supported(const yvex_backend *backend);
+int yvex_backend_resident_map_readonly(yvex_backend *backend,
+                                       const yvex_backend_tensor_desc *desc,
+                                       const unsigned char *host,
+                                       yvex_device_tensor **out,
+                                       yvex_error *err);
 /* Move one initialized backend-owned managed range to its admitted execution device.
  * The caller retains tensor ownership; success is synchronous and reports migrated bytes. */
 int yvex_backend_resident_prefetch(yvex_backend *backend,

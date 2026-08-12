@@ -366,13 +366,15 @@ static int test_bounded_telemetry_overflow(void)
     rc = yvex_server_telemetry_metrics_copy(telemetry, &metrics, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && metrics.telemetry_dropped > 0u,
                      "overflow count is explicit");
+    yvex_server_telemetry_model_opened(telemetry, 4096u, 0u, 0u, 0u);
     yvex_server_telemetry_resources(telemetry, 1024u, 2048u, 1u);
     yvex_server_telemetry_resources(telemetry, 512u, 1024u, 0u);
     rc = yvex_server_telemetry_metrics_copy(telemetry, &metrics, &err);
-    YVEX_TEST_ASSERT(rc == YVEX_OK && metrics.resident_host_bytes == 1024u &&
+    YVEX_TEST_ASSERT(rc == YVEX_OK && metrics.mapped_artifact_bytes == 4096u &&
+                         metrics.resident_host_bytes == 1024u &&
                          metrics.resident_device_bytes == 2048u &&
                          metrics.output_head_upload_count == 1u,
-                     "resource metrics retain authoritative high-water facts");
+                     "mapped backing is distinct from resident resource high-water facts");
     yvex_server_telemetry_openai_request(telemetry, 1, 0, 0, 0);
     yvex_server_telemetry_openai_request(telemetry, -1, 1, 0, 0);
     yvex_server_telemetry_openai_request(telemetry, 0, 0, 1, 1);

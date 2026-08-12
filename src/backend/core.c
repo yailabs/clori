@@ -469,6 +469,37 @@ int yvex_backend_resident_alloc(yvex_backend *backend,
     return backend->vtable->resident_alloc(backend, desc, out, host, err);
 }
 
+int yvex_backend_resident_map_readonly_supported(const yvex_backend *backend)
+{
+    return backend && backend->vtable && backend->vtable->resident_map_supported &&
+           backend->vtable->resident_map_supported(backend);
+}
+
+int yvex_backend_resident_map_readonly(yvex_backend *backend,
+                                       const yvex_backend_tensor_desc *desc,
+                                       const unsigned char *host,
+                                       yvex_device_tensor **out,
+                                       yvex_error *err)
+{
+    int rc;
+    if (out) *out = NULL;
+    if (!backend || !desc || !host || !out) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "backend.resident.map",
+                       "backend, descriptor, immutable host span, and output are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    rc = backend_dispatch_admit(backend, "backend.resident.map", err);
+    if (rc == YVEX_OK) rc = backend_desc_valid(desc, err);
+    if (rc != YVEX_OK) return rc;
+    if (!backend->vtable || !backend->vtable->resident_map_readonly ||
+        !yvex_backend_resident_map_readonly_supported(backend)) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "backend.resident.map",
+                       "backend has no admitted immutable pageable mapping");
+        return YVEX_ERR_UNSUPPORTED;
+    }
+    return backend->vtable->resident_map_readonly(backend, desc, host, out, err);
+}
+
 int yvex_backend_resident_prefetch(yvex_backend *backend,
                                    yvex_device_tensor *tensor,
                                    unsigned long long *prefetched_bytes,
