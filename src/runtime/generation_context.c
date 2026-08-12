@@ -1217,6 +1217,7 @@ static int generation_execution_owners_open(
         return rc;
     speculation.backend = options->backend;
     speculation.context_capacity = options->context_capacity;
+    speculation.prefill_chunk_tokens = options->prefill_chunk_tokens;
     speculation.maximum_host_bytes = options->maximum_host_bytes;
     speculation.maximum_device_bytes = options->maximum_device_bytes;
     speculation.cancel_requested = options->cancel_requested;

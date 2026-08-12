@@ -321,13 +321,13 @@ int yvex_backend_cuda_encoded_matvec(
     }
     if (rc == YVEX_OK) {
         void *params[] = {&encoded_ptr, &row_bytes, &row_width, &start_row,
-                          &row_count, &input_rows, &qtype, &input_ptr, &q8_input,
+                          &row_count, &input_rows, &qtype, &input_ptr, &row_width, &q8_input,
                           &block_row, &forensic_numeric, &additive_ptr, &output_ptr,
-                          &output_bf16, &status};
+                          &row_count, &output_bf16, &status};
         void *q8_params[] = {&encoded_ptr, &row_bytes, &row_width, &start_row,
-                             &row_count, &input_rows, &qtype, &quantized, &q8_input,
+                             &row_count, &input_rows, &qtype, &quantized, &row_width, &q8_input,
                              &block_row, &forensic_numeric, &additive_ptr, &output_ptr,
-                             &output_bf16, &status};
+                             &row_count, &output_bf16, &status};
         void *tensorcore_params[] = {
             &encoded_ptr, &row_bytes, &row_width, &start_row, &row_count,
             &input_rows, &qtype, &quantized, &additive_ptr, &output_ptr,

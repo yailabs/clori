@@ -423,7 +423,8 @@ test-cuda-graph: cuda
 	YVEX_CUDA_TEST_FILTER=graph $(CUDA_TEST_RUNNER)
 
 test-cuda-native-sm121-sass: build/sm121/obj/src/backend/cuda/tensorcore.cubin
-	@for symbol in yvex_qtype_tensorcore_rows yvex_moe_grouped_up_tensorcore \
+	@for symbol in yvex_qtype_tensorcore_rows \
+		yvex_moe_grouped_up_tensorcore \
 		yvex_moe_grouped_down_tensorcore; do \
 		$(CUOBJDUMP) --dump-sass $< | grep -F "Function : $$symbol" >/dev/null || { \
 			echo "native Tensor Core entrypoint $$symbol is absent: $<" >&2; exit 1; \

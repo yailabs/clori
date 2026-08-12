@@ -369,14 +369,6 @@ static int generation_prefill(
                                  "generation turn requires one exact new prompt suffix token");
     suffix_count = encoded->tokens.len - reusable_prefix;
     maximum_chunk = context->options.prefill_chunk_tokens;
-    if (context->speculation) {
-        const yvex_speculation_family_policy *policy = yvex_runtime_speculation_policy_get(
-            context->speculation);
-        if (!policy)
-            return generation_refuse(err, YVEX_ERR_STATE, "DSpark prefill policy is unavailable");
-        if (maximum_chunk > policy->block_size + 2ull)
-            maximum_chunk = policy->block_size + 2ull;
-    }
     if (maximum_chunk > suffix_count) maximum_chunk = suffix_count;
     if (!plan || !yvex_core_u64_mul(maximum_chunk, plan->hidden_width,
                                     &maximum_values) ||

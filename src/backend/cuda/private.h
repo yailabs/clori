@@ -454,40 +454,37 @@ typedef struct {
     unsigned long long main_extent, index_extent;
 } yvex_cuda_attention_state_sources;
 int yvex_cuda_qtype_matvec_geometry(
-    unsigned long long rows, unsigned long long row_width,
-    unsigned long long input_rows, unsigned int qtype,
-    int block_row_eligible, unsigned int *grid, unsigned int *block,
+    unsigned long long rows, unsigned long long row_width, unsigned long long input_rows,
+    unsigned int qtype, int block_row_eligible, unsigned int *grid, unsigned int *block,
     int *block_row);
-static inline int cuda_qtype_tensorcore_eligible(unsigned long long input_rows) { return input_rows >= 16ull; }
+/* One MMA row tile is the measured GB10 crossover; smaller widths stay latency-oriented. */
+#define YVEX_CUDA_TENSORCORE_MIN_ROWS 16ull
+static inline int cuda_qtype_tensorcore_eligible(unsigned long long input_rows) {
+    return input_rows >= YVEX_CUDA_TENSORCORE_MIN_ROWS;
+}
 typedef struct {
     int (*fail)(yvex_backend_attention_failure *, yvex_backend_attention_failure_code,
                 const char *, unsigned long long, unsigned long long, yvex_error *,
                 yvex_status, const char *);
     int (*account_transfer)(unsigned long long, size_t, unsigned long long *,
                             const char *, yvex_backend_attention_failure *, yvex_error *);
-    int (*validate_job)(yvex_backend_attention_job *,
-                        yvex_backend_attention_output *,
+    int (*validate_job)(yvex_backend_attention_job *, yvex_backend_attention_output *,
                         yvex_backend_attention_failure *, yvex_error *);
-    int (*validate_weight)(const yvex_backend_attention_weight *,
-                           unsigned long long, unsigned long long,
+    int (*validate_weight)(const yvex_backend_attention_weight *, unsigned long long, unsigned long long,
                            yvex_backend_attention_failure *, yvex_error *);
-    int (*validate_activation)(const yvex_backend_attention_activation *,
-                               unsigned long long, const char *,
-                               yvex_backend_attention_failure *, yvex_error *);
+    int (*validate_activation)(const yvex_backend_attention_activation *, unsigned long long,
+                               const char *, yvex_backend_attention_failure *, yvex_error *);
     int (*validate_rolling)(const yvex_backend_attention_job *,
-                            const yvex_backend_attention_rolling *,
-                            unsigned long long, unsigned long long, int,
-                            unsigned long long *, const char *,
+                            const yvex_backend_attention_rolling *, unsigned long long,
+                            unsigned long long, int, unsigned long long *, const char *,
                             yvex_backend_attention_failure *, yvex_error *);
     int (*validate_alias)(const yvex_backend_attention_job *,
-                          const yvex_cuda_attention_transfer *, size_t,
-                          unsigned long long, unsigned long long,
-                          unsigned long long, unsigned long long,
+                          const yvex_cuda_attention_transfer *, size_t, unsigned long long,
+                          unsigned long long, unsigned long long, unsigned long long,
                           unsigned long long);
     int (*cancel)(yvex_backend *, const yvex_backend_attention_job *,
                   const char *, int, yvex_backend_attention_failure *, yvex_error *);
-    int (*stage_acquire)(yvex_backend *, size_t, int, int,
-                         unsigned char **, int *,
+    int (*stage_acquire)(yvex_backend *, size_t, int, int, unsigned char **, int *,
                          yvex_backend_attention_failure *, yvex_error *);
     int (*stage_layout)(unsigned char *, yvex_cuda_attention_upload *, size_t,
                         yvex_cuda_attention_transfer *, size_t,
@@ -507,24 +504,28 @@ typedef struct {
                   unsigned long long, unsigned long long, unsigned long long, CUdeviceptr,
                   CUdeviceptr, int, CUdeviceptr, const char *,
                   yvex_backend_attention_failure *, yvex_error *);
+    int (*matvec_strided)(yvex_cuda_work *, const yvex_backend_attention_weight *, CUdeviceptr,
+                  unsigned long long, unsigned long long, unsigned long long, CUdeviceptr,
+                  unsigned long long, CUdeviceptr, unsigned long long, int, CUdeviceptr,
+                  const char *, yvex_backend_attention_failure *, yvex_error *);
     int (*decode)(yvex_cuda_work *, const yvex_backend_attention_weight *, CUdeviceptr,
                   unsigned long long, unsigned long long, CUdeviceptr, CUdeviceptr,
                   const char *, yvex_backend_attention_failure *, yvex_error *);
-    int (*weighted_norm)(yvex_cuda_work *, CUdeviceptr, unsigned long long,
-                         unsigned long long,
+    int (*weighted_norm)(yvex_cuda_work *, CUdeviceptr, unsigned long long, unsigned long long,
                          const yvex_backend_attention_weight *, CUdeviceptr, double,
                          CUdeviceptr, const char *, yvex_backend_attention_failure *, yvex_error *);
     int (*unit_norm)(yvex_cuda_work *, CUdeviceptr, unsigned long long, unsigned long long,
                      double, CUdeviceptr, const char *, yvex_backend_attention_failure *, yvex_error *);
     int (*rope)(yvex_cuda_work *, CUdeviceptr, unsigned long long, unsigned long long,
-                unsigned long long, const yvex_backend_attention_position *, int, CUdeviceptr,
-                const char *, yvex_backend_attention_failure *, yvex_error *);
+                unsigned long long, unsigned long long,
+                const yvex_backend_attention_position *, int, CUdeviceptr, const char *,
+                yvex_backend_attention_failure *, yvex_error *);
     int (*activation)(yvex_cuda_work *, CUdeviceptr, unsigned long long, unsigned long long,
-                      const yvex_backend_attention_activation *, CUdeviceptr, const char *,
-                      yvex_backend_attention_failure *, yvex_error *);
+                      unsigned long long,
+                      const yvex_backend_attention_activation *, CUdeviceptr,
+                      const char *, yvex_backend_attention_failure *, yvex_error *);
     int (*state_stage)(yvex_backend *, const yvex_backend_attention_job *,
-                       const yvex_cuda_attention_state_sources *, size_t *, int *,
-                       yvex_error *);
+                       const yvex_cuda_attention_state_sources *, size_t *, int *, yvex_error *);
 } yvex_cuda_attention_operations;
 const yvex_cuda_attention_operations *yvex_cuda_attention_operations_get(void);
 int yvex_cuda_kernel_bundle_admit(yvex_backend *backend, yvex_error *err);

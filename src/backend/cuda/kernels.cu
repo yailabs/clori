@@ -512,11 +512,13 @@ extern "C" __global__ void yvex_qtype_matvec(
     unsigned long long input_rows,
     unsigned int qtype,
     const void *vector,
+    unsigned long long input_stride,
     int q8_input,
     int block_row,
     int forensic_numeric,
     const float *additive,
     float *out,
+    unsigned long long output_stride,
     int output_bf16,
     int *status)
 {
@@ -529,7 +531,9 @@ extern "C" __global__ void yvex_qtype_matvec(
     float sum;
     if (!status || *status != 0) return;
     if (!encoded || !vector || !out || !row_bytes || !row_width ||
-        !row_count || !input_rows || (block_row != 0 && block_row != 1) ||
+        !row_count || !input_rows || input_stride < row_width ||
+        output_stride < row_count || (q8_input && input_stride != row_width) ||
+        (block_row != 0 && block_row != 1) ||
         (block_row && (qtype != YVEX_GGUF_QTYPE_F32 || q8_input ||
                        blockDim.x != 256u))) {
         if (!lane) atomicCAS(status, 0, 2);
@@ -547,7 +551,7 @@ extern "C" __global__ void yvex_qtype_matvec(
     input = q8_input
         ? (const void *)((const unsigned char *)vector +
                          input_row * (row_width / YVEX_CUDA_Q8_K_BLOCK) * YVEX_CUDA_Q8_K_BYTES)
-        : (const void *)((const float *)vector + input_row * row_width);
+        : (const void *)((const float *)vector + input_row * input_stride);
     if (forensic_numeric) {
         if ((block_row ? threadIdx.x : lane) == 0u) {
             double reference = 0.0;
@@ -559,9 +563,9 @@ extern "C" __global__ void yvex_qtype_matvec(
             }
             float value = (float)reference;
             if (additive)
-                value = __fadd_rn(value, additive[input_row * row_count + row]);
+                value = __fadd_rn(value, additive[input_row * output_stride + row]);
             if (!isfinite(value)) atomicCAS(status, 0, 1);
-            else out[input_row * row_count + row] =
+            else out[input_row * output_stride + row] =
                 output_bf16 ? float_to_bf16_rne(value) : value;
         }
         return;
@@ -585,9 +589,9 @@ extern "C" __global__ void yvex_qtype_matvec(
                 sum += __shfl_down_sync(0xffffffffu, sum, offset);
             if (!lane) {
                 float value = additive
-                    ? __fadd_rn(sum, additive[input_row * row_count + row]) : sum;
+                    ? __fadd_rn(sum, additive[input_row * output_stride + row]) : sum;
                 if (!isfinite(value)) atomicCAS(status, 0, 1);
-                else out[input_row * row_count + row] =
+                else out[input_row * output_stride + row] =
                     output_bf16 ? float_to_bf16_rne(value) : value;
             }
         }
@@ -607,9 +611,9 @@ extern "C" __global__ void yvex_qtype_matvec(
         if (!isfinite(sum)) atomicCAS(status, 0, 1);
         else {
             float value = additive
-                ? __fadd_rn(sum, additive[input_row * row_count + row]) : sum;
+                ? __fadd_rn(sum, additive[input_row * output_stride + row]) : sum;
             if (!isfinite(value)) atomicCAS(status, 0, 1);
-            else out[input_row * row_count + row] =
+            else out[input_row * output_stride + row] =
                 output_bf16 ? float_to_bf16_rne(value) : value;
         }
     }
@@ -854,7 +858,8 @@ static __device__ double attention_yarn_frequency(
 }
 
 extern "C" __global__ void yvex_attention_yarn_rope(
-    float *values, unsigned long long vector_count,
+    float *values, unsigned long long vectors_per_token,
+    unsigned long long token_count,
     unsigned long long vector_width, unsigned long long rope_dims,
     unsigned long long token_position, unsigned long long theta,
     unsigned long long scaling_factor, unsigned long long original_context,
@@ -868,20 +873,23 @@ extern "C" __global__ void yvex_attention_yarn_rope(
     unsigned long long total;
     if (!status) return;
     if (*status != 0) return;
-    if (!values || !vector_count || !rope_dims || rope_dims > vector_width ||
+    if (!values || !vectors_per_token || !token_count || !rope_dims ||
+        rope_dims > vector_width ||
         (rope_dims & 1ull) || theta <= 1ull || !scaling_factor ||
         (original_context && (!beta_slow || beta_fast <= beta_slow))) {
         atomicCAS(status, 0, 2);
         return;
     }
     pairs_per_vector = rope_dims / 2ull;
-    if (vector_count > ~0ull / pairs_per_vector) {
+    if (token_count > ~0ull / vectors_per_token ||
+        token_count * vectors_per_token > ~0ull / pairs_per_vector) {
         atomicCAS(status, 0, 2);
         return;
     }
-    total = vector_count * pairs_per_vector;
+    total = token_count * vectors_per_token * pairs_per_vector;
     if (pair >= total) return;
     unsigned long long vector_index = pair / pairs_per_vector;
+    unsigned long long token_index = vector_index / vectors_per_token;
     unsigned long long local_pair = pair % pairs_per_vector;
     unsigned long long start = vector_width - rope_dims;
     unsigned long long offset = vector_index * vector_width + start +
@@ -889,7 +897,7 @@ extern "C" __global__ void yvex_attention_yarn_rope(
     double frequency = attention_yarn_frequency(
         local_pair, rope_dims, theta, scaling_factor, original_context,
         beta_fast, beta_slow);
-    double angle = (double)token_position * frequency;
+    double angle = (double)(token_position + token_index) * frequency;
     double c = cos(angle);
     double s = inverse ? -sin(angle) : sin(angle);
     double x = (double)values[offset];
@@ -997,7 +1005,8 @@ static __device__ float activation_power_two_ceil(float value)
  */
 extern "C" __global__ void yvex_attention_activation_quantize(
     float *values, unsigned long long vector_count,
-    unsigned long long vector_width, unsigned long long block_width,
+    unsigned long long vector_width, unsigned long long vector_stride,
+    unsigned long long block_width,
     unsigned int quantization, int hadamard, int *status)
 {
     __shared__ unsigned int maximum_bits;
@@ -1007,15 +1016,17 @@ extern "C" __global__ void yvex_attention_activation_quantize(
     unsigned int thread = threadIdx.x;
     if (!status) return;
     if (vector_index >= vector_count) return;
-    if (!values || !vector_count || !vector_width || !block_width ||
-        vector_width % block_width || (quantization != 1u && quantization != 2u)) {
+    if (!values || !vector_count || !vector_width ||
+        vector_stride < vector_width || !block_width ||
+        vector_width % block_width ||
+        (quantization != 1u && quantization != 2u)) {
         if (thread == 0u) atomicCAS(status, 0, 2);
         return;
     }
     if (thread == 0u) active = *status == 0;
     __syncthreads();
     if (!active) return;
-    float *vector = values + vector_index * vector_width;
+    float *vector = values + vector_index * vector_stride;
     if (hadamard) {
         if ((vector_width & (vector_width - 1ull)) != 0ull ||
             vector_width > 1024ull) {

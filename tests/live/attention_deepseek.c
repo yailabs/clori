@@ -29,6 +29,7 @@
 #define ATTENTION_CUDA_RELATIVE_TOLERANCE 5.0e-4
 #define ATTENTION_NATIVE_Q8_ABSOLUTE_TOLERANCE 4.0e-2
 #define ATTENTION_NATIVE_Q8_RELATIVE_TOLERANCE 4.0e-2
+#define ATTENTION_NATIVE_TENSORCORE_ROWS 16ull
 
 static const char *attention_class_name(yvex_attention_class class_id)
 {
@@ -2413,7 +2414,7 @@ static int run_cuda_live_suite(
     attention_live_evidence evidence;
     live_attention_history history;
     const yvex_attention_layer_plan *layer;
-    float *input = NULL;
+    float *input = NULL, *native_input = NULL;
     unsigned long long input_extent = 0ull;
     unsigned long long layer_index;
     unsigned long long launches = 0ull;
@@ -2593,6 +2594,36 @@ static int run_cuda_live_suite(
         if (rc == YVEX_OK) rc = YVEX_ERR_STATE;
         goto cleanup;
     }
+    tensor_core_launches += cuda_result.cuda_tensor_core_launches;
+    if (input_extent > SIZE_MAX / ATTENTION_NATIVE_TENSORCORE_ROWS /
+                           sizeof(*native_input) ||
+        !(native_input = (float *)malloc(
+              (size_t)(input_extent * ATTENTION_NATIVE_TENSORCORE_ROWS) *
+              sizeof(*native_input)))) {
+        rc = YVEX_ERR_NOMEM;
+        goto cleanup;
+    }
+    fill_history_values(native_input, input_extent, 1401ull);
+    for (unsigned long long row = 1ull; row < ATTENTION_NATIVE_TENSORCORE_ROWS; ++row)
+        memcpy(native_input + row * input_extent, native_input,
+               (size_t)input_extent * sizeof(*native_input));
+    options.token_count = ATTENTION_NATIVE_TENSORCORE_ROWS;
+    options.input = native_input;
+    rc = run_cuda_reference_compare(
+        plan, ir, session, descriptor, backend, &options, &cuda_result,
+        &cuda_reference, NULL, NULL, ATTENTION_NATIVE_Q8_ABSOLUTE_TOLERANCE,
+        ATTENTION_NATIVE_Q8_RELATIVE_TOLERANCE, failure, err);
+    if (rc != YVEX_OK || !cuda_result.cuda_tensor_core_launches) {
+        fprintf(stderr,
+                "attention_native_row_batch_failed rc=%d launches=%llu where=%s message=%s\n",
+                rc, cuda_result.cuda_tensor_core_launches,
+                yvex_error_where(err), yvex_error_message(err));
+        if (rc == YVEX_OK) rc = YVEX_ERR_STATE;
+        goto cleanup;
+    }
+    tensor_core_launches += cuda_result.cuda_tensor_core_launches;
+    free(native_input);
+    native_input = NULL;
 #endif
 
     rc = run_cuda_core_input_regression(
@@ -3011,6 +3042,7 @@ cleanup:
     (void)unsetenv("YVEX_TEST_CUDA_ATTENTION_FAILURE");
     yvex_attention_execution_trace_release(&failed_trace);
     live_history_release(&history);
+    free(native_input);
     free(input);
     {
         int close_rc = yvex_backend_close_checked(&backend, err);

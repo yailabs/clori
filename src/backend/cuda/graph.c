@@ -1455,7 +1455,7 @@ int yvex_cuda_attention_graph_key(const yvex_backend *backend,
     yvex_sha256_init(&hash);
 #define HASH(value) \
     do { if (!yvex_sha256_update_u64(&hash, (unsigned long long)(value))) goto failed; } while (0)
-    if (!yvex_sha256_update_text(&hash, "yvex.cuda.attention-topology.v8") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.cuda.attention-topology.v14") ||
         !yvex_sha256_update_text(&hash, configuration->compatibility_identity) ||
         !yvex_sha256_update_text(&hash, configuration->capture_bucket))
         goto failed;

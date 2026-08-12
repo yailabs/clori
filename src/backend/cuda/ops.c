@@ -325,8 +325,10 @@ static int attention_matvec(yvex_cuda_work *work,
             void *params[] = {
                 &device_weight, (void *)&weight->row_bytes,
                 (void *)&weight->row_width, &start_row, &rows, &input_rows,
-                (void *)&weight->qtype, &quantized, &q8_input, &block_row,
-                &work->forensic_numeric, &additive, &out, &output_bf16, &status};
+                (void *)&weight->qtype, &quantized,
+                (void *)&weight->row_width, &q8_input, &block_row,
+                &work->forensic_numeric, &additive, &out, &rows,
+                &output_bf16, &status};
             rc = attention_launch(work, work->state->qtype_matvec_function,
                                   matvec_grid, matvec_block, 0u, params, stage,
                                   failure, err);
@@ -336,13 +338,45 @@ static int attention_matvec(yvex_cuda_work *work,
     {
         void *params[] = {&device_weight, (void *)&weight->row_bytes,
             (void *)&weight->row_width, &start_row, &rows,
-            &input_rows, (void *)&weight->qtype, &vector, &q8_input,
+            &input_rows, (void *)&weight->qtype, &vector,
+            (void *)&weight->row_width, &q8_input,
             &block_row, &work->forensic_numeric, &additive, &out,
-            &output_bf16, &status
+            &rows, &output_bf16, &status
         };
         return attention_launch(
             work, work->state->qtype_matvec_function,
             matvec_grid, matvec_block, 0u, params, stage, failure, err);
+    }
+}
+static int attention_matvec_strided(
+    yvex_cuda_work *work, const yvex_backend_attention_weight *weight,
+    CUdeviceptr device_weight, unsigned long long start_row, unsigned long long rows,
+    unsigned long long input_rows, CUdeviceptr vector, unsigned long long input_stride,
+    CUdeviceptr out, unsigned long long output_stride, int output_bf16,
+    CUdeviceptr status, const char *stage, yvex_backend_attention_failure *failure,
+    yvex_error *err)
+{
+    CUdeviceptr additive = 0ull;
+    int block_row = 0, q8_input = 0;
+    unsigned int grid, block;
+    if (!weight || !weight->present || !device_weight || !vector || !out ||
+        !rows || !input_rows || input_stride < weight->row_width ||
+        output_stride < rows || start_row > weight->row_count ||
+        rows > weight->row_count - start_row ||
+        !yvex_cuda_qtype_matvec_geometry(rows, weight->row_width, input_rows,
+                                         weight->qtype, 1, &grid, &block, &block_row))
+        return attention_fail(
+            failure, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT, stage,
+            weight ? weight->row_count : 0ull, start_row + rows, err,
+            YVEX_ERR_BOUNDS, "CUDA strided attention matvec geometry is invalid");
+    {
+        void *params[] = {
+            &device_weight, (void *)&weight->row_bytes, (void *)&weight->row_width,
+            &start_row, &rows, &input_rows, (void *)&weight->qtype, &vector,
+            &input_stride, &q8_input, &block_row, &work->forensic_numeric,
+            &additive, &out, &output_stride, &output_bf16, &status};
+        return attention_launch(work, work->state->qtype_matvec_function,
+                                grid, block, 0u, params, stage, failure, err);
     }
 }
 static int attention_decode(yvex_cuda_work *work,
@@ -427,7 +461,8 @@ static int attention_unit_norm(yvex_cuda_work *work,
 }
 static int attention_rope(yvex_cuda_work *work,
                              CUdeviceptr values,
-                             unsigned long long vectors,
+                             unsigned long long vectors_per_token,
+                             unsigned long long token_count,
                              unsigned long long width,
                              unsigned long long token_position,
                              const yvex_backend_attention_position *position,
@@ -437,16 +472,17 @@ static int attention_rope(yvex_cuda_work *work,
                              yvex_backend_attention_failure *failure,
                              yvex_error *err)
 {
-    unsigned long long total;
+    unsigned long long total_vectors, total;
     unsigned int grid;
     if (!position || !position->rope_dimensions ||
         position->rope_dimensions > width ||
-        vectors > ULLONG_MAX / (position->rope_dimensions / 2ull))
+        !yvex_core_u64_mul(vectors_per_token, token_count, &total_vectors) ||
+        total_vectors > ULLONG_MAX / (position->rope_dimensions / 2ull))
         return attention_fail(
             failure, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT, stage,
             width, position ? position->rope_dimensions : 0ull, err,
             YVEX_ERR_BOUNDS, "CUDA attention RoPE geometry is invalid");
-    total = vectors * (position->rope_dimensions / 2ull);
+    total = total_vectors * (position->rope_dimensions / 2ull);
     if (!total || total > UINT_MAX * (unsigned long long)CUDA_ATTENTION_BLOCK)
         return attention_fail(
             failure, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT, stage,
@@ -456,8 +492,9 @@ static int attention_rope(yvex_cuda_work *work,
                           CUDA_ATTENTION_BLOCK);
     {
         void *params[] = {
-            &values, &vectors, &width, (void *)&position->rope_dimensions,
-            &token_position, (void *)&position->theta,
+            &values, &vectors_per_token, &token_count, &width,
+            (void *)&position->rope_dimensions, &token_position,
+            (void *)&position->theta,
             (void *)&position->scaling_factor,
             (void *)&position->original_context, (void *)&position->beta_fast,
             (void *)&position->beta_slow, &inverse, &status
@@ -469,20 +506,21 @@ static int attention_rope(yvex_cuda_work *work,
 }
 static int attention_activation(
     yvex_cuda_work *work, CUdeviceptr values, unsigned long long vectors,
-    unsigned long long width, const yvex_backend_attention_activation *policy,
+    unsigned long long width, unsigned long long stride,
+    const yvex_backend_attention_activation *policy,
     CUdeviceptr status, const char *stage,
     yvex_backend_attention_failure *failure, yvex_error *err)
 {
     if (!policy || !policy->required) return YVEX_OK;
-    if (!vectors || vectors > UINT_MAX || !width || !policy->block_width ||
-        width % policy->block_width)
+    if (!vectors || vectors > UINT_MAX || !width || stride < width ||
+        !policy->block_width || width % policy->block_width)
         return attention_fail(
             failure, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT, stage,
             policy->block_width, width, err, YVEX_ERR_BOUNDS,
             "CUDA attention activation geometry is invalid");
     {
         void *params[] = {
-            &values, &vectors, &width, (void *)&policy->block_width,
+            &values, &vectors, &width, &stride, (void *)&policy->block_width,
             (void *)&policy->quantization, (void *)&policy->hadamard, &status
         };
         return attention_launch(
@@ -1032,7 +1070,8 @@ const yvex_cuda_attention_operations *yvex_cuda_attention_operations_get(void)
         attention_validate_alias, attention_cancel, attention_stage_acquire,
         attention_stage_layout,
         attention_allocate, attention_initialize, attention_download,
-        attention_launch, attention_round_bf16, attention_matvec, attention_decode,
+        attention_launch, attention_round_bf16, attention_matvec,
+        attention_matvec_strided, attention_decode,
         attention_weighted_norm, attention_unit_norm, attention_rope,
         attention_activation, attention_state_stage
     };

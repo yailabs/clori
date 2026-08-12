@@ -31,15 +31,14 @@ struct yvex_runtime_speculation_context {
     speculation_weight markov_output, confidence;
     yvex_backend *device_backend;
     yvex_device_tensor *device_feature_input, *device_feature_projected;
-    yvex_device_tensor *device_feature_normalized, *device_feature_norm;
-    yvex_device_tensor *device_adjusted_logits;
+    yvex_device_tensor *device_feature_normalized, *device_feature_norm, *device_adjusted_logits;
     yvex_execution_device_view pending_target_logits;
     float *feature_projected, *feature_norm_weights, *target_features;
     float *draft_hidden, *draft_pre_normalized, *target_hidden;
     float *base_logits, *adjusted_logits, *markov_bias;
     float *draft_probabilities, *target_probabilities, *markov_embedding_values;
     unsigned int *draft_input_ids;
-    unsigned long long vocabulary_size, hidden_width, workspace_bytes;
+    unsigned long long vocabulary_size, hidden_width, prefill_rows, workspace_bytes;
     unsigned long long pending_position, pending_committed_count;
     unsigned long long pending_verified_prefix_count;
     unsigned int pending_tokens[YVEX_SPECULATION_MAX_BLOCK + 2u], target_token_ids[YVEX_SPECULATION_MAX_BLOCK + 1u];
@@ -217,8 +216,8 @@ static int speculation_context_buffers(yvex_runtime_speculation_context *context
             !yvex_core_u64_add(total, bytes_, &total)) goto overflow; \
     } while (0)
     if (!yvex_core_u64_mul(block, context->hidden_width, &hidden_rows) ||
-        !yvex_core_u64_mul(block + 2ull, context->hidden_width, &target_hidden_rows) ||
-        !yvex_core_u64_mul(block + 2ull, context->policy.concatenated_feature_width,
+        !yvex_core_u64_mul(context->prefill_rows, context->hidden_width, &target_hidden_rows) ||
+        !yvex_core_u64_mul(context->prefill_rows, context->policy.concatenated_feature_width,
                            &feature_rows) ||
         !yvex_core_u64_mul(context->device_draft_selection ? 0ull : block + 1ull,
                            context->vocabulary_size, &host_logits_rows) ||
@@ -303,7 +302,7 @@ static int speculation_context_device_buffers(yvex_runtime_speculation_context *
         context->options.execution_profile->evidence != YVEX_EXECUTION_EVIDENCE_PRODUCTION)
         return YVEX_OK;
     view = yvex_runtime_session_view_get(context->session);
-    rows = context->policy.block_size + 2ull;
+    rows = context->prefill_rows;
     if (!view || !view->backend)
         return speculation_refuse(err, YVEX_ERR_STATE, "DSpark CUDA feature workspace backend is unavailable");
     if (!yvex_core_u64_mul(rows, context->policy.concatenated_feature_width, &input_elements) ||
@@ -364,7 +363,8 @@ int yvex_runtime_speculation_context_open(
         !target_sampling || !sampling_policy || !options || !workspace_bytes ||
         !options->execution_profile || !options->shape_registry ||
         (options->backend != YVEX_BACKEND_KIND_CPU &&
-         options->backend != YVEX_BACKEND_KIND_CUDA) || !options->context_capacity)
+         options->backend != YVEX_BACKEND_KIND_CUDA) || !options->context_capacity ||
+        !options->prefill_chunk_tokens)
         return speculation_refuse(err, YVEX_ERR_INVALID_ARG, "complete DSpark runtime owners are required");
     context = yvex_core_calloc(1u, sizeof(*context));
     if (!context)
@@ -376,8 +376,9 @@ int yvex_runtime_speculation_context_open(
     context->target_sampling = target_sampling;
     context->sampling_policy = *sampling_policy;
     context->options = *options;
-    target_plan = yvex_transformer_plan_summary_get(
-        yvex_runtime_transformer_context_plan(target_transformer));
+    context->prefill_rows = options->prefill_chunk_tokens > YVEX_SPECULATION_MAX_BLOCK + 2ull
+                                ? options->prefill_chunk_tokens : YVEX_SPECULATION_MAX_BLOCK + 2ull;
+    target_plan = yvex_transformer_plan_summary_get(yvex_runtime_transformer_context_plan(target_transformer));
     draft_plan = yvex_transformer_plan_summary_get(
         context->model_view ? yvex_compiled_model_plan_transformer(
                                   context->model_view->compiled_plan, 1)
@@ -417,7 +418,7 @@ int yvex_runtime_speculation_context_open(
     transformer_options.maximum_device_bytes = options->maximum_device_bytes;
     /* Draft rows share attention; extra lookahead remains outside committed target capacity. */
     transformer_options.context_capacity = draft_context_capacity;
-    transformer_options.workspace_token_capacity = context->policy.block_size + 2ull;
+    transformer_options.workspace_token_capacity = context->prefill_rows;
     transformer_options.tensor_scope = YVEX_TENSOR_SCOPE_DRAFT;
     transformer_options.cancel_requested = options->cancel_requested;
     transformer_options.cancel_context = options->cancel_context;
@@ -427,8 +428,7 @@ int yvex_runtime_speculation_context_open(
     transformer_options.execution_profile = options->execution_profile;
     transformer_options.shape_registry = options->shape_registry;
     rc = yvex_runtime_transformer_context_open(
-        &context->draft_transformer, model, session, &transformer_options,
-        workspace_bytes, err);
+        &context->draft_transformer, model, session, &transformer_options, workspace_bytes, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_logits_admit_shared_draft_plan(
             target_logits, yvex_runtime_transformer_context_plan(context->draft_transformer), err);
@@ -494,7 +494,7 @@ static int speculation_project_target_features(yvex_runtime_speculation_context 
 {
     unsigned long long token, row, output_elements;
     if (!context || (!features && !context->device_draft_selection) || !token_count || !result ||
-        token_count > context->policy.block_size + 2ull ||
+        token_count > context->options.prefill_chunk_tokens ||
         !yvex_core_u64_mul(token_count, context->hidden_width, &output_elements))
         return speculation_refuse(err, YVEX_ERR_INVALID_ARG, "DSpark feature projection extent is invalid");
     if (context->device_feature_input) {
@@ -1511,7 +1511,7 @@ int yvex_runtime_speculation_prefill(
     if (target_result) memset(target_result, 0, sizeof(*target_result));
     if (draft_result) memset(draft_result, 0, sizeof(*draft_result));
     if (!context || !token_ids || !token_count ||
-        token_count > context->policy.block_size + 2ull || !normalized_hidden ||
+        token_count > context->options.prefill_chunk_tokens || !normalized_hidden ||
         !target_result || !draft_result || context->cycle_pending ||
         token_count > context->options.context_capacity ||
         token_start > context->options.context_capacity - token_count ||

@@ -14,7 +14,7 @@
 #include <yvex/internal/graph_state.h>
 
 typedef struct {
-    unsigned long long required, host_total, device_total, generation;
+    unsigned long long required, logical_required, host_total, device_total, generation;
 } runtime_workspace_requirements;
 
 static int runtime_session_owned_by_current_thread(
@@ -238,6 +238,9 @@ static int runtime_session_workspace_requirements(
             evidence_level, physical_row_capacity, deferred,
             &requirements->required, err) != YVEX_OK)
         return yvex_error_code(err);
+    /* Deferred layer completions retain graph publications until the whole transformer
+     * transaction resolves, so the logical arena owns the same summed lifetime envelope. */
+    requirements->logical_required = requirements->required;
     if (minimum_bytes > requirements->required) requirements->required = minimum_bytes;
     if (deferred) {
         const yvex_moe_plan_summary *target =
@@ -258,8 +261,10 @@ static int runtime_session_workspace_requirements(
      * smaller logical recipe must not resize or duplicate that arena. */
     if (session->summary.host_workspace_bytes > requirements->required)
         requirements->required = session->summary.host_workspace_bytes;
+    if (session->summary.workspace_bytes > requirements->logical_required)
+        requirements->logical_required = session->summary.workspace_bytes;
     if (!requirements->required ||
-        !yvex_core_u64_add(session->summary.host_resident_bytes, session->summary.workspace_bytes,
+        !yvex_core_u64_add(session->summary.host_resident_bytes, requirements->logical_required,
                            &requirements->host_total) ||
         !yvex_core_u64_add(requirements->host_total, state->allocated_bytes,
                            &requirements->host_total) ||
@@ -278,12 +283,25 @@ static int runtime_session_workspace_requirements(
     return YVEX_OK;
 }
 
+static void runtime_session_logical_workspace_publish(
+    yvex_runtime_execution_session *session, yvex_attention_workspace **candidate,
+    unsigned long long capacity)
+{
+    yvex_attention_workspace *prior = session->attention_workspace;
+    session->attention_workspace = *candidate;
+    session->view.attention_workspace = *candidate;
+    session->summary.workspace_bytes = capacity;
+    *candidate = NULL;
+    yvex_attention_workspace_close(&prior);
+}
+
 int yvex_runtime_session_prepare_attention_workspace(yvex_runtime_execution_session *session,
     yvex_runtime_execution_mode mode, yvex_runtime_execution_scope scope,
     yvex_attention_evidence_level evidence_level, const yvex_graph_attention_capacity_plan *capacity,
     unsigned long long physical_row_capacity, unsigned long long minimum_bytes,
     yvex_runtime_model_failure *failure, yvex_error *err) {
     yvex_backend_tensor_desc device_descriptor;
+    yvex_attention_workspace *logical_candidate = NULL;
     yvex_backend_host_workspace_summary workspace;
     yvex_graph_attention_state_summary state;
     yvex_runtime_session_summary summary_before;
@@ -351,6 +369,17 @@ int yvex_runtime_session_prepare_attention_workspace(yvex_runtime_execution_sess
         session->summary.workspace_bytes, requirements.required,
         yvex_graph_attention_capacity_plan_summary(capacity)->identity, workspace_identity, err);
     if (rc != YVEX_OK) goto done;
+    if (requirements.logical_required > session->summary.workspace_bytes) {
+        rc = yvex_attention_workspace_open(
+            &logical_candidate, requirements.logical_required, err);
+        if (rc != YVEX_OK) {
+            yvex_runtime_private_failure_record(
+                failure, YVEX_RUNTIME_MODEL_FAILURE_GRAPH, "attention-workspace",
+                requirements.logical_required, 0ull,
+                "attention logical workspace growth failed");
+            goto done;
+        }
+    }
     if (session->summary.host_workspace_bytes || session->summary.device_workspace_bytes) {
         if (!session->workspace || !session->summary.host_workspace_owned ||
             !session->summary.host_workspace_pinned ||
@@ -455,6 +484,10 @@ rollback:
         session->summary = summary_before;
     }
 done:
+    if (rc == YVEX_OK && logical_candidate)
+        runtime_session_logical_workspace_publish(
+            session, &logical_candidate, requirements.logical_required);
+    yvex_attention_workspace_close(&logical_candidate);
     (void)pthread_mutex_unlock(&session->lifecycle_mutex);
     if (rc == YVEX_OK) {
         if (failure) memset(failure, 0, sizeof(*failure));
