@@ -3977,17 +3977,7 @@ static int test_runtime_model_cuda_residency_claim(
                          yvex_runtime_residency_snapshot(
                              view->residency, &summary, NULL, NULL, &err) == YVEX_OK &&
                          summary.cuda_ready &&
-                         ((summary.placement ==
-                               YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED &&
-                           summary.artifact_backed_bytes &&
-                           !summary.host_resident_bytes &&
-                           !summary.device_resident_bytes &&
-                           summary.cuda_pageable_map_count == 1ull &&
-                           summary.cuda_pageable_map_bytes ==
-                               summary.artifact_backed_bytes &&
-                           !summary.cuda_managed_allocation_count &&
-                           !summary.cuda_managed_prefetch_count) ||
-                          (summary.placement ==
+                         summary.placement ==
                                YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED &&
                            !summary.host_resident_bytes &&
                            summary.device_resident_bytes == summary.encoded_bytes &&
@@ -3995,8 +3985,8 @@ static int test_runtime_model_cuda_residency_claim(
                            summary.cuda_managed_bytes == summary.encoded_bytes &&
                            summary.cuda_managed_prefetch_count == 1ull &&
                            summary.cuda_managed_prefetch_bytes ==
-                               summary.encoded_bytes)),
-                     "runtime model publishes exact mapped or managed CUDA residency facts");
+                               summary.encoded_bytes,
+                     "runtime model publishes the exact admitted managed CUDA residency facts");
     yvex_runtime_model_close(&model);
     return 0;
 }

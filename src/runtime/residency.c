@@ -42,6 +42,48 @@ struct yvex_runtime_residency {
     int access_mutex_ready, arena_locked, arena_mapped, arena_registered, arena_managed;
     int arena_borrowed;
 };
+
+int yvex_runtime_private_weight_placement_select(
+    yvex_backend_kind backend_kind, yvex_backend *backend,
+    yvex_runtime_weight_placement *placement, yvex_error *err)
+{
+    yvex_backend_device_info device = {0};
+    int rc;
+    if (!placement || (backend_kind == YVEX_BACKEND_KIND_CUDA && !backend)) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.residency.policy",
+                       "backend facts and one placement output are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    if (backend_kind == YVEX_BACKEND_KIND_CPU) {
+        *placement = YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED;
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    if (backend_kind != YVEX_BACKEND_KIND_CUDA) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "runtime.residency.policy",
+                       "the admitted backend has no production weight placement");
+        return YVEX_ERR_UNSUPPORTED;
+    }
+    rc = yvex_backend_get_device_info(backend, &device, err);
+    if (rc != YVEX_OK) return rc;
+    if (device.kind != YVEX_BACKEND_KIND_CUDA || !device.unified_addressing ||
+        !device.managed_memory) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "runtime.residency.policy",
+                       "CUDA managed residency is not supported by the admitted backend");
+        return YVEX_ERR_UNSUPPORTED;
+    }
+
+    /*
+     * Pageable host-page-table access establishes addressability, not deterministic
+     * first-use execution. A production placement needs independent deterministic
+     * numerical admission, which the raw pageable representation does not carry. Until
+     * an identity-bound derived layout owns that contract, production selects the
+     * admitted managed alternative explicitly rather than falling back in a kernel.
+     */
+    *placement = YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
 static int residency_reject(yvex_runtime_residency_failure *failure,
                             yvex_runtime_residency_failure_code code,
                             const yvex_runtime_tensor_binding *binding,

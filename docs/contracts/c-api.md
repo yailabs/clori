@@ -256,12 +256,13 @@ One first runtime-model admission performs a complete artifact hash and one
 GGUF directory admission. A later open of the exact local filesystem snapshot
 may consume a rebuildable verified-reopen lease and records zero payload bytes
 hashed for that open; an absent, malformed, or stale lease falls back to the
-complete hash. Residency schema v7 selects an admitted immutable backing. The
-GB10 path borrows the verified artifact mapping and resolves descriptor tensors
-through exact file offsets; CUDA uses typed read-only pageable mapping rather
-than creating, registering or eagerly prefetching a complete anonymous copy.
-Managed or locked copied arenas remain explicit fallback placements. Warm
-operations reuse the same verified handle, immutable descriptor, attention
+complete hash. Residency schema v7 selects an admitted immutable backing.
+Descriptor tensors retain exact artifact offsets, while the current GB10
+production policy selects managed CUDA residency because cold pageable HMM
+execution did not pass deterministic numerical qualification. Read-only
+pageable mapping remains a typed backend capability for bounded evidence and
+future derived-layout placement; it is not selected or substituted silently.
+Warm operations reuse the same verified handle, immutable descriptor, attention
 graph and weight backing. Before and after execution, snapshot drift invalidates
 the model, sessions, residency, workspace, graph executables and candidate
 state.

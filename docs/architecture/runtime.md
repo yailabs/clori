@@ -377,12 +377,14 @@ CUDA-addressable host storage, accelerator-resident storage, session KV,
 workspace, and transient staging. Physical unified memory does not collapse
 these placement and accounting classes.
 
-The current GB10 path keeps the authenticated GGUF mapping as immutable
-model-lifetime backing. Binding ranges become typed tensor views over exact file
-offsets, and CUDA consumes the mapping through admitted pageable host-page-table
-access. No complete anonymous model copy, host registration, or eager full-model
-prefetch is required. Managed CUDA and locked host arenas remain explicit
-fallback placements when that capability is absent. Status reports mapped
+The artifact mapping remains immutable model-lifetime backing for admission and
+can provide exact typed tensor views. CUDA pageable host-page-table access is a
+backend capability, but GB10 cold-execution qualification showed that it does
+not yet provide deterministic first-use model numerics. The production policy
+therefore selects managed CUDA residency and completes its prefetch before
+publication. This is an explicit admitted alternative, not a backend-local
+fallback. A future identity-bound derived execution asset may replace managed
+full-model residency without changing tensor semantics. Status reports mapped
 artifact extent, non-artifact host residency, accelerator residency and process
 RSS separately. A placement counter is a memory fact, not by itself a causal
 performance diagnosis.

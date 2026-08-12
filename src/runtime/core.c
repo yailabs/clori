@@ -836,12 +836,10 @@ static int runtime_model_residency_open(
                                 0ull, attention_summary->required_binding_count, err);
     memset(&options, 0, sizeof(options));
     options.maximum_host_bytes = request->maximum_host_bytes;
-    options.placement = request->residency_backend == YVEX_BACKEND_KIND_CUDA
-                            ? (yvex_backend_resident_map_readonly_supported(
-                                   model->opening_backend)
-                                   ? YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED
-                                   : YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED)
-                            : YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED;
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_private_weight_placement_select(
+            request->residency_backend, model->opening_backend,
+            &options.placement, err);
     memset(&residency_failure, 0, sizeof(residency_failure));
     if (rc == YVEX_OK)
         rc = yvex_runtime_residency_prepare(&model->residency, model, &options,

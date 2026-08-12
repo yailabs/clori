@@ -921,6 +921,7 @@ int yvex_runtime_private_generation_capacity_preflight(
     yvex_runtime_generation_context context = {0};
     yvex_runtime_model_view view = {0};
     yvex_graph_attention_capacity_plan *workspace_capacity = NULL;
+    yvex_runtime_weight_placement placement;
     unsigned long long transient_bytes;
     int rc;
     if (required_bytes) *required_bytes = 0ull;
@@ -941,15 +942,13 @@ int yvex_runtime_private_generation_capacity_preflight(
         context.options.concurrent_sequences = 1ull;
     if (context.options.prefill_chunk_tokens > context.options.context_capacity)
         context.options.prefill_chunk_tokens = context.options.context_capacity;
-    rc = generation_capacity_build_for(
-        &context, backend,
-        options->backend == YVEX_BACKEND_KIND_CUDA
-            ? (yvex_backend_resident_map_readonly_supported(backend)
-                   ? YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED
-                   : YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED)
-            : YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED,
-        binding->admission.payload_bytes, 0, transient_bytes,
-        &workspace_capacity, required_bytes, available_bytes, err);
+    rc = yvex_runtime_private_weight_placement_select(
+        options->backend, backend, &placement, err);
+    if (rc == YVEX_OK)
+        rc = generation_capacity_build_for(
+            &context, backend, placement, binding->admission.payload_bytes,
+            0, transient_bytes, &workspace_capacity, required_bytes,
+            available_bytes, err);
     yvex_graph_attention_capacity_plan_close(&workspace_capacity);
     return rc;
 }

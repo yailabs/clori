@@ -53,11 +53,11 @@ OOM allocation. No materialization arena or model residency is created after
 either refusal.
 
 CUDA free memory is a separate constraint unless backend facts prove that the
-selected managed or artifact-backed placement and the host use one physical
-memory domain. Managed placement requires unified addressing, managed access,
-and an exact match between effective system and device capacity. Artifact-backed
-placement additionally requires pageable-memory access through host page tables
-and the admitted read-only advice operation. In either shared-domain case Linux
+selected placement and the host use one physical memory domain. Managed
+placement requires unified addressing, managed access, and an exact match
+between effective system and device capacity. An artifact-backed candidate
+additionally requires pageable-memory access through host page tables and the
+admitted read-only advice operation. In either shared-domain case Linux
 `MemAvailable`, already bounded by the cgroup hierarchy, owns reclaimable-capacity
 admission; `cuMemGetInfo` is not allowed to turn reclaimable page cache into a
 false refusal. A shared CUDA session inherits the same immutable domain facts
@@ -70,17 +70,18 @@ target model, tokenizer, output head, backend context, and immutable residency;
 it is not a second runtime model. Readiness is published only after every
 requirement of the selected generation mode and the worker is usable.
 
-Residency schema v7 selects one explicit physical backing. When the backend
-admits immutable pageable mapping, the authenticated artifact remains the
-model-lifetime backing and tensor views resolve their exact file offsets without
-a second anonymous copy. CUDA applies read-mostly and preferred-device advice
-to that borrowed mapping; it neither registers nor prefetches the complete
-artifact. Artifact-backed bytes are reported separately from stable host-resident
-allocations; process RSS reports the pages actually touched. Otherwise the
-admitted managed or locked placement retains the copied
-arena path. The residency identity seals artifact and materialization identities,
-placement, and exact tensor source/backing ranges. Snapshot drift, unsupported
-mapping and read failure remain typed refusals.
+Residency schema v7 selects one explicit physical backing. The authenticated
+artifact may remain model-lifetime backing and tensor views can resolve exact
+file offsets without a second anonymous copy, but addressability alone does not
+admit that mapping for production execution. On GB10, cold pageable HMM
+execution failed deterministic numerical qualification, so the current CUDA
+policy explicitly selects managed residency and its completed prefetch. The
+pageable primitive remains bounded backend evidence for a future identity-bound
+derived-layout placement; it is not a silent fallback. Artifact-backed bytes
+are reported separately from stable host-resident allocations, and process RSS
+reports the pages actually touched. The residency identity seals artifact and
+materialization identities, placement, and exact tensor source/backing ranges.
+Snapshot drift, unsupported placement and read failure remain typed refusals.
 
 Failure during opening publishes no ready model and releases every acquired
 resource transactionally. Shutdown closes the model once after request/session
