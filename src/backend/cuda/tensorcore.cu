@@ -26,50 +26,49 @@ static __device__ int tensorcore_row_geometry(unsigned int qtype,
     return 0;
 }
 
-static __device__ int tensorcore_weight_i8(const unsigned char *row,
-                                           unsigned long long index,
-                                           unsigned int qtype)
+static __device__ void tensorcore_canonical_weight_tile(
+    const unsigned char *base, unsigned long long row_bytes, unsigned long long row_count,
+    unsigned long long row_base, unsigned long long segment, unsigned int qtype, signed char *tile)
 {
-    if (qtype == YVEX_GGUF_QTYPE_Q8_0) {
-        const unsigned char *block = row + (index / 32ull) * 34ull;
-        unsigned int raw = block[2u + (unsigned int)(index % 32ull)];
-        return raw <= 127u ? (int)raw : (int)raw - 256;
+    unsigned int lane = threadIdx.x & 31u, tile_row = lane >> 1u, half = lane & 1u;
+    unsigned int shift = 0u, grid = 0u, signs = 0u;
+    unsigned long long row_index = row_base + tile_row, first = segment + half * 8ull;
+    signed char *output = tile + tile_row * 16u + half * 8u;
+    if (row_index >= row_count) {
+        for (unsigned int index = 0u; index < 8u; ++index) output[index] = 0;
+        return;
     }
-    if (qtype == YVEX_GGUF_QTYPE_Q2_K) {
-        unsigned int lane = (unsigned int)(index % 256ull);
-        unsigned int subblock = lane / 16u;
-        unsigned int half = lane / 128u;
-        unsigned int local_subblock = subblock & 7u;
-        unsigned int pair = local_subblock & 1u;
-        unsigned int group = local_subblock / 2u;
-        const unsigned char *block = row + (index / 256ull) * 84ull;
-        unsigned int packed = block[16u + half * 32u + pair * 16u + (lane & 15u)];
-        return (int)((packed >> (group * 2u)) & 3u);
+    const unsigned char *row = base + row_index * row_bytes, *packed = NULL;
+    if (qtype == YVEX_GGUF_QTYPE_Q8_0)
+        packed = row + (first / 32ull) * 34ull + 2u + first % 32ull;
+    else if (qtype == YVEX_GGUF_QTYPE_Q2_K) {
+        unsigned int local_subblock = (segment % 128ull) / 16ull, block_half = (segment % 256ull) / 128ull;
+        packed = row + (segment / 256ull) * 84ull + 16u + block_half * 32u +
+                 (local_subblock & 1u) * 16u + half * 8u;
+        shift = (local_subblock / 2u) * 2u;
+    } else if (qtype == YVEX_GGUF_QTYPE_IQ2_XXS) {
+        unsigned int group = (first % 256ull) / 32ull, subgroup = (first & 31ull) / 8ull;
+        const unsigned char *block = row + (first / 256ull) * 66ull;
+        unsigned int grids = qtype_load_u32(block + 2u + group * 8u), scale = qtype_load_u32(block + 6u + group * 8u);
+        grid = iq2_xxs_grid[(grids >> (8u * subgroup)) & 255u];
+        signs = iq2_xxs_signs((scale >> (7u * subgroup)) & 127u);
+    } else {
+        packed = row + (first / 32ull) * 17ull + 1u + first % 16ull;
+        shift = first % 32ull < 16ull ? 0u : 4u;
     }
-    if (qtype == YVEX_GGUF_QTYPE_IQ2_XXS) {
-        unsigned int lane = (unsigned int)(index % 256ull);
-        unsigned int group = lane / 32u;
-        unsigned int subgroup = (lane & 31u) / 8u;
-        unsigned int local = lane & 7u;
-        const unsigned char *block = row + (index / 256ull) * 66ull;
-        unsigned int grids = qtype_load_u32(block + 2u + group * 8u);
-        unsigned int sign_scale = qtype_load_u32(block + 6u + group * 8u);
-        unsigned int grid_index = (grids >> (8u * subgroup)) & 255u;
-        unsigned int signs = iq2_xxs_signs((sign_scale >> (7u * subgroup)) & 127u);
-        unsigned int digit = (iq2_xxs_grid[grid_index] >> (2u * local)) & 3u;
-        int level = digit == 0u ? 8 : digit == 1u ? 25 : 43;
-        return signs & (1u << local) ? -level : level;
+    for (unsigned int index = 0u; index < 8u; ++index) {
+        if (qtype == YVEX_GGUF_QTYPE_Q8_0)
+            output[index] = (signed char)packed[index];
+        else if (qtype == YVEX_GGUF_QTYPE_Q2_K)
+            output[index] = (signed char)((packed[index] >> shift) & 3u);
+        else if (qtype == YVEX_GGUF_QTYPE_IQ2_XXS) {
+            unsigned int digit = (grid >> (2u * index)) & 3u;
+            int level = digit == 0u ? 8 : digit == 1u ? 25 : 43;
+            output[index] = (signed char)(signs & (1u << index) ? -level : level);
+        } else
+            output[index] =
+                (signed char)mxfp4_code_to_float((packed[index] >> shift) & 15u);
     }
-    if (qtype == YVEX_GGUF_QTYPE_MXFP4) {
-        unsigned int lane = (unsigned int)(index % 32ull);
-        const unsigned char *block = row + (index / 32ull) * 17ull;
-        unsigned int packed = block[1u + (lane & 15u)];
-        unsigned int code = lane < 16u ? packed & 15u : packed >> 4u;
-        int magnitude = (code & 7u) == 0u ? 0 : (code & 7u) < 5u ? (int)(code & 7u)
-                          : (code & 7u) == 5u ? 6 : (code & 7u) == 6u ? 8 : 12;
-        return code & 8u ? -magnitude : magnitude;
-    }
-    return 0;
 }
 
 static __device__ int tensorcore_product_factor(const unsigned char *row,
@@ -278,14 +277,12 @@ extern "C" __global__ void yvex_qtype_tensorcore_rows(
         wmma::fragment<wmma::matrix_b, 16, 16, 16,
                        signed char, wmma::col_major> values;
         wmma::fragment<wmma::accumulator, 16, 16, 16, int> product;
+        tensorcore_canonical_weight_tile(
+            encoded + start_row * row_bytes, row_bytes, row_count,
+            row_base, segment, qtype, weight_tile);
         for (unsigned int index = lane; index < 256u; index += 32u) {
             unsigned int tile_row = index / 16u, tile_column = index % 16u;
-            unsigned long long global_row = row_base + tile_row;
             unsigned long long global_input = input_base + tile_row;
-            weight_tile[index] = global_row < row_count
-                ? (signed char)tensorcore_weight_i8(
-                      encoded + (start_row + global_row) * row_bytes,
-                      segment + tile_column, qtype) : 0;
             activation_tile[index] = global_input < input_rows
                 ? (signed char)activation[(global_input * q8_blocks + segment / 256ull) *
                                               YVEX_CUDA_Q8_K_BYTES +
@@ -359,17 +356,20 @@ static __device__ float tensorcore_selected_tile_dot(
         wmma::fragment<wmma::matrix_b, 16, 16, 16,
                        signed char, wmma::col_major> values;
         wmma::fragment<wmma::accumulator, 16, 16, 16, int> product;
+        if (view->layout) {
+            for (unsigned int index = lane; index < 256u; index += 32u) {
+                unsigned int tile_row = index / 16u, tile_column = index % 16u;
+                unsigned long long output_row = row_base + tile_row;
+                weight_tile[index] = output_row < view->row_count
+                    ? (signed char)tensorcore_derived_weight_i8(
+                          view, expert, output_row, segment + tile_column) : 0;
+            }
+        } else {
+            tensorcore_canonical_weight_tile(
+                view->base + expert * view->expert_bytes, view->row_bytes,
+                view->row_count, row_base, segment, view->qtype, weight_tile);
+        }
         for (unsigned int index = lane; index < 256u; index += 32u) {
-            unsigned int tile_row = index / 16u, tile_column = index % 16u;
-            unsigned long long output_row = row_base + tile_row;
-            weight_tile[index] = output_row < view->row_count
-                ? (signed char)(view->layout
-                      ? tensorcore_derived_weight_i8(
-                            view, expert, output_row, segment + tile_column)
-                      : tensorcore_weight_i8(
-                            view->base + expert * view->expert_bytes +
-                                output_row * view->row_bytes,
-                            segment + tile_column, view->qtype)) : 0;
             activation_tile[index] = index < 16u
                 ? (signed char)activation[(segment / 256ull) *
                                               YVEX_CUDA_Q8_K_BYTES +
