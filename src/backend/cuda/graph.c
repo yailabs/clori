@@ -1457,7 +1457,7 @@ int yvex_cuda_attention_graph_key(const yvex_backend *backend,
         !yvex_sha256_update_text(&hash, configuration->capture_bucket))
         goto failed;
     HASH(backend->resident_generation);
-    HASH(backend->workspace_generation);
+    /* Logical target/draft recipes share one sealed workspace; replay validates its cursor. */
     HASH(backend->host_workspace_generation);
     HASH(configuration->mode); HASH(YVEX_CUDA_ATTENTION_STAGE_COUNT);
     HASH(first); HASH(last);

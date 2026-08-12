@@ -1310,12 +1310,6 @@ static int test_attention_graph_configuration(yvex_backend *backend)
     rc = yvex_backend_cuda_attention_graph_registry_count(backend, &count, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && count == 0ull,
                      "released attention registry is empty");
-    rc = yvex_backend_host_workspace_detach(backend, &err);
-    YVEX_TEST_ASSERT(rc == YVEX_OK, "detach captured pinned staging workspace");
-    rc = yvex_backend_tensor_release(backend, &output, &err);
-    YVEX_TEST_ASSERT(rc == YVEX_OK, "release captured attention fixture output");
-    rc = yvex_backend_tensor_release(backend, &input, &err);
-    YVEX_TEST_ASSERT(rc == YVEX_OK, "release captured attention fixture input");
     memset(&job, 0, sizeof(job));
     job.phase = YVEX_BACKEND_ATTENTION_PHASE_PREFILL;
     for (stage = 0u; stage < YVEX_CUDA_ATTENTION_STAGE_COUNT; ++stage) {
@@ -1336,6 +1330,14 @@ static int test_attention_graph_configuration(yvex_backend *backend)
     YVEX_TEST_ASSERT(rc == YVEX_OK && full_key[0] != '\0' &&
                      strcmp(first_key, full_key) != 0,
                      "full canonical attention stage interval is admitted distinctly");
+    yvex_backend_workspace_detach(backend);
+    rc = yvex_backend_workspace_attach(backend, workspace, 10ull, &err);
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_attention_graph_key(
+            backend, &job, 0u, YVEX_CUDA_ATTENTION_STAGE_COUNT, dynamic_key, &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_OK && strcmp(full_key, dynamic_key) == 0,
+        "logical workspace profile rebinding preserves physical graph compatibility");
     rc = yvex_backend_state_residency_publish_generation(backend, 7ull, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK,
                      "publish state generation through the backend residency owner");
@@ -1426,6 +1428,31 @@ static int test_attention_graph_configuration(yvex_backend *backend)
         "decode-1", 4ull, 1ull, 1ull, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK,
                      "new compatibility identity invalidates before full mode configuration");
+    rc = yvex_cuda_graph_execute(
+        backend, "attention-config-full-v2:unit-transfer-v1",
+        NULL, enqueue_attention_fixture, &fixture, 1, &graph_info, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK,
+                     "capture the independently admitted full-mode graph namespace");
+    rc = yvex_backend_cuda_attention_configure(
+        backend, YVEX_BACKEND_ATTENTION_PHASE_PREFILL,
+        YVEX_BACKEND_CUDA_ATTENTION_PIECEWISE, "attention-config-piecewise-v1",
+        "prefill-4", 4ull, 1ull, 1ull, &err);
+    if (rc == YVEX_OK)
+        rc = yvex_backend_cuda_attention_graph_summary_get(backend, &summary, &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_OK && summary.graph_count == 1ull &&
+            summary.invalidation_count == 0ull,
+        "returning to an admitted target or draft configuration retains the other graph namespace");
+    rc = yvex_backend_cuda_attention_graph_registry_apply(
+        backend, YVEX_BACKEND_CUDA_GRAPH_REGISTRY_RELEASE, &count, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && count == 1ull,
+                     "release the retained cross-configuration graph namespace");
+    rc = yvex_backend_host_workspace_detach(backend, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK, "detach captured pinned staging workspace");
+    rc = yvex_backend_tensor_release(backend, &output, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK, "release captured attention fixture output");
+    rc = yvex_backend_tensor_release(backend, &input, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK, "release captured attention fixture input");
     yvex_backend_workspace_detach(backend);
     YVEX_TEST_ASSERT(yvex_backend_resident_detach(backend, &err) == YVEX_OK,
                      "detach stable attention residency");

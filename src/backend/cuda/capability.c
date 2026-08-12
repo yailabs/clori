@@ -904,12 +904,6 @@ int yvex_backend_cuda_attention_configure(
     if (state->attention_configuration_count &&
         state->attention_active_configuration < state->attention_configuration_count)
         active = &state->attention_configurations[state->attention_active_configuration];
-    if (active && strcmp(active->compatibility_identity, compatibility_identity) != 0) {
-        unsigned long long affected;
-        rc = yvex_backend_cuda_attention_graph_registry_apply(
-            backend, YVEX_BACKEND_CUDA_GRAPH_REGISTRY_INVALIDATE, &affected, err);
-        if (rc != YVEX_OK) return rc;
-    }
     for (index = 0u; index < state->attention_configuration_count; ++index) {
         configuration = &state->attention_configurations[index];
         if (configuration->phase == phase && configuration->mode == mode &&
@@ -923,6 +917,12 @@ int yvex_backend_cuda_attention_configure(
             yvex_error_clear(err);
             return YVEX_OK;
         }
+    }
+    if (active && strcmp(active->compatibility_identity, compatibility_identity) != 0) {
+        unsigned long long affected;
+        rc = yvex_backend_cuda_attention_graph_registry_apply(
+            backend, YVEX_BACKEND_CUDA_GRAPH_REGISTRY_INVALIDATE, &affected, err);
+        if (rc != YVEX_OK) return rc;
     }
     if (state->attention_configuration_count >= YVEX_CUDA_ATTENTION_CONFIGURATION_CAP)
         return attention_configuration_reject(
