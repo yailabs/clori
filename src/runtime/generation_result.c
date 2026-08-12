@@ -119,6 +119,9 @@ int yvex_runtime_generation_profile_transformer(
     COUNTER(YVEX_RUNTIME_PROFILE_KERNEL_LAUNCHES, value->kernel_launches);
     COUNTER(YVEX_RUNTIME_PROFILE_TENSOR_CORE_LAUNCHES,
             value->tensor_core_launches);
+    COUNTER(YVEX_RUNTIME_PROFILE_GRAPH_LAUNCHES, value->graph_launches);
+    COUNTER(YVEX_RUNTIME_PROFILE_GRAPH_CAPTURES, value->graph_captures);
+    COUNTER(YVEX_RUNTIME_PROFILE_GRAPH_REPLAYS, value->graph_replays);
     COUNTER(YVEX_RUNTIME_PROFILE_STREAM_SYNCHRONIZATIONS,
             value->stream_synchronizations);
     COUNTER(YVEX_RUNTIME_PROFILE_DEVICE_SYNCHRONIZATIONS,
@@ -170,6 +173,9 @@ int yvex_runtime_generation_profile_decode(
     projected.cache_hits = value->cache_hits;
     projected.cache_misses = value->cache_misses;
     projected.kernel_launches = value->kernel_launches;
+    projected.graph_launches = value->graph_launches;
+    projected.graph_captures = value->graph_captures;
+    projected.graph_replays = value->graph_replays;
     projected.stream_synchronizations = value->stream_synchronizations;
     projected.device_synchronizations = value->device_synchronizations;
     projected.embedding_ns = value->embedding_ns;

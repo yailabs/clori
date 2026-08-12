@@ -187,6 +187,7 @@ typedef struct {
     unsigned long long attention_weight_bytes, expert_weight_bytes, final_weight_bytes;
     yvex_execution_memory_facts memory;
     unsigned long long h2d_bytes, d2h_bytes, kernel_launches, tensor_core_launches;
+    unsigned long long graph_launches, graph_captures, graph_replays;
     unsigned long long d2d_bytes, upload_count, download_count, cache_hits, cache_misses;
     unsigned long long stream_synchronizations, device_synchronizations;
     unsigned long long embedding_ns, attention_ns, attention_device_ns, moe_ns, final_ns;
@@ -223,6 +224,7 @@ typedef struct {
     unsigned long long attention_weight_bytes, expert_weight_bytes, final_weight_bytes;
     yvex_execution_memory_facts memory;
     unsigned long long h2d_bytes, d2h_bytes, kernel_launches, tensor_core_launches;
+    unsigned long long graph_launches, graph_captures, graph_replays;
     unsigned long long d2d_bytes, upload_count, download_count, cache_hits, cache_misses;
     unsigned long long stream_synchronizations, device_synchronizations;
     unsigned long long embedding_ns, attention_ns, attention_device_ns, moe_ns, final_ns;

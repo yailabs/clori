@@ -652,6 +652,9 @@ int yvex_runtime_transformer_execute_block(
     result->d2d_bytes = moe_result.d2d_bytes;
     result->kernel_launches = moe_result.kernel_launches;
     result->tensor_core_launches = moe_result.tensor_core_launches;
+    result->graph_launches = moe_result.graph_launches;
+    result->graph_captures = moe_result.graph_captures;
+    result->graph_replays = moe_result.graph_replays;
     result->upload_count = moe_result.upload_count;
     result->download_count = moe_result.download_count;
     result->cache_hits = moe_result.cache_hits;
@@ -753,6 +756,9 @@ static int transformer_layer_evidence(void *opaque, yvex_backend_kind backend,
     chunk->result->device_synchronizations += block.device_synchronizations;
     chunk->result->kernel_launches += block.kernel_launches;
     chunk->result->tensor_core_launches += block.tensor_core_launches;
+    chunk->result->graph_launches += block.graph_launches;
+    chunk->result->graph_captures += block.graph_captures;
+    chunk->result->graph_replays += block.graph_replays;
     chunk->result->moe_ns += block.moe_ns;
     chunk->result->synchronization_ns += block.synchronization_ns;
     chunk->result->layers_executed++;

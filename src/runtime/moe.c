@@ -1283,7 +1283,7 @@ static int runtime_moe_execute_layer_rows(
     if (rc == YVEX_OK && !deferred)
         yvex_sha256_hex(digest, result->routing_digest);
     if (rc == YVEX_OK) {
-        result->schema_version = YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V2;
+        result->schema_version = YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V3;
         result->completed = !result->device_completion_pending;
         result->execution_class = batch->execution_class;
         result->row_count = batch->row_count;
@@ -1327,7 +1327,7 @@ static int runtime_moe_rows_complete(yvex_runtime_moe_context *context,
                                   "busy MoE rows cannot complete");
     }
     if (!context->pending_active) {
-        result->schema_version = YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V2;
+        result->schema_version = YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V3;
         result->completed = 1;
         (void)pthread_mutex_unlock(&context->mutex);
         yvex_error_clear(err);
@@ -1377,7 +1377,7 @@ static int runtime_moe_rows_complete(yvex_runtime_moe_context *context,
         rc = runtime_moe_refuse(err, YVEX_ERR_STATE,
                                 "deferred CUDA MoE layer count diverged");
     if (rc == YVEX_OK) {
-        result->schema_version = YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V2;
+        result->schema_version = YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V3;
         result->completed = 1;
         result->execution_class = YVEX_EXECUTION_CLASS_DEVICE_NATIVE;
         result->stream_synchronizations = backend.stream_synchronizations;

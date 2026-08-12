@@ -431,11 +431,13 @@ static int assert_encoded_moe(yvex_backend *backend)
                        selected, selected_weights, ROWS, WIDTH, 1ull, PAIRS);
     rc = operations->execute_rows(backend, &job, &rows, &output, &result, &err);
     YVEX_TEST_ASSERT(
-        rc == YVEX_OK && result.schema_version == YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V2 &&
+        rc == YVEX_OK && result.schema_version == YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V3 &&
             result.tensor_core_launches == 0ull &&
+            result.graph_launches == 1ull && result.graph_captures == 1ull &&
+            result.graph_replays == 1ull &&
             yvex_backend_tensor_read(backend, reference_output, reference,
                                      sizeof(reference), &err) == YVEX_OK,
-        "execute portable low-bit width-N MoE oracle");
+        "execute graph-compiled portable low-bit width-N MoE oracle");
     for (row = 0ull; row < ROWS; ++row) {
         yvex_moe_router_result cpu_router = {0};
         YVEX_TEST_ASSERT(yvex_moe_route_cpu(&job, input_rows + row * WIDTH,
@@ -461,7 +463,7 @@ static int assert_encoded_moe(yvex_backend *backend)
     rc = operations->execute_rows(backend, &job, &rows, &output, &result, &err);
     if (native) {
         YVEX_TEST_ASSERT(
-            rc == YVEX_OK && result.schema_version == YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V2 &&
+            rc == YVEX_OK && result.schema_version == YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V3 &&
                 result.tensor_core_launches == 0ull &&
                 yvex_device_tensor_is_written(small_output) &&
                 yvex_backend_tensor_read(backend, small_output, encoded,
@@ -480,7 +482,7 @@ static int assert_encoded_moe(yvex_backend *backend)
         memset(&result, 0, sizeof(result));
         rc = operations->execute_rows(backend, &job, &rows, &output, &result, &err);
         YVEX_TEST_ASSERT(
-            rc == YVEX_OK && result.schema_version == YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V2 &&
+            rc == YVEX_OK && result.schema_version == YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V3 &&
                 result.tensor_core_launches == 0ull &&
                 yvex_device_tensor_is_written(encoded_output) &&
                 yvex_backend_tensor_read(backend, encoded_output, encoded,
@@ -504,7 +506,7 @@ static int assert_encoded_moe(yvex_backend *backend)
         memset(&result, 0, sizeof(result));
         rc = operations->execute_rows(backend, &job, &rows, &output, &result, &err);
         YVEX_TEST_ASSERT(
-            rc == YVEX_OK && result.schema_version == YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V2 &&
+            rc == YVEX_OK && result.schema_version == YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V3 &&
                 result.tensor_core_launches == 0ull &&
                 yvex_device_tensor_is_written(small_output) &&
                 yvex_backend_tensor_read(backend, small_output, tensorcore,
@@ -524,7 +526,7 @@ static int assert_encoded_moe(yvex_backend *backend)
         memset(&result, 0, sizeof(result));
         rc = operations->execute_rows(backend, &job, &rows, &output, &result, &err);
         YVEX_TEST_ASSERT(
-            rc == YVEX_OK && result.schema_version == YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V2 &&
+            rc == YVEX_OK && result.schema_version == YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V3 &&
                 result.tensor_core_launches == 2ull &&
                 yvex_device_tensor_is_written(reference_output) &&
                 yvex_backend_tensor_read(backend, reference_output, tensorcore,
@@ -548,7 +550,7 @@ static int assert_encoded_moe(yvex_backend *backend)
         memset(&result, 0, sizeof(result));
         rc = operations->execute_rows(backend, &job, &rows, &output, &result, &err);
         YVEX_TEST_ASSERT(
-            rc == YVEX_OK && result.schema_version == YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V2 &&
+            rc == YVEX_OK && result.schema_version == YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V3 &&
                 result.tensor_core_launches == 4ull &&
                 yvex_device_tensor_is_written(small_output),
             "execute compiler-selected sparse-row Tensor Core MoE");
@@ -559,8 +561,10 @@ static int assert_encoded_moe(yvex_backend *backend)
         memset(&result, 0, sizeof(result));
         rc = operations->execute_rows(backend, &job, &rows, &output, &result, &err);
         YVEX_TEST_ASSERT(
-            rc == YVEX_OK && result.schema_version == YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V2 &&
+            rc == YVEX_OK && result.schema_version == YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V3 &&
                 result.tensor_core_launches == 4ull &&
+                result.graph_launches == 1ull && result.graph_captures == 1ull &&
+                result.graph_replays == 1ull &&
                 yvex_device_tensor_is_written(reference_output) &&
                 yvex_backend_tensor_read(backend, reference_output, tensorcore,
                                          sizeof(tensorcore), &err) == YVEX_OK,
@@ -572,6 +576,15 @@ static int assert_encoded_moe(yvex_backend *backend)
         }
         YVEX_TEST_ASSERT(maximum_error <= 1e-6f,
                          "Tensor Core MoE matches the encoded DP4A oracle");
+        reference_output->is_written = 0;
+        memset(&result, 0, sizeof(result));
+        rc = operations->execute_rows(backend, &job, &rows, &output, &result, &err);
+        YVEX_TEST_ASSERT(
+            rc == YVEX_OK && result.graph_launches == 1ull &&
+                result.graph_captures == 0ull && result.graph_replays == 1ull &&
+                result.tensor_core_launches == 4ull &&
+                yvex_device_tensor_is_written(reference_output),
+            "replay compiled Tensor Core MoE without recapturing its launch graph");
         job.weights[YVEX_MOE_WEIGHT_ROUTED_GATE].kernel_family = "unadmitted-expert-kernel";
         reference_output->is_written = 0;
         memset(&result, 0, sizeof(result));

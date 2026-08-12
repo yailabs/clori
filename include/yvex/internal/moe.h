@@ -15,7 +15,7 @@ extern "C" {
 #define YVEX_MOE_PLAN_SCHEMA_V1 1u
 #define YVEX_MOE_INPUT_SCHEMA_V1 1u
 #define YVEX_MOE_ROW_BATCH_SCHEMA_V1 1u
-#define YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V2 2u
+#define YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V3 3u
 #define YVEX_MOE_KERNEL_PORTABLE_ENCODED_ROW "portable-encoded-row"
 #define YVEX_MOE_KERNEL_PORTABLE_EXPERT_ROW "portable-expert-row"
 #define YVEX_MOE_KERNEL_SM121_TENSORCORE_EXPERT "sm121-int8-tensorcore-expert"
@@ -241,6 +241,7 @@ typedef struct {
     unsigned long long expert_subviews_accessed, encoded_bytes_read;
     unsigned long long h2d_bytes, d2h_bytes, d2d_bytes, kernel_launches;
     unsigned long long tensor_core_launches;
+    unsigned long long graph_launches, graph_captures, graph_replays;
     unsigned long long upload_count, download_count, cache_hits, cache_misses;
     unsigned long long stream_synchronizations, device_synchronizations;
     unsigned long long active_weight_base_bytes;
