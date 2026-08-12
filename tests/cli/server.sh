@@ -104,6 +104,8 @@ contains "$OUT_DIR/admission.out" "artifact $artifact"
 contains "$OUT_DIR/admission.out" "binding $binding"
 contains "$OUT_DIR/admission.out" 'stop with Ctrl-C or `yvex server stop`'
 contains "$OUT_DIR/admission.err" 'startup refused before readiness (elapsed '
+contains "$OUT_DIR/admission.err" 'model admission refused:'
+contains "$OUT_DIR/admission.err" 'field=runtime-binding'
 yvex_test_cleanup "$SOCKET_PATH"
 
 printf 'cli server grammar: ok\n'

@@ -81,6 +81,29 @@ static int server_refuse(yvex_error *err, yvex_status status,
     return status;
 }
 
+static void server_report_model_refusal(
+    int status, const yvex_runtime_model_failure *failure, yvex_error *err)
+{
+    char where[YVEX_ERROR_WHERE_CAP];
+    char reason[YVEX_ERROR_MESSAGE_CAP];
+    if (!err || !failure || failure->code == YVEX_RUNTIME_MODEL_FAILURE_NONE)
+        return;
+    yvex_core_text_copy(where, sizeof(where), yvex_error_where(err));
+    yvex_core_text_copy(reason, sizeof(reason),
+                        failure->reason ? failure->reason : yvex_error_message(err));
+    if (failure->code == YVEX_RUNTIME_MODEL_FAILURE_ALLOCATION)
+        yvex_error_setf(
+            err, (yvex_status)status, where,
+            "model admission refused: field=%s required=%llu available=%llu reason=%s",
+            failure->field, failure->expected, failure->actual, reason);
+    else
+        yvex_error_setf(
+            err, (yvex_status)status, where,
+            "model admission refused: failure=%u field=%s expected=%llu actual=%llu reason=%s",
+            (unsigned int)failure->code, failure->field, failure->expected,
+            failure->actual, reason);
+}
+
 yvex_client_failure_class yvex_server_failure_class_from_status(int status)
 {
     switch (status) {
@@ -630,6 +653,7 @@ int yvex_server_start(yvex_server *server, yvex_error *err)
     request.maximum_host_bytes = server->options.maximum_host_bytes;
     request.maximum_device_bytes = server->options.maximum_device_bytes;
     rc = yvex_runtime_model_open(&server->model, &request, &failure, err);
+    if (rc != YVEX_OK) server_report_model_refusal(rc, &failure, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_model_summary_copy(server->model, &model, err);
     view = rc == YVEX_OK ? yvex_runtime_model_view_get(server->model) : NULL;

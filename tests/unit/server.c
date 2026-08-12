@@ -332,6 +332,9 @@ static int test_model_open_refusal(void)
     YVEX_TEST_ASSERT(rc == YVEX_OK, "refusal host create");
     rc = yvex_server_start(server, &err);
     YVEX_TEST_ASSERT(rc != YVEX_OK, "missing artifact refuses start");
+    YVEX_TEST_ASSERT(strstr(yvex_error_message(&err), "model admission refused:") != NULL &&
+                         strstr(yvex_error_message(&err), "field=runtime-binding") != NULL,
+                     "model-open refusal preserves typed failure facts");
     rc = yvex_server_get_summary(server, &summary, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "failed summary remains available");
     YVEX_TEST_ASSERT(summary.status == YVEX_SERVER_STATUS_FAILED, "failed start status");
