@@ -19,6 +19,7 @@ extern "C" {
 #define YVEX_MOE_KERNEL_PORTABLE_ENCODED_ROW "portable-encoded-row"
 #define YVEX_MOE_KERNEL_PORTABLE_EXPERT_ROW "portable-expert-row"
 #define YVEX_MOE_KERNEL_SM121_TENSORCORE_EXPERT "sm121-int8-tensorcore-expert"
+#define YVEX_MOE_KERNEL_SM121_ROW_REGIME_EXPERT "sm121-int8-row-regime-expert"
 #define YVEX_MOE_INPUT_SUFFIX ".yvex-moe-input"
 #define YVEX_MOE_NO_TENSOR ULLONG_MAX
 #define YVEX_MOE_MAX_SELECTED 16u

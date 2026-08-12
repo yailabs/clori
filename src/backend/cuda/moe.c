@@ -873,69 +873,71 @@ static int moe_cuda_batch_decode(moe_cuda_batch *batch,
         weight->row_width, output, batch->status, stage, &batch->failure, err);
 }
 
+/* SM121 Nsight places sparse low-bit decode below the IMMA crossover and grouped work above it. */
+#define MOE_CUDA_SM121_TENSORCORE_PAIR_CROSSOVER 64ull
+
 static int moe_cuda_encoded_expert_policy(
     const moe_cuda_batch *batch, const yvex_moe_weight_view *gate,
     const yvex_moe_weight_view *up, const yvex_moe_weight_view *down,
     unsigned long long input_width, unsigned long long intermediate_width,
+    unsigned long long pair_count,
     int *up_q8, int *down_q8, int *up_tensorcore, int *down_tensorcore,
     yvex_error *err)
 {
-    int gate_encoded, up_encoded, down_encoded;
+    int gate_encoded, up_encoded, down_encoded, up_regime = 0, down_regime = 0;
     if (!batch || !gate || !up || !down || !up_q8 || !down_q8 ||
         !up_tensorcore || !down_tensorcore ||
         gate->activation > YVEX_EXECUTION_ACTIVATION_DEVICE_ENCODED ||
         up->activation > YVEX_EXECUTION_ACTIVATION_DEVICE_ENCODED ||
         down->activation > YVEX_EXECUTION_ACTIVATION_DEVICE_ENCODED)
-        return moe_cuda_refuse(err, YVEX_ERR_INVALID_ARG,
-                               "CUDA MoE activation policy is invalid");
+        return moe_cuda_refuse(err, YVEX_ERR_INVALID_ARG, "CUDA MoE activation policy is invalid");
     gate_encoded = gate->activation == YVEX_EXECUTION_ACTIVATION_DEVICE_ENCODED;
     up_encoded = up->activation == YVEX_EXECUTION_ACTIVATION_DEVICE_ENCODED;
     down_encoded = down->activation == YVEX_EXECUTION_ACTIVATION_DEVICE_ENCODED;
     if (gate_encoded != up_encoded)
-        return moe_cuda_refuse(
-            err, YVEX_ERR_FORMAT,
-            "CUDA MoE gate and up activation decisions disagree");
+        return moe_cuda_refuse(err, YVEX_ERR_FORMAT, "CUDA MoE gate/up activations disagree");
     if (gate_encoded && (!gate->kernel_family || !up->kernel_family ||
                          strcmp(gate->kernel_family, up->kernel_family) != 0))
-        return moe_cuda_refuse(
-            err, YVEX_ERR_FORMAT,
-            "compiled MoE gate and up kernel-family decisions disagree");
+        return moe_cuda_refuse(err, YVEX_ERR_FORMAT,
+                               "compiled MoE gate and up kernel-family decisions disagree");
+    up_regime = gate_encoded &&
+        !strcmp(gate->kernel_family, YVEX_MOE_KERNEL_SM121_ROW_REGIME_EXPERT);
+    down_regime = down_encoded && down->kernel_family &&
+        !strcmp(down->kernel_family, YVEX_MOE_KERNEL_SM121_ROW_REGIME_EXPERT);
     *up_tensorcore = gate_encoded &&
-        strcmp(gate->kernel_family, YVEX_MOE_KERNEL_SM121_TENSORCORE_EXPERT) == 0;
+        (!strcmp(gate->kernel_family, YVEX_MOE_KERNEL_SM121_TENSORCORE_EXPERT) ||
+         (up_regime && pair_count >= MOE_CUDA_SM121_TENSORCORE_PAIR_CROSSOVER));
     *down_tensorcore = down_encoded && down->kernel_family &&
-        strcmp(down->kernel_family, YVEX_MOE_KERNEL_SM121_TENSORCORE_EXPERT) == 0;
-    if ((gate_encoded && !*up_tensorcore &&
+        (!strcmp(down->kernel_family, YVEX_MOE_KERNEL_SM121_TENSORCORE_EXPERT) ||
+         (down_regime && pair_count >= MOE_CUDA_SM121_TENSORCORE_PAIR_CROSSOVER));
+    if ((gate_encoded && !*up_tensorcore && !up_regime &&
          strcmp(gate->kernel_family, YVEX_MOE_KERNEL_PORTABLE_EXPERT_ROW) != 0 &&
          strcmp(gate->kernel_family, YVEX_MOE_KERNEL_PORTABLE_ENCODED_ROW) != 0) ||
-        (down_encoded && !*down_tensorcore &&
+        (down_encoded && !*down_tensorcore && !down_regime &&
          (!down->kernel_family ||
           (strcmp(down->kernel_family, YVEX_MOE_KERNEL_PORTABLE_EXPERT_ROW) != 0 &&
            strcmp(down->kernel_family, YVEX_MOE_KERNEL_PORTABLE_ENCODED_ROW) != 0))))
-        return moe_cuda_refuse(
-            err, YVEX_ERR_UNSUPPORTED,
-            "compiled MoE kernel family is not admitted by the CUDA backend");
+        return moe_cuda_refuse(err, YVEX_ERR_UNSUPPORTED,
+                               "compiled MoE kernel family is not admitted by the CUDA backend");
     if ((gate_encoded || down_encoded) &&
         (!batch->state->kernel_bundle_native || !batch->state->q8_quantize_function ||
          (*up_tensorcore ? !batch->state->moe_grouped_up_tensorcore_function
                          : !batch->state->moe_grouped_up_rows_function) ||
          (*down_tensorcore ? !batch->state->moe_grouped_down_tensorcore_function
                            : !batch->state->moe_grouped_down_rows_function)))
-        return moe_cuda_refuse(
-            err, YVEX_ERR_UNSUPPORTED,
-            "compiled encoded MoE requires its admitted native kernel bundle");
+        return moe_cuda_refuse(err, YVEX_ERR_UNSUPPORTED,
+                               "compiled encoded MoE requires its admitted native kernel bundle");
     if (gate_encoded &&
         (input_width % YVEX_CUDA_Q8_K_BLOCK ||
          !yvex_cuda_q8_activation_eligible(gate->qtype) ||
          !yvex_cuda_q8_activation_eligible(up->qtype)))
-        return moe_cuda_refuse(
-            err, YVEX_ERR_UNSUPPORTED,
-            "compiled MoE gate/up activation is incompatible with its qtype geometry");
+        return moe_cuda_refuse(err, YVEX_ERR_UNSUPPORTED,
+                               "compiled MoE gate/up activation is incompatible with its qtype geometry");
     if (down_encoded &&
         (intermediate_width % YVEX_CUDA_Q8_K_BLOCK ||
          !yvex_cuda_q8_activation_eligible(down->qtype)))
-        return moe_cuda_refuse(
-            err, YVEX_ERR_UNSUPPORTED,
-            "compiled MoE down activation is incompatible with its qtype geometry");
+        return moe_cuda_refuse(err, YVEX_ERR_UNSUPPORTED,
+                               "compiled MoE down activation is incompatible with its qtype geometry");
     *up_q8 = gate_encoded;
     *down_q8 = down_encoded;
     return YVEX_OK;
@@ -1549,7 +1551,7 @@ static int moe_cuda_execute_rows(yvex_backend *backend,
         &batch, &job->weights[YVEX_MOE_WEIGHT_ROUTED_GATE],
         &job->weights[YVEX_MOE_WEIGHT_ROUTED_UP],
         &job->weights[YVEX_MOE_WEIGHT_ROUTED_DOWN], layer->hidden_width,
-        layer->expert_intermediate_width, &batch.routed_up_q8,
+        layer->expert_intermediate_width, pairs, &batch.routed_up_q8,
         &batch.routed_down_q8, &batch.routed_up_tensorcore,
         &batch.routed_down_tensorcore, err);
     if (rc == YVEX_OK)
@@ -1557,7 +1559,7 @@ static int moe_cuda_execute_rows(yvex_backend *backend,
             &batch, &job->weights[YVEX_MOE_WEIGHT_SHARED_GATE],
             &job->weights[YVEX_MOE_WEIGHT_SHARED_UP],
             &job->weights[YVEX_MOE_WEIGHT_SHARED_DOWN], layer->hidden_width,
-            layer->shared_intermediate_width, &batch.shared_up_q8,
+            layer->shared_intermediate_width, rows->row_count, &batch.shared_up_q8,
             &batch.shared_down_q8, &batch.shared_up_tensorcore,
             &batch.shared_down_tensorcore, err);
     if (rc == YVEX_OK) rc = moe_cuda_batch_ranges(&batch, job, rows, pairs, err);

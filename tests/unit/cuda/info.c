@@ -496,7 +496,64 @@ static int assert_encoded_moe(yvex_backend *backend)
         for (slot = YVEX_MOE_WEIGHT_ROUTED_GATE;
              slot <= YVEX_MOE_WEIGHT_SHARED_DOWN; ++slot)
             job.weights[slot].kernel_family =
+                YVEX_MOE_KERNEL_SM121_ROW_REGIME_EXPERT;
+        rows.row_count = 2ull;
+        rows.device_rows = small_input;
+        rows.device_outputs = small_output;
+        small_output->is_written = 0;
+        memset(&result, 0, sizeof(result));
+        rc = operations->execute_rows(backend, &job, &rows, &output, &result, &err);
+        YVEX_TEST_ASSERT(
+            rc == YVEX_OK && result.schema_version == YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V2 &&
+                result.tensor_core_launches == 0ull &&
+                yvex_device_tensor_is_written(small_output) &&
+                yvex_backend_tensor_read(backend, small_output, tensorcore,
+                                         2ull * WIDTH * sizeof(float), &err) == YVEX_OK,
+            "row-regime capability selects encoded DP4A for sparse MoE");
+        maximum_error = 0.0f;
+        for (index = 0ull; index < 2ull * WIDTH; ++index) {
+            float difference = fabsf(encoded[index] - tensorcore[index]);
+            if (difference > maximum_error) maximum_error = difference;
+        }
+        YVEX_TEST_ASSERT(maximum_error <= 1e-6f,
+                         "sparse row-regime MoE matches its encoded oracle");
+        rows.row_count = ROWS;
+        rows.device_rows = input;
+        rows.device_outputs = reference_output;
+        reference_output->is_written = 0;
+        memset(&result, 0, sizeof(result));
+        rc = operations->execute_rows(backend, &job, &rows, &output, &result, &err);
+        YVEX_TEST_ASSERT(
+            rc == YVEX_OK && result.schema_version == YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V2 &&
+                result.tensor_core_launches == 2ull &&
+                yvex_device_tensor_is_written(reference_output) &&
+                yvex_backend_tensor_read(backend, reference_output, tensorcore,
+                                         sizeof(tensorcore), &err) == YVEX_OK,
+            "row-regime capability selects Tensor Core only for grouped routed MoE");
+        maximum_error = 0.0f;
+        for (index = 0ull; index < ROWS * WIDTH; ++index) {
+            float difference = fabsf(encoded[index] - tensorcore[index]);
+            if (difference > maximum_error) maximum_error = difference;
+        }
+        YVEX_TEST_ASSERT(maximum_error <= 1e-6f,
+                         "grouped row-regime MoE matches its encoded oracle");
+        for (slot = YVEX_MOE_WEIGHT_ROUTED_GATE;
+             slot <= YVEX_MOE_WEIGHT_SHARED_DOWN; ++slot)
+            job.weights[slot].kernel_family =
                 YVEX_MOE_KERNEL_SM121_TENSORCORE_EXPERT;
+        rows.row_count = 2ull;
+        rows.device_rows = small_input;
+        rows.device_outputs = small_output;
+        small_output->is_written = 0;
+        memset(&result, 0, sizeof(result));
+        rc = operations->execute_rows(backend, &job, &rows, &output, &result, &err);
+        YVEX_TEST_ASSERT(
+            rc == YVEX_OK && result.schema_version == YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V2 &&
+                result.tensor_core_launches == 4ull &&
+                yvex_device_tensor_is_written(small_output),
+            "execute compiler-selected sparse-row Tensor Core MoE");
+        rows.row_count = ROWS;
+        rows.device_rows = input;
         rows.device_outputs = reference_output;
         reference_output->is_written = 0;
         memset(&result, 0, sizeof(result));
