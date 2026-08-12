@@ -24,8 +24,7 @@ static int execution_shape_equal(const yvex_execution_shape *left,
 static int execution_shape_key_equal(const yvex_execution_shape *left,
                                      const yvex_execution_shape *right,
                                      int ignore_workspace);
-static int physical_ir_identity(yvex_physical_execution_ir *ir,
-                                yvex_error *err);
+static int physical_ir_identity(yvex_physical_execution_ir *ir, yvex_error *err);
 static int physical_policy_valid(const yvex_physical_execution_policy *policy)
 {
     return policy &&
@@ -33,6 +32,7 @@ static int physical_policy_valid(const yvex_physical_execution_policy *policy)
             policy->schema_version == YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V2) &&
            (policy->schema_version == YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V2 ||
             !policy->encoded_activation_consumer_mask) &&
+           (policy->schema_version == YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V2 || !policy->derived_asset_qtype_mask) &&
            !(policy->encoded_activation_consumer_mask >> YVEX_EXECUTION_CONSUMER_COUNT) &&
            policy->activation <= YVEX_EXECUTION_ACTIVATION_DEVICE_ENCODED &&
            policy->required_backend <= YVEX_EXECUTION_BACKEND_CUDA &&
@@ -185,7 +185,6 @@ static int physical_execution_decision_seal(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 static void execution_decision_from_binding(
     yvex_physical_execution_decision *decision,
     const yvex_runtime_tensor_binding *binding,
@@ -211,9 +210,12 @@ static void execution_decision_from_binding(
     decision->encoded_bytes = physical->encoded_bytes;
     decision->alignment = physical->alignment;
     decision->consumer = execution_consumer(binding->role);
-    decision->layout = physical->expert_count > 1ull
-                           ? YVEX_EXECUTION_LAYOUT_EXPERT_MAJOR
-                           : YVEX_EXECUTION_LAYOUT_CANONICAL_ROW;
+    decision->derived_asset_required = (decision->consumer == YVEX_EXECUTION_CONSUMER_ROUTED_GATE_UP ||
+         decision->consumer == YVEX_EXECUTION_CONSUMER_ROUTED_DOWN) && physical->expert_count > 1ull &&
+        physical->qtype < 64u && (policy->derived_asset_qtype_mask & (1ull << physical->qtype)) != 0ull;
+    decision->layout = decision->derived_asset_required ? YVEX_EXECUTION_LAYOUT_DERIVED_BACKEND
+        : physical->expert_count > 1ull ? YVEX_EXECUTION_LAYOUT_EXPERT_MAJOR
+                                       : YVEX_EXECUTION_LAYOUT_CANONICAL_ROW;
     decision->placement = execution_placement(binding->placement);
     decision->sharing = binding->scope == YVEX_TENSOR_SCOPE_GLOBAL
                             ? YVEX_EXECUTION_SHARING_MODEL_READ_ONLY
@@ -231,7 +233,6 @@ static void execution_decision_from_binding(
     decision->required_compute_minor = policy->required_compute_minor;
     decision->evidence = policy->evidence;
     decision->fallback = policy->fallback;
-    decision->derived_asset_required = policy->derived_asset_required;
     yvex_core_text_copy(decision->kernel_family,
                         sizeof(decision->kernel_family),
                         (decision->consumer == YVEX_EXECUTION_CONSUMER_ROUTED_GATE_UP ||
@@ -362,7 +363,6 @@ failed:
                             "runtime.execution.physical",
                             "physical execution IR identity derivation failed");
 }
-
 int yvex_physical_execution_ir_build(
     yvex_physical_execution_ir **out,
     const yvex_materialization_session *materialization,

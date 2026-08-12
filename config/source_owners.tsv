@@ -157,6 +157,7 @@ src/graph/operator_ir.c	graph	graph.operator_ir	generic	private	immutable-planni
 src/graph/output_head.c	graph	graph.output_head	generic	private	reusable-algorithm	artifact,runtime,tests	implementation	none
 src/graph/transformer.c	graph	graph.transformer	generic	private	reusable-algorithm	runtime,backend,cli,tests	implementation	none
 src/backend/cuda/moe.c	backend.cuda	backend.cuda.moe	backend	private	backend-implementation	runtime,graph,tests	implementation	none
+src/backend/cuda/layout.c	backend.cuda	backend.cuda.derived_layout	backend	private	backend-implementation	backend.cuda.moe,runtime,tests	implementation	none
 src/graph/core.c	graph	graph.core	generic	private	resource-lifecycle	runtime,cli	implementation	none
 src/graph/families/deepseek_v4.c	graph.family	graph.family.deepseek_v4	family	private	reusable-algorithm	graph	implementation	none
 src/graph/families/minimax_h3.c	graph.family	graph.family.minimax_h3	family	private	reusable-algorithm	artifact,runtime,tests	implementation	none

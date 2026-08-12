@@ -1533,29 +1533,58 @@ static int test_physical_activation_policy(const binding_fixture *fixture)
     const yvex_family_compiler_adapter *compiler = runtime_fixture_compiler();
     const yvex_physical_execution_decision *base;
     const yvex_physical_execution_decision *encoded_decision;
+    yvex_runtime_tensor_binding *runtime_binding;
+    yvex_materialized_tensor_binding *materialized;
     yvex_physical_execution_ir *encoded = NULL;
     yvex_physical_execution_policy policy;
+    yvex_runtime_binding candidate = {0};
     yvex_error err;
+    unsigned long long original_experts, backing_bytes = 0ull;
+    yvex_tensor_role original_role;
     int rc;
 
     base = yvex_physical_execution_ir_decision_at(fixture->physical_execution, 0ull);
-    YVEX_TEST_ASSERT(compiler && compiler->physical_execution_policy && base,
+    runtime_binding = (yvex_runtime_tensor_binding *)
+        yvex_runtime_descriptor_tensor_at(fixture->descriptor, 0ull);
+    materialized = runtime_binding
+                       ? (yvex_materialized_tensor_binding *)runtime_binding->binding
+                       : NULL;
+    YVEX_TEST_ASSERT(compiler && compiler->physical_execution_policy && base && materialized,
                      "physical activation fixture has one compiled decision");
     policy = *compiler->physical_execution_policy;
     policy.schema_version = YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V2;
     policy.activation = YVEX_EXECUTION_ACTIVATION_DEVICE_F32;
-    policy.encoded_activation_consumer_mask = 1ull << (unsigned int)base->consumer;
+    policy.encoded_activation_consumer_mask =
+        1ull << (unsigned int)YVEX_EXECUTION_CONSUMER_ROUTED_GATE_UP;
+    policy.derived_asset_qtype_mask = 1ull << base->canonical_qtype;
+    original_experts = materialized->expert_count;
+    original_role = runtime_binding->role;
+    materialized->expert_count = 2ull;
+    runtime_binding->role = YVEX_TENSOR_ROLE_MOE_EXPERT_GATE;
     rc = yvex_physical_execution_ir_build(
         &encoded, fixture->materialization, fixture->descriptor,
         fixture->admission.profile_identity, &policy, &err);
+    materialized->expert_count = original_experts;
+    runtime_binding->role = original_role;
     encoded_decision = yvex_physical_execution_ir_decision_at(encoded, 0ull);
     YVEX_TEST_ASSERT(
         rc == YVEX_OK && encoded_decision &&
-            encoded_decision->consumer == base->consumer &&
+            encoded_decision->consumer == YVEX_EXECUTION_CONSUMER_ROUTED_GATE_UP &&
             encoded_decision->activation == YVEX_EXECUTION_ACTIVATION_DEVICE_ENCODED &&
+            encoded_decision->expert_count == 2ull &&
+            encoded_decision->derived_asset_required &&
+            encoded_decision->layout == YVEX_EXECUTION_LAYOUT_DERIVED_BACKEND &&
             strcmp(yvex_physical_execution_ir_summary(encoded)->identity,
                    yvex_physical_execution_ir_summary(fixture->physical_execution)->identity) != 0,
         "V2 physical policy seals consumer-selected encoded activation into identity");
+    candidate.summary.tensor_count = 1ull;
+    candidate.materialized = materialized;
+    candidate.physical_execution = encoded;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_private_residency_backing_bytes(
+            &candidate, NULL, YVEX_RUNTIME_WEIGHT_PLACEMENT_HOST_LOCKED,
+            &backing_bytes, &err) == YVEX_ERR_UNSUPPORTED && !backing_bytes,
+        "compiled derived layout refuses an incompatible host residency policy");
     yvex_physical_execution_ir_close(&encoded);
     policy.schema_version = YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V1;
     rc = yvex_physical_execution_ir_build(

@@ -853,10 +853,15 @@ static int runtime_model_residency_open(
         (!summary.host_locked && !summary.artifact_backed_bytes &&
          !(summary.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED &&
            summary.cuda_managed_allocation_count == 1ull &&
-           summary.cuda_managed_bytes == summary.encoded_bytes &&
+           summary.cuda_managed_bytes == summary.cuda_addressable_bytes &&
            summary.cuda_managed_prefetch_count == 1ull &&
-           summary.cuda_managed_prefetch_bytes == summary.encoded_bytes)) ||
+           summary.cuda_managed_prefetch_bytes == summary.cuda_addressable_bytes)) ||
         (request->residency_backend == YVEX_BACKEND_KIND_CUDA && !summary.cuda_ready) ||
+        (summary.derived_asset_count
+             ? summary.schema_version != YVEX_RUNTIME_RESIDENCY_SCHEMA_V8 ||
+                   !summary.derived_asset_bytes
+             : summary.schema_version != YVEX_RUNTIME_RESIDENCY_SCHEMA_V7 ||
+                   summary.derived_asset_bytes) ||
         summary.binding_count != descriptor_summary->tensor_count ||
         summary.encoded_bytes != descriptor_summary->payload_bytes ||
         !summary.core_complete || !summary.envelope_complete ||
@@ -905,6 +910,8 @@ static int runtime_model_startup_preflight(
     unsigned long long *required_bytes, unsigned long long *available_bytes,
     yvex_error *err)
 {
+    yvex_runtime_weight_placement placement;
+    unsigned long long backing_bytes, added_bytes;
     int rc = runtime_model_memory_preflight(
         request, model->binding, &model->admission, refusal,
         required_bytes, available_bytes);
@@ -922,6 +929,28 @@ static int runtime_model_startup_preflight(
             return rc;
         }
     }
+    rc = yvex_runtime_private_weight_placement_select(
+        request->residency_backend, model->opening_backend, &placement, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_private_residency_backing_bytes(
+            model->binding, model->opening_backend, placement, &backing_bytes, err);
+    if (rc != YVEX_OK) {
+        *refusal = YVEX_RUNTIME_REFUSE_OPEN_RESIDENCY;
+        return rc;
+    }
+    if (backing_bytes < model->admission.payload_bytes ||
+        !yvex_core_u64_add(
+            *required_bytes, backing_bytes - model->admission.payload_bytes,
+            &added_bytes))
+        return YVEX_ERR_STATE;
+    *required_bytes = added_bytes;
+    if (request->maximum_host_bytes &&
+        *required_bytes > request->maximum_host_bytes) {
+        *refusal = YVEX_RUNTIME_REFUSE_OPEN_HOST_BUDGET;
+        *available_bytes = request->maximum_host_bytes;
+        return YVEX_ERR_BOUNDS;
+    }
+    if (*required_bytes > *available_bytes) return YVEX_ERR_BOUNDS;
     if (!request->startup_generation) return YVEX_OK;
     *refusal = YVEX_RUNTIME_REFUSE_OPEN_STARTUP_CAPACITY;
     return yvex_runtime_private_generation_capacity_preflight(

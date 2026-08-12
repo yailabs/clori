@@ -69,6 +69,15 @@ int yvex_runtime_private_binding_refuse(
     const char *reason, yvex_error *err);
 int yvex_runtime_private_compiled_plan_valid(
     const yvex_runtime_binding *binding);
+int yvex_runtime_private_residency_execution_view(
+    const yvex_runtime_residency *residency,
+    const yvex_materialized_tensor_binding *binding,
+    const unsigned char **data, unsigned long long *bytes,
+    yvex_execution_layout_class *layout, yvex_error *err);
+int yvex_runtime_private_residency_backing_bytes(
+    const yvex_runtime_binding *binding, yvex_backend *backend,
+    yvex_runtime_weight_placement placement, unsigned long long *bytes,
+    yvex_error *err);
 
 struct yvex_runtime_model {
     const yvex_graph_execution_api *graph;

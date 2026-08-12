@@ -54,10 +54,11 @@ typedef struct {
     unsigned long long tensor_id, expert_index;
     yvex_tensor_role role;
     unsigned int qtype;
+    yvex_execution_layout_class layout;
     yvex_execution_activation_class activation;
     const char *kernel_family;
     const unsigned char *encoded;
-    size_t encoded_bytes;
+    size_t encoded_bytes, storage_bytes;
     unsigned long long row_bytes, row_width, row_count, device_address;
 } yvex_moe_weight_view;
 typedef struct {
@@ -258,6 +259,13 @@ typedef struct {
  * family-neutral ABI.
  */
 typedef struct {
+    int (*derived_layout_plan)(const yvex_physical_execution_decision *decision,
+                               unsigned long long *storage_bytes, yvex_error *err);
+    int (*derived_layout_build)(const yvex_physical_execution_decision *decision,
+                                const unsigned char *canonical,
+                                unsigned long long canonical_bytes,
+                                unsigned char *derived,
+                                unsigned long long storage_bytes, yvex_error *err);
     int (*workspace_required)(const yvex_moe_layer_plan *layer,
                               unsigned long long row_count,
                               unsigned long long *bytes,

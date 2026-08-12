@@ -210,7 +210,7 @@ typedef struct {
 typedef struct yvex_runtime_model yvex_runtime_model;
 typedef struct yvex_runtime_execution_session yvex_runtime_execution_session;
 typedef struct yvex_runtime_cleanup_lease yvex_runtime_cleanup_lease;
-#define YVEX_RUNTIME_RESIDENCY_SCHEMA_V7 7u
+enum { YVEX_RUNTIME_RESIDENCY_SCHEMA_V7 = 7u, YVEX_RUNTIME_RESIDENCY_SCHEMA_V8 = 8u };
 typedef enum {
     YVEX_RUNTIME_WEIGHT_PLACEMENT_HOST_LOCKED = 0,
     YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED,
@@ -248,8 +248,8 @@ typedef struct {
     unsigned long long generation, expected_model_binding_count, model_binding_count, expected_core_binding_count;
     unsigned long long expected_envelope_binding_count, core_binding_count, envelope_binding_count, binding_count;
     unsigned long long expected_output_head_binding_count, output_head_binding_count, output_head_encoded_bytes;
-    unsigned long long accelerator_encoded_bytes, encoded_bytes, host_resident_bytes;
-    unsigned long long device_resident_bytes, artifact_backed_bytes;
+    unsigned long long accelerator_encoded_bytes, encoded_bytes, derived_asset_count, derived_asset_bytes;
+    unsigned long long host_resident_bytes, device_resident_bytes, artifact_backed_bytes;
     unsigned long long cuda_addressable_bytes, cuda_upload_bytes, cuda_upload_count, cuda_host_registration_count;
     unsigned long long cuda_pageable_map_bytes, cuda_pageable_map_count, cuda_managed_bytes;
     unsigned long long cuda_managed_allocation_count;

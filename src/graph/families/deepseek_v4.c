@@ -314,6 +314,7 @@ static const yvex_physical_execution_policy deepseek_physical_execution_policy =
     .required_backend = YVEX_EXECUTION_BACKEND_ANY,
     .evidence = YVEX_EXECUTION_EVIDENCE_PRODUCTION,
     .fallback = YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE,
+    .derived_asset_qtype_mask = 0ull,
     .dense_kernel_family = YVEX_MOE_KERNEL_PORTABLE_ENCODED_ROW,
     .expert_kernel_family = YVEX_MOE_KERNEL_SM121_ROW_REGIME_EXPERT};
 static const yvex_family_binding_pipeline deepseek_binding_pipeline = {

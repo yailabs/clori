@@ -1,13 +1,12 @@
-/*
- * CUDA owners share Driver API handles, admitted kernel variants, tensors, and launch resources
- * here. Family topology cannot be reconstructed from this platform boundary.
- */
+/* CUDA owners share admitted Driver handles, kernels, tensors, and launch resources.
+ * Family topology cannot be reconstructed from this platform boundary. */
 #ifndef SRC_BACKEND_CUDA_PRIVATE_H_INCLUDED
 #define SRC_BACKEND_CUDA_PRIVATE_H_INCLUDED
 #include <stddef.h>
 #include <yvex/backend.h>
 #include <yvex/internal/backend.h>
 #include <yvex/internal/core.h>
+#include <yvex/internal/execution.h>
 #include <yvex/internal/quant_numeric.h>
 #include "src/backend/private.h"
 #define YVEX_CUDA_Q8_K_BLOCK 256ull
@@ -17,8 +16,7 @@ extern "C" {
 #endif
 typedef int CUresult;
 typedef int CUdevice;
-typedef void *CUcontext, *CUmodule, *CUfunction;
-typedef void *CUstream, *CUevent, *CUgraph;
+typedef void *CUcontext, *CUmodule, *CUfunction, *CUstream, *CUevent, *CUgraph;
 typedef void *CUgraphExec, *CUgraphNode;
 typedef unsigned long long CUdeviceptr;
 typedef unsigned long long CUmemGenericAllocationHandle;
@@ -399,6 +397,9 @@ int yvex_cuda_set_current(const yvex_backend *backend, const char *where, yvex_e
 int yvex_cuda_refresh_memory_info(yvex_backend *backend, yvex_error *err);
 CUdeviceptr yvex_cuda_tensor_ptr(const yvex_device_tensor *tensor);
 CUstream yvex_cuda_launch_stream(const yvex_backend *backend);
+int yvex_cuda_moe_derived_layout_plan(const yvex_physical_execution_decision *, unsigned long long *, yvex_error *);
+int yvex_cuda_moe_derived_layout_build(const yvex_physical_execution_decision *, const unsigned char *,
+                                       unsigned long long, unsigned char *, unsigned long long, yvex_error *);
 int yvex_cuda_resident_alloc(yvex_backend *, const yvex_backend_tensor_desc *,
                              yvex_device_tensor **, unsigned char **, yvex_error *);
 int yvex_cuda_resident_map_supported(const yvex_backend *);
@@ -441,8 +442,7 @@ int yvex_cuda_work_cleanup(yvex_cuda_work *work, yvex_error *err);
 int yvex_cuda_activation_views_valid(yvex_backend *backend,
     const yvex_device_tensor *input, unsigned long long input_elements,
     const yvex_device_tensor *output, unsigned long long output_elements);
-CUdeviceptr yvex_cuda_activation_pointer(
-    yvex_backend *backend, const yvex_device_tensor *tensor);
+CUdeviceptr yvex_cuda_activation_pointer(yvex_backend *backend, const yvex_device_tensor *tensor);
 int yvex_cuda_activation_copy(yvex_backend *backend, CUdeviceptr source,
     yvex_device_tensor *output, unsigned long long elements,
     const char *stage, yvex_error *err);

@@ -118,7 +118,7 @@ typedef struct yvex_physical_execution_policy {
     yvex_execution_backend_requirement required_backend;
     yvex_execution_evidence_profile evidence;
     yvex_execution_class fallback;
-    int derived_asset_required;
+    unsigned long long derived_asset_qtype_mask;
     const char *dense_kernel_family, *expert_kernel_family;
 } yvex_physical_execution_policy;
 

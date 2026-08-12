@@ -835,6 +835,7 @@ static int test_arch_ir_report_consumer_and_family_preservation(void)
         compiler && compiler->physical_execution_policy &&
             strcmp(compiler->physical_execution_policy->expert_kernel_family,
                    YVEX_MOE_KERNEL_SM121_ROW_REGIME_EXPERT) == 0 &&
+            compiler->physical_execution_policy->derived_asset_qtype_mask == 0ull &&
             (compiler->physical_execution_policy->encoded_activation_consumer_mask &
              (1ull << YVEX_EXECUTION_CONSUMER_SHARED_EXPERT)) != 0ull,
         "DeepSeek compilation selects the admitted SM121 row-regime expert capability");

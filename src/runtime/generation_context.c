@@ -898,6 +898,7 @@ static int generation_capacity_build(
     const yvex_runtime_session_view *session =
         context ? yvex_runtime_session_view_get(context->session) : NULL;
     yvex_runtime_residency_summary residency = {0};
+    unsigned long long model_bytes;
     if (!context || !context->model_view || !context->model_view->residency ||
         !session || !session->backend ||
         yvex_runtime_residency_snapshot(
@@ -906,9 +907,16 @@ static int generation_capacity_build(
         return generation_context_refuse(
             err, YVEX_ERR_STATE,
             "model residency placement facts are unavailable");
+    model_bytes = residency.cuda_addressable_bytes
+                      ? residency.cuda_addressable_bytes
+                      : residency.host_resident_bytes
+                            ? residency.host_resident_bytes
+                            : residency.artifact_backed_bytes
+                                  ? residency.artifact_backed_bytes
+                                  : residency.encoded_bytes;
     return generation_capacity_build_for(
         context, session->backend, residency.placement,
-        residency.encoded_bytes, 1, 0ull, workspace_capacity,
+        model_bytes, 1, 0ull, workspace_capacity,
         NULL, NULL, err);
 }
 
@@ -922,7 +930,7 @@ int yvex_runtime_private_generation_capacity_preflight(
     yvex_runtime_model_view view = {0};
     yvex_graph_attention_capacity_plan *workspace_capacity = NULL;
     yvex_runtime_weight_placement placement;
-    unsigned long long transient_bytes;
+    unsigned long long transient_bytes, model_bytes;
     int rc;
     if (required_bytes) *required_bytes = 0ull;
     if (available_bytes) *available_bytes = 0ull;
@@ -945,8 +953,11 @@ int yvex_runtime_private_generation_capacity_preflight(
     rc = yvex_runtime_private_weight_placement_select(
         options->backend, backend, &placement, err);
     if (rc == YVEX_OK)
+        rc = yvex_runtime_private_residency_backing_bytes(
+            binding, backend, placement, &model_bytes, err);
+    if (rc == YVEX_OK)
         rc = generation_capacity_build_for(
-            &context, backend, placement, binding->admission.payload_bytes,
+            &context, backend, placement, model_bytes,
             0, transient_bytes, &workspace_capacity, required_bytes,
             available_bytes, err);
     yvex_graph_attention_capacity_plan_close(&workspace_capacity);
