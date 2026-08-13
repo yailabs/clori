@@ -62,6 +62,17 @@ grep -F 'reasoning 2 tokens' "$root/raw.err" >/dev/null
 grep -F 'final 1 tokens' "$root/raw.err" >/dev/null
 ! grep "$(printf '\033')" "$root/raw.out" >/dev/null
 
+# A terminal-bound one-shot keeps the payload byte-faithful while placing
+# completion facts after it rather than on the final model-output line.
+env -u NO_COLOR TERM=xterm-256color XDG_RUNTIME_DIR="$runtime" script -q -e \
+    -c "$YVEX_BIN run --reasoning high --max-new-tokens 3 --strategy greedy REASONING_STREAM" \
+    "$root/run.typescript" >"$root/run.stdout" 2>"$root/run.stderr"
+esc=$(printf '\033')
+sed "s/${esc}\\[[0-9;]*m//g" "$root/run.typescript" | tr -d '\r' \
+    >"$root/run.plain"
+grep -Fx 'The valid result is 42.' "$root/run.plain" >/dev/null
+grep -E '^prefill .*generation .*session run-[0-9]+$' "$root/run.plain" >/dev/null
+
 mkfifo "$root/input"
 env -u NO_COLOR TERM=xterm-256color XDG_RUNTIME_DIR="$runtime" script -q -f -e \
     -c "$YVEX_BIN chat --session pty" "$root/typescript" \
@@ -154,7 +165,6 @@ exec 3>&-
 wait "$repl_pid"
 repl_pid=
 
-esc=$(printf '\033')
 clear=$(printf '\033[2J\033[H')
 redrawn=$(printf '\033[2J\033[H\r\033[2K\033[38;5;81myvex>\033[0m draft')
 sed "s/${esc}\\[[0-9;]*m//g" "$root/typescript" | tr -d '\r' \
@@ -200,6 +210,11 @@ grep -F 'Use int safely.' "$root/typescript.plain" >/dev/null
 grep -F '\x1b[31mnot-control' "$root/typescript.plain" >/dev/null
 grep -F 'I need to compare the constraints...' "$root/typescript.plain" >/dev/null
 grep -F 'The valid result is 42.' "$root/typescript.plain" >/dev/null
+grep -Fx 'thinking' "$root/typescript.plain" >/dev/null
+awk '/^I need to compare the constraints\.\.\.$/ { reasoning = NR }
+     /^The valid result is 42\.$/ { final = NR }
+     END { exit !(reasoning && final == reasoning + 2) }' \
+    "$root/typescript.plain"
 grep -F 'reasoning · enabled for the next turn' "$root/typescript.plain" >/dev/null
 grep -F 'reasoning · disabled for the next turn' "$root/typescript.plain" >/dev/null
 grep -F 'reasoning · maximum for the next turn' "$root/typescript.plain" >/dev/null
@@ -208,7 +223,7 @@ grep -F 'partial · 2 committed tokens · position 6 · reset required (/reset)'
     "$root/typescript.plain" >/dev/null
 ! grep -F '```' "$root/typescript.plain" >/dev/null
 ! grep -F "${esc}[31mnot-control" "$root/typescript" >/dev/null
-grep -F "${esc}[38;5;245mI need to compare the constraints..." \
+grep -F "${esc}[38;5;245mthinking" \
     "$root/typescript" >/dev/null
 grep -E '4 new/5 prompt/1 reused.*3 tokens.*TTFT 2\.50 s.*context 8/4096.*stop maximum tokens' \
     "$root/typescript" >/dev/null

@@ -338,8 +338,7 @@ static int stream_language_finish(yvex_cli_stream_renderer *renderer)
              fputc(']', renderer->output) != EOF;
         renderer->wrote_bytes = 1;
     }
-    renderer->collecting_language = 0;
-    renderer->fence_language_count = 0u;
+    renderer->collecting_language = renderer->fence_language_count = 0u;
     return ok;
 }
 
@@ -350,10 +349,8 @@ static int stream_newline(yvex_cli_stream_renderer *renderer)
     if (!stream_style_set(renderer, stream_context_style(renderer)) ||
         fputc('\n', renderer->output) == EOF)
         return 0;
-    renderer->line_start = 1;
+    renderer->line_start = renderer->wrote_bytes = renderer->last_newline = 1;
     renderer->line_style = YVEX_CLI_STREAM_STYLE_NORMAL;
-    renderer->wrote_bytes = 1;
-    renderer->last_newline = 1;
     return 1;
 }
 
@@ -487,8 +484,7 @@ void yvex_cli_stream_renderer_open(yvex_cli_stream_renderer *renderer,
     memset(renderer, 0, sizeof(*renderer));
     renderer->output = output ? output : stdout;
     renderer->enhanced = enhanced != 0;
-    renderer->line_start = 1;
-    renderer->last_newline = 1;
+    renderer->line_start = renderer->last_newline = 1;
     renderer->channel = YVEX_CLIENT_STREAM_FINAL_TEXT;
     yvex_cli_terminal_style_get(renderer->output, &renderer->style);
 }
@@ -511,9 +507,16 @@ int yvex_cli_stream_renderer_write(yvex_cli_stream_renderer *renderer,
         return YVEX_OK;
     }
     if (channel != renderer->channel) {
-        if (!stream_backticks_flush(renderer)) return YVEX_ERR_IO;
+        if (!stream_backticks_flush(renderer) ||
+            (renderer->wrote_bytes && !renderer->last_newline &&
+             !stream_newline(renderer)) ||
+            (renderer->channel == YVEX_CLIENT_STREAM_EXPLICIT_REASONING &&
+             channel == YVEX_CLIENT_STREAM_FINAL_TEXT && renderer->wrote_bytes && !stream_newline(renderer)))
+            return YVEX_ERR_IO;
         renderer->channel = channel;
-        if (!stream_style_set(renderer, stream_context_style(renderer)))
+        if (!stream_style_set(renderer, stream_context_style(renderer)) ||
+            (channel == YVEX_CLIENT_STREAM_EXPLICIT_REASONING &&
+             (!stream_bytes(renderer, (const unsigned char *)"thinking", 8u) || !stream_newline(renderer))))
             return YVEX_ERR_IO;
     }
     for (index = 0u; index < count; ++index)
@@ -535,11 +538,8 @@ int yvex_cli_stream_renderer_finish(yvex_cli_stream_renderer *renderer,
     if (ok && renderer->utf8_expected) ok = stream_replacement(renderer);
     renderer->utf8_count = renderer->utf8_expected = 0u;
     if (ok && renderer->pending_cr) ok = stream_newline(renderer);
-    renderer->pending_cr = 0;
-    renderer->collecting_language = 0;
-    renderer->closing_fence = 0;
-    renderer->in_fence = 0;
-    renderer->in_inline_code = 0;
+    renderer->pending_cr = renderer->collecting_language =
+        renderer->closing_fence = renderer->in_fence = renderer->in_inline_code = 0;
     if (ok) ok = stream_style_set(renderer, YVEX_CLI_STREAM_STYLE_NORMAL);
     if (ok && separate_terminal_status && renderer->wrote_bytes &&
         !renderer->last_newline) {

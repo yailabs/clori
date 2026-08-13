@@ -891,7 +891,7 @@ static int generation_turn(const char *session_name,
             started = 1;
         } else if (message.kind == YVEX_CLIENT_MESSAGE_TURN_COMPLETE) {
             if (progress_active) fputs("\r\033[2K", stdout);
-            rc = yvex_cli_stream_renderer_finish(&renderer, conversation);
+            rc = yvex_cli_stream_renderer_finish(&renderer, conversation || isatty(fileno(stdout)));
             renderer_finished = 1;
             if (rc != YVEX_OK) {
                 yvex_error_set(&err, YVEX_ERR_IO, "client.turn.render",
@@ -934,7 +934,7 @@ static int generation_turn(const char *session_name,
             break;
         } else if (message.kind == YVEX_CLIENT_MESSAGE_ERROR) {
             if (progress_active) fputs("\r\033[2K", stdout);
-            rc = yvex_cli_stream_renderer_finish(&renderer, conversation);
+            rc = yvex_cli_stream_renderer_finish(&renderer, conversation || isatty(fileno(stdout)));
             renderer_finished = 1;
             if (rc != YVEX_OK) {
                 yvex_error_set(&err, YVEX_ERR_IO, "client.turn.render",
@@ -958,7 +958,7 @@ static int generation_turn(const char *session_name,
         }
     }
     if (!renderer_finished && started)
-        (void)yvex_cli_stream_renderer_finish(&renderer, conversation);
+        (void)yvex_cli_stream_renderer_finish(&renderer, conversation || isatty(fileno(stdout)));
     yvex_client_close(&client);
     {
         int interrupted = turn_signals_close(&signals);
