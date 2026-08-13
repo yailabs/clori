@@ -1597,6 +1597,7 @@ static const yvex_backend_vtable cuda_vtable = {
     yvex_cuda_resident_alloc,
     yvex_cuda_resident_map_supported,
     yvex_cuda_resident_map_readonly,
+    yvex_cuda_resident_prefetch_supported,
     yvex_cuda_resident_prefetch,
     cuda_tensor_reserve,
     cuda_tensor_commit,

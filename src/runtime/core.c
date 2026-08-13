@@ -455,7 +455,9 @@ static int runtime_model_open_fail(yvex_runtime_model **out, yvex_runtime_model 
     (void)yvex_runtime_private_reject(
         failure, spec->code, spec->field, expected, actual, spec->reason, err, status);
     primary = err ? *err : (yvex_error){0};
-    if (refusal == YVEX_RUNTIME_REFUSE_OPEN_STARTUP_CAPACITY &&
+    if ((refusal == YVEX_RUNTIME_REFUSE_OPEN_STARTUP_CAPACITY ||
+         refusal == YVEX_RUNTIME_REFUSE_OPEN_RESIDENCY ||
+         refusal == YVEX_RUNTIME_REFUSE_OPEN_RESIDENCY_COMPLETE) &&
         yvex_error_is_set(&cause))
         primary = cause;
     cleanup_rc = runtime_model_release(model, err);
@@ -838,7 +840,7 @@ static int runtime_model_residency_open(
     options.maximum_host_bytes = request->maximum_host_bytes;
     if (rc == YVEX_OK)
         rc = yvex_runtime_private_weight_placement_select(
-            request->residency_backend, model->opening_backend,
+            model->binding, request->residency_backend, model->opening_backend,
             &options.placement, err);
     memset(&residency_failure, 0, sizeof(residency_failure));
     if (rc == YVEX_OK)
@@ -856,6 +858,12 @@ static int runtime_model_residency_open(
            summary.cuda_managed_bytes == summary.cuda_addressable_bytes &&
            summary.cuda_managed_prefetch_count == 1ull &&
            summary.cuda_managed_prefetch_bytes == summary.cuda_addressable_bytes)) ||
+        (request->residency_backend == YVEX_BACKEND_KIND_CUDA &&
+         summary.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED &&
+         (summary.cuda_pageable_map_count != 1ull ||
+          summary.cuda_pageable_map_bytes != summary.cuda_addressable_bytes ||
+          summary.cuda_pageable_prefetch_count != 1ull ||
+          summary.cuda_pageable_prefetch_bytes != summary.cuda_addressable_bytes)) ||
         (request->residency_backend == YVEX_BACKEND_KIND_CUDA && !summary.cuda_ready) ||
         (summary.derived_asset_count
              ? summary.schema_version != YVEX_RUNTIME_RESIDENCY_SCHEMA_V8 ||
@@ -930,7 +938,8 @@ static int runtime_model_startup_preflight(
         }
     }
     rc = yvex_runtime_private_weight_placement_select(
-        request->residency_backend, model->opening_backend, &placement, err);
+        model->binding, request->residency_backend, model->opening_backend,
+        &placement, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_private_residency_backing_bytes(
             model->binding, model->opening_backend, placement, &backing_bytes, err);

@@ -251,11 +251,11 @@ typedef struct {
     unsigned long long accelerator_encoded_bytes, encoded_bytes, derived_asset_count, derived_asset_bytes;
     unsigned long long host_resident_bytes, device_resident_bytes, artifact_backed_bytes;
     unsigned long long cuda_addressable_bytes, cuda_upload_bytes, cuda_upload_count, cuda_host_registration_count;
-    unsigned long long cuda_pageable_map_bytes, cuda_pageable_map_count, cuda_managed_bytes;
-    unsigned long long cuda_managed_allocation_count;
+    unsigned long long cuda_pageable_map_bytes, cuda_pageable_map_count, cuda_managed_bytes,
+        cuda_managed_allocation_count;
     unsigned long long cuda_managed_prefetch_bytes, cuda_managed_prefetch_count;
-    unsigned long long cold_artifact_read_calls, cold_artifact_bytes_read;
-    unsigned long long resident_read_calls, resident_bytes_read;
+    unsigned long long cuda_pageable_prefetch_bytes, cuda_pageable_prefetch_count;
+    unsigned long long cold_artifact_read_calls, cold_artifact_bytes_read, resident_read_calls, resident_bytes_read;
     unsigned long long qtype_binding_counts[YVEX_RUNTIME_DESCRIPTOR_QTYPE_CAP];
     unsigned long long qtype_bytes[YVEX_RUNTIME_DESCRIPTOR_QTYPE_CAP];
     char payload_digest[YVEX_SHA256_HEX_CAP], residency_identity[YVEX_SHA256_HEX_CAP];

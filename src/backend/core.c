@@ -500,6 +500,12 @@ int yvex_backend_resident_map_readonly(yvex_backend *backend,
     return backend->vtable->resident_map_readonly(backend, desc, host, out, err);
 }
 
+int yvex_backend_resident_prefetch_supported(const yvex_backend *backend)
+{
+    return backend && backend->vtable && backend->vtable->resident_prefetch_supported &&
+           backend->vtable->resident_prefetch_supported(backend);
+}
+
 int yvex_backend_resident_prefetch(yvex_backend *backend,
                                    yvex_device_tensor *tensor,
                                    unsigned long long *prefetched_bytes,
@@ -514,9 +520,10 @@ int yvex_backend_resident_prefetch(yvex_backend *backend,
     }
     rc = backend_dispatch_admit(backend, "backend.resident.prefetch", err);
     if (rc != YVEX_OK) return rc;
-    if (!backend->vtable || !backend->vtable->resident_prefetch) {
+    if (!backend->vtable || !backend->vtable->resident_prefetch ||
+        !yvex_backend_resident_prefetch_supported(backend)) {
         yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "backend.resident.prefetch",
-                       "backend has no managed-residency prefetch operation");
+                       "backend has no admitted host-addressable prefetch operation");
         return YVEX_ERR_UNSUPPORTED;
     }
     return backend->vtable->resident_prefetch(

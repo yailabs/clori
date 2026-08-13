@@ -70,18 +70,19 @@ target model, tokenizer, output head, backend context, and immutable residency;
 it is not a second runtime model. Readiness is published only after every
 requirement of the selected generation mode and the worker is usable.
 
-Residency schema v7 selects one explicit physical backing. The authenticated
-artifact may remain model-lifetime backing and tensor views can resolve exact
-file offsets without a second anonymous copy, but addressability alone does not
-admit that mapping for production execution. On GB10, cold pageable HMM
-execution failed deterministic numerical qualification, so the current CUDA
-policy explicitly selects managed residency and its completed prefetch. The
-pageable primitive remains bounded backend evidence for a future identity-bound
-derived-layout placement; it is not a silent fallback. Artifact-backed bytes
-are reported separately from stable host-resident allocations, and process RSS
-reports the pages actually touched. The residency identity seals artifact and
-materialization identities, placement, and exact tensor source/backing ranges.
-Snapshot drift, unsupported placement and read failure remain typed refusals.
+Residency schema v7 selects one explicit physical backing. When the compiled
+physical plan requires no derived asset and CUDA admits read-only host-page-table
+access plus completed prefetch, the authenticated artifact remains the
+model-lifetime execution backing and tensor views resolve its exact file offsets
+without a second anonymous copy. Addressability alone never admits this path:
+prefetch must finish before readiness. A physical plan that requires derived
+layouts instead selects managed residency and its completed prefetch. Neither
+placement is a backend-local fallback. Artifact-backed bytes and completed
+prefetch facts are reported separately from stable host-resident allocations,
+and process RSS reports the pages actually touched. The residency identity seals
+artifact and materialization identities, placement, and exact tensor
+source/backing ranges. Snapshot drift, unsupported placement, prefetch failure
+and read failure remain typed refusals.
 
 Failure during opening publishes no ready model and releases every acquired
 resource transactionally. Shutdown closes the model once after request/session

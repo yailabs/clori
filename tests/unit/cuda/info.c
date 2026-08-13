@@ -1284,14 +1284,14 @@ int yvex_cuda_test_info(void)
                          backend, &descriptor, &resident, &mapped, &err) == YVEX_OK,
                      "allocate exact managed residency");
     memset(mapped, 0x5a, 4096u);
-    YVEX_TEST_ASSERT(setenv("YVEX_TEST_CUDA_MANAGED_PREFETCH_FAILURE", "1", 1) == 0,
-                     "install managed prefetch failure injection");
+    YVEX_TEST_ASSERT(setenv("YVEX_TEST_CUDA_PREFETCH_FAILURE", "1", 1) == 0,
+                     "install residency prefetch failure injection");
     YVEX_TEST_ASSERT(yvex_backend_resident_prefetch(
                          backend, resident, &prefetched_bytes, &err) == YVEX_ERR_BACKEND &&
                          prefetched_bytes == 0ull,
-                     "managed prefetch failure publishes no migrated bytes");
-    YVEX_TEST_ASSERT(unsetenv("YVEX_TEST_CUDA_MANAGED_PREFETCH_FAILURE") == 0,
-                     "clear managed prefetch failure injection");
+                     "residency prefetch failure publishes no migrated bytes");
+    YVEX_TEST_ASSERT(unsetenv("YVEX_TEST_CUDA_PREFETCH_FAILURE") == 0,
+                     "clear residency prefetch failure injection");
     YVEX_TEST_ASSERT(yvex_backend_resident_prefetch(
                          backend, resident, &prefetched_bytes, &err) == YVEX_OK &&
                          prefetched_bytes == 4096ull,
@@ -1320,12 +1320,15 @@ int yvex_cuda_test_info(void)
         YVEX_TEST_ASSERT(
             yvex_backend_resident_map_readonly(
                 backend, &descriptor, pageable, &resident, &err) == YVEX_OK && resident &&
+                yvex_backend_resident_prefetch(
+                    backend, resident, &prefetched_bytes, &err) == YVEX_OK &&
+                prefetched_bytes == 4096ull &&
                 yvex_backend_resident_attach(
                     backend, pageable, 4096ull, resident, 2ull, &err) == YVEX_OK &&
                 yvex_backend_resident_resolve(
                     backend, pageable, 4096ull, &mapped_address) ==
                     YVEX_BACKEND_RESIDENT_HIT && mapped_address != 0ull,
-            "attach immutable pageable residency without allocation or registration");
+            "prefetch and attach immutable pageable residency without a private copy");
         memset(mapped_readback, 0, sizeof(mapped_readback));
         YVEX_TEST_ASSERT(
             yvex_backend_tensor_read(

@@ -2067,6 +2067,8 @@ static int run_runtime_residency_close_order(yvex_runtime_model *model,
            before.cuda_addressable_bytes == before.artifact_backed_bytes &&
            before.cuda_pageable_map_bytes == before.artifact_backed_bytes &&
            before.cuda_pageable_map_count == 1ull &&
+           before.cuda_pageable_prefetch_bytes == before.artifact_backed_bytes &&
+           before.cuda_pageable_prefetch_count == 1ull &&
            !before.cuda_managed_bytes && !before.cuda_managed_allocation_count &&
            !before.cuda_managed_prefetch_bytes && !before.cuda_managed_prefetch_count) ||
           (before.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED &&
@@ -2132,6 +2134,8 @@ static int run_runtime_residency_close_order(yvex_runtime_model *model,
         after.cuda_managed_allocation_count != before.cuda_managed_allocation_count ||
         after.cuda_managed_prefetch_bytes != before.cuda_managed_prefetch_bytes ||
         after.cuda_managed_prefetch_count != before.cuda_managed_prefetch_count ||
+        after.cuda_pageable_prefetch_bytes != before.cuda_pageable_prefetch_bytes ||
+        after.cuda_pageable_prefetch_count != before.cuda_pageable_prefetch_count ||
         memcmp(after.qtype_binding_counts, before.qtype_binding_counts,
                sizeof(before.qtype_binding_counts)) != 0 ||
         memcmp(after.qtype_bytes, before.qtype_bytes,

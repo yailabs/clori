@@ -375,7 +375,8 @@ static int generation_capacity_hardware(
             ((placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED &&
               device.managed_memory) ||
              (placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED &&
-              yvex_backend_resident_map_readonly_supported(backend)));
+              (resident ||
+               yvex_backend_resident_map_readonly_supported(backend))));
         total = shared_system_domain ? system_total : device.total_memory_bytes;
         if (!shared_system_domain && device.free_memory_bytes < available)
             available = device.free_memory_bytes;
@@ -951,7 +952,7 @@ int yvex_runtime_private_generation_capacity_preflight(
     if (context.options.prefill_chunk_tokens > context.options.context_capacity)
         context.options.prefill_chunk_tokens = context.options.context_capacity;
     rc = yvex_runtime_private_weight_placement_select(
-        options->backend, backend, &placement, err);
+        binding, options->backend, backend, &placement, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_private_residency_backing_bytes(
             binding, backend, placement, &model_bytes, err);

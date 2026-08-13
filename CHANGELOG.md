@@ -177,9 +177,10 @@ change. Git history preserves implementation chronology.
   unchanged local artifact snapshot and falls back to complete authentication
   when cache evidence is absent, malformed, or stale. On admitted pageable
   CUDA hardware the authenticated GGUF remains immutable execution backing,
-  eliminating the complete anonymous model copy and eager prefetch. Memory
-  status distinguishes mapped artifact extent, non-artifact host residency,
-  accelerator residency and process RSS.
+  eliminating the complete anonymous model allocation and copy. Readiness still
+  requires a completed prefetch of that exact backing. Memory status
+  distinguishes mapped artifact extent, completed prefetch, non-artifact host
+  residency, accelerator residency and process RSS.
 - Model hosting is now the explicit foreground `yvex server MODEL [--ctx N]`
   operation. Status, model, memory, logs and shutdown use the same public
   `server` noun; `server log [--json]` is the sole observability stream.

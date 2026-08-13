@@ -378,15 +378,15 @@ workspace, and transient staging. Physical unified memory does not collapse
 these placement and accounting classes.
 
 The artifact mapping remains immutable model-lifetime backing for admission and
-can provide exact typed tensor views. CUDA pageable host-page-table access is a
-backend capability, but GB10 cold-execution qualification showed that it does
-not yet provide deterministic first-use model numerics. The production policy
-therefore selects managed CUDA residency and completes its prefetch before
-publication. This is an explicit admitted alternative, not a backend-local
-fallback. A future identity-bound derived execution asset may replace managed
-full-model residency without changing tensor semantics. Status reports mapped
-artifact extent, non-artifact host residency, accelerator residency and process
-RSS separately. A placement counter is a memory fact, not by itself a causal
+provides exact typed tensor views. When the compiler-sealed physical plan needs
+no derived layout, CUDA read-only host-page-table access plus completed prefetch
+admits that mapping as the execution backing without a complete anonymous model
+copy. A plan requiring derived assets selects managed CUDA residency instead.
+The runtime selects between these compiled alternatives before allocation; the
+backend cannot substitute one silently. Both paths complete prefetch before
+publication. Status reports mapped artifact extent, completed artifact-prefetch
+facts, non-artifact host residency, accelerator residency and process RSS
+separately. A placement counter is a memory fact, not by itself a causal
 performance diagnosis.
 
 Before opening the complete artifact, startup reads the bounded binding and

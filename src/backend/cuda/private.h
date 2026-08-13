@@ -405,8 +405,8 @@ int yvex_cuda_resident_alloc(yvex_backend *, const yvex_backend_tensor_desc *,
 int yvex_cuda_resident_map_supported(const yvex_backend *);
 int yvex_cuda_resident_map_readonly(yvex_backend *, const yvex_backend_tensor_desc *,
                                     const unsigned char *, yvex_device_tensor **, yvex_error *);
-int yvex_cuda_resident_prefetch(yvex_backend *, yvex_device_tensor *,
-                                unsigned long long *, yvex_error *);
+int yvex_cuda_resident_prefetch_supported(const yvex_backend *);
+int yvex_cuda_resident_prefetch(yvex_backend *, yvex_device_tensor *, unsigned long long *, yvex_error *);
 typedef enum {
     YVEX_CUDA_TIMING_BEGIN = 0,
     YVEX_CUDA_TIMING_FINISH,

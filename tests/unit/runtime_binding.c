@@ -3995,6 +3995,24 @@ static int test_runtime_model_cuda_residency_claim(
     request.runtime_binding_path = prepared->path;
     request.target_id = runtime_fixture_execution()->target_id;
     request.residency_backend = YVEX_BACKEND_KIND_CUDA;
+    YVEX_TEST_ASSERT(setenv("YVEX_TEST_CUDA_PREFETCH_FAILURE", "1", 1) == 0,
+                     "install artifact prefetch failure injection");
+    rc = yvex_runtime_model_open(&model, &request, &failure, &err);
+    YVEX_TEST_ASSERT(unsetenv("YVEX_TEST_CUDA_PREFETCH_FAILURE") == 0,
+                     "clear artifact prefetch failure injection");
+    if (rc != YVEX_ERR_BACKEND || model ||
+        strcmp(yvex_error_where(&err), "cuda.residency.prefetch") != 0 ||
+        strcmp(failure.field, "model-residency") != 0)
+        fprintf(stderr,
+                "artifact prefetch refusal rc=%d model=%p where=%s message=%s failure=%u field=%s\n",
+                rc, (void *)model, yvex_error_where(&err), yvex_error_message(&err),
+                (unsigned int)failure.code, failure.field);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_ERR_BACKEND && !model &&
+            strcmp(yvex_error_where(&err), "cuda.residency.prefetch") == 0 &&
+            failure.code == YVEX_RUNTIME_MODEL_FAILURE_MATERIALIZATION &&
+            strcmp(failure.field, "model-residency") == 0,
+        "artifact-backed CUDA placement refuses when migration cannot complete");
     rc = yvex_runtime_model_open(&model, &request, &failure, &err);
     if (rc != YVEX_OK)
         fprintf(stderr, "CUDA runtime residency open failed: %s (%s)\n",
@@ -4007,15 +4025,17 @@ static int test_runtime_model_cuda_residency_claim(
                              view->residency, &summary, NULL, NULL, &err) == YVEX_OK &&
                          summary.cuda_ready &&
                          summary.placement ==
-                               YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED &&
-                           !summary.host_resident_bytes &&
-                           summary.device_resident_bytes == summary.encoded_bytes &&
-                           summary.cuda_managed_allocation_count == 1ull &&
-                           summary.cuda_managed_bytes == summary.encoded_bytes &&
-                           summary.cuda_managed_prefetch_count == 1ull &&
-                           summary.cuda_managed_prefetch_bytes ==
-                               summary.encoded_bytes,
-                     "runtime model publishes the exact admitted managed CUDA residency facts");
+                               YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED &&
+                           !summary.host_resident_bytes && !summary.device_resident_bytes &&
+                           summary.artifact_backed_bytes == summary.cuda_addressable_bytes &&
+                           summary.cuda_pageable_map_count == 1ull &&
+                           summary.cuda_pageable_map_bytes == summary.artifact_backed_bytes &&
+                           summary.cuda_pageable_prefetch_count == 1ull &&
+                           summary.cuda_pageable_prefetch_bytes ==
+                               summary.artifact_backed_bytes &&
+                           !summary.cuda_managed_allocation_count &&
+                           !summary.cuda_managed_bytes,
+                     "runtime model publishes exact prefetched artifact-backed CUDA facts");
     yvex_runtime_model_close(&model);
     return 0;
 }

@@ -279,7 +279,8 @@ int yvex_backend_resident_map_readonly(yvex_backend *backend,
                                        const unsigned char *host,
                                        yvex_device_tensor **out,
                                        yvex_error *err);
-/* Move one initialized backend-owned managed range to its admitted execution device.
+int yvex_backend_resident_prefetch_supported(const yvex_backend *backend);
+/* Move one initialized backend-owned host-addressable range to its execution device.
  * The caller retains tensor ownership; success is synchronous and reports migrated bytes. */
 int yvex_backend_resident_prefetch(yvex_backend *backend,
                                    yvex_device_tensor *tensor,

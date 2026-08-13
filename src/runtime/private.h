@@ -278,7 +278,8 @@ int yvex_runtime_private_memory_capacity(
 unsigned long long yvex_runtime_private_system_reserve(
     unsigned long long capacity_bytes);
 int yvex_runtime_private_weight_placement_select(
-    yvex_backend_kind backend_kind, yvex_backend *backend,
+    const yvex_runtime_binding *binding, yvex_backend_kind backend_kind,
+    yvex_backend *backend,
     yvex_runtime_weight_placement *placement, yvex_error *err);
 int yvex_runtime_private_generation_capacity_preflight(
     const yvex_runtime_binding *binding, yvex_backend *backend,

@@ -84,6 +84,13 @@ int yvex_cuda_resident_map_readonly(yvex_backend *backend,
     return YVEX_OK;
 }
 
+int yvex_cuda_resident_prefetch_supported(const yvex_backend *backend)
+{
+    const yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    return state && !state->context_borrowed && state->driver.cuMemPrefetchAsync_v2 &&
+           state->driver.cuStreamSynchronize && yvex_cuda_launch_stream(backend);
+}
+
 int yvex_cuda_resident_alloc(yvex_backend *backend,
                              const yvex_backend_tensor_desc *desc,
                              yvex_device_tensor **out,
@@ -202,17 +209,16 @@ int yvex_cuda_resident_prefetch(yvex_backend *backend,
 
     if (prefetched_bytes) *prefetched_bytes = 0ull;
     if (!state || !tensor || !prefetched_bytes || !backend_tensor_owner_is(backend, tensor) ||
-        state->context_borrowed || !tensor->host_accessible ||
-        tensor->host_data != tensor->data || !state->driver.cuMemPrefetchAsync_v2 ||
-        !(stream = yvex_cuda_launch_stream(backend)) || !state->driver.cuStreamSynchronize) {
+        !yvex_cuda_resident_prefetch_supported(backend) || !tensor->host_accessible ||
+        tensor->host_data != tensor->data || !(stream = yvex_cuda_launch_stream(backend))) {
         yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "cuda.residency.prefetch",
-                       "one owner-local managed range and asynchronous prefetch are required");
+                       "one owner-local host-addressable range and asynchronous prefetch are required");
         return YVEX_ERR_UNSUPPORTED;
     }
     rc = yvex_cuda_set_current(backend, "cuda.residency.prefetch", err);
-    if (rc == YVEX_OK && getenv("YVEX_TEST_CUDA_MANAGED_PREFETCH_FAILURE")) {
+    if (rc == YVEX_OK && getenv("YVEX_TEST_CUDA_PREFETCH_FAILURE")) {
         yvex_error_set(err, YVEX_ERR_BACKEND, "cuda.residency.prefetch",
-                       "injected managed prefetch failure");
+                       "injected residency prefetch failure");
         rc = YVEX_ERR_BACKEND;
     }
     location.type = YVEX_CUDA_MEM_LOCATION_DEVICE;
