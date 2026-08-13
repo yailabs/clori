@@ -1662,62 +1662,46 @@ extern "C" __global__ void yvex_attention_topk(
     }
 }
 typedef struct {
-    const float *history_local;
-    const unsigned long long *history_local_positions;
-    unsigned long long history_local_count;
-    unsigned long long history_local_stride;
-    const float *current_kv;
-    const float *history_compressed;
-    const unsigned long long *history_compressed_positions;
-    unsigned long long history_compressed_count;
-    unsigned long long history_compressed_stride;
-    const float *current_compressed;
-    const unsigned long long *current_compressed_positions;
-    unsigned long long current_compressed_count;
-    unsigned long long current_compressed_stride;
+    const float *local;
+    const unsigned long long *local_positions;
+    const float *compressed;
+    const unsigned long long *compressed_positions;
     const unsigned long long *selected;
-    unsigned long long sliding_window;
-    unsigned long long ratio;
+    unsigned long long initial_local_count, local_stride, compressed_stride;
+    unsigned long long topk_capacity, sliding_window, ratio;
+    unsigned long long phase_start_position, token_count;
     unsigned int attention_class;
-    unsigned long long token_position;
     int candidate_block_visible;
 } attention_reduce_rows;
 
 static __device__ __forceinline__ const float *attention_reduce_row(
     const attention_reduce_rows *rows, unsigned long long pass,
-    unsigned long long candidate, int *visible)
+    unsigned long long ordinal, unsigned long long candidate,
+    unsigned long long local_offset, int *visible)
 {
     const float *row = NULL;
     unsigned long long position = ~0ull;
     *visible = 0;
     if (pass == 0ull) {
-        if (candidate < rows->history_local_count) {
-            row = rows->history_local + candidate * rows->history_local_stride;
-            position = rows->history_local_positions[candidate];
-        } else {
-            row = rows->current_kv;
-            position = rows->token_position;
-        }
+        candidate += local_offset;
+        row = rows->local + candidate * rows->local_stride;
+        position = rows->local_positions[candidate];
         if (!rows->candidate_block_visible) {
-            unsigned long long first = rows->token_position + 1ull > rows->sliding_window
-                ? rows->token_position + 1ull - rows->sliding_window : 0ull;
-            if (position < first || position > rows->token_position) return NULL;
+            unsigned long long token_position = rows->phase_start_position + ordinal;
+            unsigned long long first = token_position + 1ull > rows->sliding_window
+                ? token_position + 1ull - rows->sliding_window : 0ull;
+            if (position < first || position > token_position) return NULL;
         }
     } else {
-        unsigned long long index = rows->attention_class == 2u
-            ? candidate : rows->selected[candidate];
-        if (index < rows->history_compressed_count) {
-            row = rows->history_compressed + index * rows->history_compressed_stride;
-            position = rows->history_compressed_positions[index];
-        } else {
-            unsigned long long local = index - rows->history_compressed_count;
-            if (local >= rows->current_compressed_count) return NULL;
-            row = rows->current_compressed + local * rows->current_compressed_stride;
-            position = rows->current_compressed_positions[local];
-        }
-        if (!row || position > rows->token_position ||
+        unsigned long long token_position = rows->phase_start_position + ordinal;
+        unsigned long long index;
+        index = rows->attention_class == 2u
+            ? candidate : rows->selected[ordinal * rows->topk_capacity + candidate];
+        row = rows->compressed + index * rows->compressed_stride;
+        position = rows->compressed_positions[index];
+        if (position > token_position ||
             position > ~0ull - rows->ratio + 1ull ||
-            position + rows->ratio - 1ull > rows->token_position) return NULL;
+            position + rows->ratio - 1ull > token_position) return NULL;
     }
     *visible = row != NULL;
     return row;
@@ -1725,29 +1709,24 @@ static __device__ __forceinline__ const float *attention_reduce_row(
 
 extern "C" __global__ void yvex_attention_reduce(
     const float *query,
-    const float *history_local,
-    const unsigned long long *history_local_positions,
-    unsigned long long history_local_count,
-    unsigned long long history_local_stride,
-    const float *current_kv,
-    unsigned long long current_kv_stride,
-    const float *history_compressed,
-    const unsigned long long *history_compressed_positions,
-    unsigned long long history_compressed_count,
-    unsigned long long history_compressed_stride,
-    const float *current_compressed,
-    const unsigned long long *current_compressed_positions,
-    unsigned long long current_compressed_count,
-    unsigned long long current_compressed_stride,
+    const float *local,
+    const unsigned long long *local_positions,
+    unsigned long long initial_local_count,
+    unsigned long long local_stride,
+    const float *compressed,
+    const unsigned long long *compressed_positions,
+    unsigned long long compressed_stride,
     const unsigned long long *selected,
     const unsigned long long *selected_count_ptr,
+    unsigned long long topk_capacity,
     const float *sinks,
     unsigned long long query_heads,
     unsigned long long head_dim,
     unsigned long long sliding_window,
     unsigned long long ratio,
     unsigned int attention_class,
-    unsigned long long token_position,
+    unsigned long long phase_start_position,
+    unsigned long long token_count,
     int candidate_block_visible,
     float *out,
     int *status)
@@ -1757,70 +1736,71 @@ extern "C" __global__ void yvex_attention_reduce(
     __shared__ double denominator;
     __shared__ double probability;
     __shared__ double renormalization;
-    __shared__ unsigned long long selected_count;
     __shared__ int active;
-    unsigned long long head = (unsigned long long)blockIdx.x;
+    unsigned long long task = (unsigned long long)blockIdx.x;
+    unsigned long long ordinal = query_heads ? task / query_heads : token_count;
+    unsigned long long head = query_heads ? task % query_heads : query_heads;
+    unsigned long long token_position, local_offset, local_count, compressed_count;
     unsigned int thread = threadIdx.x;
     if (!status) return;
-    if (head >= query_heads) return;
-    if (!query || !current_kv || !sinks || !out || !query_heads || !head_dim ||
-        !sliding_window || token_position == ~0ull || attention_class > 2u ||
+    if (ordinal >= token_count || head >= query_heads) return;
+    if (!query || !local || !local_positions || !sinks || !out || !query_heads ||
+        !head_dim || !sliding_window || !token_count || attention_class > 2u ||
         (candidate_block_visible != 0 && candidate_block_visible != 1) ||
-        history_local_count == ~0ull ||
-        history_compressed_count > ~0ull - current_compressed_count ||
-        current_kv_stride < head_dim ||
-        (history_local_count && (!history_local || !history_local_positions ||
-                                 history_local_stride < head_dim)) ||
-        (history_compressed_count &&
-         (!history_compressed || !history_compressed_positions ||
-          history_compressed_stride < head_dim)) ||
-        (current_compressed_count &&
-         (!current_compressed || !current_compressed_positions ||
-          current_compressed_stride < head_dim)) ||
-        (attention_class == 1u && (!selected || !selected_count_ptr)) ||
+        phase_start_position > ~0ull - ordinal || local_stride < head_dim ||
+        (attention_class != 0u &&
+         (!compressed || !compressed_positions || compressed_stride < head_dim)) ||
+        (attention_class == 1u &&
+         (!selected || !selected_count_ptr || !topk_capacity)) ||
         (attention_class == 1u && ratio != 4ull) ||
         (attention_class == 2u && ratio != 128ull) ||
         (attention_class == 0u && ratio != 0ull)) {
         if (thread == 0u) atomicCAS(status, 0, 2);
         return;
     }
-    const float *q = query + head * head_dim;
+    token_position = phase_start_position + ordinal;
+    if (candidate_block_visible) {
+        local_offset = 0ull;
+        local_count = initial_local_count + token_count;
+    } else {
+        unsigned long long local_before = initial_local_count + ordinal;
+        unsigned long long history_count = token_position < sliding_window - 1ull
+            ? token_position : sliding_window - 1ull;
+        local_offset = local_before - history_count;
+        local_count = history_count + 1ull;
+    }
+    compressed_count = attention_class == 0u ? 0ull
+        : attention_class == 1u ? selected_count_ptr[ordinal]
+        : token_position / ratio + ((token_position + 1ull) % ratio == 0ull);
+    const float *q = query + (ordinal * query_heads + head) * head_dim;
     double scale = 1.0 / sqrt((double)head_dim);
-    unsigned long long local_total = history_local_count +
-                                     (candidate_block_visible ? 0ull : 1ull);
     if (thread == 0u) {
         active = *status == 0;
         maximum = (double)sinks[head];
         denominator = 1.0;
-        selected_count = selected_count_ptr ? *selected_count_ptr : 0ull;
     }
     __syncthreads();
     if (!active) return;
-    unsigned long long compressed_total = attention_class == 2u
-        ? history_compressed_count + current_compressed_count
-        : selected_count;
     attention_reduce_rows rows = {
-        history_local, history_local_positions, history_local_count,
-        history_local_stride, current_kv, history_compressed,
-        history_compressed_positions, history_compressed_count,
-        history_compressed_stride, current_compressed,
-        current_compressed_positions, current_compressed_count,
-        current_compressed_stride, selected, sliding_window, ratio,
-        attention_class, token_position, candidate_block_visible
+        local, local_positions, compressed, compressed_positions, selected,
+        initial_local_count, local_stride, compressed_stride, topk_capacity,
+        sliding_window, ratio, phase_start_position, token_count,
+        attention_class, candidate_block_visible
     };
     for (unsigned long long lane = (unsigned long long)thread; lane < head_dim;
          lane += (unsigned long long)blockDim.x)
-        out[head * head_dim + lane] = 0.0f;
+        out[(ordinal * query_heads + head) * head_dim + lane] = 0.0f;
     __syncthreads();
     /* Candidates retain source order, but a stable online softmax keeps each
        dot product single-use. When a new maximum arrives, every output lane
        and the accumulated denominator are renormalized before that candidate
        is incorporated. */
     for (unsigned long long pass = 0ull; pass < 2ull; ++pass) {
-        unsigned long long count = pass == 0ull ? local_total : compressed_total;
+        unsigned long long count = pass == 0ull ? local_count : compressed_count;
         for (unsigned long long candidate = 0ull; candidate < count; ++candidate) {
             int visible;
-            const float *row = attention_reduce_row(&rows, pass, candidate, &visible);
+            const float *row = attention_reduce_row(
+                &rows, pass, ordinal, candidate, local_offset, &visible);
             if (!visible) continue;
             double dot = 0.0;
             for (unsigned long long base = 0ull; base < head_dim;
@@ -1854,7 +1834,8 @@ extern "C" __global__ void yvex_attention_reduce(
             __syncthreads();
             for (unsigned long long lane = (unsigned long long)thread; lane < head_dim;
                  lane += (unsigned long long)blockDim.x) {
-                unsigned long long offset = head * head_dim + lane;
+                unsigned long long offset =
+                    (ordinal * query_heads + head) * head_dim + lane;
                 out[offset] = (float)__dadd_rn(
                     __dmul_rn((double)out[offset], renormalization),
                     __dmul_rn(probability, (double)row[lane]));
@@ -1870,9 +1851,11 @@ extern "C" __global__ void yvex_attention_reduce(
     if (!active) return;
     for (unsigned long long lane = (unsigned long long)thread; lane < head_dim;
          lane += (unsigned long long)blockDim.x) {
-        float published = (float)__ddiv_rn((double)out[head * head_dim + lane],
+        unsigned long long offset =
+            (ordinal * query_heads + head) * head_dim + lane;
+        float published = (float)__ddiv_rn((double)out[offset],
                                            denominator);
         if (!isfinite(published)) atomicCAS(status, 0, 1);
-        else out[head * head_dim + lane] = float_to_bf16_rne(published);
+        else out[offset] = float_to_bf16_rne(published);
     }
 }

@@ -1113,8 +1113,7 @@ static int attn_envelope_pre(attn_run *run) {
     unsigned long long streams = run->job->residual_stream_count, width = run->job->residual_stream_width;
     unsigned int shared_bytes;
     int rc;
-    if (run->job->operation_scope != YVEX_BACKEND_ATTENTION_SCOPE_ENVELOPE)
-        return YVEX_OK;
+    if (run->job->operation_scope != YVEX_BACKEND_ATTENTION_SCOPE_ENVELOPE) return YVEX_OK;
     if (streams > UINT_MAX / sizeof(double) - 1ull - YVEX_CUDA_ATTN_BLOCK)
         return attn_run_fail(
             run, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT,
@@ -1384,36 +1383,37 @@ static int attn_compress(attn_run *run) {
     return rc == YVEX_OK ? attn_index_topk(run) : rc;
 }
 static int attn_reduce(attn_run *run) {
-    unsigned long long group, low_width;
+    unsigned long long group, low_width, batch_blocks;
     unsigned int attention_class = (unsigned int)run->job->attention_class;
     int rc;
-    {
+    if (!run->ordinal) {
+        if (!yvex_core_u64_mul(run->job->token_count, run->job->query_heads,
+                               &batch_blocks) || batch_blocks > UINT_MAX)
+            return attn_run_fail(
+                run, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT,
+                "cuda.attention.reduce.rows", UINT_MAX, run->job->token_count,
+                YVEX_ERR_BOUNDS, "CUDA attention row grid exceeds launch bounds");
         void *params[] = {
-            &run->query, &run->history_local, &run->history_local_positions,
-            (void *)&run->job->local_count, (void *)&run->job->local_stride,
-            &run->raw_kv, (void *)&run->job->kv_width,
-            &run->history_compressed, &run->history_compressed_positions,
-            (void *)&run->job->compressed_count,
+            &run->phase_query, &run->phase_local, &run->phase_local_positions,
+            &run->initial_local_count, (void *)&run->job->local_stride,
+            &run->phase_compressed, &run->phase_compressed_positions,
             (void *)&run->job->compressed_stride,
-            &run->rolling[ROLL_MAIN].value,
-            &run->rolling[ROLL_MAIN].positions,
-            &run->rolling[ROLL_MAIN].value_count,
-            (void *)&run->job->head_dimension, &run->selected,
-            &run->selected_count, &run->sinks,
+            &run->phase_selected, &run->phase_selected_count,
+            &run->topk_capacity, &run->sinks,
             (void *)&run->job->query_heads, (void *)&run->job->head_dimension,
             (void *)&run->job->sliding_window,
             (void *)&run->job->compression_ratio, &attention_class,
-            (void *)&run->job->token_position,
+            &run->phase_start_position, (void *)&run->job->token_count,
             (void *)&run->job->candidate_block_visible, &run->attention,
             &run->device_status
         };
         rc = run->ops->launch(
             &run->resources, run->state->attention_reduce_function,
-            (unsigned int)run->job->query_heads, YVEX_CUDA_ATTN_BLOCK,
+            (unsigned int)batch_blocks, YVEX_CUDA_ATTN_BLOCK,
             YVEX_CUDA_ATTN_BLOCK * sizeof(double), params,
             "cuda.attention.reduce", run->failure, run->err);
+        if (rc != YVEX_OK) return rc;
     }
-    if (rc != YVEX_OK) return rc;
     if (run->ordinal + 1ull < run->job->token_count) return YVEX_OK;
     rc = run->ops->rope(
         &run->resources, run->phase_attention, run->job->query_heads,
@@ -1454,24 +1454,24 @@ static int attn_reduce(attn_run *run) {
 /* Apply optional mHC residual egress to completed core output without host materialization. */
 static int attn_envelope_post(attn_run *run) {
     unsigned long long expanded = run->job->residual_expanded_width;
-    unsigned long long streams = run->job->residual_stream_count;
+    unsigned long long streams = run->job->residual_stream_count, total;
     unsigned long long width = run->job->residual_stream_width;
     unsigned int grid;
     if (run->job->operation_scope != YVEX_BACKEND_ATTENTION_SCOPE_ENVELOPE)
         return YVEX_OK;
-    if (!expanded || expanded > UINT_MAX * (unsigned long long)YVEX_CUDA_ATTN_BLOCK)
+    if (run->ordinal) return YVEX_OK;
+    if (!expanded || !yvex_core_u64_mul(expanded, run->job->token_count, &total) ||
+        total > UINT_MAX * (unsigned long long)YVEX_CUDA_ATTN_BLOCK)
         return attn_run_fail(
             run, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT,
-            "cuda.attention.mhc_post", UINT_MAX, expanded,
+            "cuda.attention.mhc_post", UINT_MAX, run->job->token_count,
             YVEX_ERR_BOUNDS, "CUDA attention mHC egress extent is invalid");
-    grid = (unsigned int)((expanded + YVEX_CUDA_ATTN_BLOCK - 1ull) /
-                          YVEX_CUDA_ATTN_BLOCK);
+    grid = (unsigned int)((total + YVEX_CUDA_ATTN_BLOCK - 1ull) / YVEX_CUDA_ATTN_BLOCK);
     {
-        unsigned long long one = 1ull;
         void *params[] = {
-            &run->final_output, &run->input, &run->mhc_post,
-            &run->mhc_combination, &streams, &width,
-            &run->envelope_output, &one, &run->device_status
+            &run->phase_output, &run->phase_input, &run->phase_mhc_post,
+            &run->phase_mhc_combination, &streams, &width, &run->phase_envelope_output,
+            (void *)&run->job->token_count, &run->device_status
         };
         return run->ops->launch(
             &run->resources, run->state->residual_mhc_post_function, grid,
