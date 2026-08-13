@@ -1682,6 +1682,7 @@ int yvex_backend_report_build(const yvex_backend_report_request *request,
 {
     yvex_backend *backend = NULL;
     yvex_backend_options options;
+    yvex_backend_cuda_attention_graph_summary cuda;
     unsigned int i;
     int rc;
 
@@ -1744,6 +1745,18 @@ int yvex_backend_report_build(const yvex_backend_report_request *request,
         }
         backend_report_set_cuda_admission(
             report, &report->variants[YVEX_BACKEND_VARIANT_EMBED_F32_TO_F32]);
+        rc = yvex_backend_cuda_attention_graph_summary_get(backend, &cuda, err);
+        if (rc != YVEX_OK) {
+            yvex_backend_close(backend);
+            return rc;
+        }
+        report->kernel_bundle_native = cuda.kernel_bundle_native;
+        yvex_core_text_copy(report->kernel_bundle_architecture,
+                            sizeof(report->kernel_bundle_architecture),
+                            cuda.kernel_bundle_architecture);
+        yvex_core_text_copy(report->kernel_bundle_identity,
+                            sizeof(report->kernel_bundle_identity),
+                            cuda.cuda_build_identity);
         if (request->kind == YVEX_BACKEND_REPORT_CUDA_BANDWIDTH) {
             rc = yvex_backend_bandwidth_probe(backend, &report->bandwidth, err);
             if (rc != YVEX_OK) {

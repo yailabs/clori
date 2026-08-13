@@ -40,6 +40,10 @@ run the bounded bandwidth fixture:
 ./yvex system cuda bandwidth
 ```
 
+The first command reports whether the admitted bundle is native, its exact architecture and its
+content identity. The default build selects native code only when local hardware detection is
+unambiguous and supported by `nvcc`; otherwise it remains an explicitly reported portable-PTX build.
+
 The second command performs five timed samples over one 32 MiB working set and
 reports CUDA streaming traffic, asynchronous D2D copy and coherent host access
 separately. Its evidence identity binds every elapsed sample and the admitted

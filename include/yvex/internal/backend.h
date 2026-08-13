@@ -533,9 +533,10 @@ typedef struct {
     yvex_backend_report_kind kind;
     yvex_backend_kind backend_kind;
     yvex_backend_status backend_status;
-    int exit_code, available, has_device_info;
+    int exit_code, available, has_device_info, kernel_bundle_native;
     yvex_backend_device_info device_info;
-    char device_name[128], reason[256];
+    char device_name[128], reason[256], kernel_bundle_architecture[16];
+    char kernel_bundle_identity[YVEX_SHA256_HEX_BYTES];
     yvex_backend_memory_stats memory;
     int capabilities[YVEX_BACKEND_CAP_OP_ATTENTION + 1];
     yvex_backend_capability_result variants[YVEX_BACKEND_VARIANT_COUNT];

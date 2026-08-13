@@ -153,8 +153,9 @@ it; the compiled profile records whether eager attention remains.
 Unsupported CUDA operations fail closed; no requested CUDA execution silently
 falls back to CPU.
 
-The CUDA kernel owner emits portable PTX and, for an explicit `sm_121` build,
-an independently identified native CUBIN. Module admission selects the native
+The CUDA kernel owner always emits portable PTX. The default `auto` build also emits an
+independently identified native CUBIN when one unambiguous local compute capability is supported
+by the admitted `nvcc`; an explicit `YVEX_CUDA_ARCH` remains authoritative. Module admission selects the native
 image only when the runtime device is capability 12.1 and includes image class,
 architecture and ordered module bytes in kernel-bundle identity v3. A
 competitive native gate refuses PTX-only selection. Binary inspection proves
