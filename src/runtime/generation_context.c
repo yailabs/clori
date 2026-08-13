@@ -1069,6 +1069,7 @@ static int generation_execution_profile_build(
             : YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
     request.moe_resolution =
         context->options.backend == YVEX_BACKEND_KIND_CUDA &&
+                cuda.kernel_bundle_native &&
                 context->options.evidence_profile == YVEX_EXECUTION_EVIDENCE_PRODUCTION &&
                 yvex_backend_moe_operations_get(session_view->backend) != NULL
             ? YVEX_EXECUTION_RESOLUTION_EXACT

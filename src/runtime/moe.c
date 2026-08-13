@@ -66,29 +66,30 @@ static int runtime_moe_activation(
     yvex_execution_activation_class *activation,
     const char **kernel_family, yvex_error *err)
 {
-    const yvex_physical_execution_summary *summary = context && context->model_view
-        ? yvex_physical_execution_ir_summary(context->model_view->physical_execution) : NULL;
-    unsigned long long index;
-    if (!summary || !binding || !activation || !kernel_family)
+    const yvex_physical_execution_ir *physical = context && context->model_view
+        ? context->model_view->physical_execution : NULL;
+    const yvex_physical_execution_decision *decision = physical && binding
+        ? yvex_physical_execution_ir_decision_at(physical, binding->tensor_id) : NULL;
+    const yvex_compiled_execution_profile *profile =
+        context ? context->options.execution_profile : NULL;
+    int degraded = profile &&
+        profile->moe_resolution == YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
+    if (!decision || !activation || !kernel_family)
         return runtime_moe_refuse(
             err, YVEX_ERR_INVALID_ARG, "MoE physical activation owners are unavailable");
-    for (index = 0ull; index < summary->decision_count; ++index) {
-        const yvex_physical_execution_decision *decision =
-            yvex_physical_execution_ir_decision_at(
-                context->model_view->physical_execution, index);
-        if (!decision || decision->terminal_tensor_id != binding->tensor_id) continue;
-        if (decision->role != binding->role ||
-            decision->canonical_qtype != binding->qtype ||
-            decision->canonical_row_width != binding->row_width ||
-            decision->canonical_row_count != binding->row_count)
-            return runtime_moe_refuse(
-                err, YVEX_ERR_STATE, "MoE physical execution decision is stale");
-        *activation = decision->activation;
-        *kernel_family = decision->kernel_family;
-        return YVEX_OK;
-    }
-    return runtime_moe_refuse(
-        err, YVEX_ERR_STATE, "MoE tensor has no physical execution decision");
+    if (decision->terminal_tensor_id != binding->tensor_id ||
+        decision->role != binding->role || decision->canonical_qtype != binding->qtype ||
+        decision->canonical_row_width != binding->row_width ||
+        decision->canonical_row_count != binding->row_count)
+        return runtime_moe_refuse(
+            err, YVEX_ERR_STATE, "MoE physical execution decision is stale");
+    if (degraded && decision->fallback != YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE)
+        return runtime_moe_refuse(
+            err, YVEX_ERR_UNSUPPORTED, "MoE physical execution fallback is not admitted");
+    *activation = degraded && decision->activation == YVEX_EXECUTION_ACTIVATION_DEVICE_ENCODED
+                      ? YVEX_EXECUTION_ACTIVATION_DEVICE_F32 : decision->activation;
+    *kernel_family = decision->kernel_family;
+    return YVEX_OK;
 }
 
 static int runtime_moe_row_bytes(const yvex_materialized_tensor_binding *binding,
