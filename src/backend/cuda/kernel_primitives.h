@@ -157,13 +157,10 @@ static __device__ float qtype_value(const unsigned char *encoded,
     if (qtype == YVEX_GGUF_QTYPE_F32) {
         return __uint_as_float(qtype_load_u32(encoded + index * 4ull));
     }
-    if (qtype == YVEX_GGUF_QTYPE_F16) {
-        return f16_bits_to_float(
-            qtype_load_u16(encoded + index * 2ull));
-    }
-    if (qtype == YVEX_GGUF_QTYPE_BF16) {
-        return bf16_bits_to_float(
-            qtype_load_u16(encoded + index * 2ull));
+    if (qtype == YVEX_GGUF_QTYPE_F16 || qtype == YVEX_GGUF_QTYPE_BF16) {
+        unsigned short bits = qtype_load_u16(encoded + index * 2ull);
+        return qtype == YVEX_GGUF_QTYPE_F16
+            ? f16_bits_to_float(bits) : bf16_bits_to_float(bits);
     }
     if (qtype == YVEX_GGUF_QTYPE_I32) {
         unsigned int raw = qtype_load_u32(encoded + index * 4ull);
@@ -232,13 +229,25 @@ static __device__ float qtype_warp_dot(const unsigned char *row, const float *ve
                                        unsigned long long width, unsigned int qtype,
                                        int *status)
 {
+    /* Dense source types select once per row so the inner dot has no qtype dispatch. */
     unsigned int lane = threadIdx.x & 31u;
     float sum = 0.0f;
     if (!row || !vector || !width) {
         if (!lane) atomicCAS(status, 0, 2);
+    } else if (qtype == YVEX_GGUF_QTYPE_F32) for (unsigned long long i = lane; i < width; i += 32ull) {
+        float weight = __uint_as_float(qtype_load_u32(row + i * 4ull)), value = vector[i];
+        if (!isfinite(weight) || !isfinite(value)) atomicCAS(status, 0, 1);
+        else sum = fmaf(weight, value, sum);
+    } else if (qtype == YVEX_GGUF_QTYPE_F16) for (unsigned long long i = lane; i < width; i += 32ull) {
+        float weight = f16_bits_to_float(qtype_load_u16(row + i * 2ull)), value = vector[i];
+        if (!isfinite(weight) || !isfinite(value)) atomicCAS(status, 0, 1);
+        else sum = fmaf(weight, value, sum);
+    } else if (qtype == YVEX_GGUF_QTYPE_BF16) for (unsigned long long i = lane; i < width; i += 32ull) {
+        float weight = bf16_bits_to_float(qtype_load_u16(row + i * 2ull)), value = vector[i];
+        if (!isfinite(weight) || !isfinite(value)) atomicCAS(status, 0, 1);
+        else sum = fmaf(weight, value, sum);
     } else for (unsigned long long i = lane; i < width; i += 32ull) {
-        float weight = qtype_value(row, i, qtype);
-        float value = vector[i];
+        float weight = qtype_value(row, i, qtype), value = vector[i];
         if (!isfinite(weight) || !isfinite(value)) atomicCAS(status, 0, 1);
         else sum = fmaf(weight, value, sum);
     }

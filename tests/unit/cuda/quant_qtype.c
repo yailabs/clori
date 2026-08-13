@@ -185,6 +185,91 @@ static void quant_q8_reference(const float *input, float *output,
     }
 }
 
+static int quant_cuda_dense_matvec(yvex_backend *backend, unsigned int qtype)
+{
+    enum { ROWS = 3, WIDTH = 64 };
+    yvex_backend_tensor_desc descriptor = {0};
+    yvex_device_tensor *resident = NULL, *input = NULL, *output = NULL;
+    unsigned char *mapped = NULL, *encoded = NULL;
+    float source[ROWS * WIDTH], vector[WIDTH], expected[ROWS], actual[ROWS];
+    yvex_backend_cuda_operation_facts facts;
+    yvex_quant_failure failure;
+    yvex_error err;
+    size_t row_bytes = 0u;
+    unsigned long long index;
+    unsigned int row;
+
+    for (index = 0ull; index < WIDTH; ++index)
+        vector[index] = (float)((int)(index % 19ull) - 9) /
+                        (float)(7ull + index % 5ull);
+    for (index = 0ull; index < ROWS * WIDTH; ++index)
+        source[index] = (float)((int)((index * 7ull + 3ull) % 31ull) - 15) /
+                        (float)(3ull + index % 7ull);
+    for (row = 0u; row < ROWS; ++row) {
+        size_t current_bytes = 0u;
+        YVEX_TEST_ASSERT(quant_cuda_encode_row(
+                             qtype, source + row * WIDTH, WIDTH,
+                             &encoded, &current_bytes),
+                         "dense encoded matvec row encodes canonically");
+        if (!row) {
+            row_bytes = current_bytes;
+            descriptor.name = "dense_matvec_resident";
+            descriptor.dtype = YVEX_DTYPE_I8;
+            descriptor.rank = 1u;
+            descriptor.dims[0] = descriptor.bytes = ROWS * row_bytes;
+            YVEX_TEST_ASSERT(yvex_backend_resident_alloc(
+                                 backend, &descriptor, &resident, &mapped, &err) == YVEX_OK,
+                             "dense encoded matvec resident matrix allocates");
+        }
+        YVEX_TEST_ASSERT(current_bytes == row_bytes,
+                         "dense encoded matvec rows share exact geometry");
+        memcpy(mapped + row * row_bytes, encoded, row_bytes);
+        free(encoded);
+        encoded = NULL;
+        YVEX_TEST_ASSERT(yvex_quant_cpu_dot(
+                             qtype, mapped + row * row_bytes, row_bytes,
+                             vector, WIDTH, &expected[row], &failure, &err) == YVEX_OK,
+                         "dense encoded matvec CPU reference succeeds");
+    }
+    YVEX_TEST_ASSERT(yvex_backend_resident_attach(
+                         backend, mapped, ROWS * row_bytes, resident, 23ull, &err) == YVEX_OK,
+                     "dense encoded matvec matrix attaches");
+    descriptor.name = "dense_matvec_input";
+    descriptor.dtype = YVEX_DTYPE_F32;
+    descriptor.dims[0] = WIDTH;
+    descriptor.bytes = sizeof(vector);
+    YVEX_TEST_ASSERT(yvex_backend_tensor_alloc(
+                         backend, &descriptor, &input, &err) == YVEX_OK &&
+                         yvex_backend_tensor_write(
+                             backend, input, vector, sizeof(vector), &err) == YVEX_OK,
+                     "dense encoded matvec input becomes device resident");
+    descriptor.name = "dense_matvec_output";
+    descriptor.dims[0] = ROWS;
+    descriptor.bytes = sizeof(actual);
+    YVEX_TEST_ASSERT(yvex_backend_tensor_alloc(
+                         backend, &descriptor, &output, &err) == YVEX_OK,
+                     "dense encoded matvec output allocates");
+    YVEX_TEST_ASSERT(yvex_backend_cuda_encoded_matvec(
+                         backend, mapped, ROWS * row_bytes, qtype,
+                         ROWS, WIDTH, row_bytes, 1ull, input, NULL, 0ull,
+                         NULL, output, 0, &facts, &err) == YVEX_OK &&
+                         facts.kernel_launches == 1ull && !facts.tensor_core_launches &&
+                         facts.temporary_bytes == sizeof(int) &&
+                         yvex_backend_tensor_read(
+                             backend, output, actual, sizeof(actual), &err) == YVEX_OK,
+                     "dense encoded matvec executes one warp-owned projection");
+    for (row = 0u; row < ROWS; ++row)
+        YVEX_TEST_ASSERT(fabs((double)actual[row] - expected[row]) <=
+                                 1e-5 * (1.0 + fabs((double)expected[row])),
+                             "dense encoded matvec matches the independent CPU reference");
+    YVEX_TEST_ASSERT(yvex_backend_resident_detach(backend, &err) == YVEX_OK &&
+                         yvex_backend_tensor_release(backend, &output, &err) == YVEX_OK &&
+                         yvex_backend_tensor_release(backend, &input, &err) == YVEX_OK &&
+                         yvex_backend_tensor_release(backend, &resident, &err) == YVEX_OK,
+                     "dense encoded matvec releases CUDA ownership");
+    return 0;
+}
+
 static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
 {
     enum { ROWS = 5, SPARSE_INPUT_ROWS = 3, INPUT_ROWS = 60, WIDTH = 4096, HEAD = 173 };
@@ -1344,6 +1429,9 @@ int yvex_cuda_test_quant_qtype(void)
                 yvex_gguf_qtype_name(cases[index].qtype),
                 maximum_difference, maximum_relative_difference);
     }
+    for (index = 0u; index < 3u; ++index)
+        YVEX_TEST_ASSERT(quant_cuda_dense_matvec(backend, cases[index].qtype) == 0,
+                         "dense source qtype matvec specializes outside the inner dot");
     YVEX_TEST_ASSERT(quant_cuda_q8_matvec(backend, YVEX_GGUF_QTYPE_Q8_0) == 0,
                      "Q8_0 production Q8 activation matvec");
     YVEX_TEST_ASSERT(quant_cuda_q8_matvec(backend, YVEX_GGUF_QTYPE_Q2_K) == 0,
