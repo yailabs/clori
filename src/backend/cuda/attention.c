@@ -69,8 +69,7 @@ typedef struct {
     attn_initializer initializers[YVEX_CUDA_ATTN_INITIALIZERS]; size_t initializer_count;
     CUdeviceptr weight[YVEX_BACKEND_ATTENTION_WEIGHT_COUNT];
     CUdeviceptr input, core_input, q_low, query, raw_kv, download_stage;
-    CUdeviceptr sinks, attention, low, final_output, envelope_output;
-    CUdeviceptr mhc_mix, mhc_scale, mhc_base, mhc_post, mhc_combination;
+    CUdeviceptr sinks, attention;
     attn_rolling_run rolling[ROLL_COUNT];
     CUdeviceptr index_query, index_weights, history_local, history_local_positions;
     CUdeviceptr history_compressed, history_compressed_positions;
@@ -1044,16 +1043,6 @@ static void attn_phase_bind(attn_run *run, unsigned long long ordinal) {
     run->query = run->phase_query + ordinal * run->query_width * float_size;
     run->raw_kv = run->phase_raw_kv + ordinal * job->kv_width * float_size;
     run->attention = run->phase_attention + ordinal * run->query_width * float_size;
-    run->low = run->phase_low + ordinal * run->low_count * float_size;
-    run->final_output = run->phase_output + ordinal * job->hidden_width * float_size;
-    run->envelope_output = run->phase_envelope_output +
-        ordinal * job->residual_expanded_width * float_size;
-    run->mhc_mix = run->phase_mhc_mix + ordinal * job->mhc_mixing_rows * float_size;
-    run->mhc_scale = run->phase_mhc_scale + ordinal * 3ull * float_size;
-    run->mhc_base = run->phase_mhc_base + ordinal * job->mhc_mixing_rows * float_size;
-    run->mhc_post = run->phase_mhc_post + ordinal * job->residual_stream_count * float_size;
-    run->mhc_combination = run->phase_mhc_combination +
-        ordinal * job->residual_stream_count * job->residual_stream_count * float_size;
     run->index_query = run->phase_index_query + ordinal * run->index_query_extent * float_size;
     run->index_weights = run->phase_index_weights + ordinal * job->indexer_heads * float_size;
     run->selected = run->phase_selected + ordinal * run->topk_capacity * u64_size;
@@ -1111,13 +1100,16 @@ static void attn_phase_bind(attn_run *run, unsigned long long ordinal) {
 }
 static int attn_envelope_pre(attn_run *run) {
     unsigned long long streams = run->job->residual_stream_count, width = run->job->residual_stream_width;
+    unsigned long long rows = run->job->token_count;
     unsigned int shared_bytes;
     int rc;
     if (run->job->operation_scope != YVEX_BACKEND_ATTENTION_SCOPE_ENVELOPE) return YVEX_OK;
-    if (streams > UINT_MAX / sizeof(double) - 1ull - YVEX_CUDA_ATTN_BLOCK)
+    if (run->ordinal) return YVEX_OK;
+    if (rows > UINT_MAX ||
+        streams > UINT_MAX / sizeof(double) - 1ull - YVEX_CUDA_ATTN_BLOCK)
         return attn_run_fail(
             run, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT,
-            "cuda.attention.mhc_pre", UINT_MAX, streams,
+            "cuda.attention.mhc_pre", UINT_MAX, rows,
             YVEX_ERR_BOUNDS, "CUDA mHC shared geometry exceeds launch bounds");
     shared_bytes = (unsigned int)((streams + 1ull + YVEX_CUDA_ATTN_BLOCK) *
                                   sizeof(double));
@@ -1125,7 +1117,7 @@ static int attn_envelope_pre(attn_run *run) {
         &run->resources,
         &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_MHC_FUNCTION],
         run->weight[YVEX_BACKEND_ATTENTION_WEIGHT_MHC_FUNCTION], 0ull,
-        run->job->mhc_mixing_rows, 1ull, run->input, run->mhc_mix, 0,
+        run->job->mhc_mixing_rows, rows, run->phase_input, run->phase_mhc_mix, 0,
         run->device_status, "cuda.attention.mhc_function",
         run->failure, run->err);
     if (rc == YVEX_OK)
@@ -1133,33 +1125,35 @@ static int attn_envelope_pre(attn_run *run) {
             &run->resources,
             &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_MHC_SCALE],
             run->weight[YVEX_BACKEND_ATTENTION_WEIGHT_MHC_SCALE], 0ull, 3ull,
-            run->mhc_scale, run->device_status,
+            run->phase_mhc_scale, run->device_status,
             "cuda.attention.mhc_scale", run->failure, run->err);
     if (rc == YVEX_OK)
         rc = run->ops->decode(
             &run->resources,
             &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_MHC_BASE],
             run->weight[YVEX_BACKEND_ATTENTION_WEIGHT_MHC_BASE], 0ull,
-            run->job->mhc_mixing_rows, run->mhc_base, run->device_status,
+            run->job->mhc_mixing_rows, run->phase_mhc_base, run->device_status,
             "cuda.attention.mhc_base", run->failure, run->err);
     if (rc == YVEX_OK) {
-        unsigned long long one = 1ull;
         void *params[] = {
-            &run->input, &run->mhc_mix, &run->mhc_scale, &run->mhc_base,
+            &run->phase_input, &run->phase_mhc_mix, &run->phase_mhc_scale,
+            &run->phase_mhc_base,
             &streams, &width, (void *)&run->job->mhc_mixing_rows,
             (void *)&run->job->mhc_sinkhorn_iterations,
             (void *)&run->job->rms_epsilon, (void *)&run->job->mhc_epsilon,
-            (void *)&run->job->mhc_residual_post_multiplier, &run->core_input,
-            &run->mhc_post, &run->mhc_combination, &one, &run->device_status
+            (void *)&run->job->mhc_residual_post_multiplier, &run->phase_core_input,
+            &run->phase_mhc_post, &run->phase_mhc_combination, &rows,
+            &run->device_status
         };
         rc = run->ops->launch(
-            &run->resources, run->state->residual_mhc_pre_function, 1u,
+            &run->resources, run->state->residual_mhc_pre_function,
+            (unsigned int)rows,
             YVEX_CUDA_ATTN_BLOCK, shared_bytes, params,
             "cuda.attention.mhc_pre", run->failure, run->err);
     }
     if (rc == YVEX_OK)
         rc = run->ops->weighted_norm(
-            &run->resources, run->core_input, run->job->hidden_width, 1ull,
+            &run->resources, run->phase_core_input, run->job->hidden_width, rows,
             &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_INPUT_NORM],
             run->weight[YVEX_BACKEND_ATTENTION_WEIGHT_INPUT_NORM],
             run->job->rms_epsilon, run->device_status,
