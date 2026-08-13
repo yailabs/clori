@@ -294,7 +294,7 @@ static void moe_encoded_output(
 
 static int assert_encoded_moe(yvex_backend *backend)
 {
-    enum { ROWS = 32, WIDTH = 512, EXPERTS = 256, TOPK = 6, PAIRS = ROWS * TOPK };
+    enum { ROWS = 192, WIDTH = 512, EXPERTS = 256, TOPK = 6, PAIRS = ROWS * TOPK };
     yvex_backend_tensor_desc descriptor = {0};
     unsigned char *workspace_poison = NULL;
     yvex_device_tensor *anchor = NULL, *input = NULL, *small_input = NULL;

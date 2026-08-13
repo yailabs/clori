@@ -1010,8 +1010,8 @@ static int moe_cuda_batch_decode(moe_cuda_batch *batch,
         weight->row_width, output, batch->status, stage, &batch->failure, err);
 }
 
-/* SM121 Nsight places sparse low-bit decode below the IMMA crossover and grouped work above it. */
-#define MOE_CUDA_SM121_TENSORCORE_PAIR_CROSSOVER 64ull
+/* SM121 profiling keeps sparse decode and short grouped prefill below the IMMA crossover. */
+#define MOE_CUDA_SM121_TENSORCORE_PAIR_CROSSOVER 1024ull
 
 static int moe_cuda_encoded_expert_policy(
     const moe_cuda_batch *batch, const yvex_moe_weight_view *gate,
