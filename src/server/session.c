@@ -1268,22 +1268,25 @@ static int session_turn(server_session_registry *registry,
     turn_sink sink;
     unsigned long long prior_messages = session->message_count;
     unsigned long long prior_transcript = session->transcript_count;
+    unsigned long long turn_maximum = request->provider_request
+        ? request->provider_request->maximum_output_tokens : request->maximum_new_tokens;
     yvex_error primary_error;
-    int generation_rc, extends = 1;
-    int rc;
+    int generation_rc, extends = 1, rc;
+    if (!request->provider_request && !turn_maximum) turn_maximum = registry->options.maximum_new_tokens;
     {
-        unsigned long long maximum = request->provider_request
-                                         ? request->provider_request->maximum_output_tokens
-                                         : request->maximum_new_tokens;
         int provider_valid = request->provider_request &&
             yvex_provider_request_validate(request->provider_request, err) == YVEX_OK;
         int native_valid = request->prompt && request->prompt_bytes &&
             request->prompt_bytes < SESSION_TRANSCRIPT_BYTES;
-        if ((!provider_valid && !native_valid) || !maximum ||
-            maximum > registry->options.maximum_new_tokens) {
-        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.session.turn",
-                       "nonempty bounded prompt and token limit are required");
-        return YVEX_ERR_INVALID_ARG;
+        if (turn_maximum > registry->options.maximum_new_tokens) {
+            yvex_error_set(err, YVEX_ERR_BOUNDS, "server.session.turn",
+                           "requested completion limit exceeds the admitted server envelope");
+            return YVEX_ERR_BOUNDS;
+        }
+        if ((!provider_valid && !native_valid) || !turn_maximum) {
+            yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.session.turn",
+                           "nonempty bounded prompt and token limit are required");
+            return YVEX_ERR_INVALID_ARG;
         }
     }
     if (session->state != YVEX_SERVER_SESSION_READY &&
@@ -1362,9 +1365,7 @@ static int session_turn(server_session_registry *registry,
     turn.prompt = &prompt;
     turn.committed_prefix_token_ids = session->committed_tokens;
     turn.committed_prefix_token_count = session->committed_count;
-    turn.maximum_new_tokens = request->provider_request
-                                  ? request->provider_request->maximum_output_tokens
-                                  : request->maximum_new_tokens;
+    turn.maximum_new_tokens = turn_maximum;
     turn.prompt_token_ids = session->prompt_tokens;
     turn.prompt_token_capacity = session->token_capacity;
     turn.fragment_sink = turn_fragment;

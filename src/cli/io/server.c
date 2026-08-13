@@ -253,7 +253,7 @@ static void options_defaults(yvex_server_options *options,
                                    : YVEX_SERVER_GENERATION_TARGET_ONLY;
     options->context_capacity = profile->context_capacity;
     options->prefill_chunk_tokens = 64u;
-    options->maximum_new_tokens = 256u;
+    options->maximum_new_tokens = 0u;
     options->maximum_output_bytes = 1048576u;
     options->maximum_sessions = 8u;
     options->request_queue_capacity = 16u;
@@ -322,6 +322,8 @@ static int command_options_parse(yvex_server_options *options, int argc,
         }
         index++;
     }
+    if (!options->maximum_new_tokens)
+        options->maximum_new_tokens = options->context_capacity;
     return 1;
 }
 

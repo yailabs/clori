@@ -88,7 +88,7 @@ cat >"$home/.local/share/yvex/models.local.json" <<EOF
 EOF
 
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server tiny-executable-cpu-complete \
-    --backend cpu --ctx 8 --generation-mode target-only --max-new-tokens 1 \
+    --backend cpu --ctx 8 --generation-mode target-only \
     --parallel 2 --console off --openai off >"$root/server.out" 2>"$root/server.err" &
 server_pid=$!
 
@@ -107,6 +107,7 @@ done
 test "$ready" -eq 1
 grep -F '"model_open_count":1' "$root/status.json" >/dev/null
 grep -F '"context_capacity":8' "$root/status.json" >/dev/null
+grep -F '"maximum_new_tokens":8' "$root/status.json" >/dev/null
 grep -F '"parallel":2' "$root/status.json" >/dev/null
 grep -F '"independent_session_scheduling":true' "$root/status.json" >/dev/null
 grep -F '"continuous_batching":false' "$root/status.json" >/dev/null
@@ -120,6 +121,19 @@ HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session new persisted \
     >"$root/session.new"
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session new independent \
     >"$root/session.independent.new"
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session new adaptive \
+    >"$root/session.adaptive.new"
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --session adaptive a \
+    --strategy greedy >"$root/run.adaptive.out" 2>"$root/run.adaptive.err"
+grep -Fx 'ok' "$root/run.adaptive.out" >/dev/null
+grep -F 'stop EOS' "$root/run.adaptive.err" >/dev/null
+if HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run a --strategy greedy \
+    --max-new-tokens 9 >"$root/run.oversized.out" 2>"$root/run.oversized.err"; then
+    printf 'oversized explicit completion limit was admitted\n' >&2
+    exit 1
+fi
+grep -F 'requested completion limit exceeds the admitted server envelope' \
+    "$root/run.oversized.err" >/dev/null
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --session persisted a \
     --strategy greedy --max-new-tokens 1 >"$root/run.out" 2>"$root/run.err" &
 first_run_pid=$!
@@ -195,7 +209,7 @@ grep -F '"phase":"graphs"' "$root/server.log.jsonl" >/dev/null
 grep -F '"phase":"tensorcore"' "$root/server.log.jsonl" >/dev/null
 
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server tiny-executable-cpu-complete \
-    --backend cpu --ctx 8 --generation-mode target-only --max-new-tokens 1 \
+    --backend cpu --ctx 8 --generation-mode target-only \
     --parallel 2 --console off --openai off >>"$root/server.out" 2>>"$root/server.err" &
 server_pid=$!
 ready=0

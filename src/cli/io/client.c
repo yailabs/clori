@@ -406,7 +406,7 @@ static void turn_options_init(client_turn_options *options)
     yvex_provider_request defaults;
     yvex_provider_request_default(&defaults);
     memset(options, 0, sizeof(*options));
-    options->maximum_new_tokens = defaults.maximum_output_tokens;
+    options->maximum_new_tokens = 0u;
     options->stochastic = defaults.sampling.stochastic;
     options->seed_present = defaults.sampling.seed_present;
     options->seed = defaults.sampling.seed;
@@ -1464,11 +1464,8 @@ static int chat(const char *session_name, unsigned long long maximum_new_tokens)
 static int chat_command(int argc, char **argv)
 {
     const char *session = "main";
-    yvex_provider_request defaults;
-    unsigned long long maximum_new_tokens;
+    unsigned long long maximum_new_tokens = 0u;
     int index, saw_session = 0, saw_maximum = 0;
-    yvex_provider_request_default(&defaults);
-    maximum_new_tokens = defaults.maximum_output_tokens;
     for (index = 2; index < argc; ++index) {
         if (!strcmp(argv[index], "--session") && !saw_session && index + 1 < argc) {
             session = argv[++index];
