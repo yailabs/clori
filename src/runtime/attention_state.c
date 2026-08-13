@@ -12,6 +12,27 @@ static int bridge_refuse(yvex_error *err, yvex_status status, const char *reason
     return status;
 }
 
+int yvex_runtime_private_attention_state_pristine(
+    const yvex_attention_state_provider *provider, int *pristine,
+    yvex_error *err)
+{
+    yvex_graph_attention_state_summary summary = {0};
+
+    if (pristine) *pristine = 0;
+    if (!provider || !provider->summary || !pristine)
+        return bridge_refuse(
+            err, YVEX_ERR_INVALID_ARG,
+            "attention state scope availability is invalid");
+    if (provider->summary(provider->context, &summary, err) != YVEX_OK)
+        return err ? err->code : YVEX_ERR_STATE;
+    *pristine = !summary.invalidated && !summary.cancelled &&
+                !summary.transaction_active && !summary.candidate_active &&
+                !summary.abort_required && !summary.prepared_layer_count &&
+                !summary.staged_layer_count &&
+                !summary.committed_sequence_length && !summary.next_position;
+    return YVEX_OK;
+}
+
 static int bridge_begin(
     void *context, unsigned long long layer_ordinal,
     const yvex_attention_layer_plan *layer,

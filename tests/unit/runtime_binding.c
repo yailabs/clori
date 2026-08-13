@@ -3521,7 +3521,9 @@ static int test_runtime_probe_consumer_boundary(
     yvex_attention_probe_result result;
     yvex_runtime_model_failure model_failure;
     yvex_attention_failure attention_failure;
+    yvex_attention_failure draft_attention_failure;
     yvex_graph_attention_state_summary state_before, state_after, forked_state;
+    yvex_graph_attention_state_summary draft_state;
     yvex_runtime_state_residency_summary state_residency;
     yvex_runtime_state_store_summary saved_state, restored_state;
     yvex_runtime_session_prefix_summary prefix_summary, attached_prefix;
@@ -3686,6 +3688,23 @@ static int test_runtime_probe_consumer_boundary(
                 &state_before, &err) == YVEX_OK &&
             state_before.committed_sequence_length == 1ull,
         "successful state transaction commits one prefix before persistence");
+    memset(&draft_attention_failure, 0, sizeof(draft_attention_failure));
+    YVEX_TEST_ASSERT(
+        yvex_attention_state_provider_open_persistent(
+            model_view->attention, 1ull << 20u,
+            &session->draft_attention_state_provider,
+            &draft_attention_failure, &err) == YVEX_OK,
+        "runtime fixture opens a pristine optional draft scope");
+    session->draft_attention_state_provider_ready = 1;
+    session->view.draft_attention_state_provider =
+        &session->draft_attention_state_provider;
+    YVEX_TEST_ASSERT(
+        session->draft_attention_state_provider.summary(
+            session->draft_attention_state_provider.context,
+            &draft_state, &err) == YVEX_OK &&
+            !draft_state.prepared_layer_count &&
+            !draft_state.committed_sequence_length,
+        "optional draft scope remains physically pristine");
     YVEX_TEST_ASSERT(
         yvex_runtime_session_prefix_capture(
             session, 1ull, &prefix, &prefix_summary, &model_failure, &err) ==
@@ -3708,6 +3727,16 @@ static int test_runtime_probe_consumer_boundary(
             &forked_session, model, &session_request, &model_failure, &err) ==
             YVEX_OK,
         "empty runtime session opens before prefix attachment");
+    memset(&draft_attention_failure, 0, sizeof(draft_attention_failure));
+    YVEX_TEST_ASSERT(
+        yvex_attention_state_provider_open_persistent(
+            model_view->attention, 1ull << 20u,
+            &forked_session->draft_attention_state_provider,
+            &draft_attention_failure, &err) == YVEX_OK,
+        "fork destination opens the same pristine optional draft scope");
+    forked_session->draft_attention_state_provider_ready = 1;
+    forked_session->view.draft_attention_state_provider =
+        &forked_session->draft_attention_state_provider;
     rc = yvex_runtime_session_prefix_attach(
         forked_session, prefix, &attached_prefix, &model_failure, &err);
     YVEX_TEST_ASSERT(
@@ -3723,8 +3752,13 @@ static int test_runtime_probe_consumer_boundary(
                         &forked_state, &err) == YVEX_OK &&
             forked_state.committed_sequence_length == 1ull &&
             strcmp(forked_state.state_content_identity,
-                   state_before.state_content_identity) == 0,
-        "attached runtime prefix preserves committed state content");
+                   state_before.state_content_identity) == 0 &&
+            forked_session->draft_attention_state_provider.summary(
+                forked_session->draft_attention_state_provider.context,
+                &draft_state, &err) == YVEX_OK &&
+            !draft_state.prepared_layer_count &&
+            !draft_state.committed_sequence_length,
+        "attached target prefix preserves content and leaves optional draft pristine");
     YVEX_TEST_ASSERT(
         yvex_runtime_session_prepare_persistent_state(
             forked_session, capacity, &model_failure, &err) == YVEX_OK,

@@ -806,7 +806,7 @@ int yvex_runtime_session_state_save(
     unsigned long long file_bytes = STATE_FILE_HEADER_V2_BYTES;
     unsigned long long scope_count = 0ull, index, payload_aligned = 0ull;
     char payload_identity[YVEX_SHA256_HEX_CAP] = {0};
-    int rc = YVEX_ERR_STATE, published = 0;
+    int rc = YVEX_ERR_STATE, published = 0, draft_pristine = 0;
     memset(scopes, 0, sizeof(scopes));
     memset(&writer, 0, sizeof(writer));
     writer.directory_fd = writer.file_fd = -1;
@@ -831,11 +831,23 @@ int yvex_runtime_session_state_save(
     if (rc != YVEX_OK) goto done;
     scope_count++;
     if (session->draft_attention_state_provider_ready) {
-        rc = state_save_scope_prepare(
-            &scopes[scope_count], &session->draft_attention_state_provider,
-            1ull, err);
+        rc = yvex_runtime_private_attention_state_pristine(
+            &session->draft_attention_state_provider, &draft_pristine, err);
         if (rc != YVEX_OK) goto done;
-        scope_count++;
+        if (!draft_pristine) {
+            rc = state_save_scope_prepare(
+                &scopes[scope_count],
+                &session->draft_attention_state_provider, 1ull, err);
+            if (rc != YVEX_OK) goto done;
+            if (scopes[scope_count].summary.committed_sequence_length !=
+                scopes[0].summary.committed_sequence_length) {
+                rc = state_store_fail(
+                    YVEX_ERR_STATE,
+                    "target and draft checkpoint extents diverged", err);
+                goto done;
+            }
+            scope_count++;
+        }
     }
     for (index = 0ull; index < scope_count; ++index)
         if (state_store_add(file_bytes, scopes[index].file_bytes,
@@ -1438,7 +1450,7 @@ static int state_restore_file_parse(
     yvex_runtime_model_summary current_model;
     const void *payload = NULL;
     char identity[YVEX_SHA256_HEX_CAP];
-    int rc;
+    int rc, draft_pristine = 0;
     memset(file, 0, sizeof(*file));
     current_model = session->model->summary;
     rc = state_file_map(path, maximum_file_bytes, &file->mapping,
@@ -1460,12 +1472,25 @@ static int state_restore_file_parse(
                current_model.runtime_binding_identity) != 0 ||
         strcmp(file->model.artifact_identity,
                current_model.artifact_identity) != 0 ||
-        file->scope_count !=
-            (session->draft_attention_state_provider_ready ? 2ull : 1ull)) {
+        (file->scope_count == 2ull &&
+         !session->draft_attention_state_provider_ready)) {
         rc = state_store_fail(YVEX_ERR_FORMAT,
                               "state checkpoint model or scope identity mismatched",
                               err);
         goto failure;
+    }
+    if (file->scope_count == 1ull &&
+        session->draft_attention_state_provider_ready) {
+        rc = yvex_runtime_private_attention_state_pristine(
+            &session->draft_attention_state_provider, &draft_pristine, err);
+        if (rc != YVEX_OK || !draft_pristine) {
+            if (rc == YVEX_OK)
+                rc = state_store_fail(
+                    YVEX_ERR_STATE,
+                    "target-only checkpoint requires pristine draft state",
+                    err);
+            goto failure;
+        }
     }
     rc = state_file_parser_scope(
         &parser, &file->scopes[0], &session->attention_state_provider,

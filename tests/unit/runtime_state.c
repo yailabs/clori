@@ -2100,9 +2100,14 @@ static int test_state_shared_prefix(const state_plan_fixture *fixture)
     char delta[YVEX_SHA256_HEX_CAP];
     unsigned long long position;
 
+    single.layers[0] = fixture->layers[1];
+    single.layers[0].layer_index = 0ull;
+    single.plan.layers = single.layers;
     single.plan.layer_count = single.plan.summary.layer_count = 1ull;
-    single.plan.summary.csa_layer_count = single.plan.summary.hca_layer_count = 0ull;
+    single.plan.summary.swa_layer_count = single.plan.summary.hca_layer_count = 0ull;
+    single.plan.summary.csa_layer_count = 1ull;
     state_page_capacity_open(&capacity);
+    capacity.state_pool_bytes = 1024ull * 1024ull;
     yvex_error_clear(&err);
     YVEX_TEST_ASSERT(
         state_open(&reference, &single.plan, 1024ull * 1024ull,

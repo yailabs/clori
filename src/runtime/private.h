@@ -143,6 +143,9 @@ typedef struct {
 
 yvex_attention_probe_state_provider yvex_runtime_private_attention_state_provider(
     runtime_attention_state_bridge *bridge);
+int yvex_runtime_private_attention_state_pristine(
+    const yvex_attention_state_provider *provider, int *pristine,
+    yvex_error *err);
 int yvex_runtime_private_attention_state_abort(
     void *context, yvex_attention_failure *failure, yvex_error *err);
 

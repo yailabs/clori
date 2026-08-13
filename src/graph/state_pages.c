@@ -1804,6 +1804,19 @@ int yvex_graph_state_pages_prepare_publications(
         unsigned long long *visible_count;
         unsigned long long count, start, publication_index;
 
+        if (component_recipe->kind == YVEX_ATTENTION_STATE_COMPONENT_ROLLING) {
+            /* Prefix capture replaces both banks with immutable shared mappings.  A rolling
+             * publication replaces the complete fixed-size state, so admit its private COW
+             * pages before either candidate application or committed-bank mirroring writes. */
+            if (pages_store_touch(
+                    storage->value_pages, 0ull,
+                    component_recipe->rolling.kv_state_extent, err) != YVEX_OK ||
+                pages_store_touch(
+                    storage->auxiliary_pages, 0ull,
+                    component_recipe->rolling.score_state_extent, err) != YVEX_OK)
+                return (int)yvex_error_code(err);
+            continue;
+        }
         if (component_recipe->kind != YVEX_ATTENTION_STATE_COMPONENT_HISTORY ||
             !component_recipe->capacity)
             continue;

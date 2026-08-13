@@ -184,7 +184,7 @@ int yvex_runtime_session_prefix_capture(
     yvex_attention_state_prefix_summary target = {0}, draft = {0};
     yvex_runtime_model_summary model = {0};
     unsigned long long remaining;
-    int rc = YVEX_OK;
+    int rc = YVEX_OK, draft_pristine = 0;
 
     if (out) *out = NULL;
     if (summary) memset(summary, 0, sizeof(*summary));
@@ -230,23 +230,28 @@ int yvex_runtime_session_prefix_capture(
     }
     remaining = maximum_shared_bytes - target.shared_bytes;
     if (source->draft_attention_state_provider_ready) {
-        if (!remaining) {
-            rc = prefix_refuse(failure, YVEX_ERR_BOUNDS,
-                               "target prefix exhausted the shared byte budget",
-                               err);
-            goto done;
-        }
-        rc = prefix_provider_capture(
-            &source->draft_attention_state_provider, remaining,
-            &prefix->draft_capacity, &prefix->draft,
-            &prefix->draft_recipes, &prefix->draft_recipe_count,
-            &draft, err);
+        rc = yvex_runtime_private_attention_state_pristine(
+            &source->draft_attention_state_provider, &draft_pristine, err);
         if (rc != YVEX_OK) goto done;
-        if (target.committed_sequence_length !=
-            draft.committed_sequence_length) {
-            rc = prefix_refuse(failure, YVEX_ERR_STATE,
-                               "target and draft prefixes diverged", err);
-            goto done;
+        if (!draft_pristine) {
+            if (!remaining) {
+                rc = prefix_refuse(
+                    failure, YVEX_ERR_BOUNDS,
+                    "target prefix exhausted the shared byte budget", err);
+                goto done;
+            }
+            rc = prefix_provider_capture(
+                &source->draft_attention_state_provider, remaining,
+                &prefix->draft_capacity, &prefix->draft,
+                &prefix->draft_recipes, &prefix->draft_recipe_count,
+                &draft, err);
+            if (rc != YVEX_OK) goto done;
+            if (target.committed_sequence_length !=
+                draft.committed_sequence_length) {
+                rc = prefix_refuse(failure, YVEX_ERR_STATE,
+                                   "target and draft prefixes diverged", err);
+                goto done;
+            }
         }
     }
     if (!prefix_identity(prefix, &prefix->summary) ||
@@ -330,7 +335,7 @@ int yvex_runtime_session_prefix_attach(
 {
     yvex_runtime_model_summary model = {0};
     yvex_runtime_session_prefix_summary current = {0};
-    int rc;
+    int rc, draft_pristine = 0;
 
     if (summary) memset(summary, 0, sizeof(*summary));
     if (!destination || !prefix || !summary ||
@@ -341,6 +346,11 @@ int yvex_runtime_session_prefix_attach(
     rc = prefix_identity(prefix, &current) ? YVEX_OK : YVEX_ERR_FORMAT;
     if (rc == YVEX_OK)
         rc = yvex_runtime_model_summary_copy(destination->model, &model, err);
+    if (rc == YVEX_OK && !prefix->draft &&
+        destination->draft_attention_state_provider_ready)
+        rc = yvex_runtime_private_attention_state_pristine(
+            &destination->draft_attention_state_provider,
+            &draft_pristine, err);
     if (rc != YVEX_OK || !destination->summary.open ||
         destination->summary.busy || destination->closing ||
         destination->summary.invalidated || destination->state_residency ||
@@ -349,7 +359,8 @@ int yvex_runtime_session_prefix_attach(
         (prefix->draft &&
          !destination->draft_attention_state_provider_ready) ||
         (!prefix->draft &&
-         destination->draft_attention_state_provider_ready) ||
+         destination->draft_attention_state_provider_ready &&
+         !draft_pristine) ||
         strcmp(current.runtime_model_identity,
                model.runtime_model_identity) != 0) {
         rc = prefix_refuse(failure, YVEX_ERR_STATE,
