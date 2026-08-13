@@ -99,9 +99,11 @@ typedef struct {
 
 typedef int (*server_message_emit)(void *context, const yvex_client_message *message,
                                    yvex_error *err);
-static inline yvex_reasoning_policy server_reasoning_default(int explicit_supported)
+static inline yvex_reasoning_policy server_reasoning_automatic_policy(void)
 {
-    return explicit_supported ? YVEX_REASONING_ENABLED : YVEX_REASONING_DISABLED;
+    /* Capability only determines whether an explicit mode can be admitted.
+       An omitted policy selects the ordinary source-authored chat mode. */
+    return YVEX_REASONING_DISABLED;
 }
 
 #define YVEX_SERVER_SESSION_STORE_SCHEMA_V1 1u

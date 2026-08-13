@@ -843,7 +843,7 @@ static int handle_generation(openai_gateway *gateway, int fd,
     rc = daemon_status(gateway, &summary, &err);
     if (rc != YVEX_OK) return send_error(fd, 503, "YVEX server is unavailable or not ready");
     rc = openai_json_admit(http, endpoint, summary.target_id,
-        server_reasoning_default(summary.explicit_reasoning_channel_supported), &admitted, &err);
+        server_reasoning_automatic_policy(), &admitted, &err);
     if (rc != YVEX_OK)
         return send_error(fd, http_status(rc, YVEX_CLIENT_FAILURE_NONE),
                           yvex_error_message(&err));

@@ -33,6 +33,14 @@ static void test_options(yvex_server_options *options)
     options->concurrent_sequences = 1u;
 }
 
+static int test_automatic_reasoning_policy(void)
+{
+    YVEX_TEST_ASSERT(
+        server_reasoning_automatic_policy() == YVEX_REASONING_DISABLED,
+        "automatic reasoning selects ordinary chat independently of capability");
+    return 0;
+}
+
 static void server_test_identity(char identity[YVEX_SHA256_HEX_CAP], char digit)
 {
     memset(identity, digit, YVEX_SHA256_HEX_CAP - 1u);
@@ -565,6 +573,7 @@ static int test_provider_telemetry(void)
 
 int yvex_test_server(void)
 {
+    if (test_automatic_reasoning_policy() != 0) return 1;
     if (test_scheduler_serialization() != 0) return 1;
     if (test_session_store() != 0) return 1;
     if (test_configured_summary_and_event() != 0) return 1;

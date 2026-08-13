@@ -355,9 +355,6 @@ int yvex_server_sessions_open(server_session_registry **out,
                               const yvex_server_options *options,
                               server_telemetry *telemetry, yvex_error *err)
 {
-    const yvex_runtime_model_view *view = yvex_runtime_model_view_get(model);
-    const yvex_tokenizer_plan_summary *tokenizer = view ?
-        yvex_tokenizer_plan_summary_get(view->tokenizer) : NULL;
     server_session_registry *registry;
     if (out) *out = NULL;
     if (!out || !model || !options || !telemetry || !options->maximum_sessions ||
@@ -378,8 +375,7 @@ int yvex_server_sessions_open(server_session_registry **out,
     }
     registry->model = model;
     registry->options = *options;
-    registry->default_reasoning_policy = server_reasoning_default(tokenizer &&
-                                           tokenizer->explicit_reasoning_supported);
+    registry->default_reasoning_policy = server_reasoning_automatic_policy();
     registry->telemetry = telemetry;
     registry->capacity = options->maximum_sessions;
     registry->next_id = 1u;
