@@ -1077,6 +1077,140 @@ static int assert_grouped_moe(yvex_backend *backend)
     return 0;
 }
 
+static int assert_finite_activation_overflow(yvex_backend *backend)
+{
+    enum { ARENA_FLOATS = 32, CUDA_BLOCK = 256 };
+    yvex_backend_tensor_desc descriptor = {0};
+    yvex_device_tensor *arena = NULL;
+    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    float host[ARENA_FLOATS] = {0.0f}, observed[ARENA_FLOATS] = {0.0f};
+    const float large = yvex_quant_bf16_decode(yvex_quant_bf16_encode(1.0e20f));
+    CUdeviceptr base, values, weight, status, residual, mix, scale, mhc_base;
+    CUdeviceptr collapsed, post, combination;
+    unsigned long long count = 4ull, vectors = 1ull;
+    unsigned long long streams = 2ull, width = 2ull, mixing_rows = 8ull;
+    unsigned long long iterations = 1ull, row_count = 1ull;
+    unsigned int qtype = YVEX_GGUF_QTYPE_F32;
+    double epsilon = 1.0e-6, mhc_epsilon = 1.0e-6, multiplier = 2.0;
+    int device_wide = 0, rc;
+    yvex_error err;
+
+    descriptor.name = "finite-rms-overflow-arena";
+    descriptor.dtype = YVEX_DTYPE_F32;
+    descriptor.rank = 1u;
+    descriptor.dims[0] = ARENA_FLOATS;
+    descriptor.bytes = sizeof(host);
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_alloc(backend, &descriptor, &arena, &err) == YVEX_OK,
+        "allocate finite RMS overflow arena");
+    base = yvex_cuda_activation_pointer(backend, arena);
+    status = base + 31ull * sizeof(float);
+    host[0] = host[1] = host[4] = host[5] = host[6] = host[7] = large;
+    host[2] = host[3] = -large;
+    YVEX_TEST_ASSERT(
+        base && yvex_backend_tensor_write(
+                    backend, arena, host, sizeof(host), &err) == YVEX_OK,
+        "upload finite matvec overflow fixture");
+    {
+        CUdeviceptr encoded = base, vector = base + 4ull * sizeof(float);
+        CUdeviceptr additive = 0ull, out = base + 8ull * sizeof(float);
+        unsigned long long row_bytes = 4ull * sizeof(float), start_row = 0ull;
+        int q8_input = 0, block_row = 1, forensic = 0, output_bf16 = 0;
+        void *params[] = {
+            &encoded, &row_bytes, &count, &start_row, &row_count, &vectors,
+            &qtype, &vector, &count, &q8_input, &block_row, &forensic, &additive,
+            &out, &vectors, &output_bf16, &status};
+        rc = yvex_cuda_launch(
+            backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+            state->qtype_matvec_function, 1u, CUDA_BLOCK, 0u, params,
+            "cuda.test.matvec-overflow", &err);
+    }
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_launch_synchronize(
+            backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED, &device_wide,
+            "cuda.test.matvec-overflow", &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_OK &&
+            yvex_backend_tensor_read(backend, arena, observed, sizeof(observed), &err) == YVEX_OK &&
+            observed[31] == 0.0f && isfinite(observed[8]),
+        "finite F32 matvec survives intermediate reduction overflow");
+
+    memset(host, 0, sizeof(host));
+    host[0] = large;
+    host[1] = -large;
+    host[2] = large;
+    host[3] = -large;
+    host[4] = host[5] = host[6] = host[7] = 1.0f;
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_write(backend, arena, host, sizeof(host), &err) == YVEX_OK,
+        "upload finite RMS overflow fixture");
+    values = base;
+    weight = base + 4ull * sizeof(float);
+    {
+        void *params[] = {
+            &values, &count, &weight, &qtype, &epsilon, &vectors, &status};
+        rc = yvex_cuda_launch(
+            backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+            state->attention_weighted_norm_function, 1u, CUDA_BLOCK,
+            CUDA_BLOCK * sizeof(double), params,
+            "cuda.test.weighted-norm-overflow", &err);
+    }
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_launch_synchronize(
+            backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED, &device_wide,
+            "cuda.test.weighted-norm-overflow", &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_OK &&
+            yvex_backend_tensor_read(backend, arena, observed, sizeof(observed), &err) == YVEX_OK &&
+            observed[31] == 0.0f && fabsf(observed[0] - 1.0f) <= 0.01f &&
+            fabsf(observed[1] + 1.0f) <= 0.01f &&
+            fabsf(observed[2] - 1.0f) <= 0.01f &&
+            fabsf(observed[3] + 1.0f) <= 0.01f,
+        "finite BF16-range values survive weighted RMS square-sum overflow");
+
+    memset(host, 0, sizeof(host));
+    host[0] = large;
+    host[1] = -large;
+    host[4] = large;
+    host[5] = -large;
+    host[12] = host[13] = host[14] = 1.0f;
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_write(backend, arena, host, sizeof(host), &err) == YVEX_OK,
+        "upload finite mHC overflow fixture");
+    residual = base;
+    mix = base + 4ull * sizeof(float);
+    scale = base + 12ull * sizeof(float);
+    mhc_base = base + 15ull * sizeof(float);
+    collapsed = base + 23ull * sizeof(float);
+    post = base + 25ull * sizeof(float);
+    combination = base + 27ull * sizeof(float);
+    {
+        void *params[] = {
+            &residual, &mix, &scale, &mhc_base, &streams, &width,
+            &mixing_rows, &iterations, &epsilon, &mhc_epsilon, &multiplier,
+            &collapsed, &post, &combination, &row_count, &status};
+        rc = yvex_cuda_launch(
+            backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+            state->residual_mhc_pre_function, 1u, CUDA_BLOCK,
+            (unsigned int)((streams + 1ull + CUDA_BLOCK) * sizeof(double)), params,
+            "cuda.test.mhc-pre-overflow", &err);
+    }
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_launch_synchronize(
+            backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED, &device_wide,
+            "cuda.test.mhc-pre-overflow", &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_OK &&
+            yvex_backend_tensor_read(backend, arena, observed, sizeof(observed), &err) == YVEX_OK &&
+            observed[31] == 0.0f && observed[23] > 0.7f * large &&
+            observed[24] < -0.7f * large,
+        "finite BF16-range values preserve mHC normalization after square-sum overflow");
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_release(backend, &arena, &err) == YVEX_OK,
+        "release finite RMS overflow fixture");
+    return 0;
+}
+
 static int assert_deferred_attention_completion(yvex_backend *backend)
 {
     yvex_backend_attention_completion completion;
@@ -1346,6 +1480,8 @@ int yvex_cuda_test_info(void)
     }
     YVEX_TEST_ASSERT(assert_grouped_moe(backend) == 0,
                      "grouped direct-address MoE matches audit execution");
+    YVEX_TEST_ASSERT(assert_finite_activation_overflow(backend) == 0,
+                     "CUDA normalization retains finite BF16-range activations");
     YVEX_TEST_ASSERT(assert_encoded_moe(backend) == 0,
                      "compiled encoded MoE is native and fail-closed");
     YVEX_TEST_ASSERT(assert_deferred_attention_completion(backend) == 0,

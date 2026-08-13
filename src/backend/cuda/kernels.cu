@@ -508,6 +508,16 @@ static __device__ int qtype_matvec_pair(
     return *row < rows && *input_row < input_rows;
 }
 
+static __device__ float qtype_dot_recover_f64(
+    const unsigned char *row, const float *input, unsigned long long width,
+    unsigned int qtype)
+{
+    double recovered = 0.0;
+    for (unsigned long long i = 0ull; i < width; ++i)
+        recovered += (double)qtype_value(row, i, qtype) * (double)input[i];
+    return (float)recovered;
+}
+
 extern "C" __global__ void yvex_qtype_matvec(
     const unsigned char *encoded,
     unsigned long long row_bytes,
@@ -558,24 +568,10 @@ extern "C" __global__ void yvex_qtype_matvec(
                          input_row * (row_width / YVEX_CUDA_Q8_K_BLOCK) * YVEX_CUDA_Q8_K_BYTES)
         : (const void *)((const float *)vector + input_row * input_stride);
     if (forensic_numeric) {
-        if ((block_row ? threadIdx.x : lane) == 0u) {
-            double reference = 0.0;
-            const float *reference_input = (const float *)input;
-            for (unsigned long long i = 0ull; i < row_width; ++i) {
-                double weight = (double)qtype_value(row_data, i, qtype);
-                double value = (double)reference_input[i];
-                reference = __dadd_rn(reference, __dmul_rn(weight, value));
-            }
-            float value = (float)reference;
-            if (additive)
-                value = __fadd_rn(value, additive[input_row * output_stride + row]);
-            if (!isfinite(value)) atomicCAS(status, 0, 1);
-            else out[input_row * output_stride + row] =
-                output_bf16 ? float_to_bf16_rne(value) : value;
-        }
-        return;
-    }
-    if (block_row) {
+        if ((block_row ? threadIdx.x : lane) != 0u) return;
+        sum = qtype_dot_recover_f64(
+            row_data, (const float *)input, row_width, qtype);
+    } else if (block_row) {
         const float *weight = (const float *)row_data;
         const float *values = (const float *)input;
         sum = 0.0f;
@@ -592,36 +588,33 @@ extern "C" __global__ void yvex_qtype_matvec(
             sum = lane < 8u ? warp_sums[lane] : 0.0f;
             for (unsigned int offset = 16u; offset; offset >>= 1u)
                 sum += __shfl_down_sync(0xffffffffu, sum, offset);
-            if (!lane) {
-                float value = additive
-                    ? __fadd_rn(sum, additive[input_row * output_stride + row]) : sum;
-                if (!isfinite(value)) atomicCAS(status, 0, 1);
-                else out[input_row * output_stride + row] =
-                    output_bf16 ? float_to_bf16_rne(value) : value;
+        }
+        if (warp || lane) return;
+    } else {
+        if (q8_input) {
+            unsigned long long blocks = row_width / YVEX_CUDA_Q8_K_BLOCK;
+            if (!blocks || row_bytes % blocks) {
+                if (!lane) atomicCAS(status, 0, 2);
+                return;
             }
+            sum = q8_warp_dot(row_data, (const unsigned char *)input, blocks,
+                              row_bytes / blocks, qtype);
+        } else {
+            sum = qtype_warp_dot(
+                row_data, (const float *)input, row_width, qtype, status);
         }
-        return;
+        if (lane) return;
     }
-    if (q8_input) {
-        unsigned long long blocks = row_width / YVEX_CUDA_Q8_K_BLOCK;
-        if (!blocks || row_bytes % blocks) {
-            if (!lane) atomicCAS(status, 0, 2);
-            return;
-        }
-        sum = q8_warp_dot(row_data, (const unsigned char *)input, blocks,
-                          row_bytes / blocks, qtype);
-    } else
-        sum = qtype_warp_dot(row_data, (const float *)input, row_width, qtype, status);
-    if (lane == 0u) {
-        if (!isfinite(sum)) atomicCAS(status, 0, 1);
-        else {
-            float value = additive
-                ? __fadd_rn(sum, additive[input_row * output_stride + row]) : sum;
-            if (!isfinite(value)) atomicCAS(status, 0, 1);
-            else out[input_row * output_stride + row] =
-                output_bf16 ? float_to_bf16_rne(value) : value;
-        }
-    }
+    /* A finite dot can overflow before opposite terms cancel. The exceptional row alone
+       uses FP64; ordinary rows retain their parallel F32 execution order. */
+    if (!q8_input && !isfinite(sum) && *status == 0)
+        sum = qtype_dot_recover_f64(
+            row_data, (const float *)input, row_width, qtype);
+    float value = additive
+        ? __fadd_rn(sum, additive[input_row * output_stride + row]) : sum;
+    if (!isfinite(value)) atomicCAS(status, 0, 1);
+    else out[input_row * output_stride + row] =
+        output_bf16 ? float_to_bf16_rne(value) : value;
 }
 
 extern "C" __global__ void yvex_qtype_split_matvec(
@@ -720,38 +713,23 @@ extern "C" __global__ void yvex_qtype_gather(
     else out[index] = value;
 }
 
-extern "C" __global__ void yvex_attention_weighted_norm(
-    float *values, unsigned long long count, const unsigned char *weight,
-    unsigned int weight_qtype, double epsilon, unsigned long long vectors,
-    int *status)
+/* Recover finite BF16-range values when their ordinary F32 square sum overflows. The rare
+   recovery is serial and double-precision so the established parallel fast path is unchanged. */
+static __device__ double finite_square_sum_f32(
+    const float *values, unsigned long long count, float *square_terms,
+    int *status, int *active)
 {
-    extern __shared__ float square_terms[];
-    __shared__ double inverse;
-    __shared__ int active;
     unsigned int lane = threadIdx.x;
     float square_sum = 0.0f;
-    if (!status) return;
-    if ((unsigned long long)blockIdx.x >= vectors) return;
-    if (!values || !weight || !count || !vectors || epsilon <= 0.0) {
-        if (lane == 0u) atomicCAS(status, 0, 2);
-        return;
-    }
-    if (lane == 0u) active = *status == 0;
-    __syncthreads();
-    if (!active) return;
-    values += (unsigned long long)blockIdx.x * count;
-    /* Values entering RMSNorm have already crossed the BF16 execution
-       boundary. Accumulating independent squares per lane avoids serial FP64
-       issue while the inverse and weighted publication retain their double
-       contract. */
     for (unsigned long long i = (unsigned long long)lane; i < count;
          i += (unsigned long long)blockDim.x) {
         float value = values[i];
         if (!isfinite(value)) {
             atomicCAS(status, 0, 1);
-            atomicExch(&active, 0);
+            atomicExch(active, 0);
+        } else {
+            square_sum = fmaf(value, value, square_sum);
         }
-        square_sum = fmaf(value, value, square_sum);
     }
     square_terms[lane] = square_sum;
     __syncthreads();
@@ -760,8 +738,39 @@ extern "C" __global__ void yvex_attention_weighted_norm(
             square_terms[lane] += square_terms[lane + offset];
         __syncthreads();
     }
-    if (lane == 0u) {
-        double mean = (double)square_terms[0];
+    if (!*active) return 0.0;
+    if (lane == 0u && !isfinite(square_terms[0])) {
+        double recovered = 0.0;
+        for (unsigned long long i = 0ull; i < count; ++i)
+            recovered += (double)values[i] * (double)values[i];
+        return recovered;
+    }
+    return (double)square_terms[0];
+}
+
+extern "C" __global__ void yvex_attention_weighted_norm(
+    float *values, unsigned long long count, const unsigned char *weight,
+    unsigned int weight_qtype, double epsilon, unsigned long long vectors,
+    int *status)
+{
+    extern __shared__ float scratch_terms[];
+    __shared__ double inverse;
+    __shared__ int active;
+    if (!status) return;
+    if ((unsigned long long)blockIdx.x >= vectors) return;
+    if (!values || !weight || !count || !vectors || epsilon <= 0.0) {
+        if (threadIdx.x == 0u) atomicCAS(status, 0, 2);
+        return;
+    }
+    if (threadIdx.x == 0u) active = *status == 0;
+    __syncthreads();
+    if (!active) return;
+    values += (unsigned long long)blockIdx.x * count;
+    double total = finite_square_sum_f32(
+        values, count, scratch_terms, status, &active);
+    if (!active) return;
+    if (threadIdx.x == 0u) {
+        double mean = total;
         mean = __ddiv_rn(mean, (double)count);
         inverse = __ddiv_rn(1.0, sqrt(__dadd_rn(mean, epsilon)));
         if (!isfinite(inverse)) {
@@ -771,7 +780,7 @@ extern "C" __global__ void yvex_attention_weighted_norm(
     }
     __syncthreads();
     if (!active) return;
-    for (unsigned long long i = (unsigned long long)lane; i < count;
+    for (unsigned long long i = (unsigned long long)threadIdx.x; i < count;
          i += (unsigned long long)blockDim.x) {
         double scale = (double)qtype_value(weight, i, weight_qtype);
         double result = __dmul_rn(
@@ -1158,29 +1167,11 @@ extern "C" __global__ void yvex_residual_mhc_pre(
     }
     __syncthreads();
     if (!active) return;
-    /* Residuals are already BF16 values. Accumulating their squares in F32
-       avoids making the envelope normalization depend on scarce FP64 issue
-       bandwidth; the final inverse and source-authored mHC transforms retain
-       their double contract before BF16 publication. */
-    {
-        float square_sum = 0.0f;
-        unsigned int offset;
-        for (unsigned long long lane = (unsigned long long)thread; lane < expanded;
-             lane += (unsigned long long)blockDim.x) {
-            float value = residual[lane];
-            square_sum = fmaf(value, value, square_sum);
-        }
-        square_terms[thread] = square_sum;
-        __syncthreads();
-        for (offset = blockDim.x >> 1u; offset; offset >>= 1u) {
-            if (thread < offset)
-                square_terms[thread] += square_terms[thread + offset];
-            __syncthreads();
-        }
-        if (thread == 0u) *inverse = (double)square_terms[0];
-    }
+    double total = finite_square_sum_f32(
+        residual, expanded, square_terms, status, &active);
+    if (!active) return;
     if (thread == 0u) {
-        *inverse = 1.0 / sqrt(*inverse / (double)expanded + rms_epsilon);
+        *inverse = 1.0 / sqrt(total / (double)expanded + rms_epsilon);
         if (!isfinite(*inverse)) {
             atomicCAS(status, 0, 1);
             active = 0;

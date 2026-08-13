@@ -1386,9 +1386,11 @@ static int runtime_moe_rows_complete(yvex_runtime_moe_context *context,
         if (!pending->pending) continue;
         found++;
         if (pending->status) {
-            rc = runtime_moe_refuse(
-                err, YVEX_ERR_BACKEND,
-                "deferred CUDA MoE phase reported invalid numerics");
+            yvex_error_setf(
+                err, YVEX_ERR_BACKEND, "runtime.moe",
+                "deferred CUDA MoE layer %llu reported device status %d",
+                index, pending->status);
+            rc = YVEX_ERR_BACKEND;
             break;
         }
         if (!pending->unique_experts ||
