@@ -333,7 +333,6 @@ static int session_execution_rebase(server_session_registry *registry,
     memset(&session->pending_generation_checkpoint, 0,
            sizeof(session->pending_generation_checkpoint));
     session->pending_generation_checkpoint_present = 0;
-    session->reasoning_policy = YVEX_REASONING_DISABLED;
     memset(session->state_digest, 0, sizeof(session->state_digest));
     session->state = session->attached_clients ? YVEX_SERVER_SESSION_READY
                                                : YVEX_SERVER_SESSION_DETACHED;

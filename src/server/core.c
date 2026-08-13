@@ -153,22 +153,19 @@ static double server_elapsed_seconds(unsigned long long start,
     if (!start || end < start) return 0.0;
     return (double)(end - start) / 1000000000.0;
 }
-
 static int server_options_admit(yvex_server *server,
                                 const yvex_server_options *options,
                                 yvex_error *err)
 {
     char canonical[YVEX_SERVER_SOCKET_PATH_CAP];
     if (!options || options->schema_version != YVEX_SERVER_OPTIONS_SCHEMA_V2 ||
-        !options->artifact_path || !options->runtime_binding_path ||
-        !options->target_id ||
+        !options->artifact_path || !options->runtime_binding_path || !options->target_id ||
         (options->backend != YVEX_BACKEND_KIND_CPU &&
          options->backend != YVEX_BACKEND_KIND_CUDA) ||
         options->generation_mode > YVEX_SERVER_GENERATION_DSPARK ||
         !options->context_capacity || !options->prefill_chunk_tokens ||
         !options->maximum_new_tokens || !options->maximum_output_bytes ||
-        !options->maximum_sessions || !options->request_queue_capacity ||
-        !options->concurrent_sequences ||
+        !options->maximum_sessions || !options->request_queue_capacity || !options->concurrent_sequences ||
         options->concurrent_sequences > options->maximum_sessions ||
         options->maximum_sessions > SERVER_CLIENT_CAPACITY ||
         (options->openai_enabled &&

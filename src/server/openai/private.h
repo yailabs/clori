@@ -107,9 +107,8 @@ int openai_http_sse_event(int fd, const char *event,
 int openai_http_sse_done(int fd, yvex_error *err);
 int openai_http_peer_wait(int fd, unsigned int milliseconds, int *closed,
                           yvex_error *err);
-int openai_json_admit(const openai_http_request *http,
-                      openai_endpoint endpoint, const char *model,
-                      openai_admitted_request *request, yvex_error *err);
+int openai_json_admit(const openai_http_request *http, openai_endpoint endpoint,
+    const char *model, yvex_reasoning_policy default_reasoning, openai_admitted_request *request, yvex_error *err);
 void openai_admitted_request_clear(openai_admitted_request *request);
 int openai_json_error(int status, const char *type, const char *param,
                       const char *code, const char *message,

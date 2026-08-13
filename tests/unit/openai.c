@@ -21,7 +21,7 @@ static int admit_fixture(const char *json, openai_endpoint endpoint,
     request.body = (unsigned char *)json;
     request.body_count = strlen(json);
     return openai_json_admit(&request, endpoint, "deepseek4-v4-flash-dspark",
-                             admitted, err);
+                             YVEX_REASONING_ENABLED, admitted, err);
 }
 
 static int test_chat_admission(void)
@@ -43,6 +43,9 @@ static int test_chat_admission(void)
         "\"strict\":false}}],\"tool_choice\":\"auto\","
         "\"parallel_tool_calls\":false,"
         "\"response_format\":{\"type\":\"json_object\"}}";
+    static const char none[] =
+        "{\"model\":\"deepseek4-v4-flash-dspark\",\"messages\":[{"
+        "\"role\":\"user\",\"content\":\"Fast\"}],\"reasoning_effort\":\"none\"}";
     openai_admitted_request admitted = {0};
     yvex_error err;
     int rc = admit_fixture(basic, OPENAI_ENDPOINT_CHAT, &admitted, &err);
@@ -76,6 +79,13 @@ static int test_chat_admission(void)
                      "JSON object policy must map exactly");
     YVEX_TEST_ASSERT(!admitted.provider->sampling.stochastic,
                      "temperature zero must select greedy generation");
+    YVEX_TEST_ASSERT(admitted.provider->reasoning_policy == YVEX_REASONING_ENABLED,
+                     "omitted reasoning effort must use the admitted model default");
+    openai_admitted_request_clear(&admitted);
+    rc = admit_fixture(none, OPENAI_ENDPOINT_CHAT, &admitted, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && admitted.provider->reasoning_policy ==
+                         YVEX_REASONING_DISABLED,
+                     "explicit non-thinking policy must override the model default");
     openai_admitted_request_clear(&admitted);
     return 0;
 }

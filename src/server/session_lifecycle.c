@@ -97,19 +97,16 @@ static int session_allocate_locked(server_session_registry *registry,
     int rc;
     if (created) *created = NULL;
     if (!name || !name[0]) {
-        (void)snprintf(generated, sizeof(generated), "s%06llu",
-                       registry->next_id++);
+        (void)snprintf(generated, sizeof(generated), "s%06llu", registry->next_id++);
         name = generated;
     }
-    if (!created || !session_name_valid(name) ||
-        yvex_server_session_find_locked(registry, name)) {
+    if (!created || !session_name_valid(name) || yvex_server_session_find_locked(registry, name)) {
         yvex_error_set(err, YVEX_ERR_STATE, "server.session.create",
                        "session name is invalid or already exists");
         return YVEX_ERR_STATE;
     }
     for (index = 0u; index < registry->capacity; ++index)
-        if (!registry->sessions[index].name[0] ||
-            registry->sessions[index].state == YVEX_SERVER_SESSION_CLOSED) {
+        if (!registry->sessions[index].name[0] || registry->sessions[index].state == YVEX_SERVER_SESSION_CLOSED) {
             session = &registry->sessions[index];
             break;
         }
@@ -124,18 +121,14 @@ static int session_allocate_locked(server_session_registry *registry,
     session->token_capacity = registry->options.context_capacity;
     session->text_capacity = registry->options.maximum_output_bytes;
     session->transcript_capacity = SESSION_TRANSCRIPT_BYTES;
-    session->committed_tokens = calloc((size_t)session->token_capacity,
-                                       sizeof(*session->committed_tokens));
-    session->prompt_tokens = calloc((size_t)session->token_capacity,
-                                    sizeof(*session->prompt_tokens));
-    session->token_results = calloc(
-        (size_t)registry->options.maximum_new_tokens,
-        sizeof(*session->token_results));
+    session->committed_tokens = calloc((size_t)session->token_capacity, sizeof(*session->committed_tokens));
+    session->prompt_tokens = calloc((size_t)session->token_capacity, sizeof(*session->prompt_tokens));
+    session->token_results = calloc((size_t)registry->options.maximum_new_tokens,
+                                    sizeof(*session->token_results));
     session->turn_text = calloc((size_t)session->text_capacity + 1u, 1u);
     session->transcript = calloc((size_t)session->transcript_capacity, 1u);
-    if (!session->committed_tokens || !session->prompt_tokens ||
-        !session->token_results || !session->turn_text ||
-        !session->transcript ||
+    if (!session->committed_tokens || !session->prompt_tokens || !session->token_results ||
+        !session->turn_text || !session->transcript ||
         !session_identity(registry, name, session->identity)) {
         rc = YVEX_ERR_NOMEM;
         yvex_error_set(err, rc, "server.session.create",
@@ -148,6 +141,7 @@ static int session_allocate_locked(server_session_registry *registry,
     atomic_init(&session->active_turn, 0);
     session->message_history_generation = 1u;
     session->transcript_generation = 1u;
+    session->reasoning_policy = registry->default_reasoning_policy;
     session->state = YVEX_SERVER_SESSION_READY;
     *created = session;
     return YVEX_OK;
@@ -314,7 +308,7 @@ int yvex_server_session_reset_locked(server_session_registry *registry,
     memset(&session->policy, 0, sizeof(session->policy));
     memset(&session->pending_generation_checkpoint, 0,
            sizeof(session->pending_generation_checkpoint));
-    session->reasoning_policy = YVEX_REASONING_DISABLED;
+    session->reasoning_policy = registry->default_reasoning_policy;
     memset(session->last_turn_identity, 0, sizeof(session->last_turn_identity));
     memset(session->state_digest, 0, sizeof(session->state_digest));
     memset(session->generated_token_identity, 0,
@@ -361,19 +355,20 @@ int yvex_server_sessions_open(server_session_registry **out,
                               const yvex_server_options *options,
                               server_telemetry *telemetry, yvex_error *err)
 {
+    const yvex_runtime_model_view *view = yvex_runtime_model_view_get(model);
+    const yvex_tokenizer_plan_summary *tokenizer = view ?
+        yvex_tokenizer_plan_summary_get(view->tokenizer) : NULL;
     server_session_registry *registry;
     if (out) *out = NULL;
-    if (!out || !model || !options || !telemetry ||
-        !options->maximum_sessions ||
+    if (!out || !model || !options || !telemetry || !options->maximum_sessions ||
         options->maximum_sessions > SIZE_MAX / sizeof(server_session)) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.session.registry",
                        "model, telemetry, and bounded session capacity are required");
         return YVEX_ERR_INVALID_ARG;
     }
     registry = calloc(1u, sizeof(*registry));
-    if (registry)
-        registry->sessions = calloc((size_t)options->maximum_sessions,
-                                    sizeof(*registry->sessions));
+    if (registry) registry->sessions = calloc((size_t)options->maximum_sessions,
+                                              sizeof(*registry->sessions));
     if (!registry || !registry->sessions) {
         free(registry ? registry->sessions : NULL);
         free(registry);
@@ -383,6 +378,8 @@ int yvex_server_sessions_open(server_session_registry **out,
     }
     registry->model = model;
     registry->options = *options;
+    registry->default_reasoning_policy = server_reasoning_default(tokenizer &&
+                                           tokenizer->explicit_reasoning_supported);
     registry->telemetry = telemetry;
     registry->capacity = options->maximum_sessions;
     registry->next_id = 1u;

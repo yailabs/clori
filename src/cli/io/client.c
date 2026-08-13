@@ -415,7 +415,7 @@ static void turn_options_init(client_turn_options *options)
     options->top_p = defaults.sampling.top_p;
     options->min_p = defaults.sampling.min_p;
     options->typical_p = defaults.sampling.typical_p;
-    options->reasoning_policy = YVEX_REASONING_DISABLED;
+    options->reasoning_policy = (yvex_reasoning_policy)(YVEX_REASONING_MAXIMUM + 1u);
 }
 static int parse_u64(const char *text, unsigned long long *value, int allow_zero)
 {
@@ -825,7 +825,13 @@ static int generation_turn(const char *session_name,
     yvex_error err;
     yvex_cli_terminal_style style;
     FILE *status_output = conversation ? stdout : stderr;
+    yvex_reasoning_policy reasoning_policy = options->reasoning_policy;
     int rc, started = 0, progress_active = 0, renderer_finished = 0;
+    if (reasoning_policy > YVEX_REASONING_MAXIMUM &&
+        console_status_fetch(session_name, &message, &err) != YVEX_OK)
+        return client_error(&err);
+    if (reasoning_policy > YVEX_REASONING_MAXIMUM)
+        reasoning_policy = message.console.reasoning_policy;
     yvex_cli_terminal_style_get(status_output, &style);
     yvex_cli_stream_renderer_open(&renderer, stdout,
                                   conversation && isatty(fileno(stdout)));
@@ -843,7 +849,7 @@ static int generation_turn(const char *session_name,
     request.top_p = options->top_p;
     request.min_p = options->min_p;
     request.typical_p = options->typical_p;
-    request.reasoning_policy = options->reasoning_policy;
+    request.reasoning_policy = reasoning_policy;
     turn_signals_open(&signals, session_name);
     rc = request_open(&client, &request, &err);
     while (rc == YVEX_OK) {
@@ -1608,6 +1614,8 @@ static void render_console_status(const yvex_client_message *message, int startu
     const yvex_console_status *status = &message->console;
     const char *target = message->runtime.target_id[0] ? message->runtime.target_id
                                                        : status->live_model_identity;
+    const char *reasoning = status->reasoning_policy == YVEX_REASONING_DISABLED ? "none" :
+        status->reasoning_policy == YVEX_REASONING_MAXIMUM ? "max" : "high";
     yvex_cli_terminal_style style;
     yvex_cli_terminal_style_get(stdout, &style);
     if (startup) {
@@ -1628,10 +1636,9 @@ static void render_console_status(const yvex_client_message *message, int startu
                    style.dim, "recovery", style.reset, style.warning, style.reset,
                    message->partial_turn.committed_token_count,
                    message->partial_turn.committed_token_count == 1u ? "" : "s");
-        printf("  %s%-10s%s %llu/%llu", style.dim, "context", style.reset,
-               status->context_used, status->context_capacity);
-        if (status->kv_used_available)
-            printf(" · KV %.2f MiB", (double)status->kv_used_bytes / 1048576.0);
+        printf("  %s%-10s%s %llu/%llu · reasoning %s", style.dim, "context", style.reset,
+               status->context_used, status->context_capacity, reasoning);
+        if (status->kv_used_available) printf(" · KV %.2f MiB", (double)status->kv_used_bytes / 1048576.0);
         printf("\n  %s%-10s%s %.2f GiB host · %.2f GiB device\n", style.dim, "memory", style.reset,
                (double)message->runtime.metrics.resident_host_bytes / 1073741824.0,
                (double)message->runtime.metrics.resident_device_bytes / 1073741824.0);
@@ -1658,11 +1665,9 @@ static void render_console_status(const yvex_client_message *message, int startu
            status->session_name,
            status->position, status->turn_count, status->context_used,
            status->context_capacity);
-    if (status->kv_used_available)
-        printf(" · KV %.2f MiB", (double)status->kv_used_bytes / 1048576.0);
-    printf(" · live %.12s", status->live_model_identity);
-    if (status->selected_model_available)
-        printf(" · selected %.12s", status->selected_model_identity);
+    if (status->kv_used_available) printf(" · KV %.2f MiB", (double)status->kv_used_bytes / 1048576.0);
+    printf(" · reasoning %s · live %.12s", reasoning, status->live_model_identity);
+    if (status->selected_model_available) printf(" · selected %.12s", status->selected_model_identity);
     if (message->partial_turn.available)
         printf(" · %sPARTIAL%s · %llu committed · reset required", style.warning,
                style.reset, message->partial_turn.committed_token_count);

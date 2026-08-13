@@ -123,6 +123,7 @@ static int send_console_status(int fd, const yvex_client_request *request,
     message.console.session_available = 1;
     message.console.attached = 1;
     message.console.explicit_reasoning_channel_supported = 1;
+    message.console.reasoning_policy = YVEX_REASONING_ENABLED;
     strcpy(message.console.session_name, request->session_name);
     memset(message.console.live_model_identity, 'a', 64u);
     message.console.live_model_identity[64] = '\0';

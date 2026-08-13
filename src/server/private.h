@@ -79,6 +79,7 @@ struct server_session_registry {
     pthread_mutex_t mutex;
     yvex_runtime_model *model;
     yvex_server_options options;
+    yvex_reasoning_policy default_reasoning_policy;
     server_telemetry *telemetry;
     server_session *sessions;
     unsigned long long capacity, count, next_id;
@@ -96,9 +97,12 @@ typedef struct {
     int enabled, ready;
 } server_openai_snapshot;
 
-typedef int (*server_message_emit)(void *context,
-                                   const yvex_client_message *message,
+typedef int (*server_message_emit)(void *context, const yvex_client_message *message,
                                    yvex_error *err);
+static inline yvex_reasoning_policy server_reasoning_default(int explicit_supported)
+{
+    return explicit_supported ? YVEX_REASONING_ENABLED : YVEX_REASONING_DISABLED;
+}
 
 #define YVEX_SERVER_SESSION_STORE_SCHEMA_V1 1u
 typedef struct {
@@ -256,11 +260,9 @@ void yvex_server_openai_snapshot(const server_openai_listener *listener,
                                  server_openai_snapshot *snapshot);
 void yvex_server_openai_close(server_openai_listener **listener);
 
-int yvex_server_sessions_open(server_session_registry **out,
-                                 yvex_runtime_model *model,
-                                 const yvex_server_options *options,
-                                 server_telemetry *telemetry,
-                                 yvex_error *err);
+int yvex_server_sessions_open(server_session_registry **out, yvex_runtime_model *model,
+                              const yvex_server_options *options, server_telemetry *telemetry,
+                              yvex_error *err);
 int yvex_server_sessions_execute(server_session_registry *registry,
                                     const yvex_client_request *request,
                                     const char *request_id,

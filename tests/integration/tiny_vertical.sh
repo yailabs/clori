@@ -124,22 +124,22 @@ HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session new independent \
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session new adaptive \
     >"$root/session.adaptive.new"
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --session adaptive a \
-    --strategy greedy >"$root/run.adaptive.out" 2>"$root/run.adaptive.err"
+    --reasoning none --strategy greedy >"$root/run.adaptive.out" 2>"$root/run.adaptive.err"
 grep -Fx 'okokokokokok' "$root/run.adaptive.out" >/dev/null
 grep -F 'generation 6 tokens' "$root/run.adaptive.err" >/dev/null
 grep -F 'stop context capacity' "$root/run.adaptive.err" >/dev/null
-if HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run a --strategy greedy \
-    --max-new-tokens 9 >"$root/run.oversized.out" 2>"$root/run.oversized.err"; then
+if HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run a --reasoning none \
+    --strategy greedy --max-new-tokens 9 >"$root/run.oversized.out" 2>"$root/run.oversized.err"; then
     printf 'oversized explicit completion limit was admitted\n' >&2
     exit 1
 fi
 grep -F 'requested completion limit exceeds the admitted server envelope' \
     "$root/run.oversized.err" >/dev/null
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --session persisted a \
-    --strategy greedy --max-new-tokens 1 >"$root/run.out" 2>"$root/run.err" &
+    --reasoning none --strategy greedy --max-new-tokens 1 >"$root/run.out" 2>"$root/run.err" &
 first_run_pid=$!
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --session independent a \
-    --strategy greedy --max-new-tokens 1 \
+    --reasoning none --strategy greedy --max-new-tokens 1 \
     >"$root/run.independent.out" 2>"$root/run.independent.err" &
 second_run_pid=$!
 wait "$first_run_pid"
@@ -167,7 +167,7 @@ child_position=$(sed -n 's/^.*position=\([0-9][0-9]*\).*$/\1/p' \
     "$root/prefix.child.before")
 test -n "$source_position" && test "$source_position" = "$child_position"
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --session forked a \
-    --strategy greedy --max-new-tokens 1 \
+    --reasoning none --strategy greedy --max-new-tokens 1 \
     >"$root/run.forked.out" 2>"$root/run.forked.err"
 grep -Fx 'ok' "$root/run.forked.out" >/dev/null
 grep -E '[1-9][0-9]* reused' "$root/run.forked.err" >/dev/null
@@ -182,7 +182,7 @@ test "$(sed -n 's/^.*position=\([0-9][0-9]*\).*$/\1/p' \
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session new reasoning-limit \
     >"$root/session.reasoning.new"
 if HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run \
-    --session reasoning-limit --reasoning high --strategy greedy \
+    --session reasoning-limit --strategy greedy \
     --max-new-tokens 1 a >"$root/reasoning-limit.out" \
     2>"$root/reasoning-limit.err"; then
     printf 'unfinished tiny reasoning unexpectedly succeeded\n' >&2
@@ -246,7 +246,7 @@ test "$(sed -n 's/^.*position=\([0-9][0-9]*\) turns=\([0-9][0-9]*\).*$/\1:\2/p' 
     "$(sed -n 's/^.*position=\([0-9][0-9]*\) turns=\([0-9][0-9]*\).*$/\1:\2/p' \
         "$root/session.after")"
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --session persisted a \
-    --strategy greedy --max-new-tokens 1 \
+    --reasoning none --strategy greedy --max-new-tokens 1 \
     >"$root/run.after-restore.out" 2>"$root/run.after-restore.err"
 grep -Fx 'ok' "$root/run.after-restore.out" >/dev/null
 grep -E '[1-9][0-9]* reused' "$root/run.after-restore.err" >/dev/null
