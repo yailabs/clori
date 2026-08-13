@@ -241,6 +241,7 @@ extern "C" __global__ void yvex_qtype_tensorcore_rows(
     const unsigned char *encoded, unsigned long long row_bytes,
     unsigned long long row_width, unsigned long long start_row,
     unsigned long long row_count, unsigned long long input_rows,
+    unsigned long long group_count, unsigned long long group_rows,
     unsigned int qtype, const unsigned char *activation, const float *additive,
     float *output, int output_bf16, int *status)
 {
@@ -259,9 +260,13 @@ extern "C" __global__ void yvex_qtype_tensorcore_rows(
                                         ? ((unsigned long long)blockIdx.x % input_tiles) * 16ull
                                         : input_rows;
     unsigned long long q8_blocks = row_width / YVEX_CUDA_Q8_K_BLOCK;
+    unsigned long long row_group = group_rows ? row_base / group_rows : group_count;
 
     if (!status || *status || lane >= 32u) return;
     if (!encoded || !activation || !output || !row_count || !input_rows ||
+        !group_count || !group_rows || group_count > ~0ull / group_rows ||
+        row_count != group_count * group_rows ||
+        (group_count > 1ull && group_rows % 16ull) || row_group >= group_count ||
         !tensorcore_row_geometry(qtype, row_width, row_bytes)) {
         if (!lane) atomicCAS(status, 0, 2);
         return;
@@ -284,7 +289,8 @@ extern "C" __global__ void yvex_qtype_tensorcore_rows(
             unsigned int tile_row = index / 16u, tile_column = index % 16u;
             unsigned long long global_input = input_base + tile_row;
             activation_tile[index] = global_input < input_rows
-                ? (signed char)activation[(global_input * q8_blocks + segment / 256ull) *
+                ? (signed char)activation[((global_input * group_count + row_group) *
+                                               q8_blocks + segment / 256ull) *
                                               YVEX_CUDA_Q8_K_BYTES +
                                           4ull + segment % 256ull + tile_column]
                 : 0;
@@ -303,7 +309,8 @@ extern "C" __global__ void yvex_qtype_tensorcore_rows(
             if (global_row < row_count && global_input < input_rows) {
                 const unsigned char *row = encoded + (start_row + global_row) * row_bytes;
                 const unsigned char *q8 = activation +
-                    (global_input * q8_blocks + segment / 256ull) * YVEX_CUDA_Q8_K_BYTES;
+                    ((global_input * group_count + row_group) * q8_blocks +
+                     segment / 256ull) * YVEX_CUDA_Q8_K_BYTES;
                 unsigned int subblock = (unsigned int)((segment % 256ull) / 16ull);
                 unsigned int group_segments =
                     qtype == YVEX_GGUF_QTYPE_Q2_K ||

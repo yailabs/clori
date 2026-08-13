@@ -719,7 +719,7 @@ static int moe_cuda_add_selected_derived(
     down_qtype = down->qtype;
     {
         void *params[] = {&execution->gate, &execution->normalized, &input_width,
-                          &one, &execution->status};
+                          &one, &one, &input_width, &execution->status};
         rc = execution->ops->launch(
             &execution->work, execution->state->q8_quantize_function,
             (unsigned int)(input_width / YVEX_CUDA_Q8_K_BLOCK), MOE_CUDA_BLOCK,
@@ -745,7 +745,8 @@ static int moe_cuda_add_selected_derived(
     }
     if (rc == YVEX_OK) {
         void *params[] = {&execution->up, &execution->intermediate,
-                          &intermediate_width, &topk, &execution->status};
+                          &intermediate_width, &topk, &one, &intermediate_width,
+                          &execution->status};
         rc = execution->ops->launch(
             &execution->work, execution->state->q8_quantize_function,
             (unsigned int)(topk * (intermediate_width / YVEX_CUDA_Q8_K_BLOCK)),
@@ -1104,7 +1105,8 @@ static int moe_cuda_batch_quantize(
         tasks > UINT_MAX)
         return moe_cuda_refuse(err, YVEX_ERR_BOUNDS,
                                "CUDA MoE Q8 activation geometry is invalid");
-    void *params[] = {&output, &input, &width, &rows, &batch->status};
+    unsigned long long one = 1ull;
+    void *params[] = {&output, &input, &width, &rows, &one, &width, &batch->status};
     return batch->ops->launch(
         &batch->work, batch->state->q8_quantize_function,
         (unsigned int)tasks, MOE_CUDA_BLOCK, 0u, params, stage,

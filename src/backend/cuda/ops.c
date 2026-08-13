@@ -254,6 +254,7 @@ static int attention_matvec(yvex_cuda_work *work,
                                yvex_error *err)
 {
     CUdeviceptr additive = 0ull;
+    unsigned long long group_count = 1ull, group_rows = rows;
     int block_row = 0, q8_path, q8_input = 0, tensorcore_path;
     unsigned long long tensorcore_grid = 0ull;
     unsigned int matvec_grid, matvec_block;
@@ -304,7 +305,8 @@ static int attention_matvec(yvex_cuda_work *work,
         quantized = work->q8_input;
         if (rc == YVEX_OK) {
             void *params[] = {&quantized, &vector, (void *)&weight->row_width,
-                              &input_rows, &status};
+                              &input_rows, &group_count,
+                              (void *)&weight->row_width, &status};
             rc = attention_launch(work, work->state->q8_quantize_function,
                                   (unsigned int)quantize_tasks, CUDA_ATTENTION_BLOCK, 0u,
                                   params, "cuda.q8-activation", failure, err);
@@ -313,8 +315,8 @@ static int attention_matvec(yvex_cuda_work *work,
             void *params[] = {
                 &device_weight, (void *)&weight->row_bytes,
                 (void *)&weight->row_width, &start_row, &rows, &input_rows,
-                (void *)&weight->qtype, &quantized, &additive, &out,
-                &output_bf16, &status};
+                &group_count, &group_rows, (void *)&weight->qtype, &quantized,
+                &additive, &out, &output_bf16, &status};
             rc = attention_launch(
                 work, work->state->qtype_tensorcore_rows_function,
                 (unsigned int)tensorcore_grid, 32u, 0u, params, stage,
@@ -348,36 +350,100 @@ static int attention_matvec(yvex_cuda_work *work,
             matvec_grid, matvec_block, 0u, params, stage, failure, err);
     }
 }
-static int attention_matvec_strided(
+static int attention_matvec_grouped(
     yvex_cuda_work *work, const yvex_backend_attention_weight *weight,
-    CUdeviceptr device_weight, unsigned long long start_row, unsigned long long rows,
+    CUdeviceptr device_weight, unsigned long long groups, unsigned long long group_rows,
     unsigned long long input_rows, CUdeviceptr vector, unsigned long long input_stride,
     CUdeviceptr out, unsigned long long output_stride, int output_bf16,
     CUdeviceptr status, const char *stage, yvex_backend_attention_failure *failure,
     yvex_error *err)
 {
     CUdeviceptr additive = 0ull;
-    int block_row = 0, q8_input = 0;
+    unsigned long long rows = 0ull, input_width, quantized_rows, quantize_tasks;
+    unsigned long long quantized_bytes, tensorcore_grid;
+    int block_row = 0, q8_input = 0, q8_path;
     unsigned int grid, block;
     if (!weight || !weight->present || !device_weight || !vector || !out ||
-        !rows || !input_rows || input_stride < weight->row_width ||
-        output_stride < rows || start_row > weight->row_count ||
-        rows > weight->row_count - start_row ||
-        !yvex_cuda_qtype_matvec_geometry(rows, weight->row_width, input_rows,
+        !groups || !group_rows || !input_rows || groups > ULLONG_MAX / group_rows ||
+        !yvex_core_u64_mul(groups, group_rows, &rows) ||
+        !yvex_core_u64_mul(groups, weight->row_width, &input_width) ||
+        rows != weight->row_count || input_stride < input_width ||
+        output_stride < rows ||
+        !yvex_cuda_qtype_matvec_geometry(group_rows, weight->row_width, input_rows,
                                          weight->qtype, 1, &grid, &block, &block_row))
         return attention_fail(
             failure, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT, stage,
-            weight ? weight->row_count : 0ull, start_row + rows, err,
-            YVEX_ERR_BOUNDS, "CUDA strided attention matvec geometry is invalid");
-    {
+            weight ? weight->row_count : 0ull, rows, err, YVEX_ERR_BOUNDS,
+            "CUDA grouped attention matvec geometry is invalid");
+    /* Weight rows are group-major while activations stay token-major. Quantizing
+     * token-by-group views lets one MMA launch preserve both physical layouts. */
+    q8_path = work->activation_q8 && !work->forensic_numeric &&
+              weight->row_width % 256ull == 0ull && group_rows % 16ull == 0ull &&
+              yvex_cuda_q8_activation_eligible(weight->qtype) &&
+              work->state->q8_quantize_function &&
+              work->state->qtype_tensorcore_rows_function &&
+              cuda_qtype_tensorcore_eligible(input_rows);
+    if (q8_path) {
+        unsigned long long blocks = weight->row_width / 256ull;
+        CUdeviceptr quantized;
+        int rc;
+        if (!yvex_core_u64_mul(input_rows, groups, &quantized_rows) ||
+            !yvex_core_u64_mul(quantized_rows, blocks, &quantize_tasks) ||
+            !yvex_core_u64_mul(quantize_tasks, 292ull, &quantized_bytes) ||
+            !yvex_core_u64_mul((rows + 15ull) / 16ull,
+                               (input_rows + 15ull) / 16ull, &tensorcore_grid) ||
+            quantize_tasks > UINT_MAX || tensorcore_grid > UINT_MAX ||
+            quantized_bytes > SIZE_MAX)
+            return attention_fail(
+                failure, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT, stage,
+                UINT_MAX, quantize_tasks, err, YVEX_ERR_BOUNDS,
+                "CUDA grouped Tensor Core geometry exceeds launch bounds");
+        rc = YVEX_OK;
+        if (quantized_bytes > work->q8_capacity) {
+            rc = yvex_cuda_work_allocate(work, &work->q8_input,
+                                         (size_t)quantized_bytes, NULL, 0,
+                                         "cuda.q8-activation", NULL, err);
+            if (rc == YVEX_OK) work->q8_capacity = quantized_bytes;
+        }
+        quantized = work->q8_input;
+        if (rc == YVEX_OK) {
+            void *params[] = {&quantized, &vector, (void *)&weight->row_width,
+                              &quantized_rows, &groups, &input_stride, &status};
+            rc = attention_launch(work, work->state->q8_quantize_function,
+                                  (unsigned int)quantize_tasks,
+                                  CUDA_ATTENTION_BLOCK, 0u, params,
+                                  "cuda.q8-activation", failure, err);
+        }
+        if (rc == YVEX_OK) {
+            unsigned long long start_row = 0ull;
+            void *params[] = {
+                &device_weight, (void *)&weight->row_bytes,
+                (void *)&weight->row_width, &start_row, &rows, &input_rows,
+                &groups, &group_rows, (void *)&weight->qtype, &quantized,
+                &additive, &out, &output_bf16, &status};
+            rc = attention_launch(
+                work, work->state->qtype_tensorcore_rows_function,
+                (unsigned int)tensorcore_grid, 32u, 0u, params, stage,
+                failure, err);
+            if (rc == YVEX_OK) work->tensor_core_launches++;
+        }
+        return rc;
+    }
+    for (unsigned long long group = 0ull; group < groups; ++group) {
+        unsigned long long start_row = group * group_rows;
+        CUdeviceptr input = vector + group * weight->row_width * sizeof(float);
+        CUdeviceptr output = out + group * group_rows * sizeof(float);
         void *params[] = {
             &device_weight, (void *)&weight->row_bytes, (void *)&weight->row_width,
-            &start_row, &rows, &input_rows, (void *)&weight->qtype, &vector,
+            &start_row, &group_rows, &input_rows, (void *)&weight->qtype, &input,
             &input_stride, &q8_input, &block_row, &work->forensic_numeric,
-            &additive, &out, &output_stride, &output_bf16, &status};
-        return attention_launch(work, work->state->qtype_matvec_function,
-                                grid, block, 0u, params, stage, failure, err);
+            &additive, &output, &output_stride, &output_bf16, &status};
+        int rc = attention_launch(work, work->state->qtype_matvec_function,
+                                  grid, block, 0u, params, stage,
+                                  failure, err);
+        if (rc != YVEX_OK) return rc;
     }
+    return YVEX_OK;
 }
 static int attention_decode(yvex_cuda_work *work,
                                const yvex_backend_attention_weight *weight,
@@ -1071,7 +1137,7 @@ const yvex_cuda_attention_operations *yvex_cuda_attention_operations_get(void)
         attention_stage_layout,
         attention_allocate, attention_initialize, attention_download,
         attention_launch, attention_round_bf16, attention_matvec,
-        attention_matvec_strided, attention_decode,
+        attention_matvec_grouped, attention_decode,
         attention_weighted_norm, attention_unit_norm, attention_rope,
         attention_activation, attention_state_stage
     };

@@ -1377,7 +1377,7 @@ static int attn_compress(attn_run *run) {
     return rc == YVEX_OK ? attn_index_topk(run) : rc;
 }
 static int attn_reduce(attn_run *run) {
-    unsigned long long group, low_width, batch_blocks;
+    unsigned long long low_width, batch_blocks;
     unsigned int attention_class = (unsigned int)run->job->attention_class;
     int rc;
     if (!run->ordinal) {
@@ -1422,22 +1422,15 @@ static int attn_reduce(attn_run *run) {
             run, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT,
             "cuda.attention.output_a.rows", ULLONG_MAX, run->job->output_groups,
             YVEX_ERR_BOUNDS, "CUDA attention output-A row geometry overflowed");
-    for (group = 0ull; group < run->job->output_groups; ++group) {
-        CUdeviceptr group_input =
-            run->phase_attention +
-            group * run->job->output_group_input_width * sizeof(float);
-        CUdeviceptr group_output =
-            run->phase_low + group * run->job->output_rank * sizeof(float);
-        rc = run->ops->matvec_strided(
-            &run->resources,
-            &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_OUT_A],
-            run->weight[YVEX_BACKEND_ATTENTION_WEIGHT_OUT_A],
-            group * run->job->output_rank, run->job->output_rank,
-            run->job->token_count, group_input, run->query_width,
-            group_output, low_width, 1, run->device_status,
-            "cuda.attention.output_a", run->failure, run->err);
-        if (rc != YVEX_OK) return rc;
-    }
+    rc = run->ops->matvec_grouped(
+        &run->resources,
+        &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_OUT_A],
+        run->weight[YVEX_BACKEND_ATTENTION_WEIGHT_OUT_A],
+        run->job->output_groups, run->job->output_rank,
+        run->job->token_count, run->phase_attention, run->query_width,
+        run->phase_low, low_width, 1, run->device_status,
+        "cuda.attention.output_a", run->failure, run->err);
+    if (rc != YVEX_OK) return rc;
     return run->ops->matvec(
         &run->resources, &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_OUT_B],
         run->weight[YVEX_BACKEND_ATTENTION_WEIGHT_OUT_B], 0ull,

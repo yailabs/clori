@@ -504,7 +504,7 @@ typedef struct {
                   unsigned long long, unsigned long long, unsigned long long, CUdeviceptr,
                   CUdeviceptr, int, CUdeviceptr, const char *,
                   yvex_backend_attention_failure *, yvex_error *);
-    int (*matvec_strided)(yvex_cuda_work *, const yvex_backend_attention_weight *, CUdeviceptr,
+    int (*matvec_grouped)(yvex_cuda_work *, const yvex_backend_attention_weight *, CUdeviceptr,
                   unsigned long long, unsigned long long, unsigned long long, CUdeviceptr,
                   unsigned long long, CUdeviceptr, unsigned long long, int, CUdeviceptr,
                   const char *, yvex_backend_attention_failure *, yvex_error *);

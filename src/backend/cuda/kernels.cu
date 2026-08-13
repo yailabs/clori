@@ -435,7 +435,8 @@ extern "C" __global__ void yvex_attention_f32(
 }
 extern "C" __global__ void yvex_q8_quantize(
     unsigned char *encoded, const float *values, unsigned long long width,
-    unsigned long long rows, int *status)
+    unsigned long long rows, unsigned long long groups,
+    unsigned long long input_stride, int *status)
 {
     __shared__ float absolute[256];
     __shared__ float signed_value[256];
@@ -444,13 +445,17 @@ extern "C" __global__ void yvex_q8_quantize(
     unsigned long long task = blockIdx.x;
     unsigned long long row = blocks ? task / blocks : rows;
     unsigned long long block_index = blocks ? task % blocks : 0ull;
+    unsigned long long input_row = groups ? row / groups : rows;
+    unsigned long long group = groups ? row % groups : groups;
     unsigned int thread = threadIdx.x;
     unsigned char *block;
     float value;
-    if (!status || *status || !encoded || !values || !blocks || row >= rows ||
+    if (!status || *status || !encoded || !values || !blocks || !groups ||
+        width > ~0ull / groups || input_stride < width * groups || row >= rows ||
         thread >= 256u) return;
     block = encoded + (row * blocks + block_index) * YVEX_CUDA_Q8_K_BYTES;
-    value = values[row * width + block_index * YVEX_CUDA_Q8_K_BLOCK + thread];
+    value = values[input_row * input_stride + group * width +
+                   block_index * YVEX_CUDA_Q8_K_BLOCK + thread];
     if (!isfinite(value)) atomicCAS(status, 0, 1);
     absolute[thread] = fabsf(value);
     signed_value[thread] = value;

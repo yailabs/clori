@@ -217,6 +217,7 @@ int yvex_backend_cuda_encoded_matvec(
     CUdeviceptr encoded_ptr, input_ptr, input_tail_ptr = 0ull, additive_ptr = 0ull, output_ptr;
     CUdeviceptr status = 0ull, quantized = 0ull;
     unsigned long long start_row = 0ull, launches = 0ull, tensorcore_grid = 0ull;
+    unsigned long long group_count = 1ull, group_rows = row_count;
     int output_bf16 = 0, host_status = 0, rc, cleanup_rc, q8_path, q8_input = 0;
     int tensorcore_path;
     int block_row = 0;
@@ -311,7 +312,8 @@ int yvex_backend_cuda_encoded_matvec(
             rc = yvex_cuda_work_allocate(&work, &quantized, (size_t)q8_workspace_bytes,
                                          NULL, 0, "cuda.encoded-matvec.q8", NULL, err);
         if (rc == YVEX_OK) {
-            void *params[] = {&quantized, &input_ptr, &row_width, &input_rows, &status};
+            void *params[] = {&quantized, &input_ptr, &row_width, &input_rows,
+                              &group_count, &row_width, &status};
             rc = yvex_cuda_launch(backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
                                   state->q8_quantize_function, (unsigned int)quantize_tasks,
                                   CUDA_QTYPE_MATVEC_BLOCK, 0u, params,
@@ -330,8 +332,8 @@ int yvex_backend_cuda_encoded_matvec(
                              &row_count, &output_bf16, &status};
         void *tensorcore_params[] = {
             &encoded_ptr, &row_bytes, &row_width, &start_row, &row_count,
-            &input_rows, &qtype, &quantized, &additive_ptr, &output_ptr,
-            &output_bf16, &status};
+            &input_rows, &group_count, &group_rows, &qtype, &quantized,
+            &additive_ptr, &output_ptr, &output_bf16, &status};
         void *split_params[] = {&encoded_ptr, &row_bytes, &row_width, &start_row,
                                 &row_count, &input_rows, &qtype, &input_ptr,
                                 &input_tail_ptr, &input_head_width, &additive_ptr,
