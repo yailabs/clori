@@ -214,7 +214,7 @@ server in the first and run `server status`, then `chat`, in the second.
 Chat opens one concise attachment view and the stable prompt:
 
 ```text
-YVEX 0.1.0 · protocol 10
+YVEX 0.1.0 · protocol 11
 
   model      deepseek4-v4-flash-dspark
   variant    abcdef012345

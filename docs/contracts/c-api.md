@@ -180,7 +180,7 @@ explicit concurrent-sequence request consumed by startup capacity admission;
 schema v1 cannot represent that fact and refuses after an atomic pre-v0.1
 product rebuild.
 The source-authored conversation boundary admits provider request/wire schema
-v2, tokenizer plan v3, tokenizer provider result v2, and local protocol v10.
+v3, tokenizer plan v3, tokenizer provider result v2, and local protocol v11.
 Runtime event schema v3, Physical Execution IR v1 and compiled profile v2
 remain unchanged. Generation plan ABI v5 adds the workload-profile identity
 required to bind phase evidence to the compiled workload; generation result
@@ -526,24 +526,25 @@ Domain APIs retain semantic validation and lifecycle. Runtime-client adapter
 objects remain protocol-only, while finite offline adapters may consume the
 non-installed engine interfaces already documented here.
 
-## Application Provider And Local Protocol v10
+## Application Provider And Local Protocol v11
 
 `<yvex/provider.h>` is the installed transport-neutral application request and
-result ABI. Provider schema v2 binds separate assistant reasoning content,
+result ABI. Provider schema v3 additionally represents an omitted completion
+limit as adaptive while binding separate assistant reasoning content,
 reasoning policy, source-authored drop behavior, field-presence facts, and a
 bounded ordered tool-call set in addition to the v1 request facts. Provider wire
-v2 carries those fields. V1 remains readable and writable only with disabled
+v3 carries those fields and the adaptive limit. V1 remains readable and writable only with disabled
 reasoning, at most one assistant tool call, and its original field semantics.
 Clone and wire-decode publish only a complete owned request graph. The provider
 owner neither parses HTTP nor renders model-family prompt syntax.
 
-`<yvex/server.h>` protocol v10 carries the sealed provider request through the
+`<yvex/server.h>` protocol v11 carries the sealed provider request through the
 private Unix socket. Provider output messages distinguish assistant text,
 explicit reasoning, function calls, usage, terminal completion, and failure.
 Typed events bind the provider adapter, provider-request identity, and external
 correlation ID while excluding prompt and output content.
 
-Protocol v10 carries selected generation mode, speculative lifecycle events,
+Protocol v11 carries selected generation mode, speculative lifecycle events,
 accepted-prefix facts, exact proposal/verification/commit accounting, turn
 timing and cancellation classes, an exact partial-turn schema, source-authored
 reasoning policy, typed reasoning/final/tool/error channels, and separate
@@ -559,8 +560,8 @@ model-state checkpoint save/restore operations with an explicit file bound and
 typed digest/identity evidence. Version 9 adds the startup capacity-plan
 identity, required and unreserved bytes, admitted concurrent sequences, and
 separate independent-session-scheduling and continuous-batching readiness.
-Those facts are not representable by a v8 reader, so every non-v9 frame refuses
-during the handshake;
+Provider v3's adaptive limit is not executable by a v10 peer, so every non-v11
+frame refuses during the handshake;
 there is no private pre-v0.1 compatibility decoder.
 
 Protocol error messages carry `yvex_client_failure_class`, so adapters map

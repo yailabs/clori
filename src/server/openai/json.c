@@ -907,6 +907,7 @@ int openai_json_admit(const openai_http_request *http,
             } else if (strcmp(key, "max_output_tokens") == 0) {
                 if (!yvex_json_u64(&json, &request->maximum_output_tokens))
                     rc = YVEX_ERR_FORMAT;
+                maximum_seen = rc == YVEX_OK;
             } else if (strcmp(key, "previous_response_id") == 0) {
                 rc = string_fixed(&json, request->previous_response_id,
                                   sizeof(request->previous_response_id), 0, err);
@@ -936,6 +937,9 @@ int openai_json_admit(const openai_http_request *http,
     if (rc == YVEX_OK && strcmp(request->model, selected_model) != 0)
         rc = json_refuse(err, YVEX_ERR_STATE,
                          "requested model is not loaded by the YVEX server");
+    if (rc == YVEX_OK && maximum_seen && !request->maximum_output_tokens)
+        rc = json_refuse(err, YVEX_ERR_BOUNDS,
+                         "explicit output token limit must be positive");
     if (rc == YVEX_OK && endpoint == OPENAI_ENDPOINT_RESPONSES)
         rc = prepend_instruction(request, instruction, err);
     if (rc == YVEX_OK) instruction.bytes = NULL;

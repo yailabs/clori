@@ -50,6 +50,10 @@ static int test_chat_admission(void)
     if (rc != YVEX_OK)
         fprintf(stderr, "basic Chat admission: %s\n", yvex_error_message(&err));
     YVEX_TEST_ASSERT(rc == YVEX_OK, "basic Chat request must admit");
+    YVEX_TEST_ASSERT(admitted.provider->schema_version ==
+                         YVEX_PROVIDER_SCHEMA_V3 &&
+                         admitted.provider->maximum_output_tokens == 0u,
+                     "omitted Chat limit must remain adaptive");
     YVEX_TEST_ASSERT(admitted.provider->reasoning_policy ==
                          YVEX_REASONING_MAXIMUM,
                      "maximum source reasoning policy must remain typed");
@@ -93,6 +97,12 @@ static int test_request_refusals(void)
         "{\"model\":\"deepseek4-v4-flash-dspark\",\"max_tokens\":4,"
         "\"max_completion_tokens\":4,"
         "\"messages\":[{\"role\":\"user\",\"content\":\"x\"}]}";
+    static const char zero_maximum[] =
+        "{\"model\":\"deepseek4-v4-flash-dspark\",\"max_tokens\":0,"
+        "\"messages\":[{\"role\":\"user\",\"content\":\"x\"}]}";
+    static const char zero_response_maximum[] =
+        "{\"model\":\"deepseek4-v4-flash-dspark\",\"max_output_tokens\":0,"
+        "\"input\":\"x\"}";
     static const char strict_tool[] =
         "{\"model\":\"deepseek4-v4-flash-dspark\","
         "\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],"
@@ -120,6 +130,13 @@ static int test_request_refusals(void)
     YVEX_TEST_ASSERT(admit_fixture(ambiguous_maximum, OPENAI_ENDPOINT_CHAT,
                                    &admitted, &err) != YVEX_OK,
                      "competing maximum-token fields must refuse");
+    YVEX_TEST_ASSERT(admit_fixture(zero_maximum, OPENAI_ENDPOINT_CHAT,
+                                   &admitted, &err) == YVEX_ERR_BOUNDS,
+                     "explicit zero maximum must refuse");
+    YVEX_TEST_ASSERT(admit_fixture(zero_response_maximum,
+                                   OPENAI_ENDPOINT_RESPONSES,
+                                   &admitted, &err) == YVEX_ERR_BOUNDS,
+                     "explicit zero Responses maximum must refuse");
     YVEX_TEST_ASSERT(admit_fixture(strict_tool, OPENAI_ENDPOINT_CHAT,
                                    &admitted, &err) == YVEX_ERR_UNSUPPORTED,
                      "strict tool schemas must refuse without constrained decoding");

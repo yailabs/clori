@@ -40,7 +40,7 @@ static int request_build(yvex_provider_request *request,
     tools[0].parameters_json.count = sizeof(schema) - 1u;
     stops[0].bytes = stop;
     stops[0].count = sizeof(stop) - 1u;
-    request->schema_version = YVEX_PROVIDER_SCHEMA_V2;
+    request->schema_version = YVEX_PROVIDER_SCHEMA_V3;
     strcpy(request->model, "deepseek4-v4-flash-dspark");
     request->messages = messages;
     request->message_count = 2u;
@@ -94,10 +94,10 @@ static int test_request_roundtrip(void)
                            "provider wire identity");
     YVEX_TEST_ASSERT(decoded->message_count == 2u && decoded->tool_count == 1u,
                      "provider wire counts");
-    YVEX_TEST_ASSERT(decoded->schema_version == YVEX_PROVIDER_SCHEMA_V2 &&
+    YVEX_TEST_ASSERT(decoded->schema_version == YVEX_PROVIDER_SCHEMA_V3 &&
                          decoded->reasoning_policy == YVEX_REASONING_ENABLED &&
                          decoded->drop_thinking,
-                     "provider v2 reasoning policy roundtrip");
+                     "provider v3 reasoning policy roundtrip");
     YVEX_TEST_ASSERT_STREQ(decoded->tools[0].name, "get_match_context",
                            "provider wire tool");
     YVEX_TEST_ASSERT_STREQ(decoded->adapter, "openai",
@@ -147,6 +147,10 @@ static int test_refusal(void)
                      "duplicate assistant tool-call IDs refuse");
 
     strcpy(calls[1].call_id, "call_second");
+    request.schema_version = YVEX_PROVIDER_SCHEMA_V2;
+    rc = yvex_provider_request_seal(&request, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && request.sealed,
+                     "provider v2 remains readable and writable");
     request.schema_version = YVEX_PROVIDER_SCHEMA_V1;
     request.reasoning_policy = YVEX_REASONING_DISABLED;
     rc = yvex_provider_request_seal(&request, &err);
@@ -187,12 +191,12 @@ static int test_request_defaults(void)
 
     memset(&request, 0xa5, sizeof(request));
     yvex_provider_request_default(&request);
-    YVEX_TEST_ASSERT(request.schema_version == YVEX_PROVIDER_SCHEMA_V2,
+    YVEX_TEST_ASSERT(request.schema_version == YVEX_PROVIDER_SCHEMA_V3,
                      "provider default schema");
     YVEX_TEST_ASSERT(request.response_format == YVEX_PROVIDER_RESPONSE_TEXT,
                      "provider default response format");
-    YVEX_TEST_ASSERT(request.maximum_output_tokens == 128u,
-                     "provider default output limit");
+    YVEX_TEST_ASSERT(request.maximum_output_tokens == 0u,
+                     "provider default adaptive output limit");
     YVEX_TEST_ASSERT(request.tool_choice.kind == YVEX_PROVIDER_TOOL_CHOICE_AUTO,
                      "provider default tool choice");
     YVEX_TEST_ASSERT(request.reasoning_policy == YVEX_REASONING_DISABLED &&

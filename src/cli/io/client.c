@@ -529,7 +529,8 @@ static void render_status(const yvex_server_summary *status, int json)
     if (json) {
         printf("{\"protocol\":%u,\"status\":%u,\"target\":\"%s\","
                "\"backend\":%u,\"generation_mode\":\"%s\","
-               "\"ready\":%s,\"context_capacity\":%llu,\"parallel\":%llu,"
+               "\"ready\":%s,\"context_capacity\":%llu,"
+               "\"maximum_new_tokens\":%llu,\"parallel\":%llu,"
                "\"independent_session_scheduling\":%s,\"continuous_batching\":%s,"
                "\"capacity_required_bytes\":%llu,\"capacity_unreserved_bytes\":%llu,"
                "\"uptime_ns\":%llu,"
@@ -557,7 +558,8 @@ static void render_status(const yvex_server_summary *status, int json)
                status->generation_mode == YVEX_SERVER_GENERATION_DSPARK
                    ? "dspark" : "target-only",
                status->runtime_ready ? "true" : "false",
-               status->context_capacity, status->concurrent_sequences,
+               status->context_capacity, status->maximum_new_tokens,
+               status->concurrent_sequences,
                status->independent_session_scheduling_ready ? "true" : "false",
                status->continuous_batching_ready ? "true" : "false",
                status->capacity_required_bytes, status->capacity_unreserved_bytes,
@@ -571,8 +573,7 @@ static void render_status(const yvex_server_summary *status, int json)
                status->metrics.output_head_upload_count, status->session_count,
                status->metrics.active_sessions, status->metrics.total_sessions,
                status->metrics.queue_depth, status->metrics.queue_capacity,
-               status->metrics.active_requests,
-               status->metrics.completed_requests,
+               status->metrics.active_requests, status->metrics.completed_requests,
                status->metrics.failed_requests,
                status->metrics.cancelled_requests,
                status->openai_listener_enabled ? "true" : "false",

@@ -1272,7 +1272,7 @@ static int session_turn(server_session_registry *registry,
         ? request->provider_request->maximum_output_tokens : request->maximum_new_tokens;
     yvex_error primary_error;
     int generation_rc, extends = 1, rc;
-    if (!request->provider_request && !turn_maximum) turn_maximum = registry->options.maximum_new_tokens;
+    if (!turn_maximum) turn_maximum = registry->options.maximum_new_tokens;
     {
         int provider_valid = request->provider_request &&
             yvex_provider_request_validate(request->provider_request, err) == YVEX_OK;

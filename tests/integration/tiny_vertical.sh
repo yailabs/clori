@@ -125,8 +125,9 @@ HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session new adaptive \
     >"$root/session.adaptive.new"
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --session adaptive a \
     --strategy greedy >"$root/run.adaptive.out" 2>"$root/run.adaptive.err"
-grep -Fx 'ok' "$root/run.adaptive.out" >/dev/null
-grep -F 'stop EOS' "$root/run.adaptive.err" >/dev/null
+grep -Fx 'okokokokokok' "$root/run.adaptive.out" >/dev/null
+grep -F 'generation 6 tokens' "$root/run.adaptive.err" >/dev/null
+grep -F 'stop context capacity' "$root/run.adaptive.err" >/dev/null
 if HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run a --strategy greedy \
     --max-new-tokens 9 >"$root/run.oversized.out" 2>"$root/run.oversized.err"; then
     printf 'oversized explicit completion limit was admitted\n' >&2

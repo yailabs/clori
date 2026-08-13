@@ -26,7 +26,7 @@ cannot represent the sealed semantic model, operator graph and physical
 execution plan. The frozen contract matrix remains historical entry evidence,
 not the current writer contract. The source-authored conversation product path
 earns local protocol v7, provider
-request/wire v2, tokenizer plan v3, tokenizer provider result v2 and OpenAI
+request/wire v3, tokenizer plan v3, tokenizer provider result v2 and OpenAI
 compatibility profile v2. The installed server-construction API and public
 declaration count remain unchanged. Runtime events remain schema v3, Physical
 Execution IR and compiled profiles remain schema v1. Generation plan ABI v5
@@ -35,7 +35,7 @@ ledger; result schema v4 and its wire projections remain unchanged. Every
 admitted change has a concrete fact and compatibility rule in the
 contract matrix; state checkpoints subsequently earned protocol v8, the
 admitted capacity/scheduler projection earned protocol v9, and the explicit
-copy-on-write session-fork request earns protocol v10. Server options earn
+copy-on-write session-fork request earns protocol v10; adaptive provider limits earn v11. Server options earn
 schema v2 because the concrete `yvex server --parallel` consumer must pass an
 explicit concurrent-sequence request into startup admission. The size of this
 milestone alone earns no version bump.
@@ -75,7 +75,9 @@ one direction does not imply compatibility in the other.
 | Tokenizer plan | v2 | v3 | reasoning token IDs, source identity and conversation capabilities | in-process layout and semantic identity | rebuilt consumers do not mix v2 objects | cannot publish conversation facts | complete rebuild; family-owned retained-binding projection | seal, missing/mutated capability refusal |
 | Tokenizer provider result | v1 | v2 | separate reasoning, final and tool output | in-process result layout | rebuilt consumers do not mix v1 objects | cannot publish typed channels | complete rebuild; no persistence | exact grammar, arbitrary-text non-inference, incomplete refusal |
 | Provider request/wire | v1 | v2 | assistant reasoning, policy/drop facts, presence facts and ordered multiple tool calls | installed C layout, request identity and serialized bytes | old binary rejects or cannot represent v2; current reader admits both | v1 emits only disabled reasoning and one call | retain v1 within exact limits; new facts require v2 | v1/v2 clone, seal, roundtrip, truncation, malformed refusal |
+| Provider request/wire | v2 | v3 | zero maximum output tokens means an adaptive server-envelope selection, while an explicit API zero refuses | request identity and serialized schema meaning | v2 readers reject v3 | v2 writers must provide a positive limit | retain v1/v2 readers; only v3 may encode the adaptive value | v2 compatibility, v3 clone/wire roundtrip, omitted and explicit-zero admission |
 | Local protocol | v6 | v7 | typed error channel and separate reasoning/final metrics | private Unix framing and payload | every non-v7 peer fails handshake | v6 cannot carry the new terminal facts | atomic daemon/client cutover; no compatibility decoder | message/status roundtrip and non-v7 refusal |
+| Local protocol | v10 | v11 | provider v3 adaptive completion semantics | private Unix negotiation and nested provider request | every non-v11 peer fails handshake | v10 cannot execute the adaptive zero contract | atomic server/client cutover; no compatibility decoder | operation/message roundtrip, non-v11 refusal, adaptive provider turn |
 | OpenAI compatibility | v1 | v2 | reasoning policy, `reasoning_content`, reasoning SSE and multiple calls | documented HTTP JSON profile | v1 clients can consume shared additive fields | cannot express the new contract | v2 documents the YVEX-specific projections | Chat/Responses, SSE, tools, usage, cancellation |
 | Public server entrypoints | v1 | v1 | the existing entrypoints consume server-options v2; no second constructor is required | none in the function ABI | rebuilt caller uses options v2 | rebuilt product writes options v2 | one constructor remains canonical | declaration count, schema refusal and CLI reachability |
 
