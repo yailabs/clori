@@ -606,6 +606,33 @@ const char *yvex_cli_out_stop_reason(unsigned long long reason)
     return reason < sizeof(names) / sizeof(names[0]) ? names[reason] : "unknown";
 }
 
+void yvex_cli_out_turn_metrics(FILE *output, const yvex_client_message *message,
+                               unsigned long long context_capacity,
+                               const yvex_cli_terminal_style *style)
+{
+    if (message->generation_mode == YVEX_SERVER_GENERATION_MEDIA) {
+        fprintf(output, "%smedia%s · %.2f s", style->success, style->reset,
+                message->decode_seconds);
+        return;
+    }
+    fprintf(output,
+            "%sprefill%s %llu new/%llu prompt/%llu reused · %.2f s · %.2f tok/s · "
+            "%sgeneration%s %llu tokens · %.2f s · %.2f tok/s · TTFT %.2f s",
+            style->accent, style->reset, message->prefill_tokens, message->prompt_tokens,
+            message->reused_tokens, message->prefill_seconds, message->prefill_rate,
+            style->success, style->reset, message->generated_tokens, message->decode_seconds,
+            message->decode_rate, message->first_token_seconds);
+    if (message->generation_mode == YVEX_SERVER_GENERATION_DSPARK)
+        fprintf(output, " · %sDSpark%s %llu proposed/%llu accepted/%llu rejected/%llu verified",
+                style->accent, style->reset, message->proposed_tokens,
+                message->accepted_draft_tokens, message->rejected_draft_tokens,
+                message->target_verification_count);
+    if (context_capacity)
+        fprintf(output, " · context %llu/%llu", message->context_used, context_capacity);
+    else
+        fprintf(output, " · context %llu", message->context_used);
+}
+
 static const char *server_backend_name(unsigned long long backend)
 {
     return backend == YVEX_BACKEND_KIND_CUDA ? "CUDA" : "CPU";

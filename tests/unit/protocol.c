@@ -99,12 +99,12 @@ static int test_all_operation_roundtrips(void)
         YVEX_TEST_ASSERT(
             yvex_protocol_request_encode(&source, frame, sizeof(frame), &count,
                                          &err) == YVEX_OK,
-            "all protocol-v8 operations encode");
+            "all protocol-v9 operations encode");
         YVEX_TEST_ASSERT(
             yvex_protocol_request_decode(frame, count, &decoded, &prompt,
                                          &provider, &err) == YVEX_OK &&
                 decoded.operation == (yvex_client_operation)value,
-            "all protocol-v8 operations decode");
+            "all protocol-v9 operations decode");
         free(prompt);
         prompt = NULL;
         yvex_provider_request_close(&provider);
@@ -661,7 +661,7 @@ static int test_v6_frame_refusal(void)
     pthread_t thread;
     v6_peer peer;
     int rc;
-    (void)snprintf(path, sizeof(path), "build/tests/protocol-v8-%lu.sock",
+    (void)snprintf(path, sizeof(path), "build/tests/protocol-v9-%lu.sock",
                    (unsigned long)getpid());
     (void)unlink(path);
     peer.listener = socket(AF_UNIX, SOCK_STREAM, 0);

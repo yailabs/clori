@@ -29,7 +29,7 @@ typedef struct {
     yvex_runtime_latent_evaluator_result evaluator_result;
     yvex_runtime_av_unpack_result unpack_result;
     yvex_runtime_av_video_reconstruction_result video_result;
-    yvex_runtime_av_audio_result audio_result;
+    yvex_runtime_av_audio_decode_result audio_result;
     yvex_media_avi_result media_result;
     yvex_runtime_av_conditioning_result conditioning_result;
     float *conditioning, *video_rows, *audio_rows, *video_latent, *audio_latent;
@@ -176,7 +176,8 @@ static int request_validate(
         !request->source_identity || !yvex_sha256_hex_valid(request->source_identity) ||
         !request->frames || !request->width || !request->height ||
         !request->fps_numerator || !request->fps_denominator || !request->audio_sample_rate ||
-        !request->inference_steps || !request->transformer_blocks ||
+        !request->inference_steps || !request->conditioning_layers ||
+        !request->transformer_blocks ||
         !request->maximum_host_bytes || !request->maximum_device_bytes ||
         !request->maximum_workspace_bytes || !request->maximum_file_bytes ||
         (request->component_backend != YVEX_BACKEND_KIND_CPU &&
@@ -225,8 +226,8 @@ static int conditioning_execute(generation_state *state, yvex_error *err)
                            (void **)&state->conditioning, "conditioning", err);
     if (rc == YVEX_OK)
         rc = request->condition(
-            request->family_context, context.artifact, context.gguf, context.table,
-            tokens->ids, tokens->len, state->conditioning,
+            context.artifact, context.gguf, context.table, tokens->ids, tokens->len,
+            request->conditioning_layers, state->conditioning,
             state->conditioning_values, request->maximum_host_bytes,
             request->maximum_device_bytes, &state->conditioning_result, err);
     if (rc == YVEX_OK &&
@@ -293,6 +294,7 @@ static int latent_execute(generation_state *state, yvex_error *err)
     yvex_complete_artifact_admission admission = {0};
     yvex_artifact_admission_failure failure = {0};
     yvex_runtime_component_session *session = NULL;
+    yvex_runtime_av_latent_context context = {0};
     yvex_error cleanup;
     int rc, cleanup_rc;
     if (!yvex_core_u64_mul(state->plan.video_rows, state->plan.video_value_width,
@@ -315,12 +317,20 @@ static int latent_execute(generation_state *state, yvex_error *err)
             &session, &admission, view.artifact, view.gguf, view.tensors,
             request->component_backend, request->maximum_host_bytes,
             request->maximum_device_bytes, err);
+    context.transformer_session = session;
+    context.conditioning = state->conditioning;
+    context.conditioning_capacity = state->conditioning_values;
+    context.conditioning_identity = state->conditioning_result.execution_identity;
+    context.layout = &state->layout;
+    context.layout_result = &state->layout_result;
+    context.timestep_indices = state->timestep_indices;
+    context.timestep_capacity = state->plan.packed_rows;
+    context.block_count = request->transformer_blocks;
+    context.cancelled = request->cancel_requested;
+    context.cancellation_context = request->cancel_context;
     if (rc == YVEX_OK)
         rc = request->latent(
-            request->family_context, session, &state->plan, state->conditioning,
-            state->conditioning_values, state->conditioning_result.execution_identity,
-            &state->layout, &state->layout_result, state->timestep_indices,
-            state->plan.packed_rows, request->transformer_blocks, request->seed,
+            &state->plan, &context, request->seed,
             request->maximum_workspace_bytes, state->video_rows, state->video_row_values,
             state->audio_rows, state->audio_row_values, &state->latent_result,
             &state->evaluator_result, err);
@@ -386,10 +396,35 @@ static int video_decode(
     yvex_runtime_av_video_decode_evidence *evidence, yvex_error *err)
 {
     video_decode_context *context = opaque;
-    return context->request->video_decode(
-        context->request->family_context, context->session, window,
-        context->request->maximum_workspace_bytes, context->request->cancel_requested,
-        context->request->cancel_context, evidence, err);
+    yvex_runtime_av_video_decode_options options = {0};
+    yvex_runtime_av_video_decode_result result = {0};
+    yvex_component_execution_failure failure = {0};
+    int rc;
+    options.latent = window->latent;
+    options.output = window->output;
+    options.batch = 1ull;
+    options.latent_channels = window->latent_channels;
+    options.latent_frames = window->latent_frames;
+    options.latent_height = window->latent_height;
+    options.latent_width = window->latent_width;
+    options.output_capacity = window->output_capacity;
+    options.max_workspace_bytes = context->request->maximum_workspace_bytes;
+    options.cancelled = context->request->cancel_requested;
+    options.cancellation_context = context->request->cancel_context;
+    rc = context->request->video_decode(
+        context->session, &options, &result, &failure, err);
+    if (rc == YVEX_OK) {
+        evidence->output_values = result.output_values;
+        evidence->kernel_launches = result.kernel_launches;
+        evidence->h2d_bytes = result.h2d_bytes;
+        evidence->d2h_bytes = result.d2h_bytes;
+        evidence->device_bytes = result.device_bytes;
+        yvex_core_text_copy(evidence->execution_identity,
+                            sizeof(evidence->execution_identity),
+                            result.execution_identity);
+        evidence->complete = result.complete;
+    }
+    return rc;
 }
 
 static int video_execute(generation_state *state, yvex_error *err)
@@ -463,6 +498,8 @@ static int audio_execute(generation_state *state, yvex_error *err)
 {
     const yvex_runtime_av_generation_request *request = state->request;
     component_view view = {0};
+    yvex_runtime_av_audio_decode_options options = {0};
+    yvex_component_execution_failure failure = {0};
     unsigned long long expected_samples;
     int rc;
     if (!yvex_core_u64_mul(request->audio_output_channels,
@@ -474,13 +511,19 @@ static int audio_execute(generation_state *state, yvex_error *err)
     rc = host_allocate(state, state->pcm_values, sizeof(float),
                        (void **)&state->pcm, "decoded PCM", err);
     if (rc == YVEX_OK) rc = component_view_open(request->audio_artifact_path, &view, err);
+    options.latent = state->audio_latent;
+    options.batch = request->audio_output_channels;
+    options.latent_channels = request->audio_channels;
+    options.latent_steps = state->plan.audio_latent_steps;
+    options.output = state->pcm;
+    options.output_capacity = state->pcm_values;
+    options.max_workspace_bytes = request->maximum_workspace_bytes;
+    options.cancelled = request->cancel_requested;
+    options.cancellation_context = request->cancel_context;
     if (rc == YVEX_OK)
         rc = request->audio_decode(
-            request->family_context, view.artifact, view.gguf, view.tensors,
-            state->audio_latent, request->audio_output_channels,
-            state->plan.audio_latent_steps, state->pcm, state->pcm_values,
-            request->maximum_workspace_bytes, request->maximum_device_bytes,
-            request->cancel_requested, request->cancel_context, &state->audio_result, err);
+            view.artifact, view.gguf, view.tensors, &options,
+            request->maximum_device_bytes, &state->audio_result, &failure, err);
     component_view_close(&view);
     if (rc == YVEX_OK &&
         !yvex_core_u64_mul(state->plan.audio_latent_steps,

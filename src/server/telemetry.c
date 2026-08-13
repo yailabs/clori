@@ -123,7 +123,7 @@ int yvex_server_telemetry_open(server_telemetry **out, unsigned long long capaci
     server_telemetry *telemetry;
     if (out) *out = NULL;
     if (!out || !capacity || capacity > SIZE_MAX / sizeof(yvex_server_event) ||
-        generation_mode > YVEX_SERVER_GENERATION_DSPARK) {
+        generation_mode > YVEX_SERVER_GENERATION_MEDIA) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.telemetry.open",
                        "bounded telemetry capacity is required");
         return YVEX_ERR_INVALID_ARG;
@@ -629,7 +629,7 @@ int yvex_server_event_validate(const yvex_server_event *event, yvex_error *err)
         (!event->provider_adapter[0] &&
          (event->provider_request_identity[0] ||
           event->external_correlation_id[0])) ||
-        event->generation_mode > YVEX_SERVER_GENERATION_DSPARK ||
+        event->generation_mode > YVEX_SERVER_GENERATION_MEDIA ||
         !isfinite(event->confidence_logit_minimum) ||
         !isfinite(event->confidence_logit_maximum) ||
         !isfinite(event->confidence_logit_mean) ||

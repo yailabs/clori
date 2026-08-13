@@ -55,6 +55,7 @@ struct yvex_server {
     yvex_runtime_execution_session *warm_session;
     server_telemetry *telemetry;
     server_session_registry *sessions;
+    server_media_registry *media;
     server_openai_listener *openai;
     server_work_item **queue;
     unsigned long long queue_capacity, queue_head, queue_count, next_request_id;
@@ -130,27 +131,32 @@ static int server_options_admit(yvex_server *server,
                                 yvex_error *err)
 {
     char canonical[YVEX_SERVER_SOCKET_PATH_CAP];
-    if (!options || !options->artifact_path || !options->runtime_binding_path ||
-        !options->target_id ||
+    if (!options || !options->target_id ||
+        (options->generation_mode != YVEX_SERVER_GENERATION_MEDIA &&
+         (!options->artifact_path || !options->runtime_binding_path)) ||
         (options->backend != YVEX_BACKEND_KIND_CPU &&
          options->backend != YVEX_BACKEND_KIND_CUDA) ||
-        options->generation_mode > YVEX_SERVER_GENERATION_DSPARK ||
+        options->generation_mode > YVEX_SERVER_GENERATION_MEDIA ||
         !options->context_capacity || !options->prefill_chunk_tokens ||
         !options->maximum_new_tokens || !options->maximum_output_bytes ||
         !options->maximum_sessions || !options->request_queue_capacity ||
         options->request_queue_capacity > SIZE_MAX / sizeof(server_work_item *) ||
         options->maximum_sessions > SERVER_CLIENT_CAPACITY ||
+        (options->generation_mode == YVEX_SERVER_GENERATION_MEDIA &&
+         options->openai_enabled) ||
         (options->openai_enabled &&
          (!options->openai_port || options->openai_timeout_ms < 100u ||
           options->openai_timeout_ms > 86400000u)))
         return server_refuse(err, YVEX_ERR_INVALID_ARG,
                              "complete bounded runtime-host options are required");
     server->options = *options;
-    yvex_core_text_copy(server->artifact_path, sizeof(server->artifact_path),
-                        options->artifact_path);
-    yvex_core_text_copy(server->runtime_binding_path,
-                        sizeof(server->runtime_binding_path),
-                        options->runtime_binding_path);
+    if (options->artifact_path)
+        yvex_core_text_copy(server->artifact_path, sizeof(server->artifact_path),
+                            options->artifact_path);
+    if (options->runtime_binding_path)
+        yvex_core_text_copy(server->runtime_binding_path,
+                            sizeof(server->runtime_binding_path),
+                            options->runtime_binding_path);
     yvex_core_text_copy(server->target_id, sizeof(server->target_id),
                         options->target_id);
     if (options->socket_path)
@@ -171,8 +177,9 @@ static int server_options_admit(yvex_server *server,
         strlen(server->lock_path) >= sizeof(server->lock_path) - 1u)
         return server_refuse(err, YVEX_ERR_BOUNDS,
                              "daemon lock path exceeds its bound");
-    server->options.artifact_path = server->artifact_path;
-    server->options.runtime_binding_path = server->runtime_binding_path;
+    server->options.artifact_path = server->artifact_path[0] ? server->artifact_path : NULL;
+    server->options.runtime_binding_path = server->runtime_binding_path[0]
+                                               ? server->runtime_binding_path : NULL;
     server->options.target_id = server->target_id;
     server->options.socket_path = server->socket_path;
     return YVEX_OK;
@@ -287,6 +294,28 @@ int yvex_server_create(yvex_server **out, const yvex_server_options *options,
     *out = server;
     yvex_error_clear(err);
     return YVEX_OK;
+}
+
+int yvex_server_media_configure(
+    yvex_server *server, const yvex_server_media_options *options, yvex_error *err)
+{
+    int rc;
+    if (!server || !options || !server->state_mutex_ready ||
+        pthread_mutex_lock(&server->state_mutex) != 0)
+        return server_refuse(err, YVEX_ERR_INVALID_ARG,
+                             "configured media host is required");
+    if (server->summary.status != YVEX_SERVER_STATUS_CONFIGURED || server->media ||
+        server->options.generation_mode != YVEX_SERVER_GENERATION_MEDIA) {
+        (void)pthread_mutex_unlock(&server->state_mutex);
+        return server_refuse(err, YVEX_ERR_STATE,
+                             "media options must bind once before server startup");
+    }
+    rc = yvex_server_media_registry_open(
+        &server->media, options, server->telemetry, err);
+    if (rc == YVEX_OK)
+        rc = yvex_server_media_registry_summary(server->media, &server->summary, err);
+    (void)pthread_mutex_unlock(&server->state_mutex);
+    return rc;
 }
 
 static int socket_directory_prepare(const char *socket_path, yvex_error *err)
@@ -464,9 +493,14 @@ static void *model_worker_main(void *opaque)
                                        ? (double)(started - item->enqueued_ns) /
                                              1000000000.0
                                        : 0.0;
-            rc = yvex_server_sessions_execute(
-                server->sessions, &item->request, item->request_id, queue_seconds,
-                work_emit, item, &item->error);
+            if (server->options.generation_mode == YVEX_SERVER_GENERATION_MEDIA)
+                rc = yvex_server_media_registry_execute(
+                    server->media, &item->request, item->request_id, queue_seconds,
+                    work_emit, item, &item->error);
+            else
+                rc = yvex_server_sessions_execute(
+                    server->sessions, &item->request, item->request_id, queue_seconds,
+                    work_emit, item, &item->error);
         }
         if (rc != YVEX_OK && !item->response_sent) {
             yvex_error send_error;
@@ -541,6 +575,54 @@ static int server_cuda_prepare(yvex_server *server,
     return YVEX_OK;
 }
 
+static int server_media_start(yvex_server *server, unsigned long long started,
+                              yvex_error *err)
+{
+    int rc;
+    if (!server->media)
+        return server_refuse(err, YVEX_ERR_STATE,
+                             "conversational media options were not configured");
+    rc = yvex_server_media_registry_summary(server->media, &server->summary, err);
+    if (rc == YVEX_OK)
+        yvex_server_telemetry_identities(
+            server->telemetry, server->summary.runtime_model_identity, NULL,
+            server->summary.physical_variant_identity);
+    if (rc == YVEX_OK)
+        rc = yvex_server_telemetry_emit(
+            server->telemetry, YVEX_SERVER_EVENT_BINDING_ADMITTED,
+            YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "media-profile",
+            1u, 0u, 0u, 0.0, 0.0, err);
+    if (rc == YVEX_OK && pthread_create(&server->worker, NULL,
+                                         model_worker_main, server) != 0)
+        rc = server_refuse(err, YVEX_ERR_STATE, "media worker creation failed");
+    else if (rc == YVEX_OK)
+        server->worker_ready = 1;
+    if (rc == YVEX_OK) rc = listener_open(server, err);
+    if (rc == YVEX_OK)
+        rc = yvex_server_telemetry_emit(
+            server->telemetry, YVEX_SERVER_EVENT_LISTENER_READY,
+            YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "listener",
+            0600u, server->queue_capacity, server->options.maximum_sessions,
+            0.0, 0.0, err);
+    if (rc == YVEX_OK)
+        rc = yvex_server_telemetry_emit(
+            server->telemetry, YVEX_SERVER_EVENT_RUNTIME_READY,
+            YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "media",
+            1u, 0u, server->options.backend,
+            server_elapsed_seconds(started, server_monotonic_ns()), 0.0, err);
+    (void)pthread_mutex_lock(&server->state_mutex);
+    if (rc == YVEX_OK) {
+        server->summary.status = YVEX_SERVER_STATUS_READY;
+        server->summary.runtime_ready = 1;
+        server->summary.generation_ready = 1;
+        server->summary.public_server_ready = 0;
+    } else {
+        server->summary.status = YVEX_SERVER_STATUS_FAILED;
+    }
+    (void)pthread_mutex_unlock(&server->state_mutex);
+    return rc;
+}
+
 /*
  * Open the model once, then sessions, worker, and listener before READY.
  *
@@ -569,6 +651,8 @@ int yvex_server_start(yvex_server *server, yvex_error *err)
     server->summary.status = YVEX_SERVER_STATUS_STARTING;
     (void)pthread_mutex_unlock(&server->state_mutex);
     startup_started = server_monotonic_ns();
+    if (server->options.generation_mode == YVEX_SERVER_GENERATION_MEDIA)
+        return server_media_start(server, startup_started, err);
     (void)yvex_server_telemetry_emit(
         server->telemetry, YVEX_SERVER_EVENT_ARTIFACT_OPEN_START,
         YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "startup",
@@ -799,10 +883,13 @@ static int console_status_message(yvex_server *server,
     yvex_core_text_copy(message->console.physical_variant_identity,
                         sizeof(message->console.physical_variant_identity),
                         summary.physical_variant_identity);
-    return yvex_server_sessions_console_status(server->sessions,
-                                               request->session_name,
-                                               &message->console,
-                                               &message->partial_turn, err);
+    if (server->options.generation_mode == YVEX_SERVER_GENERATION_MEDIA)
+        return yvex_server_media_registry_console_status(
+            server->media, request->session_name, &message->console,
+            &message->partial_turn, err);
+    return yvex_server_sessions_console_status(
+        server->sessions, request->session_name, &message->console,
+        &message->partial_turn, err);
 }
 
 static int event_subscription(yvex_server *server, int fd,
@@ -869,9 +956,12 @@ static int client_wait_work(yvex_server *server, server_work_item *item,
              errno != EINTR)) {
             yvex_error cancel_error;
             (void)pthread_mutex_unlock(&item->mutex);
-            if (yvex_server_sessions_cancel(server->sessions,
-                                            item->request.session_name,
-                                            &cancel_error) == YVEX_OK)
+            int cancel_rc = server->options.generation_mode == YVEX_SERVER_GENERATION_MEDIA
+                                ? yvex_server_media_registry_cancel(
+                                      server->media, item->request.session_name, &cancel_error)
+                                : yvex_server_sessions_cancel(
+                                      server->sessions, item->request.session_name, &cancel_error);
+            if (cancel_rc == YVEX_OK)
                 cancel_sent = 1;
             (void)pthread_mutex_lock(&item->mutex);
         }
@@ -915,8 +1005,11 @@ static void *client_main(void *opaque)
             rc = event_subscription(server, fd, &request, &err);
             done = 1;
         } else if (request.operation == YVEX_CLIENT_OP_GENERATION_CANCEL) {
-            rc = yvex_server_sessions_cancel(server->sessions,
-                                                request.session_name, &err);
+            rc = server->options.generation_mode == YVEX_SERVER_GENERATION_MEDIA
+                     ? yvex_server_media_registry_cancel(
+                           server->media, request.session_name, &err)
+                     : yvex_server_sessions_cancel(
+                           server->sessions, request.session_name, &err);
             if (rc == YVEX_OK) {
                 yvex_client_message message;
                 memset(&message, 0, sizeof(message));
@@ -944,7 +1037,7 @@ static void *client_main(void *opaque)
             message.status = YVEX_OK;
             message.request_number = request.request_number;
             yvex_core_text_copy(message.reason, sizeof(message.reason),
-                                "protocol-v8");
+                                "protocol-v9");
             rc = yvex_server_protocol_send(fd, &message, &err);
         } else {
             server_work_item item;
@@ -1115,7 +1208,10 @@ int yvex_server_stop(yvex_server *server, yvex_error *err)
         (void)close(server->listen_fd);
         server->listen_fd = -1;
     }
-    yvex_server_sessions_cancel_all(server->sessions);
+    if (server->media)
+        yvex_server_media_registry_cancel_all(server->media);
+    else
+        yvex_server_sessions_cancel_all(server->sessions);
     (void)pthread_mutex_lock(&server->queue_mutex);
     (void)pthread_cond_broadcast(&server->queue_condition);
     (void)pthread_mutex_unlock(&server->queue_mutex);
@@ -1167,6 +1263,7 @@ int yvex_server_finish(yvex_server *server, yvex_error *err)
         rc = cleanup_rc;
         primary = cleanup;
     }
+    yvex_server_media_registry_close(&server->media);
     cleanup_rc = yvex_runtime_session_close(&server->warm_session, &cleanup);
     if (cleanup_rc != YVEX_OK && rc == YVEX_OK) {
         rc = cleanup_rc;
@@ -1221,6 +1318,8 @@ int yvex_server_get_summary(const yvex_server *server,
                                             &out->metrics, err);
     if (server->sessions)
         (void)yvex_server_sessions_count(server->sessions, &sessions, err);
+    else if (server->media)
+        (void)yvex_server_media_registry_count(server->media, &sessions, err);
     out->session_count = sessions;
     out->request_count = out->metrics.completed_requests +
                          out->metrics.failed_requests +

@@ -22,6 +22,8 @@ typedef struct {
     int fail_condition, cancel;
 } media_fixture_context;
 
+static media_fixture_context *active_fixture_context;
+
 static int fixture_plan(
     yvex_runtime_av_plan *out, unsigned long long text_tokens,
     unsigned long long width, unsigned long long height,
@@ -106,13 +108,14 @@ static int fixture_admit(
 }
 
 static int fixture_condition(
-    void *opaque, const yvex_artifact *artifact, const yvex_gguf *gguf,
+    const yvex_artifact *artifact, const yvex_gguf *gguf,
     const yvex_tensor_table *tensors, const unsigned int *tokens,
-    unsigned long long token_count, float *output, unsigned long long output_capacity,
+    unsigned long long token_count, unsigned long long layer_count,
+    float *output, unsigned long long output_capacity,
     unsigned long long maximum_host_bytes, unsigned long long maximum_device_bytes,
     yvex_runtime_av_conditioning_result *result, yvex_error *err)
 {
-    media_fixture_context *context = opaque;
+    media_fixture_context *context = active_fixture_context;
     unsigned long long index, expected;
     (void)artifact;
     (void)gguf;
@@ -124,7 +127,8 @@ static int fixture_condition(
                        "requested conditioning refusal");
         return YVEX_ERR_STATE;
     }
-    if (!tokens || !token_count || !yvex_core_u64_mul(token_count, 5120ull, &expected) ||
+    if (!tokens || !token_count || layer_count != 1ull ||
+        !yvex_core_u64_mul(token_count, 5120ull, &expected) ||
         expected != output_capacity || maximum_host_bytes < expected * sizeof(float)) {
         yvex_error_set(err, YVEX_ERR_BOUNDS, "test.runtime-media.condition",
                        "fixture conditioning extent is inconsistent");
@@ -149,25 +153,23 @@ static int fixture_condition(
 }
 
 static int fixture_latent(
-    void *opaque, yvex_runtime_component_session *session,
-    const yvex_runtime_av_plan *plan, const float *conditioning,
-    unsigned long long conditioning_capacity, const char *conditioning_identity,
-    const yvex_runtime_av_layout_output *layout,
-    const yvex_runtime_av_layout_result *layout_result,
-    unsigned int *timestep_indices, unsigned long long timestep_capacity,
-    unsigned long long blocks, unsigned long long seed,
+    const yvex_runtime_av_plan *plan, const yvex_runtime_av_latent_context *execution,
+    unsigned long long seed,
     unsigned long long maximum_workspace_bytes, float *video,
     unsigned long long video_capacity, float *audio, unsigned long long audio_capacity,
     yvex_runtime_latent_result *latent_result,
     yvex_runtime_latent_evaluator_result *evaluator_result, yvex_error *err)
 {
-    media_fixture_context *context = opaque;
+    media_fixture_context *context = active_fixture_context;
     unsigned long long index;
     context->latent_calls++;
-    if (!session || !plan || !conditioning || !conditioning_capacity ||
-        !yvex_sha256_hex_valid(conditioning_identity) || !layout || !layout_result ||
-        !layout_result->complete || !timestep_indices || timestep_capacity != plan->packed_rows ||
-        blocks != 50ull || seed != 42ull || maximum_workspace_bytes < (1ull << 20u) ||
+    if (!execution || !execution->transformer_session || !plan || !execution->conditioning ||
+        !execution->conditioning_capacity ||
+        !yvex_sha256_hex_valid(execution->conditioning_identity) || !execution->layout ||
+        !execution->layout_result || !execution->layout_result->complete ||
+        !execution->timestep_indices || execution->timestep_capacity != plan->packed_rows ||
+        execution->block_count != 50ull || seed != 42ull ||
+        maximum_workspace_bytes < (1ull << 20u) ||
         video_capacity != plan->video_rows * plan->video_value_width ||
         audio_capacity != plan->audio_rows * plan->audio_value_width) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "test.runtime-media.latent",
@@ -207,63 +209,64 @@ static int fixture_latent(
 }
 
 static int fixture_video(
-    void *opaque, yvex_runtime_component_session *session,
-    const yvex_runtime_av_video_decode_window *window,
-    unsigned long long maximum_workspace_bytes, int (*cancel_requested)(void *),
-    void *cancel_context, yvex_runtime_av_video_decode_evidence *evidence,
-    yvex_error *err)
+    yvex_runtime_component_session *session,
+    const yvex_runtime_av_video_decode_options *options,
+    yvex_runtime_av_video_decode_result *result,
+    yvex_component_execution_failure *failure, yvex_error *err)
 {
-    media_fixture_context *context = opaque;
+    media_fixture_context *context = active_fixture_context;
     unsigned long long index;
+    (void)failure;
     context->video_calls++;
-    if (!session || !window || !window->output || !window->output_capacity ||
-        maximum_workspace_bytes < (1ull << 20u) ||
-        (cancel_requested && cancel_requested(cancel_context))) {
+    if (!session || !options || !options->output || !options->output_capacity ||
+        options->max_workspace_bytes < (1ull << 20u) ||
+        (options->cancelled && options->cancelled(options->cancellation_context))) {
         yvex_error_set(err, YVEX_ERR_CANCELLED, "test.runtime-media.video",
                        "fixture video execution was cancelled or malformed");
         return YVEX_ERR_CANCELLED;
     }
-    for (index = 0ull; index < window->output_capacity; ++index)
-        window->output[index] = (float)(index % 251ull) / 250.0f;
-    memset(evidence, 0, sizeof(*evidence));
-    evidence->output_values = window->output_capacity;
-    evidence->kernel_launches = 1ull;
-    evidence->device_bytes = 512ull;
-    yvex_core_text_copy(evidence->execution_identity, sizeof(evidence->execution_identity),
+    for (index = 0ull; index < options->output_capacity; ++index)
+        options->output[index] = (float)(index % 251ull) / 250.0f;
+    memset(result, 0, sizeof(*result));
+    result->output_values = options->output_capacity;
+    result->kernel_launches = 1ull;
+    result->device_bytes = 512ull;
+    yvex_core_text_copy(result->execution_identity, sizeof(result->execution_identity),
                         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-    evidence->complete = 1;
+    result->complete = 1;
     yvex_error_clear(err);
     return YVEX_OK;
 }
 
 static int fixture_audio(
-    void *opaque, const yvex_artifact *artifact, const yvex_gguf *gguf,
-    const yvex_tensor_table *tensors, const float *latent,
-    unsigned long long batch, unsigned long long latent_steps, float *output,
-    unsigned long long output_capacity, unsigned long long maximum_workspace_bytes,
-    unsigned long long maximum_device_bytes, int (*cancel_requested)(void *),
-    void *cancel_context, yvex_runtime_av_audio_result *result, yvex_error *err)
+    const yvex_artifact *artifact, const yvex_gguf *gguf,
+    const yvex_tensor_table *tensors, const yvex_runtime_av_audio_decode_options *options,
+    unsigned long long maximum_device_bytes, yvex_runtime_av_audio_decode_result *result,
+    yvex_component_execution_failure *failure, yvex_error *err)
 {
-    media_fixture_context *context = opaque;
+    media_fixture_context *context = active_fixture_context;
     unsigned long long index, samples;
     (void)artifact;
     (void)gguf;
     (void)tensors;
     (void)maximum_device_bytes;
+    (void)failure;
     context->audio_calls++;
-    if (!latent || batch != 2ull || latent_steps != FIXTURE_AUDIO_STEPS ||
-        !yvex_core_u64_mul(latent_steps, 800ull, &samples) ||
-        output_capacity != batch * samples || maximum_workspace_bytes < (1ull << 20u) ||
-        (cancel_requested && cancel_requested(cancel_context))) {
+    if (!options || !options->latent || options->batch != 2ull ||
+        options->latent_steps != FIXTURE_AUDIO_STEPS ||
+        !yvex_core_u64_mul(options->latent_steps, 800ull, &samples) ||
+        options->output_capacity != options->batch * samples ||
+        options->max_workspace_bytes < (1ull << 20u) ||
+        (options->cancelled && options->cancelled(options->cancellation_context))) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "test.runtime-media.audio",
                        "fixture audio execution inputs are inconsistent");
         return YVEX_ERR_INVALID_ARG;
     }
-    for (index = 0ull; index < output_capacity; ++index) output[index] = 0.0f;
+    for (index = 0ull; index < options->output_capacity; ++index) options->output[index] = 0.0f;
     memset(result, 0, sizeof(*result));
-    result->batch = batch;
+    result->batch = options->batch;
     result->samples_per_channel = samples;
-    result->output_values = output_capacity;
+    result->output_values = options->output_capacity;
     result->kernel_launches = 4ull;
     result->device_bytes = 1024ull;
     result->peak_workspace_bytes = 8192ull;
@@ -318,6 +321,7 @@ static yvex_runtime_av_generation_request fixture_request(
     request.fps_denominator = 1ull;
     request.audio_sample_rate = 32000ull;
     request.inference_steps = 1u;
+    request.conditioning_layers = 1ull;
     request.transformer_blocks = 50ull;
     request.seed = 42ull;
     request.maximum_host_bytes = 64ull << 20u;
@@ -342,7 +346,7 @@ static yvex_runtime_av_generation_request fixture_request(
     request.pixel_channels = 3ull;
     request.audio_output_channels = 2ull;
     request.audio_samples_per_step = 800ull;
-    request.family_context = context;
+    (void)context;
     request.plan_build = fixture_plan;
     request.layout_build = fixture_layout;
     request.component_admit = fixture_admit;
@@ -405,6 +409,7 @@ static int test_generation_transaction(void)
     second = fixture_request(&second_context, second_path, second_video_mean, second_video_std,
                              second_audio_mean, second_audio_std,
                              second_pixel_mean, second_pixel_std);
+    active_fixture_context = &first_context;
     rc = yvex_runtime_av_generate(&first, &first_result, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && first_result.complete,
                      "complete staged media transaction");
@@ -418,6 +423,7 @@ static int test_generation_transaction(void)
                          first_context.video_calls == 7ull &&
                          first_context.audio_calls == 1ull,
                      "all staged component phases executed once per admitted schedule");
+    active_fixture_context = &second_context;
     rc = yvex_runtime_av_generate(&second, &second_result, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && second_result.complete,
                      "repeat staged media transaction");
@@ -454,6 +460,7 @@ static int test_generation_refusals(void)
     unlink(path);
     request = fixture_request(&context, path, video_mean, video_std, audio_mean, audio_std,
                               pixel_mean, pixel_std);
+    active_fixture_context = &context;
     request.component_backend = YVEX_BACKEND_KIND_METAL;
     rc = yvex_runtime_av_generate(&request, &result, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_INVALID_ARG && !result.complete,

@@ -4,6 +4,7 @@
 
 #include <yvex/artifact.h>
 #include <yvex/internal/artifact.h>
+#include <yvex/internal/component.h>
 #include <yvex/internal/io.h>
 #include <yvex/internal/latent.h>
 #include <yvex/internal/runtime.h>
@@ -13,15 +14,6 @@ extern "C" {
 #endif
 
 #define YVEX_RUNTIME_AV_GENERATION_SCHEMA_V1 1u
-
-typedef struct {
-    unsigned long long token_count, hidden_width, layer_count;
-    unsigned long long resident_bytes, kernel_launches, h2d_bytes, d2h_bytes, device_bytes;
-    unsigned long long peak_workspace_bytes;
-    char residency_identity[YVEX_SHA256_HEX_CAP];
-    char execution_identity[YVEX_SHA256_HEX_CAP];
-    int complete;
-} yvex_runtime_av_conditioning_result;
 
 typedef struct {
     unsigned long long batch, samples_per_channel, output_values;
@@ -42,26 +34,22 @@ typedef int (*yvex_runtime_av_component_admit_fn)(
     const char *, const yvex_artifact *, const yvex_gguf *, const yvex_tensor_table *,
     yvex_complete_artifact_admission *, yvex_artifact_admission_failure *, yvex_error *);
 typedef int (*yvex_runtime_av_condition_fn)(
-    void *, const yvex_artifact *, const yvex_gguf *, const yvex_tensor_table *,
-    const unsigned int *, unsigned long long, float *, unsigned long long,
+    const yvex_artifact *, const yvex_gguf *, const yvex_tensor_table *,
+    const unsigned int *, unsigned long long, unsigned long long, float *, unsigned long long,
     unsigned long long, unsigned long long, yvex_runtime_av_conditioning_result *,
     yvex_error *);
 typedef int (*yvex_runtime_av_latent_fn)(
-    void *, yvex_runtime_component_session *, const yvex_runtime_av_plan *,
-    const float *, unsigned long long, const char *, const yvex_runtime_av_layout_output *,
-    const yvex_runtime_av_layout_result *, unsigned int *, unsigned long long,
-    unsigned long long, unsigned long long, unsigned long long, float *,
+    const yvex_runtime_av_plan *, const yvex_runtime_av_latent_context *,
+    unsigned long long, unsigned long long, float *,
     unsigned long long, float *, unsigned long long, yvex_runtime_latent_result *,
     yvex_runtime_latent_evaluator_result *, yvex_error *);
 typedef int (*yvex_runtime_av_video_fn)(
-    void *, yvex_runtime_component_session *, const yvex_runtime_av_video_decode_window *,
-    unsigned long long, int (*)(void *), void *,
-    yvex_runtime_av_video_decode_evidence *, yvex_error *);
+    yvex_runtime_component_session *, const yvex_runtime_av_video_decode_options *,
+    yvex_runtime_av_video_decode_result *, yvex_component_execution_failure *, yvex_error *);
 typedef int (*yvex_runtime_av_audio_fn)(
-    void *, const yvex_artifact *, const yvex_gguf *, const yvex_tensor_table *,
-    const float *, unsigned long long, unsigned long long, float *, unsigned long long,
-    unsigned long long, unsigned long long, int (*)(void *), void *,
-    yvex_runtime_av_audio_result *, yvex_error *);
+    const yvex_artifact *, const yvex_gguf *, const yvex_tensor_table *,
+    const yvex_runtime_av_audio_decode_options *, unsigned long long,
+    yvex_runtime_av_audio_decode_result *, yvex_component_execution_failure *, yvex_error *);
 
 typedef struct {
     unsigned int schema_version;
@@ -72,7 +60,7 @@ typedef struct {
     unsigned long long frames, width, height;
     unsigned long long fps_numerator, fps_denominator, audio_sample_rate;
     unsigned int inference_steps;
-    unsigned long long transformer_blocks, seed;
+    unsigned long long conditioning_layers, transformer_blocks, seed;
     unsigned long long maximum_host_bytes, maximum_device_bytes;
     unsigned long long maximum_workspace_bytes, maximum_file_bytes;
     yvex_backend_kind component_backend;
@@ -82,7 +70,6 @@ typedef struct {
     const float *pixel_mean, *pixel_std;
     unsigned long long video_channels, audio_channels, pixel_channels;
     unsigned long long audio_output_channels, audio_samples_per_step;
-    void *family_context;
     yvex_runtime_av_plan_fn plan_build;
     yvex_runtime_av_layout_fn layout_build;
     yvex_runtime_av_component_admit_fn component_admit;

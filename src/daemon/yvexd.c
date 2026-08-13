@@ -7,6 +7,8 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <yvex/server.h>
+#include <yvex/internal/families/minimax_h3.h>
+#include <yvex/internal/server_media.h>
 #include <yvex/internal/source.h>
 
 #include <pthread.h>
@@ -93,7 +95,9 @@ static void print_help(FILE *output)
     fprintf(output,
             "usage: yvexd --model ARTIFACT --runtime-binding FILE "
             "[--target ID] [--backend cpu|cuda] "
-            "[--generation-mode target-only|dspark] [--socket PATH]\n"
+            "[--generation-mode target-only|dspark|media] [--socket PATH]\n"
+            "       yvexd --generation-mode media --media-artifact-root DIR "
+            "--output-root DIR [--socket PATH]\n"
             "             [--context TOKENS] [--prefill-chunk TOKENS] "
             "[--max-new-tokens N] [--console off|raw]\n"
             "             [--trace-level summary|stages|tokens|full] "
@@ -102,6 +106,105 @@ static void print_help(FILE *output)
             "[--openai-timeout-ms MS]\n\n"
             "Hosts one process-resident model, a private Unix socket, and an optional "
             "loopback OpenAI listener.\n");
+}
+
+static int media_path(char output[YVEX_PATH_CAP], const char *root,
+                      const char *relative)
+{
+    int length = snprintf(output, YVEX_PATH_CAP, "%s/%s", root, relative);
+    return length >= 0 && length < YVEX_PATH_CAP;
+}
+
+static int media_configure(yvex_server *server, const char *artifact_root,
+                           const char *output_root, yvex_error *err)
+{
+    const yvex_minimax_h3_api *model = yvex_model_register_minimax_h3();
+    const yvex_minimax_h3_graph_api *graph = yvex_graph_register_minimax_h3();
+    const yvex_minimax_h3_latent_normalization *normalization;
+    yvex_minimax_h3_architecture architecture = {0};
+    yvex_minimax_h3_failure failure = {0};
+    yvex_runtime_av_generation_request request = {0};
+    yvex_server_media_options media = {0};
+    char text[YVEX_PATH_CAP], transformer[YVEX_PATH_CAP];
+    char video[YVEX_PATH_CAP], audio[YVEX_PATH_CAP];
+    static const yvex_server_media_profile profiles[] = {
+        {"source", 1344ull, 768ull, 1},
+        {"draft", 960ull, 544ull, 0},
+        {"smoke", 32ull, 32ull, 0},
+    };
+    int rc;
+    if (!server || !artifact_root || !output_root || !model || !graph ||
+        !media_path(text, artifact_root, "physical-v3/text_encoder.gguf") ||
+        !media_path(transformer, artifact_root, "physical-v4/transformer.gguf") ||
+        !media_path(video, artifact_root, "physical/video_vae.gguf") ||
+        !media_path(audio, artifact_root, "physical/audio_vae.gguf")) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "daemon.media",
+                       "MiniMax media artifact and output roots are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    rc = model->architecture_canonical(&architecture, &failure, err);
+    normalization = rc == YVEX_OK ? model->latent_normalization() : NULL;
+    if (rc == YVEX_OK && !normalization) {
+        yvex_error_set(err, YVEX_ERR_STATE, "daemon.media",
+                       "MiniMax latent normalization is unavailable");
+        rc = YVEX_ERR_STATE;
+    }
+    request.schema_version = YVEX_RUNTIME_AV_GENERATION_SCHEMA_V1;
+    request.target = YVEX_MINIMAX_H3_TARGET_ID;
+    request.text_artifact_path = text;
+    request.transformer_artifact_path = transformer;
+    request.video_artifact_path = video;
+    request.audio_artifact_path = audio;
+    request.source_identity = YVEX_MINIMAX_H3_SOURCE_TREE_IDENTITY;
+    request.fps_numerator = 24ull;
+    request.fps_denominator = 1ull;
+    request.audio_sample_rate = architecture.audio_vae.sample_rate;
+    request.conditioning_layers = YVEX_MINIMAX_H3_TEXT_CONDITIONING_LAYERS;
+    request.transformer_blocks = 50ull;
+    request.seed = 42ull;
+    request.maximum_host_bytes = 80ull * 1024ull * 1024ull * 1024ull;
+    request.maximum_device_bytes = 4ull * 1024ull * 1024ull * 1024ull;
+    request.maximum_workspace_bytes = 4ull * 1024ull * 1024ull * 1024ull;
+    request.maximum_file_bytes = 2ull * 1024ull * 1024ull * 1024ull;
+    request.component_backend = YVEX_BACKEND_KIND_CUDA;
+    request.video_temporal_ratio = architecture.video_vae.temporal_ratio;
+    request.video_clip_length = architecture.video_vae.clip_length;
+    request.video_token_drop = architecture.video_vae.token_drop;
+    request.video_spatial_ratio = architecture.video_vae.spatial_ratio;
+    request.video_tile_size = architecture.video_vae.tile_size;
+    request.video_minimum_tile_overlap = architecture.video_vae.tile_overlap;
+    request.video_mean = normalization ? normalization->video_mean : NULL;
+    request.video_std = normalization ? normalization->video_std : NULL;
+    request.audio_mean = normalization ? normalization->audio_mean : NULL;
+    request.audio_std = normalization ? normalization->audio_std : NULL;
+    request.pixel_mean = normalization ? normalization->pixel_mean : NULL;
+    request.pixel_std = normalization ? normalization->pixel_std : NULL;
+    request.video_channels = normalization ? normalization->video_channels : 0ull;
+    request.audio_channels = normalization ? normalization->audio_channels : 0ull;
+    request.pixel_channels = normalization ? normalization->pixel_channels : 0ull;
+    request.audio_output_channels = architecture.audio_vae.output_channels;
+    request.audio_samples_per_step = architecture.audio_vae.decoder_rate_product;
+    request.plan_build = graph->t2va_plan_build;
+    request.layout_build = graph->t2va_layout_build;
+    request.component_admit = graph->component_admit;
+    request.condition = graph->text_encoder_artifact_cuda;
+    request.latent = graph->t2va_latent_execute;
+    request.video_decode = graph->video_vae_decode_cuda;
+    request.audio_decode = graph->audio_vae_execute_artifact_cuda;
+    media.schema_version = YVEX_SERVER_MEDIA_SCHEMA_V1;
+    media.output_root = output_root;
+    media.request_template = request;
+    media.profiles = profiles;
+    media.profile_count = sizeof(profiles) / sizeof(profiles[0]);
+    media.frames_per_chunk = 17ull;
+    media.frame_remainder = 5ull;
+    media.minimum_frames = 124ull;
+    media.maximum_frames = 345ull;
+    media.minimum_inference_steps = 2ull;
+    media.maximum_inference_steps = 64ull;
+    media.canvas_multiple = 32ull;
+    media.maximum_canvas_pixels = 1344ull * 768ull;
+    return rc == YVEX_OK ? yvex_server_media_configure(server, &media, err) : rc;
 }
 
 static int parse_u64(const char *text, unsigned long long *value)
@@ -169,6 +272,7 @@ int main(int argument_count, char **arguments)
     int index, rc, signal_ready = 0, console_ready = 0;
     int mode_seen = 0, openai_seen = 0, openai_port_seen = 0;
     int openai_timeout_seen = 0;
+    const char *media_artifact_root = NULL, *output_root = NULL;
     memset(&options, 0, sizeof(options));
     options.target_id = "deepseek4-v4-flash-dspark";
     options.backend = YVEX_BACKEND_KIND_CPU;
@@ -205,7 +309,9 @@ int main(int argument_count, char **arguments)
                     !strcmp(argument, "--trace-level") ||
                     !strcmp(argument, "--openai") ||
                     !strcmp(argument, "--openai-port") ||
-                    !strcmp(argument, "--openai-timeout-ms")) &&
+                    !strcmp(argument, "--openai-timeout-ms") ||
+                    !strcmp(argument, "--media-artifact-root") ||
+                    !strcmp(argument, "--output-root")) &&
                    index + 1 >= argument_count) {
             fprintf(stderr, "yvexd: %s requires a value\n", argument);
             return 2;
@@ -213,6 +319,10 @@ int main(int argument_count, char **arguments)
             options.artifact_path = arguments[++index];
         } else if (!strcmp(argument, "--runtime-binding")) {
             options.runtime_binding_path = arguments[++index];
+        } else if (!strcmp(argument, "--media-artifact-root")) {
+            media_artifact_root = arguments[++index];
+        } else if (!strcmp(argument, "--output-root")) {
+            output_root = arguments[++index];
         } else if (!strcmp(argument, "--target")) {
             options.target_id = arguments[++index];
         } else if (!strcmp(argument, "--socket")) {
@@ -236,9 +346,11 @@ int main(int argument_count, char **arguments)
                 options.generation_mode = YVEX_SERVER_GENERATION_TARGET_ONLY;
             else if (!strcmp(mode, "dspark"))
                 options.generation_mode = YVEX_SERVER_GENERATION_DSPARK;
+            else if (!strcmp(mode, "media"))
+                options.generation_mode = YVEX_SERVER_GENERATION_MEDIA;
             else {
                 fprintf(stderr,
-                        "yvexd: --generation-mode requires target-only or dspark\n");
+                        "yvexd: --generation-mode requires target-only, dspark, or media\n");
                 return 2;
             }
         } else if (!strcmp(argument, "--context")) {
@@ -293,8 +405,18 @@ int main(int argument_count, char **arguments)
             return 2;
         }
     }
-    if (!options.artifact_path || !options.runtime_binding_path) {
+    if (options.generation_mode == YVEX_SERVER_GENERATION_MEDIA) {
+        options.target_id = YVEX_MINIMAX_H3_TARGET_ID;
+        options.backend = YVEX_BACKEND_KIND_CUDA;
+        options.openai_enabled = 0;
+    } else if (!options.artifact_path || !options.runtime_binding_path) {
         fprintf(stderr, "yvexd: --model and --runtime-binding are required\n");
+        return 2;
+    }
+    if (options.generation_mode == YVEX_SERVER_GENERATION_MEDIA &&
+        (!media_artifact_root || !output_root)) {
+        fprintf(stderr,
+                "yvexd: media mode requires --media-artifact-root and --output-root\n");
         return 2;
     }
     if (!strcmp(options.target_id, YVEX_SOURCE_RETIRED_TARGET_ID)) {
@@ -307,6 +429,8 @@ int main(int argument_count, char **arguments)
     (void)sigaddset(&signals, SIGTERM);
     (void)pthread_sigmask(SIG_BLOCK, &signals, NULL);
     rc = yvex_server_create(&server, &options, &err);
+    if (rc == YVEX_OK && options.generation_mode == YVEX_SERVER_GENERATION_MEDIA)
+        rc = media_configure(server, media_artifact_root, output_root, &err);
     if (rc == YVEX_OK) {
         startup_progress_begin(&startup_progress);
         rc = yvex_server_start(server, &err);

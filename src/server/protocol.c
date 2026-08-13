@@ -719,7 +719,7 @@ static int message_fields_valid(const yvex_client_message *message)
             (message->stream_channel == YVEX_CLIENT_STREAM_ERROR &&
              message->provider_output_kind == YVEX_PROVIDER_OUTPUT_ERROR)) &&
            ENUM_VALID(message->generation_mode, YVEX_SERVER_GENERATION_TARGET_ONLY,
-                      YVEX_SERVER_GENERATION_DSPARK) &&
+                      YVEX_SERVER_GENERATION_MEDIA) &&
            ENUM_VALID(message->session_state, YVEX_SERVER_SESSION_CREATED,
                       YVEX_SERVER_SESSION_FAILED) &&
            ENUM_VALID(message->provider_output_kind,
@@ -1324,7 +1324,7 @@ static int message_base_field(yvex_client_message *candidate, unsigned int tag,
     case TAG_KV_USED_BYTES: valid = BASE_U64(candidate->kv_used_bytes); break;
     case TAG_GENERATION_MODE:
         valid = reader_u64(bytes, count, &value) &&
-                value <= YVEX_SERVER_GENERATION_DSPARK;
+                value <= YVEX_SERVER_GENERATION_MEDIA;
         if (valid)
             candidate->generation_mode = (yvex_server_generation_mode)value;
         break;
@@ -1536,7 +1536,7 @@ static int message_runtime_field(yvex_client_message *candidate,
         break;
     case TAG_RUNTIME_GENERATION_MODE:
         valid = reader_u64(bytes, count, &value) &&
-                value <= YVEX_SERVER_GENERATION_DSPARK;
+                value <= YVEX_SERVER_GENERATION_MEDIA;
         if (valid)
             candidate->runtime.generation_mode =
                 (yvex_server_generation_mode)value;
@@ -1752,7 +1752,7 @@ static int message_event_field(yvex_client_message *candidate,
     case TAG_EVENT_VALUE_C: valid = EVENT_U64(candidate->event.value_c); break;
     case TAG_EVENT_GENERATION_MODE:
         valid = reader_u64(bytes, count, &value) &&
-                value <= YVEX_SERVER_GENERATION_DSPARK;
+                value <= YVEX_SERVER_GENERATION_MEDIA;
         if (valid)
             candidate->event.generation_mode =
                 (yvex_server_generation_mode)value;

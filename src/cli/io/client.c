@@ -501,6 +501,7 @@ static const char *backend_name(yvex_backend_kind backend)
 }
 static const char *generation_mode_name(yvex_server_generation_mode mode)
 {
+    if (mode == YVEX_SERVER_GENERATION_MEDIA) return "media";
     return mode == YVEX_SERVER_GENERATION_DSPARK ? "DSpark" : "target-only";
 }
 static void render_status(const yvex_server_summary *status, int json)
@@ -529,8 +530,9 @@ static void render_status(const yvex_server_summary *status, int json)
                "\"artifact_identity\":\"%s\",\"variant_identity\":\"%s\"}\n",
                YVEX_LOCAL_PROTOCOL_VERSION, (unsigned int)status->status,
                status->target_id, (unsigned int)status->backend,
-               status->generation_mode == YVEX_SERVER_GENERATION_DSPARK
-                   ? "dspark" : "target-only",
+               status->generation_mode == YVEX_SERVER_GENERATION_MEDIA
+                   ? "media" : status->generation_mode == YVEX_SERVER_GENERATION_DSPARK
+                                   ? "dspark" : "target-only",
                status->runtime_ready ? "true" : "false",
                status->metrics.uptime_ns, status->metrics.model_open_count,
                status->metrics.model_close_count,
@@ -849,27 +851,7 @@ static int generation_turn(const char *session_name,
                                "terminal stream finalization failed");
                 break;
             }
-            fprintf(status_output,
-                    "%sprefill%s %llu new/%llu prompt/%llu reused · %.2f s · %.2f tok/s · "
-                    "%sgeneration%s %llu tokens · %.2f s · %.2f tok/s · TTFT %.2f s",
-                    style.accent, style.reset, message.prefill_tokens,
-                    message.prompt_tokens, message.reused_tokens,
-                    message.prefill_seconds, message.prefill_rate,
-                    style.success, style.reset, message.generated_tokens,
-                    message.decode_seconds, message.decode_rate,
-                    message.first_token_seconds);
-            if (message.generation_mode == YVEX_SERVER_GENERATION_DSPARK)
-                fprintf(status_output,
-                        " · %sDSpark%s %llu proposed/%llu accepted/%llu rejected/%llu verified",
-                        style.accent, style.reset, message.proposed_tokens,
-                        message.accepted_draft_tokens,
-                        message.rejected_draft_tokens,
-                        message.target_verification_count);
-            if (context_capacity)
-                fprintf(status_output, " · context %llu/%llu",
-                        message.context_used, context_capacity);
-            else
-                fprintf(status_output, " · context %llu", message.context_used);
+            yvex_cli_out_turn_metrics(status_output, &message, context_capacity, &style);
             fprintf(status_output, " · stop %s · %ssession %s%s\n",
                     yvex_cli_out_stop_reason(message.stop_reason), style.dim,
                     message.session_name, style.reset);

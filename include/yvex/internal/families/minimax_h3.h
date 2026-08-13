@@ -387,61 +387,23 @@ typedef struct {
     yvex_source_payload_session *(*session)(yvex_minimax_h3_handoff *handoff);
     const yvex_source_payload_plan *(*plan)(const yvex_minimax_h3_handoff *handoff);
 } yvex_minimax_h3_handoff_api;
-typedef enum {
-    YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NONE = 0,
-    YVEX_MINIMAX_H3_COMPONENT_EXECUTION_INVALID_ARGUMENT,
-    YVEX_MINIMAX_H3_COMPONENT_EXECUTION_LIFECYCLE,
-    YVEX_MINIMAX_H3_COMPONENT_EXECUTION_MISSING_TENSOR,
-    YVEX_MINIMAX_H3_COMPONENT_EXECUTION_TENSOR_CONTRACT,
-    YVEX_MINIMAX_H3_COMPONENT_EXECUTION_BUDGET,
-    YVEX_MINIMAX_H3_COMPONENT_EXECUTION_MATERIALIZATION,
-    YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NUMERIC,
-    YVEX_MINIMAX_H3_COMPONENT_EXECUTION_CANCELLED
-} yvex_minimax_h3_component_execution_code;
-typedef struct {
-    yvex_minimax_h3_component_execution_code code; char tensor_name[256];
-    unsigned long long expected, actual;
-    const char *reason;
-} yvex_minimax_h3_component_execution_failure;
+#define YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NONE 0u
+#define YVEX_MINIMAX_H3_COMPONENT_EXECUTION_INVALID_ARGUMENT 1u
+#define YVEX_MINIMAX_H3_COMPONENT_EXECUTION_LIFECYCLE 2u
+#define YVEX_MINIMAX_H3_COMPONENT_EXECUTION_MISSING_TENSOR 3u
+#define YVEX_MINIMAX_H3_COMPONENT_EXECUTION_TENSOR_CONTRACT 4u
+#define YVEX_MINIMAX_H3_COMPONENT_EXECUTION_BUDGET 5u
+#define YVEX_MINIMAX_H3_COMPONENT_EXECUTION_MATERIALIZATION 6u
+#define YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NUMERIC 7u
+#define YVEX_MINIMAX_H3_COMPONENT_EXECUTION_CANCELLED 8u
+typedef unsigned int yvex_minimax_h3_component_execution_code;
+typedef struct yvex_component_execution_failure yvex_minimax_h3_component_execution_failure;
 typedef int (*yvex_minimax_h3_cancelled_fn)(void *context);
-typedef struct {
-    const float *latent;
-    unsigned long long batch, latent_channels, latent_steps;
-    float *output;
-    unsigned long long output_capacity;
-    unsigned long long max_workspace_bytes;
-    yvex_minimax_h3_cancelled_fn cancelled;
-    void *cancellation_context;
-} yvex_minimax_h3_audio_decode_options;
-typedef struct {
-    unsigned long long batch, samples_per_channel, output_values;
-    unsigned long long tensor_reads, payload_bytes_read, peak_workspace_bytes, kernel_launches;
-    unsigned long long h2d_bytes, d2h_bytes, device_bytes;
-    char artifact_identity[65], execution_identity[65], residency_identity[65];
-    int complete;
-} yvex_minimax_h3_audio_decode_result;
-typedef struct {
-    const float *latent;
-    float *output;
-    unsigned long long batch, latent_channels;
-    unsigned long long latent_frames, latent_height, latent_width;
-    unsigned long long output_capacity, max_workspace_bytes;
-    yvex_minimax_h3_cancelled_fn cancelled;
-    void *cancellation_context;
-} yvex_minimax_h3_video_decode_options;
-typedef struct {
-    unsigned long long batch, frames, height, width, output_values;
-    unsigned long long tensor_reads, payload_bytes_read, peak_workspace_bytes, kernel_launches;
-    unsigned long long h2d_bytes, d2h_bytes, device_bytes;
-    char artifact_identity[65], execution_identity[65], residency_identity[65];
-    int complete;
-} yvex_minimax_h3_video_decode_result;
-typedef struct {
-    unsigned long long token_count, hidden_width, layer_count, resident_bytes;
-    unsigned long long kernel_launches, h2d_bytes, d2h_bytes, device_bytes;
-    char residency_identity[65], execution_identity[65];
-    int complete;
-} yvex_minimax_h3_conditioning_result;
+typedef struct yvex_runtime_av_audio_decode_options yvex_minimax_h3_audio_decode_options;
+typedef struct yvex_runtime_av_audio_decode_result yvex_minimax_h3_audio_decode_result;
+typedef struct yvex_runtime_av_video_decode_options yvex_minimax_h3_video_decode_options;
+typedef struct yvex_runtime_av_video_decode_result yvex_minimax_h3_video_decode_result;
+typedef struct yvex_runtime_av_conditioning_result yvex_minimax_h3_conditioning_result;
 typedef enum {
     YVEX_MINIMAX_H3_TEXT_EMBEDDING = 0, YVEX_MINIMAX_H3_TEXT_INPUT_NORM,
     YVEX_MINIMAX_H3_TEXT_Q_PROJECTION, YVEX_MINIMAX_H3_TEXT_K_PROJECTION,
@@ -523,17 +485,7 @@ typedef struct {
         yvex_minimax_h3_omni_transformer_result *result, yvex_error *err);
 } yvex_minimax_h3_backend_api;
 typedef struct yvex_runtime_av_plan yvex_minimax_h3_t2va_plan;
-typedef struct {
-    yvex_runtime_component_session *transformer_session;
-    const float *conditioning;
-    unsigned long long conditioning_capacity;
-    const yvex_runtime_av_layout_output *layout;
-    const yvex_runtime_av_layout_result *layout_result;
-    unsigned int *timestep_indices;
-    unsigned long long timestep_capacity, block_count;
-    const char *conditioning_identity;
-    yvex_minimax_h3_cancelled_fn cancelled; void *cancellation_context;
-} yvex_minimax_h3_t2va_omni_context;
+typedef struct yvex_runtime_av_latent_context yvex_minimax_h3_t2va_omni_context;
 typedef yvex_runtime_latent_evaluator_result yvex_minimax_h3_t2va_omni_result;
 typedef struct {
     int (*t2va_plan_build)(yvex_minimax_h3_t2va_plan *, unsigned long long,

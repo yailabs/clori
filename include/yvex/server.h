@@ -9,7 +9,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#define YVEX_LOCAL_PROTOCOL_VERSION 8u
+#define YVEX_LOCAL_PROTOCOL_VERSION 9u
 #define YVEX_CLIENT_PARTIAL_TURN_SCHEMA_V1 1u
 #define YVEX_CLIENT_STATE_CHECKPOINT_SCHEMA_V1 1u
 #define YVEX_RUNTIME_EVENT_SCHEMA_VERSION 3u
@@ -43,7 +43,8 @@ typedef enum {
 } yvex_server_console_kind;
 typedef enum {
     YVEX_SERVER_GENERATION_TARGET_ONLY = 0,
-    YVEX_SERVER_GENERATION_DSPARK
+    YVEX_SERVER_GENERATION_DSPARK,
+    YVEX_SERVER_GENERATION_MEDIA
 } yvex_server_generation_mode;
 typedef enum {
     YVEX_SERVER_SESSION_CREATED = 0,

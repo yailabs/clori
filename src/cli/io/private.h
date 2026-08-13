@@ -509,6 +509,9 @@ int yvex_cli_stream_renderer_write(yvex_cli_stream_renderer *renderer,
 int yvex_cli_stream_renderer_finish(yvex_cli_stream_renderer *renderer,
                                     int separate_terminal_status);
 const char *yvex_cli_out_stop_reason(unsigned long long reason);
+void yvex_cli_out_turn_metrics(
+    FILE *, const yvex_client_message *, unsigned long long,
+    const yvex_cli_terminal_style *);
 int yvex_cli_out_server_event(const yvex_server_event *event, int detailed);
 void yvex_cli_watch_renderer_open(yvex_cli_watch_renderer *renderer);
 int yvex_cli_watch_renderer_event(yvex_cli_watch_renderer *renderer,

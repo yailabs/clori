@@ -9,6 +9,9 @@ extern "C" {
 #endif
 
 typedef struct yvex_runtime_residency yvex_runtime_residency;
+typedef struct yvex_runtime_component_session yvex_runtime_component_session;
+typedef struct yvex_runtime_av_layout_output yvex_runtime_av_layout_output;
+typedef struct yvex_runtime_av_layout_result yvex_runtime_av_layout_result;
 
 typedef struct {
     float *data;
@@ -35,6 +38,86 @@ typedef struct {
     unsigned long long expected, actual;
     const char *reason;
 } yvex_component_load_failure;
+
+typedef enum {
+    YVEX_COMPONENT_EXECUTION_NONE = 0,
+    YVEX_COMPONENT_EXECUTION_INVALID_ARGUMENT,
+    YVEX_COMPONENT_EXECUTION_LIFECYCLE,
+    YVEX_COMPONENT_EXECUTION_MISSING_TENSOR,
+    YVEX_COMPONENT_EXECUTION_TENSOR_CONTRACT,
+    YVEX_COMPONENT_EXECUTION_BUDGET,
+    YVEX_COMPONENT_EXECUTION_MATERIALIZATION,
+    YVEX_COMPONENT_EXECUTION_NUMERIC,
+    YVEX_COMPONENT_EXECUTION_CANCELLED
+} yvex_component_execution_code;
+
+typedef struct yvex_component_execution_failure {
+    unsigned int code;
+    char tensor_name[256];
+    unsigned long long expected, actual;
+    const char *reason;
+} yvex_component_execution_failure;
+
+typedef struct yvex_runtime_av_conditioning_result {
+    unsigned long long token_count, hidden_width, layer_count;
+    unsigned long long resident_bytes, kernel_launches, h2d_bytes, d2h_bytes, device_bytes;
+    unsigned long long peak_workspace_bytes;
+    char residency_identity[YVEX_SHA256_HEX_CAP];
+    char execution_identity[YVEX_SHA256_HEX_CAP];
+    int complete;
+} yvex_runtime_av_conditioning_result;
+
+typedef struct yvex_runtime_av_audio_decode_options {
+    const float *latent;
+    unsigned long long batch, latent_channels, latent_steps;
+    float *output;
+    unsigned long long output_capacity, max_workspace_bytes;
+    int (*cancelled)(void *);
+    void *cancellation_context;
+} yvex_runtime_av_audio_decode_options;
+
+typedef struct yvex_runtime_av_audio_decode_result {
+    unsigned long long batch, samples_per_channel, output_values;
+    unsigned long long tensor_reads, payload_bytes_read, peak_workspace_bytes, kernel_launches;
+    unsigned long long h2d_bytes, d2h_bytes, device_bytes;
+    char artifact_identity[YVEX_SHA256_HEX_CAP];
+    char execution_identity[YVEX_SHA256_HEX_CAP];
+    char residency_identity[YVEX_SHA256_HEX_CAP];
+    int complete;
+} yvex_runtime_av_audio_decode_result;
+
+typedef struct yvex_runtime_av_video_decode_options {
+    const float *latent;
+    float *output;
+    unsigned long long batch, latent_channels;
+    unsigned long long latent_frames, latent_height, latent_width;
+    unsigned long long output_capacity, max_workspace_bytes;
+    int (*cancelled)(void *);
+    void *cancellation_context;
+} yvex_runtime_av_video_decode_options;
+
+typedef struct yvex_runtime_av_video_decode_result {
+    unsigned long long batch, frames, height, width, output_values;
+    unsigned long long tensor_reads, payload_bytes_read, peak_workspace_bytes, kernel_launches;
+    unsigned long long h2d_bytes, d2h_bytes, device_bytes;
+    char artifact_identity[YVEX_SHA256_HEX_CAP];
+    char execution_identity[YVEX_SHA256_HEX_CAP];
+    char residency_identity[YVEX_SHA256_HEX_CAP];
+    int complete;
+} yvex_runtime_av_video_decode_result;
+
+typedef struct yvex_runtime_av_latent_context {
+    yvex_runtime_component_session *transformer_session;
+    const float *conditioning;
+    unsigned long long conditioning_capacity;
+    const yvex_runtime_av_layout_output *layout;
+    const yvex_runtime_av_layout_result *layout_result;
+    unsigned int *timestep_indices;
+    unsigned long long timestep_capacity, block_count;
+    const char *conditioning_identity;
+    int (*cancelled)(void *);
+    void *cancellation_context;
+} yvex_runtime_av_latent_context;
 
 int yvex_component_buffer_open(
     yvex_component_f32_buffer *, unsigned long long, unsigned long long,

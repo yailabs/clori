@@ -8,10 +8,12 @@
 #define SRC_SERVER_PRIVATE_H_INCLUDED
 
 #include <yvex/internal/generation.h>
+#include <yvex/internal/server_media.h>
 #include <yvex/server.h>
 
 typedef struct server_telemetry server_telemetry;
 typedef struct server_session_registry server_session_registry;
+typedef struct server_media_registry server_media_registry;
 typedef struct server_openai_listener server_openai_listener;
 
 typedef struct {
@@ -131,5 +133,22 @@ int yvex_server_sessions_cancel(server_session_registry *registry,
 void yvex_server_sessions_cancel_all(server_session_registry *registry);
 int yvex_server_sessions_close(server_session_registry **registry,
                                   yvex_error *err);
+
+int yvex_server_media_registry_open(
+    server_media_registry **, const yvex_server_media_options *, server_telemetry *, yvex_error *);
+int yvex_server_media_registry_execute(
+    server_media_registry *, const yvex_client_request *, const char *, double,
+    server_message_emit, void *, yvex_error *);
+int yvex_server_media_registry_console_status(
+    server_media_registry *, const char *, yvex_console_status *,
+    yvex_client_partial_turn *, yvex_error *);
+int yvex_server_media_registry_cancel(
+    server_media_registry *, const char *, yvex_error *);
+void yvex_server_media_registry_cancel_all(server_media_registry *);
+int yvex_server_media_registry_count(
+    server_media_registry *, unsigned long long *, yvex_error *);
+int yvex_server_media_registry_summary(
+    server_media_registry *, yvex_server_summary *, yvex_error *);
+void yvex_server_media_registry_close(server_media_registry **);
 
 #endif

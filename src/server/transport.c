@@ -234,7 +234,7 @@ int yvex_client_connect(yvex_client **out, const char *socket_path,
     if (yvex_client_send(client, &handshake, err) != YVEX_OK ||
         yvex_client_receive(client, &response, err) != YVEX_OK ||
         response.kind != YVEX_CLIENT_MESSAGE_ACK ||
-        response.status != YVEX_OK || strcmp(response.reason, "protocol-v8") != 0) {
+        response.status != YVEX_OK || strcmp(response.reason, "protocol-v9") != 0) {
         (void)close(client->fd);
         memset(client, 0, sizeof(*client));
         free(client);
