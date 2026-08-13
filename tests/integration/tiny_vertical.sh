@@ -89,7 +89,7 @@ EOF
 
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server tiny-executable-cpu-complete \
     --backend cpu --ctx 8 --generation-mode target-only \
-    --parallel 2 --console off --openai off >"$root/server.out" 2>"$root/server.err" &
+    --parallel 2 --openai off >"$root/server.out" 2>"$root/server.err" &
 server_pid=$!
 
 ready=0
@@ -205,6 +205,9 @@ wait "$server_pid"
 server_pid=
 wait "$log_pid"
 log_pid=
+grep -E 'REQUEST[[:space:]]+persisted/' "$root/server.out" >/dev/null
+grep -E 'COMPLETE[[:space:]]+[1-9][0-9]* token' "$root/server.out" >/dev/null
+! grep -F '"kind":' "$root/server.out" >/dev/null
 grep -F '"kind":"generation.completed"' "$root/server.log.jsonl" >/dev/null
 grep -F '"phase":"graphs"' "$root/server.log.jsonl" >/dev/null
 grep -F '"phase":"tensorcore"' "$root/server.log.jsonl" >/dev/null

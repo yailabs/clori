@@ -131,7 +131,7 @@ require_text docs/openai-compatibility.md 'YVEX never executes application tools
 
 require_text docs/operator-runbook.md '## First verified startup'
 require_text docs/operator-runbook.md '## What “load the model” means'
-require_text docs/operator-runbook.md '## Three-terminal operation'
+require_text docs/operator-runbook.md '## Normal two-terminal operation'
 require_text docs/operator-runbook.md '## Registering an existing model'
 require_text docs/operator-runbook.md './yvex model list'
 require_text docs/operator-runbook.md './yvex server deepseek4-v4-flash-dspark-runtime-iq2xxs'
@@ -192,8 +192,8 @@ fi
 
 test ! -e ./yvexd || fail 'retired hidden server executable remains'
 server_help=$(./yvex server --help)
-printf '%s\n' "$server_help" | grep -E -- '--console[[:space:]]+off\|raw' >/dev/null ||
-  fail 'yvex server help lacks raw console policy'
+printf '%s\n' "$server_help" | grep -E -- '--console[[:space:]]+human\|off\|raw' >/dev/null ||
+  fail 'yvex server help lacks foreground console policy'
 printf '%s\n' "$server_help" | grep -E -- '--openai[[:space:]]+on\|off' >/dev/null ||
   fail 'yvex server help lacks integrated OpenAI listener policy'
 printf '%s\n' "$server_help" | grep -E -- '--ctx[[:space:]]+N' >/dev/null ||

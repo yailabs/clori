@@ -506,12 +506,18 @@ repl_pid=
 grep -F 'live aaaaaaaaaaaa' "$root/completion.typescript" >/dev/null
 
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server log >"$root/log"
+XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server log --verbose >"$root/log.verbose"
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server log --json >"$root/log.jsonl"
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server status >"$root/status"
 grep -F 'YVEX server ·' "$root/log" >/dev/null
 grep -F 'server log · operational history and live events · Ctrl-C to stop' \
     "$root/log" >/dev/null
 grep -E 'REQUEST[[:space:]]+fixture/fixture-request' "$root/log" >/dev/null
+grep -F 'DSPARK 2 cycles · 5/10 accepted · 3 rejected · 2 discarded' \
+    "$root/log" >/dev/null
+! grep -F 'cycle 1' "$root/log" >/dev/null
+grep -F 'cycle 1' "$root/log.verbose" >/dev/null
+grep -F 'cycle 2' "$root/log.verbose" >/dev/null
 grep -E 'RUNTIME[[:space:]]+runtime shutdown complete' "$root/log" >/dev/null
 ! grep -F 'kernel launches 4511 · stream syncs 63' "$root/log" >/dev/null
 ! grep -F 'client disconnected' "$root/log" >/dev/null

@@ -151,9 +151,10 @@ runtime model, builds residency once, and only then publishes the local socket.
 `--parallel N` admits capacity for N independently scheduled sessions before
 readiness. Requests for one named session stay serialized; this option does not
 claim compatible-row continuous batching.
-Large models can spend several minutes in this phase. The foreground server
-prints an elapsed-time heartbeat every ten seconds until admission completes or
-fails; it does not claim a percentage that the admission pipeline cannot prove.
+Large models can spend substantial time in this phase. On a TTY the foreground
+server maintains one in-place elapsed-time admission line until admission completes
+or fails; redirected output retains periodic ten-second receipts. Neither projection
+claims a percentage that the admission pipeline cannot prove.
 From a second terminal, `yvex server status` refuses while the socket is absent
 and reports `ready` only after admission completes. A refusal or startup failure
 leaves no partially ready listener.
@@ -166,27 +167,25 @@ different responsibilities:
 - `yvex model list` reads the local model registry and marks complete readable
   startup profiles;
 - `yvex server NAME` opens and authenticates the named profile's artifact and
-  binding, materializes runtime-owned resources, copies the encoded payload
-  into the server's host arena, and keeps the resulting runtime model open;
+  binding, constructs its compiler-selected residency, and keeps the resulting
+  runtime model open;
 - `yvex server model` reports the identities actually open in the server;
 - `yvex server memory` reports current process, mapped, host-resident, and
   device-resident memory facts;
 - `yvex chat` and `yvex run` use the already resident model through the local
   protocol and never create another model copy.
 
-The host admits the mapped artifact, then copies every encoded model tensor
-into one process-lifetime anonymous RAM arena before publishing `runtime.ready`.
-`resident_host_bytes` is the authoritative payload-residency count; the mapped
-file size and the smaller CUDA/unified accelerator prefix remain separate
-metrics. The current DSpark bootstrap artifact therefore needs about 100.84 GiB of host
-RAM for its 108,274,154,488-byte tensor payload, plus runtime state and backend
-workspace. A cold start can take several minutes because authentication and
-the complete RAM transfer finish before the socket becomes ready.
+The host keeps the immutable artifact mapping as canonical backing. A compiled
+artifact-backed placement registers that mapping once for CUDA addressability;
+compiler-required derived layouts instead own their separately accounted managed
+storage. `server memory` reports mapped, non-artifact host, device, RSS and capacity
+facts separately. Authentication and selected residency complete before the socket
+becomes ready.
 
-## Three-terminal operation
+## Normal two-terminal operation
 
-All three terminals attach to the same server and model. They do not create
-three model copies.
+Both terminals use the same server and model. The client does not create another
+model copy.
 
 Terminal 1 owns the foreground host lifecycle:
 
@@ -194,24 +193,17 @@ Terminal 1 owns the foreground host lifecycle:
 ./yvex server deepseek4-v4-flash-dspark-runtime-iq2xxs
 ```
 
-Terminal 2 renders the operational engine view:
-
-```sh
-./yvex server log
-```
-
-Terminal 3 owns the interactive conversation:
+The foreground terminal transitions from admission into the compact operational
+event stream. A second terminal owns the interactive conversation:
 
 ```sh
 ./yvex chat --session main
 ```
 
-Start Terminal 1 first. Terminals 2 and 3 may attach in either order after
-`runtime.ready`. Raw and operational views derive from the same typed event
-sequence. Default telemetry excludes prompt and answer content.
-
-If observation is not needed, two terminals are sufficient: keep `runtime
-server in the first and run `server status`, then `chat`, in the second.
+Start Terminal 1 first and attach after `runtime.ready`. An optional observer can
+run `./yvex server log`; add `--verbose` for individual DSpark cycles or `--json`
+for canonical JSONL. All views derive from the same typed event sequence. Default
+telemetry excludes prompt and answer content.
 
 ## Interactive console
 
@@ -393,18 +385,19 @@ Follow typed server activity independently of the foreground console:
 
 ```sh
 ./yvex server log
+./yvex server log --verbose
 ./yvex server log --json
 ```
 
-The human `server log` starts with one stable startup/runtime block, then projects each request
-as one coherent unit with stable time, request, session, phase, duration and
-result fields. It groups prefill and DSpark cycles, shows queue pressure only
+The foreground human console and `server log` project each request as one coherent
+unit with stable time, request, session, phase, duration and result fields. They
+group prefill and DSpark cycles, show queue pressure only
 when contended, uses human byte units and named stop reasons, and replaces any
 active progress line with one stable completion or failure summary. It
 suppresses ordinary connection churn, token fragments and profiler detail.
-`server log --json` emits the canonical complete JSONL event record, including
-the typed detail omitted by the compact human view. Prompts and answers remain
-absent from both projections by default.
+`server log --verbose` exposes each DSpark cycle. `server log --json` emits the
+canonical complete JSONL event record, including typed detail omitted by the compact
+human view. Prompts and answers remain absent from every projection by default.
 
 Raw server-console JSONL is selected at startup with `--console raw`. Increase
 `--trace-level` from `summary` to `stages`, `tokens`, or `full` only when the

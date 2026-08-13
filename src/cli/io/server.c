@@ -11,6 +11,7 @@
 #include <yvex/server.h>
 
 #include "src/cli/private.h"
+#include "src/cli/io/private.h"
 
 #include <errno.h>
 #include <limits.h>
@@ -21,6 +22,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 typedef struct {
     char name[256];
@@ -40,7 +42,7 @@ typedef struct {
     atomic_int done;
     pthread_t thread;
     struct timespec started;
-    int thread_ready;
+    int thread_ready, terminal;
 } cli_server_startup_progress;
 
 static unsigned long long startup_elapsed_seconds(
@@ -63,10 +65,14 @@ static void *startup_progress_main(void *opaque)
         (void)nanosleep(&interval, NULL);
         elapsed = startup_elapsed_seconds(progress);
         if (!atomic_load_explicit(&progress->done, memory_order_relaxed) &&
-            elapsed >= last_report + 10u) {
-            fprintf(stderr,
-                    "yvex server: model admission still in progress (elapsed %llu s)\n",
-                    elapsed);
+            elapsed >= last_report + (progress->terminal ? 1u : 10u)) {
+            if (progress->terminal)
+                fprintf(stderr, "\r\033[KYVEX server · admitting model · elapsed %llu s",
+                        elapsed);
+            else
+                fprintf(stderr,
+                        "yvex server: model admission still in progress (elapsed %llu s)\n",
+                        elapsed);
             (void)fflush(stderr);
             last_report = elapsed;
         }
@@ -78,6 +84,7 @@ static void startup_progress_begin(cli_server_startup_progress *progress)
 {
     memset(progress, 0, sizeof(*progress));
     atomic_init(&progress->done, 0);
+    progress->terminal = isatty(STDERR_FILENO) != 0;
     if (clock_gettime(CLOCK_MONOTONIC, &progress->started) == 0 &&
         pthread_create(&progress->thread, NULL, startup_progress_main, progress) == 0)
         progress->thread_ready = 1;
@@ -94,6 +101,7 @@ static void startup_progress_end(cli_server_startup_progress *progress, int stat
     atomic_store_explicit(&progress->done, 1, memory_order_relaxed);
     if (progress->thread_ready) (void)pthread_join(progress->thread, NULL);
     elapsed = startup_elapsed_seconds(progress);
+    if (progress->terminal) fputs("\r\033[K", stderr);
     if (status != YVEX_OK)
         fprintf(stderr, "yvex server: startup refused before readiness (elapsed %llu s)\n",
                 elapsed);
@@ -238,6 +246,25 @@ static void *raw_console_main(void *opaque)
     return NULL;
 }
 
+static void *human_console_main(void *opaque)
+{
+    cli_server_thread_state *state = opaque;
+    yvex_cli_watch_renderer renderer;
+    unsigned long long cursor = 0u;
+    yvex_cli_watch_renderer_open(&renderer, 0);
+    for (;;) {
+        yvex_server_event event;
+        yvex_error err;
+        if (yvex_server_event_next(state->server, cursor, 1, &event, &err) != YVEX_OK)
+            continue;
+        cursor = event.sequence;
+        (void)yvex_cli_watch_renderer_event(&renderer, &event);
+        if (event.kind == YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_COMPLETE) break;
+    }
+    yvex_cli_watch_renderer_finish(&renderer);
+    return NULL;
+}
+
 static void options_defaults(yvex_server_options *options,
                              const cli_server_profile *profile)
 {
@@ -259,6 +286,7 @@ static void options_defaults(yvex_server_options *options,
     options->request_queue_capacity = 16u;
     options->concurrent_sequences = 1u;
     options->trace_level = YVEX_SERVER_TRACE_STAGES;
+    options->console = YVEX_SERVER_CONSOLE_HUMAN;
     options->openai_enabled = 1;
     options->openai_port = 8001u;
     options->openai_timeout_ms = 600000u;
@@ -286,9 +314,11 @@ static int option_parse(yvex_server_options *options, const char *flag,
         if (options->maximum_sessions < options->concurrent_sequences)
             options->maximum_sessions = options->concurrent_sequences;
     }
-    else if (!strcmp(flag, "--console"))
-        options->console = !strcmp(value, "raw") ? YVEX_SERVER_CONSOLE_RAW
-                                                  : YVEX_SERVER_CONSOLE_OFF;
+    else if (!strcmp(flag, "--console")) {
+        if (!strcmp(value, "human")) options->console = YVEX_SERVER_CONSOLE_HUMAN;
+        else if (!strcmp(value, "raw")) options->console = YVEX_SERVER_CONSOLE_RAW;
+        else options->console = YVEX_SERVER_CONSOLE_OFF;
+    }
     else if (!strcmp(flag, "--trace-level")) {
         if (!strcmp(value, "summary")) options->trace_level = YVEX_SERVER_TRACE_SUMMARY;
         else if (!strcmp(value, "stages")) options->trace_level = YVEX_SERVER_TRACE_STAGES;
@@ -399,8 +429,10 @@ int yvex_cli_server_dispatch(int argc, char **argv, size_t consumed)
         fprintf(stderr, "yvex server: signal coordinator creation failed\n");
         return 1;
     }
-    if (options.console == YVEX_SERVER_CONSOLE_RAW) {
-        if (pthread_create(&console_thread, NULL, raw_console_main, &thread_state) == 0)
+    if (options.console != YVEX_SERVER_CONSOLE_OFF) {
+        void *(*console_main)(void *) = options.console == YVEX_SERVER_CONSOLE_RAW
+                                           ? raw_console_main : human_console_main;
+        if (pthread_create(&console_thread, NULL, console_main, &thread_state) == 0)
             console_ready = 1;
         else {
             (void)yvex_server_stop(server, &err);

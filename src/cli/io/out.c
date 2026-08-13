@@ -886,6 +886,7 @@ static void watch_cycle(yvex_cli_watch_renderer *renderer,
     renderer->accepted += event->accepted_tokens;
     renderer->rejected += event->rejected_tokens;
     renderer->discarded += event->discarded_tokens;
+    if (!renderer->detailed) return;
     watch_line_begin(renderer, event, renderer->style.success, "DSPARK");
     printf("cycle %-3llu %llu/%llu accepted", event->speculative_cycle,
            event->accepted_tokens, event->proposed_tokens);
@@ -923,10 +924,11 @@ static void watch_request_end(yvex_cli_watch_renderer *renderer,
     renderer->request_open = 0;
 }
 
-void yvex_cli_watch_renderer_open(yvex_cli_watch_renderer *renderer)
+void yvex_cli_watch_renderer_open(yvex_cli_watch_renderer *renderer, int detailed)
 {
     if (!renderer) return;
     memset(renderer, 0, sizeof(*renderer));
+    renderer->detailed = detailed != 0;
     yvex_cli_terminal_style_get(stdout, &renderer->style);
 }
 

@@ -40,7 +40,8 @@ typedef enum {
 } yvex_server_trace_level;
 typedef enum {
     YVEX_SERVER_CONSOLE_OFF = 0,
-    YVEX_SERVER_CONSOLE_RAW
+    YVEX_SERVER_CONSOLE_RAW,
+    YVEX_SERVER_CONSOLE_HUMAN
 } yvex_server_console_kind;
 typedef enum {
     YVEX_SERVER_GENERATION_TARGET_ONLY = 0,

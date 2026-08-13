@@ -1217,7 +1217,7 @@
         "value_type": "enum"
       },
       {
-        "enum_values": ["off", "raw"],
+        "enum_values": ["human", "off", "raw"],
         "name": "--console",
         "takes_value": true,
         "value_type": "enum"
@@ -1299,7 +1299,8 @@
     ],
     "server_log": {
       "booleans": [
-        "--json"
+        "--json",
+        "--verbose"
       ],
       "repeatable_values": [],
       "values": []
@@ -6123,7 +6124,7 @@
       "result_schema": "human.v1",
       "side_effects": "continuous subscription",
       "slash_projection": "none",
-      "summary": "Follow typed server events; use --json for canonical JSONL.",
+      "summary": "Follow aggregated server events; use --verbose or --json for detail.",
       "test_owner": "tests/client_cutover.sh",
       "visibility": "product-default"
     },

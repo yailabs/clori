@@ -88,7 +88,7 @@ typedef struct {
     char session_id[YVEX_SERVER_ID_CAP];
     char request_id[YVEX_SERVER_ID_CAP];
     unsigned long long cycles, proposed, accepted, rejected, discarded;
-    int request_open;
+    int request_open, detailed;
 } yvex_cli_watch_renderer;
 
 typedef enum {
@@ -510,7 +510,7 @@ int yvex_cli_stream_renderer_finish(yvex_cli_stream_renderer *renderer,
                                     int separate_terminal_status);
 const char *yvex_cli_out_stop_reason(unsigned long long reason);
 int yvex_cli_out_server_event(const yvex_server_event *event, int detailed);
-void yvex_cli_watch_renderer_open(yvex_cli_watch_renderer *renderer);
+void yvex_cli_watch_renderer_open(yvex_cli_watch_renderer *renderer, int detailed);
 int yvex_cli_watch_renderer_event(yvex_cli_watch_renderer *renderer,
                                   const yvex_server_event *event);
 void yvex_cli_watch_renderer_finish(yvex_cli_watch_renderer *renderer);

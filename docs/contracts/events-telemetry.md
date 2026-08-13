@@ -61,18 +61,20 @@ runtime model.
 
 ## Projections
 
-`yvex server MODEL --console raw` and `yvex server log --json` emit canonical
-JSONL for the admitted trace schema. `server status` is a bounded snapshot
-rather than an event replay. Human `server log` prefixes its subscription with that
-snapshot and renders retained history plus live events in stable semantic
-categories. It retains operator-significant lifecycle, contended queue,
-prefill, first-token, speculative-commit, completion, cancellation, and failure
-events while suppressing connection churn, uncontended queue admission,
-fragments, intermediate draft/verification steps, and profile rows. It renders
-bytes in human units, speculative acceptance as accepted/proposed, and stop
-codes as their named contract values. The `--json` projection retains the full
-subscribed event sequence with sequence, severity, turn, phase, timing, and
-rate. Neither projection
+`yvex server MODEL` renders the compact human projection in the owning foreground
+terminal by default. `yvex server log` attaches the same projection from another
+terminal, while `server log --verbose` additionally renders individual speculative
+cycles. `yvex server MODEL --console raw` and `yvex server log --json` emit canonical
+JSONL for the admitted trace schema. `server status` is a bounded snapshot rather
+than an event replay. Human projections render retained history plus live events in
+stable semantic categories. They retain operator-significant lifecycle, contended
+queue, prefill, first-token, aggregate speculative economics, completion,
+cancellation, and failure events while suppressing connection churn, uncontended
+queue admission, fragments, intermediate draft/verification steps, and profile
+rows. They render bytes in human units, speculative acceptance as
+accepted/proposed, and stop codes as their named contract values. The `--json`
+projection retains the full subscribed event sequence with sequence, severity,
+turn, phase, timing, and rate. Neither projection
 exposes generic positional counter names. Native prefill
 progress sent to the REPL is another projection of the sealed event, not a
 synthetic client event.

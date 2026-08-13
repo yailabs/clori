@@ -698,7 +698,7 @@ static int server_memory(void)
     }
     return rc == YVEX_OK ? 0 : client_error(&err);
 }
-static int server_log(int json_output)
+static int server_log(int json_output, int detailed)
 {
     yvex_client_request request;
     yvex_client_message message;
@@ -716,11 +716,12 @@ static int server_log(int json_output)
         yvex_cli_terminal_style_get(stdout, &style);
         printf("%sserver log%s · operational history and live events · Ctrl-C to stop\n\n",
                style.accent, style.reset);
-        yvex_cli_watch_renderer_open(&watch);
+        yvex_cli_watch_renderer_open(&watch, detailed);
     }
     request_init(&request, json_output ? YVEX_CLIENT_OP_RUNTIME_TRACE
                                       : YVEX_CLIENT_OP_RUNTIME_WATCH);
-    request.trace_level = json_output ? YVEX_SERVER_TRACE_FULL : YVEX_SERVER_TRACE_STAGES;
+    request.trace_level = json_output || detailed ? YVEX_SERVER_TRACE_FULL
+                                                  : YVEX_SERVER_TRACE_STAGES;
     rc = request_open(&client, &request, &err);
     while (rc == YVEX_OK) {
         rc = yvex_client_receive(client, &message, &err);
@@ -1699,8 +1700,19 @@ int yvex_client_dispatch(const yvex_operator_descriptor *operation, int argc,
         return server_status(argc > 3 && !strcmp(argv[3], "--json"));
     case YVEX_OPERATOR_RUNTIME_SERVER_MODEL: return server_model();
     case YVEX_OPERATOR_RUNTIME_SERVER_MEMORY: return server_memory();
-    case YVEX_OPERATOR_RUNTIME_SERVER_LOG:
-        return server_log(argc > 3 && !strcmp(argv[3], "--json"));
+    case YVEX_OPERATOR_RUNTIME_SERVER_LOG: {
+        int json = 0, detailed = 0, index;
+        for (index = 3; index < argc; ++index) {
+            json |= !strcmp(argv[index], "--json");
+            detailed |= !strcmp(argv[index], "--verbose");
+        }
+        if (json && detailed) {
+            fputs("yvex: server log accepts either --verbose or --json, not both\n",
+                  stderr);
+            return 2;
+        }
+        return server_log(json, detailed);
+    }
     case YVEX_OPERATOR_RUNTIME_SERVER_STOP:
         return administration(YVEX_CLIENT_OP_RUNTIME_STOP, NULL, 0);
     case YVEX_OPERATOR_RUNTIME_SESSION_NEW:

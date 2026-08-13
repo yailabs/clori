@@ -174,28 +174,55 @@ static int send_event_stream(int fd, const yvex_client_request *request,
 {
     static const yvex_server_event_kind kinds[] = {
         YVEX_SERVER_EVENT_REQUEST_STARTED,
+        YVEX_SERVER_EVENT_SPECULATIVE_CYCLE_COMMITTED,
+        YVEX_SERVER_EVENT_SPECULATIVE_CYCLE_COMMITTED,
+        YVEX_SERVER_EVENT_GENERATION_COMPLETED,
         YVEX_SERVER_EVENT_GENERATION_PROFILE,
         YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_COMPLETE};
     static const unsigned long long values[][3] = {
-        {5u, 1u, 3u}, {4511u, 63u, 0u}, {1u, 1u, 0u}};
-    static const char *const phases[] = {"generation", "launches", "runtime"};
+        {5u, 1u, 10u}, {0u, 0u, 0u}, {0u, 0u, 0u},
+        {5u, 10u, YVEX_CLIENT_STOP_EOS}, {4511u, 63u, 0u}, {1u, 1u, 0u}};
+    static const char *const phases[] = {
+        "generation", "speculation", "speculation", "generation", "launches", "runtime"};
     static const char identity[] =
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     server_telemetry *telemetry = NULL;
     size_t index;
     int rc = yvex_server_telemetry_open(&telemetry, 8u,
-                                        YVEX_SERVER_GENERATION_TARGET_ONLY,
+                                        YVEX_SERVER_GENERATION_DSPARK,
                                         identity, identity,
                                         identity, err);
     for (index = 0u; rc == YVEX_OK && index < sizeof(kinds) / sizeof(kinds[0]); ++index) {
         yvex_client_message message;
+        yvex_runtime_speculation_progress speculation = {0};
+        const yvex_runtime_speculation_progress *speculation_ptr = NULL;
         message_base(&message, YVEX_CLIENT_MESSAGE_EVENT, request);
         message.stream_channel = YVEX_CLIENT_STREAM_CONTROL_EVENT;
+        if (index == 1u || index == 2u) {
+            speculation.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V3;
+            speculation.kind = YVEX_SPECULATION_PROGRESS_CYCLE_COMMITTED;
+            speculation.cycle = index;
+            speculation.proposed_tokens = 5u;
+            speculation.selected_verification_tokens = 5u;
+            speculation.accepted_tokens = index == 1u ? 3u : 2u;
+            speculation.rejected_tokens = index == 1u ? 1u : 2u;
+            speculation.discarded_tokens = 1u;
+            speculation.verification_count = 1u;
+            speculation.confidence_logit_count = 5u;
+            speculation.confidence_logit_minimum = -1.0;
+            speculation.confidence_logit_maximum = 2.0;
+            speculation.confidence_logit_mean = 0.5;
+            speculation.seconds = 0.25;
+            strcpy(speculation.policy_identity, identity);
+            speculation_ptr = &speculation;
+        }
         rc = yvex_server_telemetry_emit_provider(
             telemetry, kinds[index], YVEX_SERVER_SEVERITY_INFO,
-            index < 2u ? "fixture" : NULL, index < 2u ? "fixture-request" : NULL,
-            index < 2u ? "fixture-turn" : NULL, phases[index], values[index][0],
-            values[index][1], values[index][2], 0.0, 0.0, NULL, NULL,
+            index < 5u ? "fixture" : NULL, index < 5u ? "fixture-request" : NULL,
+            index < 5u ? "fixture-turn" : NULL, phases[index], values[index][0],
+            values[index][1], values[index][2],
+            speculation_ptr ? speculation.seconds : 0.0, 0.0,
+            speculation_ptr, NULL,
             &message.event, err);
         if (rc == YVEX_OK) rc = yvex_server_protocol_send(fd, &message, err);
     }
