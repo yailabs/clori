@@ -1401,10 +1401,15 @@ static int attn_reduce(attn_run *run) {
             (void *)&run->job->candidate_block_visible, &run->attention,
             &run->device_status
         };
+        CUfunction reduce = run->resources.activation_q8
+            ? run->state->attention_reduce_native_function
+            : run->state->attention_reduce_function;
+        unsigned int reduce_shared = run->resources.activation_q8
+            ? 0u : YVEX_CUDA_ATTN_BLOCK * sizeof(double);
         rc = run->ops->launch(
-            &run->resources, run->state->attention_reduce_function,
+            &run->resources, reduce,
             (unsigned int)batch_blocks, YVEX_CUDA_ATTN_BLOCK,
-            YVEX_CUDA_ATTN_BLOCK * sizeof(double), params,
+            reduce_shared, params,
             "cuda.attention.reduce", run->failure, run->err);
         if (rc != YVEX_OK) return rc;
     }

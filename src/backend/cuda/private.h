@@ -255,7 +255,7 @@ typedef struct {
     CUfunction transformer_final_function;
     CUfunction attention_rolling_state_function;
     CUfunction attention_topk_function;
-    CUfunction attention_reduce_function;
+    CUfunction attention_reduce_function, attention_reduce_native_function;
     CUfunction moe_route_function;
     CUfunction moe_route_rows_function;
     CUfunction moe_pair_order_function;
