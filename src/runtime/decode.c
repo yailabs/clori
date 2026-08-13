@@ -390,6 +390,7 @@ static int decode_step_locked(
         result->h2d_bytes = transformer.h2d_bytes;
         result->d2h_bytes = transformer.d2h_bytes;
         result->kernel_launches = transformer.kernel_launches;
+        result->tensor_core_launches = transformer.tensor_core_launches;
         result->graph_launches = transformer.graph_launches;
         result->graph_captures = transformer.graph_captures;
         result->graph_replays = transformer.graph_replays;
@@ -476,6 +477,7 @@ static int decode_accumulate(yvex_runtime_decode_result *result,
     result->h2d_bytes += step->h2d_bytes;
     result->d2h_bytes += step->d2h_bytes;
     result->kernel_launches += step->kernel_launches;
+    result->tensor_core_launches += step->tensor_core_launches;
     result->graph_launches += step->graph_launches;
     result->graph_captures += step->graph_captures;
     result->graph_replays += step->graph_replays;

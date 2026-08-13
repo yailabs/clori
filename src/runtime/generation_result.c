@@ -173,6 +173,7 @@ int yvex_runtime_generation_profile_decode(
     projected.cache_hits = value->cache_hits;
     projected.cache_misses = value->cache_misses;
     projected.kernel_launches = value->kernel_launches;
+    projected.tensor_core_launches = value->tensor_core_launches;
     projected.graph_launches = value->graph_launches;
     projected.graph_captures = value->graph_captures;
     projected.graph_replays = value->graph_replays;

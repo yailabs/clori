@@ -9,6 +9,21 @@
 
 #include <yvex/internal/generation.h>
 
+#include "src/runtime/private.h"
+
+static const char profile_id_a[] =
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+static const char profile_id_b[] =
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+static const char profile_id_c[] =
+    "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+static const char profile_id_d[] =
+    "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+static const char profile_id_e[] =
+    "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+static const char profile_id_f[] =
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+
 static int generation_test_stop_taxonomy(void)
 {
     unsigned int reason;
@@ -111,11 +126,36 @@ static int generation_test_plan_binds_workload_profile(void)
     return 0;
 }
 
+static int generation_test_decode_profile_projection(void)
+{
+    yvex_runtime_decode_step_result decode = {0};
+    yvex_runtime_profile_record profile;
+    yvex_error err;
+    decode.completed = 1;
+    decode.kernel_launches = 19ull;
+    decode.tensor_core_launches = 3ull;
+    decode.attention_device_ns = 7000ull;
+    YVEX_TEST_ASSERT(
+        runtime_profile_begin(
+            &profile, YVEX_RUNTIME_PROFILE_STAGES,
+            YVEX_RUNTIME_PROFILE_DECODE, YVEX_BACKEND_KIND_CUDA,
+            profile_id_a, profile_id_b, profile_id_c, profile_id_d,
+            profile_id_e, profile_id_f, &err) == YVEX_OK &&
+            yvex_runtime_generation_profile_decode(&profile, &decode, &err) ==
+                YVEX_OK &&
+            profile.counters[YVEX_RUNTIME_PROFILE_KERNEL_LAUNCHES] == 19ull &&
+            profile.counters[YVEX_RUNTIME_PROFILE_TENSOR_CORE_LAUNCHES] == 3ull &&
+            profile.phase_ns[YVEX_RUNTIME_PROFILE_ATTENTION] == 7000ull,
+        "decode profile preserves backend launch classes and device timing");
+    return 0;
+}
+
 int yvex_test_runtime_generation(void)
 {
     if (generation_test_stop_taxonomy() != 0) return 1;
     if (generation_test_refusals() != 0) return 1;
     if (generation_test_execution_identity_excludes_measurement() != 0) return 1;
     if (generation_test_plan_binds_workload_profile() != 0) return 1;
+    if (generation_test_decode_profile_projection() != 0) return 1;
     return 0;
 }
