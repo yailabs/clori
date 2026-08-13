@@ -155,6 +155,17 @@ Stochastic verification uses the admitted target-distribution-preserving
 accept/reject and residual-sampling rule; drafter confidence and decoded text
 are never correctness authorities.
 
+An admitted source-authored reasoning terminator is also an execution-shape
+boundary. DSpark may commit the target-authored delimiter, but subsequent final
+channel tokens use the ordinary target path so another speculative verification
+row cannot cross the typed channel transition. Generation-result schema v5
+binds the committed-token extent at that boundary into the execution identity;
+the exact target-only continuation is the final committed extent minus that
+boundary. This remains one explicit DSpark turn, not a backend-local fallback.
+The `source-boundary` telemetry event reports the boundary extent in `a`, the
+target-only final continuation in `b`, and replayed accepted target rows in `c`;
+that last value remains zero.
+
 `decode_step_count` retains its sequence meaning: it counts target-verified
 positions committed to model state. It is not a target-forward counter. Draft
 forwards and target block verifications have separate counters because one

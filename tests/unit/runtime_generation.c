@@ -80,7 +80,7 @@ static int generation_test_execution_identity_excludes_measurement(void)
     yvex_runtime_generation_result result;
     char before[YVEX_SHA256_HEX_CAP], after[YVEX_SHA256_HEX_CAP];
     memset(&result, 0, sizeof(result));
-    result.schema_version = YVEX_RUNTIME_GENERATION_RESULT_SCHEMA_V4;
+    result.schema_version = YVEX_RUNTIME_GENERATION_RESULT_SCHEMA_V5;
     result.execution_mode = YVEX_GENERATION_MODE_DSPARK;
     result.draft_cycle_count = 2ull;
     result.proposed_token_count = 8ull;
@@ -101,6 +101,12 @@ static int generation_test_execution_identity_excludes_measurement(void)
         yvex_runtime_generation_execution_identity(&result, NULL, after) &&
             strcmp(before, after) == 0,
         "measurement values must not alter semantic execution identity");
+    result.speculation_source_boundary_token_count = 1ull;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_generation_execution_identity(&result, NULL, after) &&
+            strcmp(before, after) != 0,
+        "source-boundary continuation must alter execution identity");
+    result.speculation_source_boundary_token_count = 0ull;
     result.proposed_token_count++;
     YVEX_TEST_ASSERT(
         yvex_runtime_generation_execution_identity(&result, NULL, after) &&

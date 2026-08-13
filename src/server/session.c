@@ -1221,6 +1221,10 @@ static int session_profile_publish(server_session_registry *registry,
             profile->counters[YVEX_RUNTIME_PROFILE_DRAFT_FORWARDS],
             profile->counters[YVEX_RUNTIME_PROFILE_VERIFIED_ROWS],
             profile->counters[YVEX_RUNTIME_PROFILE_PROMOTED_TARGET_ROWS], 0ull);
+    if (rc == YVEX_OK && result->speculation_source_boundary_token_count)
+        rc = PROFILE_EVENT("source-boundary", result->speculation_source_boundary_token_count,
+            result->model_committed_token_count - result->speculation_source_boundary_token_count,
+            profile->counters[YVEX_RUNTIME_PROFILE_REPLAYED_ACCEPTED_TARGET_ROWS], 0ull);
     if (rc == YVEX_OK)
         rc = PROFILE_EVENT("candidate",
             profile->counters[YVEX_RUNTIME_PROFILE_ACCEPTED_DRAFT_TOKENS],

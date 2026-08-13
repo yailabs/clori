@@ -31,7 +31,9 @@ compatibility profile v2. The installed server-construction API and public
 declaration count remain unchanged. Runtime events remain schema v3, Physical
 Execution IR and compiled profiles remain schema v1. Generation plan ABI v5
 binds the exact workload-profile identity needed to validate its phase roofline
-ledger; result schema v4 and its wire projections remain unchanged. Every
+ledger. Generation-result schema v5 subsequently earned its bump because v4
+cannot bind the committed reasoning-to-final execution boundary; wire
+projections remain unchanged. Every
 admitted change has a concrete fact and compatibility rule in the
 contract matrix; state checkpoints subsequently earned protocol v8, the
 admitted capacity/scheduler projection earned protocol v9, and the explicit

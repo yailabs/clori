@@ -27,8 +27,39 @@ static int generation_context_refuse(yvex_error *err, yvex_status status,
     return status;
 }
 
-static int generation_options_valid(
-    const yvex_runtime_generation_options *options)
+int yvex_runtime_private_generation_enter(yvex_runtime_generation_context *context, yvex_error *err)
+{
+    unsigned int expected = 0u;
+    if (context && atomic_compare_exchange_strong_explicit(&context->lifecycle, &expected,
+                       YVEX_GENERATION_LIFECYCLE_ACTIVE, memory_order_acq_rel, memory_order_acquire))
+        return YVEX_OK;
+    if (context) (void)atomic_fetch_add_explicit(&context->admission_failures, 1ull, memory_order_relaxed);
+    return generation_context_refuse(err, YVEX_ERR_STATE,
+        expected & YVEX_GENERATION_LIFECYCLE_CLOSING ? "generation context is closing"
+                                                    : "generation context is already in use");
+}
+/* Release exclusive admission and wake the close owner after accounting; context stays owned. */
+void yvex_runtime_private_generation_leave(yvex_runtime_generation_context *context, int rc, int executed)
+{
+    if (!context) return;
+    if (executed) context->execution_count++;
+    if (executed && rc != YVEX_OK) {
+        context->failure_count++;
+        if (rc == YVEX_ERR_CANCELLED) context->cancellation_count++;
+    }
+    if ((atomic_load_explicit(&context->lifecycle, memory_order_acquire) &
+         YVEX_GENERATION_LIFECYCLE_CLOSING) && context->drain_mutex_ready &&
+        pthread_mutex_lock(&context->drain_mutex) == 0) {
+        (void)atomic_fetch_and_explicit(
+            &context->lifecycle, ~YVEX_GENERATION_LIFECYCLE_ACTIVE, memory_order_release);
+        if (context->drain_condition_ready) (void)pthread_cond_broadcast(&context->drain_condition);
+        (void)pthread_mutex_unlock(&context->drain_mutex);
+        return;
+    }
+    (void)atomic_fetch_and_explicit(&context->lifecycle, ~YVEX_GENERATION_LIFECYCLE_ACTIVE, memory_order_release);
+}
+
+static int generation_options_valid(const yvex_runtime_generation_options *options)
 {
     return options &&
            options->schema_version == YVEX_RUNTIME_GENERATION_SCHEMA_V5 &&

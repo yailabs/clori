@@ -20,6 +20,11 @@ static int generation_refuse(yvex_error *err, yvex_status status, const char *re
 static int generation_token_classify(const yvex_runtime_generation_context *context,
     unsigned int token, yvex_tokenizer_token_classification *classification,
     int *additional_stop, yvex_error *err);
+static int generation_run_target_only(yvex_runtime_generation_context *context,
+    const yvex_runtime_generation_turn_request *turn, const yvex_transformer_plan_summary *transformer,
+    const yvex_runtime_transformer_result *prefill, const float *prefill_hidden, unsigned long long prefill_values,
+    yvex_runtime_generation_token_result *tokens, unsigned char *text, unsigned long long text_capacity,
+    yvex_runtime_generation_result *result, yvex_error *err);
 static int generation_publication_prepare(void *opaque, yvex_error *err)
 {
     generation_publication *publication = opaque;
@@ -224,48 +229,6 @@ static int generation_state_summary(const yvex_runtime_execution_session *sessio
         return generation_refuse(err, YVEX_ERR_STATE,
                                  "persistent generation state is unavailable");
     return YVEX_OK;
-}
-int yvex_runtime_private_generation_enter(yvex_runtime_generation_context *context, yvex_error *err)
-{
-    unsigned int expected = 0u;
-    if (context && atomic_compare_exchange_strong_explicit(
-                       &context->lifecycle, &expected,
-                       YVEX_GENERATION_LIFECYCLE_ACTIVE, memory_order_acq_rel,
-                       memory_order_acquire))
-        return YVEX_OK;
-    if (context)
-        (void)atomic_fetch_add_explicit(&context->admission_failures, 1ull,
-                                        memory_order_relaxed);
-    return generation_refuse(err, YVEX_ERR_STATE,
-                             expected & YVEX_GENERATION_LIFECYCLE_CLOSING
-                                 ? "generation context is closing"
-                                 : "generation context is already in use");
-}
-/* Release exclusive admission and wake the close owner after accounting; context stays owned. */
-void yvex_runtime_private_generation_leave(yvex_runtime_generation_context *context, int rc, int executed)
-{
-    unsigned int observed;
-    if (!context) return;
-    if (executed) context->execution_count++;
-    if (executed && rc != YVEX_OK) {
-        context->failure_count++;
-        if (rc == YVEX_ERR_CANCELLED) context->cancellation_count++;
-    }
-    observed = atomic_load_explicit(&context->lifecycle, memory_order_acquire);
-    if ((observed & YVEX_GENERATION_LIFECYCLE_CLOSING) &&
-        context->drain_mutex_ready &&
-        pthread_mutex_lock(&context->drain_mutex) == 0) {
-        (void)atomic_fetch_and_explicit(&context->lifecycle,
-                                        ~YVEX_GENERATION_LIFECYCLE_ACTIVE,
-                                        memory_order_release);
-        if (context->drain_condition_ready)
-            (void)pthread_cond_broadcast(&context->drain_condition);
-        (void)pthread_mutex_unlock(&context->drain_mutex);
-        return;
-    }
-    (void)atomic_fetch_and_explicit(&context->lifecycle,
-                                    ~YVEX_GENERATION_LIFECYCLE_ACTIVE,
-                                    memory_order_release);
 }
 static int generation_cancelled(const yvex_runtime_generation_context *context, yvex_error *err)
 {
@@ -825,6 +788,7 @@ static int generation_speculative_publish(
     unsigned long long text_capacity, yvex_runtime_generation_result *result,
     yvex_runtime_speculation_commit_result *commit, yvex_error *err)
 {
+    const yvex_tokenizer_plan_summary *tokenizer = yvex_tokenizer_plan_summary_get(context->tokenizer);
     generation_publication publication;
     yvex_runtime_commit_participant participant = {
         .context = &publication, .prepare = generation_publication_prepare,
@@ -861,6 +825,9 @@ static int generation_speculative_publish(
                 commit->target_result.generation_after;
             token->text_byte_offset = offset;
             token->text_byte_count = fragment->byte_count;
+            if (tokenizer && tokenizer->explicit_reasoning_supported &&
+                token->sampled_token_id == tokenizer->reasoning_end_token_id)
+                result->speculation_source_boundary_token_count = token->ordinal + 1ull;
             yvex_runtime_identity_copy(token->decode_execution_identity,
                                        commit->commit_identity);
             yvex_runtime_identity_copy(token->persistent_state_digest,
@@ -1315,6 +1282,7 @@ static int generation_speculative_candidate_cycle(
 static int generation_run_dspark(
     yvex_runtime_generation_context *context,
     const yvex_runtime_generation_turn_request *turn,
+    const yvex_transformer_plan_summary *transformer,
     const yvex_runtime_transformer_result *prefill,
     const float *prefill_hidden, unsigned long long prefill_hidden_count,
     yvex_runtime_generation_token_result *tokens, unsigned char *text,
@@ -1355,6 +1323,13 @@ static int generation_run_dspark(
             anchor = commit.target_result;
             anchor_hidden = context->hidden;
             anchor_hidden_count = context->hidden_count;
+        }
+        /* The channel transition preserves committed state, ledger, decoder and RNG. */
+        if (rc == YVEX_OK && result->speculation_source_boundary_token_count) {
+            rc = generation_run_target_only(
+                context, turn, transformer, &anchor, anchor_hidden,
+                anchor_hidden_count, tokens, text, text_capacity, result, err);
+            break;
         }
         if (terminal) break;
     }
@@ -1854,7 +1829,7 @@ int yvex_runtime_generation_turn_execute(
     memset(text, 0, (size_t)context->options.maximum_output_bytes);
     memset(&encoded, 0, sizeof(encoded));
     memset(&rendered, 0, sizeof(rendered));
-    result->schema_version = YVEX_RUNTIME_GENERATION_RESULT_SCHEMA_V4;
+    result->schema_version = YVEX_RUNTIME_GENERATION_RESULT_SCHEMA_V5;
     result->execution_mode = context->options.mode;
     result->requested_new_tokens = turn_maximum;
     yvex_runtime_identity_copy(result->generation_plan_identity,
@@ -1936,7 +1911,7 @@ int yvex_runtime_generation_turn_execute(
             result->new_prefill_token_count, prefill_chunks, err);
     if (rc == YVEX_OK && context->options.mode == YVEX_GENERATION_MODE_DSPARK)
         rc = generation_run_dspark(
-            context, turn, &prefill, prefill_hidden, prefill_values,
+            context, turn, transformer, &prefill, prefill_hidden, prefill_values,
             tokens, text, text_capacity, result, err);
     if (rc == YVEX_OK &&
         context->options.mode == YVEX_GENERATION_MODE_TARGET_ONLY)

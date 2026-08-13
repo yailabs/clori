@@ -261,7 +261,7 @@ static inline const char *runtime_profile_counter_name(yvex_runtime_profile_coun
 }
 #define YVEX_RUNTIME_GENERATION_SCHEMA_V3 3u
 #define YVEX_RUNTIME_GENERATION_SCHEMA_V5 5u
-#define YVEX_RUNTIME_GENERATION_RESULT_SCHEMA_V4 4u
+#define YVEX_RUNTIME_GENERATION_RESULT_SCHEMA_V5 5u
 #define YVEX_RUNTIME_GENERATION_TURN_SCHEMA_V1 1u
 #define YVEX_RUNTIME_PARTIAL_TURN_SCHEMA_V1 1u
 typedef enum {
@@ -401,8 +401,8 @@ typedef struct {
     unsigned long long accepted_draft_token_count, rejected_draft_token_count;
     unsigned long long discarded_draft_token_count;
     unsigned long long target_correction_or_bonus_token_count;
-    unsigned long long maximum_accepted_prefix;
-    unsigned long long confidence_logit_count;
+    unsigned long long speculation_source_boundary_token_count;
+    unsigned long long maximum_accepted_prefix, confidence_logit_count;
     unsigned long long draft_ns, verification_ns, speculative_commit_ns;
     double mean_accepted_prefix, effective_committed_tokens_per_second;
     double confidence_logit_minimum, confidence_logit_maximum;

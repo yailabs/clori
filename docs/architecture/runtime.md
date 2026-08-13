@@ -107,6 +107,13 @@ and 42 during ordinary execution. The drafter does not rerun the target trunk
 to reconstruct them. Draft Markov state is token-conditioned workspace, while
 committed sequence truth remains target-owned.
 
+Typed source-output channels constrain the speculative shape. Once the
+source-authored reasoning terminator joins the committed prefix, the common
+generation owner preserves that prefix, ledger, decoder and RNG and continues
+the final channel through target-only decode. The selected DSpark mode remains
+visible, while the boundary and exact continuation extent are identity-bound
+and projected through phase telemetry rather than hidden as a backend fallback.
+
 ## Transformer composition
 
 The DeepSeek adapter supplies the irreducible 43-layer schedule, attention

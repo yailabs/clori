@@ -183,8 +183,12 @@ The source-authored conversation boundary admits provider request/wire schema
 v3, tokenizer plan v3, tokenizer provider result v2, and local protocol v11.
 Runtime event schema v3, Physical Execution IR v1 and compiled profile v2
 remain unchanged. Generation plan ABI v5 adds the workload-profile identity
-required to bind phase evidence to the compiled workload; generation result
-schema v4 and all wire projections remain unchanged.
+required to bind phase evidence to the compiled workload. Generation result
+schema v5 adds the identity-bearing committed-token extent of a
+source-output-channel boundary; the target-only continuation extent is derived
+from the final committed extent. This internal ABI change does not
+alter local protocol v11 or runtime event schema v3; the existing typed profile
+event projects the new facts without serializing the C result layout.
 
 Phase-roofline v1 accepts both its original complete record and an additive
 availability mask. A zero mask retains the original all-facts meaning; new
