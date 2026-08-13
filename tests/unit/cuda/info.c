@@ -1320,15 +1320,12 @@ int yvex_cuda_test_info(void)
         YVEX_TEST_ASSERT(
             yvex_backend_resident_map_readonly(
                 backend, &descriptor, pageable, &resident, &err) == YVEX_OK && resident &&
-                yvex_backend_resident_prefetch(
-                    backend, resident, &prefetched_bytes, &err) == YVEX_OK &&
-                prefetched_bytes == 4096ull &&
                 yvex_backend_resident_attach(
                     backend, pageable, 4096ull, resident, 2ull, &err) == YVEX_OK &&
                 yvex_backend_resident_resolve(
                     backend, pageable, 4096ull, &mapped_address) ==
                     YVEX_BACKEND_RESIDENT_HIT && mapped_address != 0ull,
-            "prefetch and attach immutable pageable residency without a private copy");
+            "register and attach immutable artifact residency without a private copy");
         memset(mapped_readback, 0, sizeof(mapped_readback));
         YVEX_TEST_ASSERT(
             yvex_backend_tensor_read(

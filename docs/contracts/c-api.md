@@ -258,11 +258,12 @@ may consume a rebuildable verified-reopen lease and records zero payload bytes
 hashed for that open; an absent, malformed, or stale lease falls back to the
 complete hash. Residency schema v7 selects an admitted immutable backing.
 Descriptor tensors retain exact artifact offsets. When the compiled physical
-plan requires no derived asset and CUDA reports read-only host-page-table access
-with synchronous prefetch, the verified artifact mapping is the production
-weight backing. Plans requiring derived layouts select managed CUDA residency.
-Both alternatives require completed prefetch before readiness and neither may
-be substituted silently. Warm operations reuse the same verified handle,
+plan requires no derived asset and CUDA can register the immutable artifact
+mapping, that mapping is the production weight backing. Readiness consumes the
+returned device address without requiring a whole-artifact prefetch. Plans
+requiring derived layouts select managed CUDA residency and complete their
+prefetch before readiness. Neither alternative may be substituted silently.
+Warm operations reuse the same verified handle,
 immutable descriptor, attention graph and weight backing. Before and after
 execution, snapshot drift invalidates the model, sessions, residency, workspace,
 graph executables and candidate state.

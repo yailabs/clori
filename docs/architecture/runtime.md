@@ -379,15 +379,17 @@ these placement and accounting classes.
 
 The artifact mapping remains immutable model-lifetime backing for admission and
 provides exact typed tensor views. When the compiler-sealed physical plan needs
-no derived layout, CUDA read-only host-page-table access plus completed prefetch
-admits that mapping as the execution backing without a complete anonymous model
-copy. A plan requiring derived assets selects managed CUDA residency instead.
-The runtime selects between these compiled alternatives before allocation; the
-backend cannot substitute one silently. Both paths complete prefetch before
-publication. Status reports mapped artifact extent, completed artifact-prefetch
-facts, non-artifact host residency, accelerator residency and process RSS
-separately. A placement counter is a memory fact, not by itself a causal
-performance diagnosis.
+no derived layout, CUDA registers that mapping once as an immutable addressable
+range without a complete anonymous model copy or mandatory whole-artifact
+prefetch. The backend uses the device pointer returned for that registration;
+raw host-pointer addressability is not sufficient. A plan requiring derived
+assets selects managed CUDA residency and completes its migration before
+readiness instead. The runtime selects between these compiled alternatives
+before allocation; the backend cannot substitute one silently. Status reports
+mapped artifact extent, host-registration or managed-prefetch facts,
+non-artifact host residency, accelerator residency and process RSS separately.
+A placement counter is a memory fact, not by itself a causal performance
+diagnosis.
 
 Before opening the complete artifact, startup reads the bounded binding and
 admits its encoded payload against the configured host budget and the tighter

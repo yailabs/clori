@@ -56,8 +56,10 @@ CUDA free memory is a separate constraint unless backend facts prove that the
 selected placement and the host use one physical memory domain. Managed
 placement requires unified addressing, managed access, and an exact match
 between effective system and device capacity. An artifact-backed candidate
-additionally requires pageable-memory access through host page tables and the
-admitted read-only advice operation. In either shared-domain case Linux
+additionally requires one admitted immutable CUDA registration and
+device-address operation. On devices using host page tables, the registration
+need not claim a distinct read-only registration capability; YVEX still makes
+the tensor immutable at its backend contract. In either shared-domain case Linux
 `MemAvailable`, already bounded by the cgroup hierarchy, owns reclaimable-capacity
 admission; `cuMemGetInfo` is not allowed to turn reclaimable page cache into a
 false refusal. A shared CUDA session inherits the same immutable domain facts
@@ -71,18 +73,19 @@ it is not a second runtime model. Readiness is published only after every
 requirement of the selected generation mode and the worker is usable.
 
 Residency schema v7 selects one explicit physical backing. When the compiled
-physical plan requires no derived asset and CUDA admits read-only host-page-table
-access plus completed prefetch, the authenticated artifact remains the
-model-lifetime execution backing and tensor views resolve its exact file offsets
-without a second anonymous copy. Addressability alone never admits this path:
-prefetch must finish before readiness. A physical plan that requires derived
+physical plan requires no derived asset and CUDA admits immutable host mapping,
+the authenticated artifact remains the model-lifetime execution backing and
+tensor views resolve its exact file offsets without a second anonymous copy.
+Readiness requires one successful registration and its exact device address;
+raw pageable addressability does not establish the path and whole-artifact
+prefetch is not a readiness condition. A physical plan that requires derived
 layouts instead selects managed residency and its completed prefetch. Neither
-placement is a backend-local fallback. Artifact-backed bytes and completed
-prefetch facts are reported separately from stable host-resident allocations,
-and process RSS reports the pages actually touched. The residency identity seals
-artifact and materialization identities, placement, and exact tensor
-source/backing ranges. Snapshot drift, unsupported placement, prefetch failure
-and read failure remain typed refusals.
+placement is a backend-local fallback. Artifact-backed bytes, registration and
+managed-prefetch facts are reported separately from stable host-resident
+allocations, and process RSS reports the pages actually touched. The residency
+identity seals artifact and materialization identities, placement, and exact
+tensor source/backing ranges. Snapshot drift, unsupported placement,
+registration or prefetch failure, and read failure remain typed refusals.
 
 Failure during opening publishes no ready model and releases every acquired
 resource transactionally. Shutdown closes the model once after request/session

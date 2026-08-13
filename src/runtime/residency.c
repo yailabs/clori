@@ -84,8 +84,7 @@ int yvex_runtime_private_weight_placement_select(
         }
         mapped_compatible &= !decision->derived_asset_required;
     }
-    if (mapped_compatible && yvex_backend_resident_map_readonly_supported(backend) &&
-        yvex_backend_resident_prefetch_supported(backend)) {
+    if (mapped_compatible && yvex_backend_resident_map_readonly_supported(backend)) {
         *placement = YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED;
         yvex_error_clear(err);
         return YVEX_OK;
@@ -97,8 +96,8 @@ int yvex_runtime_private_weight_placement_select(
         return YVEX_ERR_UNSUPPORTED;
     }
 
-    /* Derived packs cannot borrow canonical artifact bytes; otherwise the policy prefers
-     * an immutable map only when the backend can complete migration before readiness. */
+    /* Derived packs cannot borrow canonical artifact bytes; canonical bytes prefer an
+     * immutable registered map only when the backend can publish one stable device address. */
     *placement = YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED;
     yvex_error_clear(err);
     return YVEX_OK;
@@ -981,8 +980,6 @@ static int residency_claim_cuda(yvex_runtime_residency *residency,
             residency->cuda_backend = backend;
             residency->cuda_weights = weights;
             *prepared_backend = NULL;
-            rc = yvex_backend_resident_prefetch(
-                backend, weights, &prefetched, err);
         }
     } else {
         rc = residency->arena_managed
@@ -1019,8 +1016,7 @@ static int residency_claim_cuda(yvex_runtime_residency *residency,
         residency->summary.device_resident_bytes = 0ull;
         residency->summary.cuda_pageable_map_bytes = residency->backing_bytes;
         residency->summary.cuda_pageable_map_count = 1ull;
-        residency->summary.cuda_pageable_prefetch_bytes = prefetched;
-        residency->summary.cuda_pageable_prefetch_count = 1ull;
+        residency->summary.cuda_host_registration_count = 1ull;
     } else {
         residency->summary.host_resident_bytes = residency->backing_bytes;
         residency->summary.device_resident_bytes = 0ull;
@@ -1327,7 +1323,7 @@ int yvex_runtime_residency_cuda_session_attach(
     yvex_backend *candidate_backend, *session_backend = NULL;
     yvex_device_tensor *candidate_weights = NULL;
     yvex_backend_bandwidth_evidence bandwidth = {0};
-    unsigned long long candidate_address = 0ull, prefetched = 0ull;
+    unsigned long long candidate_address = 0ull;
     yvex_error primary, cleanup;
     int rc, cleanup_rc;
     if (uploaded) *uploaded = 0;
@@ -1397,10 +1393,6 @@ int yvex_runtime_residency_cuda_session_attach(
                 rc = yvex_backend_resident_map_readonly(
                     candidate_backend, &descriptor, residency->arena,
                     &candidate_weights, err);
-                if (rc == YVEX_OK)
-                    rc = yvex_backend_resident_prefetch(
-                        candidate_backend, candidate_weights,
-                        &prefetched, err);
             } else {
                 rc = residency_register_cuda(
                     residency, candidate_backend, &candidate_weights, err);
@@ -1449,7 +1441,8 @@ int yvex_runtime_residency_cuda_session_attach(
         residency->summary.cuda_upload_bytes = 0ull;
         residency->summary.cuda_upload_count = 0ull;
         residency->summary.cuda_host_registration_count =
-            residency->summary.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_HOST_LOCKED;
+            residency->summary.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_HOST_LOCKED ||
+            residency->summary.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED;
         residency->summary.cuda_pageable_map_bytes =
             residency->summary.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED
                 ? residency->backing_bytes : 0ull;
@@ -1459,11 +1452,8 @@ int yvex_runtime_residency_cuda_session_attach(
         residency->summary.cuda_managed_allocation_count = 0ull;
         residency->summary.cuda_managed_prefetch_bytes = 0ull;
         residency->summary.cuda_managed_prefetch_count = 0ull;
-        residency->summary.cuda_pageable_prefetch_bytes =
-            residency->summary.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED
-                ? prefetched : 0ull;
-        residency->summary.cuda_pageable_prefetch_count =
-            residency->summary.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED;
+        residency->summary.cuda_pageable_prefetch_bytes = 0ull;
+        residency->summary.cuda_pageable_prefetch_count = 0ull;
         residency->summary.cuda_ready = 1;
         *uploaded = 1;
     }

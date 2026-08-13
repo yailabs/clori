@@ -862,8 +862,9 @@ static int runtime_model_residency_open(
          summary.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED &&
          (summary.cuda_pageable_map_count != 1ull ||
           summary.cuda_pageable_map_bytes != summary.cuda_addressable_bytes ||
-          summary.cuda_pageable_prefetch_count != 1ull ||
-          summary.cuda_pageable_prefetch_bytes != summary.cuda_addressable_bytes)) ||
+          summary.cuda_host_registration_count != 1ull ||
+          summary.cuda_pageable_prefetch_count ||
+          summary.cuda_pageable_prefetch_bytes)) ||
         (request->residency_backend == YVEX_BACKEND_KIND_CUDA && !summary.cuda_ready) ||
         (summary.derived_asset_count
              ? summary.schema_version != YVEX_RUNTIME_RESIDENCY_SCHEMA_V8 ||

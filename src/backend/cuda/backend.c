@@ -1109,9 +1109,7 @@ static int cuda_tensor_free(yvex_backend *backend,
         tensor->data = NULL;
     }
     pointer = yvex_cuda_tensor_ptr(tensor);
-    if (tensor->virtual_reserved || tensor->borrowed_host) {
-        rc = YVEX_OK;
-    } else if (tensor->host_data && state->registered_host == tensor->host_data &&
+    if (tensor->host_data && state->registered_host == tensor->host_data &&
         state->registered_device == pointer && state->registered_bytes == tensor->bytes) {
         rc = state->driver.cuMemHostUnregister
                  ? yvex_cuda_status(&state->driver,
@@ -1126,6 +1124,8 @@ static int cuda_tensor_free(yvex_backend *backend,
             state->registered_device = 0ull;
             state->registered_bytes = 0ull;
         }
+    } else if (tensor->virtual_reserved || tensor->borrowed_host) {
+        rc = YVEX_OK;
     } else {
         rc = yvex_cuda_temporary_free(backend, YVEX_BACKEND_VARIANT_TENSOR_ALLOC,
                                       &pointer, tensor->bytes, 0,
@@ -1676,7 +1676,7 @@ int yvex_backend_open_cuda_impl(yvex_backend **out,
     yvex_backend *backend = NULL;
     yvex_cuda_backend_state *state = NULL;
     int device_index = 0, device_count = 0, unified = 0, managed = 0;
-    int can_map_host = 0, virtual_memory_management = 0;
+    int can_map_host = 0, host_register_readonly = 0, virtual_memory_management = 0;
     int pageable_memory_access = 0, pageable_uses_host_page_tables = 0;
     size_t global_bytes = 0;
     int rc;
@@ -1763,12 +1763,18 @@ int yvex_backend_open_cuda_impl(yvex_backend **out,
         &virtual_memory_management,
         YVEX_CUDA_DEVICE_ATTRIBUTE_VIRTUAL_MEMORY_MANAGEMENT,
         state->device);
+    (void)state->driver.cuDeviceGetAttribute(
+        &host_register_readonly,
+        YVEX_CUDA_DEVICE_ATTRIBUTE_HOST_REGISTER_READ_ONLY_SUPPORTED,
+        state->device);
     state->virtual_memory_management =
         virtual_memory_management != 0 && state->driver.cuMemAddressReserve &&
         state->driver.cuMemAddressFree && state->driver.cuMemCreate &&
         state->driver.cuMemRelease && state->driver.cuMemMap &&
         state->driver.cuMemUnmap && state->driver.cuMemSetAccess &&
         state->driver.cuMemGetAllocationGranularity;
+    state->can_map_host = can_map_host != 0;
+    state->host_register_readonly = host_register_readonly != 0;
     backend->pageable_memory_access = pageable_memory_access != 0;
     backend->pageable_uses_host_page_tables = pageable_uses_host_page_tables != 0;
     backend->virtual_tensor_ready = state->virtual_memory_management;

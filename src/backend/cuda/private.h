@@ -91,13 +91,13 @@ typedef struct {
 #define YVEX_CUDA_STREAM_NON_BLOCKING 0x01u
 #define YVEX_CUDA_MEM_ATTACH_GLOBAL 0x01u
 #define YVEX_CUDA_MEMHOSTREGISTER_DEVICEMAP 0x02u
+#define YVEX_CUDA_MEMHOSTREGISTER_READ_ONLY 0x08u
 #define YVEX_CUDA_MEM_ACCESS_READ_WRITE 0x03
 #define YVEX_CUDA_MEM_LOCATION_DEVICE 0x01
-#define YVEX_CUDA_MEM_ADVISE_SET_READ_MOSTLY 1
-#define YVEX_CUDA_MEM_ADVISE_SET_PREFERRED_LOCATION 3
 #define YVEX_CUDA_MEM_ALLOCATION_PINNED 0x01
 #define YVEX_CUDA_MEM_GRANULARITY_MINIMUM 0x00
 #define YVEX_CUDA_DEVICE_ATTRIBUTE_CAN_MAP_HOST_MEMORY 19
+#define YVEX_CUDA_DEVICE_ATTRIBUTE_HOST_REGISTER_READ_ONLY_SUPPORTED 113
 #define YVEX_CUDA_DEVICE_ATTRIBUTE_UNIFIED_ADDRESSING 41
 #define YVEX_CUDA_DEVICE_ATTRIBUTE_MANAGED_MEMORY 83
 #define YVEX_CUDA_DEVICE_ATTRIBUTE_VIRTUAL_MEMORY_MANAGEMENT 102
@@ -302,7 +302,7 @@ typedef struct {
     char kernel_bundle_identity[YVEX_SHA256_HEX_BYTES];
     char kernel_bundle_architecture[16];
     yvex_backend_bandwidth_evidence bandwidth_evidence;
-    int bandwidth_ready, bandwidth_active, virtual_memory_management;
+    int bandwidth_ready, bandwidth_active, virtual_memory_management, can_map_host, host_register_readonly;
     const yvex_backend *context_owner;
     int context_borrowed;
 } yvex_cuda_backend_state;

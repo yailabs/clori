@@ -2059,7 +2059,6 @@ static int run_runtime_residency_close_order(yvex_runtime_model *model,
             view->residency, &before, NULL, NULL, err) != YVEX_OK ||
         !before.cuda_ready || !before.binding_count ||
         before.cuda_upload_bytes || before.cuda_upload_count ||
-        before.cuda_host_registration_count ||
         !((before.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED &&
            before.artifact_backed_bytes &&
            !before.host_resident_bytes &&
@@ -2067,8 +2066,8 @@ static int run_runtime_residency_close_order(yvex_runtime_model *model,
            before.cuda_addressable_bytes == before.artifact_backed_bytes &&
            before.cuda_pageable_map_bytes == before.artifact_backed_bytes &&
            before.cuda_pageable_map_count == 1ull &&
-           before.cuda_pageable_prefetch_bytes == before.artifact_backed_bytes &&
-           before.cuda_pageable_prefetch_count == 1ull &&
+           before.cuda_host_registration_count == 1ull &&
+           !before.cuda_pageable_prefetch_bytes && !before.cuda_pageable_prefetch_count &&
            !before.cuda_managed_bytes && !before.cuda_managed_allocation_count &&
            !before.cuda_managed_prefetch_bytes && !before.cuda_managed_prefetch_count) ||
           (before.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED &&
