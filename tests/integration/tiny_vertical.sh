@@ -182,7 +182,7 @@ test "$(sed -n 's/^.*position=\([0-9][0-9]*\).*$/\1/p' \
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session new reasoning-limit \
     >"$root/session.reasoning.new"
 if HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run \
-    --session reasoning-limit --strategy greedy \
+    --session reasoning-limit --reasoning high --strategy greedy \
     --max-new-tokens 1 a >"$root/reasoning-limit.out" \
     2>"$root/reasoning-limit.err"; then
     printf 'unfinished tiny reasoning unexpectedly succeeded\n' >&2
