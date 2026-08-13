@@ -161,9 +161,9 @@ assert chat['choices'][0]['message']['content']=='hello from yvex'
 assert chat['choices'][0]['finish_reason']=='stop'
 assert chat['usage']['prompt_tokens']==5 and chat['usage']['completion_tokens']==3
 assert chat['usage']['total_tokens']==8
-assert chat['usage']['completion_tokens_details']['reasoning_tokens']==2
-assert chat['yvex_completion_metrics']['final_tokens']==1
-assert chat['choices'][0]['message']['reasoning_content']=='explicit model reasoning'
+assert chat['usage']['completion_tokens_details']['reasoning_tokens']==0
+assert chat['yvex_completion_metrics']['final_tokens']==3
+assert chat['choices'][0]['message']['reasoning_content']==''
 assert json.load(open(root/'chat-json.json'))['choices'][0]['message']['content']=='{"ok":true}'
 reasoning=json.load(open(root/'chat-reasoning.json'))
 assert reasoning['choices'][0]['message']['reasoning_content']=='explicit model reasoning'
@@ -229,15 +229,12 @@ assert next(e for e in chat_tool_events
             if e.get('choices') and e['choices'][0]['finish_reason']=='tool_calls')
 response_events=records(root/'responses.sse')
 assert [e['type'] for e in response_events] == [
-    'response.created', 'response.reasoning_content.delta',
-    'response.output_item.added',
+    'response.created', 'response.output_item.added',
     'response.content_part.added', 'response.output_text.delta',
-    'response.reasoning_content.done', 'response.output_text.done',
-    'response.content_part.done',
+    'response.output_text.done', 'response.content_part.done',
     'response.output_item.done', 'response.completed']
-assert [e['sequence_number'] for e in response_events] == list(range(10))
-assert response_events[1]['delta']=='explicit model reasoning'
-assert response_events[4]['delta']=='hello from yvex'
+assert [e['sequence_number'] for e in response_events] == list(range(8))
+assert response_events[3]['delta']=='hello from yvex'
 response_reasoning_events=records(root/'response-reasoning.sse')
 assert [e['type'] for e in response_reasoning_events] == [
     'response.created', 'response.reasoning_content.delta',
@@ -249,14 +246,12 @@ assert response_reasoning_events[1]['delta']=='explicit model reasoning'
 assert response_reasoning_events[5]['reasoning_content']=='explicit model reasoning'
 response_tool_events=records(root/'responses-tool.sse')
 assert [e['type'] for e in response_tool_events] == [
-    'response.created', 'response.reasoning_content.delta',
-    'response.output_item.added',
+    'response.created', 'response.output_item.added',
     'response.function_call_arguments.delta',
-    'response.reasoning_content.done',
     'response.function_call_arguments.done',
     'response.output_item.done', 'response.completed']
-assert [e['sequence_number'] for e in response_tool_events] == list(range(8))
-assert json.loads(response_tool_events[5]['arguments'])=={'match_id':'m1'}
+assert [e['sequence_number'] for e in response_tool_events] == list(range(6))
+assert json.loads(response_tool_events[3]['arguments'])=={'match_id':'m1'}
 error=json.load(open(root/'refusal.json'))
 assert error['error']['type']=='unsupported_parameter'
 consumed=json.load(open(root/'consumed-response.json'))
