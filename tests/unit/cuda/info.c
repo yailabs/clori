@@ -572,11 +572,11 @@ static int assert_encoded_moe(yvex_backend *backend)
         rc = operations->execute_rows(backend, &job, &rows, &output, &result, &err);
         YVEX_TEST_ASSERT(
             rc == YVEX_OK && result.schema_version == YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V3 &&
-                result.tensor_core_launches == 2ull &&
+                result.tensor_core_launches == 0ull &&
                 yvex_device_tensor_is_written(reference_output) &&
                 yvex_backend_tensor_read(backend, reference_output, tensorcore,
                                          sizeof(tensorcore), &err) == YVEX_OK,
-            "row-regime capability selects Tensor Core only for grouped routed MoE");
+            "row-regime capability remains on its compiler-selected encoded path");
         maximum_error = 0.0f;
         for (index = 0ull; index < ROWS * WIDTH; ++index) {
             float difference = fabsf(encoded[index] - tensorcore[index]);

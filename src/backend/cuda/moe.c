@@ -1010,14 +1010,10 @@ static int moe_cuda_batch_decode(moe_cuda_batch *batch,
         weight->row_width, output, batch->status, stage, &batch->failure, err);
 }
 
-/* SM121 profiling keeps sparse decode and short grouped prefill below the IMMA crossover. */
-#define MOE_CUDA_SM121_TENSORCORE_PAIR_CROSSOVER 1024ull
-
 static int moe_cuda_encoded_expert_policy(
     const moe_cuda_batch *batch, const yvex_moe_weight_view *gate,
     const yvex_moe_weight_view *up, const yvex_moe_weight_view *down,
     unsigned long long input_width, unsigned long long intermediate_width,
-    unsigned long long pair_count,
     int *up_q8, int *down_q8, int *up_tensorcore, int *down_tensorcore,
     yvex_error *err)
 {
@@ -1059,12 +1055,10 @@ static int moe_cuda_encoded_expert_policy(
                                "compiled derived MoE layout has unsupported geometry");
     *up_tensorcore = gate_encoded &&
         (derived ||
-        (!strcmp(gate->kernel_family, YVEX_MOE_KERNEL_SM121_TENSORCORE_EXPERT) ||
-         (up_regime && pair_count >= MOE_CUDA_SM121_TENSORCORE_PAIR_CROSSOVER)));
+         !strcmp(gate->kernel_family, YVEX_MOE_KERNEL_SM121_TENSORCORE_EXPERT));
     *down_tensorcore = down_encoded && down->kernel_family &&
         (derived ||
-        (!strcmp(down->kernel_family, YVEX_MOE_KERNEL_SM121_TENSORCORE_EXPERT) ||
-         (down_regime && pair_count >= MOE_CUDA_SM121_TENSORCORE_PAIR_CROSSOVER)));
+         !strcmp(down->kernel_family, YVEX_MOE_KERNEL_SM121_TENSORCORE_EXPERT));
     if ((gate_encoded && !*up_tensorcore && !up_regime &&
          strcmp(gate->kernel_family, YVEX_MOE_KERNEL_PORTABLE_EXPERT_ROW) != 0 &&
          strcmp(gate->kernel_family, YVEX_MOE_KERNEL_PORTABLE_ENCODED_ROW) != 0) ||
@@ -1879,7 +1873,7 @@ static int moe_cuda_execute_rows(yvex_backend *backend,
         &batch, &job->weights[YVEX_MOE_WEIGHT_ROUTED_GATE],
         &job->weights[YVEX_MOE_WEIGHT_ROUTED_UP],
         &job->weights[YVEX_MOE_WEIGHT_ROUTED_DOWN], layer->hidden_width,
-        layer->expert_intermediate_width, pairs, &batch.routed_up_q8,
+        layer->expert_intermediate_width, &batch.routed_up_q8,
         &batch.routed_down_q8, &batch.routed_up_tensorcore,
         &batch.routed_down_tensorcore, err);
     if (rc == YVEX_OK)
@@ -1887,7 +1881,7 @@ static int moe_cuda_execute_rows(yvex_backend *backend,
             &batch, &job->weights[YVEX_MOE_WEIGHT_SHARED_GATE],
             &job->weights[YVEX_MOE_WEIGHT_SHARED_UP],
             &job->weights[YVEX_MOE_WEIGHT_SHARED_DOWN], layer->hidden_width,
-            layer->shared_intermediate_width, rows->row_count, &batch.shared_up_q8,
+            layer->shared_intermediate_width, &batch.shared_up_q8,
             &batch.shared_down_q8, &batch.shared_up_tensorcore,
             &batch.shared_down_tensorcore, err);
     if (rc == YVEX_OK) rc = moe_cuda_batch_ranges(&batch, job, rows, pairs, err);
