@@ -26,6 +26,12 @@ static __device__ int tensorcore_row_geometry(unsigned int qtype,
     return 0;
 }
 
+static __device__ __forceinline__ void tensorcore_row_sync(unsigned int warps)
+{
+    if (warps == 1u) __syncwarp();
+    else __syncthreads();
+}
+
 static __device__ void tensorcore_canonical_weight_tile(
     const unsigned char *base, unsigned long long row_bytes, unsigned long long row_count,
     unsigned long long row_base, unsigned long long segment, unsigned int qtype, signed char *tile)
@@ -246,62 +252,71 @@ extern "C" __global__ void yvex_qtype_tensorcore_rows(
     float *output, int output_bf16, int *status)
 {
     __shared__ __align__(16) signed char weight_tile[16 * 16];
-    __shared__ __align__(16) signed char activation_tile[16 * 16];
-    __shared__ __align__(16) int product_tile[16 * 16];
-    __shared__ int integer_totals[16 * 16];
-    __shared__ int minimum_totals[16 * 16];
-    __shared__ float totals[16 * 16];
-    unsigned int lane = threadIdx.x;
-    unsigned long long input_tiles = (input_rows + 15ull) / 16ull;
-    unsigned long long row_base = input_tiles
-                                      ? ((unsigned long long)blockIdx.x / input_tiles) * 16ull
-                                      : row_count;
-    unsigned long long input_base = input_tiles
-                                        ? ((unsigned long long)blockIdx.x % input_tiles) * 16ull
-                                        : input_rows;
+    __shared__ __align__(16) signed char activation_tile[4][16 * 16];
+    __shared__ __align__(16) int product_tile[4][16 * 16];
+    __shared__ int integer_totals[4][16 * 16];
+    __shared__ int minimum_totals[4][16 * 16];
+    __shared__ float totals[4][16 * 16];
+    unsigned int lane = threadIdx.x & 31u, warp = threadIdx.x >> 5u;
+    unsigned int warps = blockDim.x >> 5u;
+    unsigned long long input_tiles, input_groups, row_base, input_base;
     unsigned long long q8_blocks = row_width / YVEX_CUDA_Q8_K_BLOCK;
-    unsigned long long row_group = group_rows ? row_base / group_rows : group_count;
+    unsigned long long row_group;
 
-    if (!status || *status || lane >= 32u) return;
+    if (!status || *status) return;
     if (!encoded || !activation || !output || !row_count || !input_rows ||
         !group_count || !group_rows || group_count > ~0ull / group_rows ||
         row_count != group_count * group_rows ||
-        (group_count > 1ull && group_rows % 16ull) || row_group >= group_count ||
+        input_rows > ~0ull - 15ull ||
+        !warps || warps > 4u || blockDim.x != warps * 32u ||
+        (group_count > 1ull && group_rows % 16ull) ||
         !tensorcore_row_geometry(qtype, row_width, row_bytes)) {
-        if (!lane) atomicCAS(status, 0, 2);
+        if (!threadIdx.x) atomicCAS(status, 0, 2);
+        return;
+    }
+    input_tiles = (input_rows + 15ull) / 16ull;
+    input_groups = (input_tiles + warps - 1ull) / warps;
+    row_base = ((unsigned long long)blockIdx.x / input_groups) * 16ull;
+    input_base = ((unsigned long long)blockIdx.x % input_groups) *
+                     warps * 16ull + warp * 16ull;
+    row_group = group_rows ? row_base / group_rows : group_count;
+    if (row_group >= group_count) {
+        if (!threadIdx.x) atomicCAS(status, 0, 2);
         return;
     }
     for (unsigned int index = lane; index < 256u; index += 32u) {
-        integer_totals[index] = minimum_totals[index] = 0;
-        totals[index] = 0.0f;
+        integer_totals[warp][index] = minimum_totals[warp][index] = 0;
+        totals[warp][index] = 0.0f;
     }
-    __syncthreads();
+    tensorcore_row_sync(warps);
     for (unsigned long long segment = 0ull; segment < row_width; segment += 16ull) {
         wmma::fragment<wmma::matrix_a, 16, 16, 16,
                        signed char, wmma::row_major> weight;
         wmma::fragment<wmma::matrix_b, 16, 16, 16,
                        signed char, wmma::col_major> values;
         wmma::fragment<wmma::accumulator, 16, 16, 16, int> product;
-        tensorcore_canonical_weight_tile(
-            encoded + start_row * row_bytes, row_bytes, row_count,
-            row_base, segment, qtype, weight_tile);
+        if (!warp)
+            tensorcore_canonical_weight_tile(
+                encoded + start_row * row_bytes, row_bytes, row_count,
+                row_base, segment, qtype, weight_tile);
         for (unsigned int index = lane; index < 256u; index += 32u) {
             unsigned int tile_row = index / 16u, tile_column = index % 16u;
             unsigned long long global_input = input_base + tile_row;
-            activation_tile[index] = global_input < input_rows
+            activation_tile[warp][index] = global_input < input_rows
                 ? (signed char)activation[((global_input * group_count + row_group) *
                                                q8_blocks + segment / 256ull) *
                                               YVEX_CUDA_Q8_K_BYTES +
                                           4ull + segment % 256ull + tile_column]
                 : 0;
         }
-        __syncthreads();
+        tensorcore_row_sync(warps);
         wmma::load_matrix_sync(weight, weight_tile, 16u);
-        wmma::load_matrix_sync(values, activation_tile, 16u);
+        wmma::load_matrix_sync(values, activation_tile[warp], 16u);
         wmma::fill_fragment(product, 0);
         wmma::mma_sync(product, weight, values, product);
-        wmma::store_matrix_sync(product_tile, product, 16u, wmma::mem_row_major);
-        __syncthreads();
+        wmma::store_matrix_sync(product_tile[warp], product, 16u,
+                                wmma::mem_row_major);
+        tensorcore_row_sync(warps);
         for (unsigned int index = lane; index < 256u; index += 32u) {
             unsigned int tile_row = index / 16u, tile_column = index % 16u;
             unsigned long long global_row = row_base + tile_row;
@@ -315,21 +330,22 @@ extern "C" __global__ void yvex_qtype_tensorcore_rows(
                 unsigned int group_segments =
                     qtype == YVEX_GGUF_QTYPE_Q2_K ||
                             qtype == YVEX_GGUF_QTYPE_IQ2_XXS ? 16u : 2u;
-                integer_totals[index] += product_tile[index] *
-                                         tensorcore_product_factor(row, segment, qtype);
-                minimum_totals[index] += q8_k_sum(q8, subblock) *
-                                         tensorcore_minimum_factor(row, segment, qtype);
+                integer_totals[warp][index] += product_tile[warp][index] *
+                    tensorcore_product_factor(row, segment, qtype);
+                minimum_totals[warp][index] += q8_k_sum(q8, subblock) *
+                    tensorcore_minimum_factor(row, segment, qtype);
                 if (((segment / 16ull) + 1ull) % group_segments == 0ull) {
-                    totals[index] = __fadd_rn(
-                        totals[index], tensorcore_scaled_group(
+                    totals[warp][index] = __fadd_rn(
+                        totals[warp][index], tensorcore_scaled_group(
                             row, segment, qtype,
                             __uint_as_float(qtype_load_u32(q8)),
-                            integer_totals[index], minimum_totals[index]));
-                    integer_totals[index] = minimum_totals[index] = 0;
+                            integer_totals[warp][index],
+                            minimum_totals[warp][index]));
+                    integer_totals[warp][index] = minimum_totals[warp][index] = 0;
                 }
             }
         }
-        __syncthreads();
+        tensorcore_row_sync(warps);
     }
     for (unsigned int index = lane; index < 256u; index += 32u) {
         unsigned int tile_row = index / 16u, tile_column = index % 16u;
@@ -337,8 +353,9 @@ extern "C" __global__ void yvex_qtype_tensorcore_rows(
         unsigned long long global_input = input_base + tile_column;
         if (global_row < row_count && global_input < input_rows) {
             unsigned long long output_index = global_input * row_count + global_row;
-            float value = additive ? __fadd_rn(totals[index], additive[output_index])
-                                   : totals[index];
+            float value = additive
+                ? __fadd_rn(totals[warp][index], additive[output_index])
+                : totals[warp][index];
             if (!isfinite(value)) atomicCAS(status, 0, 1);
             else output[output_index] = output_bf16 ? float_to_bf16_rne(value) : value;
         }

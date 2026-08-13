@@ -187,7 +187,7 @@ static void quant_q8_reference(const float *input, float *output,
 
 static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
 {
-    enum { ROWS = 5, SPARSE_INPUT_ROWS = 3, INPUT_ROWS = 16, WIDTH = 4096, HEAD = 173 };
+    enum { ROWS = 5, SPARSE_INPUT_ROWS = 3, INPUT_ROWS = 60, WIDTH = 4096, HEAD = 173 };
     yvex_backend_tensor_desc descriptor = {0};
     yvex_device_tensor *resident = NULL, *input = NULL, *additive = NULL, *output = NULL;
     yvex_device_tensor *split_head = NULL, *split_tail = NULL;
@@ -1318,6 +1318,16 @@ int yvex_cuda_test_quant_qtype(void)
             &matvec_grid, &matvec_block, &block_row) &&
             matvec_grid == 512u && matvec_block == 256u && !block_row,
         "encoded Q8 projection cannot enter the F32 reduction class");
+    YVEX_TEST_ASSERT(
+        yvex_cuda_qtype_tensorcore_geometry(
+            2048ull, 60ull, &matvec_grid, &matvec_block) &&
+            matvec_grid == 128u && matvec_block == 128u,
+        "wide Tensor Core rows share one decoded tile across four input warps");
+    YVEX_TEST_ASSERT(
+        yvex_cuda_qtype_tensorcore_geometry(
+            1024ull, 60ull, &matvec_grid, &matvec_block) &&
+            matvec_grid == 64u && matvec_block == 128u,
+        "Tensor Core rows share one decoded tile across four input warps");
     for (index = 0u; index < sizeof(cases) / sizeof(cases[0]); ++index) {
         double maximum_difference = 0.0;
         double maximum_relative_difference = 0.0;

@@ -256,8 +256,7 @@ static int attention_matvec(yvex_cuda_work *work,
     CUdeviceptr additive = 0ull;
     unsigned long long group_count = 1ull, group_rows = rows;
     int block_row = 0, q8_path, q8_input = 0, tensorcore_path;
-    unsigned long long tensorcore_grid = 0ull;
-    unsigned int matvec_grid, matvec_block;
+    unsigned int matvec_grid, matvec_block, tensorcore_grid = 0u, tensorcore_block = 0u;
     q8_path = weight && work->activation_q8 && !work->forensic_numeric &&
               weight->row_width % 256ull == 0ull &&
               yvex_cuda_q8_activation_eligible(weight->qtype) &&
@@ -275,10 +274,9 @@ static int attention_matvec(yvex_cuda_work *work,
             failure, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT, stage,
             weight ? weight->row_count : 0ull, start_row + rows, err,
             YVEX_ERR_BOUNDS, "CUDA attention matvec geometry is invalid");
-    if (tensorcore_path &&
-        (!yvex_core_u64_mul((rows + 15ull) / 16ull,
-                            (input_rows + 15ull) / 16ull, &tensorcore_grid) ||
-         tensorcore_grid > UINT_MAX))
+    if (tensorcore_path && !yvex_cuda_qtype_tensorcore_geometry(
+                               rows, input_rows, &tensorcore_grid,
+                               &tensorcore_block))
         return attention_fail(
             failure, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT, stage,
             UINT_MAX, tensorcore_grid, err, YVEX_ERR_BOUNDS,
@@ -319,7 +317,7 @@ static int attention_matvec(yvex_cuda_work *work,
                 &additive, &out, &output_bf16, &status};
             rc = attention_launch(
                 work, work->state->qtype_tensorcore_rows_function,
-                (unsigned int)tensorcore_grid, 32u, 0u, params, stage,
+                tensorcore_grid, tensorcore_block, 0u, params, stage,
                 failure, err);
             if (rc == YVEX_OK) work->tensor_core_launches++;
         } else if (rc == YVEX_OK) {
@@ -360,9 +358,9 @@ static int attention_matvec_grouped(
 {
     CUdeviceptr additive = 0ull;
     unsigned long long rows = 0ull, input_width, quantized_rows, quantize_tasks;
-    unsigned long long quantized_bytes, tensorcore_grid;
+    unsigned long long quantized_bytes;
     int block_row = 0, q8_input = 0, q8_path;
-    unsigned int grid, block;
+    unsigned int grid, block, tensorcore_grid = 0u, tensorcore_block = 0u;
     if (!weight || !weight->present || !device_weight || !vector || !out ||
         !groups || !group_rows || !input_rows || groups > ULLONG_MAX / group_rows ||
         !yvex_core_u64_mul(groups, group_rows, &rows) ||
@@ -390,9 +388,9 @@ static int attention_matvec_grouped(
         if (!yvex_core_u64_mul(input_rows, groups, &quantized_rows) ||
             !yvex_core_u64_mul(quantized_rows, blocks, &quantize_tasks) ||
             !yvex_core_u64_mul(quantize_tasks, 292ull, &quantized_bytes) ||
-            !yvex_core_u64_mul((rows + 15ull) / 16ull,
-                               (input_rows + 15ull) / 16ull, &tensorcore_grid) ||
-            quantize_tasks > UINT_MAX || tensorcore_grid > UINT_MAX ||
+            !yvex_cuda_qtype_tensorcore_geometry(
+                rows, input_rows, &tensorcore_grid, &tensorcore_block) ||
+            quantize_tasks > UINT_MAX ||
             quantized_bytes > SIZE_MAX)
             return attention_fail(
                 failure, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT, stage,
@@ -423,7 +421,7 @@ static int attention_matvec_grouped(
                 &additive, &out, &output_bf16, &status};
             rc = attention_launch(
                 work, work->state->qtype_tensorcore_rows_function,
-                (unsigned int)tensorcore_grid, 32u, 0u, params, stage,
+                tensorcore_grid, tensorcore_block, 0u, params, stage,
                 failure, err);
             if (rc == YVEX_OK) work->tensor_core_launches++;
         }

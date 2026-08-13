@@ -59,6 +59,25 @@ int yvex_cuda_qtype_matvec_geometry(
     return 1;
 }
 
+int yvex_cuda_qtype_tensorcore_geometry(
+    unsigned long long rows, unsigned long long input_rows,
+    unsigned int *grid, unsigned int *block)
+{
+    unsigned long long row_tiles, input_tiles, input_groups, blocks;
+    unsigned int warps;
+    if (!rows || !input_rows || !grid || !block ||
+        rows > ULLONG_MAX - 15ull || input_rows > ULLONG_MAX - 15ull) return 0;
+    row_tiles = (rows + 15ull) / 16ull;
+    input_tiles = (input_rows + 15ull) / 16ull;
+    warps = input_tiles > 4ull ? 4u : (unsigned int)input_tiles;
+    input_groups = (input_tiles + warps - 1ull) / warps;
+    if (!yvex_core_u64_mul(row_tiles, input_groups, &blocks) ||
+        !blocks || blocks > UINT_MAX) return 0;
+    *grid = (unsigned int)blocks;
+    *block = warps * 32u;
+    return 1;
+}
+
 static int cuda_quant_fail(yvex_quant_failure *failure,
                            yvex_quant_failure_code code,
                            unsigned int qtype,
@@ -216,13 +235,13 @@ int yvex_backend_cuda_encoded_matvec(
     unsigned long long temporary_bytes = sizeof(int), q8_workspace_bytes = 0ull;
     CUdeviceptr encoded_ptr, input_ptr, input_tail_ptr = 0ull, additive_ptr = 0ull, output_ptr;
     CUdeviceptr status = 0ull, quantized = 0ull;
-    unsigned long long start_row = 0ull, launches = 0ull, tensorcore_grid = 0ull;
+    unsigned long long start_row = 0ull, launches = 0ull;
     unsigned long long group_count = 1ull, group_rows = row_count;
     int output_bf16 = 0, host_status = 0, rc, cleanup_rc, q8_path, q8_input = 0;
     int tensorcore_path;
     int block_row = 0;
     int forensic_numeric = 0, split_input = input_tail != NULL;
-    unsigned int matvec_grid, matvec_block;
+    unsigned int matvec_grid, matvec_block, tensorcore_grid = 0u, tensorcore_block = 0u;
     yvex_error cleanup;
     if (facts) memset(facts, 0, sizeof(*facts));
     if (activation_q8 != 0 && activation_q8 != 1) {
@@ -270,10 +289,9 @@ int yvex_backend_cuda_encoded_matvec(
                        "resident encoded matvec geometry or ownership is incompatible");
         return YVEX_ERR_FORMAT;
     }
-    if (tensorcore_path &&
-        (!yvex_core_u64_mul((row_count + 15ull) / 16ull,
-                            (input_rows + 15ull) / 16ull, &tensorcore_grid) ||
-         tensorcore_grid > UINT_MAX)) {
+    if (tensorcore_path && !yvex_cuda_qtype_tensorcore_geometry(
+                               row_count, input_rows,
+                               &tensorcore_grid, &tensorcore_block)) {
         yvex_error_set(err, YVEX_ERR_BOUNDS, "cuda.encoded-matvec.tensorcore",
                        "Tensor Core row-batch grid exceeds launch bounds");
         return YVEX_ERR_BOUNDS;
@@ -344,8 +362,8 @@ int yvex_backend_cuda_encoded_matvec(
             tensorcore_path ? state->qtype_tensorcore_rows_function
                             : split_input ? state->qtype_split_matvec_function
                                           : state->qtype_matvec_function,
-            tensorcore_path ? (unsigned int)tensorcore_grid : matvec_grid,
-            tensorcore_path ? 32u : matvec_block, 0u,
+            tensorcore_path ? tensorcore_grid : matvec_grid,
+            tensorcore_path ? tensorcore_block : matvec_block, 0u,
             tensorcore_path ? tensorcore_params
                             : split_input ? split_params : q8_path ? q8_params : params,
             "cuda.encoded-matvec.launch", err);

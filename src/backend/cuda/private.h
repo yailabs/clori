@@ -457,7 +457,7 @@ int yvex_cuda_qtype_matvec_geometry(
     unsigned long long rows, unsigned long long row_width, unsigned long long input_rows,
     unsigned int qtype, int block_row_eligible, unsigned int *grid, unsigned int *block,
     int *block_row);
-/* One MMA row tile is the measured GB10 crossover; smaller widths stay latency-oriented. */
+int yvex_cuda_qtype_tensorcore_geometry(unsigned long long, unsigned long long, unsigned int *, unsigned int *);
 #define YVEX_CUDA_TENSORCORE_MIN_ROWS 16ull
 static inline int cuda_qtype_tensorcore_eligible(unsigned long long input_rows) {
     return input_rows >= YVEX_CUDA_TENSORCORE_MIN_ROWS;
