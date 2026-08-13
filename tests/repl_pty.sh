@@ -62,16 +62,30 @@ grep -F 'reasoning 2 tokens' "$root/raw.err" >/dev/null
 grep -F 'final 1 tokens' "$root/raw.err" >/dev/null
 ! grep "$(printf '\033')" "$root/raw.out" >/dev/null
 
-# A terminal-bound one-shot keeps the payload byte-faithful while placing
-# completion facts after it rather than on the final model-output line.
+# A terminal-bound one-shot projects typed reasoning and final channels as
+# distinct blocks, then flushes the completed final block before metrics.
 env -u NO_COLOR TERM=xterm-256color XDG_RUNTIME_DIR="$runtime" script -q -e \
     -c "$YVEX_BIN run --reasoning high --max-new-tokens 3 --strategy greedy REASONING_STREAM" \
     "$root/run.typescript" >"$root/run.stdout" 2>"$root/run.stderr"
 esc=$(printf '\033')
 sed "s/${esc}\\[[0-9;]*m//g" "$root/run.typescript" | tr -d '\r' \
     >"$root/run.plain"
+grep -Fx 'thinking' "$root/run.plain" >/dev/null
+grep -Fx 'I need to compare the constraints...' "$root/run.plain" >/dev/null
 grep -Fx 'The valid result is 42.' "$root/run.plain" >/dev/null
 grep -E '^prefill .*generation .*session run-[0-9]+$' "$root/run.plain" >/dev/null
+python3 - "$root/run.plain" <<'PY'
+import pathlib
+import sys
+
+lines = pathlib.Path(sys.argv[1]).read_text().splitlines()
+thinking = lines.index("thinking")
+reasoning = lines.index("I need to compare the constraints...")
+final = lines.index("The valid result is 42.")
+metrics = next(index for index, line in enumerate(lines) if line.startswith("prefill "))
+assert thinking < reasoning < final < metrics
+assert not any("prefill " in line for line in lines[final + 1:metrics])
+PY
 
 mkfifo "$root/input"
 env -u NO_COLOR TERM=xterm-256color XDG_RUNTIME_DIR="$runtime" script -q -f -e \

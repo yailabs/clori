@@ -183,6 +183,9 @@ change. Git history preserves implementation chronology.
   their explicit prefetch. Memory status distinguishes mapped artifact extent,
   registration, managed prefetch, non-artifact host residency, accelerator
   residency and process RSS.
+- Terminal-bound one-shot generation now renders explicit reasoning and final
+  output as distinct blocks and flushes the completed model stream before
+  metrics. Redirected `run` output retains its exact canonical byte stream.
 - Model hosting is now the explicit foreground `yvex server MODEL [--ctx N]`
   operation. Status, model, memory, logs and shutdown use the same public
   `server` noun; `server log [--json]` is the sole observability stream.

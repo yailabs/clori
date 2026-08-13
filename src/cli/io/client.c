@@ -827,14 +827,14 @@ static int generation_turn(const char *session_name,
     FILE *status_output = conversation ? stdout : stderr;
     yvex_reasoning_policy reasoning_policy = options->reasoning_policy;
     int rc, started = 0, progress_active = 0, renderer_finished = 0;
+    int terminal_output = isatty(fileno(stdout));
     if (reasoning_policy > YVEX_REASONING_MAXIMUM &&
         console_status_fetch(session_name, &message, &err) != YVEX_OK)
         return client_error(&err);
     if (reasoning_policy > YVEX_REASONING_MAXIMUM)
         reasoning_policy = message.console.reasoning_policy;
     yvex_cli_terminal_style_get(status_output, &style);
-    yvex_cli_stream_renderer_open(&renderer, stdout,
-                                  conversation && isatty(fileno(stdout)));
+    yvex_cli_stream_renderer_open(&renderer, stdout, terminal_output);
     request_init(&request, YVEX_CLIENT_OP_GENERATION_TURN);
     snprintf(request.session_name, sizeof(request.session_name), "%s",
              session_name);
@@ -889,17 +889,19 @@ static int generation_turn(const char *session_name,
             rc = yvex_cli_stream_renderer_write(
                 &renderer, message.stream_channel, message.bytes,
                 message.byte_count);
+            if (rc == YVEX_OK) rc = yvex_cli_out_flush(stdout);
             if (rc != YVEX_OK) {
                 yvex_error_set(&err, YVEX_ERR_IO, "client.turn.render",
                                "terminal stream rendering failed");
                 break;
             }
-            fflush(stdout);
             started = 1;
         } else if (message.kind == YVEX_CLIENT_MESSAGE_TURN_COMPLETE) {
             if (progress_active) fputs("\r\033[2K", stdout);
-            rc = yvex_cli_stream_renderer_finish(&renderer, conversation || isatty(fileno(stdout)));
+            rc = yvex_cli_stream_renderer_finish(
+                &renderer, conversation || terminal_output);
             renderer_finished = 1;
+            if (rc == YVEX_OK) rc = yvex_cli_out_flush(stdout);
             if (rc != YVEX_OK) {
                 yvex_error_set(&err, YVEX_ERR_IO, "client.turn.render",
                                "terminal stream finalization failed");
@@ -941,8 +943,10 @@ static int generation_turn(const char *session_name,
             break;
         } else if (message.kind == YVEX_CLIENT_MESSAGE_ERROR) {
             if (progress_active) fputs("\r\033[2K", stdout);
-            rc = yvex_cli_stream_renderer_finish(&renderer, conversation || isatty(fileno(stdout)));
+            rc = yvex_cli_stream_renderer_finish(
+                &renderer, conversation || terminal_output);
             renderer_finished = 1;
+            if (rc == YVEX_OK) rc = yvex_cli_out_flush(stdout);
             if (rc != YVEX_OK) {
                 yvex_error_set(&err, YVEX_ERR_IO, "client.turn.render",
                                "terminal stream finalization failed");
@@ -964,8 +968,11 @@ static int generation_turn(const char *session_name,
             break;
         }
     }
-    if (!renderer_finished && started)
-        (void)yvex_cli_stream_renderer_finish(&renderer, conversation || isatty(fileno(stdout)));
+    if (!renderer_finished && started) {
+        (void)yvex_cli_stream_renderer_finish(
+            &renderer, conversation || terminal_output);
+        (void)yvex_cli_out_flush(stdout);
+    }
     yvex_client_close(&client);
     {
         int interrupted = turn_signals_close(&signals);

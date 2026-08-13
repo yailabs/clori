@@ -139,9 +139,11 @@ next-turn selection. A change that rewrites the encoded prefix causes a checked
 physical-state rebase and full prefill from authoritative semantic history; it
 does not silently reuse incompatible state or require transcript loss.
 Reasoning text is dim on a TTY and separate from final text; delimiter tags and
-inferred hidden reasoning never enter the projection. Noninteractive
-`yvex run --reasoning none|high|max` emits only canonical channel bytes on
-stdout and sends its typed completion summary to stderr.
+inferred hidden reasoning never enter the projection. A terminal-bound
+`yvex run --reasoning none|high|max` uses the same typed presentation and
+flushes the final block before its completion summary. When stdout is
+redirected, `run` instead emits only canonical channel bytes there and sends
+its typed completion summary to stderr, preserving byte-faithful pipelines.
 
 The line editor owns bounded in-memory history, registry-derived slash
 completion, UTF-8 deletion, bracketed multiline paste, resize redraw, active
