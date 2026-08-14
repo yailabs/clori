@@ -32,10 +32,16 @@ static int completion_reject(
     unsigned long long expected, unsigned long long actual,
     yvex_status status, const char *reason, yvex_error *err)
 {
-    return yvex_attention_reject(
+    yvex_attention_reject(
         failure, code, NULL,
         publication ? publication->layer_index : YVEX_ATTENTION_NO_LAYER,
         YVEX_TENSOR_ROLE_UNKNOWN, expected, actual, err, status, reason);
+    if (publication)
+        yvex_error_setf(
+            err, status, "graph.attention.completion",
+            "%s: layer=%llu expected=%llu actual=%llu", reason,
+            publication->layer_index, expected, actual);
+    return status;
 }
 
 static int completion_publication_finalize(

@@ -5,6 +5,26 @@
  * arithmetic remains shared through the CUDA kernel-primitives interface.
  */
 #include "src/backend/cuda/kernel_primitives.h"
+static __device__ float moe_warp_dot(
+    const unsigned char *weight, const unsigned char *activation, unsigned long long extent,
+    unsigned long long row_bytes, unsigned int qtype, int q8_input, int *status)
+{
+    if (!q8_input)
+        return qtype_warp_dot(weight, (const float *)activation, extent, qtype, status);
+    float sum = q8_warp_dot(weight, activation, extent, row_bytes / extent, qtype);
+    /* Only the exceptional row pays for serial FP64 recovery; finite rows retain DP4A order. */
+    if (!(threadIdx.x & 31u) && !isfinite(sum)) {
+        double recovered = 0.0;
+        for (unsigned long long i = 0ull; i < extent * YVEX_CUDA_Q8_K_BLOCK; ++i) {
+            const unsigned char *q8 = activation +
+                (i / YVEX_CUDA_Q8_K_BLOCK) * YVEX_CUDA_Q8_K_BYTES;
+            int quantized = (int)(signed char)q8[4ull + i % YVEX_CUDA_Q8_K_BLOCK];
+            recovered += (double)qtype_value(weight, i, qtype) * __uint_as_float(qtype_load_u32(q8)) * quantized;
+        }
+        sum = (float)recovered;
+    }
+    return sum;
+}
 extern "C" __global__ void yvex_moe_route(
     const float *logits, const float *bias, const unsigned long long *hash_experts,
     unsigned int router_class, unsigned long long routed_experts,
@@ -104,14 +124,11 @@ extern "C" __global__ void yvex_moe_grouped_up(
             if (!lane) atomicCAS(status, 0, 2);
             return;
         }
-        g = q8_warp_dot(gate_row, input, input_extent,
-                        gate_row_bytes / input_extent, gate_qtype);
-        u = q8_warp_dot(up_row, input, input_extent,
-                        up_row_bytes / input_extent, up_qtype);
-    } else {
-        g = qtype_warp_dot(gate_row, (const float *)input, input_extent, gate_qtype, status);
-        u = qtype_warp_dot(up_row, (const float *)input, input_extent, up_qtype, status);
     }
+    g = moe_warp_dot(gate_row, input, input_extent, gate_row_bytes,
+                     gate_qtype, q8_input, status);
+    u = moe_warp_dot(up_row, input, input_extent, up_row_bytes,
+                     up_qtype, q8_input, status);
     if (!lane && !*status) {
         g = fminf(g, (float)limit); u = fmaxf((float)-limit, fminf(u, (float)limit));
         float silu = g >= 0.0f ? g / (1.0f + expf(-g)) : g * expf(g) / (1.0f + expf(g));
@@ -145,15 +162,10 @@ extern "C" __global__ void yvex_moe_grouped_down(
         unsigned long long expert = selected[rank];
         if (expert >= expert_count) { if (!lane) atomicCAS(status, 0, 2); return; }
         const unsigned char *weight = down + expert * expert_bytes + row * row_bytes;
-        float dot = 0.0f;
-        if (q8_input) {
-            const unsigned char *activation = intermediate + rank * intermediate_extent *
-                                              YVEX_CUDA_Q8_K_BYTES;
-            dot = q8_warp_dot(weight, activation, intermediate_extent,
-                              row_bytes / intermediate_extent, qtype);
-        } else
-            dot = qtype_warp_dot(weight, (const float *)intermediate +
-                rank * intermediate_extent, intermediate_extent, qtype, status);
+        const unsigned char *activation = intermediate + rank * intermediate_extent *
+            (q8_input ? YVEX_CUDA_Q8_K_BYTES : sizeof(float));
+        float dot = moe_warp_dot(weight, activation, intermediate_extent,
+                                 row_bytes, qtype, q8_input, status);
         if (!lane && !*status) {
             float value = float_to_bf16_rne(dot);
             total = __fadd_rn(total, __fmul_rn(value, weights[rank]));
@@ -372,16 +384,11 @@ extern "C" __global__ void yvex_moe_grouped_up_rows(
             if (!lane) atomicCAS(status, 0, 2);
             return;
         }
-        g = q8_warp_dot(gate_row, activation, input_extent,
-                        gate_row_bytes / input_extent, gate_qtype);
-        u = q8_warp_dot(up_row, activation, input_extent,
-                        up_row_bytes / input_extent, up_qtype);
-    } else {
-        g = qtype_warp_dot(gate_row, (const float *)activation,
-                           input_extent, gate_qtype, status);
-        u = qtype_warp_dot(up_row, (const float *)activation,
-                           input_extent, up_qtype, status);
     }
+    g = moe_warp_dot(gate_row, activation, input_extent, gate_row_bytes,
+                     gate_qtype, q8_input, status);
+    u = moe_warp_dot(up_row, activation, input_extent, up_row_bytes,
+                     up_qtype, q8_input, status);
     if (!lane && !*status) {
         g = fminf(g, (float)limit);
         u = fmaxf((float)-limit, fminf(u, (float)limit));
@@ -419,11 +426,8 @@ extern "C" __global__ void yvex_moe_grouped_down_rows(
     const unsigned char *weight = down + expert * expert_bytes + output_row * row_bytes;
     const unsigned char *activation = intermediate + ordered_pair * intermediate_extent *
                                       (q8_input ? YVEX_CUDA_Q8_K_BYTES : sizeof(float));
-    float dot = q8_input
-        ? q8_warp_dot(weight, activation, intermediate_extent,
-                      row_bytes / intermediate_extent, qtype)
-        : qtype_warp_dot(weight, (const float *)activation,
-                         intermediate_extent, qtype, status);
+    float dot = moe_warp_dot(weight, activation, intermediate_extent,
+                             row_bytes, qtype, q8_input, status);
     if (!lane && !*status) {
         float route_weight = weights ? weights[source_pair] : 1.0f;
         float value = __fmul_rn(float_to_bf16_rne(dot), route_weight);

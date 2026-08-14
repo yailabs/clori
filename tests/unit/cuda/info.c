@@ -11,6 +11,7 @@
 #include <yvex/api.h>
 #include <yvex/qtype.h>
 #include <yvex/internal/backend.h>
+#include <yvex/internal/graph.h>
 #include <yvex/internal/moe.h>
 #include <yvex/internal/quant_numeric.h>
 
@@ -1211,6 +1212,89 @@ static int assert_finite_activation_overflow(yvex_backend *backend)
     return 0;
 }
 
+/* Prove the sparse-row MoE kernel recovers a finite dot after F32 block overflow. */
+static int assert_moe_row_dot_overflow(yvex_backend *backend)
+{
+    enum {
+        Q8_BLOCKS = 2,
+        Q8_0_ROW_BYTES = Q8_BLOCKS * 8 * 34,
+        Q8_K_BYTES = Q8_BLOCKS * 292,
+        SELECTED_OFFSET = Q8_0_ROW_BYTES + Q8_K_BYTES,
+        WEIGHT_OFFSET = SELECTED_OFFSET + 8,
+        ORDER_OFFSET = WEIGHT_OFFSET + 8,
+        OUTPUT_OFFSET = ORDER_OFFSET + 8,
+        STATUS_OFFSET = OUTPUT_OFFSET + 4,
+        ARENA_BYTES = STATUS_OFFSET + 4
+    };
+    yvex_backend_tensor_desc descriptor = {0};
+    yvex_device_tensor *arena = NULL;
+    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    unsigned char host[ARENA_BYTES] = {0}, observed[ARENA_BYTES] = {0};
+    const float activation_scale = 1.0e34f, route_weight = 1.0f;
+    const unsigned short weight_scale = yvex_quant_f16_encode(1.0f);
+    CUdeviceptr base, down, selected, weights, order, activation, output, status;
+    unsigned long long row_bytes = Q8_0_ROW_BYTES, expert_bytes = Q8_0_ROW_BYTES;
+    unsigned long long pair_count = 1ull, topk = 1ull, experts = 1ull;
+    unsigned long long intermediate_extent = Q8_BLOCKS, hidden = 1ull;
+    unsigned int qtype = YVEX_GGUF_QTYPE_Q8_0;
+    int q8_input = 1, device_wide = 0, device_status, rc;
+    float result;
+    yvex_error err;
+
+    for (unsigned int block = 0u; block < Q8_BLOCKS * 8u; ++block) {
+        unsigned char *weight = host + block * 34u;
+        memcpy(weight, &weight_scale, sizeof(weight_scale));
+        memset(weight + 2u, block < 8u ? 127 : 129, 32u);
+    }
+    for (unsigned int block = 0u; block < Q8_BLOCKS; ++block) {
+        unsigned char *q8 = host + Q8_0_ROW_BYTES + block * 292u;
+        memcpy(q8, &activation_scale, sizeof(activation_scale));
+        memset(q8 + 4u, 127, 256u);
+    }
+    memcpy(host + WEIGHT_OFFSET, &route_weight, sizeof(route_weight));
+    descriptor.name = "moe-row-dot-overflow";
+    descriptor.dtype = YVEX_DTYPE_I8;
+    descriptor.rank = 1u;
+    descriptor.dims[0] = descriptor.bytes = ARENA_BYTES;
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_alloc(backend, &descriptor, &arena, &err) == YVEX_OK &&
+            yvex_backend_tensor_write(backend, arena, host, sizeof(host), &err) == YVEX_OK,
+        "allocate sparse-row MoE overflow fixture");
+    base = yvex_cuda_activation_pointer(backend, arena);
+    down = base;
+    activation = base + Q8_0_ROW_BYTES;
+    selected = base + SELECTED_OFFSET;
+    weights = base + WEIGHT_OFFSET;
+    order = base + ORDER_OFFSET;
+    output = base + OUTPUT_OFFSET;
+    status = base + STATUS_OFFSET;
+    {
+        void *params[] = {
+            &down, &row_bytes, &expert_bytes, &qtype, &selected, &weights,
+            &order, &pair_count, &topk, &experts, &activation,
+            &intermediate_extent, &q8_input, &hidden, &output, &status};
+        rc = yvex_cuda_launch(
+            backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+            state->moe_grouped_down_rows_function, 1u, 256u, 0u, params,
+            "cuda.test.moe-row-dot-overflow", &err);
+    }
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_launch_synchronize(
+            backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED, &device_wide,
+            "cuda.test.moe-row-dot-overflow", &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_OK &&
+            yvex_backend_tensor_read(backend, arena, observed, sizeof(observed), &err) == YVEX_OK,
+        "read sparse-row MoE overflow result");
+    memcpy(&result, observed + OUTPUT_OFFSET, sizeof(result));
+    memcpy(&device_status, observed + STATUS_OFFSET, sizeof(device_status));
+    YVEX_TEST_ASSERT(device_status == 0 && isfinite(result) && fabsf(result) <= 1.0e30f,
+                     "sparse-row MoE preserves finite cancellation after block overflow");
+    YVEX_TEST_ASSERT(yvex_backend_tensor_release(backend, &arena, &err) == YVEX_OK,
+                     "release sparse-row MoE overflow fixture");
+    return 0;
+}
+
 static int assert_deferred_attention_completion(yvex_backend *backend)
 {
     yvex_backend_attention_completion completion;
@@ -1272,6 +1356,52 @@ static int assert_deferred_attention_completion(yvex_backend *backend)
         "deferred attention publication refuses device numerical failure");
     status = 0;
 
+    return 0;
+}
+
+static int unreachable_attention_stage(
+    void *context, const yvex_attention_publication *publication,
+    const yvex_attention_cancellation *cancellation,
+    char state_delta_identity[YVEX_SHA256_HEX_CAP],
+    yvex_attention_failure *failure, yvex_error *err)
+{
+    (void)context;
+    (void)publication;
+    (void)cancellation;
+    (void)state_delta_identity;
+    (void)failure;
+    (void)err;
+    return YVEX_ERR_STATE;
+}
+
+static int assert_deferred_attention_layer_failure(yvex_backend *backend)
+{
+    yvex_backend_attention_completion completion = {0};
+    yvex_attention_publication publication = {0};
+    yvex_attention_cpu_result evidence = {0};
+    yvex_attention_probe_state_provider provider = {0};
+    yvex_attention_failure failure = {0};
+    char state_delta_identity[YVEX_SHA256_HEX_CAP] = {0};
+    int provider_context = 1, status = 1, rc;
+    yvex_error err;
+
+    completion.pending = 1;
+    completion.host_status = &status;
+    completion.attention_class = YVEX_BACKEND_ATTENTION_SWA;
+    completion.token_count = 1ull;
+    publication.layer_index = 45ull;
+    publication.device_completion_pending = 1;
+    provider.context = &provider_context;
+    provider.stage = unreachable_attention_stage;
+    rc = yvex_attention_device_completion_resolve(
+        backend, &completion, &publication, &evidence, &provider, NULL, 1,
+        state_delta_identity, &failure, &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_ERR_FORMAT &&
+            failure.code == YVEX_ATTENTION_FAILURE_NUMERIC &&
+            strcmp(yvex_error_where(&err), "graph.attention.completion") == 0 &&
+            strstr(yvex_error_message(&err), "layer=45 expected=0 actual=1") != NULL,
+        "deferred attention numerical refusal identifies its layer and device status");
     return 0;
 }
 
@@ -1482,10 +1612,14 @@ int yvex_cuda_test_info(void)
                      "grouped direct-address MoE matches audit execution");
     YVEX_TEST_ASSERT(assert_finite_activation_overflow(backend) == 0,
                      "CUDA normalization retains finite BF16-range activations");
+    YVEX_TEST_ASSERT(assert_moe_row_dot_overflow(backend) == 0,
+                     "CUDA sparse-row MoE retains finite cancellation");
     YVEX_TEST_ASSERT(assert_encoded_moe(backend) == 0,
                      "compiled encoded MoE is native and fail-closed");
     YVEX_TEST_ASSERT(assert_deferred_attention_completion(backend) == 0,
                      "deferred attention owns one ordered publication barrier");
+    YVEX_TEST_ASSERT(assert_deferred_attention_layer_failure(backend) == 0,
+                     "deferred attention refusal preserves layer evidence");
     for (rc = 0; rc < (int)YVEX_BACKEND_VARIANT_COUNT; ++rc) {
         YVEX_TEST_ASSERT(assert_supported_variant(
                              backend, (yvex_backend_operation_variant)rc) == 0,
