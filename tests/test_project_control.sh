@@ -26,6 +26,7 @@ require_file docs/milestones/code-commentary.md
 require_file docs/milestones/command-architecture.md
 require_file docs/milestones/core-compilation-consolidation.md
 require_file docs/milestones/documentation-architecture.md
+require_file docs/milestones/engineering-worklog.md
 require_file docs/milestones/runtime-console-repl.md
 require_file docs/milestones/repository-compression.md
 require_file .github/ISSUE_TEMPLATE/bug_report.yml
@@ -47,6 +48,7 @@ require_text "$roadmap" '| `V010.REBASE.DEEPSEEK.DSPARK.0` | `complete` |'
 require_text "$roadmap" '| `V010.PRODUCT.ARCHITECTURE.REFOUNDATION.0` | `complete` |'
 require_text "$roadmap" '| `V010.REPO.ARCHITECTURE.COMPRESSION.0` | `complete` |'
 require_text "$roadmap" '| `V010.CORE.COMPILATION.FAMILY.CONSOLIDATION.0` | `complete` |'
+require_text "$roadmap" '| `V010.DEVELOPMENT.ENGINEERING.WORKLOG.0` | `complete` |'
 require_text "$roadmap" '| `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` | `active` |'
 require_text "$roadmap" '| `V010.EVAL.DEEPSEEK.0` | `blocked` |'
 require_text "$roadmap" '| `V010.BENCH.DEEPSEEK.0` | `not-measured` |'
@@ -82,7 +84,7 @@ in_sequence && /^\| [0-9]+ \| `V010\./ {
 ' "$roadmap" > "$rows"
 
 row_count=$(wc -l < "$rows" | tr -d ' ')
-test "$row_count" -eq 13 || fail "expected 13 current milestones, found $row_count"
+test "$row_count" -eq 14 || fail "expected 14 current milestones, found $row_count"
 
 cut -f 1 "$rows" | LC_ALL=C sort > "$ids"
 unique_count=$(uniq "$ids" | wc -l | tr -d ' ')

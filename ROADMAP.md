@@ -70,10 +70,11 @@ run, or a self-authored report cannot promote a capability by itself.
 | 7 | `V010.PRODUCT.ARCHITECTURE.REFOUNDATION.0` | `complete` | Identity-bound execution profiles, Physical Execution IR, prefix-addressable candidate state, shape-safe CUDA admission, exact partial turns, typed device views, and operational projections form one verified execution substrate. | `V010.REBASE.DEEPSEEK.DSPARK.0` |
 | 8 | `V010.REPO.ARCHITECTURE.COMPRESSION.0` | `complete` | One source-membership authority and fewer ceremonial owners, internal ABIs, symbols, build declarations, targets, and duplicate registry facts preserve the accepted execution behavior in a directly navigable repository. | `V010.PRODUCT.ARCHITECTURE.REFOUNDATION.0` |
 | 9 | `V010.CORE.COMPILATION.FAMILY.CONSOLIDATION.0` | `complete` | Family semantics terminate in compiler-owned Semantic Model IR and canonical Operator Graph IR; generic passes seal one Physical Execution IR and runtime binding that model-open authenticates and instantiates without reconstructing family topology. | `V010.REPO.ARCHITECTURE.COMPRESSION.0` |
-| 10 | `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` | `active` | Measured warm-runtime work addresses the proven attention, MoE, launch, synchronization, movement, and batching owners without creating another execution path. | `V010.CORE.COMPILATION.FAMILY.CONSOLIDATION.0` |
-| 11 | `V010.EVAL.DEEPSEEK.0` | `blocked` | Repeatable behavior, quality, tokenizer, regression, long-context, and refusal evaluation runs over the accepted hosted path. | `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` |
-| 12 | `V010.BENCH.DEEPSEEK.0` | `not-measured` | Reproducible full-model latency, throughput, memory, reliability, and workload evidence is bound to exact source, artifact, runtime, and machine identities. | `V010.EVAL.DEEPSEEK.0` |
-| 13 | `V010.RELEASE.0` | `blocked` | All v0.1.0 software, conformance, runtime, evaluation, benchmark, packaging, operator, claim, and tag gates close together. | `V010.BENCH.DEEPSEEK.0` |
+| 10 | `V010.DEVELOPMENT.ENGINEERING.WORKLOG.0` | `complete` | One repository skill turns selected material checkpoints, repairs, comparable performance changes, and closures into evidence-backed semantic records without automatic publication or product coupling. | `V010.DOCS.INFORMATION.ARCHITECTURE.0` |
+| 11 | `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` | `active` | Measured warm-runtime work addresses the proven attention, MoE, launch, synchronization, movement, and batching owners without creating another execution path. | `V010.CORE.COMPILATION.FAMILY.CONSOLIDATION.0` |
+| 12 | `V010.EVAL.DEEPSEEK.0` | `blocked` | Repeatable behavior, quality, tokenizer, regression, long-context, and refusal evaluation runs over the accepted hosted path. | `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` |
+| 13 | `V010.BENCH.DEEPSEEK.0` | `not-measured` | Reproducible full-model latency, throughput, memory, reliability, and workload evidence is bound to exact source, artifact, runtime, and machine identities. | `V010.EVAL.DEEPSEEK.0` |
+| 14 | `V010.RELEASE.0` | `blocked` | All v0.1.0 software, conformance, runtime, evaluation, benchmark, packaging, operator, claim, and tag gates close together. | `V010.BENCH.DEEPSEEK.0` |
 
 Active Next: V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0
 
@@ -87,6 +88,7 @@ Detailed accepted and successor contracts for the current sequence are:
 - [Verified Execution-Substrate Refoundation](docs/milestones/product-architecture.md)
 - [Repository Architecture Compression](docs/milestones/repository-compression.md)
 - [Core Compiler and Family Consolidation](docs/milestones/core-compilation-consolidation.md)
+- [Repository-Native Engineering Worklog](docs/milestones/engineering-worklog.md)
 - [Model-Derived GB10 Execution](docs/milestones/gb10-optimization.md)
 
 The pre-implementation combined plans remain traceable without staying on the
@@ -113,6 +115,7 @@ not a replacement historical ledger.
 | Command architecture | `yvex.operator.registry.v1` generates immutable descriptors compiled into `yvex`; canonical operation IDs drive the truthful command taxonomy, lane-safe dispatch, help, JSON discovery, completion, and slash-command schemas. |
 | Documentation architecture | Canonical doctrine, terminology, reference and implemented architecture, family records, contracts, operations, development policy, audits, migrations, and release surfaces have separate governed owners. |
 | Code commentary | Every governed first-party source follows the natural selective-commentary doctrine; the structural guard rejects obsolete templates and boilerplate while production lexical tokens remain unchanged. |
+| Engineering worklog | One repository-scoped Codex skill captures selected material semantic changes and evidence in retained records; ignored drafts and optional communication projections create no product or publication authority. |
 | Runtime console | The server-backed `yvex>` console renders one composed attachment view, protocol-authored prefill progress, direct model output, typed final metrics, registry-derived slash discovery and completion, the canonical `server log` observability stream, server cancellation, and bounded terminal restoration including Ctrl-D. |
 | Operator audit | The frozen post-cutover audit inventories 70 route-level commands, 426 command/flag pairs, 99 semantic operations, 10 slash commands, 14 protocol operations, 5 HTTP endpoints, and every Make/script/environment surface with zero unmatched categories. |
 | Performance | `V010.RUNTIME.DEEPSEEK.PERFORMANCE.0` remains `partial`: startup and bounded profiling are accepted; warm decode remains below admission. |

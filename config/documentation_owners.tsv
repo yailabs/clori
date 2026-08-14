@@ -1,4 +1,5 @@
 path	class	authority_mode	audience	lifecycle	canonical_subject
+.agents/skills/engineering-worklog/SKILL.md	development	canonical	contributors	living	engineering_worklog_procedure
 .github/pull_request_template.md	contribution	projection	contributors	living	pull_request_workflow
 AGENTS.md	development	canonical	contributors	living	repository_engineering_contract
 CHANGELOG.md	release	canonical	public	living	public_change_history
@@ -51,6 +52,7 @@ docs/milestones/command-architecture.md	milestone	canonical	contributors	accepte
 docs/milestones/core-compilation-consolidation.md	milestone	canonical	contributors	accepted	core_compilation_family_consolidation_boundary
 docs/milestones/deepseek-dspark-rebase.md	milestone	canonical	contributors	accepted	deepseek_dspark_rebase_boundary
 docs/milestones/documentation-architecture.md	milestone	canonical	contributors	accepted	documentation_architecture_boundary
+docs/milestones/engineering-worklog.md	milestone	canonical	contributors	accepted	engineering_worklog_boundary
 docs/milestones/gb10-optimization.md	milestone	canonical	contributors	planned	gb10_optimization_boundary
 docs/milestones/product-architecture.md	milestone	canonical	contributors	accepted	execution_substrate_refoundation_boundary
 docs/milestones/repository-compression.md	milestone	canonical	contributors	accepted	repository_architecture_compression_boundary
@@ -67,4 +69,5 @@ docs/operator-runbook.md	operations	canonical	operators	living	local_runtime_ope
 docs/reference/verified-inference.md	reference	canonical	all	living	verified_inference_reference_architecture
 docs/releases/doctrine.md	release	canonical	contributors	living	release_gate_doctrine
 docs/releases/v0.1.md	release	canonical	all	unreleased	v0_1_target_and_readiness_contract
+docs/worklog/2026-08-11-adaptive-memory-admission.md	worklog	canonical	contributors	retained	adaptive_memory_admission_worklog
 tests/vectors/README.md	test-support	canonical	contributors	living	test_vector_format

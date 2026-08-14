@@ -50,6 +50,7 @@ behavior; [`ROADMAP.md`](../ROADMAP.md) owns the live project sequence.
 | DeepSeek-specific operation | [DeepSeek operation](operations/deepseek.md) |
 | Build and validation | [Validation](operations/validation.md) |
 | Documentation governance | [Documentation policy](development/documentation-policy.md) |
+| Engineering worklog procedure | [Repository worklog skill](../.agents/skills/engineering-worklog/SKILL.md) |
 | Source and module ownership | [Source ownership](development/source-ownership.md) |
 | External reference traceability | [Reference-engineering baseline](development/reference-baseline.md) |
 | Release-gate meanings | [Release doctrine](releases/doctrine.md) |
@@ -58,6 +59,9 @@ behavior; [`ROADMAP.md`](../ROADMAP.md) owns the live project sequence.
 
 ## Evidence and change records
 
+- [Engineering worklogs](worklog/2026-08-11-adaptive-memory-admission.md)
+  retain selected semantic before/after records and optional communication
+  projections without becoming capability or project-control authority.
 - [Decisions](decisions/README.md) own durable choices and rationale.
 - [Audits](audits/documentation-architecture-51a5c/README.md) preserve
   point-in-time evidence; the
@@ -91,7 +95,8 @@ behavior; [`ROADMAP.md`](../ROADMAP.md) owns the live project sequence.
 The repository separates stable doctrine, implementation-independent
 reference architecture, implemented architecture, family records, normative
 contracts, operator procedures, development policy, project control,
-decisions, frozen audits, migrations, releases, and milestone contracts.
+decisions, frozen audits, selected engineering worklogs, migrations, releases,
+and milestone contracts.
 Their update rules are defined by the
 [documentation policy](development/documentation-policy.md) and checked
 against [`config/documentation_owners.tsv`](../config/documentation_owners.tsv).
