@@ -31,7 +31,7 @@ typedef struct {
     media_dialog_state dialog;
     yvex_server_session_state state;
     unsigned long long attached_clients, turn_count;
-    unsigned long long width, height, frames, inference_steps, seed;
+    unsigned long long width, height, frames, sigma_grid_points, seed;
     int profile_selected, duration_selected, steps_selected, format_selected;
     atomic_int active, cancelled;
 } server_media_session;
@@ -368,7 +368,7 @@ static int steps_select(server_media_registry *registry, server_media_session *s
             if (steps < registry->minimum_inference_steps ||
                 steps > registry->maximum_inference_steps)
                 return -1;
-            session->inference_steps = steps;
+            session->sigma_grid_points = steps;
             session->steps_selected = 1;
             return 1;
         }
@@ -535,7 +535,7 @@ static int output_path_build(server_media_registry *registry,
         !yvex_sha256_update_u64_be(&hash, session->width) ||
         !yvex_sha256_update_u64_be(&hash, session->height) ||
         !yvex_sha256_update_u64_be(&hash, session->frames) ||
-        !yvex_sha256_update_u64_be(&hash, session->inference_steps) ||
+        !yvex_sha256_update_u64_be(&hash, session->sigma_grid_points) ||
         !yvex_sha256_update_u64_be(&hash, session->seed) ||
         !yvex_sha256_final(&hash, digest))
         return media_refuse(err, YVEX_ERR_STATE, "media request identity could not seal");
@@ -566,7 +566,7 @@ static int generation_execute(server_media_registry *registry,
     generation.width = session->width;
     generation.height = session->height;
     generation.frames = session->frames;
-    generation.inference_steps = (unsigned int)session->inference_steps;
+    generation.inference_steps = (unsigned int)(session->sigma_grid_points - 1ull);
     generation.seed = session->seed;
     generation.cancel_requested = media_cancel_requested;
     generation.cancel_context = session;
