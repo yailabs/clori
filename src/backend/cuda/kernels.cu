@@ -487,8 +487,9 @@ extern "C" __global__ void yvex_q8_quantize(
         *(short *)(block + 260u + thread * 2u) = (short)sum;
     }
 }
-static __device__ int qtype_matvec_pair(
-    unsigned long long rows, unsigned long long input_rows,
+static __device__ int qtype_matvec_pair_index(
+    unsigned long long block_index, unsigned long long rows,
+    unsigned long long input_rows,
     unsigned long long *row, unsigned long long *input_row)
 {
     unsigned int warp = threadIdx.x >> 5u;
@@ -497,15 +498,22 @@ static __device__ int qtype_matvec_pair(
         (input_rows <= 8ull && warps < input_rows)) return 0;
     if (input_rows <= 8ull) {
         unsigned int groups = warps / (unsigned int)input_rows;
-        *row = (unsigned long long)blockIdx.x * groups +
-               warp / (unsigned int)input_rows;
+        *row = block_index * groups + warp / (unsigned int)input_rows;
         *input_row = warp % (unsigned int)input_rows;
     } else {
         unsigned long long tiles = (input_rows + 7ull) / 8ull;
-        *row = (unsigned long long)blockIdx.x / tiles;
-        *input_row = ((unsigned long long)blockIdx.x % tiles) * warps + warp;
+        *row = block_index / tiles;
+        *input_row = (block_index % tiles) * warps + warp;
     }
     return *row < rows && *input_row < input_rows;
+}
+
+static __device__ int qtype_matvec_pair(
+    unsigned long long rows, unsigned long long input_rows,
+    unsigned long long *row, unsigned long long *input_row)
+{
+    return qtype_matvec_pair_index(
+        (unsigned long long)blockIdx.x, rows, input_rows, row, input_row);
 }
 
 static __device__ float qtype_dot_recover_f64(
@@ -617,15 +625,17 @@ extern "C" __global__ void yvex_qtype_matvec(
         output_bf16 ? float_to_bf16_rne(value) : value;
 }
 
-/* Decode keeps each group's activation distinct while one grid covers the complete
- * group-major matrix. The row dot is deliberately identical to yvex_qtype_matvec. */
-extern "C" __global__ void yvex_qtype_grouped_decode(
+/* One grid covers the group-major matrix while token-major activations remain
+ * distinct. The row dot and token tiling are deliberately identical to
+ * yvex_qtype_matvec; grouping changes launch topology, not numerical policy. */
+extern "C" __global__ void yvex_qtype_grouped_rows(
     const unsigned char *encoded,
     unsigned long long row_bytes,
     unsigned long long row_width,
     unsigned long long group_count,
     unsigned long long group_rows,
     unsigned long long blocks_per_group,
+    unsigned long long input_rows,
     unsigned int qtype,
     const float *vector,
     unsigned long long input_stride,
@@ -635,16 +645,15 @@ extern "C" __global__ void yvex_qtype_grouped_decode(
     int *status)
 {
     unsigned int lane = threadIdx.x & 31u;
-    unsigned int warp = threadIdx.x >> 5u;
     unsigned int warps = blockDim.x >> 5u;
-    unsigned long long group, local_block, local_row, row;
+    unsigned long long group, input_row, local_block, local_row, row;
     const unsigned char *row_data;
     const float *input;
     float sum;
 
     if (!status || *status != 0) return;
     if (!encoded || !vector || !out || !row_bytes || !row_width ||
-        !group_count || !group_rows || !blocks_per_group || !warps ||
+        !group_count || !group_rows || !blocks_per_group || !input_rows || !warps ||
         (blockDim.x & 31u) != 0u ||
         group_count > ~0ull / group_rows ||
         group_count > ~0ull / row_width ||
@@ -656,17 +665,19 @@ extern "C" __global__ void yvex_qtype_grouped_decode(
     group = (unsigned long long)blockIdx.x / blocks_per_group;
     local_block = (unsigned long long)blockIdx.x % blocks_per_group;
     if (group >= group_count) return;
-    local_row = local_block * warps + warp;
-    if (local_row >= group_rows) return;
+    if (!qtype_matvec_pair_index(
+            local_block, group_rows, input_rows, &local_row, &input_row))
+        return;
     row = group * group_rows + local_row;
     row_data = encoded + row * row_bytes;
-    input = vector + group * row_width;
+    input = vector + input_row * input_stride + group * row_width;
     sum = qtype_warp_dot(row_data, input, row_width, qtype, status);
     if (lane) return;
     if (!isfinite(sum) && *status == 0)
         sum = qtype_dot_recover_f64(row_data, input, row_width, qtype);
     if (!isfinite(sum)) atomicCAS(status, 0, 1);
-    else out[row] = output_bf16 ? float_to_bf16_rne(sum) : sum;
+    else out[input_row * output_stride + row] =
+        output_bf16 ? float_to_bf16_rne(sum) : sum;
 }
 
 extern "C" __global__ void yvex_qtype_split_matvec(

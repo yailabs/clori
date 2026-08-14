@@ -427,23 +427,23 @@ static int attention_matvec_grouped(
         }
         return rc;
     }
-    if (input_rows == 1ull && !work->forensic_numeric && !block_row &&
-        work->state->qtype_grouped_decode_function) {
+    if (!work->forensic_numeric && !block_row &&
+        work->state->qtype_grouped_rows_function) {
         unsigned long long blocks_per_group = grid;
         if (!yvex_core_u64_mul(groups, blocks_per_group, &grouped_grid) ||
             grouped_grid > UINT_MAX)
             return attention_fail(
                 failure, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT, stage,
                 UINT_MAX, grouped_grid, err, YVEX_ERR_BOUNDS,
-                "CUDA grouped decode grid exceeds launch bounds");
+                "CUDA grouped rows grid exceeds launch bounds");
         {
             void *params[] = {
                 &device_weight, (void *)&weight->row_bytes,
                 (void *)&weight->row_width, &groups, &group_rows,
-                &blocks_per_group, (void *)&weight->qtype, &vector,
+                &blocks_per_group, &input_rows, (void *)&weight->qtype, &vector,
                 &input_stride, &out, &output_stride, &output_bf16, &status};
             return attention_launch(
-                work, work->state->qtype_grouped_decode_function,
+                work, work->state->qtype_grouped_rows_function,
                 (unsigned int)grouped_grid, block, 0u, params, stage,
                 failure, err);
         }

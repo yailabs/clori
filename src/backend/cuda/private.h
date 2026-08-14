@@ -236,7 +236,7 @@ typedef struct {
     CUfunction qtype_row_dot_function;
     CUfunction attention_bf16_round_function;
     CUfunction bf16_pack_function;
-    CUfunction qtype_matvec_function, qtype_grouped_decode_function;
+    CUfunction qtype_matvec_function, qtype_grouped_rows_function;
     CUfunction qtype_split_matvec_function;
     CUfunction qtype_tensorcore_rows_function;
     CUfunction qtype_gather_function;

@@ -404,6 +404,30 @@ and `60e19224c0baa0a046a1b5bbb1a3866edfe53ddc8c46130eee01bd03f0ee9866`.
 This closes one causal attention-projection launch owner, not the complete
 attention stack or the GB10 decode target.
 
+Phase attribution after that checkpoint established that routed and shared
+expert math use their own grouped MoE kernels rather than hiding beneath the
+generic qtype symbol. The remaining generic qtype matvec accounted for 47.214%
+of the fixed request's device time; output-A was its largest operation family,
+with prefill alone owning 344 launches and 69.705 ms. Current DS4 established
+that multi-row output-A remains one grouped semantic operation. YVEX adopts
+that invariant, adapts it to one exact F32/MXFP4 row-batch grid, and continues
+to reject DS4's Q8/F16-derived physical alternative for binding v13 because it
+is not numerically admitted.
+
+The generalized kernel is bit-identical to the prior per-group loop at the
+real eight-group, five-input-row scheduling geometry. On the same complete
+artifact and fixed request, output-A prefill fell from 344 launches and
+69.705 ms to 43 launches and 55.061 ms: 301 fewer launches and 21.008% less
+component device time. Total qtype-family execution fell from 3,351 launches
+and 398.568 ms to 3,050 launches and 381.153 ms, while total kernel time fell
+from 735.259 ms to 717.348 ms. Five measured short runs after warmup improved
+median prefill from 7.90 to 8.04 token/s; their generation median did not
+improve, so this checkpoint makes no decode-throughput claim. Every measured
+output retained digest
+`0943e8c85cdf24b4a50d21681604e1189cf4530e476c79db4f0973729accb55a`.
+The new Nsight report digest is
+`2b8cf61ae925067eb7489cf615015e8b4b5acfd4753664e7f395338c4425d2e1`.
+
 Each CUDA backend/session now owns one non-blocking ordinary-execution stream.
 Production attention graph pieces borrow that stream, preserve their order and
 defer completion to the existing layer publication barrier; piecewise execution
