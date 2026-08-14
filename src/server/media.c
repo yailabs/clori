@@ -31,15 +31,16 @@ typedef struct {
     media_dialog_state dialog;
     yvex_server_session_state state;
     unsigned long long attached_clients, turn_count;
-    unsigned long long width, height, frames, sigma_grid_points, seed;
+    unsigned long long width, height, frames, profile_maximum_frames;
+    unsigned long long sigma_grid_points, seed;
     int profile_selected, duration_selected, steps_selected, format_selected;
     atomic_int active, cancelled;
 } server_media_session;
 
 typedef struct {
     char name[MEDIA_PROFILE_NAME_CAP];
-    unsigned long long width, height;
-    int end_user_quality;
+    unsigned long long width, height, maximum_frames;
+    int preview_alias;
 } server_media_profile_owned;
 
 struct server_media_registry {
@@ -121,7 +122,8 @@ static int registry_identity(server_media_registry *registry, yvex_error *err)
         if (!yvex_sha256_update_text(&hash, profile->name) ||
             !yvex_sha256_update_u64_be(&hash, profile->width) ||
             !yvex_sha256_update_u64_be(&hash, profile->height) ||
-            !yvex_sha256_update_u64_be(&hash, (unsigned long long)profile->end_user_quality))
+            !yvex_sha256_update_u64_be(&hash, profile->maximum_frames) ||
+            !yvex_sha256_update_u64_be(&hash, (unsigned long long)profile->preview_alias))
             return media_refuse(err, YVEX_ERR_STATE, "media profile identity failed");
     }
     if (!yvex_sha256_final(&hash, digest))
@@ -203,6 +205,8 @@ int yvex_server_media_registry_open(
         if (!source->name || !source->name[0] ||
             strlen(source->name) >= MEDIA_PROFILE_NAME_CAP || !source->width ||
             !source->height ||
+            source->maximum_frames < registry->minimum_frames ||
+            source->maximum_frames > registry->maximum_frames ||
             source->width % registry->canvas_multiple ||
             source->height % registry->canvas_multiple ||
             !yvex_core_u64_mul(source->width, source->height, &pixels) ||
@@ -212,7 +216,8 @@ int yvex_server_media_registry_open(
                             sizeof(registry->profiles[index].name), source->name);
         registry->profiles[index].width = source->width;
         registry->profiles[index].height = source->height;
-        registry->profiles[index].end_user_quality = source->end_user_quality;
+        registry->profiles[index].maximum_frames = source->maximum_frames;
+        registry->profiles[index].preview_alias = source->preview_alias;
     }
     if (registry_identity(registry, err) != YVEX_OK) goto failed;
     *out = registry;
@@ -314,25 +319,27 @@ static int profile_select(server_media_registry *registry, server_media_session 
                           const char *text)
 {
     unsigned long long index;
-    int high = text_contains(text, "alta") || text_contains(text, "high") ||
-               text_contains(text, "768p") || text_contains(text, "1344x768");
-    int draft = text_contains(text, "bozza") || text_contains(text, "draft") ||
-                text_contains(text, "960x544");
+    int unavailable = text_contains(text, "source") || text_contains(text, "alta") ||
+                      text_contains(text, "high") || text_contains(text, "hd") ||
+                      text_contains(text, "768p") || text_contains(text, "1344x768") ||
+                      text_contains(text, "bozza") || text_contains(text, "draft") ||
+                      text_contains(text, "960x544") || text_contains(text, "fhd") ||
+                      text_contains(text, "1080p") || text_contains(text, "1920x1080") ||
+                      text_contains(text, "2k") || text_contains(text, "4k") ||
+                      text_contains(text, "2160p") || text_contains(text, "3840x2160");
+    int preview = text_contains(text, "preview") || text_contains(text, "anteprima") ||
+                  text_contains(text, "192x192");
     int smoke = text_contains(text, "smoke") || text_contains(text, "test") ||
                 text_contains(text, "32x32");
-    if (text_contains(text, "fhd") || text_contains(text, "1080p") ||
-        text_contains(text, "1920x1080") || text_contains(text, "2k") ||
-        text_contains(text, "4k") || text_contains(text, "2160p") ||
-        text_contains(text, "3840x2160"))
-        return -1;
+    if (unavailable) return -1;
     for (index = 0ull; index < registry->profile_count; ++index) {
         server_media_profile_owned *profile = registry->profiles + index;
         if (text_contains(text, profile->name) ||
-            (high && profile->end_user_quality) ||
-            (draft && !strcmp(profile->name, "draft")) ||
+            (preview && profile->preview_alias) ||
             (smoke && !strcmp(profile->name, "smoke"))) {
             session->width = profile->width;
             session->height = profile->height;
+            session->profile_maximum_frames = profile->maximum_frames;
             session->profile_selected = 1;
             return 1;
         }
@@ -444,8 +451,8 @@ static int dialog_parse(server_media_registry *registry, server_media_session *s
     seed_select(session, text);
     if (profile < 0)
         return media_refuse(err, YVEX_ERR_UNSUPPORTED,
-                            "this checkpoint admits source 1344x768, draft 960x544, or smoke "
-                            "32x32; no FHD, 2K, or 4K upscaler is admitted");
+                            "this GB10 path currently admits preview 192x192 or smoke 32x32; "
+                            "source, draft, HD, FHD, 2K, and 4K are not qualified");
     if (duration < 0)
         return media_refuse(err, YVEX_ERR_BOUNDS,
                             "MiniMax-H3 duration must resolve to 5 through 15 seconds");
@@ -455,6 +462,10 @@ static int dialog_parse(server_media_registry *registry, server_media_session *s
     if (format < 0)
         return media_refuse(err, YVEX_ERR_UNSUPPORTED,
                             "this YVEX media path currently publishes AVI only");
+    if (session->profile_selected && session->duration_selected &&
+        session->frames > session->profile_maximum_frames)
+        return media_refuse(err, YVEX_ERR_BOUNDS,
+                            "the preview profile admits 5 seconds; smoke admits 5 through 15 seconds");
     return YVEX_OK;
 }
 
@@ -477,9 +488,10 @@ static int dialog_question(server_media_registry *registry,
         used += (size_t)wrote;
         for (index = 0ull; index < registry->profile_count; ++index) {
             server_media_profile_owned *profile = registry->profiles + index;
-            wrote = snprintf(response + used, sizeof(response) - used, "%s%s (%llux%llu)",
+            wrote = snprintf(response + used, sizeof(response) - used,
+                             "%s%s (%llux%llu, max %llu frame)",
                              index ? ", " : "", profile->name,
-                             profile->width, profile->height);
+                             profile->width, profile->height, profile->maximum_frames);
             if (wrote < 0 || (size_t)wrote >= sizeof(response) - used) return YVEX_ERR_BOUNDS;
             used += (size_t)wrote;
         }

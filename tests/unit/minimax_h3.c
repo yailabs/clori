@@ -743,6 +743,13 @@ static int test_t2va_plan(void)
                          &repeated, 16ull, 1344ull, 768ull, 124ull, 19u, &err) == YVEX_OK &&
                          strcmp(first.identity, repeated.identity) == 0,
                      "t2va plan identity is deterministic");
+    YVEX_TEST_ASSERT(
+        yvex_graph_register_minimax_h3()->t2va_plan_build(
+            &repeated, YVEX_MINIMAX_H3_TEXT_MAX_TOKENS,
+            192ull, 192ull, 124ull, 1u, &err) == YVEX_OK &&
+            repeated.packed_rows == 2002ull &&
+            repeated.packed_rows <= YVEX_MINIMAX_H3_OMNI_MAX_PACKED_ROWS,
+        "preview profile fits the exact worst-case prompt and Omni row budget");
     YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->t2va_plan_build(
                          &repeated, 16ull, 1344ull, 768ull, 123ull, 19u, &err) ==
                          YVEX_ERR_INVALID_ARG &&

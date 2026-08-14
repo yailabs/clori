@@ -14,8 +14,8 @@ extern "C" {
 
 typedef struct {
     const char *name;
-    unsigned long long width, height;
-    int end_user_quality;
+    unsigned long long width, height, maximum_frames;
+    int preview_alias;
 } yvex_server_media_profile;
 
 typedef struct {

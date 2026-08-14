@@ -177,7 +177,8 @@ static int request_validate(
         !request->frames || !request->width || !request->height ||
         !request->fps_numerator || !request->fps_denominator || !request->audio_sample_rate ||
         !request->inference_steps || !request->conditioning_layers ||
-        !request->transformer_blocks ||
+        !request->transformer_blocks || !request->maximum_prompt_tokens ||
+        !request->maximum_packed_rows ||
         !request->maximum_host_bytes || !request->maximum_device_bytes ||
         !request->maximum_workspace_bytes || !request->maximum_file_bytes ||
         (request->component_backend != YVEX_BACKEND_KIND_CPU &&
@@ -200,7 +201,9 @@ static int conditioning_execute(generation_state *state, yvex_error *err)
 {
     const yvex_runtime_av_generation_request *request = state->request;
     yvex_model_context context = {0};
-    yvex_tokenizer_encode_options options = {0, 0, 1, 4096ull};
+    yvex_tokenizer_encode_options options = {
+        0, 0, 1, state->request->maximum_prompt_tokens
+    };
     yvex_tokenizer_encode_result encoded = {0};
     yvex_tokens fixture = {0};
     const yvex_tokens *tokens = NULL;
@@ -255,6 +258,9 @@ static int plan_and_layout_build(generation_state *state, yvex_error *err)
     int rc = request->plan_build(
         &state->plan, state->conditioning_result.token_count, request->width,
         request->height, request->frames, request->inference_steps, err);
+    if (rc == YVEX_OK && state->plan.packed_rows > request->maximum_packed_rows)
+        rc = generation_fail(err, YVEX_ERR_BOUNDS, "runtime.av-generation.plan",
+                             "packed AV plan exceeds the admitted execution capacity");
     if (rc == YVEX_OK &&
         !yvex_core_u64_mul(state->plan.packed_rows, 3ull, &state->layout_position_values))
         rc = generation_fail(err, YVEX_ERR_BOUNDS, "runtime.av-generation.layout",

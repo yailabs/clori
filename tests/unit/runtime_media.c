@@ -324,6 +324,8 @@ static yvex_runtime_av_generation_request fixture_request(
     request.conditioning_layers = 1ull;
     request.transformer_blocks = 50ull;
     request.seed = 42ull;
+    request.maximum_prompt_tokens = 256ull;
+    request.maximum_packed_rows = 2048ull;
     request.maximum_host_bytes = 64ull << 20u;
     request.maximum_device_bytes = 1ull << 20u;
     request.maximum_workspace_bytes = 64ull << 20u;
@@ -466,6 +468,11 @@ static int test_generation_refusals(void)
     YVEX_TEST_ASSERT(rc == YVEX_ERR_INVALID_ARG && !result.complete,
                      "unknown component placement is refused");
     request.component_backend = YVEX_BACKEND_KIND_CPU;
+    request.maximum_packed_rows = 1ull;
+    rc = yvex_runtime_av_generate(&request, &result, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_ERR_BOUNDS && !result.complete && access(path, F_OK) != 0,
+                     "oversized packed media plan is refused before latent execution");
+    request.maximum_packed_rows = 2048ull;
     context.fail_condition = 1;
     rc = yvex_runtime_av_generate(&request, &result, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_STATE && !result.complete && access(path, F_OK) != 0,

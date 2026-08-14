@@ -285,9 +285,8 @@ static int media_message_collect(void *context, const yvex_client_message *messa
 static void media_options(yvex_server_media_options *options, const char *output_root)
 {
     static const yvex_server_media_profile profiles[] = {
-        {"source", 1344ull, 768ull, 1},
-        {"draft", 960ull, 544ull, 0},
-        {"smoke", 32ull, 32ull, 0},
+        {"preview", 192ull, 192ull, 124ull, 1},
+        {"smoke", 32ull, 32ull, 345ull, 0},
     };
     memset(options, 0, sizeof(*options));
     options->schema_version = YVEX_SERVER_MEDIA_SCHEMA_V1;
@@ -312,7 +311,7 @@ static void media_options(yvex_server_media_options *options, const char *output
     options->minimum_inference_steps = 2ull;
     options->maximum_inference_steps = 64ull;
     options->canvas_multiple = 32ull;
-    options->maximum_canvas_pixels = 1344ull * 768ull;
+    options->maximum_canvas_pixels = 192ull * 192ull;
 }
 
 static int media_registry_request(server_media_registry *registry,
@@ -336,12 +335,14 @@ static int test_media_dialog_and_refusals(void)
     char root[] = "/tmp/yvex-media-dialog-XXXXXX";
     const char *bad_prompts[] = {
         "Eclissi realistica 4K, 5 secondi, 19 punti sigma, AVI",
-        "Eclissi realistica source, 4 secondi, 19 punti sigma, AVI",
-        "Eclissi realistica source, 5 secondi, 65 punti sigma, AVI",
-        "Eclissi realistica source, 5 secondi, 19 punti sigma, MP4",
+        "Eclissi realistica preview, 4 secondi, 19 punti sigma, AVI",
+        "Eclissi realistica preview, 5 secondi, 65 punti sigma, AVI",
+        "Eclissi realistica preview, 5 secondi, 19 punti sigma, MP4",
+        "Eclissi realistica preview, 15 secondi, 19 punti sigma, AVI",
     };
     const int bad_status[] = {
         YVEX_ERR_UNSUPPORTED, YVEX_ERR_BOUNDS, YVEX_ERR_BOUNDS, YVEX_ERR_UNSUPPORTED,
+        YVEX_ERR_BOUNDS,
     };
     yvex_server_media_options options;
     yvex_server_summary first = {0}, repeated = {0};
@@ -368,14 +369,14 @@ static int test_media_dialog_and_refusals(void)
         &messages, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && messages.started == 1ull &&
                          messages.completed == 1ull &&
-                         strstr(messages.text, "source (1344x768)") &&
+                         strstr(messages.text, "preview (192x192, max 124 frame)") &&
                          strstr(messages.text, "5 a 15 secondi") &&
                          strstr(messages.text, "punti sigma") && strstr(messages.text, "AVI") &&
                          messages.text[strlen(messages.text) - 1u] == '\n',
                      "media dialogue requests every unresolved creative parameter");
     memset(&messages, 0, sizeof(messages));
     rc = media_registry_request(registry, YVEX_CLIENT_OP_GENERATION_TURN, "eclipse",
-                                "source, 5 secondi, 19 punti sigma, seed 42",
+                                "preview, 5 secondi, 19 punti sigma, seed 42",
                                 &messages, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && strstr(messages.text, "AVI") &&
                          !strstr(messages.text, "Qualità:") &&

@@ -209,18 +209,22 @@ From another terminal, start the ordinary client:
 ```
 
 Write the creative scene as normal conversation. The server asks inside that
-conversation for every missing material choice: `source` (1344x768), `draft`
-(960x544), or `smoke` (32x32); 5 through 15 seconds; 2 through 64 explicit
+conversation for every missing material choice: `preview` (192x192, exactly
+five seconds) or `smoke` (32x32, 5 through 15 seconds); 2 through 64 explicit
 sigma-grid points; AVI; and an optional seed. Those are request facts, not
 daemon startup flags. The source does not declare a default iteration count,
-so YVEX never invents one. FHD, 2K, 4K, MP4, MKV, WebM, and MOV refuse until an
-admitted upscaler or encoder owns those contracts. On success, chat reports the
-atomically published AVI path beneath `OUTPUT`.
+so YVEX never invents one. Source geometry, draft, HD, FHD, 2K, 4K, MP4, MKV,
+WebM, and MOV refuse until the applicable attention, memory, upscaler, or
+encoder contract is admitted. On success, chat reports the atomically published
+AVI path beneath `OUTPUT`.
 
-Only the bounded 32x32, 124-frame, one-evaluation profile currently has live
-repeatability, playback, synchronization, and memory evidence. The larger
-profiles are source geometry choices, not quality, latency, or GB10-feasibility
-claims.
+The preview profile fits the current 2,048-row Omni execution bound even for a
+256-token prompt. Its live AVI playback and synchronization are verified, but
+sampled frames remain visually unrecognizable; `preview` is a bounded geometry
+name, not a model-quality claim. The source-sized path would require 37,726
+packed rows at the same prompt and duration and therefore refuses before model
+materialization. The smoke profile retains the earlier repeatable 32x32
+evidence.
 
 ## Three-terminal operation
 

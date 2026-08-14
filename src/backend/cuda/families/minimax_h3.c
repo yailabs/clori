@@ -14,7 +14,6 @@
 enum {
     TEXT_HIDDEN = 5120u,
     TEXT_VOCAB = 151936u,
-    TEXT_MAX_TOKENS = 256u,
     TEXT_IDENTITY_CAP = 65u,
     TEXT_HEAD_DIM = 128u,
     TEXT_Q_HEADS = 64u,
@@ -60,7 +59,6 @@ enum {
     OMNI_MODALITIES = 3u,
     OMNI_PARAMETERS = 6u,
     OMNI_BLOCKS = 50u,
-    OMNI_MAX_ROWS = 2048u,
     OMNI_MAX_TIMESTEPS = 64u
 };
 typedef enum {
@@ -140,7 +138,8 @@ static int text_embed_validate(
     unsigned long long expected_encoded, index;
 
     if (!backend || !encoded || !yvex_sha256_hex_valid(residency_identity) || !resident_bytes ||
-        !token_ids || !token_count || token_count > TEXT_MAX_TOKENS || !output || !result ||
+        !token_ids || !token_count ||
+        token_count > YVEX_MINIMAX_H3_TEXT_MAX_TOKENS || !output || !result ||
         !yvex_core_u64_mul(TEXT_HIDDEN, TEXT_VOCAB * 2ull, &expected_encoded) ||
         encoded_bytes != expected_encoded || qtype != YVEX_GGUF_QTYPE_BF16 ||
         row_count != TEXT_VOCAB ||
@@ -628,7 +627,7 @@ static int text_layer_cuda(
     if (result) memset(result, 0, sizeof(*result));
     if (!backend || !text_weights_validate(weights, layer_count, &weight_bytes) ||
         !yvex_sha256_hex_valid(residency_identity) || resident_bytes < weight_bytes || !token_ids ||
-        !token_count || token_count > TEXT_MAX_TOKENS || !output || !result ||
+        !token_count || token_count > YVEX_MINIMAX_H3_TEXT_MAX_TOKENS || !output || !result ||
         !yvex_core_u64_mul(token_count, TEXT_HIDDEN, &run.values) ||
         run.values > output_capacity ||
         !yvex_core_u64_mul(run.values, sizeof(float), &run.output_bytes) ||
@@ -737,7 +736,7 @@ static int omni_validate(omni_run *run, const char *residency_identity,
         !omni_weights_validate(run->weights, run->block_count, weight_bytes) ||
         !yvex_sha256_hex_valid(residency_identity) || resident_bytes < *weight_bytes ||
         !run->hidden || !run->temb || !run->positions || !run->adaln_indices ||
-        !run->rows || run->rows > OMNI_MAX_ROWS || !run->timesteps ||
+        !run->rows || run->rows > YVEX_MINIMAX_H3_OMNI_MAX_PACKED_ROWS || !run->timesteps ||
         run->timesteps > OMNI_MAX_TIMESTEPS || !output || !result ||
         !yvex_core_u64_mul(run->rows, OMNI_HIDDEN, &run->values) ||
         run->values > output_capacity ||
@@ -1759,7 +1758,7 @@ static int transformer_request_valid(
     unsigned long long *video_values, unsigned long long *audio_values,
     yvex_error *err)
 {
-    unsigned char seen[OMNI_MAX_ROWS] = {0};
+    unsigned char seen[YVEX_MINIMAX_H3_OMNI_MAX_PACKED_ROWS] = {0};
     unsigned long long kind, row, total;
     const unsigned int *indices[3];
     unsigned long long counts[3];
@@ -1769,7 +1768,8 @@ static int transformer_request_valid(
         !request->token_tags || !request->video_output || !request->audio_output ||
         !request->video_rows || !request->audio_rows || !request->text_rows ||
         !request->timestep_count || request->timestep_count > OMNI_MAX_TIMESTEPS ||
-        !request->packed_rows || request->packed_rows > OMNI_MAX_ROWS ||
+        !request->packed_rows ||
+        request->packed_rows > YVEX_MINIMAX_H3_OMNI_MAX_PACKED_ROWS ||
         !request->block_count || request->block_count > OMNI_BLOCKS ||
         !yvex_core_u64_add(request->video_rows, request->audio_rows, &total) ||
         !yvex_core_u64_add(total, request->text_rows, &total) || total != request->packed_rows ||

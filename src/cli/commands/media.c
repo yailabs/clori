@@ -109,6 +109,8 @@ int yvex_media_generate_command(const yvex_graph_args *args, yvex_error *err)
     request.conditioning_layers = YVEX_MINIMAX_H3_TEXT_CONDITIONING_LAYERS;
     request.transformer_blocks = args->media.transformer_blocks;
     request.seed = args->media.seed;
+    request.maximum_prompt_tokens = YVEX_MINIMAX_H3_TEXT_MAX_TOKENS;
+    request.maximum_packed_rows = YVEX_MINIMAX_H3_OMNI_MAX_PACKED_ROWS;
     request.maximum_host_bytes = args->media.maximum_host_bytes;
     request.maximum_device_bytes = args->media.maximum_device_bytes;
     request.maximum_workspace_bytes = args->media.maximum_workspace_bytes;

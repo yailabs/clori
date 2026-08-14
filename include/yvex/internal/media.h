@@ -61,6 +61,7 @@ typedef struct {
     unsigned long long fps_numerator, fps_denominator, audio_sample_rate;
     unsigned int inference_steps;
     unsigned long long conditioning_layers, transformer_blocks, seed;
+    unsigned long long maximum_prompt_tokens, maximum_packed_rows;
     unsigned long long maximum_host_bytes, maximum_device_bytes;
     unsigned long long maximum_workspace_bytes, maximum_file_bytes;
     yvex_backend_kind component_backend;

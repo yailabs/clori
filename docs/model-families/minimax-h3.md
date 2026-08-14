@@ -328,6 +328,14 @@ swaps. YVEX reported 201,867,520 peak device bytes and 2,912,520 peak reusable
 workspace bytes. These figures qualify only the exact 32x32, 124-frame,
 one-evaluation profile; they do not replace the scale estimates above.
 
+The later 192x192 conversational preview completed one- and 19-point runs in
+the same cgroup envelope. The cgroup peak was 81,608,351,744 bytes, swap stayed
+at zero, and `memory.events` recorded no maximum-limit event, OOM, or OOM kill.
+High GPU compute utilization during a phase is compatible with this lower
+resident-memory envelope: YVEX releases the transformer before Visual VAE
+decode instead of retaining all four weighted components simultaneously. This
+is anti-OOM lifecycle evidence, not a throughput or visual-quality result.
+
 For scale pressure only, assume 144 frames at 1,360 x 768 and six seconds of
 audio. The declared ratios give 37,152 video tokens and 240 audio tokens,
 before conditioning. At an illustrative total of 37,400 tokens, two BF16
@@ -1094,11 +1102,24 @@ path. The server does not load any component or create a CUDA context while it
 is only negotiating those parameters.
 
 The conversational projection has focused dialogue, refusal, deterministic
-profile-identity, and no-model-open startup tests. An operator smoke exercised
-the real `yvex runtime start` -> session -> prompt path through the parameter
-question without generating media. It does not promote the unexecuted
-1344x768 or 960x544 profiles, nor does it replace the bounded live evidence
-above. The exact startup and chat workflow is owned by the
+profile-identity, and no-model-open startup tests. It admits `preview` at
+192x192 for exactly 124 frames and `smoke` at 32x32 for 124 through 345 frames.
+The daemon validates each profile against the exact worst-case 256-token plan
+before publishing readiness; runtime independently refuses any plan above the
+2,048-row Omni execution bound before latent or component materialization.
+Source, draft, HD, FHD, 2K, and 4K requests are not advertised and fail closed.
+
+An operator-reachable `runtime start` -> session -> prompt transaction executed
+the 192x192 preview twice from the eclipse prompt with seed 42. The one-point
+run took 622.81 seconds; the 19-point run took 1,490.14 seconds. Both published
+a seekable 14,381,024-byte AVI with 124 RGB frames at 24 fps and stereo PCM at
+32 kHz, and both decoded completely through independent GStreamer audio and
+video sinks. The 19-point file SHA-256 is
+`eb6c1d6e5c332ddbfac0e6057a264b53faaa228371f81d36691ea69745e9b84d`.
+Sampled frames from both files remained faceted chromatic noise rather than a
+recognizable eclipse. This is execution, container, and synchronization
+evidence only; it does not establish conditioning, scheduler, or model-quality
+correctness. The exact startup and chat workflow is owned by the
 [operator runbook](../operator-runbook.md#conversational-minimax-h3-media-host).
 
 ## Progression and non-claims

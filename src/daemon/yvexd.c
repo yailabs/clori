@@ -128,10 +128,10 @@ static int media_configure(yvex_server *server, const char *artifact_root,
     char text[YVEX_PATH_CAP], transformer[YVEX_PATH_CAP];
     char video[YVEX_PATH_CAP], audio[YVEX_PATH_CAP];
     static const yvex_server_media_profile profiles[] = {
-        {"source", 1344ull, 768ull, 1},
-        {"draft", 960ull, 544ull, 0},
-        {"smoke", 32ull, 32ull, 0},
+        {"preview", 192ull, 192ull, 124ull, 1},
+        {"smoke", 32ull, 32ull, 345ull, 0},
     };
+    unsigned long long index;
     int rc;
     if (!server || !artifact_root || !output_root || !model || !graph ||
         !media_path(text, artifact_root, "physical-v3/text_encoder.gguf") ||
@@ -149,6 +149,19 @@ static int media_configure(yvex_server *server, const char *artifact_root,
                        "MiniMax latent normalization is unavailable");
         rc = YVEX_ERR_STATE;
     }
+    for (index = 0ull; rc == YVEX_OK &&
+         index < sizeof(profiles) / sizeof(profiles[0]); ++index) {
+        yvex_minimax_h3_t2va_plan plan = {0};
+        rc = graph->t2va_plan_build(
+            &plan, YVEX_MINIMAX_H3_TEXT_MAX_TOKENS, profiles[index].width,
+            profiles[index].height, profiles[index].maximum_frames, 1u, err);
+        if (rc == YVEX_OK &&
+            plan.packed_rows > YVEX_MINIMAX_H3_OMNI_MAX_PACKED_ROWS) {
+            yvex_error_set(err, YVEX_ERR_BOUNDS, "daemon.media",
+                           "media profile exceeds the admitted Omni packed-row capacity");
+            rc = YVEX_ERR_BOUNDS;
+        }
+    }
     request.schema_version = YVEX_RUNTIME_AV_GENERATION_SCHEMA_V1;
     request.target = YVEX_MINIMAX_H3_TARGET_ID;
     request.text_artifact_path = text;
@@ -162,6 +175,8 @@ static int media_configure(yvex_server *server, const char *artifact_root,
     request.conditioning_layers = YVEX_MINIMAX_H3_TEXT_CONDITIONING_LAYERS;
     request.transformer_blocks = 50ull;
     request.seed = 42ull;
+    request.maximum_prompt_tokens = YVEX_MINIMAX_H3_TEXT_MAX_TOKENS;
+    request.maximum_packed_rows = YVEX_MINIMAX_H3_OMNI_MAX_PACKED_ROWS;
     request.maximum_host_bytes = 80ull * 1024ull * 1024ull * 1024ull;
     request.maximum_device_bytes = 4ull * 1024ull * 1024ull * 1024ull;
     request.maximum_workspace_bytes = 4ull * 1024ull * 1024ull * 1024ull;
@@ -203,7 +218,7 @@ static int media_configure(yvex_server *server, const char *artifact_root,
     media.minimum_inference_steps = 2ull;
     media.maximum_inference_steps = 64ull;
     media.canvas_multiple = 32ull;
-    media.maximum_canvas_pixels = 1344ull * 768ull;
+    media.maximum_canvas_pixels = 192ull * 192ull;
     return rc == YVEX_OK ? yvex_server_media_configure(server, &media, err) : rc;
 }
 
