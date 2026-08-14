@@ -35,6 +35,7 @@ for file in \
   docs/operations/deepseek.md docs/operations/validation.md \
   docs/development/documentation-policy.md \
   docs/development/source-ownership.md \
+  docs/milestones/engineering-worklog.md \
   docs/releases/doctrine.md docs/releases/v0.1.md \
   docs/decisions/0003-documentation-architecture.md \
   docs/decisions/0004-target-verified-speculation.md \
@@ -146,7 +147,13 @@ require_text docs/operations/deepseek.md './yvex execute transformer generate --
 
 require_text docs/development/documentation-policy.md '## Authority rules'
 require_text docs/development/documentation-policy.md '## Changelog policy'
+require_text docs/development/documentation-policy.md '| worklog |'
 require_text docs/development/documentation-policy.md '## Validation'
+require_text AGENTS.md '.agents/skills/engineering-worklog/SKILL.md'
+require_text CONTRIBUTING.md '$engineering-worklog'
+require_file .agents/skills/engineering-worklog/SKILL.md
+require_file .agents/skills/engineering-worklog/agents/openai.yaml
+require_file docs/worklog/2026-08-11-adaptive-memory-admission.md
 require_text docs/releases/doctrine.md '## Gate meanings'
 require_text docs/releases/v0.1.md 'Status: unreleased target record'
 
@@ -187,6 +194,9 @@ if test -x ./yvex; then
   done
   if printf '%s\n' "$client_help" | grep -F 'yvex graph' >/dev/null; then
     fail 'built yvex help exposes retired graph namespace'
+  fi
+  if printf '%s\n' "$client_help" | grep -F 'yvex worklog' >/dev/null; then
+    fail 'development worklog leaked into the product CLI'
   fi
 fi
 

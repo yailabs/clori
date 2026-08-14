@@ -167,6 +167,22 @@ A pull request must state:
 Do not mix unrelated cleanup with a capability change. Do not rewrite existing
 history solely to normalize old commit subjects.
 
+## Engineering worklogs
+
+After a material checkpoint, repair, architectural cutover, comparable
+performance change, or milestone closure, invoke the repository skill with:
+
+```text
+$engineering-worklog
+```
+
+The skill is the procedural authority for semantic records, evidence handling,
+publication review, and optional communication projections. Drafts remain under
+the ignored `build/worklog/` tree; only intentionally selected records enter
+[`docs/worklog/`](docs/worklog/2026-08-11-adaptive-memory-admission.md). Worklogs
+do not replace pull-request evidence, project control, evaluation, benchmarks,
+or release qualification, and they do not publish anything automatically.
+
 ## Capability and evidence language
 
 Use the lowest truthful evidence class:

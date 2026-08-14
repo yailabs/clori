@@ -39,6 +39,7 @@ The manifest is governance metadata, not product behavior.
 | legal | License and notice obligations | legal lifecycle |
 | contribution | Public contribution workflow | changes with workflow |
 | test-support | Narrow fixture or test-format explanation | changes with test owner |
+| worklog | Selected evidence-backed semantic engineering event | retained; publication state advances only by review |
 
 ## Canonical owner and projection
 
@@ -107,7 +108,7 @@ clear public entry purpose.
 - `CONTRIBUTING.md` explains contribution workflow.
 - `AGENTS.md` is the engineering contract, not a product manual or glossary.
 
-## Decisions, audits, and milestones
+## Decisions, audits, milestones, and worklogs
 
 An ADR records a durable choice and its rationale. Accepted ADR content is not
 silently rewritten; a new ADR supersedes it.
@@ -120,6 +121,13 @@ migration record explain the current owner. Frozen hashes are checked through
 A milestone contract states one implementation boundary and acceptance. Its
 state appears only in `ROADMAP.md`; a milestone document must not contain
 Active Next.
+
+A worklog records the semantic before/problem/cause/decision/after boundary of
+one selected engineering event. It may project communication material, but it
+does not own implementation, project state, benchmark, evaluation, or release
+claims. Its technical record remains stable after acceptance; publishability
+may advance only through explicit sensitivity and evidence review. Intermediate
+worklog material remains outside tracked documentation.
 
 ## Deprecation and migration
 
