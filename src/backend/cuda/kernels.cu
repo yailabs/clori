@@ -617,6 +617,58 @@ extern "C" __global__ void yvex_qtype_matvec(
         output_bf16 ? float_to_bf16_rne(value) : value;
 }
 
+/* Decode keeps each group's activation distinct while one grid covers the complete
+ * group-major matrix. The row dot is deliberately identical to yvex_qtype_matvec. */
+extern "C" __global__ void yvex_qtype_grouped_decode(
+    const unsigned char *encoded,
+    unsigned long long row_bytes,
+    unsigned long long row_width,
+    unsigned long long group_count,
+    unsigned long long group_rows,
+    unsigned long long blocks_per_group,
+    unsigned int qtype,
+    const float *vector,
+    unsigned long long input_stride,
+    float *out,
+    unsigned long long output_stride,
+    int output_bf16,
+    int *status)
+{
+    unsigned int lane = threadIdx.x & 31u;
+    unsigned int warp = threadIdx.x >> 5u;
+    unsigned int warps = blockDim.x >> 5u;
+    unsigned long long group, local_block, local_row, row;
+    const unsigned char *row_data;
+    const float *input;
+    float sum;
+
+    if (!status || *status != 0) return;
+    if (!encoded || !vector || !out || !row_bytes || !row_width ||
+        !group_count || !group_rows || !blocks_per_group || !warps ||
+        (blockDim.x & 31u) != 0u ||
+        group_count > ~0ull / group_rows ||
+        group_count > ~0ull / row_width ||
+        input_stride < group_count * row_width ||
+        output_stride < group_count * group_rows) {
+        if (!lane) atomicCAS(status, 0, 2);
+        return;
+    }
+    group = (unsigned long long)blockIdx.x / blocks_per_group;
+    local_block = (unsigned long long)blockIdx.x % blocks_per_group;
+    if (group >= group_count) return;
+    local_row = local_block * warps + warp;
+    if (local_row >= group_rows) return;
+    row = group * group_rows + local_row;
+    row_data = encoded + row * row_bytes;
+    input = vector + group * row_width;
+    sum = qtype_warp_dot(row_data, input, row_width, qtype, status);
+    if (lane) return;
+    if (!isfinite(sum) && *status == 0)
+        sum = qtype_dot_recover_f64(row_data, input, row_width, qtype);
+    if (!isfinite(sum)) atomicCAS(status, 0, 1);
+    else out[row] = output_bf16 ? float_to_bf16_rne(sum) : sum;
+}
+
 extern "C" __global__ void yvex_qtype_split_matvec(
     const unsigned char *encoded,
     unsigned long long row_bytes,

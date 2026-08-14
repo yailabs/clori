@@ -151,9 +151,11 @@ reached by visible or pre-admitted candidate spans; the non-VMM path remains an
 explicit full-bank fallback. The admitted Q8_0/Q8_K native path now has a
 mandatory SM121 SASS proof for `IMMA.16816.S8.S8` plus native numerical and
 launch-accounting coverage. Physical Execution IR now admits a measured
-sparse/large-row MoE crossover. Specialized Tensor Core coverage beyond those
-paths, specialized attention, real deep-context qualification and the optimized
-serving after-state remain open.
+sparse/large-row MoE crossover. Exact grouped attention output projection now
+collapses the model-derived output-A group launches without changing the
+compiler-selected F32 activation representation. Specialized Tensor Core
+coverage beyond those paths, the remaining attention stack, real deep-context
+qualification and the optimized serving after-state remain open.
 
 The continuation selects expert placement, cache, grouped execution, fusion,
 prefetch, graph capture and kernel order only from measured phase economics.

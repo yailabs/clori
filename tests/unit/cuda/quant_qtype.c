@@ -722,6 +722,122 @@ static int quant_cuda_tensor(yvex_backend *backend, const char *name,
                            backend, *tensor, source, bytes, err) == YVEX_OK);
 }
 
+static int quant_cuda_grouped_attention_decode(yvex_backend *backend)
+{
+    enum { GROUPS = 2, GROUP_ROWS = 16, ROWS = 32, WIDTH = 256 };
+    const yvex_cuda_attention_operations *operations =
+        yvex_cuda_attention_operations_get();
+    yvex_backend_attention_weight weight = {0};
+    yvex_backend_attention_failure attention_failure = {0};
+    yvex_backend_tensor_desc descriptor = {0};
+    yvex_device_tensor *resident = NULL, *input = NULL;
+    yvex_device_tensor *output = NULL, *status = NULL;
+    yvex_cuda_work work = {0};
+    unsigned char *mapped = NULL, *encoded_row = NULL;
+    float source[ROWS * WIDTH], vectors[GROUPS * WIDTH];
+    float expected[ROWS], actual[ROWS];
+    yvex_quant_failure quant_failure;
+    yvex_error err;
+    size_t row_bytes = 0u;
+    unsigned long long index;
+    unsigned int row, group;
+    int device_wide = 1, status_value = 0;
+
+    for (index = 0ull; index < ROWS * WIDTH; ++index)
+        source[index] = (float)((int)((index * 7ull + 3ull) % 41ull) - 20) /
+                        (float)(3ull + index % 11ull);
+    for (index = 0ull; index < GROUPS * WIDTH; ++index)
+        vectors[index] = (float)((int)((index * 5ull + 1ull) % 31ull) - 15) /
+                         (float)(7ull + index % 5ull);
+    for (row = 0u; row < ROWS; ++row) {
+        size_t current_bytes = 0u;
+        YVEX_TEST_ASSERT(
+            quant_cuda_encode_row(YVEX_GGUF_QTYPE_MXFP4,
+                                  source + row * WIDTH, WIDTH,
+                                  &encoded_row, &current_bytes),
+            "grouped attention decode row encodes canonically");
+        if (!row) {
+            row_bytes = current_bytes;
+            descriptor.name = "grouped_attention_decode_encoded";
+            descriptor.dtype = YVEX_DTYPE_I8;
+            descriptor.rank = 1u;
+            descriptor.dims[0] = descriptor.bytes = ROWS * row_bytes;
+            YVEX_TEST_ASSERT(
+                yvex_backend_resident_alloc(
+                    backend, &descriptor, &resident, &mapped, &err) == YVEX_OK,
+                "grouped attention decode matrix allocates");
+        }
+        YVEX_TEST_ASSERT(current_bytes == row_bytes,
+                         "grouped attention decode rows share geometry");
+        memcpy(mapped + row * row_bytes, encoded_row, row_bytes);
+        free(encoded_row);
+        encoded_row = NULL;
+        group = row / GROUP_ROWS;
+        YVEX_TEST_ASSERT(
+            yvex_quant_cpu_dot(
+                YVEX_GGUF_QTYPE_MXFP4, mapped + row * row_bytes,
+                row_bytes, vectors + group * WIDTH, WIDTH,
+                &expected[row], &quant_failure, &err) == YVEX_OK,
+            "grouped attention decode reference succeeds");
+    }
+    YVEX_TEST_ASSERT(
+        yvex_backend_resident_attach(
+            backend, mapped, descriptor.bytes, resident, 29ull, &err) == YVEX_OK,
+        "grouped attention decode matrix attaches");
+    YVEX_TEST_ASSERT(
+        quant_cuda_tensor(backend, "grouped_attention_decode_input", YVEX_DTYPE_F32,
+                          vectors, sizeof(vectors), &input, &err) &&
+            quant_cuda_tensor(backend, "grouped_attention_decode_output", YVEX_DTYPE_F32,
+                              NULL, sizeof(actual), &output, &err) &&
+            quant_cuda_tensor(backend, "grouped_attention_decode_status", YVEX_DTYPE_I32,
+                              &status_value, sizeof(status_value), &status, &err),
+        "grouped attention decode device fixtures allocate");
+    weight = (yvex_backend_attention_weight){
+        .encoded = mapped,
+        .encoded_bytes = ROWS * row_bytes,
+        .row_bytes = row_bytes,
+        .row_width = WIDTH,
+        .row_count = ROWS,
+        .qtype = YVEX_GGUF_QTYPE_MXFP4,
+        .present = 1
+    };
+    work.backend = backend;
+    work.state = yvex_cuda_state(backend);
+    work.variant = YVEX_BACKEND_VARIANT_ATTENTION_ENCODED;
+    YVEX_TEST_ASSERT(
+        operations->matvec_grouped(
+            &work, &weight, yvex_cuda_tensor_ptr(resident), GROUPS, GROUP_ROWS,
+            1ull, yvex_cuda_tensor_ptr(input), GROUPS * WIDTH,
+            yvex_cuda_tensor_ptr(output), ROWS, 0, yvex_cuda_tensor_ptr(status),
+            "cuda.test.grouped-attention-decode", &attention_failure, &err) == YVEX_OK &&
+            work.launches == 1ull && work.tensor_core_launches == 0ull,
+        "grouped decode projects every group in one exact launch");
+    YVEX_TEST_ASSERT(
+        yvex_cuda_launch_synchronize(
+            backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED, &device_wide,
+            "cuda.test.grouped-attention-decode", &err) == YVEX_OK &&
+            device_wide == 0 &&
+            yvex_backend_tensor_read(
+                backend, status, &status_value, sizeof(status_value), &err) == YVEX_OK &&
+            status_value == 0 &&
+            yvex_backend_tensor_read(
+                backend, output, actual, sizeof(actual), &err) == YVEX_OK,
+        "grouped attention decode completes without a device-wide barrier");
+    for (row = 0u; row < ROWS; ++row)
+        YVEX_TEST_ASSERT(
+            fabs((double)actual[row] - expected[row]) <=
+                1e-5 * (1.0 + fabs((double)expected[row])),
+            "grouped attention decode matches the independent exact reference");
+    YVEX_TEST_ASSERT(yvex_cuda_work_cleanup(&work, &err) == YVEX_OK &&
+                         yvex_backend_resident_detach(backend, &err) == YVEX_OK &&
+                         yvex_backend_tensor_release(backend, &status, &err) == YVEX_OK &&
+                         yvex_backend_tensor_release(backend, &output, &err) == YVEX_OK &&
+                         yvex_backend_tensor_release(backend, &input, &err) == YVEX_OK &&
+                         yvex_backend_tensor_release(backend, &resident, &err) == YVEX_OK,
+                     "grouped attention decode releases CUDA ownership");
+    return 0;
+}
+
 static int quant_cuda_encoded_gather(yvex_backend *backend)
 {
     enum { ROWS = 4, SELECTED = 3, WIDTH = 64 };
@@ -1448,6 +1564,8 @@ int yvex_cuda_test_quant_qtype(void)
                              backend, cases[index].qtype, 768u) == 0,
                          "three-block production Q8 activation matvec");
     }
+    YVEX_TEST_ASSERT(quant_cuda_grouped_attention_decode(backend) == 0,
+                     "grouped attention decode retains exact activation semantics");
     YVEX_TEST_ASSERT(quant_cuda_bf16_gemm(backend) == 0,
                      "BF16 production row batch GEMM");
     YVEX_TEST_ASSERT(quant_cuda_encoded_gather(backend) == 0,

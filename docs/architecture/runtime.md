@@ -304,6 +304,13 @@ additionally select canonical-order F64 row dots so independent stage oracles
 measure semantic execution. Those slower numerical adapters are unreachable
 from production and are not performance paths.
 
+Grouped single-row attention projection is one backend operation, not a family
+topology reconstruction. Its native decode kernel spans every group while each
+group retains its own F32 activation view and canonical encoded-row arithmetic.
+The compiler-selected activation representation remains authoritative: the
+backend may reduce launch topology but cannot silently substitute the available
+Q8 activation codec or change the admitted numerical contract.
+
 Before target prefill/decode, draft, verification, correction, or reset, the
 runtime selects an identity-bound execution shape. The shape distinguishes
 target/draft scope, phase, operation, width, context band, candidate

@@ -1448,6 +1448,7 @@ int yvex_cuda_test_info(void)
     static const char *attention_symbols[] = {
         "yvex_attention_bf16_round",
         "yvex_qtype_matvec",
+        "yvex_qtype_grouped_decode",
         "yvex_encoded_row_decode",
         "yvex_attention_weighted_norm",
         "yvex_attention_unit_norm",

@@ -358,7 +358,7 @@ static int attention_matvec_grouped(
 {
     CUdeviceptr additive = 0ull;
     unsigned long long rows = 0ull, input_width, quantized_rows, quantize_tasks;
-    unsigned long long quantized_bytes;
+    unsigned long long grouped_grid, quantized_bytes;
     int block_row = 0, q8_input = 0, q8_path;
     unsigned int grid, block, tensorcore_grid = 0u, tensorcore_block = 0u;
     if (!weight || !weight->present || !device_weight || !vector || !out ||
@@ -426,6 +426,27 @@ static int attention_matvec_grouped(
             if (rc == YVEX_OK) work->tensor_core_launches++;
         }
         return rc;
+    }
+    if (input_rows == 1ull && !work->forensic_numeric && !block_row &&
+        work->state->qtype_grouped_decode_function) {
+        unsigned long long blocks_per_group = grid;
+        if (!yvex_core_u64_mul(groups, blocks_per_group, &grouped_grid) ||
+            grouped_grid > UINT_MAX)
+            return attention_fail(
+                failure, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT, stage,
+                UINT_MAX, grouped_grid, err, YVEX_ERR_BOUNDS,
+                "CUDA grouped decode grid exceeds launch bounds");
+        {
+            void *params[] = {
+                &device_weight, (void *)&weight->row_bytes,
+                (void *)&weight->row_width, &groups, &group_rows,
+                &blocks_per_group, (void *)&weight->qtype, &vector,
+                &input_stride, &out, &output_stride, &output_bf16, &status};
+            return attention_launch(
+                work, work->state->qtype_grouped_decode_function,
+                (unsigned int)grouped_grid, block, 0u, params, stage,
+                failure, err);
+        }
     }
     for (unsigned long long group = 0ull; group < groups; ++group) {
         unsigned long long start_row = group * group_rows;

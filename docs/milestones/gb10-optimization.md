@@ -387,6 +387,23 @@ row count. This keeps output-head and verification rows contiguous in the
 kernel launch, preserves the existing per-warp arithmetic and tail refusal,
 and changes no qtype, numerical, persisted, wire or public contract.
 
+Single-row grouped attention projection now applies the same launch-economy
+principle across output-A groups. One native grouped-decode grid consumes each
+group's distinct F32 activation slice and preserves the canonical qtype warp
+dot; the prior path launched the generic matvec once per group. The current DS4
+reference established the useful grouping invariant, but YVEX rejected its Q8
+activation approximation for this binding because the admitted Physical
+Execution IR still requires F32 activation semantics. On the complete selected
+artifact, the exact path replaced 1,376 generic launches with 172 grouped
+launches, reduced combined qtype projection time from 443.851 ms to 398.568 ms,
+and improved five-run EOS-completion median generation from 7.05 to 7.72
+token/s. All repeated short and EOS outputs retained their baseline digests.
+The before/after Nsight report digests are
+`170cd24a1e7f26971ab3f34f358ec0a7c7a395849cbea8b3be26d847a0970061`
+and `60e19224c0baa0a046a1b5bbb1a3866edfe53ddc8c46130eee01bd03f0ee9866`.
+This closes one causal attention-projection launch owner, not the complete
+attention stack or the GB10 decode target.
+
 Each CUDA backend/session now owns one non-blocking ordinary-execution stream.
 Production attention graph pieces borrow that stream, preserve their order and
 defer completion to the existing layer publication barrier; piecewise execution
