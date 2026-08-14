@@ -8,9 +8,6 @@
  */
 #include <yvex/internal/model_target.h>
 
-#include <yvex/internal/families/deepseek_v4.h>
-#include <yvex/internal/families/minimax_h3.h>
-#include <yvex/internal/compilation.h>
 #include <yvex/internal/source.h>
 
 #include <stdarg.h>
@@ -86,65 +83,6 @@ void yvex_model_target_report_prepare(
             yvex_core_text_copy((char *)(destination + field->report_offset), field->capacity, value);
         }
     }
-}
-
-int yvex_model_target_report_release_coverage(
-    const yvex_model_target_request *request,
-    yvex_model_target_report *report,
-    const char *operation,
-    const char *error_where,
-    const char *success_status,
-    const char *success_boundary,
-    yvex_error *err)
-{
-    const yvex_model_family_api *family = yvex_model_register_deepseek_v4();
-    yvex_source_verification verification;
-    yvex_deepseek_tensor_coverage *coverage = NULL;
-    yvex_deepseek_tensor_coverage_failure failure;
-    char models_root[512];
-    char source_path[512];
-    int rc;
-
-    if (!request || !report || !operation || !error_where || !success_status ||
-        !success_boundary || !family) {
-        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "model_target_report",
-                       "DeepSeek coverage report arguments are required");
-        return YVEX_ERR_INVALID_ARG;
-    }
-    if (!yvex_model_target_release_source_paths(
-            request, models_root, sizeof(models_root), source_path,
-            sizeof(source_path))) {
-        yvex_error_set(err, YVEX_ERR_BOUNDS, error_where,
-                       "DeepSeek source path exceeds report bounds");
-        return YVEX_ERR_BOUNDS;
-    }
-    rc = family->coverage.open_verified_source(
-        &coverage, &verification, source_path, models_root, &failure, err);
-    if (rc != YVEX_OK) {
-        report->status = "tensor-coverage-blocked";
-        report->exit_code = 5;
-        yvex_model_target_report_add_error(
-            report,
-            "model-target %s: DeepSeek coverage refused: %s tensor=%s",
-            operation, family->coverage.failure_name(failure.code),
-            failure.tensor_name[0] ? failure.tensor_name : "none");
-        yvex_error_clear(err);
-        return YVEX_OK;
-    }
-    report->family_coverage = coverage;
-    {
-        const yvex_model_target_report_profile profile = {
-            .status = success_status, .target_id = request->target_id,
-            .family = "deepseek", .stage = "header-only",
-            .tensor_map_status = "blocked", .runtime_status = "unsupported",
-            .generation_status = "unsupported",
-            .next_row = "V010.SOURCE.PAYLOAD.STREAM.0",
-            .boundary = success_boundary
-        };
-
-        yvex_model_target_report_prepare(report, request, &profile);
-    }
-    return YVEX_OK;
 }
 
 static int model_target_report_refuse(yvex_model_target_report *report,
@@ -1496,296 +1434,6 @@ static const yvex_model_target_row_spec class_audit_suffix[] = {
 #undef CLASS_U64
 #undef CLASS_LITERAL
 
-static int class_profile_path_suffix(const char *path, const char *suffix)
-{
-    size_t path_length;
-    size_t suffix_length;
-
-    if (!path || !suffix) return 0;
-    path_length = strlen(path);
-    suffix_length = strlen(suffix);
-    return path_length >= suffix_length &&
-           strcmp(path + path_length - suffix_length, suffix) == 0;
-}
-
-
-static int class_profile_deepseek_models_root(
-    const yvex_model_target_request *request,
-    char *out,
-    size_t cap)
-{
-    static const char suffix[] = "/hf/deepseek/DeepSeek-V4-Flash-DSpark";
-    const char *environment;
-    size_t source_length;
-    size_t suffix_length = sizeof(suffix) - 1u;
-
-    int n;
-
-    if (!request || !out || cap == 0u) return 0;
-    out[0] = '\0';
-    if (request->models_root[0]) {
-        n = snprintf(out, cap, "%s", request->models_root);
-        return n >= 0 && (size_t)n < cap;
-    }
-    environment = getenv("YVEX_MODELS_ROOT");
-    if (environment && environment[0]) {
-        n = snprintf(out, cap, "%s", environment);
-        return n >= 0 && (size_t)n < cap;
-    }
-    source_length = strlen(request->source_path);
-    if (class_profile_path_suffix(request->source_path, suffix) &&
-        source_length > suffix_length &&
-        source_length - suffix_length < cap) {
-        memcpy(out, request->source_path, source_length - suffix_length);
-        out[source_length - suffix_length] = '\0';
-        return 1;
-    }
-    n = snprintf(out, cap, "%s", "models");
-    return n >= 0 && (size_t)n < cap;
-}
-
-static int class_profile_deepseek_source(
-    const yvex_model_target_request *request,
-    const char *models_root,
-    char *out,
-    size_t cap)
-{
-    if (!out || cap == 0u) return 0;
-    if (request->source_path[0]) {
-        int n = snprintf(out, cap, "%s", request->source_path);
-        return n >= 0 && (size_t)n < cap;
-    }
-    return yvex_source_target_path(
-        out, cap, models_root, yvex_source_release_identity());
-}
-
-static void class_profile_deepseek_ir_refusal(
-    const yvex_deepseek_v4_ir_failure *failure,
-    yvex_model_target_report *report)
-{
-    report->status = "architecture-ir-refused";
-    report->exit_code = 5;
-    yvex_model_target_report_add_error(
-        report,
-        "model-target class-profile: architecture IR refused: %s:%s field=%s layer=%llu",
-        yvex_model_register_deepseek_v4()->ir.component_name(failure->component),
-        yvex_model_register_deepseek_v4()->ir.failure_name(failure->code),
-        failure->field ? failure->field : "none", failure->layer_index);
-}
-
-static int class_profile_deepseek_from_verification(
-    const yvex_model_target_request *request,
-    const struct yvex_source_verification *verification,
-    yvex_model_target_report *report,
-    yvex_error *err)
-{
-    yvex_deepseek_v4_ir_failure failure;
-    yvex_deepseek_v4_ir *architecture = NULL;
-    int rc;
-
-    if (!request || !verification || !report ||
-        !yvex_source_is_release_target(request->target_id)) {
-        yvex_error_set(err, YVEX_ERR_INVALID_ARG,
-                       "deepseek_architecture_profile",
-                       "canonical target, verification, and report are required");
-        return YVEX_ERR_INVALID_ARG;
-    }
-    rc = yvex_model_register_deepseek_v4()->ir.build(
-        &architecture, verification, &failure, err);
-    if (rc != YVEX_OK) {
-        class_profile_deepseek_ir_refusal(&failure, report);
-        yvex_error_clear(err);
-        return YVEX_OK;
-    }
-    report->family_architecture = architecture;
-    report->family_architecture_kind =
-        YVEX_MODEL_TARGET_FAMILY_ARCHITECTURE_DEEPSEEK;
-    {
-        const yvex_model_target_report_profile profile = {
-            .status = "typed-architecture-specified",
-            .target_id = request->target_id, .family = "deepseek",
-            .stage = "typed-architecture-specification",
-            .runtime_status = "unsupported", .generation_status = "unsupported",
-            .next_row = "V010.SOURCE.PAYLOAD.STREAM.0",
-            .boundary = "typed architecture specification; mapping is owned by the "
-                        "canonical map plan and payload/runtime remain separate"
-        };
-
-        yvex_model_target_report_prepare(report, request, &profile);
-    }
-    yvex_error_clear(err);
-    return YVEX_OK;
-}
-
-static int class_profile_minimax_report_build(
-    const yvex_model_target_request *request,
-    yvex_model_target_report *report,
-    yvex_error *err)
-{
-    const yvex_minimax_h3_api *api = yvex_model_register_minimax_h3();
-    yvex_minimax_h3_open_options options;
-    yvex_minimax_h3_failure failure;
-    yvex_minimax_h3_target *target = NULL;
-    yvex_transform_ir *transformation = NULL;
-    int rc;
-
-    if (!request->source_path[0]) {
-        report->status = "source-acquisition-required";
-        report->exit_code = 5;
-        yvex_model_target_report_add_error(
-            report, "model-target class-profile: MiniMax-H3 requires --source DIR");
-        return YVEX_OK;
-    }
-    options.source_root = request->source_path;
-    rc = api->open(&target, &options, &failure, err);
-    if (rc != YVEX_OK) {
-        report->status = "source-or-transformation-ir-refused";
-        report->exit_code = 5;
-        if (request->mode == YVEX_MODEL_TARGET_OUTPUT_JSON) {
-            yvex_model_target_report_add_row(
-                report,
-                "{\"status\":\"source-or-transformation-ir-refused\","
-                "\"target_id\":\"%s\",\"failure\":\"%s\","
-                "\"runtime\":\"unsupported\",\"generation\":\"unsupported\"}",
-                request->target_id, api->failure_name(failure.code));
-        } else {
-            yvex_model_target_report_add_error(
-                report, "model-target class-profile: MiniMax-H3 refused: %s tensor=%s",
-                api->failure_name(failure.code),
-                failure.source_name[0] ? failure.source_name : "none");
-        }
-        yvex_error_clear(err);
-        return YVEX_OK;
-    }
-    rc = yvex_model_minimax_h3_transform_api()->build(
-        &transformation, report->family_derivation_identity, target, err);
-    if (rc != YVEX_OK) {
-        api->close(&target);
-        report->status = "transformation-ir-refused";
-        report->exit_code = 5;
-        if (request->mode == YVEX_MODEL_TARGET_OUTPUT_JSON) {
-            yvex_model_target_report_add_row(
-                report,
-                "{\"status\":\"transformation-ir-refused\","
-                "\"target_id\":\"%s\",\"runtime\":\"unsupported\","
-                "\"generation\":\"unsupported\"}",
-                request->target_id);
-        } else {
-            yvex_model_target_report_add_error(
-                report, "model-target class-profile: MiniMax-H3 Transformation IR refused");
-        }
-        yvex_error_clear(err);
-        return YVEX_OK;
-    }
-    report->family_architecture = target;
-    report->family_transformation = transformation;
-    report->family_architecture_kind =
-        YVEX_MODEL_TARGET_FAMILY_ARCHITECTURE_MINIMAX_H3;
-    {
-        const yvex_model_target_report_profile profile = {
-            .status = "transformation-ir-admitted",
-            .target_id = request->target_id,
-            .family = "minimax-h3",
-            .model = "MiniMax-H3 Base FL2VA",
-            .target_class = "composite-source-model",
-            .stage = "source-verified-architecture-and-transformation-ir",
-            .source_status = "exact-immutable-source-verified",
-            .artifact_status = "not-produced",
-            .tensor_map_status = "complete-source-to-logical-role-map",
-            .runtime_status = "unsupported",
-            .generation_status = "unsupported",
-            .benchmark_status = "not-measured",
-            .next_row = "component physical variants and artifact emission",
-            .boundary = "source, composite logical target, architecture, tensor roles, and "
-                        "artifact-neutral Transformation IR only"
-        };
-
-        yvex_model_target_report_prepare(report, request, &profile);
-    }
-    yvex_error_clear(err);
-    return YVEX_OK;
-}
-
-static int class_profile_deepseek_report_build(
-    const yvex_model_target_request *request,
-    yvex_model_target_report *report,
-    yvex_error *err)
-{
-    yvex_source_verify_options options;
-    yvex_source_verification verification;
-    char models_root[512];
-    char source_path[512];
-    int rc;
-
-    if (!class_profile_deepseek_models_root(request, models_root,
-                                            sizeof(models_root))) {
-        yvex_error_set(err, YVEX_ERR_BOUNDS, "deepseek_architecture_profile",
-                       "canonical models root exceeds profile bounds");
-        return YVEX_ERR_BOUNDS;
-    }
-    if (!class_profile_deepseek_source(request, models_root, source_path,
-                                       sizeof(source_path))) {
-        yvex_error_set(err, YVEX_ERR_BOUNDS, "deepseek_architecture_profile",
-                       "canonical source path exceeds profile bounds");
-        return YVEX_ERR_BOUNDS;
-    }
-    memset(&options, 0, sizeof(options));
-    options.identity = yvex_source_release_identity();
-    options.source_path = source_path;
-    options.models_root = models_root;
-    rc = yvex_source_verify(&options, &verification, err);
-    if (rc != YVEX_OK) return rc;
-    if (!verification.verified) {
-        const char *blocker = verification.blocker_count
-                                  ? verification.blockers[0]
-                                  : "source-verification-incomplete";
-        report->status = "architecture-ir-blocked";
-        report->exit_code = 5;
-        if (request->mode == YVEX_MODEL_TARGET_OUTPUT_JSON) {
-            yvex_model_target_report_add_row(
-                report,
-                "{\"status\":\"architecture-ir-blocked\",\"target_id\":\"%s\","
-                "\"source_verification\":\"blocked\",\"reason\":\"%s\","
-                "\"runtime\":\"unsupported\",\"generation\":\"unsupported\"}",
-                request->target_id, blocker);
-        } else if (request->mode == YVEX_MODEL_TARGET_OUTPUT_TABLE) {
-            yvex_model_target_report_add_table_row(
-                report, 4u, "TARGET", "SOURCE", "IR", "REASON",
-                NULL, NULL, NULL, NULL);
-            yvex_model_target_report_add_table_row(
-                report, 4u, request->target_id, "blocked", "not-built",
-                blocker, NULL, NULL, NULL, NULL);
-        } else if (request->mode == YVEX_MODEL_TARGET_OUTPUT_AUDIT) {
-            yvex_model_target_report_add_row(
-                report, "architecture_ir_status: blocked");
-            yvex_model_target_report_add_row(report, "target_id: %s",
-                                             request->target_id);
-            yvex_model_target_report_add_row(
-                report, "source_path: %s", source_path);
-            yvex_model_target_report_add_row(
-                report, "source_verification_status: blocked");
-            yvex_model_target_report_add_row(report, "reason: %s", blocker);
-            yvex_model_target_report_add_row(
-                report, "runtime_execution: unsupported");
-            yvex_model_target_report_add_row(report,
-                                             "generation: unsupported");
-        } else {
-            yvex_model_target_report_add_row(report,
-                                             "model-class: deepseek");
-            yvex_model_target_report_add_row(report, "target: %s",
-                                             request->target_id);
-            yvex_model_target_report_add_row(
-                report, "status: architecture-ir-blocked");
-            yvex_model_target_report_add_row(report, "reason: %s", blocker);
-            yvex_model_target_report_add_row(
-                report, "boundary: source verification required; runtime/generation unsupported");
-        }
-        return YVEX_OK;
-    }
-    return class_profile_deepseek_from_verification(
-        request, &verification, report, err);
-}
-
 static void class_profile_family_facts(const char *family,
                                        const char **class_name,
                                        const char **runtime_shape,
@@ -1821,6 +1469,8 @@ static int model_class_report_build(
     const char *source_blocker;
     yvex_model_target_source_scan scan;
     const char *status;
+    int handled;
+    int rc;
 
     if (!request || !report ||
         request->kind != YVEX_MODEL_TARGET_COMMAND_CLASS_PROFILE) {
@@ -1832,11 +1482,9 @@ static int model_class_report_build(
             request, report, "class-profile", 0)) {
         return YVEX_OK;
     }
-    if (yvex_source_is_release_target(request->target_id)) {
-        return class_profile_deepseek_report_build(request, report, err);
-    }
-    if (strcmp(request->target_id, YVEX_MINIMAX_H3_TARGET_ID) == 0)
-        return class_profile_minimax_report_build(request, report, err);
+    rc = yvex_model_target_family_class_profile_build(
+        request, report, &handled, err);
+    if (rc != YVEX_OK || handled) return rc;
     family = yvex_model_target_family_key(request->target_id);
     class_profile_family_facts(family, &class_name, &runtime_shape,
                                &backend_pressure, &top_blocker,
@@ -1977,21 +1625,6 @@ void yvex_model_target_report_close(yvex_model_target_report *report)
 {
     if (!report) {
         return;
-    }
-    yvex_model_register_deepseek_v4()->lowering.close(
-        (yvex_deepseek_gguf_map *)report->family_lowering);
-    yvex_model_register_deepseek_v4()->coverage.close(
-        (yvex_deepseek_tensor_coverage *)report->family_coverage);
-    yvex_transform_ir_release((yvex_transform_ir **)&report->family_transformation);
-    if (report->family_architecture_kind ==
-        YVEX_MODEL_TARGET_FAMILY_ARCHITECTURE_DEEPSEEK) {
-        yvex_model_register_deepseek_v4()->ir.close(
-            (yvex_deepseek_v4_ir *)report->family_architecture);
-    } else if (report->family_architecture_kind ==
-               YVEX_MODEL_TARGET_FAMILY_ARCHITECTURE_MINIMAX_H3) {
-        yvex_minimax_h3_target *target =
-            (yvex_minimax_h3_target *)report->family_architecture;
-        yvex_model_register_minimax_h3()->close(&target);
     }
     memset(report, 0, sizeof(*report));
 }

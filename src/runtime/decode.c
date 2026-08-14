@@ -260,15 +260,13 @@ static int decode_structure_valid(
         yvex_runtime_session_view_get(context->session);
     const yvex_runtime_model_view *model = session
         ? yvex_runtime_model_view_get(session->model) : NULL;
-    const yvex_runtime_descriptor_summary *runtime = model
-        ? yvex_runtime_descriptor_summary_get(model->descriptor) : NULL;
-    const yvex_model_execution_descriptor *execution = runtime &&
-            runtime->model_execution.schema_version ==
-                YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1
-        ? &runtime->model_execution : NULL;
+    const yvex_attention_summary *attention = model
+        ? yvex_attention_plan_summary(model->attention) : NULL;
+    const yvex_moe_plan_summary *moe = model
+        ? yvex_moe_plan_summary_get(model->moe) : NULL;
     unsigned long long attention_layers, router_layers, routed, shared;
 
-    if (!plan || !result || !runtime ||
+    if (!plan || !result || !attention || !moe ||
         result->layers_executed != plan->layer_count ||
         !yvex_core_u64_add(result->swa_layers, result->csa_layers,
                            &attention_layers) ||
@@ -278,19 +276,18 @@ static int decode_structure_valid(
         !yvex_core_u64_add(result->hash_routers, result->learned_routers,
                            &router_layers) ||
         router_layers != plan->layer_count ||
-        !yvex_core_u64_mul(plan->layer_count, runtime->experts_per_token,
+        !yvex_core_u64_mul(plan->layer_count, moe->experts_per_token,
                            &routed) ||
         result->routed_experts != routed)
         return 0;
-    if (!execution) return 1;
-    return result->swa_layers == execution->swa_layers &&
-           result->csa_layers == execution->csa_layers &&
-           result->hca_layers == execution->hca_layers &&
-           result->hash_routers == execution->hash_router_layer_count &&
-           result->learned_routers ==
-               execution->layer_count - execution->hash_router_layer_count &&
-           yvex_core_u64_mul(execution->layer_count,
-                             execution->shared_experts, &shared) &&
+    return attention->layer_count == plan->layer_count &&
+           moe->layer_count == plan->layer_count &&
+           result->swa_layers == attention->swa_layer_count &&
+           result->csa_layers == attention->csa_layer_count &&
+           result->hca_layers == attention->hca_layer_count &&
+           result->hash_routers == moe->hash_router_layer_count &&
+           result->learned_routers == moe->learned_router_layer_count &&
+           yvex_core_u64_mul(moe->layer_count, moe->shared_experts, &shared) &&
            result->shared_experts == shared;
 }
 /*
@@ -835,7 +832,7 @@ int yvex_runtime_decode_operator_execute(
     result->step_count = result->decode.completed_steps;
     if (plan && model_view) {
         yvex_core_text_copy(result->family, sizeof(result->family),
-                            model_view->adapter->family_name);
+                            model_view->target_id);
         yvex_runtime_identity_copy(result->artifact_identity,
                                    model_view->binding->artifact_identity);
         yvex_runtime_identity_copy(result->runtime_binding_identity,

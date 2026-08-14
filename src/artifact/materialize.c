@@ -11,10 +11,46 @@
 #include <string.h>
 #include <yvex/gguf.h>
 #include <yvex/internal/artifact.h>
+#include <yvex/internal/artifact_lowering.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/quant_numeric.h>
 
 #define MATERIALIZE_DEFAULT_CHUNK (8ull * 1024ull * 1024ull)
+
+static int materialization_lowering_terminal_find(
+    const void *context, const char *name, yvex_materialization_terminal *out)
+{
+    const yvex_artifact_lowering_map *map = context;
+    const yvex_artifact_lowering_descriptor *row, *first;
+
+    if (!map || !name || !out) return 0;
+    row = yvex_artifact_lowering_operations.find_emitted(map, name);
+    first = yvex_artifact_lowering_operations.descriptor_at(map, 0ull);
+    if (!row || !first) return 0;
+    *out = (yvex_materialization_terminal){
+        (unsigned long long)(row - first), row->role, row->collection, row->scope,
+        row->layer_index, row->predictor_index, row->expert_count};
+    return 1;
+}
+
+int yvex_materialization_project_artifact_lowering(
+    const yvex_artifact_lowering_map *map,
+    yvex_materialization_projection *out, yvex_error *err)
+{
+    const yvex_artifact_lowering_summary *summary =
+        map ? yvex_artifact_lowering_operations.summary(map) : NULL;
+
+    if (!out || !summary || !summary->complete || !summary->mapping_identity) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "materialization.lowering",
+                       "complete artifact lowering is required for terminal projection");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    *out = (yvex_materialization_projection){
+        YVEX_MATERIALIZATION_PROJECTION_SCHEMA_VERSION, summary->mapping_identity,
+        summary->descriptor_count, map, materialization_lowering_terminal_find, 1};
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
 
 static const char *const materialization_failure_names[] = {
     [YVEX_MATERIALIZATION_FAILURE_NONE] = "none",

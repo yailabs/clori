@@ -82,10 +82,9 @@ static yvex_tokenizer_support support_for_kind(yvex_tokenizer_kind kind)
     return YVEX_TOKENIZER_SUPPORT_UNSUPPORTED;
 }
 
-int yvex_tokenizer_from_gguf(yvex_tokenizer **out,
-                             const yvex_gguf *gguf,
-                             const yvex_model_descriptor *model,
-                             yvex_error *err)
+static int tokenizer_from_gguf_policy(
+    yvex_tokenizer **out, const yvex_gguf *gguf,
+    const yvex_tokenizer_family_policy *policy, yvex_error *err)
 {
     yvex_tokenizer *tokenizer;
     const yvex_gguf_value *value;
@@ -112,6 +111,19 @@ int yvex_tokenizer_from_gguf(yvex_tokenizer **out,
     tokenizer->model_name = copy_string_value(value, NULL);
     tokenizer->kind = kind_from_model(tokenizer->model_name);
     tokenizer->support = support_for_kind(tokenizer->kind);
+    if (policy) {
+        tokenizer->compiled_policy = *policy;
+        if (policy->prompt_policy == YVEX_TOKENIZER_PROMPT_CONVERSATION &&
+            !yvex_tokenizer_family_policy_conversation(
+                &tokenizer->compiled_policy, &tokenizer->conversation_view)) {
+            yvex_tokenizer_close(tokenizer);
+            yvex_error_set(err, YVEX_ERR_FORMAT, "tokenizer.compiled-policy",
+                           "compiled tokenizer policy is invalid");
+            return YVEX_ERR_FORMAT;
+        }
+        if (policy->prompt_policy == YVEX_TOKENIZER_PROMPT_CONVERSATION)
+            tokenizer->conversation = &tokenizer->conversation_view;
+    }
 
     value = yvex_gguf_metadata_find(gguf, "tokenizer.chat_template");
     tokenizer->chat_template = copy_string_value(value, &tokenizer->chat_template_len);
@@ -131,7 +143,7 @@ int yvex_tokenizer_from_gguf(yvex_tokenizer **out,
         return rc;
     }
 
-    rc = yvex_tokenizer_execution_seal(tokenizer, gguf, model, err);
+    rc = yvex_tokenizer_execution_seal(tokenizer, gguf, policy, err);
     if (rc != YVEX_OK && rc != YVEX_ERR_UNSUPPORTED) {
         yvex_tokenizer_close(tokenizer);
         return rc;
@@ -143,6 +155,28 @@ int yvex_tokenizer_from_gguf(yvex_tokenizer **out,
     *out = tokenizer;
     yvex_error_clear(err);
     return YVEX_OK;
+}
+
+int yvex_tokenizer_from_gguf(yvex_tokenizer **out, const yvex_gguf *gguf,
+                             const yvex_model_descriptor *model, yvex_error *err)
+{
+    (void)model;
+    return tokenizer_from_gguf_policy(out, gguf, NULL, err);
+}
+
+int yvex_tokenizer_from_compiled_gguf(
+    yvex_tokenizer **out, const yvex_gguf *gguf,
+    const yvex_tokenizer_family_policy *policy, yvex_error *err)
+{
+    if (yvex_tokenizer_family_policy_validate(policy, err) != YVEX_OK)
+        return YVEX_ERR_FORMAT;
+    return tokenizer_from_gguf_policy(out, gguf, policy, err);
+}
+
+const yvex_conversation_protocol *yvex_tokenizer_conversation_protocol_get(
+    const yvex_tokenizer *tokenizer)
+{
+    return tokenizer && tokenizer->plan.sealed ? tokenizer->conversation : NULL;
 }
 
 void yvex_tokenizer_close(yvex_tokenizer *tokenizer)

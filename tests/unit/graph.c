@@ -7,6 +7,7 @@
 
 #include <yvex/api.h>
 
+#include "src/graph/private.h"
 #include "tests/test.h"
 
 typedef struct {
@@ -111,8 +112,54 @@ static int test_graph_from_fixture(void)
     return 0;
 }
 
+static int component_cancelled(void *context)
+{
+    return context && *(const int *)context;
+}
+
+static int test_component_execution_transaction(void)
+{
+    yvex_component_plan plan = {.workspace_bytes = 32ull};
+    int cancelled = 0;
+    yvex_component_execution_request request = {
+        .plan = &plan,
+        .cancelled = component_cancelled,
+        .cancellation_context = &cancelled,
+    };
+    yvex_component_execution_result result;
+    yvex_component_failure failure;
+    yvex_graph_component_execution execution;
+    yvex_graph_component_buffer first = {0}, refused = {0};
+    const yvex_graph_component_api *component = yvex_graph_component_api_get();
+    yvex_error err;
+
+    component->execution_open(&execution, NULL, &request, &result, &failure, &err,
+                              "test.graph.component");
+    YVEX_TEST_ASSERT(component->buffer_open(&execution, 4ull, &first) == YVEX_OK &&
+                         first.data && first.count == 4ull &&
+                         result.peak_workspace_bytes == 16ull &&
+                         execution.workspace.live_bytes == 16ull,
+                     "generic component transaction accounts owned workspace");
+    YVEX_TEST_ASSERT(component->buffer_open(&execution, 5ull, &refused) == YVEX_ERR_BOUNDS &&
+                         !refused.data && failure.code == YVEX_COMPONENT_FAILURE_BUDGET &&
+                         failure.expected == 32ull && failure.actual == 36ull &&
+                         strcmp(yvex_error_where(&err), "test.graph.component") == 0,
+                     "generic component transaction publishes bounded typed refusal");
+    component->buffer_close(&execution, &first);
+    YVEX_TEST_ASSERT(!first.data && execution.workspace.live_bytes == 0ull,
+                     "generic component transaction releases its workspace ownership");
+    cancelled = 1;
+    YVEX_TEST_ASSERT(component->cancel_check(&execution, "component test cancelled") ==
+                             YVEX_ERR_CANCELLED &&
+                         failure.code == YVEX_COMPONENT_FAILURE_CANCELLED &&
+                         strcmp(failure.reason, "component test cancelled") == 0,
+                     "generic component transaction owns cancellation projection");
+    return 0;
+}
+
 int yvex_test_graph(void)
 {
     if (test_graph_from_fixture() != 0) return 1;
+    if (test_component_execution_transaction() != 0) return 1;
     return 0;
 }

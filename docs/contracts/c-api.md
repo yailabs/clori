@@ -8,7 +8,7 @@ lifetime, inputs, outputs, side effects, failure, and compatibility policy;
 the headers remain exact ABI authority.
 
 This document maps the installed C ABI and the non-installed contracts used by
-the engine-linked daemon and finite engineering operations. It describes
+the engine-linked foreground server and finite engineering operations. It describes
 ownership and lifetime; it does not turn an internal runtime boundary into a public
 compatibility promise.
 
@@ -112,14 +112,13 @@ as explicit `target-only` mode.
 `yvex_model_registry_startup_validate` checks that all startup facts are
 present and that the two local files are readable. It does not authenticate
 either identity, materialize weights, initialize a backend, or establish
-runtime support. Selection remains an inert local configuration write; `yvexd`
-performs full artifact and binding admission when the model is opened.
+runtime support. The explicit `yvex server MODEL` entrypoint performs full
+artifact and binding admission when the model is opened.
 
 The default catalog is user-local data at
 `~/.local/share/yvex/models.local.json`; an explicit `YVEX_DATA_DIR` changes
-that owner for controlled deployments. The selected startup configuration
-remains separately owned under private XDG configuration. Catalog entry,
-selected model, and live runtime model are three distinct facts.
+that owner for controlled deployments. Catalog entry, invocation-selected
+profile, and live runtime model are three distinct facts.
 
 ## Model, Materialization, And Backend
 
@@ -133,6 +132,13 @@ does not infer family topology. `yvex_backend_close_checked` nulls its owner
 only after complete discharge and retains it when cleanup must be retried;
 `yvex_backend_close` remains the best-effort compatibility projection for
 callers without a failure channel.
+
+The concrete backend object and dispatch table are source-local backend ABI.
+Graph and runtime owners hold an opaque `yvex_backend` and use typed operations
+for allocation, transfer, capability queries, residency mappings and workspace
+access. In particular, session-state publication advances the backend-visible
+residency generation through a checked operation; callers cannot mutate backend
+dispatch, placement or generation fields directly.
 
 The generated CUDA bundle, Driver API module/function resolution and CUDA Graph
 objects are repository-internal backend contracts. They are not installed C
@@ -156,20 +162,23 @@ The internal runtime is family-neutral. Its main objects are:
 | Object | Ownership |
 | --- | --- |
 | `yvex_runtime_binding` | immutable content-addressed bridge from an admitted artifact to runtime identities and executable requirements |
-| `yvex_runtime_family_adapter` | typed family projection; DeepSeek is the first admitted adapter, not a separate runtime |
+| `yvex_family_compiler_adapter` | compilation-only family projection that seals policy into the binding and never enters runtime model state |
 | `yvex_runtime_model` | immutable verified artifact handle, binding, imported target/draft/verification plans and read-only resident weights |
 | `yvex_runtime_execution_session` | mutable backend context, reusable workspace, committed target state, bounded speculative candidate state, cancellation and CUDA Graph registry |
 | execution descriptor | canonical pointer-free identity over phase, mode, scope, geometry, residency, workspace, state and device facts |
 
 Model-execution descriptor schema v1 is a non-installed fieldwise projection
 of source/family context, attention, MoE, output, DSpark and state facts.
-Runtime binding v8 persists and authenticates it; v7 remains readable for the
-retained reference binding. Hardware-profile, workload-profile, capacity-plan
-and phase-roofline schemas begin at v1 as internal contracts. The installed
-server construction entrypoints and public declaration count remain unchanged.
+Runtime binding v12 persists and authenticates it together with the canonical
+operator graph identity, compiled model plan, and pointer-free
+tokenizer/conversation policy. Bindings v7 through v11 are refused because they
+cannot represent that complete execution authority. Hardware-profile,
+workload-profile, capacity-plan and phase-roofline schemas begin at v1 as
+internal contracts. The installed server construction entrypoints and public
+declaration count remain unchanged.
 The source-authored conversation boundary admits provider request/wire schema
 v2, tokenizer plan v3, tokenizer provider result v2, and local protocol v8.
-Runtime event schema v3, Physical Execution IR v1 and compiled profile v1
+Runtime event schema v3, Physical Execution IR v1 and compiled profile v2
 remain unchanged. Generation plan ABI v5 adds the workload-profile identity
 required to bind phase evidence to the compiled workload; generation result
 schema v4 and all wire projections remain unchanged.
@@ -297,7 +306,9 @@ outside this API.
 `include/yvex/internal/moe.h` owns the non-installed MoE plan, typed input,
 generic graph/backend execution packets, inspect context, and operator result.
 The plan imports immutable runtime descriptor and materialization facts for all
-43 layers; family policy enters through one registered projection callback.
+layers; family policy enters through the explicit compiler-facing graph adapter
+and is sealed into the pointer-free plan before runtime model-open. Generic MoE
+compilation does not discover concrete families through a global registry.
 
 `yvex_moe_input_open_memory` and `yvex_moe_input_open_file` admit the same
 schema-v1 identity chain. The bounded file form stores explicit little-endian
@@ -480,13 +491,15 @@ backend and execution-mode specific.
 ## Artifact-Bound Tokenizer Runtime
 
 `<yvex/tokenizer.h>` exposes the exact admitted tokenizer plan, explicit-length
-UTF-8 encoding, bounded DeepSeek message rendering, batch and incremental
+UTF-8 encoding, bounded source-authored conversation rendering, batch and incremental
 ByteLevel decoding, special/EOS classification, and a generation-local token
 append directory. Immutable vocabulary/merge/added-token indexes follow model
 lifetime; incremental decoder and append contexts are isolated mutable owners.
 Every owned result publishes only after complete success and carries field-wise
-identities. These operations do not read weights, mutate KV, append sampled
-tokens to decode, or compose generation.
+identities. The compiler-facing `<yvex/internal/tokenizer.h>` owns the canonical
+pointer-free policy and codec; runtime instantiation never searches a family
+registry. These operations do not read weights, mutate KV, append sampled tokens
+to decode, or compose generation.
 
 ## Compiled Operator Registry Boundary
 
@@ -540,7 +553,7 @@ inspecting diagnostic text. `yvex_client_timeout_set()` bounds application
 adapter send/receive waiting; zero restores unbounded post-handshake waiting
 for native watch and trace consumers.
 
-The source-separated OpenAI adapter inside `yvexd` consumes only the provider
+The source-separated OpenAI adapter inside the foreground server consumes only the provider
 contract, protocol client, and bounded HTTP/JSON/SSE owners. It opens no second
 artifact or model, owns no KV, and cannot call Transformer, generation, or CUDA
 owners directly. The exact HTTP profile is documented in
@@ -582,8 +595,8 @@ uncommitted participant. Existing generated-token and completion-usage counts
 remain committed-target counts.
 
 `<yvex/server.h>` exposes the local protocol, one-model host, server session,
-typed event, metrics snapshot, and thin protocol-client lifecycles. `yvexd`
-owns one engine-linked host and bounded model worker. Server sessions retain
+typed event, metrics snapshot, and thin protocol-client lifecycles. The
+engine-linked `yvex server` entrypoint owns one host and bounded model worker. Server sessions retain
 independent execution state, exact token ledgers, transcripts, and turn records
 across client detach. The next turn reuses KV only after exact token-prefix
 admission and prefills only the new suffix.
@@ -702,7 +715,7 @@ The current runtime supports the complete hosted DeepSeek prompt-to-text path on
 CPU and the admitted mixed GB10 CUDA path. It composes exact tokenizer encoding,
 prompt-suffix prefill, persistent state, MoE, the complete Transformer, raw
 vocabulary logits, common-host sampling, sampled-token decode feedback, typed
-stop, incremental detokenization, and committed streaming through one daemon
+stop, incremental detokenization, and committed streaming through one server
 model and isolated server sessions. It does not establish public serving,
 model evaluation, a release-path full-model benchmark, or release readiness.
 

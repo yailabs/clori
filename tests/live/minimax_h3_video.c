@@ -237,6 +237,7 @@ int main(int argc, char **argv)
         yvex_minimax_h3_video_decode_options decode_options;
         yvex_minimax_h3_video_decode_result result;
         yvex_minimax_h3_component_execution_failure execution_failure;
+        yvex_runtime_component_session *session = NULL;
         unsigned long long patches = frames * height * width;
         size_t latent_values = (size_t)(patches * 24ull);
         size_t output_values = (size_t)(patches * 3072ull);
@@ -259,14 +260,22 @@ int main(int argc, char **argv)
         decode_options.latent_height = height;
         decode_options.latent_width = width;
         decode_options.max_workspace_bytes = 256ull * 1024ull * 1024ull;
+        if (rc == YVEX_OK)
+            rc = yvex_graph_register_minimax_h3()->component_admit(
+                "video_vae", artifact, gguf, tensors, &admission, &admission_failure, &err);
+        if (rc == YVEX_OK)
+            rc = yvex_runtime_component_session_open(
+                &session, &admission, artifact, gguf, tensors,
+                cuda ? YVEX_BACKEND_KIND_CUDA : YVEX_BACKEND_KIND_CPU,
+                admission.payload_bytes,
+                cuda ? 16ull * 1024ull * 1024ull * 1024ull : 0ull, &err);
         if (rc == YVEX_OK && !cuda)
-            rc = yvex_graph_register_minimax_h3()->video_vae_execute_artifact_cpu(
-                artifact, gguf, tensors, &decode_options, &result,
-                &execution_failure, &err);
-        if (rc == YVEX_OK && cuda)
-            rc = yvex_graph_register_minimax_h3()->video_vae_execute_artifact_cuda(
-                artifact, gguf, tensors, &decode_options, 16ull * 1024ull * 1024ull * 1024ull,
+            rc = yvex_graph_register_minimax_h3()->video_vae_decode_cpu(
+                yvex_runtime_component_session_materialization(session), &decode_options,
                 &result, &execution_failure, &err);
+        if (rc == YVEX_OK && cuda)
+            rc = yvex_graph_register_minimax_h3()->video_vae_decode_cuda(
+                session, &decode_options, &result, &execution_failure, &err);
         if (rc != YVEX_OK) {
             fprintf(stderr,
                     "video_vae_decode=refused code=%d tensor=%s expected=%llu actual=%llu "
@@ -292,6 +301,12 @@ int main(int argc, char **argv)
             printf("execution_identity=%s\n", result.execution_identity);
             if (reference_path && compare_reference(reference_path, output, output_values) != 0)
                 rc = YVEX_ERR_FORMAT;
+        }
+        {
+            yvex_error cleanup;
+            yvex_error_clear(&cleanup);
+            if (yvex_runtime_component_session_close(&session, &cleanup) != YVEX_OK &&
+                rc == YVEX_OK) { rc = yvex_error_code(&cleanup); err = cleanup; }
         }
         free(output);
         free(latent);

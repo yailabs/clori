@@ -13,12 +13,13 @@
 #include <yvex/internal/component.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/families/minimax_h3.h>
+#include <yvex/internal/joint_transformer.h>
 #include <yvex/internal/latent.h>
 #include <yvex/internal/runtime.h>
 
 enum { VIDEO_VALUES = 96u, AUDIO_VALUES = 32u, CONDITION_VALUES = 5120u };
 
-static const char *const external_names[YVEX_MINIMAX_H3_OMNI_EXTERNAL_WEIGHT_COUNT] = {
+static const char *const external_names[YVEX_TRANSFORMER_JOINT_EXTERNAL_WEIGHT_COUNT] = {
     "audio_patch_proj.weight", "audio_patch_proj.bias",
     "video_patch_proj.weight", "video_patch_proj.bias",
     "condition_proj.weight", "condition_proj.bias",
@@ -38,7 +39,7 @@ static const char *const external_names[YVEX_MINIMAX_H3_OMNI_EXTERNAL_WEIGHT_COU
     "final_layer.audio_out.weight", "final_layer.audio_out.bias",
 };
 
-static const char *const block_suffixes[YVEX_MINIMAX_H3_OMNI_BLOCK_WEIGHT_COUNT] = {
+static const char *const block_suffixes[YVEX_TRANSFORMER_JOINT_BLOCK_WEIGHT_COUNT] = {
     "norm1.weight", "attn.qkv_proj.weight", "attn.q_norm.weight", "attn.k_norm.weight",
     "attn.out_proj.weight", "norm2.weight", "mlp.fc1.weight", "mlp.fc2.weight",
     "adaln_proj.linear.weight", "adaln_proj.linear.bias",
@@ -72,24 +73,24 @@ static int weight_bind(yvex_minimax_h3_encoded_weight *weight,
 static int selected_weights_load(
     yvex_materialization_session *session, unsigned char **arena_out,
     unsigned long long *arena_bytes_out,
-    yvex_minimax_h3_encoded_weight external[YVEX_MINIMAX_H3_OMNI_EXTERNAL_WEIGHT_COUNT],
-    yvex_minimax_h3_encoded_weight blocks[YVEX_MINIMAX_H3_OMNI_BLOCK_WEIGHT_COUNT],
+    yvex_minimax_h3_encoded_weight external[YVEX_TRANSFORMER_JOINT_EXTERNAL_WEIGHT_COUNT],
+    yvex_minimax_h3_encoded_weight blocks[YVEX_TRANSFORMER_JOINT_BLOCK_WEIGHT_COUNT],
     char identity[65], yvex_error *err)
 {
     const yvex_materialized_tensor_binding *bindings[
-        YVEX_MINIMAX_H3_OMNI_EXTERNAL_WEIGHT_COUNT + YVEX_MINIMAX_H3_OMNI_BLOCK_WEIGHT_COUNT];
-    char block_names[YVEX_MINIMAX_H3_OMNI_BLOCK_WEIGHT_COUNT][96];
+        YVEX_TRANSFORMER_JOINT_EXTERNAL_WEIGHT_COUNT + YVEX_TRANSFORMER_JOINT_BLOCK_WEIGHT_COUNT];
+    char block_names[YVEX_TRANSFORMER_JOINT_BLOCK_WEIGHT_COUNT][96];
     yvex_materialization_failure failure;
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES], *arena;
     unsigned long long index, total = 0ull, cursor = 0ull;
-    for (index = 0ull; index < YVEX_MINIMAX_H3_OMNI_EXTERNAL_WEIGHT_COUNT; ++index)
+    for (index = 0ull; index < YVEX_TRANSFORMER_JOINT_EXTERNAL_WEIGHT_COUNT; ++index)
         bindings[index] = binding_find(session, external_names[index]);
-    for (index = 0ull; index < YVEX_MINIMAX_H3_OMNI_BLOCK_WEIGHT_COUNT; ++index) {
+    for (index = 0ull; index < YVEX_TRANSFORMER_JOINT_BLOCK_WEIGHT_COUNT; ++index) {
         int length = snprintf(block_names[index], sizeof(block_names[index]),
                               "blocks.0.%s", block_suffixes[index]);
         if (length < 0 || (size_t)length >= sizeof(block_names[index])) return YVEX_ERR_BOUNDS;
-        bindings[YVEX_MINIMAX_H3_OMNI_EXTERNAL_WEIGHT_COUNT + index] =
+        bindings[YVEX_TRANSFORMER_JOINT_EXTERNAL_WEIGHT_COUNT + index] =
             binding_find(session, block_names[index]);
     }
     for (index = 0ull; index < sizeof(bindings) / sizeof(bindings[0]); ++index)
@@ -116,9 +117,9 @@ static int selected_weights_load(
             !yvex_sha256_update_u64(&hash, binding->encoded_bytes) ||
             !yvex_sha256_update(&hash, arena + cursor, (size_t)binding->encoded_bytes))
             goto failed;
-        if (index < YVEX_MINIMAX_H3_OMNI_EXTERNAL_WEIGHT_COUNT) {
+        if (index < YVEX_TRANSFORMER_JOINT_EXTERNAL_WEIGHT_COUNT) {
             if (!weight_bind(external + index, binding, arena + cursor)) goto failed;
-        } else if (!weight_bind(blocks + index - YVEX_MINIMAX_H3_OMNI_EXTERNAL_WEIGHT_COUNT,
+        } else if (!weight_bind(blocks + index - YVEX_TRANSFORMER_JOINT_EXTERNAL_WEIGHT_COUNT,
                                 binding, arena + cursor)) goto failed;
         cursor += binding->encoded_bytes;
     }
@@ -192,7 +193,7 @@ static int compare(const char *name, const float *reference, const float *output
 }
 
 static int refusal_checks(
-    const yvex_minimax_h3_backend_api *family, yvex_backend *backend,
+    yvex_backend *backend,
     const yvex_minimax_h3_encoded_weight *external,
     const yvex_minimax_h3_encoded_weight *blocks, const char *identity,
     unsigned long long arena_bytes, const yvex_minimax_h3_omni_transformer_request *valid,
@@ -204,18 +205,18 @@ static int refusal_checks(
     float invalid_timestep[1] = {1.25f};
     int rc;
     request.text_indices = duplicate_text;
-    rc = family->omni_transformer_cuda(backend, external, blocks, identity, arena_bytes,
-                                       &request, &result, err);
+    rc = yvex_backend_transformer_joint_cuda(
+        backend, external, blocks, identity, arena_bytes, &request, &result, err);
     if (rc != YVEX_ERR_FORMAT || result.complete) return YVEX_ERR_STATE;
     request = *valid;
     request.timesteps = invalid_timestep;
-    rc = family->omni_transformer_cuda(backend, external, blocks, identity, arena_bytes,
-                                       &request, &result, err);
+    rc = yvex_backend_transformer_joint_cuda(
+        backend, external, blocks, identity, arena_bytes, &request, &result, err);
     if (rc != YVEX_ERR_FORMAT || result.complete) return YVEX_ERR_STATE;
     request = *valid;
     request.video_output_capacity--;
-    rc = family->omni_transformer_cuda(backend, external, blocks, identity, arena_bytes,
-                                       &request, &result, err);
+    rc = yvex_backend_transformer_joint_cuda(
+        backend, external, blocks, identity, arena_bytes, &request, &result, err);
     if (rc != YVEX_ERR_INVALID_ARG || result.complete) return YVEX_ERR_STATE;
     yvex_error_clear(err);
     return YVEX_OK;
@@ -227,15 +228,14 @@ static int execute(const yvex_artifact *artifact, const yvex_gguf *gguf,
                    yvex_minimax_h3_omni_transformer_result *result, yvex_error *err)
 {
     const yvex_minimax_h3_graph_api *graph = yvex_graph_register_minimax_h3();
-    const yvex_minimax_h3_backend_api *family = yvex_backend_register_minimax_h3();
     yvex_complete_artifact_admission admission;
     yvex_artifact_admission_failure admission_failure;
     yvex_materialization_options options;
     yvex_materialization_failure failure;
     yvex_materialization_plan *plan = NULL;
     yvex_materialization_session *session = NULL;
-    yvex_minimax_h3_encoded_weight external[YVEX_MINIMAX_H3_OMNI_EXTERNAL_WEIGHT_COUNT] = {{0}};
-    yvex_minimax_h3_encoded_weight blocks[YVEX_MINIMAX_H3_OMNI_BLOCK_WEIGHT_COUNT] = {{0}};
+    yvex_minimax_h3_encoded_weight external[YVEX_TRANSFORMER_JOINT_EXTERNAL_WEIGHT_COUNT] = {{0}};
+    yvex_minimax_h3_encoded_weight blocks[YVEX_TRANSFORMER_JOINT_BLOCK_WEIGHT_COUNT] = {{0}};
     yvex_backend_options backend_options = {0};
     yvex_backend_tensor_desc descriptor = {0};
     yvex_backend *backend = NULL;
@@ -245,8 +245,15 @@ static int execute(const yvex_artifact *artifact, const yvex_gguf *gguf,
     char identity[65] = {0};
     int attached = 0, rc, cleanup_rc;
     yvex_error cleanup;
-    rc = graph->component_admit("transformer", artifact, gguf, tensors,
-                                &admission, &admission_failure, err);
+    request->recipe = graph ? graph->omni_recipe() : NULL;
+    if (!graph || !request->recipe) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "minimax-h3.transformer-proof",
+                       "the admitted joint Transformer recipe is unavailable");
+        rc = YVEX_ERR_UNSUPPORTED;
+    } else {
+        rc = graph->component_admit(
+            "transformer", artifact, gguf, tensors, &admission, &admission_failure, err);
+    }
     yvex_materialization_options_default(&options);
     options.max_chunk_bytes = 64ull * 1024ull * 1024ull;
     if (rc == YVEX_OK) rc = yvex_materialization_plan_build(
@@ -265,18 +272,18 @@ static int execute(const yvex_artifact *artifact, const yvex_gguf *gguf,
     descriptor.dims[0] = descriptor.bytes = arena_bytes;
     registered = arena;
     if (rc == YVEX_OK)
-        rc = backend->vtable->resident_alloc(backend, &descriptor, &resident, &registered, err);
+        rc = yvex_backend_resident_alloc(backend, &descriptor, &resident, &registered, err);
     if (rc == YVEX_OK && registered != arena) rc = YVEX_ERR_STATE;
     if (rc == YVEX_OK) {
         rc = yvex_backend_resident_attach(backend, arena, arena_bytes, resident, 1ull, err);
         attached = rc == YVEX_OK;
     }
     if (rc == YVEX_OK)
-        rc = refusal_checks(family, backend, external, blocks, identity, arena_bytes,
+        rc = refusal_checks(backend, external, blocks, identity, arena_bytes,
                             request, err);
     if (rc == YVEX_OK)
-        rc = family->omni_transformer_cuda(backend, external, blocks, identity, arena_bytes,
-                                           request, result, err);
+        rc = yvex_backend_transformer_joint_cuda(
+            backend, external, blocks, identity, arena_bytes, request, result, err);
     if (attached) {
         yvex_error_clear(&cleanup);
         cleanup_rc = yvex_backend_resident_detach(backend, &cleanup);

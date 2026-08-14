@@ -6,12 +6,10 @@
  * delegates reusable coverage, transformation, lowering, and payload mechanisms.
  */
 #include <yvex/internal/families/deepseek_v4.h>
-
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/conversation.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/source.h>
-
 #include <errno.h>
 #include <limits.h>
 #include <math.h>
@@ -20,7 +18,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
 #define DEEPSEEK_V4_FLASH_MAIN_LAYERS 43ull
 #define DEEPSEEK_V4_FLASH_LEGACY_NEXTN_LAYERS 1ull
 #define DEEPSEEK_V4_FLASH_DSPARK_LAYERS 3ull
@@ -32,10 +29,6 @@
 #define DEEPSEEK_V4_MHC_SCALE_WIDTH 3ull
 #define DEEPSEEK_V4_MHC_POST_MULTIPLIER 2.0
 #define DEEPSEEK_V4_RUNTIME_NUMERIC_SCHEMA_VERSION 2u
-#define DEEPSEEK_V4_RUNTIME_FP8_ACT_BLOCK 64ull
-#define DEEPSEEK_V4_RUNTIME_FP4_ACT_BLOCK 32ull
-#define DEEPSEEK_V4_RUNTIME_TOPK_POLICY_VERSION 1u
-
 static const char deepseek_v4_paper_revision[] = "arXiv:2606.19348v1";
 static const char deepseek_v4_dspark_paper_revision[] = "arXiv:2607.05147v1";
 static const char deepseek_v4_deepspec_revision[] =
@@ -110,28 +103,32 @@ static const yvex_conversation_protocol deepseek_v4_conversation = {
     .tools_prefix = deepseek_v4_tools_prefix, .tools_suffix = deepseek_v4_tools_suffix,
     .response_format_prefix = deepseek_v4_response_format,
     .drop_prior_reasoning_by_default = 1, .tools_preserve_reasoning = 1,
-    .tool_results_merge_into_user = 1};
+    .tool_results_merge_into_user = 1,
+    .tokenizer_model = "gpt2", .tokenizer_pre = "deepseek-v3",
+    .tokenizer_json_identity = "8f9f37ca37fdc4f5fd36d5cf4d3b0e8392edb4e894fd10cc0d70b4957c8633cf",
+    .tokenizer_config_identity = "6ac8c8dc065ed118161d02dd532749ae3f52c243deac27872134fae2f50d8547",
+    .vocabulary_size = 129280ull, .base_vocabulary_size = 128000ull,
+    .merge_count = 127741ull, .added_token_count = 1283ull, .special_token_count = 1230ull,
+    .bos_token_id = 0u, .eos_token_id = 1u, .pad_token_id = 1u,
+    .bos_present = 1, .eos_present = 1, .pad_present = 1};
 
 const yvex_conversation_protocol *
-yvex_model_conversation_protocol_at(unsigned long long index)
+yvex_model_deepseek_v4_conversation(void)
 {
-    return index == 0u ? &deepseek_v4_conversation : NULL;
+    return &deepseek_v4_conversation;
 }
-
 /* Private lifecycle and diagnostic operations used before their definitions. */
 static void family_ir_close(yvex_deepseek_v4_ir *ir);
 static const char *family_ir_failure_name(
     yvex_deepseek_v4_ir_failure_code code);
 static const char *family_ir_component_name(
     yvex_deepseek_v4_ir_component component);
-
 struct yvex_deepseek_v4_ir {
     yvex_deepseek_v4_ir_allocator allocator;
     yvex_deepseek_v4_model_spec model;
     yvex_deepseek_v4_layer_spec *layers;
     yvex_deepseek_v4_auxiliary_spec *auxiliary;
 };
-
 typedef struct {
     double attention_dropout;
     double hc_epsilon;
@@ -674,7 +671,7 @@ static void deepseek_v4_fill_runtime_activation_fp8(
     policy->quantization =
         YVEX_ATTENTION_QUANT_FP8_E4M3_UE8M0_FAKE_DEQUANT;
     policy->block_axis = YVEX_ATTENTION_AXIS_FINAL_DIMENSION;
-    policy->block_width = DEEPSEEK_V4_RUNTIME_FP8_ACT_BLOCK;
+    policy->block_width = YVEX_DEEPSEEK_V4_RUNTIME_FP8_ACT_BLOCK;
     policy->scale_format = YVEX_ATTENTION_SCALE_UE8M0;
     policy->scale_dtype = YVEX_NATIVE_DTYPE_F8_E8M0;
     policy->pre_transform = YVEX_ATTENTION_TRANSFORM_NONE;
@@ -694,7 +691,7 @@ static void deepseek_v4_fill_runtime_activation_fp4_hadamard(
     policy->quantization =
         YVEX_ATTENTION_QUANT_FP4_E2M1_UE8M0_FAKE_DEQUANT;
     policy->block_axis = YVEX_ATTENTION_AXIS_FINAL_DIMENSION;
-    policy->block_width = DEEPSEEK_V4_RUNTIME_FP4_ACT_BLOCK;
+    policy->block_width = YVEX_DEEPSEEK_V4_RUNTIME_FP4_ACT_BLOCK;
     policy->scale_format = YVEX_ATTENTION_SCALE_UE8M0;
     policy->scale_dtype = YVEX_NATIVE_DTYPE_F8_E8M0;
     policy->pre_transform =
@@ -712,7 +709,7 @@ static void deepseek_v4_fill_sparse_topk(
 {
     memset(policy, 0, sizeof(*policy));
     policy->required = k != 0ull;
-    policy->version = DEEPSEEK_V4_RUNTIME_TOPK_POLICY_VERSION;
+    policy->version = YVEX_DEEPSEEK_V4_RUNTIME_TOPK_POLICY_VERSION;
     policy->policy =
         policy->required
             ? YVEX_ATTENTION_TOPK_SCORE_DESC_ORDINAL_ASC_V1
@@ -726,138 +723,36 @@ static void deepseek_v4_fill_sparse_topk(
     policy->output_ranked_order = 1;
 }
 
-static int deepseek_v4_validate_runtime_activation_policy(
-    const yvex_attention_activation_policy *policy,
-    yvex_deepseek_v4_ir_failure *failure,
-    unsigned long long layer_index,
-    const char *field,
-    yvex_error *err)
-{
-    if (!policy) {
-        return deepseek_v4_reject(
-            failure,
-            YVEX_DEEPSEEK_V4_IR_FAILURE_UNSUPPORTED_RUNTIME_NUMERIC,
-            YVEX_DEEPSEEK_V4_IR_COMPONENT_RUNTIME_NUMERIC,
-            field, layer_index, 1u, 0u, err);
-    }
-    if (!policy->required) {
-        if (policy->quantization !=
-                YVEX_ATTENTION_QUANT_NONE ||
-            policy->block_width != 0ull ||
-            policy->pre_transform !=
-                YVEX_ATTENTION_TRANSFORM_NONE) {
-            return deepseek_v4_reject(
-                failure,
-                YVEX_DEEPSEEK_V4_IR_FAILURE_UNSUPPORTED_RUNTIME_NUMERIC,
-                YVEX_DEEPSEEK_V4_IR_COMPONENT_RUNTIME_NUMERIC,
-                field, layer_index, 0u, 1u, err);
-        }
-        return YVEX_OK;
-    }
-    if (policy->block_axis !=
-            YVEX_ATTENTION_AXIS_FINAL_DIMENSION ||
-        policy->scale_format != YVEX_ATTENTION_SCALE_UE8M0 ||
-        policy->scale_dtype != YVEX_NATIVE_DTYPE_F8_E8M0 ||
-        policy->tail_policy !=
-            YVEX_ATTENTION_TAIL_EXACT_OR_SHORT_FINAL_BLOCK ||
-        policy->nonfinite_policy !=
-            YVEX_ATTENTION_NONFINITE_REFUSE ||
-        !policy->fake_quant_inplace) {
-        return deepseek_v4_reject(
-            failure,
-            YVEX_DEEPSEEK_V4_IR_FAILURE_UNSUPPORTED_RUNTIME_NUMERIC,
-            YVEX_DEEPSEEK_V4_IR_COMPONENT_RUNTIME_NUMERIC,
-            field, layer_index, 1u, 0u, err);
-    }
-    if (policy->quantization ==
-            YVEX_ATTENTION_QUANT_FP8_E4M3_UE8M0_FAKE_DEQUANT) {
-        if (policy->block_width != DEEPSEEK_V4_RUNTIME_FP8_ACT_BLOCK ||
-            policy->pre_transform !=
-                YVEX_ATTENTION_TRANSFORM_NONE) {
-            return deepseek_v4_reject(
-                failure,
-                YVEX_DEEPSEEK_V4_IR_FAILURE_UNSUPPORTED_RUNTIME_NUMERIC,
-                YVEX_DEEPSEEK_V4_IR_COMPONENT_RUNTIME_NUMERIC,
-                field, layer_index, DEEPSEEK_V4_RUNTIME_FP8_ACT_BLOCK,
-                policy->block_width, err);
-        }
-    } else if (policy->quantization ==
-               YVEX_ATTENTION_QUANT_FP4_E2M1_UE8M0_FAKE_DEQUANT) {
-        if (policy->block_width != DEEPSEEK_V4_RUNTIME_FP4_ACT_BLOCK ||
-            policy->pre_transform !=
-                YVEX_ATTENTION_TRANSFORM_DAO_FHT_V1_1_0_POST2 ||
-            !policy->zero_pad_hadamard_to_power_of_two) {
-            return deepseek_v4_reject(
-                failure,
-                YVEX_DEEPSEEK_V4_IR_FAILURE_UNSUPPORTED_RUNTIME_NUMERIC,
-                YVEX_DEEPSEEK_V4_IR_COMPONENT_RUNTIME_NUMERIC,
-                field, layer_index, DEEPSEEK_V4_RUNTIME_FP4_ACT_BLOCK,
-                policy->block_width, err);
-        }
-    } else {
-        return deepseek_v4_reject(
-            failure,
-            YVEX_DEEPSEEK_V4_IR_FAILURE_UNSUPPORTED_RUNTIME_NUMERIC,
-            YVEX_DEEPSEEK_V4_IR_COMPONENT_RUNTIME_NUMERIC,
-            field, layer_index, 1u, 0u, err);
-    }
-    return YVEX_OK;
-}
-
 static int deepseek_v4_validate_runtime_numeric_layer(
     const yvex_deepseek_v4_layer_spec *layer,
     yvex_deepseek_v4_ir_failure *failure,
     yvex_error *err)
 {
-    int rc;
+    static const char *const activation_fields[] = {
+        "attention-kv-activation", "compressor-activation",
+        "compressor-rotated-activation", "indexer-query-activation"};
+    const yvex_attention_activation_policy *policies[] = {
+        &layer->attention_kv_activation, &layer->compressor_activation,
+        &layer->compressor_rotated_activation, &layer->indexer_query_activation};
+    yvex_attention_numeric_mismatch mismatch;
+    const char *field = "attention-compute-contract";
 
-    if (layer->compute_contract !=
-        YVEX_ATTENTION_COMPUTE_BF16_F32_RNE_V1) {
-        return deepseek_v4_reject(
-            failure,
-            YVEX_DEEPSEEK_V4_IR_FAILURE_UNSUPPORTED_RUNTIME_NUMERIC,
-            YVEX_DEEPSEEK_V4_IR_COMPONENT_RUNTIME_NUMERIC,
-            "attention-compute-contract", layer->layer_index,
-            YVEX_ATTENTION_COMPUTE_BF16_F32_RNE_V1,
-            layer->compute_contract, err);
-    }
-
-    rc = deepseek_v4_validate_runtime_activation_policy(
-        &layer->attention_kv_activation, failure, layer->layer_index,
-        "attention-kv-activation", err);
-    if (rc != YVEX_OK) return rc;
-    rc = deepseek_v4_validate_runtime_activation_policy(
-        &layer->compressor_activation, failure, layer->layer_index,
-        "compressor-activation", err);
-    if (rc != YVEX_OK) return rc;
-    rc = deepseek_v4_validate_runtime_activation_policy(
-        &layer->compressor_rotated_activation, failure, layer->layer_index,
-        "compressor-rotated-activation", err);
-    if (rc != YVEX_OK) return rc;
-    rc = deepseek_v4_validate_runtime_activation_policy(
-        &layer->indexer_query_activation, failure, layer->layer_index,
-        "indexer-query-activation", err);
-    if (rc != YVEX_OK) return rc;
-    if (layer->sparse_topk.required) {
-        if (layer->sparse_topk.version !=
-                DEEPSEEK_V4_RUNTIME_TOPK_POLICY_VERSION ||
-            layer->sparse_topk.policy !=
-                YVEX_ATTENTION_TOPK_SCORE_DESC_ORDINAL_ASC_V1 ||
-            layer->sparse_topk.k == 0ull ||
-            !layer->sparse_topk.reject_nonfinite ||
-            !layer->sparse_topk.score_descending ||
-            !layer->sparse_topk.equal_score_ordinal_ascending ||
-            !layer->sparse_topk.plus_zero_equals_minus_zero ||
-            !layer->sparse_topk.duplicate_ordinal_refused ||
-            !layer->sparse_topk.output_ranked_order) {
-            return deepseek_v4_reject(
-                failure,
-                YVEX_DEEPSEEK_V4_IR_FAILURE_UNSUPPORTED_RUNTIME_NUMERIC,
-                YVEX_DEEPSEEK_V4_IR_COMPONENT_RUNTIME_NUMERIC,
-                "sparse-topk-policy", layer->layer_index, 1u, 0u, err);
-        }
-    }
-    return YVEX_OK;
+    if (yvex_model_attention_numeric_validate(
+            layer->compute_contract, YVEX_ATTENTION_COMPUTE_BF16_F32_RNE_V1,
+            policies, sizeof(policies) / sizeof(policies[0]), &layer->sparse_topk,
+            YVEX_DEEPSEEK_V4_RUNTIME_FP8_ACT_BLOCK,
+            YVEX_DEEPSEEK_V4_RUNTIME_FP4_ACT_BLOCK,
+            YVEX_DEEPSEEK_V4_RUNTIME_TOPK_POLICY_VERSION, &mismatch))
+        return YVEX_OK;
+    if (mismatch.code == YVEX_ATTENTION_NUMERIC_MISMATCH_ACTIVATION &&
+        mismatch.policy_index < sizeof(activation_fields) / sizeof(activation_fields[0]))
+        field = activation_fields[mismatch.policy_index];
+    else if (mismatch.code == YVEX_ATTENTION_NUMERIC_MISMATCH_TOPK)
+        field = "sparse-topk-policy";
+    return deepseek_v4_reject(
+        failure, YVEX_DEEPSEEK_V4_IR_FAILURE_UNSUPPORTED_RUNTIME_NUMERIC,
+        YVEX_DEEPSEEK_V4_IR_COMPONENT_RUNTIME_NUMERIC, field, layer->layer_index,
+        mismatch.expected, mismatch.actual, err);
 }
 
 static void deepseek_v4_fill_layer(
@@ -1301,6 +1196,282 @@ static const yvex_deepseek_v4_model_spec *family_ir_model(
     return ir ? &ir->model : NULL;
 }
 
+/* Logical-model identity is a family semantic projection, not Transform IR machinery. */
+static int architecture_hash_text(yvex_sha256 *hash, const char *text)
+{
+    size_t length;
+
+    if (!text) return 0;
+    length = strlen(text);
+    return yvex_sha256_update_u64_be(hash, (unsigned long long)length) &&
+           yvex_sha256_update(hash, text, length);
+}
+
+static int architecture_hash_double(yvex_sha256 *hash, double value)
+{
+    uint64_t bits;
+
+    memcpy(&bits, &value, sizeof(bits));
+    return yvex_sha256_update_u64_be(hash, bits);
+}
+
+#define HASH_U(object, field) \
+    yvex_sha256_update_u64_be(hash, (unsigned long long)(object)->field)
+#define HASH_F(object, field) architecture_hash_double(hash, (object)->field)
+#define HASH_T(object, field) architecture_hash_text(hash, (object)->field)
+
+static int architecture_hash_kv(yvex_sha256 *hash, const yvex_deepseek_v4_kv_spec *kv)
+{
+    return HASH_U(kv, class_id) && HASH_U(kv, compression_ratio) &&
+           HASH_U(kv, sliding_window) && HASH_U(kv, requires_state_cache) &&
+           HASH_U(kv, requires_uncompressed_tail) &&
+           HASH_U(kv, requires_compressed_core) && HASH_U(kv, requires_indexer_cache);
+}
+
+static int architecture_hash_mhc(yvex_sha256 *hash,
+                                 const yvex_deepseek_v4_mhc_spec *mhc,
+                                 int auxiliary_order)
+{
+    int common = HASH_U(mhc, residual_streams) && HASH_U(mhc, stream_width) &&
+                 HASH_U(mhc, expanded_width) && HASH_U(mhc, mixing_rows) &&
+                 HASH_U(mhc, mixing_columns) && HASH_U(mhc, base_width) &&
+                 HASH_U(mhc, scale_width) && HASH_U(mhc, sinkhorn_iterations);
+
+    if (!common) return 0;
+    if (auxiliary_order)
+        return HASH_F(mhc, epsilon) && HASH_F(mhc, residual_post_multiplier) &&
+               HASH_U(mhc, entry) && HASH_U(mhc, attention_pre_and_post) &&
+               HASH_U(mhc, ffn_pre_and_deferred_post);
+    return HASH_U(mhc, entry) && HASH_U(mhc, attention_pre_and_post) &&
+           HASH_U(mhc, ffn_pre_and_deferred_post) && HASH_F(mhc, epsilon) &&
+           HASH_F(mhc, residual_post_multiplier);
+}
+
+static int architecture_hash_moe(yvex_sha256 *hash,
+                                 const yvex_deepseek_v4_moe_spec *moe,
+                                 int auxiliary_order)
+{
+    if (auxiliary_order &&
+        !(HASH_U(moe, router_class) && HASH_U(moe, routed_experts) &&
+          HASH_U(moe, expert_intermediate_size) &&
+          HASH_U(moe, shared_intermediate_size)))
+        return 0;
+    if (!auxiliary_order &&
+        !(HASH_U(moe, router_class) && HASH_U(moe, scoring) &&
+          HASH_U(moe, topk_policy) && HASH_U(moe, activation) &&
+          HASH_U(moe, routed_experts)))
+        return 0;
+    if (auxiliary_order &&
+        !(HASH_U(moe, scoring) && HASH_U(moe, topk_policy) &&
+          HASH_U(moe, activation)))
+        return 0;
+    return HASH_U(moe, shared_experts) && HASH_U(moe, experts_per_token) &&
+           (!auxiliary_order ? HASH_U(moe, expert_intermediate_size) : 1) &&
+           (!auxiliary_order ? HASH_U(moe, shared_intermediate_size) : 1) &&
+           HASH_U(moe, hash_table_rows) && HASH_U(moe, hash_table_columns) &&
+           HASH_U(moe, correction_bias_width) && HASH_F(moe, routed_scaling_factor) &&
+           HASH_F(moe, activation_limit) && HASH_U(moe, requires_token_ids) &&
+           HASH_U(moe, requires_hidden_state) &&
+           HASH_U(moe, requires_correction_bias) &&
+           HASH_U(moe, normalize_topk_probabilities);
+}
+
+static int architecture_hash_tensors(
+    yvex_sha256 *hash, const yvex_deepseek_v4_attention_tensor_spec *tensor)
+{
+    return HASH_U(tensor, q_a_rows) && HASH_U(tensor, q_a_columns) &&
+           HASH_U(tensor, q_b_rows) && HASH_U(tensor, q_b_columns) &&
+           HASH_U(tensor, kv_rows) && HASH_U(tensor, kv_columns) &&
+           HASH_U(tensor, o_a_rows) && HASH_U(tensor, o_a_columns) &&
+           HASH_U(tensor, o_b_rows) && HASH_U(tensor, o_b_columns) &&
+           HASH_U(tensor, compressor_ape_rows) &&
+           HASH_U(tensor, compressor_ape_columns) &&
+           HASH_U(tensor, compressor_norm_width) &&
+           HASH_U(tensor, compressor_projection_rows) &&
+           HASH_U(tensor, compressor_projection_columns) &&
+           HASH_U(tensor, indexer_ape_rows) && HASH_U(tensor, indexer_ape_columns) &&
+           HASH_U(tensor, indexer_norm_width) &&
+           HASH_U(tensor, indexer_projection_rows) &&
+           HASH_U(tensor, indexer_projection_columns) &&
+           HASH_U(tensor, indexer_query_rows) &&
+           HASH_U(tensor, indexer_query_columns) &&
+           HASH_U(tensor, indexer_weight_rows) &&
+           HASH_U(tensor, indexer_weight_columns);
+}
+
+static int architecture_hash_layer_body(yvex_sha256 *hash,
+                                        const yvex_deepseek_v4_layer_spec *layer)
+{
+    return HASH_U(layer, compute_contract) && HASH_U(layer, compression_ratio) &&
+           HASH_U(layer, query_heads) && HASH_U(layer, kv_heads) &&
+           HASH_U(layer, head_dimension) && HASH_U(layer, rope_head_dimension) &&
+           HASH_U(layer, non_rope_head_dimension) && HASH_U(layer, query_lora_rank) &&
+           HASH_U(layer, output_lora_rank) && HASH_U(layer, output_groups) &&
+           HASH_U(layer, output_heads_per_group) &&
+           HASH_U(layer, output_group_input_width) && HASH_U(layer, indexer_heads) &&
+           HASH_U(layer, indexer_head_dimension) && HASH_U(layer, indexer_topk) &&
+           HASH_U(layer, attention_sink_count) && HASH_F(layer, attention_dropout) &&
+           HASH_U(layer, causal) && HASH_U(layer, attention_bias) &&
+           HASH_U(layer, query_norm_required) && HASH_U(layer, kv_norm_required) &&
+           HASH_U(layer, compressor_required) && HASH_U(layer, indexer_required);
+}
+
+static int architecture_hash_layer_tail(yvex_sha256 *hash,
+                                        const yvex_deepseek_v4_layer_spec *layer,
+                                        int auxiliary_order)
+{
+    return yvex_model_position_identity_update(hash, &layer->position) &&
+           architecture_hash_kv(hash, &layer->kv) &&
+           architecture_hash_mhc(hash, &layer->mhc, auxiliary_order) &&
+           architecture_hash_moe(hash, &layer->moe, auxiliary_order) &&
+           yvex_model_activation_identity_update(hash, &layer->attention_kv_activation) &&
+           yvex_model_activation_identity_update(hash, &layer->compressor_activation) &&
+           yvex_model_activation_identity_update(
+               hash, &layer->compressor_rotated_activation) &&
+           yvex_model_activation_identity_update(hash, &layer->indexer_query_activation) &&
+           yvex_model_topk_identity_update(hash, &layer->sparse_topk) &&
+           HASH_U(&layer->attention_input_norm, required) &&
+           HASH_U(&layer->attention_input_norm, width) &&
+           HASH_U(&layer->post_attention_ffn_norm, required) &&
+           HASH_U(&layer->post_attention_ffn_norm, width) &&
+           architecture_hash_tensors(hash, &layer->tensors) &&
+           HASH_F(layer, rms_norm_epsilon);
+}
+
+static int architecture_hash_main_layer(yvex_sha256 *hash,
+                                        const yvex_deepseek_v4_layer_spec *layer)
+{
+    return HASH_U(layer, layer_index) && HASH_U(layer, attention_class) &&
+           architecture_hash_layer_body(hash, layer) &&
+           architecture_hash_layer_tail(hash, layer, 0);
+}
+
+static int architecture_hash_mhc_head(
+    yvex_sha256 *hash, const yvex_deepseek_v4_mhc_head_spec *head)
+{
+    return HASH_U(head, required) && HASH_U(head, function_rows) &&
+           HASH_U(head, function_columns) && HASH_U(head, base_width) &&
+           HASH_U(head, scale_width);
+}
+
+static int architecture_hash_auxiliary(
+    yvex_sha256 *hash, const yvex_deepseek_v4_auxiliary_spec *aux)
+{
+    const yvex_deepseek_v4_layer_spec *layer = &aux->layer;
+
+    return HASH_U(aux, predictor_index) && HASH_U(layer, layer_index) &&
+           HASH_U(layer, attention_class) && architecture_hash_layer_body(hash, layer) &&
+           architecture_hash_layer_tail(hash, layer, 1) &&
+           HASH_U(aux, has_feature_projection) && HASH_U(aux, has_feature_norm) &&
+           HASH_U(aux, has_output_norm) && HASH_U(aux, feature_projection_input) &&
+           HASH_U(aux, feature_projection_output) && HASH_U(aux, feature_norm_width) &&
+           HASH_U(aux, output_norm_width) && HASH_U(aux, has_markov_head) &&
+           HASH_U(aux, markov_rank) && HASH_U(aux, markov_vocabulary_size) &&
+           HASH_U(aux, has_confidence_head) && HASH_U(aux, confidence_input_width) &&
+           HASH_U(aux, confidence_output_width) && HASH_U(aux, has_separate_mhc_head) &&
+           architecture_hash_mhc_head(hash, &aux->mhc_head) &&
+           HASH_U(aux, shares_embedding) && HASH_U(aux, shares_output_head);
+}
+
+static int architecture_hash_dspark(yvex_sha256 *hash,
+                                    const yvex_deepseek_v4_dspark_spec *dspark)
+{
+    unsigned long long index;
+
+    if (!(HASH_U(dspark, present) && HASH_U(dspark, schema_version) &&
+          HASH_U(dspark, block_size) && HASH_U(dspark, noise_token_id) &&
+          HASH_U(dspark, target_layer_count) && HASH_U(dspark, target_feature_width) &&
+          HASH_U(dspark, concatenated_feature_width) &&
+          HASH_U(dspark, draft_layer_count) && HASH_U(dspark, markov_rank) &&
+          HASH_U(dspark, final_draft_layer) &&
+          HASH_U(dspark, parallel_block_backbone) && HASH_U(dspark, sequential_markov) &&
+          HASH_U(dspark, confidence_available) && HASH_U(dspark, shares_embedding) &&
+          HASH_U(dspark, shares_output_head) &&
+          HASH_U(dspark, target_verification_required) &&
+          HASH_U(dspark, accepted_prefix_maximum)))
+        return 0;
+    for (index = 0u; index < dspark->target_layer_count; ++index)
+        if (!yvex_sha256_update_u64_be(hash, dspark->target_layer_ids[index])) return 0;
+    return 1;
+}
+
+static int architecture_hash_model(yvex_sha256 *hash,
+                                   const yvex_deepseek_v4_model_spec *model)
+{
+    return HASH_T(model, target_id) && HASH_T(model, family) &&
+           HASH_T(model, architecture) && HASH_T(model, repository) &&
+           HASH_T(model, revision) && HASH_T(model, paper_revision) &&
+           HASH_T(model, dspark_paper_revision) && HASH_T(model, deepspec_revision) &&
+           HASH_T(model, sglang_revision) && HASH_T(model, vllm_revision) &&
+           HASH_T(model, hadamard_revision) &&
+           HASH_U(model, runtime_numeric_schema_version) &&
+           HASH_U(model, runtime_compute_policy_count) &&
+           HASH_U(model, runtime_activation_policy_count) &&
+           HASH_U(model, runtime_sparse_topk_policy_count) && HASH_U(model, hidden_size) &&
+           HASH_U(model, vocabulary_size) && HASH_U(model, maximum_context) &&
+           HASH_U(model, main_layer_count) && HASH_U(model, auxiliary_layer_count) &&
+           HASH_U(&model->embedding, required) &&
+           HASH_U(&model->embedding, vocabulary_size) &&
+           HASH_U(&model->embedding, hidden_size) && HASH_U(&model->output, required) &&
+           HASH_U(&model->output, tied_to_embedding) &&
+           HASH_U(&model->output, input_width) &&
+           HASH_U(&model->output, vocabulary_size) &&
+           HASH_U(&model->source_constraint, weight_dtype) &&
+           HASH_U(&model->source_constraint, expert_dtype) &&
+           HASH_U(&model->source_constraint, quantization) &&
+           HASH_U(&model->source_constraint, quant_block_rows) &&
+           HASH_U(&model->source_constraint, quant_block_columns) &&
+           HASH_U(&model->source_constraint, fp4_packing_factor) &&
+           HASH_U(&model->source_constraint, fp4_scale_group_width) &&
+           HASH_U(&model->source_constraint, fp4_physical_dtype) &&
+           HASH_U(&model->source_constraint, scale_dtype) &&
+           architecture_hash_dspark(hash, &model->dspark) &&
+           HASH_T(&model->tokenizer, tokenizer_class) &&
+           HASH_T(&model->tokenizer, model_type) &&
+           HASH_U(&model->tokenizer, vocabulary_size) &&
+           HASH_U(&model->tokenizer, base_vocab_entries) &&
+           HASH_U(&model->tokenizer, added_token_entries) &&
+           HASH_U(&model->tokenizer, maximum_token_id) &&
+           HASH_U(&model->tokenizer, maximum_context) &&
+           HASH_U(&model->tokenizer, bos_token_id) &&
+           HASH_U(&model->tokenizer, eos_token_id) &&
+           HASH_U(&model->tokenizer, bos_required) &&
+           HASH_U(&model->tokenizer, eos_required) &&
+           architecture_hash_mhc(hash, &model->final_mhc, 1) &&
+           architecture_hash_mhc_head(hash, &model->final_mhc_head) &&
+           HASH_F(model, final_norm_epsilon) && HASH_U(model, use_cache) &&
+           HASH_U(model, final_mhc_post_required) &&
+           HASH_U(model, final_mhc_head_required) &&
+           HASH_U(model, final_norm_after_mhc_head);
+}
+
+int yvex_transform_deepseek_architecture_identity(
+    const yvex_deepseek_v4_ir *architecture,
+    char output[YVEX_TRANSFORM_IR_IDENTITY_CAP])
+{
+    static const char domain[] = "yvex.logical-model.deepseek-v4-flash-dspark.v2";
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    yvex_sha256 hash;
+    unsigned long long index;
+
+    if (!architecture || !output) return 0;
+    yvex_sha256_init(&hash);
+    if (!architecture_hash_text(&hash, domain) ||
+        !architecture_hash_model(&hash, &architecture->model))
+        return 0;
+    for (index = 0u; index < architecture->model.main_layer_count; ++index)
+        if (!architecture_hash_main_layer(&hash, &architecture->layers[index])) return 0;
+    for (index = 0u; index < architecture->model.auxiliary_layer_count; ++index)
+        if (!architecture_hash_auxiliary(&hash, &architecture->auxiliary[index])) return 0;
+    if (!yvex_sha256_final(&hash, digest)) return 0;
+    yvex_sha256_hex(digest, output);
+    return 1;
+}
+
+#undef HASH_U
+#undef HASH_F
+#undef HASH_T
+
 static int deepseek_execution_hash_finish(
     yvex_sha256 *hash, char output[YVEX_MODEL_EXECUTION_IDENTITY_CAP])
 {
@@ -1560,17 +1731,6 @@ static const char *family_ir_component_name(
     }
 }
 
-static const char *family_attention_name(
-    yvex_attention_class class_id)
-{
-    switch (class_id) {
-    case YVEX_ATTENTION_CLASS_SWA: return "swa";
-    case YVEX_ATTENTION_CLASS_CSA: return "csa";
-    case YVEX_ATTENTION_CLASS_HCA: return "hca";
-    default: return "unknown";
-    }
-}
-
 static const char *family_kv_name(yvex_deepseek_v4_kv_class class_id)
 {
     switch (class_id) {
@@ -1613,59 +1773,6 @@ static const char *family_source_quantization_name(
                    YVEX_DEEPSEEK_V4_SOURCE_QUANT_FP8_E4M3_UE8M0_DYNAMIC
                ? "fp8-e4m3-ue8m0-dynamic"
                : "unknown";
-}
-
-static const char *family_activation_stage_name(
-    yvex_attention_activation_stage stage)
-{
-    switch (stage) {
-    case YVEX_ATTENTION_ACTIVATION_NONE: return "none";
-    case YVEX_ATTENTION_ACTIVATION_KV_NON_ROPE:
-        return "attention-kv-non-rope";
-    case YVEX_ATTENTION_ACTIVATION_COMPRESSOR_NON_ROTATED:
-        return "compressor-non-rotated";
-    case YVEX_ATTENTION_ACTIVATION_COMPRESSOR_ROTATED:
-        return "compressor-rotated";
-    case YVEX_ATTENTION_ACTIVATION_INDEXER_QUERY_ROTATED:
-        return "indexer-query-rotated";
-    }
-    return "unknown";
-}
-
-static const char *family_activation_quantization_name(
-    yvex_attention_quantization quantization)
-{
-    switch (quantization) {
-    case YVEX_ATTENTION_QUANT_NONE:
-        return "none";
-    case YVEX_ATTENTION_QUANT_FP8_E4M3_UE8M0_FAKE_DEQUANT:
-        return "fp8-e4m3-ue8m0-fake-dequant";
-    case YVEX_ATTENTION_QUANT_FP4_E2M1_UE8M0_FAKE_DEQUANT:
-        return "fp4-e2m1-ue8m0-fake-dequant";
-    }
-    return "unknown";
-}
-
-static const char *family_runtime_transform_name(
-    yvex_attention_transform transform)
-{
-    switch (transform) {
-    case YVEX_ATTENTION_TRANSFORM_NONE: return "none";
-    case YVEX_ATTENTION_TRANSFORM_DAO_FHT_V1_1_0_POST2:
-        return "dao-fast-hadamard-transform-v1.1.0.post2";
-    }
-    return "unknown";
-}
-
-static const char *family_sparse_topk_policy_name(
-    yvex_attention_topk_policy_id policy)
-{
-    switch (policy) {
-    case YVEX_ATTENTION_TOPK_NONE: return "none";
-    case YVEX_ATTENTION_TOPK_SCORE_DESC_ORDINAL_ASC_V1:
-        return "yvex-score-desc-ordinal-asc-v1";
-    }
-    return "unknown";
 }
 
 /* One table drives both exact source coverage and artifact-neutral terminals. */
@@ -1838,52 +1945,6 @@ static unsigned long long recipe_dimension(const yvex_deepseek_tensor_recipe *re
     return value;
 }
 
-static int materialization_terminal_find(const void *context, const char *emitted_name,
-                                         yvex_materialization_terminal *out)
-{
-    const yvex_model_family_lowering_api *lowering = yvex_model_deepseek_lowering_api();
-    const yvex_deepseek_gguf_map *map = (const yvex_deepseek_gguf_map *)context;
-    const yvex_deepseek_gguf_descriptor *descriptor;
-    const yvex_deepseek_gguf_descriptor *first;
-
-    if (!map || !emitted_name || !out || !lowering) return 0;
-    descriptor = lowering->find_emitted(map, emitted_name);
-    first = lowering->at(map, 0ull);
-    if (!descriptor || !first) return 0;
-    memset(out, 0, sizeof(*out));
-    out->descriptor_index = (unsigned long long)(descriptor - first);
-    out->role = descriptor->role;
-    out->collection = descriptor->collection;
-    out->scope = descriptor->scope;
-    out->layer_index = descriptor->layer_index;
-    out->predictor_index = descriptor->predictor_index;
-    out->expert_count = descriptor->expert_count;
-    return 1;
-}
-
-int yvex_deepseek_materialization_projection(const yvex_deepseek_gguf_map *map,
-                                             yvex_materialization_projection *out,
-                                             yvex_error *err)
-{
-    const yvex_model_family_lowering_api *lowering = yvex_model_deepseek_lowering_api();
-    const yvex_deepseek_gguf_map_summary *summary = map && lowering ? lowering->summary(map) : NULL;
-
-    if (!out || !summary || !summary->complete || !summary->mapping_identity) {
-        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "model.deepseek.materialization",
-                       "complete family lowering is required for terminal projection");
-        return YVEX_ERR_INVALID_ARG;
-    }
-    memset(out, 0, sizeof(*out));
-    out->schema_version = YVEX_MATERIALIZATION_PROJECTION_SCHEMA_VERSION;
-    out->mapping_identity = summary->mapping_identity;
-    out->descriptor_count = summary->descriptor_count;
-    out->context = map;
-    out->find = materialization_terminal_find;
-    out->complete = 1;
-    yvex_error_clear(err);
-    return YVEX_OK;
-}
-
 /*
  * Assemble and publish the single immutable DeepSeek family ABI from the family recipe and the
  * generic lowering/binding owner projections.
@@ -1908,16 +1969,11 @@ const yvex_model_family_api *yvex_model_register_deepseek_v4(void)
             family_ir_auxiliary_at,
             family_ir_failure_name,
             family_ir_component_name,
-            family_attention_name,
             family_kv_name,
             family_router_name,
             family_source_weight_dtype_name,
             family_source_expert_dtype_name,
             family_source_quantization_name,
-            family_activation_stage_name,
-            family_activation_quantization_name,
-            family_runtime_transform_name,
-            family_sparse_topk_policy_name,
             family_recipe_count,
             family_recipe_at,
             recipe_enabled,
@@ -1931,7 +1987,6 @@ const yvex_model_family_api *yvex_model_register_deepseek_v4(void)
         while (atomic_flag_test_and_set_explicit(&lock, memory_order_acquire)) {
         }
         if (!atomic_load_explicit(&ready, memory_order_relaxed)) {
-            api.coverage = *yvex_model_deepseek_coverage_api();
             api.transform = *yvex_model_deepseek_transform_api();
             api.lowering = *yvex_model_deepseek_lowering_api();
             api.payload = *yvex_model_deepseek_payload_api();

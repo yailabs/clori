@@ -21,23 +21,39 @@ fail() {
 family_compare_pattern='(strcmp|strncmp|strcasecmp|strncasecmp|strstr|strcasestr)'
 family_name_pattern='(deepseek|qwen|gemma|llama|kimi|mamba)'
 family_branch_pattern="(${family_compare_pattern}[^;]*${family_name_pattern}|${family_name_pattern}[^;]*${family_compare_pattern})"
+generic_family_symbol_pattern='\b(deepseek|minimax|qwen|gemma|llama|kimi|mamba)[A-Za-z0-9_]*\b'
 runtime_planning_include_pattern='#include[[:space:]]+[<"]yvex/internal/(compilation|source|source_payload|gguf_writer)[.]h[>"]'
 runtime_planning_call_pattern='yvex_(source_payload_[A-Za-z0-9_]*|transform_[A-Za-z0-9_]*|quant_plan_[A-Za-z0-9_]*|gguf_writer_[A-Za-z0-9_]*)[[:space:]]*\('
 runtime_planning_symbol_pattern='^yvex_(source_payload_[A-Za-z0-9_]*|transform_[A-Za-z0-9_]*|quant_plan_[A-Za-z0-9_]*|gguf_writer_[A-Za-z0-9_]*)$'
+execution_topology_build_pattern='yvex_(physical_execution_ir_build|compiled_model_plan_build|moe_plan_build|transformer_plan_compile|output_head_plan_build)[[:space:]]*\('
+runtime_family_dispatch_pattern='(yvex_runtime_family_adapter|[.]adapter->graph|'
+runtime_family_dispatch_pattern="${runtime_family_dispatch_pattern}"'[.]adapter[[:space:]]*=|'
+runtime_family_dispatch_pattern="${runtime_family_dispatch_pattern}"'yvex_graph_execution_(find|at)[[:space:]]*\()'
 fallback_ptx_pattern='(fallback_ptx|ptx_fallback|"[[:space:]]*[.]version[[:space:]]+[0-9])'
 cuda_cpu_fallback_pattern='(cpu_chunk_execute|rolling_state_step_cpu|yvex_backend_open_cpu(_impl)?|yvex_quant_cpu_[A-Za-z0-9_]*|yvex_attention_[A-Za-z0-9_]*_cpu)[[:space:]]*\('
 deprecated_digest_hash_pattern='yvex_sha256_[A-Za-z0-9_]*[[:space:]]*\([^;]*\boutput_digest\b'
 backend_digest_alias_pattern='\boutput_digest\b[^;]*\b(cpu_output_digest|cuda_output_digest)\b|\b(cpu_output_digest|cuda_output_digest)\b[^;]*\boutput_digest\b'
 cli_family_helper_pattern='yvex_(source_is_release_target|model_register_deepseek_v4)[[:space:]]*\('
-cli_family_abi_pattern='(#include[[:space:]]+[<"]yvex/internal/families/|yvex_[A-Za-z0-9_]*(deepseek|qwen|gemma|llama|kimi|mamba)[A-Za-z0-9_]*|YVEX_[A-Z0-9_]*(DEEPSEEK|QWEN|GEMMA|LLAMA|KIMI|MAMBA)[A-Z0-9_]*)'
+cli_family_abi_pattern='(#include[[:space:]]+[<"]yvex/internal/families/|yvex_[A-Za-z0-9_]*(deepseek|minimax|qwen|gemma|llama|kimi|mamba)[A-Za-z0-9_]*|YVEX_[A-Z0-9_]*(DEEPSEEK|MINIMAX|QWEN|GEMMA|LLAMA|KIMI|MAMBA)[A-Z0-9_]*)'
+cli_family_representation_pattern='(#include[[:space:]]+[<"]yvex/internal/families/|yvex_[A-Za-z0-9_]*(deepseek|minimax)[A-Za-z0-9_]*|YVEX_[A-Z0-9_]*(DEEPSEEK|MINIMAX)[A-Z0-9_]*)'
 cli_preparation_call_pattern='yvex_(source_payload_[A-Za-z0-9_]*|transform_[A-Za-z0-9_]*|quant_plan_[A-Za-z0-9_]*|gguf_writer_[A-Za-z0-9_]*|materialization_(plan|session)_[A-Za-z0-9_]*|runtime_descriptor_build[A-Za-z0-9_]*|artifact_physical_compatibility_[A-Za-z0-9_]*)[[:space:]]*\('
-family_preparation_callback_pattern='^static[[:space:]]+int[[:space:]]+prepare_deepseek_runtime_binding[[:space:]]*\('
 family_preparation_leak_pattern='(yvex_(model_register_deepseek_v4|graph_lower_deepseek_v4|artifact_admit_deepseek|runtime_descriptor_build_deepseek|quant_plan_build_deepseek_profile)[[:space:]]*\(|YVEX_SELECTED_DEEPSEEK_ARTIFACT_FILENAME)'
 cli_runtime_lifecycle_pattern='yvex_runtime_(model_(open|close|summary_copy|view_get)|session_(open|close|summary_copy|view_get)|residency_(prepare|close|snapshot|invalidate))[[:space:]]*\('
 recursive_cleanup_pattern='(^|[;&|()[:space:]])(command[[:space:]]+)?r'\
 'm[[:space:]]+([^#;]*[[:space:]])?(-[[:alpha:]]*[rR][[:alpha:]]*|--recursive)([[:space:]]|$)'
 recursive_cleanup_call_pattern='(system|popen)[[:space:]]*\([^;]*(rm[[:space:]]+-[[:alpha:]]*[rR]|rm[[:space:]]+--recursive)'
 conversation_literal_pattern='(<think>|</think>|｜DSML｜|<tool_result>|<｜(User|Assistant|latest_reminder)｜>)'
+family_runtime_context_pattern='(context_capacity|requested_session_context|admitted_execution_maximum|'
+family_runtime_context_pattern="${family_runtime_context_pattern}"'per_(session|request)_maximum|physical_state_pool_tokens)'
+implicit_physical_envelope_pattern='decision->(supported_width_mask[[:space:]]*=[[:space:]]*0x|maximum_context[[:space:]]*=[[:space:]]*ULLONG_MAX)'
+moe_family_registry_pattern='yvex_graph_moe_family_(at|find)[[:space:]]*\('
+conversation_family_registry_pattern='yvex_model_conversation_protocol_(at|find)[[:space:]]*\('
+legacy_resolution_boolean_pattern='(host_stochastic_reference|token_local_moe_reference|eager_attention_reference)'
+backend_representation_pattern='\bbackend->(vtable|virtual_tensor_ready|state_residency_generation|resident_host_base|workspace_device_tensor)'
+family_transform_builder_pattern='yvex_transform_builder_(create|add_source|declare_value|add_node|seal|release)[[:space:]]*\('
+generic_family_operator_lowering_pattern='yvex_operator_graph_ir_build_transformer[[:space:]]*\('
+legacy_family_lowering_representation_pattern='yvex_deepseek_gguf_(map(_failure|_allocator|_summary)?|descriptor|contribution|metadata|transform)\b|YVEX_DEEPSEEK_GGUF_(MAP|TRANSFORM|CONTRIBUTION|METADATA)_'
+source_compilation_lifecycle_pattern='yvex_(source_verify_with_snapshot|source_payload_session_open|transform_binding_create|transform_binding_payload_plan_build)[[:space:]]*\('
 
 # Every expression used as a hard gate carries positive and negative probes.
 # This catches regex drift before a repository scan can produce false comfort.
@@ -82,6 +98,47 @@ if printf '%s\n' 'conversation->thinking_start' |
     rg "$conversation_literal_pattern" >/dev/null; then
     fail "conversation-literal guard rejects a typed family fact"
 fi
+printf '%s\n' 'options.context_capacity = 4096;' |
+    rg "$family_runtime_context_pattern" >/dev/null ||
+    fail "family context-capacity guard misses a runtime-selected capacity"
+if printf '%s\n' 'model.maximum_context = 1048576;' |
+    rg "$family_runtime_context_pattern" >/dev/null; then
+    fail "family context-capacity guard rejects a semantic model maximum"
+fi
+printf '%s\n' 'decision->maximum_context = ULLONG_MAX;' |
+    rg "$implicit_physical_envelope_pattern" >/dev/null ||
+    fail "physical-envelope guard misses an implicit unbounded context"
+if printf '%s\n' 'decision->maximum_context = model->maximum_context;' |
+    rg "$implicit_physical_envelope_pattern" >/dev/null; then
+    fail "physical-envelope guard rejects a semantic model bound"
+fi
+printf '%s\n' 'yvex_deepseek_gguf_map_failure failure;' |
+    rg "$legacy_family_lowering_representation_pattern" >/dev/null ||
+    fail "artifact-lowering ownership guard misses a concrete family representation"
+if printf '%s\n' 'YVEX_DEEPSEEK_GGUF_MAPPING_IDENTITY' |
+    rg "$legacy_family_lowering_representation_pattern" >/dev/null; then
+    fail "artifact-lowering ownership guard rejects a family mapping identity"
+fi
+printf '%s\n' 'yvex_source_payload_session_open(&session, &options, &failure, &err);' |
+    rg "$source_compilation_lifecycle_pattern" >/dev/null ||
+    fail "source-compilation guard misses a family-owned payload lifecycle"
+if printf '%s\n' 'projection->lower(&transform, &lowering, verification, snapshot, &failure, &err);' |
+    rg "$source_compilation_lifecycle_pattern" >/dev/null; then
+    fail "source-compilation guard rejects typed family lowering"
+fi
+printf '%s\n' 'profile.eager_attention_reference = 1;' |
+    rg "$legacy_resolution_boolean_pattern" >/dev/null ||
+    fail "capability-resolution guard misses a legacy fallback boolean"
+if printf '%s\n' 'profile.attention_resolution = YVEX_EXECUTION_RESOLUTION_EXACT;' |
+    rg "$legacy_resolution_boolean_pattern" >/dev/null; then
+    fail "capability-resolution guard rejects a typed resolution"
+fi
+printf '%s\n' 'yvex_graph_moe_family_at(index);' |
+    rg "$moe_family_registry_pattern" >/dev/null ||
+    fail "MoE family-registry guard misses a global compiler-policy lookup"
+printf '%s\n' 'yvex_model_conversation_protocol_at(index);' |
+    rg "$conversation_family_registry_pattern" >/dev/null ||
+    fail "conversation guard misses a global family-policy lookup"
 printf '%s\n' '#include <yvex/internal/source_payload.h>' |
     rg "$runtime_planning_include_pattern" >/dev/null ||
     fail "runtime planning-dependency guard misses source payload ownership"
@@ -92,12 +149,57 @@ if printf '%s\n' 'yvex_quant_f16_decode(bits);' |
     rg "$runtime_planning_call_pattern" >/dev/null; then
     fail "runtime planning-dependency guard rejects the canonical scalar codec"
 fi
+printf '%s\n' 'yvex_compiled_model_plan_build(&plan, &request, &err);' |
+    rg "$execution_topology_build_pattern" >/dev/null ||
+    fail "execution-topology guard misses compiled plan construction"
+if printf '%s\n' 'yvex_compiled_model_plan_decode(&plan, bytes, count, &err);' |
+    rg "$execution_topology_build_pattern" >/dev/null; then
+    fail "execution-topology guard rejects compiled plan import"
+fi
 printf '%s\n' 'yvex_gguf_writer_plan_release' |
     rg "$runtime_planning_symbol_pattern" >/dev/null ||
     fail "runtime link-dependency guard misses a writer-planning symbol"
 if printf '%s\n' 'yvex_quant_f16_decode' |
     rg "$runtime_planning_symbol_pattern" >/dev/null; then
     fail "runtime link-dependency guard rejects the canonical scalar codec"
+fi
+printf '%s\n' 'model.adapter->graph();' |
+    rg "$runtime_family_dispatch_pattern" >/dev/null ||
+    fail "runtime family-dispatch guard misses a concrete adapter callback"
+printf '%s\n' 'yvex_graph_execution_find(0, 0, target);' |
+    rg "$runtime_family_dispatch_pattern" >/dev/null ||
+    fail "runtime family-dispatch guard misses a concrete execution registry lookup"
+if printf '%s\n' 'model.graph;' |
+    rg "$runtime_family_dispatch_pattern" >/dev/null; then
+    fail "runtime family-dispatch guard rejects the generic graph capability"
+fi
+printf '%s\n' 'backend->vtable->tensor_alloc(backend);' |
+    rg -- "$backend_representation_pattern" >/dev/null ||
+    fail "backend-encapsulation guard misses concrete dispatch state"
+if printf '%s\n' 'yvex_backend_tensor_alloc(backend, &desc, &tensor, &err);' |
+    rg -- "$backend_representation_pattern" >/dev/null; then
+    fail "backend-encapsulation guard rejects a typed backend operation"
+fi
+printf '%s\n' 'yvex_transform_builder_seal(builder, &ir, &failure, &err);' |
+    rg "$family_transform_builder_pattern" >/dev/null ||
+    fail "family transform guard misses direct mutable builder ownership"
+if printf '%s\n' 'yvex_transform_recipe_sink_add(sink, &recipe, &failure, &err);' |
+    rg "$family_transform_builder_pattern" >/dev/null; then
+    fail "family transform guard rejects the semantic recipe projection"
+fi
+printf '%s\n' 'yvex_operator_graph_ir_build_transformer(&graph, semantic, descriptor, target, draft, &err);' |
+    rg "$generic_family_operator_lowering_pattern" >/dev/null ||
+    fail "family operator-lowering guard misses direct generic compiler composition"
+if printf '%s\n' 'adapter->operator_graph_build(&graph, semantic, descriptor, target, draft, &err);' |
+    rg "$generic_family_operator_lowering_pattern" >/dev/null; then
+    fail "family operator-lowering guard rejects typed family composition"
+fi
+printf '%s\n' 'CUfunction deepseek_decode_function;' |
+    rg -i "$generic_family_symbol_pattern" >/dev/null ||
+    fail "generic backend family-symbol guard misses a concrete kernel handle"
+if printf '%s\n' 'CUfunction encoded_row_decode_function;' |
+    rg -i "$generic_family_symbol_pattern" >/dev/null; then
+    fail "generic backend family-symbol guard rejects an operation-named kernel handle"
 fi
 printf '%s\n' 'static const char fallback_ptx[] = ".version 8.0";' |
     rg -i "$fallback_ptx_pattern" >/dev/null ||
@@ -145,16 +247,25 @@ if find src/runtime -type f \( -name '*deepseek*' -o -name '*qwen*' -o -name '*g
     fail "runtime contains a concrete family source"
 fi
 
-# A family may project facts at three irreducible boundaries: model intake,
-# graph composition, and a fused backend lowering. These same-basename files
-# are distinct owners; any fourth DeepSeek implementation would instead create
-# the parallel family runtime that this DAG forbids.
+# A family projects facts only at boundaries where generic operations cannot
+# express its semantics. DeepSeek now terminates at model intake and graph
+# composition; its encoded-attention request is complete enough for the common
+# CUDA operation, so retaining a family backend would duplicate that mechanism.
 deepseek_family_sources=$(find src -path '*/families/deepseek_v4.c' -type f | sort)
-expected_deepseek_family_sources='src/backend/cuda/families/deepseek_v4.c
-src/graph/families/deepseek_v4.c
+expected_deepseek_family_sources='src/graph/families/deepseek_v4.c
 src/model/families/deepseek_v4.c'
 [ "$deepseek_family_sources" = "$expected_deepseek_family_sources" ] ||
-    fail "DeepSeek must have exactly model, graph, and fused-CUDA family projections"
+    fail "DeepSeek must terminate at its model and graph family projections"
+if rg -n 'yvex_graph_execution_find[[:space:]]*\(' src/graph/families; then
+    fail "a family projection owns the common execution catalog lookup"
+fi
+if rg -n 'yvex_graph_component_variant_find[[:space:]]*\(' src/graph/families; then
+    fail "a family projection owns the common component catalog lookup"
+fi
+rg -n 'yvex_graph_deepseek_v4_execution_binding' src/graph/catalog.c >/dev/null ||
+    fail "graph catalog no longer composes the DeepSeek execution binding"
+rg -n 'yvex_graph_minimax_h3_component_adapter' src/graph/catalog.c >/dev/null ||
+    fail "graph catalog no longer composes the MiniMax component adapter"
 while IFS= read -r source; do
     awk -F '\t' -v source="$source" '$1 == source && $4 == "family" { found = 1 } END { exit !found }' \
         config/source_owners.tsv ||
@@ -162,12 +273,100 @@ while IFS= read -r source; do
 done <<EOF
 $expected_deepseek_family_sources
 EOF
+if rg -n -i '(families/|deepseek|minimax)' src/backend/cuda/attention.c; then
+    fail "generic CUDA attention execution contains concrete family semantics"
+fi
+
+# MiniMax retains source interpretation and irreducible graph composition. Its
+# dense text stack is now a compiled generic backend operation rather than a
+# third family projection that owns execution resource mechanics.
+minimax_family_sources=$(find src -path '*/families/minimax_h3.c' -type f | sort)
+expected_minimax_family_sources='src/graph/families/minimax_h3.c
+src/model/families/minimax_h3.c'
+[ "$minimax_family_sources" = "$expected_minimax_family_sources" ] ||
+    fail "MiniMax must terminate at its model and graph family projections"
+if rg -n -i '(families/|deepseek|minimax|qwen)' src/backend/cuda/text_encoder.c; then
+    fail "generic CUDA text execution contains concrete family semantics"
+fi
 
 if find src include -type f \( -name '*.c' -o -name '*.h' -o -name '*.cu' \) \
         ! -path 'src/model/families/*' -print0 |
     xargs -0 rg -n "$conversation_literal_pattern"; then
     fail "source-authored conversation literal escaped the model-family projection"
 fi
+
+if find src -path '*/families/*' -type f \
+        \( -name '*.c' -o -name '*.h' -o -name '*.cu' \) -print0 |
+    xargs -0 rg -n "$family_runtime_context_pattern"; then
+    fail "a family projection owns runtime-selected context capacity"
+fi
+
+if rg -n "$legacy_resolution_boolean_pattern" src include; then
+    fail "an execution owner retains an untyped fallback boolean"
+fi
+if rg -n 'YVEX_EXECUTION_RESOLUTION_' src/backend; then
+    fail "a backend selects execution capability policy"
+fi
+
+# Concrete dispatch, placement mappings and backend allocation state remain a
+# source-local backend implementation contract. Runtime and graph consumers use
+# typed operations and cannot couple their lifecycle to vtable or struct layout.
+if rg -n 'struct[[:space:]]+yvex_backend[[:space:]]*\{' include; then
+    fail "concrete backend representation escaped into a cross-subsystem header"
+fi
+if find src include -type f \( -name '*.c' -o -name '*.h' -o -name '*.cu' \) \
+        ! -path 'src/backend/*' -print0 |
+    xargs -0 rg -n '#include[[:space:]]+"src/backend/private[.]h"'; then
+    fail "non-backend owner imports the concrete backend representation"
+fi
+if rg -n -- "$backend_representation_pattern" src/runtime src/graph; then
+    fail "runtime or graph owner manipulates concrete backend state"
+fi
+
+# Families project semantic recipes into a generic compiler-owned sink. They
+# cannot own mutable IR construction or sealing, and its concrete storage stays
+# inside the compilation subsystem.
+if rg -n 'struct[[:space:]]+yvex_transform_(builder|ir)[[:space:]]*\{' include; then
+    fail "mutable Transformation IR representation escaped compilation ownership"
+fi
+if find src -path '*/families/*' -type f \
+        \( -name '*.c' -o -name '*.h' -o -name '*.cu' \) -print0 |
+    xargs -0 rg -n "$family_transform_builder_pattern"; then
+    fail "a family projection owns mutable Transformation IR lifecycle"
+fi
+if rg -n -i "(families/|$generic_family_symbol_pattern)" \
+    src/model/compilation/binding.c src/model/compilation/ir.c \
+    src/model/compilation/ir_identity.c \
+    src/model/compilation/ir_validate.c; then
+    fail "generic Transformation IR owners contain concrete family semantics"
+fi
+if rg -n "$legacy_family_lowering_representation_pattern" src include; then
+    fail "artifact-lowering representation remains owned by a concrete family"
+fi
+if rg -n "$source_compilation_lifecycle_pattern" src/graph/families/deepseek_v4.c; then
+    fail "DeepSeek graph family owns generic source-compilation lifecycle"
+fi
+rg -n 'struct[[:space:]]+yvex_compilation_source_session[[:space:]]*\{' \
+    src/graph/source_compile.c >/dev/null ||
+    fail "compiler-source lifecycle lacks its canonical generic owner"
+if rg -n -i "(families/|$generic_family_symbol_pattern)" \
+    src/gguf/writer.c include/yvex/internal/gguf_writer.h; then
+    fail "generic GGUF writer owns or imports concrete family semantics"
+fi
+if rg -n -i "(families/|$generic_family_symbol_pattern)" \
+    src/gguf/quant_plan.c src/gguf/quant_policy.c include/yvex/internal/quant_numeric.h; then
+    fail "generic quantization planning owns or imports concrete family semantics"
+fi
+if rg -n -i "(families/|$generic_family_symbol_pattern)" src/gguf/conversion.c; then
+    fail "generic GGUF conversion owns or imports concrete family semantics"
+fi
+if rg -n "$generic_family_operator_lowering_pattern" src/graph/binding_compile.c; then
+    fail "generic binding compilation chooses concrete family operator composition"
+fi
+rg -n 'adapter->operator_graph_build[[:space:]]*\(' src/graph/binding_compile.c >/dev/null ||
+    fail "binding compilation no longer delegates operator composition to the family adapter"
+rg -n 'yvex_model_conversion_projection_find' src/gguf/conversion.c >/dev/null ||
+    fail "generic GGUF conversion no longer consumes a typed family projection"
 
 family_neutral_sources=$(
     {
@@ -185,17 +384,51 @@ while IFS= read -r source; do
 done <<EOF
 $family_neutral_sources
 EOF
+generic_cuda_sources=$(
+    find src/backend/cuda -maxdepth 1 -type f \
+        \( -name '*.c' -o -name '*.h' -o -name '*.cu' \) | LC_ALL=C sort
+)
+while IFS= read -r source; do
+    if rg -n -i "$generic_family_symbol_pattern" "$source"; then
+        fail "generic CUDA owner names a concrete family: $source"
+    fi
+done <<EOF
+$generic_cuda_sources
+EOF
 if rg -n "$cli_family_helper_pattern" src/cli/commands/graph.c; then
     fail "common graph CLI bypasses typed runtime-family preparation facts"
 fi
-if rg -n -i "$cli_family_abi_pattern" src/cli/commands/graph.c; then
+if rg -n -i "$cli_family_abi_pattern" \
+    src/cli/commands/graph.c src/cli/input/graph.c src/cli/input/private.h; then
     fail "common graph CLI imports or names a concrete family ABI"
+fi
+if rg -n -i "$cli_family_representation_pattern" src/cli/render/model_target.c; then
+    fail "model-target rendering imports or names a concrete family ABI"
+fi
+if rg -n -i "$cli_family_representation_pattern" src/cli/commands/quant.c; then
+    fail "physical-variant CLI imports or names a concrete family ABI"
+fi
+if rg -n -i "$cli_family_representation_pattern" \
+    src/model/target/report.c src/model/target/mapping_gate.c; then
+    fail "model-target coordination imports or names a concrete family ABI"
 fi
 if rg -n "$cli_preparation_call_pattern" src/cli/commands/graph.c; then
     fail "common graph CLI directly constructs compiler preparation truth"
 fi
 if rg -n "$cli_runtime_lifecycle_pattern" src/cli/commands/graph.c; then
     fail "common graph CLI owns runtime model, session, or residency lifecycle"
+fi
+if rg -n -i "(families/|$generic_family_symbol_pattern)" \
+    include/yvex/internal/compiler.h src/graph/component.c src/runtime/residency.c; then
+    fail "generic component compilation or runtime owns concrete family semantics"
+fi
+rg -n 'yvex_runtime_component_api_get\(\)->plan_build' src/cli/commands/graph.c >/dev/null ||
+    fail "component CLI bypasses compiled family geometry"
+rg -n 'yvex_runtime_component_api_get\(\)->execute' src/cli/commands/graph.c >/dev/null ||
+    fail "component CLI bypasses the generic runtime lifecycle"
+if rg -n '(audio|video)_vae_execute_artifact_cpu' \
+    src/graph/families/minimax_h3.c include/yvex/internal/families/minimax_h3.h; then
+    fail "MiniMax family retains generic artifact/materialization/residency execution"
 fi
 
 # Generic attention state iterates sealed family-projected components. Class
@@ -216,21 +449,124 @@ if rg -n 'yvex_runtime_attention_(state|capacity)' \
     fail "generic attention state retains the obsolete runtime-owned ABI"
 fi
 
-# DeepSeek cold preparation is intentionally composed by the admitted model
-# artifact gate.  Its callback remains file-local; common runtime and CLI code
-# can reach it only through the typed family-preparation registry.
-if [ "$(rg -c "$family_preparation_callback_pattern" src/model/artifacts/gate.c)" -ne 1 ]; then
-    fail "DeepSeek cold preparation callback is missing or no longer file-local"
+# DeepSeek cold preparation terminates in its compiler-facing adapter. Common artifact, runtime,
+# and CLI owners can reach only that typed compiler identity.
+if rg -n 'prepare_deepseek_runtime_binding|yvex_graph_family_preparation' src include; then
+    fail "legacy family preparation authority survived compiler-adapter cutover"
 fi
 if rg -n "$family_preparation_leak_pattern" src/runtime src/cli/commands/graph.c; then
     fail "family-specific cold preparation leaked into common runtime/CLI owners"
 fi
-preparation_callback_owners=$(
-    rg -l 'prepare_deepseek_runtime_binding' src include | LC_ALL=C sort
-)
-if [ "$preparation_callback_owners" != 'src/model/artifacts/gate.c' ]; then
-    printf '%s\n' "$preparation_callback_owners" >&2
-    fail "DeepSeek cold preparation callback escaped its admitted composition owner"
+if rg -n "$moe_family_registry_pattern" src include; then
+    fail "generic MoE compilation retains a concrete family registry"
+fi
+if rg -n "$conversation_family_registry_pattern" src include; then
+    fail "generic tokenizer or server retains a concrete conversation-family registry"
+fi
+if rg -n "$implicit_physical_envelope_pattern" src/graph/execution.c; then
+    fail "physical execution compilation retains an implicit width or context envelope"
+fi
+rg -n 'decision->maximum_context[[:space:]]*=[[:space:]]*model->maximum_context' \
+    src/graph/execution.c >/dev/null ||
+    fail "physical execution no longer binds the semantic context maximum"
+rg -n 'model->verification_width_maximum' src/graph/execution.c >/dev/null ||
+    fail "physical execution no longer derives admitted widths from semantic geometry"
+rg -n 'physical_execution_policy' src/runtime/binding.c \
+    include/yvex/internal/compiler.h >/dev/null ||
+    fail "physical execution policy escaped the compiler-binding boundary"
+if rg -n -i '(families/|deepseek|minimax)' src/artifact include/yvex/internal/artifact.h; then
+    fail "generic artifact owners contain a concrete family catalog or ABI"
+fi
+if rg -n -i '(families/|deepseek|minimax)' src/model/artifacts/gate.c; then
+    fail "generic model-artifact gate contains concrete family semantics"
+fi
+artifact_catalog_owners=$(rg -l 'deepseek_(selected|native_drafter)_catalog' src include |
+    LC_ALL=C sort)
+if [ "$artifact_catalog_owners" != 'src/graph/families/deepseek_v4.c' ]; then
+    printf '%s\n' "$artifact_catalog_owners" >&2
+    fail "DeepSeek physical artifact catalog escaped its family compiler projection"
+fi
+if rg -n -i '(families/|deepseek|minimax)' src/runtime/binding_publish.c; then
+    fail "generic runtime-binding publication contains concrete family semantics"
+fi
+if rg -n -i '(families/|deepseek|minimax)' src/graph/binding_compile.c; then
+    fail "generic runtime-binding compiler contains concrete family semantics"
+fi
+physical_variant_owner=$(rg -l \
+    '^struct[[:space:]]+yvex_physical_variant_session[[:space:]]*\{' src)
+[ "$physical_variant_owner" = 'src/graph/binding_compile.c' ] || {
+    printf '%s\n' "$physical_variant_owner" >&2
+    fail "physical-variant resource lifecycle escaped execution compilation"
+}
+physical_variant_api_consumers=$(rg -l 'yvex_graph_physical_variant_api_get' src --glob '*.c' |
+    LC_ALL=C sort)
+if [ "$physical_variant_api_consumers" != 'src/graph/binding_compile.c
+src/graph/families/deepseek_v4.c
+src/graph/families/minimax_h3.c' ]; then
+    printf '%s\n' "$physical_variant_api_consumers" >&2
+    fail "family physical variants do not share one generic compiler API"
+fi
+if rg -n 'void[[:space:]]*\*[[:space:]]*semantic_model|semantic_model_close' \
+    include/yvex/internal/compiler.h include/yvex/internal/graph.h \
+    src/graph/binding_compile.c; then
+    fail "compiler or graph boundary retains an untyped semantic model lifecycle"
+fi
+rg -n 'yvex_semantic_model_ir[[:space:]]*\*semantic_model' \
+    include/yvex/internal/compiler.h include/yvex/internal/graph.h \
+    src/graph/binding_compile.c >/dev/null ||
+    fail "binding and graph compilation no longer consume the typed Semantic Model IR"
+semantic_ir_owners=$(rg -l 'struct[[:space:]]+yvex_semantic_model_ir[[:space:]]*\{' src include)
+[ "$semantic_ir_owners" = 'src/model/compilation/semantic.c' ] || {
+    printf '%s\n' "$semantic_ir_owners" >&2
+    fail "Semantic Model IR concrete storage escaped its compiler owner"
+}
+rg -n 'yvex_model_execution_descriptor[[:space:]]+execution_descriptor' \
+    include/yvex/internal/compiler.h >/dev/null ||
+    fail "Semantic Model IR no longer owns sealed execution geometry"
+rg -n 'semantic->execution_descriptor' src/graph/operator_ir.c >/dev/null ||
+    fail "operator lowering no longer consumes Semantic Model IR geometry"
+if rg -n 'semantic_model_identity' include/yvex/internal/compiler.h \
+    include/yvex/internal/execution.h src/graph/compiled_plan.c \
+    src/graph/execution.c src/runtime; then
+    fail "runtime context capacity confuses Semantic Model IR with model-execution identity"
+fi
+rg -n 'model_execution_identity' include/yvex/internal/compiler.h \
+    include/yvex/internal/execution.h src/graph/compiled_plan.c \
+    src/graph/execution.c src/runtime/generation_context.c >/dev/null ||
+    fail "runtime context capacity no longer binds the compiled model-execution identity"
+if rg -n 'semantic_model_ir_family_payload|family_payload_(owned|close)' \
+    include/yvex/internal/compiler.h src/model/compilation/semantic.c \
+    src/graph/families; then
+    fail "Semantic Model IR retains process-local concrete family state"
+fi
+rg -n 'yvex_semantic_model_ir_attention_view' \
+    src/graph/plan.c src/graph/families/deepseek_v4.c >/dev/null ||
+    fail "attention lowering no longer consumes compiler-owned semantic topology"
+deepseek_semantic_plan_calls=$(rg -c 'yvex_attention_plan_build_semantic' \
+    src/graph/families/deepseek_v4.c)
+[ "$deepseek_semantic_plan_calls" -eq 2 ] ||
+    fail "DeepSeek graph execution reconstructs family topology after semantic sealing"
+if rg -n 'const[[:space:]]+yvex_model_execution_descriptor[[:space:]]+\*model' \
+    include/yvex/internal/operator_graph.h include/yvex/internal/compiler.h; then
+    fail "operator lowering accepts a second model-geometry authority"
+fi
+if rg -n 'descriptor_summary->model_execution' src/graph/binding_compile.c; then
+    fail "binding compilation reconstructs semantic geometry from the runtime descriptor"
+fi
+if rg -n 'yvex_(artifact_open|gguf_open|tensor_table_from_gguf|materialization_plan_build|quant_plan_file_validate|gguf_writer_plan_build)[[:space:]]*\(' \
+    src/graph/families/deepseek_v4.c; then
+    fail "the DeepSeek projection owns generic runtime-binding resource lifecycle"
+fi
+if rg -n '#include[[:space:]]+[<"]yvex/internal/(compilation|gguf_writer|quant_numeric)[.]h[>"]' \
+    src/runtime/binding_publish.c; then
+    fail "runtime-binding publication imports compiler planning representation"
+fi
+binding_prepare_callers=$(rg -l 'yvex_runtime_binding_prepare[[:space:]]*\(' src |
+    LC_ALL=C sort)
+if [ "$binding_prepare_callers" != "$(printf '%s\n' \
+    src/runtime/binding.c src/runtime/binding_publish.c)" ]; then
+    printf '%s\n' "$binding_prepare_callers" >&2
+    fail "runtime-binding publication escaped its runtime codec and compiler owner"
 fi
 
 # Runtime consumes an immutable runtime binding. Source verification,
@@ -242,6 +578,32 @@ fi
 if rg -n "$runtime_planning_call_pattern" src/runtime; then
     fail "runtime translation unit calls a source/compiler planning owner"
 fi
+# Binding preparation serializes compiler products. Model open and request
+# execution import the sealed plan and may select only within its admitted
+# envelope; no runtime owner compiles topology from family facts.
+runtime_execution_owners=$(
+    find src/runtime -maxdepth 1 -type f -name '*.c' |
+        LC_ALL=C sort
+)
+if printf '%s\n' "$runtime_execution_owners" |
+    xargs rg -n "$execution_topology_build_pattern"; then
+    fail "runtime model-open or execution owner reconstructs compiled topology"
+fi
+if rg -n '(yvex_runtime_descriptor_summary_get|yvex_model_execution_descriptor)' \
+    src/runtime/generation_context.c src/runtime/decode.c src/runtime/logits.c; then
+    fail "runtime capacity or decode reconstructs geometry from the semantic descriptor"
+fi
+if rg -n 'descriptor->draft_layer_count' src/runtime/speculation.c; then
+    fail "runtime speculation reconstructs compiled draft topology from the descriptor"
+fi
+[ "$(rg -c 'yvex_physical_execution_ir_build[[:space:]]*\(' src/graph/binding_compile.c)" -eq 1 ] ||
+    fail "family compilation does not own exactly one physical-plan construction"
+[ "$(rg -c 'yvex_compiled_model_plan_build[[:space:]]*\(' src/graph/binding_compile.c)" -eq 1 ] ||
+    fail "family compilation does not own exactly one compiled-plan construction"
+rg -n 'yvex_runtime_binding_import_graph[[:space:]]*\(' src/runtime/core.c >/dev/null ||
+    fail "runtime model-open no longer imports the sealed execution graph"
+rg -n 'binding_summary[.]physical_execution_identity' src/runtime/core.c >/dev/null ||
+    fail "runtime model-open does not authenticate the imported physical plan"
 runtime_objects=$(find build/obj/src/runtime -type f -name '*.o' 2>/dev/null | LC_ALL=C sort)
 [ -n "$runtime_objects" ] || fail "runtime object inventory is unavailable"
 runtime_planning_symbols=$(
@@ -436,6 +798,10 @@ if rg -n \
     fail "attention oracle calls a production numeric or composition owner"
 fi
 
+if rg -n "$runtime_family_dispatch_pattern" src/runtime include/yvex/internal/runtime.h; then
+    fail "runtime retains a family adapter or model-name execution callback"
+fi
+
 for product in "${YVEX_LIB:-build/lib/libyvex.a}" "${YVEX_BIN:-./yvex}"; do
     [ -f "$product" ] || fail "required production product is missing: $product"
     if nm -A "$product" | rg 'yvex_test_attention_reference_'; then
@@ -444,18 +810,20 @@ for product in "${YVEX_LIB:-build/lib/libyvex.a}" "${YVEX_BIN:-./yvex}"; do
 done
 
 # The unified ELF may contain offline engine commands, but runtime-facing dispatch
-# remains one protocol-only object lane and the two products retain one main each.
+# remains one protocol-only object lane and the product retains one process entrypoint.
 client_lane=${YVEX_CLIENT_LANE_OBJ:-build/obj/src/cli/io/client.o}
 [ -f "$client_lane" ] || fail "runtime-client lane object is missing: $client_lane"
 if nm -u "$client_lane" | rg \
     'yvex_(runtime_model_open|artifact_materialize|runtime_transformer|runtime_generation_operator_execute|backend_cuda)'; then
     fail "runtime-client lane gained an engine dependency"
 fi
-for product in "${YVEX_BIN:-./yvex}" "${YVEXD_BIN:-./yvexd}"; do
-    [ -x "$product" ] || fail "role product is missing: $product"
-    main_count=$(nm "$product" | awk '$NF == "main" { count++ } END { print count + 0 }')
-    [ "$main_count" -eq 1 ] || fail "role product does not own exactly one main: $product"
-done
+product=${YVEX_BIN:-./yvex}
+[ -x "$product" ] || fail "role product is missing: $product"
+main_count=$(nm "$product" | awk '$NF == "main" { count++ } END { print count + 0 }')
+[ "$main_count" -eq 1 ] || fail "role product does not own exactly one main: $product"
+nm "$product" | rg 'yvex_cli_server_dispatch' >/dev/null ||
+    fail "yvex does not contain its foreground server entrypoint"
+[ ! -e ./yvexd ] || fail "retired hidden server executable remains"
 [ ! -d src/gateway/openai ] || fail "retired standalone OpenAI source owner remains"
 if rg -n '(^|[[:space:]])int[[:space:]]+main[[:space:]]*\(' src/server/openai; then
     fail "in-process OpenAI adapter contains a process entrypoint"
@@ -471,7 +839,7 @@ for object in $reference_objects; do
         while IFS= read -r symbol; do
             case "$symbol" in
                 yvex_core_allocate|\
-                yvex_error_clear|yvex_graph_lower_deepseek_v4|\
+                yvex_error_clear|\
                 yvex_materialization_session_read|yvex_model_register_deepseek_v4|\
                 yvex_runtime_descriptor_find_role|yvex_sha256_*)
                     ;;

@@ -18,6 +18,8 @@
 #include <yvex/internal/core.h>
 #include <yvex/internal/backend.h>
 #include <yvex/internal/artifact.h>
+#include <yvex/internal/compiler.h>
+#include <yvex/internal/convolution.h>
 #include <yvex/internal/graph.h>
 #include <yvex/internal/graph_state.h>
 #include <yvex/internal/quant_numeric.h>
@@ -29,7 +31,45 @@
 typedef struct {
     unsigned int input_ids[4], output_ids[4];
 } yvex_graph_op_edges;
-
+typedef struct {
+    float *data;
+    unsigned long long count;
+} yvex_graph_component_buffer;
+typedef struct {
+    unsigned long long maximum_bytes, live_bytes, peak_bytes;
+} yvex_graph_component_workspace;
+typedef struct {
+    yvex_materialization_session *session;
+    const yvex_component_execution_request *request;
+    yvex_component_execution_result *result;
+    yvex_component_failure *failure;
+    yvex_error *err;
+    yvex_graph_component_workspace workspace;
+    const char *failure_where;
+} yvex_graph_component_execution;
+typedef struct {
+    void (*execution_open)(yvex_graph_component_execution *, yvex_materialization_session *,
+                           const yvex_component_execution_request *,
+                           yvex_component_execution_result *, yvex_component_failure *,
+                           yvex_error *, const char *);
+    int (*execution_refuse)(yvex_graph_component_execution *, yvex_component_failure_code,
+                            const char *, unsigned long long, unsigned long long, yvex_status,
+                            const char *);
+    int (*cancel_check)(yvex_graph_component_execution *, const char *);
+    int (*buffer_open)(yvex_graph_component_execution *, unsigned long long,
+                       yvex_graph_component_buffer *);
+    void (*buffer_close)(yvex_graph_component_execution *, yvex_graph_component_buffer *);
+    const yvex_materialized_tensor_binding *(*binding_find)(
+        const yvex_materialization_session *, const char *);
+    int (*tensor_load_f32)(yvex_graph_component_execution *, const char *, unsigned int,
+                           const unsigned long long *, yvex_graph_component_buffer *);
+    int (*name_build)(yvex_graph_component_execution *, char *, size_t, const char *,
+                      const char *, unsigned long long, const char *);
+    int (*rectified_flow_step)(float *, const float *, const float *, unsigned long long,
+                               float, float, float, yvex_error *);
+} yvex_graph_component_api;
+const yvex_graph_component_api *yvex_graph_component_api_get(void);
+const yvex_physical_variant_api *yvex_graph_physical_variant_api_get(void);
 /* Stable virtual spans commit physical state pages only as graph publication reaches them. */
 typedef struct yvex_graph_state_page_pool yvex_graph_state_page_pool;
 typedef struct yvex_graph_state_page_store yvex_graph_state_page_store;
@@ -147,19 +187,19 @@ struct yvex_plan {
 };
 
 typedef enum {
-    YVEX_DEEPSEEK_ATTENTION_COMPONENT_ATTENTION_OUTPUT = 0, YVEX_DEEPSEEK_ATTENTION_COMPONENT_RAW_LOCAL_KV,
-    YVEX_DEEPSEEK_ATTENTION_COMPONENT_COMPRESSED_MAIN_KV, YVEX_DEEPSEEK_ATTENTION_COMPONENT_INDEXER_KV,
-    YVEX_DEEPSEEK_ATTENTION_COMPONENT_MAIN_KV_STATE, YVEX_DEEPSEEK_ATTENTION_COMPONENT_MAIN_SCORE_STATE,
-    YVEX_DEEPSEEK_ATTENTION_COMPONENT_INDEXER_KV_STATE, YVEX_DEEPSEEK_ATTENTION_COMPONENT_INDEXER_SCORE_STATE,
-    YVEX_DEEPSEEK_ATTENTION_COMPONENT_ENVELOPE_OUTPUT,
-    YVEX_DEEPSEEK_ATTENTION_COMPONENT_COUNT
+    YVEX_ATTENTION_COMPONENT_ATTENTION_OUTPUT = 0, YVEX_ATTENTION_COMPONENT_RAW_LOCAL_KV,
+    YVEX_ATTENTION_COMPONENT_COMPRESSED_MAIN_KV, YVEX_ATTENTION_COMPONENT_INDEXER_KV,
+    YVEX_ATTENTION_COMPONENT_MAIN_KV_STATE, YVEX_ATTENTION_COMPONENT_MAIN_SCORE_STATE,
+    YVEX_ATTENTION_COMPONENT_INDEXER_KV_STATE, YVEX_ATTENTION_COMPONENT_INDEXER_SCORE_STATE,
+    YVEX_ATTENTION_COMPONENT_ENVELOPE_OUTPUT,
+    YVEX_ATTENTION_COMPONENT_COUNT
 } yvex_attention_component_kind;
 typedef enum {
-    YVEX_DEEPSEEK_ATTENTION_COMPONENT_STORAGE_F32 = 1
+    YVEX_ATTENTION_COMPONENT_STORAGE_F32 = 1
 } yvex_attention_component_storage;
 typedef enum {
-    YVEX_DEEPSEEK_ATTENTION_TRANSACTION_EMPTY = 0, YVEX_DEEPSEEK_ATTENTION_TRANSACTION_BEGUN,
-    YVEX_DEEPSEEK_ATTENTION_TRANSACTION_ABORTED, YVEX_DEEPSEEK_ATTENTION_TRANSACTION_COMMITTED
+    YVEX_ATTENTION_TRANSACTION_EMPTY = 0, YVEX_ATTENTION_TRANSACTION_BEGUN,
+    YVEX_ATTENTION_TRANSACTION_ABORTED, YVEX_ATTENTION_TRANSACTION_COMMITTED
 } yvex_attention_transaction_status;
 typedef struct {
     yvex_attention_component_kind kind;
@@ -182,8 +222,8 @@ typedef struct {
     yvex_attention_workspace *workspace;
     yvex_attention_memory_sink_options options;
     yvex_attention_component_span committed[
-        YVEX_DEEPSEEK_ATTENTION_COMPONENT_COUNT];
-    char committed_identity[YVEX_DEEPSEEK_ATTENTION_IDENTITY_CAP];
+        YVEX_ATTENTION_COMPONENT_COUNT];
+    char committed_identity[YVEX_ATTENTION_IDENTITY_CAP];
 } yvex_attention_memory_sink;
 typedef struct {
     yvex_attention_transaction_status status;
@@ -191,10 +231,10 @@ typedef struct {
     unsigned long long layer_index;
     yvex_attention_class attention_class;
     unsigned long long token_position, token_count;
-    char previous_state_identity[YVEX_DEEPSEEK_ATTENTION_IDENTITY_CAP],
-        transaction_identity[YVEX_DEEPSEEK_ATTENTION_IDENTITY_CAP];
+    char previous_state_identity[YVEX_ATTENTION_IDENTITY_CAP],
+        transaction_identity[YVEX_ATTENTION_IDENTITY_CAP];
     yvex_attention_component_span components[
-        YVEX_DEEPSEEK_ATTENTION_COMPONENT_COUNT];
+        YVEX_ATTENTION_COMPONENT_COUNT];
 } yvex_attention_state_transaction;
 typedef struct {
     unsigned long long limit_bytes;
@@ -235,8 +275,8 @@ int yvex_attention_cuda_reject(
     yvex_status status, const char *reason);
 int yvex_attention_cancel_check(const yvex_attention_cancellation *cancellation,
     unsigned long long layer_index, const char *safe_point, yvex_attention_failure *failure, yvex_error *err);
-int yvex_attention_class_geometry_validate(const yvex_attention_layer_plan *layer,
-    unsigned long long csa_ratio, unsigned long long hca_ratio,
+int yvex_attention_class_geometry_validate(
+    const yvex_attention_layer_plan *layer,
     yvex_attention_failure *failure, yvex_error *err);
 int yvex_attention_history_validate(const yvex_attention_layer_plan *layer,
     const yvex_attention_history_view *history, yvex_attention_failure *failure, yvex_error *err);
@@ -277,9 +317,6 @@ struct yvex_attention_plan {
     unsigned long long layer_count;
     yvex_attention_summary summary;
 };
-int yvex_attention_plan_build(yvex_attention_plan **out, const yvex_attention_recipe *recipe,
-    const yvex_materialization_session *session, const yvex_runtime_descriptor *descriptor,
-    yvex_attention_failure *failure, yvex_error *err);
 const yvex_attention_summary *yvex_attention_plan_summary(const yvex_attention_plan *plan);
 unsigned long long yvex_attention_plan_layer_count(const yvex_attention_plan *plan);
 const yvex_attention_layer_plan *yvex_attention_plan_layer_at(const yvex_attention_plan *plan,
@@ -336,20 +373,7 @@ int yvex_attention_execution_admit(
     const yvex_attention_plan *plan, const char *logical_identity,
     yvex_materialization_session *session, const yvex_runtime_descriptor *descriptor,
     const yvex_attention_cpu_options *options, const char *cancel_stage,
-    unsigned long long csa_ratio, unsigned long long hca_ratio,
     const yvex_attention_layer_plan **layer, yvex_attention_failure *failure,
-    yvex_error *err);
-int yvex_attention_state_recipe_build(
-    const yvex_attention_layer_plan *layer,
-    const yvex_attention_state_recipe_request *request,
-    yvex_attention_state_recipe *recipe, yvex_attention_failure *failure,
-    yvex_error *err);
-int yvex_attention_workspace_recipe_build(
-    const yvex_attention_layer_plan *layer,
-    const yvex_attention_state_recipe *state, yvex_attention_execution_mode mode,
-    yvex_attention_operation_scope scope, yvex_attention_evidence_level evidence_level,
-    unsigned long long token_capacity,
-    yvex_attention_workspace_recipe *recipe, yvex_attention_failure *failure,
     yvex_error *err);
 const yvex_runtime_tensor_binding *yvex_attention_binding_find(const yvex_runtime_descriptor *descriptor,
     yvex_tensor_role role, const yvex_attention_layer_plan *layer);
@@ -533,28 +557,6 @@ int yvex_attention_fp8_fake_quant_block(const float *input, unsigned long long c
 int yvex_attention_fp4_fake_quant_block(const float *input, unsigned long long count, float *dequantized,
     unsigned char *codes, unsigned char *scale_code, yvex_attention_failure *failure, yvex_error *err);
 
-typedef struct {
-    unsigned long long batch, input_channels, output_channels;
-    unsigned long long input_length, kernel_size, stride, dilation;
-    unsigned long long padding, output_padding;
-    int transposed;
-} yvex_graph_conv1d_geometry;
-
-int yvex_graph_conv1d_output_length(const yvex_graph_conv1d_geometry *geometry,
-                                    unsigned long long *output_length, yvex_error *err);
-int yvex_graph_conv1d_f32(const yvex_graph_conv1d_geometry *geometry,
-                          const float *input, unsigned long long input_count,
-                          const float *weight, unsigned long long weight_count,
-                          const float *bias, unsigned long long bias_count,
-                          const float *gain, unsigned long long gain_count,
-                          float *output, unsigned long long output_count,
-                          yvex_error *err);
-int yvex_graph_alias_snake_f32(const float *input, unsigned long long batch,
-                               unsigned long long channels, unsigned long long length,
-                               const float *alpha_log, const float *beta_log,
-                               const float up_filter[12], const float down_filter[12],
-                               float *output, float *scratch,
-                               unsigned long long scratch_count, yvex_error *err);
 int yvex_graph_linear_source_f32(
     const float *input, unsigned long long input_count, unsigned long long rows,
     unsigned long long input_width, const float *weight,
@@ -592,5 +594,4 @@ int yvex_graph_rope_3d_interleaved_qk_f32(
 int yvex_graph_scaled_residual_f32(
     float *hidden, const float *delta, const float *scale,
     unsigned long long rows, unsigned long long width, yvex_error *err);
-
 #endif

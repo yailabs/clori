@@ -6,6 +6,7 @@
  * transformation execution.
  */
 #include <yvex/internal/compilation.h>
+#include "src/model/compilation/private.h"
 
 #include <limits.h>
 #include <stdint.h>

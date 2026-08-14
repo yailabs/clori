@@ -16,10 +16,6 @@ typedef struct {
     float *decoded;
     unsigned long long decoded_count;
 } transformer_weight_owner;
-static const yvex_tensor_role transformer_runtime_roles[YVEX_TRANSFORMER_WEIGHT_COUNT] = {
-    YVEX_TENSOR_ROLE_TOKEN_EMBEDDING, YVEX_TENSOR_ROLE_HC_HEAD_FUNCTION,
-    YVEX_TENSOR_ROLE_HC_HEAD_BASE, YVEX_TENSOR_ROLE_HC_HEAD_SCALE,
-    YVEX_TENSOR_ROLE_OUTPUT_NORM};
 struct yvex_runtime_transformer_context {
     yvex_runtime_model *model;
     yvex_runtime_execution_session *session;
@@ -27,7 +23,7 @@ struct yvex_runtime_transformer_context {
     const yvex_runtime_session_view *session_view;
     yvex_runtime_transformer_options options;
     yvex_runtime_moe_context *moe;
-    yvex_transformer_plan *plan;
+    const yvex_transformer_plan *plan;
     transformer_weight_owner global[YVEX_TRANSFORMER_WEIGHT_COUNT];
     unsigned char *embedding_encoded;
     unsigned long long embedding_row_bytes;
@@ -39,7 +35,6 @@ struct yvex_runtime_transformer_context {
     float *embedding, *expanded_a, *expanded_b, *candidate_hidden;
     float *moe_combined, *moe_post, *moe_combination, *moe_routed, *moe_shared;
     unsigned long long token_capacity, host_bytes, final_weight_bytes, execution_count, moe_workspace_bytes;
-    char workspace_identity[YVEX_SHA256_HEX_CAP];
     pthread_mutex_t mutex;
     int mutex_ready, busy, invalidated;
 };
@@ -221,92 +216,6 @@ static const yvex_materialized_tensor_binding *transformer_runtime_binding(
                ? yvex_materialization_session_tensor_at(
                      context->model_view->materialization, summary->weights[slot].tensor_id)
                : NULL;
-}
-static int transformer_runtime_binding_project(
-    const yvex_runtime_model_view *view, yvex_tensor_role role,
-    yvex_tensor_scope scope, unsigned long long layer_index, unsigned long long predictor_index,
-    yvex_transformer_weight_binding *out, yvex_error *err)
-{
-    const yvex_runtime_tensor_binding *runtime;
-    const yvex_materialized_tensor_binding *binding;
-    const yvex_quant_numeric_capability *capability;
-    runtime = yvex_runtime_descriptor_find_role(
-        view ? view->descriptor : NULL, role, scope, layer_index, predictor_index);
-    binding = runtime ? yvex_materialization_session_tensor_at(
-        view->materialization, runtime->tensor_id) : NULL;
-    capability = binding ? yvex_quant_numeric_capability_at(binding->qtype) : NULL;
-    if (!binding || binding->role != role || !binding->encoded_bytes ||
-        binding->expert_count > 1ull || !binding->backend_compatible)
-        return transformer_runtime_refuse(err, YVEX_ERR_FORMAT,
-                                          "transformer global binding is unavailable");
-    if (!capability || !capability->reference_decoder_available ||
-        !capability->dedicated_cpu_compute_available ||
-        !capability->dedicated_cuda_compute_available)
-        return transformer_runtime_refuse(err, YVEX_ERR_UNSUPPORTED,
-            "transformer global binding qtype lacks CPU/CUDA execution");
-    *out = (yvex_transformer_weight_binding){
-        .tensor_id = binding->tensor_id, .row_width = binding->row_width,
-        .row_count = binding->row_count, .encoded_bytes = binding->encoded_bytes,
-        .role = binding->role, .tensor_scope = scope,
-        .layer_index = layer_index, .predictor_index = predictor_index,
-        .qtype = binding->qtype};
-    return YVEX_OK;
-}
-static int transformer_runtime_plan_facts(
-    const yvex_runtime_model_view *view, yvex_tensor_scope scope,
-    yvex_transformer_plan_facts *facts, yvex_error *err)
-{
-    const yvex_runtime_descriptor_summary *runtime = view
-        ? yvex_runtime_descriptor_summary_get(view->descriptor) : NULL;
-    const yvex_materialization_summary *material = view
-        ? yvex_materialization_session_summary(view->materialization) : NULL;
-    const yvex_attention_plan *attention = transformer_runtime_attention(view, scope);
-    const yvex_attention_summary *attention_summary = yvex_attention_plan_summary(attention);
-    const yvex_attention_layer_plan *last;
-    unsigned long long slot;
-    memset(facts, 0, sizeof(*facts));
-    if (!view || !runtime || !view->adapter || !view->adapter->transformer_policy ||
-        !view->adapter->transformer_policy(runtime, &facts->policy) || !material ||
-        !attention_summary || !attention_summary->layer_count)
-        return transformer_runtime_refuse(err, YVEX_ERR_FORMAT,
-                                          "transformer runtime plan facts are unavailable");
-    facts->family_adapter_id = view->adapter->adapter_id;
-    facts->family_adapter_version = view->adapter->adapter_version;
-    /* Runtime GLOBAL selects the target execution lane; its per-layer
-     * attention and MoE plans are bound to MAIN_LAYER tensors. Draft is both
-     * an execution lane and a physical tensor scope. */
-    facts->tensor_scope = scope == YVEX_TENSOR_SCOPE_GLOBAL
-                              ? YVEX_TENSOR_SCOPE_MAIN_LAYER : YVEX_TENSOR_SCOPE_DRAFT;
-    facts->layer_count = attention_summary->layer_count;
-    facts->vocabulary_size = runtime->vocabulary_size;
-    facts->artifact_identity = material->artifact_identity;
-    facts->materialization_identity = material->plan_identity;
-    facts->logical_model_identity = runtime->logical_model_identity;
-    facts->runtime_numeric_identity = runtime->runtime_numeric_identity;
-    facts->runtime_descriptor_identity = runtime->runtime_descriptor_identity;
-    last = yvex_attention_plan_layer_at(attention, attention_summary->layer_count - 1ull);
-    if (!last)
-        return transformer_runtime_refuse(err, YVEX_ERR_STATE,
-                                          "transformer final layer is unavailable");
-    for (slot = 0ull; slot < YVEX_TRANSFORMER_WEIGHT_COUNT; ++slot) {
-        yvex_tensor_role role = transformer_runtime_roles[slot];
-        yvex_tensor_scope weight_scope = YVEX_TENSOR_SCOPE_GLOBAL;
-        unsigned long long layer = YVEX_MATERIALIZATION_NO_INDEX;
-        unsigned long long predictor = YVEX_MATERIALIZATION_NO_INDEX;
-        if (scope == YVEX_TENSOR_SCOPE_DRAFT &&
-            slot != YVEX_TRANSFORMER_WEIGHT_EMBEDDING) {
-            weight_scope = YVEX_TENSOR_SCOPE_DRAFT;
-            layer = last->layer_index;
-            predictor = last->predictor_index;
-            if (slot == YVEX_TRANSFORMER_WEIGHT_OUTPUT_NORM)
-                role = YVEX_TENSOR_ROLE_DRAFT_OUTPUT_NORM;
-        }
-        if (transformer_runtime_binding_project(
-                view, role, weight_scope, layer, predictor,
-                &facts->weights[slot], err) != YVEX_OK)
-            return yvex_error_code(err);
-    }
-    return YVEX_OK;
 }
 static int transformer_runtime_read(yvex_runtime_transformer_context *context,
                                     const yvex_materialized_tensor_binding *binding,
@@ -703,7 +612,8 @@ int yvex_runtime_transformer_execute_block(
     batch.token_ids_present = 1;
     batch.execution_class = YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE;
     if (normal_cuda && context->busy && context->options.execution_profile &&
-        !context->options.execution_profile->token_local_moe_reference)
+        context->options.execution_profile->moe_resolution ==
+            YVEX_EXECUTION_RESOLUTION_EXACT)
         batch.execution_class = YVEX_EXECUTION_CLASS_DEVICE_NATIVE;
     batch.execution_profile_identity = context->options.execution_profile
                                            ? context->options.execution_profile->identity : NULL;
@@ -975,15 +885,13 @@ static int transformer_capacity_build(yvex_graph_attention_capacity_plan **out,
                                       yvex_error *err)
 {
     yvex_graph_attention_capacity_request request;
-    const yvex_graph_family_api *graph = model && model->adapter && model->adapter->graph
-        ? model->adapter->graph() : NULL;
     memset(&request, 0, sizeof(request));
     request.scope = YVEX_ATTENTION_PROBE_SCOPE_FULL;
     request.history_tokens = request.start_position = start;
     request.token_count = tokens;
     request.execution_count = 1ull;
     request.use_requested_position = 1;
-    return yvex_graph_attention_capacity_plan_build(out, graph,
+    return yvex_graph_attention_capacity_plan_build(out,
                                                      transformer_runtime_attention(model, scope),
                                                      &request, err);
 }
@@ -1083,7 +991,8 @@ static int transformer_shape_admit(
             required.workspace_identity, required.state_layout_identity);
     }
     if (rc == YVEX_OK && request->backend == YVEX_BACKEND_KIND_CUDA &&
-        !context->options.execution_profile->eager_attention_reference) {
+        context->options.execution_profile->attention_resolution ==
+            YVEX_EXECUTION_RESOLUTION_EXACT) {
         rc = yvex_backend_cuda_attention_configure(
             context->session_view->backend, (yvex_backend_attention_phase)selected->phase,
             YVEX_BACKEND_CUDA_ATTENTION_FULL, context->options.execution_profile->identity, "generation",
@@ -1139,7 +1048,8 @@ static int transformer_prepare(yvex_runtime_transformer_context *context,
                                           "transformer state position/capacity is incompatible");
     if (request->backend == YVEX_BACKEND_KIND_CPU) return YVEX_OK;
     mode = context->options.execution_profile &&
-                   !context->options.execution_profile->eager_attention_reference
+                   context->options.execution_profile->attention_resolution ==
+                       YVEX_EXECUTION_RESOLUTION_EXACT
                ? YVEX_RUNTIME_MODE_FULL : YVEX_RUNTIME_MODE_EAGER;
     workspace_bytes = context->moe_workspace_bytes;
     if (workspace_bytes < context->options.minimum_device_workspace_bytes)
@@ -1178,7 +1088,6 @@ static int transformer_prepare(yvex_runtime_transformer_context *context,
                 "transformer CUDA workspace did not publish stable ownership");
     }
     if (rc != YVEX_OK) return rc;
-    yvex_runtime_identity_copy(context->workspace_identity, session.workspace_identity);
     return transformer_shape_admit(context, input, request, state, &session, err);
 }
 static int transformer_core_features_execute(
@@ -1351,8 +1260,7 @@ int yvex_runtime_transformer_context_open(yvex_runtime_transformer_context **out
 {
     yvex_runtime_transformer_context *context;
     yvex_runtime_moe_options moe_options;
-    yvex_transformer_plan_facts facts;
-    const yvex_moe_plan *moe_plan;
+    const yvex_transformer_plan_summary *plan_summary;
     int rc;
     if (out) *out = NULL;
     if (workspace_bytes) *workspace_bytes = 0ull;
@@ -1391,15 +1299,18 @@ int yvex_runtime_transformer_context_open(yvex_runtime_transformer_context **out
     moe_options.execution_profile = options->execution_profile;
     rc = yvex_runtime_moe_context_open(&context->moe, model, session, &moe_options,
                                        &context->moe_workspace_bytes, err);
-    moe_plan = yvex_runtime_moe_context_plan(context->moe);
-    if (rc == YVEX_OK)
-        rc = transformer_runtime_plan_facts(
-            context->model_view, options->tensor_scope, &facts, err);
-    if (rc == YVEX_OK)
-        rc = yvex_transformer_plan_build(&context->plan, &facts,
-                                         transformer_runtime_attention(
-                                             context->model_view, options->tensor_scope),
-                                         moe_plan, err);
+    context->plan = options->tensor_scope == YVEX_TENSOR_SCOPE_DRAFT
+                        ? context->model_view->draft_transformer
+                        : context->model_view->transformer;
+    plan_summary = yvex_transformer_plan_summary_get(context->plan);
+    if (rc == YVEX_OK &&
+        (!plan_summary ||
+         strcmp(plan_summary->transformer_plan_identity,
+                options->tensor_scope == YVEX_TENSOR_SCOPE_DRAFT
+                    ? context->model_view->binding->draft_transformer_plan_identity
+                    : context->model_view->binding->transformer_plan_identity) != 0))
+        rc = transformer_runtime_refuse(
+            err, YVEX_ERR_STATE, "runtime binding transformer plan is stale");
     if (rc == YVEX_OK) rc = transformer_runtime_globals(context, err);
     if (rc == YVEX_OK && options->workspace_token_capacity)
         rc = transformer_runtime_buffers(context, options->workspace_token_capacity, err);
@@ -1840,7 +1751,6 @@ int yvex_runtime_transformer_context_close(yvex_runtime_transformer_context **co
     if (rc != YVEX_OK) return rc;
     rc = yvex_runtime_moe_context_close(&(*context)->moe, err);
     if (rc != YVEX_OK) return rc;
-    yvex_transformer_plan_close(&(*context)->plan);
     for (index = 0ull; index < YVEX_TRANSFORMER_WEIGHT_COUNT; ++index) {
         free((*context)->global[index].bytes);
         free((*context)->global[index].decoded);
@@ -1961,7 +1871,7 @@ int yvex_transformer_operator_execute(const yvex_transformer_operator_request *r
                                               &output, &result->execution, err);
     if (rc == YVEX_OK) {
         yvex_core_text_copy(result->family, sizeof(result->family),
-                            model_view->adapter->family_name);
+                            model_view->target_id);
         yvex_runtime_identity_copy(result->artifact_identity,
                                    model_view->binding->artifact_identity);
         yvex_runtime_identity_copy(result->runtime_binding_identity,

@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <yvex/internal/core.h>
+#include <yvex/internal/families/minimax_h3.h>
 #include <yvex/internal/io.h>
 #include <yvex/internal/media.h>
 

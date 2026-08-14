@@ -35,6 +35,7 @@ for file in \
   docs/operations/deepseek.md docs/operations/validation.md \
   docs/development/documentation-policy.md \
   docs/development/source-ownership.md \
+  docs/milestones/engineering-worklog.md \
   docs/releases/doctrine.md docs/releases/v0.1.md \
   docs/decisions/0003-documentation-architecture.md \
   docs/decisions/0004-target-verified-speculation.md \
@@ -68,12 +69,11 @@ require_text README.md '## Documentation'
 require_text README.md '## Current limits'
 require_text README.md '## License'
 require_text README.md './yvex model list'
-require_text README.md './yvex model select deepseek4-v4-flash-dspark-runtime-iq2xxs'
-require_text README.md './yvex model selected'
-require_text README.md './yvex runtime start'
+require_text README.md './yvex server deepseek4-v4-flash-dspark-runtime-iq2xxs'
 require_text README.md 'There is no separate model-load command.'
-require_text README.md './yvex runtime model'
-require_text README.md './yvex runtime memory'
+require_text README.md './yvex server model'
+require_text README.md './yvex server memory'
+require_text README.md '--ctx N'
 require_text README.md './yvex chat --session main'
 require_text README.md './yvex run "Explain attention in one sentence."'
 require_text README.md './yvex help --json'
@@ -84,6 +84,8 @@ reject_text README.md '`yvex-openai`'
 reject_text README.md 'Terminal 1 —'
 reject_text README.md 'export YVEX_MODEL_ARTIFACT'
 reject_text README.md './yvex runtime start \'
+reject_text README.md './yvex model select'
+reject_text README.md './yvex model selected'
 
 readme_lines=$(wc -l < README.md | tr -d ' ')
 test "$readme_lines" -ge 80 && test "$readme_lines" -le 220 ||
@@ -133,20 +135,25 @@ require_text docs/operator-runbook.md '## What “load the model” means'
 require_text docs/operator-runbook.md '## Three-terminal operation'
 require_text docs/operator-runbook.md '## Registering an existing model'
 require_text docs/operator-runbook.md './yvex model list'
-require_text docs/operator-runbook.md './yvex model select deepseek4-v4-flash-dspark-runtime-iq2xxs'
-require_text docs/operator-runbook.md './yvex runtime start'
-require_text docs/operator-runbook.md './yvex runtime model'
-require_text docs/operator-runbook.md './yvex runtime memory'
+require_text docs/operator-runbook.md './yvex server deepseek4-v4-flash-dspark-runtime-iq2xxs'
+require_text docs/operator-runbook.md './yvex server model'
+require_text docs/operator-runbook.md './yvex server memory'
 require_text docs/operator-runbook.md './yvex chat --session main'
-require_text docs/operator-runbook.md './yvex runtime watch'
-require_text docs/operator-runbook.md './yvex runtime trace'
+require_text docs/operator-runbook.md './yvex server log'
+require_text docs/operator-runbook.md './yvex server log --json'
 require_text docs/operator-runbook.md './yvex compile quant probe'
 reject_text docs/operator-runbook.md 'export YVEX_MODEL_ARTIFACT'
 require_text docs/operations/deepseek.md './yvex execute transformer generate --help'
 
 require_text docs/development/documentation-policy.md '## Authority rules'
 require_text docs/development/documentation-policy.md '## Changelog policy'
+require_text docs/development/documentation-policy.md '| worklog |'
 require_text docs/development/documentation-policy.md '## Validation'
+require_text AGENTS.md '.agents/skills/engineering-worklog/SKILL.md'
+require_text CONTRIBUTING.md '$engineering-worklog'
+require_file .agents/skills/engineering-worklog/SKILL.md
+require_file .agents/skills/engineering-worklog/agents/openai.yaml
+require_file docs/worklog/2026-08-11-adaptive-memory-admission.md
 require_text docs/releases/doctrine.md '## Gate meanings'
 require_text docs/releases/v0.1.md 'Status: unreleased target record'
 
@@ -179,7 +186,7 @@ fi
 
 if test -x ./yvex; then
   client_help=$(./yvex --help)
-  for command in 'yvex run' 'yvex runtime status' 'yvex session cancel' \
+  for command in 'yvex run' 'yvex server status' 'yvex server log' 'yvex session cancel' \
     'yvex compile quant plan'
   do
     printf '%s\n' "$client_help" | grep -F "$command" >/dev/null ||
@@ -188,15 +195,19 @@ if test -x ./yvex; then
   if printf '%s\n' "$client_help" | grep -F 'yvex graph' >/dev/null; then
     fail 'built yvex help exposes retired graph namespace'
   fi
+  if printf '%s\n' "$client_help" | grep -F 'yvex worklog' >/dev/null; then
+    fail 'development worklog leaked into the product CLI'
+  fi
 fi
 
-if test -x ./yvexd; then
-  daemon_help=$(./yvexd --help)
-  printf '%s\n' "$daemon_help" | grep -F '[--console off|raw]' >/dev/null ||
-    fail 'built yvexd help lacks raw console policy'
-  printf '%s\n' "$daemon_help" | grep -F '[--openai on|off]' >/dev/null ||
-    fail 'built yvexd help lacks integrated OpenAI listener policy'
-fi
+test ! -e ./yvexd || fail 'retired hidden server executable remains'
+server_help=$(./yvex server --help)
+printf '%s\n' "$server_help" | grep -E -- '--console[[:space:]]+off\|raw' >/dev/null ||
+  fail 'yvex server help lacks raw console policy'
+printf '%s\n' "$server_help" | grep -E -- '--openai[[:space:]]+on\|off' >/dev/null ||
+  fail 'yvex server help lacks integrated OpenAI listener policy'
+printf '%s\n' "$server_help" | grep -E -- '--ctx[[:space:]]+N' >/dev/null ||
+  fail 'yvex server help lacks canonical context flag'
 
 test ! -e ./yvex-dev || fail 'retired yvex-dev executable remains'
 test ! -e ./yvex-openai || fail 'retired yvex-openai executable remains'

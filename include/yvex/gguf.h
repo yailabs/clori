@@ -547,11 +547,6 @@ const yvex_weight_mapping_info *yvex_weight_mapping_table_find_native(const yvex
 
 const char *yvex_weight_mapping_status_name(yvex_weight_mapping_status status);
 const char *yvex_weight_mapping_issue_kind_name(yvex_weight_mapping_issue_kind issue);
-int yvex_qwen_adapter_map_name(const char *native_name,
-                               char *target,
-                               size_t target_cap,
-                               yvex_tensor_role *role,
-                               yvex_weight_mapping_issue_kind *issue);
 
 #ifdef __cplusplus
 }

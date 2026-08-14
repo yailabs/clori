@@ -16,26 +16,6 @@ extern "C" {
 #define YVEX_RUNTIME_DECODE_SCHEMA_V2 2u
 #define YVEX_RUNTIME_DECODE_SCHEMA_V1 YVEX_RUNTIME_DECODE_SCHEMA_V2
 #define YVEX_SPECULATION_SCHEMA_V1 1u
-#define YVEX_SPECULATION_FAMILY_POLICY_SCHEMA_V1 1u
-#define YVEX_SPECULATION_MAX_BLOCK 8u
-#define YVEX_SPECULATION_MAX_FEATURE_LAYERS YVEX_MODEL_EXECUTION_FEATURE_LAYER_CAP
-#define YVEX_SPECULATION_IDENTITY_CAP (YVEX_SHA256_HEX_BYTES + 1u)
-
-typedef struct yvex_speculation_family_policy {
-    unsigned int schema_version;
-    unsigned long long block_size, noise_token_id;
-    unsigned long long target_feature_layer_count;
-    unsigned long long target_feature_layers[YVEX_SPECULATION_MAX_FEATURE_LAYERS];
-    unsigned long long target_feature_width, concatenated_feature_width;
-    unsigned long long draft_layer_count, markov_rank, accepted_prefix_maximum;
-    yvex_tensor_role feature_projection_role, feature_norm_role;
-    yvex_tensor_role output_norm_role, markov_embedding_role;
-    yvex_tensor_role markov_output_role, confidence_role;
-    int parallel_block_backbone, sequential_markov, confidence_available;
-    int shares_embedding, shares_output_head, target_verification_required;
-    char policy_identity[YVEX_SPECULATION_IDENTITY_CAP];
-} yvex_speculation_family_policy;
-
 typedef enum {
     YVEX_SPECULATION_ACCEPT_GREEDY = 0,
     YVEX_SPECULATION_ACCEPT_STOCHASTIC

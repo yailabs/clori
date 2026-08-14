@@ -1,0 +1,4 @@
+interface:
+  display_name: "Engineering Worklog"
+  short_description: "Capture evidence-backed semantic changes"
+  default_prompt: "Use $engineering-worklog to create a semantic record for the current material YVEX checkpoint."

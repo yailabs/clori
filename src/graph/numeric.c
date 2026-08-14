@@ -765,7 +765,7 @@ int yvex_attention_mhc_pre(const yvex_attention_mhc_pre_args *args,
         args->combination_stride <
             layer->residual_stream_count * layer->residual_stream_count)
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION, NULL,
+            failure, YVEX_ATTENTION_FAILURE_DIMENSION, NULL,
             layer ? layer->layer_index : YVEX_ATTENTION_NO_LAYER,
             YVEX_TENSOR_ROLE_HC_ATTENTION_FUNCTION, 1ull, 0ull, err, YVEX_ERR_BOUNDS,
             "attention mHC ingress geometry is invalid");
@@ -819,7 +819,7 @@ int yvex_attention_mhc_pre(const yvex_attention_mhc_pre_args *args,
     return yvex_attention_accept(failure, err);
 numeric:
     return yvex_attention_reject(
-        failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_NUMERIC, NULL,
+        failure, YVEX_ATTENTION_FAILURE_NUMERIC, NULL,
         layer ? layer->layer_index : YVEX_ATTENTION_NO_LAYER,
         YVEX_TENSOR_ROLE_HC_ATTENTION_FUNCTION, 1ull, 0ull, err, YVEX_ERR_FORMAT,
         "attention mHC ingress produced non-finite values");
@@ -840,7 +840,7 @@ int yvex_attention_mhc_post(const yvex_attention_mhc_post_args *args,
             layer->residual_stream_count * layer->residual_stream_count ||
         args->envelope_stride < layer->residual_expanded_width)
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION, NULL,
+            failure, YVEX_ATTENTION_FAILURE_DIMENSION, NULL,
             layer ? layer->layer_index : YVEX_ATTENTION_NO_LAYER,
             YVEX_TENSOR_ROLE_HC_ATTENTION_FUNCTION, 1ull, 0ull, err, YVEX_ERR_BOUNDS,
             "attention mHC egress geometry is invalid");
@@ -868,7 +868,7 @@ int yvex_attention_mhc_post(const yvex_attention_mhc_post_args *args,
     return yvex_attention_accept(failure, err);
 numeric:
     return yvex_attention_reject(
-        failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_NUMERIC, NULL,
+        failure, YVEX_ATTENTION_FAILURE_NUMERIC, NULL,
         layer ? layer->layer_index : YVEX_ATTENTION_NO_LAYER,
         YVEX_TENSOR_ROLE_HC_ATTENTION_FUNCTION, 1ull, 0ull, err, YVEX_ERR_FORMAT,
         "attention mHC egress produced non-finite values");
@@ -1025,7 +1025,7 @@ int yvex_attention_hadamard_cpu(
     if (!input || !output || length == 0ull ||
         !yvex_core_power_of_two_capacity(length, 1ull, 1ull, 1ull, &padded_length)) {
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_INVALID_ARGUMENT, NULL,
+            failure, YVEX_ATTENTION_FAILURE_INVALID_ARGUMENT, NULL,
             YVEX_ATTENTION_NO_LAYER, YVEX_TENSOR_ROLE_UNKNOWN, 1ull,
             0ull, err, YVEX_ERR_INVALID_ARG,
             "Hadamard CPU requires non-empty input and output");
@@ -1033,7 +1033,7 @@ int yvex_attention_hadamard_cpu(
     if (!yvex_attention_scratch_reserve(
             budget, padded_length, sizeof(*scratch), &scratch_bytes))
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_SCRATCH, NULL,
+            failure, YVEX_ATTENTION_FAILURE_SCRATCH, NULL,
             YVEX_ATTENTION_NO_LAYER, YVEX_TENSOR_ROLE_UNKNOWN,
             budget ? budget->limit_bytes : 0ull,
             budget ? (unsigned long long)budget->live_bytes : 0ull,
@@ -1043,7 +1043,7 @@ int yvex_attention_hadamard_cpu(
         budget, padded_length, sizeof(*scratch));
     if (!scratch)
         rc = yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_ALLOCATION, NULL,
+            failure, YVEX_ATTENTION_FAILURE_ALLOCATION, NULL,
             YVEX_ATTENTION_NO_LAYER, YVEX_TENSOR_ROLE_UNKNOWN,
             padded_length, 0ull, err, YVEX_ERR_NOMEM,
             "Hadamard CPU scratch allocation failed");
@@ -1056,7 +1056,7 @@ int yvex_attention_hadamard_cpu(
             yvex_attention_scratch_free(budget, scratch);
             attention_scratch_release(budget, scratch_bytes);
             return yvex_attention_reject(
-                failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_NUMERIC, NULL,
+                failure, YVEX_ATTENTION_FAILURE_NUMERIC, NULL,
                 YVEX_ATTENTION_NO_LAYER, YVEX_TENSOR_ROLE_UNKNOWN, 1ull,
                 0ull, err, YVEX_ERR_FORMAT,
                 "Hadamard CPU refuses non-finite input");
@@ -1101,7 +1101,7 @@ int yvex_attention_topk_select(
     if (selected_count) *selected_count = 0ull;
     if (!scores || !ordinals || !selected_indices || !selected_count) {
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_INVALID_ARGUMENT, NULL,
+            failure, YVEX_ATTENTION_FAILURE_INVALID_ARGUMENT, NULL,
             YVEX_ATTENTION_NO_LAYER, YVEX_TENSOR_ROLE_UNKNOWN, 1ull,
             0ull, err, YVEX_ERR_INVALID_ARG,
             "top-k selection requires scores, ordinals, and output");
@@ -1114,7 +1114,7 @@ int yvex_attention_topk_select(
         scratch, candidate_count, sizeof(*candidates));
     if (!candidates)
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_ALLOCATION, NULL,
+            failure, YVEX_ATTENTION_FAILURE_ALLOCATION, NULL,
             YVEX_ATTENTION_NO_LAYER, YVEX_TENSOR_ROLE_UNKNOWN,
             candidate_count, 0ull, err, YVEX_ERR_NOMEM,
             "top-k candidate allocation failed");
@@ -1122,7 +1122,7 @@ int yvex_attention_topk_select(
         if (!isfinite(scores[i])) {
             yvex_attention_scratch_free(scratch, candidates);
             return yvex_attention_reject(
-                failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_NUMERIC, NULL,
+                failure, YVEX_ATTENTION_FAILURE_NUMERIC, NULL,
                 YVEX_ATTENTION_NO_LAYER, YVEX_TENSOR_ROLE_UNKNOWN,
                 candidate_count, i, err, YVEX_ERR_FORMAT,
                 "top-k refuses non-finite score");
@@ -1137,7 +1137,7 @@ int yvex_attention_topk_select(
         if (candidates[i - 1ull].ordinal == candidates[i].ordinal) {
             yvex_attention_scratch_free(scratch, candidates);
             return yvex_attention_reject(
-                failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_NUMERIC, NULL,
+                failure, YVEX_ATTENTION_FAILURE_NUMERIC, NULL,
                 YVEX_ATTENTION_NO_LAYER, YVEX_TENSOR_ROLE_UNKNOWN,
                 candidate_count, i, err, YVEX_ERR_FORMAT,
                 "top-k refuses duplicate candidate ordinal");
@@ -1223,7 +1223,7 @@ static int attention_fake_quant_block(
     if (!input || !dequantized || !codes || !scale_code || !count ||
         !encode || !decode)
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_INVALID_ARGUMENT, NULL,
+            failure, YVEX_ATTENTION_FAILURE_INVALID_ARGUMENT, NULL,
             YVEX_ATTENTION_NO_LAYER, YVEX_TENSOR_ROLE_UNKNOWN, 1ull, 0ull,
             err, YVEX_ERR_INVALID_ARG, argument_reason);
     if (clear_scale_first) *scale_code = 0u;
@@ -1231,7 +1231,7 @@ static int attention_fake_quant_block(
         float magnitude;
         if (!isfinite(input[i]))
             return yvex_attention_reject(
-                failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_NUMERIC, NULL,
+                failure, YVEX_ATTENTION_FAILURE_NUMERIC, NULL,
                 YVEX_ATTENTION_NO_LAYER, YVEX_TENSOR_ROLE_UNKNOWN, count, i,
                 err, YVEX_ERR_FORMAT, nonfinite_reason);
         magnitude = fabsf(input[i]);
@@ -1242,7 +1242,7 @@ static int attention_fake_quant_block(
     scale = attention_ue8m0_decode_scale(*scale_code);
     if (!isfinite(scale) || scale <= 0.0f)
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_NUMERIC, NULL,
+            failure, YVEX_ATTENTION_FAILURE_NUMERIC, NULL,
             YVEX_ATTENTION_NO_LAYER, YVEX_TENSOR_ROLE_UNKNOWN, count, 0ull,
             err, YVEX_ERR_FORMAT, scale_reason);
     for (i = 0ull; i < count; ++i) {

@@ -912,9 +912,6 @@ static int activation_prefill_capacity_build(
     yvex_error *err)
 {
     yvex_graph_attention_capacity_request request;
-    const yvex_graph_family_api *graph =
-        model && model->adapter && model->adapter->graph
-            ? model->adapter->graph() : NULL;
     memset(&request, 0, sizeof(request));
     request.scope = YVEX_ATTENTION_PROBE_SCOPE_FULL;
     request.history_tokens = request.start_position = start;
@@ -922,7 +919,7 @@ static int activation_prefill_capacity_build(
     request.execution_count = 1ull;
     request.use_requested_position = 1;
     return yvex_graph_attention_capacity_plan_build(
-        out, graph, model ? model->attention : NULL, &request, err);
+        out, model ? model->attention : NULL, &request, err);
 }
 
 static int activation_prefill_prepare(
@@ -1224,7 +1221,7 @@ static int activation_prefill_operator_publish(
         result->target, sizeof(result->target), request->target);
     yvex_core_text_copy(
         result->family, sizeof(result->family),
-        model_view->adapter->family_name);
+        model_view->target_id);
     yvex_core_text_copy(
         result->backend, sizeof(result->backend),
         request->backend == YVEX_BACKEND_KIND_CUDA ? "cuda" : "cpu");

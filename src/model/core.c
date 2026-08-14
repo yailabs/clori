@@ -31,6 +31,151 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#define MODEL_IDENTITY_FIELD(object, field) \
+    yvex_sha256_update_u64_be(hash, (unsigned long long)(object)->field)
+
+static int activation_policy_valid(
+    const yvex_attention_activation_policy *policy,
+    unsigned long long fp8_block_width, unsigned long long fp4_block_width,
+    unsigned long long *expected, unsigned long long *actual)
+{
+    if (!policy) {
+        *expected = 1ull;
+        *actual = 0ull;
+        return 0;
+    }
+    if (!policy->required) {
+        *expected = 0ull;
+        *actual = policy->quantization != YVEX_ATTENTION_QUANT_NONE ||
+                  policy->block_width != 0ull ||
+                  policy->pre_transform != YVEX_ATTENTION_TRANSFORM_NONE;
+        return !*actual;
+    }
+    if (policy->block_axis != YVEX_ATTENTION_AXIS_FINAL_DIMENSION ||
+        policy->scale_format != YVEX_ATTENTION_SCALE_UE8M0 ||
+        policy->scale_dtype != YVEX_NATIVE_DTYPE_F8_E8M0 ||
+        policy->tail_policy != YVEX_ATTENTION_TAIL_EXACT_OR_SHORT_FINAL_BLOCK ||
+        policy->nonfinite_policy != YVEX_ATTENTION_NONFINITE_REFUSE ||
+        !policy->fake_quant_inplace) {
+        *expected = 1ull;
+        *actual = 0ull;
+        return 0;
+    }
+    if (policy->quantization == YVEX_ATTENTION_QUANT_FP8_E4M3_UE8M0_FAKE_DEQUANT) {
+        *expected = fp8_block_width;
+        *actual = policy->block_width;
+        return policy->block_width == fp8_block_width &&
+               policy->pre_transform == YVEX_ATTENTION_TRANSFORM_NONE;
+    }
+    if (policy->quantization == YVEX_ATTENTION_QUANT_FP4_E2M1_UE8M0_FAKE_DEQUANT) {
+        *expected = fp4_block_width;
+        *actual = policy->block_width;
+        return policy->block_width == fp4_block_width &&
+               policy->pre_transform == YVEX_ATTENTION_TRANSFORM_DAO_FHT_V1_1_0_POST2 &&
+               policy->zero_pad_hadamard_to_power_of_two;
+    }
+    *expected = 1ull;
+    *actual = 0ull;
+    return 0;
+}
+
+int yvex_model_attention_numeric_validate(
+    yvex_attention_compute_contract compute_contract,
+    yvex_attention_compute_contract expected_compute_contract,
+    const yvex_attention_activation_policy *const *activation_policies,
+    unsigned long long activation_policy_count,
+    const yvex_attention_topk_policy *topk_policy,
+    unsigned long long fp8_block_width, unsigned long long fp4_block_width,
+    unsigned int topk_policy_version, yvex_attention_numeric_mismatch *mismatch)
+{
+    unsigned long long index, expected = 0ull, actual = 0ull;
+    yvex_attention_numeric_mismatch local = {0};
+
+    if (!mismatch) mismatch = &local;
+    memset(mismatch, 0, sizeof(*mismatch));
+    if (compute_contract != expected_compute_contract) {
+        mismatch->code = YVEX_ATTENTION_NUMERIC_MISMATCH_COMPUTE;
+        mismatch->expected = expected_compute_contract;
+        mismatch->actual = compute_contract;
+        return 0;
+    }
+    if (!activation_policies && activation_policy_count) {
+        mismatch->code = YVEX_ATTENTION_NUMERIC_MISMATCH_ACTIVATION;
+        mismatch->expected = 1ull;
+        return 0;
+    }
+    for (index = 0ull; index < activation_policy_count; ++index) {
+        if (!activation_policy_valid(activation_policies[index], fp8_block_width,
+                                     fp4_block_width, &expected, &actual)) {
+            mismatch->code = YVEX_ATTENTION_NUMERIC_MISMATCH_ACTIVATION;
+            mismatch->policy_index = index;
+            mismatch->expected = expected;
+            mismatch->actual = actual;
+            return 0;
+        }
+    }
+    if (topk_policy && topk_policy->required &&
+        (topk_policy->version != topk_policy_version ||
+         topk_policy->policy != YVEX_ATTENTION_TOPK_SCORE_DESC_ORDINAL_ASC_V1 ||
+         topk_policy->k == 0ull || !topk_policy->reject_nonfinite ||
+         !topk_policy->score_descending || !topk_policy->equal_score_ordinal_ascending ||
+         !topk_policy->plus_zero_equals_minus_zero ||
+        !topk_policy->duplicate_ordinal_refused || !topk_policy->output_ranked_order)) {
+        mismatch->code = YVEX_ATTENTION_NUMERIC_MISMATCH_TOPK;
+        mismatch->expected = 1ull;
+        mismatch->actual = 0ull;
+        return 0;
+    }
+    return 1;
+}
+
+int yvex_model_activation_identity_update(
+    yvex_sha256 *hash, const yvex_attention_activation_policy *policy)
+{
+    return hash && policy && MODEL_IDENTITY_FIELD(policy, required) &&
+           MODEL_IDENTITY_FIELD(policy, stage) &&
+           MODEL_IDENTITY_FIELD(policy, quantization) &&
+           MODEL_IDENTITY_FIELD(policy, block_axis) &&
+           MODEL_IDENTITY_FIELD(policy, block_width) &&
+           MODEL_IDENTITY_FIELD(policy, scale_format) &&
+           MODEL_IDENTITY_FIELD(policy, scale_dtype) &&
+           MODEL_IDENTITY_FIELD(policy, pre_transform) &&
+           MODEL_IDENTITY_FIELD(policy, tail_policy) &&
+           MODEL_IDENTITY_FIELD(policy, nonfinite_policy) &&
+           MODEL_IDENTITY_FIELD(policy, fake_quant_inplace) &&
+           MODEL_IDENTITY_FIELD(policy, zero_pad_hadamard_to_power_of_two);
+}
+
+int yvex_model_topk_identity_update(
+    yvex_sha256 *hash, const yvex_attention_topk_policy *policy)
+{
+    return hash && policy && MODEL_IDENTITY_FIELD(policy, required) &&
+           MODEL_IDENTITY_FIELD(policy, version) &&
+           MODEL_IDENTITY_FIELD(policy, policy) && MODEL_IDENTITY_FIELD(policy, k) &&
+           MODEL_IDENTITY_FIELD(policy, reject_nonfinite) &&
+           MODEL_IDENTITY_FIELD(policy, score_descending) &&
+           MODEL_IDENTITY_FIELD(policy, equal_score_ordinal_ascending) &&
+           MODEL_IDENTITY_FIELD(policy, plus_zero_equals_minus_zero) &&
+           MODEL_IDENTITY_FIELD(policy, duplicate_ordinal_refused) &&
+           MODEL_IDENTITY_FIELD(policy, output_ranked_order);
+}
+
+int yvex_model_position_identity_update(
+    yvex_sha256 *hash, const yvex_attention_position_policy *policy)
+{
+    return hash && policy && MODEL_IDENTITY_FIELD(policy, rope_dimension) &&
+           MODEL_IDENTITY_FIELD(policy, theta) &&
+           MODEL_IDENTITY_FIELD(policy, scaling_factor) &&
+           MODEL_IDENTITY_FIELD(policy, original_context) &&
+           MODEL_IDENTITY_FIELD(policy, beta_fast) &&
+           MODEL_IDENTITY_FIELD(policy, beta_slow) &&
+           MODEL_IDENTITY_FIELD(policy, maximum_context) &&
+           MODEL_IDENTITY_FIELD(policy, partial_rope) &&
+           MODEL_IDENTITY_FIELD(policy, inverse_output_rotation);
+}
+
+#undef MODEL_IDENTITY_FIELD
+
 static int model_execution_refuse(yvex_error *err, yvex_status status,
                                   const char *reason)
 {

@@ -1,5 +1,5 @@
-/* Registry entries describe locally available model references. Registry membership, selected
- * startup configuration, and the model currently open in yvexd remain independent facts. */
+/* Registry entries describe locally available model references. Registry membership, an explicit
+ * startup profile, and the model currently open in the server remain independent facts. */
 #ifndef YVEX_REGISTRY_H
 #define YVEX_REGISTRY_H
 
@@ -123,8 +123,8 @@ int yvex_model_registry_default_path(char *out,
                                      unsigned long long out_size,
                                      yvex_error *err);
 
-/* A startup profile is selectable only when its artifact, binding, target, backend, and context
- * form one complete local configuration. Runtime admission still occurs inside yvexd. */
+/* A startup profile is runnable only when its artifact, binding, target, backend, and startup
+ * context form one complete local configuration. Admission still occurs inside the server. */
 int yvex_model_registry_startup_validate(const yvex_model_registry_entry *entry,
                                          yvex_error *err);
 

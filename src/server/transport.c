@@ -210,7 +210,7 @@ int yvex_client_connect(yvex_client **out, const char *socket_path,
     if (connect(fd, (struct sockaddr *)&address, sizeof(address)) != 0) {
         (void)close(fd);
         return transport_refuse(err, YVEX_ERR_IO,
-                                "cannot connect to the local YVEX runtime");
+                                "cannot connect to the local YVEX server");
     }
     client = calloc(1u, sizeof(*client));
     if (!client) {

@@ -1,6 +1,7 @@
 #include "src/cli/input/private.h"
 #include "src/cli/io/private.h"
 #include <yvex/core.h>
+#include <yvex/internal/family_catalog.h>
 #include <yvex/model.h>
 #include <yvex/tokenizer.h>
 #include <limits.h>
@@ -41,6 +42,26 @@ static const char *const literal_lines_3[] = { "usage: yvex execute input tokens
     "       yvex execute input prompt --model FILE_OR_ALIAS --text TEXT",
     "\nInput parses explicit tokens or tokenizer-backed prompt text into validated token input."};
 
+static int context_tokenizer_open(yvex_model_context *context, yvex_error *err)
+{
+    int rc = yvex_family_tokenizer_open(&context->tokenizer, context->gguf, err);
+
+    if (rc != YVEX_ERR_UNSUPPORTED) return rc;
+    yvex_error_clear(err);
+    return yvex_tokenizer_from_gguf(
+        &context->tokenizer, context->gguf, context->model, err);
+}
+
+static int model_context_open_tokenizer(
+    const char *path, yvex_model_context *context, yvex_error *err)
+{
+    int rc = yvex_model_context_open(path, context, err);
+
+    if (rc == YVEX_OK) rc = context_tokenizer_open(context, err);
+    if (rc != YVEX_OK) yvex_model_context_close(context);
+    return rc;
+}
+
 static int print_special_id_line(const char *name, int (*fn)(const yvex_tokenizer *, unsigned int *),
     const yvex_tokenizer *tokenizer)
 {
@@ -74,7 +95,7 @@ static int command_tokenizer(int arg_count, char **args)
         return 2;
     }
 
-    rc = yvex_model_context_open_tokenizer(args[2], &ctx, &err);
+    rc = model_context_open_tokenizer(args[2], &ctx, &err);
     if (rc != YVEX_OK) {
         return print_yvex_error(&err, exit_for_status(rc));
     }
@@ -98,7 +119,7 @@ static int command_tokenizer(int arg_count, char **args)
         yvex_cli_out_writef(stdout, "tokenizer_plan_identity: %s\n", plan->tokenizer_plan_identity);
         yvex_cli_out_writef(
             stdout, "chat_template: %s\n",
-            plan->prompt_policy == YVEX_TOKENIZER_PROMPT_DEEPSEEK_V4
+            plan->prompt_policy == YVEX_TOKENIZER_PROMPT_CONVERSATION
                 ? "deepseek-v4-family-policy" : "verbatim-no-special");
     } else {
         yvex_cli_out_writef(stdout, "runtime_support: unavailable\n");
@@ -162,7 +183,7 @@ static int command_tokenize(int arg_count, char **args)
         return 2;
     }
 
-    rc = yvex_model_context_open_tokenizer(args[2], &ctx, &err);
+    rc = model_context_open_tokenizer(args[2], &ctx, &err);
     if (rc != YVEX_OK) {
         return print_yvex_error(&err, exit_for_status(rc));
     }
@@ -249,7 +270,7 @@ static int command_detokenize(int arg_count, char **args)
         return 2;
     }
 
-    rc = yvex_model_context_open_tokenizer(args[2], &ctx, &err);
+    rc = model_context_open_tokenizer(args[2], &ctx, &err);
     if (rc != YVEX_OK) {
         free(ids);
         return print_yvex_error(&err, exit_for_status(rc));
@@ -378,7 +399,7 @@ static int command_prompt(int arg_count, char **args)
         return 2;
     }
 
-    rc = yvex_model_context_open_tokenizer(args[2], &ctx, &err);
+    rc = model_context_open_tokenizer(args[2], &ctx, &err);
     if (rc != YVEX_OK) {
         return print_yvex_error(&err, exit_for_status(rc));
     }
@@ -604,7 +625,7 @@ static int command_input(int arg_count, char **args)
         return command_input_prompt_failure(&ref, NULL, model_arg, "not-checked",
                                             yvex_error_message(&err), &err, rc);
     }
-    rc = yvex_tokenizer_from_gguf(&ctx.tokenizer, ctx.gguf, ctx.model, &err);
+    rc = context_tokenizer_open(&ctx, &err);
     if (rc != YVEX_OK ||
         yvex_tokenizer_support_of(ctx.tokenizer) != YVEX_TOKENIZER_SUPPORT_FIXTURE_ENCODE_DECODE) {
         const char *status = rc == YVEX_OK ? "unsupported" : "missing";

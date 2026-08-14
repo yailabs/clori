@@ -13,6 +13,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <yvex/internal/families/deepseek_v4.h>
 #include <yvex/internal/quant_numeric.h>
 #include <yvex/internal/runtime.h>
 #include <yvex/internal/transformer.h>
@@ -74,8 +75,8 @@ static int transformer_test_plan(yvex_transformer_plan **out,
 
 static int transformer_test_family(void)
 {
-    const yvex_runtime_family_adapter *adapter =
-        yvex_runtime_family_adapter_find("deepseek4-v4-flash-dspark");
+    const yvex_family_compiler_adapter *adapter =
+        yvex_compiler_family_deepseek_v4();
     yvex_runtime_descriptor_summary runtime = {0};
     yvex_transformer_family_policy policy;
     runtime.model_execution = (yvex_model_execution_descriptor){
@@ -97,10 +98,34 @@ static int transformer_test_family(void)
                          policy.final_norm_after_head,
                      "DeepSeek adapter fixes exact four-stream ordered backbone semantics");
     memset(&runtime.model_execution, 0, sizeof(runtime.model_execution));
-    YVEX_TEST_ASSERT(adapter->transformer_policy(&runtime, &policy) &&
-                         policy.hidden_width == 4096ull &&
-                         policy.maximum_context == 1048576ull,
-                     "binding v7 retains its exact family-owned transformer projection");
+    YVEX_TEST_ASSERT(!adapter->transformer_policy(&runtime, &policy),
+                     "transformer policy refuses an uncompiled execution descriptor");
+    return 0;
+}
+
+static int transformer_test_context_envelope(void)
+{
+    yvex_compiled_context_envelope envelope = {
+        .schema_version = YVEX_COMPILED_CONTEXT_ENVELOPE_SCHEMA_V1,
+        .semantic_maximum_context = 1048576ull,
+        .target_maximum_context = 1048576ull};
+    yvex_error err;
+    transformer_test_identity(envelope.model_execution_identity, 10u);
+    transformer_test_identity(envelope.target_transformer_identity, 11u);
+    YVEX_TEST_ASSERT(
+        yvex_compiled_context_envelope_admit(
+            &envelope, 4096ull, 0, &err) == YVEX_OK &&
+            yvex_compiled_context_envelope_admit(
+                &envelope, 1048576ull, 0, &err) == YVEX_OK,
+        "runtime-selected context remains inside the compiled semantic envelope");
+    YVEX_TEST_ASSERT(
+        yvex_compiled_context_envelope_admit(
+            &envelope, 1048577ull, 0, &err) == YVEX_ERR_BOUNDS,
+        "compiled semantic maximum refuses an oversized runtime selection");
+    YVEX_TEST_ASSERT(
+        yvex_compiled_context_envelope_admit(
+            &envelope, 4096ull, 1, &err) == YVEX_ERR_UNSUPPORTED,
+        "target-only compiled envelope does not invent draft capacity");
     return 0;
 }
 
@@ -291,6 +316,7 @@ static int transformer_test_block_api_refusal(void)
 int yvex_test_runtime_transformer(void)
 {
     if (transformer_test_family() != 0) return 1;
+    if (transformer_test_context_envelope() != 0) return 1;
     if (transformer_test_numeric() != 0) return 1;
     if (transformer_test_router_identity() != 0) return 1;
     if (transformer_test_input() != 0) return 1;

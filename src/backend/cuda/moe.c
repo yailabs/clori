@@ -1,5 +1,5 @@
 /*
- * Execute one DeepSeek-selected MoE layer with canonical qtype kernels on CUDA.
+ * Execute one compiled MoE layer with canonical qtype kernels on CUDA.
  *
  * Production weights remain directly addressable and success follows device completion. Backend
  * execution consumes a typed MoE job and never reconstructs model topology.
@@ -361,7 +361,7 @@ static int moe_cuda_prepare_input(yvex_backend_moe_execution *execution, yvex_er
             &execution->normalized, &execution->post, &execution->combination,
             &one, &execution->status};
         rc = execution->ops->launch(
-            &execution->work, execution->state->deepseek_mhc_pre_function,
+            &execution->work, execution->state->residual_mhc_pre_function,
             1u, MOE_CUDA_BLOCK, shared_bytes, params, "cuda.moe.mhc-pre",
             &execution->failure, err);
     }
@@ -724,7 +724,7 @@ int yvex_backend_moe_finish(yvex_backend_moe_execution *execution,
                           &execution->combination, &streams, &width, &output, &one,
                           &execution->status};
         rc = execution->ops->launch(&execution->work,
-            execution->state->deepseek_mhc_post_function, grid, MOE_CUDA_BLOCK, 0u,
+            execution->state->residual_mhc_post_function, grid, MOE_CUDA_BLOCK, 0u,
             params, "cuda.moe.deferred-post", &execution->failure, err);
     }
 #define DOWNLOAD(target_, source_, bytes_, stage_)                                         \
@@ -1029,7 +1029,7 @@ static int moe_cuda_batch_prepare(moe_cuda_batch *batch,
             &batch->normalized, &batch->post, &batch->combination,
             (void *)&rows->row_count, &batch->status};
         rc = batch->ops->launch(
-            &batch->work, batch->state->deepseek_mhc_pre_function,
+            &batch->work, batch->state->residual_mhc_pre_function,
             (unsigned int)rows->row_count, MOE_CUDA_BLOCK, shared_bytes, params,
             "cuda.moe.rows.mhc-pre", &batch->failure, err);
     }
@@ -1226,7 +1226,7 @@ static int moe_cuda_batch_publish(moe_cuda_batch *batch,
             &batch->combined, &batch->expanded, &batch->post, &batch->combination,
             &streams, &width, &destination, (void *)&rows->row_count, &batch->status};
         rc = batch->ops->launch(
-            &batch->work, batch->state->deepseek_mhc_post_function,
+            &batch->work, batch->state->residual_mhc_post_function,
             expanded_grid, MOE_CUDA_BLOCK, 0u, params, "cuda.moe.rows.mhc-post",
             &batch->failure, err);
     }
@@ -1460,8 +1460,8 @@ const yvex_backend_moe_operations *yvex_backend_moe_operations_get(
         !(state = yvex_cuda_state(backend)) || !state->moe_route_rows_function ||
         !state->moe_pair_order_function || !state->moe_grouped_up_rows_function ||
         !state->moe_grouped_down_rows_function || !state->moe_reduce_rows_function ||
-        !state->moe_combine_rows_function || !state->deepseek_mhc_pre_function ||
-        !state->deepseek_mhc_post_function)
+        !state->moe_combine_rows_function || !state->residual_mhc_pre_function ||
+        !state->residual_mhc_post_function)
         return NULL;
     return &moe_cuda_row_operations;
 }

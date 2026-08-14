@@ -54,31 +54,6 @@ int yvex_artifact_payload_identity_compute(const yvex_artifact *artifact, const 
                                            yvex_error *err);
 /* Roundtrip Gate. */
 #define YVEX_GGUF_OFFICIAL_READER_REVISION "af97976c7810cdabb1863172f31c432dab767de7"
-#define YVEX_SELECTED_DEEPSEEK_ARTIFACT_FILENAME                                           \
-    "deepseek-v4-flash-dspark-bootstrap-q2-v1.gguf"
-#define YVEX_SELECTED_DEEPSEEK_ARTIFACT_IDENTITY                                                   \
-    "bf80bd7372e9ff754cd61d8f6e849ca8eff2177fad40840a2dad8e840b35690a"
-#define YVEX_SELECTED_DEEPSEEK_PROFILE_NAME "deepseek-v4-flash-dspark-bootstrap-q2-v1"
-#define YVEX_SELECTED_DEEPSEEK_PROFILE_IDENTITY                                                    \
-    "a48d43c8594999a1af3a5b1f572b34a5823042cb767832d558642bb804b036c5"
-#define YVEX_SELECTED_DEEPSEEK_EXECUTION_IDENTITY                                                  \
-    "777559149e4e8421c34299da78f63f6b0d296a91005d7670196164c3c72b62af"
-#define YVEX_SELECTED_DEEPSEEK_PAYLOAD_PLAN_IDENTITY                                               \
-    "8d1a89e794363c0aaf1c721b07c0661ea03f9680691d0113543b2540297b69e7"
-#define YVEX_SELECTED_DEEPSEEK_PAYLOAD_BYTE_IDENTITY                                               \
-    "6dce1edb82810715687d40c6d62273e992cfe9e0aa610cb9598447e06fb7099f"
-#define YVEX_SELECTED_DEEPSEEK_PAYLOAD_IDENTITY                                                    \
-    "e05ddb86f9783bf665d05395636588f4e8dbd1ee6f1ba54be4140f84369ee939"
-#define YVEX_SELECTED_DEEPSEEK_TRANSFORM_IDENTITY                                                  \
-    "cb857e6be90168ddde621c1352b0d45084901c683520f1eb1241d5559e01b7b5"
-#define YVEX_SELECTED_DEEPSEEK_WRITER_PLAN_IDENTITY                                                \
-    "1ba1ceaa709862145b1a145e938cf03327cd58da27bca42ade2f884e2b2fc635"
-#define YVEX_SELECTED_DEEPSEEK_FILE_BYTES 108285860832ull
-#define YVEX_SELECTED_DEEPSEEK_PAYLOAD_BYTES 108274154488ull
-#define YVEX_SELECTED_DEEPSEEK_TENSOR_COUNT 1409ull
-#define YVEX_SELECTED_DEEPSEEK_METADATA_COUNT 76ull
-#define YVEX_SELECTED_DEEPSEEK_SOURCE_IDENTITY 0x8d8da435dea23049ull
-#define YVEX_SELECTED_DEEPSEEK_MAPPING_IDENTITY 0x779aa44d104fc718ull
 typedef enum {
     YVEX_ARTIFACT_CLASS_REFUSED = 0,
     YVEX_ARTIFACT_CLASS_TENSOR_PROOF,
@@ -188,7 +163,7 @@ typedef struct {
     char field[64];
     char tensor_name[YVEX_GGUF_WRITER_NAME_CAP];
 } yvex_artifact_compatibility_failure;
-typedef struct {
+typedef struct yvex_artifact_physical_compatibility {
     unsigned int schema_version;
     unsigned long long source_snapshot_identity;
     unsigned long long mapping_identity;
@@ -221,6 +196,10 @@ int yvex_artifact_physical_compatibility_validate(
     const yvex_gguf_writer_plan *writer_plan, const yvex_complete_artifact_admission *admission,
     const yvex_artifact *artifact, const yvex_gguf *gguf, yvex_artifact_physical_compatibility *out,
     yvex_artifact_compatibility_failure *failure, yvex_error *err);
+const char *yvex_artifact_physical_compatibility_mismatch(
+    const yvex_artifact_physical_compatibility *proof,
+    const yvex_complete_artifact_admission *admission,
+    const char *logical_transform_identity);
 typedef enum {
     YVEX_ARTIFACT_DESCRIPTOR_REFUSED = 0,
     YVEX_ARTIFACT_DESCRIPTOR_REPORT_ONLY = 1,
@@ -246,11 +225,11 @@ typedef struct {
     const yvex_artifact_component_metadata *metadata;
     const yvex_artifact_component_storage *storage;
     unsigned long long metadata_count, storage_count, elements, alignment;
-} yvex_artifact_component_contract;
-/* Reconcile a family-provided exact component contract with one unchanged opened artifact. */
-int yvex_artifact_admit_component(
+} yvex_artifact_catalog_contract;
+/* Reconcile a family-provided exact catalog row with one unchanged opened artifact. */
+int yvex_artifact_admit_catalog(
     const yvex_artifact *artifact, const yvex_gguf *gguf, const yvex_tensor_table *tensors,
-    const yvex_artifact_component_contract *contract, yvex_complete_artifact_admission *out,
+    const yvex_artifact_catalog_contract *contract, yvex_complete_artifact_admission *out,
     yvex_artifact_admission_failure *failure, yvex_error *err);
 int yvex_artifact_admission_identity_verify(
     const yvex_artifact *artifact, yvex_complete_artifact_admission *admission,
@@ -339,6 +318,10 @@ typedef struct yvex_materialization_projection {
     int complete;
 } yvex_materialization_projection;
 #define YVEX_MATERIALIZATION_PROJECTION_SCHEMA_VERSION 1u
+struct yvex_artifact_lowering_map;
+int yvex_materialization_project_artifact_lowering(
+    const struct yvex_artifact_lowering_map *map,
+    yvex_materialization_projection *out, yvex_error *err);
 typedef struct {
     unsigned long long tensor_id;
     unsigned long long descriptor_index;
@@ -451,7 +434,7 @@ typedef struct {
     yvex_materialization_placement placement;
     yvex_materialization_access_mode access_mode;
 } yvex_runtime_tensor_binding;
-typedef struct {
+typedef struct yvex_runtime_descriptor_summary {
     yvex_runtime_descriptor_status status;
     char artifact_identity[YVEX_SHA256_HEX_CAP];
     char materialization_plan_identity[YVEX_MATERIALIZATION_IDENTITY_CAP];
@@ -492,6 +475,13 @@ int yvex_runtime_descriptor_build(yvex_runtime_descriptor **out,
                                   const yvex_materialization_session *session,
                                   const yvex_runtime_descriptor_family_facts *family,
                                   yvex_runtime_descriptor_failure *failure, yvex_error *err);
+int yvex_runtime_descriptor_build_projected(
+    yvex_runtime_descriptor **out,
+    const yvex_complete_artifact_admission *admission,
+    const yvex_materialization_session *session,
+    const yvex_runtime_descriptor_family_facts *family,
+    const yvex_materialization_projection *projection,
+    yvex_runtime_descriptor_failure *failure, yvex_error *err);
 void yvex_runtime_descriptor_close(yvex_runtime_descriptor *descriptor);
 const yvex_runtime_descriptor_summary *
 yvex_runtime_descriptor_summary_get(const yvex_runtime_descriptor *descriptor);
@@ -588,7 +578,6 @@ int yvex_materialization_session_expert_subview(const yvex_materialization_sessi
                                                 yvex_materialized_expert_subview *out,
                                                 yvex_materialization_failure *failure,
                                                 yvex_error *err);
-
 #ifdef __cplusplus
 }
 #endif

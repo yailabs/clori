@@ -216,4 +216,34 @@ typedef struct {
     int inverse_output_rotation;
 } yvex_attention_position_policy;
 
+typedef enum {
+    YVEX_ATTENTION_NUMERIC_MISMATCH_NONE = 0,
+    YVEX_ATTENTION_NUMERIC_MISMATCH_COMPUTE,
+    YVEX_ATTENTION_NUMERIC_MISMATCH_ACTIVATION,
+    YVEX_ATTENTION_NUMERIC_MISMATCH_TOPK
+} yvex_attention_numeric_mismatch_code;
+
+typedef struct {
+    yvex_attention_numeric_mismatch_code code;
+    unsigned long long policy_index, expected, actual;
+} yvex_attention_numeric_mismatch;
+
+/* Validate one family-selected numeric profile before it becomes a compiled graph fact. */
+int yvex_model_attention_numeric_validate(
+    yvex_attention_compute_contract compute_contract,
+    yvex_attention_compute_contract expected_compute_contract,
+    const yvex_attention_activation_policy *const *activation_policies,
+    unsigned long long activation_policy_count,
+    const yvex_attention_topk_policy *topk_policy,
+    unsigned long long fp8_block_width, unsigned long long fp4_block_width,
+    unsigned int topk_policy_version, yvex_attention_numeric_mismatch *mismatch);
+
+/* Canonical identity updates keep shared numeric policy fields ordered once. */
+int yvex_model_activation_identity_update(
+    yvex_sha256 *hash, const yvex_attention_activation_policy *policy);
+int yvex_model_topk_identity_update(
+    yvex_sha256 *hash, const yvex_attention_topk_policy *policy);
+int yvex_model_position_identity_update(
+    yvex_sha256 *hash, const yvex_attention_position_policy *policy);
+
 #endif

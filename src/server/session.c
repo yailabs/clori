@@ -14,9 +14,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <yvex/internal/conversation.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/runtime_state_store.h>
+#include <yvex/internal/tokenizer.h>
 #define SESSION_SCHEMA_V1 1u
 #define SESSION_MAX_MESSAGES 128u
 #define SESSION_TRANSCRIPT_BYTES 1048576u
@@ -1004,20 +1004,7 @@ static void session_speculation_result_project(
 static const yvex_conversation_protocol *session_conversation_protocol(
     const yvex_tokenizer *tokenizer)
 {
-    const yvex_tokenizer_plan_summary *plan =
-        yvex_tokenizer_plan_summary_get(tokenizer);
-    unsigned long long index;
-    for (index = 0u; plan; ++index) {
-        const yvex_conversation_protocol *candidate =
-            yvex_model_conversation_protocol_at(index);
-        if (!candidate) return NULL;
-        if (candidate->schema_version ==
-                YVEX_CONVERSATION_PROTOCOL_SCHEMA_V1 &&
-            candidate->family_adapter_id == plan->family_adapter_id &&
-            candidate->family_adapter_version == plan->family_adapter_version)
-            return candidate;
-    }
-    return NULL;
+    return yvex_tokenizer_conversation_protocol_get(tokenizer);
 }
 
 static int session_provider_result_prepare(

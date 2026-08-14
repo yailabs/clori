@@ -11,7 +11,7 @@ sh tests/test_surface.sh
 test -f src/graph/attention.c
 test -f src/graph/numeric.c
 test -f src/graph/families/deepseek_v4.c
-test -f src/backend/cuda/families/deepseek_v4.c
+test -f src/backend/cuda/attention.c
 test -f tests/reference/deepseek_attention.c
 
 if grep -RIn 'yvex_test_attention_reference_' src include; then
@@ -32,7 +32,7 @@ fi
 
 if grep -En \
     'cpu_(probe|first_token|chunk)_execute|yvex_attention_[A-Za-z0-9_]*_cpu|yvex_test_attention_reference_|yvex_quant_[A-Za-z0-9_]*reference' \
-    src/backend/cuda/families/deepseek_v4.c; then
+    src/backend/cuda/attention.c; then
   echo "topology closure: CUDA attention contains a host numeric fallback" >&2
   exit 1
 fi
@@ -48,16 +48,16 @@ if find src -type f -path '*/families/*' | grep -E '/deepseek[^/]*_(plan|execute
 fi
 
 family_files=$(find src -type f -path '*/families/deepseek_v4.*' | wc -l | tr -d ' ')
-test "$family_files" -eq 3 || {
-  echo "topology closure: DeepSeek family budget is $family_files/3" >&2
+test "$family_files" -eq 2 || {
+  echo "topology closure: DeepSeek family projection count is $family_files/2" >&2
   exit 1
 }
 
-grep -F 'plan->summary.cuda_execution_ready = 1;' src/graph/plan.c >/dev/null || {
+grep -F '.cuda_execution_ready = 1,' src/graph/plan.c >/dev/null || {
   echo "topology closure: attention CUDA readiness is not admitted" >&2
   exit 1
 }
-grep -F 'plan->summary.full_execution_ready = 1;' src/graph/plan.c >/dev/null || {
+grep -F '.full_execution_ready = 1,' src/graph/plan.c >/dev/null || {
   echo "topology closure: attention full execution is not admitted" >&2
   exit 1
 }

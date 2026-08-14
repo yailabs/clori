@@ -10,22 +10,17 @@
 #include <yvex/gguf.h>
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/backend.h>
-#include <yvex/internal/component.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/families/minimax_h3.h>
-#include <yvex/tokenizer.h>
 
 enum { TEXT_HIDDEN = 5120u };
-/* Independent Transformers CUDA BF16 layer and stack runs establish these measured bounds. */
-static const float layer_oracle_max_absolute = 0.0625f;
+/* The independent PyTorch CPU/CUDA BF16 oracle pair differs by these measured bounds. */
+static const float layer_oracle_max_absolute = 0.046875f;
 static const double layer_oracle_max_rmse = 0.002315;
 static const float encoder_oracle_max_absolute = 0.375f;
 static const double encoder_oracle_max_rmse = 0.026718;
-static const double encoder_oracle_max_relative_l2 = 0.005;
-static const double encoder_oracle_min_cosine = 0.999999;
-static const double encoder_oracle_max_scaled_absolute = 0.005;
 
-static const char *const layer_weight_names[YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT] = {
+static const char *const layer_weight_names[YVEX_BACKEND_TEXT_WEIGHT_COUNT] = {
     "model.language_model.embed_tokens.weight",
     "model.language_model.layers.0.input_layernorm.weight",
     "model.language_model.layers.0.self_attn.q_proj.weight",
@@ -54,16 +49,16 @@ static const yvex_materialized_tensor_binding *binding_find(
 static int proof_weights_load(
     yvex_materialization_session *session, unsigned char **arena_out,
     unsigned long long *arena_bytes_out,
-    yvex_minimax_h3_encoded_weight weights[YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT],
+    yvex_backend_text_weight weights[YVEX_BACKEND_TEXT_WEIGHT_COUNT],
     char identity[65], yvex_error *err)
 {
-    const yvex_materialized_tensor_binding *bindings[YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT];
+    const yvex_materialized_tensor_binding *bindings[YVEX_BACKEND_TEXT_WEIGHT_COUNT];
     yvex_materialization_failure failure;
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     unsigned char *arena;
     unsigned long long index, total = 0ull, cursor = 0ull;
-    for (index = 0ull; index < YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT; ++index) {
+    for (index = 0ull; index < YVEX_BACKEND_TEXT_WEIGHT_COUNT; ++index) {
         bindings[index] = binding_find(session, layer_weight_names[index]);
         if (!bindings[index] || !bindings[index]->row_count ||
             !yvex_core_u64_add(total, bindings[index]->encoded_bytes, &total)) {
@@ -86,7 +81,7 @@ static int proof_weights_load(
     }
     yvex_sha256_init(&hash);
     if (!yvex_sha256_update_text(&hash, "yvex.minimax-h3.text-layer-zero.proof.v1")) goto failed;
-    for (index = 0ull; index < YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT; ++index) {
+    for (index = 0ull; index < YVEX_BACKEND_TEXT_WEIGHT_COUNT; ++index) {
         const yvex_materialized_tensor_binding *binding = bindings[index];
         if (binding->encoded_bytes > SIZE_MAX ||
             yvex_materialization_session_read(
@@ -119,20 +114,23 @@ failed:
 
 static int layer_proof_execute(
     const yvex_artifact *artifact, const yvex_gguf *gguf,
-    const yvex_tensor_table *tensors, const unsigned int *tokens,
-    unsigned long long token_count, float *output, unsigned long long output_values,
-    yvex_minimax_h3_conditioning_result *result,
+    const yvex_tensor_table *tensors, const unsigned int *token,
+    float output[TEXT_HIDDEN], yvex_minimax_h3_conditioning_result *result,
     yvex_error *err)
 {
     const yvex_minimax_h3_graph_api *graph = yvex_graph_register_minimax_h3();
-    const yvex_minimax_h3_backend_api *family = yvex_backend_register_minimax_h3();
+    const yvex_minimax_h3_api *model = yvex_model_register_minimax_h3();
+    yvex_minimax_h3_architecture architecture;
+    yvex_backend_text_encoder_geometry geometry;
+    yvex_backend_text_execution_result backend_result = {0};
+    yvex_minimax_h3_failure architecture_failure;
     yvex_complete_artifact_admission admission;
     yvex_artifact_admission_failure admission_failure;
     yvex_materialization_options materialization_options;
     yvex_materialization_failure materialization_failure;
     yvex_materialization_plan *plan = NULL;
     yvex_materialization_session *session = NULL;
-    yvex_minimax_h3_encoded_weight weights[YVEX_MINIMAX_H3_TEXT_WEIGHT_COUNT] = {{0}};
+    yvex_backend_text_weight weights[YVEX_BACKEND_TEXT_WEIGHT_COUNT] = {{0}};
     yvex_backend_options backend_options = {0};
     yvex_backend_tensor_desc descriptor = {0};
     yvex_backend *backend = NULL;
@@ -142,12 +140,29 @@ static int layer_proof_execute(
     char identity[65] = {0};
     int attached = 0, rc, release_rc;
     yvex_error cleanup;
-    if (!artifact || !gguf || !tensors || !tokens || !token_count || !output || !result ||
-        !graph || !family || !family->text_layer_cuda) {
+    if (!artifact || !gguf || !tensors || !token || !output || !result ||
+        !graph || !model ||
+        !model->architecture_canonical ||
+        model->architecture_canonical(
+            &architecture, &architecture_failure, err) != YVEX_OK) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "minimax-h3.text-proof",
-                       "exact artifact views, tokens, output, and production backend are required");
+                       "exact artifact views, token, output, and production backend are required");
         return YVEX_ERR_INVALID_ARG;
     }
+    geometry = (yvex_backend_text_encoder_geometry){
+        .schema_version = YVEX_BACKEND_TEXT_ENCODER_SCHEMA_V1,
+        .semantic_identity = YVEX_MINIMAX_H3_TEXT_COMPONENT_IDENTITY,
+        .embedding_identity_domain = "yvex.minimax-h3.text-conditioning.cuda.v1",
+        .encoder_identity_domain = "yvex.minimax-h3.qwen-text-stack.cuda.v1",
+        .layer_capacity = architecture.encoder.text_layers,
+        .hidden_width = architecture.encoder.text_width,
+        .ffn_width = architecture.encoder.text_ffn_width,
+        .query_heads = architecture.encoder.text_query_heads,
+        .kv_heads = architecture.encoder.text_kv_heads,
+        .head_dimension = architecture.encoder.text_head_dimension,
+        .vocabulary_size = architecture.encoder.vocabulary_size,
+        .rope_theta = architecture.encoder.rope_theta,
+        .normalization_epsilon = 1.0e-6f};
     rc = graph->component_admit(
         "text_encoder", artifact, gguf, tensors, &admission, &admission_failure, err);
     yvex_materialization_options_default(&materialization_options);
@@ -172,13 +187,8 @@ static int layer_proof_execute(
     descriptor.rank = 1u;
     descriptor.dims[0] = descriptor.bytes = arena_bytes;
     registered = arena;
-    if (rc == YVEX_OK && (!backend->vtable || !backend->vtable->resident_alloc)) {
-        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "minimax-h3.text-proof.residency",
-                       "the CUDA backend cannot register selected proof weights");
-        rc = YVEX_ERR_UNSUPPORTED;
-    }
     if (rc == YVEX_OK)
-        rc = backend->vtable->resident_alloc(
+        rc = yvex_backend_resident_alloc(
             backend, &descriptor, &resident, &registered, err);
     if (rc == YVEX_OK && registered != arena) {
         yvex_error_set(err, YVEX_ERR_STATE, "minimax-h3.text-proof.residency",
@@ -190,9 +200,25 @@ static int layer_proof_execute(
         attached = rc == YVEX_OK;
     }
     if (rc == YVEX_OK)
-        rc = family->text_layer_cuda(
-            backend, weights, 1ull, identity, arena_bytes, tokens, token_count, output,
-            output_values, result, err);
+        rc = yvex_backend_text_encoder_execute(
+            backend, &geometry, weights, 1ull, identity, arena_bytes, token, 1ull,
+            output, TEXT_HIDDEN, &backend_result, err);
+    if (rc == YVEX_OK) {
+        *result = (yvex_minimax_h3_conditioning_result){
+            .token_count = backend_result.token_count,
+            .hidden_width = backend_result.hidden_width,
+            .layer_count = backend_result.layer_count,
+            .resident_bytes = backend_result.resident_bytes,
+            .kernel_launches = backend_result.kernel_launches,
+            .h2d_bytes = backend_result.h2d_bytes,
+            .d2h_bytes = backend_result.d2h_bytes,
+            .device_bytes = backend_result.device_bytes,
+            .complete = backend_result.complete};
+        memcpy(result->residency_identity, backend_result.residency_identity,
+               sizeof(result->residency_identity));
+        memcpy(result->execution_identity, backend_result.execution_identity,
+               sizeof(result->execution_identity));
+    }
     if (attached) {
         yvex_error_clear(&cleanup);
         release_rc = yvex_backend_resident_detach(backend, &cleanup);
@@ -221,83 +247,66 @@ static int layer_proof_execute(
     return rc;
 }
 
-static int reference_compare(const char *path, const float *output,
-                             unsigned long long values, int execution_mode)
+static int reference_compare(const char *path, const float output[TEXT_HIDDEN],
+                             int execution_mode)
 {
-    float *reference;
-    float maximum = 0.0f, reference_maximum = 0.0f;
-    double squared = 0.0, reference_squared = 0.0, output_squared = 0.0, dot = 0.0;
-    double relative_l2, cosine, scaled_absolute;
-    FILE *file;
+    float reference[TEXT_HIDDEN];
+    float maximum = 0.0f;
+    double squared = 0.0;
+    FILE *file = fopen(path, "rb");
     unsigned long long index;
 
-    if (!values || values > SIZE_MAX / sizeof(*reference) ||
-        !(reference = malloc((size_t)values * sizeof(*reference)))) return 0;
-    file = fopen(path, "rb");
-    if (!file || fread(reference, sizeof(*reference), (size_t)values, file) != values ||
-        fgetc(file) != EOF) {
+    if (!file || fread(reference, sizeof(reference), 1u, file) != 1u || fgetc(file) != EOF) {
         if (file) fclose(file);
-        free(reference);
         fprintf(stderr, "text_reference_read=refused\n");
         return 0;
     }
     fclose(file);
-    for (index = 0ull; index < values; ++index) {
+    for (index = 0ull; index < TEXT_HIDDEN; ++index) {
         float absolute = fabsf(reference[index] - output[index]);
         if (absolute > maximum) maximum = absolute;
-        if (fabsf(reference[index]) > reference_maximum)
-            reference_maximum = fabsf(reference[index]);
         squared += (double)absolute * (double)absolute;
-        reference_squared += (double)reference[index] * (double)reference[index];
-        output_squared += (double)output[index] * (double)output[index];
-        dot += (double)reference[index] * (double)output[index];
     }
-    relative_l2 = reference_squared > 0.0 ? sqrt(squared / reference_squared) : INFINITY;
-    cosine = reference_squared > 0.0 && output_squared > 0.0
-                 ? dot / sqrt(reference_squared * output_squared) : -1.0;
-    scaled_absolute = reference_maximum > 0.0 ? maximum / reference_maximum : INFINITY;
-    squared = sqrt(squared / values);
-    free(reference);
+    squared = sqrt(squared / TEXT_HIDDEN);
     printf("oracle_max_absolute_error=%.9g oracle_rmse=%.9g\n", maximum, squared);
-    printf("oracle_relative_l2=%.9g oracle_cosine=%.12g "
-           "oracle_scaled_absolute=%.9g\n", relative_l2, cosine, scaled_absolute);
     if (!execution_mode) return maximum == 0.0f;
     if (execution_mode == 3)
-        return (maximum <= encoder_oracle_max_absolute && squared <= encoder_oracle_max_rmse) ||
-               (relative_l2 <= encoder_oracle_max_relative_l2 &&
-                cosine >= encoder_oracle_min_cosine &&
-                scaled_absolute <= encoder_oracle_max_scaled_absolute);
+        return maximum <= encoder_oracle_max_absolute && squared <= encoder_oracle_max_rmse;
     return maximum <= layer_oracle_max_absolute && squared <= layer_oracle_max_rmse;
 }
 
-static int output_write(const char *path, const float *output, unsigned long long values)
+static int output_write(const char *path, const float output[TEXT_HIDDEN])
 {
     FILE *file = fopen(path, "wb");
     size_t written;
     int close_rc;
 
     if (!file) return 0;
-    written = fwrite(output, sizeof(float), (size_t)values, file);
+    written = fwrite(output, sizeof(float), TEXT_HIDDEN, file);
     close_rc = fclose(file);
-    return written == values && close_rc == 0;
+    return written == TEXT_HIDDEN && close_rc == 0;
 }
 
 int main(int argc, char **argv)
 {
+    const yvex_minimax_h3_api *model = yvex_model_register_minimax_h3();
+    yvex_minimax_h3_architecture architecture;
+    yvex_minimax_h3_failure architecture_failure;
     yvex_artifact_options options = {0};
     yvex_artifact *artifact = NULL;
     yvex_tensor_table *tensors = NULL;
     yvex_gguf *gguf = NULL;
     yvex_minimax_h3_conditioning_result result;
-    yvex_token_input input;
-    float *output = NULL;
-    unsigned long long output_values;
+    float output[TEXT_HIDDEN];
+    char *end = NULL;
+    unsigned long token_value;
+    unsigned int token;
     yvex_error err;
     int execution_mode = 0, rc;
 
     if (argc != 5 && argc != 6) {
         fprintf(stderr,
-                "usage: minimax_h3_text TEXT_GGUF TOKENS OUTPUT_F32 REFERENCE_F32 "
+                "usage: minimax_h3_text TEXT_GGUF TOKEN OUTPUT_F32 REFERENCE_F32 "
                 "[layer0|layer0-proof|encoder50]\n");
         return 2;
     }
@@ -310,42 +319,42 @@ int main(int argc, char **argv)
             return 2;
         }
     }
-    yvex_token_input_init(&input, YVEX_TOKEN_INPUT_EXPLICIT);
-    yvex_error_clear(&err);
-    if (yvex_token_input_parse_explicit(argv[2], &input, &err) != YVEX_OK ||
-        yvex_token_input_validate_bounds(&input, 151936ull, &err) != YVEX_OK ||
-        !yvex_core_u64_mul(input.token_count, TEXT_HIDDEN, &output_values) ||
-        output_values > SIZE_MAX / sizeof(*output) ||
-        !(output = calloc((size_t)output_values, sizeof(*output)))) {
+    errno = 0;
+    token_value = strtoul(argv[2], &end, 10);
+    if (errno || !end || *end || token_value > 151935ul) {
         fprintf(stderr, "text_token=refused\n");
         return 2;
     }
+    token = (unsigned int)token_value;
     options.path = argv[1];
     options.readonly = 1;
     rc = yvex_artifact_open(&artifact, &options, &err);
+    if (rc == YVEX_OK)
+        rc = model && model->architecture_canonical
+                 ? model->architecture_canonical(
+                       &architecture, &architecture_failure, &err)
+                 : YVEX_ERR_STATE;
     if (rc == YVEX_OK) rc = yvex_gguf_open(&gguf, artifact, &err);
     if (rc == YVEX_OK) rc = yvex_tensor_table_from_gguf(&tensors, gguf, &err);
     if (rc == YVEX_OK) {
         const yvex_minimax_h3_graph_api *api = yvex_graph_register_minimax_h3();
         if (execution_mode == 2)
             rc = layer_proof_execute(
-                artifact, gguf, tensors, input.tokens, input.token_count,
-                output, output_values, &result, &err);
+                artifact, gguf, tensors, &token, output, &result, &err);
         else
             rc = api->text_encoder_artifact_cuda(
-                artifact, gguf, tensors, input.tokens, input.token_count,
+                artifact, gguf, tensors, &architecture.encoder, &token, 1ull,
                 execution_mode == 3 ? 50ull : execution_mode == 1 ? 1ull : 0ull,
-                output, output_values, 70ull * 1024ull * 1024ull * 1024ull,
+                output, TEXT_HIDDEN, 70ull * 1024ull * 1024ull * 1024ull,
                 execution_mode ? 512ull * 1024ull * 1024ull : 256ull * 1024ull * 1024ull,
                 &result, &err);
     }
-    if (rc == YVEX_OK && !output_write(argv[3], output, output_values)) {
+    if (rc == YVEX_OK && !output_write(argv[3], output)) {
         yvex_error_set(&err, YVEX_ERR_IO, "minimax-h3.text.output",
                        "conditioning output could not be written completely");
         rc = YVEX_ERR_IO;
     }
-    if (rc == YVEX_OK && !reference_compare(
-            argv[4], output, output_values, execution_mode)) {
+    if (rc == YVEX_OK && !reference_compare(argv[4], output, execution_mode)) {
         yvex_error_set(&err, YVEX_ERR_FORMAT, "minimax-h3.text.oracle",
                        "YVEX conditioning differs from the independent BF16 oracle");
         rc = YVEX_ERR_FORMAT;
@@ -369,6 +378,5 @@ int main(int argc, char **argv)
     yvex_tensor_table_close(tensors);
     yvex_gguf_close(gguf);
     yvex_artifact_close(artifact);
-    free(output);
     return rc == YVEX_OK ? 0 : 1;
 }

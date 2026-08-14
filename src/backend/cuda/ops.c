@@ -368,7 +368,7 @@ static int attention_decode(yvex_cuda_work *work,
             &encoded, &count, (void *)&weight->qtype, &out, &status
         };
         return attention_launch(
-            work, work->state->deepseek_decode_function, grid,
+            work, work->state->encoded_row_decode_function, grid,
             CUDA_ATTENTION_BLOCK, 0u, params, stage, failure, err);
     }
 }
@@ -391,7 +391,7 @@ static int attention_weighted_norm(
             &epsilon, &vectors, &status
         };
         return attention_launch(
-            work, work->state->deepseek_weighted_norm_function, (unsigned int)vectors,
+            work, work->state->attention_weighted_norm_function, (unsigned int)vectors,
             CUDA_ATTENTION_BLOCK, CUDA_ATTENTION_BLOCK * sizeof(double),
             params, stage, failure, err);
     }
@@ -414,7 +414,7 @@ static int attention_unit_norm(yvex_cuda_work *work,
     {
         void *params[] = {&values, &vectors, &width, &epsilon, &status};
         return attention_launch(
-            work, work->state->deepseek_unit_norm_function,
+            work, work->state->attention_unit_norm_function,
             (unsigned int)vectors, CUDA_ATTENTION_BLOCK,
             CUDA_ATTENTION_BLOCK * (unsigned int)sizeof(double), params, stage,
             failure, err);
@@ -458,7 +458,7 @@ static int attention_rope(yvex_cuda_work *work,
             (void *)&position->beta_slow, &inverse, &status
         };
         return attention_launch(
-            work, work->state->deepseek_rope_function, grid,
+            work, work->state->attention_yarn_rope_function, grid,
             CUDA_ATTENTION_BLOCK, 0u, params, stage, failure, err);
     }
 }
@@ -481,7 +481,7 @@ static int attention_activation(
             (void *)&policy->quantization, (void *)&policy->hadamard, &status
         };
         return attention_launch(
-            work, work->state->deepseek_activation_function,
+            work, work->state->attention_activation_quantize_function,
             (unsigned int)vectors, CUDA_ATTENTION_BLOCK, 0u, params, stage,
             failure, err);
     }
@@ -1700,7 +1700,7 @@ int yvex_backend_transformer_cuda_initial(
     if (rc == YVEX_OK) {
         void *params[] = {&encoded_ptr, &count, &qtype, &embedding_ptr, &status};
         rc = yvex_cuda_launch(backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
-                              state->deepseek_decode_function, grid, CUDA_ATTENTION_BLOCK,
+                              state->encoded_row_decode_function, grid, CUDA_ATTENTION_BLOCK,
                               0u, params, "cuda.transformer.embedding", err);
     }
     for (token = 0ull; rc == YVEX_OK && token < token_count; ++token)
@@ -1915,7 +1915,7 @@ int yvex_backend_transformer_cuda_final(
                           &token_count, &residual_streams, &hidden_width, &epsilon,
                           &mhc_epsilon, &pre_output_ptr, &output_ptr, &status};
         rc = yvex_cuda_launch(backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
-            state->deepseek_transformer_final_function, (unsigned int)token_count,
+            state->transformer_final_function, (unsigned int)token_count,
             CUDA_ATTENTION_BLOCK, CUDA_ATTENTION_BLOCK * (unsigned int)sizeof(double),
             params, "cuda.transformer.final", err);
     }

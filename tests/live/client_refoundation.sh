@@ -1,10 +1,9 @@
 #!/bin/sh
-# The product clients share one daemon model across two KV-reusing turns, preserve detached state,
+# The product clients share one server model across two KV-reusing turns, preserve detached state,
 # reset exactly, and close the runtime once. Runtime output remains in an untracked directory.
 set -eu
 
 YVEX_BIN=${YVEX_BIN:-./yvex}
-YVEXD_BIN=${YVEXD_BIN:-./yvexd}
 ARTIFACT=${YVEX_MODEL_ARTIFACT:?YVEX_MODEL_ARTIFACT is required}
 BINDING=${YVEX_RUNTIME_BINDING:?YVEX_RUNTIME_BINDING is required}
 . tests/support/cleanup.sh
@@ -13,7 +12,24 @@ test -f "$ARTIFACT"
 test -f "$BINDING"
 root=$(mktemp -d "${TMPDIR:-/tmp}/yvex-client-live.XXXXXX")
 runtime="$root/runtime"
-mkdir -m 700 "$runtime"
+home="$root/home"
+profile=deepseek4-v4-flash-dspark-runtime-iq2xxs
+mkdir -m 700 "$runtime" "$home"
+mkdir -p "$home/.local/share/yvex"
+cat >"$home/.local/share/yvex/models.local.json" <<EOF
+{
+  "schema": "yvex.models.local.v3",
+  "models": [{
+    "alias": "$profile",
+    "path": "$ARTIFACT",
+    "runtime_binding": "$BINDING",
+    "runtime_target": "deepseek4-v4-flash-dspark",
+    "runtime_backend": "cuda",
+    "runtime_mode": "dspark",
+    "runtime_context": 128
+  }]
+}
+EOF
 daemon_pid=
 watch_pid=
 trace_pid=
@@ -31,7 +47,7 @@ cleanup()
         wait "$repl_pid" 2>/dev/null || true
     fi
     if test -n "$daemon_pid" && kill -0 "$daemon_pid" 2>/dev/null; then
-        XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" runtime stop >/dev/null 2>&1 || true
+        XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server stop >/dev/null 2>&1 || true
         kill "$daemon_pid" 2>/dev/null || true
         wait "$daemon_pid" 2>/dev/null || true
     fi
@@ -56,9 +72,8 @@ cleanup()
 }
 trap cleanup EXIT HUP INT TERM
 
-XDG_RUNTIME_DIR="$runtime" "$YVEXD_BIN" \
-    --model "$ARTIFACT" --runtime-binding "$BINDING" \
-    --backend cuda --context 128 --console raw --trace-level tokens \
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server "$profile" \
+    --backend cuda --ctx 128 --console raw --trace-level tokens \
     --openai off \
     >"$root/raw.jsonl" 2>"$root/daemon.err" &
 daemon_pid=$!
@@ -66,7 +81,7 @@ daemon_pid=$!
 ready=0
 attempt=0
 while test "$attempt" -lt 600; do
-    if XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" runtime status --json \
+    if XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server status --json \
         >"$root/status.json" 2>/dev/null; then
         ready=1
         break
@@ -81,9 +96,9 @@ test "$ready" -eq 1 || {
 }
 grep -F '"model_open_count":1' "$root/status.json" >/dev/null
 
-XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" runtime watch >"$root/engine.log" &
+XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server log >"$root/engine.log" &
 watch_pid=$!
-XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" runtime trace \
+XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server log --json \
     >"$root/trace.log" &
 trace_pid=$!
 
@@ -117,7 +132,7 @@ XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session detach main >/dev/null
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session show main >"$root/detached"
 grep -F 'detached' "$root/detached" >/dev/null
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session attach main >/dev/null
-XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" runtime status --json >"$root/status.after.json"
+XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server status --json >"$root/status.after.json"
 grep -F '"model_open_count":1' "$root/status.after.json" >/dev/null
 grep -E '"resident_device_bytes":[1-9][0-9]*' "$root/status.after.json" >/dev/null
 grep -E '"output_head_upload_count":[01](,|})' "$root/status.after.json" >/dev/null
@@ -217,11 +232,11 @@ XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --session cancel-live \
     >"$root/cancel.retry" 2>"$root/cancel.retry.metrics"
 grep -F 'generation 1 tokens' "$root/cancel.retry.metrics" >/dev/null
 
-XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" runtime status --json >"$root/status.final.json"
+XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server status --json >"$root/status.final.json"
 grep -F '"model_open_count":1' "$root/status.final.json" >/dev/null
 grep -E '"cancelled_requests":[1-9][0-9]*' "$root/status.final.json" >/dev/null
 
-XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" runtime stop >/dev/null
+XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server stop >/dev/null
 wait "$daemon_pid"
 daemon_pid=
 wait "$watch_pid"

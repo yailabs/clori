@@ -1,6 +1,7 @@
 /* Exact DeepSeek tensor coverage, mutation, scale, and lifetime tests. */
 #include "tests/test.h"
 
+#include <yvex/internal/artifact_lowering.h>
 #include <yvex/internal/compilation.h>
 #include <yvex/internal/families/deepseek_v4.h>
 #include <yvex/internal/gguf.h>
@@ -525,36 +526,6 @@ fail:
                : yvex_error_code(&fixture.err);
 }
 
-static int fixture_build_case(
-    fixture_mutation mutation,
-    int globals_last,
-    yvex_deepseek_tensor_coverage **coverage,
-    yvex_deepseek_tensor_coverage_failure *failure)
-{
-    yvex_source_verification verification;
-    yvex_source_tensor_snapshot *snapshot = NULL;
-    yvex_deepseek_v4_ir *ir = NULL;
-    yvex_deepseek_v4_ir_failure ir_failure;
-    yvex_error err;
-    int rc;
-
-    fixture_verification(&verification);
-    yvex_error_clear(&err);
-    rc = yvex_model_register_deepseek_v4()->ir.build(&ir, &verification, &ir_failure, &err);
-    if (rc == YVEX_OK &&
-        fixture_snapshot(&snapshot, &verification, mutation, globals_last) !=
-            YVEX_OK) {
-        rc = YVEX_ERR_FORMAT;
-    }
-    if (rc == YVEX_OK) {
-        rc = yvex_model_register_deepseek_v4()->coverage.build(
-            coverage, &verification, ir, snapshot, NULL, failure, &err);
-    }
-    yvex_model_register_deepseek_v4()->ir.close(ir);
-    yvex_source_tensor_snapshot_release(snapshot);
-    return rc;
-}
-
 typedef struct {
     unsigned int calls;
     unsigned int fail_at;
@@ -583,183 +554,15 @@ static void fixture_release(void *allocation, void *context)
     allocator->live--;
 }
 
-static int test_valid_target_scale(void)
-{
-    yvex_deepseek_tensor_coverage *first = NULL;
-    yvex_deepseek_tensor_coverage *shuffled = NULL;
-    yvex_deepseek_tensor_coverage_failure failure;
-    const yvex_deepseek_tensor_coverage_summary *summary;
-    unsigned long long identity;
-
-    {
-        int fixture_rc = fixture_build_case(FIXTURE_VALID, 0, &first, &failure);
-        YVEX_TEST_ASSERT(fixture_rc == YVEX_OK && first,
-                     "72,317-entry coverage fixture closes");
-    }
-    summary = yvex_model_register_deepseek_v4()->coverage.summary(first);
-    YVEX_TEST_ASSERT(summary->complete && summary->source_tensor_count == 72317u &&
-                     summary->main_layer_count == 43u &&
-                     summary->auxiliary_layer_count == 3u &&
-                     summary->required_tensor_count == 72317u &&
-                     summary->matched_tensor_count == 72317u &&
-                     summary->missing_count == 0u &&
-                     summary->unexpected_count == 0u,
-                     "target-scale one-to-one summary is exact");
-    YVEX_TEST_ASSERT(summary->collection_counts[
-                         YVEX_TENSOR_COLLECTION_ROUTED_EXPERT] ==
-                         70656u &&
-                     summary->collection_counts[
-                         YVEX_TENSOR_COLLECTION_ATTENTION] == 598u &&
-                     summary->collection_counts[
-                         YVEX_TENSOR_COLLECTION_AUXILIARY] == 10u,
-                     "major collection counts include target and DSpark tensors");
-    YVEX_TEST_ASSERT(summary->header_scan_count == 1u &&
-                     summary->payload_bytes_read == 0u &&
-                     summary->source_lookup_count < 3u * 72317u &&
-                     summary->source_collision_count > 0u &&
-                     summary->source_maximum_probe > 0u &&
-                     summary->source_maximum_probe < 64u,
-                     "indexed reconciliation is linear and payload-free");
-    YVEX_TEST_ASSERT(yvex_model_register_deepseek_v4()->coverage.find(
-                         first, "layers.2.attn.indexer.wq_b.scale") != NULL &&
-                     yvex_model_register_deepseek_v4()->coverage.find(
-                         first, "mtp.2.hc_head_fn") != NULL,
-                     "CSA scale and DSpark head are typed requirements");
-    identity = summary->coverage_identity;
-    YVEX_TEST_ASSERT(fixture_build_case(FIXTURE_VALID, 1, &shuffled, &failure) ==
-                         YVEX_OK && shuffled,
-                     "shuffled insertion order closes");
-    YVEX_TEST_ASSERT(yvex_model_register_deepseek_v4()->coverage.summary(shuffled)->
-                             coverage_identity == identity,
-                     "coverage identity is insertion-order invariant");
-    yvex_model_register_deepseek_v4()->coverage.close(shuffled);
-    yvex_model_register_deepseek_v4()->coverage.close(first);
-    return 0;
-}
-
-static int test_mutations(void)
-{
-    const struct {
-        fixture_mutation mutation;
-        yvex_deepseek_tensor_coverage_failure_code expected;
-    } cases[] = {
-        {FIXTURE_MISSING, YVEX_DEEPSEEK_COVERAGE_FAILURE_MISSING_REQUIREMENT},
-        {FIXTURE_MISSING_SCALE,
-         YVEX_DEEPSEEK_COVERAGE_FAILURE_SCALE_COMPANION},
-        {FIXTURE_RANK, YVEX_DEEPSEEK_COVERAGE_FAILURE_RANK_MISMATCH},
-        {FIXTURE_SHAPE, YVEX_DEEPSEEK_COVERAGE_FAILURE_SHAPE_MISMATCH},
-        {FIXTURE_DTYPE, YVEX_DEEPSEEK_COVERAGE_FAILURE_DTYPE_MISMATCH},
-        {FIXTURE_SCALE, YVEX_DEEPSEEK_COVERAGE_FAILURE_SHAPE_MISMATCH},
-        {FIXTURE_UNEXPECTED,
-         YVEX_DEEPSEEK_COVERAGE_FAILURE_UNEXPECTED_SOURCE},
-        {FIXTURE_INVALID_LAYER,
-         YVEX_DEEPSEEK_COVERAGE_FAILURE_INVALID_INDEX},
-        {FIXTURE_INVALID_EXPERT,
-         YVEX_DEEPSEEK_COVERAGE_FAILURE_INVALID_INDEX},
-        {FIXTURE_INDEX_OVERFLOW,
-         YVEX_DEEPSEEK_COVERAGE_FAILURE_ARITHMETIC_OVERFLOW},
-        {FIXTURE_MISSING_FINAL,
-         YVEX_DEEPSEEK_COVERAGE_FAILURE_MISSING_REQUIREMENT},
-        {FIXTURE_MISSING_DRAFT_SHARED,
-         YVEX_DEEPSEEK_COVERAGE_FAILURE_MISSING_REQUIREMENT},
-        {FIXTURE_MISSING_DRAFT_SCALE,
-         YVEX_DEEPSEEK_COVERAGE_FAILURE_SCALE_COMPANION},
-        {FIXTURE_MISSING_MARKOV,
-         YVEX_DEEPSEEK_COVERAGE_FAILURE_MISSING_REQUIREMENT},
-        {FIXTURE_MISSING_CONFIDENCE,
-         YVEX_DEEPSEEK_COVERAGE_FAILURE_MISSING_REQUIREMENT}
-    };
-    size_t i;
-
-    for (i = 0u; i < sizeof(cases) / sizeof(cases[0]); ++i) {
-        yvex_deepseek_tensor_coverage *coverage = NULL;
-        yvex_deepseek_tensor_coverage_failure failure;
-        YVEX_TEST_ASSERT(fixture_build_case(cases[i].mutation, 0, &coverage,
-                                            &failure) != YVEX_OK && !coverage,
-                         "mutated inventory refuses coverage");
-        YVEX_TEST_ASSERT(failure.code == cases[i].expected,
-                         "mutation returns stable typed reason");
-    }
-    return 0;
-}
-
-static int test_limits_and_allocation(void)
-{
-    yvex_source_verification verification;
-    yvex_source_tensor_snapshot *snapshot = NULL;
-    yvex_deepseek_v4_ir *ir = NULL;
-    yvex_deepseek_v4_ir_failure ir_failure;
-    yvex_deepseek_tensor_coverage_failure failure;
-    yvex_deepseek_tensor_coverage *coverage = NULL;
-    yvex_deepseek_tensor_coverage_options options;
-    yvex_error err;
-    unsigned int fail_at;
-
-    fixture_verification(&verification);
-    YVEX_TEST_ASSERT(fixture_snapshot(&snapshot, &verification,
-                                      FIXTURE_VALID, 0) == YVEX_OK,
-                     "allocation test snapshot builds");
-    yvex_error_clear(&err);
-    YVEX_TEST_ASSERT(yvex_model_register_deepseek_v4()->ir.build(
-                         &ir, &verification, &ir_failure, &err) == YVEX_OK,
-                     "allocation test IR builds");
-    fixture_copy(verification.inventory_authority,
-                 sizeof(verification.inventory_authority), "header-derived");
-    YVEX_TEST_ASSERT(yvex_model_register_deepseek_v4()->coverage.build(
-                         &coverage, &verification, ir, snapshot, NULL,
-                         &failure, &err) != YVEX_OK && !coverage &&
-                     failure.code ==
-                         YVEX_DEEPSEEK_COVERAGE_FAILURE_INVENTORY_AUTHORITY,
-                     "non-pinned inventory authority refuses coverage");
-    fixture_copy(verification.inventory_authority,
-                 sizeof(verification.inventory_authority), "upstream-index");
-    verification.header_tensor_count--;
-    YVEX_TEST_ASSERT(yvex_model_register_deepseek_v4()->coverage.build(
-                         &coverage, &verification, ir, snapshot, NULL,
-                         &failure, &err) != YVEX_OK && !coverage &&
-                     failure.code ==
-                         YVEX_DEEPSEEK_COVERAGE_FAILURE_INVENTORY_DRIFT,
-                     "snapshot and verification count drift refuses coverage");
-    verification.header_tensor_count++;
-    memset(&options, 0, sizeof(options));
-    options.maximum_tensors = 72316u;
-    YVEX_TEST_ASSERT(yvex_model_register_deepseek_v4()->coverage.build(
-                         &coverage, &verification, ir, snapshot, &options,
-                         &failure, &err) != YVEX_OK && !coverage &&
-                     failure.code ==
-                         YVEX_DEEPSEEK_COVERAGE_FAILURE_RESOURCE_LIMIT,
-                     "resource limit fails before construction");
-    for (fail_at = 0u; fail_at < 4u; ++fail_at) {
-        fixture_allocator allocator;
-        memset(&allocator, 0, sizeof(allocator));
-        allocator.fail_at = fail_at;
-        memset(&options, 0, sizeof(options));
-        options.allocate = fixture_allocate;
-        options.release = fixture_release;
-        options.context = &allocator;
-        YVEX_TEST_ASSERT(yvex_model_register_deepseek_v4()->coverage.build(
-                             &coverage, &verification, ir, snapshot, &options,
-                             &failure, &err) != YVEX_OK && !coverage,
-                         "injected allocation failure refuses");
-        YVEX_TEST_ASSERT(allocator.live == 0u,
-                         "partial coverage allocation rolls back");
-    }
-    yvex_model_register_deepseek_v4()->ir.close(ir);
-    yvex_source_tensor_snapshot_release(snapshot);
-    return 0;
-}
-
 static int fixture_build_map(int globals_last,
-                             yvex_deepseek_gguf_map **map,
-                             yvex_deepseek_gguf_map_failure *failure,
-                             const yvex_deepseek_gguf_map_allocator *allocator)
+                             yvex_artifact_lowering_map **map,
+                             yvex_artifact_lowering_failure *failure,
+                             const yvex_artifact_lowering_allocator *allocator)
 {
     yvex_source_verification verification;
     yvex_source_tensor_snapshot *snapshot = NULL;
     yvex_deepseek_v4_ir *ir = NULL;
     yvex_deepseek_v4_ir_failure ir_failure;
-    yvex_deepseek_tensor_coverage *coverage = NULL;
-    yvex_deepseek_tensor_coverage_failure coverage_failure;
     yvex_transform_ir *transform_ir = NULL;
     yvex_transform_failure transform_failure;
     yvex_error err;
@@ -771,12 +574,8 @@ static int fixture_build_map(int globals_last,
     yvex_error_clear(&err);
     rc = yvex_model_register_deepseek_v4()->ir.build(&ir, &verification, &ir_failure, &err);
     if (rc == YVEX_OK)
-        rc = yvex_model_register_deepseek_v4()->coverage.build(
-            &coverage, &verification, ir, snapshot, NULL, &coverage_failure,
-            &err);
-    if (rc == YVEX_OK)
         rc = yvex_model_register_deepseek_v4()->transform.build(
-            &transform_ir, &verification, ir, coverage, NULL,
+            &transform_ir, &verification, ir, snapshot, NULL,
             &transform_failure, &err);
     if (rc == YVEX_OK) {
         rc = allocator
@@ -786,15 +585,14 @@ static int fixture_build_map(int globals_last,
                        map, ir, transform_ir, failure, &err);
     }
     yvex_transform_ir_release(&transform_ir);
-    yvex_model_register_deepseek_v4()->coverage.close(coverage);
     yvex_model_register_deepseek_v4()->ir.close(ir);
     yvex_source_tensor_snapshot_release(snapshot);
     return rc;
 }
 
-int yvex_test_deepseek_map_fixture_build(yvex_deepseek_gguf_map **out)
+int yvex_test_deepseek_map_fixture_build(yvex_artifact_lowering_map **out)
 {
-    yvex_deepseek_gguf_map_failure failure;
+    yvex_artifact_lowering_failure failure;
 
     if (out) *out = NULL;
     return out ? fixture_build_map(0, out, &failure, NULL) : YVEX_ERR_INVALID_ARG;
@@ -810,8 +608,6 @@ static int fixture_build_transform(
     yvex_source_tensor_snapshot *snapshot = NULL;
     yvex_deepseek_v4_ir *architecture = NULL;
     yvex_deepseek_v4_ir_failure architecture_failure;
-    yvex_deepseek_tensor_coverage *coverage = NULL;
-    yvex_deepseek_tensor_coverage_failure coverage_failure;
     yvex_error err;
     int rc;
 
@@ -825,14 +621,9 @@ static int fixture_build_transform(
     rc = yvex_model_register_deepseek_v4()->ir.build(
         &architecture, &verification, &architecture_failure, &err);
     if (rc == YVEX_OK)
-        rc = yvex_model_register_deepseek_v4()->coverage.build(
-            &coverage, &verification, architecture, snapshot, NULL,
-            &coverage_failure, &err);
-    if (rc == YVEX_OK)
         rc = yvex_model_register_deepseek_v4()->transform.build(
-            transform_ir, &verification, architecture, coverage, options,
+            transform_ir, &verification, architecture, snapshot, options,
             failure, &err);
-    yvex_model_register_deepseek_v4()->coverage.close(coverage);
     yvex_model_register_deepseek_v4()->ir.close(architecture);
     yvex_source_tensor_snapshot_release(snapshot);
     return rc;
@@ -1006,37 +797,37 @@ static int test_mapping_target_scale(void)
     } pinned_names[] = {
         {YVEX_TENSOR_ROLE_TOKEN_EMBEDDING,
          YVEX_TENSOR_SCOPE_GLOBAL,
-         YVEX_DEEPSEEK_GGUF_NO_INDEX, YVEX_DEEPSEEK_GGUF_NO_INDEX,
+         YVEX_ARTIFACT_LOWERING_NO_INDEX, YVEX_ARTIFACT_LOWERING_NO_INDEX,
          "token_embd.weight"},
         {YVEX_TENSOR_ROLE_HC_HEAD_SCALE,
          YVEX_TENSOR_SCOPE_GLOBAL,
-         YVEX_DEEPSEEK_GGUF_NO_INDEX, YVEX_DEEPSEEK_GGUF_NO_INDEX,
+         YVEX_ARTIFACT_LOWERING_NO_INDEX, YVEX_ARTIFACT_LOWERING_NO_INDEX,
          "output_hc_scale.weight"},
         {YVEX_TENSOR_ROLE_ATTENTION_KV_NORM,
          YVEX_TENSOR_SCOPE_MAIN_LAYER, 0u,
-         YVEX_DEEPSEEK_GGUF_NO_INDEX, "blk.0.attn_kv_a_norm.weight"},
+         YVEX_ARTIFACT_LOWERING_NO_INDEX, "blk.0.attn_kv_a_norm.weight"},
         {YVEX_TENSOR_ROLE_MOE_ROUTER_TABLE,
          YVEX_TENSOR_SCOPE_MAIN_LAYER, 0u,
-         YVEX_DEEPSEEK_GGUF_NO_INDEX, "blk.0.ffn_gate_tid2eid.weight"},
+         YVEX_ARTIFACT_LOWERING_NO_INDEX, "blk.0.ffn_gate_tid2eid.weight"},
         {YVEX_TENSOR_ROLE_ATTENTION_COMPRESSOR_KV,
          YVEX_TENSOR_SCOPE_MAIN_LAYER, 2u,
-         YVEX_DEEPSEEK_GGUF_NO_INDEX, "blk.2.attn_compressor_kv.weight"},
+         YVEX_ARTIFACT_LOWERING_NO_INDEX, "blk.2.attn_compressor_kv.weight"},
         {YVEX_TENSOR_ROLE_INDEXER_PROJECTION,
          YVEX_TENSOR_SCOPE_MAIN_LAYER, 2u,
-         YVEX_DEEPSEEK_GGUF_NO_INDEX, "blk.2.indexer.proj.weight"},
+         YVEX_ARTIFACT_LOWERING_NO_INDEX, "blk.2.indexer.proj.weight"},
         {YVEX_TENSOR_ROLE_MOE_ROUTER_BIAS,
          YVEX_TENSOR_SCOPE_MAIN_LAYER, 6u,
-         YVEX_DEEPSEEK_GGUF_NO_INDEX, "blk.6.exp_probs_b.bias"},
+         YVEX_ARTIFACT_LOWERING_NO_INDEX, "blk.6.exp_probs_b.bias"},
         {YVEX_TENSOR_ROLE_MOE_SHARED_EXPERT_DOWN,
          YVEX_TENSOR_SCOPE_MAIN_LAYER, 42u,
-         YVEX_DEEPSEEK_GGUF_NO_INDEX, "blk.42.ffn_down_shexp.weight"}
+         YVEX_ARTIFACT_LOWERING_NO_INDEX, "blk.42.ffn_down_shexp.weight"}
     };
-    yvex_deepseek_gguf_map *map = NULL;
-    yvex_deepseek_gguf_map *shuffled = NULL;
-    yvex_deepseek_gguf_map_failure failure;
-    const yvex_deepseek_gguf_map_summary *summary;
-    const yvex_deepseek_gguf_descriptor *descriptor;
-    const yvex_deepseek_gguf_metadata *metadata;
+    yvex_artifact_lowering_map *map = NULL;
+    yvex_artifact_lowering_map *shuffled = NULL;
+    yvex_artifact_lowering_failure failure;
+    const yvex_artifact_lowering_summary *summary;
+    const yvex_artifact_lowering_descriptor *descriptor;
+    const yvex_artifact_lowering_metadata *metadata;
     unsigned long long trunk_counts[YVEX_TENSOR_COLLECTION_COUNT] = {0};
     unsigned long long descriptor_index;
     unsigned long long contribution_index;
@@ -1046,7 +837,7 @@ static int test_mapping_target_scale(void)
     YVEX_TEST_ASSERT(fixture_build_map(0, &map, &failure, NULL) == YVEX_OK &&
                          map,
                      "complete source-to-GGUF mapping builds");
-    summary = yvex_model_register_deepseek_v4()->lowering.summary(map);
+    summary = yvex_model_register_deepseek_v4()->lowering.map->summary(map);
     YVEX_TEST_ASSERT(summary && summary->complete &&
                          summary->source_contribution_count == 72317u &&
                          summary->descriptor_count == 1409u &&
@@ -1062,16 +853,16 @@ static int test_mapping_target_scale(void)
                      "official target and DSpark extension boundary is exact");
     for (descriptor_index = 0u;
          descriptor_index < summary->descriptor_count; ++descriptor_index) {
-        const yvex_deepseek_gguf_descriptor *current =
-            yvex_model_register_deepseek_v4()->lowering.at(map, descriptor_index);
+        const yvex_artifact_lowering_descriptor *current =
+            yvex_model_register_deepseek_v4()->lowering.map->descriptor_at(map, descriptor_index);
         unsigned long long local;
         YVEX_TEST_ASSERT(current && current->logical_rank > 0u &&
                              current->logical_rank <= YVEX_TENSOR_MAX_DIMS &&
                              current->contribution_count > 0u,
                          "every descriptor has logical geometry and sources");
-        YVEX_TEST_ASSERT(yvex_model_register_deepseek_v4()->lowering.find_emitted(
+        YVEX_TEST_ASSERT(yvex_model_register_deepseek_v4()->lowering.map->find_emitted(
                              map, current->emitted_name) == current &&
-                             yvex_model_register_deepseek_v4()->lowering.find_role(
+                             yvex_model_register_deepseek_v4()->lowering.map->find_role(
                                  map, current->role, current->scope,
                                  current->layer_index,
                                  current->predictor_index) == current,
@@ -1107,50 +898,50 @@ static int test_mapping_target_scale(void)
             trunk_counts[current->collection]++;
         }
         for (local = 0u; local < current->contribution_count; ++local) {
-            const yvex_deepseek_gguf_contribution *contribution =
-                yvex_model_register_deepseek_v4()->lowering.contribution_at(
+            const yvex_artifact_lowering_contribution *contribution =
+                yvex_model_register_deepseek_v4()->lowering.map->contribution_at(
                     map, current->contribution_offset + local);
             YVEX_TEST_ASSERT(contribution &&
                                  contribution->descriptor_index ==
                                      descriptor_index &&
-                                 yvex_model_register_deepseek_v4()->lowering.find_source(
+                                 yvex_model_register_deepseek_v4()->lowering.map->find_source(
                                      map, contribution->source_name) == current,
                              "every source contribution resolves to one descriptor");
             if (current->transform ==
-                YVEX_DEEPSEEK_GGUF_TRANSFORM_EXPERT_MXFP4) {
+                YVEX_ARTIFACT_LOWERING_TRANSFORM_EXPERT_MXFP4) {
                 YVEX_TEST_ASSERT(
                     contribution->expert_index == local / 2u &&
                         contribution->kind ==
                             (local % 2u == 0u
-                                 ? YVEX_DEEPSEEK_GGUF_CONTRIBUTION_EXPERT_WEIGHT
-                                 : YVEX_DEEPSEEK_GGUF_CONTRIBUTION_EXPERT_SCALE),
+                                 ? YVEX_ARTIFACT_LOWERING_CONTRIBUTION_EXPERT_WEIGHT
+                                 : YVEX_ARTIFACT_LOWERING_CONTRIBUTION_EXPERT_SCALE),
                     "expert members are ordered weight/scale by numeric expert");
             }
         }
         if (current->transform ==
-            YVEX_DEEPSEEK_GGUF_TRANSFORM_FP8_E4M3_E8M0) {
-            const yvex_deepseek_gguf_contribution *primary =
-                yvex_model_register_deepseek_v4()->lowering.contribution_at(
+            YVEX_ARTIFACT_LOWERING_TRANSFORM_FP8_E4M3_E8M0) {
+            const yvex_artifact_lowering_contribution *primary =
+                yvex_model_register_deepseek_v4()->lowering.map->contribution_at(
                     map, current->contribution_offset);
-            const yvex_deepseek_gguf_contribution *scale =
-                yvex_model_register_deepseek_v4()->lowering.contribution_at(
+            const yvex_artifact_lowering_contribution *scale =
+                yvex_model_register_deepseek_v4()->lowering.map->contribution_at(
                     map, current->contribution_offset + 1u);
             YVEX_TEST_ASSERT(current->contribution_count == 2u && primary &&
                                  scale &&
                                  primary->kind ==
-                                     YVEX_DEEPSEEK_GGUF_CONTRIBUTION_PRIMARY &&
+                                     YVEX_ARTIFACT_LOWERING_CONTRIBUTION_PRIMARY &&
                                  primary->source_dtype ==
                                      YVEX_NATIVE_DTYPE_F8_E4M3 &&
                                  scale->kind ==
-                                     YVEX_DEEPSEEK_GGUF_CONTRIBUTION_SCALE &&
+                                     YVEX_ARTIFACT_LOWERING_CONTRIBUTION_SCALE &&
                                  scale->source_dtype ==
                                      YVEX_NATIVE_DTYPE_F8_E8M0,
                              "every FP8 descriptor has its exact E8M0 companion");
         }
         if (current->transform !=
-            YVEX_DEEPSEEK_GGUF_TRANSFORM_EXPERT_MXFP4) {
-            const yvex_deepseek_gguf_contribution *primary =
-                yvex_model_register_deepseek_v4()->lowering.contribution_at(
+            YVEX_ARTIFACT_LOWERING_TRANSFORM_EXPERT_MXFP4) {
+            const yvex_artifact_lowering_contribution *primary =
+                yvex_model_register_deepseek_v4()->lowering.map->contribution_at(
                     map, current->contribution_offset);
             unsigned int dimension;
 
@@ -1183,8 +974,8 @@ static int test_mapping_target_scale(void)
     for (reference_index = 0u;
          reference_index < sizeof(pinned_names) / sizeof(pinned_names[0]);
          ++reference_index) {
-        const yvex_deepseek_gguf_descriptor *reference =
-            yvex_model_register_deepseek_v4()->lowering.find_role(
+        const yvex_artifact_lowering_descriptor *reference =
+            yvex_model_register_deepseek_v4()->lowering.map->find_role(
                 map, pinned_names[reference_index].role,
                 pinned_names[reference_index].scope,
                 pinned_names[reference_index].layer,
@@ -1198,42 +989,42 @@ static int test_mapping_target_scale(void)
     for (contribution_index = 0u;
          contribution_index < summary->source_contribution_count;
          ++contribution_index) {
-        const yvex_deepseek_gguf_contribution *contribution =
-            yvex_model_register_deepseek_v4()->lowering.contribution_at(map, contribution_index);
+        const yvex_artifact_lowering_contribution *contribution =
+            yvex_model_register_deepseek_v4()->lowering.map->contribution_at(map, contribution_index);
         YVEX_TEST_ASSERT(contribution &&
                              contribution->source_row_index < 72317u,
                          "descriptor index iteration covers all source rows");
     }
-    descriptor = yvex_model_register_deepseek_v4()->lowering.find_source(
+    descriptor = yvex_model_register_deepseek_v4()->lowering.map->find_source(
         map, "layers.2.ffn.experts.255.w1.scale");
     YVEX_TEST_ASSERT(descriptor &&
                          descriptor->role == YVEX_TENSOR_ROLE_MOE_EXPERT_GATE &&
                          descriptor->transform ==
-                             YVEX_DEEPSEEK_GGUF_TRANSFORM_EXPERT_MXFP4 &&
+                             YVEX_ARTIFACT_LOWERING_TRANSFORM_EXPERT_MXFP4 &&
                          descriptor->forced_qtype == 39u &&
                          descriptor->logical_rank == 3u &&
                          descriptor->logical_dims[0] == 4096u &&
                          descriptor->logical_dims[1] == 2048u &&
                          descriptor->logical_dims[2] == 256u &&
                          descriptor->source_axis_for_logical[2] ==
-                             YVEX_DEEPSEEK_GGUF_AGGREGATED_AXIS &&
+                             YVEX_ARTIFACT_LOWERING_AGGREGATED_AXIS &&
                          descriptor->contribution_count == 512u &&
                          strcmp(descriptor->emitted_name,
                                 "blk.2.ffn_gate_exps.weight") == 0,
                      "routed experts aggregate and repack to official MXFP4 shape");
-    descriptor = yvex_model_register_deepseek_v4()->lowering.find_emitted(
+    descriptor = yvex_model_register_deepseek_v4()->lowering.map->find_emitted(
         map, "blk.0.ffn_gate_tid2eid.weight");
     YVEX_TEST_ASSERT(descriptor &&
                          descriptor->transform ==
-                             YVEX_DEEPSEEK_GGUF_TRANSFORM_I64_TO_I32 &&
+                             YVEX_ARTIFACT_LOWERING_TRANSFORM_I64_TO_I32 &&
                          descriptor->forced_qtype == 26u &&
                          descriptor->logical_dims[0] == 6u &&
                          descriptor->logical_dims[1] == 129280u,
                      "hash routing table has checked official I32 projection");
-    descriptor = yvex_model_register_deepseek_v4()->lowering.find_role(
+    descriptor = yvex_model_register_deepseek_v4()->lowering.map->find_role(
         map, YVEX_TENSOR_ROLE_ATTENTION_Q_A,
         YVEX_TENSOR_SCOPE_MAIN_LAYER, 42u,
-        YVEX_DEEPSEEK_GGUF_NO_INDEX);
+        YVEX_ARTIFACT_LOWERING_NO_INDEX);
     YVEX_TEST_ASSERT(descriptor &&
                          strcmp(descriptor->emitted_name,
                                 "blk.42.attn_q_a.weight") == 0 &&
@@ -1242,7 +1033,7 @@ static int test_mapping_target_scale(void)
                          descriptor->name_provenance ==
                              YVEX_GGUF_NAME_PINNED_STANDARD,
                      "official attention name and logical axes match loader");
-    descriptor = yvex_model_register_deepseek_v4()->lowering.find_source(map, "mtp.0.main_proj.scale");
+    descriptor = yvex_model_register_deepseek_v4()->lowering.map->find_source(map, "mtp.0.main_proj.scale");
     YVEX_TEST_ASSERT(descriptor &&
                          descriptor->scope == YVEX_TENSOR_SCOPE_DRAFT &&
                          descriptor->name_provenance ==
@@ -1250,57 +1041,57 @@ static int test_mapping_target_scale(void)
                          strncmp(descriptor->emitted_name, "yvex.draft.v1.0.",
                                  strlen("yvex.draft.v1.0.")) == 0,
                      "DSpark survives under an explicit versioned extension");
-    metadata = yvex_model_register_deepseek_v4()->lowering.metadata_find(
+    metadata = yvex_model_register_deepseek_v4()->lowering.map->metadata_find(
         map, "deepseek4.attention.compress_ratios");
     YVEX_TEST_ASSERT(metadata &&
-                         metadata->type == YVEX_DEEPSEEK_GGUF_METADATA_U64_ARRAY &&
+                         metadata->type == YVEX_ARTIFACT_LOWERING_METADATA_U64_ARRAY &&
                          metadata->array_count == 43u &&
                          metadata->array_values[2] == 4u &&
                          metadata->array_values[3] == 128u,
                      "metadata plan preserves the complete trunk schedule");
-    metadata = yvex_model_register_deepseek_v4()->lowering.metadata_find(
+    metadata = yvex_model_register_deepseek_v4()->lowering.map->metadata_find(
         map, "yvex.deepseek4.dspark.runtime_supported");
     YVEX_TEST_ASSERT(metadata &&
-                         metadata->type == YVEX_DEEPSEEK_GGUF_METADATA_BOOL &&
+                         metadata->type == YVEX_ARTIFACT_LOWERING_METADATA_BOOL &&
                          metadata->bool_value,
                      "DSpark metadata records the admitted target and draft runtime contract");
-    metadata = yvex_model_register_deepseek_v4()->lowering.metadata_find(
+    metadata = yvex_model_register_deepseek_v4()->lowering.map->metadata_find(
         map, "deepseek4.attention.layer_norm_rms_epsilon");
     YVEX_TEST_ASSERT(metadata &&
-                         metadata->type == YVEX_DEEPSEEK_GGUF_METADATA_F64 &&
+                         metadata->type == YVEX_ARTIFACT_LOWERING_METADATA_F64 &&
                          metadata->f64_value > 0.0,
                      "official loader RMS epsilon is planned");
-    metadata = yvex_model_register_deepseek_v4()->lowering.metadata_find(
+    metadata = yvex_model_register_deepseek_v4()->lowering.map->metadata_find(
         map, "deepseek4.expert_gating_func");
     YVEX_TEST_ASSERT(metadata &&
-                         metadata->type == YVEX_DEEPSEEK_GGUF_METADATA_U64 &&
+                         metadata->type == YVEX_ARTIFACT_LOWERING_METADATA_U64 &&
                          metadata->u64_value == 4u,
                      "official sqrt-softplus expert gating enum is planned");
-    metadata = yvex_model_register_deepseek_v4()->lowering.metadata_find(
+    metadata = yvex_model_register_deepseek_v4()->lowering.map->metadata_find(
         map, "deepseek4.swiglu_clamp_exp");
     YVEX_TEST_ASSERT(
         metadata &&
-            metadata->type == YVEX_DEEPSEEK_GGUF_METADATA_F64_ARRAY &&
+            metadata->type == YVEX_ARTIFACT_LOWERING_METADATA_F64_ARRAY &&
             metadata->array_count == 43u &&
             metadata->f64_array_values[0] > 0.0,
         "official per-layer expert clamp metadata is complete");
-    metadata = yvex_model_register_deepseek_v4()->lowering.metadata_find(
+    metadata = yvex_model_register_deepseek_v4()->lowering.map->metadata_find(
         map, "deepseek4.hyper_connection.count");
     YVEX_TEST_ASSERT(metadata && metadata->u64_value == 4u &&
-                         !yvex_model_register_deepseek_v4()->lowering.metadata_find(
+                         !yvex_model_register_deepseek_v4()->lowering.map->metadata_find(
                              map, "deepseek4.hyper_connection_count"),
                      "hyper-connection metadata uses the pinned canonical key");
     for (descriptor_index = 0u;
          descriptor_index < summary->metadata_count; ++descriptor_index) {
         unsigned long long other;
-        const yvex_deepseek_gguf_metadata *entry =
-            yvex_model_register_deepseek_v4()->lowering.metadata_at(map, descriptor_index);
+        const yvex_artifact_lowering_metadata *entry =
+            yvex_model_register_deepseek_v4()->lowering.map->metadata_at(map, descriptor_index);
         YVEX_TEST_ASSERT(entry && entry->key[0],
                          "every planned metadata entry has a key");
         for (other = descriptor_index + 1u;
              other < summary->metadata_count; ++other) {
-            const yvex_deepseek_gguf_metadata *candidate =
-                yvex_model_register_deepseek_v4()->lowering.metadata_at(map, other);
+            const yvex_artifact_lowering_metadata *candidate =
+                yvex_model_register_deepseek_v4()->lowering.map->metadata_at(map, other);
             YVEX_TEST_ASSERT(candidate && strcmp(entry->key, candidate->key) != 0,
                              "metadata keys are unique");
         }
@@ -1308,11 +1099,11 @@ static int test_mapping_target_scale(void)
     identity = summary->mapping_identity;
     YVEX_TEST_ASSERT(fixture_build_map(1, &shuffled, &failure, NULL) == YVEX_OK &&
                          shuffled &&
-                         yvex_model_register_deepseek_v4()->lowering.summary(shuffled)->
+                         yvex_model_register_deepseek_v4()->lowering.map->summary(shuffled)->
                                  mapping_identity == identity,
                      "mapping identity is source-discovery-order invariant");
-    yvex_model_register_deepseek_v4()->lowering.close(shuffled);
-    yvex_model_register_deepseek_v4()->lowering.close(map);
+    yvex_model_register_deepseek_v4()->lowering.map->close(shuffled);
+    yvex_model_register_deepseek_v4()->lowering.map->close(map);
     return 0;
 }
 
@@ -1321,9 +1112,9 @@ static int test_mapping_allocation_rollback(void)
     unsigned int fail_at;
     for (fail_at = 0u; fail_at < 6u; ++fail_at) {
         fixture_allocator state;
-        yvex_deepseek_gguf_map_allocator allocator;
-        yvex_deepseek_gguf_map *map = NULL;
-        yvex_deepseek_gguf_map_failure failure;
+        yvex_artifact_lowering_allocator allocator;
+        yvex_artifact_lowering_map *map = NULL;
+        yvex_artifact_lowering_failure failure;
         memset(&state, 0, sizeof(state));
         state.fail_at = fail_at;
         allocator.allocate = fixture_allocate;
@@ -1340,8 +1131,8 @@ static int test_mapping_allocation_rollback(void)
 
 static int test_mapping_refusal_boundary(void)
 {
-    yvex_deepseek_gguf_map *map = NULL;
-    yvex_deepseek_gguf_map_failure failure;
+    yvex_artifact_lowering_map *map = NULL;
+    yvex_artifact_lowering_failure failure;
     yvex_error err;
 
     yvex_error_clear(&err);
@@ -1349,7 +1140,7 @@ static int test_mapping_refusal_boundary(void)
                          &map, NULL, NULL, &failure, &err) != YVEX_OK &&
                          !map &&
                          failure.code ==
-                             YVEX_DEEPSEEK_GGUF_MAP_FAILURE_INVALID_ARGUMENT,
+                             YVEX_ARTIFACT_LOWERING_FAILURE_INVALID_ARGUMENT,
                      "mapping refuses missing typed prerequisites");
     return 0;
 }
@@ -1389,84 +1180,72 @@ static int test_mapping_typed_owner_refusals(void)
     return 0;
 }
 
-static int test_transform_stale_coverage_refusals(void)
+static int test_transform_source_refusals(void)
 {
     yvex_source_verification verification;
     yvex_source_tensor_snapshot *snapshot = NULL;
     yvex_deepseek_v4_ir *ir = NULL;
     yvex_deepseek_v4_ir_failure ir_failure;
-    yvex_deepseek_tensor_coverage *coverage = NULL;
-    yvex_deepseek_tensor_coverage_failure coverage_failure;
     yvex_transform_ir *transform_ir = NULL;
     yvex_transform_failure failure;
-    yvex_deepseek_gguf_map *map = NULL;
-    yvex_deepseek_gguf_map_failure map_failure;
+    yvex_artifact_lowering_map *map = NULL;
+    yvex_artifact_lowering_failure map_failure;
     yvex_transform_node *node;
     yvex_transform_operation_kind saved_kind;
-    yvex_deepseek_tensor_coverage_row *row;
     yvex_native_weight_info *source;
     yvex_native_dtype saved_dtype;
-    yvex_tensor_scope saved_scope;
-    unsigned long long saved_expert;
+    unsigned long long saved_dimension;
+    unsigned long long saved_identity;
     yvex_error err;
 
     fixture_verification(&verification);
     YVEX_TEST_ASSERT(fixture_snapshot(&snapshot, &verification,
                                       FIXTURE_VALID, 0) == YVEX_OK,
-                     "stale-coverage fixture snapshot builds");
+                     "transform source fixture snapshot builds");
     yvex_error_clear(&err);
     YVEX_TEST_ASSERT(yvex_model_register_deepseek_v4()->ir.build(
                          &ir, &verification, &ir_failure, &err) == YVEX_OK,
-                     "stale-coverage fixture IR builds");
-    YVEX_TEST_ASSERT(yvex_model_register_deepseek_v4()->coverage.build(
-                         &coverage, &verification, ir, snapshot, NULL,
-                         &coverage_failure, &err) == YVEX_OK,
-                     "stale-coverage fixture closes before mutation");
+                     "transform source fixture IR builds");
 
-    row = (yvex_deepseek_tensor_coverage_row *)
-        yvex_model_register_deepseek_v4()->coverage.find(coverage, "head.weight");
-    source = row ? (yvex_native_weight_info *)row->source : NULL;
+    source = (yvex_native_weight_info *)yvex_source_tensor_snapshot_find(
+        snapshot, "head.weight");
     YVEX_TEST_ASSERT(source != NULL, "dtype mutation source is addressable");
     saved_dtype = source->dtype;
     source->dtype = YVEX_NATIVE_DTYPE_F32;
     YVEX_TEST_ASSERT(yvex_model_register_deepseek_v4()->transform.build(
-                         &transform_ir, &verification, ir, coverage, NULL,
+                         &transform_ir, &verification, ir, snapshot, NULL,
                          &failure, &err) != YVEX_OK && !transform_ir &&
                          failure.code ==
                              YVEX_TRANSFORM_FAILURE_UNSUPPORTED_SOURCE_DTYPE,
-                     "post-coverage source dtype drift refuses IR construction");
+                     "source dtype drift refuses IR construction");
     source->dtype = saved_dtype;
 
-    row = (yvex_deepseek_tensor_coverage_row *)
-        yvex_model_register_deepseek_v4()->coverage.find(
-            coverage, "layers.0.ffn.experts.1.w1.weight");
-    YVEX_TEST_ASSERT(row != NULL, "expert mutation row is addressable");
-    saved_expert = row->expert_index;
-    row->expert_index = 2u;
+    source = (yvex_native_weight_info *)yvex_source_tensor_snapshot_find(
+        snapshot, "layers.0.ffn.experts.1.w1.weight");
+    YVEX_TEST_ASSERT(source != NULL, "shape mutation source is addressable");
+    saved_dimension = source->dims[0];
+    source->dims[0]++;
     YVEX_TEST_ASSERT(yvex_model_register_deepseek_v4()->transform.build(
-                         &transform_ir, &verification, ir, coverage, NULL,
+                         &transform_ir, &verification, ir, snapshot, NULL,
                          &failure, &err) != YVEX_OK && !transform_ir &&
-                         failure.code == YVEX_TRANSFORM_FAILURE_UNEXPECTED_SOURCE,
-                     "post-coverage expert sequence drift refuses IR construction");
-    row->expert_index = saved_expert;
+                         failure.code == YVEX_TRANSFORM_FAILURE_INVALID_SHAPE,
+                     "source shape drift refuses IR construction");
+    source->dims[0] = saved_dimension;
 
-    row = (yvex_deepseek_tensor_coverage_row *)
-        yvex_model_register_deepseek_v4()->coverage.find(coverage,
-                                           "layers.0.attn_norm.weight");
-    YVEX_TEST_ASSERT(row != NULL, "scope mutation row is addressable");
-    saved_scope = row->scope;
-    row->scope = YVEX_TENSOR_SCOPE_GLOBAL;
+    saved_identity = verification.source_snapshot_identity;
+    verification.source_snapshot_identity ^= 1u;
     YVEX_TEST_ASSERT(yvex_model_register_deepseek_v4()->transform.build(
-                         &transform_ir, &verification, ir, coverage, NULL,
+                         &transform_ir, &verification, ir, snapshot, NULL,
                          &failure, &err) != YVEX_OK && !transform_ir &&
-                         failure.code == YVEX_TRANSFORM_FAILURE_UNEXPECTED_SOURCE,
-                     "post-coverage typed scope drift refuses IR construction");
-    row->scope = saved_scope;
+                         failure.code ==
+                             YVEX_TRANSFORM_FAILURE_SOURCE_IDENTITY_MISMATCH,
+                     "source identity drift refuses IR construction");
+    verification.source_snapshot_identity = saved_identity;
 
     YVEX_TEST_ASSERT(yvex_model_register_deepseek_v4()->transform.build(
-                         &transform_ir, &verification, ir, coverage, NULL,
+                         &transform_ir, &verification, ir, snapshot, NULL,
                          &failure, &err) == YVEX_OK && transform_ir,
-                     "restored coverage seals one valid Transformation IR");
+                     "restored source facts seal one valid Transformation IR");
     node = (yvex_transform_node *)yvex_transform_ir_node_at(transform_ir, 0u);
     YVEX_TEST_ASSERT(node != NULL,
                      "sealed lowering fixture exposes an immutable node view");
@@ -1476,12 +1255,11 @@ static int test_transform_stale_coverage_refusals(void)
                          &map, ir, transform_ir, &map_failure, &err) != YVEX_OK &&
                          !map &&
                          map_failure.code ==
-                             YVEX_DEEPSEEK_GGUF_MAP_FAILURE_LOWERING_DIVERGENCE,
+                             YVEX_ARTIFACT_LOWERING_FAILURE_LOWERING_DIVERGENCE,
                      "GGUF lowering refuses an unsupported semantic operation");
     node->kind = saved_kind;
 
     yvex_transform_ir_release(&transform_ir);
-    yvex_model_register_deepseek_v4()->coverage.close(coverage);
     yvex_model_register_deepseek_v4()->ir.close(ir);
     yvex_source_tensor_snapshot_release(snapshot);
     return 0;
@@ -1489,14 +1267,11 @@ static int test_transform_stale_coverage_refusals(void)
 
 int yvex_test_deepseek_tensor_coverage(void)
 {
-    if (test_valid_target_scale() != 0) return 1;
-    if (test_mutations() != 0) return 1;
-    if (test_limits_and_allocation() != 0) return 1;
     if (test_transform_target_scale() != 0) return 1;
     if (test_mapping_target_scale() != 0) return 1;
     if (test_mapping_allocation_rollback() != 0) return 1;
     if (test_mapping_refusal_boundary() != 0) return 1;
     if (test_mapping_typed_owner_refusals() != 0) return 1;
-    if (test_transform_stale_coverage_refusals() != 0) return 1;
+    if (test_transform_source_refusals() != 0) return 1;
     return 0;
 }

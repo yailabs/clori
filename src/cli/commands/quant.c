@@ -14,10 +14,9 @@
 #include <string.h>
 #include <time.h>
 #include <yvex/internal/artifact.h>
-#include <yvex/internal/compilation.h>
-#include <yvex/internal/families/deepseek_v4.h>
-#include <yvex/internal/families/minimax_h3.h>
+#include <yvex/internal/compiler.h>
 #include <yvex/internal/gguf_writer.h>
+#include <yvex/internal/graph.h>
 #include <yvex/internal/quant_numeric.h>
 #include <yvex/quant.h>
 
@@ -49,21 +48,13 @@ typedef struct {
 } quant_cli_options;
 
 typedef struct {
-    yvex_deepseek_payload_handoff *handoff;
-    yvex_minimax_h3_handoff *minimax_handoff;
-    yvex_minimax_h3_component_id minimax_component;
-    yvex_quant_policy *policy;
-    yvex_imatrix_data *imatrix;
-    yvex_quant_plan *plan;
-    yvex_gguf_writer_plan *writer;
-    const char *minimax_source_root;
-    yvex_imatrix_data_summary imatrix_summary;
+    const yvex_physical_variant_api *api;
+    yvex_physical_variant_session *session;
+    const yvex_physical_variant_summary *summary;
+    const yvex_imatrix_data *imatrix;
+    const yvex_quant_plan *plan;
+    const yvex_gguf_writer_plan *writer;
 } quant_cli_context;
-
-static int quant_cli_writer_build(yvex_gguf_writer_plan **out,
-                                  const quant_cli_context *context,
-                                  yvex_gguf_writer_failure *failure,
-                                  yvex_error *err);
 
 static int quant_cli_fail(const char *phase, const yvex_error *err)
 {
@@ -126,17 +117,16 @@ static int quant_cli_parse(int argc, char **argv, quant_cli_options *options)
 
 static int quant_cli_options_valid(const quant_cli_options *options)
 {
-    int minimax;
+    int component;
 
     if (!options || !options->target || !options->source) return 0;
-    minimax = strcmp(options->target, YVEX_MINIMAX_H3_TARGET_ID) == 0;
-    if (minimax) {
+    component = options->component != NULL;
+    if (component) {
         if (!options->component || options->models_root || options->manifest ||
             options->preset || options->policy_path || options->imatrix_path ||
             options->backend || options->role)
             return 0;
-    } else if (strcmp(options->target, "deepseek4-v4-flash-dspark") != 0 ||
-               !options->models_root || !options->manifest || options->component ||
+    } else if (!options->models_root || !options->manifest ||
                (!!options->preset == !!options->policy_path)) {
         return 0;
     }
@@ -151,48 +141,15 @@ static int quant_cli_options_valid(const quant_cli_options *options)
     if (options->action == QUANT_CLI_SUMMARIZE) return options->plan_path != NULL;
     if (options->action == QUANT_CLI_EXPLAIN)
         return options->plan_path &&
-               (minimax ? options->tensor != NULL : (!!options->tensor != !!options->role));
+               (component ? options->tensor != NULL : (!!options->tensor != !!options->role));
     return 0;
 }
 
 static void quant_cli_context_close(quant_cli_context *context)
 {
     if (!context) return;
-    yvex_gguf_writer_plan_release(&context->writer);
-    yvex_quant_plan_release(&context->plan);
-    yvex_imatrix_data_close(context->imatrix);
-    yvex_quant_policy_close(context->policy);
-    if (context->minimax_handoff)
-        yvex_model_minimax_h3_handoff_api()->close(&context->minimax_handoff);
-    if (context->handoff)
-        yvex_model_register_deepseek_v4()->payload.close(context->handoff);
+    if (context->api) context->api->close(&context->session);
     memset(context, 0, sizeof(*context));
-}
-
-static int quant_cli_imatrix_open(quant_cli_context *context, const char *path,
-                                  yvex_error *err)
-{
-    yvex_imatrix_data_options options;
-    int rc;
-
-    if (!path) return YVEX_OK;
-    memset(&options, 0, sizeof(options));
-    options.path = path;
-    /* The bootstrap profile deliberately carries forward the predecessor's
-     * routed-expert importance prior. Bind that provenance honestly; calling
-     * it calibration of the new DSpark transform would make two different
-     * source snapshots share one semantic claim. */
-    options.source_model_identity =
-        YVEX_QUANT_DSPARK_IMATRIX_SOURCE_IDENTITY;
-    options.calibration_dataset_identity =
-        YVEX_QUANT_DSPARK_IMATRIX_DATASET_IDENTITY;
-    options.producer = "llama.cpp-imatrix";
-    options.producer_version = 1u;
-    options.maximum_mapped_bytes = 1024u * 1024u * 1024u;
-    rc = yvex_imatrix_data_open(&context->imatrix, &options, err);
-    if (rc == YVEX_OK)
-        rc = yvex_imatrix_data_get_summary(context->imatrix, &context->imatrix_summary, err);
-    return rc;
 }
 
 static void quant_cli_plan_compatibility(const yvex_quant_plan *plan, int *cpu, int *cuda)
@@ -215,159 +172,59 @@ static void quant_cli_plan_compatibility(const yvex_quant_plan *plan, int *cpu, 
     }
 }
 
-static int quant_cli_backend_validate(const char *backend, const yvex_quant_plan *plan,
-                                      yvex_error *err)
-{
-    int cpu;
-    int cuda;
-
-    if (!backend) return YVEX_OK;
-    quant_cli_plan_compatibility(plan, &cpu, &cuda);
-    if ((strcmp(backend, "cpu") == 0 && cpu) ||
-        (strcmp(backend, "cuda") == 0 && cuda))
-        return YVEX_OK;
-    yvex_error_setf(err, YVEX_ERR_UNSUPPORTED, "quant_cli_backend",
-                    "physical variant is not executable on requested backend: %s", backend);
-    return YVEX_ERR_UNSUPPORTED;
-}
-
-static int quant_cli_context_open_deepseek(
-    quant_cli_context *context, const quant_cli_options *options,
-    yvex_quant_failure *failure, yvex_error *err)
-{
-    yvex_deepseek_payload_handoff_options handoff_options;
-    yvex_deepseek_payload_failure handoff_failure;
-    const yvex_transform_ir_summary *transform;
-    int rc;
-
-    memset(context, 0, sizeof(*context));
-    memset(&handoff_options, 0, sizeof(handoff_options));
-    handoff_options.source_path = options->source;
-    handoff_options.models_root = options->models_root;
-    handoff_options.manifest_path = options->manifest;
-    yvex_source_payload_budget_default(&handoff_options.budget);
-    handoff_options.budget.maximum_open_handles = 32u;
-    handoff_options.budget.maximum_streams = 16u;
-    handoff_options.budget.maximum_inflight_host_bytes =
-        handoff_options.budget.chunk_bytes * handoff_options.budget.maximum_streams;
-    handoff_options.chunk_bytes = handoff_options.budget.chunk_bytes;
-    handoff_options.page_bytes = handoff_options.budget.page_bytes;
-    rc = yvex_model_register_deepseek_v4()->payload.open(
-        &context->handoff, &handoff_options, &handoff_failure, err);
-    if (rc == YVEX_OK)
-        rc = options->preset
-                 ? yvex_quant_policy_preset_open(&context->policy, options->preset, err)
-                 : yvex_quant_policy_open(&context->policy, options->policy_path, err);
-    transform = context->handoff
-                    ? yvex_transform_ir_summary_get(
-                          yvex_model_register_deepseek_v4()->payload.transform_ir(context->handoff))
-                    : NULL;
-    if (rc == YVEX_OK && !transform) rc = YVEX_ERR_STATE;
-    if (rc == YVEX_OK)
-        rc = quant_cli_imatrix_open(context, options->imatrix_path, err);
-    if (rc == YVEX_OK)
-        rc = yvex_quant_plan_build_deepseek_policy(
-            &context->plan,
-            yvex_model_register_deepseek_v4()->payload.transform_ir(context->handoff),
-            yvex_model_register_deepseek_v4()->payload.binding(context->handoff),
-            yvex_model_register_deepseek_v4()->payload.map(context->handoff), context->policy,
-            context->imatrix_summary.complete ? context->imatrix_summary.imatrix_identity : NULL,
-            NULL, failure, err);
-    if (rc == YVEX_OK)
-        rc = quant_cli_backend_validate(options->backend, context->plan, err);
-    if (rc == YVEX_OK) {
-        yvex_gguf_writer_failure writer_failure;
-        memset(&writer_failure, 0, sizeof(writer_failure));
-        rc = quant_cli_writer_build(&context->writer, context, &writer_failure, err);
-    }
-    return rc;
-}
-
-static int quant_cli_minimax_component_find(
-    const char *name, yvex_minimax_h3_component_id *out)
-{
-    static const yvex_minimax_h3_component_id weighted[] = {
-        YVEX_MINIMAX_H3_COMPONENT_TEXT_ENCODER,
-        YVEX_MINIMAX_H3_COMPONENT_TRANSFORMER,
-        YVEX_MINIMAX_H3_COMPONENT_VIDEO_VAE,
-        YVEX_MINIMAX_H3_COMPONENT_AUDIO_VAE
-    };
-    const yvex_minimax_h3_api *family = yvex_model_register_minimax_h3();
-    size_t index;
-
-    if (!name || !out) return 0;
-    for (index = 0u; index < sizeof(weighted) / sizeof(weighted[0]); ++index) {
-        if (strcmp(name, family->component_name(weighted[index])) == 0) {
-            *out = weighted[index];
-            return 1;
-        }
-    }
-    return 0;
-}
-
-static int quant_cli_context_open_minimax(
-    quant_cli_context *context, const quant_cli_options *options,
-    yvex_quant_failure *failure, yvex_error *err)
-{
-    const yvex_minimax_h3_handoff_api *handoff_api =
-        yvex_model_minimax_h3_handoff_api();
-    const yvex_minimax_h3_api *family = yvex_model_register_minimax_h3();
-    yvex_minimax_h3_handoff_options handoff_options;
-    yvex_minimax_h3_handoff_failure handoff_failure;
-    const yvex_minimax_h3_target *target;
-    const yvex_minimax_h3_component *component;
-    yvex_gguf_writer_failure writer_failure;
-    int rc;
-
-    memset(context, 0, sizeof(*context));
-    context->minimax_source_root = options->source;
-    if (!quant_cli_minimax_component_find(options->component,
-                                          &context->minimax_component)) {
-        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "quant_cli_minimax",
-                       "component must be text_encoder, transformer, video_vae, or audio_vae");
-        return YVEX_ERR_INVALID_ARG;
-    }
-    memset(&handoff_options, 0, sizeof(handoff_options));
-    handoff_options.source_root = options->source;
-    handoff_options.component = context->minimax_component;
-    yvex_source_payload_budget_default(&handoff_options.budget);
-    handoff_options.budget.maximum_open_handles = 4u;
-    handoff_options.budget.maximum_streams = 1u;
-    handoff_options.budget.maximum_inflight_host_bytes =
-        handoff_options.budget.chunk_bytes;
-    handoff_options.chunk_bytes = handoff_options.budget.chunk_bytes;
-    handoff_options.page_bytes = handoff_options.budget.page_bytes;
-    memset(&handoff_failure, 0, sizeof(handoff_failure));
-    rc = handoff_api->open(&context->minimax_handoff, &handoff_options,
-                           &handoff_failure, err);
-    target = context->minimax_handoff
-                 ? handoff_api->target(context->minimax_handoff) : NULL;
-    component = target ? family->component_at(target, context->minimax_component) : NULL;
-    if (rc == YVEX_OK && !component) {
-        yvex_error_set(err, YVEX_ERR_STATE, "quant_cli_minimax",
-                       "weighted component disappeared after source admission");
-        rc = YVEX_ERR_STATE;
-    }
-    if (rc == YVEX_OK)
-        rc = yvex_quant_plan_build_source_faithful(
-            &context->plan, handoff_api->transform_ir(context->minimax_handoff),
-            handoff_api->binding(context->minimax_handoff),
-            "minimax-h3-source-faithful-v1",
-            yvex_transform_hash_string(component->identity), NULL, failure, err);
-    if (rc == YVEX_OK) {
-        memset(&writer_failure, 0, sizeof(writer_failure));
-        rc = quant_cli_writer_build(&context->writer, context, &writer_failure, err);
-    }
-    return rc;
-}
-
 static int quant_cli_context_open(quant_cli_context *context,
                                   const quant_cli_options *options,
-                                  yvex_quant_failure *failure, yvex_error *err)
+                                  yvex_error *err)
 {
-    return strcmp(options->target, YVEX_MINIMAX_H3_TARGET_ID) == 0
-               ? quant_cli_context_open_minimax(context, options, failure, err)
-               : quant_cli_context_open_deepseek(context, options, failure, err);
+    const yvex_graph_execution_binding *execution;
+    const yvex_component_variant_adapter *component;
+    const yvex_physical_variant_view *view;
+    yvex_physical_variant_request request = {
+        .target_id = options->target,
+        .source_path = options->source,
+        .models_root = options->models_root,
+        .source_manifest_path = options->manifest,
+        .quant_preset_name = options->preset,
+        .quant_policy_path = options->policy_path,
+        .imatrix_path = options->imatrix_path,
+        .backend = options->backend,
+        .component_id = options->component,
+        .worker_count = options->component ? 1u : 16u};
+    int rc;
+
+    memset(context, 0, sizeof(*context));
+    execution = yvex_graph_execution_find(0u, 0u, request.target_id);
+    component = execution ? NULL : yvex_graph_component_variant_find(request.target_id);
+    context->api = execution && execution->compiler &&
+                           execution->compiler->physical_variant
+                       ? execution->compiler->physical_variant()
+                       : component && component->physical_variant
+                             ? component->physical_variant()
+                             : NULL;
+    if (!context->api) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "quant_cli_context",
+                       "target has no physical-variant compiler adapter");
+        return YVEX_ERR_UNSUPPORTED;
+    }
+    if (context->api->schema_version != YVEX_PHYSICAL_VARIANT_SESSION_SCHEMA_V1 ||
+        !context->api->open || !context->api->close || !context->api->view) {
+        yvex_error_set(err, YVEX_ERR_STATE, "quant_cli_context",
+                       "target published an invalid physical-variant compiler API");
+        return YVEX_ERR_STATE;
+    }
+    rc = context->api->open(&context->session, &request, err);
+    if (rc != YVEX_OK) return rc;
+    view = context->api->view(context->session);
+    context->summary = view ? view->summary : NULL;
+    context->plan = view ? view->plan : NULL;
+    context->writer = view ? view->writer : NULL;
+    context->imatrix = view ? view->imatrix : NULL;
+    if (!context->summary || !context->plan || !context->writer) {
+        yvex_error_set(err, YVEX_ERR_STATE, "quant_cli_context",
+                       "physical-variant session did not publish immutable plans");
+        return YVEX_ERR_STATE;
+    }
+    return YVEX_OK;
 }
 
 /*
@@ -375,24 +232,21 @@ static int quant_cli_context_open(quant_cli_context *context,
  *
  * Writes bounded human-readable evidence to the canonical CLI output owner.
  */
-static void quant_cli_minimax_summary_print(const quant_cli_context *context)
+static void quant_cli_component_summary_print(const quant_cli_context *context)
 {
-    const yvex_minimax_h3_handoff_api *handoff =
-        yvex_model_minimax_h3_handoff_api();
-    const yvex_minimax_h3_handoff_summary *source =
-        handoff->summary(context->minimax_handoff);
+    const yvex_physical_variant_summary *source = context->summary;
     const yvex_quant_plan_summary *plan = yvex_quant_plan_summary_get(context->plan);
     const yvex_gguf_writer_plan_summary *writer =
         yvex_gguf_writer_plan_summary_get(context->writer);
-    const char *component = yvex_model_register_minimax_h3()->component_name(
-        context->minimax_component);
 
     yvex_cli_out_writef(stdout, "status: component-physical-variant-plan-complete\n");
-    yvex_cli_out_writef(stdout, "target: %s\n", YVEX_MINIMAX_H3_TARGET_ID);
-    yvex_cli_out_writef(stdout, "family: minimax-h3\n");
-    yvex_cli_out_writef(stdout, "component: %s\n", component);
-    yvex_cli_out_writef(stdout, "source_revision: %s\n", YVEX_MINIMAX_H3_REVISION);
-    yvex_cli_out_writef(stdout, "source_verified: %d\n", source && source->complete);
+    yvex_cli_out_writef(stdout, "target: %s\n", source ? source->target_id : "");
+    yvex_cli_out_writef(stdout, "family: %s\n", source ? source->family : "");
+    yvex_cli_out_writef(stdout, "component: %s\n", source ? source->component_id : "");
+    yvex_cli_out_writef(stdout, "source_revision: %s\n",
+                        source ? source->source_revision : "");
+    yvex_cli_out_writef(stdout, "source_verified: %d\n",
+                        source ? source->source_verified : 0);
     yvex_cli_out_writef(stdout, "source_snapshot_identity: %s\n",
                         source ? source->source_snapshot_identity : "");
     yvex_cli_out_writef(stdout, "component_identity: %s\n",
@@ -404,9 +258,9 @@ static void quant_cli_minimax_summary_print(const quant_cli_context *context)
                         plan ? plan->physical_variant_identity : "");
     yvex_cli_out_writef(stdout, "writer_plan_identity: %s\n",
                         writer ? writer->writer_plan_identity : "");
-    yvex_cli_out_writef(stdout, "shards: %llu\n", source ? source->shards : 0u);
-    yvex_cli_out_writef(stdout, "tensors: %llu\n", source ? source->tensors : 0u);
-    yvex_cli_out_writef(stdout, "elements: %llu\n", source ? source->elements : 0u);
+    yvex_cli_out_writef(stdout, "shards: %llu\n", source ? source->shards : 0ull);
+    yvex_cli_out_writef(stdout, "tensors: %llu\n", source ? source->tensors : 0ull);
+    yvex_cli_out_writef(stdout, "elements: %llu\n", source ? source->elements : 0ull);
     yvex_cli_out_writef(stdout, "predicted_payload_bytes: %llu\n",
                         plan ? plan->encoded_bytes : 0u);
     yvex_cli_out_writef(stdout, "predicted_gguf_bytes: %llu\n",
@@ -415,8 +269,9 @@ static void quant_cli_minimax_summary_print(const quant_cli_context *context)
                         plan ? plan->qtype_tensor_counts[YVEX_GGUF_QTYPE_BF16] : 0u);
     yvex_cli_out_writef(stdout, "f32_tensors: %llu\n",
                         plan ? plan->qtype_tensor_counts[YVEX_GGUF_QTYPE_F32] : 0u);
-    yvex_cli_out_writef(stdout, "transformation_payload_bytes_read: %llu\n",
-                        source ? source->payload_execution_bytes_read : 0u);
+    yvex_cli_out_writef(
+        stdout, "transformation_payload_bytes_read: %llu\n",
+        source ? source->payload_execution_bytes_read : 0ull);
     yvex_cli_out_writef(stdout, "artifact_emittable: %d\n", writer && writer->complete);
     yvex_cli_out_writef(stdout, "component_artifact_emitted: 0\n");
     yvex_cli_out_writef(stdout, "runtime_ready: 0\n");
@@ -444,8 +299,8 @@ static void quant_cli_summary_print(const quant_cli_context *context)
     int cpu_compatible;
     int cuda_compatible;
 
-    if (context->minimax_handoff) {
-        quant_cli_minimax_summary_print(context);
+    if (context->summary->kind == YVEX_PHYSICAL_VARIANT_COMPONENT) {
+        quant_cli_component_summary_print(context);
         return;
     }
 
@@ -551,65 +406,6 @@ static int quant_cli_explain(const quant_cli_options *options, const yvex_quant_
     return 0;
 }
 
-static int quant_cli_writer_build(yvex_gguf_writer_plan **out, const quant_cli_context *context,
-                                  yvex_gguf_writer_failure *failure, yvex_error *err)
-{
-    yvex_gguf_writer_plan_options options;
-    yvex_gguf_writer_plan_request request;
-
-    yvex_gguf_writer_plan_options_default(&options);
-    memset(&request, 0, sizeof(request));
-    request.quant_plan = context->plan;
-    request.options = &options;
-    if (context->minimax_handoff) {
-        const yvex_minimax_h3_handoff_api *handoff =
-            yvex_model_minimax_h3_handoff_api();
-        const yvex_minimax_h3_api *family = yvex_model_register_minimax_h3();
-        const yvex_minimax_h3_target *target = handoff->target(context->minimax_handoff);
-        const yvex_minimax_h3_summary *summary = family->summary(target);
-        const yvex_minimax_h3_component *component =
-            family->component_at(target, context->minimax_component);
-        yvex_gguf_writer_tokenizer_input tokenizer = {0};
-
-        if (!summary || !component) {
-            yvex_error_set(err, YVEX_ERR_STATE, "quant_cli_writer",
-                           "MiniMax component source facts are unavailable");
-            return YVEX_ERR_STATE;
-        }
-        request.input_class = YVEX_GGUF_WRITER_INPUT_LOGICAL_COMPONENT;
-        request.input.component.architecture = "minimax-h3";
-        request.input.component.target_id = YVEX_MINIMAX_H3_TARGET_ID;
-        request.input.component.component_id = component->canonical_id;
-        request.input.component.source_snapshot_identity =
-            summary->source_snapshot_identity;
-        request.input.component.source_snapshot_key = summary->source_snapshot_key;
-        request.input.component.component_identity = component->identity;
-        request.input.component.component_manifest_identity =
-            summary->component_manifest_identity;
-        request.input.component.architecture_identity = summary->architecture_identity;
-        request.input.component.role_map_identity = summary->role_map_identity;
-        if (context->minimax_component == YVEX_MINIMAX_H3_COMPONENT_TEXT_ENCODER) {
-            const yvex_minimax_h3_tokenizer_spec *spec = family->tokenizer_spec();
-            tokenizer.acquisition = family->acquisition(target);
-            tokenizer.source_root = context->minimax_source_root;
-            tokenizer.json_path = spec ? spec->json_path : NULL;
-            tokenizer.config_path = spec ? spec->config_path : NULL;
-            tokenizer.pre_tokenizer = spec ? spec->pre_tokenizer : NULL;
-            tokenizer.prompt_policy = spec ? spec->prompt_policy : NULL;
-            tokenizer.token_count = spec ? spec->token_count : 0u;
-            request.input.component.tokenizer = &tokenizer;
-        }
-        return yvex_gguf_writer_plan_build(out, &request, failure, err);
-    }
-    request.input_class = YVEX_GGUF_WRITER_INPUT_COMPLETE_ARTIFACT;
-    request.input.complete.family_adapter = yvex_model_register_deepseek_v4();
-    request.input.complete.lowering =
-        yvex_model_register_deepseek_v4()->payload.map(context->handoff);
-    request.input.complete.verification =
-        yvex_model_register_deepseek_v4()->payload.verification(context->handoff);
-    return yvex_gguf_writer_plan_build(out, &request, failure, err);
-}
-
 static int quant_cli_emit(const quant_cli_options *options, quant_cli_context *context,
                           yvex_error *err)
 {
@@ -640,7 +436,7 @@ static int quant_cli_emit(const quant_cli_options *options, quant_cli_context *c
     if (rc == YVEX_OK) {
         yvex_gguf_file_sink_adapter(file_sink, &sink);
         yvex_quant_executor_options_default(&executor);
-        executor.worker_count = context->minimax_handoff ? 1u : 16u;
+        executor.worker_count = context->summary->worker_count;
         executor.maximum_owned_bytes = 64u * 1024u * 1024u;
         executor.imatrix = context->imatrix;
         rc = yvex_quant_execute(context->plan, &sink, &executor, &execution, &quant_failure, err);
@@ -665,13 +461,12 @@ static int quant_cli_emit(const quant_cli_options *options, quant_cli_context *c
     if (rc == YVEX_OK) {
         yvex_cli_out_writef(
             stdout, "status: %s\n",
-            context->minimax_handoff ? "component-physical-artifact-emitted"
-                                     : "complete-physical-artifact-emitted");
-        if (context->minimax_handoff)
-            yvex_cli_out_writef(
-                stdout, "component: %s\n",
-                yvex_model_register_minimax_h3()->component_name(
-                    context->minimax_component));
+            context->summary->kind == YVEX_PHYSICAL_VARIANT_COMPONENT
+                ? "component-physical-artifact-emitted"
+                : "complete-physical-artifact-emitted");
+        if (context->summary->kind == YVEX_PHYSICAL_VARIANT_COMPONENT)
+            yvex_cli_out_writef(stdout, "component: %s\n",
+                                context->summary->component_id);
         yvex_cli_out_writef(stdout, "artifact: %s\n", options->out_artifact);
         yvex_cli_out_writef(stdout, "profile: %s\n", writer_summary->profile_name);
         yvex_cli_out_writef(stdout, "profile_identity: %s\n",
@@ -708,7 +503,7 @@ static int quant_cli_emit(const quant_cli_options *options, quant_cli_context *c
         yvex_cli_out_writef(stdout, "imatrix_identity: %s\n", plan_summary->imatrix_identity);
         yvex_cli_out_writef(stdout, "native_roundtrip: accepted\n");
         yvex_cli_out_writef(stdout, "official_reader_admission: pending\n");
-        if (context->minimax_handoff) {
+        if (context->summary->kind == YVEX_PHYSICAL_VARIANT_COMPONENT) {
             yvex_cli_out_writef(stdout, "runtime_ready: 0\n");
             yvex_cli_out_writef(stdout, "media_generation_ready: 0\n");
         }
@@ -855,7 +650,6 @@ int yvex_quant_command(int arg_count, char **args)
 {
     quant_cli_options options;
     quant_cli_context context;
-    yvex_quant_failure failure;
     yvex_error err;
     int parsed;
     int rc;
@@ -876,8 +670,7 @@ int yvex_quant_command(int arg_count, char **args)
         return 2;
     }
     yvex_error_clear(&err);
-    memset(&failure, 0, sizeof(failure));
-    rc = quant_cli_context_open(&context, &options, &failure, &err);
+    rc = quant_cli_context_open(&context, &options, &err);
     if (rc == YVEX_OK && options.action == QUANT_CLI_PLAN)
         rc = yvex_quant_plan_file_write(options.out_plan, context.plan, &err);
     if (rc == YVEX_OK && (options.action == QUANT_CLI_SUMMARIZE ||

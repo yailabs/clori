@@ -16,6 +16,8 @@
 
 #include <yvex/internal/moe.h>
 #include <yvex/internal/quant_numeric.h>
+#include <yvex/internal/compiler.h>
+#include <yvex/internal/families/deepseek_v4.h>
 
 static void moe_test_identity(char output[YVEX_SHA256_HEX_CAP], unsigned int value)
 {
@@ -24,7 +26,11 @@ static void moe_test_identity(char output[YVEX_SHA256_HEX_CAP], unsigned int val
 
 static int moe_test_family_plan(void)
 {
-    const yvex_moe_family_api *family = yvex_graph_moe_family_at(0ull);
+    const yvex_family_compiler_adapter *compiler =
+        yvex_compiler_family_deepseek_v4();
+    const yvex_graph_compiler_api *graph =
+        compiler && compiler->graph ? compiler->graph() : NULL;
+    const yvex_moe_family_api *family = graph ? graph->moe : NULL;
     yvex_runtime_descriptor_summary runtime = {0};
     yvex_attention_layer_plan attention = {0};
     yvex_error err;
@@ -73,13 +79,11 @@ static int moe_test_family_plan(void)
     memset(&runtime.model_execution, 0, sizeof(runtime.model_execution));
     attention.ordinal = attention.layer_index = 0ull;
     {
-        yvex_moe_layer_plan legacy;
+        yvex_moe_layer_plan rejected;
         YVEX_TEST_ASSERT(
-            family->project_layer(0ull, &runtime, &attention, &legacy, &err) == YVEX_OK &&
-                legacy.router_class == YVEX_MOE_ROUTER_HASH_TOKEN_ID &&
-                legacy.shared_experts == 1ull &&
-                legacy.expert_intermediate_width == 2048ull,
-            "binding v7 retains its exact family-owned MoE projection");
+            family->project_layer(0ull, &runtime, &attention, &rejected, &err) ==
+                YVEX_ERR_INVALID_ARG,
+            "MoE projection refuses an uncompiled execution descriptor");
     }
     return 0;
 }

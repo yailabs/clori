@@ -438,6 +438,53 @@ static int core_file_read_exact(int fd, unsigned char *data, size_t count)
     return 1;
 }
 
+int yvex_core_file_read_descriptor_snapshot(
+    int descriptor, size_t expected_count, unsigned char **data,
+    yvex_core_file_result *result, yvex_error *err)
+{
+    struct stat before = {0}, after = {0};
+    unsigned char *buffer = NULL;
+    int rc;
+    if (data) *data = NULL;
+    if (result) memset(result, 0, sizeof(*result));
+    if (!data || !result || descriptor < 0 || !expected_count)
+        return core_file_fail(result, YVEX_CORE_FILE_STAGE_ARGUMENT, EINVAL, 1ull, 0ull,
+                              YVEX_ERR_INVALID_ARG,
+                              "descriptor snapshot arguments are incomplete", err);
+    if (fstat(descriptor, &before) != 0 || !S_ISREG(before.st_mode) || before.st_size < 0 ||
+        (unsigned long long)before.st_size != expected_count)
+        return core_file_fail(result, YVEX_CORE_FILE_STAGE_BOUNDS, EFBIG, expected_count,
+                              before.st_size > 0 ? (unsigned long long)before.st_size : 0ull,
+                              YVEX_ERR_BOUNDS,
+                              "descriptor snapshot size is inconsistent", err);
+    buffer = malloc(expected_count + 1u);
+    if (!buffer)
+        return core_file_fail(result, YVEX_CORE_FILE_STAGE_ALLOCATION, ENOMEM,
+                              expected_count + 1ull, 0ull, YVEX_ERR_NOMEM,
+                              "descriptor snapshot allocation failed", err);
+    if (!core_file_read_exact(descriptor, buffer, expected_count))
+        rc = core_file_fail(result, YVEX_CORE_FILE_STAGE_READ, errno, expected_count, 0ull,
+                            YVEX_ERR_IO, "descriptor snapshot read was incomplete", err);
+    else if (fstat(descriptor, &after) != 0 || before.st_dev != after.st_dev ||
+             before.st_ino != after.st_ino || before.st_size != after.st_size ||
+             before.st_mtim.tv_sec != after.st_mtim.tv_sec ||
+             before.st_mtim.tv_nsec != after.st_mtim.tv_nsec ||
+             before.st_ctim.tv_sec != after.st_ctim.tv_sec ||
+             before.st_ctim.tv_nsec != after.st_ctim.tv_nsec)
+        rc = core_file_fail(result, YVEX_CORE_FILE_STAGE_DRIFT, errno, expected_count,
+                            after.st_size > 0 ? (unsigned long long)after.st_size : 0ull,
+                            YVEX_ERR_IO, "descriptor snapshot drifted during read", err);
+    else {
+        buffer[expected_count] = '\0';
+        *data = buffer;
+        result->actual = expected_count;
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    free(buffer);
+    return rc;
+}
+
 static void core_file_cleanup_note(yvex_core_file_result *result,
                                    yvex_core_file_cleanup_stage stage,
                                    int system_error)
@@ -629,7 +676,7 @@ int yvex_core_file_read_snapshot(const char *path, size_t maximum_bytes,
 {
     char name[CORE_FILE_NAME_CAP];
     int directory_fd = -1, fd = -1, rc;
-    struct stat before, after;
+    struct stat before;
     unsigned char *buffer = NULL;
 
     if (result) memset(result, 0, sizeof(*result));
@@ -652,38 +699,12 @@ int yvex_core_file_read_snapshot(const char *path, size_t maximum_bytes,
                             YVEX_ERR_BOUNDS, "file size exceeds its bound", err);
         goto done;
     }
-    buffer = (unsigned char *)malloc((size_t)before.st_size + 1u);
-    if (!buffer) {
-        rc = core_file_fail(result, YVEX_CORE_FILE_STAGE_ALLOCATION, ENOMEM,
-                            (unsigned long long)before.st_size + 1ull, 0ull,
-                            YVEX_ERR_NOMEM, "file snapshot allocation failed", err);
-        goto done;
-    }
-    if (!core_file_read_exact(fd, buffer, (size_t)before.st_size)) {
-        rc = core_file_fail(result, YVEX_CORE_FILE_STAGE_READ, errno,
-                            (unsigned long long)before.st_size, 0ull,
-                            YVEX_ERR_IO, "file snapshot read was incomplete", err);
-        goto done;
-    }
-    if (fstat(fd, &after) != 0 || before.st_dev != after.st_dev ||
-        before.st_ino != after.st_ino || before.st_size != after.st_size ||
-        before.st_mtim.tv_sec != after.st_mtim.tv_sec ||
-        before.st_mtim.tv_nsec != after.st_mtim.tv_nsec ||
-        before.st_ctim.tv_sec != after.st_ctim.tv_sec ||
-        before.st_ctim.tv_nsec != after.st_ctim.tv_nsec) {
-        rc = core_file_fail(result, YVEX_CORE_FILE_STAGE_DRIFT, errno,
-                            (unsigned long long)before.st_size,
-                            after.st_size > 0 ? (unsigned long long)after.st_size : 0ull,
-                            YVEX_ERR_IO, "file snapshot drifted during read", err);
-        goto done;
-    }
-    buffer[before.st_size] = '\0';
+    rc = yvex_core_file_read_descriptor_snapshot(
+        fd, (size_t)before.st_size, &buffer, result, err);
+    if (rc != YVEX_OK) goto done;
     *data = buffer;
     *count = (size_t)before.st_size;
-    result->actual = *count;
     buffer = NULL;
-    rc = YVEX_OK;
-    yvex_error_clear(err);
 
 done:
     free(buffer);

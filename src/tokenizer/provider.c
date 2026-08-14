@@ -1,5 +1,5 @@
 /*
- * Execute the pinned DeepSeek DSML tool and response-format contract without gateway prompt
+ * Execute the compiled tool and response-format contract without gateway prompt
  * assembly.
  *
  * Application messages reach model syntax only through the tokenizer plan; prose is never a tool
@@ -42,17 +42,11 @@ struct yvex_tokenizer_reasoning_stream {
     int reasoning, finished;
 };
 
-static int conversation_admitted(const yvex_conversation_protocol *protocol)
+static int conversation_admitted(const yvex_tokenizer *tokenizer)
 {
-    unsigned long long index;
-    for (index = 0u;; ++index) {
-        const yvex_conversation_protocol *candidate =
-            yvex_model_conversation_protocol_at(index);
-        if (!candidate) return 0;
-        if (candidate == protocol &&
-            candidate->schema_version == YVEX_CONVERSATION_PROTOCOL_SCHEMA_V1)
-            return 1;
-    }
+    return tokenizer && tokenizer->conversation == &tokenizer->conversation_view &&
+           tokenizer->conversation->schema_version == YVEX_CONVERSATION_PROTOCOL_SCHEMA_V1 &&
+           yvex_tokenizer_family_policy_validate(&tokenizer->compiled_policy, NULL) == YVEX_OK;
 }
 
 static int reasoning_emit(yvex_tokenizer_reasoning_stream *stream,
@@ -72,7 +66,7 @@ int yvex_tokenizer_reasoning_stream_open(
     yvex_tokenizer_reasoning_stream *stream;
     if (out) *out = NULL;
     if (!out || !tokenizer || !tokenizer->plan.sealed ||
-        !conversation_admitted(tokenizer->conversation) || !sink ||
+        !conversation_admitted(tokenizer) || !sink ||
         policy > YVEX_REASONING_MAXIMUM ||
         (policy != YVEX_REASONING_DISABLED &&
          !tokenizer->plan.explicit_reasoning_supported) ||
@@ -803,7 +797,7 @@ static const yvex_provider_message *ordered_tool_result(
 }
 
 /*
- * Render the sealed provider request through the exact admitted DeepSeek prompt policy.
+ * Render the sealed provider request through the exact compiled conversation policy.
  *
  * Allocates exact prompt bytes and field-wise prompt/message identities.
  */
@@ -820,8 +814,8 @@ int yvex_tokenizer_provider_prompt(
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     if (!tokenizer || !rendered ||
-        !conversation_admitted(tokenizer->conversation) ||
-        tokenizer->plan.prompt_policy != YVEX_TOKENIZER_PROMPT_DEEPSEEK_V4 ||
+        !conversation_admitted(tokenizer) ||
+        tokenizer->plan.prompt_policy != YVEX_TOKENIZER_PROMPT_CONVERSATION ||
         yvex_provider_request_validate(request, err) != YVEX_OK)
         return YVEX_ERR_INVALID_ARG;
     conversation = tokenizer->conversation;
@@ -936,7 +930,7 @@ int yvex_tokenizer_provider_prompt(
     if (rc != YVEX_OK) {
         free(builder.data);
         yvex_error_set(err, rc, "tokenizer.provider.prompt",
-                       "provider messages do not satisfy DeepSeek prompt semantics");
+                       "provider messages do not satisfy the compiled prompt semantics");
         return rc;
     }
     rendered->text = (char *)builder.data;
@@ -1080,7 +1074,7 @@ static int conversation_output_parse(
 
     if (view) memset(view, 0, sizeof(*view));
     if (!tokenizer || !tokenizer->plan.sealed ||
-        !conversation_admitted(tokenizer->conversation) ||
+        !conversation_admitted(tokenizer) ||
         !view || (!bytes && byte_count) || !valid_utf8(bytes, byte_count) ||
         policy > YVEX_REASONING_MAXIMUM) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "tokenizer.output.grammar",
@@ -1288,7 +1282,7 @@ int yvex_tokenizer_parse_provider_completion(
     int rc = YVEX_OK;
     if (result) memset(result, 0, sizeof(*result));
     if (!result || !tokenizer ||
-        tokenizer->plan.prompt_policy != YVEX_TOKENIZER_PROMPT_DEEPSEEK_V4 ||
+        tokenizer->plan.prompt_policy != YVEX_TOKENIZER_PROMPT_CONVERSATION ||
         yvex_provider_request_validate(request, err) != YVEX_OK ||
         (!bytes && byte_count) || !valid_utf8(bytes, byte_count)) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "tokenizer.provider.output",

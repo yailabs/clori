@@ -363,7 +363,7 @@ static int stale_socket_clear(const char *path, yvex_error *err)
         if (connect(fd, (struct sockaddr *)&address, sizeof(address)) == 0) {
             (void)close(fd);
             return server_refuse(err, YVEX_ERR_STATE,
-                                 "another YVEX runtime already owns the socket");
+                                 "another YVEX server already owns the socket");
         }
         (void)close(fd);
     }

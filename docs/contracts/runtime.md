@@ -7,8 +7,8 @@ semantics. C interfaces are documented separately in [YVEX C API](c-api.md).
 
 ## Parties and scope
 
-Producer: `yvexd`, common runtime, graph/backend, tokenizer, generation, and
-server owners.
+Producer: foreground `yvex server`, common runtime, graph/backend, tokenizer,
+generation, and server owners.
 
 Consumers: runtime-client operations and the interactive console in `yvex`,
 the in-process OpenAI adapter, and focused runtime tests.
@@ -155,7 +155,13 @@ means decrementing counters after publication.
 Every request consumes one immutable compiled execution profile binding the
 logical model, physical variant, Physical Execution IR, artifact,
 materialization, runtime binding, kernel bundle, hardware, context, mode,
-workload, evidence profile, and execution class. `production` admits bounded
+workload, evidence profile, and execution class. Profile v2 also records typed
+attention, MoE, and sampling resolutions. An executable resolution is either
+`exact` or `compatible-degraded`; resource pressure, unsupported capability,
+and trust failure cannot be sealed as an executable profile. The aggregate
+resolution is derived from those three operation facts rather than supplied as
+a second authority. Backend owners report capability facts but never select a
+resolution. `production` admits bounded
 status and accounting only; `audit` may add selected probes and device digests;
 `forensic` may explicitly materialize full intermediates. Trace verbosity does
 not select evidence depth, and production identity does not require complete
@@ -171,6 +177,11 @@ workload profiles plus one capacity plan. Context limits, pooled state,
 candidate and prefix reserves, logical batching, physical row geometry,
 workspace and system reserve remain separately identified. Persistent-state
 page tokens are a per-state-class planning result, not a global runtime flag.
+The model-authored maximum is sealed upstream in Semantic Model IR and must
+match the target/draft maxima in the compiled context envelope. Requested
+context is owned by the workload profile; hardware-fit admission remains the
+generic capacity planner's responsibility. No family projection owns selected
+capacity or a machine-memory constant.
 
 Target prefill/decode, draft width five, verification widths two through six,
 correction, and reset select an execution shape before mutation. The key binds
@@ -217,12 +228,12 @@ A cancellation during drafting or verification discards uncommitted candidate
 state. A cancellation after atomic accepted-prefix commit reports that exact
 committed prefix. Every cancelled request publishes a typed cancellation
 class, completed token and position facts, and no false terminal success. It
-does not close the daemon, model, or unrelated sessions, poison immutable
+does not close the server, model, or unrelated sessions, poison immutable
 caches, or prevent reset and a subsequent request.
 
 ## Resource and concurrency rules
 
-The daemon owns one bounded queue and one model worker. Listener threads admit,
+The server owns one bounded queue and one model worker. Listener threads admit,
 frame, and project requests but never mutate model state directly. One active
 generation request is executed at a time unless a later independently admitted
 scheduler changes that contract.
@@ -267,7 +278,7 @@ and never becomes the classifier.
 
 No output or state is published before its producer completes. Cleanup failure
 is reported without pretending the owner was released. Malformed or hostile
-requests cannot terminate the daemon or corrupt another session.
+requests cannot terminate the server or corrupt another session.
 
 Malformed draft geometry, feature taps, noise token, Markov rank, missing
 companions, unsupported draft qtypes, candidate workspace overflow,

@@ -663,7 +663,7 @@ extern "C" __global__ void yvex_qtype_split_matvec(
     }
 }
 
-extern "C" __global__ void yvex_deepseek_decode(
+extern "C" __global__ void yvex_encoded_row_decode(
     const unsigned char *encoded, unsigned long long count,
     unsigned int qtype, float *out, int *status)
 {
@@ -711,7 +711,7 @@ extern "C" __global__ void yvex_qtype_gather(
     else out[index] = value;
 }
 
-extern "C" __global__ void yvex_deepseek_weighted_norm(
+extern "C" __global__ void yvex_attention_weighted_norm(
     float *values, unsigned long long count, const unsigned char *weight,
     unsigned int weight_qtype, double epsilon, unsigned long long vectors,
     int *status)
@@ -776,7 +776,7 @@ extern "C" __global__ void yvex_deepseek_weighted_norm(
     }
 }
 
-extern "C" __global__ void yvex_deepseek_unit_norm(
+extern "C" __global__ void yvex_attention_unit_norm(
     float *values, unsigned long long vector_count,
     unsigned long long vector_width, double epsilon, int *status)
 {
@@ -821,7 +821,7 @@ extern "C" __global__ void yvex_deepseek_unit_norm(
     }
 }
 
-static __device__ double deepseek_yarn_frequency(
+static __device__ double attention_yarn_frequency(
     unsigned long long pair, unsigned long long rope_dims,
     unsigned long long theta, unsigned long long scaling_factor,
     unsigned long long original_context, unsigned long long beta_fast,
@@ -853,7 +853,7 @@ static __device__ double deepseek_yarn_frequency(
     return frequency;
 }
 
-extern "C" __global__ void yvex_deepseek_rope(
+extern "C" __global__ void yvex_attention_yarn_rope(
     float *values, unsigned long long vector_count,
     unsigned long long vector_width, unsigned long long rope_dims,
     unsigned long long token_position, unsigned long long theta,
@@ -886,7 +886,7 @@ extern "C" __global__ void yvex_deepseek_rope(
     unsigned long long start = vector_width - rope_dims;
     unsigned long long offset = vector_index * vector_width + start +
                                 local_pair * 2ull;
-    double frequency = deepseek_yarn_frequency(
+    double frequency = attention_yarn_frequency(
         local_pair, rope_dims, theta, scaling_factor, original_context,
         beta_fast, beta_slow);
     double angle = (double)token_position * frequency;
@@ -906,7 +906,7 @@ extern "C" __global__ void yvex_deepseek_rope(
     }
 }
 
-static __device__ float deepseek_fp8_decode(unsigned int code)
+static __device__ float activation_fp8_decode(unsigned int code)
 {
     unsigned int sign = code & 0x80u;
     unsigned int exponent = (code >> 3u) & 0x0fu;
@@ -920,7 +920,7 @@ static __device__ float deepseek_fp8_decode(unsigned int code)
     return sign ? -value : value;
 }
 
-static __device__ unsigned int deepseek_fp8_encode(float value)
+static __device__ unsigned int activation_fp8_encode(float value)
 {
     float magnitude = fabsf(value);
     float best_error = INFINITY;
@@ -929,7 +929,7 @@ static __device__ unsigned int deepseek_fp8_encode(float value)
     if (!isfinite(value)) return negative ? 0xffu : 0x7fu;
     if (magnitude > 448.0f) magnitude = 448.0f;
     for (unsigned int code = 0u; code < 0x7fu; ++code) {
-        float error = fabsf(deepseek_fp8_decode(code) - magnitude);
+        float error = fabsf(activation_fp8_decode(code) - magnitude);
         if (error < best_error ||
             (error == best_error && !(code & 1u) && (best & 1u))) {
             best_error = error;
@@ -939,7 +939,7 @@ static __device__ unsigned int deepseek_fp8_encode(float value)
     return negative ? best | 0x80u : best;
 }
 
-static __device__ float deepseek_fp4_decode(unsigned int code)
+static __device__ float activation_fp4_decode(unsigned int code)
 {
     const float table[8] = {0.0f, 0.5f, 1.0f, 1.5f,
                             2.0f, 3.0f, 4.0f, 6.0f};
@@ -947,7 +947,7 @@ static __device__ float deepseek_fp4_decode(unsigned int code)
     return (code & 8u) ? -value : value;
 }
 
-static __device__ unsigned int deepseek_fp4_encode(float value)
+static __device__ unsigned int activation_fp4_encode(float value)
 {
     const float table[8] = {0.0f, 0.5f, 1.0f, 1.5f,
                             2.0f, 3.0f, 4.0f, 6.0f};
@@ -968,7 +968,7 @@ static __device__ unsigned int deepseek_fp4_encode(float value)
     return signbit(value) ? best | 8u : best;
 }
 
-static __device__ unsigned int deepseek_e8m0_encode(float value)
+static __device__ unsigned int activation_e8m0_encode(float value)
 {
     int exponent;
     float fraction;
@@ -981,7 +981,7 @@ static __device__ unsigned int deepseek_e8m0_encode(float value)
     return (unsigned int)exponent;
 }
 
-static __device__ float deepseek_power_two_ceil(float value)
+static __device__ float activation_power_two_ceil(float value)
 {
     int exponent;
     float fraction;
@@ -995,7 +995,7 @@ static __device__ float deepseek_power_two_ceil(float value)
  *
  * Transforms it in deterministic stage order.
  */
-extern "C" __global__ void yvex_deepseek_activation(
+extern "C" __global__ void yvex_attention_activation_quantize(
     float *values, unsigned long long vector_count,
     unsigned long long vector_width, unsigned long long block_width,
     unsigned int quantization, int hadamard, int *status)
@@ -1065,9 +1065,9 @@ extern "C" __global__ void yvex_deepseek_activation(
             float amax = __uint_as_float(maximum_bits);
             float minimum = 6.0f * ldexpf(1.0f, -126);
             if (quantization == 2u && amax < minimum) amax = minimum;
-            float scale = deepseek_power_two_ceil(
+            float scale = activation_power_two_ceil(
                 amax / (quantization == 1u ? 448.0f : 6.0f));
-            unsigned int scale_code = deepseek_e8m0_encode(scale);
+            unsigned int scale_code = activation_e8m0_encode(scale);
             quantization_scale = e8m0_bits_to_float(scale_code);
             if (!isfinite(quantization_scale) || quantization_scale <= 0.0f) {
                 atomicCAS(status, 0, 1);
@@ -1083,11 +1083,11 @@ extern "C" __global__ void yvex_deepseek_activation(
                 if (normalized > 448.0f) normalized = 448.0f;
                 if (normalized < -448.0f) normalized = -448.0f;
                 vector[offset + i] = float_to_bf16_rne(
-                    deepseek_fp8_decode(deepseek_fp8_encode(normalized)) *
+                    activation_fp8_decode(activation_fp8_encode(normalized)) *
                     quantization_scale);
             } else if (quantization == 2u) {
                 vector[offset + i] = float_to_bf16_rne(
-                    deepseek_fp4_decode(deepseek_fp4_encode(normalized)) *
+                    activation_fp4_decode(activation_fp4_encode(normalized)) *
                     quantization_scale);
             } else {
                 atomicCAS(status, 0, 2);
@@ -1099,7 +1099,7 @@ extern "C" __global__ void yvex_deepseek_activation(
     }
 }
 
-extern "C" __global__ void yvex_deepseek_mhc_pre(
+extern "C" __global__ void yvex_residual_mhc_pre(
     float *residual, const float *linear_mix, const float *scale,
     const float *base, unsigned long long streams,
     unsigned long long stream_width, unsigned long long mixing_rows,
@@ -1263,7 +1263,7 @@ extern "C" __global__ void yvex_deepseek_mhc_pre(
     }
 }
 
-extern "C" __global__ void yvex_deepseek_mhc_post(
+extern "C" __global__ void yvex_residual_mhc_post(
     const float *core, const float *residual, const float *post,
     const float *combination, unsigned long long streams,
     unsigned long long stream_width, float *output,
@@ -1333,7 +1333,7 @@ extern "C" __global__ void yvex_transformer_feature_mean(
  *
  * Device-resident expanded rows and exact decoded final weights.
  */
-extern "C" __global__ void yvex_deepseek_transformer_final(
+extern "C" __global__ void yvex_transformer_final(
     const float *expanded, const float *function, const float *base,
     const float *scale, const float *norm, unsigned long long token_count,
     unsigned long long streams, unsigned long long width, double epsilon,
@@ -1410,7 +1410,7 @@ extern "C" __global__ void yvex_deepseek_transformer_final(
  *
  * Writes only transaction-local outputs. Host owns publication and rollback.
  */
-extern "C" __global__ void yvex_deepseek_rolling(
+extern "C" __global__ void yvex_attention_rolling_state(
     const float *before_kv, const float *before_score,
     const float *token_kv, const float *token_score, const float *ape,
     float *after_kv, float *after_score, float *compressed,
@@ -1511,7 +1511,7 @@ extern "C" __global__ void yvex_deepseek_rolling(
  *
  * Writes deterministic selected indexes and counts. Host owns transaction publication.
  */
-extern "C" __global__ void yvex_deepseek_topk(
+extern "C" __global__ void yvex_attention_topk(
     const float *index_query, const float *index_weights,
     const float *history_indexer, const unsigned long long *history_positions,
     unsigned long long history_count, unsigned long long history_stride,
@@ -1670,10 +1670,10 @@ typedef struct {
     unsigned int attention_class;
     unsigned long long token_position;
     int candidate_block_visible;
-} deepseek_reduce_rows;
+} attention_reduce_rows;
 
-static __device__ __forceinline__ const float *deepseek_reduce_row(
-    const deepseek_reduce_rows *rows, unsigned long long pass,
+static __device__ __forceinline__ const float *attention_reduce_row(
+    const attention_reduce_rows *rows, unsigned long long pass,
     unsigned long long candidate, int *visible)
 {
     const float *row = NULL;
@@ -1712,7 +1712,7 @@ static __device__ __forceinline__ const float *deepseek_reduce_row(
     return row;
 }
 
-extern "C" __global__ void yvex_deepseek_reduce(
+extern "C" __global__ void yvex_attention_reduce(
     const float *query,
     const float *history_local,
     const unsigned long long *history_local_positions,
@@ -1788,7 +1788,7 @@ extern "C" __global__ void yvex_deepseek_reduce(
     unsigned long long compressed_total = attention_class == 2u
         ? history_compressed_count + current_compressed_count
         : selected_count;
-    deepseek_reduce_rows rows = {
+    attention_reduce_rows rows = {
         history_local, history_local_positions, history_local_count,
         history_local_stride, current_kv, history_compressed,
         history_compressed_positions, history_compressed_count,
@@ -1809,7 +1809,7 @@ extern "C" __global__ void yvex_deepseek_reduce(
         unsigned long long count = pass == 0ull ? local_total : compressed_total;
         for (unsigned long long candidate = 0ull; candidate < count; ++candidate) {
             int visible;
-            const float *row = deepseek_reduce_row(&rows, pass, candidate, &visible);
+            const float *row = attention_reduce_row(&rows, pass, candidate, &visible);
             if (!visible) continue;
             double dot = 0.0;
             for (unsigned long long base = 0ull; base < head_dim;

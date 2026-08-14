@@ -16,6 +16,31 @@ ROOT = Path(__file__).resolve().parents[1]
 OWNERS = ROOT / "config/documentation_owners.tsv"
 FROZEN = ROOT / "config/frozen_documents.tsv"
 BASELINE = "51a5c087eafe857d71df1566ce90c2f87a2fcfc1"
+WORKLOG_FIELDS = [
+    "Date",
+    "Type",
+    "Milestone",
+    "Branch",
+    "Baseline",
+    "Checkpoint",
+    "Subsystem",
+    "Model family",
+    "Hardware",
+    "Evidence",
+    "Comparability",
+    "Publishability",
+]
+WORKLOG_SECTIONS = [
+    "Before",
+    "Problem",
+    "Causal analysis",
+    "Decision",
+    "Implementation",
+    "After",
+    "Evidence",
+    "Remaining limitations",
+    "Why it matters",
+]
 
 
 def fail(message: str) -> None:
@@ -121,7 +146,15 @@ def check_links(paths: set[str]) -> None:
         OWNERS,
         ["path", "class", "authority_mode", "audience", "lifecycle", "canonical_subject"],
     )
-    exempt = {"audit", "decision", "migration", "milestone", "test-support", "legal"}
+    exempt = {
+        "audit",
+        "decision",
+        "migration",
+        "milestone",
+        "test-support",
+        "legal",
+        "worklog",
+    }
     for row in owner_rows:
         path = row["path"]
         if (
@@ -168,6 +201,7 @@ def check_owners() -> list[dict[str, str]]:
         "legal",
         "contribution",
         "test-support",
+        "worklog",
     }
     modes = {"canonical", "projection", "frozen"}
     lifecycles = {"living", "frozen", "accepted", "planned", "retained", "unreleased"}
@@ -213,6 +247,83 @@ def check_frozen() -> None:
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         if digest != row["sha256"]:
             fail(f"frozen document changed: {row['path']}")
+
+
+def check_engineering_worklogs(rows: list[dict[str, str]]) -> None:
+    skill_path = ROOT / ".agents/skills/engineering-worklog/SKILL.md"
+    if not skill_path.is_file():
+        fail("repository engineering-worklog skill is absent")
+    skill = skill_path.read_text(encoding="utf-8")
+    if not re.match(
+        r"^---\nname: engineering-worklog\ndescription: .+\n---\n", skill
+    ):
+        fail("engineering-worklog skill lacks canonical discovery metadata")
+    for phrase in (
+        "checkpoint",
+        "repair",
+        "performance",
+        "closure",
+        "build/worklog/",
+        "docs/worklog/",
+        "private-draft",
+        "reviewed",
+        "public-safe",
+        "Do not generate a worklog for formatting-only edits",
+        "Do not generate or publish visuals",
+    ):
+        if phrase not in skill:
+            fail(f"engineering-worklog skill lacks required contract: {phrase}")
+    if (ROOT / ".codex/skills/engineering-worklog").exists():
+        fail("engineering-worklog uses unsupported repository skill location")
+
+    records = [row for row in rows if row["class"] == "worklog"]
+    if not records:
+        fail("documentation ownership has no retained engineering worklog")
+    for row in records:
+        path = row["path"]
+        if not re.fullmatch(
+            r"docs/worklog/\d{4}-\d{2}-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*\.md",
+            path,
+        ):
+            fail(f"worklog path is not canonical: {path}")
+        text = (ROOT / path).read_text(encoding="utf-8")
+        metadata: list[tuple[str, str]] = []
+        for match in re.finditer(r"^\| ([^|]+?) \| (.+?) \|$", text, re.MULTILINE):
+            field, value = match.groups()
+            if field not in {"Field", "---"}:
+                metadata.append((field, value.strip("`")))
+            if len(metadata) == len(WORKLOG_FIELDS):
+                break
+        if [field for field, _ in metadata] != WORKLOG_FIELDS:
+            fail(f"worklog metadata fields are missing or out of order: {path}")
+        values = dict(metadata)
+        event_date = Path(path).name[:10]
+        if values["Date"] != event_date:
+            fail(f"worklog date does not match its path: {path}")
+        if values["Type"] not in {"checkpoint", "repair", "performance", "closure"}:
+            fail(f"worklog has invalid trigger type: {path}")
+        for field in ("Baseline", "Checkpoint"):
+            if not re.fullmatch(r"[0-9a-f]{40}", values[field]):
+                fail(f"worklog {field.lower()} is not a full commit identity: {path}")
+        if values["Comparability"] not in {
+            "directly comparable",
+            "approximately comparable",
+            "characterization only",
+            "not-applicable",
+        }:
+            fail(f"worklog has invalid comparability: {path}")
+        if values["Publishability"] not in {"private-draft", "reviewed", "public-safe"}:
+            fail(f"worklog has invalid publishability: {path}")
+        for section in WORKLOG_SECTIONS:
+            if f"## {section}" not in text:
+                fail(f"worklog lacks required section {section}: {path}")
+        if values["Publishability"] == "public-safe" and re.search(
+            r"(?:/home/|/Users/|\$HOME/|BEGIN [A-Z ]*PRIVATE KEY|"
+            r"(?:api[_-]?key|token|password)\s*[:=]\s*\S+)",
+            text,
+            re.IGNORECASE,
+        ):
+            fail(f"public-safe worklog contains sensitive local material: {path}")
 
 
 def check_migration() -> None:
@@ -304,6 +415,8 @@ def check_project_control() -> None:
         "V010.REBASE.DEEPSEEK.DSPARK.0": "complete",
         "V010.PRODUCT.ARCHITECTURE.REFOUNDATION.0": "complete",
         "V010.REPO.ARCHITECTURE.COMPRESSION.0": "complete",
+        "V010.CORE.COMPILATION.FAMILY.CONSOLIDATION.0": "complete",
+        "V010.DEVELOPMENT.ENGINEERING.WORKLOG.0": "complete",
         "V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0": "active",
         "V010.EVAL.DEEPSEEK.0": "blocked",
         "V010.BENCH.DEEPSEEK.0": "not-measured",
@@ -441,7 +554,7 @@ def check_content(rows: list[dict[str, str]]) -> None:
             fail(f"glossary lacks canonical term: {term}")
 
     by_path = {row["path"]: row for row in rows}
-    excluded_classes = {"audit", "migration", "decision", "milestone"}
+    excluded_classes = {"audit", "migration", "decision", "milestone", "worklog"}
     stale_paths = (
         "docs/reference-architecture.md",
         "docs/contract.md",
@@ -484,8 +597,8 @@ def check_content(rows: list[dict[str, str]]) -> None:
         if "unsupported runtime family" not in text:
             fail(f"{family} record does not state unsupported runtime stage")
 
-    if "The daemon-backed console uses one `yvex>` prompt" not in readme:
-        fail("README does not describe the current daemon-backed console")
+    if "The server-backed console uses one `yvex>` prompt" not in readme:
+        fail("README does not describe the current server-backed console")
     if "Ctrl-D exits cleanly" not in readme:
         fail("README omits the current console EOF contract")
     if "functional but transitional" in readme:
@@ -500,6 +613,7 @@ def main() -> int:
     rows = check_owners()
     paths = {row["path"] for row in rows}
     check_frozen()
+    check_engineering_worklogs(rows)
     check_migration()
     check_links(paths)
     check_project_control()

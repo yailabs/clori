@@ -209,7 +209,7 @@ static const char *const literal_pair_4[] = { "identity_status: recorded",
 static const char *const models_help_lines[] = {
     "usage: yvex model registry scan --root DIR [--registry FILE]",
     "       yvex model registry add --path FILE [--alias ALIAS] [--support-level LEVEL] "
-        "[--runtime-binding FILE --target ID --backend cpu|cuda --context N] [--registry FILE]",
+        "[--runtime-binding FILE --target ID --backend cpu|cuda --ctx N] [--registry FILE]",
     "       yvex model acquire TARGET [--models-root DIR] [--auth auto|required|never] [--dry-run] "
         "[--progress auto|live|plain|log|off] [--tick-seconds N] [--no-progress] [--audit | --output "
         "normal|table|audit]",
@@ -341,7 +341,7 @@ static int parse_models_add_options(int arg_count, char **args,
         else if (strcmp(args[i], "--backend") == 0) options->runtime_backend = args[++i];
         else if (strcmp(args[i], "--generation-mode") == 0)
             options->runtime_mode = args[++i];
-        else if (strcmp(args[i], "--context") == 0) options->runtime_context = args[++i];
+        else if (strcmp(args[i], "--ctx") == 0) options->runtime_context = args[++i];
         else {
             yvex_cli_out_writef(stderr, "yvex: unknown models add option: %s\n", args[i]);
             return 2;
@@ -375,7 +375,7 @@ static int command_models_scan(int arg_count, char **args)
             }
             registry_path = args[++i];
         } else if (strcmp(args[i], "--json") == 0) {
-            /* Reserved for model selection work compatibility; text output remains canonical. */
+            /* Reserved for the registry scan JSON projection; text remains canonical. */
         } else {
             yvex_cli_out_writef(stderr, "yvex: unknown models scan option: %s\n", args[i]);
             return 2;
@@ -455,14 +455,14 @@ static int command_models_add(int arg_count, char **args)
     if (runtime_fields != 0u && runtime_fields != 5u) {
         yvex_cli_out_writef(stderr,
             "yvex: a startup profile requires --runtime-binding, --target, --backend, "
-            "--generation-mode, and --context together\n");
+            "--generation-mode, and --ctx together\n");
         return 2;
     }
     if (runtime_fields == 5u) {
         errno = 0;
         entry.runtime_context = strtoull(cli_options.runtime_context, &context_end, 10);
         if (errno || !context_end || *context_end || entry.runtime_context == 0ull) {
-            yvex_cli_out_writef(stderr, "yvex: model registry add --context requires a positive integer\n");
+            yvex_cli_out_writef(stderr, "yvex: model registry add --ctx requires a positive integer\n");
             return 2;
         }
         entry.runtime_binding = cli_options.runtime_binding;

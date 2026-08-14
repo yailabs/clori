@@ -44,7 +44,7 @@ static int attention_history_refuse(const yvex_attention_layer_plan *layer,
                                     unsigned long long expected, unsigned long long actual,
                                     yvex_attention_failure *failure, yvex_error *err,
                                     yvex_status status, const char *reason) {
-    return attention_refuse(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_HISTORY,
+    return attention_refuse(failure, YVEX_ATTENTION_FAILURE_HISTORY,
                             layer ? layer->layer_index : YVEX_ATTENTION_NO_LAYER, expected, actual,
                             err, status, reason);
 }
@@ -59,11 +59,11 @@ int yvex_attention_cancel_check(const yvex_attention_cancellation *cancellation,
     if (!cancellation)
         return YVEX_OK;
     if (!cancellation->requested)
-        return attention_refuse(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_INVALID_ARGUMENT,
+        return attention_refuse(failure, YVEX_ATTENTION_FAILURE_INVALID_ARGUMENT,
                                 layer_index, 1ull, 0ull, err, YVEX_ERR_INVALID_ARG,
                                 "attention cancellation requires a borrowed predicate");
     if (cancellation->requested(cancellation->context))
-        return attention_refuse(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_CANCELLED, layer_index,
+        return attention_refuse(failure, YVEX_ATTENTION_FAILURE_CANCELLED, layer_index,
                                 0ull, 1ull, err, YVEX_ERR_CANCELLED,
                                 safe_point ? safe_point : "attention execution cancelled");
     return YVEX_OK;
@@ -73,10 +73,9 @@ int yvex_attention_cancel_check(const yvex_attention_cancellation *cancellation,
  *
  * Reads geometry only and clears no admitted identity or state.
  */
-int yvex_attention_class_geometry_validate(const yvex_attention_layer_plan *layer,
-                                           unsigned long long csa_ratio,
-                                           unsigned long long hca_ratio,
-                                           yvex_attention_failure *failure, yvex_error *err) {
+int yvex_attention_class_geometry_validate(
+    const yvex_attention_layer_plan *layer,
+    yvex_attention_failure *failure, yvex_error *err) {
     unsigned long long query_width, indexer_width = 0ull, output_group_width;
     unsigned long long output_width, output_low_width;
     int valid = layer && layer->sliding_window && layer->query_heads && layer->kv_heads &&
@@ -91,7 +90,7 @@ int yvex_attention_class_geometry_validate(const yvex_attention_layer_plan *laye
                 output_width == query_width &&
                 yvex_core_u64_mul(layer->output_groups, layer->output_lora_rank, &output_low_width);
     if (!valid)
-        return attention_refuse(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION,
+        return attention_refuse(failure, YVEX_ATTENTION_FAILURE_DIMENSION,
                                 layer ? layer->layer_index : YVEX_ATTENTION_NO_LAYER, 1ull, 0ull,
                                 err, YVEX_ERR_FORMAT,
                                 "attention common head, position, or output geometry is invalid");
@@ -103,7 +102,7 @@ int yvex_attention_class_geometry_validate(const yvex_attention_layer_plan *laye
                 !layer->sparse_topk.required && !layer->sparse_topk.k;
         break;
     case YVEX_ATTENTION_CLASS_CSA:
-        valid = csa_ratio && layer->compression_ratio == csa_ratio && layer->compressor_required &&
+        valid = layer->compression_ratio && layer->compressor_required &&
                 layer->indexer_required && layer->indexer_heads && layer->indexer_head_dimension &&
                 yvex_core_u64_mul(layer->indexer_heads, layer->indexer_head_dimension,
                                   &indexer_width) &&
@@ -111,7 +110,7 @@ int yvex_attention_class_geometry_validate(const yvex_attention_layer_plan *laye
                 layer->sparse_topk.k == layer->indexer_topk;
         break;
     case YVEX_ATTENTION_CLASS_HCA:
-        valid = hca_ratio && layer->compression_ratio == hca_ratio && layer->compressor_required &&
+        valid = layer->compression_ratio && layer->compressor_required &&
                 !layer->indexer_required && !layer->indexer_heads &&
                 !layer->indexer_head_dimension && !layer->indexer_topk &&
                 !layer->sparse_topk.required && !layer->sparse_topk.k;
@@ -122,8 +121,8 @@ int yvex_attention_class_geometry_validate(const yvex_attention_layer_plan *laye
     }
     if (!valid)
         return attention_refuse(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION, layer->layer_index,
-            layer->attention_class == YVEX_ATTENTION_CLASS_HCA ? hca_ratio : csa_ratio,
+            failure, YVEX_ATTENTION_FAILURE_DIMENSION, layer->layer_index,
+            layer->attention_class == YVEX_ATTENTION_CLASS_SWA ? 0ull : 1ull,
             layer->compression_ratio, err, YVEX_ERR_FORMAT,
             "attention class geometry does not match the family contract");
     return yvex_attention_accept(failure, err);
@@ -187,13 +186,13 @@ static int attention_envelope_bindings_validate(
     if (!layer || !function || !base || !scale || !norm || !function->binding || !base->binding ||
         !scale->binding || !norm->binding)
         return attention_envelope_reject(
-            layer, YVEX_DEEPSEEK_ATTENTION_FAILURE_MISSING_BINDING, NULL,
+            layer, YVEX_ATTENTION_FAILURE_MISSING_BINDING, NULL,
             YVEX_TENSOR_ROLE_UNKNOWN, 4ull, 0ull, failure, err,
             YVEX_ERR_FORMAT, "attention envelope requires mHC and input-norm bindings");
     if (function->qtype != YVEX_GGUF_QTYPE_F32 || base->qtype != YVEX_GGUF_QTYPE_F32 ||
         scale->qtype != YVEX_GGUF_QTYPE_F32)
         return attention_envelope_reject(
-            layer, YVEX_DEEPSEEK_ATTENTION_FAILURE_QTYPE, function,
+            layer, YVEX_ATTENTION_FAILURE_QTYPE, function,
             layer->mhc_function_role, YVEX_GGUF_QTYPE_F32,
             function->qtype, failure, err, YVEX_ERR_UNSUPPORTED,
             "attention envelope mHC bindings require exact F32 storage");
@@ -209,7 +208,7 @@ static int attention_envelope_bindings_validate(
         scale_elements != layer->mhc_scale_width ||
         norm_elements != layer->attention_input_norm_width)
         return attention_envelope_reject(
-            layer, YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION, function,
+            layer, YVEX_ATTENTION_FAILURE_DIMENSION, function,
             layer->mhc_function_role, layer->mhc_mixing_columns,
             function->binding->row_width, failure, err, YVEX_ERR_FORMAT,
             "attention envelope binding shapes do not match the immutable plan");
@@ -246,7 +245,7 @@ int yvex_attention_envelope_prepare(
         !workspace || workspace->linear_mixes || input_stride < layer->residual_expanded_width ||
         core_stride < layer->hidden_dimension)
         return attention_envelope_reject(
-            layer, YVEX_DEEPSEEK_ATTENTION_FAILURE_INVALID_ARGUMENT, NULL,
+            layer, YVEX_ATTENTION_FAILURE_INVALID_ARGUMENT, NULL,
             YVEX_TENSOR_ROLE_UNKNOWN, 1ull, 0ull, failure, err,
             YVEX_ERR_INVALID_ARG, "attention envelope preparation arguments are invalid");
     rc = attention_envelope_bind(descriptor, layer, &function, &base, &scale, &norm,
@@ -260,7 +259,7 @@ int yvex_attention_envelope_prepare(
         !yvex_core_u64_mul(workspace->post_elements, layer->residual_stream_count,
                            &workspace->combination_elements))
         return attention_envelope_reject(
-            layer, YVEX_DEEPSEEK_ATTENTION_FAILURE_SCRATCH, function,
+            layer, YVEX_ATTENTION_FAILURE_SCRATCH, function,
             layer->mhc_function_role, ULLONG_MAX, token_count,
             failure, err, YVEX_ERR_BOUNDS, "attention envelope workspace geometry overflowed");
     workspace->residual_stride = layer->residual_expanded_width;
@@ -285,7 +284,7 @@ int yvex_attention_envelope_prepare(
         unsigned long long expected = workspace->mix_elements;
         yvex_attention_envelope_workspace_release(workspace);
         return attention_envelope_reject(
-            layer, YVEX_DEEPSEEK_ATTENTION_FAILURE_ALLOCATION, function,
+            layer, YVEX_ATTENTION_FAILURE_ALLOCATION, function,
             layer->mhc_function_role, expected, 0ull,
             failure, err, YVEX_ERR_NOMEM, "attention envelope workspace allocation failed");
     }
@@ -297,7 +296,7 @@ int yvex_attention_envelope_prepare(
         for (lane = 0ull; lane < workspace->residual_stride; ++lane)
             if (!isfinite(residual[lane])) {
                 rc = attention_envelope_reject(
-                    layer, YVEX_DEEPSEEK_ATTENTION_FAILURE_NUMERIC, NULL,
+                    layer, YVEX_ATTENTION_FAILURE_NUMERIC, NULL,
                     YVEX_TENSOR_ROLE_UNKNOWN, 1ull, token, failure, err,
                     YVEX_ERR_FORMAT, "attention envelope residual input is non-finite");
                 goto done;
@@ -305,7 +304,7 @@ int yvex_attention_envelope_prepare(
         if (!yvex_attention_compute_round(layer->compute_contract, residual,
                                           workspace->residual_stride)) {
             rc = attention_envelope_reject(
-                layer, YVEX_DEEPSEEK_ATTENTION_FAILURE_NUMERIC, NULL,
+                layer, YVEX_ATTENTION_FAILURE_NUMERIC, NULL,
                 YVEX_TENSOR_ROLE_UNKNOWN, workspace->residual_stride,
                 token, failure, err, YVEX_ERR_FORMAT,
                 "attention envelope residual input cannot reach its BF16 boundary");
@@ -319,7 +318,7 @@ int yvex_attention_envelope_prepare(
         layer->mhc_mixing_rows, &rows, scratch, result, failure, err);
     if (rc == YVEX_OK && rows != layer->mhc_mixing_rows)
         rc = attention_envelope_reject(
-            layer, YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION, function,
+            layer, YVEX_ATTENTION_FAILURE_DIMENSION, function,
             layer->mhc_function_role, layer->mhc_mixing_rows, rows,
             failure, err, YVEX_ERR_FORMAT, "attention envelope mHC projection is incomplete");
     if (rc == YVEX_OK)
@@ -345,7 +344,7 @@ int yvex_attention_envelope_prepare(
             !yvex_attention_compute_round(layer->compute_contract, row,
                                           layer->attention_input_norm_width))
             rc = attention_envelope_reject(
-                layer, YVEX_DEEPSEEK_ATTENTION_FAILURE_NUMERIC, norm,
+                layer, YVEX_ATTENTION_FAILURE_NUMERIC, norm,
                 layer->attention_input_norm_role,
                 layer->attention_input_norm_width, token, failure, err, YVEX_ERR_FORMAT,
                 "attention envelope input normalization failed");
@@ -364,7 +363,7 @@ int yvex_attention_envelope_finish(
     yvex_attention_mhc_post_args post;
     if (!workspace || !workspace->residual || !workspace->post || !workspace->combination)
         return attention_envelope_reject(
-            layer, YVEX_DEEPSEEK_ATTENTION_FAILURE_STATE_DELTA, NULL,
+            layer, YVEX_ATTENTION_FAILURE_STATE_DELTA, NULL,
             YVEX_TENSOR_ROLE_HC_ATTENTION_FUNCTION, 1ull, 0ull,
             failure, err, YVEX_ERR_STATE, "attention envelope coefficients are absent");
     post = (yvex_attention_mhc_post_args){
@@ -395,12 +394,12 @@ int yvex_attention_csa_select(
         *valid_count = 0ull;
     if (!layer || !history || !index_query || !index_weights || !selected || !selected_count ||
         !valid_count)
-        return attention_refuse(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_INVALID_ARGUMENT,
+        return attention_refuse(failure, YVEX_ATTENTION_FAILURE_INVALID_ARGUMENT,
                                 layer ? layer->layer_index : YVEX_ATTENTION_NO_LAYER, 1ull, 0ull,
                                 err, YVEX_ERR_INVALID_ARG,
                                 "CSA selection requires history, query, weights, and outputs");
     if (history->indexer_entry_count > ULLONG_MAX - current_indexer_count)
-        return attention_refuse(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION,
+        return attention_refuse(failure, YVEX_ATTENTION_FAILURE_DIMENSION,
                                 layer->layer_index, ULLONG_MAX, history->indexer_entry_count, err,
                                 YVEX_ERR_BOUNDS, "CSA candidate count overflowed");
     total = history->indexer_entry_count + current_indexer_count;
@@ -409,7 +408,7 @@ int yvex_attention_csa_select(
     if (!yvex_attention_scratch_reserve(
             scratch, total, sizeof(*scores) + sizeof(*ordinals) + sizeof(*valid_indexes),
             &base_reserved))
-        return attention_refuse(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_SCRATCH,
+        return attention_refuse(failure, YVEX_ATTENTION_FAILURE_SCRATCH,
                                 layer->layer_index, scratch ? scratch->limit_bytes : 0ull,
                                 scratch ? (unsigned long long)scratch->live_bytes : 0ull, err,
                                 YVEX_ERR_BOUNDS,
@@ -420,7 +419,7 @@ int yvex_attention_csa_select(
     valid_indexes = (unsigned long long *)yvex_attention_scratch_calloc(
         scratch, total, sizeof(*valid_indexes));
     if (!scores || !ordinals || !valid_indexes) {
-        rc = attention_refuse(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_ALLOCATION,
+        rc = attention_refuse(failure, YVEX_ATTENTION_FAILURE_ALLOCATION,
                               layer->layer_index, total, 0ull, err, YVEX_ERR_NOMEM,
                               "CSA selection scratch allocation failed");
         goto cleanup;
@@ -467,7 +466,7 @@ int yvex_attention_csa_select(
         unsigned long long index;
         if (!yvex_attention_scratch_reserve(scratch, ranked_capacity, sizeof(*ranked),
                                             &ranked_reserved)) {
-            rc = attention_refuse(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_SCRATCH,
+            rc = attention_refuse(failure, YVEX_ATTENTION_FAILURE_SCRATCH,
                                   layer->layer_index, scratch ? scratch->limit_bytes : 0ull,
                                   scratch ? (unsigned long long)scratch->live_bytes : 0ull, err,
                                   YVEX_ERR_BOUNDS,
@@ -477,7 +476,7 @@ int yvex_attention_csa_select(
         ranked = (unsigned long long *)yvex_attention_scratch_calloc(
             scratch, ranked_capacity, sizeof(*ranked));
         if (!ranked) {
-            rc = attention_refuse(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_ALLOCATION,
+            rc = attention_refuse(failure, YVEX_ATTENTION_FAILURE_ALLOCATION,
                                   layer->layer_index, valid, 0ull, err, YVEX_ERR_NOMEM,
                                   "CSA ranked-selection scratch allocation failed");
             goto cleanup;
@@ -500,7 +499,7 @@ cleanup:
     attention_scratch_release(scratch, base_reserved);
     return rc;
 numeric:
-    rc = attention_refuse(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_NUMERIC,
+    rc = attention_refuse(failure, YVEX_ATTENTION_FAILURE_NUMERIC,
                           layer->layer_index, 1ull, candidate, err, YVEX_ERR_FORMAT,
                           "CSA index scoring produced non-finite values");
     goto cleanup;
@@ -514,12 +513,12 @@ int yvex_attention_rolling_geometry(const yvex_attention_layer_plan *layer,
     if (!layer || !ratio || !head_dim || !state_width || !state_slots || !overlap || !rotated ||
         layer->compression_ratio == 0ull)
         return 0;
-    if (kind == YVEX_DEEPSEEK_ATTENTION_ROLLING_MAIN) {
+    if (kind == YVEX_ATTENTION_ROLLING_MAIN) {
         *ratio = layer->compression_ratio;
         *head_dim = layer->head_dimension;
         *overlap = layer->attention_class == YVEX_ATTENTION_CLASS_CSA ? 1 : 0;
         *rotated = 0;
-    } else if (kind == YVEX_DEEPSEEK_ATTENTION_ROLLING_INDEXER) {
+    } else if (kind == YVEX_ATTENTION_ROLLING_INDEXER) {
         if (layer->attention_class != YVEX_ATTENTION_CLASS_CSA)
             return 0;
         *ratio = layer->compression_ratio;
@@ -590,7 +589,7 @@ static int attention_rolling_state_validate(const yvex_attention_layer_plan *lay
         return attention_history_refuse(
             layer, 1ull, 0ull, failure, err, YVEX_ERR_UNSUPPORTED,
             "DeepSeek attention rolling state is not used by this class");
-    if (state->schema_version != YVEX_DEEPSEEK_ATTENTION_ROLLING_STATE_SCHEMA_V1 ||
+    if (state->schema_version != YVEX_ATTENTION_ROLLING_STATE_SCHEMA_V1 ||
         state->kind != kind || state->attention_class != layer->attention_class ||
         state->layer_index != layer->layer_index || state->ratio != ratio ||
         state->head_dimension != head_dim || state->state_width != state_width ||
@@ -625,7 +624,7 @@ static int attention_rolling_state_validate(const yvex_attention_layer_plan *lay
     if (!attention_rolling_active_values_are_finite(
             state->kv_state, state->score_state, state->kv_state_stride, state->score_state_stride,
             head_dim, ratio, state->previous_fill, state->current_fill, overlap))
-        return attention_refuse(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_NUMERIC,
+        return attention_refuse(failure, YVEX_ATTENTION_FAILURE_NUMERIC,
                                 layer->layer_index, 1ull, 0ull, err, YVEX_ERR_FORMAT,
                                 "DeepSeek attention rolling state contains non-finite active values");
     return yvex_attention_accept(failure, err);
@@ -766,11 +765,11 @@ int yvex_attention_rolling_state_step_cpu(const yvex_attention_layer_plan *layer
     if (emitted)
         *emitted = 0;
     rc = attention_rolling_state_validate(
-        layer, before, before ? before->kind : YVEX_DEEPSEEK_ATTENTION_ROLLING_NONE, failure, err);
+        layer, before, before ? before->kind : YVEX_ATTENTION_ROLLING_NONE, failure, err);
     if (rc != YVEX_OK)
         return rc;
     if (!token_kv || !token_score || !ape_row || !after)
-        return attention_refuse(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_INVALID_ARGUMENT,
+        return attention_refuse(failure, YVEX_ATTENTION_FAILURE_INVALID_ARGUMENT,
                                 layer->layer_index, 1ull, 0ull, err, YVEX_ERR_INVALID_ARG,
                                 "DeepSeek attention rolling transition requires token vectors and output state");
     if (before->next_token_position == ULLONG_MAX)
@@ -794,7 +793,7 @@ int yvex_attention_rolling_state_step_cpu(const yvex_attention_layer_plan *layer
     memcpy(&storage, &after->kv_state_stride, sizeof(storage));
     for (lane = 0ull; lane < state_width; ++lane) {
         if (!isfinite(token_kv[lane]) || !isfinite(token_score[lane]) || !isfinite(ape_row[lane]))
-            return attention_refuse(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_NUMERIC,
+            return attention_refuse(failure, YVEX_ATTENTION_FAILURE_NUMERIC,
                                     layer->layer_index, 1ull, lane, err, YVEX_ERR_FORMAT,
                                     "DeepSeek attention rolling transition input is non-finite");
     }
@@ -814,7 +813,7 @@ int yvex_attention_rolling_state_step_cpu(const yvex_attention_layer_plan *layer
     if (after->cursor == 0ull) {
         if (!attention_rolling_emit(after, head_dim, ratio, overlap, compressed_out,
                                     compressed_out_count))
-            return attention_refuse(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_NUMERIC,
+            return attention_refuse(failure, YVEX_ATTENTION_FAILURE_NUMERIC,
                                     layer->layer_index, head_dim, compressed_out_count, err,
                                     YVEX_ERR_FORMAT,
                                     "DeepSeek attention rolling compression emitted invalid values");
@@ -844,7 +843,7 @@ int yvex_attention_history_validate(const yvex_attention_layer_plan *layer,
                                     yvex_attention_failure *failure, yvex_error *err) {
     int rc;
     if (!layer || !history)
-        return attention_refuse(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_INVALID_ARGUMENT,
+        return attention_refuse(failure, YVEX_ATTENTION_FAILURE_INVALID_ARGUMENT,
                                 layer ? layer->layer_index : YVEX_ATTENTION_NO_LAYER, 1ull, 0ull,
                                 err, YVEX_ERR_INVALID_ARG,
                                 "DeepSeek attention history validation requires layer and history");
@@ -888,7 +887,7 @@ int yvex_attention_history_validate(const yvex_attention_layer_plan *layer,
                 "SWA history may not carry compressor rolling state");
     } else {
         rc = attention_rolling_state_validate(layer, &history->main_rolling_state,
-                                              YVEX_DEEPSEEK_ATTENTION_ROLLING_MAIN, failure, err);
+                                              YVEX_ATTENTION_ROLLING_MAIN, failure, err);
         if (rc != YVEX_OK)
             return rc;
         if (history->main_rolling_state.next_token_position != history->token_count)
@@ -897,7 +896,7 @@ int yvex_attention_history_validate(const yvex_attention_layer_plan *layer,
                 failure, err, YVEX_ERR_STATE, "main rolling state token position is stale");
         if (layer->attention_class == YVEX_ATTENTION_CLASS_CSA) {
             rc = attention_rolling_state_validate(layer, &history->indexer_rolling_state,
-                                                  YVEX_DEEPSEEK_ATTENTION_ROLLING_INDEXER, failure,
+                                                  YVEX_ATTENTION_ROLLING_INDEXER, failure,
                                                   err);
             if (rc != YVEX_OK)
                 return rc;
@@ -968,7 +967,7 @@ typedef struct {
     float *values;
 } attention_probe_segment;
 typedef struct {
-    const yvex_graph_family_api *family;
+    const yvex_graph_execution_api *family;
     const yvex_attention_plan *plan;
     const void *family_ir;
     yvex_materialization_session *session;
@@ -1030,7 +1029,7 @@ static int attention_probe_rolling_init(yvex_attention_probe_history *history,
     yvex_error error;
     float *values = NULL, *scores = NULL;
     unsigned long long offset, extent;
-    unsigned int owner = kind == YVEX_DEEPSEEK_ATTENTION_ROLLING_INDEXER ? 4u : 2u;
+    unsigned int owner = kind == YVEX_ATTENTION_ROLLING_INDEXER ? 4u : 2u;
     int rc;
     yvex_error_clear(&error);
     rc = yvex_attention_rolling_storage_acquire(
@@ -1138,12 +1137,12 @@ static int attention_probe_history_init(yvex_attention_probe_history *history,
     };
     if (layer->attention_class != YVEX_ATTENTION_CLASS_SWA &&
         !attention_probe_rolling_init(history, &history->view.main_rolling_state, layer,
-                                      YVEX_DEEPSEEK_ATTENTION_ROLLING_MAIN, position,
+                                      YVEX_ATTENTION_ROLLING_MAIN, position,
                                       summary->attention_plan_identity))
         goto fail;
     if (layer->attention_class == YVEX_ATTENTION_CLASS_CSA &&
         !attention_probe_rolling_init(history, &history->view.indexer_rolling_state, layer,
-                                      YVEX_DEEPSEEK_ATTENTION_ROLLING_INDEXER, position,
+                                      YVEX_ATTENTION_ROLLING_INDEXER, position,
                                       summary->attention_plan_identity))
         goto fail;
     return 1;
@@ -1566,7 +1565,7 @@ cleanup:
             rc = abort_rc;
     }
     for (index = 0u; index < ATTENTION_PROBE_BACKEND_COUNT; ++index)
-        context->family->publication_release(&backend[index].publication);
+        yvex_attention_execution_trace_release(&backend[index].publication);
     attention_probe_history_release(&history);
     if (context->request->workspace) {
         yvex_error rewind_error;
@@ -1766,7 +1765,7 @@ static void attention_probe_comparison_publish(yvex_attention_probe_result *resu
 }
 
 int yvex_attention_execute(
-    const yvex_graph_family_api *family, const yvex_attention_plan *plan,
+    const yvex_graph_execution_api *family, const yvex_attention_plan *plan,
     const void *family_ir, yvex_materialization_session *session,
     const yvex_runtime_descriptor *descriptor,
     const yvex_attention_execution_request *request,
@@ -1810,12 +1809,10 @@ int yvex_attention_execute(
         request->execution_class > YVEX_EXECUTION_CLASS_FORENSIC_REFERENCE)
         return attention_probe_fail(err, YVEX_ERR_INVALID_ARG, "canonical V2 probe request is invalid");
     if (!family || !plan || !session || !descriptor || !result ||
-        !family->plan_summary || !family->plan_layer_count || !family->plan_layer_at ||
-        !family->cpu_options_default || !family->cpu_chunk_execute || !family->cuda_token_execute ||
-        !family->publication_release)
+        !family->cpu_options_default || !family->cpu_chunk_execute || !family->cuda_token_execute)
         return attention_probe_fail(err, YVEX_ERR_INVALID_ARG,
                                     "sealed attention owners and execution API are required");
-    context.summary = family->plan_summary(plan);
+    context.summary = yvex_attention_plan_summary(plan);
     if (!context.summary || !context.summary->full_execution_ready ||
         !context.summary->cpu_reference_ready ||
         ((request->compare_backends || request->backend == YVEX_BACKEND_KIND_CUDA) &&
@@ -1825,7 +1822,7 @@ int yvex_attention_execute(
     if ((unsigned int)request->evidence_level >
             (unsigned int)YVEX_ATTENTION_EVIDENCE_FULL ||
         (request->select_layer &&
-         request->layer_ordinal >= family->plan_layer_count(plan)) ||
+         request->layer_ordinal >= yvex_attention_plan_layer_count(plan)) ||
         (request->select_position && !request->select_layer && !request->state_provider))
         return attention_probe_fail(err, YVEX_ERR_BOUNDS,
                                     "selected attention probe layer or position is invalid");
@@ -1858,8 +1855,8 @@ int yvex_attention_execute(
         if (rc != YVEX_OK)
             goto cleanup;
     }
-    for (index = 0ull; index < family->plan_layer_count(plan); ++index) {
-        const yvex_attention_layer_plan *layer = family->plan_layer_at(plan, index);
+    for (index = 0ull; index < yvex_attention_plan_layer_count(plan); ++index) {
+        const yvex_attention_layer_plan *layer = yvex_attention_plan_layer_at(plan, index);
         int class_selected;
         int include;
         unsigned long long position = request->token_position;
@@ -1932,7 +1929,7 @@ cleanup:
 }
 
 int yvex_attention_probe_execute(
-    const yvex_graph_family_api *family, const yvex_attention_plan *plan,
+    const yvex_graph_execution_api *family, const yvex_attention_plan *plan,
     const void *family_ir, yvex_materialization_session *session,
     const yvex_runtime_descriptor *descriptor,
     const yvex_attention_probe_request *request,

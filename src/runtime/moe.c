@@ -28,7 +28,7 @@ struct yvex_runtime_moe_context {
     yvex_runtime_execution_session *session;
     const yvex_runtime_model_view *model_view;
     const yvex_runtime_session_view *session_view;
-    yvex_moe_plan *plan;
+    const yvex_moe_plan *plan;
     yvex_runtime_moe_options options;
     moe_byte_buffer fixed[YVEX_MOE_WEIGHT_COUNT];
     moe_byte_buffer selected[3];
@@ -628,20 +628,16 @@ int yvex_runtime_moe_context_open(yvex_runtime_moe_context **out, yvex_runtime_m
         goto fail;
     }
     context->mutex_ready = 1;
-    rc = yvex_moe_plan_build(&context->plan, context->model_view->adapter->adapter_id,
-                             context->model_view->adapter->adapter_version,
-                             context->model_view->materialization,
-                             context->model_view->descriptor,
-                             options->tensor_scope == YVEX_TENSOR_SCOPE_DRAFT
-                                 ? context->model_view->draft_attention
-                                 : context->model_view->attention,
-                             err);
+    context->plan = options->tensor_scope == YVEX_TENSOR_SCOPE_DRAFT
+                        ? context->model_view->draft_moe
+                        : context->model_view->moe;
     summary = yvex_moe_plan_summary_get(context->plan);
-    if (rc == YVEX_OK && (!summary ||
+    rc = YVEX_OK;
+    if (!summary ||
         strcmp(summary->moe_plan_identity,
                options->tensor_scope == YVEX_TENSOR_SCOPE_DRAFT
                    ? context->model_view->binding->draft_moe_plan_identity
-                   : context->model_view->binding->moe_plan_identity) != 0))
+                   : context->model_view->binding->moe_plan_identity) != 0)
         rc = runtime_moe_refuse(err, YVEX_ERR_STATE, "runtime binding MoE plan is stale");
     if (rc == YVEX_OK) rc = runtime_moe_buffer_plan(context, err);
     if (rc == YVEX_OK && !options->defer_cuda_workspace &&
@@ -1078,8 +1074,8 @@ static int runtime_moe_execute_layer_rows(
         (batch->execution_class != YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE &&
          batch->execution_class != YVEX_EXECUTION_CLASS_DEVICE_NATIVE) ||
         (context->options.execution_profile &&
-         ((context->options.execution_profile->token_local_moe_reference !=
-           (batch->execution_class == YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE)) ||
+         ((context->options.execution_profile->moe_resolution == YVEX_EXECUTION_RESOLUTION_EXACT) !=
+              (batch->execution_class == YVEX_EXECUTION_CLASS_DEVICE_NATIVE) ||
           !batch->execution_profile_identity ||
           strcmp(batch->execution_profile_identity,
                  context->options.execution_profile->identity) != 0)) ||
@@ -1406,7 +1402,6 @@ int yvex_runtime_moe_context_close(yvex_runtime_moe_context **context, yvex_erro
     free((*context)->candidate_combined);
     free((*context)->candidate_post);
     free((*context)->candidate_combination);
-    yvex_moe_plan_close(&(*context)->plan);
     if ((*context)->mutex_ready) (void)pthread_mutex_destroy(&(*context)->mutex);
     free(*context);
     *context = NULL;
@@ -1518,7 +1513,7 @@ int yvex_runtime_moe_operator_execute(const yvex_moe_operator_request *request,
         yvex_core_text_copy(result->command, sizeof(result->command), "execute moe");
         yvex_core_text_copy(result->target, sizeof(result->target), request->target);
         yvex_core_text_copy(result->family, sizeof(result->family),
-                            model_view->adapter->family_name);
+                            model_view->target_id);
         yvex_core_text_copy(result->backend, sizeof(result->backend),
                             request->backend == YVEX_BACKEND_KIND_CUDA ? "cuda" : "cpu");
         yvex_runtime_identity_copy(result->artifact_identity,

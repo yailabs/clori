@@ -4,7 +4,7 @@ This deterministic migration matrix reconciles the frozen operator audit with
 `yvex.operator.registry.v1`. It is documentation, not runtime command authority.
 
 - Frozen audit baseline: `ec7dccede90c1a1efa87b4c2519c25b30d5e1733`
-- Registry identity: `33d5d938580bdf9fe5f816b253ea1cc27ce8a1f2dea0c558789f0adce019c8d5`
+- Registry identity: `edf0d408d0dc4c190caf184576a5beb8455426608dc9243e73ae37bb43170791`
 - Compatibility policy: pre-v0.1 breaking grammar cutover; removed paths never execute aliases.
 
 | Old path | Old operation | Final operation | Final projection | Visibility | Compatibility | Rationale |
@@ -53,13 +53,13 @@ This deterministic migration matrix reconciles the frozen operator audit with
 | `yvex help` | `command.discovery` | `command.discovery` | `yvex help` | product-default | retained | replace-registry-projection: incomplete and manually duplicated |
 | `yvex model list` | `model.list` | `model.list` | `yvex model list` | product-default | retained | rename-or-remove: misleading: identical to model show and does not list models |
 | `yvex model show` | `model.show` | `model.show` | `yvex model show` | product-default | retained | rename: misleading: selected configuration is not live runtime identity |
-| `yvex model use` | `model.use` | `model.select` | `yvex model select` | product-default | breaking-cutover | normalize: truthful but DeepSeek/CUDA/4096 defaults are client-local policy |
+| `yvex model use` | `model.use` | `server.host` | `yvex server` | product-default | breaking-cutover | normalize: truthful but DeepSeek/CUDA/4096 defaults are client-local policy |
 | `yvex run` | `generation.turn` | `generation.turn` | `yvex run` | product-default | retained | keep: truthful; detailed help absent |
-| `yvex runtime start` | `runtime.start` | `runtime.start` | `yvex runtime start` | product-default | retained | keep: truthful foreground exec; selected config fallback |
-| `yvex runtime status` | `runtime.status` | `runtime.status` | `yvex runtime status` | product-default | retained | keep-and-expand-renderer: human view omits authoritative variant/context facts |
-| `yvex runtime stop` | `runtime.stop` | `runtime.stop` | `yvex runtime stop` | product-default | retained | keep: truthful |
-| `yvex runtime trace` | `runtime.trace` | `runtime.trace` | `yvex runtime trace` | product-default | retained | normalize-flag: --follow is inert because trace always follows |
-| `yvex runtime watch` | `runtime.watch` | `runtime.watch` | `yvex runtime watch` | product-default | retained | replace-renderer: claims operational view but renders generic a/b fields |
+| `yvex runtime start` | `runtime.start` | `server.host` | `yvex server` | product-default | breaking-cutover | keep: truthful foreground exec; selected config fallback |
+| `yvex runtime status` | `runtime.status` | `server.status` | `yvex server status` | product-default | breaking-cutover | keep-and-expand-renderer: human view omits authoritative variant/context facts |
+| `yvex runtime stop` | `runtime.stop` | `server.stop` | `yvex server stop` | product-default | breaking-cutover | keep: truthful |
+| `yvex runtime trace` | `runtime.trace` | `server.log` | `yvex server log` | product-default | breaking-cutover | normalize-flag: --follow is inert because trace always follows |
+| `yvex runtime watch` | `runtime.watch` | `server.log` | `yvex server log` | product-default | breaking-cutover | replace-renderer: claims operational view but renders generic a/b fields |
 | `yvex session attach` | `session.attach` | `session.attach` | `yvex session attach` | product-default | retained | keep: truthful; namespace help absent |
 | `yvex session close` | `session.close` | `session.close` | `yvex session close` | product-default | retained | keep: truthful; namespace help absent |
 | `yvex session detach` | `session.detach` | `session.detach` | `yvex session detach` | product-default | retained | keep: truthful; namespace help absent |
@@ -68,7 +68,7 @@ This deterministic migration matrix reconciles the frozen operator audit with
 | `yvex session reset` | `session.reset` | `session.reset` | `yvex session reset` | product-default | retained | keep: truthful; namespace help absent |
 | `yvex session show` | `session.show` | `session.show` | `yvex session show` | product-default | retained | keep: truthful; namespace help absent |
 | `yvex version` | `system.version` | `system.version` | `yvex version` | product-default | retained | keep: truthful |
-| `yvexd` | `runtime.host` | `runtime.host` | `yvexd` | product-advanced | retained | retain-configure: truthful but service policy repeated as flags |
+| `yvexd` | `runtime.host` | `server.host` | `yvex server` | product-default | breaking-cutover | retain-configure: truthful but service policy repeated as flags |
 | `/attach` | `session.attach` | `session.attach` | `/attach` | product-default | retained | retain adapter: hardcoded separately from external dispatch |
 | `/cancel` | `generation.cancel` | `generation.cancel` | `/cancel` | product-default | retained | retain interaction: hardcoded separately from external dispatch |
 | `/close` | `session.close` | `session.close` | `/close` | product-default | retained | retain adapter: hardcoded separately from external dispatch |
@@ -86,11 +86,15 @@ This deterministic migration matrix reconciles the frozen operator audit with
 - `cli.offline.evidence.models --force-sidecars` — remove a parsed but unconsumed option.
 - `cli.offline.evidence.models --no-use` — separate acquisition from selected startup state.
 - `cli.yvex.model.use --artifact` — resolve startup facts from the selected registry profile.
-- `cli.yvex.model.use --backend` — resolve startup facts from the selected registry profile.
 - `cli.yvex.model.use --context` — resolve startup facts from the selected registry profile.
 - `cli.yvex.model.use --runtime-binding` — resolve startup facts from the selected registry profile.
 - `cli.yvex.model.use --target` — resolve startup facts from the selected registry profile.
 - `cli.yvex.runtime.trace --follow` — trace is already a continuous subscription.
+- `daemon.yvexd --context` — replace the retired daemon spelling with the canonical server --ctx option.
+- `daemon.yvexd --model` — replace separate startup paths with the explicit MODEL profile argument.
+- `daemon.yvexd --runtime-binding` — resolve the admitted binding from the explicit MODEL profile.
+- `daemon.yvexd --target` — resolve the target from the explicit MODEL profile.
+- `daemon.yvexd --version` — retain version reporting at the single yvex executable boundary.
 
 The retired top-level namespaces `evidence`, `graph`, `quant`, `source`,
 `tensor`, and `tokenizer` are refusal-only migration hints, not aliases.

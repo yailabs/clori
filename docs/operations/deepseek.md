@@ -7,15 +7,13 @@ gates live in [`ROADMAP.md`](../../ROADMAP.md).
 
 ## Product path
 
-List the local startup profiles and select the admitted DeepSeek entry, then
-start the sole persistent `yvexd` process:
+List the local startup profiles, inspect the admitted DeepSeek entry, then
+start the sole persistent foreground server:
 
 ```sh
 ./yvex model list
 ./yvex model show deepseek4-v4-flash-dspark-runtime-iq2xxs
-./yvex model select deepseek4-v4-flash-dspark-runtime-iq2xxs
-./yvex model selected
-./yvex runtime start
+./yvex server deepseek4-v4-flash-dspark-runtime-iq2xxs
 ```
 
 The alias is an example; use a DeepSeek row whose `STARTUP` column is `yes` and
@@ -31,17 +29,17 @@ After `runtime.ready`, verify and use the same resident model from another
 terminal:
 
 ```sh
-./yvex runtime status
-./yvex runtime model
-./yvex runtime memory
+./yvex server status
+./yvex server model
+./yvex server memory
 ./yvex chat --session main
 ```
 
-An optional third terminal may run `yvex runtime watch`. Status, watch, and
-chat are clients of the same daemon; none reloads weights or opens a second
+An optional third terminal may run `yvex server log`. Status, logs, and chat
+are clients of the same server; none reloads weights or opens a second
 runtime model.
 
-The daemon opens one model and retains the complete encoded model payload in
+The server opens one model and retains the complete encoded model payload in
 one immutable process-lifetime host arena together with tokenizer, attention,
 materialization, output-head, target, draft, and verification resources. Each
 named session owns independent DeepSeek persistent state, bounded speculative
@@ -64,9 +62,9 @@ and incremental detokenization commit.
 
 ## Target-only and DSpark modes
 
-Generation mode belongs to the selected startup profile. `runtime model` and
-`runtime status --json` report the mode actually open in `yvexd`. Selection is
-inert until the daemon restarts; there is no per-turn fallback switch.
+Generation mode belongs to the named startup profile. `server model` and
+`server status --json` report the mode actually open in the server. There is
+no per-turn fallback switch.
 
 `target-only` retains ordinary one-token target generation as the semantic
 reference. `dspark` uses the checkpoint drafter to propose bounded blocks and
@@ -75,7 +73,7 @@ committed and streamed. Draft proposals do not appear in chat, native
 streaming, SSE, transcript, or completion usage.
 
 The final turn result reports the execution mode and compact speculation
-counts. Use `runtime trace` or `runtime trace --json` for cycle-level draft,
+counts. Use `server log --json` for cycle-level draft,
 verification, accepted-prefix, rejection, timing, and policy facts. A requested
 DSpark profile refuses startup if its artifact, binding, backend, or workspace
 requirements are incomplete; it never runs target-only silently.

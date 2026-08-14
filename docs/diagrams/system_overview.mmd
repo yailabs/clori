@@ -6,7 +6,7 @@ flowchart LR
         source --> compiler --> artifact
     end
 
-    subgraph host[B. Run — yvexd]
+    subgraph host[B. Run — yvex server MODEL]
         protocol[Private local protocol]
         openai[Loopback OpenAI adapter]
         sessions[Session registry<br/>+ persistent KV]

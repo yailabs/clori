@@ -561,7 +561,8 @@ int yvex_runtime_state_residency_prepare(
     if (!residency) return YVEX_ERR_NOMEM;
     residency->backend = backend;
     cuda = yvex_backend_kind_of(backend) == YVEX_BACKEND_KIND_CUDA;
-    residency->paging_selected = cuda && backend->virtual_tensor_ready;
+    residency->paging_selected =
+        cuda && yvex_backend_virtual_tensor_supported(backend);
     residency->summary.paged = residency->paging_selected;
     residency->layer_count = summary->layer_count;
     residency->layers = calloc((size_t)residency->layer_count,
@@ -704,7 +705,7 @@ static int state_resident_copy_bank(
                 layer->device[source_bank], part->offset[span], bytes, &source);
             state_resident_tensor_view(
                 layer->device[target_bank], part->offset[span], bytes, &target);
-            rc = residency->backend->vtable->tensor_copy_async(
+            rc = yvex_backend_tensor_copy_async(
                 residency->backend, &target, &source, err);
             if (rc != YVEX_OK) return rc;
             if (!yvex_core_u64_add(residency->summary.copy_bytes, bytes,
@@ -760,12 +761,7 @@ static int state_residency_begin(
         rc = state_resident_pack(layer, bank, view, &layer->recipe, 0, err);
     if (rc == YVEX_OK && !state.extension_ready && !layer->banks_synchronized &&
         yvex_backend_kind_of(residency->backend) == YVEX_BACKEND_KIND_CUDA) {
-        if (!residency->backend->vtable ||
-            !residency->backend->vtable->tensor_copy_async) {
-            yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "runtime.state.residency.begin",
-                           "backend has no asynchronous state-bank copy");
-            rc = YVEX_ERR_UNSUPPORTED;
-        } else if (layer->paged) {
+        if (layer->paged) {
             rc = state_resident_copy_bank(residency, layer, bank, err);
         } else {
             unsigned long long next_bytes, next_count;
@@ -776,7 +772,7 @@ static int state_residency_begin(
                                "persistent state copy accounting overflowed");
                 return YVEX_ERR_BOUNDS;
             }
-            rc = residency->backend->vtable->tensor_copy_async(
+            rc = yvex_backend_tensor_copy_async(
                 residency->backend, layer->device[bank],
                 layer->device[layer->committed_bank], err);
             if (rc == YVEX_OK) {
@@ -915,10 +911,16 @@ int yvex_runtime_state_residency_publish(
     return YVEX_OK;
 }
 
-void yvex_runtime_state_residency_commit(yvex_runtime_state_residency *residency)
+int yvex_runtime_state_residency_commit(yvex_runtime_state_residency *residency,
+                                        yvex_error *err)
 {
     unsigned long long index;
-    if (!residency) return;
+    int rc;
+    if (!residency) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.state.residency.commit",
+                       "persistent state residency is required");
+        return YVEX_ERR_INVALID_ARG;
+    }
     for (index = 0ull; index < residency->layer_count; ++index) {
         state_resident_layer *layer = &residency->layers[index];
         if (layer->staged) layer->committed_bank = layer->staged_bank;
@@ -927,9 +929,14 @@ void yvex_runtime_state_residency_commit(yvex_runtime_state_residency *residency
     residency->summary.staged_layer_count = 0ull;
     residency->summary.commit_count++;
     residency->summary.generation++;
-    if (residency->backend)
-        residency->backend->state_residency_generation =
-            residency->summary.generation;
+    rc = yvex_backend_state_residency_publish_generation(
+        residency->backend, residency->summary.generation, err);
+    if (rc != YVEX_OK) {
+        residency->summary.invalidated = 1;
+        return rc;
+    }
+    yvex_error_clear(err);
+    return YVEX_OK;
 }
 
 void yvex_runtime_state_residency_abort(yvex_runtime_state_residency *residency)
@@ -999,9 +1006,9 @@ int yvex_runtime_state_residency_reset(
                 !residency->layers[index].paged;
         }
         residency->summary.generation++;
-        if (residency->backend)
-            residency->backend->state_residency_generation =
-                residency->summary.generation;
+        rc = yvex_backend_state_residency_publish_generation(
+            residency->backend, residency->summary.generation, err);
+        if (rc != YVEX_OK) residency->summary.invalidated = 1;
     }
     return rc;
 }

@@ -238,7 +238,7 @@ static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
             descriptor.dtype = YVEX_DTYPE_I8;
             descriptor.rank = 1u;
             descriptor.dims[0] = descriptor.bytes = ROWS * row_bytes;
-            YVEX_TEST_ASSERT(backend->vtable->resident_alloc(
+            YVEX_TEST_ASSERT(yvex_backend_resident_alloc(
                                  backend, &descriptor, &resident, &mapped, &err) == YVEX_OK,
                              "Q8 activation resident matrix allocates");
         }
@@ -452,7 +452,7 @@ static int quant_cuda_q8_grouped_matvec(yvex_backend *backend,
             descriptor.dtype = YVEX_DTYPE_I8;
             descriptor.rank = 1u;
             descriptor.dims[0] = descriptor.bytes = ROWS * row_bytes;
-            YVEX_TEST_ASSERT(backend->vtable->resident_alloc(
+            YVEX_TEST_ASSERT(yvex_backend_resident_alloc(
                                  backend, &descriptor, &resident, &mapped, &err) == YVEX_OK,
                              "grouped Q8 activation matrix allocates");
         }
@@ -535,7 +535,7 @@ static int quant_cuda_bf16_gemm(yvex_backend *backend)
             descriptor.dtype = YVEX_DTYPE_I8;
             descriptor.rank = 1u;
             descriptor.dims[0] = descriptor.bytes = ROWS * row_bytes;
-            YVEX_TEST_ASSERT(backend->vtable->resident_alloc(
+            YVEX_TEST_ASSERT(yvex_backend_resident_alloc(
                                  backend, &descriptor, &resident, &mapped, &err) == YVEX_OK,
                              "BF16 GEMM resident matrix allocates");
         }
@@ -731,7 +731,7 @@ static int quant_cuda_encoded_gather(yvex_backend *backend)
             descriptor.dtype = YVEX_DTYPE_I8;
             descriptor.rank = 1u;
             descriptor.dims[0] = descriptor.bytes = ROWS * row_bytes;
-            YVEX_TEST_ASSERT(backend->vtable->resident_alloc(
+            YVEX_TEST_ASSERT(yvex_backend_resident_alloc(
                                  backend, &descriptor, &resident, &mapped, &err) == YVEX_OK,
                              "encoded gather resident matrix allocates");
         }

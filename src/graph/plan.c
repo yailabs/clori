@@ -398,7 +398,7 @@ int yvex_attention_context_validate(
     if (!plan || !logical_identity || !logical_identity[0] || !session ||
         !descriptor)
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_INVALID_ARGUMENT, NULL,
+            failure, YVEX_ATTENTION_FAILURE_INVALID_ARGUMENT, NULL,
             YVEX_ATTENTION_NO_LAYER, YVEX_TENSOR_ROLE_UNKNOWN, 1ull,
             0ull, err, YVEX_ERR_INVALID_ARG,
             "attention execution identity validation requires all owners");
@@ -408,7 +408,7 @@ int yvex_attention_context_validate(
     if (!attention || !runtime || !materialization ||
         !materialization->committed)
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_DESCRIPTOR, NULL,
+            failure, YVEX_ATTENTION_FAILURE_DESCRIPTOR, NULL,
             YVEX_ATTENTION_NO_LAYER, YVEX_TENSOR_ROLE_UNKNOWN, 1ull,
             0ull, err, YVEX_ERR_STATE,
             "attention execution requires sealed identity-bearing owners");
@@ -423,7 +423,7 @@ int yvex_attention_context_validate(
         strcmp(materialization->plan_identity,
                attention->materialization_plan_identity) != 0)
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_DESCRIPTOR, NULL,
+            failure, YVEX_ATTENTION_FAILURE_DESCRIPTOR, NULL,
             YVEX_ATTENTION_NO_LAYER, YVEX_TENSOR_ROLE_UNKNOWN, 1ull,
             0ull, err, YVEX_ERR_STATE,
             "attention execution refused a stale or mismatched identity chain");
@@ -442,10 +442,6 @@ typedef struct {
 } plan_hash_field;
 
 #define PLAN_FIELD(type, member, kind) {offsetof(type, member), kind}
-#define PLAN_POSITION_FIELD(member, kind) \
-    {offsetof(yvex_attention_layer_plan, position) + \
-         offsetof(yvex_attention_position_policy, member), kind}
-
 static const plan_hash_field plan_layer_fields[] = {
     PLAN_FIELD(yvex_attention_layer_plan, ordinal, PLAN_HASH_U64),
     PLAN_FIELD(yvex_attention_layer_plan, layer_index, PLAN_HASH_U64),
@@ -490,48 +486,10 @@ static const plan_hash_field plan_layer_fields[] = {
     PLAN_FIELD(yvex_attention_layer_plan, mhc_scale_role, PLAN_HASH_INT),
     PLAN_FIELD(yvex_attention_layer_plan, compressor_required, PLAN_HASH_INT),
     PLAN_FIELD(yvex_attention_layer_plan, indexer_required, PLAN_HASH_INT),
-    PLAN_POSITION_FIELD(rope_dimension, PLAN_HASH_U64),
-    PLAN_POSITION_FIELD(theta, PLAN_HASH_U64),
-    PLAN_POSITION_FIELD(scaling_factor, PLAN_HASH_U64),
-    PLAN_POSITION_FIELD(original_context, PLAN_HASH_U64),
-    PLAN_POSITION_FIELD(beta_fast, PLAN_HASH_U64),
-    PLAN_POSITION_FIELD(beta_slow, PLAN_HASH_U64),
-    PLAN_POSITION_FIELD(maximum_context, PLAN_HASH_U64),
-    PLAN_POSITION_FIELD(partial_rope, PLAN_HASH_INT),
-    PLAN_POSITION_FIELD(inverse_output_rotation, PLAN_HASH_INT),
-};
-
-static const plan_hash_field plan_activation_fields[] = {
-    PLAN_FIELD(yvex_attention_activation_policy, required, PLAN_HASH_INT),
-    PLAN_FIELD(yvex_attention_activation_policy, stage, PLAN_HASH_INT),
-    PLAN_FIELD(yvex_attention_activation_policy, quantization, PLAN_HASH_INT),
-    PLAN_FIELD(yvex_attention_activation_policy, block_axis, PLAN_HASH_INT),
-    PLAN_FIELD(yvex_attention_activation_policy, block_width, PLAN_HASH_U64),
-    PLAN_FIELD(yvex_attention_activation_policy, scale_format, PLAN_HASH_INT),
-    PLAN_FIELD(yvex_attention_activation_policy, scale_dtype, PLAN_HASH_INT),
-    PLAN_FIELD(yvex_attention_activation_policy, pre_transform, PLAN_HASH_INT),
-    PLAN_FIELD(yvex_attention_activation_policy, tail_policy, PLAN_HASH_INT),
-    PLAN_FIELD(yvex_attention_activation_policy, nonfinite_policy, PLAN_HASH_INT),
-    PLAN_FIELD(yvex_attention_activation_policy, fake_quant_inplace, PLAN_HASH_INT),
-    PLAN_FIELD(yvex_attention_activation_policy, zero_pad_hadamard_to_power_of_two,
-               PLAN_HASH_INT),
-};
-
-static const plan_hash_field plan_topk_fields[] = {
-    PLAN_FIELD(yvex_attention_topk_policy, required, PLAN_HASH_INT),
-    PLAN_FIELD(yvex_attention_topk_policy, version, PLAN_HASH_UINT),
-    PLAN_FIELD(yvex_attention_topk_policy, policy, PLAN_HASH_INT),
-    PLAN_FIELD(yvex_attention_topk_policy, k, PLAN_HASH_U64),
-    PLAN_FIELD(yvex_attention_topk_policy, reject_nonfinite, PLAN_HASH_INT),
-    PLAN_FIELD(yvex_attention_topk_policy, score_descending, PLAN_HASH_INT),
-    PLAN_FIELD(yvex_attention_topk_policy, equal_score_ordinal_ascending, PLAN_HASH_INT),
-    PLAN_FIELD(yvex_attention_topk_policy, plus_zero_equals_minus_zero, PLAN_HASH_INT),
-    PLAN_FIELD(yvex_attention_topk_policy, duplicate_ordinal_refused, PLAN_HASH_INT),
-    PLAN_FIELD(yvex_attention_topk_policy, output_ranked_order, PLAN_HASH_INT),
 };
 
 static const yvex_attention_summary attention_ready_summary = {
-    .status = YVEX_DEEPSEEK_ATTENTION_STATUS_EXECUTION_READY,
+    .status = YVEX_ATTENTION_STATUS_EXECUTION_READY,
     .history_contract_ready = 1,
     .state_delta_contract_ready = 1,
     .cpu_reference_ready = 1,
@@ -539,13 +497,7 @@ static const yvex_attention_summary attention_ready_summary = {
     .full_execution_ready = 1,
 };
 
-#undef PLAN_POSITION_FIELD
 #undef PLAN_FIELD
-
-static void plan_hash_activation_policy(yvex_sha256 *hash,
-                                        const yvex_attention_activation_policy *policy);
-static void plan_hash_sparse_topk_policy(yvex_sha256 *hash,
-                                         const yvex_attention_topk_policy *policy);
 void yvex_attention_plan_close(yvex_attention_plan *plan);
 
 /*
@@ -565,7 +517,7 @@ static int attention_plan_allocate(
     if (!yvex_attention_checked_size(layer_count, sizeof(*plan->layers),
                                      &layer_bytes))
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_ALLOCATION, NULL,
+            failure, YVEX_ATTENTION_FAILURE_ALLOCATION, NULL,
             YVEX_ATTENTION_NO_LAYER, YVEX_TENSOR_ROLE_UNKNOWN,
             (unsigned long long)SIZE_MAX, layer_count, err, YVEX_ERR_BOUNDS,
             "attention layer count exceeds platform capacity");
@@ -575,7 +527,7 @@ static int attention_plan_allocate(
     if (!plan || !plan->layers) {
         yvex_attention_plan_close(plan);
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_ALLOCATION, NULL,
+            failure, YVEX_ATTENTION_FAILURE_ALLOCATION, NULL,
             YVEX_ATTENTION_NO_LAYER, YVEX_TENSOR_ROLE_UNKNOWN,
             plan ? layer_count : sizeof(*plan), 0ull, err, YVEX_ERR_NOMEM,
             plan ? layer_reason : plan_reason);
@@ -666,7 +618,7 @@ int yvex_attention_plan_identity_compute(
     const yvex_attention_summary *summary,
     const yvex_attention_layer_plan *layers,
     unsigned long long layer_count,
-    char output[YVEX_DEEPSEEK_ATTENTION_IDENTITY_CAP])
+    char output[YVEX_ATTENTION_IDENTITY_CAP])
 {
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
@@ -688,11 +640,13 @@ int yvex_attention_plan_identity_compute(
         const yvex_attention_layer_plan *layer = &layers[i];
         plan_hash_fields(&hash, layer, plan_layer_fields,
                          sizeof(plan_layer_fields) / sizeof(plan_layer_fields[0]));
-        plan_hash_activation_policy(&hash, &layer->attention_kv_activation);
-        plan_hash_activation_policy(&hash, &layer->compressor_activation);
-        plan_hash_activation_policy(&hash, &layer->compressor_rotated_activation);
-        plan_hash_activation_policy(&hash, &layer->indexer_query_activation);
-        plan_hash_sparse_topk_policy(&hash, &layer->sparse_topk);
+        (void)yvex_model_position_identity_update(&hash, &layer->position);
+        (void)yvex_model_activation_identity_update(&hash, &layer->attention_kv_activation);
+        (void)yvex_model_activation_identity_update(&hash, &layer->compressor_activation);
+        (void)yvex_model_activation_identity_update(
+            &hash, &layer->compressor_rotated_activation);
+        (void)yvex_model_activation_identity_update(&hash, &layer->indexer_query_activation);
+        (void)yvex_model_topk_identity_update(&hash, &layer->sparse_topk);
         (void)attention_hash_u64(&hash, layer->required_binding_count);
         (void)attention_hash_u64(&hash, layer->qtype_compute_refusal_count);
         (void)attention_hash_u64(&hash, layer->payload_bytes_bound);
@@ -700,26 +654,6 @@ int yvex_attention_plan_identity_compute(
     (void)yvex_sha256_final(&hash, digest);
     yvex_sha256_hex(digest, output);
     return 1;
-}
-
-static void plan_hash_activation_policy(
-    yvex_sha256 *hash,
-    const yvex_attention_activation_policy *policy)
-{
-    const yvex_attention_activation_policy empty = {0};
-
-    plan_hash_fields(hash, policy ? policy : &empty, plan_activation_fields,
-                     sizeof(plan_activation_fields) / sizeof(plan_activation_fields[0]));
-}
-
-static void plan_hash_sparse_topk_policy(
-    yvex_sha256 *hash,
-    const yvex_attention_topk_policy *policy)
-{
-    const yvex_attention_topk_policy empty = {0};
-
-    plan_hash_fields(hash, policy ? policy : &empty, plan_topk_fields,
-                     sizeof(plan_topk_fields) / sizeof(plan_topk_fields[0]));
 }
 
 static int attention_envelope_binding_count(
@@ -767,7 +701,7 @@ static int attention_bind_role(
         !yvex_core_u64_add(layer_plan ? layer_plan->required_binding_count : 0ull,
                            1ull, &total))
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION, binding,
+            failure, YVEX_ATTENTION_FAILURE_DIMENSION, binding,
             layer_index, role, ULLONG_MAX,
             layer_plan ? layer_plan->required_binding_count : 0ull,
             err, YVEX_ERR_BOUNDS,
@@ -775,13 +709,13 @@ static int attention_bind_role(
     layer_plan->required_binding_count = total;
     if (!binding || !binding->binding) {
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_MISSING_BINDING, binding,
+            failure, YVEX_ATTENTION_FAILURE_MISSING_BINDING, binding,
             layer_index, role, 1ull, 0ull, err, YVEX_ERR_FORMAT,
             "DeepSeek attention binding is missing from runtime descriptor");
     }
     if (!binding->binding->encoded_bytes || !binding->binding->rank) {
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION, binding,
+            failure, YVEX_ATTENTION_FAILURE_DIMENSION, binding,
             layer_index, role, 1ull, 0ull, err, YVEX_ERR_FORMAT,
             "DeepSeek attention binding has empty shape or byte range");
     }
@@ -791,20 +725,20 @@ static int attention_bind_role(
         !capability->dedicated_cpu_compute_available) {
         layer_plan->qtype_compute_refusal_count++;
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_QTYPE, binding,
+            failure, YVEX_ATTENTION_FAILURE_QTYPE, binding,
             layer_index, role, 1ull, 0ull, err, YVEX_ERR_UNSUPPORTED,
             "DeepSeek attention binding qtype lacks admitted CPU row compute");
     }
     if (binding->qtype >= YVEX_RUNTIME_DESCRIPTOR_QTYPE_CAP)
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_QTYPE, binding,
+            failure, YVEX_ATTENTION_FAILURE_QTYPE, binding,
             layer_index, role, YVEX_RUNTIME_DESCRIPTOR_QTYPE_CAP,
             binding->qtype, err, YVEX_ERR_BOUNDS,
             "DeepSeek attention binding qtype is outside the canonical identity space");
     if (!yvex_core_u64_add(summary->qtype_binding_counts[binding->qtype],
                            1ull, &total))
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION, binding,
+            failure, YVEX_ATTENTION_FAILURE_DIMENSION, binding,
             layer_index, role, ULLONG_MAX,
             summary->qtype_binding_counts[binding->qtype], err,
             YVEX_ERR_BOUNDS,
@@ -813,7 +747,7 @@ static int attention_bind_role(
     if (!yvex_core_u64_add(layer_plan->payload_bytes_bound,
                            binding->binding->encoded_bytes, &total))
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION, binding,
+            failure, YVEX_ATTENTION_FAILURE_DIMENSION, binding,
             layer_index, role, ULLONG_MAX,
             binding->binding->encoded_bytes, err, YVEX_ERR_BOUNDS,
             "DeepSeek attention payload byte count overflowed");
@@ -859,8 +793,8 @@ int yvex_attention_plan_import(yvex_attention_plan **out,
     const yvex_materialization_summary *materialization;
     const yvex_runtime_descriptor_summary *runtime;
     yvex_attention_plan *plan;
-    char expected_identity[YVEX_DEEPSEEK_ATTENTION_IDENTITY_CAP];
-    char computed_identity[YVEX_DEEPSEEK_ATTENTION_IDENTITY_CAP];
+    char expected_identity[YVEX_ATTENTION_IDENTITY_CAP];
+    char computed_identity[YVEX_ATTENTION_IDENTITY_CAP];
     unsigned long long i, required = 0ull, envelope = 0ull, payload = 0ull, refused = 0ull;
     unsigned long long swa = 0ull, csa = 0ull, hca = 0ull;
     int rc;
@@ -871,7 +805,7 @@ int yvex_attention_plan_import(yvex_attention_plan **out,
     if (!out || !summary || !layers || !layer_count || !materialization ||
         !materialization->committed || !runtime ||
         runtime->status != YVEX_RUNTIME_DESCRIPTOR_STATUS_READY ||
-        summary->status != YVEX_DEEPSEEK_ATTENTION_STATUS_EXECUTION_READY ||
+        summary->status != YVEX_ATTENTION_STATUS_EXECUTION_READY ||
         summary->layer_count != layer_count ||
         strcmp(summary->artifact_identity, runtime->artifact_identity) != 0 ||
         strcmp(summary->materialization_plan_identity, materialization->plan_identity) != 0 ||
@@ -879,7 +813,7 @@ int yvex_attention_plan_import(yvex_attention_plan **out,
                runtime->runtime_descriptor_identity) != 0 ||
         strcmp(summary->runtime_numeric_identity, runtime->runtime_numeric_identity) != 0)
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_INVALID_ARGUMENT, NULL,
+            failure, YVEX_ATTENTION_FAILURE_INVALID_ARGUMENT, NULL,
             YVEX_ATTENTION_NO_LAYER, YVEX_TENSOR_ROLE_UNKNOWN,
             summary ? summary->layer_count : 0ull, layer_count, err,
             YVEX_ERR_INVALID_ARG, "runtime binding attention records are incomplete or stale");
@@ -900,7 +834,7 @@ int yvex_attention_plan_import(yvex_attention_plan **out,
             !yvex_core_u64_add(refused, layer->qtype_compute_refusal_count, &refused)) {
             yvex_attention_plan_close(plan);
             return yvex_attention_reject(
-                failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_ARCHITECTURE, NULL, i,
+                failure, YVEX_ATTENTION_FAILURE_ARCHITECTURE, NULL, i,
                 YVEX_TENSOR_ROLE_UNKNOWN, i, layer->ordinal, err, YVEX_ERR_FORMAT,
                 "runtime binding attention layer record is invalid");
         }
@@ -910,7 +844,7 @@ int yvex_attention_plan_import(yvex_attention_plan **out,
     }
     rc = attention_envelope_binding_count(
         plan, descriptor, &envelope,
-        YVEX_DEEPSEEK_ATTENTION_FAILURE_ARCHITECTURE,
+        YVEX_ATTENTION_FAILURE_ARCHITECTURE,
         "runtime binding envelope count overflowed", failure, err);
     if (rc != YVEX_OK) {
         yvex_attention_plan_close(plan);
@@ -922,7 +856,7 @@ int yvex_attention_plan_import(yvex_attention_plan **out,
         envelope != summary->required_envelope_binding_count) {
         yvex_attention_plan_close(plan);
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_ARCHITECTURE, NULL,
+            failure, YVEX_ATTENTION_FAILURE_ARCHITECTURE, NULL,
             YVEX_ATTENTION_NO_LAYER, YVEX_TENSOR_ROLE_UNKNOWN,
             summary->required_binding_count, required, err, YVEX_ERR_FORMAT,
             "runtime binding attention summary disagrees with its layers");
@@ -932,7 +866,7 @@ int yvex_attention_plan_import(yvex_attention_plan **out,
         strcmp(computed_identity, expected_identity) != 0) {
         yvex_attention_plan_close(plan);
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_ARCHITECTURE, NULL,
+            failure, YVEX_ATTENTION_FAILURE_ARCHITECTURE, NULL,
             YVEX_ATTENTION_NO_LAYER, YVEX_TENSOR_ROLE_UNKNOWN, 1ull, 0ull, err,
             YVEX_ERR_FORMAT, "runtime binding attention identity disagrees with its layers");
     }
@@ -967,7 +901,142 @@ static int attention_bind_required_layer_roles(
     return YVEX_OK;
 }
 
-int yvex_attention_plan_build(
+typedef struct {
+    const yvex_semantic_model_ir *model;
+    const yvex_semantic_attention_layer *layers;
+    unsigned long long layer_count;
+} semantic_attention_recipe;
+
+static int attention_plan_build(
+    yvex_attention_plan **out, const yvex_attention_recipe *recipe,
+    const yvex_materialization_session *session,
+    const yvex_runtime_descriptor *descriptor,
+    yvex_attention_failure *failure, yvex_error *err);
+
+static int semantic_attention_identity(const void *context, char output[65])
+{
+    const semantic_attention_recipe *recipe = context;
+    const yvex_semantic_model_ir_summary *summary =
+        recipe ? yvex_semantic_model_ir_summary_get(recipe->model) : NULL;
+
+    if (!summary || !yvex_sha256_hex_valid(summary->logical_model_identity))
+        return 0;
+    yvex_core_text_copy(output, 65u, summary->logical_model_identity);
+    return 1;
+}
+
+static int semantic_attention_layer(
+    const void *context, unsigned long long index,
+    yvex_attention_layer_plan *output)
+{
+    const semantic_attention_recipe *recipe = context;
+    const yvex_semantic_attention_layer *input;
+
+    if (!recipe || !output || index >= recipe->layer_count) return 0;
+    input = &recipe->layers[index];
+    *output = (yvex_attention_layer_plan){
+        .ordinal = input->ordinal,
+        .layer_index = input->layer_index,
+        .predictor_index = input->predictor_index,
+        .tensor_scope = input->tensor_scope,
+        .attention_class = input->attention_class,
+        .compute_contract = input->compute_contract,
+        .compression_ratio = input->compression_ratio,
+        .sliding_window = input->sliding_window,
+        .query_heads = input->query_heads,
+        .kv_heads = input->kv_heads,
+        .head_dimension = input->head_dimension,
+        .rope_head_dimension = input->rope_head_dimension,
+        .query_lora_rank = input->query_lora_rank,
+        .output_lora_rank = input->output_lora_rank,
+        .output_groups = input->output_groups,
+        .output_group_input_width = input->output_group_input_width,
+        .hidden_dimension = input->hidden_dimension,
+        .indexer_heads = input->indexer_heads,
+        .indexer_head_dimension = input->indexer_head_dimension,
+        .indexer_topk = input->indexer_topk,
+        .compressor_ape_columns = input->compressor_ape_columns,
+        .indexer_ape_columns = input->indexer_ape_columns,
+        .rms_norm_epsilon = input->rms_norm_epsilon,
+        .residual_stream_count = input->residual_stream_count,
+        .residual_stream_width = input->residual_stream_width,
+        .residual_expanded_width = input->residual_expanded_width,
+        .mhc_mixing_rows = input->mhc_mixing_rows,
+        .mhc_mixing_columns = input->mhc_mixing_columns,
+        .mhc_base_width = input->mhc_base_width,
+        .mhc_scale_width = input->mhc_scale_width,
+        .mhc_sinkhorn_iterations = input->mhc_sinkhorn_iterations,
+        .attention_input_norm_width = input->attention_input_norm_width,
+        .mhc_epsilon = input->mhc_epsilon,
+        .mhc_residual_post_multiplier = input->mhc_residual_post_multiplier,
+        .mhc_entry_policy = input->mhc_entry_policy,
+        .mhc_attention_pre_and_post = input->mhc_attention_pre_and_post,
+        .attention_input_norm_required = input->attention_input_norm_required,
+        .attention_input_norm_role = input->attention_input_norm_role,
+        .mhc_function_role = input->mhc_function_role,
+        .mhc_base_role = input->mhc_base_role,
+        .mhc_scale_role = input->mhc_scale_role,
+        .compressor_required = input->compressor_required,
+        .indexer_required = input->indexer_required,
+        .position = input->position,
+        .attention_kv_activation = input->attention_kv_activation,
+        .compressor_activation = input->compressor_activation,
+        .compressor_rotated_activation = input->compressor_rotated_activation,
+        .indexer_query_activation = input->indexer_query_activation,
+        .sparse_topk = input->sparse_topk};
+    return 1;
+}
+
+int yvex_attention_plan_build_semantic(
+    yvex_attention_plan **out, const yvex_semantic_model_ir *semantic_model,
+    yvex_tensor_scope tensor_scope,
+    const yvex_materialization_session *session,
+    const yvex_runtime_descriptor *descriptor,
+    yvex_attention_failure *failure, yvex_error *err)
+{
+    const yvex_semantic_model_ir_summary *semantic =
+        yvex_semantic_model_ir_summary_get(semantic_model);
+    const yvex_model_execution_descriptor *execution =
+        semantic ? &semantic->execution_descriptor : NULL;
+    semantic_attention_recipe context = {0};
+    yvex_attention_recipe recipe = {0};
+
+    if (out) *out = NULL;
+    if (!out || !semantic_model || !session || !descriptor ||
+        (tensor_scope != YVEX_TENSOR_SCOPE_MAIN_LAYER &&
+         tensor_scope != YVEX_TENSOR_SCOPE_DRAFT))
+        return yvex_attention_reject(
+            failure, YVEX_ATTENTION_FAILURE_INVALID_ARGUMENT, NULL,
+            YVEX_ATTENTION_NO_LAYER, YVEX_TENSOR_ROLE_UNKNOWN, 1ull, 0ull,
+            err, YVEX_ERR_INVALID_ARG,
+            "semantic attention planning requires model, scope, session, and descriptor");
+    if (!execution || !yvex_semantic_model_ir_attention_view(
+                          semantic_model, tensor_scope, &context.layers,
+                          &context.layer_count))
+        return yvex_attention_reject(
+            failure, YVEX_ATTENTION_FAILURE_ARCHITECTURE, NULL,
+            YVEX_ATTENTION_NO_LAYER, YVEX_TENSOR_ROLE_UNKNOWN, 1ull, 0ull,
+            err, YVEX_ERR_FORMAT,
+            "semantic model has no admitted attention topology for this scope");
+    context.model = semantic_model;
+    recipe = (yvex_attention_recipe){
+        .context = &context,
+        .layer_count = context.layer_count,
+        .auxiliary_layer_count = execution->draft_layer_count,
+        .swa_layer_count = tensor_scope == YVEX_TENSOR_SCOPE_DRAFT
+                               ? context.layer_count : execution->swa_layers,
+        .csa_layer_count = tensor_scope == YVEX_TENSOR_SCOPE_DRAFT
+                               ? 0ull : execution->csa_layers,
+        .hca_layer_count = tensor_scope == YVEX_TENSOR_SCOPE_DRAFT
+                               ? 0ull : execution->hca_layers,
+        .tensor_scope = tensor_scope,
+        .identity = semantic_attention_identity,
+        .layer = semantic_attention_layer};
+    return attention_plan_build(
+        out, &recipe, session, descriptor, failure, err);
+}
+
+static int attention_plan_build(
     yvex_attention_plan **out,
     const yvex_attention_recipe *recipe,
     const yvex_materialization_session *session,
@@ -988,7 +1057,7 @@ int yvex_attention_plan_build(
     if (!out || !recipe || !recipe->context || !recipe->identity ||
         !recipe->layer || !recipe->layer_count || !session || !descriptor)
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_INVALID_ARGUMENT, NULL,
+            failure, YVEX_ATTENTION_FAILURE_INVALID_ARGUMENT, NULL,
             YVEX_ATTENTION_NO_LAYER, YVEX_TENSOR_ROLE_UNKNOWN, 1ull,
             0ull, err, YVEX_ERR_INVALID_ARG,
             "DeepSeek attention plan requires IR, materialization session, and descriptor");
@@ -997,20 +1066,20 @@ int yvex_attention_plan_build(
     if (!materialization || !materialization->committed ||
         materialization->status != YVEX_MATERIALIZATION_STATUS_COMMITTED)
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_MATERIALIZATION, NULL,
+            failure, YVEX_ATTENTION_FAILURE_MATERIALIZATION, NULL,
             YVEX_ATTENTION_NO_LAYER, YVEX_TENSOR_ROLE_UNKNOWN, 1ull,
             0ull, err, YVEX_ERR_STATE,
             "DeepSeek attention requires committed materialization");
     if (!runtime || runtime->status != YVEX_RUNTIME_DESCRIPTOR_STATUS_READY)
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_DESCRIPTOR, NULL,
+            failure, YVEX_ATTENTION_FAILURE_DESCRIPTOR, NULL,
             YVEX_ATTENTION_NO_LAYER, YVEX_TENSOR_ROLE_UNKNOWN, 1ull,
             0ull, err, YVEX_ERR_STATE,
             "DeepSeek attention requires a ready runtime descriptor");
     if (!runtime->runtime_numeric_identity[0] ||
         runtime->runtime_numeric_schema_version == 0u)
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_DESCRIPTOR, NULL,
+            failure, YVEX_ATTENTION_FAILURE_DESCRIPTOR, NULL,
             YVEX_ATTENTION_NO_LAYER, YVEX_TENSOR_ROLE_UNKNOWN, 1ull,
             0ull, err, YVEX_ERR_STATE,
             "DeepSeek attention requires runtime numeric descriptor facts");
@@ -1019,7 +1088,7 @@ int yvex_attention_plan_build(
         strcmp(materialization->plan_identity,
                runtime->materialization_plan_identity) != 0)
         return yvex_attention_reject(
-            failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_DESCRIPTOR, NULL,
+            failure, YVEX_ATTENTION_FAILURE_DESCRIPTOR, NULL,
             YVEX_ATTENTION_NO_LAYER, YVEX_TENSOR_ROLE_UNKNOWN, 1ull,
             0ull, err, YVEX_ERR_STATE,
             "DeepSeek attention refused a stale runtime descriptor identity");
@@ -1035,7 +1104,7 @@ int yvex_attention_plan_build(
         if (!recipe->layer(recipe->context, i, layer)) {
             yvex_attention_plan_close(plan);
             return yvex_attention_reject(
-                failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_ARCHITECTURE, NULL,
+                failure, YVEX_ATTENTION_FAILURE_ARCHITECTURE, NULL,
                 i, YVEX_TENSOR_ROLE_UNKNOWN, 1ull, 0ull, err,
                 YVEX_ERR_FORMAT, "DeepSeek attention layer is missing");
         }
@@ -1052,7 +1121,7 @@ int yvex_attention_plan_build(
         if (layer->compute_contract !=
             YVEX_ATTENTION_COMPUTE_BF16_F32_RNE_V1) {
             rc = yvex_attention_reject(
-                failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_NUMERIC, NULL,
+                failure, YVEX_ATTENTION_FAILURE_NUMERIC, NULL,
                 layer->layer_index, YVEX_TENSOR_ROLE_UNKNOWN,
                 YVEX_ATTENTION_COMPUTE_BF16_F32_RNE_V1,
                 layer->compute_contract, err, YVEX_ERR_UNSUPPORTED,
@@ -1070,7 +1139,7 @@ int yvex_attention_plan_build(
                                plan->layers[i].required_binding_count,
                                &total)) {
             rc = yvex_attention_reject(
-                failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION, NULL,
+                failure, YVEX_ATTENTION_FAILURE_DIMENSION, NULL,
                 i, YVEX_TENSOR_ROLE_UNKNOWN, ULLONG_MAX,
                 plan->layers[i].required_binding_count, err, YVEX_ERR_BOUNDS,
                 "DeepSeek attention summary binding count overflowed");
@@ -1085,7 +1154,7 @@ int yvex_attention_plan_build(
                                plan->layers[i].payload_bytes_bound,
                                &plan->summary.payload_bytes_bound)) {
             rc = yvex_attention_reject(
-                failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION, NULL,
+                failure, YVEX_ATTENTION_FAILURE_DIMENSION, NULL,
                 i, YVEX_TENSOR_ROLE_UNKNOWN, ULLONG_MAX,
                 plan->layers[i].payload_bytes_bound, err, YVEX_ERR_BOUNDS,
                 "DeepSeek attention summary accounting overflowed");
@@ -1096,7 +1165,7 @@ int yvex_attention_plan_build(
     }
     rc = attention_envelope_binding_count(
         plan, descriptor, &plan->summary.required_envelope_binding_count,
-        YVEX_DEEPSEEK_ATTENTION_FAILURE_DIMENSION,
+        YVEX_ATTENTION_FAILURE_DIMENSION,
         "attention envelope binding count overflowed", failure, err);
     if (rc != YVEX_OK) {
         yvex_attention_plan_close(plan);
@@ -1224,6 +1293,17 @@ static const plan_backend_capability plan_backend_capabilities[] = {
      {YVEX_BACKEND_VARIANT_ATTENTION_CAUSAL_F32}, 1u},
 };
 
+static int plan_backend_variant_supported(
+    const yvex_backend *backend, yvex_backend_operation_variant variant)
+{
+    yvex_backend_capability_result capability;
+    yvex_error err;
+    yvex_error_clear(&err);
+    return yvex_backend_query_capability(
+               backend, variant, &capability, &err) == YVEX_OK &&
+           capability.state == YVEX_BACKEND_CAPABILITY_SUPPORTED;
+}
+
 static void plan_backend_capabilities_fill(yvex_plan *plan, const yvex_backend *backend)
 {
     size_t capability, variant;
@@ -1234,7 +1314,7 @@ static void plan_backend_capabilities_fill(yvex_plan *plan, const yvex_backend *
         int supported = 1;
         for (variant = 0u; variant < plan_backend_capabilities[capability].variant_count;
              ++variant)
-            supported &= backend_variant_supported(
+            supported &= plan_backend_variant_supported(
                 backend, plan_backend_capabilities[capability].variants[variant]);
         memcpy((unsigned char *)plan + plan_backend_capabilities[capability].plan_offset,
                &supported, sizeof(supported));

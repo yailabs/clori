@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <yvex/gguf.h>
+#include <yvex/internal/family_catalog.h>
 #include <yvex/model.h>
 #include <yvex/tokenizer.h>
 
@@ -209,7 +210,15 @@ static int conditioning_execute(generation_state *state, yvex_error *err)
     const yvex_tokens *tokens = NULL;
     int rc = generation_cancelled(request, err);
     if (rc == YVEX_OK)
-        rc = yvex_model_context_open_tokenizer(request->text_artifact_path, &context, err);
+        rc = yvex_model_context_open(request->text_artifact_path, &context, err);
+    if (rc == YVEX_OK) {
+        rc = yvex_family_tokenizer_open(&context.tokenizer, context.gguf, err);
+        if (rc == YVEX_ERR_UNSUPPORTED) {
+            yvex_error_clear(err);
+            rc = yvex_tokenizer_from_gguf(
+                &context.tokenizer, context.gguf, context.model, err);
+        }
+    }
     if (rc == YVEX_OK && yvex_tokenizer_plan_summary_get(context.tokenizer)) {
         rc = yvex_tokenizer_encode(
             context.tokenizer, (const unsigned char *)request->prompt,

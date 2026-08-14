@@ -9,9 +9,11 @@
 #include <yvex/graph.h>
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/benchmark.h>
+#include <yvex/internal/compiler.h>
 #include <yvex/internal/execution.h>
 #include <yvex/internal/graph.h>
 #include <yvex/internal/graph_state.h>
+#include <yvex/internal/tokenizer.h>
 #include <yvex/model.h>
 #include <yvex/registry.h>
 #include <yvex/tokenizer.h>
@@ -25,9 +27,7 @@ static inline void yvex_runtime_identity_copy(char destination[YVEX_SHA256_HEX_C
     if (length) memcpy(destination, source, length);
 }
 #define YVEX_RUNTIME_REASON_CAP 256u
-#define YVEX_RUNTIME_BINDING_SCHEMA_V7 7u
-#define YVEX_RUNTIME_BINDING_SCHEMA_V8 8u
-#define YVEX_RUNTIME_BINDING_SCHEMA_CURRENT YVEX_RUNTIME_BINDING_SCHEMA_V8
+#define YVEX_RUNTIME_BINDING_SCHEMA_CURRENT 12u
 #define YVEX_RUNTIME_BINDING_SUFFIX ".yvex-runtime-binding"
 typedef enum {
     YVEX_RUNTIME_BINDING_FAILURE_NONE = 0, YVEX_RUNTIME_BINDING_FAILURE_INVALID_ARGUMENT,
@@ -49,29 +49,7 @@ typedef struct yvex_runtime_binding_failure {
     const char *reason;
 } yvex_runtime_binding_failure;
 #define YVEX_RUNTIME_MODEL_SCHEMA_V1 1u
-#define YVEX_RUNTIME_FAMILY_ADAPTER_SCHEMA_V3 3u
 #define YVEX_RUNTIME_EXECUTION_DESCRIPTOR_SCHEMA_V2 2u
-typedef enum {
-    YVEX_SEQUENCE_MIXER_SOFTMAX_ATTENTION = 0, YVEX_SEQUENCE_MIXER_RECURRENT_LINEAR, YVEX_SEQUENCE_MIXER_STATE_SPACE
-} yvex_sequence_mixer_family;
-typedef enum {
-    YVEX_SEQUENCE_MIXER_DENSE_MHA = 0, YVEX_SEQUENCE_MIXER_GROUPED_QUERY,
-    YVEX_SEQUENCE_MIXER_MULTI_QUERY, YVEX_SEQUENCE_MIXER_SLIDING_WINDOW,
-    YVEX_SEQUENCE_MIXER_LATENT_ATTENTION, YVEX_SEQUENCE_MIXER_SPARSE_ATTENTION,
-    YVEX_SEQUENCE_MIXER_COMPRESSED_SPARSE, YVEX_SEQUENCE_MIXER_HIERARCHICAL_COMPRESSED,
-    YVEX_SEQUENCE_MIXER_CROSS_ATTENTION, YVEX_SEQUENCE_MIXER_DELTANET,
-    YVEX_SEQUENCE_MIXER_GATED_DELTANET, YVEX_SEQUENCE_MIXER_KIMI_DELTA, YVEX_SEQUENCE_MIXER_MAMBA
-} yvex_sequence_mixer_semantics;
-typedef enum {
-    YVEX_RUNTIME_MIXER_UNSUPPORTED = 0, YVEX_RUNTIME_MIXER_SUPPORTED,
-    YVEX_RUNTIME_MIXER_NOT_IMPLEMENTED, YVEX_RUNTIME_MIXER_NOT_ADMITTED
-} yvex_runtime_mixer_capability_state;
-typedef struct {
-    yvex_sequence_mixer_family family;
-    yvex_sequence_mixer_semantics semantics;
-    yvex_runtime_mixer_capability_state state;
-    const char *reason;
-} yvex_runtime_mixer_capability;
 typedef enum {
     YVEX_RUNTIME_MODE_EAGER = 0, YVEX_RUNTIME_MODE_PIECEWISE,
     YVEX_RUNTIME_MODE_FULL, YVEX_RUNTIME_MODE_AUTO
@@ -96,53 +74,15 @@ typedef enum {
 } yvex_runtime_lifecycle_phase;
 typedef int (*yvex_runtime_progress_callback)(void *, yvex_runtime_lifecycle_phase, unsigned long long,
                                               unsigned long long);
-typedef struct {
-    int attention_semantics_ready, attention_core_ready, attention_envelope_ready;
-    int cpu_prefill_eager_ready, cpu_decode_eager_ready, cuda_prefill_eager_ready,
-        cuda_decode_eager_ready;
-    int cuda_eager_implemented, cuda_piecewise_graph_implemented, cuda_full_graph_implemented;
-    int cuda_prefill_piecewise_graph_ready, cuda_decode_piecewise_graph_ready;
-    int cuda_prefill_full_graph_ready, cuda_decode_full_graph_ready;
-    int attention_weight_residency_ready, attention_workspace_ready;
-    int attention_state_delta_ready, attention_operator_ready, attention_trace_ready;
-    int attention_profile_ready, attention_benchmark_ready, mixed_attention_ready;
-    int speculative_attention_ready, persistent_kv_ready;
-    int moe_plan_ready, moe_router_ready, moe_routed_expert_ready, moe_shared_expert_ready, moe_block_ready;
-    int transformer_ready, output_head_binding_ready, output_head_projection_ready;
-    int logits_cpu_ready, logits_cuda_ready, logits_prefill_ready, logits_decode_ready;
-    int logits_full_vocabulary_ready, logits_hidden_contract_ready, logits_partial_progress_ready, logits_ready;
-    int generation_ready;
-} yvex_runtime_capabilities;
-#define YVEX_RUNTIME_EXECUTION_CAPABILITY_SCHEMA_V2 2u
-int yvex_runtime_capabilities_identity(const yvex_runtime_capabilities *facts,
-                                       char output[YVEX_SHA256_HEX_CAP]);
-int yvex_runtime_capabilities_admitted_by(const yvex_runtime_capabilities *facts,
-                                          const yvex_runtime_capabilities *maximum);
-int yvex_runtime_capabilities_contract_valid(const yvex_runtime_capabilities *facts);
-const struct yvex_runtime_family_adapter *yvex_runtime_family_at(unsigned long long index);
-struct yvex_model_family_api;
-struct yvex_transformer_family_policy;
-struct yvex_logits_family_policy;
-struct yvex_speculation_family_policy;
-typedef struct yvex_runtime_family_adapter {
-    unsigned int schema_version;
-    unsigned long long adapter_id, adapter_version;
-    const char *target_id, *family_name, *operator_family_key;
-    const char *operator_artifact_filename, *logical_transform_identity;
-    yvex_sequence_mixer_family mixer_family;
-    int (*mixer_capability)(yvex_sequence_mixer_semantics, yvex_runtime_mixer_capability *);
-    const yvex_graph_family_api *(*graph)(void);
-    int (*execution_capabilities)(yvex_runtime_capabilities *out);
-    int (*transformer_policy)(const yvex_runtime_descriptor_summary *, struct yvex_transformer_family_policy *);
-    int (*logits_policy)(struct yvex_logits_family_policy *out);
-    int (*speculation_policy)(const yvex_runtime_descriptor_summary *, struct yvex_speculation_family_policy *);
-} yvex_runtime_family_adapter;
-typedef struct {
+typedef struct yvex_runtime_binding_prepare_request {
     const char *directory;
     const yvex_complete_artifact_admission *admission;
     const yvex_artifact_physical_compatibility *physical_compatibility;
     const yvex_materialization_session *materialization;
     const yvex_runtime_descriptor *runtime_descriptor;
+    const yvex_operator_graph_ir *operator_graph;
+    const yvex_physical_execution_ir *physical_execution;
+    const yvex_compiled_model_plan *compiled_plan;
     const yvex_attention_plan *attention_plan;
     const yvex_attention_plan *draft_attention_plan;
     unsigned long long family_adapter_id, family_adapter_version;
@@ -150,12 +90,17 @@ typedef struct {
     unsigned int artifact_format_version;
     const char *logical_transform_identity;
     yvex_runtime_capabilities capabilities;
+    yvex_transformer_family_policy transformer_policy;
+    yvex_logits_family_policy logits_policy;
+    yvex_speculation_family_policy speculation_policy;
+    yvex_tokenizer_family_policy tokenizer_policy;
 } yvex_runtime_binding_prepare_request;
 typedef struct yvex_runtime_binding_summary {
     unsigned int schema_version;
     unsigned long long family_adapter_id, family_adapter_version;
     unsigned long long tensor_count, layer_count, draft_layer_count, file_bytes;
-    unsigned long long source_snapshot_identity, mapping_identity;
+    unsigned long long semantic_maximum_context;
+    unsigned long long physical_execution_decision_count, source_snapshot_identity, mapping_identity;
     unsigned int artifact_format_version;
     char artifact_format[16];
     char identity[YVEX_SHA256_HEX_CAP];
@@ -167,9 +112,13 @@ typedef struct yvex_runtime_binding_summary {
     char materialization_identity[YVEX_SHA256_HEX_CAP], logical_model_identity[YVEX_SHA256_HEX_CAP];
     char runtime_numeric_identity[YVEX_SHA256_HEX_CAP];
     char runtime_descriptor_identity[YVEX_SHA256_HEX_CAP], model_execution_identity[YVEX_SHA256_HEX_CAP];
+    char physical_execution_identity[YVEX_SHA256_HEX_CAP];
     char attention_plan_identity[YVEX_SHA256_HEX_CAP], moe_plan_identity[YVEX_SHA256_HEX_CAP];
     char draft_attention_plan_identity[YVEX_SHA256_HEX_CAP];
     char draft_moe_plan_identity[YVEX_SHA256_HEX_CAP];
+    char transformer_plan_identity[YVEX_SHA256_HEX_CAP];
+    char draft_transformer_plan_identity[YVEX_SHA256_HEX_CAP];
+    char output_head_plan_identity[YVEX_SHA256_HEX_CAP];
     char semantic_graph_identity[YVEX_SHA256_HEX_CAP], executable_graph_identity[YVEX_SHA256_HEX_CAP];
     yvex_artifact_physical_compatibility physical_compatibility;
     yvex_runtime_capabilities capabilities;
@@ -183,6 +132,10 @@ typedef struct yvex_runtime_binding yvex_runtime_binding;
 int yvex_runtime_binding_prepare(const yvex_runtime_binding_prepare_request *request,
                                  yvex_runtime_binding_prepare_result *result,
                                  yvex_runtime_binding_failure *failure, yvex_error *err);
+int yvex_runtime_binding_compile_publish(
+    const yvex_family_compiler_adapter *adapter,
+    const struct yvex_compilation_runtime_binding_request *request,
+    char path[YVEX_PATH_CAP], int *published, yvex_error *err);
 int yvex_runtime_binding_open(yvex_runtime_binding **out, const char *path,
     yvex_runtime_binding_summary *summary,
     yvex_complete_artifact_admission *admission,
@@ -196,8 +149,15 @@ int yvex_runtime_binding_import_materialization(
 int yvex_runtime_binding_import_graph(
     const yvex_runtime_binding *binding, const yvex_materialization_session *session,
     yvex_runtime_descriptor **descriptor_out, yvex_attention_plan **attention_out,
-    yvex_attention_plan **draft_attention_out,
+    yvex_attention_plan **draft_attention_out, const yvex_physical_execution_ir **physical_execution_out,
     yvex_runtime_binding_failure *failure, yvex_error *err);
+int yvex_runtime_binding_policies(
+    const yvex_runtime_binding *binding,
+    const yvex_transformer_family_policy **transformer,
+    const yvex_logits_family_policy **logits,
+    const yvex_speculation_family_policy **speculation);
+const yvex_tokenizer_family_policy *yvex_runtime_binding_tokenizer_policy(
+    const yvex_runtime_binding *binding);
 typedef enum {
     YVEX_RUNTIME_MODEL_FAILURE_NONE = 0, YVEX_RUNTIME_MODEL_FAILURE_INVALID_ARGUMENT,
     YVEX_RUNTIME_MODEL_FAILURE_ADAPTER, YVEX_RUNTIME_MODEL_FAILURE_BINDING,
@@ -205,8 +165,8 @@ typedef enum {
     YVEX_RUNTIME_MODEL_FAILURE_MATERIALIZATION, YVEX_RUNTIME_MODEL_FAILURE_DESCRIPTOR,
     YVEX_RUNTIME_MODEL_FAILURE_GRAPH, YVEX_RUNTIME_MODEL_FAILURE_BACKEND,
     YVEX_RUNTIME_MODEL_FAILURE_DRIFT, YVEX_RUNTIME_MODEL_FAILURE_BUSY,
-    YVEX_RUNTIME_MODEL_FAILURE_CANCELLED,
-    YVEX_RUNTIME_MODEL_FAILURE_ALLOCATION, YVEX_RUNTIME_MODEL_FAILURE_CLEANUP
+    YVEX_RUNTIME_MODEL_FAILURE_CANCELLED, YVEX_RUNTIME_MODEL_FAILURE_ALLOCATION,
+    YVEX_RUNTIME_MODEL_FAILURE_CLEANUP
 } yvex_runtime_model_failure_code;
 typedef struct yvex_runtime_model_failure {
     yvex_runtime_model_failure_code code;
@@ -291,6 +251,8 @@ typedef struct {
 typedef struct yvex_runtime_residency yvex_runtime_residency;
 typedef struct yvex_runtime_state_residency yvex_runtime_state_residency;
 typedef struct yvex_runtime_component_session yvex_runtime_component_session;
+typedef struct yvex_moe_plan yvex_moe_plan;
+typedef struct yvex_transformer_plan yvex_transformer_plan;
 typedef struct {
     int sealed, cuda_ready, paged, invalidated;
     unsigned long long layer_count, host_bytes, device_bytes, virtual_device_bytes;
@@ -301,9 +263,15 @@ typedef struct {
 } yvex_runtime_state_residency_summary;
 typedef struct {
     const yvex_runtime_residency *residency;
+    const yvex_runtime_binding *compiled_binding;
+    const yvex_compiled_model_plan *compiled_plan;
     const yvex_runtime_binding_summary *binding;
-    const yvex_runtime_family_adapter *adapter;
+    const yvex_graph_execution_api *graph;
+    const char *target_id;
     const yvex_attention_plan *attention, *draft_attention;
+    const yvex_moe_plan *moe, *draft_moe;
+    const yvex_transformer_plan *transformer, *draft_transformer;
+    const yvex_runtime_logits_plan_summary *output_head;
     const yvex_runtime_descriptor *descriptor;
     const yvex_physical_execution_ir *physical_execution;
     const yvex_tokenizer *tokenizer;
@@ -311,8 +279,35 @@ typedef struct {
 } yvex_runtime_model_view;
 int yvex_runtime_residency_prepare(yvex_runtime_residency **out, yvex_runtime_model *model,
     const yvex_runtime_residency_options *options, yvex_runtime_residency_failure *failure, yvex_error *err);
-int yvex_runtime_component_residency_prepare(yvex_runtime_residency **, yvex_materialization_session *,
-    const char *, const yvex_runtime_residency_options *, yvex_runtime_residency_failure *, yvex_error *);
+int yvex_runtime_component_residency_prepare(yvex_runtime_residency **out,
+    yvex_materialization_session *materialization, const char *component_identity,
+    const yvex_runtime_residency_options *options, yvex_runtime_residency_failure *failure, yvex_error *err);
+typedef struct yvex_component_binding {
+    unsigned int schema_version;
+    unsigned long long binding_id, binding_version;
+    const char *target_id, *component_id, *admission_component;
+    yvex_backend_kind backend;
+    int (*plan)(const yvex_component_plan_request *, yvex_component_plan *,
+                yvex_component_failure *, yvex_error *);
+    int (*admit)(const char *, const yvex_artifact *, const yvex_gguf *,
+                 const yvex_tensor_table *,
+                 yvex_complete_artifact_admission *, yvex_artifact_admission_failure *,
+                 yvex_error *);
+    int (*execute)(yvex_materialization_session *, const yvex_component_execution_request *,
+                   yvex_component_execution_result *, yvex_component_failure *, yvex_error *);
+} yvex_component_binding;
+const yvex_component_binding *yvex_component_binding_at(unsigned long long index);
+typedef struct {
+    int (*plan_build)(const yvex_component_plan_request *, yvex_component_plan *,
+                      yvex_component_failure *, yvex_error *);
+    int (*plan_validate)(const yvex_component_plan *, yvex_component_failure *,
+                         yvex_error *);
+    int (*execute)(const yvex_artifact *, const yvex_gguf *, const yvex_tensor_table *,
+                   const yvex_component_execution_request *,
+                   yvex_component_execution_result *, yvex_component_failure *,
+                   yvex_error *);
+} yvex_runtime_component_api;
+const yvex_runtime_component_api *yvex_runtime_component_api_get(void);
 int yvex_runtime_residency_close(yvex_runtime_residency **residency, yvex_error *err);
 int yvex_runtime_residency_snapshot(const yvex_runtime_residency *residency, yvex_runtime_residency_summary *summary,
     const unsigned char **arena, unsigned long long *arena_bytes, yvex_error *err);
@@ -339,14 +334,14 @@ int yvex_runtime_state_residency_transition(yvex_runtime_state_residency *,
     const yvex_attention_state_provider *, const yvex_attention_publication *,
     unsigned long long, unsigned long long, yvex_runtime_state_action, yvex_error *);
 int yvex_runtime_state_residency_publish(yvex_runtime_state_residency *residency, yvex_error *err);
-void yvex_runtime_state_residency_commit(yvex_runtime_state_residency *residency);
+int yvex_runtime_state_residency_commit(yvex_runtime_state_residency *residency,
+                                        yvex_error *err);
 void yvex_runtime_state_residency_abort(yvex_runtime_state_residency *residency);
 int yvex_runtime_state_residency_reset(yvex_runtime_state_residency *residency, yvex_error *err);
 int yvex_runtime_state_residency_invalidate(yvex_runtime_state_residency *residency, yvex_error *err);
 int yvex_runtime_state_residency_close(yvex_runtime_state_residency **residency, yvex_error *err);
 int yvex_runtime_state_residency_summary_copy(const yvex_runtime_state_residency *residency,
                                               yvex_runtime_state_residency_summary *out, yvex_error *err);
-const yvex_runtime_family_adapter *yvex_runtime_family_adapter_find(const char *target_id);
 /* A cleanup failure may publish an unpublished model in out; close retries exact ownership. */
 int yvex_runtime_model_open(yvex_runtime_model **out, const yvex_runtime_model_open_request *request,
                             yvex_runtime_model_failure *failure, yvex_error *err);

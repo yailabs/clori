@@ -179,7 +179,11 @@ static int execution_test_planning(void)
                      "bounded serving workload should seal");
 
     capacity_request.schema_version = YVEX_EXECUTION_CAPACITY_PLAN_SCHEMA_V1;
-    capacity_request.model = &model;
+    capacity_request.model_execution_identity = model.identity;
+    capacity_request.semantic_maximum_context = model.maximum_context;
+    capacity_request.candidate_width = model.proposal_width + 1ull;
+    capacity_request.semantic_state_class_mask =
+        model.persistent_state_class_mask;
     capacity_request.hardware = &hardware;
     capacity_request.workload = &workload;
     capacity_request.model_bytes = 90ull * 1024ull * 1024ull * 1024ull;
@@ -281,7 +285,7 @@ static int execution_test_profile(void)
     yvex_error err;
 
     execution_test_identity(identity, 'a');
-    request.schema_version = YVEX_COMPILED_EXECUTION_PROFILE_SCHEMA_V1;
+    request.schema_version = YVEX_COMPILED_EXECUTION_PROFILE_SCHEMA_V2;
     request.logical_model_identity = identity;
     request.physical_variant_identity = identity;
     request.physical_execution_identity = identity;
@@ -296,9 +300,9 @@ static int execution_test_profile(void)
     request.workload = YVEX_EXECUTION_WORKLOAD_INTERACTIVE;
     request.evidence = YVEX_EXECUTION_EVIDENCE_PRODUCTION;
     request.execution_class = YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE;
-    request.host_stochastic_reference = 1;
-    request.token_local_moe_reference = 1;
-    request.eager_attention_reference = 1;
+    request.attention_resolution = YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
+    request.moe_resolution = YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
+    request.sampling_resolution = YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
     YVEX_TEST_ASSERT(yvex_compiled_execution_profile_seal(
                          &request, &first, &err) == YVEX_OK,
                      "compiled execution profile should seal");
@@ -307,11 +311,26 @@ static int execution_test_profile(void)
                      "equal compiled execution profile should seal");
     YVEX_TEST_ASSERT(strcmp(first.identity, second.identity) == 0,
                      "compiled execution identity should be deterministic");
+    YVEX_TEST_ASSERT(
+        first.resolution == YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED,
+        "compiled profile should expose its admitted degraded resolution");
+    request.attention_resolution = YVEX_EXECUTION_RESOLUTION_EXACT;
+    YVEX_TEST_ASSERT(yvex_compiled_execution_profile_seal(
+                         &request, &second, &err) == YVEX_OK &&
+                         strcmp(first.identity, second.identity) != 0,
+                     "capability resolution should change execution identity");
+    request.attention_resolution =
+        YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
     request.evidence = YVEX_EXECUTION_EVIDENCE_FORENSIC;
     YVEX_TEST_ASSERT(yvex_compiled_execution_profile_seal(
                          &request, &second, &err) == YVEX_OK &&
                          strcmp(first.identity, second.identity) != 0,
                      "evidence profile should change execution identity");
+    request.attention_resolution =
+        YVEX_EXECUTION_RESOLUTION_TEMPORARILY_RESOURCE_LIMITED;
+    YVEX_TEST_ASSERT(yvex_compiled_execution_profile_seal(
+                         &request, &second, &err) == YVEX_ERR_INVALID_ARG,
+                     "non-executable capability resolution should refuse profile admission");
     return 0;
 }
 
@@ -645,19 +664,25 @@ static int execution_test_shape(void)
 
 static int execution_test_device_view(void)
 {
-    yvex_backend backend = {0};
-    yvex_device_tensor tensor = {0};
+    yvex_backend *backend = NULL;
+    yvex_device_tensor *tensor = NULL;
+    yvex_backend_tensor_desc descriptor = {0};
     yvex_execution_device_view view = {0};
     yvex_error err;
 
-    tensor.owner = &backend;
-    tensor.owner_id = 1ull;
-    tensor.dtype = YVEX_DTYPE_F32;
-    tensor.bytes = 48ull;
+    descriptor.name = "execution-device-view";
+    descriptor.dtype = YVEX_DTYPE_F32;
+    descriptor.rank = 1u;
+    descriptor.dims[0] = 12ull;
+    descriptor.bytes = 48ull;
+    YVEX_TEST_ASSERT(
+        yvex_backend_open_cpu(&backend, &err) == YVEX_OK &&
+            yvex_backend_tensor_alloc(backend, &descriptor, &tensor, &err) == YVEX_OK,
+        "device view uses one real backend-owned tensor");
     view.schema_version = YVEX_EXECUTION_DEVICE_VIEW_SCHEMA_V1;
     view.kind = YVEX_EXECUTION_DEVICE_LOGITS;
-    view.backend = &backend;
-    view.tensor = &tensor;
+    view.backend = backend;
+    view.tensor = tensor;
     view.element_offset = 4ull;
     view.model_generation = 1ull;
     view.session_generation = 1ull;
@@ -675,6 +700,10 @@ static int execution_test_device_view(void)
     YVEX_TEST_ASSERT(yvex_execution_device_view_validate(&view, &err) ==
                          YVEX_ERR_FORMAT,
                      "device view with a mismatched extent should refuse");
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_release(backend, &tensor, &err) == YVEX_OK &&
+            yvex_backend_close_checked(&backend, &err) == YVEX_OK,
+        "device view releases exact backend ownership");
     return 0;
 }
 

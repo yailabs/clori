@@ -20,6 +20,21 @@ struct yvex_transformer_plan {
     yvex_transformer_layer_plan *layers;
 };
 
+static const yvex_tensor_role transformer_weight_roles[YVEX_TRANSFORMER_WEIGHT_COUNT] = {
+    YVEX_TENSOR_ROLE_TOKEN_EMBEDDING, YVEX_TENSOR_ROLE_HC_HEAD_FUNCTION,
+    YVEX_TENSOR_ROLE_HC_HEAD_BASE, YVEX_TENSOR_ROLE_HC_HEAD_SCALE,
+    YVEX_TENSOR_ROLE_OUTPUT_NORM};
+
+typedef struct {
+    yvex_transformer_family_policy policy;
+    yvex_tensor_scope tensor_scope;
+    unsigned long long family_adapter_id, family_adapter_version;
+    unsigned long long layer_count, vocabulary_size;
+    const char *artifact_identity, *materialization_identity, *logical_model_identity;
+    const char *runtime_numeric_identity, *runtime_descriptor_identity;
+    yvex_transformer_weight_binding weights[YVEX_TRANSFORMER_WEIGHT_COUNT];
+} transformer_plan_facts;
+
 static int transformer_refuse(yvex_error *err, yvex_status status, const char *reason)
 {
     yvex_error_set(err, status, "graph.transformer", reason);
@@ -71,6 +86,43 @@ static int transformer_layer_identity(yvex_transformer_layer_plan *out,
         !yvex_sha256_final(&hash, digest)) return 0;
     yvex_sha256_hex(digest, out->layer_identity);
     return 1;
+}
+
+static int transformer_binding_project(
+    const yvex_materialization_session *materialization,
+    const yvex_runtime_descriptor *descriptor, yvex_tensor_role role,
+    yvex_tensor_scope scope, unsigned long long layer_index,
+    unsigned long long predictor_index, yvex_transformer_weight_binding *out,
+    yvex_error *err)
+{
+    const yvex_runtime_tensor_binding *runtime = yvex_runtime_descriptor_find_role(
+        descriptor, role, scope, layer_index, predictor_index);
+    const yvex_materialized_tensor_binding *binding = runtime
+        ? yvex_materialization_session_tensor_at(materialization, runtime->tensor_id)
+        : NULL;
+    const yvex_quant_numeric_capability *capability = binding
+        ? yvex_quant_numeric_capability_at(binding->qtype) : NULL;
+    if (!binding || binding->role != role || !binding->encoded_bytes ||
+        binding->expert_count > 1ull || !binding->backend_compatible)
+        return transformer_refuse(err, YVEX_ERR_FORMAT,
+                                  "transformer global binding is unavailable");
+    if (!capability || !capability->reference_decoder_available ||
+        !capability->dedicated_cpu_compute_available ||
+        !capability->dedicated_cuda_compute_available)
+        return transformer_refuse(
+            err, YVEX_ERR_UNSUPPORTED,
+            "transformer global binding qtype lacks CPU/CUDA execution");
+    *out = (yvex_transformer_weight_binding){
+        .tensor_id = binding->tensor_id,
+        .row_width = binding->row_width,
+        .row_count = binding->row_count,
+        .encoded_bytes = binding->encoded_bytes,
+        .role = binding->role,
+        .tensor_scope = scope,
+        .layer_index = layer_index,
+        .predictor_index = predictor_index,
+        .qtype = binding->qtype};
+    return YVEX_OK;
 }
 
 /*
@@ -128,10 +180,10 @@ static int transformer_plan_identity(yvex_transformer_plan *plan)
     return 1;
 }
 
-int yvex_transformer_plan_build(yvex_transformer_plan **out,
-                                const yvex_transformer_plan_facts *facts,
-                                const yvex_attention_plan *attention,
-                                const yvex_moe_plan *moe, yvex_error *err)
+static int transformer_plan_build(yvex_transformer_plan **out,
+                                  const transformer_plan_facts *facts,
+                                  const yvex_attention_plan *attention,
+                                  const yvex_moe_plan *moe, yvex_error *err)
 {
     yvex_transformer_plan *plan = NULL;
     const yvex_transformer_family_policy *policy = facts ? &facts->policy : NULL;
@@ -231,6 +283,72 @@ geometry:
 failure:
     yvex_transformer_plan_close(&plan);
     return yvex_error_code(err);
+}
+
+/* Compile global bindings and family policy before runtime model publication. */
+int yvex_transformer_plan_compile(
+    yvex_transformer_plan **out, const yvex_transformer_family_policy *policy,
+    unsigned long long family_adapter_id,
+    unsigned long long family_adapter_version,
+    const yvex_materialization_session *materialization,
+    const yvex_runtime_descriptor *descriptor,
+    const yvex_attention_plan *attention, const yvex_moe_plan *moe,
+    yvex_tensor_scope execution_scope, yvex_error *err)
+{
+    const yvex_runtime_descriptor_summary *runtime =
+        yvex_runtime_descriptor_summary_get(descriptor);
+    const yvex_materialization_summary *material =
+        yvex_materialization_session_summary(materialization);
+    const yvex_attention_summary *attention_summary =
+        yvex_attention_plan_summary(attention);
+    const yvex_attention_layer_plan *last;
+    transformer_plan_facts facts = {0};
+    unsigned long long slot;
+    if (out) *out = NULL;
+    if (!out || !policy || !family_adapter_id || !family_adapter_version ||
+        !runtime || !material || !attention_summary ||
+        !attention_summary->layer_count || !moe ||
+        (execution_scope != YVEX_TENSOR_SCOPE_GLOBAL &&
+         execution_scope != YVEX_TENSOR_SCOPE_DRAFT))
+        return transformer_refuse(err, YVEX_ERR_INVALID_ARG,
+                                  "transformer compiler facts are incomplete");
+    facts.policy = *policy;
+    facts.family_adapter_id = family_adapter_id;
+    facts.family_adapter_version = family_adapter_version;
+    facts.tensor_scope = execution_scope == YVEX_TENSOR_SCOPE_GLOBAL
+                             ? YVEX_TENSOR_SCOPE_MAIN_LAYER
+                             : YVEX_TENSOR_SCOPE_DRAFT;
+    facts.layer_count = attention_summary->layer_count;
+    facts.vocabulary_size = runtime->vocabulary_size;
+    facts.artifact_identity = material->artifact_identity;
+    facts.materialization_identity = material->plan_identity;
+    facts.logical_model_identity = runtime->logical_model_identity;
+    facts.runtime_numeric_identity = runtime->runtime_numeric_identity;
+    facts.runtime_descriptor_identity = runtime->runtime_descriptor_identity;
+    last = yvex_attention_plan_layer_at(attention,
+                                        attention_summary->layer_count - 1ull);
+    if (!last)
+        return transformer_refuse(err, YVEX_ERR_STATE,
+                                  "transformer final layer is unavailable");
+    for (slot = 0ull; slot < YVEX_TRANSFORMER_WEIGHT_COUNT; ++slot) {
+        yvex_tensor_role role = transformer_weight_roles[slot];
+        yvex_tensor_scope scope = YVEX_TENSOR_SCOPE_GLOBAL;
+        unsigned long long layer = YVEX_MATERIALIZATION_NO_INDEX;
+        unsigned long long predictor = YVEX_MATERIALIZATION_NO_INDEX;
+        if (execution_scope == YVEX_TENSOR_SCOPE_DRAFT &&
+            slot != YVEX_TRANSFORMER_WEIGHT_EMBEDDING) {
+            scope = YVEX_TENSOR_SCOPE_DRAFT;
+            layer = last->layer_index;
+            predictor = last->predictor_index;
+            if (slot == YVEX_TRANSFORMER_WEIGHT_OUTPUT_NORM)
+                role = YVEX_TENSOR_ROLE_DRAFT_OUTPUT_NORM;
+        }
+        if (transformer_binding_project(
+                materialization, descriptor, role, scope, layer, predictor,
+                &facts.weights[slot], err) != YVEX_OK)
+            return yvex_error_code(err);
+    }
+    return transformer_plan_build(out, &facts, attention, moe, err);
 }
 
 /*
@@ -333,6 +451,13 @@ const yvex_transformer_plan_summary *yvex_transformer_plan_summary_get(
     const yvex_transformer_plan *plan)
 {
     return plan ? &plan->summary : NULL;
+}
+
+const yvex_transformer_layer_plan *yvex_transformer_plan_layer_at(
+    const yvex_transformer_plan *plan, unsigned long long ordinal)
+{
+    return plan && ordinal < plan->summary.layer_count
+               ? &plan->layers[ordinal] : NULL;
 }
 
 void yvex_transformer_plan_close(yvex_transformer_plan **plan)

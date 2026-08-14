@@ -9,7 +9,6 @@
 #include <yvex/artifact.h>
 #include <yvex/core.h>
 #include <yvex/internal/backend.h>
-#include <yvex/internal/families/minimax_h3.h>
 #include <yvex/internal/graph.h>
 #include <yvex/internal/model_artifact.h>
 #include <yvex/internal/model_target.h>
