@@ -578,6 +578,13 @@ preserved identities and refusals.
 No implementation may be declared complete because a report says so. Project
 control changes only after executable evidence passes.
 
+After a material checkpoint, repair, architectural cutover, comparable
+performance change, or milestone closure, use the repository
+[`engineering-worklog`](.agents/skills/engineering-worklog/SKILL.md) skill before
+final handoff. Record the semantic change and its evidence, not a Git diff
+summary. Trivial changes require no worklog, and no record or communication
+projection is published automatically.
+
 ### Progression admissibility
 
 A completed boundary is progression-safe only when its next declared consumer
