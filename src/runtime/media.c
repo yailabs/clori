@@ -8,6 +8,7 @@
 #include <yvex/internal/media.h>
 
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <yvex/gguf.h>
@@ -48,6 +49,159 @@ typedef struct {
     const yvex_runtime_av_generation_request *request;
     yvex_runtime_component_session *session;
 } video_decode_context;
+
+static int media_artifact_path(char output[YVEX_PATH_CAP], const char *root,
+                               const char *relative)
+{
+    int length;
+
+    if (!output || !root || root[0] != '/' || !relative || !relative[0] ||
+        relative[0] == '/' || strstr(relative, ".."))
+        return 0;
+    length = snprintf(output, YVEX_PATH_CAP, "%s/%s", root, relative);
+    return length >= 0 && length < YVEX_PATH_CAP;
+}
+
+static int media_target_validate(
+    const yvex_media_target_profile *target,
+    const yvex_media_execution_recipe *execution, yvex_error *err)
+{
+    if (!target || target->schema_version != YVEX_MEDIA_TARGET_PROFILE_SCHEMA_V1 ||
+        !target->target || !target->target[0] || !target->family || !target->family[0] ||
+        !target->source_identity || strlen(target->source_identity) != 64u ||
+        !target->tier_count || target->tier_count > YVEX_MEDIA_TARGET_TIER_CAP ||
+        !target->fps_numerator || !target->fps_denominator || !target->audio_sample_rate ||
+        !target->maximum_host_bytes || !target->maximum_device_bytes ||
+        !target->maximum_workspace_bytes || !target->maximum_file_bytes ||
+        !target->minimum_frames || target->minimum_frames > target->maximum_frames ||
+        !target->minimum_inference_steps ||
+        target->minimum_inference_steps > target->maximum_inference_steps ||
+        !target->canvas_multiple || !target->maximum_canvas_pixels ||
+        !execution || execution->schema_version != YVEX_MEDIA_EXECUTION_RECIPE_SCHEMA_V1 ||
+        !execution->conditioning_layers || !execution->transformer_blocks ||
+        !execution->maximum_prompt_tokens || !execution->maximum_packed_rows ||
+        !execution->plan_build || !execution->layout_build || !execution->component_admit ||
+        !execution->condition || !execution->latent || !execution->video_decode ||
+        !execution->audio_decode) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.media-profile",
+                       "complete target facts and execution recipe are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    return YVEX_OK;
+}
+
+int yvex_runtime_media_host_profile_build(
+    yvex_runtime_media_host_profile *out, const yvex_media_target_profile *target,
+    const yvex_media_execution_recipe *execution, const char *artifact_root,
+    const char *output_root, yvex_error *err)
+{
+    yvex_runtime_av_generation_request *request;
+    unsigned long long index;
+    int rc;
+
+    if (out) memset(out, 0, sizeof(*out));
+    rc = media_target_validate(target, execution, err);
+    if (rc != YVEX_OK || !out || !artifact_root || artifact_root[0] != '/' ||
+        !output_root || output_root[0] != '/') {
+        if (rc == YVEX_OK)
+            yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.media-profile",
+                           "output and absolute component and publication roots are required");
+        return rc == YVEX_OK ? YVEX_ERR_INVALID_ARG : rc;
+    }
+    if (strlen(target->target) >= sizeof(out->target) ||
+        strlen(output_root) >= sizeof(out->output_root) ||
+        !media_artifact_path(out->text_artifact, artifact_root, target->text_artifact) ||
+        !media_artifact_path(out->transformer_artifact, artifact_root,
+                             target->transformer_artifact) ||
+        !media_artifact_path(out->video_artifact, artifact_root, target->video_artifact) ||
+        !media_artifact_path(out->audio_artifact, artifact_root, target->audio_artifact)) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "runtime.media-profile",
+                       "media profile path exceeds its bounded representation");
+        return YVEX_ERR_BOUNDS;
+    }
+    for (index = 0ull; index < target->tier_count; ++index) {
+        const yvex_media_target_tier *tier = target->tiers + index;
+        yvex_runtime_av_plan plan = {0};
+
+        if (!tier->name || !tier->name[0] ||
+            strlen(tier->name) >= YVEX_RUNTIME_MEDIA_PROFILE_NAME_CAP ||
+            !tier->width || !tier->height ||
+            tier->maximum_frames < target->minimum_frames ||
+            tier->maximum_frames > target->maximum_frames) {
+            yvex_error_set(err, YVEX_ERR_BOUNDS, "runtime.media-profile",
+                           "media tier exceeds its admitted bounds");
+            return YVEX_ERR_BOUNDS;
+        }
+        rc = execution->plan_build(
+            &plan, execution->maximum_prompt_tokens, tier->width, tier->height,
+            tier->maximum_frames, 1u, err);
+        if (rc != YVEX_OK) return rc;
+        if (plan.packed_rows > execution->maximum_packed_rows) {
+            yvex_error_set(err, YVEX_ERR_BOUNDS, "runtime.media-profile",
+                           "media tier exceeds the admitted packed-row capacity");
+            return YVEX_ERR_BOUNDS;
+        }
+        yvex_core_text_copy(out->profiles[index].name,
+                            sizeof(out->profiles[index].name), tier->name);
+        out->profiles[index].width = tier->width;
+        out->profiles[index].height = tier->height;
+        out->profiles[index].maximum_frames = tier->maximum_frames;
+        out->profiles[index].preview_alias = tier->preview_alias;
+    }
+    yvex_core_text_copy(out->target, sizeof(out->target), target->target);
+    yvex_core_text_copy(out->source_identity, sizeof(out->source_identity),
+                        target->source_identity);
+    yvex_core_text_copy(out->output_root, sizeof(out->output_root), output_root);
+    out->schema_version = YVEX_RUNTIME_MEDIA_HOST_SCHEMA_V1;
+    out->profile_count = target->tier_count;
+    out->frames_per_chunk = target->frames_per_chunk;
+    out->frame_remainder = target->frame_remainder;
+    out->minimum_frames = target->minimum_frames;
+    out->maximum_frames = target->maximum_frames;
+    out->minimum_inference_steps = target->minimum_inference_steps;
+    out->maximum_inference_steps = target->maximum_inference_steps;
+    out->canvas_multiple = target->canvas_multiple;
+    out->maximum_canvas_pixels = target->maximum_canvas_pixels;
+    request = &out->request_template;
+    *request = (yvex_runtime_av_generation_request){
+        .schema_version = YVEX_RUNTIME_AV_GENERATION_SCHEMA_V1,
+        .target = out->target,
+        .text_artifact_path = out->text_artifact,
+        .transformer_artifact_path = out->transformer_artifact,
+        .video_artifact_path = out->video_artifact,
+        .audio_artifact_path = out->audio_artifact,
+        .source_identity = out->source_identity,
+        .fps_numerator = target->fps_numerator, .fps_denominator = target->fps_denominator,
+        .audio_sample_rate = target->audio_sample_rate, .seed = target->seed,
+        .conditioning_layers = execution->conditioning_layers,
+        .transformer_blocks = execution->transformer_blocks,
+        .maximum_prompt_tokens = execution->maximum_prompt_tokens,
+        .maximum_packed_rows = execution->maximum_packed_rows,
+        .maximum_host_bytes = target->maximum_host_bytes,
+        .maximum_device_bytes = target->maximum_device_bytes,
+        .maximum_workspace_bytes = target->maximum_workspace_bytes,
+        .maximum_file_bytes = target->maximum_file_bytes,
+        .component_backend = execution->component_backend,
+        .video_temporal_ratio = target->video_temporal_ratio,
+        .video_clip_length = target->video_clip_length,
+        .video_token_drop = target->video_token_drop,
+        .video_spatial_ratio = target->video_spatial_ratio,
+        .video_tile_size = target->video_tile_size,
+        .video_minimum_tile_overlap = target->video_minimum_tile_overlap,
+        .video_mean = target->video_mean, .video_std = target->video_std,
+        .audio_mean = target->audio_mean, .audio_std = target->audio_std,
+        .pixel_mean = target->pixel_mean, .pixel_std = target->pixel_std,
+        .video_channels = target->video_channels, .audio_channels = target->audio_channels,
+        .pixel_channels = target->pixel_channels,
+        .audio_output_channels = target->audio_output_channels,
+        .audio_samples_per_step = target->audio_samples_per_step,
+        .plan_build = execution->plan_build, .layout_build = execution->layout_build,
+        .component_admit = execution->component_admit, .condition = execution->condition,
+        .latent = execution->latent, .video_decode = execution->video_decode,
+        .audio_decode = execution->audio_decode};
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
 
 static int generation_fail(
     yvex_error *err, yvex_status status, const char *where, const char *message)

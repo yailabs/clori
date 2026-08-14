@@ -3,7 +3,7 @@
 Status: exact FL2VA source and four component artifacts verified; architecture,
 tensor roles, and Transformation IR admitted; Audio VAE, Visual VAE, text-only
 Qwen3-VL conditioning, Omni-Transformer latent iteration, staged GB10 residency,
-and native synchronized-media publication execute through one operator command.
+and native synchronized-media publication execute through one operator workflow.
 The admitted bounded profile produces a deterministic playable AVI from an
 ASCII text prompt; it is not a quality, useful-resolution, performance, release,
 or complete upstream-feature claim.
@@ -39,8 +39,8 @@ promotion rules remain in the [family integration contract](integration.md).
 | Implementation branch | `feature/minimax-h3` |
 | Branch status | end-to-end completion condition satisfied; retained for hardening and optimization |
 | Branch completion | first YVEX-authored playable synchronized MiniMax-H3 FL2VA audio-video output |
-| Current wave | `R010.MINIMAX.H3.FL2VA.END_TO_END.0` |
-| Current boundary | one bounded ASCII prompt-to-playable-AVI path executes all admitted FL2VA components natively through YVEX with staged GB10 residency and atomic publication |
+| Current wave | `R011.MINIMAX.H3.RECANONICALIZE.CHAT.MEDIA.RUNTIME.0` |
+| Current boundary | the canonical `yvex server MODEL` and `yvex chat` path negotiates one bounded request, executes all admitted FL2VA components with staged GB10 residency, and returns the atomically published playable AVI path |
 | Next expected boundary | PASS 2 correctness and ownership hardening for the admitted bounded vertical; no new macro milestone is activated by this family record |
 
 The branch preserves the accepted intake and implementation history. Its
@@ -1093,33 +1093,41 @@ runs are not benchmarks and establish no useful generation speed.
 ## Conversational media projection
 
 The common persistent server now admits MiniMax-H3 as generation mode `media`.
-`yvex runtime start` accepts the immutable component-artifact root and an owned
-absolute output directory, while `yvex chat` owns the creative prompt and asks
-for missing resolution profile, duration, explicit sigma-grid count, AVI
-format, and optional seed. A complete turn invokes the same staged native
-runtime transaction described above and returns the atomically published file
-path. The server does not load any component or create a CUDA context while it
-is only negotiating those parameters.
+`yvex server minimax-h3-fl2va-runtime-media` accepts the immutable
+component-artifact root and an owned absolute output directory, while `yvex
+chat` owns the creative prompt and asks for missing resolution profile,
+duration, explicit sigma-grid count, AVI format, and optional seed. The model
+registry family selects the typed media adapter, so the operator does not choose
+family callbacks or reconstruct the offline execution command. A complete turn
+invokes the same staged native runtime transaction described above and returns
+the atomically published file path. The server does not load any component or
+create a CUDA context while it is only negotiating those parameters.
 
 The conversational projection has focused dialogue, refusal, deterministic
 profile-identity, and no-model-open startup tests. It admits `preview` at
 192x192 for exactly 124 frames and `smoke` at 32x32 for 124 through 345 frames.
-The daemon validates each profile against the exact worst-case 256-token plan
+The server validates each profile against the exact worst-case 256-token plan
 before publishing readiness; runtime independently refuses any plan above the
 2,048-row Omni execution bound before latent or component materialization.
 Source, draft, HD, FHD, 2K, and 4K requests are not advertised and fail closed.
 
-An operator-reachable `runtime start` -> session -> prompt transaction executed
-the 192x192 preview twice from the eclipse prompt with seed 42. The one-point
-run took 622.81 seconds; the 19-point run took 1,490.14 seconds. Both published
-a seekable 14,381,024-byte AVI with 124 RGB frames at 24 fps and stereo PCM at
-32 kHz, and both decoded completely through independent GStreamer audio and
-video sinks. The 19-point file SHA-256 is
-`eb6c1d6e5c332ddbfac0e6057a264b53faaa228371f81d36691ea69745e9b84d`.
-Sampled frames from both files remained faceted chromatic noise rather than a
-recognizable eclipse. This is execution, container, and synchronization
-evidence only; it does not establish conditioning, scheduler, or model-quality
-correctness. The exact startup and chat workflow is owned by the
+On 2026-08-14 an operator-reachable `yvex server` -> `yvex chat` transaction
+accepted “Genera un video dell'eclissi di ieri sera”, asked for the missing
+choices, then executed `smoke`, five seconds, two sigma-grid points, AVI, and
+seed 42. It completed in 560.36 seconds and returned the atomically published
+1,048,544-byte file path through chat. GStreamer independently discovered and
+played a seekable AVI with 124 uncompressed 32x32 RGB frames at 24 fps and raw
+stereo PCM at 32 kHz. Demuxing recovered 380,928 video bytes and 661,332 audio
+bytes: 124 frames and 165,333 samples per channel, whose durations differ by
+10,416 ns. The file SHA-256 is
+`f384f998957d00e42606b1bf12e5863211107871973f7fc68a4d0d0eda9f4365`.
+Server telemetry reported 62.57 GiB peak RSS and zero residual host/device
+residency after the turn; the systemd scope enforced 76 GiB memory high, 88 GiB
+memory max, and zero swap for the workload. A sampled frame remained colored
+blocks rather than a recognizable eclipse. This is native execution,
+container, synchronization, and product-path evidence only; it does not
+establish conditioning, scheduler, or model-quality correctness. The exact
+startup and chat workflow is owned by the
 [operator runbook](../operator-runbook.md#conversational-minimax-h3-media-host).
 
 ## Progression and non-claims

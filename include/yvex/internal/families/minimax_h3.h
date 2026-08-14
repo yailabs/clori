@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <yvex/core.h>
 #include <yvex/source.h>
+#include <yvex/internal/media_target.h>
 #include <yvex/internal/source_payload.h>
 typedef struct yvex_transform_ir yvex_transform_ir;
 typedef struct yvex_transform_binding yvex_transform_binding;
@@ -472,5 +473,7 @@ typedef struct {
 const yvex_minimax_h3_api *yvex_model_register_minimax_h3(void);
 const yvex_minimax_h3_transform_api *yvex_model_minimax_h3_transform_api(void);
 const yvex_minimax_h3_handoff_api *yvex_model_minimax_h3_handoff_api(void);
+int yvex_model_minimax_h3_media_target_profile(
+    yvex_media_target_profile *, yvex_error *);
 const yvex_minimax_h3_graph_api *yvex_graph_register_minimax_h3(void);
 #endif /* INCLUDE_YVEX_INTERNAL_FAMILIES_MINIMAX_H3_H_INCLUDED */

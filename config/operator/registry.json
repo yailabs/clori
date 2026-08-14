@@ -1227,10 +1227,15 @@
         "value_type": "u64"
       },
       {
-        "enum_values": ["target-only", "dspark"],
+        "enum_values": ["target-only", "dspark", "media"],
         "name": "--generation-mode",
         "takes_value": true,
         "value_type": "enum"
+      },
+      {
+        "name": "--media-artifact-root",
+        "takes_value": true,
+        "value_type": "path"
       },
       {
         "name": "--max-new-tokens",
@@ -1255,6 +1260,11 @@
         "range": "100..86400000",
         "takes_value": true,
         "value_type": "u64"
+      },
+      {
+        "name": "--output-root",
+        "takes_value": true,
+        "value_type": "path"
       },
       {
         "name": "--prefill-chunk",

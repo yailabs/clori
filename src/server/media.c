@@ -202,8 +202,8 @@ int yvex_server_media_registry_open(
     for (index = 0ull; index < options->profile_count; ++index) {
         const yvex_server_media_profile *source = options->profiles + index;
         unsigned long long pixels;
-        if (!source->name || !source->name[0] ||
-            strlen(source->name) >= MEDIA_PROFILE_NAME_CAP || !source->width ||
+        if (!source->name[0] || strlen(source->name) >= MEDIA_PROFILE_NAME_CAP ||
+            !source->width ||
             !source->height ||
             source->maximum_frames < registry->minimum_frames ||
             source->maximum_frames > registry->maximum_frames ||
@@ -389,14 +389,17 @@ static int duration_select(server_media_registry *registry, server_media_session
 {
     const char *cursor = text;
     while (cursor && *cursor) {
-        char *end;
+        char *end, *unit;
         unsigned long long seconds, frames;
         while (*cursor && !isdigit((unsigned char)*cursor)) cursor++;
         if (!*cursor) break;
         seconds = strtoull(cursor, &end, 10);
         if (end == cursor) break;
-        if ((*end == 's' && (end[1] == '\0' || isspace((unsigned char)end[1]))) ||
-            text_contains(end, "second")) {
+        unit = end;
+        while (*unit && isspace((unsigned char)*unit)) unit++;
+        if ((*unit == 's' && (unit[1] == '\0' || isspace((unsigned char)unit[1]) ||
+                             ispunct((unsigned char)unit[1]))) ||
+            text_prefix(unit, "second")) {
             if (!seconds || !yvex_core_u64_mul(seconds,
                                                 registry->generation.fps_numerator, &frames))
                 return -1;

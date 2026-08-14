@@ -11,6 +11,7 @@
 #include <yvex/core.h>
 #include <yvex/backend.h>
 #include <yvex/internal/core.h>
+#include <yvex/internal/media_target.h>
 #include <yvex/internal/model.h>
 #include <yvex/registry.h>
 
@@ -269,6 +270,8 @@ typedef struct {
                        const yvex_component_variant_source_request *request,
                        yvex_error *err);
     const struct yvex_physical_variant_api *(*physical_variant)(void);
+    int (*media_target_profile)(yvex_media_target_profile *, yvex_error *);
+    const yvex_media_execution_recipe *media_execution;
 } yvex_component_variant_adapter;
 #define YVEX_QUANT_PRESET_CATALOG_SCHEMA_V1 1u
 typedef struct {

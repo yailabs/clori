@@ -7,6 +7,7 @@
 #include <yvex/internal/component.h>
 #include <yvex/internal/io.h>
 #include <yvex/internal/latent.h>
+#include <yvex/internal/media_target.h>
 #include <yvex/internal/runtime.h>
 
 #ifdef __cplusplus
@@ -14,6 +15,15 @@ extern "C" {
 #endif
 
 #define YVEX_RUNTIME_AV_GENERATION_SCHEMA_V1 1u
+#define YVEX_RUNTIME_MEDIA_HOST_SCHEMA_V1 1u
+#define YVEX_RUNTIME_MEDIA_PROFILE_CAP 4u
+#define YVEX_RUNTIME_MEDIA_PROFILE_NAME_CAP 32u
+
+typedef struct {
+    char name[YVEX_RUNTIME_MEDIA_PROFILE_NAME_CAP];
+    unsigned long long width, height, maximum_frames;
+    int preview_alias;
+} yvex_runtime_media_profile;
 
 typedef struct {
     unsigned long long batch, samples_per_channel, output_values;
@@ -24,32 +34,13 @@ typedef struct {
     int complete;
 } yvex_runtime_av_audio_result;
 
-typedef int (*yvex_runtime_av_plan_fn)(
-    yvex_runtime_av_plan *, unsigned long long, unsigned long long,
-    unsigned long long, unsigned long long, unsigned int, yvex_error *);
-typedef int (*yvex_runtime_av_layout_fn)(
-    const yvex_runtime_av_plan *, const yvex_runtime_av_layout_output *,
-    yvex_runtime_av_layout_result *, yvex_error *);
-typedef int (*yvex_runtime_av_component_admit_fn)(
-    const char *, const yvex_artifact *, const yvex_gguf *, const yvex_tensor_table *,
-    yvex_complete_artifact_admission *, yvex_artifact_admission_failure *, yvex_error *);
-typedef int (*yvex_runtime_av_condition_fn)(
-    const yvex_artifact *, const yvex_gguf *, const yvex_tensor_table *,
-    const unsigned int *, unsigned long long, unsigned long long, float *, unsigned long long,
-    unsigned long long, unsigned long long, yvex_runtime_av_conditioning_result *,
-    yvex_error *);
-typedef int (*yvex_runtime_av_latent_fn)(
-    const yvex_runtime_av_plan *, const yvex_runtime_av_latent_context *,
-    unsigned long long, unsigned long long, float *,
-    unsigned long long, float *, unsigned long long, yvex_runtime_latent_result *,
-    yvex_runtime_latent_evaluator_result *, yvex_error *);
-typedef int (*yvex_runtime_av_video_fn)(
-    yvex_runtime_component_session *, const yvex_runtime_av_video_decode_options *,
-    yvex_runtime_av_video_decode_result *, yvex_component_execution_failure *, yvex_error *);
-typedef int (*yvex_runtime_av_audio_fn)(
-    const yvex_artifact *, const yvex_gguf *, const yvex_tensor_table *,
-    const yvex_runtime_av_audio_decode_options *, unsigned long long,
-    yvex_runtime_av_audio_decode_result *, yvex_component_execution_failure *, yvex_error *);
+typedef yvex_media_plan_fn yvex_runtime_av_plan_fn;
+typedef yvex_media_layout_fn yvex_runtime_av_layout_fn;
+typedef yvex_media_component_admit_fn yvex_runtime_av_component_admit_fn;
+typedef yvex_media_condition_fn yvex_runtime_av_condition_fn;
+typedef yvex_media_latent_fn yvex_runtime_av_latent_fn;
+typedef yvex_media_video_fn yvex_runtime_av_video_fn;
+typedef yvex_media_audio_fn yvex_runtime_av_audio_fn;
 
 typedef struct {
     unsigned int schema_version;
@@ -82,6 +73,26 @@ typedef struct {
     void *cancel_context;
 } yvex_runtime_av_generation_request;
 
+/*
+ * The compiled family adapter seals model facts and graph callbacks into this path-owning profile
+ * before the server sees it. The server copies referenced strings during configuration, so callers
+ * may keep this profile on their own stack for the foreground host lifetime.
+ */
+typedef struct {
+    unsigned int schema_version;
+    yvex_runtime_av_generation_request request_template;
+    yvex_runtime_media_profile profiles[YVEX_RUNTIME_MEDIA_PROFILE_CAP];
+    unsigned long long profile_count;
+    unsigned long long frames_per_chunk, frame_remainder;
+    unsigned long long minimum_frames, maximum_frames;
+    unsigned long long minimum_inference_steps, maximum_inference_steps;
+    unsigned long long canvas_multiple, maximum_canvas_pixels;
+    char output_root[YVEX_PATH_CAP];
+    char target[128], source_identity[YVEX_SHA256_HEX_CAP];
+    char text_artifact[YVEX_PATH_CAP], transformer_artifact[YVEX_PATH_CAP];
+    char video_artifact[YVEX_PATH_CAP], audio_artifact[YVEX_PATH_CAP];
+} yvex_runtime_media_host_profile;
+
 typedef struct {
     unsigned int schema_version;
     unsigned long long prompt_tokens, frames, width, height, audio_samples;
@@ -103,6 +114,10 @@ typedef struct {
 
 int yvex_runtime_av_generate(const yvex_runtime_av_generation_request *,
                              yvex_runtime_av_generation_result *, yvex_error *);
+int yvex_runtime_media_host_profile_build(
+    yvex_runtime_media_host_profile *, const yvex_media_target_profile *,
+    const yvex_media_execution_recipe *, const char *artifact_root,
+    const char *output_root, yvex_error *);
 
 #ifdef __cplusplus
 }

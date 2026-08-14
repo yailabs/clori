@@ -1736,7 +1736,6 @@ static void component_variant_close(void *owner)
     yvex_minimax_h3_handoff *handoff = owner;
     yvex_model_minimax_h3_handoff_api()->close(&handoff);
 }
-
 static int component_variant_open(yvex_component_variant_source *out,
                                   const yvex_component_variant_source_request *request,
                                   yvex_error *err)
@@ -1814,9 +1813,17 @@ static int component_variant_open(yvex_component_variant_source *out,
 #undef COPY_SUMMARY
     return YVEX_OK;
 }
-
 const yvex_component_variant_adapter *yvex_graph_minimax_h3_component_adapter(void)
 {
+    static const yvex_media_execution_recipe media = {
+        .schema_version = YVEX_MEDIA_EXECUTION_RECIPE_SCHEMA_V1,
+        .conditioning_layers = YVEX_MINIMAX_H3_TEXT_CONDITIONING_LAYERS, .transformer_blocks = 50ull,
+        .maximum_prompt_tokens = YVEX_MINIMAX_H3_TEXT_MAX_TOKENS,
+        .maximum_packed_rows = YVEX_MINIMAX_H3_OMNI_MAX_PACKED_ROWS, .component_backend = YVEX_BACKEND_KIND_CUDA,
+        .plan_build = t2va_plan_build, .layout_build = yvex_runtime_av_layout_from_plan,
+        .component_admit = component_admit, .condition = text_encoder_artifact_cuda,
+        .latent = t2va_latent_execute, .video_decode = video_vae_decode_cuda_session,
+        .audio_decode = audio_vae_execute_artifact_cuda};
     static const yvex_component_variant_adapter adapter = {
         .schema_version = YVEX_PHYSICAL_VARIANT_SESSION_SCHEMA_V1,
         .target_id = YVEX_MINIMAX_H3_TARGET_ID,
@@ -1824,15 +1831,15 @@ const yvex_component_variant_adapter *yvex_graph_minimax_h3_component_adapter(vo
         .source_revision = YVEX_MINIMAX_H3_REVISION,
         .profile_name = "minimax-h3-source-faithful-v1",
         .source_open = component_variant_open,
-        .physical_variant = yvex_graph_physical_variant_api_get};
+        .physical_variant = yvex_graph_physical_variant_api_get,
+        .media_target_profile = yvex_model_minimax_h3_media_target_profile,
+        .media_execution = &media};
     return &adapter;
 }
-
 typedef struct {
     yvex_semantic_model_ir *semantic_model;
     yvex_transform_ir *transform_ir;
 } minimax_source_owner;
-
 static void minimax_source_release(void *pointer)
 {
     minimax_source_owner *owner = pointer;
@@ -1841,7 +1848,6 @@ static void minimax_source_release(void *pointer)
     yvex_transform_ir_release(&owner->transform_ir);
     free(owner);
 }
-
 static int minimax_source_compile(yvex_family_source_products *out,
                                   const yvex_compilation_runtime_binding_request *request,
                                   yvex_error *err)
@@ -1953,7 +1959,6 @@ cleanup:
     minimax_source_release(owner);
     return rc;
 }
-
 static int minimax_tokenizer_policy(
     yvex_tokenizer_family_policy *out, yvex_error *err)
 {
@@ -1980,10 +1985,8 @@ static int minimax_tokenizer_policy(
         .tokenizer_config_identity =
             "a07e942ac874baa13758de8d1fbdb186683cc03416b5589e1b6671c6b3057c68",
         .prompt_name = "verbatim-no-special-v1"};
-
     return yvex_tokenizer_family_policy_compile_direct(out, &policy, err) == YVEX_OK;
 }
-
 const yvex_family_source_adapter *yvex_graph_minimax_h3_source_adapter(void)
 {
     static const yvex_family_source_adapter adapter = {

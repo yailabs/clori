@@ -289,6 +289,24 @@ const yvex_component_variant_adapter *yvex_graph_component_variant_find(
     return NULL;
 }
 
+const yvex_component_variant_adapter *yvex_graph_component_variant_find_family(
+    const char *family)
+{
+    size_t index;
+
+    if (!family) return NULL;
+    for (index = 0u;
+         index < sizeof(component_providers) / sizeof(component_providers[0]);
+         ++index) {
+        const yvex_component_variant_adapter *adapter = component_providers[index]();
+
+        if (adapter && adapter->schema_version == YVEX_PHYSICAL_VARIANT_SESSION_SCHEMA_V1 &&
+            adapter->family && strcmp(family, adapter->family) == 0)
+            return adapter;
+    }
+    return NULL;
+}
+
 int yvex_family_source_compile(
     const char *target_id, const yvex_compilation_runtime_binding_request *request,
     yvex_family_source_products *products, yvex_error *err)

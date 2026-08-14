@@ -831,6 +831,56 @@ static int architecture_canonical(yvex_minimax_h3_architecture *architecture,
     if (rc == YVEX_OK) *architecture = target.architecture;
     return rc;
 }
+int yvex_model_minimax_h3_media_target_profile(
+    yvex_media_target_profile *out, yvex_error *err)
+{
+    yvex_minimax_h3_architecture architecture = {0};
+    yvex_minimax_h3_failure failure = {0};
+    const yvex_minimax_h3_latent_normalization *normalization;
+    int rc;
+    if (!out) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "minimax-h3.media-profile",
+                       "media target profile output is required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    rc = architecture_canonical(&architecture, &failure, err);
+    normalization = rc == YVEX_OK ? latent_normalization() : NULL;
+    if (rc != YVEX_OK || !normalization) return rc != YVEX_OK ? rc : YVEX_ERR_STATE;
+    *out = (yvex_media_target_profile){
+        .schema_version = YVEX_MEDIA_TARGET_PROFILE_SCHEMA_V1,
+        .target = YVEX_MINIMAX_H3_TARGET_ID, .family = "minimax-h3",
+        .source_identity = YVEX_MINIMAX_H3_SOURCE_TREE_IDENTITY,
+        .text_artifact = "physical-v3/text_encoder.gguf",
+        .transformer_artifact = "physical-v4/transformer.gguf",
+        .video_artifact = "physical/video_vae.gguf",
+        .audio_artifact = "physical/audio_vae.gguf",
+        .tiers = {{"preview", 192ull, 192ull, 124ull, 1},
+                  {"smoke", 32ull, 32ull, 345ull, 0}}, .tier_count = 2ull,
+        .fps_numerator = 24ull, .fps_denominator = 1ull,
+        .audio_sample_rate = architecture.audio_vae.sample_rate, .seed = 42ull,
+        .maximum_host_bytes = 80ull << 30u, .maximum_device_bytes = 4ull << 30u,
+        .maximum_workspace_bytes = 4ull << 30u, .maximum_file_bytes = 2ull << 30u,
+        .video_temporal_ratio = architecture.video_vae.temporal_ratio,
+        .video_clip_length = architecture.video_vae.clip_length,
+        .video_token_drop = architecture.video_vae.token_drop,
+        .video_spatial_ratio = architecture.video_vae.spatial_ratio,
+        .video_tile_size = architecture.video_vae.tile_size,
+        .video_minimum_tile_overlap = architecture.video_vae.tile_overlap,
+        .video_mean = normalization->video_mean, .video_std = normalization->video_std,
+        .audio_mean = normalization->audio_mean, .audio_std = normalization->audio_std,
+        .pixel_mean = normalization->pixel_mean, .pixel_std = normalization->pixel_std,
+        .video_channels = normalization->video_channels,
+        .audio_channels = normalization->audio_channels,
+        .pixel_channels = normalization->pixel_channels,
+        .audio_output_channels = architecture.audio_vae.output_channels,
+        .audio_samples_per_step = architecture.audio_vae.decoder_rate_product,
+        .frames_per_chunk = 17ull, .frame_remainder = 5ull,
+        .minimum_frames = 124ull, .maximum_frames = 345ull,
+        .minimum_inference_steps = 2ull, .maximum_inference_steps = 64ull,
+        .canvas_multiple = 32ull, .maximum_canvas_pixels = 192ull * 192ull};
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
 static int unresolved_requirements_build(yvex_minimax_h3_target *target,
                                          yvex_minimax_h3_failure *failure,
                                          yvex_error *err)

@@ -9,6 +9,8 @@
 
 #include <yvex/registry.h>
 #include <yvex/server.h>
+#include <yvex/internal/graph.h>
+#include <yvex/internal/server_media.h>
 
 #include "src/cli/private.h"
 
@@ -21,9 +23,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 typedef struct {
     char name[YVEX_SERVER_SESSION_NAME_CAP];
+    char family[64];
     char artifact[PATH_MAX];
     char binding[PATH_MAX];
     char target[128];
@@ -31,6 +35,11 @@ typedef struct {
     char mode[16];
     unsigned long long context_capacity;
 } cli_server_profile;
+
+typedef struct {
+    const char *artifact_root;
+    const char *output_root;
+} cli_server_media_configuration;
 
 typedef struct {
     yvex_server *server;
@@ -119,7 +128,10 @@ static int parse_u64(const char *text, unsigned long long *value)
 static int profile_copy(cli_server_profile *profile,
                         const yvex_model_registry_entry *entry)
 {
-    if (!profile || !entry || strlen(entry->alias) >= sizeof(profile->name) ||
+    if (!profile || !entry || !entry->alias || !entry->family || !entry->path ||
+        !entry->runtime_binding || !entry->runtime_target || !entry->runtime_backend ||
+        !entry->runtime_mode || strlen(entry->alias) >= sizeof(profile->name) ||
+        strlen(entry->family) >= sizeof(profile->family) ||
         strlen(entry->path) >= sizeof(profile->artifact) ||
         strlen(entry->runtime_binding) >= sizeof(profile->binding) ||
         strlen(entry->runtime_target) >= sizeof(profile->target) ||
@@ -127,18 +139,20 @@ static int profile_copy(cli_server_profile *profile,
         strlen(entry->runtime_mode) >= sizeof(profile->mode))
         return 0;
     return snprintf(profile->name, sizeof(profile->name), "%s", entry->alias) > 0 &&
+           snprintf(profile->family, sizeof(profile->family), "%s", entry->family) >= 0 &&
            snprintf(profile->artifact, sizeof(profile->artifact), "%s", entry->path) > 0 &&
            snprintf(profile->binding, sizeof(profile->binding), "%s",
-                    entry->runtime_binding) > 0 &&
+                    entry->runtime_binding) >= 0 &&
            snprintf(profile->target, sizeof(profile->target), "%s",
-                    entry->runtime_target) > 0 &&
+                    entry->runtime_target) >= 0 &&
            snprintf(profile->backend, sizeof(profile->backend), "%s",
-                    entry->runtime_backend) > 0 &&
+                    entry->runtime_backend) >= 0 &&
            snprintf(profile->mode, sizeof(profile->mode), "%s",
-                    entry->runtime_mode) > 0;
+                    entry->runtime_mode) >= 0;
 }
 
-static int profile_resolve(const char *name, cli_server_profile *profile)
+static int profile_resolve(const char *name, cli_server_profile *profile,
+                           int *media_requested)
 {
     static const char *const controls[] = {
         "status", "model", "memory", "log", "stop"
@@ -146,6 +160,7 @@ static int profile_resolve(const char *name, cli_server_profile *profile)
     yvex_model_registry_options options;
     yvex_model_registry *registry = NULL;
     const yvex_model_registry_entry *entry;
+    const yvex_component_variant_adapter *adapter;
     yvex_error err;
     size_t control;
     int rc;
@@ -179,7 +194,12 @@ static int profile_resolve(const char *name, cli_server_profile *profile)
         yvex_model_registry_close(registry);
         return 1;
     }
-    rc = yvex_model_registry_startup_validate(entry, &err);
+    adapter = entry->family
+                  ? yvex_graph_component_variant_find_family(entry->family) : NULL;
+    if (!*media_requested && adapter && adapter->media_target_profile &&
+        adapter->media_execution && (!entry->runtime_binding || !entry->runtime_binding[0]))
+        *media_requested = 1;
+    rc = *media_requested ? YVEX_OK : yvex_model_registry_startup_validate(entry, &err);
     if (rc != YVEX_OK) {
         fprintf(stderr,
                 "yvex server: model cannot start: %s\n"
@@ -240,40 +260,49 @@ static void *raw_console_main(void *opaque)
 }
 
 static void options_defaults(yvex_server_options *options,
-                             const cli_server_profile *profile)
+                             const cli_server_profile *profile, int media_requested)
 {
     memset(options, 0, sizeof(*options));
     options->artifact_path = profile->artifact;
     options->runtime_binding_path = profile->binding;
     options->target_id = profile->target;
-    options->backend = !strcmp(profile->backend, "cuda")
+    options->backend = media_requested || !strcmp(profile->backend, "cuda")
                            ? YVEX_BACKEND_KIND_CUDA : YVEX_BACKEND_KIND_CPU;
-    options->generation_mode = !strcmp(profile->mode, "dspark")
-                                   ? YVEX_SERVER_GENERATION_DSPARK
-                                   : YVEX_SERVER_GENERATION_TARGET_ONLY;
-    options->context_capacity = profile->context_capacity;
+    options->generation_mode = media_requested
+                                   ? YVEX_SERVER_GENERATION_MEDIA
+                                   : (!strcmp(profile->mode, "dspark")
+                                          ? YVEX_SERVER_GENERATION_DSPARK
+                                          : YVEX_SERVER_GENERATION_TARGET_ONLY);
+    options->context_capacity = profile->context_capacity
+                                    ? profile->context_capacity : 256u;
     options->prefill_chunk_tokens = 64u;
     options->maximum_new_tokens = 256u;
     options->maximum_output_bytes = 1048576u;
     options->maximum_sessions = 8u;
     options->request_queue_capacity = 16u;
     options->trace_level = YVEX_SERVER_TRACE_STAGES;
-    options->openai_enabled = 1;
+    options->openai_enabled = !media_requested;
     options->openai_port = 8001u;
     options->openai_timeout_ms = 600000u;
 }
 
-static int option_parse(yvex_server_options *options, const char *flag,
-                        const char *value)
+static int option_parse(yvex_server_options *options,
+                        cli_server_media_configuration *media,
+                        const char *flag, const char *value)
 {
     if (!strcmp(flag, "--socket")) options->socket_path = value;
     else if (!strcmp(flag, "--backend"))
         options->backend = !strcmp(value, "cuda") ? YVEX_BACKEND_KIND_CUDA
                                                     : YVEX_BACKEND_KIND_CPU;
-    else if (!strcmp(flag, "--generation-mode"))
-        options->generation_mode = !strcmp(value, "dspark")
-                                       ? YVEX_SERVER_GENERATION_DSPARK
-                                       : YVEX_SERVER_GENERATION_TARGET_ONLY;
+    else if (!strcmp(flag, "--generation-mode")) {
+        if (!strcmp(value, "media")) options->generation_mode = YVEX_SERVER_GENERATION_MEDIA;
+        else if (!strcmp(value, "dspark"))
+            options->generation_mode = YVEX_SERVER_GENERATION_DSPARK;
+        else options->generation_mode = YVEX_SERVER_GENERATION_TARGET_ONLY;
+    } else if (!strcmp(flag, "--media-artifact-root"))
+        media->artifact_root = value;
+    else if (!strcmp(flag, "--output-root"))
+        media->output_root = value;
     else if (!strcmp(flag, "--ctx"))
         return parse_u64(value, &options->context_capacity);
     else if (!strcmp(flag, "--prefill-chunk"))
@@ -300,8 +329,9 @@ static int option_parse(yvex_server_options *options, const char *flag,
     return 1;
 }
 
-static int command_options_parse(yvex_server_options *options, int argc,
-                                 char **argv, size_t consumed)
+static int command_options_parse(yvex_server_options *options,
+                                 cli_server_media_configuration *media,
+                                 int argc, char **argv, size_t consumed)
 {
     int index;
     for (index = (int)consumed + 2; index < argc; ++index) {
@@ -310,7 +340,7 @@ static int command_options_parse(yvex_server_options *options, int argc,
             options->trace_content = 1;
             continue;
         }
-        if (index + 1 >= argc || !option_parse(options, flag, argv[index + 1])) {
+        if (index + 1 >= argc || !option_parse(options, media, flag, argv[index + 1])) {
             fprintf(stderr, "yvex server: invalid option: %s\n", flag);
             return 0;
         }
@@ -319,8 +349,77 @@ static int command_options_parse(yvex_server_options *options, int argc,
     return 1;
 }
 
+static int command_requests_media(int argc, char **argv, size_t consumed)
+{
+    int index;
+
+    for (index = (int)consumed + 2; index + 1 < argc; ++index)
+        if (!strcmp(argv[index], "--generation-mode") &&
+            !strcmp(argv[index + 1], "media"))
+            return 1;
+    return 0;
+}
+
+static int media_prepare(const cli_server_profile *profile,
+                         const cli_server_media_configuration *configuration,
+                         yvex_runtime_media_host_profile *host,
+                         yvex_server_media_options *media,
+                         yvex_server_options *options, yvex_error *err)
+{
+    const yvex_component_variant_adapter *adapter;
+    yvex_media_target_profile target = {0};
+    int rc;
+
+    if (!configuration->artifact_root || !configuration->output_root) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.media-profile",
+                       "media mode requires --media-artifact-root and --output-root");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    if (access(profile->artifact, R_OK) != 0) {
+        yvex_error_set(err, YVEX_ERR_IO, "server.media-profile",
+                       "registered model artifact is not readable");
+        return YVEX_ERR_IO;
+    }
+    adapter = yvex_graph_component_variant_find_family(profile->family);
+    if (!adapter || !adapter->media_target_profile || !adapter->media_execution) {
+        yvex_error_setf(err, YVEX_ERR_UNSUPPORTED, "server.media-profile",
+                        "family has no conversational media adapter: %s", profile->family);
+        return YVEX_ERR_UNSUPPORTED;
+    }
+    rc = adapter->media_target_profile(&target, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_media_host_profile_build(
+            host, &target, adapter->media_execution, configuration->artifact_root,
+            configuration->output_root, err);
+    if (rc != YVEX_OK) return rc;
+    if (options->backend != host->request_template.component_backend ||
+        options->openai_enabled) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.media-profile",
+                       "media mode requires the admitted CUDA backend and OpenAI disabled");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    options->artifact_path = NULL;
+    options->runtime_binding_path = NULL;
+    options->target_id = host->target;
+    media->schema_version = YVEX_SERVER_MEDIA_SCHEMA_V1;
+    media->output_root = host->output_root;
+    media->request_template = host->request_template;
+    media->profiles = host->profiles;
+    media->profile_count = host->profile_count;
+    media->frames_per_chunk = host->frames_per_chunk;
+    media->frame_remainder = host->frame_remainder;
+    media->minimum_frames = host->minimum_frames;
+    media->maximum_frames = host->maximum_frames;
+    media->minimum_inference_steps = host->minimum_inference_steps;
+    media->maximum_inference_steps = host->maximum_inference_steps;
+    media->canvas_multiple = host->canvas_multiple;
+    media->maximum_canvas_pixels = host->maximum_canvas_pixels;
+    return YVEX_OK;
+}
+
 static void startup_announce(const cli_server_profile *profile,
-                             const yvex_server_options *options)
+                             const yvex_server_options *options,
+                             const cli_server_media_configuration *media)
 {
     char socket_path[YVEX_SERVER_SOCKET_PATH_CAP];
     yvex_error err;
@@ -330,15 +429,21 @@ static void startup_announce(const cli_server_profile *profile,
     printf("YVEX server · foreground\n"
            "  profile %s\n"
            "  target %s · backend=%s · mode=%s · requested ctx=%llu\n"
-           "  artifact %s\n"
-           "  binding %s\n"
-           "  local endpoint %s",
-           profile->name, profile->target,
+           "  artifact %s\n",
+           profile->name, options->target_id,
            options->backend == YVEX_BACKEND_KIND_CUDA ? "cuda" : "cpu",
-           options->generation_mode == YVEX_SERVER_GENERATION_DSPARK
-               ? "dspark" : "target-only",
-           options->context_capacity, profile->artifact, profile->binding,
-           endpoint ? endpoint : "unavailable");
+           options->generation_mode == YVEX_SERVER_GENERATION_MEDIA
+               ? "media"
+               : (options->generation_mode == YVEX_SERVER_GENERATION_DSPARK
+                      ? "dspark" : "target-only"),
+           options->context_capacity, profile->artifact);
+    if (options->generation_mode == YVEX_SERVER_GENERATION_MEDIA) {
+        printf("  component root %s\n  output root %s\n",
+               media->artifact_root, media->output_root);
+    } else {
+        printf("  binding %s\n", profile->binding);
+    }
+    printf("  local endpoint %s", endpoint ? endpoint : "unavailable");
     if (options->openai_enabled)
         printf(" · OpenAI 127.0.0.1:%u", (unsigned int)options->openai_port);
     else
@@ -351,6 +456,9 @@ int yvex_cli_server_dispatch(int argc, char **argv, size_t consumed)
 {
     const char *profile_name;
     cli_server_profile profile;
+    cli_server_media_configuration media_configuration = {0};
+    yvex_runtime_media_host_profile media_host = {0};
+    yvex_server_media_options media_options = {0};
     yvex_server_options options;
     yvex_server *server = NULL;
     cli_server_thread_state thread_state;
@@ -359,19 +467,33 @@ int yvex_cli_server_dispatch(int argc, char **argv, size_t consumed)
     sigset_t signals;
     yvex_error err;
     int rc, signal_ready = 0, console_ready = 0;
+    int media_requested;
     if (consumed + 1u >= (size_t)argc) return 2;
     profile_name = argv[consumed + 1u];
-    rc = profile_resolve(profile_name, &profile);
+    media_requested = command_requests_media(argc, argv, consumed);
+    rc = profile_resolve(profile_name, &profile, &media_requested);
     if (rc != 0) return rc;
-    options_defaults(&options, &profile);
-    if (!command_options_parse(&options, argc, argv, consumed)) return 2;
-    startup_announce(&profile, &options);
+    options_defaults(&options, &profile, media_requested);
+    if (!command_options_parse(
+            &options, &media_configuration, argc, argv, consumed)) return 2;
+    yvex_error_clear(&err);
+    if (options.generation_mode == YVEX_SERVER_GENERATION_MEDIA)
+        rc = media_prepare(&profile, &media_configuration, &media_host,
+                           &media_options, &options, &err);
+    else if (media_configuration.artifact_root || media_configuration.output_root) {
+        yvex_error_set(&err, YVEX_ERR_INVALID_ARG, "server.media-profile",
+                       "media roots require --generation-mode media");
+        rc = YVEX_ERR_INVALID_ARG;
+    } else rc = YVEX_OK;
+    if (rc != YVEX_OK) return server_error(&err, 2);
+    startup_announce(&profile, &options, &media_configuration);
     (void)sigemptyset(&signals);
     (void)sigaddset(&signals, SIGINT);
     (void)sigaddset(&signals, SIGTERM);
     (void)pthread_sigmask(SIG_BLOCK, &signals, NULL);
-    yvex_error_clear(&err);
     rc = yvex_server_create(&server, &options, &err);
+    if (rc == YVEX_OK && options.generation_mode == YVEX_SERVER_GENERATION_MEDIA)
+        rc = yvex_server_media_configure(server, &media_options, &err);
     if (rc == YVEX_OK) {
         startup_progress_begin(&startup_progress);
         rc = yvex_server_start(server, &err);

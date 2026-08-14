@@ -184,12 +184,19 @@ artifact and publication roots:
 ```sh
 ROOT=<EXTERNAL_MINIMAX_ROOT>/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08
 OUTPUT=<OWNED_ABSOLUTE_OUTPUT_DIRECTORY>
+
+# One-time selector registration. The complete component set is admitted from ROOT.
+./yvex model registry add \
+  --alias minimax-h3-fl2va-runtime-media \
+  --family minimax-h3 \
+  --path "$ROOT/physical/audio_vae.gguf"
+
 systemd-run --user --scope --quiet \
   -p MemoryHigh=76G -p MemoryMax=88G -p MemorySwapMax=0 \
-  ./yvex runtime start \
-  --generation-mode media \
+  ./yvex server minimax-h3-fl2va-runtime-media \
   --media-artifact-root "$ROOT" \
-  --output-root "$OUTPUT"
+  --output-root "$OUTPUT" \
+  --openai off
 ```
 
 The output directory must already exist, be owned by the operator, and must not
@@ -199,7 +206,9 @@ request instead of consuming the machine's remaining unified memory. Startup
 admits the conversational endpoint and its identity-bound component locations;
 it does not preload 144 GB of weights or create a CUDA context. A completed
 media request authenticates and stages each component through the native YVEX
-runtime.
+runtime. The registry entry is a selector, not a complete-artifact or runtime
+readiness claim; the family adapter selects media mode and the request validates
+all four component artifacts beneath `ROOT`.
 
 From another terminal, start the ordinary client:
 
@@ -223,7 +232,12 @@ sampled frames remain visually unrecognizable; `preview` is a bounded geometry
 name, not a model-quality claim. The source-sized path would require 37,726
 packed rows at the same prompt and duration and therefore refuses before model
 materialization. The smoke profile retains the earlier repeatable 32x32
-evidence.
+evidence. The canonical server/chat acceptance used `smoke`, five seconds, two
+sigma-grid points, AVI, and seed 42; it returned a 1,048,544-byte seekable file
+after 560.36 seconds. Independent GStreamer playback recovered 124 frames and
+165,333 stereo samples per channel with a 10,416 ns duration delta. Peak server
+RSS was 62.57 GiB inside the 88 GiB hard limit, with no residual component
+residency after the turn.
 
 ## Three-terminal operation
 

@@ -10,13 +10,9 @@ extern "C" {
 #endif
 
 #define YVEX_SERVER_MEDIA_SCHEMA_V1 1u
-#define YVEX_SERVER_MEDIA_PROFILE_CAP 4u
+#define YVEX_SERVER_MEDIA_PROFILE_CAP YVEX_RUNTIME_MEDIA_PROFILE_CAP
 
-typedef struct {
-    const char *name;
-    unsigned long long width, height, maximum_frames;
-    int preview_alias;
-} yvex_server_media_profile;
+typedef yvex_runtime_media_profile yvex_server_media_profile;
 
 typedef struct {
     unsigned int schema_version;

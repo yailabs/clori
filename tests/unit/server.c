@@ -10,6 +10,8 @@
 #include <unistd.h>
 
 #include <yvex/server.h>
+#include <yvex/internal/graph.h>
+#include <yvex/internal/media.h>
 
 #include "src/server/private.h"
 #include "tests/test.h"
@@ -383,6 +385,20 @@ static int test_media_dialog_and_refusals(void)
                          !strstr(messages.text, "Durata:") &&
                          !strstr(messages.text, "Iterazioni:"),
                      "media dialogue retains selected parameters and asks only for format");
+    memset(&messages, 0, sizeof(messages));
+    YVEX_TEST_ASSERT(media_registry_request(registry, YVEX_CLIENT_OP_SESSION_NEW,
+                                            "smoke-geometry", NULL,
+                                            &messages, &err) == YVEX_OK,
+                     "media geometry dialogue session");
+    memset(&messages, 0, sizeof(messages));
+    rc = media_registry_request(
+        registry, YVEX_CLIENT_OP_GENERATION_TURN, "smoke-geometry",
+        "Smoke 32x32, 5 secondi, 2 punti sigma, seed 42", &messages, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && strstr(messages.text, "AVI") &&
+                         !strstr(messages.text, "Qualità:") &&
+                         !strstr(messages.text, "Durata:") &&
+                         !strstr(messages.text, "Iterazioni:"),
+                     "media dimensions do not alias the adjacent duration");
     for (index = 0ull; index < sizeof(bad_prompts) / sizeof(bad_prompts[0]); ++index) {
         char name[32];
         (void)snprintf(name, sizeof(name), "bad-%llu", index);
@@ -455,6 +471,60 @@ static int test_media_server_starts_without_model(void)
                      "media host finishes cleanly");
     yvex_server_close(&server);
     YVEX_TEST_ASSERT(rmdir(root) == 0, "media host output root removed empty");
+    return 0;
+}
+
+static int test_media_family_profile(void)
+{
+    const yvex_component_variant_adapter *adapter;
+    yvex_media_target_profile target;
+    yvex_runtime_media_host_profile profile, repeated;
+    yvex_error err;
+    int rc;
+
+    adapter = yvex_graph_component_variant_find_family("minimax-h3");
+    YVEX_TEST_ASSERT(adapter && adapter->media_target_profile && adapter->media_execution,
+                     "family catalog exposes one media adapter");
+    rc = adapter->media_target_profile(&target, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK, "family builds media target facts");
+    rc = yvex_runtime_media_host_profile_build(
+        &profile, &target, adapter->media_execution, "/models/minimax-h3/revision",
+        "/outputs/minimax-h3", &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK, "family catalog builds media host profile");
+    YVEX_TEST_ASSERT(profile.schema_version == YVEX_RUNTIME_MEDIA_HOST_SCHEMA_V1,
+                     "media host profile schema");
+    YVEX_TEST_ASSERT_STREQ(profile.request_template.target,
+                           "minimax-h3-fl2va", "media host target");
+    YVEX_TEST_ASSERT(profile.request_template.component_backend == YVEX_BACKEND_KIND_CUDA,
+                     "media host CUDA backend");
+    YVEX_TEST_ASSERT(profile.request_template.condition && profile.request_template.latent &&
+                         profile.request_template.video_decode &&
+                         profile.request_template.audio_decode,
+                     "media host execution callbacks");
+    YVEX_TEST_ASSERT(profile.profile_count == 2ull &&
+                         !strcmp(profile.profiles[0].name, "preview") &&
+                         !strcmp(profile.profiles[1].name, "smoke"),
+                     "media host user profiles");
+    YVEX_TEST_ASSERT(strstr(profile.transformer_artifact,
+                            "physical-v4/transformer.gguf") != NULL,
+                     "media host transformer artifact path");
+    rc = yvex_runtime_media_host_profile_build(
+        &repeated, &target, adapter->media_execution, "/models/minimax-h3/revision",
+        "/outputs/minimax-h3", &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK &&
+                         !strcmp(profile.request_template.source_identity,
+                                 repeated.request_template.source_identity) &&
+                         !strcmp(profile.text_artifact, repeated.text_artifact) &&
+                         profile.maximum_canvas_pixels == repeated.maximum_canvas_pixels,
+                     "media host profile is deterministic");
+    target.text_artifact = "../outside.gguf";
+    rc = yvex_runtime_media_host_profile_build(
+        &repeated, &target, adapter->media_execution, "/models/minimax-h3/revision",
+        "/outputs/minimax-h3", &err);
+    YVEX_TEST_ASSERT(rc == YVEX_ERR_BOUNDS,
+                     "media host refuses component-root traversal");
+    YVEX_TEST_ASSERT(!yvex_graph_component_variant_find_family("unknown"),
+                     "family without a media adapter refuses");
     return 0;
 }
 
@@ -573,6 +643,7 @@ int yvex_test_server(void)
     if (test_provider_telemetry() != 0) return 1;
     if (test_openai_listener_admission() != 0) return 1;
     if (test_media_dialog_and_refusals() != 0) return 1;
+    if (test_media_family_profile() != 0) return 1;
     if (test_media_server_starts_without_model() != 0) return 1;
     return 0;
 }

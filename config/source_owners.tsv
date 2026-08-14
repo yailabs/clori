@@ -25,6 +25,7 @@ include/yvex/internal/logits.h	runtime	runtime.logits	generic	private	internal-a
 include/yvex/internal/sampling.h	runtime	runtime.sampling	generic	private	internal-abi	runtime,cli,tests	interface	none
 include/yvex/internal/latent.h	runtime	runtime.latent	generic	private	internal-abi	runtime,graph,tests	interface	none
 include/yvex/internal/media.h	runtime	runtime.media	generic	private	internal-abi	graph.family,cli,tests	interface	none
+include/yvex/internal/media_target.h	model	model.media_target	generic	private	internal-abi	model.family,graph.family,runtime,cli	interface	none
 include/yvex/internal/server_media.h	server	server.media	generic	private	internal-abi	daemon,server.core	interface	none
 include/yvex/internal/graph.h	graph	graph.internal	generic	private	internal-abi	runtime,backend,cli	interface	none
 include/yvex/internal/operator_graph.h	graph	graph.operator_ir	generic	private	internal-abi	model.family,graph,runtime,tests	interface	none

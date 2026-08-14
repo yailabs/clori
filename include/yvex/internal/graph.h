@@ -394,6 +394,8 @@ const yvex_graph_execution_binding *yvex_graph_execution_find(
     const char *target_id);
 const yvex_component_variant_adapter *yvex_graph_component_variant_find(
     const char *target_id);
+const yvex_component_variant_adapter *yvex_graph_component_variant_find_family(
+    const char *family);
 
 /* Resolve the reusable graph numerical arena independently of backend staging. */
 int yvex_attention_workspace_capacity_resolve(
