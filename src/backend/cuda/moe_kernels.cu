@@ -97,7 +97,8 @@ extern "C" __global__ void yvex_moe_grouped_up(
     unsigned long long gate_expert_bytes, unsigned int gate_qtype,
     const unsigned char *up, unsigned long long up_row_bytes,
     unsigned long long up_expert_bytes, unsigned int up_qtype,
-    const unsigned long long *selected, unsigned long long topk,
+    const unsigned long long *selected, const float *weights,
+    unsigned long long topk,
     unsigned long long expert_count, const unsigned char *input,
     unsigned long long input_extent, int q8_input,
     unsigned long long intermediate_width,
@@ -132,7 +133,8 @@ extern "C" __global__ void yvex_moe_grouped_up(
     if (!lane && !*status) {
         g = fminf(g, (float)limit); u = fmaxf((float)-limit, fminf(u, (float)limit));
         float silu = g >= 0.0f ? g / (1.0f + expf(-g)) : g * expf(g) / (1.0f + expf(g));
-        float value = float_to_bf16_rne(silu * u);
+        float route_weight = weights ? weights[rank] : 1.0f;
+        float value = float_to_bf16_rne(silu * u * route_weight);
         if (!isfinite(value)) atomicCAS(status, 0, 1);
         else intermediate[rank * intermediate_width + row] = value;
     }
@@ -141,7 +143,7 @@ extern "C" __global__ void yvex_moe_grouped_up(
 extern "C" __global__ void yvex_moe_grouped_down(
     const unsigned char *down, unsigned long long row_bytes,
     unsigned long long expert_bytes, unsigned int qtype,
-    const unsigned long long *selected, const float *weights,
+    const unsigned long long *selected,
     unsigned long long topk, unsigned long long expert_count,
     const unsigned char *intermediate, unsigned long long intermediate_extent,
     int q8_input,
@@ -152,7 +154,7 @@ extern "C" __global__ void yvex_moe_grouped_down(
                              (unsigned long long)(threadIdx.x >> 5u);
     float total = 0.0f;
     if (!status || *status || row >= hidden) return;
-    if (!down || !selected || !weights || !intermediate || !routed ||
+    if (!down || !selected || !intermediate || !routed ||
         !row_bytes || !intermediate_extent || !topk ||
         (q8_input && row_bytes % intermediate_extent)) {
         if (!lane) atomicCAS(status, 0, 2);
@@ -167,8 +169,7 @@ extern "C" __global__ void yvex_moe_grouped_down(
         float dot = moe_warp_dot(weight, activation, intermediate_extent,
                                  row_bytes, qtype, q8_input, status);
         if (!lane && !*status) {
-            float value = float_to_bf16_rne(dot);
-            total = __fadd_rn(total, __fmul_rn(value, weights[rank]));
+            total = __fadd_rn(total, float_to_bf16_rne(dot));
         }
     }
     if (!lane && !*status) routed[row] = total;
@@ -350,7 +351,8 @@ extern "C" __global__ void yvex_moe_grouped_up_rows(
     unsigned long long gate_expert_bytes, unsigned int gate_qtype,
     const unsigned char *up, unsigned long long up_row_bytes,
     unsigned long long up_expert_bytes, unsigned int up_qtype,
-    const unsigned long long *selected, const unsigned long long *order,
+    const unsigned long long *selected, const float *weights,
+    const unsigned long long *order,
     unsigned long long pair_count, unsigned long long topk,
     unsigned long long expert_count, const unsigned char *input,
     unsigned long long input_extent, int q8_input,
@@ -394,7 +396,8 @@ extern "C" __global__ void yvex_moe_grouped_up_rows(
         u = fmaxf((float)-limit, fminf(u, (float)limit));
         float silu = g >= 0.0f ? g / (1.0f + expf(-g))
                                : g * expf(g) / (1.0f + expf(g));
-        float value = float_to_bf16_rne(silu * u);
+        float route_weight = weights ? weights[source_pair] : 1.0f;
+        float value = float_to_bf16_rne(silu * u * route_weight);
         if (!isfinite(value)) atomicCAS(status, 0, 1);
         else intermediate[ordered_pair * intermediate_width + output_row] = value;
     }
@@ -403,7 +406,7 @@ extern "C" __global__ void yvex_moe_grouped_up_rows(
 extern "C" __global__ void yvex_moe_grouped_down_rows(
     const unsigned char *down, unsigned long long row_bytes,
     unsigned long long expert_bytes, unsigned int qtype,
-    const unsigned long long *selected, const float *weights,
+    const unsigned long long *selected,
     const unsigned long long *order, unsigned long long pair_count,
     unsigned long long topk, unsigned long long expert_count,
     const unsigned char *intermediate, unsigned long long intermediate_extent,
@@ -429,8 +432,7 @@ extern "C" __global__ void yvex_moe_grouped_down_rows(
     float dot = moe_warp_dot(weight, activation, intermediate_extent,
                              row_bytes, qtype, q8_input, status);
     if (!lane && !*status) {
-        float route_weight = weights ? weights[source_pair] : 1.0f;
-        float value = __fmul_rn(float_to_bf16_rne(dot), route_weight);
+        float value = float_to_bf16_rne(dot);
         if (!isfinite(value)) atomicCAS(status, 0, 1);
         else pair_outputs[source_pair * hidden + output_row] = value;
     }
@@ -472,7 +474,7 @@ extern "C" __global__ void yvex_moe_combine_rows(
 
 extern "C" __global__ void yvex_moe_swiglu(
     const float *gate, const float *up, unsigned long long count,
-    double limit, float *output, int *status)
+    double limit, float route_weight, float *output, int *status)
 {
     unsigned long long index = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
     if (!status || *status || index >= count) return;
@@ -483,7 +485,7 @@ extern "C" __global__ void yvex_moe_swiglu(
     double g = fmin((double)gate[index], limit);
     double u = fmax(-limit, fmin((double)up[index], limit));
     double silu = g >= 0.0 ? g / (1.0 + exp(-g)) : g * exp(g) / (1.0 + exp(g));
-    float value = float_to_bf16_rne((float)(silu * u));
+    float value = float_to_bf16_rne((float)(silu * u * route_weight));
     if (!isfinite(value)) atomicCAS(status, 0, 1);
     else output[index] = value;
 }

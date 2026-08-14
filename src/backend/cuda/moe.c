@@ -628,7 +628,7 @@ static int moe_cuda_add_selected(yvex_backend_moe_execution *execution, yvex_err
                                     MOE_CUDA_ROWS_PER_BLOCK;
         void *params[] = {&gate_address, (void *)&gate->row_bytes, &gate_expert_bytes,
                           &gate_qtype, &up_address, (void *)&up->row_bytes, &up_expert_bytes,
-                          &up_qtype, &execution->selected,
+                          &up_qtype, &execution->selected, &execution->weights,
                           (void *)&layer->experts_per_token, (void *)&layer->routed_experts,
                           &execution->normalized, &hidden_width, &q8_input,
                           (void *)&layer->expert_intermediate_width,
@@ -646,7 +646,7 @@ static int moe_cuda_add_selected(yvex_backend_moe_execution *execution, yvex_err
         CUdeviceptr down_address = (CUdeviceptr)down->device_address;
         unsigned int qtype = down->qtype;
         void *params[] = {&down_address, (void *)&down->row_bytes, &down_expert_bytes,
-                          &qtype, &execution->selected, &execution->weights,
+                          &qtype, &execution->selected,
                           (void *)&layer->experts_per_token, (void *)&layer->routed_experts,
                           &execution->intermediate, &intermediate_width, &q8_input,
                           (void *)&layer->hidden_width, &execution->routed,
@@ -733,7 +733,7 @@ static int moe_cuda_add_selected_derived(
             &gate_storage, &derived, &gate_qtype,
             &up_address, (void *)&up->row_bytes, &up_expert_bytes,
             &up_storage, &derived, &up_qtype,
-            &execution->selected, &order, &topk, &topk, &experts,
+            &execution->selected, &execution->weights, &order, &topk, &topk, &experts,
             &execution->gate, &input_width, &intermediate_width,
             (void *)&layer->activation_limit, &execution->intermediate,
             &execution->status};
@@ -758,7 +758,7 @@ static int moe_cuda_add_selected_derived(
         void *params[] = {
             &down_address, (void *)&down->row_bytes, &down_expert_bytes,
             &down_storage, &derived, &down_qtype,
-            &execution->selected, &execution->weights, &order, &topk, &topk,
+            &execution->selected, &order, &topk, &topk,
             &experts, &execution->up, &intermediate_width, &hidden,
             &execution->pair_outputs, &execution->status};
         rc = execution->ops->launch(
@@ -806,8 +806,9 @@ int yvex_backend_moe_add_expert(yvex_backend_moe_execution *execution,
                              "cuda.moe.expert-up", err);
     grid = (unsigned int)((width + MOE_CUDA_BLOCK - 1ull) / MOE_CUDA_BLOCK);
     if (rc == YVEX_OK) {
+        float weight = shared ? 1.0f : route_weight;
         void *params[] = {&execution->gate, &execution->up, &width,
-                          (void *)&layer->activation_limit, &execution->intermediate,
+                          (void *)&layer->activation_limit, &weight, &execution->intermediate,
                           &execution->status};
         rc = execution->ops->launch(&execution->work, execution->state->moe_swiglu_function,
                                     grid, MOE_CUDA_BLOCK, 0u, params, "cuda.moe.swiglu",
@@ -818,7 +819,7 @@ int yvex_backend_moe_add_expert(yvex_backend_moe_execution *execution,
                              execution->expert, 1, "cuda.moe.expert-down", err);
     grid = (unsigned int)((layer->hidden_width + MOE_CUDA_BLOCK - 1ull) / MOE_CUDA_BLOCK);
     if (rc == YVEX_OK) {
-        float weight = shared ? 1.0f : route_weight;
+        float weight = 1.0f;
         CUdeviceptr aggregate = shared ? execution->shared : execution->routed;
         void *params[] = {&execution->expert, (void *)&layer->hidden_width, &weight,
                           &aggregate, &execution->status};
@@ -1456,7 +1457,7 @@ static int moe_cuda_batch_experts(moe_cuda_batch *batch,
         void *params[] = {
             &gate_address, (void *)&gate->row_bytes, &gate_expert_bytes, &gate_qtype,
             &up_address, (void *)&up->row_bytes, &up_expert_bytes, &up_qtype,
-            &selected, &order, &count, &topk, &experts,
+            &selected, &weights, &order, &count, &topk, &experts,
             &input, &up_input_extent, &up_q8,
             &intermediate_width, (void *)&layer->activation_limit,
             &intermediate, &batch->status};
@@ -1465,7 +1466,7 @@ static int moe_cuda_batch_experts(moe_cuda_batch *batch,
             &gate_storage, &gate_layout, &gate_qtype,
             &up_address, (void *)&up->row_bytes, &up_expert_bytes,
             &up_storage, &up_layout, &up_qtype,
-            &selected, &order, &count, &topk, &experts, &input, &input_width,
+            &selected, &weights, &order, &count, &topk, &experts, &input, &input_width,
             &intermediate_width, (void *)&layer->activation_limit,
             &intermediate, &batch->status};
         rc = batch->ops->launch(
@@ -1491,13 +1492,13 @@ static int moe_cuda_batch_experts(moe_cuda_batch *batch,
         unsigned long long storage = down->storage_bytes;
         void *params[] = {
             &down_address, (void *)&down->row_bytes, &down_expert_bytes, &qtype,
-            &selected, &weights, &order, &count, &topk, &experts,
+            &selected, &order, &count, &topk, &experts,
             &down_input, &down_input_extent, &down_q8,
             (void *)&layer->hidden_width, &pair_outputs, &batch->status};
         void *tensorcore_params[] = {
             &down_address, (void *)&down->row_bytes, &down_expert_bytes,
             &storage, &layout, &qtype,
-            &selected, &weights, &order, &count, &topk, &experts,
+            &selected, &order, &count, &topk, &experts,
             &down_input, &intermediate_width, (void *)&layer->hidden_width,
             &pair_outputs, &batch->status};
         rc = batch->ops->launch(

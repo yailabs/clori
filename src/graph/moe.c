@@ -588,12 +588,12 @@ int yvex_moe_expert_cpu(const yvex_moe_layer_plan *layer,
                         const yvex_moe_weight_view *gate,
                         const yvex_moe_weight_view *up,
                         const yvex_moe_weight_view *down, const float *input,
-                        float *output, yvex_error *err)
+                        float route_weight, float *output, yvex_error *err)
 {
     float gate_values[4096], up_values[4096], intermediate[4096];
     unsigned long long index, width;
     int rc;
-    if (!layer || !gate || !up || !down || !input || !output ||
+    if (!layer || !gate || !up || !down || !input || !output || !isfinite(route_weight) ||
         gate->row_count != up->row_count || down->row_width != gate->row_count ||
         down->row_count != layer->hidden_width)
         return moe_refuse(err, YVEX_ERR_INVALID_ARG, "MoE expert geometry is invalid");
@@ -607,7 +607,7 @@ int yvex_moe_expert_cpu(const yvex_moe_layer_plan *layer,
         double u = fmax(-layer->activation_limit,
                         fmin(up_values[index], layer->activation_limit));
         double silu = g >= 0.0 ? g / (1.0 + exp(-g)) : g * exp(g) / (1.0 + exp(g));
-        intermediate[index] = (float)(silu * u);
+        intermediate[index] = (float)(silu * u * route_weight);
     }
     if (!yvex_attention_compute_round(YVEX_ATTENTION_COMPUTE_BF16_F32_RNE_V1,
                                       intermediate, width)) {

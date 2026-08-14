@@ -462,7 +462,8 @@ extern "C" __global__ void yvex_moe_grouped_up_tensorcore(
     const unsigned char *up, unsigned long long up_row_bytes,
     unsigned long long up_expert_bytes, unsigned long long up_storage_bytes,
     unsigned int up_layout, unsigned int up_qtype,
-    const unsigned long long *selected, const unsigned long long *order,
+    const unsigned long long *selected, const float *weights,
+    const unsigned long long *order,
     unsigned long long pair_count, unsigned long long topk,
     unsigned long long expert_count, const unsigned char *input,
     unsigned long long input_width, unsigned long long intermediate_width,
@@ -524,7 +525,8 @@ extern "C" __global__ void yvex_moe_grouped_up_tensorcore(
         u = fmaxf((float)-limit, fminf(u, (float)limit));
         float silu = g >= 0.0f ? g / (1.0f + expf(-g))
                                : g * expf(g) / (1.0f + expf(g));
-        float value = float_to_bf16_rne(silu * u);
+        float route_weight = weights ? weights[source_pair] : 1.0f;
+        float value = float_to_bf16_rne(silu * u * route_weight);
         if (!isfinite(value)) atomicCAS(status, 0, 1);
         else intermediate[ordered_pair * intermediate_width + row_base + lane] = value;
     }
@@ -534,7 +536,7 @@ extern "C" __global__ void yvex_moe_grouped_down_tensorcore(
     const unsigned char *down, unsigned long long row_bytes,
     unsigned long long expert_bytes, unsigned long long storage_bytes,
     unsigned int layout, unsigned int qtype,
-    const unsigned long long *selected, const float *weights,
+    const unsigned long long *selected,
     const unsigned long long *order, unsigned long long pair_count,
     unsigned long long topk, unsigned long long expert_count,
     const unsigned char *intermediate, unsigned long long intermediate_width,
@@ -577,8 +579,7 @@ extern "C" __global__ void yvex_moe_grouped_down_tensorcore(
         &down_view, expert, row_base, activation, weight_tiles + warp * 256u,
         activation_tiles + warp * 256u, product_tiles + warp * 256u);
     if (lane < 16u && row_base + lane < hidden && !*status) {
-        float route_weight = weights ? weights[source_pair] : 1.0f;
-        float value = __fmul_rn(float_to_bf16_rne(dot), route_weight);
+        float value = float_to_bf16_rne(dot);
         if (!isfinite(value)) atomicCAS(status, 0, 1);
         else pair_outputs[source_pair * hidden + row_base + lane] = value;
     }

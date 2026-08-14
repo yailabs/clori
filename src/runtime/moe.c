@@ -518,17 +518,16 @@ static int runtime_moe_layer_cpu(yvex_runtime_moe_context *context,
                                          &bytes_read, err);
         if (rc == YVEX_OK)
             rc = yvex_moe_expert_cpu(layer, &selected[0], &selected[1], &selected[2],
-                                     context->normalized, context->expert, err);
+                                     context->normalized, result->router.selected_weights[rank], context->expert, err);
         if (rc == YVEX_OK)
             for (lane = 0ull; lane < layer->hidden_width; ++lane)
-                context->routed[lane] += context->expert[lane] *
-                                         result->router.selected_weights[rank];
+                context->routed[lane] += context->expert[lane];
     }
     if (rc == YVEX_OK)
         rc = yvex_moe_expert_cpu(layer, &job->weights[YVEX_MOE_WEIGHT_SHARED_GATE],
                                  &job->weights[YVEX_MOE_WEIGHT_SHARED_UP],
                                  &job->weights[YVEX_MOE_WEIGHT_SHARED_DOWN],
-                                 context->normalized, context->shared, err);
+                                 context->normalized, 1.0f, context->shared, err);
     if (rc != YVEX_OK) return rc;
     for (lane = 0ull; lane < layer->hidden_width; ++lane)
         context->combined[lane] = context->routed[lane] + context->shared[lane];
@@ -1158,8 +1157,7 @@ static int runtime_moe_device_routing_identity(
  * token-local. This boundary prevents Transformer and future backends from defining batching as
  * repeated one-row calls; a grouped kernel can replace this adapter without changing semantics.
  */
-static int runtime_moe_execute_layer_rows(
-    yvex_runtime_moe_context *context, unsigned long long layer_index,
+static int runtime_moe_execute_layer_rows(yvex_runtime_moe_context *context, unsigned long long layer_index,
     const yvex_moe_row_batch *batch, const yvex_moe_row_batch_output *output,
     yvex_moe_row_batch_result *result, yvex_error *err)
 {

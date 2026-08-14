@@ -1230,9 +1230,9 @@ static int assert_moe_row_dot_overflow(yvex_backend *backend)
     yvex_device_tensor *arena = NULL;
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     unsigned char host[ARENA_BYTES] = {0}, observed[ARENA_BYTES] = {0};
-    const float activation_scale = 1.0e34f, route_weight = 1.0f;
+    const float activation_scale = 1.0e34f;
     const unsigned short weight_scale = yvex_quant_f16_encode(1.0f);
-    CUdeviceptr base, down, selected, weights, order, activation, output, status;
+    CUdeviceptr base, down, selected, order, activation, output, status;
     unsigned long long row_bytes = Q8_0_ROW_BYTES, expert_bytes = Q8_0_ROW_BYTES;
     unsigned long long pair_count = 1ull, topk = 1ull, experts = 1ull;
     unsigned long long intermediate_extent = Q8_BLOCKS, hidden = 1ull;
@@ -1251,7 +1251,6 @@ static int assert_moe_row_dot_overflow(yvex_backend *backend)
         memcpy(q8, &activation_scale, sizeof(activation_scale));
         memset(q8 + 4u, 127, 256u);
     }
-    memcpy(host + WEIGHT_OFFSET, &route_weight, sizeof(route_weight));
     descriptor.name = "moe-row-dot-overflow";
     descriptor.dtype = YVEX_DTYPE_I8;
     descriptor.rank = 1u;
@@ -1264,13 +1263,12 @@ static int assert_moe_row_dot_overflow(yvex_backend *backend)
     down = base;
     activation = base + Q8_0_ROW_BYTES;
     selected = base + SELECTED_OFFSET;
-    weights = base + WEIGHT_OFFSET;
     order = base + ORDER_OFFSET;
     output = base + OUTPUT_OFFSET;
     status = base + STATUS_OFFSET;
     {
         void *params[] = {
-            &down, &row_bytes, &expert_bytes, &qtype, &selected, &weights,
+            &down, &row_bytes, &expert_bytes, &qtype, &selected,
             &order, &pair_count, &topk, &experts, &activation,
             &intermediate_extent, &q8_input, &hidden, &output, &status};
         rc = yvex_cuda_launch(

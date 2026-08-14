@@ -283,11 +283,12 @@ int yvex_moe_ffn_prepare_cpu(const yvex_moe_layer_job *job, float *normalized,
                              float *post, float *combination, yvex_error *err);
 int yvex_moe_route_cpu(const yvex_moe_layer_job *job, const float *normalized,
                        yvex_moe_router_result *result, yvex_error *err);
+/* Route weight scales SwiGLU before BF16 publication and the down projection. */
 int yvex_moe_expert_cpu(const yvex_moe_layer_plan *layer,
                         const yvex_moe_weight_view *gate,
                         const yvex_moe_weight_view *up,
                         const yvex_moe_weight_view *down, const float *input,
-                        float *output, yvex_error *err);
+                        float route_weight, float *output, yvex_error *err);
 typedef struct yvex_backend_moe_execution yvex_backend_moe_execution;
 int yvex_backend_moe_begin(yvex_backend_moe_execution **out, yvex_backend *backend,
                            const yvex_moe_layer_job *job,
