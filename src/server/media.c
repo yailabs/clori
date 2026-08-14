@@ -501,7 +501,7 @@ static int dialog_question(server_media_registry *registry,
     }
     if (!session->format_selected) {
         wrote = snprintf(response + used, sizeof(response) - used,
-                         "Formato disponibile: AVI. Puoi anche indicare un seed opzionale.");
+                         "Formato disponibile: AVI. Puoi anche indicare un seed opzionale.\n");
         if (wrote < 0 || (size_t)wrote >= sizeof(response) - used) return YVEX_ERR_BOUNDS;
     }
     session->dialog = MEDIA_DIALOG_PARAMETERS;
@@ -590,7 +590,7 @@ static int generation_execute(server_media_registry *registry,
     session->dialog = MEDIA_DIALOG_COMPLETE;
     session->state = YVEX_SERVER_SESSION_READY;
     length = snprintf(response, sizeof(response),
-                      "Video completato: %s\n%llux%llu, %llu frame, AVI, seed %llu.",
+                      "Video completato: %s\n%llux%llu, %llu frame, AVI, seed %llu.\n",
                       path, session->width, session->height, session->frames, session->seed);
     if (length < 0 || (size_t)length >= sizeof(response))
         return media_refuse(err, YVEX_ERR_BOUNDS, "media completion response exceeds capacity");

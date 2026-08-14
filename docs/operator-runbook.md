@@ -175,6 +175,48 @@ RAM for its 108,274,154,488-byte tensor payload, plus runtime state and backend
 workspace. A cold start can take several minutes because authentication and
 the complete RAM transfer finish before the socket becomes ready.
 
+## Conversational MiniMax-H3 media host
+
+MiniMax-H3 uses the same persistent server and local chat protocol, but its four
+large component artifacts are staged at request phase boundaries rather than
+kept resident simultaneously. An operator starts the media host with immutable
+artifact and publication roots:
+
+```sh
+ROOT=<EXTERNAL_MINIMAX_ROOT>/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08
+OUTPUT=<OWNED_ABSOLUTE_OUTPUT_DIRECTORY>
+./yvex runtime start \
+  --generation-mode media \
+  --media-artifact-root "$ROOT" \
+  --output-root "$OUTPUT"
+```
+
+The output directory must already exist, be owned by the operator, and must not
+itself be a symlink. Startup admits the conversational endpoint and its
+identity-bound component locations; it does not preload 144 GB of weights or
+create a CUDA context. A completed media request authenticates and stages each
+component through the native YVEX runtime.
+
+From another terminal, start the ordinary client:
+
+```sh
+./yvex chat --session video
+```
+
+Write the creative scene as normal conversation. The server asks inside that
+conversation for every missing material choice: `source` (1344x768), `draft`
+(960x544), or `smoke` (32x32); 5 through 15 seconds; 2 through 64 explicit
+sigma-grid points; AVI; and an optional seed. Those are request facts, not
+daemon startup flags. The source does not declare a default iteration count,
+so YVEX never invents one. FHD, 2K, 4K, MP4, MKV, WebM, and MOV refuse until an
+admitted upscaler or encoder owns those contracts. On success, chat reports the
+atomically published AVI path beneath `OUTPUT`.
+
+Only the bounded 32x32, 124-frame, one-evaluation profile currently has live
+repeatability, playback, synchronization, and memory evidence. The larger
+profiles are source geometry choices, not quality, latency, or GB10-feasibility
+claims.
+
 ## Three-terminal operation
 
 All three terminals attach to the same daemon and model. They do not create

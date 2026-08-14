@@ -282,6 +282,22 @@ dspark
 EOF
 cmp "$root/expected-daemon-arguments" "$root/daemon-arguments"
 
+# Composite media locations configure the resident host; creative parameters remain chat turns.
+HOME="$home_root" YVEX_TEST_DAEMON_ARGS="$root/media-daemon-arguments" \
+    "$root/product-bin/yvex" runtime start \
+    --generation-mode media \
+    --media-artifact-root /models/minimax-h3/revision \
+    --output-root /outputs/minimax-h3 >"$root/media-start.out"
+cat >"$root/expected-media-daemon-arguments" <<'EOF'
+--generation-mode
+media
+--media-artifact-root
+/models/minimax-h3/revision
+--output-root
+/outputs/minimax-h3
+EOF
+cmp "$root/expected-media-daemon-arguments" "$root/media-daemon-arguments"
+
 set +e
 HOME="$home_root" XDG_RUNTIME_DIR="$root/absent-runtime" \
     "$YVEX_BIN" runtime model >"$root/out2" 2>"$root/err"

@@ -1082,6 +1082,25 @@ The audit projection truthfully reports
 `cli_applicability: applicable`. The roughly 9 minute 40 second correctness
 runs are not benchmarks and establish no useful generation speed.
 
+## Conversational media projection
+
+The common persistent server now admits MiniMax-H3 as generation mode `media`.
+`yvex runtime start` accepts the immutable component-artifact root and an owned
+absolute output directory, while `yvex chat` owns the creative prompt and asks
+for missing resolution profile, duration, explicit sigma-grid count, AVI
+format, and optional seed. A complete turn invokes the same staged native
+runtime transaction described above and returns the atomically published file
+path. The server does not load any component or create a CUDA context while it
+is only negotiating those parameters.
+
+The conversational projection has focused dialogue, refusal, deterministic
+profile-identity, and no-model-open startup tests. An operator smoke exercised
+the real `yvex runtime start` -> session -> prompt path through the parameter
+question without generating media. It does not promote the unexecuted
+1344x768 or 960x544 profiles, nor does it replace the bounded live evidence
+above. The exact startup and chat workflow is owned by the
+[operator runbook](../operator-runbook.md#conversational-minimax-h3-media-host).
+
 ## Progression and non-claims
 
 `branch_completion_condition_satisfied: true`
