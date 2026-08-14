@@ -13,10 +13,11 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
 #define YVEX_PHYSICAL_EXECUTION_SCHEMA_V2 2u
+#define YVEX_PHYSICAL_EXECUTION_SCHEMA_V3 3u
 #define YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V1 1u
 #define YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V2 2u
+#define YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V3 3u
 #define YVEX_COMPILED_EXECUTION_PROFILE_SCHEMA_V2 2u
 #define YVEX_EXECUTION_HARDWARE_PROFILE_SCHEMA_V1 1u
 #define YVEX_EXECUTION_WORKLOAD_PROFILE_SCHEMA_V1 1u
@@ -27,7 +28,6 @@ extern "C" {
 #define YVEX_EXECUTION_DEVICE_VIEW_SCHEMA_V1 1u
 #define YVEX_EXECUTION_TEXT_CAP 64u
 #define YVEX_EXECUTION_MINIMUM_SYSTEM_RESERVE (8ull * 1024ull * 1024ull * 1024ull)
-
 typedef enum {
     YVEX_EXECUTION_EVIDENCE_PRODUCTION = 0,
     YVEX_EXECUTION_EVIDENCE_AUDIT,
@@ -118,8 +118,8 @@ typedef struct yvex_physical_execution_policy {
     yvex_execution_backend_requirement required_backend;
     yvex_execution_evidence_profile evidence;
     yvex_execution_class fallback;
-    unsigned long long derived_asset_qtype_mask;
-    const char *dense_kernel_family, *expert_kernel_family;
+    unsigned long long derived_asset_qtype_mask, expert_large_row_minimum;
+    const char *dense_kernel_family, *expert_kernel_family, *expert_large_row_kernel_family;
 } yvex_physical_execution_policy;
 
 typedef struct {
@@ -136,13 +136,13 @@ typedef struct {
     yvex_execution_placement_class placement;
     yvex_execution_sharing_class sharing;
     yvex_execution_activation_class activation;
-    unsigned long long supported_width_mask, maximum_context;
+    unsigned long long supported_width_mask, maximum_context, large_row_minimum;
     yvex_execution_backend_requirement required_backend;
     unsigned int required_compute_major, required_compute_minor;
     yvex_execution_evidence_profile evidence;
     yvex_execution_class fallback;
     int derived_asset_required;
-    char kernel_family[YVEX_EXECUTION_TEXT_CAP];
+    char kernel_family[YVEX_EXECUTION_TEXT_CAP], large_row_kernel_family[YVEX_EXECUTION_TEXT_CAP];
     char terminal_identity[YVEX_SHA256_HEX_CAP];
     char decision_identity[YVEX_SHA256_HEX_CAP];
 } yvex_physical_execution_decision;

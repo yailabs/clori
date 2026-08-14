@@ -98,7 +98,9 @@ The physical variant owns canonical encoded representation. The versioned
 Physical Execution IR separately projects each terminal tensor into its
 consumer class, execution layout, placement, activation representation,
 supported widths, backend and hardware requirement, kernel family, evidence
-depth, and explicit fallback class. This separation lets a backend derive a
+depth, and explicit fallback class. Schema v3 can additionally seal a second
+row-geometry kernel family and the minimum routed-row population at which that
+alternative is admitted. This separation lets a backend derive a
 kernel-consumable layout without changing the canonical artifact identity.
 Physical decisions bind terminal and variant identities; they never include
 process pointers, local paths, timestamps, or transient residency.
@@ -140,12 +142,14 @@ capacity planner evaluates state geometry, artifact bytes, hardware facts and
 resource reserve. The current 4096-token DeepSeek profile is one such selected
 workload, not the model's semantic limit.
 
-Runtime binding v12 persists the canonical operator graph identity and the pointer-free compiled
-tokenizer and conversation policy beside the model/operator execution records. Source-owned syntax
-and exact tokenizer component identities enter through the family compiler adapter; tokenizer,
-runtime and server consume the authenticated record without enumerating a concrete family. Bindings
-v7 through v11 are refused because none can represent the current complete compilation authority.
-Physical Execution IR remains at its existing schema. Compiled execution
+Runtime binding v13 persists the canonical operator graph identity, Physical Execution IR v3 and
+the pointer-free compiled tokenizer and conversation policy beside the model/operator execution
+records. Source-owned syntax and exact tokenizer component identities enter through the family
+compiler adapter; tokenizer, runtime and server consume the authenticated record without
+enumerating a concrete family. Bindings v7 through v12 are refused because none can represent the
+current complete compilation authority. For MoE, compilation seals the sparse base kernel, the
+large-row alternative and their crossover; runtime resolves one concrete family from admitted row
+geometry, and the backend executes that family without a hidden threshold or fallback. Compiled execution
 profile v2 replaces three fallback booleans with identity-bearing attention,
 MoE, and sampling resolutions; this is an incompatible internal contract change
 because v1 cannot represent why an admitted execution differs from the exact

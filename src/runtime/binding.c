@@ -25,11 +25,13 @@
 #define BINDING_MAGIC_V10 "YVRBND10"
 #define BINDING_MAGIC_V11 "YVRBND11"
 #define BINDING_MAGIC_V12 "YVRBND12"
+#define BINDING_MAGIC_V13 "YVRBND13"
 #define BINDING_SCHEMA_V7 7u
 #define BINDING_SCHEMA_V8 8u
 #define BINDING_SCHEMA_V9 9u
 #define BINDING_SCHEMA_V10 10u
 #define BINDING_SCHEMA_V11 11u
+#define BINDING_SCHEMA_V12 12u
 #define BINDING_MAGIC_BYTES 8u
 #define BINDING_HEADER_BYTES (BINDING_MAGIC_BYTES + 16u + 64u)
 #define BINDING_MAX_BYTES (64u * 1024u * 1024u)
@@ -601,9 +603,10 @@ static const binding_field physical_decision_fields[] = {
     PHYSICAL_U(canonical_row_count), PHYSICAL_U(encoded_offset), PHYSICAL_U(encoded_bytes),
     PHYSICAL_U(alignment), PHYSICAL_U(consumer), PHYSICAL_U(layout), PHYSICAL_U(placement),
     PHYSICAL_U(sharing), PHYSICAL_U(activation), PHYSICAL_U(supported_width_mask),
-    PHYSICAL_U(maximum_context), PHYSICAL_U(required_backend),
+    PHYSICAL_U(maximum_context), PHYSICAL_U(large_row_minimum), PHYSICAL_U(required_backend),
     PHYSICAL_U(required_compute_major), PHYSICAL_U(required_compute_minor), PHYSICAL_U(evidence),
     PHYSICAL_U(fallback), PHYSICAL_U(derived_asset_required), PHYSICAL_T(kernel_family),
+    PHYSICAL_T(large_row_kernel_family),
     PHYSICAL_T(terminal_identity), PHYSICAL_T(decision_identity),
 };
 #undef PHYSICAL_U
@@ -1167,7 +1170,7 @@ static int binding_body_write(const yvex_runtime_binding_prepare_request *reques
     layer_count = attention->layer_count;
     draft_layer_count = draft_attention ? draft_attention->layer_count : 0ull;
     if (!yvex_runtime_capabilities_identity(capabilities, capability_identity) ||
-        !bytes_put_text(body, "yvex.runtime.binding.payload.v12") ||
+        !bytes_put_text(body, "yvex.runtime.binding.payload.v13") ||
         !bytes_put_u64(body, YVEX_RUNTIME_BINDING_SCHEMA_CURRENT) ||
         !bytes_put_u64(body, adapter_id) || !bytes_put_u64(body, adapter_version) ||
         !bytes_put_text(body, format) || !bytes_put_u64(body, format_version) ||
@@ -1237,7 +1240,7 @@ static int binding_identity(const unsigned char *body, size_t body_bytes,
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.binding.v12") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.binding.v13") ||
         !yvex_sha256_update_u64(&hash, YVEX_RUNTIME_BINDING_SCHEMA_CURRENT) ||
         !yvex_sha256_update(&hash, body, body_bytes) ||
         !yvex_sha256_final(&hash, digest)) return 0;
@@ -1249,7 +1252,7 @@ static int build_file(const binding_bytes *body, const char *identity, binding_b
     if (!body || !identity || !file) return 0;
     file->maximum = BINDING_MAX_BYTES;
     file->initial_capacity = 4096u;
-    return yvex_core_bytes_append(file, BINDING_MAGIC_V12, BINDING_MAGIC_BYTES) &&
+    return yvex_core_bytes_append(file, BINDING_MAGIC_V13, BINDING_MAGIC_BYTES) &&
            bytes_put_u64(file, YVEX_RUNTIME_BINDING_SCHEMA_CURRENT) &&
            bytes_put_u64(file, (unsigned long long)body->count) &&
            yvex_core_bytes_append(file, identity, 64u) &&
@@ -1271,7 +1274,7 @@ static binding_parse_result parse_body(yvex_runtime_binding *binding,
     unsigned long long draft_layer_count = 0ull, i;
     if (!cursor_text(&cursor, domain, sizeof(domain)) ||
         !cursor_u64(&cursor, &schema) || schema != expected_schema ||
-        strcmp(domain, "yvex.runtime.binding.payload.v12") != 0 ||
+        strcmp(domain, "yvex.runtime.binding.payload.v13") != 0 ||
         !cursor_u64(&cursor, &family_id) || !family_id ||
         !cursor_u64(&cursor, &family_version) || !family_version ||
         !cursor_text(&cursor, format, sizeof(format)) || !format[0] ||
@@ -1654,8 +1657,10 @@ static int binding_file_decode(yvex_runtime_binding **out,
            memcmp(magic, BINDING_MAGIC_V10, sizeof(magic)) == 0) ||
           (schema == BINDING_SCHEMA_V11 &&
            memcmp(magic, BINDING_MAGIC_V11, sizeof(magic)) == 0) ||
+          (schema == BINDING_SCHEMA_V12 &&
+           memcmp(magic, BINDING_MAGIC_V12, sizeof(magic)) == 0) ||
           (schema == YVEX_RUNTIME_BINDING_SCHEMA_CURRENT &&
-           memcmp(magic, BINDING_MAGIC_V12, sizeof(magic)) == 0))) {
+           memcmp(magic, BINDING_MAGIC_V13, sizeof(magic)) == 0))) {
         rc = binding_reject(failure, YVEX_RUNTIME_BINDING_FAILURE_SCHEMA,
                             "schema-version", path, 0ull,
                             YVEX_RUNTIME_BINDING_SCHEMA_CURRENT, schema,

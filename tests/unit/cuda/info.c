@@ -242,7 +242,7 @@ static int moe_derived_weight(
         !operations->derived_layout_build || !view || !experts ||
         view->row_count % experts)
         return 0;
-    decision.schema_version = YVEX_PHYSICAL_EXECUTION_SCHEMA_V2;
+    decision.schema_version = YVEX_PHYSICAL_EXECUTION_SCHEMA_V3;
     decision.terminal_tensor_id = view->tensor_id;
     decision.role = view->role;
     decision.expert_count = experts;

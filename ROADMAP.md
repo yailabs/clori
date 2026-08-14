@@ -135,8 +135,9 @@ tokens/s, attention at 43.88% of measured warm execution, MoE at 19.29%, about
 baseline facts, not a release benchmark.
 
 The active implementation now derives execution geometry from one sealed model
-descriptor and admits binding v12 as the first complete compiler authority;
-older bindings are refused because they cannot represent that authority.
+descriptor and admits binding v13 as the complete compiler authority; older
+bindings are refused because they cannot represent the compiled sparse/large-row
+MoE alternatives and crossover carried by Physical Execution IR v3.
 Hardware, workload, capacity and state-page facts remain separate. Admission
 refuses insufficient model-residency memory before artifact open. Host graph
 state commits through stable per-class virtual pages; a phase roofline ledger
@@ -146,8 +147,9 @@ state now reserves stable logical banks and commits only the physical granules
 reached by visible or pre-admitted candidate spans; the non-VMM path remains an
 explicit full-bank fallback. The admitted Q8_0/Q8_K native path now has a
 mandatory SM121 SASS proof for `IMMA.16816.S8.S8` plus native numerical and
-launch-accounting coverage. Specialized Tensor Core coverage beyond that path,
-specialized attention, real deep-context qualification and the optimized
+launch-accounting coverage. Physical Execution IR now admits a measured
+sparse/large-row MoE crossover. Specialized Tensor Core coverage beyond those
+paths, specialized attention, real deep-context qualification and the optimized
 serving after-state remain open.
 
 The continuation selects expert placement, cache, grouped execution, fusion,

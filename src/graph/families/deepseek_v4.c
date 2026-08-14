@@ -305,7 +305,7 @@ static int deepseek_compilation_quant_policy(
     const yvex_quant_policy *policy, const char *imatrix_identity,
     yvex_error *err);
 static const yvex_physical_execution_policy deepseek_physical_execution_policy = {
-    .schema_version = YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V2,
+    .schema_version = YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V3,
     .activation = YVEX_EXECUTION_ACTIVATION_DEVICE_F32,
     .encoded_activation_consumer_mask =
         (1ull << YVEX_EXECUTION_CONSUMER_ROUTED_GATE_UP) |
@@ -316,7 +316,9 @@ static const yvex_physical_execution_policy deepseek_physical_execution_policy =
     .fallback = YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE,
     .derived_asset_qtype_mask = 0ull,
     .dense_kernel_family = YVEX_MOE_KERNEL_PORTABLE_ENCODED_ROW,
-    .expert_kernel_family = YVEX_MOE_KERNEL_SM121_ROW_REGIME_EXPERT};
+    .expert_kernel_family = YVEX_MOE_KERNEL_SM121_ROW_REGIME_EXPERT,
+    .expert_large_row_minimum = 1024ull,
+    .expert_large_row_kernel_family = YVEX_MOE_KERNEL_SM121_TENSORCORE_EXPERT};
 static const yvex_family_binding_pipeline deepseek_binding_pipeline = {
     .schema_version = YVEX_FAMILY_BINDING_PIPELINE_SCHEMA_V1,
     .source_open = deepseek_compilation_source_open,

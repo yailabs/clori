@@ -83,6 +83,11 @@ change. Git history preserves implementation chronology.
   an unused expert staging range. Compatible weight qtypes no longer select Q8
   activation compression implicitly; production retains F32 activations while
   full forensic evidence separately selects canonical-order accumulation.
+  Physical Execution IR v3 now seals both the sparse row-regime and SM121
+  Tensor Core expert kernels plus their measured row-population crossover;
+  runtime binding v13 persists that policy, runtime resolves one concrete
+  kernel from admitted request geometry, and CUDA no longer owns a hidden
+  threshold or silent fallback.
 - CUDA mHC envelope gates, combination rows and Sinkhorn row/column passes now
   execute across their independent stream lanes. Ordered reductions and FP64
   source transforms remain intact, while BF16 residual-square accumulation no

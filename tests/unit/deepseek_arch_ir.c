@@ -833,12 +833,17 @@ static int test_arch_ir_report_consumer_and_family_preservation(void)
     arch_ir_verification_fixture(&source);
     YVEX_TEST_ASSERT(
         compiler && compiler->physical_execution_policy &&
+            compiler->physical_execution_policy->schema_version ==
+                YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V3 &&
             strcmp(compiler->physical_execution_policy->expert_kernel_family,
                    YVEX_MOE_KERNEL_SM121_ROW_REGIME_EXPERT) == 0 &&
+            compiler->physical_execution_policy->expert_large_row_minimum == 1024ull &&
+            strcmp(compiler->physical_execution_policy->expert_large_row_kernel_family,
+                   YVEX_MOE_KERNEL_SM121_TENSORCORE_EXPERT) == 0 &&
             compiler->physical_execution_policy->derived_asset_qtype_mask == 0ull &&
             (compiler->physical_execution_policy->encoded_activation_consumer_mask &
              (1ull << YVEX_EXECUTION_CONSUMER_SHARED_EXPERT)) != 0ull,
-        "DeepSeek compilation selects the admitted SM121 row-regime expert capability");
+        "DeepSeek compilation seals sparse and large-row SM121 expert capabilities");
     YVEX_TEST_ASSERT(compiler->binding_pipeline &&
                          compiler->binding_pipeline->semantic_model_build(
                              &semantic, &source, &err) == YVEX_OK,
