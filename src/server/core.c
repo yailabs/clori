@@ -31,7 +31,7 @@ typedef struct server_work_item {
     unsigned char *prompt;
     yvex_provider_request *provider;
     unsigned long long enqueued_ns;
-    int fd, done, response_sent, status;
+    int fd, done, error_sent, status;
     yvex_client_failure_class failure_class;
     pthread_mutex_t mutex;
     pthread_cond_t condition;
@@ -432,7 +432,7 @@ static int work_emit(void *opaque, const yvex_client_message *message,
 {
     server_work_item *item = opaque;
     int rc = yvex_server_protocol_send(item->fd, message, err);
-    if (rc == YVEX_OK) item->response_sent = 1;
+    if (rc == YVEX_OK && message->kind == YVEX_CLIENT_MESSAGE_ERROR) item->error_sent = 1;
     return rc;
 }
 
@@ -502,14 +502,14 @@ static void *model_worker_main(void *opaque)
                     server->sessions, &item->request, item->request_id, queue_seconds,
                     work_emit, item, &item->error);
         }
-        if (rc != YVEX_OK && !item->response_sent) {
+        if (rc != YVEX_OK && !item->error_sent) {
             yvex_error send_error;
             item->failure_class = yvex_server_failure_class_from_status(rc);
             if (protocol_error(item->fd, &item->request, rc,
                                item->failure_class,
                                yvex_error_message(&item->error),
                                &send_error) == YVEX_OK)
-                item->response_sent = 1;
+                item->error_sent = 1;
         }
         yvex_server_telemetry_request(server->telemetry, -1, rc == YVEX_OK,
                                  rc != YVEX_OK && rc != YVEX_ERR_CANCELLED,
@@ -982,7 +982,7 @@ static void *client_main(void *opaque)
         unsigned char *prompt = NULL;
         yvex_provider_request *provider = NULL;
         yvex_error err;
-        int response_sent = 0;
+        int error_sent = 0;
         yvex_client_failure_class failure_class = YVEX_CLIENT_FAILURE_NONE;
         int rc = yvex_server_protocol_receive(
             fd, &request, &prompt, &provider, &err);
@@ -1070,10 +1070,10 @@ static void *client_main(void *opaque)
             }
             free(item.prompt);
             yvex_provider_request_close(&item.provider);
-            response_sent = item.response_sent;
+            error_sent = item.error_sent;
             failure_class = item.failure_class;
         }
-        if (rc != YVEX_OK && !done && !response_sent) {
+        if (rc != YVEX_OK && !done && !error_sent) {
             yvex_error send_error;
             (void)protocol_error(fd, &request, rc, failure_class,
                                  yvex_error_message(&err), &send_error);
