@@ -185,17 +185,22 @@ artifact and publication roots:
 ```sh
 ROOT=<EXTERNAL_MINIMAX_ROOT>/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08
 OUTPUT=<OWNED_ABSOLUTE_OUTPUT_DIRECTORY>
-./yvex runtime start \
+systemd-run --user --scope --quiet \
+  -p MemoryHigh=76G -p MemoryMax=88G -p MemorySwapMax=0 \
+  ./yvex runtime start \
   --generation-mode media \
   --media-artifact-root "$ROOT" \
   --output-root "$OUTPUT"
 ```
 
 The output directory must already exist, be owned by the operator, and must not
-itself be a symlink. Startup admits the conversational endpoint and its
-identity-bound component locations; it does not preload 144 GB of weights or
-create a CUDA context. A completed media request authenticates and stages each
-component through the native YVEX runtime.
+itself be a symlink. The transient user scope preserves the validated GB10
+memory envelope and forbids swap; a resource refusal therefore terminates the
+request instead of consuming the machine's remaining unified memory. Startup
+admits the conversational endpoint and its identity-bound component locations;
+it does not preload 144 GB of weights or create a CUDA context. A completed
+media request authenticates and stages each component through the native YVEX
+runtime.
 
 From another terminal, start the ordinary client:
 
