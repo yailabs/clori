@@ -7,7 +7,7 @@
 | Milestone | `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` |
 | Branch | `feature/deepseek-v4-flash` |
 | Baseline | `9c729ada5827ca4589f718801bf4adb4f9c415e5` |
-| Checkpoint | `406873c63d735472760261b96552a51fd92a238f` |
+| Checkpoint | `406873c501af101193ed75c6db3f343e5ad5a89e` |
 | Subsystem | generic CUDA qtype attention projection |
 | Model family | DeepSeek-V4-Flash-DSpark |
 | Hardware | NVIDIA DGX Spark / GB10 / SM121 |
@@ -72,7 +72,7 @@ not enter this regime.
 
 ## Implementation
 
-Checkpoint `406873c63d735472760261b96552a51fd92a238f` adds the native
+Checkpoint `406873c501af101193ed75c6db3f343e5ad5a89e` adds the native
 SM121 kernel to the admitted CUDA capability bundle and selects it in the
 generic attention operation from explicit qtype, row width, row count, and
 input-row geometry.
