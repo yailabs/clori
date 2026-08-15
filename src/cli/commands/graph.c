@@ -1696,6 +1696,10 @@ int yvex_graph_command(int argc, char **argv,
 
     if (args.moe.active)
         return graph_cli_moe_execute(&args, retained_cleanup, &err);
+    if (args.media.active && args.media.generate)
+        return yvex_media_generate_command(&args, &err);
+    if (args.media.active)
+        return yvex_media_publish_command(&args, &err);
     if (args.component.active)
         return graph_cli_component_execute(&args, &err);
     if (args.transformer.active && args.transformer.generate)
