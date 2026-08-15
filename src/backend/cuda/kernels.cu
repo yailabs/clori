@@ -625,6 +625,59 @@ extern "C" __global__ void yvex_qtype_matvec(
         output_bf16 ? float_to_bf16_rne(value) : value;
 }
 
+/* Narrow row batches reuse one admitted Q8 activation across eight independent
+ * MXFP4 row dots. The warp dot is unchanged; shared storage only removes
+ * redundant global reads and therefore preserves its numerical order. */
+extern "C" __global__ void yvex_mxfp4_q8_rows(
+    const unsigned char *encoded,
+    unsigned long long row_bytes,
+    unsigned long long row_width,
+    unsigned long long start_row,
+    unsigned long long row_count,
+    unsigned long long input_rows,
+    const unsigned char *vector,
+    float *out,
+    unsigned long long output_stride,
+    int output_bf16,
+    int *status)
+{
+    extern __shared__ unsigned char activation[];
+    unsigned int lane = threadIdx.x & 31u;
+    unsigned int warp = threadIdx.x >> 5u;
+    unsigned long long blocks = row_width / YVEX_CUDA_Q8_K_BLOCK;
+    unsigned long long blocks_per_input = (row_count + 7ull) / 8ull;
+    unsigned long long input_row = blocks_per_input
+        ? (unsigned long long)blockIdx.x / blocks_per_input : input_rows;
+    unsigned long long row_group = blocks_per_input
+        ? (unsigned long long)blockIdx.x % blocks_per_input : blocks_per_input;
+    unsigned long long row = row_group * 8ull + warp;
+    unsigned long long activation_bytes = blocks * YVEX_CUDA_Q8_K_BYTES;
+    unsigned long long weight_block = blocks ? row_bytes / blocks : 0ull;
+
+    if (!status || *status != 0) return;
+    if (!encoded || !vector || !out || !blocks || !blocks_per_input ||
+        !row_count || !input_rows || input_rows > 8ull ||
+        blockDim.x != 256u || row_bytes % blocks || weight_block != 136ull ||
+        output_stride < row_count) {
+        if (!threadIdx.x) atomicCAS(status, 0, 2);
+        return;
+    }
+    if (input_row >= input_rows) return;
+    const unsigned char *input = vector + input_row * activation_bytes;
+    for (unsigned long long byte = threadIdx.x; byte < activation_bytes;
+         byte += blockDim.x)
+        activation[byte] = input[byte];
+    __syncthreads();
+    if (row >= row_count) return;
+    const unsigned char *row_data = encoded + (start_row + row) * row_bytes;
+    float sum = q8_warp_dot(row_data, activation, blocks, weight_block,
+                            YVEX_GGUF_QTYPE_MXFP4);
+    if (lane) return;
+    if (!isfinite(sum)) atomicCAS(status, 0, 1);
+    else out[input_row * output_stride + row] =
+        output_bf16 ? float_to_bf16_rne(sum) : sum;
+}
+
 /* One grid covers the group-major matrix while token-major activations remain
  * distinct. The row dot and token tiling are deliberately identical to
  * yvex_qtype_matvec; grouping changes launch topology, not numerical policy. */

@@ -1449,6 +1449,7 @@ int yvex_cuda_test_info(void)
         "yvex_attention_bf16_round",
         "yvex_qtype_matvec",
         "yvex_qtype_grouped_rows",
+        "yvex_mxfp4_q8_rows",
         "yvex_encoded_row_decode",
         "yvex_attention_weighted_norm",
         "yvex_attention_unit_norm",
@@ -1489,6 +1490,12 @@ int yvex_cuda_test_info(void)
                    yvex_cuda_state(backend)->qtype_tensorcore_rows_function),
                "yvex_qtype_tensorcore_rows") == 0,
         "graph identity resolves the admitted Tensor Core kernel from bundle authority");
+    YVEX_TEST_ASSERT(
+        strcmp(yvex_cuda_kernel_function_identity(
+                   yvex_cuda_state(backend),
+                   yvex_cuda_state(backend)->mxfp4_q8_rows_function),
+               "yvex_mxfp4_q8_rows") == 0,
+        "graph identity resolves the admitted exact MXFP4 narrow-row kernel");
     if (required_native && required_native[0]) {
         YVEX_TEST_ASSERT(kernel_summary.kernel_bundle_native,
                          "native CUDA validation refuses a PTX-only bundle");
