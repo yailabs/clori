@@ -73,4 +73,5 @@ docs/worklog/2026-08-11-adaptive-memory-admission.md	worklog	canonical	contribut
 docs/worklog/2026-08-14-grouped-attention-output-decode.md	worklog	canonical	contributors	retained	grouped_attention_output_decode_worklog
 docs/worklog/2026-08-14-grouped-attention-output-prefill.md	worklog	canonical	contributors	retained	grouped_attention_output_prefill_worklog
 docs/worklog/2026-08-14-moe-route-weight-order.md	worklog	canonical	contributors	retained	moe_route_weight_order_worklog
+docs/worklog/2026-08-15-grouped-moe-activation-reuse.md	worklog	canonical	contributors	retained	grouped_moe_activation_reuse_worklog
 tests/vectors/README.md	test-support	canonical	contributors	living	test_vector_format
