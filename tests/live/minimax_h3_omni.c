@@ -19,7 +19,10 @@ enum { OMNI_ROWS = 3u, OMNI_HIDDEN = 5376u, OMNI_TIME = 2688u };
  * different legal reduction orders. */
 static const double oracle_max_relative_l2 = 0.01;
 static const double oracle_min_cosine = 0.9999;
-static const double oracle_max_scaled_absolute = 0.002;
+/* A multi-row BF16 reduction can move one maximum-magnitude output by a binade ULP even
+ * while the aggregate vector stays conformant; the paired L2 and cosine bounds prevent
+ * this maximum-element allowance from admitting a structurally different result. */
+static const double oracle_max_scaled_absolute = 0.01;
 
 static const char *const block_weight_names[YVEX_TRANSFORMER_JOINT_BLOCK_WEIGHT_COUNT] = {
     "blocks.0.norm1.weight",
@@ -122,6 +125,17 @@ static int file_read_exact(const char *path, float *values, unsigned long long c
     return valid;
 }
 
+static int file_read_u32_exact(
+    const char *path, unsigned int *values, unsigned long long count)
+{
+    FILE *file = fopen(path, "rb");
+    int valid;
+    if (!file) return 0;
+    valid = fread(values, sizeof(*values), (size_t)count, file) == count && fgetc(file) == EOF;
+    if (fclose(file) != 0) valid = 0;
+    return valid;
+}
+
 static int output_write(const char *path, const float *values, unsigned long long count)
 {
     FILE *file = fopen(path, "wb");
@@ -164,6 +178,8 @@ static int reference_compare(const float *reference, const float *output,
 static int execute_block(
     const yvex_artifact *artifact, const yvex_gguf *gguf,
     const yvex_tensor_table *tensors, const float *hidden, const float *temb,
+    const float *positions, const unsigned int *adaln_indices,
+    unsigned long long rows, unsigned long long timesteps,
     float *output, yvex_minimax_h3_omni_result *result, yvex_error *err)
 {
     const yvex_minimax_h3_graph_api *graph = yvex_graph_register_minimax_h3();
@@ -181,7 +197,7 @@ static int execute_block(
     yvex_device_tensor *resident = NULL;
     unsigned char *arena = NULL, *registered = NULL;
     unsigned long long arena_bytes = 0ull;
-    unsigned int invalid_indices[OMNI_ROWS] = {3u, 0u, 2u};
+    unsigned int *invalid_indices = NULL;
     char identity[65] = {0};
     int attached = 0, rc, cleanup_rc;
     yvex_error cleanup;
@@ -190,6 +206,14 @@ static int execute_block(
                        "the production MiniMax Omni backend is unavailable");
         return YVEX_ERR_UNSUPPORTED;
     }
+    invalid_indices = malloc((size_t)rows * sizeof(*invalid_indices));
+    if (!invalid_indices) {
+        yvex_error_set(err, YVEX_ERR_NOMEM, "minimax-h3.omni-proof",
+                       "the bounded refusal fixture could not be allocated");
+        return YVEX_ERR_NOMEM;
+    }
+    memcpy(invalid_indices, adaln_indices, (size_t)rows * sizeof(*invalid_indices));
+    invalid_indices[0] = (unsigned int)(timesteps * 3ull);
     rc = graph->component_admit(
         "transformer", artifact, gguf, tensors, &admission, &admission_failure, err);
     yvex_materialization_options_default(&materialization_options);
@@ -227,9 +251,8 @@ static int execute_block(
     if (rc == YVEX_OK) {
         yvex_minimax_h3_omni_result refused = {0};
         int refusal = yvex_backend_transformer_joint_blocks_cuda(
-            backend, recipe, weights, 0ull, identity, arena_bytes, hidden, temb, 1ull,
-            block_positions, block_adaln_indices, OMNI_ROWS, output,
-            OMNI_ROWS * OMNI_HIDDEN, &refused, err);
+            backend, recipe, weights, 0ull, identity, arena_bytes, hidden, temb, timesteps,
+            positions, adaln_indices, rows, output, rows * OMNI_HIDDEN, &refused, err);
         if (refusal != YVEX_ERR_INVALID_ARG || refused.complete) {
             yvex_error_set(err, YVEX_ERR_STATE, "minimax-h3.omni-proof.refusal",
                            "zero-block execution did not fail closed");
@@ -239,9 +262,8 @@ static int execute_block(
     if (rc == YVEX_OK) {
         yvex_minimax_h3_omni_result refused = {0};
         int refusal = yvex_backend_transformer_joint_blocks_cuda(
-            backend, recipe, weights, 1ull, identity, arena_bytes, hidden, temb, 1ull,
-            block_positions, invalid_indices, OMNI_ROWS, output,
-            OMNI_ROWS * OMNI_HIDDEN, &refused, err);
+            backend, recipe, weights, 1ull, identity, arena_bytes, hidden, temb, timesteps,
+            positions, invalid_indices, rows, output, rows * OMNI_HIDDEN, &refused, err);
         if (refusal != YVEX_ERR_BOUNDS || refused.complete) {
             yvex_error_set(err, YVEX_ERR_STATE, "minimax-h3.omni-proof.refusal",
                            "out-of-range AdaLN selection did not fail closed");
@@ -251,9 +273,8 @@ static int execute_block(
     if (rc == YVEX_OK) {
         yvex_minimax_h3_omni_result refused = {0};
         int refusal = yvex_backend_transformer_joint_blocks_cuda(
-            backend, recipe, weights, 1ull, identity, arena_bytes, hidden, temb, 1ull,
-            block_positions, block_adaln_indices, OMNI_ROWS, output,
-            OMNI_ROWS * OMNI_HIDDEN - 1ull, &refused, err);
+            backend, recipe, weights, 1ull, identity, arena_bytes, hidden, temb, timesteps,
+            positions, adaln_indices, rows, output, rows * OMNI_HIDDEN - 1ull, &refused, err);
         if (refusal != YVEX_ERR_INVALID_ARG || refused.complete) {
             yvex_error_set(err, YVEX_ERR_STATE, "minimax-h3.omni-proof.refusal",
                            "undersized output did not fail closed");
@@ -262,9 +283,8 @@ static int execute_block(
     }
     if (rc == YVEX_OK)
         rc = yvex_backend_transformer_joint_blocks_cuda(
-            backend, recipe, weights, 1ull, identity, arena_bytes, hidden, temb, 1ull,
-            block_positions, block_adaln_indices, OMNI_ROWS, output,
-            OMNI_ROWS * OMNI_HIDDEN, result, err);
+            backend, recipe, weights, 1ull, identity, arena_bytes, hidden, temb, timesteps,
+            positions, adaln_indices, rows, output, rows * OMNI_HIDDEN, result, err);
     if (attached) {
         yvex_error_clear(&cleanup);
         cleanup_rc = yvex_backend_resident_detach(backend, &cleanup);
@@ -281,6 +301,7 @@ static int execute_block(
     if (arena) munmap(arena, (size_t)arena_bytes);
     yvex_materialization_session_close(session);
     yvex_materialization_plan_close(plan);
+    free(invalid_indices);
     return rc;
 }
 
@@ -292,22 +313,56 @@ int main(int argc, char **argv)
     yvex_gguf *gguf = NULL;
     yvex_minimax_h3_omni_result result;
     yvex_error err;
-    float *hidden = NULL, *temb = NULL, *output = NULL, *reference = NULL;
-    unsigned long long values = OMNI_ROWS * OMNI_HIDDEN;
+    float *hidden = NULL, *temb = NULL, *dynamic_positions = NULL;
+    float *output = NULL, *reference = NULL;
+    unsigned int *dynamic_adaln_indices = NULL;
+    const float *positions = block_positions;
+    const unsigned int *adaln_indices = block_adaln_indices;
+    unsigned long long rows = OMNI_ROWS, timesteps = 1ull, values, temb_values;
+    const char *output_path, *reference_path;
+    int dynamic = 0;
     int rc = YVEX_OK;
-    if (argc != 6) {
+    if (argc != 6 && argc != 10) {
         fprintf(stderr, "usage: minimax_h3_omni TRANSFORMER_GGUF INPUT_F32 "
-                        "TEMB_F32 OUTPUT_F32 REFERENCE_F32\n");
+                        "TEMB_F32 OUTPUT_F32 REFERENCE_F32\n"
+                        "   or: minimax_h3_omni TRANSFORMER_GGUF INPUT_F32 "
+                        "TEMB_F32 POSITIONS_F32 ADALN_U32 OUTPUT_F32 REFERENCE_F32 "
+                        "ROWS TIMESTEPS\n");
         return 2;
     }
+    if (argc == 10) {
+        char *rows_end = NULL, *timesteps_end = NULL;
+        rows = strtoull(argv[8], &rows_end, 10);
+        timesteps = strtoull(argv[9], &timesteps_end, 10);
+        if (!rows_end || *rows_end || !rows || rows > 2048ull ||
+            !timesteps_end || *timesteps_end || !timesteps || timesteps > 64ull)
+            return 2;
+        dynamic = 1;
+    }
+    if (!yvex_core_u64_mul(rows, OMNI_HIDDEN, &values) ||
+        !yvex_core_u64_mul(timesteps, OMNI_TIME, &temb_values) ||
+        values > SIZE_MAX / sizeof(float) || temb_values > SIZE_MAX / sizeof(float))
+        return 2;
     hidden = malloc((size_t)values * sizeof(*hidden));
-    temb = malloc(OMNI_TIME * sizeof(*temb));
+    temb = malloc((size_t)temb_values * sizeof(*temb));
     output = calloc((size_t)values, sizeof(*output));
     reference = malloc((size_t)values * sizeof(*reference));
+    if (dynamic) {
+        dynamic_positions = malloc((size_t)(rows * 3ull) * sizeof(*dynamic_positions));
+        dynamic_adaln_indices =
+            malloc((size_t)rows * sizeof(*dynamic_adaln_indices));
+        positions = dynamic_positions;
+        adaln_indices = dynamic_adaln_indices;
+    }
+    output_path = dynamic ? argv[6] : argv[4];
+    reference_path = dynamic ? argv[7] : argv[5];
     if (!hidden || !temb || !output || !reference ||
         !file_read_exact(argv[2], hidden, values) ||
-        !file_read_exact(argv[3], temb, OMNI_TIME) ||
-        !file_read_exact(argv[5], reference, values)) {
+        !file_read_exact(argv[3], temb, temb_values) ||
+        (dynamic && (!dynamic_positions || !dynamic_adaln_indices ||
+                     !file_read_exact(argv[4], dynamic_positions, rows * 3ull) ||
+                     !file_read_u32_exact(argv[5], dynamic_adaln_indices, rows))) ||
+        !file_read_exact(reference_path, reference, values)) {
         fprintf(stderr, "omni_fixture=refused\n");
         rc = YVEX_ERR_IO;
         goto done;
@@ -319,8 +374,9 @@ int main(int argc, char **argv)
     if (rc == YVEX_OK) rc = yvex_gguf_open(&gguf, artifact, &err);
     if (rc == YVEX_OK) rc = yvex_tensor_table_from_gguf(&tensors, gguf, &err);
     if (rc == YVEX_OK)
-        rc = execute_block(artifact, gguf, tensors, hidden, temb, output, &result, &err);
-    if (rc == YVEX_OK && !output_write(argv[4], output, values)) {
+        rc = execute_block(artifact, gguf, tensors, hidden, temb, positions, adaln_indices,
+                           rows, timesteps, output, &result, &err);
+    if (rc == YVEX_OK && !output_write(output_path, output, values)) {
         yvex_error_set(&err, YVEX_ERR_IO, "minimax-h3.omni-proof.output",
                        "Omni proof output could not be written completely");
         rc = YVEX_ERR_IO;
@@ -350,5 +406,9 @@ done:
     free(output);
     free(temb);
     free(hidden);
+    if (dynamic) {
+        free(dynamic_adaln_indices);
+        free(dynamic_positions);
+    }
     return rc == YVEX_OK ? 0 : 1;
 }

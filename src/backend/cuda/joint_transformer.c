@@ -362,8 +362,8 @@ static int joint_modulation(joint_run *run, yvex_error *err)
         rc = joint_weight_project(run, YVEX_TRANSFORMER_JOINT_ADALN_WEIGHT, run->timesteps,
                                  run->device[JOINT_DEVICE_TEMB_ACTIVATED],
                                  run->device[JOINT_DEVICE_MODULATION], err);
-    if (rc == YVEX_OK) rc = joint_round(run, JOINT_DEVICE_MODULATION,
-                                       run->timesteps * table_width, err);
+    /* The source BF16 linear rounds after its bias epilogue. Keeping the GEMM result in
+     * F32 until the broadcast bias kernel avoids a second, coherently accumulating round. */
     if (rc == YVEX_OK)
         rc = joint_weight_gather(run, YVEX_TRANSFORMER_JOINT_ADALN_BIAS,
                                 run->device[JOINT_DEVICE_MODULATION_BIAS], err);
