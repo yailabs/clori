@@ -313,8 +313,16 @@ static int execute_artifact(const yvex_artifact *artifact, const yvex_gguf *gguf
     yvex_artifact_admission_failure failure;
     yvex_runtime_component_session *session = NULL;
     yvex_error cleanup;
-    int rc = graph->component_admit(
-        "transformer", artifact, gguf, tensors, &admission, &failure, err);
+    int rc;
+    request->recipe = graph ? graph->omni_recipe() : NULL;
+    if (!graph || !request->recipe) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "minimax-h3.transformer-proof",
+                       "the admitted joint Transformer recipe is unavailable");
+        rc = YVEX_ERR_UNSUPPORTED;
+    } else {
+        rc = graph->component_admit(
+            "transformer", artifact, gguf, tensors, &admission, &failure, err);
+    }
     if (rc == YVEX_OK)
         rc = yvex_runtime_component_session_open(
             &session, &admission, artifact, gguf, tensors, YVEX_BACKEND_KIND_CUDA,
