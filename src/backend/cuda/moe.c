@@ -1406,9 +1406,9 @@ static int moe_cuda_batch_experts(moe_cuda_batch *batch,
                                                     : layer->shared_intermediate_width;
     unsigned long long gate_expert_bytes, up_expert_bytes, down_expert_bytes;
     unsigned long long input_width = layer->hidden_width;
-    unsigned long long up_input_extent, down_input_extent;
+    unsigned long long up_input_extent, down_input_extent, up_shared = 0ull, down_shared = 0ull;
     unsigned long long up_tasks, down_tasks, reduce_tasks;
-    unsigned int up_grid, down_grid, reduce_grid;
+    unsigned int up_grid = 0u, down_grid = 0u, reduce_grid;
     CUdeviceptr selected = routed ? batch->selected : 0ull;
     CUdeviceptr weights = routed ? batch->weights : 0ull;
     CUdeviceptr order = routed ? batch->order : 0ull;
@@ -1424,6 +1424,7 @@ static int moe_cuda_batch_experts(moe_cuda_batch *batch,
                                : batch->shared_up_tensorcore;
     int down_tensorcore = routed ? batch->routed_down_tensorcore
                                  : batch->shared_down_tensorcore;
+    unsigned int up_shared_bytes, down_shared_bytes;
     int rc;
     up_input_extent = up_q8 ? input_width / YVEX_CUDA_Q8_K_BLOCK : input_width;
     down_input_extent = down_q8
@@ -1432,16 +1433,34 @@ static int moe_cuda_batch_experts(moe_cuda_batch *batch,
     if (!yvex_core_u64_mul(gate->row_bytes, intermediate_width, &gate_expert_bytes) ||
         !yvex_core_u64_mul(up->row_bytes, intermediate_width, &up_expert_bytes) ||
         !yvex_core_u64_mul(down->row_bytes, layer->hidden_width, &down_expert_bytes) ||
-        !yvex_core_u64_mul(count, up_tensorcore ? (intermediate_width + 15ull) / 16ull
-                                                : intermediate_width, &up_tasks) ||
-        !yvex_core_u64_mul(count, down_tensorcore ? (layer->hidden_width + 15ull) / 16ull
-                                                  : layer->hidden_width, &down_tasks) ||
+        !yvex_core_u64_mul(count,
+                           up_tensorcore ? (intermediate_width + 15ull) / 16ull
+                                         : intermediate_width / MOE_CUDA_ROWS_PER_BLOCK +
+                                               (intermediate_width % MOE_CUDA_ROWS_PER_BLOCK != 0),
+                           &up_tasks) ||
+        !yvex_core_u64_mul(count,
+                           down_tensorcore ? (layer->hidden_width + 15ull) / 16ull
+                                           : layer->hidden_width / MOE_CUDA_ROWS_PER_BLOCK +
+                                                 (layer->hidden_width % MOE_CUDA_ROWS_PER_BLOCK != 0),
+                           &down_tasks) ||
         !yvex_core_u64_mul(rows->row_count, layer->hidden_width, &reduce_tasks) ||
-        !moe_cuda_grid(up_tasks, MOE_CUDA_ROWS_PER_BLOCK, &up_grid) ||
-        !moe_cuda_grid(down_tasks, MOE_CUDA_ROWS_PER_BLOCK, &down_grid) ||
+        (!up_q8 && (!yvex_core_u64_mul(input_width, sizeof(float), &up_shared) ||
+                    up_shared > UINT_MAX)) ||
+        (!down_q8 &&
+         (!yvex_core_u64_mul(intermediate_width, sizeof(float), &down_shared) ||
+          down_shared > UINT_MAX)) ||
+        (up_tensorcore && !moe_cuda_grid(up_tasks, MOE_CUDA_ROWS_PER_BLOCK, &up_grid)) ||
+        (down_tensorcore && !moe_cuda_grid(down_tasks, MOE_CUDA_ROWS_PER_BLOCK, &down_grid)) ||
+        (!up_tensorcore && up_tasks > UINT_MAX) ||
+        (!down_tensorcore && down_tasks > UINT_MAX) ||
         !moe_cuda_grid(reduce_tasks, MOE_CUDA_BLOCK, &reduce_grid))
-        return moe_cuda_refuse(err, YVEX_ERR_BOUNDS,
-                               "CUDA width-N MoE expert grid exceeds launch bounds");
+        return moe_cuda_refuse(
+            err, YVEX_ERR_BOUNDS,
+            "CUDA width-N MoE expert or shared-staging geometry exceeds launch bounds");
+    up_shared_bytes = up_q8 ? 0u : (unsigned int)up_shared;
+    down_shared_bytes = down_q8 ? 0u : (unsigned int)down_shared;
+    if (!up_tensorcore) up_grid = (unsigned int)up_tasks;
+    if (!down_tensorcore) down_grid = (unsigned int)down_tasks;
     rc = YVEX_OK;
     if (rc == YVEX_OK) {
         CUdeviceptr gate_address = (CUdeviceptr)gate->device_address;
@@ -1472,7 +1491,8 @@ static int moe_cuda_batch_experts(moe_cuda_batch *batch,
         rc = batch->ops->launch(
             &batch->work, up_tensorcore ? batch->state->moe_grouped_up_tensorcore_function
                                         : batch->state->moe_grouped_up_rows_function,
-            up_grid, MOE_CUDA_BLOCK, 0u, up_tensorcore ? tensorcore_params : params,
+            up_grid, MOE_CUDA_BLOCK, up_tensorcore ? 0u : up_shared_bytes,
+            up_tensorcore ? tensorcore_params : params,
             routed ? "cuda.moe.rows.routed-up" : "cuda.moe.rows.shared-up",
             &batch->failure, err);
         if (rc == YVEX_OK && up_tensorcore) batch->work.tensor_core_launches++;
@@ -1504,7 +1524,8 @@ static int moe_cuda_batch_experts(moe_cuda_batch *batch,
         rc = batch->ops->launch(
             &batch->work, down_tensorcore ? batch->state->moe_grouped_down_tensorcore_function
                                           : batch->state->moe_grouped_down_rows_function,
-            down_grid, MOE_CUDA_BLOCK, 0u, down_tensorcore ? tensorcore_params : params,
+            down_grid, MOE_CUDA_BLOCK, down_tensorcore ? 0u : down_shared_bytes,
+            down_tensorcore ? tensorcore_params : params,
             routed ? "cuda.moe.rows.routed-down" : "cuda.moe.rows.shared-down",
             &batch->failure, err);
         if (rc == YVEX_OK && down_tensorcore) batch->work.tensor_core_launches++;

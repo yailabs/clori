@@ -359,12 +359,16 @@ extern "C" __global__ void yvex_moe_grouped_up_rows(
     unsigned long long intermediate_width, double limit,
     float *intermediate, int *status)
 {
+    extern __shared__ float staged_activation[];
     unsigned int lane = threadIdx.x & 31u;
-    unsigned long long task = (unsigned long long)blockIdx.x * 8ull +
-                              (unsigned long long)(threadIdx.x >> 5u);
-    unsigned long long ordered_pair = task / intermediate_width;
-    unsigned long long output_row = task % intermediate_width;
-    if (!status || *status || ordered_pair >= pair_count) return;
+    unsigned long long warp = (unsigned long long)(threadIdx.x >> 5u);
+    /* A row block stays within one ordered pair so its warps can reuse one exact activation. */
+    unsigned long long rows_per_pair = intermediate_width / 8ull +
+                                       (intermediate_width % 8ull != 0ull);
+    unsigned long long ordered_pair = (unsigned long long)blockIdx.x / rows_per_pair;
+    unsigned long long output_row = ((unsigned long long)blockIdx.x % rows_per_pair) *
+                                    8ull + warp;
+    if (!status || ordered_pair >= pair_count) return;
     unsigned long long source_pair = order ? order[ordered_pair] : ordered_pair;
     unsigned long long source_row = source_pair / topk;
     unsigned long long expert = selected ? selected[source_pair] : 0ull;
@@ -374,19 +378,29 @@ extern "C" __global__ void yvex_moe_grouped_up_rows(
         if (!lane) atomicCAS(status, 0, 2);
         return;
     }
-    const unsigned char *gate_row = gate + expert * gate_expert_bytes +
-                                    output_row * gate_row_bytes;
-    const unsigned char *up_row = up + expert * up_expert_bytes +
-                                  output_row * up_row_bytes;
     const unsigned char *activation = input + source_row * input_extent *
                                       (q8_input ? YVEX_CUDA_Q8_K_BYTES : sizeof(float));
+    const unsigned char *gate_row;
+    const unsigned char *up_row;
     float g, u;
     if (q8_input) {
         if (gate_row_bytes % input_extent || up_row_bytes % input_extent) {
             if (!lane) atomicCAS(status, 0, 2);
             return;
         }
+        if (*status) return;
+    } else {
+        const float *source = (const float *)activation;
+        for (unsigned long long index = threadIdx.x; index < input_extent;
+             index += blockDim.x)
+            staged_activation[index] = source[index];
+        __syncthreads();
+        if (*status) return;
+        activation = (const unsigned char *)staged_activation;
     }
+    if (output_row >= intermediate_width) return;
+    gate_row = gate + expert * gate_expert_bytes + output_row * gate_row_bytes;
+    up_row = up + expert * up_expert_bytes + output_row * up_row_bytes;
     g = moe_warp_dot(gate_row, activation, input_extent, gate_row_bytes,
                      gate_qtype, q8_input, status);
     u = moe_warp_dot(up_row, activation, input_extent, up_row_bytes,
@@ -412,12 +426,15 @@ extern "C" __global__ void yvex_moe_grouped_down_rows(
     const unsigned char *intermediate, unsigned long long intermediate_extent,
     int q8_input, unsigned long long hidden, float *pair_outputs, int *status)
 {
+    extern __shared__ float staged_activation[];
     unsigned int lane = threadIdx.x & 31u;
-    unsigned long long task = (unsigned long long)blockIdx.x * 8ull +
-                              (unsigned long long)(threadIdx.x >> 5u);
-    unsigned long long ordered_pair = task / hidden;
-    unsigned long long output_row = task % hidden;
-    if (!status || *status || ordered_pair >= pair_count) return;
+    unsigned long long warp = (unsigned long long)(threadIdx.x >> 5u);
+    /* The pair-local block contract also makes partial output-row groups synchronization-safe. */
+    unsigned long long rows_per_pair = hidden / 8ull + (hidden % 8ull != 0ull);
+    unsigned long long ordered_pair = (unsigned long long)blockIdx.x / rows_per_pair;
+    unsigned long long output_row = ((unsigned long long)blockIdx.x % rows_per_pair) *
+                                    8ull + warp;
+    if (!status || ordered_pair >= pair_count) return;
     unsigned long long source_pair = order ? order[ordered_pair] : ordered_pair;
     unsigned long long expert = selected ? selected[source_pair] : 0ull;
     if (!down || !intermediate || !pair_outputs || expert >= expert_count ||
@@ -426,9 +443,22 @@ extern "C" __global__ void yvex_moe_grouped_down_rows(
         if (!lane) atomicCAS(status, 0, 2);
         return;
     }
-    const unsigned char *weight = down + expert * expert_bytes + output_row * row_bytes;
     const unsigned char *activation = intermediate + ordered_pair * intermediate_extent *
                                       (q8_input ? YVEX_CUDA_Q8_K_BYTES : sizeof(float));
+    const unsigned char *weight;
+    if (q8_input) {
+        if (*status) return;
+    } else {
+        const float *source = (const float *)activation;
+        for (unsigned long long index = threadIdx.x; index < intermediate_extent;
+             index += blockDim.x)
+            staged_activation[index] = source[index];
+        __syncthreads();
+        if (*status) return;
+        activation = (const unsigned char *)staged_activation;
+    }
+    if (output_row >= hidden) return;
+    weight = down + expert * expert_bytes + output_row * row_bytes;
     float dot = moe_warp_dot(weight, activation, intermediate_extent,
                              row_bytes, qtype, q8_input, status);
     if (!lane && !*status) {
