@@ -1187,6 +1187,26 @@ this profile in the media runtime, and no complete Q8 trajectory was attempted. 
 record and exact candidate identities are retained in the
 [selective-Q8 worklog](../worklog/2026-08-16-minimax-selective-q8-candidate.md).
 
+## Reusable source-scale attention workspace
+
+The source-faithful Transformer now obtains one exact CUDA attention arena from the existing
+component-session residency owner and reuses it across blocks and latent evaluations. Chunked
+BF16 GQA resets the arena at each operation boundary, and component close detaches and releases
+it before backend teardown. The joint execution report now includes the maximum simultaneous
+scratch instead of reporting persistent activation bytes alone.
+
+At 5,757 packed rows, fifty complete blocks reused a 907,855,876-byte arena and retained the
+accepted manual BF16 oracle result. At the 21,741-row source-square geometry, one block reused a
+3,428,468,740-byte arena and retained video relative L2 `0.0060228159` with cosine
+`0.999981866929`, plus audio relative L2 `0.00375755049` with cosine `0.99999295103`. Both
+source-square outputs are byte-identical to the preceding q256 path. Corrected peak device facts
+are 3,430,740,740 bytes at 5,757 rows and 12,952,601,348 bytes at 21,741 rows.
+
+This proves source-square one-block numerical conformance, exact workspace ownership, reuse, and
+cleanup. It does not yet prove a complete 49-evaluation 768x768 trajectory, recognizable video,
+or practical generation time. The durable semantic and memory evidence is retained in the
+[reusable-workspace worklog](../worklog/2026-08-16-minimax-reusable-attention-workspace.md).
+
 ## Progression and non-claims
 
 `branch_completion_condition_satisfied: true`
