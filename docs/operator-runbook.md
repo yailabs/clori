@@ -218,26 +218,29 @@ From another terminal, start the ordinary client:
 
 Write the creative scene as normal conversation. The server asks inside that
 conversation for every missing material choice: `preview` (192x192, exactly
-five seconds) or `smoke` (32x32, 5 through 15 seconds); 2 through 64 explicit
-sigma-grid points; AVI; and an optional seed. Those are request facts, not
-daemon startup flags. The source does not declare a default iteration count,
-so YVEX never invents one. Source geometry, draft, HD, FHD, 2K, 4K, MP4, MKV,
-WebM, and MOV refuse until the applicable attention, memory, upscaler, or
-encoder contract is admitted. On success, chat reports the atomically published
-AVI path beneath `OUTPUT`.
+five seconds), `preview-256` (256x256, exactly five seconds), or `smoke`
+(32x32, 5 through 15 seconds); 2 through 64 explicit sigma-grid points; AVI;
+and an optional seed. Those are request facts, not daemon startup flags. The
+source does not declare a default iteration count, so YVEX never invents one.
+Source geometry, draft, HD, FHD, 2K, 4K, MP4, MKV, WebM, and MOV refuse until
+the applicable attention, memory, upscaler, or encoder contract is admitted.
+On success, chat reports the atomically published AVI path beneath `OUTPUT`.
 
-The preview profile fits the current 2,048-row Omni execution bound even for a
-256-token prompt. Its live AVI playback and synchronization are verified, but
-sampled frames remain visually unrecognizable; `preview` is a bounded geometry
-name, not a model-quality claim. The source-sized path would require 37,726
-packed rows at the same prompt and duration and therefore refuses before model
-materialization. The smoke profile retains the earlier repeatable 32x32
-evidence. The canonical server/chat acceptance used `smoke`, five seconds, two
-sigma-grid points, AVI, and seed 42; it returned a 1,048,544-byte seekable file
-after 560.36 seconds. Independent GStreamer playback recovered 124 frames and
-165,333 stereo samples per channel with a 10,416 ns duration delta. Peak server
-RSS was 62.57 GiB inside the 88 GiB hard limit, with no residual component
-residency after the turn.
+Both preview profiles fit the current 4,096-row Omni execution bound even for a
+256-token prompt. The 2,797-row `preview-256` Transformer envelope passed all
+50 blocks against an independent manual BF16 oracle under a 100 GiB hard limit
+with zero swap. Full media playback at that tier is still pending; the earlier
+192x192 AVI playback and synchronization are verified, but sampled frames
+remain visually unrecognizable. Preview names describe bounded geometry, not
+model quality. The source-sized path would require 37,726 packed rows at the
+same prompt and duration and therefore refuses before model materialization.
+The smoke profile retains the earlier repeatable 32x32 evidence. The canonical
+server/chat acceptance used `smoke`, five seconds, two sigma-grid points, AVI,
+and seed 42; it returned a 1,048,544-byte seekable file after 560.36 seconds.
+Independent GStreamer playback recovered 124 frames and 165,333 stereo samples
+per channel with a 10,416 ns duration delta. Peak server RSS was 62.57 GiB
+inside the 88 GiB hard limit, with no residual component residency after the
+turn.
 
 ## Three-terminal operation
 

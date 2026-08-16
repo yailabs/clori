@@ -336,6 +336,14 @@ resident-memory envelope: YVEX releases the transformer before Visual VAE
 decode instead of retaining all four weighted components simultaneously. This
 is anti-OOM lifecycle evidence, not a throughput or visual-quality result.
 
+The request envelope was subsequently raised from 2,048 to 4,096 packed rows
+only after a 2,797-row, 256x256, 124-frame request passed an independent manual
+BF16 Omni-Transformer oracle. The full 50-block YVEX run used 65,505,928 KiB
+maximum RSS, zero swap, and 1,226,357,504 device bytes. Video relative L2 was
+`0.004822398` with cosine `0.999988385`; audio relative L2 was `0.015343347`
+with cosine `0.999882448`. This admits the exact Transformer envelope for the
+new bounded geometry; it is not a full-media quality or speed result.
+
 For scale pressure only, assume 144 frames at 1,360 x 768 and six seconds of
 audio. The declared ratios give 37,152 video tokens and 240 audio tokens,
 before conditioning. At an illustrative total of 37,400 tokens, two BF16
@@ -1105,11 +1113,12 @@ create a CUDA context while it is only negotiating those parameters.
 
 The conversational projection has focused dialogue, refusal, deterministic
 profile-identity, and no-model-open startup tests. It admits `preview` at
-192x192 for exactly 124 frames and `smoke` at 32x32 for 124 through 345 frames.
-The server validates each profile against the exact worst-case 256-token plan
-before publishing readiness; runtime independently refuses any plan above the
-2,048-row Omni execution bound before latent or component materialization.
-Source, draft, HD, FHD, 2K, and 4K requests are not advertised and fail closed.
+192x192 and `preview-256` at 256x256, both for exactly 124 frames, plus `smoke`
+at 32x32 for 124 through 345 frames. The server validates each profile against
+the exact worst-case 256-token plan before publishing readiness; runtime
+independently refuses any plan above the 4,096-row Omni execution bound before
+latent or component materialization. Source, draft, HD, FHD, 2K, and 4K
+requests are not advertised and fail closed.
 
 On 2026-08-14 an operator-reachable `yvex server` -> `yvex chat` transaction
 accepted “Genera un video dell'eclissi di ieri sera”, asked for the missing

@@ -334,7 +334,11 @@ static int profile_select(server_media_registry *registry, server_media_session 
     if (unavailable) return -1;
     for (index = 0ull; index < registry->profile_count; ++index) {
         server_media_profile_owned *profile = registry->profiles + index;
-        if (text_contains(text, profile->name) ||
+        char geometry[48];
+        int geometry_length = snprintf(geometry, sizeof(geometry), "%llux%llu",
+                                       profile->width, profile->height);
+        if (geometry_length < 0 || (size_t)geometry_length >= sizeof(geometry)) return -1;
+        if (text_contains(text, profile->name) || text_contains(text, geometry) ||
             (preview && profile->preview_alias) ||
             (smoke && !strcmp(profile->name, "smoke"))) {
             session->width = profile->width;
@@ -454,7 +458,8 @@ static int dialog_parse(server_media_registry *registry, server_media_session *s
     seed_select(session, text);
     if (profile < 0)
         return media_refuse(err, YVEX_ERR_UNSUPPORTED,
-                            "this GB10 path currently admits preview 192x192 or smoke 32x32; "
+                            "this GB10 path currently admits preview 192x192, preview-256 "
+                            "256x256, or smoke 32x32; "
                             "source, draft, HD, FHD, 2K, and 4K are not qualified");
     if (duration < 0)
         return media_refuse(err, YVEX_ERR_BOUNDS,
@@ -468,7 +473,7 @@ static int dialog_parse(server_media_registry *registry, server_media_session *s
     if (session->profile_selected && session->duration_selected &&
         session->frames > session->profile_maximum_frames)
         return media_refuse(err, YVEX_ERR_BOUNDS,
-                            "the preview profile admits 5 seconds; smoke admits 5 through 15 seconds");
+                            "the preview profiles admit 5 seconds; smoke admits 5 through 15 seconds");
     return YVEX_OK;
 }
 

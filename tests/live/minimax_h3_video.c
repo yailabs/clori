@@ -7,13 +7,14 @@
 #include <yvex/artifact.h>
 #include <yvex/gguf.h>
 #include <yvex/internal/artifact.h>
+#include <yvex/internal/component.h>
 #include <yvex/internal/families/minimax_h3.h>
 #include <yvex/internal/latent.h>
 #include <yvex/internal/runtime.h>
 
 typedef struct {
     yvex_runtime_component_session *session;
-    yvex_minimax_h3_component_execution_failure failure;
+    yvex_component_execution_failure failure;
 } reconstruction_context;
 
 static int reconstruction_decode(
@@ -21,8 +22,8 @@ static int reconstruction_decode(
     yvex_runtime_av_video_decode_evidence *evidence, yvex_error *err)
 {
     reconstruction_context *context = opaque;
-    yvex_minimax_h3_video_decode_options options = {0};
-    yvex_minimax_h3_video_decode_result result;
+    yvex_runtime_av_video_decode_options options = {0};
+    yvex_runtime_av_video_decode_result result;
     int rc;
     options.latent = window->latent; options.output = window->output;
     options.batch = 1ull; options.latent_channels = window->latent_channels;
@@ -81,6 +82,47 @@ static int compare_reference(const char *path, const float *output, size_t count
         return 1;
     }
     printf("video_vae_conformance=accepted tolerance=1e-5\n");
+    return 0;
+}
+
+static int compare_reconstruction_reference(const char *path, const float *output, size_t count)
+{
+    float *reference = (float *)malloc(count * sizeof(*reference));
+    long double reference_squared = 0.0L, difference_squared = 0.0L;
+    float maximum = 0.0f;
+    size_t index;
+
+    if (!reference || !file_read_exact(path, reference, count * sizeof(*reference))) {
+        fprintf(stderr, "video_reconstruction_reference_read=refused\n");
+        free(reference);
+        return 1;
+    }
+    for (index = 0u; index < count; ++index) {
+        float difference = output[index] - reference[index];
+        float absolute = fabsf(difference);
+
+        if (!isfinite(absolute)) {
+            fprintf(stderr, "video_reconstruction_conformance=refused non-finite-value\n");
+            free(reference);
+            return 1;
+        }
+        if (absolute > maximum) maximum = absolute;
+        reference_squared += (long double)reference[index] * reference[index];
+        difference_squared += (long double)difference * difference;
+    }
+    free(reference);
+    if (reference_squared <= 0.0L) {
+        fprintf(stderr, "video_reconstruction_conformance=refused zero-reference-norm\n");
+        return 1;
+    }
+    printf("reconstruction_oracle_max_absolute_error=%.9g\n", maximum);
+    printf("reconstruction_oracle_relative_l2=%.12Lg\n",
+           sqrtl(difference_squared / reference_squared));
+    if (maximum > 1.0e-4f || sqrtl(difference_squared / reference_squared) > 1.0e-4L) {
+        fprintf(stderr, "video_reconstruction_conformance=refused tolerance=1e-4\n");
+        return 1;
+    }
+    printf("video_reconstruction_conformance=accepted tolerance=1e-4\n");
     return 0;
 }
 
@@ -144,9 +186,10 @@ int main(int argc, char **argv)
             return 2;
         }
         if (argc == 9) reference_path = argv[8];
-    } else if (argc == 5 && strcmp(argv[1], "--reconstruct-cuda") == 0) {
+    } else if ((argc == 5 || argc == 6) && strcmp(argv[1], "--reconstruct-cuda") == 0) {
         reconstruct = 1; cuda = 1; options.path = argv[2];
         latent_path = argv[3]; output_path = argv[4];
+        if (argc == 6) reference_path = argv[5];
     } else if (argc == 3 && strcmp(argv[1], "--expect-refused") == 0) {
         expect_refused = 1;
         options.path = argv[2];
@@ -160,7 +203,7 @@ int main(int argc, char **argv)
                 "       minimax_h3_video --decode-geometry VIDEO_VAE_GGUF LATENT_F32 "
                 "OUTPUT_F32 T H W [REFERENCE_F32]\n"
                 "       minimax_h3_video --reconstruct-cuda VIDEO_VAE_GGUF LATENT_F32 "
-                "OUTPUT_F32\n"
+                "OUTPUT_F32 [REFERENCE_F32]\n"
                 "       replace --decode with --decode-cuda for resident CUDA execution\n");
         return 2;
     }
@@ -218,6 +261,10 @@ int main(int argc, char **argv)
                 &execution, output, output_values, &result, &err);
         if (rc == YVEX_OK && !output_write(output_path, output, (size_t)output_values))
             rc = YVEX_ERR_IO;
+        if (rc == YVEX_OK && reference_path &&
+            compare_reconstruction_reference(reference_path, output,
+                                             (size_t)output_values) != 0)
+            rc = YVEX_ERR_FORMAT;
         if (rc == YVEX_OK)
             printf("video_reconstruction=accepted shape=1x3x124x32x32 calls=%llu "
                    "kernels=%llu workspace=%llu device=%llu identity=%s\n",
@@ -234,9 +281,9 @@ int main(int argc, char **argv)
         }
         free(output); free(latent);
     } else if (decode && rc == YVEX_OK) {
-        yvex_minimax_h3_video_decode_options decode_options;
-        yvex_minimax_h3_video_decode_result result;
-        yvex_minimax_h3_component_execution_failure execution_failure;
+        yvex_runtime_av_video_decode_options decode_options;
+        yvex_runtime_av_video_decode_result result;
+        yvex_component_execution_failure execution_failure;
         yvex_runtime_component_session *session = NULL;
         unsigned long long patches = frames * height * width;
         size_t latent_values = (size_t)(patches * 24ull);

@@ -1483,7 +1483,7 @@ static const yvex_transformer_joint_recipe omni_transformer_recipe = {
     .rotary_width = 96ull, .modality_count = 3ull,
     .modulation_parameters = 6ull, .block_count = 50ull,
     .refiner_block_count = 2ull, .maximum_timesteps = 64ull,
-    .maximum_packed_rows = 2048ull, .video_input_width = 96ull,
+    .maximum_packed_rows = 4096ull, .video_input_width = 96ull,
     .audio_input_width = 32ull, .condition_input_width = 5120ull,
     .video_output_width = 96ull, .audio_output_width = 32ull,
 };

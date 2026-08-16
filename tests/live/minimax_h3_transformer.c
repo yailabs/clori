@@ -146,6 +146,24 @@ static int file_read(const char *path, float *values, unsigned long long count)
     return valid;
 }
 
+static int file_read_u32(const char *path, unsigned int *values, unsigned long long count)
+{
+    FILE *file = fopen(path, "rb");
+    int valid;
+    if (!file) return 0;
+    valid = fread(values, sizeof(*values), (size_t)count, file) == count && fgetc(file) == EOF;
+    if (fclose(file) != 0) valid = 0;
+    return valid;
+}
+
+static int fixture_path(char output[1024], const char *root, const char *name)
+{
+    int length;
+    if (!root || !root[0] || !name || !name[0]) return 0;
+    length = snprintf(output, 1024u, "%s/%s", root, name);
+    return length > 0 && length < 1024;
+}
+
 static int file_write(const char *path, const float *values, unsigned long long count)
 {
     FILE *file = fopen(path, "wb");
@@ -470,6 +488,160 @@ static int execute_latent(const char *path, const char *conditioning_path,
     return rc == YVEX_OK ? 0 : 1;
 }
 
+typedef struct {
+    float *video, *audio, *conditioning, *timesteps, *positions;
+    float *video_output, *audio_output, *video_reference, *audio_reference;
+    unsigned int *video_indices, *audio_indices, *text_indices;
+    unsigned int *timestep_indices, *tags;
+} request_fixture;
+
+static void request_fixture_close(request_fixture *fixture)
+{
+    if (!fixture) return;
+    free(fixture->tags); free(fixture->timestep_indices); free(fixture->text_indices);
+    free(fixture->audio_indices); free(fixture->video_indices);
+    free(fixture->audio_reference); free(fixture->video_reference);
+    free(fixture->audio_output); free(fixture->video_output); free(fixture->positions);
+    free(fixture->timesteps); free(fixture->conditioning); free(fixture->audio);
+    free(fixture->video);
+    memset(fixture, 0, sizeof(*fixture));
+}
+
+static int request_fixture_allocate(request_fixture *fixture,
+                                    unsigned long long video_rows,
+                                    unsigned long long audio_rows,
+                                    unsigned long long text_rows,
+                                    unsigned long long packed_rows,
+                                    unsigned long long timestep_count)
+{
+#define ALLOCATE(target, count, type) \
+    ((count) <= SIZE_MAX / sizeof(type) && \
+     ((target) = calloc((size_t)(count), sizeof(type))) != NULL)
+    if (!fixture || !ALLOCATE(fixture->video, video_rows * 96ull, float) ||
+        !ALLOCATE(fixture->audio, audio_rows * 32ull, float) ||
+        !ALLOCATE(fixture->conditioning, text_rows * 5120ull, float) ||
+        !ALLOCATE(fixture->timesteps, timestep_count, float) ||
+        !ALLOCATE(fixture->positions, packed_rows * 3ull, float) ||
+        !ALLOCATE(fixture->video_output, video_rows * 96ull, float) ||
+        !ALLOCATE(fixture->audio_output, audio_rows * 32ull, float) ||
+        !ALLOCATE(fixture->video_reference, video_rows * 96ull, float) ||
+        !ALLOCATE(fixture->audio_reference, audio_rows * 32ull, float) ||
+        !ALLOCATE(fixture->video_indices, video_rows, unsigned int) ||
+        !ALLOCATE(fixture->audio_indices, audio_rows, unsigned int) ||
+        !ALLOCATE(fixture->text_indices, text_rows, unsigned int) ||
+        !ALLOCATE(fixture->timestep_indices, packed_rows, unsigned int) ||
+        !ALLOCATE(fixture->tags, packed_rows, unsigned int)) {
+        request_fixture_close(fixture);
+        return 0;
+    }
+#undef ALLOCATE
+    return 1;
+}
+
+static int request_fixture_read(request_fixture *fixture, const char *root,
+                                unsigned long long video_rows,
+                                unsigned long long audio_rows,
+                                unsigned long long text_rows,
+                                unsigned long long packed_rows,
+                                unsigned long long timestep_count)
+{
+    static const char *const names[] = {
+        "video.f32", "audio.f32", "conditioning.f32", "timesteps.f32", "positions.f32",
+        "video.oracle.f32", "audio.oracle.f32", "video_indices.u32", "audio_indices.u32",
+        "text_indices.u32", "timestep_indices.u32", "tags.u32",
+    };
+    char paths[sizeof(names) / sizeof(names[0])][1024];
+    unsigned long long index;
+    for (index = 0ull; index < sizeof(names) / sizeof(names[0]); ++index)
+        if (!fixture_path(paths[index], root, names[index])) return 0;
+    return file_read(paths[0], fixture->video, video_rows * 96ull) &&
+           file_read(paths[1], fixture->audio, audio_rows * 32ull) &&
+           file_read(paths[2], fixture->conditioning, text_rows * 5120ull) &&
+           file_read(paths[3], fixture->timesteps, timestep_count) &&
+           file_read(paths[4], fixture->positions, packed_rows * 3ull) &&
+           file_read(paths[5], fixture->video_reference, video_rows * 96ull) &&
+           file_read(paths[6], fixture->audio_reference, audio_rows * 32ull) &&
+           file_read_u32(paths[7], fixture->video_indices, video_rows) &&
+           file_read_u32(paths[8], fixture->audio_indices, audio_rows) &&
+           file_read_u32(paths[9], fixture->text_indices, text_rows) &&
+           file_read_u32(paths[10], fixture->timestep_indices, packed_rows) &&
+           file_read_u32(paths[11], fixture->tags, packed_rows);
+}
+
+static int execute_request_fixture(
+    const char *artifact_path, const char *fixture_root, const char *video_output_path,
+    const char *audio_output_path, unsigned long long video_rows,
+    unsigned long long audio_rows, unsigned long long text_rows,
+    unsigned long long block_count, unsigned long long timestep_count)
+{
+    yvex_artifact_options options = {.path = artifact_path, .readonly = 1};
+    yvex_artifact *artifact = NULL;
+    yvex_tensor_table *tensors = NULL;
+    yvex_gguf *gguf = NULL;
+    yvex_minimax_h3_omni_transformer_request request = {0};
+    yvex_minimax_h3_omni_transformer_result result = {0};
+    request_fixture fixture = {0};
+    yvex_error err;
+    unsigned long long packed_rows, video_values, audio_values;
+    int rc = YVEX_OK;
+    if (!video_rows || !audio_rows || !text_rows || !block_count || block_count > 50ull ||
+        !timestep_count || timestep_count > 64ull ||
+        !yvex_core_u64_add(video_rows, audio_rows, &packed_rows) ||
+        !yvex_core_u64_add(packed_rows, text_rows, &packed_rows) || packed_rows > 4096ull ||
+        !yvex_core_u64_mul(video_rows, 96ull, &video_values) ||
+        !yvex_core_u64_mul(audio_rows, 32ull, &audio_values) ||
+        !request_fixture_allocate(&fixture, video_rows, audio_rows, text_rows,
+                                  packed_rows, timestep_count) ||
+        !request_fixture_read(&fixture, fixture_root, video_rows, audio_rows, text_rows,
+                              packed_rows, timestep_count)) {
+        request_fixture_close(&fixture);
+        return 2;
+    }
+    request.video = fixture.video; request.audio = fixture.audio;
+    request.conditioning = fixture.conditioning; request.timesteps = fixture.timesteps;
+    request.position_ids = fixture.positions; request.video_indices = fixture.video_indices;
+    request.audio_indices = fixture.audio_indices; request.text_indices = fixture.text_indices;
+    request.timestep_indices = fixture.timestep_indices; request.token_tags = fixture.tags;
+    request.video_rows = video_rows; request.audio_rows = audio_rows; request.text_rows = text_rows;
+    request.packed_rows = packed_rows; request.timestep_count = timestep_count;
+    request.block_count = block_count; request.video_output = fixture.video_output;
+    request.audio_output = fixture.audio_output; request.video_output_capacity = video_values;
+    request.audio_output_capacity = audio_values;
+    yvex_error_clear(&err);
+    rc = yvex_artifact_open(&artifact, &options, &err);
+    if (rc == YVEX_OK) rc = yvex_gguf_open(&gguf, artifact, &err);
+    if (rc == YVEX_OK) rc = yvex_tensor_table_from_gguf(&tensors, gguf, &err);
+    if (rc == YVEX_OK)
+        rc = block_count == 1ull
+                 ? execute(artifact, gguf, tensors, &request, &result, &err)
+                 : execute_artifact(artifact, gguf, tensors, &request, &result, &err);
+    if (rc == YVEX_OK &&
+        (!file_write(video_output_path, fixture.video_output, video_values) ||
+         !file_write(audio_output_path, fixture.audio_output, audio_values)))
+        rc = YVEX_ERR_IO;
+    if (rc == YVEX_OK &&
+        (!compare("video", fixture.video_reference, fixture.video_output,
+                  video_values, block_count) ||
+         !compare("audio", fixture.audio_reference, fixture.audio_output,
+                  audio_values, block_count))) {
+        yvex_error_set(&err, YVEX_ERR_FORMAT, "minimax-h3.transformer-request-proof.oracle",
+                       "the request-shaped Transformer envelope differs from its BF16 oracle");
+        rc = YVEX_ERR_FORMAT;
+    }
+    if (rc == YVEX_OK)
+        printf("omni_transformer_request=accepted rows=%llu blocks=%llu resident_bytes=%llu\n"
+               "kernel_launches=%llu device_bytes=%llu\nresidency_identity=%s\n"
+               "execution_identity=%s\n", packed_rows, block_count, result.resident_bytes,
+               result.kernel_launches, result.device_bytes, result.residency_identity,
+               result.execution_identity);
+    else
+        fprintf(stderr, "omni_transformer_request=refused where=%s message=%s\n",
+                yvex_error_where(&err), yvex_error_message(&err));
+    request_fixture_close(&fixture);
+    yvex_tensor_table_close(tensors); yvex_gguf_close(gguf); yvex_artifact_close(artifact);
+    return rc == YVEX_OK ? 0 : 1;
+}
+
 int main(int argc, char **argv)
 {
     yvex_artifact_options options = {0};
@@ -491,6 +663,16 @@ int main(int argc, char **argv)
     char *blocks_end = NULL;
     unsigned long long block_count = blocks_text ? strtoull(blocks_text, &blocks_end, 10) : 1ull;
     int rc = YVEX_OK;
+    if (argc == 11 && strcmp(argv[2], "request") == 0) {
+        char *ends[5] = {0};
+        unsigned long long values[5];
+        int index;
+        for (index = 0; index < 5; ++index) values[index] = strtoull(argv[index + 6], &ends[index], 10);
+        for (index = 0; index < 5; ++index)
+            if (!ends[index] || *ends[index]) return 2;
+        return execute_request_fixture(argv[1], argv[3], argv[4], argv[5],
+                                       values[0], values[1], values[2], values[3], values[4]);
+    }
     if (argc == 6 && strcmp(argv[2], "latent") == 0) {
         char *latent_blocks_end = NULL, *steps_end = NULL;
         unsigned long long latent_blocks = strtoull(argv[4], &latent_blocks_end, 10);

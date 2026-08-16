@@ -288,6 +288,7 @@ static void media_options(yvex_server_media_options *options, const char *output
 {
     static const yvex_server_media_profile profiles[] = {
         {"preview", 192ull, 192ull, 124ull, 1},
+        {"preview-256", 256ull, 256ull, 124ull, 0},
         {"smoke", 32ull, 32ull, 345ull, 0},
     };
     memset(options, 0, sizeof(*options));
@@ -313,7 +314,7 @@ static void media_options(yvex_server_media_options *options, const char *output
     options->minimum_inference_steps = 2ull;
     options->maximum_inference_steps = 64ull;
     options->canvas_multiple = 32ull;
-    options->maximum_canvas_pixels = 192ull * 192ull;
+    options->maximum_canvas_pixels = 256ull * 256ull;
 }
 
 static int media_registry_request(server_media_registry *registry,
@@ -399,6 +400,20 @@ static int test_media_dialog_and_refusals(void)
                          !strstr(messages.text, "Durata:") &&
                          !strstr(messages.text, "Iterazioni:"),
                      "media dimensions do not alias the adjacent duration");
+    memset(&messages, 0, sizeof(messages));
+    YVEX_TEST_ASSERT(media_registry_request(registry, YVEX_CLIENT_OP_SESSION_NEW,
+                                            "preview-256-geometry", NULL,
+                                            &messages, &err) == YVEX_OK,
+                     "extended preview geometry dialogue session");
+    memset(&messages, 0, sizeof(messages));
+    rc = media_registry_request(
+        registry, YVEX_CLIENT_OP_GENERATION_TURN, "preview-256-geometry",
+        "256x256, 5 secondi, 2 punti sigma, seed 42", &messages, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && strstr(messages.text, "AVI") &&
+                         !strstr(messages.text, "Qualità:") &&
+                         !strstr(messages.text, "Durata:") &&
+                         !strstr(messages.text, "Iterazioni:"),
+                     "registered media geometry selects its typed profile");
     for (index = 0ull; index < sizeof(bad_prompts) / sizeof(bad_prompts[0]); ++index) {
         char name[32];
         (void)snprintf(name, sizeof(name), "bad-%llu", index);
@@ -501,9 +516,10 @@ static int test_media_family_profile(void)
                          profile.request_template.video_decode &&
                          profile.request_template.audio_decode,
                      "media host execution callbacks");
-    YVEX_TEST_ASSERT(profile.profile_count == 2ull &&
+    YVEX_TEST_ASSERT(profile.profile_count == 3ull &&
                          !strcmp(profile.profiles[0].name, "preview") &&
-                         !strcmp(profile.profiles[1].name, "smoke"),
+                         !strcmp(profile.profiles[1].name, "preview-256") &&
+                         !strcmp(profile.profiles[2].name, "smoke"),
                      "media host user profiles");
     YVEX_TEST_ASSERT(strstr(profile.transformer_artifact,
                             "physical-v4/transformer.gguf") != NULL,

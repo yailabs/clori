@@ -855,7 +855,8 @@ int yvex_model_minimax_h3_media_target_profile(
         .video_artifact = "physical/video_vae.gguf",
         .audio_artifact = "physical/audio_vae.gguf",
         .tiers = {{"preview", 192ull, 192ull, 124ull, 1},
-                  {"smoke", 32ull, 32ull, 345ull, 0}}, .tier_count = 2ull,
+                  {"preview-256", 256ull, 256ull, 124ull, 0},
+                  {"smoke", 32ull, 32ull, 345ull, 0}}, .tier_count = 3ull,
         .fps_numerator = 24ull, .fps_denominator = 1ull,
         .audio_sample_rate = architecture.audio_vae.sample_rate, .seed = 42ull,
         .maximum_host_bytes = 80ull << 30u, .maximum_device_bytes = 4ull << 30u,
@@ -877,7 +878,7 @@ int yvex_model_minimax_h3_media_target_profile(
         .frames_per_chunk = 17ull, .frame_remainder = 5ull,
         .minimum_frames = 124ull, .maximum_frames = 345ull,
         .minimum_inference_steps = 2ull, .maximum_inference_steps = 64ull,
-        .canvas_multiple = 32ull, .maximum_canvas_pixels = 192ull * 192ull};
+        .canvas_multiple = 32ull, .maximum_canvas_pixels = 256ull * 256ull};
     yvex_error_clear(err);
     return YVEX_OK;
 }
