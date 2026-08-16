@@ -218,16 +218,17 @@ From another terminal, start the ordinary client:
 
 Write the creative scene as normal conversation. The server asks inside that
 conversation for every missing material choice: `preview` (192x192, exactly
-five seconds), `preview-256` (256x256, exactly five seconds), or `smoke`
-(32x32, 5 through 15 seconds); 2 through 64 explicit sigma-grid points; AVI;
+five seconds), `preview-256` (256x256, exactly five seconds), `preview-384`
+(384x384, exactly five seconds), or `smoke` (32x32, 5 through 15 seconds);
+2 through 64 explicit sigma-grid points; AVI;
 and an optional seed. Those are request facts, not daemon startup flags. The
 source does not declare a default iteration count, so YVEX never invents one.
 Source geometry, draft, HD, FHD, 2K, 4K, MP4, MKV, WebM, and MOV refuse until
 the applicable attention, memory, upscaler, or encoder contract is admitted.
 On success, chat reports the atomically published AVI path beneath `OUTPUT`.
 
-Both preview profiles fit the current 4,096-row Omni execution bound even for a
-256-token prompt. The 2,797-row `preview-256` Transformer envelope passed all
+All preview profiles fit the current 8,192-row Omni execution bound even for a
+256-token prompt. The 5,757-row `preview-384` Transformer envelope passed all
 50 blocks against an independent manual BF16 oracle under a 100 GiB hard limit
 with zero swap. Full media playback at that tier is still pending; the earlier
 192x192 AVI playback and synchronization are verified, but sampled frames

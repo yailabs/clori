@@ -76,6 +76,7 @@ docs/worklog/2026-08-15-minimax-media-operator-reachability.md	worklog	canonical
 docs/worklog/2026-08-15-minimax-omni-50-block-conformance.md	worklog	canonical	contributors	retained	minimax_omni_50_block_conformance_worklog
 docs/worklog/2026-08-15-minimax-omni-adaln-rounding.md	worklog	canonical	contributors	retained	minimax_omni_adaln_rounding_worklog
 docs/worklog/2026-08-16-minimax-256-preview-envelope.md	worklog	canonical	contributors	retained	minimax_256_preview_envelope_worklog
+docs/worklog/2026-08-16-minimax-384-preview-envelope.md	worklog	canonical	contributors	retained	minimax_384_preview_envelope_worklog
 docs/worklog/2026-08-16-minimax-chunked-bf16-attention.md	worklog	canonical	contributors	retained	minimax_chunked_bf16_attention_worklog
 docs/worklog/2026-08-16-minimax-exact-attention-tiling.md	worklog	canonical	contributors	retained	minimax_exact_attention_tiling_worklog
 docs/worklog/2026-08-16-minimax-iterative-latent-conformance.md	worklog	canonical	contributors	retained	minimax_iterative_latent_conformance_worklog

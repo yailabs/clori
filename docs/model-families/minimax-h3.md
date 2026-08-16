@@ -1113,10 +1113,10 @@ create a CUDA context while it is only negotiating those parameters.
 
 The conversational projection has focused dialogue, refusal, deterministic
 profile-identity, and no-model-open startup tests. It admits `preview` at
-192x192 and `preview-256` at 256x256, both for exactly 124 frames, plus `smoke`
-at 32x32 for 124 through 345 frames. The server validates each profile against
+192x192, `preview-256` at 256x256, and `preview-384` at 384x384, all for exactly
+124 frames, plus `smoke` at 32x32 for 124 through 345 frames. The server validates each profile against
 the exact worst-case 256-token plan before publishing readiness; runtime
-independently refuses any plan above the 4,096-row Omni execution bound before
+independently refuses any plan above the 8,192-row Omni execution bound before
 latent or component materialization. Source, draft, HD, FHD, 2K, and 4K
 requests are not advertised and fail closed.
 
@@ -1156,6 +1156,13 @@ trajectory or useful media quality. The released checkpoint targets a 768-pixel 
 versus the current 4,096-row admission maximum. The unrecognizable 192x192 output is therefore no
 longer attributed to an observed early recurrent mismatch; useful-resolution capacity and longer
 trajectory evidence remain separate downstream work.
+
+The next admitted spatial envelope is `preview-384`: 384x384 for 124 frames. Its exact
+fifty-block, 5,757-row request passed the independent manual BF16 oracle with video relative L2
+`0.004785907` and cosine `0.999988564`, plus audio relative L2 `0.013636469` and cosine
+`0.999907030`. YVEX reached 65,760,132 KiB peak RSS and 2,522,884,864 device bytes with zero swap.
+This raises capacity and conversational selection only; no complete 384x384 media or quality
+claim exists until an operator-reachable generation and independent playback complete.
 
 ## Progression and non-claims
 
