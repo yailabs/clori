@@ -319,9 +319,12 @@ static int profile_select(server_media_registry *registry, server_media_session 
                           const char *text)
 {
     unsigned long long index;
-    int unavailable = text_contains(text, "source") || text_contains(text, "alta") ||
-                      text_contains(text, "high") || text_contains(text, "hd") ||
-                      text_contains(text, "768p") || text_contains(text, "1344x768") ||
+    int source_square = text_contains(text, "source-768") ||
+                        text_contains(text, "768x768");
+    int unavailable = (text_contains(text, "source") && !source_square) ||
+                      text_contains(text, "alta") || text_contains(text, "high") ||
+                      text_contains(text, "hd") || text_contains(text, "768p") ||
+                      text_contains(text, "1344x768") ||
                       text_contains(text, "bozza") || text_contains(text, "draft") ||
                       text_contains(text, "960x544") || text_contains(text, "fhd") ||
                       text_contains(text, "1080p") || text_contains(text, "1920x1080") ||
@@ -459,8 +462,9 @@ static int dialog_parse(server_media_registry *registry, server_media_session *s
     if (profile < 0)
         return media_refuse(err, YVEX_ERR_UNSUPPORTED,
                             "this GB10 path currently admits preview 192x192, preview-256 "
-                            "256x256, preview-384 384x384, or smoke 32x32; "
-                            "source, draft, HD, FHD, 2K, and 4K are not qualified");
+                            "256x256, preview-384 384x384, source-768 768x768, or smoke "
+                            "32x32; landscape source, draft, HD, FHD, 2K, and 4K are not "
+                            "qualified");
     if (duration < 0)
         return media_refuse(err, YVEX_ERR_BOUNDS,
                             "MiniMax-H3 duration must resolve to 5 through 15 seconds");

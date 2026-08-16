@@ -11,7 +11,7 @@ extern "C" {
 
 #define YVEX_MEDIA_TARGET_PROFILE_SCHEMA_V1 1u
 #define YVEX_MEDIA_EXECUTION_RECIPE_SCHEMA_V1 1u
-#define YVEX_MEDIA_TARGET_TIER_CAP 4u
+#define YVEX_MEDIA_TARGET_TIER_CAP 5u
 
 typedef struct yvex_artifact yvex_artifact;
 typedef struct yvex_gguf yvex_gguf;

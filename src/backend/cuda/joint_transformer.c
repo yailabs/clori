@@ -25,7 +25,7 @@ enum {
     JOINT_PARAMETERS = 6u,
     JOINT_BLOCKS = 50u,
     JOINT_MAX_TIMESTEPS = 64u,
-    JOINT_MAX_PACKED_ROWS = 8192u
+    JOINT_MAX_PACKED_ROWS = 22016u
 };
 typedef enum {
     JOINT_DEVICE_HIDDEN = 0,
@@ -517,8 +517,15 @@ static int joint_compute(joint_run *run, float *staged, yvex_error *err)
     if (rc == YVEX_OK) rc = joint_upload_inputs(run, err);
     if (rc == YVEX_OK) rc = joint_rope_tables(run, err);
     for (run->block_index = 0ull;
-         rc == YVEX_OK && run->block_index < run->block_count; ++run->block_index)
+         rc == YVEX_OK && run->block_index < run->block_count; ++run->block_index) {
         rc = joint_block(run, err);
+        if (rc != YVEX_OK && err) {
+            yvex_error cause = *err;
+            yvex_error_setf(err, cause.code, cause.where,
+                            "Omni block %llu failed: %s", run->block_index,
+                            cause.message);
+        }
+    }
     if (rc == YVEX_OK)
         rc = yvex_backend_tensor_read(run->backend, run->device[JOINT_DEVICE_HIDDEN],
                                       staged, run->output_bytes, err);

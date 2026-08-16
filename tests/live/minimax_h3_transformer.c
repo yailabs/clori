@@ -282,7 +282,7 @@ static int execute(const yvex_artifact *artifact, const yvex_gguf *gguf,
     if (rc == YVEX_OK) rc = selected_weights_load(
         session, &arena, &arena_bytes, external, blocks, identity, err);
     backend_options.kind = YVEX_BACKEND_KIND_CUDA;
-    backend_options.memory_limit_bytes = 4ull * 1024ull * 1024ull * 1024ull;
+    backend_options.memory_limit_bytes = 16ull * 1024ull * 1024ull * 1024ull;
     if (rc == YVEX_OK) rc = yvex_backend_open(&backend, &backend_options, err);
     descriptor.name = "minimax-h3-transformer-envelope-proof-residency";
     descriptor.dtype = YVEX_DTYPE_I8;
@@ -344,7 +344,7 @@ static int execute_artifact(const yvex_artifact *artifact, const yvex_gguf *gguf
     if (rc == YVEX_OK)
         rc = yvex_runtime_component_session_open(
             &session, &admission, artifact, gguf, tensors, YVEX_BACKEND_KIND_CUDA,
-            80ull * 1024ull * 1024ull * 1024ull, 4ull * 1024ull * 1024ull * 1024ull, err);
+            80ull * 1024ull * 1024ull * 1024ull, 16ull * 1024ull * 1024ull * 1024ull, err);
     if (rc == YVEX_OK) rc = graph->transformer_component_cuda(session, request, result, err);
     yvex_error_clear(&cleanup);
     if (yvex_runtime_component_session_close(&session, &cleanup) != YVEX_OK && rc == YVEX_OK) {
@@ -425,7 +425,7 @@ static int execute_latent(const char *path, const char *conditioning_path,
     if (rc == YVEX_OK)
         rc = yvex_runtime_component_session_open(
             &session, &admission, artifact, gguf, tensors, YVEX_BACKEND_KIND_CUDA,
-            80ull * 1024ull * 1024ull * 1024ull, 4ull * 1024ull * 1024ull * 1024ull, &err);
+            80ull * 1024ull * 1024ull * 1024ull, 16ull * 1024ull * 1024ull * 1024ull, &err);
     if (rc == YVEX_OK)
         rc = graph->t2va_plan_build(&plan, 1ull, 32ull, 32ull, 5ull, steps, &err);
     if (rc == YVEX_OK) rc = graph->t2va_layout_build(&plan, &layout, &layout_result, &err);
@@ -587,7 +587,8 @@ static int execute_request_fixture(
     if (!video_rows || !audio_rows || !text_rows || !block_count || block_count > 50ull ||
         !timestep_count || timestep_count > 64ull ||
         !yvex_core_u64_add(video_rows, audio_rows, &packed_rows) ||
-        !yvex_core_u64_add(packed_rows, text_rows, &packed_rows) || packed_rows > 8192ull ||
+        !yvex_core_u64_add(packed_rows, text_rows, &packed_rows) ||
+        packed_rows > YVEX_MINIMAX_H3_OMNI_MAX_PACKED_ROWS ||
         !yvex_core_u64_mul(video_rows, 96ull, &video_values) ||
         !yvex_core_u64_mul(audio_rows, 32ull, &audio_values) ||
         !request_fixture_allocate(&fixture, video_rows, audio_rows, text_rows,
@@ -685,7 +686,7 @@ static int execute_latent_fixture(
         !width || !height || !frames || !text_rows || !block_count || block_count > 50ull ||
         !steps || steps > 64u || !graph ||
         graph->t2va_plan_build(&plan, text_rows, width, height, frames, steps, &err) != YVEX_OK ||
-        plan.packed_rows > 8192ull ||
+        plan.packed_rows > YVEX_MINIMAX_H3_OMNI_MAX_PACKED_ROWS ||
         !yvex_core_u64_mul(plan.video_rows, plan.video_value_width, &video_values) ||
         !yvex_core_u64_mul(plan.audio_rows, plan.audio_value_width, &audio_values) ||
         !yvex_core_u64_mul(text_rows, 5120ull, &conditioning_values) ||
