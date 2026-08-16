@@ -1327,7 +1327,7 @@ static void quant_gqa_bf16_reference(const float *query, const float *key,
 
 static int quant_cuda_gqa_blas(yvex_backend *backend)
 {
-    enum { TOKENS = 129u, HEAD_DIM = 128u, ELEMENTS = TOKENS * HEAD_DIM };
+    enum { TOKENS = 257u, HEAD_DIM = 128u, ELEMENTS = TOKENS * HEAD_DIM };
     yvex_device_tensor *query = NULL, *key = NULL, *value = NULL, *output = NULL;
     float query_values[ELEMENTS], key_values[ELEMENTS], values[ELEMENTS];
     float result[ELEMENTS], reference[ELEMENTS];
@@ -1359,7 +1359,7 @@ static int quant_cuda_gqa_blas(yvex_backend *backend)
             yvex_cuda_transformer_gqa(
                 backend, query, key, value, output, TOKENS, 1ull, 1ull,
                 HEAD_DIM, causal, &facts, &err) == YVEX_OK &&
-                facts.kernel_launches == 13ull && facts.tensor_core_launches == 6ull &&
+                facts.kernel_launches == 10ull && facts.tensor_core_launches == 4ull &&
                 facts.device_synchronizations == 1ull &&
                 facts.d2h_bytes == sizeof(int) && facts.temporary_bytes > sizeof(result) &&
                 yvex_backend_tensor_read(
