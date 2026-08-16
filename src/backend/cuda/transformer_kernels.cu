@@ -175,6 +175,87 @@ extern "C" __global__ void yvex_gqa_f32(
     }
 }
 
+/* Pack token-major F32 values into head-major BF16 matrices consumed by batched GEMM. */
+extern "C" __global__ void yvex_gqa_pack_bf16(
+    const float *input, unsigned short *output, unsigned long long tokens,
+    unsigned long long heads, unsigned long long head_dim, int *status)
+{
+    unsigned long long index =
+        (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned long long elements = tokens * heads * head_dim, token, head, dim;
+    float value;
+    if (!input || !output || !status || *status || index >= elements) return;
+    token = index / (heads * head_dim);
+    head = (index / head_dim) % heads;
+    dim = index % head_dim;
+    value = input[index];
+    if (!isfinite(value)) {
+        atomicCAS(status, 0, 1);
+        return;
+    }
+    output[(head * tokens + token) * head_dim + dim] =
+        (unsigned short)(__float_as_uint(float_to_bf16_rne(value)) >> 16u);
+}
+
+/* Normalize one bounded score tile and publish BF16 probabilities for the value GEMM. */
+extern "C" __global__ void yvex_gqa_softmax_bf16(
+    const float *scores, unsigned short *probabilities,
+    unsigned long long query_rows, unsigned long long tokens,
+    unsigned long long query_start, int causal, int *status)
+{
+    extern __shared__ float reduction[];
+    unsigned long long row = blockIdx.x, local_query = row % query_rows;
+    unsigned long long query = query_start + local_query, source;
+    float maximum = -INFINITY, sum = 0.0f;
+    if (!scores || !probabilities || !status || *status || !query_rows || !tokens) return;
+    for (source = threadIdx.x; source < tokens; source += blockDim.x) {
+        float value = scores[row * tokens + source];
+        if ((!causal || source <= query) && !isfinite(value)) atomicCAS(status, 0, 1);
+        if (!causal || source <= query) maximum = fmaxf(maximum, value);
+    }
+    reduction[threadIdx.x] = maximum;
+    __syncthreads();
+    for (unsigned int stride = blockDim.x >> 1; stride; stride >>= 1) {
+        if (threadIdx.x < stride)
+            reduction[threadIdx.x] = fmaxf(reduction[threadIdx.x],
+                                            reduction[threadIdx.x + stride]);
+        __syncthreads();
+    }
+    maximum = reduction[0];
+    for (source = threadIdx.x; source < tokens; source += blockDim.x)
+        if (!causal || source <= query) sum += expf(scores[row * tokens + source] - maximum);
+    reduction[threadIdx.x] = sum;
+    __syncthreads();
+    for (unsigned int stride = blockDim.x >> 1; stride; stride >>= 1) {
+        if (threadIdx.x < stride) reduction[threadIdx.x] += reduction[threadIdx.x + stride];
+        __syncthreads();
+    }
+    sum = reduction[0];
+    if (!isfinite(sum) || sum <= 0.0f) atomicCAS(status, 0, 1);
+    for (source = threadIdx.x; source < tokens; source += blockDim.x) {
+        float probability = (!causal || source <= query) && sum > 0.0f
+                                ? expf(scores[row * tokens + source] - maximum) / sum
+                                : 0.0f;
+        probabilities[row * tokens + source] =
+            (unsigned short)(__float_as_uint(float_to_bf16_rne(probability)) >> 16u);
+    }
+}
+
+/* Restore the batched GEMM result to the canonical token/head/dimension layout. */
+extern "C" __global__ void yvex_gqa_unpack_f32(
+    const float *input, float *output, unsigned long long tokens,
+    unsigned long long heads, unsigned long long head_dim)
+{
+    unsigned long long index =
+        (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned long long elements = tokens * heads * head_dim, token, head, dim;
+    if (!input || !output || index >= elements) return;
+    token = index / (heads * head_dim);
+    head = (index / head_dim) % heads;
+    dim = index % head_dim;
+    output[index] = input[(head * tokens + token) * head_dim + dim];
+}
+
 /* Fuse the elementwise SiLU gate product used by dense transformer MLPs. */
 extern "C" __global__ void yvex_silu_product_bf16_f32(
     const float *gate, const float *up, float *output, unsigned long long count)

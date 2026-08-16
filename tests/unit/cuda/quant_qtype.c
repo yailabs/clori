@@ -1289,6 +1289,99 @@ static int quant_cuda_gqa_tiles(yvex_backend *backend)
     return 0;
 }
 
+static void quant_gqa_bf16_reference(const float *query, const float *key,
+                                     const float *value, float *output,
+                                     unsigned int tokens, unsigned int head_dim,
+                                     int causal)
+{
+    const float scale = 1.0f / sqrtf((float)head_dim);
+    unsigned int row, source, dim;
+    for (row = 0u; row < tokens; ++row) {
+        unsigned int visible = causal ? row + 1u : tokens;
+        float maximum = -INFINITY, denominator = 0.0f;
+        for (source = 0u; source < visible; ++source) {
+            float score = 0.0f;
+            for (dim = 0u; dim < head_dim; ++dim)
+                score += query[row * head_dim + dim] * key[source * head_dim + dim];
+            if (score * scale > maximum) maximum = score * scale;
+        }
+        for (source = 0u; source < visible; ++source) {
+            float score = 0.0f;
+            for (dim = 0u; dim < head_dim; ++dim)
+                score += query[row * head_dim + dim] * key[source * head_dim + dim];
+            denominator += expf(score * scale - maximum);
+        }
+        for (dim = 0u; dim < head_dim; ++dim) output[row * head_dim + dim] = 0.0f;
+        for (source = 0u; source < visible; ++source) {
+            float score = 0.0f, probability;
+            for (dim = 0u; dim < head_dim; ++dim)
+                score += query[row * head_dim + dim] * key[source * head_dim + dim];
+            probability = expf(score * scale - maximum) / denominator;
+            probability = yvex_quant_bf16_decode(yvex_quant_bf16_encode(probability));
+            for (dim = 0u; dim < head_dim; ++dim)
+                output[row * head_dim + dim] +=
+                    probability * value[source * head_dim + dim];
+        }
+    }
+}
+
+static int quant_cuda_gqa_blas(yvex_backend *backend)
+{
+    enum { TOKENS = 129u, HEAD_DIM = 128u, ELEMENTS = TOKENS * HEAD_DIM };
+    yvex_device_tensor *query = NULL, *key = NULL, *value = NULL, *output = NULL;
+    float query_values[ELEMENTS], key_values[ELEMENTS], values[ELEMENTS];
+    float result[ELEMENTS], reference[ELEMENTS];
+    yvex_backend_cuda_operation_facts facts;
+    yvex_error err;
+    unsigned int index;
+    int causal;
+
+    for (index = 0u; index < ELEMENTS; ++index) {
+        query_values[index] = yvex_quant_bf16_decode(
+            yvex_quant_bf16_encode((float)((int)((index * 3u) % 31u) - 15) / 16.0f));
+        key_values[index] = yvex_quant_bf16_decode(
+            yvex_quant_bf16_encode((float)((int)((index * 5u + 2u) % 37u) - 18) / 16.0f));
+        values[index] = yvex_quant_bf16_decode(
+            yvex_quant_bf16_encode((float)((int)((index * 7u + 1u) % 41u) - 20) / 8.0f));
+    }
+    YVEX_TEST_ASSERT(
+        quant_cuda_tensor(backend, "gqa-blas-query", YVEX_DTYPE_F32,
+                          query_values, sizeof(query_values), &query, &err) &&
+            quant_cuda_tensor(backend, "gqa-blas-key", YVEX_DTYPE_F32,
+                              key_values, sizeof(key_values), &key, &err) &&
+            quant_cuda_tensor(backend, "gqa-blas-value", YVEX_DTYPE_F32,
+                              values, sizeof(values), &value, &err) &&
+            quant_cuda_tensor(backend, "gqa-blas-output", YVEX_DTYPE_F32,
+                              NULL, sizeof(result), &output, &err),
+        "chunked BF16 GQA tensors allocate");
+    for (causal = 0; causal <= 1; ++causal) {
+        YVEX_TEST_ASSERT(
+            yvex_cuda_transformer_gqa(
+                backend, query, key, value, output, TOKENS, 1ull, 1ull,
+                HEAD_DIM, causal, &facts, &err) == YVEX_OK &&
+                facts.kernel_launches == 13ull && facts.tensor_core_launches == 6ull &&
+                facts.device_synchronizations == 1ull &&
+                facts.d2h_bytes == sizeof(int) && facts.temporary_bytes > sizeof(result) &&
+                yvex_backend_tensor_read(
+                    backend, output, result, sizeof(result), &err) == YVEX_OK,
+            "chunked BF16 GQA publishes bounded tensor-core execution facts");
+        quant_gqa_bf16_reference(query_values, key_values, values, reference,
+                                 TOKENS, HEAD_DIM, causal);
+        for (index = 0u; index < ELEMENTS; ++index)
+            YVEX_TEST_ASSERT(
+                fabsf(result[index] - reference[index]) <=
+                    2e-3f * (1.0f + fabsf(reference[index])),
+                "chunked BF16 GQA matches the scalar mixed-precision oracle");
+    }
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_release(backend, &query, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &key, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &value, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &output, &err) == YVEX_OK,
+        "chunked BF16 GQA tensors release cleanly");
+    return 0;
+}
+
 static int quant_cuda_video_transformer(yvex_backend *backend)
 {
     yvex_device_tensor *input = NULL, *first = NULL, *second = NULL, *third = NULL;
@@ -1916,6 +2009,8 @@ int yvex_cuda_test_quant_qtype(void)
                      "dense transformer activation primitives");
     YVEX_TEST_ASSERT(quant_cuda_gqa_tiles(backend) == 0,
                      "online grouped-query attention tiles");
+    YVEX_TEST_ASSERT(quant_cuda_gqa_blas(backend) == 0,
+                     "chunked BF16 tensor-core attention");
     YVEX_TEST_ASSERT(quant_cuda_video_transformer(backend) == 0,
                      "video transformer activation primitives");
     YVEX_TEST_ASSERT(quant_cuda_dense_decoder(backend) == 0,

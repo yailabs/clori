@@ -218,6 +218,12 @@ typedef struct {
                    const void *alpha, const void *a, int atype, int lda,
                    const void *b, int btype, int ldb, const void *beta,
                    void *c, int ctype, int ldc, int compute_type, int algorithm);
+    int (*gemm_strided_batched_ex)(
+        void *handle, int transa, int transb, int m, int n, int k,
+        const void *alpha, const void *a, int atype, int lda, long long stride_a,
+        const void *b, int btype, int ldb, long long stride_b, const void *beta,
+        void *c, int ctype, int ldc, long long stride_c, int batches,
+        int compute_type, int algorithm);
     int ready;
 } yvex_cuda_blas;
 typedef struct {
@@ -273,6 +279,7 @@ typedef struct {
     CUfunction mlp_function;
     CUfunction attention_function;
     CUfunction rotary_half_function, rotary_half_plain_function, gqa_function;
+    CUfunction gqa_pack_function, gqa_softmax_function, gqa_unpack_function;
     CUfunction silu_product_function, silu_function, split_three_function;
     CUfunction split_interleaved_function, swiglu_split_function, swiglu_split_f32_function;
     CUfunction modulation_function, gated_residual_function, bias_function;

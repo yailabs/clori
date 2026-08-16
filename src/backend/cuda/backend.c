@@ -222,6 +222,8 @@ static int cuda_blas_open(yvex_backend *backend, yvex_error *err)
     *(void **)(&blas->destroy) = dlsym(blas->library, "cublasDestroy_v2");
     *(void **)(&blas->set_stream) = dlsym(blas->library, "cublasSetStream_v2");
     *(void **)(&blas->gemm_ex) = dlsym(blas->library, "cublasGemmEx");
+    *(void **)(&blas->gemm_strided_batched_ex) =
+        dlsym(blas->library, "cublasGemmStridedBatchedEx");
     if (!blas->create || !blas->destroy || !blas->set_stream || !blas->gemm_ex ||
         blas->create(&blas->handle) != 0 ||
         blas->set_stream(blas->handle, state->execution_stream) != 0) {

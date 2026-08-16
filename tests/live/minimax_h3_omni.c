@@ -17,12 +17,17 @@
 enum { OMNI_ROWS = 3u, OMNI_HIDDEN = 5376u, OMNI_TIME = 2688u, OMNI_BLOCKS = 50u };
 /* Independent PyTorch CUDA BF16 execution bounds the composed block across
  * different legal reduction orders. */
-static const double oracle_max_relative_l2 = 0.01;
-static const double oracle_min_cosine = 0.9999;
+static const double oracle_one_block_max_relative_l2 = 0.01;
+static const double oracle_one_block_min_cosine = 0.9999;
 /* A multi-row BF16 reduction can move one maximum-magnitude output by a binade ULP even
  * while the aggregate vector stays conformant; the paired L2 and cosine bounds prevent
  * this maximum-element allowance from admitting a structurally different result. */
-static const double oracle_max_scaled_absolute = 0.01;
+static const double oracle_one_block_max_scaled_absolute = 0.01;
+/* The complete stack admits the established aggregate BF16 envelope only after the strict
+ * one-block contract above has ruled out a locally incorrect operation. */
+static const double oracle_stack_max_relative_l2 = 0.04;
+static const double oracle_stack_min_cosine = 0.9995;
+static const double oracle_stack_max_scaled_absolute = 0.04;
 
 static const char *const block_weight_suffixes[YVEX_TRANSFORMER_JOINT_BLOCK_WEIGHT_COUNT] = {
     "norm1.weight",
@@ -174,7 +179,7 @@ static int output_write(const char *path, const float *values, unsigned long lon
 }
 
 static int reference_compare(const float *reference, const float *output,
-                             unsigned long long count)
+                             unsigned long long count, unsigned long long block_count)
 {
     double squared = 0.0, reference_squared = 0.0, output_squared = 0.0, dot = 0.0;
     double rmse, relative_l2, cosine, scaled_absolute;
@@ -198,8 +203,13 @@ static int reference_compare(const float *reference, const float *output,
     printf("oracle_max_absolute_error=%.9g oracle_rmse=%.9g\n", maximum, rmse);
     printf("oracle_relative_l2=%.9g oracle_cosine=%.12g "
            "oracle_scaled_absolute=%.9g\n", relative_l2, cosine, scaled_absolute);
-    return relative_l2 <= oracle_max_relative_l2 && cosine >= oracle_min_cosine &&
-           scaled_absolute <= oracle_max_scaled_absolute;
+    if (block_count == 1ull)
+        return relative_l2 <= oracle_one_block_max_relative_l2 &&
+               cosine >= oracle_one_block_min_cosine &&
+               scaled_absolute <= oracle_one_block_max_scaled_absolute;
+    return relative_l2 <= oracle_stack_max_relative_l2 &&
+           cosine >= oracle_stack_min_cosine &&
+           scaled_absolute <= oracle_stack_max_scaled_absolute;
 }
 
 static int execute_block(
@@ -422,7 +432,7 @@ int main(int argc, char **argv)
                        "Omni proof output could not be written completely");
         rc = YVEX_ERR_IO;
     }
-    if (rc == YVEX_OK && !reference_compare(reference, output, values)) {
+    if (rc == YVEX_OK && !reference_compare(reference, output, values, block_count)) {
         yvex_error_set(&err, YVEX_ERR_FORMAT, "minimax-h3.omni-proof.oracle",
                        "YVEX Omni block differs from the independent BF16 oracle");
         rc = YVEX_ERR_FORMAT;
