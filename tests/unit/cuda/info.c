@@ -191,9 +191,11 @@ static int moe_encoded_weight(
     yvex_quant_failure failure;
     yvex_error err;
     float calibration[YVEX_QUANT_IQ2_XXS_ELEMENTS];
-    unsigned long long row_bytes, bytes, offset, row, block;
+    float source_values[YVEX_QUANT_IQ2_XXS_ELEMENTS];
+    unsigned long long row_bytes, bytes, offset, row, block, element;
     if (!fixture || !view || !geometry || !rows || !width || !row_values ||
         width % geometry->block_size ||
+        geometry->block_size > YVEX_QUANT_IQ2_XXS_ELEMENTS ||
         !yvex_core_u64_mul(width / geometry->block_size,
                            geometry->bytes_per_block, &row_bytes) ||
         !yvex_core_u64_mul(rows, row_bytes, &bytes) ||
@@ -203,14 +205,18 @@ static int moe_encoded_weight(
     for (row = 0ull; row < rows; ++row)
         for (block = 0ull; block < width / geometry->block_size; ++block) {
             size_t wrote = 0u;
-            const float *source = row_values + block * geometry->block_size;
+            for (element = 0ull; element < geometry->block_size; ++element) {
+                unsigned long long logical = block * geometry->block_size + element;
+                source_values[element] = row & 1ull ? -row_values[logical]
+                                                    : row_values[logical];
+            }
             unsigned char *destination = fixture->arena + offset + row * row_bytes +
                                          block * geometry->bytes_per_block;
             int rc = qtype == YVEX_GGUF_QTYPE_IQ2_XXS
                          ? yvex_quant_encode_block_weighted(
-                               qtype, source, calibration, geometry->block_size, destination,
+                               qtype, source_values, calibration, geometry->block_size, destination,
                                geometry->bytes_per_block, &wrote, &failure, &err)
-                         : yvex_quant_encode_block(qtype, source, geometry->block_size,
+                         : yvex_quant_encode_block(qtype, source_values, geometry->block_size,
                                                    destination, geometry->bytes_per_block,
                                                    &wrote, &failure, &err);
             if (rc != YVEX_OK ||
@@ -330,7 +336,7 @@ static int assert_encoded_moe(yvex_backend *backend)
     YVEX_TEST_ASSERT(operations, "obtain CUDA width-N MoE operations");
     for (index = 0ull; index < WIDTH; ++index) {
         norm[index] = 1.0f;
-        expert_row[index] = ((float)((index * 11ull + 5ull) % 31ull) - 15.0f) / 32.0f;
+        expert_row[index] = ((float)((index * 11ull + 5ull) % 31ull) - 15.0f) / 128.0f;
         for (row = 0ull; row < ROWS; ++row)
             input_rows[row * WIDTH + index] = (row + index * 7ull) & 1ull ? -1.0f : 1.0f;
     }
@@ -419,6 +425,12 @@ static int assert_encoded_moe(yvex_backend *backend)
                                YVEX_GGUF_QTYPE_Q8_0,
                                WIDTH, WIDTH, expert_row),
         "encode mixed low-bit expert-major MoE weights");
+    YVEX_TEST_ASSERT(
+        memcmp(job.weights[YVEX_MOE_WEIGHT_ROUTED_GATE].encoded,
+               job.weights[YVEX_MOE_WEIGHT_ROUTED_GATE].encoded +
+                   job.weights[YVEX_MOE_WEIGHT_ROUTED_GATE].row_bytes,
+               job.weights[YVEX_MOE_WEIGHT_ROUTED_GATE].row_bytes) != 0,
+        "encoded MoE oracle distinguishes adjacent expert rows");
     for (slot = 0ull; slot < YVEX_MOE_WEIGHT_COUNT; ++slot)
         if (job.weights[slot].device_address)
             layer.tensor_ids[slot] = job.weights[slot].tensor_id;
