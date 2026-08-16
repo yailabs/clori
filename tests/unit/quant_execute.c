@@ -1372,7 +1372,7 @@ int yvex_test_gguf_writer_artifact(void)
     YVEX_TEST_ASSERT(quant_fixture_create(
                          &fixture, "gguf-writer", 0, 0, &err),
                      "writer fixture must construct trusted quant inputs");
-    YVEX_TEST_ASSERT(yvex_quant_plan_build_source_faithful(
+    YVEX_TEST_ASSERT(yvex_quant_plan_build_identity(
                          &source_faithful, fixture.ir, fixture.binding,
                          "invalid-source-faithful-v1", 0x112233u, NULL,
                          &quant_failure, &err) != YVEX_OK && !source_faithful &&

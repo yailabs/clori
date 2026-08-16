@@ -250,6 +250,7 @@ typedef struct {
 } yvex_physical_variant_summary;
 typedef struct {
     const char *source_path, *component_id;
+    int candidate_q8;
 } yvex_component_variant_source_request;
 typedef struct {
     void *owner;
@@ -266,6 +267,8 @@ struct yvex_physical_variant_api;
 typedef struct {
     unsigned int schema_version;
     const char *target_id, *family, *source_revision, *profile_name;
+    const char *candidate_profile_name, *candidate_component_id;
+    unsigned long long candidate_q8_semantic_role_mask;
     int (*source_open)(yvex_component_variant_source *out,
                        const yvex_component_variant_source_request *request,
                        yvex_error *err);

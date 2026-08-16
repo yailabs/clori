@@ -51,6 +51,9 @@ typedef struct yvex_transformer_joint_result yvex_minimax_h3_omni_transformer_re
 #define YVEX_MINIMAX_H3_AUDIO_UNRESOLVED_IDENTITY "935ae0a2371b15131b8920a879462484ebd3f5526ff5a97ef95c4e0af7b7cc1d"
 #define YVEX_MINIMAX_H3_AUDIO_TRANSFORM_IDENTITY "e6f8f3ac2ae01157a57049f0db2439271585966174c0bfe202a5546471361ab3"
 #define YVEX_MINIMAX_H3_AUDIO_PROFILE_NAME "minimax-h3-source-faithful-v1"
+#define YVEX_MINIMAX_H3_TRANSFORMER_Q8_PROFILE_NAME "minimax-h3-transformer-q8_0-v1"
+#define YVEX_MINIMAX_H3_TRANSFORMER_Q8_ROLE_MASK \
+    ((1ull << YVEX_MINIMAX_H3_ROLE_OMNI_ATTENTION) | (1ull << YVEX_MINIMAX_H3_ROLE_OMNI_MLP))
 #define YVEX_MINIMAX_H3_AUDIO_PROFILE_IDENTITY "b8b5aa330a617b0fa33fdd1428e5fea9e8edcdd7f6a2ba6f530d378fbaddaa65"
 #define YVEX_MINIMAX_H3_AUDIO_QUANT_IDENTITY "551609d790bd9af9a51297bacbc7d476bbe436239ee0ce86fb1daa896fccd2ec"
 #define YVEX_MINIMAX_H3_AUDIO_PAYLOAD_PLAN_IDENTITY "c42dee2e548b9452707cb3327e55f09e3e9262bfc3d3d3665170bc9cfce1ffe4"
@@ -363,6 +366,7 @@ typedef struct {
 typedef struct {
     const char *source_root;
     yvex_minimax_h3_component_id component;
+    int transformer_q8;
     yvex_source_payload_budget budget;
     size_t chunk_bytes;
     size_t page_bytes;

@@ -574,10 +574,29 @@ static int variant_component_adapter_validate(
         !adapter->family || !adapter->family[0] ||
         !adapter->source_revision || !adapter->source_revision[0] ||
         !adapter->profile_name || !adapter->profile_name[0] ||
-        !adapter->source_open || !adapter->physical_variant)
+        !adapter->source_open || !adapter->physical_variant ||
+        (!!adapter->candidate_profile_name != !!adapter->candidate_component_id) ||
+        (!!adapter->candidate_profile_name !=
+         !!adapter->candidate_q8_semantic_role_mask))
         return variant_refuse(YVEX_ERR_STATE,
                               "target published an invalid component compiler adapter", err);
     return YVEX_OK;
+}
+
+static int variant_q8_select(const yvex_transform_value *terminal,
+                             unsigned int *qtype, int *approximation, void *context)
+{
+    const yvex_component_variant_adapter *adapter = context;
+    unsigned long long role = terminal ? terminal->logical_key.semantic_role : 64ull;
+
+    if (!terminal || !qtype || !approximation || !adapter) return 0;
+    if (terminal->dtype == YVEX_TRANSFORM_DTYPE_BF16 && terminal->shape.rank == 2u &&
+        terminal->shape.dims[1] % 256ull == 0ull && role < 64ull &&
+        (adapter->candidate_q8_semantic_role_mask & (1ull << role)) != 0ull) {
+        *qtype = YVEX_GGUF_QTYPE_Q8_0;
+        *approximation = 1;
+    }
+    return 1;
 }
 
 static int variant_component_source_validate(
@@ -637,28 +656,56 @@ static int variant_component_open(
     const yvex_physical_variant_request *request,
     yvex_error *err)
 {
-    yvex_component_variant_source_request source = {
-        request->source_path, request->component_id};
+    const char *profile_name = request->quant_preset_name
+                                   ? request->quant_preset_name
+                                   : adapter->profile_name;
     yvex_quant_failure failure = {0};
+    yvex_quant_plan_options quant_options = {0};
+    int candidate_profile = adapter && adapter->candidate_profile_name &&
+                            strcmp(profile_name, adapter->candidate_profile_name) == 0;
+    yvex_component_variant_source_request source = {
+        .source_path = request->source_path,
+        .component_id = request->component_id,
+        .candidate_q8 = candidate_profile};
     int rc;
 
+    if (candidate_profile) {
+        quant_options.identity_override = variant_q8_select;
+        quant_options.identity_override_context = (void *)adapter;
+    }
+
     if (!request->component_id || request->models_root ||
-        request->source_manifest_path || request->quant_preset_name ||
-        request->quant_policy_path || request->imatrix_path || request->backend)
+        request->source_manifest_path || request->quant_policy_path ||
+        request->imatrix_path ||
+        (request->backend && strcmp(request->backend, "cpu") != 0 &&
+         strcmp(request->backend, "cuda") != 0))
         return variant_refuse(
             YVEX_ERR_INVALID_ARG,
-            "component preparation accepts only source and component", err);
+            "component preparation accepts source, component, preset, and backend", err);
     rc = variant_component_adapter_validate(adapter, request, err);
+    if (rc == YVEX_OK && strcmp(profile_name, adapter->profile_name) != 0 &&
+        !candidate_profile)
+        rc = variant_refuse(YVEX_ERR_UNSUPPORTED,
+                            "component physical profile is not admitted", err);
+    if (rc == YVEX_OK && candidate_profile &&
+        strcmp(request->component_id, adapter->candidate_component_id) != 0)
+        rc = variant_refuse(YVEX_ERR_UNSUPPORTED,
+                            "component alternate profile targets another component", err);
     if (rc == YVEX_OK) rc = adapter->source_open(&session->component, &source, err);
     if (rc == YVEX_OK)
         rc = variant_component_source_validate(
             &session->component, adapter, request, err);
     if (rc == YVEX_OK)
-        rc = yvex_quant_plan_build_source_faithful(
+        rc = yvex_quant_plan_build_identity(
             &session->component_quant, session->component.transform_ir,
-            session->component.transform_binding, adapter->profile_name,
-            yvex_transform_hash_string(session->component.component_identity),
-            NULL, &failure, err);
+            session->component.transform_binding, profile_name,
+            yvex_transform_hash_string(candidate_profile
+                                           ? profile_name
+                                           : session->component.component_identity),
+            candidate_profile ? &quant_options : NULL, &failure, err);
+    if (rc == YVEX_OK)
+        rc = variant_backend_validate(request->backend,
+                                      session->component_quant, err);
     if (rc == YVEX_OK) rc = variant_component_writer(session, err);
     if (rc == YVEX_OK) {
         session->summary = session->component.summary;

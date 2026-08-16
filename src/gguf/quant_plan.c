@@ -1119,7 +1119,7 @@ int yvex_quant_plan_build_explicit(yvex_quant_plan **out, const yvex_transform_i
  * axes and fold the remaining contiguous axes into the fourth. The logical rank remains in
  * Transformation IR and the physical decision identity binds this reversible container view.
  */
-int yvex_quant_plan_build_source_faithful(
+int yvex_quant_plan_build_identity(
     yvex_quant_plan **out, const yvex_transform_ir *ir,
     const yvex_transform_binding *binding, const char *profile_name,
     unsigned long long lowering_identity, const yvex_quant_plan_options *options,
@@ -1185,6 +1185,18 @@ int yvex_quant_plan_build_source_faithful(
                 }
             }
             decisions[ordinal].dims[YVEX_GGUF_QTYPE_MAX_DIMS - 1u] = folded;
+        }
+        if (options && options->identity_override &&
+            !options->identity_override(
+                terminal, &decisions[ordinal].qtype,
+                &decisions[ordinal].approximation,
+                options->identity_override_context)) {
+            free(decisions);
+            return quant_plan_fail(
+                failure, YVEX_QUANT_FAILURE_UNSUPPORTED_OPERATION, ordinal,
+                ULLONG_MAX, 1u, 0u, decisions[ordinal].qtype, node->kind, err,
+                YVEX_ERR_UNSUPPORTED,
+                "identity physical override refused one terminal");
         }
     }
     rc = yvex_quant_plan_build_explicit(

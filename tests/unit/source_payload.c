@@ -589,6 +589,7 @@ static int payload_fixture_transform_ir(
     const char *required_payload_identity,
     const char *shard_name_override,
     int component_schema,
+    int quantizable,
     yvex_transform_failure *failure,
     yvex_error *err)
 {
@@ -665,8 +666,14 @@ static int payload_fixture_transform_ir(
     terminal.shape = source.shape;
     terminal.dtype = YVEX_TRANSFORM_DTYPE_BF16;
     terminal.precision.flags = YVEX_TRANSFORM_PRECISION_EXACT;
+    if (quantizable)
+        terminal.precision.flags |= YVEX_TRANSFORM_PRECISION_QUANTIZABLE_WEIGHT |
+                                    YVEX_TRANSFORM_PRECISION_REFERENCE_COMPUTE;
     terminal.precision.allowed_physical_classes =
-        YVEX_TRANSFORM_PHYSICAL_BF16;
+        YVEX_TRANSFORM_PHYSICAL_BF16 |
+        (quantizable ? YVEX_TRANSFORM_PHYSICAL_QUANTIZED : 0u);
+    terminal.precision.approximation_allowed = quantizable;
+    terminal.precision.reference_compute_required = quantizable;
     terminal.logical_key.scope = YVEX_TRANSFORM_SCOPE_MAIN_LAYER;
     terminal.logical_key.subsystem = YVEX_TRANSFORM_SUBSYSTEM_ATTENTION;
     terminal.logical_key.role = YVEX_TENSOR_ROLE_ATTENTION_Q_A;
@@ -757,7 +764,7 @@ static int test_payload_transform_binding(
     YVEX_TEST_ASSERT(payload_fixture_transform_ir(
                          &ir, fixture->session,
                          facts->source_snapshot_identity,
-                         facts->payload_identity, NULL, 0, &failure, &err) ==
+                         facts->payload_identity, NULL, 0, 0, &failure, &err) ==
                          YVEX_OK &&
                          ir,
                      "trusted fixture Transformation IR seals");
@@ -1186,16 +1193,16 @@ static int test_payload_transform_binding(
     YVEX_TEST_ASSERT(payload_fixture_transform_ir(
                          &mismatch, fixture->session,
                          facts->source_snapshot_identity, facts->payload_identity,
-                         NULL, 1, &failure, &err) == YVEX_OK && mismatch &&
+                         NULL, 1, 0, &failure, &err) == YVEX_OK && mismatch &&
                          yvex_transform_binding_create(
                              &binding, mismatch, fixture->session, NULL,
                              &failure, &err) == YVEX_OK && binding,
                      "component-schema source binds without payload reads");
-    YVEX_TEST_ASSERT(yvex_quant_plan_build_source_faithful(
+    YVEX_TEST_ASSERT(yvex_quant_plan_build_identity(
                          &quant_plan, mismatch, binding,
                          "minimax-h3-source-faithful-v1", 0x778899u, NULL,
                          &quant_failure, &err) == YVEX_OK && quant_plan &&
-                         yvex_quant_plan_build_source_faithful(
+                         yvex_quant_plan_build_identity(
                              &second_plan, mismatch, binding,
                              "minimax-h3-source-faithful-v1", 0x778899u,
                              NULL, &quant_failure, &err) == YVEX_OK && second_plan,
@@ -1286,7 +1293,7 @@ static int test_payload_transform_binding(
     YVEX_TEST_ASSERT(payload_fixture_transform_ir(
                          &mismatch, fixture->session,
                          facts->source_snapshot_identity, wrong_payload,
-                         NULL, 0, &failure, &err) == YVEX_OK && mismatch &&
+                         NULL, 0, 0, &failure, &err) == YVEX_OK && mismatch &&
                          yvex_transform_binding_create(
                              &binding, mismatch, fixture->session, NULL,
                              &failure, &err) != YVEX_OK && !binding &&
@@ -1299,7 +1306,7 @@ static int test_payload_transform_binding(
                          &mismatch, fixture->session,
                          facts->source_snapshot_identity,
                          facts->payload_identity, "wrong.safetensors",
-                         0, &failure, &err) == YVEX_OK && mismatch &&
+                         0, 0, &failure, &err) == YVEX_OK && mismatch &&
                          yvex_transform_binding_create(
                              &binding, mismatch, fixture->session, NULL,
                              &failure, &err) != YVEX_OK && !binding &&
@@ -1347,7 +1354,7 @@ static int test_payload_transform_binding_untrusted(payload_fixture *fixture)
     YVEX_TEST_ASSERT(payload_fixture_transform_ir(
                          &ir, fixture->session,
                          fixture->verification.source_snapshot_identity,
-                         pending_payload, NULL, 0, &failure, &err) == YVEX_OK &&
+                         pending_payload, NULL, 0, 0, &failure, &err) == YVEX_OK &&
                          ir,
                      "untrusted-session plan remains valid planning state");
     YVEX_TEST_ASSERT(yvex_transform_binding_create(
@@ -1358,6 +1365,19 @@ static int test_payload_transform_binding_untrusted(payload_fixture *fixture)
                      "untrusted session without admitted identity refuses binding");
     yvex_transform_ir_release(&ir);
     return 0;
+}
+
+static int payload_fixture_q8_override(const yvex_transform_value *terminal,
+                                       unsigned int *qtype, int *approximation,
+                                       void *context)
+{
+    unsigned int *calls = context;
+
+    if (!terminal || !qtype || !approximation || !calls) return 0;
+    *qtype = YVEX_GGUF_QTYPE_Q8_0;
+    *approximation = 1;
+    (*calls)++;
+    return 1;
 }
 
 static int test_payload_component_physical_shape_fold(void)
@@ -1374,15 +1394,20 @@ static int test_payload_component_physical_shape_fold(void)
     yvex_transform_binding *binding = NULL;
     yvex_transform_failure transform_failure;
     yvex_quant_plan *plan = NULL;
+    yvex_quant_plan *candidate = NULL;
     yvex_quant_plan *arbitrary = NULL;
     yvex_quant_failure quant_failure;
     const yvex_quant_plan_summary *summary;
+    const yvex_quant_plan_summary *candidate_summary;
     const yvex_quant_decision *decision;
+    const yvex_quant_decision *candidate_decision;
     yvex_quant_explicit_decision arbitrary_spec;
+    yvex_quant_plan_options candidate_options;
     yvex_gguf_writer_plan_request request;
     yvex_gguf_writer_plan *writer = NULL;
     yvex_gguf_writer_failure writer_failure;
     yvex_error err;
+    unsigned int override_calls = 0u;
 
     yvex_error_clear(&err);
     YVEX_TEST_ASSERT(payload_fixture_create_with_alpha_shape(
@@ -1407,13 +1432,13 @@ static int test_payload_component_physical_shape_fold(void)
                      "rank-five source payload identity is ready");
     YVEX_TEST_ASSERT(payload_fixture_transform_ir(
                          &ir, fixture.session, facts.source_snapshot_identity,
-                         facts.payload_identity, NULL, 1, &transform_failure,
+                         facts.payload_identity, NULL, 1, 1, &transform_failure,
                          &err) == YVEX_OK && ir &&
                          yvex_transform_binding_create(
                              &binding, ir, fixture.session, NULL,
                              &transform_failure, &err) == YVEX_OK && binding,
                      "rank-five logical component binds exact source bytes");
-    YVEX_TEST_ASSERT(yvex_quant_plan_build_source_faithful(
+    YVEX_TEST_ASSERT(yvex_quant_plan_build_identity(
                          &plan, ir, binding, "source-faithful-rank-fold-v1",
                          0x887766u, NULL, &quant_failure, &err) == YVEX_OK &&
                          plan,
@@ -1427,6 +1452,22 @@ static int test_payload_component_physical_shape_fold(void)
                          decision->element_count == 4096u &&
                          decision->encoded_bytes == 8192u,
                      "canonical GGUF projection preserves elements and exact bytes");
+
+    memset(&candidate_options, 0, sizeof(candidate_options));
+    candidate_options.identity_override = payload_fixture_q8_override;
+    candidate_options.identity_override_context = &override_calls;
+    YVEX_TEST_ASSERT(yvex_quant_plan_build_identity(
+                         &candidate, ir, binding, "fixture-q8-candidate-v1",
+                         0x1122aabbu, &candidate_options, &quant_failure, &err) == YVEX_OK &&
+                         candidate,
+                     "bounded physical override seals a quantized identity candidate");
+    candidate_summary = yvex_quant_plan_summary_get(candidate);
+    candidate_decision = yvex_quant_plan_decision_at(candidate, 0u);
+    YVEX_TEST_ASSERT(override_calls == 1u && candidate_summary && candidate_summary->complete &&
+                         candidate_summary->qtype_tensor_counts[YVEX_GGUF_QTYPE_Q8_0] == 1u &&
+                         candidate_decision && candidate_decision->qtype == YVEX_GGUF_QTYPE_Q8_0 &&
+                         candidate_decision->approximation,
+                     "candidate override changes only the admitted physical decision");
 
     memset(&request, 0, sizeof(request));
     request.input_class = YVEX_GGUF_WRITER_INPUT_LOGICAL_COMPONENT;
@@ -1469,6 +1510,7 @@ static int test_payload_component_physical_shape_fold(void)
                      "logical component writer refuses an arbitrary shape fold");
 
     yvex_quant_plan_release(&arbitrary);
+    yvex_quant_plan_release(&candidate);
     yvex_quant_plan_release(&plan);
     yvex_transform_binding_release(&binding);
     yvex_transform_ir_release(&ir);

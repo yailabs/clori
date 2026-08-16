@@ -30,7 +30,12 @@ static int test_family_catalog(void)
     YVEX_TEST_ASSERT(resolved &&
                          resolved->schema_version ==
                              YVEX_PHYSICAL_VARIANT_SESSION_SCHEMA_V1 &&
-                         strcmp(resolved->target_id, YVEX_MINIMAX_H3_TARGET_ID) == 0,
+                         strcmp(resolved->target_id, YVEX_MINIMAX_H3_TARGET_ID) == 0 &&
+                         resolved->source_open && resolved->candidate_profile_name &&
+                         resolved->candidate_q8_semantic_role_mask ==
+                             YVEX_MINIMAX_H3_TRANSFORMER_Q8_ROLE_MASK &&
+                         !(resolved->candidate_q8_semantic_role_mask &
+                           (1ull << YVEX_MINIMAX_H3_ROLE_OMNI_NORM)),
                      "generic family catalog resolves the exact MiniMax component adapter");
     YVEX_TEST_ASSERT(yvex_graph_component_variant_find(NULL) == NULL &&
                          yvex_graph_component_variant_find("unknown-family") == NULL,

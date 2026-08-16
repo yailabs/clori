@@ -58,6 +58,19 @@ expect_rc 1 "$YVEX_BIN" compile quant plan --target minimax-h3-fl2va \
 grep 'immutable source acquisition admission failed' "$OUT_DIR/minimax-missing.err" >/dev/null ||
     fail "MiniMax source refusal missing"
 expect_rc 1 "$YVEX_BIN" compile quant plan --target minimax-h3-fl2va \
+    --source /does/not/exist --component transformer \
+    --preset minimax-h3-transformer-q8_0-v1 --backend cuda \
+    --out-plan "$OUT_DIR/minimax-q8.plan" \
+    > "$OUT_DIR/minimax-q8-missing.out" 2> "$OUT_DIR/minimax-q8-missing.err"
+grep 'immutable source acquisition admission failed' \
+    "$OUT_DIR/minimax-q8-missing.err" >/dev/null || fail "MiniMax Q8 source refusal missing"
+expect_rc 1 "$YVEX_BIN" compile quant plan --target minimax-h3-fl2va \
+    --source /does/not/exist --component audio_vae \
+    --preset minimax-h3-transformer-q8_0-v1 --out-plan "$OUT_DIR/minimax-q8.plan" \
+    > "$OUT_DIR/minimax-q8-component.out" 2> "$OUT_DIR/minimax-q8-component.err"
+grep 'component alternate profile targets another component' \
+    "$OUT_DIR/minimax-q8-component.err" >/dev/null || fail "MiniMax Q8 component refusal missing"
+expect_rc 1 "$YVEX_BIN" compile quant plan --target minimax-h3-fl2va \
     --source /does/not/exist --component pipeline --out-plan "$OUT_DIR/minimax.plan" \
     > "$OUT_DIR/minimax-component.out" 2> "$OUT_DIR/minimax-component.err"
 grep 'component must be text_encoder, transformer, video_vae, or audio_vae' \

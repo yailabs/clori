@@ -123,8 +123,7 @@ static int quant_cli_options_valid(const quant_cli_options *options)
     component = options->component != NULL;
     if (component) {
         if (!options->component || options->models_root || options->manifest ||
-            options->preset || options->policy_path || options->imatrix_path ||
-            options->backend || options->role)
+            options->policy_path || options->imatrix_path || options->role)
             return 0;
     } else if (!options->models_root || !options->manifest ||
                (!!options->preset == !!options->policy_path)) {

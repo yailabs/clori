@@ -1547,8 +1547,8 @@ typedef struct {
     const yvex_minimax_h3_target *target;
     yvex_minimax_h3_component_id component;
     int component_only;
+    int transformer_q8;
 } minimax_transform_projection;
-
 static int minimax_transform_project(void *context, yvex_transform_recipe_sink *sink,
                                      yvex_transform_failure *failure,
                                      yvex_error *err)
@@ -1624,6 +1624,17 @@ static int minimax_transform_project(void *context, yvex_transform_recipe_sink *
         recipe.terminal.precision.allowed_physical_classes =
             source.value_dtype == YVEX_TRANSFORM_DTYPE_BF16
                 ? YVEX_TRANSFORM_PHYSICAL_BF16 : YVEX_TRANSFORM_PHYSICAL_F32;
+        if (projection->transformer_q8 &&
+            role->component == YVEX_MINIMAX_H3_COMPONENT_TRANSFORMER &&
+            role->layer_index != YVEX_MINIMAX_H3_NO_COORDINATE &&
+            (YVEX_MINIMAX_H3_TRANSFORMER_Q8_ROLE_MASK & (1ull << role->role))) {
+            recipe.terminal.precision.flags |= YVEX_TRANSFORM_PRECISION_QUANTIZABLE_WEIGHT |
+                                               YVEX_TRANSFORM_PRECISION_REFERENCE_COMPUTE;
+            recipe.terminal.precision.allowed_physical_classes |=
+                YVEX_TRANSFORM_PHYSICAL_QUANTIZED;
+            recipe.terminal.precision.approximation_allowed = 1;
+            recipe.terminal.precision.reference_compute_required = 1;
+        }
         recipe.terminal.logical_key.scope = source.scope;
         recipe.terminal.logical_key.subsystem = source.subsystem;
         recipe.terminal.logical_key.role = YVEX_TENSOR_ROLE_UNKNOWN;
@@ -1690,11 +1701,9 @@ static int minimax_derivation_identity(
     yvex_sha256_hex(digest, output);
     return YVEX_OK;
 }
-
 static int minimax_transform_build_selected(
-    yvex_transform_ir **out, char derivation_identity[65],
-    const yvex_minimax_h3_target *target,
-    const yvex_minimax_h3_component *component, yvex_error *err)
+    yvex_transform_ir **out, char derivation_identity[65], const yvex_minimax_h3_target *target,
+    const yvex_minimax_h3_component *component, int transformer_q8, yvex_error *err)
 {
     const yvex_minimax_h3_api *family = yvex_model_register_minimax_h3();
     const yvex_minimax_h3_summary *facts = family->summary(target);
@@ -1717,24 +1726,21 @@ static int minimax_transform_build_selected(
     projection.target = target;
     projection.component = component ? component->id : YVEX_MINIMAX_H3_COMPONENT_COUNT;
     projection.component_only = component != NULL;
+    projection.transformer_q8 = transformer_q8;
     yvex_transform_budget_default(&options.budget);
-    rc = yvex_transform_recipe_compile(
-        out, &header, minimax_transform_project, &projection, &options,
-        &failure, err);
+    rc = yvex_transform_recipe_compile(out, &header, minimax_transform_project, &projection,
+                                       &options, &failure, err);
     if (rc == YVEX_OK)
-        rc = minimax_derivation_identity(*out, facts, component,
-                                         derivation_identity, err);
+        rc = minimax_derivation_identity(*out, facts, component, derivation_identity, err);
     if (rc != YVEX_OK) yvex_transform_ir_release(out);
     return rc;
 }
-
 static int minimax_transform_build(yvex_transform_ir **out,
                                    char derivation_identity[65],
                                    const yvex_minimax_h3_target *target,
                                    yvex_error *err)
 {
-    return minimax_transform_build_selected(out, derivation_identity, target,
-                                            NULL, err);
+    return minimax_transform_build_selected(out, derivation_identity, target, NULL, 0, err);
 }
 
 static int minimax_transform_build_component(yvex_transform_ir **out,
@@ -1745,8 +1751,7 @@ static int minimax_transform_build_component(yvex_transform_ir **out,
 {
     const yvex_minimax_h3_api *family = yvex_model_register_minimax_h3();
     const yvex_minimax_h3_component *component = family->component_at(target, component_id);
-    return minimax_transform_build_selected(out, derivation_identity, target,
-                                            component, err);
+    return minimax_transform_build_selected(out, derivation_identity, target, component, 0, err);
 }
 
 const yvex_minimax_h3_transform_api *yvex_model_minimax_h3_transform_api(void)
@@ -1926,9 +1931,9 @@ static int minimax_handoff_open(yvex_minimax_h3_handoff **out,
         if (failure) failure->code = YVEX_MINIMAX_H3_HANDOFF_PAYLOAD_SESSION;
         goto fail;
     }
-    rc = yvex_model_minimax_h3_transform_api()->build_component(
+    rc = minimax_transform_build_selected(
         &handoff->transform_ir, handoff->summary.derivation_identity,
-        handoff->target, options->component, err);
+        handoff->target, component, options->transformer_q8, err);
     if (rc != YVEX_OK) {
         if (failure) failure->code = YVEX_MINIMAX_H3_HANDOFF_TRANSFORMATION;
         goto fail;
@@ -1951,31 +1956,26 @@ fail:
     minimax_handoff_close(&handoff);
     return rc;
 }
-
 static const yvex_minimax_h3_handoff_summary *minimax_handoff_summary(
     const yvex_minimax_h3_handoff *handoff)
 {
     return handoff ? &handoff->summary : NULL;
 }
-
 static const yvex_minimax_h3_target *minimax_handoff_target(
     const yvex_minimax_h3_handoff *handoff)
 {
     return handoff ? handoff->target : NULL;
 }
-
 static const yvex_transform_ir *minimax_handoff_transform_ir(
     const yvex_minimax_h3_handoff *handoff)
 {
     return handoff ? handoff->transform_ir : NULL;
 }
-
 static const yvex_transform_binding *minimax_handoff_binding(
     const yvex_minimax_h3_handoff *handoff)
 {
     return handoff ? handoff->binding : NULL;
 }
-
 static yvex_source_payload_session *minimax_handoff_session(
     yvex_minimax_h3_handoff *handoff)
 {

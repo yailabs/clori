@@ -318,6 +318,8 @@ typedef struct yvex_quant_plan_options {
     yvex_quant_release_fn release;
     void *context;
     size_t maximum_owned_bytes;
+    int (*identity_override)(const yvex_transform_value *, unsigned int *, int *, void *);
+    void *identity_override_context;
 } yvex_quant_plan_options;
 /*
  * Family compilation projects physical tensor facts through this bounded quantization ABI.
@@ -394,7 +396,7 @@ int yvex_quant_plan_build_explicit(
     const yvex_quant_plan_options *options,
     yvex_quant_failure *failure,
     yvex_error *err);
-int yvex_quant_plan_build_source_faithful(
+int yvex_quant_plan_build_identity(
     yvex_quant_plan **out,
     const yvex_transform_ir *ir,
     const yvex_transform_binding *binding,

@@ -981,7 +981,6 @@ static int component_binding_refuse(yvex_component_failure *failure,
     yvex_error_set(err, status, "graph.minimax_h3.component.plan", reason);
     return status;
 }
-
 static int audio_component_plan(const yvex_component_plan_request *request,
                                 yvex_component_plan *out,
                                 yvex_component_failure *failure, yvex_error *err)
@@ -1005,7 +1004,6 @@ static int audio_component_plan(const yvex_component_plan_request *request,
     out->output_dims[2] = request->geometry[0] * 800ull;
     return YVEX_OK;
 }
-
 static int video_component_plan(const yvex_component_plan_request *request,
                                 yvex_component_plan *out,
                                 yvex_component_failure *failure, yvex_error *err)
@@ -1711,7 +1709,6 @@ const yvex_minimax_h3_graph_api *yvex_graph_register_minimax_h3(void)
     };
     return &api;
 }
-
 static int component_variant_id(const char *name, yvex_minimax_h3_component_id *out)
 {
     static const yvex_minimax_h3_component_id weighted[] = {
@@ -1730,7 +1727,6 @@ static int component_variant_id(const char *name, yvex_minimax_h3_component_id *
     }
     return 0;
 }
-
 static void component_variant_close(void *owner)
 {
     yvex_minimax_h3_handoff *handoff = owner;
@@ -1759,6 +1755,7 @@ static int component_variant_open(yvex_component_variant_source *out,
     }
     options.source_root = request->source_path;
     options.component = component_id;
+    options.transformer_q8 = request->candidate_q8;
     yvex_source_payload_budget_default(&options.budget);
     options.budget.maximum_open_handles = 4u;
     options.budget.maximum_streams = 1u;
@@ -1830,6 +1827,9 @@ const yvex_component_variant_adapter *yvex_graph_minimax_h3_component_adapter(vo
         .family = "minimax-h3",
         .source_revision = YVEX_MINIMAX_H3_REVISION,
         .profile_name = "minimax-h3-source-faithful-v1",
+        .candidate_profile_name = YVEX_MINIMAX_H3_TRANSFORMER_Q8_PROFILE_NAME,
+        .candidate_component_id = "transformer",
+        .candidate_q8_semantic_role_mask = YVEX_MINIMAX_H3_TRANSFORMER_Q8_ROLE_MASK,
         .source_open = component_variant_open,
         .physical_variant = yvex_graph_physical_variant_api_get,
         .media_target_profile = yvex_model_minimax_h3_media_target_profile,
