@@ -61,8 +61,9 @@ behavior; [`ROADMAP.md`](../ROADMAP.md) owns the live project sequence.
 
 - Engineering worklogs retain selected semantic before/after records and
   optional communication projections without becoming capability or project-
-  control authority: [adaptive memory admission](worklog/2026-08-11-adaptive-memory-admission.md)
-  and [MoE route-weight order](worklog/2026-08-14-moe-route-weight-order.md).
+  control authority: [adaptive memory admission](worklog/2026-08-11-adaptive-memory-admission.md),
+  [MoE route-weight order](worklog/2026-08-14-moe-route-weight-order.md), and
+  [expert worklist execution](worklog/2026-08-16-expert-worklist-execution-batch.md).
 - [Decisions](decisions/README.md) own durable choices and rationale.
 - [Audits](audits/documentation-architecture-51a5c/README.md) preserve
   point-in-time evidence; the
