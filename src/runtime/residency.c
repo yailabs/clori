@@ -930,6 +930,7 @@ int yvex_runtime_component_session_open(
     unsigned long long maximum_device_bytes, yvex_error *err)
 {
     yvex_runtime_component_session *session = NULL;
+    yvex_backend_options backend_options = {0};
     yvex_materialization_options options;
     yvex_materialization_failure materialization_failure;
     yvex_runtime_residency_options residency_options = {0};
@@ -961,6 +962,13 @@ int yvex_runtime_component_session_open(
     if (rc == YVEX_OK)
         rc = yvex_materialization_session_commit(session->materialization,
                                                   &materialization_failure, err);
+    /* Context creation needs independent system headroom, so establish it before the complete
+     * component payload is faulted into the locked residency arena. */
+    if (rc == YVEX_OK && backend_kind == YVEX_BACKEND_KIND_CUDA) {
+        backend_options.kind = YVEX_BACKEND_KIND_CUDA;
+        backend_options.memory_limit_bytes = maximum_device_bytes;
+        rc = yvex_backend_open(&session->backend, &backend_options, err);
+    }
     residency_options.maximum_host_bytes = maximum_host_bytes;
     if (rc == YVEX_OK)
         rc = yvex_runtime_component_residency_prepare(
