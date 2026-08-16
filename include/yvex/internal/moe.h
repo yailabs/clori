@@ -9,13 +9,14 @@
 #include <stddef.h>
 #include <yvex/internal/execution.h>
 #include <yvex/internal/graph.h>
+#include <yvex/internal/execution_batch.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
 #define YVEX_MOE_PLAN_SCHEMA_V1 1u
 #define YVEX_MOE_INPUT_SCHEMA_V1 1u
 #define YVEX_MOE_ROW_BATCH_SCHEMA_V1 1u
-#define YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V3 3u
+#define YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V4 4u
 #define YVEX_MOE_KERNEL_PORTABLE_ENCODED_ROW "portable-encoded-row"
 #define YVEX_MOE_KERNEL_PORTABLE_EXPERT_ROW "portable-expert-row"
 #define YVEX_MOE_KERNEL_SM121_TENSORCORE_EXPERT "sm121-int8-tensorcore-expert"
@@ -167,7 +168,9 @@ int yvex_moe_router_result_identity(const yvex_moe_router_result *router,
                                     unsigned long long routed_experts,
                                     char output[YVEX_SHA256_HEX_CAP]);
 typedef struct {
-    unsigned long long unique_experts, row_count, row_expert_pairs;
+    unsigned long long row_count, row_expert_pairs;
+    yvex_expert_worklist_observation worklist;
+    unsigned long long tensor_core_executed_pairs;
     unsigned long long routed_experts, active_base_bytes, active_per_expert_bytes;
     unsigned long long activation_bytes, temporary_bytes;
     int status, pending;
@@ -188,6 +191,8 @@ typedef struct {
     void *cancel_context;
     yvex_attention_evidence_level evidence_level;
     const yvex_moe_device_completion *device_completion;
+    const yvex_execution_batch *execution_batch;
+    const yvex_expert_worklist_policy *worklist_policy;
 } yvex_moe_layer_job;
 typedef struct {
     float *combined_output, *post, *combination;
@@ -220,8 +225,13 @@ typedef struct {
     yvex_device_tensor *device_outputs;
     const unsigned int *token_ids;
     int token_ids_present;
+    yvex_execution_batch_provenance provenance;
+    unsigned int phase;
     yvex_execution_class execution_class;
     const char *execution_profile_identity;
+    const yvex_execution_batch_source *execution_sources;
+    const yvex_execution_batch_row *execution_rows;
+    unsigned long long execution_source_count;
 } yvex_moe_row_batch;
 
 typedef struct {
@@ -238,6 +248,7 @@ typedef struct {
     int completed, execution_profile_available, device_completion_pending;
     yvex_execution_class execution_class;
     unsigned long long row_count, row_expert_pairs, unique_experts;
+    yvex_expert_worklist_observation worklists;
     unsigned long long grouped_expert_operations, shared_expert_operations;
     unsigned long long expert_subviews_accessed, encoded_bytes_read;
     unsigned long long h2d_bytes, d2h_bytes, d2d_bytes, kernel_launches;
@@ -250,6 +261,9 @@ typedef struct {
     yvex_execution_memory_facts memory;
     unsigned long long total_ns, synchronization_ns;
     char execution_profile_identity[YVEX_SHA256_HEX_CAP];
+    char execution_batch_identity[YVEX_SHA256_HEX_CAP];
+    char worklist_policy_identity[YVEX_SHA256_HEX_CAP];
+    char expert_worklist_identity[YVEX_SHA256_HEX_CAP];
     char routing_digest[YVEX_SHA256_HEX_CAP];
     char execution_identity[YVEX_SHA256_HEX_CAP];
 } yvex_moe_row_batch_result;

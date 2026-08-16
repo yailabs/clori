@@ -138,9 +138,11 @@ tokens/s, attention at 43.88% of measured warm execution, MoE at 19.29%, about
 baseline facts, not a release benchmark.
 
 The active implementation now derives execution geometry from one sealed model
-descriptor and admits binding v13 as the complete compiler authority; older
-bindings are refused because they cannot represent the compiled sparse/large-row
-MoE alternatives and crossover carried by Physical Execution IR v3.
+descriptor and admits binding v14 as the complete compiler authority; older
+bindings are refused because they cannot represent the legal expert-worklist
+widths and optional Tensor Core regime carried by Physical Execution IR v4.
+Runtime instantiates actual expert-major populations from typed execution batches;
+the backend cannot infer semantic compatibility or manufacture execution width.
 Hardware, workload, capacity and state-page facts remain separate. Admission
 refuses insufficient model-residency memory before artifact open. Host graph
 state commits through stable per-class virtual pages; a phase roofline ledger

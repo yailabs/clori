@@ -27,7 +27,7 @@ static inline void yvex_runtime_identity_copy(char destination[YVEX_SHA256_HEX_C
     if (length) memcpy(destination, source, length);
 }
 #define YVEX_RUNTIME_REASON_CAP 256u
-#define YVEX_RUNTIME_BINDING_SCHEMA_CURRENT 13u
+#define YVEX_RUNTIME_BINDING_SCHEMA_CURRENT 14u
 #define YVEX_RUNTIME_BINDING_SUFFIX ".yvex-runtime-binding"
 typedef enum {
     YVEX_RUNTIME_BINDING_FAILURE_NONE = 0, YVEX_RUNTIME_BINDING_FAILURE_INVALID_ARGUMENT,

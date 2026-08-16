@@ -332,8 +332,7 @@ static int speculation_context_device_buffers(yvex_runtime_speculation_context *
     if (rc == YVEX_OK)
         rc = speculation_device_tensor_open(view->backend, &context->device_feature_norm,
                                             "dspark_feature_norm", context->hidden_width, err);
-    if (rc == YVEX_OK && context->device_draft_selection)
-        rc = speculation_device_tensor_open(
+    if (rc == YVEX_OK && context->device_draft_selection) rc = speculation_device_tensor_open(
             view->backend, &context->device_adjusted_logits, "dspark_adjusted_logits",
             adjusted_elements, err);
     if (rc == YVEX_OK)
@@ -429,8 +428,7 @@ int yvex_runtime_speculation_context_open(
     transformer_options.shape_registry = options->shape_registry;
     rc = yvex_runtime_transformer_context_open(
         &context->draft_transformer, model, session, &transformer_options, workspace_bytes, err);
-    if (rc == YVEX_OK)
-        rc = yvex_runtime_logits_admit_shared_draft_plan(
+    if (rc == YVEX_OK) rc = yvex_runtime_logits_admit_shared_draft_plan(
             target_logits, yvex_runtime_transformer_context_plan(context->draft_transformer), err);
     sampling_options.maximum_vocabulary_size = context->vocabulary_size;
     sampling_options.maximum_rows = context->policy.block_size;
@@ -438,11 +436,9 @@ int yvex_runtime_speculation_context_open(
     sampling_options.cancel_requested = options->cancel_requested;
     sampling_options.cancel_context = options->cancel_context;
     sampling_options.device_selection = context->device_draft_selection;
-    if (rc == YVEX_OK)
-        rc = speculation_draft_sampling_policy(
+    if (rc == YVEX_OK) rc = speculation_draft_sampling_policy(
             sampling_policy, context->vocabulary_size, &draft_policy, err);
-    if (rc == YVEX_OK)
-        rc = yvex_runtime_sampling_context_open(
+    if (rc == YVEX_OK) rc = yvex_runtime_sampling_context_open(
             &context->draft_sampling, yvex_runtime_logits_plan_summary_get(target_logits),
             &draft_policy, &sampling_options, err);
     if (rc == YVEX_OK && context->device_draft_selection) {
@@ -922,6 +918,7 @@ static int speculation_execute_draft(yvex_runtime_speculation_context *context,
             context, &draft, rows, draft_count, &logits_execution, err);
     if (rc == YVEX_OK)
         rc = speculation_phase_physical(&draft, &logits_execution, &result->draft_physical, err);
+    if (rc == YVEX_OK) result->draft_worklists = draft.expert_worklists;
     if (rc == YVEX_OK && context->sampling_policy.strategy == YVEX_SAMPLING_STRATEGY_STOCHASTIC)
         rc = yvex_runtime_sampling_transaction_begin(
             context->draft_sampling, &context->draft_rng, err);
@@ -1059,6 +1056,7 @@ static int speculation_verify_target(yvex_runtime_speculation_context *context,
     if (rc == YVEX_OK)
         rc = speculation_phase_physical(&target, &logits_execution,
                                         &result->verification_physical, err);
+    if (rc == YVEX_OK) result->verification_worklists = target.expert_worklists;
     for (row = 0ull; rc == YVEX_OK && !device_stochastic && row <= request->candidate_count; ++row)
         rc = yvex_runtime_sampling_source_from_logits(
             device_verification ? context->verification_sampling : context->target_sampling,
@@ -1630,6 +1628,7 @@ static int speculation_commit_target_step(
         result->position_after = context->pending_position + 1ull;
         result->target_extension_count = 1ull;
         result->target_result = target;
+        result->extension_worklists = target.expert_worklists;
         yvex_runtime_identity_copy(result->cycle_identity,
                                    context->pending_cycle_identity);
         yvex_runtime_identity_copy(result->target_execution_identity, target.execution_identity);
@@ -1835,6 +1834,8 @@ int yvex_runtime_speculation_commit_prefix(
         rc = speculation_promoted_target_result(
             context, committed_count,
             extension_required ? &extension : NULL, &target, err);
+    if (rc == YVEX_OK && extension_required)
+        result->extension_worklists = extension.expert_worklists;
     if (rc == YVEX_OK)
         rc = speculation_project_target_features(
             context, context->device_draft_selection ? NULL : context->target_features,

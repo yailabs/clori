@@ -171,6 +171,7 @@ static int run_runtime_console(void)
     if (run_test("runtime_binding", yvex_test_runtime_binding) != 0) return 1;
     if (run_test("runtime_decode", yvex_test_runtime_decode) != 0) return 1;
     if (run_test("runtime_execution", yvex_test_runtime_execution) != 0) return 1;
+    if (run_test("expert_worklist", yvex_test_expert_worklist) != 0) return 1;
     if (run_test("runtime_logits", yvex_test_runtime_logits) != 0) return 1;
     if (run_test("runtime_sampling", yvex_test_runtime_sampling) != 0) return 1;
     if (run_test("runtime_speculation", yvex_test_runtime_speculation) != 0) return 1;

@@ -1,6 +1,5 @@
 /*
  * Compose admitted lower owners into one bounded autoregressive lifecycle.
- *
  * Published tokens are always target-authored: ordinary generation commits one decode step at a
  * time, while speculative generation may commit a target-verified prefix atomically. This is the
  * internal runtime/operator ABI from exact text/messages to model-backed incremental text.
@@ -426,6 +425,7 @@ typedef struct {
     char generation_execution_identity[YVEX_SHA256_HEX_CAP];
     yvex_runtime_partial_turn partial_turn;
     yvex_runtime_profile_record profile;
+    yvex_expert_worklist_observation expert_worklists;
     int roofline_available;
     yvex_execution_roofline_ledger roofline;
 } yvex_runtime_generation_result;

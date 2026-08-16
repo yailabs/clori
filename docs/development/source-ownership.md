@@ -190,6 +190,7 @@ domain algorithms. No writer owns command output.
 | `src/runtime/graph.c` | execution descriptors, phase/mode dispatch, reusable workspace, and transactional publication |
 | `src/runtime/benchmark.c` | identity-bound runtime timing, baseline, CSV, and deterministic SVG serialization |
 | `src/graph/execution.c` | Physical Execution IR, compiled execution-profile identities, device-view admission, and execution-shape registry |
+| `src/graph/worklist.c` | deterministic execution-batch sealing, expert-major worklist construction, validation, identity, and observation aggregation |
 | `src/graph/candidate.c` | prefix-addressable attention candidate deltas and exact accepted-prefix projection |
 | `src/graph/state.c` | committed/candidate persistent-state transactions, prefix promotion, rollback and state identity |
 | `src/graph/state_pages.c` | stable virtual state spans, per-class host-page commitment, pool accounting and release lifecycle |

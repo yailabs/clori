@@ -380,6 +380,7 @@ static int decode_step_locked(
         result->shared_experts = transformer.shared_experts;
         result->row_expert_pairs = transformer.row_expert_pairs;
         result->unique_experts = transformer.unique_experts;
+        result->expert_worklists = transformer.expert_worklists;
         result->grouped_expert_operations = transformer.grouped_expert_operations;
         result->expert_subviews_accessed = transformer.expert_subviews_accessed;
         result->embedding_weight_bytes = transformer.embedding_bytes;
@@ -468,6 +469,10 @@ static int decode_accumulate(yvex_runtime_decode_result *result,
     result->shared_experts += step->shared_experts;
     result->row_expert_pairs += step->row_expert_pairs;
     result->unique_experts += step->unique_experts;
+    if (step->expert_worklists.worklist_count &&
+        yvex_expert_worklist_observation_add(
+            &result->expert_worklists, &step->expert_worklists, err) != YVEX_OK)
+        return yvex_error_code(err);
     result->grouped_expert_operations += step->grouped_expert_operations;
     result->expert_subviews_accessed += step->expert_subviews_accessed;
     result->embedding_weight_bytes += step->embedding_weight_bytes;

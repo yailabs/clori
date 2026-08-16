@@ -110,7 +110,9 @@ actual target/draft forwards and rows, verifications, accepted/promoted/replayed
 rows, state copies and candidate bytes, output-head rows, logits movement,
 full-array scans/digests, row/expert pairs and unique experts, launches, graph
 launches, waits, synchronizations, allocations, shape hits/misses/rebuilds,
-and publication facts rather than inferring them from tensor sizes. A measured
+expert-worklist counts, pair/bucket counts, maximum bucket width, narrow rows,
+bounded tails and Tensor Core eligible/executed rows, and publication facts rather than inferring
+them from tensor sizes. A measured
 zero synchronization duration is never interpreted as zero synchronization
 cost.
 

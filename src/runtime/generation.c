@@ -315,6 +315,7 @@ static int generation_prefill(
 {
     const yvex_transformer_plan_summary *plan = yvex_transformer_plan_summary_get(
         yvex_runtime_transformer_context_plan(context->transformer));
+    yvex_expert_worklist_observation worklists = {0};
     unsigned long long offset = 0ull, suffix_count, maximum_chunk, maximum_values;
     float *buffer = NULL;
     const int device_only =
@@ -386,6 +387,9 @@ static int generation_prefill(
         completed = yvex_core_monotonic_ns();
         yvex_transformer_input_close(&input);
         if (rc == YVEX_OK) rc = yvex_runtime_generation_profile_transformer(profile, &result, err);
+        if (rc == YVEX_OK && result.expert_worklists.worklist_count)
+            rc = yvex_expert_worklist_observation_add(
+                &worklists, &result.expert_worklists, err);
         if (rc == YVEX_OK && !context->speculation &&
             !yvex_core_u64_add(result.stream_synchronizations, result.device_synchronizations,
                                &synchronizations))
@@ -404,6 +408,7 @@ static int generation_prefill(
                     (result.memory.complete ? YVEX_EXECUTION_PHASE_MEMORY_FACTS : 0ull), err);
         if (rc == YVEX_OK) {
             *final_result = result;
+            final_result->expert_worklists = worklists;
             *final_hidden_count = buffer ? values : 0ull;
             (*completed_chunks)++;
             offset += count;
@@ -426,6 +431,15 @@ static int generation_profile_count(yvex_runtime_profile_record *profile,
 {
     return !value || runtime_profile_counter_add(profile, counter, value, err) == YVEX_OK
                ? YVEX_OK : yvex_error_code(err);
+}
+static int generation_observe_worklists(
+    yvex_runtime_generation_result *result,
+    const yvex_expert_worklist_observation *observation, yvex_error *err)
+{
+    return !observation || !observation->worklist_count
+               ? YVEX_OK
+               : yvex_expert_worklist_observation_add(
+                     &result->expert_worklists, observation, err);
 }
 static int generation_profile_graph_delta(yvex_runtime_profile_record *profile,
     const yvex_backend_cuda_attention_graph_summary *before,
@@ -637,6 +651,9 @@ static int generation_commit_ordinary(
                 completed - started, err);
         if (rc == YVEX_OK)
             rc = yvex_runtime_generation_profile_decode(&result->profile, decode_result, err);
+        if (rc == YVEX_OK)
+            rc = generation_observe_worklists(
+                result, &decode_result->expert_worklists, err);
     }
     if (rc == YVEX_OK) {
         rc = yvex_token_sequence_transition(
@@ -1188,9 +1205,15 @@ static int generation_speculative_candidate_cycle(
             context->speculation, &request, &cycle, err);
     }
     if (!cycle.completed) {
+        (void)generation_observe_worklists(result, &cycle.draft_worklists, NULL);
+        (void)generation_observe_worklists(result, &cycle.verification_worklists, NULL);
         generation_speculative_account_incomplete(result, &cycle);
         return rc;
     }
+    rc = generation_observe_worklists(result, &cycle.draft_worklists, err);
+    if (rc == YVEX_OK)
+        rc = generation_observe_worklists(
+            result, &cycle.verification_worklists, err);
     cycle_metrics = cycle;
     memcpy(committed + 1u, cycle.committed_token_ids,
            (size_t)cycle.committed_count * sizeof(*committed));
@@ -1238,6 +1261,9 @@ static int generation_speculative_candidate_cycle(
             cycle.acceptance.acceptance_identity, tokens, text, text_capacity,
             result, commit, err);
     if (commit->completed) {
+        if (rc == YVEX_OK)
+            rc = generation_observe_worklists(
+                result, &commit->extension_worklists, err);
         result->sampling_draw_count += anchor_step->target_rng_draw_count +
                                        cycle.target_rng_draw_count;
         if (rc == YVEX_OK)
@@ -1899,6 +1925,9 @@ int yvex_runtime_generation_turn_execute(
                                 turn->committed_prefix_token_count, turn, &prefill_hidden,
                                 &prefill_values, &prefill, &prefill_chunks,
                                 &result->profile, err);
+    if (rc == YVEX_OK)
+        rc = generation_observe_worklists(
+            result, &prefill.expert_worklists, err);
     completed = yvex_core_monotonic_ns();
     if (rc == YVEX_OK)
         rc = yvex_runtime_generation_profile_phase(&result->profile,

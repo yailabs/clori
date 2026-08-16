@@ -1203,6 +1203,19 @@ static int session_profile_publish(server_session_registry *registry,
             profile->counters[YVEX_RUNTIME_PROFILE_EXPERT_SUBVIEWS],
             profile->counters[YVEX_RUNTIME_PROFILE_EXPERT_BYTES],
             profile->phase_ns[YVEX_RUNTIME_PROFILE_MOE_TOTAL]);
+    if (rc == YVEX_OK && result->expert_worklists.worklist_count)
+        rc = PROFILE_EVENT("expert-worklist",
+            result->expert_worklists.worklist_count,
+            result->expert_worklists.pair_count,
+            result->expert_worklists.bucket_count, 0ull);
+    if (rc == YVEX_OK && result->expert_worklists.worklist_count)
+        rc = PROFILE_EVENT("expert-width",
+            result->expert_worklists.maximum_bucket_population,
+            result->expert_worklists.tensor_core_eligible_pairs,
+            result->expert_worklists.tensor_core_executed_pairs, 0ull);
+    if (rc == YVEX_OK && result->expert_worklists.worklist_count)
+        rc = PROFILE_EVENT("expert-rows", result->expert_worklists.narrow_pairs,
+            result->expert_worklists.tail_rows, 0ull, 0ull);
     if (rc == YVEX_OK)
         rc = PROFILE_EVENT("output",
             profile->counters[YVEX_RUNTIME_PROFILE_OUTPUT_HEAD_ROWS],

@@ -195,6 +195,8 @@ src/runtime/generation.c	runtime	runtime.generation	generic	private	transactiona
 src/runtime/generation_context.c	runtime	runtime.generation_context	generic	private	resource-lifecycle	runtime,generation,tests	implementation	none
 src/runtime/generation_result.c	runtime	runtime.generation_result	generic	private	typed-report	runtime,cli,tests	implementation	none
 src/graph/execution.c	graph	graph.execution	generic	private	reusable-algorithm	compilation,artifact,runtime,backend,tests	implementation	none
+include/yvex/internal/execution_batch.h	graph	graph.expert_worklist	generic	private	internal-abi	graph,runtime,backend,tests	interface	none
+src/graph/worklist.c	graph	graph.expert_worklist	generic	private	reusable-algorithm	runtime,backend,tests	implementation	none
 src/runtime/speculation.c	runtime	runtime.speculation	generic	private	proposal-verification-acceptance	runtime,generation,tests	implementation	none
 src/runtime/logits.c	runtime	runtime.logits	generic	private	transactional-execution	runtime,backend,cli,tests	implementation	none
 src/runtime/prefix.c	runtime	runtime.session_prefix	generic	private	resource-lifecycle	runtime,server,tests	implementation	none

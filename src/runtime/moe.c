@@ -89,11 +89,95 @@ static int runtime_moe_activation(
             err, YVEX_ERR_UNSUPPORTED, "MoE physical execution fallback is not admitted");
     *activation = degraded && decision->activation == YVEX_EXECUTION_ACTIVATION_DEVICE_ENCODED
                       ? YVEX_EXECUTION_ACTIVATION_DEVICE_F32 : decision->activation;
-    *kernel_family = !degraded && decision->large_row_minimum &&
-                             population >= decision->large_row_minimum
-                         ? decision->large_row_kernel_family
-                         : decision->kernel_family;
+    /* Runtime validates the compiled operation but never promotes a total row population into
+     * expert-compatible width. Wide regimes are selected only from the sealed worklist policy
+     * after routing has produced real same-expert buckets. */
+    *kernel_family = decision->kernel_family;
     return YVEX_OK;
+}
+
+static int runtime_moe_worklist_contract(
+    yvex_runtime_moe_context *context, const yvex_moe_layer_plan *layer,
+    const yvex_moe_row_batch *rows, const yvex_runtime_session_summary *session,
+    yvex_execution_batch_source *source, yvex_execution_batch *batch,
+    yvex_expert_worklist_policy *policy, yvex_error *err)
+{
+    const yvex_physical_execution_ir *physical = context->model_view->physical_execution;
+    const yvex_physical_execution_summary *physical_summary =
+        yvex_physical_execution_ir_summary(physical);
+    const yvex_attention_state_provider *provider =
+        layer->tensor_scope == YVEX_TENSOR_SCOPE_DRAFT
+            ? context->session_view->draft_attention_state_provider
+            : context->session_view->attention_state_provider;
+    const yvex_physical_execution_decision *decisions[3];
+    yvex_runtime_model_summary model;
+    yvex_graph_attention_state_summary state;
+    unsigned long long slot, next_execution;
+    if (!physical_summary || !provider || !provider->summary || !source ||
+        rows->execution_source_count != 1ull || !rows->execution_sources ||
+        !rows->execution_rows ||
+        yvex_runtime_model_summary_copy(context->model, &model, err) != YVEX_OK ||
+        provider->summary(provider->context, &state, err) != YVEX_OK ||
+        !yvex_core_u64_add(session->execution_count, 1ull, &next_execution))
+        return yvex_error_code(err) == YVEX_OK
+                   ? runtime_moe_refuse(err, YVEX_ERR_STATE,
+                                        "expert worklist identity owners are unavailable")
+                   : yvex_error_code(err);
+    memset(batch, 0, sizeof(*batch));
+    batch->schema_version = YVEX_EXECUTION_BATCH_SCHEMA_V1;
+    batch->provenance = rows->provenance;
+    batch->phase = rows->phase;
+    batch->row_count = rows->row_count;
+    batch->source_count = 1ull;
+    batch->model_generation = model.runtime_model_builds;
+    *source = rows->execution_sources[0];
+    source->execution_generation = next_execution;
+    source->state_generation = state.generation;
+    batch->sources = source;
+    batch->rows = rows->execution_rows;
+    yvex_runtime_identity_copy(batch->runtime_model_identity,
+                               model.runtime_model_identity);
+    yvex_runtime_identity_copy(batch->runtime_binding_identity,
+                               model.runtime_binding_identity);
+    yvex_runtime_identity_copy(batch->physical_variant_identity,
+                               physical_summary->physical_variant_identity);
+    yvex_runtime_identity_copy(batch->execution_profile_identity,
+                               rows->execution_profile_identity);
+    yvex_runtime_identity_copy(batch->operation_identity, layer->layer_identity);
+    if (yvex_execution_batch_seal(batch, err) != YVEX_OK) return yvex_error_code(err);
+    for (slot = 0ull; slot < 3ull; ++slot) {
+        const yvex_materialized_tensor_binding *binding = runtime_moe_binding(
+            context, layer, (yvex_moe_weight_slot)(YVEX_MOE_WEIGHT_ROUTED_GATE + slot));
+        decisions[slot] = binding
+                              ? yvex_physical_execution_ir_decision_at(
+                                    physical, binding->tensor_id)
+                              : NULL;
+        if (!decisions[slot] ||
+            decisions[slot]->schema_version != YVEX_PHYSICAL_EXECUTION_SCHEMA_V4 ||
+            !decisions[slot]->worklist_width_mask ||
+            (slot && (decisions[slot]->worklist_width_mask !=
+                          decisions[0]->worklist_width_mask ||
+                      decisions[slot]->tensor_core_minimum !=
+                          decisions[0]->tensor_core_minimum ||
+                      strcmp(decisions[slot]->kernel_family,
+                             decisions[0]->kernel_family) != 0 ||
+                      strcmp(decisions[slot]->tensor_core_kernel_family,
+                             decisions[0]->tensor_core_kernel_family) != 0)))
+            return runtime_moe_refuse(
+                err, YVEX_ERR_STATE,
+                "compiled routed-expert worklist policies disagree");
+    }
+    memset(policy, 0, sizeof(*policy));
+    policy->schema_version = YVEX_EXPERT_WORKLIST_POLICY_SCHEMA_V1;
+    policy->supported_width_mask = decisions[0]->worklist_width_mask;
+    policy->tensor_core_minimum = decisions[0]->tensor_core_minimum;
+    yvex_core_text_copy(policy->narrow_kernel_family,
+                        sizeof(policy->narrow_kernel_family),
+                        decisions[0]->kernel_family);
+    yvex_core_text_copy(policy->tensor_core_kernel_family,
+                        sizeof(policy->tensor_core_kernel_family),
+                        decisions[0]->tensor_core_kernel_family);
+    return yvex_expert_worklist_policy_seal(policy, err);
 }
 
 static int runtime_moe_row_bytes(const yvex_materialized_tensor_binding *binding,
@@ -1113,11 +1197,23 @@ static int runtime_moe_batch_identity(const yvex_moe_plan_summary *plan,
         !yvex_sha256_update_u64(&hash, result->row_count) ||
         !yvex_sha256_update_u64(&hash, result->row_expert_pairs) ||
         !yvex_sha256_update_u64(&hash, result->unique_experts) ||
+        !yvex_sha256_update_u64(&hash, result->worklists.worklist_count) ||
+        !yvex_sha256_update_u64(&hash, result->worklists.bucket_count) ||
+        !yvex_sha256_update_u64(&hash,
+                                result->worklists.maximum_bucket_population) ||
+        !yvex_sha256_update_u64(&hash,
+                                result->worklists.tensor_core_eligible_pairs) ||
+        !yvex_sha256_update_u64(&hash,
+                                result->worklists.tensor_core_executed_pairs) ||
         !yvex_sha256_update_u64(&hash, result->device_completion_pending) ||
         !yvex_sha256_update_u64(&hash, result->active_weight_base_bytes) ||
         !yvex_sha256_update_u64(
             &hash, result->active_weight_per_unique_expert_bytes) ||
-        !yvex_sha256_update_text(&hash, result->routing_digest))
+        !yvex_sha256_update_text(&hash, result->routing_digest) ||
+        (result->execution_batch_identity[0] &&
+         !yvex_sha256_update_text(&hash, result->execution_batch_identity)) ||
+        (result->expert_worklist_identity[0] &&
+         !yvex_sha256_update_text(&hash, result->expert_worklist_identity)))
         return 0;
     for (row = 0ull; row < batch->row_count; ++row)
         if (!yvex_sha256_update_u64(&hash, batch->token_ids[row])) return 0;
@@ -1152,6 +1248,37 @@ static int runtime_moe_device_routing_identity(
     return 1;
 }
 
+static int runtime_moe_batch_result_seal(
+    const yvex_moe_plan_summary *plan, const yvex_moe_layer_plan *layer,
+    const yvex_moe_row_batch *batch, const yvex_execution_batch *execution_batch,
+    const yvex_expert_worklist_policy *worklist_policy,
+    yvex_moe_row_batch_result *result, yvex_error *err)
+{
+    result->schema_version = YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V4;
+    result->completed = !result->device_completion_pending;
+    result->execution_class = batch->execution_class;
+    result->row_count = batch->row_count;
+    result->shared_expert_operations = batch->row_count * layer->shared_experts;
+    result->execution_profile_available = batch->execution_profile_identity != NULL;
+    if (batch->execution_profile_identity)
+        yvex_runtime_identity_copy(result->execution_profile_identity,
+                                   batch->execution_profile_identity);
+    if (batch->execution_class == YVEX_EXECUTION_CLASS_DEVICE_NATIVE) {
+        yvex_runtime_identity_copy(result->execution_batch_identity,
+                                   execution_batch->identity);
+        yvex_runtime_identity_copy(result->worklist_policy_identity,
+                                   worklist_policy->identity);
+        if (yvex_expert_worklist_routing_identity(
+                result->execution_batch_identity, result->worklist_policy_identity,
+                result->routing_digest, result->expert_worklist_identity, err) != YVEX_OK)
+            return yvex_error_code(err);
+    }
+    if (!runtime_moe_batch_identity(plan, layer, batch, result))
+        return runtime_moe_refuse(err, YVEX_ERR_STATE,
+                                  "ordered MoE execution identity failed");
+    return YVEX_OK;
+}
+
 /*
  * Admit width-N as one ordered MoE operation while the portable implementation remains
  * token-local. This boundary prevents Transformer and future backends from defining batching as
@@ -1168,6 +1295,9 @@ static int runtime_moe_execute_layer_rows(yvex_runtime_moe_context *context, uns
     const yvex_backend_moe_operations *backend_operations = context
         ? yvex_backend_moe_operations_get(context->session_view->backend) : NULL;
     yvex_moe_layer_job batch_job;
+    yvex_execution_batch_source execution_source;
+    yvex_execution_batch execution_batch;
+    yvex_expert_worklist_policy worklist_policy;
     yvex_moe_device_completion completion = {0};
     yvex_moe_device_completion_slot *pending = NULL;
     yvex_moe_row_batch_output staged_output;
@@ -1178,6 +1308,8 @@ static int runtime_moe_execute_layer_rows(yvex_runtime_moe_context *context, uns
     if (result) memset(result, 0, sizeof(*result));
     if (!context || !plan || !layer || !batch || !output || !result ||
         batch->schema_version != YVEX_MOE_ROW_BATCH_SCHEMA_V1 || !batch->row_count ||
+        batch->provenance > YVEX_EXECUTION_BATCH_COMPILED_COMPATIBLE ||
+        batch->phase >= YVEX_EXECUTION_PHASE_COUNT ||
         batch->row_width != layer->expanded_width ||
         batch->row_stride < batch->row_width || !batch->expanded_rows || !batch->token_ids ||
         !batch->token_ids_present || batch->row_count > context->options.row_capacity ||
@@ -1205,6 +1337,10 @@ static int runtime_moe_execute_layer_rows(yvex_runtime_moe_context *context, uns
         !session.busy || !layer->routed_experts || layer->routed_experts > SIZE_MAX)
         return runtime_moe_refuse(err, YVEX_ERR_INVALID_ARG,
                                   "ordered MoE row batch or execution profile is invalid");
+    if (batch->execution_class == YVEX_EXECUTION_CLASS_DEVICE_NATIVE &&
+        runtime_moe_worklist_contract(context, layer, batch, &session, &execution_source,
+                                      &execution_batch, &worklist_policy, err) != YVEX_OK)
+        return yvex_error_code(err);
     if (pthread_mutex_lock(&context->mutex) != 0)
         return runtime_moe_refuse(err, YVEX_ERR_STATE, "MoE context lock failed");
     locked = 1;
@@ -1253,6 +1389,8 @@ static int runtime_moe_execute_layer_rows(yvex_runtime_moe_context *context, uns
             batch_job.expanded_input = batch->expanded_rows;
             batch_job.device_input = batch->device_rows;
             batch_job.device_output = batch->device_outputs;
+            batch_job.execution_batch = &execution_batch;
+            batch_job.worklist_policy = &worklist_policy;
             if (deferred) {
                 pending = &context->pending_layers[layer->ordinal];
                 completion.defer = 1;
@@ -1333,20 +1471,9 @@ static int runtime_moe_execute_layer_rows(yvex_runtime_moe_context *context, uns
     if (rc == YVEX_OK && !deferred && batch->device_outputs) batch->device_outputs->is_written = 1;
     if (rc == YVEX_OK && !deferred)
         yvex_sha256_hex(digest, result->routing_digest);
-    if (rc == YVEX_OK) {
-        result->schema_version = YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V3;
-        result->completed = !result->device_completion_pending;
-        result->execution_class = batch->execution_class;
-        result->row_count = batch->row_count;
-        result->shared_expert_operations = batch->row_count * layer->shared_experts;
-        result->execution_profile_available = batch->execution_profile_identity != NULL;
-        if (batch->execution_profile_identity)
-            yvex_runtime_identity_copy(result->execution_profile_identity,
-                                       batch->execution_profile_identity);
-        if (!runtime_moe_batch_identity(plan, layer, batch, result))
-            rc = runtime_moe_refuse(err, YVEX_ERR_STATE,
-                                    "ordered MoE execution identity failed");
-    }
+    if (rc == YVEX_OK)
+        rc = runtime_moe_batch_result_seal(
+            plan, layer, batch, &execution_batch, &worklist_policy, result, err);
 done:
     yvex_core_free(seen);
     if (locked) {
@@ -1378,7 +1505,7 @@ static int runtime_moe_rows_complete(yvex_runtime_moe_context *context,
                                   "busy MoE rows cannot complete");
     }
     if (!context->pending_active) {
-        result->schema_version = YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V3;
+        result->schema_version = YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V4;
         result->completed = 1;
         (void)pthread_mutex_unlock(&context->mutex);
         yvex_error_clear(err);
@@ -1395,6 +1522,7 @@ static int runtime_moe_rows_complete(yvex_runtime_moe_context *context,
     for (index = 0ull; rc == YVEX_OK &&
                          index < context->pending_layer_capacity; ++index) {
         yvex_moe_device_completion_slot *pending = &context->pending_layers[index];
+        yvex_expert_worklist_observation observation;
         unsigned long long active;
         if (!pending->pending) continue;
         found++;
@@ -1406,15 +1534,33 @@ static int runtime_moe_rows_complete(yvex_runtime_moe_context *context,
             rc = YVEX_ERR_BACKEND;
             break;
         }
-        if (!pending->unique_experts ||
-            pending->unique_experts > pending->routed_experts ||
-            pending->unique_experts > pending->row_expert_pairs ||
+        observation = pending->worklist;
+        observation.tensor_core_executed_pairs =
+            pending->tensor_core_executed_pairs;
+        if (observation.schema_version !=
+                YVEX_EXPERT_WORKLIST_OBSERVATION_SCHEMA_V1 ||
+            observation.worklist_count != 1ull ||
+            observation.pair_count != pending->row_expert_pairs ||
+            !pending->worklist.bucket_count ||
+            pending->worklist.bucket_count > pending->routed_experts ||
+            pending->worklist.bucket_count > pending->row_expert_pairs ||
+            !pending->worklist.maximum_bucket_population ||
+            pending->worklist.tensor_core_eligible_pairs >
+                pending->row_expert_pairs ||
+            pending->worklist.narrow_pairs !=
+                pending->row_expert_pairs -
+                    pending->worklist.tensor_core_eligible_pairs ||
             !yvex_core_u64_mul(pending->active_per_expert_bytes,
-                               pending->unique_experts, &active) ||
+                               pending->worklist.bucket_count, &active) ||
             !yvex_core_u64_add(active, pending->active_base_bytes, &active) ||
             !yvex_core_u64_add(result->unique_experts,
-                               pending->unique_experts,
+                               pending->worklist.bucket_count,
                                &result->unique_experts) ||
+            !yvex_core_u64_add(result->row_expert_pairs,
+                               pending->row_expert_pairs,
+                               &result->row_expert_pairs) ||
+            yvex_expert_worklist_observation_add(
+                &result->worklists, &observation, err) != YVEX_OK ||
             !yvex_core_u64_add(result->encoded_bytes_read, active,
                                &result->encoded_bytes_read) ||
             yvex_execution_memory_facts_add(
@@ -1430,7 +1576,7 @@ static int runtime_moe_rows_complete(yvex_runtime_moe_context *context,
         rc = runtime_moe_refuse(err, YVEX_ERR_STATE,
                                 "deferred CUDA MoE layer count diverged");
     if (rc == YVEX_OK) {
-        result->schema_version = YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V3;
+        result->schema_version = YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V4;
         result->completed = 1;
         result->execution_class = YVEX_EXECUTION_CLASS_DEVICE_NATIVE;
         result->stream_synchronizations = backend.stream_synchronizations;

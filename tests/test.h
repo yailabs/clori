@@ -59,6 +59,7 @@ int yvex_test_qwen_adapter(void);
 int yvex_test_runtime_binding(void);
 int yvex_test_runtime_decode(void);
 int yvex_test_runtime_execution(void);
+int yvex_test_expert_worklist(void);
 int yvex_test_runtime_logits(void);
 int yvex_test_runtime_sampling(void);
 int yvex_test_runtime_speculation(void);

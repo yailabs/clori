@@ -169,11 +169,11 @@ The internal runtime is family-neutral. Its main objects are:
 
 Model-execution descriptor schema v1 is a non-installed fieldwise projection
 of source/family context, attention, MoE, output, DSpark and state facts.
-Runtime binding v13 persists and authenticates it together with the canonical
-operator graph identity, Physical Execution IR v3, compiled model plan, and
-pointer-free tokenizer/conversation policy. Bindings v7 through v12 are refused
+Runtime binding v14 persists and authenticates it together with the canonical
+operator graph identity, Physical Execution IR v4, compiled model plan, and
+pointer-free tokenizer/conversation policy. Bindings v7 through v13 are refused
 because they cannot represent that complete execution authority, including the
-compiled sparse/large-row MoE alternatives and row-population crossover.
+compiled expert-worklist width policy and any admitted Tensor Core regime.
 Hardware-profile,
 workload-profile, capacity-plan and phase-roofline schemas begin at v1 as
 internal contracts. The installed server construction entrypoints and public
@@ -183,7 +183,7 @@ schema v1 cannot represent that fact and refuses after an atomic pre-v0.1
 product rebuild.
 The source-authored conversation boundary admits provider request/wire schema
 v3, tokenizer plan v3, tokenizer provider result v2, and local protocol v11.
-Runtime event schema v3, Physical Execution IR v3 and compiled profile v2
+Runtime event schema v3, Physical Execution IR v4 and compiled profile v2
 remain unchanged. Generation plan ABI v5 adds the workload-profile identity
 required to bind phase evidence to the compiled workload. Generation result
 schema v5 adds the identity-bearing committed-token extent of a
@@ -585,16 +585,23 @@ owners directly. The exact HTTP profile is documented in
 
 ## Physical Execution And Candidate-State ABI
 
-`<yvex/internal/execution.h>` owns Physical Execution IR schema v3, compiled
+`<yvex/internal/execution.h>` owns Physical Execution IR schema v4, compiled
 execution profiles, device-value views, explicit host-materialization policy,
 and the execution-shape registry. These are non-installed cross-subsystem
 contracts. They bind semantic identities and extents but never durable pointers
 or process state. Materialization consumes terminal decisions; runtime consumes
 one sealed profile; backend consumers receive typed values rather than an
-implicit host `float *` contract. An expert decision may seal a sparse base
-kernel, one distinct large-row alternative and a checked row-population
-crossover. Runtime resolves the concrete alternative from request geometry;
-the backend owns no implicit crossover policy.
+implicit host `float *` contract. An expert decision seals legal worklist
+widths, the narrow kernel family, and an optional numerically admitted Tensor
+Core minimum and family. Runtime geometry cannot widen that policy.
+
+`<yvex/internal/execution_batch.h>` owns the typed execution-batch and expert-
+worklist contracts. The compiled policy contains only stable physical facts;
+one runtime instance binds actual sources, rows, provenance, expert buckets,
+offsets, populations and route weights. A bucket contains rows for exactly one
+compatible expert. CUDA may select an equivalent microkernel and execute a
+bounded tail, but it cannot regroup routes, merge sessions, or fabricate width.
+The copied observation is pointer-free developer evidence, not execution authority.
 
 `<yvex/internal/candidate.h>` owns prefix projection from an attention
 candidate delta. It can reconstruct any admitted verified prefix without

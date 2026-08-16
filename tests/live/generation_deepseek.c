@@ -83,6 +83,43 @@ static void live_failure(const char *step, int rc, const yvex_error *err)
             err ? yvex_error_message(err) : "");
 }
 
+static void live_failure_primary(const live_generation *primary)
+{
+    const yvex_expert_worklist_observation *worklists;
+    unsigned long long index;
+    int width_present = 0;
+    if (!primary || !primary->result.completed) return;
+    worklists = &primary->result.expert_worklists;
+    fprintf(stderr,
+            "generation_live primary mode=%u sampled=%llu committed=%llu cycles=%llu "
+            "proposed=%llu verified=%llu accepted=%llu rejected=%llu tokens=",
+            (unsigned int)primary->result.execution_mode,
+            primary->result.sampled_token_count,
+            primary->result.model_committed_token_count,
+            primary->result.draft_cycle_count,
+            primary->result.proposed_token_count,
+            primary->result.target_verification_count,
+            primary->result.accepted_draft_token_count,
+            primary->result.rejected_draft_token_count);
+    for (index = 0ull; index < primary->result.sampled_token_count; ++index)
+        fprintf(stderr, "%s%u", index ? "," : "",
+                primary->tokens[index].sampled_token_id);
+    fprintf(stderr,
+            " worklists=%llu pairs=%llu buckets=%llu max_bucket=%llu tc=%llu/%llu "
+            "narrow=%llu widths=",
+            worklists->worklist_count, worklists->pair_count,
+            worklists->bucket_count, worklists->maximum_bucket_population,
+            worklists->tensor_core_executed_pairs,
+            worklists->tensor_core_eligible_pairs, worklists->narrow_pairs);
+    for (index = 1ull; index < YVEX_EXPERT_WORKLIST_HISTOGRAM_CAP; ++index)
+        if (worklists->width_histogram[index]) {
+            fprintf(stderr, "%s%llu:%llu", width_present ? "," : "",
+                    index, worklists->width_histogram[index]);
+            width_present = 1;
+        }
+    fputc('\n', stderr);
+}
+
 static int live_scope_state(const yvex_runtime_execution_session *session,
                             int draft,
                             yvex_graph_attention_state_summary *summary,
@@ -762,6 +799,7 @@ static int live_dspark_cancellation_proof(
     yvex_runtime_generation_context *context = NULL;
     yvex_runtime_generation_plan_summary plan = {0};
     yvex_runtime_generation_token_result tokens[LIVE_GENERATION_MAX_TOKENS];
+    unsigned int prompt_tokens[32];
     yvex_runtime_generation_result result;
     yvex_graph_attention_state_summary target_state, draft_state;
     live_speculation_cancel cancel = {0};
@@ -775,6 +813,8 @@ static int live_dspark_cancellation_proof(
     options.cancel_requested = live_cancel_flag;
     options.cancel_context = &cancel;
     atomic_init(&cancel.cancel, 0);
+    turn.prompt_token_ids = prompt_tokens;
+    turn.prompt_token_capacity = sizeof(prompt_tokens) / sizeof(prompt_tokens[0]);
     turn.speculation_progress_sink = live_cancel_verification;
     turn.speculation_progress_context = &cancel;
     rc = yvex_runtime_session_open(&session, model, &session_options,
@@ -1190,7 +1230,6 @@ static int live_greedy_equivalence(const live_generation *target,
         target->result.sampled_token_count != dspark->result.sampled_token_count ||
         target->result.model_committed_token_count !=
             dspark->result.model_committed_token_count ||
-        target->result.generated_text_bytes != dspark->result.generated_text_bytes ||
         target->result.final_position != dspark->result.final_position) {
         yvex_error_setf(
             err, YVEX_ERR_FORMAT, "generation_live.equivalence",
@@ -1204,11 +1243,18 @@ static int live_greedy_equivalence(const live_generation *target,
             target->result.final_position, dspark->result.final_position);
         return YVEX_ERR_FORMAT;
     }
-    if (strcmp(target->result.final_persistent_state_digest,
-               dspark->result.final_persistent_state_digest) != 0) {
+    /* Execution modes may admit different physical state layouts; equivalence is the exact
+     * per-layer semantic timeline, while each layout-bound identity must remain valid. */
+    if (!yvex_sha256_hex_valid(target->result.final_persistent_state_digest) ||
+        !yvex_sha256_hex_valid(dspark->result.final_persistent_state_digest) ||
+        strcmp(target->semantic_state_digest,
+               dspark->semantic_state_digest) != 0) {
         yvex_error_setf(err, YVEX_ERR_FORMAT, "generation_live.equivalence",
-                        "persistent state differs target=%.16s dspark=%.16s "
-                        "cycles=%llu proposed=%llu accepted=%llu rejected=%llu verified=%llu",
+                        "semantic state differs target=%.16s dspark=%.16s "
+                        "physical=%.16s/%.16s cycles=%llu proposed=%llu "
+                        "accepted=%llu rejected=%llu verified=%llu",
+                        target->semantic_state_digest,
+                        dspark->semantic_state_digest,
                         target->result.final_persistent_state_digest,
                         dspark->result.final_persistent_state_digest,
                         dspark->result.draft_cycle_count,
@@ -1216,12 +1262,6 @@ static int live_greedy_equivalence(const live_generation *target,
                         dspark->result.accepted_draft_token_count,
                         dspark->result.rejected_draft_token_count,
                         dspark->result.target_verification_count);
-        return YVEX_ERR_FORMAT;
-    }
-    if (memcmp(target->text, dspark->text,
-               (size_t)target->result.generated_text_bytes) != 0) {
-        yvex_error_set(err, YVEX_ERR_FORMAT, "generation_live.equivalence",
-                       "rendered text differs between target-only and DSpark");
         return YVEX_ERR_FORMAT;
     }
     for (index = 0ull; index < target->result.sampled_token_count; ++index)
@@ -1233,6 +1273,14 @@ static int live_greedy_equivalence(const live_generation *target,
                             dspark->tokens[index].sampled_token_id);
             return YVEX_ERR_FORMAT;
         }
+    if (target->result.generated_text_bytes !=
+            dspark->result.generated_text_bytes ||
+        memcmp(target->text, dspark->text,
+               (size_t)target->result.generated_text_bytes) != 0) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "generation_live.equivalence",
+                       "rendered text differs between target-only and DSpark");
+        return YVEX_ERR_FORMAT;
+    }
     yvex_error_clear(err);
     return YVEX_OK;
 }
@@ -1462,7 +1510,10 @@ int main(int argc, char **argv)
         step = "partial-progress";
         rc = live_partial_progress_proof(model, backend, policy, &err);
     }
-    if (rc != YVEX_OK) live_failure(step, rc, &err);
+    if (rc != YVEX_OK) {
+        live_failure_primary(&production);
+        live_failure(step, rc, &err);
+    }
     else {
         printf("generation_backend=%s mode=%s strategy=%s prompt_tokens=%llu "
                "sampled=%llu committed=%llu decode_inputs_match=pass "
@@ -1563,6 +1614,37 @@ int main(int argc, char **argv)
             production.result.profile.phase_ns[YVEX_RUNTIME_PROFILE_FIRST_DECODE],
             production.result.profile.phase_ns[YVEX_RUNTIME_PROFILE_SUBSEQUENT_DECODE],
             production.result.profile.phase_ns[YVEX_RUNTIME_PROFILE_TOTAL_GENERATION]);
+        printf("generation_worklists count=%llu pairs=%llu buckets=%llu "
+               "max_bucket=%llu tc_eligible=%llu tc_executed=%llu narrow=%llu "
+               "tail=%llu widths=",
+               production.result.expert_worklists.worklist_count,
+               production.result.expert_worklists.pair_count,
+               production.result.expert_worklists.bucket_count,
+               production.result.expert_worklists.maximum_bucket_population,
+               production.result.expert_worklists.tensor_core_eligible_pairs,
+               production.result.expert_worklists.tensor_core_executed_pairs,
+               production.result.expert_worklists.narrow_pairs,
+               production.result.expert_worklists.tail_rows);
+        for (unsigned int index = 1u;
+             index < YVEX_EXPERT_WORKLIST_HISTOGRAM_CAP; ++index)
+            printf("%s%u:%llu", index == 1u ? "" : ",", index,
+                   production.result.expert_worklists.width_histogram[index]);
+        printf(" populations=");
+        for (unsigned int index = 1u;
+             index < YVEX_EXPERT_WORKLIST_HISTOGRAM_CAP; ++index)
+            printf("%s%u:%llu", index == 1u ? "" : ",", index,
+                   production.result.expert_worklists.population_histogram[index]);
+        printf(" provenance=%llu,%llu,%llu,%llu,%llu\n",
+               production.result.expert_worklists.provenance_counts[
+                   YVEX_EXECUTION_BATCH_SINGLE_ROW],
+               production.result.expert_worklists.provenance_counts[
+                   YVEX_EXECUTION_BATCH_SPECULATIVE_VERIFICATION],
+               production.result.expert_worklists.provenance_counts[
+                   YVEX_EXECUTION_BATCH_MULTI_SESSION],
+               production.result.expert_worklists.provenance_counts[
+                   YVEX_EXECUTION_BATCH_PREFILL],
+               production.result.expert_worklists.provenance_counts[
+                   YVEX_EXECUTION_BATCH_COMPILED_COMPATIBLE]);
     }
     yvex_runtime_model_close(&model);
     return rc == YVEX_OK ? 0 : 1;

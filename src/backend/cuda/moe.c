@@ -1,9 +1,4 @@
-/*
- * Execute one compiled MoE layer with canonical qtype kernels on CUDA.
- *
- * Production weights remain directly addressable and success follows device completion. Backend
- * execution consumes a typed MoE job and never reconstructs model topology.
- */
+/* Execute compiled MoE work on resident weights without reconstructing model topology. */
 #include <yvex/internal/moe.h>
 #include "src/backend/cuda/private.h"
 #include <limits.h>
@@ -35,15 +30,16 @@ typedef struct {
     yvex_cuda_work work;
     yvex_backend_attention_failure failure;
     CUdeviceptr status, expanded, normalized, post, combination, mix, scale, base;
-    CUdeviceptr logits, scores, selected, weights, tokens, order, unique;
+    CUdeviceptr logits, scores, selected, weights, tokens, order;
+    CUdeviceptr expert_ids, bucket_offsets, bucket_populations;
+    CUdeviceptr source_rows, destination_rows, worklist_summary;
     CUdeviceptr routed_intermediate, routed_pairs, routed;
     CUdeviceptr shared_intermediate, q8_normalized;
     CUdeviceptr q8_routed_intermediate, q8_shared_intermediate;
     CUdeviceptr shared_pairs, shared, combined;
     int host_status, routed_up_q8, routed_down_q8, shared_up_q8, shared_down_q8;
-    int routed_up_tensorcore, routed_down_tensorcore;
-    int shared_up_tensorcore, shared_down_tensorcore;
-    unsigned long long host_unique, h2d, d2h, d2d, downloads;
+    yvex_expert_worklist_observation host_worklist;
+    unsigned long long h2d, d2h, d2d, downloads;
     unsigned long long graph_launches, graph_captures, graph_replays;
     unsigned long long started_ns, synchronization_ns;
     unsigned long long stream_synchronizations, device_synchronizations;
@@ -162,7 +158,12 @@ static int moe_cuda_rows_workspace_required(const yvex_moe_layer_plan *layer,
     ADD(pairs, sizeof(float));
     ADD(row_count, sizeof(unsigned int));
     ADD(pairs, sizeof(unsigned long long));
-    ADD(1ull, sizeof(unsigned long long));
+    ADD(layer->routed_experts, sizeof(unsigned long long));
+    ADD(layer->routed_experts + 1ull, sizeof(unsigned long long));
+    ADD(layer->routed_experts, sizeof(unsigned long long));
+    ADD(pairs, sizeof(unsigned long long));
+    ADD(pairs, sizeof(unsigned long long));
+    ADD(1ull, sizeof(yvex_expert_worklist_observation));
     ADD(routed_intermediate, sizeof(float));
     ADD(pair_outputs, sizeof(float));
     ADD(hidden, sizeof(float));
@@ -1016,13 +1017,10 @@ static int moe_cuda_encoded_expert_policy(
     const moe_cuda_batch *batch, const yvex_moe_weight_view *gate,
     const yvex_moe_weight_view *up, const yvex_moe_weight_view *down,
     unsigned long long input_width, unsigned long long intermediate_width,
-    int *up_q8, int *down_q8, int *up_tensorcore, int *down_tensorcore,
-    yvex_error *err)
+    int *up_q8, int *down_q8, yvex_error *err)
 {
     int gate_encoded, up_encoded, down_encoded, up_regime = 0, down_regime = 0;
-    int derived;
     if (!batch || !gate || !up || !down || !up_q8 || !down_q8 ||
-        !up_tensorcore || !down_tensorcore ||
         gate->activation > YVEX_EXECUTION_ACTIVATION_DEVICE_ENCODED ||
         up->activation > YVEX_EXECUTION_ACTIVATION_DEVICE_ENCODED ||
         down->activation > YVEX_EXECUTION_ACTIVATION_DEVICE_ENCODED)
@@ -1045,26 +1043,18 @@ static int moe_cuda_encoded_expert_policy(
          (down->layout == YVEX_EXECUTION_LAYOUT_DERIVED_BACKEND)))
         return moe_cuda_refuse(err, YVEX_ERR_FORMAT,
                                "compiled routed MoE layouts disagree");
-    derived = gate->layout == YVEX_EXECUTION_LAYOUT_DERIVED_BACKEND;
-    if (derived &&
-        (gate->qtype != YVEX_GGUF_QTYPE_IQ2_XXS ||
-         up->qtype != YVEX_GGUF_QTYPE_IQ2_XXS ||
-         down->qtype != YVEX_GGUF_QTYPE_Q2_K ||
-         gate->storage_bytes < gate->encoded_bytes ||
-         up->storage_bytes < up->encoded_bytes ||
-         down->storage_bytes < down->encoded_bytes))
-        return moe_cuda_refuse(err, YVEX_ERR_FORMAT,
-                               "compiled derived MoE layout has unsupported geometry");
-    *up_tensorcore = gate_encoded &&
-        (derived ||
-         !strcmp(gate->kernel_family, YVEX_MOE_KERNEL_SM121_TENSORCORE_EXPERT));
-    *down_tensorcore = down_encoded && down->kernel_family &&
-        (derived ||
-         !strcmp(down->kernel_family, YVEX_MOE_KERNEL_SM121_TENSORCORE_EXPERT));
-    if ((gate_encoded && !*up_tensorcore && !up_regime &&
+    if (gate->layout == YVEX_EXECUTION_LAYOUT_DERIVED_BACKEND ||
+        (gate_encoded &&
+         !strcmp(gate->kernel_family, YVEX_MOE_KERNEL_SM121_TENSORCORE_EXPERT)) ||
+        (down_encoded && down->kernel_family &&
+         !strcmp(down->kernel_family, YVEX_MOE_KERNEL_SM121_TENSORCORE_EXPERT)))
+        return moe_cuda_refuse(
+            err, YVEX_ERR_UNSUPPORTED,
+            "Tensor Core MoE requires a compiler-admitted real-width expert worklist");
+    if ((gate_encoded && !up_regime &&
          strcmp(gate->kernel_family, YVEX_MOE_KERNEL_PORTABLE_EXPERT_ROW) != 0 &&
          strcmp(gate->kernel_family, YVEX_MOE_KERNEL_PORTABLE_ENCODED_ROW) != 0) ||
-        (down_encoded && !*down_tensorcore && !down_regime &&
+        (down_encoded && !down_regime &&
          (!down->kernel_family ||
           (strcmp(down->kernel_family, YVEX_MOE_KERNEL_PORTABLE_EXPERT_ROW) != 0 &&
            strcmp(down->kernel_family, YVEX_MOE_KERNEL_PORTABLE_ENCODED_ROW) != 0))))
@@ -1072,10 +1062,8 @@ static int moe_cuda_encoded_expert_policy(
                                "compiled MoE kernel family is not admitted by the CUDA backend");
     if ((gate_encoded || down_encoded) &&
         (!batch->state->kernel_bundle_native || !batch->state->q8_quantize_function ||
-         (*up_tensorcore ? !batch->state->moe_grouped_up_tensorcore_function
-                         : !batch->state->moe_grouped_up_rows_function) ||
-         (*down_tensorcore ? !batch->state->moe_grouped_down_tensorcore_function
-                           : !batch->state->moe_grouped_down_rows_function)))
+         !batch->state->moe_grouped_up_rows_function ||
+         !batch->state->moe_grouped_down_rows_function))
         return moe_cuda_refuse(err, YVEX_ERR_UNSUPPORTED,
                                "compiled encoded MoE requires its admitted native kernel bundle");
     if (gate_encoded &&
@@ -1226,7 +1214,18 @@ static int moe_cuda_batch_ranges(moe_cuda_batch *batch,
     RANGE(weights, pairs, sizeof(float), 0, "cuda.moe.rows.weights");
     RANGE(tokens, rows->row_count, sizeof(unsigned int), 0, "cuda.moe.rows.tokens");
     RANGE(order, pairs, sizeof(unsigned long long), 0, "cuda.moe.rows.order");
-    RANGE(unique, 1ull, sizeof(unsigned long long), 0, "cuda.moe.rows.unique");
+    RANGE(expert_ids, layer->routed_experts, sizeof(unsigned long long), 0,
+          "cuda.moe.rows.worklist-experts");
+    RANGE(bucket_offsets, layer->routed_experts + 1ull, sizeof(unsigned long long), 0,
+          "cuda.moe.rows.worklist-offsets");
+    RANGE(bucket_populations, layer->routed_experts, sizeof(unsigned long long), 0,
+          "cuda.moe.rows.worklist-populations");
+    RANGE(source_rows, pairs, sizeof(unsigned long long), 0,
+          "cuda.moe.rows.worklist-source-rows");
+    RANGE(destination_rows, pairs, sizeof(unsigned long long), 0,
+          "cuda.moe.rows.worklist-destination-rows");
+    RANGE(worklist_summary, 1ull, sizeof(yvex_expert_worklist_observation), 0,
+          "cuda.moe.rows.worklist-summary");
     RANGE(routed_intermediate, routed_intermediate, sizeof(float), 0,
           "cuda.moe.rows.routed-intermediate");
     RANGE(routed_pairs, pair_outputs, sizeof(float), 0, "cuda.moe.rows.routed-pairs");
@@ -1374,14 +1373,29 @@ static int moe_cuda_batch_route(moe_cuda_batch *batch,
             "cuda.moe.rows.route", &batch->failure, err);
     }
     if (rc == YVEX_OK) {
+        unsigned long long admitted_width = 0ull;
+        unsigned long long width_mask = job->worklist_policy
+                                            ? job->worklist_policy->supported_width_mask
+                                            : 2ull;
+        unsigned long long width_scan = width_mask;
+        unsigned long long tensor_core_minimum = job->worklist_policy
+                                                     ? job->worklist_policy->tensor_core_minimum
+                                                     : 0ull;
+        unsigned int provenance = job->execution_batch
+                                      ? (unsigned int)job->execution_batch->provenance : 0u;
+        while (width_scan >>= 1u) admitted_width++;
         void *params[] = {
             &batch->selected, (void *)&rows->row_count,
             (void *)&layer->experts_per_token, (void *)&layer->routed_experts,
-            &batch->order, &batch->unique, &batch->status};
+            &batch->order, &batch->expert_ids, &batch->bucket_offsets,
+            &batch->bucket_populations, &batch->source_rows,
+            &batch->destination_rows, &batch->worklist_summary,
+            &width_mask, &tensor_core_minimum,
+            &admitted_width, &provenance, &batch->status};
         rc = batch->ops->launch(
-            &batch->work, batch->state->moe_pair_order_function,
+            &batch->work, batch->state->expert_worklist_build_cuda_function,
             1u, MOE_CUDA_BLOCK, 0u,
-            params, "cuda.moe.rows.pair-order", &batch->failure, err);
+            params, "cuda.moe.rows.worklist-build", &batch->failure, err);
     }
     (void)pairs;
     return rc;
@@ -1420,10 +1434,6 @@ static int moe_cuda_batch_experts(moe_cuda_batch *batch,
     CUdeviceptr aggregate = routed ? batch->routed : batch->shared;
     int up_q8 = routed ? batch->routed_up_q8 : batch->shared_up_q8;
     int down_q8 = routed ? batch->routed_down_q8 : batch->shared_down_q8;
-    int up_tensorcore = routed ? batch->routed_up_tensorcore
-                               : batch->shared_up_tensorcore;
-    int down_tensorcore = routed ? batch->routed_down_tensorcore
-                                 : batch->shared_down_tensorcore;
     unsigned int up_shared_bytes, down_shared_bytes;
     int rc;
     up_input_extent = up_q8 ? input_width / YVEX_CUDA_Q8_K_BLOCK : input_width;
@@ -1434,14 +1444,12 @@ static int moe_cuda_batch_experts(moe_cuda_batch *batch,
         !yvex_core_u64_mul(up->row_bytes, intermediate_width, &up_expert_bytes) ||
         !yvex_core_u64_mul(down->row_bytes, layer->hidden_width, &down_expert_bytes) ||
         !yvex_core_u64_mul(count,
-                           up_tensorcore ? (intermediate_width + 15ull) / 16ull
-                                         : intermediate_width / MOE_CUDA_ROWS_PER_BLOCK +
-                                               (intermediate_width % MOE_CUDA_ROWS_PER_BLOCK != 0),
+                           intermediate_width / MOE_CUDA_ROWS_PER_BLOCK +
+                               (intermediate_width % MOE_CUDA_ROWS_PER_BLOCK != 0),
                            &up_tasks) ||
         !yvex_core_u64_mul(count,
-                           down_tensorcore ? (layer->hidden_width + 15ull) / 16ull
-                                           : layer->hidden_width / MOE_CUDA_ROWS_PER_BLOCK +
-                                                 (layer->hidden_width % MOE_CUDA_ROWS_PER_BLOCK != 0),
+                           layer->hidden_width / MOE_CUDA_ROWS_PER_BLOCK +
+                               (layer->hidden_width % MOE_CUDA_ROWS_PER_BLOCK != 0),
                            &down_tasks) ||
         !yvex_core_u64_mul(rows->row_count, layer->hidden_width, &reduce_tasks) ||
         (!up_q8 && (!yvex_core_u64_mul(input_width, sizeof(float), &up_shared) ||
@@ -1449,30 +1457,21 @@ static int moe_cuda_batch_experts(moe_cuda_batch *batch,
         (!down_q8 &&
          (!yvex_core_u64_mul(intermediate_width, sizeof(float), &down_shared) ||
           down_shared > UINT_MAX)) ||
-        (up_tensorcore && !moe_cuda_grid(up_tasks, MOE_CUDA_ROWS_PER_BLOCK, &up_grid)) ||
-        (down_tensorcore && !moe_cuda_grid(down_tasks, MOE_CUDA_ROWS_PER_BLOCK, &down_grid)) ||
-        (!up_tensorcore && up_tasks > UINT_MAX) ||
-        (!down_tensorcore && down_tasks > UINT_MAX) ||
+        up_tasks > UINT_MAX || down_tasks > UINT_MAX ||
         !moe_cuda_grid(reduce_tasks, MOE_CUDA_BLOCK, &reduce_grid))
         return moe_cuda_refuse(
             err, YVEX_ERR_BOUNDS,
             "CUDA width-N MoE expert or shared-staging geometry exceeds launch bounds");
     up_shared_bytes = up_q8 ? 0u : (unsigned int)up_shared;
     down_shared_bytes = down_q8 ? 0u : (unsigned int)down_shared;
-    if (!up_tensorcore) up_grid = (unsigned int)up_tasks;
-    if (!down_tensorcore) down_grid = (unsigned int)down_tasks;
+    up_grid = (unsigned int)up_tasks;
+    down_grid = (unsigned int)down_tasks;
     rc = YVEX_OK;
     if (rc == YVEX_OK) {
         CUdeviceptr gate_address = (CUdeviceptr)gate->device_address;
         CUdeviceptr up_address = (CUdeviceptr)up->device_address;
         CUdeviceptr input = up_q8 ? batch->q8_normalized : batch->normalized;
         unsigned int gate_qtype = gate->qtype, up_qtype = up->qtype;
-        unsigned int gate_layout =
-            gate->layout == YVEX_EXECUTION_LAYOUT_DERIVED_BACKEND;
-        unsigned int up_layout =
-            up->layout == YVEX_EXECUTION_LAYOUT_DERIVED_BACKEND;
-        unsigned long long gate_storage = gate->storage_bytes;
-        unsigned long long up_storage = up->storage_bytes;
         void *params[] = {
             &gate_address, (void *)&gate->row_bytes, &gate_expert_bytes, &gate_qtype,
             &up_address, (void *)&up->row_bytes, &up_expert_bytes, &up_qtype,
@@ -1480,22 +1479,11 @@ static int moe_cuda_batch_experts(moe_cuda_batch *batch,
             &input, &up_input_extent, &up_q8,
             &intermediate_width, (void *)&layer->activation_limit,
             &intermediate, &batch->status};
-        void *tensorcore_params[] = {
-            &gate_address, (void *)&gate->row_bytes, &gate_expert_bytes,
-            &gate_storage, &gate_layout, &gate_qtype,
-            &up_address, (void *)&up->row_bytes, &up_expert_bytes,
-            &up_storage, &up_layout, &up_qtype,
-            &selected, &weights, &order, &count, &topk, &experts, &input, &input_width,
-            &intermediate_width, (void *)&layer->activation_limit,
-            &intermediate, &batch->status};
         rc = batch->ops->launch(
-            &batch->work, up_tensorcore ? batch->state->moe_grouped_up_tensorcore_function
-                                        : batch->state->moe_grouped_up_rows_function,
-            up_grid, MOE_CUDA_BLOCK, up_tensorcore ? 0u : up_shared_bytes,
-            up_tensorcore ? tensorcore_params : params,
+            &batch->work, batch->state->moe_grouped_up_rows_function,
+            up_grid, MOE_CUDA_BLOCK, up_shared_bytes, params,
             routed ? "cuda.moe.rows.routed-up" : "cuda.moe.rows.shared-up",
             &batch->failure, err);
-        if (rc == YVEX_OK && up_tensorcore) batch->work.tensor_core_launches++;
     }
     if (rc == YVEX_OK && down_q8)
         rc = moe_cuda_batch_quantize(
@@ -1507,28 +1495,16 @@ static int moe_cuda_batch_experts(moe_cuda_batch *batch,
         CUdeviceptr down_address = (CUdeviceptr)down->device_address;
         CUdeviceptr down_input = down_q8 ? q8_intermediate : intermediate;
         unsigned int qtype = down->qtype;
-        unsigned int layout =
-            down->layout == YVEX_EXECUTION_LAYOUT_DERIVED_BACKEND;
-        unsigned long long storage = down->storage_bytes;
         void *params[] = {
             &down_address, (void *)&down->row_bytes, &down_expert_bytes, &qtype,
             &selected, &order, &count, &topk, &experts,
             &down_input, &down_input_extent, &down_q8,
             (void *)&layer->hidden_width, &pair_outputs, &batch->status};
-        void *tensorcore_params[] = {
-            &down_address, (void *)&down->row_bytes, &down_expert_bytes,
-            &storage, &layout, &qtype,
-            &selected, &order, &count, &topk, &experts,
-            &down_input, &intermediate_width, (void *)&layer->hidden_width,
-            &pair_outputs, &batch->status};
         rc = batch->ops->launch(
-            &batch->work, down_tensorcore ? batch->state->moe_grouped_down_tensorcore_function
-                                          : batch->state->moe_grouped_down_rows_function,
-            down_grid, MOE_CUDA_BLOCK, down_tensorcore ? 0u : down_shared_bytes,
-            down_tensorcore ? tensorcore_params : params,
+            &batch->work, batch->state->moe_grouped_down_rows_function,
+            down_grid, MOE_CUDA_BLOCK, down_shared_bytes, params,
             routed ? "cuda.moe.rows.routed-down" : "cuda.moe.rows.shared-down",
             &batch->failure, err);
-        if (rc == YVEX_OK && down_tensorcore) batch->work.tensor_core_launches++;
     }
     if (rc == YVEX_OK) {
         void *params[] = {
@@ -1606,6 +1582,8 @@ static int moe_cuda_graph_key(const moe_cuda_batch *batch,
         !yvex_sha256_update_text(
             &hash, yvex_sha256_hex_valid(layer->layer_identity)
                        ? layer->layer_identity : "unsealed-layer") ||
+        (job->worklist_policy &&
+         !yvex_sha256_update_text(&hash, job->worklist_policy->identity)) ||
         !yvex_sha256_update_text(&hash, batch->state->kernel_bundle_identity))
         goto failed;
     HASH(batch->backend->resident_generation);
@@ -1625,10 +1603,6 @@ static int moe_cuda_graph_key(const moe_cuda_batch *batch,
     HASH(batch->routed_down_q8);
     HASH(batch->shared_up_q8);
     HASH(batch->shared_down_q8);
-    HASH(batch->routed_up_tensorcore);
-    HASH(batch->routed_down_tensorcore);
-    HASH(batch->shared_up_tensorcore);
-    HASH(batch->shared_down_tensorcore);
     for (slot = 0ull; slot < YVEX_MOE_WEIGHT_COUNT; ++slot) {
         const yvex_moe_weight_view *weight = &job->weights[slot];
         HASH(layer->tensor_ids[slot] != YVEX_MOE_NO_TENSOR);
@@ -1748,9 +1722,9 @@ static int moe_cuda_batch_publish(moe_cuda_batch *batch,
         if (rc == YVEX_OK) { batch->d2h += (bytes_); batch->downloads++; }                 \
     } while (0)
     if (deferred) {
-        DOWNLOAD(&job->device_completion->host->unique_experts, batch->unique,
-                 sizeof(job->device_completion->host->unique_experts),
-                 "cuda.moe.rows.unique-download");
+        DOWNLOAD(&job->device_completion->host->worklist, batch->worklist_summary,
+                 sizeof(job->device_completion->host->worklist),
+                 "cuda.moe.rows.worklist-summary-download");
         DOWNLOAD(&job->device_completion->host->status, batch->status,
                  sizeof(job->device_completion->host->status),
                  "cuda.moe.rows.status-download");
@@ -1759,8 +1733,9 @@ static int moe_cuda_batch_publish(moe_cuda_batch *batch,
                  (size_t)selected_bytes, "cuda.moe.rows.selected-download");
         DOWNLOAD(output->selected_weights, batch->weights,
                  (size_t)weight_bytes, "cuda.moe.rows.weights-download");
-        DOWNLOAD(&batch->host_unique, batch->unique, sizeof(batch->host_unique),
-                 "cuda.moe.rows.unique-download");
+        DOWNLOAD(&batch->host_worklist, batch->worklist_summary,
+                 sizeof(batch->host_worklist),
+                 "cuda.moe.rows.worklist-summary-download");
         DOWNLOAD(&batch->host_status, batch->status, sizeof(batch->host_status),
                  "cuda.moe.rows.status-download");
     }
@@ -1780,16 +1755,26 @@ static int moe_cuda_batch_publish(moe_cuda_batch *batch,
     if (rc == YVEX_OK && !deferred && batch->host_status)
         rc = moe_cuda_refuse(err, YVEX_ERR_BACKEND,
                              "CUDA width-N MoE reported invalid or non-finite numerics");
+    if (rc == YVEX_OK && !deferred &&
+        (!batch->host_worklist.bucket_count ||
+         batch->host_worklist.bucket_count > layer->routed_experts ||
+         !batch->host_worklist.maximum_bucket_population ||
+         batch->host_worklist.tensor_core_eligible_pairs > pairs ||
+         batch->host_worklist.narrow_pairs !=
+             pairs - batch->host_worklist.tensor_core_eligible_pairs))
+        rc = moe_cuda_refuse(err, YVEX_ERR_STATE,
+                             "CUDA expert worklist completion is invalid");
     if (rc == YVEX_OK) {
         for (slot = 0ull; slot < YVEX_MOE_WEIGHT_COUNT; ++slot)
             cache_hits += layer->tensor_ids[slot] != YVEX_MOE_NO_TENSOR;
-        result->schema_version = YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V3;
+        result->schema_version = YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V4;
         result->completed = !deferred;
         result->device_completion_pending = deferred;
         result->execution_class = YVEX_EXECUTION_CLASS_DEVICE_NATIVE;
         result->row_count = rows->row_count;
         result->row_expert_pairs = pairs;
-        result->unique_experts = deferred ? 0ull : batch->host_unique;
+        result->unique_experts = deferred ? 0ull : batch->host_worklist.bucket_count;
+        if (!deferred) result->worklists = batch->host_worklist;
         result->grouped_expert_operations = pairs;
         result->shared_expert_operations = rows->row_count;
         result->h2d_bytes = batch->h2d;
@@ -1865,6 +1850,15 @@ static int moe_cuda_execute_rows(yvex_backend *backend,
     int rc, cleanup_rc;
     if (result) memset(result, 0, sizeof(*result));
     if (!backend || !job || !rows || !output || !result ||
+        ((job->execution_batch == NULL) != (job->worklist_policy == NULL)) ||
+        (job->execution_batch &&
+         (yvex_execution_batch_validate(job->execution_batch, NULL) != YVEX_OK ||
+          yvex_expert_worklist_policy_validate(job->worklist_policy, NULL) != YVEX_OK ||
+          job->execution_batch->row_count != rows->row_count ||
+          job->execution_batch->provenance != rows->provenance ||
+          job->execution_batch->phase != rows->phase)) ||
+        (rows->execution_profile_identity &&
+         (!job->execution_batch || !job->worklist_policy)) ||
         yvex_backend_kind_of(backend) != YVEX_BACKEND_KIND_CUDA ||
         !backend_tensor_owner_is(backend, rows->device_rows) ||
         !backend_tensor_owner_is(backend, rows->device_outputs) ||
@@ -1898,16 +1892,14 @@ static int moe_cuda_execute_rows(yvex_backend *backend,
         &job->weights[YVEX_MOE_WEIGHT_ROUTED_UP],
         &job->weights[YVEX_MOE_WEIGHT_ROUTED_DOWN], layer->hidden_width,
         layer->expert_intermediate_width, &batch.routed_up_q8,
-        &batch.routed_down_q8, &batch.routed_up_tensorcore,
-        &batch.routed_down_tensorcore, err);
+        &batch.routed_down_q8, err);
     if (rc == YVEX_OK)
         rc = moe_cuda_encoded_expert_policy(
             &batch, &job->weights[YVEX_MOE_WEIGHT_SHARED_GATE],
             &job->weights[YVEX_MOE_WEIGHT_SHARED_UP],
             &job->weights[YVEX_MOE_WEIGHT_SHARED_DOWN], layer->hidden_width,
             layer->shared_intermediate_width, &batch.shared_up_q8,
-            &batch.shared_down_q8, &batch.shared_up_tensorcore,
-            &batch.shared_down_tensorcore, err);
+            &batch.shared_down_q8, err);
     if (rc == YVEX_OK) rc = moe_cuda_batch_ranges(&batch, job, rows, pairs, err);
     if (rc == YVEX_OK)
         rc = moe_cuda_batch_execute_graph(&batch, job, rows, pairs, err);
@@ -1957,7 +1949,7 @@ static int moe_cuda_complete_rows(yvex_backend *backend,
     }
     completed = yvex_core_monotonic_ns();
     if (rc == YVEX_OK) {
-        result->schema_version = YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V3;
+        result->schema_version = YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V4;
         result->completed = 1;
         result->execution_class = YVEX_EXECUTION_CLASS_DEVICE_NATIVE;
         result->device_synchronizations =
@@ -1985,7 +1977,8 @@ const yvex_backend_moe_operations *yvex_backend_moe_operations_get(
     const yvex_cuda_backend_state *state;
     if (!backend || yvex_backend_kind_of(backend) != YVEX_BACKEND_KIND_CUDA ||
         !(state = yvex_cuda_state(backend)) || !state->moe_route_rows_function ||
-        !state->moe_pair_order_function || !state->moe_grouped_up_rows_function ||
+        !state->expert_worklist_build_cuda_function ||
+        !state->moe_grouped_up_rows_function ||
         !state->moe_grouped_down_rows_function || !state->moe_reduce_rows_function ||
         !state->moe_combine_rows_function || !state->residual_mhc_pre_function ||
         !state->residual_mhc_post_function)

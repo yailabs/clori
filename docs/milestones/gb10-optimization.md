@@ -21,10 +21,10 @@ reader, writer, migration, and test consequences for every considered change.
 Runtime binding v8 was the first admitted persisted GB10 change because it
 authenticated source-derived execution geometry that v7 could not carry. The
 compiler/family consolidation subsequently admitted binding v12 as the first
-complete compiler authority. Binding v13 now carries Physical Execution IR v3,
-whose expert decisions can seal sparse and large-row kernel alternatives plus
-their crossover; readers refuse v7-v12 because those versions cannot represent
-the current complete execution plan. The frozen contract matrix remains
+complete compiler authority. Binding v14 now carries Physical Execution IR v4,
+whose expert decisions seal legal worklist widths and any admitted Tensor Core
+regime without treating request population as a compiled fact; readers refuse
+v7-v13 because those versions cannot represent the current complete execution plan. The frozen contract matrix remains
 historical entry evidence, not the current writer contract. The source-authored conversation product path
 earns local protocol v7, provider
 request/wire v3, tokenizer plan v3, tokenizer provider result v2 and OpenAI
@@ -50,6 +50,8 @@ entry audit:
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Physical Execution IR | v2 | v3 | an expert decision seals a distinct large-row kernel family and its checked row-population crossover | persisted decision layout and semantic identity | v2 can name only one kernel family and cannot authenticate a geometry-dependent alternative | rebuild from the family compiler policy; runtime selects one concrete alternative and backend executes it without a hidden threshold | identity mutation, invalid v2 policy refusal, DeepSeek policy projection, native sparse/Tensor Core kernels |
 | Runtime binding | v12 | v13 | Physical Execution IR v3 records | persisted wire layout, payload domain and content identity | v12 is recognized then refused before body parsing because it cannot carry the new physical decision | publish a separate immutable v13 binding; retained v12 files are never overwritten or migrated in place | deterministic prepare/reopen, previous-schema refusal, corruption and physical-identity validation |
+| Physical Execution IR | v3 | v4 | legal expert-worklist widths plus an optional admitted Tensor Core minimum and kernel family | persisted decision layout and semantic identity | v3 can infer a large-row alternative only from total operation population and cannot authenticate compatible expert-bucket width | rebuild from family compiler policy; runtime instantiates actual compatible rows within the sealed mask; backend never invents width | identity mutation, invalid width/TC policy refusal, DeepSeek projection, worklist and CUDA qualification |
+| Runtime binding | v13 | v14 | Physical Execution IR v4 records | persisted wire layout, payload domain and content identity | v13 is recognized then refused before body parsing because it cannot carry the worklist-width decision | publish a separate immutable v14 binding; retained v13 files are never overwritten or migrated in place | deterministic prepare/reopen, previous-schema refusal, corruption and physical-identity validation |
 | Kernel-bundle identity | v2 | v3 | ordered set of independently compiled modules | semantic identity derivation only; no wire or persisted layout | v2 hashes one image and cannot identify the module set | full rebuild admits all manifest-owned modules atomically; model artifacts do not migrate | PTX/native admission, missing-symbol rollback, checked unload retry, identity mutation |
 | Launch-graph identity | v2 | v3 | owned versus borrowed launch-stream policy | semantic identity derivation only; no wire or persisted layout | v2 cannot distinguish an isolated graph stream from the session stream | rebuilt graph registries recapture under the selected stream policy; no model, binding or profile migration | identity mutation, isolated/shared registry separation, capture and warm replay |
 | Graph-executable identity | v1 | v2 | owned versus borrowed launch-stream policy | semantic identity derivation only; no wire or persisted layout | v1 authenticates device and executable topology but omits completion ownership | rebuilt executables are admitted beneath launch-graph v3; old in-process objects are never mixed | exact identity, shared-stream capture/replay, checked teardown |
@@ -585,7 +587,7 @@ tool sequence. These are explicit model outputs, not inferred chain of thought.
 
 ## Non-claims
 
-The currently admitted code establishes model-derived geometry, binding v13 as
+The currently admitted code establishes model-derived geometry, binding v14 as
 the sole complete compiler authority, typed capacity/page planning,
 pre-materialization memory refusal,
 the availability-aware production phase ledger, and identity-bound native
@@ -597,9 +599,11 @@ residency with stable device addresses.
 It also admits native integer Tensor Core execution for the supported expert
 qtypes and Q8_K activations: the SM121 CUBIN must expose its production
 entrypoints and contain `IMMA.16816.S8.S8`, while native device tests account
-launches and check numerical agreement. Physical Execution IR v3 seals a
-measured sparse/large-row MoE crossover rather than leaving selection to a
-backend heuristic. It does not yet establish specialized Tensor Core coverage
+launches and check numerical agreement. Physical Execution IR v4 seals legal
+expert-worklist widths and refuses to infer Tensor Core width from total rows.
+Runtime execution now constructs one typed expert-major worklist from real
+prefill, decode or DSpark verification rows, and the ordinary narrow CUDA path
+consumes that same authority. It does not yet establish specialized Tensor Core coverage
 for all competitive operation classes, specialized attention, full-model
 GB10-competitive grouped-MoE performance, zero per-layer attention synchronization,
 the complete full-model device-sampling fault and acceptance-corpus matrix,

@@ -183,6 +183,7 @@ typedef struct {
     unsigned long long layer_ordinal, token_count;
     unsigned long long hash_routers, learned_routers, routed_experts, shared_experts;
     unsigned long long row_expert_pairs, unique_experts;
+    yvex_expert_worklist_observation expert_worklists;
     unsigned long long grouped_expert_operations, expert_subviews_accessed;
     unsigned long long attention_weight_bytes, expert_weight_bytes, final_weight_bytes;
     yvex_execution_memory_facts memory;
@@ -220,6 +221,7 @@ typedef struct {
     unsigned long long swa_layers, csa_layers, hca_layers;
     unsigned long long hash_routers, learned_routers, routed_experts, shared_experts;
     unsigned long long row_expert_pairs, unique_experts;
+    yvex_expert_worklist_observation expert_worklists;
     unsigned long long grouped_expert_operations, expert_subviews_accessed;
     unsigned long long attention_weight_bytes, expert_weight_bytes, final_weight_bytes;
     yvex_execution_memory_facts memory;
@@ -269,6 +271,7 @@ int yvex_runtime_transformer_context_validate_input(
 int yvex_runtime_transformer_execute_block(
     yvex_runtime_transformer_context *context, unsigned long long layer_ordinal,
     const unsigned int *token_ids, unsigned long long token_count,
+    yvex_execution_batch_provenance provenance, yvex_execution_phase phase,
     yvex_backend_kind backend, const yvex_attention_publication *attention,
     const yvex_device_tensor *device_attention, yvex_device_tensor *device_output,
     float *expanded_output, yvex_runtime_transformer_block_result *result,

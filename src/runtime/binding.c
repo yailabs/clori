@@ -26,12 +26,14 @@
 #define BINDING_MAGIC_V11 "YVRBND11"
 #define BINDING_MAGIC_V12 "YVRBND12"
 #define BINDING_MAGIC_V13 "YVRBND13"
+#define BINDING_MAGIC_V14 "YVRBND14"
 #define BINDING_SCHEMA_V7 7u
 #define BINDING_SCHEMA_V8 8u
 #define BINDING_SCHEMA_V9 9u
 #define BINDING_SCHEMA_V10 10u
 #define BINDING_SCHEMA_V11 11u
 #define BINDING_SCHEMA_V12 12u
+#define BINDING_SCHEMA_V13 13u
 #define BINDING_MAGIC_BYTES 8u
 #define BINDING_HEADER_BYTES (BINDING_MAGIC_BYTES + 16u + 64u)
 #define BINDING_MAX_BYTES (64u * 1024u * 1024u)
@@ -127,8 +129,7 @@ static int model_execution_write(binding_bytes *bytes,
            bytes_put_u64(bytes, sizeof(encoded)) &&
            yvex_core_bytes_append(bytes, encoded, sizeof(encoded));
 }
-static int model_execution_read(binding_cursor *cursor,
-                                yvex_model_execution_descriptor *descriptor)
+static int model_execution_read(binding_cursor *cursor, yvex_model_execution_descriptor *descriptor)
 {
     unsigned char encoded[YVEX_MODEL_EXECUTION_WIRE_BYTES];
     unsigned long long byte_count;
@@ -139,8 +140,7 @@ static int model_execution_read(binding_cursor *cursor,
                encoded, sizeof(encoded), descriptor, &err) == YVEX_OK;
 }
 typedef enum {
-    BINDING_FIELD_UNSIGNED = 0,
-    BINDING_FIELD_SIGNED,
+    BINDING_FIELD_UNSIGNED = 0, BINDING_FIELD_SIGNED,
     BINDING_FIELD_FLOAT,
     BINDING_FIELD_TEXT
 } binding_field_kind;
@@ -603,10 +603,11 @@ static const binding_field physical_decision_fields[] = {
     PHYSICAL_U(canonical_row_count), PHYSICAL_U(encoded_offset), PHYSICAL_U(encoded_bytes),
     PHYSICAL_U(alignment), PHYSICAL_U(consumer), PHYSICAL_U(layout), PHYSICAL_U(placement),
     PHYSICAL_U(sharing), PHYSICAL_U(activation), PHYSICAL_U(supported_width_mask),
-    PHYSICAL_U(maximum_context), PHYSICAL_U(large_row_minimum), PHYSICAL_U(required_backend),
+    PHYSICAL_U(maximum_context), PHYSICAL_U(worklist_width_mask),
+    PHYSICAL_U(tensor_core_minimum), PHYSICAL_U(required_backend),
     PHYSICAL_U(required_compute_major), PHYSICAL_U(required_compute_minor), PHYSICAL_U(evidence),
     PHYSICAL_U(fallback), PHYSICAL_U(derived_asset_required), PHYSICAL_T(kernel_family),
-    PHYSICAL_T(large_row_kernel_family),
+    PHYSICAL_T(tensor_core_kernel_family),
     PHYSICAL_T(terminal_identity), PHYSICAL_T(decision_identity),
 };
 #undef PHYSICAL_U
@@ -1170,7 +1171,7 @@ static int binding_body_write(const yvex_runtime_binding_prepare_request *reques
     layer_count = attention->layer_count;
     draft_layer_count = draft_attention ? draft_attention->layer_count : 0ull;
     if (!yvex_runtime_capabilities_identity(capabilities, capability_identity) ||
-        !bytes_put_text(body, "yvex.runtime.binding.payload.v13") ||
+        !bytes_put_text(body, "yvex.runtime.binding.payload.v14") ||
         !bytes_put_u64(body, YVEX_RUNTIME_BINDING_SCHEMA_CURRENT) ||
         !bytes_put_u64(body, adapter_id) || !bytes_put_u64(body, adapter_version) ||
         !bytes_put_text(body, format) || !bytes_put_u64(body, format_version) ||
@@ -1240,7 +1241,7 @@ static int binding_identity(const unsigned char *body, size_t body_bytes,
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.binding.v13") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.binding.v14") ||
         !yvex_sha256_update_u64(&hash, YVEX_RUNTIME_BINDING_SCHEMA_CURRENT) ||
         !yvex_sha256_update(&hash, body, body_bytes) ||
         !yvex_sha256_final(&hash, digest)) return 0;
@@ -1252,7 +1253,7 @@ static int build_file(const binding_bytes *body, const char *identity, binding_b
     if (!body || !identity || !file) return 0;
     file->maximum = BINDING_MAX_BYTES;
     file->initial_capacity = 4096u;
-    return yvex_core_bytes_append(file, BINDING_MAGIC_V13, BINDING_MAGIC_BYTES) &&
+    return yvex_core_bytes_append(file, BINDING_MAGIC_V14, BINDING_MAGIC_BYTES) &&
            bytes_put_u64(file, YVEX_RUNTIME_BINDING_SCHEMA_CURRENT) &&
            bytes_put_u64(file, (unsigned long long)body->count) &&
            yvex_core_bytes_append(file, identity, 64u) &&
@@ -1274,7 +1275,7 @@ static binding_parse_result parse_body(yvex_runtime_binding *binding,
     unsigned long long draft_layer_count = 0ull, i;
     if (!cursor_text(&cursor, domain, sizeof(domain)) ||
         !cursor_u64(&cursor, &schema) || schema != expected_schema ||
-        strcmp(domain, "yvex.runtime.binding.payload.v13") != 0 ||
+        strcmp(domain, "yvex.runtime.binding.payload.v14") != 0 ||
         !cursor_u64(&cursor, &family_id) || !family_id ||
         !cursor_u64(&cursor, &family_version) || !family_version ||
         !cursor_text(&cursor, format, sizeof(format)) || !format[0] ||
@@ -1659,8 +1660,10 @@ static int binding_file_decode(yvex_runtime_binding **out,
            memcmp(magic, BINDING_MAGIC_V11, sizeof(magic)) == 0) ||
           (schema == BINDING_SCHEMA_V12 &&
            memcmp(magic, BINDING_MAGIC_V12, sizeof(magic)) == 0) ||
+          (schema == BINDING_SCHEMA_V13 &&
+           memcmp(magic, BINDING_MAGIC_V13, sizeof(magic)) == 0) ||
           (schema == YVEX_RUNTIME_BINDING_SCHEMA_CURRENT &&
-           memcmp(magic, BINDING_MAGIC_V13, sizeof(magic)) == 0))) {
+           memcmp(magic, BINDING_MAGIC_V14, sizeof(magic)) == 0))) {
         rc = binding_reject(failure, YVEX_RUNTIME_BINDING_FAILURE_SCHEMA,
                             "schema-version", path, 0ull,
                             YVEX_RUNTIME_BINDING_SCHEMA_CURRENT, schema,
@@ -1957,11 +1960,8 @@ done:
     return rc;
 }
 /*
- * Reopen and authenticate one content-addressed runtime binding.
- *
- * Exact external binding path whose basename is its canonical identity. Reads a bounded regular
- * file and allocates one independently owned immutable view. Symlinks, drift, malformed fields,
- * stale identity, or trailing bytes publish no view.
+ * Reopen a bounded content-addressed snapshot; malformed identity, drift, or trailing bytes never
+ * publish a view.
  */
 int yvex_runtime_binding_open(yvex_runtime_binding **out, const char *path,
                               yvex_runtime_binding_summary *summary,

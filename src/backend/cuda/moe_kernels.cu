@@ -5,6 +5,7 @@
  * arithmetic remains shared through the CUDA kernel-primitives interface.
  */
 #include "src/backend/cuda/kernel_primitives.h"
+#include <yvex/internal/execution_batch.h>
 static __device__ float moe_warp_dot(
     const unsigned char *weight, const unsigned char *activation, unsigned long long extent,
     unsigned long long row_bytes, unsigned int qtype, int q8_input, int *status)
@@ -289,11 +290,17 @@ extern "C" __global__ void yvex_moe_route_rows(
     }
 }
 
-/* Build a deterministic expert-major pair order without host routing authority. */
-extern "C" __global__ void yvex_moe_pair_order(
+/* Materialize the canonical expert-major worklist from already-admitted route pairs. */
+extern "C" __global__ void yvex_expert_worklist_build_cuda(
     const unsigned long long *selected, unsigned long long row_count,
     unsigned long long topk, unsigned long long expert_count,
-    unsigned long long *order, unsigned long long *unique_experts, int *status)
+    unsigned long long *order, unsigned long long *expert_ids,
+    unsigned long long *bucket_offsets, unsigned long long *bucket_populations,
+    unsigned long long *source_rows, unsigned long long *destination_rows,
+    yvex_expert_worklist_observation *summary,
+    unsigned long long supported_width_mask,
+    unsigned long long tensor_core_minimum,
+    unsigned long long admitted_width, unsigned int provenance, int *status)
 {
     __shared__ unsigned long long counts[256];
     __shared__ unsigned long long offsets[256];
@@ -304,7 +311,11 @@ extern "C" __global__ void yvex_moe_pair_order(
     if (thread == 0u) {
         active = *status == 0;
         if (active && (!selected || !row_count || !topk || !expert_count ||
-            expert_count > blockDim.x || !order || !unique_experts ||
+            expert_count > blockDim.x || !order || !expert_ids || !bucket_offsets ||
+            !bucket_populations || !source_rows || !destination_rows || !summary ||
+            !(supported_width_mask & 2ull) || supported_width_mask & 1ull ||
+            row_count >= 63ull || !(supported_width_mask & (1ull << row_count)) ||
+            !admitted_width || provenance > YVEX_EXECUTION_BATCH_COMPILED_COMPATIBLE ||
             row_count > ~0ull / topk)) {
             atomicCAS(status, 0, 2);
             active = 0;
@@ -329,21 +340,65 @@ extern "C" __global__ void yvex_moe_pair_order(
     if (!active) return;
     if (thread == 0u) {
         unsigned long long emitted = 0ull, unique = 0ull;
+        summary->schema_version = YVEX_EXPERT_WORKLIST_OBSERVATION_SCHEMA_V1;
+        summary->worklist_count = 1ull;
+        summary->pair_count = pairs;
+        summary->bucket_count = 0ull;
+        summary->maximum_bucket_population = 0ull;
+        summary->tensor_core_eligible_pairs = 0ull;
+        summary->tensor_core_executed_pairs = 0ull;
+        summary->narrow_pairs = 0ull;
+        summary->tail_rows = 0ull;
+        for (unsigned int index = 0u; index < YVEX_EXPERT_WORKLIST_HISTOGRAM_CAP;
+             ++index) {
+            summary->width_histogram[index] = 0ull;
+            summary->population_histogram[index] = 0ull;
+        }
+        for (unsigned int index = 0u;
+             index <= YVEX_EXECUTION_BATCH_COMPILED_COMPATIBLE; ++index)
+            summary->provenance_counts[index] = 0ull;
+        summary->width_histogram[
+            row_count < YVEX_EXPERT_WORKLIST_HISTOGRAM_CAP
+                ? row_count : YVEX_EXPERT_WORKLIST_HISTOGRAM_CAP - 1u] = 1ull;
+        summary->provenance_counts[provenance] = 1ull;
         for (unsigned long long expert = 0ull; expert < expert_count; ++expert) {
             offsets[expert] = emitted;
             emitted += counts[expert];
-            if (counts[expert]) unique++;
+            if (!counts[expert]) continue;
+            expert_ids[unique] = expert;
+            bucket_offsets[unique] = offsets[expert];
+            bucket_populations[unique] = counts[expert];
+            if (counts[expert] > summary->maximum_bucket_population)
+                summary->maximum_bucket_population = counts[expert];
+            unsigned long long histogram =
+                counts[expert] < YVEX_EXPERT_WORKLIST_HISTOGRAM_CAP
+                    ? counts[expert] : YVEX_EXPERT_WORKLIST_HISTOGRAM_CAP - 1u;
+            summary->population_histogram[histogram]++;
+            if (tensor_core_minimum && counts[expert] >= tensor_core_minimum) {
+                summary->tensor_core_eligible_pairs += counts[expert];
+                if (counts[expert] % admitted_width)
+                    summary->tail_rows += admitted_width - counts[expert] % admitted_width;
+            } else summary->narrow_pairs += counts[expert];
+            unique++;
         }
         if (emitted != pairs) {
             atomicCAS(status, 0, 2);
             active = 0;
-        } else *unique_experts = unique;
+        } else {
+            bucket_offsets[unique] = emitted;
+            summary->bucket_count = unique;
+        }
     }
     __syncthreads();
     if (!active || (unsigned long long)thread >= expert_count) return;
     unsigned long long cursor = offsets[thread];
     for (unsigned long long pair = 0ull; pair < pairs; ++pair)
-        if (selected[pair] == (unsigned long long)thread) order[cursor++] = pair;
+        if (selected[pair] == (unsigned long long)thread) {
+            order[cursor] = pair;
+            source_rows[cursor] = pair / topk;
+            destination_rows[cursor] = pair;
+            cursor++;
+        }
 }
 
 extern "C" __global__ void yvex_moe_grouped_up_rows(

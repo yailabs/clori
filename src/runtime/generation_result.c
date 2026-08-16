@@ -575,11 +575,15 @@ int yvex_runtime_generation_result_validate(
     const yvex_runtime_generation_result *result, yvex_error *err)
 {
     char identity[YVEX_SHA256_HEX_CAP], text_digest[YVEX_SHA256_HEX_CAP];
+    yvex_expert_worklist_observation worklists = {0};
     unsigned long long index, published_offset = 0ull, committed = 0ull;
     unsigned long long published = 0ull, terminal = 0ull, suppressed = 0ull;
     unsigned long long classified_selected = 0ull, classified_proposed = 0ull;
     unsigned long long completed_samples = 0ull, expected_final_position = 0ull;
-    int result_extents_valid, speculation_counts_valid;
+    int result_extents_valid, speculation_counts_valid, worklists_valid;
+    worklists_valid = !result || !result->expert_worklists.worklist_count ||
+        yvex_expert_worklist_observation_add(
+            &worklists, &result->expert_worklists, NULL) == YVEX_OK;
     result_extents_valid = result &&
         yvex_core_u64_add(result->model_committed_token_count,
                           result->terminal_token_count,
@@ -605,7 +609,7 @@ int yvex_runtime_generation_result_validate(
         !result->requested_new_tokens ||
         result->requested_new_tokens > plan->maximum_new_tokens ||
         result->sampled_token_count > result->requested_new_tokens ||
-        !result_extents_valid ||
+        !result_extents_valid || !worklists_valid ||
         completed_samples > result->sampled_token_count ||
         result->reusable_prefix_token_count != result->initial_position ||
         result->reusable_prefix_token_count > result->prompt_token_count ||

@@ -1,8 +1,4 @@
-/*
- * Execution identity is compiled from admitted semantic and physical facts. This owner keeps
- * portable reference mechanisms explicit while providing shape and device-value contracts that
- * optimized backends can consume without changing model semantics.
- */
+/* Compile identity-bound physical facts consumed without backend topology reconstruction. */
 #include <yvex/internal/execution.h>
 #include <limits.h>
 #include <math.h>
@@ -25,24 +21,24 @@ static int execution_shape_key_equal(const yvex_execution_shape *left,
                                      const yvex_execution_shape *right,
                                      int ignore_workspace);
 static int physical_ir_identity(yvex_physical_execution_ir *ir, yvex_error *err);
-static int physical_large_row_policy_valid(const yvex_physical_execution_policy *policy)
-{
-    int present = policy && policy->expert_large_row_minimum != 0ull;
-    return policy && (policy->schema_version == YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V3 ||
-                      !present) &&
-           present == (policy->expert_large_row_kernel_family && policy->expert_large_row_kernel_family[0]) &&
-           (!present || strlen(policy->expert_large_row_kernel_family) < YVEX_EXECUTION_TEXT_CAP);
-}
 static int physical_policy_valid(const yvex_physical_execution_policy *policy)
 {
     return policy &&
            (policy->schema_version == YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V1 ||
             policy->schema_version == YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V2 ||
-            policy->schema_version == YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V3) &&
+            policy->schema_version == YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V3 ||
+            policy->schema_version == YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V4) &&
            (policy->schema_version >= YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V2 ||
             !policy->encoded_activation_consumer_mask) &&
            (policy->schema_version >= YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V2 ||
-            !policy->derived_asset_qtype_mask) && physical_large_row_policy_valid(policy) &&
+            !policy->derived_asset_qtype_mask) &&
+           (policy->schema_version == YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V4
+                ? yvex_expert_worklist_compiled_policy_valid(
+                      policy->expert_worklist_width_mask,
+                      policy->expert_tensor_core_minimum,
+                      policy->expert_tensor_core_kernel_family)
+                : !policy->expert_worklist_width_mask &&
+                      !policy->expert_tensor_core_minimum) &&
            !(policy->encoded_activation_consumer_mask >> YVEX_EXECUTION_CONSUMER_COUNT) &&
            policy->activation <= YVEX_EXECUTION_ACTIVATION_DEVICE_ENCODED &&
            policy->required_backend <= YVEX_EXECUTION_BACKEND_CUDA &&
@@ -137,7 +133,7 @@ static int physical_execution_decision_seal(
 {
     yvex_sha256 hash;
     if (!decision ||
-        decision->schema_version != YVEX_PHYSICAL_EXECUTION_SCHEMA_V3 ||
+        decision->schema_version != YVEX_PHYSICAL_EXECUTION_SCHEMA_V4 ||
         decision->role <= YVEX_TENSOR_ROLE_UNKNOWN ||
         decision->role >= YVEX_TENSOR_ROLE_COUNT ||
         decision->scope > YVEX_TENSOR_SCOPE_DRAFT ||
@@ -153,17 +149,21 @@ static int physical_execution_decision_seal(
         decision->evidence > YVEX_EXECUTION_EVIDENCE_FORENSIC ||
         decision->fallback > YVEX_EXECUTION_CLASS_FORENSIC_REFERENCE ||
         !decision->kernel_family[0] ||
-        ((decision->large_row_minimum != 0ull) != (decision->large_row_kernel_family[0] != '\0')) ||
-        (decision->large_row_minimum &&
+        ((decision->tensor_core_minimum != 0ull) !=
+         (decision->tensor_core_kernel_family[0] != '\0')) ||
+        (decision->worklist_width_mask &&
          (decision->consumer < YVEX_EXECUTION_CONSUMER_ROUTED_GATE_UP ||
-          decision->consumer > YVEX_EXECUTION_CONSUMER_SHARED_EXPERT ||
-          strcmp(decision->kernel_family, decision->large_row_kernel_family) == 0)) ||
+          decision->consumer > YVEX_EXECUTION_CONSUMER_ROUTED_DOWN)) ||
+        (decision->tensor_core_minimum &&
+         (!decision->worklist_width_mask || decision->tensor_core_minimum >= 63ull ||
+          !(decision->worklist_width_mask & (1ull << decision->tensor_core_minimum)) ||
+          strcmp(decision->kernel_family, decision->tensor_core_kernel_family) == 0)) ||
         !yvex_sha256_hex_valid(decision->terminal_identity))
         return execution_refuse(
             err, YVEX_ERR_INVALID_ARG, "runtime.execution.physical",
             "complete physical execution decision facts are required");
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.physical-execution.decision.v3") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.physical-execution.decision.v4") ||
         !yvex_sha256_update_u64(&hash, decision->schema_version) ||
         !yvex_sha256_update_u64(&hash, decision->terminal_tensor_id) ||
         !yvex_sha256_update_u64(&hash, decision->role) ||
@@ -191,10 +191,11 @@ static int physical_execution_decision_seal(
         !yvex_sha256_update_u64(&hash, decision->fallback) ||
         !yvex_sha256_update_u64(&hash,
                                 (unsigned long long)decision->derived_asset_required) ||
-        !yvex_sha256_update_u64(&hash, decision->large_row_minimum) ||
+        !yvex_sha256_update_u64(&hash, decision->worklist_width_mask) ||
+        !yvex_sha256_update_u64(&hash, decision->tensor_core_minimum) ||
         !yvex_sha256_update_text(&hash, decision->terminal_identity) ||
         !yvex_sha256_update_text(&hash, decision->kernel_family) ||
-        !yvex_sha256_update_text(&hash, decision->large_row_kernel_family) ||
+        !yvex_sha256_update_text(&hash, decision->tensor_core_kernel_family) ||
         !execution_hash_finish(&hash, decision->decision_identity))
         return execution_refuse(
             err, YVEX_ERR_STATE, "runtime.execution.physical",
@@ -213,7 +214,7 @@ static void execution_decision_from_binding(
                                            ? model->verification_width_maximum
                                            : 1ull;
     memset(decision, 0, sizeof(*decision));
-    decision->schema_version = YVEX_PHYSICAL_EXECUTION_SCHEMA_V3;
+    decision->schema_version = YVEX_PHYSICAL_EXECUTION_SCHEMA_V4;
     decision->terminal_tensor_id = binding->tensor_id;
     decision->role = binding->role;
     decision->scope = binding->scope;
@@ -258,10 +259,13 @@ static void execution_decision_from_binding(
                             ? policy->expert_kernel_family
                             : policy->dense_kernel_family);
     if (decision->consumer >= YVEX_EXECUTION_CONSUMER_ROUTED_GATE_UP &&
-        decision->consumer <= YVEX_EXECUTION_CONSUMER_SHARED_EXPERT) {
-        decision->large_row_minimum = policy->expert_large_row_minimum;
-        yvex_core_text_copy(decision->large_row_kernel_family, sizeof(decision->large_row_kernel_family),
-                            policy->expert_large_row_kernel_family);
+        decision->consumer <= YVEX_EXECUTION_CONSUMER_ROUTED_DOWN &&
+        policy->schema_version >= YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V4) {
+        decision->worklist_width_mask = policy->expert_worklist_width_mask;
+        decision->tensor_core_minimum = policy->expert_tensor_core_minimum;
+        yvex_core_text_copy(decision->tensor_core_kernel_family,
+                            sizeof(decision->tensor_core_kernel_family),
+                            policy->expert_tensor_core_kernel_family);
     }
     {
         yvex_sha256 hash;
@@ -304,7 +308,7 @@ static int physical_ir_compile(
                                 "runtime.execution.physical",
                                 "physical execution IR allocation failed");
     }
-    ir->summary.schema_version = YVEX_PHYSICAL_EXECUTION_SCHEMA_V3;
+    ir->summary.schema_version = YVEX_PHYSICAL_EXECUTION_SCHEMA_V4;
     ir->summary.decision_count = count;
     yvex_core_text_copy(ir->summary.physical_variant_identity,
                         sizeof(ir->summary.physical_variant_identity),
@@ -421,7 +425,7 @@ int yvex_physical_execution_ir_import(
     char expected[YVEX_SHA256_HEX_CAP];
     if (out) *out = NULL;
     if (!out || !summary || !decisions || !count || summary->decision_count != count ||
-        summary->schema_version != YVEX_PHYSICAL_EXECUTION_SCHEMA_V3 ||
+        summary->schema_version != YVEX_PHYSICAL_EXECUTION_SCHEMA_V4 ||
         count > SIZE_MAX / sizeof(*ir->decisions))
         return execution_refuse(err, YVEX_ERR_INVALID_ARG,
                                 "runtime.execution.physical",
@@ -1135,7 +1139,6 @@ static int capacity_plan_structure_valid(
         return 0;
     return 1;
 }
-
 int yvex_execution_capacity_plan_validate(
     const yvex_execution_capacity_plan *plan, yvex_error *err)
 {
