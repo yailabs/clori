@@ -1172,6 +1172,21 @@ stereo samples per channel. Its file identity is
 mosaic rather than a recognizable eclipse. This establishes the bounded 384 lifecycle and
 publication envelope, not prompt fidelity, visual quality, practical speed, or HD support.
 
+## Selective Q8 physical candidate
+
+The component compiler can deterministically emit the experimental
+`minimax-h3-transformer-q8_0-v1` profile. It keeps 335 tensors source-faithful and converts 200
+rank-two main-block attention and MLP weights, producing a 48,217,105,664-byte external GGUF.
+Native roundtrip and the pinned official reader accepted all 535 tensor records, so the file is
+a structurally admitted physical candidate rather than a runtime artifact.
+
+The first 21,741-row source-square block failed the independent video contract: relative L2 was
+`0.0385166827` against `0.02`, cosine was `0.99927958` against `0.9998`, and scaled maximum
+absolute error was about `0.0701` against `0.02`. YVEX therefore does not register or execute
+this profile in the media runtime, and no complete Q8 trajectory was attempted. The semantic
+record and exact candidate identities are retained in the
+[selective-Q8 worklog](../worklog/2026-08-16-minimax-selective-q8-candidate.md).
+
 ## Progression and non-claims
 
 `branch_completion_condition_satisfied: true`
