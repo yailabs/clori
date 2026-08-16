@@ -191,6 +191,7 @@ static int gqa_blas_execute(
                        "chunked BF16 attention exceeds admitted integer geometry");
         return YVEX_ERR_BOUNDS;
     }
+    backend_workspace_reset(backend);
     work.backend = backend;
     work.state = state;
     work.variant = YVEX_BACKEND_VARIANT_ATTENTION_ENCODED;
@@ -309,6 +310,7 @@ static int gqa_blas_execute(
     }
     yvex_error_clear(&cleanup);
     cleanup_rc = yvex_cuda_work_cleanup(&work, &cleanup);
+    backend_workspace_reset(backend);
     if (rc == YVEX_OK && cleanup_rc != YVEX_OK) {
         rc = cleanup_rc;
         if (err) *err = cleanup;
@@ -321,6 +323,44 @@ static int gqa_blas_execute(
     facts->tensor_core_launches = chunks * 2ull;
     facts->device_synchronizations = 1ull;
     facts->compulsory_memory_facts_available = 1;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_backend_transformer_gqa_workspace_bytes(
+    unsigned long long tokens, unsigned long long query_heads,
+    unsigned long long kv_heads, unsigned long long head_dim,
+    unsigned long long *bytes, yvex_error *err)
+{
+    unsigned long long elements, score_elements, packed, output, scores, probabilities, total;
+    if (bytes) *bytes = 0ull;
+    if (!bytes || !tokens || !query_heads || !kv_heads || !head_dim ||
+        query_heads % kv_heads) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "cuda.transformer.gqa.workspace",
+                       "bounded grouped-query attention geometry is required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    if (tokens < GQA_BLAS_MIN_TOKENS || query_heads != kv_heads) {
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    if (!yvex_core_u64_mul(tokens, query_heads, &elements) ||
+        !yvex_core_u64_mul(elements, head_dim, &elements) ||
+        !yvex_core_u64_mul(elements, 6ull, &packed) ||
+        !yvex_core_u64_mul(elements, sizeof(float), &output) ||
+        !yvex_core_u64_mul(query_heads, GQA_BLAS_QUERY_CHUNK, &score_elements) ||
+        !yvex_core_u64_mul(score_elements, tokens, &score_elements) ||
+        !yvex_core_u64_mul(score_elements, sizeof(float), &scores) ||
+        !yvex_core_u64_mul(score_elements, sizeof(unsigned short), &probabilities) ||
+        !yvex_core_u64_add(packed, output, &total) ||
+        !yvex_core_u64_add(total, scores, &total) ||
+        !yvex_core_u64_add(total, probabilities, &total) ||
+        !yvex_core_u64_add(total, sizeof(int), &total) || total > SIZE_MAX) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "cuda.transformer.gqa.workspace",
+                       "chunked grouped-query workspace geometry overflowed");
+        return YVEX_ERR_BOUNDS;
+    }
+    *bytes = total;
     yvex_error_clear(err);
     return YVEX_OK;
 }

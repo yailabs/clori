@@ -69,7 +69,7 @@ typedef struct yvex_transformer_joint_recipe {
 
 typedef struct yvex_transformer_joint_block_result {
     unsigned long long packed_rows, block_count, resident_bytes, kernel_launches;
-    unsigned long long h2d_bytes, d2h_bytes, device_bytes;
+    unsigned long long h2d_bytes, d2h_bytes, device_bytes, temporary_bytes;
     char residency_identity[65], execution_identity[65];
     int complete;
 } yvex_transformer_joint_block_result;

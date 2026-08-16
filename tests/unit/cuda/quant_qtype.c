@@ -1328,11 +1328,12 @@ static void quant_gqa_bf16_reference(const float *query, const float *key,
 static int quant_cuda_gqa_blas(yvex_backend *backend)
 {
     enum { TOKENS = 257u, HEAD_DIM = 128u, ELEMENTS = TOKENS * HEAD_DIM };
-    yvex_device_tensor *query = NULL, *key = NULL, *value = NULL, *output = NULL;
+    yvex_device_tensor *query = NULL, *key = NULL, *value = NULL, *output = NULL, *workspace = NULL;
     float query_values[ELEMENTS], key_values[ELEMENTS], values[ELEMENTS];
     float result[ELEMENTS], reference[ELEMENTS];
     yvex_backend_cuda_operation_facts facts;
     yvex_error err;
+    unsigned long long workspace_bytes = 0ull, unused_bytes = 1ull;
     unsigned int index;
     int causal;
 
@@ -1354,6 +1355,17 @@ static int quant_cuda_gqa_blas(yvex_backend *backend)
             quant_cuda_tensor(backend, "gqa-blas-output", YVEX_DTYPE_F32,
                               NULL, sizeof(result), &output, &err),
         "chunked BF16 GQA tensors allocate");
+    YVEX_TEST_ASSERT(
+        yvex_backend_transformer_gqa_workspace_bytes(
+            TOKENS, 1ull, 1ull, HEAD_DIM, &workspace_bytes, &err) == YVEX_OK &&
+            workspace_bytes > sizeof(result) &&
+            yvex_backend_transformer_gqa_workspace_bytes(
+                5ull, 1ull, 1ull, HEAD_DIM, &unused_bytes, &err) == YVEX_OK &&
+            unused_bytes == 0ull &&
+            quant_cuda_tensor(backend, "gqa-blas-workspace", YVEX_DTYPE_I8,
+                              NULL, workspace_bytes, &workspace, &err) &&
+            yvex_backend_workspace_attach(backend, workspace, 1ull, &err) == YVEX_OK,
+        "chunked BF16 GQA admits one exact reusable workspace");
     for (causal = 0; causal <= 1; ++causal) {
         YVEX_TEST_ASSERT(
             yvex_cuda_transformer_gqa(
@@ -1361,7 +1373,7 @@ static int quant_cuda_gqa_blas(yvex_backend *backend)
                 HEAD_DIM, causal, &facts, &err) == YVEX_OK &&
                 facts.kernel_launches == 10ull && facts.tensor_core_launches == 4ull &&
                 facts.device_synchronizations == 1ull &&
-                facts.d2h_bytes == sizeof(int) && facts.temporary_bytes > sizeof(result) &&
+                facts.d2h_bytes == sizeof(int) && facts.temporary_bytes == workspace_bytes &&
                 yvex_backend_tensor_read(
                     backend, output, result, sizeof(result), &err) == YVEX_OK,
             "chunked BF16 GQA publishes bounded tensor-core execution facts");
@@ -1373,8 +1385,10 @@ static int quant_cuda_gqa_blas(yvex_backend *backend)
                     2e-3f * (1.0f + fabsf(reference[index])),
                 "chunked BF16 GQA matches the scalar mixed-precision oracle");
     }
+    yvex_backend_workspace_detach(backend);
     YVEX_TEST_ASSERT(
-        yvex_backend_tensor_release(backend, &query, &err) == YVEX_OK &&
+        yvex_backend_tensor_release(backend, &workspace, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &query, &err) == YVEX_OK &&
             yvex_backend_tensor_release(backend, &key, &err) == YVEX_OK &&
             yvex_backend_tensor_release(backend, &value, &err) == YVEX_OK &&
             yvex_backend_tensor_release(backend, &output, &err) == YVEX_OK,

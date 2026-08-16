@@ -613,9 +613,7 @@ static int execute_request_fixture(
     if (rc == YVEX_OK) rc = yvex_gguf_open(&gguf, artifact, &err);
     if (rc == YVEX_OK) rc = yvex_tensor_table_from_gguf(&tensors, gguf, &err);
     if (rc == YVEX_OK)
-        rc = block_count == 1ull
-                 ? execute(artifact, gguf, tensors, &request, &result, &err)
-                 : execute_artifact(artifact, gguf, tensors, &request, &result, &err);
+        rc = execute_artifact(artifact, gguf, tensors, &request, &result, &err);
     if (rc == YVEX_OK &&
         (!file_write(video_output_path, fixture.video_output, video_values) ||
          !file_write(audio_output_path, fixture.audio_output, audio_values)))

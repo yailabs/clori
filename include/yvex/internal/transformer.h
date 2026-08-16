@@ -166,6 +166,9 @@ int yvex_cuda_transformer_gqa(yvex_backend *backend, const yvex_device_tensor *q
     unsigned long long tokens, unsigned long long query_heads, unsigned long long kv_heads,
     unsigned long long head_dim, int causal, yvex_backend_cuda_operation_facts *facts,
     yvex_error *err);
+/* Return exact BLAS GQA scratch bytes; zero selects the allocation-free online path. */
+int yvex_backend_transformer_gqa_workspace_bytes(unsigned long long, unsigned long long,
+    unsigned long long, unsigned long long, unsigned long long *, yvex_error *);
 int yvex_cuda_transformer_silu_product_bf16(yvex_backend *backend,
     const yvex_device_tensor *gate, const yvex_device_tensor *up, yvex_device_tensor *output,
     unsigned long long count, yvex_backend_cuda_operation_facts *facts, yvex_error *err);

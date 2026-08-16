@@ -1029,7 +1029,6 @@ static int video_component_plan(const yvex_component_plan_request *request,
     out->output_dims[4] = request->geometry[2] * 16ull;
     return YVEX_OK;
 }
-
 static int audio_component_execute(yvex_materialization_session *session,
                                    const yvex_component_execution_request *request,
                                    yvex_component_execution_result *out,
@@ -1068,7 +1067,6 @@ static int audio_component_execute(yvex_materialization_session *session,
     out->complete = result.complete;
     return YVEX_OK;
 }
-
 static int video_component_execute(yvex_materialization_session *session,
                                    const yvex_component_execution_request *request,
                                    yvex_component_execution_result *out,
@@ -1109,7 +1107,6 @@ static int video_component_execute(yvex_materialization_session *session,
     out->complete = result.complete;
     return YVEX_OK;
 }
-
 const yvex_component_binding *yvex_component_binding_at(unsigned long long index)
 {
     static const yvex_component_binding bindings[] = {
@@ -1557,8 +1554,7 @@ static int transformer_component_cuda(yvex_runtime_component_session *session,
     const yvex_runtime_residency_summary *summary;
     yvex_minimax_h3_encoded_weight external[YVEX_TRANSFORMER_JOINT_EXTERNAL_WEIGHT_COUNT] = {{0}};
     yvex_minimax_h3_encoded_weight *blocks = NULL;
-    unsigned long long count = 0ull;
-    int rc;
+    unsigned long long count = 0ull, workspace_bytes = 0ull; int rc;
     if (result) memset(result, 0, sizeof(*result));
     if (!session || !request || request->recipe != &omni_transformer_recipe || !result ||
         !request->block_count || request->block_count > 50ull ||
@@ -1570,9 +1566,13 @@ static int transformer_component_cuda(yvex_runtime_component_session *session,
         return YVEX_ERR_INVALID_ARG;
     }
     summary = yvex_runtime_component_session_summary(session);
-    rc = transformer_weights_bind(yvex_runtime_component_session_materialization(session),
-        yvex_runtime_component_session_residency(session), external, blocks,
-        request->block_count, err);
+    rc = yvex_backend_transformer_gqa_workspace_bytes(request->packed_rows,
+        request->recipe->attention_heads, request->recipe->attention_heads,
+        request->recipe->head_dimension, &workspace_bytes, err);
+    if (rc == YVEX_OK && workspace_bytes) rc = yvex_runtime_component_session_prepare_workspace(
+        session, workspace_bytes, err);
+    if (rc == YVEX_OK) rc = transformer_weights_bind(yvex_runtime_component_session_materialization(session),
+        yvex_runtime_component_session_residency(session), external, blocks, request->block_count, err);
     if (rc == YVEX_OK)
         rc = yvex_backend_transformer_joint_cuda(
             yvex_runtime_component_session_backend(session),

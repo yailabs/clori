@@ -91,8 +91,10 @@ static int joint_recipe_supported(const yvex_transformer_joint_recipe *recipe)
 static int joint_facts_add(yvex_transformer_joint_block_result *total,
                           const yvex_backend_cuda_operation_facts *part)
 {
-    return total && part && part->compulsory_memory_facts_available &&
-           yvex_core_u64_add(total->kernel_launches, part->kernel_launches,
+    if (!total || !part || !part->compulsory_memory_facts_available) return 0;
+    if (part->temporary_bytes > total->temporary_bytes)
+        total->temporary_bytes = part->temporary_bytes;
+    return yvex_core_u64_add(total->kernel_launches, part->kernel_launches,
                              &total->kernel_launches) &&
            yvex_core_u64_add(total->h2d_bytes, part->h2d_bytes, &total->h2d_bytes) &&
            yvex_core_u64_add(total->d2h_bytes, part->d2h_bytes, &total->d2h_bytes);
@@ -632,7 +634,12 @@ static int joint_blocks_execute(
         published.kernel_launches = run.facts.kernel_launches;
         published.h2d_bytes = run.facts.h2d_bytes;
         published.d2h_bytes = run.facts.d2h_bytes;
-        published.device_bytes = run.device_bytes;
+        if (!yvex_core_u64_add(run.device_bytes, run.facts.temporary_bytes,
+                               &published.device_bytes)) {
+            free(staged);
+            return conditioning_refuse(err, YVEX_ERR_BOUNDS,
+                "cuda.transformer.joint.joint.facts", "peak device-byte accounting overflowed");
+        }
         memcpy(published.residency_identity, residency_identity,
                sizeof(published.residency_identity));
         published.complete = 1;

@@ -47,6 +47,8 @@ struct yvex_runtime_component_session {
     yvex_materialization_session *materialization;
     yvex_runtime_residency *residency;
     yvex_backend *backend;
+    yvex_device_tensor *workspace;
+    unsigned long long workspace_bytes;
     yvex_runtime_residency_summary summary;
 };
 static int residency_reject(yvex_runtime_residency_failure *failure,
@@ -910,6 +912,12 @@ int yvex_runtime_component_session_close(yvex_runtime_component_session **sessio
     }
     owned = *session;
     *session = NULL;
+    if (owned->workspace) {
+        yvex_backend_workspace_detach(owned->backend);
+        yvex_error_clear(&cleanup);
+        cleanup_rc = yvex_backend_tensor_release(owned->backend, &owned->workspace, &cleanup);
+        if (cleanup_rc != YVEX_OK) { rc = cleanup_rc; if (err) *err = cleanup; }
+    }
     yvex_error_clear(&cleanup);
     cleanup_rc = yvex_backend_close_checked(&owned->backend, &cleanup);
     if (cleanup_rc != YVEX_OK) { rc = cleanup_rc; if (err) *err = cleanup; }
@@ -921,6 +929,47 @@ int yvex_runtime_component_session_close(yvex_runtime_component_session **sessio
     free(owned);
     if (rc == YVEX_OK) yvex_error_clear(err);
     return rc;
+}
+
+int yvex_runtime_component_session_prepare_workspace(
+    yvex_runtime_component_session *session, unsigned long long bytes, yvex_error *err)
+{
+    yvex_backend_tensor_desc descriptor = {0};
+    yvex_device_tensor *workspace = NULL;
+    yvex_error primary, cleanup;
+    int rc, cleanup_rc;
+    if (!session || !session->backend || !bytes || bytes > SIZE_MAX) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.component-session.workspace",
+                       "one bounded CUDA component workspace is required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    if (session->workspace) {
+        if (session->workspace_bytes == bytes) { yvex_error_clear(err); return YVEX_OK; }
+        yvex_error_set(err, YVEX_ERR_STATE, "runtime.component-session.workspace",
+                       "component workspace geometry is already sealed");
+        return YVEX_ERR_STATE;
+    }
+    descriptor.name = "runtime-component-workspace";
+    descriptor.dtype = YVEX_DTYPE_I8;
+    descriptor.rank = 1u;
+    descriptor.dims[0] = descriptor.bytes = bytes;
+    rc = yvex_backend_tensor_alloc(session->backend, &descriptor, &workspace, err);
+    if (rc == YVEX_OK)
+        rc = yvex_backend_workspace_attach(session->backend, workspace, 1ull, err);
+    if (rc != YVEX_OK) {
+        primary = err ? *err : (yvex_error){0};
+        yvex_error_clear(&cleanup);
+        cleanup_rc = workspace
+                         ? yvex_backend_tensor_release(session->backend, &workspace, &cleanup)
+                         : YVEX_OK;
+        if (cleanup_rc != YVEX_OK) { if (err) *err = cleanup; return cleanup_rc; }
+        if (err) *err = primary;
+        return rc;
+    }
+    session->workspace = workspace;
+    session->workspace_bytes = bytes;
+    yvex_error_clear(err);
+    return YVEX_OK;
 }
 
 int yvex_runtime_component_session_open(
