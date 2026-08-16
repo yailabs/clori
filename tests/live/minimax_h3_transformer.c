@@ -642,6 +642,127 @@ static int execute_request_fixture(
     return rc == YVEX_OK ? 0 : 1;
 }
 
+static int latent_fixture_read(request_fixture *fixture, const char *root,
+                               unsigned long long video_values,
+                               unsigned long long audio_values,
+                               unsigned long long conditioning_values)
+{
+    char conditioning_path[1024], video_path[1024], audio_path[1024];
+    return fixture_path(conditioning_path, root, "conditioning.f32") &&
+           fixture_path(video_path, root, "video.oracle.f32") &&
+           fixture_path(audio_path, root, "audio.oracle.f32") &&
+           file_read(conditioning_path, fixture->conditioning, conditioning_values) &&
+           file_read(video_path, fixture->video_reference, video_values) &&
+           file_read(audio_path, fixture->audio_reference, audio_values);
+}
+
+static int execute_latent_fixture(
+    const char *artifact_path, const char *fixture_root, const char *video_output_path,
+    const char *audio_output_path, unsigned long long width, unsigned long long height,
+    unsigned long long frames, unsigned long long text_rows, unsigned long long block_count,
+    unsigned int steps, unsigned long long seed)
+{
+    const yvex_minimax_h3_graph_api *graph = yvex_graph_register_minimax_h3();
+    yvex_artifact_options options = {.path = artifact_path, .readonly = 1};
+    yvex_artifact *artifact = NULL;
+    yvex_gguf *gguf = NULL;
+    yvex_tensor_table *tensors = NULL;
+    yvex_complete_artifact_admission admission;
+    yvex_artifact_admission_failure failure;
+    yvex_runtime_component_session *session = NULL;
+    yvex_minimax_h3_t2va_plan plan = {0};
+    yvex_runtime_av_layout_result layout_result = {0};
+    yvex_runtime_latent_result latent_result = {0};
+    yvex_minimax_h3_t2va_omni_result omni_result = {0};
+    yvex_minimax_h3_t2va_omni_context context = {0};
+    yvex_runtime_av_layout_output layout = {0};
+    request_fixture fixture = {0};
+    unsigned long long video_values, audio_values, conditioning_values, workspace_bytes;
+    char conditioning_identity[65];
+    yvex_error err, cleanup;
+    int rc = YVEX_OK, cleanup_rc;
+    if (!artifact_path || !fixture_root || !video_output_path || !audio_output_path ||
+        !width || !height || !frames || !text_rows || !block_count || block_count > 50ull ||
+        !steps || steps > 64u || !graph ||
+        graph->t2va_plan_build(&plan, text_rows, width, height, frames, steps, &err) != YVEX_OK ||
+        plan.packed_rows > 4096ull ||
+        !yvex_core_u64_mul(plan.video_rows, plan.video_value_width, &video_values) ||
+        !yvex_core_u64_mul(plan.audio_rows, plan.audio_value_width, &audio_values) ||
+        !yvex_core_u64_mul(text_rows, 5120ull, &conditioning_values) ||
+        !yvex_core_u64_add(video_values, audio_values, &workspace_bytes) ||
+        !yvex_core_u64_mul(workspace_bytes, 4ull * sizeof(float), &workspace_bytes) ||
+        !request_fixture_allocate(&fixture, plan.video_rows, plan.audio_rows, text_rows,
+                                  plan.packed_rows, 2ull) ||
+        !latent_fixture_read(&fixture, fixture_root, video_values, audio_values,
+                             conditioning_values) ||
+        !float_identity("yvex.minimax-h3.conditioning.fixture.v1", fixture.conditioning,
+                        conditioning_values, conditioning_identity)) {
+        request_fixture_close(&fixture);
+        return 2;
+    }
+    layout = (yvex_runtime_av_layout_output){
+        fixture.positions, plan.packed_rows * 3ull, fixture.tags,
+        fixture.video_indices, fixture.audio_indices, fixture.text_indices,
+        plan.packed_rows, plan.video_rows, plan.audio_rows, text_rows,
+    };
+    yvex_error_clear(&err);
+    rc = yvex_artifact_open(&artifact, &options, &err);
+    if (rc == YVEX_OK) rc = yvex_gguf_open(&gguf, artifact, &err);
+    if (rc == YVEX_OK) rc = yvex_tensor_table_from_gguf(&tensors, gguf, &err);
+    if (rc == YVEX_OK)
+        rc = graph->component_admit("transformer", artifact, gguf, tensors,
+                                    &admission, &failure, &err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_component_session_open(
+            &session, &admission, artifact, gguf, tensors, YVEX_BACKEND_KIND_CUDA,
+            80ull * 1024ull * 1024ull * 1024ull, 4ull * 1024ull * 1024ull * 1024ull, &err);
+    if (rc == YVEX_OK) rc = graph->t2va_layout_build(&plan, &layout, &layout_result, &err);
+    context.transformer_session = session;
+    context.conditioning = fixture.conditioning;
+    context.conditioning_capacity = conditioning_values;
+    context.layout = &layout;
+    context.layout_result = &layout_result;
+    context.timestep_indices = fixture.timestep_indices;
+    context.timestep_capacity = plan.packed_rows;
+    context.block_count = block_count;
+    context.conditioning_identity = conditioning_identity;
+    if (rc == YVEX_OK)
+        rc = graph->t2va_latent_execute(
+            &plan, &context, seed, workspace_bytes, fixture.video_output, video_values,
+            fixture.audio_output, audio_values, &latent_result, &omni_result, &err);
+    if (rc == YVEX_OK &&
+        (!file_write(video_output_path, fixture.video_output, video_values) ||
+         !file_write(audio_output_path, fixture.audio_output, audio_values)))
+        rc = YVEX_ERR_IO;
+    if (rc == YVEX_OK &&
+        (!compare("video", fixture.video_reference, fixture.video_output,
+                  video_values, block_count) ||
+         !compare("audio", fixture.audio_reference, fixture.audio_output,
+                  audio_values, block_count))) {
+        yvex_error_set(&err, YVEX_ERR_FORMAT, "minimax-h3.latent-iteration-proof.oracle",
+                       "the iterative latent result differs from its independent oracle");
+        rc = YVEX_ERR_FORMAT;
+    }
+    if (rc == YVEX_OK)
+        printf("t2va_latent_request=accepted rows=%llu blocks=%llu steps=%u seed=%llu\n"
+               "kernel_launches=%llu peak_device_bytes=%llu\nplan_identity=%s\n"
+               "layout_identity=%s\nlatent_identity=%s\ntransformer_chain_identity=%s\n",
+               plan.packed_rows, block_count, steps, seed, omni_result.kernel_launches,
+               omni_result.peak_device_bytes, plan.identity, layout_result.layout_identity,
+               latent_result.execution_identity, omni_result.execution_chain_identity);
+    else
+        fprintf(stderr, "t2va_latent_request=refused where=%s message=%s\n",
+                yvex_error_where(&err), yvex_error_message(&err));
+    yvex_error_clear(&cleanup);
+    cleanup_rc = yvex_runtime_component_session_close(&session, &cleanup);
+    if (cleanup_rc != YVEX_OK && rc == YVEX_OK) rc = cleanup_rc;
+    request_fixture_close(&fixture);
+    yvex_tensor_table_close(tensors);
+    yvex_gguf_close(gguf);
+    yvex_artifact_close(artifact);
+    return rc == YVEX_OK ? 0 : 1;
+}
+
 int main(int argc, char **argv)
 {
     yvex_artifact_options options = {0};
@@ -663,6 +784,19 @@ int main(int argc, char **argv)
     char *blocks_end = NULL;
     unsigned long long block_count = blocks_text ? strtoull(blocks_text, &blocks_end, 10) : 1ull;
     int rc = YVEX_OK;
+    if (argc == 13 && strcmp(argv[2], "latent-request") == 0) {
+        char *ends[7] = {0};
+        unsigned long long values[7];
+        int index;
+        for (index = 0; index < 7; ++index)
+            values[index] = strtoull(argv[index + 6], &ends[index], 10);
+        for (index = 0; index < 7; ++index)
+            if (!ends[index] || *ends[index]) return 2;
+        if (values[5] > UINT_MAX) return 2;
+        return execute_latent_fixture(
+            argv[1], argv[3], argv[4], argv[5], values[0], values[1], values[2],
+            values[3], values[4], (unsigned int)values[5], values[6]);
+    }
     if (argc == 11 && strcmp(argv[2], "request") == 0) {
         char *ends[5] = {0};
         unsigned long long values[5];
