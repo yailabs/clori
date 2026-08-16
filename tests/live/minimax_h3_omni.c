@@ -1,4 +1,4 @@
-/* Compare one exact MiniMax-H3 Omni block with an independent BF16 CUDA oracle. */
+/* Compare a selected MiniMax-H3 Omni block stack with an independent BF16 CUDA oracle. */
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,7 +14,7 @@
 #include <yvex/internal/families/minimax_h3.h>
 #include <yvex/internal/joint_transformer.h>
 
-enum { OMNI_ROWS = 3u, OMNI_HIDDEN = 5376u, OMNI_TIME = 2688u };
+enum { OMNI_ROWS = 3u, OMNI_HIDDEN = 5376u, OMNI_TIME = 2688u, OMNI_BLOCKS = 50u };
 /* Independent PyTorch CUDA BF16 execution bounds the composed block across
  * different legal reduction orders. */
 static const double oracle_max_relative_l2 = 0.01;
@@ -24,17 +24,17 @@ static const double oracle_min_cosine = 0.9999;
  * this maximum-element allowance from admitting a structurally different result. */
 static const double oracle_max_scaled_absolute = 0.01;
 
-static const char *const block_weight_names[YVEX_TRANSFORMER_JOINT_BLOCK_WEIGHT_COUNT] = {
-    "blocks.0.norm1.weight",
-    "blocks.0.attn.qkv_proj.weight",
-    "blocks.0.attn.q_norm.weight",
-    "blocks.0.attn.k_norm.weight",
-    "blocks.0.attn.out_proj.weight",
-    "blocks.0.norm2.weight",
-    "blocks.0.mlp.fc1.weight",
-    "blocks.0.mlp.fc2.weight",
-    "blocks.0.adaln_proj.linear.weight",
-    "blocks.0.adaln_proj.linear.bias",
+static const char *const block_weight_suffixes[YVEX_TRANSFORMER_JOINT_BLOCK_WEIGHT_COUNT] = {
+    "norm1.weight",
+    "attn.qkv_proj.weight",
+    "attn.q_norm.weight",
+    "attn.k_norm.weight",
+    "attn.out_proj.weight",
+    "norm2.weight",
+    "mlp.fc1.weight",
+    "mlp.fc2.weight",
+    "adaln_proj.linear.weight",
+    "adaln_proj.linear.bias",
 };
 
 static const float block_positions[OMNI_ROWS * 3u] = {
@@ -56,35 +56,57 @@ static const yvex_materialized_tensor_binding *binding_find(
 static int weights_load(
     yvex_materialization_session *session, unsigned char **arena_out,
     unsigned long long *arena_bytes_out,
-    yvex_minimax_h3_encoded_weight weights[YVEX_TRANSFORMER_JOINT_BLOCK_WEIGHT_COUNT],
+    yvex_minimax_h3_encoded_weight *weights, unsigned long long block_count,
     char identity[65], yvex_error *err)
 {
-    const yvex_materialized_tensor_binding *bindings[YVEX_TRANSFORMER_JOINT_BLOCK_WEIGHT_COUNT];
+    const yvex_materialized_tensor_binding **bindings = NULL;
+    char (*names)[96] = NULL;
     yvex_materialization_failure failure;
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     unsigned char *arena;
-    unsigned long long index, total = 0ull, cursor = 0ull;
-    for (index = 0ull; index < YVEX_TRANSFORMER_JOINT_BLOCK_WEIGHT_COUNT; ++index) {
-        bindings[index] = binding_find(session, block_weight_names[index]);
+    unsigned long long count, index, total = 0ull, cursor = 0ull;
+    if (!weights || !block_count || block_count > OMNI_BLOCKS ||
+        !yvex_core_u64_mul(block_count, YVEX_TRANSFORMER_JOINT_BLOCK_WEIGHT_COUNT, &count) ||
+        count > SIZE_MAX / sizeof(*bindings) || count > SIZE_MAX / sizeof(*names) ||
+        !(bindings = calloc((size_t)count, sizeof(*bindings))) ||
+        !(names = calloc((size_t)count, sizeof(*names)))) {
+        free(bindings);
+        free(names);
+        yvex_error_set(err, YVEX_ERR_NOMEM, "minimax-h3.omni-proof.binding",
+                       "the selected block binding table could not be allocated");
+        return YVEX_ERR_NOMEM;
+    }
+    for (index = 0ull; index < count; ++index) {
+        unsigned long long block = index / YVEX_TRANSFORMER_JOINT_BLOCK_WEIGHT_COUNT;
+        unsigned long long weight = index % YVEX_TRANSFORMER_JOINT_BLOCK_WEIGHT_COUNT;
+        int length = snprintf(names[index], sizeof(names[index]), "blocks.%llu.%s",
+                              block, block_weight_suffixes[weight]);
+        if (length < 0 || (size_t)length >= sizeof(names[index])) {
+            yvex_error_set(err, YVEX_ERR_BOUNDS, "minimax-h3.omni-proof.binding",
+                           "a selected block tensor name exceeds the proof bound");
+            goto failed_bindings;
+        }
+        bindings[index] = binding_find(session, names[index]);
         if (!bindings[index] || !bindings[index]->row_count ||
             !yvex_core_u64_add(total, bindings[index]->encoded_bytes, &total)) {
             yvex_error_set(err, YVEX_ERR_FORMAT, "minimax-h3.omni-proof.binding",
-                           "the exact block-zero weight set is unavailable");
-            return YVEX_ERR_FORMAT;
+                           "the exact selected block weight set is unavailable");
+            goto failed_bindings;
         }
     }
     if (!total || total > SIZE_MAX ||
         (arena = mmap(NULL, (size_t)total, PROT_READ | PROT_WRITE,
                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0)) == MAP_FAILED) {
         yvex_error_set(err, YVEX_ERR_NOMEM, "minimax-h3.omni-proof.arena",
-                       "the block-zero proof residency allocation failed");
-        return YVEX_ERR_NOMEM;
+                       "the selected block proof residency allocation failed");
+        goto failed_bindings;
     }
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.minimax-h3.omni-block-zero.proof.v1"))
+    if (!yvex_sha256_update_text(&hash, "yvex.minimax-h3.omni-block-stack.proof.v1") ||
+        !yvex_sha256_update_u64(&hash, block_count))
         goto failed;
-    for (index = 0ull; index < YVEX_TRANSFORMER_JOINT_BLOCK_WEIGHT_COUNT; ++index) {
+    for (index = 0ull; index < count; ++index) {
         const yvex_materialized_tensor_binding *binding = bindings[index];
         if (binding->encoded_bytes > SIZE_MAX ||
             yvex_materialization_session_read(
@@ -106,12 +128,17 @@ static int weights_load(
     yvex_sha256_hex(digest, identity);
     *arena_out = arena;
     *arena_bytes_out = total;
+    free(names);
+    free(bindings);
     return YVEX_OK;
 failed:
     munmap(arena, (size_t)total);
     if (yvex_error_code(err) == YVEX_OK)
         yvex_error_set(err, YVEX_ERR_STATE, "minimax-h3.omni-proof.identity",
-                       "the block-zero proof identity could not be sealed");
+                       "the selected block proof identity could not be sealed");
+failed_bindings:
+    free(names);
+    free(bindings);
     return yvex_error_code(err);
 }
 
@@ -179,7 +206,7 @@ static int execute_block(
     const yvex_artifact *artifact, const yvex_gguf *gguf,
     const yvex_tensor_table *tensors, const float *hidden, const float *temb,
     const float *positions, const unsigned int *adaln_indices,
-    unsigned long long rows, unsigned long long timesteps,
+    unsigned long long rows, unsigned long long timesteps, unsigned long long block_count,
     float *output, yvex_minimax_h3_omni_result *result, yvex_error *err)
 {
     const yvex_minimax_h3_graph_api *graph = yvex_graph_register_minimax_h3();
@@ -190,7 +217,7 @@ static int execute_block(
     yvex_materialization_failure materialization_failure;
     yvex_materialization_plan *plan = NULL;
     yvex_materialization_session *session = NULL;
-    yvex_minimax_h3_encoded_weight weights[YVEX_TRANSFORMER_JOINT_BLOCK_WEIGHT_COUNT] = {{0}};
+    yvex_minimax_h3_encoded_weight *weights = NULL;
     yvex_backend_options backend_options = {0};
     yvex_backend_tensor_desc descriptor = {0};
     yvex_backend *backend = NULL;
@@ -199,6 +226,7 @@ static int execute_block(
     unsigned long long arena_bytes = 0ull;
     unsigned int *invalid_indices = NULL;
     char identity[65] = {0};
+    unsigned long long weight_count;
     int attached = 0, rc, cleanup_rc;
     yvex_error cleanup;
     if (!graph || !recipe) {
@@ -206,8 +234,13 @@ static int execute_block(
                        "the production MiniMax Omni backend is unavailable");
         return YVEX_ERR_UNSUPPORTED;
     }
-    invalid_indices = malloc((size_t)rows * sizeof(*invalid_indices));
-    if (!invalid_indices) {
+    if (!block_count || block_count > OMNI_BLOCKS ||
+        !yvex_core_u64_mul(block_count, YVEX_TRANSFORMER_JOINT_BLOCK_WEIGHT_COUNT,
+                           &weight_count) ||
+        weight_count > SIZE_MAX / sizeof(*weights) ||
+        !(weights = calloc((size_t)weight_count, sizeof(*weights))) ||
+        !(invalid_indices = malloc((size_t)rows * sizeof(*invalid_indices)))) {
+        free(weights);
         yvex_error_set(err, YVEX_ERR_NOMEM, "minimax-h3.omni-proof",
                        "the bounded refusal fixture could not be allocated");
         return YVEX_ERR_NOMEM;
@@ -228,9 +261,9 @@ static int execute_block(
     if (rc == YVEX_OK)
         rc = yvex_materialization_session_commit(session, &materialization_failure, err);
     if (rc == YVEX_OK)
-        rc = weights_load(session, &arena, &arena_bytes, weights, identity, err);
+        rc = weights_load(session, &arena, &arena_bytes, weights, block_count, identity, err);
     backend_options.kind = YVEX_BACKEND_KIND_CUDA;
-    backend_options.memory_limit_bytes = 3ull * 1024ull * 1024ull * 1024ull;
+    backend_options.memory_limit_bytes = 80ull * 1024ull * 1024ull * 1024ull;
     if (rc == YVEX_OK) rc = yvex_backend_open(&backend, &backend_options, err);
     descriptor.name = "minimax-h3-omni-block-zero-proof-residency";
     descriptor.dtype = YVEX_DTYPE_I8;
@@ -262,7 +295,7 @@ static int execute_block(
     if (rc == YVEX_OK) {
         yvex_minimax_h3_omni_result refused = {0};
         int refusal = yvex_backend_transformer_joint_blocks_cuda(
-            backend, recipe, weights, 1ull, identity, arena_bytes, hidden, temb, timesteps,
+            backend, recipe, weights, block_count, identity, arena_bytes, hidden, temb, timesteps,
             positions, invalid_indices, rows, output, rows * OMNI_HIDDEN, &refused, err);
         if (refusal != YVEX_ERR_BOUNDS || refused.complete) {
             yvex_error_set(err, YVEX_ERR_STATE, "minimax-h3.omni-proof.refusal",
@@ -273,7 +306,7 @@ static int execute_block(
     if (rc == YVEX_OK) {
         yvex_minimax_h3_omni_result refused = {0};
         int refusal = yvex_backend_transformer_joint_blocks_cuda(
-            backend, recipe, weights, 1ull, identity, arena_bytes, hidden, temb, timesteps,
+            backend, recipe, weights, block_count, identity, arena_bytes, hidden, temb, timesteps,
             positions, adaln_indices, rows, output, rows * OMNI_HIDDEN - 1ull, &refused, err);
         if (refusal != YVEX_ERR_INVALID_ARG || refused.complete) {
             yvex_error_set(err, YVEX_ERR_STATE, "minimax-h3.omni-proof.refusal",
@@ -283,7 +316,7 @@ static int execute_block(
     }
     if (rc == YVEX_OK)
         rc = yvex_backend_transformer_joint_blocks_cuda(
-            backend, recipe, weights, 1ull, identity, arena_bytes, hidden, temb, timesteps,
+            backend, recipe, weights, block_count, identity, arena_bytes, hidden, temb, timesteps,
             positions, adaln_indices, rows, output, rows * OMNI_HIDDEN, result, err);
     if (attached) {
         yvex_error_clear(&cleanup);
@@ -302,6 +335,7 @@ static int execute_block(
     yvex_materialization_session_close(session);
     yvex_materialization_plan_close(plan);
     free(invalid_indices);
+    free(weights);
     return rc;
 }
 
@@ -319,6 +353,9 @@ int main(int argc, char **argv)
     const float *positions = block_positions;
     const unsigned int *adaln_indices = block_adaln_indices;
     unsigned long long rows = OMNI_ROWS, timesteps = 1ull, values, temb_values;
+    const char *blocks_text = getenv("YVEX_MINIMAX_H3_BLOCKS");
+    char *blocks_end = NULL;
+    unsigned long long block_count = blocks_text ? strtoull(blocks_text, &blocks_end, 10) : 1ull;
     const char *output_path, *reference_path;
     int dynamic = 0;
     int rc = YVEX_OK;
@@ -327,9 +364,13 @@ int main(int argc, char **argv)
                         "TEMB_F32 OUTPUT_F32 REFERENCE_F32\n"
                         "   or: minimax_h3_omni TRANSFORMER_GGUF INPUT_F32 "
                         "TEMB_F32 POSITIONS_F32 ADALN_U32 OUTPUT_F32 REFERENCE_F32 "
-                        "ROWS TIMESTEPS\n");
+                        "ROWS TIMESTEPS\n"
+                        "Set YVEX_MINIMAX_H3_BLOCKS=1..50 to select the block stack.\n");
         return 2;
     }
+    if ((blocks_text && (!blocks_end || *blocks_end)) || !block_count ||
+        block_count > OMNI_BLOCKS)
+        return 2;
     if (argc == 10) {
         char *rows_end = NULL, *timesteps_end = NULL;
         rows = strtoull(argv[8], &rows_end, 10);
@@ -375,7 +416,7 @@ int main(int argc, char **argv)
     if (rc == YVEX_OK) rc = yvex_tensor_table_from_gguf(&tensors, gguf, &err);
     if (rc == YVEX_OK)
         rc = execute_block(artifact, gguf, tensors, hidden, temb, positions, adaln_indices,
-                           rows, timesteps, output, &result, &err);
+                           rows, timesteps, block_count, output, &result, &err);
     if (rc == YVEX_OK && !output_write(output_path, output, values)) {
         yvex_error_set(&err, YVEX_ERR_IO, "minimax-h3.omni-proof.output",
                        "Omni proof output could not be written completely");

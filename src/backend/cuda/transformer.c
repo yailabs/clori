@@ -6,7 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { TRANSFORMER_BLOCK = 128u };
+enum { TRANSFORMER_BLOCK = 128u, GQA_QUERIES_PER_BLOCK = 4u };
 
 static int transformer_tensor(const yvex_backend *backend, const yvex_device_tensor *tensor,
                               unsigned long long elements, int require_written)
@@ -114,8 +114,7 @@ int yvex_cuda_transformer_gqa(
     yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
-    unsigned long long query_elements, kv_elements, rows;
-    CUdeviceptr query_ptr, key_ptr, value_ptr, output_ptr;
+    unsigned long long query_elements, kv_elements, rows, grid_rows;
     float scale;
     int rc;
     if (!state || !tokens || !query_heads || !kv_heads || query_heads % kv_heads ||
@@ -124,7 +123,10 @@ int yvex_cuda_transformer_gqa(
         !yvex_core_u64_mul(tokens, query_heads, &rows) ||
         !yvex_core_u64_mul(rows, head_dim, &query_elements) ||
         !yvex_core_u64_mul(tokens, kv_heads, &kv_elements) ||
-        !yvex_core_u64_mul(kv_elements, head_dim, &kv_elements) || rows > UINT_MAX ||
+        !yvex_core_u64_mul(kv_elements, head_dim, &kv_elements) ||
+        !yvex_core_u64_mul(tokens / GQA_QUERIES_PER_BLOCK +
+                               (tokens % GQA_QUERIES_PER_BLOCK != 0ull),
+                           query_heads, &grid_rows) || grid_rows > UINT_MAX ||
         !transformer_tensor(backend, query, query_elements, 1) ||
         !transformer_tensor(backend, key, kv_elements, 1) ||
         !transformer_tensor(backend, value, kv_elements, 1) ||
@@ -133,10 +135,8 @@ int yvex_cuda_transformer_gqa(
                        "bounded packed Q/K/V geometry is required");
         return YVEX_ERR_FORMAT;
     }
-    query_ptr = yvex_cuda_tensor_ptr(query);
-    key_ptr = yvex_cuda_tensor_ptr(key);
-    value_ptr = yvex_cuda_tensor_ptr(value);
-    output_ptr = yvex_cuda_tensor_ptr(output);
+    CUdeviceptr query_ptr = yvex_cuda_tensor_ptr(query), key_ptr = yvex_cuda_tensor_ptr(key);
+    CUdeviceptr value_ptr = yvex_cuda_tensor_ptr(value), output_ptr = yvex_cuda_tensor_ptr(output);
     scale = 1.0f / sqrtf((float)head_dim);
     {
         void *parameters[] = {
@@ -144,8 +144,8 @@ int yvex_cuda_transformer_gqa(
             &query_heads, &kv_heads, &head_dim, &scale, &causal,
         };
         rc = transformer_launch(
-            backend, state->gqa_function, (unsigned int)rows,
-            (TRANSFORMER_BLOCK + 2u) * sizeof(float), parameters,
+            backend, state->gqa_function, (unsigned int)grid_rows,
+            2u * (unsigned int)head_dim * sizeof(float), parameters,
             "cuda.transformer.gqa", facts, err);
     }
     if (rc == YVEX_OK) output->is_written = 1;

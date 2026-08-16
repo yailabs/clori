@@ -112,67 +112,67 @@ extern "C" __global__ void yvex_rotary_half_plain_f32(
     values[base + half + lane] = second * cosine + first * sine;
 }
 
-/* Execute bounded grouped-query attention without materializing a score matrix. */
+/* Four warp-owned queries reuse K/V while online softmax avoids a second Q/K traversal. */
 extern "C" __global__ void yvex_gqa_f32(
     const float *query, const float *key, const float *value, float *output,
     unsigned long long tokens, unsigned long long query_heads,
     unsigned long long kv_heads, unsigned long long head_dim, float scale, int causal)
 {
     extern __shared__ float scratch[];
-    unsigned long long row = (unsigned long long)blockIdx.x;
-    unsigned long long token = row / query_heads;
-    unsigned long long query_head = row % query_heads;
+    const unsigned int warp = threadIdx.x / warpSize, lane = threadIdx.x % warpSize;
+    const unsigned int queries_per_block = blockDim.x / warpSize;
+    unsigned long long query_tile = blockIdx.x / query_heads, query_head = blockIdx.x % query_heads;
+    unsigned long long token = query_tile * queries_per_block + warp;
     unsigned long long kv_head = query_head / (query_heads / kv_heads);
-    unsigned long long lane = (unsigned long long)threadIdx.x;
-    unsigned long long visible, source, dim;
-    float local, maximum, accumulated = 0.0f;
+    unsigned long long maximum_visible, visible, source, dim;
+    float query_lanes[4] = {0.0f}, accumulated[4] = {0.0f};
+    float maximum = -INFINITY, denominator = 0.0f;
+    unsigned int slot, active;
     if (!query || !key || !value || !output || !tokens || !kv_heads ||
-        !query_heads || query_heads % kv_heads || !head_dim || token >= tokens) return;
+        !query_heads || query_heads % kv_heads || !head_dim || queries_per_block > 4u) return;
+    active = token < tokens;
     visible = causal ? token + 1ull : tokens;
-    if (threadIdx.x == 0) scratch[blockDim.x] = -INFINITY;
-    __syncthreads();
-    for (source = 0ull; source < visible; ++source) {
-        local = 0.0f;
-        for (dim = lane; dim < head_dim; dim += (unsigned long long)blockDim.x)
-            local += query[(token * query_heads + query_head) * head_dim + dim] *
-                     key[(source * kv_heads + kv_head) * head_dim + dim];
-        scratch[threadIdx.x] = local;
-        __syncthreads();
-        for (unsigned int offset = blockDim.x >> 1; offset; offset >>= 1) {
-            if (threadIdx.x < offset) scratch[threadIdx.x] += scratch[threadIdx.x + offset];
-            __syncthreads();
+    maximum_visible = causal ? min(tokens, (query_tile + 1ull) * queries_per_block) : tokens;
+    for (slot = 0u; slot < 4u; ++slot) {
+        dim = (unsigned long long)lane + (unsigned long long)slot * warpSize;
+        if (active && dim < head_dim)
+            query_lanes[slot] = query[(token * query_heads + query_head) * head_dim + dim];
+    }
+    for (source = 0ull; source < maximum_visible; ++source) {
+        float dot = 0.0f;
+        float new_maximum, old_scale, weight;
+        for (dim = threadIdx.x; dim < head_dim; dim += blockDim.x) {
+            scratch[dim] = key[(source * kv_heads + kv_head) * head_dim + dim];
+            scratch[head_dim + dim] = value[(source * kv_heads + kv_head) * head_dim + dim];
         }
-        if (threadIdx.x == 0 && scratch[0] * scale > scratch[blockDim.x])
-            scratch[blockDim.x] = scratch[0] * scale;
+        __syncthreads();
+        for (slot = 0u; slot < 4u; ++slot) {
+            dim = (unsigned long long)lane + (unsigned long long)slot * warpSize;
+            if (active && source < visible && dim < head_dim)
+                dot += query_lanes[slot] * scratch[dim];
+        }
+        for (unsigned int offset = warpSize >> 1; offset; offset >>= 1)
+            dot += __shfl_down_sync(0xffffffffu, dot, offset);
+        dot = __shfl_sync(0xffffffffu, dot, 0) * scale;
+        if (active && source < visible) {
+            new_maximum = fmaxf(maximum, dot);
+            old_scale = maximum == -INFINITY ? 0.0f : expf(maximum - new_maximum);
+            weight = expf(dot - new_maximum);
+            denominator = denominator * old_scale + weight;
+            for (slot = 0u; slot < 4u; ++slot) {
+                dim = (unsigned long long)lane + (unsigned long long)slot * warpSize;
+                if (dim < head_dim)
+                    accumulated[slot] = accumulated[slot] * old_scale + weight * scratch[head_dim + dim];
+            }
+            maximum = new_maximum;
+        }
         __syncthreads();
     }
-    maximum = scratch[blockDim.x];
-    if (threadIdx.x == 0) scratch[blockDim.x + 1u] = 0.0f;
-    __syncthreads();
-    for (source = 0ull; source < visible; ++source) {
-        local = 0.0f;
-        for (dim = lane; dim < head_dim; dim += (unsigned long long)blockDim.x)
-            local += query[(token * query_heads + query_head) * head_dim + dim] *
-                     key[(source * kv_heads + kv_head) * head_dim + dim];
-        scratch[threadIdx.x] = local;
-        __syncthreads();
-        for (unsigned int offset = blockDim.x >> 1; offset; offset >>= 1) {
-            if (threadIdx.x < offset) scratch[threadIdx.x] += scratch[threadIdx.x + offset];
-            __syncthreads();
-        }
-        if (threadIdx.x == 0) {
-            scratch[0] = expf(scratch[0] * scale - maximum);
-            scratch[blockDim.x + 1u] += scratch[0];
-        }
-        __syncthreads();
-        if (lane < head_dim)
-            accumulated += scratch[0] *
-                value[(source * kv_heads + kv_head) * head_dim + lane];
-        __syncthreads();
+    for (slot = 0u; slot < 4u; ++slot) {
+        dim = (unsigned long long)lane + (unsigned long long)slot * warpSize;
+        if (active && dim < head_dim && denominator > 0.0f)
+            output[(token * query_heads + query_head) * head_dim + dim] = accumulated[slot] / denominator;
     }
-    if (lane < head_dim && scratch[blockDim.x + 1u] > 0.0f)
-        output[(token * query_heads + query_head) * head_dim + lane] =
-            accumulated / scratch[blockDim.x + 1u];
 }
 
 /* Fuse the elementwise SiLU gate product used by dense transformer MLPs. */
