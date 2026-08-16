@@ -587,7 +587,7 @@ static int execute_request_fixture(
     if (!video_rows || !audio_rows || !text_rows || !block_count || block_count > 50ull ||
         !timestep_count || timestep_count > 64ull ||
         !yvex_core_u64_add(video_rows, audio_rows, &packed_rows) ||
-        !yvex_core_u64_add(packed_rows, text_rows, &packed_rows) || packed_rows > 4096ull ||
+        !yvex_core_u64_add(packed_rows, text_rows, &packed_rows) || packed_rows > 8192ull ||
         !yvex_core_u64_mul(video_rows, 96ull, &video_values) ||
         !yvex_core_u64_mul(audio_rows, 32ull, &audio_values) ||
         !request_fixture_allocate(&fixture, video_rows, audio_rows, text_rows,
@@ -685,7 +685,7 @@ static int execute_latent_fixture(
         !width || !height || !frames || !text_rows || !block_count || block_count > 50ull ||
         !steps || steps > 64u || !graph ||
         graph->t2va_plan_build(&plan, text_rows, width, height, frames, steps, &err) != YVEX_OK ||
-        plan.packed_rows > 4096ull ||
+        plan.packed_rows > 8192ull ||
         !yvex_core_u64_mul(plan.video_rows, plan.video_value_width, &video_values) ||
         !yvex_core_u64_mul(plan.audio_rows, plan.audio_value_width, &audio_values) ||
         !yvex_core_u64_mul(text_rows, 5120ull, &conditioning_values) ||

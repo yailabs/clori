@@ -459,7 +459,7 @@ static int dialog_parse(server_media_registry *registry, server_media_session *s
     if (profile < 0)
         return media_refuse(err, YVEX_ERR_UNSUPPORTED,
                             "this GB10 path currently admits preview 192x192, preview-256 "
-                            "256x256, or smoke 32x32; "
+                            "256x256, preview-384 384x384, or smoke 32x32; "
                             "source, draft, HD, FHD, 2K, and 4K are not qualified");
     if (duration < 0)
         return media_refuse(err, YVEX_ERR_BOUNDS,
