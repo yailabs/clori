@@ -1139,6 +1139,24 @@ establish conditioning, scheduler, or model-quality correctness. The exact
 startup and chat workflow is owned by the
 [operator runbook](../operator-runbook.md#conversational-minimax-h3-media-host).
 
+## Iterative latent conformance
+
+A source-weight manual BF16 oracle and the native production latent path executed the same seed
+42 trajectory for two complete fifty-block evaluations over 466 packed rows. The oracle
+reproduced YVEX's versioned PCG XSH RR 64/32 plus Box-Muller initialization, then applied the
+separate video-shift-12 and audio-shift-3 schedules. Video finished at relative L2 `0.004744679`
+and cosine `0.999988780`; audio finished at relative L2 `0.004959823` and cosine `0.999987701`.
+YVEX completed in 3 minutes 13 seconds with 65,318,864 KiB peak RSS, 205,342,208 peak device
+bytes, and zero swap under a 100 GiB hard memory limit.
+
+This evidence covers initialization, two paired scheduler advances, two complete resident
+Transformer evaluations, and final latent publication. It does not establish the full 49-step
+trajectory or useful media quality. The released checkpoint targets a 768-pixel short edge:
+768x768 needs about 21,741 packed rows and 1344x768 about 37,725 for 124 frames and 15 text rows,
+versus the current 4,096-row admission maximum. The unrecognizable 192x192 output is therefore no
+longer attributed to an observed early recurrent mismatch; useful-resolution capacity and longer
+trajectory evidence remain separate downstream work.
+
 ## Progression and non-claims
 
 `branch_completion_condition_satisfied: true`
