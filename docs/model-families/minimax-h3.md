@@ -1153,7 +1153,7 @@ This evidence covers initialization, two paired scheduler advances, two complete
 Transformer evaluations, and final latent publication. It does not establish the full 49-step
 trajectory or useful media quality. The released checkpoint targets a 768-pixel short edge:
 768x768 needs about 21,741 packed rows and 1344x768 about 37,725 for 124 frames and 15 text rows,
-versus the current 4,096-row admission maximum. The unrecognizable 192x192 output is therefore no
+versus the current 8,192-row admission maximum. The unrecognizable 192x192 output is therefore no
 longer attributed to an observed early recurrent mismatch; useful-resolution capacity and longer
 trajectory evidence remain separate downstream work.
 
@@ -1161,8 +1161,16 @@ The next admitted spatial envelope is `preview-384`: 384x384 for 124 frames. Its
 fifty-block, 5,757-row request passed the independent manual BF16 oracle with video relative L2
 `0.004785907` and cosine `0.999988564`, plus audio relative L2 `0.013636469` and cosine
 `0.999907030`. YVEX reached 65,760,132 KiB peak RSS and 2,522,884,864 device bytes with zero swap.
-This raises capacity and conversational selection only; no complete 384x384 media or quality
-claim exists until an operator-reachable generation and independent playback complete.
+The first complete 384x384 operator run initially failed at CUDA context creation because the
+component session opened CUDA only after faulting and locking the roughly 66 GB Transformer
+residency. Generic component open now establishes the context before that dominant residency
+transition. Under the same 100 GiB hard limit with swap disabled, the repaired request completed
+49 model evaluations and published a seekable 55,521,248-byte AVI with 124 RGB frames and 165,333
+stereo samples per channel. Its file identity is
+`1f2928f59abfdeace614617bc7645f0b1661a5343a14ec854d289d59c21045f4`; maximum RSS was
+65,792,152 KiB and cgroup peak memory was 96,421,195,776 bytes. Sampled frames remain a colored
+mosaic rather than a recognizable eclipse. This establishes the bounded 384 lifecycle and
+publication envelope, not prompt fidelity, visual quality, practical speed, or HD support.
 
 ## Progression and non-claims
 

@@ -78,6 +78,7 @@ docs/worklog/2026-08-15-minimax-omni-adaln-rounding.md	worklog	canonical	contrib
 docs/worklog/2026-08-16-minimax-256-preview-envelope.md	worklog	canonical	contributors	retained	minimax_256_preview_envelope_worklog
 docs/worklog/2026-08-16-minimax-384-preview-envelope.md	worklog	canonical	contributors	retained	minimax_384_preview_envelope_worklog
 docs/worklog/2026-08-16-minimax-chunked-bf16-attention.md	worklog	canonical	contributors	retained	minimax_chunked_bf16_attention_worklog
+docs/worklog/2026-08-16-minimax-component-cuda-preopen.md	worklog	canonical	contributors	retained	minimax_component_cuda_preopen_worklog
 docs/worklog/2026-08-16-minimax-exact-attention-tiling.md	worklog	canonical	contributors	retained	minimax_exact_attention_tiling_worklog
 docs/worklog/2026-08-16-minimax-iterative-latent-conformance.md	worklog	canonical	contributors	retained	minimax_iterative_latent_conformance_worklog
 tests/vectors/README.md	test-support	canonical	contributors	living	test_vector_format
