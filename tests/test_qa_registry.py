@@ -29,12 +29,13 @@ def expect_refusal(registry: dict, message: str) -> None:
 def main() -> int:
     source = ROOT / "config/qa/registry.json"
     registry, tests = generate_qa_registry.load_and_validate(ROOT, source)
-    make_test = next(
+    build_consumers = [
         item for item in tests
-        if item["runner"]["kind"] == "command" and item["runner"]["argv"][0] == "make"
-    )
-    if "build-tree" not in make_test["resources"]:
-        raise AssertionError("Make-backed test did not acquire the build-tree resource")
+        if item["runner"]["kind"] in {"c-unit", "c-cuda"} or
+        (item["runner"]["kind"] == "command" and item["runner"]["argv"][0] == "make")
+    ]
+    if any("build-tree" not in item["resources"] for item in build_consumers):
+        raise AssertionError("native or Make-backed test did not acquire the build-tree resource")
     first = generate_qa_registry.projections(registry, tests)
     second = generate_qa_registry.projections(registry, tests)
     if first != second:
