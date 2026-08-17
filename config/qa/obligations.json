@@ -1,0 +1,179 @@
+{
+  "schema": "yvex.qa.obligations.v1",
+  "schema_version": 1,
+  "fallback": {
+    "lanes": ["fast", "structural", "numeric", "runtime"],
+    "tests": [],
+    "reason": "unknown ownership expands to conservative CPU composition evidence"
+  },
+  "change_classes": [
+    {
+      "id": "core-common",
+      "patterns": ["src/core/**", "include/yvex/core.h", "include/yvex/status.h"],
+      "lanes": ["fast", "structural", "runtime", "sanitizer"],
+      "tests": [],
+      "reason": "common utility changes can affect every composed owner"
+    },
+    {
+      "id": "artifact-source-manifest",
+      "patterns": ["src/artifact/**", "src/source/**", "src/gguf/core.c", "tools/generate_source_manifest.py", "config/source_owners.tsv"],
+      "lanes": ["fast", "structural", "numeric", "runtime"],
+      "tests": ["numeric.gguf-artifact-abi", "integration.tiny-vertical"],
+      "reason": "artifact and source trust require identity, corruption, generated-authority, and executable composition evidence"
+    },
+    {
+      "id": "quantization",
+      "patterns": ["src/gguf/quant*.c", "src/gguf/qtype.c", "src/gguf/imatrix.c", "tests/unit/quant*.c", "tests/unit/qtype*.c"],
+      "lanes": ["fast", "numeric", "sanitizer"],
+      "tests": ["numeric.gguf-qtype"],
+      "reason": "quantized representations require independent numeric and sanitizer evidence"
+    },
+    {
+      "id": "family-deepseek",
+      "patterns": ["src/model/families/deepseek*.c", "src/graph/families/deepseek*.c", "src/backend/cuda/families/deepseek*.cu"],
+      "lanes": ["fast", "structural", "numeric", "runtime"],
+      "tests": ["live.deepseek.generation"],
+      "reason": "DeepSeek semantic lowering requires its bounded live vertical"
+    },
+    {
+      "id": "family-minimax",
+      "patterns": ["src/model/families/minimax*.c", "src/graph/families/minimax*.c", "src/backend/cuda/families/minimax*.cu"],
+      "lanes": ["fast", "structural", "numeric", "runtime"],
+      "tests": ["live.minimax.text"],
+      "reason": "MiniMax semantic lowering requires its distinct bounded live vertical"
+    },
+    {
+      "id": "family-compiler-adapter",
+      "patterns": ["src/model/families/**", "include/yvex/internal/model_family.h"],
+      "lanes": ["fast", "structural", "numeric", "runtime"],
+      "tests": ["integration.tiny-vertical"],
+      "reason": "family adapters must preserve the generic compiler boundary"
+    },
+    {
+      "id": "semantic-operator-ir",
+      "patterns": ["src/model/compilation/semantic.c", "src/graph/operator_ir.c", "src/graph/source_compile.c", "include/yvex/internal/model_ir.h", "include/yvex/internal/operator_ir.h"],
+      "lanes": ["fast", "structural", "numeric", "runtime", "sanitizer"],
+      "tests": ["integration.tiny-vertical"],
+      "reason": "semantic and operator IR changes require deterministic lowering and production composition"
+    },
+    {
+      "id": "physical-execution-ir",
+      "patterns": ["src/graph/execution.c", "src/graph/compiled_plan.c", "src/graph/binding_compile.c", "include/yvex/internal/execution.h", "include/yvex/internal/execution_batch.h"],
+      "lanes": ["fast", "structural", "numeric", "runtime", "sanitizer"],
+      "tests": ["integration.tiny-vertical", "live.deepseek.generation"],
+      "reason": "physical planning requires schema identity, stale refusal, runtime composition, and one affected live family"
+    },
+    {
+      "id": "runtime-binding-schema",
+      "patterns": ["src/runtime/binding*.c", "include/yvex/internal/runtime_binding.h", "tests/unit/runtime_binding.c"],
+      "lanes": ["fast", "structural", "runtime", "sanitizer"],
+      "tests": ["unit.runtime_binding", "integration.tiny-vertical", "live.deepseek.generation"],
+      "reason": "binding changes require deterministic serialization, stale-version refusal, and executable reopen"
+    },
+    {
+      "id": "runtime-transaction",
+      "patterns": ["src/runtime/session.c", "src/runtime/state*.c", "src/runtime/prefix.c", "src/graph/state*.c", "include/yvex/internal/graph_state.h"],
+      "lanes": ["fast", "runtime", "sanitizer"],
+      "tests": ["unit.runtime_state", "integration.tiny-vertical"],
+      "reason": "mutable state requires reset, cancellation, rollback, cleanup, and composed lifecycle evidence"
+    },
+    {
+      "id": "backend-cpu",
+      "patterns": ["src/backend/cpu.c", "src/backend/core.c", "src/backend/residency.c"],
+      "lanes": ["fast", "numeric", "runtime", "sanitizer"],
+      "tests": ["unit.backend_cpu", "integration.tiny-vertical"],
+      "reason": "CPU backend changes require numeric and executable reference composition"
+    },
+    {
+      "id": "backend-cuda",
+      "patterns": ["src/backend/cuda/*.c", "src/backend/cuda/private.h", "include/yvex/internal/cuda.h"],
+      "lanes": ["fast", "structural", "numeric", "cuda", "sanitizer"],
+      "tests": ["cuda.native", "live.deepseek.generation"],
+      "reason": "CUDA backend changes require native parity, faults, cleanup, and production reachability"
+    },
+    {
+      "id": "cuda-kernel",
+      "patterns": ["src/backend/cuda/*.cu", "src/backend/cuda/families/*.cu"],
+      "lanes": ["structural", "numeric", "cuda", "sanitizer", "perf"],
+      "tests": ["cuda.native", "live.deepseek.generation"],
+      "reason": "kernel changes require native numeric oracle, repeat, cleanup, live reachability, and comparable performance evidence"
+    },
+    {
+      "id": "tokenizer-conversation",
+      "patterns": ["src/tokenizer/**", "src/server/session.c", "include/yvex/tokenizer.h"],
+      "lanes": ["fast", "runtime", "sanitizer"],
+      "tests": ["unit.tokenizer", "unit.runtime_tokenizer", "integration.tiny-vertical"],
+      "reason": "text conversion and conversation changes require exact roundtrip and complete text-path evidence"
+    },
+    {
+      "id": "protocol-provider-api",
+      "patterns": ["src/provider/**", "src/server/protocol.c", "include/yvex/provider.h", "include/yvex/protocol.h", "include/yvex/api.h"],
+      "lanes": ["fast", "runtime", "sanitizer"],
+      "tests": ["integration.openai", "integration.tiny-vertical"],
+      "reason": "protocol and API changes require codec refusal and client/server composition"
+    },
+    {
+      "id": "cli",
+      "patterns": ["src/cli/**", "config/operator/registry.json", "tools/generate_operator_registry.py"],
+      "lanes": ["fast", "structural", "runtime"],
+      "tests": ["integration.cli", "structural.operator-registry"],
+      "reason": "operator grammar changes require generated-authority and executable CLI acceptance"
+    },
+    {
+      "id": "server",
+      "patterns": ["src/server/**", "include/yvex/internal/server.h"],
+      "lanes": ["fast", "runtime", "sanitizer"],
+      "tests": ["integration.openai", "integration.repl", "integration.tiny-vertical"],
+      "reason": "server changes require process lifecycle, protocol, cancellation, and cleanup evidence"
+    },
+    {
+      "id": "speculative-execution",
+      "patterns": ["src/runtime/speculation.c", "src/graph/candidate.c", "tests/unit/speculation.c"],
+      "lanes": ["fast", "numeric", "runtime", "sanitizer"],
+      "tests": ["unit.runtime_speculation", "live.deepseek.generation"],
+      "reason": "speculation requires exact candidate promotion, cancellation, and no-replay live evidence"
+    },
+    {
+      "id": "memory-residency",
+      "patterns": ["src/runtime/residency.c", "src/runtime/state_residency.c", "src/graph/memory_plan.c", "src/backend/*residency*.c"],
+      "lanes": ["fast", "runtime", "sanitizer"],
+      "tests": ["unit.memory_plan", "unit.runtime_binding", "integration.tiny-vertical"],
+      "reason": "resource changes require capacity refusal, cleanup, sanitizer, and runtime composition"
+    },
+    {
+      "id": "performance-sensitive",
+      "patterns": ["src/backend/**", "src/runtime/benchmark.c", "tests/support/validate_runtime_benchmark.py"],
+      "lanes": ["perf"],
+      "tests": [],
+      "reason": "performance-sensitive owners require identity-bound repeated characterization without output drift"
+    },
+    {
+      "id": "documentation-only",
+      "patterns": ["docs/**", "config/documentation_owners.tsv", "README.md", "CHANGELOG.md", "ROADMAP.md", "CONTRIBUTING.md", "AGENTS.md"],
+      "lanes": ["structural"],
+      "tests": [],
+      "reason": "documentation changes require ownership, links, project-control, and architecture checks only"
+    },
+    {
+      "id": "test-corpus",
+      "patterns": ["tests/**"],
+      "lanes": ["fast", "structural"],
+      "tests": ["property.qa-registry"],
+      "reason": "test corpus changes require registry parity and representative hermetic execution"
+    },
+    {
+      "id": "test-infrastructure",
+      "patterns": ["tests/test.c", "tests/test.h", "tests/test_cuda.c", "tests/support/**", "tests/unit/*_runner.c", "tools/qa*.py", "tools/generate_qa_registry.py", "config/qa/**", ".agents/skills/engineering-worklog/**", ".github/workflows/**", ".github/pull_request_template.md", ".gitignore"],
+      "lanes": ["fast", "structural", "runtime", "sanitizer"],
+      "tests": ["property.qa-registry"],
+      "reason": "QA infrastructure changes must validate registry parity, orchestration, and representative execution"
+    },
+    {
+      "id": "build-topology",
+      "patterns": ["Makefile", "tools/generate_source_manifest.py", "config/c_policy.json"],
+      "lanes": ["fast", "structural", "ci"],
+      "tests": ["integration.tiny-vertical"],
+      "reason": "build topology requires generated dependency parity and repeated compositional builds"
+    }
+  ]
+}

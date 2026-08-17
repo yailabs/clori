@@ -50,6 +50,7 @@ behavior; [`ROADMAP.md`](../ROADMAP.md) owns the live project sequence.
 | DeepSeek-specific operation | [DeepSeek operation](operations/deepseek.md) |
 | Build and validation | [Validation](operations/validation.md) |
 | Documentation governance | [Documentation policy](development/documentation-policy.md) |
+| Quality assurance and evidence execution | [QA architecture](development/qa.md) |
 | Engineering worklog procedure | [Repository worklog skill](../.agents/skills/engineering-worklog/SKILL.md) |
 | Source and module ownership | [Source ownership](development/source-ownership.md) |
 | External reference traceability | [Reference-engineering baseline](development/reference-baseline.md) |
