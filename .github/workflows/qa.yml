@@ -1,0 +1,31 @@
+name: QA
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qa-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hermetic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Diagnose QA environment
+        run: python3 tools/qa.py doctor
+      - name: Run canonical hosted lane
+        run: python3 tools/qa.py run ci
+      - name: Upload structured evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yvex-qa-evidence
+          path: build/qa/evidence/
+          if-no-files-found: warn

@@ -32,6 +32,9 @@ generated-file churn, insignificant housekeeping, or trivial test maintenance. S
    implementation invariant, after-state, and remaining limitations.
 4. Inspect the tests, measurements, traces, review findings, and operator observations already
    produced by the delivery. Do not rerun expensive GPU work solely for a worklog.
+   When `build/qa/evidence/latest.json` applies to the checkpoint, consume its resolved
+   obligations, result states, prerequisites, fixture identities, and comparability facts.
+   The QA report remains the authority.
 5. Label missing proof as `evidence gap`; do not smooth uncertainty into a claim.
 6. Treat Git paths, line counts, and commit statistics as secondary evidence only.
 
@@ -94,6 +97,9 @@ Then write these required sections:
 9. `## Why it matters` — one short technical consequence without promotion.
 
 Add `## Quantitative delta` only when numerical facts exist. Do not fabricate an empty table.
+Summarize applicable canonical QA evidence as required, passed, blocked, and not required.
+Do not replace stable evidence with generic `tests passed` prose and do not turn the worklog
+into a second QA registry.
 
 ## Create communication projections
 

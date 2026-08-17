@@ -1,15 +1,12 @@
-/*
- * Returns nonzero on the first owned suite refusal. Fixture validation is not target-scale
- * complete emission.
- */
+/* Registry-generated artifact sanitizer runner. */
+
 #include "tests/test.h"
+#include "tests/support/runner.h"
+
+#include "qa/artifact_registry.inc"
 
 int main(void)
 {
-    int rc;
-    fprintf(stderr, "artifact test: gguf_writer_artifact\n");
-    rc = yvex_test_gguf_writer_artifact();
-    if (rc != 0)
-        fprintf(stderr, "FAIL: gguf_writer_artifact exited %d\n", rc);
-    return rc;
+    return yvex_test_runner_run(yvex_artifact_tests, yvex_artifact_test_count,
+                                "YVEX_ARTIFACT_TEST_FILTER", "artifact test", 1);
 }

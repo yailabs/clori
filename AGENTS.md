@@ -526,6 +526,22 @@ contract, edge cases, cleanup, and backend comparison where applicable.
 
 Validation is proportional to the changed boundary.
 
+`config/qa/registry.json` is the canonical test/evidence catalog and
+`config/qa/obligations.json` is the change-to-evidence authority. Before final
+validation, run:
+
+```sh
+python3 tools/qa.py plan --changed BASE
+python3 tools/qa.py run --changed BASE
+```
+
+Inspect the versioned report under `build/qa/evidence/`. Contributors and
+agents do not replace resolved obligations with an ad hoc checklist. Additional
+focused evidence is permitted. Unknown ownership expands coverage. `PASS`,
+`FAIL`, `SKIP`, `BLOCKED`, and `ERROR` remain distinct; mandatory evidence that
+is blocked or skipped cannot support a downstream-safe claim. The canonical
+workflow and lane semantics are owned by `docs/development/qa.md`.
+
 Always run:
 
 ```sh

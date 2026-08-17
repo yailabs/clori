@@ -8,6 +8,10 @@ This runbook covers repository-wide build, test, claim, topology, and artifact
 hygiene. It deliberately excludes selected model execution, diagnostic runtime
 command atlases, and future command syntax.
 
+The canonical lane, registry, requirement, result-state, and structured-report
+contract is the [QA architecture](../development/qa.md). This runbook retains
+operator-oriented entrypoints and does not duplicate lane membership.
+
 Validation proves only the behavior exercised by each test. Existing hosted
 DeepSeek generation does not itself establish model evaluation, the release-
 path full-model benchmark, a selected release artifact, or release
@@ -31,9 +35,8 @@ Boundary:
   build and existing CLI regression only.
 
 ```sh
-make
-make smoke
-make check-source-manifest
+python3 tools/qa.py doctor
+python3 tools/qa.py run fast
 ```
 
 ## Focused Documentation Check
@@ -80,16 +83,9 @@ Boundary:
 
 ```sh
 git diff --check
-make
-make smoke
-make check
-make check-docs
-sh tests/test_docs_surface.sh
-python3 tests/documentation_architecture.py
-sh tests/test_surface.sh
-sh tests/test_source_layout.sh
-sh tests/test_code_natural.sh
-sh tests/test_topology_closure_audit.sh
+python3 tools/qa.py plan --changed BASE
+python3 tools/qa.py run --changed BASE
+python3 tools/qa.py report latest
 ```
 
 ## CUDA Validation
@@ -111,7 +107,7 @@ Boundary:
   does not establish model evaluation, full-model benchmark, or release status.
 
 ```sh
-make check-cuda
+python3 tools/qa.py run cuda
 make test-cuda-native-sm121
 ```
 
