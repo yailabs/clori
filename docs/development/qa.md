@@ -145,6 +145,11 @@ remain local to one worktree. Each run owns its report and log root. A test may
 delete only paths it created and validated. Completed lanes must not leave
 server, profiler, or accelerator processes behind.
 
+The registry normalizer assigns `build-tree` to every Make-backed command. A
+test cannot run a mutating Make recipe concurrently with another test using the
+same worktree build tree merely because its handwritten resource list omitted
+that mechanically implied ownership.
+
 Missing mandatory live assets are `BLOCKED`. Configure their environment
 variables explicitly; paths and identities remain outside Git. `qa doctor`
 reports prerequisites before an expensive lane starts.
