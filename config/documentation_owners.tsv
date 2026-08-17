@@ -39,6 +39,7 @@ docs/decisions/0005-execution-substrate.md	decision	canonical	contributors	accep
 docs/decisions/README.md	decision	projection	contributors	living	decision_index
 docs/development/documentation-policy.md	development	canonical	contributors	living	documentation_governance
 docs/development/gb10-targets.md	development	canonical	contributors	living	gb10_execution_target_table
+docs/development/qa.md	development	canonical	contributors	living	quality_assurance_architecture
 docs/development/reference-baseline.md	development	canonical	contributors	living	external_reference_engineering_baseline
 docs/development/source-ownership.md	development	canonical	contributors	living	source_module_ownership_reference
 docs/doctrine/evidence.md	doctrine	canonical	all	living	evidence_claim_discipline

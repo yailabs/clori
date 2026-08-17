@@ -16,12 +16,14 @@
 
 ## Validation
 
-- Focused positive tests:
-- Refusal/failure tests:
-- Cleanup/cancellation/rollback tests:
-- Ownership/layout/architecture guards:
-- Sanitizer/CUDA/no-`nvcc` evidence when applicable:
-- Repeated check evidence when applicable:
+- QA plan command / identity:
+- Required lanes:
+- Structured evidence path / run identity:
+- PASS / FAIL / SKIP / BLOCKED / ERROR summary:
+- Blocked mandatory lanes and prerequisite:
+- Live assets and hardware used:
+- Performance comparability classification when applicable:
+- Additional focused evidence:
 - Tracked model/artifact guard result:
 
 ## Claims and progression

@@ -120,6 +120,21 @@ Every behavior needs a positive test and every refusal needs a failure test.
 Numeric work also needs an independent reference or tolerance contract, edge
 cases, cleanup, and backend comparison where applicable.
 
+Test identities and evidence obligations are repository truth. Resolve them
+before handoff rather than constructing a wave-specific checklist:
+
+```sh
+python3 tools/qa.py doctor
+python3 tools/qa.py plan --changed BASE
+python3 tools/qa.py run --changed BASE
+python3 tools/qa.py report latest
+```
+
+The [QA architecture](docs/development/qa.md) defines lane contents,
+requirements, result states, resource ownership, live assets, and structured
+reports. Add tests through `config/qa/registry.json`; do not manually add a
+prototype, runner call, and Make membership as separate authorities.
+
 Always run:
 
 ```sh
@@ -158,7 +173,8 @@ A pull request must state:
 - problem and owned boundary;
 - implementation and intentional non-changes;
 - production command/API reachability, or the exact non-applicability reason;
-- tests and commands actually run;
+- QA plan identity, required lanes, structured result summary, and any blocked
+  mandatory evidence;
 - resource, cleanup, cancellation, and failure evidence when relevant;
 - capability/non-claim impact;
 - progression decision and downstream consumer when a milestone changes; and
