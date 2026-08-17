@@ -85,6 +85,7 @@ docs/worklog/2026-08-16-minimax-iterative-latent-conformance.md	worklog	canonica
 docs/worklog/2026-08-16-minimax-reusable-attention-workspace.md	worklog	canonical	contributors	retained	minimax_reusable_attention_workspace_worklog
 docs/worklog/2026-08-16-minimax-selective-q8-candidate.md	worklog	canonical	contributors	retained	minimax_selective_q8_candidate_worklog
 docs/worklog/2026-08-16-minimax-source-square-attention-tile.md	worklog	canonical	contributors	retained	minimax_source_square_attention_tile_worklog
+docs/worklog/2026-08-17-minimax-source-square-media-qualification.md	worklog	canonical	contributors	retained	minimax_source_square_media_qualification_worklog
 docs/worklog/2026-08-17-qa-test-architecture-refoundation.md	worklog	canonical	contributors	retained	qa_test_architecture_refoundation_worklog
 docs/worklog/2026-08-17-qa-vertical-cutover.md	worklog	canonical	contributors	retained	qa_vertical_cutover_worklog
 tests/vectors/README.md	test-support	canonical	contributors	living	test_vector_format
