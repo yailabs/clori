@@ -123,9 +123,10 @@ def apply_defaults(registry: dict[str, Any], item: dict[str, Any]) -> dict[str, 
     merged.update(item)
     resources = list(merged.get("resources", []))
     runner = merged.get("runner")
-    if (isinstance(runner, dict) and runner.get("kind") == "command" and
-            runner.get("argv") and Path(runner["argv"][0]).name == "make" and
-            "build-tree" not in resources):
+    runner_kind = runner.get("kind") if isinstance(runner, dict) else None
+    make_command = (runner_kind == "command" and runner.get("argv") and
+                    Path(runner["argv"][0]).name == "make")
+    if (runner_kind in {"c-unit", "c-cuda"} or make_command) and "build-tree" not in resources:
         resources.append("build-tree")
     merged["resources"] = resources
     return merged
