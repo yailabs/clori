@@ -1207,23 +1207,48 @@ cleanup. It does not yet prove a complete 49-evaluation 768x768 trajectory, reco
 or practical generation time. The durable semantic and memory evidence is retained in the
 [reusable-workspace worklog](../worklog/2026-08-16-minimax-reusable-attention-workspace.md).
 
+## Source-square media qualification
+
+The source-faithful path completed a 768x768, 124-frame request with 49 model evaluations and all
+50 Omni blocks per evaluation. It executed 942,556 CUDA kernels in 2 hours 30 minutes 28 seconds,
+reported 12,960,345,604 peak device bytes and 1,485,742,080 peak workspace bytes, reached
+67,176,200 KiB maximum RSS, and recorded zero swaps. The component session released its staged
+residency and atomically published a 220,082,144-byte AVI with file identity
+`cf54a70f6854c33d775ef4a624f60e6ecafb54f0302d4277b68943f31bfe48f0`.
+
+GStreamer independently discovered and played the seekable container: 124 uncompressed RGB
+frames at 768x768 and 24 fps, plus 165,333 stereo PCM samples per channel at 32 kHz. The stream
+durations differ by 10,416.667 ns. Execution identity
+`3089bfbf486c78cfa360c7421ad91031bb4770cfdef110de0821af25184e77c6`, conditioning identity
+`e94b983ddf292138fce22a62b91b938f19ac4c4c59b3fa76c1725e1e12dbb726`, and latent identity
+`4d040e01a2b6cd38708d135ef74ecef30d7fb9ffc673220b6156de57ce4804b0` retain the admitted
+source-to-publication chain.
+
+Seven one-second frame samples, including the beginning, middle, and end, remain a regular
+colored mosaic with no recognizable eclipse, landscape, Moon, or coherent scene. Source-scale
+geometry therefore resolves the prior memory and spatial-envelope questions but does not repair
+visual reconstruction. This is negative model-behavior evidence: the product transaction is
+real and playable, while useful prompt-conditioned video remains unproved and requires a
+same-boundary semantic repair.
+
 ## Progression and non-claims
 
 `branch_completion_condition_satisfied: true`
 
-`progression_decision: proceed`
+`progression_decision: repair_same_boundary`
 
-`downstream_safe: true`
+`downstream_safe: false`
 
-The downstream consumer is PASS 2 correctness and ownership hardening of this
-bounded vertical. There is no gate blocker, boundary incompleteness, or evidence
-gap for the exact prompt, geometry, inference count, source artifacts, native
-execution, synchronization, and publication profile above. Exact Unicode NFC
-normalization, multimodal vision input, compressed codecs, hosted serving, and
-source-default or full-scale geometry are deferred depth with explicit later
-consumers. Runtime and kernel efficiency, useful resolution, and generation
-latency are optimization debt for PASS 3 and PASS 4. A second complete media
-family consumer is generalization debt for PASS 6. None weakens the admitted
+The accepted bounded executable vertical remains intact, so its first playable synchronized-file
+completion condition remains true. The current downstream consumer is useful source-square
+prompt-conditioned video. The regular tiled mosaic at the fully admitted 768x768 geometry is a
+gate blocker for that consumer; its exact owner among latent interpretation, Visual VAE
+reconstruction, and their interface requires independent upstream numerical localization before
+another full media qualification. Source-scale memory capacity and transactional publication are
+no longer evidence gaps. Exact Unicode NFC normalization, multimodal vision input, compressed
+codecs, and hosted serving remain deferred depth with explicit later consumers. Runtime and
+kernel efficiency and generation latency are optimization debt for PASS 3 and PASS 4. A second
+complete media family consumer is generalization debt for PASS 6. None weakens the admitted
 bounded identities or operator path.
 License review remains an external authorization prerequisite for any use that
 requires an eligibility conclusion.
@@ -1232,9 +1257,9 @@ This implementation boundary does not prove:
 
 - multimodal Qwen3-VL vision conditioning or source-default/full-scale latent generation;
 - complete composite-artifact support or Physical Execution IR;
-- simultaneous multi-component residency or useful-resolution GB10 operation;
+- simultaneous multi-component residency or useful prompt-conditioned GB10 output;
 - PyTorch seed-stream parity or model-quality usefulness of the bounded latent run;
-- 768p spatial tiling or full-scale Visual VAE qualification;
+- numerically correct source-square Visual VAE reconstruction or recognizable 768p output;
 - compressed-codec output or hosted serving;
 - Diffusers, SGLang, or vLLM parity;
 - model quality, generation speed, practical 768p, or 2K generation;
