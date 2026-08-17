@@ -40,6 +40,7 @@
 
 .PHONY: all info lib client package generate-source-manifest \
 	check-source-manifest generate-operator-registry \
+	generate-qa-registry check-qa-registry qa qa-fast qa-structural qa-cuda qa-ci qa-doctor \
 	generate-command-migration \
 	check-operator-registry test-operator-registry cuda-info cuda-kernels cuda test-cuda test-cuda-graph \
 	test-cuda-native-sm121 \
@@ -133,6 +134,16 @@ BUILD_COMMIT_HEADER := $(BUILD_DIR)/generated/build_commit.h
 SOURCE_OWNER_MANIFEST := config/source_owners.tsv
 SOURCE_MANIFEST_GENERATOR := tools/generate_source_manifest.py
 SOURCE_MANIFEST_MK := $(BUILD_DIR)/generated/sources.mk
+QA_REGISTRY_SOURCE := config/qa/registry.json
+QA_REGISTRY_GENERATOR := tools/generate_qa_registry.py
+QA_REGISTRY_DIR := $(BUILD_DIR)/generated/qa
+QA_REGISTRY_MK := $(QA_REGISTRY_DIR)/registry.mk
+QA_REGISTRY_HEADER := $(QA_REGISTRY_DIR)/test_declarations.h
+QA_REGISTRY_PROJECTIONS := $(QA_REGISTRY_HEADER) \
+	$(QA_REGISTRY_DIR)/unit_registry.inc $(QA_REGISTRY_DIR)/cuda_registry.inc \
+	$(QA_REGISTRY_DIR)/quant_registry.inc $(QA_REGISTRY_DIR)/artifact_registry.inc \
+	$(QA_REGISTRY_DIR)/inventory.tsv $(QA_REGISTRY_DIR)/make_targets.tsv \
+	$(QA_REGISTRY_DIR)/registry.sha256
 OPERATOR_REGISTRY_SOURCE := config/operator/registry.json
 OPERATOR_REGISTRY_GENERATOR := tools/generate_operator_registry.py
 OPERATOR_REGISTRY_DIR := $(BUILD_DIR)/generated/operator
@@ -167,7 +178,10 @@ YVEX_BIN ?= ./yvex
 
 ifneq ($(strip $(MAKECMDGOALS)),clean)
 include $(SOURCE_MANIFEST_MK)
+include $(QA_REGISTRY_MK)
 endif
+
+TEST_CPPFLAGS += -I$(BUILD_DIR)/generated
 
 # Attention wrappers own a collision-free temporary root and delete only that
 # root after validating its canonical parent and generated basename.
@@ -270,16 +284,7 @@ TEST_UNIT_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(TEST_UNIT_SRCS))
 TEST_REFERENCE_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(TEST_REFERENCE_SRCS))
 TEST_MAIN_OBJ := $(OBJ_DIR)/tests/test.o
 
-QUANT_TEST_UNIT_SRCS := \
-	tests/unit/gguf_qtype_abi.c \
-	tests/unit/source_payload.c \
-	tests/unit/transform_ir.c \
-	tests/unit/deepseek_tensor_coverage.c \
-	tests/unit/quant_numeric.c \
-	tests/unit/quant_execute.c \
-	tests/unit/qtype_support.c \
-	tests/unit/quant_policy.c \
-	tests/unit/imatrix.c
+QUANT_TEST_UNIT_SRCS := $(QA_QUANT_TEST_SRCS)
 QUANT_TEST_UNIT_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(QUANT_TEST_UNIT_SRCS))
 QUANT_TEST_RUNNER_OBJ := $(OBJ_DIR)/tests/unit/quant_runner.o
 ARTIFACT_TEST_RUNNER_OBJ := $(OBJ_DIR)/tests/unit/artifact_writer_runner.o
@@ -345,6 +350,30 @@ info:
 all: generate-source-manifest generate-operator-registry lib client
 
 generate-source-manifest: $(SOURCE_MANIFEST_MK)
+
+generate-qa-registry: $(QA_REGISTRY_MK) $(QA_REGISTRY_PROJECTIONS)
+
+check-qa-registry: generate-qa-registry
+	python3 $(QA_REGISTRY_GENERATOR) --registry $(QA_REGISTRY_SOURCE) \
+		--output-dir $(QA_REGISTRY_DIR) --check
+	python3 tests/test_qa_registry.py
+
+qa: qa-fast
+
+qa-fast:
+	python3 tools/qa.py run fast
+
+qa-structural:
+	python3 tools/qa.py run structural
+
+qa-cuda:
+	python3 tools/qa.py run cuda
+
+qa-ci:
+	python3 tools/qa.py run ci
+
+qa-doctor:
+	python3 tools/qa.py doctor
 
 check-source-manifest: $(SOURCE_MANIFEST_MK)
 	python3 $(SOURCE_MANIFEST_GENERATOR) --manifest $(SOURCE_OWNER_MANIFEST) \
@@ -479,11 +508,8 @@ test-cli: client $(CLI_TEST) $(CLIENT_CUTOVER_TEST)
 test-materialize: $(TEST_RUNNER)
 	$(TEST_RUNNER)
 
-test-runtime-descriptor: $(TEST_RUNNER)
-	YVEX_TEST_FILTER=materialization_runtime $(TEST_RUNNER)
-
-test-runtime-binding: $(TEST_RUNNER)
-	YVEX_TEST_FILTER=runtime_binding $(TEST_RUNNER)
+$(QA_C_UNIT_LEGACY_TARGETS): generate-qa-registry
+	python3 tools/qa.py run --legacy-target $@
 
 # Runtime model/session lifecycle is exercised by the binding owner because the
 # sealed model consumes one independently reopened binding.
@@ -508,44 +534,8 @@ test-runtime-digests: $(TEST_RUNNER)
 test-runtime-family-neutrality: $(TEST_RUNNER) test-architecture-boundaries
 	YVEX_TEST_FILTER=runtime_binding $(TEST_RUNNER)
 
-test-runtime-state: $(TEST_RUNNER)
-	YVEX_TEST_FILTER=runtime_state $(TEST_RUNNER)
-
-test-runtime-prefill: $(TEST_RUNNER)
-	YVEX_TEST_FILTER=runtime_prefill $(TEST_RUNNER)
-
-test-runtime-profile: $(TEST_RUNNER)
-	YVEX_TEST_FILTER=runtime_profile $(TEST_RUNNER)
-
-test-runtime-moe: $(TEST_RUNNER)
-	YVEX_TEST_FILTER=runtime_moe $(TEST_RUNNER)
-
-test-runtime-transformer: $(TEST_RUNNER)
-	YVEX_TEST_FILTER=runtime_transformer $(TEST_RUNNER)
-
-test-runtime-decode: $(TEST_RUNNER)
-	YVEX_TEST_FILTER=runtime_decode $(TEST_RUNNER)
-
-test-runtime-logits: $(TEST_RUNNER)
-	YVEX_TEST_FILTER=runtime_logits $(TEST_RUNNER)
-
-test-runtime-sampling: $(TEST_RUNNER)
-	YVEX_TEST_FILTER=runtime_sampling $(TEST_RUNNER)
-
-test-runtime-speculation: $(TEST_RUNNER)
-	YVEX_TEST_FILTER=runtime_speculation $(TEST_RUNNER)
-
-test-runtime-generation: $(TEST_RUNNER)
-	YVEX_TEST_FILTER=runtime_generation $(TEST_RUNNER)
-
 test-tokenizer: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=tokenizer,runtime_tokenizer,prompt $(TEST_RUNNER)
-
-test-runtime-tokenizer: $(TEST_RUNNER)
-	YVEX_TEST_FILTER=runtime_tokenizer $(TEST_RUNNER)
-
-test-runtime-benchmark: $(TEST_RUNNER)
-	YVEX_TEST_FILTER=runtime_benchmark $(TEST_RUNNER)
 
 # This target retains identity-bound target-scale benchmark evidence in one
 # caller-owned external directory. It never deletes, replaces, or tracks the
@@ -1473,7 +1463,7 @@ test-architecture-boundaries: $(LIBYVEX) $(YVEX_BIN) $(TEST_REFERENCE_OBJS) test
 
 smoke: test-cli
 
-check: check-docs check-guardrails lib client test test-cuda-no-nvcc test-gguf-artifact-abi test-gguf-layout-integrity test-gguf-qtype-abi test-layout test-code-natural test-project-control test-docs-surface test-documentation-architecture test-surface test-source-ownership test-repository-layout test-architecture-boundaries smoke
+check: check-qa-registry check-docs check-guardrails lib client test test-cuda-no-nvcc test-gguf-artifact-abi test-gguf-layout-integrity test-gguf-qtype-abi test-layout test-code-natural test-project-control test-docs-surface test-documentation-architecture test-surface test-source-ownership test-repository-layout test-architecture-boundaries smoke
 	@echo "yvex check: ok"
 
 $(LIBYVEX): $(CORE_OBJS)
@@ -1488,6 +1478,11 @@ $(OBJ_DIR)/%.o: %.c
 $(SOURCE_MANIFEST_MK): $(SOURCE_OWNER_MANIFEST) $(SOURCE_MANIFEST_GENERATOR)
 	@mkdir -p $(@D)
 	python3 $(SOURCE_MANIFEST_GENERATOR) --manifest $(SOURCE_OWNER_MANIFEST) --output $@
+
+$(QA_REGISTRY_MK) $(QA_REGISTRY_PROJECTIONS) &: \
+		$(QA_REGISTRY_SOURCE) $(QA_REGISTRY_GENERATOR)
+	python3 $(QA_REGISTRY_GENERATOR) --registry $(QA_REGISTRY_SOURCE) \
+		--output-dir $(QA_REGISTRY_DIR)
 
 $(OPERATOR_REGISTRY_HEADER) $(OPERATOR_REGISTRY_C) $(OPERATOR_REGISTRY_IDENTITY) &: \
 		$(OPERATOR_REGISTRY_SOURCE) $(OPERATOR_REGISTRY_GENERATOR)
@@ -1520,11 +1515,11 @@ $(BUILD_COMMIT_HEADER): FORCE
 	if test -r "$@" && cmp -s "$$tmp" "$@"; then rm -f "$$tmp"; \
 	else mv "$$tmp" "$@"; fi
 
-$(OBJ_DIR)/tests/unit/%.o: tests/unit/%.c tests/test.h
+$(OBJ_DIR)/tests/unit/%.o: tests/unit/%.c tests/test.h $(QA_REGISTRY_HEADER)
 	@mkdir -p $(@D)
 	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
 
-$(OBJ_DIR)/tests/unit/cuda/%.o: tests/unit/cuda/%.c tests/test.h
+$(OBJ_DIR)/tests/unit/cuda/%.o: tests/unit/cuda/%.c tests/test.h $(QA_REGISTRY_HEADER)
 	@mkdir -p $(@D)
 	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
 
@@ -1581,6 +1576,13 @@ $(YVEX_BIN): $(YVEX_OBJS) $(OPENAI_ADAPTER_OBJS) $(LIBYVEX)
 	$(CC) $(CFLAGS) $(YVEX_OBJS) $(OPENAI_ADAPTER_OBJS) $(LIBYVEX) \
 		$(LDFLAGS) $(LDLIBS) -o $@
 
+$(TEST_MAIN_OBJ) $(CUDA_TEST_MAIN_OBJ): CPPFLAGS += -I$(BUILD_DIR)/generated
+$(TEST_MAIN_OBJ) $(CUDA_TEST_MAIN_OBJ): $(QA_REGISTRY_HEADER)
+$(TEST_MAIN_OBJ): $(QA_REGISTRY_DIR)/unit_registry.inc tests/support/runner.h
+$(CUDA_TEST_MAIN_OBJ): $(QA_REGISTRY_DIR)/cuda_registry.inc tests/support/runner.h
+$(QUANT_TEST_RUNNER_OBJ): $(QA_REGISTRY_DIR)/quant_registry.inc tests/support/runner.h
+$(ARTIFACT_TEST_RUNNER_OBJ): $(QA_REGISTRY_DIR)/artifact_registry.inc tests/support/runner.h
+
 $(TEST_RUNNER): $(TEST_MAIN_OBJ) $(TEST_UNIT_OBJS) $(TEST_REFERENCE_OBJS) \
 	$(OPENAI_ADAPTER_OBJS) $(LIBYVEX) tests/test.h
 	@mkdir -p $(@D)
@@ -1591,9 +1593,12 @@ $(QUANT_TEST_RUNNER): $(QUANT_TEST_RUNNER_OBJ) $(QUANT_TEST_UNIT_OBJS) $(LIBYVEX
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $(QUANT_TEST_RUNNER_OBJ) $(QUANT_TEST_UNIT_OBJS) $(LIBYVEX) $(LDFLAGS) $(LDLIBS) -o $@
 
-$(ARTIFACT_TEST_RUNNER): $(ARTIFACT_TEST_RUNNER_OBJ) $(OBJ_DIR)/tests/unit/quant_execute.o $(LIBYVEX) tests/test.h
+$(ARTIFACT_TEST_RUNNER): $(ARTIFACT_TEST_RUNNER_OBJ) \
+	$(patsubst %.c,$(OBJ_DIR)/%.o,$(QA_ARTIFACT_TEST_SRCS)) $(LIBYVEX) tests/test.h
 	@mkdir -p $(@D)
-	$(CC) $(CFLAGS) $(ARTIFACT_TEST_RUNNER_OBJ) $(OBJ_DIR)/tests/unit/quant_execute.o $(LIBYVEX) $(LDFLAGS) $(LDLIBS) -o $@
+	$(CC) $(CFLAGS) $(ARTIFACT_TEST_RUNNER_OBJ) \
+		$(patsubst %.c,$(OBJ_DIR)/%.o,$(QA_ARTIFACT_TEST_SRCS)) \
+		$(LIBYVEX) $(LDFLAGS) $(LDLIBS) -o $@
 
 $(OPENAI_FAKE_HOST): $(OPENAI_FAKE_HOST_OBJ) $(LIBYVEX)
 	@mkdir -p $(@D)
