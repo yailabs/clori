@@ -73,4 +73,5 @@ docs/releases/v0.1.md	release	canonical	all	unreleased	v0_1_target_and_readiness
 docs/worklog/2026-08-11-adaptive-memory-admission.md	worklog	canonical	contributors	retained	adaptive_memory_admission_worklog
 docs/worklog/2026-08-17-qa-test-architecture-refoundation.md	worklog	canonical	contributors	retained	qa_test_architecture_refoundation_worklog
 docs/worklog/2026-08-17-qa-vertical-cutover.md	worklog	canonical	contributors	retained	qa_vertical_cutover_worklog
+docs/worklog/2026-08-18-interactive-console-quality-repair.md	worklog	canonical	contributors	retained	interactive_console_quality_repair_worklog
 tests/vectors/README.md	test-support	canonical	contributors	living	test_vector_format

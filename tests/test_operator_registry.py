@@ -300,6 +300,9 @@ def test_audit_reconciliation(registry: dict[str, object]) -> None:
                       "/session", "/new", "/attach", "/detach", "/reset", "/close",
                       "/cancel", "/quit", "/nothink", "/think", "/think-max"},
             f"unexpected slash catalog: {sorted(slash)}")
+    slash_aliases = {alias for row in rows for alias in row.get("slash_aliases", [])}
+    require(slash_aliases == {"/exit"},
+            f"unexpected slash aliases: {sorted(slash_aliases)}")
     with tempfile.TemporaryDirectory(prefix="yvex-audit-reconciliation-") as temporary:
         root = pathlib.Path(temporary)
         first = root / "first.md"

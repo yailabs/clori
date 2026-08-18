@@ -101,6 +101,7 @@ OPERATION_KEYS = {
     "schema_version",
     "side_effects",
     "slash_arguments",
+    "slash_aliases",
     "slash_projection",
     "summary",
     "superseded_by",
@@ -561,6 +562,12 @@ def validate_registry(registry: dict[str, Any]) -> list[dict[str, Any]]:
         slash = text(operation.get("slash_projection", "none"), f"{where}.slash_projection")
         if slash != "none" and (not slash.startswith("/") or " " in slash):
             fail(f"{where}.slash_projection", "must be one slash command spelling")
+        slash_aliases = string_list(
+            operation.get("slash_aliases", []), f"{where}.slash_aliases"
+        )
+        for alias in slash_aliases:
+            if not alias.startswith("/") or " " in alias:
+                fail(f"{where}.slash_aliases", "must contain slash command spellings")
         if slash != "none" and lane not in {"runtime-client", "REPL-local"}:
             fail(
                 f"{where}.slash_projection",
@@ -600,6 +607,7 @@ def validate_registry(registry: dict[str, Any]) -> list[dict[str, Any]]:
             "completion_provider": completion_provider,
             "requirements": requirements,
             "slash_projection": slash,
+            "slash_aliases": slash_aliases,
             "adapter_argv": adapter_argv,
             "deprecation_state": deprecation,
             "superseded_by": superseded_by,
@@ -610,11 +618,12 @@ def validate_registry(registry: dict[str, Any]) -> list[dict[str, Any]]:
             fail(f"operation {owner}", "alias collides with canonical path")
     slash_owners: dict[str, str] = {}
     for operation in operations:
-        slash = operation["slash_projection"]
-        if slash != "none":
+        spellings = ([] if operation["slash_projection"] == "none"
+                     else [operation["slash_projection"]]) + operation["slash_aliases"]
+        for slash in spellings:
             if slash in slash_owners:
                 fail(
-                    f"operation {operation['operation_id']}.slash_projection",
+                    f"operation {operation['operation_id']}.slash_aliases",
                     f"collides with {slash_owners[slash]!r}",
                 )
             slash_owners[slash] = operation["operation_id"]
@@ -982,7 +991,7 @@ def render_header(registry: dict[str, Any]) -> str:
         "    const char *superseded_by;",
         "    const char *summary, *input_schema, *result_schema, *side_effects;",
         "    const char *protocol_operation, *adapter_id, *renderer_id;",
-        "    const char *slash_projection, *completion_provider, *future_tui_projection;",
+        "    const char *slash_projection, *slash_aliases, *completion_provider, *future_tui_projection;",
         "    const char *test_owner, *documentation_owner, *default_providers, *validator_ids;",
         "    const char *daemon_requirement, *model_requirement, *artifact_requirement, *backend_requirement;",
         "    const char *tty_policy;",
@@ -1100,6 +1109,7 @@ def render_source(registry: dict[str, Any], operations: list[dict[str, Any]], id
         elif lane == "daemon-entrypoint":
             daemon_adapter = f"YVEX_OPERATOR_DAEMON_{c_enum(operation['adapter_id'])}"
         alias_text = ",".join(" ".join(row["path"]) for row in operation["aliases"]) or "none"
+        slash_alias_text = ",".join(operation["slash_aliases"]) or "none"
         command_words = f"command_{index}" if operation["command_path"] else "NULL"
         adapter_words = f"adapter_{index}" if operation["adapter_argv"] else "NULL"
         argument_rows = f"arguments_{index}" if operation["arguments"] else "NULL"
@@ -1116,6 +1126,7 @@ def render_source(registry: dict[str, Any], operations: list[dict[str, Any]], id
             f"        {c_string(operation['result_schema'])}, {c_string(operation['side_effects'])},",
             f"        {c_string(operation['protocol_operation'])}, {c_string(operation['adapter_id'])},",
             f"        {c_string(operation['renderer_id'])}, {c_string(operation['slash_projection'])},",
+            f"        {c_string(slash_alias_text)},",
             f"        {c_string(operation['completion_provider'])}, {c_string(operation['future_TUI_projection'])},",
             f"        {c_string(operation['test_owner'])}, {c_string(operation['documentation_owner'])},",
             f"        {c_string(joined(operation['default_providers']))}, {c_string(joined(operation['validator_ids']))},",

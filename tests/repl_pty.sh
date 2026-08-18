@@ -103,6 +103,14 @@ while test "$attempt" -lt 100; do
     sleep 0.01
 done
 test "$attempt" -lt 100
+printf 'TAILX\033[HHEAD_\033[F\033[D\033[3~_END\n' >&3
+attempt=0
+while test "$attempt" -lt 100; do
+    grep -F 'line editing accepted' "$root/typescript" >/dev/null 2>&1 && break
+    attempt=$((attempt + 1))
+    sleep 0.01
+done
+test "$attempt" -lt 100
 printf '/think\n' >&3
 attempt=0
 while test "$attempt" -lt 100; do
@@ -149,7 +157,7 @@ while test "$attempt" -lt 100; do
     sleep 0.01
 done
 test "$attempt" -lt 100
-printf '\004' >&3
+printf '/exit\n' >&3
 exec 3>&-
 wait "$repl_pid"
 repl_pid=
@@ -167,7 +175,7 @@ grep -F '  runtime    ● ready · attached to resident runtime · CUDA · targe
     "$root/typescript.plain" >/dev/null
 grep -F '  session    pty · position 0 · turns 0' "$root/typescript.plain" >/dev/null
 grep -F '  context    0/4096' "$root/typescript.plain" >/dev/null
-grep -F '  memory     0.00 GiB host · 0.00 GiB device' \
+grep -F '  memory     3.00 GiB process · 2.00 GiB artifact mapped · 1.00 GiB device' \
     "$root/typescript.plain" >/dev/null
 grep -F '  OpenAI     disabled' "$root/typescript.plain" >/dev/null
 grep -Fx 'commands' "$root/typescript.plain" >/dev/null
@@ -203,6 +211,8 @@ grep -F 'The valid result is 42.' "$root/typescript.plain" >/dev/null
 grep -F 'reasoning · enabled for the next turn' "$root/typescript.plain" >/dev/null
 grep -F 'reasoning · disabled for the next turn' "$root/typescript.plain" >/dev/null
 grep -F 'reasoning · maximum for the next turn' "$root/typescript.plain" >/dev/null
+grep -F 'line editing accepted' "$root/typescript.plain" >/dev/null
+! grep -F 'unknown command: /exit' "$root/typescript.plain" >/dev/null
 grep -F 'int value = ' "$root/typescript.plain" >/dev/null
 grep -F 'partial · 2 committed tokens · position 6 · reset required (/reset)' \
     "$root/typescript.plain" >/dev/null
@@ -508,10 +518,10 @@ while test "$attempt" -lt 100; do
     sleep 0.01
 done
 test "$attempt" -lt 100
-printf 'WAIT_DECODE_CANCEL\n' >&3
+printf 'WAIT_PREFILL_CANCEL\n' >&3
 attempt=0
 while test "$attempt" -lt 100; do
-    grep -F 'processing 4 input tokens · 4/4 · 100%' \
+    grep -F 'processing 4 input tokens · 0/4 · 0%' \
         "$root/disconnect.typescript" >/dev/null 2>&1 && break
     attempt=$((attempt + 1))
     sleep 0.01
@@ -527,6 +537,16 @@ while test "$attempt" -lt 100; do
     sleep 0.01
 done
 test "$attempt" -lt 100
+attempt=0
+while test "$attempt" -lt 100; do
+    grep -F 'yvex [disconnected]> ' "$root/disconnect.typescript" \
+        >/dev/null 2>&1 && break
+    attempt=$((attempt + 1))
+    sleep 0.01
+done
+test "$attempt" -lt 100
+! grep -F '0%yvex:' "$root/disconnect.typescript" >/dev/null
+! grep -F 'unknown session' "$root/disconnect.typescript" >/dev/null
 printf '\004' >&3
 exec 3>&-
 wait "$repl_pid"
