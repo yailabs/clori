@@ -107,6 +107,9 @@ static int send_console_status(int fd, const yvex_client_request *request,
     message.runtime.capacity_unreserved_bytes = 8192u;
     message.runtime.backend = YVEX_BACKEND_KIND_CUDA;
     message.runtime.context_capacity = 4096u;
+    message.runtime.metrics.current_rss_bytes = 3ull * 1073741824ull;
+    message.runtime.metrics.mapped_artifact_bytes = 2ull * 1073741824ull;
+    message.runtime.metrics.resident_device_bytes = 1073741824ull;
     strcpy(message.runtime.target_id, "deepseek4-v4-flash-dspark");
     memset(message.runtime.runtime_model_identity, 'a', 64u);
     message.runtime.runtime_model_identity[64] = '\0';
@@ -563,6 +566,8 @@ static int send_generation(int fd, const yvex_client_request *request,
                                ? "Reasoning continuity accepted."
                            : has_tool_result ? "Match context accepted."
                                              : "hello from yvex";
+        if (!provider && native_prompt_contains(request, "HEAD_TAIL_END"))
+            text = "line editing accepted";
         if (request_contains(provider, "exactly these keys"))
             text = "{\"status\":\"ok\",\"operation_mode\":\"observe\","
                    "\"real_data\":false}";
