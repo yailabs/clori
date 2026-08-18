@@ -3,6 +3,7 @@
 #define INCLUDE_YVEX_INTERNAL_COMPONENT_H_INCLUDED
 
 #include <yvex/internal/artifact.h>
+#include <yvex/internal/latent.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -117,6 +118,8 @@ typedef struct yvex_runtime_av_latent_context {
     const char *conditioning_identity;
     int (*cancelled)(void *);
     void *cancellation_context;
+    yvex_runtime_latent_observe_fn observe;
+    void *observer_context;
 } yvex_runtime_av_latent_context;
 
 int yvex_component_buffer_open(

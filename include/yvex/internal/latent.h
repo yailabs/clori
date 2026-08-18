@@ -18,6 +18,7 @@ extern "C" {
 #define YVEX_RUNTIME_AV_TEMPORAL_PATTERN_CAP 8u
 #define YVEX_RUNTIME_AV_TILE_CAP 16u
 #define YVEX_RUNTIME_LATENT_EVALUATOR_SCHEMA_V1 1u
+#define YVEX_RUNTIME_LATENT_OBSERVATION_SCHEMA_V1 1u
 
 typedef struct yvex_runtime_av_plan_policy {
     unsigned int schema_version, maximum_steps;
@@ -60,6 +61,26 @@ typedef int (*yvex_runtime_latent_advance_fn)(
     unsigned long long values, float timestep, float sigma, float sigma_next,
     yvex_error *err);
 
+typedef enum yvex_runtime_latent_observation_stage {
+    YVEX_RUNTIME_LATENT_OBSERVATION_INITIAL = 1,
+    YVEX_RUNTIME_LATENT_OBSERVATION_EVALUATED = 2,
+    YVEX_RUNTIME_LATENT_OBSERVATION_ADVANCED = 3,
+    YVEX_RUNTIME_LATENT_OBSERVATION_FINAL = 4
+} yvex_runtime_latent_observation_stage;
+
+typedef struct yvex_runtime_latent_observation {
+    unsigned int schema_version;
+    yvex_runtime_latent_observation_stage stage;
+    unsigned long long completed_steps, video_values, audio_values;
+    float video_timestep, audio_timestep;
+    const float *video_state, *audio_state;
+    const float *video_velocity, *audio_velocity;
+} yvex_runtime_latent_observation;
+
+/* The view is immutable and borrowed for one synchronous call. Failure aborts latent publication. */
+typedef int (*yvex_runtime_latent_observe_fn)(
+    void *context, const yvex_runtime_latent_observation *observation, yvex_error *err);
+
 typedef struct yvex_runtime_latent_request {
     unsigned int schema_version;
     unsigned long long seed, video_values, audio_values, step_count;
@@ -71,6 +92,8 @@ typedef struct yvex_runtime_latent_request {
     void *execution_context;
     int (*cancel_requested)(void *context);
     void *cancel_context;
+    yvex_runtime_latent_observe_fn observe;
+    void *observer_context;
 } yvex_runtime_latent_request;
 
 typedef struct yvex_runtime_latent_result {

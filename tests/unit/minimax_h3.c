@@ -14,10 +14,18 @@
 #include <yvex/internal/operator_graph.h>
 #include <yvex/internal/runtime.h>
 
+#include <stdint.h>
 #include <string.h>
 
 #define TEST_ID_A "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 #define TEST_ID_B "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+
+static uint32_t float_bits(float value)
+{
+    uint32_t bits;
+    memcpy(&bits, &value, sizeof(bits));
+    return bits;
+}
 
 static int test_family_catalog(void)
 {
@@ -675,7 +683,7 @@ static int test_video_numeric_primitives(void)
 
 static int test_t2va_plan(void)
 {
-    yvex_minimax_h3_t2va_plan first, repeated;
+    yvex_minimax_h3_t2va_plan first, repeated, source_scale;
     float sample[2] = {0.5f, -1.0f}, velocity[2] = {2.0f, 4.0f};
     float stepped[2] = {13.0f, 13.0f};
     yvex_error err;
@@ -696,6 +704,22 @@ static int test_t2va_plan(void)
                          fabsf(first.audio_sigmas[18] - 0.142857149f) < 1.0e-7f &&
                          first.video_sigmas[19] == 0.0f && first.audio_sigmas[19] == 0.0f,
                      "t2va plan includes terminal zero in the paired shifted sigma grids");
+    YVEX_TEST_ASSERT(
+        yvex_graph_register_minimax_h3()->t2va_plan_build(
+            &source_scale, 28ull, 768ull, 768ull, 124ull, 49u, &err) == YVEX_OK &&
+            float_bits(source_scale.video_sigmas[26]) == UINT32_C(0x3f69f5d3) &&
+            float_bits(source_scale.video_sigmas[32]) == UINT32_C(0x3f5d49c4) &&
+            float_bits(source_scale.video_sigmas[42]) == UINT32_C(0x3f2aaaaa) &&
+            float_bits(source_scale.video_sigmas[44]) == UINT32_C(0x3f13b13a) &&
+            float_bits(source_scale.audio_sigmas[16]) == UINT32_C(0x3f5c61f2) &&
+            float_bits(source_scale.audio_sigmas[22]) == UINT32_C(0x3f495207) &&
+            float_bits(source_scale.audio_sigmas[26]) == UINT32_C(0x3f39efd4) &&
+            float_bits(source_scale.audio_sigmas[32]) == UINT32_C(0x3f1d4d1c) &&
+            float_bits(source_scale.audio_sigmas[35]) == UINT32_C(0x3f0ba2e8) &&
+            float_bits(source_scale.audio_sigmas[39]) == UINT32_C(0x3ede9bd2) &&
+            float_bits(source_scale.audio_sigmas[42]) == UINT32_C(0x3eaaaaaa) &&
+            float_bits(source_scale.audio_sigmas[44]) == UINT32_C(0x3e822b63),
+        "source-scale sigma grids reproduce the released torch.linspace F32 bit patterns");
     YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->scheduler_step(
                          stepped, sample, velocity, 2ull, 0.75f, 0.25f, 0.1f,
                          &err) == YVEX_OK &&

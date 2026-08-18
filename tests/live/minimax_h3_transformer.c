@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <unistd.h>
 
 #include <yvex/artifact.h>
 #include <yvex/gguf.h>
@@ -172,6 +173,79 @@ static int file_write(const char *path, const float *values, unsigned long long 
     valid = fwrite(values, sizeof(*values), (size_t)count, file) == count;
     if (fclose(file) != 0) valid = 0;
     return valid;
+}
+
+static int file_write_atomic(const char *path, const float *values, unsigned long long count)
+{
+    char temporary[1024];
+    FILE *file;
+    int length = snprintf(temporary, sizeof(temporary), "%s.part", path), valid;
+    if (length < 0 || (size_t)length >= sizeof(temporary)) return 0;
+    file = fopen(temporary, "wb");
+    if (!file) return 0;
+    valid = fwrite(values, sizeof(*values), (size_t)count, file) == count &&
+            fflush(file) == 0 && fsync(fileno(file)) == 0;
+    if (fclose(file) != 0) valid = 0;
+    if (valid && rename(temporary, path) != 0) valid = 0;
+    if (!valid) remove(temporary);
+    return valid;
+}
+
+typedef struct {
+    const char *root;
+    unsigned long long step_count;
+} latent_checkpoint_context;
+
+static int latent_checkpoint_write(
+    const latent_checkpoint_context *context, const char *domain, const char *kind,
+    unsigned long long step, const float *values, unsigned long long count)
+{
+    char path[1024];
+    int length = snprintf(path, sizeof(path), "%s/%s.%s.step-%03llu.f32",
+                          context->root, domain, kind, step);
+    return length > 0 && (size_t)length < sizeof(path) && file_write_atomic(path, values, count);
+}
+
+static int latent_checkpoint_observe(
+    void *opaque, const yvex_runtime_latent_observation *observation, yvex_error *err)
+{
+    const latent_checkpoint_context *context = opaque;
+    unsigned long long middle = context ? context->step_count / 2ull : 0ull;
+    int selected = 0, valid;
+    const char *kind;
+    if (!context || !context->root || !observation) return YVEX_OK;
+    if (observation->stage == YVEX_RUNTIME_LATENT_OBSERVATION_INITIAL) {
+        selected = 1; kind = "initial";
+    } else if (observation->stage == YVEX_RUNTIME_LATENT_OBSERVATION_EVALUATED &&
+               (observation->completed_steps == 0ull ||
+                observation->completed_steps == middle ||
+                observation->completed_steps + 1ull == context->step_count)) {
+        selected = 1; kind = "velocity";
+    } else if (observation->stage == YVEX_RUNTIME_LATENT_OBSERVATION_ADVANCED &&
+               (observation->completed_steps == 1ull ||
+                observation->completed_steps == middle + 1ull ||
+                observation->completed_steps == context->step_count)) {
+        selected = 1; kind = "state";
+    } else if (observation->stage == YVEX_RUNTIME_LATENT_OBSERVATION_FINAL) {
+        selected = 1; kind = "final";
+    } else {
+        return YVEX_OK;
+    }
+    valid = latent_checkpoint_write(context, "video", kind, observation->completed_steps,
+                                    kind[0] == 'v' ? observation->video_velocity
+                                                   : observation->video_state,
+                                    observation->video_values) &&
+            latent_checkpoint_write(context, "audio", kind, observation->completed_steps,
+                                    kind[0] == 'v' ? observation->audio_velocity
+                                                   : observation->audio_state,
+                                    observation->audio_values);
+    if (!selected || valid) {
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    yvex_error_set(err, YVEX_ERR_IO, "minimax-h3.latent-checkpoint",
+                   "a selected latent checkpoint could not be published atomically");
+    return YVEX_ERR_IO;
 }
 
 static int compare(const char *name, const float *reference, const float *output,
@@ -678,6 +752,8 @@ static int execute_latent_fixture(
     request_fixture fixture = {0};
     unsigned long long video_values, audio_values, conditioning_values, workspace_bytes;
     char conditioning_identity[65];
+    const char *checkpoint_root = getenv("YVEX_MINIMAX_H3_LATENT_CHECKPOINT_ROOT");
+    latent_checkpoint_context checkpoint = {checkpoint_root, steps};
     yvex_error err, cleanup;
     int rc = YVEX_OK, cleanup_rc;
     if (!artifact_path || !fixture_root || !video_output_path || !audio_output_path ||
@@ -725,6 +801,8 @@ static int execute_latent_fixture(
     context.timestep_capacity = plan.packed_rows;
     context.block_count = block_count;
     context.conditioning_identity = conditioning_identity;
+    context.observe = checkpoint_root && checkpoint_root[0] ? latent_checkpoint_observe : NULL;
+    context.observer_context = &checkpoint;
     if (rc == YVEX_OK)
         rc = graph->t2va_latent_execute(
             &plan, &context, seed, workspace_bytes, fixture.video_output, video_values,

@@ -2,6 +2,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,6 +24,70 @@ static unsigned long long read_u32(const unsigned char *data)
 {
     return (unsigned long long)data[0] | ((unsigned long long)data[1] << 8u) |
            ((unsigned long long)data[2] << 16u) | ((unsigned long long)data[3] << 24u);
+}
+
+static int16_t read_i16(const unsigned char *data)
+{
+    uint16_t bits = (uint16_t)data[0] | (uint16_t)((uint16_t)data[1] << 8u);
+    int16_t value;
+    memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+static unsigned char expected_pixel(float value)
+{
+    if (value <= 0.0f) return 0u;
+    if (value >= 1.0f) return 255u;
+    return (unsigned char)(value * 255.0f);
+}
+
+static int16_t expected_sample(float value)
+{
+    if (value <= -1.0f) return INT16_MIN;
+    if (value >= 1.0f) return INT16_MAX;
+    return value >= 0.0f ? (int16_t)(value * 32767.0f + 0.5f)
+                         : (int16_t)(value * 32768.0f - 0.5f);
+}
+
+static int verify_media_payload(
+    const unsigned char *bytes, size_t count,
+    const float video[3u * TEST_FRAMES * TEST_HEIGHT * TEST_WIDTH],
+    const float audio[2u * TEST_AUDIO_SAMPLES])
+{
+    unsigned long long cursor = 324ull, frame, row, column, channel;
+    unsigned long long pixels = TEST_WIDTH * TEST_HEIGHT;
+    for (frame = 0ull; frame < TEST_FRAMES; ++frame) {
+        unsigned long long frame_bytes, frame_end, start, stop, audio_bytes, sample;
+        if (cursor + 8ull > count || memcmp(bytes + cursor, "00db", 4u) != 0) return 0;
+        frame_bytes = read_u32(bytes + cursor + 4ull);
+        frame_end = cursor + 8ull + frame_bytes;
+        if (frame_bytes != 16ull || frame_end > count) return 0;
+        cursor += 8ull;
+        for (row = TEST_HEIGHT; row > 0ull; --row) {
+            for (column = 0ull; column < TEST_WIDTH; ++column)
+                for (channel = 3ull; channel > 0ull; --channel) {
+                    float value = video[((channel - 1ull) * TEST_FRAMES + frame) * pixels +
+                                        (row - 1ull) * TEST_WIDTH + column];
+                    if (bytes[cursor++] != expected_pixel(value)) return 0;
+                }
+            if (bytes[cursor++] != 0u || bytes[cursor++] != 0u) return 0;
+        }
+        if (cursor != frame_end || cursor + 8ull > count ||
+            memcmp(bytes + cursor, "01wb", 4u) != 0) return 0;
+        start = (frame * 4000ull) / TEST_FRAMES;
+        stop = ((frame + 1ull) * 4000ull) / TEST_FRAMES;
+        audio_bytes = read_u32(bytes + cursor + 4ull);
+        if (audio_bytes != (stop - start) * 4ull || cursor + 8ull + audio_bytes > count) return 0;
+        cursor += 8ull;
+        for (sample = start; sample < stop; ++sample)
+            for (channel = 0ull; channel < 2ull; ++channel) {
+                float value = audio[channel * TEST_AUDIO_SAMPLES + sample];
+                if (read_i16(bytes + cursor) != expected_sample(value)) return 0;
+                cursor += 2ull;
+            }
+    }
+    return cursor + 8ull <= count && memcmp(bytes + cursor, "idx1", 4u) == 0 &&
+           read_u32(bytes + cursor + 4ull) == TEST_FRAMES * 2ull * 16ull;
 }
 
 static int cancelled(void *context)
@@ -140,6 +205,8 @@ static int test_valid_and_deterministic(void)
                          memcmp(bytes_a + 8u, "AVI ", 4u) == 0 &&
                          memcmp(bytes_a + 320u, "movi", 4u) == 0,
                      "AVI structure and extent");
+    YVEX_TEST_ASSERT(verify_media_payload(bytes_a, count_a, video, audio),
+                     "independent AVI readback preserves frame coordinates, BGR, stride, and PCM");
     request.path = path_a;
     rc = yvex_media_avi_publish(&request, &second, &err);
     YVEX_TEST_ASSERT(rc != YVEX_OK, "existing publication is never overwritten");

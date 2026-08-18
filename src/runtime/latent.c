@@ -47,6 +47,36 @@ static int latent_state_identity(
     return 1;
 }
 
+static int latent_observe(
+    const yvex_runtime_latent_request *request,
+    yvex_runtime_latent_observation_stage stage, unsigned long long completed_steps,
+    const float *state, const float *velocity, float video_timestep,
+    float audio_timestep, yvex_error *err)
+{
+    yvex_runtime_latent_observation observation;
+    int rc;
+    if (!request->observe) return YVEX_OK;
+    memset(&observation, 0, sizeof(observation));
+    observation.schema_version = YVEX_RUNTIME_LATENT_OBSERVATION_SCHEMA_V1;
+    observation.stage = stage;
+    observation.completed_steps = completed_steps;
+    observation.video_values = request->video_values;
+    observation.audio_values = request->audio_values;
+    observation.video_timestep = video_timestep;
+    observation.audio_timestep = audio_timestep;
+    observation.video_state = state;
+    observation.audio_state = state + request->video_values;
+    if (velocity) {
+        observation.video_velocity = velocity;
+        observation.audio_velocity = velocity + request->video_values;
+    }
+    rc = request->observe(request->observer_context, &observation, err);
+    if (rc == YVEX_OK) return YVEX_OK;
+    if (!yvex_error_is_set(err))
+        return latent_refuse(err, YVEX_ERR, "latent observation failed without an error");
+    return yvex_error_code(err);
+}
+
 static int latent_request_validate(
     const yvex_runtime_latent_request *request,
     unsigned long long video_capacity, unsigned long long audio_capacity,
@@ -112,12 +142,19 @@ static int latent_execution_identity(
 static int latent_shifted_sigmas(
     float *output, unsigned int points, float shift, yvex_error *err)
 {
-    unsigned int index;
+    float step;
+    unsigned int half, index;
     if (!output || points < 2u || points > 65u || !isfinite(shift) || shift <= 0.0f)
         return latent_refuse(err, YVEX_ERR_INVALID_ARG,
                              "a bounded positive shifted sigma grid is required");
+    step = -1.0f / (float)(points - 1u);
+    half = points / 2u;
     for (index = 0u; index < points; ++index) {
-        float base = (float)(points - 1u - index) / (float)(points - 1u);
+        /* The released scheduler builds this grid with torch.linspace on CPU. Its symmetric
+           FMA construction is observably different from direct rational division at a few ULPs. */
+        float base = index < half
+                         ? fmaf((float)index, step, 1.0f)
+                         : fmaf((float)(points - index - 1u), -step, 0.0f);
         output[index] = shift * base / (1.0f + (shift - 1.0f) * base);
     }
     yvex_error_clear(err);
@@ -1443,6 +1480,9 @@ int yvex_runtime_latent_execute(
         !latent_state_identity("yvex.runtime.latent.initial.v1", state, total,
                                staged.initial_state_identity))
         rc = latent_refuse(err, YVEX_ERR_STATE, "initial latent identity failed");
+    if (rc == YVEX_OK)
+        rc = latent_observe(request, YVEX_RUNTIME_LATENT_OBSERVATION_INITIAL, 0ull,
+                            state, NULL, 0.0f, 0.0f, err);
     for (step = 0ull; rc == YVEX_OK && step < request->step_count; ++step) {
         float video_timestep = 1.0f - request->video_sigmas[step];
         float audio_timestep = 1.0f - request->audio_sigmas[step];
@@ -1456,6 +1496,9 @@ int yvex_runtime_latent_execute(
             video_timestep, audio_timestep, velocity,
             velocity + request->video_values, err);
         if (rc == YVEX_OK)
+            rc = latent_observe(request, YVEX_RUNTIME_LATENT_OBSERVATION_EVALUATED, step,
+                                state, velocity, video_timestep, audio_timestep, err);
+        if (rc == YVEX_OK)
             rc = request->advance(
                 next, state, velocity,
                 request->video_values, video_timestep, request->video_sigmas[step],
@@ -1466,7 +1509,12 @@ int yvex_runtime_latent_execute(
                 state + request->video_values, velocity + request->video_values,
                 request->audio_values, audio_timestep, request->audio_sigmas[step],
                 request->audio_sigmas[step + 1ull], err);
-        if (rc == YVEX_OK) { swap = state; state = next; next = swap; staged.completed_steps++; }
+        if (rc == YVEX_OK) {
+            swap = state; state = next; next = swap; staged.completed_steps++;
+            rc = latent_observe(request, YVEX_RUNTIME_LATENT_OBSERVATION_ADVANCED,
+                                staged.completed_steps, state, NULL,
+                                video_timestep, audio_timestep, err);
+        }
     }
     if (rc == YVEX_OK && request->cancel_requested &&
         request->cancel_requested(request->cancel_context))
@@ -1476,6 +1524,9 @@ int yvex_runtime_latent_execute(
         !latent_state_identity("yvex.runtime.latent.final.v1", state, total,
                                staged.final_state_identity))
         rc = latent_refuse(err, YVEX_ERR_STATE, "final latent identity failed");
+    if (rc == YVEX_OK)
+        rc = latent_observe(request, YVEX_RUNTIME_LATENT_OBSERVATION_FINAL,
+                            staged.completed_steps, state, NULL, 0.0f, 0.0f, err);
     staged.schema_version = YVEX_RUNTIME_LATENT_SCHEMA_V1;
     staged.video_values = request->video_values;
     staged.audio_values = request->audio_values;

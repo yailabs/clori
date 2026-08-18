@@ -1679,16 +1679,15 @@ static int t2va_latent_execute(const yvex_minimax_h3_t2va_plan *plan,
     }
     execution.plan = plan; execution.context = context;
     rc = t2va_omni_identity(plan, context, summary, execution.evidence.staged.evaluator_identity, err);
-    if (rc == YVEX_OK)
-        rc = yvex_runtime_latent_evaluator_begin(
+    if (rc == YVEX_OK) rc = yvex_runtime_latent_evaluator_begin(
             &execution.evidence, "yvex.minimax-h3.t2va.transformer-chain.v1",
             execution.evidence.staged.evaluator_identity, err);
     request.seed = seed; request.maximum_workspace_bytes = maximum_workspace_bytes;
     request.evaluator_identity = execution.evidence.staged.evaluator_identity;
     request.evaluate = t2va_omni_evaluate; request.execution_context = &execution;
     request.cancel_requested = context->cancelled; request.cancel_context = context->cancellation_context;
-    if (rc == YVEX_OK)
-        rc = yvex_runtime_av_latent_execute(plan, &request, video, video_capacity,
+    request.observe = context->observe; request.observer_context = context->observer_context;
+    if (rc == YVEX_OK) rc = yvex_runtime_av_latent_execute(plan, &request, video, video_capacity,
                                              audio, audio_capacity, latent_result, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_latent_evaluator_finish(

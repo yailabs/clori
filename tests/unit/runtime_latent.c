@@ -5,7 +5,11 @@
 #include <math.h>
 #include <string.h>
 
-typedef struct { int cancelled, evaluations; } latent_fixture;
+typedef struct {
+    int cancelled, evaluations, observations, observation_mismatch, fail_observation;
+    yvex_runtime_latent_observation_stage stages[8];
+    unsigned long long completed_steps[8];
+} latent_fixture;
 
 static int latent_evaluate(
     void *context, const float *video, unsigned long long video_values,
@@ -43,6 +47,32 @@ static int latent_cancel(void *context)
     return ((latent_fixture *)context)->cancelled;
 }
 
+static int latent_observe(
+    void *context, const yvex_runtime_latent_observation *observation, yvex_error *err)
+{
+    latent_fixture *fixture = context;
+    int index = fixture->observations++;
+    if (!observation || observation->schema_version != YVEX_RUNTIME_LATENT_OBSERVATION_SCHEMA_V1 ||
+        observation->video_values != 3ull || observation->audio_values != 2ull ||
+        !observation->video_state || !observation->audio_state || index >= 8 ||
+        ((observation->stage == YVEX_RUNTIME_LATENT_OBSERVATION_EVALUATED) !=
+         (observation->video_velocity && observation->audio_velocity))) {
+        fixture->observation_mismatch = 1;
+        yvex_error_set(err, YVEX_ERR_FORMAT, "test.latent-observation",
+                       "latent observation did not preserve its typed state boundary");
+        return YVEX_ERR_FORMAT;
+    }
+    fixture->stages[index] = observation->stage;
+    fixture->completed_steps[index] = observation->completed_steps;
+    if (fixture->fail_observation == index + 1) {
+        yvex_error_set(err, YVEX_ERR_IO, "test.latent-observation",
+                       "synthetic latent observation failure");
+        return YVEX_ERR_IO;
+    }
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
 static yvex_runtime_latent_request latent_request(latent_fixture *fixture)
 {
     static const float video_sigmas[3] = {1.0f, 0.5f, 0.0f};
@@ -57,7 +87,7 @@ static yvex_runtime_latent_request latent_request(latent_fixture *fixture)
         .plan_identity = identity, .evaluator_identity = identity,
         .evaluate = latent_evaluate, .advance = latent_advance,
         .execution_context = fixture, .cancel_requested = latent_cancel,
-        .cancel_context = fixture,
+        .cancel_context = fixture, .observe = latent_observe, .observer_context = fixture,
     };
     return request;
 }
@@ -333,7 +363,8 @@ static int video_reconstruction_decode(
     video_reconstruction_fixture *fixture = context;
     unsigned long long channel, frame, row, column, expected_tile = fixture->calls % 4ull;
     unsigned long long chunk = fixture->calls / 4ull;
-    float expected = (float)(chunk * 500ull + (expected_tile / 2ull) * 10ull + expected_tile % 2ull);
+    unsigned long long tile_y = expected_tile / 2ull, tile_x = expected_tile % 2ull;
+    float expected = (float)(chunk * 500ull + tile_y * 10ull + tile_x);
     if (!window || window->latent_channels != 1ull || window->latent_frames != 7ull ||
         window->latent_height != 2ull || window->latent_width != 2ull ||
         window->output_capacity != 3ull * 28ull * 4ull * 4ull || window->latent[0] != expected) {
@@ -342,12 +373,31 @@ static int video_reconstruction_decode(
                        "the runtime did not provide the expected latent tile");
         return YVEX_ERR_FORMAT;
     }
+    for (frame = 0ull; frame < 7ull; ++frame)
+        for (row = 0ull; row < 2ull; ++row)
+            for (column = 0ull; column < 2ull; ++column) {
+                unsigned long long source_frame = chunk * 5ull + frame;
+                unsigned long long source_row = tile_y + row;
+                unsigned long long source_column = tile_x + column;
+                float source_expected;
+                if (source_frame >= 37ull) source_frame = 36ull;
+                source_expected = (float)(source_frame * 100ull + source_row * 10ull +
+                                          source_column);
+                if (window->latent[(frame * 2ull + row) * 2ull + column] != source_expected) {
+                    fixture->input_mismatch = 1;
+                    yvex_error_set(err, YVEX_ERR_FORMAT, "test.video-reconstruction",
+                                   "the runtime transposed or displaced a latent tile coordinate");
+                    return YVEX_ERR_FORMAT;
+                }
+            }
     for (channel = 0ull; channel < 3ull; ++channel)
         for (frame = 0ull; frame < 28ull; ++frame)
             for (row = 0ull; row < 4ull; ++row)
                 for (column = 0ull; column < 4ull; ++column)
                     window->output[((channel * 28ull + frame) * 4ull + row) * 4ull + column] =
-                        expected + (float)frame + (float)(channel * 10000ull);
+                        (float)(channel * 1000ull + chunk * 100ull + frame * 2ull) +
+                        (float)(tile_y * 2ull + row) * 0.1f +
+                        (float)(tile_x * 2ull + column) * 0.01f;
     memset(evidence, 0, sizeof(*evidence));
     evidence->output_values = window->output_capacity;
     evidence->kernel_launches = 2ull; evidence->h2d_bytes = 3ull;
@@ -380,9 +430,8 @@ static int test_video_reconstruction_execution(void)
     video_reconstruction_fixture invalid_fixture = {.invalid_evidence = 1};
     float latent[37 * 3 * 3], first_output[3 * 124 * 6 * 6], repeated_output[3 * 124 * 6 * 6];
     float refused_output[3 * 124 * 6 * 6];
-    const float output_mean[3] = {0.1f, 0.2f, 0.3f};
-    const float output_std[3] = {0.1f, 0.1f, 0.1f};
-    unsigned long long frame, row, column, index;
+    unsigned long long channel, frame, row, column, index;
+    int coordinate_mismatch = 0;
     yvex_error err;
     for (frame = 0ull; frame < 37ull; ++frame)
         for (row = 0ull; row < 3ull; ++row)
@@ -398,8 +447,6 @@ static int test_video_reconstruction_execution(void)
     execution.plan = &plan; execution.latent = latent; execution.latent_channels = 1ull;
     execution.latent_capacity = 37ull * 3ull * 3ull;
     execution.maximum_workspace_bytes = 1024ull * 1024ull;
-    execution.output_channel_mean = output_mean; execution.output_channel_std = output_std;
-    execution.output_channel_count = 3ull;
     execution.decode = video_reconstruction_decode;
     execution.decode_context = &first_fixture;
     execution.cancel_requested = video_reconstruction_cancel;
@@ -409,16 +456,44 @@ static int test_video_reconstruction_execution(void)
             3ull * 124ull * 6ull * 6ull, &first, &err) == YVEX_OK && first.complete &&
             first.decode_calls == 28ull && first.kernel_launches == 56ull &&
             first.h2d_bytes == 84ull && first.d2h_bytes == 112ull &&
-            first.peak_device_bytes == 5ull && !first_fixture.input_mismatch &&
-            first_output[0] == 0.4f && first_output[2] == 0.4f &&
-            first_output[3] == 0.45f && first_output[4] == 0.5f &&
-            first_output[6ull * 3ull + 3ull] == 1.0f &&
-            first_output[17ull * 36ull] == 1.0f &&
-            first_output[18ull * 36ull] == 1.0f &&
-            first_output[21ull * 36ull] == 1.0f &&
-            first_output[22ull * 36ull] == 1.0f &&
-            first_output[123ull * 36ull] == 1.0f,
-        "video reconstruction executes exact spatial and temporal source blending");
+            first.peak_device_bytes == 5ull && !first_fixture.input_mismatch,
+        "video reconstruction executes every coordinate-coded decoder window");
+    for (channel = 0ull; channel < 3ull && !coordinate_mismatch; ++channel)
+        for (frame = 0ull; frame < 124ull && !coordinate_mismatch; ++frame)
+            for (row = 0ull; row < 6ull && !coordinate_mismatch; ++row)
+                for (column = 0ull; column < 6ull; ++column) {
+                    unsigned long long chunk, local_frame;
+                    float expected;
+                    if (frame < 119ull) {
+                        unsigned long long position = frame % 17ull;
+                        chunk = frame / 17ull;
+                        local_frame = 3ull + position;
+                        expected = (float)(channel * 1000ull + chunk * 100ull +
+                                           local_frame * 2ull) +
+                                   (float)row * 0.1f + (float)column * 0.01f;
+                        if (chunk && position < 5ull) {
+                            float prior = (float)(channel * 1000ull + (chunk - 1ull) * 100ull +
+                                                  (23ull + position) * 2ull) +
+                                          (float)row * 0.1f + (float)column * 0.01f;
+                            float weight = (float)position / 5.0f;
+                            expected = prior * (1.0f - weight) + expected * weight;
+                        }
+                    } else {
+                        chunk = 6ull;
+                        local_frame = 23ull + frame - 119ull;
+                        expected = (float)(channel * 1000ull + chunk * 100ull +
+                                           local_frame * 2ull) +
+                                   (float)row * 0.1f + (float)column * 0.01f;
+                    }
+                    index = ((channel * 124ull + frame) * 6ull + row) * 6ull + column;
+                    if (fabsf(first_output[index] - expected) > 5.0e-4f) {
+                        coordinate_mismatch = 1;
+                        break;
+                    }
+                }
+    YVEX_TEST_ASSERT(
+        !coordinate_mismatch,
+        "video reconstruction preserves channel, frame, row, column, crop, and blend coordinates");
     execution.decode_context = &repeated_fixture; execution.cancel_context = &repeated_fixture;
     YVEX_TEST_ASSERT(
         yvex_runtime_av_video_reconstruct(&execution, repeated_output,
@@ -449,6 +524,8 @@ static int test_video_reconstruction_execution(void)
             !refused.complete && ((unsigned char *)refused_output)[0] == 0x5a,
         "video reconstruction refuses insufficient workspace before decoding");
     execution.maximum_workspace_bytes = 1024ull * 1024ull;
+    execution.output_channel_mean = (const float[3]){0.1f, 0.2f, 0.3f};
+    execution.output_channel_std = (const float[3]){0.1f, 0.1f, 0.1f};
     execution.output_channel_count = 2ull;
     YVEX_TEST_ASSERT(
         yvex_runtime_av_video_reconstruct(&execution, refused_output,
@@ -461,14 +538,21 @@ static int test_video_reconstruction_execution(void)
 int yvex_test_runtime_latent(void)
 {
     latent_fixture first_fixture = {0}, second_fixture = {0}, cancelled = {.cancelled = 1};
+    latent_fixture unobserved_fixture = {0};
+    latent_fixture observation_failed = {.fail_observation = 3};
     yvex_runtime_latent_request first_request = latent_request(&first_fixture);
     yvex_runtime_latent_request second_request = latent_request(&second_fixture);
     yvex_runtime_latent_request refused_request = latent_request(&cancelled);
-    yvex_runtime_latent_result first, second, refused;
+    yvex_runtime_latent_request observation_request = latent_request(&observation_failed);
+    yvex_runtime_latent_request unobserved_request = latent_request(&unobserved_fixture);
+    yvex_runtime_latent_result first, second, unobserved, refused;
     float first_video[3], first_audio[2], second_video[3], second_audio[2];
+    float unobserved_video[3], unobserved_audio[2];
     float refused_video[3], refused_audio[2];
     yvex_error err;
 
+    unobserved_request.observe = NULL;
+    unobserved_request.observer_context = NULL;
     memset(refused_video, 0x5a, sizeof(refused_video));
     memset(refused_audio, 0x5a, sizeof(refused_audio));
     YVEX_TEST_ASSERT(
@@ -479,16 +563,48 @@ int yvex_test_runtime_latent(void)
             first.completed && first.completed_steps == 2ull && first.model_evaluations == 2ull &&
             first.peak_workspace_bytes == 5ull * sizeof(float) * 4ull &&
             first_fixture.evaluations == 2 && second_fixture.evaluations == 2 &&
+            first_fixture.observations == 6 && second_fixture.observations == 6 &&
+            !first_fixture.observation_mismatch && !second_fixture.observation_mismatch &&
+            first_fixture.stages[0] == YVEX_RUNTIME_LATENT_OBSERVATION_INITIAL &&
+            first_fixture.stages[1] == YVEX_RUNTIME_LATENT_OBSERVATION_EVALUATED &&
+            first_fixture.stages[2] == YVEX_RUNTIME_LATENT_OBSERVATION_ADVANCED &&
+            first_fixture.stages[3] == YVEX_RUNTIME_LATENT_OBSERVATION_EVALUATED &&
+            first_fixture.stages[4] == YVEX_RUNTIME_LATENT_OBSERVATION_ADVANCED &&
+            first_fixture.stages[5] == YVEX_RUNTIME_LATENT_OBSERVATION_FINAL &&
+            first_fixture.completed_steps[0] == 0ull &&
+            first_fixture.completed_steps[1] == 0ull &&
+            first_fixture.completed_steps[2] == 1ull &&
+            first_fixture.completed_steps[3] == 1ull &&
+            first_fixture.completed_steps[4] == 2ull &&
+            first_fixture.completed_steps[5] == 2ull &&
             memcmp(first_video, second_video, sizeof(first_video)) == 0 &&
             memcmp(first_audio, second_audio, sizeof(first_audio)) == 0 &&
             strcmp(first.execution_identity, second.execution_identity) == 0,
         "paired latent execution is deterministic and completes every scheduled model evaluation");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_latent_execute(&unobserved_request, unobserved_video, 3ull,
+                                    unobserved_audio, 2ull, &unobserved, &err) == YVEX_OK &&
+            unobserved.completed && unobserved_fixture.observations == 0 &&
+            memcmp(first_video, unobserved_video, sizeof(first_video)) == 0 &&
+            memcmp(first_audio, unobserved_audio, sizeof(first_audio)) == 0 &&
+            strcmp(first.execution_identity, unobserved.execution_identity) == 0,
+        "diagnostic observation does not change latent values or execution identity");
     YVEX_TEST_ASSERT(
         yvex_runtime_latent_execute(&refused_request, refused_video, 3ull, refused_audio, 2ull,
                                     &refused, &err) == YVEX_ERR_CANCELLED &&
             !refused.completed && ((unsigned char *)refused_video)[0] == 0x5a &&
             ((unsigned char *)refused_audio)[0] == 0x5a,
         "cancelled latent execution leaves both output domains unpublished");
+    memset(refused_video, 0x5a, sizeof(refused_video));
+    memset(refused_audio, 0x5a, sizeof(refused_audio));
+    YVEX_TEST_ASSERT(
+        yvex_runtime_latent_execute(&observation_request, refused_video, 3ull,
+                                    refused_audio, 2ull, &refused, &err) == YVEX_ERR_IO &&
+            !refused.completed && observation_failed.observations == 3 &&
+            observation_failed.evaluations == 1 &&
+            ((unsigned char *)refused_video)[0] == 0x5a &&
+            ((unsigned char *)refused_audio)[0] == 0x5a,
+        "failed latent observation aborts both output domains transactionally");
     refused_request = latent_request(&cancelled);
     refused_request.cancel_requested = NULL;
     refused_request.maximum_workspace_bytes--;
