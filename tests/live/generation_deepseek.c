@@ -1421,7 +1421,8 @@ static int live_reasoning_mode_equivalence(
     static const yvex_reasoning_policy reasoning_modes[] = {
         YVEX_REASONING_DISABLED, YVEX_REASONING_ENABLED,
         YVEX_REASONING_MAXIMUM};
-    static const unsigned char prompt[] = "Hi";
+    static const unsigned char prompt[] =
+        "mi spieghi come funziona un llm";
     yvex_provider_message message = {
         .role = YVEX_PROVIDER_ROLE_USER,
         .content = {prompt, sizeof(prompt) - 1u}};

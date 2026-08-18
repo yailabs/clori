@@ -316,7 +316,7 @@ static int generation_prefill(
     const yvex_transformer_plan_summary *plan = yvex_transformer_plan_summary_get(
         yvex_runtime_transformer_context_plan(context->transformer));
     yvex_expert_worklist_observation worklists = {0};
-    unsigned long long offset = 0ull, suffix_count, maximum_chunk, maximum_values;
+    unsigned long long offset = 0ull, suffix_count, maximum_chunk, maximum_values, compiled_row_width = 0ull;
     float *buffer = NULL;
     const int device_only =
         context->options.backend == YVEX_BACKEND_KIND_CUDA &&
@@ -333,6 +333,10 @@ static int generation_prefill(
                                  "generation turn requires one exact new prompt suffix token");
     suffix_count = encoded->tokens.len - reusable_prefix;
     maximum_chunk = context->options.prefill_chunk_tokens;
+    rc = yvex_runtime_model_compatible_batch_width_copy(context->model, &compiled_row_width, err);
+    if (rc != YVEX_OK) return rc;
+    /* Configured prefill remains bounded by the compiler-sealed routed-row envelope. */
+    if (compiled_row_width > 1ull && maximum_chunk > compiled_row_width) maximum_chunk = compiled_row_width;
     if (maximum_chunk > suffix_count) maximum_chunk = suffix_count;
     if (!plan || !yvex_core_u64_mul(maximum_chunk, plan->hidden_width,
                                     &maximum_values) ||

@@ -541,6 +541,23 @@ static int assert_encoded_moe(yvex_backend *backend)
                         1e-6f,
                 "CUDA route selection and weights match the CPU oracle");
     }
+    worklist_policy.supported_width_mask = 0xfeull;
+    YVEX_TEST_ASSERT(
+        yvex_expert_worklist_policy_seal(&worklist_policy, &err) == YVEX_OK,
+        "seal a policy that excludes the requested CUDA row width");
+    reference_output->is_written = 0;
+    memset(&result, 0, sizeof(result));
+    rc = operations->execute_rows(
+        backend, &job, &rows, &output, &result, &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_ERR_UNSUPPORTED && !result.completed &&
+            !yvex_device_tensor_is_written(reference_output),
+        "unsupported worklist width refuses before CUDA graph mutation");
+    YVEX_TEST_ASSERT(
+        moe_test_execution_contract(
+            &job, &rows, &execution_batch, &worklist_policy,
+            &execution_source, execution_rows, ROWS, &err),
+        "restore the admitted expert worklist contract after width refusal");
     for (slot = YVEX_MOE_WEIGHT_ROUTED_GATE;
          slot <= YVEX_MOE_WEIGHT_SHARED_DOWN; ++slot) {
         job.weights[slot].activation = YVEX_EXECUTION_ACTIVATION_DEVICE_ENCODED;

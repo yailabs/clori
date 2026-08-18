@@ -423,13 +423,21 @@ extern "C" __global__ void yvex_moe_grouped_up_rows(
     unsigned long long ordered_pair = (unsigned long long)blockIdx.x / rows_per_pair;
     unsigned long long output_row = ((unsigned long long)blockIdx.x % rows_per_pair) *
                                     8ull + warp;
-    if (!status || ordered_pair >= pair_count) return;
+    if (!status || *status || ordered_pair >= pair_count) return;
+    if (!gate || !up || !input || !intermediate || !topk ||
+        !gate_row_bytes || !up_row_bytes || !input_extent ||
+        !intermediate_width || !isfinite(limit) || limit <= 0.0) {
+        if (!lane) atomicCAS(status, 0, 2);
+        return;
+    }
     unsigned long long source_pair = order ? order[ordered_pair] : ordered_pair;
+    if (source_pair >= pair_count) {
+        if (!lane) atomicCAS(status, 0, 2);
+        return;
+    }
     unsigned long long source_row = source_pair / topk;
     unsigned long long expert = selected ? selected[source_pair] : 0ull;
-    if (!gate || !up || !input || !intermediate || expert >= expert_count ||
-        source_pair >= pair_count || !topk || !gate_row_bytes || !up_row_bytes ||
-        !input_extent || !intermediate_width || !isfinite(limit) || limit <= 0.0) {
+    if (expert >= expert_count) {
         if (!lane) atomicCAS(status, 0, 2);
         return;
     }
@@ -489,12 +497,19 @@ extern "C" __global__ void yvex_moe_grouped_down_rows(
     unsigned long long ordered_pair = (unsigned long long)blockIdx.x / rows_per_pair;
     unsigned long long output_row = ((unsigned long long)blockIdx.x % rows_per_pair) *
                                     8ull + warp;
-    if (!status || ordered_pair >= pair_count) return;
+    if (!status || *status || ordered_pair >= pair_count) return;
+    if (!down || !intermediate || !pair_outputs || !topk || !row_bytes ||
+        !intermediate_extent || (q8_input && row_bytes % intermediate_extent)) {
+        if (!lane) atomicCAS(status, 0, 2);
+        return;
+    }
     unsigned long long source_pair = order ? order[ordered_pair] : ordered_pair;
+    if (source_pair >= pair_count) {
+        if (!lane) atomicCAS(status, 0, 2);
+        return;
+    }
     unsigned long long expert = selected ? selected[source_pair] : 0ull;
-    if (!down || !intermediate || !pair_outputs || expert >= expert_count ||
-        source_pair >= pair_count || !topk || !row_bytes || !intermediate_extent ||
-        (q8_input && row_bytes % intermediate_extent)) {
+    if (expert >= expert_count) {
         if (!lane) atomicCAS(status, 0, 2);
         return;
     }

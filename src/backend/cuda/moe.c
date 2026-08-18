@@ -835,11 +835,7 @@ int yvex_backend_moe_add_expert(yvex_backend_moe_execution *execution,
     }
     return rc;
 }
-/*
- * Publish one complete CUDA MoE output.
- *
- * Backend transaction.
- */
+/* Publish one complete CUDA MoE output as a backend transaction. */
 int yvex_backend_moe_finish(yvex_backend_moe_execution *execution,
                             yvex_moe_layer_result *result, yvex_error *err)
 {
@@ -946,11 +942,7 @@ int yvex_backend_moe_finish(yvex_backend_moe_execution *execution,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/*
- * Release one CUDA MoE transaction.
- *
- * Retains retryable ownership.
- */
+/* Release one CUDA MoE transaction while retaining retryable ownership. */
 int yvex_backend_moe_close(yvex_backend_moe_execution **execution, yvex_error *err)
 {
     int rc;
@@ -1860,8 +1852,12 @@ static int moe_cuda_execute_rows(yvex_backend *backend,
     yvex_moe_weight_view routed_weights[3], shared_weights[3];
     unsigned long long pairs = 0ull, required = 0ull, active_bytes = 0ull;
     unsigned long long active_base = 0ull, active_per_expert = 0ull;
-    int rc, cleanup_rc;
+    int rc, cleanup_rc, unsupported_width;
     if (result) memset(result, 0, sizeof(*result));
+    unsupported_width =
+        job && rows && job->worklist_policy &&
+        (rows->row_count >= 63ull || !(job->worklist_policy->supported_width_mask &
+                                      (1ull << rows->row_count)));
     if (!backend || !job || !rows || !output || !result ||
         ((job->execution_batch == NULL) != (job->worklist_policy == NULL)) ||
         (job->execution_batch &&
@@ -1869,7 +1865,7 @@ static int moe_cuda_execute_rows(yvex_backend *backend,
           yvex_expert_worklist_policy_validate(job->worklist_policy, NULL) != YVEX_OK ||
           job->execution_batch->row_count != rows->row_count ||
           job->execution_batch->provenance != rows->provenance ||
-          job->execution_batch->phase != rows->phase)) ||
+          job->execution_batch->phase != rows->phase || unsupported_width)) ||
         (rows->execution_profile_identity &&
          (!job->execution_batch || !job->worklist_policy)) ||
         yvex_backend_kind_of(backend) != YVEX_BACKEND_KIND_CUDA ||
@@ -1877,8 +1873,9 @@ static int moe_cuda_execute_rows(yvex_backend *backend,
         !backend_tensor_owner_is(backend, rows->device_outputs) ||
         moe_cuda_rows_geometry(job, rows, output, &pairs, err) != YVEX_OK)
         return yvex_error_code(err) == YVEX_OK
-                   ? moe_cuda_refuse(err, YVEX_ERR_INVALID_ARG,
-                                     "CUDA width-N MoE owners are invalid")
+                   ? moe_cuda_refuse(err, unsupported_width ? YVEX_ERR_UNSUPPORTED
+                                                             : YVEX_ERR_INVALID_ARG,
+                                     "CUDA width-N MoE owners or admitted width are invalid")
                    : yvex_error_code(err);
     if (job->cancel_requested && job->cancel_requested(job->cancel_context))
         return moe_cuda_refuse(err, YVEX_ERR_CANCELLED,
