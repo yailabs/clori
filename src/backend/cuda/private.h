@@ -279,7 +279,8 @@ typedef struct {
     CUfunction mlp_function;
     CUfunction attention_function;
     CUfunction rotary_half_function, rotary_half_plain_function, gqa_function;
-    CUfunction gqa_pack_function, gqa_softmax_function, gqa_unpack_function;
+    CUfunction gqa_pack_function, gqa_pack_value_function;
+    CUfunction gqa_softmax_function, gqa_unpack_function;
     CUfunction silu_product_function, silu_function, split_three_function;
     CUfunction split_interleaved_function, swiglu_split_function, swiglu_split_f32_function;
     CUfunction modulation_function, gated_residual_function, bias_function;

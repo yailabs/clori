@@ -1470,8 +1470,9 @@ static int text_encoder_artifact_cuda(const yvex_artifact *artifact,
     return rc;
 }
 static const yvex_transformer_joint_recipe omni_transformer_recipe = {
-    .schema_version = YVEX_TRANSFORMER_JOINT_SCHEMA_V1,
-    .identity_domain = "minimax-h3-fl2va-omni-transformer",
+    .schema_version = YVEX_TRANSFORMER_JOINT_SCHEMA_V1, .identity_domain = "minimax-h3-fl2va-omni-transformer",
+    .qkv_layout = YVEX_TRANSFORMER_QKV_LAYOUT_PER_HEAD_THREE,
+    .swiglu_layout = YVEX_TRANSFORMER_SWIGLU_LAYOUT_GATE_THEN_UP,
     .hidden_width = 5376ull, .attention_heads = 56ull,
     .head_dimension = 128ull, .attention_width = 7168ull,
     .ffn_width = 14336ull, .timestep_width = 2688ull,

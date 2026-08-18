@@ -248,6 +248,36 @@ static int latent_checkpoint_observe(
     return YVEX_ERR_IO;
 }
 
+typedef struct {
+    const char *root;
+} block_checkpoint_context;
+
+static int block_checkpoint_observe(
+    void *opaque, const yvex_transformer_joint_block_observation *observation,
+    yvex_error *err)
+{
+    const block_checkpoint_context *context = opaque;
+    char path[1024];
+    unsigned long long completed;
+    int length;
+    if (!context || !context->root || !observation) return YVEX_OK;
+    completed = observation->completed_blocks;
+    if (completed != 1ull && completed != 2ull && completed != 5ull &&
+        completed != 10ull && completed != 20ull && completed != 30ull &&
+        completed != 40ull && completed != 50ull)
+        return YVEX_OK;
+    length = snprintf(path, sizeof(path), "%s/hidden.block-%03llu.f32",
+                      context->root, completed);
+    if (length > 0 && (size_t)length < sizeof(path) &&
+        file_write_atomic(path, observation->values, observation->value_count)) {
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    yvex_error_set(err, YVEX_ERR_IO, "minimax-h3.block-checkpoint",
+                   "a selected Omni block checkpoint could not be published atomically");
+    return YVEX_ERR_IO;
+}
+
 static int compare(const char *name, const float *reference, const float *output,
                    unsigned long long count, unsigned long long block_count)
 {
@@ -655,6 +685,8 @@ static int execute_request_fixture(
     yvex_minimax_h3_omni_transformer_request request = {0};
     yvex_minimax_h3_omni_transformer_result result = {0};
     request_fixture fixture = {0};
+    block_checkpoint_context checkpoint = {
+        .root = getenv("YVEX_MINIMAX_H3_BLOCK_CHECKPOINT_ROOT")};
     yvex_error err;
     unsigned long long packed_rows, video_values, audio_values;
     int rc = YVEX_OK;
@@ -682,6 +714,8 @@ static int execute_request_fixture(
     request.block_count = block_count; request.video_output = fixture.video_output;
     request.audio_output = fixture.audio_output; request.video_output_capacity = video_values;
     request.audio_output_capacity = audio_values;
+    request.block_observer = checkpoint.root ? block_checkpoint_observe : NULL;
+    request.block_observer_context = checkpoint.root ? &checkpoint : NULL;
     yvex_error_clear(&err);
     rc = yvex_artifact_open(&artifact, &options, &err);
     if (rc == YVEX_OK) rc = yvex_gguf_open(&gguf, artifact, &err);

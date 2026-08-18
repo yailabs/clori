@@ -1289,10 +1289,10 @@ static int quant_cuda_gqa_tiles(yvex_backend *backend)
     return 0;
 }
 
-static void quant_gqa_bf16_reference(const float *query, const float *key,
-                                     const float *value, float *output,
-                                     unsigned int tokens, unsigned int head_dim,
-                                     int causal)
+static void quant_gqa_source_reference(const float *query, const float *key,
+                                       const float *value, float *output,
+                                       unsigned int tokens, unsigned int head_dim,
+                                       int causal)
 {
     const float scale = 1.0f / sqrtf((float)head_dim);
     unsigned int row, source, dim;
@@ -1317,7 +1317,6 @@ static void quant_gqa_bf16_reference(const float *query, const float *key,
             for (dim = 0u; dim < head_dim; ++dim)
                 score += query[row * head_dim + dim] * key[source * head_dim + dim];
             probability = expf(score * scale - maximum) / denominator;
-            probability = yvex_quant_bf16_decode(yvex_quant_bf16_encode(probability));
             for (dim = 0u; dim < head_dim; ++dim)
                 output[row * head_dim + dim] +=
                     probability * value[source * head_dim + dim];
@@ -1333,7 +1332,9 @@ static int quant_cuda_gqa_blas(yvex_backend *backend)
     float result[ELEMENTS], reference[ELEMENTS];
     yvex_backend_cuda_operation_facts facts;
     yvex_error err;
-    unsigned long long workspace_bytes = 0ull, unused_bytes = 1ull;
+    unsigned long long workspace_bytes = 0ull, source_workspace_bytes = 0ull;
+    unsigned long long aligned_workspace_bytes = 0ull;
+    unsigned long long unused_bytes = 1ull;
     unsigned int index;
     int causal;
 
@@ -1362,6 +1363,13 @@ static int quant_cuda_gqa_blas(yvex_backend *backend)
             yvex_backend_transformer_gqa_workspace_bytes(
                 5ull, 1ull, 1ull, HEAD_DIM, &unused_bytes, &err) == YVEX_OK &&
             unused_bytes == 0ull &&
+            yvex_backend_transformer_gqa_workspace_bytes(
+                21741ull, 56ull, 56ull, HEAD_DIM, &source_workspace_bytes, &err) == YVEX_OK &&
+            source_workspace_bytes == 2493431812ull &&
+            source_workspace_bytes < 4ull * 1024ull * 1024ull * 1024ull &&
+            yvex_backend_transformer_gqa_workspace_bytes(
+                129ull, 1ull, 1ull, 33ull, &aligned_workspace_bytes, &err) == YVEX_OK &&
+            aligned_workspace_bytes == 117764ull &&
             quant_cuda_tensor(backend, "gqa-blas-workspace", YVEX_DTYPE_I8,
                               NULL, workspace_bytes, &workspace, &err) &&
             yvex_backend_workspace_attach(backend, workspace, 1ull, &err) == YVEX_OK,
@@ -1371,14 +1379,14 @@ static int quant_cuda_gqa_blas(yvex_backend *backend)
             yvex_cuda_transformer_gqa(
                 backend, query, key, value, output, TOKENS, 1ull, 1ull,
                 HEAD_DIM, causal, &facts, &err) == YVEX_OK &&
-                facts.kernel_launches == 10ull && facts.tensor_core_launches == 4ull &&
+                facts.kernel_launches == 19ull && facts.tensor_core_launches == 10ull &&
                 facts.device_synchronizations == 1ull &&
                 facts.d2h_bytes == sizeof(int) && facts.temporary_bytes == workspace_bytes &&
                 yvex_backend_tensor_read(
                     backend, output, result, sizeof(result), &err) == YVEX_OK,
             "chunked BF16 GQA publishes bounded tensor-core execution facts");
-        quant_gqa_bf16_reference(query_values, key_values, values, reference,
-                                 TOKENS, HEAD_DIM, causal);
+        quant_gqa_source_reference(query_values, key_values, values, reference,
+                                   TOKENS, HEAD_DIM, causal);
         for (index = 0u; index < ELEMENTS; ++index)
             YVEX_TEST_ASSERT(
                 fabsf(result[index] - reference[index]) <=
@@ -1745,11 +1753,11 @@ static int quant_cuda_omni_transformer(yvex_backend *backend)
         "Omni combined FFN projection executes source-order SwiGLU");
     for (index = 0ull; index < 4ull; ++index) {
         unsigned long long row = index / 2ull, column = index % 2ull;
-        float hidden = swiglu_input[row * 4ull + column];
-        float gate = swiglu_input[row * 4ull + 2ull + column];
+        float gate = swiglu_input[row * 4ull + column];
+        float up = swiglu_input[row * 4ull + 2ull + column];
         float activated = yvex_quant_bf16_decode(yvex_quant_bf16_encode(
             gate / (1.0f + expf(-gate))));
-        float expected = yvex_quant_bf16_decode(yvex_quant_bf16_encode(hidden * activated));
+        float expected = yvex_quant_bf16_decode(yvex_quant_bf16_encode(activated * up));
         YVEX_TEST_ASSERT(swiglu_output[index] == expected,
                          "Omni source-order SwiGLU matches the BF16 scalar policy");
     }

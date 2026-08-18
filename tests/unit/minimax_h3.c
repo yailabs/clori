@@ -9,6 +9,7 @@
 #include <yvex/internal/component.h>
 #include <yvex/internal/compilation.h>
 #include <yvex/internal/family_catalog.h>
+#include <yvex/internal/joint_transformer.h>
 #include <yvex/internal/latent.h>
 #include <yvex/internal/model_target.h>
 #include <yvex/internal/operator_graph.h>
@@ -683,10 +684,21 @@ static int test_video_numeric_primitives(void)
 
 static int test_t2va_plan(void)
 {
+    const yvex_transformer_joint_recipe *recipe =
+        yvex_graph_register_minimax_h3()->omni_recipe();
     yvex_minimax_h3_t2va_plan first, repeated, source_scale;
     float sample[2] = {0.5f, -1.0f}, velocity[2] = {2.0f, 4.0f};
     float stepped[2] = {13.0f, 13.0f};
     yvex_error err;
+
+    YVEX_TEST_ASSERT(recipe &&
+                         recipe->qkv_layout ==
+                             YVEX_TRANSFORMER_QKV_LAYOUT_PER_HEAD_THREE,
+                     "Omni recipe preserves the released per-head Q/K/V row layout");
+    YVEX_TEST_ASSERT(recipe &&
+                         recipe->swiglu_layout ==
+                             YVEX_TRANSFORMER_SWIGLU_LAYOUT_GATE_THEN_UP,
+                     "Omni recipe preserves the released gate-before-up SwiGLU row layout");
 
     YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->t2va_plan_build(
                          &first, 16ull, 1344ull, 768ull, 124ull, 19u, &err) == YVEX_OK &&

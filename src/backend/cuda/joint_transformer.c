@@ -57,6 +57,8 @@ typedef struct {
     const unsigned int *adaln_indices;
     unsigned long long rows, timesteps, values, output_bytes, device_bytes;
     unsigned long long block_count, block_index;
+    yvex_transformer_joint_block_observer_fn observer;
+    void *observer_context;
     yvex_transformer_joint_block_result facts;
 } joint_run;
 static const unsigned int text_zero_row = 0u;
@@ -74,6 +76,8 @@ static float joint_bf16_value(float value)
 static int joint_recipe_supported(const yvex_transformer_joint_recipe *recipe)
 {
     return recipe && recipe->schema_version == YVEX_TRANSFORMER_JOINT_SCHEMA_V1 &&
+           recipe->qkv_layout == YVEX_TRANSFORMER_QKV_LAYOUT_PER_HEAD_THREE &&
+           recipe->swiglu_layout == YVEX_TRANSFORMER_SWIGLU_LAYOUT_GATE_THEN_UP &&
            recipe->identity_domain && recipe->identity_domain[0] &&
            recipe->hidden_width == JOINT_HIDDEN && recipe->attention_heads == JOINT_HEADS &&
            recipe->head_dimension == JOINT_HEAD_DIM &&
@@ -420,12 +424,13 @@ static int joint_attention(joint_run *run, yvex_error *err)
                                  run->device[JOINT_DEVICE_NORM],
                                  run->device[JOINT_DEVICE_QKV], err);
     if (rc == YVEX_OK) rc = joint_round(run, JOINT_DEVICE_QKV, 3ull * attention_values, err);
+    /* The released checkpoint groups Q/K/V rows inside each attention head. */
     if (rc == YVEX_OK)
-        rc = yvex_cuda_transformer_split_three(
+        rc = yvex_cuda_transformer_split_interleaved_three(
             run->backend, run->device[JOINT_DEVICE_QKV],
             run->device[JOINT_DEVICE_QUERY], run->device[JOINT_DEVICE_KEY],
-            run->device[JOINT_DEVICE_VALUE], run->rows, JOINT_ATTENTION_WIDTH,
-            &facts, err);
+            run->device[JOINT_DEVICE_VALUE], run->rows, JOINT_HEADS,
+            JOINT_HEAD_DIM, &facts, err);
     if (rc == YVEX_OK && !joint_facts_add(&run->facts, &facts))
         rc = conditioning_refuse(err, YVEX_ERR_BOUNDS, "cuda.transformer.joint.joint.facts",
                                  "Omni QKV split accounting overflowed");
@@ -513,14 +518,45 @@ static int joint_block(joint_run *run, yvex_error *err)
     return rc;
 }
 
+static int joint_observe(joint_run *run, float *values, yvex_error *err)
+{
+    yvex_transformer_joint_block_observation observation;
+    int rc;
+    if (!run->observer) return YVEX_OK;
+    rc = yvex_backend_tensor_read(run->backend, run->device[JOINT_DEVICE_HIDDEN],
+                                  values, run->output_bytes, err);
+    if (rc == YVEX_OK &&
+        !yvex_core_u64_add(run->facts.d2h_bytes, run->output_bytes,
+                           &run->facts.d2h_bytes))
+        rc = conditioning_refuse(err, YVEX_ERR_BOUNDS, "cuda.transformer.joint.observe",
+                                 "Omni observation accounting overflowed");
+    observation.completed_blocks = run->block_index + 1ull;
+    observation.packed_rows = run->rows;
+    observation.hidden_width = JOINT_HIDDEN;
+    observation.value_count = run->values;
+    observation.values = values;
+    if (rc == YVEX_OK)
+        rc = run->observer(run->observer_context, &observation, err);
+    if (rc != YVEX_OK && err && yvex_error_code(err) == YVEX_OK)
+        yvex_error_set(err, rc, "cuda.transformer.joint.observe",
+                       "Omni block observer refused the execution");
+    return rc;
+}
+
 static int joint_compute(joint_run *run, float *staged, yvex_error *err)
 {
+    float *observed = NULL;
     int rc = joint_devices_prepare(run, err);
+    if (rc == YVEX_OK && run->observer &&
+        !(observed = (float *)malloc((size_t)run->output_bytes)))
+        rc = conditioning_refuse(err, YVEX_ERR_NOMEM, "cuda.transformer.joint.observe",
+                                 "bounded Omni observation allocation failed");
     if (rc == YVEX_OK) rc = joint_upload_inputs(run, err);
     if (rc == YVEX_OK) rc = joint_rope_tables(run, err);
     for (run->block_index = 0ull;
          rc == YVEX_OK && run->block_index < run->block_count; ++run->block_index) {
         rc = joint_block(run, err);
+        if (rc == YVEX_OK) rc = joint_observe(run, observed, err);
         if (rc != YVEX_OK && err) {
             yvex_error cause = *err;
             yvex_error_setf(err, cause.code, cause.where,
@@ -535,6 +571,7 @@ static int joint_compute(joint_run *run, float *staged, yvex_error *err)
         !yvex_core_u64_add(run->facts.d2h_bytes, run->output_bytes, &run->facts.d2h_bytes))
         rc = conditioning_refuse(err, YVEX_ERR_BOUNDS, "cuda.transformer.joint.joint.facts",
                                  "Omni output accounting overflowed");
+    free(observed);
     return rc;
 }
 
@@ -564,6 +601,8 @@ static int joint_identity(const joint_run *run, const char *residency_identity,
     yvex_sha256_init(&hash);
     if (!yvex_sha256_update_text(&hash, "yvex.transformer.joint-block-stack.cuda.v1") ||
         !yvex_sha256_update_text(&hash, run->recipe->identity_domain) ||
+        !yvex_sha256_update_u64(&hash, run->recipe->qkv_layout) ||
+        !yvex_sha256_update_u64(&hash, run->recipe->swiglu_layout) ||
         !yvex_sha256_update_text(&hash, residency_identity) ||
         !yvex_sha256_update_u64(&hash, run->block_count) ||
         !yvex_sha256_update_u64(&hash, run->rows) ||
@@ -593,7 +632,9 @@ static int joint_blocks_execute(
     unsigned long long timestep_count, const float *position_ids,
     const unsigned int *adaln_indices, unsigned long long packed_rows,
     float *output, unsigned long long output_capacity,
-    yvex_transformer_joint_block_result *result, const float *inv_freq, yvex_error *err)
+    yvex_transformer_joint_block_result *result, const float *inv_freq,
+    yvex_transformer_joint_block_observer_fn observer, void *observer_context,
+    yvex_error *err)
 {
     joint_run run = {0};
     yvex_transformer_joint_block_result published = {0};
@@ -612,6 +653,8 @@ static int joint_blocks_execute(
     run.rows = packed_rows;
     run.timesteps = timestep_count;
     run.block_count = block_count;
+    run.observer = observer;
+    run.observer_context = observer_context;
     rc = joint_validate(&run, residency_identity, resident_bytes, output,
                        output_capacity, result, &weight_bytes, err);
     if (rc == YVEX_OK) {
@@ -660,7 +703,7 @@ int yvex_backend_transformer_joint_blocks_cuda(
 {
     return joint_blocks_execute(backend, recipe, weights, block_count, residency_identity,
         resident_bytes, hidden, temb, timestep_count, position_ids, adaln_indices, packed_rows, output,
-        output_capacity, result, NULL, err);
+        output_capacity, result, NULL, NULL, NULL, err);
 }
 
 typedef enum {
@@ -945,10 +988,10 @@ static int refiner_block(refiner_run *run, unsigned long long block, yvex_error 
         rc = transformer_round(run->backend, run->device[REFINER_QKV],
                                3ull * attention_values, run->facts, err);
     if (rc == YVEX_OK)
-        rc = yvex_cuda_transformer_split_three(
+        rc = yvex_cuda_transformer_split_interleaved_three(
             run->backend, run->device[REFINER_QKV], run->device[REFINER_QUERY],
             run->device[REFINER_KEY], run->device[REFINER_VALUE], run->rows,
-            JOINT_ATTENTION_WIDTH, &part, err);
+            JOINT_HEADS, JOINT_HEAD_DIM, &part, err);
     if (rc == YVEX_OK && !transformer_facts_add(run->facts, &part)) rc = YVEX_ERR_BOUNDS;
     if (rc == YVEX_OK)
         rc = refiner_norm(run, REFINER_QUERY, weight + 2, REFINER_Q_NORM,
@@ -1159,11 +1202,11 @@ static int transformer_final_norm(
     if (rc == YVEX_OK)
         rc = transformer_project(backend, weights + YVEX_TRANSFORMER_JOINT_FINAL_ADALN_WEIGHT,
                                  timesteps, device[TEMB], NULL, device[TABLE], facts, err);
-    if (rc == YVEX_OK) rc = transformer_round(backend, device[TABLE],
-                                               timesteps * 2ull * JOINT_HIDDEN, facts, err);
     if (rc == YVEX_OK)
         rc = transformer_gather(backend, weights + YVEX_TRANSFORMER_JOINT_FINAL_ADALN_BIAS,
                                 device[BIAS], facts, err);
+    /* Match the BF16 linear epilogue: the projection remains F32 until bias is added, then
+       the complete result is rounded once. Pre-rounding introduces a second coherent error. */
     if (rc == YVEX_OK)
         rc = yvex_cuda_transformer_bias(backend, device[TABLE], device[BIAS], device[TABLE],
                                         timesteps, 2ull * JOINT_HIDDEN, 1, &part, err);
@@ -1261,6 +1304,8 @@ static int transformer_execution_identity(
     yvex_sha256_init(&hash);
     if (!yvex_sha256_update_text(&hash, "yvex.transformer.joint.cuda.v1") ||
         !yvex_sha256_update_text(&hash, request->recipe->identity_domain) ||
+        !yvex_sha256_update_u64(&hash, request->recipe->qkv_layout) ||
+        !yvex_sha256_update_u64(&hash, request->recipe->swiglu_layout) ||
         !yvex_sha256_update_text(&hash, residency_identity) ||
         !yvex_sha256_update_text(&hash, block_identity) ||
         !yvex_sha256_update_u64(&hash, request->video_rows) ||
@@ -1378,7 +1423,8 @@ int yvex_backend_transformer_joint_cuda(
             residency_identity, resident_bytes, packed, temb, request->timestep_count,
             request->position_ids, adaln,
             request->packed_rows, block_output, hidden_values, &blocks,
-            (const float *)external_weights[YVEX_TRANSFORMER_JOINT_ROPE_INV_FREQ].encoded, err);
+            (const float *)external_weights[YVEX_TRANSFORMER_JOINT_ROPE_INV_FREQ].encoded,
+            request->block_observer, request->block_observer_context, err);
     if (rc == YVEX_OK &&
         (!yvex_core_u64_add(published.kernel_launches, blocks.kernel_launches,
                             &published.kernel_launches) ||

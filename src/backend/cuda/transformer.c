@@ -11,7 +11,11 @@ enum {
     TRANSFORMER_BLOCK = 128u,
     GQA_QUERIES_PER_BLOCK = 4u,
     GQA_BLAS_BLOCK = 256u,
-    GQA_BLAS_QUERY_CHUNK = 256u,
+    GQA_WORK_ALIGNMENT = 256u,
+    /* F32 scores and probabilities dominate source-scale scratch. This bounded query tile
+       preserves the validated accumulation path while keeping 768p execution below the GB10
+       workspace admission limit. */
+    GQA_BLAS_QUERY_CHUNK = 64u,
     GQA_BLAS_MIN_TOKENS = 128u
 };
 #define GQA_BLAS_OP_N 0
@@ -168,7 +172,8 @@ static int gqa_blas_execute(
     CUdeviceptr packed_q = 0ull, packed_k = 0ull, packed_v = 0ull;
     CUdeviceptr head_output = 0ull, scores = 0ull, probabilities = 0ull, status = 0ull;
     unsigned long long elements, matrix_stride, score_elements, chunks = 0ull;
-    unsigned long long packed_bytes, output_bytes, score_bytes, probability_bytes;
+    unsigned long long qk_bytes, value_bytes, output_bytes, score_bytes, probability_bytes;
+    unsigned long long temporary_bytes = 0ull;
     unsigned long long query_start;
     const float scale = 1.0f / sqrtf((float)head_dim), zero = 0.0f, one = 1.0f;
     int host_status = 0, rc = YVEX_OK, cleanup_rc, blas_status;
@@ -178,14 +183,15 @@ static int gqa_blas_execute(
         !yvex_core_u64_mul(tokens, heads, &elements) ||
         !yvex_core_u64_mul(elements, head_dim, &elements) ||
         !yvex_core_u64_mul(tokens, head_dim, &matrix_stride) ||
-        !yvex_core_u64_mul(elements, 2ull, &packed_bytes) ||
+        !yvex_core_u64_mul(elements, sizeof(unsigned short), &qk_bytes) ||
+        !yvex_core_u64_mul(elements, sizeof(float), &value_bytes) ||
         !yvex_core_u64_mul(elements, sizeof(float), &output_bytes) ||
         !yvex_core_u64_mul(heads, GQA_BLAS_QUERY_CHUNK, &score_elements) ||
         !yvex_core_u64_mul(score_elements, tokens, &score_elements) ||
         !yvex_core_u64_mul(score_elements, sizeof(float), &score_bytes) ||
-        !yvex_core_u64_mul(score_elements, sizeof(unsigned short), &probability_bytes) ||
+        !yvex_core_u64_mul(score_elements, sizeof(float), &probability_bytes) ||
         matrix_stride > LLONG_MAX || score_elements > LLONG_MAX ||
-        packed_bytes > SIZE_MAX || output_bytes > SIZE_MAX ||
+        qk_bytes > SIZE_MAX || value_bytes > SIZE_MAX || output_bytes > SIZE_MAX ||
         score_bytes > SIZE_MAX || probability_bytes > SIZE_MAX) {
         yvex_error_set(err, YVEX_ERR_BOUNDS, "cuda.transformer.gqa.blas",
                        "chunked BF16 attention exceeds admitted integer geometry");
@@ -201,14 +207,18 @@ static int gqa_blas_execute(
             rc = yvex_cuda_work_allocate(&work, &(pointer), (size_t)(bytes), NULL, (zeroed), \
                                          "cuda.transformer.gqa.alloc." label, NULL, err); \
     } while (0)
-    GQA_ALLOC(packed_q, packed_bytes, 0, "query");
-    GQA_ALLOC(packed_k, packed_bytes, 0, "key");
-    GQA_ALLOC(packed_v, packed_bytes, 0, "value");
+    GQA_ALLOC(packed_q, qk_bytes, 0, "query");
+    GQA_ALLOC(packed_k, qk_bytes, 0, "key");
+    GQA_ALLOC(packed_v, value_bytes, 0, "value");
     GQA_ALLOC(head_output, output_bytes, 0, "output");
     GQA_ALLOC(scores, score_bytes, 0, "scores");
     GQA_ALLOC(probabilities, probability_bytes, 0, "probabilities");
     GQA_ALLOC(status, sizeof(host_status), 1, "status");
 #undef GQA_ALLOC
+    if (rc == YVEX_OK)
+        temporary_bytes = backend->workspace_device_tensor
+                              ? backend->workspace_cursor
+                              : work.peak_bytes;
     if (rc == YVEX_OK)
         rc = gqa_pack_enqueue(backend, state->gqa_pack_function,
                               yvex_cuda_tensor_ptr(query), packed_q,
@@ -218,7 +228,7 @@ static int gqa_blas_execute(
                               yvex_cuda_tensor_ptr(key), packed_k,
                               tokens, heads, head_dim, status, err);
     if (rc == YVEX_OK)
-        rc = gqa_pack_enqueue(backend, state->gqa_pack_function,
+        rc = gqa_pack_enqueue(backend, state->gqa_pack_value_function,
                               yvex_cuda_tensor_ptr(value), packed_v,
                               tokens, heads, head_dim, status, err);
     for (query_start = 0ull; rc == YVEX_OK && query_start < tokens;
@@ -264,15 +274,15 @@ static int gqa_blas_execute(
         blas_status = rc == YVEX_OK ? state->blas.gemm_strided_batched_ex(
             state->blas.handle, GQA_BLAS_OP_N, GQA_BLAS_OP_N,
             (int)head_dim, (int)query_rows, (int)tokens, &one,
-            (const void *)(uintptr_t)packed_v, GQA_BLAS_R_16BF, (int)head_dim,
+            (const void *)(uintptr_t)packed_v, GQA_BLAS_R_32F, (int)head_dim,
             (long long)matrix_stride, (const void *)(uintptr_t)probabilities,
-            GQA_BLAS_R_16BF, (int)tokens, (long long)score_stride, &zero,
+            GQA_BLAS_R_32F, (int)tokens, (long long)score_stride, &zero,
             (void *)(uintptr_t)output_chunk, GQA_BLAS_R_32F, (int)head_dim,
             (long long)matrix_stride, (int)heads, GQA_BLAS_COMPUTE_32F,
             GQA_BLAS_DEFAULT) : 0;
         if (rc == YVEX_OK && blas_status != 0) {
             yvex_error_setf(err, YVEX_ERR_BACKEND, "cuda.transformer.gqa.pv",
-                            "batched BF16 probability/value projection failed with status %d",
+                            "batched F32 probability/value projection failed with status %d",
                             blas_status);
             rc = YVEX_ERR_BACKEND;
         }
@@ -319,7 +329,7 @@ static int gqa_blas_execute(
     facts->kernel_launches = 4ull + chunks * 3ull;
     facts->download_count = 1ull;
     facts->d2h_bytes = sizeof(host_status);
-    facts->temporary_bytes = work.peak_bytes;
+    facts->temporary_bytes = temporary_bytes;
     facts->tensor_core_launches = chunks * 2ull;
     facts->device_synchronizations = 1ull;
     facts->compulsory_memory_facts_available = 1;
@@ -327,12 +337,23 @@ static int gqa_blas_execute(
     return YVEX_OK;
 }
 
+static int gqa_workspace_add(unsigned long long *cursor, unsigned long long bytes)
+{
+    unsigned long long aligned;
+    if (!cursor || !bytes ||
+        !yvex_core_u64_add(*cursor, GQA_WORK_ALIGNMENT - 1ull, &aligned))
+        return 0;
+    aligned &= ~(GQA_WORK_ALIGNMENT - 1ull);
+    return yvex_core_u64_add(aligned, bytes, cursor);
+}
+
 int yvex_backend_transformer_gqa_workspace_bytes(
     unsigned long long tokens, unsigned long long query_heads,
     unsigned long long kv_heads, unsigned long long head_dim,
     unsigned long long *bytes, yvex_error *err)
 {
-    unsigned long long elements, score_elements, packed, output, scores, probabilities, total;
+    unsigned long long elements, score_elements, qk, value, output, scores, probabilities;
+    unsigned long long total = 0ull;
     if (bytes) *bytes = 0ull;
     if (!bytes || !tokens || !query_heads || !kv_heads || !head_dim ||
         query_heads % kv_heads) {
@@ -346,16 +367,18 @@ int yvex_backend_transformer_gqa_workspace_bytes(
     }
     if (!yvex_core_u64_mul(tokens, query_heads, &elements) ||
         !yvex_core_u64_mul(elements, head_dim, &elements) ||
-        !yvex_core_u64_mul(elements, 6ull, &packed) ||
+        !yvex_core_u64_mul(elements, sizeof(unsigned short), &qk) ||
+        !yvex_core_u64_mul(elements, sizeof(float), &value) ||
         !yvex_core_u64_mul(elements, sizeof(float), &output) ||
         !yvex_core_u64_mul(query_heads, GQA_BLAS_QUERY_CHUNK, &score_elements) ||
         !yvex_core_u64_mul(score_elements, tokens, &score_elements) ||
         !yvex_core_u64_mul(score_elements, sizeof(float), &scores) ||
-        !yvex_core_u64_mul(score_elements, sizeof(unsigned short), &probabilities) ||
-        !yvex_core_u64_add(packed, output, &total) ||
-        !yvex_core_u64_add(total, scores, &total) ||
-        !yvex_core_u64_add(total, probabilities, &total) ||
-        !yvex_core_u64_add(total, sizeof(int), &total) || total > SIZE_MAX) {
+        !yvex_core_u64_mul(score_elements, sizeof(float), &probabilities) ||
+        !gqa_workspace_add(&total, qk) || !gqa_workspace_add(&total, qk) ||
+        !gqa_workspace_add(&total, value) || !gqa_workspace_add(&total, output) ||
+        !gqa_workspace_add(&total, scores) ||
+        !gqa_workspace_add(&total, probabilities) ||
+        !gqa_workspace_add(&total, sizeof(int)) || total > SIZE_MAX) {
         yvex_error_set(err, YVEX_ERR_BOUNDS, "cuda.transformer.gqa.workspace",
                        "chunked grouped-query workspace geometry overflowed");
         return YVEX_ERR_BOUNDS;
@@ -397,7 +420,8 @@ int yvex_cuda_transformer_gqa(
     }
     if (tokens >= GQA_BLAS_MIN_TOKENS && query_heads == kv_heads &&
         state->blas.ready && state->blas.gemm_strided_batched_ex &&
-        state->gqa_pack_function && state->gqa_softmax_function &&
+        state->gqa_pack_function && state->gqa_pack_value_function &&
+        state->gqa_softmax_function &&
         state->gqa_unpack_function && !yvex_cuda_capture_active(backend)) {
         rc = gqa_blas_execute(backend, query, key, value, output, tokens,
                               query_heads, head_dim, causal, facts, err);

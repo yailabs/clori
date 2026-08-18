@@ -197,9 +197,30 @@ extern "C" __global__ void yvex_gqa_pack_bf16(
         (unsigned short)(__float_as_uint(float_to_bf16_rne(value)) >> 16u);
 }
 
-/* Normalize one bounded score tile and publish BF16 probabilities for the value GEMM. */
-extern "C" __global__ void yvex_gqa_softmax_bf16(
-    const float *scores, unsigned short *probabilities,
+/* Preserve BF16 source values in F32 while changing to the head-major GEMM layout. */
+extern "C" __global__ void yvex_gqa_pack_f32(
+    const float *input, float *output, unsigned long long tokens,
+    unsigned long long heads, unsigned long long head_dim, int *status)
+{
+    unsigned long long index =
+        (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned long long elements = tokens * heads * head_dim, token, head, dim;
+    float value;
+    if (!input || !output || !status || *status || index >= elements) return;
+    token = index / (heads * head_dim);
+    head = (index / head_dim) % heads;
+    dim = index % head_dim;
+    value = input[index];
+    if (!isfinite(value)) {
+        atomicCAS(status, 0, 1);
+        return;
+    }
+    output[(head * tokens + token) * head_dim + dim] = value;
+}
+
+/* Source attention normalizes in F32; only the completed attention output is BF16-rounded. */
+extern "C" __global__ void yvex_gqa_softmax_f32(
+    const float *scores, float *probabilities,
     unsigned long long query_rows, unsigned long long tokens,
     unsigned long long query_start, int causal, int *status)
 {
@@ -236,8 +257,7 @@ extern "C" __global__ void yvex_gqa_softmax_bf16(
         float probability = (!causal || source <= query) && sum > 0.0f
                                 ? expf(scores[row * tokens + source] - maximum) / sum
                                 : 0.0f;
-        probabilities[row * tokens + source] =
-            (unsigned short)(__float_as_uint(float_to_bf16_rne(probability)) >> 16u);
+        probabilities[row * tokens + source] = probability;
     }
 }
 
@@ -324,15 +344,15 @@ extern "C" __global__ void yvex_swiglu_split_bf16_f32(
     unsigned long long index =
         (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
     unsigned long long row, column, base;
-    float hidden, gate;
+    float gate, up;
     if (!input || !output || !width || index >= rows * width) return;
     row = index / width;
     column = index % width;
     base = row * 2ull * width + column;
-    hidden = input[base];
-    gate = input[base + width];
+    gate = input[base];
+    up = input[base + width];
     gate = float_to_bf16_rne(gate / (1.0f + expf(-gate)));
-    output[index] = float_to_bf16_rne(hidden * gate);
+    output[index] = float_to_bf16_rne(gate * up);
 }
 
 extern "C" __global__ void yvex_swiglu_split_f32(

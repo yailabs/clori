@@ -55,8 +55,22 @@ typedef enum {
     YVEX_TRANSFORMER_JOINT_AUDIO_OUT_BIAS
 } yvex_transformer_joint_external_slot;
 
+typedef enum {
+    YVEX_TRANSFORMER_QKV_LAYOUT_UNKNOWN = 0,
+    YVEX_TRANSFORMER_QKV_LAYOUT_GLOBAL_THREE,
+    YVEX_TRANSFORMER_QKV_LAYOUT_PER_HEAD_THREE
+} yvex_transformer_qkv_layout;
+
+typedef enum {
+    YVEX_TRANSFORMER_SWIGLU_LAYOUT_UNKNOWN = 0,
+    YVEX_TRANSFORMER_SWIGLU_LAYOUT_GATE_THEN_UP,
+    YVEX_TRANSFORMER_SWIGLU_LAYOUT_UP_THEN_GATE
+} yvex_transformer_swiglu_layout;
+
 typedef struct yvex_transformer_joint_recipe {
     unsigned int schema_version;
+    yvex_transformer_qkv_layout qkv_layout;
+    yvex_transformer_swiglu_layout swiglu_layout;
     const char *identity_domain;
     unsigned long long hidden_width, attention_heads, head_dimension, attention_width;
     unsigned long long ffn_width, timestep_width, rotary_width;
@@ -74,6 +88,17 @@ typedef struct yvex_transformer_joint_block_result {
     int complete;
 } yvex_transformer_joint_block_result;
 
+typedef struct yvex_transformer_joint_block_observation {
+    unsigned long long completed_blocks, packed_rows, hidden_width, value_count;
+    const float *values;
+} yvex_transformer_joint_block_observation;
+
+/* Observation values are borrowed for the callback only. A callback failure aborts the
+   enclosing output transaction before any result becomes visible. */
+typedef int (*yvex_transformer_joint_block_observer_fn)(
+    void *context, const yvex_transformer_joint_block_observation *observation,
+    yvex_error *err);
+
 typedef struct yvex_transformer_joint_request {
     const yvex_transformer_joint_recipe *recipe;
     const float *video, *audio, *conditioning, *timesteps, *position_ids;
@@ -83,6 +108,8 @@ typedef struct yvex_transformer_joint_request {
     unsigned long long block_count;
     float *video_output, *audio_output;
     unsigned long long video_output_capacity, audio_output_capacity;
+    yvex_transformer_joint_block_observer_fn block_observer;
+    void *block_observer_context;
 } yvex_transformer_joint_request;
 
 typedef struct yvex_transformer_joint_result {
