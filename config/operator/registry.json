@@ -2084,6 +2084,9 @@
       "renderer_id": "human",
       "result_schema": "human.v1",
       "side_effects": "client exit",
+      "slash_aliases": [
+        "/exit"
+      ],
       "slash_projection": "/quit",
       "summary": "Exit the interactive client.",
       "test_owner": "tests/repl_pty.sh",
