@@ -1417,6 +1417,12 @@ enum {
     RUNTIME_WARM_MONOTONIC_COUNTERS = 12,
     RUNTIME_WARM_COUNTERS = 15
 };
+static const char *const runtime_warm_counter_names[RUNTIME_WARM_COUNTERS] = {
+    "artifact_hash_passes", "artifact_read_calls", "cold_artifact_read_calls",
+    "backend_allocation_events", "backend_release_events", "cuda_upload_bytes",
+    "host_workspace_allocations", "host_allocations", "host_reallocations",
+    "host_releases", "h2d_bytes", "d2h_bytes", "graph_workspace_capacity",
+    "residency_generation", "workspace_generation"};
 static int runtime_attention_warm_snapshot_take(
     yvex_runtime_model *model, yvex_runtime_execution_session *session,
     runtime_attention_warm_snapshot *out, yvex_error *err) {
@@ -1457,16 +1463,19 @@ static int runtime_attention_warm_snapshot_publish(const runtime_attention_warm_
 {before->graph_workspace.capacity_bytes, after->graph_workspace.capacity_bytes},
 {before->session.residency_generation, after->session.residency_generation},
         {before->session.workspace_generation, after->session.workspace_generation} };
-unsigned int index, regressed = before->host_allocations.overflowed ||
-                                    after->host_allocations.overflowed;
+    unsigned int index, first_transition = RUNTIME_WARM_COUNTERS;
+    int regressed = before->host_allocations.overflowed || after->host_allocations.overflowed;
     unsigned long long host_allocations, host_reallocations;
     int transitioned = 0;
     for (index = 0u; index < RUNTIME_WARM_COUNTERS; ++index) {
         regressed |= index < RUNTIME_WARM_MONOTONIC_COUNTERS &&
                      counters[index].after < counters[index].before;
-        transitioned |= (index < RUNTIME_WARM_STABLE_COUNTERS ||
-                          index >= RUNTIME_WARM_MONOTONIC_COUNTERS) &&
-                         counters[index].after != counters[index].before;
+        if ((index < RUNTIME_WARM_STABLE_COUNTERS ||
+             index >= RUNTIME_WARM_MONOTONIC_COUNTERS) &&
+            counters[index].after != counters[index].before) {
+            transitioned = 1;
+            if (first_transition == RUNTIME_WARM_COUNTERS) first_transition = index;
+        }
     }
     if (regressed)
         return runtime_refuse(
@@ -1476,9 +1485,14 @@ unsigned int index, regressed = before->host_allocations.overflowed ||
     if (host_allocations > ULLONG_MAX - host_reallocations)
         return runtime_refuse(
             err, YVEX_ERR_BOUNDS, "runtime.attention.warm", "warm host allocation evidence overflowed");
-    if (transitioned)
-        return runtime_refuse(err, YVEX_ERR_STATE, "runtime.attention.warm",
-                              "steady-state runtime performed a forbidden resource transition");
+    if (transitioned) {
+        yvex_error_setf(
+            err, YVEX_ERR_STATE, "runtime.attention.warm",
+            "steady-state runtime changed %s: before=%llu after=%llu",
+            runtime_warm_counter_names[first_transition],
+            counters[first_transition].before, counters[first_transition].after);
+        return YVEX_ERR_STATE;
+    }
     result->warm_artifact_hash_passes = 0ull;
     result->warm_weight_artifact_reads = 0ull;
     result->warm_weight_upload_bytes = 0ull;
@@ -1790,6 +1804,8 @@ int yvex_graph_attention_operator_execute(const yvex_graph_attention_operator_re
                                         ? YVEX_ATTENTION_OPERATION_CORE : YVEX_ATTENTION_OPERATION_ENVELOPE;
     probe_request.token_count = request->token_count;
     probe_request.evidence_level = runtime_attention_evidence_levels[request->trace_policy];
+    probe_request.measure_device_time = samples &&
+        (request->compare_backends || request->backend == YVEX_BACKEND_KIND_CUDA);
     if (rc == YVEX_OK && request->select_layer)
         selected_layer = request->layer_start;
     else if (rc == YVEX_OK && request->select_selection_key)

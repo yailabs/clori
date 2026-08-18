@@ -8,6 +8,7 @@
 #include "src/server/openai/private.h"
 #include <arpa/inet.h>
 #include <errno.h>
+#include <limits.h>
 #include <netinet/in.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -32,16 +33,48 @@ typedef struct {
 struct server_openai_listener {
     openai_gateway gateway;
     atomic_int stop, admit, ready;
+    pthread_mutex_t connection_mutex;
+    pthread_cond_t connection_idle;
     pthread_t thread;
+    unsigned long long active_connections, maximum_connections;
     int listen_fd, thread_started, thread_status;
+    int connection_mutex_ready, connection_idle_ready;
     yvex_error thread_error;
 };
+
+typedef struct {
+    server_openai_listener *listener;
+    int fd;
+} openai_connection;
 
 static unsigned long long wall_seconds(void)
 {
     struct timespec now;
     return clock_gettime(CLOCK_REALTIME, &now) == 0
                ? (unsigned long long)now.tv_sec : 0u;
+}
+
+static int next_request_ordinal(openai_gateway *gateway,
+                                unsigned long long *ordinal, yvex_error *err)
+{
+    unsigned long long current;
+    if (!gateway || !ordinal) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.openai.request-id",
+                       "request identity owner is unavailable");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    current = atomic_load_explicit(&gateway->next_id, memory_order_relaxed);
+    do {
+        if (current == ULLONG_MAX) {
+            yvex_error_set(err, YVEX_ERR_BOUNDS, "server.openai.request-id",
+                           "request identity sequence is exhausted");
+            return YVEX_ERR_BOUNDS;
+        }
+    } while (!atomic_compare_exchange_weak_explicit(
+        &gateway->next_id, &current, current + 1ull, memory_order_relaxed,
+        memory_order_relaxed));
+    *ordinal = current + 1ull;
+    return YVEX_OK;
 }
 /*
  * Grow one bounded collected output span.
@@ -837,8 +870,10 @@ static int handle_generation(openai_gateway *gateway, int fd,
     char id[YVEX_PROVIDER_ID_CAP], session[YVEX_SERVER_SESSION_NAME_CAP];
     unsigned char *json = NULL;
     unsigned long long json_count = 0u, now = wall_seconds();
+    unsigned long long request_ordinal;
     int stateful = endpoint == OPENAI_ENDPOINT_RESPONSES;
-    int created_session = 0, generation_started = 0, peer_closed = 0, rc;
+    int created_session = 0, generation_started = 0, peer_closed = 0;
+    int state_locked = 0, rc;
     yvex_error err, failure_error;
     rc = daemon_status(gateway, &summary, &err);
     if (rc != YVEX_OK) return send_error(fd, 503, "YVEX server is unavailable or not ready");
@@ -847,10 +882,12 @@ static int handle_generation(openai_gateway *gateway, int fd,
     if (rc != YVEX_OK)
         return send_error(fd, http_status(rc, YVEX_CLIENT_FAILURE_NONE),
                           yvex_error_message(&err));
+    rc = next_request_ordinal(gateway, &request_ordinal, &err);
+    if (rc != YVEX_OK) goto failure;
     (void)snprintf(id, sizeof(id), endpoint == OPENAI_ENDPOINT_CHAT
                                       ? "chatcmpl-yvex-%012llu"
                                       : "resp_yvex_%012llu",
-                   ++gateway->next_id);
+                   request_ordinal);
     yvex_core_text_copy(admitted.provider->adapter,
                         sizeof(admitted.provider->adapter), "openai");
     yvex_core_text_copy(admitted.provider->external_correlation_id,
@@ -858,8 +895,17 @@ static int handle_generation(openai_gateway *gateway, int fd,
     admitted.provider->sealed = 0;
     admitted.provider->request_identity[0] = '\0';
     rc = yvex_provider_request_seal(admitted.provider, &err);
-    if (rc == YVEX_OK)
-        rc = state_prepare(gateway, now, 0, &err);
+    if (rc == YVEX_OK && stateful) {
+        if (!gateway->state_mutex_ready ||
+            pthread_mutex_lock(&gateway->state_mutex) != 0) {
+            rc = YVEX_ERR_STATE;
+            yvex_error_set(&err, rc, "server.openai.state",
+                           "response-state lock is unavailable");
+        } else {
+            state_locked = 1;
+            rc = state_prepare(gateway, now, 0, &err);
+        }
+    }
     if (rc == YVEX_OK && admitted.provider->previous_response_id[0]) {
         prior = openai_state_find(gateway,
                                   admitted.provider->previous_response_id, now);
@@ -885,7 +931,8 @@ static int handle_generation(openai_gateway *gateway, int fd,
     if (prior) {
         yvex_core_text_copy(session, sizeof(session), prior->session_name);
     } else {
-        (void)snprintf(session, sizeof(session), "oa-%012llu", gateway->next_id);
+        (void)snprintf(session, sizeof(session), "oa-%012llu",
+                       request_ordinal);
         rc = client_connect(gateway, &session_client, &err);
         if (rc == YVEX_OK)
             rc = session_operation(session_client, YVEX_CLIENT_OP_SESSION_NEW,
@@ -944,6 +991,7 @@ static int handle_generation(openai_gateway *gateway, int fd,
     yvex_provider_request_close(&combined);
     openai_admitted_request_clear(&admitted);
     result_clear(&result);
+    if (state_locked) (void)pthread_mutex_unlock(&gateway->state_mutex);
     return rc;
 failure:
     peer_closed = disconnect_watch_close(&watch) || peer_closed;
@@ -984,6 +1032,7 @@ failure:
     yvex_provider_request_close(&combined);
     openai_admitted_request_clear(&admitted);
     result_clear(&result);
+    if (state_locked) (void)pthread_mutex_unlock(&gateway->state_mutex);
     return rc;
 }
 /*
@@ -1018,11 +1067,106 @@ static int handle_connection(openai_gateway *gateway, int fd)
     openai_http_request_clear(&request);
     return rc;
 }
+
+static void connection_release(server_openai_listener *listener)
+{
+    if (!listener || !listener->connection_mutex_ready ||
+        pthread_mutex_lock(&listener->connection_mutex) != 0)
+        return;
+    if (listener->active_connections) listener->active_connections--;
+    if (listener->connection_idle_ready)
+        (void)pthread_cond_broadcast(&listener->connection_idle);
+    (void)pthread_mutex_unlock(&listener->connection_mutex);
+}
+
+static void *connection_main(void *opaque)
+{
+    openai_connection *connection = opaque;
+    server_openai_listener *listener = connection->listener;
+    yvex_server_telemetry_openai_request(listener->gateway.telemetry,
+                                         1, 0, 0, 0);
+    int rc = handle_connection(&listener->gateway, connection->fd);
+    yvex_server_telemetry_openai_request(
+        listener->gateway.telemetry, -1, rc == YVEX_OK,
+        rc != YVEX_OK && rc != YVEX_ERR_CANCELLED,
+        rc == YVEX_ERR_CANCELLED);
+    (void)close(connection->fd);
+    connection_release(listener);
+    free(connection);
+    return NULL;
+}
+
+static int connection_start(server_openai_listener *listener, int fd,
+                            yvex_error *err)
+{
+    openai_connection *connection = NULL;
+    pthread_attr_t attributes;
+    pthread_t thread;
+    int attributes_ready = 0, rc = YVEX_OK;
+    if (!listener || fd < 0 || !listener->maximum_connections ||
+        !listener->connection_mutex_ready ||
+        pthread_mutex_lock(&listener->connection_mutex) != 0) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.openai.connection",
+                       "bounded connection ownership is required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    while (listener->active_connections >= listener->maximum_connections &&
+           !atomic_load_explicit(&listener->stop, memory_order_acquire))
+        (void)pthread_cond_wait(&listener->connection_idle,
+                                &listener->connection_mutex);
+    if (atomic_load_explicit(&listener->stop, memory_order_acquire))
+        rc = YVEX_ERR_CANCELLED;
+    else {
+        connection = calloc(1u, sizeof(*connection));
+        if (!connection) rc = YVEX_ERR_NOMEM;
+    }
+    if (rc == YVEX_OK) {
+        connection->listener = listener;
+        connection->fd = fd;
+        listener->active_connections++;
+    }
+    (void)pthread_mutex_unlock(&listener->connection_mutex);
+    if (rc == YVEX_OK && pthread_attr_init(&attributes) == 0) {
+        attributes_ready = 1;
+        if (pthread_attr_setdetachstate(&attributes,
+                                        PTHREAD_CREATE_DETACHED) != 0)
+            rc = YVEX_ERR_STATE;
+    } else if (rc == YVEX_OK) {
+        rc = YVEX_ERR_STATE;
+    }
+    if (rc == YVEX_OK &&
+        pthread_create(&thread, &attributes, connection_main, connection) != 0)
+        rc = YVEX_ERR_STATE;
+    if (attributes_ready) (void)pthread_attr_destroy(&attributes);
+    if (rc != YVEX_OK) {
+        if (connection) connection_release(listener);
+        free(connection);
+        yvex_error_set(
+            err, (yvex_status)rc, "server.openai.connection",
+            rc == YVEX_ERR_CANCELLED
+                ? "OpenAI listener stopped before connection admission"
+                : "OpenAI connection worker could not start");
+        return rc;
+    }
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+static void connections_finish(server_openai_listener *listener)
+{
+    if (!listener || !listener->connection_mutex_ready ||
+        pthread_mutex_lock(&listener->connection_mutex) != 0)
+        return;
+    while (listener->active_connections)
+        (void)pthread_cond_wait(&listener->connection_idle,
+                                &listener->connection_mutex);
+    (void)pthread_mutex_unlock(&listener->connection_mutex);
+}
 /*
  * Serve one already-reserved loopback listener until its server owner requests stop.
  *
- * Prepared listener ownership. Accepts serial bounded requests and clears response state. No model
- * ownership.
+ * Prepared listener ownership. Accepted connections execute concurrently only up to the runtime's
+ * admitted session width; each still reaches the canonical server scheduler over local protocol.
  */
 static void *listener_main(void *opaque)
 {
@@ -1063,22 +1207,22 @@ static void *listener_main(void *opaque)
                 break;
             }
             if (peer.sin_addr.s_addr == htonl(INADDR_LOOPBACK)) {
-                int request_rc;
-                yvex_server_telemetry_openai_request(gateway->telemetry,
-                                                     1, 0, 0, 0);
-                request_rc = handle_connection(gateway, client);
-                yvex_server_telemetry_openai_request(
-                    gateway->telemetry, -1, request_rc == YVEX_OK,
-                    request_rc != YVEX_OK && request_rc != YVEX_ERR_CANCELLED,
-                    request_rc == YVEX_ERR_CANCELLED);
+                yvex_error connection_error;
+                int request_rc = connection_start(listener, client,
+                                                  &connection_error);
+                if (request_rc == YVEX_OK) client = -1;
+                else if (request_rc != YVEX_ERR_CANCELLED)
+                    (void)send_error(client, 503,
+                                     yvex_error_message(&connection_error));
             }
-            (void)close(client);
+            if (client >= 0) (void)close(client);
         }
     }
     if (listener->listen_fd >= 0) {
         (void)close(listener->listen_fd);
         listener->listen_fd = -1;
     }
+    connections_finish(listener);
     {
         yvex_error cleanup_error;
         int cleanup_rc = state_sessions_close(gateway, &cleanup_error);
@@ -1108,6 +1252,7 @@ int yvex_server_openai_prepare(server_openai_listener **out,
     if (!out || !options || !options->yvex_socket ||
         options->yvex_socket[0] != '/' || !options->port ||
         options->timeout_ms < 100u || options->timeout_ms > 86400000u ||
+        !options->maximum_connections || options->maximum_connections >= 64ull ||
         strlen(options->yvex_socket) >= YVEX_SERVER_SOCKET_PATH_CAP) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.openai.config",
                        "loopback port, timeout, and YVEX socket are required");
@@ -1119,6 +1264,17 @@ int yvex_server_openai_prepare(server_openai_listener **out,
                        "OpenAI listener allocation failed");
         return YVEX_ERR_NOMEM;
     }
+    listener->maximum_connections = options->maximum_connections;
+    atomic_init(&listener->gateway.next_id, 0ull);
+    if (pthread_mutex_init(&listener->gateway.state_mutex, NULL) != 0)
+        goto state_failure;
+    listener->gateway.state_mutex_ready = 1;
+    if (pthread_mutex_init(&listener->connection_mutex, NULL) != 0)
+        goto state_failure;
+    listener->connection_mutex_ready = 1;
+    if (pthread_cond_init(&listener->connection_idle, NULL) != 0)
+        goto state_failure;
+    listener->connection_idle_ready = 1;
     listener->listen_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (listener->listen_fd < 0) goto io_failure;
     (void)setsockopt(listener->listen_fd, SOL_SOCKET, SO_REUSEADDR,
@@ -1144,6 +1300,13 @@ int yvex_server_openai_prepare(server_openai_listener **out,
     return YVEX_OK;
 io_failure:
     if (listener->listen_fd >= 0) (void)close(listener->listen_fd);
+state_failure:
+    if (listener->connection_idle_ready)
+        (void)pthread_cond_destroy(&listener->connection_idle);
+    if (listener->connection_mutex_ready)
+        (void)pthread_mutex_destroy(&listener->connection_mutex);
+    if (listener->gateway.state_mutex_ready)
+        (void)pthread_mutex_destroy(&listener->gateway.state_mutex);
     free(listener);
     yvex_error_set(err, YVEX_ERR_IO, "server.openai.listener",
                    "loopback listener reservation failed");
@@ -1180,6 +1343,12 @@ void yvex_server_openai_request_stop(server_openai_listener *listener)
 {
     if (!listener) return;
     atomic_store_explicit(&listener->stop, 1, memory_order_release);
+    if (listener->connection_mutex_ready &&
+        pthread_mutex_lock(&listener->connection_mutex) == 0) {
+        if (listener->connection_idle_ready)
+            (void)pthread_cond_broadcast(&listener->connection_idle);
+        (void)pthread_mutex_unlock(&listener->connection_mutex);
+    }
     if (listener->listen_fd >= 0)
         (void)shutdown(listener->listen_fd, SHUT_RDWR);
 }
@@ -1238,6 +1407,12 @@ void yvex_server_openai_close(server_openai_listener **listener)
     (void)yvex_server_openai_finish(owner, &err);
     if (owner->listen_fd >= 0) (void)close(owner->listen_fd);
     openai_state_clear(&owner->gateway);
+    if (owner->connection_idle_ready)
+        (void)pthread_cond_destroy(&owner->connection_idle);
+    if (owner->connection_mutex_ready)
+        (void)pthread_mutex_destroy(&owner->connection_mutex);
+    if (owner->gateway.state_mutex_ready)
+        (void)pthread_mutex_destroy(&owner->gateway.state_mutex);
     memset(owner, 0, sizeof(*owner));
     free(owner);
     *listener = NULL;

@@ -14,6 +14,7 @@ extern "C" {
 #endif
 
 #define YVEX_EXECUTION_BATCH_SCHEMA_V1 1u
+#define YVEX_EXECUTION_COMPATIBILITY_SCHEMA_V1 1u
 #define YVEX_EXPERT_WORKLIST_POLICY_SCHEMA_V1 1u
 #define YVEX_EXPERT_WORKLIST_SCHEMA_V1 1u
 #define YVEX_EXPERT_WORKLIST_OBSERVATION_SCHEMA_V1 1u
@@ -63,6 +64,24 @@ typedef struct {
     char operation_identity[YVEX_SHA256_HEX_CAP];
     char identity[YVEX_SHA256_HEX_CAP];
 } yvex_execution_batch;
+
+/*
+ * Stable compiled/runtime facts that prove rows may enter one physical operation. Dynamic
+ * session, candidate, and row ownership stays in yvex_execution_batch_source/row and therefore
+ * cannot be mistaken for compatibility merely because two buffers have equal extents.
+ */
+typedef struct {
+    unsigned int schema_version;
+    yvex_execution_phase phase;
+    unsigned int backend_kind, tensor_scope, execution_class, publication_contract;
+    unsigned long long model_generation, layer_ordinal, row_width, admitted_width;
+    char runtime_model_identity[YVEX_SHA256_HEX_CAP];
+    char runtime_binding_identity[YVEX_SHA256_HEX_CAP];
+    char physical_variant_identity[YVEX_SHA256_HEX_CAP];
+    char execution_profile_identity[YVEX_SHA256_HEX_CAP];
+    char operation_identity[YVEX_SHA256_HEX_CAP];
+    char identity[YVEX_SHA256_HEX_CAP];
+} yvex_execution_compatibility_key;
 
 typedef struct {
     unsigned int schema_version;
@@ -120,6 +139,13 @@ typedef struct {
 int yvex_execution_batch_seal(yvex_execution_batch *batch, yvex_error *err);
 int yvex_execution_batch_validate(const yvex_execution_batch *batch,
                                   yvex_error *err);
+int yvex_execution_compatibility_key_seal(
+    yvex_execution_compatibility_key *key, yvex_error *err);
+int yvex_execution_compatibility_key_validate(
+    const yvex_execution_compatibility_key *key, yvex_error *err);
+int yvex_execution_compatibility_keys_match(
+    const yvex_execution_compatibility_key *left,
+    const yvex_execution_compatibility_key *right, yvex_error *err);
 int yvex_expert_worklist_compiled_policy_valid(
     unsigned long long supported_width_mask,
     unsigned long long tensor_core_minimum,

@@ -166,6 +166,9 @@ typedef struct {
     void *cancel_context;
     yvex_attention_evidence_level evidence_level;
     int device_hidden_output, device_pre_normalized_output;
+    int compatible_batching;
+    unsigned long long compatible_batch_width;
+    const unsigned long long *execution_width;
     const yvex_compiled_execution_profile *execution_profile;
     yvex_execution_shape_registry *shape_registry;
 } yvex_runtime_transformer_options;

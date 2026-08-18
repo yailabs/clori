@@ -458,9 +458,21 @@ One bounded keyed scheduler owns queue order and active-session mutation.
 Socket/listener threads parse and project requests but do not mutate model
 state directly. A configured worker set can execute independent sessions in
 parallel, while one serialization key never has two active operations. The
-capacity compiler admits the total sequence count before readiness. Physical
-compatible-row continuous batching, multiple hosted models, and distributed
-serving are not implemented.
+capacity compiler admits the total sequence count before readiness. A readiness
+rendezvous coordinates only a compatible cohort that is already active; it does
+not delay an isolated request while waiting for unknown future traffic.
+
+The runtime model owns one bounded compatible-batch queue shared by its
+generation contexts. Physical Execution IR supplies the admitted width and
+representation policy, each runtime ticket supplies an identity-sealed phase,
+operation, layer, row geometry and source generation, and the backend receives
+only a validated physical batch. Current production CUDA execution combines
+compatible rows from independent sessions in the canonical expert worklist and
+executes grouped MoE once before scattering results back to their isolated
+session streams. Cancellation, failure and teardown retain per-session
+publication and lifetime. Attention, output-head projection and sampling remain
+session-local, so this is not yet complete transformer-wide continuous
+batching. Multiple hosted models and distributed serving are not implemented.
 
 ## Publication and observability
 

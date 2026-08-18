@@ -1040,15 +1040,9 @@ static int state_summary_copy(const attention_state *state,
 }
 void yvex_graph_attention_state_candidate_clear(attention_state *state) {
     unsigned long long index;
-    unsigned long long delta;
     if (!state) return;
-    for (index = 0ull; index < state->layer_count; ++index) {
-        for (delta = 0u;
-             delta < state->layers[index].candidate_delta_count; ++delta)
-            yvex_attention_candidate_delta_close(
-                &state->layers[index].candidate_deltas[delta]);
+    for (index = 0ull; index < state->layer_count; ++index)
         state->layers[index].candidate_delta_count = 0u;
-    }
 }
 static void state_candidate_clear(attention_state_transaction *transaction) {
     transaction->layer = NULL;
@@ -1230,7 +1224,6 @@ static int state_apply(attention_state *state, const yvex_attention_publication 
     attention_state_transaction *transaction;
     attention_layer_state *layer;
     attention_state_bank *committed, *candidate;
-    yvex_attention_candidate_delta *candidate_delta = NULL;
     int rc = YVEX_OK;
     if (delta_identity_output) delta_identity_output[0] = '\0';
     rc = state_enter(state, YVEX_ATTENTION_NO_LAYER, 0ull,
@@ -1289,15 +1282,15 @@ static int state_apply(attention_state *state, const yvex_attention_publication 
     candidate = &layer->bank[1u - layer->committed_bank];
     if (!state_candidate_delta_reserve(state, layer, err) ||
         yvex_attention_candidate_delta_open(
-            &candidate_delta, publication, err) != YVEX_OK) {
+            &layer->candidate_deltas[layer->candidate_delta_count],
+            publication, err) != YVEX_OK) {
         transaction->failed = 1;
         rc = state_reject(failure, transaction->layer_ordinal, 1ull, 0ull,
                           "bounded attention state delta could not be retained",
                           (yvex_status)yvex_error_code(err), err);
         goto done;
     }
-    layer->candidate_deltas[layer->candidate_delta_count++] = candidate_delta;
-    candidate_delta = NULL;
+    layer->candidate_delta_count++;
     rc = state_bank_apply_publication(
         state, layer, candidate, publication, failure, err);
     if (rc != YVEX_OK) {
@@ -1331,7 +1324,6 @@ static int state_apply(attention_state *state, const yvex_attention_publication 
         state_candidate_clear(transaction);
     }
 done:
-    yvex_attention_candidate_delta_close(&candidate_delta);
     return state_transaction_result(state, rc, failure, err);
 }
 static int state_select_prefix(
@@ -1383,29 +1375,26 @@ static int state_select_prefix(
         attention_layer_state *layer = &state->layers[index];
         attention_state_bank *committed = &layer->bank[layer->committed_bank];
         attention_state_bank *candidate = &layer->bank[1u - layer->committed_bank];
-        yvex_attention_candidate_delta *selected_delta = NULL;
         yvex_attention_publication publication;
         if (!layer->staged) continue;
         rc = yvex_attention_candidate_delta_project(
             layer->candidate_deltas[0], &committed->view, prefix_count,
             &publication, err);
         if (rc != YVEX_OK) goto failed;
-        if (yvex_attention_candidate_delta_open(
-                &selected_delta, &publication, err) != YVEX_OK) {
-            rc = yvex_error_code(err);
-            goto failed;
-        }
         state_bank_restore_candidate(candidate, committed, layer);
         rc = state_bank_apply_publication(
             state, layer, candidate, &publication, failure, err);
         if (rc != YVEX_OK) {
-            yvex_attention_candidate_delta_close(&selected_delta);
             state_bank_restore_candidate(candidate, committed, layer);
             goto failed;
         }
-        yvex_attention_candidate_delta_close(&layer->candidate_deltas[0]);
-        layer->candidate_delta_count = 0u;
-        layer->candidate_deltas[layer->candidate_delta_count++] = selected_delta;
+        if (yvex_attention_candidate_delta_open(
+                &layer->candidate_deltas[0], &publication, err) != YVEX_OK) {
+            rc = yvex_error_code(err);
+            state_bank_restore_candidate(candidate, committed, layer);
+            goto failed;
+        }
+        layer->candidate_delta_count = 1u;
         layer->banks_synchronized = 0;
         layer->staged = extension_count == 0ull;
     }
@@ -1597,13 +1586,7 @@ static int state_reset(
         layer->committed_bank = 0u;
         layer->staged = 0;
         layer->banks_synchronized = 1;
-        {
-            unsigned long long delta;
-            for (delta = 0u; delta < layer->candidate_delta_count; ++delta)
-                yvex_attention_candidate_delta_close(
-                    &layer->candidate_deltas[delta]);
-            layer->candidate_delta_count = 0u;
-        }
+        layer->candidate_delta_count = 0u;
     }
     if (!state_content_identity(state, ULLONG_MAX, NULL, 0,
                                 state->summary.state_layout_identity,
@@ -1769,7 +1752,7 @@ static void state_close(attention_state **state_ptr) {
     for (layer = 0ull; layer < state->layer_count; ++layer) {
         unsigned long long delta;
         for (delta = 0u;
-             delta < state->layers[layer].candidate_delta_count; ++delta)
+             delta < state->layers[layer].candidate_delta_capacity; ++delta)
             yvex_attention_candidate_delta_close(
                 &state->layers[layer].candidate_deltas[delta]);
         for (bank = 0ull; bank < 2ull; ++bank)

@@ -92,7 +92,10 @@ typedef struct {
     unsigned long long yvex_timeout_ms;
     atomic_int *stop;
     char yvex_socket[YVEX_SERVER_SOCKET_PATH_CAP];
-    unsigned long long next_id, request_count;
+    atomic_ullong next_id;
+    unsigned long long request_count;
+    pthread_mutex_t state_mutex;
+    int state_mutex_ready;
     server_telemetry *telemetry;
     openai_response_record records[OPENAI_RESPONSE_RECORD_MAX];
 } openai_gateway;

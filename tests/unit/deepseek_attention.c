@@ -2515,6 +2515,15 @@ static int test_probe_version_refusal(void)
             YVEX_ERR_INVALID_ARG && result.layers_executed == 0ull,
         "direct graph API refuses unknown operation scope before publication");
     request.operation_scope = YVEX_ATTENTION_OPERATION_CORE;
+    request.measure_device_time = 2;
+    yvex_error_clear(&error);
+    YVEX_TEST_ASSERT(
+        yvex_attention_execute(
+            NULL, NULL, NULL, NULL, NULL, &request, &result, NULL, &error) ==
+                YVEX_ERR_INVALID_ARG &&
+            strcmp(yvex_error_message(&error), "canonical V2 probe request is invalid") == 0,
+        "attention probe refuses an invalid device timing policy");
+    request.measure_device_time = 0;
     request.backend = YVEX_BACKEND_KIND_CUDA;
     request.probe = YVEX_ATTENTION_PROBE_UNSPECIFIED;
     request.device_view = probe_device_view_unreached;
@@ -2548,6 +2557,37 @@ static int test_probe_version_refusal(void)
     return 0;
 }
 
+static int test_device_native_publication_identity_hash(void)
+{
+    yvex_attention_publication publication = {
+        .complete = 1,
+        .token_count = 1ull,
+        .hidden_width = 4ull,
+        .kv_width = 2ull,
+        .evidence_level = YVEX_ATTENTION_EVIDENCE_NONE,
+    };
+    yvex_sha256 output_hash, state_hash;
+
+    yvex_core_text_copy(
+        publication.execution_identity,
+        sizeof(publication.execution_identity),
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    yvex_sha256_init(&output_hash);
+    yvex_sha256_init(&state_hash);
+    YVEX_TEST_ASSERT(
+        yvex_attention_publication_hash_update(
+            &output_hash, &state_hash, &publication),
+        "device-native semantic publication hashes identity without host arrays");
+    publication.evidence_level = YVEX_ATTENTION_EVIDENCE_FULL;
+    yvex_sha256_init(&output_hash);
+    yvex_sha256_init(&state_hash);
+    YVEX_TEST_ASSERT(
+        !yvex_attention_publication_hash_update(
+            &output_hash, &state_hash, &publication),
+        "full evidence publication still requires materialized host arrays");
+    return 0;
+}
+
 int yvex_test_deepseek_attention(void)
 {
     if (test_execution_status_names() != 0) return 1;
@@ -2571,6 +2611,7 @@ int yvex_test_deepseek_attention(void)
     if (test_attention_workspace_lifecycle() != 0) return 1;
     if (test_probe_seed_contract() != 0) return 1;
     if (test_probe_version_refusal() != 0) return 1;
+    if (test_device_native_publication_identity_hash() != 0) return 1;
     if (test_f32_comparison_contract() != 0) return 1;
     if (test_attention_state_comparison_contract() != 0) return 1;
     if (test_independent_reference_detects_stage_mutations() != 0) return 1;

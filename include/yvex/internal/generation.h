@@ -518,9 +518,8 @@ int yvex_runtime_generation_execution_identity(
     char output[YVEX_SHA256_HEX_CAP]);
 int yvex_runtime_generation_context_summary_copy(const yvex_runtime_generation_context *context,
     yvex_runtime_generation_context_summary *summary, yvex_error *err);
-int yvex_runtime_generation_context_open(
-    yvex_runtime_generation_context **out, yvex_runtime_model *model,
-    yvex_runtime_execution_session *session,
+int yvex_runtime_generation_context_open(yvex_runtime_generation_context **out,
+    yvex_runtime_model *model, yvex_runtime_execution_session *session,
     const yvex_runtime_generation_options *options, yvex_error *err);
 const yvex_runtime_generation_plan_summary *yvex_runtime_generation_plan_summary_get(
     const yvex_runtime_generation_context *context);
@@ -538,14 +537,15 @@ int yvex_runtime_generation_turn_execute(
     unsigned long long token_capacity, unsigned char *text,
     unsigned long long text_capacity, yvex_runtime_generation_result *result,
     yvex_error *err);
+int yvex_runtime_generation_execution_width_set(
+    yvex_runtime_generation_context *context, unsigned long long width, yvex_error *err);
 int yvex_runtime_generation_result_validate(
     const yvex_runtime_generation_plan_summary *plan,
     const yvex_runtime_generation_token_result *tokens,
     unsigned long long token_capacity, const unsigned char *text,
     unsigned long long text_capacity,
     const yvex_runtime_generation_result *result, yvex_error *err);
-int yvex_runtime_generation_context_close(
-    yvex_runtime_generation_context **context, yvex_error *err);
+int yvex_runtime_generation_context_close(yvex_runtime_generation_context **context, yvex_error *err);
 typedef struct {
     const char *target, *artifact_path, *runtime_binding_path;
     yvex_backend_kind backend;

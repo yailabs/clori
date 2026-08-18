@@ -1490,6 +1490,7 @@ context->job.indexer_heads = context->layer->indexer_heads;
 context->job.indexer_head_dimension = context->layer->indexer_head_dimension;
 context->job.indexer_topk = context->layer->sparse_topk.k;
 context->job.evidence_level = (unsigned int)context->opts->evidence_level;
+context->job.measure_device_time = context->opts->measure_device_time;
 context->job.native_execution =
     context->opts->execution_class == YVEX_EXECUTION_CLASS_DEVICE_NATIVE;
 context->job.residual_stream_count = context->layer->residual_stream_count;
@@ -1680,3 +1681,21 @@ const yvex_graph_execution_api yvex_attention_execution_api = {
     .cuda_token_execute = graph_cuda_request_execute,
     .cpu_chunk_execute = graph_cpu_chunk_execute
 };
+
+int yvex_attention_probe_execute(
+    const yvex_graph_execution_api *family, const yvex_attention_plan *plan,
+    const void *family_ir, yvex_materialization_session *session,
+    const yvex_runtime_descriptor *descriptor,
+    const yvex_attention_probe_request *request,
+    yvex_attention_probe_result *result,
+    yvex_attention_failure *failure, yvex_error *err)
+{
+    if (!request || request->activation_view || request->input_identity ||
+        request->token_ids) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "graph.attention.probe",
+                       "canonical probe cannot borrow an activation input");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    return yvex_attention_execute(family, plan, family_ir, session, descriptor,
+                                  request, result, failure, err);
+}

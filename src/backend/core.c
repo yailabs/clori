@@ -15,6 +15,12 @@
 #include <stdlib.h>
 #include <string.h>
 static int backend_desc_valid(const yvex_backend_tensor_desc *desc, yvex_error *err);
+static int backend_refuse(yvex_error *err, yvex_status status,
+                          const char *where, const char *reason)
+{
+    yvex_error_set(err, status, where, reason);
+    return status;
+}
 static const char *const backend_kind_names[] = {"cpu", "cuda", "metal", "rocm"};
 static const char *const backend_status_names[] = {
     "ready", "context-ready", "unsupported", "failed"
@@ -726,6 +732,40 @@ int yvex_backend_tensor_copy_async(yvex_backend *backend,
     }
     return backend->vtable->tensor_copy_async(
         backend, destination, source, err);
+}
+
+int yvex_backend_tensor_copy_shared_async(yvex_backend *executor,
+                                          yvex_device_tensor *destination,
+                                          const yvex_device_tensor *source,
+                                          yvex_error *err)
+{
+    yvex_backend *physical;
+    int rc;
+    if (!executor || !destination || !source || !destination->owner ||
+        !source->owner)
+        return backend_refuse(
+            err, YVEX_ERR_INVALID_ARG, "backend.tensor.copy-shared",
+            "executor and two owned tensors are required");
+    rc = backend_dispatch_admit(executor, "backend.tensor.copy-shared", err);
+    if (rc == YVEX_OK)
+        rc = backend_dispatch_admit(source->owner,
+                                    "backend.tensor.copy-shared", err);
+    physical = executor->resource_owner ? executor->resource_owner : executor;
+    if (rc != YVEX_OK) return rc;
+    if (destination->owner != executor ||
+        (source->owner->resource_owner ? source->owner->resource_owner
+                                       : source->owner) != physical ||
+        !yvex_backend_tensor_same_shape(destination, source) ||
+        !source->is_written)
+        return backend_refuse(
+            err, YVEX_ERR_INVALID_ARG, "backend.tensor.copy-shared",
+            "same-physical-owner initialized tensor shapes are required");
+    if (!executor->vtable || !executor->vtable->tensor_copy_shared_async)
+        return backend_refuse(
+            err, YVEX_ERR_UNSUPPORTED, "backend.tensor.copy-shared",
+            "backend does not support cross-stream tensor copy");
+    return executor->vtable->tensor_copy_shared_async(
+        executor, destination, source, err);
 }
 
 int yvex_backend_sync(yvex_backend *backend, yvex_error *err)

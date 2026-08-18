@@ -12,6 +12,54 @@ static void worklist_test_identity(char output[YVEX_SHA256_HEX_CAP], char digit)
     output[YVEX_SHA256_HEX_CAP - 1u] = '\0';
 }
 
+static int worklist_test_compatibility(void)
+{
+    yvex_execution_compatibility_key first = {0}, same, different;
+    yvex_error err;
+    first.schema_version = YVEX_EXECUTION_COMPATIBILITY_SCHEMA_V1;
+    first.phase = YVEX_EXECUTION_PHASE_DECODE;
+    first.backend_kind = 1u;
+    first.tensor_scope = 2u;
+    first.execution_class = 1u;
+    first.publication_contract = 1u;
+    first.model_generation = 7ull;
+    first.layer_ordinal = 3ull;
+    first.row_width = 14336ull;
+    first.admitted_width = 8ull;
+    worklist_test_identity(first.runtime_model_identity, '1');
+    worklist_test_identity(first.runtime_binding_identity, '2');
+    worklist_test_identity(first.physical_variant_identity, '3');
+    worklist_test_identity(first.execution_profile_identity, '4');
+    worklist_test_identity(first.operation_identity, '5');
+    YVEX_TEST_ASSERT(
+        yvex_execution_compatibility_key_seal(&first, &err) == YVEX_OK &&
+            yvex_execution_compatibility_key_validate(&first, &err) == YVEX_OK,
+        "complete execution compatibility facts should seal");
+    same = first;
+    YVEX_TEST_ASSERT(
+        yvex_execution_compatibility_keys_match(&first, &same, &err),
+        "identical compiled operations should be compatible");
+    different = first;
+    different.layer_ordinal++;
+    YVEX_TEST_ASSERT(
+        yvex_execution_compatibility_key_seal(&different, &err) == YVEX_OK &&
+            !yvex_execution_compatibility_keys_match(&first, &different, &err),
+        "equal row geometry must not merge distinct compiled operations");
+    different = first;
+    different.admitted_width = 0ull;
+    YVEX_TEST_ASSERT(
+        yvex_execution_compatibility_key_seal(&different, &err) ==
+            YVEX_ERR_INVALID_ARG,
+        "unbounded compatibility width should refuse");
+    different = first;
+    different.runtime_binding_identity[0] = 'f';
+    YVEX_TEST_ASSERT(
+        yvex_execution_compatibility_key_validate(&different, &err) ==
+            YVEX_ERR_FORMAT,
+        "stale compatibility identity should refuse");
+    return 0;
+}
+
 static int worklist_test_build(void)
 {
     const unsigned long long selected[] = {3ull, 1ull, 7ull, 1ull, 3ull, 5ull,
@@ -273,6 +321,7 @@ static int worklist_test_multi_session_sources(void)
 
 int yvex_test_expert_worklist(void)
 {
+    if (worklist_test_compatibility() != 0) return 1;
     if (worklist_test_build() != 0) return 1;
     if (worklist_test_refusals() != 0) return 1;
     if (worklist_test_multi_session_sources() != 0) return 1;

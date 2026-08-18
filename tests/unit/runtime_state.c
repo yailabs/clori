@@ -11,6 +11,7 @@
 
 #include <yvex/internal/graph_state.h>
 #include <yvex/internal/candidate.h>
+#include <yvex/internal/core.h>
 #include <yvex/internal/runtime.h>
 
 #include "src/graph/private.h"
@@ -955,8 +956,10 @@ static int test_state_identity_is_execution_shape_neutral(
 static int test_candidate_prefix_compression_boundary(void)
 {
     yvex_attention_candidate_delta *delta = NULL;
+    yvex_attention_candidate_delta *periodic = NULL;
     yvex_attention_history_view committed;
     yvex_attention_publication source, projected;
+    yvex_core_allocation_epoch before_reuse, after_reuse;
     yvex_error err;
     float raw[6] = {1.0f, -1.0f, 2.0f, -2.0f, 3.0f, -3.0f};
     float compressed[2] = {4.0f, -4.0f};
@@ -1003,9 +1006,11 @@ static int test_candidate_prefix_compression_boundary(void)
     source.indexer_positions = &compressed_position;
     source.rolling_checkpoint_count = 3ull;
     source.next_main_rolling_state.present = 1;
+    source.next_main_rolling_state.head_dimension = 2ull;
     source.next_main_rolling_state.kv_state_extent = 1ull;
     source.next_main_rolling_state.score_state_extent = 1ull;
     source.next_indexer_rolling_state.present = 1;
+    source.next_indexer_rolling_state.head_dimension = 2ull;
     source.next_indexer_rolling_state.kv_state_extent = 1ull;
     source.next_indexer_rolling_state.score_state_extent = 1ull;
     source.main_rolling_kv_checkpoints = main_kv;
@@ -1037,7 +1042,48 @@ static int test_candidate_prefix_compression_boundary(void)
             projected.indexer_count == 1ull &&
             projected.next_main_rolling_state.next_token_position == 40ull,
         "prefix containing the completing row exposes exactly one compressed entry");
+    raw[0] = 7.0f;
+    tokens[0] = 9u;
+    yvex_core_allocation_epoch_snapshot(&before_reuse);
+    YVEX_TEST_ASSERT(
+        yvex_attention_candidate_delta_open(&delta, &source, &err) == YVEX_OK,
+        "candidate delta storage accepts a same-geometry replacement");
+    yvex_core_allocation_epoch_snapshot(&after_reuse);
+    YVEX_TEST_ASSERT(
+        after_reuse.allocation_events == before_reuse.allocation_events &&
+            after_reuse.reallocation_events == before_reuse.reallocation_events &&
+            after_reuse.release_events == before_reuse.release_events,
+        "same-geometry candidate replacement reuses retained storage");
+    YVEX_TEST_ASSERT(
+        yvex_attention_candidate_delta_project(
+            delta, &committed, 1ull, &projected, &err) == YVEX_OK &&
+            projected.raw_kv[0] == 7.0f && projected.token_ids[0] == 9u,
+        "reused candidate storage retains the replacement publication");
     yvex_attention_candidate_delta_close(&delta);
+
+    source.compressed_count = source.indexer_count = 0ull;
+    source.compressed_stride = source.indexer_stride = 0ull;
+    source.compressed_kv = source.indexer_kv = NULL;
+    source.compressed_positions = source.indexer_positions = NULL;
+    YVEX_TEST_ASSERT(
+        yvex_attention_candidate_delta_open(&periodic, &source, &err) == YVEX_OK,
+        "candidate delta reserves a future rolling emission");
+    yvex_core_allocation_epoch_snapshot(&before_reuse);
+    source.compressed_count = source.indexer_count = 1ull;
+    source.compressed_stride = source.indexer_stride = 2ull;
+    source.compressed_kv = source.indexer_kv = compressed;
+    source.compressed_positions = source.indexer_positions =
+        &compressed_position;
+    YVEX_TEST_ASSERT(
+        yvex_attention_candidate_delta_open(&periodic, &source, &err) == YVEX_OK,
+        "periodic rolling emission uses the sealed row geometry");
+    yvex_core_allocation_epoch_snapshot(&after_reuse);
+    YVEX_TEST_ASSERT(
+        after_reuse.allocation_events == before_reuse.allocation_events &&
+            after_reuse.reallocation_events == before_reuse.reallocation_events &&
+            after_reuse.release_events == before_reuse.release_events,
+        "first periodic emission reuses preflighted candidate storage");
+    yvex_attention_candidate_delta_close(&periodic);
     return 0;
 }
 

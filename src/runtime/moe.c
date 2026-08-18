@@ -10,6 +10,7 @@
 #include <yvex/internal/quant_numeric.h>
 #include <yvex/internal/runtime.h>
 #include "src/runtime/private.h"
+#include <limits.h>
 #include <math.h>
 #include <pthread.h>
 #include <stdint.h>
@@ -34,6 +35,7 @@ struct yvex_runtime_moe_context {
     unsigned long long cuda_workspace_bytes;
     yvex_moe_device_completion_slot *pending_layers;
     unsigned long long pending_layer_capacity, pending_layer_count;
+    unsigned long long pending_first_layer;
     int pending_active;
     float *candidate_combined, *candidate_post, *candidate_combination;
     unsigned long long candidate_tokens, candidate_layers;
@@ -111,14 +113,12 @@ static int runtime_moe_worklist_contract(
             : context->session_view->attention_state_provider;
     const yvex_physical_execution_decision *decisions[3];
     yvex_runtime_model_summary model;
-    yvex_graph_attention_state_summary state;
+    yvex_graph_attention_state_summary state = {0};
     unsigned long long slot, next_execution;
     if (!physical_summary || !provider || !provider->summary || !source ||
-        rows->execution_source_count != 1ull || !rows->execution_sources ||
+        !rows->execution_source_count || !rows->execution_sources ||
         !rows->execution_rows ||
-        yvex_runtime_model_summary_copy(context->model, &model, err) != YVEX_OK ||
-        provider->summary(provider->context, &state, err) != YVEX_OK ||
-        !yvex_core_u64_add(session->execution_count, 1ull, &next_execution))
+        yvex_runtime_model_summary_copy(context->model, &model, err) != YVEX_OK)
         return yvex_error_code(err) == YVEX_OK
                    ? runtime_moe_refuse(err, YVEX_ERR_STATE,
                                         "expert worklist identity owners are unavailable")
@@ -128,12 +128,24 @@ static int runtime_moe_worklist_contract(
     batch->provenance = rows->provenance;
     batch->phase = rows->phase;
     batch->row_count = rows->row_count;
-    batch->source_count = 1ull;
+    batch->source_count = rows->execution_source_count;
     batch->model_generation = model.runtime_model_builds;
-    *source = rows->execution_sources[0];
-    source->execution_generation = next_execution;
-    source->state_generation = state.generation;
-    batch->sources = source;
+    if (rows->execution_source_count == 1ull) {
+        if (provider->summary(provider->context, &state, err) != YVEX_OK ||
+            !yvex_core_u64_add(session->execution_count, 1ull,
+                               &next_execution))
+            return yvex_error_code(err) == YVEX_OK
+                       ? runtime_moe_refuse(
+                             err, YVEX_ERR_STATE,
+                             "expert worklist source generation is unavailable")
+                       : yvex_error_code(err);
+        *source = rows->execution_sources[0];
+        source->execution_generation = next_execution;
+        source->state_generation = state.generation;
+        batch->sources = source;
+    } else {
+        batch->sources = rows->execution_sources;
+    }
     batch->rows = rows->execution_rows;
     yvex_runtime_identity_copy(batch->runtime_model_identity,
                                model.runtime_model_identity);
@@ -451,6 +463,7 @@ static int runtime_moe_load_layer(yvex_runtime_moe_context *context,
     job->cancel_requested = context->options.cancel_requested;
     job->cancel_context = context->options.cancel_context;
     job->evidence_level = context->options.evidence_level;
+    job->eager_execution = context->options.eager_execution;
     if (!input_rows || !yvex_core_u64_mul(input_rows, layer->experts_per_token,
                                           &routed_population))
         return runtime_moe_refuse(err, YVEX_ERR_BOUNDS,
@@ -782,6 +795,7 @@ int yvex_runtime_moe_context_open(yvex_runtime_moe_context **out, yvex_runtime_m
     if (out) *out = NULL;
     if (cuda_workspace_bytes) *cuda_workspace_bytes = 0ull;
     if (!out || !model || !session || !options ||
+        (options->eager_execution != 0 && options->eager_execution != 1) ||
         (options->tensor_scope != YVEX_TENSOR_SCOPE_GLOBAL &&
          options->tensor_scope != YVEX_TENSOR_SCOPE_DRAFT))
         return runtime_moe_refuse(err, YVEX_ERR_INVALID_ARG, "MoE context arguments are required");
@@ -1248,6 +1262,26 @@ static int runtime_moe_device_routing_identity(
     return 1;
 }
 
+int yvex_runtime_moe_row_routing_identity(
+    const yvex_runtime_moe_context *context, unsigned long long layer_index,
+    const yvex_moe_row_batch *batch, char output[YVEX_SHA256_HEX_CAP],
+    yvex_error *err)
+{
+    const yvex_moe_plan_summary *plan = context
+        ? yvex_moe_plan_summary_get(context->plan) : NULL;
+    const yvex_moe_layer_plan *layer = context
+        ? yvex_moe_plan_layer_at(context->plan, layer_index) : NULL;
+    if (output) output[0] = '\0';
+    if (!plan || !layer || !batch || !output || !batch->token_ids ||
+        !batch->row_count || !batch->token_ids_present ||
+        !runtime_moe_device_routing_identity(plan, layer, batch, output))
+        return runtime_moe_refuse(
+            err, YVEX_ERR_INVALID_ARG,
+            "MoE row routing identity owners are unavailable");
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
 static int runtime_moe_batch_result_seal(
     const yvex_moe_plan_summary *plan, const yvex_moe_layer_plan *layer,
     const yvex_moe_row_batch *batch, const yvex_execution_batch *execution_batch,
@@ -1276,6 +1310,28 @@ static int runtime_moe_batch_result_seal(
     if (!runtime_moe_batch_identity(plan, layer, batch, result))
         return runtime_moe_refuse(err, YVEX_ERR_STATE,
                                   "ordered MoE execution identity failed");
+    return YVEX_OK;
+}
+
+static int runtime_moe_transaction_begin(
+    yvex_runtime_moe_context *context, const yvex_moe_layer_plan *layer,
+    const yvex_moe_row_batch *batch,
+    const yvex_backend_moe_operations *operations, yvex_error *err)
+{
+    if (batch->execution_class != YVEX_EXECUTION_CLASS_DEVICE_NATIVE ||
+        context->pending_active)
+        return YVEX_OK;
+    if ((!batch->complete_after_operation && layer->ordinal != 0ull) ||
+        !context->pending_layers || !context->pending_layer_capacity ||
+        !operations->complete_rows)
+        return runtime_moe_refuse(err, YVEX_ERR_STATE,
+                                  "MoE row transaction cannot begin");
+    memset(context->pending_layers, 0,
+           (size_t)context->pending_layer_capacity *
+               sizeof(*context->pending_layers));
+    context->pending_layer_count = 0ull;
+    context->pending_first_layer = layer->ordinal;
+    context->pending_active = 1;
     return YVEX_OK;
 }
 
@@ -1310,6 +1366,8 @@ static int runtime_moe_execute_layer_rows(yvex_runtime_moe_context *context, uns
         batch->schema_version != YVEX_MOE_ROW_BATCH_SCHEMA_V1 || !batch->row_count ||
         batch->provenance > YVEX_EXECUTION_BATCH_COMPILED_COMPATIBLE ||
         batch->phase >= YVEX_EXECUTION_PHASE_COUNT ||
+        (batch->complete_after_operation != 0 &&
+         batch->complete_after_operation != 1) ||
         batch->row_width != layer->expanded_width ||
         batch->row_stride < batch->row_width || !batch->expanded_rows || !batch->token_ids ||
         !batch->token_ids_present || batch->row_count > context->options.row_capacity ||
@@ -1349,24 +1407,18 @@ static int runtime_moe_execute_layer_rows(yvex_runtime_moe_context *context, uns
         goto done;
     }
     context->busy = 1;
-    if (batch->execution_class == YVEX_EXECUTION_CLASS_DEVICE_NATIVE && !context->pending_active) {
-        if (layer->ordinal != 0ull || !context->pending_layers ||
-            !context->pending_layer_capacity ||
-            !backend_operations->complete_rows) {
-            rc = runtime_moe_refuse(err, YVEX_ERR_STATE, "MoE row transaction cannot begin");
-            goto done;
-        }
-        memset(context->pending_layers, 0,
-               (size_t)context->pending_layer_capacity * sizeof(*context->pending_layers));
-        context->pending_layer_count = 0ull;
-        context->pending_active = 1;
-    }
+    rc = runtime_moe_transaction_begin(context, layer, batch,
+                                       backend_operations, err);
+    if (rc != YVEX_OK) goto done;
     deferred = batch->execution_class == YVEX_EXECUTION_CLASS_DEVICE_NATIVE &&
                context->pending_active;
     if (!deferred && batch->device_outputs) batch->device_outputs->is_written = 0;
     if ((context->pending_active && !deferred) ||
         (deferred &&
-         (layer->ordinal != context->pending_layer_count ||
+         (context->pending_first_layer >
+                  ULLONG_MAX - context->pending_layer_count ||
+          layer->ordinal !=
+              context->pending_first_layer + context->pending_layer_count ||
           layer->ordinal >= context->pending_layer_capacity ||
           context->pending_layers[layer->ordinal].pending))) {
         rc = runtime_moe_refuse(err, YVEX_ERR_STATE, "MoE deferred layer ownership is invalid");
@@ -1535,8 +1587,6 @@ static int runtime_moe_rows_complete(yvex_runtime_moe_context *context,
             break;
         }
         observation = pending->worklist;
-        observation.tensor_core_executed_pairs =
-            pending->tensor_core_executed_pairs;
         if (observation.schema_version !=
                 YVEX_EXPERT_WORKLIST_OBSERVATION_SCHEMA_V1 ||
             observation.worklist_count != 1ull ||
@@ -1589,6 +1639,7 @@ static int runtime_moe_rows_complete(yvex_runtime_moe_context *context,
            (size_t)context->pending_layer_capacity *
                sizeof(*context->pending_layers));
     context->pending_layer_count = 0ull;
+    context->pending_first_layer = 0ull;
     context->pending_active = 0;
     (void)pthread_mutex_unlock(&context->mutex);
     if (rc == YVEX_OK) yvex_error_clear(err);

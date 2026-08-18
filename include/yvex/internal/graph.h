@@ -24,7 +24,6 @@ typedef enum {
     YVEX_GRAPH_REPORT_MODE_JSON,
     YVEX_GRAPH_REPORT_MODE_CSV
 } yvex_graph_report_mode;
-
 typedef struct yvex_attention_layer_plan {
     unsigned long long ordinal, layer_index, predictor_index;
     yvex_tensor_scope tensor_scope;
@@ -293,6 +292,7 @@ typedef struct {
     unsigned long long max_q_b_rows, max_kv_rows, max_compressor_rows, max_indexer_rows;
     unsigned long long scratch_limit_bytes;
     yvex_attention_evidence_level evidence_level;
+    int measure_device_time;
     yvex_execution_class execution_class;
     yvex_attention_workspace *workspace;
     struct yvex_backend_attention_completion *device_completion;
@@ -472,6 +472,7 @@ typedef struct {
     const yvex_attention_probe_state_provider *state_provider;
     yvex_attention_workspace *workspace;
     yvex_attention_evidence_level evidence_level;
+    int measure_device_time;
     yvex_execution_class execution_class;
     yvex_attention_probe_evidence_fn evidence;
     void *evidence_context;
@@ -591,10 +592,9 @@ int yvex_attention_state_provider_abort(
     yvex_attention_failure *failure, yvex_error *err);
 int yvex_attention_publication_identity_build(
     const char *plan_identity, const char *logical_model_identity,
-    const char *input_identity, yvex_attention_operation_scope scope,
-    int candidate_visible, int retain_prefix,
+    const char *input_identity, unsigned long long canonical_input_variant,
+    yvex_attention_operation_scope scope, int candidate_visible, int retain_prefix,
     yvex_attention_publication *publication);
 void yvex_attention_comparison_failure_publish(
     yvex_attention_probe_result *result, const yvex_attention_probe_result *candidate);
-
 #endif

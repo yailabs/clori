@@ -50,7 +50,10 @@ static void server_test_identity(char identity[YVEX_SHA256_HEX_CAP], char digit)
 typedef struct {
     pthread_mutex_t mutex;
     pthread_cond_t condition;
+    server_scheduler *scheduler;
     unsigned long long active, peak, completed;
+    unsigned long long ready_width_two, ready_wait_ns;
+    unsigned long long ready_timeouts;
     int release, first_active, third_active, first_done, violation;
 } scheduler_probe;
 
@@ -63,7 +66,17 @@ static void scheduler_probe_execute(void *context, void *opaque)
 {
     scheduler_probe *probe = context;
     scheduler_probe_work *work = opaque;
+    unsigned long long ready_width = 0ull, wait_ns = 0ull;
+    int timed_out = 0;
+    yvex_error err;
+    int ready_rc = yvex_server_scheduler_execution_ready(
+        probe->scheduler, work->id == 3 ? "other" : "same", &ready_width,
+        &wait_ns, &timed_out, &err);
     (void)pthread_mutex_lock(&probe->mutex);
+    if (ready_rc != YVEX_OK) probe->violation = 1;
+    probe->ready_width_two += ready_width == 2ull;
+    probe->ready_wait_ns += wait_ns;
+    probe->ready_timeouts += timed_out != 0;
     if (work->id == 2 && !probe->first_done) probe->violation = 1;
     probe->active++;
     if (probe->active > probe->peak) probe->peak = probe->active;
@@ -86,7 +99,7 @@ static int test_scheduler_serialization(void)
         {&probe, 1}, {&probe, 2}, {&probe, 3}
     };
     server_scheduler *scheduler = NULL;
-    unsigned long long queued = 0ull, active = 0ull;
+    server_scheduler_summary summary = {0};
     yvex_error err;
     YVEX_TEST_ASSERT(pthread_mutex_init(&probe.mutex, NULL) == 0 &&
                          pthread_cond_init(&probe.condition, NULL) == 0,
@@ -94,17 +107,21 @@ static int test_scheduler_serialization(void)
     YVEX_TEST_ASSERT(
         yvex_server_scheduler_open(
             &scheduler, 3ull, 2ull, scheduler_probe_execute, NULL,
-            &probe, &err) == YVEX_OK && scheduler &&
-            yvex_server_scheduler_start(scheduler, &err) == YVEX_OK,
-        "two-worker scheduler opens and starts");
+            &probe, &err) == YVEX_OK && scheduler,
+        "two-worker scheduler opens");
+    probe.scheduler = scheduler;
+    YVEX_TEST_ASSERT(yvex_server_scheduler_start(scheduler, &err) == YVEX_OK,
+                     "two-worker scheduler starts");
     YVEX_TEST_ASSERT(
         yvex_server_scheduler_submit(
-            scheduler, &work[0], "same", NULL, &err) == YVEX_OK &&
+            scheduler, &work[0], "same", 1, NULL, &err) == YVEX_OK,
+        "scheduler accepts the first compatible candidate");
+    YVEX_TEST_ASSERT(
+        yvex_server_scheduler_submit(
+                scheduler, &work[1], "same", 1, NULL, &err) == YVEX_OK &&
             yvex_server_scheduler_submit(
-                scheduler, &work[1], "same", NULL, &err) == YVEX_OK &&
-            yvex_server_scheduler_submit(
-                scheduler, &work[2], "other", NULL, &err) == YVEX_OK,
-        "scheduler accepts bounded keyed work");
+                scheduler, &work[2], "other", 1, NULL, &err) == YVEX_OK,
+        "scheduler admits independent peers without a speculative wait window");
     (void)pthread_mutex_lock(&probe.mutex);
     while (probe.active < 2ull)
         (void)pthread_cond_wait(&probe.condition, &probe.mutex);
@@ -119,8 +136,15 @@ static int test_scheduler_serialization(void)
     YVEX_TEST_ASSERT(
         yvex_server_scheduler_finish(scheduler, &err) == YVEX_OK,
         "scheduler drains and joins workers");
-    yvex_server_scheduler_snapshot(scheduler, &queued, &active);
-    YVEX_TEST_ASSERT(!queued && !active && !probe.violation && probe.first_done,
+    yvex_server_scheduler_snapshot(scheduler, &summary);
+    YVEX_TEST_ASSERT(!summary.queued && !summary.active &&
+                         summary.execution_ready_limit_ns == 3000000000ull &&
+                         !summary.execution_ready_timeouts &&
+                         summary.maximum_execution_ready_width == 2ull &&
+                         probe.ready_width_two >= 1ull &&
+                         !probe.ready_timeouts &&
+                         !probe.violation &&
+                         probe.first_done,
                      "same-key work starts only after its predecessor completes");
     yvex_server_scheduler_close(&scheduler);
     (void)pthread_cond_destroy(&probe.condition);

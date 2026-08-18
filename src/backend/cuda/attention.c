@@ -1593,7 +1593,7 @@ static int attn_graph_execute(attn_run *run, unsigned int first, unsigned int la
     yvex_backend_cuda_graph_info info;
     size_t initializer;
     char identity[160];
-    int measure_device_time = run->job->evidence_level != 0u, rc;
+    int measure_device_time = run->job->measure_device_time, rc;
     if (yvex_cuda_attention_graph_key(run->backend, run->job, first, last,
                                       identity, run->err) != YVEX_OK)
         return attn_run_fail(
@@ -1642,7 +1642,7 @@ static int attn_numerical_execute(attn_run *run) {
         {YVEX_CUDA_ATTENTION_STAGE_COMPRESS, YVEX_CUDA_ATTENTION_STAGE_COMPRESS + 1u},
         {YVEX_CUDA_ATTENTION_STAGE_REDUCE, YVEX_CUDA_ATTENTION_STAGE_COUNT}};
     unsigned int pass;
-    int measure_device_time = run->job->evidence_level != 0u, rc = YVEX_OK;
+    int measure_device_time = run->job->measure_device_time, rc = YVEX_OK;
     if (!run->configuration ||
         run->configuration->mode == YVEX_BACKEND_CUDA_ATTENTION_EAGER) {
         if (measure_device_time) rc = yvex_cuda_timing(

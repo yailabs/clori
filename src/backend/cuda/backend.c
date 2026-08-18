@@ -1074,9 +1074,27 @@ allocation_failure:
     return rc;
 }
 
-static int cuda_tensor_free(yvex_backend *backend,
-                          yvex_device_tensor *tensor,
-                          yvex_error *err)
+static int cuda_tensor_release_wait(yvex_backend *backend, yvex_error *err)
+{
+    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    CUstream stream = yvex_cuda_launch_stream(backend);
+    if (!state) {
+        yvex_error_set(err, YVEX_ERR_STATE, "cuda.tensor_free.wait",
+                       "CUDA tensor release state is missing");
+        return YVEX_ERR_STATE;
+    }
+    /* Cleanup bypasses dispatch admission so a prior capability failure cannot strand storage,
+     * while the direct driver barrier still reports asynchronous device failure. */
+    return yvex_cuda_status(
+        &state->driver,
+        stream && state->driver.cuStreamSynchronize
+            ? state->driver.cuStreamSynchronize(stream)
+            : state->driver.cuCtxSynchronize(),
+        "cuda.tensor_free.wait", err);
+}
+
+static int cuda_tensor_free(yvex_backend *backend, yvex_device_tensor *tensor,
+                            yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     cuda_virtual_allocation *allocation;
@@ -1092,6 +1110,10 @@ static int cuda_tensor_free(yvex_backend *backend,
     if (rc != YVEX_OK) {
         return rc;
     }
+    /* Cross-stream copies return consumption to the source stream. Observe that stream before
+     * releasing borrowed storage; cuMemFree is not an implicit completion/error barrier. */
+    rc = cuda_tensor_release_wait(backend, err);
+    if (rc != YVEX_OK) return rc;
     allocation = (cuda_virtual_allocation *)tensor->backend_allocation;
     if (tensor->virtual_reserved && allocation) {
         rc = cuda_tensor_decommit(backend, tensor, &released, err);
@@ -1286,6 +1308,77 @@ static int cuda_tensor_copy_async(yvex_backend *backend,
                            : (CUresult)1;
     rc = yvex_cuda_status(&state->driver, copied,
                           "runtime.state.residency.copy", err);
+    if (rc == YVEX_OK) dst->is_written = src->is_written;
+    return rc;
+}
+
+/* Preserve source readiness and destination consumption before either borrowed view is reused. */
+static int cuda_tensor_copy_shared_async(yvex_backend *backend, yvex_device_tensor *dst,
+    const yvex_device_tensor *src, yvex_error *err)
+{
+    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    yvex_cuda_backend_state *source_state = yvex_cuda_state(src ? src->owner : NULL);
+    CUevent consumed = NULL, ready = NULL;
+    CUstream destination_stream, source_stream;
+    int rc;
+    if (!state || !source_state || !dst || !src ||
+        !(destination_stream = yvex_cuda_launch_stream(backend)) ||
+        !(source_stream = yvex_cuda_launch_stream(src->owner)) ||
+        !state->driver.cuMemcpyDtoDAsync_v2 || !state->driver.cuEventCreate ||
+        !state->driver.cuEventRecord || !state->driver.cuEventDestroy_v2 ||
+        !state->driver.cuStreamWaitEvent) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "backend.tensor.copy-shared",
+                       "CUDA cross-stream event ordering is unavailable");
+        return YVEX_ERR_UNSUPPORTED;
+    }
+    rc = yvex_cuda_set_current(backend, "backend.tensor.copy-shared", err);
+    if (rc != YVEX_OK) return rc;
+    if (source_stream != destination_stream) {
+        rc = yvex_cuda_status(
+            &state->driver, state->driver.cuEventCreate(&ready, 2u),
+            "backend.tensor.copy-shared.event", err);
+        if (rc == YVEX_OK)
+            rc = yvex_cuda_status(&state->driver,
+                state->driver.cuEventCreate(&consumed, 2u),
+                "backend.tensor.copy-shared.consumed-event", err);
+        if (rc == YVEX_OK)
+            rc = yvex_cuda_status(&state->driver,
+                state->driver.cuEventRecord(ready, source_stream),
+                "backend.tensor.copy-shared.record", err);
+        if (rc == YVEX_OK)
+            rc = yvex_cuda_status(&state->driver,
+                state->driver.cuStreamWaitEvent(destination_stream, ready, 0u),
+                "backend.tensor.copy-shared.wait", err);
+    }
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_status(
+            &state->driver,
+            state->driver.cuMemcpyDtoDAsync_v2(
+                yvex_cuda_tensor_ptr(dst), yvex_cuda_tensor_ptr(src),
+                (size_t)src->bytes, destination_stream),
+            "backend.tensor.copy-shared.copy", err);
+    if (rc == YVEX_OK && consumed) {
+        rc = yvex_cuda_status(&state->driver,
+            state->driver.cuEventRecord(consumed, destination_stream),
+            "backend.tensor.copy-shared.consumed-record", err);
+        if (rc == YVEX_OK)
+            rc = yvex_cuda_status(&state->driver,
+                state->driver.cuStreamWaitEvent(source_stream, consumed, 0u),
+                "backend.tensor.copy-shared.consumed-wait", err);
+    }
+    if (consumed) {
+        int cleanup = yvex_cuda_status(
+            &state->driver, state->driver.cuEventDestroy_v2(consumed),
+            "backend.tensor.copy-shared.consumed-event-close",
+            rc == YVEX_OK ? err : NULL);
+        if (rc == YVEX_OK) rc = cleanup;
+    }
+    if (ready) {
+        int cleanup = yvex_cuda_status(
+            &state->driver, state->driver.cuEventDestroy_v2(ready),
+            "backend.tensor.copy-shared.event-close", rc == YVEX_OK ? err : NULL);
+        if (rc == YVEX_OK) rc = cleanup;
+    }
     if (rc == YVEX_OK) dst->is_written = src->is_written;
     return rc;
 }
@@ -1607,6 +1700,7 @@ static const yvex_backend_vtable cuda_vtable = {
     cuda_tensor_read,
     cuda_tensor_copy,
     cuda_tensor_copy_async,
+    cuda_tensor_copy_shared_async,
     cuda_sync,
     yvex_cuda_query_capability,
     yvex_cuda_op_embed,

@@ -15,9 +15,25 @@
 
 #include "src/graph/private.h"
 
+typedef enum {
+    CANDIDATE_STORAGE_RAW_KV = 0,
+    CANDIDATE_STORAGE_COMPRESSED_KV,
+    CANDIDATE_STORAGE_COMPRESSED_POSITIONS,
+    CANDIDATE_STORAGE_INDEXER_KV,
+    CANDIDATE_STORAGE_INDEXER_POSITIONS,
+    CANDIDATE_STORAGE_TOKEN_IDS,
+    CANDIDATE_STORAGE_MAIN_KV_CHECKPOINTS,
+    CANDIDATE_STORAGE_MAIN_SCORE_CHECKPOINTS,
+    CANDIDATE_STORAGE_INDEXER_KV_CHECKPOINTS,
+    CANDIDATE_STORAGE_INDEXER_SCORE_CHECKPOINTS,
+    CANDIDATE_STORAGE_COUNT
+} candidate_storage_slot;
+
 struct yvex_attention_candidate_delta {
     unsigned int schema_version;
     yvex_attention_publication publication;
+    void *storage[CANDIDATE_STORAGE_COUNT];
+    size_t storage_capacity[CANDIDATE_STORAGE_COUNT];
 };
 
 static int candidate_refuse(yvex_error *err, yvex_status status,
@@ -27,29 +43,150 @@ static int candidate_refuse(yvex_error *err, yvex_status status,
     return status;
 }
 
-static int candidate_copy(void **out, const void *source,
-                          unsigned long long count, size_t width)
+static int candidate_store(yvex_attention_candidate_delta *delta,
+                           candidate_storage_slot slot, void **out,
+                           const void *source, unsigned long long count,
+                           size_t width)
 {
     size_t bytes;
-    void *copy;
     *out = NULL;
     if (!count) return 1;
-    if (!source || !width || count > SIZE_MAX / width) return 0;
+    if (!delta || slot >= CANDIDATE_STORAGE_COUNT || !source || !width ||
+        count > SIZE_MAX / width)
+        return 0;
     bytes = (size_t)count * width;
-    copy = calloc(1u, bytes);
-    if (!copy) return 0;
-    memcpy(copy, source, bytes);
-    *out = copy;
+    if (bytes > delta->storage_capacity[slot]) return 0;
+    memmove(delta->storage[slot], source, bytes);
+    *out = delta->storage[slot];
     return 1;
 }
 
-static int candidate_copy_floats(float **out, const float *source,
-                                 unsigned long long rows,
-                                 unsigned long long width)
+static int candidate_storage_bytes(unsigned long long count,
+                                   unsigned long long width,
+                                   size_t element_size, size_t *out)
+{
+    unsigned long long elements;
+    if (out) *out = 0u;
+    if (!out || !element_size ||
+        !yvex_core_u64_mul(count, width, &elements) ||
+        elements > SIZE_MAX / element_size)
+        return 0;
+    *out = (size_t)elements * element_size;
+    return 1;
+}
+
+/*
+ * A one-row decode may publish compressed state only on a later ratio boundary. Reserve that
+ * bounded periodic form with the first delta so a warmed execution does not allocate merely
+ * because the current token crosses the boundary. New storage is adopted only after every grow
+ * succeeds, preserving an existing reusable delta on allocation failure.
+ */
+static int candidate_storage_prepare(
+    yvex_attention_candidate_delta *delta,
+    const yvex_attention_publication *publication)
+{
+    size_t required[CANDIDATE_STORAGE_COUNT] = {0u};
+    void *replacement[CANDIDATE_STORAGE_COUNT] = {0};
+    unsigned long long compressed_width = publication->compressed_stride
+        ? publication->compressed_stride
+        : (publication->next_main_rolling_state.present
+               ? publication->next_main_rolling_state.head_dimension
+               : 0ull);
+    unsigned long long indexer_width = publication->indexer_stride
+        ? publication->indexer_stride
+        : (publication->next_indexer_rolling_state.present
+               ? publication->next_indexer_rolling_state.head_dimension
+               : 0ull);
+    unsigned long long compressed_rows = compressed_width
+                                             ? publication->token_count
+                                             : publication->compressed_count;
+    unsigned long long indexer_rows = indexer_width
+                                          ? publication->token_count
+                                          : publication->indexer_count;
+    unsigned long long rolling_rows = publication->prefix_addressable
+                                          ? publication->rolling_checkpoint_count
+                                          : 1ull;
+    unsigned int slot;
+    int valid =
+        candidate_storage_bytes(publication->token_count,
+                                publication->kv_width, sizeof(float),
+                                &required[CANDIDATE_STORAGE_RAW_KV]) &&
+        candidate_storage_bytes(compressed_rows, compressed_width, sizeof(float),
+                                &required[CANDIDATE_STORAGE_COMPRESSED_KV]) &&
+        candidate_storage_bytes(compressed_rows, 1ull,
+                                sizeof(*publication->compressed_positions),
+                                &required[CANDIDATE_STORAGE_COMPRESSED_POSITIONS]) &&
+        candidate_storage_bytes(indexer_rows, indexer_width,
+                                sizeof(float),
+                                &required[CANDIDATE_STORAGE_INDEXER_KV]) &&
+        candidate_storage_bytes(indexer_rows, 1ull,
+                                sizeof(*publication->indexer_positions),
+                                &required[CANDIDATE_STORAGE_INDEXER_POSITIONS]) &&
+        candidate_storage_bytes(publication->token_ids
+                                    ? publication->token_count
+                                    : 0ull,
+                                1ull, sizeof(*publication->token_ids),
+                                &required[CANDIDATE_STORAGE_TOKEN_IDS]) &&
+        candidate_storage_bytes(publication->next_main_rolling_state.present
+                                    ? rolling_rows
+                                    : 0ull,
+                                publication->next_main_rolling_state.kv_state_extent,
+                                sizeof(float),
+                                &required[CANDIDATE_STORAGE_MAIN_KV_CHECKPOINTS]) &&
+        candidate_storage_bytes(publication->next_main_rolling_state.present
+                                    ? rolling_rows
+                                    : 0ull,
+                                publication->next_main_rolling_state.score_state_extent,
+                                sizeof(float),
+                                &required[CANDIDATE_STORAGE_MAIN_SCORE_CHECKPOINTS]) &&
+        candidate_storage_bytes(publication->next_indexer_rolling_state.present
+                                    ? rolling_rows
+                                    : 0ull,
+                                publication->next_indexer_rolling_state.kv_state_extent,
+                                sizeof(float),
+                                &required[CANDIDATE_STORAGE_INDEXER_KV_CHECKPOINTS]) &&
+        candidate_storage_bytes(publication->next_indexer_rolling_state.present
+                                    ? rolling_rows
+                                    : 0ull,
+                                publication->next_indexer_rolling_state.score_state_extent,
+                                sizeof(float),
+                                &required[CANDIDATE_STORAGE_INDEXER_SCORE_CHECKPOINTS]);
+    if (!valid ||
+        (publication->compressed_count &&
+         (!publication->compressed_kv || !publication->compressed_positions ||
+          !publication->compressed_stride)) ||
+        (publication->indexer_count &&
+         (!publication->indexer_kv || !publication->indexer_positions ||
+          !publication->indexer_stride)))
+        return 0;
+    for (slot = 0u; slot < CANDIDATE_STORAGE_COUNT; ++slot) {
+        if (required[slot] <= delta->storage_capacity[slot]) continue;
+        replacement[slot] = malloc(required[slot]);
+        if (!replacement[slot]) {
+            unsigned int release;
+            for (release = 0u; release < CANDIDATE_STORAGE_COUNT; ++release)
+                free(replacement[release]);
+            return 0;
+        }
+    }
+    for (slot = 0u; slot < CANDIDATE_STORAGE_COUNT; ++slot) {
+        if (!replacement[slot]) continue;
+        free(delta->storage[slot]);
+        delta->storage[slot] = replacement[slot];
+        delta->storage_capacity[slot] = required[slot];
+    }
+    return 1;
+}
+
+static int candidate_store_floats(
+    yvex_attention_candidate_delta *delta, candidate_storage_slot slot,
+    float **out, const float *source, unsigned long long rows,
+    unsigned long long width)
 {
     unsigned long long count;
     return yvex_core_u64_mul(rows, width, &count) &&
-           candidate_copy((void **)out, source, count, sizeof(**out));
+           candidate_store(delta, slot, (void **)out, source, count,
+                           sizeof(**out));
 }
 
 int yvex_attention_candidate_checkpoints_open(
@@ -81,58 +218,57 @@ void yvex_attention_candidate_checkpoint_capture(
            (size_t)rolling->score_state_extent * sizeof(*score));
 }
 
-static void candidate_release_publication(yvex_attention_publication *publication)
+static void candidate_storage_release(yvex_attention_candidate_delta *delta)
 {
-    if (!publication) return;
-    free(publication->raw_kv);
-    free(publication->compressed_kv);
-    free(publication->compressed_positions);
-    free(publication->indexer_kv);
-    free(publication->indexer_positions);
-    free((void *)publication->token_ids);
-    free(publication->main_rolling_kv_checkpoints);
-    free(publication->main_rolling_score_checkpoints);
-    free(publication->indexer_rolling_kv_checkpoints);
-    free(publication->indexer_rolling_score_checkpoints);
-    memset(publication, 0, sizeof(*publication));
+    unsigned int slot;
+    if (!delta) return;
+    for (slot = 0u; slot < CANDIDATE_STORAGE_COUNT; ++slot)
+        free(delta->storage[slot]);
+    memset(delta, 0, sizeof(*delta));
 }
 
 static int candidate_copy_rolling(
+    yvex_attention_candidate_delta *delta,
     const yvex_attention_publication *source,
     const yvex_attention_rolling_state_output *rolling,
     const float *kv, const float *score, float **target_kv,
-    float **target_score)
+    float **target_score, candidate_storage_slot kv_slot,
+    candidate_storage_slot score_slot)
 {
     unsigned long long rows = source->rolling_checkpoint_count;
     if (!rolling->present) return !kv && !score;
     return rows && rolling->kv_state_extent && rolling->score_state_extent &&
            kv && score &&
-           candidate_copy_floats(target_kv, kv, rows,
-                                 rolling->kv_state_extent) &&
-           candidate_copy_floats(target_score, score, rows,
-                                 rolling->score_state_extent);
+           candidate_store_floats(delta, kv_slot, target_kv, kv, rows,
+                                  rolling->kv_state_extent) &&
+           candidate_store_floats(delta, score_slot, target_score, score, rows,
+                                  rolling->score_state_extent);
 }
 
 static int candidate_copy_rolling_final(
+    yvex_attention_candidate_delta *delta,
     const yvex_attention_rolling_state_output *rolling, float **target_kv,
-    float **target_score)
+    float **target_score, candidate_storage_slot kv_slot,
+    candidate_storage_slot score_slot)
 {
     if (!rolling->present) return 1;
     return rolling->kv_state && rolling->score_state &&
-           candidate_copy_floats(target_kv, rolling->kv_state, 1ull,
-                                 rolling->kv_state_extent) &&
-           candidate_copy_floats(target_score, rolling->score_state, 1ull,
-                                 rolling->score_state_extent);
+           candidate_store_floats(delta, kv_slot, target_kv,
+                                  rolling->kv_state, 1ull,
+                                  rolling->kv_state_extent) &&
+           candidate_store_floats(delta, score_slot, target_score,
+                                  rolling->score_state, 1ull,
+                                  rolling->score_state_extent);
 }
 
-int yvex_attention_candidate_delta_open(
-    yvex_attention_candidate_delta **out,
+static int candidate_delta_assign(
+    yvex_attention_candidate_delta **owner,
     const yvex_attention_publication *publication, yvex_error *err)
 {
     yvex_attention_candidate_delta *delta;
     yvex_attention_publication *copy;
-    if (out) *out = NULL;
-    if (!out || !publication || !publication->complete ||
+    int allocated = 0;
+    if (!owner || !publication || !publication->complete ||
         publication->device_completion_pending ||
         !publication->token_count ||
         !publication->raw_kv || !publication->kv_width ||
@@ -143,10 +279,22 @@ int yvex_attention_candidate_delta_open(
         return candidate_refuse(
             err, YVEX_ERR_FORMAT,
             "prefix-addressable attention publication is incomplete");
-    delta = calloc(1u, sizeof(*delta));
-    if (!delta)
+    delta = *owner;
+    if (!delta) {
+        delta = calloc(1u, sizeof(*delta));
+        if (!delta)
+            return candidate_refuse(err, YVEX_ERR_NOMEM,
+                                    "candidate delta allocation failed");
+        allocated = 1;
+    }
+    if (!candidate_storage_prepare(delta, publication)) {
+        if (allocated) {
+            candidate_storage_release(delta);
+            free(delta);
+        }
         return candidate_refuse(err, YVEX_ERR_NOMEM,
-                                "candidate delta allocation failed");
+                                "candidate delta storage allocation failed");
+    }
     delta->schema_version = YVEX_ATTENTION_CANDIDATE_SCHEMA_V1;
     copy = &delta->publication;
     *copy = *publication;
@@ -168,52 +316,68 @@ int yvex_attention_candidate_delta_open(
     copy->next_main_rolling_state.score_state = NULL;
     copy->next_indexer_rolling_state.kv_state = NULL;
     copy->next_indexer_rolling_state.score_state = NULL;
-    if (!candidate_copy_floats(&copy->raw_kv, publication->raw_kv,
-                               publication->token_count,
-                               publication->kv_width) ||
-        !candidate_copy_floats(&copy->compressed_kv,
-                               publication->compressed_kv,
-                               publication->compressed_count,
-                               publication->compressed_stride) ||
-        !candidate_copy((void **)&copy->compressed_positions,
-                        publication->compressed_positions,
-                        publication->compressed_count,
-                        sizeof(*copy->compressed_positions)) ||
-        !candidate_copy_floats(&copy->indexer_kv,
-                               publication->indexer_kv,
-                               publication->indexer_count,
-                               publication->indexer_stride) ||
-        !candidate_copy((void **)&copy->indexer_positions,
-                        publication->indexer_positions,
-                        publication->indexer_count,
-                        sizeof(*copy->indexer_positions)) ||
+    if (!candidate_store_floats(
+            delta, CANDIDATE_STORAGE_RAW_KV, &copy->raw_kv,
+            publication->raw_kv, publication->token_count,
+            publication->kv_width) ||
+        !candidate_store_floats(
+            delta, CANDIDATE_STORAGE_COMPRESSED_KV, &copy->compressed_kv,
+            publication->compressed_kv, publication->compressed_count,
+            publication->compressed_stride) ||
+        !candidate_store(
+            delta, CANDIDATE_STORAGE_COMPRESSED_POSITIONS,
+            (void **)&copy->compressed_positions,
+            publication->compressed_positions, publication->compressed_count,
+            sizeof(*copy->compressed_positions)) ||
+        !candidate_store_floats(
+            delta, CANDIDATE_STORAGE_INDEXER_KV, &copy->indexer_kv,
+            publication->indexer_kv, publication->indexer_count,
+            publication->indexer_stride) ||
+        !candidate_store(
+            delta, CANDIDATE_STORAGE_INDEXER_POSITIONS,
+            (void **)&copy->indexer_positions, publication->indexer_positions,
+            publication->indexer_count, sizeof(*copy->indexer_positions)) ||
         (publication->token_ids &&
-         !candidate_copy((void **)&copy->token_ids, publication->token_ids,
-                         publication->token_count, sizeof(*copy->token_ids))) ||
+         !candidate_store(
+             delta, CANDIDATE_STORAGE_TOKEN_IDS, (void **)&copy->token_ids,
+             publication->token_ids, publication->token_count,
+             sizeof(*copy->token_ids))) ||
         !(publication->prefix_addressable
               ? candidate_copy_rolling(
-                    publication, &publication->next_main_rolling_state,
+                    delta, publication,
+                    &publication->next_main_rolling_state,
                     publication->main_rolling_kv_checkpoints,
                     publication->main_rolling_score_checkpoints,
                     &copy->main_rolling_kv_checkpoints,
-                    &copy->main_rolling_score_checkpoints)
+                    &copy->main_rolling_score_checkpoints,
+                    CANDIDATE_STORAGE_MAIN_KV_CHECKPOINTS,
+                    CANDIDATE_STORAGE_MAIN_SCORE_CHECKPOINTS)
               : candidate_copy_rolling_final(
-                    &publication->next_main_rolling_state,
+                    delta, &publication->next_main_rolling_state,
                     &copy->main_rolling_kv_checkpoints,
-                    &copy->main_rolling_score_checkpoints)) ||
+                    &copy->main_rolling_score_checkpoints,
+                    CANDIDATE_STORAGE_MAIN_KV_CHECKPOINTS,
+                    CANDIDATE_STORAGE_MAIN_SCORE_CHECKPOINTS)) ||
         !(publication->prefix_addressable
               ? candidate_copy_rolling(
-                    publication, &publication->next_indexer_rolling_state,
+                    delta, publication,
+                    &publication->next_indexer_rolling_state,
                     publication->indexer_rolling_kv_checkpoints,
                     publication->indexer_rolling_score_checkpoints,
                     &copy->indexer_rolling_kv_checkpoints,
-                    &copy->indexer_rolling_score_checkpoints)
+                    &copy->indexer_rolling_score_checkpoints,
+                    CANDIDATE_STORAGE_INDEXER_KV_CHECKPOINTS,
+                    CANDIDATE_STORAGE_INDEXER_SCORE_CHECKPOINTS)
               : candidate_copy_rolling_final(
-                    &publication->next_indexer_rolling_state,
+                    delta, &publication->next_indexer_rolling_state,
                     &copy->indexer_rolling_kv_checkpoints,
-                    &copy->indexer_rolling_score_checkpoints))) {
-        candidate_release_publication(copy);
-        free(delta);
+                    &copy->indexer_rolling_score_checkpoints,
+                    CANDIDATE_STORAGE_INDEXER_KV_CHECKPOINTS,
+                    CANDIDATE_STORAGE_INDEXER_SCORE_CHECKPOINTS))) {
+        if (allocated) {
+            candidate_storage_release(delta);
+            free(delta);
+        }
         return candidate_refuse(err, YVEX_ERR_NOMEM,
                                 "candidate delta storage allocation failed");
     }
@@ -231,9 +395,16 @@ int yvex_attention_candidate_delta_open(
                 copy->indexer_rolling_score_checkpoints;
         }
     }
-    *out = delta;
+    *owner = delta;
     yvex_error_clear(err);
     return YVEX_OK;
+}
+
+int yvex_attention_candidate_delta_open(
+    yvex_attention_candidate_delta **out,
+    const yvex_attention_publication *publication, yvex_error *err)
+{
+    return candidate_delta_assign(out, publication, err);
 }
 
 /*
@@ -382,8 +553,7 @@ void yvex_attention_candidate_delta_close(
     yvex_attention_candidate_delta **delta)
 {
     if (!delta || !*delta) return;
-    candidate_release_publication(&(*delta)->publication);
-    memset(*delta, 0, sizeof(**delta));
+    candidate_storage_release(*delta);
     free(*delta);
     *delta = NULL;
 }

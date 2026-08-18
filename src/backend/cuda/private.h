@@ -157,14 +157,13 @@ typedef struct {
     CUresult (*cuStreamCreate)(CUstream *stream, unsigned int flags);
     CUresult (*cuStreamDestroy_v2)(CUstream stream);
     CUresult (*cuStreamSynchronize)(CUstream stream);
+    CUresult (*cuStreamWaitEvent)(CUstream stream, CUevent event, unsigned int flags);
     CUresult (*cuStreamBeginCapture_v2)(CUstream stream, int mode);
     CUresult (*cuStreamEndCapture)(CUstream stream, CUgraph *graph);
     CUresult (*cuGraphGetNodes)(CUgraph graph, CUgraphNode *nodes, size_t *count);
-    CUresult (*cuGraphGetEdges_v2)(CUgraph graph,
-                                  CUgraphNode *from,
-                                  CUgraphNode *to,
-                                  CUgraphEdgeData *data,
-                                  size_t *count);
+    CUresult (*cuGraphGetEdges_v2)(CUgraph graph, CUgraphNode *from,
+                                   CUgraphNode *to, CUgraphEdgeData *data,
+                                   size_t *count);
     CUresult (*cuGraphNodeGetType)(CUgraphNode node, int *type);
     CUresult (*cuGraphInstantiateWithFlags)(CUgraphExec *exec,
                                            CUgraph graph,

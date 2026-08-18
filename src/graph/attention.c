@@ -1308,22 +1308,31 @@ static int attention_probe_backend_execute(
     options->publication = NULL;
     options->device_completion = NULL;
     if (rc != YVEX_OK) return rc;
-    if (!(cuda ? run->evidence.cuda_executed : run->evidence.executed) ||
-        !yvex_attention_publication_identity_build(
+    if (!(cuda ? run->evidence.cuda_executed : run->evidence.executed))
+        return attention_probe_fail(
+            context->error, YVEX_ERR_STATE,
+            cuda ? "CUDA attention execution did not publish completion"
+                 : "CPU attention execution did not publish completion");
+    if (!yvex_attention_publication_identity_build(
             context->summary->attention_plan_identity,
             context->request->logical_model_identity,
             context->request->input_identity,
+            (unsigned long long)context->request->perturb_input,
             context->request->operation_scope,
             context->request->candidate_block_visible,
             context->request->retain_prefix_checkpoints,
-            &run->publication) ||
-        !yvex_attention_publication_hash_update(
+            &run->publication))
+        return attention_probe_fail(
+            context->error, YVEX_ERR_STATE,
+            cuda ? "CUDA attention publication identity was incomplete"
+                 : "CPU attention publication identity was incomplete");
+    if (!yvex_attention_publication_hash_update(
             &context->metrics.output_hash[index],
             &context->metrics.state_hash[index], &run->publication))
         return attention_probe_fail(
             context->error, YVEX_ERR_STATE,
-            cuda ? "CUDA attention publication was incomplete"
-                 : "CPU attention publication was incomplete");
+            cuda ? "CUDA attention publication evidence was incomplete"
+                 : "CPU attention publication evidence was incomplete");
     run->publication.token_ids = context->request->token_ids;
     if (context->request->evidence) {
         rc = context->request->evidence(
@@ -1449,6 +1458,7 @@ static int attention_probe_layer_execute(
     options.device_output = device_output;
     options.history = execution_history;
     options.evidence_level = context->request->evidence_level;
+    options.measure_device_time = context->request->measure_device_time;
     options.execution_class = context->request->execution_class;
     options.workspace = context->request->workspace;
     options.cancellation = context->request->cancel_requested ? &cancellation : NULL;
@@ -1834,7 +1844,8 @@ int yvex_attention_execute(
          request->execution_phase != YVEX_EXECUTION_PHASE_MIXED &&
          request->execution_phase != YVEX_EXECUTION_PHASE_DRAFT &&
          request->execution_phase != YVEX_EXECUTION_PHASE_VERIFY) ||
-        request->execution_class > YVEX_EXECUTION_CLASS_FORENSIC_REFERENCE)
+        request->execution_class > YVEX_EXECUTION_CLASS_FORENSIC_REFERENCE ||
+        (request->measure_device_time != 0 && request->measure_device_time != 1))
         return attention_probe_fail(err, YVEX_ERR_INVALID_ARG, "canonical V2 probe request is invalid");
     if (!family || !plan || !session || !descriptor || !result ||
         !family->cpu_options_default || !family->cpu_chunk_execute || !family->cuda_token_execute)
@@ -1979,21 +1990,4 @@ cleanup:
         yvex_error_clear(err);
     }
     return rc;
-}
-
-int yvex_attention_probe_execute(
-    const yvex_graph_execution_api *family, const yvex_attention_plan *plan,
-    const void *family_ir, yvex_materialization_session *session,
-    const yvex_runtime_descriptor *descriptor,
-    const yvex_attention_probe_request *request,
-    yvex_attention_probe_result *result,
-    yvex_attention_failure *failure, yvex_error *err)
-{
-    if (!request || request->activation_view || request->input_identity ||
-        request->token_ids)
-        return attention_probe_fail(
-            err, YVEX_ERR_INVALID_ARG,
-            "canonical probe cannot borrow an activation input");
-    return yvex_attention_execute(family, plan, family_ir, session, descriptor,
-                                  request, result, failure, err);
 }

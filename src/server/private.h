@@ -26,6 +26,13 @@ typedef void (*server_scheduler_observe)(void *context,
                                          unsigned long long capacity,
                                          unsigned long long active);
 
+typedef struct {
+    unsigned long long queued, capacity, active, workers;
+    unsigned long long execution_ready_limit_ns, execution_ready_waits;
+    unsigned long long execution_ready_timeouts, execution_ready_ns;
+    unsigned long long maximum_execution_ready_width;
+} server_scheduler_summary;
+
 int yvex_server_scheduler_open(
     server_scheduler **out, unsigned long long queue_capacity,
     unsigned long long worker_count, server_scheduler_execute execute,
@@ -33,12 +40,16 @@ int yvex_server_scheduler_open(
 int yvex_server_scheduler_start(server_scheduler *scheduler, yvex_error *err);
 int yvex_server_scheduler_submit(server_scheduler *scheduler, void *work,
                                  const char *serialization_key,
+                                 int compatible_batch_candidate,
                                  unsigned long long *queued, yvex_error *err);
+int yvex_server_scheduler_execution_ready(
+    server_scheduler *scheduler, const char *serialization_key,
+    unsigned long long *compatible_width, unsigned long long *wait_ns,
+    int *timed_out, yvex_error *err);
 void yvex_server_scheduler_request_stop(server_scheduler *scheduler);
 int yvex_server_scheduler_finish(server_scheduler *scheduler, yvex_error *err);
 void yvex_server_scheduler_snapshot(const server_scheduler *scheduler,
-                                    unsigned long long *queued,
-                                    unsigned long long *active);
+                                    server_scheduler_summary *summary);
 void yvex_server_scheduler_close(server_scheduler **scheduler);
 
 #define SESSION_SCHEMA_V1 1u
@@ -78,18 +89,19 @@ typedef struct server_session {
 struct server_session_registry {
     pthread_mutex_t mutex;
     yvex_runtime_model *model;
+    server_scheduler *scheduler;
     yvex_server_options options;
     yvex_reasoning_policy default_reasoning_policy;
     server_telemetry *telemetry;
     server_session *sessions;
     unsigned long long capacity, count, next_id;
-    int mutex_ready, closing;
+    int mutex_ready, closing, continuous_batching;
 };
 
 typedef struct {
     const char *yvex_socket;
     unsigned short port;
-    unsigned long long timeout_ms;
+    unsigned long long timeout_ms, maximum_connections;
 } server_openai_options;
 
 typedef struct {
@@ -263,7 +275,10 @@ void yvex_server_openai_snapshot(const server_openai_listener *listener,
 void yvex_server_openai_close(server_openai_listener **listener);
 
 int yvex_server_sessions_open(server_session_registry **out, yvex_runtime_model *model,
-                              const yvex_server_options *options, server_telemetry *telemetry,
+                              server_scheduler *scheduler,
+                              const yvex_server_options *options,
+                              int continuous_batching,
+                              server_telemetry *telemetry,
                               yvex_error *err);
 int yvex_server_sessions_execute(server_session_registry *registry,
                                     const yvex_client_request *request,

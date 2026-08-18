@@ -257,12 +257,26 @@ static int runtime_model_session_reserve(yvex_runtime_model *model,
     return YVEX_OK;
 }
 
-static void runtime_model_session_register_locked(
+static int runtime_model_session_register_locked(
     yvex_runtime_model *model, yvex_runtime_execution_session *session) {
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    if (!yvex_core_u64_add(model->next_session_ordinal, 1ull,
+                           &model->next_session_ordinal))
+        return 0;
+    session->batch_source_ordinal = model->next_session_ordinal;
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.batch-source.v1") ||
+        !yvex_sha256_update_text(&hash, model->summary.runtime_model_identity) ||
+        !yvex_sha256_update_u64(&hash, session->batch_source_ordinal) ||
+        !yvex_sha256_final(&hash, digest))
+        return 0;
+    yvex_sha256_hex(digest, session->batch_source_identity);
     session->model_next = model->sessions;
     if (model->sessions) model->sessions->model_previous = session;
     model->sessions = session;
     session->model_registered = 1;
+    return 1;
 }
 
 static int runtime_model_session_unregister(yvex_runtime_model *model,
@@ -377,6 +391,15 @@ static int runtime_model_release(yvex_runtime_model *model, yvex_error *err) {
                        "injected runtime model cleanup failure");
         return YVEX_ERR_STATE;
     }
+    if (model->compatible_batcher_references ||
+        model->compatible_batcher_producers) {
+        yvex_error_set(err, YVEX_ERR_STATE, "runtime.model.release",
+                       "runtime model still owns compatible batch consumers");
+        return YVEX_ERR_STATE;
+    }
+    rc = yvex_runtime_private_batcher_close(&model->compatible_batcher, err);
+    if (rc != YVEX_OK) return rc;
+    model->compatible_batch_width = 0ull;
     rc = yvex_runtime_residency_close(&model->residency, err);
     if (rc != YVEX_OK) return rc;
     rc = yvex_backend_close_checked(&model->opening_backend, err);
@@ -1783,8 +1806,8 @@ int yvex_runtime_session_open(yvex_runtime_execution_session **out,
         publishable = model->summary.valid && !model->close_requested;
         if (publishable) {
             session->summary.open = 1;
-            runtime_model_session_register_locked(model, session);
-            *out = session;
+            publishable = runtime_model_session_register_locked(model, session);
+            if (publishable) *out = session;
         }
         (void)pthread_mutex_unlock(&model->lifecycle_mutex);
     }

@@ -37,6 +37,8 @@ typedef struct yvex_backend_vtable {
                        yvex_error *);
     int (*tensor_copy_async)(yvex_backend *, yvex_device_tensor *,
                              const yvex_device_tensor *, yvex_error *);
+    int (*tensor_copy_shared_async)(yvex_backend *, yvex_device_tensor *,
+                                    const yvex_device_tensor *, yvex_error *);
     int (*sync)(yvex_backend *, yvex_error *);
     int (*query_capability)(const yvex_backend *, yvex_backend_operation_variant,
                             yvex_backend_capability_result *, yvex_error *);

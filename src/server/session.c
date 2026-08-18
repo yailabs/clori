@@ -15,6 +15,7 @@
 #include <string.h>
 #include <time.h>
 #include <yvex/internal/core.h>
+#include <yvex/internal/runtime_batching.h>
 #include <yvex/internal/runtime_state_store.h>
 #include <yvex/internal/tokenizer.h>
 typedef struct {
@@ -276,12 +277,17 @@ static int session_generation_open(
                            YVEX_SERVER_GENERATION_DSPARK
                        ? YVEX_GENERATION_MODE_DSPARK
                        : YVEX_GENERATION_MODE_TARGET_ONLY;
+    options.workload_kind = registry->options.concurrent_sequences > 1ull
+                                ? YVEX_EXECUTION_WORKLOAD_BALANCED_SERVING
+                                : YVEX_EXECUTION_WORKLOAD_INTERACTIVE_LATENCY;
     options.context_capacity = registry->options.context_capacity;
     options.prefill_chunk_tokens = registry->options.prefill_chunk_tokens;
     options.maximum_new_tokens = registry->options.maximum_new_tokens;
     options.maximum_output_bytes = registry->options.maximum_output_bytes;
     options.maximum_host_bytes = registry->options.maximum_host_bytes;
     options.maximum_device_bytes = registry->options.maximum_device_bytes;
+    options.concurrent_sequences = registry->options.concurrent_sequences;
+    options.continuous_batching = registry->continuous_batching;
     options.trace_policy = registry->options.trace_level == YVEX_SERVER_TRACE_FULL
         ? YVEX_RUNTIME_TRACE_FULL : (registry->options.trace_level >= YVEX_SERVER_TRACE_STAGES
                                          ? YVEX_RUNTIME_TRACE_STAGES : YVEX_RUNTIME_TRACE_SUMMARY);
@@ -1158,6 +1164,7 @@ static int session_profile_publish(server_session_registry *registry,
                                    yvex_error *err)
 {
     const yvex_runtime_profile_record *profile = result ? &result->profile : NULL;
+    yvex_runtime_execution_batch_summary batches;
     int rc;
 #define PROFILE_EVENT(phase_, a_, b_, c_, nanoseconds_)                                   \
     yvex_server_telemetry_emit_provider(                                                   \
@@ -1261,7 +1268,98 @@ static int session_profile_publish(server_session_registry *registry,
             profile->counters[YVEX_RUNTIME_PROFILE_GENERATED_TOKENS],
             profile->phase_ns[YVEX_RUNTIME_PROFILE_FIRST_DECODE] +
                 profile->phase_ns[YVEX_RUNTIME_PROFILE_SUBSEQUENT_DECODE]);
+    memset(&batches, 0, sizeof(batches));
+    if (rc == YVEX_OK &&
+        yvex_runtime_model_execution_batch_summary_copy(
+            registry->model, &batches, err) == YVEX_OK && batches.enabled)
+        rc = PROFILE_EVENT("execution-batches", batches.physical_batches,
+                           batches.multi_source_batches, batches.maximum_width, 0ull);
+    if (rc == YVEX_OK && batches.enabled)
+        rc = PROFILE_EVENT("execution-batch-rows", batches.submitted_rows,
+                           batches.executed_rows, batches.admitted_maximum_width, 0ull);
+    if (rc == YVEX_OK && batches.enabled)
+        rc = PROFILE_EVENT("execution-batch-multi-source",
+                           batches.multi_source_batches,
+                           batches.multi_source_rows,
+                           batches.maximum_multi_source_width, 0ull);
+    if (rc == YVEX_OK && batches.enabled)
+        rc = PROFILE_EVENT("execution-batch-sources",
+                           batches.maximum_source_count,
+                           batches.registered_producers, 0ull, 0ull);
+    if (rc == YVEX_OK && batches.enabled)
+        rc = PROFILE_EVENT("execution-batch-experts",
+                           batches.multi_source_worklists,
+                           batches.multi_source_expert_pairs,
+                           batches.maximum_multi_source_bucket_population, 0ull);
+    if (rc == YVEX_OK && batches.enabled)
+        rc = PROFILE_EVENT("execution-batch-expert-rows",
+                           batches.multi_source_tensor_core_eligible_pairs,
+                           batches.multi_source_tensor_core_executed_pairs,
+                           batches.multi_source_narrow_pairs, 0ull);
+    if (rc == YVEX_OK && batches.enabled)
+        rc = PROFILE_EVENT("batch-expert-population-1-3",
+                           batches.multi_source_population_histogram[1],
+                           batches.multi_source_population_histogram[2],
+                           batches.multi_source_population_histogram[3], 0ull);
+    if (rc == YVEX_OK && batches.enabled)
+        rc = PROFILE_EVENT("batch-expert-population-4-6",
+                           batches.multi_source_population_histogram[4],
+                           batches.multi_source_population_histogram[5],
+                           batches.multi_source_population_histogram[6], 0ull);
+    if (rc == YVEX_OK && batches.enabled)
+        rc = PROFILE_EVENT("execution-batch-coalescing", batches.coalescing_waits,
+                           batches.coalescing_timeouts,
+                           batches.registered_producers, batches.coalescing_ns);
+    if (rc == YVEX_OK && batches.enabled)
+        rc = PROFILE_EVENT("execution-batch-policy", batches.coalescing_limit_ns,
+                           batches.admitted_maximum_width,
+                           batches.registered_producers, 0ull);
+    if (rc == YVEX_OK && batches.enabled)
+        rc = PROFILE_EVENT("execution-step-rendezvous",
+                           batches.rendezvous_submissions,
+                           batches.multi_source_rendezvous,
+                           batches.maximum_rendezvous_width, 0ull);
+    if (rc == YVEX_OK && batches.enabled)
+        rc = PROFILE_EVENT("execution-step-policy", batches.rendezvous_limit_ns,
+                           batches.rendezvous_steps,
+                           batches.registered_producers, 0ull);
+    if (rc == YVEX_OK && batches.enabled)
+        rc = PROFILE_EVENT("execution-batch-mismatch", batches.phase_mismatches,
+                           batches.layer_mismatches,
+                           batches.operation_mismatches, 0ull);
+    if (rc == YVEX_OK && batches.enabled)
+        rc = PROFILE_EVENT("execution-batch-mismatch-other",
+                           batches.geometry_mismatches, batches.profile_mismatches,
+                           batches.identity_mismatches, 0ull);
 #undef PROFILE_EVENT
+    return rc;
+}
+
+static int session_execution_ready_admit(
+    server_session_registry *registry, const server_session *session,
+    const yvex_client_request *request, const char *request_id,
+    unsigned long long *width, yvex_error *err)
+{
+    server_scheduler_summary summary;
+    unsigned long long wait_ns = 0ull;
+    int timed_out = 0;
+    int rc = yvex_server_scheduler_execution_ready(
+        registry->scheduler, session->name, width, &wait_ns, &timed_out, err);
+    if (rc == YVEX_OK && !registry->continuous_batching) *width = 1ull;
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_generation_execution_width_set(
+            session->generation, *width, err);
+    memset(&summary, 0, sizeof(summary));
+    if (rc == YVEX_OK) {
+        yvex_server_scheduler_snapshot(registry->scheduler, &summary);
+        rc = yvex_server_telemetry_emit_provider(
+            registry->telemetry, YVEX_SERVER_EVENT_GENERATION_PROFILE,
+            YVEX_SERVER_SEVERITY_INFO, session->name, request_id, NULL,
+            "scheduler-ready", *width, (unsigned long long)timed_out,
+            summary.execution_ready_limit_ns,
+            (double)wait_ns / 1000000000.0, 0.0, NULL,
+            request->provider_request, NULL, err);
+    }
     return rc;
 }
 
@@ -1282,6 +1380,7 @@ static int session_turn(server_session_registry *registry,
     yvex_runtime_sampling_policy policy;
     yvex_client_message started;
     turn_sink sink;
+    unsigned long long execution_ready_width = 0ull;
     unsigned long long prior_messages = session->message_count;
     unsigned long long prior_transcript = session->transcript_count;
     unsigned long long turn_maximum = request->provider_request
@@ -1347,6 +1446,10 @@ static int session_turn(server_session_registry *registry,
         rc = session_execution_rebase(registry, session, err);
     if (rc == YVEX_OK)
         rc = session_generation_open(registry, session, request, &policy, err);
+    if (rc == YVEX_OK)
+        rc = session_execution_ready_admit(
+            registry, session, request, request_id,
+            &execution_ready_width, err);
     if (rc != YVEX_OK) return rc;
     memset(&sink, 0, sizeof(sink));
     sink.registry = registry;

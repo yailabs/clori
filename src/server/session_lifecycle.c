@@ -352,12 +352,15 @@ int yvex_server_session_close_locked(server_session_registry *registry,
 
 int yvex_server_sessions_open(server_session_registry **out,
                               yvex_runtime_model *model,
+                              server_scheduler *scheduler,
                               const yvex_server_options *options,
+                              int continuous_batching,
                               server_telemetry *telemetry, yvex_error *err)
 {
     server_session_registry *registry;
     if (out) *out = NULL;
-    if (!out || !model || !options || !telemetry || !options->maximum_sessions ||
+    if (!out || !model || !scheduler || !options || !telemetry ||
+        !options->maximum_sessions ||
         options->maximum_sessions > SIZE_MAX / sizeof(server_session)) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.session.registry",
                        "model, telemetry, and bounded session capacity are required");
@@ -374,7 +377,9 @@ int yvex_server_sessions_open(server_session_registry **out,
         return YVEX_ERR_NOMEM;
     }
     registry->model = model;
+    registry->scheduler = scheduler;
     registry->options = *options;
+    registry->continuous_batching = continuous_batching != 0;
     registry->default_reasoning_policy = server_reasoning_automatic_policy();
     registry->telemetry = telemetry;
     registry->capacity = options->maximum_sessions;

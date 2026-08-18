@@ -111,8 +111,10 @@ rows, state copies and candidate bytes, output-head rows, logits movement,
 full-array scans/digests, row/expert pairs and unique experts, launches, graph
 launches, waits, synchronizations, allocations, shape hits/misses/rebuilds,
 expert-worklist counts, pair/bucket counts, maximum bucket width, narrow rows,
-bounded tails and Tensor Core eligible/executed rows, and publication facts rather than inferring
-them from tensor sizes. A measured
+bounded tails and Tensor Core eligible/executed rows, multi-source physical
+batch counts, real rows and source counts, and the multi-source expert-bucket
+population histogram. These are publication facts rather than values inferred
+from tensor sizes. A measured
 zero synchronization duration is never interpreted as zero synchronization
 cost.
 

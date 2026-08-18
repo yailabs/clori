@@ -72,7 +72,8 @@ static int generation_options_valid(const yvex_runtime_generation_options *optio
            options->trace_policy <= YVEX_RUNTIME_TRACE_FULL &&
            options->evidence_profile <= YVEX_EXECUTION_EVIDENCE_FORENSIC &&
            (options->continuous_batching == 0 ||
-            options->continuous_batching == 1);
+            options->continuous_batching == 1) &&
+           (!options->continuous_batching || options->concurrent_sequences > 1ull);
 }
 
 static int generation_device_stochastic(
@@ -586,6 +587,32 @@ static int generation_physical_row_capacity(
                 "compiled speculative execution width is invalid");
         if (draft_width > *capacity) *capacity = draft_width;
     }
+    if (context->options.continuous_batching &&
+        context->options.concurrent_sequences > *capacity)
+        *capacity = context->options.concurrent_sequences;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+static int generation_compatible_batch_width(
+    const yvex_runtime_generation_context *context,
+    unsigned long long *width, yvex_error *err)
+{
+    int rc;
+    if (width) *width = 0ull;
+    if (!context || !width)
+        return generation_context_refuse(
+            err, YVEX_ERR_INVALID_ARG,
+            "compatible execution width owner is unavailable");
+    rc = yvex_runtime_model_compatible_batch_width_copy(
+        context->model, width, err);
+    if (rc != YVEX_OK) return rc;
+    if (*width > context->options.concurrent_sequences)
+        *width = context->options.concurrent_sequences;
+    if (*width < 2ull || *width >= 64ull)
+        return generation_context_refuse(
+            err, YVEX_ERR_UNSUPPORTED,
+            "compiled execution does not admit compatible batching");
     yvex_error_clear(err);
     return YVEX_OK;
 }
@@ -1209,13 +1236,17 @@ static int generation_execution_owners_open(
     yvex_runtime_speculation_options speculation = {0};
     const yvex_runtime_session_view *session_view =
         yvex_runtime_session_view_get(context->session);
-    unsigned long long draft_workspace = 0ull;
+    unsigned long long compatible_width = 0ull, draft_workspace = 0ull;
     int device_selection = session_view &&
         generation_device_selection(context, session_view->backend);
     int rc;
 
     context->device_selection = device_selection;
     *workspace_bytes = 0ull;
+    if (options->continuous_batching) {
+        rc = generation_compatible_batch_width(context, &compatible_width, err);
+        if (rc != YVEX_OK) return rc;
+    }
 
     transformer.maximum_host_bytes = options->maximum_host_bytes;
     transformer.maximum_device_bytes = options->maximum_device_bytes;
@@ -1225,6 +1256,13 @@ static int generation_execution_owners_open(
     if (options->mode == YVEX_GENERATION_MODE_DSPARK &&
         transformer.workspace_token_capacity < YVEX_SPECULATION_MAX_BLOCK + 2ull)
         transformer.workspace_token_capacity = YVEX_SPECULATION_MAX_BLOCK + 2ull;
+    if (options->continuous_batching &&
+        transformer.workspace_token_capacity < options->concurrent_sequences)
+        transformer.workspace_token_capacity = options->concurrent_sequences;
+    transformer.compatible_batching = options->continuous_batching;
+    transformer.compatible_batch_width = compatible_width;
+    transformer.execution_width = options->continuous_batching
+                                      ? &context->compatible_execution_width : NULL;
     transformer.cancel_requested = options->cancel_requested;
     transformer.cancel_context = options->cancel_context;
     transformer.evidence_level =
@@ -1274,6 +1312,10 @@ static int generation_execution_owners_open(
     speculation.prefill_chunk_tokens = options->prefill_chunk_tokens;
     speculation.maximum_host_bytes = options->maximum_host_bytes;
     speculation.maximum_device_bytes = options->maximum_device_bytes;
+    speculation.compatible_batching = options->continuous_batching;
+    speculation.compatible_batch_width = compatible_width;
+    speculation.execution_width = options->continuous_batching
+                                      ? &context->compatible_execution_width : NULL;
     speculation.cancel_requested = options->cancel_requested;
     speculation.cancel_context = options->cancel_context;
     speculation.execution_profile = &context->execution_profile;
@@ -1375,6 +1417,7 @@ int yvex_runtime_generation_context_open(
     context->options = *options;
     if (!context->options.concurrent_sequences)
         context->options.concurrent_sequences = 1ull;
+    context->compatible_execution_width = 1ull;
     if (context->options.prefill_chunk_tokens > context->options.context_capacity)
         context->options.prefill_chunk_tokens = context->options.context_capacity;
     atomic_init(&context->lifecycle, 0u);
@@ -1416,7 +1459,8 @@ int yvex_runtime_generation_context_open(
     if (context->options.backend == YVEX_BACKEND_KIND_CUDA)
         rc = yvex_runtime_session_prepare_attention_workspace(
             context->session,
-            context->execution_profile.attention_resolution !=
+            context->options.continuous_batching ||
+                    context->execution_profile.attention_resolution !=
                 YVEX_EXECUTION_RESOLUTION_EXACT
                 ? YVEX_RUNTIME_MODE_EAGER : YVEX_RUNTIME_MODE_FULL,
             YVEX_RUNTIME_SCOPE_ATTENTION_ENVELOPE, YVEX_ATTENTION_EVIDENCE_NONE,
@@ -1527,6 +1571,24 @@ const yvex_runtime_generation_plan_summary *yvex_runtime_generation_plan_summary
     const yvex_runtime_generation_context *context)
 {
     return context ? &context->plan : NULL;
+}
+
+int yvex_runtime_generation_execution_width_set(
+    yvex_runtime_generation_context *context, unsigned long long width,
+    yvex_error *err)
+{
+    int rc;
+    if (!context || !width || width > context->options.concurrent_sequences ||
+        (!context->options.continuous_batching && width != 1ull))
+        return generation_context_refuse(
+            err, YVEX_ERR_INVALID_ARG,
+            "generation width exceeds the admitted execution batch");
+    rc = yvex_runtime_private_generation_enter(context, err);
+    if (rc != YVEX_OK) return rc;
+    context->compatible_execution_width = width;
+    yvex_runtime_private_generation_leave(context, rc, 0);
+    if (rc == YVEX_OK) yvex_error_clear(err);
+    return rc;
 }
 
 static int generation_checkpoint_identity(

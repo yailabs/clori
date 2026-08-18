@@ -745,6 +745,48 @@ static void server_event_values(const yvex_server_event *event, int detailed)
         else if (!strcmp(event->phase, "decode"))
             printf(" · first decode %llu · later decode %llu · tokens %llu",
                    event->value_a, event->value_b, event->value_c);
+        else if (!strcmp(event->phase, "execution-batches"))
+            printf(" · physical %llu · multi-source %llu · max width %llu",
+                   event->value_a, event->value_b, event->value_c);
+        else if (!strcmp(event->phase, "execution-batch-rows"))
+            printf(" · submitted %llu · executed %llu · admitted width %llu",
+                   event->value_a, event->value_b, event->value_c);
+        else if (!strcmp(event->phase, "execution-batch-multi-source"))
+            printf(" · physical %llu · rows %llu · max real width %llu",
+                   event->value_a, event->value_b, event->value_c);
+        else if (!strcmp(event->phase, "execution-batch-sources"))
+            printf(" · max sources %llu · active producers %llu",
+                   event->value_a, event->value_b);
+        else if (!strcmp(event->phase, "execution-batch-experts"))
+            printf(" · worklists %llu · pairs %llu · max population %llu",
+                   event->value_a, event->value_b, event->value_c);
+        else if (!strcmp(event->phase, "execution-batch-expert-rows"))
+            printf(" · TC eligible %llu · TC executed %llu · narrow %llu",
+                   event->value_a, event->value_b, event->value_c);
+        else if (!strcmp(event->phase, "batch-expert-population-1-3"))
+            printf(" · population 1 %llu · 2 %llu · 3 %llu",
+                   event->value_a, event->value_b, event->value_c);
+        else if (!strcmp(event->phase, "batch-expert-population-4-6"))
+            printf(" · population 4 %llu · 5 %llu · 6 %llu",
+                   event->value_a, event->value_b, event->value_c);
+        else if (!strcmp(event->phase, "execution-batch-coalescing"))
+            printf(" · waits %llu · timeouts %llu · producers %llu",
+                   event->value_a, event->value_b, event->value_c);
+        else if (!strcmp(event->phase, "execution-batch-policy"))
+            printf(" · coalescing limit %llu ns · width %llu · producers %llu",
+                   event->value_a, event->value_b, event->value_c);
+        else if (!strcmp(event->phase, "execution-step-rendezvous"))
+            printf(" · submissions %llu · multi-source %llu · max width %llu",
+                   event->value_a, event->value_b, event->value_c);
+        else if (!strcmp(event->phase, "execution-step-policy"))
+            printf(" · limit %llu ns · steps %llu · producers %llu",
+                   event->value_a, event->value_b, event->value_c);
+        else if (!strcmp(event->phase, "execution-batch-mismatch"))
+            printf(" · phase %llu · layer %llu · operation %llu",
+                   event->value_a, event->value_b, event->value_c);
+        else if (!strcmp(event->phase, "execution-batch-mismatch-other"))
+            printf(" · geometry %llu · profile %llu · identity %llu",
+                   event->value_a, event->value_b, event->value_c);
         break;
     case YVEX_SERVER_EVENT_TELEMETRY_DROPPED:
         printf(" · %llu dropped · capacity %llu", event->value_a, event->value_b);

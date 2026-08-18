@@ -58,6 +58,9 @@ typedef struct yvex_runtime_speculation_context yvex_runtime_speculation_context
 typedef struct {
     yvex_backend_kind backend;
     unsigned long long context_capacity, prefill_chunk_tokens, maximum_host_bytes, maximum_device_bytes;
+    unsigned long long compatible_batch_width;
+    int compatible_batching;
+    const unsigned long long *execution_width;
     int (*cancel_requested)(void *context);
     void *cancel_context;
     const yvex_compiled_execution_profile *execution_profile;

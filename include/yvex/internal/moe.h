@@ -190,6 +190,7 @@ typedef struct {
     int (*cancel_requested)(void *context);
     void *cancel_context;
     yvex_attention_evidence_level evidence_level;
+    int eager_execution;
     const yvex_moe_device_completion *device_completion;
     const yvex_execution_batch *execution_batch;
     const yvex_expert_worklist_policy *worklist_policy;
@@ -232,6 +233,7 @@ typedef struct {
     const yvex_execution_batch_source *execution_sources;
     const yvex_execution_batch_row *execution_rows;
     unsigned long long execution_source_count;
+    int complete_after_operation;
 } yvex_moe_row_batch;
 
 typedef struct {
@@ -321,7 +323,7 @@ typedef struct {
     yvex_tensor_scope tensor_scope;
     int (*cancel_requested)(void *context);
     void *cancel_context;
-    int defer_cuda_workspace;
+    int defer_cuda_workspace, eager_execution;
     yvex_attention_evidence_level evidence_level;
     const yvex_compiled_execution_profile *execution_profile;
 } yvex_runtime_moe_options;
@@ -377,6 +379,10 @@ int yvex_runtime_moe_rows(yvex_runtime_moe_context *context,
                           const yvex_moe_rows_request *request,
                           yvex_moe_row_batch_result *result,
                           yvex_error *err);
+int yvex_runtime_moe_row_routing_identity(
+    const yvex_runtime_moe_context *context, unsigned long long layer_index,
+    const yvex_moe_row_batch *batch, char output[YVEX_SHA256_HEX_CAP],
+    yvex_error *err);
 int yvex_runtime_moe_context_reset(yvex_runtime_moe_context *context, yvex_error *err);
 int yvex_runtime_moe_context_close(yvex_runtime_moe_context **context, yvex_error *err);
 typedef struct {

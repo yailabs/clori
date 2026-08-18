@@ -319,6 +319,7 @@ static int assert_encoded_moe(yvex_backend *backend)
     yvex_backend_tensor_desc descriptor = {0};
     unsigned char *workspace_poison = NULL;
     yvex_device_tensor *anchor = NULL, *input = NULL, *small_input = NULL;
+    yvex_device_tensor *wide_input = NULL, *wide_output = NULL;
     yvex_device_tensor *reference_output = NULL, *encoded_output = NULL;
     yvex_device_tensor *small_output = NULL;
     yvex_device_tensor *workspace = NULL;
@@ -355,6 +356,9 @@ static int assert_encoded_moe(yvex_backend *backend)
         for (row = 0ull; row < ROWS; ++row)
             input_rows[row * WIDTH + index] = (row + index * 7ull) & 1ull ? -1.0f : 1.0f;
     }
+    for (row = 0ull; row < ROWS; ++row)
+        input_rows[row * WIDTH] = 1.0f;
+    input_rows[(ROWS - 1ull) * WIDTH] = -1.0f;
     memset(router, 0, sizeof(router));
     router[0] = 1.0f;
     router[WIDTH] = -1.0f;
@@ -468,6 +472,10 @@ static int assert_encoded_moe(yvex_backend *backend)
     ALLOCATE_ENCODED_TENSOR(input, "encoded-moe-input", sizeof(input_rows));
     ALLOCATE_ENCODED_TENSOR(small_input, "encoded-moe-small-input",
                             2ull * WIDTH * sizeof(float));
+    ALLOCATE_ENCODED_TENSOR(wide_input, "encoded-moe-wide-input",
+                            4ull * WIDTH * sizeof(float));
+    ALLOCATE_ENCODED_TENSOR(wide_output, "encoded-moe-wide-output",
+                            4ull * WIDTH * sizeof(float));
     ALLOCATE_ENCODED_TENSOR(reference_output, "encoded-moe-reference",
                             sizeof(reference));
     ALLOCATE_ENCODED_TENSOR(encoded_output, "encoded-moe-output", sizeof(encoded));
@@ -483,6 +491,8 @@ static int assert_encoded_moe(yvex_backend *backend)
                 YVEX_OK &&
             yvex_backend_tensor_write(backend, small_input, input_rows,
                                       2ull * WIDTH * sizeof(float), &err) == YVEX_OK &&
+            yvex_backend_tensor_write(backend, wide_input, input_rows,
+                                      4ull * WIDTH * sizeof(float), &err) == YVEX_OK &&
             yvex_backend_tensor_write(backend, workspace, workspace_poison,
                                       workspace_bytes, &err) == YVEX_OK &&
             yvex_backend_workspace_attach(backend, workspace, 2ull, &err) == YVEX_OK,
@@ -640,29 +650,28 @@ static int assert_encoded_moe(yvex_backend *backend)
         }
         YVEX_TEST_ASSERT(maximum_error <= 1e-6f,
                          "grouped row-regime MoE matches its encoded oracle");
-        for (slot = YVEX_MOE_WEIGHT_ROUTED_GATE;
-             slot <= YVEX_MOE_WEIGHT_SHARED_DOWN; ++slot)
-            job.weights[slot].kernel_family =
-                YVEX_MOE_KERNEL_SM121_TENSORCORE_EXPERT;
-        rows.row_count = 2ull;
-        rows.device_rows = small_input;
-        rows.device_outputs = small_output;
+        rows.row_count = 4ull;
+        rows.device_rows = wide_input;
+        rows.device_outputs = wide_output;
         YVEX_TEST_ASSERT(
             moe_test_execution_contract(
                 &job, &rows, &execution_batch, &worklist_policy,
-                &execution_source, execution_rows, 2ull, &err),
-            "reseal the rejected Tensor Core worklist contract");
-        small_output->is_written = 0;
+                &execution_source, execution_rows, 4ull, &err),
+            "seal a rejected width-four Tensor Core worklist contract");
+        worklist_policy.tensor_core_minimum = 4ull;
+        strcpy(worklist_policy.tensor_core_kernel_family,
+               YVEX_MOE_KERNEL_SM121_TENSORCORE_EXPERT);
+        YVEX_TEST_ASSERT(
+            yvex_expert_worklist_policy_seal(&worklist_policy, &err) == YVEX_OK,
+            "seal the rejected Tensor Core worklist alternative");
+        wide_output->is_written = 0;
         memset(&result, 0, sizeof(result));
-        rc = operations->execute_rows(backend, &job, &rows, &output, &result, &err);
+        rc = operations->execute_rows(
+            backend, &job, &rows, &output, &result, &err);
         YVEX_TEST_ASSERT(
             rc == YVEX_ERR_UNSUPPORTED && !result.completed &&
-                !yvex_device_tensor_is_written(small_output),
-            "width-N Tensor Core execution refuses without a real-width worklist regime");
-        for (slot = YVEX_MOE_WEIGHT_ROUTED_GATE;
-             slot <= YVEX_MOE_WEIGHT_SHARED_DOWN; ++slot)
-            job.weights[slot].kernel_family =
-                YVEX_MOE_KERNEL_SM121_ROW_REGIME_EXPERT;
+                !yvex_device_tensor_is_written(wide_output),
+            "rejected Tensor Core worklist policy fails closed before publication");
         rows.row_count = ROWS;
         rows.device_rows = input;
         rows.device_outputs = reference_output;
@@ -709,6 +718,8 @@ static int assert_encoded_moe(yvex_backend *backend)
     yvex_backend_workspace_detach(backend);
     YVEX_TEST_ASSERT(
         yvex_backend_tensor_release(backend, &workspace, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &wide_output, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &wide_input, &err) == YVEX_OK &&
             yvex_backend_tensor_release(backend, &small_output, &err) == YVEX_OK &&
             yvex_backend_tensor_release(backend, &encoded_output, &err) == YVEX_OK &&
             yvex_backend_tensor_release(backend, &reference_output, &err) == YVEX_OK &&
@@ -1197,7 +1208,8 @@ static int assert_moe_row_dot_overflow(yvex_backend *backend)
     const unsigned short weight_scale = yvex_quant_f16_encode(1.0f);
     CUdeviceptr base, down, selected, order, activation, output, status;
     unsigned long long row_bytes = Q8_0_ROW_BYTES, expert_bytes = Q8_0_ROW_BYTES;
-    unsigned long long pair_count = 1ull, topk = 1ull, experts = 1ull;
+    unsigned long long pair_count = 1ull;
+    unsigned long long topk = 1ull, experts = 1ull;
     unsigned long long intermediate_extent = Q8_BLOCKS, hidden = 1ull;
     unsigned int qtype = YVEX_GGUF_QTYPE_Q8_0;
     int q8_input = 1, device_wide = 0, device_status, rc;

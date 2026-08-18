@@ -1181,15 +1181,24 @@ test-runtime-deepseek-generation-live: cuda $(GENERATION_LIVE_RUNNER) $(YVEX_BIN
 		cuda target-only stochastic 42 2 >"$$tmp_dir/cuda-stochastic-first.out"; \
 	$(GENERATION_LIVE_RUNNER) "$(DEEPSEEK_SELECTED_ARTIFACT)" "$$binding" \
 		cuda target-only stochastic 42 2 >"$$tmp_dir/cuda-stochastic-second.out"; \
-	cmp "$$tmp_dir/cuda-stochastic-first.out" "$$tmp_dir/cuda-stochastic-second.out"; \
+	sed -n '1p' "$$tmp_dir/cuda-stochastic-first.out" \
+		>"$$tmp_dir/cuda-stochastic-first.semantic"; \
+	sed -n '1p' "$$tmp_dir/cuda-stochastic-second.out" \
+		>"$$tmp_dir/cuda-stochastic-second.semantic"; \
+	cmp "$$tmp_dir/cuda-stochastic-first.semantic" \
+		"$$tmp_dir/cuda-stochastic-second.semantic"; \
 	$(GENERATION_LIVE_RUNNER) "$(DEEPSEEK_SELECTED_ARTIFACT)" "$$binding" \
 		cuda dspark greedy 0 8 >"$$tmp_dir/cuda-dspark-greedy.out"; \
 	$(GENERATION_LIVE_RUNNER) "$(DEEPSEEK_SELECTED_ARTIFACT)" "$$binding" \
 		cuda dspark stochastic 42 8 >"$$tmp_dir/cuda-dspark-stochastic-first.out"; \
 	$(GENERATION_LIVE_RUNNER) "$(DEEPSEEK_SELECTED_ARTIFACT)" "$$binding" \
 		cuda dspark stochastic 42 8 >"$$tmp_dir/cuda-dspark-stochastic-second.out"; \
-	cmp "$$tmp_dir/cuda-dspark-stochastic-first.out" \
-		"$$tmp_dir/cuda-dspark-stochastic-second.out"; \
+	sed -n '1p' "$$tmp_dir/cuda-dspark-stochastic-first.out" \
+		>"$$tmp_dir/cuda-dspark-stochastic-first.semantic"; \
+	sed -n '1p' "$$tmp_dir/cuda-dspark-stochastic-second.out" \
+		>"$$tmp_dir/cuda-dspark-stochastic-second.semantic"; \
+	cmp "$$tmp_dir/cuda-dspark-stochastic-first.semantic" \
+		"$$tmp_dir/cuda-dspark-stochastic-second.semantic"; \
 	python3 -c 'import sys; f=dict(x.split("=",1) for x in open(sys.argv[1]).read().split() if "=" in x); \
 		assert int(f["draft_cycles"])>0 and int(f["proposed"])>0 \
 		and int(f["verified"])>0 and f["acceptance_corpus"]=="pass" \

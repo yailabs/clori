@@ -112,6 +112,7 @@ typedef struct {
     const yvex_backend_cancellation *cancellation;
     yvex_backend_attention_completion *device_completion;
     unsigned int evidence_level;
+    int measure_device_time;
     int candidate_block_visible, retain_prefix_checkpoints, native_execution;
     unsigned long long max_host_bytes, max_device_bytes;
 } yvex_backend_attention_job;
@@ -289,6 +290,11 @@ int yvex_backend_tensor_copy_async(yvex_backend *backend,
                                    yvex_device_tensor *destination,
                                    const yvex_device_tensor *source,
                                    yvex_error *err);
+/* Transfer one D2D view across session streams before either side may reuse its storage. */
+int yvex_backend_tensor_copy_shared_async(yvex_backend *executor,
+                                          yvex_device_tensor *destination,
+                                          const yvex_device_tensor *source,
+                                          yvex_error *err);
 int yvex_backend_virtual_tensor_supported(const yvex_backend *backend);
 int yvex_backend_tensor_f32_subview(const yvex_device_tensor *source,
                                     unsigned long long offset, unsigned long long count,

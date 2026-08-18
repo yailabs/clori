@@ -154,6 +154,8 @@ int yvex_cuda_driver_load(yvex_cuda_driver *driver, yvex_error *err)
                          "cuMemHostGetDevicePointer_v2", "cuMemHostGetDevicePointer");
     load_optional_symbol(driver->library, (void **)&driver->cuMemHostUnregister,
                          "cuMemHostUnregister", NULL);
+    load_optional_symbol(driver->library, (void **)&driver->cuStreamWaitEvent,
+                         "cuStreamWaitEvent", NULL);
     load_optional_symbol(driver->library, (void **)&driver->cuEventCreate,
                          "cuEventCreate", NULL);
     load_optional_symbol(driver->library, (void **)&driver->cuEventRecord,

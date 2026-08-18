@@ -173,20 +173,24 @@ int yvex_attention_state_provider_abort(
 
 int yvex_attention_publication_identity_build(
     const char *plan_identity, const char *logical_model_identity,
-    const char *input_identity, yvex_attention_operation_scope scope,
+    const char *input_identity, unsigned long long canonical_input_variant,
+    yvex_attention_operation_scope scope,
     int candidate_visible, int retain_prefix,
     yvex_attention_publication *publication)
 {
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
-    if (!plan_identity || !logical_model_identity || !input_identity ||
+    if (!plan_identity || !logical_model_identity ||
         !publication || !publication->token_count)
         return 0;
     yvex_sha256_init(&hash);
     if (!yvex_sha256_update_text(&hash, "yvex.graph.attention.publication.v1") ||
         !yvex_sha256_update_text(&hash, plan_identity) ||
         !yvex_sha256_update_text(&hash, logical_model_identity) ||
-        !yvex_sha256_update_text(&hash, input_identity) ||
+        !yvex_sha256_update_text(
+            &hash, input_identity ? input_identity
+                                  : "yvex.attention.canonical-input.v1") ||
+        !yvex_sha256_update_u64(&hash, canonical_input_variant) ||
         !yvex_sha256_update_u64(&hash, publication->layer_index) ||
         !yvex_sha256_update_u64(&hash, (unsigned long long)scope) ||
         !yvex_sha256_update_u64(&hash, publication->token_position) ||

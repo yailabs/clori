@@ -3,10 +3,14 @@
  * Every ordinary sampled ID is the exact next decode input and no teacher-forced tail exists.
  * Test-only consumer of production lower-owner APIs over isolated CPU/CUDA sessions.
  */
+#include <yvex/internal/backend.h>
 #include <yvex/internal/decode.h>
 #include <yvex/internal/core.h>
+#include <yvex/internal/execution.h>
+#include <yvex/internal/execution_batch.h>
 #include <yvex/internal/generation.h>
 #include <yvex/internal/logits.h>
+#include <yvex/internal/moe.h>
 #include <yvex/internal/runtime.h>
 #include <yvex/internal/sampling.h>
 #include <yvex/internal/transformer.h>
@@ -34,6 +38,7 @@ typedef struct {
 
 typedef struct {
     unsigned int tokens[LIVE_GENERATION_MAX_TOKENS];
+    unsigned long long token_text_bytes[LIVE_GENERATION_MAX_TOKENS];
     unsigned long long sampled, committed, text_bytes, final_position;
     unsigned char text[LIVE_GENERATION_TEXT_BYTES];
     char semantic_state_digest[YVEX_SHA256_HEX_CAP];
@@ -933,9 +938,107 @@ static int live_fragment_append(yvex_tokenizer_decoder *decoder,
     if (rc == YVEX_OK && fragment.byte_count)
         memcpy(out->text + out->text_bytes, fragment.bytes,
                (size_t)fragment.byte_count);
-    if (rc == YVEX_OK) out->text_bytes = next;
+    if (rc == YVEX_OK) {
+        if (!out->sampled || out->sampled > LIVE_GENERATION_MAX_TOKENS)
+            rc = YVEX_ERR_BOUNDS;
+        else {
+            out->token_text_bytes[out->sampled - 1ull] = fragment.byte_count;
+            out->text_bytes = next;
+        }
+    }
     yvex_tokenizer_fragment_clear(&fragment);
     return rc;
+}
+
+/* The independent composition must execute the production-admitted physical profile.  A
+ * profile-less transformer is an intentionally degraded reference regime and is not an exact
+ * oracle for the selected CUDA generation path. */
+static int live_execution_profile(
+    yvex_runtime_model *model, yvex_runtime_execution_session *session,
+    yvex_backend_kind backend, yvex_sampling_strategy strategy,
+    yvex_compiled_execution_profile *profile, yvex_error *err)
+{
+    const yvex_runtime_model_view *model_view = yvex_runtime_model_view_get(model);
+    const yvex_runtime_session_view *session_view = yvex_runtime_session_view_get(session);
+    const yvex_physical_execution_summary *physical = model_view
+        ? yvex_physical_execution_ir_summary(model_view->physical_execution) : NULL;
+    const yvex_runtime_binding_summary *binding = model_view ? model_view->binding : NULL;
+    yvex_backend_cuda_attention_graph_summary cuda = {0};
+    yvex_backend_cuda_graph_capability graph = {0};
+    yvex_runtime_session_summary summary;
+    yvex_compiled_execution_profile_request request = {0};
+    const char *kernel_bundle = binding ? binding->identity : NULL;
+    char hardware[YVEX_EXECUTION_TEXT_CAP];
+    int rc, written;
+
+    if (!model_view || !session_view || !session_view->backend || !physical || !binding ||
+        !profile || yvex_runtime_session_summary_copy(session, &summary, err) != YVEX_OK) {
+        if (!yvex_error_is_set(err))
+            yvex_error_set(err, YVEX_ERR_STATE, "generation_live.profile",
+                           "compiled execution profile owners are unavailable");
+        return yvex_error_is_set(err) ? yvex_error_code(err) : YVEX_ERR_STATE;
+    }
+    if (backend == YVEX_BACKEND_KIND_CUDA) {
+        rc = yvex_backend_cuda_attention_graph_summary_get(
+            session_view->backend, &cuda, err);
+        if (rc != YVEX_OK || !yvex_sha256_hex_valid(cuda.cuda_build_identity))
+            return rc != YVEX_OK ? rc : YVEX_ERR_STATE;
+        rc = yvex_backend_cuda_graph_query(session_view->backend, &graph, err);
+        if (rc != YVEX_OK) return rc;
+        kernel_bundle = cuda.cuda_build_identity;
+        written = snprintf(hardware, sizeof(hardware), "%s-cuda-sm%d%d",
+                           cuda.kernel_bundle_native ? "native" : "portable",
+                           summary.compute_capability_major,
+                           summary.compute_capability_minor);
+    } else {
+        written = snprintf(hardware, sizeof(hardware), "portable-cpu");
+    }
+    if (written < 0 || (size_t)written >= sizeof(hardware)) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "generation_live.profile",
+                       "hardware profile rendering overflowed");
+        return YVEX_ERR_BOUNDS;
+    }
+    request.schema_version = YVEX_COMPILED_EXECUTION_PROFILE_SCHEMA_V2;
+    request.logical_model_identity = binding->logical_model_identity;
+    request.physical_variant_identity = binding->profile_identity;
+    request.physical_execution_identity = physical->identity;
+    request.artifact_identity = binding->artifact_identity;
+    request.materialization_identity = binding->materialization_identity;
+    request.runtime_binding_identity = binding->identity;
+    request.kernel_bundle_identity = kernel_bundle;
+    request.hardware_profile = hardware;
+    request.backend = backend;
+    request.device_index = summary.device_index;
+    request.compute_major = summary.compute_capability_major;
+    request.compute_minor = summary.compute_capability_minor;
+    request.context_capacity = 64ull;
+    request.generation_mode = YVEX_EXECUTION_GENERATION_TARGET_ONLY;
+    request.workload = YVEX_EXECUTION_WORKLOAD_INTERACTIVE;
+    request.evidence = YVEX_EXECUTION_EVIDENCE_PRODUCTION;
+    request.execution_class =
+        backend == YVEX_BACKEND_KIND_CUDA && cuda.kernel_bundle_native
+            ? YVEX_EXECUTION_CLASS_DEVICE_NATIVE
+            : YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE;
+    request.sampling_resolution =
+        strategy == YVEX_SAMPLING_STRATEGY_GREEDY ||
+                (backend == YVEX_BACKEND_KIND_CUDA &&
+                 yvex_backend_sampling_operations_get(session_view->backend) != NULL)
+            ? YVEX_EXECUTION_RESOLUTION_EXACT
+            : YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
+    request.moe_resolution =
+        backend == YVEX_BACKEND_KIND_CUDA && cuda.kernel_bundle_native &&
+                yvex_backend_moe_operations_get(session_view->backend) != NULL
+            ? YVEX_EXECUTION_RESOLUTION_EXACT
+            : YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
+    request.attention_resolution =
+        backend == YVEX_BACKEND_KIND_CUDA &&
+                binding->capabilities.cuda_full_graph_implemented &&
+                graph.state == YVEX_BACKEND_CUDA_GRAPH_OPEN &&
+                graph.edge_inventory_available && graph.async_memory_available &&
+                graph.async_copy_available && graph.pinned_host_memory_available
+            ? YVEX_EXECUTION_RESOLUTION_EXACT
+            : YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
+    return yvex_compiled_execution_profile_seal(&request, profile, err);
 }
 
 static int live_manual_execute(yvex_runtime_model *model,
@@ -947,7 +1050,8 @@ static int live_manual_execute(yvex_runtime_model *model,
     static const unsigned char prompt[] = "Hi";
     const yvex_runtime_model_view *view = yvex_runtime_model_view_get(model);
     yvex_runtime_session_open_request session_options = {.backend = backend};
-    yvex_runtime_transformer_options transformer_options = {.context_capacity = 64ull};
+    yvex_runtime_transformer_options transformer_options = {
+        .context_capacity = 64ull, .workspace_token_capacity = 8ull};
     yvex_runtime_decode_options decode_options = {.maximum_steps = LIVE_GENERATION_MAX_TOKENS};
     yvex_runtime_logits_options logits_options = {.maximum_rows = 1ull};
     yvex_runtime_sampling_options sampling_options = {
@@ -956,6 +1060,7 @@ static int live_manual_execute(yvex_runtime_model *model,
     yvex_tokenizer_decode_options decoder_options = {
         .skip_special_tokens = 1, .require_complete_utf8 = 1};
     yvex_runtime_execution_session *session = NULL;
+    yvex_execution_shape_registry *shapes = NULL;
     yvex_runtime_transformer_context *transformer = NULL;
     yvex_runtime_decode_context *decode = NULL;
     yvex_runtime_logits_context *logits = NULL;
@@ -968,6 +1073,7 @@ static int live_manual_execute(yvex_runtime_model *model,
     yvex_runtime_sampling_context_summary sampling_summary;
     yvex_graph_attention_state_summary state;
     yvex_runtime_model_failure failure = {0};
+    yvex_compiled_execution_profile execution_profile = {0};
     const yvex_transformer_plan_summary *plan = NULL;
     const yvex_runtime_logits_plan_summary *logits_plan = NULL;
     float *prefill_hidden = NULL, *decode_hidden = NULL, *raw_logits = NULL;
@@ -976,6 +1082,17 @@ static int live_manual_execute(yvex_runtime_model *model,
     memset(out, 0, sizeof(*out));
     if (!view || !view->tokenizer) return YVEX_ERR_STATE;
     rc = yvex_runtime_session_open(&session, model, &session_options, &failure, err);
+    if (rc == YVEX_OK)
+        rc = live_execution_profile(
+            model, session, backend, policy.strategy, &execution_profile, err);
+    if (rc == YVEX_OK)
+        rc = yvex_execution_shape_registry_open(
+            &shapes,
+            YVEX_EXECUTION_SHAPE_MAX_WIDTH * YVEX_EXECUTION_PHASE_COUNT *
+                (YVEX_EXECUTION_CONTEXT_NEAR_CAPACITY + 1ull) * 4ull,
+            err);
+    transformer_options.execution_profile = &execution_profile;
+    transformer_options.shape_registry = shapes;
     if (rc == YVEX_OK)
         rc = yvex_runtime_transformer_context_open(
             &transformer, model, session, &transformer_options, NULL, err);
@@ -1011,7 +1128,7 @@ static int live_manual_execute(yvex_runtime_model *model,
         yvex_runtime_transformer_request request = {
             .chunk_tokens = encoded.tokens.len, .backend = backend,
             .phase = YVEX_TRANSFORMER_PHASE_PREFILL};
-        yvex_runtime_transformer_output output;
+        yvex_runtime_transformer_output output = {0};
         prefill_hidden = calloc((size_t)prefill_values, sizeof(float));
         decode_hidden = calloc((size_t)plan->hidden_width, sizeof(float));
         raw_logits = calloc((size_t)logits_plan->vocabulary_size, sizeof(float));
@@ -1099,6 +1216,7 @@ static int live_manual_execute(yvex_runtime_model *model,
         if (rc == YVEX_OK && close_rc != YVEX_OK) { rc = close_rc; *err = cleanup; }
         close_rc = yvex_runtime_transformer_context_close(&transformer, &cleanup);
         if (rc == YVEX_OK && close_rc != YVEX_OK) { rc = close_rc; *err = cleanup; }
+        yvex_execution_shape_registry_close(&shapes);
         close_rc = yvex_runtime_session_close(&session, &cleanup);
         if (rc == YVEX_OK && close_rc != YVEX_OK) { rc = close_rc; *err = cleanup; }
     }
@@ -1172,15 +1290,13 @@ static int live_compare(const live_generation *production,
     if (!production->result.completed ||
         production->result.sampled_token_count != manual->sampled ||
         production->result.model_committed_token_count != manual->committed ||
-        production->result.generated_text_bytes != manual->text_bytes ||
         production->result.final_position != manual->final_position) {
         yvex_error_setf(err, YVEX_ERR_FORMAT, "generation_live.compare",
                         "composition facts differ completed=%d sampled=%llu/%llu committed=%llu/%llu "
-                        "text=%llu/%llu position=%llu/%llu",
+                        "position=%llu/%llu",
                         production->result.completed,
                         production->result.sampled_token_count, manual->sampled,
                         production->result.model_committed_token_count, manual->committed,
-                        production->result.generated_text_bytes, manual->text_bytes,
                         production->result.final_position, manual->final_position);
         return YVEX_ERR_FORMAT;
     }
@@ -1196,6 +1312,19 @@ static int live_compare(const live_generation *production,
                             manual->tokens[index]);
             return YVEX_ERR_FORMAT;
         }
+    if (production->result.generated_text_bytes != manual->text_bytes) {
+        yvex_error_setf(
+            err, YVEX_ERR_FORMAT, "generation_live.compare",
+            "composition text extent differs text=%llu/%llu "
+            "token_text=%llu,%llu,%llu/%llu,%llu,%llu",
+            production->result.generated_text_bytes, manual->text_bytes,
+            production->tokens[0].text_byte_count,
+            production->tokens[1].text_byte_count,
+            production->tokens[2].text_byte_count,
+            manual->token_text_bytes[0], manual->token_text_bytes[1],
+            manual->token_text_bytes[2]);
+        return YVEX_ERR_FORMAT;
+    }
     if (strcmp(production->semantic_state_digest,
                manual->semantic_state_digest) != 0) {
         yvex_error_setf(err, YVEX_ERR_FORMAT, "generation_live.compare",
