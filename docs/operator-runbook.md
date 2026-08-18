@@ -285,7 +285,7 @@ YVEX 0.1.0 · protocol 8
   runtime    ● ready · attached to resident runtime · CUDA · DSpark
   session    main · position 0 · turns 0
   context    0/4096
-  memory     100.84 GiB host · 0.02 GiB device
+  memory     100.84 GiB process · 91.31 GiB artifact mapped · 0.02 GiB device
   OpenAI     ● ready · 127.0.0.1:8001
 
 commands
@@ -321,7 +321,8 @@ current catalog is visible at startup. `/help` adds one-line descriptions;
 `/status`, `/runtime`, `/model`, `/memory`, and `/context` inspect state;
 `/session`, `/sessions`, `/new`, `/attach`, `/detach`, `/reset`, and `/close`
 manage the session; `/cancel` cancels active generation; and `/quit` exits
-locally. Tab completes an unambiguous slash command. Commands for an unsupported
+locally. `/exit` is a registry-owned alias for `/quit`; bare `exit` remains
+ordinary model input. Tab completes an unambiguous slash command. Commands for an unsupported
 explicit reasoning channel refuse rather than simulate support. The current
 DSpark profile admits `/think`, `/think-max`, and `/nothink`; they select its
 source-authored model-emitted channel and never expose hidden reasoning. A
@@ -338,6 +339,13 @@ shell. Cancellation or failure requires `/reset` only when the server reports
 committed partial progress. The console names that state and refuses a new turn
 instead of silently appending to it. Reset creates a fresh execution session
 while keeping the process-resident model open.
+
+Left/Right, Home/End, Delete and Backspace edit the current UTF-8 line without
+submitting it; Up/Down navigate local history. If the server connection closes,
+an active progress row is terminated cleanly and the prompt changes to
+`yvex [disconnected]>`. Local help and exit remain available. The next remote
+operation attempts one foreground reconnect; when that fails, the unsent line
+is preserved for another attempt rather than discarded.
 
 Ctrl-L clears the visible terminal while the REPL prompt is active, then redraws
 the prompt and any input already typed. It does not detach, reset, cancel, or

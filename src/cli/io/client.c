@@ -17,6 +17,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <math.h>
+#include <poll.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdatomic.h>
@@ -307,6 +308,8 @@ static void render_discovery_operation(size_t operation_index,
     fputs(",\"projections\":{\"cli\":", stdout);
     fputs(descriptor->cli_projection ? "true" : "false", stdout);
     fputs(",\"slash\":", stdout); discovery_json_string(stdout, descriptor->slash_projection);
+    fputs(",\"slash_aliases\":", stdout);
+    discovery_json_list(stdout, descriptor->slash_aliases, ',');
     fputs(",\"protocol\":", stdout); discovery_json_string(stdout, descriptor->protocol_operation);
     fputs(",\"future_tui\":", stdout); discovery_json_string(stdout, descriptor->future_tui_projection);
     fputs("},\"deprecation\":", stdout); discovery_json_string(stdout, descriptor->deprecation_state);
@@ -782,12 +785,21 @@ static int state_checkpoint(yvex_client_operation operation,
     request.maximum_state_file_bytes = maximum_file_bytes;
     return administration_request(&request, 0);
 }
+static void generation_progress_finish(int *active, int terminate_line)
+{
+    if (!active || !*active) return;
+    fputs("\r\033[2K", stdout);
+    if (terminate_line) fputc('\n', stdout);
+    fflush(stdout);
+    *active = 0;
+}
 static int generation_turn(const char *session_name,
                            const unsigned char *prompt,
                            unsigned long long prompt_bytes,
                            const client_turn_options *options,
                            int conversation,
-                           unsigned long long context_capacity)
+                           unsigned long long context_capacity,
+                           int *connection_lost)
 {
     yvex_client_request request;
     yvex_client_message message;
@@ -798,6 +810,7 @@ static int generation_turn(const char *session_name,
     yvex_cli_terminal_style style;
     FILE *status_output = conversation ? stdout : stderr;
     int rc, started = 0, progress_active = 0, renderer_finished = 0;
+    if (connection_lost) *connection_lost = 0;
     yvex_cli_terminal_style_get(status_output, &style);
     yvex_cli_stream_renderer_open(&renderer, stdout,
                                   conversation && isatty(fileno(stdout)));
@@ -848,10 +861,7 @@ static int generation_turn(const char *session_name,
                 progress_active = 0;
             }
         } else if (message.kind == YVEX_CLIENT_MESSAGE_FRAGMENT) {
-            if (progress_active) {
-                fputs("\r\033[2K", stdout);
-                progress_active = 0;
-            }
+            generation_progress_finish(&progress_active, 0);
             rc = yvex_cli_stream_renderer_write(
                 &renderer, message.stream_channel, message.bytes,
                 message.byte_count);
@@ -863,7 +873,7 @@ static int generation_turn(const char *session_name,
             fflush(stdout);
             started = 1;
         } else if (message.kind == YVEX_CLIENT_MESSAGE_TURN_COMPLETE) {
-            if (progress_active) fputs("\r\033[2K", stdout);
+            generation_progress_finish(&progress_active, 0);
             rc = yvex_cli_stream_renderer_finish(&renderer, conversation);
             renderer_finished = 1;
             if (rc != YVEX_OK) {
@@ -886,7 +896,7 @@ static int generation_turn(const char *session_name,
                         message.first_final_seconds, message.total_completion_rate);
             break;
         } else if (message.kind == YVEX_CLIENT_MESSAGE_ERROR) {
-            if (progress_active) fputs("\r\033[2K", stdout);
+            generation_progress_finish(&progress_active, 1);
             rc = yvex_cli_stream_renderer_finish(&renderer, conversation);
             renderer_finished = 1;
             if (rc != YVEX_OK) {
@@ -910,6 +920,7 @@ static int generation_turn(const char *session_name,
             break;
         }
     }
+    if (rc != YVEX_OK) generation_progress_finish(&progress_active, 1);
     if (!renderer_finished && started)
         (void)yvex_cli_stream_renderer_finish(&renderer, conversation);
     yvex_client_close(&client);
@@ -926,6 +937,10 @@ static int generation_turn(const char *session_name,
             return interrupted == 2 ? 131 : 130;
         }
     }
+    if (connection_lost && rc != YVEX_OK &&
+        yvex_error_code(&err) == YVEX_ERR_IO &&
+        !strcmp(yvex_error_where(&err), "server.protocol"))
+        *connection_lost = 1;
     return rc == YVEX_OK ? 0 : client_error(&err);
 }
 static int session_ensure(const char *name)
@@ -973,15 +988,42 @@ static void repl_signal_handler(int number)
     else if (interrupts < 2)
         repl_signal_state = (repl_signal_state & ~3) | (interrupts + 1);
 }
-static void repl_redraw(const char *prompt, const char *line, size_t count)
+static size_t repl_previous(const char *line, size_t cursor)
+{
+    if (!cursor) return 0u;
+    cursor--;
+    while (cursor && (((unsigned char)line[cursor] & 0xc0u) == 0x80u)) cursor--;
+    return cursor;
+}
+static size_t repl_next(const char *line, size_t count, size_t cursor)
+{
+    if (cursor >= count) return count;
+    cursor++;
+    while (cursor < count && (((unsigned char)line[cursor] & 0xc0u) == 0x80u)) cursor++;
+    return cursor;
+}
+static size_t repl_columns(const char *line, size_t start, size_t count)
+{
+    size_t columns = 0u;
+    while (start < count) {
+        if (((unsigned char)line[start] & 0xc0u) != 0x80u) columns++;
+        start++;
+    }
+    return columns;
+}
+static void repl_redraw(const char *prompt, const char *line, size_t count,
+                        size_t cursor)
 {
     fputs("\r\033[2K", stdout);
     fputs(prompt, stdout);
     if (count) (void)fwrite(line, 1u, count, stdout);
+    if (cursor < count)
+        fprintf(stdout, "\033[%zuD", repl_columns(line, cursor, count));
     fflush(stdout);
 }
 static int repl_replace_line(char **line, size_t *count, size_t *capacity,
-                             const char *replacement, const char *prompt)
+                             size_t *cursor, const char *replacement,
+                             const char *prompt)
 {
     size_t needed = strlen(replacement) + 1u;
     char *grown;
@@ -994,11 +1036,12 @@ static int repl_replace_line(char **line, size_t *count, size_t *capacity,
     }
     memcpy(*line, replacement, needed);
     *count = needed - 1u;
-    repl_redraw(prompt, *line, *count);
+    *cursor = *count;
+    repl_redraw(prompt, *line, *count, *cursor);
     return 1;
 }
 static int repl_complete_slash(char **line, size_t *count, size_t *capacity,
-                               const char *prompt)
+                               size_t *cursor, const char *prompt)
 {
     const yvex_operator_descriptor *match = NULL;
     size_t index, matches = 0u;
@@ -1015,13 +1058,13 @@ static int repl_complete_slash(char **line, size_t *count, size_t *capacity,
         char replacement[128];
         (void)snprintf(replacement, sizeof(replacement), "%s%s",
                        match->slash_projection, match->argument_count ? " " : "");
-        return repl_replace_line(line, count, capacity, replacement, prompt);
+        return repl_replace_line(line, count, capacity, cursor, replacement, prompt);
     }
     if (matches > 1u) return 1;
     return 0;
 }
-static int repl_append_byte(char **line, size_t *count, size_t *capacity,
-                            unsigned char byte)
+static int repl_insert_byte(char **line, size_t *count, size_t *capacity,
+                            size_t *cursor, unsigned char byte)
 {
     char *grown;
     size_t next;
@@ -1034,24 +1077,44 @@ static int repl_append_byte(char **line, size_t *count, size_t *capacity,
         *line = grown;
         *capacity = next;
     }
-    (*line)[(*count)++] = (char)byte;
+    memmove(*line + *cursor + 1u, *line + *cursor, *count - *cursor + 1u);
+    (*line)[(*cursor)++] = (char)byte;
+    (*count)++;
     (*line)[*count] = '\0';
     return 1;
 }
-static void repl_backspace(char *line, size_t *count)
+static void repl_erase(char *line, size_t *count, size_t *cursor, int backward)
 {
-    if (!*count) return;
-    (*count)--;
-    while (*count && (((unsigned char)line[*count] & 0xc0u) == 0x80u))
-        (*count)--;
-    line[*count] = '\0';
+    size_t start = backward ? repl_previous(line, *cursor) : *cursor;
+    size_t end = backward ? *cursor : repl_next(line, *count, *cursor);
+    if (start == end) return;
+    memmove(line + start, line + end, *count - end + 1u);
+    *count -= end - start;
+    *cursor = start;
 }
-static int repl_read_line(const char *prompt, const client_repl_history *history,
+static size_t repl_escape_read(unsigned char sequence[8])
+{
+    size_t length = 0u;
+    while (length < 8u) {
+        struct pollfd input = {.fd = STDIN_FILENO, .events = POLLIN};
+        if (poll(&input, 1u, 25) <= 0 || !(input.revents & POLLIN) ||
+            read(STDIN_FILENO, &sequence[length], 1u) != 1)
+            break;
+        length++;
+        if ((sequence[0] == '[' && length >= 2u && sequence[length - 1u] >= '@') ||
+            (sequence[0] == 'O' && length == 2u) ||
+            (sequence[0] != '[' && sequence[0] != 'O'))
+            break;
+    }
+    return length;
+}
+static int repl_read_line(const char *prompt, const char *initial,
+                          const client_repl_history *history,
                           char **output, size_t *output_count)
 {
     struct termios saved, raw;
     char *line = NULL;
-    size_t count = 0u, capacity = 0u, selected = history->count;
+    size_t count = 0u, capacity = 0u, cursor = 0u, selected = history->count;
     int paste = 0, result = -1;
     unsigned char byte;
     if (tcgetattr(STDIN_FILENO, &saved) != 0) return -1;
@@ -1062,7 +1125,10 @@ static int repl_read_line(const char *prompt, const client_repl_history *history
     raw.c_cc[VTIME] = 0;
     if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) != 0) return -1;
     fputs("\033[?2004h", stdout);
-    repl_redraw(prompt, "", 0u);
+    if (initial && !repl_replace_line(&line, &count, &capacity, &cursor,
+                                      initial, prompt))
+        goto done;
+    if (!initial) repl_redraw(prompt, "", 0u, 0u);
     for (;;) {
         ssize_t got = read(STDIN_FILENO, &byte, 1u);
         if (got < 0 && errno == EINTR) {
@@ -1079,7 +1145,7 @@ static int repl_read_line(const char *prompt, const client_repl_history *history
                 struct winsize window;
                 (void)ioctl(STDOUT_FILENO, TIOCGWINSZ, &window);
                 repl_signal_state &= ~4;
-                repl_redraw(prompt, line ? line : "", count);
+                repl_redraw(prompt, line ? line : "", count, cursor);
             }
             continue;
         }
@@ -1089,7 +1155,7 @@ static int repl_read_line(const char *prompt, const client_repl_history *history
         }
         if (byte == '\r' || byte == '\n') {
             if (paste) {
-                if (!repl_append_byte(&line, &count, &capacity, '\n')) break;
+                if (!repl_insert_byte(&line, &count, &capacity, &cursor, '\n')) break;
                 fputs("\r\n... ", stdout);
                 fflush(stdout);
                 continue;
@@ -1103,48 +1169,79 @@ static int repl_read_line(const char *prompt, const client_repl_history *history
             result = 0;
             break;
         }
+        if ((byte == 1u || byte == 5u) && !paste) {
+            cursor = byte == 1u ? 0u : count;
+            repl_redraw(prompt, line ? line : "", count, cursor);
+            continue;
+        }
         if (byte == '\t' && !paste) {
-            if (!repl_complete_slash(&line, &count, &capacity, prompt)) fputc('\a', stdout);
+            if (!repl_complete_slash(&line, &count, &capacity, &cursor, prompt))
+                fputc('\a', stdout);
             fflush(stdout);
             continue;
         }
         if (byte == '\f' && !paste)
             fputs("\033[2J\033[H", stdout);
         if ((byte == '\f' && !paste) || byte == 8u || byte == 127u) {
-            if (byte != '\f') repl_backspace(line, &count);
-            repl_redraw(prompt, line ? line : "", count);
+            if (byte != '\f') repl_erase(line, &count, &cursor, 1);
+            repl_redraw(prompt, line ? line : "", count, cursor);
             continue;
         }
         if (byte == 27u) {
-            unsigned char sequence[5];
-            size_t length = 0u;
-            while (length < sizeof(sequence) && read(STDIN_FILENO, &sequence[length], 1u) == 1) {
-                length++;
-                if ((length == 2u && (sequence[1] == 'A' || sequence[1] == 'B')) ||
-                    (length == 5u && sequence[4] == '~'))
-                    break;
-            }
+            unsigned char sequence[8];
+            size_t length = repl_escape_read(sequence);
             if (length == 5u && !memcmp(sequence, "[200~", 5u)) paste = 1;
             else if (length == 5u && !memcmp(sequence, "[201~", 5u)) paste = 0;
             else if (!paste && length == 2u && sequence[0] == '[' && sequence[1] == 'A' && selected) {
                 selected--;
-                if (!repl_replace_line(&line, &count, &capacity,
+                if (!repl_replace_line(&line, &count, &capacity, &cursor,
                                        history->entry[selected], prompt))
                     break;
             } else if (!paste && length == 2u && sequence[0] == '[' &&
                        sequence[1] == 'B' && selected < history->count) {
                 selected++;
-                if (!repl_replace_line(&line, &count, &capacity,
+                if (!repl_replace_line(&line, &count, &capacity, &cursor,
                                        selected == history->count ? "" : history->entry[selected],
                                        prompt))
                     break;
+            } else if (!paste && length == 2u && sequence[0] == '[' &&
+                       sequence[1] == 'C') {
+                cursor = repl_next(line ? line : "", count, cursor);
+                repl_redraw(prompt, line ? line : "", count, cursor);
+            } else if (!paste && length == 2u && sequence[0] == '[' &&
+                       sequence[1] == 'D') {
+                cursor = repl_previous(line ? line : "", cursor);
+                repl_redraw(prompt, line ? line : "", count, cursor);
+            } else if (!paste && ((length == 2u &&
+                        ((sequence[0] == '[' && sequence[1] == 'H') ||
+                         (sequence[0] == 'O' && sequence[1] == 'H'))) ||
+                       (length == 3u && (!memcmp(sequence, "[1~", 3u) ||
+                                        !memcmp(sequence, "[7~", 3u))))) {
+                cursor = 0u;
+                repl_redraw(prompt, line ? line : "", count, cursor);
+            } else if (!paste && ((length == 2u &&
+                        ((sequence[0] == '[' && sequence[1] == 'F') ||
+                         (sequence[0] == 'O' && sequence[1] == 'F'))) ||
+                       (length == 3u && (!memcmp(sequence, "[4~", 3u) ||
+                                        !memcmp(sequence, "[8~", 3u))))) {
+                cursor = count;
+                repl_redraw(prompt, line ? line : "", count, cursor);
+            } else if (!paste && length == 3u && !memcmp(sequence, "[3~", 3u)) {
+                repl_erase(line, &count, &cursor, 0);
+                repl_redraw(prompt, line ? line : "", count, cursor);
             }
             continue;
         }
-        if (!repl_append_byte(&line, &count, &capacity, byte)) break;
-        (void)fwrite(&byte, 1u, 1u, stdout);
-        fflush(stdout);
+        {
+            size_t old_count = count;
+            if (!repl_insert_byte(&line, &count, &capacity, &cursor, byte)) break;
+            if (cursor == count && old_count + 1u == count) {
+                (void)fwrite(&byte, 1u, 1u, stdout);
+                fflush(stdout);
+            } else repl_redraw(prompt, line, count, cursor);
+        }
     }
+done:
     fputs("\033[?2004l", stdout);
     (void)tcsetattr(STDIN_FILENO, TCSAFLUSH, &saved);
     if (result == 1) {
@@ -1173,6 +1270,20 @@ static int repl_switch_session(char current[YVEX_SERVER_SESSION_NAME_CAP],
     printf("%ssession%s · %s\n", style.success, style.reset, current);
     return 1;
 }
+static int slash_alias_matches(const char *aliases, const char *line,
+                               size_t extent)
+{
+    const char *cursor = aliases;
+    if (!aliases || !strcmp(aliases, "none")) return 0;
+    while (*cursor) {
+        const char *end = strchr(cursor, ',');
+        size_t length = end ? (size_t)(end - cursor) : strlen(cursor);
+        if (length == extent && !memcmp(cursor, line, extent)) return 1;
+        if (!end) break;
+        cursor = end + 1;
+    }
+    return 0;
+}
 static const yvex_operator_descriptor *slash_descriptor(const char *line,
                                                          const char **argument)
 {
@@ -1183,9 +1294,10 @@ static const yvex_operator_descriptor *slash_descriptor(const char *line,
     if (*argument && !**argument) *argument = NULL;
     for (index = 0u; index < yvex_operator_descriptor_count; ++index) {
         const yvex_operator_descriptor *descriptor = &yvex_operator_descriptors[index];
-        if (strcmp(descriptor->slash_projection, "none") &&
-            strlen(descriptor->slash_projection) == extent &&
-            !memcmp(descriptor->slash_projection, line, extent))
+        if ((strcmp(descriptor->slash_projection, "none") &&
+             strlen(descriptor->slash_projection) == extent &&
+             !memcmp(descriptor->slash_projection, line, extent)) ||
+            slash_alias_matches(descriptor->slash_aliases, line, extent))
             return descriptor;
     }
     return NULL;
@@ -1325,6 +1437,19 @@ static int repl_command(const char *line, char current[YVEX_SERVER_SESSION_NAME_
     yvex_cli_operator_invocation_close(&invocation);
     return result;
 }
+static int repl_reconnect(const char *session, yvex_client_message *status)
+{
+    yvex_cli_terminal_style style;
+    yvex_error err;
+    if (session_ensure(session) != 0 ||
+        administration(YVEX_CLIENT_OP_SESSION_ATTACH, session, -1) != 0 ||
+        console_status_fetch(session, status, &err) != YVEX_OK)
+        return 0;
+    yvex_cli_terminal_style_get(stdout, &style);
+    printf("%sreconnected%s · session %s\n", style.success, style.reset,
+           session);
+    return 1;
+}
 static int chat(const char *session_name, unsigned long long maximum_new_tokens)
 {
     client_turn_options options;
@@ -1335,8 +1460,9 @@ static int chat(const char *session_name, unsigned long long maximum_new_tokens)
     struct sigaction action, prior_interrupt, prior_resize;
     char current[YVEX_SERVER_SESSION_NAME_CAP];
     char prompt[64];
+    char *draft = NULL;
     unsigned long long generated_session = 1u;
-    int closed = 0;
+    int closed = 0, connected = 1;
     if (!isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO)) {
         fprintf(stderr, "yvex: chat requires a terminal; use `yvex run TEXT`\n");
         return 2;
@@ -1374,11 +1500,15 @@ static int chat(const char *session_name, unsigned long long maximum_new_tokens)
     options.reasoning_policy = status.console.reasoning_policy;
     yvex_cli_out_repl_catalog();
     yvex_cli_terminal_style_get(stdout, &style);
-    (void)snprintf(prompt, sizeof(prompt), "%syvex>%s ", style.accent, style.reset);
     for (;;) {
         char *line = NULL;
         size_t count = 0u;
-        int input = repl_read_line(prompt, &history, &line, &count);
+        int input;
+        (void)snprintf(prompt, sizeof(prompt), "%syvex%s>%s ", style.accent,
+                       connected ? "" : " [disconnected]", style.reset);
+        input = repl_read_line(prompt, draft, &history, &line, &count);
+        free(draft);
+        draft = NULL;
         if (input == -2) continue;
         if (input <= 0) break;
         repl_signal_state &= ~3;
@@ -1387,6 +1517,18 @@ static int chat(const char *session_name, unsigned long long maximum_new_tokens)
             continue;
         }
         if (line[0] == '/') {
+            const char *argument = NULL;
+            const yvex_operator_descriptor *descriptor =
+                slash_descriptor(line, &argument);
+            int local = descriptor &&
+                (descriptor->lane == YVEX_OPERATOR_LANE_REPL_LOCAL ||
+                 descriptor->runtime_adapter == YVEX_OPERATOR_RUNTIME_HELP);
+            if (!connected && descriptor && !local &&
+                !repl_reconnect(current, &status)) {
+                draft = line;
+                continue;
+            }
+            if (!connected && descriptor && !local) connected = 1;
             int command = repl_command(line, current, &generated_session,
                                        &options);
             free(line);
@@ -1397,17 +1539,30 @@ static int chat(const char *session_name, unsigned long long maximum_new_tokens)
             if (command == 2) break;
             continue;
         }
+        if (!connected && !repl_reconnect(current, &status)) {
+            draft = line;
+            continue;
+        }
+        connected = 1;
         repl_history_push(&history, line);
-        if (generation_turn(current, (const unsigned char *)line,
-                            (unsigned long long)count, &options, 1,
-                            status.console.context_capacity) == 131) {
-            free(line);
-            break;
+        {
+            int connection_lost = 0;
+            int turn = generation_turn(
+                current, (const unsigned char *)line,
+                (unsigned long long)count, &options, 1,
+                status.console.context_capacity, &connection_lost);
+            if (connection_lost) connected = 0;
+            if (turn == 131) {
+                free(line);
+                break;
+            }
         }
         free(line);
     }
+    free(draft);
     repl_history_close(&history);
-    if (!closed) (void)administration(YVEX_CLIENT_OP_SESSION_DETACH, current, -1);
+    if (!closed && connected)
+        (void)administration(YVEX_CLIENT_OP_SESSION_DETACH, current, -1);
     (void)sigaction(SIGINT, &prior_interrupt, NULL);
     (void)sigaction(SIGWINCH, &prior_resize, NULL);
     return 0;
@@ -1508,7 +1663,7 @@ static int run_command(int argc, char **argv)
     {
         int status = generation_turn(session, (const unsigned char *)prompt,
                                      (unsigned long long)strlen(prompt),
-                                     &options, 0, 0u);
+                                     &options, 0, 0u, NULL);
         if (owns_session)
             (void)administration(YVEX_CLIENT_OP_SESSION_CLOSE, session, -1);
         return status;
@@ -1585,8 +1740,10 @@ static void render_console_status(const yvex_client_message *message, int startu
                status->context_used, status->context_capacity);
         if (status->kv_used_available)
             printf(" · KV %.2f MiB", (double)status->kv_used_bytes / 1048576.0);
-        printf("\n  %s%-10s%s %.2f GiB host · %.2f GiB device\n", style.dim, "memory", style.reset,
-               (double)message->runtime.metrics.resident_host_bytes / 1073741824.0,
+        printf("\n  %s%-10s%s %.2f GiB process · %.2f GiB artifact mapped · "
+               "%.2f GiB device\n", style.dim, "memory", style.reset,
+               (double)message->runtime.metrics.current_rss_bytes / 1073741824.0,
+               (double)message->runtime.metrics.mapped_artifact_bytes / 1073741824.0,
                (double)message->runtime.metrics.resident_device_bytes / 1073741824.0);
         printf("  %s%-10s%s ", style.dim, "OpenAI", style.reset);
         if (message->runtime.openai_listener_enabled)
