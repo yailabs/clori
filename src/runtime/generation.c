@@ -468,15 +468,15 @@ static int generation_profile_graph_delta(yvex_runtime_profile_record *profile,
     return YVEX_OK;
 }
 /* Derive token-step identity from published fields, never pointers, padding, or object bytes. */
-static int generation_project_logits(
-    yvex_runtime_generation_context *context, const yvex_runtime_transformer_result *prefill,
+static int generation_project_logits(yvex_runtime_generation_context *context,
+    const yvex_runtime_transformer_result *prefill,
     const float *prefill_hidden, unsigned long long prefill_hidden_count,
     const yvex_runtime_decode_step_result *decode, yvex_runtime_logits_row_result *logits_result,
     yvex_runtime_profile_record *profile, yvex_error *err)
 {
     yvex_runtime_logits_source logits_source;
     unsigned long long started, completed;
-    int rc;
+    int shared_attribution, rc;
     memset(logits_result, 0, sizeof(*logits_result));
     if (prefill)
         rc = yvex_runtime_logits_source_from_transformer(
@@ -490,14 +490,14 @@ static int generation_project_logits(
             err);
     if (rc == YVEX_OK) {
         started = yvex_core_monotonic_ns();
-        rc = yvex_runtime_logits_project(
-            context->logits, &logits_source, context->options.backend,
-            context->logits_row, context->logits_row ? context->logits_count : 0ull,
-            logits_result, err);
+        rc = yvex_runtime_private_generation_logits_project(
+            context, &logits_source, logits_result, err);
         completed = yvex_core_monotonic_ns();
         if (rc == YVEX_OK)
             rc = yvex_runtime_generation_profile_phase(profile, YVEX_RUNTIME_PROFILE_OUTPUT_HEAD,
                                            completed - started, err);
+        if (rc == YVEX_OK)
+            shared_attribution = context->options.continuous_batching && logits_result->device_values_available;
         if (rc == YVEX_OK)
             rc = generation_phase_time(context, YVEX_EXECUTION_ROOFLINE_OUTPUT_HEAD,
                 completed - started, 1ull, 0ull,
@@ -505,7 +505,7 @@ static int generation_project_logits(
                 logits_result->h2d_bytes,
                 logits_result->d2h_bytes, logits_result->d2d_bytes,
                 logits_result->kernel_launches, logits_result->device_synchronizations,
-                (logits_result->memory.complete
+                (logits_result->memory.complete || shared_attribution
                      ? YVEX_EXECUTION_PHASE_MEMORY_FACTS : 0ull) |
                     YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_MOVEMENT) |
                     YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_KERNELS) |

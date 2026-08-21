@@ -26,6 +26,8 @@
 #define SERVER_SCHEMA_V1 1u
 #define SERVER_TELEMETRY_CAPACITY 4096u
 #define SERVER_CLIENT_CAPACITY 64u
+#define SERVER_INTERACTIVE_PREFILL_CHUNK 64u
+#define SERVER_BATCHED_PREFILL_FLOOR 4u
 typedef struct server_work_item {
     yvex_client_request request;
     char request_id[YVEX_SERVER_ID_CAP];
@@ -155,6 +157,23 @@ static double server_elapsed_seconds(unsigned long long start,
     if (!start || end < start) return 0.0;
     return (double)(end - start) / 1000000000.0;
 }
+
+static unsigned long long server_adaptive_prefill_chunk(
+    unsigned long long context_capacity,
+    unsigned long long concurrent_sequences)
+{
+    /* Keep the established wide interactive prefill, but do not multiply that
+       workspace across concurrent sessions. Serving starts from real scheduler
+       width with a small amortization floor; live capacity admission remains the
+       final authority and the resolved value is published in server status. */
+    unsigned long long selected = concurrent_sequences > 1ull
+                                      ? concurrent_sequences
+                                      : SERVER_INTERACTIVE_PREFILL_CHUNK;
+    if (concurrent_sequences > 1ull && selected < SERVER_BATCHED_PREFILL_FLOOR)
+        selected = SERVER_BATCHED_PREFILL_FLOOR;
+    return selected < context_capacity ? selected : context_capacity;
+}
+
 static int server_options_admit(yvex_server *server,
                                 const yvex_server_options *options,
                                 yvex_error *err)
@@ -165,7 +184,7 @@ static int server_options_admit(yvex_server *server,
         (options->backend != YVEX_BACKEND_KIND_CPU &&
          options->backend != YVEX_BACKEND_KIND_CUDA) ||
         options->generation_mode > YVEX_SERVER_GENERATION_DSPARK ||
-        !options->context_capacity || !options->prefill_chunk_tokens ||
+        !options->context_capacity ||
         !options->maximum_new_tokens || !options->maximum_output_bytes ||
         !options->maximum_sessions || !options->request_queue_capacity || !options->concurrent_sequences ||
         options->concurrent_sequences > options->maximum_sessions ||
@@ -176,6 +195,10 @@ static int server_options_admit(yvex_server *server,
         return server_refuse(err, YVEX_ERR_INVALID_ARG,
                              "complete bounded runtime-host options are required");
     server->options = *options;
+    if (!server->options.prefill_chunk_tokens)
+        server->options.prefill_chunk_tokens = server_adaptive_prefill_chunk(
+            server->options.context_capacity,
+            server->options.concurrent_sequences);
     yvex_core_text_copy(server->artifact_path, sizeof(server->artifact_path),
                         options->artifact_path);
     yvex_core_text_copy(server->runtime_binding_path,
@@ -229,6 +252,7 @@ int yvex_server_create(yvex_server **out, const yvex_server_options *options,
                        yvex_error *err)
 {
     yvex_server *server;
+    const yvex_server_options *admitted;
     int rc;
     if (out) *out = NULL;
     if (!out)
@@ -242,6 +266,7 @@ int yvex_server_create(yvex_server **out, const yvex_server_options *options,
     server->lock_fd = -1;
     atomic_init(&server->stopping, 0);
     rc = server_options_admit(server, options, err);
+    admitted = &server->options;
     if (rc == YVEX_OK) rc = server_synchronization_open(server, err);
     if (rc == YVEX_OK) {
         server->client_capacity = SERVER_CLIENT_CAPACITY;
@@ -253,23 +278,23 @@ int yvex_server_create(yvex_server **out, const yvex_server_options *options,
     }
     if (rc == YVEX_OK)
         rc = yvex_server_scheduler_open(
-            &server->scheduler, options->request_queue_capacity,
-            options->concurrent_sequences,
+            &server->scheduler, admitted->request_queue_capacity,
+            admitted->concurrent_sequences,
             model_work_execute, scheduler_observe, server, err);
     if (rc == YVEX_OK)
         rc = yvex_server_telemetry_open(&server->telemetry,
                                    SERVER_TELEMETRY_CAPACITY,
-                                   options->generation_mode,
+                                   admitted->generation_mode,
                                    NULL, NULL, NULL, err);
     if (rc == YVEX_OK)
         yvex_server_telemetry_queue(server->telemetry, 0u,
-                                    options->request_queue_capacity);
-    if (rc == YVEX_OK && options->openai_enabled) {
+                                    admitted->request_queue_capacity);
+    if (rc == YVEX_OK && admitted->openai_enabled) {
         server_openai_options openai = {
             .yvex_socket = server->socket_path,
-            .port = options->openai_port,
-            .timeout_ms = options->openai_timeout_ms,
-            .maximum_connections = options->concurrent_sequences
+            .port = admitted->openai_port,
+            .timeout_ms = admitted->openai_timeout_ms,
+            .maximum_connections = admitted->concurrent_sequences
         };
         rc = yvex_server_openai_prepare(&server->openai, &openai,
                                         server->telemetry, err);
@@ -281,21 +306,21 @@ int yvex_server_create(yvex_server **out, const yvex_server_options *options,
     memset(&server->summary, 0, sizeof(server->summary));
     server->summary.schema_version = SERVER_SCHEMA_V1;
     server->summary.status = YVEX_SERVER_STATUS_CONFIGURED;
-    server->summary.backend = options->backend;
-    server->summary.context_capacity = options->context_capacity;
-    server->summary.prefill_chunk_tokens = options->prefill_chunk_tokens;
-    server->summary.generation_mode = options->generation_mode;
-    server->summary.maximum_new_tokens = options->maximum_new_tokens;
-    server->summary.maximum_output_bytes = options->maximum_output_bytes;
-    server->summary.maximum_sessions = options->maximum_sessions;
-    server->summary.request_queue_capacity = options->request_queue_capacity;
-    server->summary.concurrent_sequences = options->concurrent_sequences;
-    server->summary.openai_timeout_ms = options->openai_timeout_ms;
-    server->summary.trace_level = options->trace_level;
+    server->summary.backend = admitted->backend;
+    server->summary.context_capacity = admitted->context_capacity;
+    server->summary.prefill_chunk_tokens = admitted->prefill_chunk_tokens;
+    server->summary.generation_mode = admitted->generation_mode;
+    server->summary.maximum_new_tokens = admitted->maximum_new_tokens;
+    server->summary.maximum_output_bytes = admitted->maximum_output_bytes;
+    server->summary.maximum_sessions = admitted->maximum_sessions;
+    server->summary.request_queue_capacity = admitted->request_queue_capacity;
+    server->summary.concurrent_sequences = admitted->concurrent_sequences;
+    server->summary.openai_timeout_ms = admitted->openai_timeout_ms;
+    server->summary.trace_level = admitted->trace_level;
     server->summary.explicit_reasoning_channel_supported = 0;
-    server->summary.openai_listener_enabled = options->openai_enabled;
-    server->summary.openai_port = options->openai_enabled
-                                      ? options->openai_port : 0u;
+    server->summary.openai_listener_enabled = admitted->openai_enabled;
+    server->summary.openai_port = admitted->openai_enabled
+                                      ? admitted->openai_port : 0u;
     yvex_core_text_copy(server->summary.socket_path,
                         sizeof(server->summary.socket_path),
                         server->socket_path);
@@ -305,7 +330,7 @@ int yvex_server_create(yvex_server **out, const yvex_server_options *options,
     (void)yvex_server_telemetry_emit(
         server->telemetry, YVEX_SERVER_EVENT_PROCESS_START,
         YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "process",
-        (unsigned long long)getpid(), options->backend, 0u, 0.0, 0.0, err);
+        (unsigned long long)getpid(), admitted->backend, 0u, 0.0, 0.0, err);
     (void)yvex_server_telemetry_emit(
         server->telemetry, YVEX_SERVER_EVENT_TELEMETRY_READY,
         YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "telemetry",

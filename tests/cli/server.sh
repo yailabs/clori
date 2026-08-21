@@ -76,6 +76,9 @@ mode_status=$?
 HOME="$HOME_ROOT" "$YVEX_BIN" server "$PROFILE" --context 8192 \
     >"$OUT_DIR/context.out" 2>"$OUT_DIR/context.err"
 context_status=$?
+HOME="$HOME_ROOT" "$YVEX_BIN" server "$PROFILE" --prefill-chunk 0 \
+    >"$OUT_DIR/prefill-zero.out" 2>"$OUT_DIR/prefill-zero.err"
+prefill_zero_status=$?
 HOME="$HOME_ROOT" "$YVEX_BIN" server "$PROFILE" \
     --ctx 8192 --parallel 2 --socket "$SOCKET_PATH" --openai off \
     >"$OUT_DIR/admission.out" 2>"$OUT_DIR/admission.err"
@@ -89,6 +92,7 @@ test "$port_status" -eq 2
 test "$duplicate_status" -eq 2
 test "$mode_status" -eq 2
 test "$context_status" -eq 2
+test "$prefill_zero_status" -eq 2
 test "$admission_status" -eq 1
 contains "$OUT_DIR/missing.err" 'usage: yvex server MODEL [options]'
 contains "$OUT_DIR/absent.err" 'model is not registered: absent'
@@ -97,6 +101,7 @@ contains "$OUT_DIR/port.err" 'invalid value for --openai-port: 0'
 contains "$OUT_DIR/duplicate.err" 'duplicate flag: --openai'
 contains "$OUT_DIR/mode.err" 'invalid value for --generation-mode: invalid'
 contains "$OUT_DIR/context.err" 'unknown flag: --context'
+contains "$OUT_DIR/prefill-zero.err" 'invalid value for --prefill-chunk: 0'
 contains "$OUT_DIR/admission.out" 'YVEX server · foreground'
 contains "$OUT_DIR/admission.out" "profile $PROFILE"
 contains "$OUT_DIR/admission.out" 'backend=cpu · mode=target-only · requested ctx=8192 · parallel=2'

@@ -493,7 +493,7 @@ static int speculation_project_target_features(yvex_runtime_speculation_context 
 {
     unsigned long long token, row, output_elements;
     if (!context || (!features && !context->device_draft_selection) || !token_count || !result ||
-        token_count > context->options.prefill_chunk_tokens ||
+        token_count > context->prefill_rows ||
         !yvex_core_u64_mul(token_count, context->hidden_width, &output_elements))
         return speculation_refuse(err, YVEX_ERR_INVALID_ARG, "DSpark feature projection extent is invalid");
     if (context->device_feature_input) {

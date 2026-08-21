@@ -18,7 +18,7 @@ cat >"$home/.local/share/yvex/models.local.json" <<EOF
 {
   "schema": "yvex.models.local.v3",
   "models": [{
-    "alias": "deepseek-openai-live",
+    "alias": "deepseek4-v4-flash-dspark-runtime-openai-live",
     "path": "$ARTIFACT",
     "runtime_binding": "$BINDING",
     "runtime_target": "deepseek4-v4-flash-dspark",
@@ -58,8 +58,9 @@ cleanup()
 trap cleanup EXIT HUP INT TERM
 
 port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
-HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server deepseek-openai-live \
-    --backend cuda --ctx 512 \
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server \
+    deepseek4-v4-flash-dspark-runtime-openai-live \
+    --backend cuda --ctx 512 --parallel 4 \
     --console raw --trace-level stages --openai on --openai-port "$port" \
     --openai-timeout-ms 3600000 >"$root/raw.jsonl" 2>"$root/daemon.err" &
 daemon_pid=$!
@@ -83,12 +84,16 @@ grep -F '"materialization_count":1' "$root/status.json" >/dev/null
 grep -F '"residency_build_count":1' "$root/status.json" >/dev/null
 grep -F '"openai_enabled":true' "$root/status.json" >/dev/null
 grep -F '"openai_ready":true' "$root/status.json" >/dev/null
+grep -F '"prefill_chunk_tokens":4' "$root/status.json" >/dev/null
+grep -F '"parallel":4' "$root/status.json" >/dev/null
+grep -F '"continuous_batching":true' "$root/status.json" >/dev/null
 grep -F "\"openai_port\":$port" "$root/status.json" >/dev/null
 python3 - "$root/status.json" "$ARTIFACT" "$daemon_pid" <<'PY'
 import json, os, sys
 status = json.load(open(sys.argv[1]))
 artifact_bytes = os.path.getsize(sys.argv[2])
-assert status['resident_host_bytes'] * 100 >= artifact_bytes * 95
+assert status['mapped_artifact_bytes'] == artifact_bytes
+assert status['resident_host_bytes'] * 20 < artifact_bytes
 rollup = {}
 for line in open(f'/proc/{sys.argv[3]}/smaps_rollup'):
     fields = line.split()
@@ -99,8 +104,8 @@ for line in open(f'/proc/{sys.argv[3]}/status'):
     fields = line.split()
     if fields and fields[0] == 'VmLck:':
         locked = int(fields[1]) * 1024
-assert rollup['Anonymous'] * 100 >= status['resident_host_bytes'] * 95
-assert locked * 100 >= status['resident_host_bytes'] * 95
+assert rollup['Anonymous'] * 20 < artifact_bytes
+assert locked * 20 < artifact_bytes
 PY
 
 base="http://127.0.0.1:$port"
@@ -118,6 +123,14 @@ model=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["data"][
 chat_body="{\"model\":\"$model\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply briefly.\"}],\"temperature\":0,\"max_completion_tokens\":2}"
 curl --fail-with-body -sS -H 'Content-Type: application/json' "$base/v1/chat/completions" \
     -d "$chat_body" >"$root/chat.json"
+parallel_pids=
+for index in 1 2 3 4; do
+    curl --fail-with-body -sS -H 'Content-Type: application/json' \
+        "$base/v1/chat/completions" -d "$chat_body" \
+        >"$root/chat.parallel.$index.json" &
+    parallel_pids="$parallel_pids $!"
+done
+for parallel_pid in $parallel_pids; do wait "$parallel_pid"; done
 chat_stream="{\"model\":\"$model\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply briefly.\"}],\"temperature\":0,\"max_completion_tokens\":2,\"stream\":true,\"stream_options\":{\"include_usage\":true}}"
 curl --fail-with-body -sS -N -H 'Content-Type: application/json' "$base/v1/chat/completions" \
     -d "$chat_stream" >"$root/chat.sse"
@@ -130,6 +143,11 @@ assert health['adapter'] == 'ready' and health['server'] == 'ready'
 chat = json.load(open(root / 'chat.json'))
 assert chat['object'] == 'chat.completion' and chat['usage']['total_tokens'] >= 1
 assert chat['choices'][0]['finish_reason'] in ('stop', 'length')
+parallel = [json.load(open(root / f'chat.parallel.{index}.json'))
+            for index in range(1, 5)]
+assert all(item['object'] == 'chat.completion' for item in parallel)
+assert all(item['usage']['completion_tokens'] == chat['usage']['completion_tokens']
+           for item in parallel)
 def events(path):
     return [json.loads(line[6:]) for line in path.read_text().splitlines()
             if line.startswith('data: ') and line != 'data: [DONE]']
@@ -158,9 +176,12 @@ grep -F '"artifact_open_count":1' "$root/status.after.json" >/dev/null
 grep -F '"materialization_count":1' "$root/status.after.json" >/dev/null
 grep -F '"residency_build_count":1' "$root/status.after.json" >/dev/null
 grep -E '"output_head_upload_count":[01](,|})' "$root/status.after.json" >/dev/null
-python3 - "$root/status.after.json" "$daemon_pid" <<'PY'
-import json, sys
+python3 - "$root/status.after.json" "$daemon_pid" "$ARTIFACT" <<'PY'
+import json, os, sys
 status = json.load(open(sys.argv[1]))
+artifact_bytes = os.path.getsize(sys.argv[3])
+assert status['mapped_artifact_bytes'] == artifact_bytes
+assert status['resident_host_bytes'] * 20 < artifact_bytes
 rollup = {}
 for line in open(f'/proc/{sys.argv[2]}/smaps_rollup'):
     fields = line.split()
@@ -171,8 +192,8 @@ for line in open(f'/proc/{sys.argv[2]}/status'):
     fields = line.split()
     if fields and fields[0] == 'VmLck:':
         locked = int(fields[1]) * 1024
-assert rollup['Anonymous'] * 100 >= status['resident_host_bytes'] * 95
-assert locked * 100 >= status['resident_host_bytes'] * 95
+assert rollup['Anonymous'] * 20 < artifact_bytes
+assert locked * 20 < artifact_bytes
 PY
 
 curl --fail-with-body -sS "$base/health" >"$root/health.after.json"

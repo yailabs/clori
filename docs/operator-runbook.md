@@ -149,8 +149,19 @@ previously running process and it is flushed before admission begins.
 Startup authenticates the selected artifact and binding, creates the immutable
 runtime model, builds residency once, and only then publishes the local socket.
 `--parallel N` admits capacity for N independently scheduled sessions before
-readiness. Requests for one named session stay serialized; this option does not
-claim compatible-row continuous batching.
+readiness. When the binding admits compatible execution width, ready independent
+sessions may contribute real rows to the same typed MoE or output-head execution
+batch; requests for one named session remain serialized. Attention and sampling
+remain session-local, so this is not transformer-wide continuous batching.
+
+When `--prefill-chunk` is omitted, the server resolves an adaptive chunk before
+capacity admission. Width-one operation retains the established interactive
+chunk, while concurrent serving starts from the real admitted scheduling width
+with a bounded amortization floor. `yvex server status` reports the resolved
+`prefill` value. An explicit positive `--prefill-chunk N` remains authoritative;
+zero is invalid, and an unsafe override is refused before model residency.
+DSpark keeps its separately admitted bounded lookahead workspace; prompt chunk
+selection does not truncate a real speculative verification batch.
 Large models can spend substantial time in this phase. On a TTY the foreground
 server maintains one in-place elapsed-time admission line until admission completes
 or fails; redirected output retains periodic ten-second receipts. Neither projection

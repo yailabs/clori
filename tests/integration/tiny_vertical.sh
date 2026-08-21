@@ -107,6 +107,7 @@ done
 test "$ready" -eq 1
 grep -F '"model_open_count":1' "$root/status.json" >/dev/null
 grep -F '"context_capacity":8' "$root/status.json" >/dev/null
+grep -F '"prefill_chunk_tokens":4' "$root/status.json" >/dev/null
 grep -F '"maximum_new_tokens":8' "$root/status.json" >/dev/null
 grep -F '"parallel":2' "$root/status.json" >/dev/null
 grep -F '"independent_session_scheduling":true' "$root/status.json" >/dev/null

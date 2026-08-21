@@ -12,6 +12,7 @@
 #include <yvex/internal/decode.h>
 #include <yvex/internal/generation.h>
 #include <yvex/internal/graph.h>
+#include <yvex/internal/logits.h>
 #include <yvex/internal/runtime.h>
 #include <yvex/internal/runtime_batching.h>
 
@@ -157,6 +158,10 @@ int yvex_runtime_private_compatible_step_enter(
     yvex_error *err);
 int yvex_runtime_private_compatible_moe_execute(
     const runtime_compatible_moe_request *request, yvex_error *err);
+int yvex_runtime_private_generation_logits_project(
+    yvex_runtime_generation_context *context,
+    const yvex_runtime_logits_source *source,
+    yvex_runtime_logits_row_result *result, yvex_error *err);
 static inline int runtime_binding_maximum_tensor_bytes(
     const yvex_runtime_binding *binding, unsigned long long *maximum)
 {

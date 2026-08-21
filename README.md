@@ -81,8 +81,11 @@ builds runtime residency, and keeps that runtime model open. Before admission
 starts it prints the profile, target, backend, mode, requested context,
 artifact, binding, endpoint, and stop instruction. Use `--ctx N` for an
 explicit startup capacity override and `--parallel N` for capacity-admitted
-independent-session scheduling. The latter is not physical continuous
-batching. Leave that terminal running. A large model
+independent-session scheduling. Compatible sessions can share the current typed
+MoE and output-head execution-batch boundaries; attention and sampling remain
+session-local.
+Prefill chunking is adaptive unless a positive `--prefill-chunk N` override is
+supplied. Leave that terminal running. A large model
 can take several minutes before the server becomes ready.
 
 ### 4. Verify the resident server

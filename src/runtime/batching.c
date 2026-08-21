@@ -10,6 +10,7 @@
 
 enum {
     COMPATIBLE_COALESCING_NS = 5000000,
+    COMPATIBLE_LOGITS_COALESCING_NS = 1000000,
     COMPATIBLE_RENDEZVOUS_NS = 50000000
 };
 
@@ -964,6 +965,157 @@ int yvex_runtime_private_compatible_moe_execute(
     }
     if (rc == YVEX_OK) compatible_moe_transformer_result(request);
     return rc;
+}
+
+typedef struct {
+    runtime_compatible_batch_ticket ticket;
+    yvex_runtime_model *model;
+    yvex_runtime_execution_session *session;
+    yvex_runtime_logits_context *logits;
+    yvex_backend *backend;
+    const yvex_compiled_execution_profile *execution_profile;
+    const yvex_runtime_logits_source *source;
+    yvex_runtime_logits_row_result *result;
+    float *host_logits;
+    unsigned long long host_logits_capacity;
+    unsigned long long admitted_width, expected_width;
+} compatible_logits_ticket;
+
+static int compatible_logits_direct(
+    const compatible_logits_ticket *ticket, yvex_error *err)
+{
+    return yvex_runtime_logits_project(
+        ticket->logits, ticket->source, yvex_backend_kind_of(ticket->backend),
+        ticket->host_logits, ticket->host_logits_capacity, ticket->result, err);
+}
+
+static yvex_execution_phase compatible_logits_phase(yvex_logits_source_phase phase)
+{
+    if (phase == YVEX_LOGITS_SOURCE_PREFILL) return YVEX_EXECUTION_PHASE_PREFILL;
+    if (phase == YVEX_LOGITS_SOURCE_DRAFT) return YVEX_EXECUTION_PHASE_DRAFT;
+    return YVEX_EXECUTION_PHASE_DECODE;
+}
+
+static int compatible_logits_key_prepare(compatible_logits_ticket *ticket,
+                                         yvex_error *err)
+{
+    const yvex_runtime_model_view *view = yvex_runtime_model_view_get(ticket->model);
+    const yvex_physical_execution_summary *physical = view
+        ? yvex_physical_execution_ir_summary(view->physical_execution) : NULL;
+    const yvex_runtime_logits_plan_summary *plan =
+        yvex_runtime_logits_plan_summary_get(ticket->logits);
+    yvex_runtime_model_summary model;
+    yvex_execution_compatibility_key *key = &ticket->ticket.key;
+    if (!physical || !plan || ticket->admitted_width >= 64ull ||
+        yvex_runtime_model_summary_copy(ticket->model, &model, err) != YVEX_OK)
+        return batching_refuse(err, YVEX_ERR_STATE,
+                               "compatible output-head facts are unavailable");
+    key->schema_version = YVEX_EXECUTION_COMPATIBILITY_SCHEMA_V1;
+    key->phase = compatible_logits_phase(ticket->source->source_phase);
+    key->backend_kind = yvex_backend_kind_of(ticket->backend);
+    key->tensor_scope = YVEX_TENSOR_SCOPE_GLOBAL;
+    key->execution_class = ticket->execution_profile->execution_class;
+    key->publication_contract = 3u;
+    key->model_generation = model.runtime_model_builds;
+    key->row_width = plan->hidden_width;
+    key->admitted_width = ticket->admitted_width;
+    yvex_runtime_identity_copy(key->runtime_model_identity,
+                               model.runtime_model_identity);
+    yvex_runtime_identity_copy(key->runtime_binding_identity,
+                               model.runtime_binding_identity);
+    yvex_runtime_identity_copy(key->physical_variant_identity,
+                               physical->physical_variant_identity);
+    yvex_runtime_identity_copy(key->execution_profile_identity,
+                               ticket->execution_profile->identity);
+    yvex_runtime_identity_copy(key->operation_identity,
+                               plan->output_head_plan_identity);
+    return yvex_execution_compatibility_key_seal(key, err);
+}
+
+static int compatible_logits_ticket_compare(const void *left,
+                                            const void *right)
+{
+    const compatible_logits_ticket *a = *(compatible_logits_ticket *const *)left;
+    const compatible_logits_ticket *b = *(compatible_logits_ticket *const *)right;
+    return strcmp(a->session->batch_source_identity,
+                  b->session->batch_source_identity);
+}
+
+static int compatible_logits_batch_execute(
+    runtime_compatible_batch_ticket *const *tickets,
+    unsigned long long ticket_count, yvex_error *err)
+{
+    compatible_logits_ticket **ordered = (compatible_logits_ticket **)tickets;
+    yvex_runtime_logits_context *contexts[63];
+    const yvex_runtime_logits_source *sources[63];
+    yvex_runtime_logits_row_result *rows[63];
+    unsigned long long index;
+    if (!ticket_count || ticket_count >= 64ull)
+        return batching_refuse(err, YVEX_ERR_BOUNDS,
+                               "compatible output-head batch exceeds capacity");
+    if (ticket_count == 1ull) return compatible_logits_direct(ordered[0], err);
+    qsort(ordered, (size_t)ticket_count, sizeof(*ordered),
+          compatible_logits_ticket_compare);
+    for (index = 0ull; index < ticket_count; ++index) {
+        contexts[index] = ordered[index]->logits;
+        sources[index] = ordered[index]->source;
+        rows[index] = ordered[index]->result;
+    }
+    return yvex_runtime_logits_project_compatible(
+        contexts, sources, rows, ticket_count, err);
+}
+
+int yvex_runtime_private_generation_logits_project(
+    yvex_runtime_generation_context *context,
+    const yvex_runtime_logits_source *source,
+    yvex_runtime_logits_row_result *result, yvex_error *err)
+{
+    const yvex_runtime_session_view *session = context
+        ? yvex_runtime_session_view_get(context->session) : NULL;
+    compatible_logits_ticket ticket = {0};
+    int producer_active = 0, rc;
+    if (!context || !session)
+        return batching_refuse(err, YVEX_ERR_INVALID_ARG,
+                               "generation output-head owner is unavailable");
+    ticket.model = context->model;
+    ticket.session = context->session;
+    ticket.logits = context->logits;
+    ticket.backend = session->backend;
+    ticket.execution_profile = &context->execution_profile;
+    ticket.source = source;
+    ticket.result = result;
+    ticket.host_logits = context->logits_row;
+    ticket.host_logits_capacity = context->logits_row ? context->logits_count : 0ull;
+    ticket.admitted_width = context->options.continuous_batching
+                                ? context->options.concurrent_sequences : 1ull;
+    ticket.expected_width = context->compatible_execution_width;
+    if (!source || !result || !ticket.admitted_width || !ticket.expected_width ||
+        ticket.expected_width > ticket.admitted_width)
+        return batching_refuse(err, YVEX_ERR_INVALID_ARG,
+                               "compatible output-head request is incomplete");
+    if (!ticket.model->compatible_batcher || ticket.admitted_width < 2ull ||
+        ticket.expected_width < 2ull ||
+        yvex_backend_kind_of(ticket.backend) != YVEX_BACKEND_KIND_CUDA ||
+        ticket.execution_profile->execution_class != YVEX_EXECUTION_CLASS_DEVICE_NATIVE ||
+        !source->device_values_available)
+        return compatible_logits_direct(&ticket, err);
+    ticket.ticket.row_count = 1ull;
+    ticket.ticket.expected_group_size = ticket.expected_width;
+    ticket.ticket.coalescing_limit_ns = COMPATIBLE_LOGITS_COALESCING_NS;
+    ticket.ticket.execute = compatible_logits_batch_execute;
+    ticket.ticket.context = &ticket;
+    ticket.ticket.cancel_requested = context->options.cancel_requested;
+    ticket.ticket.cancel_context = context->options.cancel_context;
+    rc = compatible_logits_key_prepare(&ticket, err);
+    if (rc == YVEX_OK) {
+        rc = yvex_runtime_private_model_batcher_producer_enter(ticket.model, err);
+        producer_active = rc == YVEX_OK;
+    }
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_private_batcher_submit(
+            ticket.model->compatible_batcher, &ticket.ticket, err);
+    return yvex_runtime_private_batcher_producer_finish(
+        ticket.model, &producer_active, rc, err);
 }
 
 static int compatible_step_execute(

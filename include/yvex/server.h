@@ -157,7 +157,9 @@ typedef struct {
     const char *socket_path;
     yvex_backend_kind backend;
     yvex_server_generation_mode generation_mode;
-    unsigned long long context_capacity, prefill_chunk_tokens;
+    unsigned long long context_capacity;
+    /* Zero selects the server-owned adaptive prefill policy. */
+    unsigned long long prefill_chunk_tokens;
     unsigned long long maximum_new_tokens, maximum_output_bytes;
     unsigned long long maximum_host_bytes, maximum_device_bytes;
     unsigned long long maximum_sessions, request_queue_capacity, concurrent_sequences;

@@ -1276,7 +1276,7 @@ static int generation_execution_owners_open(
         workspace_bytes, err);
     logits.maximum_rows = options->mode == YVEX_GENERATION_MODE_DSPARK
                               ? YVEX_SPECULATION_MAX_BLOCK + 1ull
-                              : 1ull;
+                              : options->continuous_batching ? compatible_width : 1ull;
     logits.maximum_host_bytes = options->maximum_host_bytes;
     logits.maximum_device_bytes = options->maximum_device_bytes;
     logits.evidence_profile = options->evidence_profile;
@@ -1297,7 +1297,8 @@ static int generation_execution_owners_open(
             err, YVEX_ERR_STATE, "runtime logits plan is unavailable");
     if (rc != YVEX_OK) return rc;
     sampling.maximum_vocabulary_size = (*logits_plan)->vocabulary_size;
-    sampling.maximum_rows = logits.maximum_rows;
+    sampling.maximum_rows = options->mode == YVEX_GENERATION_MODE_DSPARK
+                                ? YVEX_SPECULATION_MAX_BLOCK + 1ull : 1ull;
     sampling.maximum_host_bytes = options->maximum_host_bytes;
     sampling.device_selection = device_selection;
     sampling.cancel_requested = options->cancel_requested;

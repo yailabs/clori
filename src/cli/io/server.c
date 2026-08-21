@@ -279,7 +279,7 @@ static void options_defaults(yvex_server_options *options,
                                    ? YVEX_SERVER_GENERATION_DSPARK
                                    : YVEX_SERVER_GENERATION_TARGET_ONLY;
     options->context_capacity = profile->context_capacity;
-    options->prefill_chunk_tokens = 64u;
+    options->prefill_chunk_tokens = 0u;
     options->maximum_new_tokens = 0u;
     options->maximum_output_bytes = 1048576u;
     options->maximum_sessions = 8u;
@@ -306,7 +306,8 @@ static int option_parse(yvex_server_options *options, const char *flag,
     else if (!strcmp(flag, "--ctx"))
         return parse_u64(value, &options->context_capacity);
     else if (!strcmp(flag, "--prefill-chunk"))
-        return parse_u64(value, &options->prefill_chunk_tokens);
+        return parse_u64(value, &options->prefill_chunk_tokens) &&
+               options->prefill_chunk_tokens > 0ull;
     else if (!strcmp(flag, "--max-new-tokens"))
         return parse_u64(value, &options->maximum_new_tokens);
     else if (!strcmp(flag, "--parallel")) {

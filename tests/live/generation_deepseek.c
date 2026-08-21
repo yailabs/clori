@@ -313,7 +313,7 @@ static int live_production_request(
     yvex_runtime_session_open_request session_options = {.backend = backend};
     yvex_runtime_generation_options options = {
         .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V5,
-        .context_capacity = context_capacity, .prefill_chunk_tokens = 8ull,
+        .context_capacity = context_capacity, .prefill_chunk_tokens = 4ull,
         .maximum_output_bytes = LIVE_GENERATION_TEXT_BYTES - 1ull,
         .trace_policy = YVEX_RUNTIME_TRACE_SUMMARY};
     yvex_runtime_model_failure failure = {0};

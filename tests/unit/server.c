@@ -335,6 +335,51 @@ static int test_configured_summary_and_event(void)
     return 0;
 }
 
+static int test_adaptive_prefill_policy(void)
+{
+    static const struct {
+        unsigned long long context, concurrency, expected;
+    } cases[] = {
+        {4096ull, 1ull, 64ull},
+        {4096ull, 2ull, 4ull},
+        {4096ull, 4ull, 4ull},
+        {4096ull, 8ull, 8ull},
+        {32ull, 1ull, 32ull},
+    };
+    yvex_server_options options;
+    yvex_server_summary summary;
+    yvex_server *server = NULL;
+    yvex_error err;
+    size_t index;
+    int rc;
+    for (index = 0u; index < sizeof(cases) / sizeof(cases[0]); ++index) {
+        test_options(&options);
+        options.context_capacity = cases[index].context;
+        options.maximum_sessions = cases[index].concurrency;
+        options.concurrent_sequences = cases[index].concurrency;
+        options.prefill_chunk_tokens = 0ull;
+        rc = yvex_server_create(&server, &options, &err);
+        YVEX_TEST_ASSERT(rc == YVEX_OK && server,
+                         "adaptive prefill host create");
+        rc = yvex_server_get_summary(server, &summary, &err);
+        YVEX_TEST_ASSERT(rc == YVEX_OK &&
+                             summary.prefill_chunk_tokens == cases[index].expected,
+                         "adaptive prefill policy is inspectable");
+        yvex_server_close(&server);
+    }
+    test_options(&options);
+    options.concurrent_sequences = 2ull;
+    options.prefill_chunk_tokens = 7ull;
+    rc = yvex_server_create(&server, &options, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && server,
+                     "explicit prefill host create");
+    rc = yvex_server_get_summary(server, &summary, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && summary.prefill_chunk_tokens == 7ull,
+                     "explicit prefill override remains authoritative");
+    yvex_server_close(&server);
+    return 0;
+}
+
 static int test_model_open_refusal(void)
 {
     yvex_server_options options;
@@ -601,6 +646,7 @@ int yvex_test_server(void)
     if (test_scheduler_serialization() != 0) return 1;
     if (test_session_store() != 0) return 1;
     if (test_configured_summary_and_event() != 0) return 1;
+    if (test_adaptive_prefill_policy() != 0) return 1;
     if (test_model_open_refusal() != 0) return 1;
     if (test_bounded_telemetry_overflow() != 0) return 1;
     if (test_provider_telemetry() != 0) return 1;
