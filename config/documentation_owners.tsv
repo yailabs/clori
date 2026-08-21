@@ -86,4 +86,5 @@ docs/worklog/2026-08-18-expert-worklist-prefill-admission-repair.md	worklog	cano
 docs/worklog/2026-08-18-interactive-console-quality-repair.md	worklog	canonical	contributors	retained	interactive_console_quality_repair_worklog
 docs/worklog/2026-08-21-adaptive-output-head-batching.md	worklog	canonical	contributors	retained	adaptive_output_head_batching_worklog
 docs/worklog/2026-08-21-exact-mxfp4-decode.md	worklog	canonical	contributors	retained	exact_mxfp4_decode_worklog
+docs/worklog/2026-08-21-real-width-tensor-core-cutover-rejection.md	worklog	canonical	contributors	retained	real_width_tensor_core_cutover_rejection_worklog
 tests/vectors/README.md	test-support	canonical	contributors	living	test_vector_format
