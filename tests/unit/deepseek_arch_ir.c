@@ -843,7 +843,7 @@ static int test_arch_ir_report_consumer_and_family_preservation(void)
             compiler->physical_execution_policy->derived_asset_qtype_mask == 0ull &&
             (compiler->physical_execution_policy->encoded_activation_consumer_mask &
              (1ull << YVEX_EXECUTION_CONSUMER_SHARED_EXPERT)) != 0ull,
-        "DeepSeek compilation preserves real worklist width without admitting the rejected Tensor Core regime");
+        "DeepSeek compilation retains real worklist width without an unproven Tensor Core cutover");
     YVEX_TEST_ASSERT(compiler->binding_pipeline &&
                          compiler->binding_pipeline->semantic_model_build(
                              &semantic, &source, &err) == YVEX_OK,

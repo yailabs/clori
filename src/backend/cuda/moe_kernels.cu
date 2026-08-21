@@ -401,6 +401,33 @@ extern "C" __global__ void yvex_expert_worklist_build_cuda(
         }
 }
 
+static __device__ int worklist_tensor_core_pair(
+    unsigned long long ordered_pair, const unsigned long long *bucket_offsets,
+    const unsigned long long *bucket_populations,
+    const yvex_expert_worklist_observation *summary,
+    unsigned long long tensor_core_minimum, int *status)
+{
+    if (!tensor_core_minimum) return 0;
+    if (!bucket_offsets || !bucket_populations || !summary ||
+        !summary->bucket_count) {
+        atomicCAS(status, 0, 2);
+        return 0;
+    }
+    unsigned long long low = 0ull, high = summary->bucket_count;
+    while (low + 1ull < high) {
+        unsigned long long middle = low + (high - low) / 2ull;
+        if (bucket_offsets[middle] <= ordered_pair) low = middle;
+        else high = middle;
+    }
+    unsigned long long offset = bucket_offsets[low];
+    unsigned long long population = bucket_populations[low];
+    if (ordered_pair < offset || ordered_pair - offset >= population) {
+        atomicCAS(status, 0, 2);
+        return 0;
+    }
+    return population >= tensor_core_minimum;
+}
+
 extern "C" __global__ void yvex_moe_grouped_up_rows(
     const unsigned char *gate, unsigned long long gate_row_bytes,
     unsigned long long gate_expert_bytes, unsigned int gate_qtype,
@@ -408,6 +435,10 @@ extern "C" __global__ void yvex_moe_grouped_up_rows(
     unsigned long long up_expert_bytes, unsigned int up_qtype,
     const unsigned long long *selected, const float *weights,
     const unsigned long long *order,
+    const unsigned long long *bucket_offsets,
+    const unsigned long long *bucket_populations,
+    const yvex_expert_worklist_observation *summary,
+    unsigned long long tensor_core_minimum,
     unsigned long long pair_count, unsigned long long topk,
     unsigned long long expert_count, const unsigned char *input,
     unsigned long long input_extent, int q8_input,
@@ -430,6 +461,10 @@ extern "C" __global__ void yvex_moe_grouped_up_rows(
         if (!lane) atomicCAS(status, 0, 2);
         return;
     }
+    if (worklist_tensor_core_pair(
+            ordered_pair, bucket_offsets, bucket_populations, summary,
+            tensor_core_minimum, status)) return;
+    if (*status) return;
     unsigned long long source_pair = order ? order[ordered_pair] : ordered_pair;
     if (source_pair >= pair_count) {
         if (!lane) atomicCAS(status, 0, 2);
@@ -484,7 +519,11 @@ extern "C" __global__ void yvex_moe_grouped_down_rows(
     const unsigned char *down, unsigned long long row_bytes,
     unsigned long long expert_bytes, unsigned int qtype,
     const unsigned long long *selected,
-    const unsigned long long *order, unsigned long long pair_count,
+    const unsigned long long *order,
+    const unsigned long long *bucket_offsets,
+    const unsigned long long *bucket_populations,
+    const yvex_expert_worklist_observation *summary,
+    unsigned long long tensor_core_minimum, unsigned long long pair_count,
     unsigned long long topk, unsigned long long expert_count,
     const unsigned char *intermediate, unsigned long long intermediate_extent,
     int q8_input, unsigned long long hidden, float *pair_outputs, int *status)
@@ -503,6 +542,10 @@ extern "C" __global__ void yvex_moe_grouped_down_rows(
         if (!lane) atomicCAS(status, 0, 2);
         return;
     }
+    if (worklist_tensor_core_pair(
+            ordered_pair, bucket_offsets, bucket_populations, summary,
+            tensor_core_minimum, status)) return;
+    if (*status) return;
     unsigned long long source_pair = order ? order[ordered_pair] : ordered_pair;
     if (source_pair >= pair_count) {
         if (!lane) atomicCAS(status, 0, 2);

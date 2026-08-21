@@ -617,6 +617,9 @@ static int assert_encoded_moe(yvex_backend *backend)
              slot <= YVEX_MOE_WEIGHT_SHARED_DOWN; ++slot)
             job.weights[slot].kernel_family =
                 YVEX_MOE_KERNEL_SM121_ROW_REGIME_EXPERT;
+        for (slot = YVEX_MOE_WEIGHT_ROUTED_GATE;
+             slot <= YVEX_MOE_WEIGHT_ROUTED_DOWN; ++slot)
+            job.weights[slot].layout = YVEX_EXECUTION_LAYOUT_EXPERT_MAJOR;
         rows.row_count = 2ull;
         rows.device_rows = small_input;
         rows.device_outputs = small_output;
@@ -674,21 +677,91 @@ static int assert_encoded_moe(yvex_backend *backend)
             moe_test_execution_contract(
                 &job, &rows, &execution_batch, &worklist_policy,
                 &execution_source, execution_rows, 4ull, &err),
-            "seal a rejected width-four Tensor Core worklist contract");
-        worklist_policy.tensor_core_minimum = 4ull;
-        strcpy(worklist_policy.tensor_core_kernel_family,
-               YVEX_MOE_KERNEL_SM121_TENSORCORE_EXPERT);
-        YVEX_TEST_ASSERT(
-            yvex_expert_worklist_policy_seal(&worklist_policy, &err) == YVEX_OK,
-            "seal the rejected Tensor Core worklist alternative");
+            "seal a real width-four Tensor Core worklist contract");
+        job.eager_execution = 1;
         wide_output->is_written = 0;
         memset(&result, 0, sizeof(result));
         rc = operations->execute_rows(
             backend, &job, &rows, &output, &result, &err);
         YVEX_TEST_ASSERT(
-            rc == YVEX_ERR_UNSUPPORTED && !result.completed &&
-                !yvex_device_tensor_is_written(wide_output),
-            "rejected Tensor Core worklist policy fails closed before publication");
+            rc == YVEX_OK && result.completed && result.tensor_core_launches == 0ull &&
+                yvex_device_tensor_is_written(wide_output) &&
+                yvex_backend_tensor_read(backend, wide_output, tensorcore,
+                                         4ull * WIDTH * sizeof(float), &err) == YVEX_OK,
+            "execute the exact width-four DP4A comparison regime");
+        maximum_error = 0.0f;
+        for (index = 0ull; index < 4ull * WIDTH; ++index) {
+            float difference = fabsf(encoded[index] - tensorcore[index]);
+            if (difference > maximum_error) maximum_error = difference;
+        }
+        YVEX_TEST_ASSERT(maximum_error <= 1e-6f,
+                         "width-four DP4A comparison matches its encoded oracle");
+        worklist_policy.tensor_core_minimum = 4ull;
+        strcpy(worklist_policy.tensor_core_kernel_family,
+               YVEX_MOE_KERNEL_SM121_TENSORCORE_EXPERT);
+        YVEX_TEST_ASSERT(
+            yvex_expert_worklist_policy_seal(&worklist_policy, &err) == YVEX_OK,
+            "seal the compiler-admitted real-width Tensor Core worklist");
+        wide_output->is_written = 0;
+        memset(&result, 0, sizeof(result));
+        rc = operations->execute_rows(
+            backend, &job, &rows, &output, &result, &err);
+        YVEX_TEST_ASSERT(
+            rc == YVEX_OK && result.completed && result.tensor_core_launches == 2ull &&
+                result.worklists.tensor_core_eligible_pairs == 24ull &&
+                result.worklists.tensor_core_executed_pairs == 24ull &&
+                result.worklists.narrow_pairs == 0ull &&
+                result.worklists.maximum_bucket_population == 4ull &&
+                yvex_device_tensor_is_written(wide_output) &&
+                yvex_backend_tensor_read(backend, wide_output, tensorcore,
+                                         4ull * WIDTH * sizeof(float), &err) == YVEX_OK,
+            "execute real same-expert rows through the Tensor Core worklist regime");
+        maximum_error = 0.0f;
+        for (index = 0ull; index < 4ull * WIDTH; ++index) {
+            float difference = fabsf(encoded[index] - tensorcore[index]);
+            if (difference > maximum_error) maximum_error = difference;
+        }
+        YVEX_TEST_ASSERT(maximum_error <= 0.01f,
+                         "real-width Tensor Core MoE matches its encoded oracle");
+        rows.row_count = 2ull;
+        rows.device_rows = small_input;
+        rows.device_outputs = small_output;
+        YVEX_TEST_ASSERT(
+            moe_test_execution_contract(
+                &job, &rows, &execution_batch, &worklist_policy,
+                &execution_source, execution_rows, 2ull, &err),
+            "seal a narrow batch under the Tensor Core-capable policy");
+        worklist_policy.tensor_core_minimum = 4ull;
+        strcpy(worklist_policy.tensor_core_kernel_family,
+               YVEX_MOE_KERNEL_SM121_TENSORCORE_EXPERT);
+        YVEX_TEST_ASSERT(
+            yvex_expert_worklist_policy_seal(&worklist_policy, &err) == YVEX_OK,
+            "reseal the Tensor Core policy for its exact narrow fallback");
+        small_output->is_written = 0;
+        memset(&result, 0, sizeof(result));
+        rc = operations->execute_rows(
+            backend, &job, &rows, &output, &result, &err);
+        YVEX_TEST_ASSERT(
+            rc == YVEX_OK && result.completed && result.tensor_core_launches == 0ull &&
+                result.worklists.tensor_core_eligible_pairs == 0ull &&
+                result.worklists.tensor_core_executed_pairs == 0ull &&
+                result.worklists.narrow_pairs == 12ull &&
+                yvex_device_tensor_is_written(small_output) &&
+                yvex_backend_tensor_read(backend, small_output, tensorcore,
+                                         2ull * WIDTH * sizeof(float), &err) == YVEX_OK,
+            "retain exact DP4A execution below the real-width crossover");
+        maximum_error = 0.0f;
+        for (index = 0ull; index < 2ull * WIDTH; ++index) {
+            float difference = fabsf(encoded[index] - tensorcore[index]);
+            if (difference > maximum_error) maximum_error = difference;
+        }
+        YVEX_TEST_ASSERT(maximum_error <= 1e-6f,
+                         "Tensor Core-capable policy preserves its narrow encoded oracle");
+        job.eager_execution = 0;
+        for (slot = YVEX_MOE_WEIGHT_ROUTED_GATE;
+             slot <= YVEX_MOE_WEIGHT_ROUTED_DOWN; ++slot)
+            job.weights[slot].kernel_family =
+                YVEX_MOE_KERNEL_SM121_ROW_REGIME_EXPERT;
         rows.row_count = ROWS;
         rows.device_rows = input;
         rows.device_outputs = reference_output;
@@ -1224,9 +1297,11 @@ static int assert_moe_row_dot_overflow(yvex_backend *backend)
     const float activation_scale = 1.0e34f;
     const unsigned short weight_scale = yvex_quant_f16_encode(1.0f);
     CUdeviceptr base, down, selected, order, activation, output, status;
+    CUdeviceptr bucket_offsets = 0ull, bucket_populations = 0ull, summary = 0ull;
     unsigned long long row_bytes = Q8_0_ROW_BYTES, expert_bytes = Q8_0_ROW_BYTES;
     unsigned long long pair_count = 1ull;
     unsigned long long topk = 1ull, experts = 1ull;
+    unsigned long long tensor_core_minimum = 0ull;
     unsigned long long intermediate_extent = Q8_BLOCKS, hidden = 1ull;
     unsigned int qtype = YVEX_GGUF_QTYPE_Q8_0;
     int q8_input = 1, device_wide = 0, device_status, rc;
@@ -1261,7 +1336,8 @@ static int assert_moe_row_dot_overflow(yvex_backend *backend)
     {
         void *params[] = {
             &down, &row_bytes, &expert_bytes, &qtype, &selected,
-            &order, &pair_count, &topk, &experts, &activation,
+            &order, &bucket_offsets, &bucket_populations, &summary,
+            &tensor_core_minimum, &pair_count, &topk, &experts, &activation,
             &intermediate_extent, &q8_input, &hidden, &output, &status};
         rc = yvex_cuda_launch(
             backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
