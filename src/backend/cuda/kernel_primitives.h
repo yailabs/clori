@@ -103,21 +103,12 @@ static __device__ float e8m0_bits_to_float(unsigned int bits)
     if (bits == 0xffu) return __uint_as_float(0x7fc00000u);
     return __uint_as_float(bits == 0u ? 0x00400000u : bits << 23);
 }
-
 static __device__ float mxfp4_code_to_float(unsigned int code)
 {
-    float magnitude;
-    switch (code & 7u) {
-    case 0u: magnitude = 0.0f; break;
-    case 1u: magnitude = 1.0f; break;
-    case 2u: magnitude = 2.0f; break;
-    case 3u: magnitude = 3.0f; break;
-    case 4u: magnitude = 4.0f; break;
-    case 5u: magnitude = 6.0f; break;
-    case 6u: magnitude = 8.0f; break;
-    default: magnitude = 12.0f; break;
-    }
-    return code & 8u ? -magnitude : magnitude;
+    unsigned int magnitude = code & 7u;
+    magnitude += (magnitude & 3u) * (magnitude >> 2u);
+    magnitude += (unsigned int)(magnitude == 10u) * 2u;
+    return __uint_as_float(__float_as_uint((float)magnitude) | ((code & 8u) << 28u));
 }
 /* Pinned compatible IQ2_XXS magnitude-grid identities. */
 static __device__ __constant__ unsigned short iq2_xxs_grid[256] = {
@@ -244,6 +235,14 @@ static __device__ float qtype_warp_dot(const unsigned char *row, const float *ve
         else sum = fmaf(weight, value, sum);
     } else if (qtype == YVEX_GGUF_QTYPE_BF16) for (unsigned long long i = lane; i < width; i += 32ull) {
         float weight = bf16_bits_to_float(qtype_load_u16(row + i * 2ull)), value = vector[i];
+        if (!isfinite(weight) || !isfinite(value)) atomicCAS(status, 0, 1);
+        else sum = fmaf(weight, value, sum);
+    } else if (qtype == YVEX_GGUF_QTYPE_MXFP4) for (unsigned long long i = lane; i < width; i += 32ull) {
+        const unsigned char *block = row + (i >> 5u) * 17ull;
+        unsigned int packed = block[1u + (unsigned int)(i & 15ull)];
+        unsigned int code = (i & 16ull) ? packed >> 4u : packed & 15u;
+        float weight = mxfp4_code_to_float(code) * e8m0_bits_to_float(block[0]) * 0.5f;
+        float value = vector[i];
         if (!isfinite(weight) || !isfinite(value)) atomicCAS(status, 0, 1);
         else sum = fmaf(weight, value, sum);
     } else for (unsigned long long i = lane; i < width; i += 32ull) {
@@ -519,18 +518,19 @@ static __device__ float qtype_q8_k_dot_group(const unsigned char *weight,
 }
 static __device__ int mxfp4_i8x4(unsigned int packed, unsigned int high)
 {
-    unsigned int values = 0u;
-#pragma unroll
-    for (unsigned int i = 0u; i < 4u; ++i) {
-        unsigned int code = (packed >> (8u * i + (high ? 4u : 0u))) & 15u;
-        int magnitude = (code & 7u) == 0u ? 0 :
-                        (code & 7u) < 5u ? (int)(code & 7u) :
-                        (code & 7u) == 5u ? 6 :
-                        (code & 7u) == 6u ? 8 : 12;
-        int value = code & 8u ? -magnitude : magnitude;
-        values |= ((unsigned int)value & 255u) << (8u * i);
-    }
-    return (int)values;
+    unsigned int codes = (high ? packed >> 4u : packed) & 0x0f0f0f0fu;
+    unsigned int magnitudes = codes & 0x07070707u;
+    unsigned int upper = (magnitudes >> 2u) & 0x01010101u, signs, nonzero, masks;
+    unsigned int seven = magnitudes & (magnitudes >> 1u) &
+                         (magnitudes >> 2u) & 0x01010101u;
+    /* Four E2M1 byte lanes stay exact because the packed additions cannot overflow. */
+    magnitudes += (magnitudes & 0x03030303u) & (upper * 3u);
+    magnitudes += seven << 1u;
+    nonzero = (magnitudes | (magnitudes >> 1u) |
+               (magnitudes >> 2u) | (magnitudes >> 3u)) & 0x01010101u;
+    signs = ((codes >> 3u) & 0x01010101u) & nonzero;
+    masks = signs * 255u;
+    return (int)((magnitudes ^ masks) + signs);
 }
 static __device__ float mxfp4_q8_k_dot(const unsigned char *weight,
                                        const unsigned char *activation)
