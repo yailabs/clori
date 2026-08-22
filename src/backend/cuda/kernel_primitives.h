@@ -7,7 +7,6 @@
 #ifndef SRC_BACKEND_CUDA_KERNEL_PRIMITIVES_H_INCLUDED
 #define SRC_BACKEND_CUDA_KERNEL_PRIMITIVES_H_INCLUDED
 #include <yvex/qtype.h>
-
 enum {
     YVEX_CUDA_SAMPLING_TOP_K_COUNT = 0,
     YVEX_CUDA_SAMPLING_MIN_P_COUNT,
@@ -564,27 +563,28 @@ static __device__ float qtype_q8_k_dot(const unsigned char *weight,
     if (qtype == YVEX_GGUF_QTYPE_MXFP4) return mxfp4_q8_k_dot(weight, activation);
     return __uint_as_float(0x7fc00000u);
 }
-static __device__ float q8_warp_dot(const unsigned char *weight,
-                                    const unsigned char *activation,
+static __device__ float q8_warp_dot(const unsigned char *weight, const unsigned char *activation,
                                     unsigned long long blocks,
                                     unsigned long long weight_block,
                                     unsigned int qtype)
 {
     unsigned int lane = threadIdx.x & 31u;
     float sum = 0.0f;
-    if (blocks <= 16ull) {
-        unsigned int group_width = blocks <= 4ull ? 8u : blocks <= 8ull ? 4u : 2u;
-        unsigned int groups = 32u / group_width;
-        unsigned int group = lane / group_width;
-        unsigned int block = group < blocks ? group : 0u;
-        float group_value = qtype_q8_k_dot_group(
-            weight + (unsigned long long)block * weight_block,
-            activation + (unsigned long long)block * YVEX_CUDA_Q8_K_BYTES,
-            qtype, group_width);
-        float original_lane_value = __shfl_sync(
-            0xffffffffu, group_value,
-            (int)((lane & (groups - 1u)) * group_width));
-        if ((unsigned long long)lane < blocks) sum = original_lane_value;
+    /* Four-lane groups coalesce real MXFP4 blocks, then restore the original reduction order. */
+    if (blocks <= 16ull || (qtype == YVEX_GGUF_QTYPE_MXFP4 && blocks == 32ull)) {
+        unsigned int lanes = blocks > 16ull ? 4u : blocks > 8ull ? 2u : blocks > 4ull ? 4u : 8u;
+        unsigned int groups = 32u / lanes, group = lane / lanes;
+        unsigned int rounds = (unsigned int)((blocks + groups - 1u) / groups);
+        for (unsigned int round = 0u; round < rounds; ++round) {
+            unsigned int block = round * groups + group;
+            float group_value = qtype_q8_k_dot_group(
+                weight + (unsigned long long)block * weight_block,
+                activation + (unsigned long long)block * YVEX_CUDA_Q8_K_BYTES,
+                qtype, lanes);
+            float original_lane_value = __shfl_sync(0xffffffffu, group_value,
+                                                    (int)((lane % groups) * lanes));
+            if (lane / groups == round && (unsigned long long)lane < blocks) sum = original_lane_value;
+        }
     } else {
         for (unsigned long long block = lane; block < blocks; block += 32ull)
             sum += qtype_q8_k_dot(weight + block * weight_block,
