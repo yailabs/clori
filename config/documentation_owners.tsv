@@ -90,4 +90,5 @@ docs/worklog/2026-08-17-qa-test-architecture-refoundation.md	worklog	canonical	c
 docs/worklog/2026-08-17-qa-vertical-cutover.md	worklog	canonical	contributors	retained	qa_vertical_cutover_worklog
 docs/worklog/2026-08-18-interactive-console-quality-repair.md	worklog	canonical	contributors	retained	interactive_console_quality_repair_worklog
 docs/worklog/2026-08-18-minimax-source-scale-correctness.md	worklog	canonical	contributors	retained	minimax_source_scale_correctness_worklog
+docs/worklog/2026-08-22-minimax-media-model-admission.md	worklog	canonical	contributors	retained	minimax_media_model_admission_worklog
 tests/vectors/README.md	test-support	canonical	contributors	living	test_vector_format
