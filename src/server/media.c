@@ -45,6 +45,7 @@ typedef struct {
 
 struct server_media_registry {
     pthread_mutex_t mutex;
+    yvex_runtime_media_model *model;
     yvex_runtime_av_generation_request generation;
     server_media_profile_owned profiles[YVEX_SERVER_MEDIA_PROFILE_CAP];
     server_media_session sessions[MEDIA_SESSION_CAP];
@@ -54,6 +55,7 @@ struct server_media_registry {
     char text_artifact[YVEX_PATH_CAP], transformer_artifact[YVEX_PATH_CAP];
     char video_artifact[YVEX_PATH_CAP], audio_artifact[YVEX_PATH_CAP];
     char profile_identity[YVEX_SHA256_HEX_CAP];
+    char runtime_model_identity[YVEX_SHA256_HEX_CAP];
     unsigned long long profile_count, frames_per_chunk, frame_remainder;
     unsigned long long minimum_frames, maximum_frames;
     unsigned long long minimum_inference_steps, maximum_inference_steps;
@@ -67,7 +69,7 @@ static int media_refuse(yvex_error *err, yvex_status status, const char *reason)
     return status;
 }
 
-static int text_contains(const char *text, const char *needle)
+static int text_has_term(const char *text, const char *needle)
 {
     size_t extent, index, offset;
     if (!text || !needle || !(extent = strlen(needle))) return 0;
@@ -76,7 +78,10 @@ static int text_contains(const char *text, const char *needle)
                            tolower((unsigned char)text[index + offset]) ==
                                tolower((unsigned char)needle[offset]);
              ++offset) {}
-        if (offset == extent) return 1;
+        if (offset == extent &&
+            (!index || !isalnum((unsigned char)text[index - 1u])) &&
+            !isalnum((unsigned char)text[index + extent]))
+            return 1;
     }
     return 0;
 }
@@ -319,21 +324,21 @@ static int profile_select(server_media_registry *registry, server_media_session 
                           const char *text)
 {
     unsigned long long index;
-    int source_square = text_contains(text, "source-768") ||
-                        text_contains(text, "768x768");
-    int unavailable = (text_contains(text, "source") && !source_square) ||
-                      text_contains(text, "alta") || text_contains(text, "high") ||
-                      text_contains(text, "hd") || text_contains(text, "768p") ||
-                      text_contains(text, "1344x768") ||
-                      text_contains(text, "bozza") || text_contains(text, "draft") ||
-                      text_contains(text, "960x544") || text_contains(text, "fhd") ||
-                      text_contains(text, "1080p") || text_contains(text, "1920x1080") ||
-                      text_contains(text, "2k") || text_contains(text, "4k") ||
-                      text_contains(text, "2160p") || text_contains(text, "3840x2160");
-    int preview = text_contains(text, "preview") || text_contains(text, "anteprima") ||
-                  text_contains(text, "192x192");
-    int smoke = text_contains(text, "smoke") || text_contains(text, "test") ||
-                text_contains(text, "32x32");
+    int source_square = text_has_term(text, "source-768") ||
+                        text_has_term(text, "768x768");
+    int unavailable = (text_has_term(text, "source") && !source_square) ||
+                      text_has_term(text, "alta") || text_has_term(text, "high") ||
+                      text_has_term(text, "hd") || text_has_term(text, "768p") ||
+                      text_has_term(text, "1344x768") ||
+                      text_has_term(text, "bozza") || text_has_term(text, "draft") ||
+                      text_has_term(text, "960x544") || text_has_term(text, "fhd") ||
+                      text_has_term(text, "1080p") || text_has_term(text, "1920x1080") ||
+                      text_has_term(text, "2k") || text_has_term(text, "4k") ||
+                      text_has_term(text, "2160p") || text_has_term(text, "3840x2160");
+    int preview = text_has_term(text, "preview") || text_has_term(text, "anteprima") ||
+                  text_has_term(text, "192x192");
+    int smoke = text_has_term(text, "smoke") || text_has_term(text, "test") ||
+                text_has_term(text, "32x32");
     if (unavailable) return -1;
     for (index = 0ull; index < registry->profile_count; ++index) {
         server_media_profile_owned *profile = registry->profiles + index;
@@ -341,7 +346,7 @@ static int profile_select(server_media_registry *registry, server_media_session 
         int geometry_length = snprintf(geometry, sizeof(geometry), "%llux%llu",
                                        profile->width, profile->height);
         if (geometry_length < 0 || (size_t)geometry_length >= sizeof(geometry)) return -1;
-        if (text_contains(text, profile->name) || text_contains(text, geometry) ||
+        if (text_has_term(text, profile->name) || text_has_term(text, geometry) ||
             (preview && profile->preview_alias) ||
             (smoke && !strcmp(profile->name, "smoke"))) {
             session->width = profile->width;
@@ -425,10 +430,10 @@ static int duration_select(server_media_registry *registry, server_media_session
 
 static int format_select(server_media_session *session, const char *text)
 {
-    if (text_contains(text, "mp4") || text_contains(text, "mkv") ||
-        text_contains(text, "webm") || text_contains(text, "mov"))
+    if (text_has_term(text, "mp4") || text_has_term(text, "mkv") ||
+        text_has_term(text, "webm") || text_has_term(text, "mov"))
         return -1;
-    if (text_contains(text, "avi")) {
+    if (text_has_term(text, "avi")) {
         session->format_selected = 1;
         return 1;
     }
@@ -601,7 +606,8 @@ static int generation_execute(server_media_registry *registry,
     rc = message_emit(emit, context, YVEX_CLIENT_MESSAGE_TURN_STARTED,
                       request, session, NULL, err);
     if (rc == YVEX_OK)
-        rc = yvex_runtime_av_generate(&generation, &result, err);
+        rc = yvex_runtime_media_model_generate(
+            registry->model, &generation, &result, err);
     completed = yvex_core_monotonic_ns();
     seconds = completed >= started ? (double)(completed - started) / 1000000000.0 : 0.0;
     atomic_store_explicit(&session->active, 0, memory_order_release);
@@ -837,7 +843,10 @@ int yvex_server_media_registry_summary(server_media_registry *registry,
     if (!registry || !summary)
         return media_refuse(err, YVEX_ERR_INVALID_ARG, "media summary is required");
     yvex_core_text_copy(summary->runtime_model_identity,
-                        sizeof(summary->runtime_model_identity), registry->profile_identity);
+                        sizeof(summary->runtime_model_identity),
+                        registry->runtime_model_identity[0]
+                            ? registry->runtime_model_identity
+                            : registry->profile_identity);
     yvex_core_text_copy(summary->runtime_binding_identity,
                         sizeof(summary->runtime_binding_identity), registry->profile_identity);
     yvex_core_text_copy(summary->artifact_identity, sizeof(summary->artifact_identity),
@@ -849,11 +858,36 @@ int yvex_server_media_registry_summary(server_media_registry *registry,
     return YVEX_OK;
 }
 
+int yvex_server_media_registry_start(
+    server_media_registry *registry, yvex_runtime_media_model_summary *summary,
+    yvex_error *err)
+{
+    int rc;
+    if (summary) memset(summary, 0, sizeof(*summary));
+    if (!registry || !summary || pthread_mutex_lock(&registry->mutex) != 0)
+        return media_refuse(err, YVEX_ERR_INVALID_ARG,
+                            "media runtime model and summary are required");
+    if (registry->model) {
+        (void)pthread_mutex_unlock(&registry->mutex);
+        return media_refuse(err, YVEX_ERR_STATE,
+                            "media runtime model is already open");
+    }
+    rc = yvex_runtime_media_model_open(
+        &registry->model, &registry->generation, summary, err);
+    if (rc == YVEX_OK)
+        yvex_core_text_copy(registry->runtime_model_identity,
+                            sizeof(registry->runtime_model_identity),
+                            summary->model_identity);
+    (void)pthread_mutex_unlock(&registry->mutex);
+    return rc;
+}
+
 void yvex_server_media_registry_close(server_media_registry **registry)
 {
     server_media_registry *owner;
     if (!registry || !*registry) return;
     owner = *registry;
+    yvex_runtime_media_model_close(&owner->model);
     if (owner->mutex_ready) (void)pthread_mutex_destroy(&owner->mutex);
     memset(owner, 0, sizeof(*owner));
     free(owner);

@@ -1111,8 +1111,15 @@ invokes the same staged native runtime transaction described above and returns
 the atomically published file path. The server does not load any component or
 create a CUDA context while it is only negotiating those parameters.
 
+Server readiness nevertheless requires a real process-lifetime model open. Startup opens the
+tokenizer and all four component GGUF views, performs exact component admission, seals one
+composite runtime-model identity, and retains those immutable views until shutdown. It does not
+claim that the roughly 144 GB component population is simultaneously resident. Conditioning,
+Transformer, Visual VAE, and Audio VAE payload residency remains staged at request phase
+boundaries so the GB10 unified-memory envelope remains bounded.
+
 The conversational projection has focused dialogue, refusal, deterministic
-profile-identity, and no-model-open startup tests. It admits `preview` at
+profile-identity, model-open startup, and missing-component refusal tests. It admits `preview` at
 192x192, `preview-256` at 256x256, and `preview-384` at 384x384, all for exactly
 124 frames, plus `smoke` at 32x32 for 124 through 345 frames. The server validates each profile against
 the exact worst-case 256-token plan before publishing readiness; runtime

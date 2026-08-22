@@ -78,6 +78,8 @@ void yvex_server_telemetry_model_opened(server_telemetry *telemetry,
                                    unsigned long long host_bytes,
                                    unsigned long long device_bytes,
                                    unsigned long long uploads);
+void yvex_server_telemetry_media_model_opened(
+    server_telemetry *telemetry, unsigned long long artifact_count);
 void yvex_server_telemetry_model_closed(server_telemetry *telemetry);
 void yvex_server_telemetry_resources(server_telemetry *telemetry,
                                  unsigned long long host_bytes,
@@ -149,6 +151,8 @@ int yvex_server_media_registry_count(
     server_media_registry *, unsigned long long *, yvex_error *);
 int yvex_server_media_registry_summary(
     server_media_registry *, yvex_server_summary *, yvex_error *);
+int yvex_server_media_registry_start(
+    server_media_registry *, yvex_runtime_media_model_summary *, yvex_error *);
 void yvex_server_media_registry_close(server_media_registry **);
 
 #endif

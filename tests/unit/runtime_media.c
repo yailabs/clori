@@ -74,10 +74,22 @@ static int fixture_admit(
     const yvex_tensor_table *tensors, yvex_complete_artifact_admission *out,
     yvex_artifact_admission_failure *failure, yvex_error *err)
 {
+    const char *admission_identity = NULL;
     (void)gguf;
     if (failure) memset(failure, 0, sizeof(*failure));
-    if (!component || (strcmp(component, "transformer") != 0 &&
-                       strcmp(component, "video_vae") != 0) ||
+    if (component && strcmp(component, "text_encoder") == 0)
+        admission_identity =
+            "1111111111111111111111111111111111111111111111111111111111111111";
+    else if (component && strcmp(component, "transformer") == 0)
+        admission_identity =
+            "2222222222222222222222222222222222222222222222222222222222222222";
+    else if (component && strcmp(component, "video_vae") == 0)
+        admission_identity =
+            "3333333333333333333333333333333333333333333333333333333333333333";
+    else if (component && strcmp(component, "audio_vae") == 0)
+        admission_identity =
+            "4444444444444444444444444444444444444444444444444444444444444444";
+    if (!admission_identity ||
         !artifact || !tensors || !out) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "test.runtime-media.admit",
                        "fixture component admission inputs are required");
@@ -101,6 +113,8 @@ static int fixture_admit(
     yvex_core_text_copy(out->logical_component_identity,
                         sizeof(out->logical_component_identity),
                         "3333333333333333333333333333333333333333333333333333333333333333");
+    yvex_core_text_copy(out->admission_identity, sizeof(out->admission_identity),
+                        admission_identity);
     if (yvex_artifact_snapshot_get(artifact, &out->file_snapshot, err) != YVEX_OK)
         return yvex_error_code(err);
     yvex_error_clear(err);
@@ -395,6 +409,8 @@ static int test_generation_transaction(void)
     char first_path[160], second_path[160];
     yvex_runtime_av_generation_request first, second;
     yvex_runtime_av_generation_result first_result, second_result;
+    yvex_runtime_media_model_summary model_summary, repeated_summary;
+    yvex_runtime_media_model *model = NULL, *repeated_model = NULL;
     unsigned char *first_bytes = NULL, *second_bytes = NULL;
     size_t first_count = 0u, second_count = 0u;
     yvex_error err;
@@ -411,8 +427,20 @@ static int test_generation_transaction(void)
     second = fixture_request(&second_context, second_path, second_video_mean, second_video_std,
                              second_audio_mean, second_audio_std,
                              second_pixel_mean, second_pixel_std);
+    rc = yvex_runtime_media_model_open(&model, &first, &model_summary, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && model && model_summary.complete &&
+                         model_summary.component_count == 4ull &&
+                         yvex_sha256_hex_valid(model_summary.model_identity),
+                     "persistent media model admits four components once");
+    rc = yvex_runtime_media_model_open(
+        &repeated_model, &second, &repeated_summary, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && repeated_model &&
+                         strcmp(model_summary.model_identity,
+                                repeated_summary.model_identity) == 0,
+                     "media model identity is deterministic across independent opens");
+    yvex_runtime_media_model_close(&repeated_model);
     active_fixture_context = &first_context;
-    rc = yvex_runtime_av_generate(&first, &first_result, &err);
+    rc = yvex_runtime_media_model_generate(model, &first, &first_result, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && first_result.complete,
                      "complete staged media transaction");
     YVEX_TEST_ASSERT(first_result.frames == FIXTURE_FRAMES &&
@@ -426,7 +454,7 @@ static int test_generation_transaction(void)
                          first_context.audio_calls == 1ull,
                      "all staged component phases executed once per admitted schedule");
     active_fixture_context = &second_context;
-    rc = yvex_runtime_av_generate(&second, &second_result, &err);
+    rc = yvex_runtime_media_model_generate(model, &second, &second_result, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && second_result.complete,
                      "repeat staged media transaction");
     YVEX_TEST_ASSERT_STREQ(first_result.execution_identity, second_result.execution_identity,
@@ -443,6 +471,7 @@ static int test_generation_transaction(void)
                      "staged transaction published a playable-container signature");
     free(first_bytes);
     free(second_bytes);
+    yvex_runtime_media_model_close(&model);
     unlink(first_path);
     unlink(second_path);
     return 0;
@@ -456,6 +485,8 @@ static int test_generation_refusals(void)
     char path[160];
     yvex_runtime_av_generation_request request;
     yvex_runtime_av_generation_result result;
+    yvex_runtime_media_model_summary model_summary;
+    yvex_runtime_media_model *model = NULL;
     yvex_error err;
     int rc;
     snprintf(path, sizeof(path), "build/tests/tmp/runtime-media-%ld-refuse.avi", (long)getpid());
@@ -463,6 +494,14 @@ static int test_generation_refusals(void)
     request = fixture_request(&context, path, video_mean, video_std, audio_mean, audio_std,
                               pixel_mean, pixel_std);
     active_fixture_context = &context;
+    rc = yvex_runtime_media_model_open(&model, &request, &model_summary, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && model, "refusal fixture media model opens");
+    request.maximum_device_bytes++;
+    rc = yvex_runtime_media_model_generate(model, &request, &result, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT && !result.complete,
+                     "request cannot mutate the opened media model contract");
+    request.maximum_device_bytes--;
+    yvex_runtime_media_model_close(&model);
     request.component_backend = YVEX_BACKEND_KIND_METAL;
     rc = yvex_runtime_av_generate(&request, &result, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_INVALID_ARG && !result.complete,

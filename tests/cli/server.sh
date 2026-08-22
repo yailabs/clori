@@ -143,12 +143,13 @@ HOME="$HOME_ROOT" timeout --signal=TERM 2 "$YVEX_BIN" server minimax-h3-fl2va-ru
     >"$OUT_DIR/media-host.out" 2>"$OUT_DIR/media-host.err"
 media_host_status=$?
 set -e
-test "$media_host_status" -eq 124 || test "$media_host_status" -eq 0
+test "$media_host_status" -eq 1
 contains "$OUT_DIR/media-host.out" 'profile minimax-h3-fl2va-runtime-media'
 contains "$OUT_DIR/media-host.out" 'mode=media'
 contains "$OUT_DIR/media-host.out" "component root $MEDIA_ROOT"
 contains "$OUT_DIR/media-host.out" "output root $MEDIA_OUTPUT"
-contains "$OUT_DIR/media-host.err" 'model admission complete'
+contains "$OUT_DIR/media-host.err" 'model admission failed'
+contains "$OUT_DIR/media-host.err" 'failed to open'
 test ! -e "$MEDIA_SOCKET"
 yvex_test_cleanup "$SOCKET_PATH"
 

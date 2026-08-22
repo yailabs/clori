@@ -486,6 +486,17 @@ void yvex_server_telemetry_model_opened(server_telemetry *telemetry,
     telemetry->metrics.output_head_upload_count = uploads;
     (void)pthread_mutex_unlock(&telemetry->mutex);
 }
+
+/* Account one admitted composite model without claiming payload materialization or residency. */
+void yvex_server_telemetry_media_model_opened(
+    server_telemetry *telemetry, unsigned long long artifact_count)
+{
+    if (!telemetry || !artifact_count || pthread_mutex_lock(&telemetry->mutex) != 0) return;
+    telemetry->metrics.model_open_count++;
+    telemetry->metrics.artifact_open_count += artifact_count;
+    telemetry->metrics.binding_open_count++;
+    (void)pthread_mutex_unlock(&telemetry->mutex);
+}
 /* Account the single process-lifetime model discharge. */
 void yvex_server_telemetry_model_closed(server_telemetry *telemetry)
 {

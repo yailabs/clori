@@ -115,6 +115,13 @@ either identity, materialize weights, initialize a backend, or establish
 runtime support. The explicit `yvex server MODEL` entrypoint performs full
 artifact and binding admission when the model is opened.
 
+A composite media target follows the same readiness rule. Before publishing
+`READY`, the server opens the tokenizer and every component artifact, reconciles
+their typed admissions, and retains those immutable views under one runtime-model
+identity. Payload materialization and CUDA residency remain separate facts: a
+component set larger than the device's memory envelope is staged at execution
+phase boundaries rather than being reported as simultaneously resident.
+
 The default catalog is user-local data at
 `~/.local/share/yvex/models.local.json`; an explicit `YVEX_DATA_DIR` changes
 that owner for controlled deployments. Catalog entry, invocation-selected

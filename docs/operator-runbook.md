@@ -203,12 +203,13 @@ The output directory must already exist, be owned by the operator, and must not
 itself be a symlink. The transient user scope preserves the validated GB10
 memory envelope and forbids swap; a resource refusal therefore terminates the
 request instead of consuming the machine's remaining unified memory. Startup
-admits the conversational endpoint and its identity-bound component locations;
-it does not preload 144 GB of weights or create a CUDA context. A completed
-media request authenticates and stages each component through the native YVEX
-runtime. The registry entry is a selector, not a complete-artifact or runtime
-readiness claim; the family adapter selects media mode and the request validates
-all four component artifacts beneath `ROOT`.
+admits the conversational endpoint only after opening the tokenizer and all four
+identity-bound component artifacts. The server retains their admitted immutable
+views under one runtime-model identity, but does not preload 144 GB of payloads
+or create a CUDA context. A completed media request stages each already-admitted
+component through the native YVEX runtime. The registry entry is a selector,
+not a complete-artifact or runtime-readiness claim; the family adapter selects
+media mode and startup validates all four component artifacts beneath `ROOT`.
 
 From another terminal, start the ordinary client:
 

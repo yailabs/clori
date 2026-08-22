@@ -16,8 +16,11 @@ extern "C" {
 
 #define YVEX_RUNTIME_AV_GENERATION_SCHEMA_V1 1u
 #define YVEX_RUNTIME_MEDIA_HOST_SCHEMA_V1 1u
+#define YVEX_RUNTIME_MEDIA_MODEL_SCHEMA_V1 1u
 #define YVEX_RUNTIME_MEDIA_PROFILE_CAP 5u
 #define YVEX_RUNTIME_MEDIA_PROFILE_NAME_CAP 32u
+
+typedef struct yvex_runtime_media_model yvex_runtime_media_model;
 
 typedef struct {
     char name[YVEX_RUNTIME_MEDIA_PROFILE_NAME_CAP];
@@ -112,8 +115,23 @@ typedef struct {
     int complete;
 } yvex_runtime_av_generation_result;
 
+typedef struct {
+    unsigned int schema_version;
+    unsigned long long component_count, artifact_bytes;
+    char model_identity[YVEX_SHA256_HEX_CAP];
+    char source_identity[YVEX_SHA256_HEX_CAP];
+    int complete;
+} yvex_runtime_media_model_summary;
+
 int yvex_runtime_av_generate(const yvex_runtime_av_generation_request *,
                              yvex_runtime_av_generation_result *, yvex_error *);
+int yvex_runtime_media_model_open(
+    yvex_runtime_media_model **, const yvex_runtime_av_generation_request *,
+    yvex_runtime_media_model_summary *, yvex_error *);
+int yvex_runtime_media_model_generate(
+    yvex_runtime_media_model *, const yvex_runtime_av_generation_request *,
+    yvex_runtime_av_generation_result *, yvex_error *);
+void yvex_runtime_media_model_close(yvex_runtime_media_model **);
 int yvex_runtime_media_host_profile_build(
     yvex_runtime_media_host_profile *, const yvex_media_target_profile *,
     const yvex_media_execution_recipe *, const char *artifact_root,

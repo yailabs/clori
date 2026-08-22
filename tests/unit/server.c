@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include <yvex/server.h>
+#include <yvex/internal/core.h>
 #include <yvex/internal/graph.h>
 #include <yvex/internal/media.h>
 
@@ -284,7 +285,44 @@ static int media_message_collect(void *context, const yvex_client_message *messa
     return YVEX_OK;
 }
 
-static void media_options(yvex_server_media_options *options, const char *output_root)
+static int media_fixture_admit(
+    const char *component, const yvex_artifact *artifact, const yvex_gguf *gguf,
+    const yvex_tensor_table *tensors, yvex_complete_artifact_admission *out,
+    yvex_artifact_admission_failure *failure, yvex_error *err)
+{
+    if (failure) memset(failure, 0, sizeof(*failure));
+    if (!component || (strcmp(component, "text_encoder") != 0 &&
+                       strcmp(component, "transformer") != 0 &&
+                       strcmp(component, "video_vae") != 0 &&
+                       strcmp(component, "audio_vae") != 0) ||
+        !artifact || !gguf || !tensors || !out) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "test.server.media-admit",
+                       "four exact fixture component views are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    memset(out, 0, sizeof(*out));
+    out->artifact_class = YVEX_ARTIFACT_CLASS_COMPLETE_YVEX;
+    out->tensor_count = yvex_tensor_table_count(tensors);
+    out->payload_bytes = 128ull;
+    out->file_bytes = yvex_artifact_size(artifact);
+    out->materialization_input_ready = 1;
+    out->complete = 1;
+    yvex_core_text_copy(out->artifact_path, sizeof(out->artifact_path),
+                        yvex_artifact_path(artifact));
+    yvex_core_text_copy(out->artifact_identity, sizeof(out->artifact_identity),
+                        "2222222222222222222222222222222222222222222222222222222222222222");
+    yvex_core_text_copy(out->logical_component_identity,
+                        sizeof(out->logical_component_identity),
+                        "3333333333333333333333333333333333333333333333333333333333333333");
+    yvex_core_text_copy(out->admission_identity, sizeof(out->admission_identity),
+                        "4444444444444444444444444444444444444444444444444444444444444444");
+    if (yvex_artifact_snapshot_get(artifact, &out->file_snapshot, err) != YVEX_OK)
+        return yvex_error_code(err);
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+static int media_options(yvex_server_media_options *options, const char *output_root)
 {
     static const yvex_server_media_profile profiles[] = {
         {"preview", 192ull, 192ull, 124ull, 1},
@@ -293,6 +331,15 @@ static void media_options(yvex_server_media_options *options, const char *output
         {"source-768", 768ull, 768ull, 124ull, 0},
         {"smoke", 32ull, 32ull, 345ull, 0},
     };
+    const yvex_component_variant_adapter *adapter =
+        yvex_graph_component_variant_find_family("minimax-h3");
+    const yvex_media_execution_recipe *execution =
+        adapter ? adapter->media_execution : NULL;
+    yvex_media_target_profile target;
+    yvex_error err;
+    if (!adapter || !execution ||
+        adapter->media_target_profile(&target, &err) != YVEX_OK)
+        return 0;
     memset(options, 0, sizeof(*options));
     options->schema_version = YVEX_SERVER_MEDIA_SCHEMA_V1;
     options->output_root = output_root;
@@ -304,9 +351,43 @@ static void media_options(yvex_server_media_options *options, const char *output
     options->request_template.transformer_artifact_path = "/not-opened/transformer.gguf";
     options->request_template.video_artifact_path = "/not-opened/video.gguf";
     options->request_template.audio_artifact_path = "/not-opened/audio.gguf";
-    options->request_template.fps_numerator = 24ull;
-    options->request_template.fps_denominator = 1ull;
-    options->request_template.seed = 42ull;
+    options->request_template.fps_numerator = target.fps_numerator;
+    options->request_template.fps_denominator = target.fps_denominator;
+    options->request_template.audio_sample_rate = target.audio_sample_rate;
+    options->request_template.seed = target.seed;
+    options->request_template.conditioning_layers = execution->conditioning_layers;
+    options->request_template.transformer_blocks = execution->transformer_blocks;
+    options->request_template.maximum_prompt_tokens = execution->maximum_prompt_tokens;
+    options->request_template.maximum_packed_rows = execution->maximum_packed_rows;
+    options->request_template.maximum_host_bytes = target.maximum_host_bytes;
+    options->request_template.maximum_device_bytes = target.maximum_device_bytes;
+    options->request_template.maximum_workspace_bytes = target.maximum_workspace_bytes;
+    options->request_template.maximum_file_bytes = target.maximum_file_bytes;
+    options->request_template.component_backend = execution->component_backend;
+    options->request_template.video_temporal_ratio = target.video_temporal_ratio;
+    options->request_template.video_clip_length = target.video_clip_length;
+    options->request_template.video_token_drop = target.video_token_drop;
+    options->request_template.video_spatial_ratio = target.video_spatial_ratio;
+    options->request_template.video_tile_size = target.video_tile_size;
+    options->request_template.video_minimum_tile_overlap = target.video_minimum_tile_overlap;
+    options->request_template.video_mean = target.video_mean;
+    options->request_template.video_std = target.video_std;
+    options->request_template.audio_mean = target.audio_mean;
+    options->request_template.audio_std = target.audio_std;
+    options->request_template.pixel_mean = target.pixel_mean;
+    options->request_template.pixel_std = target.pixel_std;
+    options->request_template.video_channels = target.video_channels;
+    options->request_template.audio_channels = target.audio_channels;
+    options->request_template.pixel_channels = target.pixel_channels;
+    options->request_template.audio_output_channels = target.audio_output_channels;
+    options->request_template.audio_samples_per_step = target.audio_samples_per_step;
+    options->request_template.plan_build = execution->plan_build;
+    options->request_template.layout_build = execution->layout_build;
+    options->request_template.component_admit = media_fixture_admit;
+    options->request_template.condition = execution->condition;
+    options->request_template.latent = execution->latent;
+    options->request_template.video_decode = execution->video_decode;
+    options->request_template.audio_decode = execution->audio_decode;
     options->profiles = profiles;
     options->profile_count = sizeof(profiles) / sizeof(profiles[0]);
     options->frames_per_chunk = 17ull;
@@ -317,6 +398,7 @@ static void media_options(yvex_server_media_options *options, const char *output
     options->maximum_inference_steps = 64ull;
     options->canvas_multiple = 32ull;
     options->maximum_canvas_pixels = 768ull * 768ull;
+    return 1;
 }
 
 static int media_registry_request(server_media_registry *registry,
@@ -343,11 +425,12 @@ static int test_media_dialog_and_refusals(void)
         "Eclissi realistica preview, 4 secondi, 19 punti sigma, AVI",
         "Eclissi realistica preview, 5 secondi, 65 punti sigma, AVI",
         "Eclissi realistica preview, 5 secondi, 19 punti sigma, MP4",
+        "Eclissi realistica preview, 5 secondi, 19 punti sigma, MOV",
         "Eclissi realistica preview, 15 secondi, 19 punti sigma, AVI",
     };
     const int bad_status[] = {
         YVEX_ERR_UNSUPPORTED, YVEX_ERR_BOUNDS, YVEX_ERR_BOUNDS, YVEX_ERR_UNSUPPORTED,
-        YVEX_ERR_BOUNDS,
+        YVEX_ERR_UNSUPPORTED, YVEX_ERR_BOUNDS,
     };
     yvex_server_media_options options;
     yvex_server_summary first = {0}, repeated = {0};
@@ -358,7 +441,7 @@ static int test_media_dialog_and_refusals(void)
     unsigned long long index;
     int rc;
     YVEX_TEST_ASSERT(mkdtemp(root) != NULL, "media dialogue output root");
-    media_options(&options, root);
+    YVEX_TEST_ASSERT(media_options(&options, root), "media dialogue options");
     rc = yvex_server_telemetry_open(&telemetry, 16u, YVEX_SERVER_GENERATION_MEDIA,
                                     NULL, NULL, NULL, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "media dialogue telemetry");
@@ -454,6 +537,43 @@ static int test_media_dialog_and_refusals(void)
                                             "source-768-geometry", NULL,
                                             &messages, &err) == YVEX_OK,
                      "source square dialogue session closes");
+    memset(&messages, 0, sizeof(messages));
+    YVEX_TEST_ASSERT(media_registry_request(registry, YVEX_CLIENT_OP_SESSION_NEW,
+                                            "natural-language", NULL,
+                                            &messages, &err) == YVEX_OK,
+                     "natural-language media dialogue session");
+    memset(&messages, 0, sizeof(messages));
+    rc = media_registry_request(
+        registry, YVEX_CLIENT_OP_GENERATION_TURN, "natural-language",
+        "Genera un eclissi con nuvole in movimento, source-768 768x768, "
+        "5 secondi, formato AVI, seed 42",
+        &messages, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && strstr(messages.text, "Iterazioni:") &&
+                         !strstr(messages.text, "Formato disponibile:") &&
+                         !strstr(messages.text, "Qualità:") &&
+                         !strstr(messages.text, "Durata:"),
+                     "natural words containing container prefixes retain AVI selection");
+    memset(&messages, 0, sizeof(messages));
+    YVEX_TEST_ASSERT(media_registry_request(registry, YVEX_CLIENT_OP_SESSION_RESET,
+                                            "natural-language", NULL,
+                                            &messages, &err) == YVEX_OK,
+                     "natural-language media dialogue resets");
+    memset(&messages, 0, sizeof(messages));
+    rc = media_registry_request(
+        registry, YVEX_CLIENT_OP_GENERATION_TURN, "natural-language",
+        "Una volpe salta e muove la testa nella neve, 5 secondi, "
+        "2 punti sigma, AVI",
+        &messages, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && strstr(messages.text, "Qualità:") &&
+                         !strstr(messages.text, "Durata:") &&
+                         !strstr(messages.text, "Iterazioni:") &&
+                         !strstr(messages.text, "Formato disponibile:"),
+                     "natural words containing quality aliases do not select a profile");
+    memset(&messages, 0, sizeof(messages));
+    YVEX_TEST_ASSERT(media_registry_request(registry, YVEX_CLIENT_OP_SESSION_CLOSE,
+                                            "natural-language", NULL,
+                                            &messages, &err) == YVEX_OK,
+                     "natural-language media dialogue closes");
     for (index = 0ull; index < sizeof(bad_prompts) / sizeof(bad_prompts[0]); ++index) {
         char name[32];
         (void)snprintf(name, sizeof(name), "bad-%llu", index);
@@ -466,6 +586,10 @@ static int test_media_dialog_and_refusals(void)
                                     bad_prompts[index], &messages, &err);
         YVEX_TEST_ASSERT(rc == bad_status[index] && messages.started == 0ull,
                          "media refusal occurs before generation");
+        memset(&messages, 0, sizeof(messages));
+        YVEX_TEST_ASSERT(media_registry_request(registry, YVEX_CLIENT_OP_SESSION_CLOSE,
+                                                name, NULL, &messages, &err) == YVEX_OK,
+                         "refused media dialogue session closes");
     }
     YVEX_TEST_ASSERT(yvex_server_media_registry_summary(registry, &first, &err) == YVEX_OK,
                      "media first identity");
@@ -487,8 +611,9 @@ static int test_media_dialog_and_refusals(void)
     return 0;
 }
 
-static int test_media_server_starts_without_model(void)
+static int test_media_server_opens_model_before_ready(void)
 {
+    const char *fixture = "tests/fixtures/gguf/valid-tokenizer-simple.gguf";
     char root[] = "/tmp/yvex-media-host-XXXXXX";
     char socket_path[YVEX_SERVER_SOCKET_PATH_CAP];
     yvex_server_media_options media;
@@ -507,23 +632,33 @@ static int test_media_server_starts_without_model(void)
     options.socket_path = socket_path;
     options.backend = YVEX_BACKEND_KIND_CUDA;
     options.generation_mode = YVEX_SERVER_GENERATION_MEDIA;
-    media_options(&media, root);
+    YVEX_TEST_ASSERT(media_options(&media, root), "media host options");
+    media.request_template.text_artifact_path = fixture;
+    media.request_template.transformer_artifact_path = fixture;
+    media.request_template.video_artifact_path = fixture;
+    media.request_template.audio_artifact_path = fixture;
     rc = yvex_server_create(&server, &options, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && server != NULL, "media host create");
     YVEX_TEST_ASSERT(yvex_server_media_configure(server, &media, &err) == YVEX_OK,
                      "media host configure");
     YVEX_TEST_ASSERT(yvex_server_start(server, &err) == YVEX_OK,
-                     "media host starts without loading components");
+                     "media host opens admitted components before readiness");
     YVEX_TEST_ASSERT(yvex_server_get_summary(server, &summary, &err) == YVEX_OK &&
                          summary.status == YVEX_SERVER_STATUS_READY &&
                          summary.runtime_ready && summary.generation_ready &&
                          summary.generation_mode == YVEX_SERVER_GENERATION_MEDIA &&
-                         summary.metrics.model_open_count == 0ull &&
-                         summary.metrics.artifact_open_count == 0ull &&
+                         summary.metrics.model_open_count == 1ull &&
+                         summary.metrics.artifact_open_count == 4ull &&
+                         summary.metrics.binding_open_count == 1ull &&
+                         summary.metrics.materialization_count == 0ull &&
+                         summary.metrics.residency_build_count == 0ull &&
                          summary.metrics.resident_device_bytes == 0ull,
-                     "media host readiness does not promote model or CUDA residency");
+                     "media host readiness admits the model without false payload residency");
     YVEX_TEST_ASSERT(yvex_server_finish(server, &err) == YVEX_OK,
                      "media host finishes cleanly");
+    YVEX_TEST_ASSERT(yvex_server_get_summary(server, &summary, &err) == YVEX_OK &&
+                         summary.metrics.model_close_count == 1ull,
+                     "media host closes the process-lifetime model once");
     yvex_server_close(&server);
     YVEX_TEST_ASSERT(rmdir(root) == 0, "media host output root removed empty");
     return 0;
@@ -702,6 +837,6 @@ int yvex_test_server(void)
     if (test_openai_listener_admission() != 0) return 1;
     if (test_media_dialog_and_refusals() != 0) return 1;
     if (test_media_family_profile() != 0) return 1;
-    if (test_media_server_starts_without_model() != 0) return 1;
+    if (test_media_server_opens_model_before_ready() != 0) return 1;
     return 0;
 }

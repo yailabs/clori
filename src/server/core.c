@@ -63,6 +63,7 @@ struct yvex_server {
     unsigned long long client_capacity, active_clients;
     pthread_t worker;
     int listen_fd, lock_fd, lock_owned, worker_ready;
+    int media_model_open;
     atomic_int stopping;
     int state_mutex_ready, queue_mutex_ready, queue_condition_ready;
     int clients_mutex_ready, clients_condition_ready;
@@ -578,20 +579,39 @@ static int server_cuda_prepare(yvex_server *server,
 static int server_media_start(yvex_server *server, unsigned long long started,
                               yvex_error *err)
 {
+    yvex_runtime_media_model_summary model = {0};
     int rc;
     if (!server->media)
         return server_refuse(err, YVEX_ERR_STATE,
                              "conversational media options were not configured");
-    rc = yvex_server_media_registry_summary(server->media, &server->summary, err);
+    rc = yvex_server_telemetry_emit(
+        server->telemetry, YVEX_SERVER_EVENT_ARTIFACT_OPEN_START,
+        YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "media-model",
+        4u, 0u, 0u, 0.0, 0.0, err);
+    if (rc == YVEX_OK)
+        rc = yvex_server_media_registry_start(server->media, &model, err);
+    if (rc == YVEX_OK) {
+        server->media_model_open = 1;
+        yvex_server_telemetry_media_model_opened(
+            server->telemetry, model.component_count);
+        rc = yvex_server_media_registry_summary(
+            server->media, &server->summary, err);
+    }
     if (rc == YVEX_OK)
         yvex_server_telemetry_identities(
             server->telemetry, server->summary.runtime_model_identity, NULL,
             server->summary.physical_variant_identity);
     if (rc == YVEX_OK)
         rc = yvex_server_telemetry_emit(
+            server->telemetry, YVEX_SERVER_EVENT_ARTIFACT_OPEN_COMPLETE,
+            YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "media-model",
+            model.component_count, model.artifact_bytes, 0u,
+            server_elapsed_seconds(started, server_monotonic_ns()), 0.0, err);
+    if (rc == YVEX_OK)
+        rc = yvex_server_telemetry_emit(
             server->telemetry, YVEX_SERVER_EVENT_BINDING_ADMITTED,
             YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "media-profile",
-            1u, 0u, 0u, 0.0, 0.0, err);
+            1u, model.component_count, 0u, 0.0, 0.0, err);
     if (rc == YVEX_OK && pthread_create(&server->worker, NULL,
                                          model_worker_main, server) != 0)
         rc = server_refuse(err, YVEX_ERR_STATE, "media worker creation failed");
@@ -1264,6 +1284,10 @@ int yvex_server_finish(yvex_server *server, yvex_error *err)
         primary = cleanup;
     }
     yvex_server_media_registry_close(&server->media);
+    if (server->media_model_open) {
+        yvex_server_telemetry_model_closed(server->telemetry);
+        server->media_model_open = 0;
+    }
     cleanup_rc = yvex_runtime_session_close(&server->warm_session, &cleanup);
     if (cleanup_rc != YVEX_OK && rc == YVEX_OK) {
         rc = cleanup_rc;
