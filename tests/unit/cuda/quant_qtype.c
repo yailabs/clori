@@ -1707,12 +1707,10 @@ static int quant_cuda_dense_transformer(yvex_backend *backend)
         "dense transformer Qwen RMS policy executes");
     for (index = 0ull; index < 4ull; ++index) {
         float inverse = 1.0f / sqrtf(7.5f + 1e-6f);
-        float normalized = yvex_quant_bf16_decode(
-            yvex_quant_bf16_encode(norm_values[index] * inverse));
         float expected = yvex_quant_bf16_decode(
-            yvex_quant_bf16_encode(normalized * norm_scales[index]));
+            yvex_quant_bf16_encode(norm_values[index] * inverse * norm_scales[index]));
         YVEX_TEST_ASSERT(norm_result[index] == expected,
-                         "dense transformer Qwen RMS preserves the intermediate BF16 cast");
+                         "dense transformer RMS publishes one source-faithful BF16 result");
     }
     YVEX_TEST_ASSERT(
         quant_cuda_tensor(backend, "query", YVEX_DTYPE_F32, query_input,

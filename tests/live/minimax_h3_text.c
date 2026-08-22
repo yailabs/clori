@@ -10,6 +10,7 @@
 #include <yvex/gguf.h>
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/backend.h>
+#include <yvex/internal/component.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/families/minimax_h3.h>
 
@@ -289,9 +290,6 @@ static int output_write(const char *path, const float output[TEXT_HIDDEN])
 
 int main(int argc, char **argv)
 {
-    const yvex_minimax_h3_api *model = yvex_model_register_minimax_h3();
-    yvex_minimax_h3_architecture architecture;
-    yvex_minimax_h3_failure architecture_failure;
     yvex_artifact_options options = {0};
     yvex_artifact *artifact = NULL;
     yvex_tensor_table *tensors = NULL;
@@ -329,11 +327,6 @@ int main(int argc, char **argv)
     options.path = argv[1];
     options.readonly = 1;
     rc = yvex_artifact_open(&artifact, &options, &err);
-    if (rc == YVEX_OK)
-        rc = model && model->architecture_canonical
-                 ? model->architecture_canonical(
-                       &architecture, &architecture_failure, &err)
-                 : YVEX_ERR_STATE;
     if (rc == YVEX_OK) rc = yvex_gguf_open(&gguf, artifact, &err);
     if (rc == YVEX_OK) rc = yvex_tensor_table_from_gguf(&tensors, gguf, &err);
     if (rc == YVEX_OK) {
@@ -343,7 +336,7 @@ int main(int argc, char **argv)
                 artifact, gguf, tensors, &token, output, &result, &err);
         else
             rc = api->text_encoder_artifact_cuda(
-                artifact, gguf, tensors, &architecture.encoder, &token, 1ull,
+                artifact, gguf, tensors, &token, 1ull,
                 execution_mode == 3 ? 50ull : execution_mode == 1 ? 1ull : 0ull,
                 output, TEXT_HIDDEN, 70ull * 1024ull * 1024ull * 1024ull,
                 execution_mode ? 512ull * 1024ull * 1024ull : 256ull * 1024ull * 1024ull,

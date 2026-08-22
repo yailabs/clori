@@ -24,7 +24,8 @@ extern "C" __global__ void yvex_f32_to_bf16(
     output[index] = (unsigned short)((encoded.bits + rounding) >> 16u);
 }
 
-/* Preserve the BF16 cast between unit normalization and affine weighting. */
+/* The source RMS operation keeps normalization and affine weighting in F32 and publishes one
+ * BF16 result. An intermediate narrowing changes hundreds of thousands of lanes at model width. */
 extern "C" __global__ void yvex_rms_norm_bf16_policy_f32(
     const float *input, const float *weight, float *output,
     unsigned long long hidden_size, unsigned long long row_count, float epsilon)
@@ -48,10 +49,9 @@ extern "C" __global__ void yvex_rms_norm_bf16_policy_f32(
         __syncthreads();
     }
     inverse = rsqrtf(scratch[0] / (float)hidden_size + epsilon);
-    for (index = lane; index < hidden_size; index += blockDim.x) {
-        float normalized = float_to_bf16_rne(input[offset + index] * inverse);
-        output[offset + index] = float_to_bf16_rne(normalized * weight[index]);
-    }
+    for (index = lane; index < hidden_size; index += blockDim.x)
+        output[offset + index] =
+            float_to_bf16_rne(input[offset + index] * inverse * weight[index]);
 }
 
 /* Apply explicit rotate-half cos/sin tables to packed token/head vectors in place. */

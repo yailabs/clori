@@ -689,6 +689,7 @@ static int execute_request_fixture(
         .root = getenv("YVEX_MINIMAX_H3_BLOCK_CHECKPOINT_ROOT")};
     yvex_error err;
     unsigned long long packed_rows, video_values, audio_values;
+    int video_matches = 0, audio_matches = 0;
     int rc = YVEX_OK;
     if (!video_rows || !audio_rows || !text_rows || !block_count || block_count > 50ull ||
         !timestep_count || timestep_count > 64ull ||
@@ -726,14 +727,17 @@ static int execute_request_fixture(
         (!file_write(video_output_path, fixture.video_output, video_values) ||
          !file_write(audio_output_path, fixture.audio_output, audio_values)))
         rc = YVEX_ERR_IO;
-    if (rc == YVEX_OK &&
-        (!compare("video", fixture.video_reference, fixture.video_output,
-                  video_values, block_count) ||
-         !compare("audio", fixture.audio_reference, fixture.audio_output,
-                  audio_values, block_count))) {
-        yvex_error_set(&err, YVEX_ERR_FORMAT, "minimax-h3.transformer-request-proof.oracle",
-                       "the request-shaped Transformer envelope differs from its BF16 oracle");
-        rc = YVEX_ERR_FORMAT;
+    if (rc == YVEX_OK) {
+        video_matches = compare("video", fixture.video_reference, fixture.video_output,
+                                video_values, block_count);
+        audio_matches = compare("audio", fixture.audio_reference, fixture.audio_output,
+                                audio_values, block_count);
+        if (!video_matches || !audio_matches) {
+            yvex_error_set(
+                &err, YVEX_ERR_FORMAT, "minimax-h3.transformer-request-proof.oracle",
+                "the request-shaped Transformer envelope differs from its BF16 oracle");
+            rc = YVEX_ERR_FORMAT;
+        }
     }
     if (rc == YVEX_OK)
         printf("omni_transformer_request=accepted rows=%llu blocks=%llu resident_bytes=%llu\n"
