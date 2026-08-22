@@ -32,6 +32,8 @@ enum {
     TAG_REASONING_POLICY,
     TAG_STATE_PATH,
     TAG_MAXIMUM_STATE_FILE_BYTES,
+    TAG_FORK_SESSION_NAME,
+    TAG_MAXIMUM_PREFIX_BYTES,
     TAG_MESSAGE_KIND = 32,
     TAG_STATUS,
     TAG_REASON,
@@ -200,7 +202,11 @@ enum {
     TAG_CHECKPOINT_RUNTIME_MODEL_ID,
     TAG_CHECKPOINT_RUNTIME_BINDING_ID,
     TAG_CHECKPOINT_ARTIFACT_ID,
-    TAG_CHECKPOINT_FILE_DIGEST
+    TAG_CHECKPOINT_FILE_DIGEST,
+    TAG_RUNTIME_CONCURRENT_SEQUENCES,
+    TAG_RUNTIME_CAPACITY_REQUIRED_BYTES,
+    TAG_RUNTIME_CAPACITY_UNRESERVED_BYTES,
+    TAG_RUNTIME_CAPACITY_PLAN_ID
 };
 typedef struct {
     unsigned char *data;
@@ -212,7 +218,7 @@ typedef struct {
     uint64_t seen[4];
 } wire_reader;
 _Static_assert(sizeof(double) == 8u, "local protocol requires binary64 double");
-_Static_assert(TAG_TOTAL_COMPLETION_RATE < 256u,
+_Static_assert(TAG_RUNTIME_CAPACITY_PLAN_ID < 256u,
                "known protocol tags must fit the duplicate-field set");
 
 static int protocol_refuse(yvex_error *err, yvex_status status,
@@ -385,6 +391,16 @@ static int request_state_fields_valid(const yvex_client_request *request)
                : request->maximum_state_file_bytes != 0u;
 }
 
+static int request_fork_fields_valid(const yvex_client_request *request)
+{
+    if (!memchr(request->fork_session_name, '\0',
+                sizeof(request->fork_session_name)))
+        return 0;
+    if (request->operation != YVEX_CLIENT_OP_SESSION_FORK)
+        return !request->fork_session_name[0] && !request->maximum_prefix_bytes;
+    return request->fork_session_name[0] && request->maximum_prefix_bytes;
+}
+
 int yvex_protocol_request_encode(const yvex_client_request *request,
                                  unsigned char *output,
                                  unsigned long long capacity,
@@ -405,6 +421,7 @@ int yvex_protocol_request_encode(const yvex_client_request *request,
         request->trace_level > YVEX_SERVER_TRACE_FULL ||
         request->reasoning_policy > YVEX_REASONING_MAXIMUM ||
         !request_state_fields_valid(request) ||
+        !request_fork_fields_valid(request) ||
         (request->stochastic != 0 && request->stochastic != 1) ||
         (request->seed_present != 0 && request->seed_present != 1) ||
         (request->trace_content != 0 && request->trace_content != 1) ||
@@ -452,6 +469,10 @@ int yvex_protocol_request_encode(const yvex_client_request *request,
         !writer_text(&writer, TAG_STATE_PATH, request->state_path) ||
         !writer_u64(&writer, TAG_MAXIMUM_STATE_FILE_BYTES,
                     request->maximum_state_file_bytes) ||
+        !writer_text(&writer, TAG_FORK_SESSION_NAME,
+                     request->fork_session_name) ||
+        !writer_u64(&writer, TAG_MAXIMUM_PREFIX_BYTES,
+                    request->maximum_prefix_bytes) ||
         !writer_field(&writer, TAG_PROVIDER_REQUEST, provider_bytes,
                       provider_count)) {
         free(provider_bytes);
@@ -551,11 +572,20 @@ int yvex_protocol_request_decode(const unsigned char *input,
             valid = reader_u64(bytes, count,
                                &candidate.maximum_state_file_bytes);
             break;
+        case TAG_FORK_SESSION_NAME:
+            valid = reader_text(bytes, count, candidate.fork_session_name,
+                                sizeof(candidate.fork_session_name));
+            break;
+        case TAG_MAXIMUM_PREFIX_BYTES:
+            valid = reader_u64(bytes, count,
+                               &candidate.maximum_prefix_bytes);
+            break;
         default: valid = 0; break;
         }
     }
     if (next < 0 || !valid || !have_operation ||
         !request_state_fields_valid(&candidate) ||
+        !request_fork_fields_valid(&candidate) ||
         (candidate.prompt_bytes && candidate.provider_request)) {
         free(prompt);
         yvex_provider_request_close(&provider);
@@ -755,6 +785,13 @@ static int message_fields_valid(const yvex_client_message *message)
            BOOL_VALID(message->runtime.openai_listener_enabled) &&
            BOOL_VALID(message->runtime.openai_listener_ready) &&
            BOOL_VALID(message->runtime.explicit_reasoning_channel_supported) &&
+           BOOL_VALID(message->runtime.independent_session_scheduling_ready) &&
+           BOOL_VALID(message->runtime.continuous_batching_ready) &&
+           optional_identity_valid(message->runtime.capacity_plan_identity) &&
+           (!message->runtime.runtime_ready ||
+            (message->runtime.concurrent_sequences &&
+             message->runtime.capacity_required_bytes &&
+             yvex_sha256_hex_valid(message->runtime.capacity_plan_identity))) &&
            BOOL_VALID(message->console.runtime_ready) &&
            BOOL_VALID(message->console.session_available) &&
            BOOL_VALID(message->console.attached) &&
@@ -1074,7 +1111,9 @@ static int protocol_runtime_write(wire_writer *writer,
                                (runtime->public_server_ready ? 4u : 0u) |
                                (runtime->openai_listener_enabled ? 8u : 0u) |
                                (runtime->openai_listener_ready ? 16u : 0u) |
-                               (runtime->explicit_reasoning_channel_supported ? 32u : 0u);
+                               (runtime->explicit_reasoning_channel_supported ? 32u : 0u) |
+                               (runtime->independent_session_scheduling_ready ? 64u : 0u) |
+                               (runtime->continuous_batching_ready ? 128u : 0u);
 #define RUNTIME_U64(tag, field) \
     writer_u64(writer, tag, (unsigned long long)(field))
     int valid =
@@ -1106,6 +1145,14 @@ static int protocol_runtime_write(wire_writer *writer,
                     runtime->request_queue_capacity) &&
         RUNTIME_U64(TAG_RUNTIME_OPENAI_TIMEOUT, runtime->openai_timeout_ms) &&
         RUNTIME_U64(TAG_RUNTIME_TRACE_LEVEL, runtime->trace_level) &&
+        RUNTIME_U64(TAG_RUNTIME_CONCURRENT_SEQUENCES,
+                    runtime->concurrent_sequences) &&
+        RUNTIME_U64(TAG_RUNTIME_CAPACITY_REQUIRED_BYTES,
+                    runtime->capacity_required_bytes) &&
+        RUNTIME_U64(TAG_RUNTIME_CAPACITY_UNRESERVED_BYTES,
+                    runtime->capacity_unreserved_bytes) &&
+        writer_text(writer, TAG_RUNTIME_CAPACITY_PLAN_ID,
+                    runtime->capacity_plan_identity) &&
         writer_metrics(writer, &runtime->metrics);
 #undef RUNTIME_U64
     return valid;
@@ -1591,12 +1638,26 @@ static int message_runtime_field(yvex_client_message *candidate,
                 value <= YVEX_SERVER_TRACE_FULL;
         if (valid) candidate->runtime.trace_level = (yvex_server_trace_level)value;
         break;
+    case TAG_RUNTIME_CONCURRENT_SEQUENCES:
+        valid = RUNTIME_U64(candidate->runtime.concurrent_sequences);
+        break;
+    case TAG_RUNTIME_CAPACITY_REQUIRED_BYTES:
+        valid = RUNTIME_U64(candidate->runtime.capacity_required_bytes);
+        break;
+    case TAG_RUNTIME_CAPACITY_UNRESERVED_BYTES:
+        valid = RUNTIME_U64(candidate->runtime.capacity_unreserved_bytes);
+        break;
+    case TAG_RUNTIME_CAPACITY_PLAN_ID:
+        valid = reader_text(bytes, count,
+                            candidate->runtime.capacity_plan_identity,
+                            sizeof(candidate->runtime.capacity_plan_identity));
+        break;
     case TAG_OPENAI_PORT:
         valid = reader_u64(bytes, count, &value) && value <= 65535u;
         if (valid) candidate->runtime.openai_port = (unsigned short)value;
         break;
     case TAG_RUNTIME_FLAGS:
-        valid = reader_u64(bytes, count, &value) && !(value & ~63u);
+        valid = reader_u64(bytes, count, &value) && !(value & ~255u);
         candidate->runtime.runtime_ready = (value & 1u) != 0u;
         candidate->runtime.generation_ready = (value & 2u) != 0u;
         candidate->runtime.public_server_ready = (value & 4u) != 0u;
@@ -1604,6 +1665,9 @@ static int message_runtime_field(yvex_client_message *candidate,
         candidate->runtime.openai_listener_ready = (value & 16u) != 0u;
         candidate->runtime.explicit_reasoning_channel_supported =
             (value & 32u) != 0u;
+        candidate->runtime.independent_session_scheduling_ready =
+            (value & 64u) != 0u;
+        candidate->runtime.continuous_batching_ready = (value & 128u) != 0u;
         break;
     case TAG_METRICS: valid = reader_metrics(bytes, count, &candidate->runtime.metrics); break;
     default: return 0;

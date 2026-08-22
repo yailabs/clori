@@ -23,6 +23,14 @@ static void render_cuda_admission(FILE *fp, const yvex_backend_report *report)
     yvex_cli_out_writef(fp, "kernel_bundle_reason: %s\n",
                         yvex_backend_capability_reason_name(
                             report->bundle_reason));
+    yvex_cli_out_writef(fp, "kernel_bundle_native: %s\n",
+                        yes_no(report->kernel_bundle_native));
+    yvex_cli_out_writef(fp, "kernel_bundle_architecture: %s\n",
+                        report->kernel_bundle_architecture[0]
+                            ? report->kernel_bundle_architecture : "unavailable");
+    yvex_cli_out_writef(fp, "kernel_bundle_identity: %s\n",
+                        report->kernel_bundle_identity[0]
+                            ? report->kernel_bundle_identity : "unavailable");
 }
 
 static void render_variants(FILE *fp, const yvex_backend_report *report)

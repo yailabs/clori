@@ -5,14 +5,12 @@
  * Family-neutral runtime execution from typed normalized hidden state to raw F32 logits.
  */
 #include <yvex/internal/logits.h>
-
 #include <float.h>
 #include <math.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-
 #include <yvex/internal/backend.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/execution.h>
@@ -23,7 +21,6 @@ struct yvex_runtime_logits_plan {
     yvex_runtime_logits_plan_summary summary;
     const yvex_materialized_tensor_binding *binding;
 };
-
 struct yvex_runtime_logits_context {
     yvex_runtime_model *model;
     yvex_runtime_execution_session *session;
@@ -42,7 +39,6 @@ struct yvex_runtime_logits_context {
     char shared_draft_plan_identity[YVEX_SHA256_HEX_CAP];
     int mutex_ready, busy, invalidated, shared_draft_plan_admitted;
 };
-
 /*
  * Admit and project logits readiness from the exact immutable output-head residency.
  *
@@ -59,7 +55,6 @@ int yvex_runtime_logits_residency_admit(
         capabilities->output_head_binding_ready && residency->output_head_complete;
     return 1;
 }
-
 void yvex_runtime_logits_capabilities_invalidate(yvex_runtime_capabilities *capabilities)
 {
     if (!capabilities) return;
@@ -69,13 +64,11 @@ void yvex_runtime_logits_capabilities_invalidate(yvex_runtime_capabilities *capa
         capabilities->logits_full_vocabulary_ready = capabilities->logits_hidden_contract_ready =
         capabilities->logits_partial_progress_ready = capabilities->logits_ready = 0;
 }
-
 static int logits_refuse(yvex_error *err, yvex_status status, const char *reason)
 {
     yvex_error_set(err, status, "runtime.logits", reason);
     return status;
 }
-
 static int logits_device_open(yvex_runtime_logits_context *context,
                               yvex_device_tensor **out, const char *name,
                               unsigned long long elements, yvex_error *err)
@@ -1491,6 +1484,113 @@ int yvex_runtime_logits_execute_rows(
                              "logits execution identity derivation failed");
     yvex_sha256_hex(digest, result->execution_identity);
     result->completed = result->completed_rows == result->requested_rows;
+    return rc;
+}
+static int logits_tensor_same_view(const yvex_device_tensor *left,
+                                   const yvex_device_tensor *right)
+{
+    return left && right && left->owner == right->owner &&
+           left->backend_allocation == right->backend_allocation &&
+           left->data == right->data && left->bytes == right->bytes;
+}
+int yvex_runtime_logits_project_compatible(
+    yvex_runtime_logits_context *const *contexts,
+    const yvex_runtime_logits_source *const *sources,
+    yvex_runtime_logits_row_result *const *rows, unsigned long long row_count, yvex_error *err)
+{
+    yvex_runtime_logits_context *leader;
+    yvex_backend_cuda_operation_facts facts = {0};
+    yvex_device_tensor input_view, output_view;
+    unsigned long long hidden_elements, output_elements, row_values, row_bytes, d2d_bytes = 0ull, index, entered = 0ull;
+    int rc = YVEX_OK;
+    if (!contexts || !sources || !rows || row_count < 2ull || row_count >= 64ull ||
+        !(leader = contexts[0]) || row_count > leader->options.maximum_rows ||
+        !leader->options.device_selection ||
+        !yvex_core_u64_mul(row_count, leader->plan.summary.hidden_width, &hidden_elements) ||
+        !yvex_core_u64_mul(row_count, leader->plan.summary.vocabulary_size, &output_elements) ||
+        !yvex_core_u64_add(leader->plan.summary.hidden_width, leader->plan.summary.vocabulary_size, &row_values) ||
+        !yvex_core_u64_mul(row_values, sizeof(float), &row_bytes) ||
+        !yvex_backend_tensor_f32_subview(leader->device_hidden, 0ull, hidden_elements, &input_view) ||
+        !yvex_backend_tensor_f32_subview(leader->device_logits, 0ull, output_elements, &output_view))
+        return logits_refuse(err, YVEX_ERR_INVALID_ARG, "compatible logits batch geometry is invalid");
+    for (index = 0ull; index < row_count && rc == YVEX_OK; ++index) {
+        unsigned long long prior;
+        if (!contexts[index] || !sources[index] || !rows[index] ||
+            !contexts[index]->options.device_selection ||
+            contexts[index]->model != leader->model ||
+            strcmp(contexts[index]->plan.summary.output_head_plan_identity,
+                   leader->plan.summary.output_head_plan_identity) ||
+            !sources[index]->device_values_available)
+            rc = logits_refuse(err, YVEX_ERR_FORMAT, "compatible logits source is not device-compatible");
+        for (prior = 0ull; prior < index && rc == YVEX_OK; ++prior)
+            if (contexts[prior] == contexts[index])
+                rc = logits_refuse(err, YVEX_ERR_FORMAT, "compatible logits session is duplicated");
+        if (rc == YVEX_OK) rc = logits_enter(contexts[index], err);
+        if (rc == YVEX_OK) entered++;
+        if (rc == YVEX_OK) rc = logits_source_validate(contexts[index], sources[index], err);
+        if (rc == YVEX_OK) memset(rows[index], 0, sizeof(*rows[index]));
+    }
+    for (index = 0ull; index < row_count && rc == YVEX_OK; ++index) {
+        yvex_device_tensor source, destination;
+        if (!yvex_backend_tensor_f32_subview(
+                sources[index]->device_hidden.tensor,
+                sources[index]->device_hidden.element_offset,
+                leader->plan.summary.hidden_width, &source) ||
+            !yvex_backend_tensor_f32_subview(
+                &input_view, index * leader->plan.summary.hidden_width,
+                leader->plan.summary.hidden_width, &destination))
+            rc = logits_refuse(err, YVEX_ERR_BOUNDS, "compatible hidden row view is invalid");
+        if (rc == YVEX_OK && !logits_tensor_same_view(&source, &destination)) {
+            rc = yvex_backend_tensor_copy_shared_async(
+                leader->session_view->backend, &destination, &source, err);
+            if (rc == YVEX_OK && !yvex_core_u64_add(d2d_bytes, source.bytes, &d2d_bytes))
+                rc = logits_refuse(err, YVEX_ERR_BOUNDS, "compatible logits D2D accounting overflowed");
+        }
+    }
+    if (rc == YVEX_OK) {
+        input_view.is_written = 1;
+        rc = yvex_backend_cuda_encoded_matvec(
+            leader->session_view->backend, leader->resident_head,
+            leader->resident_head_bytes, leader->plan.summary.qtype,
+            leader->plan.summary.row_count, leader->plan.summary.row_width,
+            leader->plan.summary.row_bytes, row_count, &input_view, NULL, 0ull,
+            NULL, &output_view, 0, &facts, err);
+    }
+    for (index = 0ull; index < row_count && rc == YVEX_OK; ++index) {
+        yvex_device_tensor source, destination;
+        if (!yvex_backend_tensor_f32_subview(
+                &output_view, index * leader->plan.summary.vocabulary_size,
+                leader->plan.summary.vocabulary_size, &source) ||
+            !yvex_backend_tensor_f32_subview(
+                contexts[index]->device_logits, 0ull,
+                leader->plan.summary.vocabulary_size, &destination))
+            rc = logits_refuse(err, YVEX_ERR_BOUNDS, "compatible output row view is invalid");
+        if (rc == YVEX_OK && !logits_tensor_same_view(&source, &destination)) {
+            rc = yvex_backend_tensor_copy_shared_async(
+                contexts[index]->session_view->backend, &destination, &source, err);
+            if (rc == YVEX_OK && !yvex_core_u64_add(d2d_bytes, source.bytes, &d2d_bytes))
+                rc = logits_refuse(err, YVEX_ERR_BOUNDS, "compatible logits D2D accounting overflowed");
+        }
+        if (rc == YVEX_OK) destination.is_written = source.is_written;
+        if (rc == YVEX_OK) contexts[index]->device_logits_publication = destination;
+    }
+    if (rc == YVEX_OK &&
+        !yvex_core_u64_add(d2d_bytes, facts.d2d_bytes, &d2d_bytes))
+        rc = logits_refuse(err, YVEX_ERR_BOUNDS, "compatible logits D2D accounting overflowed");
+    if (rc == YVEX_OK) {
+        rows[0]->d2h_bytes = facts.d2h_bytes;
+        rows[0]->d2d_bytes = d2d_bytes;
+        rows[0]->kernel_launches = facts.kernel_launches;
+        rows[0]->device_synchronizations = facts.device_synchronizations;
+        rc = yvex_execution_memory_facts_add(
+            &rows[0]->memory, facts.active_weight_bytes, facts.state_bytes,
+            row_bytes, facts.temporary_bytes, facts.compulsory_memory_facts_available,
+            !facts.compulsory_memory_facts_available, err);
+    }
+    for (index = 0ull; index < row_count && rc == YVEX_OK; ++index)
+        rc = logits_row_finish(contexts[index], sources[index], YVEX_BACKEND_KIND_CUDA,
+                               NULL, 0ull, rows[index], err);
+    while (entered) logits_leave(contexts[--entered], rc == YVEX_OK);
     return rc;
 }
 int yvex_runtime_logits_execute(

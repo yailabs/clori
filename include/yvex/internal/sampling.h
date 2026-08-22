@@ -8,6 +8,7 @@
 #ifndef INCLUDE_YVEX_INTERNAL_SAMPLING_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_SAMPLING_H_INCLUDED
 
+#include <stdint.h>
 #include <yvex/internal/logits.h>
 
 #ifdef __cplusplus
@@ -171,6 +172,15 @@ typedef struct {
     char rng_state_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_sampling_context_summary;
 
+#define YVEX_RUNTIME_SAMPLING_CHECKPOINT_SCHEMA_V1 1u
+typedef struct {
+    unsigned int schema_version;
+    unsigned long long rng_state, rng_increment, successful_draws;
+    char policy_identity[YVEX_SHA256_HEX_CAP];
+    char rng_state_identity[YVEX_SHA256_HEX_CAP];
+    char checkpoint_identity[YVEX_SHA256_HEX_CAP];
+} yvex_runtime_sampling_checkpoint;
+
 typedef struct {
     unsigned int schema_version;
     int completed;
@@ -189,13 +199,6 @@ typedef struct {
     char rng_state_after_identity[YVEX_SHA256_HEX_CAP];
     char draw_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_sampling_uniform_result;
-
-typedef struct {
-    unsigned int schema_version, rng_algorithm, rng_version;
-    int completed;
-    unsigned long long seed, value_count, uniform_draw_count, workspace_bytes;
-    char normal_identity[YVEX_SHA256_HEX_CAP];
-} yvex_runtime_sampling_normal_result;
 
 typedef struct yvex_runtime_sampling_context yvex_runtime_sampling_context;
 typedef struct yvex_runtime_sampling_transaction yvex_runtime_sampling_transaction;
@@ -230,11 +233,8 @@ int yvex_runtime_sampling_transaction_uniforms(
     yvex_runtime_sampling_transaction *transaction, double *values,
     unsigned long long value_count,
     yvex_runtime_sampling_uniform_result *result, yvex_error *err);
-int yvex_runtime_sampling_normal_f32(
-    float *values, unsigned long long value_capacity,
-    unsigned long long value_count, unsigned long long seed,
-    unsigned long long maximum_workspace_bytes,
-    yvex_runtime_sampling_normal_result *result, yvex_error *err);
+uint32_t yvex_runtime_sampling_pcg_next(uint64_t *, uint64_t);
+void yvex_runtime_sampling_pcg_seed(uint64_t, uint64_t *, uint64_t *);
 int yvex_runtime_sampling_transaction_prepare_commit(
     yvex_runtime_sampling_transaction *transaction, yvex_error *err);
 void yvex_runtime_sampling_transaction_publish_commit(
@@ -249,6 +249,12 @@ int yvex_runtime_sampling_execute(
 int yvex_runtime_sampling_context_snapshot(
     const yvex_runtime_sampling_context *context,
     yvex_runtime_sampling_context_summary *summary, yvex_error *err);
+int yvex_runtime_sampling_context_checkpoint(
+    yvex_runtime_sampling_context *context,
+    yvex_runtime_sampling_checkpoint *checkpoint, yvex_error *err);
+int yvex_runtime_sampling_context_restore(
+    yvex_runtime_sampling_context *context,
+    const yvex_runtime_sampling_checkpoint *checkpoint, yvex_error *err);
 int yvex_runtime_sampling_context_close(
     yvex_runtime_sampling_context **context, yvex_error *err);
 

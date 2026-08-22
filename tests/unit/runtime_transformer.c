@@ -306,7 +306,8 @@ static int transformer_test_block_api_refusal(void)
     yvex_runtime_transformer_block_result result;
     yvex_error err;
     YVEX_TEST_ASSERT(yvex_runtime_transformer_execute_block(
-                         NULL, 0ull, NULL, 1ull, YVEX_BACKEND_KIND_CPU,
+                         NULL, 0ull, NULL, 1ull, YVEX_EXECUTION_BATCH_SINGLE_ROW,
+                         YVEX_EXECUTION_PHASE_DECODE, YVEX_BACKEND_KIND_CPU,
                          NULL, NULL, NULL, NULL, &result, &err) == YVEX_ERR_FORMAT &&
                          !result.completed,
                      "single-block production API refuses an absent active transaction");

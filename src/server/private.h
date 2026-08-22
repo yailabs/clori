@@ -7,19 +7,103 @@
 #ifndef SRC_SERVER_PRIVATE_H_INCLUDED
 #define SRC_SERVER_PRIVATE_H_INCLUDED
 
+#include <pthread.h>
+#include <stdatomic.h>
+
 #include <yvex/internal/generation.h>
 #include <yvex/internal/server_media.h>
+#include <yvex/internal/runtime_prefix.h>
+#include <yvex/internal/runtime_state_store.h>
 #include <yvex/server.h>
 
 typedef struct server_telemetry server_telemetry;
 typedef struct server_session_registry server_session_registry;
 typedef struct server_media_registry server_media_registry;
 typedef struct server_openai_listener server_openai_listener;
+typedef struct server_scheduler server_scheduler;
+
+typedef void (*server_scheduler_execute)(void *context, void *work);
+typedef void (*server_scheduler_observe)(void *context,
+                                         unsigned long long queued,
+                                         unsigned long long capacity,
+                                         unsigned long long active);
+
+typedef struct {
+    unsigned long long queued, capacity, active, workers;
+    unsigned long long execution_ready_limit_ns, execution_ready_waits;
+    unsigned long long execution_ready_timeouts, execution_ready_ns;
+    unsigned long long maximum_execution_ready_width;
+} server_scheduler_summary;
+
+int yvex_server_scheduler_open(
+    server_scheduler **out, unsigned long long queue_capacity,
+    unsigned long long worker_count, server_scheduler_execute execute,
+    server_scheduler_observe observe, void *context, yvex_error *err);
+int yvex_server_scheduler_start(server_scheduler *scheduler, yvex_error *err);
+int yvex_server_scheduler_submit(server_scheduler *scheduler, void *work,
+                                 const char *serialization_key,
+                                 int compatible_batch_candidate,
+                                 unsigned long long *queued, yvex_error *err);
+int yvex_server_scheduler_execution_ready(
+    server_scheduler *scheduler, const char *serialization_key,
+    unsigned long long *compatible_width, unsigned long long *wait_ns,
+    int *timed_out, yvex_error *err);
+void yvex_server_scheduler_request_stop(server_scheduler *scheduler);
+int yvex_server_scheduler_finish(server_scheduler *scheduler, yvex_error *err);
+void yvex_server_scheduler_snapshot(const server_scheduler *scheduler,
+                                    server_scheduler_summary *summary);
+void yvex_server_scheduler_close(server_scheduler **scheduler);
+
+#define SESSION_SCHEMA_V1 1u
+#define SESSION_MAX_MESSAGES 128u
+#define SESSION_TRANSCRIPT_BYTES 1048576u
+
+typedef struct server_session {
+    char name[YVEX_SERVER_SESSION_NAME_CAP];
+    char identity[YVEX_SHA256_HEX_CAP];
+    yvex_server_session_state state;
+    yvex_runtime_execution_session *execution;
+    yvex_runtime_generation_context *generation;
+    yvex_prompt_message messages[SESSION_MAX_MESSAGES];
+    unsigned long long message_count;
+    unsigned char *transcript;
+    unsigned long long transcript_count, transcript_capacity;
+    unsigned int *committed_tokens, *prompt_tokens;
+    unsigned long long committed_count, token_capacity;
+    yvex_runtime_generation_token_result *token_results;
+    unsigned char *turn_text;
+    unsigned long long text_capacity, turn_count, attached_clients;
+    unsigned long long message_history_generation, transcript_generation;
+    char last_turn_identity[YVEX_SHA256_HEX_CAP];
+    char state_digest[YVEX_SHA256_HEX_CAP];
+    char generated_token_identity[YVEX_SHA256_HEX_CAP];
+    char generated_text_digest[YVEX_SHA256_HEX_CAP];
+    yvex_client_partial_turn partial_turn;
+    yvex_client_state_checkpoint state_checkpoint;
+    yvex_runtime_sampling_policy policy;
+    yvex_reasoning_policy reasoning_policy;
+    yvex_runtime_generation_checkpoint pending_generation_checkpoint;
+    int policy_set, pending_generation_checkpoint_present;
+    atomic_int cancel_requested;
+    atomic_int active_turn;
+} server_session;
+
+struct server_session_registry {
+    pthread_mutex_t mutex;
+    yvex_runtime_model *model;
+    server_scheduler *scheduler;
+    yvex_server_options options;
+    yvex_reasoning_policy default_reasoning_policy;
+    server_telemetry *telemetry;
+    server_session *sessions;
+    unsigned long long capacity, count, next_id;
+    int mutex_ready, closing, continuous_batching;
+};
 
 typedef struct {
     const char *yvex_socket;
     unsigned short port;
-    unsigned long long timeout_ms;
+    unsigned long long timeout_ms, maximum_connections;
 } server_openai_options;
 
 typedef struct {
@@ -27,9 +111,92 @@ typedef struct {
     int enabled, ready;
 } server_openai_snapshot;
 
-typedef int (*server_message_emit)(void *context,
-                                   const yvex_client_message *message,
+typedef int (*server_message_emit)(void *context, const yvex_client_message *message,
                                    yvex_error *err);
+static inline yvex_reasoning_policy server_reasoning_automatic_policy(void)
+{
+    /* Capability only determines whether an explicit mode can be admitted.
+       An omitted policy selects the ordinary source-authored chat mode. */
+    return YVEX_REASONING_DISABLED;
+}
+
+#define YVEX_SERVER_SESSION_STORE_SCHEMA_V1 1u
+typedef struct {
+    const yvex_prompt_message *messages;
+    const unsigned int *committed_tokens;
+    unsigned long long message_count, committed_count, turn_count;
+    unsigned long long message_history_generation, transcript_generation;
+    yvex_runtime_sampling_policy policy;
+    yvex_reasoning_policy reasoning_policy;
+    yvex_runtime_generation_checkpoint generation_checkpoint;
+    int policy_set, generation_checkpoint_present;
+    char last_turn_identity[YVEX_SHA256_HEX_CAP];
+    char state_digest[YVEX_SHA256_HEX_CAP];
+    char generated_token_identity[YVEX_SHA256_HEX_CAP];
+    char generated_text_digest[YVEX_SHA256_HEX_CAP];
+} server_session_store_view;
+
+typedef struct {
+    yvex_prompt_message *messages;
+    unsigned char *transcript;
+    unsigned int *committed_tokens;
+    unsigned long long message_count, transcript_count, committed_count;
+    unsigned long long turn_count, message_history_generation, transcript_generation;
+    yvex_runtime_sampling_policy policy;
+    yvex_reasoning_policy reasoning_policy;
+    yvex_runtime_generation_checkpoint generation_checkpoint;
+    int policy_set, generation_checkpoint_present;
+    char last_turn_identity[YVEX_SHA256_HEX_CAP];
+    char state_digest[YVEX_SHA256_HEX_CAP];
+    char generated_token_identity[YVEX_SHA256_HEX_CAP];
+    char generated_text_digest[YVEX_SHA256_HEX_CAP];
+    char payload_identity[YVEX_SHA256_HEX_CAP];
+} server_session_store_state;
+
+int yvex_server_session_store_encode(
+    const server_session_store_view *view, unsigned char **bytes,
+    unsigned long long *byte_count,
+    char payload_identity[YVEX_SHA256_HEX_CAP], yvex_error *err);
+int yvex_server_session_store_decode(
+    const unsigned char *bytes, unsigned long long byte_count,
+    unsigned long long maximum_messages,
+    unsigned long long maximum_transcript_bytes,
+    unsigned long long maximum_tokens, unsigned long long vocabulary_size,
+    server_session_store_state *state, yvex_error *err);
+void yvex_server_session_store_bytes_close(unsigned char **bytes);
+void yvex_server_session_store_close(server_session_store_state *state);
+int yvex_server_session_state_save(
+    server_session *session, const char *path,
+    yvex_runtime_state_store_summary *summary, yvex_error *err);
+int yvex_server_session_state_restore(
+    server_session *session, const char *path,
+    unsigned long long maximum_file_bytes, unsigned long long vocabulary_size,
+    yvex_runtime_state_store_summary *summary, yvex_error *err);
+int yvex_server_session_generation_state_restore(
+    server_session *session, yvex_error *err);
+int yvex_server_session_state_clone(
+    server_session *source, server_session *destination,
+    unsigned long long vocabulary_size, yvex_error *err);
+
+server_session *yvex_server_session_find_locked(
+    server_session_registry *registry, const char *name);
+int yvex_server_session_execution_open(
+    server_session_registry *registry, server_session *session,
+    yvex_error *err);
+int yvex_server_session_create_locked(
+    server_session_registry *registry, const char *requested,
+    server_session **created, yvex_error *err);
+int yvex_server_session_fork_locked(
+    server_session_registry *registry, server_session *source,
+    const char *requested, unsigned long long maximum_shared_bytes,
+    server_session **created,
+    yvex_runtime_session_prefix_summary *prefix_summary, yvex_error *err);
+int yvex_server_session_reset_locked(
+    server_session_registry *registry, server_session *session,
+    yvex_error *err);
+int yvex_server_session_close_locked(
+    server_session_registry *registry, server_session *session,
+    yvex_error *err);
 
 yvex_client_failure_class yvex_server_failure_class_from_status(int status);
 
@@ -74,7 +241,7 @@ void yvex_server_telemetry_identities(server_telemetry *telemetry,
                                  const char *artifact_identity,
                                  const char *variant_identity);
 void yvex_server_telemetry_model_opened(server_telemetry *telemetry,
-                                   unsigned long long artifact_bytes,
+                                   unsigned long long mapped_artifact_bytes,
                                    unsigned long long host_bytes,
                                    unsigned long long device_bytes,
                                    unsigned long long uploads);
@@ -111,11 +278,12 @@ void yvex_server_openai_snapshot(const server_openai_listener *listener,
                                  server_openai_snapshot *snapshot);
 void yvex_server_openai_close(server_openai_listener **listener);
 
-int yvex_server_sessions_open(server_session_registry **out,
-                                 yvex_runtime_model *model,
-                                 const yvex_server_options *options,
-                                 server_telemetry *telemetry,
-                                 yvex_error *err);
+int yvex_server_sessions_open(server_session_registry **out, yvex_runtime_model *model,
+                              server_scheduler *scheduler,
+                              const yvex_server_options *options,
+                              int continuous_batching,
+                              server_telemetry *telemetry,
+                              yvex_error *err);
 int yvex_server_sessions_execute(server_session_registry *registry,
                                     const yvex_client_request *request,
                                     const char *request_id,

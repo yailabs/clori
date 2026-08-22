@@ -55,6 +55,86 @@ struct yvex_attention_state_recipe_request {
     const char *attention_plan_identity;
 };
 
+/* Graph state pages are borrowed by the provider and remain owned by its page pool. */
+typedef struct yvex_graph_state_page_pool yvex_graph_state_page_pool;
+typedef struct yvex_graph_state_page_store yvex_graph_state_page_store;
+typedef struct yvex_graph_state_bank_prefix yvex_graph_state_bank_prefix;
+typedef struct {
+    yvex_attention_state_component_recipe recipe;
+    float *values;
+    unsigned long long *positions;
+    float *auxiliary;
+    unsigned long long start, allocated_rows;
+    yvex_graph_state_page_store *value_pages, *position_pages, *auxiliary_pages;
+} yvex_graph_state_component_storage;
+typedef struct {
+    unsigned long long allocated_bytes, metadata_bytes, virtual_bytes;
+    unsigned long long resident_bytes, page_count, resident_page_count;
+    unsigned long long page_commit_count, page_release_count;
+} yvex_graph_state_page_summary;
+typedef struct {
+    const float *values;
+    const unsigned long long *positions;
+    unsigned long long count, width;
+} yvex_graph_state_history_span;
+
+int yvex_graph_state_hash_u64s(yvex_sha256 *, const unsigned long long *, size_t);
+int yvex_graph_state_history_project(const yvex_attention_history_view *,
+    const yvex_attention_state_component_recipe *, yvex_graph_state_history_span *);
+const yvex_attention_rolling_state_view *yvex_graph_state_rolling_view(
+    const yvex_attention_history_view *, yvex_attention_state_binding);
+int yvex_graph_state_page_pool_open(yvex_graph_state_page_pool **,
+    unsigned long long, yvex_error *);
+int yvex_graph_state_page_pool_bind_capacity(yvex_graph_state_page_pool *,
+    const yvex_execution_capacity_plan *, yvex_error *);
+void yvex_graph_state_page_pool_release(yvex_graph_state_page_pool *, unsigned long long);
+int yvex_graph_state_page_pool_summary(const yvex_graph_state_page_pool *,
+    yvex_graph_state_page_summary *, yvex_error *);
+void yvex_graph_state_page_pool_close(yvex_graph_state_page_pool **);
+int yvex_graph_state_capacity_plan_valid(const yvex_execution_capacity_plan *);
+int yvex_graph_state_bank_pages_open(yvex_graph_state_page_pool *,
+    const yvex_execution_capacity_plan *, const yvex_attention_summary *,
+    const yvex_attention_layer_plan *, const yvex_attention_state_recipe *,
+    yvex_graph_state_component_storage[YVEX_ATTENTION_STATE_BINDING_COUNT],
+    yvex_attention_history_view *, yvex_error *);
+int yvex_graph_state_bank_pages_reset(
+    yvex_graph_state_component_storage[YVEX_ATTENTION_STATE_BINDING_COUNT],
+    yvex_attention_history_view *, const yvex_attention_state_recipe *, yvex_error *);
+void yvex_graph_state_bank_pages_bind(
+    yvex_graph_state_component_storage[YVEX_ATTENTION_STATE_BINDING_COUNT],
+    yvex_attention_history_view *, const yvex_attention_state_recipe *);
+int yvex_graph_state_bank_pages_transfer(
+    yvex_graph_state_component_storage[YVEX_ATTENTION_STATE_BINDING_COUNT],
+    yvex_attention_history_view *, const yvex_attention_state_recipe *,
+    const yvex_attention_history_view *, int, yvex_error *);
+void yvex_graph_state_bank_pages_close(
+    yvex_graph_state_component_storage[YVEX_ATTENTION_STATE_BINDING_COUNT]);
+int yvex_graph_state_pages_prepare_publications(yvex_attention_history_view *,
+    yvex_graph_state_component_storage[YVEX_ATTENTION_STATE_BINDING_COUNT],
+    const yvex_attention_state_recipe *, const yvex_attention_publication *const *,
+    unsigned long long, yvex_error *);
+int yvex_graph_state_pointer_table_reserve(yvex_graph_state_page_pool *, void ***,
+    unsigned long long *, unsigned long long *, unsigned long long, yvex_error *);
+int yvex_graph_state_initial_identity(const yvex_attention_history_view *,
+    const yvex_attention_state_recipe *, const char *, char[YVEX_SHA256_HEX_CAP]);
+int yvex_graph_state_advance_identity(const char *, const yvex_attention_state_recipe *,
+    const char *, const yvex_attention_publication *, char[YVEX_SHA256_HEX_CAP]);
+int yvex_graph_state_bank_prefix_measure(
+    yvex_graph_state_component_storage[YVEX_ATTENTION_STATE_BINDING_COUNT],
+    const yvex_attention_state_recipe *, unsigned long long *, yvex_error *);
+int yvex_graph_state_bank_prefix_capture(yvex_graph_state_bank_prefix **,
+    yvex_graph_state_component_storage[YVEX_ATTENTION_STATE_BINDING_COUNT],
+    yvex_attention_history_view *, const yvex_attention_state_recipe *, yvex_error *);
+int yvex_graph_state_bank_prefix_compatible(const yvex_graph_state_bank_prefix *,
+    yvex_graph_state_component_storage[YVEX_ATTENTION_STATE_BINDING_COUNT],
+    const yvex_attention_state_recipe *, yvex_error *);
+int yvex_graph_state_bank_prefix_attach(const yvex_graph_state_bank_prefix *,
+    yvex_graph_state_component_storage[YVEX_ATTENTION_STATE_BINDING_COUNT],
+    yvex_attention_history_view *, const yvex_attention_state_recipe *, yvex_error *);
+void yvex_graph_state_bank_prefix_summary(const yvex_graph_state_bank_prefix *,
+    unsigned long long *, unsigned long long *, unsigned long long *, const char **);
+void yvex_graph_state_bank_prefix_close(yvex_graph_state_bank_prefix **);
+
 typedef enum {
     YVEX_ATTENTION_WORKSPACE_INGRESS = 0,
     YVEX_ATTENTION_WORKSPACE_LOCAL_VALUES,
@@ -148,6 +228,10 @@ typedef struct {
 } yvex_graph_attention_capacity_layer;
 
 typedef struct yvex_graph_attention_capacity_plan yvex_graph_attention_capacity_plan;
+int yvex_graph_attention_capacity_plan_build_compiled(
+    yvex_graph_attention_capacity_plan **out, const yvex_attention_summary *summary,
+    const yvex_attention_layer_plan *layers, unsigned long long layer_count,
+    const yvex_graph_attention_capacity_request *request, yvex_error *err);
 int yvex_graph_attention_capacity_plan_build(
     yvex_graph_attention_capacity_plan **out, const yvex_attention_plan *attention,
     const yvex_graph_attention_capacity_request *request, yvex_error *err);
@@ -187,15 +271,39 @@ typedef enum {
 typedef struct {
     unsigned int schema_version;
     unsigned long long layer_count, committed_sequence_length;
+    const yvex_execution_capacity_plan *capacity;
+    const yvex_attention_state_recipe *recipes;
     const yvex_attention_history_view *layers;
     const char (*layer_identities)[YVEX_SHA256_HEX_CAP];
     char state_layout_identity[YVEX_SHA256_HEX_CAP];
     char state_content_identity[YVEX_SHA256_HEX_CAP];
     char capacity_plan_identity[YVEX_SHA256_HEX_CAP];
 } yvex_attention_state_checkpoint;
+int yvex_attention_state_checkpoint_validate(
+    const yvex_attention_state_checkpoint *checkpoint,
+    const yvex_graph_attention_state_summary *provider,
+    yvex_error *err);
+
+#define YVEX_ATTENTION_STATE_PREFIX_SCHEMA_V1 1u
+typedef struct yvex_attention_state_prefix yvex_attention_state_prefix;
+typedef struct {
+    unsigned int schema_version;
+    unsigned long long layer_count, committed_sequence_length;
+    unsigned long long shared_bytes, mapped_bytes, reference_count;
+    char state_layout_identity[YVEX_SHA256_HEX_CAP];
+    char state_content_identity[YVEX_SHA256_HEX_CAP];
+    char capacity_plan_identity[YVEX_SHA256_HEX_CAP];
+    char prefix_identity[YVEX_SHA256_HEX_CAP];
+} yvex_attention_state_prefix_summary;
+int yvex_attention_state_prefix_summary_copy(
+    const yvex_attention_state_prefix *prefix,
+    yvex_attention_state_prefix_summary *summary, yvex_error *err);
+void yvex_attention_state_prefix_close(yvex_attention_state_prefix **prefix);
 
 #define YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V5 5u
 #define YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V6 6u
+#define YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V7 7u
+#define YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V8 8u
 typedef struct yvex_attention_state_provider {
     unsigned int schema_version;
     void *context;
@@ -208,6 +316,9 @@ typedef struct yvex_attention_state_provider {
                    yvex_attention_failure *failure, yvex_error *err);
     int (*summary)(void *context, yvex_graph_attention_state_summary *out,
                    yvex_error *err);
+    const yvex_execution_capacity_plan *(*capacity)(void *context);
+    const yvex_attention_state_recipe *(*recipe)(
+        void *context, unsigned long long layer_index);
     const yvex_attention_history_view *(*view)(
         void *context, unsigned long long layer_index,
         yvex_attention_state_view_kind kind);
@@ -240,6 +351,12 @@ typedef struct yvex_attention_state_provider {
     int (*restore)(void *context,
                    const yvex_attention_state_checkpoint *checkpoint,
                    yvex_attention_failure *failure, yvex_error *err);
+    int (*prefix_capture)(void *context, unsigned long long maximum_bytes,
+                          yvex_attention_state_prefix **prefix,
+                          yvex_attention_failure *failure, yvex_error *err);
+    int (*prefix_attach)(void *context,
+                         const yvex_attention_state_prefix *prefix,
+                         yvex_attention_failure *failure, yvex_error *err);
     int (*invalidate)(void *context, yvex_error *err);
     int (*release)(void **context, yvex_error *err);
 } yvex_attention_state_provider;

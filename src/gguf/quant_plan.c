@@ -1325,6 +1325,7 @@ static unsigned int quant_policy_qtype(yvex_quant_qtype qtype) {
     case YVEX_QUANT_QTYPE_IQ3_XXS: return YVEX_GGUF_QTYPE_IQ3_XXS;
     case YVEX_QUANT_QTYPE_IQ4_NL: return YVEX_GGUF_QTYPE_IQ4_NL;
     case YVEX_QUANT_QTYPE_I32: return YVEX_GGUF_QTYPE_I32;
+    case YVEX_QUANT_QTYPE_MXFP4: return YVEX_GGUF_QTYPE_MXFP4;
     default: return UINT_MAX;
     }
 }

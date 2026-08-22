@@ -642,6 +642,7 @@ static int test_shared_graph_completion(yvex_backend *backend)
     rope_graph_fixture fixture = {0};
     rope_graph_fixture next_piece = {0};
     yvex_error err;
+    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     int device_wide = 1;
     int rc;
 
@@ -680,7 +681,8 @@ static int test_shared_graph_completion(yvex_backend *backend)
     rc = yvex_cuda_launch_synchronize(
         backend, YVEX_BACKEND_VARIANT_ROPE_F32, &device_wide,
         "cuda.test.shared-graph.capture", &err);
-    YVEX_TEST_ASSERT(rc == YVEX_OK && device_wide == 0,
+    YVEX_TEST_ASSERT(rc == YVEX_OK && device_wide == 0 &&
+                         state && !state->shared_stream_in_flight,
                      "shared-stream graph completes through one scoped barrier");
 
     fixture.position = 8ull;
@@ -691,6 +693,7 @@ static int test_shared_graph_completion(yvex_backend *backend)
         &info, &err);
     YVEX_TEST_ASSERT(
         rc == YVEX_OK && info.shared_launch_stream && info.completion_pending &&
+            state->shared_stream_in_flight &&
             info.capture_count == 1ull && info.replay_count == 2ull &&
             info.synchronize_count == 0ull,
         "warm shared-stream replay updates parameters without a graph-local barrier");
@@ -870,6 +873,7 @@ static int test_attention_graph_configuration(yvex_backend *backend)
     };
     unsigned long long count = 0ull;
     unsigned long long failed_synchronize_count = 0ull;
+    unsigned long long layout_address = 0ull;
     unsigned long long configuration_hits;
     unsigned int configuration_count;
     size_t fault_index;
@@ -1307,12 +1311,7 @@ static int test_attention_graph_configuration(yvex_backend *backend)
     rc = yvex_backend_cuda_attention_graph_registry_count(backend, &count, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && count == 0ull,
                      "released attention registry is empty");
-    rc = yvex_backend_host_workspace_detach(backend, &err);
-    YVEX_TEST_ASSERT(rc == YVEX_OK, "detach captured pinned staging workspace");
-    rc = yvex_backend_tensor_release(backend, &output, &err);
-    YVEX_TEST_ASSERT(rc == YVEX_OK, "release captured attention fixture output");
-    rc = yvex_backend_tensor_release(backend, &input, &err);
-    YVEX_TEST_ASSERT(rc == YVEX_OK, "release captured attention fixture input");
+    backend_workspace_reset(backend);
     memset(&job, 0, sizeof(job));
     job.phase = YVEX_BACKEND_ATTENTION_PHASE_PREFILL;
     for (stage = 0u; stage < YVEX_CUDA_ATTENTION_STAGE_COUNT; ++stage) {
@@ -1333,6 +1332,27 @@ static int test_attention_graph_configuration(yvex_backend *backend)
     YVEX_TEST_ASSERT(rc == YVEX_OK && full_key[0] != '\0' &&
                      strcmp(first_key, full_key) != 0,
                      "full canonical attention stage interval is admitted distinctly");
+    YVEX_TEST_ASSERT(
+        yvex_backend_workspace_acquire(backend, 8ull, 8ull, &layout_address) ==
+            YVEX_BACKEND_RESIDENT_HIT,
+        "reserve a distinct physical attention base layout");
+    rc = yvex_cuda_attention_graph_key(
+        backend, &job, 0u, YVEX_CUDA_ATTENTION_STAGE_COUNT, dynamic_key, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && strcmp(full_key, dynamic_key) != 0,
+                     "physical base cursor separates incompatible attention graph layouts");
+    backend_workspace_reset(backend);
+    rc = yvex_cuda_attention_graph_key(
+        backend, &job, 0u, YVEX_CUDA_ATTENTION_STAGE_COUNT, dynamic_key, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && strcmp(full_key, dynamic_key) == 0,
+                     "restored physical base cursor recovers graph compatibility");
+    yvex_backend_workspace_detach(backend);
+    rc = yvex_backend_workspace_attach(backend, workspace, 10ull, &err);
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_attention_graph_key(
+            backend, &job, 0u, YVEX_CUDA_ATTENTION_STAGE_COUNT, dynamic_key, &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_OK && strcmp(full_key, dynamic_key) == 0,
+        "logical workspace profile rebinding preserves physical graph compatibility");
     rc = yvex_backend_state_residency_publish_generation(backend, 7ull, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK,
                      "publish state generation through the backend residency owner");
@@ -1405,8 +1425,13 @@ static int test_attention_graph_configuration(yvex_backend *backend)
     job.local_count = 6ull;
     rc = yvex_cuda_attention_graph_key(
         backend, &job, 0u, YVEX_CUDA_ATTENTION_STAGE_COUNT, dynamic_key, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK,
+                     "candidate-visible graph admits its bounded ephemeral row");
+    job.local_count = 7ull;
+    rc = yvex_cuda_attention_graph_key(
+        backend, &job, 0u, YVEX_CUDA_ATTENTION_STAGE_COUNT, dynamic_key, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_BOUNDS,
-                     "candidate-visible history beyond the sliding window refuses");
+                     "candidate-visible history beyond its ephemeral capacity refuses");
     memset(&job, 0, sizeof(job));
     rc = yvex_cuda_attention_graph_key(
         backend, &job, 0u, YVEX_CUDA_ATTENTION_STAGE_COUNT + 1u, full_key, &err);
@@ -1418,6 +1443,31 @@ static int test_attention_graph_configuration(yvex_backend *backend)
         "decode-1", 4ull, 1ull, 1ull, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK,
                      "new compatibility identity invalidates before full mode configuration");
+    rc = yvex_cuda_graph_execute(
+        backend, "attention-config-full-v2:unit-transfer-v1",
+        NULL, enqueue_attention_fixture, &fixture, 1, &graph_info, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK,
+                     "capture the independently admitted full-mode graph namespace");
+    rc = yvex_backend_cuda_attention_configure(
+        backend, YVEX_BACKEND_ATTENTION_PHASE_PREFILL,
+        YVEX_BACKEND_CUDA_ATTENTION_PIECEWISE, "attention-config-piecewise-v1",
+        "prefill-4", 4ull, 1ull, 1ull, &err);
+    if (rc == YVEX_OK)
+        rc = yvex_backend_cuda_attention_graph_summary_get(backend, &summary, &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_OK && summary.graph_count == 1ull &&
+            summary.invalidation_count == 0ull,
+        "returning to an admitted target or draft configuration retains the other graph namespace");
+    rc = yvex_backend_cuda_attention_graph_registry_apply(
+        backend, YVEX_BACKEND_CUDA_GRAPH_REGISTRY_RELEASE, &count, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && count == 1ull,
+                     "release the retained cross-configuration graph namespace");
+    rc = yvex_backend_host_workspace_detach(backend, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK, "detach captured pinned staging workspace");
+    rc = yvex_backend_tensor_release(backend, &output, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK, "release captured attention fixture output");
+    rc = yvex_backend_tensor_release(backend, &input, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK, "release captured attention fixture input");
     yvex_backend_workspace_detach(backend);
     YVEX_TEST_ASSERT(yvex_backend_resident_detach(backend, &err) == YVEX_OK,
                      "detach stable attention residency");
@@ -1432,6 +1482,7 @@ static int test_host_workspace_lifecycle(yvex_backend *backend)
 {
     yvex_backend_host_workspace_summary summary;
     void *first = NULL;
+    void *mismatched = (void *)1;
     void *second = NULL;
     yvex_error err;
     int rc;
@@ -1445,8 +1496,14 @@ static int test_host_workspace_lifecycle(yvex_backend *backend)
             summary.peak == 0ull && summary.generation == 1ull &&
             summary.allocation_count == 1ull,
         "owned host arena exposes exact cold preparation facts");
+    rc = yvex_backend_host_workspace_reserve(backend, 32ull, 16ull, &second);
+    YVEX_TEST_ASSERT(rc == YVEX_BACKEND_RESIDENT_HIT && second,
+                     "reserve stable host completion tail");
+    rc = yvex_backend_host_workspace_reserve(backend, 16ull, 16ull, &mismatched);
+    YVEX_TEST_ASSERT(rc == YVEX_BACKEND_RESIDENT_MISS && !mismatched,
+                     "refuse a conflicting stable host reservation");
     rc = yvex_backend_host_workspace_acquire(backend, 32ull, 16ull, &first);
-    YVEX_TEST_ASSERT(rc == YVEX_BACKEND_RESIDENT_HIT && first,
+    YVEX_TEST_ASSERT(rc == YVEX_BACKEND_RESIDENT_HIT && first && first != second,
                      "acquire aligned host staging range");
     YVEX_TEST_ASSERT(
         yvex_backend_host_workspace_acquire(backend, 257ull, 1ull,
@@ -1460,13 +1517,13 @@ static int test_host_workspace_lifecycle(yvex_backend *backend)
             !second,
         "host staging refuses non-power-of-two alignment");
     backend_host_workspace_reset(backend);
-    rc = yvex_backend_host_workspace_acquire(backend, 257ull, 1ull, &second);
+    rc = yvex_backend_host_workspace_acquire(backend, 32ull, 16ull, &second);
     YVEX_TEST_ASSERT(rc == YVEX_BACKEND_RESIDENT_HIT && second == first,
                      "warm rewind reuses the exact owned address");
     backend_host_workspace_reset(backend);
     YVEX_TEST_ASSERT(
         yvex_backend_host_workspace_summary_get(backend, &summary) &&
-            summary.used == 0ull && summary.peak == 257ull &&
+            summary.used == 32ull && summary.peak == 64ull &&
             summary.allocation_count == 1ull,
         "two acquisitions preserve one allocation and exact peak evidence");
     rc = yvex_backend_host_workspace_detach(backend, &err);

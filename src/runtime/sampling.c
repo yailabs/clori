@@ -150,7 +150,7 @@ int yvex_runtime_sampling_policy_seal(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-static uint32_t sampling_pcg_next(uint64_t *state, uint64_t increment)
+uint32_t yvex_runtime_sampling_pcg_next(uint64_t *state, uint64_t increment)
 {
     uint64_t old = *state;
     uint32_t shifted = (uint32_t)(((old >> 18u) ^ old) >> 27u);
@@ -158,13 +158,13 @@ static uint32_t sampling_pcg_next(uint64_t *state, uint64_t increment)
     *state = old * SAMPLING_PCG_MULTIPLIER + increment;
     return (shifted >> rotation) | (shifted << ((0u - rotation) & 31u));
 }
-static void sampling_pcg_seed(uint64_t seed, uint64_t *state, uint64_t *increment)
+void yvex_runtime_sampling_pcg_seed(uint64_t seed, uint64_t *state, uint64_t *increment)
 {
     *state = 0ull;
     *increment = SAMPLING_PCG_INCREMENT;
-    (void)sampling_pcg_next(state, *increment);
+    (void)yvex_runtime_sampling_pcg_next(state, *increment);
     *state += seed;
-    (void)sampling_pcg_next(state, *increment);
+    (void)yvex_runtime_sampling_pcg_next(state, *increment);
 }
 static int sampling_rng_identity(const yvex_runtime_sampling_context *context,
                                  uint64_t state, unsigned long long draws,
@@ -180,6 +180,22 @@ static int sampling_rng_identity(const yvex_runtime_sampling_context *context,
            yvex_sha256_update_u64(&hash, state) &&
            yvex_sha256_update_u64(&hash, context->rng_increment) &&
            yvex_sha256_update_u64(&hash, draws) &&
+           sampling_hash_finish(&hash, output);
+}
+static int sampling_checkpoint_identity(
+    const yvex_runtime_sampling_checkpoint *checkpoint,
+    char output[YVEX_SHA256_HEX_CAP])
+{
+    yvex_sha256 hash;
+    yvex_sha256_init(&hash);
+    return checkpoint &&
+           yvex_sha256_update_text(&hash, "yvex.runtime.sampling.checkpoint.v1") &&
+           yvex_sha256_update_u64(&hash, checkpoint->schema_version) &&
+           yvex_sha256_update_u64(&hash, checkpoint->rng_state) &&
+           yvex_sha256_update_u64(&hash, checkpoint->rng_increment) &&
+           yvex_sha256_update_u64(&hash, checkpoint->successful_draws) &&
+           yvex_sha256_update_text(&hash, checkpoint->policy_identity) &&
+           yvex_sha256_update_text(&hash, checkpoint->rng_state_identity) &&
            sampling_hash_finish(&hash, output);
 }
 /* Open one fixed-workspace sampling context without model/session ownership. */
@@ -247,7 +263,8 @@ int yvex_runtime_sampling_context_open(
     context->logits_plan = *logits_plan;
     context->policy = canonical;
     context->options = *options;
-    sampling_pcg_seed(canonical.seed, &context->rng_state, &context->rng_increment);
+    yvex_runtime_sampling_pcg_seed(
+        canonical.seed, &context->rng_state, &context->rng_increment);
     atomic_init(&context->lifecycle, 0u);
     atomic_init(&context->admission_failures, 0ull);
     atomic_init(&context->open_transactions, 0ull);
@@ -948,7 +965,7 @@ static int sampling_select_device_stochastic(
         context->options.cancel_requested(context->options.cancel_context))
         return sampling_refuse(
             err, YVEX_ERR_CANCELLED, "device stochastic sampling was cancelled before launch");
-    random_value = sampling_pcg_next(&next_state, context->rng_increment);
+    random_value = yvex_runtime_sampling_pcg_next(&next_state, context->rng_increment);
     rc = operations->select_stochastic(
         source->device_logits.backend, &view, source->vocabulary_size,
         &context->policy, random_value, &selected, &facts, err);
@@ -1050,7 +1067,7 @@ static int sampling_select_stochastic(
         context->options.cancel_requested(context->options.cancel_context))
         return sampling_refuse(err, YVEX_ERR_CANCELLED,
                                "sampling was cancelled before RNG publication");
-    random_value = sampling_pcg_next(&next_state, context->rng_increment);
+    random_value = yvex_runtime_sampling_pcg_next(&next_state, context->rng_increment);
     uniform = ((double)random_value + 0.5) / 4294967296.0;
     for (index = 0ull; index < count; ++index) {
         cumulative += context->candidates[index].probability;
@@ -1412,7 +1429,7 @@ int yvex_runtime_sampling_transaction_uniforms(
                                  "sampling transaction draw was cancelled");
             break;
         }
-        random_value = sampling_pcg_next(&next_state, context->rng_increment);
+        random_value = yvex_runtime_sampling_pcg_next(&next_state, context->rng_increment);
         values[index] = ((double)random_value + 0.5) / 4294967296.0;
     }
     if (rc == YVEX_OK &&
@@ -1715,6 +1732,76 @@ int yvex_runtime_sampling_context_snapshot(
     yvex_error_clear(err);
     return YVEX_OK;
 }
+int yvex_runtime_sampling_context_checkpoint(
+    yvex_runtime_sampling_context *context,
+    yvex_runtime_sampling_checkpoint *checkpoint, yvex_error *err)
+{
+    int rc;
+    if (checkpoint) memset(checkpoint, 0, sizeof(*checkpoint));
+    if (!context || !checkpoint)
+        return sampling_refuse(err, YVEX_ERR_INVALID_ARG,
+                               "sampling checkpoint output is required");
+    rc = sampling_enter(context, err);
+    if (rc != YVEX_OK) return rc;
+    if (atomic_load_explicit(&context->open_transactions, memory_order_acquire))
+        rc = sampling_refuse(err, YVEX_ERR_STATE,
+                             "sampling checkpoint requires no open transaction");
+    checkpoint->schema_version = YVEX_RUNTIME_SAMPLING_CHECKPOINT_SCHEMA_V1;
+    checkpoint->rng_state = context->rng_state;
+    checkpoint->rng_increment = context->rng_increment;
+    checkpoint->successful_draws = context->successful_draws;
+    yvex_runtime_identity_copy(checkpoint->policy_identity,
+                               context->policy.policy_identity);
+    if (rc == YVEX_OK &&
+        (!sampling_rng_identity(context, checkpoint->rng_state,
+                                checkpoint->successful_draws,
+                                checkpoint->rng_state_identity) ||
+         !sampling_checkpoint_identity(checkpoint,
+                                       checkpoint->checkpoint_identity)))
+        rc = sampling_refuse(err, YVEX_ERR_STATE,
+                             "sampling checkpoint identity failed");
+    if (rc != YVEX_OK) memset(checkpoint, 0, sizeof(*checkpoint));
+    sampling_leave(context, rc, 0ull);
+    if (rc == YVEX_OK) yvex_error_clear(err);
+    return rc;
+}
+int yvex_runtime_sampling_context_restore(
+    yvex_runtime_sampling_context *context,
+    const yvex_runtime_sampling_checkpoint *checkpoint, yvex_error *err)
+{
+    char rng_identity[YVEX_SHA256_HEX_CAP], checkpoint_identity[YVEX_SHA256_HEX_CAP];
+    int rc;
+    if (!context || !checkpoint)
+        return sampling_refuse(err, YVEX_ERR_INVALID_ARG,
+                               "sampling checkpoint is required");
+    rc = sampling_enter(context, err);
+    if (rc != YVEX_OK) return rc;
+    if (atomic_load_explicit(&context->open_transactions, memory_order_acquire))
+        rc = sampling_refuse(err, YVEX_ERR_STATE,
+                             "sampling restore requires no open transaction");
+    else if (checkpoint->schema_version !=
+                 YVEX_RUNTIME_SAMPLING_CHECKPOINT_SCHEMA_V1 ||
+             checkpoint->rng_increment != context->rng_increment ||
+             strcmp(checkpoint->policy_identity,
+                    context->policy.policy_identity) != 0 ||
+             !sampling_rng_identity(context, checkpoint->rng_state,
+                                    checkpoint->successful_draws, rng_identity) ||
+             strcmp(rng_identity, checkpoint->rng_state_identity) != 0 ||
+             !sampling_checkpoint_identity(checkpoint, checkpoint_identity) ||
+             strcmp(checkpoint_identity, checkpoint->checkpoint_identity) != 0)
+        rc = sampling_refuse(err, YVEX_ERR_FORMAT,
+                             "sampling checkpoint is incompatible or corrupt");
+    if (rc == YVEX_OK) {
+        context->rng_state = checkpoint->rng_state;
+        context->successful_draws = checkpoint->successful_draws;
+        context->summary.stochastic_draws = checkpoint->successful_draws;
+        yvex_runtime_identity_copy(context->summary.rng_state_identity,
+                                   checkpoint->rng_state_identity);
+        yvex_error_clear(err);
+    }
+    sampling_leave(context, rc, 0ull);
+    return rc;
+}
 /* Close is idempotent; unique close ownership drains active sampling transactions. */
 int yvex_runtime_sampling_context_close(
     yvex_runtime_sampling_context **context, yvex_error *err)
@@ -1768,64 +1855,6 @@ int yvex_runtime_sampling_context_close(
     *context = NULL;
     yvex_error_clear(err);
     return YVEX_OK;
-}
-/* Seeded latent initialization is staged so failed identity or bounds checks publish no values. */
-int yvex_runtime_sampling_normal_f32(
-    float *values, unsigned long long value_capacity, unsigned long long value_count,
-    unsigned long long seed, unsigned long long maximum_workspace_bytes,
-    yvex_runtime_sampling_normal_result *result, yvex_error *err)
-{
-    yvex_runtime_sampling_normal_result staged = {0};
-    yvex_sha256 hash;
-    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
-    uint64_t state, increment;
-    unsigned long long bytes, index = 0ull;
-    float *output;
-    if (result) memset(result, 0, sizeof(*result));
-    if (!values || !result || !value_count || value_count > value_capacity ||
-        !yvex_core_u64_mul(value_count, sizeof(*output), &bytes) || bytes > SIZE_MAX ||
-        bytes > maximum_workspace_bytes)
-        return sampling_refuse(err, YVEX_ERR_BOUNDS,
-                               "bounded normal output and workspace are required");
-    output = yvex_core_malloc((size_t)bytes);
-    if (!output) return sampling_refuse(err, YVEX_ERR_NOMEM,
-                                        "normal staging allocation failed");
-    sampling_pcg_seed(seed, &state, &increment);
-    while (index < value_count) {
-        const double scale = 1.0 / 4294967296.0;
-        double first = ((double)sampling_pcg_next(&state, increment) + 0.5) * scale;
-        double second = ((double)sampling_pcg_next(&state, increment) + 0.5) * scale;
-        double magnitude = sqrt(-2.0 * log(first));
-        double angle = 6.283185307179586476925286766559 * second;
-        output[index++] = (float)(magnitude * cos(angle));
-        if (index < value_count) output[index++] = (float)(magnitude * sin(angle));
-    }
-    staged.schema_version = YVEX_RUNTIME_SAMPLING_SCHEMA_V1;
-    staged.rng_algorithm = YVEX_SAMPLING_RNG_PCG_XSH_RR_64_32;
-    staged.rng_version = YVEX_SAMPLING_RNG_VERSION_V1;
-    staged.seed = seed;
-    staged.value_count = value_count;
-    staged.uniform_draw_count = 2ull * ((value_count + 1ull) / 2ull);
-    staged.workspace_bytes = bytes;
-    yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.sampling.normal-f32.v1") ||
-        !yvex_sha256_update_u64(&hash, staged.rng_algorithm) ||
-        !yvex_sha256_update_u64(&hash, staged.rng_version) ||
-        !yvex_sha256_update_u64(&hash, seed) ||
-        !yvex_sha256_update_u64(&hash, value_count)) goto identity_failed;
-    for (index = 0ull; index < value_count; ++index)
-        if (!sampling_hash_f32(&hash, output[index])) goto identity_failed;
-    if (!yvex_sha256_final(&hash, digest)) goto identity_failed;
-    yvex_sha256_hex(digest, staged.normal_identity);
-    staged.completed = 1;
-    memcpy(values, output, (size_t)bytes);
-    *result = staged;
-    yvex_core_free(output);
-    yvex_error_clear(err);
-    return YVEX_OK;
-identity_failed:
-    yvex_core_free(output);
-    return sampling_refuse(err, YVEX_ERR_STATE, "normal identity derivation failed");
 }
 /* Publish sampling readiness only after real-logits selection completes. */
 static void sampling_operator_publish(

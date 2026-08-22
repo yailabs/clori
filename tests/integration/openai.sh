@@ -1,5 +1,5 @@
 #!/bin/sh
-# Exercises production HTTP/SSE translation over the real local protocol v8 codec.
+# Exercises production HTTP/SSE translation over the real local protocol v11 codec.
 set -eu
 
 YVEX_OPENAI_ADAPTER=${YVEX_OPENAI_ADAPTER:-build/tests/openai_adapter}
@@ -163,6 +163,7 @@ assert chat['usage']['prompt_tokens']==5 and chat['usage']['completion_tokens']=
 assert chat['usage']['total_tokens']==8
 assert chat['usage']['completion_tokens_details']['reasoning_tokens']==0
 assert chat['yvex_completion_metrics']['final_tokens']==3
+assert chat['choices'][0]['message']['reasoning_content']==''
 assert json.load(open(root/'chat-json.json'))['choices'][0]['message']['content']=='{"ok":true}'
 reasoning=json.load(open(root/'chat-reasoning.json'))
 assert reasoning['choices'][0]['message']['reasoning_content']=='explicit model reasoning'
@@ -271,4 +272,4 @@ closed=$(grep -c '^session.close ' "$root/host.err" || true)
 test "$created" -gt 0
 test "$created" = "$closed"
 
-echo 'OpenAI adapter integration: protocol-v9 Chat/Responses/SSE/tool/state/cleanup/refusal passed'
+echo 'OpenAI adapter integration: protocol-v11 Chat/Responses/SSE/tool/state/cleanup/refusal passed'

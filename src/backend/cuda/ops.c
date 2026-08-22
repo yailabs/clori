@@ -74,11 +74,7 @@ static int attention_account_transfer(
     *total = next;
     return YVEX_OK;
 }
-/*
- * Acquire one bounded CUDA attention work range.
- *
- * Generic transaction resource; no family-specific geometry.
- */
+/* Acquire one bounded, family-neutral attention transaction range. */
 static int attention_allocate(yvex_cuda_work *work,
                                  CUdeviceptr *out,
                                  size_t bytes,
@@ -189,11 +185,7 @@ static int attention_download(yvex_cuda_work *work, void *target,
         failure, YVEX_BACKEND_ATTENTION_FAILURE_COPY, stage, bytes, 0ull, err,
         (yvex_status)rc, "CUDA attention staged output copy failed");
 }
-/*
- * Launch one admitted generic attention kernel.
- *
- * Launch only; family transaction owns synchronization and publication.
- */
+/* Launch only; the family transaction retains synchronization and publication. */
 static int attention_launch(yvex_cuda_work *work,
                                CUfunction function,
                                unsigned int grid,
@@ -247,6 +239,29 @@ static int attention_round_bf16(
             CUDA_ATTENTION_BLOCK, 0u, params, stage, failure, err);
     }
 }
+static int attention_mxfp4_q8_rows_geometry(
+    const yvex_backend_attention_weight *weight, unsigned long long rows,
+    unsigned long long input_rows, unsigned int *grid,
+    unsigned int *block, unsigned int *shared_bytes)
+{
+    unsigned long long row_blocks, launch_blocks, activation_bytes;
+    if (!weight || weight->qtype != YVEX_GGUF_QTYPE_MXFP4 ||
+        rows < 4096ull || weight->row_width != 1024ull ||
+        !input_rows || input_rows > 8ull ||
+        !grid || !block || !shared_bytes)
+        return 0;
+    row_blocks = (rows + 7ull) / 8ull;
+    if (!yvex_core_u64_mul(row_blocks, input_rows, &launch_blocks) ||
+        !yvex_core_u64_mul(weight->row_width / 256ull, 292ull,
+                           &activation_bytes) ||
+        !launch_blocks || launch_blocks > UINT_MAX ||
+        activation_bytes > UINT_MAX)
+        return 0;
+    *grid = (unsigned int)launch_blocks;
+    *block = CUDA_ATTENTION_BLOCK;
+    *shared_bytes = (unsigned int)activation_bytes;
+    return 1;
+}
 static int attention_matvec(yvex_cuda_work *work,
                                const yvex_backend_attention_weight *weight,
                                CUdeviceptr device_weight,
@@ -262,13 +277,21 @@ static int attention_matvec(yvex_cuda_work *work,
                                yvex_error *err)
 {
     CUdeviceptr additive = 0ull;
-    int block_row = 0, q8_path, q8_input = 0;
-    unsigned long long tensorcore_grid = 0ull;
-    unsigned int matvec_grid, matvec_block;
+    unsigned long long group_count = 1ull, group_rows = rows;
+    int block_row = 0, q8_path, q8_input = 0, shared_q8_path, tensorcore_path;
+    unsigned int matvec_grid, matvec_block, tensorcore_grid = 0u, tensorcore_block = 0u;
+    unsigned int shared_q8_grid = 0u, shared_q8_block = 0u, shared_q8_bytes = 0u;
     q8_path = weight && work->activation_q8 && !work->forensic_numeric &&
-              weight->qtype == YVEX_GGUF_QTYPE_Q8_0 &&
               weight->row_width % 256ull == 0ull &&
-              work->state->q8_0_tensorcore_rows_function;
+              yvex_cuda_q8_activation_eligible(weight->qtype) &&
+              work->state->q8_quantize_function && work->state->qtype_matvec_function;
+    tensorcore_path = q8_path && work->state->qtype_tensorcore_rows_function &&
+                      cuda_qtype_tensorcore_eligible(input_rows);
+    shared_q8_path = q8_path && !tensorcore_path &&
+                     work->state->mxfp4_q8_rows_function &&
+                     attention_mxfp4_q8_rows_geometry(
+                         weight, rows, input_rows, &shared_q8_grid,
+                         &shared_q8_block, &shared_q8_bytes);
     if (!weight || !weight->present || !device_weight || !vector || !out ||
         !rows || !input_rows || start_row > weight->row_count ||
         rows > weight->row_count - start_row ||
@@ -280,10 +303,9 @@ static int attention_matvec(yvex_cuda_work *work,
             failure, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT, stage,
             weight ? weight->row_count : 0ull, start_row + rows, err,
             YVEX_ERR_BOUNDS, "CUDA attention matvec geometry is invalid");
-    if (q8_path &&
-        (!yvex_core_u64_mul((rows + 15ull) / 16ull,
-                            (input_rows + 15ull) / 16ull, &tensorcore_grid) ||
-         tensorcore_grid > UINT_MAX))
+    if (tensorcore_path && !yvex_cuda_qtype_tensorcore_geometry(
+                               rows, input_rows, &tensorcore_grid,
+                               &tensorcore_block))
         return attention_fail(
             failure, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT, stage,
             UINT_MAX, tensorcore_grid, err, YVEX_ERR_BOUNDS,
@@ -310,35 +332,175 @@ static int attention_matvec(yvex_cuda_work *work,
         quantized = work->q8_input;
         if (rc == YVEX_OK) {
             void *params[] = {&quantized, &vector, (void *)&weight->row_width,
-                              &input_rows, &status};
+                              &input_rows, &group_count,
+                              (void *)&weight->row_width, &status};
             rc = attention_launch(work, work->state->q8_quantize_function,
                                   (unsigned int)quantize_tasks, CUDA_ATTENTION_BLOCK, 0u,
                                   params, "cuda.q8-activation", failure, err);
         }
-        if (rc == YVEX_OK) {
+        if (rc == YVEX_OK && tensorcore_path) {
             void *params[] = {
                 &device_weight, (void *)&weight->row_bytes,
                 (void *)&weight->row_width, &start_row, &rows, &input_rows,
-                &quantized, &additive, &out, &output_bf16, &status};
+                &group_count, &group_rows, (void *)&weight->qtype, &quantized,
+                &additive, &out, &output_bf16, &status};
             rc = attention_launch(
-                work, work->state->q8_0_tensorcore_rows_function,
-                (unsigned int)tensorcore_grid, 32u, 0u, params, stage,
+                work, work->state->qtype_tensorcore_rows_function,
+                tensorcore_grid, tensorcore_block, 0u, params, stage,
                 failure, err);
             if (rc == YVEX_OK) work->tensor_core_launches++;
+        } else if (rc == YVEX_OK && shared_q8_path) {
+            void *params[] = {
+                &device_weight, (void *)&weight->row_bytes,
+                (void *)&weight->row_width, &start_row, &rows, &input_rows,
+                &quantized, &out, &rows, &output_bf16, &status};
+            rc = attention_launch(
+                work, work->state->mxfp4_q8_rows_function,
+                shared_q8_grid, shared_q8_block, shared_q8_bytes, params,
+                stage, failure, err);
+        } else if (rc == YVEX_OK) {
+            q8_input = 1;
+            void *params[] = {
+                &device_weight, (void *)&weight->row_bytes,
+                (void *)&weight->row_width, &start_row, &rows, &input_rows,
+                (void *)&weight->qtype, &quantized,
+                (void *)&weight->row_width, &q8_input, &block_row,
+                &work->forensic_numeric, &additive, &out, &rows,
+                &output_bf16, &status};
+            rc = attention_launch(work, work->state->qtype_matvec_function,
+                                  matvec_grid, matvec_block, 0u, params, stage,
+                                  failure, err);
         }
         return rc;
     }
     {
         void *params[] = {&device_weight, (void *)&weight->row_bytes,
             (void *)&weight->row_width, &start_row, &rows,
-            &input_rows, (void *)&weight->qtype, &vector, &q8_input,
+            &input_rows, (void *)&weight->qtype, &vector,
+            (void *)&weight->row_width, &q8_input,
             &block_row, &work->forensic_numeric, &additive, &out,
-            &output_bf16, &status
+            &rows, &output_bf16, &status
         };
         return attention_launch(
             work, work->state->qtype_matvec_function,
             matvec_grid, matvec_block, 0u, params, stage, failure, err);
     }
+}
+static int attention_matvec_grouped(
+    yvex_cuda_work *work, const yvex_backend_attention_weight *weight,
+    CUdeviceptr device_weight, unsigned long long groups, unsigned long long group_rows,
+    unsigned long long input_rows, CUdeviceptr vector, unsigned long long input_stride,
+    CUdeviceptr out, unsigned long long output_stride, int output_bf16,
+    CUdeviceptr status, const char *stage, yvex_backend_attention_failure *failure,
+    yvex_error *err)
+{
+    CUdeviceptr additive = 0ull;
+    unsigned long long rows = 0ull, input_width, quantized_rows, quantize_tasks;
+    unsigned long long grouped_grid, quantized_bytes;
+    int block_row = 0, q8_input = 0, q8_path;
+    unsigned int grid, block, tensorcore_grid = 0u, tensorcore_block = 0u;
+    if (!weight || !weight->present || !device_weight || !vector || !out ||
+        !groups || !group_rows || !input_rows || groups > ULLONG_MAX / group_rows ||
+        !yvex_core_u64_mul(groups, group_rows, &rows) ||
+        !yvex_core_u64_mul(groups, weight->row_width, &input_width) ||
+        rows != weight->row_count || input_stride < input_width ||
+        output_stride < rows ||
+        !yvex_cuda_qtype_matvec_geometry(group_rows, weight->row_width, input_rows,
+                                         weight->qtype, 1, &grid, &block, &block_row))
+        return attention_fail(
+            failure, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT, stage,
+            weight ? weight->row_count : 0ull, rows, err, YVEX_ERR_BOUNDS,
+            "CUDA grouped attention matvec geometry is invalid");
+    /* Weight rows are group-major while activations stay token-major. Quantizing
+     * token-by-group views lets one MMA launch preserve both physical layouts. */
+    q8_path = work->activation_q8 && !work->forensic_numeric &&
+              weight->row_width % 256ull == 0ull && group_rows % 16ull == 0ull &&
+              yvex_cuda_q8_activation_eligible(weight->qtype) &&
+              work->state->q8_quantize_function &&
+              work->state->qtype_tensorcore_rows_function &&
+              cuda_qtype_tensorcore_eligible(input_rows);
+    if (q8_path) {
+        unsigned long long blocks = weight->row_width / 256ull;
+        CUdeviceptr quantized;
+        int rc;
+        if (!yvex_core_u64_mul(input_rows, groups, &quantized_rows) ||
+            !yvex_core_u64_mul(quantized_rows, blocks, &quantize_tasks) ||
+            !yvex_core_u64_mul(quantize_tasks, 292ull, &quantized_bytes) ||
+            !yvex_cuda_qtype_tensorcore_geometry(
+                rows, input_rows, &tensorcore_grid, &tensorcore_block) ||
+            quantize_tasks > UINT_MAX ||
+            quantized_bytes > SIZE_MAX)
+            return attention_fail(
+                failure, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT, stage,
+                UINT_MAX, quantize_tasks, err, YVEX_ERR_BOUNDS,
+                "CUDA grouped Tensor Core geometry exceeds launch bounds");
+        rc = YVEX_OK;
+        if (quantized_bytes > work->q8_capacity) {
+            rc = yvex_cuda_work_allocate(work, &work->q8_input,
+                                         (size_t)quantized_bytes, NULL, 0,
+                                         "cuda.q8-activation", NULL, err);
+            if (rc == YVEX_OK) work->q8_capacity = quantized_bytes;
+        }
+        quantized = work->q8_input;
+        if (rc == YVEX_OK) {
+            void *params[] = {&quantized, &vector, (void *)&weight->row_width,
+                              &quantized_rows, &groups, &input_stride, &status};
+            rc = attention_launch(work, work->state->q8_quantize_function,
+                                  (unsigned int)quantize_tasks,
+                                  CUDA_ATTENTION_BLOCK, 0u, params,
+                                  "cuda.q8-activation", failure, err);
+        }
+        if (rc == YVEX_OK) {
+            unsigned long long start_row = 0ull;
+            void *params[] = {
+                &device_weight, (void *)&weight->row_bytes,
+                (void *)&weight->row_width, &start_row, &rows, &input_rows,
+                &groups, &group_rows, (void *)&weight->qtype, &quantized,
+                &additive, &out, &output_bf16, &status};
+            rc = attention_launch(
+                work, work->state->qtype_tensorcore_rows_function,
+                tensorcore_grid, tensorcore_block, 0u, params, stage,
+                failure, err);
+            if (rc == YVEX_OK) work->tensor_core_launches++;
+        }
+        return rc;
+    }
+    if (!work->forensic_numeric && !block_row &&
+        work->state->qtype_grouped_rows_function) {
+        unsigned long long blocks_per_group = grid;
+        if (!yvex_core_u64_mul(groups, blocks_per_group, &grouped_grid) ||
+            grouped_grid > UINT_MAX)
+            return attention_fail(
+                failure, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT, stage,
+                UINT_MAX, grouped_grid, err, YVEX_ERR_BOUNDS,
+                "CUDA grouped rows grid exceeds launch bounds");
+        {
+            void *params[] = {
+                &device_weight, (void *)&weight->row_bytes,
+                (void *)&weight->row_width, &groups, &group_rows,
+                &blocks_per_group, &input_rows, (void *)&weight->qtype, &vector,
+                &input_stride, &out, &output_stride, &output_bf16, &status};
+            return attention_launch(
+                work, work->state->qtype_grouped_rows_function,
+                (unsigned int)grouped_grid, block, 0u, params, stage,
+                failure, err);
+        }
+    }
+    for (unsigned long long group = 0ull; group < groups; ++group) {
+        unsigned long long start_row = group * group_rows;
+        CUdeviceptr input = vector + group * weight->row_width * sizeof(float);
+        CUdeviceptr output = out + group * group_rows * sizeof(float);
+        void *params[] = {
+            &device_weight, (void *)&weight->row_bytes, (void *)&weight->row_width,
+            &start_row, &group_rows, &input_rows, (void *)&weight->qtype, &input,
+            &input_stride, &q8_input, &block_row, &work->forensic_numeric,
+            &additive, &output, &output_stride, &output_bf16, &status};
+        int rc = attention_launch(work, work->state->qtype_matvec_function,
+                                  grid, block, 0u, params, stage,
+                                  failure, err);
+        if (rc != YVEX_OK) return rc;
+    }
+    return YVEX_OK;
 }
 static int attention_decode(yvex_cuda_work *work,
                                const yvex_backend_attention_weight *weight,
@@ -422,7 +584,8 @@ static int attention_unit_norm(yvex_cuda_work *work,
 }
 static int attention_rope(yvex_cuda_work *work,
                              CUdeviceptr values,
-                             unsigned long long vectors,
+                             unsigned long long vectors_per_token,
+                             unsigned long long token_count,
                              unsigned long long width,
                              unsigned long long token_position,
                              const yvex_backend_attention_position *position,
@@ -432,16 +595,17 @@ static int attention_rope(yvex_cuda_work *work,
                              yvex_backend_attention_failure *failure,
                              yvex_error *err)
 {
-    unsigned long long total;
+    unsigned long long total_vectors, total;
     unsigned int grid;
     if (!position || !position->rope_dimensions ||
         position->rope_dimensions > width ||
-        vectors > ULLONG_MAX / (position->rope_dimensions / 2ull))
+        !yvex_core_u64_mul(vectors_per_token, token_count, &total_vectors) ||
+        total_vectors > ULLONG_MAX / (position->rope_dimensions / 2ull))
         return attention_fail(
             failure, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT, stage,
             width, position ? position->rope_dimensions : 0ull, err,
             YVEX_ERR_BOUNDS, "CUDA attention RoPE geometry is invalid");
-    total = vectors * (position->rope_dimensions / 2ull);
+    total = total_vectors * (position->rope_dimensions / 2ull);
     if (!total || total > UINT_MAX * (unsigned long long)CUDA_ATTENTION_BLOCK)
         return attention_fail(
             failure, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT, stage,
@@ -451,8 +615,9 @@ static int attention_rope(yvex_cuda_work *work,
                           CUDA_ATTENTION_BLOCK);
     {
         void *params[] = {
-            &values, &vectors, &width, (void *)&position->rope_dimensions,
-            &token_position, (void *)&position->theta,
+            &values, &vectors_per_token, &token_count, &width,
+            (void *)&position->rope_dimensions, &token_position,
+            (void *)&position->theta,
             (void *)&position->scaling_factor,
             (void *)&position->original_context, (void *)&position->beta_fast,
             (void *)&position->beta_slow, &inverse, &status
@@ -464,20 +629,21 @@ static int attention_rope(yvex_cuda_work *work,
 }
 static int attention_activation(
     yvex_cuda_work *work, CUdeviceptr values, unsigned long long vectors,
-    unsigned long long width, const yvex_backend_attention_activation *policy,
+    unsigned long long width, unsigned long long stride,
+    const yvex_backend_attention_activation *policy,
     CUdeviceptr status, const char *stage,
     yvex_backend_attention_failure *failure, yvex_error *err)
 {
     if (!policy || !policy->required) return YVEX_OK;
-    if (!vectors || vectors > UINT_MAX || !width || !policy->block_width ||
-        width % policy->block_width)
+    if (!vectors || vectors > UINT_MAX || !width || stride < width ||
+        !policy->block_width || width % policy->block_width)
         return attention_fail(
             failure, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT, stage,
             policy->block_width, width, err, YVEX_ERR_BOUNDS,
             "CUDA attention activation geometry is invalid");
     {
         void *params[] = {
-            &values, &vectors, &width, (void *)&policy->block_width,
+            &values, &vectors, &width, &stride, (void *)&policy->block_width,
             (void *)&policy->quantization, (void *)&policy->hadamard, &status
         };
         return attention_launch(
@@ -730,7 +896,6 @@ static int attention_validate_alias(
 #undef READ
     return attention_spans_disjoint(writes, transfer_count, reads, read_count);
 }
-
 static int attention_cancel(yvex_backend *backend,
                             const yvex_backend_attention_job *job,
                             const char *stage, int pending,
@@ -822,15 +987,12 @@ static int attention_stage_layout(
     unsigned char *base, yvex_cuda_attention_upload *uploads, size_t upload_count,
     yvex_cuda_attention_transfer *transfers, size_t transfer_count,
     unsigned long long csa_tokens, int **status, unsigned long long **selected,
-    unsigned long long **candidates, size_t *total)
+    unsigned long long **candidates, size_t *total, size_t *download_total)
 {
     size_t cursor = 0u, i;
-    if (!uploads || !transfers || !status || !selected || !candidates || !total)
+    if (!uploads || !transfers || !status || !selected || !candidates || !total ||
+        !download_total)
         return 0;
-    for (i = 0u; i < upload_count; ++i)
-        if (!attention_stage_range(base, &cursor, uploads[i].count,
-                                   uploads[i].width, &uploads[i].staged))
-            return 0;
     if (!attention_stage_range(base, &cursor, 1ull, sizeof(int), (void **)status) ||
         !attention_stage_range(base, &cursor, csa_tokens, sizeof(**selected),
                                (void **)selected) ||
@@ -840,6 +1002,11 @@ static int attention_stage_layout(
     for (i = 0u; i < transfer_count; ++i)
         if (!attention_stage_range(base, &cursor, transfers[i].capacity,
                                    transfers[i].width, &transfers[i].staged))
+            return 0;
+    *download_total = cursor;
+    for (i = 0u; i < upload_count; ++i)
+        if (!attention_stage_range(base, &cursor, uploads[i].count,
+                                   uploads[i].width, &uploads[i].staged))
             return 0;
     *total = cursor;
     return 1;
@@ -1026,7 +1193,8 @@ const yvex_cuda_attention_operations *yvex_cuda_attention_operations_get(void)
         attention_validate_alias, attention_cancel, attention_stage_acquire,
         attention_stage_layout,
         attention_allocate, attention_initialize, attention_download,
-        attention_launch, attention_round_bf16, attention_matvec, attention_decode,
+        attention_launch, attention_round_bf16, attention_matvec,
+        attention_matvec_grouped, attention_decode,
         attention_weighted_norm, attention_unit_norm, attention_rope,
         attention_activation, attention_state_stage
     };
@@ -1207,6 +1375,8 @@ int yvex_backend_attention_workspace_required_from_recipe(
             goto overflow;
         if (!yvex_core_u64_mul(count, scale, &count) ||
             !yvex_core_u64_mul(count, component->element_width, &bytes) ||
+            (component->lifetime != YVEX_ATTENTION_WORKSPACE_GRAPH_STABLE &&
+             !yvex_core_u64_add(bytes, bytes, &bytes)) ||
             cursor > ULLONG_MAX - mask) goto overflow;
         aligned = (cursor + mask) & ~mask;
         if (aligned > ULLONG_MAX - bytes) goto overflow;
@@ -1633,319 +1803,6 @@ int yvex_cuda_op_attention(yvex_backend *backend,
     out->is_written = 1;
     yvex_error_clear(err);
     return YVEX_OK;
-}
-
-static int cuda_transformer_refuse(yvex_error *err, yvex_status status,
-                                   const char *where, const char *reason)
-{
-    yvex_error_set(err, status, where, reason);
-    return status;
-}
-/*
- * Decode selected encoded embedding rows and initialize repeated mHC streams on CUDA.
- *
- * Writes device embedding and expanded tensors; allocates only transaction scratch. Ownership,
- * launch, copy, status, sync, or cleanup refusal leaves output unadmitted. Transformer embedding
- * initialization only; no tokenizer or host numerical fallback.
- */
-int yvex_backend_transformer_cuda_initial(
-    yvex_backend *backend, const yvex_device_tensor *encoded, unsigned int qtype,
-    unsigned long long token_count, unsigned long long hidden_width,
-    unsigned long long residual_streams, yvex_device_tensor *embedding,
-    yvex_device_tensor *expanded, yvex_backend_cuda_operation_facts *facts,
-    yvex_error *err)
-{
-    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
-    const yvex_gguf_qtype_geometry *geometry = yvex_gguf_qtype_geometry_find(qtype);
-    yvex_cuda_work work = {0};
-    CUstream stream = yvex_cuda_launch_stream(backend);
-    CUdeviceptr status = 0ull, encoded_ptr, embedding_ptr, expanded_ptr;
-    unsigned long long count, expanded_count, encoded_required, token, residual_stream;
-    size_t embedding_bytes, expanded_bytes, row_bytes;
-    unsigned long long activation_bytes;
-    unsigned int grid;
-    int host_status = 0, rc, cleanup_rc;
-    yvex_error cleanup;
-    if (facts) memset(facts, 0, sizeof(*facts));
-    if (!state || !geometry || !geometry->block_size || !geometry->bytes_per_block || !facts ||
-        !encoded || !embedding || !expanded || !token_count || !hidden_width ||
-        !residual_streams || !yvex_core_u64_mul(token_count, hidden_width, &count) ||
-        !yvex_core_u64_mul(count, residual_streams, &expanded_count) ||
-        !yvex_core_u64_mul(count / geometry->block_size,
-                           geometry->bytes_per_block, &encoded_required) ||
-        !yvex_cuda_work_checked_bytes(count, sizeof(float), &embedding_bytes) ||
-        !yvex_cuda_work_checked_bytes(expanded_count, sizeof(float), &expanded_bytes) ||
-        !yvex_cuda_work_checked_bytes(hidden_width, sizeof(float), &row_bytes) ||
-        !yvex_core_u64_add((unsigned long long)embedding_bytes,
-                           (unsigned long long)expanded_bytes, &activation_bytes) ||
-        !backend_tensor_owner_is(backend, encoded) ||
-        count % geometry->block_size ||
-        encoded->bytes < encoded_required ||
-        !backend_tensor_owner_is(backend, embedding) || embedding->dtype != YVEX_DTYPE_F32 ||
-        embedding->bytes < embedding_bytes ||
-        !backend_tensor_owner_is(backend, expanded) || expanded->dtype != YVEX_DTYPE_F32 ||
-        expanded->bytes < expanded_bytes ||
-        count > UINT_MAX * (unsigned long long)CUDA_ATTENTION_BLOCK)
-        return cuda_transformer_refuse(err, YVEX_ERR_FORMAT, "cuda.transformer.initial",
-                                       "CUDA transformer embedding geometry is incompatible");
-    work.backend = backend;
-    work.state = state;
-    work.variant = YVEX_BACKEND_VARIANT_ATTENTION_ENCODED;
-    rc = yvex_cuda_work_allocate(&work, &status, sizeof(int), NULL, 1,
-                                 "cuda.transformer.initial.status", NULL, err);
-    encoded_ptr = (CUdeviceptr)encoded->data;
-    embedding_ptr = (CUdeviceptr)embedding->data;
-    expanded_ptr = (CUdeviceptr)expanded->data;
-    grid = (unsigned int)((count + CUDA_ATTENTION_BLOCK - 1ull) / CUDA_ATTENTION_BLOCK);
-    if (rc == YVEX_OK) {
-        void *params[] = {&encoded_ptr, &count, &qtype, &embedding_ptr, &status};
-        rc = yvex_cuda_launch(backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
-                              state->encoded_row_decode_function, grid, CUDA_ATTENTION_BLOCK,
-                              0u, params, "cuda.transformer.embedding", err);
-    }
-    for (token = 0ull; rc == YVEX_OK && token < token_count; ++token)
-        for (residual_stream = 0ull;
-             rc == YVEX_OK && residual_stream < residual_streams; ++residual_stream) {
-            CUdeviceptr source = embedding_ptr + token * hidden_width * sizeof(float);
-            CUdeviceptr target = expanded_ptr +
-                (token * residual_streams + residual_stream) * hidden_width * sizeof(float);
-            CUresult copied = stream && state->driver.cuMemcpyDtoDAsync_v2
-                                  ? state->driver.cuMemcpyDtoDAsync_v2(
-                                        target, source, row_bytes, stream)
-                                  : !stream ? state->driver.cuMemcpyDtoD_v2(
-                                        target, source, row_bytes) : (CUresult)1;
-            rc = yvex_cuda_status(&state->driver, copied,
-                                  "cuda.transformer.initial.repeat", err);
-        }
-    if (rc == YVEX_OK)
-        rc = yvex_cuda_synchronize(backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
-                                   "cuda.transformer.initial.sync", err);
-    if (rc == YVEX_OK)
-        rc = yvex_cuda_status(&state->driver,
-                              state->driver.cuMemcpyDtoH_v2(&host_status, status, sizeof(host_status)),
-                              "cuda.transformer.initial.status", err);
-    if (rc == YVEX_OK && host_status)
-        rc = cuda_transformer_refuse(err, YVEX_ERR_FORMAT, "cuda.transformer.initial",
-                                     "CUDA transformer embedding produced invalid numerics");
-    yvex_error_clear(&cleanup);
-    cleanup_rc = yvex_cuda_work_cleanup(&work, &cleanup);
-    if (rc == YVEX_OK && cleanup_rc != YVEX_OK) { rc = cleanup_rc; if (err) *err = cleanup; }
-    if (rc == YVEX_OK) {
-        embedding->is_written = 1;
-        expanded->is_written = 1;
-        facts->d2h_bytes = sizeof(host_status);
-        facts->d2d_bytes = expanded_bytes;
-        facts->kernel_launches = 1ull;
-        facts->download_count = 1ull;
-        facts->device_synchronizations = 1ull;
-        facts->active_weight_bytes = encoded_required;
-        facts->activation_bytes = activation_bytes;
-        facts->temporary_bytes = sizeof(host_status);
-        facts->compulsory_memory_facts_available = 1;
-        yvex_error_clear(err);
-    }
-    return rc;
-}
-
-/*
- * Collapse target-feature residual streams on CUDA and publish compact and optional resident rows.
- *
- * The caller supplies reusable device storage and may request compact host evidence. Bounded
- * status and resident rows become visible together; expanded input never leaves the device.
- */
-int yvex_backend_transformer_cuda_feature_mean(
-    yvex_backend *backend, const yvex_device_tensor *expanded,
-    unsigned long long token_count, unsigned long long hidden_width,
-    unsigned long long residual_streams, yvex_device_tensor *device_output,
-    yvex_device_tensor *resident_output, unsigned long long resident_row_offset,
-    unsigned long long resident_row_stride, unsigned long long resident_column_offset,
-    float *host_output, yvex_backend_cuda_operation_facts *facts,
-    yvex_error *err)
-{
-    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
-    yvex_cuda_work work = {0};
-    CUdeviceptr status = 0ull, input_ptr, output_ptr, resident_ptr = 0ull;
-    unsigned long long input_count, output_count, activation_count, resident_rows, resident_elements;
-    size_t output_bytes, activation_bytes;
-    unsigned int grid;
-    int host_status = 0, rc, cleanup_rc;
-    yvex_error cleanup;
-    if (facts) memset(facts, 0, sizeof(*facts));
-    if (!state || !state->transformer_feature_mean_function || !facts ||
-        !token_count || !hidden_width || !residual_streams ||
-        !yvex_core_u64_mul(token_count, hidden_width, &output_count) ||
-        !yvex_core_u64_mul(output_count, residual_streams, &input_count) ||
-        !yvex_core_u64_add(input_count, output_count, &activation_count) ||
-        (resident_output &&
-         (!yvex_core_u64_add(activation_count, output_count, &activation_count) ||
-          !resident_row_stride || resident_column_offset > resident_row_stride ||
-          hidden_width > resident_row_stride - resident_column_offset ||
-          !yvex_core_u64_add(resident_row_offset, token_count, &resident_rows) ||
-          !yvex_core_u64_mul(resident_rows, resident_row_stride, &resident_elements) ||
-          resident_elements > ULLONG_MAX / sizeof(float) ||
-          !backend_tensor_owner_is(backend, resident_output) ||
-          resident_output->dtype != YVEX_DTYPE_F32 ||
-          resident_output->data == expanded->data || resident_output->data == device_output->data ||
-          resident_output->bytes < resident_elements * sizeof(float))) ||
-        (!resident_output &&
-         (resident_row_offset || resident_row_stride || resident_column_offset)) ||
-        !yvex_cuda_work_checked_bytes(output_count, sizeof(float), &output_bytes) ||
-        !yvex_cuda_work_checked_bytes(activation_count, sizeof(float), &activation_bytes) ||
-        output_count > UINT_MAX * (unsigned long long)CUDA_ATTENTION_BLOCK ||
-        !backend_tensor_f32_elements(expanded, input_count) ||
-        !backend_tensor_f32_elements(device_output, output_count))
-        return cuda_transformer_refuse(
-            err, YVEX_ERR_FORMAT, "cuda.transformer.feature-mean",
-            "CUDA transformer feature geometry is incompatible");
-    device_output->is_written = 0;
-    if (resident_output) resident_output->is_written = 0;
-    work.backend = backend;
-    work.state = state;
-    work.variant = YVEX_BACKEND_VARIANT_ATTENTION_ENCODED;
-    rc = yvex_cuda_work_allocate(&work, &status, sizeof(int), NULL, 1,
-                                 "cuda.transformer.feature-mean.status", NULL, err);
-    input_ptr = (CUdeviceptr)expanded->data;
-    output_ptr = (CUdeviceptr)device_output->data;
-    if (resident_output) resident_ptr = (CUdeviceptr)resident_output->data;
-    grid = (unsigned int)((output_count + CUDA_ATTENTION_BLOCK - 1ull) /
-                          CUDA_ATTENTION_BLOCK);
-    if (rc == YVEX_OK) {
-        void *params[] = {
-            &input_ptr, &token_count, &residual_streams, &hidden_width,
-            &output_ptr, &resident_ptr, &resident_row_offset,
-            &resident_row_stride, &resident_column_offset, &status};
-        rc = yvex_cuda_launch(
-            backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
-            state->transformer_feature_mean_function, grid, CUDA_ATTENTION_BLOCK,
-            0u, params, "cuda.transformer.feature-mean", err);
-    }
-    if (rc == YVEX_OK)
-        rc = yvex_cuda_synchronize(backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
-                                   "cuda.transformer.feature-mean.sync", err);
-    if (rc == YVEX_OK)
-        rc = yvex_cuda_status(
-            &state->driver,
-            state->driver.cuMemcpyDtoH_v2(&host_status, status, sizeof(host_status)),
-            "cuda.transformer.feature-mean.status", err);
-    if (rc == YVEX_OK && host_status)
-        rc = cuda_transformer_refuse(
-            err, YVEX_ERR_FORMAT, "cuda.transformer.feature-mean",
-            "CUDA transformer feature reduction produced invalid numerics");
-    if (rc == YVEX_OK && host_output)
-        rc = yvex_cuda_status(
-            &state->driver,
-            state->driver.cuMemcpyDtoH_v2(host_output, output_ptr, output_bytes),
-            "cuda.transformer.feature-mean.output", err);
-    yvex_error_clear(&cleanup);
-    cleanup_rc = yvex_cuda_work_cleanup(&work, &cleanup);
-    if (rc == YVEX_OK && cleanup_rc != YVEX_OK) {
-        rc = cleanup_rc;
-        if (err) *err = cleanup;
-    }
-    if (rc == YVEX_OK) {
-        device_output->is_written = 1;
-        if (resident_output) resident_output->is_written = 1;
-        facts->d2h_bytes = sizeof(host_status) + (host_output ? output_bytes : 0u);
-        facts->kernel_launches = 1ull;
-        facts->download_count = 1ull + (host_output != NULL);
-        facts->device_synchronizations = 1ull;
-        facts->activation_bytes = activation_bytes;
-        facts->temporary_bytes = sizeof(host_status);
-        facts->compulsory_memory_facts_available = 1;
-        yvex_error_clear(err);
-    }
-    return rc;
-}
-
-int yvex_backend_transformer_cuda_final(
-    yvex_backend *backend, const yvex_device_tensor *expanded,
-    const yvex_device_tensor *function, const yvex_device_tensor *base,
-    const yvex_device_tensor *scale, const yvex_device_tensor *norm,
-    unsigned long long token_count, unsigned long long hidden_width,
-    unsigned long long residual_streams, double epsilon, double mhc_epsilon,
-    yvex_device_tensor *pre_normalized, yvex_device_tensor *output,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err)
-{
-    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
-    yvex_cuda_work work = {0};
-    CUdeviceptr status = 0ull, input_ptr, function_ptr, base_ptr, scale_ptr, norm_ptr;
-    CUdeviceptr pre_output_ptr = 0ull, output_ptr;
-    unsigned long long expanded_width, expanded_count, function_count, output_count;
-    unsigned long long weight_count, activation_count;
-    size_t weight_bytes, activation_bytes;
-    int host_status = 0, rc, cleanup_rc;
-    yvex_error cleanup;
-    if (facts) memset(facts, 0, sizeof(*facts));
-    if (!state || !facts || !token_count || !hidden_width || !residual_streams ||
-        !yvex_core_u64_mul(hidden_width, residual_streams, &expanded_width) ||
-        !yvex_core_u64_mul(token_count, expanded_width, &expanded_count) ||
-        !yvex_core_u64_mul(residual_streams, expanded_width, &function_count) ||
-        !yvex_core_u64_mul(token_count, hidden_width, &output_count) ||
-        !yvex_core_u64_add(function_count, residual_streams, &weight_count) ||
-        !yvex_core_u64_add(weight_count, 1ull, &weight_count) ||
-        !yvex_core_u64_add(weight_count, hidden_width, &weight_count) ||
-        !yvex_core_u64_add(expanded_count, output_count, &activation_count) ||
-        (pre_normalized &&
-         !yvex_core_u64_add(activation_count, output_count, &activation_count)) ||
-        !yvex_cuda_work_checked_bytes(weight_count, sizeof(float), &weight_bytes) ||
-        !yvex_cuda_work_checked_bytes(activation_count, sizeof(float), &activation_bytes) ||
-        token_count > UINT_MAX || !backend_tensor_f32_elements(expanded, expanded_count) ||
-        !backend_tensor_f32_elements(function, function_count) ||
-        !backend_tensor_f32_elements(base, residual_streams) ||
-        !backend_tensor_f32_elements(scale, 1ull) ||
-        !backend_tensor_f32_elements(norm, hidden_width) ||
-        !backend_tensor_f32_elements(output, output_count) ||
-        (pre_normalized &&
-         (!backend_tensor_f32_elements(pre_normalized, output_count) ||
-          pre_normalized->data == output->data)))
-        return cuda_transformer_refuse(err, YVEX_ERR_FORMAT, "cuda.transformer.final",
-                                       "CUDA transformer final geometry is incompatible");
-    work.backend = backend;
-    work.state = state;
-    work.variant = YVEX_BACKEND_VARIANT_ATTENTION_ENCODED;
-    rc = yvex_cuda_work_allocate(&work, &status, sizeof(int), NULL, 1,
-                                 "cuda.transformer.final.status", NULL, err);
-    input_ptr = (CUdeviceptr)expanded->data; function_ptr = (CUdeviceptr)function->data;
-    base_ptr = (CUdeviceptr)base->data; scale_ptr = (CUdeviceptr)scale->data;
-    norm_ptr = (CUdeviceptr)norm->data;
-    if (pre_normalized) pre_output_ptr = (CUdeviceptr)pre_normalized->data;
-    output_ptr = (CUdeviceptr)output->data;
-    if (rc == YVEX_OK) {
-        void *params[] = {&input_ptr, &function_ptr, &base_ptr, &scale_ptr, &norm_ptr,
-                          &token_count, &residual_streams, &hidden_width, &epsilon,
-                          &mhc_epsilon, &pre_output_ptr, &output_ptr, &status};
-        rc = yvex_cuda_launch(backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
-            state->transformer_final_function, (unsigned int)token_count,
-            CUDA_ATTENTION_BLOCK, CUDA_ATTENTION_BLOCK * (unsigned int)sizeof(double),
-            params, "cuda.transformer.final", err);
-    }
-    if (rc == YVEX_OK)
-        rc = yvex_cuda_synchronize(backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
-                                   "cuda.transformer.final.sync", err);
-    if (rc == YVEX_OK)
-        rc = yvex_cuda_status(&state->driver,
-                              state->driver.cuMemcpyDtoH_v2(&host_status, status, sizeof(host_status)),
-                              "cuda.transformer.final.status", err);
-    if (rc == YVEX_OK && host_status)
-        rc = cuda_transformer_refuse(err, YVEX_ERR_FORMAT, "cuda.transformer.final",
-                                     "CUDA transformer final stage produced invalid numerics");
-    yvex_error_clear(&cleanup);
-    cleanup_rc = yvex_cuda_work_cleanup(&work, &cleanup);
-    if (rc == YVEX_OK && cleanup_rc != YVEX_OK) { rc = cleanup_rc; if (err) *err = cleanup; }
-    if (rc == YVEX_OK) {
-        if (pre_normalized) pre_normalized->is_written = 1;
-        output->is_written = 1;
-        facts->d2h_bytes = sizeof(host_status);
-        facts->kernel_launches = 1ull;
-        facts->download_count = 1ull;
-        facts->device_synchronizations = 1ull;
-        facts->active_weight_bytes = weight_bytes;
-        facts->activation_bytes = activation_bytes;
-        facts->temporary_bytes = sizeof(host_status);
-        facts->compulsory_memory_facts_available = 1;
-        yvex_error_clear(err);
-    }
-    return rc;
 }
 
 int yvex_cuda_activation_views_valid(yvex_backend *backend,

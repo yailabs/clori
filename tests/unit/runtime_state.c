@@ -11,9 +11,11 @@
 
 #include <yvex/internal/graph_state.h>
 #include <yvex/internal/candidate.h>
+#include <yvex/internal/core.h>
 #include <yvex/internal/runtime.h>
 
 #include "src/graph/private.h"
+#include "src/runtime/private.h"
 
 typedef struct {
     yvex_attention_publication publication;
@@ -954,8 +956,10 @@ static int test_state_identity_is_execution_shape_neutral(
 static int test_candidate_prefix_compression_boundary(void)
 {
     yvex_attention_candidate_delta *delta = NULL;
+    yvex_attention_candidate_delta *periodic = NULL;
     yvex_attention_history_view committed;
     yvex_attention_publication source, projected;
+    yvex_core_allocation_epoch before_reuse, after_reuse;
     yvex_error err;
     float raw[6] = {1.0f, -1.0f, 2.0f, -2.0f, 3.0f, -3.0f};
     float compressed[2] = {4.0f, -4.0f};
@@ -1002,9 +1006,11 @@ static int test_candidate_prefix_compression_boundary(void)
     source.indexer_positions = &compressed_position;
     source.rolling_checkpoint_count = 3ull;
     source.next_main_rolling_state.present = 1;
+    source.next_main_rolling_state.head_dimension = 2ull;
     source.next_main_rolling_state.kv_state_extent = 1ull;
     source.next_main_rolling_state.score_state_extent = 1ull;
     source.next_indexer_rolling_state.present = 1;
+    source.next_indexer_rolling_state.head_dimension = 2ull;
     source.next_indexer_rolling_state.kv_state_extent = 1ull;
     source.next_indexer_rolling_state.score_state_extent = 1ull;
     source.main_rolling_kv_checkpoints = main_kv;
@@ -1036,7 +1042,48 @@ static int test_candidate_prefix_compression_boundary(void)
             projected.indexer_count == 1ull &&
             projected.next_main_rolling_state.next_token_position == 40ull,
         "prefix containing the completing row exposes exactly one compressed entry");
+    raw[0] = 7.0f;
+    tokens[0] = 9u;
+    yvex_core_allocation_epoch_snapshot(&before_reuse);
+    YVEX_TEST_ASSERT(
+        yvex_attention_candidate_delta_open(&delta, &source, &err) == YVEX_OK,
+        "candidate delta storage accepts a same-geometry replacement");
+    yvex_core_allocation_epoch_snapshot(&after_reuse);
+    YVEX_TEST_ASSERT(
+        after_reuse.allocation_events == before_reuse.allocation_events &&
+            after_reuse.reallocation_events == before_reuse.reallocation_events &&
+            after_reuse.release_events == before_reuse.release_events,
+        "same-geometry candidate replacement reuses retained storage");
+    YVEX_TEST_ASSERT(
+        yvex_attention_candidate_delta_project(
+            delta, &committed, 1ull, &projected, &err) == YVEX_OK &&
+            projected.raw_kv[0] == 7.0f && projected.token_ids[0] == 9u,
+        "reused candidate storage retains the replacement publication");
     yvex_attention_candidate_delta_close(&delta);
+
+    source.compressed_count = source.indexer_count = 0ull;
+    source.compressed_stride = source.indexer_stride = 0ull;
+    source.compressed_kv = source.indexer_kv = NULL;
+    source.compressed_positions = source.indexer_positions = NULL;
+    YVEX_TEST_ASSERT(
+        yvex_attention_candidate_delta_open(&periodic, &source, &err) == YVEX_OK,
+        "candidate delta reserves a future rolling emission");
+    yvex_core_allocation_epoch_snapshot(&before_reuse);
+    source.compressed_count = source.indexer_count = 1ull;
+    source.compressed_stride = source.indexer_stride = 2ull;
+    source.compressed_kv = source.indexer_kv = compressed;
+    source.compressed_positions = source.indexer_positions =
+        &compressed_position;
+    YVEX_TEST_ASSERT(
+        yvex_attention_candidate_delta_open(&periodic, &source, &err) == YVEX_OK,
+        "periodic rolling emission uses the sealed row geometry");
+    yvex_core_allocation_epoch_snapshot(&after_reuse);
+    YVEX_TEST_ASSERT(
+        after_reuse.allocation_events == before_reuse.allocation_events &&
+            after_reuse.reallocation_events == before_reuse.reallocation_events &&
+            after_reuse.release_events == before_reuse.release_events,
+        "first periodic emission reuses preflighted candidate storage");
+    yvex_attention_candidate_delta_close(&periodic);
     return 0;
 }
 
@@ -1517,6 +1564,127 @@ static int test_batch_publication_is_atomic(const state_plan_fixture *fixture)
     return 0;
 }
 
+/* A deferred CUDA stack may queue layers, but only ordered completions may stage state. */
+static int test_deferred_state_publication(const state_plan_fixture *fixture)
+{
+    test_state state = {0};
+    state_token token[2];
+    yvex_graph_attention_state_summary summary;
+    yvex_attention_failure failure;
+    runtime_attention_state_bridge bridge = {0};
+    yvex_attention_probe_state_provider provider;
+    yvex_error err;
+    char delta[YVEX_SHA256_HEX_CAP];
+    unsigned long long required;
+    unsigned long long layer;
+    int rc = 0;
+
+    memset(token, 0, sizeof(token));
+    yvex_error_clear(&err);
+    YVEX_TEST_ASSERT(
+        yvex_attention_deferred_workspace_required(
+            2ull, 4096ull, &required, &err) == YVEX_OK && required > 4096ull,
+        "deferred attention capacity includes every retained layer record");
+    YVEX_TEST_ASSERT(
+        yvex_attention_deferred_workspace_required(
+            ULLONG_MAX, ULLONG_MAX, &required, &err) == YVEX_ERR_BOUNDS,
+        "deferred attention capacity refuses arithmetic overflow before mutation");
+    yvex_error_clear(&err);
+    YVEX_TEST_ASSERT(
+        state_open(&state, &fixture->plan, 16ull * 1024ull * 1024ull,
+                   &failure, &err) == YVEX_OK &&
+            state_prepare(&state, &fixture->layers[0],
+                          fixture->plan.summary.attention_plan_identity) &&
+            state_prepare(&state, &fixture->layers[1],
+                          fixture->plan.summary.attention_plan_identity),
+        "deferred state fixture opens two ordered layers");
+    bridge.provider = &state;
+    bridge.operation_scope = YVEX_ATTENTION_OPERATION_CORE;
+    provider = yvex_runtime_private_attention_state_provider(&bridge);
+    for (layer = 0ull; layer < 2ull; ++layer) {
+        const yvex_attention_history_view *history;
+        YVEX_TEST_ASSERT(
+            provider.begin(provider.context, layer, &fixture->layers[layer],
+                           NULL, 0ull, 1ull, NULL, &history,
+                           &failure, &err) == YVEX_OK,
+            "deferred layer begins without waiting for an earlier device completion");
+        YVEX_TEST_ASSERT(
+            history && state_token_open(
+                           &token[layer], &fixture->layers[layer], history, 0ull),
+            "deferred layer retains one complete private publication");
+        token[layer].publication.device_completion_pending = 1;
+        delta[0] = '\0';
+        YVEX_TEST_ASSERT(
+            provider.stage(provider.context, &token[layer].publication, NULL,
+                           delta, &failure, &err) == YVEX_OK && !delta[0],
+            "provisional device publication exposes no state identity");
+    }
+    YVEX_TEST_ASSERT(
+        state_summary(&state, &summary, &err) == YVEX_OK &&
+            summary.transaction_active && !summary.candidate_active &&
+            bridge.pending_layer_count == 2ull && !bridge.layer_active &&
+            !summary.staged_layer_count &&
+            state_view(&state, 0ull,
+                       YVEX_ATTENTION_STATE_VIEW_COMMITTED)->token_count == 0ull &&
+            state_view(&state, 1ull,
+                       YVEX_ATTENTION_STATE_VIEW_COMMITTED)->token_count == 0ull,
+        "queued device publications mutate neither committed nor staged state");
+    token[1].publication.device_completion_pending = 0;
+    YVEX_TEST_ASSERT(
+        provider.stage(provider.context, &token[1].publication, NULL, delta,
+                       &failure, &err) == YVEX_ERR_FORMAT &&
+            provider.abort(provider.context, &failure, &err) == YVEX_OK &&
+            state_summary(&state, &summary, &err) == YVEX_OK &&
+            !summary.transaction_active && !summary.staged_layer_count &&
+            !bridge.pending_layer_count,
+        "out-of-order completion refuses and abort clears every pending layer");
+    for (layer = 0ull; layer < 2ull; ++layer)
+        state_token_release(&token[layer]);
+
+    for (layer = 0ull; layer < 2ull; ++layer) {
+        const yvex_attention_history_view *history;
+        if (provider.begin(provider.context, layer, &fixture->layers[layer],
+                           NULL, 0ull, 1ull, NULL, &history,
+                           &failure, &err) != YVEX_OK)
+            rc = 1;
+        if (rc || !history ||
+            !state_token_open(&token[layer], &fixture->layers[layer], history, 0ull))
+            rc = 1;
+        if (!rc) {
+            token[layer].publication.prefix_addressable = layer == 0ull;
+            token[layer].publication.device_completion_pending = 1;
+            delta[0] = '\0';
+            if (provider.stage(provider.context, &token[layer].publication,
+                               NULL, delta, &failure, &err) != YVEX_OK ||
+                delta[0])
+                rc = 1;
+        }
+    }
+    for (layer = 0ull; !rc && layer < 2ull; ++layer) {
+        token[layer].publication.device_completion_pending = 0;
+        if (provider.stage(provider.context, &token[layer].publication, NULL,
+                           delta, &failure, &err) != YVEX_OK ||
+            !yvex_sha256_hex_valid(delta))
+            rc = 1;
+    }
+    YVEX_TEST_ASSERT(
+        !rc && state_summary(&state, &summary, &err) == YVEX_OK &&
+            !summary.candidate_active && summary.staged_layer_count == 2ull &&
+            summary.staged_batch_complete && !bridge.pending_layer_count &&
+            yvex_sha256_hex_valid(bridge.last_delta_identity) &&
+            state.commit(state.context, &failure, &err) == YVEX_OK &&
+            state_view(&state, 0ull,
+                       YVEX_ATTENTION_STATE_VIEW_COMMITTED)->token_count == 1ull &&
+            state_view(&state, 1ull,
+                       YVEX_ATTENTION_STATE_VIEW_COMMITTED)->token_count == 1ull,
+        "ordered completions admit a prefix-addressable state publication");
+    for (layer = 0ull; layer < 2ull; ++layer)
+        state_token_release(&token[layer]);
+    YVEX_TEST_ASSERT(state_close(&state),
+                     "deferred state fixture releases all retained ownership");
+    return 0;
+}
+
 /* Prove aggregate capacity accounting remains distinct from one-layer capture maxima. */
 static int test_summary_capacity_accounting(const state_plan_fixture *fixture)
 {
@@ -1938,7 +2106,7 @@ static int test_state_checkpoint_restore(const state_plan_fixture *fixture)
                                         &err)
                      : YVEX_ERR_STATE;
     YVEX_TEST_ASSERT(
-        restored.schema_version == YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V6 &&
+        restored.schema_version == YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V8 &&
             restored.restore && restore_rc == YVEX_OK &&
             state_summary(&restored, &after, &err) == YVEX_OK &&
             after.committed_sequence_length == 3ull &&
@@ -1962,6 +2130,142 @@ static int test_state_checkpoint_restore(const state_plan_fixture *fixture)
     return 0;
 }
 
+static int test_state_shared_prefix(const state_plan_fixture *fixture)
+{
+    state_plan_fixture single = *fixture;
+    yvex_execution_capacity_plan capacity, incompatible_capacity;
+    yvex_attention_state_prefix *prefix = NULL;
+    yvex_attention_state_prefix_summary prefix_before, prefix_after;
+    yvex_graph_attention_state_summary source_before, source_after;
+    yvex_graph_attention_state_summary child_before, child_after;
+    yvex_graph_attention_state_summary incompatible_after;
+    yvex_attention_failure failure;
+    yvex_error err;
+    test_state reference = {0}, source = {0}, child = {0}, incompatible = {0};
+    const yvex_attention_history_view *source_view, *child_view;
+    char delta[YVEX_SHA256_HEX_CAP];
+    unsigned long long position;
+
+    single.layers[0] = fixture->layers[1];
+    single.layers[0].layer_index = 0ull;
+    single.plan.layers = single.layers;
+    single.plan.layer_count = single.plan.summary.layer_count = 1ull;
+    single.plan.summary.swa_layer_count = single.plan.summary.hca_layer_count = 0ull;
+    single.plan.summary.csa_layer_count = 1ull;
+    state_page_capacity_open(&capacity);
+    capacity.state_pool_bytes = 1024ull * 1024ull;
+    yvex_error_clear(&err);
+    YVEX_TEST_ASSERT(
+        state_open(&reference, &single.plan, 1024ull * 1024ull,
+                   &failure, &err) == YVEX_OK &&
+            state_prepare(&reference, &single.layers[0],
+                          single.plan.summary.attention_plan_identity) &&
+            reference.prefix_capture(
+                reference.context, 1024ull * 1024ull, &prefix,
+                &failure, &err) == YVEX_ERR_UNSUPPORTED &&
+            prefix == NULL && state_close(&reference),
+        "shared-prefix capture refuses the eager reference provider");
+    YVEX_TEST_ASSERT(
+        state_open(&source, &single.plan, 1024ull * 1024ull,
+                   &failure, &err) == YVEX_OK &&
+            state_open(&child, &single.plan, 1024ull * 1024ull,
+                       &failure, &err) == YVEX_OK &&
+            source.configure_pages(source.context, &capacity, &failure, &err) ==
+                YVEX_OK &&
+            child.configure_pages(child.context, &capacity, &failure, &err) ==
+                YVEX_OK &&
+            state_prepare(&source, &single.layers[0],
+                          single.plan.summary.attention_plan_identity) &&
+            state_prepare(&child, &single.layers[0],
+                          single.plan.summary.attention_plan_identity),
+        "shared-prefix providers admit identical paged geometry");
+    for (position = 0ull; position < 3ull; ++position)
+        YVEX_TEST_ASSERT(
+            state_apply_token(&source, &single.layers[0], position, 0, delta),
+            "shared-prefix source commits an exact prefix");
+    YVEX_TEST_ASSERT(
+        state_summary(&source, &source_before, &err) == YVEX_OK &&
+            state_summary(&child, &child_before, &err) == YVEX_OK &&
+            source.prefix_capture && source.prefix_attach &&
+            source.prefix_capture(source.context, 1ull, &prefix, &failure,
+                                  &err) == YVEX_ERR_BOUNDS &&
+            prefix == NULL &&
+            source.prefix_capture(source.context, 1024ull * 1024ull, &prefix,
+                                  &failure, &err) == YVEX_OK &&
+            prefix &&
+            yvex_attention_state_prefix_summary_copy(
+                prefix, &prefix_before, &err) == YVEX_OK &&
+            prefix_before.schema_version ==
+                YVEX_ATTENTION_STATE_PREFIX_SCHEMA_V1 &&
+            prefix_before.layer_count == 1ull &&
+            prefix_before.committed_sequence_length == 3ull &&
+            prefix_before.shared_bytes &&
+            prefix_before.mapped_bytes >= prefix_before.shared_bytes &&
+            prefix_before.reference_count >= 3ull,
+        "prefix capture enforces budget and publishes immutable shared backing");
+    YVEX_TEST_ASSERT(
+        child.prefix_attach(child.context, prefix, &failure, &err) == YVEX_OK &&
+            state_summary(&child, &child_after, &err) == YVEX_OK &&
+            child_after.committed_sequence_length == 3ull &&
+            child_after.next_position == 3ull &&
+            child_after.resident_bytes == 0ull &&
+            strcmp(child_after.state_content_identity,
+                   source_before.state_content_identity) == 0 &&
+            yvex_attention_state_prefix_summary_copy(
+                prefix, &prefix_after, &err) == YVEX_OK &&
+            prefix_after.reference_count >= 5ull,
+        "prefix attach shares physical backing without charging private state");
+    source_view = state_view(&source, 0ull, YVEX_ATTENTION_STATE_VIEW_COMMITTED);
+    child_view = state_view(&child, 0ull, YVEX_ATTENTION_STATE_VIEW_COMMITTED);
+    YVEX_TEST_ASSERT(
+        source_view && child_view && source_view->token_count == 3ull &&
+            child_view->token_count == 3ull &&
+            source_view->local_kv[0] == child_view->local_kv[0] &&
+            source_view->local_positions[0] == child_view->local_positions[0],
+        "source and child expose the same immutable semantic prefix");
+    YVEX_TEST_ASSERT(
+        state_apply_token(&child, &single.layers[0], 3ull, 0, delta) &&
+            state_summary(&source, &source_after, &err) == YVEX_OK &&
+            state_summary(&child, &child_after, &err) == YVEX_OK &&
+            source_after.committed_sequence_length == 3ull &&
+            child_after.committed_sequence_length == 4ull &&
+            child_after.resident_bytes > child_before.resident_bytes &&
+            strcmp(source_after.state_content_identity,
+                   source_before.state_content_identity) == 0 &&
+            strcmp(child_after.state_content_identity,
+                   source_after.state_content_identity) != 0,
+        "child extension faults private COW pages without mutating the source");
+    incompatible_capacity = capacity;
+    incompatible_capacity.identity[0] =
+        incompatible_capacity.identity[0] == '0' ? '1' : '0';
+    YVEX_TEST_ASSERT(
+        state_open(&incompatible, &single.plan, 1024ull * 1024ull,
+                   &failure, &err) == YVEX_OK &&
+            incompatible.configure_pages(
+                incompatible.context, &incompatible_capacity, &failure,
+                &err) == YVEX_OK &&
+            state_prepare(&incompatible, &single.layers[0],
+                          single.plan.summary.attention_plan_identity) &&
+            incompatible.prefix_attach(
+                incompatible.context, prefix, &failure, &err) ==
+                YVEX_ERR_FORMAT &&
+            state_summary(&incompatible, &incompatible_after, &err) == YVEX_OK &&
+            incompatible_after.committed_sequence_length == 0ull &&
+            !incompatible_after.invalidated,
+        "incompatible prefix identity refuses before destination mutation");
+    YVEX_TEST_ASSERT(
+        child.reset(child.context, &failure, &err) == YVEX_OK &&
+            yvex_attention_state_prefix_summary_copy(
+                prefix, &prefix_after, &err) == YVEX_OK &&
+            prefix_after.reference_count == prefix_before.reference_count &&
+            state_close(&source) && state_close(&child) &&
+            state_close(&incompatible),
+        "reset releases child sharing and all providers close cleanly");
+    yvex_attention_state_prefix_close(&prefix);
+    YVEX_TEST_ASSERT(prefix == NULL, "prefix close releases immutable backing");
+    return 0;
+}
+
 static int test_state_pages(const state_plan_fixture *fixture)
 {
     yvex_execution_capacity_plan capacity, changed;
@@ -1969,7 +2273,8 @@ static int test_state_pages(const state_plan_fixture *fixture)
     yvex_attention_state_recipe recipe, initial_recipe;
     yvex_graph_attention_state_summary summary, touched;
     yvex_attention_failure failure;
-    test_state state = {0}, initial = {0}, reference = {0}, limited = {0};
+    test_state state = {0}, model_maximum = {0}, initial = {0};
+    test_state reference = {0}, limited = {0};
     yvex_error err;
     const float *stable;
     char delta[YVEX_SHA256_HEX_CAP];
@@ -2036,6 +2341,28 @@ static int test_state_pages(const state_plan_fixture *fixture)
             state_view(&state, 1ull, YVEX_ATTENTION_STATE_VIEW_COMMITTED)->local_kv == stable &&
             state_close(&state),
         "reset releases physical pages without relocating the admitted state span");
+    state_page_capacity_open(&capacity);
+    capacity.per_session_maximum = 1048576ull;
+    (void)snprintf(capacity.identity, sizeof(capacity.identity), "%064x", 0x106u);
+    request.final_position = capacity.per_session_maximum;
+    YVEX_TEST_ASSERT(
+        state_open(&model_maximum, &fixture->plan, 512ull * 1024ull,
+                   &failure, &err) == YVEX_OK &&
+            model_maximum.configure_pages(model_maximum.context, &capacity,
+                                          &failure, &err) == YVEX_OK &&
+            state_recipe_project(&fixture->layers[1], &request, &recipe,
+                                 &failure, &err) == YVEX_OK &&
+            model_maximum.prepare(model_maximum.context, 1ull, &recipe, NULL,
+                                  &failure, &err) == YVEX_OK &&
+            state_summary(&model_maximum, &summary, &err) == YVEX_OK &&
+            summary.paged && summary.virtual_bytes > summary.resident_bytes &&
+            state_apply_token(&model_maximum, &fixture->layers[1], 0ull, 0,
+                              delta) &&
+            state_summary(&model_maximum, &touched, &err) == YVEX_OK &&
+            touched.resident_bytes > summary.resident_bytes &&
+            touched.next_position == 1ull && state_close(&model_maximum),
+        "model-authored 1M state extent remains virtual until its first semantic page");
+    state_page_capacity_open(&capacity);
     capacity.state_pool_bytes = 4096ull;
     YVEX_TEST_ASSERT(
         state_open(&limited, &fixture->plan, 512ull * 1024ull,
@@ -2069,9 +2396,11 @@ int yvex_test_runtime_state(void)
     if (test_candidate_prefix_compression_boundary() != 0) return 1;
     if (test_state_reset(&fixture) != 0) return 1;
     if (test_state_checkpoint_restore(&fixture) != 0) return 1;
+    if (test_state_shared_prefix(&fixture) != 0) return 1;
     if (test_summary_capacity_accounting(&fixture) != 0) return 1;
     if (test_prepare_failure_is_atomic(&fixture) != 0) return 1;
     if (test_batch_publication_is_atomic(&fixture) != 0) return 1;
+    if (test_deferred_state_publication(&fixture) != 0) return 1;
     YVEX_TEST_ASSERT(state_phase_equivalence(&fixture, 0ull, 6ull),
                      "SWA chunk and ordered decode preserve rollover state exactly");
     YVEX_TEST_ASSERT(state_phase_equivalence(&fixture, 1ull, 2052ull),

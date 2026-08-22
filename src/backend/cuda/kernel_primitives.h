@@ -7,7 +7,6 @@
 #ifndef SRC_BACKEND_CUDA_KERNEL_PRIMITIVES_H_INCLUDED
 #define SRC_BACKEND_CUDA_KERNEL_PRIMITIVES_H_INCLUDED
 #include <yvex/qtype.h>
-
 enum {
     YVEX_CUDA_SAMPLING_TOP_K_COUNT = 0,
     YVEX_CUDA_SAMPLING_MIN_P_COUNT,
@@ -103,21 +102,12 @@ static __device__ float e8m0_bits_to_float(unsigned int bits)
     if (bits == 0xffu) return __uint_as_float(0x7fc00000u);
     return __uint_as_float(bits == 0u ? 0x00400000u : bits << 23);
 }
-
 static __device__ float mxfp4_code_to_float(unsigned int code)
 {
-    float magnitude;
-    switch (code & 7u) {
-    case 0u: magnitude = 0.0f; break;
-    case 1u: magnitude = 1.0f; break;
-    case 2u: magnitude = 2.0f; break;
-    case 3u: magnitude = 3.0f; break;
-    case 4u: magnitude = 4.0f; break;
-    case 5u: magnitude = 6.0f; break;
-    case 6u: magnitude = 8.0f; break;
-    default: magnitude = 12.0f; break;
-    }
-    return code & 8u ? -magnitude : magnitude;
+    unsigned int magnitude = code & 7u;
+    magnitude += (magnitude & 3u) * (magnitude >> 2u);
+    magnitude += (unsigned int)(magnitude == 10u) * 2u;
+    return __uint_as_float(__float_as_uint((float)magnitude) | ((code & 8u) << 28u));
 }
 /* Pinned compatible IQ2_XXS magnitude-grid identities. */
 static __device__ __constant__ unsigned short iq2_xxs_grid[256] = {
@@ -157,13 +147,10 @@ static __device__ float qtype_value(const unsigned char *encoded,
     if (qtype == YVEX_GGUF_QTYPE_F32) {
         return __uint_as_float(qtype_load_u32(encoded + index * 4ull));
     }
-    if (qtype == YVEX_GGUF_QTYPE_F16) {
-        return f16_bits_to_float(
-            qtype_load_u16(encoded + index * 2ull));
-    }
-    if (qtype == YVEX_GGUF_QTYPE_BF16) {
-        return bf16_bits_to_float(
-            qtype_load_u16(encoded + index * 2ull));
+    if (qtype == YVEX_GGUF_QTYPE_F16 || qtype == YVEX_GGUF_QTYPE_BF16) {
+        unsigned short bits = qtype_load_u16(encoded + index * 2ull);
+        return qtype == YVEX_GGUF_QTYPE_F16
+            ? f16_bits_to_float(bits) : bf16_bits_to_float(bits);
     }
     if (qtype == YVEX_GGUF_QTYPE_I32) {
         unsigned int raw = qtype_load_u32(encoded + index * 4ull);
@@ -232,13 +219,33 @@ static __device__ float qtype_warp_dot(const unsigned char *row, const float *ve
                                        unsigned long long width, unsigned int qtype,
                                        int *status)
 {
+    /* Dense source types select once per row so the inner dot has no qtype dispatch. */
     unsigned int lane = threadIdx.x & 31u;
     float sum = 0.0f;
     if (!row || !vector || !width) {
         if (!lane) atomicCAS(status, 0, 2);
-    } else for (unsigned long long i = lane; i < width; i += 32ull) {
-        float weight = qtype_value(row, i, qtype);
+    } else if (qtype == YVEX_GGUF_QTYPE_F32) for (unsigned long long i = lane; i < width; i += 32ull) {
+        float weight = __uint_as_float(qtype_load_u32(row + i * 4ull)), value = vector[i];
+        if (!isfinite(weight) || !isfinite(value)) atomicCAS(status, 0, 1);
+        else sum = fmaf(weight, value, sum);
+    } else if (qtype == YVEX_GGUF_QTYPE_F16) for (unsigned long long i = lane; i < width; i += 32ull) {
+        float weight = f16_bits_to_float(qtype_load_u16(row + i * 2ull)), value = vector[i];
+        if (!isfinite(weight) || !isfinite(value)) atomicCAS(status, 0, 1);
+        else sum = fmaf(weight, value, sum);
+    } else if (qtype == YVEX_GGUF_QTYPE_BF16) for (unsigned long long i = lane; i < width; i += 32ull) {
+        float weight = bf16_bits_to_float(qtype_load_u16(row + i * 2ull)), value = vector[i];
+        if (!isfinite(weight) || !isfinite(value)) atomicCAS(status, 0, 1);
+        else sum = fmaf(weight, value, sum);
+    } else if (qtype == YVEX_GGUF_QTYPE_MXFP4) for (unsigned long long i = lane; i < width; i += 32ull) {
+        const unsigned char *block = row + (i >> 5u) * 17ull;
+        unsigned int packed = block[1u + (unsigned int)(i & 15ull)];
+        unsigned int code = (i & 16ull) ? packed >> 4u : packed & 15u;
+        float weight = mxfp4_code_to_float(code) * e8m0_bits_to_float(block[0]) * 0.5f;
         float value = vector[i];
+        if (!isfinite(weight) || !isfinite(value)) atomicCAS(status, 0, 1);
+        else sum = fmaf(weight, value, sum);
+    } else for (unsigned long long i = lane; i < width; i += 32ull) {
+        float weight = qtype_value(row, i, qtype), value = vector[i];
         if (!isfinite(weight) || !isfinite(value)) atomicCAS(status, 0, 1);
         else sum = fmaf(weight, value, sum);
     }
@@ -510,18 +517,19 @@ static __device__ float qtype_q8_k_dot_group(const unsigned char *weight,
 }
 static __device__ int mxfp4_i8x4(unsigned int packed, unsigned int high)
 {
-    unsigned int values = 0u;
-#pragma unroll
-    for (unsigned int i = 0u; i < 4u; ++i) {
-        unsigned int code = (packed >> (8u * i + (high ? 4u : 0u))) & 15u;
-        int magnitude = (code & 7u) == 0u ? 0 :
-                        (code & 7u) < 5u ? (int)(code & 7u) :
-                        (code & 7u) == 5u ? 6 :
-                        (code & 7u) == 6u ? 8 : 12;
-        int value = code & 8u ? -magnitude : magnitude;
-        values |= ((unsigned int)value & 255u) << (8u * i);
-    }
-    return (int)values;
+    unsigned int codes = (high ? packed >> 4u : packed) & 0x0f0f0f0fu;
+    unsigned int magnitudes = codes & 0x07070707u;
+    unsigned int upper = (magnitudes >> 2u) & 0x01010101u, signs, nonzero, masks;
+    unsigned int seven = magnitudes & (magnitudes >> 1u) &
+                         (magnitudes >> 2u) & 0x01010101u;
+    /* Four E2M1 byte lanes stay exact because the packed additions cannot overflow. */
+    magnitudes += (magnitudes & 0x03030303u) & (upper * 3u);
+    magnitudes += seven << 1u;
+    nonzero = (magnitudes | (magnitudes >> 1u) |
+               (magnitudes >> 2u) | (magnitudes >> 3u)) & 0x01010101u;
+    signs = ((codes >> 3u) & 0x01010101u) & nonzero;
+    masks = signs * 255u;
+    return (int)((magnitudes ^ masks) + signs);
 }
 static __device__ float mxfp4_q8_k_dot(const unsigned char *weight,
                                        const unsigned char *activation)
@@ -555,27 +563,28 @@ static __device__ float qtype_q8_k_dot(const unsigned char *weight,
     if (qtype == YVEX_GGUF_QTYPE_MXFP4) return mxfp4_q8_k_dot(weight, activation);
     return __uint_as_float(0x7fc00000u);
 }
-static __device__ float q8_warp_dot(const unsigned char *weight,
-                                    const unsigned char *activation,
+static __device__ float q8_warp_dot(const unsigned char *weight, const unsigned char *activation,
                                     unsigned long long blocks,
                                     unsigned long long weight_block,
                                     unsigned int qtype)
 {
     unsigned int lane = threadIdx.x & 31u;
     float sum = 0.0f;
-    if (blocks <= 16ull) {
-        unsigned int group_width = blocks <= 4ull ? 8u : blocks <= 8ull ? 4u : 2u;
-        unsigned int groups = 32u / group_width;
-        unsigned int group = lane / group_width;
-        unsigned int block = group < blocks ? group : 0u;
-        float group_value = qtype_q8_k_dot_group(
-            weight + (unsigned long long)block * weight_block,
-            activation + (unsigned long long)block * YVEX_CUDA_Q8_K_BYTES,
-            qtype, group_width);
-        float original_lane_value = __shfl_sync(
-            0xffffffffu, group_value,
-            (int)((lane & (groups - 1u)) * group_width));
-        if ((unsigned long long)lane < blocks) sum = original_lane_value;
+    /* Groups preserve reduction order; hardware tails join the collective on bounded block zero. */
+    if (blocks <= 16ull || (qtype == YVEX_GGUF_QTYPE_MXFP4 && blocks == 32ull)) {
+        unsigned int lanes = blocks > 16ull ? 4u : blocks > 8ull ? 2u : blocks > 4ull ? 4u : 8u;
+        unsigned int groups = 32u / lanes, group = lane / lanes;
+        unsigned int rounds = (unsigned int)((blocks + groups - 1u) / groups);
+        for (unsigned int round = 0u; round < rounds; ++round) {
+            unsigned int block = round * groups + group;
+            unsigned int bounded_block = block < blocks ? block : 0u;
+            float group_value = qtype_q8_k_dot_group(weight + (unsigned long long)bounded_block * weight_block,
+                activation + (unsigned long long)bounded_block * YVEX_CUDA_Q8_K_BYTES,
+                qtype, lanes);
+            if (block >= blocks) group_value = 0.0f;
+            float original_lane_value = __shfl_sync(0xffffffffu, group_value, (int)((lane % groups) * lanes));
+            if (lane / groups == round && (unsigned long long)lane < blocks) sum = original_lane_value;
+        }
     } else {
         for (unsigned long long block = lane; block < blocks; block += 32ull)
             sum += qtype_q8_k_dot(weight + block * weight_block,

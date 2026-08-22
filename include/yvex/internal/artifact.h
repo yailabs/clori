@@ -236,6 +236,17 @@ int yvex_artifact_admission_identity_verify(
     int (*progress)(void *context, unsigned long long completed,
                     unsigned long long total), void *progress_context,
     yvex_artifact_admission_failure *failure, yvex_error *err);
+typedef struct {
+    int verified, receipt_present, receipt_valid;
+    yvex_artifact_snapshot snapshot;
+    char lease_identity[YVEX_SHA256_HEX_CAP], path[YVEX_ARTIFACT_PATH_CAP];
+} yvex_artifact_reopen_lease;
+int yvex_artifact_reopen_lease_check(
+    const yvex_artifact *artifact, const char *artifact_identity, const char *cache_root,
+    yvex_artifact_reopen_lease *out, yvex_error *err);
+int yvex_artifact_reopen_lease_publish(
+    const yvex_artifact *artifact, const char *artifact_identity, const char *cache_root,
+    yvex_artifact_reopen_lease *out, yvex_error *err);
 const char *yvex_artifact_admission_code_name(yvex_artifact_admission_code code);
 int yvex_artifact_descriptor_from_admission(const yvex_complete_artifact_admission *admission,
                                             yvex_artifact_descriptor_fact *fact);

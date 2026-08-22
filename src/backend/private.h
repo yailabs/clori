@@ -16,6 +16,12 @@ typedef struct yvex_backend_vtable {
                         yvex_device_tensor **, yvex_error *);
     int (*resident_alloc)(yvex_backend *, const yvex_backend_tensor_desc *,
                           yvex_device_tensor **, unsigned char **, yvex_error *);
+    int (*resident_map_supported)(const yvex_backend *);
+    int (*resident_map_readonly)(yvex_backend *, const yvex_backend_tensor_desc *,
+                                 const unsigned char *, yvex_device_tensor **, yvex_error *);
+    int (*resident_prefetch_supported)(const yvex_backend *);
+    int (*resident_prefetch)(yvex_backend *, yvex_device_tensor *,
+                             unsigned long long *, yvex_error *);
     int (*tensor_reserve)(yvex_backend *, const yvex_backend_tensor_desc *,
                           yvex_device_tensor **, unsigned long long *, yvex_error *);
     int (*tensor_commit)(yvex_backend *, yvex_device_tensor *, unsigned long long,
@@ -31,6 +37,8 @@ typedef struct yvex_backend_vtable {
                        yvex_error *);
     int (*tensor_copy_async)(yvex_backend *, yvex_device_tensor *,
                              const yvex_device_tensor *, yvex_error *);
+    int (*tensor_copy_shared_async)(yvex_backend *, yvex_device_tensor *,
+                                    const yvex_device_tensor *, yvex_error *);
     int (*sync)(yvex_backend *, yvex_error *);
     int (*query_capability)(const yvex_backend *, yvex_backend_operation_variant,
                             yvex_backend_capability_result *, yvex_error *);
@@ -66,6 +74,7 @@ struct yvex_backend {
     struct yvex_backend *resource_owner;
     _Atomic unsigned long long lifecycle;
     unsigned long long tensor_id_next, resident_host_bytes;
+    int pageable_memory_access, pageable_uses_host_page_tables;
     const unsigned char *resident_host_base;
     const yvex_device_tensor *resident_device_tensor;
     unsigned long long resident_device_address, resident_generation;
@@ -76,7 +85,8 @@ struct yvex_backend {
     unsigned long long workspace_device_address, workspace_bytes, workspace_cursor;
     unsigned long long workspace_peak, workspace_generation;
     unsigned char *host_workspace_base;
-    unsigned long long host_workspace_bytes, host_workspace_cursor, host_workspace_peak;
+    unsigned long long host_workspace_bytes, host_workspace_reserved, host_workspace_cursor;
+    unsigned long long host_workspace_peak;
     unsigned long long host_workspace_generation, host_workspace_allocation_count;
     int host_workspace_owned, host_workspace_pinned, shared_owner_registered;
     int virtual_tensor_ready;
@@ -153,7 +163,7 @@ static inline void backend_workspace_reset(yvex_backend *backend)
 
 static inline void backend_host_workspace_reset(yvex_backend *backend)
 {
-    if (backend) backend->host_workspace_cursor = 0ull;
+    if (backend) backend->host_workspace_cursor = backend->host_workspace_reserved;
 }
 
 #endif /* SRC_BACKEND_PRIVATE_H_INCLUDED */

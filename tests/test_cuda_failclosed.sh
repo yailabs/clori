@@ -15,6 +15,11 @@ contains() {
     grep -F "$2" "$1" >/dev/null || fail "$1 missing: $2"
 }
 
+make -pn YVEX_CUDA_ARCH=auto CUDA_AUTO_ARCH=sm_121 >"$OUT_DIR/make-auto.out"
+contains "$OUT_DIR/make-auto.out" "CUDA_EFFECTIVE_ARCH := sm_121"
+make -pn YVEX_CUDA_ARCH=sm_90 CUDA_AUTO_ARCH=sm_121 >"$OUT_DIR/make-explicit.out"
+contains "$OUT_DIR/make-explicit.out" "CUDA_EFFECTIVE_ARCH := sm_90"
+
 if grep -RIn -E 'Fallback embedded PTX|\.visible[[:space:]]+\.entry' \
     src/backend/cuda --include='*.c' >/dev/null; then
     fail "production C source contains embedded CUDA entry points"
@@ -64,6 +69,9 @@ contains "$OUT_DIR/backend.out" "op_mlp: no"
 contains "$OUT_DIR/backend.out" "context_available: yes"
 contains "$OUT_DIR/backend.out" "kernel_bundle: absent"
 contains "$OUT_DIR/backend.out" "kernel_bundle_reason: kernel-bundle-absent"
+contains "$OUT_DIR/backend.out" "kernel_bundle_native: no"
+contains "$OUT_DIR/backend.out" "kernel_bundle_architecture: unavailable"
+contains "$OUT_DIR/backend.out" "kernel_bundle_identity: unavailable"
 contains "$OUT_DIR/backend.out" "embed-f32-to-f32: unsupported (kernel-bundle-absent)"
 contains "$OUT_DIR/backend.out" "attention-noncausal-f32: unsupported (kernel-bundle-absent)"
 contains "$OUT_DIR/backend.out" "qtype-row-dot: unsupported (kernel-bundle-absent)"

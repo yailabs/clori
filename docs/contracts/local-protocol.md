@@ -1,8 +1,8 @@
-# Local Protocol v8
+# Local Protocol v11
 
 Status: normative private protocol contract
 
-Schema/version: `YVEX_LOCAL_PROTOCOL_VERSION = 8`.
+Schema/version: `YVEX_LOCAL_PROTOCOL_VERSION = 11`.
 
 Authority: `include/yvex/server.h` and `src/server/protocol.c`. This document
 explains the wire and lifecycle contract; code remains authoritative for exact
@@ -17,21 +17,22 @@ Unix-domain socket and is not a public network API.
 
 ## Framing and negotiation
 
-Every connection negotiates version 8 and exchanges bounded typed frames.
+Every connection negotiates version 11 and exchanges bounded typed frames.
 Lengths, enums, strings, arrays, message/tool fields, and correlations are
 validated before dispatch. Oversized, truncated, duplicate, unknown, or
-malformed fields refuse without entering the model worker.
+malformed fields refuse without entering the server scheduler.
 
-Every earlier version, including v7, is refused explicitly. There is no private
+Every earlier version, including v10, is refused explicitly. There is no private
 pre-v0.1 compatibility decoder. Unknown operations and response kinds fail
 closed.
 
 ## Operations
 
-Protocol v8 carries runtime start-state/status/stop, live model and memory
+Protocol v11 carries server status/stop, live model and memory
 facts, selected target-only or DSpark generation mode, session lifecycle,
-generation turns and cancellation, speculative lifecycle events, event
-subscriptions, and composed console status. Offline compile, artifact,
+bounded copy-on-write session fork, generation turns and cancellation,
+speculative lifecycle events, event subscriptions, and composed console status.
+Offline compile, artifact,
 inspect, execute, profile, and system operations do not cross this protocol.
 
 The removed model/artifact facade operation values are absent. Artifact
@@ -84,7 +85,12 @@ never retracts a candidate because no candidate is published.
 
 ## Status and console facts
 
-`runtime.status` returns the bounded runtime snapshot. `console.status` returns
+`server.status` returns the bounded hosted-runtime snapshot. It includes the
+identity-bound startup capacity plan, its required and unreserved bytes, the
+admitted concurrent-sequence count, and separate facts for independent-session
+scheduling and physical continuous batching. The latter remains false until a
+compatible-row generation scheduler is admitted; multiple server workers do
+not manufacture that claim. `console.status` returns
 a server-composed snapshot containing, where authoritative:
 
 - readiness and runtime configuration;
@@ -126,8 +132,10 @@ progress. A partial session refuses an ordinary turn until reset.
 
 ## Side effects
 
-The protocol may create/reset/close sessions, enqueue/cancel generation,
-commit runtime state through the worker, save one immutable model-state
+The protocol may create/reset/close sessions, fork one idle committed session
+into an independently mutable child under an explicit shared-byte budget,
+enqueue/cancel generation,
+commit runtime state through the keyed scheduler, save one immutable model-state
 checkpoint, restore it at the exact current semantic-session position, publish
 events, or initiate bounded server shutdown. State checkpoint messages carry
 the file digest, byte extent, scope count, committed position, and bound model,
@@ -158,9 +166,9 @@ format.
 
 ## Non-claims
 
-Protocol v8 is not a public remote API, authentication protocol, TLS transport,
+Protocol v11 is not a public remote API, authentication protocol, TLS transport,
 stable cross-version SDK promise, distributed serving protocol, or model
-quality contract. The current checkpoint operation preserves committed model
-state only. It does not yet persist the server transcript, token ledger,
-detokenizer, or RNG authority and therefore cannot claim cross-restart session
-continuation.
+quality contract. Versioned checkpoints preserve the admitted model and
+semantic-session state across restart; the in-memory fork does not create a
+durable shared-prefix namespace, CUDA-shared state cache, or cross-process
+copy-on-write authority.

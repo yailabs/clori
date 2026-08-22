@@ -9,7 +9,7 @@ adapter follows the hosted runtime lifecycle and owns no model, session, KV,
 worker, or telemetry authority.
 
 `yvex.openai.compat.v2` is a bounded, local application-provider profile. It
-adapts OpenAI-compatible HTTP/JSON/SSE requests to YVEX local protocol v8 and
+adapts OpenAI-compatible HTTP/JSON/SSE requests to YVEX local protocol v11 and
 the existing foreground model server. It is not a claim of full OpenAI API or OpenAI
 service equivalence.
 
@@ -26,7 +26,7 @@ Those moving interfaces do not expand this explicitly versioned YVEX subset.
 application or SDK
   -> loopback HTTP/1.1
   -> YVEX server OpenAI adapter
-  -> provider-neutral request over YVEX protocol v8
+  -> provider-neutral request over YVEX protocol v11
   -> server session and generation owners
 ```
 
@@ -113,6 +113,11 @@ Unknown fields and unsupported known fields refuse; they are not ignored.
 Multimodal content, `n > 1`, penalties, logprobs, modalities, prediction, and
 service-tier controls are outside the profile.
 
+When neither completion-limit field is present, provider schema v3 preserves
+the request as adaptive and the server selects its admitted completion
+envelope. An explicitly supplied zero is invalid rather than another spelling
+of adaptive behavior.
+
 A non-stream response contains one assistant choice, separate final and
 reasoning content, an exact finish reason, prompt/completion/total usage, and a
 YVEX completion-metrics object. A stream emits `chat.completion.chunk` objects,
@@ -139,6 +144,9 @@ Supported fields are:
 | `previous_response_id` | live record created by this daemon instance |
 | `store` | false only |
 | `background` | false only |
+
+Omitted `max_output_tokens` has the same adaptive meaning. An explicitly
+supplied zero refuses.
 
 The admitted streaming sequence uses the applicable subset of:
 

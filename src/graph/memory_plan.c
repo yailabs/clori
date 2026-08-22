@@ -91,15 +91,16 @@ static int capacity_identity(
  * Owns one independently queryable per-layer plan with a deterministic identity. Malformed
  * selection, geometry, overflow, or allocation publishes no plan.
  */
-int yvex_graph_attention_capacity_plan_build(
-    yvex_graph_attention_capacity_plan **out, const yvex_attention_plan *attention,
+int yvex_graph_attention_capacity_plan_build_compiled(
+    yvex_graph_attention_capacity_plan **out,
+    const yvex_attention_summary *attention_summary,
+    const yvex_attention_layer_plan *layers, unsigned long long layer_count,
     const yvex_graph_attention_capacity_request *request, yvex_error *err) {
-    const yvex_attention_summary *attention_summary = yvex_attention_plan_summary(attention);
     yvex_graph_attention_capacity_plan *plan;
     unsigned long long bytes, extent, index;
-    if (!out || *out || !attention ||
-        !attention_summary || !request ||
+    if (!out || *out || !attention_summary || !layers || !layer_count || !request ||
         attention_summary->status != YVEX_ATTENTION_STATUS_EXECUTION_READY ||
+        attention_summary->layer_count != layer_count ||
         !yvex_sha256_hex_valid(attention_summary->attention_plan_identity) ||
         !request->token_count || !request->execution_count ||
         request->history_tokens != request->start_position ||
@@ -108,8 +109,8 @@ int yvex_graph_attention_capacity_plan_build(
         return capacity_reject(err, YVEX_ERR_INVALID_ARG,
                                "complete sealed capacity-plan facts are required");
     if (!yvex_core_u64_mul(request->token_count, request->execution_count, &extent) ||
-        !yvex_core_u64_mul(yvex_attention_plan_layer_count(attention),
-                           (unsigned long long)sizeof(*plan->layers), &bytes) ||
+        !yvex_core_u64_mul(layer_count, (unsigned long long)sizeof(*plan->layers),
+                           &bytes) ||
         bytes > (unsigned long long)SIZE_MAX)
         return capacity_reject(err, YVEX_ERR_BOUNDS,
                                "attention capacity-plan extent overflowed");
@@ -117,7 +118,7 @@ int yvex_graph_attention_capacity_plan_build(
     if (!plan)
         return capacity_reject(err, YVEX_ERR_NOMEM,
                                "attention capacity plan allocation failed");
-    plan->summary.layer_count = yvex_attention_plan_layer_count(attention);
+    plan->summary.layer_count = layer_count;
     plan->layers = calloc((size_t)plan->summary.layer_count, sizeof(*plan->layers));
     if (!plan->layers) {
         free(plan);
@@ -132,8 +133,7 @@ int yvex_graph_attention_capacity_plan_build(
                         sizeof(plan->summary.attention_plan_identity),
                         attention_summary->attention_plan_identity);
     for (index = 0ull; index < plan->summary.layer_count; ++index) {
-        const yvex_attention_layer_plan *layer =
-            yvex_attention_plan_layer_at(attention, index);
+        const yvex_attention_layer_plan *layer = &layers[index];
         yvex_graph_attention_capacity_layer *capacity = &plan->layers[index];
         yvex_attention_state_recipe_request recipe_request;
         yvex_attention_state_recipe recipe;
@@ -237,6 +237,16 @@ int yvex_graph_attention_capacity_plan_build(
     *out = plan;
     yvex_error_clear(err);
     return YVEX_OK;
+}
+
+int yvex_graph_attention_capacity_plan_build(
+    yvex_graph_attention_capacity_plan **out, const yvex_attention_plan *attention,
+    const yvex_graph_attention_capacity_request *request, yvex_error *err) {
+    const yvex_attention_summary *summary = yvex_attention_plan_summary(attention);
+    const yvex_attention_layer_plan *layers =
+        attention ? yvex_attention_plan_layer_at(attention, 0ull) : NULL;
+    return yvex_graph_attention_capacity_plan_build_compiled(
+        out, summary, layers, yvex_attention_plan_layer_count(attention), request, err);
 }
 /* Borrow one sealed capacity summary without transferring plan ownership. */
 const yvex_graph_attention_capacity_summary *
@@ -936,6 +946,14 @@ int yvex_attention_cuda_publish(attention_cuda_context *context)
 {
     unsigned long long q_low, query, raw, output, envelope;
     unsigned long long token;
+    int completion_pending = context->opts->device_completion &&
+                             context->opts->device_completion->pending;
+    if (completion_pending && context->opts->evidence_level != YVEX_ATTENTION_EVIDENCE_NONE)
+        return yvex_attention_cuda_reject(
+            context, YVEX_ATTENTION_FAILURE_BACKEND,
+            YVEX_ATTENTION_EVIDENCE_NONE, context->opts->evidence_level,
+            YVEX_ERR_STATE,
+            "deferred CUDA attention completion requires production evidence scope");
     if (context->cuda_output.tokens_executed != context->token_count ||
         !yvex_core_u64_mul(context->token_count, context->trace.q_rank, &q_low) ||
         !yvex_core_u64_mul(context->token_count, context->trace.query_width, &query) ||
@@ -961,7 +979,8 @@ int yvex_attention_cuda_publish(attention_cuda_context *context)
                                            ? context->layer->head_dimension : 0ull;
     context->trace.indexer_stride = context->trace.indexer_count
                                         ? context->layer->indexer_head_dimension : 0ull;
-    if (context->layer->attention_class == YVEX_ATTENTION_CLASS_CSA) {
+    if (!completion_pending &&
+        context->layer->attention_class == YVEX_ATTENTION_CLASS_CSA) {
         unsigned long long storage_stride = context->trace.topk_stride;
         unsigned long long semantic_stride = context->cuda_output.topk_count;
         if (semantic_stride > storage_stride)
@@ -977,6 +996,7 @@ int yvex_attention_cuda_publish(attention_cuda_context *context)
         context->trace.topk_stride = semantic_stride;
     }
     context->trace.complete = 1;
+    context->trace.device_completion_pending = completion_pending;
     context->result->executed = 1;
     context->result->full_attention = 1;
     context->result->cuda_executed = 1;

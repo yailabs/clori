@@ -2,7 +2,7 @@
  * Convert client turns into reusable generation turns without reopening the model.
  *
  * One registry row owns one execution session and exact committed token prefix. The sole
- * server-side conversation/session authority used by the model worker.
+ * server-side conversation/session authority used by keyed scheduler workers.
  */
 #define _POSIX_C_SOURCE 200809L
 #include "src/server/private.h"
@@ -15,48 +15,9 @@
 #include <string.h>
 #include <time.h>
 #include <yvex/internal/core.h>
+#include <yvex/internal/runtime_batching.h>
 #include <yvex/internal/runtime_state_store.h>
 #include <yvex/internal/tokenizer.h>
-#define SESSION_SCHEMA_V1 1u
-#define SESSION_MAX_MESSAGES 128u
-#define SESSION_TRANSCRIPT_BYTES 1048576u
-typedef struct {
-    char name[YVEX_SERVER_SESSION_NAME_CAP];
-    char identity[YVEX_SHA256_HEX_CAP];
-    yvex_server_session_state state;
-    yvex_runtime_execution_session *execution;
-    yvex_runtime_generation_context *generation;
-    yvex_prompt_message messages[SESSION_MAX_MESSAGES];
-    unsigned long long message_count;
-    unsigned char *transcript;
-    unsigned long long transcript_count, transcript_capacity;
-    unsigned int *committed_tokens, *prompt_tokens;
-    unsigned long long committed_count, token_capacity;
-    yvex_runtime_generation_token_result *token_results;
-    unsigned char *turn_text;
-    unsigned long long text_capacity, turn_count, attached_clients;
-    unsigned long long message_history_generation, transcript_generation;
-    char last_turn_identity[YVEX_SHA256_HEX_CAP];
-    char state_digest[YVEX_SHA256_HEX_CAP];
-    char generated_token_identity[YVEX_SHA256_HEX_CAP];
-    char generated_text_digest[YVEX_SHA256_HEX_CAP];
-    yvex_client_partial_turn partial_turn;
-    yvex_client_state_checkpoint state_checkpoint;
-    yvex_runtime_sampling_policy policy;
-    yvex_reasoning_policy reasoning_policy;
-    int policy_set;
-    atomic_int cancel_requested;
-    atomic_int active_turn;
-} server_session;
-struct server_session_registry {
-    pthread_mutex_t mutex;
-    yvex_runtime_model *model;
-    yvex_server_options options;
-    server_telemetry *telemetry;
-    server_session *sessions;
-    unsigned long long capacity, count, next_id;
-    int mutex_ready, closing;
-};
 typedef struct {
     server_session_registry *registry;
     server_session *session;
@@ -196,53 +157,6 @@ static double elapsed_seconds(unsigned long long start,
 {
     return finish >= start ? (double)(finish - start) / 1000000000.0 : 0.0;
 }
-static int session_name_valid(const char *name)
-{
-    size_t index, count;
-    if (!name || !name[0]) return 0;
-    count = strlen(name);
-    if (count >= YVEX_SERVER_SESSION_NAME_CAP) return 0;
-    for (index = 0u; index < count; ++index) {
-        unsigned char byte = (unsigned char)name[index];
-        if (!((byte >= 'a' && byte <= 'z') ||
-              (byte >= 'A' && byte <= 'Z') ||
-              (byte >= '0' && byte <= '9') || byte == '-' || byte == '_' ||
-              byte == '.'))
-            return 0;
-    }
-    return 1;
-}
-static int session_identity(server_session_registry *registry,
-                            const char *name,
-                            char output[YVEX_SHA256_HEX_CAP])
-{
-    const yvex_runtime_model_view *view = yvex_runtime_model_view_get(registry->model);
-    yvex_runtime_model_summary model;
-    yvex_sha256 hash;
-    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
-    yvex_error err;
-    if (!view || yvex_runtime_model_summary_copy(registry->model, &model, &err) != YVEX_OK)
-        return 0;
-    yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.server.session.v1") ||
-        !yvex_sha256_update_text(&hash, model.runtime_model_identity) ||
-        !yvex_sha256_update_text(&hash, name) ||
-        !yvex_sha256_final(&hash, digest))
-        return 0;
-    yvex_sha256_hex(digest, output);
-    return 1;
-}
-static server_session *session_find_locked(server_session_registry *registry,
-                                           const char *name)
-{
-    unsigned long long index;
-    for (index = 0u; index < registry->capacity; ++index)
-        if (registry->sessions[index].state != YVEX_SERVER_SESSION_CLOSED &&
-            registry->sessions[index].name[0] &&
-            strcmp(registry->sessions[index].name, name) == 0)
-            return &registry->sessions[index];
-    return NULL;
-}
 static int session_message_append(server_session *session, yvex_prompt_role role,
                                   const unsigned char *bytes,
                                   unsigned long long count, yvex_error *err)
@@ -344,13 +258,15 @@ static int session_generation_open(
     const yvex_runtime_sampling_policy *policy, yvex_error *err)
 {
     yvex_runtime_generation_options options;
+    yvex_error primary;
     int rc;
+    if (session->policy_set &&
+        strcmp(policy->policy_identity, session->policy.policy_identity) != 0) {
+        yvex_error_set(err, YVEX_ERR_STATE, "server.session.policy",
+                       "sampling policy is immutable until session reset");
+        return YVEX_ERR_STATE;
+    }
     if (session->generation) {
-        if (strcmp(policy->policy_identity, session->policy.policy_identity) != 0) {
-            yvex_error_set(err, YVEX_ERR_STATE, "server.session.policy",
-                           "sampling policy is immutable until session reset");
-            return YVEX_ERR_STATE;
-        }
         session->reasoning_policy = request->reasoning_policy;
         return YVEX_OK;
     }
@@ -361,12 +277,17 @@ static int session_generation_open(
                            YVEX_SERVER_GENERATION_DSPARK
                        ? YVEX_GENERATION_MODE_DSPARK
                        : YVEX_GENERATION_MODE_TARGET_ONLY;
+    options.workload_kind = registry->options.concurrent_sequences > 1ull
+                                ? YVEX_EXECUTION_WORKLOAD_BALANCED_SERVING
+                                : YVEX_EXECUTION_WORKLOAD_INTERACTIVE_LATENCY;
     options.context_capacity = registry->options.context_capacity;
     options.prefill_chunk_tokens = registry->options.prefill_chunk_tokens;
     options.maximum_new_tokens = registry->options.maximum_new_tokens;
     options.maximum_output_bytes = registry->options.maximum_output_bytes;
     options.maximum_host_bytes = registry->options.maximum_host_bytes;
     options.maximum_device_bytes = registry->options.maximum_device_bytes;
+    options.concurrent_sequences = registry->options.concurrent_sequences;
+    options.continuous_batching = registry->continuous_batching;
     options.trace_policy = registry->options.trace_level == YVEX_SERVER_TRACE_FULL
         ? YVEX_RUNTIME_TRACE_FULL : (registry->options.trace_level >= YVEX_SERVER_TRACE_STAGES
                                          ? YVEX_RUNTIME_TRACE_STAGES : YVEX_RUNTIME_TRACE_SUMMARY);
@@ -377,6 +298,14 @@ static int session_generation_open(
     rc = yvex_runtime_generation_context_open(
         &session->generation, registry->model, session->execution,
         &options, err);
+    if (rc == YVEX_OK)
+        rc = yvex_server_session_generation_state_restore(session, err);
+    if (rc != YVEX_OK && session->generation) {
+        yvex_error_clear(&primary);
+        if (err) primary = *err;
+        (void)yvex_runtime_generation_context_close(&session->generation, NULL);
+        if (err) *err = primary;
+    }
     if (rc == YVEX_OK) {
         session->policy = *policy;
         session->policy_set = 1;
@@ -384,20 +313,6 @@ static int session_generation_open(
     }
     return rc;
 }
-static int session_execution_open(server_session_registry *registry,
-                                  server_session *session, yvex_error *err)
-{
-    yvex_runtime_session_open_request request;
-    yvex_runtime_model_failure failure;
-    memset(&request, 0, sizeof(request));
-    memset(&failure, 0, sizeof(failure));
-    request.backend = registry->options.backend;
-    request.maximum_host_bytes = registry->options.maximum_host_bytes;
-    request.maximum_device_bytes = registry->options.maximum_device_bytes;
-    return yvex_runtime_session_open(&session->execution, registry->model,
-                                     &request, &failure, err);
-}
-
 /*
  * Rebuild only physical sequence state when a source-authored prompt rewrite no longer extends
  * the resident token prefix. Semantic messages remain authoritative and are fully re-prefilled.
@@ -409,7 +324,7 @@ static int session_execution_rebase(server_session_registry *registry,
     if (rc == YVEX_OK)
         rc = yvex_runtime_session_close(&session->execution, err);
     if (rc == YVEX_OK)
-        rc = session_execution_open(registry, session, err);
+        rc = yvex_server_session_execution_open(registry, session, err);
     if (rc != YVEX_OK) {
         session->state = YVEX_SERVER_SESSION_FAILED;
         return rc;
@@ -421,7 +336,9 @@ static int session_execution_rebase(server_session_registry *registry,
     session->committed_count = 0u;
     session->policy_set = 0;
     memset(&session->policy, 0, sizeof(session->policy));
-    session->reasoning_policy = YVEX_REASONING_DISABLED;
+    memset(&session->pending_generation_checkpoint, 0,
+           sizeof(session->pending_generation_checkpoint));
+    session->pending_generation_checkpoint_present = 0;
     memset(session->state_digest, 0, sizeof(session->state_digest));
     session->state = session->attached_clients ? YVEX_SERVER_SESSION_READY
                                                : YVEX_SERVER_SESSION_DETACHED;
@@ -455,86 +372,6 @@ static int session_prompt_extends_prefix(
                                sizeof(*session->committed_tokens)) == 0);
     yvex_rendered_prompt_free(&rendered);
     yvex_tokenizer_encode_result_clear(&encoded);
-    return rc;
-}
-/*
- * Initialize one registry slot and its unique runtime execution session.
- *
- * Closes all partial slot ownership and publishes no member.
- */
-static int session_create_locked(server_session_registry *registry,
-                                 const char *requested,
-                                 server_session **created, yvex_error *err)
-{
-    server_session *session = NULL;
-    char generated[YVEX_SERVER_SESSION_NAME_CAP];
-    const char *name = requested;
-    unsigned long long index;
-    int rc;
-    if (!name || !name[0]) {
-        (void)snprintf(generated, sizeof(generated), "s%06llu", registry->next_id++);
-        name = generated;
-    }
-    if (!session_name_valid(name) || session_find_locked(registry, name)) {
-        yvex_error_set(err, YVEX_ERR_STATE, "server.session.create",
-                       "session name is invalid or already exists");
-        return YVEX_ERR_STATE;
-    }
-    for (index = 0u; index < registry->capacity; ++index)
-        if (!registry->sessions[index].name[0] ||
-            registry->sessions[index].state == YVEX_SERVER_SESSION_CLOSED) {
-            session = &registry->sessions[index];
-            break;
-        }
-    if (!session) {
-        yvex_error_set(err, YVEX_ERR_BOUNDS, "server.session.create",
-                       "session registry capacity is exhausted");
-        return YVEX_ERR_BOUNDS;
-    }
-    memset(session, 0, sizeof(*session));
-    yvex_core_text_copy(session->name, sizeof(session->name), name);
-    session->state = YVEX_SERVER_SESSION_CREATED;
-    session->token_capacity = registry->options.context_capacity;
-    session->text_capacity = registry->options.maximum_output_bytes;
-    session->transcript_capacity = SESSION_TRANSCRIPT_BYTES;
-    session->committed_tokens = calloc((size_t)session->token_capacity,
-                                       sizeof(*session->committed_tokens));
-    session->prompt_tokens = calloc((size_t)session->token_capacity,
-                                    sizeof(*session->prompt_tokens));
-    session->token_results = calloc(
-        (size_t)registry->options.maximum_new_tokens,
-        sizeof(*session->token_results));
-    session->turn_text = calloc((size_t)session->text_capacity + 1u, 1u);
-    session->transcript = calloc((size_t)session->transcript_capacity, 1u);
-    if (!session->committed_tokens || !session->prompt_tokens ||
-        !session->token_results || !session->turn_text || !session->transcript ||
-        !session_identity(registry, name, session->identity)) {
-        yvex_error_set(err, YVEX_ERR_NOMEM, "server.session.create",
-                       "session storage allocation or identity failed");
-        rc = YVEX_ERR_NOMEM;
-        goto failure;
-    }
-    rc = session_execution_open(registry, session, err);
-    if (rc != YVEX_OK) goto failure;
-    atomic_init(&session->cancel_requested, 0);
-    atomic_init(&session->active_turn, 0);
-    session->message_history_generation = 1u;
-    session->transcript_generation = 1u;
-    session->state = YVEX_SERVER_SESSION_READY;
-    registry->count++;
-    yvex_server_telemetry_session(registry->telemetry, 1, 1);
-    *created = session;
-    return yvex_server_telemetry_emit(
-        registry->telemetry, YVEX_SERVER_EVENT_SESSION_CREATED,
-        YVEX_SERVER_SEVERITY_INFO, session->name, NULL, NULL, "session",
-        0u, registry->count, 0u, 0.0, 0.0, err);
-failure:
-    free(session->transcript);
-    free(session->turn_text);
-    free(session->token_results);
-    free(session->prompt_tokens);
-    free(session->committed_tokens);
-    memset(session, 0, sizeof(*session));
     return rc;
 }
 static int turn_classified_fragment(void *opaque,
@@ -782,7 +619,8 @@ static int session_message(server_message_emit emit, void *emit_context,
 static void session_checkpoint_set(
     server_session *session, const yvex_runtime_state_store_summary *summary)
 {
-    session->state_checkpoint.schema_version = summary->schema_version;
+    session->state_checkpoint.schema_version =
+        YVEX_CLIENT_STATE_CHECKPOINT_SCHEMA_V1;
     session->state_checkpoint.file_bytes = summary->file_bytes;
     session->state_checkpoint.scope_count = summary->scope_count;
     session->state_checkpoint.committed_sequence_length =
@@ -1326,6 +1164,7 @@ static int session_profile_publish(server_session_registry *registry,
                                    yvex_error *err)
 {
     const yvex_runtime_profile_record *profile = result ? &result->profile : NULL;
+    yvex_runtime_execution_batch_summary batches;
     int rc;
 #define PROFILE_EVENT(phase_, a_, b_, c_, nanoseconds_)                                   \
     yvex_server_telemetry_emit_provider(                                                   \
@@ -1350,6 +1189,16 @@ static int session_profile_publish(server_session_registry *registry,
             profile->counters[YVEX_RUNTIME_PROFILE_DEVICE_SYNCHRONIZATIONS],
             profile->phase_ns[YVEX_RUNTIME_PROFILE_SYNCHRONIZATION_WAIT]);
     if (rc == YVEX_OK)
+        rc = PROFILE_EVENT("graphs",
+            profile->counters[YVEX_RUNTIME_PROFILE_GRAPH_LAUNCHES],
+            profile->counters[YVEX_RUNTIME_PROFILE_GRAPH_CAPTURES],
+            profile->counters[YVEX_RUNTIME_PROFILE_GRAPH_REPLAYS], 0ull);
+    if (rc == YVEX_OK)
+        rc = PROFILE_EVENT("tensorcore",
+            profile->counters[YVEX_RUNTIME_PROFILE_TENSOR_CORE_LAUNCHES],
+            profile->counters[YVEX_RUNTIME_PROFILE_KERNEL_LAUNCHES],
+            profile->counters[YVEX_RUNTIME_PROFILE_UNIQUE_EXPERTS], 0ull);
+    if (rc == YVEX_OK)
         rc = PROFILE_EVENT("attention",
             profile->phase_calls[YVEX_RUNTIME_PROFILE_ATTENTION],
             profile->counters[YVEX_RUNTIME_PROFILE_CACHE_HITS],
@@ -1361,6 +1210,19 @@ static int session_profile_publish(server_session_registry *registry,
             profile->counters[YVEX_RUNTIME_PROFILE_EXPERT_SUBVIEWS],
             profile->counters[YVEX_RUNTIME_PROFILE_EXPERT_BYTES],
             profile->phase_ns[YVEX_RUNTIME_PROFILE_MOE_TOTAL]);
+    if (rc == YVEX_OK && result->expert_worklists.worklist_count)
+        rc = PROFILE_EVENT("expert-worklist",
+            result->expert_worklists.worklist_count,
+            result->expert_worklists.pair_count,
+            result->expert_worklists.bucket_count, 0ull);
+    if (rc == YVEX_OK && result->expert_worklists.worklist_count)
+        rc = PROFILE_EVENT("expert-width",
+            result->expert_worklists.maximum_bucket_population,
+            result->expert_worklists.tensor_core_eligible_pairs,
+            result->expert_worklists.tensor_core_executed_pairs, 0ull);
+    if (rc == YVEX_OK && result->expert_worklists.worklist_count)
+        rc = PROFILE_EVENT("expert-rows", result->expert_worklists.narrow_pairs,
+            result->expert_worklists.tail_rows, 0ull, 0ull);
     if (rc == YVEX_OK)
         rc = PROFILE_EVENT("output",
             profile->counters[YVEX_RUNTIME_PROFILE_OUTPUT_HEAD_ROWS],
@@ -1379,6 +1241,10 @@ static int session_profile_publish(server_session_registry *registry,
             profile->counters[YVEX_RUNTIME_PROFILE_DRAFT_FORWARDS],
             profile->counters[YVEX_RUNTIME_PROFILE_VERIFIED_ROWS],
             profile->counters[YVEX_RUNTIME_PROFILE_PROMOTED_TARGET_ROWS], 0ull);
+    if (rc == YVEX_OK && result->speculation_source_boundary_token_count)
+        rc = PROFILE_EVENT("source-boundary", result->speculation_source_boundary_token_count,
+            result->model_committed_token_count - result->speculation_source_boundary_token_count,
+            profile->counters[YVEX_RUNTIME_PROFILE_REPLAYED_ACCEPTED_TARGET_ROWS], 0ull);
     if (rc == YVEX_OK)
         rc = PROFILE_EVENT("candidate",
             profile->counters[YVEX_RUNTIME_PROFILE_ACCEPTED_DRAFT_TOKENS],
@@ -1402,7 +1268,98 @@ static int session_profile_publish(server_session_registry *registry,
             profile->counters[YVEX_RUNTIME_PROFILE_GENERATED_TOKENS],
             profile->phase_ns[YVEX_RUNTIME_PROFILE_FIRST_DECODE] +
                 profile->phase_ns[YVEX_RUNTIME_PROFILE_SUBSEQUENT_DECODE]);
+    memset(&batches, 0, sizeof(batches));
+    if (rc == YVEX_OK &&
+        yvex_runtime_model_execution_batch_summary_copy(
+            registry->model, &batches, err) == YVEX_OK && batches.enabled)
+        rc = PROFILE_EVENT("execution-batches", batches.physical_batches,
+                           batches.multi_source_batches, batches.maximum_width, 0ull);
+    if (rc == YVEX_OK && batches.enabled)
+        rc = PROFILE_EVENT("execution-batch-rows", batches.submitted_rows,
+                           batches.executed_rows, batches.admitted_maximum_width, 0ull);
+    if (rc == YVEX_OK && batches.enabled)
+        rc = PROFILE_EVENT("execution-batch-multi-source",
+                           batches.multi_source_batches,
+                           batches.multi_source_rows,
+                           batches.maximum_multi_source_width, 0ull);
+    if (rc == YVEX_OK && batches.enabled)
+        rc = PROFILE_EVENT("execution-batch-sources",
+                           batches.maximum_source_count,
+                           batches.registered_producers, 0ull, 0ull);
+    if (rc == YVEX_OK && batches.enabled)
+        rc = PROFILE_EVENT("execution-batch-experts",
+                           batches.multi_source_worklists,
+                           batches.multi_source_expert_pairs,
+                           batches.maximum_multi_source_bucket_population, 0ull);
+    if (rc == YVEX_OK && batches.enabled)
+        rc = PROFILE_EVENT("execution-batch-expert-rows",
+                           batches.multi_source_tensor_core_eligible_pairs,
+                           batches.multi_source_tensor_core_executed_pairs,
+                           batches.multi_source_narrow_pairs, 0ull);
+    if (rc == YVEX_OK && batches.enabled)
+        rc = PROFILE_EVENT("batch-expert-population-1-3",
+                           batches.multi_source_population_histogram[1],
+                           batches.multi_source_population_histogram[2],
+                           batches.multi_source_population_histogram[3], 0ull);
+    if (rc == YVEX_OK && batches.enabled)
+        rc = PROFILE_EVENT("batch-expert-population-4-6",
+                           batches.multi_source_population_histogram[4],
+                           batches.multi_source_population_histogram[5],
+                           batches.multi_source_population_histogram[6], 0ull);
+    if (rc == YVEX_OK && batches.enabled)
+        rc = PROFILE_EVENT("execution-batch-coalescing", batches.coalescing_waits,
+                           batches.coalescing_timeouts,
+                           batches.registered_producers, batches.coalescing_ns);
+    if (rc == YVEX_OK && batches.enabled)
+        rc = PROFILE_EVENT("execution-batch-policy", batches.coalescing_limit_ns,
+                           batches.admitted_maximum_width,
+                           batches.registered_producers, 0ull);
+    if (rc == YVEX_OK && batches.enabled)
+        rc = PROFILE_EVENT("execution-step-rendezvous",
+                           batches.rendezvous_submissions,
+                           batches.multi_source_rendezvous,
+                           batches.maximum_rendezvous_width, 0ull);
+    if (rc == YVEX_OK && batches.enabled)
+        rc = PROFILE_EVENT("execution-step-policy", batches.rendezvous_limit_ns,
+                           batches.rendezvous_steps,
+                           batches.registered_producers, 0ull);
+    if (rc == YVEX_OK && batches.enabled)
+        rc = PROFILE_EVENT("execution-batch-mismatch", batches.phase_mismatches,
+                           batches.layer_mismatches,
+                           batches.operation_mismatches, 0ull);
+    if (rc == YVEX_OK && batches.enabled)
+        rc = PROFILE_EVENT("execution-batch-mismatch-other",
+                           batches.geometry_mismatches, batches.profile_mismatches,
+                           batches.identity_mismatches, 0ull);
 #undef PROFILE_EVENT
+    return rc;
+}
+
+static int session_execution_ready_admit(
+    server_session_registry *registry, const server_session *session,
+    const yvex_client_request *request, const char *request_id,
+    unsigned long long *width, yvex_error *err)
+{
+    server_scheduler_summary summary;
+    unsigned long long wait_ns = 0ull;
+    int timed_out = 0;
+    int rc = yvex_server_scheduler_execution_ready(
+        registry->scheduler, session->name, width, &wait_ns, &timed_out, err);
+    if (rc == YVEX_OK && !registry->continuous_batching) *width = 1ull;
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_generation_execution_width_set(
+            session->generation, *width, err);
+    memset(&summary, 0, sizeof(summary));
+    if (rc == YVEX_OK) {
+        yvex_server_scheduler_snapshot(registry->scheduler, &summary);
+        rc = yvex_server_telemetry_emit_provider(
+            registry->telemetry, YVEX_SERVER_EVENT_GENERATION_PROFILE,
+            YVEX_SERVER_SEVERITY_INFO, session->name, request_id, NULL,
+            "scheduler-ready", *width, (unsigned long long)timed_out,
+            summary.execution_ready_limit_ns,
+            (double)wait_ns / 1000000000.0, 0.0, NULL,
+            request->provider_request, NULL, err);
+    }
     return rc;
 }
 
@@ -1423,24 +1380,28 @@ static int session_turn(server_session_registry *registry,
     yvex_runtime_sampling_policy policy;
     yvex_client_message started;
     turn_sink sink;
+    unsigned long long execution_ready_width = 0ull;
     unsigned long long prior_messages = session->message_count;
     unsigned long long prior_transcript = session->transcript_count;
+    unsigned long long turn_maximum = request->provider_request
+        ? request->provider_request->maximum_output_tokens : request->maximum_new_tokens;
     yvex_error primary_error;
-    int generation_rc, extends = 1;
-    int rc;
+    int generation_rc, extends = 1, rc;
+    if (!turn_maximum) turn_maximum = registry->options.maximum_new_tokens;
     {
-        unsigned long long maximum = request->provider_request
-                                         ? request->provider_request->maximum_output_tokens
-                                         : request->maximum_new_tokens;
         int provider_valid = request->provider_request &&
             yvex_provider_request_validate(request->provider_request, err) == YVEX_OK;
         int native_valid = request->prompt && request->prompt_bytes &&
             request->prompt_bytes < SESSION_TRANSCRIPT_BYTES;
-        if ((!provider_valid && !native_valid) || !maximum ||
-            maximum > registry->options.maximum_new_tokens) {
-        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.session.turn",
-                       "nonempty bounded prompt and token limit are required");
-        return YVEX_ERR_INVALID_ARG;
+        if (turn_maximum > registry->options.maximum_new_tokens) {
+            yvex_error_set(err, YVEX_ERR_BOUNDS, "server.session.turn",
+                           "requested completion limit exceeds the admitted server envelope");
+            return YVEX_ERR_BOUNDS;
+        }
+        if ((!provider_valid && !native_valid) || !turn_maximum) {
+            yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.session.turn",
+                           "nonempty bounded prompt and token limit are required");
+            return YVEX_ERR_INVALID_ARG;
         }
     }
     if (session->state != YVEX_SERVER_SESSION_READY &&
@@ -1485,6 +1446,10 @@ static int session_turn(server_session_registry *registry,
         rc = session_execution_rebase(registry, session, err);
     if (rc == YVEX_OK)
         rc = session_generation_open(registry, session, request, &policy, err);
+    if (rc == YVEX_OK)
+        rc = session_execution_ready_admit(
+            registry, session, request, request_id,
+            &execution_ready_width, err);
     if (rc != YVEX_OK) return rc;
     memset(&sink, 0, sizeof(sink));
     sink.registry = registry;
@@ -1519,9 +1484,7 @@ static int session_turn(server_session_registry *registry,
     turn.prompt = &prompt;
     turn.committed_prefix_token_ids = session->committed_tokens;
     turn.committed_prefix_token_count = session->committed_count;
-    turn.maximum_new_tokens = request->provider_request
-                                  ? request->provider_request->maximum_output_tokens
-                                  : request->maximum_new_tokens;
+    turn.maximum_new_tokens = turn_maximum;
     turn.prompt_token_ids = session->prompt_tokens;
     turn.prompt_token_capacity = session->token_capacity;
     turn.fragment_sink = turn_fragment;
@@ -1584,141 +1547,6 @@ static int session_turn(server_session_registry *registry,
     atomic_store_explicit(&session->active_turn, 0, memory_order_release);
     return rc;
 }
-/*
- * Clear exact mutable session state while keeping model residency process-owned.
- * Reopening the execution session also drops a workspace recipe sealed by an
- * interrupted turn; reusing that recipe for a differently sized first chunk
- * would otherwise violate runtime workspace identity admission.
- */
-static int session_reset(server_session_registry *registry,
-                         server_session *session, yvex_error *err)
-{
-    unsigned long long next_message_generation, next_transcript_generation;
-    int rc;
-    if (!yvex_core_u64_add(session->message_history_generation, 1u,
-                           &next_message_generation) ||
-        !yvex_core_u64_add(session->transcript_generation, 1u,
-                           &next_transcript_generation)) {
-        yvex_error_set(err, YVEX_ERR_BOUNDS, "server.session.reset",
-                       "session history generation overflowed");
-        return YVEX_ERR_BOUNDS;
-    }
-    session->state = YVEX_SERVER_SESSION_RESETTING;
-    rc = yvex_runtime_generation_context_close(&session->generation, err);
-    if (rc == YVEX_OK)
-        rc = yvex_runtime_session_close(&session->execution, err);
-    if (rc == YVEX_OK)
-        rc = session_execution_open(registry, session, err);
-    if (rc != YVEX_OK) {
-        session->state = YVEX_SERVER_SESSION_FAILED;
-        return rc;
-    }
-    memset(session->messages, 0, sizeof(session->messages));
-    memset(session->transcript, 0, (size_t)session->transcript_capacity);
-    memset(session->committed_tokens, 0,
-           (size_t)session->token_capacity * sizeof(*session->committed_tokens));
-    session->message_count = 0u;
-    session->transcript_count = 0u;
-    session->committed_count = 0u;
-    session->turn_count = 0u;
-    session->message_history_generation = next_message_generation;
-    session->transcript_generation = next_transcript_generation;
-    session->policy_set = 0;
-    memset(&session->policy, 0, sizeof(session->policy));
-    session->reasoning_policy = YVEX_REASONING_DISABLED;
-    memset(session->last_turn_identity, 0, sizeof(session->last_turn_identity));
-    memset(session->state_digest, 0, sizeof(session->state_digest));
-    memset(session->generated_token_identity, 0,
-           sizeof(session->generated_token_identity));
-    memset(session->generated_text_digest, 0,
-           sizeof(session->generated_text_digest));
-    memset(&session->partial_turn, 0, sizeof(session->partial_turn));
-    atomic_store_explicit(&session->cancel_requested, 0, memory_order_release);
-    session->state = session->attached_clients ? YVEX_SERVER_SESSION_READY
-                                               : YVEX_SERVER_SESSION_DETACHED;
-    return yvex_server_telemetry_emit(
-        registry->telemetry, YVEX_SERVER_EVENT_SESSION_RESET,
-        YVEX_SERVER_SEVERITY_INFO, session->name, NULL, NULL, "session",
-        0u, 0u, 0u, 0.0, 0.0, err);
-}
-
-static int session_close_locked(server_session_registry *registry,
-                                server_session *session, yvex_error *err)
-{
-    int rc;
-    session->state = YVEX_SERVER_SESSION_CLOSING;
-    rc = yvex_runtime_generation_context_close(&session->generation, err);
-    if (rc == YVEX_OK)
-        rc = yvex_runtime_session_close(&session->execution, err);
-    if (rc != YVEX_OK) {
-        session->state = YVEX_SERVER_SESSION_FAILED;
-        return rc;
-    }
-    free(session->transcript);
-    free(session->turn_text);
-    free(session->token_results);
-    free(session->prompt_tokens);
-    free(session->committed_tokens);
-    session->state = YVEX_SERVER_SESSION_CLOSED;
-    registry->count--;
-    yvex_server_telemetry_session(registry->telemetry, -1, 0);
-    (void)yvex_server_telemetry_emit(
-        registry->telemetry, YVEX_SERVER_EVENT_SESSION_CLOSED,
-        YVEX_SERVER_SEVERITY_INFO, session->name, NULL, NULL, "session",
-        0u, registry->count, 0u, 0.0, 0.0, err);
-    memset(session, 0, sizeof(*session));
-    session->state = YVEX_SERVER_SESSION_CLOSED;
-    return YVEX_OK;
-}
-/*
- * Allocate a bounded registry over one borrowed process-resident model.
- *
- * Model ownership stays with host.
- */
-int yvex_server_sessions_open(server_session_registry **out,
-                                 yvex_runtime_model *model,
-                                 const yvex_server_options *options,
-                                 server_telemetry *telemetry,
-                                 yvex_error *err)
-{
-    server_session_registry *registry;
-    if (out) *out = NULL;
-    if (!out || !model || !options || !telemetry ||
-        !options->maximum_sessions ||
-        options->maximum_sessions > SIZE_MAX / sizeof(server_session)) {
-        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.session.registry",
-                       "model, telemetry, and bounded session capacity are required");
-        return YVEX_ERR_INVALID_ARG;
-    }
-    registry = calloc(1u, sizeof(*registry));
-    if (registry)
-        registry->sessions = calloc((size_t)options->maximum_sessions,
-                                    sizeof(*registry->sessions));
-    if (!registry || !registry->sessions) {
-        free(registry ? registry->sessions : NULL);
-        free(registry);
-        yvex_error_set(err, YVEX_ERR_NOMEM, "server.session.registry",
-                       "session registry allocation failed");
-        return YVEX_ERR_NOMEM;
-    }
-    registry->model = model;
-    registry->options = *options;
-    registry->telemetry = telemetry;
-    registry->capacity = options->maximum_sessions;
-    registry->next_id = 1u;
-    if (pthread_mutex_init(&registry->mutex, NULL) != 0) {
-        free(registry->sessions);
-        free(registry);
-        yvex_error_set(err, YVEX_ERR_STATE, "server.session.registry",
-                       "session registry mutex initialization failed");
-        return YVEX_ERR_STATE;
-    }
-    registry->mutex_ready = 1;
-    *out = registry;
-    yvex_error_clear(err);
-    return YVEX_OK;
-}
-
 int yvex_server_sessions_execute(server_session_registry *registry,
                                     const yvex_client_request *request,
                                     const char *request_id,
@@ -1742,10 +1570,11 @@ int yvex_server_sessions_execute(server_session_registry *registry,
     }
     if (request->operation != YVEX_CLIENT_OP_SESSION_NEW &&
         request->operation != YVEX_CLIENT_OP_SESSION_LIST)
-        session = session_find_locked(registry, request->session_name);
+        session = yvex_server_session_find_locked(registry,
+                                                  request->session_name);
     if (request->operation == YVEX_CLIENT_OP_SESSION_NEW) {
-        rc = session_create_locked(registry, request->session_name,
-                                   &session, err);
+        rc = yvex_server_session_create_locked(
+            registry, request->session_name, &session, err);
         if (rc == YVEX_OK)
             rc = session_message(emit, emit_context,
                                  YVEX_CLIENT_MESSAGE_SESSION, YVEX_OK,
@@ -1793,25 +1622,31 @@ int yvex_server_sessions_execute(server_session_registry *registry,
             rc = session_message(emit, emit_context, YVEX_CLIENT_MESSAGE_ACK,
                                  YVEX_OK, request, session, "detached", err);
     } else if (request->operation == YVEX_CLIENT_OP_SESSION_RESET) {
-        rc = session_reset(registry, session, err);
+        rc = yvex_server_session_reset_locked(registry, session, err);
         if (rc == YVEX_OK)
             rc = session_message(emit, emit_context, YVEX_CLIENT_MESSAGE_ACK,
                                  YVEX_OK, request, session, "reset", err);
     } else if (request->operation == YVEX_CLIENT_OP_SESSION_STATE_SAVE ||
                request->operation == YVEX_CLIENT_OP_SESSION_STATE_RESTORE) {
+        const yvex_runtime_model_view *view =
+            yvex_runtime_model_view_get(registry->model);
         yvex_runtime_state_store_summary summary;
         if (atomic_load_explicit(&session->active_turn, memory_order_acquire)) {
             rc = YVEX_ERR_STATE;
             yvex_error_set(err, YVEX_ERR_STATE, "server.session.state",
                            "active session state cannot be checkpointed");
         } else if (request->operation == YVEX_CLIENT_OP_SESSION_STATE_SAVE) {
-            rc = yvex_runtime_session_state_save(
-                session->execution, request->state_path, &summary, err);
+            rc = yvex_server_session_state_save(
+                session, request->state_path, &summary, err);
+        } else if (!view || !view->tokenizer) {
+            rc = YVEX_ERR_STATE;
+            yvex_error_set(err, rc, "server.session.state",
+                           "runtime tokenizer is unavailable");
         } else {
-            rc = yvex_runtime_session_state_restore(
-                session->execution, request->state_path,
-                request->maximum_state_file_bytes, session->committed_count,
-                &summary, err);
+            rc = yvex_server_session_state_restore(
+                session, request->state_path,
+                request->maximum_state_file_bytes,
+                yvex_tokenizer_vocab_size(view->tokenizer), &summary, err);
         }
         if (rc == YVEX_OK) {
             session_checkpoint_set(session, &summary);
@@ -1825,8 +1660,18 @@ int yvex_server_sessions_execute(server_session_registry *registry,
             memset(&session->state_checkpoint, 0,
                    sizeof(session->state_checkpoint));
         }
+    } else if (request->operation == YVEX_CLIENT_OP_SESSION_FORK) {
+        yvex_runtime_session_prefix_summary prefix_summary;
+        server_session *child = NULL;
+        rc = yvex_server_session_fork_locked(
+            registry, session, request->fork_session_name,
+            request->maximum_prefix_bytes, &child, &prefix_summary, err);
+        if (rc == YVEX_OK)
+            rc = session_message(emit, emit_context,
+                                 YVEX_CLIENT_MESSAGE_SESSION, YVEX_OK,
+                                 request, child, "forked", err);
     } else if (request->operation == YVEX_CLIENT_OP_SESSION_CLOSE) {
-        rc = session_close_locked(registry, session, err);
+        rc = yvex_server_session_close_locked(registry, session, err);
         if (rc == YVEX_OK)
             rc = session_message(emit, emit_context, YVEX_CLIENT_MESSAGE_ACK,
                                  YVEX_OK, request, NULL, "closed", err);
@@ -1862,7 +1707,7 @@ int yvex_server_sessions_console_status(server_session_registry *registry,
                        "registry, session name, and status output are required");
         return YVEX_ERR_INVALID_ARG;
     }
-    session = session_find_locked(registry, session_name);
+    session = yvex_server_session_find_locked(registry, session_name);
     if (!session) {
         (void)pthread_mutex_unlock(&registry->mutex);
         yvex_error_set(err, YVEX_ERR_STATE, "server.session.console-status",
@@ -1908,7 +1753,7 @@ int yvex_server_sessions_cancel(server_session_registry *registry,
                        "registry and session name are required");
         return YVEX_ERR_INVALID_ARG;
     }
-    session = session_find_locked(registry, session_name);
+    session = yvex_server_session_find_locked(registry, session_name);
     if (!session || !atomic_load_explicit(&session->active_turn,
                                           memory_order_acquire)) {
         (void)pthread_mutex_unlock(&registry->mutex);
@@ -1937,51 +1782,4 @@ void yvex_server_sessions_cancel_all(server_session_registry *registry)
             atomic_store_explicit(&registry->sessions[index].cancel_requested,
                                   1, memory_order_release);
     (void)pthread_mutex_unlock(&registry->mutex);
-}
-
-int yvex_server_sessions_count(server_session_registry *registry,
-                                  unsigned long long *count, yvex_error *err)
-{
-    if (!registry || !count || pthread_mutex_lock(&registry->mutex) != 0) {
-        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.session.count",
-                       "registry and count output are required");
-        return YVEX_ERR_INVALID_ARG;
-    }
-    *count = registry->count;
-    (void)pthread_mutex_unlock(&registry->mutex);
-    yvex_error_clear(err);
-    return YVEX_OK;
-}
-/* Drain every session and release registry ownership before model close. */
-int yvex_server_sessions_close(server_session_registry **registry,
-                                  yvex_error *err)
-{
-    server_session_registry *owner;
-    unsigned long long index;
-    int rc = YVEX_OK;
-    if (!registry || !*registry) {
-        yvex_error_clear(err);
-        return YVEX_OK;
-    }
-    owner = *registry;
-    if (!owner->mutex_ready || pthread_mutex_lock(&owner->mutex) != 0) {
-        yvex_error_set(err, YVEX_ERR_STATE, "server.session.close",
-                       "session registry close lock failed");
-        return YVEX_ERR_STATE;
-    }
-    owner->closing = 1;
-    for (index = 0u; index < owner->capacity && rc == YVEX_OK; ++index)
-        if (owner->sessions[index].name[0] &&
-            owner->sessions[index].state != YVEX_SERVER_SESSION_CLOSED)
-            rc = session_close_locked(owner, &owner->sessions[index], err);
-    (void)pthread_mutex_unlock(&owner->mutex);
-    if (rc != YVEX_OK) return rc;
-    (void)pthread_mutex_destroy(&owner->mutex);
-    owner->mutex_ready = 0;
-    free(owner->sessions);
-    memset(owner, 0, sizeof(*owner));
-    free(owner);
-    *registry = NULL;
-    yvex_error_clear(err);
-    return YVEX_OK;
 }

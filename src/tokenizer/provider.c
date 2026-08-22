@@ -168,7 +168,7 @@ int yvex_tokenizer_reasoning_stream_finish(
     stream->finished = 1;
     if (rc == YVEX_OK && incomplete) {
         yvex_error_set(err, YVEX_ERR_FORMAT, "tokenizer.reasoning",
-                       "thinking completion is missing its source delimiter");
+                       "thinking ended before its source delimiter; reset and retry with a larger token limit");
         rc = YVEX_ERR_FORMAT;
     } else if (rc == YVEX_OK) {
         yvex_error_clear(err);
@@ -693,7 +693,7 @@ static int append_tool_schema(provider_builder *builder,
     if (rc == YVEX_OK) rc = literal(builder, ", \"parameters\": ", err);
     if (rc == YVEX_OK)
         rc = json_canonical_span(builder, tool->parameters_json, err);
-    if (rc == YVEX_OK && request_schema == YVEX_PROVIDER_SCHEMA_V2 &&
+    if (rc == YVEX_OK && request_schema != YVEX_PROVIDER_SCHEMA_V1 &&
         tool->strict_present)
         rc = literal(builder, tool->strict ? ", \"strict\": true"
                                            : ", \"strict\": false", err);
@@ -819,7 +819,7 @@ int yvex_tokenizer_provider_prompt(
         yvex_provider_request_validate(request, err) != YVEX_OK)
         return YVEX_ERR_INVALID_ARG;
     conversation = tokenizer->conversation;
-    thinking = request->schema_version == YVEX_PROVIDER_SCHEMA_V2 &&
+    thinking = request->schema_version != YVEX_PROVIDER_SCHEMA_V1 &&
                request->reasoning_policy != YVEX_REASONING_DISABLED;
     effective_drop = request->schema_version == YVEX_PROVIDER_SCHEMA_V1 ||
                      request->drop_thinking;

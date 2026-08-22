@@ -535,6 +535,38 @@ static int test_video_reconstruction_execution(void)
     return 0;
 }
 
+static int test_normal_vectors(void)
+{
+    float first[5] = {0}, repeated[5] = {0}, refused[5];
+    yvex_runtime_latent_normal_result a, b, failure;
+    yvex_error err;
+
+    memset(refused, 0x5a, sizeof(refused));
+    YVEX_TEST_ASSERT(
+        yvex_runtime_latent_normal_f32(
+            first, 5ull, 5ull, 42ull, sizeof(first), &a, &err) == YVEX_OK &&
+            yvex_runtime_latent_normal_f32(
+                repeated, 5ull, 5ull, 42ull, sizeof(repeated), &b, &err) == YVEX_OK &&
+            a.completed && a.value_count == 5ull && a.uniform_draw_count == 6ull &&
+            a.workspace_bytes == sizeof(first) && memcmp(first, repeated, sizeof(first)) == 0 &&
+            strcmp(a.normal_identity, b.normal_identity) == 0 &&
+            fabsf(first[0] + 0.642473459f) < 1.0e-7f &&
+            fabsf(first[4] + 0.241338655f) < 1.0e-7f,
+        "seeded latent initialization has stable PCG Box-Muller vectors");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_latent_normal_f32(
+            refused, 5ull, 5ull, 42ull, sizeof(refused) - 1ull, &failure, &err) ==
+                YVEX_ERR_BOUNDS &&
+            !failure.completed && ((unsigned char *)refused)[0] == 0x5a,
+        "latent initialization refuses insufficient workspace without publication");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_latent_normal_f32(
+            repeated, 5ull, 5ull, 41ull, sizeof(repeated), &b, &err) == YVEX_OK &&
+            strcmp(a.normal_identity, b.normal_identity) != 0,
+        "latent initialization binds its seed into values and identity");
+    return 0;
+}
+
 int yvex_test_runtime_latent(void)
 {
     latent_fixture first_fixture = {0}, second_fixture = {0}, cancelled = {.cancelled = 1};
@@ -612,7 +644,7 @@ int yvex_test_runtime_latent(void)
         yvex_runtime_latent_execute(&refused_request, refused_video, 3ull, refused_audio, 2ull,
                                     &refused, &err) == YVEX_ERR_BOUNDS && !refused.completed,
         "paired latent execution refuses an undersized workspace budget");
-    if (test_packed_av_layout() != 0) return 1;
+    if (test_normal_vectors() != 0 || test_packed_av_layout() != 0) return 1;
     if (test_evaluator_evidence() != 0) return 1;
     if (test_av_unpack() != 0) return 1;
     if (test_video_reconstruction_plan() != 0 || test_video_reconstruction_execution() != 0) return 1;

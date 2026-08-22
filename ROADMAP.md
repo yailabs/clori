@@ -110,7 +110,7 @@ not a replacement historical ledger.
 | Compiler and family boundary | Compiler-facing family adapters seal source-authored facts into Semantic Model IR and a canonical Operator Graph IR. Generic passes seal Physical Execution IR and one content-addressed binding; runtime model-open authenticates and instantiates that compiled truth without consulting a concrete family implementation. |
 | Artifact and admission | One complete DSpark bootstrap artifact contains the target and drafter; structural, payload, roundtrip, materialization, and one binding containing target/draft/verification plans are admitted outside Git. |
 | Runtime and generation | One authenticated model opens in the foreground `yvex server` process; server-owned sessions retain exact target KV/token truth and bounded candidate state; target-only and target-verified DSpark text run on CPU and the admitted mixed CUDA/host path. |
-| Application serving | Local protocol v8 and YVEX OpenAI Compatibility Profile v2 share one runtime, worker, queue, session registry, and telemetry authority. |
+| Application serving | Local protocol v10 and YVEX OpenAI Compatibility Profile v2 share one runtime, scheduler, session registry, and telemetry authority; bounded session fork composes immutable prefix sharing with independent semantic state. |
 | Product surface | `yvex` is the sole product executable. Its explicit foreground `server MODEL` mode hosts the model; `chat` and `run` remain protocol clients, while finite compiler and engineering lanes remain bounded offline operations. |
 | Command architecture | `yvex.operator.registry.v1` generates immutable descriptors compiled into `yvex`; canonical operation IDs drive the truthful command taxonomy, lane-safe dispatch, help, JSON discovery, completion, and slash-command schemas. |
 | Documentation architecture | Canonical doctrine, terminology, reference and implemented architecture, family records, contracts, operations, development policy, audits, migrations, and release surfaces have separate governed owners. |
@@ -138,8 +138,11 @@ tokens/s, attention at 43.88% of measured warm execution, MoE at 19.29%, about
 baseline facts, not a release benchmark.
 
 The active implementation now derives execution geometry from one sealed model
-descriptor and admits binding v12 as the first complete compiler authority;
-older bindings are refused because they cannot represent that authority.
+descriptor and admits binding v14 as the complete compiler authority; older
+bindings are refused because they cannot represent the legal expert-worklist
+widths and optional Tensor Core regime carried by Physical Execution IR v4.
+Runtime instantiates actual expert-major populations from typed execution batches;
+the backend cannot infer semantic compatibility or manufacture execution width.
 Hardware, workload, capacity and state-page facts remain separate. Admission
 refuses insufficient model-residency memory before artifact open. Host graph
 state commits through stable per-class virtual pages; a phase roofline ledger
@@ -147,8 +150,15 @@ and identity-bound native `sm_121` CUBIN coexist with portable PTX. On
 Driver-VMM hardware, CUDA session
 state now reserves stable logical banks and commits only the physical granules
 reached by visible or pre-admitted candidate spans; the non-VMM path remains an
-explicit full-bank fallback. Specialized kernels, Tensor Core execution, real
-deep-context qualification and the optimized serving after-state remain open.
+explicit full-bank fallback. The admitted Q8_0/Q8_K native path now has a
+mandatory SM121 SASS proof for `IMMA.16816.S8.S8` plus native numerical and
+launch-accounting coverage. Physical Execution IR now admits a measured
+sparse/large-row MoE crossover. Exact grouped attention output projection now
+collapses the model-derived output-A group launches for both decode and bounded
+prefill without changing the compiler-selected F32 activation representation.
+Specialized Tensor Core coverage beyond those paths, the remaining attention
+stack, real deep-context qualification and the optimized serving after-state
+remain open.
 
 The continuation selects expert placement, cache, grouped execution, fusion,
 prefetch, graph capture and kernel order only from measured phase economics.

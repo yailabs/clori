@@ -7,10 +7,14 @@ set -eu
 YVEX_BIN=${YVEX_BIN:-./yvex}
 OUT_DIR=${YVEX_TEST_OUT_DIR:-build/tests/cli-server}
 HOME_ROOT=$OUT_DIR/home
-SOCKET_PATH=${TMPDIR:-/tmp}/yvex-cli-server-$$.sock
+SOCKET_ROOT=$OUT_DIR/runtime
+SOCKET_PATH=$SOCKET_ROOT/yvex.sock
+PROFILE=deepseek4-v4-flash-dspark-runtime-iq2xxs-q2k-mxfp4-b9825a07-sm121-tc
 
 yvex_test_cleanup "$OUT_DIR" "$SOCKET_PATH"
-mkdir -p "$OUT_DIR" "$HOME_ROOT/.local/share/yvex"
+mkdir -p "$OUT_DIR" "$HOME_ROOT/.local/share/yvex" "$SOCKET_ROOT"
+chmod 0700 "$SOCKET_ROOT"
+SOCKET_PATH=$(realpath "$SOCKET_ROOT")/yvex.sock
 
 fail()
 {
@@ -33,7 +37,7 @@ cat >"$HOME_ROOT/.local/share/yvex/models.local.json" <<EOF
 {
   "schema": "yvex.models.local.v3",
   "models": [{
-    "alias": "current-model-runtime-profile",
+    "alias": "$PROFILE",
     "family": "deepseek4",
     "path": "$artifact",
     "runtime_binding": "$binding",
@@ -63,6 +67,7 @@ MEDIA_SOCKET=$MEDIA_RUNTIME/yvexd.sock
 contains "$OUT_DIR/help.out" 'usage: yvex server MODEL [options]'
 contains "$OUT_DIR/help.out" 'Run one model server in the foreground.'
 contains "$OUT_DIR/help.out" '--ctx'
+contains "$OUT_DIR/help.out" '--parallel'
 ! grep -F -- '--context' "$OUT_DIR/help.out" >/dev/null
 contains "$OUT_DIR/help.out" '--openai'
 contains "$OUT_DIR/help.out" '--generation-mode        target-only|dspark|media'
@@ -74,19 +79,19 @@ HOME="$HOME_ROOT" "$YVEX_BIN" server >"$OUT_DIR/missing.out" 2>"$OUT_DIR/missing
 missing_status=$?
 HOME="$HOME_ROOT" "$YVEX_BIN" server absent >"$OUT_DIR/absent.out" 2>"$OUT_DIR/absent.err"
 absent_status=$?
-HOME="$HOME_ROOT" "$YVEX_BIN" server current-model-runtime-profile --openai remote \
+HOME="$HOME_ROOT" "$YVEX_BIN" server "$PROFILE" --openai remote \
     >"$OUT_DIR/remote.out" 2>"$OUT_DIR/remote.err"
 remote_status=$?
-HOME="$HOME_ROOT" "$YVEX_BIN" server current-model-runtime-profile --openai-port 0 \
+HOME="$HOME_ROOT" "$YVEX_BIN" server "$PROFILE" --openai-port 0 \
     >"$OUT_DIR/port.out" 2>"$OUT_DIR/port.err"
 port_status=$?
-HOME="$HOME_ROOT" "$YVEX_BIN" server current-model-runtime-profile --openai on --openai off \
+HOME="$HOME_ROOT" "$YVEX_BIN" server "$PROFILE" --openai on --openai off \
     >"$OUT_DIR/duplicate.out" 2>"$OUT_DIR/duplicate.err"
 duplicate_status=$?
-HOME="$HOME_ROOT" "$YVEX_BIN" server current-model-runtime-profile --generation-mode invalid \
+HOME="$HOME_ROOT" "$YVEX_BIN" server "$PROFILE" --generation-mode invalid \
     >"$OUT_DIR/mode.out" 2>"$OUT_DIR/mode.err"
 mode_status=$?
-HOME="$HOME_ROOT" "$YVEX_BIN" server current-model-runtime-profile --context 8192 \
+HOME="$HOME_ROOT" "$YVEX_BIN" server "$PROFILE" --context 8192 \
     >"$OUT_DIR/context.out" 2>"$OUT_DIR/context.err"
 context_status=$?
 HOME="$HOME_ROOT" "$YVEX_BIN" server minimax-h3-fl2va-runtime-media --generation-mode media \
@@ -100,8 +105,11 @@ HOME="$HOME_ROOT" "$YVEX_BIN" server minimax-h3-fl2va-runtime-media --generation
     --media-artifact-root "$MEDIA_ROOT" --output-root "$MEDIA_OUTPUT" --openai on \
     >"$OUT_DIR/media-openai.out" 2>"$OUT_DIR/media-openai.err"
 media_openai_status=$?
-HOME="$HOME_ROOT" "$YVEX_BIN" server current-model-runtime-profile \
-    --ctx 8192 --socket "$SOCKET_PATH" --openai off \
+HOME="$HOME_ROOT" "$YVEX_BIN" server "$PROFILE" --prefill-chunk 0 \
+    >"$OUT_DIR/prefill-zero.out" 2>"$OUT_DIR/prefill-zero.err"
+prefill_zero_status=$?
+HOME="$HOME_ROOT" "$YVEX_BIN" server "$PROFILE" \
+    --ctx 8192 --parallel 2 --socket "$SOCKET_PATH" --openai off \
     >"$OUT_DIR/admission.out" 2>"$OUT_DIR/admission.err"
 admission_status=$?
 set -e
@@ -116,6 +124,7 @@ test "$context_status" -eq 2
 test "$media_missing_status" -eq 2
 test "$media_cpu_status" -eq 2
 test "$media_openai_status" -eq 2
+test "$prefill_zero_status" -eq 2
 test "$admission_status" -eq 1
 contains "$OUT_DIR/missing.err" 'usage: yvex server MODEL [options]'
 contains "$OUT_DIR/absent.err" 'model is not registered: absent'
@@ -127,14 +136,16 @@ contains "$OUT_DIR/context.err" 'unknown flag: --context'
 contains "$OUT_DIR/media-missing.err" 'media mode requires --media-artifact-root and --output-root'
 contains "$OUT_DIR/media-cpu.err" 'media mode requires the admitted CUDA backend'
 contains "$OUT_DIR/media-openai.err" 'media mode requires the admitted CUDA backend and OpenAI disabled'
+contains "$OUT_DIR/prefill-zero.err" 'invalid value for --prefill-chunk: 0'
 contains "$OUT_DIR/admission.out" 'YVEX server · foreground'
-contains "$OUT_DIR/admission.out" 'profile current-model-runtime-profile'
-contains "$OUT_DIR/admission.out" 'backend=cpu · mode=target-only · requested ctx=8192'
+contains "$OUT_DIR/admission.out" "profile $PROFILE"
+contains "$OUT_DIR/admission.out" 'backend=cpu · mode=target-only · requested ctx=8192 · parallel=2'
 contains "$OUT_DIR/admission.out" "artifact $artifact"
 contains "$OUT_DIR/admission.out" "binding $binding"
 contains "$OUT_DIR/admission.out" 'stop with Ctrl-C or `yvex server stop`'
-contains "$OUT_DIR/admission.err" 'model admission in progress (elapsed 0 s)'
-contains "$OUT_DIR/admission.err" 'model admission failed (elapsed '
+contains "$OUT_DIR/admission.err" 'startup refused before readiness (elapsed '
+contains "$OUT_DIR/admission.err" 'model admission refused:'
+contains "$OUT_DIR/admission.err" 'field=runtime-binding'
 
 set +e
 HOME="$HOME_ROOT" timeout --signal=TERM 2 "$YVEX_BIN" server minimax-h3-fl2va-runtime-media \
@@ -148,7 +159,7 @@ contains "$OUT_DIR/media-host.out" 'profile minimax-h3-fl2va-runtime-media'
 contains "$OUT_DIR/media-host.out" 'mode=media'
 contains "$OUT_DIR/media-host.out" "component root $MEDIA_ROOT"
 contains "$OUT_DIR/media-host.out" "output root $MEDIA_OUTPUT"
-contains "$OUT_DIR/media-host.err" 'model admission failed'
+contains "$OUT_DIR/media-host.err" 'startup refused before readiness'
 contains "$OUT_DIR/media-host.err" 'failed to open'
 test ! -e "$MEDIA_SOCKET"
 yvex_test_cleanup "$SOCKET_PATH"

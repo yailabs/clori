@@ -16,6 +16,7 @@
 #include <yvex/artifact.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/backend.h>
+#include <yvex/internal/moe.h>
 #include <yvex/internal/runtime.h>
 #include <yvex/internal/transformer.h>
 typedef enum {
@@ -26,8 +27,10 @@ typedef enum {
 } residency_binding_class;
 typedef struct {
     const yvex_materialized_tensor_binding *binding;
+    const yvex_physical_execution_decision *decision;
+    const unsigned char *canonical_data;
     residency_binding_class binding_class;
-    unsigned long long arena_offset;
+    unsigned long long arena_offset, storage_bytes;
 } residency_record;
 struct yvex_runtime_residency {
     yvex_materialization_session *materialization;
@@ -37,20 +40,68 @@ struct yvex_runtime_residency {
     unsigned long long record_index_count;
     yvex_backend *cuda_backend;
     yvex_device_tensor *cuda_weights;
-    unsigned long long cuda_addressable_device_base;
+    unsigned long long cuda_addressable_device_base, backing_bytes;
     yvex_runtime_residency_summary summary;
     pthread_mutex_t access_mutex;
-    int access_mutex_ready, arena_locked, arena_mapped, arena_registered;
+    int access_mutex_ready, arena_locked, arena_mapped, arena_registered, arena_managed;
+    int arena_borrowed;
 };
-struct yvex_runtime_component_session {
-    yvex_materialization_plan *plan;
-    yvex_materialization_session *materialization;
-    yvex_runtime_residency *residency;
-    yvex_backend *backend;
-    yvex_device_tensor *workspace;
-    unsigned long long workspace_bytes;
-    yvex_runtime_residency_summary summary;
-};
+int yvex_runtime_private_weight_placement_select(
+    const yvex_runtime_binding *binding, yvex_backend_kind backend_kind,
+    yvex_backend *backend,
+    yvex_runtime_weight_placement *placement, yvex_error *err)
+{
+    yvex_backend_device_info device = {0};
+    unsigned long long index;
+    int mapped_compatible = 1;
+    int rc;
+    if (!binding || !binding->physical_execution || !placement ||
+        (backend_kind == YVEX_BACKEND_KIND_CUDA && !backend)) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.residency.policy",
+                       "compiled binding, backend facts, and placement output are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    if (backend_kind == YVEX_BACKEND_KIND_CPU) {
+        *placement = YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED;
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    if (backend_kind != YVEX_BACKEND_KIND_CUDA) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "runtime.residency.policy",
+                       "the admitted backend has no production weight placement");
+        return YVEX_ERR_UNSUPPORTED;
+    }
+    rc = yvex_backend_get_device_info(backend, &device, err);
+    if (rc != YVEX_OK) return rc;
+    for (index = 0ull; index < binding->summary.tensor_count; ++index) {
+        const yvex_physical_execution_decision *decision =
+            yvex_physical_execution_ir_decision_at(
+                binding->physical_execution, binding->materialized[index].tensor_id);
+        if (!decision) {
+            yvex_error_set(err, YVEX_ERR_FORMAT, "runtime.residency.policy",
+                           "compiled placement decision is unavailable");
+            return YVEX_ERR_FORMAT;
+        }
+        mapped_compatible &= !decision->derived_asset_required;
+    }
+    if (mapped_compatible && yvex_backend_resident_map_readonly_supported(backend)) {
+        *placement = YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED;
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    if (device.kind != YVEX_BACKEND_KIND_CUDA || !device.unified_addressing ||
+        !device.managed_memory) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "runtime.residency.policy",
+                       "CUDA managed residency is not supported by the admitted backend");
+        return YVEX_ERR_UNSUPPORTED;
+    }
+
+    /* Derived packs cannot borrow canonical artifact bytes; canonical bytes prefer an
+     * immutable registered map only when the backend can publish one stable device address. */
+    *placement = YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
 static int residency_reject(yvex_runtime_residency_failure *failure,
                             yvex_runtime_residency_failure_code code,
                             const yvex_runtime_tensor_binding *binding,
@@ -69,6 +120,12 @@ static int residency_reject(yvex_runtime_residency_failure *failure,
     }
     yvex_error_set(err, status, "runtime.residency", reason);
     return status;
+}
+
+static int residency_refuse(yvex_error *err, yvex_status status, const char *reason)
+{
+    return residency_reject(NULL, YVEX_RUNTIME_RESIDENCY_FAILURE_PLAN, NULL,
+                            0ull, 0ull, reason, status, err);
 }
 /* Resolve one exact resident record without copying or exposing arena ownership. */
 static int residency_resolve(const void *context,
@@ -99,7 +156,9 @@ static int residency_resolve(const void *context,
         record->binding->absolute_offset != binding->absolute_offset ||
         strcmp(record->binding->name, binding->name) != 0)
         return YVEX_MATERIALIZATION_READ_INVALID;
-    *data = residency->arena + record->arena_offset;
+    *data = record->canonical_data
+                ? record->canonical_data
+                : residency->arena + record->arena_offset;
     *bytes = record->binding->encoded_bytes;
     return YVEX_MATERIALIZATION_READ_HIT;
 }
@@ -137,9 +196,9 @@ static void residency_storage_release(yvex_runtime_residency **owner)
     yvex_runtime_residency *residency = owner ? *owner : NULL;
     if (!residency) return;
     if (residency->arena_locked)
-        (void)munlock(residency->arena, (size_t)residency->summary.encoded_bytes);
-    if (residency->arena_mapped)
-        (void)munmap(residency->arena, (size_t)residency->summary.encoded_bytes);
+        (void)munlock(residency->arena, (size_t)residency->backing_bytes);
+    if (residency->arena_mapped && !residency->arena_managed)
+        (void)munmap(residency->arena, (size_t)residency->backing_bytes);
     free(residency->records);
     free(residency->record_index);
     if (residency->access_mutex_ready)
@@ -155,8 +214,10 @@ static void residency_storage_release(yvex_runtime_residency **owner)
  */
 static int residency_cuda_release(yvex_runtime_residency *residency, yvex_error *err)
 {
+    int managed;
     int rc = YVEX_OK;
     if (!residency) return YVEX_OK;
+    managed = residency->arena_managed;
     if (residency->cuda_backend) {
         rc = yvex_backend_resident_detach(residency->cuda_backend, err);
         if (rc != YVEX_OK) return rc;
@@ -168,6 +229,10 @@ static int residency_cuda_release(yvex_runtime_residency *residency, yvex_error 
             residency->cuda_backend, &residency->cuda_weights, err);
         if (rc != YVEX_OK) return rc;
     }
+    if (managed) {
+        residency->arena = NULL;
+        residency->arena_managed = 0;
+    }
     rc = yvex_backend_close_checked(&residency->cuda_backend, err);
     if (rc != YVEX_OK) return rc;
     residency->summary.cuda_ready = 0;
@@ -176,8 +241,14 @@ static int residency_cuda_release(yvex_runtime_residency *residency, yvex_error 
     residency->summary.cuda_upload_bytes = 0ull;
     residency->summary.cuda_upload_count = 0ull;
     residency->summary.cuda_host_registration_count = 0ull;
+    residency->summary.cuda_pageable_map_bytes = 0ull;
+    residency->summary.cuda_pageable_map_count = 0ull;
     residency->summary.cuda_managed_bytes = 0ull;
     residency->summary.cuda_managed_allocation_count = 0ull;
+    residency->summary.cuda_managed_prefetch_bytes = 0ull;
+    residency->summary.cuda_managed_prefetch_count = 0ull;
+    residency->summary.cuda_pageable_prefetch_bytes = 0ull;
+    residency->summary.cuda_pageable_prefetch_count = 0ull;
     residency->cuda_addressable_device_base = 0ull;
     residency->arena_registered = 0;
     yvex_error_clear(err);
@@ -255,27 +326,276 @@ static int residency_add_record(yvex_runtime_residency *residency,
     residency->summary.binding_count++;
     return YVEX_OK;
 }
-/* Hash exact resident payload bytes and immutable range boundaries. */
-static int residency_load_and_hash(yvex_runtime_residency *residency,
-                                   yvex_runtime_residency_failure *failure, yvex_error *err)
+
+/* Classify the sealed binding inventory before any backing allocation begins. */
+static int residency_records_prepare(
+    yvex_runtime_residency *residency, const yvex_runtime_descriptor *descriptor,
+    const yvex_runtime_descriptor_summary *descriptor_summary,
+    const yvex_runtime_model_summary *model_summary,
+    const yvex_attention_plan *plan, const yvex_attention_summary *attention,
+    yvex_runtime_residency_failure *failure, yvex_error *err)
 {
-    yvex_sha256 hash;
-    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
-    char tensor_digest[YVEX_SHA256_HEX_CAP];
-    unsigned long long index;
-    yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.resident.payload.v3") ||
-        !yvex_sha256_update_u64(&hash, residency->summary.binding_count))
-        return residency_reject(failure, YVEX_RUNTIME_RESIDENCY_FAILURE_LIFECYCLE, NULL,
-                                1ull, 0ull, "resident payload hash initialization failed",
+    unsigned long long core_qtypes[YVEX_RUNTIME_DESCRIPTOR_QTYPE_CAP] = {0};
+    unsigned long long core_bytes = 0ull;
+    unsigned long long index, ordinal = 0ull;
+    int rc = YVEX_OK;
+    residency->summary.expected_core_binding_count = attention->required_binding_count;
+    residency->summary.expected_envelope_binding_count =
+        attention->required_envelope_binding_count;
+    for (index = 0ull; rc == YVEX_OK && index < descriptor_summary->tensor_count; ++index) {
+        const yvex_runtime_tensor_binding *binding =
+            yvex_runtime_descriptor_tensor_at(descriptor, index);
+        yvex_attention_binding_class attention_class =
+            yvex_attention_plan_binding_classify(plan, binding);
+        residency_binding_class binding_class;
+        int selected = 1;
+        if (attention_class == YVEX_ATTENTION_BINDING_CORE)
+            binding_class = RESIDENCY_BINDING_CORE;
+        else if (attention_class == YVEX_ATTENTION_BINDING_ENVELOPE)
+            binding_class = RESIDENCY_BINDING_ENVELOPE;
+        else if (model_summary->capabilities.output_head_binding_ready && binding &&
+                 binding->role == YVEX_TENSOR_ROLE_OUTPUT_HEAD &&
+                 binding->scope == YVEX_TENSOR_SCOPE_GLOBAL)
+            binding_class = RESIDENCY_BINDING_OUTPUT_HEAD;
+        else
+            selected = 0;
+        if (selected)
+            rc = residency_add_record(residency, binding, binding_class, ordinal++,
+                                      &core_bytes, core_qtypes, failure, err);
+    }
+    residency->summary.accelerator_encoded_bytes = residency->summary.encoded_bytes;
+    for (index = 0ull; rc == YVEX_OK && index < descriptor_summary->tensor_count; ++index) {
+        const yvex_runtime_tensor_binding *binding =
+            yvex_runtime_descriptor_tensor_at(descriptor, index);
+        yvex_attention_binding_class attention_class =
+            yvex_attention_plan_binding_classify(plan, binding);
+        int accelerator_binding =
+            attention_class == YVEX_ATTENTION_BINDING_CORE ||
+            attention_class == YVEX_ATTENTION_BINDING_ENVELOPE ||
+            (model_summary->capabilities.output_head_binding_ready && binding &&
+             binding->role == YVEX_TENSOR_ROLE_OUTPUT_HEAD &&
+             binding->scope == YVEX_TENSOR_SCOPE_GLOBAL);
+        if (!accelerator_binding)
+            rc = residency_add_record(residency, binding, RESIDENCY_BINDING_MODEL,
+                                      ordinal++, &core_bytes, core_qtypes, failure, err);
+    }
+    residency->summary.expected_output_head_binding_count =
+        model_summary->capabilities.output_head_binding_ready ? 1ull : 0ull;
+    residency->summary.expected_model_binding_count =
+        descriptor_summary->tensor_count - residency->summary.expected_core_binding_count -
+        residency->summary.expected_envelope_binding_count -
+        residency->summary.expected_output_head_binding_count;
+    if (rc == YVEX_OK &&
+        (residency->summary.core_binding_count != attention->required_binding_count ||
+         residency->summary.envelope_binding_count != attention->required_envelope_binding_count ||
+         residency->summary.output_head_binding_count !=
+             residency->summary.expected_output_head_binding_count ||
+         residency->summary.model_binding_count !=
+             residency->summary.expected_model_binding_count ||
+         residency->summary.binding_count != descriptor_summary->tensor_count ||
+         residency->summary.encoded_bytes != descriptor_summary->payload_bytes ||
+         core_bytes != attention->payload_bytes_bound))
+        rc = residency_reject(failure, YVEX_RUNTIME_RESIDENCY_FAILURE_PLAN, NULL,
+                              descriptor_summary->tensor_count,
+                              residency->summary.binding_count,
+                              "full-model resident accounting differs from the descriptor",
+                              YVEX_ERR_FORMAT, err);
+    for (index = 0ull; rc == YVEX_OK && index < YVEX_RUNTIME_DESCRIPTOR_QTYPE_CAP; ++index)
+        if (core_qtypes[index] != attention->qtype_binding_counts[index])
+            rc = residency_reject(failure, YVEX_RUNTIME_RESIDENCY_FAILURE_PLAN, NULL,
+                                  attention->qtype_binding_counts[index], core_qtypes[index],
+                                  "resident core qtype accounting differs from the plan",
+                                  YVEX_ERR_FORMAT, err);
+    return rc;
+}
+
+static int residency_layout_plan(
+    yvex_runtime_residency *residency,
+    const yvex_physical_execution_ir *physical,
+    const yvex_artifact *artifact, yvex_backend *backend,
+    yvex_runtime_weight_placement placement,
+    yvex_runtime_residency_failure *failure, yvex_error *err)
+{
+    const yvex_backend_moe_operations *operations =
+        placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED
+            ? yvex_backend_moe_operations_get(backend) : NULL;
+    const unsigned char *mapping = artifact ? yvex_artifact_data(artifact) : NULL;
+    unsigned long long artifact_bytes = artifact ? yvex_artifact_size(artifact) : 0ull;
+    unsigned long long offset = 0ull, derived_bytes = 0ull, index;
+    int derived = 0;
+
+    if (!residency || !physical)
+        return residency_reject(failure, YVEX_RUNTIME_RESIDENCY_FAILURE_PLAN, NULL,
+                                1ull, 0ull, "physical execution layout is unavailable",
                                 YVEX_ERR_STATE, err);
+    for (index = 0ull; index < residency->summary.binding_count; ++index) {
+        residency_record *record = &residency->records[index];
+        const yvex_materialized_tensor_binding *binding = record->binding;
+        const yvex_physical_execution_decision *decision =
+            yvex_physical_execution_ir_decision_at(physical, binding->tensor_id);
+        unsigned long long storage = binding->encoded_bytes;
+        if (!decision || decision->terminal_tensor_id != binding->tensor_id ||
+            decision->canonical_qtype != binding->qtype ||
+            decision->canonical_row_width != binding->row_width ||
+            decision->canonical_row_count != binding->row_count ||
+            decision->encoded_bytes != binding->encoded_bytes)
+            return residency_reject(failure, YVEX_RUNTIME_RESIDENCY_FAILURE_PLAN, NULL,
+                                    binding->tensor_id, decision ? decision->terminal_tensor_id
+                                                                : ULLONG_MAX,
+                                    "resident layout decision is stale",
+                                    YVEX_ERR_FORMAT, err);
+        record->decision = decision;
+        if (decision->derived_asset_required &&
+            placement != YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED)
+            return residency_reject(
+                failure, YVEX_RUNTIME_RESIDENCY_FAILURE_PLAN, NULL,
+                YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED, placement,
+                "compiled backend-derived layout requires CUDA-managed residency",
+                YVEX_ERR_UNSUPPORTED, err);
+        if (placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED &&
+            decision->derived_asset_required) {
+            if (!operations || !operations->derived_layout_plan ||
+                !operations->derived_layout_build || !mapping ||
+                binding->absolute_offset > artifact_bytes ||
+                binding->encoded_bytes > artifact_bytes - binding->absolute_offset)
+                return residency_reject(
+                    failure, YVEX_RUNTIME_RESIDENCY_FAILURE_PLAN, NULL,
+                    binding->encoded_bytes, 0ull,
+                    "required backend-derived resident layout is unavailable",
+                    YVEX_ERR_UNSUPPORTED, err);
+            if (operations->derived_layout_plan(decision, &storage, err) != YVEX_OK)
+                return residency_reject(
+                    failure, YVEX_RUNTIME_RESIDENCY_FAILURE_GEOMETRY, NULL,
+                    binding->encoded_bytes, storage,
+                    "required backend-derived resident layout is invalid",
+                    (yvex_status)yvex_error_code(err), err);
+            record->canonical_data = mapping + binding->absolute_offset;
+            if (!yvex_core_u64_add(derived_bytes, storage, &derived_bytes))
+                return residency_reject(
+                    failure, YVEX_RUNTIME_RESIDENCY_FAILURE_GEOMETRY, NULL,
+                    ULLONG_MAX, storage,
+                    "derived resident layout accounting overflowed",
+                    YVEX_ERR_BOUNDS, err);
+            residency->summary.derived_asset_count++;
+            derived = 1;
+        }
+        record->storage_bytes = storage;
+    }
+    for (index = 0ull; index < residency->summary.binding_count; ++index) {
+        residency_record *record = &residency->records[index];
+        if (derived && !yvex_core_u64_add(offset, 63ull, &offset))
+            return residency_reject(failure, YVEX_RUNTIME_RESIDENCY_FAILURE_GEOMETRY,
+                                    NULL, ULLONG_MAX, record->storage_bytes,
+                                    "resident layout alignment overflowed",
+                                    YVEX_ERR_BOUNDS, err);
+        if (derived) offset &= ~63ull;
+        record->arena_offset = offset;
+        if (!yvex_core_u64_add(offset, record->storage_bytes, &offset))
+            return residency_reject(failure, YVEX_RUNTIME_RESIDENCY_FAILURE_GEOMETRY,
+                                    NULL, ULLONG_MAX, record->storage_bytes,
+                                    "resident layout storage overflowed",
+                                    YVEX_ERR_BOUNDS, err);
+    }
+    if (derived) {
+        if (!yvex_core_u64_add(offset, 63ull, &offset))
+            return residency_reject(failure, YVEX_RUNTIME_RESIDENCY_FAILURE_GEOMETRY,
+                                    NULL, ULLONG_MAX, 64ull,
+                                    "resident layout final alignment overflowed",
+                                    YVEX_ERR_BOUNDS, err);
+        offset &= ~63ull;
+    }
+    residency->summary.derived_asset_bytes = derived_bytes;
+    residency->backing_bytes = offset;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_runtime_private_residency_backing_bytes(
+    const yvex_runtime_binding *binding, yvex_backend *backend,
+    yvex_runtime_weight_placement placement, unsigned long long *bytes,
+    yvex_error *err)
+{
+    const yvex_backend_moe_operations *operations =
+        placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED
+            ? yvex_backend_moe_operations_get(backend) : NULL;
+    unsigned long long index, total = 0ull;
+    int derived = 0;
+    if (bytes) *bytes = 0ull;
+    if (!binding || !binding->physical_execution || !binding->materialized ||
+        !binding->summary.tensor_count || !bytes)
+        return residency_refuse(err, YVEX_ERR_INVALID_ARG,
+                                "compiled residency backing facts are required");
+    for (index = 0ull; index < binding->summary.tensor_count; ++index) {
+        const yvex_materialized_tensor_binding *materialized =
+            &binding->materialized[index];
+        const yvex_physical_execution_decision *decision =
+            yvex_physical_execution_ir_decision_at(
+                binding->physical_execution, materialized->tensor_id);
+        if (!decision || decision->terminal_tensor_id != materialized->tensor_id ||
+            decision->encoded_bytes != materialized->encoded_bytes)
+            return residency_refuse(err, YVEX_ERR_FORMAT,
+                                    "compiled residency backing decision is stale");
+        if (decision->derived_asset_required &&
+            placement != YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED)
+            return residency_refuse(
+                err, YVEX_ERR_UNSUPPORTED,
+                "compiled backend-derived layout requires CUDA-managed residency");
+        derived |= placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED &&
+                   decision->derived_asset_required;
+    }
+    for (index = 0ull; index < binding->summary.tensor_count; ++index) {
+        const yvex_materialized_tensor_binding *materialized =
+            &binding->materialized[index];
+        const yvex_physical_execution_decision *decision =
+            yvex_physical_execution_ir_decision_at(
+                binding->physical_execution, materialized->tensor_id);
+        unsigned long long storage = materialized->encoded_bytes;
+        if (placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED &&
+            decision->derived_asset_required &&
+            (!operations || !operations->derived_layout_plan ||
+             operations->derived_layout_plan(decision, &storage, err) != YVEX_OK))
+            return residency_refuse(err, YVEX_ERR_UNSUPPORTED,
+                                    "required derived residency layout is unavailable");
+        if (derived && !yvex_core_u64_add(total, 63ull, &total))
+            return residency_refuse(err, YVEX_ERR_BOUNDS,
+                                    "compiled residency backing extent overflowed");
+        if (derived) total &= ~63ull;
+        if (!yvex_core_u64_add(total, storage, &total))
+            return residency_refuse(err, YVEX_ERR_BOUNDS,
+                                    "compiled residency backing extent overflowed");
+    }
+    if (derived) {
+        if (!yvex_core_u64_add(total, 63ull, &total))
+            return residency_refuse(err, YVEX_ERR_BOUNDS,
+                                    "compiled residency final alignment overflowed");
+        total &= ~63ull;
+    }
+    *bytes = total;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+/* Populate one arena from the already authenticated immutable artifact snapshot. */
+static int residency_load(yvex_runtime_residency *residency,
+                          yvex_runtime_residency_failure *failure, yvex_error *err)
+{
+    const yvex_backend_moe_operations *operations =
+        residency && residency->cuda_backend
+            ? yvex_backend_moe_operations_get(residency->cuda_backend) : NULL;
+    unsigned long long index;
+
     for (index = 0ull; index < residency->summary.binding_count; ++index) {
         const residency_record *record = &residency->records[index];
         const yvex_materialized_tensor_binding *binding = record->binding;
         unsigned char *destination = residency->arena + record->arena_offset;
-        int rc = yvex_materialization_session_read(
-            residency->materialization, binding, 0ull, destination,
-            (size_t)binding->encoded_bytes, NULL, err);
+        int rc = record->canonical_data
+                     ? operations->derived_layout_build(
+                           record->decision, record->canonical_data,
+                           binding->encoded_bytes, destination,
+                           record->storage_bytes, err)
+                     : yvex_materialization_session_read(
+                           residency->materialization, binding, 0ull, destination,
+                           (size_t)binding->encoded_bytes, NULL, err);
         if (rc != YVEX_OK)
             return residency_reject(failure, YVEX_RUNTIME_RESIDENCY_FAILURE_READ, NULL,
                                     binding->encoded_bytes, 0ull,
@@ -290,27 +610,72 @@ static int residency_load_and_hash(yvex_runtime_residency *residency,
                 failure, YVEX_RUNTIME_RESIDENCY_FAILURE_LIFECYCLE, NULL,
                 ULLONG_MAX, binding->encoded_bytes,
                 "resident cold-read accounting overflowed", YVEX_ERR_BOUNDS, err);
-        rc = yvex_artifact_sha256_hex_bytes(
-            destination, binding->encoded_bytes, tensor_digest, err);
-        if (rc != YVEX_OK)
-            return residency_reject(failure, YVEX_RUNTIME_RESIDENCY_FAILURE_LIFECYCLE, NULL,
-                                    binding->encoded_bytes, 0ull,
-                                    "resident tensor payload digest failed",
-                                    (yvex_status)rc, err);
+    }
+    return YVEX_OK;
+}
+
+/*
+ * Bind resident content to the verified artifact and exact copied byte ranges.
+ *
+ * Rehashing the destination would repeat the complete artifact trust pass while protecting only
+ * one instant of mutable memory. The artifact identity, stable snapshot reads, materialization
+ * identity, and exact source/destination ranges instead seal the same immutable content without a
+ * second model-sized SHA pass.
+ */
+static int residency_payload_digest_build(yvex_runtime_residency *residency,
+                                          const char *artifact_identity,
+                                          const char *materialization_identity,
+                                          yvex_error *err)
+{
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    unsigned long long index;
+    int derived;
+
+    if (!residency || !yvex_sha256_hex_valid(artifact_identity) ||
+        !yvex_sha256_hex_valid(materialization_identity)) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.residency.payload",
+                       "verified artifact and materialization identities are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    derived = residency->summary.derived_asset_count != 0ull;
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(
+            &hash, derived ? "yvex.runtime.resident.payload.v6"
+                           : "yvex.runtime.resident.payload.v5") ||
+        !yvex_sha256_update_text(&hash, artifact_identity) ||
+        !yvex_sha256_update_text(&hash, materialization_identity) ||
+        !yvex_sha256_update_u64(&hash, residency->summary.binding_count) ||
+        !yvex_sha256_update_u64(&hash, residency->summary.encoded_bytes) ||
+        (derived &&
+         (!yvex_sha256_update_u64(&hash, residency->summary.derived_asset_count) ||
+          !yvex_sha256_update_u64(&hash, residency->summary.derived_asset_bytes) ||
+          !yvex_sha256_update_u64(&hash, residency->backing_bytes))))
+        goto failed;
+    for (index = 0ull; index < residency->summary.binding_count; ++index) {
+        const residency_record *record = &residency->records[index];
+        const yvex_materialized_tensor_binding *binding = record->binding;
+
         if (!yvex_sha256_update_u64(&hash, binding->tensor_id) ||
             !yvex_sha256_update_u64(&hash, binding->qtype) ||
+            !yvex_sha256_update_u64(&hash, binding->absolute_offset) ||
             !yvex_sha256_update_u64(&hash, binding->encoded_bytes) ||
-            !yvex_sha256_update_text(&hash, tensor_digest))
-            return residency_reject(failure, YVEX_RUNTIME_RESIDENCY_FAILURE_LIFECYCLE, NULL,
-                                    1ull, 0ull, "resident payload hash update failed",
-                                    YVEX_ERR_STATE, err);
+            !yvex_sha256_update_u64(&hash, record->arena_offset) ||
+            (derived &&
+             (!record->decision ||
+              !yvex_sha256_update_u64(&hash, record->storage_bytes) ||
+              !yvex_sha256_update_u64(&hash, record->decision->layout) ||
+              !yvex_sha256_update_text(&hash, record->decision->decision_identity))))
+            goto failed;
     }
-    if (!yvex_sha256_final(&hash, digest))
-        return residency_reject(failure, YVEX_RUNTIME_RESIDENCY_FAILURE_LIFECYCLE, NULL,
-                                1ull, 0ull, "resident payload hash finalization failed",
-                                YVEX_ERR_STATE, err);
+    if (!yvex_sha256_final(&hash, digest)) goto failed;
     yvex_sha256_hex(digest, residency->summary.payload_digest);
     return YVEX_OK;
+
+failed:
+    yvex_error_set(err, YVEX_ERR_STATE, "runtime.residency.payload",
+                   "resident payload derivation identity failed");
+    return YVEX_ERR_STATE;
 }
 /*
  * Derive residency identity from semantic range order and exact encoded payload.
@@ -325,12 +690,19 @@ static int residency_identity_build(yvex_runtime_residency *residency,
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     unsigned long long index;
+    int derived = residency->summary.derived_asset_count != 0ull;
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.residency.v4") ||
-        !yvex_sha256_update_u64(&hash, YVEX_RUNTIME_RESIDENCY_SCHEMA_V4) ||
+    if (!yvex_sha256_update_text(
+            &hash, derived ? "yvex.runtime.residency.v8"
+                           : "yvex.runtime.residency.v7") ||
+        !yvex_sha256_update_u64(
+            &hash, derived ? YVEX_RUNTIME_RESIDENCY_SCHEMA_V8
+                           : YVEX_RUNTIME_RESIDENCY_SCHEMA_V7) ||
         !yvex_sha256_update_text(&hash, model->runtime_model_identity) ||
         !yvex_sha256_update_text(&hash, model->artifact_identity) ||
         !yvex_sha256_update_text(&hash, model->materialization_identity) ||
+        (derived &&
+         !yvex_sha256_update_text(&hash, model->physical_execution_identity)) ||
         !yvex_sha256_update_text(&hash, attention->attention_plan_identity) ||
         !yvex_sha256_update_u64(&hash, residency->summary.model_binding_count) ||
         !yvex_sha256_update_u64(&hash, residency->summary.core_binding_count) ||
@@ -338,7 +710,12 @@ static int residency_identity_build(yvex_runtime_residency *residency,
         !yvex_sha256_update_u64(&hash, residency->summary.output_head_binding_count) ||
         !yvex_sha256_update_u64(
             &hash, residency->summary.accelerator_encoded_bytes) ||
-        !yvex_sha256_update_u64(&hash, residency->summary.encoded_bytes))
+        !yvex_sha256_update_u64(&hash, residency->summary.encoded_bytes) ||
+        (derived &&
+         (!yvex_sha256_update_u64(&hash, residency->summary.derived_asset_count) ||
+          !yvex_sha256_update_u64(&hash, residency->summary.derived_asset_bytes) ||
+          !yvex_sha256_update_u64(&hash, residency->backing_bytes))) ||
+        !yvex_sha256_update_u64(&hash, residency->summary.placement))
         goto failed;
     for (index = 0ull; index < residency->summary.binding_count; ++index) {
         const residency_record *record = &residency->records[index];
@@ -346,7 +723,12 @@ static int residency_identity_build(yvex_runtime_residency *residency,
             !yvex_sha256_update_u64(&hash, record->binding_class) ||
             !yvex_sha256_update_u64(&hash, record->binding->qtype) ||
             !yvex_sha256_update_u64(&hash, record->binding->encoded_bytes) ||
-            !yvex_sha256_update_u64(&hash, record->arena_offset))
+            !yvex_sha256_update_u64(&hash, record->arena_offset) ||
+            (derived &&
+             (!record->decision ||
+              !yvex_sha256_update_u64(&hash, record->storage_bytes) ||
+              !yvex_sha256_update_u64(&hash, record->decision->layout) ||
+              !yvex_sha256_update_text(&hash, record->decision->decision_identity))))
             goto failed;
     }
     if (!yvex_sha256_update_text(&hash, residency->summary.payload_digest) ||
@@ -354,7 +736,7 @@ static int residency_identity_build(yvex_runtime_residency *residency,
         goto failed;
     yvex_sha256_hex(digest, residency->summary.residency_identity);
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.output-head.residency.v1") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.output-head.residency.v3") ||
         !yvex_sha256_update_text(&hash, model->runtime_model_identity) ||
         !yvex_sha256_update_u64(&hash, residency->summary.output_head_binding_count) ||
         !yvex_sha256_update_u64(&hash, residency->summary.output_head_encoded_bytes) ||
@@ -380,8 +762,8 @@ static int residency_component_identity_build(
     unsigned long long index;
 
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.component-residency.v1") ||
-        !yvex_sha256_update_u64(&hash, YVEX_RUNTIME_RESIDENCY_SCHEMA_V4) ||
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.component-residency.v2") ||
+        !yvex_sha256_update_u64(&hash, 5ull) ||
         !yvex_sha256_update_text(&hash, component_identity) ||
         !yvex_sha256_update_text(&hash, materialization->artifact_identity) ||
         !yvex_sha256_update_text(&hash, materialization->plan_identity) ||
@@ -430,40 +812,101 @@ static int residency_release(yvex_runtime_residency **owner, yvex_error *err)
 }
 
 static int residency_arena_prepare(yvex_runtime_residency *residency,
+                                   yvex_backend **prepared_backend,
+                                   const yvex_artifact *artifact,
                                    const yvex_runtime_residency_options *options,
                                    yvex_runtime_residency_failure *failure,
                                    yvex_error *err)
 {
+    yvex_backend_tensor_desc descriptor = {0};
+    yvex_backend *backend = prepared_backend ? *prepared_backend : NULL;
     int rc = YVEX_OK;
-    if (residency->summary.encoded_bytes > (unsigned long long)SIZE_MAX)
+    if (!residency->backing_bytes)
+        residency->backing_bytes = residency->summary.encoded_bytes;
+    if (residency->backing_bytes > (unsigned long long)SIZE_MAX)
         return residency_reject(failure, YVEX_RUNTIME_RESIDENCY_FAILURE_BUDGET, NULL,
                                 (unsigned long long)SIZE_MAX,
-                                residency->summary.encoded_bytes,
+                                residency->backing_bytes,
                                 "resident arena exceeds platform allocation range",
                                 YVEX_ERR_BOUNDS, err);
     if (options && options->maximum_host_bytes &&
-        residency->summary.encoded_bytes > options->maximum_host_bytes)
+        residency->backing_bytes > options->maximum_host_bytes)
         return residency_reject(failure, YVEX_RUNTIME_RESIDENCY_FAILURE_BUDGET, NULL,
                                 options->maximum_host_bytes,
-                                residency->summary.encoded_bytes,
+                                residency->backing_bytes,
                                 "resident arena exceeds the configured host budget",
                                 YVEX_ERR_NOMEM, err);
-    residency->arena = (unsigned char *)mmap(
-        NULL, (size_t)residency->summary.encoded_bytes,
-        PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (residency->arena == MAP_FAILED) {
-        residency->arena = NULL;
-        return residency_reject(failure, YVEX_RUNTIME_RESIDENCY_FAILURE_ALLOCATION, NULL,
-                                residency->summary.encoded_bytes, 0ull,
-                                "resident encoded arena allocation failed",
-                                YVEX_ERR_NOMEM, err);
+    if (options && options->placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED) {
+        unsigned long long index, artifact_bytes = yvex_artifact_size(artifact);
+        const unsigned char *mapping = yvex_artifact_data(artifact);
+        if (!artifact || !mapping || !yvex_artifact_is_mapped(artifact) ||
+            !artifact_bytes || artifact_bytes > (unsigned long long)SIZE_MAX)
+            return residency_reject(
+                failure, YVEX_RUNTIME_RESIDENCY_FAILURE_ALLOCATION, NULL,
+                1ull, 0ull, "verified artifact mapping is unavailable",
+                YVEX_ERR_UNSUPPORTED, err);
+        for (index = 0ull; index < residency->summary.binding_count; ++index) {
+            residency_record *record = &residency->records[index];
+            unsigned long long offset = record->binding->absolute_offset;
+            if (offset > artifact_bytes ||
+                record->binding->encoded_bytes > artifact_bytes - offset)
+                return residency_reject(
+                    failure, YVEX_RUNTIME_RESIDENCY_FAILURE_GEOMETRY, NULL,
+                    artifact_bytes, offset, "artifact-backed resident range exceeds the snapshot",
+                    YVEX_ERR_BOUNDS, err);
+            record->arena_offset = offset;
+        }
+        residency->arena = (unsigned char *)(uintptr_t)mapping;
+        residency->backing_bytes = artifact_bytes;
+        residency->arena_borrowed = 1;
+        residency->summary.placement = YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED;
+        residency->summary.artifact_backed_bytes = artifact_bytes;
+        return YVEX_OK;
     }
-    residency->arena_mapped = 1;
-    rc = residency_load_and_hash(residency, failure, err);
+    if (options && options->placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED) {
+        if (!backend || yvex_backend_kind_of(backend) != YVEX_BACKEND_KIND_CUDA)
+            return residency_reject(
+                failure, YVEX_RUNTIME_RESIDENCY_FAILURE_ALLOCATION, NULL,
+                YVEX_BACKEND_KIND_CUDA, backend ? yvex_backend_kind_of(backend) : 0ull,
+                "CUDA managed residency requires one prepared CUDA backend",
+                YVEX_ERR_UNSUPPORTED, err);
+        descriptor.name = "runtime-managed-residency";
+        descriptor.dtype = YVEX_DTYPE_I8;
+        descriptor.rank = 1u;
+        descriptor.dims[0] = descriptor.bytes = residency->backing_bytes;
+        rc = yvex_backend_resident_alloc(
+            backend, &descriptor, &residency->cuda_weights, &residency->arena, err);
+        if (rc != YVEX_OK)
+            return residency_reject(
+                failure, YVEX_RUNTIME_RESIDENCY_FAILURE_ALLOCATION, NULL,
+                residency->backing_bytes, 0ull,
+                "CUDA managed resident arena allocation failed", (yvex_status)rc, err);
+        residency->cuda_backend = backend;
+        residency->arena_managed = 1;
+        residency->summary.placement = YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED;
+        residency->summary.cuda_managed_bytes = residency->backing_bytes;
+        residency->summary.cuda_managed_allocation_count = 1ull;
+        *prepared_backend = NULL;
+    } else {
+        residency->arena = (unsigned char *)mmap(
+            NULL, (size_t)residency->backing_bytes,
+            PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (residency->arena == MAP_FAILED) {
+            residency->arena = NULL;
+            return residency_reject(failure, YVEX_RUNTIME_RESIDENCY_FAILURE_ALLOCATION, NULL,
+                                    residency->backing_bytes, 0ull,
+                                    "resident encoded arena allocation failed",
+                                    YVEX_ERR_NOMEM, err);
+        }
+        residency->arena_mapped = 1;
+        residency->summary.placement = YVEX_RUNTIME_WEIGHT_PLACEMENT_HOST_LOCKED;
+    }
+    rc = residency_load(residency, failure, err);
     if (rc != YVEX_OK) return rc;
-    if (mlock(residency->arena, (size_t)residency->summary.encoded_bytes) != 0)
+    if (residency->arena_managed) return YVEX_OK;
+    if (mlock(residency->arena, (size_t)residency->backing_bytes) != 0)
         return residency_reject(failure, YVEX_RUNTIME_RESIDENCY_FAILURE_BUDGET, NULL,
-                                residency->summary.encoded_bytes, 0ull,
+                                residency->backing_bytes, 0ull,
                                 "complete resident arena could not be locked in host RAM",
                                 YVEX_ERR_NOMEM, err);
     residency->arena_locked = 1;
@@ -493,7 +936,7 @@ static int residency_register_cuda(yvex_runtime_residency *residency,
     descriptor.name = "runtime-registered-residency";
     descriptor.dtype = YVEX_DTYPE_I8;
     descriptor.rank = 1u;
-    descriptor.dims[0] = descriptor.bytes = residency->summary.encoded_bytes;
+    descriptor.dims[0] = descriptor.bytes = residency->backing_bytes;
     registered = residency->arena;
     rc = yvex_backend_resident_alloc(
         backend, &descriptor, tensor, &registered, err);
@@ -512,53 +955,74 @@ static int residency_claim_cuda(yvex_runtime_residency *residency,
                                 yvex_backend **prepared_backend,
                                 yvex_error *err)
 {
-    yvex_backend *backend = prepared_backend ? *prepared_backend : NULL;
-    yvex_device_tensor *weights = NULL;
-    unsigned long long address = 0ull;
-    yvex_error primary, cleanup;
-    int rc, cleanup_rc;
+    yvex_backend_tensor_desc descriptor = {0};
+    yvex_backend *backend = residency && residency->arena_managed
+                                ? residency->cuda_backend
+                                : (prepared_backend ? *prepared_backend : NULL);
+    yvex_device_tensor *weights = residency && residency->arena_managed
+                                      ? residency->cuda_weights : NULL;
+    unsigned long long address = 0ull, prefetched = 0ull;
+    int rc;
 
     if (!residency || !backend || yvex_backend_kind_of(backend) != YVEX_BACKEND_KIND_CUDA) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.residency.cuda-claim",
                        "one pre-opened CUDA model backend is required");
         return YVEX_ERR_INVALID_ARG;
     }
-    rc = residency_register_cuda(residency, backend, &weights, err);
+    if (residency->arena_borrowed) {
+        descriptor.name = "runtime-artifact-residency";
+        descriptor.dtype = YVEX_DTYPE_I8;
+        descriptor.rank = 1u;
+        descriptor.dims[0] = descriptor.bytes = residency->backing_bytes;
+        rc = yvex_backend_resident_map_readonly(
+            backend, &descriptor, residency->arena, &weights, err);
+        if (rc == YVEX_OK) {
+            residency->cuda_backend = backend;
+            residency->cuda_weights = weights;
+            *prepared_backend = NULL;
+        }
+    } else {
+        rc = residency->arena_managed
+                 ? yvex_backend_resident_prefetch(backend, weights, &prefetched, err)
+                 : residency_register_cuda(residency, backend, &weights, err);
+    }
+    if (rc == YVEX_OK && !residency->arena_managed && !residency->arena_borrowed) {
+        residency->cuda_backend = backend;
+        residency->cuda_weights = weights;
+        *prepared_backend = NULL;
+    }
     if (rc == YVEX_OK)
         rc = yvex_backend_resident_attach(
-            backend, residency->arena, residency->summary.encoded_bytes,
+            backend, residency->arena, residency->backing_bytes,
             weights, residency->summary.generation, err);
     if (rc == YVEX_OK &&
         yvex_backend_resident_resolve(
-            backend, residency->arena, residency->summary.encoded_bytes,
+            backend, residency->arena, residency->backing_bytes,
             &address) != YVEX_BACKEND_RESIDENT_HIT) {
         rc = YVEX_ERR_STATE;
         yvex_error_set(err, rc, "runtime.residency.cuda-claim",
                        "pre-opened CUDA model residency did not resolve");
     }
-    if (rc != YVEX_OK) {
-        primary = err ? *err : (yvex_error){0};
-        yvex_error_clear(&cleanup);
-        cleanup_rc = yvex_backend_resident_detach(backend, &cleanup);
-        if (cleanup_rc == YVEX_OK && weights)
-            cleanup_rc = yvex_backend_tensor_release(backend, &weights, &cleanup);
-        residency->arena_registered = 0;
-        if (cleanup_rc != YVEX_OK) {
-            if (err) *err = cleanup;
-            return cleanup_rc;
-        }
-        if (err) *err = primary;
-        return rc;
-    }
-    residency->cuda_backend = backend;
-    residency->cuda_weights = weights;
+    if (rc != YVEX_OK) return rc;
     residency->cuda_addressable_device_base = address;
-    residency->summary.host_resident_bytes = residency->summary.encoded_bytes;
-    residency->summary.device_resident_bytes = 0ull;
-    residency->summary.cuda_addressable_bytes = residency->summary.encoded_bytes;
-    residency->summary.cuda_host_registration_count = 1ull;
+    residency->summary.cuda_addressable_bytes = residency->backing_bytes;
+    if (residency->arena_managed) {
+        residency->summary.host_resident_bytes = 0ull;
+        residency->summary.device_resident_bytes = residency->backing_bytes;
+        residency->summary.cuda_managed_prefetch_bytes = prefetched;
+        residency->summary.cuda_managed_prefetch_count = 1ull;
+    } else if (residency->arena_borrowed) {
+        residency->summary.host_resident_bytes = 0ull;
+        residency->summary.device_resident_bytes = 0ull;
+        residency->summary.cuda_pageable_map_bytes = residency->backing_bytes;
+        residency->summary.cuda_pageable_map_count = 1ull;
+        residency->summary.cuda_host_registration_count = 1ull;
+    } else {
+        residency->summary.host_resident_bytes = residency->backing_bytes;
+        residency->summary.device_resident_bytes = 0ull;
+        residency->summary.cuda_host_registration_count = 1ull;
+    }
     residency->summary.cuda_ready = 1;
-    *prepared_backend = NULL;
     yvex_error_clear(err);
     return YVEX_OK;
 }
@@ -578,9 +1042,6 @@ int yvex_runtime_residency_prepare(yvex_runtime_residency **out, yvex_runtime_mo
     yvex_materialization_session *materialization = view ? view->materialization : NULL;
     yvex_runtime_residency *residency = NULL;
     yvex_materialization_read_provider provider;
-    unsigned long long core_qtypes[YVEX_RUNTIME_DESCRIPTOR_QTYPE_CAP] = {0};
-    unsigned long long core_bytes = 0ull;
-    unsigned long long index, ordinal = 0ull;
     int rc = YVEX_OK;
     if (out) *out = NULL;
     if (failure) memset(failure, 0, sizeof(*failure));
@@ -627,78 +1088,15 @@ int yvex_runtime_residency_prepare(yvex_runtime_residency **out, yvex_runtime_mo
                                 "resident record index allocation failed",
                                 YVEX_ERR_NOMEM, err);
     }
-    residency->summary.expected_core_binding_count = attention->required_binding_count;
-    residency->summary.expected_envelope_binding_count =
-        attention->required_envelope_binding_count;
-    /* The direct CUDA pack remains a compact prefix while every other tensor is
-     * retained after it in the same process-lifetime host arena. */
-    for (index = 0ull; rc == YVEX_OK && index < descriptor_summary->tensor_count; ++index) {
-        const yvex_runtime_tensor_binding *binding =
-            yvex_runtime_descriptor_tensor_at(descriptor, index);
-        yvex_attention_binding_class attention_class =
-            yvex_attention_plan_binding_classify(plan, binding);
-        residency_binding_class binding_class;
-        int selected = 1;
-        if (attention_class == YVEX_ATTENTION_BINDING_CORE)
-            binding_class = RESIDENCY_BINDING_CORE;
-        else if (attention_class == YVEX_ATTENTION_BINDING_ENVELOPE)
-            binding_class = RESIDENCY_BINDING_ENVELOPE;
-        else if (model_summary.capabilities.output_head_binding_ready && binding &&
-                 binding->role == YVEX_TENSOR_ROLE_OUTPUT_HEAD &&
-                 binding->scope == YVEX_TENSOR_SCOPE_GLOBAL)
-            binding_class = RESIDENCY_BINDING_OUTPUT_HEAD;
-        else
-            selected = 0;
-        if (selected)
-            rc = residency_add_record(residency, binding, binding_class, ordinal++,
-                                      &core_bytes, core_qtypes, failure, err);
-    }
-    residency->summary.accelerator_encoded_bytes =
-        residency->summary.encoded_bytes;
-    for (index = 0ull; rc == YVEX_OK && index < descriptor_summary->tensor_count; ++index) {
-        const yvex_runtime_tensor_binding *binding =
-            yvex_runtime_descriptor_tensor_at(descriptor, index);
-        yvex_attention_binding_class attention_class =
-            yvex_attention_plan_binding_classify(plan, binding);
-        int accelerator_binding =
-            attention_class == YVEX_ATTENTION_BINDING_CORE ||
-            attention_class == YVEX_ATTENTION_BINDING_ENVELOPE ||
-            (model_summary.capabilities.output_head_binding_ready && binding &&
-             binding->role == YVEX_TENSOR_ROLE_OUTPUT_HEAD &&
-             binding->scope == YVEX_TENSOR_SCOPE_GLOBAL);
-        if (!accelerator_binding)
-            rc = residency_add_record(
-                residency, binding, RESIDENCY_BINDING_MODEL, ordinal++,
-                &core_bytes, core_qtypes, failure, err);
-    }
-    residency->summary.expected_output_head_binding_count =
-        model_summary.capabilities.output_head_binding_ready ? 1ull : 0ull;
-    residency->summary.expected_model_binding_count =
-        descriptor_summary->tensor_count -
-        residency->summary.expected_core_binding_count -
-        residency->summary.expected_envelope_binding_count -
-        residency->summary.expected_output_head_binding_count;
-    if (rc == YVEX_OK &&
-        (residency->summary.core_binding_count != attention->required_binding_count ||
-         residency->summary.envelope_binding_count != attention->required_envelope_binding_count ||
-         residency->summary.output_head_binding_count !=
-             residency->summary.expected_output_head_binding_count ||
-         residency->summary.model_binding_count !=
-             residency->summary.expected_model_binding_count ||
-         residency->summary.binding_count != descriptor_summary->tensor_count ||
-         residency->summary.encoded_bytes != descriptor_summary->payload_bytes ||
-         core_bytes != attention->payload_bytes_bound))
-        rc = residency_reject(failure, YVEX_RUNTIME_RESIDENCY_FAILURE_PLAN, NULL,
-                              descriptor_summary->tensor_count,
-                              residency->summary.binding_count,
-                              "full-model resident accounting differs from the descriptor",
-                              YVEX_ERR_FORMAT, err);
-    for (index = 0ull; rc == YVEX_OK && index < YVEX_RUNTIME_DESCRIPTOR_QTYPE_CAP; ++index)
-        if (core_qtypes[index] != attention->qtype_binding_counts[index])
-            rc = residency_reject(failure, YVEX_RUNTIME_RESIDENCY_FAILURE_PLAN, NULL,
-                                  attention->qtype_binding_counts[index], core_qtypes[index],
-                                  "resident core qtype accounting differs from the plan",
-                                  YVEX_ERR_FORMAT, err);
+    rc = residency_records_prepare(
+        residency, descriptor, descriptor_summary, &model_summary,
+        plan, attention, failure, err);
+    if (rc == YVEX_OK)
+        rc = residency_layout_plan(
+            residency, view->physical_execution, model->artifact,
+            model->opening_backend,
+            options ? options->placement : YVEX_RUNTIME_WEIGHT_PLACEMENT_HOST_LOCKED,
+            failure, err);
     if (rc == YVEX_OK) {
         residency->summary.model_complete =
             residency->summary.binding_count == descriptor_summary->tensor_count &&
@@ -714,11 +1112,17 @@ int yvex_runtime_residency_prepare(yvex_runtime_residency **out, yvex_runtime_mo
             residency->summary.output_head_binding_count ==
             residency->summary.expected_output_head_binding_count;
     }
-    if (rc == YVEX_OK) rc = residency_arena_prepare(residency, options, failure, err);
+    if (rc == YVEX_OK)
+        rc = residency_arena_prepare(
+            residency, &model->opening_backend, model->artifact, options, failure, err);
+    if (rc == YVEX_OK)
+        rc = residency_payload_digest_build(
+            residency, model_summary.artifact_identity,
+            model_summary.materialization_identity, err);
     if (rc == YVEX_OK)
         rc = residency_identity_build(residency, &model_summary, attention, err);
     if (rc == YVEX_OK) residency->summary.generation = 1ull;
-    if (rc == YVEX_OK && model->opening_backend)
+    if (rc == YVEX_OK && (model->opening_backend || residency->cuda_backend))
         rc = residency_claim_cuda(residency, &model->opening_backend, err);
     if (rc == YVEX_OK) {
         provider.context = residency;
@@ -746,9 +1150,12 @@ int yvex_runtime_residency_prepare(yvex_runtime_residency **out, yvex_runtime_mo
         if (err) *err = primary;
         return rc;
     }
-    residency->summary.schema_version = YVEX_RUNTIME_RESIDENCY_SCHEMA_V4;
+    residency->summary.schema_version = residency->summary.derived_asset_count
+                                            ? YVEX_RUNTIME_RESIDENCY_SCHEMA_V8
+                                            : YVEX_RUNTIME_RESIDENCY_SCHEMA_V7;
     residency->summary.generation = 1ull;
-    residency->summary.host_resident_bytes = residency->summary.encoded_bytes;
+    if (!residency->arena_managed && !residency->arena_borrowed)
+        residency->summary.host_resident_bytes = residency->backing_bytes;
     residency->summary.sealed = 1;
     residency->summary.attached = 1;
     residency->summary.host_ready = 1;
@@ -860,8 +1267,11 @@ int yvex_runtime_component_residency_prepare(
         residency->summary.core_complete = 1;
         residency->summary.envelope_complete = 1;
         residency->summary.output_head_complete = 1;
-        rc = residency_arena_prepare(residency, options, failure, err);
+        rc = residency_arena_prepare(residency, NULL, NULL, options, failure, err);
     }
+    if (rc == YVEX_OK)
+        rc = residency_payload_digest_build(
+            residency, source->artifact_identity, source->plan_identity, err);
     if (rc == YVEX_OK)
         rc = residency_component_identity_build(residency, source, component_identity, err);
     if (rc == YVEX_OK) {
@@ -890,7 +1300,7 @@ int yvex_runtime_component_residency_prepare(
         if (err) *err = primary;
         return rc;
     }
-    residency->summary.schema_version = YVEX_RUNTIME_RESIDENCY_SCHEMA_V4;
+    residency->summary.schema_version = YVEX_RUNTIME_RESIDENCY_SCHEMA_V7;
     residency->summary.host_resident_bytes = residency->summary.encoded_bytes;
     residency->summary.sealed = 1;
     residency->summary.attached = 1;
@@ -900,284 +1310,6 @@ int yvex_runtime_component_residency_prepare(
     return YVEX_OK;
 }
 
-int yvex_runtime_component_session_close(yvex_runtime_component_session **session,
-                                         yvex_error *err)
-{
-    yvex_runtime_component_session *owned;
-    yvex_error cleanup;
-    int rc = YVEX_OK, cleanup_rc;
-    if (!session || !*session) {
-        yvex_error_clear(err);
-        return YVEX_OK;
-    }
-    owned = *session;
-    *session = NULL;
-    if (owned->workspace) {
-        yvex_backend_workspace_detach(owned->backend);
-        yvex_error_clear(&cleanup);
-        cleanup_rc = yvex_backend_tensor_release(owned->backend, &owned->workspace, &cleanup);
-        if (cleanup_rc != YVEX_OK) { rc = cleanup_rc; if (err) *err = cleanup; }
-    }
-    yvex_error_clear(&cleanup);
-    cleanup_rc = yvex_backend_close_checked(&owned->backend, &cleanup);
-    if (cleanup_rc != YVEX_OK) { rc = cleanup_rc; if (err) *err = cleanup; }
-    yvex_error_clear(&cleanup);
-    cleanup_rc = yvex_runtime_residency_close(&owned->residency, &cleanup);
-    if (cleanup_rc != YVEX_OK) { rc = cleanup_rc; if (err) *err = cleanup; }
-    yvex_materialization_session_close(owned->materialization);
-    yvex_materialization_plan_close(owned->plan);
-    free(owned);
-    if (rc == YVEX_OK) yvex_error_clear(err);
-    return rc;
-}
-
-int yvex_runtime_component_session_prepare_workspace(
-    yvex_runtime_component_session *session, unsigned long long bytes, yvex_error *err)
-{
-    yvex_backend_tensor_desc descriptor = {0};
-    yvex_device_tensor *workspace = NULL;
-    yvex_error primary, cleanup;
-    int rc, cleanup_rc;
-    if (!session || !session->backend || !bytes || bytes > SIZE_MAX) {
-        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.component-session.workspace",
-                       "one bounded CUDA component workspace is required");
-        return YVEX_ERR_INVALID_ARG;
-    }
-    if (session->workspace) {
-        if (session->workspace_bytes == bytes) { yvex_error_clear(err); return YVEX_OK; }
-        yvex_error_set(err, YVEX_ERR_STATE, "runtime.component-session.workspace",
-                       "component workspace geometry is already sealed");
-        return YVEX_ERR_STATE;
-    }
-    descriptor.name = "runtime-component-workspace";
-    descriptor.dtype = YVEX_DTYPE_I8;
-    descriptor.rank = 1u;
-    descriptor.dims[0] = descriptor.bytes = bytes;
-    rc = yvex_backend_tensor_alloc(session->backend, &descriptor, &workspace, err);
-    if (rc == YVEX_OK)
-        rc = yvex_backend_workspace_attach(session->backend, workspace, 1ull, err);
-    if (rc != YVEX_OK) {
-        primary = err ? *err : (yvex_error){0};
-        yvex_error_clear(&cleanup);
-        cleanup_rc = workspace
-                         ? yvex_backend_tensor_release(session->backend, &workspace, &cleanup)
-                         : YVEX_OK;
-        if (cleanup_rc != YVEX_OK) { if (err) *err = cleanup; return cleanup_rc; }
-        if (err) *err = primary;
-        return rc;
-    }
-    session->workspace = workspace;
-    session->workspace_bytes = bytes;
-    yvex_error_clear(err);
-    return YVEX_OK;
-}
-
-int yvex_runtime_component_session_open(
-    yvex_runtime_component_session **out, const yvex_complete_artifact_admission *admission,
-    const yvex_artifact *artifact, const yvex_gguf *gguf, const yvex_tensor_table *tensors,
-    yvex_backend_kind backend_kind, unsigned long long maximum_host_bytes,
-    unsigned long long maximum_device_bytes, yvex_error *err)
-{
-    yvex_runtime_component_session *session = NULL;
-    yvex_backend_options backend_options = {0};
-    yvex_materialization_options options;
-    yvex_materialization_failure materialization_failure;
-    yvex_runtime_residency_options residency_options = {0};
-    yvex_runtime_residency_failure residency_failure;
-    yvex_error primary, cleanup;
-    int uploaded = 0, rc, cleanup_rc;
-    if (out) *out = NULL;
-    if (!out || !admission || !artifact || !gguf || !tensors ||
-        (backend_kind != YVEX_BACKEND_KIND_CPU && backend_kind != YVEX_BACKEND_KIND_CUDA)) {
-        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.component-session",
-                       "admitted component inputs and CPU or CUDA placement are required");
-        return YVEX_ERR_INVALID_ARG;
-    }
-    session = (yvex_runtime_component_session *)calloc(1u, sizeof(*session));
-    if (!session) {
-        yvex_error_set(err, YVEX_ERR_NOMEM, "runtime.component-session",
-                       "component execution session allocation failed");
-        return YVEX_ERR_NOMEM;
-    }
-    yvex_materialization_options_default(&options);
-    options.max_chunk_bytes = 64ull * 1024ull * 1024ull;
-    if (maximum_host_bytes && maximum_host_bytes < options.max_chunk_bytes)
-        options.max_chunk_bytes = (size_t)maximum_host_bytes;
-    rc = yvex_materialization_plan_build(&session->plan, admission, artifact, gguf, tensors,
-                                         NULL, &options, &materialization_failure, err);
-    if (rc == YVEX_OK)
-        rc = yvex_materialization_session_open(&session->materialization, session->plan,
-                                                artifact, &options, &materialization_failure, err);
-    if (rc == YVEX_OK)
-        rc = yvex_materialization_session_commit(session->materialization,
-                                                  &materialization_failure, err);
-    /* Context creation needs independent system headroom, so establish it before the complete
-     * component payload is faulted into the locked residency arena. */
-    if (rc == YVEX_OK && backend_kind == YVEX_BACKEND_KIND_CUDA) {
-        backend_options.kind = YVEX_BACKEND_KIND_CUDA;
-        backend_options.memory_limit_bytes = maximum_device_bytes;
-        rc = yvex_backend_open(&session->backend, &backend_options, err);
-    }
-    residency_options.maximum_host_bytes = maximum_host_bytes;
-    if (rc == YVEX_OK)
-        rc = yvex_runtime_component_residency_prepare(
-            &session->residency, session->materialization, admission->logical_component_identity,
-            &residency_options, &residency_failure, err);
-    if (rc == YVEX_OK && backend_kind == YVEX_BACKEND_KIND_CUDA)
-        rc = yvex_runtime_residency_cuda_session_attach(
-            session->residency, &session->backend, maximum_device_bytes, &uploaded,
-            &session->summary, err);
-    if (rc == YVEX_OK && backend_kind == YVEX_BACKEND_KIND_CPU)
-        rc = yvex_runtime_residency_snapshot(session->residency, &session->summary,
-                                             NULL, NULL, err);
-    if (rc != YVEX_OK) {
-        primary = err ? *err : (yvex_error){0};
-        yvex_error_clear(&cleanup);
-        cleanup_rc = yvex_runtime_component_session_close(&session, &cleanup);
-        if (cleanup_rc != YVEX_OK) { if (err) *err = cleanup; return cleanup_rc; }
-        if (err) *err = primary;
-        return rc;
-    }
-    *out = session;
-    yvex_error_clear(err);
-    return YVEX_OK;
-}
-
-yvex_materialization_session *yvex_runtime_component_session_materialization(
-    const yvex_runtime_component_session *session)
-{
-    return session ? session->materialization : NULL;
-}
-
-const yvex_runtime_residency *yvex_runtime_component_session_residency(
-    const yvex_runtime_component_session *session)
-{
-    return session ? session->residency : NULL;
-}
-
-yvex_backend *yvex_runtime_component_session_backend(const yvex_runtime_component_session *session)
-{
-    return session ? session->backend : NULL;
-}
-
-const yvex_runtime_residency_summary *yvex_runtime_component_session_summary(
-    const yvex_runtime_component_session *session)
-{
-    return session ? &session->summary : NULL;
-}
-
-static const yvex_materialized_tensor_binding *component_tensor_find(
-    const yvex_runtime_component_session *session, const char *name)
-{
-    unsigned long long index;
-    if (!session || !session->materialization || !name || !name[0]) return NULL;
-    for (index = 0ull;; ++index) {
-        const yvex_materialized_tensor_binding *binding =
-            yvex_materialization_session_tensor_at(session->materialization, index);
-        if (!binding || strcmp(binding->name, name) == 0) return binding;
-    }
-}
-
-static int component_decoder_weight_bind(
-    const yvex_runtime_component_session *session, const char *name,
-    yvex_transformer_encoded_weight *weight, yvex_error *err)
-{
-    const yvex_materialized_tensor_binding *binding = component_tensor_find(session, name);
-    unsigned long long elements, bytes;
-    if (!binding || binding->qtype != YVEX_GGUF_QTYPE_F32 ||
-        (binding->rank != 1u && binding->rank != 2u)) {
-        yvex_error_set(err, YVEX_ERR_FORMAT, "runtime.component.dense-decoder.binding",
-                       "one exact F32 vector or source-ordered matrix binding is required");
-        return YVEX_ERR_FORMAT;
-    }
-    weight->row_count = binding->rank == 1u ? 1ull : binding->dims[0];
-    weight->row_width = binding->rank == 1u ? binding->dims[0] : binding->dims[1];
-    if (!weight->row_count || !weight->row_width ||
-        !yvex_core_u64_mul(weight->row_count, weight->row_width, &elements) ||
-        !yvex_core_u64_mul(elements, sizeof(float), &bytes) ||
-        bytes != binding->encoded_bytes) {
-        yvex_error_set(err, YVEX_ERR_FORMAT, "runtime.component.dense-decoder.binding",
-                       "resident F32 binding disagrees with its logical source shape");
-        return YVEX_ERR_FORMAT;
-    }
-    if (yvex_runtime_residency_binding_view(
-            session->residency, binding, &weight->encoded,
-            &weight->encoded_bytes, err) != YVEX_OK)
-        return yvex_error_code(err);
-    weight->row_bytes = weight->row_width * sizeof(float);
-    weight->qtype = binding->qtype;
-    return YVEX_OK;
-}
-
-int yvex_runtime_component_dense_decoder_cuda(
-    const yvex_runtime_component_session *session,
-    const yvex_transformer_resident_decoder_request *request,
-    yvex_transformer_dense_decoder_result *result, yvex_error *err)
-{
-    yvex_transformer_dense_decoder_request execution;
-    yvex_transformer_encoded_weight *blocks = NULL;
-    yvex_transformer_encoded_weight final_norm = {0}, final_bias = {0};
-    yvex_transformer_encoded_weight output_weight = {0}, output_bias = {0};
-    unsigned long long weight_count, index;
-    int rc;
-    if (result) memset(result, 0, sizeof(*result));
-    if (!session || !request || !result || !request->block_weight_name ||
-        !request->final_norm_weight_name || !request->final_norm_bias_name ||
-        !request->output_weight_name || !request->output_bias_name ||
-        !request->execution.block_count || !session->backend || !session->residency ||
-        yvex_backend_kind_of(session->backend) != YVEX_BACKEND_KIND_CUDA ||
-        !session->summary.sealed || !session->summary.cuda_ready ||
-        session->summary.invalidated ||
-        !yvex_core_u64_mul(request->execution.block_count,
-                           YVEX_TRANSFORMER_DENSE_DECODER_BLOCK_WEIGHT_COUNT,
-                           &weight_count) || weight_count > SIZE_MAX / sizeof(*blocks)) {
-        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.component.dense-decoder",
-                       "one sealed CUDA component and complete named decoder recipe are required");
-        return YVEX_ERR_INVALID_ARG;
-    }
-    blocks = (yvex_transformer_encoded_weight *)calloc(
-        (size_t)weight_count, sizeof(*blocks));
-    if (!blocks) {
-        yvex_error_set(err, YVEX_ERR_NOMEM, "runtime.component.dense-decoder",
-                       "resident decoder binding directory allocation failed");
-        return YVEX_ERR_NOMEM;
-    }
-    rc = YVEX_OK;
-    for (index = 0ull; index < weight_count && rc == YVEX_OK; ++index) {
-        char name[256];
-        unsigned long long block =
-            index / YVEX_TRANSFORMER_DENSE_DECODER_BLOCK_WEIGHT_COUNT;
-        unsigned int slot = (unsigned int)(
-            index % YVEX_TRANSFORMER_DENSE_DECODER_BLOCK_WEIGHT_COUNT);
-        rc = request->block_weight_name(
-            request->block_weight_name_context, block, slot, name, err);
-        if (rc == YVEX_OK)
-            rc = component_decoder_weight_bind(session, name, blocks + index, err);
-    }
-    if (rc == YVEX_OK)
-        rc = component_decoder_weight_bind(
-            session, request->final_norm_weight_name, &final_norm, err);
-    if (rc == YVEX_OK)
-        rc = component_decoder_weight_bind(
-            session, request->final_norm_bias_name, &final_bias, err);
-    if (rc == YVEX_OK)
-        rc = component_decoder_weight_bind(
-            session, request->output_weight_name, &output_weight, err);
-    if (rc == YVEX_OK)
-        rc = component_decoder_weight_bind(
-            session, request->output_bias_name, &output_bias, err);
-    execution = request->execution;
-    execution.block_weights = blocks;
-    execution.final_norm_weight = &final_norm;
-    execution.final_norm_bias = &final_bias;
-    execution.output_weight = &output_weight;
-    execution.output_bias = &output_bias;
-    if (rc == YVEX_OK)
-        rc = yvex_cuda_transformer_dense_decoder_execute(
-            session->backend, &execution, result, err);
-    free(blocks);
-    return rc;
-}
 /*
  * Register one model-owned host arena and attach an isolated session backend.
  *
@@ -1221,7 +1353,11 @@ int yvex_runtime_residency_cuda_session_attach(
         return YVEX_ERR_STATE;
     }
     if (!residency->summary.sealed || !residency->summary.host_ready ||
-        !residency->summary.host_locked ||
+        (!residency->summary.host_locked && !residency->summary.artifact_backed_bytes &&
+         !(residency->summary.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED &&
+           residency->summary.cuda_managed_allocation_count == 1ull &&
+           residency->summary.cuda_managed_bytes ==
+               residency->summary.cuda_addressable_bytes)) ||
         residency->summary.invalidated || !residency->arena ||
         !residency->summary.accelerator_encoded_bytes) {
         rc = YVEX_ERR_STATE;
@@ -1236,20 +1372,40 @@ int yvex_runtime_residency_cuda_session_attach(
         if (rc != YVEX_OK) goto done;
     }
     if (!residency->summary.cuda_ready) {
+        if (residency->summary.placement != YVEX_RUNTIME_WEIGHT_PLACEMENT_HOST_LOCKED &&
+            residency->summary.placement != YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED) {
+            rc = YVEX_ERR_STATE;
+            yvex_error_set(err, rc, "runtime.residency.cuda",
+                           "managed model residency lost its admitted CUDA owner");
+            goto done;
+        }
         memset(&options, 0, sizeof(options));
         options.kind = YVEX_BACKEND_KIND_CUDA;
         options.memory_limit_bytes = maximum_device_bytes;
         rc = candidate_backend ? YVEX_OK : yvex_backend_open(&candidate_backend, &options, err);
-        if (rc == YVEX_OK)
-            rc = residency_register_cuda(
-                residency, candidate_backend, &candidate_weights, err);
+        if (rc == YVEX_OK) {
+            if (residency->summary.placement ==
+                YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED) {
+                yvex_backend_tensor_desc descriptor = {0};
+                descriptor.name = "runtime-artifact-residency";
+                descriptor.dtype = YVEX_DTYPE_I8;
+                descriptor.rank = 1u;
+                descriptor.dims[0] = descriptor.bytes = residency->backing_bytes;
+                rc = yvex_backend_resident_map_readonly(
+                    candidate_backend, &descriptor, residency->arena,
+                    &candidate_weights, err);
+            } else {
+                rc = residency_register_cuda(
+                    residency, candidate_backend, &candidate_weights, err);
+            }
+        }
         if (rc == YVEX_OK)
             rc = yvex_backend_resident_attach(
-                candidate_backend, residency->arena, residency->summary.encoded_bytes,
+                candidate_backend, residency->arena, residency->backing_bytes,
                 candidate_weights, residency->summary.generation, err);
         if (rc == YVEX_OK &&
             yvex_backend_resident_resolve(
-                candidate_backend, residency->arena, residency->summary.encoded_bytes,
+                candidate_backend, residency->arena, residency->backing_bytes,
                 &candidate_address) != YVEX_BACKEND_RESIDENT_HIT) {
             rc = YVEX_ERR_STATE;
             yvex_error_set(err, rc, "runtime.residency.cuda",
@@ -1278,14 +1434,27 @@ int yvex_runtime_residency_cuda_session_attach(
         residency->cuda_backend = candidate_backend;
         residency->cuda_weights = candidate_weights;
         residency->cuda_addressable_device_base = candidate_address;
-        residency->summary.host_resident_bytes = residency->summary.encoded_bytes;
+        residency->summary.host_resident_bytes =
+            residency->summary.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED
+                ? 0ull : residency->summary.encoded_bytes;
         residency->summary.device_resident_bytes = 0ull;
-        residency->summary.cuda_addressable_bytes = residency->summary.encoded_bytes;
+        residency->summary.cuda_addressable_bytes = residency->backing_bytes;
         residency->summary.cuda_upload_bytes = 0ull;
         residency->summary.cuda_upload_count = 0ull;
-        residency->summary.cuda_host_registration_count = 1ull;
+        residency->summary.cuda_host_registration_count =
+            residency->summary.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_HOST_LOCKED ||
+            residency->summary.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED;
+        residency->summary.cuda_pageable_map_bytes =
+            residency->summary.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED
+                ? residency->backing_bytes : 0ull;
+        residency->summary.cuda_pageable_map_count =
+            residency->summary.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED;
         residency->summary.cuda_managed_bytes = 0ull;
         residency->summary.cuda_managed_allocation_count = 0ull;
+        residency->summary.cuda_managed_prefetch_bytes = 0ull;
+        residency->summary.cuda_managed_prefetch_count = 0ull;
+        residency->summary.cuda_pageable_prefetch_bytes = 0ull;
+        residency->summary.cuda_pageable_prefetch_count = 0ull;
         residency->summary.cuda_ready = 1;
         *uploaded = 1;
     }
@@ -1297,7 +1466,7 @@ int yvex_runtime_residency_cuda_session_attach(
     if (rc == YVEX_OK)
         rc = yvex_backend_resident_attach(
             session_backend, residency->arena,
-            residency->summary.encoded_bytes,
+            residency->backing_bytes,
             residency->cuda_weights, residency->summary.generation, err);
     if (rc != YVEX_OK) {
         primary = err ? *err : (yvex_error){0};
@@ -1361,7 +1530,7 @@ int yvex_runtime_residency_snapshot(const yvex_runtime_residency *residency,
     }
     if (borrow_arena) {
         *arena = residency->arena;
-        *arena_bytes = summary->encoded_bytes;
+        *arena_bytes = residency->backing_bytes;
     }
     (void)pthread_mutex_unlock(&mutable_residency->access_mutex);
     yvex_error_clear(err);
@@ -1399,6 +1568,53 @@ int yvex_runtime_residency_binding_view(
         return resolved == YVEX_MATERIALIZATION_READ_INVALID
                    ? YVEX_ERR_STATE : YVEX_ERR_FORMAT;
     }
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_runtime_private_residency_execution_view(
+    const yvex_runtime_residency *residency,
+    const yvex_materialized_tensor_binding *binding,
+    const unsigned char **data, unsigned long long *bytes,
+    yvex_execution_layout_class *layout, yvex_error *err)
+{
+    yvex_runtime_residency *mutable_residency =
+        (yvex_runtime_residency *)residency;
+    unsigned long long slot;
+    const residency_record *record;
+    if (data) *data = NULL;
+    if (bytes) *bytes = 0ull;
+    if (layout) *layout = YVEX_EXECUTION_LAYOUT_CANONICAL_ROW;
+    if (!residency || !binding || !data || !bytes || !layout ||
+        binding->tensor_id >= residency->record_index_count) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.residency.execution",
+                       "residency, binding, and execution-span outputs are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    if (!residency->access_mutex_ready ||
+        pthread_mutex_lock(&mutable_residency->access_mutex) != 0) {
+        yvex_error_set(err, YVEX_ERR_STATE, "runtime.residency.execution",
+                       "runtime residency synchronization is unavailable");
+        return YVEX_ERR_STATE;
+    }
+    slot = residency->record_index[binding->tensor_id];
+    record = slot ? &residency->records[slot - 1ull] : NULL;
+    if (!record || !record->decision || !record->binding ||
+        record->binding->tensor_id != binding->tensor_id ||
+        record->binding->qtype != binding->qtype ||
+        record->binding->encoded_bytes != binding->encoded_bytes ||
+        record->arena_offset > residency->backing_bytes ||
+        record->storage_bytes > residency->backing_bytes - record->arena_offset ||
+        !residency->arena || residency->summary.invalidated) {
+        (void)pthread_mutex_unlock(&mutable_residency->access_mutex);
+        yvex_error_set(err, YVEX_ERR_STATE, "runtime.residency.execution",
+                       "requested tensor has no valid resident execution span");
+        return YVEX_ERR_STATE;
+    }
+    *data = residency->arena + record->arena_offset;
+    *bytes = record->storage_bytes;
+    *layout = record->decision->layout;
+    (void)pthread_mutex_unlock(&mutable_residency->access_mutex);
     yvex_error_clear(err);
     return YVEX_OK;
 }

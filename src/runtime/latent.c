@@ -30,6 +30,66 @@ static int latent_hash_f32(yvex_sha256 *hash, float value)
     return yvex_sha256_update_u64(hash, bits);
 }
 
+/* Latent initialization owns Box-Muller publication while sampling owns the versioned PCG stream. */
+int yvex_runtime_latent_normal_f32(
+    float *values, unsigned long long value_capacity, unsigned long long value_count,
+    unsigned long long seed, unsigned long long maximum_workspace_bytes,
+    yvex_runtime_latent_normal_result *result, yvex_error *err)
+{
+    yvex_runtime_latent_normal_result staged = {0};
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    uint64_t state, increment;
+    unsigned long long bytes, index = 0ull;
+    float *output;
+    if (result) memset(result, 0, sizeof(*result));
+    if (!values || !result || !value_count || value_count > value_capacity ||
+        !yvex_core_u64_mul(value_count, sizeof(*output), &bytes) || bytes > SIZE_MAX ||
+        bytes > maximum_workspace_bytes)
+        return latent_refuse(err, YVEX_ERR_BOUNDS,
+                             "bounded normal output and workspace are required");
+    output = yvex_core_malloc((size_t)bytes);
+    if (!output)
+        return latent_refuse(err, YVEX_ERR_NOMEM, "normal staging allocation failed");
+    yvex_runtime_sampling_pcg_seed(seed, &state, &increment);
+    while (index < value_count) {
+        const double scale = 1.0 / 4294967296.0;
+        double first = ((double)yvex_runtime_sampling_pcg_next(&state, increment) + 0.5) * scale;
+        double second = ((double)yvex_runtime_sampling_pcg_next(&state, increment) + 0.5) * scale;
+        double magnitude = sqrt(-2.0 * log(first));
+        double angle = 6.283185307179586476925286766559 * second;
+        output[index++] = (float)(magnitude * cos(angle));
+        if (index < value_count) output[index++] = (float)(magnitude * sin(angle));
+    }
+    staged.schema_version = YVEX_RUNTIME_SAMPLING_SCHEMA_V1;
+    staged.rng_algorithm = YVEX_SAMPLING_RNG_PCG_XSH_RR_64_32;
+    staged.rng_version = YVEX_SAMPLING_RNG_VERSION_V1;
+    staged.seed = seed;
+    staged.value_count = value_count;
+    staged.uniform_draw_count = 2ull * ((value_count + 1ull) / 2ull);
+    staged.workspace_bytes = bytes;
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.sampling.normal-f32.v1") ||
+        !yvex_sha256_update_u64(&hash, staged.rng_algorithm) ||
+        !yvex_sha256_update_u64(&hash, staged.rng_version) ||
+        !yvex_sha256_update_u64(&hash, seed) ||
+        !yvex_sha256_update_u64(&hash, value_count))
+        goto identity_failed;
+    for (index = 0ull; index < value_count; ++index)
+        if (!latent_hash_f32(&hash, output[index])) goto identity_failed;
+    if (!yvex_sha256_final(&hash, digest)) goto identity_failed;
+    yvex_sha256_hex(digest, staged.normal_identity);
+    staged.completed = 1;
+    memcpy(values, output, (size_t)bytes);
+    *result = staged;
+    yvex_core_free(output);
+    yvex_error_clear(err);
+    return YVEX_OK;
+identity_failed:
+    yvex_core_free(output);
+    return latent_refuse(err, YVEX_ERR_STATE, "normal identity derivation failed");
+}
+
 static int latent_state_identity(
     const char *domain, const float *values, unsigned long long count,
     char output[YVEX_SHA256_HEX_CAP])
@@ -1474,7 +1534,7 @@ int yvex_runtime_latent_execute(
     state = storage;
     next = state + total;
     velocity = next + total;
-    rc = yvex_runtime_sampling_normal_f32(
+    rc = yvex_runtime_latent_normal_f32(
         state, total, total, request->seed, bytes, &staged.initialization, err);
     if (rc == YVEX_OK &&
         !latent_state_identity("yvex.runtime.latent.initial.v1", state, total,

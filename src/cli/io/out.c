@@ -338,8 +338,7 @@ static int stream_language_finish(yvex_cli_stream_renderer *renderer)
              fputc(']', renderer->output) != EOF;
         renderer->wrote_bytes = 1;
     }
-    renderer->collecting_language = 0;
-    renderer->fence_language_count = 0u;
+    renderer->collecting_language = renderer->fence_language_count = 0u;
     return ok;
 }
 
@@ -350,10 +349,8 @@ static int stream_newline(yvex_cli_stream_renderer *renderer)
     if (!stream_style_set(renderer, stream_context_style(renderer)) ||
         fputc('\n', renderer->output) == EOF)
         return 0;
-    renderer->line_start = 1;
+    renderer->line_start = renderer->wrote_bytes = renderer->last_newline = 1;
     renderer->line_style = YVEX_CLI_STREAM_STYLE_NORMAL;
-    renderer->wrote_bytes = 1;
-    renderer->last_newline = 1;
     return 1;
 }
 
@@ -487,8 +484,7 @@ void yvex_cli_stream_renderer_open(yvex_cli_stream_renderer *renderer,
     memset(renderer, 0, sizeof(*renderer));
     renderer->output = output ? output : stdout;
     renderer->enhanced = enhanced != 0;
-    renderer->line_start = 1;
-    renderer->last_newline = 1;
+    renderer->line_start = renderer->last_newline = 1;
     renderer->channel = YVEX_CLIENT_STREAM_FINAL_TEXT;
     yvex_cli_terminal_style_get(renderer->output, &renderer->style);
 }
@@ -511,9 +507,16 @@ int yvex_cli_stream_renderer_write(yvex_cli_stream_renderer *renderer,
         return YVEX_OK;
     }
     if (channel != renderer->channel) {
-        if (!stream_backticks_flush(renderer)) return YVEX_ERR_IO;
+        if (!stream_backticks_flush(renderer) ||
+            (renderer->wrote_bytes && !renderer->last_newline &&
+             !stream_newline(renderer)) ||
+            (renderer->channel == YVEX_CLIENT_STREAM_EXPLICIT_REASONING &&
+             channel == YVEX_CLIENT_STREAM_FINAL_TEXT && renderer->wrote_bytes && !stream_newline(renderer)))
+            return YVEX_ERR_IO;
         renderer->channel = channel;
-        if (!stream_style_set(renderer, stream_context_style(renderer)))
+        if (!stream_style_set(renderer, stream_context_style(renderer)) ||
+            (channel == YVEX_CLIENT_STREAM_EXPLICIT_REASONING &&
+             (!stream_bytes(renderer, (const unsigned char *)"thinking", 8u) || !stream_newline(renderer))))
             return YVEX_ERR_IO;
     }
     for (index = 0u; index < count; ++index)
@@ -535,11 +538,8 @@ int yvex_cli_stream_renderer_finish(yvex_cli_stream_renderer *renderer,
     if (ok && renderer->utf8_expected) ok = stream_replacement(renderer);
     renderer->utf8_count = renderer->utf8_expected = 0u;
     if (ok && renderer->pending_cr) ok = stream_newline(renderer);
-    renderer->pending_cr = 0;
-    renderer->collecting_language = 0;
-    renderer->closing_fence = 0;
-    renderer->in_fence = 0;
-    renderer->in_inline_code = 0;
+    renderer->pending_cr = renderer->collecting_language =
+        renderer->closing_fence = renderer->in_fence = renderer->in_inline_code = 0;
     if (ok) ok = stream_style_set(renderer, YVEX_CLI_STREAM_STYLE_NORMAL);
     if (ok && separate_terminal_status && renderer->wrote_bytes &&
         !renderer->last_newline) {
@@ -772,6 +772,48 @@ static void server_event_values(const yvex_server_event *event, int detailed)
         else if (!strcmp(event->phase, "decode"))
             printf(" · first decode %llu · later decode %llu · tokens %llu",
                    event->value_a, event->value_b, event->value_c);
+        else if (!strcmp(event->phase, "execution-batches"))
+            printf(" · physical %llu · multi-source %llu · max width %llu",
+                   event->value_a, event->value_b, event->value_c);
+        else if (!strcmp(event->phase, "execution-batch-rows"))
+            printf(" · submitted %llu · executed %llu · admitted width %llu",
+                   event->value_a, event->value_b, event->value_c);
+        else if (!strcmp(event->phase, "execution-batch-multi-source"))
+            printf(" · physical %llu · rows %llu · max real width %llu",
+                   event->value_a, event->value_b, event->value_c);
+        else if (!strcmp(event->phase, "execution-batch-sources"))
+            printf(" · max sources %llu · active producers %llu",
+                   event->value_a, event->value_b);
+        else if (!strcmp(event->phase, "execution-batch-experts"))
+            printf(" · worklists %llu · pairs %llu · max population %llu",
+                   event->value_a, event->value_b, event->value_c);
+        else if (!strcmp(event->phase, "execution-batch-expert-rows"))
+            printf(" · TC eligible %llu · TC executed %llu · narrow %llu",
+                   event->value_a, event->value_b, event->value_c);
+        else if (!strcmp(event->phase, "batch-expert-population-1-3"))
+            printf(" · population 1 %llu · 2 %llu · 3 %llu",
+                   event->value_a, event->value_b, event->value_c);
+        else if (!strcmp(event->phase, "batch-expert-population-4-6"))
+            printf(" · population 4 %llu · 5 %llu · 6 %llu",
+                   event->value_a, event->value_b, event->value_c);
+        else if (!strcmp(event->phase, "execution-batch-coalescing"))
+            printf(" · waits %llu · timeouts %llu · producers %llu",
+                   event->value_a, event->value_b, event->value_c);
+        else if (!strcmp(event->phase, "execution-batch-policy"))
+            printf(" · coalescing limit %llu ns · width %llu · producers %llu",
+                   event->value_a, event->value_b, event->value_c);
+        else if (!strcmp(event->phase, "execution-step-rendezvous"))
+            printf(" · submissions %llu · multi-source %llu · max width %llu",
+                   event->value_a, event->value_b, event->value_c);
+        else if (!strcmp(event->phase, "execution-step-policy"))
+            printf(" · limit %llu ns · steps %llu · producers %llu",
+                   event->value_a, event->value_b, event->value_c);
+        else if (!strcmp(event->phase, "execution-batch-mismatch"))
+            printf(" · phase %llu · layer %llu · operation %llu",
+                   event->value_a, event->value_b, event->value_c);
+        else if (!strcmp(event->phase, "execution-batch-mismatch-other"))
+            printf(" · geometry %llu · profile %llu · identity %llu",
+                   event->value_a, event->value_b, event->value_c);
         break;
     case YVEX_SERVER_EVENT_TELEMETRY_DROPPED:
         printf(" · %llu dropped · capacity %llu", event->value_a, event->value_b);
@@ -913,6 +955,7 @@ static void watch_cycle(yvex_cli_watch_renderer *renderer,
     renderer->accepted += event->accepted_tokens;
     renderer->rejected += event->rejected_tokens;
     renderer->discarded += event->discarded_tokens;
+    if (!renderer->detailed) return;
     watch_line_begin(renderer, event, renderer->style.success, "DSPARK");
     printf("cycle %-3llu %llu/%llu accepted", event->speculative_cycle,
            event->accepted_tokens, event->proposed_tokens);
@@ -950,10 +993,11 @@ static void watch_request_end(yvex_cli_watch_renderer *renderer,
     renderer->request_open = 0;
 }
 
-void yvex_cli_watch_renderer_open(yvex_cli_watch_renderer *renderer)
+void yvex_cli_watch_renderer_open(yvex_cli_watch_renderer *renderer, int detailed)
 {
     if (!renderer) return;
     memset(renderer, 0, sizeof(*renderer));
+    renderer->detailed = detailed != 0;
     yvex_cli_terminal_style_get(stdout, &renderer->style);
 }
 

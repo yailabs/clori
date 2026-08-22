@@ -62,14 +62,14 @@ typedef struct {
     yvex_backend_attention_job request;
     yvex_backend_attention_job *job; yvex_backend_attention_output *output;
     yvex_backend_attention_failure *failure; yvex_error *err;
-    unsigned char *host_stage; size_t host_stage_bytes;
+    yvex_backend_attention_completion *completion;
+    unsigned char *host_stage; size_t host_stage_bytes, download_stage_bytes;
     attn_transfer transfers[YVEX_CUDA_ATTN_TRANSFERS]; size_t transfer_count;
     attn_upload uploads[YVEX_CUDA_ATTN_UPLOADS]; size_t upload_count;
     attn_initializer initializers[YVEX_CUDA_ATTN_INITIALIZERS]; size_t initializer_count;
     CUdeviceptr weight[YVEX_BACKEND_ATTENTION_WEIGHT_COUNT];
-    CUdeviceptr input, core_input, q_low, query, raw_kv;
-    CUdeviceptr sinks, attention, low, final_output, envelope_output;
-    CUdeviceptr mhc_mix, mhc_scale, mhc_base, mhc_post, mhc_combination;
+    CUdeviceptr input, core_input, q_low, query, raw_kv, download_stage;
+    CUdeviceptr sinks, attention;
     attn_rolling_run rolling[ROLL_COUNT];
     CUdeviceptr index_query, index_weights, history_local, history_local_positions;
     CUdeviceptr history_compressed, history_compressed_positions;
@@ -80,11 +80,11 @@ typedef struct {
     unsigned long long local_extent, compressed_extent, history_index_extent;
     unsigned long long local_storage_extent, compressed_storage_extent, indexer_storage_extent;
     unsigned long long local_capacity, publication_local_capacity, compressed_capacity, indexer_capacity;
-    unsigned long long index_query_extent, emission_position, topk_count, staged_valid_count;
+    unsigned long long index_query_extent, emission_position;
     unsigned long long h2d_bytes, d2h_bytes, d2d_bytes, device_execution_elapsed_ns;
     unsigned long long stream_synchronizations, device_synchronizations;
     int *staged_status; unsigned long long *staged_selected_count, *staged_candidate_count;
-    int host_workspace_reused, host_status;
+    int host_workspace_reused;
     unsigned long long ordinal, phase_start_position, input_extent;
     unsigned long long phase_compressed_count, phase_indexer_count;
     unsigned long long initial_local_count, initial_compressed_count, initial_indexer_count;
@@ -134,6 +134,16 @@ static int attn_account_d2d(attn_run *run, size_t bytes, const char *stage) {
                          ULLONG_MAX, bytes, YVEX_ERR_BOUNDS,
                          "CUDA attention D2D accounting overflowed");
 }
+static int attn_device_copy(attn_run *run, CUdeviceptr target, CUdeviceptr source,
+                            size_t bytes, const char *stage) {
+    CUstream stream = yvex_cuda_launch_stream(run->backend);
+    CUresult copied = stream && run->state->driver.cuMemcpyDtoDAsync_v2
+                          ? run->state->driver.cuMemcpyDtoDAsync_v2(target, source, bytes, stream)
+                          : !stream ? run->state->driver.cuMemcpyDtoD_v2(target, source, bytes)
+                                    : (CUresult)1;
+    int rc = yvex_cuda_status(&run->state->driver, copied, stage, run->err);
+    return rc == YVEX_OK ? attn_account_d2d(run, bytes, stage) : rc;
+}
 static int attn_cancel(attn_run *run, const char *stage, int device_work_pending) {
     return run->ops->cancel(
         run->backend, run->job, stage, device_work_pending,
@@ -156,8 +166,7 @@ static int attn_transfer_add(attn_run *run, CUdeviceptr *device, void *output,
             "CUDA attention output span is absent, invalid, or undersized");
     transfer = &run->transfers[run->transfer_count++];
     *transfer = (attn_transfer){device, output, NULL, capacity, output_capacity, used, width, stage};
-    return run->ops->account_transfer(
-        capacity, width, &run->d2h_bytes, stage, run->failure, run->err);
+    return YVEX_OK;
 }
 typedef enum { SPAN_FLOAT = 0, SPAN_U64 } attn_span_kind;
 typedef struct {
@@ -203,21 +212,7 @@ static const attn_transfer_spec attn_transfers[] = {
 #undef T
 static int attn_transfer_plan(attn_run *run) {
     size_t index;
-    int rc;
-    rc = run->ops->account_transfer(
-        1ull, sizeof(int), &run->d2h_bytes,
-        "cuda.attention.copy.status", run->failure, run->err);
-    if (rc == YVEX_OK && run->job->attention_class == YVEX_BACKEND_ATTENTION_CSA)
-        rc = run->ops->account_transfer(
-            run->job->token_count, sizeof(unsigned long long),
-            &run->d2h_bytes, "cuda.attention.copy.counts",
-            run->failure, run->err);
-    if (rc == YVEX_OK && run->job->attention_class == YVEX_BACKEND_ATTENTION_CSA)
-        rc = run->ops->account_transfer(
-            run->job->token_count, sizeof(unsigned long long),
-            &run->d2h_bytes, "cuda.attention.copy.counts",
-            run->failure, run->err);
-    if (rc != YVEX_OK) return rc;
+    int rc = YVEX_OK;
     for (index = 0u; index < sizeof(attn_transfers) /
                                   sizeof(attn_transfers[0]); ++index) {
         const attn_transfer_spec *spec = &attn_transfers[index];
@@ -612,17 +607,7 @@ static int attn_alloc_values(attn_run *run, CUdeviceptr *target,
                             run->failure, run->err);
     if (rc != YVEX_OK || run->resources.prepare_only || !device_source)
         return rc;
-    {
-        CUstream stream = yvex_cuda_launch_stream(run->backend);
-        CUresult copy = stream && run->state->driver.cuMemcpyDtoDAsync_v2
-                            ? run->state->driver.cuMemcpyDtoDAsync_v2(
-                                  *target, device_source, bytes, stream)
-                            : !stream
-                                  ? run->state->driver.cuMemcpyDtoD_v2(*target, device_source, bytes)
-                                  : (CUresult)1;
-        rc = yvex_cuda_status(&run->state->driver, copy, stage, run->err);
-        return rc == YVEX_OK ? attn_account_d2d(run, bytes, stage) : rc;
-    }
+    return attn_device_copy(run, *target, device_source, bytes, stage);
 }
 typedef struct {
     size_t target_offset;
@@ -712,11 +697,12 @@ static int attn_extent(const attn_run *run,
     case EXT_INDEXER: *out = run->indexer_storage_extent; return 1;
     case EXT_INDEXER_POSITIONS: *out = run->phase_indexer_storage_count; return 1;
     case EXT_MAIN_STATE:
-        if (left == ULLONG_MAX) return 0;
-        ++left; right = run->rolling[ROLL_MAIN].extent; break;
     case EXT_INDEX_STATE:
-        if (left == ULLONG_MAX) return 0;
-        ++left; right = run->rolling[ROLL_INDEX].extent; break;
+        if (!run->job->retain_prefix_checkpoints) left = 1ull;
+        else if (left == ULLONG_MAX) return 0;
+        else ++left;
+        right = run->rolling[kind == EXT_MAIN_STATE ? ROLL_MAIN : ROLL_INDEX].extent;
+        break;
     case EXT_INDEX_QUERY: right = run->index_query_extent; break;
     case EXT_INDEX_WEIGHTS: right = run->job->indexer_heads; break;
     case EXT_SELECTED: right = run->topk_capacity; break;
@@ -976,7 +962,7 @@ static int attn_prepare(attn_run *run) {
     run->resources.budget = run->job->max_device_bytes;
     run->resources.activation_q8 = run->job->native_execution && run->job->evidence_level < 3u &&
         run->state->kernel_bundle_native &&
-        run->state->q8_0_tensorcore_rows_function != NULL;
+        run->state->qtype_tensorcore_rows_function != NULL;
     /* Full evidence selects canonical-order arithmetic for the stage oracles. */
     run->resources.forensic_numeric = run->job->evidence_level == 3u;
     return YVEX_OK;
@@ -1027,6 +1013,16 @@ static int attn_allocate_base(attn_run *run) {
         run->initial_indexer_count * sizeof(unsigned long long);
     return YVEX_OK;
 }
+static void attn_rolling_bind(attn_run *run, unsigned int slot, CUdeviceptr kv, CUdeviceptr score,
+                              unsigned long long extent, unsigned long long ordinal) {
+    unsigned long long before = run->job->retain_prefix_checkpoints ? ordinal : 0ull;
+    unsigned long long after = run->job->retain_prefix_checkpoints ? ordinal + 1ull : 0ull;
+    unsigned long long bytes = extent * sizeof(float);
+    run->rolling[slot].before_kv = kv + before * bytes;
+    run->rolling[slot].before_score = score + before * bytes;
+    run->rolling[slot].after_kv = kv + after * bytes;
+    run->rolling[slot].after_score = score + after * bytes;
+}
 static void attn_phase_bind(attn_run *run, unsigned long long ordinal) {
     yvex_backend_attention_job *job = &run->request;
     unsigned long long position = run->phase_start_position + ordinal;
@@ -1039,8 +1035,6 @@ static void attn_phase_bind(attn_run *run, unsigned long long ordinal) {
     unsigned long long emit = job->attention_class != YVEX_BACKEND_ATTENTION_SWA &&
                               (position + 1ull) % job->compression_ratio == 0ull;
     unsigned long long float_size = sizeof(float), u64_size = sizeof(unsigned long long);
-    unsigned long long main_extent = run->rolling[ROLL_MAIN].extent;
-    unsigned long long index_extent = run->rolling[ROLL_INDEX].extent;
     run->ordinal = ordinal;
     if (job->candidate_block_visible) {
         local_count = run->initial_local_count + job->token_count;
@@ -1058,16 +1052,6 @@ static void attn_phase_bind(attn_run *run, unsigned long long ordinal) {
     run->query = run->phase_query + ordinal * run->query_width * float_size;
     run->raw_kv = run->phase_raw_kv + ordinal * job->kv_width * float_size;
     run->attention = run->phase_attention + ordinal * run->query_width * float_size;
-    run->low = run->phase_low + ordinal * run->low_count * float_size;
-    run->final_output = run->phase_output + ordinal * job->hidden_width * float_size;
-    run->envelope_output = run->phase_envelope_output +
-        ordinal * job->residual_expanded_width * float_size;
-    run->mhc_mix = run->phase_mhc_mix + ordinal * job->mhc_mixing_rows * float_size;
-    run->mhc_scale = run->phase_mhc_scale + ordinal * 3ull * float_size;
-    run->mhc_base = run->phase_mhc_base + ordinal * job->mhc_mixing_rows * float_size;
-    run->mhc_post = run->phase_mhc_post + ordinal * job->residual_stream_count * float_size;
-    run->mhc_combination = run->phase_mhc_combination +
-        ordinal * job->residual_stream_count * job->residual_stream_count * float_size;
     run->index_query = run->phase_index_query + ordinal * run->index_query_extent * float_size;
     run->index_weights = run->phase_index_weights + ordinal * job->indexer_heads * float_size;
     run->selected = run->phase_selected + ordinal * run->topk_capacity * u64_size;
@@ -1087,14 +1071,10 @@ static void attn_phase_bind(attn_run *run, unsigned long long ordinal) {
     job->main_rolling.current_fill = job->main_rolling.cursor;
     job->main_rolling.previous_fill = job->main_rolling.overlap &&
         position >= job->compression_ratio ? job->compression_ratio : 0ull;
-    run->rolling[ROLL_MAIN].before_kv =
-        run->phase_main_kv + ordinal * main_extent * float_size;
-    run->rolling[ROLL_MAIN].before_score =
-        run->phase_main_score + ordinal * main_extent * float_size;
-    run->rolling[ROLL_MAIN].after_kv =
-        run->phase_main_kv + (ordinal + 1ull) * main_extent * float_size;
-    run->rolling[ROLL_MAIN].after_score =
-        run->phase_main_score + (ordinal + 1ull) * main_extent * float_size;
+    /* The uploaded no-checkpoint state is transaction-private, so in-place mutation preserves
+     * rollback; checkpointed execution keeps each historical state version distinct. */
+    attn_rolling_bind(run, ROLL_MAIN, run->phase_main_kv, run->phase_main_score,
+                      run->rolling[ROLL_MAIN].extent, ordinal);
     run->rolling[ROLL_MAIN].value =
         run->phase_compressed + compressed_count * job->compressed_stride * float_size;
     run->rolling[ROLL_MAIN].positions =
@@ -1108,14 +1088,8 @@ static void attn_phase_bind(attn_run *run, unsigned long long ordinal) {
     job->indexer_rolling.current_fill = job->indexer_rolling.cursor;
     job->indexer_rolling.previous_fill = position >= job->compression_ratio
                                             ? job->compression_ratio : 0ull;
-    run->rolling[ROLL_INDEX].before_kv =
-        run->phase_index_kv + ordinal * index_extent * float_size;
-    run->rolling[ROLL_INDEX].before_score =
-        run->phase_index_score + ordinal * index_extent * float_size;
-    run->rolling[ROLL_INDEX].after_kv =
-        run->phase_index_kv + (ordinal + 1ull) * index_extent * float_size;
-    run->rolling[ROLL_INDEX].after_score =
-        run->phase_index_score + (ordinal + 1ull) * index_extent * float_size;
+    attn_rolling_bind(run, ROLL_INDEX, run->phase_index_kv, run->phase_index_score,
+                      run->rolling[ROLL_INDEX].extent, ordinal);
     run->rolling[ROLL_INDEX].value =
         run->phase_indexer + compressed_count * job->indexer_stride * float_size;
     run->rolling[ROLL_INDEX].positions =
@@ -1125,14 +1099,16 @@ static void attn_phase_bind(attn_run *run, unsigned long long ordinal) {
 }
 static int attn_envelope_pre(attn_run *run) {
     unsigned long long streams = run->job->residual_stream_count, width = run->job->residual_stream_width;
+    unsigned long long rows = run->job->token_count;
     unsigned int shared_bytes;
     int rc;
-    if (run->job->operation_scope != YVEX_BACKEND_ATTENTION_SCOPE_ENVELOPE)
-        return YVEX_OK;
-    if (streams > UINT_MAX / sizeof(double) - 1ull - YVEX_CUDA_ATTN_BLOCK)
+    if (run->job->operation_scope != YVEX_BACKEND_ATTENTION_SCOPE_ENVELOPE) return YVEX_OK;
+    if (run->ordinal) return YVEX_OK;
+    if (rows > UINT_MAX ||
+        streams > UINT_MAX / sizeof(double) - 1ull - YVEX_CUDA_ATTN_BLOCK)
         return attn_run_fail(
             run, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT,
-            "cuda.attention.mhc_pre", UINT_MAX, streams,
+            "cuda.attention.mhc_pre", UINT_MAX, rows,
             YVEX_ERR_BOUNDS, "CUDA mHC shared geometry exceeds launch bounds");
     shared_bytes = (unsigned int)((streams + 1ull + YVEX_CUDA_ATTN_BLOCK) *
                                   sizeof(double));
@@ -1140,7 +1116,7 @@ static int attn_envelope_pre(attn_run *run) {
         &run->resources,
         &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_MHC_FUNCTION],
         run->weight[YVEX_BACKEND_ATTENTION_WEIGHT_MHC_FUNCTION], 0ull,
-        run->job->mhc_mixing_rows, 1ull, run->input, run->mhc_mix, 0,
+        run->job->mhc_mixing_rows, rows, run->phase_input, run->phase_mhc_mix, 0,
         run->device_status, "cuda.attention.mhc_function",
         run->failure, run->err);
     if (rc == YVEX_OK)
@@ -1148,33 +1124,35 @@ static int attn_envelope_pre(attn_run *run) {
             &run->resources,
             &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_MHC_SCALE],
             run->weight[YVEX_BACKEND_ATTENTION_WEIGHT_MHC_SCALE], 0ull, 3ull,
-            run->mhc_scale, run->device_status,
+            run->phase_mhc_scale, run->device_status,
             "cuda.attention.mhc_scale", run->failure, run->err);
     if (rc == YVEX_OK)
         rc = run->ops->decode(
             &run->resources,
             &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_MHC_BASE],
             run->weight[YVEX_BACKEND_ATTENTION_WEIGHT_MHC_BASE], 0ull,
-            run->job->mhc_mixing_rows, run->mhc_base, run->device_status,
+            run->job->mhc_mixing_rows, run->phase_mhc_base, run->device_status,
             "cuda.attention.mhc_base", run->failure, run->err);
     if (rc == YVEX_OK) {
-        unsigned long long one = 1ull;
         void *params[] = {
-            &run->input, &run->mhc_mix, &run->mhc_scale, &run->mhc_base,
+            &run->phase_input, &run->phase_mhc_mix, &run->phase_mhc_scale,
+            &run->phase_mhc_base,
             &streams, &width, (void *)&run->job->mhc_mixing_rows,
             (void *)&run->job->mhc_sinkhorn_iterations,
             (void *)&run->job->rms_epsilon, (void *)&run->job->mhc_epsilon,
-            (void *)&run->job->mhc_residual_post_multiplier, &run->core_input,
-            &run->mhc_post, &run->mhc_combination, &one, &run->device_status
+            (void *)&run->job->mhc_residual_post_multiplier, &run->phase_core_input,
+            &run->phase_mhc_post, &run->phase_mhc_combination, &rows,
+            &run->device_status
         };
         rc = run->ops->launch(
-            &run->resources, run->state->residual_mhc_pre_function, 1u,
+            &run->resources, run->state->residual_mhc_pre_function,
+            (unsigned int)rows,
             YVEX_CUDA_ATTN_BLOCK, shared_bytes, params,
             "cuda.attention.mhc_pre", run->failure, run->err);
     }
     if (rc == YVEX_OK)
         rc = run->ops->weighted_norm(
-            &run->resources, run->core_input, run->job->hidden_width, 1ull,
+            &run->resources, run->phase_core_input, run->job->hidden_width, rows,
             &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_INPUT_NORM],
             run->weight[YVEX_BACKEND_ATTENTION_WEIGHT_INPUT_NORM],
             run->job->rms_epsilon, run->device_status,
@@ -1182,104 +1160,113 @@ static int attn_envelope_pre(attn_run *run) {
     return rc;
 }
 static int attn_project(attn_run *run) {
+    unsigned long long rows = run->job->token_count, query_vectors, core_values;
     int rc = YVEX_OK;
+    if (!yvex_core_u64_mul(rows, run->job->query_heads, &query_vectors) ||
+        !yvex_core_u64_mul(rows, run->job->hidden_width, &core_values))
+        return attn_run_fail(
+            run, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT,
+            "cuda.attention.project.rows", ULLONG_MAX, rows,
+            YVEX_ERR_BOUNDS, "CUDA attention projection row geometry overflowed");
     if (run->job->operation_scope == YVEX_BACKEND_ATTENTION_SCOPE_CORE)
         rc = run->ops->round_bf16(
-            &run->resources, run->core_input, run->job->hidden_width,
-            run->device_status, "cuda.attention.input_round",
-            run->failure, run->err);
+            &run->resources, run->core_input, core_values, run->device_status,
+            "cuda.attention.input_round", run->failure, run->err);
     if (rc == YVEX_OK) rc = run->ops->matvec(
-        &run->resources,
-        &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_Q_A],
+        &run->resources, &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_Q_A],
         run->weight[YVEX_BACKEND_ATTENTION_WEIGHT_Q_A], 0ull,
-        run->job->q_rank, 1ull, run->core_input, run->q_low, 1, run->device_status,
+        run->job->q_rank, rows, run->core_input, run->q_low, 1, run->device_status,
         "cuda.attention.q_a", run->failure, run->err);
     if (rc != YVEX_OK) return rc;
     rc = run->ops->weighted_norm(
-        &run->resources, run->q_low, run->job->q_rank, 1ull,
+        &run->resources, run->q_low, run->job->q_rank, rows,
         &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_Q_A_NORM],
         run->weight[YVEX_BACKEND_ATTENTION_WEIGHT_Q_A_NORM],
-        run->job->rms_epsilon, run->device_status,
-        "cuda.attention.q_norm", run->failure, run->err);
+        run->job->rms_epsilon, run->device_status, "cuda.attention.q_norm",
+        run->failure, run->err);
     if (rc != YVEX_OK) return rc;
     rc = run->ops->matvec(
-        &run->resources,
-        &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_Q_B],
+        &run->resources, &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_Q_B],
         run->weight[YVEX_BACKEND_ATTENTION_WEIGHT_Q_B], 0ull,
-        run->query_width, 1ull, run->q_low, run->query, 1, run->device_status,
+        run->query_width, rows, run->q_low, run->query, 1, run->device_status,
         "cuda.attention.q_b", run->failure, run->err);
     if (rc != YVEX_OK) return rc;
     rc = run->ops->matvec(
-        &run->resources,
-        &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_KV],
+        &run->resources, &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_KV],
         run->weight[YVEX_BACKEND_ATTENTION_WEIGHT_KV], 0ull,
-        run->job->kv_width, 1ull, run->core_input, run->raw_kv, 1, run->device_status,
+        run->job->kv_width, rows, run->core_input, run->raw_kv, 1, run->device_status,
         "cuda.attention.kv", run->failure, run->err);
     if (rc != YVEX_OK) return rc;
     rc = run->ops->weighted_norm(
-        &run->resources, run->raw_kv, run->job->kv_width, 1ull,
+        &run->resources, run->raw_kv, run->job->kv_width, rows,
         &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_KV_NORM],
         run->weight[YVEX_BACKEND_ATTENTION_WEIGHT_KV_NORM],
-        run->job->rms_epsilon, run->device_status,
-        "cuda.attention.kv_norm", run->failure, run->err);
+        run->job->rms_epsilon, run->device_status, "cuda.attention.kv_norm",
+        run->failure, run->err);
     if (rc != YVEX_OK) return rc;
     rc = run->ops->unit_norm(
-        &run->resources, run->query, run->job->query_heads,
-        run->job->head_dimension, run->job->rms_epsilon, run->device_status,
+        &run->resources, run->query, query_vectors, run->job->head_dimension,
+        run->job->rms_epsilon, run->device_status,
         "cuda.attention.query_unit_norm", run->failure, run->err);
     if (rc != YVEX_OK) return rc;
     rc = run->ops->rope(
-        &run->resources, run->query, run->job->query_heads,
-        run->job->head_dimension, run->job->token_position,
+        &run->resources, run->phase_query, run->job->query_heads, rows, run->job->head_dimension,
+        run->phase_start_position,
         &run->job->position, 0, run->device_status,
         "cuda.attention.query_rope", run->failure, run->err);
-    if (rc != YVEX_OK) return rc;
-    rc = run->ops->rope(
-        &run->resources, run->raw_kv, 1ull, run->job->kv_width,
-        run->job->token_position, &run->job->position, 0,
-        run->device_status, "cuda.attention.kv_rope",
-        run->failure, run->err);
-    if (rc != YVEX_OK) return rc;
-    if (run->job->kv_width > run->job->position.rope_dimensions) {
+    if (rc == YVEX_OK)
+        rc = run->ops->rope(
+            &run->resources, run->phase_raw_kv, 1ull, rows, run->job->kv_width,
+            run->phase_start_position,
+            &run->job->position, 0, run->device_status,
+            "cuda.attention.kv_rope", run->failure, run->err);
+    if (rc == YVEX_OK && run->job->kv_width > run->job->position.rope_dimensions)
         rc = run->ops->activation(
-            &run->resources, run->raw_kv, 1ull,
+            &run->resources, run->phase_raw_kv, rows,
             run->job->kv_width - run->job->position.rope_dimensions,
-            &run->job->attention_kv_activation, run->device_status,
-            "cuda.attention.kv_activation", run->failure, run->err);
-        if (rc != YVEX_OK) return rc;
-    }
+            run->job->kv_width, &run->job->attention_kv_activation, run->device_status,
+            "cuda.attention.kv_activation",
+            run->failure, run->err);
+    if (rc != YVEX_OK) return rc;
     return run->ops->decode(
-        &run->resources,
-        &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_SINKS],
+        &run->resources, &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_SINKS],
         run->weight[YVEX_BACKEND_ATTENTION_WEIGHT_SINKS], 0ull,
         run->job->query_heads, run->sinks, run->device_status,
         "cuda.attention.sinks", run->failure, run->err);
 }
 static int attn_rolling_execute(attn_run *run, unsigned int kind) {
     const int index = kind == ROLL_INDEX;
-    const yvex_backend_attention_rolling *rolling = index
-        ? &run->job->indexer_rolling : &run->job->main_rolling;
+    const yvex_backend_attention_rolling *rolling = index ? &run->job->indexer_rolling
+                                                          : &run->job->main_rolling;
     attn_rolling_run *device = &run->rolling[kind];
-    yvex_backend_attention_weight_slot base = index
-        ? YVEX_BACKEND_ATTENTION_WEIGHT_INDEX_KV
-        : YVEX_BACKEND_ATTENTION_WEIGHT_MAIN_KV;
+    yvex_backend_attention_weight_slot base = index ? YVEX_BACKEND_ATTENTION_WEIGHT_INDEX_KV
+                                                     : YVEX_BACKEND_ATTENTION_WEIGHT_MAIN_KV;
     const yvex_backend_attention_activation *activation = index
-        ? &run->job->compressor_rotated_activation
-        : &run->job->compressor_activation;
-    const char *stage = index ? "cuda.attention.index_rolling"
-                              : "cuda.attention.main_rolling";
-    unsigned long long activation_width = rolling->head_dimension;
+        ? &run->job->compressor_rotated_activation : &run->job->compressor_activation;
+    const char *stage = index ? "cuda.attention.index_rolling" : "cuda.attention.main_rolling";
+    unsigned long long activation_width = rolling->head_dimension, rows = rolling->state_width;
     int emit, rc;
-    rc = run->ops->matvec(
-        &run->resources, &run->job->weights[base], run->weight[base], 0ull,
-        rolling->state_width, 1ull, run->core_input, device->kv, 0, run->device_status,
-        stage, run->failure, run->err);
-    if (rc == YVEX_OK)
-        rc = run->ops->matvec(
-            &run->resources, &run->job->weights[base + 1],
-            run->weight[base + 1], 0ull, rolling->state_width, 1ull, run->core_input,
-            device->score, 0, run->device_status, stage, run->failure,
-            run->err);
+    if (run->job->weights[base].qtype == YVEX_GGUF_QTYPE_BF16 &&
+        run->job->weights[base + 1].qtype == YVEX_GGUF_QTYPE_BF16 &&
+        rows <= UINT_MAX * 8ull - 7ull) {
+        unsigned int grid = (unsigned int)((rows + 7ull) / 8ull);
+        void *params[] = {
+            &run->weight[base], &run->job->weights[base].row_bytes,
+            &run->weight[base + 1], &run->job->weights[base + 1].row_bytes,
+            &run->job->weights[base].row_width, &rows,
+            &run->core_input, &device->kv, &device->score, &run->device_status};
+        rc = run->ops->launch(&run->resources, run->state->attention_bf16_pair_function,
+                              grid, 256u, 0u, params, stage, run->failure, run->err);
+    } else {
+        rc = run->ops->matvec(&run->resources, &run->job->weights[base], run->weight[base],
+            0ull, rolling->state_width, 1ull, run->core_input, device->kv, 0,
+            run->device_status, stage, run->failure, run->err);
+        if (rc == YVEX_OK)
+            rc = run->ops->matvec(&run->resources, &run->job->weights[base + 1],
+                run->weight[base + 1], 0ull, rolling->state_width, 1ull,
+                run->core_input, device->score, 0, run->device_status, stage,
+                run->failure, run->err);
+    }
     if (rc == YVEX_OK)
         rc = run->ops->decode(
             &run->resources, &run->job->weights[base + 2],
@@ -1310,7 +1297,7 @@ static int attn_rolling_execute(attn_run *run, unsigned int kind) {
         run->err);
     if (rc == YVEX_OK)
         rc = run->ops->rope(
-            &run->resources, device->value, 1ull, rolling->head_dimension,
+            &run->resources, device->value, 1ull, 1ull, rolling->head_dimension,
             run->emission_position, &run->job->position, 0,
             run->device_status, stage, run->failure, run->err);
     if (rc != YVEX_OK) return rc;
@@ -1324,40 +1311,46 @@ static int attn_rolling_execute(attn_run *run, unsigned int kind) {
         activation_width -= run->job->position.rope_dimensions;
     }
     return run->ops->activation(
-        &run->resources, device->value, 1ull, activation_width, activation,
+        &run->resources, device->value, 1ull, activation_width,
+        activation_width, activation,
         run->device_status, stage, run->failure, run->err);
 }
-static int attn_index_topk(attn_run *run) {
+static int attn_index_prepare(attn_run *run) {
+    unsigned long long rows = run->job->token_count, index_vectors;
     int rc;
+    if (!yvex_core_u64_mul(rows, run->job->indexer_heads, &index_vectors))
+        return attn_run_fail(
+            run, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT,
+            "cuda.attention.index.rows", ULLONG_MAX, rows,
+            YVEX_ERR_BOUNDS, "CUDA attention index row geometry overflowed");
     rc = run->ops->matvec(
-        &run->resources,
-        &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_INDEX_Q],
+        &run->resources, &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_INDEX_Q],
         run->weight[YVEX_BACKEND_ATTENTION_WEIGHT_INDEX_Q], 0ull,
-        run->index_query_extent, 1ull, run->q_low, run->index_query,
-        1, run->device_status, "cuda.attention.index_query",
-        run->failure, run->err);
+        run->index_query_extent, rows, run->phase_q_low, run->phase_index_query,
+        1, run->device_status, "cuda.attention.index_query", run->failure, run->err);
     if (rc != YVEX_OK) return rc;
     rc = run->ops->matvec(
-        &run->resources,
-        &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_INDEX_PROJECTION],
+        &run->resources, &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_INDEX_PROJECTION],
         run->weight[YVEX_BACKEND_ATTENTION_WEIGHT_INDEX_PROJECTION], 0ull,
-        run->job->indexer_heads, 1ull, run->core_input, run->index_weights,
+        run->job->indexer_heads, rows, run->phase_core_input, run->phase_index_weights,
         1, run->device_status, "cuda.attention.index_weights",
         run->failure, run->err);
     if (rc != YVEX_OK) return rc;
     rc = run->ops->rope(
-        &run->resources, run->index_query, run->job->indexer_heads,
-        run->job->indexer_head_dimension, run->job->token_position,
-        &run->job->position, 0, run->device_status,
-        "cuda.attention.index_query_rope",
+        &run->resources, run->phase_index_query, run->job->indexer_heads, rows,
+        run->job->indexer_head_dimension, run->phase_start_position,
+        &run->job->position, 0, run->device_status, "cuda.attention.index_query_rope",
         run->failure, run->err);
     if (rc != YVEX_OK) return rc;
     rc = run->ops->activation(
-        &run->resources, run->index_query, run->job->indexer_heads,
-        run->job->indexer_head_dimension, &run->job->indexer_query_activation,
+        &run->resources, run->phase_index_query, index_vectors,
+        run->job->indexer_head_dimension, run->job->indexer_head_dimension,
+        &run->job->indexer_query_activation,
         run->device_status, "cuda.attention.index_query_activation",
         run->failure, run->err);
-    if (rc != YVEX_OK) return rc;
+    return rc;
+}
+static int attn_index_topk(attn_run *run) {
     {
         void *params[] = {
             &run->index_query, &run->index_weights, &run->history_indexer,
@@ -1391,87 +1384,93 @@ static int attn_compress(attn_run *run) {
     return rc == YVEX_OK ? attn_index_topk(run) : rc;
 }
 static int attn_reduce(attn_run *run) {
-    unsigned long long group;
+    unsigned long long low_width, batch_blocks;
     unsigned int attention_class = (unsigned int)run->job->attention_class;
     int rc;
-    {
+    if (!run->ordinal) {
+        if (!yvex_core_u64_mul(run->job->token_count, run->job->query_heads,
+                               &batch_blocks) || batch_blocks > UINT_MAX)
+            return attn_run_fail(
+                run, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT,
+                "cuda.attention.reduce.rows", UINT_MAX, run->job->token_count,
+                YVEX_ERR_BOUNDS, "CUDA attention row grid exceeds launch bounds");
         void *params[] = {
-            &run->query, &run->history_local, &run->history_local_positions,
-            (void *)&run->job->local_count, (void *)&run->job->local_stride,
-            &run->raw_kv, (void *)&run->job->kv_width,
-            &run->history_compressed, &run->history_compressed_positions,
-            (void *)&run->job->compressed_count,
+            &run->phase_query, &run->phase_local, &run->phase_local_positions,
+            &run->initial_local_count, (void *)&run->job->local_stride,
+            &run->phase_compressed, &run->phase_compressed_positions,
             (void *)&run->job->compressed_stride,
-            &run->rolling[ROLL_MAIN].value,
-            &run->rolling[ROLL_MAIN].positions,
-            &run->rolling[ROLL_MAIN].value_count,
-            (void *)&run->job->head_dimension, &run->selected,
-            &run->selected_count, &run->sinks,
+            &run->phase_selected, &run->phase_selected_count,
+            &run->topk_capacity, &run->sinks,
             (void *)&run->job->query_heads, (void *)&run->job->head_dimension,
             (void *)&run->job->sliding_window,
             (void *)&run->job->compression_ratio, &attention_class,
-            (void *)&run->job->token_position,
+            &run->phase_start_position, (void *)&run->job->token_count,
             (void *)&run->job->candidate_block_visible, &run->attention,
             &run->device_status
         };
+        CUfunction reduce = run->resources.activation_q8
+            ? run->state->attention_reduce_native_function
+            : run->state->attention_reduce_function;
+        unsigned int reduce_shared = run->resources.activation_q8
+            ? 0u : YVEX_CUDA_ATTN_BLOCK * sizeof(double);
         rc = run->ops->launch(
-            &run->resources, run->state->attention_reduce_function,
-            (unsigned int)run->job->query_heads, YVEX_CUDA_ATTN_BLOCK,
-            YVEX_CUDA_ATTN_BLOCK * sizeof(double), params,
+            &run->resources, reduce,
+            (unsigned int)batch_blocks, YVEX_CUDA_ATTN_BLOCK,
+            reduce_shared, params,
             "cuda.attention.reduce", run->failure, run->err);
-    }
-    if (rc != YVEX_OK) return rc;
-    rc = run->ops->rope(
-        &run->resources, run->attention, run->job->query_heads,
-        run->job->head_dimension, run->job->token_position,
-        &run->job->position, 1, run->device_status,
-        "cuda.attention.output_inverse_rope",
-        run->failure, run->err);
-    if (rc != YVEX_OK) return rc;
-    for (group = 0ull; group < run->job->output_groups; ++group) {
-        CUdeviceptr group_input =
-            run->attention +
-            group * run->job->output_group_input_width * sizeof(float);
-        CUdeviceptr group_output =
-            run->low + group * run->job->output_rank * sizeof(float);
-        rc = run->ops->matvec(
-            &run->resources,
-            &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_OUT_A],
-            run->weight[YVEX_BACKEND_ATTENTION_WEIGHT_OUT_A],
-            group * run->job->output_rank, run->job->output_rank, 1ull,
-            group_input, group_output, 1, run->device_status,
-            "cuda.attention.output_a", run->failure, run->err);
         if (rc != YVEX_OK) return rc;
     }
-    return run->ops->matvec(
+    if (run->ordinal + 1ull < run->job->token_count) return YVEX_OK;
+    rc = run->ops->rope(
+        &run->resources, run->phase_attention, run->job->query_heads,
+        run->job->token_count, run->job->head_dimension,
+        run->phase_start_position, &run->job->position, 1,
+        run->device_status, "cuda.attention.output_inverse_rope",
+        run->failure, run->err);
+    if (rc != YVEX_OK) return rc;
+    if (!yvex_core_u64_mul(run->job->output_groups, run->job->output_rank,
+                           &low_width))
+        return attn_run_fail(
+            run, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT,
+            "cuda.attention.output_a.rows", ULLONG_MAX, run->job->output_groups,
+            YVEX_ERR_BOUNDS, "CUDA attention output-A row geometry overflowed");
+    rc = run->ops->matvec_grouped(
         &run->resources,
-        &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_OUT_B],
+        &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_OUT_A],
+        run->weight[YVEX_BACKEND_ATTENTION_WEIGHT_OUT_A],
+        run->job->output_groups, run->job->output_rank,
+        run->job->token_count, run->phase_attention, run->query_width,
+        run->phase_low, low_width, 1, run->device_status,
+        "cuda.attention.output_a", run->failure, run->err);
+    if (rc != YVEX_OK) return rc;
+    return run->ops->matvec(
+        &run->resources, &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_OUT_B],
         run->weight[YVEX_BACKEND_ATTENTION_WEIGHT_OUT_B], 0ull,
-        run->job->hidden_width, 1ull, run->low, run->final_output,
-        1, run->device_status, "cuda.attention.output_b",
+        run->job->hidden_width, run->job->token_count, run->phase_low,
+        run->phase_output, 1, run->device_status, "cuda.attention.output_b",
         run->failure, run->err);
 }
 /* Apply optional mHC residual egress to completed core output without host materialization. */
 static int attn_envelope_post(attn_run *run) {
     unsigned long long expanded = run->job->residual_expanded_width;
-    unsigned long long streams = run->job->residual_stream_count;
+    unsigned long long streams = run->job->residual_stream_count, total;
     unsigned long long width = run->job->residual_stream_width;
     unsigned int grid;
     if (run->job->operation_scope != YVEX_BACKEND_ATTENTION_SCOPE_ENVELOPE)
         return YVEX_OK;
-    if (!expanded || expanded > UINT_MAX * (unsigned long long)YVEX_CUDA_ATTN_BLOCK)
+    if (run->ordinal) return YVEX_OK;
+    if (!expanded || !yvex_core_u64_mul(expanded, run->job->token_count, &total) ||
+        total > UINT_MAX * (unsigned long long)YVEX_CUDA_ATTN_BLOCK)
         return attn_run_fail(
             run, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT,
-            "cuda.attention.mhc_post", UINT_MAX, expanded,
+            "cuda.attention.mhc_post", UINT_MAX, run->job->token_count,
             YVEX_ERR_BOUNDS, "CUDA attention mHC egress extent is invalid");
-    grid = (unsigned int)((expanded + YVEX_CUDA_ATTN_BLOCK - 1ull) /
-                          YVEX_CUDA_ATTN_BLOCK);
+    grid = (unsigned int)((total + YVEX_CUDA_ATTN_BLOCK - 1ull) / YVEX_CUDA_ATTN_BLOCK);
     {
-        unsigned long long one = 1ull;
         void *params[] = {
-            &run->final_output, &run->input, &run->mhc_post,
-            &run->mhc_combination, &streams, &width,
-            &run->envelope_output, &one, &run->device_status
+            &run->phase_output, &run->phase_input, &run->phase_mhc_post,
+            &run->phase_mhc_combination, &streams, &width, &run->phase_envelope_output,
+            (void *)&run->job->token_count, &run->device_status
         };
         return run->ops->launch(
             &run->resources, run->state->residual_mhc_post_function, grid,
@@ -1483,9 +1482,34 @@ typedef struct {
     attn_run *run; unsigned int first, last;
 } attn_graph_piece;
 static int (*const attn_kernel_stages[YVEX_CUDA_ATTENTION_STAGE_COUNT])(attn_run *) = {
-        attn_envelope_pre, attn_project, attn_compress,
-        attn_reduce, attn_envelope_post
+    attn_envelope_pre, attn_project, attn_compress, attn_reduce, attn_envelope_post
 };
+static int attn_stages_execute(attn_run *run, unsigned int first, unsigned int last) {
+    unsigned long long token;
+    unsigned int stage;
+    int rc = YVEX_OK;
+    for (stage = first; rc == YVEX_OK && stage < last; ++stage) {
+        if (!cuda_attention_piece_active(
+                run->job->operation_scope, run->job->attention_class,
+                (yvex_cuda_attention_stage)stage))
+            continue;
+        if (stage == YVEX_CUDA_ATTENTION_STAGE_PROJECT) {
+            attn_phase_bind(run, 0ull);
+            rc = attn_kernel_stages[stage](run);
+            continue;
+        }
+        if (stage == YVEX_CUDA_ATTENTION_STAGE_COMPRESS &&
+            run->job->attention_class == YVEX_BACKEND_ATTENTION_CSA) {
+            rc = attn_index_prepare(run);
+            if (rc != YVEX_OK) continue;
+        }
+        for (token = 0ull; rc == YVEX_OK && token < run->job->token_count; ++token) {
+            attn_phase_bind(run, token);
+            rc = attn_kernel_stages[stage](run);
+        }
+    }
+    return rc;
+}
 static int attn_initializers_enqueue(attn_run *run) {
     size_t i;
     int rc;
@@ -1513,53 +1537,51 @@ static int attn_initializers_enqueue(attn_run *run) {
     return YVEX_OK;
 }
 static int attn_downloads_enqueue(attn_run *run) {
-    size_t i;
-    int rc = run->ops->download(
-        &run->resources, run->staged_status, run->device_status,
-        sizeof(*run->staged_status), "cuda.attention.copy.status",
-        run->failure, run->err);
-    if (rc == YVEX_OK && run->job->attention_class == YVEX_BACKEND_ATTENTION_CSA)
-        rc = run->ops->download(
-            &run->resources, run->staged_selected_count, run->phase_selected_count,
-            (size_t)run->job->token_count * sizeof(*run->staged_selected_count),
-            "cuda.attention.copy.selected_count", run->failure,
-            run->err);
-    if (rc == YVEX_OK && run->job->attention_class == YVEX_BACKEND_ATTENTION_CSA)
-        rc = run->ops->download(
-            &run->resources, run->staged_candidate_count, run->phase_valid_count,
-            (size_t)run->job->token_count * sizeof(*run->staged_candidate_count),
-            "cuda.attention.copy.valid_count", run->failure, run->err);
-    for (i = 0u; rc == YVEX_OK && i < run->transfer_count; ++i) {
-        attn_transfer *transfer = &run->transfers[i];
-        size_t bytes;
-        if (!yvex_cuda_work_checked_bytes(
-                transfer->capacity, transfer->width, &bytes))
-            return attn_run_fail(
-                run, YVEX_BACKEND_ATTENTION_FAILURE_COPY, transfer->stage,
-                transfer->capacity, 0ull, YVEX_ERR_BOUNDS,
-                "CUDA attention output staging extent overflowed");
-        rc = run->ops->download(
-            &run->resources, transfer->staged, *transfer->device, bytes,
-            transfer->stage, run->failure, run->err);
+    attn_transfer spans[YVEX_CUDA_ATTN_TRANSFERS + 3u] = {
+        {&run->device_status, run->staged_status, NULL, 1ull, 1ull, NULL,
+         sizeof(*run->staged_status), "cuda.attention.copy.status"}};
+    size_t count = 1u, i;
+    int rc = run->ops->allocate(
+        &run->resources, &run->download_stage, run->download_stage_bytes,
+        NULL, 1, "cuda.attention.copy.packed.allocate", run->failure, run->err);
+    if (run->job->attention_class == YVEX_BACKEND_ATTENTION_CSA) {
+        spans[count++] = (attn_transfer){&run->phase_selected_count, run->staged_selected_count,
+            NULL, run->job->token_count, run->job->token_count, NULL,
+            sizeof(*run->staged_selected_count), "cuda.attention.copy.selected_count"};
+        spans[count++] = (attn_transfer){&run->phase_valid_count, run->staged_candidate_count,
+            NULL, run->job->token_count, run->job->token_count, NULL,
+            sizeof(*run->staged_candidate_count), "cuda.attention.copy.valid_count"};
     }
+    for (i = 0u; i < run->transfer_count; ++i)
+        spans[count++] = run->transfers[i];
+    for (i = 0u; rc == YVEX_OK && i < count; ++i) {
+        attn_transfer *span = &spans[i];
+        const unsigned char *host = span->staged ? span->staged : span->output;
+        size_t bytes, offset = (size_t)(host - run->host_stage);
+        if (!yvex_cuda_work_checked_bytes(span->capacity, span->width, &bytes))
+            return attn_run_fail(run, YVEX_BACKEND_ATTENTION_FAILURE_COPY, span->stage,
+                                 span->capacity, 0ull, YVEX_ERR_BOUNDS,
+                                 "CUDA attention output staging extent overflowed");
+        if (offset > run->download_stage_bytes ||
+            bytes > run->download_stage_bytes - offset)
+            return attn_run_fail(run, YVEX_BACKEND_ATTENTION_FAILURE_COPY, span->stage,
+                                 run->download_stage_bytes, offset, YVEX_ERR_BOUNDS,
+                                 "CUDA attention packed publication layout drifted");
+        rc = attn_device_copy(run, run->download_stage + offset, *span->device,
+                              bytes, "cuda.attention.copy.packed.stage");
+    }
+    if (rc == YVEX_OK)
+        rc = run->ops->download(&run->resources, run->host_stage, run->download_stage,
+                                run->download_stage_bytes, "cuda.attention.copy.packed",
+                                run->failure, run->err);
     return rc;
 }
 static int attn_graph_enqueue(void *opaque, int enqueue_kernels, yvex_error *err) {
     attn_graph_piece *piece = (attn_graph_piece *)opaque;
-    unsigned long long token;
-    unsigned int stage;
-    int rc = YVEX_OK;
+    int rc;
     (void)err;
     piece->run->resources.prepare_only = !enqueue_kernels;
-    for (token = 0ull; rc == YVEX_OK && token < piece->run->job->token_count; ++token) {
-        attn_phase_bind(piece->run, token);
-        for (stage = piece->first; rc == YVEX_OK && stage < piece->last; ++stage)
-            if (cuda_attention_piece_active(
-                    piece->run->job->operation_scope,
-                    piece->run->job->attention_class,
-                    (yvex_cuda_attention_stage)stage))
-                rc = attn_kernel_stages[stage](piece->run);
-    }
+    rc = attn_stages_execute(piece->run, piece->first, piece->last);
     piece->run->resources.prepare_only = 0;
     return rc;
 }
@@ -1578,7 +1600,7 @@ static int attn_graph_execute(attn_run *run, unsigned int first, unsigned int la
     yvex_backend_cuda_graph_info info;
     size_t initializer;
     char identity[160];
-    int measure_device_time = run->job->evidence_level != 0u, rc;
+    int measure_device_time = run->job->measure_device_time, rc;
     if (yvex_cuda_attention_graph_key(run->backend, run->job, first, last,
                                       identity, run->err) != YVEX_OK)
         return attn_run_fail(
@@ -1626,20 +1648,15 @@ static int attn_numerical_execute(attn_run *run) {
         {0u, YVEX_CUDA_ATTENTION_STAGE_COMPRESS},
         {YVEX_CUDA_ATTENTION_STAGE_COMPRESS, YVEX_CUDA_ATTENTION_STAGE_COMPRESS + 1u},
         {YVEX_CUDA_ATTENTION_STAGE_REDUCE, YVEX_CUDA_ATTENTION_STAGE_COUNT}};
-    unsigned long long token;
-    unsigned int pass, stage;
-    int measure_device_time = run->job->evidence_level != 0u, rc = YVEX_OK;
+    unsigned int pass;
+    int measure_device_time = run->job->measure_device_time, rc = YVEX_OK;
     if (!run->configuration ||
         run->configuration->mode == YVEX_BACKEND_CUDA_ATTENTION_EAGER) {
         if (measure_device_time) rc = yvex_cuda_timing(
                 run->backend, yvex_cuda_launch_stream(run->backend), YVEX_CUDA_TIMING_BEGIN, NULL,
                 "cuda.attention.eager.timing.begin", run->err);
         for (pass = 0u; rc == YVEX_OK && pass < 3u; ++pass)
-            for (token = 0ull; rc == YVEX_OK && token < run->job->token_count; ++token) {
-                attn_phase_bind(run, token);
-                for (stage = passes[pass][0]; rc == YVEX_OK && stage < passes[pass][1]; ++stage)
-                    rc = attn_kernel_stages[stage](run);
-            }
+            rc = attn_stages_execute(run, passes[pass][0], passes[pass][1]);
         if (rc == YVEX_OK && measure_device_time)
             rc = yvex_cuda_timing(
                 run->backend, yvex_cuda_launch_stream(run->backend), YVEX_CUDA_TIMING_FINISH,
@@ -1690,14 +1707,68 @@ static int attn_numerical_execute(attn_run *run) {
             run, "cuda.attention.cancel.after_graph_piece", 1);
     return rc;
 }
+static int attn_completion_prepare(attn_run *run)
+{
+    yvex_backend_host_workspace_summary workspace;
+    yvex_backend_attention_completion *completion = run->completion;
+    size_t index;
+    if (!completion || run->transfer_count > YVEX_BACKEND_ATTENTION_COMPLETION_TRANSFER_CAP)
+        return attn_run_fail(
+            run, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT,
+            "cuda.attention.complete.prepare",
+            YVEX_BACKEND_ATTENTION_COMPLETION_TRANSFER_CAP,
+            run->transfer_count, YVEX_ERR_BOUNDS,
+            "CUDA attention completion capacity is invalid");
+    completion->output = *run->output;
+    completion->output.tokens_executed = run->job->token_count;
+    completion->output.compressed_count = run->phase_compressed_count;
+    completion->output.indexer_count = run->phase_indexer_count;
+    completion->output.host_bytes = 0ull;
+    completion->output.peak_host_bytes = run->host_stage_bytes;
+    completion->output.device_bytes = 0ull;
+    completion->output.peak_device_bytes = run->resources.peak_bytes;
+    completion->output.kernel_launches = run->resources.launches;
+    completion->output.tensor_core_launches = run->resources.tensor_core_launches;
+    completion->output.h2d_bytes = run->h2d_bytes;
+    completion->output.d2h_bytes = run->d2h_bytes;
+    completion->output.d2d_bytes = run->d2d_bytes;
+    completion->output.stream_synchronizations = run->stream_synchronizations;
+    completion->output.device_synchronizations = run->device_synchronizations;
+    completion->output.device_execution_elapsed_ns = run->device_execution_elapsed_ns;
+    if (yvex_backend_host_workspace_summary_get(run->backend, &workspace)) {
+        completion->output.host_workspace_capacity = workspace.capacity;
+        completion->output.host_workspace_used = workspace.used;
+        completion->output.host_workspace_peak = workspace.peak;
+        completion->output.host_workspace_allocation_count = workspace.allocation_count;
+        completion->output.host_workspace_reused = run->host_workspace_reused;
+    }
+    completion->host_status = run->staged_status;
+    completion->host_selected_counts = run->staged_selected_count;
+    completion->host_candidate_counts = run->staged_candidate_count;
+    completion->attention_class = run->job->attention_class;
+    completion->token_count = run->job->token_count;
+    completion->indexer_topk = run->job->indexer_topk;
+    completion->candidate_capacity = run->candidate_capacity;
+    completion->transfer_count = (unsigned int)run->transfer_count;
+    for (index = 0u; index < run->transfer_count; ++index) {
+        const attn_transfer *source = &run->transfers[index];
+        completion->transfers[index] = (yvex_backend_attention_completion_transfer){
+            source->output, source->staged, source->capacity,
+            source->output_capacity,
+            source->used ? *source->used : source->capacity,
+            source->width, source->stage};
+    }
+    completion->pending = 1;
+    return YVEX_OK;
+}
+
 static int attn_synchronize(attn_run *run) {
     yvex_cuda_attention_state_sources sources;
-    unsigned long long expected_topk, output_elements, token;
+    unsigned long long output_elements;
     unsigned long long output_width;
     size_t state_bytes = 0u;
     CUdeviceptr output_source;
-    size_t index;
-    int device_wide = 0, state_staged = 0, rc = YVEX_OK;
+    int state_staged = 0, rc = YVEX_OK;
     output_width = run->job->operation_scope == YVEX_BACKEND_ATTENTION_SCOPE_ENVELOPE
                        ? run->job->residual_expanded_width : run->job->hidden_width;
     output_source = run->job->operation_scope == YVEX_BACKEND_ATTENTION_SCOPE_ENVELOPE
@@ -1754,56 +1825,14 @@ static int attn_synchronize(attn_run *run) {
             run->rolling[ROLL_INDEX].extent * sizeof(float);
     }
     if (rc == YVEX_OK) rc = attn_downloads_enqueue(run);
-    if (rc == YVEX_OK)
-        rc = yvex_cuda_launch_synchronize(
-            run->backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED, &device_wide,
-            "cuda.attention.synchronize", run->err);
-    if (rc == YVEX_OK) {
-        run->stream_synchronizations +=
-            (unsigned long long)(!attn_graph_mode(run) &&
-                                 run->job->evidence_level != 0u && run->state->timing_ready) +
-            (unsigned long long)!device_wide;
-        run->device_synchronizations += (unsigned long long)device_wide;
-    }
-    if (rc != YVEX_OK)
-        return attn_run_fail(
-            run, YVEX_BACKEND_ATTENTION_FAILURE_SYNCHRONIZE,
-            "cuda.attention.synchronize", 1ull, 0ull,
-            (yvex_status)rc, "CUDA attention completion failed");
-    run->host_status = *run->staged_status;
-    if (run->job->attention_class == YVEX_BACKEND_ATTENTION_CSA) {
-        run->topk_count = 0ull;
-        run->staged_valid_count = 0ull;
-        for (token = 0ull; token < run->job->token_count; ++token) {
-            unsigned long long selected = run->staged_selected_count[token];
-            unsigned long long valid = run->staged_candidate_count[token];
-            expected_topk = valid < run->job->indexer_topk ? valid : run->job->indexer_topk;
-            if (valid > run->candidate_capacity || selected != expected_topk)
-                return attn_run_fail(
-                    run, YVEX_BACKEND_ATTENTION_FAILURE_NUMERIC,
-                    "cuda.attention.copy.topk", expected_topk, selected,
-                    YVEX_ERR_BOUNDS,
-                    "CUDA attention top-k counts violate candidate geometry");
-            if (selected > run->topk_count) run->topk_count = selected;
-            if (valid > run->staged_valid_count) run->staged_valid_count = valid;
-        }
-    }
-    for (index = 0u; index < run->transfer_count; ++index)
-        if (run->transfers[index].used &&
-            (*run->transfers[index].used > run->transfers[index].capacity ||
-             *run->transfers[index].used > run->transfers[index].output_capacity))
-            return attn_run_fail(
-                run, YVEX_BACKEND_ATTENTION_FAILURE_COPY,
-                run->transfers[index].stage, run->transfers[index].output_capacity,
-                *run->transfers[index].used, YVEX_ERR_BOUNDS,
-                "CUDA attention logical output exceeded its publication span");
-    if (run->host_status != 0)
-        return attn_run_fail(
-            run, YVEX_BACKEND_ATTENTION_FAILURE_NUMERIC,
-            "cuda.attention.numeric", 0ull,
-            (unsigned long long)run->host_status, YVEX_ERR_FORMAT,
-            "CUDA attention device numerical stage refused its input");
-    return YVEX_OK;
+    if (rc == YVEX_OK) rc = attn_completion_prepare(run);
+    if (rc == YVEX_OK && !run->completion->defer)
+        rc = yvex_backend_attention_complete(
+            run->backend, run->completion, 0, run->err);
+    if (rc != YVEX_OK && run->failure && run->completion->failure.code)
+        *run->failure = run->completion->failure;
+    if (rc == YVEX_OK) *run->output = run->completion->output;
+    return rc;
 }
 static int attn_stage_layout(attn_run *run, unsigned char *base, size_t *total) {
     unsigned long long csa_tokens =
@@ -1812,7 +1841,8 @@ static int attn_stage_layout(attn_run *run, unsigned char *base, size_t *total) 
     return run->ops->stage_layout(
         base, run->uploads, run->upload_count, run->transfers,
         run->transfer_count, csa_tokens, &run->staged_status,
-        &run->staged_selected_count, &run->staged_candidate_count, total);
+        &run->staged_selected_count, &run->staged_candidate_count, total,
+        &run->download_stage_bytes);
 }
 static int attn_stage_allocate(attn_run *run) {
     const char *injected = getenv("YVEX_TEST_CUDA_ATTENTION_FAILURE");
@@ -1824,8 +1854,10 @@ static int attn_stage_allocate(attn_run *run) {
         run->failure, run->err);
     if (rc != YVEX_OK) return rc;
     if (attn_stage_layout(run, run->host_stage, &actual) &&
-        actual == run->host_stage_bytes)
+        actual == run->host_stage_bytes && run->download_stage_bytes) {
+        run->d2h_bytes = run->download_stage_bytes;
         return YVEX_OK;
+    }
     return attn_run_fail(
         run, YVEX_BACKEND_ATTENTION_FAILURE_ALLOCATION,
         "cuda.attention.host_stage.layout", run->host_stage_bytes,
@@ -1880,65 +1912,6 @@ static int attn_stage_inputs(attn_run *run) {
     }
     return YVEX_OK;
 }
-static int attn_publish(attn_run *run) {
-    yvex_backend_host_workspace_summary workspace;
-    unsigned long long backend_h2d, backend_d2h;
-    size_t i;
-    if (!yvex_core_u64_add(
-            run->backend->stats.h2d_bytes, run->h2d_bytes, &backend_h2d) ||
-        !yvex_core_u64_add(
-            run->backend->stats.d2h_bytes, run->d2h_bytes, &backend_d2h))
-        return attn_run_fail(
-            run, YVEX_BACKEND_ATTENTION_FAILURE_BUDGET,
-            "cuda.attention.transfer.account", ULLONG_MAX,
-            run->h2d_bytes > run->d2h_bytes ? run->h2d_bytes : run->d2h_bytes,
-            YVEX_ERR_BOUNDS,
-            "CUDA attention cumulative transfer accounting overflowed");
-    for (i = 0u; i < run->transfer_count; ++i) {
-        const attn_transfer *transfer = &run->transfers[i];
-        unsigned long long count = transfer->used ?
-            *transfer->used : transfer->capacity;
-        if (count) memcpy(transfer->output, transfer->staged,
-                          (size_t)count * transfer->width);
-    }
-    if (run->job->attention_class == YVEX_BACKEND_ATTENTION_CSA &&
-        run->output->topk_counts.data) {
-        memcpy(run->output->topk_counts.data, run->staged_selected_count,
-               (size_t)run->job->token_count * sizeof(*run->staged_selected_count));
-    }
-    if (run->job->attention_class == YVEX_BACKEND_ATTENTION_CSA &&
-        run->output->valid_candidate_counts.data) {
-        memcpy(run->output->valid_candidate_counts.data, run->staged_candidate_count,
-               (size_t)run->job->token_count * sizeof(*run->staged_candidate_count));
-    }
-    run->output->tokens_executed = run->job->token_count;
-    run->output->compressed_count = run->phase_compressed_count;
-    run->output->indexer_count = run->phase_indexer_count;
-    run->output->topk_count = run->topk_count;
-    run->output->valid_candidate_count = run->staged_valid_count;
-    run->output->host_bytes = 0ull;
-    run->output->peak_host_bytes = run->host_stage_bytes;
-    run->output->device_bytes = 0ull;
-    run->output->peak_device_bytes = run->resources.peak_bytes;
-    run->output->kernel_launches = run->resources.launches;
-    run->output->tensor_core_launches = run->resources.tensor_core_launches;
-    run->output->h2d_bytes = run->h2d_bytes;
-    run->output->d2h_bytes = run->d2h_bytes;
-    run->output->d2d_bytes = run->d2d_bytes;
-    run->output->stream_synchronizations = run->stream_synchronizations;
-    run->output->device_synchronizations = run->device_synchronizations;
-    run->output->device_execution_elapsed_ns = run->device_execution_elapsed_ns;
-    run->backend->stats.h2d_bytes = backend_h2d;
-    run->backend->stats.d2h_bytes = backend_d2h;
-    if (yvex_backend_host_workspace_summary_get(run->backend, &workspace)) {
-        run->output->host_workspace_capacity = workspace.capacity;
-        run->output->host_workspace_used = workspace.used;
-        run->output->host_workspace_peak = workspace.peak;
-        run->output->host_workspace_allocation_count = workspace.allocation_count;
-        run->output->host_workspace_reused = run->host_workspace_reused;
-    }
-    return YVEX_OK;
-}
 typedef struct {
     int (*execute)(attn_run *run); const char *cancel_stage; int pending_device_work;
 } attn_transaction_phase;
@@ -1951,10 +1924,12 @@ static const attn_transaction_phase attn_transaction[] = {
 int yvex_backend_attention_execute(yvex_backend *backend, const yvex_backend_attention_job *job,
                                    yvex_backend_attention_output *output,
                                    yvex_backend_attention_failure *failure, yvex_error *err) {
+    yvex_backend_attention_completion local_completion = {.stack_start = 1};
     attn_run run = {.backend = backend, .state = yvex_cuda_state(backend),
                     .ops = yvex_cuda_attention_operations_get(), .topk_capacity = 1ull,
                     .output = output, .failure = failure, .err = err, .candidate_capacity = 1ull};
-    yvex_error cleanup_error;
+    yvex_error cleanup_error, primary_error;
+    yvex_backend_attention_failure primary_failure;
     size_t phase;
     int cleanup_rc, rc;
     if (failure) memset(failure, 0, sizeof(*failure));
@@ -1963,10 +1938,25 @@ int yvex_backend_attention_execute(yvex_backend *backend, const yvex_backend_att
         run.request = *job;
         run.job = &run.request;
     }
+    run.completion = job && job->device_completion
+                         ? job->device_completion : &local_completion;
+    if (run.completion != &local_completion) {
+        int defer = run.completion->defer;
+        int stack_start = run.completion->stack_start;
+        if (!defer || run.completion->pending)
+            return run.ops->fail(
+                failure, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT,
+                "cuda.attention.complete.admit", 1ull, 0ull, err,
+                YVEX_ERR_INVALID_ARG,
+                "CUDA attention deferred completion is not reusable");
+        memset(run.completion, 0, sizeof(*run.completion));
+        run.completion->defer = defer;
+        run.completion->stack_start = stack_start;
+    }
     rc = attn_prepare(&run);
     if (rc != YVEX_OK) return rc;
     backend_workspace_reset(backend);
-    backend_host_workspace_reset(backend);
+    if (run.completion->stack_start) backend_host_workspace_reset(backend);
     for (phase = 0u, rc = YVEX_OK;
          rc == YVEX_OK && phase < sizeof(attn_transaction) /
                                       sizeof(attn_transaction[0]);
@@ -1984,8 +1974,23 @@ int yvex_backend_attention_execute(yvex_backend *backend, const yvex_backend_att
             "cuda.attention.cleanup", 0ull,
             run.state->deferred_release_bytes, (yvex_status)cleanup_rc,
             "CUDA attention temporary cleanup failed");
-    if (rc == YVEX_OK) rc = attn_cancel(&run, "cuda.attention.cancel.publish", 0);
-    if (rc == YVEX_OK) rc = attn_publish(&run);
+    if (rc == YVEX_OK && !run.completion->defer)
+        rc = attn_cancel(&run, "cuda.attention.cancel.publish", 0);
+    if (rc != YVEX_OK && run.completion->pending) {
+        int completion_rc;
+        primary_error = err ? *err : (yvex_error){0};
+        primary_failure = failure ? *failure : (yvex_backend_attention_failure){0};
+        completion_rc = yvex_backend_attention_complete(
+            backend, run.completion, 0, &cleanup_error);
+        if (completion_rc != YVEX_OK && !yvex_error_is_set(&primary_error)) {
+            if (err) *err = cleanup_error;
+            if (failure) *failure = run.completion->failure;
+            rc = completion_rc;
+        } else {
+            if (err) *err = primary_error;
+            if (failure) *failure = primary_failure;
+        }
+    }
     if (rc == YVEX_OK) {
         if (failure) memset(failure, 0, sizeof(*failure));
         yvex_error_clear(err);

@@ -1,30 +1,24 @@
-/*
- * CUDA owners share Driver API handles, admitted kernel variants, tensors, and launch resources
- * here. Family topology cannot be reconstructed from this platform boundary.
- */
+/* CUDA owners share admitted Driver handles, kernels, tensors, and launch resources.
+ * Family topology cannot be reconstructed from this platform boundary. */
 #ifndef SRC_BACKEND_CUDA_PRIVATE_H_INCLUDED
 #define SRC_BACKEND_CUDA_PRIVATE_H_INCLUDED
 #include <stddef.h>
 #include <yvex/backend.h>
 #include <yvex/internal/backend.h>
 #include <yvex/internal/core.h>
+#include <yvex/internal/execution.h>
 #include <yvex/internal/quant_numeric.h>
 #include <yvex/internal/transformer.h>
 #include "src/backend/private.h"
+#define YVEX_CUDA_Q8_K_BLOCK 256ull
+#define YVEX_CUDA_Q8_K_BYTES 292ull
 #ifdef __cplusplus
 extern "C" {
 #endif
-/* Driver. */
 typedef int CUresult;
 typedef int CUdevice;
-typedef void *CUcontext;
-typedef void *CUmodule;
-typedef void *CUfunction;
-typedef void *CUstream;
-typedef void *CUevent;
-typedef void *CUgraph;
-typedef void *CUgraphExec;
-typedef void *CUgraphNode;
+typedef void *CUcontext, *CUmodule, *CUfunction, *CUstream, *CUevent, *CUgraph;
+typedef void *CUgraphExec, *CUgraphNode;
 typedef unsigned long long CUdeviceptr;
 typedef unsigned long long CUmemGenericAllocationHandle;
 typedef struct { int type, id; } CUmemLocation;
@@ -98,11 +92,13 @@ typedef struct {
 #define YVEX_CUDA_STREAM_NON_BLOCKING 0x01u
 #define YVEX_CUDA_MEM_ATTACH_GLOBAL 0x01u
 #define YVEX_CUDA_MEMHOSTREGISTER_DEVICEMAP 0x02u
+#define YVEX_CUDA_MEMHOSTREGISTER_READ_ONLY 0x08u
 #define YVEX_CUDA_MEM_ACCESS_READ_WRITE 0x03
 #define YVEX_CUDA_MEM_LOCATION_DEVICE 0x01
 #define YVEX_CUDA_MEM_ALLOCATION_PINNED 0x01
 #define YVEX_CUDA_MEM_GRANULARITY_MINIMUM 0x00
 #define YVEX_CUDA_DEVICE_ATTRIBUTE_CAN_MAP_HOST_MEMORY 19
+#define YVEX_CUDA_DEVICE_ATTRIBUTE_HOST_REGISTER_READ_ONLY_SUPPORTED 113
 #define YVEX_CUDA_DEVICE_ATTRIBUTE_UNIFIED_ADDRESSING 41
 #define YVEX_CUDA_DEVICE_ATTRIBUTE_MANAGED_MEMORY 83
 #define YVEX_CUDA_DEVICE_ATTRIBUTE_VIRTUAL_MEMORY_MANAGEMENT 102
@@ -123,6 +119,8 @@ typedef struct {
     CUresult (*cuMemGetInfo_v2)(size_t *free_bytes, size_t *total_bytes);
     CUresult (*cuMemAlloc_v2)(CUdeviceptr *dptr, size_t bytesize);
     CUresult (*cuMemAllocManaged)(CUdeviceptr *dptr, size_t bytesize, unsigned int flags);
+    CUresult (*cuMemPrefetchAsync_v2)(CUdeviceptr, size_t, CUmemLocation, unsigned int, CUstream);
+    CUresult (*cuMemAdvise_v2)(CUdeviceptr, size_t, int, CUmemLocation);
     CUresult (*cuMemAddressReserve)(CUdeviceptr *, size_t, size_t, CUdeviceptr,
                                    unsigned long long);
     CUresult (*cuMemAddressFree)(CUdeviceptr ptr, size_t size);
@@ -160,14 +158,13 @@ typedef struct {
     CUresult (*cuStreamCreate)(CUstream *stream, unsigned int flags);
     CUresult (*cuStreamDestroy_v2)(CUstream stream);
     CUresult (*cuStreamSynchronize)(CUstream stream);
+    CUresult (*cuStreamWaitEvent)(CUstream stream, CUevent event, unsigned int flags);
     CUresult (*cuStreamBeginCapture_v2)(CUstream stream, int mode);
     CUresult (*cuStreamEndCapture)(CUstream stream, CUgraph *graph);
     CUresult (*cuGraphGetNodes)(CUgraph graph, CUgraphNode *nodes, size_t *count);
-    CUresult (*cuGraphGetEdges_v2)(CUgraph graph,
-                                  CUgraphNode *from,
-                                  CUgraphNode *to,
-                                  CUgraphEdgeData *data,
-                                  size_t *count);
+    CUresult (*cuGraphGetEdges_v2)(CUgraph graph, CUgraphNode *from,
+                                   CUgraphNode *to, CUgraphEdgeData *data,
+                                   size_t *count);
     CUresult (*cuGraphNodeGetType)(CUgraphNode node, int *type);
     CUresult (*cuGraphInstantiateWithFlags)(CUgraphExec *exec,
                                            CUgraph graph,
@@ -245,9 +242,10 @@ typedef struct {
     CUfunction qtype_row_dot_function;
     CUfunction attention_bf16_round_function;
     CUfunction bf16_pack_function;
-    CUfunction qtype_matvec_function;
+    CUfunction qtype_matvec_function, qtype_grouped_rows_function, mxfp4_q8_rows_function;
+    CUfunction attention_bf16_pair_function;
     CUfunction qtype_split_matvec_function;
-    CUfunction q8_0_tensorcore_rows_function;
+    CUfunction qtype_tensorcore_rows_function;
     CUfunction qtype_gather_function;
     CUfunction argmax_f32_function;
     CUfunction sample_stochastic_f32_function;
@@ -264,14 +262,14 @@ typedef struct {
     CUfunction transformer_final_function;
     CUfunction attention_rolling_state_function;
     CUfunction attention_topk_function;
-    CUfunction attention_reduce_function;
+    CUfunction attention_reduce_function, attention_reduce_native_function;
     CUfunction moe_route_function;
     CUfunction moe_route_rows_function;
-    CUfunction moe_pair_order_function;
+    CUfunction expert_worklist_build_cuda_function;
     CUfunction moe_grouped_up_function;
     CUfunction moe_grouped_down_function;
-    CUfunction moe_grouped_up_rows_function;
-    CUfunction moe_grouped_down_rows_function;
+    CUfunction moe_grouped_up_rows_function, moe_grouped_down_rows_function;
+    CUfunction moe_grouped_up_tensorcore_function, moe_grouped_down_tensorcore_function;
     CUfunction moe_reduce_rows_function;
     CUfunction moe_combine_rows_function;
     CUfunction moe_swiglu_function;
@@ -295,8 +293,8 @@ typedef struct {
     yvex_backend_cuda_graph *graphs;
     yvex_backend_cuda_graph *capture_owner;
     yvex_backend_cuda_graph *parameter_update_owner;
-    CUstream capture_stream;
-    CUstream execution_stream;
+    CUstream capture_stream, execution_stream;
+    int shared_stream_in_flight;
     CUevent timing_start;
     CUevent timing_stop;
     int timing_ready;
@@ -311,17 +309,16 @@ typedef struct {
     unsigned int deferred_release_count;
     unsigned long long deferred_release_bytes;
     void *registered_host;
-    CUdeviceptr registered_device;
+    CUdeviceptr registered_device, transformer_status;
     unsigned long long registered_bytes;
-    int kernel_bundle_native;
+    int kernel_bundle_native, status_transaction_active;
     char kernel_bundle_identity[YVEX_SHA256_HEX_BYTES];
     char kernel_bundle_architecture[16];
     yvex_backend_bandwidth_evidence bandwidth_evidence;
-    int bandwidth_ready, bandwidth_active, virtual_memory_management;
+    int bandwidth_ready, bandwidth_active, virtual_memory_management, can_map_host, host_register_readonly;
     const yvex_backend *context_owner;
     int context_borrowed;
 } yvex_cuda_backend_state;
-
 const yvex_cuda_attention_configuration *yvex_cuda_attention_configuration_active(
     const yvex_cuda_backend_state *state, yvex_backend_attention_phase phase);
 static inline unsigned long long yvex_cuda_attention_local_capacity(
@@ -329,7 +326,6 @@ static inline unsigned long long yvex_cuda_attention_local_capacity(
     const yvex_backend_attention_job *job, int publication) {
     return shape->local_capacity + (!publication && shape->local_capacity < job->sliding_window);
 }
-
 /* These formats can consume the canonical Q8_K activation workspace. Runtime
  * admission remains a separate explicit decision because weight qtype alone
  * cannot establish whole-stack numerical compatibility. */
@@ -366,9 +362,9 @@ typedef struct {
     yvex_backend *backend;
     yvex_cuda_backend_state *state;
     yvex_backend_operation_variant variant;
-    CUdeviceptr pointers[YVEX_CUDA_WORK_MAX_RANGES], q8_input;
+    CUdeviceptr pointers[YVEX_CUDA_WORK_MAX_RANGES], q8_input, status;
     unsigned long long sizes[YVEX_CUDA_WORK_MAX_RANGES];
-    unsigned char workspace_owned[YVEX_CUDA_WORK_MAX_RANGES];
+    unsigned char workspace_owned[YVEX_CUDA_WORK_MAX_RANGES], status_deferred;
     int prepare_only, raw_only, forensic_numeric, activation_q8;
     unsigned int count;
     unsigned long long current_bytes, peak_bytes, budget, launches, q8_capacity;
@@ -414,6 +410,16 @@ int yvex_cuda_set_current(const yvex_backend *backend, const char *where, yvex_e
 int yvex_cuda_refresh_memory_info(yvex_backend *backend, yvex_error *err);
 CUdeviceptr yvex_cuda_tensor_ptr(const yvex_device_tensor *tensor);
 CUstream yvex_cuda_launch_stream(const yvex_backend *backend);
+int yvex_cuda_moe_derived_layout_plan(const yvex_physical_execution_decision *, unsigned long long *, yvex_error *);
+int yvex_cuda_moe_derived_layout_build(const yvex_physical_execution_decision *, const unsigned char *,
+                                       unsigned long long, unsigned char *, unsigned long long, yvex_error *);
+int yvex_cuda_resident_alloc(yvex_backend *, const yvex_backend_tensor_desc *,
+                             yvex_device_tensor **, unsigned char **, yvex_error *);
+int yvex_cuda_resident_map_supported(const yvex_backend *);
+int yvex_cuda_resident_map_readonly(yvex_backend *, const yvex_backend_tensor_desc *,
+                                    const unsigned char *, yvex_device_tensor **, yvex_error *);
+int yvex_cuda_resident_prefetch_supported(const yvex_backend *);
+int yvex_cuda_resident_prefetch(yvex_backend *, yvex_device_tensor *, unsigned long long *, yvex_error *);
 typedef enum {
     YVEX_CUDA_TIMING_BEGIN = 0,
     YVEX_CUDA_TIMING_FINISH,
@@ -437,7 +443,6 @@ int yvex_cuda_graph_kernel_update(yvex_backend *, yvex_backend_operation_variant
     unsigned int, unsigned int, unsigned int, void **, const char *, yvex_error *);
 int yvex_cuda_attention_graph_key(const yvex_backend *, const yvex_backend_attention_job *,
                                   unsigned int, unsigned int, char[160], yvex_error *);
-/* Derive one representable host byte extent for a CUDA work range. */
 static inline int yvex_cuda_work_checked_bytes(unsigned long long count,
                                                unsigned long long width,
                                                size_t *out) {
@@ -450,8 +455,7 @@ int yvex_cuda_work_cleanup(yvex_cuda_work *work, yvex_error *err);
 int yvex_cuda_activation_views_valid(yvex_backend *backend,
     const yvex_device_tensor *input, unsigned long long input_elements,
     const yvex_device_tensor *output, unsigned long long output_elements);
-CUdeviceptr yvex_cuda_activation_pointer(
-    yvex_backend *backend, const yvex_device_tensor *tensor);
+CUdeviceptr yvex_cuda_activation_pointer(yvex_backend *backend, const yvex_device_tensor *tensor);
 int yvex_cuda_activation_copy(yvex_backend *backend, CUdeviceptr source,
     yvex_device_tensor *output, unsigned long long elements,
     const char *stage, yvex_error *err);
@@ -463,44 +467,42 @@ typedef struct {
     unsigned long long main_extent, index_extent;
 } yvex_cuda_attention_state_sources;
 int yvex_cuda_qtype_matvec_geometry(
-    unsigned long long rows, unsigned long long row_width,
-    unsigned long long input_rows, unsigned int qtype,
-    int block_row_eligible, unsigned int *grid, unsigned int *block,
+    unsigned long long rows, unsigned long long row_width, unsigned long long input_rows,
+    unsigned int qtype, int block_row_eligible, unsigned int *grid, unsigned int *block,
     int *block_row);
+int yvex_cuda_qtype_tensorcore_geometry(unsigned long long, unsigned long long, unsigned int *, unsigned int *);
+#define YVEX_CUDA_TENSORCORE_MIN_ROWS 16ull
+static inline int cuda_qtype_tensorcore_eligible(unsigned long long input_rows) {
+    return input_rows >= YVEX_CUDA_TENSORCORE_MIN_ROWS;
+}
 typedef struct {
     int (*fail)(yvex_backend_attention_failure *, yvex_backend_attention_failure_code,
                 const char *, unsigned long long, unsigned long long, yvex_error *,
                 yvex_status, const char *);
     int (*account_transfer)(unsigned long long, size_t, unsigned long long *,
                             const char *, yvex_backend_attention_failure *, yvex_error *);
-    int (*validate_job)(yvex_backend_attention_job *,
-                        yvex_backend_attention_output *,
+    int (*validate_job)(yvex_backend_attention_job *, yvex_backend_attention_output *,
                         yvex_backend_attention_failure *, yvex_error *);
-    int (*validate_weight)(const yvex_backend_attention_weight *,
-                           unsigned long long, unsigned long long,
+    int (*validate_weight)(const yvex_backend_attention_weight *, unsigned long long, unsigned long long,
                            yvex_backend_attention_failure *, yvex_error *);
-    int (*validate_activation)(const yvex_backend_attention_activation *,
-                               unsigned long long, const char *,
-                               yvex_backend_attention_failure *, yvex_error *);
+    int (*validate_activation)(const yvex_backend_attention_activation *, unsigned long long,
+                               const char *, yvex_backend_attention_failure *, yvex_error *);
     int (*validate_rolling)(const yvex_backend_attention_job *,
-                            const yvex_backend_attention_rolling *,
-                            unsigned long long, unsigned long long, int,
-                            unsigned long long *, const char *,
+                            const yvex_backend_attention_rolling *, unsigned long long,
+                            unsigned long long, int, unsigned long long *, const char *,
                             yvex_backend_attention_failure *, yvex_error *);
     int (*validate_alias)(const yvex_backend_attention_job *,
-                          const yvex_cuda_attention_transfer *, size_t,
-                          unsigned long long, unsigned long long,
-                          unsigned long long, unsigned long long,
+                          const yvex_cuda_attention_transfer *, size_t, unsigned long long,
+                          unsigned long long, unsigned long long, unsigned long long,
                           unsigned long long);
     int (*cancel)(yvex_backend *, const yvex_backend_attention_job *,
                   const char *, int, yvex_backend_attention_failure *, yvex_error *);
-    int (*stage_acquire)(yvex_backend *, size_t, int, int,
-                         unsigned char **, int *,
+    int (*stage_acquire)(yvex_backend *, size_t, int, int, unsigned char **, int *,
                          yvex_backend_attention_failure *, yvex_error *);
     int (*stage_layout)(unsigned char *, yvex_cuda_attention_upload *, size_t,
                         yvex_cuda_attention_transfer *, size_t,
                         unsigned long long, int **, unsigned long long **,
-                        unsigned long long **, size_t *);
+                        unsigned long long **, size_t *, size_t *);
     int (*allocate)(yvex_cuda_work *, CUdeviceptr *, size_t, const void *, int,
                     const char *, yvex_backend_attention_failure *, yvex_error *);
     int (*initialize)(yvex_cuda_work *, CUdeviceptr, size_t, const void *, int,
@@ -515,27 +517,32 @@ typedef struct {
                   unsigned long long, unsigned long long, unsigned long long, CUdeviceptr,
                   CUdeviceptr, int, CUdeviceptr, const char *,
                   yvex_backend_attention_failure *, yvex_error *);
+    int (*matvec_grouped)(yvex_cuda_work *, const yvex_backend_attention_weight *, CUdeviceptr,
+                  unsigned long long, unsigned long long, unsigned long long, CUdeviceptr,
+                  unsigned long long, CUdeviceptr, unsigned long long, int, CUdeviceptr,
+                  const char *, yvex_backend_attention_failure *, yvex_error *);
     int (*decode)(yvex_cuda_work *, const yvex_backend_attention_weight *, CUdeviceptr,
                   unsigned long long, unsigned long long, CUdeviceptr, CUdeviceptr,
                   const char *, yvex_backend_attention_failure *, yvex_error *);
-    int (*weighted_norm)(yvex_cuda_work *, CUdeviceptr, unsigned long long,
-                         unsigned long long,
+    int (*weighted_norm)(yvex_cuda_work *, CUdeviceptr, unsigned long long, unsigned long long,
                          const yvex_backend_attention_weight *, CUdeviceptr, double,
                          CUdeviceptr, const char *, yvex_backend_attention_failure *, yvex_error *);
     int (*unit_norm)(yvex_cuda_work *, CUdeviceptr, unsigned long long, unsigned long long,
                      double, CUdeviceptr, const char *, yvex_backend_attention_failure *, yvex_error *);
     int (*rope)(yvex_cuda_work *, CUdeviceptr, unsigned long long, unsigned long long,
-                unsigned long long, const yvex_backend_attention_position *, int, CUdeviceptr,
-                const char *, yvex_backend_attention_failure *, yvex_error *);
+                unsigned long long, unsigned long long,
+                const yvex_backend_attention_position *, int, CUdeviceptr, const char *,
+                yvex_backend_attention_failure *, yvex_error *);
     int (*activation)(yvex_cuda_work *, CUdeviceptr, unsigned long long, unsigned long long,
-                      const yvex_backend_attention_activation *, CUdeviceptr, const char *,
-                      yvex_backend_attention_failure *, yvex_error *);
+                      unsigned long long,
+                      const yvex_backend_attention_activation *, CUdeviceptr,
+                      const char *, yvex_backend_attention_failure *, yvex_error *);
     int (*state_stage)(yvex_backend *, const yvex_backend_attention_job *,
-                       const yvex_cuda_attention_state_sources *, size_t *, int *,
-                       yvex_error *);
+                       const yvex_cuda_attention_state_sources *, size_t *, int *, yvex_error *);
 } yvex_cuda_attention_operations;
 const yvex_cuda_attention_operations *yvex_cuda_attention_operations_get(void);
 int yvex_cuda_kernel_bundle_admit(yvex_backend *backend, yvex_error *err);
+const char *yvex_cuda_kernel_function_identity(const yvex_cuda_backend_state *, CUfunction);
 int yvex_cuda_kernel_bundle_close(yvex_backend *backend, yvex_error *err);
 int yvex_cuda_query_capability(const yvex_backend *, yvex_backend_operation_variant,
                                yvex_backend_capability_result *, yvex_error *);
@@ -567,17 +574,11 @@ int yvex_cuda_op_mlp(yvex_backend *backend, const yvex_device_tensor *input,
                      const yvex_device_tensor *gate_weight, const yvex_device_tensor *up_weight,
                      const yvex_device_tensor *down_weight, const yvex_mlp_options *options,
                      yvex_device_tensor *intermediate, yvex_device_tensor *out, yvex_error *err);
-int yvex_cuda_op_attention(yvex_backend *backend,
-                           const yvex_device_tensor *query,
-                           const yvex_device_tensor *keys,
-                           const yvex_device_tensor *values,
-                           unsigned long long seq_len,
-                           unsigned long long position,
-                           float scale,
-                           int causal,
-                           yvex_device_tensor *score_scratch,
-                           yvex_device_tensor *probability_scratch,
-                           yvex_device_tensor *out,
+int yvex_cuda_op_attention(yvex_backend *backend, const yvex_device_tensor *query,
+                           const yvex_device_tensor *keys, const yvex_device_tensor *values,
+                           unsigned long long seq_len, unsigned long long position, float scale,
+                           int causal, yvex_device_tensor *score_scratch,
+                           yvex_device_tensor *probability_scratch, yvex_device_tensor *out,
                            yvex_error *err);
 /* Qtype. */
 int yvex_cuda_quant_row_dot(yvex_backend *backend,

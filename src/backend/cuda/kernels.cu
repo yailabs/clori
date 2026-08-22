@@ -435,7 +435,8 @@ extern "C" __global__ void yvex_attention_f32(
 }
 extern "C" __global__ void yvex_q8_quantize(
     unsigned char *encoded, const float *values, unsigned long long width,
-    unsigned long long rows, int *status)
+    unsigned long long rows, unsigned long long groups,
+    unsigned long long input_stride, int *status)
 {
     __shared__ float absolute[256];
     __shared__ float signed_value[256];
@@ -444,13 +445,17 @@ extern "C" __global__ void yvex_q8_quantize(
     unsigned long long task = blockIdx.x;
     unsigned long long row = blocks ? task / blocks : rows;
     unsigned long long block_index = blocks ? task % blocks : 0ull;
+    unsigned long long input_row = groups ? row / groups : rows;
+    unsigned long long group = groups ? row % groups : groups;
     unsigned int thread = threadIdx.x;
     unsigned char *block;
     float value;
-    if (!status || *status || !encoded || !values || !blocks || row >= rows ||
+    if (!status || *status || !encoded || !values || !blocks || !groups ||
+        width > ~0ull / groups || input_stride < width * groups || row >= rows ||
         thread >= 256u) return;
     block = encoded + (row * blocks + block_index) * YVEX_CUDA_Q8_K_BYTES;
-    value = values[row * width + block_index * YVEX_CUDA_Q8_K_BLOCK + thread];
+    value = values[input_row * input_stride + group * width +
+                   block_index * YVEX_CUDA_Q8_K_BLOCK + thread];
     if (!isfinite(value)) atomicCAS(status, 0, 1);
     absolute[thread] = fabsf(value);
     signed_value[thread] = value;
@@ -482,8 +487,9 @@ extern "C" __global__ void yvex_q8_quantize(
         *(short *)(block + 260u + thread * 2u) = (short)sum;
     }
 }
-static __device__ int qtype_matvec_pair(
-    unsigned long long rows, unsigned long long input_rows,
+static __device__ int qtype_matvec_pair_index(
+    unsigned long long block_index, unsigned long long rows,
+    unsigned long long input_rows,
     unsigned long long *row, unsigned long long *input_row)
 {
     unsigned int warp = threadIdx.x >> 5u;
@@ -492,15 +498,32 @@ static __device__ int qtype_matvec_pair(
         (input_rows <= 8ull && warps < input_rows)) return 0;
     if (input_rows <= 8ull) {
         unsigned int groups = warps / (unsigned int)input_rows;
-        *row = (unsigned long long)blockIdx.x * groups +
-               warp / (unsigned int)input_rows;
+        *row = block_index * groups + warp / (unsigned int)input_rows;
         *input_row = warp % (unsigned int)input_rows;
     } else {
         unsigned long long tiles = (input_rows + 7ull) / 8ull;
-        *row = (unsigned long long)blockIdx.x / tiles;
-        *input_row = ((unsigned long long)blockIdx.x % tiles) * warps + warp;
+        *row = block_index / tiles;
+        *input_row = (block_index % tiles) * warps + warp;
     }
     return *row < rows && *input_row < input_rows;
+}
+
+static __device__ int qtype_matvec_pair(
+    unsigned long long rows, unsigned long long input_rows,
+    unsigned long long *row, unsigned long long *input_row)
+{
+    return qtype_matvec_pair_index(
+        (unsigned long long)blockIdx.x, rows, input_rows, row, input_row);
+}
+
+static __device__ float qtype_dot_recover_f64(
+    const unsigned char *row, const float *input, unsigned long long width,
+    unsigned int qtype)
+{
+    double recovered = 0.0;
+    for (unsigned long long i = 0ull; i < width; ++i)
+        recovered += (double)qtype_value(row, i, qtype) * (double)input[i];
+    return (float)recovered;
 }
 
 extern "C" __global__ void yvex_qtype_matvec(
@@ -512,11 +535,13 @@ extern "C" __global__ void yvex_qtype_matvec(
     unsigned long long input_rows,
     unsigned int qtype,
     const void *vector,
+    unsigned long long input_stride,
     int q8_input,
     int block_row,
     int forensic_numeric,
     const float *additive,
     float *out,
+    unsigned long long output_stride,
     int output_bf16,
     int *status)
 {
@@ -529,7 +554,9 @@ extern "C" __global__ void yvex_qtype_matvec(
     float sum;
     if (!status || *status != 0) return;
     if (!encoded || !vector || !out || !row_bytes || !row_width ||
-        !row_count || !input_rows || (block_row != 0 && block_row != 1) ||
+        !row_count || !input_rows || input_stride < row_width ||
+        output_stride < row_count || (q8_input && input_stride != row_width) ||
+        (block_row != 0 && block_row != 1) ||
         (block_row && (qtype != YVEX_GGUF_QTYPE_F32 || q8_input ||
                        blockDim.x != 256u))) {
         if (!lane) atomicCAS(status, 0, 2);
@@ -547,26 +574,12 @@ extern "C" __global__ void yvex_qtype_matvec(
     input = q8_input
         ? (const void *)((const unsigned char *)vector +
                          input_row * (row_width / YVEX_CUDA_Q8_K_BLOCK) * YVEX_CUDA_Q8_K_BYTES)
-        : (const void *)((const float *)vector + input_row * row_width);
+        : (const void *)((const float *)vector + input_row * input_stride);
     if (forensic_numeric) {
-        if ((block_row ? threadIdx.x : lane) == 0u) {
-            double reference = 0.0;
-            const float *reference_input = (const float *)input;
-            for (unsigned long long i = 0ull; i < row_width; ++i) {
-                double weight = (double)qtype_value(row_data, i, qtype);
-                double value = (double)reference_input[i];
-                reference = __dadd_rn(reference, __dmul_rn(weight, value));
-            }
-            float value = (float)reference;
-            if (additive)
-                value = __fadd_rn(value, additive[input_row * row_count + row]);
-            if (!isfinite(value)) atomicCAS(status, 0, 1);
-            else out[input_row * row_count + row] =
-                output_bf16 ? float_to_bf16_rne(value) : value;
-        }
-        return;
-    }
-    if (block_row) {
+        if ((block_row ? threadIdx.x : lane) != 0u) return;
+        sum = qtype_dot_recover_f64(
+            row_data, (const float *)input, row_width, qtype);
+    } else if (block_row) {
         const float *weight = (const float *)row_data;
         const float *values = (const float *)input;
         sum = 0.0f;
@@ -583,36 +596,141 @@ extern "C" __global__ void yvex_qtype_matvec(
             sum = lane < 8u ? warp_sums[lane] : 0.0f;
             for (unsigned int offset = 16u; offset; offset >>= 1u)
                 sum += __shfl_down_sync(0xffffffffu, sum, offset);
-            if (!lane) {
-                float value = additive
-                    ? __fadd_rn(sum, additive[input_row * row_count + row]) : sum;
-                if (!isfinite(value)) atomicCAS(status, 0, 1);
-                else out[input_row * row_count + row] =
-                    output_bf16 ? float_to_bf16_rne(value) : value;
-            }
         }
+        if (warp || lane) return;
+    } else {
+        if (q8_input) {
+            unsigned long long blocks = row_width / YVEX_CUDA_Q8_K_BLOCK;
+            if (!blocks || row_bytes % blocks) {
+                if (!lane) atomicCAS(status, 0, 2);
+                return;
+            }
+            sum = q8_warp_dot(row_data, (const unsigned char *)input, blocks,
+                              row_bytes / blocks, qtype);
+        } else {
+            sum = qtype_warp_dot(
+                row_data, (const float *)input, row_width, qtype, status);
+        }
+        if (lane) return;
+    }
+    /* A finite dot can overflow before opposite terms cancel. The exceptional row alone
+       uses FP64; ordinary rows retain their parallel F32 execution order. */
+    if (!q8_input && !isfinite(sum) && *status == 0)
+        sum = qtype_dot_recover_f64(
+            row_data, (const float *)input, row_width, qtype);
+    float value = additive
+        ? __fadd_rn(sum, additive[input_row * output_stride + row]) : sum;
+    if (!isfinite(value)) atomicCAS(status, 0, 1);
+    else out[input_row * output_stride + row] =
+        output_bf16 ? float_to_bf16_rne(value) : value;
+}
+
+/* Narrow row batches reuse one admitted Q8 activation across eight independent
+ * MXFP4 row dots. The warp dot is unchanged; shared storage only removes
+ * redundant global reads and therefore preserves its numerical order. */
+extern "C" __global__ void yvex_mxfp4_q8_rows(
+    const unsigned char *encoded,
+    unsigned long long row_bytes,
+    unsigned long long row_width,
+    unsigned long long start_row,
+    unsigned long long row_count,
+    unsigned long long input_rows,
+    const unsigned char *vector,
+    float *out,
+    unsigned long long output_stride,
+    int output_bf16,
+    int *status)
+{
+    extern __shared__ unsigned char activation[];
+    unsigned int lane = threadIdx.x & 31u;
+    unsigned int warp = threadIdx.x >> 5u;
+    unsigned long long blocks = row_width / YVEX_CUDA_Q8_K_BLOCK;
+    unsigned long long blocks_per_input = (row_count + 7ull) / 8ull;
+    unsigned long long input_row = blocks_per_input
+        ? (unsigned long long)blockIdx.x / blocks_per_input : input_rows;
+    unsigned long long row_group = blocks_per_input
+        ? (unsigned long long)blockIdx.x % blocks_per_input : blocks_per_input;
+    unsigned long long row = row_group * 8ull + warp;
+    unsigned long long activation_bytes = blocks * YVEX_CUDA_Q8_K_BYTES;
+    unsigned long long weight_block = blocks ? row_bytes / blocks : 0ull;
+
+    if (!status || *status != 0) return;
+    if (!encoded || !vector || !out || !blocks || !blocks_per_input ||
+        !row_count || !input_rows || input_rows > 8ull ||
+        blockDim.x != 256u || row_bytes % blocks || weight_block != 136ull ||
+        output_stride < row_count) {
+        if (!threadIdx.x) atomicCAS(status, 0, 2);
         return;
     }
-    if (q8_input) {
-        unsigned long long blocks = row_width / YVEX_CUDA_Q8_K_BLOCK;
-        if (!blocks || row_bytes % blocks) {
-            if (!lane) atomicCAS(status, 0, 2);
-            return;
-        }
-        sum = q8_warp_dot(row_data, (const unsigned char *)input, blocks,
-                          row_bytes / blocks, qtype);
-    } else
-        sum = qtype_warp_dot(row_data, (const float *)input, row_width, qtype, status);
-    if (lane == 0u) {
-        if (!isfinite(sum)) atomicCAS(status, 0, 1);
-        else {
-            float value = additive
-                ? __fadd_rn(sum, additive[input_row * row_count + row]) : sum;
-            if (!isfinite(value)) atomicCAS(status, 0, 1);
-            else out[input_row * row_count + row] =
-                output_bf16 ? float_to_bf16_rne(value) : value;
-        }
+    if (input_row >= input_rows) return;
+    const unsigned char *input = vector + input_row * activation_bytes;
+    for (unsigned long long byte = threadIdx.x; byte < activation_bytes;
+         byte += blockDim.x)
+        activation[byte] = input[byte];
+    __syncthreads();
+    if (row >= row_count) return;
+    const unsigned char *row_data = encoded + (start_row + row) * row_bytes;
+    float sum = q8_warp_dot(row_data, activation, blocks, weight_block,
+                            YVEX_GGUF_QTYPE_MXFP4);
+    if (lane) return;
+    if (!isfinite(sum)) atomicCAS(status, 0, 1);
+    else out[input_row * output_stride + row] =
+        output_bf16 ? float_to_bf16_rne(sum) : sum;
+}
+
+/* One grid covers the group-major matrix while token-major activations remain
+ * distinct. The row dot and token tiling are deliberately identical to
+ * yvex_qtype_matvec; grouping changes launch topology, not numerical policy. */
+extern "C" __global__ void yvex_qtype_grouped_rows(
+    const unsigned char *encoded,
+    unsigned long long row_bytes,
+    unsigned long long row_width,
+    unsigned long long group_count,
+    unsigned long long group_rows,
+    unsigned long long blocks_per_group,
+    unsigned long long input_rows,
+    unsigned int qtype,
+    const float *vector,
+    unsigned long long input_stride,
+    float *out,
+    unsigned long long output_stride,
+    int output_bf16,
+    int *status)
+{
+    unsigned int lane = threadIdx.x & 31u;
+    unsigned int warps = blockDim.x >> 5u;
+    unsigned long long group, input_row, local_block, local_row, row;
+    const unsigned char *row_data;
+    const float *input;
+    float sum;
+
+    if (!status || *status != 0) return;
+    if (!encoded || !vector || !out || !row_bytes || !row_width ||
+        !group_count || !group_rows || !blocks_per_group || !input_rows || !warps ||
+        (blockDim.x & 31u) != 0u ||
+        group_count > ~0ull / group_rows ||
+        group_count > ~0ull / row_width ||
+        input_stride < group_count * row_width ||
+        output_stride < group_count * group_rows) {
+        if (!lane) atomicCAS(status, 0, 2);
+        return;
     }
+    group = (unsigned long long)blockIdx.x / blocks_per_group;
+    local_block = (unsigned long long)blockIdx.x % blocks_per_group;
+    if (group >= group_count) return;
+    if (!qtype_matvec_pair_index(
+            local_block, group_rows, input_rows, &local_row, &input_row))
+        return;
+    row = group * group_rows + local_row;
+    row_data = encoded + row * row_bytes;
+    input = vector + input_row * input_stride + group * row_width;
+    sum = qtype_warp_dot(row_data, input, row_width, qtype, status);
+    if (lane) return;
+    if (!isfinite(sum) && *status == 0)
+        sum = qtype_dot_recover_f64(row_data, input, row_width, qtype);
+    if (!isfinite(sum)) atomicCAS(status, 0, 1);
+    else out[input_row * output_stride + row] =
+        output_bf16 ? float_to_bf16_rne(sum) : sum;
 }
 
 extern "C" __global__ void yvex_qtype_split_matvec(
@@ -711,38 +829,23 @@ extern "C" __global__ void yvex_qtype_gather(
     else out[index] = value;
 }
 
-extern "C" __global__ void yvex_attention_weighted_norm(
-    float *values, unsigned long long count, const unsigned char *weight,
-    unsigned int weight_qtype, double epsilon, unsigned long long vectors,
-    int *status)
+/* Recover finite BF16-range values when their ordinary F32 square sum overflows. The rare
+   recovery is serial and double-precision so the established parallel fast path is unchanged. */
+static __device__ double finite_square_sum_f32(
+    const float *values, unsigned long long count, float *square_terms,
+    int *status, int *active)
 {
-    extern __shared__ float square_terms[];
-    __shared__ double inverse;
-    __shared__ int active;
     unsigned int lane = threadIdx.x;
     float square_sum = 0.0f;
-    if (!status) return;
-    if ((unsigned long long)blockIdx.x >= vectors) return;
-    if (!values || !weight || !count || !vectors || epsilon <= 0.0) {
-        if (lane == 0u) atomicCAS(status, 0, 2);
-        return;
-    }
-    if (lane == 0u) active = *status == 0;
-    __syncthreads();
-    if (!active) return;
-    values += (unsigned long long)blockIdx.x * count;
-    /* Values entering RMSNorm have already crossed the BF16 execution
-       boundary. Accumulating independent squares per lane avoids serial FP64
-       issue while the inverse and weighted publication retain their double
-       contract. */
     for (unsigned long long i = (unsigned long long)lane; i < count;
          i += (unsigned long long)blockDim.x) {
         float value = values[i];
         if (!isfinite(value)) {
             atomicCAS(status, 0, 1);
-            atomicExch(&active, 0);
+            atomicExch(active, 0);
+        } else {
+            square_sum = fmaf(value, value, square_sum);
         }
-        square_sum = fmaf(value, value, square_sum);
     }
     square_terms[lane] = square_sum;
     __syncthreads();
@@ -751,8 +854,39 @@ extern "C" __global__ void yvex_attention_weighted_norm(
             square_terms[lane] += square_terms[lane + offset];
         __syncthreads();
     }
-    if (lane == 0u) {
-        double mean = (double)square_terms[0];
+    if (!*active) return 0.0;
+    if (lane == 0u && !isfinite(square_terms[0])) {
+        double recovered = 0.0;
+        for (unsigned long long i = 0ull; i < count; ++i)
+            recovered += (double)values[i] * (double)values[i];
+        return recovered;
+    }
+    return (double)square_terms[0];
+}
+
+extern "C" __global__ void yvex_attention_weighted_norm(
+    float *values, unsigned long long count, const unsigned char *weight,
+    unsigned int weight_qtype, double epsilon, unsigned long long vectors,
+    int *status)
+{
+    extern __shared__ float scratch_terms[];
+    __shared__ double inverse;
+    __shared__ int active;
+    if (!status) return;
+    if ((unsigned long long)blockIdx.x >= vectors) return;
+    if (!values || !weight || !count || !vectors || epsilon <= 0.0) {
+        if (threadIdx.x == 0u) atomicCAS(status, 0, 2);
+        return;
+    }
+    if (threadIdx.x == 0u) active = *status == 0;
+    __syncthreads();
+    if (!active) return;
+    values += (unsigned long long)blockIdx.x * count;
+    double total = finite_square_sum_f32(
+        values, count, scratch_terms, status, &active);
+    if (!active) return;
+    if (threadIdx.x == 0u) {
+        double mean = total;
         mean = __ddiv_rn(mean, (double)count);
         inverse = __ddiv_rn(1.0, sqrt(__dadd_rn(mean, epsilon)));
         if (!isfinite(inverse)) {
@@ -762,7 +896,7 @@ extern "C" __global__ void yvex_attention_weighted_norm(
     }
     __syncthreads();
     if (!active) return;
-    for (unsigned long long i = (unsigned long long)lane; i < count;
+    for (unsigned long long i = (unsigned long long)threadIdx.x; i < count;
          i += (unsigned long long)blockDim.x) {
         double scale = (double)qtype_value(weight, i, weight_qtype);
         double result = __dmul_rn(
@@ -854,7 +988,8 @@ static __device__ double attention_yarn_frequency(
 }
 
 extern "C" __global__ void yvex_attention_yarn_rope(
-    float *values, unsigned long long vector_count,
+    float *values, unsigned long long vectors_per_token,
+    unsigned long long token_count,
     unsigned long long vector_width, unsigned long long rope_dims,
     unsigned long long token_position, unsigned long long theta,
     unsigned long long scaling_factor, unsigned long long original_context,
@@ -868,20 +1003,23 @@ extern "C" __global__ void yvex_attention_yarn_rope(
     unsigned long long total;
     if (!status) return;
     if (*status != 0) return;
-    if (!values || !vector_count || !rope_dims || rope_dims > vector_width ||
+    if (!values || !vectors_per_token || !token_count || !rope_dims ||
+        rope_dims > vector_width ||
         (rope_dims & 1ull) || theta <= 1ull || !scaling_factor ||
         (original_context && (!beta_slow || beta_fast <= beta_slow))) {
         atomicCAS(status, 0, 2);
         return;
     }
     pairs_per_vector = rope_dims / 2ull;
-    if (vector_count > ~0ull / pairs_per_vector) {
+    if (token_count > ~0ull / vectors_per_token ||
+        token_count * vectors_per_token > ~0ull / pairs_per_vector) {
         atomicCAS(status, 0, 2);
         return;
     }
-    total = vector_count * pairs_per_vector;
+    total = token_count * vectors_per_token * pairs_per_vector;
     if (pair >= total) return;
     unsigned long long vector_index = pair / pairs_per_vector;
+    unsigned long long token_index = vector_index / vectors_per_token;
     unsigned long long local_pair = pair % pairs_per_vector;
     unsigned long long start = vector_width - rope_dims;
     unsigned long long offset = vector_index * vector_width + start +
@@ -889,7 +1027,7 @@ extern "C" __global__ void yvex_attention_yarn_rope(
     double frequency = attention_yarn_frequency(
         local_pair, rope_dims, theta, scaling_factor, original_context,
         beta_fast, beta_slow);
-    double angle = (double)token_position * frequency;
+    double angle = (double)(token_position + token_index) * frequency;
     double c = cos(angle);
     double s = inverse ? -sin(angle) : sin(angle);
     double x = (double)values[offset];
@@ -997,7 +1135,8 @@ static __device__ float activation_power_two_ceil(float value)
  */
 extern "C" __global__ void yvex_attention_activation_quantize(
     float *values, unsigned long long vector_count,
-    unsigned long long vector_width, unsigned long long block_width,
+    unsigned long long vector_width, unsigned long long vector_stride,
+    unsigned long long block_width,
     unsigned int quantization, int hadamard, int *status)
 {
     __shared__ unsigned int maximum_bits;
@@ -1007,15 +1146,17 @@ extern "C" __global__ void yvex_attention_activation_quantize(
     unsigned int thread = threadIdx.x;
     if (!status) return;
     if (vector_index >= vector_count) return;
-    if (!values || !vector_count || !vector_width || !block_width ||
-        vector_width % block_width || (quantization != 1u && quantization != 2u)) {
+    if (!values || !vector_count || !vector_width ||
+        vector_stride < vector_width || !block_width ||
+        vector_width % block_width ||
+        (quantization != 1u && quantization != 2u)) {
         if (thread == 0u) atomicCAS(status, 0, 2);
         return;
     }
     if (thread == 0u) active = *status == 0;
     __syncthreads();
     if (!active) return;
-    float *vector = values + vector_index * vector_width;
+    float *vector = values + vector_index * vector_stride;
     if (hadamard) {
         if ((vector_width & (vector_width - 1ull)) != 0ull ||
             vector_width > 1024ull) {
@@ -1142,29 +1283,11 @@ extern "C" __global__ void yvex_residual_mhc_pre(
     }
     __syncthreads();
     if (!active) return;
-    /* Residuals are already BF16 values. Accumulating their squares in F32
-       avoids making the envelope normalization depend on scarce FP64 issue
-       bandwidth; the final inverse and source-authored mHC transforms retain
-       their double contract before BF16 publication. */
-    {
-        float square_sum = 0.0f;
-        unsigned int offset;
-        for (unsigned long long lane = (unsigned long long)thread; lane < expanded;
-             lane += (unsigned long long)blockDim.x) {
-            float value = residual[lane];
-            square_sum = fmaf(value, value, square_sum);
-        }
-        square_terms[thread] = square_sum;
-        __syncthreads();
-        for (offset = blockDim.x >> 1u; offset; offset >>= 1u) {
-            if (thread < offset)
-                square_terms[thread] += square_terms[thread + offset];
-            __syncthreads();
-        }
-        if (thread == 0u) *inverse = (double)square_terms[0];
-    }
+    double total = finite_square_sum_f32(
+        residual, expanded, square_terms, status, &active);
+    if (!active) return;
     if (thread == 0u) {
-        *inverse = 1.0 / sqrt(*inverse / (double)expanded + rms_epsilon);
+        *inverse = 1.0 / sqrt(total / (double)expanded + rms_epsilon);
         if (!isfinite(*inverse)) {
             atomicCAS(status, 0, 1);
             active = 0;
@@ -1440,11 +1563,12 @@ extern "C" __global__ void yvex_attention_rolling_state(
         if (thread == 0u) atomicCAS(status, 0, 1);
         return;
     }
-    for (unsigned long long i = (unsigned long long)thread; i < extent;
-         i += (unsigned long long)blockDim.x) {
-        after_kv[i] = before_kv[i];
-        after_score[i] = before_score[i];
-    }
+    if (after_kv != before_kv || after_score != before_score)
+        for (unsigned long long i = (unsigned long long)thread; i < extent;
+             i += (unsigned long long)blockDim.x) {
+            after_kv[i] = before_kv[i];
+            after_score[i] = before_score[i];
+        }
     for (unsigned long long lane = (unsigned long long)thread;
          lane < state_width; lane += (unsigned long long)blockDim.x) {
         float kv = token_kv[lane];
@@ -1648,220 +1772,5 @@ extern "C" __global__ void yvex_attention_topk(
         }
         *selected_count = chosen;
         *valid_count = valid;
-    }
-}
-typedef struct {
-    const float *history_local;
-    const unsigned long long *history_local_positions;
-    unsigned long long history_local_count;
-    unsigned long long history_local_stride;
-    const float *current_kv;
-    const float *history_compressed;
-    const unsigned long long *history_compressed_positions;
-    unsigned long long history_compressed_count;
-    unsigned long long history_compressed_stride;
-    const float *current_compressed;
-    const unsigned long long *current_compressed_positions;
-    unsigned long long current_compressed_count;
-    unsigned long long current_compressed_stride;
-    const unsigned long long *selected;
-    unsigned long long sliding_window;
-    unsigned long long ratio;
-    unsigned int attention_class;
-    unsigned long long token_position;
-    int candidate_block_visible;
-} attention_reduce_rows;
-
-static __device__ __forceinline__ const float *attention_reduce_row(
-    const attention_reduce_rows *rows, unsigned long long pass,
-    unsigned long long candidate, int *visible)
-{
-    const float *row = NULL;
-    unsigned long long position = ~0ull;
-    *visible = 0;
-    if (pass == 0ull) {
-        if (candidate < rows->history_local_count) {
-            row = rows->history_local + candidate * rows->history_local_stride;
-            position = rows->history_local_positions[candidate];
-        } else {
-            row = rows->current_kv;
-            position = rows->token_position;
-        }
-        if (!rows->candidate_block_visible) {
-            unsigned long long first = rows->token_position + 1ull > rows->sliding_window
-                ? rows->token_position + 1ull - rows->sliding_window : 0ull;
-            if (position < first || position > rows->token_position) return NULL;
-        }
-    } else {
-        unsigned long long index = rows->attention_class == 2u
-            ? candidate : rows->selected[candidate];
-        if (index < rows->history_compressed_count) {
-            row = rows->history_compressed + index * rows->history_compressed_stride;
-            position = rows->history_compressed_positions[index];
-        } else {
-            unsigned long long local = index - rows->history_compressed_count;
-            if (local >= rows->current_compressed_count) return NULL;
-            row = rows->current_compressed + local * rows->current_compressed_stride;
-            position = rows->current_compressed_positions[local];
-        }
-        if (!row || position > rows->token_position ||
-            position > ~0ull - rows->ratio + 1ull ||
-            position + rows->ratio - 1ull > rows->token_position) return NULL;
-    }
-    *visible = row != NULL;
-    return row;
-}
-
-extern "C" __global__ void yvex_attention_reduce(
-    const float *query,
-    const float *history_local,
-    const unsigned long long *history_local_positions,
-    unsigned long long history_local_count,
-    unsigned long long history_local_stride,
-    const float *current_kv,
-    unsigned long long current_kv_stride,
-    const float *history_compressed,
-    const unsigned long long *history_compressed_positions,
-    unsigned long long history_compressed_count,
-    unsigned long long history_compressed_stride,
-    const float *current_compressed,
-    const unsigned long long *current_compressed_positions,
-    unsigned long long current_compressed_count,
-    unsigned long long current_compressed_stride,
-    const unsigned long long *selected,
-    const unsigned long long *selected_count_ptr,
-    const float *sinks,
-    unsigned long long query_heads,
-    unsigned long long head_dim,
-    unsigned long long sliding_window,
-    unsigned long long ratio,
-    unsigned int attention_class,
-    unsigned long long token_position,
-    int candidate_block_visible,
-    float *out,
-    int *status)
-{
-    extern __shared__ double dot_terms[];
-    __shared__ double maximum;
-    __shared__ double denominator;
-    __shared__ double probability;
-    __shared__ double renormalization;
-    __shared__ unsigned long long selected_count;
-    __shared__ int active;
-    unsigned long long head = (unsigned long long)blockIdx.x;
-    unsigned int thread = threadIdx.x;
-    if (!status) return;
-    if (head >= query_heads) return;
-    if (!query || !current_kv || !sinks || !out || !query_heads || !head_dim ||
-        !sliding_window || token_position == ~0ull || attention_class > 2u ||
-        (candidate_block_visible != 0 && candidate_block_visible != 1) ||
-        history_local_count == ~0ull ||
-        history_compressed_count > ~0ull - current_compressed_count ||
-        current_kv_stride < head_dim ||
-        (history_local_count && (!history_local || !history_local_positions ||
-                                 history_local_stride < head_dim)) ||
-        (history_compressed_count &&
-         (!history_compressed || !history_compressed_positions ||
-          history_compressed_stride < head_dim)) ||
-        (current_compressed_count &&
-         (!current_compressed || !current_compressed_positions ||
-          current_compressed_stride < head_dim)) ||
-        (attention_class == 1u && (!selected || !selected_count_ptr)) ||
-        (attention_class == 1u && ratio != 4ull) ||
-        (attention_class == 2u && ratio != 128ull) ||
-        (attention_class == 0u && ratio != 0ull)) {
-        if (thread == 0u) atomicCAS(status, 0, 2);
-        return;
-    }
-    const float *q = query + head * head_dim;
-    double scale = 1.0 / sqrt((double)head_dim);
-    unsigned long long local_total = history_local_count +
-                                     (candidate_block_visible ? 0ull : 1ull);
-    if (thread == 0u) {
-        active = *status == 0;
-        maximum = (double)sinks[head];
-        denominator = 1.0;
-        selected_count = selected_count_ptr ? *selected_count_ptr : 0ull;
-    }
-    __syncthreads();
-    if (!active) return;
-    unsigned long long compressed_total = attention_class == 2u
-        ? history_compressed_count + current_compressed_count
-        : selected_count;
-    attention_reduce_rows rows = {
-        history_local, history_local_positions, history_local_count,
-        history_local_stride, current_kv, history_compressed,
-        history_compressed_positions, history_compressed_count,
-        history_compressed_stride, current_compressed,
-        current_compressed_positions, current_compressed_count,
-        current_compressed_stride, selected, sliding_window, ratio,
-        attention_class, token_position, candidate_block_visible
-    };
-    for (unsigned long long lane = (unsigned long long)thread; lane < head_dim;
-         lane += (unsigned long long)blockDim.x)
-        out[head * head_dim + lane] = 0.0f;
-    __syncthreads();
-    /* Candidates retain source order, but a stable online softmax keeps each
-       dot product single-use. When a new maximum arrives, every output lane
-       and the accumulated denominator are renormalized before that candidate
-       is incorporated. */
-    for (unsigned long long pass = 0ull; pass < 2ull; ++pass) {
-        unsigned long long count = pass == 0ull ? local_total : compressed_total;
-        for (unsigned long long candidate = 0ull; candidate < count; ++candidate) {
-            int visible;
-            const float *row = attention_reduce_row(&rows, pass, candidate, &visible);
-            if (!visible) continue;
-            double dot = 0.0;
-            for (unsigned long long base = 0ull; base < head_dim;
-                 base += (unsigned long long)blockDim.x) {
-                unsigned long long lane = base + (unsigned long long)thread;
-                dot_terms[thread] = lane < head_dim
-                    ? __dmul_rn((double)q[lane], (double)row[lane]) : 0.0;
-                __syncthreads();
-                if (thread == 0u) {
-                    unsigned long long tile = head_dim - base;
-                    if (tile > (unsigned long long)blockDim.x) tile = blockDim.x;
-                    for (unsigned long long i = 0ull; i < tile; ++i)
-                        dot = __dadd_rn(dot, dot_terms[i]);
-                }
-                __syncthreads();
-            }
-            if (thread == 0u) {
-                double score = __dmul_rn(dot, scale);
-                if (score > maximum) {
-                    renormalization = exp(__dadd_rn(maximum, -score));
-                    maximum = score;
-                    probability = 1.0;
-                    denominator = __dadd_rn(
-                        __dmul_rn(denominator, renormalization), probability);
-                } else {
-                    renormalization = 1.0;
-                    probability = exp(__dadd_rn(score, -maximum));
-                    denominator = __dadd_rn(denominator, probability);
-                }
-            }
-            __syncthreads();
-            for (unsigned long long lane = (unsigned long long)thread; lane < head_dim;
-                 lane += (unsigned long long)blockDim.x) {
-                unsigned long long offset = head * head_dim + lane;
-                out[offset] = (float)__dadd_rn(
-                    __dmul_rn((double)out[offset], renormalization),
-                    __dmul_rn(probability, (double)row[lane]));
-            }
-            __syncthreads();
-        }
-    }
-    if (thread == 0u && (!isfinite(denominator) || denominator <= 0.0)) {
-        atomicCAS(status, 0, 1);
-        active = 0;
-    }
-    __syncthreads();
-    if (!active) return;
-    for (unsigned long long lane = (unsigned long long)thread; lane < head_dim;
-         lane += (unsigned long long)blockDim.x) {
-        float published = (float)__ddiv_rn((double)out[head * head_dim + lane],
-                                           denominator);
-        if (!isfinite(published)) atomicCAS(status, 0, 1);
-        else out[head * head_dim + lane] = float_to_bf16_rne(published);
     }
 }

@@ -186,6 +186,7 @@ static int moe_test_expert(void)
     yvex_moe_weight_view up_view = moe_test_weight(up, 2ull, 2ull);
     yvex_moe_weight_view down_view = moe_test_weight(down, 2ull, 2ull);
     yvex_error err;
+    const float route_weight = 0.25f;
     unsigned int row;
 
     layer.hidden_width = 2ull;
@@ -193,18 +194,19 @@ static int moe_test_expert(void)
     for (row = 0u; row < 2u; ++row) {
         double g = gate[row * 2u] * input[0] + gate[row * 2u + 1u] * input[1];
         double u = up[row * 2u] * input[0] + up[row * 2u + 1u] * input[1];
-        intermediate[row] = moe_test_bf16((float)((g / (1.0 + exp(-g))) * u));
+        intermediate[row] = moe_test_bf16(
+            (float)((g / (1.0 + exp(-g))) * u * route_weight));
     }
     expected[0] = moe_test_bf16(down[0] * intermediate[0] + down[1] * intermediate[1]);
     expected[1] = moe_test_bf16(down[2] * intermediate[0] + down[3] * intermediate[1]);
     YVEX_TEST_ASSERT(yvex_moe_expert_cpu(&layer, &gate_view, &up_view, &down_view,
-                                         input, output, &err) == YVEX_OK,
+                                         input, route_weight, output, &err) == YVEX_OK,
                      "encoded selected expert executes");
     YVEX_TEST_ASSERT(output[0] == expected[0] && output[1] == expected[1],
                      "selected expert matches independent BF16 SwiGLU equation");
     up_view.row_count = 1ull;
     YVEX_TEST_ASSERT(yvex_moe_expert_cpu(&layer, &gate_view, &up_view, &down_view,
-                                         input, output, &err) == YVEX_ERR_INVALID_ARG,
+                                         input, route_weight, output, &err) == YVEX_ERR_INVALID_ARG,
                      "malformed expert geometry refuses");
     return 0;
 }

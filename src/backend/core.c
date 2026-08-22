@@ -15,6 +15,12 @@
 #include <stdlib.h>
 #include <string.h>
 static int backend_desc_valid(const yvex_backend_tensor_desc *desc, yvex_error *err);
+static int backend_refuse(yvex_error *err, yvex_status status,
+                          const char *where, const char *reason)
+{
+    yvex_error_set(err, status, where, reason);
+    return status;
+}
 static const char *const backend_kind_names[] = {"cpu", "cuda", "metal", "rocm"};
 static const char *const backend_status_names[] = {
     "ready", "context-ready", "unsupported", "failed"
@@ -469,6 +475,62 @@ int yvex_backend_resident_alloc(yvex_backend *backend,
     return backend->vtable->resident_alloc(backend, desc, out, host, err);
 }
 
+int yvex_backend_resident_map_readonly_supported(const yvex_backend *backend)
+{
+    return backend && backend->vtable && backend->vtable->resident_map_supported &&
+           backend->vtable->resident_map_supported(backend);
+}
+
+int yvex_backend_resident_map_readonly(yvex_backend *backend,
+                                       const yvex_backend_tensor_desc *desc,
+                                       const unsigned char *host,
+                                       yvex_device_tensor **out,
+                                       yvex_error *err)
+{
+    int rc;
+    if (out) *out = NULL;
+    if (!backend || !desc || !host || !out) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "backend.resident.map",
+                       "backend, descriptor, immutable host span, and output are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    rc = backend_dispatch_admit(backend, "backend.resident.map", err);
+    if (rc == YVEX_OK) rc = backend_desc_valid(desc, err);
+    if (rc != YVEX_OK) return rc;
+    if (!backend->vtable || !backend->vtable->resident_map_readonly ||
+        !yvex_backend_resident_map_readonly_supported(backend)) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "backend.resident.map",
+                       "backend has no admitted immutable pageable mapping");
+        return YVEX_ERR_UNSUPPORTED;
+    }
+    return backend->vtable->resident_map_readonly(backend, desc, host, out, err);
+}
+
+int yvex_backend_resident_prefetch(yvex_backend *backend,
+                                   yvex_device_tensor *tensor,
+                                   unsigned long long *prefetched_bytes,
+                                   yvex_error *err)
+{
+    int rc;
+    if (prefetched_bytes) *prefetched_bytes = 0ull;
+    if (!backend || !tensor || !prefetched_bytes) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "backend.resident.prefetch",
+                       "backend, managed tensor, and byte output are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    rc = backend_dispatch_admit(backend, "backend.resident.prefetch", err);
+    if (rc != YVEX_OK) return rc;
+    if (!backend->vtable || !backend->vtable->resident_prefetch_supported ||
+        !backend->vtable->resident_prefetch ||
+        !backend->vtable->resident_prefetch_supported(backend)) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "backend.resident.prefetch",
+                       "backend has no admitted host-addressable prefetch operation");
+        return YVEX_ERR_UNSUPPORTED;
+    }
+    return backend->vtable->resident_prefetch(
+        backend, tensor, prefetched_bytes, err);
+}
+
 int yvex_backend_tensor_reserve(yvex_backend *backend, const yvex_backend_tensor_desc *desc,
                                 yvex_device_tensor **out, unsigned long long *granularity,
                                 yvex_error *err)
@@ -670,6 +732,40 @@ int yvex_backend_tensor_copy_async(yvex_backend *backend,
     }
     return backend->vtable->tensor_copy_async(
         backend, destination, source, err);
+}
+
+int yvex_backend_tensor_copy_shared_async(yvex_backend *executor,
+                                          yvex_device_tensor *destination,
+                                          const yvex_device_tensor *source,
+                                          yvex_error *err)
+{
+    yvex_backend *physical;
+    int rc;
+    if (!executor || !destination || !source || !destination->owner ||
+        !source->owner)
+        return backend_refuse(
+            err, YVEX_ERR_INVALID_ARG, "backend.tensor.copy-shared",
+            "executor and two owned tensors are required");
+    rc = backend_dispatch_admit(executor, "backend.tensor.copy-shared", err);
+    if (rc == YVEX_OK)
+        rc = backend_dispatch_admit(source->owner,
+                                    "backend.tensor.copy-shared", err);
+    physical = executor->resource_owner ? executor->resource_owner : executor;
+    if (rc != YVEX_OK) return rc;
+    if (destination->owner != executor ||
+        (source->owner->resource_owner ? source->owner->resource_owner
+                                       : source->owner) != physical ||
+        !yvex_backend_tensor_same_shape(destination, source) ||
+        !source->is_written)
+        return backend_refuse(
+            err, YVEX_ERR_INVALID_ARG, "backend.tensor.copy-shared",
+            "same-physical-owner initialized tensor shapes are required");
+    if (!executor->vtable || !executor->vtable->tensor_copy_shared_async)
+        return backend_refuse(
+            err, YVEX_ERR_UNSUPPORTED, "backend.tensor.copy-shared",
+            "backend does not support cross-stream tensor copy");
+    return executor->vtable->tensor_copy_shared_async(
+        executor, destination, source, err);
 }
 
 int yvex_backend_sync(yvex_backend *backend, yvex_error *err)
@@ -1626,6 +1722,7 @@ int yvex_backend_report_build(const yvex_backend_report_request *request,
 {
     yvex_backend *backend = NULL;
     yvex_backend_options options;
+    yvex_backend_cuda_attention_graph_summary cuda;
     unsigned int i;
     int rc;
 
@@ -1688,6 +1785,18 @@ int yvex_backend_report_build(const yvex_backend_report_request *request,
         }
         backend_report_set_cuda_admission(
             report, &report->variants[YVEX_BACKEND_VARIANT_EMBED_F32_TO_F32]);
+        rc = yvex_backend_cuda_attention_graph_summary_get(backend, &cuda, err);
+        if (rc != YVEX_OK) {
+            yvex_backend_close(backend);
+            return rc;
+        }
+        report->kernel_bundle_native = cuda.kernel_bundle_native;
+        yvex_core_text_copy(report->kernel_bundle_architecture,
+                            sizeof(report->kernel_bundle_architecture),
+                            cuda.kernel_bundle_architecture);
+        yvex_core_text_copy(report->kernel_bundle_identity,
+                            sizeof(report->kernel_bundle_identity),
+                            cuda.cuda_build_identity);
         if (request->kind == YVEX_BACKEND_REPORT_CUDA_BANDWIDTH) {
             rc = yvex_backend_bandwidth_probe(backend, &report->bandwidth, err);
             if (rc != YVEX_OK) {

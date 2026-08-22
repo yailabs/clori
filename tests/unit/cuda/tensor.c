@@ -87,6 +87,52 @@ static int assert_virtual_pages(yvex_backend *backend)
     return 0;
 }
 
+static int assert_shared_stream_copy(yvex_backend *owner)
+{
+    enum { SHARED_COPY_VALUES = 1024 * 256 };
+    yvex_backend *source_backend = NULL, *destination_backend = NULL;
+    yvex_device_tensor *source = NULL, *destination = NULL, *replacement = NULL;
+    yvex_backend_tensor_desc desc;
+    yvex_error err;
+    static float input[SHARED_COPY_VALUES], output[SHARED_COPY_VALUES];
+    static float replacement_values[SHARED_COPY_VALUES];
+    unsigned long long index;
+    for (index = 0ull; index < SHARED_COPY_VALUES; ++index) {
+        input[index] = (float)(index % 251ull);
+        replacement_values[index] = -(float)(index % 241ull) - 1.0f;
+    }
+    make_desc(&desc, "cuda_shared_copy", 1024ull, 256ull);
+    YVEX_TEST_ASSERT(
+        yvex_backend_open_shared_cuda(&source_backend, owner, 0ull, &err) == YVEX_OK &&
+            yvex_backend_open_shared_cuda(&destination_backend, owner, 0ull, &err) == YVEX_OK,
+        "open two session streams over one CUDA physical owner");
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_alloc(source_backend, &desc, &source, &err) == YVEX_OK &&
+            yvex_backend_tensor_alloc(source_backend, &desc, &replacement, &err) == YVEX_OK &&
+            yvex_backend_tensor_alloc(destination_backend, &desc, &destination, &err) == YVEX_OK,
+        "allocate cross-stream source and destination tensors");
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_write(source_backend, source, input, desc.bytes, &err) == YVEX_OK &&
+            yvex_backend_tensor_write(source_backend, replacement, replacement_values,
+                                      desc.bytes, &err) == YVEX_OK &&
+            yvex_backend_tensor_copy_shared_async(
+                destination_backend, destination, source, &err) == YVEX_OK &&
+            yvex_backend_tensor_copy_async(
+                source_backend, source, replacement, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(source_backend, &source, &err) == YVEX_OK && !source &&
+            yvex_backend_tensor_read(
+                destination_backend, destination, output, desc.bytes, &err) == YVEX_OK &&
+            memcmp(input, output, (size_t)desc.bytes) == 0,
+        "source release observes cross-stream D2D consumption before storage reuse");
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_release(source_backend, &replacement, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(destination_backend, &destination, &err) == YVEX_OK,
+        "release cross-stream tensors");
+    yvex_backend_close(source_backend);
+    yvex_backend_close(destination_backend);
+    return 0;
+}
+
 int yvex_cuda_test_tensor(void)
 {
     yvex_backend *backend = NULL;
@@ -112,6 +158,8 @@ int yvex_cuda_test_tensor(void)
     YVEX_TEST_ASSERT(rc == YVEX_OK, "open cuda backend");
     YVEX_TEST_ASSERT(assert_virtual_pages(backend) == 0,
                      "CUDA virtual page ownership is transactional");
+    YVEX_TEST_ASSERT(assert_shared_stream_copy(backend) == 0,
+                     "CUDA shared physical owner supports ordered row movement");
 
     rc = yvex_backend_get_memory_stats(backend, &stats, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "initial stats");

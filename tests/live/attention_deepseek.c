@@ -29,6 +29,7 @@
 #define ATTENTION_CUDA_RELATIVE_TOLERANCE 5.0e-4
 #define ATTENTION_NATIVE_Q8_ABSOLUTE_TOLERANCE 4.0e-2
 #define ATTENTION_NATIVE_Q8_RELATIVE_TOLERANCE 4.0e-2
+#define ATTENTION_NATIVE_TENSORCORE_ROWS 16ull
 
 static const char *attention_class_name(yvex_attention_class class_id)
 {
@@ -2057,12 +2058,26 @@ static int run_runtime_residency_close_order(yvex_runtime_model *model,
         yvex_runtime_residency_snapshot(
             view->residency, &before, NULL, NULL, err) != YVEX_OK ||
         !before.cuda_ready || !before.binding_count ||
-        before.host_resident_bytes != before.encoded_bytes ||
-        before.device_resident_bytes ||
-        before.cuda_addressable_bytes != before.encoded_bytes ||
         before.cuda_upload_bytes || before.cuda_upload_count ||
-        before.cuda_host_registration_count != 1ull ||
-        before.cuda_managed_bytes || before.cuda_managed_allocation_count) {
+        !((before.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED &&
+           before.artifact_backed_bytes &&
+           !before.host_resident_bytes &&
+           !before.device_resident_bytes &&
+           before.cuda_addressable_bytes == before.artifact_backed_bytes &&
+           before.cuda_pageable_map_bytes == before.artifact_backed_bytes &&
+           before.cuda_pageable_map_count == 1ull &&
+           before.cuda_host_registration_count == 1ull &&
+           !before.cuda_pageable_prefetch_bytes && !before.cuda_pageable_prefetch_count &&
+           !before.cuda_managed_bytes && !before.cuda_managed_allocation_count &&
+           !before.cuda_managed_prefetch_bytes && !before.cuda_managed_prefetch_count) ||
+          (before.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED &&
+           !before.host_resident_bytes &&
+           before.device_resident_bytes == before.encoded_bytes &&
+           before.cuda_addressable_bytes == before.encoded_bytes &&
+           before.cuda_managed_bytes == before.encoded_bytes &&
+           before.cuda_managed_allocation_count == 1ull &&
+           before.cuda_managed_prefetch_bytes == before.encoded_bytes &&
+           before.cuda_managed_prefetch_count == 1ull))) {
         yvex_error_set(err, YVEX_ERR_STATE, "attention.runtime_residency.close_order",
                        "one populated live CUDA residency is required");
         return YVEX_ERR_STATE;
@@ -2091,6 +2106,7 @@ static int run_runtime_residency_close_order(yvex_runtime_model *model,
         return YVEX_ERR_STATE;
     }
     if (after.schema_version != before.schema_version ||
+        after.placement != before.placement ||
         after.sealed != before.sealed || after.attached != before.attached ||
         after.host_ready != before.host_ready ||
         after.host_locked != before.host_locked ||
@@ -2107,11 +2123,18 @@ static int run_runtime_residency_close_order(yvex_runtime_model *model,
         after.accelerator_encoded_bytes != before.accelerator_encoded_bytes ||
         after.host_resident_bytes != before.host_resident_bytes ||
         after.device_resident_bytes != before.device_resident_bytes ||
+        after.artifact_backed_bytes != before.artifact_backed_bytes ||
         after.cuda_upload_bytes != before.cuda_upload_bytes ||
         after.cuda_upload_count != before.cuda_upload_count ||
         after.cuda_host_registration_count != before.cuda_host_registration_count ||
+        after.cuda_pageable_map_bytes != before.cuda_pageable_map_bytes ||
+        after.cuda_pageable_map_count != before.cuda_pageable_map_count ||
         after.cuda_managed_bytes != before.cuda_managed_bytes ||
         after.cuda_managed_allocation_count != before.cuda_managed_allocation_count ||
+        after.cuda_managed_prefetch_bytes != before.cuda_managed_prefetch_bytes ||
+        after.cuda_managed_prefetch_count != before.cuda_managed_prefetch_count ||
+        after.cuda_pageable_prefetch_bytes != before.cuda_pageable_prefetch_bytes ||
+        after.cuda_pageable_prefetch_count != before.cuda_pageable_prefetch_count ||
         memcmp(after.qtype_binding_counts, before.qtype_binding_counts,
                sizeof(before.qtype_binding_counts)) != 0 ||
         memcmp(after.qtype_bytes, before.qtype_bytes,
@@ -2264,7 +2287,7 @@ static int run_runtime_graph_oracle_suite(
         rc = yvex_runtime_session_prepare_attention_workspace(
             runtime_session, YVEX_RUNTIME_MODE_PIECEWISE,
             YVEX_RUNTIME_SCOPE_ATTENTION_CORE, YVEX_ATTENTION_EVIDENCE_FULL,
-            capacity, 0ull, &failure, err);
+            capacity, capacity_request.token_count, 0ull, &failure, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_session_prepare_attention_probe_state(
             runtime_session, model, capacity, &attention_failure, err);
@@ -2290,7 +2313,7 @@ static int run_runtime_graph_oracle_suite(
         rc = yvex_runtime_session_prepare_attention_workspace(
             runtime_session, YVEX_RUNTIME_MODE_FULL,
             YVEX_RUNTIME_SCOPE_ATTENTION_CORE, YVEX_ATTENTION_EVIDENCE_FULL,
-            capacity, 0ull, &failure, err);
+            capacity, capacity_request.token_count, 0ull, &failure, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_session_prepare_attention_probe_state(
             runtime_session, model, capacity, &attention_failure, err);
@@ -2406,7 +2429,7 @@ static int run_cuda_live_suite(
     attention_live_evidence evidence;
     live_attention_history history;
     const yvex_attention_layer_plan *layer;
-    float *input = NULL;
+    float *input = NULL, *native_input = NULL;
     unsigned long long input_extent = 0ull;
     unsigned long long layer_index;
     unsigned long long launches = 0ull;
@@ -2429,8 +2452,7 @@ static int run_cuda_live_suite(
         {"copy-input", YVEX_ATTENTION_FAILURE_BACKEND},
         {"cuda.attention.q_a",
          YVEX_ATTENTION_FAILURE_BACKEND},
-        {"cuda.attention.copy.output",
-         YVEX_ATTENTION_FAILURE_BACKEND}
+        {"copy-output", YVEX_ATTENTION_FAILURE_BACKEND}
     };
     unsigned int fault_index;
     unsigned int qtype;
@@ -2579,15 +2601,44 @@ static int run_cuda_live_suite(
         &cuda_reference, NULL, NULL,
         ATTENTION_NATIVE_Q8_ABSOLUTE_TOLERANCE,
         ATTENTION_NATIVE_Q8_RELATIVE_TOLERANCE, failure, err);
-    if (rc != YVEX_OK || !cuda_result.cuda_tensor_core_launches) {
+    if (rc != YVEX_OK || cuda_result.cuda_tensor_core_launches) {
         fprintf(stderr,
-                "attention_native_tensor_core_failed rc=%d launches=%llu where=%s message=%s\n",
+                "attention_native_sparse_projection_failed rc=%d launches=%llu where=%s message=%s\n",
                 rc, cuda_result.cuda_tensor_core_launches,
                 yvex_error_where(err), yvex_error_message(err));
-        if (rc == YVEX_OK) rc = YVEX_ERR_UNSUPPORTED;
+        if (rc == YVEX_OK) rc = YVEX_ERR_STATE;
         goto cleanup;
     }
     tensor_core_launches += cuda_result.cuda_tensor_core_launches;
+    if (input_extent > SIZE_MAX / ATTENTION_NATIVE_TENSORCORE_ROWS /
+                           sizeof(*native_input) ||
+        !(native_input = (float *)malloc(
+              (size_t)(input_extent * ATTENTION_NATIVE_TENSORCORE_ROWS) *
+              sizeof(*native_input)))) {
+        rc = YVEX_ERR_NOMEM;
+        goto cleanup;
+    }
+    fill_history_values(native_input, input_extent, 1401ull);
+    for (unsigned long long row = 1ull; row < ATTENTION_NATIVE_TENSORCORE_ROWS; ++row)
+        memcpy(native_input + row * input_extent, native_input,
+               (size_t)input_extent * sizeof(*native_input));
+    options.token_count = ATTENTION_NATIVE_TENSORCORE_ROWS;
+    options.input = native_input;
+    rc = run_cuda_reference_compare(
+        plan, ir, session, descriptor, backend, &options, &cuda_result,
+        &cuda_reference, NULL, NULL, ATTENTION_NATIVE_Q8_ABSOLUTE_TOLERANCE,
+        ATTENTION_NATIVE_Q8_RELATIVE_TOLERANCE, failure, err);
+    if (rc != YVEX_OK || !cuda_result.cuda_tensor_core_launches) {
+        fprintf(stderr,
+                "attention_native_row_batch_failed rc=%d launches=%llu where=%s message=%s\n",
+                rc, cuda_result.cuda_tensor_core_launches,
+                yvex_error_where(err), yvex_error_message(err));
+        if (rc == YVEX_OK) rc = YVEX_ERR_STATE;
+        goto cleanup;
+    }
+    tensor_core_launches += cuda_result.cuda_tensor_core_launches;
+    free(native_input);
+    native_input = NULL;
 #endif
 
     rc = run_cuda_core_input_regression(
@@ -2687,6 +2738,14 @@ static int run_cuda_live_suite(
         options.trace = NULL;
         if (rc == YVEX_OK || failed_trace.owned || cuda_result.executed ||
             failure->code != fault_cases[fault_index].expected_failure) {
+            fprintf(stderr,
+                    "attention_cuda_injected_fault_failed seam=%s rc=%d expected=%u "
+                    "actual=%u trace_owned=%d executed=%d where=%s message=%s\n",
+                    fault_cases[fault_index].seam, rc,
+                    (unsigned int)fault_cases[fault_index].expected_failure,
+                    (unsigned int)failure->code, failed_trace.owned,
+                    cuda_result.executed, yvex_error_where(err),
+                    yvex_error_message(err));
             rc = YVEX_ERR_STATE;
             goto cleanup;
         }
@@ -2895,15 +2954,6 @@ static int run_cuda_live_suite(
         rc = YVEX_ERR_FORMAT;
         goto cleanup;
     }
-#ifdef YVEX_HAVE_CUDA_KERNEL_CUBIN
-    if (!tensor_core_launches) {
-        yvex_error_set(err, YVEX_ERR_UNSUPPORTED,
-                       "attention.cuda.tensor_core",
-                       "native SM121 attention executed without a Tensor Core projection");
-        rc = YVEX_ERR_UNSUPPORTED;
-        goto cleanup;
-    }
-#endif
     rc = yvex_backend_close_checked(&backend, err);
     if (rc != YVEX_OK) goto cleanup;
     printf("attention_cuda_layers_executed=%llu\n", evidence.layer_count);
@@ -3007,6 +3057,7 @@ cleanup:
     (void)unsetenv("YVEX_TEST_CUDA_ATTENTION_FAILURE");
     yvex_attention_execution_trace_release(&failed_trace);
     live_history_release(&history);
+    free(native_input);
     free(input);
     {
         int close_rc = yvex_backend_close_checked(&backend, err);

@@ -68,6 +68,10 @@ int yvex_cuda_driver_load(yvex_cuda_driver *driver, yvex_error *err)
     YVEX_LOAD_REQUIRED(driver, cuMemGetInfo_v2);
     YVEX_LOAD_REQUIRED(driver, cuMemAlloc_v2);
     YVEX_LOAD_REQUIRED(driver, cuMemAllocManaged);
+    load_optional_symbol(driver->library, (void **)&driver->cuMemPrefetchAsync_v2,
+                         "cuMemPrefetchAsync_v2", NULL);
+    load_optional_symbol(driver->library, (void **)&driver->cuMemAdvise_v2,
+                         "cuMemAdvise_v2", NULL);
     YVEX_LOAD_REQUIRED(driver, cuMemFree_v2);
     YVEX_LOAD_REQUIRED(driver, cuMemsetD8_v2);
     YVEX_LOAD_REQUIRED(driver, cuMemcpyHtoD_v2);
@@ -150,6 +154,8 @@ int yvex_cuda_driver_load(yvex_cuda_driver *driver, yvex_error *err)
                          "cuMemHostGetDevicePointer_v2", "cuMemHostGetDevicePointer");
     load_optional_symbol(driver->library, (void **)&driver->cuMemHostUnregister,
                          "cuMemHostUnregister", NULL);
+    load_optional_symbol(driver->library, (void **)&driver->cuStreamWaitEvent,
+                         "cuStreamWaitEvent", NULL);
     load_optional_symbol(driver->library, (void **)&driver->cuEventCreate,
                          "cuEventCreate", NULL);
     load_optional_symbol(driver->library, (void **)&driver->cuEventRecord,

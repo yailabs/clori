@@ -20,7 +20,7 @@ static int execution_test_planning(void)
     yvex_model_execution_descriptor_request model_request = {0};
     yvex_model_execution_descriptor model, changed;
     yvex_execution_hardware_profile hardware = {0};
-    yvex_execution_workload_profile workload = {0};
+    yvex_execution_workload_profile workload = {0}, independently_scheduled;
     yvex_execution_capacity_plan_request capacity_request = {0};
     yvex_execution_capacity_plan capacity, repeated;
     yvex_execution_state_class_request states[YVEX_MODEL_STATE_CLASS_COUNT] = {{0}};
@@ -177,6 +177,14 @@ static int execution_test_planning(void)
     memcpy(workload.name, "balanced-serving", sizeof("balanced-serving"));
     YVEX_TEST_ASSERT(yvex_execution_workload_profile_seal(&workload, &err) == YVEX_OK,
                      "bounded serving workload should seal");
+    independently_scheduled = workload;
+    independently_scheduled.continuous_batching = 0;
+    independently_scheduled.identity[0] = '\0';
+    YVEX_TEST_ASSERT(
+        yvex_execution_workload_profile_seal(
+            &independently_scheduled, &err) == YVEX_OK &&
+            strcmp(workload.identity, independently_scheduled.identity) != 0,
+        "multi-sequence admission must remain distinct from physical row batching");
 
     capacity_request.schema_version = YVEX_EXECUTION_CAPACITY_PLAN_SCHEMA_V1;
     capacity_request.model_execution_identity = model.identity;
@@ -245,6 +253,13 @@ static int execution_test_planning(void)
                          &capacity_request, &repeated, &err) == YVEX_OK &&
                          strcmp(capacity.identity, repeated.identity) == 0,
                      "capacity plan identity should be deterministic");
+    repeated = capacity;
+    repeated.per_session_maximum--;
+    YVEX_TEST_ASSERT(
+        yvex_execution_capacity_plan_validate(&capacity, &err) == YVEX_OK &&
+            yvex_execution_capacity_plan_validate(&repeated, &err) ==
+                YVEX_ERR_FORMAT,
+        "persisted capacity validation refuses noncanonical unhashed fields");
     hardware.device_page_bytes = 4096ull;
     states[YVEX_MODEL_STATE_SWA_RING].bytes_per_block = 4104ull;
     YVEX_TEST_ASSERT(yvex_execution_hardware_profile_seal(&hardware, &err) == YVEX_OK &&
@@ -604,6 +619,7 @@ static int execution_test_shape(void)
     yvex_execution_shape_failure failure;
     yvex_execution_shape_registry_summary summary;
     const yvex_execution_shape *selected = NULL;
+    unsigned long long generation;
     yvex_error err;
 
     configured.schema_version = YVEX_EXECUTION_SHAPE_SCHEMA_V1;
@@ -658,6 +674,33 @@ static int execution_test_shape(void)
                          summary.count == 1ull && summary.hit_count == 1ull &&
                          summary.miss_count == 1ull,
                      "shape registry should publish hit and miss accounting");
+    for (generation = 2ull; generation <= 258ull; ++generation) {
+        configured.workspace_generation = generation;
+        execution_test_identity(configured.workspace_identity,
+                                generation % 2ull ? '5' : '6');
+        YVEX_TEST_ASSERT(yvex_execution_shape_seal(&configured, &err) == YVEX_OK &&
+                             yvex_execution_shape_registry_register(
+                                 registry, &configured, &err) == YVEX_OK,
+                         "workspace rebinds must replace stale shape classes");
+    }
+    YVEX_TEST_ASSERT(yvex_execution_shape_registry_summary_copy(
+                         registry, &summary, &err) == YVEX_OK &&
+                         summary.count == 1ull,
+                     "workspace generations must not consume registry capacity");
+    required = configured;
+    required.position = 11ull;
+    required.candidate_capacity = 5ull;
+    YVEX_TEST_ASSERT(yvex_execution_shape_seal(&required, &err) == YVEX_OK &&
+                         yvex_execution_shape_registry_select(
+                             registry, &required, &selected, &failure, &err) == YVEX_OK &&
+                         selected && selected->workspace_generation == 258ull,
+                     "shape selection should use only the current workspace generation");
+    configured.workspace_generation = 1ull;
+    execution_test_identity(configured.workspace_identity, '5');
+    YVEX_TEST_ASSERT(yvex_execution_shape_seal(&configured, &err) == YVEX_OK &&
+                         yvex_execution_shape_registry_register(
+                             registry, &configured, &err) == YVEX_ERR_STATE,
+                     "stale workspace generation should not replace current execution truth");
     yvex_execution_shape_registry_close(&registry);
     return 0;
 }

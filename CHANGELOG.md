@@ -19,6 +19,12 @@ change. Git history preserves implementation chronology.
   through native and bounded OpenAI-compatible local surfaces.
 - Exact server-owned multi-turn sessions with committed-prefix reuse,
   cancellation, partial-progress truth, and one persistent model lifecycle.
+- Bounded copy-on-write session fork through `yvex session fork SOURCE CHILD
+  MAXIMUM_SHARED_BYTES`: immutable committed state pages are shared while token,
+  RNG, decoder, transcript and conversation state remain independently mutable.
+- Capacity-admitted independent-session scheduling with one keyed mutation
+  authority, bounded worker concurrency, explicit `--parallel N` startup, and
+  protocol v9 facts that distinguish it from still-open continuous batching.
 - Registry-driven command discovery, advanced help, JSON discovery, and Bash,
   Zsh, and Fish completion.
 - A server-backed `yvex>` console with composed attachment state, live prefill
@@ -77,6 +83,11 @@ change. Git history preserves implementation chronology.
   an unused expert staging range. Compatible weight qtypes no longer select Q8
   activation compression implicitly; production retains F32 activations while
   full forensic evidence separately selects canonical-order accumulation.
+  Physical Execution IR v3 now seals both the sparse row-regime and SM121
+  Tensor Core expert kernels plus their measured row-population crossover;
+  runtime binding v13 persists that policy, runtime resolves one concrete
+  kernel from admitted request geometry, and CUDA no longer owns a hidden
+  threshold or silent fallback.
 - CUDA mHC envelope gates, combination rows and Sinkhorn row/column passes now
   execute across their independent stream lanes. Ordered reductions and FP64
   source transforms remain intact, while BF16 residual-square accumulation no
@@ -167,6 +178,19 @@ change. Git history preserves implementation chronology.
 
 ### Changed
 
+- Hosted startup now reuses a content-addressed verified-reopen lease for an
+  unchanged local artifact snapshot and falls back to complete authentication
+  when cache evidence is absent, malformed, or stale. On admitted pageable
+  CUDA hardware the authenticated GGUF remains immutable execution backing,
+  eliminating the complete anonymous model allocation and copy. CUDA registers
+  that mapping once and publishes the returned device address without making a
+  whole-artifact prefetch a readiness condition; managed derived layouts retain
+  their explicit prefetch. Memory status distinguishes mapped artifact extent,
+  registration, managed prefetch, non-artifact host residency, accelerator
+  residency and process RSS.
+- Terminal-bound one-shot generation now renders explicit reasoning and final
+  output as distinct blocks and flushes the completed model stream before
+  metrics. Redirected `run` output retains its exact canonical byte stream.
 - Model hosting is now the explicit foreground `yvex server MODEL [--ctx N]`
   operation. Status, model, memory, logs and shutdown use the same public
   `server` noun; `server log [--json]` is the sole observability stream.
@@ -240,8 +264,9 @@ change. Git history preserves implementation chronology.
 - Advanced runtime bindings to v8 when they carry sealed model geometry while
   retaining v7 reference bindings, and made startup refuse insufficient model
   residency memory before opening the complete artifact.
-- Made explicit SM121 builds admit an identity-bound native CUBIN on GB10 while
-  retaining portable PTX as a separately identified fallback class.
+- Made automatic CUDA builds derive one unambiguous `nvcc`-supported local architecture, so GB10
+  product builds admit identity-bound native SM121 CUBIN without a hidden PTX-only default. Explicit
+  architecture selection remains authoritative and portable PTX remains separately identified.
 
 ### Removed
 

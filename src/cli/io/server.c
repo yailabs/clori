@@ -13,6 +13,7 @@
 #include <yvex/internal/server_media.h>
 
 #include "src/cli/private.h"
+#include "src/cli/io/private.h"
 
 #include <errno.h>
 #include <limits.h>
@@ -26,7 +27,7 @@
 #include <unistd.h>
 
 typedef struct {
-    char name[YVEX_SERVER_SESSION_NAME_CAP];
+    char name[256];
     char family[64];
     char artifact[PATH_MAX];
     char binding[PATH_MAX];
@@ -49,7 +50,7 @@ typedef struct {
     atomic_int done;
     pthread_t thread;
     struct timespec started;
-    int thread_ready;
+    int thread_ready, terminal;
 } cli_server_startup_progress;
 
 static unsigned long long startup_elapsed_seconds(
@@ -72,10 +73,14 @@ static void *startup_progress_main(void *opaque)
         (void)nanosleep(&interval, NULL);
         elapsed = startup_elapsed_seconds(progress);
         if (!atomic_load_explicit(&progress->done, memory_order_relaxed) &&
-            elapsed >= last_report + 10u) {
-            fprintf(stderr,
-                    "yvex server: model admission still in progress (elapsed %llu s)\n",
-                    elapsed);
+            elapsed >= last_report + (progress->terminal ? 1u : 10u)) {
+            if (progress->terminal)
+                fprintf(stderr, "\r\033[KYVEX server · admitting model · elapsed %llu s",
+                        elapsed);
+            else
+                fprintf(stderr,
+                        "yvex server: model admission still in progress (elapsed %llu s)\n",
+                        elapsed);
             (void)fflush(stderr);
             last_report = elapsed;
         }
@@ -87,10 +92,7 @@ static void startup_progress_begin(cli_server_startup_progress *progress)
 {
     memset(progress, 0, sizeof(*progress));
     atomic_init(&progress->done, 0);
-    fprintf(stderr,
-            "yvex server: model admission in progress (elapsed 0 s); "
-            "readiness follows verification and residency\n");
-    (void)fflush(stderr);
+    progress->terminal = isatty(STDERR_FILENO) != 0;
     if (clock_gettime(CLOCK_MONOTONIC, &progress->started) == 0 &&
         pthread_create(&progress->thread, NULL, startup_progress_main, progress) == 0)
         progress->thread_ready = 1;
@@ -107,9 +109,13 @@ static void startup_progress_end(cli_server_startup_progress *progress, int stat
     atomic_store_explicit(&progress->done, 1, memory_order_relaxed);
     if (progress->thread_ready) (void)pthread_join(progress->thread, NULL);
     elapsed = startup_elapsed_seconds(progress);
-    fprintf(stderr, "yvex server: model admission %s (elapsed %llu s)%s\n",
-            status == YVEX_OK ? "complete" : "failed", elapsed,
-            status == YVEX_OK ? "; local server ready" : "");
+    if (progress->terminal) fputs("\r\033[K", stderr);
+    if (status != YVEX_OK)
+        fprintf(stderr, "yvex server: startup refused before readiness (elapsed %llu s)\n",
+                elapsed);
+    else
+        fprintf(stderr, "yvex server: model admission complete (elapsed %llu s); "
+                        "local server ready\n", elapsed);
     (void)fflush(stderr);
 }
 
@@ -259,10 +265,30 @@ static void *raw_console_main(void *opaque)
     return NULL;
 }
 
+static void *human_console_main(void *opaque)
+{
+    cli_server_thread_state *state = opaque;
+    yvex_cli_watch_renderer renderer;
+    unsigned long long cursor = 0u;
+    yvex_cli_watch_renderer_open(&renderer, 0);
+    for (;;) {
+        yvex_server_event event;
+        yvex_error err;
+        if (yvex_server_event_next(state->server, cursor, 1, &event, &err) != YVEX_OK)
+            continue;
+        cursor = event.sequence;
+        (void)yvex_cli_watch_renderer_event(&renderer, &event);
+        if (event.kind == YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_COMPLETE) break;
+    }
+    yvex_cli_watch_renderer_finish(&renderer);
+    return NULL;
+}
+
 static void options_defaults(yvex_server_options *options,
                              const cli_server_profile *profile, int media_requested)
 {
     memset(options, 0, sizeof(*options));
+    options->schema_version = YVEX_SERVER_OPTIONS_SCHEMA_V2;
     options->artifact_path = profile->artifact;
     options->runtime_binding_path = profile->binding;
     options->target_id = profile->target;
@@ -275,12 +301,14 @@ static void options_defaults(yvex_server_options *options,
                                           : YVEX_SERVER_GENERATION_TARGET_ONLY);
     options->context_capacity = profile->context_capacity
                                     ? profile->context_capacity : 256u;
-    options->prefill_chunk_tokens = 64u;
-    options->maximum_new_tokens = 256u;
+    options->prefill_chunk_tokens = media_requested ? 64u : 0u;
+    options->maximum_new_tokens = media_requested ? 256u : 0u;
     options->maximum_output_bytes = 1048576u;
     options->maximum_sessions = 8u;
     options->request_queue_capacity = 16u;
+    options->concurrent_sequences = 1u;
     options->trace_level = YVEX_SERVER_TRACE_STAGES;
+    options->console = YVEX_SERVER_CONSOLE_HUMAN;
     options->openai_enabled = !media_requested;
     options->openai_port = 8001u;
     options->openai_timeout_ms = 600000u;
@@ -306,12 +334,20 @@ static int option_parse(yvex_server_options *options,
     else if (!strcmp(flag, "--ctx"))
         return parse_u64(value, &options->context_capacity);
     else if (!strcmp(flag, "--prefill-chunk"))
-        return parse_u64(value, &options->prefill_chunk_tokens);
+        return parse_u64(value, &options->prefill_chunk_tokens) &&
+               options->prefill_chunk_tokens > 0ull;
     else if (!strcmp(flag, "--max-new-tokens"))
         return parse_u64(value, &options->maximum_new_tokens);
-    else if (!strcmp(flag, "--console"))
-        options->console = !strcmp(value, "raw") ? YVEX_SERVER_CONSOLE_RAW
-                                                  : YVEX_SERVER_CONSOLE_OFF;
+    else if (!strcmp(flag, "--parallel")) {
+        if (!parse_u64(value, &options->concurrent_sequences)) return 0;
+        if (options->maximum_sessions < options->concurrent_sequences)
+            options->maximum_sessions = options->concurrent_sequences;
+    }
+    else if (!strcmp(flag, "--console")) {
+        if (!strcmp(value, "human")) options->console = YVEX_SERVER_CONSOLE_HUMAN;
+        else if (!strcmp(value, "raw")) options->console = YVEX_SERVER_CONSOLE_RAW;
+        else options->console = YVEX_SERVER_CONSOLE_OFF;
+    }
     else if (!strcmp(flag, "--trace-level")) {
         if (!strcmp(value, "summary")) options->trace_level = YVEX_SERVER_TRACE_SUMMARY;
         else if (!strcmp(value, "stages")) options->trace_level = YVEX_SERVER_TRACE_STAGES;
@@ -346,6 +382,8 @@ static int command_options_parse(yvex_server_options *options,
         }
         index++;
     }
+    if (!options->maximum_new_tokens)
+        options->maximum_new_tokens = options->context_capacity;
     return 1;
 }
 
@@ -428,7 +466,7 @@ static void startup_announce(const cli_server_profile *profile,
         endpoint = socket_path;
     printf("YVEX server · foreground\n"
            "  profile %s\n"
-           "  target %s · backend=%s · mode=%s · requested ctx=%llu\n"
+           "  target %s · backend=%s · mode=%s · requested ctx=%llu · parallel=%llu\n"
            "  artifact %s\n",
            profile->name, options->target_id,
            options->backend == YVEX_BACKEND_KIND_CUDA ? "cuda" : "cpu",
@@ -436,7 +474,8 @@ static void startup_announce(const cli_server_profile *profile,
                ? "media"
                : (options->generation_mode == YVEX_SERVER_GENERATION_DSPARK
                       ? "dspark" : "target-only"),
-           options->context_capacity, profile->artifact);
+           options->context_capacity, options->concurrent_sequences,
+           profile->artifact);
     if (options->generation_mode == YVEX_SERVER_GENERATION_MEDIA) {
         printf("  component root %s\n  output root %s\n",
                media->artifact_root, media->output_root);
@@ -512,8 +551,10 @@ int yvex_cli_server_dispatch(int argc, char **argv, size_t consumed)
         fprintf(stderr, "yvex server: signal coordinator creation failed\n");
         return 1;
     }
-    if (options.console == YVEX_SERVER_CONSOLE_RAW) {
-        if (pthread_create(&console_thread, NULL, raw_console_main, &thread_state) == 0)
+    if (options.console != YVEX_SERVER_CONSOLE_OFF) {
+        void *(*console_main)(void *) = options.console == YVEX_SERVER_CONSOLE_RAW
+                                           ? raw_console_main : human_console_main;
+        if (pthread_create(&console_thread, NULL, console_main, &thread_state) == 0)
             console_ready = 1;
         else {
             (void)yvex_server_stop(server, &err);

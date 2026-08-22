@@ -176,19 +176,28 @@ The internal runtime is family-neutral. Its main objects are:
 
 Model-execution descriptor schema v1 is a non-installed fieldwise projection
 of source/family context, attention, MoE, output, DSpark and state facts.
-Runtime binding v12 persists and authenticates it together with the canonical
-operator graph identity, compiled model plan, and pointer-free
-tokenizer/conversation policy. Bindings v7 through v11 are refused because they
-cannot represent that complete execution authority. Hardware-profile,
+Runtime binding v14 persists and authenticates it together with the canonical
+operator graph identity, Physical Execution IR v4, compiled model plan, and
+pointer-free tokenizer/conversation policy. Bindings v7 through v13 are refused
+because they cannot represent that complete execution authority, including the
+compiled expert-worklist width policy and any admitted Tensor Core regime.
+Hardware-profile,
 workload-profile, capacity-plan and phase-roofline schemas begin at v1 as
 internal contracts. The installed server construction entrypoints and public
-declaration count remain unchanged.
+function-declaration count remain unchanged. Server options schema v2 adds the
+explicit concurrent-sequence request consumed by startup capacity admission;
+schema v1 cannot represent that fact and refuses after an atomic pre-v0.1
+product rebuild.
 The source-authored conversation boundary admits provider request/wire schema
-v2, tokenizer plan v3, tokenizer provider result v2, and local protocol v8.
-Runtime event schema v3, Physical Execution IR v1 and compiled profile v2
+v3, tokenizer plan v3, tokenizer provider result v2, and local protocol v11.
+Runtime event schema v3, Physical Execution IR v4 and compiled profile v2
 remain unchanged. Generation plan ABI v5 adds the workload-profile identity
-required to bind phase evidence to the compiled workload; generation result
-schema v4 and all wire projections remain unchanged.
+required to bind phase evidence to the compiled workload. Generation result
+schema v5 adds the identity-bearing committed-token extent of a
+source-output-channel boundary; the target-only continuation extent is derived
+from the final committed extent. This internal ABI change does not
+alter local protocol v11 or runtime event schema v3; the existing typed profile
+event projects the new facts without serializing the C result layout.
 
 Phase-roofline v1 accepts both its original complete record and an additive
 availability mask. A zero mask retains the original all-facts meaning; new
@@ -208,7 +217,7 @@ plan ABI v5 binds the ledger's workload-profile identity instead of comparing
 it with the distinct per-request profiling identity. Result validation checks
 that like-for-like identity and the availability masks when a ledger is
 present; old internal results with no ledger retain their zero-initialized
-meaning. Protocol v8 and event schema v3 do not change.
+meaning. The phase-ledger change did not alter the wire or event schema.
 
 CUDA producers currently expose exact active-weight and launch facts for
 target-only prefill and decode together with their exact H2D/D2H/D2D movement
@@ -256,13 +265,21 @@ writers cannot represent model geometry; v7 readers reject v8 as expected.
 The rebuilt reader admits both versions and refuses malformed, truncated or
 identity-mismatched descriptor payloads.
 
-One runtime model performs one complete artifact hash and one GGUF directory
-admission. It then owns one anonymous host arena containing every encoded
-descriptor tensor; a compact accelerator prefix is uploaded and shared under
-the admitted backend contract. Warm operations reuse the same verified handle,
-immutable descriptor, attention graph and complete resident weight pack.
-Before and after execution, snapshot drift invalidates the model, sessions,
-residency, workspace, graph executables and candidate state.
+One first runtime-model admission performs a complete artifact hash and one
+GGUF directory admission. A later open of the exact local filesystem snapshot
+may consume a rebuildable verified-reopen lease and records zero payload bytes
+hashed for that open; an absent, malformed, or stale lease falls back to the
+complete hash. Residency schema v7 selects an admitted immutable backing.
+Descriptor tensors retain exact artifact offsets. When the compiled physical
+plan requires no derived asset and CUDA can register the immutable artifact
+mapping, that mapping is the production weight backing. Readiness consumes the
+returned device address without requiring a whole-artifact prefetch. Plans
+requiring derived layouts select managed CUDA residency and complete their
+prefetch before readiness. Neither alternative may be substituted silently.
+Warm operations reuse the same verified handle,
+immutable descriptor, attention graph and weight backing. Before and after
+execution, snapshot drift invalidates the model, sessions, residency, workspace,
+graph executables and candidate state.
 
 Sessions own mutable state. `yvex_runtime_session_prepare_persistent_state`
 seals the provider layout and CPU/CUDA residency for an exact capacity;
@@ -523,35 +540,42 @@ Domain APIs retain semantic validation and lifecycle. Runtime-client adapter
 objects remain protocol-only, while finite offline adapters may consume the
 non-installed engine interfaces already documented here.
 
-## Application Provider And Local Protocol v8
+## Application Provider And Local Protocol v11
 
 `<yvex/provider.h>` is the installed transport-neutral application request and
-result ABI. Provider schema v2 binds separate assistant reasoning content,
+result ABI. Provider schema v3 additionally represents an omitted completion
+limit as adaptive while binding separate assistant reasoning content,
 reasoning policy, source-authored drop behavior, field-presence facts, and a
 bounded ordered tool-call set in addition to the v1 request facts. Provider wire
-v2 carries those fields. V1 remains readable and writable only with disabled
+v3 carries those fields and the adaptive limit. V1 remains readable and writable only with disabled
 reasoning, at most one assistant tool call, and its original field semantics.
 Clone and wire-decode publish only a complete owned request graph. The provider
 owner neither parses HTTP nor renders model-family prompt syntax.
 
-`<yvex/server.h>` protocol v8 carries the sealed provider request through the
+`<yvex/server.h>` protocol v11 carries the sealed provider request through the
 private Unix socket. Provider output messages distinguish assistant text,
 explicit reasoning, function calls, usage, terminal completion, and failure.
 Typed events bind the provider adapter, provider-request identity, and external
 correlation ID while excluding prompt and output content.
 
-Protocol v8 carries selected generation mode, speculative lifecycle events,
+Protocol v11 carries selected generation mode, speculative lifecycle events,
 accepted-prefix facts, exact proposal/verification/commit accounting, turn
 timing and cancellation classes, an exact partial-turn schema, source-authored
 reasoning policy, typed reasoning/final/tool/error channels, and separate
-reasoning/final count, rate and first-token timing facts. It
+reasoning/final count, rate and first-token timing facts. It also carries the
+explicit source session, child name, and shared-prefix byte bound required for
+one transactional copy-on-write session fork. It
 retains the typed `console.status` and the removal of former
 model/artifact facades introduced by the preceding protocol. Facts that are
 not authoritative, including selected client configuration, active
 micro-phase, or KV byte use when unavailable, have explicit availability bits
-and are never fabricated. Version 8 additionally carries immutable committed
+and are never fabricated. Version 8 introduced immutable committed
 model-state checkpoint save/restore operations with an explicit file bound and
-typed digest/identity evidence. Every non-v8 frame refuses during the handshake;
+typed digest/identity evidence. Version 9 adds the startup capacity-plan
+identity, required and unreserved bytes, admitted concurrent sequences, and
+separate independent-session-scheduling and continuous-batching readiness.
+Provider v3's adaptive limit is not executable by a v10 peer, so every non-v11
+frame refuses during the handshake;
 there is no private pre-v0.1 compatibility decoder.
 
 Protocol error messages carry `yvex_client_failure_class`, so adapters map
@@ -568,13 +592,23 @@ owners directly. The exact HTTP profile is documented in
 
 ## Physical Execution And Candidate-State ABI
 
-`<yvex/internal/execution.h>` owns Physical Execution IR schema v1, compiled
+`<yvex/internal/execution.h>` owns Physical Execution IR schema v4, compiled
 execution profiles, device-value views, explicit host-materialization policy,
 and the execution-shape registry. These are non-installed cross-subsystem
 contracts. They bind semantic identities and extents but never durable pointers
 or process state. Materialization consumes terminal decisions; runtime consumes
 one sealed profile; backend consumers receive typed values rather than an
-implicit host `float *` contract.
+implicit host `float *` contract. An expert decision seals legal worklist
+widths, the narrow kernel family, and an optional numerically admitted Tensor
+Core minimum and family. Runtime geometry cannot widen that policy.
+
+`<yvex/internal/execution_batch.h>` owns the typed execution-batch and expert-
+worklist contracts. The compiled policy contains only stable physical facts;
+one runtime instance binds actual sources, rows, provenance, expert buckets,
+offsets, populations and route weights. A bucket contains rows for exactly one
+compatible expert. CUDA may select an equivalent microkernel and execute a
+bounded tail, but it cannot regroup routes, merge sessions, or fabricate width.
+The copied observation is pointer-free developer evidence, not execution authority.
 
 `<yvex/internal/candidate.h>` owns prefix projection from an attention
 candidate delta. It can reconstruct any admitted verified prefix without
@@ -603,7 +637,7 @@ remain committed-target counts.
 
 `<yvex/server.h>` exposes the local protocol, one-model host, server session,
 typed event, metrics snapshot, and thin protocol-client lifecycles. The
-engine-linked `yvex server` entrypoint owns one host and bounded model worker. Server sessions retain
+engine-linked `yvex server` entrypoint owns one host and bounded keyed scheduler. Server sessions retain
 independent execution state, exact token ledgers, transcripts, and turn records
 across client detach. The next turn reuses KV only after exact token-prefix
 admission and prefills only the new suffix.

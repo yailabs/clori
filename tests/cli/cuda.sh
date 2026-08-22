@@ -31,6 +31,9 @@ fi
 [ "$rc" -eq 0 ] || fail "cuda-info exit code was $rc"
 contains "$OUT_DIR/cuda_info.out" "cuda: available"
 contains "$OUT_DIR/cuda_info.out" "kernel_bundle: admitted"
+contains "$OUT_DIR/cuda_info.out" "kernel_bundle_native:"
+contains "$OUT_DIR/cuda_info.out" "kernel_bundle_architecture:"
+contains "$OUT_DIR/cuda_info.out" "kernel_bundle_identity:"
 contains "$OUT_DIR/cuda_info.out" "status: cuda-info"
 
 "$YVEX_BIN" system cuda bandwidth >"$OUT_DIR/bandwidth.out" 2>"$OUT_DIR/bandwidth.err"
@@ -47,6 +50,9 @@ rc=$?
 contains "$OUT_DIR/backend.out" "backend: cuda"
 contains "$OUT_DIR/backend.out" "status: ready"
 contains "$OUT_DIR/backend.out" "kernel_bundle: admitted"
+contains "$OUT_DIR/backend.out" "kernel_bundle_native:"
+contains "$OUT_DIR/backend.out" "kernel_bundle_architecture:"
+contains "$OUT_DIR/backend.out" "kernel_bundle_identity:"
 contains "$OUT_DIR/backend.out" "status: backend-capabilities"
 
 "$YVEX_BIN" artifact materialize --model "$FIXTURE" --backend cuda \

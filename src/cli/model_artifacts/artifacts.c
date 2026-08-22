@@ -243,7 +243,7 @@ static void artifacts_target_from_gguf_name(const char *file_name,
     if (!out || out_cap == 0u) return;
     out[0] = '\0';
     if (!file_name || !file_name[0]) return;
-    snprintf(out, out_cap, "%s", file_name);
+    yvex_core_text_copy(out, out_cap, file_name);
     artifacts_strip_suffix(out, ".gguf");
     artifacts_strip_suffix(out, "-F16-noimatrix-yvex-v1");
 }

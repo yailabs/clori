@@ -140,6 +140,20 @@ int yvex_component_f32_load(
     unsigned long long *, unsigned long long *, unsigned long long *,
     unsigned long long *, yvex_component_load_failure *, const char *, const char *,
     yvex_error *);
+int yvex_runtime_component_session_open(
+    yvex_runtime_component_session **, const yvex_complete_artifact_admission *,
+    const yvex_artifact *, const yvex_gguf *, const yvex_tensor_table *, yvex_backend_kind,
+    unsigned long long, unsigned long long, yvex_error *);
+int yvex_runtime_component_session_close(yvex_runtime_component_session **, yvex_error *);
+int yvex_runtime_component_session_prepare_workspace(
+    yvex_runtime_component_session *, unsigned long long, yvex_error *);
+yvex_materialization_session *yvex_runtime_component_session_materialization(
+    const yvex_runtime_component_session *);
+const yvex_runtime_residency *yvex_runtime_component_session_residency(
+    const yvex_runtime_component_session *);
+yvex_backend *yvex_runtime_component_session_backend(const yvex_runtime_component_session *);
+const yvex_runtime_residency_summary *yvex_runtime_component_session_summary(
+    const yvex_runtime_component_session *);
 
 #ifdef __cplusplus
 }

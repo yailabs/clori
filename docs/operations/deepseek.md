@@ -78,6 +78,13 @@ verification, accepted-prefix, rejection, timing, and policy facts. A requested
 DSpark profile refuses startup if its artifact, binding, backend, or workspace
 requirements are incomplete; it never runs target-only silently.
 
+For explicit reasoning, the source-authored reasoning terminator ends the
+speculative shape. The committed final channel continues through ordinary
+target decode. The `source-boundary` fact emitted by `server log --json` reports
+the boundary extent in `a`, the target-only continuation in `b`, and replayed
+accepted target rows in `c`. The last value must remain zero. This is an
+identity-bound DSpark sub-policy, not a fallback.
+
 ## Explicit reasoning
 
 The current DSpark source profile admits explicit model-emitted reasoning. In

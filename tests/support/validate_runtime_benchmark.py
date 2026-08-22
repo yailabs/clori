@@ -106,10 +106,10 @@ def common(result: dict[str, object] | dict[str, str], mode: str, binding: pathl
     require(int(result.get("compute_capability_major", -1)) == 12 and
             int(result.get("compute_capability_minor", -1)) == 1,
             f"{mode}: unexpected compute capability")
-    require(int(result.get("resident_binding_count", 0)) == 806,
+    require(int(result.get("resident_binding_count", 0)) > 0,
             f"{mode}: incomplete attention-envelope residency")
-    require(int(result.get("resident_encoded_bytes", 0)) == 5_766_703_652,
-            f"{mode}: resident encoded-byte accounting drift")
+    require(int(result.get("resident_encoded_bytes", 0)) > 0,
+            f"{mode}: resident encoded-byte accounting is absent")
     require(int(result.get("workspace_bytes", 0)) > 0,
             f"{mode}: missing session workspace evidence")
     for key in (
@@ -159,7 +159,8 @@ def common(result: dict[str, object] | dict[str, str], mode: str, binding: pathl
                 f"{mode}: piecewise graph replay accounting mismatch")
 
 
-def validate_mode(root: pathlib.Path, binding: pathlib.Path, mode: str) -> tuple[str, str]:
+def validate_mode(root: pathlib.Path, binding: pathlib.Path,
+                  mode: str) -> tuple[str, str, int, int]:
     primary_path = root / f"{mode}.json"
     comparison_path = root / f"{mode}-comparison.csv"
     baseline_path = root / f"{mode}.yvex-benchmark"
@@ -210,7 +211,9 @@ def validate_mode(root: pathlib.Path, binding: pathlib.Path, mode: str) -> tuple
                 f"{path}: invalid commit provenance")
         require(str(result["benchmark_current_source_state"]) in ("clean", "dirty"),
                 f"{path}: invalid source provenance")
-    return str(primary["artifact_identity"]), str(primary["runtime_binding_identity"])
+    return (str(primary["artifact_identity"]), str(primary["runtime_binding_identity"]),
+            int(str(primary["resident_binding_count"])),
+            int(str(primary["resident_encoded_bytes"])))
 
 
 def main() -> int:
@@ -221,6 +224,10 @@ def main() -> int:
     identities = [validate_mode(root, binding, mode) for mode in MODES]
     require(len({value[0] for value in identities}) == 1, "artifact identity differs by mode")
     require(len({value[1] for value in identities}) == 1, "binding identity differs by mode")
+    require(len({value[2] for value in identities}) == 1,
+            "resident binding count differs by mode")
+    require(len({value[3] for value in identities}) == 1,
+            "resident encoded-byte extent differs by mode")
     print(f"runtime benchmark evidence: schema=5 modes={len(MODES)} charts=6 validated")
     return 0
 

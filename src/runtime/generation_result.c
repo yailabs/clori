@@ -117,6 +117,11 @@ int yvex_runtime_generation_profile_transformer(
     COUNTER(YVEX_RUNTIME_PROFILE_FULL_ARRAY_HOST_SCAN_BYTES,
             value->full_array_host_scan_bytes);
     COUNTER(YVEX_RUNTIME_PROFILE_KERNEL_LAUNCHES, value->kernel_launches);
+    COUNTER(YVEX_RUNTIME_PROFILE_TENSOR_CORE_LAUNCHES,
+            value->tensor_core_launches);
+    COUNTER(YVEX_RUNTIME_PROFILE_GRAPH_LAUNCHES, value->graph_launches);
+    COUNTER(YVEX_RUNTIME_PROFILE_GRAPH_CAPTURES, value->graph_captures);
+    COUNTER(YVEX_RUNTIME_PROFILE_GRAPH_REPLAYS, value->graph_replays);
     COUNTER(YVEX_RUNTIME_PROFILE_STREAM_SYNCHRONIZATIONS,
             value->stream_synchronizations);
     COUNTER(YVEX_RUNTIME_PROFILE_DEVICE_SYNCHRONIZATIONS,
@@ -168,6 +173,10 @@ int yvex_runtime_generation_profile_decode(
     projected.cache_hits = value->cache_hits;
     projected.cache_misses = value->cache_misses;
     projected.kernel_launches = value->kernel_launches;
+    projected.tensor_core_launches = value->tensor_core_launches;
+    projected.graph_launches = value->graph_launches;
+    projected.graph_captures = value->graph_captures;
+    projected.graph_replays = value->graph_replays;
     projected.stream_synchronizations = value->stream_synchronizations;
     projected.device_synchronizations = value->device_synchronizations;
     projected.embedding_ns = value->embedding_ns;
@@ -379,7 +388,7 @@ int yvex_runtime_generation_execution_identity(
     unsigned long long index;
     if (!result || (!tokens && result->sampled_token_count) || !output) return 0;
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.generation.execution.v4") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.generation.execution.v5") ||
         !yvex_sha256_update_u64(&hash, result->schema_version) ||
         !yvex_sha256_update_u64(&hash, result->execution_mode) ||
         !yvex_sha256_update_u64(&hash, result->status) ||
@@ -412,6 +421,7 @@ int yvex_runtime_generation_execution_identity(
         !yvex_sha256_update_u64(&hash, result->discarded_draft_token_count) ||
         !yvex_sha256_update_u64(&hash,
                                 result->target_correction_or_bonus_token_count) ||
+        !yvex_sha256_update_u64(&hash, result->speculation_source_boundary_token_count) ||
         !yvex_sha256_update_u64(&hash, result->maximum_accepted_prefix) ||
         !yvex_sha256_update_u64(&hash, result->confidence_logit_count) ||
         !yvex_sha256_update_u64(&hash, result->initial_position) ||
@@ -565,11 +575,15 @@ int yvex_runtime_generation_result_validate(
     const yvex_runtime_generation_result *result, yvex_error *err)
 {
     char identity[YVEX_SHA256_HEX_CAP], text_digest[YVEX_SHA256_HEX_CAP];
+    yvex_expert_worklist_observation worklists = {0};
     unsigned long long index, published_offset = 0ull, committed = 0ull;
     unsigned long long published = 0ull, terminal = 0ull, suppressed = 0ull;
     unsigned long long classified_selected = 0ull, classified_proposed = 0ull;
     unsigned long long completed_samples = 0ull, expected_final_position = 0ull;
-    int result_extents_valid, speculation_counts_valid;
+    int result_extents_valid, speculation_counts_valid, worklists_valid;
+    worklists_valid = !result || !result->expert_worklists.worklist_count ||
+        yvex_expert_worklist_observation_add(
+            &worklists, &result->expert_worklists, NULL) == YVEX_OK;
     result_extents_valid = result &&
         yvex_core_u64_add(result->model_committed_token_count,
                           result->terminal_token_count,
@@ -583,7 +597,7 @@ int yvex_runtime_generation_result_validate(
     if (!plan || !result || (!tokens && result->sampled_token_count) ||
         (!text && result->generated_text_bytes) ||
         plan->schema_version != YVEX_RUNTIME_GENERATION_SCHEMA_V5 ||
-        result->schema_version != YVEX_RUNTIME_GENERATION_RESULT_SCHEMA_V4 ||
+        result->schema_version != YVEX_RUNTIME_GENERATION_RESULT_SCHEMA_V5 ||
         plan->evidence_profile > YVEX_EXECUTION_EVIDENCE_FORENSIC ||
         plan->execution_class > YVEX_EXECUTION_CLASS_FORENSIC_REFERENCE ||
         !yvex_sha256_hex_valid(plan->kernel_bundle_identity) ||
@@ -595,13 +609,13 @@ int yvex_runtime_generation_result_validate(
         !result->requested_new_tokens ||
         result->requested_new_tokens > plan->maximum_new_tokens ||
         result->sampled_token_count > result->requested_new_tokens ||
-        !result_extents_valid ||
+        !result_extents_valid || !worklists_valid ||
         completed_samples > result->sampled_token_count ||
         result->reusable_prefix_token_count != result->initial_position ||
         result->reusable_prefix_token_count > result->prompt_token_count ||
         result->new_prefill_token_count !=
             result->prompt_token_count - result->reusable_prefix_token_count ||
-        result->profile.schema_version != YVEX_RUNTIME_PROFILE_SCHEMA_V2 ||
+        result->profile.schema_version != YVEX_RUNTIME_PROFILE_SCHEMA_V3 ||
         runtime_profile_validate(&result->profile, NULL) != YVEX_OK ||
         !generation_roofline_validate(plan, result) ||
         !yvex_sha256_hex_valid(result->reusable_prefix_identity) ||
@@ -688,29 +702,24 @@ int yvex_runtime_generation_result_validate(
             (result->has_incomplete_token ? result->sampled_token_count - 1ull
                                           : result->sampled_token_count) ||
         (result->execution_mode == YVEX_GENERATION_MODE_TARGET_ONLY &&
-         (result->draft_cycle_count || result->draft_forward_count ||
-          result->proposed_token_count ||
-          result->selected_verification_token_count ||
-          result->target_verification_count ||
-          result->accepted_draft_token_count ||
-          result->rejected_draft_token_count ||
-          result->discarded_draft_token_count ||
-          result->target_correction_or_bonus_token_count ||
-          result->maximum_accepted_prefix || result->confidence_logit_count ||
-          result->confidence_logit_minimum ||
-          result->confidence_logit_maximum ||
-          result->confidence_logit_mean || result->draft_ns ||
+         (result->draft_cycle_count || result->draft_forward_count || result->proposed_token_count ||
+          result->selected_verification_token_count || result->target_verification_count ||
+          result->accepted_draft_token_count || result->rejected_draft_token_count ||
+          result->discarded_draft_token_count || result->target_correction_or_bonus_token_count ||
+          result->speculation_source_boundary_token_count || result->maximum_accepted_prefix ||
+          result->confidence_logit_count || result->confidence_logit_minimum ||
+          result->confidence_logit_maximum || result->confidence_logit_mean || result->draft_ns ||
           result->verification_ns || result->speculative_commit_ns ||
           result->speculation_policy_identity[0])) ||
         (result->execution_mode == YVEX_GENERATION_MODE_DSPARK &&
          (!speculation_counts_valid ||
           !yvex_sha256_hex_valid(result->speculation_policy_identity) ||
+          result->speculation_source_boundary_token_count > result->model_committed_token_count ||
           result->draft_forward_count > result->draft_cycle_count ||
-          result->target_verification_count > result->draft_forward_count ||
-          (result->completed &&
-           (result->draft_cycle_count != result->draft_forward_count ||
-            result->draft_forward_count !=
-                result->target_verification_count)) ||
+           result->target_verification_count > result->draft_forward_count ||
+           (result->completed &&
+            (result->draft_cycle_count != result->draft_forward_count ||
+             result->draft_forward_count != result->target_verification_count)) ||
           result->selected_verification_token_count >
               result->proposed_token_count ||
           classified_selected >
@@ -847,16 +856,6 @@ int yvex_runtime_generation_operator_execute(
                         sizeof(result->sampling_execution_kind), "common-host");
     yvex_core_text_copy(result->tokenizer_execution_kind,
                         sizeof(result->tokenizer_execution_kind), "common-host");
-    model_request.artifact_path = request->artifact_path;
-    model_request.runtime_binding_path = request->runtime_binding_path;
-    model_request.target_id = request->target;
-    model_request.maximum_host_bytes = request->maximum_host_bytes;
-    session_request.backend = request->backend;
-    session_request.maximum_host_bytes = request->maximum_host_bytes;
-    session_request.maximum_device_bytes = request->maximum_device_bytes;
-    rc = yvex_runtime_cleanup_lease_acquire(
-        &cleanup, &model_request, &session_request, &model, &session,
-        &failure, err);
     options.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V5;
     options.backend = request->backend;
     options.mode = request->mode;
@@ -871,6 +870,19 @@ int yvex_runtime_generation_operator_execute(
     options.sampling_policy = request->sampling_policy;
     options.cancel_requested = request->cancel_requested;
     options.cancel_context = request->cancel_context;
+    model_request.artifact_path = request->artifact_path;
+    model_request.runtime_binding_path = request->runtime_binding_path;
+    model_request.target_id = request->target;
+    model_request.startup_generation = &options;
+    model_request.residency_backend = request->backend;
+    model_request.maximum_host_bytes = request->maximum_host_bytes;
+    model_request.maximum_device_bytes = request->maximum_device_bytes;
+    session_request.backend = request->backend;
+    session_request.maximum_host_bytes = request->maximum_host_bytes;
+    session_request.maximum_device_bytes = request->maximum_device_bytes;
+    rc = yvex_runtime_cleanup_lease_acquire(
+        &cleanup, &model_request, &session_request, &model, &session,
+        &failure, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_generation_context_open(
             &context, model, session, &options, err);
@@ -909,7 +921,7 @@ int yvex_runtime_generation_operator_execute(
             &result->execution, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_generation_context_summary_copy(context, &result->context, err);
-    if (result->execution.schema_version == YVEX_RUNTIME_GENERATION_RESULT_SCHEMA_V4) {
+    if (result->execution.schema_version == YVEX_RUNTIME_GENERATION_RESULT_SCHEMA_V5) {
         result->token_count = result->execution.sampled_token_count;
         result->text_bytes = result->execution.generated_text_bytes;
     }

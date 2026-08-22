@@ -77,6 +77,7 @@ typedef int (*yvex_backend_cancelled_fn)(void *context);
 typedef struct { yvex_backend_cancelled_fn requested; void *context; } yvex_backend_cancellation;
 typedef struct { float *data; unsigned long long capacity; } yvex_backend_float_span;
 typedef struct { unsigned long long *data, capacity; } yvex_backend_u64_span;
+typedef struct yvex_backend_attention_completion yvex_backend_attention_completion;
 typedef struct {
     int present, overlap;
     unsigned long long next_token_position, ratio, head_dimension, state_width, state_slots;
@@ -109,7 +110,9 @@ typedef struct {
     unsigned long long indexer_count, indexer_stride;
     yvex_backend_attention_rolling main_rolling, indexer_rolling;
     const yvex_backend_cancellation *cancellation;
+    yvex_backend_attention_completion *device_completion;
     unsigned int evidence_level;
+    int measure_device_time;
     int candidate_block_visible, retain_prefix_checkpoints, native_execution;
     unsigned long long max_host_bytes, max_device_bytes;
 } yvex_backend_attention_job;
@@ -149,6 +152,25 @@ typedef struct {
     const char *stage;
     unsigned long long expected, actual;
 } yvex_backend_attention_failure;
+#define YVEX_BACKEND_ATTENTION_COMPLETION_TRANSFER_CAP 20u
+typedef struct {
+    void *output, *staged;
+    unsigned long long capacity, output_capacity, used;
+    size_t width;
+    const char *stage;
+} yvex_backend_attention_completion_transfer;
+struct yvex_backend_attention_completion {
+    int defer, stack_start, pending, barrier_observed;
+    yvex_backend_attention_output output;
+    yvex_backend_attention_failure failure;
+    int *host_status;
+    unsigned long long *host_selected_counts, *host_candidate_counts;
+    unsigned int attention_class;
+    unsigned long long token_count, indexer_topk, candidate_capacity;
+    unsigned int transfer_count;
+    yvex_backend_attention_completion_transfer
+        transfers[YVEX_BACKEND_ATTENTION_COMPLETION_TRANSFER_CAP];
+};
 #define YVEX_BACKEND_BANDWIDTH_SCHEMA_V1 1u
 #define YVEX_BACKEND_BANDWIDTH_SAMPLE_COUNT 5u
 typedef struct {
@@ -164,6 +186,9 @@ typedef struct {
 int yvex_backend_attention_execute(yvex_backend *backend, const yvex_backend_attention_job *job,
                                    yvex_backend_attention_output *output,
                                    yvex_backend_attention_failure *failure, yvex_error *err);
+int yvex_backend_attention_complete(yvex_backend *backend,
+                                    yvex_backend_attention_completion *completion,
+                                    int barrier_observed, yvex_error *err);
 
 /* A family compiler supplies this complete text-stack geometry and semantic identity. The CUDA
  * operation executes it without recovering a source architecture or selecting family policy. */
@@ -240,7 +265,7 @@ struct yvex_device_tensor {
     void *backend_allocation;
     unsigned long long resident_bytes;
     int virtual_reserved;
-    int is_written, host_accessible;
+    int is_written, host_accessible, borrowed_host;
 };
 int yvex_backend_tensor_owned_by(const yvex_backend *backend,
                                  const yvex_device_tensor *tensor);
@@ -249,10 +274,27 @@ int yvex_backend_resident_alloc(yvex_backend *backend,
                                 yvex_device_tensor **out,
                                 unsigned char **host,
                                 yvex_error *err);
+int yvex_backend_resident_map_readonly_supported(const yvex_backend *backend);
+int yvex_backend_resident_map_readonly(yvex_backend *backend,
+                                       const yvex_backend_tensor_desc *desc,
+                                       const unsigned char *host,
+                                       yvex_device_tensor **out,
+                                       yvex_error *err);
+/* Move one initialized backend-owned host-addressable range to its execution device.
+ * The caller retains tensor ownership; success is synchronous and reports migrated bytes. */
+int yvex_backend_resident_prefetch(yvex_backend *backend,
+                                   yvex_device_tensor *tensor,
+                                   unsigned long long *prefetched_bytes,
+                                   yvex_error *err);
 int yvex_backend_tensor_copy_async(yvex_backend *backend,
                                    yvex_device_tensor *destination,
                                    const yvex_device_tensor *source,
                                    yvex_error *err);
+/* Transfer one D2D view across session streams before either side may reuse its storage. */
+int yvex_backend_tensor_copy_shared_async(yvex_backend *executor,
+                                          yvex_device_tensor *destination,
+                                          const yvex_device_tensor *source,
+                                          yvex_error *err);
 int yvex_backend_virtual_tensor_supported(const yvex_backend *backend);
 int yvex_backend_tensor_f32_subview(const yvex_device_tensor *source,
                                     unsigned long long offset, unsigned long long count,
@@ -314,6 +356,8 @@ int yvex_backend_host_workspace_prepare_owned(yvex_backend *backend, unsigned lo
                                               yvex_error *err);
 int yvex_backend_host_workspace_detach(yvex_backend *backend, yvex_error *err);
 int yvex_backend_host_workspace_acquire(yvex_backend *, unsigned long long,
+                                        unsigned long long, void **);
+int yvex_backend_host_workspace_reserve(yvex_backend *, unsigned long long,
                                         unsigned long long, void **);
 int yvex_backend_host_workspace_summary_get(const yvex_backend *, yvex_backend_host_workspace_summary *);
 int yvex_backend_validate_rope(const yvex_device_tensor *tensor, unsigned long long *head_dim,
@@ -495,9 +539,10 @@ typedef struct {
     yvex_backend_report_kind kind;
     yvex_backend_kind backend_kind;
     yvex_backend_status backend_status;
-    int exit_code, available, has_device_info;
+    int exit_code, available, has_device_info, kernel_bundle_native;
     yvex_backend_device_info device_info;
-    char device_name[128], reason[256];
+    char device_name[128], reason[256], kernel_bundle_architecture[16];
+    char kernel_bundle_identity[YVEX_SHA256_HEX_BYTES];
     yvex_backend_memory_stats memory;
     int capabilities[YVEX_BACKEND_CAP_OP_ATTENTION + 1];
     yvex_backend_capability_result variants[YVEX_BACKEND_VARIANT_COUNT];

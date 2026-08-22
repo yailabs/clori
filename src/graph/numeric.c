@@ -569,7 +569,6 @@ int yvex_attention_publication_hash_update(
     const float *output_values = attention_hash_output_values(publication, &output_width);
 
     if (!output_hash || !state_hash || !publication || !publication->complete ||
-        !output_values || !publication->raw_kv ||
         !yvex_core_u64_mul(publication->token_count, output_width, &output_count) ||
         !yvex_core_u64_mul(publication->token_count, publication->kv_width, &raw_count) ||
         !yvex_core_u64_mul(publication->compressed_count, publication->compressed_stride,
@@ -591,6 +590,7 @@ int yvex_attention_publication_hash_update(
                yvex_sha256_update_u64(state_hash, raw_count) &&
                yvex_sha256_update_u64(state_hash, compressed_count) &&
                yvex_sha256_update_u64(state_hash, indexer_count);
+    if (!output_values || !publication->raw_kv) return 0;
     return attention_hash_fields(output_hash, publication,
                                  attention_publication_fields + 1u, 4u) &&
            yvex_sha256_update_u64(output_hash, output_width) &&

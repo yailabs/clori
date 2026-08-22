@@ -1,38 +1,45 @@
-/*
- * Execution identity is compiled from admitted semantic and physical facts. This owner keeps
- * portable reference mechanisms explicit while providing shape and device-value contracts that
- * optimized backends can consume without changing model semantics.
- */
+/* Compile identity-bound physical facts consumed without backend topology reconstruction. */
 #include <yvex/internal/execution.h>
-
 #include <limits.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-
 #include <yvex/internal/backend.h>
 #include <yvex/internal/core.h>
-
 struct yvex_physical_execution_ir {
     yvex_physical_execution_decision *decisions;
     yvex_physical_execution_summary summary;
 };
-
 struct yvex_execution_shape_registry {
     yvex_execution_shape *shapes;
     unsigned long long count, capacity, hit_count, miss_count;
 };
-
 static int execution_shape_equal(const yvex_execution_shape *left,
                                  const yvex_execution_shape *right);
-static int physical_ir_identity(yvex_physical_execution_ir *ir,
-                                yvex_error *err);
-
+static int execution_shape_key_equal(const yvex_execution_shape *left,
+                                     const yvex_execution_shape *right,
+                                     int ignore_workspace);
+static int physical_ir_identity(yvex_physical_execution_ir *ir, yvex_error *err);
 static int physical_policy_valid(const yvex_physical_execution_policy *policy)
 {
     return policy &&
-           policy->schema_version == YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V1 &&
+           (policy->schema_version == YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V1 ||
+            policy->schema_version == YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V2 ||
+            policy->schema_version == YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V3 ||
+            policy->schema_version == YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V4) &&
+           (policy->schema_version >= YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V2 ||
+            !policy->encoded_activation_consumer_mask) &&
+           (policy->schema_version >= YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V2 ||
+            !policy->derived_asset_qtype_mask) &&
+           (policy->schema_version == YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V4
+                ? yvex_expert_worklist_compiled_policy_valid(
+                      policy->expert_worklist_width_mask,
+                      policy->expert_tensor_core_minimum,
+                      policy->expert_tensor_core_kernel_family)
+                : !policy->expert_worklist_width_mask &&
+                      !policy->expert_tensor_core_minimum) &&
+           !(policy->encoded_activation_consumer_mask >> YVEX_EXECUTION_CONSUMER_COUNT) &&
            policy->activation <= YVEX_EXECUTION_ACTIVATION_DEVICE_ENCODED &&
            policy->required_backend <= YVEX_EXECUTION_BACKEND_CUDA &&
            policy->evidence <= YVEX_EXECUTION_EVIDENCE_FORENSIC &&
@@ -42,14 +49,12 @@ static int physical_policy_valid(const yvex_physical_execution_policy *policy)
            policy->expert_kernel_family && policy->expert_kernel_family[0] &&
            strlen(policy->expert_kernel_family) < YVEX_EXECUTION_TEXT_CAP;
 }
-
 static int execution_refuse(yvex_error *err, yvex_status status,
                             const char *where, const char *reason)
 {
     yvex_error_set(err, status, where, reason);
     return status;
 }
-
 static int execution_hash_finish(yvex_sha256 *hash,
                                  char output[YVEX_SHA256_HEX_CAP])
 {
@@ -58,7 +63,6 @@ static int execution_hash_finish(yvex_sha256 *hash,
     yvex_sha256_hex(digest, output);
     return 1;
 }
-
 static yvex_execution_consumer_class execution_consumer(yvex_tensor_role role)
 {
     switch (role) {
@@ -111,7 +115,6 @@ static yvex_execution_consumer_class execution_consumer(yvex_tensor_role role)
                    : YVEX_EXECUTION_CONSUMER_DRAFT_BACKBONE;
     }
 }
-
 static yvex_execution_placement_class execution_placement(
     yvex_materialization_placement placement)
 {
@@ -125,13 +128,12 @@ static yvex_execution_placement_class execution_placement(
         return YVEX_EXECUTION_PLACEMENT_FILE_BACKED;
     }
 }
-
 static int physical_execution_decision_seal(
     yvex_physical_execution_decision *decision, yvex_error *err)
 {
     yvex_sha256 hash;
     if (!decision ||
-        decision->schema_version != YVEX_PHYSICAL_EXECUTION_SCHEMA_V2 ||
+        decision->schema_version != YVEX_PHYSICAL_EXECUTION_SCHEMA_V4 ||
         decision->role <= YVEX_TENSOR_ROLE_UNKNOWN ||
         decision->role >= YVEX_TENSOR_ROLE_COUNT ||
         decision->scope > YVEX_TENSOR_SCOPE_DRAFT ||
@@ -147,12 +149,21 @@ static int physical_execution_decision_seal(
         decision->evidence > YVEX_EXECUTION_EVIDENCE_FORENSIC ||
         decision->fallback > YVEX_EXECUTION_CLASS_FORENSIC_REFERENCE ||
         !decision->kernel_family[0] ||
+        ((decision->tensor_core_minimum != 0ull) !=
+         (decision->tensor_core_kernel_family[0] != '\0')) ||
+        (decision->worklist_width_mask &&
+         (decision->consumer < YVEX_EXECUTION_CONSUMER_ROUTED_GATE_UP ||
+          decision->consumer > YVEX_EXECUTION_CONSUMER_ROUTED_DOWN)) ||
+        (decision->tensor_core_minimum &&
+         (!decision->worklist_width_mask || decision->tensor_core_minimum >= 63ull ||
+          !(decision->worklist_width_mask & (1ull << decision->tensor_core_minimum)) ||
+          strcmp(decision->kernel_family, decision->tensor_core_kernel_family) == 0)) ||
         !yvex_sha256_hex_valid(decision->terminal_identity))
         return execution_refuse(
             err, YVEX_ERR_INVALID_ARG, "runtime.execution.physical",
             "complete physical execution decision facts are required");
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.physical-execution.decision.v2") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.physical-execution.decision.v4") ||
         !yvex_sha256_update_u64(&hash, decision->schema_version) ||
         !yvex_sha256_update_u64(&hash, decision->terminal_tensor_id) ||
         !yvex_sha256_update_u64(&hash, decision->role) ||
@@ -180,8 +191,11 @@ static int physical_execution_decision_seal(
         !yvex_sha256_update_u64(&hash, decision->fallback) ||
         !yvex_sha256_update_u64(&hash,
                                 (unsigned long long)decision->derived_asset_required) ||
+        !yvex_sha256_update_u64(&hash, decision->worklist_width_mask) ||
+        !yvex_sha256_update_u64(&hash, decision->tensor_core_minimum) ||
         !yvex_sha256_update_text(&hash, decision->terminal_identity) ||
         !yvex_sha256_update_text(&hash, decision->kernel_family) ||
+        !yvex_sha256_update_text(&hash, decision->tensor_core_kernel_family) ||
         !execution_hash_finish(&hash, decision->decision_identity))
         return execution_refuse(
             err, YVEX_ERR_STATE, "runtime.execution.physical",
@@ -189,7 +203,6 @@ static int physical_execution_decision_seal(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 static void execution_decision_from_binding(
     yvex_physical_execution_decision *decision,
     const yvex_runtime_tensor_binding *binding,
@@ -201,7 +214,7 @@ static void execution_decision_from_binding(
                                            ? model->verification_width_maximum
                                            : 1ull;
     memset(decision, 0, sizeof(*decision));
-    decision->schema_version = YVEX_PHYSICAL_EXECUTION_SCHEMA_V2;
+    decision->schema_version = YVEX_PHYSICAL_EXECUTION_SCHEMA_V4;
     decision->terminal_tensor_id = binding->tensor_id;
     decision->role = binding->role;
     decision->scope = binding->scope;
@@ -215,14 +228,22 @@ static void execution_decision_from_binding(
     decision->encoded_bytes = physical->encoded_bytes;
     decision->alignment = physical->alignment;
     decision->consumer = execution_consumer(binding->role);
-    decision->layout = physical->expert_count > 1ull
-                           ? YVEX_EXECUTION_LAYOUT_EXPERT_MAJOR
-                           : YVEX_EXECUTION_LAYOUT_CANONICAL_ROW;
+    decision->derived_asset_required = (decision->consumer == YVEX_EXECUTION_CONSUMER_ROUTED_GATE_UP ||
+         decision->consumer == YVEX_EXECUTION_CONSUMER_ROUTED_DOWN) && physical->expert_count > 1ull &&
+        physical->qtype < 64u && (policy->derived_asset_qtype_mask & (1ull << physical->qtype)) != 0ull;
+    decision->layout = decision->derived_asset_required ? YVEX_EXECUTION_LAYOUT_DERIVED_BACKEND
+        : physical->expert_count > 1ull ? YVEX_EXECUTION_LAYOUT_EXPERT_MAJOR
+                                       : YVEX_EXECUTION_LAYOUT_CANONICAL_ROW;
     decision->placement = execution_placement(binding->placement);
     decision->sharing = binding->scope == YVEX_TENSOR_SCOPE_GLOBAL
                             ? YVEX_EXECUTION_SHARING_MODEL_READ_ONLY
                             : YVEX_EXECUTION_SHARING_EXCLUSIVE;
-    decision->activation = policy->activation;
+    decision->activation =
+        policy->schema_version >= YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V2 &&
+                (policy->encoded_activation_consumer_mask &
+                 (1ull << (unsigned int)decision->consumer))
+            ? YVEX_EXECUTION_ACTIVATION_DEVICE_ENCODED
+            : policy->activation;
     decision->supported_width_mask = (1ull << (maximum_width + 1ull)) - 2ull;
     decision->maximum_context = model->maximum_context;
     decision->required_backend = policy->required_backend;
@@ -230,12 +251,22 @@ static void execution_decision_from_binding(
     decision->required_compute_minor = policy->required_compute_minor;
     decision->evidence = policy->evidence;
     decision->fallback = policy->fallback;
-    decision->derived_asset_required = policy->derived_asset_required;
     yvex_core_text_copy(decision->kernel_family,
                         sizeof(decision->kernel_family),
-                        physical->expert_count > 1ull
+                        (decision->consumer == YVEX_EXECUTION_CONSUMER_ROUTED_GATE_UP ||
+                         decision->consumer == YVEX_EXECUTION_CONSUMER_ROUTED_DOWN ||
+                         decision->consumer == YVEX_EXECUTION_CONSUMER_SHARED_EXPERT)
                             ? policy->expert_kernel_family
                             : policy->dense_kernel_family);
+    if (decision->consumer >= YVEX_EXECUTION_CONSUMER_ROUTED_GATE_UP &&
+        decision->consumer <= YVEX_EXECUTION_CONSUMER_ROUTED_DOWN &&
+        policy->schema_version >= YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V4) {
+        decision->worklist_width_mask = policy->expert_worklist_width_mask;
+        decision->tensor_core_minimum = policy->expert_tensor_core_minimum;
+        yvex_core_text_copy(decision->tensor_core_kernel_family,
+                            sizeof(decision->tensor_core_kernel_family),
+                            policy->expert_tensor_core_kernel_family);
+    }
     {
         yvex_sha256 hash;
         yvex_sha256_init(&hash);
@@ -247,11 +278,9 @@ static void execution_decision_from_binding(
             (void)execution_hash_finish(&hash, decision->terminal_identity);
     }
 }
-
 typedef int (*physical_binding_at_fn)(
     const void *, unsigned long long, const yvex_runtime_tensor_binding **,
     const yvex_materialized_tensor_binding **);
-
 static int physical_ir_compile(
     yvex_physical_execution_ir **out, unsigned long long count,
     const char *physical_variant_identity, physical_binding_at_fn binding_at,
@@ -261,7 +290,6 @@ static int physical_ir_compile(
     yvex_physical_execution_ir *ir;
     unsigned long long index;
     int rc = YVEX_OK;
-
     if (out) *out = NULL;
     if (!out || !count || !yvex_sha256_hex_valid(physical_variant_identity) ||
         count > SIZE_MAX / sizeof(*ir->decisions) || !binding_at || !model ||
@@ -280,7 +308,7 @@ static int physical_ir_compile(
                                 "runtime.execution.physical",
                                 "physical execution IR allocation failed");
     }
-    ir->summary.schema_version = YVEX_PHYSICAL_EXECUTION_SCHEMA_V2;
+    ir->summary.schema_version = YVEX_PHYSICAL_EXECUTION_SCHEMA_V4;
     ir->summary.decision_count = count;
     yvex_core_text_copy(ir->summary.physical_variant_identity,
                         sizeof(ir->summary.physical_variant_identity),
@@ -319,11 +347,9 @@ static int physical_ir_compile(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 typedef struct {
     const yvex_runtime_descriptor *descriptor;
 } physical_descriptor_source;
-
 static int physical_descriptor_binding_at(
     const void *opaque, unsigned long long index,
     const yvex_runtime_tensor_binding **binding,
@@ -334,7 +360,6 @@ static int physical_descriptor_binding_at(
     *physical = *binding ? (*binding)->binding : NULL;
     return *binding && *physical;
 }
-
 static int physical_ir_identity(yvex_physical_execution_ir *ir,
                                 yvex_error *err)
 {
@@ -359,7 +384,6 @@ failed:
                             "runtime.execution.physical",
                             "physical execution IR identity derivation failed");
 }
-
 int yvex_physical_execution_ir_build(
     yvex_physical_execution_ir **out,
     const yvex_materialization_session *materialization,
@@ -391,7 +415,6 @@ int yvex_physical_execution_ir_build(
         physical_descriptor_binding_at, &source,
         &descriptor_summary->model_execution, policy, err);
 }
-
 int yvex_physical_execution_ir_import(
     yvex_physical_execution_ir **out, const yvex_physical_execution_summary *summary,
     const yvex_physical_execution_decision *decisions, unsigned long long count,
@@ -402,7 +425,7 @@ int yvex_physical_execution_ir_import(
     char expected[YVEX_SHA256_HEX_CAP];
     if (out) *out = NULL;
     if (!out || !summary || !decisions || !count || summary->decision_count != count ||
-        summary->schema_version != YVEX_PHYSICAL_EXECUTION_SCHEMA_V2 ||
+        summary->schema_version != YVEX_PHYSICAL_EXECUTION_SCHEMA_V4 ||
         count > SIZE_MAX / sizeof(*ir->decisions))
         return execution_refuse(err, YVEX_ERR_INVALID_ARG,
                                 "runtime.execution.physical",
@@ -454,19 +477,16 @@ refused:
                             "runtime.execution.physical",
                             "physical execution records failed identity validation");
 }
-
 const yvex_physical_execution_summary *yvex_physical_execution_ir_summary(
     const yvex_physical_execution_ir *ir)
 {
     return ir ? &ir->summary : NULL;
 }
-
 const yvex_physical_execution_decision *yvex_physical_execution_ir_decision_at(
     const yvex_physical_execution_ir *ir, unsigned long long index)
 {
     return ir && index < ir->summary.decision_count ? &ir->decisions[index] : NULL;
 }
-
 void yvex_physical_execution_ir_close(yvex_physical_execution_ir **ir)
 {
     if (!ir || !*ir) return;
@@ -475,7 +495,6 @@ void yvex_physical_execution_ir_close(yvex_physical_execution_ir **ir)
     free(*ir);
     *ir = NULL;
 }
-
 int yvex_execution_hardware_profile_seal(
     yvex_execution_hardware_profile *profile, yvex_error *err)
 {
@@ -559,7 +578,6 @@ int yvex_execution_hardware_profile_seal(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 int yvex_execution_workload_profile_seal(
     yvex_execution_workload_profile *profile, yvex_error *err)
 {
@@ -578,8 +596,7 @@ int yvex_execution_workload_profile_seal(
         (profile->continuous_batching != 0 && profile->continuous_batching != 1) ||
         (profile->prefix_sharing != 0 && profile->prefix_sharing != 1) ||
         (profile->durable_state != 0 && profile->durable_state != 1) ||
-        profile->system_reserve_bytes < YVEX_EXECUTION_MINIMUM_SYSTEM_RESERVE ||
-        (!profile->continuous_batching && profile->concurrent_sequences != 1ull))
+        profile->system_reserve_bytes < YVEX_EXECUTION_MINIMUM_SYSTEM_RESERVE)
         return execution_refuse(err, YVEX_ERR_INVALID_ARG,
                                 "runtime.execution.workload",
                                 "complete bounded workload profile facts are required");
@@ -610,12 +627,10 @@ int yvex_execution_workload_profile_seal(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 static int capacity_add(unsigned long long *total, unsigned long long value)
 {
     return yvex_core_u64_add(*total, value, total);
 }
-
 static unsigned long long capacity_gcd(unsigned long long left,
                                        unsigned long long right)
 {
@@ -626,7 +641,6 @@ static unsigned long long capacity_gcd(unsigned long long left,
     }
     return left;
 }
-
 static int capacity_lcm(unsigned long long left, unsigned long long right,
                         unsigned long long *result)
 {
@@ -635,7 +649,6 @@ static int capacity_lcm(unsigned long long left, unsigned long long right,
     divisor = capacity_gcd(left, right);
     return yvex_core_u64_mul(left / divisor, right, result);
 }
-
 static int capacity_ceil_div(unsigned long long value, unsigned long long divisor,
                              unsigned long long *result)
 {
@@ -645,7 +658,6 @@ static int capacity_ceil_div(unsigned long long value, unsigned long long diviso
     *result = adjusted / divisor;
     return 1;
 }
-
 /* Compute one exact scaled ratio without requiring the numerator product to fit. */
 static int capacity_mul_div(unsigned long long left, unsigned long long right,
                             unsigned long long divisor, int round_up,
@@ -678,7 +690,6 @@ static int capacity_mul_div(unsigned long long left, unsigned long long right,
     *result = quotient;
     return 1;
 }
-
 static int capacity_state_request_valid(
     const yvex_execution_state_class_request *request)
 {
@@ -700,7 +711,6 @@ static int capacity_state_request_valid(
         (request->extent == YVEX_EXECUTION_STATE_EXTENT_PREFIX_BUDGET)) return 0;
     return 1;
 }
-
 static int capacity_state_geometry(
     const yvex_execution_state_class_request *request,
     unsigned long long candidate_width,
@@ -776,7 +786,6 @@ next_candidate:
     plan->copy_on_write = request->copy_on_write;
     return 1;
 }
-
 static int capacity_state_usage(
     const yvex_execution_capacity_plan_request *request,
     const yvex_execution_state_class_plan *geometry,
@@ -845,7 +854,6 @@ static int capacity_state_usage(
     }
     return 1;
 }
-
 static int capacity_request_validate(
     const yvex_execution_capacity_plan_request *request,
     const yvex_execution_hardware_profile **hardware,
@@ -886,7 +894,6 @@ static int capacity_request_validate(
         !(seen & YVEX_MODEL_STATE_CLASS_BIT(YVEX_MODEL_STATE_PREFIX_CHECKPOINT))) return 0;
     return 1;
 }
-
 static int capacity_plan_identity(yvex_execution_capacity_plan *plan)
 {
     yvex_sha256 hash;
@@ -928,7 +935,6 @@ static int capacity_plan_identity(yvex_execution_capacity_plan *plan)
     }
     return execution_hash_finish(&hash, plan->identity);
 }
-
 int yvex_execution_capacity_plan_build(
     const yvex_execution_capacity_plan_request *request,
     yvex_execution_capacity_plan *plan, yvex_error *err)
@@ -938,7 +944,6 @@ int yvex_execution_capacity_plan_build(
     yvex_execution_state_class_plan geometry[YVEX_MODEL_STATE_CLASS_COUNT] = {{0}};
     unsigned long long fixed_bytes = 0ull, low, high, admitted = 0ull, index;
     unsigned long long state_bytes, candidate_bytes, required_bytes;
-
     if (plan) memset(plan, 0, sizeof(*plan));
     if (!plan || !capacity_request_validate(request, &hardware, &workload))
         return execution_refuse(err, YVEX_ERR_INVALID_ARG,
@@ -1005,7 +1010,6 @@ int yvex_execution_capacity_plan_build(
         return execution_refuse(err, YVEX_ERR_BOUNDS,
                                 "runtime.execution.capacity",
                                 "state-pool capacity accounting overflowed");
-
     plan->schema_version = YVEX_EXECUTION_CAPACITY_PLAN_SCHEMA_V1;
     plan->model_maximum_context = request->semantic_maximum_context;
     plan->admitted_execution_maximum = admitted;
@@ -1039,6 +1043,130 @@ int yvex_execution_capacity_plan_build(
         return execution_refuse(err, YVEX_ERR_STATE,
                                 "runtime.execution.capacity",
                                 "capacity plan identity derivation failed");
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+static int capacity_plan_structure_valid(
+    const yvex_execution_capacity_plan *plan)
+{
+    unsigned long long required = 0ull, state_bytes = 0ull;
+    unsigned long long candidate_bytes = 0ull, logical_tokens;
+    unsigned long long index;
+    if (!plan->model_maximum_context || !plan->admitted_execution_maximum ||
+        plan->admitted_execution_maximum > plan->model_maximum_context ||
+        plan->per_session_maximum != plan->admitted_execution_maximum ||
+        plan->per_request_maximum != plan->admitted_execution_maximum ||
+        !plan->concurrent_sequences || !plan->logical_batch_tokens ||
+        !plan->attention_microbatch_rows || !plan->moe_row_tile ||
+        !plan->output_head_rows || !plan->model_bytes || !plan->workspace_bytes ||
+        !yvex_core_u64_mul(plan->admitted_execution_maximum,
+                           plan->concurrent_sequences, &logical_tokens) ||
+        logical_tokens != plan->total_logical_context_tokens ||
+        plan->physical_state_pool_tokens != plan->total_logical_context_tokens)
+        return 0;
+    for (index = 0ull; index < plan->state_class_count; ++index) {
+        const yvex_execution_state_class_plan *state =
+            &plan->state_classes[index];
+        unsigned long long page_bytes, rounded_tokens, data_bytes;
+        unsigned long long pool_tokens, fragmentation, cow_bytes;
+        if (state->state_class >= YVEX_MODEL_STATE_CLASS_COUNT ||
+            state->extent > YVEX_EXECUTION_STATE_EXTENT_PREFIX_BUDGET ||
+            (index && state->state_class <=
+                          plan->state_classes[index - 1ull].state_class) ||
+            !state->logical_block_tokens || !state->bytes_per_block ||
+            !state->page_tokens ||
+            state->page_tokens % state->logical_block_tokens ||
+            !yvex_core_u64_mul(
+                state->page_tokens / state->logical_block_tokens,
+                state->bytes_per_block, &page_bytes) ||
+            page_bytes != state->page_bytes ||
+            (state->shared != 0 && state->shared != 1) ||
+            (state->copy_on_write != 0 && state->copy_on_write != 1) ||
+            !yvex_core_u64_mul(state->page_count, state->page_tokens,
+                               &rounded_tokens))
+            return 0;
+        if (state->extent == YVEX_EXECUTION_STATE_EXTENT_PREFIX_BUDGET) {
+            if (state->tokens_per_sequence ||
+                rounded_tokens != state->pool_tokens ||
+                state->pool_bytes != plan->prefix_cache_bytes ||
+                state->promotion_fragmentation_bytes ||
+                state->copy_on_write_tail_bytes !=
+                    (state->copy_on_write ? state->page_bytes : 0ull))
+                return 0;
+            continue;
+        }
+        if (!state->tokens_per_sequence ||
+            !yvex_core_u64_mul(state->tokens_per_sequence,
+                               plan->concurrent_sequences, &pool_tokens) ||
+            pool_tokens != state->pool_tokens || rounded_tokens < pool_tokens ||
+            rounded_tokens % state->logical_block_tokens ||
+            !yvex_core_u64_mul(
+                rounded_tokens / state->logical_block_tokens,
+                state->bytes_per_block, &data_bytes) ||
+            !yvex_core_u64_mul(
+                (rounded_tokens - pool_tokens) / state->logical_block_tokens,
+                state->bytes_per_block, &fragmentation) ||
+            state->pool_bytes < data_bytes ||
+            state->pool_bytes - data_bytes != state->page_table_bytes ||
+            fragmentation != state->tail_fragmentation_bytes ||
+            !yvex_core_u64_mul(state->page_bytes, plan->concurrent_sequences,
+                               &cow_bytes) ||
+            state->copy_on_write_tail_bytes !=
+                (state->copy_on_write ? cow_bytes : 0ull) ||
+            state->promotion_fragmentation_bytes !=
+                (state->extent == YVEX_EXECUTION_STATE_EXTENT_CANDIDATE
+                     ? fragmentation : 0ull) ||
+            !capacity_add(
+                state->extent == YVEX_EXECUTION_STATE_EXTENT_CANDIDATE
+                    ? &candidate_bytes : &state_bytes,
+                state->pool_bytes))
+            return 0;
+    }
+    if (state_bytes != plan->state_pool_bytes ||
+        candidate_bytes != plan->candidate_reserve_bytes ||
+        !capacity_add(&required, plan->model_bytes) ||
+        !capacity_add(&required, plan->derived_layout_bytes) ||
+        !capacity_add(&required, plan->state_pool_bytes) ||
+        !capacity_add(&required, plan->candidate_reserve_bytes) ||
+        !capacity_add(&required, plan->workspace_bytes) ||
+        !capacity_add(&required, plan->scheduler_bytes) ||
+        !capacity_add(&required, plan->graph_bytes) ||
+        !capacity_add(&required, plan->prefix_cache_bytes) ||
+        !capacity_add(&required, plan->persistent_state_bytes) ||
+        !capacity_add(&required, plan->system_reserve_bytes) ||
+        required != plan->required_bytes || required > plan->usable_memory_bytes ||
+        plan->unreserved_bytes != plan->usable_memory_bytes - required)
+        return 0;
+    return 1;
+}
+int yvex_execution_capacity_plan_validate(
+    const yvex_execution_capacity_plan *plan, yvex_error *err)
+{
+    yvex_execution_capacity_plan candidate;
+    char expected[YVEX_SHA256_HEX_CAP];
+    if (!plan ||
+        plan->schema_version != YVEX_EXECUTION_CAPACITY_PLAN_SCHEMA_V1 ||
+        !plan->state_class_count ||
+        plan->state_class_count > YVEX_MODEL_STATE_CLASS_COUNT ||
+        !yvex_sha256_hex_valid(plan->model_execution_identity) ||
+        !yvex_sha256_hex_valid(plan->hardware_profile_identity) ||
+        !yvex_sha256_hex_valid(plan->workload_profile_identity) ||
+        !yvex_sha256_hex_valid(plan->identity) ||
+        !capacity_plan_structure_valid(plan))
+        return execution_refuse(err, YVEX_ERR_FORMAT,
+                                "runtime.execution.capacity",
+                                "persisted capacity plan is incomplete");
+    candidate = *plan;
+    candidate.identity[0] = '\0';
+    if (!capacity_plan_identity(&candidate))
+        return execution_refuse(err, YVEX_ERR_STATE,
+                                "runtime.execution.capacity",
+                                "capacity plan identity derivation failed");
+    yvex_core_text_copy(expected, sizeof(expected), candidate.identity);
+    if (strcmp(expected, plan->identity) != 0)
+        return execution_refuse(err, YVEX_ERR_FORMAT,
+                                "runtime.execution.capacity",
+                                "persisted capacity plan identity mismatched");
     yvex_error_clear(err);
     return YVEX_OK;
 }
@@ -1558,7 +1686,6 @@ identity_failed:
                             "runtime.execution.profile",
                             "compiled execution profile identity derivation failed");
 }
-
 int yvex_execution_device_view_validate(
     const yvex_execution_device_view *view, yvex_error *err)
 {
@@ -1584,7 +1711,6 @@ int yvex_execution_device_view_validate(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 int yvex_execution_shape_seal(yvex_execution_shape *shape, yvex_error *err)
 {
     yvex_sha256 hash;
@@ -1592,7 +1718,7 @@ int yvex_execution_shape_seal(yvex_execution_shape *shape, yvex_error *err)
         shape->target_scope > YVEX_EXECUTION_SCOPE_DRAFT ||
         shape->phase > YVEX_EXECUTION_PHASE_RESET ||
         shape->operation_scope > YVEX_EXECUTION_OPERATION_RELEASE_SET ||
-        !shape->token_width || shape->token_width > 64ull ||
+        !shape->token_width || shape->token_width > YVEX_EXECUTION_SHAPE_MAX_WIDTH ||
         shape->context_band > YVEX_EXECUTION_CONTEXT_NEAR_CAPACITY ||
         shape->evidence > YVEX_EXECUTION_EVIDENCE_FORENSIC ||
         !shape->candidate_capacity || !shape->context_capacity ||
@@ -1636,7 +1762,6 @@ int yvex_execution_shape_seal(yvex_execution_shape *shape, yvex_error *err)
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 int yvex_execution_shape_registry_open(
     yvex_execution_shape_registry **out, unsigned long long capacity,
     yvex_error *err)
@@ -1649,8 +1774,7 @@ int yvex_execution_shape_registry_open(
                                 "bounded shape registry capacity is required");
     registry = calloc(1u, sizeof(*registry));
     if (registry)
-        registry->shapes = calloc((size_t)capacity,
-                                  sizeof(*registry->shapes));
+        registry->shapes = calloc((size_t)capacity, sizeof(*registry->shapes));
     if (!registry || !registry->shapes) {
         yvex_execution_shape_registry_close(&registry);
         return execution_refuse(err, YVEX_ERR_NOMEM,
@@ -1662,7 +1786,6 @@ int yvex_execution_shape_registry_open(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 int yvex_execution_shape_registry_register(
     yvex_execution_shape_registry *registry,
     const yvex_execution_shape *shape, yvex_error *err)
@@ -1682,6 +1805,16 @@ int yvex_execution_shape_registry_register(
                                     "runtime.execution.shape-registry",
                                     "shape identity collision was refused");
         }
+        if (execution_shape_key_equal(&registry->shapes[index], shape, 1)) {
+            if (shape->workspace_generation <=
+                registry->shapes[index].workspace_generation)
+                return execution_refuse(
+                    err, YVEX_ERR_STATE, "runtime.execution.shape-registry",
+                    "stale workspace shape replacement was refused");
+            registry->shapes[index] = *shape;
+            yvex_error_clear(err);
+            return YVEX_OK;
+        }
     }
     if (registry->count == registry->capacity)
         return execution_refuse(err, YVEX_ERR_BOUNDS,
@@ -1691,7 +1824,6 @@ int yvex_execution_shape_registry_register(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 static int execution_shape_equal(const yvex_execution_shape *left,
                                  const yvex_execution_shape *right)
 {
@@ -1722,9 +1854,9 @@ static int execution_shape_equal(const yvex_execution_shape *left,
            strcmp(left->workspace_identity, right->workspace_identity) == 0 &&
            strcmp(left->identity, right->identity) == 0;
 }
-
 static int execution_shape_key_equal(const yvex_execution_shape *left,
-                                     const yvex_execution_shape *right)
+                                     const yvex_execution_shape *right,
+                                     int ignore_workspace)
 {
     return left->target_scope == right->target_scope &&
            left->phase == right->phase &&
@@ -1733,7 +1865,6 @@ static int execution_shape_key_equal(const yvex_execution_shape *left,
            left->candidate_visible == right->candidate_visible &&
            left->context_band == right->context_band &&
            left->context_capacity == right->context_capacity &&
-           left->workspace_generation == right->workspace_generation &&
            left->evidence == right->evidence &&
            strcmp(left->execution_profile_identity,
                   right->execution_profile_identity) == 0 &&
@@ -1743,12 +1874,12 @@ static int execution_shape_key_equal(const yvex_execution_shape *left,
                   right->state_layout_identity) == 0 &&
            strcmp(left->kernel_bundle_identity,
                   right->kernel_bundle_identity) == 0 &&
-           strcmp(left->workspace_identity, right->workspace_identity) == 0;
+           (ignore_workspace ||
+            (left->workspace_generation == right->workspace_generation &&
+             strcmp(left->workspace_identity, right->workspace_identity) == 0));
 }
-
 static int execution_shape_capacity(
-    const yvex_execution_shape *configured,
-    const yvex_execution_shape *required,
+    const yvex_execution_shape *configured, const yvex_execution_shape *required,
     yvex_execution_shape_failure *failure)
 {
     const struct {
@@ -1780,10 +1911,8 @@ static int execution_shape_capacity(
     }
     return 1;
 }
-
 int yvex_execution_shape_registry_select(
-    yvex_execution_shape_registry *registry,
-    const yvex_execution_shape *request,
+    yvex_execution_shape_registry *registry, const yvex_execution_shape *request,
     const yvex_execution_shape **selected,
     yvex_execution_shape_failure *failure, yvex_error *err)
 {
@@ -1797,7 +1926,7 @@ int yvex_execution_shape_registry_select(
                                 "sealed shape request and output are required");
     for (index = 0ull; index < registry->count; ++index) {
         const yvex_execution_shape *candidate = &registry->shapes[index];
-        if (!execution_shape_key_equal(candidate, request)) continue;
+        if (!execution_shape_key_equal(candidate, request, 0)) continue;
         if (!execution_shape_capacity(candidate, request, failure)) {
             if (failure) {
                 failure->position = request->position;
@@ -1845,7 +1974,6 @@ int yvex_execution_shape_registry_select(
                             "runtime.execution.shape-registry",
                             "no compatible execution shape is admitted");
 }
-
 int yvex_execution_shape_registry_summary_copy(
     const yvex_execution_shape_registry *registry,
     yvex_execution_shape_registry_summary *summary, yvex_error *err)
@@ -1861,7 +1989,6 @@ int yvex_execution_shape_registry_summary_copy(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 void yvex_execution_shape_registry_close(
     yvex_execution_shape_registry **registry)
 {

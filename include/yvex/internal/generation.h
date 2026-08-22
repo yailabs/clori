@@ -1,6 +1,5 @@
 /*
  * Compose admitted lower owners into one bounded autoregressive lifecycle.
- *
  * Published tokens are always target-authored: ordinary generation commits one decode step at a
  * time, while speculative generation may commit a target-verified prefix atomically. This is the
  * internal runtime/operator ABI from exact text/messages to model-backed incremental text.
@@ -15,7 +14,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#define YVEX_RUNTIME_PROFILE_SCHEMA_V2 2u
+#define YVEX_RUNTIME_PROFILE_SCHEMA_V3 3u
 typedef enum {
     YVEX_RUNTIME_PROFILE_OFF = 0, YVEX_RUNTIME_PROFILE_SUMMARY, YVEX_RUNTIME_PROFILE_STAGES,
     YVEX_RUNTIME_PROFILE_DETAILED
@@ -45,6 +44,7 @@ typedef enum {
     YVEX_RUNTIME_PROFILE_UPLOADS, YVEX_RUNTIME_PROFILE_DOWNLOADS, YVEX_RUNTIME_PROFILE_CACHE_HITS,
     YVEX_RUNTIME_PROFILE_CACHE_MISSES, YVEX_RUNTIME_PROFILE_CACHE_EVICTIONS,
     YVEX_RUNTIME_PROFILE_EXPERT_SUBVIEWS, YVEX_RUNTIME_PROFILE_KERNEL_LAUNCHES,
+    YVEX_RUNTIME_PROFILE_TENSOR_CORE_LAUNCHES,
     YVEX_RUNTIME_PROFILE_GRAPH_LAUNCHES, YVEX_RUNTIME_PROFILE_GRAPH_CAPTURES,
     YVEX_RUNTIME_PROFILE_GRAPH_REPLAYS, YVEX_RUNTIME_PROFILE_STREAM_SYNCHRONIZATIONS,
     YVEX_RUNTIME_PROFILE_EVENT_SYNCHRONIZATIONS, YVEX_RUNTIME_PROFILE_DEVICE_SYNCHRONIZATIONS,
@@ -96,7 +96,7 @@ static inline int runtime_profile_identity(const yvex_runtime_profile_record *re
     unsigned long long index;
     yvex_sha256_init(&hash);
     if (!record || !output ||
-        !yvex_sha256_update_text(&hash, "yvex.runtime.profile.v2") ||
+        !yvex_sha256_update_text(&hash, "yvex.runtime.profile.v3") ||
         !yvex_sha256_update_u64(&hash, record->schema_version) ||
         !yvex_sha256_update_u64(&hash, record->mode) ||
         !yvex_sha256_update_u64(&hash, record->scope) ||
@@ -142,7 +142,7 @@ static inline int runtime_profile_begin(yvex_runtime_profile_record *record,
         !runtime_profile_identity_copy(record->workload_identity, workload_identity))
         return runtime_profile_refuse(err, YVEX_ERR_INVALID_ARG,
                                       "profile mode, scope, and exact identities are required");
-    record->schema_version = YVEX_RUNTIME_PROFILE_SCHEMA_V2;
+    record->schema_version = YVEX_RUNTIME_PROFILE_SCHEMA_V3;
     record->mode = mode;
     record->scope = scope;
     record->backend = backend;
@@ -158,7 +158,7 @@ static inline int runtime_profile_begin(yvex_runtime_profile_record *record,
 static inline int runtime_profile_counter_add(yvex_runtime_profile_record *record,
     yvex_runtime_profile_counter counter, unsigned long long value, yvex_error *err)
 {
-    if (!record || record->schema_version != YVEX_RUNTIME_PROFILE_SCHEMA_V2 ||
+    if (!record || record->schema_version != YVEX_RUNTIME_PROFILE_SCHEMA_V3 ||
         record->sealed || counter >= YVEX_RUNTIME_PROFILE_COUNTER_COUNT)
         return runtime_profile_refuse(err, YVEX_ERR_STATE,
                                       "profile counter mutation is invalid");
@@ -171,7 +171,7 @@ static inline int runtime_profile_counter_add(yvex_runtime_profile_record *recor
 static inline int runtime_profile_phase_add(yvex_runtime_profile_record *record,
     yvex_runtime_profile_phase phase, unsigned long long elapsed_ns, yvex_error *err)
 {
-    if (!record || record->schema_version != YVEX_RUNTIME_PROFILE_SCHEMA_V2 ||
+    if (!record || record->schema_version != YVEX_RUNTIME_PROFILE_SCHEMA_V3 ||
         record->sealed || phase >= YVEX_RUNTIME_PROFILE_PHASE_COUNT || !elapsed_ns)
         return runtime_profile_refuse(err, YVEX_ERR_STATE,
                                       "profile phase mutation is invalid");
@@ -186,7 +186,7 @@ static inline int runtime_profile_phase_add(yvex_runtime_profile_record *record,
 }
 static inline int runtime_profile_finish(yvex_runtime_profile_record *record, yvex_error *err)
 {
-    if (!record || record->schema_version != YVEX_RUNTIME_PROFILE_SCHEMA_V2 || record->sealed)
+    if (!record || record->schema_version != YVEX_RUNTIME_PROFILE_SCHEMA_V3 || record->sealed)
         return runtime_profile_refuse(err, YVEX_ERR_STATE, "profile finish is invalid");
     record->completed_ns = yvex_core_monotonic_ns();
     if (record->completed_ns <= record->started_ns ||
@@ -204,7 +204,7 @@ static inline int runtime_profile_validate(const yvex_runtime_profile_record *re
                                            yvex_error *err)
 {
     char identity[YVEX_SHA256_HEX_BYTES];
-    if (!record || record->schema_version != YVEX_RUNTIME_PROFILE_SCHEMA_V2 ||
+    if (!record || record->schema_version != YVEX_RUNTIME_PROFILE_SCHEMA_V3 ||
         !record->sealed || record->mode > YVEX_RUNTIME_PROFILE_DETAILED ||
         record->scope > YVEX_RUNTIME_PROFILE_GENERATION ||
         record->completed_ns <= record->started_ns ||
@@ -245,6 +245,7 @@ static inline const char *runtime_profile_counter_name(yvex_runtime_profile_coun
     static const char *const names[] = {"host_payload_reads", "mapped_bytes_touched",
         "h2d_bytes", "d2h_bytes", "d2d_bytes", "managed_prefetch_bytes", "uploads", "downloads",
         "cache_hits", "cache_misses", "cache_evictions", "expert_subviews", "kernel_launches",
+        "tensor_core_launches",
         "graph_launches", "graph_captures", "graph_replays", "stream_synchronizations",
         "event_synchronizations", "device_synchronizations", "device_allocations", "host_allocations",
         "workspace_resets", "prompt_tokens", "reused_tokens", "new_prefill_tokens",
@@ -259,7 +260,7 @@ static inline const char *runtime_profile_counter_name(yvex_runtime_profile_coun
 }
 #define YVEX_RUNTIME_GENERATION_SCHEMA_V3 3u
 #define YVEX_RUNTIME_GENERATION_SCHEMA_V5 5u
-#define YVEX_RUNTIME_GENERATION_RESULT_SCHEMA_V4 4u
+#define YVEX_RUNTIME_GENERATION_RESULT_SCHEMA_V5 5u
 #define YVEX_RUNTIME_GENERATION_TURN_SCHEMA_V1 1u
 #define YVEX_RUNTIME_PARTIAL_TURN_SCHEMA_V1 1u
 typedef enum {
@@ -289,11 +290,12 @@ typedef enum {
     YVEX_GENERATION_STATUS_CANCELLED,
     YVEX_GENERATION_STATUS_FAILED
 } yvex_runtime_generation_status;
-typedef struct {
+typedef struct yvex_runtime_generation_options {
     unsigned int schema_version;
     yvex_backend_kind backend;
     yvex_runtime_generation_mode mode;
-    unsigned long long context_capacity, prefill_chunk_tokens, maximum_new_tokens;
+    yvex_execution_workload_profile_kind workload_kind;
+    unsigned long long context_capacity, prefill_chunk_tokens, maximum_new_tokens, concurrent_sequences;
     unsigned long long maximum_output_bytes, maximum_host_bytes, maximum_device_bytes;
     yvex_runtime_trace_policy trace_policy;
     yvex_execution_evidence_profile evidence_profile;
@@ -302,6 +304,7 @@ typedef struct {
     unsigned long long additional_stop_token_count;
     int (*cancel_requested)(void *context);
     void *cancel_context;
+    int continuous_batching;
 } yvex_runtime_generation_options;
 typedef struct {
     unsigned int schema_version;
@@ -357,7 +360,6 @@ typedef struct {
     char decoder_fragment_identity[YVEX_SHA256_HEX_CAP];
     char token_step_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_generation_token_result;
-
 /*
  * A failed turn reports the exact committed boundary independently of its failure class. Facts
  * without a current owner remain explicitly unavailable instead of being inferred from counters.
@@ -378,7 +380,6 @@ typedef struct {
     char token_ledger_identity[YVEX_SHA256_HEX_CAP];
     char published_text_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_partial_turn;
-
 typedef struct {
     unsigned int schema_version;
     yvex_runtime_generation_mode execution_mode;
@@ -399,8 +400,8 @@ typedef struct {
     unsigned long long accepted_draft_token_count, rejected_draft_token_count;
     unsigned long long discarded_draft_token_count;
     unsigned long long target_correction_or_bonus_token_count;
-    unsigned long long maximum_accepted_prefix;
-    unsigned long long confidence_logit_count;
+    unsigned long long speculation_source_boundary_token_count;
+    unsigned long long maximum_accepted_prefix, confidence_logit_count;
     unsigned long long draft_ns, verification_ns, speculative_commit_ns;
     double mean_accepted_prefix, effective_committed_tokens_per_second;
     double confidence_logit_minimum, confidence_logit_maximum;
@@ -424,6 +425,7 @@ typedef struct {
     char generation_execution_identity[YVEX_SHA256_HEX_CAP];
     yvex_runtime_partial_turn partial_turn;
     yvex_runtime_profile_record profile;
+    yvex_expert_worklist_observation expert_worklists;
     int roofline_available;
     yvex_execution_roofline_ledger roofline;
 } yvex_runtime_generation_result;
@@ -481,13 +483,14 @@ typedef struct {
 } yvex_runtime_generation_turn_request;
 typedef struct {
     unsigned int schema_version;
-    int open, busy, closing;
+    int open, busy, closing, continuous_batching;
     unsigned long long execution_count, failure_count, cancellation_count;
-    unsigned long long token_capacity, text_capacity, workspace_bytes;
+    unsigned long long token_capacity, text_capacity, workspace_bytes, concurrent_sequences;
+    unsigned long long capacity_required_bytes, capacity_unreserved_bytes;
     unsigned long long artifact_reopens, model_rebuilds, output_head_reuploads;
-    char generation_plan_identity[YVEX_SHA256_HEX_CAP];
-    char token_sequence_identity[YVEX_SHA256_HEX_CAP];
-    char rng_state_identity[YVEX_SHA256_HEX_CAP];
+    char generation_plan_identity[YVEX_SHA256_HEX_CAP],
+        capacity_plan_identity[YVEX_SHA256_HEX_CAP];
+    char token_sequence_identity[YVEX_SHA256_HEX_CAP], rng_state_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_generation_context_summary;
 typedef struct yvex_runtime_generation_context yvex_runtime_generation_context;
 int yvex_runtime_generation_bytes_digest(
@@ -513,12 +516,10 @@ int yvex_runtime_generation_execution_identity(
     const yvex_runtime_generation_result *result,
     const yvex_runtime_generation_token_result *tokens,
     char output[YVEX_SHA256_HEX_CAP]);
-int yvex_runtime_generation_context_summary_copy(
-    const yvex_runtime_generation_context *context,
+int yvex_runtime_generation_context_summary_copy(const yvex_runtime_generation_context *context,
     yvex_runtime_generation_context_summary *summary, yvex_error *err);
-int yvex_runtime_generation_context_open(
-    yvex_runtime_generation_context **out, yvex_runtime_model *model,
-    yvex_runtime_execution_session *session,
+int yvex_runtime_generation_context_open(yvex_runtime_generation_context **out,
+    yvex_runtime_model *model, yvex_runtime_execution_session *session,
     const yvex_runtime_generation_options *options, yvex_error *err);
 const yvex_runtime_generation_plan_summary *yvex_runtime_generation_plan_summary_get(
     const yvex_runtime_generation_context *context);
@@ -536,14 +537,15 @@ int yvex_runtime_generation_turn_execute(
     unsigned long long token_capacity, unsigned char *text,
     unsigned long long text_capacity, yvex_runtime_generation_result *result,
     yvex_error *err);
+int yvex_runtime_generation_execution_width_set(
+    yvex_runtime_generation_context *context, unsigned long long width, yvex_error *err);
 int yvex_runtime_generation_result_validate(
     const yvex_runtime_generation_plan_summary *plan,
     const yvex_runtime_generation_token_result *tokens,
     unsigned long long token_capacity, const unsigned char *text,
     unsigned long long text_capacity,
     const yvex_runtime_generation_result *result, yvex_error *err);
-int yvex_runtime_generation_context_close(
-    yvex_runtime_generation_context **context, yvex_error *err);
+int yvex_runtime_generation_context_close(yvex_runtime_generation_context **context, yvex_error *err);
 typedef struct {
     const char *target, *artifact_path, *runtime_binding_path;
     yvex_backend_kind backend;

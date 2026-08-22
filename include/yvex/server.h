@@ -1,5 +1,5 @@
 /* Local clients and the foreground server exchange bounded versioned frames without sharing
- * engine pointers. The server alone owns model, worker, queue, session, and KV lifetimes. */
+ * engine pointers. The server alone owns model, scheduler, queue, session, and KV lifetimes. */
 #ifndef YVEX_SERVER_H
 #define YVEX_SERVER_H
 #include <yvex/artifact.h>
@@ -9,7 +9,8 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#define YVEX_LOCAL_PROTOCOL_VERSION 9u
+#define YVEX_LOCAL_PROTOCOL_VERSION 11u
+#define YVEX_SERVER_OPTIONS_SCHEMA_V2 2u
 #define YVEX_CLIENT_PARTIAL_TURN_SCHEMA_V1 1u
 #define YVEX_CLIENT_STATE_CHECKPOINT_SCHEMA_V1 1u
 #define YVEX_RUNTIME_EVENT_SCHEMA_VERSION 3u
@@ -39,7 +40,8 @@ typedef enum {
 } yvex_server_trace_level;
 typedef enum {
     YVEX_SERVER_CONSOLE_OFF = 0,
-    YVEX_SERVER_CONSOLE_RAW
+    YVEX_SERVER_CONSOLE_RAW,
+    YVEX_SERVER_CONSOLE_HUMAN
 } yvex_server_console_kind;
 typedef enum {
     YVEX_SERVER_GENERATION_TARGET_ONLY = 0,
@@ -149,16 +151,19 @@ typedef struct {
     unsigned long long telemetry_dropped;
 } yvex_server_metrics;
 typedef struct {
+    unsigned int schema_version;
     const char *artifact_path;
     const char *runtime_binding_path;
     const char *target_id;
     const char *socket_path;
     yvex_backend_kind backend;
     yvex_server_generation_mode generation_mode;
-    unsigned long long context_capacity, prefill_chunk_tokens;
+    unsigned long long context_capacity;
+    /* Zero selects the server-owned adaptive prefill policy. */
+    unsigned long long prefill_chunk_tokens;
     unsigned long long maximum_new_tokens, maximum_output_bytes;
     unsigned long long maximum_host_bytes, maximum_device_bytes;
-    unsigned long long maximum_sessions, request_queue_capacity;
+    unsigned long long maximum_sessions, request_queue_capacity, concurrent_sequences;
     unsigned long long sampling_seed;
     unsigned long long openai_timeout_ms;
     unsigned short openai_port;
@@ -177,16 +182,20 @@ typedef struct {
     char runtime_binding_identity[YVEX_SHA256_HEX_CAP];
     char artifact_identity[YVEX_SHA256_HEX_CAP];
     char physical_variant_identity[YVEX_SHA256_HEX_CAP];
+    char capacity_plan_identity[YVEX_SHA256_HEX_CAP];
     unsigned long long context_capacity, session_count, request_count;
     unsigned long long prefill_chunk_tokens, maximum_new_tokens;
     unsigned long long maximum_output_bytes, maximum_sessions;
-    unsigned long long request_queue_capacity, openai_timeout_ms;
+    unsigned long long request_queue_capacity, concurrent_sequences;
+    unsigned long long capacity_required_bytes, capacity_unreserved_bytes;
+    unsigned long long openai_timeout_ms;
     unsigned short openai_port;
     yvex_server_trace_level trace_level;
     yvex_server_metrics metrics;
     int runtime_ready, generation_ready, public_server_ready;
     int openai_listener_enabled, openai_listener_ready;
     int explicit_reasoning_channel_supported;
+    int independent_session_scheduling_ready, continuous_batching_ready;
 } yvex_server_summary;
 typedef enum {
     YVEX_CLIENT_OP_HANDSHAKE = 0,
@@ -202,6 +211,7 @@ typedef enum {
     YVEX_CLIENT_OP_SESSION_RESET,
     YVEX_CLIENT_OP_SESSION_STATE_SAVE,
     YVEX_CLIENT_OP_SESSION_STATE_RESTORE,
+    YVEX_CLIENT_OP_SESSION_FORK,
     YVEX_CLIENT_OP_SESSION_CLOSE,
     YVEX_CLIENT_OP_GENERATION_TURN,
     YVEX_CLIENT_OP_GENERATION_CANCEL,
@@ -326,10 +336,12 @@ typedef struct {
     yvex_client_operation operation;
     unsigned long long request_number;
     char session_name[YVEX_SERVER_SESSION_NAME_CAP];
+    char fork_session_name[YVEX_SERVER_SESSION_NAME_CAP];
     char state_path[YVEX_SERVER_STATE_PATH_CAP];
     const unsigned char *prompt;
     unsigned long long prompt_bytes, maximum_new_tokens;
     unsigned long long maximum_state_file_bytes;
+    unsigned long long maximum_prefix_bytes;
     int stochastic, seed_present;
     unsigned long long seed;
     double temperature, top_p, min_p, typical_p;

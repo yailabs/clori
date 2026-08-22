@@ -171,7 +171,6 @@ int yvex_cuda_work_cleanup(yvex_cuda_work *work, yvex_error *err)
     if (result == YVEX_OK) yvex_error_clear(err);
     return result;
 }
-
 static int parse_device_index(const char *text, int *out, yvex_error *err)
 {
     long value = 0;
@@ -222,8 +221,7 @@ static int cuda_blas_open(yvex_backend *backend, yvex_error *err)
     *(void **)(&blas->destroy) = dlsym(blas->library, "cublasDestroy_v2");
     *(void **)(&blas->set_stream) = dlsym(blas->library, "cublasSetStream_v2");
     *(void **)(&blas->gemm_ex) = dlsym(blas->library, "cublasGemmEx");
-    *(void **)(&blas->gemm_strided_batched_ex) =
-        dlsym(blas->library, "cublasGemmStridedBatchedEx");
+    *(void **)(&blas->gemm_strided_batched_ex) = dlsym(blas->library, "cublasGemmStridedBatchedEx");
     if (!blas->create || !blas->destroy || !blas->set_stream || !blas->gemm_ex ||
         blas->create(&blas->handle) != 0 ||
         blas->set_stream(blas->handle, state->execution_stream) != 0) {
@@ -496,6 +494,14 @@ static int cuda_close(yvex_backend *backend, yvex_error *err)
     rc = cuda_execution_stream_close(backend, err);
     if (rc != YVEX_OK)
         return rc;
+    if (state->transformer_status) {
+        rc = yvex_cuda_temporary_free(
+            backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+            &state->transformer_status, sizeof(int), 0,
+            "cuda.transformer.status.close", err);
+        if (rc != YVEX_OK) return rc;
+        state->status_transaction_active = 0;
+    }
     rc = cuda_timing_close(backend, err);
     if (rc != YVEX_OK)
         return rc;
@@ -539,8 +545,7 @@ static int cuda_close(yvex_backend *backend, yvex_error *err)
     return YVEX_OK;
 }
 
-static int cuda_memory_stats(const yvex_backend *backend,
-                             yvex_backend_memory_stats *out,
+static int cuda_memory_stats(const yvex_backend *backend, yvex_backend_memory_stats *out,
                              yvex_error *err)
 {
     if (!backend || !out) {
@@ -973,109 +978,6 @@ static int cuda_tensor_decommit(yvex_backend *backend,
     return YVEX_OK;
 }
 
-static int cuda_resident_alloc(yvex_backend *backend, const yvex_backend_tensor_desc *desc,
-                               yvex_device_tensor **out, unsigned char **host, yvex_error *err)
-{
-    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
-    yvex_device_tensor *tensor = NULL;
-    unsigned char *imported = host ? *host : NULL;
-    CUdeviceptr pointer = 0ull;
-    unsigned int index;
-    int rc;
-    if (out) *out = NULL;
-    if (!backend || !state || !desc || !out || !host || !desc->name || desc->rank == 0u ||
-        desc->rank > YVEX_TENSOR_MAX_DIMS || desc->bytes == 0ull ||
-        desc->bytes > (unsigned long long)SIZE_MAX || state->context_borrowed ||
-        !backend->device_info.unified_addressing ||
-        (imported && (!state->driver.cuMemHostRegister_v2 ||
-                      !state->driver.cuMemHostGetDevicePointer_v2 ||
-                      !state->driver.cuMemHostUnregister || state->registered_host)) ||
-        (!imported && (!backend->device_info.managed_memory ||
-                       !state->driver.cuMemAllocManaged))) {
-        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "cuda.residency.alloc",
-                       "one valid imported-host or managed CUDA residency is required");
-        return YVEX_ERR_UNSUPPORTED;
-    }
-    for (index = 0u; index < desc->rank; ++index) {
-        if (desc->dims[index] == 0ull) {
-            yvex_error_set(err, YVEX_ERR_INVALID_ARG, "cuda.residency.alloc",
-                           "managed allocation dimensions must be non-zero");
-            return YVEX_ERR_INVALID_ARG;
-        }
-    }
-    if (!imported) {
-        rc = yvex_backend_memory_can_add(
-            backend, desc->bytes, "CUDA managed", "cuda.residency.alloc", err);
-        if (rc != YVEX_OK) return rc;
-    }
-    tensor = (yvex_device_tensor *)calloc(1u, sizeof(*tensor));
-    if (tensor) tensor->name = yvex_core_strdup(desc->name);
-    if (!tensor || !tensor->name) {
-        free(tensor);
-        yvex_error_set(err, YVEX_ERR_NOMEM, "cuda.residency.alloc",
-                       "managed tensor metadata allocation failed");
-        return YVEX_ERR_NOMEM;
-    }
-    rc = yvex_cuda_set_current(backend, "cuda.residency.alloc", err);
-    if (rc == YVEX_OK && imported && getenv("YVEX_TEST_CUDA_HOST_REGISTER_FAILURE")) {
-        yvex_error_set(err, YVEX_ERR_BACKEND, "cuda.residency.register",
-                       "injected CUDA host registration failure");
-        rc = YVEX_ERR_BACKEND;
-    } else if (rc == YVEX_OK && !imported &&
-               getenv("YVEX_TEST_CUDA_MANAGED_ALLOC_FAILURE")) {
-        yvex_error_set(err, YVEX_ERR_BACKEND, "cuda.residency.alloc",
-                       "injected managed allocation failure");
-        rc = YVEX_ERR_BACKEND;
-    }
-    if (rc == YVEX_OK && imported) {
-        rc = yvex_cuda_status(
-            &state->driver,
-            state->driver.cuMemHostRegister_v2(
-                imported, (size_t)desc->bytes, YVEX_CUDA_MEMHOSTREGISTER_DEVICEMAP),
-            "cuda.residency.register", err);
-        if (rc == YVEX_OK) {
-            state->registered_host = imported;
-            state->registered_bytes = desc->bytes;
-            rc = yvex_cuda_status(
-                &state->driver,
-                state->driver.cuMemHostGetDevicePointer_v2(&pointer, imported, 0u),
-                "cuda.residency.address", err);
-            if (rc == YVEX_OK) state->registered_device = pointer;
-        }
-    } else if (rc == YVEX_OK) {
-        rc = yvex_cuda_status(
-            &state->driver,
-            state->driver.cuMemAllocManaged(
-                &pointer, (size_t)desc->bytes, YVEX_CUDA_MEM_ATTACH_GLOBAL),
-            "cuda.residency.alloc", err);
-    }
-    if (rc != YVEX_OK) {
-        if (state->registered_host && state->driver.cuMemHostUnregister &&
-            state->driver.cuMemHostUnregister(state->registered_host) == YVEX_CUDA_SUCCESS) {
-            state->registered_host = NULL;
-            state->registered_device = 0ull;
-            state->registered_bytes = 0ull;
-        }
-        free(tensor->name);
-        free(tensor);
-        return rc;
-    }
-    tensor->owner = backend;
-    tensor->owner_id = backend->tensor_id_next++;
-    tensor->dtype = desc->dtype;
-    tensor->rank = desc->rank;
-    for (index = 0u; index < desc->rank; ++index) tensor->dims[index] = desc->dims[index];
-    tensor->bytes = desc->bytes;
-    tensor->data = (unsigned char *)(uintptr_t)pointer;
-    tensor->host_data = imported ? imported : tensor->data;
-    tensor->host_accessible = 1;
-    tensor->is_written = imported != NULL;
-    if (!imported) backend_memory_acquire(backend, desc->bytes);
-    *out = tensor;
-    *host = tensor->host_data;
-    yvex_error_clear(err);
-    return YVEX_OK;
-}
 /*
  * Own CUDA tensor allocation, transfer, copy, accounting, and release.
  *
@@ -1094,7 +996,6 @@ static int cuda_tensor_alloc(yvex_backend *backend,
     yvex_error cleanup_error, primary_error;
     CUdeviceptr ptr = 0;
     unsigned int i;
-    int cleanup_rc;
     int rc;
     memset(&work, 0, sizeof(work));
     if (!backend || !state || !out) {
@@ -1155,7 +1056,6 @@ static int cuda_tensor_alloc(yvex_backend *backend,
     tensor->bytes = desc->bytes;
     tensor->data = (unsigned char *)(uintptr_t)ptr;
     work.count = 0u;
-    work.current_bytes = 0ull;
     (void)yvex_cuda_refresh_memory_info(backend, err);
     *out = tensor;
     yvex_error_clear(err);
@@ -1165,16 +1065,36 @@ allocation_failure:
         primary_error = *err;
     else
         yvex_error_clear(&primary_error);
-    cleanup_rc = yvex_cuda_work_cleanup(&work, &cleanup_error);
-    (void)cleanup_rc;
-    if (err)
+    (void)yvex_cuda_work_cleanup(&work, &cleanup_error);
+    if (err && rc == YVEX_ERR_NOMEM)
+        yvex_error_setf(err, rc, "cuda.tensor_alloc", "%s allocation of %llu bytes failed: %s",
+                        desc->name, desc->bytes, yvex_error_message(&primary_error));
+    else if (err)
         *err = primary_error;
     return rc;
 }
 
-static int cuda_tensor_free(yvex_backend *backend,
-                          yvex_device_tensor *tensor,
-                          yvex_error *err)
+static int cuda_tensor_release_wait(yvex_backend *backend, yvex_error *err)
+{
+    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    CUstream stream = yvex_cuda_launch_stream(backend);
+    if (!state) {
+        yvex_error_set(err, YVEX_ERR_STATE, "cuda.tensor_free.wait",
+                       "CUDA tensor release state is missing");
+        return YVEX_ERR_STATE;
+    }
+    /* Cleanup bypasses dispatch admission so a prior capability failure cannot strand storage,
+     * while the direct driver barrier still reports asynchronous device failure. */
+    return yvex_cuda_status(
+        &state->driver,
+        stream && state->driver.cuStreamSynchronize
+            ? state->driver.cuStreamSynchronize(stream)
+            : state->driver.cuCtxSynchronize(),
+        "cuda.tensor_free.wait", err);
+}
+
+static int cuda_tensor_free(yvex_backend *backend, yvex_device_tensor *tensor,
+                            yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     cuda_virtual_allocation *allocation;
@@ -1190,6 +1110,10 @@ static int cuda_tensor_free(yvex_backend *backend,
     if (rc != YVEX_OK) {
         return rc;
     }
+    /* Cross-stream copies return consumption to the source stream. Observe that stream before
+     * releasing borrowed storage; cuMemFree is not an implicit completion/error barrier. */
+    rc = cuda_tensor_release_wait(backend, err);
+    if (rc != YVEX_OK) return rc;
     allocation = (cuda_virtual_allocation *)tensor->backend_allocation;
     if (tensor->virtual_reserved && allocation) {
         rc = cuda_tensor_decommit(backend, tensor, &released, err);
@@ -1207,9 +1131,7 @@ static int cuda_tensor_free(yvex_backend *backend,
         tensor->data = NULL;
     }
     pointer = yvex_cuda_tensor_ptr(tensor);
-    if (tensor->virtual_reserved) {
-        rc = YVEX_OK;
-    } else if (tensor->host_data && state->registered_host == tensor->host_data &&
+    if (tensor->host_data && state->registered_host == tensor->host_data &&
         state->registered_device == pointer && state->registered_bytes == tensor->bytes) {
         rc = state->driver.cuMemHostUnregister
                  ? yvex_cuda_status(&state->driver,
@@ -1224,6 +1146,8 @@ static int cuda_tensor_free(yvex_backend *backend,
             state->registered_device = 0ull;
             state->registered_bytes = 0ull;
         }
+    } else if (tensor->virtual_reserved || tensor->borrowed_host) {
+        rc = YVEX_OK;
     } else {
         rc = yvex_cuda_temporary_free(backend, YVEX_BACKEND_VARIANT_TENSOR_ALLOC,
                                       &pointer, tensor->bytes, 0,
@@ -1247,6 +1171,11 @@ static int cuda_tensor_write(yvex_backend *backend,
                            yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    if (tensor && tensor->borrowed_host) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "cuda.tensor_write",
+                       "immutable artifact-backed tensor cannot be written");
+        return YVEX_ERR_UNSUPPORTED;
+    }
     int rc = yvex_backend_tensor_rw_validate(
         "yvex_backend_tensor_write", backend, tensor, len, err);
     if (rc != YVEX_OK) {
@@ -1379,6 +1308,77 @@ static int cuda_tensor_copy_async(yvex_backend *backend,
                            : (CUresult)1;
     rc = yvex_cuda_status(&state->driver, copied,
                           "runtime.state.residency.copy", err);
+    if (rc == YVEX_OK) dst->is_written = src->is_written;
+    return rc;
+}
+
+/* Preserve source readiness and destination consumption before either borrowed view is reused. */
+static int cuda_tensor_copy_shared_async(yvex_backend *backend, yvex_device_tensor *dst,
+    const yvex_device_tensor *src, yvex_error *err)
+{
+    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    yvex_cuda_backend_state *source_state = yvex_cuda_state(src ? src->owner : NULL);
+    CUevent consumed = NULL, ready = NULL;
+    CUstream destination_stream, source_stream;
+    int rc;
+    if (!state || !source_state || !dst || !src ||
+        !(destination_stream = yvex_cuda_launch_stream(backend)) ||
+        !(source_stream = yvex_cuda_launch_stream(src->owner)) ||
+        !state->driver.cuMemcpyDtoDAsync_v2 || !state->driver.cuEventCreate ||
+        !state->driver.cuEventRecord || !state->driver.cuEventDestroy_v2 ||
+        !state->driver.cuStreamWaitEvent) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "backend.tensor.copy-shared",
+                       "CUDA cross-stream event ordering is unavailable");
+        return YVEX_ERR_UNSUPPORTED;
+    }
+    rc = yvex_cuda_set_current(backend, "backend.tensor.copy-shared", err);
+    if (rc != YVEX_OK) return rc;
+    if (source_stream != destination_stream) {
+        rc = yvex_cuda_status(
+            &state->driver, state->driver.cuEventCreate(&ready, 2u),
+            "backend.tensor.copy-shared.event", err);
+        if (rc == YVEX_OK)
+            rc = yvex_cuda_status(&state->driver,
+                state->driver.cuEventCreate(&consumed, 2u),
+                "backend.tensor.copy-shared.consumed-event", err);
+        if (rc == YVEX_OK)
+            rc = yvex_cuda_status(&state->driver,
+                state->driver.cuEventRecord(ready, source_stream),
+                "backend.tensor.copy-shared.record", err);
+        if (rc == YVEX_OK)
+            rc = yvex_cuda_status(&state->driver,
+                state->driver.cuStreamWaitEvent(destination_stream, ready, 0u),
+                "backend.tensor.copy-shared.wait", err);
+    }
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_status(
+            &state->driver,
+            state->driver.cuMemcpyDtoDAsync_v2(
+                yvex_cuda_tensor_ptr(dst), yvex_cuda_tensor_ptr(src),
+                (size_t)src->bytes, destination_stream),
+            "backend.tensor.copy-shared.copy", err);
+    if (rc == YVEX_OK && consumed) {
+        rc = yvex_cuda_status(&state->driver,
+            state->driver.cuEventRecord(consumed, destination_stream),
+            "backend.tensor.copy-shared.consumed-record", err);
+        if (rc == YVEX_OK)
+            rc = yvex_cuda_status(&state->driver,
+                state->driver.cuStreamWaitEvent(source_stream, consumed, 0u),
+                "backend.tensor.copy-shared.consumed-wait", err);
+    }
+    if (consumed) {
+        int cleanup = yvex_cuda_status(
+            &state->driver, state->driver.cuEventDestroy_v2(consumed),
+            "backend.tensor.copy-shared.consumed-event-close",
+            rc == YVEX_OK ? err : NULL);
+        if (rc == YVEX_OK) rc = cleanup;
+    }
+    if (ready) {
+        int cleanup = yvex_cuda_status(
+            &state->driver, state->driver.cuEventDestroy_v2(ready),
+            "backend.tensor.copy-shared.event-close", rc == YVEX_OK ? err : NULL);
+        if (rc == YVEX_OK) rc = cleanup;
+    }
     if (rc == YVEX_OK) dst->is_written = src->is_written;
     return rc;
 }
@@ -1589,7 +1589,7 @@ static int cuda_bandwidth_probe(yvex_backend *backend,
     descriptor.dtype = YVEX_DTYPE_I8;
     descriptor.rank = 1u;
     descriptor.dims[0] = descriptor.bytes = evidence.working_set_bytes;
-    rc = cuda_resident_alloc(owner, &descriptor, &managed, &host, err);
+    rc = yvex_cuda_resident_alloc(owner, &descriptor, &managed, &host, err);
     descriptor.name = "bandwidth-copy";
     if (rc == YVEX_OK) rc = yvex_backend_tensor_alloc(owner, &descriptor, &copy, err);
     descriptor.name = "bandwidth-status";
@@ -1687,7 +1687,11 @@ static const yvex_backend_vtable cuda_vtable = {
     cuda_device_info,
     cuda_bandwidth_probe,
     cuda_tensor_alloc,
-    cuda_resident_alloc,
+    yvex_cuda_resident_alloc,
+    yvex_cuda_resident_map_supported,
+    yvex_cuda_resident_map_readonly,
+    yvex_cuda_resident_prefetch_supported,
+    yvex_cuda_resident_prefetch,
     cuda_tensor_reserve,
     cuda_tensor_commit,
     cuda_tensor_decommit,
@@ -1696,6 +1700,7 @@ static const yvex_backend_vtable cuda_vtable = {
     cuda_tensor_read,
     cuda_tensor_copy,
     cuda_tensor_copy_async,
+    cuda_tensor_copy_shared_async,
     cuda_sync,
     yvex_cuda_query_capability,
     yvex_cuda_op_embed,
@@ -1758,10 +1763,15 @@ int yvex_backend_open_cuda_impl(yvex_backend **out,
                                 unsigned long long memory_limit_bytes,
                                 yvex_error *err)
 {
+    enum {
+        CUDA_DEVICE_ATTRIBUTE_PAGEABLE_MEMORY_ACCESS = 88,
+        CUDA_DEVICE_ATTRIBUTE_PAGEABLE_USES_HOST_PAGE_TABLES = 100
+    };
     yvex_backend *backend = NULL;
     yvex_cuda_backend_state *state = NULL;
     int device_index = 0, device_count = 0, unified = 0, managed = 0;
-    int can_map_host = 0, virtual_memory_management = 0;
+    int can_map_host = 0, host_register_readonly = 0, virtual_memory_management = 0;
+    int pageable_memory_access = 0, pageable_uses_host_page_tables = 0;
     size_t global_bytes = 0;
     int rc;
     if (!out) {
@@ -1838,8 +1848,18 @@ int yvex_backend_open_cuda_impl(yvex_backend **out,
                                              YVEX_CUDA_DEVICE_ATTRIBUTE_MANAGED_MEMORY,
                                              state->device);
     (void)state->driver.cuDeviceGetAttribute(
+        &pageable_memory_access,
+        CUDA_DEVICE_ATTRIBUTE_PAGEABLE_MEMORY_ACCESS, state->device);
+    (void)state->driver.cuDeviceGetAttribute(
+        &pageable_uses_host_page_tables,
+        CUDA_DEVICE_ATTRIBUTE_PAGEABLE_USES_HOST_PAGE_TABLES, state->device);
+    (void)state->driver.cuDeviceGetAttribute(
         &virtual_memory_management,
         YVEX_CUDA_DEVICE_ATTRIBUTE_VIRTUAL_MEMORY_MANAGEMENT,
+        state->device);
+    (void)state->driver.cuDeviceGetAttribute(
+        &host_register_readonly,
+        YVEX_CUDA_DEVICE_ATTRIBUTE_HOST_REGISTER_READ_ONLY_SUPPORTED,
         state->device);
     state->virtual_memory_management =
         virtual_memory_management != 0 && state->driver.cuMemAddressReserve &&
@@ -1847,6 +1867,10 @@ int yvex_backend_open_cuda_impl(yvex_backend **out,
         state->driver.cuMemRelease && state->driver.cuMemMap &&
         state->driver.cuMemUnmap && state->driver.cuMemSetAccess &&
         state->driver.cuMemGetAllocationGranularity;
+    state->can_map_host = can_map_host != 0;
+    state->host_register_readonly = host_register_readonly != 0;
+    backend->pageable_memory_access = pageable_memory_access != 0;
+    backend->pageable_uses_host_page_tables = pageable_uses_host_page_tables != 0;
     backend->virtual_tensor_ready = state->virtual_memory_management;
     backend->status = YVEX_BACKEND_STATUS_CONTEXT_READY;
     backend->stats.memory_limit_bytes = memory_limit_bytes;

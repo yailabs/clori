@@ -480,7 +480,7 @@ fi
 if rg -n -i '(families/|deepseek|minimax)' src/model/artifacts/gate.c; then
     fail "generic model-artifact gate contains concrete family semantics"
 fi
-artifact_catalog_owners=$(rg -l 'deepseek_(selected|native_drafter)_catalog' src include |
+artifact_catalog_owners=$(rg -l 'deepseek_artifact_catalog' src include |
     LC_ALL=C sort)
 if [ "$artifact_catalog_owners" != 'src/graph/families/deepseek_v4.c' ]; then
     printf '%s\n' "$artifact_catalog_owners" >&2

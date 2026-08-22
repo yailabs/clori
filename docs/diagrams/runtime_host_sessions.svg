@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1040" viewBox="0 0 1600 1040" role="img" aria-labelledby="title desc">
   <title id="title">Runtime host and session ownership</title>
-  <desc id="desc">Native clients connect across a private local protocol and OpenAI-compatible applications connect through an integrated loopback adapter to one foreground YVEX server process. The server owns immutable model resources, a bounded model worker, conversation sessions with persistent KV, and one typed event authority.</desc>
+  <desc id="desc">Native clients connect across a private local protocol and OpenAI-compatible applications connect through an integrated loopback adapter to one foreground YVEX server process. The server owns immutable model resources, bounded keyed scheduler workers, conversation sessions with persistent KV, and one typed event authority.</desc>
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0 0L0 6L9 3z" class="arrow-fill"/></marker>
     <style>
@@ -29,7 +29,7 @@
   <rect class="state" x="765" y="235" width="180" height="60" rx="8"/><text class="small" x="855" y="263">residency</text><text class="small" x="855" y="283">output head + weights</text>
 
   <rect class="group" x="320" y="345" width="650" height="175" rx="12"/>
-  <text class="text" x="645" y="376">Model worker</text>
+  <text class="text" x="645" y="376">Keyed scheduler</text>
   <rect class="state" x="355" y="405" width="210" height="75" rx="8"/><text class="text" x="460" y="434">Bounded request queue</text><text class="small" x="460" y="459">explicit refusal + cancellation</text>
   <rect class="state" x="615" y="405" width="315" height="75" rx="8"/><text class="text" x="772" y="434">Serialized execution coordinator</text><text class="small" x="772" y="459">one graph mutation at a time</text>
   <path class="line" d="M565 442H608"/>

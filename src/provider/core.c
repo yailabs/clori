@@ -46,9 +46,8 @@ void yvex_provider_request_default(yvex_provider_request *request)
     if (!request)
         return;
     memset(request, 0, sizeof(*request));
-    request->schema_version = YVEX_PROVIDER_SCHEMA_V2;
+    request->schema_version = YVEX_PROVIDER_SCHEMA_V3;
     request->response_format = YVEX_PROVIDER_RESPONSE_TEXT;
-    request->maximum_output_tokens = 128u;
     request->tool_choice.kind = YVEX_PROVIDER_TOOL_CHOICE_AUTO;
     request->reasoning_policy = YVEX_REASONING_DISABLED;
     request->drop_thinking = 1;
@@ -146,7 +145,7 @@ static int tool_valid(const yvex_provider_function_tool *tool,
         !span_valid(tool->parameters_json,
                     YVEX_PROVIDER_MAX_TOOL_SCHEMA_BYTES, 0) ||
         (tool->strict != 0 && tool->strict != 1) ||
-        (schema_version == YVEX_PROVIDER_SCHEMA_V2 &&
+        (schema_version != YVEX_PROVIDER_SCHEMA_V1 &&
          ((tool->description_present != 0 && tool->description_present != 1) ||
           (tool->strict_present != 0 && tool->strict_present != 1) ||
           (!tool->description_present && tool->description.count) ||
@@ -224,8 +223,7 @@ static int request_fields_validate(const yvex_provider_request *request,
     unsigned long long index, other, total = 0u;
     int named_found = 0;
     if (!request ||
-        (request->schema_version != YVEX_PROVIDER_SCHEMA_V1 &&
-         request->schema_version != YVEX_PROVIDER_SCHEMA_V2) ||
+        (request->schema_version < YVEX_PROVIDER_SCHEMA_V1 || request->schema_version > YVEX_PROVIDER_SCHEMA_V3) ||
         !identifier_valid(request->model, sizeof(request->model), 0) ||
         !request->messages || !request->message_count ||
         request->message_count > YVEX_PROVIDER_MAX_MESSAGES ||
@@ -243,7 +241,8 @@ static int request_fields_validate(const yvex_provider_request *request,
         (request->drop_thinking != 0 && request->drop_thinking != 1) ||
         (request->schema_version == YVEX_PROVIDER_SCHEMA_V1 &&
          request->reasoning_policy != YVEX_REASONING_DISABLED) ||
-        !request->maximum_output_tokens ||
+        (request->schema_version != YVEX_PROVIDER_SCHEMA_V3 &&
+         !request->maximum_output_tokens) ||
         request->maximum_output_tokens > UINT32_MAX ||
         (request->stream != 0 && request->stream != 1) ||
         (request->include_usage != 0 && request->include_usage != 1) ||
@@ -349,9 +348,11 @@ static int request_identity(yvex_provider_request *request)
     unsigned long long index, call;
     yvex_sha256_init(&hash);
     if (!yvex_sha256_update_text(
-            &hash, request->schema_version == YVEX_PROVIDER_SCHEMA_V2
-                       ? "yvex.provider.request.v2"
-                       : "yvex.provider.request.v1") ||
+            &hash, request->schema_version == YVEX_PROVIDER_SCHEMA_V3
+                       ? "yvex.provider.request.v3"
+                       : request->schema_version == YVEX_PROVIDER_SCHEMA_V2
+                             ? "yvex.provider.request.v2"
+                             : "yvex.provider.request.v1") ||
         !yvex_sha256_update_u64_be(&hash, request->schema_version) ||
         !yvex_sha256_update_text(&hash, request->model) ||
         !yvex_sha256_update_u64_be(&hash, request->message_count))
@@ -360,7 +361,7 @@ static int request_identity(yvex_provider_request *request)
         const yvex_provider_message *message = &request->messages[index];
         if (!yvex_sha256_update_u64_be(&hash, message->role) ||
             !hash_span(&hash, message->content) ||
-            (request->schema_version == YVEX_PROVIDER_SCHEMA_V2 &&
+            (request->schema_version != YVEX_PROVIDER_SCHEMA_V1 &&
              !hash_span(&hash, message->reasoning_content)) ||
             !yvex_sha256_update_text(&hash, message->tool_call_id) ||
             !yvex_sha256_update_u64_be(&hash, message->tool_call_count))
@@ -376,7 +377,7 @@ static int request_identity(yvex_provider_request *request)
         if (!yvex_sha256_update_text(&hash, request->tools[index].name) ||
             !hash_span(&hash, request->tools[index].description) ||
             !hash_span(&hash, request->tools[index].parameters_json) ||
-            (request->schema_version == YVEX_PROVIDER_SCHEMA_V2 &&
+            (request->schema_version != YVEX_PROVIDER_SCHEMA_V1 &&
              (!yvex_sha256_update_u64_be(
                   &hash, request->tools[index].description_present) ||
               !yvex_sha256_update_u64_be(
@@ -390,7 +391,7 @@ static int request_identity(yvex_provider_request *request)
         !yvex_sha256_update_text(&hash, request->tool_choice.function_name) ||
         !yvex_sha256_update_u64_be(&hash, request->tool_choice.parallel_calls) ||
         !yvex_sha256_update_u64_be(&hash, request->response_format) ||
-        (request->schema_version == YVEX_PROVIDER_SCHEMA_V2 &&
+        (request->schema_version != YVEX_PROVIDER_SCHEMA_V1 &&
          (!yvex_sha256_update_u64_be(&hash, request->reasoning_policy) ||
           !yvex_sha256_update_u64_be(&hash, request->drop_thinking))) ||
         !yvex_sha256_update_u64_be(&hash, request->sampling.stochastic) ||
@@ -627,20 +628,12 @@ static int write_text(provider_writer *writer, const char *text, size_t capacity
 
 static unsigned int request_wire_schema(unsigned int request_schema)
 {
-    switch (request_schema) {
-    case YVEX_PROVIDER_SCHEMA_V1: return YVEX_PROVIDER_WIRE_SCHEMA_V1;
-    case YVEX_PROVIDER_SCHEMA_V2: return YVEX_PROVIDER_WIRE_SCHEMA_V2;
-    }
-    return 0u;
+    return request_schema <= YVEX_PROVIDER_SCHEMA_V3 ? request_schema : 0u;
 }
 
 static unsigned int wire_request_schema(unsigned int wire_schema)
 {
-    switch (wire_schema) {
-    case YVEX_PROVIDER_WIRE_SCHEMA_V1: return YVEX_PROVIDER_SCHEMA_V1;
-    case YVEX_PROVIDER_WIRE_SCHEMA_V2: return YVEX_PROVIDER_SCHEMA_V2;
-    }
-    return 0u;
+    return wire_schema <= YVEX_PROVIDER_WIRE_SCHEMA_V3 ? wire_schema : 0u;
 }
 
 /* Encode one sealed provider request in deterministic field order. */
@@ -674,7 +667,7 @@ int yvex_provider_request_wire_encode(const yvex_provider_request *request,
     for (index = 0u; index < request->message_count; ++index) {
         const yvex_provider_message *message = &request->messages[index];
         if (!W32(message->role) || !write_span(&writer, message->content) ||
-            (request->schema_version == YVEX_PROVIDER_SCHEMA_V2 &&
+            (request->schema_version != YVEX_PROVIDER_SCHEMA_V1 &&
              !write_span(&writer, message->reasoning_content)) ||
             !write_text(&writer, message->tool_call_id,
                         sizeof(message->tool_call_id)) ||
@@ -694,7 +687,7 @@ int yvex_provider_request_wire_encode(const yvex_provider_request *request,
             !write_span(&writer, request->tools[index].description) ||
             !write_span(&writer, request->tools[index].parameters_json) ||
             !W32(request->tools[index].strict) ||
-            (request->schema_version == YVEX_PROVIDER_SCHEMA_V2 &&
+            (request->schema_version != YVEX_PROVIDER_SCHEMA_V1 &&
              (!W32(request->tools[index].description_present) ||
               !W32(request->tools[index].strict_present)))) goto bounds;
     if (!W32(request->stop_count)) goto bounds;
@@ -705,7 +698,7 @@ int yvex_provider_request_wire_encode(const yvex_provider_request *request,
                     sizeof(request->tool_choice.function_name)) ||
         !W32(request->tool_choice.parallel_calls) ||
         !W32(request->response_format) ||
-        (request->schema_version == YVEX_PROVIDER_SCHEMA_V2 &&
+        (request->schema_version != YVEX_PROVIDER_SCHEMA_V1 &&
          (!W32(request->reasoning_policy) || !W32(request->drop_thinking))) ||
         !W32(request->sampling.stochastic) ||
         !W32(request->sampling.seed_present) || !W64(request->sampling.seed) ||
@@ -831,8 +824,7 @@ int yvex_provider_request_wire_decode(const unsigned char *input,
     if (!request) goto no_memory;
     if (!read_u32(&reader, &magic) || !read_u32(&reader, &schema) ||
         magic != PROVIDER_WIRE_MAGIC ||
-        (schema != YVEX_PROVIDER_WIRE_SCHEMA_V1 &&
-         schema != YVEX_PROVIDER_WIRE_SCHEMA_V2) ||
+        (schema < YVEX_PROVIDER_WIRE_SCHEMA_V1 || schema > YVEX_PROVIDER_WIRE_SCHEMA_V3) ||
         !read_text(&reader, request->model, sizeof(request->model)) ||
         !read_u32(&reader, &count32) || count32 > YVEX_PROVIDER_MAX_MESSAGES)
         goto malformed;
@@ -847,7 +839,7 @@ int yvex_provider_request_wire_decode(const unsigned char *input,
         if (!read_u32(&reader, &value32) || value32 > YVEX_PROVIDER_ROLE_TOOL ||
             !read_span(&reader, &messages[index].content,
                        YVEX_PROVIDER_MAX_MESSAGE_BYTES) ||
-            (schema == YVEX_PROVIDER_WIRE_SCHEMA_V2 &&
+            (schema != YVEX_PROVIDER_WIRE_SCHEMA_V1 &&
              !read_span(&reader, &messages[index].reasoning_content,
                         YVEX_PROVIDER_MAX_MESSAGE_BYTES)) ||
             !read_text(&reader, messages[index].tool_call_id,
@@ -886,7 +878,7 @@ int yvex_provider_request_wire_decode(const unsigned char *input,
             !read_u32(&reader, &value32) || value32 > 1u)
             goto malformed;
         tools[index].strict = (int)value32;
-        if (schema == YVEX_PROVIDER_WIRE_SCHEMA_V2) {
+        if (schema != YVEX_PROVIDER_WIRE_SCHEMA_V1) {
             if (!read_u32(&reader, &value32) || value32 > 1u)
                 goto malformed;
             tools[index].description_present = (int)value32;
@@ -915,7 +907,7 @@ int yvex_provider_request_wire_decode(const unsigned char *input,
     if (!read_u32(&reader, &value32) || value32 > YVEX_PROVIDER_RESPONSE_JSON_OBJECT)
         goto malformed;
     request->response_format = (yvex_provider_response_format)value32;
-    if (schema == YVEX_PROVIDER_WIRE_SCHEMA_V2) {
+    if (schema != YVEX_PROVIDER_WIRE_SCHEMA_V1) {
         if (!read_u32(&reader, &value32) ||
             value32 > YVEX_REASONING_MAXIMUM)
             goto malformed;

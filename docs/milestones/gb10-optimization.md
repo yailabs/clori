@@ -18,24 +18,40 @@ the current persistence, wire, layout, or binary boundary. The frozen
 [contract matrix](../audits/gb10-optimization-691814/contracts.tsv) records the
 reader, writer, migration, and test consequences for every considered change.
 
-Runtime binding v8 is the first admitted persisted change. It authenticates the
-source-derived model-execution descriptor that v7 cannot carry. V7 remains
-readable as the retained reference profile; v8 is emitted beside it. The
-source-authored conversation product path earns local protocol v7, provider
-request/wire v2, tokenizer plan v3, tokenizer provider result v2 and OpenAI
+Runtime binding v8 was the first admitted persisted GB10 change because it
+authenticated source-derived execution geometry that v7 could not carry. The
+compiler/family consolidation subsequently admitted binding v12 as the first
+complete compiler authority. Binding v14 now carries Physical Execution IR v4,
+whose expert decisions seal legal worklist widths and any admitted Tensor Core
+regime without treating request population as a compiled fact; readers refuse
+v7-v13 because those versions cannot represent the current complete execution plan. The frozen contract matrix remains
+historical entry evidence, not the current writer contract. The source-authored conversation product path
+earns local protocol v7, provider
+request/wire v3, tokenizer plan v3, tokenizer provider result v2 and OpenAI
 compatibility profile v2. The installed server-construction API and public
-declaration count remain unchanged. Runtime events remain schema v3, Physical
-Execution IR and compiled profiles remain schema v1. Generation plan ABI v5
+declaration count remain unchanged. Runtime events remain schema v3 and
+compiled profiles remain schema v2. Generation plan ABI v5
 binds the exact workload-profile identity needed to validate its phase roofline
-ledger; result schema v4 and its wire projections remain unchanged. Every
+ledger. Generation-result schema v5 subsequently earned its bump because v4
+cannot bind the committed reasoning-to-final execution boundary; wire
+projections remain unchanged. Every
 admitted change has a concrete fact and compatibility rule in the
-contract matrix; the size of this milestone alone earns no version bump.
+contract matrix; state checkpoints subsequently earned protocol v8, the
+admitted capacity/scheduler projection earned protocol v9, and the explicit
+copy-on-write session-fork request earns protocol v10; adaptive provider limits earn v11. Server options earn
+schema v2 because the concrete `yvex server --parallel` consumer must pass an
+explicit concurrent-sequence request into startup admission. The size of this
+milestone alone earns no version bump.
 
 An implementation-discovered identity change is admitted beside that frozen
 entry audit:
 
 | Contract | Current | Admitted | New fact | Incompatibility | Old behavior | Rule | Tests |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| Physical Execution IR | v2 | v3 | an expert decision seals a distinct large-row kernel family and its checked row-population crossover | persisted decision layout and semantic identity | v2 can name only one kernel family and cannot authenticate a geometry-dependent alternative | rebuild from the family compiler policy; runtime selects one concrete alternative and backend executes it without a hidden threshold | identity mutation, invalid v2 policy refusal, DeepSeek policy projection, native sparse/Tensor Core kernels |
+| Runtime binding | v12 | v13 | Physical Execution IR v3 records | persisted wire layout, payload domain and content identity | v12 is recognized then refused before body parsing because it cannot carry the new physical decision | publish a separate immutable v13 binding; retained v12 files are never overwritten or migrated in place | deterministic prepare/reopen, previous-schema refusal, corruption and physical-identity validation |
+| Physical Execution IR | v3 | v4 | legal expert-worklist widths plus an optional admitted Tensor Core minimum and kernel family | persisted decision layout and semantic identity | v3 can infer a large-row alternative only from total operation population and cannot authenticate compatible expert-bucket width | rebuild from family compiler policy; runtime instantiates actual compatible rows within the sealed mask; backend never invents width | identity mutation, invalid width/TC policy refusal, DeepSeek projection, worklist and CUDA qualification |
+| Runtime binding | v13 | v14 | Physical Execution IR v4 records | persisted wire layout, payload domain and content identity | v13 is recognized then refused before body parsing because it cannot carry the worklist-width decision | publish a separate immutable v14 binding; retained v13 files are never overwritten or migrated in place | deterministic prepare/reopen, previous-schema refusal, corruption and physical-identity validation |
 | Kernel-bundle identity | v2 | v3 | ordered set of independently compiled modules | semantic identity derivation only; no wire or persisted layout | v2 hashes one image and cannot identify the module set | full rebuild admits all manifest-owned modules atomically; model artifacts do not migrate | PTX/native admission, missing-symbol rollback, checked unload retry, identity mutation |
 | Launch-graph identity | v2 | v3 | owned versus borrowed launch-stream policy | semantic identity derivation only; no wire or persisted layout | v2 cannot distinguish an isolated graph stream from the session stream | rebuilt graph registries recapture under the selected stream policy; no model, binding or profile migration | identity mutation, isolated/shared registry separation, capture and warm replay |
 | Graph-executable identity | v1 | v2 | owned versus borrowed launch-stream policy | semantic identity derivation only; no wire or persisted layout | v1 authenticates device and executable topology but omits completion ownership | rebuilt executables are admitted beneath launch-graph v3; old in-process objects are never mixed | exact identity, shared-stream capture/replay, checked teardown |
@@ -49,7 +65,12 @@ entry audit:
 | Attention-state summary | v3 | v4 | capacity-plan identity plus virtual, resident, page-table, commit and release facts | in-process internal record layout only; no persisted or wire representation | rebuilt readers require v4 and never mix old objects | complete rebuild; the page-pool owner projects counters without a second mutable truth | 512K logical reservation, bounded resident growth, reset release and stable-address tests |
 | Attention-state provider ABI | v4 | v5 | capacity-plan configuration before persistent storage admission | in-process function-table layout only; no persisted, wire or public C incompatibility | rebuilt runtime validation rejects a provider without the configuration operation | complete rebuild; target and draft configure under one serialized session mutation and partial configuration invalidates the session | provider forwarding/failure, changed-plan refusal, pre-mutation budget refusal and abort rollback |
 | Attention-state provider ABI | v5 | v6 | exact committed-state restore with lineage and layout identities | in-process function-table layout plus versioned checkpoint payload | rebuilt runtime validation rejects a provider without restore | complete rebuild; checkpoint files remain immutable and model-bound | exact restore, corruption refusal, no partial publication |
+| Attention-state provider ABI | v6 | v7 | capacity and recipe accessors needed by exact versioned state persistence | in-process function-table layout only; persisted checkpoint schema remains independently versioned | rebuilt runtime validation rejects a provider without the geometry accessors | complete rebuild; the store serializes provider-owned geometry rather than reconstructing family facts | save/restore, geometry mutation, corruption and incompatible-capacity refusal |
+| Attention-state provider ABI | v7 | v8 | immutable committed-prefix capture and compatible copy-on-write attachment | in-process function-table layout plus an opaque in-memory prefix owner; no persisted, wire or public C incompatibility | rebuilt runtime validation rejects a provider without both prefix operations | complete rebuild; the durable state-store schema is unchanged and does not deserialize an in-memory prefix owner | byte-budget refusal, exact identity, shared references, copy-on-write isolation, incompatible attach, reset and cleanup |
 | Local protocol | v7 | v8 | typed model-state checkpoint path, restore bound and result evidence | private Unix framing and payload | every non-v8 peer fails handshake | atomic daemon/client cutover; no compatibility decoder | request/message roundtrip, operator reachability, non-v8 refusal |
+| Local protocol | v8 | v9 | startup capacity-plan identity and bytes, admitted concurrent sequences, and distinct independent-scheduling versus continuous-batching readiness | private Unix framing and payload | every non-v9 peer fails handshake | atomic server/client cutover; no compatibility decoder | complete roundtrip, invalid capacity identity, zero concurrency and non-v9 refusal |
+| Local protocol | v9 | v10 | source session, child session and explicit maximum shared-prefix bytes for transactional fork | private Unix framing and payload | every non-v10 peer fails handshake and cannot express fork admission | atomic server/client cutover; no compatibility decoder | all-operation roundtrip, fork-only field refusal, bounded tiny-vertical fork, parent/child isolation |
+| Server options | v1 | v2 | explicit concurrent-sequence request consumed by startup capacity admission and the keyed scheduler | installed C structure layout | v1 writers cannot express concurrency and refuse at schema admission | complete pre-v0.1 rebuild; entrypoint name is unchanged and no side-by-side options authority remains | old-schema refusal, concurrency/session bound, CLI startup and tiny vertical |
 
 The later source-authored conversation gate earned these product-boundary
 changes. Reader and writer behavior remain separate because compatibility in
@@ -61,9 +82,11 @@ one direction does not imply compatibility in the other.
 | Tokenizer plan | v2 | v3 | reasoning token IDs, source identity and conversation capabilities | in-process layout and semantic identity | rebuilt consumers do not mix v2 objects | cannot publish conversation facts | complete rebuild; family-owned retained-binding projection | seal, missing/mutated capability refusal |
 | Tokenizer provider result | v1 | v2 | separate reasoning, final and tool output | in-process result layout | rebuilt consumers do not mix v1 objects | cannot publish typed channels | complete rebuild; no persistence | exact grammar, arbitrary-text non-inference, incomplete refusal |
 | Provider request/wire | v1 | v2 | assistant reasoning, policy/drop facts, presence facts and ordered multiple tool calls | installed C layout, request identity and serialized bytes | old binary rejects or cannot represent v2; current reader admits both | v1 emits only disabled reasoning and one call | retain v1 within exact limits; new facts require v2 | v1/v2 clone, seal, roundtrip, truncation, malformed refusal |
+| Provider request/wire | v2 | v3 | zero maximum output tokens means an adaptive server-envelope selection, while an explicit API zero refuses | request identity and serialized schema meaning | v2 readers reject v3 | v2 writers must provide a positive limit | retain v1/v2 readers; only v3 may encode the adaptive value | v2 compatibility, v3 clone/wire roundtrip, omitted and explicit-zero admission |
 | Local protocol | v6 | v7 | typed error channel and separate reasoning/final metrics | private Unix framing and payload | every non-v7 peer fails handshake | v6 cannot carry the new terminal facts | atomic daemon/client cutover; no compatibility decoder | message/status roundtrip and non-v7 refusal |
+| Local protocol | v10 | v11 | provider v3 adaptive completion semantics | private Unix negotiation and nested provider request | every non-v11 peer fails handshake | v10 cannot execute the adaptive zero contract | atomic server/client cutover; no compatibility decoder | operation/message roundtrip, non-v11 refusal, adaptive provider turn |
 | OpenAI compatibility | v1 | v2 | reasoning policy, `reasoning_content`, reasoning SSE and multiple calls | documented HTTP JSON profile | v1 clients can consume shared additive fields | cannot express the new contract | v2 documents the YVEX-specific projections | Chat/Responses, SSE, tools, usage, cancellation |
-| Public server construction | v1 | v1 | none; no concrete scheduler-construction consumer exists | none | unchanged | unchanged | current entrypoints converge on new internals | declaration count and ABI guard |
+| Public server entrypoints | v1 | v1 | the existing entrypoints consume server-options v2; no second constructor is required | none in the function ABI | rebuilt caller uses options v2 | rebuilt product writes options v2 | one constructor remains canonical | declaration count, schema refusal and CLI reachability |
 
 ## Planning authority
 
@@ -82,9 +105,22 @@ page-table cost, fragmentation, copy-on-write and promotion granularity.
 
 Model residency is preflighted after bounded binding admission and before
 artifact open or materialization. The admitted resident payload must fit both
-the caller's host budget and currently available system memory while preserving
-at least 8 GiB. Refusal reports configured or available bytes against required
-bytes before the model candidate mutates artifact or residency state.
+the caller's host budget and the tighter of currently available system memory
+and the process cgroup-v2 hierarchy while preserving the greater of 8 GiB and
+one eighth of the effective admitted capacity. The preflight runs again after
+artifact authentication and immediately before residency allocation. Refusal
+reports configured or available bytes against required bytes before the model
+candidate mutates residency state. Generation retains the same derived reserve
+in its workload/capacity plan and rechecks live system/cgroup and CUDA
+availability against non-weight resources without making transient free bytes
+part of page geometry, plan identity or durable-state compatibility.
+
+Full artifact admission publishes a rebuildable verified-reopen lease bound to
+the exact artifact identity and filesystem snapshot. An unchanged local reopen
+still validates the snapshot but skips the repeated model-sized payload hash;
+invalid cache evidence falls back to full authentication. Residency schema v6
+then binds the authenticated artifact, materialization and exact copied ranges
+without hashing the complete destination arena a second time.
 
 ## Causal optimization
 
@@ -296,6 +332,18 @@ MoE plan rather than a duplicated physical-variant table. The internal source
 ABI rebuilds atomically; no persisted, wire, public C, execution-profile, or
 state-layout schema changes.
 
+The current `antirez/ds4` reference is pinned at
+`84cc882352757baf628a1776badf7cc54d584e28`. Its D2R path uses expert-major
+worklists and crosses to the large-row Tensor Core regime at a default
+population of 1,024. YVEX adapts that invariant through compiler-owned Physical
+Execution IR rather than a backend-local model heuristic: DeepSeek seals the
+sparse row-regime kernel, the SM121 Tensor Core alternative and the same
+measured crossover. On the admitted 256-expert, top-6 fixture, seven repetitions
+retained the sparse path at two input rows (about 275 microseconds median versus
+315 for the Tensor Core path) and selected Tensor Core execution at 192 rows
+(about 6.3 milliseconds versus 13.3 for sparse execution). These are component
+crossover measurements, not full-model throughput or GB10 closure evidence.
+
 The shared CUDA qtype primitive now admits short-row shapes that form
 geometry-selected two-, four- or eight-lane groups for Q8_0, Q2_K, IQ2_XXS and
 MXFP4 activation dots. Group-local work redistributes only exact integer terms;
@@ -340,6 +388,47 @@ block, while wider batches tile that same mapping without padding the logical
 row count. This keeps output-head and verification rows contiguous in the
 kernel launch, preserves the existing per-warp arithmetic and tail refusal,
 and changes no qtype, numerical, persisted, wire or public contract.
+
+Single-row grouped attention projection now applies the same launch-economy
+principle across output-A groups. One native grouped-decode grid consumes each
+group's distinct F32 activation slice and preserves the canonical qtype warp
+dot; the prior path launched the generic matvec once per group. The current DS4
+reference established the useful grouping invariant, but YVEX rejected its Q8
+activation approximation for this binding because the admitted Physical
+Execution IR still requires F32 activation semantics. On the complete selected
+artifact, the exact path replaced 1,376 generic launches with 172 grouped
+launches, reduced combined qtype projection time from 443.851 ms to 398.568 ms,
+and improved five-run EOS-completion median generation from 7.05 to 7.72
+token/s. All repeated short and EOS outputs retained their baseline digests.
+The before/after Nsight report digests are
+`170cd24a1e7f26971ab3f34f358ec0a7c7a395849cbea8b3be26d847a0970061`
+and `60e19224c0baa0a046a1b5bbb1a3866edfe53ddc8c46130eee01bd03f0ee9866`.
+This closes one causal attention-projection launch owner, not the complete
+attention stack or the GB10 decode target.
+
+Phase attribution after that checkpoint established that routed and shared
+expert math use their own grouped MoE kernels rather than hiding beneath the
+generic qtype symbol. The remaining generic qtype matvec accounted for 47.214%
+of the fixed request's device time; output-A was its largest operation family,
+with prefill alone owning 344 launches and 69.705 ms. Current DS4 established
+that multi-row output-A remains one grouped semantic operation. YVEX adopts
+that invariant, adapts it to one exact F32/MXFP4 row-batch grid, and continues
+to reject DS4's Q8/F16-derived physical alternative for binding v13 because it
+is not numerically admitted.
+
+The generalized kernel is bit-identical to the prior per-group loop at the
+real eight-group, five-input-row scheduling geometry. On the same complete
+artifact and fixed request, output-A prefill fell from 344 launches and
+69.705 ms to 43 launches and 55.061 ms: 301 fewer launches and 21.008% less
+component device time. Total qtype-family execution fell from 3,351 launches
+and 398.568 ms to 3,050 launches and 381.153 ms, while total kernel time fell
+from 735.259 ms to 717.348 ms. Five measured short runs after warmup improved
+median prefill from 7.90 to 8.04 token/s; their generation median did not
+improve, so this checkpoint makes no decode-throughput claim. Every measured
+output retained digest
+`0943e8c85cdf24b4a50d21681604e1189cf4530e476c79db4f0973729accb55a`.
+The new Nsight report digest is
+`2b8cf61ae925067eb7489cf615015e8b4b5acfd4753664e7f395338c4425d2e1`.
 
 Each CUDA backend/session now owns one non-blocking ordinary-execution stream.
 Production attention graph pieces borrow that stream, preserve their order and
@@ -388,9 +477,9 @@ acceptance identity before state or RNG publication. Workspace capacity is
 derived from vocabulary and model-authored proposal width before execution;
 undersized capacity and malformed candidates refuse before a launch. CPU and
 audit/forensic execution retain the complete-distribution oracle. This changes
-only an internal operation table and helper signature; binding v8, protocol v8,
-events v3, compiled profile v1, generation ABI v5 and the server-construction
-API remain unchanged by this optimization.
+only an internal operation table and helper signature; it did not change the
+persisted binding, local wire, event schema, compiled profile, generation ABI,
+or server-construction API.
 
 Generation admission now obtains the exact target and draft transformer
 workspace requirements from their lower owners and seals one session-owned
@@ -409,8 +498,8 @@ evidence-bearing profiles select through the same sampling owner over the host
 row, rather than reconstructing a second selection algorithm in speculation.
 The normal production profile refuses host-authored selection facts and records
 zero full-array host-scan bytes. This is an internal complete-rebuild ABI change
-only; binding v8, protocol v8, events v3, generation ABI v5 and the
-server-construction API remain unchanged by this optimization.
+only; it did not change the persisted binding, local wire, event schema,
+generation ABI or server-construction API.
 
 Source-selected target features now collapse their mHC residual streams on
 CUDA. Production CUDA execution publishes reduced rows only into the
@@ -465,8 +554,9 @@ Continuous serving has one scheduler authority and one serialized mutation
 domain. Thread count is not part of that semantic contract. Independently
 admitted execution and I/O workers may be used when ownership, cancellation,
 publication, fairness and cleanup remain exact. The public server API is not
-versioned speculatively; its current entrypoints must converge on the admitted
-scheduler before a concrete external consumer may justify a new ABI.
+versioned speculatively. The existing constructor now consumes options schema
+v2 because the product's `--parallel` input is a concrete consumer; no second
+constructor or compatibility alias is introduced.
 
 ## Source-authored conversation protocol
 
@@ -485,7 +575,7 @@ non-interactive `--reasoning` policy. Only the exact model-emitted
 fails closed, arbitrary prose is never reclassified, and no hidden model state
 is exposed.
 
-Protocol v8 carries distinct reasoning, final, tool and error channels plus
+Protocol v9 carries distinct reasoning, final, tool and error channels plus
 reasoning/final token counts, rates, first-token times and total completion
 time. The REPL renders explicit reasoning incrementally and distinctly; raw
 execution writes canonical channel payload bytes without terminal decoration.
@@ -497,18 +587,28 @@ tool sequence. These are explicit model outputs, not inferred chain of thought.
 
 ## Non-claims
 
-The currently admitted code establishes model-derived geometry, v7/v8 binding
-coexistence, typed capacity/page planning, pre-materialization memory refusal,
+The currently admitted code establishes model-derived geometry, binding v14 as
+the sole complete compiler authority, typed capacity/page planning,
+pre-materialization memory refusal,
 the availability-aware production phase ledger, and identity-bound native
 SM121 CUBIN admission. It also establishes identity-bound width-N CUDA logits
 publication and greedy/stochastic DSpark target-anchor selection without
 full-vocabulary host materialization, plus stable-address host graph-state
 paging under the admitted per-class capacity plan and on-demand CUDA VMM state
 residency with stable device addresses.
-It does not yet establish Tensor Core execution, specialized attention,
-GB10-competitive grouped MoE, zero per-layer attention synchronization,
+It also admits native integer Tensor Core execution for the supported expert
+qtypes and Q8_K activations: the SM121 CUBIN must expose its production
+entrypoints and contain `IMMA.16816.S8.S8`, while native device tests account
+launches and check numerical agreement. Physical Execution IR v4 seals legal
+expert-worklist widths and refuses to infer Tensor Core width from total rows.
+Runtime execution now constructs one typed expert-major worklist from real
+prefill, decode or DSpark verification rows, and the ordinary narrow CUDA path
+consumes that same authority. It does not yet establish specialized Tensor Core coverage
+for all competitive operation classes, specialized attention, full-model
+GB10-competitive grouped-MoE performance, zero per-layer attention synchronization,
 the complete full-model device-sampling fault and acceptance-corpus matrix,
 full-model live qualification of all reasoning modes, paged CUDA state
-real deep-context qualification, prefix persistence, continuous batching,
+real deep-context qualification, durable prefix persistence and session-fork
+product reachability, continuous batching,
 competitive throughput, evaluation, benchmark qualification, release
 qualification, or Hugging Face publication.

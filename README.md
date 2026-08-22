@@ -80,7 +80,12 @@ binding, copies the encoded weights into its process-lifetime host arena,
 builds runtime residency, and keeps that runtime model open. Before admission
 starts it prints the profile, target, backend, mode, requested context,
 artifact, binding, endpoint, and stop instruction. Use `--ctx N` for an
-explicit startup capacity override. Leave that terminal running. A large model
+explicit startup capacity override and `--parallel N` for capacity-admitted
+independent-session scheduling. Compatible sessions can share the current typed
+MoE and output-head execution-batch boundaries; attention and sampling remain
+session-local.
+Prefill chunking is adaptive unless a positive `--prefill-chunk N` override is
+supplied. Leave that terminal running. A large model
 can take several minutes before the server becomes ready.
 
 ### 4. Verify the resident server
@@ -127,7 +132,7 @@ three-terminal observation, sessions, shutdown, configuration, and recovery.
 | `yvex` | Explicit foreground model server, public REPL, one-shot and administrative protocol client, plus finite offline compile, artifact, inspect, execute, profile, and system operations |
 | `libyvex` | Reusable compilation, artifact, runtime, graph, backend, tokenizer, and generation implementation |
 
-Runtime-facing `yvex` operations always cross private local protocol v8. The
+Runtime-facing `yvex` operations always cross private local protocol v10. The
 finite offline lane may link engine owners but never hosts a persistent model.
 One compiled operation registry drives command paths, syntax, help, JSON
 discovery, completion, and slash schemas without becoming a domain-policy

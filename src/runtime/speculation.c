@@ -31,15 +31,14 @@ struct yvex_runtime_speculation_context {
     speculation_weight markov_output, confidence;
     yvex_backend *device_backend;
     yvex_device_tensor *device_feature_input, *device_feature_projected;
-    yvex_device_tensor *device_feature_normalized, *device_feature_norm;
-    yvex_device_tensor *device_adjusted_logits;
+    yvex_device_tensor *device_feature_normalized, *device_feature_norm, *device_adjusted_logits;
     yvex_execution_device_view pending_target_logits;
     float *feature_projected, *feature_norm_weights, *target_features;
     float *draft_hidden, *draft_pre_normalized, *target_hidden;
     float *base_logits, *adjusted_logits, *markov_bias;
     float *draft_probabilities, *target_probabilities, *markov_embedding_values;
     unsigned int *draft_input_ids;
-    unsigned long long vocabulary_size, hidden_width, workspace_bytes;
+    unsigned long long vocabulary_size, hidden_width, prefill_rows, workspace_bytes;
     unsigned long long pending_position, pending_committed_count;
     unsigned long long pending_verified_prefix_count;
     unsigned int pending_tokens[YVEX_SPECULATION_MAX_BLOCK + 2u], target_token_ids[YVEX_SPECULATION_MAX_BLOCK + 1u];
@@ -217,8 +216,8 @@ static int speculation_context_buffers(yvex_runtime_speculation_context *context
             !yvex_core_u64_add(total, bytes_, &total)) goto overflow; \
     } while (0)
     if (!yvex_core_u64_mul(block, context->hidden_width, &hidden_rows) ||
-        !yvex_core_u64_mul(block + 2ull, context->hidden_width, &target_hidden_rows) ||
-        !yvex_core_u64_mul(block + 2ull, context->policy.concatenated_feature_width,
+        !yvex_core_u64_mul(context->prefill_rows, context->hidden_width, &target_hidden_rows) ||
+        !yvex_core_u64_mul(context->prefill_rows, context->policy.concatenated_feature_width,
                            &feature_rows) ||
         !yvex_core_u64_mul(context->device_draft_selection ? 0ull : block + 1ull,
                            context->vocabulary_size, &host_logits_rows) ||
@@ -303,7 +302,7 @@ static int speculation_context_device_buffers(yvex_runtime_speculation_context *
         context->options.execution_profile->evidence != YVEX_EXECUTION_EVIDENCE_PRODUCTION)
         return YVEX_OK;
     view = yvex_runtime_session_view_get(context->session);
-    rows = context->policy.block_size + 2ull;
+    rows = context->prefill_rows;
     if (!view || !view->backend)
         return speculation_refuse(err, YVEX_ERR_STATE, "DSpark CUDA feature workspace backend is unavailable");
     if (!yvex_core_u64_mul(rows, context->policy.concatenated_feature_width, &input_elements) ||
@@ -333,8 +332,7 @@ static int speculation_context_device_buffers(yvex_runtime_speculation_context *
     if (rc == YVEX_OK)
         rc = speculation_device_tensor_open(view->backend, &context->device_feature_norm,
                                             "dspark_feature_norm", context->hidden_width, err);
-    if (rc == YVEX_OK && context->device_draft_selection)
-        rc = speculation_device_tensor_open(
+    if (rc == YVEX_OK && context->device_draft_selection) rc = speculation_device_tensor_open(
             view->backend, &context->device_adjusted_logits, "dspark_adjusted_logits",
             adjusted_elements, err);
     if (rc == YVEX_OK)
@@ -342,11 +340,10 @@ static int speculation_context_device_buffers(yvex_runtime_speculation_context *
             context->feature_norm_weights, context->device_feature_norm->bytes, err);
     return rc;
 }
-int yvex_runtime_speculation_context_open(
-    yvex_runtime_speculation_context **out, yvex_runtime_model *model,
-    yvex_runtime_execution_session *session, yvex_runtime_transformer_context *target_transformer,
-    yvex_runtime_logits_context *target_logits, yvex_runtime_sampling_context *target_sampling,
-    const yvex_runtime_sampling_policy *sampling_policy,
+int yvex_runtime_speculation_context_open(yvex_runtime_speculation_context **out,
+    yvex_runtime_model *model, yvex_runtime_execution_session *session,
+    yvex_runtime_transformer_context *target_transformer, yvex_runtime_logits_context *target_logits,
+    yvex_runtime_sampling_context *target_sampling, const yvex_runtime_sampling_policy *sampling_policy,
     const yvex_runtime_speculation_options *options, unsigned long long *workspace_bytes, yvex_error *err)
 {
     yvex_runtime_speculation_context *context = NULL;
@@ -364,7 +361,10 @@ int yvex_runtime_speculation_context_open(
         !target_sampling || !sampling_policy || !options || !workspace_bytes ||
         !options->execution_profile || !options->shape_registry ||
         (options->backend != YVEX_BACKEND_KIND_CPU &&
-         options->backend != YVEX_BACKEND_KIND_CUDA) || !options->context_capacity)
+         options->backend != YVEX_BACKEND_KIND_CUDA) || !options->context_capacity ||
+        !options->prefill_chunk_tokens ||
+        !runtime_compatible_batch_options_valid(options->compatible_batching,
+            options->compatible_batch_width, options->execution_width))
         return speculation_refuse(err, YVEX_ERR_INVALID_ARG, "complete DSpark runtime owners are required");
     context = yvex_core_calloc(1u, sizeof(*context));
     if (!context)
@@ -376,8 +376,9 @@ int yvex_runtime_speculation_context_open(
     context->target_sampling = target_sampling;
     context->sampling_policy = *sampling_policy;
     context->options = *options;
-    target_plan = yvex_transformer_plan_summary_get(
-        yvex_runtime_transformer_context_plan(target_transformer));
+    context->prefill_rows = options->prefill_chunk_tokens > YVEX_SPECULATION_MAX_BLOCK + 2ull
+                                ? options->prefill_chunk_tokens : YVEX_SPECULATION_MAX_BLOCK + 2ull;
+    target_plan = yvex_transformer_plan_summary_get(yvex_runtime_transformer_context_plan(target_transformer));
     draft_plan = yvex_transformer_plan_summary_get(
         context->model_view ? yvex_compiled_model_plan_transformer(
                                   context->model_view->compiled_plan, 1)
@@ -395,8 +396,7 @@ int yvex_runtime_speculation_context_open(
         target_plan->tensor_scope != YVEX_TENSOR_SCOPE_MAIN_LAYER ||
         context->policy.block_size < 2ull ||
         context->policy.block_size > YVEX_SPECULATION_MAX_BLOCK) {
-        rc = speculation_refuse(err, YVEX_ERR_UNSUPPORTED,
-                                "runtime binding does not admit complete DSpark execution");
+        rc = speculation_refuse(err, YVEX_ERR_UNSUPPORTED, "runtime binding does not admit complete DSpark execution");
         (void)yvex_runtime_speculation_context_close(&context, NULL);
         return rc;
     }
@@ -417,20 +417,21 @@ int yvex_runtime_speculation_context_open(
     transformer_options.maximum_device_bytes = options->maximum_device_bytes;
     /* Draft rows share attention; extra lookahead remains outside committed target capacity. */
     transformer_options.context_capacity = draft_context_capacity;
-    transformer_options.workspace_token_capacity = context->policy.block_size + 2ull;
+    transformer_options.workspace_token_capacity = context->prefill_rows;
     transformer_options.tensor_scope = YVEX_TENSOR_SCOPE_DRAFT;
     transformer_options.cancel_requested = options->cancel_requested;
     transformer_options.cancel_context = options->cancel_context;
     transformer_options.evidence_level = runtime_attention_evidence(options->execution_profile->evidence);
     transformer_options.device_hidden_output = context->device_draft_selection;
     transformer_options.device_pre_normalized_output = context->device_draft_selection;
+    transformer_options.compatible_batching = options->compatible_batching;
+    transformer_options.compatible_batch_width = options->compatible_batch_width;
+    transformer_options.execution_width = options->execution_width;
     transformer_options.execution_profile = options->execution_profile;
     transformer_options.shape_registry = options->shape_registry;
     rc = yvex_runtime_transformer_context_open(
-        &context->draft_transformer, model, session, &transformer_options,
-        workspace_bytes, err);
-    if (rc == YVEX_OK)
-        rc = yvex_runtime_logits_admit_shared_draft_plan(
+        &context->draft_transformer, model, session, &transformer_options, workspace_bytes, err);
+    if (rc == YVEX_OK) rc = yvex_runtime_logits_admit_shared_draft_plan(
             target_logits, yvex_runtime_transformer_context_plan(context->draft_transformer), err);
     sampling_options.maximum_vocabulary_size = context->vocabulary_size;
     sampling_options.maximum_rows = context->policy.block_size;
@@ -438,11 +439,9 @@ int yvex_runtime_speculation_context_open(
     sampling_options.cancel_requested = options->cancel_requested;
     sampling_options.cancel_context = options->cancel_context;
     sampling_options.device_selection = context->device_draft_selection;
-    if (rc == YVEX_OK)
-        rc = speculation_draft_sampling_policy(
+    if (rc == YVEX_OK) rc = speculation_draft_sampling_policy(
             sampling_policy, context->vocabulary_size, &draft_policy, err);
-    if (rc == YVEX_OK)
-        rc = yvex_runtime_sampling_context_open(
+    if (rc == YVEX_OK) rc = yvex_runtime_sampling_context_open(
             &context->draft_sampling, yvex_runtime_logits_plan_summary_get(target_logits),
             &draft_policy, &sampling_options, err);
     if (rc == YVEX_OK && context->device_draft_selection) {
@@ -494,7 +493,7 @@ static int speculation_project_target_features(yvex_runtime_speculation_context 
 {
     unsigned long long token, row, output_elements;
     if (!context || (!features && !context->device_draft_selection) || !token_count || !result ||
-        token_count > context->policy.block_size + 2ull ||
+        token_count > context->prefill_rows ||
         !yvex_core_u64_mul(token_count, context->hidden_width, &output_elements))
         return speculation_refuse(err, YVEX_ERR_INVALID_ARG, "DSpark feature projection extent is invalid");
     if (context->device_feature_input) {
@@ -689,8 +688,7 @@ static int speculation_transformer_execute(yvex_runtime_speculation_context *con
     if (rc == YVEX_OK && disposition == YVEX_ATTENTION_TRANSACTION_ABORT &&
         (result->position_before != position || result->position_after != position ||
          result->generation_after != result->generation_before))
-        rc = speculation_refuse(err, YVEX_ERR_STATE,
-                                "speculative transformer candidate state escaped abort");
+        rc = speculation_refuse(err, YVEX_ERR_STATE, "speculative transformer candidate state escaped abort");
     return rc;
 }
 static int speculation_project_draft_base(yvex_runtime_speculation_context *context,
@@ -876,8 +874,7 @@ static int speculation_phase_physical(const yvex_runtime_transformer_result *tra
     yvex_execution_physical_facts candidate = {0};
     int rc;
     if (!transformer || !execution || !execution->completed || !execution->completed_rows || !facts)
-        return speculation_refuse(err, YVEX_ERR_INVALID_ARG,
-                                  "DSpark physical accounting requires complete owners");
+        return speculation_refuse(err, YVEX_ERR_INVALID_ARG, "DSpark physical accounting requires complete owners");
     rc = yvex_execution_physical_facts_add(
         &candidate, &transformer->memory, transformer->h2d_bytes, transformer->d2h_bytes,
         transformer->d2d_bytes, transformer->kernel_launches,
@@ -922,6 +919,7 @@ static int speculation_execute_draft(yvex_runtime_speculation_context *context,
             context, &draft, rows, draft_count, &logits_execution, err);
     if (rc == YVEX_OK)
         rc = speculation_phase_physical(&draft, &logits_execution, &result->draft_physical, err);
+    if (rc == YVEX_OK) result->draft_worklists = draft.expert_worklists;
     if (rc == YVEX_OK && context->sampling_policy.strategy == YVEX_SAMPLING_STRATEGY_STOCHASTIC)
         rc = yvex_runtime_sampling_transaction_begin(
             context->draft_sampling, &context->draft_rng, err);
@@ -937,8 +935,7 @@ static int speculation_execute_draft(yvex_runtime_speculation_context *context,
          !yvex_sha256_update_u64(&hash, request->position) ||
          !yvex_sha256_update_u64(&hash, draft_count) ||
          !yvex_sha256_update_u64(&hash, request->candidate_count)))
-        rc = speculation_refuse(
-            err, YVEX_ERR_STATE, "draft execution identity initialization failed");
+        rc = speculation_refuse(err, YVEX_ERR_STATE, "draft execution identity initialization failed");
     for (index = 0ull; rc == YVEX_OK && index < draft_count; ++index) {
         char proposal_identity[YVEX_SPECULATION_IDENTITY_CAP];
         unsigned long long device_draws = 0ull;
@@ -1059,6 +1056,7 @@ static int speculation_verify_target(yvex_runtime_speculation_context *context,
     if (rc == YVEX_OK)
         rc = speculation_phase_physical(&target, &logits_execution,
                                         &result->verification_physical, err);
+    if (rc == YVEX_OK) result->verification_worklists = target.expert_worklists;
     for (row = 0ull; rc == YVEX_OK && !device_stochastic && row <= request->candidate_count; ++row)
         rc = yvex_runtime_sampling_source_from_logits(
             device_verification ? context->verification_sampling : context->target_sampling,
@@ -1511,7 +1509,7 @@ int yvex_runtime_speculation_prefill(
     if (target_result) memset(target_result, 0, sizeof(*target_result));
     if (draft_result) memset(draft_result, 0, sizeof(*draft_result));
     if (!context || !token_ids || !token_count ||
-        token_count > context->policy.block_size + 2ull || !normalized_hidden ||
+        token_count > context->options.prefill_chunk_tokens || !normalized_hidden ||
         !target_result || !draft_result || context->cycle_pending ||
         token_count > context->options.context_capacity ||
         token_start > context->options.context_capacity - token_count ||
@@ -1630,6 +1628,7 @@ static int speculation_commit_target_step(
         result->position_after = context->pending_position + 1ull;
         result->target_extension_count = 1ull;
         result->target_result = target;
+        result->extension_worklists = target.expert_worklists;
         yvex_runtime_identity_copy(result->cycle_identity,
                                    context->pending_cycle_identity);
         yvex_runtime_identity_copy(result->target_execution_identity, target.execution_identity);
@@ -1835,6 +1834,8 @@ int yvex_runtime_speculation_commit_prefix(
         rc = speculation_promoted_target_result(
             context, committed_count,
             extension_required ? &extension : NULL, &target, err);
+    if (rc == YVEX_OK && extension_required)
+        result->extension_worklists = extension.expert_worklists;
     if (rc == YVEX_OK)
         rc = speculation_project_target_features(
             context, context->device_draft_selection ? NULL : context->target_features,

@@ -10,7 +10,7 @@ flowchart LR
         protocol[Private local protocol]
         openai[Loopback OpenAI adapter]
         sessions[Session registry<br/>+ persistent KV]
-        worker[Bounded model worker]
+        worker[Bounded keyed scheduler]
         events[Typed runtime events]
         protocol <--> sessions
         openai <--> protocol

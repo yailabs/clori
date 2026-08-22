@@ -903,16 +903,16 @@ static int test_attention_workspace_recipe_lowering(void)
     (void)snprintf(baseline, sizeof(baseline), "%s", recipe.identity);
     YVEX_TEST_ASSERT(
         yvex_backend_attention_workspace_required_from_recipe(&recipe, &first, &err) == YVEX_OK &&
-            first == 216ull,
-        "backend lowers token-scaled execution and captured rolling extents exactly");
+            first == 392ull,
+        "backend reserves token-scaled execution, publication, and captured rolling extents");
     YVEX_TEST_ASSERT(
         attention_workspace_recipe_make(&full_recipe, 4ull,
                                         YVEX_ATTENTION_EVIDENCE_FULL, &err) == YVEX_OK &&
             strcmp(baseline, full_recipe.identity) != 0 &&
             yvex_backend_attention_workspace_required_from_recipe(
                 &full_recipe, &second, &err) == YVEX_OK &&
-            second == 336ull && second > first,
-        "full evidence changes identity and reserves its exact additional staging");
+            second == 624ull && second > first,
+        "full evidence changes identity and reserves its execution and publication staging");
     second = 0ull;
     YVEX_TEST_ASSERT(
         yvex_backend_attention_workspace_required_from_recipe(&recipe, &second, &err) == YVEX_OK &&

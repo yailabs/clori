@@ -294,6 +294,9 @@ typedef struct {
     void *cancel_context;
     yvex_attention_evidence_level evidence_level;
     int device_hidden_output, device_pre_normalized_output;
+    int compatible_batching;
+    unsigned long long compatible_batch_width;
+    const unsigned long long *execution_width;
     const yvex_compiled_execution_profile *execution_profile;
     yvex_execution_shape_registry *shape_registry;
 } yvex_runtime_transformer_options;
@@ -311,10 +314,12 @@ typedef struct {
     unsigned long long layer_ordinal, token_count;
     unsigned long long hash_routers, learned_routers, routed_experts, shared_experts;
     unsigned long long row_expert_pairs, unique_experts;
+    yvex_expert_worklist_observation expert_worklists;
     unsigned long long grouped_expert_operations, expert_subviews_accessed;
     unsigned long long attention_weight_bytes, expert_weight_bytes, final_weight_bytes;
     yvex_execution_memory_facts memory;
-    unsigned long long h2d_bytes, d2h_bytes, kernel_launches;
+    unsigned long long h2d_bytes, d2h_bytes, kernel_launches, tensor_core_launches;
+    unsigned long long graph_launches, graph_captures, graph_replays;
     unsigned long long d2d_bytes, upload_count, download_count, cache_hits, cache_misses;
     unsigned long long stream_synchronizations, device_synchronizations;
     unsigned long long embedding_ns, attention_ns, attention_device_ns, moe_ns, final_ns;
@@ -347,10 +352,12 @@ typedef struct {
     unsigned long long swa_layers, csa_layers, hca_layers;
     unsigned long long hash_routers, learned_routers, routed_experts, shared_experts;
     unsigned long long row_expert_pairs, unique_experts;
+    yvex_expert_worklist_observation expert_worklists;
     unsigned long long grouped_expert_operations, expert_subviews_accessed;
     unsigned long long attention_weight_bytes, expert_weight_bytes, final_weight_bytes;
     yvex_execution_memory_facts memory;
-    unsigned long long h2d_bytes, d2h_bytes, kernel_launches;
+    unsigned long long h2d_bytes, d2h_bytes, kernel_launches, tensor_core_launches;
+    unsigned long long graph_launches, graph_captures, graph_replays;
     unsigned long long d2d_bytes, upload_count, download_count, cache_hits, cache_misses;
     unsigned long long stream_synchronizations, device_synchronizations;
     unsigned long long embedding_ns, attention_ns, attention_device_ns, moe_ns, final_ns;
@@ -395,6 +402,7 @@ int yvex_runtime_transformer_context_validate_input(
 int yvex_runtime_transformer_execute_block(
     yvex_runtime_transformer_context *context, unsigned long long layer_ordinal,
     const unsigned int *token_ids, unsigned long long token_count,
+    yvex_execution_batch_provenance provenance, yvex_execution_phase phase,
     yvex_backend_kind backend, const yvex_attention_publication *attention,
     const yvex_device_tensor *device_attention, yvex_device_tensor *device_output,
     float *expanded_output, yvex_runtime_transformer_block_result *result,

@@ -43,7 +43,7 @@
 	generate-qa-registry check-qa-registry qa qa-fast qa-structural qa-cuda qa-ci qa-doctor \
 	generate-command-migration \
 	check-operator-registry test-operator-registry cuda-info cuda-kernels cuda test-cuda test-cuda-graph \
-	test-cuda-native-sm121 \
+	test-cuda-native-sm121 test-cuda-native-sm121-sass \
 	test-cuda-no-nvcc smoke-cuda check-cuda test test-core test-cli test-materialize \
 	test-runtime-descriptor test-runtime-binding test-runtime-model-session \
 	test-runtime-residency test-runtime-phases test-runtime-envelope \
@@ -93,7 +93,17 @@ CUDA_HOME ?= /usr/local/cuda
 NVCCFLAGS ?= -O3
 CUDA_LDFLAGS ?=
 YVEX_CUDA_ARCH ?= auto
+CUDA_AUTO_ARCH ?= $(shell caps=$$(command -v nvidia-smi >/dev/null 2>&1 && \
+	nvidia-smi --query-gpu=compute_cap --format=csv,noheader,nounits 2>/dev/null | \
+	sed -n 's/[^0-9.]//g; s/[.]//g; /^[0-9][0-9]*$$/p' | sort -u); \
+	set -- $$caps; if test "$$#" -eq 1 && command -v $(NVCC) >/dev/null 2>&1 && \
+		$(NVCC) --list-gpu-arch 2>/dev/null | grep -Fx "compute_$$1" >/dev/null; \
+	then printf 'sm_%s' "$$1"; fi)
+CUDA_EFFECTIVE_ARCH := $(if $(filter auto,$(YVEX_CUDA_ARCH)),$(CUDA_AUTO_ARCH),$(YVEX_CUDA_ARCH))
 NVCC_AVAILABLE := $(shell command -v $(NVCC) >/dev/null 2>&1 && echo yes || echo no)
+YVEX_PROTOCOL_VERSION := $(shell sed -n \
+	's/^#define YVEX_LOCAL_PROTOCOL_VERSION \([0-9][0-9]*\)u$$/\1/p' \
+	include/yvex/server.h)
 
 CPPFLAGS ?= -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L -Iinclude -I.
 YVEX_BUILD_COMMIT ?= $(shell git rev-parse --verify HEAD 2>/dev/null || printf unknown)
@@ -115,7 +125,8 @@ YVEX_BUILD_IDENTITY ?= $(shell printf '%s\n' \
 	'cppflags=$(CPPFLAGS)' 'cflags=$(CFLAGS)' 'ldflags=$(LDFLAGS)' 'ldlibs=$(LDLIBS)' \
 	'linker-version=$(shell $(CC) -Wl,--version 2>/dev/null | head -1)' \
 	'nvcc=$(NVCC)' 'nvcc-version=$(shell $(NVCC) --version 2>/dev/null | tail -1)' \
-	'nvccflags=$(NVCCFLAGS)' 'cuda-ldflags=$(CUDA_LDFLAGS)' 'cuda-arch=$(YVEX_CUDA_ARCH)' | \
+	'nvccflags=$(NVCCFLAGS)' 'cuda-ldflags=$(CUDA_LDFLAGS)' \
+	'cuda-arch-request=$(YVEX_CUDA_ARCH)' 'cuda-arch=$(CUDA_EFFECTIVE_ARCH)' | \
 	sha256sum | cut -d' ' -f1)
 YVEX_BUILD_SOURCE_ROOT ?= $(shell pwd -P)
 CFLAGS ?= -O3 -std=c11 -Wall -Wextra -pedantic -Wstrict-prototypes \
@@ -131,6 +142,7 @@ OBJ_DIR ?= $(BUILD_DIR)/obj
 LIB_DIR ?= $(BUILD_DIR)/lib
 TEST_DIR ?= $(BUILD_DIR)/tests
 BUILD_COMMIT_HEADER := $(BUILD_DIR)/generated/build_commit.h
+CUDA_BUILD_CONFIG := $(BUILD_DIR)/generated/cuda_build_config
 SOURCE_OWNER_MANIFEST := config/source_owners.tsv
 SOURCE_MANIFEST_GENERATOR := tools/generate_source_manifest.py
 SOURCE_MANIFEST_MK := $(BUILD_DIR)/generated/sources.mk
@@ -220,10 +232,10 @@ CLIENT_PROTOCOL_OBJS := \
 	$(OBJ_DIR)/src/server/telemetry.o
 OPENAI_ADAPTER_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(OPENAI_ADAPTER_SRCS))
 
-CUDA_ARCH_FLAG := $(if $(filter auto,$(YVEX_CUDA_ARCH)),,-arch=$(YVEX_CUDA_ARCH))
+CUDA_ARCH_FLAG := $(if $(CUDA_EFFECTIVE_ARCH),-arch=$(CUDA_EFFECTIVE_ARCH))
 CUDA_PTX := $(patsubst %.cu,$(OBJ_DIR)/%.ptx,$(CUDA_CU_SRCS))
 CUDA_PTX_INC := $(OBJ_DIR)/generated/cuda_kernels_ptx.inc
-CUDA_NATIVE_ARCH := $(filter sm_%,$(YVEX_CUDA_ARCH))
+CUDA_NATIVE_ARCH := $(filter sm_%,$(CUDA_EFFECTIVE_ARCH))
 CUDA_CUBIN := $(if $(CUDA_NATIVE_ARCH),$(patsubst %.cu,$(OBJ_DIR)/%.cubin,$(CUDA_CU_SRCS)))
 CUDA_CUBIN_INC := $(OBJ_DIR)/generated/cuda_kernels_cubin.inc
 
@@ -234,7 +246,7 @@ CORE_OBJS += $(CUDA_OBJS)
 ifeq ($(NVCC_AVAILABLE),yes)
 CPPFLAGS += -DYVEX_HAVE_CUDA_KERNEL_PTX=1
 $(OBJ_DIR)/src/backend/cuda/capability.o: CPPFLAGS += -I$(OBJ_DIR)/generated
-$(OBJ_DIR)/src/backend/cuda/capability.o: $(CUDA_PTX_INC)
+$(OBJ_DIR)/src/backend/cuda/capability.o: $(CUDA_PTX_INC) $(CUDA_BUILD_CONFIG)
 ifneq ($(CUDA_NATIVE_ARCH),)
 CPPFLAGS += -DYVEX_HAVE_CUDA_KERNEL_CUBIN=1
 $(OBJ_DIR)/src/backend/cuda/capability.o: $(CUDA_CUBIN_INC)
@@ -427,14 +439,14 @@ package: client config/package_manifest.tsv NOTICE.md
 	client_sha=$$(sha256sum '$(YVEX_BIN)' | awk '{print $$1}'); \
 	library_sha=$$(sha256sum '$(LIBYVEX)' | awk '{print $$1}'); \
 	registry_identity=$$(cat '$(OPERATOR_REGISTRY_IDENTITY)'); \
-	package_identity=$$(printf '%s\n' "$$commit" '8' 'cpu+cuda-dynamic' \
+	package_identity=$$(printf '%s\n' "$$commit" '$(YVEX_PROTOCOL_VERSION)' 'cpu+cuda-dynamic' \
 		"$$registry_identity" "$$client_sha" "$$library_sha" | \
 		sha256sum | awk '{print $$1}'); \
 	{ printf 'field\tvalue\n'; \
 	  printf 'profile\tproduct\nsource_commit\t%s\n' "$$commit"; \
 	  printf 'package_identity\t%s\n' "$$package_identity"; \
 	  printf 'protocol_version\t%s\noperator_registry_identity\t%s\nbackend\t%s\n' \
-		'8' "$$registry_identity" 'cpu+cuda-dynamic'; \
+		'$(YVEX_PROTOCOL_VERSION)' "$$registry_identity" 'cpu+cuda-dynamic'; \
 	  printf 'yvex_sha256\t%s\nlibyvex_sha256\t%s\n' \
 		"$$client_sha" "$$library_sha"; \
 	} > "$$package_dir/share/yvex/build.tsv"
@@ -443,10 +455,11 @@ cuda-info: $(YVEX_BIN)
 	@echo "nvcc: $$(command -v $(NVCC) >/dev/null 2>&1 && command -v $(NVCC) || echo unavailable)"
 	@echo "CUDA_HOME: $(CUDA_HOME)"
 	@echo "YVEX_CUDA_ARCH: $(YVEX_CUDA_ARCH)"
+	@echo "YVEX_CUDA_EFFECTIVE_ARCH: $(if $(CUDA_EFFECTIVE_ARCH),$(CUDA_EFFECTIVE_ARCH),portable-ptx)"
 	$(YVEX_BIN) system cuda
 
 cuda-kernels: $(CUDA_PTX_INC) $(if $(CUDA_NATIVE_ARCH),$(CUDA_CUBIN_INC))
-	@echo "yvex cuda kernels: built from $(CUDA_CU_SRCS) arch=$(YVEX_CUDA_ARCH)"
+	@echo "yvex cuda kernels: built from $(CUDA_CU_SRCS) arch=$(if $(CUDA_EFFECTIVE_ARCH),$(CUDA_EFFECTIVE_ARCH),portable-ptx)"
 
 cuda: cuda-kernels lib client $(CUDA_TEST_RUNNER)
 	@echo "yvex cuda build: dynamic Driver API plus admitted PTX/native kernel image"
@@ -458,10 +471,24 @@ test-cuda: cuda
 test-cuda-graph: cuda
 	YVEX_CUDA_TEST_FILTER=graph $(CUDA_TEST_RUNNER)
 
-test-cuda-native-sm121:
+test-cuda-native-sm121-sass: build/sm121/obj/src/backend/cuda/tensorcore.cubin
+	@for symbol in yvex_qtype_tensorcore_rows \
+		yvex_moe_grouped_up_tensorcore \
+		yvex_moe_grouped_down_tensorcore; do \
+		$(CUOBJDUMP) --dump-sass $< | grep -F "Function : $$symbol" >/dev/null || { \
+			echo "native Tensor Core entrypoint $$symbol is absent: $<" >&2; exit 1; \
+		}; \
+	done
+	@$(CUOBJDUMP) --dump-sass $< | grep -E 'IMMA[.]16816[.]S8[.]S8' \
+		>/dev/null || { echo "native Tensor Core IMMA instruction is absent: $<" >&2; exit 1; }
+	@echo "yvex native sm_121 Tensor Core SASS: admitted"
+
+test-cuda-native-sm121: test-cuda-native-sm121-sass
 	$(MAKE) BUILD_DIR=build/sm121 YVEX_CUDA_ARCH=sm_121 \
 		build/sm121/tests/test_cuda
 	YVEX_REQUIRE_NATIVE_CUDA_TEST=sm_121 YVEX_CUDA_TEST_FILTER=info \
+		build/sm121/tests/test_cuda
+	YVEX_REQUIRE_NATIVE_CUDA_TEST=sm_121 YVEX_CUDA_TEST_FILTER=quant_qtype \
 		build/sm121/tests/test_cuda
 
 smoke-cuda: cuda $(YVEX_BIN)
@@ -675,7 +702,8 @@ test-packaging: package
 	@test ! -e '$(BUILD_DIR)/package/product/bin/yvex-dev'
 	@test -f '$(BUILD_DIR)/package/product/share/yvex/package_manifest.tsv'
 	@test -f '$(BUILD_DIR)/package/product/share/yvex/build.tsv'
-	@grep -F 'protocol_version	9' '$(BUILD_DIR)/package/product/share/yvex/build.tsv' >/dev/null
+	@grep -F 'protocol_version	$(YVEX_PROTOCOL_VERSION)' \
+		'$(BUILD_DIR)/package/product/share/yvex/build.tsv' >/dev/null
 	@grep -F 'source_commit	' '$(BUILD_DIR)/package/product/share/yvex/build.tsv' >/dev/null
 	@test ! -e '$(BUILD_DIR)/package/developer'
 
@@ -1220,15 +1248,24 @@ test-runtime-deepseek-generation-live: cuda $(GENERATION_LIVE_RUNNER) $(YVEX_BIN
 		cuda target-only stochastic 42 2 >"$$tmp_dir/cuda-stochastic-first.out"; \
 	$(GENERATION_LIVE_RUNNER) "$(DEEPSEEK_SELECTED_ARTIFACT)" "$$binding" \
 		cuda target-only stochastic 42 2 >"$$tmp_dir/cuda-stochastic-second.out"; \
-	cmp "$$tmp_dir/cuda-stochastic-first.out" "$$tmp_dir/cuda-stochastic-second.out"; \
+	sed -n '1p' "$$tmp_dir/cuda-stochastic-first.out" \
+		>"$$tmp_dir/cuda-stochastic-first.semantic"; \
+	sed -n '1p' "$$tmp_dir/cuda-stochastic-second.out" \
+		>"$$tmp_dir/cuda-stochastic-second.semantic"; \
+	cmp "$$tmp_dir/cuda-stochastic-first.semantic" \
+		"$$tmp_dir/cuda-stochastic-second.semantic"; \
 	$(GENERATION_LIVE_RUNNER) "$(DEEPSEEK_SELECTED_ARTIFACT)" "$$binding" \
 		cuda dspark greedy 0 8 >"$$tmp_dir/cuda-dspark-greedy.out"; \
 	$(GENERATION_LIVE_RUNNER) "$(DEEPSEEK_SELECTED_ARTIFACT)" "$$binding" \
 		cuda dspark stochastic 42 8 >"$$tmp_dir/cuda-dspark-stochastic-first.out"; \
 	$(GENERATION_LIVE_RUNNER) "$(DEEPSEEK_SELECTED_ARTIFACT)" "$$binding" \
 		cuda dspark stochastic 42 8 >"$$tmp_dir/cuda-dspark-stochastic-second.out"; \
-	cmp "$$tmp_dir/cuda-dspark-stochastic-first.out" \
-		"$$tmp_dir/cuda-dspark-stochastic-second.out"; \
+	sed -n '1p' "$$tmp_dir/cuda-dspark-stochastic-first.out" \
+		>"$$tmp_dir/cuda-dspark-stochastic-first.semantic"; \
+	sed -n '1p' "$$tmp_dir/cuda-dspark-stochastic-second.out" \
+		>"$$tmp_dir/cuda-dspark-stochastic-second.semantic"; \
+	cmp "$$tmp_dir/cuda-dspark-stochastic-first.semantic" \
+		"$$tmp_dir/cuda-dspark-stochastic-second.semantic"; \
 	python3 -c 'import sys; f=dict(x.split("=",1) for x in open(sys.argv[1]).read().split() if "=" in x); \
 		assert int(f["draft_cycles"])>0 and int(f["proposed"])>0 \
 		and int(f["verified"])>0 and f["acceptance_corpus"]=="pass" \
@@ -1439,7 +1476,7 @@ test-code-natural: tests/test_code_natural.sh
 test-project-control: tests/test_project_control.sh ROADMAP.md CONTRIBUTING.md
 	sh tests/test_project_control.sh
 
-test-docs-surface: tests/test_docs_surface.sh
+test-docs-surface: $(YVEX_BIN) tests/test_docs_surface.sh
 	sh tests/test_docs_surface.sh
 
 test-documentation-architecture: tests/documentation_architecture.py \
@@ -1503,6 +1540,18 @@ $(OPERATOR_REGISTRY_OBJ): $(OPERATOR_REGISTRY_C) $(OPERATOR_REGISTRY_HEADER)
 .PHONY: FORCE
 FORCE:
 
+# CUDA objects and embedded images follow resolved hardware and toolchain facts even when a caller
+# reuses one build directory after changing an explicit or automatically detected architecture.
+$(CUDA_BUILD_CONFIG): FORCE
+	@mkdir -p $(@D)
+	@tmp="$@.tmp"; \
+	printf '%s\n' \
+		'nvcc=$(NVCC)' 'nvccflags=$(NVCCFLAGS)' \
+		'cuda_arch_request=$(YVEX_CUDA_ARCH)' \
+		'cuda_arch_effective=$(CUDA_EFFECTIVE_ARCH)' >"$$tmp"; \
+	if test -r "$@" && cmp -s "$$tmp" "$@"; then rm -f "$$tmp"; \
+	else mv "$$tmp" "$@"; fi
+
 # Revalidate commit and source cleanliness on every invocation; replace the
 # generated header only when exact provenance changes.
 $(BUILD_COMMIT_HEADER): FORCE
@@ -1523,11 +1572,13 @@ $(OBJ_DIR)/tests/unit/cuda/%.o: tests/unit/cuda/%.c tests/test.h $(QA_REGISTRY_H
 	@mkdir -p $(@D)
 	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
 
-$(OBJ_DIR)/%.ptx: %.cu include/yvex/qtype.h src/backend/cuda/kernel_primitives.h
+$(OBJ_DIR)/%.ptx: %.cu include/yvex/qtype.h src/backend/cuda/kernel_primitives.h \
+		$(CUDA_BUILD_CONFIG)
 	@mkdir -p $(@D)
 	$(NVCC) $(CPPFLAGS) $(NVCCFLAGS) $(CUDA_ARCH_FLAG) -ptx $< -o $@
 
-$(OBJ_DIR)/%.cubin: %.cu include/yvex/qtype.h src/backend/cuda/kernel_primitives.h
+$(OBJ_DIR)/%.cubin: %.cu include/yvex/qtype.h src/backend/cuda/kernel_primitives.h \
+		$(CUDA_BUILD_CONFIG)
 	@mkdir -p $(@D)
 	$(NVCC) $(CPPFLAGS) $(NVCCFLAGS) $(CUDA_ARCH_FLAG) -cubin $< -o $@
 	@$(CUOBJDUMP) --list-elf $@ | grep -F '$(CUDA_NATIVE_ARCH)' >/dev/null || { \

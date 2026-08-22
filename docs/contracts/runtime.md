@@ -33,11 +33,37 @@ qtype/backend prerequisites, compiled profile, and resource budgets before
 readiness. The runtime imports compiler facts; it does not reconstruct
 transformation or writer plans.
 
-Startup performs bounded binding admission before artifact open. When the
-binding's admitted resident payload exceeds either the caller's host budget or
-available memory after the mandatory 8 GiB reserve, opening refuses with the
-exact capacity component and byte extents. No artifact handle, materialization
-arena or model residency is created before that refusal.
+A first admission hashes the complete artifact. A later open may skip that
+model-sized hash only when a rebuildable local verified-reopen lease binds the
+expected artifact identity to the same device, inode, size, modification time,
+and change time. The runtime still opens and validates the live snapshot;
+missing, malformed, or stale lease data falls back to complete authentication.
+The lease is neither an artifact identity authority nor portable evidence.
+
+Startup performs bounded binding admission before artifact open. The retained
+system reserve is the greater of 8 GiB and one eighth of the effective memory
+capacity, where the effective capacity is constrained by the caller's host
+budget and the process's complete cgroup-v2 `memory.max`/`memory.high`
+hierarchy. When the binding's admitted resident payload plus that reserve
+exceeds the configured or currently available extent, opening refuses with the
+exact capacity component and byte extents. The same live check runs again after
+artifact authentication and immediately before residency allocation, so memory
+consumed during a long hash cannot turn a previously valid observation into an
+OOM allocation. No materialization arena or model residency is created after
+either refusal.
+
+CUDA free memory is a separate constraint unless backend facts prove that the
+selected placement and the host use one physical memory domain. Managed
+placement requires unified addressing, managed access, and an exact match
+between effective system and device capacity. An artifact-backed candidate
+additionally requires one admitted immutable CUDA registration and
+device-address operation. On devices using host page tables, the registration
+need not claim a distinct read-only registration capability; YVEX still makes
+the tensor immutable at its backend contract. In either shared-domain case Linux
+`MemAvailable`, already bounded by the cgroup hierarchy, owns reclaimable-capacity
+admission; `cuMemGetInfo` is not allowed to turn reclaimable page cache into a
+false refusal. A shared CUDA session inherits the same immutable domain facts
+from its model-owned context.
 
 The model owns model-lifetime artifact/binding handles, encoded weights,
 backend resources, tokenizer plan, output-head residency, immutable execution
@@ -45,6 +71,21 @@ descriptors, target and draft plans, and shared caches. A DSpark plan shares the
 target model, tokenizer, output head, backend context, and immutable residency;
 it is not a second runtime model. Readiness is published only after every
 requirement of the selected generation mode and the worker is usable.
+
+Residency schema v7 selects one explicit physical backing. When the compiled
+physical plan requires no derived asset and CUDA admits immutable host mapping,
+the authenticated artifact remains the model-lifetime execution backing and
+tensor views resolve its exact file offsets without a second anonymous copy.
+Readiness requires one successful registration and its exact device address;
+raw pageable addressability does not establish the path and whole-artifact
+prefetch is not a readiness condition. A physical plan that requires derived
+layouts instead selects managed residency and its completed prefetch. Neither
+placement is a backend-local fallback. Artifact-backed bytes, registration and
+managed-prefetch facts are reported separately from stable host-resident
+allocations, and process RSS reports the pages actually touched. The residency
+identity seals artifact and materialization identities, placement, and exact
+tensor source/backing ranges. Snapshot drift, unsupported placement,
+registration or prefetch failure, and read failure remain typed refusals.
 
 Failure during opening publishes no ready model and releases every acquired
 resource transactionally. Shutdown closes the model once after request/session
@@ -114,6 +155,17 @@ Stochastic verification uses the admitted target-distribution-preserving
 accept/reject and residual-sampling rule; drafter confidence and decoded text
 are never correctness authorities.
 
+An admitted source-authored reasoning terminator is also an execution-shape
+boundary. DSpark may commit the target-authored delimiter, but subsequent final
+channel tokens use the ordinary target path so another speculative verification
+row cannot cross the typed channel transition. Generation-result schema v5
+binds the committed-token extent at that boundary into the execution identity;
+the exact target-only continuation is the final committed extent minus that
+boundary. This remains one explicit DSpark turn, not a backend-local fallback.
+The `source-boundary` telemetry event reports the boundary extent in `a`, the
+target-only final continuation in `b`, and replayed accepted target rows in `c`;
+that last value remains zero.
+
 `decode_step_count` retains its sequence meaning: it counts target-verified
 positions committed to model state. It is not a target-forward counter. Draft
 forwards and target block verifications have separate counters because one
@@ -150,6 +202,22 @@ executed correction or bonus token defined by the algorithm. Accepted target
 rows are not replayed, rejected suffixes are discarded, and rollback never
 means decrementing counters after publication.
 
+An idle, complete paged provider may capture its committed attention state as
+an immutable in-memory prefix. Capture is admitted against an explicit byte
+budget and seals the state-layout, capacity-plan, content and backing
+identities before publication. A compatible empty provider may attach that
+backing without charging it as private residency. Shared pages remain
+immutable; the first write to an attached tail faults a private copy, so a
+child extension cannot mutate its source or another child. Incompatible
+geometry, identity, capacity or destination state refuses before attachment.
+Reset, invalidation and close release references through the prefix owner.
+
+This in-memory prefix contract is not durable persistence. The server session
+lifecycle combines it with a deep semantic clone of the token ledger, RNG,
+decoder, transcript and conversation state, then publishes one child only after
+both physical and semantic extents agree. Persisted state continues to use the
+separate versioned checkpoint/store contract.
+
 ## Execution and evidence admission
 
 Every request consumes one immutable compiled execution profile binding the
@@ -182,6 +250,14 @@ match the target/draft maxima in the compiled context envelope. Requested
 context is owned by the workload profile; hardware-fit admission remains the
 generic capacity planner's responsibility. No family projection owns selected
 capacity or a machine-memory constant.
+
+The identity-bearing capacity plan uses stable physical and configured-budget
+facts. Before generation allocates session state or workspace, a separate
+transient preflight compares the plan's non-weight requirement with current
+system/cgroup availability and, for CUDA, current free device memory. Transient
+free bytes therefore prevent overcommit without changing page geometry,
+capacity identity, or persistent-state compatibility between requests and
+restarts.
 
 Target prefill/decode, draft width five, verification widths two through six,
 correction, and reset select an execution shape before mutation. The key binds
@@ -233,10 +309,13 @@ caches, or prevent reset and a subsequent request.
 
 ## Resource and concurrency rules
 
-The server owns one bounded queue and one model worker. Listener threads admit,
-frame, and project requests but never mutate model state directly. One active
-generation request is executed at a time unless a later independently admitted
-scheduler changes that contract.
+The server owns one bounded queue and one scheduler mutation authority.
+Listener threads admit, frame, and project requests but never mutate model
+state directly. A bounded worker set may execute distinct session keys
+concurrently; requests sharing a session key remain strictly serialized. This
+is independent-session scheduling, not compatible-row continuous batching.
+The startup capacity plan accounts the admitted worker count before readiness
+and the protocol exposes both capabilities separately.
 
 Prepared warm execution reuses immutable weights, output-head residency,
 workspace, persistent-state allocation, and stable execution resources within
@@ -287,7 +366,7 @@ refusals or failures. None may become a successful target-only turn.
 
 ## Compatibility
 
-The runtime behavior is consumed through private local protocol v8 and the
+The runtime behavior is consumed through private local protocol v11 and the
 bounded OpenAI compatibility profile v2. Public C ABI and internal ABI follow
 their header/version contracts. Pre-v0.1 private protocol versions may be
 refused rather than decoded compatibly.

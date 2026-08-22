@@ -20,6 +20,13 @@ extern "C" {
 #define YVEX_RUNTIME_LATENT_EVALUATOR_SCHEMA_V1 1u
 #define YVEX_RUNTIME_LATENT_OBSERVATION_SCHEMA_V1 1u
 
+typedef struct {
+    unsigned int schema_version, rng_algorithm, rng_version;
+    int completed;
+    unsigned long long seed, value_count, uniform_draw_count, workspace_bytes;
+    char normal_identity[YVEX_SHA256_HEX_CAP];
+} yvex_runtime_latent_normal_result;
+
 typedef struct yvex_runtime_av_plan_policy {
     unsigned int schema_version, maximum_steps;
     unsigned int text_tag, audio_tag, video_tag;
@@ -101,7 +108,7 @@ typedef struct yvex_runtime_latent_result {
     int completed;
     unsigned long long video_values, audio_values, completed_steps;
     unsigned long long model_evaluations, peak_workspace_bytes;
-    yvex_runtime_sampling_normal_result initialization;
+    yvex_runtime_latent_normal_result initialization;
     char initial_state_identity[YVEX_SHA256_HEX_CAP];
     char final_state_identity[YVEX_SHA256_HEX_CAP];
     char execution_identity[YVEX_SHA256_HEX_CAP];
@@ -122,6 +129,10 @@ typedef struct yvex_runtime_latent_evaluator_evidence {
     yvex_sha256 chain;
     int active;
 } yvex_runtime_latent_evaluator_evidence;
+
+int yvex_runtime_latent_normal_f32(
+    float *, unsigned long long, unsigned long long, unsigned long long,
+    unsigned long long, yvex_runtime_latent_normal_result *, yvex_error *);
 
 typedef struct yvex_runtime_av_layout_request {
     unsigned int schema_version;

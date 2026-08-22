@@ -107,6 +107,13 @@ and 42 during ordinary execution. The drafter does not rerun the target trunk
 to reconstruct them. Draft Markov state is token-conditioned workspace, while
 committed sequence truth remains target-owned.
 
+Typed source-output channels constrain the speculative shape. Once the
+source-authored reasoning terminator joins the committed prefix, the common
+generation owner preserves that prefix, ledger, decoder and RNG and continues
+the final channel through target-only decode. The selected DSpark mode remains
+visible, while the boundary and exact continuation extent are identity-bound
+and projected through phase telemetry rather than hidden as a backend fallback.
+
 ## Transformer composition
 
 The DeepSeek adapter supplies the irreducible 43-layer schedule, attention
@@ -120,9 +127,13 @@ residual, feature, logits, probability, candidate, accepted-prefix and
 workspace values with explicit owner, identity, generation, extent, lifetime,
 synchronization and materialization policy. Production greedy selection uses a
 device argmax and transfers only the selected token and bounded status.
-Production CUDA MoE routes compatible rows together, orders row/expert pairs
-by expert, executes grouped routed and shared paths, and leaves route arrays on
-the device. Each layer transfers only bounded status and unique-expert facts;
+Production CUDA MoE routes typed execution-batch rows into one deterministic
+expert-major worklist, then executes grouped routed and shared paths while
+leaving route arrays on the device. The generic worklist binds batch provenance,
+source rows, expert buckets, offsets, populations and route weights to the
+compiler-admitted width policy. CUDA consumes those facts and bounded tails; it
+does not reconstruct expert compatibility or infer width from total rows. Each layer transfers
+only bounded status and worklist-observation facts;
 one stack completion validates them and reconstructs exact active weight bytes.
 A final-stage barrier on the same session stream satisfies completion without a
 redundant wait. Its workspace derives from layer qtypes and admitted row capacity
@@ -146,13 +157,18 @@ it; the compiled profile records whether eager attention remains.
 Unsupported CUDA operations fail closed; no requested CUDA execution silently
 falls back to CPU.
 
-The CUDA kernel owner emits portable PTX and, for an explicit `sm_121` build,
-an independently identified native CUBIN. Module admission selects the native
+The CUDA kernel owner always emits portable PTX. The default `auto` build also emits an
+independently identified native CUBIN when one unambiguous local compute capability is supported
+by the admitted `nvcc`; an explicit `YVEX_CUDA_ARCH` remains authoritative. Module admission selects the native
 image only when the runtime device is capability 12.1 and includes image class,
 architecture and ordered module bytes in kernel-bundle identity v3. A
 competitive native gate refuses PTX-only selection. Binary inspection proves
-native SASS but no admitted MMA instruction evidence, so this establishes
-native code without making a Tensor Core claim.
+that the Q8_0-weight/Q8_K-activation row kernel exports the admitted native
+entrypoint and contains `IMMA.16816.S8.S8` instructions. Native device tests
+require the backend to account a Tensor Core launch and compare decoded output
+against the independent qtype codec oracle. This admits that exact integer
+Tensor Core operation; it does not imply that every CUDA operation, qtype or
+family path uses Tensor Cores.
 
 ## Persistent state
 
@@ -209,6 +225,24 @@ constant. The pool charges page tables and actual system-page residency before
 candidate writes or committed publication. Reset releases physical pages with
 the virtual address unchanged. Reference providers without a capacity plan
 retain the bounded eager allocation oracle.
+
+Committed host pages can also move under an immutable prefix owner. Capture
+converts the exact committed bank extents into sealed shared backing and binds
+them to the provider layout, capacity plan and content identity. An empty
+compatible provider maps the same backing privately: reads share physical
+pages, while the first write to an extended or modified page establishes
+copy-on-write private residency. Prefix accounting therefore distinguishes
+shared backing bytes, mapped bytes, private resident bytes and live
+references. Capture and attach preflight the complete bank set before changing
+provider visibility; reset and close drop mappings and references without
+making shared state mutable.
+
+The server session owner now consumes this graph-state boundary to expose one
+bounded operator-visible session fork. It deep-clones semantic session state,
+attaches the immutable backing to an empty child, and publishes the child only
+after physical and semantic positions agree. This does not yet provide a
+persistent prefix namespace, durable shared-prefix serialization, CUDA-state
+sharing or warm prefix TTFT qualification.
 
 On CUDA Driver-VMM hardware, the session residency owner projects the same
 logical envelope into two stable virtual device banks per selected layer. It
@@ -273,6 +307,15 @@ numerical admission. Full forensic attention and token-local MoE comparison
 additionally select canonical-order F64 row dots so independent stage oracles
 measure semantic execution. Those slower numerical adapters are unreachable
 from production and are not performance paths.
+
+Grouped attention projection is one backend operation, not a family topology
+reconstruction. Its native row-batch kernel spans every group and admitted
+input row while each token/group pair retains its own F32 activation view and
+canonical encoded-row arithmetic. Decode and prefill therefore share one
+operation contract without a host-side group launch loop. The compiler-selected
+activation representation remains authoritative: the backend may reduce launch
+topology but cannot silently substitute the available Q8 activation codec or
+change the admitted numerical contract.
 
 Before target prefill/decode, draft, verification, correction, or reset, the
 runtime selects an identity-bound execution shape. The shape distinguishes
@@ -355,16 +398,49 @@ CUDA-addressable host storage, accelerator-resident storage, session KV,
 workspace, and transient staging. Physical unified memory does not collapse
 these placement and accounting classes.
 
-The current complete encoded payload is copied into a process-lifetime host
-arena. A bounded accelerator placement contains the admitted CUDA-resident
-resources. Status reports host and accelerator bytes separately. A placement
-counter is a memory fact, not by itself a causal performance diagnosis.
+The artifact mapping remains immutable model-lifetime backing for admission and
+provides exact typed tensor views. When the compiler-sealed physical plan needs
+no derived layout, CUDA registers that mapping once as an immutable addressable
+range without a complete anonymous model copy or mandatory whole-artifact
+prefetch. The backend uses the device pointer returned for that registration;
+raw host-pointer addressability is not sufficient. A plan requiring derived
+assets selects managed CUDA residency and completes its migration before
+readiness instead. The runtime selects between these compiled alternatives
+before allocation; the backend cannot substitute one silently. Status reports
+mapped artifact extent, host-registration or managed-prefetch facts,
+non-artifact host residency, accelerator residency and process RSS separately.
+A placement counter is a memory fact, not by itself a causal performance
+diagnosis.
 
 Before opening the complete artifact, startup reads the bounded binding and
-admits its encoded payload against both the configured host budget and current
-system availability while preserving at least 8 GiB. Refusal reports the
-configured or available extent and required bytes before artifact or residency
-mutation. Process admission therefore does not depend on the Linux OOM killer.
+admits its encoded payload against the configured host budget and the tighter
+of current system availability and the process's cgroup-v2 memory hierarchy.
+It preserves the greater of 8 GiB and one eighth of that effective capacity;
+this scales with the admitted machine or process envelope rather than assuming
+128 GiB. Refusal reports configured or available bytes against required bytes
+before artifact mutation. First admission authenticates every artifact byte.
+Later opens may consume one content-addressed local lease only when the expected
+artifact identity and complete filesystem snapshot are unchanged; invalid or
+missing cache evidence returns to the full hash. A second live check immediately
+before residency construction closes the race introduced by artifact
+authentication and import. Process admission therefore does not depend on the
+Linux OOM killer.
+
+Residency schema v7 binds the verified artifact and materialization identities,
+selected placement and each source/backing extent. Artifact-backed placement
+borrows the stable mapping and preserves its lifetime beneath every tensor view;
+copied placements retain exact range reads. Both paths retain snapshot-drift,
+integrity and cleanup refusal.
+
+Generation retains the derived reserve in its identity-bearing workload and
+capacity plans, then checks future state, workspace, graph, scheduler and
+reserve bytes against live system/cgroup availability. Dedicated CUDA memory
+also constrains the check by current CUDA free memory. Managed or
+artifact-backed placement may instead use reclaimable system availability only
+when typed backend facts prove the required access and the same physical
+capacity. Live availability is deliberately not hashed
+into page geometry or capacity identity, so ordinary memory fluctuation cannot
+invalidate durable state or change an admitted session layout.
 
 Mutable session resources remain isolated while immutable model caches may be
 shared. Allocation, transfer, synchronization, execution, and cleanup failures
@@ -376,12 +452,27 @@ resolve, transfer and generation-publication operations. Concrete backend
 allocation state and dispatch remain source-local to `src/backend/`; graph and
 runtime owners cannot coordinate their lifecycle by inspecting backend fields.
 
-## Worker, queue, and concurrency
+## Scheduler, queue, and concurrency
 
-One bounded model worker serializes admitted generation work from native and
-HTTP clients. Socket/listener threads parse and project requests but do not
-mutate model state directly. Continuous batching, multiple hosted models, and
-distributed serving are not implemented.
+One bounded keyed scheduler owns queue order and active-session mutation.
+Socket/listener threads parse and project requests but do not mutate model
+state directly. A configured worker set can execute independent sessions in
+parallel, while one serialization key never has two active operations. The
+capacity compiler admits the total sequence count before readiness. A readiness
+rendezvous coordinates only a compatible cohort that is already active; it does
+not delay an isolated request while waiting for unknown future traffic.
+
+The runtime model owns one bounded compatible-batch queue shared by its
+generation contexts. Physical Execution IR supplies the admitted width and
+representation policy, each runtime ticket supplies an identity-sealed phase,
+operation, layer, row geometry and source generation, and the backend receives
+only a validated physical batch. Current production CUDA execution combines
+compatible rows from independent sessions in the canonical expert worklist and
+executes grouped MoE once before scattering results back to their isolated
+session streams. Cancellation, failure and teardown retain per-session
+publication and lifetime. Attention, output-head projection and sampling remain
+session-local, so this is not yet complete transformer-wide continuous
+batching. Multiple hosted models and distributed serving are not implemented.
 
 ## Publication and observability
 

@@ -48,10 +48,16 @@ static const cuda_kernel_binding cuda_kernel_bindings[] = {
      CUDA_HANDLE_OFFSET(bf16_pack_function)},
     {"yvex_qtype_matvec", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(qtype_matvec_function)},
+    {"yvex_qtype_grouped_rows", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(qtype_grouped_rows_function)},
+    {"yvex_mxfp4_q8_rows", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(mxfp4_q8_rows_function)},
+    {"yvex_attention_bf16_pair", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(attention_bf16_pair_function)},
     {"yvex_qtype_split_matvec", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(qtype_split_matvec_function)},
-    {"yvex_q8_0_tensorcore_rows", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
-     CUDA_HANDLE_OFFSET(q8_0_tensorcore_rows_function)},
+    {"yvex_qtype_tensorcore_rows", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(qtype_tensorcore_rows_function)},
     {"yvex_qtype_gather", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(qtype_gather_function)},
     {"yvex_argmax_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
@@ -86,20 +92,26 @@ static const cuda_kernel_binding cuda_kernel_bindings[] = {
      CUDA_HANDLE_OFFSET(attention_topk_function)},
     {"yvex_attention_reduce", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(attention_reduce_function)},
+    {"yvex_attention_reduce_native", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(attention_reduce_native_function)},
     {"yvex_moe_route", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(moe_route_function)},
     {"yvex_moe_route_rows", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(moe_route_rows_function)},
-    {"yvex_moe_pair_order", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
-     CUDA_HANDLE_OFFSET(moe_pair_order_function)},
+    {"yvex_expert_worklist_build_cuda", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(expert_worklist_build_cuda_function)},
     {"yvex_moe_grouped_up", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(moe_grouped_up_function)},
     {"yvex_moe_grouped_down", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(moe_grouped_down_function)},
     {"yvex_moe_grouped_up_rows", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(moe_grouped_up_rows_function)},
+    {"yvex_moe_grouped_up_tensorcore", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(moe_grouped_up_tensorcore_function)},
     {"yvex_moe_grouped_down_rows", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(moe_grouped_down_rows_function)},
+    {"yvex_moe_grouped_down_tensorcore", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(moe_grouped_down_tensorcore_function)},
     {"yvex_moe_reduce_rows", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(moe_reduce_rows_function)},
     {"yvex_moe_combine_rows", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
@@ -167,6 +179,18 @@ static const cuda_kernel_binding cuda_kernel_bindings[] = {
 static CUfunction *cuda_function_slot(yvex_cuda_backend_state *state, size_t offset)
 {
     return (CUfunction *)((unsigned char *)state + offset);
+}
+
+const char *yvex_cuda_kernel_function_identity(
+    const yvex_cuda_backend_state *state, CUfunction function)
+{
+    size_t index;
+    if (!state || !function) return NULL;
+    for (index = 0u; index < CUDA_KERNEL_BINDING_COUNT; ++index)
+        if (*cuda_function_slot((yvex_cuda_backend_state *)state,
+                                cuda_kernel_bindings[index].state_offset) == function)
+            return cuda_kernel_bindings[index].symbol;
+    return NULL;
 }
 
 static void cuda_bundle_clear_handles(yvex_cuda_backend_state *state)
@@ -677,7 +701,9 @@ int yvex_cuda_synchronize(yvex_backend *backend,
         return YVEX_ERR_BACKEND;
     }
     rc = yvex_cuda_status(&state->driver, state->driver.cuCtxSynchronize(), where, err);
-    if (rc != YVEX_OK) {
+    if (rc == YVEX_OK) {
+        state->shared_stream_in_flight = 0;
+    } else {
         cuda_capability_fail(backend, variant,
                              YVEX_BACKEND_CAPABILITY_REASON_SYNCHRONIZATION_FAILED);
     }
@@ -725,7 +751,9 @@ int yvex_cuda_launch_synchronize(yvex_backend *backend,
         return YVEX_ERR_BACKEND;
     }
     rc = yvex_cuda_status(&state->driver, state->driver.cuStreamSynchronize(stream), where, err);
-    if (rc != YVEX_OK)
+    if (rc == YVEX_OK)
+        state->shared_stream_in_flight = 0;
+    else
         cuda_capability_fail(backend, variant,
                              YVEX_BACKEND_CAPABILITY_REASON_SYNCHRONIZATION_FAILED);
     return rc;
@@ -926,12 +954,6 @@ int yvex_backend_cuda_attention_configure(
     if (state->attention_configuration_count &&
         state->attention_active_configuration < state->attention_configuration_count)
         active = &state->attention_configurations[state->attention_active_configuration];
-    if (active && strcmp(active->compatibility_identity, compatibility_identity) != 0) {
-        unsigned long long affected;
-        rc = yvex_backend_cuda_attention_graph_registry_apply(
-            backend, YVEX_BACKEND_CUDA_GRAPH_REGISTRY_INVALIDATE, &affected, err);
-        if (rc != YVEX_OK) return rc;
-    }
     for (index = 0u; index < state->attention_configuration_count; ++index) {
         configuration = &state->attention_configurations[index];
         if (configuration->phase == phase && configuration->mode == mode &&
@@ -945,6 +967,12 @@ int yvex_backend_cuda_attention_configure(
             yvex_error_clear(err);
             return YVEX_OK;
         }
+    }
+    if (active && strcmp(active->compatibility_identity, compatibility_identity) != 0) {
+        unsigned long long affected;
+        rc = yvex_backend_cuda_attention_graph_registry_apply(
+            backend, YVEX_BACKEND_CUDA_GRAPH_REGISTRY_INVALIDATE, &affected, err);
+        if (rc != YVEX_OK) return rc;
     }
     if (state->attention_configuration_count >= YVEX_CUDA_ATTENTION_CONFIGURATION_CAP)
         return attention_configuration_reject(

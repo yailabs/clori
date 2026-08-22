@@ -646,6 +646,13 @@ static int benchmark_attention_metrics(const yvex_graph_attention_operator_resul
         !yvex_core_u64_add(peak, result->state_allocated_bytes, &metrics->peak_host_bytes))
         return benchmark_fail(NULL, YVEX_RUNTIME_BENCHMARK_FAILURE_BOUNDS, "memory", YVEX_ERR_BOUNDS,
             "attention benchmark memory accounting overflowed", err);
+    /*
+     * Immutable artifact-backed CUDA residency intentionally owns neither an anonymous host copy
+     * nor a device copy. Schema five has one aggregate resident-footprint field, so retain the
+     * larger encoded backing extent instead of misreporting that admitted representation as zero.
+     */
+    if (metrics->resident_bytes < metrics->resident_encoded_bytes)
+        metrics->resident_bytes = metrics->resident_encoded_bytes;
     return YVEX_OK;
 }
 

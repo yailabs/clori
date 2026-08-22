@@ -57,7 +57,10 @@ typedef struct yvex_runtime_speculation_context yvex_runtime_speculation_context
 
 typedef struct {
     yvex_backend_kind backend;
-    unsigned long long context_capacity, maximum_host_bytes, maximum_device_bytes;
+    unsigned long long context_capacity, prefill_chunk_tokens, maximum_host_bytes, maximum_device_bytes;
+    unsigned long long compatible_batch_width;
+    int compatible_batching;
+    const unsigned long long *execution_width;
     int (*cancel_requested)(void *context);
     void *cancel_context;
     const yvex_compiled_execution_profile *execution_profile;
@@ -104,6 +107,7 @@ typedef struct {
     unsigned long long target_rng_draw_count, draft_rng_draw_count;
     unsigned long long draft_ns, verification_ns, acceptance_ns;
     yvex_execution_physical_facts draft_physical, verification_physical;
+    yvex_expert_worklist_observation draft_worklists, verification_worklists;
     yvex_speculation_acceptance_result acceptance;
     char draft_execution_identity[YVEX_SPECULATION_IDENTITY_CAP];
     char verification_execution_identity[YVEX_SPECULATION_IDENTITY_CAP];
@@ -129,6 +133,7 @@ typedef struct {
     unsigned long long promotion_ns, target_extension_ns;
     yvex_runtime_state_promotion_facts promotion_physical;
     yvex_runtime_transformer_result target_result;
+    yvex_expert_worklist_observation extension_worklists;
     char cycle_identity[YVEX_SPECULATION_IDENTITY_CAP];
     char target_execution_identity[YVEX_SPECULATION_IDENTITY_CAP];
     char draft_execution_identity[YVEX_SPECULATION_IDENTITY_CAP];
@@ -213,11 +218,13 @@ typedef struct {
     unsigned long long layers_executed, swa_layers, csa_layers, hca_layers;
     unsigned long long hash_routers, learned_routers, routed_experts, shared_experts;
     unsigned long long row_expert_pairs, unique_experts;
+    yvex_expert_worklist_observation expert_worklists;
     unsigned long long grouped_expert_operations, expert_subviews_accessed;
     unsigned long long embedding_weight_bytes, attention_weight_bytes;
     unsigned long long expert_weight_bytes, final_weight_bytes;
     yvex_execution_memory_facts memory;
-    unsigned long long h2d_bytes, d2h_bytes, kernel_launches;
+    unsigned long long h2d_bytes, d2h_bytes, kernel_launches, tensor_core_launches;
+    unsigned long long graph_launches, graph_captures, graph_replays;
     unsigned long long d2d_bytes, upload_count, download_count, cache_hits, cache_misses;
     unsigned long long stream_synchronizations, device_synchronizations;
     unsigned long long embedding_ns, attention_ns, attention_device_ns, moe_ns, final_ns;
@@ -242,11 +249,13 @@ typedef struct {
     unsigned long long layers_executed, swa_layers, csa_layers, hca_layers;
     unsigned long long hash_routers, learned_routers, routed_experts, shared_experts;
     unsigned long long row_expert_pairs, unique_experts;
+    yvex_expert_worklist_observation expert_worklists;
     unsigned long long grouped_expert_operations, expert_subviews_accessed;
     unsigned long long embedding_weight_bytes, attention_weight_bytes;
     unsigned long long expert_weight_bytes, final_weight_bytes;
     yvex_execution_memory_facts memory;
-    unsigned long long h2d_bytes, d2h_bytes, kernel_launches;
+    unsigned long long h2d_bytes, d2h_bytes, kernel_launches, tensor_core_launches;
+    unsigned long long graph_launches, graph_captures, graph_replays;
     unsigned long long d2d_bytes, upload_count, download_count, cache_hits, cache_misses;
     unsigned long long stream_synchronizations, device_synchronizations;
     unsigned long long embedding_ns, attention_ns, attention_device_ns, moe_ns, final_ns;

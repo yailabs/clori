@@ -62,6 +62,31 @@ grep -F 'reasoning 2 tokens' "$root/raw.err" >/dev/null
 grep -F 'final 1 tokens' "$root/raw.err" >/dev/null
 ! grep "$(printf '\033')" "$root/raw.out" >/dev/null
 
+# A terminal-bound one-shot projects typed reasoning and final channels as
+# distinct blocks, then flushes the completed final block before metrics.
+env -u NO_COLOR TERM=xterm-256color XDG_RUNTIME_DIR="$runtime" script -q -e \
+    -c "$YVEX_BIN run --reasoning high --max-new-tokens 3 --strategy greedy REASONING_STREAM" \
+    "$root/run.typescript" >"$root/run.stdout" 2>"$root/run.stderr"
+esc=$(printf '\033')
+sed "s/${esc}\\[[0-9;]*m//g" "$root/run.typescript" | tr -d '\r' \
+    >"$root/run.plain"
+grep -Fx 'thinking' "$root/run.plain" >/dev/null
+grep -Fx 'I need to compare the constraints...' "$root/run.plain" >/dev/null
+grep -Fx 'The valid result is 42.' "$root/run.plain" >/dev/null
+grep -E '^prefill .*generation .*session run-[0-9]+$' "$root/run.plain" >/dev/null
+python3 - "$root/run.plain" <<'PY'
+import pathlib
+import sys
+
+lines = pathlib.Path(sys.argv[1]).read_text().splitlines()
+thinking = lines.index("thinking")
+reasoning = lines.index("I need to compare the constraints...")
+final = lines.index("The valid result is 42.")
+metrics = next(index for index, line in enumerate(lines) if line.startswith("prefill "))
+assert thinking < reasoning < final < metrics
+assert not any("prefill " in line for line in lines[final + 1:metrics])
+PY
+
 mkfifo "$root/input"
 env -u NO_COLOR TERM=xterm-256color XDG_RUNTIME_DIR="$runtime" script -q -f -e \
     -c "$YVEX_BIN chat --session pty" "$root/typescript" \
@@ -162,12 +187,11 @@ exec 3>&-
 wait "$repl_pid"
 repl_pid=
 
-esc=$(printf '\033')
 clear=$(printf '\033[2J\033[H')
 redrawn=$(printf '\033[2J\033[H\r\033[2K\033[38;5;81myvex>\033[0m draft')
 sed "s/${esc}\\[[0-9;]*m//g" "$root/typescript" | tr -d '\r' \
     >"$root/typescript.plain"
-grep -F 'YVEX 0.1.0 · protocol 9' "$root/typescript.plain" >/dev/null
+grep -F 'YVEX 0.1.0 · protocol 11' "$root/typescript.plain" >/dev/null
 grep -F '  model      deepseek4-v4-flash-dspark' \
     "$root/typescript.plain" >/dev/null
 grep -F '  variant    dddddddddddd' "$root/typescript.plain" >/dev/null
@@ -208,6 +232,11 @@ grep -F 'Use int safely.' "$root/typescript.plain" >/dev/null
 grep -F '\x1b[31mnot-control' "$root/typescript.plain" >/dev/null
 grep -F 'I need to compare the constraints...' "$root/typescript.plain" >/dev/null
 grep -F 'The valid result is 42.' "$root/typescript.plain" >/dev/null
+grep -Fx 'thinking' "$root/typescript.plain" >/dev/null
+awk '/^I need to compare the constraints\.\.\.$/ { reasoning = NR }
+     /^The valid result is 42\.$/ { final = NR }
+     END { exit !(reasoning && final == reasoning + 2) }' \
+    "$root/typescript.plain"
 grep -F 'reasoning · enabled for the next turn' "$root/typescript.plain" >/dev/null
 grep -F 'reasoning · disabled for the next turn' "$root/typescript.plain" >/dev/null
 grep -F 'reasoning · maximum for the next turn' "$root/typescript.plain" >/dev/null
@@ -218,7 +247,7 @@ grep -F 'partial · 2 committed tokens · position 6 · reset required (/reset)'
     "$root/typescript.plain" >/dev/null
 ! grep -F '```' "$root/typescript.plain" >/dev/null
 ! grep -F "${esc}[31mnot-control" "$root/typescript" >/dev/null
-grep -F "${esc}[38;5;245mI need to compare the constraints..." \
+grep -F "${esc}[38;5;245mthinking" \
     "$root/typescript" >/dev/null
 grep -E '4 new/5 prompt/1 reused.*3 tokens.*TTFT 2\.50 s.*context 8/4096.*stop maximum tokens' \
     "$root/typescript" >/dev/null
@@ -487,12 +516,18 @@ repl_pid=
 grep -F 'live aaaaaaaaaaaa' "$root/completion.typescript" >/dev/null
 
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server log >"$root/log"
+XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server log --verbose >"$root/log.verbose"
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server log --json >"$root/log.jsonl"
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server status >"$root/status"
 grep -F 'YVEX server ·' "$root/log" >/dev/null
 grep -F 'server log · operational history and live events · Ctrl-C to stop' \
     "$root/log" >/dev/null
 grep -E 'REQUEST[[:space:]]+fixture/fixture-request' "$root/log" >/dev/null
+grep -F 'DSPARK 2 cycles · 5/10 accepted · 3 rejected · 2 discarded' \
+    "$root/log" >/dev/null
+! grep -F 'cycle 1' "$root/log" >/dev/null
+grep -F 'cycle 1' "$root/log.verbose" >/dev/null
+grep -F 'cycle 2' "$root/log.verbose" >/dev/null
 grep -E 'RUNTIME[[:space:]]+runtime shutdown complete' "$root/log" >/dev/null
 ! grep -F 'kernel launches 4511 · stream syncs 63' "$root/log" >/dev/null
 ! grep -F 'client disconnected' "$root/log" >/dev/null
