@@ -697,11 +697,12 @@ static int attn_extent(const attn_run *run,
     case EXT_INDEXER: *out = run->indexer_storage_extent; return 1;
     case EXT_INDEXER_POSITIONS: *out = run->phase_indexer_storage_count; return 1;
     case EXT_MAIN_STATE:
-        if (left == ULLONG_MAX) return 0;
-        ++left; right = run->rolling[ROLL_MAIN].extent; break;
     case EXT_INDEX_STATE:
-        if (left == ULLONG_MAX) return 0;
-        ++left; right = run->rolling[ROLL_INDEX].extent; break;
+        if (!run->job->retain_prefix_checkpoints) left = 1ull;
+        else if (left == ULLONG_MAX) return 0;
+        else ++left;
+        right = run->rolling[kind == EXT_MAIN_STATE ? ROLL_MAIN : ROLL_INDEX].extent;
+        break;
     case EXT_INDEX_QUERY: right = run->index_query_extent; break;
     case EXT_INDEX_WEIGHTS: right = run->job->indexer_heads; break;
     case EXT_SELECTED: right = run->topk_capacity; break;
@@ -1012,6 +1013,16 @@ static int attn_allocate_base(attn_run *run) {
         run->initial_indexer_count * sizeof(unsigned long long);
     return YVEX_OK;
 }
+static void attn_rolling_bind(attn_run *run, unsigned int slot, CUdeviceptr kv, CUdeviceptr score,
+                              unsigned long long extent, unsigned long long ordinal) {
+    unsigned long long before = run->job->retain_prefix_checkpoints ? ordinal : 0ull;
+    unsigned long long after = run->job->retain_prefix_checkpoints ? ordinal + 1ull : 0ull;
+    unsigned long long bytes = extent * sizeof(float);
+    run->rolling[slot].before_kv = kv + before * bytes;
+    run->rolling[slot].before_score = score + before * bytes;
+    run->rolling[slot].after_kv = kv + after * bytes;
+    run->rolling[slot].after_score = score + after * bytes;
+}
 static void attn_phase_bind(attn_run *run, unsigned long long ordinal) {
     yvex_backend_attention_job *job = &run->request;
     unsigned long long position = run->phase_start_position + ordinal;
@@ -1024,8 +1035,6 @@ static void attn_phase_bind(attn_run *run, unsigned long long ordinal) {
     unsigned long long emit = job->attention_class != YVEX_BACKEND_ATTENTION_SWA &&
                               (position + 1ull) % job->compression_ratio == 0ull;
     unsigned long long float_size = sizeof(float), u64_size = sizeof(unsigned long long);
-    unsigned long long main_extent = run->rolling[ROLL_MAIN].extent;
-    unsigned long long index_extent = run->rolling[ROLL_INDEX].extent;
     run->ordinal = ordinal;
     if (job->candidate_block_visible) {
         local_count = run->initial_local_count + job->token_count;
@@ -1062,14 +1071,10 @@ static void attn_phase_bind(attn_run *run, unsigned long long ordinal) {
     job->main_rolling.current_fill = job->main_rolling.cursor;
     job->main_rolling.previous_fill = job->main_rolling.overlap &&
         position >= job->compression_ratio ? job->compression_ratio : 0ull;
-    run->rolling[ROLL_MAIN].before_kv =
-        run->phase_main_kv + ordinal * main_extent * float_size;
-    run->rolling[ROLL_MAIN].before_score =
-        run->phase_main_score + ordinal * main_extent * float_size;
-    run->rolling[ROLL_MAIN].after_kv =
-        run->phase_main_kv + (ordinal + 1ull) * main_extent * float_size;
-    run->rolling[ROLL_MAIN].after_score =
-        run->phase_main_score + (ordinal + 1ull) * main_extent * float_size;
+    /* The uploaded no-checkpoint state is transaction-private, so in-place mutation preserves
+     * rollback; checkpointed execution keeps each historical state version distinct. */
+    attn_rolling_bind(run, ROLL_MAIN, run->phase_main_kv, run->phase_main_score,
+                      run->rolling[ROLL_MAIN].extent, ordinal);
     run->rolling[ROLL_MAIN].value =
         run->phase_compressed + compressed_count * job->compressed_stride * float_size;
     run->rolling[ROLL_MAIN].positions =
@@ -1083,14 +1088,8 @@ static void attn_phase_bind(attn_run *run, unsigned long long ordinal) {
     job->indexer_rolling.current_fill = job->indexer_rolling.cursor;
     job->indexer_rolling.previous_fill = position >= job->compression_ratio
                                             ? job->compression_ratio : 0ull;
-    run->rolling[ROLL_INDEX].before_kv =
-        run->phase_index_kv + ordinal * index_extent * float_size;
-    run->rolling[ROLL_INDEX].before_score =
-        run->phase_index_score + ordinal * index_extent * float_size;
-    run->rolling[ROLL_INDEX].after_kv =
-        run->phase_index_kv + (ordinal + 1ull) * index_extent * float_size;
-    run->rolling[ROLL_INDEX].after_score =
-        run->phase_index_score + (ordinal + 1ull) * index_extent * float_size;
+    attn_rolling_bind(run, ROLL_INDEX, run->phase_index_kv, run->phase_index_score,
+                      run->rolling[ROLL_INDEX].extent, ordinal);
     run->rolling[ROLL_INDEX].value =
         run->phase_indexer + compressed_count * job->indexer_stride * float_size;
     run->rolling[ROLL_INDEX].positions =

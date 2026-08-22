@@ -1563,11 +1563,12 @@ extern "C" __global__ void yvex_attention_rolling_state(
         if (thread == 0u) atomicCAS(status, 0, 1);
         return;
     }
-    for (unsigned long long i = (unsigned long long)thread; i < extent;
-         i += (unsigned long long)blockDim.x) {
-        after_kv[i] = before_kv[i];
-        after_score[i] = before_score[i];
-    }
+    if (after_kv != before_kv || after_score != before_score)
+        for (unsigned long long i = (unsigned long long)thread; i < extent;
+             i += (unsigned long long)blockDim.x) {
+            after_kv[i] = before_kv[i];
+            after_score[i] = before_score[i];
+        }
     for (unsigned long long lane = (unsigned long long)thread;
          lane < state_width; lane += (unsigned long long)blockDim.x) {
         float kv = token_kv[lane];
