@@ -105,6 +105,7 @@ docs/worklog/2026-08-21-exact-mxfp4-decode.md	worklog	canonical	contributors	ret
 docs/worklog/2026-08-21-real-width-tensor-core-cutover-rejection.md	worklog	canonical	contributors	retained	real_width_tensor_core_cutover_rejection_worklog
 docs/worklog/2026-08-22-bf16-rolling-projection-reuse.md	worklog	canonical	contributors	retained	bf16_rolling_projection_reuse_worklog
 docs/worklog/2026-08-22-cuda-moe-workspace-tail-repair.md	worklog	canonical	contributors	retained	cuda_moe_workspace_tail_repair_worklog
+docs/worklog/2026-08-22-minimax-main-recanonicalization-2.md	worklog	canonical	contributors	retained	minimax_main_recanonicalization_2_worklog
 docs/worklog/2026-08-22-minimax-media-model-admission.md	worklog	canonical	contributors	retained	minimax_media_model_admission_worklog
 docs/worklog/2026-08-22-narrow-execution-regime-barrier.md	worklog	canonical	contributors	retained	narrow_execution_regime_barrier_worklog
 docs/worklog/2026-08-22-transaction-local-rolling-state.md	worklog	canonical	contributors	retained	transaction_local_rolling_state_worklog
