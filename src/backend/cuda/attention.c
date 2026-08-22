@@ -1237,29 +1237,37 @@ static int attn_project(attn_run *run) {
 }
 static int attn_rolling_execute(attn_run *run, unsigned int kind) {
     const int index = kind == ROLL_INDEX;
-    const yvex_backend_attention_rolling *rolling = index
-        ? &run->job->indexer_rolling : &run->job->main_rolling;
+    const yvex_backend_attention_rolling *rolling = index ? &run->job->indexer_rolling
+                                                          : &run->job->main_rolling;
     attn_rolling_run *device = &run->rolling[kind];
-    yvex_backend_attention_weight_slot base = index
-        ? YVEX_BACKEND_ATTENTION_WEIGHT_INDEX_KV
-        : YVEX_BACKEND_ATTENTION_WEIGHT_MAIN_KV;
+    yvex_backend_attention_weight_slot base = index ? YVEX_BACKEND_ATTENTION_WEIGHT_INDEX_KV
+                                                     : YVEX_BACKEND_ATTENTION_WEIGHT_MAIN_KV;
     const yvex_backend_attention_activation *activation = index
-        ? &run->job->compressor_rotated_activation
-        : &run->job->compressor_activation;
-    const char *stage = index ? "cuda.attention.index_rolling"
-                              : "cuda.attention.main_rolling";
-    unsigned long long activation_width = rolling->head_dimension;
+        ? &run->job->compressor_rotated_activation : &run->job->compressor_activation;
+    const char *stage = index ? "cuda.attention.index_rolling" : "cuda.attention.main_rolling";
+    unsigned long long activation_width = rolling->head_dimension, rows = rolling->state_width;
     int emit, rc;
-    rc = run->ops->matvec(
-        &run->resources, &run->job->weights[base], run->weight[base], 0ull,
-        rolling->state_width, 1ull, run->core_input, device->kv, 0, run->device_status,
-        stage, run->failure, run->err);
-    if (rc == YVEX_OK)
-        rc = run->ops->matvec(
-            &run->resources, &run->job->weights[base + 1],
-            run->weight[base + 1], 0ull, rolling->state_width, 1ull, run->core_input,
-            device->score, 0, run->device_status, stage, run->failure,
-            run->err);
+    if (run->job->weights[base].qtype == YVEX_GGUF_QTYPE_BF16 &&
+        run->job->weights[base + 1].qtype == YVEX_GGUF_QTYPE_BF16 &&
+        rows <= UINT_MAX * 8ull - 7ull) {
+        unsigned int grid = (unsigned int)((rows + 7ull) / 8ull);
+        void *params[] = {
+            &run->weight[base], &run->job->weights[base].row_bytes,
+            &run->weight[base + 1], &run->job->weights[base + 1].row_bytes,
+            &run->job->weights[base].row_width, &rows,
+            &run->core_input, &device->kv, &device->score, &run->device_status};
+        rc = run->ops->launch(&run->resources, run->state->attention_bf16_pair_function,
+                              grid, 256u, 0u, params, stage, run->failure, run->err);
+    } else {
+        rc = run->ops->matvec(&run->resources, &run->job->weights[base], run->weight[base],
+            0ull, rolling->state_width, 1ull, run->core_input, device->kv, 0,
+            run->device_status, stage, run->failure, run->err);
+        if (rc == YVEX_OK)
+            rc = run->ops->matvec(&run->resources, &run->job->weights[base + 1],
+                run->weight[base + 1], 0ull, rolling->state_width, 1ull,
+                run->core_input, device->score, 0, run->device_status, stage,
+                run->failure, run->err);
+    }
     if (rc == YVEX_OK)
         rc = run->ops->decode(
             &run->resources, &run->job->weights[base + 2],

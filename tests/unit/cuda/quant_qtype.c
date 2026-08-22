@@ -722,6 +722,146 @@ static int quant_cuda_tensor(yvex_backend *backend, const char *name,
                            backend, *tensor, source, bytes, err) == YVEX_OK);
 }
 
+static int quant_cuda_bf16_projection_pair(yvex_backend *backend)
+{
+    enum { ROWS = 9, WIDTH = 64, ROW_BYTES = WIDTH * 2 };
+    const yvex_cuda_attention_operations *operations =
+        yvex_cuda_attention_operations_get();
+    yvex_backend_attention_failure failure = {0};
+    yvex_device_tensor *first = NULL, *second = NULL, *input = NULL;
+    yvex_device_tensor *first_out = NULL, *second_out = NULL, *status = NULL;
+    yvex_device_tensor *first_expected_out = NULL, *second_expected_out = NULL;
+    yvex_backend_attention_weight first_weight, second_weight;
+    yvex_cuda_work ordinary = {0}, work = {0};
+    unsigned char first_encoded[ROWS * ROW_BYTES], second_encoded[ROWS * ROW_BYTES];
+    float source[WIDTH], vector[WIDTH], actual[ROWS];
+    float first_expected[ROWS], second_expected[ROWS];
+    unsigned long long index, rows = ROWS, row_width = WIDTH, row_bytes = ROW_BYTES;
+    unsigned int row, grid = (ROWS + 7u) / 8u;
+    int device_wide = 1, status_value = 0, rc = YVEX_OK;
+    yvex_error err;
+
+    for (index = 0ull; index < WIDTH; ++index)
+        vector[index] = (float)((int)((index * 7ull + 5ull) % 29ull) - 14) /
+                        (float)(5ull + index % 7ull);
+    for (row = 0u; row < ROWS; ++row) {
+        unsigned char *encoded = NULL;
+        size_t encoded_bytes = 0u;
+        for (index = 0ull; index < WIDTH; ++index)
+            source[index] = (float)((int)((index * 11ull + row * 13u) % 47ull) - 23) /
+                            (float)(3ull + (index + row) % 9ull);
+        YVEX_TEST_ASSERT(
+            quant_cuda_encode_row(YVEX_GGUF_QTYPE_BF16, source, WIDTH,
+                                  &encoded, &encoded_bytes) &&
+                encoded_bytes == ROW_BYTES,
+            "first BF16 projection row encodes");
+        memcpy(first_encoded + row * ROW_BYTES, encoded, ROW_BYTES);
+        free(encoded);
+        encoded = NULL;
+        for (index = 0ull; index < WIDTH; ++index)
+            source[index] = (float)((int)((index * 17ull + row * 19u + 3u) % 53ull) - 26) /
+                            (float)(7ull + (index * 3ull + row) % 11ull);
+        YVEX_TEST_ASSERT(
+            quant_cuda_encode_row(YVEX_GGUF_QTYPE_BF16, source, WIDTH,
+                                  &encoded, &encoded_bytes) &&
+                encoded_bytes == ROW_BYTES,
+            "second BF16 projection row encodes independently");
+        memcpy(second_encoded + row * ROW_BYTES, encoded, ROW_BYTES);
+        free(encoded);
+    }
+    YVEX_TEST_ASSERT(
+        quant_cuda_tensor(backend, "bf16_pair_first", YVEX_DTYPE_I8,
+                          first_encoded, sizeof(first_encoded), &first, &err) &&
+            quant_cuda_tensor(backend, "bf16_pair_second", YVEX_DTYPE_I8,
+                              second_encoded, sizeof(second_encoded), &second, &err) &&
+            quant_cuda_tensor(backend, "bf16_pair_input", YVEX_DTYPE_F32,
+                              vector, sizeof(vector), &input, &err) &&
+            quant_cuda_tensor(backend, "bf16_pair_first_out", YVEX_DTYPE_F32,
+                              NULL, sizeof(actual), &first_out, &err) &&
+            quant_cuda_tensor(backend, "bf16_pair_second_out", YVEX_DTYPE_F32,
+                              NULL, sizeof(actual), &second_out, &err) &&
+            quant_cuda_tensor(backend, "bf16_pair_first_expected", YVEX_DTYPE_F32,
+                              NULL, sizeof(actual), &first_expected_out, &err) &&
+            quant_cuda_tensor(backend, "bf16_pair_second_expected", YVEX_DTYPE_F32,
+                              NULL, sizeof(actual), &second_expected_out, &err) &&
+            quant_cuda_tensor(backend, "bf16_pair_status", YVEX_DTYPE_I32,
+                              &status_value, sizeof(status_value), &status, &err),
+        "paired BF16 projection fixtures allocate");
+    first_weight = (yvex_backend_attention_weight){
+        .encoded = first_encoded, .encoded_bytes = sizeof(first_encoded),
+        .row_bytes = ROW_BYTES, .row_width = WIDTH, .row_count = ROWS,
+        .qtype = YVEX_GGUF_QTYPE_BF16, .present = 1};
+    second_weight = first_weight;
+    second_weight.encoded = second_encoded;
+    ordinary.backend = work.backend = backend;
+    ordinary.state = work.state = yvex_cuda_state(backend);
+    ordinary.variant = work.variant = YVEX_BACKEND_VARIANT_ATTENTION_ENCODED;
+    rc = operations->matvec(
+        &ordinary, &first_weight, yvex_cuda_tensor_ptr(first), 0ull, ROWS, 1ull,
+        yvex_cuda_tensor_ptr(input), yvex_cuda_tensor_ptr(first_expected_out), 0,
+        yvex_cuda_tensor_ptr(status), "cuda.test.bf16-first", &failure, &err);
+    if (rc == YVEX_OK)
+        rc = operations->matvec(
+            &ordinary, &second_weight, yvex_cuda_tensor_ptr(second), 0ull, ROWS, 1ull,
+            yvex_cuda_tensor_ptr(input), yvex_cuda_tensor_ptr(second_expected_out), 0,
+            yvex_cuda_tensor_ptr(status), "cuda.test.bf16-second", &failure, &err);
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_launch_synchronize(backend, ordinary.variant, &device_wide,
+                                          "cuda.test.bf16-ordinary", &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && ordinary.launches == 2ull && device_wide == 0,
+                     "ordinary BF16 matvec establishes the production oracle");
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_read(backend, first_expected_out, first_expected,
+                                 sizeof(first_expected), &err) == YVEX_OK &&
+            yvex_backend_tensor_read(backend, second_expected_out, second_expected,
+                                     sizeof(second_expected), &err) == YVEX_OK,
+        "ordinary BF16 projection outputs are readable");
+    {
+        CUdeviceptr first_ptr = yvex_cuda_tensor_ptr(first);
+        CUdeviceptr second_ptr = yvex_cuda_tensor_ptr(second);
+        CUdeviceptr input_ptr = yvex_cuda_tensor_ptr(input);
+        CUdeviceptr first_out_ptr = yvex_cuda_tensor_ptr(first_out);
+        CUdeviceptr second_out_ptr = yvex_cuda_tensor_ptr(second_out);
+        CUdeviceptr status_ptr = yvex_cuda_tensor_ptr(status);
+        void *params[] = {&first_ptr, &row_bytes, &second_ptr, &row_bytes,
+                          &row_width, &rows, &input_ptr, &first_out_ptr,
+                          &second_out_ptr, &status_ptr};
+        rc = operations->launch(&work, work.state->attention_bf16_pair_function,
+                                grid, 256u, 0u, params, "cuda.test.bf16-pair",
+                                &failure, &err);
+    }
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_launch_synchronize(backend, work.variant, &device_wide,
+                                          "cuda.test.bf16-pair", &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_OK && work.launches == 1ull && device_wide == 0 &&
+            yvex_backend_tensor_read(backend, status, &status_value,
+                                     sizeof(status_value), &err) == YVEX_OK &&
+            status_value == 0,
+        "paired BF16 projection completes through one shared activation launch");
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_read(backend, first_out, actual, sizeof(actual), &err) == YVEX_OK &&
+            memcmp(actual, first_expected, sizeof(actual)) == 0,
+        "first paired projection is bit-identical to ordinary BF16 matvec");
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_read(backend, second_out, actual, sizeof(actual), &err) == YVEX_OK &&
+            memcmp(actual, second_expected, sizeof(actual)) == 0,
+        "second paired projection is bit-identical to ordinary BF16 matvec");
+    YVEX_TEST_ASSERT(
+        yvex_cuda_work_cleanup(&ordinary, &err) == YVEX_OK &&
+            yvex_cuda_work_cleanup(&work, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &status, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &second_expected_out, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &first_expected_out, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &second_out, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &first_out, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &input, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &second, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &first, &err) == YVEX_OK,
+        "paired BF16 projection releases all CUDA ownership");
+    return 0;
+}
+
 static int quant_cuda_grouped_attention_rows(yvex_backend *backend)
 {
     enum { GROUPS = 8, GROUP_ROWS = 16, INPUT_ROWS = 5, ROWS = 128, WIDTH = 256 };
@@ -1774,6 +1914,8 @@ int yvex_cuda_test_quant_qtype(void)
                      "grouped attention rows retain exact activation semantics");
     YVEX_TEST_ASSERT(quant_cuda_mxfp4_q8_shared_rows(backend) == 0,
                      "MXFP4 narrow attention rows reuse exact Q8 activation storage");
+    YVEX_TEST_ASSERT(quant_cuda_bf16_projection_pair(backend) == 0,
+                     "paired BF16 projections reuse one exact activation load stream");
     YVEX_TEST_ASSERT(quant_cuda_bf16_gemm(backend) == 0,
                      "BF16 production row batch GEMM");
     YVEX_TEST_ASSERT(quant_cuda_encoded_gather(backend) == 0,

@@ -19,6 +19,53 @@ typedef struct {
     int candidate_block_visible;
 } attention_reduce_rows;
 
+/* The rolling-state contract already defines two equally shaped projections of
+ * one activation.  A warp retains the activation load across both independent
+ * accumulators while preserving each projection's original dot-product order. */
+extern "C" __global__ void yvex_attention_bf16_pair(
+    const unsigned char *first, unsigned long long first_row_bytes,
+    const unsigned char *second, unsigned long long second_row_bytes,
+    unsigned long long row_width, unsigned long long row_count,
+    const float *input, float *first_out, float *second_out, int *status)
+{
+    unsigned int lane = threadIdx.x & 31u;
+    unsigned int warp = threadIdx.x >> 5u;
+    unsigned long long row_index = (unsigned long long)blockIdx.x * 8ull + warp;
+    float first_sum = 0.0f, second_sum = 0.0f;
+    if (!status) return;
+    if (!first || !second || !first_row_bytes || !second_row_bytes ||
+        !row_width || !row_count || !input || !first_out || !second_out ||
+        blockDim.x != 256u) {
+        if (!lane) atomicCAS(status, 0, 2);
+        return;
+    }
+    if (*status || row_index >= row_count) return;
+    first += row_index * first_row_bytes;
+    second += row_index * second_row_bytes;
+    for (unsigned long long i = lane; i < row_width; i += 32ull) {
+        float value = input[i];
+        float first_weight = bf16_bits_to_float(qtype_load_u16(first + i * 2ull));
+        float second_weight = bf16_bits_to_float(qtype_load_u16(second + i * 2ull));
+        if (!isfinite(value) || !isfinite(first_weight) || !isfinite(second_weight))
+            atomicCAS(status, 0, 1);
+        else {
+            first_sum = fmaf(first_weight, value, first_sum);
+            second_sum = fmaf(second_weight, value, second_sum);
+        }
+    }
+    for (unsigned int offset = 16u; offset; offset >>= 1u) {
+        first_sum += __shfl_down_sync(0xffffffffu, first_sum, offset);
+        second_sum += __shfl_down_sync(0xffffffffu, second_sum, offset);
+    }
+    if (!lane) {
+        if (!isfinite(first_sum) || !isfinite(second_sum)) atomicCAS(status, 0, 1);
+        else {
+            first_out[row_index] = first_sum;
+            second_out[row_index] = second_sum;
+        }
+    }
+}
+
 static __device__ __forceinline__ const float *attention_reduce_row(
     const attention_reduce_rows *rows, unsigned long long pass,
     unsigned long long ordinal, unsigned long long candidate,
