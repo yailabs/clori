@@ -117,11 +117,10 @@ static int moe_cuda_rows_workspace_required(const yvex_moe_layer_plan *layer,
 {
     unsigned long long total = 0ull, pairs, expanded, hidden, post, combination;
     unsigned long long mix, logits, routed_intermediate, shared_intermediate;
-    unsigned long long pair_outputs, q8_normalized, q8_routed, q8_shared;
+    unsigned long long pair_outputs, q8_normalized, q8_routed, q8_shared, token_intermediate;
     if (bytes) *bytes = 0ull;
-    if (!layer || !bytes || !row_count || !layer->hidden_width ||
-        !layer->residual_streams || !layer->expanded_width ||
-        !layer->mhc_mixing_rows || !layer->routed_experts ||
+    if (!layer || !bytes || !row_count || !layer->hidden_width || !layer->residual_streams ||
+        !layer->expanded_width || !layer->mhc_mixing_rows || !layer->routed_experts ||
         !layer->experts_per_token || !layer->expert_intermediate_width ||
         !layer->shared_intermediate_width || layer->shared_experts != 1ull ||
         !yvex_core_u64_mul(row_count, layer->experts_per_token, &pairs) ||
@@ -131,16 +130,14 @@ static int moe_cuda_rows_workspace_required(const yvex_moe_layer_plan *layer,
         !yvex_core_u64_mul(post, layer->residual_streams, &combination) ||
         !yvex_core_u64_mul(row_count, layer->mhc_mixing_rows, &mix) ||
         !yvex_core_u64_mul(row_count, layer->routed_experts, &logits) ||
-        !yvex_core_u64_mul(pairs, layer->expert_intermediate_width,
-                           &routed_intermediate) ||
-        !yvex_core_u64_mul(row_count, layer->shared_intermediate_width,
-                           &shared_intermediate) ||
+        !yvex_core_u64_mul(pairs, layer->expert_intermediate_width, &routed_intermediate) ||
+        !yvex_core_u64_mul(row_count, layer->shared_intermediate_width, &shared_intermediate) ||
         !yvex_core_u64_mul(pairs, layer->hidden_width, &pair_outputs) ||
+        !yvex_core_u64_mul(layer->experts_per_token, layer->expert_intermediate_width, &token_intermediate) ||
         !moe_cuda_q8_bytes(row_count, layer->hidden_width, &q8_normalized) ||
         !moe_cuda_q8_bytes(pairs, layer->expert_intermediate_width, &q8_routed) ||
         !moe_cuda_q8_bytes(row_count, layer->shared_intermediate_width, &q8_shared))
-        return moe_cuda_refuse(err, YVEX_ERR_BOUNDS,
-                               "CUDA width-N MoE workspace geometry is invalid");
+        return moe_cuda_refuse(err, YVEX_ERR_BOUNDS, "CUDA width-N MoE workspace geometry is invalid");
 #define ADD(count_, width_)                                                                \
     do { if (!moe_cuda_workspace_add(&total, (count_), (width_))) goto overflow; } while (0)
     ADD(1ull, sizeof(int));
@@ -173,13 +170,16 @@ static int moe_cuda_rows_workspace_required(const yvex_moe_layer_plan *layer,
     if (q8_normalized) ADD(1ull, q8_normalized);
     if (q8_routed) ADD(1ull, q8_routed);
     if (q8_shared) ADD(1ull, q8_shared);
+    if (layer->shared_intermediate_width > token_intermediate) token_intermediate = layer->shared_intermediate_width;
+    /* The row contract dominates token-local metadata; these ranges admit its extra gate/up. */
+    ADD(token_intermediate, sizeof(float));
+    ADD(token_intermediate, sizeof(float));
 #undef ADD
     *bytes = total;
     yvex_error_clear(err);
     return YVEX_OK;
 overflow:
-    return moe_cuda_refuse(err, YVEX_ERR_BOUNDS,
-                           "CUDA width-N MoE workspace extent overflowed");
+    return moe_cuda_refuse(err, YVEX_ERR_BOUNDS, "CUDA width-N MoE workspace extent overflowed");
 }
 
 static yvex_backend_attention_weight moe_cuda_weight(const yvex_moe_weight_view *weight)

@@ -570,19 +570,19 @@ static __device__ float q8_warp_dot(const unsigned char *weight, const unsigned 
 {
     unsigned int lane = threadIdx.x & 31u;
     float sum = 0.0f;
-    /* Four-lane groups coalesce real MXFP4 blocks, then restore the original reduction order. */
+    /* Groups preserve reduction order; hardware tails join the collective on bounded block zero. */
     if (blocks <= 16ull || (qtype == YVEX_GGUF_QTYPE_MXFP4 && blocks == 32ull)) {
         unsigned int lanes = blocks > 16ull ? 4u : blocks > 8ull ? 2u : blocks > 4ull ? 4u : 8u;
         unsigned int groups = 32u / lanes, group = lane / lanes;
         unsigned int rounds = (unsigned int)((blocks + groups - 1u) / groups);
         for (unsigned int round = 0u; round < rounds; ++round) {
             unsigned int block = round * groups + group;
-            float group_value = qtype_q8_k_dot_group(
-                weight + (unsigned long long)block * weight_block,
-                activation + (unsigned long long)block * YVEX_CUDA_Q8_K_BYTES,
+            unsigned int bounded_block = block < blocks ? block : 0u;
+            float group_value = qtype_q8_k_dot_group(weight + (unsigned long long)bounded_block * weight_block,
+                activation + (unsigned long long)bounded_block * YVEX_CUDA_Q8_K_BYTES,
                 qtype, lanes);
-            float original_lane_value = __shfl_sync(0xffffffffu, group_value,
-                                                    (int)((lane % groups) * lanes));
+            if (block >= blocks) group_value = 0.0f;
+            float original_lane_value = __shfl_sync(0xffffffffu, group_value, (int)((lane % groups) * lanes));
             if (lane / groups == round && (unsigned long long)lane < blocks) sum = original_lane_value;
         }
     } else {
