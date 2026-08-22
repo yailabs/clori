@@ -88,5 +88,6 @@ docs/worklog/2026-08-21-adaptive-output-head-batching.md	worklog	canonical	contr
 docs/worklog/2026-08-21-exact-mxfp4-decode.md	worklog	canonical	contributors	retained	exact_mxfp4_decode_worklog
 docs/worklog/2026-08-21-real-width-tensor-core-cutover-rejection.md	worklog	canonical	contributors	retained	real_width_tensor_core_cutover_rejection_worklog
 docs/worklog/2026-08-22-bf16-rolling-projection-reuse.md	worklog	canonical	contributors	retained	bf16_rolling_projection_reuse_worklog
+docs/worklog/2026-08-22-transaction-local-rolling-state.md	worklog	canonical	contributors	retained	transaction_local_rolling_state_worklog
 docs/worklog/2026-08-22-wide-mxfp4-block-cooperation.md	worklog	canonical	contributors	retained	wide_mxfp4_block_cooperation_worklog
 tests/vectors/README.md	test-support	canonical	contributors	living	test_vector_format
