@@ -107,6 +107,7 @@ docs/worklog/2026-08-22-bf16-rolling-projection-reuse.md	worklog	canonical	contr
 docs/worklog/2026-08-22-cuda-moe-workspace-tail-repair.md	worklog	canonical	contributors	retained	cuda_moe_workspace_tail_repair_worklog
 docs/worklog/2026-08-22-minimax-main-recanonicalization-2.md	worklog	canonical	contributors	retained	minimax_main_recanonicalization_2_worklog
 docs/worklog/2026-08-22-minimax-media-model-admission.md	worklog	canonical	contributors	retained	minimax_media_model_admission_worklog
+docs/worklog/2026-08-22-minimax-recanonicalization-evidence-barrier.md	worklog	canonical	contributors	retained	minimax_recanonicalization_evidence_barrier_worklog
 docs/worklog/2026-08-22-narrow-execution-regime-barrier.md	worklog	canonical	contributors	retained	narrow_execution_regime_barrier_worklog
 docs/worklog/2026-08-22-transaction-local-rolling-state.md	worklog	canonical	contributors	retained	transaction_local_rolling_state_worklog
 docs/worklog/2026-08-22-wide-mxfp4-block-cooperation.md	worklog	canonical	contributors	retained	wide_mxfp4_block_cooperation_worklog
