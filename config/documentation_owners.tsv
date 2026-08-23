@@ -112,4 +112,5 @@ docs/worklog/2026-08-22-narrow-execution-regime-barrier.md	worklog	canonical	con
 docs/worklog/2026-08-22-transaction-local-rolling-state.md	worklog	canonical	contributors	retained	transaction_local_rolling_state_worklog
 docs/worklog/2026-08-22-wide-mxfp4-block-cooperation.md	worklog	canonical	contributors	retained	wide_mxfp4_block_cooperation_worklog
 docs/worklog/2026-08-23-minimax-omni-first-divergence-repair.md	worklog	canonical	contributors	retained	minimax_omni_first_divergence_repair_worklog
+docs/worklog/2026-08-23-minimax-physical-numeric-ownership-repair.md	worklog	canonical	contributors	retained	minimax_physical_numeric_ownership_repair_worklog
 tests/vectors/README.md	test-support	canonical	contributors	living	test_vector_format
