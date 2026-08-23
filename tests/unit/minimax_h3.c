@@ -684,8 +684,10 @@ static int test_video_numeric_primitives(void)
 
 static int test_t2va_plan(void)
 {
-    const yvex_transformer_joint_recipe *recipe =
-        yvex_graph_register_minimax_h3()->omni_recipe();
+    const yvex_minimax_h3_graph_api *graph = yvex_graph_register_minimax_h3();
+    const yvex_transformer_joint_recipe *recipe = graph->omni_recipe;
+    yvex_transformer_linear_physical_plan video, audio, changed;
+    char video_operation[65], video_physical[65], audio_physical[65];
     yvex_minimax_h3_t2va_plan first, repeated, source_scale;
     float sample[2] = {0.5f, -1.0f}, velocity[2] = {2.0f, 4.0f};
     float stepped[2] = {13.0f, 13.0f};
@@ -699,17 +701,47 @@ static int test_t2va_plan(void)
                          recipe->swiglu_layout ==
                              YVEX_TRANSFORMER_SWIGLU_LAYOUT_GATE_THEN_UP,
                      "Omni recipe preserves the released gate-before-up SwiGLU row layout");
+    YVEX_TEST_ASSERT(recipe && recipe->schema_version == YVEX_TRANSFORMER_JOINT_SCHEMA_V3 &&
+                         graph->omni_output_physical_compile(&video, &audio, &err) == YVEX_OK,
+                     "Omni compiler seals output execution outside the semantic recipe");
     YVEX_TEST_ASSERT(
-        recipe && recipe->schema_version == YVEX_TRANSFORMER_JOINT_SCHEMA_V2 &&
-            recipe->video_output_numeric.tile_rows == 32u &&
-            recipe->video_output_numeric.split_k == 10u &&
-            recipe->video_output_numeric.reduction ==
-                YVEX_BACKEND_LINEAR_REDUCTION_INPLACE &&
-            recipe->audio_output_numeric.tile_rows == 128u &&
-            recipe->audio_output_numeric.split_k == 3u &&
-            recipe->audio_output_numeric.reduction ==
-                YVEX_BACKEND_LINEAR_REDUCTION_COMPUTE_TYPE,
-        "Omni recipe seals the independently qualified final projection reductions");
+        video.operation == YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_VIDEO_OUTPUT &&
+            video.input_width == 5376ull && video.output_width == 96ull &&
+            video.algorithm_id == 10u && video.tile_rows == 32u && video.tile_columns == 32u &&
+            video.split_k == 10u &&
+            video.reduction == YVEX_TRANSFORMER_LINEAR_REDUCTION_INPLACE &&
+            video.stages == YVEX_TRANSFORMER_LINEAR_STAGES_DEFAULT &&
+            audio.operation == YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_AUDIO_OUTPUT &&
+            audio.input_width == 5376ull && audio.output_width == 32ull &&
+            audio.algorithm_id == 20u && audio.tile_rows == 128u && audio.tile_columns == 32u &&
+            audio.split_k == 3u &&
+            audio.reduction == YVEX_TRANSFORMER_LINEAR_REDUCTION_COMPUTE_TYPE &&
+            audio.stages == YVEX_TRANSFORMER_LINEAR_STAGES_8X5 &&
+            video.compute_capability_major == 12u && video.compute_capability_minor == 1u &&
+            audio.compute_capability_major == 12u && audio.compute_capability_minor == 1u,
+        "Omni physical compiler emits the exact qualified SM121 output configurations");
+    memcpy(video_operation, video.operation_identity, sizeof(video_operation));
+    memcpy(video_physical, video.physical_identity, sizeof(video_physical));
+    memcpy(audio_physical, audio.physical_identity, sizeof(audio_physical));
+    changed = video;
+    changed.split_k = 9u;
+    YVEX_TEST_ASSERT(yvex_transformer_linear_physical_seal(&changed, &err) == YVEX_OK &&
+                         strcmp(changed.operation_identity, video_operation) == 0 &&
+                         strcmp(changed.physical_identity, video_physical) != 0,
+                     "split-K mutation changes physical identity but not semantic operation");
+    changed = video;
+    changed.reduction = YVEX_TRANSFORMER_LINEAR_REDUCTION_COMPUTE_TYPE;
+    YVEX_TEST_ASSERT(yvex_transformer_linear_physical_seal(&changed, &err) == YVEX_OK &&
+                         strcmp(changed.operation_identity, video_operation) == 0 &&
+                         strcmp(changed.physical_identity, video_physical) != 0 &&
+                         strcmp(audio.physical_identity, audio_physical) == 0,
+                     "reduction mutation is physical and leaves other operation plans unchanged");
+    YVEX_TEST_ASSERT(
+        yvex_transformer_linear_physical_profile_compile(
+            recipe->identity_domain, YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_VIDEO_OUTPUT,
+            5376ull, 96ull, YVEX_TRANSFORMER_LINEAR_PROFILE_UNKNOWN, &changed, &err) ==
+            YVEX_ERR_UNSUPPORTED,
+        "physical compiler refuses an unknown output-linear profile");
 
     YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->t2va_plan_build(
                          &first, 16ull, 1344ull, 768ull, 124ull, 19u, &err) == YVEX_OK &&

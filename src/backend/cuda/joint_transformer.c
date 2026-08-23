@@ -78,18 +78,19 @@ static float joint_bf16_value(float value)
     return yvex_quant_bf16_decode(yvex_quant_bf16_encode(value));
 }
 
-static int joint_linear_policy_supported(const yvex_backend_linear_numeric_policy *policy)
+static int joint_linear_physical_supported(
+    const yvex_transformer_linear_physical_plan *plan,
+    yvex_transformer_linear_operation operation, unsigned long long output_width)
 {
-    return policy && policy->split_k > 1u &&
-           ((policy->tile_rows == 32u &&
-             policy->reduction == YVEX_BACKEND_LINEAR_REDUCTION_INPLACE) ||
-            (policy->tile_rows == 128u &&
-             policy->reduction == YVEX_BACKEND_LINEAR_REDUCTION_COMPUTE_TYPE));
+    yvex_error err;
+    return plan && plan->operation == operation && plan->input_width == JOINT_HIDDEN &&
+           plan->output_width == output_width && plan->backend == YVEX_BACKEND_KIND_CUDA &&
+           yvex_transformer_linear_physical_validate(plan, &err) == YVEX_OK;
 }
 
 static int joint_recipe_supported(const yvex_transformer_joint_recipe *recipe)
 {
-    return recipe && recipe->schema_version == YVEX_TRANSFORMER_JOINT_SCHEMA_V2 &&
+    return recipe && recipe->schema_version == YVEX_TRANSFORMER_JOINT_SCHEMA_V3 &&
            recipe->qkv_layout == YVEX_TRANSFORMER_QKV_LAYOUT_PER_HEAD_THREE &&
            recipe->swiglu_layout == YVEX_TRANSFORMER_SWIGLU_LAYOUT_GATE_THEN_UP &&
            recipe->identity_domain && recipe->identity_domain[0] &&
@@ -104,9 +105,7 @@ static int joint_recipe_supported(const yvex_transformer_joint_recipe *recipe)
            recipe->maximum_packed_rows == JOINT_MAX_PACKED_ROWS &&
            recipe->video_input_width == 96ull && recipe->audio_input_width == 32ull &&
            recipe->condition_input_width == 5120ull && recipe->video_output_width == 96ull &&
-           recipe->audio_output_width == 32ull &&
-           joint_linear_policy_supported(&recipe->video_output_numeric) &&
-           joint_linear_policy_supported(&recipe->audio_output_numeric);
+           recipe->audio_output_width == 32ull;
 }
 static int joint_facts_add(yvex_transformer_joint_block_result *total,
                           const yvex_backend_cuda_operation_facts *part)
@@ -1066,7 +1065,7 @@ static int transformer_linear_host(
     yvex_backend *backend, const yvex_transformer_joint_encoded_weight *weight,
     const yvex_transformer_joint_encoded_weight *bias, const float *input,
     unsigned long long rows, float *output, int bf16_output,
-    const yvex_backend_linear_numeric_policy *numeric_policy,
+    const yvex_transformer_linear_physical_plan *physical_plan,
     yvex_transformer_joint_result *facts, yvex_error *err)
 {
     enum { INPUT = 0, OUTPUT, BIAS, COUNT };
@@ -1085,30 +1084,30 @@ static int transformer_linear_host(
     if (rc == YVEX_OK)
         rc = transformer_tensor(backend, "transformer-linear-output", rows, weight->row_count,
                                 &device[OUTPUT], &device_bytes, err);
-    if (rc == YVEX_OK && !numeric_policy)
+    if (rc == YVEX_OK && !physical_plan)
         rc = transformer_tensor(backend, "transformer-linear-bias", 1ull, weight->row_count,
                                 &device[BIAS], &device_bytes, err);
     if (rc == YVEX_OK)
         rc = yvex_backend_tensor_write(backend, device[INPUT], input, input_bytes, err);
     if (rc == YVEX_OK) rc = transformer_fact_bytes(&facts->h2d_bytes, input_bytes, err);
-    if (rc == YVEX_OK && numeric_policy)
+    if (rc == YVEX_OK && physical_plan)
         rc = yvex_backend_cuda_encoded_linear_f32(
             backend, weight->encoded, weight->encoded_bytes, bias->encoded,
             bias->encoded_bytes, weight->row_count, weight->row_width, rows,
-            device[INPUT], device[OUTPUT], numeric_policy, &part, err);
-    if (rc == YVEX_OK && numeric_policy && !transformer_facts_add(facts, &part))
+            device[INPUT], device[OUTPUT], physical_plan, &part, err);
+    if (rc == YVEX_OK && physical_plan && !transformer_facts_add(facts, &part))
         rc = conditioning_refuse(err, YVEX_ERR_BOUNDS,
                                  "cuda.transformer.joint.transformer.facts",
                                  "transformer epilogue accounting overflowed");
-    if (rc == YVEX_OK && !numeric_policy)
+    if (rc == YVEX_OK && !physical_plan)
         rc = transformer_project(backend, weight, rows, device[INPUT], NULL,
                                  device[OUTPUT], facts, err);
-    if (rc == YVEX_OK && !numeric_policy)
+    if (rc == YVEX_OK && !physical_plan)
         rc = transformer_gather(backend, bias, device[BIAS], facts, err);
-    if (rc == YVEX_OK && !numeric_policy)
+    if (rc == YVEX_OK && !physical_plan)
         rc = yvex_cuda_transformer_bias(backend, device[OUTPUT], device[BIAS], device[OUTPUT],
                                         rows, weight->row_count, bf16_output, &part, err);
-    if (rc == YVEX_OK && !numeric_policy && !transformer_facts_add(facts, &part))
+    if (rc == YVEX_OK && !physical_plan && !transformer_facts_add(facts, &part))
         rc = conditioning_refuse(err, YVEX_ERR_BOUNDS, "cuda.transformer.joint.transformer.facts",
                                  "transformer bias accounting overflowed");
     if (rc == YVEX_OK)
@@ -1673,6 +1672,12 @@ static int transformer_request_valid(
         !request->packed_rows ||
         request->packed_rows > JOINT_MAX_PACKED_ROWS ||
         !request->block_count || request->block_count > JOINT_BLOCKS ||
+        !joint_linear_physical_supported(
+            &request->video_output_physical,
+            YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_VIDEO_OUTPUT, 96ull) ||
+        !joint_linear_physical_supported(
+            &request->audio_output_physical,
+            YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_AUDIO_OUTPUT, 32ull) ||
         !yvex_core_u64_add(request->video_rows, request->audio_rows, &total) ||
         !yvex_core_u64_add(total, request->text_rows, &total) || total != request->packed_rows ||
         !yvex_core_u64_mul(request->video_rows, 96ull, video_values) ||
@@ -1734,12 +1739,8 @@ static int transformer_execution_identity(
         !yvex_sha256_update_text(&hash, request->recipe->identity_domain) ||
         !yvex_sha256_update_u64(&hash, request->recipe->qkv_layout) ||
         !yvex_sha256_update_u64(&hash, request->recipe->swiglu_layout) ||
-        !yvex_sha256_update_u64(&hash, request->recipe->video_output_numeric.tile_rows) ||
-        !yvex_sha256_update_u64(&hash, request->recipe->video_output_numeric.split_k) ||
-        !yvex_sha256_update_u64(&hash, request->recipe->video_output_numeric.reduction) ||
-        !yvex_sha256_update_u64(&hash, request->recipe->audio_output_numeric.tile_rows) ||
-        !yvex_sha256_update_u64(&hash, request->recipe->audio_output_numeric.split_k) ||
-        !yvex_sha256_update_u64(&hash, request->recipe->audio_output_numeric.reduction) ||
+        !yvex_sha256_update_text(&hash, request->video_output_physical.physical_identity) ||
+        !yvex_sha256_update_text(&hash, request->audio_output_physical.physical_identity) ||
         !yvex_sha256_update_text(&hash, residency_identity) ||
         !yvex_sha256_update_text(&hash, block_identity) ||
         !yvex_sha256_update_u64(&hash, request->video_rows) ||
@@ -1889,13 +1890,13 @@ int yvex_backend_transformer_joint_cuda(
         rc = transformer_linear_host(backend, external_weights + YVEX_TRANSFORMER_JOINT_VIDEO_OUT_WEIGHT,
                                      external_weights + YVEX_TRANSFORMER_JOINT_VIDEO_OUT_BIAS,
                                      normalized, request->packed_rows, all_video, 0,
-                                     &request->recipe->video_output_numeric,
+                                     &request->video_output_physical,
                                      &published, err);
     if (rc == YVEX_OK)
         rc = transformer_linear_host(backend, external_weights + YVEX_TRANSFORMER_JOINT_AUDIO_OUT_WEIGHT,
                                      external_weights + YVEX_TRANSFORMER_JOINT_AUDIO_OUT_BIAS,
                                      normalized, request->packed_rows, all_audio, 0,
-                                     &request->recipe->audio_output_numeric,
+                                     &request->audio_output_physical,
                                      &published, err);
     for (row = 0ull; rc == YVEX_OK && row < request->video_rows; ++row)
         memcpy(staged_video + row * 96ull, all_video + request->video_indices[row] * 96ull,

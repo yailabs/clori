@@ -220,7 +220,7 @@ static int execute_block(
     float *output, yvex_minimax_h3_omni_result *result, yvex_error *err)
 {
     const yvex_minimax_h3_graph_api *graph = yvex_graph_register_minimax_h3();
-    const yvex_transformer_joint_recipe *recipe = graph ? graph->omni_recipe() : NULL;
+    const yvex_transformer_joint_recipe *recipe = graph ? graph->omni_recipe : NULL;
     yvex_complete_artifact_admission admission;
     yvex_artifact_admission_failure admission_failure;
     yvex_materialization_options materialization_options;

@@ -58,6 +58,69 @@ typedef struct {
     yvex_transformer_weight_binding weights[YVEX_TRANSFORMER_WEIGHT_COUNT];
 } yvex_transformer_plan_summary;
 typedef struct yvex_transformer_plan yvex_transformer_plan;
+
+#define YVEX_TRANSFORMER_LINEAR_PHYSICAL_SCHEMA_V1 1u
+#define YVEX_TRANSFORMER_LINEAR_DOMAIN_CAP 96u
+typedef enum {
+    YVEX_TRANSFORMER_LINEAR_OPERATION_UNKNOWN = 0,
+    YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_VIDEO_OUTPUT,
+    YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_AUDIO_OUTPUT
+} yvex_transformer_linear_operation;
+typedef enum {
+    YVEX_TRANSFORMER_LINEAR_IMPLEMENTATION_UNKNOWN = 0,
+    YVEX_TRANSFORMER_LINEAR_IMPLEMENTATION_CUBLAS_LT_F32_BIAS
+} yvex_transformer_linear_implementation;
+typedef enum {
+    YVEX_TRANSFORMER_LINEAR_REDUCTION_UNKNOWN = 0,
+    YVEX_TRANSFORMER_LINEAR_REDUCTION_INPLACE,
+    YVEX_TRANSFORMER_LINEAR_REDUCTION_COMPUTE_TYPE
+} yvex_transformer_linear_reduction;
+typedef enum {
+    YVEX_TRANSFORMER_LINEAR_STAGES_DEFAULT = 0,
+    YVEX_TRANSFORMER_LINEAR_STAGES_8X5
+} yvex_transformer_linear_stages;
+typedef enum {
+    YVEX_TRANSFORMER_LINEAR_PROFILE_UNKNOWN = 0,
+    YVEX_TRANSFORMER_LINEAR_PROFILE_CUBLAS_LT_SM121_ALGORITHM_10,
+    YVEX_TRANSFORMER_LINEAR_PROFILE_CUBLAS_LT_SM121_ALGORITHM_20
+} yvex_transformer_linear_profile;
+typedef struct {
+    unsigned int schema_version;
+    const char *semantic_domain;
+    yvex_transformer_linear_operation operation;
+    yvex_transformer_linear_implementation implementation;
+    yvex_transformer_linear_reduction reduction;
+    yvex_transformer_linear_stages stages;
+    yvex_backend_kind backend;
+    unsigned int algorithm_id, tile_rows, tile_columns, split_k;
+    unsigned int compute_capability_major, compute_capability_minor;
+    unsigned long long input_width, output_width, workspace_bytes;
+    int deterministic, exact;
+} yvex_transformer_linear_physical_request;
+typedef struct yvex_transformer_linear_physical_plan {
+    unsigned int schema_version;
+    char semantic_domain[YVEX_TRANSFORMER_LINEAR_DOMAIN_CAP];
+    yvex_transformer_linear_operation operation;
+    yvex_transformer_linear_implementation implementation;
+    yvex_transformer_linear_reduction reduction;
+    yvex_transformer_linear_stages stages;
+    yvex_backend_kind backend;
+    unsigned int algorithm_id, tile_rows, tile_columns, split_k;
+    unsigned int compute_capability_major, compute_capability_minor;
+    unsigned long long input_width, output_width, workspace_bytes;
+    int deterministic, exact;
+    char operation_identity[YVEX_SHA256_HEX_CAP];
+    char physical_identity[YVEX_SHA256_HEX_CAP];
+} yvex_transformer_linear_physical_plan;
+int yvex_transformer_linear_physical_profile_compile(
+    const char *semantic_domain, yvex_transformer_linear_operation operation,
+    unsigned long long input_width, unsigned long long output_width,
+    yvex_transformer_linear_profile profile, yvex_transformer_linear_physical_plan *plan,
+    yvex_error *err);
+int yvex_transformer_linear_physical_seal(
+    yvex_transformer_linear_physical_plan *plan, yvex_error *err);
+int yvex_transformer_linear_physical_validate(
+    const yvex_transformer_linear_physical_plan *plan, yvex_error *err);
 int yvex_transformer_plan_compile(
     yvex_transformer_plan **out, const yvex_transformer_family_policy *policy,
     unsigned long long family_adapter_id,

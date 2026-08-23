@@ -3,7 +3,7 @@
 #define INCLUDE_YVEX_INTERNAL_JOINT_TRANSFORMER_H_INCLUDED
 
 #include <yvex/core.h>
-#include <yvex/internal/backend.h>
+#include <yvex/internal/transformer.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -12,6 +12,7 @@ extern "C" {
 typedef struct yvex_backend yvex_backend;
 #define YVEX_TRANSFORMER_JOINT_SCHEMA_V1 1u
 #define YVEX_TRANSFORMER_JOINT_SCHEMA_V2 2u
+#define YVEX_TRANSFORMER_JOINT_SCHEMA_V3 3u
 #define YVEX_TRANSFORMER_JOINT_BLOCK_WEIGHT_COUNT 10u
 #define YVEX_TRANSFORMER_JOINT_EXTERNAL_WEIGHT_COUNT 35u
 
@@ -81,7 +82,6 @@ typedef struct yvex_transformer_joint_recipe {
     unsigned long long maximum_timesteps, maximum_packed_rows;
     unsigned long long video_input_width, audio_input_width, condition_input_width;
     unsigned long long video_output_width, audio_output_width;
-    yvex_backend_linear_numeric_policy video_output_numeric, audio_output_numeric;
 } yvex_transformer_joint_recipe;
 
 typedef struct yvex_transformer_joint_block_result {
@@ -172,6 +172,8 @@ typedef struct yvex_transformer_joint_block_options {
 
 typedef struct yvex_transformer_joint_request {
     const yvex_transformer_joint_recipe *recipe;
+    yvex_transformer_linear_physical_plan video_output_physical;
+    yvex_transformer_linear_physical_plan audio_output_physical;
     const float *video, *audio, *conditioning, *timesteps, *position_ids;
     const unsigned int *video_indices, *audio_indices, *text_indices;
     const unsigned int *timestep_indices, *token_tags;

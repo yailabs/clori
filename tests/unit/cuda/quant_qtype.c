@@ -814,10 +814,7 @@ static int quant_cuda_f32_linear_policy(yvex_backend *backend)
     const size_t output_bytes = (size_t)INPUT_ROWS * ROWS * sizeof(float);
     yvex_backend_tensor_desc descriptor = {0};
     yvex_device_tensor *resident = NULL, *input = NULL, *output = NULL;
-    yvex_backend_linear_numeric_policy policy = {
-        .tile_rows = 32u, .split_k = 10u,
-        .reduction = YVEX_BACKEND_LINEAR_REDUCTION_INPLACE,
-    };
+    yvex_transformer_linear_physical_plan policy = {0}, changed;
     yvex_backend_cuda_operation_facts facts;
     unsigned char *mapped = NULL;
     float *inputs = (float *)calloc(1u, input_bytes);
@@ -827,6 +824,12 @@ static int quant_cuda_f32_linear_policy(yvex_backend *backend)
     int rc;
 
     YVEX_TEST_ASSERT(inputs && actual, "F32 linear policy fixtures allocate");
+    YVEX_TEST_ASSERT(
+        yvex_transformer_linear_physical_profile_compile(
+            "cuda-quant-qtype-fixture", YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_VIDEO_OUTPUT,
+            WIDTH, ROWS, YVEX_TRANSFORMER_LINEAR_PROFILE_CUBLAS_LT_SM121_ALGORITHM_10,
+            &policy, &err) == YVEX_OK,
+        "F32 linear policy is compiler-sealed before backend execution");
     descriptor.name = "f32_linear_policy_resident";
     descriptor.dtype = YVEX_DTYPE_I8;
     descriptor.rank = 1u;
@@ -876,13 +879,30 @@ static int quant_cuda_f32_linear_policy(yvex_backend *backend)
             YVEX_TEST_ASSERT(actual[row * ROWS + output_row] == expected,
                              "F32 linear policy matches its exact sparse reference");
         }
-    policy.tile_rows = 64u;
+    changed = policy;
+    changed.tile_rows = 64u;
+    YVEX_TEST_ASSERT(yvex_transformer_linear_physical_seal(&changed, &err) == YVEX_OK &&
+                         strcmp(changed.physical_identity, policy.physical_identity) != 0 &&
+                         strcmp(changed.operation_identity, policy.operation_identity) == 0,
+                     "F32 linear tile mutation changes only physical identity");
     YVEX_TEST_ASSERT(
         yvex_backend_cuda_encoded_linear_f32(
             backend, mapped, weight_bytes, mapped + weight_bytes, bias_bytes,
-            ROWS, WIDTH, INPUT_ROWS, input, output, &policy, &facts, &err) ==
+            ROWS, WIDTH, INPUT_ROWS, input, output, &changed, &facts, &err) ==
             YVEX_ERR_UNSUPPORTED,
         "F32 linear policy refuses an unadmitted reduction shape");
+    changed = policy;
+    changed.split_k = 9u;
+    YVEX_TEST_ASSERT(
+        yvex_backend_cuda_encoded_linear_f32(
+            backend, mapped, weight_bytes, mapped + weight_bytes, bias_bytes,
+            ROWS, WIDTH, INPUT_ROWS, input, output, &changed, &facts, &err) == YVEX_ERR_STATE,
+        "F32 linear policy refuses a stale physical identity without execution");
+    YVEX_TEST_ASSERT(
+        yvex_backend_cuda_encoded_linear_f32(
+            backend, mapped, weight_bytes, mapped + weight_bytes, bias_bytes,
+            ROWS, WIDTH, INPUT_ROWS, input, output, NULL, &facts, &err) != YVEX_OK,
+        "F32 linear execution cannot silently fall back to a heuristic");
     YVEX_TEST_ASSERT(yvex_backend_resident_detach(backend, &err) == YVEX_OK &&
                          yvex_backend_tensor_release(backend, &output, &err) == YVEX_OK &&
                          yvex_backend_tensor_release(backend, &input, &err) == YVEX_OK &&

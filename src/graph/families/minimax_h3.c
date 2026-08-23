@@ -1470,7 +1470,7 @@ static int text_encoder_artifact_cuda(const yvex_artifact *artifact,
     return rc;
 }
 static const yvex_transformer_joint_recipe omni_transformer_recipe = {
-    .schema_version = YVEX_TRANSFORMER_JOINT_SCHEMA_V2, .identity_domain = "minimax-h3-fl2va-omni-transformer",
+    .schema_version = YVEX_TRANSFORMER_JOINT_SCHEMA_V3, .identity_domain = "minimax-h3-fl2va-omni-transformer",
     .qkv_layout = YVEX_TRANSFORMER_QKV_LAYOUT_PER_HEAD_THREE,
     .swiglu_layout = YVEX_TRANSFORMER_SWIGLU_LAYOUT_GATE_THEN_UP,
     .hidden_width = 5376ull, .attention_heads = 56ull, .head_dimension = 128ull,
@@ -1479,13 +1479,16 @@ static const yvex_transformer_joint_recipe omni_transformer_recipe = {
     .block_count = 50ull, .refiner_block_count = 2ull, .maximum_timesteps = 64ull,
     .maximum_packed_rows = YVEX_MINIMAX_H3_OMNI_MAX_PACKED_ROWS, .video_input_width = 96ull,
     .audio_input_width = 32ull, .condition_input_width = 5120ull,
-    .video_output_width = 96ull, .audio_output_width = 32ull,
-    .video_output_numeric = {.tile_rows = 32u, .split_k = 10u, .reduction = YVEX_BACKEND_LINEAR_REDUCTION_INPLACE},
-    .audio_output_numeric = {.tile_rows = 128u, .split_k = 3u, .reduction = YVEX_BACKEND_LINEAR_REDUCTION_COMPUTE_TYPE},
-};
-static const yvex_transformer_joint_recipe *omni_recipe(void)
+    .video_output_width = 96ull, .audio_output_width = 32ull};
+static int omni_output_physical_compile(yvex_transformer_linear_physical_plan *video,
+    yvex_transformer_linear_physical_plan *audio, yvex_error *err)
 {
-    return &omni_transformer_recipe;
+    int rc = yvex_transformer_linear_physical_profile_compile(omni_transformer_recipe.identity_domain,
+        YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_VIDEO_OUTPUT, 5376ull, 96ull,
+        YVEX_TRANSFORMER_LINEAR_PROFILE_CUBLAS_LT_SM121_ALGORITHM_10, video, err);
+    return rc != YVEX_OK ? rc : yvex_transformer_linear_physical_profile_compile(
+        omni_transformer_recipe.identity_domain, YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_AUDIO_OUTPUT,
+        5376ull, 32ull, YVEX_TRANSFORMER_LINEAR_PROFILE_CUBLAS_LT_SM121_ALGORITHM_20, audio, err);
 }
 static const char *const transformer_external_names[YVEX_TRANSFORMER_JOINT_EXTERNAL_WEIGHT_COUNT] = {
     "audio_patch_proj.weight", "audio_patch_proj.bias", "video_patch_proj.weight",
@@ -1585,20 +1588,9 @@ static int transformer_component_cuda(yvex_runtime_component_session *session,
 typedef struct {
     const yvex_minimax_h3_t2va_plan *plan;
     const yvex_minimax_h3_t2va_omni_context *context;
+    yvex_transformer_linear_physical_plan video_output_physical, audio_output_physical;
     yvex_runtime_latent_evaluator_evidence evidence;
 } t2va_omni_execution;
-static int t2va_omni_identity(const yvex_minimax_h3_t2va_plan *plan,
-    const yvex_minimax_h3_t2va_omni_context *context,
-    const yvex_runtime_residency_summary *summary, char output[65], yvex_error *err)
-{
-    const char *identities[4] = {plan->identity, summary->residency_identity,
-                                 context->conditioning_identity,
-                                 context->layout_result->layout_identity};
-    unsigned long long facts[2] = {context->block_count, summary->encoded_bytes};
-    return yvex_runtime_latent_binding_identity(
-        "yvex.minimax-h3.t2va.omni-evaluator.v1", identities, 4ull,
-        facts, 2ull, output, err);
-}
 static int t2va_omni_evaluate(void *opaque, const float *video,
     unsigned long long video_values, const float *audio, unsigned long long audio_values,
     float video_timestep, float audio_timestep, float *video_velocity,
@@ -1631,6 +1623,8 @@ static int t2va_omni_evaluate(void *opaque, const float *video,
             tag == plan->audio_tag && audio_timestep != video_timestep ? 1u : 0u;
     }
     request.recipe = &omni_transformer_recipe;
+    request.video_output_physical = execution->video_output_physical;
+    request.audio_output_physical = execution->audio_output_physical;
     request.video = video; request.audio = audio; request.conditioning = context->conditioning;
     request.timesteps = timesteps; request.position_ids = context->layout->position_ids;
     request.video_indices = context->layout->video_indices;
@@ -1679,7 +1673,13 @@ static int t2va_latent_execute(const yvex_minimax_h3_t2va_plan *plan,
         return YVEX_ERR_INVALID_ARG;
     }
     execution.plan = plan; execution.context = context;
-    rc = t2va_omni_identity(plan, context, summary, execution.evidence.staged.evaluator_identity, err);
+    rc = omni_output_physical_compile(&execution.video_output_physical,
+        &execution.audio_output_physical, err);
+    if (rc == YVEX_OK) rc = yvex_runtime_latent_binding_identity(
+        "yvex.minimax-h3.t2va.omni-evaluator.v1", (const char *[4]){plan->identity, summary->residency_identity,
+            context->conditioning_identity, context->layout_result->layout_identity}, 4ull,
+        (unsigned long long[2]){context->block_count, summary->encoded_bytes}, 2ull,
+        execution.evidence.staged.evaluator_identity, err);
     if (rc == YVEX_OK) rc = yvex_runtime_latent_evaluator_begin(
             &execution.evidence, "yvex.minimax-h3.t2va.transformer-chain.v1",
             execution.evidence.staged.evaluator_identity, err);
@@ -1699,7 +1699,7 @@ static int t2va_latent_execute(const yvex_minimax_h3_t2va_plan *plan,
 const yvex_minimax_h3_graph_api *yvex_graph_register_minimax_h3(void)
 {
     static const yvex_minimax_h3_graph_api api = {
-        omni_recipe,
+        &omni_transformer_recipe, omni_output_physical_compile,
         t2va_plan_build, yvex_runtime_av_scheduler_step,
         t2va_latent_execute, yvex_runtime_av_layout_from_plan,
         component_admit, text_encoder_artifact_cuda,

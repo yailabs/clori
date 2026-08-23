@@ -288,6 +288,18 @@ src/model/families/minimax_h3.c'
 if rg -n -i '(families/|deepseek|minimax|qwen)' src/backend/cuda/text_encoder.c; then
     fail "generic CUDA text execution contains concrete family semantics"
 fi
+if rg -n '#include[[:space:]]+[<"]yvex/internal/backend[.]h[>"]|linear_numeric_policy' \
+    include/yvex/internal/joint_transformer.h; then
+    fail "joint Transformer semantics contain backend physical policy"
+fi
+if rg -n 'video_output_numeric|audio_output_numeric|tile_rows|split_k|LINEAR_REDUCTION' \
+    src/graph/families/minimax_h3.c include/yvex/internal/joint_transformer.h; then
+    fail "MiniMax semantic recipe contains output-linear physical execution policy"
+fi
+if rg -n -i 'minimax' src/backend/cuda/qtype.c src/backend/cuda/joint_transformer.c \
+    src/runtime/component.c; then
+    fail "generic runtime or CUDA output-linear execution contains a MiniMax switch"
+fi
 
 if find src include -type f \( -name '*.c' -o -name '*.h' -o -name '*.cu' \) \
         ! -path 'src/model/families/*' -print0 |

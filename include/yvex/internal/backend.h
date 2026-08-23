@@ -329,15 +329,7 @@ typedef struct yvex_backend_cuda_operation_facts {
     unsigned long long activation_bytes, temporary_bytes, tensor_core_launches;
     int compulsory_memory_facts_available;
 } yvex_backend_cuda_operation_facts;
-typedef enum {
-    YVEX_BACKEND_LINEAR_REDUCTION_DEFAULT = 0,
-    YVEX_BACKEND_LINEAR_REDUCTION_INPLACE,
-    YVEX_BACKEND_LINEAR_REDUCTION_COMPUTE_TYPE
-} yvex_backend_linear_reduction;
-typedef struct yvex_backend_linear_numeric_policy {
-    unsigned int tile_rows, split_k;
-    yvex_backend_linear_reduction reduction;
-} yvex_backend_linear_numeric_policy;
+typedef struct yvex_transformer_linear_physical_plan yvex_transformer_linear_physical_plan;
 int yvex_backend_cuda_encoded_matvec(yvex_backend *backend, const unsigned char *resident_encoded,
     unsigned long long encoded_bytes, unsigned int qtype, unsigned long long row_count,
     unsigned long long row_width, unsigned long long row_bytes, unsigned long long input_rows,
@@ -357,7 +349,7 @@ int yvex_backend_cuda_encoded_linear_f32(
     unsigned long long bias_bytes, unsigned long long output_width,
     unsigned long long input_width, unsigned long long input_rows,
     const yvex_device_tensor *input, yvex_device_tensor *output,
-    const yvex_backend_linear_numeric_policy *numeric_policy,
+    const yvex_transformer_linear_physical_plan *physical_plan,
     yvex_backend_cuda_operation_facts *facts, yvex_error *err);
 int yvex_backend_cuda_encoded_gather(yvex_backend *backend, const unsigned char *resident_encoded,
     unsigned long long encoded_bytes, unsigned int qtype, unsigned long long row_count,

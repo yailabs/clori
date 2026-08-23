@@ -369,6 +369,11 @@ static int refusal_checks(
     rc = yvex_backend_transformer_joint_cuda(
         backend, external, blocks, identity, arena_bytes, &request, &result, err);
     if (rc != YVEX_ERR_INVALID_ARG || result.complete) return YVEX_ERR_STATE;
+    request = *valid;
+    request.video_output_physical = valid->audio_output_physical;
+    rc = yvex_backend_transformer_joint_cuda(
+        backend, external, blocks, identity, arena_bytes, &request, &result, err);
+    if (rc != YVEX_ERR_INVALID_ARG || result.complete) return YVEX_ERR_STATE;
     yvex_error_clear(err);
     return YVEX_OK;
 }
@@ -396,12 +401,16 @@ static int execute(const yvex_artifact *artifact, const yvex_gguf *gguf,
     char identity[65] = {0};
     int attached = 0, rc, cleanup_rc;
     yvex_error cleanup;
-    request->recipe = graph ? graph->omni_recipe() : NULL;
-    if (!graph || !request->recipe) {
+    request->recipe = graph ? graph->omni_recipe : NULL;
+    if (!graph || !request->recipe || !graph->omni_output_physical_compile) {
         yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "minimax-h3.transformer-proof",
                        "the admitted joint Transformer recipe is unavailable");
         rc = YVEX_ERR_UNSUPPORTED;
     } else {
+        rc = graph->omni_output_physical_compile(
+            &request->video_output_physical, &request->audio_output_physical, err);
+    }
+    if (rc == YVEX_OK) {
         rc = graph->component_admit(
             "transformer", artifact, gguf, tensors, &admission, &admission_failure, err);
     }
@@ -496,7 +505,7 @@ static int execute_selected_block(
     char timestep_indices_path[1024], reference_name[64], reference_path[1024];
     yvex_error err, cleanup;
     int attached = 0, rc = YVEX_OK, cleanup_rc, matches = 0;
-    if (!graph || !graph->omni_recipe() || selected_block >= 50ull || !video_rows ||
+    if (!graph || !graph->omni_recipe || selected_block >= 50ull || !video_rows ||
         !audio_rows || !text_rows || !timestep_count || timestep_count > 64ull ||
         !yvex_core_u64_add(video_rows, audio_rows, &rows) ||
         !yvex_core_u64_add(rows, text_rows, &rows) ||
@@ -573,7 +582,7 @@ static int execute_selected_block(
     options.inv_freq = (const float *)external[YVEX_TRANSFORMER_JOINT_ROPE_INV_FREQ].encoded;
     if (rc == YVEX_OK)
         rc = yvex_backend_transformer_joint_blocks_cuda(
-            backend, graph->omni_recipe(), block, 1ull, identity, arena_bytes, hidden,
+            backend, graph->omni_recipe, block, 1ull, identity, arena_bytes, hidden,
             time, timestep_count, positions, adaln_indices, rows, output, values,
             &result, &options, &err);
     if (rc == YVEX_OK && !file_write(output_path, output, values)) rc = YVEX_ERR_IO;
@@ -620,12 +629,16 @@ static int execute_artifact(const yvex_artifact *artifact, const yvex_gguf *gguf
     yvex_runtime_component_session *session = NULL;
     yvex_error cleanup;
     int rc;
-    request->recipe = graph ? graph->omni_recipe() : NULL;
-    if (!graph || !request->recipe) {
+    request->recipe = graph ? graph->omni_recipe : NULL;
+    if (!graph || !request->recipe || !graph->omni_output_physical_compile) {
         yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "minimax-h3.transformer-proof",
                        "the admitted joint Transformer recipe is unavailable");
         rc = YVEX_ERR_UNSUPPORTED;
     } else {
+        rc = graph->omni_output_physical_compile(
+            &request->video_output_physical, &request->audio_output_physical, err);
+    }
+    if (rc == YVEX_OK) {
         rc = graph->component_admit(
             "transformer", artifact, gguf, tensors, &admission, &failure, err);
     }

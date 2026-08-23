@@ -22,6 +22,7 @@ typedef struct yvex_runtime_av_layout_output yvex_runtime_av_layout_output;
 typedef struct yvex_runtime_av_layout_result yvex_runtime_av_layout_result;
 typedef struct yvex_transformer_joint_encoded_weight yvex_minimax_h3_encoded_weight;
 typedef struct yvex_transformer_joint_recipe yvex_transformer_joint_recipe;
+typedef struct yvex_transformer_linear_physical_plan yvex_transformer_linear_physical_plan;
 typedef struct yvex_transformer_joint_block_result yvex_minimax_h3_omni_result;
 typedef struct yvex_transformer_joint_request yvex_minimax_h3_omni_transformer_request;
 typedef struct yvex_transformer_joint_result yvex_minimax_h3_omni_transformer_result;
@@ -432,7 +433,9 @@ typedef struct yvex_runtime_av_plan yvex_minimax_h3_t2va_plan;
 typedef struct yvex_runtime_av_latent_context yvex_minimax_h3_t2va_omni_context;
 typedef yvex_runtime_latent_evaluator_result yvex_minimax_h3_t2va_omni_result;
 typedef struct {
-    const yvex_transformer_joint_recipe *(*omni_recipe)(void);
+    const yvex_transformer_joint_recipe *omni_recipe;
+    int (*omni_output_physical_compile)(yvex_transformer_linear_physical_plan *,
+        yvex_transformer_linear_physical_plan *, yvex_error *);
     int (*t2va_plan_build)(yvex_minimax_h3_t2va_plan *, unsigned long long,
         unsigned long long, unsigned long long, unsigned long long, unsigned int, yvex_error *);
     int (*scheduler_step)(float *output, const float *sample, const float *velocity,
