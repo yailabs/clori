@@ -76,7 +76,7 @@ static int selected_weights_load(
     unsigned long long *arena_bytes_out,
     yvex_minimax_h3_encoded_weight external[YVEX_TRANSFORMER_JOINT_EXTERNAL_WEIGHT_COUNT],
     yvex_minimax_h3_encoded_weight blocks[YVEX_TRANSFORMER_JOINT_BLOCK_WEIGHT_COUNT],
-    char identity[65], yvex_error *err)
+    unsigned long long selected_block, char identity[65], yvex_error *err)
 {
     const yvex_materialized_tensor_binding *bindings[
         YVEX_TRANSFORMER_JOINT_EXTERNAL_WEIGHT_COUNT + YVEX_TRANSFORMER_JOINT_BLOCK_WEIGHT_COUNT];
@@ -89,7 +89,7 @@ static int selected_weights_load(
         bindings[index] = binding_find(session, external_names[index]);
     for (index = 0ull; index < YVEX_TRANSFORMER_JOINT_BLOCK_WEIGHT_COUNT; ++index) {
         int length = snprintf(block_names[index], sizeof(block_names[index]),
-                              "blocks.0.%s", block_suffixes[index]);
+                              "blocks.%llu.%s", selected_block, block_suffixes[index]);
         if (length < 0 || (size_t)length >= sizeof(block_names[index])) return YVEX_ERR_BOUNDS;
         bindings[YVEX_TRANSFORMER_JOINT_EXTERNAL_WEIGHT_COUNT + index] =
             binding_find(session, block_names[index]);
@@ -257,12 +257,14 @@ static int block_checkpoint_observe(
     yvex_error *err)
 {
     const block_checkpoint_context *context = opaque;
+    const char *every_block = getenv("YVEX_MINIMAX_H3_BLOCK_CHECKPOINT_EVERY");
     char path[1024];
     unsigned long long completed;
     int length;
     if (!context || !context->root || !observation) return YVEX_OK;
     completed = observation->completed_blocks;
-    if (completed != 1ull && completed != 2ull && completed != 5ull &&
+    if ((!every_block || strcmp(every_block, "1") != 0) &&
+        completed != 1ull && completed != 2ull && completed != 5ull &&
         completed != 10ull && completed != 20ull && completed != 30ull &&
         completed != 40ull && completed != 50ull)
         return YVEX_OK;
@@ -275,6 +277,33 @@ static int block_checkpoint_observe(
     }
     yvex_error_set(err, YVEX_ERR_IO, "minimax-h3.block-checkpoint",
                    "a selected Omni block checkpoint could not be published atomically");
+    return YVEX_ERR_IO;
+}
+
+typedef struct {
+    const char *root;
+    yvex_transformer_joint_scope scope;
+    unsigned long long block;
+} stage_checkpoint_context;
+
+static int stage_checkpoint_observe(
+    void *opaque, const yvex_transformer_joint_stage_observation *observation,
+    yvex_error *err)
+{
+    const stage_checkpoint_context *context = opaque;
+    char path[1024];
+    int length;
+    if (!context || !context->root || !observation) return YVEX_OK;
+    length = snprintf(path, sizeof(path), "%s/scope-%u-block-%03llu-stage-%02u.f32",
+                      context->root, (unsigned int)observation->scope,
+                      observation->block, (unsigned int)observation->stage);
+    if (length > 0 && (size_t)length < sizeof(path) &&
+        file_write_atomic(path, observation->values, observation->value_count)) {
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    yvex_error_set(err, YVEX_ERR_IO, "minimax-h3.stage-checkpoint",
+                   "a selected Omni stage checkpoint could not be published atomically");
     return YVEX_ERR_IO;
 }
 
@@ -384,7 +413,7 @@ static int execute(const yvex_artifact *artifact, const yvex_gguf *gguf,
         &session, plan, artifact, &options, &failure, err);
     if (rc == YVEX_OK) rc = yvex_materialization_session_commit(session, &failure, err);
     if (rc == YVEX_OK) rc = selected_weights_load(
-        session, &arena, &arena_bytes, external, blocks, identity, err);
+        session, &arena, &arena_bytes, external, blocks, 0ull, identity, err);
     backend_options.kind = YVEX_BACKEND_KIND_CUDA;
     backend_options.memory_limit_bytes = 16ull * 1024ull * 1024ull * 1024ull;
     if (rc == YVEX_OK) rc = yvex_backend_open(&backend, &backend_options, err);
@@ -423,6 +452,161 @@ static int execute(const yvex_artifact *artifact, const yvex_gguf *gguf,
     yvex_materialization_session_close(session);
     yvex_materialization_plan_close(plan);
     return rc;
+}
+
+static int execute_selected_block(
+    const char *artifact_path, const char *fixture_root, const char *hidden_path,
+    const char *time_path, const char *output_path, unsigned long long video_rows,
+    unsigned long long audio_rows, unsigned long long text_rows,
+    unsigned long long timestep_count, unsigned long long selected_block)
+{
+    const yvex_minimax_h3_graph_api *graph = yvex_graph_register_minimax_h3();
+    yvex_artifact_options artifact_options = {.path = artifact_path, .readonly = 1};
+    yvex_artifact *artifact = NULL;
+    yvex_gguf *gguf = NULL;
+    yvex_tensor_table *tensors = NULL;
+    yvex_complete_artifact_admission admission;
+    yvex_artifact_admission_failure admission_failure;
+    yvex_materialization_options materialization_options;
+    yvex_materialization_failure materialization_failure;
+    yvex_materialization_plan *plan = NULL;
+    yvex_materialization_session *session = NULL;
+    yvex_minimax_h3_encoded_weight external[YVEX_TRANSFORMER_JOINT_EXTERNAL_WEIGHT_COUNT] = {{0}};
+    yvex_minimax_h3_encoded_weight block[YVEX_TRANSFORMER_JOINT_BLOCK_WEIGHT_COUNT] = {{0}};
+    yvex_backend_options backend_options = {0};
+    yvex_backend_tensor_desc descriptor = {0};
+    yvex_backend *backend = NULL;
+    yvex_device_tensor *resident = NULL;
+    yvex_transformer_joint_block_result result = {0};
+    stage_checkpoint_context checkpoint = {
+        .root = getenv("YVEX_MINIMAX_H3_STAGE_CHECKPOINT_ROOT"),
+        .scope = YVEX_TRANSFORMER_JOINT_SCOPE_OMNI,
+        .block = 1ull};
+    yvex_transformer_joint_block_options options = {
+        .stage_observer = checkpoint.root ? stage_checkpoint_observe : NULL,
+        .stage_observer_context = checkpoint.root ? &checkpoint : NULL,
+        .observed_stage_block = 1ull,
+        .observed_stage_scope = YVEX_TRANSFORMER_JOINT_SCOPE_OMNI,
+        .observed_stage = YVEX_TRANSFORMER_JOINT_STAGE_COUNT};
+    unsigned char *arena = NULL, *registered = NULL;
+    float *hidden = NULL, *time = NULL, *positions = NULL, *output = NULL, *reference = NULL;
+    unsigned int *tags = NULL, *timestep_indices = NULL, *adaln_indices = NULL;
+    unsigned long long arena_bytes = 0ull, rows, values, row, bytes;
+    char identity[65] = {0}, positions_path[1024], tags_path[1024];
+    char timestep_indices_path[1024], reference_name[64], reference_path[1024];
+    yvex_error err, cleanup;
+    int attached = 0, rc = YVEX_OK, cleanup_rc, matches = 0;
+    if (!graph || !graph->omni_recipe() || selected_block >= 50ull || !video_rows ||
+        !audio_rows || !text_rows || !timestep_count || timestep_count > 64ull ||
+        !yvex_core_u64_add(video_rows, audio_rows, &rows) ||
+        !yvex_core_u64_add(rows, text_rows, &rows) ||
+        !yvex_core_u64_mul(rows, 5376ull, &values) ||
+        !yvex_core_u64_mul(values, sizeof(float), &bytes) || bytes > SIZE_MAX ||
+        !fixture_path(positions_path, fixture_root, "positions.f32") ||
+        !fixture_path(tags_path, fixture_root, "tags.u32") ||
+        !fixture_path(timestep_indices_path, fixture_root, "timestep_indices.u32") ||
+        snprintf(reference_name, sizeof(reference_name), "hidden.block-%03llu.f32",
+                 selected_block + 1ull) <= 0 ||
+        !fixture_path(reference_path, fixture_root, reference_name) ||
+        !(hidden = malloc((size_t)bytes)) || !(output = malloc((size_t)bytes)) ||
+        !(reference = malloc((size_t)bytes)) ||
+        !(time = malloc((size_t)(timestep_count * 2688ull * sizeof(float)))) ||
+        !(positions = malloc((size_t)(rows * 3ull * sizeof(float)))) ||
+        !(tags = malloc((size_t)(rows * sizeof(*tags)))) ||
+        !(timestep_indices = malloc((size_t)(rows * sizeof(*timestep_indices)))) ||
+        !(adaln_indices = malloc((size_t)(rows * sizeof(*adaln_indices))))) {
+        rc = YVEX_ERR_INVALID_ARG;
+        goto cleanup;
+    }
+    if (!file_read(hidden_path, hidden, values) ||
+        !file_read(time_path, time, timestep_count * 2688ull) ||
+        !file_read(positions_path, positions, rows * 3ull) ||
+        !file_read_u32(tags_path, tags, rows) ||
+        !file_read_u32(timestep_indices_path, timestep_indices, rows) ||
+        !file_read(reference_path, reference, values)) {
+        rc = YVEX_ERR_IO;
+        goto cleanup;
+    }
+    for (row = 0ull; row < rows; ++row) {
+        if (tags[row] >= 3u || timestep_indices[row] >= timestep_count) {
+            rc = YVEX_ERR_FORMAT;
+            goto cleanup;
+        }
+        adaln_indices[row] = timestep_indices[row] * 3u + tags[row];
+    }
+    yvex_error_clear(&err);
+    rc = yvex_artifact_open(&artifact, &artifact_options, &err);
+    if (rc == YVEX_OK) rc = yvex_gguf_open(&gguf, artifact, &err);
+    if (rc == YVEX_OK) rc = yvex_tensor_table_from_gguf(&tensors, gguf, &err);
+    if (rc == YVEX_OK)
+        rc = graph->component_admit(
+            "transformer", artifact, gguf, tensors, &admission, &admission_failure, &err);
+    yvex_materialization_options_default(&materialization_options);
+    materialization_options.max_chunk_bytes = 64ull * 1024ull * 1024ull;
+    if (rc == YVEX_OK)
+        rc = yvex_materialization_plan_build(
+            &plan, &admission, artifact, gguf, tensors, NULL, &materialization_options,
+            &materialization_failure, &err);
+    if (rc == YVEX_OK)
+        rc = yvex_materialization_session_open(
+            &session, plan, artifact, &materialization_options, &materialization_failure, &err);
+    if (rc == YVEX_OK)
+        rc = yvex_materialization_session_commit(session, &materialization_failure, &err);
+    if (rc == YVEX_OK)
+        rc = selected_weights_load(session, &arena, &arena_bytes, external, block,
+                                   selected_block, identity, &err);
+    backend_options.kind = YVEX_BACKEND_KIND_CUDA;
+    backend_options.memory_limit_bytes = 16ull * 1024ull * 1024ull * 1024ull;
+    if (rc == YVEX_OK) rc = yvex_backend_open(&backend, &backend_options, &err);
+    descriptor.name = "minimax-h3-selected-block-proof-residency";
+    descriptor.dtype = YVEX_DTYPE_I8;
+    descriptor.rank = 1u;
+    descriptor.dims[0] = descriptor.bytes = arena_bytes;
+    registered = arena;
+    if (rc == YVEX_OK)
+        rc = yvex_backend_resident_alloc(backend, &descriptor, &resident, &registered, &err);
+    if (rc == YVEX_OK && registered != arena) rc = YVEX_ERR_STATE;
+    if (rc == YVEX_OK) {
+        rc = yvex_backend_resident_attach(backend, arena, arena_bytes, resident, 1ull, &err);
+        attached = rc == YVEX_OK;
+    }
+    options.inv_freq = (const float *)external[YVEX_TRANSFORMER_JOINT_ROPE_INV_FREQ].encoded;
+    if (rc == YVEX_OK)
+        rc = yvex_backend_transformer_joint_blocks_cuda(
+            backend, graph->omni_recipe(), block, 1ull, identity, arena_bytes, hidden,
+            time, timestep_count, positions, adaln_indices, rows, output, values,
+            &result, &options, &err);
+    if (rc == YVEX_OK && !file_write(output_path, output, values)) rc = YVEX_ERR_IO;
+    if (rc == YVEX_OK) matches = compare("block", reference, output, values, 1ull);
+    if (rc == YVEX_OK)
+        printf("selected_block=%llu rows=%llu oracle_match=%s execution_identity=%s\n",
+               selected_block + 1ull, rows, matches ? "yes" : "no", result.execution_identity);
+    else
+        fprintf(stderr, "selected_block=refused where=%s message=%s\n",
+                yvex_error_where(&err), yvex_error_message(&err));
+cleanup:
+    if (attached) {
+        yvex_error_clear(&cleanup);
+        cleanup_rc = yvex_backend_resident_detach(backend, &cleanup);
+        if (cleanup_rc != YVEX_OK && rc == YVEX_OK) rc = cleanup_rc;
+    }
+    if (resident) {
+        yvex_error_clear(&cleanup);
+        cleanup_rc = yvex_backend_tensor_release(backend, &resident, &cleanup);
+        if (cleanup_rc != YVEX_OK && rc == YVEX_OK) rc = cleanup_rc;
+    }
+    yvex_error_clear(&cleanup);
+    cleanup_rc = yvex_backend_close_checked(&backend, &cleanup);
+    if (cleanup_rc != YVEX_OK && rc == YVEX_OK) rc = cleanup_rc;
+    if (arena) munmap(arena, (size_t)arena_bytes);
+    yvex_materialization_session_close(session);
+    yvex_materialization_plan_close(plan);
+    yvex_tensor_table_close(tensors);
+    yvex_gguf_close(gguf);
+    yvex_artifact_close(artifact);
+    free(adaln_indices); free(timestep_indices); free(tags); free(positions);
+    free(time); free(reference); free(output); free(hidden);
+    return rc == YVEX_OK ? 0 : 1;
 }
 
 static int execute_artifact(const yvex_artifact *artifact, const yvex_gguf *gguf,
@@ -687,10 +871,36 @@ static int execute_request_fixture(
     request_fixture fixture = {0};
     block_checkpoint_context checkpoint = {
         .root = getenv("YVEX_MINIMAX_H3_BLOCK_CHECKPOINT_ROOT")};
+    stage_checkpoint_context stage_checkpoint = {
+        .root = getenv("YVEX_MINIMAX_H3_STAGE_CHECKPOINT_ROOT")};
+    const char *stage_block = getenv("YVEX_MINIMAX_H3_STAGE_CHECKPOINT_BLOCK");
+    const char *stage_value = getenv("YVEX_MINIMAX_H3_STAGE_CHECKPOINT_STAGE");
+    const char *stage_scope = getenv("YVEX_MINIMAX_H3_STAGE_CHECKPOINT_SCOPE");
+    char *stage_block_end = NULL;
+    char *stage_value_end = NULL;
     yvex_error err;
     unsigned long long packed_rows, video_values, audio_values;
     int video_matches = 0, audio_matches = 0;
     int rc = YVEX_OK;
+    if (stage_checkpoint.root) {
+        unsigned long long selected_stage = stage_value
+                                                ? strtoull(stage_value, &stage_value_end, 10)
+                                                : YVEX_TRANSFORMER_JOINT_STAGE_COUNT;
+        stage_checkpoint.block = stage_block ? strtoull(stage_block, &stage_block_end, 10) : 0ull;
+        stage_checkpoint.scope = stage_scope && strcmp(stage_scope, "refiner") == 0
+                                     ? YVEX_TRANSFORMER_JOINT_SCOPE_REFINER
+                                     : YVEX_TRANSFORMER_JOINT_SCOPE_OMNI;
+        if (!stage_block || !stage_block_end || *stage_block_end ||
+            (!stage_checkpoint.block &&
+             stage_checkpoint.scope != YVEX_TRANSFORMER_JOINT_SCOPE_REFINER) ||
+            (stage_scope && strcmp(stage_scope, "omni") != 0 &&
+             strcmp(stage_scope, "refiner") != 0) ||
+            (stage_value && (!stage_value_end || *stage_value_end)) ||
+            selected_stage > YVEX_TRANSFORMER_JOINT_STAGE_COUNT)
+            return 2;
+        request.observed_stage_scope = stage_checkpoint.scope;
+        request.observed_stage = (yvex_transformer_joint_stage)selected_stage;
+    }
     if (!video_rows || !audio_rows || !text_rows || !block_count || block_count > 50ull ||
         !timestep_count || timestep_count > 64ull ||
         !yvex_core_u64_add(video_rows, audio_rows, &packed_rows) ||
@@ -717,6 +927,9 @@ static int execute_request_fixture(
     request.audio_output_capacity = audio_values;
     request.block_observer = checkpoint.root ? block_checkpoint_observe : NULL;
     request.block_observer_context = checkpoint.root ? &checkpoint : NULL;
+    request.stage_observer = stage_checkpoint.root ? stage_checkpoint_observe : NULL;
+    request.stage_observer_context = stage_checkpoint.root ? &stage_checkpoint : NULL;
+    request.observed_stage_block = stage_checkpoint.block;
     yvex_error_clear(&err);
     rc = yvex_artifact_open(&artifact, &options, &err);
     if (rc == YVEX_OK) rc = yvex_gguf_open(&gguf, artifact, &err);
@@ -849,14 +1062,16 @@ static int execute_latent_fixture(
         (!file_write(video_output_path, fixture.video_output, video_values) ||
          !file_write(audio_output_path, fixture.audio_output, audio_values)))
         rc = YVEX_ERR_IO;
-    if (rc == YVEX_OK &&
-        (!compare("video", fixture.video_reference, fixture.video_output,
-                  video_values, block_count) ||
-         !compare("audio", fixture.audio_reference, fixture.audio_output,
-                  audio_values, block_count))) {
-        yvex_error_set(&err, YVEX_ERR_FORMAT, "minimax-h3.latent-iteration-proof.oracle",
-                       "the iterative latent result differs from its independent oracle");
-        rc = YVEX_ERR_FORMAT;
+    if (rc == YVEX_OK) {
+        int video_matches = compare("video", fixture.video_reference, fixture.video_output,
+                                    video_values, block_count);
+        int audio_matches = compare("audio", fixture.audio_reference, fixture.audio_output,
+                                    audio_values, block_count);
+        if (!video_matches || !audio_matches) {
+            yvex_error_set(&err, YVEX_ERR_FORMAT, "minimax-h3.latent-iteration-proof.oracle",
+                           "the iterative latent result differs from its independent oracle");
+            rc = YVEX_ERR_FORMAT;
+        }
     }
     if (rc == YVEX_OK)
         printf("t2va_latent_request=accepted rows=%llu blocks=%llu steps=%u seed=%llu\n"
@@ -899,6 +1114,18 @@ int main(int argc, char **argv)
     char *blocks_end = NULL;
     unsigned long long block_count = blocks_text ? strtoull(blocks_text, &blocks_end, 10) : 1ull;
     int rc = YVEX_OK;
+    if (argc == 12 && strcmp(argv[2], "block-request") == 0) {
+        char *ends[5] = {0};
+        unsigned long long values[5];
+        int index;
+        for (index = 0; index < 5; ++index)
+            values[index] = strtoull(argv[index + 7], &ends[index], 10);
+        for (index = 0; index < 5; ++index)
+            if (!ends[index] || *ends[index]) return 2;
+        return execute_selected_block(
+            argv[1], argv[3], argv[4], argv[5], argv[6], values[0], values[1],
+            values[2], values[3], values[4]);
+    }
     if (argc == 13 && strcmp(argv[2], "latent-request") == 0) {
         char *ends[7] = {0};
         unsigned long long values[7];

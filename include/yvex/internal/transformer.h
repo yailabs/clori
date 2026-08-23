@@ -175,6 +175,11 @@ int yvex_cuda_transformer_silu_product_bf16(yvex_backend *backend,
 int yvex_cuda_transformer_silu(yvex_backend *backend, const yvex_device_tensor *input,
     yvex_device_tensor *output, unsigned long long count, int bf16_output,
     yvex_backend_cuda_operation_facts *facts, yvex_error *err);
+int yvex_cuda_transformer_timestep_embedding(
+    yvex_backend *backend, const yvex_device_tensor *timesteps,
+    yvex_device_tensor *output, unsigned long long rows,
+    unsigned long long half_width, float maximum_period,
+    yvex_backend_cuda_operation_facts *facts, yvex_error *err);
 int yvex_cuda_transformer_split_three(yvex_backend *backend,
     const yvex_device_tensor *input, yvex_device_tensor *first, yvex_device_tensor *second,
     yvex_device_tensor *third, unsigned long long rows, unsigned long long width,
@@ -207,6 +212,10 @@ int yvex_cuda_transformer_bias(yvex_backend *backend,
     const yvex_device_tensor *input, const yvex_device_tensor *bias,
     yvex_device_tensor *output, unsigned long long rows, unsigned long long width,
     int bf16_output, yvex_backend_cuda_operation_facts *facts, yvex_error *err);
+int yvex_cuda_transformer_add_bf16(yvex_backend *backend,
+    const yvex_device_tensor *left, const yvex_device_tensor *right,
+    yvex_device_tensor *output, unsigned long long rows, unsigned long long width,
+    yvex_backend_cuda_operation_facts *facts, yvex_error *err);
 int yvex_cuda_transformer_scaled_residual_f32(yvex_backend *backend,
     const yvex_device_tensor *residual, const yvex_device_tensor *update,
     const yvex_device_tensor *scale, yvex_device_tensor *output,

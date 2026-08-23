@@ -1470,18 +1470,18 @@ static int text_encoder_artifact_cuda(const yvex_artifact *artifact,
     return rc;
 }
 static const yvex_transformer_joint_recipe omni_transformer_recipe = {
-    .schema_version = YVEX_TRANSFORMER_JOINT_SCHEMA_V1, .identity_domain = "minimax-h3-fl2va-omni-transformer",
+    .schema_version = YVEX_TRANSFORMER_JOINT_SCHEMA_V2, .identity_domain = "minimax-h3-fl2va-omni-transformer",
     .qkv_layout = YVEX_TRANSFORMER_QKV_LAYOUT_PER_HEAD_THREE,
     .swiglu_layout = YVEX_TRANSFORMER_SWIGLU_LAYOUT_GATE_THEN_UP,
-    .hidden_width = 5376ull, .attention_heads = 56ull,
-    .head_dimension = 128ull, .attention_width = 7168ull,
-    .ffn_width = 14336ull, .timestep_width = 2688ull,
-    .rotary_width = 96ull, .modality_count = 3ull,
-    .modulation_parameters = 6ull, .block_count = 50ull,
-    .refiner_block_count = 2ull, .maximum_timesteps = 64ull,
+    .hidden_width = 5376ull, .attention_heads = 56ull, .head_dimension = 128ull,
+    .attention_width = 7168ull, .ffn_width = 14336ull, .timestep_width = 2688ull,
+    .rotary_width = 96ull, .modality_count = 3ull, .modulation_parameters = 6ull,
+    .block_count = 50ull, .refiner_block_count = 2ull, .maximum_timesteps = 64ull,
     .maximum_packed_rows = YVEX_MINIMAX_H3_OMNI_MAX_PACKED_ROWS, .video_input_width = 96ull,
     .audio_input_width = 32ull, .condition_input_width = 5120ull,
     .video_output_width = 96ull, .audio_output_width = 32ull,
+    .video_output_numeric = {.tile_rows = 32u, .split_k = 10u, .reduction = YVEX_BACKEND_LINEAR_REDUCTION_INPLACE},
+    .audio_output_numeric = {.tile_rows = 128u, .split_k = 3u, .reduction = YVEX_BACKEND_LINEAR_REDUCTION_COMPUTE_TYPE},
 };
 static const yvex_transformer_joint_recipe *omni_recipe(void)
 {

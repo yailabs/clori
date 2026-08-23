@@ -59,6 +59,11 @@ typedef struct {
     unsigned long long block_count, block_index;
     yvex_transformer_joint_block_observer_fn observer;
     void *observer_context;
+    yvex_transformer_joint_stage_observer_fn stage_observer;
+    void *stage_observer_context;
+    yvex_transformer_joint_scope observed_stage_scope;
+    unsigned long long observed_stage_block;
+    yvex_transformer_joint_stage observed_stage;
     yvex_transformer_joint_block_result facts;
 } joint_run;
 static const unsigned int text_zero_row = 0u;
@@ -73,9 +78,18 @@ static float joint_bf16_value(float value)
     return yvex_quant_bf16_decode(yvex_quant_bf16_encode(value));
 }
 
+static int joint_linear_policy_supported(const yvex_backend_linear_numeric_policy *policy)
+{
+    return policy && policy->split_k > 1u &&
+           ((policy->tile_rows == 32u &&
+             policy->reduction == YVEX_BACKEND_LINEAR_REDUCTION_INPLACE) ||
+            (policy->tile_rows == 128u &&
+             policy->reduction == YVEX_BACKEND_LINEAR_REDUCTION_COMPUTE_TYPE));
+}
+
 static int joint_recipe_supported(const yvex_transformer_joint_recipe *recipe)
 {
-    return recipe && recipe->schema_version == YVEX_TRANSFORMER_JOINT_SCHEMA_V1 &&
+    return recipe && recipe->schema_version == YVEX_TRANSFORMER_JOINT_SCHEMA_V2 &&
            recipe->qkv_layout == YVEX_TRANSFORMER_QKV_LAYOUT_PER_HEAD_THREE &&
            recipe->swiglu_layout == YVEX_TRANSFORMER_SWIGLU_LAYOUT_GATE_THEN_UP &&
            recipe->identity_domain && recipe->identity_domain[0] &&
@@ -90,7 +104,9 @@ static int joint_recipe_supported(const yvex_transformer_joint_recipe *recipe)
            recipe->maximum_packed_rows == JOINT_MAX_PACKED_ROWS &&
            recipe->video_input_width == 96ull && recipe->audio_input_width == 32ull &&
            recipe->condition_input_width == 5120ull && recipe->video_output_width == 96ull &&
-           recipe->audio_output_width == 32ull;
+           recipe->audio_output_width == 32ull &&
+           joint_linear_policy_supported(&recipe->video_output_numeric) &&
+           joint_linear_policy_supported(&recipe->audio_output_numeric);
 }
 static int joint_facts_add(yvex_transformer_joint_block_result *total,
                           const yvex_backend_cuda_operation_facts *part)
@@ -267,6 +283,52 @@ static int joint_round(joint_run *run, joint_device_slot slot,
     return rc;
 }
 
+static int joint_stage_observe(joint_run *run, yvex_transformer_joint_stage stage,
+                               joint_device_slot slot, unsigned long long rows,
+                               unsigned long long width, yvex_error *err)
+{
+    yvex_transformer_joint_stage_observation observation;
+    float *values;
+    unsigned long long count, bytes;
+    int rc;
+    if (!run->stage_observer || run->observed_stage_scope != YVEX_TRANSFORMER_JOINT_SCOPE_OMNI ||
+        run->observed_stage_block != run->block_index + 1ull ||
+        (run->observed_stage < YVEX_TRANSFORMER_JOINT_STAGE_COUNT &&
+         run->observed_stage != stage))
+        return YVEX_OK;
+    if (stage >= YVEX_TRANSFORMER_JOINT_STAGE_COUNT || slot >= JOINT_DEVICE_COUNT ||
+        !rows || !width || !yvex_core_u64_mul(rows, width, &count) ||
+        !yvex_core_u64_mul(count, sizeof(float), &bytes) || bytes > SIZE_MAX)
+        return conditioning_refuse(err, YVEX_ERR_BOUNDS,
+                                   "cuda.transformer.joint.stage-observe",
+                                   "bounded Omni stage observation geometry is required");
+    values = (float *)malloc((size_t)bytes);
+    if (!values)
+        return conditioning_refuse(err, YVEX_ERR_NOMEM,
+                                   "cuda.transformer.joint.stage-observe",
+                                   "bounded Omni stage observation allocation failed");
+    rc = yvex_backend_tensor_read(run->backend, run->device[slot], values, bytes, err);
+    if (rc == YVEX_OK &&
+        !yvex_core_u64_add(run->facts.d2h_bytes, bytes, &run->facts.d2h_bytes))
+        rc = conditioning_refuse(err, YVEX_ERR_BOUNDS,
+                                 "cuda.transformer.joint.stage-observe",
+                                 "Omni stage observation accounting overflowed");
+    observation.block = run->block_index + 1ull;
+    observation.scope = YVEX_TRANSFORMER_JOINT_SCOPE_OMNI;
+    observation.stage = stage;
+    observation.rows = rows;
+    observation.width = width;
+    observation.value_count = count;
+    observation.values = values;
+    if (rc == YVEX_OK)
+        rc = run->stage_observer(run->stage_observer_context, &observation, err);
+    if (rc != YVEX_OK && err && yvex_error_code(err) == YVEX_OK)
+        yvex_error_set(err, rc, "cuda.transformer.joint.stage-observe",
+                       "Omni stage observer refused the execution");
+    free(values);
+    return rc;
+}
+
 static int joint_norm(joint_run *run, joint_device_slot input,
                      yvex_transformer_joint_weight_slot weight,
                      joint_device_slot weight_device, joint_device_slot output,
@@ -365,6 +427,10 @@ static int joint_modulation(joint_run *run, yvex_error *err)
         rc = conditioning_refuse(err, YVEX_ERR_BOUNDS, "cuda.transformer.joint.joint.facts",
                                  "Omni timestep activation accounting overflowed");
     if (rc == YVEX_OK)
+        rc = joint_stage_observe(run, YVEX_TRANSFORMER_JOINT_STAGE_CONDITION_ACTIVATION,
+                                 JOINT_DEVICE_TEMB_ACTIVATED, run->timesteps,
+                                 JOINT_TIME, err);
+    if (rc == YVEX_OK)
         rc = joint_weight_project(run, YVEX_TRANSFORMER_JOINT_ADALN_WEIGHT, run->timesteps,
                                  run->device[JOINT_DEVICE_TEMB_ACTIVATED],
                                  run->device[JOINT_DEVICE_MODULATION], err);
@@ -382,6 +448,10 @@ static int joint_modulation(joint_run *run, yvex_error *err)
     if (rc == YVEX_OK && !joint_facts_add(&run->facts, &facts))
         rc = conditioning_refuse(err, YVEX_ERR_BOUNDS, "cuda.transformer.joint.joint.facts",
                                  "Omni AdaLN bias accounting overflowed");
+    if (rc == YVEX_OK)
+        rc = joint_stage_observe(run, YVEX_TRANSFORMER_JOINT_STAGE_MODULATION,
+                                 JOINT_DEVICE_MODULATION, run->timesteps,
+                                 table_width, err);
     return rc;
 }
 
@@ -423,7 +493,15 @@ static int joint_attention(joint_run *run, yvex_error *err)
     int rc = joint_weight_project(run, YVEX_TRANSFORMER_JOINT_QKV, run->rows,
                                  run->device[JOINT_DEVICE_NORM],
                                  run->device[JOINT_DEVICE_QKV], err);
+    if (rc == YVEX_OK)
+        rc = joint_stage_observe(run, YVEX_TRANSFORMER_JOINT_STAGE_QKV_F32,
+                                 JOINT_DEVICE_QKV, run->rows,
+                                 3ull * JOINT_ATTENTION_WIDTH, err);
     if (rc == YVEX_OK) rc = joint_round(run, JOINT_DEVICE_QKV, 3ull * attention_values, err);
+    if (rc == YVEX_OK)
+        rc = joint_stage_observe(run, YVEX_TRANSFORMER_JOINT_STAGE_QKV_BF16,
+                                 JOINT_DEVICE_QKV, run->rows,
+                                 3ull * JOINT_ATTENTION_WIDTH, err);
     /* The released checkpoint groups Q/K/V rows inside each attention head. */
     if (rc == YVEX_OK)
         rc = yvex_cuda_transformer_split_interleaved_three(
@@ -435,13 +513,33 @@ static int joint_attention(joint_run *run, yvex_error *err)
         rc = conditioning_refuse(err, YVEX_ERR_BOUNDS, "cuda.transformer.joint.joint.facts",
                                  "Omni QKV split accounting overflowed");
     if (rc == YVEX_OK)
+        rc = joint_stage_observe(run, YVEX_TRANSFORMER_JOINT_STAGE_QUERY,
+                                 JOINT_DEVICE_QUERY, run->rows,
+                                 JOINT_ATTENTION_WIDTH, err);
+    if (rc == YVEX_OK)
+        rc = joint_stage_observe(run, YVEX_TRANSFORMER_JOINT_STAGE_KEY,
+                                 JOINT_DEVICE_KEY, run->rows,
+                                 JOINT_ATTENTION_WIDTH, err);
+    if (rc == YVEX_OK)
+        rc = joint_stage_observe(run, YVEX_TRANSFORMER_JOINT_STAGE_VALUE,
+                                 JOINT_DEVICE_VALUE, run->rows,
+                                 JOINT_ATTENTION_WIDTH, err);
+    if (rc == YVEX_OK)
         rc = joint_norm(run, JOINT_DEVICE_QUERY, YVEX_TRANSFORMER_JOINT_Q_NORM,
                        JOINT_DEVICE_Q_NORM, JOINT_DEVICE_QUERY,
                        run->rows * JOINT_HEADS, JOINT_HEAD_DIM, 1.0e-5f, err);
     if (rc == YVEX_OK)
+        rc = joint_stage_observe(run, YVEX_TRANSFORMER_JOINT_STAGE_QUERY_NORM,
+                                 JOINT_DEVICE_QUERY, run->rows,
+                                 JOINT_ATTENTION_WIDTH, err);
+    if (rc == YVEX_OK)
         rc = joint_norm(run, JOINT_DEVICE_KEY, YVEX_TRANSFORMER_JOINT_K_NORM,
                        JOINT_DEVICE_K_NORM, JOINT_DEVICE_KEY,
                        run->rows * JOINT_HEADS, JOINT_HEAD_DIM, 1.0e-5f, err);
+    if (rc == YVEX_OK)
+        rc = joint_stage_observe(run, YVEX_TRANSFORMER_JOINT_STAGE_KEY_NORM,
+                                 JOINT_DEVICE_KEY, run->rows,
+                                 JOINT_ATTENTION_WIDTH, err);
     if (rc == YVEX_OK)
         rc = yvex_cuda_transformer_rotary_half(
             run->backend, run->device[JOINT_DEVICE_QUERY], run->device[JOINT_DEVICE_COSINE],
@@ -451,6 +549,10 @@ static int joint_attention(joint_run *run, yvex_error *err)
         rc = conditioning_refuse(err, YVEX_ERR_BOUNDS, "cuda.transformer.joint.joint.facts",
                                  "Omni query MM-RoPE accounting overflowed");
     if (rc == YVEX_OK)
+        rc = joint_stage_observe(run, YVEX_TRANSFORMER_JOINT_STAGE_QUERY_ROTARY,
+                                 JOINT_DEVICE_QUERY, run->rows,
+                                 JOINT_ATTENTION_WIDTH, err);
+    if (rc == YVEX_OK)
         rc = yvex_cuda_transformer_rotary_half(
             run->backend, run->device[JOINT_DEVICE_KEY], run->device[JOINT_DEVICE_COSINE],
             run->device[JOINT_DEVICE_SINE], run->rows, JOINT_HEADS, JOINT_HEAD_DIM,
@@ -459,6 +561,10 @@ static int joint_attention(joint_run *run, yvex_error *err)
         rc = conditioning_refuse(err, YVEX_ERR_BOUNDS, "cuda.transformer.joint.joint.facts",
                                  "Omni key MM-RoPE accounting overflowed");
     if (rc == YVEX_OK)
+        rc = joint_stage_observe(run, YVEX_TRANSFORMER_JOINT_STAGE_KEY_ROTARY,
+                                 JOINT_DEVICE_KEY, run->rows,
+                                 JOINT_ATTENTION_WIDTH, err);
+    if (rc == YVEX_OK)
         rc = yvex_cuda_transformer_gqa(
             run->backend, run->device[JOINT_DEVICE_QUERY], run->device[JOINT_DEVICE_KEY],
             run->device[JOINT_DEVICE_VALUE], run->device[JOINT_DEVICE_ATTENTION],
@@ -466,12 +572,28 @@ static int joint_attention(joint_run *run, yvex_error *err)
     if (rc == YVEX_OK && !joint_facts_add(&run->facts, &facts))
         rc = conditioning_refuse(err, YVEX_ERR_BOUNDS, "cuda.transformer.joint.joint.facts",
                                  "Omni full-attention accounting overflowed");
+    if (rc == YVEX_OK)
+        rc = joint_stage_observe(run, YVEX_TRANSFORMER_JOINT_STAGE_ATTENTION_F32,
+                                 JOINT_DEVICE_ATTENTION, run->rows,
+                                 JOINT_ATTENTION_WIDTH, err);
     if (rc == YVEX_OK) rc = joint_round(run, JOINT_DEVICE_ATTENTION, attention_values, err);
+    if (rc == YVEX_OK)
+        rc = joint_stage_observe(run, YVEX_TRANSFORMER_JOINT_STAGE_ATTENTION_BF16,
+                                 JOINT_DEVICE_ATTENTION, run->rows,
+                                 JOINT_ATTENTION_WIDTH, err);
     if (rc == YVEX_OK)
         rc = joint_weight_project(run, YVEX_TRANSFORMER_JOINT_ATTENTION_OUT, run->rows,
                                  run->device[JOINT_DEVICE_ATTENTION],
                                  run->device[JOINT_DEVICE_UPDATE], err);
+    if (rc == YVEX_OK)
+        rc = joint_stage_observe(
+            run, YVEX_TRANSFORMER_JOINT_STAGE_ATTENTION_PROJECTION_F32,
+            JOINT_DEVICE_UPDATE, run->rows, JOINT_HIDDEN, err);
     if (rc == YVEX_OK) rc = joint_round(run, JOINT_DEVICE_UPDATE, run->values, err);
+    if (rc == YVEX_OK)
+        rc = joint_stage_observe(
+            run, YVEX_TRANSFORMER_JOINT_STAGE_ATTENTION_PROJECTION_BF16,
+            JOINT_DEVICE_UPDATE, run->rows, JOINT_HIDDEN, err);
     return rc;
 }
 
@@ -482,7 +604,13 @@ static int joint_mlp(joint_run *run, yvex_error *err)
     int rc = joint_weight_project(run, YVEX_TRANSFORMER_JOINT_FC1, run->rows,
                                  run->device[JOINT_DEVICE_NORM],
                                  run->device[JOINT_DEVICE_FC1], err);
+    if (rc == YVEX_OK)
+        rc = joint_stage_observe(run, YVEX_TRANSFORMER_JOINT_STAGE_FC1_F32,
+                                 JOINT_DEVICE_FC1, run->rows, 2ull * JOINT_FFN, err);
     if (rc == YVEX_OK) rc = joint_round(run, JOINT_DEVICE_FC1, 2ull * ffn_values, err);
+    if (rc == YVEX_OK)
+        rc = joint_stage_observe(run, YVEX_TRANSFORMER_JOINT_STAGE_FC1_BF16,
+                                 JOINT_DEVICE_FC1, run->rows, 2ull * JOINT_FFN, err);
     if (rc == YVEX_OK)
         rc = yvex_cuda_transformer_swiglu_split_bf16(
             run->backend, run->device[JOINT_DEVICE_FC1], run->device[JOINT_DEVICE_FF],
@@ -491,10 +619,19 @@ static int joint_mlp(joint_run *run, yvex_error *err)
         rc = conditioning_refuse(err, YVEX_ERR_BOUNDS, "cuda.transformer.joint.joint.facts",
                                  "Omni SwiGLU accounting overflowed");
     if (rc == YVEX_OK)
+        rc = joint_stage_observe(run, YVEX_TRANSFORMER_JOINT_STAGE_SWIGLU,
+                                 JOINT_DEVICE_FF, run->rows, JOINT_FFN, err);
+    if (rc == YVEX_OK)
         rc = joint_weight_project(run, YVEX_TRANSFORMER_JOINT_FC2, run->rows,
                                  run->device[JOINT_DEVICE_FF],
                                  run->device[JOINT_DEVICE_UPDATE], err);
+    if (rc == YVEX_OK)
+        rc = joint_stage_observe(run, YVEX_TRANSFORMER_JOINT_STAGE_FC2_F32,
+                                 JOINT_DEVICE_UPDATE, run->rows, JOINT_HIDDEN, err);
     if (rc == YVEX_OK) rc = joint_round(run, JOINT_DEVICE_UPDATE, run->values, err);
+    if (rc == YVEX_OK)
+        rc = joint_stage_observe(run, YVEX_TRANSFORMER_JOINT_STAGE_FC2_BF16,
+                                 JOINT_DEVICE_UPDATE, run->rows, JOINT_HIDDEN, err);
     return rc;
 }
 
@@ -505,16 +642,34 @@ static int joint_block(joint_run *run, yvex_error *err)
         rc = joint_norm(run, JOINT_DEVICE_HIDDEN, YVEX_TRANSFORMER_JOINT_NORM1,
                        JOINT_DEVICE_NORM_WEIGHT, JOINT_DEVICE_NORM,
                        run->rows, JOINT_HIDDEN, 1.0e-5f, err);
+    if (rc == YVEX_OK)
+        rc = joint_stage_observe(run, YVEX_TRANSFORMER_JOINT_STAGE_NORM1,
+                                 JOINT_DEVICE_NORM, run->rows, JOINT_HIDDEN, err);
     if (rc == YVEX_OK) rc = joint_modulate(run, 0u, 1u, err);
+    if (rc == YVEX_OK)
+        rc = joint_stage_observe(run, YVEX_TRANSFORMER_JOINT_STAGE_MODULATED1,
+                                 JOINT_DEVICE_NORM, run->rows, JOINT_HIDDEN, err);
     if (rc == YVEX_OK) rc = joint_attention(run, err);
     if (rc == YVEX_OK) rc = joint_residual(run, 2u, err);
+    if (rc == YVEX_OK)
+        rc = joint_stage_observe(run, YVEX_TRANSFORMER_JOINT_STAGE_ATTENTION_RESIDUAL,
+                                 JOINT_DEVICE_HIDDEN, run->rows, JOINT_HIDDEN, err);
     if (rc == YVEX_OK)
         rc = joint_norm(run, JOINT_DEVICE_HIDDEN, YVEX_TRANSFORMER_JOINT_NORM2,
                        JOINT_DEVICE_NORM_WEIGHT, JOINT_DEVICE_NORM,
                        run->rows, JOINT_HIDDEN, 1.0e-5f, err);
+    if (rc == YVEX_OK)
+        rc = joint_stage_observe(run, YVEX_TRANSFORMER_JOINT_STAGE_NORM2,
+                                 JOINT_DEVICE_NORM, run->rows, JOINT_HIDDEN, err);
     if (rc == YVEX_OK) rc = joint_modulate(run, 3u, 4u, err);
+    if (rc == YVEX_OK)
+        rc = joint_stage_observe(run, YVEX_TRANSFORMER_JOINT_STAGE_MODULATED2,
+                                 JOINT_DEVICE_NORM, run->rows, JOINT_HIDDEN, err);
     if (rc == YVEX_OK) rc = joint_mlp(run, err);
     if (rc == YVEX_OK) rc = joint_residual(run, 5u, err);
+    if (rc == YVEX_OK)
+        rc = joint_stage_observe(run, YVEX_TRANSFORMER_JOINT_STAGE_OUTPUT,
+                                 JOINT_DEVICE_HIDDEN, run->rows, JOINT_HIDDEN, err);
     return rc;
 }
 
@@ -552,10 +707,15 @@ static int joint_compute(joint_run *run, float *staged, yvex_error *err)
         rc = conditioning_refuse(err, YVEX_ERR_NOMEM, "cuda.transformer.joint.observe",
                                  "bounded Omni observation allocation failed");
     if (rc == YVEX_OK) rc = joint_upload_inputs(run, err);
+    if (rc == YVEX_OK)
+        rc = joint_stage_observe(run, YVEX_TRANSFORMER_JOINT_STAGE_INPUT_TIME,
+                                 JOINT_DEVICE_TEMB, run->timesteps, JOINT_TIME, err);
     if (rc == YVEX_OK) rc = joint_rope_tables(run, err);
     for (run->block_index = 0ull;
          rc == YVEX_OK && run->block_index < run->block_count; ++run->block_index) {
-        rc = joint_block(run, err);
+        rc = joint_stage_observe(run, YVEX_TRANSFORMER_JOINT_STAGE_INPUT_HIDDEN,
+                                 JOINT_DEVICE_HIDDEN, run->rows, JOINT_HIDDEN, err);
+        if (rc == YVEX_OK) rc = joint_block(run, err);
         if (rc == YVEX_OK) rc = joint_observe(run, observed, err);
         if (rc != YVEX_OK && err) {
             yvex_error cause = *err;
@@ -634,6 +794,10 @@ static int joint_blocks_execute(
     float *output, unsigned long long output_capacity,
     yvex_transformer_joint_block_result *result, const float *inv_freq,
     yvex_transformer_joint_block_observer_fn observer, void *observer_context,
+    yvex_transformer_joint_stage_observer_fn stage_observer,
+    void *stage_observer_context, unsigned long long observed_stage_block,
+    yvex_transformer_joint_scope observed_stage_scope,
+    yvex_transformer_joint_stage observed_stage,
     yvex_error *err)
 {
     joint_run run = {0};
@@ -655,6 +819,11 @@ static int joint_blocks_execute(
     run.block_count = block_count;
     run.observer = observer;
     run.observer_context = observer_context;
+    run.stage_observer = stage_observer;
+    run.stage_observer_context = stage_observer_context;
+    run.observed_stage_scope = observed_stage_scope;
+    run.observed_stage_block = observed_stage_block;
+    run.observed_stage = observed_stage;
     rc = joint_validate(&run, residency_identity, resident_bytes, output,
                        output_capacity, result, &weight_bytes, err);
     if (rc == YVEX_OK) {
@@ -699,11 +868,19 @@ int yvex_backend_transformer_joint_blocks_cuda(
     const float *hidden, const float *temb, unsigned long long timestep_count,
     const float *position_ids, const unsigned int *adaln_indices,
     unsigned long long packed_rows, float *output, unsigned long long output_capacity,
-    yvex_transformer_joint_block_result *result, yvex_error *err)
+    yvex_transformer_joint_block_result *result,
+    const yvex_transformer_joint_block_options *options, yvex_error *err)
 {
     return joint_blocks_execute(backend, recipe, weights, block_count, residency_identity,
         resident_bytes, hidden, temb, timestep_count, position_ids, adaln_indices, packed_rows, output,
-        output_capacity, result, NULL, NULL, NULL, err);
+        output_capacity, result, options ? options->inv_freq : NULL,
+        options ? options->block_observer : NULL,
+        options ? options->block_observer_context : NULL,
+        options ? options->stage_observer : NULL,
+        options ? options->stage_observer_context : NULL,
+        options ? options->observed_stage_block : 0ull,
+        options ? options->observed_stage_scope : YVEX_TRANSFORMER_JOINT_SCOPE_OMNI,
+        options ? options->observed_stage : YVEX_TRANSFORMER_JOINT_STAGE_COUNT, err);
 }
 
 typedef enum {
@@ -718,6 +895,11 @@ typedef struct {
     const yvex_transformer_joint_encoded_weight *weights;
     yvex_device_tensor *device[REFINER_DEVICE_COUNT];
     unsigned long long rows, values, output_bytes, device_bytes;
+    yvex_transformer_joint_stage_observer_fn stage_observer;
+    void *stage_observer_context;
+    yvex_transformer_joint_scope observed_stage_scope;
+    unsigned long long observed_stage_block;
+    yvex_transformer_joint_stage observed_stage;
     yvex_transformer_joint_result *facts;
 } refiner_run;
 
@@ -884,6 +1066,7 @@ static int transformer_linear_host(
     yvex_backend *backend, const yvex_transformer_joint_encoded_weight *weight,
     const yvex_transformer_joint_encoded_weight *bias, const float *input,
     unsigned long long rows, float *output, int bf16_output,
+    const yvex_backend_linear_numeric_policy *numeric_policy,
     yvex_transformer_joint_result *facts, yvex_error *err)
 {
     enum { INPUT = 0, OUTPUT, BIAS, COUNT };
@@ -902,20 +1085,30 @@ static int transformer_linear_host(
     if (rc == YVEX_OK)
         rc = transformer_tensor(backend, "transformer-linear-output", rows, weight->row_count,
                                 &device[OUTPUT], &device_bytes, err);
-    if (rc == YVEX_OK)
+    if (rc == YVEX_OK && !numeric_policy)
         rc = transformer_tensor(backend, "transformer-linear-bias", 1ull, weight->row_count,
                                 &device[BIAS], &device_bytes, err);
     if (rc == YVEX_OK)
         rc = yvex_backend_tensor_write(backend, device[INPUT], input, input_bytes, err);
     if (rc == YVEX_OK) rc = transformer_fact_bytes(&facts->h2d_bytes, input_bytes, err);
-    if (rc == YVEX_OK)
+    if (rc == YVEX_OK && numeric_policy)
+        rc = yvex_backend_cuda_encoded_linear_f32(
+            backend, weight->encoded, weight->encoded_bytes, bias->encoded,
+            bias->encoded_bytes, weight->row_count, weight->row_width, rows,
+            device[INPUT], device[OUTPUT], numeric_policy, &part, err);
+    if (rc == YVEX_OK && numeric_policy && !transformer_facts_add(facts, &part))
+        rc = conditioning_refuse(err, YVEX_ERR_BOUNDS,
+                                 "cuda.transformer.joint.transformer.facts",
+                                 "transformer epilogue accounting overflowed");
+    if (rc == YVEX_OK && !numeric_policy)
         rc = transformer_project(backend, weight, rows, device[INPUT], NULL,
                                  device[OUTPUT], facts, err);
-    if (rc == YVEX_OK) rc = transformer_gather(backend, bias, device[BIAS], facts, err);
-    if (rc == YVEX_OK)
+    if (rc == YVEX_OK && !numeric_policy)
+        rc = transformer_gather(backend, bias, device[BIAS], facts, err);
+    if (rc == YVEX_OK && !numeric_policy)
         rc = yvex_cuda_transformer_bias(backend, device[OUTPUT], device[BIAS], device[OUTPUT],
                                         rows, weight->row_count, bf16_output, &part, err);
-    if (rc == YVEX_OK && !transformer_facts_add(facts, &part))
+    if (rc == YVEX_OK && !numeric_policy && !transformer_facts_add(facts, &part))
         rc = conditioning_refuse(err, YVEX_ERR_BOUNDS, "cuda.transformer.joint.transformer.facts",
                                  "transformer bias accounting overflowed");
     if (rc == YVEX_OK)
@@ -945,6 +1138,54 @@ static int refiner_norm(refiner_run *run, refiner_device_slot input,
     if (rc == YVEX_OK && !transformer_facts_add(run->facts, &part))
         rc = conditioning_refuse(err, YVEX_ERR_BOUNDS, "cuda.transformer.joint.refiner.facts",
                                  "token-refiner norm accounting overflowed");
+    return rc;
+}
+
+static int refiner_stage_observe(refiner_run *run, unsigned long long block,
+                                 yvex_transformer_joint_stage stage,
+                                 refiner_device_slot slot, unsigned long long rows,
+                                 unsigned long long width, yvex_error *err)
+{
+    yvex_transformer_joint_stage_observation observation;
+    float *values;
+    unsigned long long count, bytes;
+    int rc;
+    if (!run->stage_observer ||
+        run->observed_stage_scope != YVEX_TRANSFORMER_JOINT_SCOPE_REFINER ||
+        run->observed_stage_block != block ||
+        (run->observed_stage < YVEX_TRANSFORMER_JOINT_STAGE_COUNT &&
+         run->observed_stage != stage))
+        return YVEX_OK;
+    if (stage >= YVEX_TRANSFORMER_JOINT_STAGE_COUNT || slot >= REFINER_DEVICE_COUNT ||
+        !rows || !width || !yvex_core_u64_mul(rows, width, &count) ||
+        !yvex_core_u64_mul(count, sizeof(float), &bytes) || bytes > SIZE_MAX)
+        return conditioning_refuse(err, YVEX_ERR_BOUNDS,
+                                   "cuda.transformer.joint.refiner-stage-observe",
+                                   "bounded refiner stage observation geometry is required");
+    values = (float *)malloc((size_t)bytes);
+    if (!values)
+        return conditioning_refuse(err, YVEX_ERR_NOMEM,
+                                   "cuda.transformer.joint.refiner-stage-observe",
+                                   "bounded refiner stage observation allocation failed");
+    rc = yvex_backend_tensor_read(run->backend, run->device[slot], values, bytes, err);
+    if (rc == YVEX_OK &&
+        !yvex_core_u64_add(run->facts->d2h_bytes, bytes, &run->facts->d2h_bytes))
+        rc = conditioning_refuse(err, YVEX_ERR_BOUNDS,
+                                 "cuda.transformer.joint.refiner-stage-observe",
+                                 "refiner stage observation accounting overflowed");
+    observation.block = block;
+    observation.scope = YVEX_TRANSFORMER_JOINT_SCOPE_REFINER;
+    observation.stage = stage;
+    observation.rows = rows;
+    observation.width = width;
+    observation.value_count = count;
+    observation.values = values;
+    if (rc == YVEX_OK)
+        rc = run->stage_observer(run->stage_observer_context, &observation, err);
+    if (rc != YVEX_OK && err && yvex_error_code(err) == YVEX_OK)
+        yvex_error_set(err, rc, "cuda.transformer.joint.refiner-stage-observe",
+                       "refiner stage observer refused the execution");
+    free(values);
     return rc;
 }
 
@@ -981,12 +1222,21 @@ static int refiner_block(refiner_run *run, unsigned long long block, yvex_error 
     int rc = refiner_norm(run, REFINER_HIDDEN, weight, REFINER_NORM_WEIGHT,
                           REFINER_NORM, run->rows, JOINT_HIDDEN, err);
     if (rc == YVEX_OK)
+        rc = refiner_stage_observe(run, block + 1ull, YVEX_TRANSFORMER_JOINT_STAGE_NORM1,
+                                   REFINER_NORM, run->rows, JOINT_HIDDEN, err);
+    if (rc == YVEX_OK)
         rc = transformer_project(run->backend, weight + 1, run->rows,
                                  run->device[REFINER_NORM], NULL,
                                  run->device[REFINER_QKV], run->facts, err);
     if (rc == YVEX_OK)
+        rc = refiner_stage_observe(run, block + 1ull, YVEX_TRANSFORMER_JOINT_STAGE_QKV_F32,
+                                   REFINER_QKV, run->rows, 3ull * JOINT_ATTENTION_WIDTH, err);
+    if (rc == YVEX_OK)
         rc = transformer_round(run->backend, run->device[REFINER_QKV],
                                3ull * attention_values, run->facts, err);
+    if (rc == YVEX_OK)
+        rc = refiner_stage_observe(run, block + 1ull, YVEX_TRANSFORMER_JOINT_STAGE_QKV_BF16,
+                                   REFINER_QKV, run->rows, 3ull * JOINT_ATTENTION_WIDTH, err);
     if (rc == YVEX_OK)
         rc = yvex_cuda_transformer_split_interleaved_three(
             run->backend, run->device[REFINER_QKV], run->device[REFINER_QUERY],
@@ -994,11 +1244,28 @@ static int refiner_block(refiner_run *run, unsigned long long block, yvex_error 
             JOINT_HEADS, JOINT_HEAD_DIM, &part, err);
     if (rc == YVEX_OK && !transformer_facts_add(run->facts, &part)) rc = YVEX_ERR_BOUNDS;
     if (rc == YVEX_OK)
+        rc = refiner_stage_observe(run, block + 1ull, YVEX_TRANSFORMER_JOINT_STAGE_QUERY,
+                                   REFINER_QUERY, run->rows, JOINT_ATTENTION_WIDTH, err);
+    if (rc == YVEX_OK)
+        rc = refiner_stage_observe(run, block + 1ull, YVEX_TRANSFORMER_JOINT_STAGE_KEY,
+                                   REFINER_KEY, run->rows, JOINT_ATTENTION_WIDTH, err);
+    if (rc == YVEX_OK)
+        rc = refiner_stage_observe(run, block + 1ull, YVEX_TRANSFORMER_JOINT_STAGE_VALUE,
+                                   REFINER_VALUE, run->rows, JOINT_ATTENTION_WIDTH, err);
+    if (rc == YVEX_OK)
         rc = refiner_norm(run, REFINER_QUERY, weight + 2, REFINER_Q_NORM,
                           REFINER_QUERY, run->rows * JOINT_HEADS, JOINT_HEAD_DIM, err);
     if (rc == YVEX_OK)
+        rc = refiner_stage_observe(run, block + 1ull,
+                                   YVEX_TRANSFORMER_JOINT_STAGE_QUERY_NORM,
+                                   REFINER_QUERY, run->rows, JOINT_ATTENTION_WIDTH, err);
+    if (rc == YVEX_OK)
         rc = refiner_norm(run, REFINER_KEY, weight + 3, REFINER_K_NORM,
                           REFINER_KEY, run->rows * JOINT_HEADS, JOINT_HEAD_DIM, err);
+    if (rc == YVEX_OK)
+        rc = refiner_stage_observe(run, block + 1ull,
+                                   YVEX_TRANSFORMER_JOINT_STAGE_KEY_NORM,
+                                   REFINER_KEY, run->rows, JOINT_ATTENTION_WIDTH, err);
     if (rc == YVEX_OK)
         rc = yvex_cuda_transformer_gqa(
             run->backend, run->device[REFINER_QUERY], run->device[REFINER_KEY],
@@ -1006,37 +1273,89 @@ static int refiner_block(refiner_run *run, unsigned long long block, yvex_error 
             JOINT_HEADS, JOINT_HEADS, JOINT_HEAD_DIM, 0, &part, err);
     if (rc == YVEX_OK && !transformer_facts_add(run->facts, &part)) rc = YVEX_ERR_BOUNDS;
     if (rc == YVEX_OK)
+        rc = refiner_stage_observe(run, block + 1ull,
+                                   YVEX_TRANSFORMER_JOINT_STAGE_ATTENTION_F32,
+                                   REFINER_ATTENTION, run->rows, JOINT_ATTENTION_WIDTH, err);
+    if (rc == YVEX_OK)
         rc = transformer_round(run->backend, run->device[REFINER_ATTENTION],
                                attention_values, run->facts, err);
     if (rc == YVEX_OK)
+        rc = refiner_stage_observe(run, block + 1ull,
+                                   YVEX_TRANSFORMER_JOINT_STAGE_ATTENTION_BF16,
+                                   REFINER_ATTENTION, run->rows, JOINT_ATTENTION_WIDTH, err);
+    if (rc == YVEX_OK)
         rc = transformer_project(run->backend, weight + 4, run->rows,
-                                 run->device[REFINER_ATTENTION], run->device[REFINER_HIDDEN],
+                                 run->device[REFINER_ATTENTION], NULL,
                                  run->device[REFINER_UPDATE], run->facts, err);
+    if (rc == YVEX_OK)
+        rc = refiner_stage_observe(run, block + 1ull,
+                                   YVEX_TRANSFORMER_JOINT_STAGE_ATTENTION_PROJECTION_F32,
+                                   REFINER_UPDATE, run->rows, JOINT_HIDDEN, err);
     if (rc == YVEX_OK)
         rc = transformer_round(run->backend, run->device[REFINER_UPDATE], run->values,
                                run->facts, err);
     if (rc == YVEX_OK)
+        rc = refiner_stage_observe(run, block + 1ull,
+                                   YVEX_TRANSFORMER_JOINT_STAGE_ATTENTION_PROJECTION_BF16,
+                                   REFINER_UPDATE, run->rows, JOINT_HIDDEN, err);
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_transformer_add_bf16(
+            run->backend, run->device[REFINER_HIDDEN], run->device[REFINER_UPDATE],
+            run->device[REFINER_UPDATE], run->rows, JOINT_HIDDEN, &part, err);
+    if (rc == YVEX_OK && !transformer_facts_add(run->facts, &part)) rc = YVEX_ERR_BOUNDS;
+    if (rc == YVEX_OK)
+        rc = refiner_stage_observe(run, block + 1ull,
+                                   YVEX_TRANSFORMER_JOINT_STAGE_ATTENTION_RESIDUAL,
+                                   REFINER_UPDATE, run->rows, JOINT_HIDDEN, err);
+    if (rc == YVEX_OK)
         rc = refiner_norm(run, REFINER_UPDATE, weight + 5, REFINER_NORM_WEIGHT,
                           REFINER_NORM, run->rows, JOINT_HIDDEN, err);
+    if (rc == YVEX_OK)
+        rc = refiner_stage_observe(run, block + 1ull, YVEX_TRANSFORMER_JOINT_STAGE_NORM2,
+                                   REFINER_NORM, run->rows, JOINT_HIDDEN, err);
     if (rc == YVEX_OK)
         rc = transformer_project(run->backend, weight + 6, run->rows,
                                  run->device[REFINER_NORM], NULL,
                                  run->device[REFINER_FC1], run->facts, err);
     if (rc == YVEX_OK)
+        rc = refiner_stage_observe(run, block + 1ull, YVEX_TRANSFORMER_JOINT_STAGE_FC1_F32,
+                                   REFINER_FC1, run->rows, 2ull * JOINT_FFN, err);
+    if (rc == YVEX_OK)
         rc = transformer_round(run->backend, run->device[REFINER_FC1],
                                2ull * ffn_values, run->facts, err);
+    if (rc == YVEX_OK)
+        rc = refiner_stage_observe(run, block + 1ull, YVEX_TRANSFORMER_JOINT_STAGE_FC1_BF16,
+                                   REFINER_FC1, run->rows, 2ull * JOINT_FFN, err);
     if (rc == YVEX_OK)
         rc = yvex_cuda_transformer_swiglu_split_bf16(
             run->backend, run->device[REFINER_FC1], run->device[REFINER_FF],
             run->rows, JOINT_FFN, &part, err);
     if (rc == YVEX_OK && !transformer_facts_add(run->facts, &part)) rc = YVEX_ERR_BOUNDS;
     if (rc == YVEX_OK)
+        rc = refiner_stage_observe(run, block + 1ull, YVEX_TRANSFORMER_JOINT_STAGE_SWIGLU,
+                                   REFINER_FF, run->rows, JOINT_FFN, err);
+    if (rc == YVEX_OK)
         rc = transformer_project(run->backend, weight + 7, run->rows,
-                                 run->device[REFINER_FF], run->device[REFINER_UPDATE],
+                                 run->device[REFINER_FF], NULL,
                                  run->device[REFINER_HIDDEN], run->facts, err);
+    if (rc == YVEX_OK)
+        rc = refiner_stage_observe(run, block + 1ull, YVEX_TRANSFORMER_JOINT_STAGE_FC2_F32,
+                                   REFINER_HIDDEN, run->rows, JOINT_HIDDEN, err);
     if (rc == YVEX_OK)
         rc = transformer_round(run->backend, run->device[REFINER_HIDDEN], run->values,
                                run->facts, err);
+    if (rc == YVEX_OK)
+        rc = refiner_stage_observe(run, block + 1ull,
+                                   YVEX_TRANSFORMER_JOINT_STAGE_FC2_BF16,
+                                   REFINER_HIDDEN, run->rows, JOINT_HIDDEN, err);
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_transformer_add_bf16(
+            run->backend, run->device[REFINER_UPDATE], run->device[REFINER_HIDDEN],
+            run->device[REFINER_HIDDEN], run->rows, JOINT_HIDDEN, &part, err);
+    if (rc == YVEX_OK && !transformer_facts_add(run->facts, &part)) rc = YVEX_ERR_BOUNDS;
+    if (rc == YVEX_OK)
+        rc = refiner_stage_observe(run, block + 1ull, YVEX_TRANSFORMER_JOINT_STAGE_OUTPUT,
+                                   REFINER_HIDDEN, run->rows, JOINT_HIDDEN, err);
     if (rc == YVEX_ERR_BOUNDS && yvex_error_code(err) == YVEX_OK)
         rc = conditioning_refuse(err, rc, "cuda.transformer.joint.refiner.facts",
                                  "token-refiner accounting overflowed");
@@ -1046,6 +1365,11 @@ static int refiner_block(refiner_run *run, unsigned long long block, yvex_error 
 static int transformer_refine(yvex_backend *backend,
                               const yvex_transformer_joint_encoded_weight *weights,
                               const float *input, unsigned long long rows, float *output,
+                              yvex_transformer_joint_stage_observer_fn stage_observer,
+                              void *stage_observer_context,
+                              yvex_transformer_joint_scope observed_stage_scope,
+                              unsigned long long observed_stage_block,
+                              yvex_transformer_joint_stage observed_stage,
                               yvex_transformer_joint_result *facts,
                               yvex_error *err)
 {
@@ -1056,6 +1380,11 @@ static int transformer_refine(yvex_backend *backend,
     run.weights = weights;
     run.rows = rows;
     run.facts = facts;
+    run.stage_observer = stage_observer;
+    run.stage_observer_context = stage_observer_context;
+    run.observed_stage_scope = observed_stage_scope;
+    run.observed_stage_block = observed_stage_block;
+    run.observed_stage = observed_stage;
     if (!yvex_core_u64_mul(rows, JOINT_HIDDEN, &run.values) ||
         !yvex_core_u64_mul(run.values, sizeof(float), &run.output_bytes))
         return conditioning_refuse(err, YVEX_ERR_BOUNDS, "cuda.transformer.joint.refiner",
@@ -1066,12 +1395,18 @@ static int transformer_refine(yvex_backend *backend,
         rc = yvex_backend_tensor_write(backend, run.device[REFINER_HIDDEN], input,
                                        input_bytes, err);
     if (rc == YVEX_OK) rc = transformer_fact_bytes(&facts->h2d_bytes, input_bytes, err);
+    if (rc == YVEX_OK)
+        rc = refiner_stage_observe(&run, 0ull, YVEX_TRANSFORMER_JOINT_STAGE_INPUT_HIDDEN,
+                                   REFINER_HIDDEN, rows, JOINT_HIDDEN, err);
     for (block = 0ull; rc == YVEX_OK && block < 2ull; ++block)
         rc = refiner_block(&run, block, err);
     if (rc == YVEX_OK)
         rc = refiner_norm(&run, REFINER_HIDDEN, weights + 16,
                           REFINER_NORM_WEIGHT, REFINER_NORM,
                           rows, JOINT_HIDDEN, err);
+    if (rc == YVEX_OK)
+        rc = refiner_stage_observe(&run, 3ull, YVEX_TRANSFORMER_JOINT_STAGE_OUTPUT,
+                                   REFINER_NORM, rows, JOINT_HIDDEN, err);
     if (rc == YVEX_OK)
         rc = yvex_backend_tensor_read(backend, run.device[REFINER_NORM], output,
                                       run.output_bytes, err);
@@ -1080,31 +1415,75 @@ static int transformer_refine(yvex_backend *backend,
     return transformer_devices_release(backend, run.device, REFINER_DEVICE_COUNT, rc, err);
 }
 
+static int transformer_time_observe(
+    yvex_backend *backend, yvex_device_tensor *device,
+    yvex_transformer_joint_stage stage, unsigned long long rows,
+    unsigned long long width, unsigned long long event_block,
+    yvex_transformer_joint_stage_observer_fn observer,
+    void *observer_context, yvex_transformer_joint_scope observed_scope,
+    unsigned long long observed_block, yvex_transformer_joint_stage observed_stage,
+    yvex_transformer_joint_result *facts, yvex_error *err)
+{
+    yvex_transformer_joint_stage_observation observation;
+    float *values;
+    unsigned long long count, bytes;
+    int rc;
+    if (!observer || observed_scope != YVEX_TRANSFORMER_JOINT_SCOPE_OMNI ||
+        observed_block != event_block ||
+        (observed_stage < YVEX_TRANSFORMER_JOINT_STAGE_COUNT && observed_stage != stage))
+        return YVEX_OK;
+    if (!device || !rows || !width || !yvex_core_u64_mul(rows, width, &count) ||
+        !yvex_core_u64_mul(count, sizeof(float), &bytes) || bytes > SIZE_MAX)
+        return conditioning_refuse(err, YVEX_ERR_BOUNDS,
+                                   "cuda.transformer.joint.time-observe",
+                                   "bounded timestep stage observation geometry is required");
+    values = malloc((size_t)bytes);
+    if (!values)
+        return conditioning_refuse(err, YVEX_ERR_NOMEM,
+                                   "cuda.transformer.joint.time-observe",
+                                   "bounded timestep stage observation allocation failed");
+    rc = yvex_backend_tensor_read(backend, device, values, bytes, err);
+    if (rc == YVEX_OK) rc = transformer_fact_bytes(&facts->d2h_bytes, bytes, err);
+    observation.block = event_block;
+    observation.scope = YVEX_TRANSFORMER_JOINT_SCOPE_OMNI;
+    observation.stage = stage;
+    observation.rows = rows;
+    observation.width = width;
+    observation.value_count = count;
+    observation.values = values;
+    if (rc == YVEX_OK) rc = observer(observer_context, &observation, err);
+    if (rc != YVEX_OK && err && yvex_error_code(err) == YVEX_OK)
+        yvex_error_set(err, rc, "cuda.transformer.joint.time-observe",
+                       "timestep stage observer refused the execution");
+    free(values);
+    return rc;
+}
+
 static int transformer_time_embed(
     yvex_backend *backend, const yvex_transformer_joint_encoded_weight *weights,
     const float *timesteps, unsigned long long rows, float *output,
+    yvex_transformer_joint_stage_observer_fn observer, void *observer_context,
+    yvex_transformer_joint_scope observed_scope, unsigned long long observed_block,
+    yvex_transformer_joint_stage observed_stage,
     yvex_transformer_joint_result *facts, yvex_error *err)
 {
-    enum { INPUT = 0, HIDDEN, OUTPUT, BIAS_IN, BIAS_OUT, COUNT };
+    enum { TIMESTEPS = 0, INPUT, HIDDEN, OUTPUT, BIAS_IN, BIAS_OUT, COUNT };
     yvex_device_tensor *device[COUNT] = {0};
     yvex_backend_cuda_operation_facts part;
-    float *embedding = NULL;
-    unsigned long long row, lane, input_values, input_bytes, output_bytes;
+    unsigned long long input_values, input_bytes, output_bytes, timestep_bytes;
     unsigned long long device_bytes = 0ull;
     int rc = YVEX_OK;
     if (!yvex_core_u64_mul(rows, 256ull, &input_values) ||
         !yvex_core_u64_mul(input_values, sizeof(float), &input_bytes) ||
+        !yvex_core_u64_mul(rows, sizeof(float), &timestep_bytes) ||
         !yvex_core_u64_mul(rows * JOINT_TIME, sizeof(float), &output_bytes) ||
-        input_bytes > SIZE_MAX || !(embedding = (float *)malloc((size_t)input_bytes)))
+        input_bytes > SIZE_MAX)
         return conditioning_refuse(err, YVEX_ERR_NOMEM, "cuda.transformer.joint.time-embed",
                                    "bounded timestep embedding allocation failed");
-    for (row = 0ull; row < rows; ++row)
-        for (lane = 0ull; lane < 128ull; ++lane) {
-            double angle = timesteps[row] * exp(-log(10000.0) * (double)lane / 128.0);
-            embedding[row * 256ull + lane] = (float)cos(angle);
-            embedding[row * 256ull + 128ull + lane] = (float)sin(angle);
-        }
-    rc = transformer_tensor(backend, "time-input", rows, 256ull, &device[INPUT],
+    rc = transformer_tensor(backend, "timesteps", rows, 1ull, &device[TIMESTEPS],
+                            &device_bytes, err);
+    if (rc == YVEX_OK)
+        rc = transformer_tensor(backend, "time-input", rows, 256ull, &device[INPUT],
                             &device_bytes, err);
     if (rc == YVEX_OK)
         rc = transformer_tensor(backend, "time-hidden", rows, 5376ull, &device[HIDDEN],
@@ -1119,11 +1498,28 @@ static int transformer_time_embed(
         rc = transformer_tensor(backend, "time-bias-out", 1ull, JOINT_TIME,
                                 &device[BIAS_OUT], &device_bytes, err);
     if (rc == YVEX_OK)
-        rc = yvex_backend_tensor_write(backend, device[INPUT], embedding, input_bytes, err);
-    if (rc == YVEX_OK) rc = transformer_fact_bytes(&facts->h2d_bytes, input_bytes, err);
+        rc = yvex_backend_tensor_write(
+            backend, device[TIMESTEPS], timesteps, timestep_bytes, err);
+    if (rc == YVEX_OK)
+        rc = transformer_fact_bytes(&facts->h2d_bytes, timestep_bytes, err);
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_transformer_timestep_embedding(
+            backend, device[TIMESTEPS], device[INPUT], rows, 128ull, 10000.0f,
+            &part, err);
+    if (rc == YVEX_OK && !transformer_facts_add(facts, &part)) rc = YVEX_ERR_BOUNDS;
+    if (rc == YVEX_OK)
+        rc = transformer_time_observe(
+            backend, device[INPUT], YVEX_TRANSFORMER_JOINT_STAGE_TIME_INPUT,
+            rows, 256ull, 1ull, observer, observer_context, observed_scope,
+            observed_block, observed_stage, facts, err);
     if (rc == YVEX_OK)
         rc = transformer_project(backend, weights + YVEX_TRANSFORMER_JOINT_TIME_IN_WEIGHT,
                                  rows, device[INPUT], NULL, device[HIDDEN], facts, err);
+    if (rc == YVEX_OK)
+        rc = transformer_time_observe(
+            backend, device[HIDDEN], YVEX_TRANSFORMER_JOINT_STAGE_TIME_PROJECTION_IN,
+            rows, 5376ull, 1ull, observer, observer_context, observed_scope,
+            observed_block, observed_stage, facts, err);
     if (rc == YVEX_OK)
         rc = transformer_gather(backend, weights + YVEX_TRANSFORMER_JOINT_TIME_IN_BIAS,
                                 device[BIAS_IN], facts, err);
@@ -1132,12 +1528,27 @@ static int transformer_time_embed(
                                         rows, 5376ull, 0, &part, err);
     if (rc == YVEX_OK && !transformer_facts_add(facts, &part)) rc = YVEX_ERR_BOUNDS;
     if (rc == YVEX_OK)
+        rc = transformer_time_observe(
+            backend, device[HIDDEN], YVEX_TRANSFORMER_JOINT_STAGE_TIME_BIAS_IN,
+            rows, 5376ull, 1ull, observer, observer_context, observed_scope,
+            observed_block, observed_stage, facts, err);
+    if (rc == YVEX_OK)
         rc = yvex_cuda_transformer_silu(backend, device[HIDDEN], device[HIDDEN], rows * 5376ull,
                                         0, &part, err);
     if (rc == YVEX_OK && !transformer_facts_add(facts, &part)) rc = YVEX_ERR_BOUNDS;
     if (rc == YVEX_OK)
+        rc = transformer_time_observe(
+            backend, device[HIDDEN], YVEX_TRANSFORMER_JOINT_STAGE_TIME_ACTIVATION,
+            rows, 5376ull, 1ull, observer, observer_context, observed_scope,
+            observed_block, observed_stage, facts, err);
+    if (rc == YVEX_OK)
         rc = transformer_project(backend, weights + YVEX_TRANSFORMER_JOINT_TIME_OUT_WEIGHT,
                                  rows, device[HIDDEN], NULL, device[OUTPUT], facts, err);
+    if (rc == YVEX_OK)
+        rc = transformer_time_observe(
+            backend, device[OUTPUT], YVEX_TRANSFORMER_JOINT_STAGE_TIME_PROJECTION_OUT,
+            rows, JOINT_TIME, 1ull, observer, observer_context, observed_scope,
+            observed_block, observed_stage, facts, err);
     if (rc == YVEX_OK)
         rc = transformer_gather(backend, weights + YVEX_TRANSFORMER_JOINT_TIME_OUT_BIAS,
                                 device[BIAS_OUT], facts, err);
@@ -1152,7 +1563,6 @@ static int transformer_time_embed(
         rc = conditioning_refuse(err, rc, "cuda.transformer.joint.time-embed.facts",
                                  "timestep embedding accounting overflowed");
     if (device_bytes > facts->device_bytes) facts->device_bytes = device_bytes;
-    free(embedding);
     return transformer_devices_release(backend, device, COUNT, rc, err);
 }
 
@@ -1160,9 +1570,12 @@ static int transformer_final_norm(
     yvex_backend *backend, const yvex_transformer_joint_encoded_weight *weights,
     const float *hidden, const float *temb, const unsigned int *timestep_indices,
     unsigned long long rows, unsigned long long timesteps, float *output,
+    yvex_transformer_joint_stage_observer_fn observer, void *observer_context,
+    yvex_transformer_joint_scope observed_scope, unsigned long long observed_block,
+    yvex_transformer_joint_stage observed_stage, unsigned long long final_block,
     yvex_transformer_joint_result *facts, yvex_error *err)
 {
-    enum { HIDDEN = 0, NORM, NORM_WEIGHT, TEMB, TABLE, BIAS, COUNT };
+    enum { HIDDEN = 0, NORM, NORM_WEIGHT, TEMB, TABLE, COUNT };
     yvex_device_tensor *device[COUNT] = {0};
     yvex_backend_cuda_operation_facts part;
     unsigned long long device_bytes = 0ull, hidden_bytes = rows * JOINT_HIDDEN * 4ull;
@@ -1177,9 +1590,6 @@ static int transformer_final_norm(
                                                 &device[TEMB], &device_bytes, err);
     if (rc == YVEX_OK) rc = transformer_tensor(backend, "final-table", timesteps,
                                                 2ull * JOINT_HIDDEN, &device[TABLE],
-                                                &device_bytes, err);
-    if (rc == YVEX_OK) rc = transformer_tensor(backend, "final-bias", 1ull,
-                                                2ull * JOINT_HIDDEN, &device[BIAS],
                                                 &device_bytes, err);
     if (rc == YVEX_OK) rc = yvex_backend_tensor_write(backend, device[HIDDEN], hidden,
                                                        hidden_bytes, err);
@@ -1196,26 +1606,44 @@ static int transformer_final_norm(
                                                   &part, err);
     if (rc == YVEX_OK && !transformer_facts_add(facts, &part)) rc = YVEX_ERR_BOUNDS;
     if (rc == YVEX_OK)
+        rc = transformer_time_observe(
+            backend, device[NORM], YVEX_TRANSFORMER_JOINT_STAGE_FINAL_NORM,
+            rows, JOINT_HIDDEN, final_block, observer, observer_context, observed_scope,
+            observed_block, observed_stage, facts, err);
+    if (rc == YVEX_OK)
         rc = yvex_cuda_transformer_silu(backend, device[TEMB], device[TEMB],
-                                        timesteps * JOINT_TIME, 0, &part, err);
+                                        timesteps * JOINT_TIME, 1, &part, err);
     if (rc == YVEX_OK && !transformer_facts_add(facts, &part)) rc = YVEX_ERR_BOUNDS;
     if (rc == YVEX_OK)
-        rc = transformer_project(backend, weights + YVEX_TRANSFORMER_JOINT_FINAL_ADALN_WEIGHT,
-                                 timesteps, device[TEMB], NULL, device[TABLE], facts, err);
+        rc = transformer_time_observe(
+            backend, device[TEMB], YVEX_TRANSFORMER_JOINT_STAGE_FINAL_TIME_ACTIVATION,
+            timesteps, JOINT_TIME, final_block, observer, observer_context, observed_scope,
+            observed_block, observed_stage, facts, err);
     if (rc == YVEX_OK)
-        rc = transformer_gather(backend, weights + YVEX_TRANSFORMER_JOINT_FINAL_ADALN_BIAS,
-                                device[BIAS], facts, err);
-    /* Match the BF16 linear epilogue: the projection remains F32 until bias is added, then
-       the complete result is rounded once. Pre-rounding introduces a second coherent error. */
-    if (rc == YVEX_OK)
-        rc = yvex_cuda_transformer_bias(backend, device[TABLE], device[BIAS], device[TABLE],
-                                        timesteps, 2ull * JOINT_HIDDEN, 1, &part, err);
+        rc = yvex_backend_cuda_encoded_linear_bf16(
+            backend, weights[YVEX_TRANSFORMER_JOINT_FINAL_ADALN_WEIGHT].encoded,
+            weights[YVEX_TRANSFORMER_JOINT_FINAL_ADALN_WEIGHT].encoded_bytes,
+            weights[YVEX_TRANSFORMER_JOINT_FINAL_ADALN_BIAS].encoded,
+            weights[YVEX_TRANSFORMER_JOINT_FINAL_ADALN_BIAS].encoded_bytes,
+            2ull * JOINT_HIDDEN, JOINT_TIME, timesteps, device[TEMB], device[TABLE],
+            &part, err);
     if (rc == YVEX_OK && !transformer_facts_add(facts, &part)) rc = YVEX_ERR_BOUNDS;
+    if (rc == YVEX_OK)
+        rc = transformer_time_observe(
+            backend, device[TABLE], YVEX_TRANSFORMER_JOINT_STAGE_FINAL_ADALN,
+            timesteps, 2ull * JOINT_HIDDEN, final_block,
+            observer, observer_context, observed_scope,
+            observed_block, observed_stage, facts, err);
     if (rc == YVEX_OK)
         rc = yvex_cuda_transformer_modulate_bf16(
             backend, device[NORM], device[TABLE], timestep_indices, device[NORM], rows,
             JOINT_HIDDEN, timesteps, 2ull, 0u, 1u, &part, err);
     if (rc == YVEX_OK && !transformer_facts_add(facts, &part)) rc = YVEX_ERR_BOUNDS;
+    if (rc == YVEX_OK)
+        rc = transformer_time_observe(
+            backend, device[NORM], YVEX_TRANSFORMER_JOINT_STAGE_FINAL_HIDDEN,
+            rows, JOINT_HIDDEN, final_block, observer, observer_context, observed_scope,
+            observed_block, observed_stage, facts, err);
     if (rc == YVEX_OK)
         rc = yvex_backend_tensor_read(backend, device[NORM], output, hidden_bytes, err);
     if (rc == YVEX_OK) rc = transformer_fact_bytes(&facts->d2h_bytes, hidden_bytes, err);
@@ -1306,6 +1734,12 @@ static int transformer_execution_identity(
         !yvex_sha256_update_text(&hash, request->recipe->identity_domain) ||
         !yvex_sha256_update_u64(&hash, request->recipe->qkv_layout) ||
         !yvex_sha256_update_u64(&hash, request->recipe->swiglu_layout) ||
+        !yvex_sha256_update_u64(&hash, request->recipe->video_output_numeric.tile_rows) ||
+        !yvex_sha256_update_u64(&hash, request->recipe->video_output_numeric.split_k) ||
+        !yvex_sha256_update_u64(&hash, request->recipe->video_output_numeric.reduction) ||
+        !yvex_sha256_update_u64(&hash, request->recipe->audio_output_numeric.tile_rows) ||
+        !yvex_sha256_update_u64(&hash, request->recipe->audio_output_numeric.split_k) ||
+        !yvex_sha256_update_u64(&hash, request->recipe->audio_output_numeric.reduction) ||
         !yvex_sha256_update_text(&hash, residency_identity) ||
         !yvex_sha256_update_text(&hash, block_identity) ||
         !yvex_sha256_update_u64(&hash, request->video_rows) ||
@@ -1386,24 +1820,30 @@ int yvex_backend_transformer_joint_cuda(
     if (rc == YVEX_OK)
         rc = transformer_linear_host(backend, external_weights + YVEX_TRANSFORMER_JOINT_VIDEO_WEIGHT,
                                      external_weights + YVEX_TRANSFORMER_JOINT_VIDEO_BIAS,
-                                     request->video, request->video_rows, video_embed, 0,
+                                     request->video, request->video_rows, video_embed, 0, NULL,
                                      &published, err);
     if (rc == YVEX_OK)
         rc = transformer_linear_host(backend, external_weights + YVEX_TRANSFORMER_JOINT_AUDIO_WEIGHT,
                                      external_weights + YVEX_TRANSFORMER_JOINT_AUDIO_BIAS,
-                                     request->audio, request->audio_rows, audio_embed, 0,
+                                     request->audio, request->audio_rows, audio_embed, 0, NULL,
                                      &published, err);
     if (rc == YVEX_OK)
         rc = transformer_linear_host(backend, external_weights + YVEX_TRANSFORMER_JOINT_CONDITION_WEIGHT,
                                      external_weights + YVEX_TRANSFORMER_JOINT_CONDITION_BIAS,
-                                     request->conditioning, request->text_rows, text_embed, 1,
+                                     request->conditioning, request->text_rows, text_embed, 1, NULL,
                                      &published, err);
     if (rc == YVEX_OK)
         rc = transformer_refine(backend, external_weights + YVEX_TRANSFORMER_JOINT_REFINER_WEIGHTS,
-                                text_embed, request->text_rows, text_refined, &published, err);
+                                text_embed, request->text_rows, text_refined,
+                                request->stage_observer, request->stage_observer_context,
+                                request->observed_stage_scope, request->observed_stage_block,
+                                request->observed_stage, &published, err);
     if (rc == YVEX_OK)
-        rc = transformer_time_embed(backend, external_weights, request->timesteps,
-                                    request->timestep_count, temb, &published, err);
+        rc = transformer_time_embed(
+            backend, external_weights, request->timesteps, request->timestep_count,
+            temb, request->stage_observer, request->stage_observer_context,
+            request->observed_stage_scope, request->observed_stage_block,
+            request->observed_stage, &published, err);
     if (rc == YVEX_OK) memset(packed, 0, (size_t)hidden_values * sizeof(float));
     for (row = 0ull; rc == YVEX_OK && row < request->video_rows; ++row)
         for (lane = 0ull; lane < JOINT_HIDDEN; ++lane)
@@ -1424,7 +1864,10 @@ int yvex_backend_transformer_joint_cuda(
             request->position_ids, adaln,
             request->packed_rows, block_output, hidden_values, &blocks,
             (const float *)external_weights[YVEX_TRANSFORMER_JOINT_ROPE_INV_FREQ].encoded,
-            request->block_observer, request->block_observer_context, err);
+            request->block_observer, request->block_observer_context,
+            request->stage_observer, request->stage_observer_context,
+            request->observed_stage_block, request->observed_stage_scope,
+            request->observed_stage, err);
     if (rc == YVEX_OK &&
         (!yvex_core_u64_add(published.kernel_launches, blocks.kernel_launches,
                             &published.kernel_launches) ||
@@ -1436,15 +1879,24 @@ int yvex_backend_transformer_joint_cuda(
     if (rc == YVEX_OK)
         rc = transformer_final_norm(backend, external_weights, block_output, temb,
                                     request->timestep_indices, request->packed_rows,
-                                    request->timestep_count, normalized, &published, err);
+                                    request->timestep_count, normalized,
+                                    request->stage_observer, request->stage_observer_context,
+                                    request->observed_stage_scope,
+                                    request->observed_stage_block, request->observed_stage,
+                                    request->block_count + 1ull,
+                                    &published, err);
     if (rc == YVEX_OK)
         rc = transformer_linear_host(backend, external_weights + YVEX_TRANSFORMER_JOINT_VIDEO_OUT_WEIGHT,
                                      external_weights + YVEX_TRANSFORMER_JOINT_VIDEO_OUT_BIAS,
-                                     normalized, request->packed_rows, all_video, 0, &published, err);
+                                     normalized, request->packed_rows, all_video, 0,
+                                     &request->recipe->video_output_numeric,
+                                     &published, err);
     if (rc == YVEX_OK)
         rc = transformer_linear_host(backend, external_weights + YVEX_TRANSFORMER_JOINT_AUDIO_OUT_WEIGHT,
                                      external_weights + YVEX_TRANSFORMER_JOINT_AUDIO_OUT_BIAS,
-                                     normalized, request->packed_rows, all_audio, 0, &published, err);
+                                     normalized, request->packed_rows, all_audio, 0,
+                                     &request->recipe->audio_output_numeric,
+                                     &published, err);
     for (row = 0ull; rc == YVEX_OK && row < request->video_rows; ++row)
         memcpy(staged_video + row * 96ull, all_video + request->video_indices[row] * 96ull,
                96ull * sizeof(float));

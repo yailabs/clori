@@ -22,6 +22,36 @@ typedef struct {
     size_t state_offset;
 } cuda_kernel_binding;
 #define CUDA_HANDLE_OFFSET(field) offsetof(yvex_cuda_backend_state, field)
+
+int yvex_cuda_blas_bind_launch_stream(yvex_backend *backend, const char *where,
+                                      yvex_error *err)
+{
+    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    CUstream stream = yvex_cuda_launch_stream(backend);
+    int status;
+    if (!state || !state->blas.ready || !state->blas.handle || !state->blas.set_stream ||
+        !state->blas.set_workspace) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, where,
+                       "an admitted cuBLAS handle is required");
+        return YVEX_ERR_UNSUPPORTED;
+    }
+    status = state->blas.set_stream(state->blas.handle, stream);
+    if (status != 0) {
+        yvex_error_setf(err, YVEX_ERR_BACKEND, where,
+                        "cuBLAS launch-stream binding failed with status %d", status);
+        return YVEX_ERR_BACKEND;
+    }
+    /* Stream changes reset a caller workspace. Reapply the source-qualified policy. */
+    status = state->blas.set_workspace(state->blas.handle, NULL, 0u);
+    if (status != 0) {
+        yvex_error_setf(err, YVEX_ERR_BACKEND, where,
+                        "cuBLAS zero-workspace binding failed with status %d", status);
+        return YVEX_ERR_BACKEND;
+    }
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
 /*
  * The bundle table is the single correspondence between generated PTX names,
  * capability variants, and admitted state.  Aliased variants (dense/routed
@@ -46,6 +76,8 @@ static const cuda_kernel_binding cuda_kernel_bindings[] = {
      CUDA_HANDLE_OFFSET(attention_bf16_round_function)},
     {"yvex_f32_to_bf16", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(bf16_pack_function)},
+    {"yvex_bf16_to_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(bf16_unpack_function)},
     {"yvex_qtype_matvec", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(qtype_matvec_function)},
     {"yvex_qtype_grouped_rows", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
@@ -130,18 +162,26 @@ static const cuda_kernel_binding cuda_kernel_bindings[] = {
      CUDA_HANDLE_OFFSET(rotary_half_plain_function)},
     {"yvex_gqa_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(gqa_function)},
-    {"yvex_gqa_pack_bf16", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
-     CUDA_HANDLE_OFFSET(gqa_pack_function)},
     {"yvex_gqa_pack_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(gqa_pack_value_function)},
+    {"yvex_gqa_score_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(gqa_score_function)},
+    {"yvex_gqa_scale_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(gqa_scale_function)},
     {"yvex_gqa_softmax_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(gqa_softmax_function)},
+    {"yvex_gqa_softmax_warp_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(gqa_softmax_warp_function)},
+    {"yvex_gqa_value_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(gqa_value_function)},
     {"yvex_gqa_unpack_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(gqa_unpack_function)},
     {"yvex_silu_product_bf16_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(silu_product_function)},
     {"yvex_silu_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(silu_function)},
+    {"yvex_timestep_embedding_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(timestep_embedding_function)},
     {"yvex_split_three_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(split_three_function)},
     {"yvex_split_interleaved_three_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
@@ -156,6 +196,8 @@ static const cuda_kernel_binding cuda_kernel_bindings[] = {
      CUDA_HANDLE_OFFSET(gated_residual_function)},
     {"yvex_bias_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(bias_function)},
+    {"yvex_add_bf16_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(add_bf16_function)},
     {"yvex_scaled_residual_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(scaled_residual_f32_function)},
     {"yvex_layer_norm_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,

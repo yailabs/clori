@@ -329,11 +329,35 @@ typedef struct yvex_backend_cuda_operation_facts {
     unsigned long long activation_bytes, temporary_bytes, tensor_core_launches;
     int compulsory_memory_facts_available;
 } yvex_backend_cuda_operation_facts;
+typedef enum {
+    YVEX_BACKEND_LINEAR_REDUCTION_DEFAULT = 0,
+    YVEX_BACKEND_LINEAR_REDUCTION_INPLACE,
+    YVEX_BACKEND_LINEAR_REDUCTION_COMPUTE_TYPE
+} yvex_backend_linear_reduction;
+typedef struct yvex_backend_linear_numeric_policy {
+    unsigned int tile_rows, split_k;
+    yvex_backend_linear_reduction reduction;
+} yvex_backend_linear_numeric_policy;
 int yvex_backend_cuda_encoded_matvec(yvex_backend *backend, const unsigned char *resident_encoded,
     unsigned long long encoded_bytes, unsigned int qtype, unsigned long long row_count,
     unsigned long long row_width, unsigned long long row_bytes, unsigned long long input_rows,
     const yvex_device_tensor *input, const yvex_device_tensor *input_tail, unsigned long long input_head_width,
     const yvex_device_tensor *additive, yvex_device_tensor *output, int activation_q8,
+    yvex_backend_cuda_operation_facts *facts, yvex_error *err);
+int yvex_backend_cuda_encoded_linear_bf16(
+    yvex_backend *backend, const unsigned char *resident_weight,
+    unsigned long long weight_bytes, const unsigned char *resident_bias,
+    unsigned long long bias_bytes, unsigned long long output_width,
+    unsigned long long input_width, unsigned long long input_rows,
+    const yvex_device_tensor *input, yvex_device_tensor *output,
+    yvex_backend_cuda_operation_facts *facts, yvex_error *err);
+int yvex_backend_cuda_encoded_linear_f32(
+    yvex_backend *backend, const unsigned char *resident_weight,
+    unsigned long long weight_bytes, const unsigned char *resident_bias,
+    unsigned long long bias_bytes, unsigned long long output_width,
+    unsigned long long input_width, unsigned long long input_rows,
+    const yvex_device_tensor *input, yvex_device_tensor *output,
+    const yvex_backend_linear_numeric_policy *numeric_policy,
     yvex_backend_cuda_operation_facts *facts, yvex_error *err);
 int yvex_backend_cuda_encoded_gather(yvex_backend *backend, const unsigned char *resident_encoded,
     unsigned long long encoded_bytes, unsigned int qtype, unsigned long long row_count,

@@ -3,6 +3,7 @@
 #define INCLUDE_YVEX_INTERNAL_JOINT_TRANSFORMER_H_INCLUDED
 
 #include <yvex/core.h>
+#include <yvex/internal/backend.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -10,6 +11,7 @@ extern "C" {
 
 typedef struct yvex_backend yvex_backend;
 #define YVEX_TRANSFORMER_JOINT_SCHEMA_V1 1u
+#define YVEX_TRANSFORMER_JOINT_SCHEMA_V2 2u
 #define YVEX_TRANSFORMER_JOINT_BLOCK_WEIGHT_COUNT 10u
 #define YVEX_TRANSFORMER_JOINT_EXTERNAL_WEIGHT_COUNT 35u
 
@@ -79,6 +81,7 @@ typedef struct yvex_transformer_joint_recipe {
     unsigned long long maximum_timesteps, maximum_packed_rows;
     unsigned long long video_input_width, audio_input_width, condition_input_width;
     unsigned long long video_output_width, audio_output_width;
+    yvex_backend_linear_numeric_policy video_output_numeric, audio_output_numeric;
 } yvex_transformer_joint_recipe;
 
 typedef struct yvex_transformer_joint_block_result {
@@ -93,11 +96,79 @@ typedef struct yvex_transformer_joint_block_observation {
     const float *values;
 } yvex_transformer_joint_block_observation;
 
+typedef enum {
+    YVEX_TRANSFORMER_JOINT_STAGE_MODULATION = 0,
+    YVEX_TRANSFORMER_JOINT_STAGE_NORM1,
+    YVEX_TRANSFORMER_JOINT_STAGE_MODULATED1,
+    YVEX_TRANSFORMER_JOINT_STAGE_QKV_F32,
+    YVEX_TRANSFORMER_JOINT_STAGE_QKV_BF16,
+    YVEX_TRANSFORMER_JOINT_STAGE_QUERY,
+    YVEX_TRANSFORMER_JOINT_STAGE_KEY,
+    YVEX_TRANSFORMER_JOINT_STAGE_VALUE,
+    YVEX_TRANSFORMER_JOINT_STAGE_QUERY_NORM,
+    YVEX_TRANSFORMER_JOINT_STAGE_KEY_NORM,
+    YVEX_TRANSFORMER_JOINT_STAGE_QUERY_ROTARY,
+    YVEX_TRANSFORMER_JOINT_STAGE_KEY_ROTARY,
+    YVEX_TRANSFORMER_JOINT_STAGE_ATTENTION_F32,
+    YVEX_TRANSFORMER_JOINT_STAGE_ATTENTION_BF16,
+    YVEX_TRANSFORMER_JOINT_STAGE_ATTENTION_PROJECTION_F32,
+    YVEX_TRANSFORMER_JOINT_STAGE_ATTENTION_PROJECTION_BF16,
+    YVEX_TRANSFORMER_JOINT_STAGE_ATTENTION_RESIDUAL,
+    YVEX_TRANSFORMER_JOINT_STAGE_NORM2,
+    YVEX_TRANSFORMER_JOINT_STAGE_MODULATED2,
+    YVEX_TRANSFORMER_JOINT_STAGE_FC1_F32,
+    YVEX_TRANSFORMER_JOINT_STAGE_FC1_BF16,
+    YVEX_TRANSFORMER_JOINT_STAGE_SWIGLU,
+    YVEX_TRANSFORMER_JOINT_STAGE_FC2_F32,
+    YVEX_TRANSFORMER_JOINT_STAGE_FC2_BF16,
+    YVEX_TRANSFORMER_JOINT_STAGE_OUTPUT,
+    YVEX_TRANSFORMER_JOINT_STAGE_INPUT_HIDDEN,
+    YVEX_TRANSFORMER_JOINT_STAGE_INPUT_TIME,
+    YVEX_TRANSFORMER_JOINT_STAGE_TIME_INPUT,
+    YVEX_TRANSFORMER_JOINT_STAGE_TIME_PROJECTION_IN,
+    YVEX_TRANSFORMER_JOINT_STAGE_TIME_BIAS_IN,
+    YVEX_TRANSFORMER_JOINT_STAGE_TIME_ACTIVATION,
+    YVEX_TRANSFORMER_JOINT_STAGE_TIME_PROJECTION_OUT,
+    YVEX_TRANSFORMER_JOINT_STAGE_CONDITION_ACTIVATION,
+    YVEX_TRANSFORMER_JOINT_STAGE_FINAL_TIME_ACTIVATION,
+    YVEX_TRANSFORMER_JOINT_STAGE_FINAL_ADALN,
+    YVEX_TRANSFORMER_JOINT_STAGE_FINAL_NORM,
+    YVEX_TRANSFORMER_JOINT_STAGE_FINAL_HIDDEN,
+    YVEX_TRANSFORMER_JOINT_STAGE_COUNT
+} yvex_transformer_joint_stage;
+
+typedef enum {
+    YVEX_TRANSFORMER_JOINT_SCOPE_OMNI = 0,
+    YVEX_TRANSFORMER_JOINT_SCOPE_REFINER,
+    YVEX_TRANSFORMER_JOINT_SCOPE_COUNT
+} yvex_transformer_joint_scope;
+
+typedef struct yvex_transformer_joint_stage_observation {
+    unsigned long long block, rows, width, value_count;
+    yvex_transformer_joint_scope scope;
+    yvex_transformer_joint_stage stage;
+    const float *values;
+} yvex_transformer_joint_stage_observation;
+
 /* Observation values are borrowed for the callback only. A callback failure aborts the
    enclosing output transaction before any result becomes visible. */
 typedef int (*yvex_transformer_joint_block_observer_fn)(
     void *context, const yvex_transformer_joint_block_observation *observation,
     yvex_error *err);
+typedef int (*yvex_transformer_joint_stage_observer_fn)(
+    void *context, const yvex_transformer_joint_stage_observation *observation,
+    yvex_error *err);
+
+typedef struct yvex_transformer_joint_block_options {
+    const float *inv_freq;
+    yvex_transformer_joint_block_observer_fn block_observer;
+    void *block_observer_context;
+    yvex_transformer_joint_stage_observer_fn stage_observer;
+    void *stage_observer_context;
+    unsigned long long observed_stage_block;
+    yvex_transformer_joint_scope observed_stage_scope;
+    yvex_transformer_joint_stage observed_stage;
+} yvex_transformer_joint_block_options;
 
 typedef struct yvex_transformer_joint_request {
     const yvex_transformer_joint_recipe *recipe;
@@ -110,6 +181,11 @@ typedef struct yvex_transformer_joint_request {
     unsigned long long video_output_capacity, audio_output_capacity;
     yvex_transformer_joint_block_observer_fn block_observer;
     void *block_observer_context;
+    yvex_transformer_joint_stage_observer_fn stage_observer;
+    void *stage_observer_context;
+    yvex_transformer_joint_scope observed_stage_scope;
+    unsigned long long observed_stage_block;
+    yvex_transformer_joint_stage observed_stage;
 } yvex_transformer_joint_request;
 
 typedef struct yvex_transformer_joint_result {
@@ -126,7 +202,8 @@ int yvex_backend_transformer_joint_blocks_cuda(
     const float *hidden, const float *temb, unsigned long long timestep_count,
     const float *position_ids, const unsigned int *adaln_indices,
     unsigned long long packed_rows, float *output, unsigned long long output_capacity,
-    yvex_transformer_joint_block_result *result, yvex_error *err);
+    yvex_transformer_joint_block_result *result,
+    const yvex_transformer_joint_block_options *options, yvex_error *err);
 int yvex_backend_transformer_joint_cuda(
     yvex_backend *backend, const yvex_transformer_joint_encoded_weight *external_weights,
     const yvex_transformer_joint_encoded_weight *block_weights,

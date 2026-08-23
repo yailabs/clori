@@ -220,9 +220,10 @@ static int cuda_blas_open(yvex_backend *backend, yvex_error *err)
     *(void **)(&blas->create) = dlsym(blas->library, "cublasCreate_v2");
     *(void **)(&blas->destroy) = dlsym(blas->library, "cublasDestroy_v2");
     *(void **)(&blas->set_stream) = dlsym(blas->library, "cublasSetStream_v2");
+    *(void **)(&blas->set_workspace) = dlsym(blas->library, "cublasSetWorkspace_v2");
     *(void **)(&blas->gemm_ex) = dlsym(blas->library, "cublasGemmEx");
     *(void **)(&blas->gemm_strided_batched_ex) = dlsym(blas->library, "cublasGemmStridedBatchedEx");
-    if (!blas->create || !blas->destroy || !blas->set_stream || !blas->gemm_ex ||
+    if (!blas->create || !blas->destroy || !blas->set_stream || !blas->set_workspace || !blas->gemm_ex ||
         blas->create(&blas->handle) != 0 ||
         blas->set_stream(blas->handle, state->execution_stream) != 0) {
         if (blas->handle && blas->destroy) (void)blas->destroy(blas->handle);
@@ -1975,18 +1976,15 @@ int yvex_backend_open_shared_cuda(yvex_backend **out,
     backend->device_info.name = backend->device_name_storage;
     rc = cuda_execution_stream_open(backend, err);
     if (rc != YVEX_OK) {
-        return cuda_open_rollback(out, &backend, rc,
-                                  err ? *err : (yvex_error){0}, err);
+        return cuda_open_rollback(out, &backend, rc, err ? *err : (yvex_error){0}, err);
     }
     rc = cuda_timing_open(backend, err);
     if (rc != YVEX_OK) {
-        return cuda_open_rollback(out, &backend, rc,
-                                  err ? *err : (yvex_error){0}, err);
+        return cuda_open_rollback(out, &backend, rc, err ? *err : (yvex_error){0}, err);
     }
     rc = cuda_blas_open(backend, err);
     if (rc != YVEX_OK) {
-        return cuda_open_rollback(out, &backend, rc,
-                                  err ? *err : (yvex_error){0}, err);
+        return cuda_open_rollback(out, &backend, rc, err ? *err : (yvex_error){0}, err);
     }
     rc = yvex_cuda_kernel_bundle_admit(backend, err);
     if (rc != YVEX_OK) {

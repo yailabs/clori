@@ -295,7 +295,7 @@ static int execute_block(
         yvex_minimax_h3_omni_result refused = {0};
         int refusal = yvex_backend_transformer_joint_blocks_cuda(
             backend, recipe, weights, 0ull, identity, arena_bytes, hidden, temb, timesteps,
-            positions, adaln_indices, rows, output, rows * OMNI_HIDDEN, &refused, err);
+            positions, adaln_indices, rows, output, rows * OMNI_HIDDEN, &refused, NULL, err);
         if (refusal != YVEX_ERR_INVALID_ARG || refused.complete) {
             yvex_error_set(err, YVEX_ERR_STATE, "minimax-h3.omni-proof.refusal",
                            "zero-block execution did not fail closed");
@@ -306,7 +306,7 @@ static int execute_block(
         yvex_minimax_h3_omni_result refused = {0};
         int refusal = yvex_backend_transformer_joint_blocks_cuda(
             backend, recipe, weights, block_count, identity, arena_bytes, hidden, temb, timesteps,
-            positions, invalid_indices, rows, output, rows * OMNI_HIDDEN, &refused, err);
+            positions, invalid_indices, rows, output, rows * OMNI_HIDDEN, &refused, NULL, err);
         if (refusal != YVEX_ERR_BOUNDS || refused.complete) {
             yvex_error_set(err, YVEX_ERR_STATE, "minimax-h3.omni-proof.refusal",
                            "out-of-range AdaLN selection did not fail closed");
@@ -317,7 +317,7 @@ static int execute_block(
         yvex_minimax_h3_omni_result refused = {0};
         int refusal = yvex_backend_transformer_joint_blocks_cuda(
             backend, recipe, weights, block_count, identity, arena_bytes, hidden, temb, timesteps,
-            positions, adaln_indices, rows, output, rows * OMNI_HIDDEN - 1ull, &refused, err);
+            positions, adaln_indices, rows, output, rows * OMNI_HIDDEN - 1ull, &refused, NULL, err);
         if (refusal != YVEX_ERR_INVALID_ARG || refused.complete) {
             yvex_error_set(err, YVEX_ERR_STATE, "minimax-h3.omni-proof.refusal",
                            "undersized output did not fail closed");
@@ -327,7 +327,7 @@ static int execute_block(
     if (rc == YVEX_OK)
         rc = yvex_backend_transformer_joint_blocks_cuda(
             backend, recipe, weights, block_count, identity, arena_bytes, hidden, temb, timesteps,
-            positions, adaln_indices, rows, output, rows * OMNI_HIDDEN, result, err);
+            positions, adaln_indices, rows, output, rows * OMNI_HIDDEN, result, NULL, err);
     if (attached) {
         yvex_error_clear(&cleanup);
         cleanup_rc = yvex_backend_resident_detach(backend, &cleanup);

@@ -699,6 +699,17 @@ static int test_t2va_plan(void)
                          recipe->swiglu_layout ==
                              YVEX_TRANSFORMER_SWIGLU_LAYOUT_GATE_THEN_UP,
                      "Omni recipe preserves the released gate-before-up SwiGLU row layout");
+    YVEX_TEST_ASSERT(
+        recipe && recipe->schema_version == YVEX_TRANSFORMER_JOINT_SCHEMA_V2 &&
+            recipe->video_output_numeric.tile_rows == 32u &&
+            recipe->video_output_numeric.split_k == 10u &&
+            recipe->video_output_numeric.reduction ==
+                YVEX_BACKEND_LINEAR_REDUCTION_INPLACE &&
+            recipe->audio_output_numeric.tile_rows == 128u &&
+            recipe->audio_output_numeric.split_k == 3u &&
+            recipe->audio_output_numeric.reduction ==
+                YVEX_BACKEND_LINEAR_REDUCTION_COMPUTE_TYPE,
+        "Omni recipe seals the independently qualified final projection reductions");
 
     YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->t2va_plan_build(
                          &first, 16ull, 1344ull, 768ull, 124ull, 19u, &err) == YVEX_OK &&

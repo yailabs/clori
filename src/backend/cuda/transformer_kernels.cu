@@ -24,34 +24,55 @@ extern "C" __global__ void yvex_f32_to_bf16(
     output[index] = (unsigned short)((encoded.bits + rounding) >> 16u);
 }
 
-/* The source RMS operation keeps normalization and affine weighting in F32 and publishes one
- * BF16 result. An intermediate narrowing changes hundreds of thousands of lanes at model width. */
+extern "C" __global__ void yvex_bf16_to_f32(
+    const unsigned short *input, float *output, unsigned long long count)
+{
+    unsigned long long index =
+        (unsigned long long)blockIdx.x * (unsigned long long)blockDim.x +
+        (unsigned long long)threadIdx.x;
+    union { unsigned int bits; float value; } decoded;
+    if (!input || !output || index >= count) return;
+    decoded.bits = (unsigned int)input[index] << 16u;
+    output[index] = decoded.value;
+}
+
+/* The source CUDA RMS operation reduces four adjacent BF16-published values per vector lane,
+ * then combines four warps. Both grouping and publication order are observable across a deep
+ * stack. */
 extern "C" __global__ void yvex_rms_norm_bf16_policy_f32(
     const float *input, const float *weight, float *output,
     unsigned long long hidden_size, unsigned long long row_count, float epsilon)
 {
     extern __shared__ float scratch[];
-    unsigned int lane = threadIdx.x;
+    unsigned int thread = threadIdx.x;
+    unsigned int lane = thread & 31u;
+    unsigned int warp = thread >> 5u;
     unsigned long long row = (unsigned long long)blockIdx.x;
-    unsigned long long offset, index;
+    unsigned long long offset, vector, index;
     float sum = 0.0f, inverse;
-    if (!input || !weight || !output || !hidden_size || row >= row_count || epsilon <= 0.0f)
+    if (!input || !weight || !output || !hidden_size || (hidden_size & 3ull) ||
+        blockDim.x != 128u || row >= row_count || epsilon <= 0.0f)
         return;
     offset = row * hidden_size;
-    for (index = lane; index < hidden_size; index += blockDim.x) {
-        float value = input[offset + index];
-        sum += value * value;
+    for (vector = thread; vector < hidden_size / 4ull; vector += blockDim.x) {
+#pragma unroll
+        for (unsigned int element = 0u; element < 4u; ++element) {
+            float value = input[offset + vector * 4ull + element];
+            sum += value * value;
+        }
     }
-    scratch[lane] = sum;
+    for (unsigned int stride = 16u; stride; stride >>= 1u)
+        sum += __shfl_down_sync(0xffffffffu, sum, stride);
+    if (lane == 0u) scratch[warp] = sum;
     __syncthreads();
-    for (unsigned int stride = blockDim.x >> 1; stride; stride >>= 1) {
-        if (lane < stride) scratch[lane] += scratch[lane + stride];
+    for (unsigned int stride = 2u; stride; stride >>= 1u) {
+        if (lane == 0u && warp < stride) scratch[warp] += scratch[warp + stride];
         __syncthreads();
     }
     inverse = rsqrtf(scratch[0] / (float)hidden_size + epsilon);
-    for (index = lane; index < hidden_size; index += blockDim.x)
+    for (index = thread; index < hidden_size; index += blockDim.x)
         output[offset + index] =
-            float_to_bf16_rne(input[offset + index] * inverse * weight[index]);
+            float_to_bf16_rne(weight[index] * (inverse * input[offset + index]));
 }
 
 /* Apply explicit rotate-half cos/sin tables to packed token/head vectors in place. */
@@ -175,28 +196,6 @@ extern "C" __global__ void yvex_gqa_f32(
     }
 }
 
-/* Pack token-major F32 values into head-major BF16 matrices consumed by batched GEMM. */
-extern "C" __global__ void yvex_gqa_pack_bf16(
-    const float *input, unsigned short *output, unsigned long long tokens,
-    unsigned long long heads, unsigned long long head_dim, int *status)
-{
-    unsigned long long index =
-        (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
-    unsigned long long elements = tokens * heads * head_dim, token, head, dim;
-    float value;
-    if (!input || !output || !status || *status || index >= elements) return;
-    token = index / (heads * head_dim);
-    head = (index / head_dim) % heads;
-    dim = index % head_dim;
-    value = input[index];
-    if (!isfinite(value)) {
-        atomicCAS(status, 0, 1);
-        return;
-    }
-    output[(head * tokens + token) * head_dim + dim] =
-        (unsigned short)(__float_as_uint(float_to_bf16_rne(value)) >> 16u);
-}
-
 /* Preserve BF16 source values in F32 while changing to the head-major GEMM layout. */
 extern "C" __global__ void yvex_gqa_pack_f32(
     const float *input, float *output, unsigned long long tokens,
@@ -216,6 +215,40 @@ extern "C" __global__ void yvex_gqa_pack_f32(
         return;
     }
     output[(head * tokens + token) * head_dim + dim] = value;
+}
+
+/* One warp owns one F32-published score so the fallback reduction order is invariant. */
+extern "C" __global__ void yvex_gqa_score_f32(
+    const float *query, const float *key, float *scores,
+    unsigned long long tokens, unsigned long long heads,
+    unsigned long long query_rows, unsigned long long head_dim, float scale)
+{
+    const unsigned int warp = threadIdx.x / warpSize, lane = threadIdx.x % warpSize;
+    const unsigned int warps = blockDim.x / warpSize;
+    unsigned long long task = (unsigned long long)blockIdx.x * warps + warp;
+    unsigned long long source, local_query, head, dim;
+    float dot = 0.0f;
+    if (!query || !key || !scores || !tokens || !heads || !query_rows ||
+        !head_dim || task >= heads * query_rows * tokens) return;
+    source = task % tokens;
+    local_query = (task / tokens) % query_rows;
+    head = task / (tokens * query_rows);
+    for (dim = lane; dim < head_dim; dim += warpSize) {
+        float q = query[(head * tokens + local_query) * head_dim + dim];
+        float k = key[(head * tokens + source) * head_dim + dim];
+        dot += q * k;
+    }
+    for (unsigned int offset = warpSize >> 1; offset; offset >>= 1)
+        dot += __shfl_down_sync(0xffffffffu, dot, offset);
+    if (!lane) scores[task] = dot * scale;
+}
+
+extern "C" __global__ void yvex_gqa_scale_f32(
+    float *values, unsigned long long count, float scale)
+{
+    unsigned long long index =
+        (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (values && index < count) values[index] *= scale;
 }
 
 /* Source attention normalizes in F32; only the completed attention output is BF16-rounded. */
@@ -261,6 +294,77 @@ extern "C" __global__ void yvex_gqa_softmax_f32(
     }
 }
 
+/* Match the source CUDA warp-softmax reduction for bounded rows up to 1024 elements. */
+extern "C" __global__ void yvex_gqa_softmax_warp_f32(
+    const float *scores, float *probabilities,
+    unsigned long long query_rows, unsigned long long tokens,
+    unsigned long long query_start, int causal, int *status)
+{
+    const unsigned int lane = threadIdx.x & 31u;
+    const unsigned long long row = (unsigned long long)blockIdx.x;
+    const unsigned long long local_query = query_rows ? row % query_rows : 0ull;
+    const unsigned long long query = query_start + local_query;
+    float elements[32], maximum, sum = 0.0f;
+    unsigned int power = 1u, iterations, index;
+    if (!scores || !probabilities || !status || !query_rows || !tokens || tokens > 1024ull)
+        return;
+    while (power < tokens) power <<= 1u;
+    iterations = power >> 5u;
+    if (!iterations) iterations = 1u;
+    if (*status) return;
+    for (index = 0u; index < iterations; ++index) {
+        unsigned long long source = lane + (unsigned long long)index * 32ull;
+        int valid = source < tokens && (!causal || source <= query);
+        elements[index] = valid ? scores[row * tokens + source] : -INFINITY;
+        if (valid && !isfinite(elements[index])) atomicCAS(status, 0, 1);
+    }
+    maximum = elements[0];
+    for (index = 0u; index < iterations; ++index)
+        maximum = maximum > elements[index] ? maximum : elements[index];
+    for (unsigned int offset = 16u; offset; offset >>= 1u) {
+        float other = __shfl_xor_sync(0xffffffffu, maximum, offset, 32);
+        maximum = maximum < other ? other : maximum;
+    }
+    for (index = 0u; index < iterations; ++index) {
+        elements[index] = expf(elements[index] - maximum);
+        sum += elements[index];
+    }
+    for (unsigned int offset = 16u; offset; offset >>= 1u)
+        sum += __shfl_xor_sync(0xffffffffu, sum, offset, 32);
+    if (!isfinite(sum) || sum <= 0.0f) atomicCAS(status, 0, 1);
+    for (index = 0u; index < iterations; ++index) {
+        unsigned long long source = lane + (unsigned long long)index * 32ull;
+        if (source < tokens)
+            probabilities[row * tokens + source] = elements[index] / sum;
+    }
+}
+
+/* Publish P*V with a fixed source-order accumulation for every output element. */
+extern "C" __global__ void yvex_gqa_value_f32(
+    const float *probabilities, const float *value, float *output,
+    unsigned long long tokens, unsigned long long heads,
+    unsigned long long query_rows, unsigned long long head_dim, int *status)
+{
+    unsigned long long task =
+        (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned long long dim, local_query, head, source;
+    float accumulated = 0.0f;
+    if (!probabilities || !value || !output || !status || *status || !tokens ||
+        !heads || !query_rows || !head_dim || task >= heads * query_rows * head_dim)
+        return;
+    dim = task % head_dim;
+    local_query = (task / head_dim) % query_rows;
+    head = task / (head_dim * query_rows);
+    for (source = 0ull; source < tokens; ++source)
+        accumulated += probabilities[(head * query_rows + local_query) * tokens + source] *
+                       value[(head * tokens + source) * head_dim + dim];
+    if (!isfinite(accumulated)) {
+        atomicCAS(status, 0, 1);
+        return;
+    }
+    output[(head * tokens + local_query) * head_dim + dim] = accumulated;
+}
+
 /* Restore the batched GEMM result to the canonical token/head/dimension layout. */
 extern "C" __global__ void yvex_gqa_unpack_f32(
     const float *input, float *output, unsigned long long tokens,
@@ -299,6 +403,26 @@ extern "C" __global__ void yvex_silu_f32(
     if (!input || !output || index >= count) return;
     value = input[index] / (1.0f + expf(-input[index]));
     output[index] = bf16_output ? float_to_bf16_rne(value) : value;
+}
+
+/* Source timestep features are constructed in F32 on the execution device. Host-double
+ * reconstruction crosses rounding boundaries that become observable after repeated blocks. */
+extern "C" __global__ void yvex_timestep_embedding_f32(
+    const float *timesteps, float *output, unsigned long long rows,
+    unsigned long long half_width, float maximum_period)
+{
+    unsigned long long index =
+        (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned long long row, lane;
+    float exponent, angle;
+    if (!timesteps || !output || !rows || !half_width || maximum_period <= 1.0f ||
+        index >= rows * half_width) return;
+    row = index / half_width;
+    lane = index % half_width;
+    exponent = -logf(maximum_period) * (float)lane / (float)half_width;
+    angle = timesteps[row] * expf(exponent);
+    output[row * half_width * 2ull + lane] = cosf(angle);
+    output[row * half_width * 2ull + half_width + lane] = sinf(angle);
 }
 
 extern "C" __global__ void yvex_split_three_f32(
@@ -472,4 +596,14 @@ extern "C" __global__ void yvex_bias_f32(
     if (!input || !bias || !output || !width || index >= rows * width) return;
     value = input[index] + bias[index % width];
     output[index] = bf16_output ? float_to_bf16_rne(value) : value;
+}
+
+extern "C" __global__ void yvex_add_bf16_f32(
+    const float *left, const float *right, float *output,
+    unsigned long long rows, unsigned long long width)
+{
+    unsigned long long index =
+        (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (!left || !right || !output || !width || index >= rows * width) return;
+    output[index] = float_to_bf16_rne(left[index] + right[index]);
 }

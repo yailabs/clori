@@ -191,7 +191,8 @@ static int quant_cuda_dense_matvec(yvex_backend *backend, unsigned int qtype)
     yvex_backend_tensor_desc descriptor = {0};
     yvex_device_tensor *resident = NULL, *input = NULL, *output = NULL;
     unsigned char *mapped = NULL, *encoded = NULL;
-    float source[ROWS * WIDTH], vector[WIDTH], expected[ROWS], actual[ROWS];
+    float source[ROWS * WIDTH], vector[WIDTH], reference_vector[WIDTH];
+    float expected[ROWS], actual[ROWS];
     yvex_backend_cuda_operation_facts facts;
     yvex_quant_failure failure;
     yvex_error err;
@@ -199,9 +200,14 @@ static int quant_cuda_dense_matvec(yvex_backend *backend, unsigned int qtype)
     unsigned long long index;
     unsigned int row;
 
-    for (index = 0ull; index < WIDTH; ++index)
+    for (index = 0ull; index < WIDTH; ++index) {
         vector[index] = (float)((int)(index % 19ull) - 9) /
                         (float)(7ull + index % 5ull);
+        reference_vector[index] = qtype == YVEX_GGUF_QTYPE_BF16
+                                      ? yvex_quant_bf16_decode(
+                                            yvex_quant_bf16_encode(vector[index]))
+                                      : vector[index];
+    }
     for (index = 0ull; index < ROWS * WIDTH; ++index)
         source[index] = (float)((int)((index * 7ull + 3ull) % 31ull) - 15) /
                         (float)(3ull + index % 7ull);
@@ -228,7 +234,7 @@ static int quant_cuda_dense_matvec(yvex_backend *backend, unsigned int qtype)
         encoded = NULL;
         YVEX_TEST_ASSERT(yvex_quant_cpu_dot(
                              qtype, mapped + row * row_bytes, row_bytes,
-                             vector, WIDTH, &expected[row], &failure, &err) == YVEX_OK,
+                             reference_vector, WIDTH, &expected[row], &failure, &err) == YVEX_OK,
                          "dense encoded matvec CPU reference succeeds");
     }
     YVEX_TEST_ASSERT(yvex_backend_resident_attach(
@@ -253,15 +259,28 @@ static int quant_cuda_dense_matvec(yvex_backend *backend, unsigned int qtype)
                          backend, mapped, ROWS * row_bytes, qtype,
                          ROWS, WIDTH, row_bytes, 1ull, input, NULL, 0ull,
                          NULL, output, 0, &facts, &err) == YVEX_OK &&
-                         facts.kernel_launches == 1ull && !facts.tensor_core_launches &&
-                         facts.temporary_bytes == sizeof(int) &&
+                         facts.kernel_launches ==
+                             (qtype == YVEX_GGUF_QTYPE_BF16 ? 2ull : 1ull) &&
+                         !facts.tensor_core_launches &&
+                         facts.temporary_bytes ==
+                             (qtype == YVEX_GGUF_QTYPE_F32
+                                  ? 0ull
+                                  : qtype == YVEX_GGUF_QTYPE_BF16
+                                      ? WIDTH * sizeof(unsigned short) + sizeof(int)
+                                      : sizeof(int)) &&
                          yvex_backend_tensor_read(
                              backend, output, actual, sizeof(actual), &err) == YVEX_OK,
-                     "dense encoded matvec executes one warp-owned projection");
-    for (row = 0u; row < ROWS; ++row)
+                     "dense encoded matvec executes its source-faithful projection");
+    for (row = 0u; row < ROWS; ++row) {
+        if (fabs((double)actual[row] - expected[row]) >
+            1e-5 * (1.0 + fabs((double)expected[row])))
+            fprintf(stderr, "dense %s row=%u actual=%.9g expected=%.9g delta=%.9g\n",
+                    yvex_gguf_qtype_name(qtype), row, actual[row], expected[row],
+                    actual[row] - expected[row]);
         YVEX_TEST_ASSERT(fabs((double)actual[row] - expected[row]) <=
                                  1e-5 * (1.0 + fabs((double)expected[row])),
                              "dense encoded matvec matches the independent CPU reference");
+    }
     YVEX_TEST_ASSERT(yvex_backend_resident_detach(backend, &err) == YVEX_OK &&
                          yvex_backend_tensor_release(backend, &output, &err) == YVEX_OK &&
                          yvex_backend_tensor_release(backend, &input, &err) == YVEX_OK &&
@@ -783,6 +802,94 @@ static int quant_cuda_f32_gemm(yvex_backend *backend)
                          yvex_backend_tensor_release(backend, &input, &err) == YVEX_OK &&
                          yvex_backend_tensor_release(backend, &resident, &err) == YVEX_OK,
                      "F32 GEMM releases all CUDA ownership");
+    return 0;
+}
+
+static int quant_cuda_f32_linear_policy(yvex_backend *backend)
+{
+    enum { ROWS = 96, WIDTH = 5376, INPUT_ROWS = 466 };
+    const size_t weight_bytes = (size_t)ROWS * WIDTH * sizeof(float);
+    const size_t bias_bytes = ROWS * sizeof(float);
+    const size_t input_bytes = (size_t)INPUT_ROWS * WIDTH * sizeof(float);
+    const size_t output_bytes = (size_t)INPUT_ROWS * ROWS * sizeof(float);
+    yvex_backend_tensor_desc descriptor = {0};
+    yvex_device_tensor *resident = NULL, *input = NULL, *output = NULL;
+    yvex_backend_linear_numeric_policy policy = {
+        .tile_rows = 32u, .split_k = 10u,
+        .reduction = YVEX_BACKEND_LINEAR_REDUCTION_INPLACE,
+    };
+    yvex_backend_cuda_operation_facts facts;
+    unsigned char *mapped = NULL;
+    float *inputs = (float *)calloc(1u, input_bytes);
+    float *actual = (float *)malloc(output_bytes);
+    unsigned long long row, output_row;
+    yvex_error err;
+    int rc;
+
+    YVEX_TEST_ASSERT(inputs && actual, "F32 linear policy fixtures allocate");
+    descriptor.name = "f32_linear_policy_resident";
+    descriptor.dtype = YVEX_DTYPE_I8;
+    descriptor.rank = 1u;
+    descriptor.dims[0] = descriptor.bytes = weight_bytes + bias_bytes;
+    YVEX_TEST_ASSERT(yvex_backend_resident_alloc(
+                         backend, &descriptor, &resident, &mapped, &err) == YVEX_OK,
+                     "F32 linear policy resident rows allocate");
+    memset(mapped, 0, weight_bytes + bias_bytes);
+    for (output_row = 0ull; output_row < ROWS; ++output_row) {
+        float weight = (float)(output_row + 1ull) / 128.0f;
+        float bias = (float)(output_row % 17ull) / 64.0f;
+        memcpy(mapped + output_row * WIDTH * sizeof(float), &weight, sizeof(weight));
+        memcpy(mapped + weight_bytes + output_row * sizeof(float), &bias, sizeof(bias));
+    }
+    for (row = 0ull; row < INPUT_ROWS; ++row)
+        inputs[row * WIDTH] = (float)(row % 11ull) / 8.0f;
+    YVEX_TEST_ASSERT(yvex_backend_resident_attach(
+                         backend, mapped, weight_bytes + bias_bytes,
+                         resident, 31ull, &err) == YVEX_OK,
+                     "F32 linear policy resident rows attach");
+    descriptor.name = "f32_linear_policy_input";
+    descriptor.dtype = YVEX_DTYPE_F32;
+    descriptor.dims[0] = INPUT_ROWS * WIDTH;
+    descriptor.bytes = input_bytes;
+    YVEX_TEST_ASSERT(yvex_backend_tensor_alloc(backend, &descriptor, &input, &err) == YVEX_OK &&
+                         yvex_backend_tensor_write(
+                             backend, input, inputs, input_bytes, &err) == YVEX_OK,
+                     "F32 linear policy input becomes device resident");
+    descriptor.name = "f32_linear_policy_output";
+    descriptor.dims[0] = INPUT_ROWS * ROWS;
+    descriptor.bytes = output_bytes;
+    YVEX_TEST_ASSERT(yvex_backend_tensor_alloc(backend, &descriptor, &output, &err) == YVEX_OK,
+                     "F32 linear policy output allocates");
+    rc = yvex_backend_cuda_encoded_linear_f32(
+        backend, mapped, weight_bytes, mapped + weight_bytes, bias_bytes,
+        ROWS, WIDTH, INPUT_ROWS, input, output, &policy, &facts, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && facts.kernel_launches == 1ull &&
+                         facts.tensor_core_launches == 1ull &&
+                         facts.temporary_bytes == weight_bytes + bias_bytes + 1024u * 1024u &&
+                         yvex_backend_tensor_read(
+                             backend, output, actual, output_bytes, &err) == YVEX_OK,
+                     "F32 linear policy executes one bounded split reduction");
+    for (row = 0ull; row < INPUT_ROWS; ++row)
+        for (output_row = 0ull; output_row < ROWS; ++output_row) {
+            float expected = inputs[row * WIDTH] * (float)(output_row + 1ull) / 128.0f +
+                             (float)(output_row % 17ull) / 64.0f;
+            YVEX_TEST_ASSERT(actual[row * ROWS + output_row] == expected,
+                             "F32 linear policy matches its exact sparse reference");
+        }
+    policy.tile_rows = 64u;
+    YVEX_TEST_ASSERT(
+        yvex_backend_cuda_encoded_linear_f32(
+            backend, mapped, weight_bytes, mapped + weight_bytes, bias_bytes,
+            ROWS, WIDTH, INPUT_ROWS, input, output, &policy, &facts, &err) ==
+            YVEX_ERR_UNSUPPORTED,
+        "F32 linear policy refuses an unadmitted reduction shape");
+    YVEX_TEST_ASSERT(yvex_backend_resident_detach(backend, &err) == YVEX_OK &&
+                         yvex_backend_tensor_release(backend, &output, &err) == YVEX_OK &&
+                         yvex_backend_tensor_release(backend, &input, &err) == YVEX_OK &&
+                         yvex_backend_tensor_release(backend, &resident, &err) == YVEX_OK,
+                     "F32 linear policy releases all CUDA ownership");
+    free(actual);
+    free(inputs);
     return 0;
 }
 
@@ -1867,10 +1974,11 @@ static int quant_cuda_gqa_tiles(yvex_backend *backend)
         yvex_cuda_transformer_gqa(
             backend, query, key, value, output, TOKENS, 1ull, 1ull, HEAD_DIM, 1,
             &facts, &err) == YVEX_OK &&
-            facts.kernel_launches == 1ull &&
+            facts.kernel_launches == 8ull && facts.tensor_core_launches == 2ull &&
+            facts.device_synchronizations == 1ull &&
             yvex_backend_tensor_read(
                 backend, output, result, sizeof(result), &err) == YVEX_OK,
-        "causal online GQA crosses the four-query tile boundary");
+        "causal source-published GQA crosses the four-query tile boundary");
     quant_gqa_reference(query_values, key_values, values, reference, TOKENS, HEAD_DIM, 1);
     for (index = 0u; index < ELEMENTS; ++index)
         YVEX_TEST_ASSERT(fabsf(result[index] - reference[index]) < 2e-5f,
@@ -1879,9 +1987,11 @@ static int quant_cuda_gqa_tiles(yvex_backend *backend)
         yvex_cuda_transformer_gqa(
             backend, query, key, value, output, TOKENS, 1ull, 1ull, HEAD_DIM, 0,
             &facts, &err) == YVEX_OK &&
+            facts.kernel_launches == 8ull && facts.tensor_core_launches == 2ull &&
+            facts.device_synchronizations == 1ull &&
             yvex_backend_tensor_read(
                 backend, output, result, sizeof(result), &err) == YVEX_OK,
-        "non-causal online GQA crosses the four-query tile boundary");
+        "non-causal source-published GQA crosses the four-query tile boundary");
     quant_gqa_reference(query_values, key_values, values, reference, TOKENS, HEAD_DIM, 0);
     for (index = 0u; index < ELEMENTS; ++index)
         YVEX_TEST_ASSERT(fabsf(result[index] - reference[index]) < 2e-5f,
@@ -1935,12 +2045,12 @@ static int quant_cuda_gqa_blas(yvex_backend *backend)
     enum { TOKENS = 257u, HEAD_DIM = 128u, ELEMENTS = TOKENS * HEAD_DIM };
     yvex_device_tensor *query = NULL, *key = NULL, *value = NULL, *output = NULL, *workspace = NULL;
     float query_values[ELEMENTS], key_values[ELEMENTS], values[ELEMENTS];
-    float result[ELEMENTS], reference[ELEMENTS];
+    float result[ELEMENTS], reference[ELEMENTS], repeated[ELEMENTS];
     yvex_backend_cuda_operation_facts facts;
     yvex_error err;
     unsigned long long workspace_bytes = 0ull, source_workspace_bytes = 0ull;
     unsigned long long aligned_workspace_bytes = 0ull;
-    unsigned long long unused_bytes = 1ull;
+    unsigned long long small_workspace_bytes = 0ull;
     unsigned int index;
     int causal;
 
@@ -1961,44 +2071,53 @@ static int quant_cuda_gqa_blas(yvex_backend *backend)
                               values, sizeof(values), &value, &err) &&
             quant_cuda_tensor(backend, "gqa-blas-output", YVEX_DTYPE_F32,
                               NULL, sizeof(result), &output, &err),
-        "chunked BF16 GQA tensors allocate");
+        "chunked source-published GQA tensors allocate");
     YVEX_TEST_ASSERT(
         yvex_backend_transformer_gqa_workspace_bytes(
             TOKENS, 1ull, 1ull, HEAD_DIM, &workspace_bytes, &err) == YVEX_OK &&
             workspace_bytes > sizeof(result) &&
             yvex_backend_transformer_gqa_workspace_bytes(
-                5ull, 1ull, 1ull, HEAD_DIM, &unused_bytes, &err) == YVEX_OK &&
-            unused_bytes == 0ull &&
+                5ull, 1ull, 1ull, HEAD_DIM, &small_workspace_bytes, &err) == YVEX_OK &&
+            small_workspace_bytes == 12804ull &&
             yvex_backend_transformer_gqa_workspace_bytes(
                 21741ull, 56ull, 56ull, HEAD_DIM, &source_workspace_bytes, &err) == YVEX_OK &&
-            source_workspace_bytes == 2493431812ull &&
+            source_workspace_bytes == 3116789764ull &&
             source_workspace_bytes < 4ull * 1024ull * 1024ull * 1024ull &&
             yvex_backend_transformer_gqa_workspace_bytes(
                 129ull, 1ull, 1ull, 33ull, &aligned_workspace_bytes, &err) == YVEX_OK &&
-            aligned_workspace_bytes == 117764ull &&
+            aligned_workspace_bytes == 134660ull &&
             quant_cuda_tensor(backend, "gqa-blas-workspace", YVEX_DTYPE_I8,
                               NULL, workspace_bytes, &workspace, &err) &&
             yvex_backend_workspace_attach(backend, workspace, 1ull, &err) == YVEX_OK,
-        "chunked BF16 GQA admits one exact reusable workspace");
+        "chunked source-published GQA admits one exact reusable workspace");
     for (causal = 0; causal <= 1; ++causal) {
         YVEX_TEST_ASSERT(
             yvex_cuda_transformer_gqa(
                 backend, query, key, value, output, TOKENS, 1ull, 1ull,
                 HEAD_DIM, causal, &facts, &err) == YVEX_OK &&
-                facts.kernel_launches == 19ull && facts.tensor_core_launches == 10ull &&
+                facts.kernel_launches == 24ull && facts.tensor_core_launches == 10ull &&
                 facts.device_synchronizations == 1ull &&
                 facts.d2h_bytes == sizeof(int) && facts.temporary_bytes == workspace_bytes &&
                 yvex_backend_tensor_read(
                     backend, output, result, sizeof(result), &err) == YVEX_OK,
-            "chunked BF16 GQA publishes bounded tensor-core execution facts");
+            "chunked source-published GQA publishes bounded tensor-core execution facts");
         quant_gqa_source_reference(query_values, key_values, values, reference,
                                    TOKENS, HEAD_DIM, causal);
         for (index = 0u; index < ELEMENTS; ++index)
             YVEX_TEST_ASSERT(
                 fabsf(result[index] - reference[index]) <=
                     2e-3f * (1.0f + fabsf(reference[index])),
-                "chunked BF16 GQA matches the scalar mixed-precision oracle");
+                "chunked source-published GQA matches the scalar mixed-precision oracle");
     }
+    memcpy(repeated, result, sizeof(repeated));
+    YVEX_TEST_ASSERT(
+        yvex_cuda_transformer_gqa(
+            backend, query, key, value, output, TOKENS, 1ull, 1ull,
+            HEAD_DIM, 1, &facts, &err) == YVEX_OK &&
+            yvex_backend_tensor_read(
+                backend, output, result, sizeof(result), &err) == YVEX_OK &&
+            memcmp(repeated, result, sizeof(result)) == 0,
+        "chunked source-published GQA repeats byte-identically");
     yvex_backend_workspace_detach(backend);
     YVEX_TEST_ASSERT(
         yvex_backend_tensor_release(backend, &workspace, &err) == YVEX_OK &&
@@ -2006,7 +2125,7 @@ static int quant_cuda_gqa_blas(yvex_backend *backend)
             yvex_backend_tensor_release(backend, &key, &err) == YVEX_OK &&
             yvex_backend_tensor_release(backend, &value, &err) == YVEX_OK &&
             yvex_backend_tensor_release(backend, &output, &err) == YVEX_OK,
-        "chunked BF16 GQA tensors release cleanly");
+        "chunked source-published GQA tensors release cleanly");
     return 0;
 }
 
@@ -2096,6 +2215,17 @@ static int quant_cuda_video_transformer(yvex_backend *backend)
     for (index = 0ull; index < 4ull; ++index)
         YVEX_TEST_ASSERT(values[index] == residual[index] + fused[index] * scales[index % 2ull],
                          "video scaled residual matches the scalar reference");
+    YVEX_TEST_ASSERT(
+        yvex_cuda_transformer_add_bf16(
+            backend, residual_device, fused_device, output, 2ull, 2ull, &facts, &err) == YVEX_OK &&
+            facts.kernel_launches == 1ull &&
+            yvex_backend_tensor_read(backend, output, values, sizeof(values), &err) == YVEX_OK,
+        "video BF16 residual publication executes");
+    for (index = 0ull; index < 4ull; ++index)
+        YVEX_TEST_ASSERT(
+            values[index] == yvex_quant_bf16_decode(
+                                 yvex_quant_bf16_encode(residual[index] + fused[index])),
+            "video BF16 residual publication matches the scalar reference");
     YVEX_TEST_ASSERT(
         quant_cuda_tensor(backend, "video-norm-weight", YVEX_DTYPE_F32,
                           norm_weight, sizeof(norm_weight), &weight, &err) &&
@@ -2291,6 +2421,8 @@ static int quant_cuda_omni_transformer(yvex_backend *backend)
 {
     yvex_device_tensor *input = NULL, *output = NULL, *first = NULL, *second = NULL;
     yvex_device_tensor *third = NULL, *table = NULL, *update = NULL, *residual = NULL;
+    float timestep_input[2] = {0.07692307233810425f, 0.25f};
+    float timestep_output[512];
     float silu_input[4] = {-2.0f, -0.5f, 0.5f, 2.0f}, silu_output[4];
     float split_input[12] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
     float swiglu_input[8] = {1, 2, 3, 4, 5, 6, 7, 8};
@@ -2307,6 +2439,28 @@ static int quant_cuda_omni_transformer(yvex_backend *backend)
     yvex_error err;
     unsigned long long index;
 
+    YVEX_TEST_ASSERT(
+        quant_cuda_tensor(backend, "omni-timestep-input", YVEX_DTYPE_F32,
+                          timestep_input, sizeof(timestep_input), &input, &err) &&
+            quant_cuda_tensor(backend, "omni-timestep-output", YVEX_DTYPE_F32, NULL,
+                              sizeof(timestep_output), &output, &err) &&
+            yvex_cuda_transformer_timestep_embedding(
+                backend, input, output, 2ull, 128ull, 10000.0f, &facts, &err) == YVEX_OK &&
+            yvex_backend_tensor_read(
+                backend, output, timestep_output, sizeof(timestep_output), &err) == YVEX_OK,
+        "Omni timestep embedding executes with source F32 device semantics");
+    YVEX_TEST_ASSERT(
+        timestep_output[0] == 0x1.fe7c68p-1f &&
+            timestep_output[130] == 0x1.10a4c6p-4f &&
+            timestep_output[255] == 0x1.155e38p-17f &&
+            timestep_output[256] == 0x1.f0154ap-1f &&
+            timestep_output[386] == 0x1.b7eb22p-3f &&
+            timestep_output[511] == 0x1.c2b91cp-16f,
+        "Omni timestep embedding matches source CUDA rounding boundaries");
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_release(backend, &output, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &input, &err) == YVEX_OK,
+        "Omni timestep embedding releases device ownership");
     YVEX_TEST_ASSERT(
         quant_cuda_tensor(backend, "omni-silu-input", YVEX_DTYPE_F32, silu_input,
                           sizeof(silu_input), &input, &err) &&
@@ -2648,6 +2802,8 @@ int yvex_cuda_test_quant_qtype(void)
                      "BF16 production row batch GEMM");
     YVEX_TEST_ASSERT(quant_cuda_f32_gemm(backend) == 0,
                      "F32 production row batch GEMM");
+    YVEX_TEST_ASSERT(quant_cuda_f32_linear_policy(backend) == 0,
+                     "F32 source-qualified split reduction");
     YVEX_TEST_ASSERT(quant_cuda_encoded_gather(backend) == 0,
                      "resident qtype row gather");
     YVEX_TEST_ASSERT(quant_cuda_transformer_facts(backend) == 0,
@@ -2657,7 +2813,7 @@ int yvex_cuda_test_quant_qtype(void)
     YVEX_TEST_ASSERT(quant_cuda_gqa_tiles(backend) == 0,
                      "online grouped-query attention tiles");
     YVEX_TEST_ASSERT(quant_cuda_gqa_blas(backend) == 0,
-                     "chunked BF16 tensor-core attention");
+                     "chunked source-published tensor-core attention");
     YVEX_TEST_ASSERT(quant_cuda_video_transformer(backend) == 0,
                      "video transformer activation primitives");
     YVEX_TEST_ASSERT(quant_cuda_dense_decoder(backend) == 0,

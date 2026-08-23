@@ -211,6 +211,7 @@ typedef struct {
     void *library, *handle;
     int (*create)(void **handle), (*destroy)(void *handle);
     int (*set_stream)(void *handle, CUstream stream);
+    int (*set_workspace)(void *handle, void *workspace, size_t bytes);
     int (*gemm_ex)(void *handle, int transa, int transb, int m, int n, int k,
                    const void *alpha, const void *a, int atype, int lda,
                    const void *b, int btype, int ldb, const void *beta,
@@ -241,13 +242,11 @@ typedef struct {
     CUfunction matmul_function;
     CUfunction qtype_row_dot_function;
     CUfunction attention_bf16_round_function;
-    CUfunction bf16_pack_function;
-    CUfunction qtype_matvec_function, qtype_grouped_rows_function, mxfp4_q8_rows_function;
-    CUfunction attention_bf16_pair_function;
-    CUfunction qtype_split_matvec_function;
-    CUfunction qtype_tensorcore_rows_function;
-    CUfunction qtype_gather_function;
-    CUfunction argmax_f32_function;
+    CUfunction bf16_pack_function, bf16_unpack_function;
+    CUfunction qtype_matvec_function, qtype_grouped_rows_function, mxfp4_q8_rows_function,
+        attention_bf16_pair_function;
+    CUfunction qtype_split_matvec_function, qtype_tensorcore_rows_function;
+    CUfunction qtype_gather_function, argmax_f32_function;
     CUfunction sample_stochastic_f32_function;
     CUfunction speculation_stochastic_f32_function;
     CUfunction q8_quantize_function;
@@ -277,11 +276,12 @@ typedef struct {
     CUfunction mlp_function;
     CUfunction attention_function;
     CUfunction rotary_half_function, rotary_half_plain_function, gqa_function;
-    CUfunction gqa_pack_function, gqa_pack_value_function;
-    CUfunction gqa_softmax_function, gqa_unpack_function;
-    CUfunction silu_product_function, silu_function, split_three_function;
-    CUfunction split_interleaved_function, swiglu_split_function, swiglu_split_f32_function;
-    CUfunction modulation_function, gated_residual_function, bias_function;
+    CUfunction gqa_pack_value_function, gqa_score_function, gqa_scale_function, gqa_softmax_function;
+    CUfunction gqa_softmax_warp_function, gqa_value_function, gqa_unpack_function;
+    CUfunction silu_product_function, silu_function, timestep_embedding_function;
+    CUfunction split_three_function, split_interleaved_function;
+    CUfunction swiglu_split_function, swiglu_split_f32_function;
+    CUfunction modulation_function, gated_residual_function, bias_function, add_bf16_function;
     CUfunction scaled_residual_f32_function, layer_norm_f32_function;
     CUfunction conv_scale_function, conv1d_function, alias_up_function, alias_down_function;
     CUfunction vector_update_function, clamp_function;
@@ -409,6 +409,7 @@ yvex_cuda_backend_state *yvex_cuda_state(const yvex_backend *backend);
 int yvex_cuda_set_current(const yvex_backend *backend, const char *where, yvex_error *err);
 int yvex_cuda_refresh_memory_info(yvex_backend *backend, yvex_error *err);
 CUdeviceptr yvex_cuda_tensor_ptr(const yvex_device_tensor *tensor);
+int yvex_cuda_blas_bind_launch_stream(yvex_backend *backend, const char *where, yvex_error *err);
 CUstream yvex_cuda_launch_stream(const yvex_backend *backend);
 int yvex_cuda_moe_derived_layout_plan(const yvex_physical_execution_decision *, unsigned long long *, yvex_error *);
 int yvex_cuda_moe_derived_layout_build(const yvex_physical_execution_decision *, const unsigned char *,
