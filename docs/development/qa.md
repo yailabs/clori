@@ -194,6 +194,15 @@ or seed. Random reruns are not a flakiness policy.
 DeepSeek and MiniMax register different family fixtures and live requirements
 through this same architecture. The orchestrator understands metadata,
 resources, and evidence classes; it contains no family execution policy.
-Feature branches merge the current `main` QA substrate and extend the registry
-for their own additional tests. They never merge into one another to transport
-QA infrastructure.
+
+QA selection derives from changed semantic owners, not branch names. DeepSeek
+and MiniMax may qualify from one branch and physical worktree. A shared branch
+does not reduce evidence: a generic change spanning both consumers requires
+the affected cross-family qualification. Separate feature branches remain an
+optional integration choice rather than an evidence boundary.
+
+The mutable native build tree remains exclusive to its worktree. CUDA devices,
+large live-model slots, fixed ports and benchmark directories retain their
+declared host-scoped exclusivity. Those resource locks serialize only the
+owned resource; they do not lock source development or turn branch topology
+into QA policy.

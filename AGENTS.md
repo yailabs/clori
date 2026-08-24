@@ -37,6 +37,12 @@ policy does not schedule agents or prescribe whether an external harness uses
 worktrees, clones, sandboxes, containers, remote environments, or another
 workspace topology.
 
+A branch is not a model-family identity. One shared development branch may
+intentionally contain several supported families, and several agents may use
+one physical worktree. In a shared worktree the working tree and index are
+mutable shared state: a file or `HEAD` read earlier may have changed before the
+next operation.
+
 Each agent owns only its assigned delivery and semantic scope. Before editing,
 identify the concrete task, affected semantic owners, expected files, functions
 or regions, and affected tests or generated outputs. Expand that scope only
@@ -63,17 +69,26 @@ invariant. Stop only the conflicting part, report that exact overlap, and
 continue independent work. Never silently choose one implementation or erase
 the other.
 
+Immediately before editing a file or region, reread its current contents and
+inspect the concurrent diff affecting that owner. After editing, inspect the
+resulting file and diff to prove unrelated hunks survived. The Git index is a
+short-lived commit transaction, not shared storage: stage only immediately
+before a focused commit, use path or hunk selection, and reread `HEAD`, the
+complete worktree and staged diff before committing. Same-file partial staging
+is valid when the semantic hunks are independent.
+
 Multiple agents may contribute to one branch. Each agent commits focused
 semantic boundaries, rereads the current HEAD before committing, accepts valid
 concurrent branch advancement, validates the combined repository state, and
 never rewrites another agent's published history. An advancing branch HEAD is
 normal concurrent development, not corruption.
 
-Feature branches advance independently and need not share a HEAD. Family work
-remains on its family branch. A generic change discovered there is isolated in
-a dedicated generic commit, reviewed and integrated into `main` separately,
-then merged from `main` into applicable branches. Do not merge an entire family
-branch into `main` merely to transport one generic change. `main` remains
+Branch topology is independent of semantic ownership. A coherent generic
+change may be committed directly to the active shared development branch and
+does not travel through `main` merely to become visible to another family on
+that branch. It must qualify every affected currently supported vertical.
+Separate feature or family branches remain allowed when useful, but they are
+optional integration topology rather than repository doctrine. `main` remains
 integration-only and is not a normal development branch.
 
 Integrate published histories with merge, not rebase. For every textual

@@ -36,6 +36,7 @@ docs/decisions/0002-command-operation-registry.md	decision	canonical	contributor
 docs/decisions/0003-documentation-architecture.md	decision	canonical	contributors	accepted	documentation_architecture_decision
 docs/decisions/0004-target-verified-speculation.md	decision	canonical	contributors	accepted	target_verified_speculation_decision
 docs/decisions/0005-execution-substrate.md	decision	canonical	contributors	accepted	execution_substrate_decision
+docs/decisions/0006-shared-multifamily-development.md	decision	canonical	contributors	accepted	shared_multifamily_development_decision
 docs/decisions/README.md	decision	projection	contributors	living	decision_index
 docs/development/documentation-policy.md	development	canonical	contributors	living	documentation_governance
 docs/development/gb10-targets.md	development	canonical	contributors	living	gb10_execution_target_table
