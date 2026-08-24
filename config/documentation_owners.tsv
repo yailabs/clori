@@ -118,4 +118,5 @@ docs/worklog/2026-08-24-deepseek-attention-candidate-alias-repair.md	worklog	can
 docs/worklog/2026-08-24-deepseek-selective-residency-barrier.md	worklog	canonical	contributors	retained	deepseek_selective_residency_barrier_worklog
 docs/worklog/2026-08-24-minimax-direct-media-reopen-repair.md	worklog	canonical	contributors	retained	minimax_direct_media_reopen_repair_worklog
 docs/worklog/2026-08-24-minimax-first-class-hosted-runtime.md	worklog	canonical	contributors	retained	minimax_first_class_hosted_runtime_worklog
+docs/worklog/2026-08-24-shared-multifamily-branch-cutover.md	worklog	canonical	contributors	retained	shared_multifamily_branch_cutover_worklog
 tests/vectors/README.md	test-support	canonical	contributors	living	test_vector_format
