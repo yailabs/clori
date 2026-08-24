@@ -127,8 +127,10 @@ family-specific media assumption.
   parser fixtures.
 
 The eight blocked rows are seven externally configured family live fixtures plus
-`performance.runtime`, whose benchmark directory is absent. They are evidence gaps for a fresh
-all-assets rerun, not software failures and not performance claims for this cutover.
+`performance.runtime`, whose benchmark directory is absent. They are not cutover-gate evidence
+gaps: the affected family execution is covered by current bounded or unchanged-source evidence,
+and this delivery makes no performance claim. The rows remain explicit prerequisites for a future
+fresh all-assets or performance qualification.
 
 ## Remaining limitations
 
@@ -154,8 +156,8 @@ downstream_safe: true
 downstream_consumer: separately reviewed total semantic cleanup on the shared multifamily tree
 gate blockers: none
 boundary incompleteness: none for branch consolidation, shared-development doctrine, or source-stable QA
-evidence gaps: seven all-assets family live rows and performance.runtime were not re-executed in
-  the canonical combined plan
+evidence gaps: none for branch consolidation, shared-development doctrine, source-stable QA, or
+  bounded common-runtime regression
 deferred depth: historical branch/worktree retirement and total semantic cleanup
 optimization debt: DeepSeek GB10 performance and MiniMax model execution performance remain separately owned
 generalization debt: none for shared-branch doctrine; both active family consumers are present
