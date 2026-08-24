@@ -6,7 +6,6 @@
 #include <yvex/internal/transformer.h>
 #include <yvex/internal/runtime.h>
 #include <yvex/internal/logits.h>
-
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,6 +13,7 @@
 
 #define TRANSFORMER_LIVE_ABSOLUTE_TOLERANCE 8.0e-3
 #define TRANSFORMER_LIVE_RELATIVE_TOLERANCE 8.0e-3
+#define TRANSFORMER_LIVE_MAX_TOKENS 128ull
 
 typedef struct {
     yvex_runtime_execution_session *session;
@@ -30,15 +30,18 @@ static void live_fail(const char *step, int rc, const yvex_error *err)
 }
 
 static int live_execution_open(live_execution *execution, yvex_runtime_model *model,
-                               yvex_backend_kind backend, yvex_error *err)
+                               yvex_backend_kind backend,
+                               unsigned long long context_capacity,
+                               yvex_error *err)
 {
     yvex_runtime_session_open_request session_request = {0};
     yvex_runtime_transformer_options options = {0};
     yvex_runtime_model_failure failure = {0};
     memset(execution, 0, sizeof(*execution));
     session_request.backend = backend;
-    options.context_capacity = 2ull;
-    options.workspace_token_capacity = 2ull;
+    options.context_capacity = context_capacity;
+    options.workspace_token_capacity = context_capacity < 4ull
+                                           ? context_capacity : 4ull;
     options.evidence_level = YVEX_ATTENTION_EVIDENCE_NONE;
     if (yvex_runtime_session_open(&execution->session, model, &session_request,
                                   &failure, err) != YVEX_OK)
@@ -71,6 +74,7 @@ static int live_input_open(yvex_transformer_input **input,
                            const yvex_transformer_plan *plan,
                            const unsigned int *token_ids,
                            unsigned long long token_count,
+                           unsigned long long token_start,
                            const char *path, yvex_error *err)
 {
     const yvex_runtime_model_view *view = yvex_runtime_model_view_get(model);
@@ -83,6 +87,7 @@ static int live_input_open(yvex_transformer_input **input,
         return YVEX_ERR_STATE;
     memset(summary, 0, sizeof(*summary));
     summary->schema_version = YVEX_TRANSFORMER_INPUT_SCHEMA_V1;
+    summary->token_start = token_start;
     summary->token_count = token_count;
     summary->vocabulary_size = plan_summary->vocabulary_size;
     yvex_runtime_identity_copy(summary->logical_model_identity,
@@ -103,6 +108,7 @@ static int live_input_open(yvex_transformer_input **input,
 
 static int live_execute(live_execution *execution, const yvex_transformer_input *input,
                         yvex_backend_kind backend, unsigned long long chunk_tokens,
+                        int capture_features,
                         yvex_error *err)
 {
     unsigned long long *feature_layers = NULL;
@@ -115,25 +121,38 @@ static int live_execute(live_execution *execution, const yvex_transformer_input 
         .backend = backend,
         .phase = YVEX_TRANSFORMER_PHASE_PREFILL};
     yvex_runtime_transformer_output output = {0};
-    unsigned long long output_count, feature_count, layer;
+    unsigned long long output_count, feature_count = 0ull, layer;
     int rc;
     if (!plan || !input_summary ||
         !yvex_core_u64_mul(input_summary->token_count, plan->hidden_width, &output_count) ||
-        !yvex_core_u64_mul(output_count, plan->layer_count, &feature_count) ||
+        (capture_features &&
+         !yvex_core_u64_mul(output_count, plan->layer_count, &feature_count)) ||
         output_count > SIZE_MAX / sizeof(float) ||
         feature_count > SIZE_MAX / sizeof(float) ||
-        plan->layer_count > SIZE_MAX / sizeof(*feature_layers)) return YVEX_ERR_STATE;
+        (capture_features && plan->layer_count > SIZE_MAX / sizeof(*feature_layers)))
+        return YVEX_ERR_STATE;
+    free(execution->hidden);
+    free(execution->features);
+    execution->hidden = NULL;
+    execution->features = NULL;
     execution->hidden = calloc((size_t)output_count, sizeof(float));
-    execution->features = calloc((size_t)feature_count, sizeof(float));
-    feature_layers = malloc((size_t)plan->layer_count * sizeof(*feature_layers));
-    if (!execution->hidden || !execution->features || !feature_layers) {
+    execution->features = capture_features
+                              ? calloc((size_t)feature_count, sizeof(float))
+                              : NULL;
+    feature_layers = capture_features
+                         ? malloc((size_t)plan->layer_count * sizeof(*feature_layers))
+                         : NULL;
+    if (!execution->hidden ||
+        (capture_features && (!execution->features || !feature_layers))) {
         free(feature_layers);
         return YVEX_ERR_NOMEM;
     }
-    for (layer = 0ull; layer < plan->layer_count; ++layer)
-        feature_layers[layer] = layer;
-    request.feature_layer_ordinals = feature_layers;
-    request.feature_layer_count = plan->layer_count;
+    if (capture_features) {
+        for (layer = 0ull; layer < plan->layer_count; ++layer)
+            feature_layers[layer] = layer;
+        request.feature_layer_ordinals = feature_layers;
+        request.feature_layer_count = plan->layer_count;
+    }
     output.normalized_hidden = execution->hidden;
     output.capacity = output_count;
     output.features = execution->features;
@@ -151,9 +170,14 @@ static int live_execute(live_execution *execution, const yvex_transformer_input 
          execution->result.learned_routers != 40ull * input_summary->token_count ||
          execution->result.routed_experts != 258ull * input_summary->token_count ||
          execution->result.shared_experts != 43ull * input_summary->token_count ||
-         execution->result.feature_layer_count != plan->layer_count ||
-         execution->result.feature_row_count != input_summary->token_count ||
-         execution->result.position_after != input_summary->token_count ||
+         (capture_features &&
+          (execution->result.feature_layer_count != plan->layer_count ||
+           execution->result.feature_row_count != input_summary->token_count)) ||
+         (!capture_features &&
+          (execution->result.feature_layer_count ||
+           execution->result.feature_row_count != input_summary->token_count)) ||
+         execution->result.position_after !=
+             input_summary->token_start + input_summary->token_count ||
          !yvex_sha256_hex_valid(execution->result.normalized_hidden_digest) ||
          !yvex_sha256_hex_valid(execution->result.persistent_state_digest))) {
         yvex_error_set(err, YVEX_ERR_FORMAT, "test.transformer.structure",
@@ -212,15 +236,22 @@ static int live_compare(const live_execution *cpu, const live_execution *cuda,
 
 static unsigned long long live_first_layer_mismatch(
     const live_execution *cpu, const live_execution *cuda,
-    unsigned long long layer_count, unsigned long long width,
+    unsigned long long layer_count, unsigned long long row_count,
+    unsigned long long hidden_width,
     double *maximum, double *rmse)
 {
-    unsigned long long layer;
-    for (layer = 0ull; layer < layer_count; ++layer)
-        if (!live_values_compare(cpu->features + layer * width,
-                                 cuda->features + layer * width,
-                                 width, maximum, rmse, NULL, NULL, NULL))
-            break;
+    unsigned long long layer, row;
+    for (layer = 0ull; layer < layer_count; ++layer) {
+        for (row = 0ull; row < row_count; ++row) {
+            unsigned long long offset =
+                (row * layer_count + layer) * hidden_width;
+            if (!live_values_compare(cpu->features + offset,
+                                     cuda->features + offset,
+                                     hidden_width, maximum, rmse,
+                                     NULL, NULL, NULL))
+                return layer;
+        }
+    }
     return layer;
 }
 
@@ -343,9 +374,14 @@ int main(int argc, char **argv)
     yvex_runtime_model *model = NULL;
     yvex_transformer_input *input = NULL, *cli_input = NULL, *empty_input = NULL;
     yvex_transformer_input_summary input_summary, auxiliary_summary;
-    live_execution cpu = {0}, cpu_steps = {0}, cpu_empty = {0}, cuda = {0};
+    live_execution cpu = {0}, cpu_steps = {0}, cpu_empty = {0}, cuda = {0},
+                   cuda_steps = {0};
+    const yvex_runtime_model_view *model_view;
+    const yvex_transformer_plan *input_plan;
     const yvex_transformer_plan_summary *plan;
-    const unsigned int tokens[] = {1u, 2u}, cli_token[] = {1u}, empty_token[] = {2u};
+    const unsigned int tokens[] = {1u, 2u, 3u, 4u};
+    const unsigned int cli_token[] = {1u}, empty_token[] = {2u};
+    unsigned int diagnostic_tokens[TRANSFORMER_LIVE_MAX_TOKENS];
     yvex_error err, cleanup;
     double maximum = 0.0, rmse = 0.0;
     const char *step = "model-open";
@@ -356,48 +392,76 @@ int main(int argc, char **argv)
     double logit_maximum = 0.0, logit_rmse = 0.0, probability_tv = 0.0;
     float cpu_margin = 0.0f, cuda_margin = 0.0f;
     unsigned int cpu_token = 0u, cuda_token = 0u;
-    int rc, close_rc, hidden_match, state_match;
+    int cuda_only = getenv("YVEX_TRANSFORMER_LIVE_CUDA_ONLY") != NULL;
+    int capture_features = !cuda_only;
+    const char *token_text = getenv("YVEX_TRANSFORMER_LIVE_TOKENS");
+    const char *context_text = getenv("YVEX_TRANSFORMER_LIVE_CONTEXT");
+    unsigned long long comparison_tokens = cuda_only && token_text
+                                               ? strtoull(token_text, NULL, 10)
+                                               : cuda_only ? 32ull : 2ull;
+    unsigned long long comparison_chunk = cuda_only ? 4ull : 2ull;
+    unsigned long long context_capacity = cuda_only && context_text
+                                              ? strtoull(context_text, NULL, 10)
+                                              : comparison_tokens;
+    unsigned long long token;
+    int rc, close_rc, hidden_match, state_match, cuda_chunk_match;
     if (argc != 4) {
         fprintf(stderr, "usage: %s ARTIFACT RUNTIME_BINDING TOKEN_INPUT_OUTPUT\n", argv[0]);
         return 2;
     }
+    if (!comparison_tokens || comparison_tokens > TRANSFORMER_LIVE_MAX_TOKENS) {
+        fprintf(stderr, "YVEX_TRANSFORMER_LIVE_TOKENS must be in [1, %llu]\n",
+                TRANSFORMER_LIVE_MAX_TOKENS);
+        return 2;
+    }
+    if (context_capacity < comparison_tokens || context_capacity > 4096ull) {
+        fprintf(stderr, "YVEX_TRANSFORMER_LIVE_CONTEXT must contain the token fixture\n");
+        return 2;
+    }
     (void)setvbuf(stdout, NULL, _IOLBF, 0);
+    for (token = 0ull; token < comparison_tokens; ++token)
+        diagnostic_tokens[token] = (unsigned int)(token + 1ull);
     request.artifact_path = argv[1];
     request.runtime_binding_path = argv[2];
     request.target_id = "deepseek4-v4-flash-dspark";
     request.residency_backend = YVEX_BACKEND_KIND_CUDA;
     rc = yvex_runtime_model_open(&model, &request, &failure, &err);
-    if (rc == YVEX_OK) {
+    model_view = rc == YVEX_OK ? yvex_runtime_model_view_get(model) : NULL;
+    if (rc == YVEX_OK && !cuda_only) {
         step = "cpu-context-open";
-        rc = live_execution_open(&cpu, model, YVEX_BACKEND_KIND_CPU, &err);
+        rc = live_execution_open(&cpu, model, YVEX_BACKEND_KIND_CPU,
+                                 context_capacity, &err);
     }
+    input_plan = cuda_only && model_view ? model_view->transformer
+                                        : yvex_runtime_transformer_context_plan(cpu.context);
     plan = yvex_transformer_plan_summary_get(
-        yvex_runtime_transformer_context_plan(cpu.context));
+        input_plan);
     if (rc == YVEX_OK) {
         step = "input-open";
-        rc = live_input_open(&input, &input_summary, model,
-                             yvex_runtime_transformer_context_plan(cpu.context),
-                             tokens, 2ull, NULL, &err);
+        rc = live_input_open(&input, &input_summary, model, input_plan,
+                             cuda_only ? diagnostic_tokens : tokens,
+                             comparison_tokens, 0ull,
+                             NULL, &err);
     }
-    if (rc == YVEX_OK) {
+    if (rc == YVEX_OK && !cuda_only) {
         step = "cli-input-open";
-        rc = live_input_open(&cli_input, &auxiliary_summary, model,
-                             yvex_runtime_transformer_context_plan(cpu.context),
-                             cli_token, 1ull, argv[3], &err);
+        rc = live_input_open(&cli_input, &auxiliary_summary, model, input_plan,
+                             cli_token, 1ull, 0ull, argv[3], &err);
     }
-    if (rc == YVEX_OK) {
+    if (rc == YVEX_OK && !cuda_only) {
         step = "cpu-execute";
-        rc = live_execute(&cpu, input, YVEX_BACKEND_KIND_CPU, 2ull, &err);
+        rc = live_execute(&cpu, input, YVEX_BACKEND_KIND_CPU, 2ull, 1, &err);
     }
-    if (rc == YVEX_OK) {
+    if (rc == YVEX_OK && !cuda_only) {
         step = "cpu-step-context-open";
-        rc = live_execution_open(&cpu_steps, model, YVEX_BACKEND_KIND_CPU, &err);
+        rc = live_execution_open(&cpu_steps, model, YVEX_BACKEND_KIND_CPU,
+                                 context_capacity, &err);
     }
-    if (rc == YVEX_OK) {
+    if (rc == YVEX_OK && !cuda_only) {
         step = "cpu-step-execute";
-        rc = live_execute(&cpu_steps, input, YVEX_BACKEND_KIND_CPU, 1ull, &err);
+        rc = live_execute(&cpu_steps, input, YVEX_BACKEND_KIND_CPU, 1ull, 1, &err);
     }
-    if (rc == YVEX_OK &&
+    if (rc == YVEX_OK && !cuda_only &&
         (!live_compare(&cpu, &cpu_steps, plan->hidden_width * 2ull, &maximum, &rmse,
                        NULL, NULL, NULL) ||
          strcmp(cpu.result.persistent_state_digest,
@@ -406,21 +470,21 @@ int main(int argc, char **argv)
                        "whole chunk and repeated one-token chunks diverged");
         rc = YVEX_ERR_FORMAT;
     }
-    if (rc == YVEX_OK) {
+    if (rc == YVEX_OK && !cuda_only) {
         step = "empty-input-open";
-        rc = live_input_open(&empty_input, &auxiliary_summary, model,
-                             yvex_runtime_transformer_context_plan(cpu.context),
-                             empty_token, 1ull, NULL, &err);
+        rc = live_input_open(&empty_input, &auxiliary_summary, model, input_plan,
+                             empty_token, 1ull, 0ull, NULL, &err);
     }
-    if (rc == YVEX_OK) {
+    if (rc == YVEX_OK && !cuda_only) {
         step = "cpu-empty-context-open";
-        rc = live_execution_open(&cpu_empty, model, YVEX_BACKEND_KIND_CPU, &err);
+        rc = live_execution_open(&cpu_empty, model, YVEX_BACKEND_KIND_CPU,
+                                 context_capacity, &err);
     }
-    if (rc == YVEX_OK) {
+    if (rc == YVEX_OK && !cuda_only) {
         step = "cpu-empty-execute";
-        rc = live_execute(&cpu_empty, empty_input, YVEX_BACKEND_KIND_CPU, 1ull, &err);
+        rc = live_execute(&cpu_empty, empty_input, YVEX_BACKEND_KIND_CPU, 1ull, 1, &err);
     }
-    if (rc == YVEX_OK && !live_history_changes(
+    if (rc == YVEX_OK && !cuda_only && !live_history_changes(
             cpu.hidden + plan->hidden_width, cpu_empty.hidden, plan->hidden_width)) {
         yvex_error_set(&err, YVEX_ERR_FORMAT, "test.transformer.causality",
                        "committed first-token history did not affect the second token");
@@ -428,20 +492,55 @@ int main(int argc, char **argv)
     }
     if (rc == YVEX_OK) {
         step = "cuda-context-open";
-        rc = live_execution_open(&cuda, model, YVEX_BACKEND_KIND_CUDA, &err);
+        rc = live_execution_open(&cuda, model, YVEX_BACKEND_KIND_CUDA,
+                                 context_capacity, &err);
     }
     if (rc == YVEX_OK) {
         step = "cuda-execute";
-        rc = live_execute(&cuda, input, YVEX_BACKEND_KIND_CUDA, 2ull, &err);
+        rc = live_execute(&cuda, input, YVEX_BACKEND_KIND_CUDA, comparison_chunk,
+                          capture_features, &err);
     }
     if (rc == YVEX_OK) {
+        step = "cuda-step-context-open";
+        rc = live_execution_open(&cuda_steps, model, YVEX_BACKEND_KIND_CUDA,
+                                 context_capacity, &err);
+    }
+    if (rc == YVEX_OK) {
+        step = "cuda-step-execute";
+        rc = live_execute(&cuda_steps, input, YVEX_BACKEND_KIND_CUDA, 1ull, 0, &err);
+    }
+    if (rc == YVEX_OK) {
+        step = "cuda-chunk-equivalence";
+        cuda_chunk_match = plan && live_compare(
+            &cuda, &cuda_steps, plan->hidden_width * comparison_tokens,
+            &maximum, &rmse,
+            &first_mismatch, &first_left, &first_right);
+        first_layer = plan ? plan->layer_count : 0ull;
+        state_match = strcmp(cuda.result.persistent_state_digest,
+                             cuda_steps.result.persistent_state_digest) == 0;
+        if (!cuda_chunk_match || !state_match) {
+            fprintf(stderr,
+                    "transformer_live cuda_chunk first=%llu wide=%.9g steps=%.9g "
+                    "max_abs=%.9g rmse=%.9g state=%d\n",
+                    first_mismatch, first_left, first_right, maximum, rmse,
+                    state_match);
+            yvex_error_setf(
+                &err, YVEX_ERR_FORMAT, "test.transformer.cuda-chunk-equivalence",
+                "CUDA whole chunk and repeated one-token chunks diverged "
+                "(state=%d first_layer=%llu max_abs=%.9g rmse=%.9g)",
+                state_match, first_layer, maximum, rmse);
+            rc = YVEX_ERR_FORMAT;
+        }
+    }
+    if (rc == YVEX_OK && !cuda_only) {
         step = "cpu-cuda-compare";
         hidden_match = plan && live_compare(
             &cpu, &cuda, plan->hidden_width * 2ull, &maximum, &rmse,
             &first_mismatch, &first_left, &first_right);
         first_layer = plan ? live_first_layer_mismatch(
                                  &cpu, &cuda, plan->layer_count,
-                                 plan->hidden_width, &layer_maximum, &layer_rmse)
+                                 2ull, plan->hidden_width,
+                                 &layer_maximum, &layer_rmse)
                            : 0ull;
         state_match = strcmp(cpu.result.persistent_state_digest,
                              cuda.result.persistent_state_digest) == 0;
@@ -468,6 +567,9 @@ int main(int argc, char **argv)
         }
     }
     if (rc != YVEX_OK) live_fail(step, rc, &err);
+    else if (cuda_only)
+        printf("cuda_chunk_equivalence=pass tokens=%llu layers=43\n",
+               comparison_tokens);
     else
         printf("transformer_layers=43 chunks=1 tokens=2 swa=2 csa=21 hca=20 "
                "hash=6 learned=80 routed=516 shared=86 max_abs=%.17g rmse=%.17g\n"
@@ -482,6 +584,9 @@ int main(int argc, char **argv)
     yvex_transformer_input_close(&empty_input);
     yvex_transformer_input_close(&cli_input);
     yvex_transformer_input_close(&input);
+    yvex_error_clear(&cleanup);
+    close_rc = live_execution_close(&cuda_steps, &cleanup);
+    if (rc == YVEX_OK && close_rc != YVEX_OK) { rc = close_rc; err = cleanup; }
     yvex_error_clear(&cleanup);
     close_rc = live_execution_close(&cuda, &cleanup);
     if (rc == YVEX_OK && close_rc != YVEX_OK) { rc = close_rc; err = cleanup; }

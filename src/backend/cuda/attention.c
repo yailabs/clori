@@ -79,7 +79,7 @@ typedef struct {
     unsigned long long query_width, candidate_capacity, topk_capacity, low_count;
     unsigned long long local_extent, compressed_extent, history_index_extent;
     unsigned long long local_storage_extent, compressed_storage_extent, indexer_storage_extent;
-    unsigned long long local_capacity, publication_local_capacity, compressed_capacity, indexer_capacity;
+    unsigned long long local_capacity, local_ring_capacity, compressed_capacity, indexer_capacity;
     unsigned long long index_query_extent, emission_position;
     unsigned long long h2d_bytes, d2h_bytes, d2d_bytes, device_execution_elapsed_ns;
     unsigned long long stream_synchronizations, device_synchronizations;
@@ -559,9 +559,9 @@ static int attn_alloc_values(attn_run *run, CUdeviceptr *target,
     if (target == &run->phase_input)
         device_source = yvex_cuda_activation_pointer(run->backend, run->job->device_input);
     visible_bytes = upload && upload->used ? (size_t)(upload->used * upload->width) : 1u;
-    /* Growth is pre-admitted; a full local ring retains its wrapped workspace instead. */
+    /* Transient candidate capacity is wider; only committed ring rows may alias residency. */
     persistent_input = upload && (target == &run->phase_compressed || target == &run->phase_indexer ||
-        (target == &run->phase_local && run->initial_local_count + run->job->token_count <= run->local_capacity));
+        (target == &run->phase_local && run->initial_local_count + run->job->token_count <= run->local_ring_capacity));
     resident = source && !device_source && upload && !upload->generated && persistent_input
         ? yvex_backend_state_residency_resolve(run->backend, source, visible_bytes,
                                                &resident_address)
@@ -817,7 +817,7 @@ static int attn_prepare(attn_run *run) {
     run->local_capacity = attn_graph_mode(run)
                               ? yvex_cuda_attention_local_capacity(run->configuration, run->job, 0)
                               : run->job->sliding_window;
-    run->publication_local_capacity = attn_graph_mode(run) ?
+    run->local_ring_capacity = attn_graph_mode(run) ?
         yvex_cuda_attention_local_capacity(run->configuration, run->job, 1) :
         run->job->sliding_window - (run->job->candidate_block_visible ? 0ull : 1ull);
     run->compressed_capacity = run->job->attention_class == YVEX_BACKEND_ATTENTION_SWA
@@ -1802,7 +1802,7 @@ static int attn_synchronize(attn_run *run) {
             run->phase_indexer_positions, run->phase_main_kv, run->phase_main_score,
             run->phase_index_kv, run->phase_index_score, run->initial_local_count,
             run->initial_compressed_count, run->initial_indexer_count,
-            run->phase_compressed_count, run->phase_indexer_count, run->publication_local_capacity,
+            run->phase_compressed_count, run->phase_indexer_count, run->local_ring_capacity,
             run->rolling[ROLL_MAIN].extent, run->rolling[ROLL_INDEX].extent};
         rc = run->ops->state_stage(
             run->backend, run->job, &sources, &state_bytes, &state_staged, run->err);

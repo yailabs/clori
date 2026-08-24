@@ -1095,6 +1095,11 @@ test-runtime-deepseek-transformer-live: cuda $(TRANSFORMER_LIVE_RUNNER) $(YVEX_B
 	test -f "$$binding" && test ! -L "$$binding" || { \
 		echo "runtime binding must be a regular non-symlink file" >&2; exit 2; }; \
 	input="$$tmp_dir/deepseek-transformer.yvex-transformer-input"; \
+	YVEX_TRANSFORMER_LIVE_CUDA_ONLY=1 \
+	YVEX_TRANSFORMER_LIVE_TOKENS=128 \
+	YVEX_TRANSFORMER_LIVE_CONTEXT=128 \
+		$(TRANSFORMER_LIVE_RUNNER) "$(DEEPSEEK_SELECTED_ARTIFACT)" "$$binding" "$$input" \
+		>"$$tmp_dir/chunk.out"; \
 	$(TRANSFORMER_LIVE_RUNNER) "$(DEEPSEEK_SELECTED_ARTIFACT)" "$$binding" "$$input" \
 		>"$$tmp_dir/api.out"; \
 	$(YVEX_BIN) execute transformer run --target deepseek4-v4-flash-dspark \
@@ -1112,6 +1117,7 @@ test-runtime-deepseek-transformer-live: cuda $(TRANSFORMER_LIVE_RUNNER) $(YVEX_B
 		and r["full_model_prefill_ready"] and not r["model_decode_ready"] \
 		and not r["logits_ready"] and not r["generation_ready"]' "$$tmp_dir/cuda.json"; \
 	cat "$$tmp_dir/api.out"; \
+	cat "$$tmp_dir/chunk.out"; \
 	echo "production DeepSeek transformer live: CPU/CUDA token-to-normalized-hidden backbone"
 
 # This serial target proves shared-context prefill and two real CPU/CUDA decode steps.
