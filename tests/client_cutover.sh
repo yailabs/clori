@@ -10,6 +10,10 @@ root=$(mktemp -d "${TMPDIR:-/tmp}/yvex-command-architecture.XXXXXX")
 home_root=$root/home
 mkdir -m 700 "$home_root" "$home_root/.config"
 mkdir -m 775 "$home_root/.config/yvex"
+registry="$home_root/.local/share/yvex/models.local.json"
+mkdir -p "$home_root/.local/share/yvex"
+printf '{"schema":"yvex.models.local.v5","models":[]}\n' >"$registry"
+export HOME="$home_root"
 cleanup()
 {
     status=$?
@@ -220,8 +224,6 @@ grep -F 'did you mean `yvex server status`' "$root/err" >/dev/null
 # an implicit startup selection.
 artifact="$root/current.gguf"
 binding="$root/current.binding"
-registry="$home_root/.local/share/yvex/models.local.json"
-mkdir -p "$home_root/.local/share/yvex"
 printf 'artifact fixture\n' >"$artifact"
 printf 'binding fixture\n' >"$binding"
 artifact=$(realpath "$artifact")
