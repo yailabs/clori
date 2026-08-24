@@ -91,7 +91,7 @@ int main(int argc, char **argv)
     if (rc == YVEX_OK) rc = yvex_tensor_table_from_gguf(&tensors, gguf, &err);
     if (rc == YVEX_OK)
         rc = yvex_graph_register_minimax_h3()->component_admit(
-            component, artifact, gguf, tensors, &admission, &failure, &err);
+            component, artifact, gguf, tensors, NULL, &admission, NULL, &failure, &err);
     if (expect_refused) {
         if (rc == YVEX_OK) {
             fprintf(stderr, "audio_vae_corruption=accepted\n");

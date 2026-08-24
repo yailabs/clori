@@ -9,7 +9,8 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#define YVEX_LOCAL_PROTOCOL_VERSION 11u
+#define YVEX_LOCAL_PROTOCOL_VERSION 12u
+#define YVEX_CLIENT_MEDIA_RESULT_SCHEMA_V1 1u
 #define YVEX_SERVER_OPTIONS_SCHEMA_V2 2u
 #define YVEX_CLIENT_PARTIAL_TURN_SCHEMA_V1 1u
 #define YVEX_CLIENT_STATE_CHECKPOINT_SCHEMA_V1 1u
@@ -333,6 +334,18 @@ typedef struct {
 } yvex_client_state_checkpoint;
 typedef struct {
     unsigned int schema_version;
+    int available;
+    char output_path[YVEX_SERVER_STATE_PATH_CAP];
+    unsigned long long width, height, frames;
+    unsigned long long fps_numerator, fps_denominator;
+    unsigned long long audio_samples, audio_sample_rate, seed, file_bytes;
+    char preset_identity[YVEX_SHA256_HEX_CAP];
+    char execution_identity[YVEX_SHA256_HEX_CAP];
+    char file_identity[YVEX_SHA256_HEX_CAP];
+    char publication_identity[YVEX_SHA256_HEX_CAP];
+} yvex_client_media_result;
+typedef struct {
+    unsigned int schema_version;
     yvex_client_operation operation;
     unsigned long long request_number;
     char session_name[YVEX_SERVER_SESSION_NAME_CAP];
@@ -404,6 +417,7 @@ typedef struct {
     char tool_name[YVEX_PROVIDER_TOOL_NAME_CAP];
     yvex_client_partial_turn partial_turn;
     yvex_client_state_checkpoint state_checkpoint;
+    yvex_client_media_result media_result;
     yvex_server_summary runtime;
     yvex_console_status console;
     yvex_server_event event;

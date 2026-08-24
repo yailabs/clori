@@ -17,6 +17,8 @@ typedef yvex_runtime_media_profile yvex_server_media_profile;
 typedef struct {
     unsigned int schema_version;
     const char *output_root;
+    const char *artifact_reopen_cache_root;
+    yvex_runtime_media_execution_preset execution_preset;
     yvex_runtime_av_generation_request request_template;
     const yvex_server_media_profile *profiles;
     unsigned long long profile_count;

@@ -243,7 +243,7 @@ int main(int argc, char **argv)
             rc = yvex_runtime_av_video_reconstruction_plan_build(&plan_request, &plan, &err);
         if (rc == YVEX_OK)
             rc = yvex_graph_register_minimax_h3()->component_admit(
-                "video_vae", artifact, gguf, tensors, &component, &failure, &err);
+                "video_vae", artifact, gguf, tensors, NULL, &component, NULL, &failure, &err);
         if (rc == YVEX_OK)
             rc = yvex_runtime_component_session_open(
                 &context.session, &component, artifact, gguf, tensors, YVEX_BACKEND_KIND_CUDA,
@@ -309,7 +309,8 @@ int main(int argc, char **argv)
         decode_options.max_workspace_bytes = 256ull * 1024ull * 1024ull;
         if (rc == YVEX_OK)
             rc = yvex_graph_register_minimax_h3()->component_admit(
-                "video_vae", artifact, gguf, tensors, &admission, &admission_failure, &err);
+                "video_vae", artifact, gguf, tensors, NULL, &admission, NULL,
+                &admission_failure, &err);
         if (rc == YVEX_OK)
             rc = yvex_runtime_component_session_open(
                 &session, &admission, artifact, gguf, tensors,
@@ -359,7 +360,8 @@ int main(int argc, char **argv)
         free(latent);
     } else if (rc == YVEX_OK) {
         rc = yvex_graph_register_minimax_h3()->component_admit(
-            "video_vae", artifact, gguf, tensors, &admission, &admission_failure, &err);
+            "video_vae", artifact, gguf, tensors, NULL, &admission, NULL,
+            &admission_failure, &err);
         if (expect_refused) {
             if (rc == YVEX_OK) {
                 fprintf(stderr, "video_vae_corruption=accepted\n");

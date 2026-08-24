@@ -449,7 +449,8 @@ typedef struct {
         yvex_runtime_av_layout_result *, yvex_error *);
     int (*component_admit)(const char *component,
         const yvex_artifact *artifact, const yvex_gguf *gguf,
-        const yvex_tensor_table *tensors, yvex_complete_artifact_admission *out,
+        const yvex_tensor_table *tensors, const yvex_artifact_admission_options *options,
+        yvex_complete_artifact_admission *out, yvex_artifact_admission_evidence *evidence,
         yvex_artifact_admission_failure *failure, yvex_error *err);
     int (*text_encoder_artifact_cuda)(
         const yvex_artifact *artifact, const yvex_gguf *gguf, const yvex_tensor_table *tensors,

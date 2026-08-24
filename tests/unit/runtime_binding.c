@@ -2588,9 +2588,20 @@ static int test_runtime_model_verified_reopen(
                          yvex_runtime_model_summary_copy(model, &summary, &err) == YVEX_OK &&
                          summary.artifact_hash_passes == 1ull &&
                          summary.artifact_verified_reopen_passes == 0ull &&
-                         summary.artifact_reopen_cache_failures == 1ull &&
+                         summary.artifact_reopen_cache_failures == 0ull &&
                          progress.events[YVEX_RUNTIME_LIFECYCLE_ARTIFACT_HASH] > 1ull,
-                     "invalid runtime lease falls back to complete verification visibly");
+                     "invalid runtime lease falls back to complete verification and repair");
+    yvex_runtime_model_close(&model);
+    memset(&progress, 0, sizeof(progress));
+    YVEX_TEST_ASSERT(yvex_runtime_model_open(
+                         &model, &request, &failure, &err) == YVEX_OK && model &&
+                         yvex_runtime_model_summary_copy(model, &summary, &err) == YVEX_OK &&
+                         summary.artifact_hash_passes == 0ull &&
+                         summary.artifact_verified_reopen_passes == 1ull &&
+                         summary.artifact_reopen_cache_failures == 0ull &&
+                         summary.artifact_bytes_hashed == 0ull &&
+                         progress.events[YVEX_RUNTIME_LIFECYCLE_ARTIFACT_HASH] == 0ull,
+                     "repaired runtime lease restores the verified-reopen path");
     yvex_runtime_model_close(&model);
     count = snprintf(artifact_dir, sizeof(artifact_dir), "%s/artifact-reopen/%s",
                      cache_root, fixture->admission.artifact_identity);

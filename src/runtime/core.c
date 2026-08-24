@@ -499,12 +499,12 @@ static int runtime_model_artifact_open(
     yvex_runtime_model *model, const yvex_runtime_model_open_request *request,
     const yvex_runtime_binding_summary *binding, yvex_runtime_model_failure *failure,
     yvex_error *err) {
-    yvex_artifact_admission_failure admission_failure;
-    yvex_artifact_reopen_lease reopen_lease;
+    yvex_artifact_admission_failure admission_failure = {0};
+    yvex_artifact_admission_options admission_options = {0};
+    yvex_artifact_admission_evidence admission_evidence = {0};
     yvex_artifact_options options;
-    yvex_error reopen_error;
     unsigned long long started;
-    int rc, verified_reopen = 0;
+    int rc;
     if (!model->admission.file_bytes || !model->admission.tensor_count)
         return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_BINDING_ADMISSION, 1ull, 0ull, err);
     memset(&options, 0, sizeof(options));
@@ -531,42 +531,26 @@ static int runtime_model_artifact_open(
     if (rc == YVEX_OK &&
         strcmp(model->admission.artifact_identity, binding->artifact_identity) != 0)
         rc = yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_ARTIFACT_IDENTITY, 1ull, 0ull, err);
-    memset(&reopen_lease, 0, sizeof(reopen_lease));
-    yvex_error_clear(&reopen_error);
-    if (rc == YVEX_OK && request->artifact_reopen_cache_root) {
-        int reopen_rc = yvex_artifact_reopen_lease_check(
-            model->artifact, binding->artifact_identity,
-            request->artifact_reopen_cache_root, &reopen_lease, &reopen_error);
-        if (reopen_rc == YVEX_OK)
-            verified_reopen = reopen_lease.verified;
-        else
-            model->summary.artifact_reopen_cache_failures++;
-    }
-    if (rc == YVEX_OK && verified_reopen) {
-        model->admission.artifact_bytes_hashed = model->admission.file_bytes;
-        model->admission.artifact_identity_verified = 1;
+    started = yvex_core_monotonic_ns();
+    admission_options.schema_version = YVEX_ARTIFACT_ADMISSION_OPTIONS_SCHEMA_V1;
+    admission_options.reopen_cache_root = request->artifact_reopen_cache_root;
+    admission_options.progress = runtime_model_hash_progress;
+    admission_options.progress_context = (void *)request;
+    if (rc == YVEX_OK)
+        rc = yvex_artifact_admission_authenticate(
+            model->artifact, &model->admission, &admission_options,
+            &admission_evidence, &admission_failure, err);
+    if (rc == YVEX_OK &&
+        admission_evidence.verification_mode ==
+            YVEX_ARTIFACT_VERIFICATION_VERIFIED_REOPEN)
         rc = runtime_model_once(&model->summary.artifact_verified_reopen_passes,
                                 "runtime.model.artifact-verified-reopen", err);
-    } else {
-        started = yvex_core_monotonic_ns();
-        if (rc == YVEX_OK)
-            rc = runtime_model_progress(request, YVEX_RUNTIME_LIFECYCLE_ARTIFACT_HASH,
-                                        0ull, yvex_artifact_size(model->artifact), err);
-        if (rc == YVEX_OK)
-            rc = yvex_artifact_admission_identity_verify(
-                model->artifact, &model->admission, runtime_model_hash_progress,
-                (void *)request, &admission_failure, err);
-        if (rc == YVEX_OK)
-            rc = runtime_model_once(&model->summary.artifact_hash_passes,
-                                    "runtime.model.artifact-hash", err);
-        runtime_model_timing(model, YVEX_RUNTIME_LIFECYCLE_ARTIFACT_HASH, started);
-        if (rc == YVEX_OK && request->artifact_reopen_cache_root &&
-            yvex_artifact_reopen_lease_publish(
-                model->artifact, binding->artifact_identity,
-                request->artifact_reopen_cache_root, &reopen_lease,
-                &reopen_error) != YVEX_OK)
-            model->summary.artifact_reopen_cache_failures++;
-    }
+    else if (rc == YVEX_OK)
+        rc = runtime_model_once(&model->summary.artifact_hash_passes,
+                                "runtime.model.artifact-hash", err);
+    if (admission_evidence.cache_failure)
+        model->summary.artifact_reopen_cache_failures++;
+    runtime_model_timing(model, YVEX_RUNTIME_LIFECYCLE_ARTIFACT_HASH, started);
     started = yvex_core_monotonic_ns();
     if (rc == YVEX_OK)
         rc = yvex_gguf_open(&model->gguf, model->artifact, err);

@@ -1098,31 +1098,44 @@ The audit projection truthfully reports
 `cli_applicability: applicable`. The roughly 9 minute 40 second correctness
 runs are not benchmarks and establish no useful generation speed.
 
-## Conversational media projection
+## Direct hosted media projection
 
 The common persistent server now admits MiniMax-H3 as generation mode `media`.
 `yvex server minimax-h3-fl2va-runtime-media` resolves the immutable component
 installation, CUDA backend, and media mode from its composite startup profile;
 the default owned publication directory comes from the common YVEX data path.
-`yvex chat` owns the creative prompt and asks for missing resolution profile,
-duration, explicit sigma-grid count, AVI format, and optional seed. The model
-registry profile selects the typed media adapter, so the operator does not
-choose family callbacks, component paths, or reconstruct the offline execution
-command. A complete turn invokes the same staged native runtime transaction
-described above and returns the atomically published file path. Explicit
-component/output roots remain engineering overrides. The server does not load
-component payloads or create a CUDA context while it is only negotiating those
-parameters.
+`yvex chat` accepts one creative prompt and immediately invokes the staged
+native runtime transaction. It does not ask for resolution, duration,
+sigma-grid count, format, or seed, and MiniMax-H3 is not presented as a
+conversational assistant. The model registry profile selects the typed media
+adapter, so the operator does not choose family callbacks, component paths, or
+reconstruct the offline execution command. Explicit component/output roots
+remain engineering overrides.
 
-Server readiness nevertheless requires a real process-lifetime model open. Startup opens the
-tokenizer and all four component GGUF views, performs exact component admission, seals one
-composite runtime-model identity, and retains those immutable views until shutdown. It does not
-claim that the roughly 144 GB component population is simultaneously resident. Conditioning,
-Transformer, Visual VAE, and Audio VAE payload residency remains staged at request phase
+The hosted operator policy is the identity-bearing
+`interactive-preview-v1` preset: profile `preview`, 192x192, 124 frames, two
+sigma-grid points (one Transformer evaluation), AVI, and seed 42. These values
+are YVEX interactive test policy, not source-declared MiniMax defaults. Prompt
+bytes remain opaque input to tokenizer/conditioning; words, numbers, and
+format-like substrings in the scene do not select execution settings. There is
+no keyword rule engine, secondary LLM, agent loop, or Context-IR substitute.
+
+Server readiness nevertheless requires a real process-lifetime model open.
+Startup opens the tokenizer and all four component GGUF views, performs exact
+component admission, seals one composite runtime-model identity, and retains
+those immutable views until shutdown. The generic artifact owner authenticates
+each component independently: a cold open performs full byte verification and
+publishes a snapshot-bound verified-reopen receipt; an unchanged warm open uses
+that receipt without rereading the full payload. Missing, stale, malformed, or
+unavailable receipt evidence falls back to full verification and cannot admit
+mismatched bytes. Reopen neither materializes payload nor claims that the
+component population is simultaneously resident. Conditioning, Transformer,
+Visual VAE, and Audio VAE payload residency remains staged at request phase
 boundaries so the GB10 unified-memory envelope remains bounded.
 
-The conversational projection has focused dialogue, refusal, deterministic
-profile-identity, model-open startup, and missing-component refusal tests. It admits `preview` at
+The direct projection has focused opaque-prompt, preset-identity, model-open,
+reopen, progress/result, cancellation, and missing-component refusal tests. The
+underlying engine admits `preview` at
 192x192, `preview-256` at 256x256, and `preview-384` at 384x384, all for exactly
 124 frames, plus `smoke` at 32x32 for 124 through 345 frames. The server validates each profile against
 the exact worst-case 256-token plan before publishing readiness; runtime
@@ -1130,7 +1143,8 @@ independently refuses any plan above the 8,192-row Omni execution bound before
 latent or component materialization. Source, draft, HD, FHD, 2K, and 4K
 requests are not advertised and fail closed.
 
-On 2026-08-14 an operator-reachable `yvex server` -> `yvex chat` transaction
+Historical evidence from 2026-08-14 predates the direct hosted policy. That
+operator-reachable `yvex server` -> `yvex chat` transaction
 accepted “Genera un video dell'eclissi di ieri sera”, asked for the missing
 choices, then executed `smoke`, five seconds, two sigma-grid points, AVI, and
 seed 42. It completed in 560.36 seconds and returned the atomically published
@@ -1145,9 +1159,9 @@ residency after the turn; the systemd scope enforced 76 GiB memory high, 88 GiB
 memory max, and zero swap for the workload. A sampled frame remained colored
 blocks rather than a recognizable eclipse. This is native execution,
 container, synchronization, and product-path evidence only; it does not
-establish conditioning, scheduler, or model-quality correctness. The exact
-startup and chat workflow is owned by the
-[operator runbook](../operator-runbook.md#conversational-minimax-h3-media-host).
+establish conditioning, scheduler, or model-quality correctness. The current
+direct startup and chat workflow is owned by the
+[operator runbook](../operator-runbook.md#direct-minimax-h3-media-host).
 
 ## Iterative latent conformance
 

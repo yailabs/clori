@@ -1,7 +1,6 @@
-/* Own conversational media requests while the generic runtime stages component residency. */
+/* Own direct hosted-media requests while the generic runtime stages component residency. */
 #include "src/server/private.h"
 
-#include <ctype.h>
 #include <errno.h>
 #include <pthread.h>
 #include <stdatomic.h>
@@ -17,23 +16,11 @@
 #define MEDIA_PROMPT_CAP 16384u
 #define MEDIA_PROFILE_NAME_CAP 32u
 
-typedef enum {
-    MEDIA_DIALOG_EMPTY = 0,
-    MEDIA_DIALOG_PARAMETERS,
-    MEDIA_DIALOG_RUNNING,
-    MEDIA_DIALOG_COMPLETE,
-    MEDIA_DIALOG_FAILED
-} media_dialog_state;
-
 typedef struct {
     char name[YVEX_SERVER_SESSION_NAME_CAP];
     char prompt[MEDIA_PROMPT_CAP];
-    media_dialog_state dialog;
     yvex_server_session_state state;
     unsigned long long attached_clients, turn_count;
-    unsigned long long width, height, frames, profile_maximum_frames;
-    unsigned long long sigma_grid_points, seed;
-    int profile_selected, duration_selected, steps_selected, format_selected;
     atomic_int active, cancelled;
 } server_media_session;
 
@@ -47,10 +34,11 @@ struct server_media_registry {
     pthread_mutex_t mutex;
     yvex_runtime_media_model *model;
     yvex_runtime_av_generation_request generation;
+    yvex_runtime_media_execution_preset preset;
     server_media_profile_owned profiles[YVEX_SERVER_MEDIA_PROFILE_CAP];
     server_media_session sessions[MEDIA_SESSION_CAP];
     server_telemetry *telemetry;
-    char output_root[YVEX_PATH_CAP];
+    char output_root[YVEX_PATH_CAP], artifact_reopen_cache_root[YVEX_PATH_CAP];
     char target[128], source_identity[YVEX_SHA256_HEX_CAP];
     char text_artifact[YVEX_PATH_CAP], transformer_artifact[YVEX_PATH_CAP];
     char video_artifact[YVEX_PATH_CAP], audio_artifact[YVEX_PATH_CAP];
@@ -67,23 +55,6 @@ static int media_refuse(yvex_error *err, yvex_status status, const char *reason)
 {
     yvex_error_set(err, status, "server.media", reason);
     return status;
-}
-
-static int text_has_term(const char *text, const char *needle)
-{
-    size_t extent, index, offset;
-    if (!text || !needle || !(extent = strlen(needle))) return 0;
-    for (index = 0u; text[index]; ++index) {
-        for (offset = 0u; offset < extent && text[index + offset] &&
-                           tolower((unsigned char)text[index + offset]) ==
-                               tolower((unsigned char)needle[offset]);
-             ++offset) {}
-        if (offset == extent &&
-            (!index || !isalnum((unsigned char)text[index - 1u])) &&
-            !isalnum((unsigned char)text[index + extent]))
-            return 1;
-    }
-    return 0;
 }
 
 static int output_root_admit(const char *path, char output[YVEX_PATH_CAP], yvex_error *err)
@@ -117,7 +88,8 @@ static int registry_identity(server_media_registry *registry, yvex_error *err)
     facts[5] = registry->minimum_inference_steps;
     facts[6] = registry->maximum_inference_steps;
     if (!yvex_sha256_update_text(&hash, "yvex.server.media-profile.v1") ||
-        !yvex_sha256_update_text(&hash, identities[0]))
+        !yvex_sha256_update_text(&hash, identities[0]) ||
+        !yvex_sha256_update_text(&hash, registry->preset.identity))
         return media_refuse(err, YVEX_ERR_STATE, "media profile identity could not start");
     for (index = 0ull; index < 7ull; ++index)
         if (!yvex_sha256_update_u64_be(&hash, facts[index]))
@@ -135,6 +107,33 @@ static int registry_identity(server_media_registry *registry, yvex_error *err)
         return media_refuse(err, YVEX_ERR_STATE, "media profile identity could not seal");
     yvex_sha256_hex(digest, registry->profile_identity);
     return YVEX_OK;
+}
+
+static int preset_admit(server_media_registry *registry, yvex_error *err)
+{
+    yvex_runtime_media_host_profile host = {0};
+    unsigned long long index;
+
+    host.schema_version = YVEX_RUNTIME_MEDIA_HOST_SCHEMA_V1;
+    host.profile_count = registry->profile_count;
+    host.frames_per_chunk = registry->frames_per_chunk;
+    host.frame_remainder = registry->frame_remainder;
+    host.minimum_frames = registry->minimum_frames;
+    host.maximum_frames = registry->maximum_frames;
+    host.minimum_inference_steps = registry->minimum_inference_steps;
+    host.maximum_inference_steps = registry->maximum_inference_steps;
+    for (index = 0ull; index < registry->profile_count; ++index) {
+        yvex_core_text_copy(host.profiles[index].name,
+                            sizeof(host.profiles[index].name),
+                            registry->profiles[index].name);
+        host.profiles[index].width = registry->profiles[index].width;
+        host.profiles[index].height = registry->profiles[index].height;
+        host.profiles[index].maximum_frames =
+            registry->profiles[index].maximum_frames;
+        host.profiles[index].preview_alias = registry->profiles[index].preview_alias;
+    }
+    return yvex_runtime_media_execution_preset_validate(
+        &host, &registry->preset, err);
 }
 
 static void request_strings_copy(server_media_registry *registry,
@@ -176,7 +175,7 @@ int yvex_server_media_registry_open(
         options->minimum_inference_steps > options->maximum_inference_steps ||
         !options->canvas_multiple || !options->maximum_canvas_pixels)
         return media_refuse(err, YVEX_ERR_INVALID_ARG,
-                            "complete bounded conversational media options are required");
+                            "complete bounded hosted media options are required");
     registry = calloc(1u, sizeof(*registry));
     if (!registry) return media_refuse(err, YVEX_ERR_NOMEM, "media registry allocation failed");
     registry->generation = options->request_template;
@@ -190,6 +189,7 @@ int yvex_server_media_registry_open(
     registry->maximum_inference_steps = options->maximum_inference_steps;
     registry->canvas_multiple = options->canvas_multiple;
     registry->maximum_canvas_pixels = options->maximum_canvas_pixels;
+    registry->preset = options->execution_preset;
     if (pthread_mutex_init(&registry->mutex, NULL) != 0) {
         free(registry);
         return media_refuse(err, YVEX_ERR_STATE, "media registry mutex failed");
@@ -197,6 +197,18 @@ int yvex_server_media_registry_open(
     registry->mutex_ready = 1;
     if (output_root_admit(options->output_root, registry->output_root, err) != YVEX_OK)
         goto failed;
+    if (!options->artifact_reopen_cache_root ||
+        options->artifact_reopen_cache_root[0] != '/' ||
+        strlen(options->artifact_reopen_cache_root) >=
+            sizeof(registry->artifact_reopen_cache_root) ||
+        strstr(options->artifact_reopen_cache_root, "/../") ||
+        !strcmp(options->artifact_reopen_cache_root +
+                    strlen(options->artifact_reopen_cache_root) - 1u,
+                "/.."))
+        goto invalid;
+    yvex_core_text_copy(registry->artifact_reopen_cache_root,
+                        sizeof(registry->artifact_reopen_cache_root),
+                        options->artifact_reopen_cache_root);
     if (!registry->generation.target || !registry->generation.source_identity ||
         !registry->generation.text_artifact_path ||
         !registry->generation.transformer_artifact_path ||
@@ -224,6 +236,7 @@ int yvex_server_media_registry_open(
         registry->profiles[index].maximum_frames = source->maximum_frames;
         registry->profiles[index].preview_alias = source->preview_alias;
     }
+    if (preset_admit(registry, err) != YVEX_OK) goto failed;
     if (registry_identity(registry, err) != YVEX_OK) goto failed;
     *out = registry;
     yvex_error_clear(err);
@@ -268,7 +281,6 @@ static server_media_session *session_create(server_media_registry *registry,
     memset(session, 0, sizeof(*session));
     yvex_core_text_copy(session->name, sizeof(session->name), name);
     session->state = YVEX_SERVER_SESSION_READY;
-    session->dialog = MEDIA_DIALOG_EMPTY;
     atomic_init(&session->active, 0);
     atomic_init(&session->cancelled, 0);
     yvex_server_telemetry_session(registry->telemetry, 1, 1);
@@ -302,7 +314,10 @@ static int message_emit(server_message_emit emit, void *context,
 
 static int turn_complete(server_message_emit emit, void *context,
                          const yvex_client_request *request,
-                         const server_media_session *session, double seconds,
+                         const server_media_session *session,
+                         const server_media_registry *registry,
+                         const yvex_runtime_av_generation_result *result,
+                         const char *output_path, double seconds,
                          yvex_error *err)
 {
     yvex_client_message message = {0};
@@ -316,237 +331,95 @@ static int turn_complete(server_message_emit emit, void *context,
     message.decode_seconds = seconds;
     message.turn_count = session->turn_count;
     message.session_state = session->state;
+    message.media_result.schema_version = YVEX_CLIENT_MEDIA_RESULT_SCHEMA_V1;
+    message.media_result.available = 1;
+    message.media_result.width = result->width;
+    message.media_result.height = result->height;
+    message.media_result.frames = result->frames;
+    message.media_result.fps_numerator = registry->generation.fps_numerator;
+    message.media_result.fps_denominator = registry->generation.fps_denominator;
+    message.media_result.audio_samples = result->audio_samples;
+    message.media_result.audio_sample_rate = registry->generation.audio_sample_rate;
+    message.media_result.seed = registry->preset.seed;
+    message.media_result.file_bytes = result->file_bytes;
+    yvex_core_text_copy(message.media_result.output_path,
+                        sizeof(message.media_result.output_path), output_path);
+    yvex_core_text_copy(message.media_result.preset_identity,
+                        sizeof(message.media_result.preset_identity),
+                        registry->preset.identity);
+    yvex_core_text_copy(message.media_result.execution_identity,
+                        sizeof(message.media_result.execution_identity),
+                        result->execution_identity);
+    yvex_core_text_copy(message.media_result.file_identity,
+                        sizeof(message.media_result.file_identity),
+                        result->file_identity);
+    yvex_core_text_copy(message.media_result.publication_identity,
+                        sizeof(message.media_result.publication_identity),
+                        result->publication_identity);
     yvex_core_text_copy(message.session_name, sizeof(message.session_name), session->name);
     return emit(context, &message, err);
-}
-
-static int profile_select(server_media_registry *registry, server_media_session *session,
-                          const char *text)
-{
-    unsigned long long index;
-    int source_square = text_has_term(text, "source-768") ||
-                        text_has_term(text, "768x768");
-    int unavailable = (text_has_term(text, "source") && !source_square) ||
-                      text_has_term(text, "alta") || text_has_term(text, "high") ||
-                      text_has_term(text, "hd") || text_has_term(text, "768p") ||
-                      text_has_term(text, "1344x768") ||
-                      text_has_term(text, "bozza") || text_has_term(text, "draft") ||
-                      text_has_term(text, "960x544") || text_has_term(text, "fhd") ||
-                      text_has_term(text, "1080p") || text_has_term(text, "1920x1080") ||
-                      text_has_term(text, "2k") || text_has_term(text, "4k") ||
-                      text_has_term(text, "2160p") || text_has_term(text, "3840x2160");
-    int preview = text_has_term(text, "preview") || text_has_term(text, "anteprima") ||
-                  text_has_term(text, "192x192");
-    int smoke = text_has_term(text, "smoke") || text_has_term(text, "test") ||
-                text_has_term(text, "32x32");
-    if (unavailable) return -1;
-    for (index = 0ull; index < registry->profile_count; ++index) {
-        server_media_profile_owned *profile = registry->profiles + index;
-        char geometry[48];
-        int geometry_length = snprintf(geometry, sizeof(geometry), "%llux%llu",
-                                       profile->width, profile->height);
-        if (geometry_length < 0 || (size_t)geometry_length >= sizeof(geometry)) return -1;
-        if (text_has_term(text, profile->name) || text_has_term(text, geometry) ||
-            (preview && profile->preview_alias) ||
-            (smoke && !strcmp(profile->name, "smoke"))) {
-            session->width = profile->width;
-            session->height = profile->height;
-            session->profile_maximum_frames = profile->maximum_frames;
-            session->profile_selected = 1;
-            return 1;
-        }
-    }
-    return 0;
-}
-
-static int text_prefix(const char *text, const char *prefix)
-{
-    if (!text || !prefix) return 0;
-    while (*prefix && *text &&
-           tolower((unsigned char)*text) == tolower((unsigned char)*prefix)) {
-        text++;
-        prefix++;
-    }
-    return *prefix == '\0';
-}
-
-static int steps_select(server_media_registry *registry, server_media_session *session,
-                        const char *text)
-{
-    const char *cursor = text;
-    while (cursor && *cursor) {
-        char *end;
-        unsigned long long steps;
-        while (*cursor && !isdigit((unsigned char)*cursor)) cursor++;
-        if (!*cursor) break;
-        steps = strtoull(cursor, &end, 10);
-        if (end == cursor) break;
-        while (*end && (isspace((unsigned char)*end) || *end == '-')) end++;
-        if (text_prefix(end, "step") || text_prefix(end, "iteraz") ||
-            text_prefix(end, "punti sigma")) {
-            if (steps < registry->minimum_inference_steps ||
-                steps > registry->maximum_inference_steps)
-                return -1;
-            session->sigma_grid_points = steps;
-            session->steps_selected = 1;
-            return 1;
-        }
-        cursor = end;
-    }
-    return 0;
-}
-
-static int duration_select(server_media_registry *registry, server_media_session *session,
-                           const char *text)
-{
-    const char *cursor = text;
-    while (cursor && *cursor) {
-        char *end, *unit;
-        unsigned long long seconds, frames;
-        while (*cursor && !isdigit((unsigned char)*cursor)) cursor++;
-        if (!*cursor) break;
-        seconds = strtoull(cursor, &end, 10);
-        if (end == cursor) break;
-        unit = end;
-        while (*unit && isspace((unsigned char)*unit)) unit++;
-        if ((*unit == 's' && (unit[1] == '\0' || isspace((unsigned char)unit[1]) ||
-                             ispunct((unsigned char)unit[1]))) ||
-            text_prefix(unit, "second")) {
-            if (!seconds || !yvex_core_u64_mul(seconds,
-                                                registry->generation.fps_numerator, &frames))
-                return -1;
-            frames /= registry->generation.fps_denominator;
-            while (frames % registry->frames_per_chunk != registry->frame_remainder) frames++;
-            if (frames < registry->minimum_frames || frames > registry->maximum_frames)
-                return -1;
-            session->frames = frames;
-            session->duration_selected = 1;
-            return 1;
-        }
-        cursor = end;
-    }
-    return 0;
-}
-
-static int format_select(server_media_session *session, const char *text)
-{
-    if (text_has_term(text, "mp4") || text_has_term(text, "mkv") ||
-        text_has_term(text, "webm") || text_has_term(text, "mov"))
-        return -1;
-    if (text_has_term(text, "avi")) {
-        session->format_selected = 1;
-        return 1;
-    }
-    return 0;
-}
-
-static void seed_select(server_media_session *session, const char *text)
-{
-    const char *cursor = text;
-    while ((cursor = strstr(cursor, "seed")) != NULL) {
-        char *end;
-        unsigned long long value;
-        cursor += 4;
-        while (*cursor && (isspace((unsigned char)*cursor) || *cursor == ':' || *cursor == '='))
-            cursor++;
-        value = strtoull(cursor, &end, 10);
-        if (end != cursor) session->seed = value;
-        return;
-    }
-}
-
-static int dialog_parse(server_media_registry *registry, server_media_session *session,
-                        const char *text, yvex_error *err)
-{
-    int profile, duration, steps, format;
-    profile = profile_select(registry, session, text);
-    duration = duration_select(registry, session, text);
-    steps = steps_select(registry, session, text);
-    format = format_select(session, text);
-    seed_select(session, text);
-    if (profile < 0)
-        return media_refuse(err, YVEX_ERR_UNSUPPORTED,
-                            "this GB10 path currently admits preview 192x192, preview-256 "
-                            "256x256, preview-384 384x384, source-768 768x768, or smoke "
-                            "32x32; landscape source, draft, HD, FHD, 2K, and 4K are not "
-                            "qualified");
-    if (duration < 0)
-        return media_refuse(err, YVEX_ERR_BOUNDS,
-                            "MiniMax-H3 duration must resolve to 5 through 15 seconds");
-    if (steps < 0)
-        return media_refuse(err, YVEX_ERR_BOUNDS,
-                            "MiniMax-H3 requires 2 through 64 explicit sigma grid points");
-    if (format < 0)
-        return media_refuse(err, YVEX_ERR_UNSUPPORTED,
-                            "this YVEX media path currently publishes AVI only");
-    if (session->profile_selected && session->duration_selected &&
-        session->frames > session->profile_maximum_frames)
-        return media_refuse(err, YVEX_ERR_BOUNDS,
-                            "the preview profiles admit 5 seconds; smoke admits 5 through 15 seconds");
-    return YVEX_OK;
-}
-
-static int dialog_question(server_media_registry *registry,
-                           server_message_emit emit, void *context,
-                           const yvex_client_request *request,
-                           server_media_session *session, yvex_error *err)
-{
-    char response[YVEX_SERVER_FRAGMENT_CAP];
-    size_t used = 0u;
-    int wrote;
-    wrote = snprintf(response, sizeof(response),
-                     "Prima di generare mi servono i parametri mancanti. ");
-    if (wrote < 0 || (size_t)wrote >= sizeof(response)) return YVEX_ERR_BOUNDS;
-    used = (size_t)wrote;
-    if (!session->profile_selected) {
-        unsigned long long index;
-        wrote = snprintf(response + used, sizeof(response) - used, "Qualità: ");
-        if (wrote < 0 || (size_t)wrote >= sizeof(response) - used) return YVEX_ERR_BOUNDS;
-        used += (size_t)wrote;
-        for (index = 0ull; index < registry->profile_count; ++index) {
-            server_media_profile_owned *profile = registry->profiles + index;
-            wrote = snprintf(response + used, sizeof(response) - used,
-                             "%s%s (%llux%llu, max %llu frame)",
-                             index ? ", " : "", profile->name,
-                             profile->width, profile->height, profile->maximum_frames);
-            if (wrote < 0 || (size_t)wrote >= sizeof(response) - used) return YVEX_ERR_BOUNDS;
-            used += (size_t)wrote;
-        }
-        wrote = snprintf(response + used, sizeof(response) - used, ". ");
-        if (wrote < 0 || (size_t)wrote >= sizeof(response) - used) return YVEX_ERR_BOUNDS;
-        used += (size_t)wrote;
-    }
-    if (!session->duration_selected) {
-        wrote = snprintf(response + used, sizeof(response) - used,
-                         "Durata: da 5 a 15 secondi. ");
-        if (wrote < 0 || (size_t)wrote >= sizeof(response) - used) return YVEX_ERR_BOUNDS;
-        used += (size_t)wrote;
-    }
-    if (!session->steps_selected) {
-        wrote = snprintf(response + used, sizeof(response) - used,
-                         "Iterazioni: indica da 2 a 64 punti sigma; la sorgente non dichiara un default. ");
-        if (wrote < 0 || (size_t)wrote >= sizeof(response) - used) return YVEX_ERR_BOUNDS;
-        used += (size_t)wrote;
-    }
-    if (!session->format_selected) {
-        wrote = snprintf(response + used, sizeof(response) - used,
-                         "Formato disponibile: AVI. Puoi anche indicare un seed opzionale.\n");
-        if (wrote < 0 || (size_t)wrote >= sizeof(response) - used) return YVEX_ERR_BOUNDS;
-    }
-    session->dialog = MEDIA_DIALOG_PARAMETERS;
-    session->turn_count++;
-    if (message_emit(emit, context, YVEX_CLIENT_MESSAGE_TURN_STARTED,
-                     request, session, NULL, err) != YVEX_OK ||
-        message_emit(emit, context, YVEX_CLIENT_MESSAGE_FRAGMENT,
-                     request, session, response, err) != YVEX_OK)
-        return yvex_error_code(err);
-    return turn_complete(emit, context, request, session, 0.0, err);
 }
 
 static int media_cancel_requested(void *opaque)
 {
     server_media_session *session = opaque;
     return atomic_load_explicit(&session->cancelled, memory_order_acquire) != 0;
+}
+
+typedef struct {
+    server_media_registry *registry;
+    server_media_session *session;
+    const yvex_client_request *request;
+    const char *request_id;
+    server_message_emit emit;
+    void *emit_context;
+} media_progress_sink;
+
+static int media_event_emit(
+    media_progress_sink *sink, yvex_server_event_kind kind,
+    const char *phase, unsigned long long value_a,
+    unsigned long long value_b, unsigned long long value_c,
+    double seconds, yvex_error *err)
+{
+    yvex_client_message message = {0};
+    int rc = yvex_server_telemetry_emit_provider(
+        sink->registry->telemetry, kind, YVEX_SERVER_SEVERITY_INFO,
+        sink->session->name, sink->request_id, NULL, phase, value_a, value_b,
+        value_c, seconds, 0.0, NULL, NULL, &message.event, err);
+    if (rc != YVEX_OK) return rc;
+    message.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
+    message.kind = YVEX_CLIENT_MESSAGE_EVENT;
+    message.status = YVEX_OK;
+    message.request_number = sink->request->request_number;
+    message.generation_mode = YVEX_SERVER_GENERATION_MEDIA;
+    message.stream_channel = YVEX_CLIENT_STREAM_CONTROL_EVENT;
+    return sink->emit(sink->emit_context, &message, err);
+}
+
+static int media_progress_observe(
+    void *opaque, const yvex_runtime_media_progress *progress, yvex_error *err)
+{
+    static const char *const phases[] = {
+        "conditioning-start", "conditioning-complete", "latent-start",
+        "latent-step", "latent-complete", "visual-vae-start",
+        "visual-vae-complete", "audio-vae-start", "audio-vae-complete",
+        "publication-start", "publication-complete",
+    };
+    media_progress_sink *sink = opaque;
+    yvex_server_event_kind kind = YVEX_SERVER_EVENT_GENERATION_PROGRESS;
+
+    if (!sink || !progress ||
+        progress->schema_version != YVEX_RUNTIME_MEDIA_PROGRESS_SCHEMA_V1 ||
+        progress->kind > YVEX_RUNTIME_MEDIA_PROGRESS_PUBLICATION_COMPLETE)
+        return media_refuse(err, YVEX_ERR_INVALID_ARG,
+                            "typed media execution progress is required");
+    if (progress->kind == YVEX_RUNTIME_MEDIA_PROGRESS_CONDITIONING_START)
+        kind = YVEX_SERVER_EVENT_PREFILL_STARTED;
+    else if (progress->kind == YVEX_RUNTIME_MEDIA_PROGRESS_CONDITIONING_COMPLETE)
+        kind = YVEX_SERVER_EVENT_PREFILL_COMPLETED;
+    return media_event_emit(sink, kind, phases[progress->kind],
+                            progress->completed, progress->total,
+                            progress->value, 0.0, err);
 }
 
 static int output_path_build(server_media_registry *registry,
@@ -559,17 +432,13 @@ static int output_path_build(server_media_registry *registry,
     int length;
     yvex_sha256_init(&hash);
     if (!yvex_sha256_update_text(&hash, "yvex.server.media-request.v1") ||
-        !yvex_sha256_update_text(&hash, registry->profile_identity) ||
+        !yvex_sha256_update_text(&hash, registry->preset.identity) ||
         !yvex_sha256_update_text(&hash, session->prompt) ||
-        !yvex_sha256_update_u64_be(&hash, session->width) ||
-        !yvex_sha256_update_u64_be(&hash, session->height) ||
-        !yvex_sha256_update_u64_be(&hash, session->frames) ||
-        !yvex_sha256_update_u64_be(&hash, session->sigma_grid_points) ||
-        !yvex_sha256_update_u64_be(&hash, session->seed) ||
+        !yvex_sha256_update_u64_be(&hash, session->turn_count) ||
         !yvex_sha256_final(&hash, digest))
         return media_refuse(err, YVEX_ERR_STATE, "media request identity could not seal");
     yvex_sha256_hex(digest, identity);
-    length = snprintf(path, YVEX_PATH_CAP, "%s/minimax-h3-%s.avi",
+    length = snprintf(path, YVEX_PATH_CAP, "%s/yvex-media-%s.avi",
                       registry->output_root, identity);
     if (length < 0 || length >= YVEX_PATH_CAP)
         return media_refuse(err, YVEX_ERR_BOUNDS, "media output path exceeds capacity");
@@ -579,32 +448,46 @@ static int output_path_build(server_media_registry *registry,
 static int generation_execute(server_media_registry *registry,
                               server_media_session *session,
                               const yvex_client_request *request,
+                              const char *request_id,
                               server_message_emit emit, void *context,
                               yvex_error *err)
 {
     yvex_runtime_av_generation_request generation = registry->generation;
     yvex_runtime_av_generation_result result = {0};
-    char path[YVEX_PATH_CAP], response[YVEX_SERVER_FRAGMENT_CAP];
+    media_progress_sink sink = {
+        registry, session, request, request_id, emit, context,
+    };
+    char path[YVEX_PATH_CAP];
     unsigned long long started = yvex_core_monotonic_ns(), completed;
     double seconds;
-    int rc, length;
+    int rc;
     rc = output_path_build(registry, session, path, err);
     if (rc != YVEX_OK) return rc;
     generation.prompt = session->prompt;
     generation.output_path = path;
-    generation.width = session->width;
-    generation.height = session->height;
-    generation.frames = session->frames;
-    generation.inference_steps = (unsigned int)(session->sigma_grid_points - 1ull);
-    generation.seed = session->seed;
+    generation.width = registry->preset.width;
+    generation.height = registry->preset.height;
+    generation.frames = registry->preset.frames;
+    generation.inference_steps =
+        (unsigned int)(registry->preset.sigma_grid_points - 1ull);
+    generation.seed = registry->preset.seed;
     generation.cancel_requested = media_cancel_requested;
     generation.cancel_context = session;
-    session->dialog = MEDIA_DIALOG_RUNNING;
+    generation.observe_progress = media_progress_observe;
+    generation.progress_context = &sink;
     session->state = YVEX_SERVER_SESSION_RUNNING;
     atomic_store_explicit(&session->active, 1, memory_order_release);
     atomic_store_explicit(&session->cancelled, 0, memory_order_release);
     rc = message_emit(emit, context, YVEX_CLIENT_MESSAGE_TURN_STARTED,
                       request, session, NULL, err);
+    if (rc == YVEX_OK)
+        rc = media_event_emit(&sink, YVEX_SERVER_EVENT_REQUEST_STARTED,
+                              "media", 1ull, 0ull, 0ull, 0.0, err);
+    if (rc == YVEX_OK)
+        rc = media_event_emit(
+            &sink, YVEX_SERVER_EVENT_GENERATION_PROFILE, "hosted-preset",
+            registry->preset.width, registry->preset.height,
+            registry->preset.frames, 0.0, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_media_model_generate(
             registry->model, &generation, &result, err);
@@ -613,21 +496,32 @@ static int generation_execute(server_media_registry *registry,
     atomic_store_explicit(&session->active, 0, memory_order_release);
     session->turn_count++;
     if (rc != YVEX_OK) {
-        session->dialog = MEDIA_DIALOG_FAILED;
-        session->state = YVEX_SERVER_SESSION_FAILED;
+        yvex_error primary = err ? *err : (yvex_error){0};
+        yvex_error telemetry_error;
+        yvex_error_clear(&telemetry_error);
+        session->state = rc == YVEX_ERR_CANCELLED ? YVEX_SERVER_SESSION_READY
+                                                  : YVEX_SERVER_SESSION_FAILED;
+        (void)yvex_server_telemetry_emit(
+            registry->telemetry,
+            rc == YVEX_ERR_CANCELLED ? YVEX_SERVER_EVENT_GENERATION_CANCELLED
+                                     : YVEX_SERVER_EVENT_GENERATION_FAILED,
+            rc == YVEX_ERR_CANCELLED ? YVEX_SERVER_SEVERITY_INFO
+                                     : YVEX_SERVER_SEVERITY_ERROR,
+            session->name, request_id, NULL,
+            rc == YVEX_ERR_CANCELLED ? "cancelled" : "failed", 0ull, 0ull,
+            0ull, seconds, 0.0, &telemetry_error);
+        if (err) *err = primary;
         return rc;
     }
-    session->dialog = MEDIA_DIALOG_COMPLETE;
     session->state = YVEX_SERVER_SESSION_READY;
-    length = snprintf(response, sizeof(response),
-                      "Video completato: %s\n%llux%llu, %llu frame, AVI, seed %llu.\n",
-                      path, session->width, session->height, session->frames, session->seed);
-    if (length < 0 || (size_t)length >= sizeof(response))
-        return media_refuse(err, YVEX_ERR_BOUNDS, "media completion response exceeds capacity");
-    rc = message_emit(emit, context, YVEX_CLIENT_MESSAGE_FRAGMENT,
-                      request, session, response, err);
-    if (rc == YVEX_OK) rc = turn_complete(emit, context, request, session, seconds, err);
-    return rc;
+    rc = yvex_server_telemetry_emit(
+        registry->telemetry, YVEX_SERVER_EVENT_GENERATION_COMPLETED,
+        YVEX_SERVER_SEVERITY_INFO, session->name, request_id, NULL,
+        "completed", result.frames, result.file_bytes, result.audio_samples,
+        seconds, 0.0, err);
+    if (rc != YVEX_OK) return rc;
+    return turn_complete(emit, context, request, session, registry, &result,
+                         path, seconds, err);
 }
 
 static int session_message(server_message_emit emit, void *context,
@@ -658,7 +552,6 @@ int yvex_server_media_registry_execute(
 {
     server_media_session *session = NULL;
     int rc = YVEX_OK;
-    (void)request_id;
     (void)queue_seconds;
     if (!registry || !request || !emit || pthread_mutex_lock(&registry->mutex) != 0)
         return media_refuse(err, YVEX_ERR_INVALID_ARG, "media request registry is required");
@@ -723,37 +616,25 @@ int yvex_server_media_registry_execute(
                                  request, NULL, "closed", err);
         }
     } else if (request->operation == YVEX_CLIENT_OP_GENERATION_TURN) {
-        char text[MEDIA_PROMPT_CAP];
         if (!request->prompt || !request->prompt_bytes ||
-            request->prompt_bytes >= sizeof(text)) {
+            request->prompt_bytes >= sizeof(session->prompt) ||
+            memchr(request->prompt, '\0', (size_t)request->prompt_bytes)) {
             rc = media_refuse(err, YVEX_ERR_BOUNDS, "media prompt exceeds capacity");
             goto done;
         }
-        memcpy(text, request->prompt, (size_t)request->prompt_bytes);
-        text[request->prompt_bytes] = '\0';
-        if (session->dialog == MEDIA_DIALOG_EMPTY ||
-            session->dialog == MEDIA_DIALOG_COMPLETE ||
-            session->dialog == MEDIA_DIALOG_FAILED) {
-            yvex_core_text_copy(session->prompt, sizeof(session->prompt), text);
-            session->profile_selected = 0;
-            session->duration_selected = 0;
-            session->steps_selected = 0;
-            session->format_selected = 0;
-            session->seed = registry->generation.seed;
+        if (atomic_load_explicit(&session->active, memory_order_acquire)) {
+            rc = media_refuse(err, YVEX_ERR_STATE,
+                              "media session already owns an active generation");
+            goto done;
         }
-        rc = dialog_parse(registry, session, text, err);
-        if (rc == YVEX_OK && (!session->profile_selected ||
-                              !session->duration_selected ||
-                              !session->steps_selected ||
-                              !session->format_selected))
-            rc = dialog_question(registry, emit, emit_context, request, session, err);
-        else if (rc == YVEX_OK) {
-            (void)pthread_mutex_unlock(&registry->mutex);
-            return generation_execute(registry, session, request, emit, emit_context, err);
-        }
+        memcpy(session->prompt, request->prompt, (size_t)request->prompt_bytes);
+        session->prompt[request->prompt_bytes] = '\0';
+        (void)pthread_mutex_unlock(&registry->mutex);
+        return generation_execute(registry, session, request, request_id,
+                                  emit, emit_context, err);
     } else {
         rc = media_refuse(err, YVEX_ERR_UNSUPPORTED,
-                          "operation is unavailable for conversational media sessions");
+                          "operation is unavailable for hosted media sessions");
     }
 done:
     (void)pthread_mutex_unlock(&registry->mutex);
@@ -856,10 +737,39 @@ int yvex_server_media_registry_summary(server_media_registry *registry,
     return YVEX_OK;
 }
 
+static void component_admission_observe(
+    void *opaque, const char *role,
+    const yvex_artifact_admission_evidence *evidence)
+{
+    server_media_registry *registry = opaque;
+    yvex_error event_error;
+    unsigned long long receipt;
+    double rate;
+
+    if (!registry || !evidence || !evidence->complete) return;
+    receipt = (unsigned long long)evidence->verification_mode |
+              ((unsigned long long)evidence->reopen_state << 8u) |
+              ((unsigned long long)(evidence->lease_published != 0) << 16u) |
+              ((unsigned long long)(evidence->lease_repaired != 0) << 17u) |
+              ((unsigned long long)(evidence->cache_failure != 0) << 18u);
+    rate = evidence->seconds > 0.0
+               ? (double)evidence->bytes_hashed / evidence->seconds
+               : 0.0;
+    yvex_error_clear(&event_error);
+    (void)yvex_server_telemetry_emit(
+        registry->telemetry, YVEX_SERVER_EVENT_ARTIFACT_OPEN_COMPLETE,
+        evidence->cache_failure ? YVEX_SERVER_SEVERITY_WARNING
+                                : YVEX_SERVER_SEVERITY_INFO,
+        NULL, NULL, NULL, role, evidence->bytes_hashed, evidence->file_bytes,
+        receipt, evidence->seconds,
+        rate, &event_error);
+}
+
 int yvex_server_media_registry_start(
     server_media_registry *registry, yvex_runtime_media_model_summary *summary,
     yvex_error *err)
 {
+    yvex_runtime_media_model_open_options open_options = {0};
     int rc;
     if (summary) memset(summary, 0, sizeof(*summary));
     if (!registry || !summary || pthread_mutex_lock(&registry->mutex) != 0)
@@ -870,8 +780,12 @@ int yvex_server_media_registry_start(
         return media_refuse(err, YVEX_ERR_STATE,
                             "media runtime model is already open");
     }
+    open_options.schema_version = YVEX_RUNTIME_MEDIA_MODEL_OPEN_SCHEMA_V1;
+    open_options.artifact_reopen_cache_root = registry->artifact_reopen_cache_root;
+    open_options.observe_component = component_admission_observe;
+    open_options.observer_context = registry;
     rc = yvex_runtime_media_model_open(
-        &registry->model, &registry->generation, summary, err);
+        &registry->model, &registry->generation, &open_options, summary, err);
     if (rc == YVEX_OK)
         yvex_core_text_copy(registry->runtime_model_identity,
                             sizeof(registry->runtime_model_identity),

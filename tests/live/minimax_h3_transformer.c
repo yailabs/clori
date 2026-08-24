@@ -412,7 +412,8 @@ static int execute(const yvex_artifact *artifact, const yvex_gguf *gguf,
     }
     if (rc == YVEX_OK) {
         rc = graph->component_admit(
-            "transformer", artifact, gguf, tensors, &admission, &admission_failure, err);
+            "transformer", artifact, gguf, tensors, NULL, &admission, NULL,
+            &admission_failure, err);
     }
     yvex_materialization_options_default(&options);
     options.max_chunk_bytes = 64ull * 1024ull * 1024ull;
@@ -549,7 +550,8 @@ static int execute_selected_block(
     if (rc == YVEX_OK) rc = yvex_tensor_table_from_gguf(&tensors, gguf, &err);
     if (rc == YVEX_OK)
         rc = graph->component_admit(
-            "transformer", artifact, gguf, tensors, &admission, &admission_failure, &err);
+            "transformer", artifact, gguf, tensors, NULL, &admission, NULL,
+            &admission_failure, &err);
     yvex_materialization_options_default(&materialization_options);
     materialization_options.max_chunk_bytes = 64ull * 1024ull * 1024ull;
     if (rc == YVEX_OK)
@@ -640,7 +642,7 @@ static int execute_artifact(const yvex_artifact *artifact, const yvex_gguf *gguf
     }
     if (rc == YVEX_OK) {
         rc = graph->component_admit(
-            "transformer", artifact, gguf, tensors, &admission, &failure, err);
+            "transformer", artifact, gguf, tensors, NULL, &admission, NULL, &failure, err);
     }
     if (rc == YVEX_OK)
         rc = yvex_runtime_component_session_open(
@@ -722,7 +724,7 @@ static int execute_latent(const char *path, const char *conditioning_path,
     if (rc == YVEX_OK) rc = yvex_tensor_table_from_gguf(&tensors, gguf, &err);
     if (rc == YVEX_OK)
         rc = graph->component_admit("transformer", artifact, gguf, tensors,
-                                    &admission, &failure, &err);
+                                    NULL, &admission, NULL, &failure, &err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_component_session_open(
             &session, &admission, artifact, gguf, tensors, YVEX_BACKEND_KIND_CUDA,
@@ -1050,7 +1052,7 @@ static int execute_latent_fixture(
     if (rc == YVEX_OK) rc = yvex_tensor_table_from_gguf(&tensors, gguf, &err);
     if (rc == YVEX_OK)
         rc = graph->component_admit("transformer", artifact, gguf, tensors,
-                                    &admission, &failure, &err);
+                                    NULL, &admission, NULL, &failure, &err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_component_session_open(
             &session, &admission, artifact, gguf, tensors, YVEX_BACKEND_KIND_CUDA,

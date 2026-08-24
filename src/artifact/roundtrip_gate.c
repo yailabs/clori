@@ -392,7 +392,7 @@ static int artifact_admit_component_catalog(
 }
 
 /* Reconcile a family catalog with the complete structural and storage inventory before trust. */
-int yvex_artifact_admit_catalog(
+static int artifact_admit_catalog_structure(
     const yvex_artifact *artifact, const yvex_gguf *gguf, const yvex_tensor_table *tensors,
     const yvex_artifact_catalog_contract *contract, yvex_complete_artifact_admission *out,
     yvex_artifact_admission_failure *failure, yvex_error *err)
@@ -516,11 +516,7 @@ int yvex_artifact_admit_catalog(
             elements != contract->elements ? contract->elements : catalog->payload_bytes,
             elements != contract->elements ? elements : payload, err, YVEX_ERR_FORMAT,
             "component aggregate storage differs from its catalog");
-    rc = artifact_admit_component_catalog(artifact, catalog, out, failure, err);
-    if (rc == YVEX_OK)
-        rc = yvex_artifact_admission_identity_verify(
-            artifact, out, NULL, NULL, failure, err);
-    return rc;
+    return artifact_admit_component_catalog(artifact, catalog, out, failure, err);
 }
 
 /* Bind one opened artifact snapshot to its admitted exact-file identity. */
@@ -561,6 +557,122 @@ int yvex_artifact_admission_identity_verify(
         memset(failure, 0, sizeof(*failure));
     yvex_error_clear(err);
     return YVEX_OK;
+}
+
+int yvex_artifact_admission_authenticate(
+    const yvex_artifact *artifact, yvex_complete_artifact_admission *admission,
+    const yvex_artifact_admission_options *options,
+    yvex_artifact_admission_evidence *evidence,
+    yvex_artifact_admission_failure *failure, yvex_error *err)
+{
+    yvex_artifact_reopen_lease lease = {0};
+    yvex_error cache_error;
+    int rc, cache_enabled;
+
+    if (evidence) memset(evidence, 0, sizeof(*evidence));
+    if (!artifact || !admission || !evidence ||
+        (options && options->schema_version != YVEX_ARTIFACT_ADMISSION_OPTIONS_SCHEMA_V1))
+        return admission_fail(failure, YVEX_ARTIFACT_ADMISSION_INVALID_ARGUMENT,
+                              "authentication-options", 1u, 0u, err,
+                              YVEX_ERR_INVALID_ARG,
+                              "artifact authentication options and evidence are required");
+    evidence->schema_version = YVEX_ARTIFACT_ADMISSION_OPTIONS_SCHEMA_V1;
+    evidence->file_bytes = yvex_artifact_size(artifact);
+    cache_enabled = options && options->reopen_cache_root && options->reopen_cache_root[0];
+    evidence->reopen_state = cache_enabled ? YVEX_ARTIFACT_REOPEN_MISS
+                                           : YVEX_ARTIFACT_REOPEN_DISABLED;
+    yvex_error_clear(&cache_error);
+    if (cache_enabled) {
+        rc = yvex_artifact_reopen_lease_check(
+            artifact, admission->artifact_identity, options->reopen_cache_root,
+            &lease, &cache_error);
+        if (rc != YVEX_OK) {
+            evidence->cache_failure = 1;
+            yvex_error_clear(&cache_error);
+        } else if (lease.verified) {
+            admission->artifact_bytes_hashed = 0ull;
+            admission->artifact_identity_verified = 1;
+            evidence->verification_mode = YVEX_ARTIFACT_VERIFICATION_VERIFIED_REOPEN;
+            evidence->reopen_state = YVEX_ARTIFACT_REOPEN_HIT;
+            yvex_core_text_copy(evidence->lease_identity,
+                                sizeof(evidence->lease_identity),
+                                lease.lease_identity);
+            evidence->complete = 1;
+            yvex_error_clear(err);
+            return YVEX_OK;
+        } else if (lease.receipt_present) {
+            evidence->reopen_state = YVEX_ARTIFACT_REOPEN_INVALID;
+        }
+    }
+    evidence->verification_mode =
+        cache_enabled && (evidence->cache_failure ||
+                          evidence->reopen_state == YVEX_ARTIFACT_REOPEN_INVALID)
+            ? YVEX_ARTIFACT_VERIFICATION_FALLBACK_FULL_HASH
+            : YVEX_ARTIFACT_VERIFICATION_FULL_HASH;
+    if (options && options->progress &&
+        !options->progress(options->progress_context, 0ull,
+                           yvex_artifact_size(artifact)))
+        return admission_fail(failure, YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH,
+                              "artifact-byte-identity", admission->file_bytes, 0ull,
+                              err, YVEX_ERR_CANCELLED,
+                              "artifact byte verification was cancelled");
+    rc = yvex_artifact_admission_identity_verify(
+        artifact, admission, options ? options->progress : NULL,
+        options ? options->progress_context : NULL, failure, err);
+    if (rc != YVEX_OK) return rc;
+    evidence->bytes_hashed = admission->artifact_bytes_hashed;
+    if (cache_enabled) {
+        int publish_rc = yvex_artifact_reopen_lease_publish(
+            artifact, admission->artifact_identity, options->reopen_cache_root,
+            &lease, &cache_error);
+        if (publish_rc == YVEX_OK) {
+            evidence->lease_published = evidence->reopen_state == YVEX_ARTIFACT_REOPEN_MISS;
+            evidence->lease_repaired =
+                evidence->reopen_state == YVEX_ARTIFACT_REOPEN_INVALID;
+            yvex_core_text_copy(evidence->lease_identity,
+                                sizeof(evidence->lease_identity),
+                                lease.lease_identity);
+        } else {
+            evidence->cache_failure = 1;
+            yvex_error_clear(&cache_error);
+        }
+    }
+    evidence->complete = 1;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_artifact_admit_catalog_with_options(
+    const yvex_artifact *artifact, const yvex_gguf *gguf,
+    const yvex_tensor_table *tensors,
+    const yvex_artifact_catalog_contract *contract,
+    const yvex_artifact_admission_options *options,
+    yvex_complete_artifact_admission *out,
+    yvex_artifact_admission_evidence *evidence,
+    yvex_artifact_admission_failure *failure, yvex_error *err)
+{
+    int rc = artifact_admit_catalog_structure(
+        artifact, gguf, tensors, contract, out, failure, err);
+    if (rc == YVEX_OK)
+        rc = yvex_artifact_admission_authenticate(
+            artifact, out, options, evidence, failure, err);
+    return rc;
+}
+
+int yvex_artifact_admit_catalog(
+    const yvex_artifact *artifact, const yvex_gguf *gguf,
+    const yvex_tensor_table *tensors,
+    const yvex_artifact_catalog_contract *contract,
+    yvex_complete_artifact_admission *out,
+    yvex_artifact_admission_failure *failure, yvex_error *err)
+{
+    yvex_artifact_admission_evidence evidence;
+    int rc = artifact_admit_catalog_structure(
+        artifact, gguf, tensors, contract, out, failure, err);
+    if (rc == YVEX_OK && out->artifact_class == YVEX_ARTIFACT_CLASS_COMPONENT_YVEX)
+        rc = yvex_artifact_admission_authenticate(
+            artifact, out, NULL, &evidence, failure, err);
+    return rc;
 }
 
 typedef struct {

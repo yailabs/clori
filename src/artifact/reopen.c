@@ -250,9 +250,12 @@ int yvex_artifact_reopen_lease_publish(
         rc = yvex_artifact_reopen_lease_check(
             artifact, artifact_identity, cache_root, out, err);
         if (rc == YVEX_OK && !out->verified) {
-            yvex_error_set(err, YVEX_ERR_FORMAT, "artifact.reopen-lease",
-                           "existing verified-reopen lease is invalid");
-            return YVEX_ERR_FORMAT;
+            memset(&result, 0, sizeof(result));
+            rc = yvex_core_file_publish_replace(
+                out->path, bytes, sizeof(bytes), reopen_candidate_validate,
+                &validation, &result, err);
+            if (rc == YVEX_OK)
+                out->receipt_present = out->receipt_valid = out->verified = 1;
         }
         return rc;
     }

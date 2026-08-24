@@ -178,6 +178,16 @@ change. Git history preserves implementation chronology.
 
 ### Changed
 
+- MiniMax hosted media turns now send the creative prompt directly to the
+  native tokenizer/conditioning pipeline under one identity-bearing YVEX
+  interactive preset. The removed hardcoded questionnaire no longer parses
+  creative words or numbers as execution controls; progress is server-authored
+  control state and successful protocol-v12 turns carry a typed media result.
+- Composite artifact startup now reuses the generic verified-reopen authority
+  independently for every component. Cold or invalid-cache opens fully verify
+  and publish or repair receipts, unchanged warm opens avoid complete payload
+  hashing, and selective fallback cannot admit mismatched bytes or imply
+  materialization or residency.
 - Hosted startup now reuses a content-addressed verified-reopen lease for an
   unchanged local artifact snapshot and falls back to complete authentication
   when cache evidence is absent, malformed, or stale. On admitted pageable

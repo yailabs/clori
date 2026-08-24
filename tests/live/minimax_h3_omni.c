@@ -258,7 +258,8 @@ static int execute_block(
     memcpy(invalid_indices, adaln_indices, (size_t)rows * sizeof(*invalid_indices));
     invalid_indices[0] = (unsigned int)(timesteps * 3ull);
     rc = graph->component_admit(
-        "transformer", artifact, gguf, tensors, &admission, &admission_failure, err);
+        "transformer", artifact, gguf, tensors, NULL, &admission, NULL,
+        &admission_failure, err);
     yvex_materialization_options_default(&materialization_options);
     materialization_options.max_chunk_bytes = 64ull * 1024ull * 1024ull;
     if (rc == YVEX_OK)

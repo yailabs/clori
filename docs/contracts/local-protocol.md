@@ -1,8 +1,8 @@
-# Local Protocol v11
+# Local Protocol v12
 
 Status: normative private protocol contract
 
-Schema/version: `YVEX_LOCAL_PROTOCOL_VERSION = 11`.
+Schema/version: `YVEX_LOCAL_PROTOCOL_VERSION = 12`.
 
 Authority: `include/yvex/server.h` and `src/server/protocol.c`. This document
 explains the wire and lifecycle contract; code remains authoritative for exact
@@ -17,18 +17,18 @@ Unix-domain socket and is not a public network API.
 
 ## Framing and negotiation
 
-Every connection negotiates version 11 and exchanges bounded typed frames.
+Every connection negotiates version 12 and exchanges bounded typed frames.
 Lengths, enums, strings, arrays, message/tool fields, and correlations are
 validated before dispatch. Oversized, truncated, duplicate, unknown, or
 malformed fields refuse without entering the server scheduler.
 
-Every earlier version, including v10, is refused explicitly. There is no private
+Every earlier version, including v11, is refused explicitly. There is no private
 pre-v0.1 compatibility decoder. Unknown operations and response kinds fail
 closed.
 
 ## Operations
 
-Protocol v11 carries server status/stop, live model and memory
+Protocol v12 carries server status/stop, live model and memory
 facts, selected target-only or DSpark generation mode, session lifecycle,
 bounded copy-on-write session fork, generation turns and cancellation,
 speculative lifecycle events, event subscriptions, and composed console status.
@@ -67,6 +67,15 @@ per-chunk progress, and completion facts let the console update one truthful
 line without timing the asynchronous request locally. Provider/OpenAI requests
 retain their provider stream contract and do not receive these native console
 messages.
+
+Native media turns carry server-authored request, conditioning, latent,
+decoder, publication, completion, cancellation, and failure progress. These
+are control facts, never assistant text. A successful media turn carries one
+typed result containing the publication path, geometry, frame and audio facts,
+seed, byte extent, and the hosted preset, execution, file, and publication
+identities. Protocol v12 adds that identity-bearing result and refuses a media
+success that omits it. Creative prompt bytes are model input; the protocol does
+not parse them into execution policy.
 
 The admitted DeepSeek DSpark tokenizer contract classifies source-authored
 explicit reasoning separately from final text when the request selects
@@ -170,7 +179,7 @@ format.
 
 ## Non-claims
 
-Protocol v11 is not a public remote API, authentication protocol, TLS transport,
+Protocol v12 is not a public remote API, authentication protocol, TLS transport,
 stable cross-version SDK promise, distributed serving protocol, or model
 quality contract. Versioned checkpoints preserve the admitted model and
 semantic-session state across restart; the in-memory fork does not create a

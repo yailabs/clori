@@ -191,14 +191,14 @@ explicit concurrent-sequence request consumed by startup capacity admission;
 schema v1 cannot represent that fact and refuses after an atomic pre-v0.1
 product rebuild.
 The source-authored conversation boundary admits provider request/wire schema
-v3, tokenizer plan v3, tokenizer provider result v2, and local protocol v11.
+v3, tokenizer plan v3, tokenizer provider result v2, and local protocol v12.
 Runtime event schema v3, Physical Execution IR v4 and compiled profile v2
 remain unchanged. Generation plan ABI v5 adds the workload-profile identity
 required to bind phase evidence to the compiled workload. Generation result
 schema v5 adds the identity-bearing committed-token extent of a
 source-output-channel boundary; the target-only continuation extent is derived
 from the final committed extent. This internal ABI change does not
-alter local protocol v11 or runtime event schema v3; the existing typed profile
+alter local protocol v12 or runtime event schema v3; the existing typed profile
 event projects the new facts without serializing the C result layout.
 
 Phase-roofline v1 accepts both its original complete record and an additive
@@ -542,7 +542,7 @@ Domain APIs retain semantic validation and lifecycle. Runtime-client adapter
 objects remain protocol-only, while finite offline adapters may consume the
 non-installed engine interfaces already documented here.
 
-## Application Provider And Local Protocol v11
+## Application Provider And Local Protocol v12
 
 `<yvex/provider.h>` is the installed transport-neutral application request and
 result ABI. Provider schema v3 additionally represents an omitted completion
@@ -554,13 +554,13 @@ reasoning, at most one assistant tool call, and its original field semantics.
 Clone and wire-decode publish only a complete owned request graph. The provider
 owner neither parses HTTP nor renders model-family prompt syntax.
 
-`<yvex/server.h>` protocol v11 carries the sealed provider request through the
+`<yvex/server.h>` protocol v12 carries the sealed provider request through the
 private Unix socket. Provider output messages distinguish assistant text,
 explicit reasoning, function calls, usage, terminal completion, and failure.
 Typed events bind the provider adapter, provider-request identity, and external
 correlation ID while excluding prompt and output content.
 
-Protocol v11 carries selected generation mode, speculative lifecycle events,
+Protocol v12 carries selected generation mode, speculative lifecycle events,
 accepted-prefix facts, exact proposal/verification/commit accounting, turn
 timing and cancellation classes, an exact partial-turn schema, source-authored
 reasoning policy, typed reasoning/final/tool/error channels, and separate
@@ -576,9 +576,16 @@ model-state checkpoint save/restore operations with an explicit file bound and
 typed digest/identity evidence. Version 9 adds the startup capacity-plan
 identity, required and unreserved bytes, admitted concurrent sequences, and
 separate independent-session-scheduling and continuous-batching readiness.
-Provider v3's adaptive limit is not executable by a v10 peer, so every non-v11
+Provider v3's adaptive limit is not executable by a v11 peer, so every non-v12
 frame refuses during the handshake;
 there is no private pre-v0.1 compatibility decoder.
+
+Version 12 adds the typed terminal media result. A successful media turn binds
+its absolute publication path, geometry, frame/audio facts, seed, byte extent,
+hosted-preset identity, execution identity, file identity, and publication
+identity without reclassifying runtime control text as model output. Media
+progress remains server-authored telemetry. Text-generation request and result
+semantics are unchanged.
 
 Protocol error messages carry `yvex_client_failure_class`, so adapters map
 queue capacity, timeout, incompatible state and unsupported input without

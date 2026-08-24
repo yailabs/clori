@@ -1879,8 +1879,8 @@ static int component_resources_open(
     yvex_materialization_failure materialization_failure;
     yvex_runtime_residency_options residency_options = {0};
     yvex_runtime_residency_failure residency_failure;
-    int rc = binding->admit(binding->admission_component, artifact, gguf, tensors, &admission,
-                            &admission_failure, err);
+    int rc = binding->admit(binding->admission_component, artifact, gguf, tensors, NULL,
+                            &admission, NULL, &admission_failure, err);
 
     yvex_materialization_options_default(&options);
     options.max_chunk_bytes = 64ull * 1024ull * 1024ull;

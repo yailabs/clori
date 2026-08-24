@@ -18,6 +18,8 @@ typedef struct yvex_gguf yvex_gguf;
 typedef struct yvex_tensor_table yvex_tensor_table;
 typedef struct yvex_complete_artifact_admission yvex_complete_artifact_admission;
 typedef struct yvex_artifact_admission_failure yvex_artifact_admission_failure;
+typedef struct yvex_artifact_admission_options yvex_artifact_admission_options;
+typedef struct yvex_artifact_admission_evidence yvex_artifact_admission_evidence;
 typedef struct yvex_runtime_av_plan yvex_runtime_av_plan;
 typedef struct yvex_runtime_av_layout_output yvex_runtime_av_layout_output;
 typedef struct yvex_runtime_av_layout_result yvex_runtime_av_layout_result;
@@ -68,7 +70,8 @@ typedef int (*yvex_media_layout_fn)(
     yvex_runtime_av_layout_result *, yvex_error *);
 typedef int (*yvex_media_component_admit_fn)(
     const char *, const yvex_artifact *, const yvex_gguf *, const yvex_tensor_table *,
-    yvex_complete_artifact_admission *, yvex_artifact_admission_failure *, yvex_error *);
+    const yvex_artifact_admission_options *, yvex_complete_artifact_admission *,
+    yvex_artifact_admission_evidence *, yvex_artifact_admission_failure *, yvex_error *);
 typedef int (*yvex_media_condition_fn)(
     const yvex_artifact *, const yvex_gguf *, const yvex_tensor_table *,
     const unsigned int *, unsigned long long, unsigned long long, float *, unsigned long long,

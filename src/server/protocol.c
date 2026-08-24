@@ -206,7 +206,8 @@ enum {
     TAG_RUNTIME_CONCURRENT_SEQUENCES,
     TAG_RUNTIME_CAPACITY_REQUIRED_BYTES,
     TAG_RUNTIME_CAPACITY_UNRESERVED_BYTES,
-    TAG_RUNTIME_CAPACITY_PLAN_ID
+    TAG_RUNTIME_CAPACITY_PLAN_ID,
+    TAG_MEDIA_RESULT
 };
 typedef struct {
     unsigned char *data;
@@ -218,22 +219,19 @@ typedef struct {
     uint64_t seen[4];
 } wire_reader;
 _Static_assert(sizeof(double) == 8u, "local protocol requires binary64 double");
-_Static_assert(TAG_RUNTIME_CAPACITY_PLAN_ID < 256u,
+_Static_assert(TAG_MEDIA_RESULT < 256u,
                "known protocol tags must fit the duplicate-field set");
-
 static int protocol_refuse(yvex_error *err, yvex_status status,
                            const char *reason)
 {
     yvex_error_set(err, status, "server.protocol", reason);
     return status;
 }
-
 static void put_u16(unsigned char *out, uint16_t value)
 {
     out[0] = (unsigned char)(value >> 8u);
     out[1] = (unsigned char)value;
 }
-
 static void put_u32(unsigned char *out, uint32_t value)
 {
     out[0] = (unsigned char)(value >> 24u);
@@ -241,25 +239,21 @@ static void put_u32(unsigned char *out, uint32_t value)
     out[2] = (unsigned char)(value >> 8u);
     out[3] = (unsigned char)value;
 }
-
 static void put_u64(unsigned char *out, uint64_t value)
 {
     unsigned int index;
     for (index = 0u; index < 8u; ++index)
         out[index] = (unsigned char)(value >> (56u - 8u * index));
 }
-
 static uint16_t get_u16(const unsigned char *input)
 {
     return (uint16_t)(((uint16_t)input[0] << 8u) | input[1]);
 }
-
 static uint32_t get_u32(const unsigned char *input)
 {
     return ((uint32_t)input[0] << 24u) | ((uint32_t)input[1] << 16u) |
            ((uint32_t)input[2] << 8u) | input[3];
 }
-
 static uint64_t get_u64(const unsigned char *input)
 {
     uint64_t value = 0u;
@@ -268,7 +262,6 @@ static uint64_t get_u64(const unsigned char *input)
         value = (value << 8u) | input[index];
     return value;
 }
-
 static int writer_field(wire_writer *writer, unsigned int tag,
                         const void *bytes, unsigned long long count)
 {
@@ -289,7 +282,6 @@ static int writer_field(wire_writer *writer, unsigned int tag,
     writer->count = required;
     return 1;
 }
-
 static int writer_u64(wire_writer *writer, unsigned int tag,
                       unsigned long long value)
 {
@@ -297,7 +289,6 @@ static int writer_u64(wire_writer *writer, unsigned int tag,
     put_u64(bytes, value);
     return writer_field(writer, tag, bytes, sizeof(bytes));
 }
-
 static int writer_double(wire_writer *writer, unsigned int tag, double value)
 {
     uint64_t bits;
@@ -305,7 +296,6 @@ static int writer_double(wire_writer *writer, unsigned int tag, double value)
     memcpy(&bits, &value, sizeof(bits));
     return writer_u64(writer, tag, bits);
 }
-
 static int writer_text(wire_writer *writer, unsigned int tag,
                        const char *text)
 {
@@ -313,7 +303,6 @@ static int writer_text(wire_writer *writer, unsigned int tag,
            writer_field(writer, tag, text,
                         (unsigned long long)strlen(text));
 }
-
 static int reader_next(wire_reader *reader, unsigned int *tag,
                        const unsigned char **bytes, unsigned long long *count)
 {
@@ -343,7 +332,6 @@ static int reader_next(wire_reader *reader, unsigned int *tag,
     reader->offset += length;
     return 1;
 }
-
 static int reader_u64(const unsigned char *bytes, unsigned long long count,
                       unsigned long long *value)
 {
@@ -352,7 +340,6 @@ static int reader_u64(const unsigned char *bytes, unsigned long long count,
     *value = get_u64(bytes);
     return 1;
 }
-
 static int reader_double(const unsigned char *bytes, unsigned long long count,
                          double *value)
 {
@@ -364,7 +351,6 @@ static int reader_double(const unsigned char *bytes, unsigned long long count,
     memcpy(value, &bits, sizeof(bits));
     return isfinite(*value);
 }
-
 static int reader_text(const unsigned char *bytes, unsigned long long count,
                        char *output, size_t capacity)
 {
@@ -375,7 +361,6 @@ static int reader_text(const unsigned char *bytes, unsigned long long count,
     output[count] = '\0';
     return 1;
 }
-
 static int request_state_fields_valid(const yvex_client_request *request)
 {
     int state_operation =
@@ -390,7 +375,6 @@ static int request_state_fields_valid(const yvex_client_request *request)
                ? !request->maximum_state_file_bytes
                : request->maximum_state_file_bytes != 0u;
 }
-
 static int request_fork_fields_valid(const yvex_client_request *request)
 {
     if (!memchr(request->fork_session_name, '\0',
@@ -400,7 +384,6 @@ static int request_fork_fields_valid(const yvex_client_request *request)
         return !request->fork_session_name[0] && !request->maximum_prefix_bytes;
     return request->fork_session_name[0] && request->maximum_prefix_bytes;
 }
-
 int yvex_protocol_request_encode(const yvex_client_request *request,
                                  unsigned char *output,
                                  unsigned long long capacity,
@@ -484,7 +467,6 @@ int yvex_protocol_request_encode(const yvex_client_request *request,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 int yvex_protocol_request_decode(const unsigned char *input,
                                  unsigned long long byte_count,
                                  yvex_client_request *request,
@@ -598,7 +580,6 @@ int yvex_protocol_request_decode(const unsigned char *input,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 static int writer_metrics(wire_writer *writer, const yvex_server_metrics *metrics)
 {
     unsigned char bytes[32u * 8u];
@@ -622,7 +603,6 @@ static int writer_metrics(wire_writer *writer, const yvex_server_metrics *metric
     return writer_field(writer, TAG_METRICS, bytes,
                         sizeof(values) / sizeof(values[0]) * 8u);
 }
-
 static int reader_metrics(const unsigned char *bytes, unsigned long long count,
                           yvex_server_metrics *metrics)
 {
@@ -653,12 +633,10 @@ static int reader_metrics(const unsigned char *bytes, unsigned long long count,
     }
     return 1;
 }
-
 static int optional_identity_valid(const char value[YVEX_SHA256_HEX_CAP])
 {
     return !value[0] || yvex_sha256_hex_valid(value);
 }
-
 static int checkpoint_fields_valid(
     const yvex_client_state_checkpoint *checkpoint)
 {
@@ -677,7 +655,6 @@ static int checkpoint_fields_valid(
            yvex_sha256_hex_valid(checkpoint->artifact_identity) &&
            yvex_sha256_hex_valid(checkpoint->file_digest);
 }
-
 static int partial_turn_fields_valid(const yvex_client_partial_turn *partial)
 {
 #define PARTIAL_BOOL(value) ((value) == 0 || (value) == 1)
@@ -721,9 +698,30 @@ static int partial_turn_fields_valid(const yvex_client_partial_turn *partial)
            optional_identity_valid(partial->published_text_identity);
 #undef PARTIAL_BOOL
 }
-
+static int media_result_fields_valid(const yvex_client_media_result *result)
+{
+    if (!result->available)
+        return !result->schema_version && !result->output_path[0] &&
+               !result->width && !result->height && !result->frames &&
+               !result->fps_numerator && !result->fps_denominator && !result->audio_samples &&
+               !result->audio_sample_rate && !result->seed && !result->file_bytes &&
+               !result->preset_identity[0] && !result->execution_identity[0] &&
+               !result->file_identity[0] && !result->publication_identity[0];
+    return result->schema_version == YVEX_CLIENT_MEDIA_RESULT_SCHEMA_V1 &&
+           result->output_path[0] == '/' && !strstr(result->output_path, "/../") &&
+           strcmp(result->output_path + strlen(result->output_path) - 1u, "/..") &&
+           result->width && result->height && result->frames && result->fps_numerator &&
+           result->fps_denominator && result->audio_samples && result->audio_sample_rate &&
+           result->file_bytes &&
+           yvex_sha256_hex_valid(result->preset_identity) &&
+           yvex_sha256_hex_valid(result->execution_identity) &&
+           yvex_sha256_hex_valid(result->file_identity) &&
+           yvex_sha256_hex_valid(result->publication_identity);
+}
 static int message_fields_valid(const yvex_client_message *message)
 {
+    const yvex_server_summary *runtime = &message->runtime;
+    const yvex_console_status *console = &message->console;
 #define ENUM_VALID(value, first, last) \
     ((int)(value) >= (int)(first) && (value) <= (last))
 #define BOOL_VALID(value) ((value) == 0 || (value) == 1)
@@ -758,95 +756,79 @@ static int message_fields_valid(const yvex_client_message *message)
            ENUM_VALID(message->provider_finish, YVEX_PROVIDER_FINISH_STOP,
                       YVEX_PROVIDER_FINISH_FAILED) &&
            message->stop_reason <= YVEX_GENERATION_STOP_OUTPUT_FAILURE &&
-           ENUM_VALID(message->runtime.status, YVEX_SERVER_STATUS_CONFIGURED,
+           ENUM_VALID(runtime->status, YVEX_SERVER_STATUS_CONFIGURED,
                       YVEX_SERVER_STATUS_FAILED) &&
-           ENUM_VALID(message->runtime.backend, YVEX_BACKEND_KIND_CPU,
-                      YVEX_BACKEND_KIND_ROCM) &&
-           ENUM_VALID(message->runtime.trace_level, YVEX_SERVER_TRACE_SUMMARY,
+           ENUM_VALID(runtime->backend, YVEX_BACKEND_KIND_CPU, YVEX_BACKEND_KIND_ROCM) &&
+           ENUM_VALID(runtime->trace_level, YVEX_SERVER_TRACE_SUMMARY,
                       YVEX_SERVER_TRACE_FULL) &&
-           ENUM_VALID(message->console.backend, YVEX_BACKEND_KIND_CPU,
-                      YVEX_BACKEND_KIND_ROCM) &&
-           ENUM_VALID(message->console.session_state, YVEX_SERVER_SESSION_CREATED,
+           ENUM_VALID(console->backend, YVEX_BACKEND_KIND_CPU, YVEX_BACKEND_KIND_ROCM) &&
+           ENUM_VALID(console->session_state, YVEX_SERVER_SESSION_CREATED,
                       YVEX_SERVER_SESSION_FAILED) &&
-           ENUM_VALID(message->console.generation_phase,
-                      YVEX_CLIENT_PHASE_UNAVAILABLE, YVEX_CLIENT_PHASE_FAILED) &&
-           ENUM_VALID(message->console.cancellation_class,
-                      YVEX_CLIENT_CANCELLATION_NONE,
+           ENUM_VALID(console->generation_phase, YVEX_CLIENT_PHASE_UNAVAILABLE,
+                      YVEX_CLIENT_PHASE_FAILED) &&
+           ENUM_VALID(console->cancellation_class, YVEX_CLIENT_CANCELLATION_NONE,
                       YVEX_CLIENT_CANCELLATION_FAILED) &&
            ENUM_VALID(message->event.kind, YVEX_SERVER_EVENT_PROCESS_START,
                       YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_COMPLETE) &&
            ENUM_VALID(message->event.severity, YVEX_SERVER_SEVERITY_DEBUG,
                       YVEX_SERVER_SEVERITY_FATAL) &&
-           BOOL_VALID(message->kv_used_available) &&
-           BOOL_VALID(message->publication_timing_available) &&
-           BOOL_VALID(message->runtime.runtime_ready) &&
-           BOOL_VALID(message->runtime.generation_ready) &&
-           BOOL_VALID(message->runtime.public_server_ready) &&
-           BOOL_VALID(message->runtime.openai_listener_enabled) &&
-           BOOL_VALID(message->runtime.openai_listener_ready) &&
-           BOOL_VALID(message->runtime.explicit_reasoning_channel_supported) &&
-           BOOL_VALID(message->runtime.independent_session_scheduling_ready) &&
-           BOOL_VALID(message->runtime.continuous_batching_ready) &&
-           optional_identity_valid(message->runtime.runtime_model_identity) &&
-           optional_identity_valid(message->runtime.runtime_binding_identity) &&
-           optional_identity_valid(message->runtime.artifact_identity) &&
-           optional_identity_valid(message->runtime.physical_variant_identity) &&
-           optional_identity_valid(message->runtime.capacity_plan_identity) &&
-           (!message->runtime.runtime_ready ||
-            (yvex_sha256_hex_valid(message->runtime.runtime_model_identity) &&
-             yvex_sha256_hex_valid(message->runtime.physical_variant_identity) &&
-             (message->runtime.generation_mode == YVEX_SERVER_GENERATION_MEDIA
-                 ? (message->runtime.concurrent_sequences &&
-                    !message->runtime.context_capacity &&
-                    !message->runtime.prefill_chunk_tokens &&
-                    !message->runtime.maximum_new_tokens &&
-                    !message->runtime.capacity_required_bytes &&
-                    !message->runtime.capacity_unreserved_bytes &&
-                    !message->runtime.capacity_plan_identity[0] &&
-                    !message->runtime.runtime_binding_identity[0] &&
-                    !message->runtime.artifact_identity[0])
-                 : (yvex_sha256_hex_valid(
-                        message->runtime.runtime_binding_identity) &&
-                    yvex_sha256_hex_valid(message->runtime.artifact_identity) &&
-                    message->runtime.concurrent_sequences &&
-                    message->runtime.capacity_required_bytes &&
-                    yvex_sha256_hex_valid(
-                        message->runtime.capacity_plan_identity))))) &&
-           BOOL_VALID(message->console.runtime_ready) &&
-           BOOL_VALID(message->console.session_available) &&
-           BOOL_VALID(message->console.attached) &&
-           BOOL_VALID(message->console.cancel_requested) &&
-           BOOL_VALID(message->console.kv_used_available) &&
-           BOOL_VALID(message->console.progress_available) &&
-           BOOL_VALID(message->console.selected_model_available) &&
-           BOOL_VALID(message->console.explicit_reasoning_channel_supported) &&
-           ENUM_VALID(message->console.reasoning_policy,
-                      YVEX_REASONING_DISABLED,
+           BOOL_VALID(message->kv_used_available) && BOOL_VALID(message->publication_timing_available) &&
+           BOOL_VALID(runtime->runtime_ready) && BOOL_VALID(runtime->generation_ready) &&
+           BOOL_VALID(runtime->public_server_ready) &&
+           BOOL_VALID(runtime->openai_listener_enabled) &&
+           BOOL_VALID(runtime->openai_listener_ready) &&
+           BOOL_VALID(runtime->explicit_reasoning_channel_supported) &&
+           BOOL_VALID(runtime->independent_session_scheduling_ready) &&
+           BOOL_VALID(runtime->continuous_batching_ready) &&
+           optional_identity_valid(runtime->runtime_model_identity) &&
+           optional_identity_valid(runtime->runtime_binding_identity) &&
+           optional_identity_valid(runtime->artifact_identity) &&
+           optional_identity_valid(runtime->physical_variant_identity) &&
+           optional_identity_valid(runtime->capacity_plan_identity) &&
+           (!runtime->runtime_ready ||
+            (yvex_sha256_hex_valid(runtime->runtime_model_identity) &&
+             yvex_sha256_hex_valid(runtime->physical_variant_identity) &&
+             (runtime->generation_mode == YVEX_SERVER_GENERATION_MEDIA
+                  ? (runtime->concurrent_sequences && !runtime->context_capacity &&
+                     !runtime->prefill_chunk_tokens && !runtime->maximum_new_tokens &&
+                     !runtime->capacity_required_bytes && !runtime->capacity_unreserved_bytes &&
+                     !runtime->capacity_plan_identity[0] &&
+                     !runtime->runtime_binding_identity[0] && !runtime->artifact_identity[0])
+                  : (yvex_sha256_hex_valid(runtime->runtime_binding_identity) &&
+                     yvex_sha256_hex_valid(runtime->artifact_identity) &&
+                     runtime->concurrent_sequences && runtime->capacity_required_bytes &&
+                     yvex_sha256_hex_valid(runtime->capacity_plan_identity))))) &&
+           BOOL_VALID(console->runtime_ready) && BOOL_VALID(console->session_available) &&
+           BOOL_VALID(console->attached) && BOOL_VALID(console->cancel_requested) &&
+           BOOL_VALID(console->kv_used_available) && BOOL_VALID(console->progress_available) &&
+           BOOL_VALID(console->selected_model_available) &&
+           BOOL_VALID(console->explicit_reasoning_channel_supported) &&
+           ENUM_VALID(console->reasoning_policy, YVEX_REASONING_DISABLED,
                       YVEX_REASONING_MAXIMUM) &&
            partial_turn_fields_valid(&message->partial_turn) &&
            checkpoint_fields_valid(&message->state_checkpoint) &&
-           isfinite(message->queue_seconds) &&
-           isfinite(message->prefill_seconds) &&
-           isfinite(message->first_token_seconds) &&
-           isfinite(message->first_reasoning_seconds) &&
+           media_result_fields_valid(&message->media_result) &&
+           (!message->media_result.available ||
+            (message->kind == YVEX_CLIENT_MESSAGE_TURN_COMPLETE &&
+             message->status == YVEX_OK &&
+             message->generation_mode == YVEX_SERVER_GENERATION_MEDIA &&
+             message->generation_phase == YVEX_CLIENT_PHASE_COMPLETE)) &&
+           (message->kind != YVEX_CLIENT_MESSAGE_TURN_COMPLETE ||
+            message->status != YVEX_OK ||
+            message->generation_mode != YVEX_SERVER_GENERATION_MEDIA ||
+            message->media_result.available) &&
+           isfinite(message->queue_seconds) && isfinite(message->prefill_seconds) &&
+           isfinite(message->first_token_seconds) && isfinite(message->first_reasoning_seconds) &&
            isfinite(message->first_final_seconds) &&
            isfinite(message->decode_seconds) && isfinite(message->prefill_rate) &&
-           isfinite(message->decode_rate) &&
-           isfinite(message->reasoning_seconds) &&
-           isfinite(message->final_seconds) &&
-           isfinite(message->total_completion_seconds) &&
-           isfinite(message->reasoning_rate) &&
-           isfinite(message->final_rate) &&
-           isfinite(message->total_completion_rate) &&
-           isfinite(message->publication_seconds) &&
-           isfinite(message->draft_seconds) &&
-           isfinite(message->verification_seconds) &&
-           isfinite(message->speculative_commit_seconds) &&
-           isfinite(message->mean_accepted_prefix) &&
-           isfinite(message->effective_committed_rate) &&
-           isfinite(message->confidence_logit_minimum) &&
-           isfinite(message->confidence_logit_maximum) &&
-           isfinite(message->confidence_logit_mean) &&
+           isfinite(message->decode_rate) && isfinite(message->reasoning_seconds) &&
+           isfinite(message->final_seconds) && isfinite(message->total_completion_seconds) &&
+           isfinite(message->reasoning_rate) && isfinite(message->final_rate) &&
+           isfinite(message->total_completion_rate) && isfinite(message->publication_seconds) &&
+           isfinite(message->draft_seconds) && isfinite(message->verification_seconds) &&
+           isfinite(message->speculative_commit_seconds) && isfinite(message->mean_accepted_prefix) &&
+           isfinite(message->effective_committed_rate) && isfinite(message->confidence_logit_minimum) &&
+           isfinite(message->confidence_logit_maximum) && isfinite(message->confidence_logit_mean) &&
            message->draft_forward_count <= message->draft_cycle_count &&
            message->target_verification_count <= message->draft_forward_count &&
            message->selected_verification_tokens <= message->proposed_tokens &&
@@ -885,14 +867,11 @@ static int message_fields_valid(const yvex_client_message *message)
            (message->kv_used_available || message->kv_used_bytes == 0u) &&
            (message->publication_timing_available ||
             message->publication_seconds == 0.0) &&
-           (message->console.kv_used_available ||
-            message->console.kv_used_bytes == 0u) &&
-           (message->console.selected_model_available ||
-            message->console.selected_model_identity[0] == '\0');
+           (console->kv_used_available || !console->kv_used_bytes) &&
+           (console->selected_model_available || !console->selected_model_identity[0]);
 #undef BOOL_VALID
 #undef ENUM_VALID
 }
-
 static int protocol_event_write(wire_writer *writer,
                                 const yvex_server_event *event)
 {
@@ -947,7 +926,6 @@ static int protocol_event_write(wire_writer *writer,
 #undef EVENT_U64
     return valid;
 }
-
 static int protocol_message_core_write(wire_writer *writer,
                                        const yvex_client_message *message,
                                        unsigned long long message_flags)
@@ -1074,7 +1052,35 @@ static int protocol_message_core_write(wire_writer *writer,
 #undef MESSAGE_U64
     return valid;
 }
-
+static int protocol_media_result_write(
+    wire_writer *writer, const yvex_client_media_result *result)
+{
+    unsigned char bytes[YVEX_SERVER_STATE_PATH_CAP + 400u];
+    const unsigned long long facts[] = {
+        result->width, result->height, result->frames, result->fps_numerator,
+        result->fps_denominator, result->audio_samples, result->audio_sample_rate, result->seed,
+        result->file_bytes,
+    };
+    const char *identities[] = {result->preset_identity, result->execution_identity,
+                                result->file_identity, result->publication_identity};
+    const unsigned long long path_offset = sizeof(facts);
+    size_t path_bytes = strlen(result->output_path);
+    unsigned long long index, identity_offset;
+    if (!result->available)
+        return 1;
+    if (path_bytes >= YVEX_SERVER_STATE_PATH_CAP || path_bytes > UINT16_MAX)
+        return 0;
+    for (index = 0ull; index < sizeof(facts) / sizeof(facts[0]); ++index)
+        put_u64(bytes + index * 8ull, facts[index]);
+    put_u16(bytes + path_offset, (uint16_t)path_bytes);
+    memcpy(bytes + path_offset + 2ull, result->output_path, path_bytes);
+    identity_offset = path_offset + 2ull + path_bytes;
+    for (index = 0ull; index < sizeof(identities) / sizeof(identities[0]); ++index)
+        memcpy(bytes + identity_offset + index * YVEX_SHA256_HEX_BYTES,
+               identities[index], YVEX_SHA256_HEX_BYTES);
+    return writer_field(writer, TAG_MEDIA_RESULT, bytes,
+                        identity_offset + 4ull * YVEX_SHA256_HEX_BYTES);
+}
 static int protocol_partial_write(wire_writer *writer,
                                   const yvex_client_partial_turn *partial)
 {
@@ -1122,7 +1128,6 @@ static int protocol_partial_write(wire_writer *writer,
 #undef PARTIAL_U64
     return valid;
 }
-
 static int protocol_runtime_write(wire_writer *writer,
                                   const yvex_server_summary *runtime)
 {
@@ -1177,7 +1182,6 @@ static int protocol_runtime_write(wire_writer *writer,
 #undef RUNTIME_U64
     return valid;
 }
-
 static int protocol_console_write(wire_writer *writer,
                                   const yvex_console_status *console)
 {
@@ -1237,6 +1241,7 @@ int yvex_protocol_message_encode(const yvex_client_message *message,
         yvex_server_event_validate(&message->event, err) != YVEX_OK)
         return yvex_error_code(err);
     if (!protocol_message_core_write(&writer, message, message_flags) ||
+        !protocol_media_result_write(&writer, &message->media_result) ||
         !protocol_partial_write(&writer, &message->partial_turn) ||
         !protocol_runtime_write(&writer, &message->runtime) ||
         !protocol_console_write(&writer, &message->console) ||
@@ -1253,7 +1258,6 @@ static int message_speculation_u64_field(yvex_client_message *candidate,
                                          unsigned long long count)
 {
     unsigned long long value;
-
     switch (tag) {
     case TAG_DRAFT_CYCLE_COUNT:
     case TAG_DRAFT_FORWARD_COUNT:
@@ -1293,14 +1297,12 @@ static int message_speculation_u64_field(yvex_client_message *candidate,
     }
     return 1;
 }
-
 static int message_timing_field(yvex_client_message *candidate,
                                 unsigned int tag,
                                 const unsigned char *bytes,
                                 unsigned long long count)
 {
     double *destination = NULL;
-
     switch (tag) {
     case TAG_QUEUE_SECONDS: destination = &candidate->queue_seconds; break;
     case TAG_PREFILL_SECONDS: destination = &candidate->prefill_seconds; break;
@@ -1337,14 +1339,12 @@ static int message_timing_field(yvex_client_message *candidate,
     }
     return reader_double(bytes, count, destination) ? 1 : -1;
 }
-
 static int message_base_field(yvex_client_message *candidate, unsigned int tag,
                               const unsigned char *bytes,
                               unsigned long long count, int *have_kind)
 {
     unsigned long long value = 0ull;
     int valid = message_timing_field(candidate, tag, bytes, count);
-
     if (valid) return valid;
     valid = 1;
 #define BASE_U64(field) (reader_u64(bytes, count, &value) ? ((field) = value, 1) : 0)
@@ -1521,7 +1521,43 @@ static int message_base_field(yvex_client_message *candidate, unsigned int tag,
 #undef BASE_U64
     return valid ? 1 : -1;
 }
-
+static int message_media_result_field(
+    yvex_client_message *candidate, unsigned int tag, const unsigned char *bytes,
+    unsigned long long count)
+{
+    yvex_client_media_result *result = &candidate->media_result;
+    unsigned long long *facts[] = {
+        &result->width, &result->height, &result->frames, &result->fps_numerator,
+        &result->fps_denominator, &result->audio_samples, &result->audio_sample_rate, &result->seed,
+        &result->file_bytes,
+    };
+    char *identities[] = {result->preset_identity, result->execution_identity,
+                          result->file_identity, result->publication_identity};
+    const unsigned long long path_offset = 9ull * 8ull;
+    unsigned long long index, identity_offset;
+    unsigned int path_bytes;
+    if (tag != TAG_MEDIA_RESULT)
+        return 0;
+    if (count < path_offset + 2ull + 4ull * YVEX_SHA256_HEX_BYTES)
+        return -1;
+    for (index = 0ull; index < sizeof(facts) / sizeof(facts[0]); ++index)
+        *facts[index] = get_u64(bytes + index * 8ull);
+    path_bytes = ((unsigned int)bytes[path_offset] << 8u) | bytes[path_offset + 1ull];
+    identity_offset = path_offset + 2ull + path_bytes;
+    if (!path_bytes || path_bytes >= sizeof(result->output_path) ||
+        count != identity_offset + 4ull * YVEX_SHA256_HEX_BYTES)
+        return -1;
+    memcpy(result->output_path, bytes + path_offset + 2ull, path_bytes);
+    result->output_path[path_bytes] = '\0';
+    for (index = 0ull; index < sizeof(identities) / sizeof(identities[0]); ++index) {
+        memcpy(identities[index], bytes + identity_offset + index * YVEX_SHA256_HEX_BYTES,
+               YVEX_SHA256_HEX_BYTES);
+        identities[index][YVEX_SHA256_HEX_BYTES] = '\0';
+    }
+    result->schema_version = YVEX_CLIENT_MEDIA_RESULT_SCHEMA_V1;
+    result->available = 1;
+    return 1;
+}
 static int message_partial_field(yvex_client_message *candidate,
                                  unsigned int tag,
                                  const unsigned char *bytes,
@@ -1695,7 +1731,6 @@ static int message_runtime_field(yvex_client_message *candidate,
 #undef RUNTIME_U64
     return valid ? 1 : -1;
 }
-
 static int message_console_field(yvex_client_message *candidate,
                                  unsigned int tag,
                                  const unsigned char *bytes,
@@ -1905,7 +1940,6 @@ static int message_event_field(yvex_client_message *candidate,
 #undef EVENT_U64
     return valid ? 1 : -1;
 }
-
 static int message_publish(const yvex_client_message *candidate, int next,
                            int valid, int have_kind,
                            yvex_client_message *message, yvex_error *err)
@@ -1921,7 +1955,6 @@ static int message_publish(const yvex_client_message *candidate, int next,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 int yvex_protocol_message_decode(const unsigned char *input,
                                  unsigned long long byte_count,
                                  yvex_client_message *message,
@@ -1944,6 +1977,8 @@ int yvex_protocol_message_decode(const unsigned char *input,
     while ((next = reader_next(&reader, &tag, &bytes, &count)) > 0 && valid) {
         int field = message_base_field(&candidate, tag, bytes, count,
                                        &have_kind);
+        if (!field)
+            field = message_media_result_field(&candidate, tag, bytes, count);
         if (!field)
             field = message_partial_field(&candidate, tag, bytes, count);
         if (!field)

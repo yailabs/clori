@@ -7,6 +7,7 @@
 #include <string.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/families/minimax_h3.h>
+#include <yvex/internal/graph.h>
 #include <yvex/internal/io.h>
 #include <yvex/internal/media.h>
 
@@ -67,7 +68,10 @@ static int media_command_error(const yvex_error *err)
 int yvex_media_generate_command(const yvex_graph_args *args, yvex_error *err)
 {
     const yvex_minimax_h3_api *model = yvex_model_register_minimax_h3();
-    const yvex_minimax_h3_graph_api *graph = yvex_graph_register_minimax_h3();
+    const yvex_component_variant_adapter *adapter =
+        yvex_graph_component_variant_find_family("minimax-h3");
+    const yvex_media_execution_recipe *execution =
+        adapter ? adapter->media_execution : NULL;
     const yvex_minimax_h3_latent_normalization *normalization;
     yvex_minimax_h3_architecture architecture;
     yvex_minimax_h3_failure failure;
@@ -77,7 +81,8 @@ int yvex_media_generate_command(const yvex_graph_args *args, yvex_error *err)
     yvex_error restore_error;
     int rc, restore_rc, render_rc, signals_installed = 0;
     if (!args || !args->media.generate ||
-        strcmp(args->media.target, YVEX_MINIMAX_H3_TARGET_ID) != 0 || !model || !graph) {
+        strcmp(args->media.target, YVEX_MINIMAX_H3_TARGET_ID) != 0 || !model ||
+        !execution) {
         yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "media.generate.cli",
                        "only the admitted MiniMax-H3 FL2VA target is available");
         return media_command_error(err);
@@ -107,16 +112,16 @@ int yvex_media_generate_command(const yvex_graph_args *args, yvex_error *err)
     request.fps_denominator = args->media.fps_denominator;
     request.audio_sample_rate = architecture.audio_vae.sample_rate;
     request.inference_steps = (unsigned int)args->media.inference_steps;
-    request.conditioning_layers = YVEX_MINIMAX_H3_TEXT_CONDITIONING_LAYERS;
+    request.conditioning_layers = execution->conditioning_layers;
     request.transformer_blocks = args->media.transformer_blocks;
     request.seed = args->media.seed;
-    request.maximum_prompt_tokens = YVEX_MINIMAX_H3_TEXT_MAX_TOKENS;
-    request.maximum_packed_rows = YVEX_MINIMAX_H3_OMNI_MAX_PACKED_ROWS;
+    request.maximum_prompt_tokens = execution->maximum_prompt_tokens;
+    request.maximum_packed_rows = execution->maximum_packed_rows;
     request.maximum_host_bytes = args->media.maximum_host_bytes;
     request.maximum_device_bytes = args->media.maximum_device_bytes;
     request.maximum_workspace_bytes = args->media.maximum_workspace_bytes;
     request.maximum_file_bytes = args->media.maximum_output_bytes;
-    request.component_backend = YVEX_BACKEND_KIND_CUDA;
+    request.component_backend = execution->component_backend;
     request.video_temporal_ratio = architecture.video_vae.temporal_ratio;
     request.video_clip_length = architecture.video_vae.clip_length;
     request.video_token_drop = architecture.video_vae.token_drop;
@@ -134,13 +139,13 @@ int yvex_media_generate_command(const yvex_graph_args *args, yvex_error *err)
     request.pixel_channels = normalization ? normalization->pixel_channels : 0ull;
     request.audio_output_channels = architecture.audio_vae.output_channels;
     request.audio_samples_per_step = architecture.audio_vae.decoder_rate_product;
-    request.plan_build = graph->t2va_plan_build;
-    request.layout_build = graph->t2va_layout_build;
-    request.component_admit = graph->component_admit;
-    request.condition = graph->text_encoder_artifact_cuda;
-    request.latent = graph->t2va_latent_execute;
-    request.video_decode = graph->video_vae_decode_cuda;
-    request.audio_decode = graph->audio_vae_execute_artifact_cuda;
+    request.plan_build = execution->plan_build;
+    request.layout_build = execution->layout_build;
+    request.component_admit = execution->component_admit;
+    request.condition = execution->condition;
+    request.latent = execution->latent;
+    request.video_decode = execution->video_decode;
+    request.audio_decode = execution->audio_decode;
     request.cancel_requested = media_cancel_requested;
     media_signal_seen = 0;
     if (rc == YVEX_OK) {

@@ -221,6 +221,111 @@ int yvex_runtime_media_host_profile_build(
 }
 
 static int generation_fail(
+    yvex_error *err, yvex_status status, const char *where, const char *message);
+
+static int media_preset_identity(
+    const yvex_runtime_media_execution_preset *preset,
+    char identity[YVEX_SHA256_HEX_CAP], yvex_error *err)
+{
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    const unsigned long long facts[] = {
+        preset->width, preset->height, preset->frames,
+        preset->sigma_grid_points, preset->seed,
+    };
+    unsigned long long index;
+
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.hosted-media-preset.v1") ||
+        !yvex_sha256_update_text(&hash, preset->name) ||
+        !yvex_sha256_update_text(&hash, preset->profile) ||
+        !yvex_sha256_update_text(&hash, preset->format))
+        return generation_fail(err, YVEX_ERR_STATE, "runtime.media-preset",
+                               "hosted media preset identity could not start");
+    for (index = 0ull; index < sizeof(facts) / sizeof(facts[0]); ++index)
+        if (!yvex_sha256_update_u64_be(&hash, facts[index]))
+            return generation_fail(err, YVEX_ERR_STATE, "runtime.media-preset",
+                                   "hosted media preset identity facts failed");
+    if (!yvex_sha256_final(&hash, digest))
+        return generation_fail(err, YVEX_ERR_STATE, "runtime.media-preset",
+                               "hosted media preset identity could not finish");
+    yvex_sha256_hex(digest, identity);
+    return YVEX_OK;
+}
+
+int yvex_runtime_media_execution_preset_validate(
+    const yvex_runtime_media_host_profile *host,
+    const yvex_runtime_media_execution_preset *preset, yvex_error *err)
+{
+    char identity[YVEX_SHA256_HEX_CAP];
+    const yvex_runtime_media_profile *profile = NULL;
+    unsigned long long index;
+    int rc;
+
+    if (!host || host->schema_version != YVEX_RUNTIME_MEDIA_HOST_SCHEMA_V1 ||
+        !preset || preset->schema_version != YVEX_RUNTIME_MEDIA_PRESET_SCHEMA_V1 ||
+        !preset->name[0] || !preset->profile[0] || strcmp(preset->format, "avi") ||
+        !preset->width || !preset->height || !preset->frames ||
+        preset->frames < host->minimum_frames || preset->frames > host->maximum_frames ||
+        preset->frames % host->frames_per_chunk != host->frame_remainder ||
+        preset->sigma_grid_points < host->minimum_inference_steps ||
+        preset->sigma_grid_points > host->maximum_inference_steps || !preset->complete)
+        return generation_fail(err, YVEX_ERR_INVALID_ARG, "runtime.media-preset",
+                               "one complete admitted hosted media preset is required");
+    for (index = 0ull; index < host->profile_count; ++index)
+        if (!strcmp(host->profiles[index].name, preset->profile)) {
+            profile = host->profiles + index;
+            break;
+        }
+    if (!profile || profile->width != preset->width || profile->height != preset->height ||
+        preset->frames > profile->maximum_frames)
+        return generation_fail(err, YVEX_ERR_BOUNDS, "runtime.media-preset",
+                               "hosted media preset exceeds its admitted profile");
+    rc = media_preset_identity(preset, identity, err);
+    if (rc == YVEX_OK && strcmp(identity, preset->identity))
+        rc = generation_fail(err, YVEX_ERR_FORMAT, "runtime.media-preset",
+                             "hosted media preset identity is inconsistent");
+    return rc;
+}
+
+int yvex_runtime_media_execution_preset_build(
+    const yvex_runtime_media_host_profile *host,
+    yvex_runtime_media_execution_preset *out, yvex_error *err)
+{
+    const yvex_runtime_media_profile *preview = NULL;
+    unsigned long long index;
+    int rc;
+
+    if (out) memset(out, 0, sizeof(*out));
+    if (!host || !out || host->schema_version != YVEX_RUNTIME_MEDIA_HOST_SCHEMA_V1)
+        return generation_fail(err, YVEX_ERR_INVALID_ARG, "runtime.media-preset",
+                               "one admitted media host profile is required");
+    for (index = 0ull; index < host->profile_count; ++index) {
+        if (!host->profiles[index].preview_alias) continue;
+        if (preview)
+            return generation_fail(err, YVEX_ERR_STATE, "runtime.media-preset",
+                                   "hosted media policy requires one preview profile");
+        preview = host->profiles + index;
+    }
+    if (!preview || host->minimum_frames > preview->maximum_frames)
+        return generation_fail(err, YVEX_ERR_STATE, "runtime.media-preset",
+                               "hosted media preview policy is not admitted");
+    out->schema_version = YVEX_RUNTIME_MEDIA_PRESET_SCHEMA_V1;
+    yvex_core_text_copy(out->name, sizeof(out->name), "interactive-preview-v1");
+    yvex_core_text_copy(out->profile, sizeof(out->profile), preview->name);
+    yvex_core_text_copy(out->format, sizeof(out->format), "avi");
+    out->width = preview->width;
+    out->height = preview->height;
+    out->frames = host->minimum_frames;
+    out->sigma_grid_points = host->minimum_inference_steps;
+    out->seed = 42ull;
+    out->complete = 1;
+    rc = media_preset_identity(out, out->identity, err);
+    if (rc == YVEX_OK) rc = yvex_runtime_media_execution_preset_validate(host, out, err);
+    return rc;
+}
+
+static int generation_fail(
     yvex_error *err, yvex_status status, const char *where, const char *message)
 {
     yvex_error_set(err, status, where, message);
@@ -234,6 +339,39 @@ static int generation_cancelled(
         return generation_fail(err, YVEX_ERR_CANCELLED, "runtime.av-generation",
                                "audio-video generation was cancelled");
     return YVEX_OK;
+}
+
+static int generation_progress(
+    const yvex_runtime_av_generation_request *request,
+    yvex_runtime_media_progress_kind kind, unsigned long long completed,
+    unsigned long long total, unsigned long long value, yvex_error *err)
+{
+    yvex_runtime_media_progress progress = {0};
+    if (!request->observe_progress) return YVEX_OK;
+    progress.schema_version = YVEX_RUNTIME_MEDIA_PROGRESS_SCHEMA_V1;
+    progress.kind = kind;
+    progress.completed = completed;
+    progress.total = total;
+    progress.value = value;
+    return request->observe_progress(request->progress_context, &progress, err);
+}
+
+static int latent_progress_observe(
+    void *opaque, const yvex_runtime_latent_observation *observation,
+    yvex_error *err)
+{
+    const yvex_runtime_av_generation_request *request = opaque;
+    if (!observation ||
+        observation->schema_version != YVEX_RUNTIME_LATENT_OBSERVATION_SCHEMA_V1)
+        return generation_fail(err, YVEX_ERR_INVALID_ARG,
+                               "runtime.av-generation.progress",
+                               "typed latent progress is required");
+    if (observation->stage != YVEX_RUNTIME_LATENT_OBSERVATION_ADVANCED)
+        return YVEX_OK;
+    return generation_progress(
+        request, YVEX_RUNTIME_MEDIA_PROGRESS_LATENT_STEP,
+        observation->completed_steps, request->inference_steps,
+        observation->video_values + observation->audio_values, err);
 }
 
 static int component_view_open(const char *path, component_view *view, yvex_error *err)
@@ -394,14 +532,27 @@ static component_view *media_model_view(
 static int media_model_component_admit(
     yvex_runtime_media_model *model, media_component_index component,
     const char *name, const yvex_artifact *artifact, const yvex_gguf *gguf,
-    const yvex_tensor_table *tensors, unsigned long long *artifact_bytes,
-    yvex_error *err)
+    const yvex_tensor_table *tensors,
+    const yvex_runtime_media_model_open_options *open_options,
+    unsigned long long *artifact_bytes, yvex_error *err)
 {
+    yvex_artifact_admission_options admission_options = {0};
+    yvex_artifact_admission_evidence *evidence =
+        &model->summary.components[component].evidence;
     yvex_artifact_admission_failure failure = {0};
     yvex_complete_artifact_admission *admission = model->admissions + component;
-    unsigned long long next;
-    int rc = model->contract.component_admit(
-        name, artifact, gguf, tensors, admission, &failure, err);
+    unsigned long long next, started = yvex_core_monotonic_ns(), completed;
+    int rc;
+    admission_options.schema_version = YVEX_ARTIFACT_ADMISSION_OPTIONS_SCHEMA_V1;
+    admission_options.reopen_cache_root =
+        open_options ? open_options->artifact_reopen_cache_root : NULL;
+    rc = model->contract.component_admit(
+        name, artifact, gguf, tensors, &admission_options, admission, evidence,
+        &failure, err);
+    completed = yvex_core_monotonic_ns();
+    evidence->seconds = completed >= started
+                            ? (double)(completed - started) / 1000000000.0
+                            : 0.0;
     if (rc == YVEX_OK &&
         (!admission->complete ||
          !yvex_sha256_hex_valid(admission->artifact_identity) ||
@@ -413,7 +564,19 @@ static int media_model_component_admit(
         !yvex_core_u64_add(*artifact_bytes, yvex_artifact_size(artifact), &next))
         rc = generation_fail(err, YVEX_ERR_BOUNDS, "runtime.media-model",
                              "component artifact byte accounting overflowed");
-    if (rc == YVEX_OK) *artifact_bytes = next;
+    if (rc == YVEX_OK) {
+        *artifact_bytes = next;
+        yvex_core_text_copy(model->summary.components[component].role,
+                            sizeof(model->summary.components[component].role), name);
+        if (!yvex_core_u64_add(model->summary.artifact_bytes_hashed,
+                               evidence->bytes_hashed, &next))
+            rc = generation_fail(err, YVEX_ERR_BOUNDS, "runtime.media-model",
+                                 "component verification byte accounting overflowed");
+        else
+            model->summary.artifact_bytes_hashed = next;
+        if (rc == YVEX_OK && open_options && open_options->observe_component)
+            open_options->observe_component(open_options->observer_context, name, evidence);
+    }
     return rc;
 }
 
@@ -522,6 +685,7 @@ static int media_model_contract_matches(
 int yvex_runtime_media_model_open(
     yvex_runtime_media_model **out,
     const yvex_runtime_av_generation_request *request,
+    const yvex_runtime_media_model_open_options *open_options,
     yvex_runtime_media_model_summary *summary, yvex_error *err)
 {
     static const char *names[MEDIA_COMPONENT_COUNT] = {
@@ -534,6 +698,10 @@ int yvex_runtime_media_model_open(
     if (out) *out = NULL;
     if (summary) memset(summary, 0, sizeof(*summary));
     rc = model_contract_validate(request, err);
+    if (rc == YVEX_OK && open_options &&
+        open_options->schema_version != YVEX_RUNTIME_MEDIA_MODEL_OPEN_SCHEMA_V1)
+        rc = generation_fail(err, YVEX_ERR_INVALID_ARG, "runtime.media-model",
+                             "media model-open options schema is unsupported");
     if (rc != YVEX_OK || !out || !summary) {
         if (rc == YVEX_OK)
             rc = generation_fail(err, YVEX_ERR_INVALID_ARG, "runtime.media-model",
@@ -562,7 +730,7 @@ int yvex_runtime_media_model_open(
         rc = media_model_component_admit(
             model, MEDIA_COMPONENT_TEXT, names[MEDIA_COMPONENT_TEXT],
             model->text.artifact, model->text.gguf, model->text.table,
-            &artifact_bytes, err);
+            open_options, &artifact_bytes, err);
     for (index = MEDIA_COMPONENT_TRANSFORMER;
          rc == YVEX_OK && index < MEDIA_COMPONENT_COUNT; ++index) {
         component_view *view = media_model_view(model, (media_component_index)index);
@@ -570,7 +738,8 @@ int yvex_runtime_media_model_open(
         if (rc == YVEX_OK)
             rc = media_model_component_admit(
                 model, (media_component_index)index, names[index],
-                view->artifact, view->gguf, view->tensors, &artifact_bytes, err);
+                view->artifact, view->gguf, view->tensors, open_options,
+                &artifact_bytes, err);
     }
     if (rc == YVEX_OK) rc = media_model_identity(model, artifact_bytes, err);
     if (rc != YVEX_OK) {
@@ -727,6 +896,8 @@ static int latent_execute(generation_state *state, yvex_error *err)
     context.block_count = request->transformer_blocks;
     context.cancelled = request->cancel_requested;
     context.cancellation_context = request->cancel_context;
+    context.observe = latent_progress_observe;
+    context.observer_context = (void *)request;
     if (rc == YVEX_OK)
         rc = request->latent(
             &state->plan, &context, request->seed,
@@ -1057,24 +1228,65 @@ int yvex_runtime_media_model_generate(
     }
     state.model = model;
     state.request = request;
-    rc = conditioning_execute(&state, err);
+    rc = generation_progress(request, YVEX_RUNTIME_MEDIA_PROGRESS_CONDITIONING_START,
+                             0ull, 0ull, 0ull, err);
+    if (rc == YVEX_OK) rc = conditioning_execute(&state, err);
+    if (rc == YVEX_OK)
+        rc = generation_progress(
+            request, YVEX_RUNTIME_MEDIA_PROGRESS_CONDITIONING_COMPLETE,
+            state.conditioning_result.token_count,
+            state.conditioning_result.token_count,
+            state.conditioning_result.kernel_launches, err);
     if (rc == YVEX_OK) rc = plan_and_layout_build(&state, err);
     if (rc == YVEX_OK) rc = generation_cancelled(request, err);
+    if (rc == YVEX_OK)
+        rc = generation_progress(request, YVEX_RUNTIME_MEDIA_PROGRESS_LATENT_START,
+                                 0ull, request->inference_steps,
+                                 state.plan.packed_rows, err);
     if (rc == YVEX_OK) rc = latent_execute(&state, err);
+    if (rc == YVEX_OK)
+        rc = generation_progress(
+            request, YVEX_RUNTIME_MEDIA_PROGRESS_LATENT_COMPLETE,
+            request->inference_steps, request->inference_steps,
+            state.evaluator_result.model_evaluations, err);
     if (rc == YVEX_OK) rc = latent_unpack(&state, err);
     host_release(&state, (void **)&state.video_rows, state.video_row_values, sizeof(float));
     host_release(&state, (void **)&state.audio_rows, state.audio_row_values, sizeof(float));
     host_release(&state, (void **)&state.conditioning,
                  state.conditioning_values, sizeof(float));
     if (rc == YVEX_OK) rc = generation_cancelled(request, err);
+    if (rc == YVEX_OK)
+        rc = generation_progress(request, YVEX_RUNTIME_MEDIA_PROGRESS_VIDEO_START,
+                                 0ull, request->frames, 0ull, err);
     if (rc == YVEX_OK) rc = video_execute(&state, err);
+    if (rc == YVEX_OK)
+        rc = generation_progress(request, YVEX_RUNTIME_MEDIA_PROGRESS_VIDEO_COMPLETE,
+                                 request->frames, request->frames,
+                                 state.video_result.kernel_launches, err);
     host_release(&state, (void **)&state.video_latent,
                  state.video_latent_values, sizeof(float));
     if (rc == YVEX_OK) rc = generation_cancelled(request, err);
+    if (rc == YVEX_OK)
+        rc = generation_progress(request, YVEX_RUNTIME_MEDIA_PROGRESS_AUDIO_START,
+                                 0ull, 0ull, 0ull, err);
     if (rc == YVEX_OK) rc = audio_execute(&state, err);
+    if (rc == YVEX_OK)
+        rc = generation_progress(
+            request, YVEX_RUNTIME_MEDIA_PROGRESS_AUDIO_COMPLETE,
+            state.audio_result.samples_per_channel,
+            state.audio_result.samples_per_channel,
+            state.audio_result.kernel_launches, err);
     host_release(&state, (void **)&state.audio_latent,
                  state.audio_latent_values, sizeof(float));
+    if (rc == YVEX_OK)
+        rc = generation_progress(request, YVEX_RUNTIME_MEDIA_PROGRESS_PUBLICATION_START,
+                                 0ull, 0ull, 0ull, err);
     if (rc == YVEX_OK) rc = media_publish(&state, err);
+    if (rc == YVEX_OK)
+        rc = generation_progress(
+            request, YVEX_RUNTIME_MEDIA_PROGRESS_PUBLICATION_COMPLETE,
+            state.media_result.file_bytes, state.media_result.file_bytes,
+            state.media_result.video_frames, err);
     if (rc == YVEX_OK) {
         rc = result_publish(&state, result, err);
     }
@@ -1094,7 +1306,7 @@ int yvex_runtime_av_generate(
     yvex_error primary;
     int rc;
     if (result) memset(result, 0, sizeof(*result));
-    rc = yvex_runtime_media_model_open(&model, request, &summary, err);
+    rc = yvex_runtime_media_model_open(&model, request, NULL, &summary, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_media_model_generate(model, request, result, err);
     primary = err ? *err : (yvex_error){0};

@@ -686,9 +686,33 @@ static void server_event_values(const yvex_server_event *event, int detailed)
         printf(" · %llu upload%s", event->value_c, event->value_c == 1u ? "" : "s");
         break;
     case YVEX_SERVER_EVENT_ARTIFACT_OPEN_COMPLETE:
-        server_event_bytes("hashed", event->value_a);
-        server_event_bytes("host", event->value_b);
-        server_event_bytes("device", event->value_c);
+        if (event->generation_mode == YVEX_SERVER_GENERATION_MEDIA &&
+            strcmp(event->phase, "media-model")) {
+            static const char *const modes[] = {
+                "full-hash", "verified-reopen", "fallback-full-hash",
+            };
+            static const char *const states[] = {
+                "disabled", "miss", "hit", "invalid",
+            };
+            unsigned long long mode = event->value_c & 0xffull;
+            unsigned long long state = (event->value_c >> 8u) & 0xffull;
+            server_event_bytes("hashed", event->value_a);
+            server_event_bytes("file", event->value_b);
+            printf(" · %s · lease %s",
+                   mode < sizeof(modes) / sizeof(modes[0]) ? modes[mode] : "unknown",
+                   state < sizeof(states) / sizeof(states[0]) ? states[state] : "unknown");
+            if ((event->value_c >> 16u) & 1ull) printf(" · published");
+            if ((event->value_c >> 17u) & 1ull) printf(" · repaired");
+            if ((event->value_c >> 18u) & 1ull) printf(" · cache warning");
+        } else if (event->generation_mode == YVEX_SERVER_GENERATION_MEDIA) {
+            server_event_bytes("hashed", event->value_a);
+            server_event_bytes("files", event->value_b);
+            printf(" · %llu components", event->value_c);
+        } else {
+            server_event_bytes("hashed", event->value_a);
+            server_event_bytes("host", event->value_b);
+            server_event_bytes("device", event->value_c);
+        }
         break;
     case YVEX_SERVER_EVENT_LISTENER_READY:
         printf(" · socket %04llo · queue %llu · sessions %llu", event->value_a,
@@ -1005,6 +1029,61 @@ int yvex_cli_watch_renderer_event(yvex_cli_watch_renderer *renderer,
                                   const yvex_server_event *event)
 {
     if (!renderer || !event) return 0;
+    if (event->generation_mode == YVEX_SERVER_GENERATION_MEDIA &&
+        event->kind == YVEX_SERVER_EVENT_ARTIFACT_OPEN_COMPLETE &&
+        strcmp(event->phase, "media-model")) {
+        static const char *const modes[] = {
+            "full-hash", "verified-reopen", "fallback-full-hash",
+        };
+        unsigned long long mode = event->value_c & 0xffull;
+        watch_line_begin(renderer, event, renderer->style.accent, "COMPONENT");
+        printf("%-12s · %s", event->phase,
+               mode < sizeof(modes) / sizeof(modes[0]) ? modes[mode] : "unknown");
+        server_event_bytes("hashed", event->value_a);
+        server_event_bytes("file", event->value_b);
+        if (event->seconds > 0.0) printf(" · %.3f s", event->seconds);
+        putchar('\n');
+        return 1;
+    }
+    if (event->generation_mode == YVEX_SERVER_GENERATION_MEDIA &&
+        event->kind == YVEX_SERVER_EVENT_REQUEST_STARTED) {
+        watch_line_begin(renderer, event, renderer->style.accent, "MEDIA");
+        printf("request started\n");
+        renderer->request_open = 1;
+        return 1;
+    }
+    if (event->generation_mode == YVEX_SERVER_GENERATION_MEDIA &&
+        (event->kind == YVEX_SERVER_EVENT_PREFILL_STARTED ||
+         event->kind == YVEX_SERVER_EVENT_PREFILL_COMPLETED ||
+         event->kind == YVEX_SERVER_EVENT_GENERATION_PROGRESS ||
+         event->kind == YVEX_SERVER_EVENT_GENERATION_PROFILE)) {
+        watch_line_begin(renderer, event, renderer->style.accent, "MEDIA");
+        printf("%s", event->phase[0] ? event->phase : "executing");
+        if (event->value_b)
+            printf(" · %llu/%llu", event->value_a, event->value_b);
+        if (event->value_c) printf(" · value %llu", event->value_c);
+        putchar('\n');
+        return 1;
+    }
+    if (event->generation_mode == YVEX_SERVER_GENERATION_MEDIA &&
+        event->kind >= YVEX_SERVER_EVENT_GENERATION_COMPLETED &&
+        event->kind <= YVEX_SERVER_EVENT_GENERATION_FAILED) {
+        const char *label = event->kind == YVEX_SERVER_EVENT_GENERATION_COMPLETED
+                                ? "COMPLETE"
+                            : event->kind == YVEX_SERVER_EVENT_GENERATION_CANCELLED
+                                ? "CANCELLED" : "FAILED";
+        watch_line_begin(renderer, event, server_event_color(event, &renderer->style),
+                         label);
+        if (event->kind == YVEX_SERVER_EVENT_GENERATION_COMPLETED)
+            printf("%llu frames · %llu bytes · %llu audio samples",
+                   event->value_a, event->value_b, event->value_c);
+        else
+            printf("media generation %s", event->phase[0] ? event->phase : "ended");
+        if (event->seconds > 0.0) printf(" · %.3f s", event->seconds);
+        puts("\n");
+        renderer->request_open = 0;
+        return 1;
+    }
     if (event->kind <= YVEX_SERVER_EVENT_LISTENER_READY ||
         event->kind == YVEX_SERVER_EVENT_CLIENT_DISCONNECTED ||
         event->kind == YVEX_SERVER_EVENT_REQUEST_RECEIVED ||

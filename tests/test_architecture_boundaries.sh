@@ -814,6 +814,14 @@ if rg -n "$runtime_family_dispatch_pattern" src/runtime include/yvex/internal/ru
     fail "runtime retains a family adapter or model-name execution callback"
 fi
 
+# Hosted media treats creative text as opaque conditioning input. Execution policy is a typed
+# runtime preset; the server cannot grow another prompt-keyword wizard or fabricated dialogue.
+if rg -n \
+    'MEDIA_DIALOG_PARAMETERS|text_has_term|profile_select|duration_select|steps_select|format_select|seed_select|dialog_parse|dialog_question' \
+    src/server/media.c; then
+    fail "hosted media server interprets creative prompt text as execution policy"
+fi
+
 for product in "${YVEX_LIB:-build/lib/libyvex.a}" "${YVEX_BIN:-./yvex}"; do
     [ -f "$product" ] || fail "required production product is missing: $product"
     if nm -A "$product" | rg 'yvex_test_attention_reference_'; then

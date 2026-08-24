@@ -836,13 +836,9 @@ static void generation_progress_finish(int *active, int terminate_line)
     fflush(stdout);
     *active = 0;
 }
-static int generation_turn(const char *session_name,
-                           const unsigned char *prompt,
-                           unsigned long long prompt_bytes,
-                           const client_turn_options *options,
-                           int conversation,
-                           unsigned long long context_capacity,
-                           int *connection_lost)
+static int generation_turn(const char *session_name, const unsigned char *prompt,
+                           unsigned long long prompt_bytes, const client_turn_options *options,
+                           int conversation, unsigned long long context_capacity, int *connection_lost)
 {
     yvex_client_request request;
     yvex_client_message message;
@@ -886,7 +882,28 @@ static int generation_turn(const char *session_name,
         if (message.kind == YVEX_CLIENT_MESSAGE_TURN_STARTED) {
             continue;
         } else if (message.kind == YVEX_CLIENT_MESSAGE_EVENT) {
-            if (conversation && message.event.kind == YVEX_SERVER_EVENT_PREFILL_STARTED) {
+            if (conversation &&
+                message.event.generation_mode == YVEX_SERVER_GENERATION_MEDIA) {
+                printf("\r\033[2K%smedia · %s", style.accent,
+                       message.event.phase[0] ? message.event.phase : "executing");
+                if (message.event.value_b)
+                    printf(" · %llu/%llu", message.event.value_a,
+                           message.event.value_b);
+                printf("%s", style.reset);
+                if (message.event.kind == YVEX_SERVER_EVENT_GENERATION_COMPLETED ||
+                    message.event.kind == YVEX_SERVER_EVENT_GENERATION_CANCELLED ||
+                    message.event.kind == YVEX_SERVER_EVENT_GENERATION_FAILED ||
+                    strstr(message.event.phase, "complete"))
+                    putchar('\n');
+                fflush(stdout);
+                progress_active = message.event.kind !=
+                                      YVEX_SERVER_EVENT_GENERATION_COMPLETED &&
+                                  message.event.kind !=
+                                      YVEX_SERVER_EVENT_GENERATION_CANCELLED &&
+                                  message.event.kind !=
+                                      YVEX_SERVER_EVENT_GENERATION_FAILED;
+            } else if (conversation &&
+                       message.event.kind == YVEX_SERVER_EVENT_PREFILL_STARTED) {
                 printf("\r\033[2K%sprocessing %llu input tokens · 0/%llu · 0%%%s",
                        style.accent, message.event.value_a, message.event.value_a,
                        style.reset);
@@ -932,10 +949,30 @@ static int generation_turn(const char *session_name,
                                "terminal stream finalization failed");
                 break;
             }
-            yvex_cli_out_turn_metrics(status_output, &message, context_capacity, &style);
-            fprintf(status_output, " · stop %s · %ssession %s%s\n",
-                    yvex_cli_out_stop_reason(message.stop_reason), style.dim,
-                    message.session_name, style.reset);
+            if (message.media_result.available) {
+                fprintf(status_output,
+                        "%smedia complete%s · %s\n"
+                        "%llux%llu · %llu frames · %llu/%llu fps · "
+                        "%llu audio samples · %llu bytes · seed %llu\n"
+                        "%spreset %s · execution %s%s\n",
+                        style.success, style.reset,
+                        message.media_result.output_path,
+                        message.media_result.width, message.media_result.height,
+                        message.media_result.frames,
+                        message.media_result.fps_numerator,
+                        message.media_result.fps_denominator,
+                        message.media_result.audio_samples,
+                        message.media_result.file_bytes,
+                        message.media_result.seed, style.dim,
+                        message.media_result.preset_identity,
+                        message.media_result.execution_identity, style.reset);
+            } else {
+                yvex_cli_out_turn_metrics(status_output, &message,
+                                          context_capacity, &style);
+                fprintf(status_output, " · stop %s · %ssession %s%s\n",
+                        yvex_cli_out_stop_reason(message.stop_reason), style.dim,
+                        message.session_name, style.reset);
+            }
             if (message.reasoning_tokens || message.first_reasoning_seconds > 0.0)
                 fprintf(status_output,
                         "%sreasoning%s %llu tokens · %.2f s · %.2f tok/s · TTFR %.2f s · "
@@ -1794,7 +1831,7 @@ static void render_console_status(const yvex_client_message *message, int startu
                    message->partial_turn.committed_token_count,
                    message->partial_turn.committed_token_count == 1u ? "" : "s");
         if (message->runtime.generation_mode == YVEX_SERVER_GENERATION_MEDIA)
-            printf("  %s%-10s%s media request negotiation", style.dim, "context", style.reset);
+            printf("  %s%-10s%s direct media generation", style.dim, "context", style.reset);
         else
             printf("  %s%-10s%s %llu/%llu · reasoning %s", style.dim, "context", style.reset,
                    status->context_used, status->context_capacity, reasoning);
@@ -1827,7 +1864,7 @@ static void render_console_status(const yvex_client_message *message, int startu
            status->attached ? "attached to resident runtime" : "detached from runtime",
            status->session_name, status->position, status->turn_count);
     if (message->runtime.generation_mode == YVEX_SERVER_GENERATION_MEDIA)
-        printf(" · media request negotiation");
+        printf(" · direct media generation");
     else
         printf(" · context %llu/%llu", status->context_used,
                status->context_capacity);

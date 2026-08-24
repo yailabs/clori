@@ -945,12 +945,14 @@ static const yvex_artifact_catalog_contract video_contract = {
     sizeof(video_metadata) / sizeof(video_metadata[0]), 1ull,
     VIDEO_ELEMENTS, 32ull,
 };
-static int component_admit(const char *component, const yvex_artifact *artifact,
-                           const yvex_gguf *gguf, const yvex_tensor_table *tensors,
-                           yvex_complete_artifact_admission *out,
-                           yvex_artifact_admission_failure *failure, yvex_error *err)
+static int component_admit(
+    const char *component, const yvex_artifact *artifact, const yvex_gguf *gguf,
+    const yvex_tensor_table *tensors, const yvex_artifact_admission_options *options,
+    yvex_complete_artifact_admission *out, yvex_artifact_admission_evidence *evidence,
+    yvex_artifact_admission_failure *failure, yvex_error *err)
 {
     const yvex_artifact_catalog_contract *contract = NULL;
+    yvex_artifact_admission_evidence local_evidence;
     if (component && strcmp(component, "audio_vae") == 0) contract = &audio_contract;
     if (component && strcmp(component, "video_vae") == 0) contract = &video_contract;
     if (component && strcmp(component, "text_encoder") == 0) contract = &text_contract;
@@ -965,8 +967,9 @@ static int component_admit(const char *component, const yvex_artifact *artifact,
                        "unknown MiniMax-H3 weighted component");
         return YVEX_ERR_INVALID_ARG;
     }
-    return yvex_artifact_admit_catalog(
-        artifact, gguf, tensors, contract, out, failure, err);
+    return yvex_artifact_admit_catalog_with_options(
+        artifact, gguf, tensors, contract, options, out, evidence ? evidence : &local_evidence,
+        failure, err);
 }
 static int component_binding_refuse(yvex_component_failure *failure,
                                     yvex_component_failure_code code,
@@ -1143,8 +1146,8 @@ static int audio_vae_execute_artifact_cuda(
             &execution, YVEX_MINIMAX_H3_COMPONENT_EXECUTION_INVALID_ARGUMENT,
             NULL, 6ull, 0ull, YVEX_ERR_INVALID_ARG,
             "Audio VAE CUDA execution requires artifact, geometry, and device budget");
-    rc = component_admit(
-        "audio_vae", artifact, gguf, tensors, &admission, &admission_failure, err);
+    rc = component_admit("audio_vae", artifact, gguf, tensors, NULL, &admission, NULL,
+                         &admission_failure, err);
     admitted = rc == YVEX_OK;
     if (rc == YVEX_OK)
         rc = yvex_runtime_component_session_open(
@@ -1421,8 +1424,8 @@ static int text_encoder_artifact_cuda(const yvex_artifact *artifact,
                        "bounded Qwen conditioning weight bindings could not be allocated");
         return YVEX_ERR_NOMEM;
     }
-    rc = component_admit(
-        "text_encoder", artifact, gguf, tensors, &admission, &admission_failure, err);
+    rc = component_admit("text_encoder", artifact, gguf, tensors, NULL, &admission, NULL,
+                         &admission_failure, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_component_session_open(
             &component_session, &admission, artifact, gguf, tensors, YVEX_BACKEND_KIND_CUDA,
@@ -1990,11 +1993,8 @@ static int minimax_tokenizer_policy(
 const yvex_family_source_adapter *yvex_graph_minimax_h3_source_adapter(void)
 {
     static const yvex_family_source_adapter adapter = {
-        .schema_version = YVEX_FAMILY_SOURCE_ADAPTER_SCHEMA_V1,
-        .target_id = YVEX_MINIMAX_H3_TARGET_ID,
-        .family = "minimax-h3",
-        .tokenizer_architecture = "minimax-h3",
-        .tokenizer_policy = minimax_tokenizer_policy,
-        .compile = minimax_source_compile};
+        .schema_version = YVEX_FAMILY_SOURCE_ADAPTER_SCHEMA_V1, .target_id = YVEX_MINIMAX_H3_TARGET_ID,
+        .family = "minimax-h3", .tokenizer_architecture = "minimax-h3",
+        .tokenizer_policy = minimax_tokenizer_policy, .compile = minimax_source_compile};
     return &adapter;
 }

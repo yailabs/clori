@@ -303,9 +303,9 @@ typedef struct yvex_component_binding {
     int (*plan)(const yvex_component_plan_request *, yvex_component_plan *,
                 yvex_component_failure *, yvex_error *);
     int (*admit)(const char *, const yvex_artifact *, const yvex_gguf *,
-                 const yvex_tensor_table *,
-                 yvex_complete_artifact_admission *, yvex_artifact_admission_failure *,
-                 yvex_error *);
+                 const yvex_tensor_table *, const yvex_artifact_admission_options *,
+                 yvex_complete_artifact_admission *, yvex_artifact_admission_evidence *,
+                 yvex_artifact_admission_failure *, yvex_error *);
     int (*execute)(yvex_materialization_session *, const yvex_component_execution_request *,
                    yvex_component_execution_result *, yvex_component_failure *, yvex_error *);
 } yvex_component_binding;

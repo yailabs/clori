@@ -44,6 +44,8 @@ Typed events cover at least:
 - draft start/completion, target verification start/completion, accepted prefix,
   candidate rejection, and speculative-cycle commit;
 - first token, decode progress, fragment publication, commit, and stop;
+- media request, conditioning, latent iteration, video/audio decode,
+  publication, completion, cancellation, and failure;
 - cancellation, refusal, failure, and partial progress;
 - memory/resource counters and bounded profile stages;
 - shutdown admission, drain, model close, and completion.
@@ -78,6 +80,12 @@ turn, phase, timing, and rate. Neither projection
 exposes generic positional counter names. Native prefill
 progress sent to the REPL is another projection of the sealed event, not a
 synthetic client event.
+
+Media progress is likewise server-authored. The interactive client may project
+bounded completed/total iteration facts but does not fabricate percentages or
+assistant prose. Component-open events distinguish full hash, verified reopen,
+fallback hash, receipt state, bytes actually hashed, file extent, and elapsed
+time. These authentication facts do not imply materialization or residency.
 
 Speculative events carry availability-bearing named generation mode, cycle,
 candidate extent, selected-verification, accepted, rejected, stop-discarded,

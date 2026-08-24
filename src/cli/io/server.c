@@ -43,7 +43,9 @@ typedef struct {
 typedef struct {
     const char *artifact_root;
     const char *output_root;
+    const char *artifact_reopen_cache_root;
     char default_output_root[PATH_MAX];
+    char default_cache_root[PATH_MAX];
 } cli_server_media_configuration;
 
 typedef struct {
@@ -412,8 +414,13 @@ static int media_configuration_defaults(
     int admission_written, written, rc;
     if (!configuration->artifact_root)
         configuration->artifact_root = profile->installation;
-    if (configuration->output_root) return YVEX_OK;
     rc = yvex_paths_default(&paths, err);
+    if (rc == YVEX_OK) {
+        yvex_core_text_copy(configuration->default_cache_root,
+                            sizeof(configuration->default_cache_root), paths.cache_dir);
+        configuration->artifact_reopen_cache_root = configuration->default_cache_root;
+    }
+    if (rc != YVEX_OK || configuration->output_root) return rc;
     written = rc == YVEX_OK
                   ? snprintf(configuration->default_output_root,
                              sizeof(configuration->default_output_root), "%s/media",
@@ -465,6 +472,9 @@ static int media_prepare(const cli_server_profile *profile,
         rc = yvex_runtime_media_host_profile_build(
             host, &target, adapter->media_execution, configuration->artifact_root,
             configuration->output_root, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_media_execution_preset_build(
+            host, &media->execution_preset, err);
     if (rc != YVEX_OK) return rc;
     if (options->backend != host->request_template.component_backend ||
         options->openai_enabled) {
@@ -477,6 +487,7 @@ static int media_prepare(const cli_server_profile *profile,
     options->target_id = host->target;
     media->schema_version = YVEX_SERVER_MEDIA_SCHEMA_V1;
     media->output_root = host->output_root;
+    media->artifact_reopen_cache_root = configuration->artifact_reopen_cache_root;
     media->request_template = host->request_template;
     media->profiles = host->profiles;
     media->profile_count = host->profile_count;

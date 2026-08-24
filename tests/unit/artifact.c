@@ -54,6 +54,10 @@ static int test_verified_reopen_lease(void)
     char artifact_dir[YVEX_ARTIFACT_PATH_CAP], lease_path[YVEX_ARTIFACT_PATH_CAP];
     char receipt_root[YVEX_ARTIFACT_PATH_CAP];
     yvex_artifact_options options = {0};
+    yvex_artifact_admission_options admission_options = {0};
+    yvex_artifact_admission_evidence evidence;
+    yvex_complete_artifact_admission admission = {0};
+    yvex_artifact_admission_failure failure;
     yvex_artifact_file_identity identity;
     yvex_artifact_reopen_lease lease;
     yvex_artifact *artifact = NULL;
@@ -97,6 +101,32 @@ static int test_verified_reopen_lease(void)
                          artifact, identity.sha256, cache_root, &lease, &err) == YVEX_OK &&
                          !lease.verified && lease.receipt_present && !lease.receipt_valid,
                      "corrupt verified-reopen lease falls back to a full hash");
+    admission.file_bytes = yvex_artifact_size(artifact);
+    admission.complete = 1;
+    YVEX_TEST_ASSERT(yvex_artifact_snapshot_get(
+                         artifact, &admission.file_snapshot, &err) == YVEX_OK,
+                     "artifact admission snapshot is captured");
+    memcpy(admission.artifact_identity, identity.sha256,
+           sizeof(admission.artifact_identity));
+    admission_options.schema_version = YVEX_ARTIFACT_ADMISSION_OPTIONS_SCHEMA_V1;
+    admission_options.reopen_cache_root = cache_root;
+    YVEX_TEST_ASSERT(
+        yvex_artifact_admission_authenticate(
+            artifact, &admission, &admission_options, &evidence, &failure,
+            &err) == YVEX_OK &&
+            admission.artifact_identity_verified &&
+            evidence.complete &&
+            evidence.verification_mode ==
+                YVEX_ARTIFACT_VERIFICATION_FALLBACK_FULL_HASH &&
+            evidence.reopen_state == YVEX_ARTIFACT_REOPEN_INVALID &&
+            evidence.bytes_hashed == yvex_artifact_size(artifact) &&
+            evidence.lease_repaired && !evidence.cache_failure,
+        "full verification repairs a malformed verified-reopen receipt");
+    YVEX_TEST_ASSERT(yvex_artifact_reopen_lease_check(
+                         artifact, identity.sha256, cache_root, &lease,
+                         &err) == YVEX_OK &&
+                         lease.verified && lease.receipt_valid,
+                     "repaired verified-reopen receipt is canonical");
     yvex_artifact_close(artifact);
     artifact = NULL;
     descriptor = open(artifact_path, O_WRONLY | O_CLOEXEC | O_NOFOLLOW);
@@ -107,6 +137,20 @@ static int test_verified_reopen_lease(void)
                              artifact, identity.sha256, cache_root, &lease, &err) == YVEX_OK &&
                          !lease.verified && !lease.receipt_present,
                      "artifact snapshot drift cannot reuse the prior lease");
+    memset(&admission, 0, sizeof(admission));
+    admission.file_bytes = yvex_artifact_size(artifact);
+    admission.complete = 1;
+    YVEX_TEST_ASSERT(yvex_artifact_snapshot_get(
+                         artifact, &admission.file_snapshot, &err) == YVEX_OK,
+                     "changed artifact admission snapshot is captured");
+    memcpy(admission.artifact_identity, identity.sha256,
+           sizeof(admission.artifact_identity));
+    YVEX_TEST_ASSERT(
+        yvex_artifact_admission_authenticate(
+            artifact, &admission, &admission_options, &evidence, &failure,
+            &err) == YVEX_ERR_FORMAT &&
+            !admission.artifact_identity_verified && !evidence.complete,
+        "snapshot drift falls back to full verification and refuses changed bytes");
     yvex_artifact_close(artifact);
     artifact_count = snprintf(artifact_dir, sizeof(artifact_dir),
                               "%s/artifact-reopen/%s", cache_root, identity.sha256);

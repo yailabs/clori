@@ -165,7 +165,8 @@ static int layer_proof_execute(
         .rope_theta = architecture.encoder.rope_theta,
         .normalization_epsilon = 1.0e-6f};
     rc = graph->component_admit(
-        "text_encoder", artifact, gguf, tensors, &admission, &admission_failure, err);
+        "text_encoder", artifact, gguf, tensors, NULL, &admission, NULL,
+        &admission_failure, err);
     yvex_materialization_options_default(&materialization_options);
     materialization_options.max_chunk_bytes = 64ull * 1024ull * 1024ull;
     if (rc == YVEX_OK)

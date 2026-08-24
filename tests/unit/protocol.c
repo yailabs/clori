@@ -103,12 +103,12 @@ static int test_all_operation_roundtrips(void)
         YVEX_TEST_ASSERT(
             yvex_protocol_request_encode(&source, frame, sizeof(frame), &count,
                                          &err) == YVEX_OK,
-            "all protocol-v11 operations encode");
+            "all protocol-v12 operations encode");
         YVEX_TEST_ASSERT(
             yvex_protocol_request_decode(frame, count, &decoded, &prompt,
                                          &provider, &err) == YVEX_OK &&
                 decoded.operation == (yvex_client_operation)value,
-            "all protocol-v11 operations decode");
+            "all protocol-v12 operations decode");
         if (source.operation == YVEX_CLIENT_OP_SESSION_FORK)
             YVEX_TEST_ASSERT(
                 strcmp(decoded.fork_session_name, "child") == 0 &&
@@ -720,7 +720,7 @@ static int test_v6_frame_refusal(void)
     pthread_t thread;
     v6_peer peer;
     int rc;
-    (void)snprintf(path, sizeof(path), "build/tests/protocol-v11-%lu.sock",
+    (void)snprintf(path, sizeof(path), "build/tests/protocol-v12-%lu.sock",
                    (unsigned long)getpid());
     (void)unlink(path);
     peer.listener = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -736,7 +736,7 @@ static int test_v6_frame_refusal(void)
                      "v6 peer thread");
     rc = yvex_client_connect(&client, path, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT && client == NULL &&
-                         strstr(yvex_error_message(&err), "version 11") != NULL,
+                         strstr(yvex_error_message(&err), "version 12") != NULL,
                      "v6 frame explicitly refuses");
     YVEX_TEST_ASSERT(pthread_join(thread, NULL) == 0, "v6 peer join");
     (void)close(peer.listener);
@@ -824,6 +824,65 @@ static int test_bounded_parser_mutation(void)
     return 0;
 }
 
+static int test_media_result_roundtrip(void)
+{
+    yvex_client_message message = {0}, decoded;
+    unsigned char frame[16384];
+    unsigned long long count = 0ull;
+    yvex_error err;
+
+    message.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
+    message.kind = YVEX_CLIENT_MESSAGE_TURN_COMPLETE;
+    message.status = YVEX_OK;
+    message.generation_mode = YVEX_SERVER_GENERATION_MEDIA;
+    message.generation_phase = YVEX_CLIENT_PHASE_COMPLETE;
+    message.stop_reason = YVEX_CLIENT_STOP_EOS;
+    message.session_state = YVEX_SERVER_SESSION_READY;
+    message.media_result.schema_version = YVEX_CLIENT_MEDIA_RESULT_SCHEMA_V1;
+    message.media_result.available = 1;
+    strcpy(message.media_result.output_path, "/tmp/yvex-media-result.avi");
+    message.media_result.width = 192ull;
+    message.media_result.height = 192ull;
+    message.media_result.frames = 124ull;
+    message.media_result.fps_numerator = 24ull;
+    message.media_result.fps_denominator = 1ull;
+    message.media_result.audio_samples = 248000ull;
+    message.media_result.audio_sample_rate = 48000ull;
+    message.media_result.seed = 42ull;
+    message.media_result.file_bytes = 123456ull;
+    memset(message.media_result.preset_identity, 'a', 64u);
+    memset(message.media_result.execution_identity, 'b', 64u);
+    memset(message.media_result.file_identity, 'c', 64u);
+    memset(message.media_result.publication_identity, 'd', 64u);
+    YVEX_TEST_ASSERT(
+        yvex_protocol_message_encode(&message, frame, sizeof(frame), &count,
+                                     &err) == YVEX_OK &&
+            yvex_protocol_message_decode(frame, count, &decoded, &err) ==
+                YVEX_OK &&
+            decoded.media_result.available &&
+            !strcmp(decoded.media_result.output_path,
+                    message.media_result.output_path) &&
+            decoded.media_result.width == 192ull &&
+            decoded.media_result.height == 192ull &&
+            decoded.media_result.frames == 124ull &&
+            decoded.media_result.audio_samples == 248000ull &&
+            decoded.media_result.seed == 42ull &&
+            !strcmp(decoded.media_result.publication_identity,
+                    message.media_result.publication_identity),
+        "typed media result roundtrip preserves publication facts");
+    message.media_result.output_path[0] = 'x';
+    YVEX_TEST_ASSERT(
+        yvex_protocol_message_encode(&message, frame, sizeof(frame), &count,
+                                     &err) == YVEX_ERR_INVALID_ARG,
+        "typed media result refuses a relative output path");
+    memset(&message.media_result, 0, sizeof(message.media_result));
+    YVEX_TEST_ASSERT(
+        yvex_protocol_message_encode(&message, frame, sizeof(frame), &count,
+                                     &err) == YVEX_ERR_INVALID_ARG,
+        "successful media completion refuses without a typed media result");
+    return 0;
+}
+
 int yvex_test_protocol(void)
 {
     if (test_request_roundtrip() != 0) return 1;
@@ -831,6 +890,7 @@ int yvex_test_protocol(void)
     if (test_schema_refusals() != 0) return 1;
     if (test_message_roundtrip() != 0) return 1;
     if (test_capability_aware_readiness() != 0) return 1;
+    if (test_media_result_roundtrip() != 0) return 1;
     if (test_v6_frame_refusal() != 0) return 1;
     if (test_bounded_parser_mutation() != 0) return 1;
     return 0;

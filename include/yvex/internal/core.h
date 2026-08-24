@@ -363,6 +363,10 @@ int yvex_core_file_publish_noreplace(const char *path, const void *data, size_t 
                                      yvex_core_file_validator validator,
                                      void *validator_context,
                                      yvex_core_file_result *result, yvex_error *err);
+int yvex_core_file_publish_replace(const char *path, const void *data, size_t count,
+                                   yvex_core_file_validator validator,
+                                   void *validator_context,
+                                   yvex_core_file_result *result, yvex_error *err);
 int yvex_core_file_read_snapshot(const char *path, size_t maximum_bytes,
                                  unsigned char **data, size_t *count,
                                  yvex_core_file_result *result, yvex_error *err);

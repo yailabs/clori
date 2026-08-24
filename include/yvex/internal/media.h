@@ -17,6 +17,9 @@ extern "C" {
 #define YVEX_RUNTIME_AV_GENERATION_SCHEMA_V1 1u
 #define YVEX_RUNTIME_MEDIA_HOST_SCHEMA_V1 1u
 #define YVEX_RUNTIME_MEDIA_MODEL_SCHEMA_V1 1u
+#define YVEX_RUNTIME_MEDIA_MODEL_OPEN_SCHEMA_V1 1u
+#define YVEX_RUNTIME_MEDIA_PRESET_SCHEMA_V1 1u
+#define YVEX_RUNTIME_MEDIA_PROGRESS_SCHEMA_V1 1u
 #define YVEX_RUNTIME_MEDIA_PROFILE_CAP 5u
 #define YVEX_RUNTIME_MEDIA_PROFILE_NAME_CAP 32u
 
@@ -27,6 +30,37 @@ typedef struct {
     unsigned long long width, height, maximum_frames;
     int preview_alias;
 } yvex_runtime_media_profile;
+
+typedef struct {
+    unsigned int schema_version;
+    char name[YVEX_RUNTIME_MEDIA_PROFILE_NAME_CAP];
+    char profile[YVEX_RUNTIME_MEDIA_PROFILE_NAME_CAP];
+    char format[8];
+    unsigned long long width, height, frames, sigma_grid_points, seed;
+    char identity[YVEX_SHA256_HEX_CAP];
+    int complete;
+} yvex_runtime_media_execution_preset;
+
+typedef enum {
+    YVEX_RUNTIME_MEDIA_PROGRESS_CONDITIONING_START = 0,
+    YVEX_RUNTIME_MEDIA_PROGRESS_CONDITIONING_COMPLETE,
+    YVEX_RUNTIME_MEDIA_PROGRESS_LATENT_START,
+    YVEX_RUNTIME_MEDIA_PROGRESS_LATENT_STEP,
+    YVEX_RUNTIME_MEDIA_PROGRESS_LATENT_COMPLETE,
+    YVEX_RUNTIME_MEDIA_PROGRESS_VIDEO_START,
+    YVEX_RUNTIME_MEDIA_PROGRESS_VIDEO_COMPLETE,
+    YVEX_RUNTIME_MEDIA_PROGRESS_AUDIO_START,
+    YVEX_RUNTIME_MEDIA_PROGRESS_AUDIO_COMPLETE,
+    YVEX_RUNTIME_MEDIA_PROGRESS_PUBLICATION_START,
+    YVEX_RUNTIME_MEDIA_PROGRESS_PUBLICATION_COMPLETE
+} yvex_runtime_media_progress_kind;
+typedef struct {
+    unsigned int schema_version;
+    yvex_runtime_media_progress_kind kind;
+    unsigned long long completed, total, value;
+} yvex_runtime_media_progress;
+typedef int (*yvex_runtime_media_progress_fn)(
+    void *context, const yvex_runtime_media_progress *progress, yvex_error *err);
 
 typedef struct {
     unsigned long long batch, samples_per_channel, output_values;
@@ -74,6 +108,8 @@ typedef struct {
     yvex_runtime_av_audio_fn audio_decode;
     int (*cancel_requested)(void *);
     void *cancel_context;
+    yvex_runtime_media_progress_fn observe_progress;
+    void *progress_context;
 } yvex_runtime_av_generation_request;
 
 /*
@@ -98,6 +134,19 @@ typedef struct {
 
 typedef struct {
     unsigned int schema_version;
+    const char *artifact_reopen_cache_root;
+    void (*observe_component)(void *context, const char *role,
+                              const yvex_artifact_admission_evidence *evidence);
+    void *observer_context;
+} yvex_runtime_media_model_open_options;
+
+typedef struct {
+    char role[32];
+    yvex_artifact_admission_evidence evidence;
+} yvex_runtime_media_component_summary;
+
+typedef struct {
+    unsigned int schema_version;
     unsigned long long prompt_tokens, frames, width, height, audio_samples;
     unsigned long long model_evaluations, kernel_launches, peak_device_bytes;
     unsigned long long peak_workspace_bytes, file_bytes;
@@ -117,9 +166,10 @@ typedef struct {
 
 typedef struct {
     unsigned int schema_version;
-    unsigned long long component_count, artifact_bytes;
+    unsigned long long component_count, artifact_bytes, artifact_bytes_hashed;
     char model_identity[YVEX_SHA256_HEX_CAP];
     char source_identity[YVEX_SHA256_HEX_CAP];
+    yvex_runtime_media_component_summary components[4];
     int complete;
 } yvex_runtime_media_model_summary;
 
@@ -127,6 +177,7 @@ int yvex_runtime_av_generate(const yvex_runtime_av_generation_request *,
                              yvex_runtime_av_generation_result *, yvex_error *);
 int yvex_runtime_media_model_open(
     yvex_runtime_media_model **, const yvex_runtime_av_generation_request *,
+    const yvex_runtime_media_model_open_options *,
     yvex_runtime_media_model_summary *, yvex_error *);
 int yvex_runtime_media_model_generate(
     yvex_runtime_media_model *, const yvex_runtime_av_generation_request *,
@@ -136,6 +187,12 @@ int yvex_runtime_media_host_profile_build(
     yvex_runtime_media_host_profile *, const yvex_media_target_profile *,
     const yvex_media_execution_recipe *, const char *artifact_root,
     const char *output_root, yvex_error *);
+int yvex_runtime_media_execution_preset_build(
+    const yvex_runtime_media_host_profile *, yvex_runtime_media_execution_preset *,
+    yvex_error *);
+int yvex_runtime_media_execution_preset_validate(
+    const yvex_runtime_media_host_profile *,
+    const yvex_runtime_media_execution_preset *, yvex_error *);
 
 #ifdef __cplusplus
 }

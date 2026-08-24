@@ -43,8 +43,7 @@ int yvex_artifact_identity_read_open_progress(
                     unsigned long long total),
     void *progress_context, yvex_error *err);
 typedef struct {
-    unsigned long long tensor_count;
-    unsigned long long payload_bytes_read;
+    unsigned long long tensor_count, payload_bytes_read;
     char payload_byte_identity[YVEX_SHA256_HEX_CAP];
     int complete;
 } yvex_artifact_payload_identity;
@@ -76,21 +75,15 @@ typedef enum {
 } yvex_artifact_admission_code;
 typedef struct {
     char revision[41];
-    unsigned long long metadata_count;
-    unsigned long long tensor_count;
-    unsigned long long file_bytes;
-    unsigned long long file_device;
-    unsigned long long file_inode;
-    long long file_mtime_seconds;
-    long long file_mtime_nanoseconds;
-    long long file_ctime_seconds;
-    long long file_ctime_nanoseconds;
+    unsigned long long metadata_count, tensor_count, file_bytes;
+    unsigned long long file_device, file_inode;
+    long long file_mtime_seconds, file_mtime_nanoseconds;
+    long long file_ctime_seconds, file_ctime_nanoseconds;
     int accepted;
 } yvex_artifact_official_reader_fact;
 typedef struct yvex_artifact_admission_failure {
     yvex_artifact_admission_code code;
-    unsigned long long expected;
-    unsigned long long actual;
+    unsigned long long expected, actual;
     char field[96];
 } yvex_artifact_admission_failure;
 typedef struct {
@@ -102,12 +95,8 @@ typedef struct {
 } yvex_artifact_admission_request;
 typedef struct yvex_complete_artifact_admission {
     yvex_artifact_class artifact_class;
-    unsigned long long metadata_count;
-    unsigned long long tensor_count;
-    unsigned long long payload_bytes;
-    unsigned long long file_bytes;
-    unsigned long long source_snapshot_identity;
-    unsigned long long mapping_identity;
+    unsigned long long metadata_count, tensor_count, payload_bytes, file_bytes;
+    unsigned long long source_snapshot_identity, mapping_identity;
     yvex_artifact_snapshot file_snapshot;
     char artifact_path[YVEX_ARTIFACT_PATH_CAP];
     char payload_identity[YVEX_GGUF_WRITER_IDENTITY_CAP];
@@ -124,15 +113,10 @@ typedef struct yvex_complete_artifact_admission {
     char logical_target[128];
     char logical_component[64];
     char logical_component_identity[YVEX_SHA256_HEX_CAP];
-    int tokenizer_complete;
-    int native_reader_accepted;
-    int official_reader_accepted;
-    int payload_integrity_accepted;
-    int materialization_input_ready;
-    int runtime_supported;
+    int tokenizer_complete, native_reader_accepted, official_reader_accepted;
+    int payload_integrity_accepted, materialization_input_ready, runtime_supported;
     unsigned long long artifact_bytes_hashed;
-    int artifact_identity_verified;
-    int complete;
+    int artifact_identity_verified, complete;
 } yvex_complete_artifact_admission;
 
 /* Physical compatibility. */
@@ -156,21 +140,15 @@ typedef enum {
 } yvex_artifact_compatibility_code;
 typedef struct {
     yvex_artifact_compatibility_code code;
-    unsigned long long tensor_index;
+    unsigned long long tensor_index, expected, actual;
     unsigned int dimension;
-    unsigned long long expected;
-    unsigned long long actual;
     char field[64];
     char tensor_name[YVEX_GGUF_WRITER_NAME_CAP];
 } yvex_artifact_compatibility_failure;
 typedef struct yvex_artifact_physical_compatibility {
     unsigned int schema_version;
-    unsigned long long source_snapshot_identity;
-    unsigned long long mapping_identity;
-    unsigned long long tensor_count;
-    unsigned long long tensors_compared;
-    unsigned long long payload_bytes;
-    unsigned long long payload_bytes_read;
+    unsigned long long source_snapshot_identity, mapping_identity;
+    unsigned long long tensor_count, tensors_compared, payload_bytes, payload_bytes_read;
     char writer_plan_identity[YVEX_GGUF_WRITER_IDENTITY_CAP];
     char admitted_writer_plan_identity[YVEX_GGUF_WRITER_IDENTITY_CAP];
     char artifact_identity[YVEX_SHA256_HEX_CAP];
@@ -182,14 +160,9 @@ typedef struct yvex_artifact_physical_compatibility {
     char quant_execution_identity[YVEX_GGUF_WRITER_IDENTITY_CAP];
     char payload_plan_identity[YVEX_GGUF_WRITER_IDENTITY_CAP];
     char payload_byte_identity[YVEX_GGUF_WRITER_IDENTITY_CAP];
-    int physical_payload_compatible;
-    int artifact_rebuild_required;
-    int materialization_rebuild_required;
-    int tensor_inventory_equal;
-    int qtype_equal;
-    int layout_equal;
-    int offset_equal;
-    int payload_digest_equal;
+    int physical_payload_compatible, artifact_rebuild_required;
+    int materialization_rebuild_required, tensor_inventory_equal;
+    int qtype_equal, layout_equal, offset_equal, payload_digest_equal;
 } yvex_artifact_physical_compatibility;
 
 int yvex_artifact_physical_compatibility_validate(
@@ -207,13 +180,9 @@ typedef enum {
 } yvex_artifact_descriptor_status;
 typedef struct {
     yvex_artifact_descriptor_status status;
-    const char *format;
-    const char *reason;
-    const char *next_row;
-    const char *artifact_identity;
+    const char *format, *reason, *next_row, *artifact_identity;
     unsigned long long tensor_count;
-    int materialization_input_ready;
-    int runtime_supported;
+    int materialization_input_ready, runtime_supported;
 } yvex_artifact_descriptor_fact;
 int yvex_complete_artifact_admit(const yvex_artifact_admission_request *request,
                                  yvex_complete_artifact_admission *out,
@@ -241,6 +210,41 @@ typedef struct {
     yvex_artifact_snapshot snapshot;
     char lease_identity[YVEX_SHA256_HEX_CAP], path[YVEX_ARTIFACT_PATH_CAP];
 } yvex_artifact_reopen_lease;
+
+#define YVEX_ARTIFACT_ADMISSION_OPTIONS_SCHEMA_V1 1u
+typedef enum {
+    YVEX_ARTIFACT_VERIFICATION_FULL_HASH = 0, YVEX_ARTIFACT_VERIFICATION_VERIFIED_REOPEN,
+    YVEX_ARTIFACT_VERIFICATION_FALLBACK_FULL_HASH
+} yvex_artifact_verification_mode;
+typedef enum {
+    YVEX_ARTIFACT_REOPEN_DISABLED = 0, YVEX_ARTIFACT_REOPEN_MISS,
+    YVEX_ARTIFACT_REOPEN_HIT, YVEX_ARTIFACT_REOPEN_INVALID
+} yvex_artifact_reopen_state;
+typedef struct yvex_artifact_admission_options {
+    unsigned int schema_version;
+    const char *reopen_cache_root;
+    int (*progress)(void *context, unsigned long long completed,
+                    unsigned long long total);
+    void *progress_context;
+} yvex_artifact_admission_options;
+typedef struct yvex_artifact_admission_evidence {
+    unsigned int schema_version;
+    yvex_artifact_verification_mode verification_mode;
+    yvex_artifact_reopen_state reopen_state;
+    unsigned long long file_bytes, bytes_hashed;
+    double seconds;
+    int lease_published, lease_repaired, cache_failure, complete;
+    char lease_identity[YVEX_SHA256_HEX_CAP];
+} yvex_artifact_admission_evidence;
+int yvex_artifact_admission_authenticate(
+    const yvex_artifact *artifact, yvex_complete_artifact_admission *admission,
+    const yvex_artifact_admission_options *options, yvex_artifact_admission_evidence *evidence,
+    yvex_artifact_admission_failure *failure, yvex_error *err);
+int yvex_artifact_admit_catalog_with_options(
+    const yvex_artifact *artifact, const yvex_gguf *gguf, const yvex_tensor_table *tensors,
+    const yvex_artifact_catalog_contract *contract, const yvex_artifact_admission_options *options,
+    yvex_complete_artifact_admission *out, yvex_artifact_admission_evidence *evidence,
+    yvex_artifact_admission_failure *failure, yvex_error *err);
 int yvex_artifact_reopen_lease_check(
     const yvex_artifact *artifact, const char *artifact_identity, const char *cache_root,
     yvex_artifact_reopen_lease *out, yvex_error *err);

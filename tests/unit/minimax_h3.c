@@ -816,13 +816,13 @@ static int test_component_admission_routing(void)
     yvex_error err;
 
     YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->component_admit(
-                         "unknown", NULL, NULL, NULL, &admission, &failure, &err) ==
+                         "unknown", NULL, NULL, NULL, NULL, &admission, NULL, &failure, &err) ==
                          YVEX_ERR_INVALID_ARG &&
                          failure.code == YVEX_ARTIFACT_ADMISSION_INVALID_ARGUMENT &&
                          strcmp(failure.field, "component") == 0,
                      "component admission refuses an unknown family-owned component");
     YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->component_admit(
-                         "audio_vae", NULL, NULL, NULL, &admission, &failure, &err) ==
+                         "audio_vae", NULL, NULL, NULL, NULL, &admission, NULL, &failure, &err) ==
                          YVEX_ERR_INVALID_ARG &&
                          failure.code == YVEX_ARTIFACT_ADMISSION_INVALID_ARGUMENT,
                      "component admission refuses absent generic structural views");

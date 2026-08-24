@@ -690,7 +690,7 @@ static int server_media_start(yvex_server *server, unsigned long long started,
     int rc;
     if (!server->media)
         return server_refuse(err, YVEX_ERR_STATE,
-                             "conversational media options were not configured");
+                             "hosted media options were not configured");
     rc = yvex_server_telemetry_emit(
         server->telemetry, YVEX_SERVER_EVENT_ARTIFACT_OPEN_START,
         YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "media-model",
@@ -712,7 +712,8 @@ static int server_media_start(yvex_server *server, unsigned long long started,
         rc = yvex_server_telemetry_emit(
             server->telemetry, YVEX_SERVER_EVENT_ARTIFACT_OPEN_COMPLETE,
             YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "media-model",
-            model.component_count, model.artifact_bytes, 0u,
+            model.artifact_bytes_hashed, model.artifact_bytes,
+            model.component_count,
             server_elapsed_seconds(started, server_monotonic_ns()), 0.0, err);
     if (rc == YVEX_OK)
         rc = yvex_server_telemetry_emit(

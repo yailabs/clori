@@ -195,7 +195,7 @@ storage. `server memory` reports mapped, non-artifact host, device, RSS and capa
 facts separately. Authentication and selected residency complete before the socket
 becomes ready.
 
-## Conversational MiniMax-H3 media host
+## Direct MiniMax-H3 media host
 
 MiniMax-H3 uses the same persistent server and local chat protocol, but its four
 large component artifacts are staged at request phase boundaries rather than
@@ -212,14 +212,22 @@ The default publication directory is `$YVEX_DATA_DIR/media`, or
 `$HOME/.local/share/yvex/media` when that override is absent. YVEX creates and
 admits it as an owned absolute non-symlink directory. `--output-root` and
 `--media-artifact-root` remain explicit engineering overrides; they are not
-normal startup requirements. Startup admits the conversational endpoint only
-after opening the tokenizer and all four
+normal startup requirements. Startup opens the tokenizer and all four
 identity-bound component artifacts. The server retains their admitted immutable
-views under one runtime-model identity, but does not preload 144 GB of payloads
-or create a CUDA context. A completed media request stages each already-admitted
-component through the native YVEX runtime. The composite registry profile is a
-local deployment contract; family semantics still select and validate the exact
-four-component topology.
+views under one runtime-model identity, but does not preload the component
+payloads or create a CUDA context. A completed media request stages each
+already-admitted component through the native YVEX runtime. The composite
+registry profile is a local deployment contract; family semantics still select
+and validate the exact four-component topology.
+
+Component byte authentication uses the common verified-reopen authority. A
+cold open fully verifies a component and publishes its snapshot-bound receipt;
+an unchanged warm open authenticates that component without rereading its full
+payload. Missing, malformed, stale, or unusable receipt evidence falls back to
+full verification and is repaired only after the bytes match. The four
+components are independent: one fallback does not invalidate three valid warm
+reopens. This mechanism does not materialize weights or imply host/CUDA
+residency.
 
 From another terminal, start the ordinary client:
 
@@ -227,17 +235,24 @@ From another terminal, start the ordinary client:
 ./yvex chat --session video
 ```
 
-Write the creative scene as normal conversation. The server asks inside that
-conversation for every missing material choice: `preview` (192x192, exactly
-five seconds), `preview-256` (256x256, exactly five seconds), `preview-384`
-(384x384, exactly five seconds), or `smoke` (32x32, 5 through 15 seconds);
-2 through 64 explicit sigma-grid points; AVI;
-and an optional seed. Those are request facts, not daemon startup flags. The
-source does not declare a default iteration count, so YVEX never invents one.
-Source geometry, draft, HD, FHD, 2K, 4K, MP4, MKV, WebM, and MOV refuse until
-the applicable attention, memory, upscaler, or encoder contract is admitted.
-On success, chat reports the atomically published AVI path beneath the resolved
-publication root.
+Submit one creative prompt. The prompt immediately starts native generation;
+there is no parameter questionnaire, keyword parser, assistant model, or
+conversation planner. Prompt bytes are opaque execution input and reach the
+existing tokenizer/conditioning path unchanged by operator policy.
+
+Ordinary hosted execution currently selects the identity-bearing YVEX policy
+`interactive-preview-v1`: profile `preview`, 192x192, 124 frames, two sigma-grid
+points (one Transformer evaluation), AVI publication, and seed 42. These are
+explicit YVEX interactive test policy, not MiniMax or upstream defaults.
+Changing the policy changes its identity. Advanced offline engineering commands
+retain explicit parameter surfaces; creative words such as `HD`, `seed`,
+`draft`, `MOV`, numbers, or durations do not alter the hosted preset.
+
+Chat projects server-authored conditioning, latent, decoder, publication,
+completion, cancellation, and failure events as control state rather than
+model-authored prose. On success it renders the typed publication path and
+media identities. Ctrl-C uses the existing request cancellation contract and
+must leave no partial published file.
 
 All preview profiles fit the current 8,192-row Omni execution bound even for a
 256-token prompt. The 5,757-row `preview-384` Transformer envelope passed all
@@ -247,9 +262,10 @@ with zero swap. Full media playback at that tier is still pending; the earlier
 remain visually unrecognizable. Preview names describe bounded geometry, not
 model quality. The source-sized path would require 37,726 packed rows at the
 same prompt and duration and therefore refuses before model materialization.
-The smoke profile retains the earlier repeatable 32x32 evidence. The canonical
-server/chat acceptance used `smoke`, five seconds, two sigma-grid points, AVI,
-and seed 42; it returned a 1,048,544-byte seekable file after 560.36 seconds.
+The smoke profile retains the earlier repeatable 32x32 evidence. The historical
+pre-direct-execution server/chat acceptance used `smoke`, five seconds, two
+sigma-grid points, AVI, and seed 42; it returned a 1,048,544-byte seekable file
+after 560.36 seconds.
 Independent GStreamer playback recovered 124 frames and 165,333 stereo samples
 per channel with a 10,416 ns duration delta. Peak server RSS was 62.57 GiB
 inside the 88 GiB hard limit, with no residual component residency after the
@@ -283,7 +299,7 @@ telemetry excludes prompt and answer content.
 Chat opens one concise attachment view and the stable prompt:
 
 ```text
-YVEX 0.1.0 · protocol 11
+YVEX 0.1.0 · protocol 12
 
   model      deepseek4-v4-flash-dspark
   variant    abcdef012345

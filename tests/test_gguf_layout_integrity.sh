@@ -17,7 +17,7 @@ grep -nF 'yvex_gguf_layout_validate(artifact, gguf' \
 # remains in the preparation plane checked immediately below.
 grep -nF '&model->admission, &binding_failure, err)' \
   src/runtime/core.c >/dev/null
-grep -nF 'yvex_artifact_admission_identity_verify(' src/runtime/core.c >/dev/null
+grep -nF 'yvex_artifact_admission_authenticate(' src/runtime/core.c >/dev/null
 grep -nF 'yvex_gguf_open(&model->gguf, model->artifact' \
   src/runtime/core.c >/dev/null
 grep -nF 'yvex_tensor_table_from_gguf(&model->tensors, model->gguf' \

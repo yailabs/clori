@@ -40,6 +40,14 @@ and change time. The runtime still opens and validates the live snapshot;
 missing, malformed, or stale lease data falls back to complete authentication.
 The lease is neither an artifact identity authority nor portable evidence.
 
+A composite runtime applies the same generic contract independently to every
+component. Structural catalog and family-role admission still run on every
+open. An unchanged component may use verified reopen while one stale or damaged
+receipt falls back to full byte authentication without invalidating the other
+components. A malformed receipt is repaired only after successful full
+verification; an artifact mismatch fails closed. Reopen says nothing about
+materialization, host residency, or CUDA residency.
+
 Startup performs bounded binding admission before artifact open. The retained
 system reserve is the greater of 8 GiB and one eighth of the effective memory
 capacity, where the effective capacity is constrained by the caller's host
@@ -366,7 +374,7 @@ refusals or failures. None may become a successful target-only turn.
 
 ## Compatibility
 
-The runtime behavior is consumed through private local protocol v11 and the
+The runtime behavior is consumed through private local protocol v12 and the
 bounded OpenAI compatibility profile v2. Public C ABI and internal ABI follow
 their header/version contracts. Pre-v0.1 private protocol versions may be
 refused rather than decoded compatibly.

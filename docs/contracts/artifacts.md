@@ -125,6 +125,23 @@ A supported artifact additionally requires the runtime, generation,
 evaluation, benchmark, and release gates in
 [Release Doctrine](../releases/doctrine.md).
 
+## Verified Reopen
+
+Complete byte authentication may publish a rebuildable local verified-reopen
+receipt. The receipt binds the expected artifact identity to one stable
+filesystem snapshot and records that full byte verification previously
+completed. A later open may skip the full payload hash only when both identities
+still match. Structural GGUF, tensor, qtype, catalog, role, and family admission
+remain mandatory.
+
+Composite runtimes consume the same artifact-owned mechanism independently for
+each component. Missing, stale, malformed, or unreadable receipt state falls
+back to full byte verification. A successful fallback safely repairs the
+receipt; a byte mismatch fails closed and publishes no trusted evidence. One
+component fallback does not invalidate unrelated warm component hits. The
+cache root is deployment/runtime policy, never family semantics, and verified
+reopen is not materialization or residency evidence.
+
 ## Existing Proof Files
 
 Legacy selected DeepSeek files and aliases may still exist outside the
