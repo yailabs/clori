@@ -85,9 +85,13 @@ never retracts a candidate because no candidate is published.
 
 ## Status and console facts
 
-`server.status` returns the bounded hosted-runtime snapshot. It includes the
-identity-bound startup capacity plan, its required and unreserved bytes, the
-admitted concurrent-sequence count, and separate facts for independent-session
+`server.status` returns the bounded hosted-runtime snapshot. Readiness is
+capability-aware. A text-generation runtime includes its identity-bound startup
+capacity plan, required and unreserved bytes, singular artifact and runtime
+binding identities, and admitted concurrent-sequence count. A composite media
+runtime instead carries its composite runtime-model and media-profile
+identities; text capacity, singular artifact, and runtime-binding fields remain
+explicitly unavailable. Both retain separate facts for independent-session
 scheduling and physical continuous batching. The latter remains false until a
 compatible-row generation scheduler is admitted; multiple server workers do
 not manufacture that claim. `console.status` returns

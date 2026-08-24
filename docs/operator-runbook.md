@@ -17,9 +17,11 @@ process-resident runtime model, the private Unix listener, and the bounded
 loopback OpenAI-compatible listener in the foreground. Other `yvex` modes own
 native clients and finite offline engineering operations.
 
-Starting a host requires one registry entry containing an admitted complete
-GGUF, its exact runtime binding, target, backend, and context capacity. Inspect
-the available entries first:
+Starting a host requires one complete registry startup profile. A text runtime
+binds one admitted GGUF to its exact runtime binding, target, backend, and
+context capacity. A composite runtime instead binds an installed component root
+to its target, backend, and capability mode without inventing a singular
+artifact or text-runtime binding. Inspect the available entries first:
 
 ```sh
 ./yvex model list
@@ -197,38 +199,27 @@ becomes ready.
 
 MiniMax-H3 uses the same persistent server and local chat protocol, but its four
 large component artifacts are staged at request phase boundaries rather than
-kept resident simultaneously. An operator starts the media host with immutable
-artifact and publication roots:
+kept resident simultaneously. Its installed composite startup profile owns the
+component location, CUDA backend, and media mode. Normal operation is therefore
+the same registry-first command used by other hosted models:
 
 ```sh
-ROOT=<EXTERNAL_MINIMAX_ROOT>/b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08
-OUTPUT=<OWNED_ABSOLUTE_OUTPUT_DIRECTORY>
-
-# One-time selector registration. The complete component set is admitted from ROOT.
-./yvex model registry add \
-  --alias minimax-h3-fl2va-runtime-media \
-  --family minimax-h3 \
-  --path "$ROOT/physical/audio_vae.gguf"
-
-systemd-run --user --scope --quiet \
-  -p MemoryHigh=76G -p MemoryMax=88G -p MemorySwapMax=0 \
-  ./yvex server minimax-h3-fl2va-runtime-media \
-  --media-artifact-root "$ROOT" \
-  --output-root "$OUTPUT" \
-  --openai off
+./yvex model list
+./yvex server minimax-h3-fl2va-runtime-media
 ```
 
-The output directory must already exist, be owned by the operator, and must not
-itself be a symlink. The transient user scope preserves the validated GB10
-memory envelope and forbids swap; a resource refusal therefore terminates the
-request instead of consuming the machine's remaining unified memory. Startup
-admits the conversational endpoint only after opening the tokenizer and all four
+The default publication directory is `$YVEX_DATA_DIR/media`, or
+`$HOME/.local/share/yvex/media` when that override is absent. YVEX creates and
+admits it as an owned absolute non-symlink directory. `--output-root` and
+`--media-artifact-root` remain explicit engineering overrides; they are not
+normal startup requirements. Startup admits the conversational endpoint only
+after opening the tokenizer and all four
 identity-bound component artifacts. The server retains their admitted immutable
 views under one runtime-model identity, but does not preload 144 GB of payloads
 or create a CUDA context. A completed media request stages each already-admitted
-component through the native YVEX runtime. The registry entry is a selector,
-not a complete-artifact or runtime-readiness claim; the family adapter selects
-media mode and startup validates all four component artifacts beneath `ROOT`.
+component through the native YVEX runtime. The composite registry profile is a
+local deployment contract; family semantics still select and validate the exact
+four-component topology.
 
 From another terminal, start the ordinary client:
 
@@ -245,7 +236,8 @@ and an optional seed. Those are request facts, not daemon startup flags. The
 source does not declare a default iteration count, so YVEX never invents one.
 Source geometry, draft, HD, FHD, 2K, 4K, MP4, MKV, WebM, and MOV refuse until
 the applicable attention, memory, upscaler, or encoder contract is admitted.
-On success, chat reports the atomically published AVI path beneath `OUTPUT`.
+On success, chat reports the atomically published AVI path beneath the resolved
+publication root.
 
 All preview profiles fit the current 8,192-row Omni execution bound even for a
 256-token prompt. The 5,757-row `preview-384` Transformer envelope passed all

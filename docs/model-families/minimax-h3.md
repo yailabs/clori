@@ -1101,15 +1101,18 @@ runs are not benchmarks and establish no useful generation speed.
 ## Conversational media projection
 
 The common persistent server now admits MiniMax-H3 as generation mode `media`.
-`yvex server minimax-h3-fl2va-runtime-media` accepts the immutable
-component-artifact root and an owned absolute output directory, while `yvex
-chat` owns the creative prompt and asks for missing resolution profile,
+`yvex server minimax-h3-fl2va-runtime-media` resolves the immutable component
+installation, CUDA backend, and media mode from its composite startup profile;
+the default owned publication directory comes from the common YVEX data path.
+`yvex chat` owns the creative prompt and asks for missing resolution profile,
 duration, explicit sigma-grid count, AVI format, and optional seed. The model
-registry family selects the typed media adapter, so the operator does not choose
-family callbacks or reconstruct the offline execution command. A complete turn
-invokes the same staged native runtime transaction described above and returns
-the atomically published file path. The server does not load any component or
-create a CUDA context while it is only negotiating those parameters.
+registry profile selects the typed media adapter, so the operator does not
+choose family callbacks, component paths, or reconstruct the offline execution
+command. A complete turn invokes the same staged native runtime transaction
+described above and returns the atomically published file path. Explicit
+component/output roots remain engineering overrides. The server does not load
+component payloads or create a CUDA context while it is only negotiating those
+parameters.
 
 Server readiness nevertheless requires a real process-lifetime model open. Startup opens the
 tokenizer and all four component GGUF views, performs exact component admission, seals one

@@ -606,15 +606,17 @@ static void render_status(const yvex_server_summary *status, int json)
         yvex_cli_terminal_style style;
         int ready = status->status == YVEX_SERVER_STATUS_READY;
         yvex_cli_terminal_style_get(stdout, &style);
-        printf("%sYVEX server%s · %s%s%s · %s · %s · %s · ctx %llu · prefill %llu · "
-               "parallel %llu %s · "
-               "%llu session%s · "
-               "queue %llu/%llu · model opened %llu×",
+        printf("%sYVEX server%s · %s%s%s · %s · %s · %s",
                style.strong, style.reset, ready ? style.success : style.warning,
                ready ? "● ready" : "● starting", style.reset,
                status->target_id[0] ? status->target_id : "no model",
-               backend_name(status->backend), generation_mode_name(status->generation_mode),
-               status->context_capacity, status->prefill_chunk_tokens,
+               backend_name(status->backend), generation_mode_name(status->generation_mode));
+        if (status->generation_mode != YVEX_SERVER_GENERATION_MEDIA)
+            printf(" · ctx %llu · prefill %llu", status->context_capacity,
+                   status->prefill_chunk_tokens);
+        else
+            printf(" · context n/a");
+        printf(" · parallel %llu %s · %llu session%s · queue %llu/%llu · model opened %llu×",
                status->concurrent_sequences,
                status->continuous_batching_ready ? "continuous"
                    : (status->independent_session_scheduling_ready
@@ -675,12 +677,17 @@ static int server_model(void)
     if (rc == YVEX_OK) {
         yvex_cli_terminal_style style;
         yvex_cli_terminal_style_get(stdout, &style);
-        printf("%slive runtime model%s · %s · %s · %s · ctx %llu · model %s · variant %s · "
-               "artifact %s · binding %s\n",
+        printf("%slive runtime model%s · %s · %s · %s",
                style.strong, style.reset, summary.target_id, backend_name(summary.backend),
-               generation_mode_name(summary.generation_mode), summary.context_capacity,
-               summary.runtime_model_identity, summary.physical_variant_identity,
-               summary.artifact_identity, summary.runtime_binding_identity);
+               generation_mode_name(summary.generation_mode));
+        if (summary.generation_mode == YVEX_SERVER_GENERATION_MEDIA)
+            printf(" · context n/a · model %s · media profile %s · artifact n/a · binding n/a\n",
+                   summary.runtime_model_identity, summary.physical_variant_identity);
+        else
+            printf(" · ctx %llu · model %s · variant %s · artifact %s · binding %s\n",
+                   summary.context_capacity, summary.runtime_model_identity,
+                   summary.physical_variant_identity, summary.artifact_identity,
+                   summary.runtime_binding_identity);
     }
     return rc == YVEX_OK ? 0 : client_error(&err);
 }
@@ -693,16 +700,19 @@ static int server_memory(void)
         yvex_cli_terminal_style style;
         yvex_cli_terminal_style_get(stdout, &style);
         printf("%sserver memory%s · %.2f GiB host · %.2f GiB device · "
-               "%.2f GiB mapped · %.2f GiB RSS · %.2f GiB peak RSS · "
-               "capacity %.2f GiB required/%.2f GiB unreserved\n",
+               "%.2f GiB mapped · %.2f GiB RSS · %.2f GiB peak RSS",
                style.strong, style.reset,
                (double)summary.metrics.resident_host_bytes / 1073741824.0,
                (double)summary.metrics.resident_device_bytes / 1073741824.0,
                (double)summary.metrics.mapped_artifact_bytes / 1073741824.0,
                (double)summary.metrics.current_rss_bytes / 1073741824.0,
-               (double)summary.metrics.peak_rss_bytes / 1073741824.0,
-               (double)summary.capacity_required_bytes / 1073741824.0,
-               (double)summary.capacity_unreserved_bytes / 1073741824.0);
+               (double)summary.metrics.peak_rss_bytes / 1073741824.0);
+        if (summary.generation_mode == YVEX_SERVER_GENERATION_MEDIA)
+            printf(" · text capacity n/a\n");
+        else
+            printf(" · capacity %.2f GiB required/%.2f GiB unreserved\n",
+                   (double)summary.capacity_required_bytes / 1073741824.0,
+                   (double)summary.capacity_unreserved_bytes / 1073741824.0);
     }
     return rc == YVEX_OK ? 0 : client_error(&err);
 }
@@ -1783,8 +1793,11 @@ static void render_console_status(const yvex_client_message *message, int startu
                    style.dim, "recovery", style.reset, style.warning, style.reset,
                    message->partial_turn.committed_token_count,
                    message->partial_turn.committed_token_count == 1u ? "" : "s");
-        printf("  %s%-10s%s %llu/%llu · reasoning %s", style.dim, "context", style.reset,
-               status->context_used, status->context_capacity, reasoning);
+        if (message->runtime.generation_mode == YVEX_SERVER_GENERATION_MEDIA)
+            printf("  %s%-10s%s media request negotiation", style.dim, "context", style.reset);
+        else
+            printf("  %s%-10s%s %llu/%llu · reasoning %s", style.dim, "context", style.reset,
+                   status->context_used, status->context_capacity, reasoning);
         if (status->kv_used_available)
             printf(" · KV %.2f MiB", (double)status->kv_used_bytes / 1048576.0);
         printf("\n  %s%-10s%s %.2f GiB process · %.2f GiB artifact mapped · "
@@ -1805,16 +1818,19 @@ static void render_console_status(const yvex_client_message *message, int startu
     }
     printf("%sconsole%s · ", style.strong, style.reset);
     printf("%s · %s · %s · variant %.12s · %s%s%s · %s · "
-           "session %s · position %llu · turns %llu · context %llu/%llu",
+           "session %s · position %llu · turns %llu",
            target, backend_name(status->backend),
            generation_mode_name(message->runtime.generation_mode),
            status->physical_variant_identity,
            status->runtime_ready ? style.success : style.warning,
            status->runtime_ready ? "● ready" : "● not ready", style.reset,
            status->attached ? "attached to resident runtime" : "detached from runtime",
-           status->session_name,
-           status->position, status->turn_count, status->context_used,
-           status->context_capacity);
+           status->session_name, status->position, status->turn_count);
+    if (message->runtime.generation_mode == YVEX_SERVER_GENERATION_MEDIA)
+        printf(" · media request negotiation");
+    else
+        printf(" · context %llu/%llu", status->context_used,
+               status->context_capacity);
     if (status->kv_used_available) printf(" · KV %.2f MiB", (double)status->kv_used_bytes / 1048576.0);
     printf(" · reasoning %s · live %.12s", reasoning, status->live_model_identity);
     if (status->selected_model_available) printf(" · selected %.12s", status->selected_model_identity);

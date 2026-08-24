@@ -847,10 +847,8 @@ int yvex_server_media_registry_summary(server_media_registry *registry,
                         registry->runtime_model_identity[0]
                             ? registry->runtime_model_identity
                             : registry->profile_identity);
-    yvex_core_text_copy(summary->runtime_binding_identity,
-                        sizeof(summary->runtime_binding_identity), registry->profile_identity);
-    yvex_core_text_copy(summary->artifact_identity, sizeof(summary->artifact_identity),
-                        registry->source_identity);
+    summary->runtime_binding_identity[0] = '\0';
+    summary->artifact_identity[0] = '\0';
     yvex_core_text_copy(summary->physical_variant_identity,
                         sizeof(summary->physical_variant_identity), registry->profile_identity);
     summary->explicit_reasoning_channel_supported = 0;

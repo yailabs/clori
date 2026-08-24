@@ -126,7 +126,7 @@ require_text docs/contracts/runtime.md 'no explicit CUDA request'
 require_text docs/contracts/local-protocol.md 'YVEX_LOCAL_PROTOCOL_VERSION = 11'
 require_text docs/contracts/events-telemetry.md 'No consumer scrapes another renderer'
 require_text docs/contracts/c-api.md '## Compiled Operator Registry Boundary'
-require_text docs/contracts/c-api.md 'yvex.models.local.v4'
+require_text docs/contracts/c-api.md 'yvex.models.local.v5'
 require_text docs/openai-compatibility.md 'yvex.openai.compat.v2'
 require_text docs/openai-compatibility.md 'YVEX never executes application tools.'
 

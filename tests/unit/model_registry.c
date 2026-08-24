@@ -44,7 +44,7 @@ static int file_contains(const char *path, const char *needle)
 
 static int write_legacy_v3_copy(const char *source, const char *destination)
 {
-    static const char schema_v4[] = "yvex.models.local.v4";
+    static const char schema_v5[] = "yvex.models.local.v5";
     static const char schema_v3[] = "yvex.models.local.v3";
     FILE *fp;
     char *bytes, *schema, *mode, *line_end;
@@ -73,7 +73,7 @@ static int write_legacy_v3_copy(const char *source, const char *destination)
         return 0;
     }
     bytes[size] = '\0';
-    schema = strstr(bytes, schema_v4);
+    schema = strstr(bytes, schema_v5);
     mode = strstr(bytes, "      \"runtime_mode\":");
     line_end = mode ? strchr(mode, '\n') : NULL;
     if (!schema || !mode || !line_end) {
@@ -186,6 +186,8 @@ static void fill_entry(yvex_model_registry_entry *entry, const char *path,
     entry->selected_embedding_output_count = 4ull;
     entry->selected_embedding_slice_bytes = 8ull;
     entry->execution_ready = 0;
+    entry->runtime_profile = "single-artifact";
+    entry->runtime_installation = "";
     entry->runtime_binding = binding;
     entry->runtime_target = "deepseek4-v4-flash-dspark";
     entry->runtime_backend = "cuda";
@@ -245,8 +247,8 @@ static int test_registry_lifecycle(void)
 
     rc = yvex_model_registry_save(registry, registry_path, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "save registry");
-    YVEX_TEST_ASSERT(file_contains(registry_path, "\"schema\": \"yvex.models.local.v4\""),
-                     "registry writer publishes schema v4");
+    YVEX_TEST_ASSERT(file_contains(registry_path, "\"schema\": \"yvex.models.local.v5\""),
+                     "registry writer publishes schema v5");
     YVEX_TEST_ASSERT(file_contains(registry_path, "\"runtime_backend\": \"cuda\""),
                      "registry writer persists runtime profile");
     YVEX_TEST_ASSERT(file_contains(registry_path, "\"runtime_mode\": \"dspark\""),
@@ -270,6 +272,8 @@ static int test_registry_lifecycle(void)
     YVEX_TEST_ASSERT(found->selected_embedding_ready == 1, "selected embedding readiness after reload");
     YVEX_TEST_ASSERT_STREQ(found->runtime_binding, absolute_binding,
                            "runtime binding after reload");
+    YVEX_TEST_ASSERT_STREQ(found->runtime_profile, "single-artifact",
+                           "single-artifact profile after reload");
     YVEX_TEST_ASSERT_STREQ(found->runtime_target, "deepseek4-v4-flash-dspark",
                            "runtime target after reload");
     YVEX_TEST_ASSERT_STREQ(found->runtime_backend, "cuda",
@@ -286,6 +290,63 @@ static int test_registry_lifecycle(void)
     YVEX_TEST_ASSERT(yvex_model_registry_count(registry) == 0, "count after remove");
     yvex_model_registry_close(registry);
     (void)dir;
+    return 0;
+}
+
+static int test_composite_profile(void)
+{
+    const char *registry_path = "build/tests/model-registry/composite.local.json";
+    const char *model_path =
+        "build/tests/model-registry/deepseek4-v4-flash-dspark-selected-embed-F16-noimatrix-yvex-v1.gguf";
+    yvex_model_registry_options options = {0};
+    yvex_model_registry *registry = NULL;
+    yvex_model_registry_entry entry;
+    const yvex_model_registry_entry *found;
+    char absolute_model[YVEX_PATH_CAP], absolute_root[YVEX_PATH_CAP];
+    yvex_error err;
+
+    YVEX_TEST_ASSERT(realpath(model_path, absolute_model) != NULL,
+                     "resolve composite reference artifact");
+    YVEX_TEST_ASSERT(realpath("build/tests/model-registry", absolute_root) != NULL,
+                     "resolve composite installation");
+    fill_entry(&entry, absolute_model, "");
+    entry.alias = "minimax-h3-fl2va-runtime-media";
+    entry.family = "minimax-h3";
+    entry.runtime_profile = "composite";
+    entry.runtime_installation = absolute_root;
+    entry.runtime_target = "minimax-h3-fl2va";
+    entry.runtime_backend = "cuda";
+    entry.runtime_mode = "media";
+    entry.runtime_context = 0ull;
+    YVEX_TEST_ASSERT(yvex_model_registry_startup_validate(&entry, &err) == YVEX_OK,
+                     "complete composite startup profile validates");
+    entry.runtime_installation = "";
+    YVEX_TEST_ASSERT(yvex_model_registry_startup_validate(&entry, &err) == YVEX_ERR_STATE,
+                     "incomplete composite startup profile refuses");
+    entry.runtime_installation = absolute_root;
+    entry.runtime_binding = absolute_model;
+    YVEX_TEST_ASSERT(yvex_model_registry_startup_validate(&entry, &err) == YVEX_ERR_STATE,
+                     "composite startup refuses a fake runtime binding");
+    entry.runtime_binding = "";
+
+    options.registry_path = registry_path;
+    options.create_if_missing = 1;
+    YVEX_TEST_ASSERT(yvex_model_registry_open(&registry, &options, &err) == YVEX_OK &&
+                         yvex_model_registry_add(registry, &entry, &err) == YVEX_OK &&
+                         yvex_model_registry_save(registry, registry_path, &err) == YVEX_OK,
+                     "persist composite startup profile");
+    yvex_model_registry_close(registry);
+    registry = NULL;
+    options.create_if_missing = 0;
+    YVEX_TEST_ASSERT(yvex_model_registry_open(&registry, &options, &err) == YVEX_OK,
+                     "reload composite startup profile");
+    found = yvex_model_registry_find(registry, entry.alias);
+    YVEX_TEST_ASSERT(found && !strcmp(found->runtime_profile, "composite") &&
+                         !strcmp(found->runtime_installation, absolute_root) &&
+                         !found->runtime_binding[0] && found->runtime_context == 0ull &&
+                         yvex_model_registry_startup_validate(found, &err) == YVEX_OK,
+                     "composite profile roundtrip preserves its deployment contract");
+    yvex_model_registry_close(registry);
     return 0;
 }
 
@@ -340,6 +401,7 @@ int yvex_test_model_registry(void)
     if (test_alias_validation() != 0) return 1;
     if (test_derive_metadata() != 0) return 1;
     if (test_registry_lifecycle() != 0) return 1;
+    if (test_composite_profile() != 0) return 1;
     if (test_legacy_v3_runtime_mode() != 0) return 1;
     if (test_invalid_args() != 0) return 1;
     return 0;

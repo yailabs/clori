@@ -387,13 +387,13 @@ test -f "$REG"
 "$YVEX_BIN" model list --registry "$REG" > "$ROOT/list.out"
 grep 'deepseek4-v4-flash-dspark-selected-embed' "$ROOT/list.out"
 grep 'MODELS  count=1' "$ROOT/list.out"
-matches "$ROOT/list.out" '^ALIAS[[:space:]]{2,}FAMILY[[:space:]]{2,}BACKEND[[:space:]]{2,}CONTEXT[[:space:]]{2,}STARTUP$'
-matches "$ROOT/list.out" '^deepseek4-v4-flash-dspark-selected-embed[[:space:]]+deepseek4[[:space:]]+cpu[[:space:]]+4096[[:space:]]+yes$'
+matches "$ROOT/list.out" '^ALIAS[[:space:]]{2,}FAMILY[[:space:]]{2,}BACKEND[[:space:]]{2,}MODE[[:space:]]{2,}CONTEXT[[:space:]]{2,}STARTUP$'
+matches "$ROOT/list.out" '^deepseek4-v4-flash-dspark-selected-embed[[:space:]]+deepseek4[[:space:]]+cpu[[:space:]]+dspark[[:space:]]+4096[[:space:]]+yes$'
 grep 'status: models-list' "$ROOT/list.out"
 
 "$YVEX_BIN" model list --registry "$REG" --output table > "$ROOT/list-table.out"
 grep 'MODELS  count=1' "$ROOT/list-table.out"
-matches "$ROOT/list-table.out" '^ALIAS[[:space:]]{2,}FAMILY[[:space:]]{2,}BACKEND[[:space:]]{2,}CONTEXT[[:space:]]{2,}STARTUP$'
+matches "$ROOT/list-table.out" '^ALIAS[[:space:]]{2,}FAMILY[[:space:]]{2,}BACKEND[[:space:]]{2,}MODE[[:space:]]{2,}CONTEXT[[:space:]]{2,}STARTUP$'
 grep 'deepseek4-v4-flash-dspark-selected-embed' "$ROOT/list-table.out"
 grep 'status: models-list' "$ROOT/list-table.out"
 
@@ -423,6 +423,33 @@ grep 'gguf:' "$ROOT/inspect-audit.out"
 grep 'tensor_count: 1' "$ROOT/inspect-audit.out"
 grep 'status: models-inspect' "$ROOT/inspect-audit.out"
 
+COMPOSITE_ROOT=$(realpath "$ROOT")
+"$YVEX_BIN" model registry add --path "$ARTIFACT" --registry "$REG" \
+  --alias minimax-h3-fl2va-runtime-media --family minimax-h3 \
+  --startup-profile composite --installation-root "$COMPOSITE_ROOT" \
+  --target minimax-h3-fl2va --backend cuda --generation-mode media \
+  > "$ROOT/add-composite.out"
+"$YVEX_BIN" model list --registry "$REG" > "$ROOT/list-composite.out"
+matches "$ROOT/list-composite.out" '^minimax-h3-fl2va-runtime-media[[:space:]]+minimax-h3[[:space:]]+cuda[[:space:]]+media[[:space:]]+-[[:space:]]+yes$'
+"$YVEX_BIN" model show minimax-h3-fl2va-runtime-media --registry "$REG" --audit \
+  > "$ROOT/show-composite.out"
+grep 'runtime_profile: composite' "$ROOT/show-composite.out"
+grep "runtime_installation: $COMPOSITE_ROOT" "$ROOT/show-composite.out"
+grep 'runtime_binding: $' "$ROOT/show-composite.out"
+grep 'runtime_context: 0' "$ROOT/show-composite.out"
+grep 'startup_profile_status: ready' "$ROOT/show-composite.out"
+set +e
+"$YVEX_BIN" model registry add --path "$ARTIFACT" --registry "$REG" \
+  --alias minimax-h3-fl2va-runtime-incomplete --family minimax-h3 \
+  --startup-profile composite --target minimax-h3-fl2va --backend cuda \
+  --generation-mode media > "$ROOT/add-composite-bad.out" \
+  2> "$ROOT/add-composite-bad.err"
+composite_bad_status=$?
+set -e
+test "$composite_bad_status" -eq 2
+grep 'composite startup profile requires --installation-root' \
+  "$ROOT/add-composite-bad.err"
+
 "$YVEX_BIN" model show deepseek4-v4-flash-dspark-selected-embed --registry "$REG" --output nope > "$ROOT/inspect-bad-output.out" 2> "$ROOT/inspect-bad-output.err" && exit 1 || true
 grep 'unsupported output mode: nope' "$ROOT/inspect-bad-output.err"
 
@@ -438,6 +465,8 @@ grep 'model has no complete startup profile' "$ROOT/use-incomplete.err"
 "$YVEX_BIN" model registry remove deepseek4-v4-flash-dspark-selected-embed --registry "$REG" > "$ROOT/remove.out"
 grep 'removed: deepseek4-v4-flash-dspark-selected-embed' "$ROOT/remove.out"
 grep 'status: models-removed' "$ROOT/remove.out"
+"$YVEX_BIN" model registry remove minimax-h3-fl2va-runtime-media --registry "$REG" \
+  > "$ROOT/remove-composite.out"
 
 YVEX_MODELS_REGISTRY="$REG" \
   "$YVEX_BIN" server missing > "$ROOT/use-missing.out" 2> "$ROOT/use-missing.err" && exit 1 || true

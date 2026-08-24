@@ -188,8 +188,12 @@ static int server_options_admit(yvex_server *server,
         (options->backend != YVEX_BACKEND_KIND_CPU &&
          options->backend != YVEX_BACKEND_KIND_CUDA) ||
         options->generation_mode > YVEX_SERVER_GENERATION_MEDIA ||
-        !options->context_capacity ||
-        !options->maximum_new_tokens || !options->maximum_output_bytes ||
+        (options->generation_mode != YVEX_SERVER_GENERATION_MEDIA &&
+         (!options->context_capacity || !options->maximum_new_tokens)) ||
+        (options->generation_mode == YVEX_SERVER_GENERATION_MEDIA &&
+         (options->context_capacity || options->prefill_chunk_tokens ||
+          options->maximum_new_tokens)) ||
+        !options->maximum_output_bytes ||
         !options->maximum_sessions || !options->request_queue_capacity || !options->concurrent_sequences ||
         options->concurrent_sequences > options->maximum_sessions ||
         options->maximum_sessions > SERVER_CLIENT_CAPACITY ||
@@ -201,7 +205,8 @@ static int server_options_admit(yvex_server *server,
         return server_refuse(err, YVEX_ERR_INVALID_ARG,
                              "complete bounded runtime-host options are required");
     server->options = *options;
-    if (!server->options.prefill_chunk_tokens)
+    if (!server->options.prefill_chunk_tokens &&
+        server->options.generation_mode != YVEX_SERVER_GENERATION_MEDIA)
         server->options.prefill_chunk_tokens = server_adaptive_prefill_chunk(
             server->options.context_capacity,
             server->options.concurrent_sequences);

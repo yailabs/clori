@@ -24,6 +24,8 @@ typedef struct {
     const char *calibration;
     const char *sha256;
     const char *support_level;
+    const char *runtime_profile;
+    const char *runtime_installation;
     const char *runtime_binding;
     const char *runtime_target;
     const char *runtime_backend;
@@ -86,6 +88,8 @@ static const yvex_cli_field_spec registry_add_fields[] = {
                    selected_embedding_output_count, NULL),
     REGISTRY_FIELD("registered_selected_embedding_slice_bytes", YVEX_CLI_FIELD_U64,
                    selected_embedding_slice_bytes, NULL),
+    REGISTRY_FIELD("runtime_profile", YVEX_CLI_FIELD_TEXT, runtime_profile, ""),
+    REGISTRY_FIELD("runtime_installation", YVEX_CLI_FIELD_TEXT, runtime_installation, ""),
     REGISTRY_FIELD("runtime_binding", YVEX_CLI_FIELD_TEXT, runtime_binding, ""),
     REGISTRY_FIELD("runtime_target", YVEX_CLI_FIELD_TEXT, runtime_target, ""),
     REGISTRY_FIELD("runtime_backend", YVEX_CLI_FIELD_TEXT, runtime_backend, ""),
@@ -125,6 +129,8 @@ static const yvex_cli_field_spec registry_inspect_fields[] = {
     REGISTRY_FIELD("selected_embedding_slice_bytes", YVEX_CLI_FIELD_U64,
                    selected_embedding_slice_bytes, NULL),
     REGISTRY_FIELD("artifact_execution_ready", YVEX_CLI_FIELD_BOOL, execution_ready, NULL),
+    REGISTRY_FIELD("runtime_profile", YVEX_CLI_FIELD_TEXT, runtime_profile, ""),
+    REGISTRY_FIELD("runtime_installation", YVEX_CLI_FIELD_TEXT, runtime_installation, ""),
     REGISTRY_FIELD("runtime_binding", YVEX_CLI_FIELD_TEXT, runtime_binding, ""),
     REGISTRY_FIELD("runtime_target", YVEX_CLI_FIELD_TEXT, runtime_target, ""),
     REGISTRY_FIELD("runtime_backend", YVEX_CLI_FIELD_TEXT, runtime_backend, ""),
@@ -137,7 +143,8 @@ static const yvex_model_registry_entry empty_registry_entry = {
     .qprofile = "", .calibration = "", .producer = "yvex", .schema_version = "v1",
     .path = "", .sha256 = "", .format = "", .architecture = "",
     .primary_tensor_name = "", .primary_tensor_role = "", .primary_tensor_dtype = "",
-    .primary_tensor_dims = "", .support_level = "", .runtime_binding = "",
+    .primary_tensor_dims = "", .support_level = "", .runtime_profile = "",
+    .runtime_installation = "", .runtime_binding = "",
     .runtime_target = "", .runtime_backend = "", .runtime_mode = ""
 };
 
@@ -209,7 +216,10 @@ static const char *const literal_pair_4[] = { "identity_status: recorded",
 static const char *const models_help_lines[] = {
     "usage: yvex model registry scan --root DIR [--registry FILE]",
     "       yvex model registry add --path FILE [--alias ALIAS] [--support-level LEVEL] "
-        "[--runtime-binding FILE --target ID --backend cpu|cuda --ctx N] [--registry FILE]",
+        "[--startup-profile single-artifact --runtime-binding FILE --target ID "
+        "--backend cpu|cuda --generation-mode target-only|dspark --ctx N] "
+        "[--startup-profile composite --installation-root DIR --target ID --backend cuda "
+        "--generation-mode media] [--registry FILE]",
     "       yvex model acquire TARGET [--models-root DIR] [--auth auto|required|never] [--dry-run] "
         "[--progress auto|live|plain|log|off] [--tick-seconds N] [--no-progress] [--audit | --output "
         "normal|table|audit]",
@@ -336,6 +346,10 @@ static int parse_models_add_options(int arg_count, char **args,
         else if (strcmp(args[i], "--calibration") == 0) options->calibration = args[++i];
         else if (strcmp(args[i], "--sha256") == 0) options->sha256 = args[++i];
         else if (strcmp(args[i], "--support-level") == 0) options->support_level = args[++i];
+        else if (strcmp(args[i], "--startup-profile") == 0)
+            options->runtime_profile = args[++i];
+        else if (strcmp(args[i], "--installation-root") == 0)
+            options->runtime_installation = args[++i];
         else if (strcmp(args[i], "--runtime-binding") == 0) options->runtime_binding = args[++i];
         else if (strcmp(args[i], "--target") == 0) options->runtime_target = args[++i];
         else if (strcmp(args[i], "--backend") == 0) options->runtime_backend = args[++i];
@@ -414,7 +428,7 @@ static int command_models_add(int arg_count, char **args)
     char primary_tensor_role[64] = {0};
     char primary_tensor_dtype[32] = {0};
     char primary_tensor_dims[128] = {0};
-    unsigned int runtime_fields = 0u;
+    unsigned int single_fields = 0u, composite_fields = 0u;
     char *context_end = NULL;
     int have_derived = 0;
     int rc;
@@ -447,24 +461,50 @@ static int command_models_add(int arg_count, char **args)
     entry.calibration = cli_options.calibration ? cli_options.calibration : entry.calibration;
     entry.path = cli_options.path;
     entry.support_level = cli_options.support_level ? cli_options.support_level : "";
-    runtime_fields += cli_options.runtime_binding != NULL;
-    runtime_fields += cli_options.runtime_target != NULL;
-    runtime_fields += cli_options.runtime_backend != NULL;
-    runtime_fields += cli_options.runtime_mode != NULL;
-    runtime_fields += cli_options.runtime_context != NULL;
-    if (runtime_fields != 0u && runtime_fields != 5u) {
+    single_fields += cli_options.runtime_binding != NULL;
+    single_fields += cli_options.runtime_target != NULL;
+    single_fields += cli_options.runtime_backend != NULL;
+    single_fields += cli_options.runtime_mode != NULL;
+    single_fields += cli_options.runtime_context != NULL;
+    composite_fields += cli_options.runtime_installation != NULL;
+    composite_fields += cli_options.runtime_target != NULL;
+    composite_fields += cli_options.runtime_backend != NULL;
+    composite_fields += cli_options.runtime_mode != NULL;
+    if (cli_options.runtime_profile &&
+        strcmp(cli_options.runtime_profile, "single-artifact") != 0 &&
+        strcmp(cli_options.runtime_profile, "composite") != 0) {
         yvex_cli_out_writef(stderr,
-            "yvex: a startup profile requires --runtime-binding, --target, --backend, "
-            "--generation-mode, and --ctx together\n");
+            "yvex: --startup-profile must be single-artifact or composite\n");
         return 2;
     }
-    if (runtime_fields == 5u) {
+    if (cli_options.runtime_profile &&
+        strcmp(cli_options.runtime_profile, "composite") == 0) {
+        if (composite_fields != 4u || cli_options.runtime_binding ||
+            cli_options.runtime_context) {
+            yvex_cli_out_writef(stderr,
+                "yvex: a composite startup profile requires --installation-root, --target, "
+                "--backend, and --generation-mode without --runtime-binding or --ctx\n");
+            return 2;
+        }
+        entry.runtime_profile = "composite";
+        entry.runtime_installation = cli_options.runtime_installation;
+        entry.runtime_target = cli_options.runtime_target;
+        entry.runtime_backend = cli_options.runtime_backend;
+        entry.runtime_mode = cli_options.runtime_mode;
+    } else if (single_fields != 0u || cli_options.runtime_profile) {
+        if (single_fields != 5u || cli_options.runtime_installation) {
+            yvex_cli_out_writef(stderr,
+                "yvex: a startup profile requires --runtime-binding, --target, --backend, "
+                "--generation-mode, and --ctx together\n");
+            return 2;
+        }
         errno = 0;
         entry.runtime_context = strtoull(cli_options.runtime_context, &context_end, 10);
         if (errno || !context_end || *context_end || entry.runtime_context == 0ull) {
             yvex_cli_out_writef(stderr, "yvex: model registry add --ctx requires a positive integer\n");
             return 2;
         }
+        entry.runtime_profile = "single-artifact";
         entry.runtime_binding = cli_options.runtime_binding;
         entry.runtime_target = cli_options.runtime_target;
         entry.runtime_backend = cli_options.runtime_backend;
@@ -490,7 +530,7 @@ static int command_models_add(int arg_count, char **args)
                         cli_options.sha256, registered_sha256);
         return print_yvex_error(&err, exit_for_status(YVEX_ERR_STATE));
     }
-    if (runtime_fields == 5u) {
+    if ((entry.runtime_profile && entry.runtime_profile[0]) || single_fields != 0u) {
         rc = yvex_model_registry_startup_validate(&entry, &err);
         if (rc != YVEX_OK) return print_yvex_error(&err, exit_for_status(rc));
     }
@@ -528,10 +568,11 @@ static int command_models_list(int arg_count, char **args)
     count = yvex_model_registry_count(registry);
     if (output_mode != YVEX_MODELS_OUTPUT_AUDIT) {
         yvex_cli_out_writef(stdout, "MODELS  count=%llu\n\n", count);
-        yvex_cli_out_writef(stdout, "%-44s  %-10s  %-8s  %7s  %s\n",
+        yvex_cli_out_writef(stdout, "%-44s  %-10s  %-8s  %-11s  %7s  %s\n",
                "ALIAS",
                "FAMILY",
                "BACKEND",
+               "MODE",
                "CONTEXT",
                "STARTUP");
         for (i = 0; i < count; ++i) {

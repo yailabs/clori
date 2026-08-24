@@ -373,6 +373,10 @@ static int test_message_roundtrip(void)
     source.runtime.concurrent_sequences = 4u;
     source.runtime.capacity_required_bytes = 1024u;
     source.runtime.capacity_unreserved_bytes = 2048u;
+    memset(source.runtime.runtime_model_identity, 'a', 64u);
+    memset(source.runtime.runtime_binding_identity, 'b', 64u);
+    memset(source.runtime.artifact_identity, 'c', 64u);
+    memset(source.runtime.physical_variant_identity, 'd', 64u);
     memset(source.runtime.capacity_plan_identity, 'e', 64u);
     source.runtime.openai_timeout_ms = 600000u;
     source.runtime.trace_level = YVEX_SERVER_TRACE_STAGES;
@@ -740,6 +744,54 @@ static int test_v6_frame_refusal(void)
     return 0;
 }
 
+static int test_capability_aware_readiness(void)
+{
+    yvex_client_message message = {0}, decoded;
+    unsigned char frame[16384];
+    unsigned long long count = 0ull;
+    yvex_error err;
+
+    message.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
+    message.kind = YVEX_CLIENT_MESSAGE_STATUS;
+    message.status = YVEX_OK;
+    message.runtime.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
+    message.runtime.status = YVEX_SERVER_STATUS_READY;
+    message.runtime.backend = YVEX_BACKEND_KIND_CUDA;
+    message.runtime.generation_mode = YVEX_SERVER_GENERATION_MEDIA;
+    message.runtime.runtime_ready = 1;
+    message.runtime.generation_ready = 1;
+    message.runtime.concurrent_sequences = 1ull;
+    memset(message.runtime.runtime_model_identity, 'a', 64u);
+    memset(message.runtime.physical_variant_identity, 'b', 64u);
+    YVEX_TEST_ASSERT(
+        yvex_protocol_message_encode(&message, frame, sizeof(frame), &count,
+                                     &err) == YVEX_OK &&
+            yvex_protocol_message_decode(frame, count, &decoded, &err) == YVEX_OK &&
+            decoded.runtime.runtime_ready &&
+            !decoded.runtime.runtime_binding_identity[0] &&
+            !decoded.runtime.artifact_identity[0] &&
+            !decoded.runtime.capacity_plan_identity[0],
+        "media readiness roundtrip requires only its admitted identities");
+    message.runtime.capacity_required_bytes = 1ull;
+    YVEX_TEST_ASSERT(
+        yvex_protocol_message_encode(&message, frame, sizeof(frame), &count,
+                                     &err) == YVEX_ERR_INVALID_ARG,
+        "media readiness refuses an aliased text capacity plan");
+    message.runtime.capacity_required_bytes = 0ull;
+    memset(message.runtime.runtime_binding_identity, 'c', 64u);
+    YVEX_TEST_ASSERT(
+        yvex_protocol_message_encode(&message, frame, sizeof(frame), &count,
+                                     &err) == YVEX_ERR_INVALID_ARG,
+        "media readiness refuses a fake runtime binding identity");
+    message.runtime.runtime_binding_identity[0] = '\0';
+    message.runtime.runtime_model_identity[0] = '\0';
+    YVEX_TEST_ASSERT(
+        yvex_protocol_message_encode(&message, frame, sizeof(frame), &count,
+                                     &err) == YVEX_ERR_INVALID_ARG,
+        "media readiness refuses without a composite runtime model identity");
+    return 0;
+}
+
 static int test_bounded_parser_mutation(void)
 {
     unsigned char bytes[1024];
@@ -778,6 +830,7 @@ int yvex_test_protocol(void)
     if (test_all_operation_roundtrips() != 0) return 1;
     if (test_schema_refusals() != 0) return 1;
     if (test_message_roundtrip() != 0) return 1;
+    if (test_capability_aware_readiness() != 0) return 1;
     if (test_v6_frame_refusal() != 0) return 1;
     if (test_bounded_parser_mutation() != 0) return 1;
     return 0;

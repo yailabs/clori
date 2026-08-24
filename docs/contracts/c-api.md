@@ -102,18 +102,20 @@ artifact is still not a supported artifact.
 ## Model Registry And Startup Profiles
 
 `<yvex/registry.h>` owns the local model catalog and typed reference
-resolution. Registry schema `yvex.models.local.v4` may bind a catalog entry to
-one complete startup profile: absolute artifact path, exact runtime-binding
-path, runtime target, admitted backend and generation-mode choices, and
-positive context capacity. Older v1/v2/v3 catalogs remain readable; v1/v2
-contain no complete startup profile, while v3 startup profiles are interpreted
-as explicit `target-only` mode.
+resolution. Registry schema `yvex.models.local.v5` binds a catalog entry to one
+typed startup profile. `single-artifact` profiles carry the absolute artifact,
+exact runtime-binding path, runtime target, backend, generation mode, and
+positive context capacity. `composite` profiles carry an installed component
+root, target, backend, and capability mode without manufacturing a singular
+artifact or runtime binding. Older v1 through v4 catalogs remain readable;
+v1/v2 contain no complete startup profile, v3 profiles are interpreted as
+explicit `target-only`, and v4 single-artifact profiles retain their meaning.
 
-`yvex_model_registry_startup_validate` checks that all startup facts are
-present and that the two local files are readable. It does not authenticate
-either identity, materialize weights, initialize a backend, or establish
-runtime support. The explicit `yvex server MODEL` entrypoint performs full
-artifact and binding admission when the model is opened.
+`yvex_model_registry_startup_validate` checks the facts required by the profile
+kind and the corresponding local file or installation accessibility. It does
+not authenticate identities, materialize weights, initialize a backend, or
+establish runtime support. The explicit `yvex server MODEL` entrypoint performs
+full singular or composite admission when the model is opened.
 
 A composite media target follows the same readiness rule. Before publishing
 `READY`, the server opens the tokenizer and every component artifact, reconciles

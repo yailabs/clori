@@ -42,6 +42,8 @@ typedef struct {
     unsigned long long selected_embedding_output_count;
     unsigned long long selected_embedding_slice_bytes;
     int execution_ready;
+    const char *runtime_profile;
+    const char *runtime_installation;
     const char *runtime_binding;
     const char *runtime_target;
     const char *runtime_backend;
@@ -123,8 +125,9 @@ int yvex_model_registry_default_path(char *out,
                                      unsigned long long out_size,
                                      yvex_error *err);
 
-/* A startup profile is runnable only when its artifact, binding, target, backend, and startup
- * context form one complete local configuration. Admission still occurs inside the server. */
+/* A startup profile names either one artifact plus binding or one installed composite model.
+ * Validation proves that local deployment facts are complete; admission still occurs inside the
+ * server and does not imply payload materialization or device residency. */
 int yvex_model_registry_startup_validate(const yvex_model_registry_entry *entry,
                                          yvex_error *err);
 

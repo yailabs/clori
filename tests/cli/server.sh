@@ -13,6 +13,7 @@ PROFILE=deepseek4-v4-flash-dspark-runtime-iq2xxs-q2k-mxfp4-b9825a07-sm121-tc
 
 yvex_test_cleanup "$OUT_DIR" "$SOCKET_PATH"
 mkdir -p "$OUT_DIR" "$HOME_ROOT/.local/share/yvex" "$SOCKET_ROOT"
+HOME_ROOT=$(realpath "$HOME_ROOT")
 chmod 0700 "$SOCKET_ROOT"
 SOCKET_PATH=$(realpath "$SOCKET_ROOT")/yvex.sock
 
@@ -33,9 +34,18 @@ printf 'artifact fixture\n' >"$artifact"
 printf 'binding fixture\n' >"$binding"
 artifact=$(realpath "$artifact")
 binding=$(realpath "$binding")
+MEDIA_ROOT=$OUT_DIR/media-root
+MEDIA_OUTPUT=$OUT_DIR/media-output
+MEDIA_RUNTIME=$OUT_DIR/media-runtime
+mkdir -p "$MEDIA_ROOT" "$MEDIA_OUTPUT" "$MEDIA_RUNTIME"
+chmod 700 "$MEDIA_RUNTIME"
+MEDIA_ROOT=$(realpath "$MEDIA_ROOT")
+MEDIA_OUTPUT=$(realpath "$MEDIA_OUTPUT")
+MEDIA_RUNTIME=$(realpath "$MEDIA_RUNTIME")
+MEDIA_SOCKET=$MEDIA_RUNTIME/yvexd.sock
 cat >"$HOME_ROOT/.local/share/yvex/models.local.json" <<EOF
 {
-  "schema": "yvex.models.local.v3",
+  "schema": "yvex.models.local.v5",
   "models": [{
     "alias": "$PROFILE",
     "family": "deepseek4",
@@ -48,20 +58,16 @@ cat >"$HOME_ROOT/.local/share/yvex/models.local.json" <<EOF
   }, {
     "alias": "minimax-h3-fl2va-runtime-media",
     "family": "minimax-h3",
-    "path": "$artifact"
+    "path": "$artifact",
+    "runtime_profile": "composite",
+    "runtime_installation": "$MEDIA_ROOT",
+    "runtime_target": "minimax-h3-fl2va",
+    "runtime_backend": "cuda",
+    "runtime_mode": "media",
+    "runtime_context": 0
   }]
 }
 EOF
-
-MEDIA_ROOT=$OUT_DIR/media-root
-MEDIA_OUTPUT=$OUT_DIR/media-output
-MEDIA_RUNTIME=$OUT_DIR/media-runtime
-mkdir -p "$MEDIA_ROOT" "$MEDIA_OUTPUT" "$MEDIA_RUNTIME"
-chmod 700 "$MEDIA_RUNTIME"
-MEDIA_ROOT=$(realpath "$MEDIA_ROOT")
-MEDIA_OUTPUT=$(realpath "$MEDIA_OUTPUT")
-MEDIA_RUNTIME=$(realpath "$MEDIA_RUNTIME")
-MEDIA_SOCKET=$MEDIA_RUNTIME/yvexd.sock
 
 "$YVEX_BIN" server --help >"$OUT_DIR/help.out" 2>"$OUT_DIR/help.err"
 contains "$OUT_DIR/help.out" 'usage: yvex server MODEL [options]'
@@ -94,7 +100,7 @@ mode_status=$?
 HOME="$HOME_ROOT" "$YVEX_BIN" server "$PROFILE" --context 8192 \
     >"$OUT_DIR/context.out" 2>"$OUT_DIR/context.err"
 context_status=$?
-HOME="$HOME_ROOT" "$YVEX_BIN" server minimax-h3-fl2va-runtime-media --generation-mode media \
+HOME="$HOME_ROOT" "$YVEX_BIN" server minimax-h3-fl2va-runtime-media \
     >"$OUT_DIR/media-missing.out" 2>"$OUT_DIR/media-missing.err"
 media_missing_status=$?
 HOME="$HOME_ROOT" "$YVEX_BIN" server minimax-h3-fl2va-runtime-media --generation-mode media \
@@ -121,7 +127,7 @@ test "$port_status" -eq 2
 test "$duplicate_status" -eq 2
 test "$mode_status" -eq 2
 test "$context_status" -eq 2
-test "$media_missing_status" -eq 2
+test "$media_missing_status" -eq 1
 test "$media_cpu_status" -eq 2
 test "$media_openai_status" -eq 2
 test "$prefill_zero_status" -eq 2
@@ -133,7 +139,9 @@ contains "$OUT_DIR/port.err" 'invalid value for --openai-port: 0'
 contains "$OUT_DIR/duplicate.err" 'duplicate flag: --openai'
 contains "$OUT_DIR/mode.err" 'invalid value for --generation-mode: invalid'
 contains "$OUT_DIR/context.err" 'unknown flag: --context'
-contains "$OUT_DIR/media-missing.err" 'media mode requires --media-artifact-root and --output-root'
+contains "$OUT_DIR/media-missing.out" "component root $MEDIA_ROOT"
+contains "$OUT_DIR/media-missing.out" "output root $HOME_ROOT/.local/share/yvex/media"
+contains "$OUT_DIR/media-missing.err" 'failed to open'
 contains "$OUT_DIR/media-cpu.err" 'media mode requires the admitted CUDA backend'
 contains "$OUT_DIR/media-openai.err" 'media mode requires the admitted CUDA backend and OpenAI disabled'
 contains "$OUT_DIR/prefill-zero.err" 'invalid value for --prefill-chunk: 0'

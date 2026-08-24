@@ -389,17 +389,24 @@ int parse_models_bound_option(const char *command, int arg_count, char **args, i
 }
 
 void print_model_registry_entry_cli(const yvex_model_registry_entry *entry) {
+    char context[32];
     yvex_error err;
     int startup_ready;
     if (!entry)
         return;
     yvex_error_clear(&err);
     startup_ready = yvex_model_registry_startup_validate(entry, &err) == YVEX_OK;
-    yvex_cli_out_writef(stdout, "%-44s  %-10s  %-8s  %7llu  %s\n",
+    if (entry->runtime_context)
+        (void)snprintf(context, sizeof(context), "%llu", entry->runtime_context);
+    else
+        (void)snprintf(context, sizeof(context), "-");
+    yvex_cli_out_writef(stdout, "%-44s  %-10s  %-8s  %-11s  %7s  %s\n",
                         entry->alias ? entry->alias : "", entry->family ? entry->family : "",
                         entry->runtime_backend && entry->runtime_backend[0]
                             ? entry->runtime_backend : "-",
-                        entry->runtime_context, startup_ready ? "yes" : "no");
+                        entry->runtime_mode && entry->runtime_mode[0]
+                            ? entry->runtime_mode : "-",
+                        context, startup_ready ? "yes" : "no");
 }
 
 void print_model_registry_entry_audit(const yvex_model_registry_entry *entry) {
@@ -428,6 +435,10 @@ void print_model_registry_entry_audit(const yvex_model_registry_entry *entry) {
     yvex_cli_out_writef(stdout, "registered_known_tensor_bytes: %llu\n", entry->known_tensor_bytes);
     yvex_cli_out_writef(stdout, "registered_selected_embedding_ready: %s\n",
                         entry->selected_embedding_ready ? "true" : "false");
+    yvex_cli_out_writef(stdout, "runtime_profile: %s\n",
+                        entry->runtime_profile ? entry->runtime_profile : "");
+    yvex_cli_out_writef(stdout, "runtime_installation: %s\n",
+                        entry->runtime_installation ? entry->runtime_installation : "");
     yvex_cli_out_writef(stdout, "runtime_binding: %s\n",
                         entry->runtime_binding ? entry->runtime_binding : "");
     yvex_cli_out_writef(stdout, "runtime_target: %s\n",

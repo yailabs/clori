@@ -787,11 +787,31 @@ static int message_fields_valid(const yvex_client_message *message)
            BOOL_VALID(message->runtime.explicit_reasoning_channel_supported) &&
            BOOL_VALID(message->runtime.independent_session_scheduling_ready) &&
            BOOL_VALID(message->runtime.continuous_batching_ready) &&
+           optional_identity_valid(message->runtime.runtime_model_identity) &&
+           optional_identity_valid(message->runtime.runtime_binding_identity) &&
+           optional_identity_valid(message->runtime.artifact_identity) &&
+           optional_identity_valid(message->runtime.physical_variant_identity) &&
            optional_identity_valid(message->runtime.capacity_plan_identity) &&
            (!message->runtime.runtime_ready ||
-            (message->runtime.concurrent_sequences &&
-             message->runtime.capacity_required_bytes &&
-             yvex_sha256_hex_valid(message->runtime.capacity_plan_identity))) &&
+            (yvex_sha256_hex_valid(message->runtime.runtime_model_identity) &&
+             yvex_sha256_hex_valid(message->runtime.physical_variant_identity) &&
+             (message->runtime.generation_mode == YVEX_SERVER_GENERATION_MEDIA
+                 ? (message->runtime.concurrent_sequences &&
+                    !message->runtime.context_capacity &&
+                    !message->runtime.prefill_chunk_tokens &&
+                    !message->runtime.maximum_new_tokens &&
+                    !message->runtime.capacity_required_bytes &&
+                    !message->runtime.capacity_unreserved_bytes &&
+                    !message->runtime.capacity_plan_identity[0] &&
+                    !message->runtime.runtime_binding_identity[0] &&
+                    !message->runtime.artifact_identity[0])
+                 : (yvex_sha256_hex_valid(
+                        message->runtime.runtime_binding_identity) &&
+                    yvex_sha256_hex_valid(message->runtime.artifact_identity) &&
+                    message->runtime.concurrent_sequences &&
+                    message->runtime.capacity_required_bytes &&
+                    yvex_sha256_hex_valid(
+                        message->runtime.capacity_plan_identity))))) &&
            BOOL_VALID(message->console.runtime_ready) &&
            BOOL_VALID(message->console.session_available) &&
            BOOL_VALID(message->console.attached) &&

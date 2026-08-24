@@ -113,6 +113,10 @@ static int send_console_status(int fd, const yvex_client_request *request,
     strcpy(message.runtime.target_id, "deepseek4-v4-flash-dspark");
     memset(message.runtime.runtime_model_identity, 'a', 64u);
     message.runtime.runtime_model_identity[64] = '\0';
+    memset(message.runtime.runtime_binding_identity, 'b', 64u);
+    message.runtime.runtime_binding_identity[64] = '\0';
+    memset(message.runtime.artifact_identity, 'c', 64u);
+    message.runtime.artifact_identity[64] = '\0';
     memset(message.runtime.physical_variant_identity, 'd', 64u);
     message.runtime.physical_variant_identity[64] = '\0';
     memset(message.runtime.capacity_plan_identity, 'e', 64u);

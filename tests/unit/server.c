@@ -885,8 +885,11 @@ static int test_media_dialog_and_refusals(void)
                          yvex_server_media_registry_summary(second, &repeated, &err) == YVEX_OK &&
                          !strcmp(first.runtime_model_identity,
                                  repeated.runtime_model_identity) &&
-                         !strcmp(first.artifact_identity, repeated.artifact_identity),
-                     "media profile and source identities are deterministic");
+                         !strcmp(first.physical_variant_identity,
+                                 repeated.physical_variant_identity) &&
+                         !first.runtime_binding_identity[0] &&
+                         !first.artifact_identity[0],
+                     "media runtime and profile identities are deterministic without aliases");
     yvex_server_media_registry_close(&second);
     yvex_server_telemetry_close(&second_telemetry);
     yvex_server_media_registry_close(&registry);
@@ -903,6 +906,9 @@ static int test_media_server_opens_model_before_ready(void)
     yvex_server_media_options media;
     yvex_server_options options;
     yvex_server_summary summary;
+    yvex_client_message wire = {0}, decoded;
+    unsigned char frame[16384];
+    unsigned long long frame_count = 0ull;
     yvex_server *server = NULL;
     yvex_error err;
     int rc;
@@ -916,6 +922,9 @@ static int test_media_server_opens_model_before_ready(void)
     options.socket_path = socket_path;
     options.backend = YVEX_BACKEND_KIND_CUDA;
     options.generation_mode = YVEX_SERVER_GENERATION_MEDIA;
+    options.context_capacity = 0ull;
+    options.prefill_chunk_tokens = 0ull;
+    options.maximum_new_tokens = 0ull;
     YVEX_TEST_ASSERT(media_options(&media, root), "media host options");
     media.request_template.text_artifact_path = fixture;
     media.request_template.transformer_artifact_path = fixture;
@@ -936,8 +945,26 @@ static int test_media_server_opens_model_before_ready(void)
                          summary.metrics.binding_open_count == 1ull &&
                          summary.metrics.materialization_count == 0ull &&
                          summary.metrics.residency_build_count == 0ull &&
-                         summary.metrics.resident_device_bytes == 0ull,
+                         summary.metrics.resident_device_bytes == 0ull &&
+                         summary.context_capacity == 0ull &&
+                         summary.prefill_chunk_tokens == 0ull &&
+                         summary.maximum_new_tokens == 0ull &&
+                         !summary.runtime_binding_identity[0] &&
+                         !summary.artifact_identity[0] &&
+                         !summary.capacity_plan_identity[0] &&
+                         summary.capacity_required_bytes == 0ull,
                      "media host readiness admits the model without false payload residency");
+    wire.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
+    wire.kind = YVEX_CLIENT_MESSAGE_STATUS;
+    wire.status = YVEX_OK;
+    wire.runtime = summary;
+    YVEX_TEST_ASSERT(
+        yvex_protocol_message_encode(&wire, frame, sizeof(frame), &frame_count,
+                                     &err) == YVEX_OK &&
+            yvex_protocol_message_decode(frame, frame_count, &decoded, &err) == YVEX_OK &&
+            decoded.runtime.generation_mode == YVEX_SERVER_GENERATION_MEDIA &&
+            decoded.runtime.runtime_ready,
+        "ready media host crosses the capability-aware local protocol");
     YVEX_TEST_ASSERT(yvex_server_finish(server, &err) == YVEX_OK,
                      "media host finishes cleanly");
     YVEX_TEST_ASSERT(yvex_server_get_summary(server, &summary, &err) == YVEX_OK &&

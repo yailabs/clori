@@ -62,6 +62,8 @@ typedef struct {
     unsigned long long selected_embedding_output_count;
     unsigned long long selected_embedding_slice_bytes;
     int execution_ready;
+    char *runtime_profile;
+    char *runtime_installation;
     char *runtime_binding;
     char *runtime_target;
     char *runtime_backend;

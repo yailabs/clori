@@ -46,12 +46,13 @@ metadata, tensor-map, and target-report operations enter the finite offline
 lane. Retired top-level namespaces refuse with a migration hint and never
 execute hidden aliases.
 
-The local model registry owns complete startup profiles: artifact, runtime
-binding, target, backend, generation mode, and startup context. `model list`
-marks which entries have a complete readable profile and `model show` inspects
-one entry. `server MODEL` names that profile explicitly; no persisted selection
-is required or consulted. `server model` reads the model actually open in the
-resident server.
+The local model registry owns complete typed startup profiles. Text runtimes
+carry one artifact, runtime binding, target, backend, generation mode, and
+startup context; composite runtimes carry an installed component root, target,
+backend, and capability mode. `model list` marks which entries have a complete
+readable profile and `model show` inspects one entry. `server MODEL` names that
+profile explicitly; no persisted selection is required or consulted. `server
+model` reads the model actually open in the resident server.
 
 ### Hosted startup semantics
 

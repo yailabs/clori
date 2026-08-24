@@ -813,6 +813,7 @@
         "--ctx",
         "--family",
         "--generation-mode",
+        "--installation-root",
         "--model",
         "--path",
         "--qprofile",
@@ -820,6 +821,7 @@
         "--runtime-binding",
         "--scope",
         "--sha256",
+        "--startup-profile",
         "--support-level",
         "--target"
       ]
