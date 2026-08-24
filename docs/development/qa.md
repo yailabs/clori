@@ -173,6 +173,14 @@ resolved plan, test IDs, result states, duration, prerequisite reasons,
 fixture/evidence metadata, and summary counts. Logs are per-test files
 referenced by the report, not embedded unbounded output.
 
+The orchestrator authenticates `HEAD`, the clean/dirty source state, and the
+complete tracked-plus-untracked source delta at both run start and completion.
+Those values must remain identical. A mutation leaves individual results
+available for diagnosis but marks the evidence `SOURCE MUTATED / EVIDENCE
+INVALID` and makes both `run` and `report` return non-zero. Older v1 reports
+without the additive stability record remain readable; they do not acquire a
+source-stability claim retroactively.
+
 Engineering worklogs summarize applicable QA evidence by lane and state. They
 do not copy the registry or become a second test database.
 

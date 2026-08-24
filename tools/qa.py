@@ -254,22 +254,61 @@ def requirement_failure(item: dict[str, Any], facts: dict[str, Any]) -> str | No
     return None
 
 
-def source_delta_identity() -> tuple[str, str]:
+def git_capture(root: Path, argv: list[str]) -> str:
+    result = subprocess.run(
+        ["git", *argv],
+        cwd=root,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if result.returncode != 0:
+        fail(result.stderr.strip() or result.stdout.strip() or f"git command failed: {argv}")
+    return result.stdout.strip()
+
+
+def source_delta_identity(root: Path = ROOT) -> tuple[str, str]:
     digest = hashlib.sha256()
     diff = subprocess.run(
         ["git", "diff", "--binary", "--no-ext-diff", "HEAD", "--", "."],
-        cwd=ROOT,
+        cwd=root,
         stdout=subprocess.PIPE,
         check=True,
     ).stdout
     digest.update(diff)
-    untracked = run_capture(["git", "ls-files", "--others", "--exclude-standard"]).splitlines()
+    untracked = git_capture(root, ["ls-files", "--others", "--exclude-standard"]).splitlines()
     for path in sorted(path for path in untracked if "__pycache__/" not in path and not path.endswith(".pyc")):
         digest.update(path.encode() + b"\0")
-        digest.update((ROOT / path).read_bytes())
+        digest.update((root / path).read_bytes())
     identity = digest.hexdigest()
     empty = hashlib.sha256(b"").hexdigest()
     return ("clean" if identity == empty else "dirty", identity)
+
+
+def source_snapshot(root: Path = ROOT) -> dict[str, str]:
+    state, delta_identity = source_delta_identity(root)
+    return {
+        "head": git_capture(root, ["rev-parse", "HEAD"]),
+        "state": state,
+        "delta_identity": delta_identity,
+    }
+
+
+def source_stability(start: dict[str, str], finish: dict[str, str]) -> dict[str, Any]:
+    changed = [field for field in ("head", "state", "delta_identity")
+               if start[field] != finish[field]]
+    return {
+        "valid": not changed,
+        "changed_fields": changed,
+        "start": start,
+        "finish": finish,
+    }
+
+
+def evidence_invalid(value: dict[str, Any]) -> bool:
+    stability = value.get("source_stability")
+    return isinstance(stability, dict) and stability.get("valid") is False
 
 
 def build_identity() -> str:
@@ -449,9 +488,9 @@ def execute(
         fail("--jobs must be a positive integer")
     lookup = {item["id"]: item for item in tests}
     selected = [lookup[test_id] for test_id in selected_ids]
-    source_state, delta_identity = source_delta_identity()
+    source_start = source_snapshot()
     started = dt.datetime.now(dt.timezone.utc)
-    run_material = f"{started.isoformat()}\0{run_capture(['git','rev-parse','HEAD'])}\0{','.join(selected_ids)}"
+    run_material = f"{started.isoformat()}\0{source_start['head']}\0{','.join(selected_ids)}"
     run_identity = hashlib.sha256(run_material.encode()).hexdigest()
     run_root = ROOT / "build/qa/runs" / run_identity
     run_root.mkdir(parents=True, exist_ok=False)
@@ -481,20 +520,23 @@ def execute(
     results.sort(key=lambda result: result_order[result["test_id"]])
     counts = {state: sum(result["status"] == state for result in results)
               for state in ["PASS", "FAIL", "SKIP", "BLOCKED", "ERROR"]}
-    finished = dt.datetime.now(dt.timezone.utc)
     registry_identity = hashlib.sha256(
         json.dumps(registry, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
+    current_build_identity = build_identity()
+    finished = dt.datetime.now(dt.timezone.utc)
+    stability = source_stability(source_start, source_snapshot())
     report = {
         "schema": EVIDENCE_SCHEMA,
         "schema_version": 1,
         "run_identity": run_identity,
         "invocation": ["python3", str(Path(__file__).relative_to(ROOT)), *sys.argv[1:]],
         "registry_identity": registry_identity,
-        "source_commit": run_capture(["git", "rev-parse", "HEAD"]),
-        "source_state": source_state,
-        "source_delta_identity": delta_identity,
-        "build_identity": build_identity(),
+        "source_commit": source_start["head"],
+        "source_state": source_start["state"],
+        "source_delta_identity": source_start["delta_identity"],
+        "source_stability": stability,
+        "build_identity": current_build_identity,
         "started_at": started.isoformat(),
         "finished_at": finished.isoformat(),
         "host": facts,
@@ -511,7 +553,11 @@ def execute(
         "SUMMARY " + " ".join(f"{state}={counts[state]}" for state in counts)
         + f" · evidence {evidence_path.relative_to(ROOT)}", flush=True
     )
-    return 1 if counts["FAIL"] or counts["BLOCKED"] or counts["ERROR"] else 0
+    if not stability["valid"]:
+        fields = ", ".join(stability["changed_fields"])
+        print(f"SOURCE MUTATED / EVIDENCE INVALID · changed {fields}", flush=True)
+    return 1 if (counts["FAIL"] or counts["BLOCKED"] or counts["ERROR"]
+                 or not stability["valid"]) else 0
 
 
 def resolve_selection(
@@ -558,11 +604,14 @@ def report(path: str) -> int:
     counts = value["summary"]["counts"]
     print(f"run {value['run_identity']}")
     print(f"source {value['source_commit']} ({value['source_state']})")
+    if evidence_invalid(value):
+        fields = ", ".join(value["source_stability"].get("changed_fields", [])) or "unknown"
+        print(f"SOURCE MUTATED / EVIDENCE INVALID · changed {fields}")
     print(" ".join(f"{state}={counts[state]}" for state in counts))
     for result in value["results"]:
         if result["status"] != "PASS":
             print(f"{result['status']} {result['test_id']}: {result['reason']}")
-    return 0
+    return 1 if evidence_invalid(value) else 0
 
 
 def main() -> int:
