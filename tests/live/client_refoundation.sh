@@ -247,11 +247,11 @@ trace_pid=
 grep -F '"kind":"runtime.ready"' "$root/raw.jsonl" >/dev/null
 grep -F '"kind":"runtime.shutdown.complete"' "$root/raw.jsonl" |
     grep -F '"a":1,"b":1' >/dev/null
-grep -F 'request started' "$root/engine.log" >/dev/null
-grep -F 'generation completed' "$root/engine.log" >/dev/null
-grep -F 'request started' "$root/trace.log" >/dev/null
-grep -F 'generation completed' "$root/trace.log" >/dev/null
-grep -E '^#[0-9]+ (debug|info|warning|error|fatal)' "$root/trace.log" >/dev/null
+grep -E 'REQUEST[[:space:]]+main/' "$root/engine.log" >/dev/null
+grep -E 'COMPLETE[[:space:]]+[1-9][0-9]* token' "$root/engine.log" >/dev/null
+grep -F '"kind":"request.started"' "$root/trace.log" >/dev/null
+grep -F '"kind":"generation.completed"' "$root/trace.log" >/dev/null
+grep -F '"schema":3' "$root/trace.log" >/dev/null
 ! grep -E '(^|[[:space:]])[ab]=' "$root/engine.log" >/dev/null
 ! grep -E '(^|[[:space:]])[ab]=' "$root/trace.log" >/dev/null
 grep -F '"kind":"generation.cancelled"' "$root/raw.jsonl" |
