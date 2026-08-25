@@ -93,8 +93,6 @@ def common(result: dict[str, object] | dict[str, str], mode: str, binding: pathl
         "warm_artifact_hash_passes": 0, "runtime_source_headers_read": 0,
         "runtime_source_payload_bytes_read": 0, "runtime_transform_plans_built": 0,
         "runtime_quant_plans_built": 0, "runtime_writer_plans_built": 0,
-        "runtime_model_builds": 1, "runtime_descriptor_builds": 1,
-        "semantic_graph_builds": 1, "executable_graph_builds": 1,
         "warm_weight_artifact_reads": 0, "warm_weight_upload_bytes": 0,
         "warm_host_allocations": 0, "warm_device_allocations": 0,
         "warm_device_frees": 0,

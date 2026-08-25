@@ -83,7 +83,7 @@ struct runtime_compatible_batch_ticket {
 };
 
 typedef struct {
-    yvex_runtime_model *model;
+    yvex_model_engine *model;
     yvex_runtime_execution_session *session;
     yvex_backend *backend;
     const yvex_transformer_plan_summary *transformer;
@@ -97,7 +97,7 @@ typedef struct {
 } runtime_compatible_step_request;
 
 typedef struct {
-    yvex_runtime_model *model;
+    yvex_model_engine *model;
     yvex_runtime_execution_session *session;
     yvex_runtime_moe_context *moe;
     yvex_backend *backend;
@@ -141,18 +141,18 @@ int yvex_runtime_private_batcher_snapshot(
 int yvex_runtime_private_batcher_close(
     runtime_compatible_batcher **batcher, yvex_error *err);
 int yvex_runtime_private_model_batcher_acquire(
-    yvex_runtime_model *model, unsigned long long maximum_width,
+    yvex_model_engine *model, unsigned long long maximum_width,
     yvex_error *err);
 int yvex_runtime_private_model_batcher_release(
-    yvex_runtime_model *model, yvex_error *err);
+    yvex_model_engine *model, yvex_error *err);
 int yvex_runtime_private_model_batcher_finish(
-    yvex_runtime_model *model, int *acquired, yvex_error *err);
+    yvex_model_engine *model, int *acquired, yvex_error *err);
 int yvex_runtime_private_model_batcher_producer_enter(
-    yvex_runtime_model *model, yvex_error *err);
+    yvex_model_engine *model, yvex_error *err);
 int yvex_runtime_private_model_batcher_producer_leave(
-    yvex_runtime_model *model, yvex_error *err);
+    yvex_model_engine *model, yvex_error *err);
 int yvex_runtime_private_batcher_producer_finish(
-    yvex_runtime_model *model, int *active, int status, yvex_error *err);
+    yvex_model_engine *model, int *active, int status, yvex_error *err);
 int yvex_runtime_private_compatible_step_enter(
     const runtime_compatible_step_request *request, int *active,
     yvex_error *err);
@@ -194,7 +194,7 @@ int yvex_runtime_private_residency_backing_bytes(
     yvex_runtime_weight_placement placement, unsigned long long *bytes,
     yvex_error *err);
 
-struct yvex_runtime_model {
+struct yvex_model_engine {
     const yvex_graph_execution_api *graph;
     char target_id[128];
     yvex_runtime_binding *binding;
@@ -212,8 +212,8 @@ struct yvex_runtime_model {
     yvex_tokenizer *tokenizer;
     yvex_runtime_residency *residency;
     yvex_backend *opening_backend;
-    yvex_runtime_model_summary summary;
-    yvex_runtime_model_view view;
+    yvex_model_engine_summary summary;
+    yvex_model_engine_view view;
     pthread_mutex_t lifecycle_mutex;
     runtime_compatible_batcher *compatible_batcher;
     struct yvex_runtime_execution_session *sessions;
@@ -225,7 +225,7 @@ struct yvex_runtime_model {
 };
 
 struct yvex_runtime_execution_session {
-    yvex_runtime_model *model;
+    yvex_model_engine *engine;
     yvex_backend *backend;
     yvex_attention_state_provider attention_state_provider;
     yvex_attention_state_provider_factory attention_state_factory;
@@ -240,13 +240,13 @@ struct yvex_runtime_execution_session {
     pthread_mutex_t lifecycle_mutex;
     pthread_cond_t idle_condition;
     pthread_t execution_owner;
-    struct yvex_runtime_execution_session *model_previous, *model_next;
+    struct yvex_runtime_execution_session *engine_previous, *engine_next;
     unsigned long long maximum_host_bytes, maximum_device_bytes;
     unsigned long long batch_source_ordinal;
     char batch_source_identity[YVEX_SHA256_HEX_CAP];
     int lifecycle_mutex_ready, idle_condition_ready, execution_owner_ready;
-    int closing, model_registered, model_reserved;
-    int model_release_pending, invalidation_pending, host_workspace_cleanup_pending;
+    int closing, engine_registered, engine_reserved;
+    int engine_release_pending, invalidation_pending, host_workspace_cleanup_pending;
     int attention_state_provider_ready, draft_attention_state_provider_ready;
     int state_resolver_attached;
 };
@@ -271,16 +271,16 @@ int yvex_runtime_private_attention_state_abort(
     void *context, yvex_attention_failure *failure, yvex_error *err);
 
 struct yvex_runtime_cleanup_lease {
-    yvex_runtime_model *model;
+    yvex_model_engine *model;
     yvex_runtime_execution_session *session;
     void *dependent_context;
     yvex_runtime_cleanup_release_fn dependent_release;
 };
 
 struct yvex_runtime_generation_context {
-    yvex_runtime_model *model;
+    yvex_model_engine *model;
     yvex_runtime_execution_session *session;
-    const yvex_runtime_model_view *model_view;
+    const yvex_model_engine_view *model_view;
     const yvex_tokenizer *tokenizer;
     yvex_runtime_transformer_context *transformer;
     yvex_runtime_decode_context *decode;
@@ -376,7 +376,6 @@ typedef enum {
     YVEX_RUNTIME_REFUSE_OPEN_IMPORTED_IDENTITY,
     YVEX_RUNTIME_REFUSE_OPEN_TOKENIZER,
     YVEX_RUNTIME_REFUSE_OPEN_SEAL,
-    YVEX_RUNTIME_REFUSE_OPEN_BUILD,
     YVEX_RUNTIME_REFUSE_OPEN_CAPABILITIES,
     YVEX_RUNTIME_REFUSE_OPEN_RESIDENCY,
     YVEX_RUNTIME_REFUSE_OPEN_RESIDENCY_COMPLETE,
@@ -385,16 +384,16 @@ typedef enum {
 } yvex_runtime_private_refusal_id;
 
 void yvex_runtime_private_failure_record(
-    yvex_runtime_model_failure *failure, yvex_runtime_model_failure_code code,
+    yvex_model_engine_failure *failure, yvex_model_engine_failure_code code,
     const char *field, unsigned long long expected,
     unsigned long long actual, const char *reason);
 int yvex_runtime_private_reject(
-    yvex_runtime_model_failure *failure, yvex_runtime_model_failure_code code,
+    yvex_model_engine_failure *failure, yvex_model_engine_failure_code code,
     const char *field, unsigned long long expected,
     unsigned long long actual, const char *reason, yvex_error *err,
     yvex_status status);
 int yvex_runtime_private_refuse(
-    yvex_runtime_model_failure *failure, yvex_runtime_private_refusal_id id,
+    yvex_model_engine_failure *failure, yvex_runtime_private_refusal_id id,
     unsigned long long expected, unsigned long long actual, yvex_error *err);
 int yvex_runtime_private_success(yvex_error *err);
 int yvex_runtime_private_memory_capacity(
@@ -426,12 +425,12 @@ int yvex_runtime_private_session_workspace_discard(
     yvex_runtime_execution_session *session, yvex_error *err);
 int yvex_runtime_private_session_capabilities_bind(
     yvex_runtime_execution_session *session,
-    yvex_runtime_model_failure *failure, int require_workspace,
+    yvex_model_engine_failure *failure, int require_workspace,
     yvex_error *err);
 int yvex_runtime_private_session_prepare_persistent_scope_state_locked(
     yvex_runtime_execution_session *session, yvex_tensor_scope scope,
     const yvex_graph_attention_capacity_plan *capacity,
-    yvex_runtime_model_failure *failure, yvex_error *err);
+    yvex_model_engine_failure *failure, yvex_error *err);
 int yvex_runtime_private_state_residency_resolve(
     const void *context, const void *host, unsigned long long bytes,
     unsigned long long *device_address);

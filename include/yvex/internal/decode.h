@@ -164,7 +164,7 @@ int yvex_speculation_commit_plan_build(
     unsigned long long terminal_index,
     yvex_speculation_commit_plan *plan, yvex_error *err);
 int yvex_runtime_speculation_context_open(
-    yvex_runtime_speculation_context **out, yvex_runtime_model *model,
+    yvex_runtime_speculation_context **out, yvex_model_engine *model,
     yvex_runtime_execution_session *session,
     yvex_runtime_transformer_context *target_transformer,
     yvex_runtime_logits_context *target_logits,

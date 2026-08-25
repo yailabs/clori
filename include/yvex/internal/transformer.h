@@ -459,7 +459,7 @@ typedef struct {
     char execution_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_transformer_core_commit_result;
 int yvex_runtime_transformer_context_open(yvex_runtime_transformer_context **out,
-                                          yvex_runtime_model *model,
+                                          yvex_model_engine *model,
                                           yvex_runtime_execution_session *session,
                                           const yvex_runtime_transformer_options *options,
                                           unsigned long long *workspace_bytes,

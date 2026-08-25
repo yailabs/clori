@@ -12,7 +12,7 @@ extern "C" {
 #define YVEX_RUNTIME_SESSION_PREFIX_SCHEMA_V1 1u
 
 typedef struct yvex_runtime_execution_session yvex_runtime_execution_session;
-typedef struct yvex_runtime_model_failure yvex_runtime_model_failure;
+typedef struct yvex_model_engine_failure yvex_model_engine_failure;
 typedef struct yvex_runtime_session_prefix yvex_runtime_session_prefix;
 
 typedef struct {
@@ -32,12 +32,12 @@ int yvex_runtime_session_prefix_capture(
     unsigned long long maximum_shared_bytes,
     yvex_runtime_session_prefix **out,
     yvex_runtime_session_prefix_summary *summary,
-    yvex_runtime_model_failure *failure, yvex_error *err);
+    yvex_model_engine_failure *failure, yvex_error *err);
 int yvex_runtime_session_prefix_attach(
     yvex_runtime_execution_session *destination,
     const yvex_runtime_session_prefix *prefix,
     yvex_runtime_session_prefix_summary *summary,
-    yvex_runtime_model_failure *failure, yvex_error *err);
+    yvex_model_engine_failure *failure, yvex_error *err);
 void yvex_runtime_session_prefix_close(yvex_runtime_session_prefix **prefix);
 
 #ifdef __cplusplus

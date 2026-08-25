@@ -22,7 +22,7 @@ static int worklist_test_compatibility(void)
     first.tensor_scope = 2u;
     first.execution_class = 1u;
     first.publication_contract = 1u;
-    first.model_generation = 7ull;
+    first.engine_generation = 7ull;
     first.layer_ordinal = 3ull;
     first.row_width = 14336ull;
     first.admitted_width = 8ull;
@@ -83,7 +83,7 @@ static int worklist_test_build(void)
     batch.phase = 3u;
     batch.row_count = 4ull;
     batch.source_count = 1ull;
-    batch.model_generation = 9ull;
+    batch.engine_generation = 9ull;
     batch.sources = &source;
     batch.rows = batch_rows;
     worklist_test_identity(source.identity, '0');
@@ -172,7 +172,7 @@ static int worklist_test_refusals(void)
 
     batch.schema_version = YVEX_EXECUTION_BATCH_SCHEMA_V1;
     batch.provenance = YVEX_EXECUTION_BATCH_SINGLE_ROW;
-    batch.row_count = batch.source_count = batch.model_generation = 1ull;
+    batch.row_count = batch.source_count = batch.engine_generation = 1ull;
     batch.sources = &source;
     batch.rows = batch_rows;
     worklist_test_identity(source.identity, '0');
@@ -299,7 +299,7 @@ static int worklist_test_multi_session_sources(void)
     batch.schema_version = YVEX_EXECUTION_BATCH_SCHEMA_V1;
     batch.provenance = YVEX_EXECUTION_BATCH_MULTI_SESSION;
     batch.phase = YVEX_EXECUTION_PHASE_DECODE;
-    batch.row_count = batch.source_count = batch.model_generation = 2ull;
+    batch.row_count = batch.source_count = batch.engine_generation = 2ull;
     batch.sources = sources;
     batch.rows = rows;
     worklist_test_identity(batch.runtime_model_identity, 'a');

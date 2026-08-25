@@ -54,7 +54,7 @@ struct yvex_server {
     char target_id[128];
     char socket_path[YVEX_SERVER_SOCKET_PATH_CAP];
     char lock_path[YVEX_SERVER_SOCKET_PATH_CAP];
-    yvex_runtime_model *model;
+    yvex_model_engine *model;
     yvex_runtime_generation_context_summary capacity_summary;
     yvex_runtime_generation_context *warm_generation;
     yvex_runtime_execution_session *warm_session;
@@ -88,16 +88,16 @@ static int server_refuse(yvex_error *err, yvex_status status,
 }
 
 static void server_report_model_refusal(
-    int status, const yvex_runtime_model_failure *failure, yvex_error *err)
+    int status, const yvex_model_engine_failure *failure, yvex_error *err)
 {
     char where[YVEX_ERROR_WHERE_CAP];
     char reason[YVEX_ERROR_MESSAGE_CAP];
-    if (!err || !failure || failure->code == YVEX_RUNTIME_MODEL_FAILURE_NONE)
+    if (!err || !failure || failure->code == YVEX_MODEL_ENGINE_FAILURE_NONE)
         return;
     yvex_core_text_copy(where, sizeof(where), yvex_error_where(err));
     yvex_core_text_copy(reason, sizeof(reason),
                         failure->reason ? failure->reason : yvex_error_message(err));
-    if (failure->code == YVEX_RUNTIME_MODEL_FAILURE_ALLOCATION)
+    if (failure->code == YVEX_MODEL_ENGINE_FAILURE_ALLOCATION)
         yvex_error_setf(
             err, (yvex_status)status, where,
             "model admission refused: field=%s required=%llu available=%llu reason=%s",
@@ -605,14 +605,14 @@ static int server_execution_prepare(yvex_server *server,
                                     yvex_runtime_residency_summary *summary,
                                     yvex_error *err)
 {
-    const yvex_runtime_model_view *view = server && server->model
-                                              ? yvex_runtime_model_view_get(server->model)
+    const yvex_model_engine_view *view = server && server->model
+                                              ? yvex_model_engine_view_get(server->model)
                                               : NULL;
     yvex_runtime_execution_session *session = NULL;
     yvex_runtime_generation_context *generation = NULL;
     yvex_runtime_session_open_request request;
     yvex_runtime_generation_options options;
-    yvex_runtime_model_failure failure;
+    yvex_model_engine_failure failure;
     yvex_error primary, cleanup;
     unsigned long long compatible_width = 1ull;
     int rc, generation_cleanup_rc, session_cleanup_rc;
@@ -624,7 +624,7 @@ static int server_execution_prepare(yvex_server *server,
     request.backend = server->options.backend;
     request.maximum_host_bytes = server->options.maximum_host_bytes;
     request.maximum_device_bytes = server->options.maximum_device_bytes;
-    rc = yvex_runtime_model_compatible_batch_width_copy(
+    rc = yvex_model_engine_compatible_batch_width_copy(
         server->model, &compatible_width, err);
     if (rc == YVEX_OK)
         server->continuous_batching_admitted =
@@ -755,14 +755,14 @@ static int server_media_start(yvex_server *server, unsigned long long started,
  */
 int yvex_server_start(yvex_server *server, yvex_error *err)
 {
-    yvex_runtime_model_open_request request;
+    yvex_model_engine_open_request request;
     yvex_runtime_generation_options startup_options;
-    yvex_runtime_model_failure failure;
-    yvex_runtime_model_summary model;
+    yvex_model_engine_failure failure;
+    yvex_model_engine_summary model;
     yvex_runtime_residency_summary residency;
     yvex_paths paths;
     yvex_error path_error;
-    const yvex_runtime_model_view *view;
+    const yvex_model_engine_view *view;
     unsigned long long startup_started, cuda_started = 0u, startup_completed;
     double cuda_seconds = 0.0, startup_seconds;
     int rc = YVEX_OK;
@@ -802,11 +802,11 @@ int yvex_server_start(yvex_server *server, yvex_error *err)
     request.residency_backend = server->options.backend;
     request.maximum_host_bytes = server->options.maximum_host_bytes;
     request.maximum_device_bytes = server->options.maximum_device_bytes;
-    rc = yvex_runtime_model_open(&server->model, &request, &failure, err);
+    rc = yvex_model_engine_open(&server->model, &request, &failure, err);
     if (rc != YVEX_OK) server_report_model_refusal(rc, &failure, err);
     if (rc == YVEX_OK)
-        rc = yvex_runtime_model_summary_copy(server->model, &model, err);
-    view = rc == YVEX_OK ? yvex_runtime_model_view_get(server->model) : NULL;
+        rc = yvex_model_engine_summary_copy(server->model, &model, err);
+    view = rc == YVEX_OK ? yvex_model_engine_view_get(server->model) : NULL;
     memset(&residency, 0, sizeof(residency));
     if (rc == YVEX_OK && (!view || !view->residency))
         rc = server_refuse(err, YVEX_ERR_STATE,
@@ -1418,7 +1418,7 @@ int yvex_server_finish(yvex_server *server, yvex_error *err)
         }
     }
     if (server->model && !server->warm_generation && !server->warm_session) {
-        yvex_runtime_model_close(&server->model);
+        yvex_model_engine_close(&server->model);
         yvex_server_telemetry_model_closed(server->telemetry);
     }
     (void)yvex_server_telemetry_metrics_copy(server->telemetry, &metrics,

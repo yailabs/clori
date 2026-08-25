@@ -19,7 +19,7 @@ typedef struct {
 } speculation_weight;
 struct yvex_runtime_speculation_context {
     yvex_runtime_execution_session *session;
-    const yvex_runtime_model_view *model_view;
+    const yvex_model_engine_view *model_view;
     yvex_runtime_transformer_context *target_transformer, *draft_transformer;
     yvex_runtime_logits_context *target_logits, *verification_logits;
     yvex_runtime_sampling_context *target_sampling, *draft_sampling, *verification_sampling;
@@ -341,7 +341,7 @@ static int speculation_context_device_buffers(yvex_runtime_speculation_context *
     return rc;
 }
 int yvex_runtime_speculation_context_open(yvex_runtime_speculation_context **out,
-    yvex_runtime_model *model, yvex_runtime_execution_session *session,
+    yvex_model_engine *model, yvex_runtime_execution_session *session,
     yvex_runtime_transformer_context *target_transformer, yvex_runtime_logits_context *target_logits,
     yvex_runtime_sampling_context *target_sampling, const yvex_runtime_sampling_policy *sampling_policy,
     const yvex_runtime_speculation_options *options, unsigned long long *workspace_bytes, yvex_error *err)
@@ -370,7 +370,7 @@ int yvex_runtime_speculation_context_open(yvex_runtime_speculation_context **out
     if (!context)
         return speculation_refuse(err, YVEX_ERR_NOMEM, "DSpark context allocation failed");
     context->session = session;
-    context->model_view = yvex_runtime_model_view_get(model);
+    context->model_view = yvex_model_engine_view_get(model);
     context->target_transformer = target_transformer;
     context->target_logits = target_logits;
     context->target_sampling = target_sampling;
@@ -1000,7 +1000,7 @@ static int speculation_verify_target(yvex_runtime_speculation_context *context,
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     unsigned long long started, row;
-    yvex_runtime_model_failure failure = {0};
+    yvex_model_engine_failure failure = {0};
     int device_verification = context->verification_logits != NULL;
     int device_stochastic = device_verification &&
         context->sampling_policy.strategy == YVEX_SAMPLING_STRATEGY_STOCHASTIC;
@@ -1502,7 +1502,7 @@ int yvex_runtime_speculation_prefill(
     yvex_runtime_transformer_result target = {0};
     yvex_runtime_transformer_core_commit_result draft = {0};
     yvex_runtime_speculation_feature_result prepared = {0};
-    yvex_runtime_model_failure failure = {0};
+    yvex_model_engine_failure failure = {0};
     yvex_sha256 hash;
     unsigned long long feature_values;
     int acquired = 0, rc;
@@ -1613,7 +1613,7 @@ static int speculation_commit_target_step(
     yvex_runtime_commit_participant participant = {
         .context = context, .prepare = speculation_rng_prepare,
         .publish = speculation_rng_publish, .cancel = speculation_rng_cancel};
-    yvex_runtime_model_failure failure = {0};
+    yvex_model_engine_failure failure = {0};
     unsigned long long started = yvex_core_monotonic_ns();
     int acquired = 0, rc;
     rc = yvex_runtime_session_begin(context->session, &failure, err);

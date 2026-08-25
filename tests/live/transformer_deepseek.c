@@ -29,14 +29,14 @@ static void live_fail(const char *step, int rc, const yvex_error *err)
             err ? yvex_error_message(err) : "");
 }
 
-static int live_execution_open(live_execution *execution, yvex_runtime_model *model,
+static int live_execution_open(live_execution *execution, yvex_model_engine *model,
                                yvex_backend_kind backend,
                                unsigned long long context_capacity,
                                yvex_error *err)
 {
     yvex_runtime_session_open_request session_request = {0};
     yvex_runtime_transformer_options options = {0};
-    yvex_runtime_model_failure failure = {0};
+    yvex_model_engine_failure failure = {0};
     memset(execution, 0, sizeof(*execution));
     session_request.backend = backend;
     options.context_capacity = context_capacity;
@@ -70,14 +70,14 @@ static int live_execution_close(live_execution *execution, yvex_error *err)
 
 static int live_input_open(yvex_transformer_input **input,
                            yvex_transformer_input_summary *summary,
-                           const yvex_runtime_model *model,
+                           const yvex_model_engine *model,
                            const yvex_transformer_plan *plan,
                            const unsigned int *token_ids,
                            unsigned long long token_count,
                            unsigned long long token_start,
                            const char *path, yvex_error *err)
 {
-    const yvex_runtime_model_view *view = yvex_runtime_model_view_get(model);
+    const yvex_model_engine_view *view = yvex_model_engine_view_get(model);
     const yvex_runtime_binding_summary *binding = view ? view->binding : NULL;
     const yvex_transformer_plan_summary *plan_summary =
         yvex_transformer_plan_summary_get(plan);
@@ -256,7 +256,7 @@ static unsigned long long live_first_layer_mismatch(
 }
 
 static int live_argmax_compare(
-    yvex_runtime_model *model, const live_execution *cpu,
+    yvex_model_engine *model, const live_execution *cpu,
     const live_execution *cuda, unsigned int *cpu_token,
     unsigned int *cuda_token, float *cpu_margin, float *cuda_margin,
     double *logit_maximum, double *logit_rmse, double *probability_tv,
@@ -369,14 +369,14 @@ static int live_history_changes(const float *with_history, const float *without_
 
 int main(int argc, char **argv)
 {
-    yvex_runtime_model_open_request request = {0};
-    yvex_runtime_model_failure failure = {0};
-    yvex_runtime_model *model = NULL;
+    yvex_model_engine_open_request request = {0};
+    yvex_model_engine_failure failure = {0};
+    yvex_model_engine *model = NULL;
     yvex_transformer_input *input = NULL, *cli_input = NULL, *empty_input = NULL;
     yvex_transformer_input_summary input_summary, auxiliary_summary;
     live_execution cpu = {0}, cpu_steps = {0}, cpu_empty = {0}, cuda = {0},
                    cuda_steps = {0};
-    const yvex_runtime_model_view *model_view;
+    const yvex_model_engine_view *model_view;
     const yvex_transformer_plan *input_plan;
     const yvex_transformer_plan_summary *plan;
     const unsigned int tokens[] = {1u, 2u, 3u, 4u};
@@ -425,8 +425,8 @@ int main(int argc, char **argv)
     request.runtime_binding_path = argv[2];
     request.target_id = "deepseek4-v4-flash-dspark";
     request.residency_backend = YVEX_BACKEND_KIND_CUDA;
-    rc = yvex_runtime_model_open(&model, &request, &failure, &err);
-    model_view = rc == YVEX_OK ? yvex_runtime_model_view_get(model) : NULL;
+    rc = yvex_model_engine_open(&model, &request, &failure, &err);
+    model_view = rc == YVEX_OK ? yvex_model_engine_view_get(model) : NULL;
     if (rc == YVEX_OK && !cuda_only) {
         step = "cpu-context-open";
         rc = live_execution_open(&cpu, model, YVEX_BACKEND_KIND_CPU,
@@ -599,7 +599,7 @@ int main(int argc, char **argv)
     yvex_error_clear(&cleanup);
     close_rc = live_execution_close(&cpu, &cleanup);
     if (rc == YVEX_OK && close_rc != YVEX_OK) { rc = close_rc; err = cleanup; }
-    yvex_runtime_model_close(&model);
+    yvex_model_engine_close(&model);
     if (model && rc == YVEX_OK) rc = YVEX_ERR_STATE;
     if (rc == YVEX_OK)
         printf("transformer_input=%s\ntransformer_ready=1\n"

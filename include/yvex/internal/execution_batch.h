@@ -54,7 +54,7 @@ typedef struct {
     unsigned int schema_version;
     yvex_execution_batch_provenance provenance;
     yvex_execution_phase phase;
-    unsigned long long row_count, source_count, model_generation;
+    unsigned long long row_count, source_count, engine_generation;
     const yvex_execution_batch_source *sources;
     const yvex_execution_batch_row *rows;
     char runtime_model_identity[YVEX_SHA256_HEX_CAP];
@@ -74,7 +74,7 @@ typedef struct {
     unsigned int schema_version;
     yvex_execution_phase phase;
     unsigned int backend_kind, tensor_scope, execution_class, publication_contract;
-    unsigned long long model_generation, layer_ordinal, row_width, admitted_width;
+    unsigned long long engine_generation, layer_ordinal, row_width, admitted_width;
     char runtime_model_identity[YVEX_SHA256_HEX_CAP];
     char runtime_binding_identity[YVEX_SHA256_HEX_CAP];
     char physical_variant_identity[YVEX_SHA256_HEX_CAP];

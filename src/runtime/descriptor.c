@@ -58,10 +58,6 @@ ASSERT_FIELD_RUN(yvex_artifact_physical_compatibility, physical_payload_compatib
                  payload_digest_equal, 8u, int);
 ASSERT_FIELD_RUN(yvex_graph_attention_operator_result, physical_payload_compatible,
                  payload_digest_equal, 8u, int);
-ASSERT_FIELD_RUN(yvex_runtime_model_summary, runtime_model_builds,
-                 executable_graph_builds, 4u, unsigned long long);
-ASSERT_FIELD_RUN(yvex_graph_attention_operator_result, runtime_model_builds,
-                 executable_graph_builds, 4u, unsigned long long);
 ASSERT_FIELD_RUN(yvex_graph_attention_state_summary, layer_count,
                  prepared_layer_count, 2u, unsigned long long);
 ASSERT_FIELD_RUN(yvex_graph_attention_operator_result, state_layer_count,

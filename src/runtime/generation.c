@@ -333,7 +333,7 @@ static int generation_prefill(
                                  "generation turn requires one exact new prompt suffix token");
     suffix_count = encoded->tokens.len - reusable_prefix;
     maximum_chunk = context->options.prefill_chunk_tokens;
-    rc = yvex_runtime_model_compatible_batch_width_copy(context->model, &compiled_row_width, err);
+    rc = yvex_model_engine_compatible_batch_width_copy(context->model, &compiled_row_width, err);
     if (rc != YVEX_OK) return rc;
     /* Configured prefill remains bounded by the compiler-sealed routed-row envelope. */
     if (compiled_row_width > 1ull && maximum_chunk > compiled_row_width) maximum_chunk = compiled_row_width;

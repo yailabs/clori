@@ -32,7 +32,7 @@ static void live_fail(const char *step, int rc, const yvex_error *err)
             err ? yvex_error_message(err) : "");
 }
 
-static int live_decode_open(live_decode *execution, yvex_runtime_model *model,
+static int live_decode_open(live_decode *execution, yvex_model_engine *model,
                             yvex_backend_kind backend,
                             int (*decode_cancel)(void *), void *cancel_context,
                             yvex_error *err)
@@ -40,7 +40,7 @@ static int live_decode_open(live_decode *execution, yvex_runtime_model *model,
     yvex_runtime_session_open_request session_request = {0};
     yvex_runtime_transformer_options transformer_options = {0};
     yvex_runtime_decode_options decode_options = {0};
-    yvex_runtime_model_failure failure = {0};
+    yvex_model_engine_failure failure = {0};
     memset(execution, 0, sizeof(*execution));
     session_request.backend = backend;
     transformer_options.context_capacity = 4ull;
@@ -271,9 +271,9 @@ static int live_partial_run(live_decode *execution,
 
 int main(int argc, char **argv)
 {
-    yvex_runtime_model_open_request request = {0};
-    yvex_runtime_model_failure failure = {0};
-    yvex_runtime_model *model = NULL;
+    yvex_model_engine_open_request request = {0};
+    yvex_model_engine_failure failure = {0};
+    yvex_model_engine *model = NULL;
     yvex_transformer_input *stream = NULL, *prefill = NULL, *decode = NULL;
     yvex_transformer_input *mutated_prefill = NULL, *mutated_decode = NULL;
     live_decode cpu = {0}, cuda = {0}, reference = {0}, partial = {0}, prefix = {0};
@@ -294,7 +294,7 @@ int main(int argc, char **argv)
     request.artifact_path = argv[1];
     request.runtime_binding_path = argv[2];
     request.target_id = "deepseek4-v4-flash-dspark";
-    rc = yvex_runtime_model_open(&model, &request, &failure, &err);
+    rc = yvex_model_engine_open(&model, &request, &failure, &err);
     if (rc == YVEX_OK) {
         step = "cpu-open";
         rc = live_decode_open(&cpu, model, YVEX_BACKEND_KIND_CPU, NULL, NULL, &err);
@@ -426,7 +426,7 @@ int main(int argc, char **argv)
     yvex_error_clear(&cleanup);
     close_rc = live_decode_close(&cpu, &cleanup);
     if (rc == YVEX_OK && close_rc != YVEX_OK) { rc = close_rc; err = cleanup; }
-    yvex_runtime_model_close(&model);
+    yvex_model_engine_close(&model);
     if (model && rc == YVEX_OK) rc = YVEX_ERR_STATE;
     return rc == YVEX_OK ? 0 : 1;
 }

@@ -822,16 +822,16 @@ int yvex_runtime_generation_operator_execute(
     yvex_generation_operator_result *result,
     yvex_runtime_cleanup_lease **retained_cleanup, yvex_error *err)
 {
-    yvex_runtime_model_open_request model_request = {0};
+    yvex_model_engine_open_request model_request = {0};
     yvex_runtime_session_open_request session_request = {0};
     yvex_runtime_generation_options options = {0};
     yvex_runtime_generation_request execution_request = {0};
-    yvex_runtime_model_failure failure = {0};
+    yvex_model_engine_failure failure = {0};
     yvex_runtime_cleanup_lease *cleanup = NULL;
-    yvex_runtime_model *model = NULL;
+    yvex_model_engine *model = NULL;
     yvex_runtime_execution_session *session = NULL;
     yvex_runtime_generation_context *context = NULL;
-    const yvex_runtime_model_view *view;
+    const yvex_model_engine_view *view;
     unsigned long long text_allocation;
     yvex_error primary, cleanup_error, validation_error;
     int adopted = 0, rc, close_rc;
@@ -935,7 +935,7 @@ int yvex_runtime_generation_operator_execute(
             if (err) *err = validation_error;
         }
     }
-    view = yvex_runtime_model_view_get(model);
+    view = yvex_model_engine_view_get(model);
     if (view && view->target_id)
         yvex_core_text_copy(result->family, sizeof(result->family),
                             view->target_id);

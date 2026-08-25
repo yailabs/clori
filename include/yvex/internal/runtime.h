@@ -48,7 +48,7 @@ typedef struct yvex_runtime_binding_failure {
     char field[64], path[YVEX_PATH_CAP];
     const char *reason;
 } yvex_runtime_binding_failure;
-#define YVEX_RUNTIME_MODEL_SCHEMA_V1 1u
+#define YVEX_MODEL_ENGINE_SCHEMA_V1 1u
 #define YVEX_RUNTIME_EXECUTION_DESCRIPTOR_SCHEMA_V2 2u
 typedef enum {
     YVEX_RUNTIME_MODE_EAGER = 0, YVEX_RUNTIME_MODE_PIECEWISE,
@@ -159,21 +159,21 @@ int yvex_runtime_binding_policies(
 const yvex_tokenizer_family_policy *yvex_runtime_binding_tokenizer_policy(
     const yvex_runtime_binding *binding);
 typedef enum {
-    YVEX_RUNTIME_MODEL_FAILURE_NONE = 0, YVEX_RUNTIME_MODEL_FAILURE_INVALID_ARGUMENT,
-    YVEX_RUNTIME_MODEL_FAILURE_ADAPTER, YVEX_RUNTIME_MODEL_FAILURE_BINDING,
-    YVEX_RUNTIME_MODEL_FAILURE_ARTIFACT, YVEX_RUNTIME_MODEL_FAILURE_IDENTITY,
-    YVEX_RUNTIME_MODEL_FAILURE_MATERIALIZATION, YVEX_RUNTIME_MODEL_FAILURE_DESCRIPTOR,
-    YVEX_RUNTIME_MODEL_FAILURE_GRAPH, YVEX_RUNTIME_MODEL_FAILURE_BACKEND,
-    YVEX_RUNTIME_MODEL_FAILURE_DRIFT, YVEX_RUNTIME_MODEL_FAILURE_BUSY,
-    YVEX_RUNTIME_MODEL_FAILURE_CANCELLED, YVEX_RUNTIME_MODEL_FAILURE_ALLOCATION,
-    YVEX_RUNTIME_MODEL_FAILURE_CLEANUP
-} yvex_runtime_model_failure_code;
-typedef struct yvex_runtime_model_failure {
-    yvex_runtime_model_failure_code code;
+    YVEX_MODEL_ENGINE_FAILURE_NONE = 0, YVEX_MODEL_ENGINE_FAILURE_INVALID_ARGUMENT,
+    YVEX_MODEL_ENGINE_FAILURE_ADAPTER, YVEX_MODEL_ENGINE_FAILURE_BINDING,
+    YVEX_MODEL_ENGINE_FAILURE_ARTIFACT, YVEX_MODEL_ENGINE_FAILURE_IDENTITY,
+    YVEX_MODEL_ENGINE_FAILURE_MATERIALIZATION, YVEX_MODEL_ENGINE_FAILURE_DESCRIPTOR,
+    YVEX_MODEL_ENGINE_FAILURE_GRAPH, YVEX_MODEL_ENGINE_FAILURE_BACKEND,
+    YVEX_MODEL_ENGINE_FAILURE_DRIFT, YVEX_MODEL_ENGINE_FAILURE_BUSY,
+    YVEX_MODEL_ENGINE_FAILURE_CANCELLED, YVEX_MODEL_ENGINE_FAILURE_ALLOCATION,
+    YVEX_MODEL_ENGINE_FAILURE_CLEANUP
+} yvex_model_engine_failure_code;
+typedef struct yvex_model_engine_failure {
+    yvex_model_engine_failure_code code;
     unsigned long long expected, actual;
     char field[64];
     const char *reason;
-} yvex_runtime_model_failure;
+} yvex_model_engine_failure;
 struct yvex_runtime_generation_options;
 typedef struct {
     const char *artifact_path, *runtime_binding_path, *target_id, *artifact_reopen_cache_root;
@@ -182,10 +182,10 @@ typedef struct {
     unsigned long long maximum_host_bytes, maximum_device_bytes;
     yvex_runtime_progress_callback progress;
     void *progress_context;
-} yvex_runtime_model_open_request;
+} yvex_model_engine_open_request;
 typedef struct {
-    unsigned int schema_version;
     int sealed, valid;
+    unsigned long long engine_generation; /* Process-local; never persisted or hashed. */
     char runtime_model_identity[YVEX_SHA256_HEX_CAP];
     char runtime_binding_identity[YVEX_SHA256_HEX_CAP];
     char artifact_identity[YVEX_SHA256_HEX_CAP];
@@ -198,16 +198,14 @@ typedef struct {
     unsigned long long artifact_hash_passes, artifact_verified_reopen_passes;
     unsigned long long artifact_reopen_cache_failures, artifact_bytes_hashed;
     unsigned long long gguf_directory_parses, runtime_binding_parses;
-    unsigned long long runtime_model_builds, runtime_descriptor_builds;
-    unsigned long long semantic_graph_builds, executable_graph_builds;
     unsigned long long drift_checks, invalidation_count;
     unsigned long long tensor_count, attention_layer_count, draft_attention_layer_count;
     unsigned long long attention_binding_count, draft_attention_binding_count;
     unsigned long long physical_execution_decision_count;
     double lifecycle_seconds[YVEX_RUNTIME_LIFECYCLE_COUNT], total_seconds;
     yvex_runtime_capabilities capabilities;
-} yvex_runtime_model_summary;
-typedef struct yvex_runtime_model yvex_runtime_model;
+} yvex_model_engine_summary;
+typedef struct yvex_model_engine yvex_model_engine;
 typedef struct yvex_runtime_execution_session yvex_runtime_execution_session;
 typedef struct yvex_runtime_cleanup_lease yvex_runtime_cleanup_lease;
 enum { YVEX_RUNTIME_RESIDENCY_SCHEMA_V7 = 7u, YVEX_RUNTIME_RESIDENCY_SCHEMA_V8 = 8u };
@@ -289,8 +287,8 @@ typedef struct {
     const yvex_physical_execution_ir *physical_execution;
     const yvex_tokenizer *tokenizer;
     yvex_materialization_session *materialization;
-} yvex_runtime_model_view;
-int yvex_runtime_residency_prepare(yvex_runtime_residency **out, yvex_runtime_model *model,
+} yvex_model_engine_view;
+int yvex_runtime_residency_prepare(yvex_runtime_residency **out, yvex_model_engine *model,
     const yvex_runtime_residency_options *options, yvex_runtime_residency_failure *failure, yvex_error *err);
 int yvex_runtime_component_residency_prepare(yvex_runtime_residency **out,
     yvex_materialization_session *materialization, const char *component_identity,
@@ -348,12 +346,12 @@ int yvex_runtime_state_residency_close(yvex_runtime_state_residency **residency,
 int yvex_runtime_state_residency_summary_copy(const yvex_runtime_state_residency *residency,
                                               yvex_runtime_state_residency_summary *out, yvex_error *err);
 /* A cleanup failure may publish an unpublished model in out; close retries exact ownership. */
-int yvex_runtime_model_open(yvex_runtime_model **out, const yvex_runtime_model_open_request *request,
-                            yvex_runtime_model_failure *failure, yvex_error *err);
-int yvex_runtime_model_validate(yvex_runtime_model *model, yvex_runtime_model_failure *failure, yvex_error *err);
-int yvex_runtime_model_summary_copy(const yvex_runtime_model *model, yvex_runtime_model_summary *out, yvex_error *err);
-void yvex_runtime_model_close(yvex_runtime_model **model);
-const yvex_runtime_model_view *yvex_runtime_model_view_get(const yvex_runtime_model *model);
+int yvex_model_engine_open(yvex_model_engine **out, const yvex_model_engine_open_request *request,
+                            yvex_model_engine_failure *failure, yvex_error *err);
+int yvex_model_engine_validate(yvex_model_engine *model, yvex_model_engine_failure *failure, yvex_error *err);
+int yvex_model_engine_summary_copy(const yvex_model_engine *model, yvex_model_engine_summary *out, yvex_error *err);
+void yvex_model_engine_close(yvex_model_engine **model);
+const yvex_model_engine_view *yvex_model_engine_view_get(const yvex_model_engine *model);
 typedef struct {
     yvex_backend_kind backend;
     unsigned long long maximum_host_bytes, maximum_device_bytes;
@@ -362,6 +360,7 @@ typedef struct {
 typedef struct {
     int open, busy, cancelled, invalidated;
     yvex_backend_kind backend;
+    unsigned long long engine_generation;
     yvex_runtime_capabilities capabilities;
     unsigned long long execution_count, failure_count, cancellation_count;
     unsigned long long warm_artifact_hash_passes, warm_weight_artifact_reads;
@@ -382,7 +381,7 @@ typedef struct {
     char residency_identity[YVEX_SHA256_HEX_CAP], workspace_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_session_summary;
 typedef struct {
-    const yvex_runtime_model *model;
+    const yvex_model_engine *engine;
     yvex_backend *backend;
     const yvex_attention_state_provider *attention_state_provider;
     const yvex_attention_state_provider *draft_attention_state_provider;
@@ -391,34 +390,34 @@ typedef struct {
     yvex_runtime_state_residency *draft_state_residency;
 } yvex_runtime_session_view;
 /* A cleanup failure may retain an unpublished closing session in out; retry close discharges it. */
-int yvex_runtime_session_open(yvex_runtime_execution_session **out, yvex_runtime_model *model,
-    const yvex_runtime_session_open_request *request, yvex_runtime_model_failure *failure,
+int yvex_runtime_session_open(yvex_runtime_execution_session **out, yvex_model_engine *model,
+    const yvex_runtime_session_open_request *request, yvex_model_engine_failure *failure,
     yvex_error *err);
 int yvex_runtime_session_prepare_attention_workspace(yvex_runtime_execution_session *session,
     yvex_runtime_execution_mode mode, yvex_runtime_execution_scope scope,
     yvex_attention_evidence_level evidence_level,
     const yvex_graph_attention_capacity_plan *capacity,
     unsigned long long physical_row_capacity, unsigned long long minimum_bytes,
-    yvex_runtime_model_failure *failure, yvex_error *err);
+    yvex_model_engine_failure *failure, yvex_error *err);
 int yvex_runtime_session_summary_copy(const yvex_runtime_execution_session *session,
                                       yvex_runtime_session_summary *out, yvex_error *err);
 int yvex_runtime_session_close(yvex_runtime_execution_session **session, yvex_error *err);
 const yvex_runtime_session_view *yvex_runtime_session_view_get(const yvex_runtime_execution_session *session);
 int yvex_runtime_device_view_bind(yvex_execution_device_view *out, yvex_execution_device_value_kind kind,
-    yvex_runtime_model *model, yvex_runtime_execution_session *session,
+    yvex_model_engine *model, yvex_runtime_execution_session *session,
     const yvex_attention_state_provider *provider,
     const yvex_compiled_execution_profile *profile, const yvex_device_tensor *tensor,
     unsigned long long offset, unsigned long long rows, unsigned long long columns,
     yvex_error *err);
 int yvex_runtime_cleanup_lease_acquire(
-    yvex_runtime_cleanup_lease **out, const yvex_runtime_model_open_request *model_request,
+    yvex_runtime_cleanup_lease **out, const yvex_model_engine_open_request *model_request,
     const yvex_runtime_session_open_request *session_request,
-    yvex_runtime_model **borrowed_model, yvex_runtime_execution_session **borrowed_session,
-    yvex_runtime_model_failure *failure, yvex_error *err);
+    yvex_model_engine **borrowed_model, yvex_runtime_execution_session **borrowed_session,
+    yvex_model_engine_failure *failure, yvex_error *err);
 int yvex_runtime_cleanup_lease_session_open(
     yvex_runtime_cleanup_lease *lease, const yvex_runtime_session_open_request *request,
     yvex_runtime_execution_session **borrowed_session,
-    yvex_runtime_model_failure *failure, yvex_error *err);
+    yvex_model_engine_failure *failure, yvex_error *err);
 int yvex_runtime_cleanup_lease_close(yvex_runtime_cleanup_lease **lease, yvex_error *err);
 typedef int (*yvex_runtime_cleanup_release_fn)(void **context, yvex_error *err);
 int yvex_runtime_cleanup_lease_adopt(yvex_runtime_cleanup_lease *lease, void *context,
@@ -544,8 +543,7 @@ typedef struct yvex_graph_attention_operator_result {
     unsigned long long artifact_hash_passes, warm_artifact_hash_passes;
     unsigned long long runtime_source_headers_read, runtime_source_payload_bytes_read;
     unsigned long long runtime_transform_plans_built, runtime_quant_plans_built;
-    unsigned long long runtime_writer_plans_built, runtime_model_builds;
-    unsigned long long runtime_descriptor_builds, semantic_graph_builds, executable_graph_builds;
+    unsigned long long runtime_writer_plans_built;
     unsigned long long resident_binding_count, resident_encoded_bytes, host_resident_bytes, device_resident_bytes;
     unsigned long long workspace_bytes, pinned_host_bytes, pinned_host_peak_bytes, upload_bytes, upload_count;
     unsigned long long warm_weight_artifact_reads, warm_weight_upload_bytes;

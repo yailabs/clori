@@ -230,7 +230,7 @@ static int session_generation_policy(
     server_session_registry *registry, const yvex_client_request *request,
     yvex_runtime_sampling_policy *policy, yvex_error *err)
 {
-    const yvex_runtime_model_view *view = yvex_runtime_model_view_get(registry->model);
+    const yvex_model_engine_view *view = yvex_model_engine_view_get(registry->model);
     if (!view || !view->tokenizer)
         return YVEX_ERR_STATE;
     {
@@ -852,7 +852,7 @@ static int session_provider_result_prepare(
     yvex_tokenizer_provider_result *provider_result, int *stop_matched,
     yvex_error *err)
 {
-    const yvex_runtime_model_view *view = yvex_runtime_model_view_get(registry->model);
+    const yvex_model_engine_view *view = yvex_model_engine_view_get(registry->model);
     const yvex_conversation_protocol *conversation;
     const unsigned char *completion = session->turn_text;
     unsigned char *owned_completion = NULL;
@@ -1270,7 +1270,7 @@ static int session_profile_publish(server_session_registry *registry,
                 profile->phase_ns[YVEX_RUNTIME_PROFILE_SUBSEQUENT_DECODE]);
     memset(&batches, 0, sizeof(batches));
     if (rc == YVEX_OK &&
-        yvex_runtime_model_execution_batch_summary_copy(
+        yvex_model_engine_execution_batch_summary_copy(
             registry->model, &batches, err) == YVEX_OK && batches.enabled)
         rc = PROFILE_EVENT("execution-batches", batches.physical_batches,
                            batches.multi_source_batches, batches.maximum_width, 0ull);
@@ -1371,8 +1371,8 @@ static int session_turn(server_session_registry *registry,
                         server_message_emit emit, void *emit_context,
                         yvex_error *err)
 {
-    const yvex_runtime_model_view *model_view =
-        yvex_runtime_model_view_get(registry->model);
+    const yvex_model_engine_view *model_view =
+        yvex_model_engine_view_get(registry->model);
     yvex_prompt_message prompt_messages[SESSION_MAX_MESSAGES + 1u];
     yvex_runtime_generation_request prompt;
     yvex_runtime_generation_turn_request turn;
@@ -1628,8 +1628,8 @@ int yvex_server_sessions_execute(server_session_registry *registry,
                                  YVEX_OK, request, session, "reset", err);
     } else if (request->operation == YVEX_CLIENT_OP_SESSION_STATE_SAVE ||
                request->operation == YVEX_CLIENT_OP_SESSION_STATE_RESTORE) {
-        const yvex_runtime_model_view *view =
-            yvex_runtime_model_view_get(registry->model);
+        const yvex_model_engine_view *view =
+            yvex_model_engine_view_get(registry->model);
         yvex_runtime_state_store_summary summary;
         if (atomic_load_explicit(&session->active_turn, memory_order_acquire)) {
             rc = YVEX_ERR_STATE;

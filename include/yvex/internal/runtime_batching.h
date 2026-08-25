@@ -34,12 +34,12 @@ typedef struct {
     unsigned long long maximum_rendezvous_width;
 } yvex_runtime_execution_batch_summary;
 
-struct yvex_runtime_model;
-int yvex_runtime_model_compatible_batch_width_copy(
-    const struct yvex_runtime_model *model, unsigned long long *width,
+struct yvex_model_engine;
+int yvex_model_engine_compatible_batch_width_copy(
+    const struct yvex_model_engine *model, unsigned long long *width,
     yvex_error *err);
-int yvex_runtime_model_execution_batch_summary_copy(
-    const struct yvex_runtime_model *model,
+int yvex_model_engine_execution_batch_summary_copy(
+    const struct yvex_model_engine *model,
     yvex_runtime_execution_batch_summary *out, yvex_error *err);
 
 #ifdef __cplusplus

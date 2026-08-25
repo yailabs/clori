@@ -616,13 +616,13 @@ static int compatible_moe_key_prepare(compatible_moe_ticket *ticket,
                                       yvex_error *err)
 {
     const runtime_compatible_moe_request *request = ticket->request;
-    const yvex_runtime_model_view *view = yvex_runtime_model_view_get(request->model);
+    const yvex_model_engine_view *view = yvex_model_engine_view_get(request->model);
     const yvex_physical_execution_summary *physical = view
         ? yvex_physical_execution_ir_summary(view->physical_execution) : NULL;
-    yvex_runtime_model_summary model;
+    yvex_model_engine_summary model;
     yvex_execution_compatibility_key *key = &ticket->ticket.key;
     if (!view || !physical ||
-        yvex_runtime_model_summary_copy(request->model, &model, err) != YVEX_OK)
+        yvex_model_engine_summary_copy(request->model, &model, err) != YVEX_OK)
         return batching_refuse(err, YVEX_ERR_STATE,
                                "compatible MoE compiled facts are unavailable");
     memset(key, 0, sizeof(*key));
@@ -632,7 +632,7 @@ static int compatible_moe_key_prepare(compatible_moe_ticket *ticket,
     key->tensor_scope = request->layer->tensor_scope;
     key->execution_class = request->execution_class;
     key->publication_contract = 1u;
-    key->model_generation = model.runtime_model_builds;
+    key->engine_generation = model.engine_generation;
     key->layer_ordinal = request->layer_ordinal;
     key->row_width = request->transformer->expanded_width;
     key->admitted_width = request->admitted_width;
@@ -969,7 +969,7 @@ int yvex_runtime_private_compatible_moe_execute(
 
 typedef struct {
     runtime_compatible_batch_ticket ticket;
-    yvex_runtime_model *model;
+    yvex_model_engine *model;
     yvex_runtime_execution_session *session;
     yvex_runtime_logits_context *logits;
     yvex_backend *backend;
@@ -999,15 +999,15 @@ static yvex_execution_phase compatible_logits_phase(yvex_logits_source_phase pha
 static int compatible_logits_key_prepare(compatible_logits_ticket *ticket,
                                          yvex_error *err)
 {
-    const yvex_runtime_model_view *view = yvex_runtime_model_view_get(ticket->model);
+    const yvex_model_engine_view *view = yvex_model_engine_view_get(ticket->model);
     const yvex_physical_execution_summary *physical = view
         ? yvex_physical_execution_ir_summary(view->physical_execution) : NULL;
     const yvex_runtime_logits_plan_summary *plan =
         yvex_runtime_logits_plan_summary_get(ticket->logits);
-    yvex_runtime_model_summary model;
+    yvex_model_engine_summary model;
     yvex_execution_compatibility_key *key = &ticket->ticket.key;
     if (!physical || !plan || ticket->admitted_width >= 64ull ||
-        yvex_runtime_model_summary_copy(ticket->model, &model, err) != YVEX_OK)
+        yvex_model_engine_summary_copy(ticket->model, &model, err) != YVEX_OK)
         return batching_refuse(err, YVEX_ERR_STATE,
                                "compatible output-head facts are unavailable");
     key->schema_version = YVEX_EXECUTION_COMPATIBILITY_SCHEMA_V1;
@@ -1016,7 +1016,7 @@ static int compatible_logits_key_prepare(compatible_logits_ticket *ticket,
     key->tensor_scope = YVEX_TENSOR_SCOPE_GLOBAL;
     key->execution_class = ticket->execution_profile->execution_class;
     key->publication_contract = 3u;
-    key->model_generation = model.runtime_model_builds;
+    key->engine_generation = model.engine_generation;
     key->row_width = plan->hidden_width;
     key->admitted_width = ticket->admitted_width;
     yvex_runtime_identity_copy(key->runtime_model_identity,
@@ -1137,9 +1137,9 @@ static int compatible_step_execute(
 static int compatible_step_rendezvous(
     const runtime_compatible_step_request *request, yvex_error *err)
 {
-    const yvex_runtime_model_view *view;
+    const yvex_model_engine_view *view;
     const yvex_physical_execution_summary *physical;
-    yvex_runtime_model_summary model;
+    yvex_model_engine_summary model;
     runtime_compatible_batch_ticket ticket = {0};
     yvex_execution_compatibility_key *key = &ticket.key;
     if (!request || !request->model || !request->session || !request->backend ||
@@ -1154,12 +1154,12 @@ static int compatible_step_rendezvous(
         yvex_error_clear(err);
         return YVEX_OK;
     }
-    view = yvex_runtime_model_view_get(request->model);
+    view = yvex_model_engine_view_get(request->model);
     physical = view
                    ? yvex_physical_execution_ir_summary(view->physical_execution)
                    : NULL;
     if (!physical ||
-        yvex_runtime_model_summary_copy(request->model, &model, err) != YVEX_OK)
+        yvex_model_engine_summary_copy(request->model, &model, err) != YVEX_OK)
         return batching_refuse(err, YVEX_ERR_STATE,
                                "compatible execution step facts are unavailable");
     key->schema_version = YVEX_EXECUTION_COMPATIBILITY_SCHEMA_V1;
@@ -1168,7 +1168,7 @@ static int compatible_step_rendezvous(
     key->tensor_scope = request->tensor_scope;
     key->execution_class = request->execution_class;
     key->publication_contract = 2u;
-    key->model_generation = model.runtime_model_builds;
+    key->engine_generation = model.engine_generation;
     key->row_width = request->transformer->expanded_width;
     key->admitted_width = request->maximum_width;
     yvex_runtime_identity_copy(key->runtime_model_identity,
@@ -1195,7 +1195,7 @@ static int compatible_step_rendezvous(
 }
 
 int yvex_runtime_private_model_batcher_acquire(
-    yvex_runtime_model *model, unsigned long long maximum_width,
+    yvex_model_engine *model, unsigned long long maximum_width,
     yvex_error *err)
 {
     runtime_compatible_batcher *created = NULL;
@@ -1238,7 +1238,7 @@ int yvex_runtime_private_model_batcher_acquire(
 }
 
 int yvex_runtime_private_model_batcher_release(
-    yvex_runtime_model *model, yvex_error *err)
+    yvex_model_engine *model, yvex_error *err)
 {
     runtime_compatible_batcher *owner = NULL;
     int rc;
@@ -1271,7 +1271,7 @@ int yvex_runtime_private_model_batcher_release(
 }
 
 int yvex_runtime_private_model_batcher_finish(
-    yvex_runtime_model *model, int *acquired, yvex_error *err)
+    yvex_model_engine *model, int *acquired, yvex_error *err)
 {
     int rc;
     if (!acquired || !*acquired) {
@@ -1284,7 +1284,7 @@ int yvex_runtime_private_model_batcher_finish(
 }
 
 int yvex_runtime_private_model_batcher_producer_enter(
-    yvex_runtime_model *model, yvex_error *err)
+    yvex_model_engine *model, yvex_error *err)
 {
     int rc;
     if (!model || !model->lifecycle_mutex_ready ||
@@ -1307,7 +1307,7 @@ int yvex_runtime_private_model_batcher_producer_enter(
 }
 
 int yvex_runtime_private_model_batcher_producer_leave(
-    yvex_runtime_model *model, yvex_error *err)
+    yvex_model_engine *model, yvex_error *err)
 {
     int rc;
     if (!model || !model->lifecycle_mutex_ready ||
@@ -1328,7 +1328,7 @@ int yvex_runtime_private_model_batcher_producer_leave(
 }
 
 int yvex_runtime_private_batcher_producer_finish(
-    yvex_runtime_model *model, int *active, int status, yvex_error *err)
+    yvex_model_engine *model, int *active, int status, yvex_error *err)
 {
     int leave_status;
     if (!active || !*active) return status;
@@ -1338,11 +1338,11 @@ int yvex_runtime_private_batcher_producer_finish(
     return status == YVEX_OK ? leave_status : status;
 }
 
-int yvex_runtime_model_compatible_batch_width_copy(
-    const yvex_runtime_model *model, unsigned long long *width,
+int yvex_model_engine_compatible_batch_width_copy(
+    const yvex_model_engine *model, unsigned long long *width,
     yvex_error *err)
 {
-    yvex_runtime_model *owner = (yvex_runtime_model *)model;
+    yvex_model_engine *owner = (yvex_model_engine *)model;
     const yvex_physical_execution_summary *summary;
     unsigned long long common = 0ull, consumers = 0ull, index, candidate;
     int initialized = 0;
@@ -1403,11 +1403,11 @@ int yvex_runtime_private_compatible_step_enter(
     return rc;
 }
 
-int yvex_runtime_model_execution_batch_summary_copy(
-    const yvex_runtime_model *model, yvex_runtime_execution_batch_summary *out,
+int yvex_model_engine_execution_batch_summary_copy(
+    const yvex_model_engine *model, yvex_runtime_execution_batch_summary *out,
     yvex_error *err)
 {
-    yvex_runtime_model *owner = (yvex_runtime_model *)model;
+    yvex_model_engine *owner = (yvex_model_engine *)model;
     int rc = YVEX_OK;
     if (!owner || !out || !owner->lifecycle_mutex_ready ||
         pthread_mutex_lock(&owner->lifecycle_mutex) != 0)

@@ -25,7 +25,7 @@ extern "C" {
 #define YVEX_MOE_NO_TENSOR ULLONG_MAX
 #define YVEX_MOE_MAX_SELECTED 16u
 typedef struct yvex_runtime_binding_summary yvex_runtime_binding_summary;
-typedef struct yvex_runtime_model yvex_runtime_model;
+typedef struct yvex_model_engine yvex_model_engine;
 typedef struct yvex_runtime_execution_session yvex_runtime_execution_session;
 typedef struct yvex_runtime_cleanup_lease yvex_runtime_cleanup_lease;
 typedef enum {
@@ -348,7 +348,7 @@ typedef struct {
     char combined_output_digest[YVEX_SHA256_HEX_CAP];
     char execution_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_moe_result;
-int yvex_runtime_moe_context_open(yvex_runtime_moe_context **out, yvex_runtime_model *model,
+int yvex_runtime_moe_context_open(yvex_runtime_moe_context **out, yvex_model_engine *model,
                                   yvex_runtime_execution_session *session,
                                   const yvex_runtime_moe_options *options,
                                   unsigned long long *cuda_workspace_bytes,

@@ -874,10 +874,6 @@ with open(sys.argv[1], encoding="utf-8") as stream:
     result = json.load(stream)
 assert result["command"] == "inspect attention capabilities"
 assert result["artifact_hash_passes"] == 1
-assert result["runtime_model_builds"] == 1
-assert result["runtime_descriptor_builds"] == 1
-assert result["semantic_graph_builds"] == 1
-assert result["executable_graph_builds"] == 1
 assert result["attention_semantics_ready"] is True
 assert result["attention_core_ready"] is True
 assert result["attention_envelope_ready"] is True

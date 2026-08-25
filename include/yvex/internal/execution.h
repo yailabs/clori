@@ -497,7 +497,7 @@ typedef struct {
     yvex_backend *backend;
     const yvex_device_tensor *tensor;
     unsigned long long element_offset;
-    unsigned long long model_generation, session_generation, state_generation;
+    unsigned long long resource_generation, session_generation, state_generation;
     unsigned long long rows, columns, element_bytes;
     yvex_dtype dtype;
     int mutable_view, synchronization_required;

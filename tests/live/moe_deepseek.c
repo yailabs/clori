@@ -57,10 +57,10 @@ static float live_value(unsigned long long layer, unsigned long long column)
     return ((float)value - 260.0f) / 2048.0f;
 }
 
-static int live_input_open(live_input *input, const yvex_runtime_model *model,
+static int live_input_open(live_input *input, const yvex_model_engine *model,
                            const yvex_moe_plan *plan, const char *path, yvex_error *err)
 {
-    const yvex_runtime_model_view *view = yvex_runtime_model_view_get(model);
+    const yvex_model_engine_view *view = yvex_model_engine_view_get(model);
     const yvex_runtime_binding_summary *binding = view ? view->binding : NULL;
     const yvex_moe_plan_summary *summary = yvex_moe_plan_summary_get(plan);
     unsigned long long layer_index, total = 0ull, offset = 0ull;
@@ -138,12 +138,12 @@ fail:
 
 static int live_context_open(yvex_runtime_execution_session **session,
                              yvex_runtime_moe_context **context,
-                             yvex_runtime_model *model, yvex_backend_kind backend,
+                             yvex_model_engine *model, yvex_backend_kind backend,
                              const yvex_runtime_moe_options *requested_options,
                              yvex_error *err)
 {
     yvex_runtime_session_open_request request = {0};
-    yvex_runtime_model_failure failure = {0};
+    yvex_model_engine_failure failure = {0};
     yvex_runtime_moe_options options = {0};
     int rc;
     request.backend = backend;
@@ -377,7 +377,7 @@ static int live_full_cuda(yvex_runtime_moe_context *context, const yvex_moe_plan
     return rc;
 }
 
-static int live_cancellation(yvex_runtime_model *model, const yvex_moe_plan *plan,
+static int live_cancellation(yvex_model_engine *model, const yvex_moe_plan *plan,
                              const live_input *input, yvex_error *err)
 {
     yvex_runtime_execution_session *session = NULL;
@@ -424,9 +424,9 @@ static int live_cancellation(yvex_runtime_model *model, const yvex_moe_plan *pla
 
 int main(int argc, char **argv)
 {
-    yvex_runtime_model_open_request request = {0};
-    yvex_runtime_model_failure failure = {0};
-    yvex_runtime_model *model = NULL;
+    yvex_model_engine_open_request request = {0};
+    yvex_model_engine_failure failure = {0};
+    yvex_model_engine *model = NULL;
     yvex_runtime_execution_session *cpu_session = NULL, *cuda_session = NULL;
     yvex_runtime_execution_session *forensic_session = NULL;
     yvex_runtime_moe_context *cpu_context = NULL, *cuda_context = NULL;
@@ -448,7 +448,7 @@ int main(int argc, char **argv)
     request.target_id = "deepseek4-v4-flash-dspark";
     request.residency_backend = YVEX_BACKEND_KIND_CUDA;
     forensic_options.evidence_level = YVEX_ATTENTION_EVIDENCE_FULL;
-    rc = yvex_runtime_model_open(&model, &request, &failure, &err);
+    rc = yvex_model_engine_open(&model, &request, &failure, &err);
     if (rc == YVEX_OK)
         rc = live_context_open(&cpu_session, &cpu_context, model,
                                YVEX_BACKEND_KIND_CPU, NULL, &err);
@@ -488,7 +488,7 @@ int main(int argc, char **argv)
     yvex_error_clear(&cleanup);
     close_rc = live_context_close(&cpu_context, &cpu_session, &cleanup);
     if (rc == YVEX_OK && close_rc != YVEX_OK) { rc = close_rc; err = cleanup; }
-    yvex_runtime_model_close(&model);
+    yvex_model_engine_close(&model);
     if (model && rc == YVEX_OK) rc = YVEX_ERR_STATE;
     if (rc == YVEX_OK)
         printf("moe_input=%s\nmoe_plan_ready=1\nmoe_block_ready=1\n"

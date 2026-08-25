@@ -321,7 +321,7 @@ static int sampling_source_identity(yvex_runtime_sampling_source *source)
             (yvex_sha256_update_text(
                  &hash, source->device_logits.execution_profile_identity) &&
              yvex_sha256_update_u64(
-                 &hash, source->device_logits.model_generation) &&
+                 &hash, source->device_logits.resource_generation) &&
              yvex_sha256_update_u64(
                  &hash, source->device_logits.session_generation) &&
              yvex_sha256_update_u64(
@@ -1141,7 +1141,7 @@ static int sampling_select_device_greedy_batch(
              !yvex_core_u64_add(first->element_offset, expected, &expected) ||
              view->backend != first->backend || view->tensor != first->tensor ||
              view->element_offset != expected ||
-             view->model_generation != first->model_generation ||
+             view->resource_generation != first->resource_generation ||
              view->session_generation != first->session_generation ||
              view->state_generation != first->state_generation ||
              strcmp(view->execution_profile_identity, first->execution_profile_identity) != 0))

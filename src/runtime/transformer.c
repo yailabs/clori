@@ -18,9 +18,9 @@ typedef struct {
     unsigned long long decoded_count;
 } transformer_weight_owner;
 struct yvex_runtime_transformer_context {
-    yvex_runtime_model *model;
+    yvex_model_engine *model;
     yvex_runtime_execution_session *session;
-    const yvex_runtime_model_view *model_view;
+    const yvex_model_engine_view *model_view;
     const yvex_runtime_session_view *session_view;
     yvex_runtime_transformer_options options;
     yvex_runtime_moe_context *moe;
@@ -43,7 +43,7 @@ struct yvex_runtime_transformer_context {
     int mutex_ready, busy, invalidated, batcher_acquired, batcher_producer_active;
 };
 static const yvex_attention_plan *transformer_runtime_attention(
-    const yvex_runtime_model_view *view, yvex_tensor_scope scope)
+    const yvex_model_engine_view *view, yvex_tensor_scope scope)
 {
     if (!view) return NULL;
     return scope == YVEX_TENSOR_SCOPE_DRAFT ? view->draft_attention : view->attention;
@@ -915,7 +915,7 @@ static int transformer_state_summary(const yvex_runtime_transformer_context *con
     return YVEX_OK;
 }
 static int transformer_capacity_build(yvex_graph_attention_capacity_plan **out,
-                                      const yvex_runtime_model_view *model,
+                                      const yvex_model_engine_view *model,
                                       yvex_tensor_scope scope,
                                       unsigned long long start, unsigned long long tokens,
                                       yvex_error *err)
@@ -1047,7 +1047,7 @@ static int transformer_prepare(yvex_runtime_transformer_context *context,
     const yvex_transformer_plan_summary *plan =
         yvex_transformer_plan_summary_get(context->plan);
     yvex_graph_attention_capacity_plan *capacity = NULL;
-    yvex_runtime_model_failure failure;
+    yvex_model_engine_failure failure;
     yvex_runtime_session_summary session;
     yvex_attention_failure attention_failure;
     yvex_runtime_execution_mode mode;
@@ -1172,7 +1172,7 @@ static int transformer_core_features_execute(
     yvex_graph_attention_state_summary before = {0}, after = {0};
     yvex_attention_execution_request execution = {0};
     yvex_attention_probe_result probe = {0};
-    yvex_runtime_model_failure failure = {0};
+    yvex_model_engine_failure failure = {0};
     yvex_execution_device_view device_view = {0};
     transformer_activation_source activation = {0};
     yvex_device_tensor device_input = {0}, device_output = {0};
@@ -1324,7 +1324,7 @@ int yvex_runtime_transformer_stage_core_features(
 }
 /* Allocate and seal one transformer context over a model/session pair with complete rollback. */
 int yvex_runtime_transformer_context_open(yvex_runtime_transformer_context **out,
-                                          yvex_runtime_model *model, yvex_runtime_execution_session *session,
+                                          yvex_model_engine *model, yvex_runtime_execution_session *session,
                                           const yvex_runtime_transformer_options *options,
                                           unsigned long long *workspace_bytes, yvex_error *err)
 {
@@ -1347,10 +1347,10 @@ int yvex_runtime_transformer_context_open(yvex_runtime_transformer_context **out
                                                     "transformer context allocation failed");
     context->model = model;
     context->session = session;
-    context->model_view = yvex_runtime_model_view_get(model);
+    context->model_view = yvex_model_engine_view_get(model);
     context->session_view = yvex_runtime_session_view_get(session);
     context->options = *options;
-    if (!context->model_view || !context->session_view || context->session_view->model != model ||
+    if (!context->model_view || !context->session_view || context->session_view->engine != model ||
         !context->model_view->binding->capabilities.transformer_ready ||
         pthread_mutex_init(&context->mutex, NULL) != 0) {
         rc = transformer_runtime_refuse(err, YVEX_ERR_STATE,
@@ -1679,7 +1679,7 @@ int yvex_runtime_transformer_execute(yvex_runtime_transformer_context *context,
     while (rc == YVEX_OK && offset < input_summary->token_count) {
         yvex_attention_execution_request execution;
         yvex_attention_probe_result attention_result;
-        yvex_runtime_model_failure failure;
+        yvex_model_engine_failure failure;
         unsigned long long remaining = input_summary->token_count - offset;
         unsigned long long count = remaining < request->chunk_tokens
                                        ? remaining : request->chunk_tokens;
@@ -1872,19 +1872,19 @@ int yvex_transformer_operator_execute(const yvex_transformer_operator_request *r
                                       yvex_runtime_cleanup_lease **retained_cleanup,
                                       yvex_error *err)
 {
-    yvex_runtime_model_open_request model_request = {0};
+    yvex_model_engine_open_request model_request = {0};
     yvex_runtime_session_open_request session_request = {0};
     yvex_runtime_transformer_options options = {0};
     yvex_runtime_transformer_request execution_request = {0};
     yvex_runtime_transformer_output output = {0};
     yvex_transformer_input_limits limits = {0};
-    yvex_runtime_model_failure failure = {0};
+    yvex_model_engine_failure failure = {0};
     yvex_runtime_cleanup_lease *cleanup = NULL;
-    yvex_runtime_model *model = NULL;
+    yvex_model_engine *model = NULL;
     yvex_runtime_execution_session *session = NULL;
     yvex_runtime_transformer_context *context = NULL;
     yvex_transformer_input *input = NULL;
-    const yvex_runtime_model_view *model_view = NULL;
+    const yvex_model_engine_view *model_view = NULL;
     const yvex_transformer_plan_summary *plan = NULL;
     const yvex_transformer_input_summary *input_summary = NULL;
     yvex_error primary = {0};
@@ -1933,7 +1933,7 @@ int yvex_transformer_operator_execute(const yvex_transformer_operator_request *r
                                               transformer_runtime_cleanup, err);
         adopted = rc == YVEX_OK;
     }
-    model_view = yvex_runtime_model_view_get(model);
+    model_view = yvex_model_engine_view_get(model);
     plan = yvex_transformer_plan_summary_get(
         yvex_runtime_transformer_context_plan(context));
     input_summary = yvex_transformer_input_summary_get(input);

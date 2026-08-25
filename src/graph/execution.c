@@ -1693,7 +1693,7 @@ int yvex_execution_device_view_validate(
     if (!view || view->schema_version != YVEX_EXECUTION_DEVICE_VIEW_SCHEMA_V1 ||
         view->kind > YVEX_EXECUTION_DEVICE_WORKSPACE || !view->backend || !view->tensor ||
         !yvex_backend_tensor_owned_by(view->backend, view->tensor) ||
-        !view->model_generation || !view->session_generation ||
+        !view->resource_generation || !view->session_generation ||
         !view->state_generation || !view->rows || !view->columns ||
         !view->element_bytes ||
         view->materialization > YVEX_EXECUTION_MATERIALIZE_FORENSIC_FULL ||

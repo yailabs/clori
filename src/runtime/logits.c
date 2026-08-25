@@ -22,9 +22,9 @@ struct yvex_runtime_logits_plan {
     const yvex_materialized_tensor_binding *binding;
 };
 struct yvex_runtime_logits_context {
-    yvex_runtime_model *model;
+    yvex_model_engine *model;
     yvex_runtime_execution_session *session;
-    const yvex_runtime_model_view *model_view;
+    const yvex_model_engine_view *model_view;
     const yvex_runtime_session_view *session_view;
     yvex_runtime_logits_plan plan;
     yvex_runtime_logits_options options;
@@ -92,13 +92,13 @@ static int logits_device_open(yvex_runtime_logits_context *context,
  * Borrows resident head and allocates stable local CPU/CUDA workspaces.
  */
 int yvex_runtime_logits_context_open(
-    yvex_runtime_logits_context **out, yvex_runtime_model *model,
+    yvex_runtime_logits_context **out, yvex_model_engine *model,
     yvex_runtime_execution_session *session,
     const yvex_transformer_plan *transformer_plan,
     const yvex_runtime_logits_options *options, yvex_error *err)
 {
     yvex_runtime_logits_context *context = NULL;
-    yvex_runtime_model_summary model_summary;
+    yvex_model_engine_summary model_summary;
     yvex_runtime_residency_summary residency;
     unsigned long long candidate_bytes, hidden_elements, hidden_bytes;
     unsigned long long logits_elements, device_elements, device_bytes, device_total, host_bytes;
@@ -119,12 +119,12 @@ int yvex_runtime_logits_context_open(
                                        "logits context allocation failed");
     context->model = model;
     context->session = session;
-    context->model_view = yvex_runtime_model_view_get(model);
+    context->model_view = yvex_model_engine_view_get(model);
     context->session_view = yvex_runtime_session_view_get(session);
     context->options = *options;
     if (!context->model_view || !context->session_view ||
-        context->session_view->model != model ||
-        yvex_runtime_model_summary_copy(model, &model_summary, err) != YVEX_OK ||
+        context->session_view->engine != model ||
+        yvex_model_engine_summary_copy(model, &model_summary, err) != YVEX_OK ||
         !model_summary.sealed || !model_summary.valid) {
         rc = logits_refuse(err, YVEX_ERR_STATE,
                            "logits model/session pairing is invalid");
@@ -292,7 +292,7 @@ static int logits_source_identity(yvex_runtime_logits_source *source)
         (source->device_values_available &&
          (!yvex_sha256_update_text(
               &hash, source->device_hidden.execution_profile_identity) ||
-          !yvex_sha256_update_u64(&hash, source->device_hidden.model_generation) ||
+          !yvex_sha256_update_u64(&hash, source->device_hidden.resource_generation) ||
           !yvex_sha256_update_u64(&hash, source->device_hidden.session_generation) ||
           !yvex_sha256_update_u64(&hash, source->device_hidden.state_generation) ||
           !yvex_sha256_update_u64(&hash, source->device_hidden.element_offset))) ||
@@ -317,14 +317,14 @@ static int logits_source_begin(const yvex_runtime_logits_context *context,
                                const char *producer_identity,
                                yvex_error *err)
 {
-    yvex_runtime_model_summary model;
+    yvex_model_engine_summary model;
     if (!context || !source || (!hidden == !device_hidden) ||
         !producer_hidden_digest || !producer_identity ||
         !yvex_sha256_hex_valid(producer_hidden_digest) ||
         !yvex_sha256_hex_valid(producer_identity) ||
         (device_hidden &&
          yvex_execution_device_view_validate(device_hidden, err) != YVEX_OK) ||
-        yvex_runtime_model_summary_copy(context->model, &model, err) != YVEX_OK)
+        yvex_model_engine_summary_copy(context->model, &model, err) != YVEX_OK)
         return logits_refuse(err, YVEX_ERR_INVALID_ARG,
                              "logits producer source facts are invalid");
     memset(source, 0, sizeof(*source));
@@ -518,7 +518,7 @@ static int logits_source_validate(const yvex_runtime_logits_context *context,
                                   const yvex_runtime_logits_source *source,
                                   yvex_error *err)
 {
-    yvex_runtime_model_summary model;
+    yvex_model_engine_summary model;
     yvex_runtime_logits_source canonical;
     char digest[YVEX_SHA256_HEX_CAP];
     if (!context || !source || source->schema_version != YVEX_RUNTIME_LOGITS_SCHEMA_V1 ||
@@ -526,7 +526,7 @@ static int logits_source_validate(const yvex_runtime_logits_context *context,
         source->hidden_width != context->plan.summary.hidden_width ||
         source->host_values_available + source->device_values_available != 1 ||
         source->host_values_available != (source->normalized_hidden != NULL) ||
-        yvex_runtime_model_summary_copy(context->model, &model, err) != YVEX_OK ||
+        yvex_model_engine_summary_copy(context->model, &model, err) != YVEX_OK ||
         strcmp(source->runtime_model_identity, model.runtime_model_identity) != 0 ||
         strcmp(source->runtime_binding_identity,
                context->model_view->binding->identity) != 0 ||
@@ -718,7 +718,7 @@ static int logits_row_identity_build(yvex_runtime_logits_row_result *result)
     if (result->device_values_available &&
         (!yvex_sha256_update_text(
              &hash, result->device_logits.execution_profile_identity) ||
-         !yvex_sha256_update_u64(&hash, result->device_logits.model_generation) ||
+         !yvex_sha256_update_u64(&hash, result->device_logits.resource_generation) ||
          !yvex_sha256_update_u64(&hash, result->device_logits.session_generation) ||
          !yvex_sha256_update_u64(&hash, result->device_logits.state_generation) ||
          !yvex_sha256_update_u64(&hash, result->device_logits.element_offset) ||
@@ -1068,8 +1068,8 @@ int yvex_runtime_logits_result_validate(
               rows[index].device_logits.tensor != rows[0].device_logits.tensor ||
               rows[index].device_logits.backend != rows[0].device_logits.backend ||
               rows[index].device_logits.element_offset != expected_offset ||
-              rows[index].device_logits.model_generation !=
-                  rows[0].device_logits.model_generation ||
+              rows[index].device_logits.resource_generation !=
+                  rows[0].device_logits.resource_generation ||
               rows[index].device_logits.session_generation !=
                   rows[0].device_logits.session_generation ||
               rows[index].device_logits.state_generation !=
@@ -1240,7 +1240,7 @@ static int logits_cuda_batch_compatible(
                                &expected_offset) ||
             current->tensor != first->tensor || current->backend != first->backend ||
             current->element_offset != expected_offset ||
-            current->model_generation != first->model_generation ||
+            current->resource_generation != first->resource_generation ||
             current->session_generation != first->session_generation ||
             current->state_generation != first->state_generation ||
             strcmp(current->execution_profile_identity,
@@ -1701,7 +1701,7 @@ static void logits_operator_refuse(yvex_logits_operator_result *result,
 static void logits_operator_publish_facts(
     yvex_logits_operator_result *result,
     const yvex_transformer_plan_summary *transformer_plan,
-    const yvex_runtime_model_view *model_view,
+    const yvex_model_engine_view *model_view,
     const yvex_runtime_logits_context *logits_context,
     yvex_backend_kind backend, int completed)
 {
@@ -1805,14 +1805,14 @@ int yvex_runtime_logits_operator_execute(
     yvex_logits_operator_result *result,
     yvex_runtime_cleanup_lease **retained_cleanup, yvex_error *err)
 {
-    yvex_runtime_model_open_request model_request = {0};
+    yvex_model_engine_open_request model_request = {0};
     yvex_runtime_session_open_request session_request = {0};
     yvex_runtime_transformer_options transformer_options = {0};
     yvex_runtime_decode_options decode_options = {0};
     yvex_runtime_logits_options logits_options = {0};
-    yvex_runtime_model_failure failure = {0};
+    yvex_model_engine_failure failure = {0};
     yvex_runtime_cleanup_lease *cleanup = NULL;
-    yvex_runtime_model *model = NULL;
+    yvex_model_engine *model = NULL;
     yvex_runtime_execution_session *session = NULL;
     yvex_runtime_transformer_context *transformer = NULL;
     yvex_runtime_decode_context *decode = NULL;
@@ -1820,7 +1820,7 @@ int yvex_runtime_logits_operator_execute(
     yvex_transformer_input *input = NULL, *prefill_input = NULL, *decode_input = NULL;
     const yvex_transformer_input_summary *input_summary;
     const yvex_transformer_plan_summary *plan;
-    const yvex_runtime_model_view *model_view;
+    const yvex_model_engine_view *model_view;
     const unsigned int *tokens;
     yvex_transformer_input_limits limits = {0};
     yvex_runtime_transformer_request prefill_request = {0};
@@ -1878,7 +1878,7 @@ int yvex_runtime_logits_operator_execute(
     tokens = yvex_transformer_input_token_ids(input);
     plan = yvex_transformer_plan_summary_get(
         yvex_runtime_transformer_context_plan(transformer));
-    model_view = yvex_runtime_model_view_get(model);
+    model_view = yvex_model_engine_view_get(model);
     if (rc == YVEX_OK &&
         (!input_summary || !tokens || !plan || !model_view || input_summary->token_start ||
          request->prefill_tokens >= input_summary->token_count ||

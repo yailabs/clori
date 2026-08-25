@@ -82,7 +82,7 @@ static int sampling_device_row(
     row->device_logits.kind = YVEX_EXECUTION_DEVICE_LOGITS;
     row->device_logits.backend = backend;
     row->device_logits.tensor = tensor;
-    row->device_logits.model_generation = row->device_logits.session_generation =
+    row->device_logits.resource_generation = row->device_logits.session_generation =
         row->device_logits.state_generation = 1ull;
     row->device_logits.rows = 1ull;
     row->device_logits.columns = plan->vocabulary_size;
@@ -105,7 +105,7 @@ static int sampling_device_row(
         !yvex_sha256_update_text(&hash, row->output_head_residency_identity) ||
         !yvex_sha256_update_text(&hash, row->backend_execution_identity) ||
         !yvex_sha256_update_text(&hash, row->device_logits.execution_profile_identity) ||
-        !yvex_sha256_update_u64(&hash, row->device_logits.model_generation) ||
+        !yvex_sha256_update_u64(&hash, row->device_logits.resource_generation) ||
         !yvex_sha256_update_u64(&hash, row->device_logits.session_generation) ||
         !yvex_sha256_update_u64(&hash, row->device_logits.state_generation) ||
         !yvex_sha256_update_u64(&hash, row->device_logits.element_offset) ||

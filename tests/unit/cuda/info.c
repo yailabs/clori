@@ -277,7 +277,7 @@ static int moe_test_execution_contract(
     batch->phase = YVEX_EXECUTION_PHASE_DECODE;
     batch->row_count = row_count;
     batch->source_count = 1ull;
-    batch->model_generation = 1ull;
+    batch->engine_generation = 1ull;
     memset(source, 0, sizeof(*source));
     source->execution_generation = 2ull;
     source->state_generation = 3ull;

@@ -531,10 +531,6 @@ static const yvex_cli_field_spec attention_runtime_fields[] = {
     ATTENTION_FIELD("runtime_transform_plans_built", YVEX_CLI_FIELD_U64, runtime_transform_plans_built),
     ATTENTION_FIELD("runtime_quant_plans_built", YVEX_CLI_FIELD_U64, runtime_quant_plans_built),
     ATTENTION_FIELD("runtime_writer_plans_built", YVEX_CLI_FIELD_U64, runtime_writer_plans_built),
-    ATTENTION_FIELD("runtime_model_builds", YVEX_CLI_FIELD_U64, runtime_model_builds),
-    ATTENTION_FIELD("runtime_descriptor_builds", YVEX_CLI_FIELD_U64, runtime_descriptor_builds),
-    ATTENTION_FIELD("semantic_graph_builds", YVEX_CLI_FIELD_U64, semantic_graph_builds),
-    ATTENTION_FIELD("executable_graph_builds", YVEX_CLI_FIELD_U64, executable_graph_builds),
 };
 static const yvex_cli_field_spec attention_timing_fields[] = {
     ATTENTION_TIMING("artifact_open_seconds", YVEX_RUNTIME_LIFECYCLE_ARTIFACT_OPEN),

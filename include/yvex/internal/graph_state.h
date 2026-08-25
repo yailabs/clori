@@ -378,8 +378,8 @@ int yvex_attention_state_provider_open_persistent(
     yvex_attention_failure *failure, yvex_error *err);
 
 struct yvex_runtime_execution_session;
-struct yvex_runtime_model;
-struct yvex_runtime_model_failure;
+struct yvex_model_engine;
+struct yvex_model_engine_failure;
 
 typedef struct {
     void *context;
@@ -398,37 +398,37 @@ typedef struct {
 int yvex_runtime_session_prepare_persistent_state(
     struct yvex_runtime_execution_session *session,
     const yvex_graph_attention_capacity_plan *capacity,
-    struct yvex_runtime_model_failure *failure, yvex_error *err);
+    struct yvex_model_engine_failure *failure, yvex_error *err);
 int yvex_runtime_session_configure_persistent_pages(
     struct yvex_runtime_execution_session *session,
     const yvex_execution_capacity_plan *capacity,
-    struct yvex_runtime_model_failure *failure, yvex_error *err);
+    struct yvex_model_engine_failure *failure, yvex_error *err);
 int yvex_runtime_session_prepare_persistent_scope_state(
     struct yvex_runtime_execution_session *session, yvex_tensor_scope scope,
     const yvex_graph_attention_capacity_plan *capacity,
-    struct yvex_runtime_model_failure *failure, yvex_error *err);
+    struct yvex_model_engine_failure *failure, yvex_error *err);
 int yvex_runtime_session_reset_persistent_state(
     struct yvex_runtime_execution_session *session,
-    struct yvex_runtime_model_failure *failure, yvex_error *err);
+    struct yvex_model_engine_failure *failure, yvex_error *err);
 int yvex_runtime_session_prepare_attention_probe_state(
     struct yvex_runtime_execution_session *session,
-    struct yvex_runtime_model *model,
+    struct yvex_model_engine *model,
     const yvex_graph_attention_capacity_plan *capacity,
     yvex_attention_failure *failure, yvex_error *err);
 int yvex_runtime_session_prepare_attention_scope_state(
     struct yvex_runtime_execution_session *session,
-    struct yvex_runtime_model *model, yvex_tensor_scope scope,
+    struct yvex_model_engine *model, yvex_tensor_scope scope,
     const yvex_graph_attention_capacity_plan *capacity,
     yvex_attention_failure *failure, yvex_error *err);
 int yvex_runtime_attention_probe_execute(
     struct yvex_runtime_execution_session *session,
-    struct yvex_runtime_model *model,
+    struct yvex_model_engine *model,
     const yvex_attention_probe_request *request,
     yvex_attention_probe_result *result,
-    struct yvex_runtime_model_failure *failure, yvex_error *err);
+    struct yvex_model_engine_failure *failure, yvex_error *err);
 int yvex_runtime_session_begin(
     struct yvex_runtime_execution_session *session,
-    struct yvex_runtime_model_failure *failure, yvex_error *err);
+    struct yvex_model_engine_failure *failure, yvex_error *err);
 int yvex_runtime_session_select_attention_prefix(
     struct yvex_runtime_execution_session *session, yvex_tensor_scope scope,
     unsigned long long prefix_count, unsigned long long extension_count,

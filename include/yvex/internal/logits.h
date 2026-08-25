@@ -113,7 +113,7 @@ int yvex_runtime_logits_residency_admit(
     const yvex_runtime_residency_summary *residency);
 void yvex_runtime_logits_capabilities_invalidate(yvex_runtime_capabilities *capabilities);
 int yvex_runtime_logits_context_open(
-    yvex_runtime_logits_context **out, yvex_runtime_model *model,
+    yvex_runtime_logits_context **out, yvex_model_engine *model,
     yvex_runtime_execution_session *session,
     const yvex_transformer_plan *transformer_plan,
     const yvex_runtime_logits_options *options, yvex_error *err);

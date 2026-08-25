@@ -90,14 +90,14 @@ static int live_input_open(yvex_transformer_input **input,
     return rc;
 }
 
-static int live_open(live_logits *execution, yvex_runtime_model *model,
+static int live_open(live_logits *execution, yvex_model_engine *model,
                      yvex_backend_kind backend, yvex_error *err)
 {
     yvex_runtime_session_open_request session_options = {.backend = backend};
     yvex_runtime_transformer_options transformer_options = {.context_capacity = 3ull};
     yvex_runtime_decode_options decode_options = {.maximum_steps = 2ull};
     yvex_runtime_logits_options logits_options = {.maximum_rows = LIVE_LOGITS_ROWS};
-    yvex_runtime_model_failure failure = {0};
+    yvex_model_engine_failure failure = {0};
     memset(execution, 0, sizeof(*execution));
     if (yvex_runtime_session_open(&execution->session, model, &session_options,
                                   &failure, err) != YVEX_OK)
@@ -242,10 +242,10 @@ static int live_execute(live_logits *execution,
 }
 
 /* Compute three complete independent rows from the exact resident output head. */
-static int live_reference(live_logits *execution, yvex_runtime_model *model,
+static int live_reference(live_logits *execution, yvex_model_engine *model,
                           yvex_error *err)
 {
-    const yvex_runtime_model_view *view = yvex_runtime_model_view_get(model);
+    const yvex_model_engine_view *view = yvex_model_engine_view_get(model);
     const yvex_runtime_tensor_binding *runtime_binding;
     const yvex_materialized_tensor_binding *binding;
     const yvex_runtime_logits_plan_summary *plan =
@@ -308,11 +308,11 @@ static int live_compare(const float *actual, const float *reference,
     return comparison->first_failure == count;
 }
 
-static int live_device_profile(live_logits *execution, yvex_runtime_model *model,
+static int live_device_profile(live_logits *execution, yvex_model_engine *model,
                                yvex_compiled_execution_profile *profile,
                                yvex_error *err)
 {
-    const yvex_runtime_model_view *model_view = yvex_runtime_model_view_get(model);
+    const yvex_model_engine_view *model_view = yvex_model_engine_view_get(model);
     const yvex_runtime_session_view *session_view =
         yvex_runtime_session_view_get(execution->session);
     const yvex_physical_execution_summary *physical = model_view
@@ -363,7 +363,7 @@ static int live_device_profile(live_logits *execution, yvex_runtime_model *model
     return yvex_compiled_execution_profile_seal(&request, profile, err);
 }
 
-static int live_device_batch(live_logits *execution, yvex_runtime_model *model,
+static int live_device_batch(live_logits *execution, yvex_model_engine *model,
                              const live_sampling_result *host_greedy,
                              live_device_result *out, yvex_error *err)
 {
@@ -601,7 +601,7 @@ static int live_cancel_always(void *context)
     return 1;
 }
 
-static int live_failure_proofs(live_logits *execution, yvex_runtime_model *model,
+static int live_failure_proofs(live_logits *execution, yvex_model_engine *model,
                                yvex_error *err)
 {
     const yvex_runtime_logits_plan_summary *plan =
@@ -746,9 +746,9 @@ cleanup:
 
 int main(int argc, char **argv)
 {
-    yvex_runtime_model_open_request request = {0};
-    yvex_runtime_model_failure failure = {0};
-    yvex_runtime_model *model = NULL;
+    yvex_model_engine_open_request request = {0};
+    yvex_model_engine_failure failure = {0};
+    yvex_model_engine *model = NULL;
     yvex_transformer_input *stream = NULL, *prefill = NULL, *decode = NULL;
     live_logits cpu = {0}, cuda = {0};
     live_comparison cpu_reference, cuda_reference, cpu_cuda;
@@ -783,7 +783,7 @@ int main(int argc, char **argv)
     request.artifact_path = argv[1];
     request.runtime_binding_path = argv[2];
     request.target_id = "deepseek4-v4-flash-dspark";
-    rc = yvex_runtime_model_open(&model, &request, &failure, &err);
+    rc = yvex_model_engine_open(&model, &request, &failure, &err);
     if (rc == YVEX_OK) { step = "cuda-open"; rc = live_open(&cuda, model, YVEX_BACKEND_KIND_CUDA, &err); }
     if (rc == YVEX_OK) { step = "cpu-open"; rc = live_open(&cpu, model, YVEX_BACKEND_KIND_CPU, &err); }
     plan = yvex_transformer_plan_summary_get(
@@ -920,7 +920,7 @@ int main(int argc, char **argv)
     yvex_error_clear(&cleanup);
     close_rc = live_close(&cpu, &cleanup);
     if (rc == YVEX_OK && close_rc != YVEX_OK) { rc = close_rc; err = cleanup; }
-    yvex_runtime_model_close(&model);
+    yvex_model_engine_close(&model);
     if (model && rc == YVEX_OK) rc = YVEX_ERR_STATE;
     return rc == YVEX_OK ? 0 : 1;
 }

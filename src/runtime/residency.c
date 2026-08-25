@@ -331,7 +331,7 @@ static int residency_add_record(yvex_runtime_residency *residency,
 static int residency_records_prepare(
     yvex_runtime_residency *residency, const yvex_runtime_descriptor *descriptor,
     const yvex_runtime_descriptor_summary *descriptor_summary,
-    const yvex_runtime_model_summary *model_summary,
+    const yvex_model_engine_summary *model_summary,
     const yvex_attention_plan *plan, const yvex_attention_summary *attention,
     yvex_runtime_residency_failure *failure, yvex_error *err)
 {
@@ -683,7 +683,7 @@ failed:
  * Writes one canonical content identity.
  */
 static int residency_identity_build(yvex_runtime_residency *residency,
-                                    const yvex_runtime_model_summary *model,
+                                    const yvex_model_engine_summary *model,
                                     const yvex_attention_summary *attention,
                                     yvex_error *err)
 {
@@ -1028,12 +1028,12 @@ static int residency_claim_cuda(yvex_runtime_residency *residency,
 }
 
 /* Build and attach one exact process-lifetime full-model residency pack. */
-int yvex_runtime_residency_prepare(yvex_runtime_residency **out, yvex_runtime_model *model,
+int yvex_runtime_residency_prepare(yvex_runtime_residency **out, yvex_model_engine *model,
                                    const yvex_runtime_residency_options *options,
                                    yvex_runtime_residency_failure *failure, yvex_error *err)
 {
-    const yvex_runtime_model_view *view = yvex_runtime_model_view_get(model);
-    yvex_runtime_model_summary model_summary;
+    const yvex_model_engine_view *view = yvex_model_engine_view_get(model);
+    yvex_model_engine_summary model_summary;
     const yvex_runtime_descriptor *descriptor = view ? view->descriptor : NULL;
     const yvex_runtime_descriptor_summary *descriptor_summary =
         yvex_runtime_descriptor_summary_get(descriptor);
@@ -1049,7 +1049,7 @@ int yvex_runtime_residency_prepare(yvex_runtime_residency **out, yvex_runtime_mo
         return residency_reject(failure, YVEX_RUNTIME_RESIDENCY_FAILURE_INVALID_ARGUMENT,
                                 NULL, 1ull, 0ull, "residency output is required",
                                 YVEX_ERR_INVALID_ARG, err);
-    rc = yvex_runtime_model_summary_copy(model, &model_summary, err);
+    rc = yvex_model_engine_summary_copy(model, &model_summary, err);
     if (rc != YVEX_OK) {
         if (failure) {
             failure->code = YVEX_RUNTIME_RESIDENCY_FAILURE_LIFECYCLE;

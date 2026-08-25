@@ -90,7 +90,7 @@ typedef struct server_session {
 
 struct server_session_registry {
     pthread_mutex_t mutex;
-    yvex_runtime_model *model;
+    yvex_model_engine *model;
     server_scheduler *scheduler;
     yvex_server_options options;
     yvex_reasoning_policy default_reasoning_policy;
@@ -278,7 +278,7 @@ void yvex_server_openai_snapshot(const server_openai_listener *listener,
                                  server_openai_snapshot *snapshot);
 void yvex_server_openai_close(server_openai_listener **listener);
 
-int yvex_server_sessions_open(server_session_registry **out, yvex_runtime_model *model,
+int yvex_server_sessions_open(server_session_registry **out, yvex_model_engine *model,
                               server_scheduler *scheduler,
                               const yvex_server_options *options,
                               int continuous_batching,

@@ -604,7 +604,7 @@ static int generation_compatible_batch_width(
         return generation_context_refuse(
             err, YVEX_ERR_INVALID_ARG,
             "compatible execution width owner is unavailable");
-    rc = yvex_runtime_model_compatible_batch_width_copy(
+    rc = yvex_model_engine_compatible_batch_width_copy(
         context->model, width, err);
     if (rc != YVEX_OK) return rc;
     if (*width > context->options.concurrent_sequences)
@@ -986,7 +986,7 @@ int yvex_runtime_private_generation_capacity_preflight(
     yvex_error *err)
 {
     yvex_runtime_generation_context context = {0};
-    yvex_runtime_model_view view = {0};
+    yvex_model_engine_view view = {0};
     yvex_graph_attention_capacity_plan *workspace_capacity = NULL;
     yvex_runtime_weight_placement placement;
     unsigned long long transient_bytes, model_bytes;
@@ -1148,12 +1148,12 @@ static int generation_execution_profile_build(
 static int generation_plan_build(yvex_runtime_generation_context *context,
                                  yvex_error *err)
 {
-    yvex_runtime_model_summary model;
+    yvex_model_engine_summary model;
     const yvex_transformer_plan_summary *transformer;
     const yvex_runtime_logits_plan_summary *logits;
     const yvex_tokenizer_plan_summary *tokenizer;
     yvex_runtime_generation_plan_summary plan = {0};
-    if (yvex_runtime_model_summary_copy(context->model, &model, err) != YVEX_OK)
+    if (yvex_model_engine_summary_copy(context->model, &model, err) != YVEX_OK)
         return yvex_error_code(err);
     transformer = yvex_transformer_plan_summary_get(
         yvex_runtime_transformer_context_plan(context->transformer));
@@ -1386,14 +1386,14 @@ int yvex_runtime_generation_context_summary_copy(
 }
 
 int yvex_runtime_generation_context_open(
-    yvex_runtime_generation_context **out, yvex_runtime_model *model,
+    yvex_runtime_generation_context **out, yvex_model_engine *model,
     yvex_runtime_execution_session *session,
     const yvex_runtime_generation_options *options, yvex_error *err)
 {
     yvex_runtime_generation_context *context = NULL;
     yvex_runtime_decode_options decode_options = {0};
-    yvex_runtime_model_failure state_failure = {0};
-    yvex_runtime_model_failure workspace_failure = {0};
+    yvex_model_engine_failure state_failure = {0};
+    yvex_model_engine_failure workspace_failure = {0};
     yvex_graph_attention_capacity_plan *workspace_capacity = NULL;
     yvex_tokenizer_decode_options decoder_options = {0};
     const yvex_runtime_logits_plan_summary *logits_plan = NULL;
@@ -1413,7 +1413,7 @@ int yvex_runtime_generation_context_open(
             "generation context allocation failed");
     context->model = model;
     context->session = session;
-    context->model_view = yvex_runtime_model_view_get(model);
+    context->model_view = yvex_model_engine_view_get(model);
     context->tokenizer = context->model_view ? context->model_view->tokenizer : NULL;
     context->options = *options;
     if (!context->options.concurrent_sequences)
@@ -1425,7 +1425,7 @@ int yvex_runtime_generation_context_open(
     atomic_init(&context->admission_failures, 0ull);
     if (!context->model_view || !context->tokenizer ||
         !yvex_runtime_session_view_get(session) ||
-        yvex_runtime_session_view_get(session)->model != model) {
+        yvex_runtime_session_view_get(session)->engine != model) {
         rc = generation_context_refuse(
             err, YVEX_ERR_STATE,
             "generation model, session, and tokenizer are not paired");

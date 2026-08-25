@@ -96,7 +96,7 @@ int yvex_execution_batch_seal(yvex_execution_batch *batch, yvex_error *err)
          batch->row_count < 2ull) ||
         (batch->provenance == YVEX_EXECUTION_BATCH_PREFILL &&
          batch->phase != YVEX_EXECUTION_PHASE_PREFILL) ||
-        !batch->model_generation || !execution_batch_sources_valid(batch) ||
+        !batch->engine_generation || !execution_batch_sources_valid(batch) ||
         !worklist_identity_valid(batch->runtime_model_identity) ||
         !worklist_identity_valid(batch->runtime_binding_identity) ||
         !worklist_identity_valid(batch->physical_variant_identity) ||
@@ -111,7 +111,7 @@ int yvex_execution_batch_seal(yvex_execution_batch *batch, yvex_error *err)
         !yvex_sha256_update_u64(&hash, batch->phase) ||
         !yvex_sha256_update_u64(&hash, batch->row_count) ||
         !yvex_sha256_update_u64(&hash, batch->source_count) ||
-        !yvex_sha256_update_u64(&hash, batch->model_generation) ||
+        !yvex_sha256_update_u64(&hash, batch->engine_generation) ||
         !execution_batch_sources_hash(&hash, batch) ||
         !yvex_sha256_update_text(&hash, batch->runtime_model_identity) ||
         !yvex_sha256_update_text(&hash, batch->runtime_binding_identity) ||
@@ -153,7 +153,7 @@ int yvex_execution_compatibility_key_seal(
             err, YVEX_ERR_INVALID_ARG,
             "execution compatibility key is unavailable");
     if (key->schema_version != YVEX_EXECUTION_COMPATIBILITY_SCHEMA_V1 ||
-        key->phase >= YVEX_EXECUTION_PHASE_COUNT || !key->model_generation ||
+        key->phase >= YVEX_EXECUTION_PHASE_COUNT || !key->engine_generation ||
         !key->row_width || !key->admitted_width || key->admitted_width >= 64ull)
         return worklist_refuse(
             err, YVEX_ERR_INVALID_ARG,
@@ -186,7 +186,7 @@ int yvex_execution_compatibility_key_seal(
         !yvex_sha256_update_u64(&hash, key->tensor_scope) ||
         !yvex_sha256_update_u64(&hash, key->execution_class) ||
         !yvex_sha256_update_u64(&hash, key->publication_contract) ||
-        !yvex_sha256_update_u64(&hash, key->model_generation) ||
+        !yvex_sha256_update_u64(&hash, key->engine_generation) ||
         !yvex_sha256_update_u64(&hash, key->layer_ordinal) ||
         !yvex_sha256_update_u64(&hash, key->row_width) ||
         !yvex_sha256_update_u64(&hash, key->admitted_width) ||

@@ -30,12 +30,12 @@ static int session_identity(server_session_registry *registry,
                             const char *name,
                             char output[YVEX_SHA256_HEX_CAP])
 {
-    yvex_runtime_model_summary model;
+    yvex_model_engine_summary model;
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     yvex_error err;
-    if (!yvex_runtime_model_view_get(registry->model) ||
-        yvex_runtime_model_summary_copy(registry->model, &model, &err) !=
+    if (!yvex_model_engine_view_get(registry->model) ||
+        yvex_model_engine_summary_copy(registry->model, &model, &err) !=
             YVEX_OK)
         return 0;
     yvex_sha256_init(&hash);
@@ -66,7 +66,7 @@ int yvex_server_session_execution_open(server_session_registry *registry,
                                        yvex_error *err)
 {
     yvex_runtime_session_open_request request = {0};
-    yvex_runtime_model_failure failure = {0};
+    yvex_model_engine_failure failure = {0};
     request.backend = registry->options.backend;
     request.maximum_host_bytes = registry->options.maximum_host_bytes;
     request.maximum_device_bytes = registry->options.maximum_device_bytes;
@@ -209,10 +209,10 @@ int yvex_server_session_fork_locked(
     server_session **created,
     yvex_runtime_session_prefix_summary *prefix_summary, yvex_error *err)
 {
-    const yvex_runtime_model_view *view =
-        registry ? yvex_runtime_model_view_get(registry->model) : NULL;
+    const yvex_model_engine_view *view =
+        registry ? yvex_model_engine_view_get(registry->model) : NULL;
     yvex_runtime_session_prefix *prefix = NULL;
-    yvex_runtime_model_failure failure = {0};
+    yvex_model_engine_failure failure = {0};
     server_session *child = NULL;
     int rc;
     if (created) *created = NULL;
@@ -351,7 +351,7 @@ int yvex_server_session_close_locked(server_session_registry *registry,
 }
 
 int yvex_server_sessions_open(server_session_registry **out,
-                              yvex_runtime_model *model,
+                              yvex_model_engine *model,
                               server_scheduler *scheduler,
                               const yvex_server_options *options,
                               int continuous_batching,

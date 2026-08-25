@@ -727,7 +727,7 @@ static int execution_test_device_view(void)
     view.backend = backend;
     view.tensor = tensor;
     view.element_offset = 4ull;
-    view.model_generation = 1ull;
+    view.resource_generation = 1ull;
     view.session_generation = 1ull;
     view.state_generation = 1ull;
     view.rows = 2ull;

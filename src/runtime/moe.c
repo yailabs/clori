@@ -21,9 +21,9 @@ typedef struct {
     unsigned long long capacity;
 } moe_byte_buffer;
 struct yvex_runtime_moe_context {
-    yvex_runtime_model *model;
+    yvex_model_engine *model;
     yvex_runtime_execution_session *session;
-    const yvex_runtime_model_view *model_view;
+    const yvex_model_engine_view *model_view;
     const yvex_runtime_session_view *session_view;
     const yvex_moe_plan *plan;
     yvex_runtime_moe_options options;
@@ -112,13 +112,13 @@ static int runtime_moe_worklist_contract(
             ? context->session_view->draft_attention_state_provider
             : context->session_view->attention_state_provider;
     const yvex_physical_execution_decision *decisions[3];
-    yvex_runtime_model_summary model;
+    yvex_model_engine_summary model;
     yvex_graph_attention_state_summary state = {0};
     unsigned long long slot, next_execution;
     if (!physical_summary || !provider || !provider->summary || !source ||
         !rows->execution_source_count || !rows->execution_sources ||
         !rows->execution_rows ||
-        yvex_runtime_model_summary_copy(context->model, &model, err) != YVEX_OK)
+        yvex_model_engine_summary_copy(context->model, &model, err) != YVEX_OK)
         return yvex_error_code(err) == YVEX_OK
                    ? runtime_moe_refuse(err, YVEX_ERR_STATE,
                                         "expert worklist identity owners are unavailable")
@@ -129,7 +129,7 @@ static int runtime_moe_worklist_contract(
     batch->phase = rows->phase;
     batch->row_count = rows->row_count;
     batch->source_count = rows->execution_source_count;
-    batch->model_generation = model.runtime_model_builds;
+    batch->engine_generation = model.engine_generation;
     if (rows->execution_source_count == 1ull) {
         if (provider->summary(provider->context, &state, err) != YVEX_OK ||
             !yvex_core_u64_add(session->execution_count, 1ull,
@@ -783,7 +783,7 @@ static int runtime_moe_layer_owned(yvex_runtime_moe_context *context,
     return YVEX_OK;
 }
 
-int yvex_runtime_moe_context_open(yvex_runtime_moe_context **out, yvex_runtime_model *model,
+int yvex_runtime_moe_context_open(yvex_runtime_moe_context **out, yvex_model_engine *model,
                                   yvex_runtime_execution_session *session,
                                   const yvex_runtime_moe_options *options,
                                   unsigned long long *cuda_workspace_bytes,
@@ -803,11 +803,11 @@ int yvex_runtime_moe_context_open(yvex_runtime_moe_context **out, yvex_runtime_m
     if (!context) return runtime_moe_refuse(err, YVEX_ERR_NOMEM, "MoE context allocation failed");
     context->model = model;
     context->session = session;
-    context->model_view = yvex_runtime_model_view_get(model);
+    context->model_view = yvex_model_engine_view_get(model);
     context->session_view = yvex_runtime_session_view_get(session);
     context->options = *options;
     if (!context->options.row_capacity) context->options.row_capacity = 1ull;
-    if (!context->model_view || !context->session_view || context->session_view->model != model ||
+    if (!context->model_view || !context->session_view || context->session_view->engine != model ||
         !context->model_view->binding->capabilities.moe_plan_ready ||
         !context->model_view->binding->capabilities.moe_router_ready ||
         !context->model_view->binding->capabilities.moe_routed_expert_ready ||
@@ -919,7 +919,7 @@ int yvex_runtime_moe_execute(yvex_runtime_moe_context *context,
     const yvex_moe_input_summary *input_summary = yvex_moe_input_summary_get(input);
     const yvex_moe_plan_summary *plan = yvex_moe_plan_summary_get(context ? context->plan : NULL);
     const unsigned int *tokens = yvex_moe_input_token_ids(input);
-    yvex_runtime_model_failure failure;
+    yvex_model_engine_failure failure;
     yvex_sha256 output_hash, route_hash, routed_hash, shared_hash, execution_hash;
     unsigned long long layer_index, token_index, output_count, post_count, combination_count;
     unsigned long long qtype_index;
@@ -1079,7 +1079,7 @@ static int runtime_moe_execute_layer_mode(yvex_runtime_moe_context *context,
                                           int token_id_present, int manage_session,
                                           yvex_moe_layer_result *result, yvex_error *err)
 {
-    yvex_runtime_model_failure failure;
+    yvex_model_engine_failure failure;
     yvex_moe_layer_result staged;
     float *combined, *post, *routed, *shared, *combination;
     unsigned long long combined_capacity, routed_capacity, shared_capacity;
@@ -1737,18 +1737,18 @@ int yvex_runtime_moe_operator_execute(const yvex_moe_operator_request *request,
                                       yvex_runtime_cleanup_lease **retained_cleanup,
                                       yvex_error *err)
 {
-    yvex_runtime_model_open_request model_request = {0};
+    yvex_model_engine_open_request model_request = {0};
     yvex_runtime_session_open_request session_request = {0};
     yvex_runtime_moe_options options = {0};
     yvex_moe_input_limits limits = {0};
-    yvex_runtime_model_failure failure = {0};
+    yvex_model_engine_failure failure = {0};
     yvex_runtime_cleanup_lease *cleanup = NULL;
-    yvex_runtime_model *model = NULL;
+    yvex_model_engine *model = NULL;
     yvex_runtime_execution_session *session = NULL;
     yvex_runtime_moe_context *context = NULL;
     yvex_moe_input *input = NULL;
     yvex_runtime_moe_output output = {0};
-    const yvex_runtime_model_view *model_view;
+    const yvex_model_engine_view *model_view;
     const yvex_moe_plan_summary *plan;
     const yvex_moe_layer_plan *first_layer;
     const yvex_moe_input_summary *input_summary;
@@ -1792,7 +1792,7 @@ int yvex_runtime_moe_operator_execute(const yvex_moe_operator_request *request,
         rc = yvex_runtime_cleanup_lease_adopt(cleanup, context, runtime_moe_cleanup, err);
         adopted = rc == YVEX_OK;
     }
-    model_view = yvex_runtime_model_view_get(model);
+    model_view = yvex_model_engine_view_get(model);
     plan = yvex_moe_plan_summary_get(yvex_runtime_moe_context_plan(context));
     first_layer = yvex_moe_plan_layer_at(yvex_runtime_moe_context_plan(context), 0ull);
     input_summary = yvex_moe_input_summary_get(input);

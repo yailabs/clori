@@ -258,8 +258,8 @@ static int decode_structure_valid(
 {
     const yvex_runtime_session_view *session =
         yvex_runtime_session_view_get(context->session);
-    const yvex_runtime_model_view *model = session
-        ? yvex_runtime_model_view_get(session->model) : NULL;
+    const yvex_model_engine_view *model = session
+        ? yvex_model_engine_view_get(session->engine) : NULL;
     const yvex_attention_summary *attention = model
         ? yvex_attention_plan_summary(model->attention) : NULL;
     const yvex_moe_plan_summary *moe = model
@@ -711,20 +711,20 @@ int yvex_runtime_decode_operator_execute(
     yvex_decode_operator_result *result,
     yvex_runtime_cleanup_lease **retained_cleanup, yvex_error *err)
 {
-    yvex_runtime_model_open_request model_request = {0};
+    yvex_model_engine_open_request model_request = {0};
     yvex_runtime_session_open_request session_request = {0};
     yvex_runtime_transformer_options transformer_options = {0};
     yvex_runtime_decode_options decode_options = {0};
-    yvex_runtime_model_failure failure = {0};
+    yvex_model_engine_failure failure = {0};
     yvex_runtime_cleanup_lease *cleanup = NULL;
-    yvex_runtime_model *model = NULL;
+    yvex_model_engine *model = NULL;
     yvex_runtime_execution_session *session = NULL;
     yvex_runtime_transformer_context *transformer = NULL;
     yvex_runtime_decode_context *decode = NULL;
     yvex_transformer_input *input = NULL, *prefill_input = NULL, *decode_input = NULL;
     const yvex_transformer_input_summary *input_summary;
     const yvex_transformer_plan_summary *plan;
-    const yvex_runtime_model_view *model_view;
+    const yvex_model_engine_view *model_view;
     const unsigned int *tokens;
     yvex_transformer_input_limits limits;
     yvex_runtime_transformer_request prefill_request = {0};
@@ -779,7 +779,7 @@ int yvex_runtime_decode_operator_execute(
     tokens = yvex_transformer_input_token_ids(input);
     plan = yvex_transformer_plan_summary_get(
         yvex_runtime_transformer_context_plan(transformer));
-    model_view = yvex_runtime_model_view_get(model);
+    model_view = yvex_model_engine_view_get(model);
     if (rc == YVEX_OK &&
         (!input_summary || !tokens || !plan || !model_view || input_summary->token_start ||
          request->prefill_tokens >= input_summary->token_count ||

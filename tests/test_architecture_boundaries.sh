@@ -38,7 +38,7 @@ cli_family_abi_pattern='(#include[[:space:]]+[<"]yvex/internal/families/|yvex_[A
 cli_family_representation_pattern='(#include[[:space:]]+[<"]yvex/internal/families/|yvex_[A-Za-z0-9_]*(deepseek|minimax)[A-Za-z0-9_]*|YVEX_[A-Z0-9_]*(DEEPSEEK|MINIMAX)[A-Z0-9_]*)'
 cli_preparation_call_pattern='yvex_(source_payload_[A-Za-z0-9_]*|transform_[A-Za-z0-9_]*|quant_plan_[A-Za-z0-9_]*|gguf_writer_[A-Za-z0-9_]*|materialization_(plan|session)_[A-Za-z0-9_]*|runtime_descriptor_build[A-Za-z0-9_]*|artifact_physical_compatibility_[A-Za-z0-9_]*)[[:space:]]*\('
 family_preparation_leak_pattern='(yvex_(model_register_deepseek_v4|graph_lower_deepseek_v4|artifact_admit_deepseek|runtime_descriptor_build_deepseek|quant_plan_build_deepseek_profile)[[:space:]]*\(|YVEX_SELECTED_DEEPSEEK_ARTIFACT_FILENAME)'
-cli_runtime_lifecycle_pattern='yvex_runtime_(model_(open|close|summary_copy|view_get)|session_(open|close|summary_copy|view_get)|residency_(prepare|close|snapshot|invalidate))[[:space:]]*\('
+cli_runtime_lifecycle_pattern='yvex_(model_engine_(open|close|summary_copy|view_get)|runtime_(session_(open|close|summary_copy|view_get)|residency_(prepare|close|snapshot|invalidate)))[[:space:]]*\('
 recursive_cleanup_pattern='(^|[;&|()[:space:]])(command[[:space:]]+)?r'\
 'm[[:space:]]+([^#;]*[[:space:]])?(-[[:alpha:]]*[rR][[:alpha:]]*|--recursive)([[:space:]]|$)'
 recursive_cleanup_call_pattern='(system|popen)[[:space:]]*\([^;]*(rm[[:space:]]+-[[:alpha:]]*[rR]|rm[[:space:]]+--recursive)'
@@ -84,9 +84,9 @@ if printf '%s\n' 'preparation->prepare_runtime_binding(&request, &result, &err);
     rg -i "$cli_family_abi_pattern|$cli_preparation_call_pattern" >/dev/null; then
     fail "CLI preparation guard rejects typed family preparation dispatch"
 fi
-printf '%s\n' 'yvex_runtime_model_open(&model, &request, &failure, &err);' |
+printf '%s\n' 'yvex_model_engine_open(&model, &request, &failure, &err);' |
     rg "$cli_runtime_lifecycle_pattern" >/dev/null ||
-    fail "CLI lifecycle guard misses direct runtime-model ownership"
+    fail "CLI lifecycle guard misses direct model-engine ownership"
 if printf '%s\n' 'yvex_graph_attention_operator_execute(&request, &result, &cleanup, &err);' |
     rg "$cli_runtime_lifecycle_pattern" >/dev/null; then
     fail "CLI lifecycle guard rejects the canonical production operator"
@@ -428,7 +428,7 @@ if rg -n "$cli_preparation_call_pattern" src/cli/commands/graph.c; then
     fail "common graph CLI directly constructs compiler preparation truth"
 fi
 if rg -n "$cli_runtime_lifecycle_pattern" src/cli/commands/graph.c; then
-    fail "common graph CLI owns runtime model, session, or residency lifecycle"
+    fail "common graph CLI owns model-engine, session, or residency lifecycle"
 fi
 if rg -n -i "(families/|$generic_family_symbol_pattern)" \
     include/yvex/internal/compiler.h src/graph/component.c src/runtime/residency.c; then
@@ -834,7 +834,7 @@ done
 client_lane=${YVEX_CLIENT_LANE_OBJ:-build/obj/src/cli/io/client.o}
 [ -f "$client_lane" ] || fail "runtime-client lane object is missing: $client_lane"
 if nm -u "$client_lane" | rg \
-    'yvex_(runtime_model_open|artifact_materialize|runtime_transformer|runtime_generation_operator_execute|backend_cuda)'; then
+    'yvex_(model_engine_open|artifact_materialize|runtime_transformer|runtime_generation_operator_execute|backend_cuda)'; then
     fail "runtime-client lane gained an engine dependency"
 fi
 product=${YVEX_BIN:-./yvex}

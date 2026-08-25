@@ -123,11 +123,11 @@ typedef struct {
  * One model/session, admitted input, explicit backend/mode, and bounded capacity.
  */
 int yvex_runtime_activation_prefill_execute(
-    yvex_runtime_model *model, yvex_runtime_execution_session *session,
+    yvex_model_engine *model, yvex_runtime_execution_session *session,
     const yvex_runtime_activation_input *input,
     const yvex_runtime_activation_prefill_request *request,
     yvex_runtime_activation_prefill_result *result,
-    yvex_runtime_model_failure *failure, yvex_error *err);
+    yvex_model_engine_failure *failure, yvex_error *err);
 
 /* Adapt the existing graph-attention operator request to activation prefill. */
 int yvex_runtime_activation_prefill_operator_execute(

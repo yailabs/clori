@@ -56,7 +56,7 @@ static void generation_batching_key(yvex_execution_compatibility_key *key,
     key->tensor_scope = 1u;
     key->execution_class = 1u;
     key->publication_contract = 1u;
-    key->model_generation = 1ull;
+    key->engine_generation = 1ull;
     key->layer_ordinal = layer;
     key->row_width = 64ull;
     key->admitted_width = 4ull;
@@ -338,7 +338,7 @@ static int generation_test_incompatible_arrival_releases_impossible_wait(void)
 
 static int generation_test_active_batch_producers(void)
 {
-    yvex_runtime_model model = {0};
+    yvex_model_engine model = {0};
     yvex_runtime_execution_batch_summary summary = {0};
     yvex_error err;
     YVEX_TEST_ASSERT(pthread_mutex_init(&model.lifecycle_mutex, NULL) == 0,

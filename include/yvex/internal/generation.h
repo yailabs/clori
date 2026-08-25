@@ -519,7 +519,7 @@ int yvex_runtime_generation_execution_identity(
 int yvex_runtime_generation_context_summary_copy(const yvex_runtime_generation_context *context,
     yvex_runtime_generation_context_summary *summary, yvex_error *err);
 int yvex_runtime_generation_context_open(yvex_runtime_generation_context **out,
-    yvex_runtime_model *model, yvex_runtime_execution_session *session,
+    yvex_model_engine *model, yvex_runtime_execution_session *session,
     const yvex_runtime_generation_options *options, yvex_error *err);
 const yvex_runtime_generation_plan_summary *yvex_runtime_generation_plan_summary_get(
     const yvex_runtime_generation_context *context);
