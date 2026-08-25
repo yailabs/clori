@@ -478,14 +478,24 @@ fi
 if rg -n "$implicit_physical_envelope_pattern" src/graph/execution.c; then
     fail "physical execution compilation retains an implicit width or context envelope"
 fi
-rg -n 'decision->maximum_context[[:space:]]*=[[:space:]]*model->maximum_context' \
-    src/graph/execution.c >/dev/null ||
-    fail "physical execution no longer binds the semantic context maximum"
-rg -n 'model->verification_width_maximum' src/graph/execution.c >/dev/null ||
-    fail "physical execution no longer derives admitted widths from semantic geometry"
-rg -n 'physical_execution_policy' src/runtime/binding.c \
-    include/yvex/internal/compiler.h >/dev/null ||
-    fail "physical execution policy escaped the compiler-binding boundary"
+if rg -n 'decision->(supported_width_mask|maximum_context|required_backend|kernel_family)' \
+    src/graph/execution.c; then
+    fail "package physical execution retains deployment policy"
+fi
+rg -n 'model->verification_width_maximum' src/runtime/specialization.c >/dev/null ||
+    fail "engine specialization no longer derives its deployment width envelope"
+rg -n 'yvex_backend_get_device_info' src/runtime/specialization.c >/dev/null ||
+    fail "engine specialization no longer binds backend hardware facts"
+if rg -n 'physical_execution_policy' src/runtime src/graph/families \
+    include/yvex/internal/compiler.h include/yvex/internal/execution.h; then
+    fail "obsolete physical execution policy survived package/specialization separation"
+fi
+rg -n 'runtime_specialization_tensor' src/runtime/moe.c >/dev/null ||
+    fail "runtime MoE no longer consumes the engine-owned implementation catalog"
+if rg -n -i '(deepseek|minimax|families/)' src/runtime/specialization.c \
+    include/yvex/internal/execution.h; then
+    fail "engine specialization contains concrete family policy"
+fi
 if rg -n -i '(families/|deepseek|minimax)' src/artifact include/yvex/internal/artifact.h; then
     fail "generic artifact owners contain a concrete family catalog or ABI"
 fi

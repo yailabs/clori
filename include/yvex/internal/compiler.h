@@ -176,7 +176,6 @@ struct yvex_graph_compiler_api;
 struct yvex_compilation_runtime_binding_request;
 struct yvex_runtime_descriptor_summary;
 struct yvex_tokenizer_family_policy;
-struct yvex_physical_execution_policy;
 struct yvex_artifact;
 struct yvex_complete_artifact_admission;
 struct yvex_artifact_admission_failure;
@@ -449,7 +448,6 @@ struct yvex_family_compiler_adapter {
     unsigned int schema_version;
     unsigned long long adapter_id, adapter_version;
     const char *target_id, *family, *logical_transform_identity;
-    const struct yvex_physical_execution_policy *physical_execution_policy;
     const struct yvex_graph_compiler_api *(*graph)(void);
     int (*operator_graph_build)(
         yvex_operator_graph_ir **out,

@@ -27,7 +27,7 @@ static inline void yvex_runtime_identity_copy(char destination[YVEX_SHA256_HEX_C
     if (length) memcpy(destination, source, length);
 }
 #define YVEX_RUNTIME_REASON_CAP 256u
-#define YVEX_RUNTIME_BINDING_SCHEMA_CURRENT 14u
+#define YVEX_RUNTIME_BINDING_SCHEMA_CURRENT 15u
 #define YVEX_RUNTIME_BINDING_SUFFIX ".yvex-runtime-binding"
 typedef enum {
     YVEX_RUNTIME_BINDING_FAILURE_NONE = 0, YVEX_RUNTIME_BINDING_FAILURE_INVALID_ARGUMENT,
@@ -137,8 +137,7 @@ int yvex_runtime_binding_compile_publish(
     const struct yvex_compilation_runtime_binding_request *request,
     char path[YVEX_PATH_CAP], int *published, yvex_error *err);
 int yvex_runtime_binding_open(yvex_runtime_binding **out, const char *path,
-    yvex_runtime_binding_summary *summary,
-    yvex_complete_artifact_admission *admission,
+    yvex_runtime_binding_summary *summary, yvex_complete_artifact_admission *admission,
     yvex_runtime_binding_failure *failure, yvex_error *err);
 void yvex_runtime_binding_close(yvex_runtime_binding *binding);
 int yvex_runtime_binding_import_materialization(
@@ -186,15 +185,14 @@ typedef struct {
 typedef struct {
     int sealed, valid;
     unsigned long long engine_generation; /* Process-local; never persisted or hashed. */
-    char runtime_model_identity[YVEX_SHA256_HEX_CAP];
-    char runtime_binding_identity[YVEX_SHA256_HEX_CAP];
+    char runtime_model_identity[YVEX_SHA256_HEX_CAP], runtime_binding_identity[YVEX_SHA256_HEX_CAP];
     char artifact_identity[YVEX_SHA256_HEX_CAP];
     char materialization_identity[YVEX_SHA256_HEX_CAP];
     char runtime_descriptor_identity[YVEX_SHA256_HEX_CAP];
     char runtime_numeric_identity[YVEX_SHA256_HEX_CAP];
     char semantic_graph_identity[YVEX_SHA256_HEX_CAP];
     char executable_graph_identity[YVEX_SHA256_HEX_CAP];
-    char physical_execution_identity[YVEX_SHA256_HEX_CAP];
+    char physical_execution_identity[YVEX_SHA256_HEX_CAP], engine_specialization_identity[YVEX_SHA256_HEX_CAP];
     unsigned long long artifact_hash_passes, artifact_verified_reopen_passes;
     unsigned long long artifact_reopen_cache_failures, artifact_bytes_hashed;
     unsigned long long gguf_directory_parses, runtime_binding_parses;
@@ -202,13 +200,14 @@ typedef struct {
     unsigned long long tensor_count, attention_layer_count, draft_attention_layer_count;
     unsigned long long attention_binding_count, draft_attention_binding_count;
     unsigned long long physical_execution_decision_count;
+    unsigned long long specialization_implementation_count, engine_specialization_count;
     double lifecycle_seconds[YVEX_RUNTIME_LIFECYCLE_COUNT], total_seconds;
     yvex_runtime_capabilities capabilities;
 } yvex_model_engine_summary;
 typedef struct yvex_model_engine yvex_model_engine;
 typedef struct yvex_runtime_execution_session yvex_runtime_execution_session;
 typedef struct yvex_runtime_cleanup_lease yvex_runtime_cleanup_lease;
-enum { YVEX_RUNTIME_RESIDENCY_SCHEMA_V7 = 7u, YVEX_RUNTIME_RESIDENCY_SCHEMA_V8 = 8u };
+enum { YVEX_RUNTIME_RESIDENCY_SCHEMA_V7 = 7u };
 typedef enum {
     YVEX_RUNTIME_WEIGHT_PLACEMENT_HOST_LOCKED = 0,
     YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED,
@@ -246,7 +245,7 @@ typedef struct {
     unsigned long long generation, expected_model_binding_count, model_binding_count, expected_core_binding_count;
     unsigned long long expected_envelope_binding_count, core_binding_count, envelope_binding_count, binding_count;
     unsigned long long expected_output_head_binding_count, output_head_binding_count, output_head_encoded_bytes;
-    unsigned long long accelerator_encoded_bytes, encoded_bytes, derived_asset_count, derived_asset_bytes;
+    unsigned long long accelerator_encoded_bytes, encoded_bytes;
     unsigned long long host_resident_bytes, device_resident_bytes, artifact_backed_bytes;
     unsigned long long cuda_addressable_bytes, cuda_upload_bytes, cuda_upload_count, cuda_host_registration_count;
     unsigned long long cuda_pageable_map_bytes, cuda_pageable_map_count, cuda_managed_bytes,
@@ -378,6 +377,7 @@ typedef struct {
     unsigned long long total_device_bytes, sustainable_read_bytes_per_second, sustainable_copy_bytes_per_second;
     unsigned long long sustainable_coherent_host_bytes_per_second;
     char device_name[128], bandwidth_evidence_identity[YVEX_SHA256_HEX_CAP];
+    char engine_specialization_identity[YVEX_SHA256_HEX_CAP];
     char residency_identity[YVEX_SHA256_HEX_CAP], workspace_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_session_summary;
 typedef struct {

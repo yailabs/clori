@@ -105,8 +105,8 @@ static int worklist_test_build(void)
     policy.schema_version = YVEX_EXPERT_WORKLIST_POLICY_SCHEMA_V1;
     policy.supported_width_mask = 0x1feull;
     policy.tensor_core_minimum = 3ull;
-    strcpy(policy.narrow_kernel_family, "exact-narrow");
-    strcpy(policy.tensor_core_kernel_family, "exact-wide");
+    policy.narrow_implementation = YVEX_ENGINE_IMPLEMENTATION_CUDA_ENCODED_ROW;
+    policy.wide_implementation = YVEX_ENGINE_IMPLEMENTATION_CUDA_SM121_MOE_TENSORCORE;
     YVEX_TEST_ASSERT(yvex_expert_worklist_policy_seal(&policy, &err) == YVEX_OK,
                      "compiled expert worklist policy should seal");
 
@@ -185,7 +185,8 @@ static int worklist_test_refusals(void)
                      "single-row execution batch should seal");
     policy.schema_version = YVEX_EXPERT_WORKLIST_POLICY_SCHEMA_V1;
     policy.supported_width_mask = 2ull;
-    strcpy(policy.narrow_kernel_family, "exact-narrow");
+    policy.narrow_implementation = YVEX_ENGINE_IMPLEMENTATION_CUDA_ENCODED_ROW;
+    policy.wide_implementation = YVEX_ENGINE_IMPLEMENTATION_COUNT;
     YVEX_TEST_ASSERT(yvex_expert_worklist_policy_seal(&policy, &err) == YVEX_OK,
                      "narrow-only worklist policy should seal");
     request = (yvex_expert_worklist_request){YVEX_EXPERT_WORKLIST_SCHEMA_V1, &batch,

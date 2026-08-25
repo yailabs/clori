@@ -411,9 +411,6 @@ int yvex_cuda_refresh_memory_info(yvex_backend *backend, yvex_error *err);
 CUdeviceptr yvex_cuda_tensor_ptr(const yvex_device_tensor *tensor);
 int yvex_cuda_blas_bind_launch_stream(yvex_backend *backend, const char *where, yvex_error *err);
 CUstream yvex_cuda_launch_stream(const yvex_backend *backend);
-int yvex_cuda_moe_derived_layout_plan(const yvex_physical_execution_decision *, unsigned long long *, yvex_error *);
-int yvex_cuda_moe_derived_layout_build(const yvex_physical_execution_decision *, const unsigned char *,
-                                       unsigned long long, unsigned char *, unsigned long long, yvex_error *);
 int yvex_cuda_resident_alloc(yvex_backend *, const yvex_backend_tensor_desc *,
                              yvex_device_tensor **, unsigned char **, yvex_error *);
 int yvex_cuda_resident_map_supported(const yvex_backend *);

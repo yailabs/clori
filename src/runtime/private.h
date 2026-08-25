@@ -8,6 +8,7 @@
 
 #include <pthread.h>
 #include <stdatomic.h>
+#include <stdlib.h>
 #include <yvex/internal/backend.h>
 #include <yvex/internal/decode.h>
 #include <yvex/internal/generation.h>
@@ -56,6 +57,49 @@ struct yvex_runtime_binding {
     yvex_attention_layer_plan *layers, *draft_layers;
     yvex_compiled_model_plan *plan;
 };
+
+/* Exact legacy wire records exist only to authenticate and narrow accepted v14 bindings. */
+typedef struct {
+    unsigned int schema_version;
+    unsigned long long decision_count, encoded_bytes;
+    unsigned long long consumer_counts[YVEX_EXECUTION_CONSUMER_COUNT];
+    unsigned long long layout_counts[4], placement_counts[5];
+    char physical_variant_identity[YVEX_SHA256_HEX_CAP];
+    char identity[YVEX_SHA256_HEX_CAP];
+} yvex_runtime_binding_physical_summary_v14;
+
+typedef struct {
+    unsigned int schema_version;
+    unsigned long long terminal_tensor_id;
+    unsigned int role, scope;
+    unsigned long long layer_index, predictor_index, expert_count;
+    unsigned int canonical_qtype;
+    unsigned long long canonical_row_width, canonical_row_count;
+    unsigned long long encoded_offset, encoded_bytes, alignment;
+    unsigned int consumer, layout, placement, sharing, activation;
+    unsigned long long supported_width_mask, maximum_context, worklist_width_mask;
+    unsigned long long tensor_core_minimum;
+    unsigned int required_backend, required_compute_major, required_compute_minor;
+    unsigned int evidence, fallback;
+    int derived_asset_required;
+    char kernel_family[YVEX_EXECUTION_TEXT_CAP];
+    char tensor_core_kernel_family[YVEX_EXECUTION_TEXT_CAP];
+    char terminal_identity[YVEX_SHA256_HEX_CAP];
+    char decision_identity[YVEX_SHA256_HEX_CAP];
+} yvex_runtime_binding_physical_decision_v14;
+
+int yvex_runtime_private_binding_physical_v14_import(
+    yvex_physical_execution_ir **out,
+    const yvex_runtime_binding_physical_summary_v14 *summary,
+    const yvex_runtime_binding_physical_decision_v14 *decisions,
+    unsigned long long count, yvex_error *err);
+int yvex_runtime_private_binding_policies_valid(
+    const yvex_runtime_binding *binding);
+int yvex_runtime_private_binding_policies_match_model(
+    const yvex_model_execution_descriptor *model,
+    const yvex_transformer_family_policy *transformer,
+    const yvex_logits_family_policy *logits,
+    const yvex_speculation_family_policy *speculation);
 
 typedef struct runtime_compatible_batcher runtime_compatible_batcher;
 typedef struct runtime_compatible_batch_ticket runtime_compatible_batch_ticket;
@@ -194,6 +238,63 @@ int yvex_runtime_private_residency_backing_bytes(
     yvex_runtime_weight_placement placement, unsigned long long *bytes,
     yvex_error *err);
 
+#define YVEX_ENGINE_SPECIALIZATION_SCHEMA_V1 1u
+#define YVEX_ENGINE_IMPLEMENTATION_CAP 8u
+typedef struct {
+    unsigned int schema_version;
+    yvex_engine_implementation implementation, fallback_implementation;
+    yvex_execution_activation_class activation, fallback_activation;
+    unsigned long long supported_width_mask, worklist_width_mask, tensor_core_minimum;
+    char identity[YVEX_SHA256_HEX_CAP];
+} yvex_engine_implementation_record;
+typedef struct {
+    unsigned int schema_version;
+    yvex_backend_kind backend;
+    int device_index, compute_major, compute_minor;
+    unsigned long long package_decision_count, implementation_count;
+    char package_execution_identity[YVEX_SHA256_HEX_CAP];
+    char identity[YVEX_SHA256_HEX_CAP];
+} yvex_engine_specialization_summary;
+typedef struct yvex_engine_specialization {
+    yvex_engine_implementation_record implementations[YVEX_ENGINE_IMPLEMENTATION_CAP];
+    unsigned int *decision_handles;
+    yvex_engine_specialization_summary summary;
+} yvex_engine_specialization;
+
+static inline void runtime_specialization_release(yvex_engine_specialization **specialization)
+{
+    if (!specialization || !*specialization) return;
+    free((*specialization)->decision_handles);
+    free(*specialization);
+    *specialization = NULL;
+}
+
+static inline const yvex_engine_implementation_record *runtime_specialization_decision(
+    const yvex_engine_specialization *specialization, unsigned long long decision_index)
+{
+    unsigned int handle;
+    if (!specialization || decision_index >= specialization->summary.package_decision_count)
+        return NULL;
+    handle = specialization->decision_handles[decision_index];
+    return handle < specialization->summary.implementation_count
+               ? &specialization->implementations[handle] : NULL;
+}
+
+static inline const yvex_engine_implementation_record *runtime_specialization_tensor(
+    const yvex_engine_specialization *specialization,
+    const yvex_physical_execution_ir *package_execution, unsigned long long tensor_id)
+{
+    unsigned long long index;
+    if (!specialization || !package_execution) return NULL;
+    for (index = 0ull; index < specialization->summary.package_decision_count; ++index) {
+        const yvex_physical_execution_decision *package =
+            yvex_physical_execution_ir_decision_at(package_execution, index);
+        if (package && package->terminal_tensor_id == tensor_id)
+            return runtime_specialization_decision(specialization, index);
+    }
+    return NULL;
+}
+
 struct yvex_model_engine {
     const yvex_graph_execution_api *graph;
     char target_id[128];
@@ -207,6 +308,7 @@ struct yvex_model_engine {
     yvex_materialization_session *materialization;
     yvex_runtime_descriptor *descriptor;
     const yvex_physical_execution_ir *physical_execution;
+    yvex_engine_specialization *specializations[2];
     yvex_attention_plan *attention;
     yvex_attention_plan *draft_attention;
     yvex_tokenizer *tokenizer;
@@ -226,6 +328,7 @@ struct yvex_model_engine {
 
 struct yvex_runtime_execution_session {
     yvex_model_engine *engine;
+    const yvex_engine_specialization *specialization;
     yvex_backend *backend;
     yvex_attention_state_provider attention_state_provider;
     yvex_attention_state_provider_factory attention_state_factory;
@@ -426,6 +529,10 @@ int yvex_runtime_private_session_workspace_discard(
 int yvex_runtime_private_session_capabilities_bind(
     yvex_runtime_execution_session *session,
     yvex_model_engine_failure *failure, int require_workspace,
+    yvex_error *err);
+int yvex_runtime_private_model_specialization_prepare(
+    yvex_model_engine *model, yvex_backend_kind backend_kind,
+    yvex_backend *backend, const yvex_engine_specialization **out,
     yvex_error *err);
 int yvex_runtime_private_session_prepare_persistent_scope_state_locked(
     yvex_runtime_execution_session *session, yvex_tensor_scope scope,

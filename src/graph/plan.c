@@ -614,7 +614,7 @@ static void plan_hash_fields(yvex_sha256 *hash, const void *object,
 }
 
 /* Derive the deterministic compute identity identity from explicit semantic fields. */
-int yvex_attention_plan_identity_compute(
+static int attention_plan_identity_compute(
     const yvex_attention_summary *summary,
     const yvex_attention_layer_plan *layers,
     unsigned long long layer_count,
@@ -861,8 +861,8 @@ int yvex_attention_plan_import(yvex_attention_plan **out,
             summary->required_binding_count, required, err, YVEX_ERR_FORMAT,
             "runtime binding attention summary disagrees with its layers");
     }
-    if (!yvex_attention_plan_identity_compute(&plan->summary, plan->layers,
-                                              plan->layer_count, computed_identity) ||
+    if (!attention_plan_identity_compute(&plan->summary, plan->layers,
+                                         plan->layer_count, computed_identity) ||
         strcmp(computed_identity, expected_identity) != 0) {
         yvex_attention_plan_close(plan);
         return yvex_attention_reject(
@@ -1171,7 +1171,7 @@ static int attention_plan_build(
         yvex_attention_plan_close(plan);
         return rc;
     }
-    (void)yvex_attention_plan_identity_compute(
+    (void)attention_plan_identity_compute(
         &plan->summary, plan->layers, plan->layer_count,
         plan->summary.attention_plan_identity);
     *out = plan;

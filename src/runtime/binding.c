@@ -19,21 +19,9 @@
 #ifndef O_NOFOLLOW
 #define O_NOFOLLOW 0
 #endif
-#define BINDING_MAGIC_V7 "YVRBND7\0"
-#define BINDING_MAGIC_V8 "YVRBND8\0"
-#define BINDING_MAGIC_V9 "YVRBND9\0"
-#define BINDING_MAGIC_V10 "YVRBND10"
-#define BINDING_MAGIC_V11 "YVRBND11"
-#define BINDING_MAGIC_V12 "YVRBND12"
-#define BINDING_MAGIC_V13 "YVRBND13"
 #define BINDING_MAGIC_V14 "YVRBND14"
-#define BINDING_SCHEMA_V7 7u
-#define BINDING_SCHEMA_V8 8u
-#define BINDING_SCHEMA_V9 9u
-#define BINDING_SCHEMA_V10 10u
-#define BINDING_SCHEMA_V11 11u
-#define BINDING_SCHEMA_V12 12u
-#define BINDING_SCHEMA_V13 13u
+#define BINDING_MAGIC_V15 "YVRBND15"
+#define BINDING_SCHEMA_V14 14u
 #define BINDING_MAGIC_BYTES 8u
 #define BINDING_HEADER_BYTES (BINDING_MAGIC_BYTES + 16u + 64u)
 #define BINDING_MAX_BYTES (64u * 1024u * 1024u)
@@ -593,7 +581,7 @@ typedef yvex_physical_execution_decision physical_decision;
 static const binding_field physical_summary_fields[] = {
     FIELD_U(physical_summary, schema_version), FIELD_U(physical_summary, decision_count),
     FIELD_U(physical_summary, encoded_bytes), FIELD_A(physical_summary, consumer_counts),
-    FIELD_A(physical_summary, layout_counts), FIELD_A(physical_summary, placement_counts),
+    FIELD_A(physical_summary, layout_counts),
     FIELD_T(physical_summary, physical_variant_identity), FIELD_T(physical_summary, identity),
 };
 static const binding_field physical_decision_fields[] = {
@@ -601,17 +589,43 @@ static const binding_field physical_decision_fields[] = {
     PHYSICAL_U(layer_index), PHYSICAL_U(predictor_index), PHYSICAL_U(expert_count),
     PHYSICAL_U(canonical_qtype), PHYSICAL_U(canonical_row_width),
     PHYSICAL_U(canonical_row_count), PHYSICAL_U(encoded_offset), PHYSICAL_U(encoded_bytes),
-    PHYSICAL_U(alignment), PHYSICAL_U(consumer), PHYSICAL_U(layout), PHYSICAL_U(placement),
-    PHYSICAL_U(sharing), PHYSICAL_U(activation), PHYSICAL_U(supported_width_mask),
-    PHYSICAL_U(maximum_context), PHYSICAL_U(worklist_width_mask),
-    PHYSICAL_U(tensor_core_minimum), PHYSICAL_U(required_backend),
-    PHYSICAL_U(required_compute_major), PHYSICAL_U(required_compute_minor), PHYSICAL_U(evidence),
-    PHYSICAL_U(fallback), PHYSICAL_U(derived_asset_required), PHYSICAL_T(kernel_family),
-    PHYSICAL_T(tensor_core_kernel_family),
+    PHYSICAL_U(alignment), PHYSICAL_U(consumer), PHYSICAL_U(layout), PHYSICAL_U(sharing),
     PHYSICAL_T(terminal_identity), PHYSICAL_T(decision_identity),
 };
 #undef PHYSICAL_U
 #undef PHYSICAL_T
+
+#define PHYSICAL_V14_U(member) FIELD_U(yvex_runtime_binding_physical_decision_v14, member)
+#define PHYSICAL_V14_T(member) FIELD_T(yvex_runtime_binding_physical_decision_v14, member)
+static const binding_field physical_summary_v14_fields[] = {
+    FIELD_U(yvex_runtime_binding_physical_summary_v14, schema_version),
+    FIELD_U(yvex_runtime_binding_physical_summary_v14, decision_count),
+    FIELD_U(yvex_runtime_binding_physical_summary_v14, encoded_bytes),
+    FIELD_A(yvex_runtime_binding_physical_summary_v14, consumer_counts),
+    FIELD_A(yvex_runtime_binding_physical_summary_v14, layout_counts),
+    FIELD_A(yvex_runtime_binding_physical_summary_v14, placement_counts),
+    FIELD_T(yvex_runtime_binding_physical_summary_v14, physical_variant_identity),
+    FIELD_T(yvex_runtime_binding_physical_summary_v14, identity),
+};
+static const binding_field physical_decision_v14_fields[] = {
+    PHYSICAL_V14_U(schema_version), PHYSICAL_V14_U(terminal_tensor_id),
+    PHYSICAL_V14_U(role), PHYSICAL_V14_U(scope), PHYSICAL_V14_U(layer_index),
+    PHYSICAL_V14_U(predictor_index), PHYSICAL_V14_U(expert_count),
+    PHYSICAL_V14_U(canonical_qtype), PHYSICAL_V14_U(canonical_row_width),
+    PHYSICAL_V14_U(canonical_row_count), PHYSICAL_V14_U(encoded_offset),
+    PHYSICAL_V14_U(encoded_bytes), PHYSICAL_V14_U(alignment),
+    PHYSICAL_V14_U(consumer), PHYSICAL_V14_U(layout), PHYSICAL_V14_U(placement),
+    PHYSICAL_V14_U(sharing), PHYSICAL_V14_U(activation),
+    PHYSICAL_V14_U(supported_width_mask), PHYSICAL_V14_U(maximum_context),
+    PHYSICAL_V14_U(worklist_width_mask), PHYSICAL_V14_U(tensor_core_minimum),
+    PHYSICAL_V14_U(required_backend), PHYSICAL_V14_U(required_compute_major),
+    PHYSICAL_V14_U(required_compute_minor), PHYSICAL_V14_U(evidence),
+    PHYSICAL_V14_U(fallback), PHYSICAL_V14_U(derived_asset_required),
+    PHYSICAL_V14_T(kernel_family), PHYSICAL_V14_T(tensor_core_kernel_family),
+    PHYSICAL_V14_T(terminal_identity), PHYSICAL_V14_T(decision_identity),
+};
+#undef PHYSICAL_V14_U
+#undef PHYSICAL_V14_T
 int yvex_runtime_capabilities_contract_valid(const yvex_runtime_capabilities *facts)
 {
     return facts && (!facts->attention_core_ready || facts->attention_semantics_ready) &&
@@ -691,75 +705,6 @@ int yvex_runtime_capabilities_admitted_by(const yvex_runtime_capabilities *facts
             return 0;
     }
     return 1;
-}
-static int binding_boolean(int value)
-{
-    return value == 0 || value == 1;
-}
-static int binding_policies_match_model(
-    const yvex_model_execution_descriptor *model,
-    const yvex_transformer_family_policy *transformer,
-    const yvex_logits_family_policy *logits,
-    const yvex_speculation_family_policy *speculation)
-{
-    unsigned long long expanded, features;
-    return model && transformer && logits && speculation &&
-           transformer->schema_version == YVEX_TRANSFORMER_PLAN_SCHEMA_V2 &&
-           (unsigned int)transformer->initial_policy < YVEX_TRANSFORMER_INITIAL_POLICY_COUNT &&
-           (unsigned int)transformer->final_policy < YVEX_TRANSFORMER_FINAL_POLICY_COUNT &&
-           transformer->residual_streams == model->residual_streams &&
-           transformer->hidden_width == model->hidden_width &&
-           yvex_core_u64_mul(model->residual_streams, model->hidden_width, &expanded) &&
-           transformer->expanded_width == expanded &&
-           transformer->maximum_context == model->maximum_context &&
-           transformer->sinkhorn_iterations == model->mhc_sinkhorn_iterations &&
-           transformer->mhc_epsilon == model->mhc_epsilon &&
-           transformer->output_norm_epsilon == model->normalization_epsilon &&
-           binding_boolean(transformer->attention_then_moe) &&
-           binding_boolean(transformer->deferred_ffn_post) &&
-           binding_boolean(transformer->final_norm_after_head) &&
-           logits->schema_version == YVEX_RUNTIME_LOGITS_SCHEMA_V1 &&
-           binding_boolean(logits->separate_output_head) &&
-           binding_boolean(logits->tied_output_head) &&
-           binding_boolean(logits->output_head_bias) &&
-           logits->separate_output_head != logits->tied_output_head &&
-           speculation->schema_version == YVEX_SPECULATION_FAMILY_POLICY_SCHEMA_V1 &&
-           speculation->block_size == model->proposal_width &&
-           speculation->noise_token_id == model->draft_noise_token_id &&
-           speculation->target_feature_layer_count == model->target_feature_count &&
-           memcmp(speculation->target_feature_layers, model->target_feature_layers,
-                  sizeof(model->target_feature_layers)) == 0 &&
-           speculation->target_feature_width == model->target_feature_width &&
-           yvex_core_u64_mul(model->target_feature_count, model->target_feature_width,
-                             &features) &&
-           speculation->concatenated_feature_width == features &&
-           speculation->draft_layer_count == model->draft_layer_count &&
-           speculation->markov_rank == model->markov_rank &&
-           speculation->accepted_prefix_maximum <= model->proposal_width &&
-           (unsigned int)speculation->feature_projection_role < YVEX_TENSOR_ROLE_COUNT &&
-           (unsigned int)speculation->feature_norm_role < YVEX_TENSOR_ROLE_COUNT &&
-           (unsigned int)speculation->output_norm_role < YVEX_TENSOR_ROLE_COUNT &&
-           (unsigned int)speculation->markov_embedding_role < YVEX_TENSOR_ROLE_COUNT &&
-           (unsigned int)speculation->markov_output_role < YVEX_TENSOR_ROLE_COUNT &&
-           (unsigned int)speculation->confidence_role < YVEX_TENSOR_ROLE_COUNT &&
-           binding_boolean(speculation->parallel_block_backbone) &&
-           binding_boolean(speculation->sequential_markov) &&
-           binding_boolean(speculation->confidence_available) &&
-           binding_boolean(speculation->shares_embedding) &&
-           binding_boolean(speculation->shares_output_head) &&
-           binding_boolean(speculation->target_verification_required) &&
-           yvex_sha256_hex_is_valid(speculation->policy_identity);
-}
-static int binding_policies_valid(const yvex_runtime_binding *binding)
-{
-    return binding && binding_policies_match_model(
-        &binding->descriptor.model_execution, &binding->transformer_policy,
-        &binding->logits_policy, &binding->speculation_policy) &&
-        binding->tokenizer_policy.family_adapter_id == binding->summary.family_adapter_id &&
-        binding->tokenizer_policy.family_adapter_version == binding->summary.family_adapter_version &&
-        binding->tokenizer_policy.vocabulary_size ==
-            binding->descriptor.model_execution.vocabulary_size &&
-        yvex_tokenizer_family_policy_validate(&binding->tokenizer_policy, NULL) == YVEX_OK;
 }
 static int binding_moe_unavailable_identity(
     const yvex_runtime_binding_prepare_request *request,
@@ -889,7 +834,7 @@ static int write_physical_execution(binding_bytes *body,
     }
     return 1;
 }
-static binding_parse_result read_physical_execution(
+static binding_parse_result read_physical_execution_v15(
     binding_cursor *cursor, yvex_physical_execution_ir **out,
     unsigned long long expected_count)
 {
@@ -917,6 +862,35 @@ static binding_parse_result read_physical_execution(
     }
     free(decisions);
     return BINDING_PARSE_OK;
+}
+
+static binding_parse_result read_physical_execution_v14(
+    binding_cursor *cursor, yvex_physical_execution_ir **out,
+    unsigned long long expected_count)
+{
+    yvex_runtime_binding_physical_summary_v14 summary;
+    yvex_runtime_binding_physical_decision_v14 *legacy = NULL;
+    yvex_error err;
+    unsigned long long index;
+    binding_parse_result result = BINDING_PARSE_FORMAT;
+    if (!record_read(cursor, &summary, sizeof(summary), physical_summary_v14_fields,
+                     FIELD_COUNT(physical_summary_v14_fields)) ||
+        summary.decision_count != expected_count ||
+        !record_count_fits(cursor, expected_count, sizeof(*legacy)))
+        return BINDING_PARSE_FORMAT;
+    legacy = calloc((size_t)expected_count, sizeof(*legacy));
+    if (!legacy) return BINDING_PARSE_ALLOCATION;
+    for (index = 0ull; index < expected_count; ++index)
+        if (!record_read(cursor, &legacy[index], sizeof(legacy[index]),
+                         physical_decision_v14_fields,
+                         FIELD_COUNT(physical_decision_v14_fields)))
+            goto done;
+    if (yvex_runtime_private_binding_physical_v14_import(
+            out, &summary, legacy, expected_count, &err) == YVEX_OK)
+        result = BINDING_PARSE_OK;
+done:
+    free(legacy);
+    return result;
 }
 static int binding_admission_ready(const yvex_complete_artifact_admission *admission) {
     return admission && admission->complete && admission->materialization_input_ready &&
@@ -998,7 +972,7 @@ static int prepare_validate(const yvex_runtime_binding_prepare_request *request,
         operators->maximum_context != descriptor->model_execution.maximum_context ||
         operators->target_layer_count != descriptor->model_execution.layer_count ||
         operators->draft_layer_count != descriptor->model_execution.draft_layer_count ||
-        !binding_policies_match_model(
+        !yvex_runtime_private_binding_policies_match_model(
             &descriptor->model_execution, &request->transformer_policy,
             &request->logits_policy, &request->speculation_policy) ||
         request->tokenizer_policy.family_adapter_id != request->family_adapter_id ||
@@ -1171,7 +1145,7 @@ static int binding_body_write(const yvex_runtime_binding_prepare_request *reques
     layer_count = attention->layer_count;
     draft_layer_count = draft_attention ? draft_attention->layer_count : 0ull;
     if (!yvex_runtime_capabilities_identity(capabilities, capability_identity) ||
-        !bytes_put_text(body, "yvex.runtime.binding.payload.v14") ||
+        !bytes_put_text(body, "yvex.runtime.binding.payload.v15") ||
         !bytes_put_u64(body, YVEX_RUNTIME_BINDING_SCHEMA_CURRENT) ||
         !bytes_put_u64(body, adapter_id) || !bytes_put_u64(body, adapter_version) ||
         !bytes_put_text(body, format) || !bytes_put_u64(body, format_version) ||
@@ -1235,14 +1209,19 @@ static int binding_body_write(const yvex_runtime_binding_prepare_request *reques
     }
     return 1;
 }
-static int binding_identity(const unsigned char *body, size_t body_bytes,
+static int binding_identity(unsigned int schema, const unsigned char *body, size_t body_bytes,
                             char output[YVEX_SHA256_HEX_CAP])
 {
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.binding.v14") ||
-        !yvex_sha256_update_u64(&hash, YVEX_RUNTIME_BINDING_SCHEMA_CURRENT) ||
+    if ((schema != BINDING_SCHEMA_V14 &&
+         schema != YVEX_RUNTIME_BINDING_SCHEMA_CURRENT) ||
+        !yvex_sha256_update_text(
+            &hash, schema == BINDING_SCHEMA_V14
+                       ? "yvex.runtime.binding.v14"
+                       : "yvex.runtime.binding.v15") ||
+        !yvex_sha256_update_u64(&hash, schema) ||
         !yvex_sha256_update(&hash, body, body_bytes) ||
         !yvex_sha256_final(&hash, digest)) return 0;
     yvex_sha256_hex(digest, output);
@@ -1253,7 +1232,7 @@ static int build_file(const binding_bytes *body, const char *identity, binding_b
     if (!body || !identity || !file) return 0;
     file->maximum = BINDING_MAX_BYTES;
     file->initial_capacity = 4096u;
-    return yvex_core_bytes_append(file, BINDING_MAGIC_V14, BINDING_MAGIC_BYTES) &&
+    return yvex_core_bytes_append(file, BINDING_MAGIC_V15, BINDING_MAGIC_BYTES) &&
            bytes_put_u64(file, YVEX_RUNTIME_BINDING_SCHEMA_CURRENT) &&
            bytes_put_u64(file, (unsigned long long)body->count) &&
            yvex_core_bytes_append(file, identity, 64u) &&
@@ -1275,7 +1254,9 @@ static binding_parse_result parse_body(yvex_runtime_binding *binding,
     unsigned long long draft_layer_count = 0ull, i;
     if (!cursor_text(&cursor, domain, sizeof(domain)) ||
         !cursor_u64(&cursor, &schema) || schema != expected_schema ||
-        strcmp(domain, "yvex.runtime.binding.payload.v14") != 0 ||
+        strcmp(domain, expected_schema == BINDING_SCHEMA_V14
+                           ? "yvex.runtime.binding.payload.v14"
+                           : "yvex.runtime.binding.payload.v15") != 0 ||
         !cursor_u64(&cursor, &family_id) || !family_id ||
         !cursor_u64(&cursor, &family_version) || !family_version ||
         !cursor_text(&cursor, format, sizeof(format)) || !format[0] ||
@@ -1328,8 +1309,12 @@ static binding_parse_result parse_body(yvex_runtime_binding *binding,
         if (!record_read(&cursor, &binding->runtime[i], sizeof(binding->runtime[i]),
                          runtime_record_fields, FIELD_COUNT(runtime_record_fields)))
             return BINDING_PARSE_FORMAT;
-    if (read_physical_execution(&cursor, &binding->physical_execution,
-                                runtime_count) != BINDING_PARSE_OK)
+    if ((expected_schema == BINDING_SCHEMA_V14
+             ? read_physical_execution_v14(
+                   &cursor, &binding->physical_execution, runtime_count)
+             : read_physical_execution_v15(
+                   &cursor, &binding->physical_execution, runtime_count)) !=
+        BINDING_PARSE_OK)
         return BINDING_PARSE_FORMAT;
     if (!record_read(&cursor, &binding->transformer_policy,
                      sizeof(binding->transformer_policy), transformer_policy_fields,
@@ -1439,7 +1424,7 @@ static int binding_validate(const yvex_runtime_binding *binding,
     char semantic[YVEX_SHA256_HEX_CAP], executable[YVEX_SHA256_HEX_CAP];
     const char *compatibility;
     const physical_summary *physical;
-    unsigned long long i, maximum_width, width_mask;
+    unsigned long long i;
     *field = "canonical-body";
     *code = YVEX_RUNTIME_BINDING_FAILURE_FORMAT;
     if (!binding) return 0;
@@ -1451,18 +1436,14 @@ static int binding_validate(const yvex_runtime_binding *binding,
         *code = YVEX_RUNTIME_BINDING_FAILURE_IDENTITY;
         return 0;
     }
-    maximum_width = binding->descriptor.model_execution.verification_width_maximum;
-    if (!maximum_width) maximum_width = 1ull;
-    if (maximum_width >= 63ull) return 0;
-    width_mask = (1ull << (maximum_width + 1ull)) - 2ull;
     for (i = 0ull; i < physical->decision_count; ++i) {
         const physical_decision *decision =
             yvex_physical_execution_ir_decision_at(binding->physical_execution, i);
-        if (!decision || decision->maximum_context !=
-                             binding->descriptor.model_execution.maximum_context ||
-            decision->supported_width_mask != width_mask) {
-            *field = "physical-execution-envelope";
-            *code = YVEX_RUNTIME_BINDING_FAILURE_COMPATIBILITY;
+        if (!decision || decision->terminal_tensor_id >= binding->summary.tensor_count ||
+            decision->canonical_qtype !=
+                binding->runtime[decision->terminal_tensor_id].qtype) {
+            *field = "physical-execution-package";
+            *code = YVEX_RUNTIME_BINDING_FAILURE_IDENTITY;
             return 0;
         }
     }
@@ -1512,7 +1493,7 @@ static int binding_validate(const yvex_runtime_binding *binding,
             binding->descriptor.model_execution.draft_layer_count ||
         binding->descriptor.vocabulary_size !=
             binding->descriptor.model_execution.vocabulary_size ||
-        !binding_policies_valid(binding) ||
+        !yvex_runtime_private_binding_policies_valid(binding) ||
         !yvex_runtime_private_compiled_plan_valid(binding) ||
         !binding_attention_ready(&binding->attention) ||
         binding->attention.tensor_scope != YVEX_TENSOR_SCOPE_MAIN_LAYER ||
@@ -1647,23 +1628,7 @@ static int binding_file_decode(yvex_runtime_binding **out,
                             "runtime binding file magic is invalid", err);
         goto done;
     }
-    if (!cursor_u64(&header, &schema) ||
-        !((schema == BINDING_SCHEMA_V7 &&
-           memcmp(magic, BINDING_MAGIC_V7, sizeof(magic)) == 0) ||
-          (schema == BINDING_SCHEMA_V8 &&
-           memcmp(magic, BINDING_MAGIC_V8, sizeof(magic)) == 0) ||
-          (schema == BINDING_SCHEMA_V9 &&
-           memcmp(magic, BINDING_MAGIC_V9, sizeof(magic)) == 0) ||
-          (schema == BINDING_SCHEMA_V10 &&
-           memcmp(magic, BINDING_MAGIC_V10, sizeof(magic)) == 0) ||
-          (schema == BINDING_SCHEMA_V11 &&
-           memcmp(magic, BINDING_MAGIC_V11, sizeof(magic)) == 0) ||
-          (schema == BINDING_SCHEMA_V12 &&
-           memcmp(magic, BINDING_MAGIC_V12, sizeof(magic)) == 0) ||
-          (schema == BINDING_SCHEMA_V13 &&
-           memcmp(magic, BINDING_MAGIC_V13, sizeof(magic)) == 0) ||
-          (schema == YVEX_RUNTIME_BINDING_SCHEMA_CURRENT &&
-           memcmp(magic, BINDING_MAGIC_V14, sizeof(magic)) == 0))) {
+    if (!cursor_u64(&header, &schema)) {
         rc = binding_reject(failure, YVEX_RUNTIME_BINDING_FAILURE_SCHEMA,
                             "schema-version", path, 0ull,
                             YVEX_RUNTIME_BINDING_SCHEMA_CURRENT, schema,
@@ -1671,12 +1636,24 @@ static int binding_file_decode(yvex_runtime_binding **out,
                             "runtime binding schema is unsupported", err);
         goto done;
     }
-    if (schema != YVEX_RUNTIME_BINDING_SCHEMA_CURRENT) {
+    if (schema >= 7u && schema < BINDING_SCHEMA_V14 &&
+        memcmp(magic, "YVRBND", 6u) == 0) {
         rc = binding_reject(
             failure, YVEX_RUNTIME_BINDING_FAILURE_COMPATIBILITY,
             "model-execution", path, 0ull, YVEX_RUNTIME_BINDING_SCHEMA_CURRENT,
             schema, YVEX_ERR_FORMAT,
             "runtime binding predates the canonical operator graph and must be rebuilt", err);
+        goto done;
+    }
+    if (!((schema == BINDING_SCHEMA_V14 &&
+           memcmp(magic, BINDING_MAGIC_V14, sizeof(magic)) == 0) ||
+          (schema == YVEX_RUNTIME_BINDING_SCHEMA_CURRENT &&
+           memcmp(magic, BINDING_MAGIC_V15, sizeof(magic)) == 0))) {
+        rc = binding_reject(failure, YVEX_RUNTIME_BINDING_FAILURE_SCHEMA,
+                            "schema-version", path, 0ull,
+                            YVEX_RUNTIME_BINDING_SCHEMA_CURRENT, schema,
+                            YVEX_ERR_FORMAT,
+                            "runtime binding schema is unsupported", err);
         goto done;
     }
     if (!cursor_u64(&header, &body_bytes) ||
@@ -1702,7 +1679,8 @@ static int binding_file_decode(yvex_runtime_binding **out,
             err);
         goto done;
     }
-    if (!binding_identity(file + BINDING_HEADER_BYTES, (size_t)body_bytes,
+    if (!binding_identity((unsigned int)schema, file + BINDING_HEADER_BYTES,
+                          (size_t)body_bytes,
                           computed_identity) ||
         strcmp(stored_identity, computed_identity) != 0 ||
         (expected_identity && strcmp(expected_identity, computed_identity) != 0)) {
@@ -1911,7 +1889,9 @@ int yvex_runtime_binding_prepare(const yvex_runtime_binding_prepare_request *req
             failure, YVEX_RUNTIME_BINDING_FAILURE_ALLOCATION, "canonical-body",
             request->directory, 0ull, BINDING_MAX_BYTES, body.count, YVEX_ERR_NOMEM,
             "runtime binding canonical body exceeded its allocation budget", err);
-    if (rc != YVEX_OK || !binding_identity(body.data, body.count, identity) ||
+    if (rc != YVEX_OK ||
+        !binding_identity(YVEX_RUNTIME_BINDING_SCHEMA_CURRENT,
+                          body.data, body.count, identity) ||
         !build_file(&body, identity, &file)) {
         if (rc == YVEX_OK)
             rc = binding_reject(failure, YVEX_RUNTIME_BINDING_FAILURE_ALLOCATION,

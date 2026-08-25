@@ -1,6 +1,6 @@
 /*
- * Bind physical tensor decisions, request execution policy, device-resident values, and
- * attention shapes without allowing runtime consumers to recover those facts from names.
+ * Bind immutable package decisions and deployment-specialized implementations without allowing
+ * runtime consumers to recover either class of fact from names.
  */
 #ifndef INCLUDE_YVEX_INTERNAL_EXECUTION_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_EXECUTION_H_INCLUDED
@@ -14,13 +14,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#define YVEX_PHYSICAL_EXECUTION_SCHEMA_V2 2u
-#define YVEX_PHYSICAL_EXECUTION_SCHEMA_V3 3u
-#define YVEX_PHYSICAL_EXECUTION_SCHEMA_V4 4u
-#define YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V1 1u
-#define YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V2 2u
-#define YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V3 3u
-#define YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V4 4u
+#define YVEX_PHYSICAL_EXECUTION_SCHEMA_V5 5u
 #define YVEX_COMPILED_EXECUTION_PROFILE_SCHEMA_V2 2u
 #define YVEX_EXECUTION_HARDWARE_PROFILE_SCHEMA_V1 1u
 #define YVEX_EXECUTION_WORKLOAD_PROFILE_SCHEMA_V1 1u
@@ -71,17 +65,8 @@ typedef enum {
 typedef enum {
     YVEX_EXECUTION_LAYOUT_CANONICAL_ROW = 0,
     YVEX_EXECUTION_LAYOUT_CONTIGUOUS_DENSE,
-    YVEX_EXECUTION_LAYOUT_EXPERT_MAJOR,
-    YVEX_EXECUTION_LAYOUT_DERIVED_BACKEND
+    YVEX_EXECUTION_LAYOUT_EXPERT_MAJOR
 } yvex_execution_layout_class;
-
-typedef enum {
-    YVEX_EXECUTION_PLACEMENT_FILE_BACKED = 0,
-    YVEX_EXECUTION_PLACEMENT_HOST_CANONICAL,
-    YVEX_EXECUTION_PLACEMENT_CUDA_ADDRESSABLE_HOST,
-    YVEX_EXECUTION_PLACEMENT_DEVICE,
-    YVEX_EXECUTION_PLACEMENT_STAGED
-} yvex_execution_placement_class;
 
 typedef enum {
     YVEX_EXECUTION_SHARING_EXCLUSIVE = 0,
@@ -108,25 +93,6 @@ typedef enum {
     YVEX_EXECUTION_ACTIVATION_DEVICE_ENCODED
 } yvex_execution_activation_class;
 
-typedef enum {
-    YVEX_EXECUTION_BACKEND_ANY = 0,
-    YVEX_EXECUTION_BACKEND_CPU,
-    YVEX_EXECUTION_BACKEND_CUDA
-} yvex_execution_backend_requirement;
-
-typedef struct yvex_physical_execution_policy {
-    unsigned int schema_version, required_compute_major, required_compute_minor;
-    yvex_execution_activation_class activation;
-    unsigned long long encoded_activation_consumer_mask;
-    yvex_execution_backend_requirement required_backend;
-    yvex_execution_evidence_profile evidence;
-    yvex_execution_class fallback;
-    unsigned long long derived_asset_qtype_mask, expert_worklist_width_mask;
-    unsigned long long expert_tensor_core_minimum;
-    const char *dense_kernel_family, *expert_kernel_family;
-    const char *expert_tensor_core_kernel_family;
-} yvex_physical_execution_policy;
-
 typedef struct {
     unsigned int schema_version;
     unsigned long long terminal_tensor_id;
@@ -138,18 +104,7 @@ typedef struct {
     unsigned long long encoded_offset, encoded_bytes, alignment;
     yvex_execution_consumer_class consumer;
     yvex_execution_layout_class layout;
-    yvex_execution_placement_class placement;
     yvex_execution_sharing_class sharing;
-    yvex_execution_activation_class activation;
-    unsigned long long supported_width_mask, maximum_context, worklist_width_mask;
-    unsigned long long tensor_core_minimum;
-    yvex_execution_backend_requirement required_backend;
-    unsigned int required_compute_major, required_compute_minor;
-    yvex_execution_evidence_profile evidence;
-    yvex_execution_class fallback;
-    int derived_asset_required;
-    char kernel_family[YVEX_EXECUTION_TEXT_CAP];
-    char tensor_core_kernel_family[YVEX_EXECUTION_TEXT_CAP];
     char terminal_identity[YVEX_SHA256_HEX_CAP];
     char decision_identity[YVEX_SHA256_HEX_CAP];
 } yvex_physical_execution_decision;
@@ -158,7 +113,7 @@ typedef struct {
     unsigned int schema_version;
     unsigned long long decision_count, encoded_bytes;
     unsigned long long consumer_counts[YVEX_EXECUTION_CONSUMER_COUNT];
-    unsigned long long layout_counts[4], placement_counts[5];
+    unsigned long long layout_counts[4];
     char physical_variant_identity[YVEX_SHA256_HEX_CAP];
     char identity[YVEX_SHA256_HEX_CAP];
 } yvex_physical_execution_summary;
@@ -169,8 +124,7 @@ int yvex_physical_execution_ir_build(
     yvex_physical_execution_ir **out,
     const yvex_materialization_session *materialization,
     const yvex_runtime_descriptor *descriptor,
-    const char *physical_variant_identity,
-    const yvex_physical_execution_policy *policy, yvex_error *err);
+    const char *physical_variant_identity, yvex_error *err);
 int yvex_physical_execution_ir_import(
     yvex_physical_execution_ir **out, const yvex_physical_execution_summary *summary,
     const yvex_physical_execution_decision *decisions, unsigned long long count,

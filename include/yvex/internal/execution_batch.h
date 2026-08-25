@@ -21,6 +21,15 @@ extern "C" {
 #define YVEX_EXPERT_WORKLIST_HISTOGRAM_CAP 17u
 
 typedef enum {
+    YVEX_ENGINE_IMPLEMENTATION_PORTABLE_F32 = 0,
+    YVEX_ENGINE_IMPLEMENTATION_CUDA_F32,
+    YVEX_ENGINE_IMPLEMENTATION_CUDA_ENCODED_ROW,
+    YVEX_ENGINE_IMPLEMENTATION_CUDA_SM121_MOE_ROW,
+    YVEX_ENGINE_IMPLEMENTATION_CUDA_SM121_MOE_TENSORCORE,
+    YVEX_ENGINE_IMPLEMENTATION_COUNT
+} yvex_engine_implementation;
+
+typedef enum {
     YVEX_EXECUTION_PHASE_PREFILL = 0,
     YVEX_EXECUTION_PHASE_DECODE,
     YVEX_EXECUTION_PHASE_DRAFT,
@@ -87,8 +96,7 @@ typedef struct {
     unsigned int schema_version;
     unsigned long long supported_width_mask;
     unsigned long long tensor_core_minimum;
-    char narrow_kernel_family[64];
-    char tensor_core_kernel_family[64];
+    yvex_engine_implementation narrow_implementation, wide_implementation;
     char identity[YVEX_SHA256_HEX_CAP];
 } yvex_expert_worklist_policy;
 
@@ -146,10 +154,6 @@ int yvex_execution_compatibility_key_validate(
 int yvex_execution_compatibility_keys_match(
     const yvex_execution_compatibility_key *left,
     const yvex_execution_compatibility_key *right, yvex_error *err);
-int yvex_expert_worklist_compiled_policy_valid(
-    unsigned long long supported_width_mask,
-    unsigned long long tensor_core_minimum,
-    const char *tensor_core_kernel_family);
 int yvex_expert_worklist_policy_seal(yvex_expert_worklist_policy *policy,
                                      yvex_error *err);
 int yvex_expert_worklist_policy_validate(

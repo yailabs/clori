@@ -235,20 +235,6 @@ int yvex_execution_compatibility_keys_match(
     return strcmp(left->identity, right->identity) == 0;
 }
 
-int yvex_expert_worklist_compiled_policy_valid(
-    unsigned long long supported_width_mask,
-    unsigned long long tensor_core_minimum,
-    const char *tensor_core_kernel_family)
-{
-    int tensor_core = tensor_core_minimum != 0ull;
-    return (supported_width_mask & 2ull) && !(supported_width_mask & 1ull) &&
-           tensor_core == (tensor_core_kernel_family && tensor_core_kernel_family[0]) &&
-           (!tensor_core ||
-            (tensor_core_minimum < 63ull &&
-             (supported_width_mask & (1ull << tensor_core_minimum)) &&
-             strlen(tensor_core_kernel_family) < 64u));
-}
-
 int yvex_expert_worklist_policy_seal(yvex_expert_worklist_policy *policy,
                                      yvex_error *err)
 {
@@ -258,16 +244,17 @@ int yvex_expert_worklist_policy_seal(yvex_expert_worklist_policy *policy,
         !(policy->supported_width_mask & 2ull) ||
         (policy->supported_width_mask & 1ull) ||
         (policy->supported_width_mask >> 63u) ||
-        !policy->narrow_kernel_family[0])
+        policy->narrow_implementation >= YVEX_ENGINE_IMPLEMENTATION_COUNT)
         return worklist_refuse(err, YVEX_ERR_INVALID_ARG,
                                "expert worklist width policy is incomplete");
     tensor_core = policy->tensor_core_minimum != 0ull;
-    if (tensor_core != (policy->tensor_core_kernel_family[0] != '\0') ||
+    if (tensor_core != (policy->wide_implementation != YVEX_ENGINE_IMPLEMENTATION_COUNT) ||
         (tensor_core &&
          (policy->tensor_core_minimum >= 63ull ||
           !(policy->supported_width_mask & (1ull << policy->tensor_core_minimum)) ||
-          strcmp(policy->narrow_kernel_family,
-                 policy->tensor_core_kernel_family) == 0)))
+          policy->wide_implementation !=
+              YVEX_ENGINE_IMPLEMENTATION_CUDA_SM121_MOE_TENSORCORE ||
+          policy->narrow_implementation == policy->wide_implementation)))
         return worklist_refuse(err, YVEX_ERR_INVALID_ARG,
                                "expert Tensor Core width policy is inconsistent");
     yvex_sha256_init(&hash);
@@ -275,8 +262,8 @@ int yvex_expert_worklist_policy_seal(yvex_expert_worklist_policy *policy,
         !yvex_sha256_update_u64(&hash, policy->schema_version) ||
         !yvex_sha256_update_u64(&hash, policy->supported_width_mask) ||
         !yvex_sha256_update_u64(&hash, policy->tensor_core_minimum) ||
-        !yvex_sha256_update_text(&hash, policy->narrow_kernel_family) ||
-        !yvex_sha256_update_text(&hash, policy->tensor_core_kernel_family) ||
+        !yvex_sha256_update_u64(&hash, policy->narrow_implementation) ||
+        !yvex_sha256_update_u64(&hash, policy->wide_implementation) ||
         !worklist_hash_finish(&hash, policy->identity))
         return worklist_refuse(err, YVEX_ERR_STATE,
                                "expert worklist policy identity derivation failed");

@@ -237,10 +237,6 @@ const yvex_attention_layer_plan *
 yvex_attention_plan_layer_at(const yvex_attention_plan *plan, unsigned long long index);
 yvex_attention_binding_class yvex_attention_plan_binding_classify(
     const yvex_attention_plan *plan, const yvex_runtime_tensor_binding *binding);
-int yvex_attention_plan_identity_compute(const yvex_attention_summary *summary,
-                                         const yvex_attention_layer_plan *layers,
-                                         unsigned long long layer_count,
-                                         char output[YVEX_ATTENTION_IDENTITY_CAP]);
 typedef enum {
     YVEX_ATTENTION_OPERATION_CORE = 0,
     YVEX_ATTENTION_OPERATION_ENVELOPE,

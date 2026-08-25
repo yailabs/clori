@@ -499,15 +499,6 @@ static int tiny_semantic(tiny_fixture *fixture,
 
 static int tiny_execution(tiny_fixture *fixture, yvex_error *err)
 {
-    static const yvex_physical_execution_policy physical_policy = {
-        .schema_version = YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V1,
-        .activation = YVEX_EXECUTION_ACTIVATION_HOST_F32,
-        .required_backend = YVEX_EXECUTION_BACKEND_CPU,
-        .evidence = YVEX_EXECUTION_EVIDENCE_PRODUCTION,
-        .fallback = YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE,
-        .dense_kernel_family = "tiny-cpu-f32",
-        .expert_kernel_family = "tiny-cpu-f32",
-    };
     yvex_attention_failure attention_failure = {0};
     yvex_compiled_model_plan_request compiled = {0};
     int rc = yvex_attention_plan_build_semantic(
@@ -561,7 +552,7 @@ static int tiny_execution(tiny_fixture *fixture, yvex_error *err)
     if (rc == YVEX_OK)
         rc = yvex_physical_execution_ir_build(
             &fixture->physical, fixture->materialization, fixture->descriptor,
-            fixture->admission.profile_identity, &physical_policy, err);
+            fixture->admission.profile_identity, err);
     compiled = (yvex_compiled_model_plan_request){
         .operator_graph = fixture->operators,
         .materialization = fixture->materialization,

@@ -1344,7 +1344,7 @@ int yvex_model_engine_compatible_batch_width_copy(
 {
     yvex_model_engine *owner = (yvex_model_engine *)model;
     const yvex_physical_execution_summary *summary;
-    unsigned long long common = 0ull, consumers = 0ull, index, candidate;
+    unsigned long long common = 0ull, consumers = 0ull, backend, index, candidate;
     int initialized = 0;
     if (width) *width = 0ull;
     if (!owner || !width || !owner->lifecycle_mutex_ready ||
@@ -1353,20 +1353,28 @@ int yvex_model_engine_compatible_batch_width_copy(
             err, YVEX_ERR_INVALID_ARG,
             "runtime model compatible width is unavailable");
     summary = yvex_physical_execution_ir_summary(owner->physical_execution);
-    for (index = 0ull; summary && index < summary->decision_count; ++index) {
-        const yvex_physical_execution_decision *decision =
-            yvex_physical_execution_ir_decision_at(owner->physical_execution,
-                                                   index);
-        unsigned long long admitted;
-        if (!decision ||
-            (decision->consumer != YVEX_EXECUTION_CONSUMER_ROUTED_GATE_UP &&
-             decision->consumer != YVEX_EXECUTION_CONSUMER_ROUTED_DOWN))
-            continue;
-        admitted = decision->supported_width_mask &
-                   decision->worklist_width_mask;
-        common = initialized ? common & admitted : admitted;
-        initialized = 1;
-        consumers |= 1ull << (unsigned int)decision->consumer;
+    for (backend = YVEX_BACKEND_KIND_CPU;
+         summary && backend <= YVEX_BACKEND_KIND_CUDA; ++backend) {
+        const yvex_engine_specialization *specialization =
+            owner->specializations[backend];
+        if (!specialization) continue;
+        for (index = 0ull; index < summary->decision_count; ++index) {
+            const yvex_physical_execution_decision *package =
+                yvex_physical_execution_ir_decision_at(
+                    owner->physical_execution, index);
+            const yvex_engine_implementation_record *decision =
+                runtime_specialization_decision(specialization, index);
+            unsigned long long admitted;
+            if (!package || !decision ||
+                (package->consumer != YVEX_EXECUTION_CONSUMER_ROUTED_GATE_UP &&
+                 package->consumer != YVEX_EXECUTION_CONSUMER_ROUTED_DOWN))
+                continue;
+            admitted = decision->supported_width_mask &
+                       decision->worklist_width_mask;
+            common = initialized ? common & admitted : admitted;
+            initialized = 1;
+            consumers |= 1ull << (unsigned int)package->consumer;
+        }
     }
     *width = 1ull;
     if (initialized &&

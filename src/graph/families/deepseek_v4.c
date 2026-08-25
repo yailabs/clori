@@ -304,22 +304,6 @@ static int deepseek_compilation_quant_policy(
     const yvex_transform_binding *binding, const void *lowering_context,
     const yvex_quant_policy *policy, const char *imatrix_identity,
     yvex_error *err);
-static const yvex_physical_execution_policy deepseek_physical_execution_policy = {
-    .schema_version = YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V4,
-    .activation = YVEX_EXECUTION_ACTIVATION_DEVICE_F32,
-    .encoded_activation_consumer_mask =
-        (1ull << YVEX_EXECUTION_CONSUMER_ROUTED_GATE_UP) |
-        (1ull << YVEX_EXECUTION_CONSUMER_ROUTED_DOWN) |
-        (1ull << YVEX_EXECUTION_CONSUMER_SHARED_EXPERT),
-    .required_backend = YVEX_EXECUTION_BACKEND_ANY,
-    .evidence = YVEX_EXECUTION_EVIDENCE_PRODUCTION,
-    .fallback = YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE,
-    .derived_asset_qtype_mask = 0ull,
-    .dense_kernel_family = YVEX_MOE_KERNEL_PORTABLE_ENCODED_ROW,
-    .expert_kernel_family = YVEX_MOE_KERNEL_SM121_ROW_REGIME_EXPERT,
-    .expert_worklist_width_mask = 0x1feull,
-    .expert_tensor_core_minimum = 0ull,
-    .expert_tensor_core_kernel_family = NULL};
 static const yvex_family_binding_pipeline deepseek_binding_pipeline = {
     .schema_version = YVEX_FAMILY_BINDING_PIPELINE_SCHEMA_V1,
     .source_open = deepseek_compilation_source_open,
@@ -341,7 +325,6 @@ static const yvex_family_compiler_adapter deepseek_compiler = {
     .target_id = "deepseek4-v4-flash-dspark",
     .family = "deepseek-v4",
     .logical_transform_identity = YVEX_SELECTED_DEEPSEEK_TRANSFORM_IDENTITY,
-    .physical_execution_policy = &deepseek_physical_execution_policy,
     .graph = deepseek_graph_compile,
     .operator_graph_build = yvex_operator_graph_ir_build_transformer,
     .execution_capabilities = deepseek_execution_capabilities,

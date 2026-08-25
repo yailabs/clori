@@ -403,6 +403,8 @@ static int runtime_model_release(yvex_model_engine *model, yvex_error *err) {
     model->compatible_batch_width = 0ull;
     rc = yvex_runtime_residency_close(&model->residency, err);
     if (rc != YVEX_OK) return rc;
+    runtime_specialization_release(&model->specializations[YVEX_BACKEND_KIND_CPU]);
+    runtime_specialization_release(&model->specializations[YVEX_BACKEND_KIND_CUDA]);
     rc = yvex_backend_close_checked(&model->opening_backend, err);
     if (rc != YVEX_OK) return rc;
     yvex_tokenizer_close(model->tokenizer);
@@ -636,7 +638,6 @@ static int runtime_model_cgroup_memory(unsigned long long *capacity,
     }
     return found;
 }
-
 static int runtime_model_system_memory(unsigned long long *total,
                                        unsigned long long *available)
 {
@@ -826,6 +827,23 @@ static void runtime_model_summary_bind(
                                        physical->identity);
         }
     }
+    {
+        const yvex_engine_specialization *owner =
+            model->specializations[YVEX_BACKEND_KIND_CPU]
+                ? model->specializations[YVEX_BACKEND_KIND_CPU]
+                : model->specializations[YVEX_BACKEND_KIND_CUDA];
+        const yvex_engine_specialization_summary *specialization =
+            owner ? &owner->summary : NULL;
+        if (specialization) {
+            model->summary.specialization_implementation_count =
+                specialization->implementation_count;
+            model->summary.engine_specialization_count =
+                (unsigned long long)(model->specializations[YVEX_BACKEND_KIND_CPU] != NULL) +
+                (unsigned long long)(model->specializations[YVEX_BACKEND_KIND_CUDA] != NULL);
+            yvex_runtime_identity_copy(model->summary.engine_specialization_identity,
+                                       specialization->identity);
+        }
+    }
 }
 
 static int runtime_model_residency_open(
@@ -874,11 +892,7 @@ static int runtime_model_residency_open(
           summary.cuda_pageable_prefetch_count ||
           summary.cuda_pageable_prefetch_bytes)) ||
         (request->residency_backend == YVEX_BACKEND_KIND_CUDA && !summary.cuda_ready) ||
-        (summary.derived_asset_count
-             ? summary.schema_version != YVEX_RUNTIME_RESIDENCY_SCHEMA_V8 ||
-                   !summary.derived_asset_bytes
-             : summary.schema_version != YVEX_RUNTIME_RESIDENCY_SCHEMA_V7 ||
-                   summary.derived_asset_bytes) ||
+        summary.schema_version != YVEX_RUNTIME_RESIDENCY_SCHEMA_V7 ||
         summary.binding_count != descriptor_summary->tensor_count ||
         summary.encoded_bytes != descriptor_summary->payload_bytes ||
         !summary.core_complete || !summary.envelope_complete ||
@@ -982,6 +996,7 @@ int yvex_model_engine_open(yvex_model_engine **out, const yvex_model_engine_open
     const yvex_runtime_descriptor_summary *descriptor_summary;
     const yvex_attention_summary *attention_summary;
     const yvex_attention_summary *draft_attention_summary;
+    const yvex_engine_specialization *opening_specialization = NULL;
     yvex_runtime_binding_failure binding_failure;
     yvex_materialization_options materialization_options;
     yvex_runtime_private_refusal_id capacity_refusal = YVEX_RUNTIME_REFUSE_OPEN_SYSTEM_MEMORY;
@@ -1096,6 +1111,13 @@ int yvex_model_engine_open(yvex_model_engine **out, const yvex_model_engine_open
             out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_IMPORTED_IDENTITY, 1ull, 0ull, err,
             YVEX_ERR_FORMAT);
     }
+    rc = yvex_runtime_private_model_specialization_prepare(
+        model, request->residency_backend, model->opening_backend,
+        &opening_specialization, err);
+    if (rc != YVEX_OK)
+        return runtime_model_open_fail(
+            out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_CAPABILITIES,
+            1ull, 0ull, err, (yvex_status)rc);
     rc = yvex_tokenizer_from_compiled_gguf(
         &model->tokenizer, model->gguf,
         yvex_runtime_binding_tokenizer_policy(model->binding), err);
@@ -1653,6 +1675,7 @@ int yvex_runtime_session_open(yvex_runtime_execution_session **out,
     yvex_runtime_execution_session *session = NULL;
     yvex_runtime_residency_summary residency_storage;
     const yvex_runtime_residency_summary *residency = NULL;
+    const yvex_engine_specialization *specialization = NULL;
     const yvex_attention_state_provider_factory *state_factory =
         request ? request->attention_state_factory : NULL;
     const yvex_graph_execution_api *graph;
@@ -1753,6 +1776,19 @@ int yvex_runtime_session_open(yvex_runtime_execution_session **out,
                                      "runtime session backend could not be opened");
         return runtime_session_open_fail(out, session, rc, failure, err);
     }
+    rc = yvex_runtime_private_model_specialization_prepare(
+        model, request->backend, session->backend, &specialization, err);
+    if (rc != YVEX_OK) {
+        yvex_runtime_private_failure_record(
+            failure, YVEX_MODEL_ENGINE_FAILURE_BACKEND,
+            "engine-specialization", 1ull, 0ull,
+            "session backend could not instantiate the engine specialization");
+        return runtime_session_open_fail(out, session, rc, failure, err);
+    }
+    session->specialization = specialization;
+    yvex_runtime_identity_copy(
+        session->summary.engine_specialization_identity,
+        specialization->summary.identity);
     if (yvex_runtime_workspace_identity_compute(
             model->summary.runtime_model_identity, request->backend,
             request->maximum_host_bytes, request->maximum_device_bytes,

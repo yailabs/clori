@@ -598,10 +598,6 @@ static int moe_cuda_add_selected(yvex_backend_moe_execution *execution, yvex_err
     gate = &job->weights[YVEX_MOE_WEIGHT_ROUTED_GATE];
     up = &job->weights[YVEX_MOE_WEIGHT_ROUTED_UP];
     down = &job->weights[YVEX_MOE_WEIGHT_ROUTED_DOWN];
-    if (gate->layout == YVEX_EXECUTION_LAYOUT_DERIVED_BACKEND)
-        return moe_cuda_refuse(
-            err, YVEX_ERR_UNSUPPORTED,
-            "Tensor Core MoE requires a compiler-sealed real-width expert worklist");
     if (!execution->state->moe_grouped_up_function ||
         !execution->state->moe_grouped_down_function)
         return moe_cuda_refuse(err, YVEX_ERR_UNSUPPORTED,
@@ -868,8 +864,7 @@ static int moe_cuda_batch_matvec(moe_cuda_batch *batch,
                                  yvex_error *err)
 {
     yvex_backend_attention_weight encoded = moe_cuda_weight(weight);
-    if (!weight || !weight->device_address ||
-        weight->layout == YVEX_EXECUTION_LAYOUT_DERIVED_BACKEND)
+    if (!weight || !weight->device_address)
         return moe_cuda_refuse(err, YVEX_ERR_STATE,
                                "CUDA dense MoE execution requires canonical resident weights");
     return batch->ops->matvec(
@@ -884,8 +879,7 @@ static int moe_cuda_batch_decode(moe_cuda_batch *batch,
                                  yvex_error *err)
 {
     yvex_backend_attention_weight encoded = moe_cuda_weight(weight);
-    if (!weight || !weight->device_address ||
-        weight->layout == YVEX_EXECUTION_LAYOUT_DERIVED_BACKEND)
+    if (!weight || !weight->device_address)
         return moe_cuda_refuse(err, YVEX_ERR_STATE,
                                "CUDA dense MoE execution requires canonical resident weights");
     return batch->ops->decode(
@@ -922,27 +916,22 @@ static int moe_cuda_encoded_expert_policy(
     down_encoded = down->activation == YVEX_EXECUTION_ACTIVATION_DEVICE_ENCODED;
     if (gate_encoded != up_encoded)
         return moe_cuda_refuse(err, YVEX_ERR_FORMAT, "CUDA MoE gate/up activations disagree");
-    if (gate_encoded && (!gate->kernel_family || !up->kernel_family ||
-                         strcmp(gate->kernel_family, up->kernel_family) != 0))
+    if (gate_encoded && gate->implementation != up->implementation)
         return moe_cuda_refuse(err, YVEX_ERR_FORMAT,
-                               "compiled MoE gate and up kernel-family decisions disagree");
+                               "compiled MoE gate and up implementations disagree");
     up_regime = gate_encoded &&
-        !strcmp(gate->kernel_family, YVEX_MOE_KERNEL_SM121_ROW_REGIME_EXPERT);
-    down_regime = down_encoded && down->kernel_family &&
-        !strcmp(down->kernel_family, YVEX_MOE_KERNEL_SM121_ROW_REGIME_EXPERT);
-    if (gate->layout != up->layout ||
-        ((gate->layout == YVEX_EXECUTION_LAYOUT_DERIVED_BACKEND) !=
-         (down->layout == YVEX_EXECUTION_LAYOUT_DERIVED_BACKEND)))
+                gate->implementation == YVEX_ENGINE_IMPLEMENTATION_CUDA_SM121_MOE_ROW;
+    down_regime = down_encoded &&
+                  down->implementation == YVEX_ENGINE_IMPLEMENTATION_CUDA_SM121_MOE_ROW;
+    if (gate->layout != up->layout || gate->layout != down->layout)
         return moe_cuda_refuse(err, YVEX_ERR_FORMAT,
                                "compiled routed MoE layouts disagree");
     if (tensor_core &&
-        (gate->layout == YVEX_EXECUTION_LAYOUT_DERIVED_BACKEND ||
-         !gate_encoded || !down_encoded || !gate->kernel_family ||
-         !down->kernel_family || !worklist->tensor_core_kernel_family[0] ||
-         strcmp(worklist->tensor_core_kernel_family,
-                YVEX_MOE_KERNEL_SM121_TENSORCORE_EXPERT) != 0 ||
-         strcmp(worklist->narrow_kernel_family, gate->kernel_family) != 0 ||
-         strcmp(worklist->narrow_kernel_family, down->kernel_family) != 0 ||
+        (!gate_encoded || !down_encoded ||
+         worklist->wide_implementation !=
+             YVEX_ENGINE_IMPLEMENTATION_CUDA_SM121_MOE_TENSORCORE ||
+         worklist->narrow_implementation != gate->implementation ||
+         worklist->narrow_implementation != down->implementation ||
          !batch->state->kernel_bundle_native || !batch->state->q8_quantize_function ||
          !batch->state->moe_grouped_up_tensorcore_function ||
          !batch->state->moe_grouped_down_tensorcore_function))
@@ -950,23 +939,17 @@ static int moe_cuda_encoded_expert_policy(
             err, YVEX_ERR_UNSUPPORTED,
             "compiled hybrid Tensor Core MoE worklist regime is unavailable");
     if (!tensor_core &&
-        (gate->layout == YVEX_EXECUTION_LAYOUT_DERIVED_BACKEND ||
-         (gate_encoded && gate->kernel_family &&
-          !strcmp(gate->kernel_family, YVEX_MOE_KERNEL_SM121_TENSORCORE_EXPERT)) ||
-         (down_encoded && down->kernel_family &&
-          !strcmp(down->kernel_family, YVEX_MOE_KERNEL_SM121_TENSORCORE_EXPERT))))
+        (gate->implementation == YVEX_ENGINE_IMPLEMENTATION_CUDA_SM121_MOE_TENSORCORE ||
+         down->implementation == YVEX_ENGINE_IMPLEMENTATION_CUDA_SM121_MOE_TENSORCORE))
         return moe_cuda_refuse(
             err, YVEX_ERR_UNSUPPORTED,
             "Tensor Core MoE requires a compiler-admitted real-width expert worklist");
     if ((gate_encoded && !up_regime &&
-         strcmp(gate->kernel_family, YVEX_MOE_KERNEL_PORTABLE_EXPERT_ROW) != 0 &&
-         strcmp(gate->kernel_family, YVEX_MOE_KERNEL_PORTABLE_ENCODED_ROW) != 0) ||
+         gate->implementation != YVEX_ENGINE_IMPLEMENTATION_CUDA_ENCODED_ROW) ||
         (down_encoded && !down_regime &&
-         (!down->kernel_family ||
-          (strcmp(down->kernel_family, YVEX_MOE_KERNEL_PORTABLE_EXPERT_ROW) != 0 &&
-           strcmp(down->kernel_family, YVEX_MOE_KERNEL_PORTABLE_ENCODED_ROW) != 0))))
+         down->implementation != YVEX_ENGINE_IMPLEMENTATION_CUDA_ENCODED_ROW))
         return moe_cuda_refuse(err, YVEX_ERR_UNSUPPORTED,
-                               "compiled MoE kernel family is not admitted by the CUDA backend");
+                               "compiled MoE implementation is not admitted by the CUDA backend");
     if ((gate_encoded || down_encoded) &&
         (!batch->state->kernel_bundle_native || !batch->state->q8_quantize_function ||
          !batch->state->moe_grouped_up_rows_function ||
@@ -1425,18 +1408,12 @@ static int moe_cuda_batch_experts(moe_cuda_batch *batch,
         CUdeviceptr gate_address = (CUdeviceptr)gate->device_address;
         CUdeviceptr up_address = (CUdeviceptr)up->device_address;
         CUdeviceptr input = batch->q8_normalized;
-        unsigned long long gate_storage = gate->storage_bytes;
-        unsigned long long up_storage = up->storage_bytes;
-        unsigned int gate_derived =
-            gate->layout == YVEX_EXECUTION_LAYOUT_DERIVED_BACKEND;
-        unsigned int up_derived =
-            up->layout == YVEX_EXECUTION_LAYOUT_DERIVED_BACKEND;
         unsigned int gate_qtype = gate->qtype, up_qtype = up->qtype;
         void *params[] = {
             &gate_address, (void *)&gate->row_bytes, &gate_expert_bytes,
-            &gate_storage, &gate_derived, &gate_qtype,
+            &gate_qtype,
             &up_address, (void *)&up->row_bytes, &up_expert_bytes,
-            &up_storage, &up_derived, &up_qtype,
+            &up_qtype,
             &selected, &weights, &order, &batch->expert_ids,
             &batch->bucket_offsets, &batch->bucket_populations,
             &batch->worklist_summary, &count, &topk, &experts,
@@ -1474,13 +1451,10 @@ static int moe_cuda_batch_experts(moe_cuda_batch *batch,
     if (rc == YVEX_OK && tensor_core_minimum) {
         CUdeviceptr down_address = (CUdeviceptr)down->device_address;
         CUdeviceptr down_input = batch->q8_routed_intermediate;
-        unsigned long long down_storage = down->storage_bytes;
-        unsigned int down_derived =
-            down->layout == YVEX_EXECUTION_LAYOUT_DERIVED_BACKEND;
         unsigned int qtype = down->qtype;
         void *params[] = {
             &down_address, (void *)&down->row_bytes, &down_expert_bytes,
-            &down_storage, &down_derived, &qtype, &selected, &order,
+            &qtype, &selected, &order,
             &batch->expert_ids, &batch->bucket_offsets,
             &batch->bucket_populations, &batch->worklist_summary,
             &count, &topk, &experts, &tensor_core_minimum,
@@ -1594,14 +1568,11 @@ static int moe_cuda_graph_key(const moe_cuda_batch *batch,
         HASH(layer->tensor_ids[slot] != YVEX_MOE_NO_TENSOR);
         HASH(weight->qtype);
         HASH(weight->layout);
-        HASH(weight->storage_bytes);
         HASH(weight->row_bytes);
         HASH(weight->row_width);
         HASH(weight->row_count);
         HASH(weight->activation);
-        if (weight->kernel_family &&
-            !yvex_sha256_update_text(&hash, weight->kernel_family))
-            goto failed;
+        HASH(weight->implementation);
     }
 #undef HASH
     if (!yvex_sha256_final(&hash, digest)) goto failed_no_hash;
@@ -1958,8 +1929,6 @@ static int moe_cuda_complete_rows(yvex_backend *backend,
 }
 
 static const yvex_backend_moe_operations moe_cuda_row_operations = {
-    yvex_cuda_moe_derived_layout_plan,
-    yvex_cuda_moe_derived_layout_build,
     moe_cuda_rows_workspace_required,
     moe_cuda_execute_rows,
     moe_cuda_complete_rows

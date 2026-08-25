@@ -68,7 +68,7 @@ static int pipeline_valid(const yvex_family_compiler_adapter *adapter)
     return adapter && adapter->schema_version == YVEX_FAMILY_COMPILER_SCHEMA_V2 &&
            adapter->adapter_id && adapter->adapter_version && adapter->target_id &&
            adapter->family && adapter->graph &&
-           adapter->operator_graph_build && adapter->physical_execution_policy &&
+           adapter->operator_graph_build &&
            adapter->execution_capabilities &&
            adapter->transformer_policy && adapter->logits_policy &&
            adapter->speculation_policy && adapter->tokenizer_policy &&
@@ -317,8 +317,7 @@ static int binding_compiler_prepare(
     }
     rc = yvex_physical_execution_ir_build(
         &compiler->physical_execution, compiler->materialization,
-        compiler->descriptor, compiler->admission.profile_identity,
-        compiler->adapter->physical_execution_policy, err);
+        compiler->descriptor, compiler->admission.profile_identity, err);
     if (rc == YVEX_OK) {
         yvex_compiled_model_plan_request plan = {
             .operator_graph = compiler->operator_graph,

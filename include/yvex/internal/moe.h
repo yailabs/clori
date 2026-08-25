@@ -17,10 +17,6 @@ extern "C" {
 #define YVEX_MOE_INPUT_SCHEMA_V1 1u
 #define YVEX_MOE_ROW_BATCH_SCHEMA_V1 1u
 #define YVEX_MOE_ROW_BATCH_RESULT_SCHEMA_V4 4u
-#define YVEX_MOE_KERNEL_PORTABLE_ENCODED_ROW "portable-encoded-row"
-#define YVEX_MOE_KERNEL_PORTABLE_EXPERT_ROW "portable-expert-row"
-#define YVEX_MOE_KERNEL_SM121_TENSORCORE_EXPERT "sm121-int8-tensorcore-expert"
-#define YVEX_MOE_KERNEL_SM121_ROW_REGIME_EXPERT "sm121-int8-row-regime-expert"
 #define YVEX_MOE_INPUT_SUFFIX ".yvex-moe-input"
 #define YVEX_MOE_NO_TENSOR ULLONG_MAX
 #define YVEX_MOE_MAX_SELECTED 16u
@@ -57,9 +53,9 @@ typedef struct {
     unsigned int qtype;
     yvex_execution_layout_class layout;
     yvex_execution_activation_class activation;
-    const char *kernel_family;
+    yvex_engine_implementation implementation;
     const unsigned char *encoded;
-    size_t encoded_bytes, storage_bytes;
+    size_t encoded_bytes;
     unsigned long long row_bytes, row_width, row_count, device_address;
 } yvex_moe_weight_view;
 typedef struct {
@@ -275,13 +271,6 @@ typedef struct {
  * family-neutral ABI.
  */
 typedef struct {
-    int (*derived_layout_plan)(const yvex_physical_execution_decision *decision,
-                               unsigned long long *storage_bytes, yvex_error *err);
-    int (*derived_layout_build)(const yvex_physical_execution_decision *decision,
-                                const unsigned char *canonical,
-                                unsigned long long canonical_bytes,
-                                unsigned char *derived,
-                                unsigned long long storage_bytes, yvex_error *err);
     int (*workspace_required)(const yvex_moe_layer_plan *layer,
                               unsigned long long row_count,
                               unsigned long long *bytes,

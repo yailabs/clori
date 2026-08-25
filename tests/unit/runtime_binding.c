@@ -966,7 +966,7 @@ static int test_binding_readdress(const char *path, unsigned char *file, size_t 
         !test_binding_u64(file, count, 8u, &schema) ||
         schema != YVEX_RUNTIME_BINDING_SCHEMA_CURRENT)
         return 0;
-    domain = "yvex.runtime.binding.v14";
+    domain = "yvex.runtime.binding.v15";
     yvex_sha256_init(&hash);
     if (!yvex_sha256_update_text(&hash, domain) ||
         !yvex_sha256_update_u64(&hash, schema) ||
@@ -1170,9 +1170,9 @@ static int fixture_attention_build(binding_fixture *fixture)
     layer.residual_expanded_width = 4ull;
     layer.required_binding_count = 1ull;
     layer.payload_bytes_bound = materialization->payload_bytes;
-    if (!yvex_attention_plan_identity_compute(
-            &summary, &layer, 1ull, summary.attention_plan_identity))
-        return 0;
+    (void)snprintf(summary.attention_plan_identity,
+                   sizeof(summary.attention_plan_identity),
+                   "cb3c2f810ddc268394cfa82feecf76acbfacb737888eba2a499bea3cd89b8b83");
     if (yvex_attention_plan_import(
             &fixture->attention, &summary, &layer, 1ull, fixture->materialization,
             fixture->descriptor, &failure, &err) != YVEX_OK) {
@@ -1262,8 +1262,7 @@ static int fixture_execution_compile(binding_fixture *fixture, yvex_error *err)
     if (!yvex_runtime_capabilities_contract_valid(&fixture->capabilities) ||
         yvex_physical_execution_ir_build(
             &fixture->physical_execution, fixture->materialization,
-            fixture->descriptor, fixture->admission.profile_identity,
-            compiler->physical_execution_policy, err) != YVEX_OK)
+            fixture->descriptor, fixture->admission.profile_identity, err) != YVEX_OK)
         return 0;
     plan.operator_graph = fixture->operator_graph;
     plan.materialization = fixture->materialization;
@@ -1528,84 +1527,34 @@ static int test_runtime_capability_contract(void)
     return 0;
 }
 
-static int test_physical_activation_policy(const binding_fixture *fixture)
+static int test_package_execution_identity(const binding_fixture *fixture)
 {
-    const yvex_family_compiler_adapter *compiler = runtime_fixture_compiler();
     const yvex_physical_execution_decision *base;
-    const yvex_physical_execution_decision *encoded_decision;
-    yvex_runtime_tensor_binding *runtime_binding;
-    yvex_materialized_tensor_binding *materialized;
-    yvex_physical_execution_ir *encoded = NULL;
-    yvex_physical_execution_policy policy;
-    yvex_runtime_binding candidate = {0};
+    const yvex_physical_execution_decision *mutated_decision;
+    yvex_physical_execution_decision record;
+    yvex_physical_execution_summary import = {0};
+    yvex_physical_execution_ir *mutated = NULL;
     yvex_error err;
-    unsigned long long original_experts, backing_bytes = 0ull;
-    yvex_tensor_role original_role;
-    int rc;
 
     base = yvex_physical_execution_ir_decision_at(fixture->physical_execution, 0ull);
-    runtime_binding = (yvex_runtime_tensor_binding *)
-        yvex_runtime_descriptor_tensor_at(fixture->descriptor, 0ull);
-    materialized = runtime_binding
-                       ? (yvex_materialized_tensor_binding *)runtime_binding->binding
-                       : NULL;
-    YVEX_TEST_ASSERT(compiler && compiler->physical_execution_policy && base && materialized,
-                     "physical activation fixture has one compiled decision");
-    policy = *compiler->physical_execution_policy;
-    policy.schema_version = YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V4;
-    policy.expert_worklist_width_mask = 0x1feull;
-    policy.expert_tensor_core_minimum = 0ull;
-    policy.expert_tensor_core_kernel_family = NULL;
-    policy.activation = YVEX_EXECUTION_ACTIVATION_DEVICE_F32;
-    policy.encoded_activation_consumer_mask =
-        1ull << (unsigned int)YVEX_EXECUTION_CONSUMER_ROUTED_GATE_UP;
-    policy.derived_asset_qtype_mask = 1ull << base->canonical_qtype;
-    original_experts = materialized->expert_count;
-    original_role = runtime_binding->role;
-    materialized->expert_count = 2ull;
-    runtime_binding->role = YVEX_TENSOR_ROLE_MOE_EXPERT_GATE;
-    rc = yvex_physical_execution_ir_build(
-        &encoded, fixture->materialization, fixture->descriptor,
-        fixture->admission.profile_identity, &policy, &err);
-    materialized->expert_count = original_experts;
-    runtime_binding->role = original_role;
-    encoded_decision = yvex_physical_execution_ir_decision_at(encoded, 0ull);
+    YVEX_TEST_ASSERT(base && base->schema_version == YVEX_PHYSICAL_EXECUTION_SCHEMA_V5,
+                     "package execution fixture has one stable V5 decision");
+    record = *base;
+    record.canonical_row_width++;
+    memset(record.decision_identity, 0, sizeof(record.decision_identity));
+    import.schema_version = YVEX_PHYSICAL_EXECUTION_SCHEMA_V5;
+    import.decision_count = 1ull;
+    yvex_runtime_identity_copy(
+        import.physical_variant_identity,
+        yvex_physical_execution_ir_summary(fixture->physical_execution)
+            ->physical_variant_identity);
     YVEX_TEST_ASSERT(
-        rc == YVEX_OK && encoded_decision &&
-            encoded_decision->consumer == YVEX_EXECUTION_CONSUMER_ROUTED_GATE_UP &&
-            encoded_decision->activation == YVEX_EXECUTION_ACTIVATION_DEVICE_ENCODED &&
-            encoded_decision->expert_count == 2ull &&
-            encoded_decision->derived_asset_required &&
-            encoded_decision->layout == YVEX_EXECUTION_LAYOUT_DERIVED_BACKEND &&
-            encoded_decision->worklist_width_mask == policy.expert_worklist_width_mask &&
-            encoded_decision->tensor_core_minimum == policy.expert_tensor_core_minimum &&
-            !encoded_decision->tensor_core_kernel_family[0] &&
-            strcmp(yvex_physical_execution_ir_summary(encoded)->identity,
-                   yvex_physical_execution_ir_summary(fixture->physical_execution)->identity) != 0,
-        "V4 physical policy seals encoded activation and worklist widths into identity");
-    candidate.summary.tensor_count = 1ull;
-    candidate.materialized = materialized;
-    candidate.physical_execution = encoded;
-    YVEX_TEST_ASSERT(
-        yvex_runtime_private_residency_backing_bytes(
-            &candidate, NULL, YVEX_RUNTIME_WEIGHT_PLACEMENT_HOST_LOCKED,
-            &backing_bytes, &err) == YVEX_ERR_UNSUPPORTED && !backing_bytes,
-        "compiled derived layout refuses an incompatible host residency policy");
-    yvex_physical_execution_ir_close(&encoded);
-    policy.schema_version = YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V2;
-    rc = yvex_physical_execution_ir_build(
-        &encoded, fixture->materialization, fixture->descriptor,
-        fixture->admission.profile_identity, &policy, &err);
-    YVEX_TEST_ASSERT(
-        rc == YVEX_ERR_INVALID_ARG && !encoded,
-        "V2 physical policy refuses an unrepresentable row crossover");
-    policy.schema_version = YVEX_PHYSICAL_EXECUTION_POLICY_SCHEMA_V1;
-    rc = yvex_physical_execution_ir_build(
-        &encoded, fixture->materialization, fixture->descriptor,
-        fixture->admission.profile_identity, &policy, &err);
-    YVEX_TEST_ASSERT(
-        rc == YVEX_ERR_INVALID_ARG && !encoded,
-        "V1 physical policy refuses an unrepresentable encoded consumer mask");
+        yvex_physical_execution_ir_import(
+            &mutated, &import, &record, 1ull, &err) == YVEX_OK &&
+            (mutated_decision = yvex_physical_execution_ir_decision_at(mutated, 0ull)) &&
+            strcmp(mutated_decision->decision_identity, base->decision_identity) != 0,
+        "stable package geometry mutations change package execution identity");
+    yvex_physical_execution_ir_close(&mutated);
     return 0;
 }
 
@@ -1644,8 +1593,8 @@ static int test_prepare_reopen_import(const binding_fixture *fixture, const char
     char capability_identity[YVEX_SHA256_HEX_CAP];
     int rc;
 
-    YVEX_TEST_ASSERT(test_physical_activation_policy(fixture) == 0,
-                     "physical activation policy is versioned and identity-bound");
+    YVEX_TEST_ASSERT(test_package_execution_identity(fixture) == 0,
+                     "package execution identity owns stable physical bytes only");
     {
         const yvex_operator_graph_summary *operators =
             yvex_operator_graph_ir_summary(fixture->operator_graph);
@@ -1784,7 +1733,7 @@ static int test_prepare_reopen_import(const binding_fixture *fixture, const char
                      "binding runtime graph imported without an invented draft plan");
     YVEX_TEST_ASSERT(
         yvex_physical_execution_ir_summary(physical)->schema_version ==
-                YVEX_PHYSICAL_EXECUTION_SCHEMA_V4 &&
+                YVEX_PHYSICAL_EXECUTION_SCHEMA_V5 &&
             strcmp(yvex_physical_execution_ir_summary(physical)->identity,
                summary.physical_execution_identity) == 0 &&
             summary.physical_execution_decision_count == summary.tensor_count,
@@ -1808,15 +1757,12 @@ static int test_prepare_reopen_import(const binding_fixture *fixture, const char
         "binding imports authenticated compiled execution policies");
     YVEX_TEST_ASSERT(
         physical_decision && imported_descriptor &&
-            physical_decision->maximum_context ==
-                imported_descriptor->model_execution.maximum_context &&
-            physical_decision->supported_width_mask == 2ull &&
-            physical_decision->activation ==
-                runtime_fixture_compiler()->physical_execution_policy->activation &&
-            strcmp(physical_decision->kernel_family,
-                   runtime_fixture_compiler()->physical_execution_policy
-                       ->dense_kernel_family) == 0,
-        "physical execution derives semantic bounds and preserves selected policy");
+            physical_decision->schema_version == YVEX_PHYSICAL_EXECUTION_SCHEMA_V5 &&
+            physical_decision->terminal_tensor_id == 0ull &&
+            physical_decision->canonical_row_width > 0ull &&
+            physical_decision->canonical_row_count > 0ull &&
+            yvex_sha256_hex_is_valid(physical_decision->decision_identity),
+        "package execution preserves authenticated tensor storage truth");
     tokenizer_policy = yvex_runtime_binding_tokenizer_policy(*binding_out);
     YVEX_TEST_ASSERT(
         tokenizer_policy &&
@@ -1943,7 +1889,7 @@ static int test_prepare_reopen_import(const binding_fixture *fixture, const char
     return 0;
 }
 
-static int test_compiled_model_binding_v14(const char *root)
+static int test_compiled_model_binding_v15(const char *root)
 {
     binding_fixture fixture;
     yvex_runtime_binding_prepare_request request;
@@ -1956,28 +1902,30 @@ static int test_compiled_model_binding_v14(const char *root)
     yvex_runtime_generation_context *generation = NULL;
     yvex_runtime_generation_options generation_options = {0};
     yvex_runtime_session_open_request session_request = {0};
+    yvex_model_engine_summary model_summary;
+    yvex_runtime_session_summary session_summary;
     yvex_model_engine_failure model_failure;
     const yvex_runtime_descriptor_summary *descriptor;
     char directory[YVEX_PATH_CAP], artifact_path[YVEX_PATH_CAP];
     yvex_error err;
 
     YVEX_TEST_ASSERT(
-        variant_path(root, "model-v14", "runtime.gguf", directory, artifact_path) &&
+        variant_path(root, "model-v15", "runtime.gguf", directory, artifact_path) &&
             copy_regular_file("tests/fixtures/gguf/valid-tokenizer-simple.gguf",
                               artifact_path) &&
             rewrite_attention_artifact_fixture(artifact_path),
-        "v14 runtime artifact fixture created");
+        "v15 runtime artifact fixture created");
     YVEX_TEST_ASSERT(fixture_build(&fixture, artifact_path, 1),
-                     "v14 runtime binding fixture built");
+                     "v15 runtime binding fixture built");
     descriptor = yvex_runtime_descriptor_summary_get(fixture.descriptor);
     YVEX_TEST_ASSERT(descriptor &&
                          descriptor->model_execution.schema_version ==
                              YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1,
-                     "v14 fixture owns a sealed model execution descriptor");
+                     "v15 fixture owns a sealed model execution descriptor");
     YVEX_TEST_ASSERT(fixture_binding_request(&fixture, directory, &request) &&
                          yvex_runtime_binding_prepare(
                              &request, &prepared, &failure, &err) == YVEX_OK,
-                     "v14 runtime binding prepared");
+                     "v15 runtime binding prepared");
     YVEX_TEST_ASSERT(yvex_runtime_binding_open(
                          &binding, prepared.path, &summary, NULL, &failure, &err) == YVEX_OK &&
                          summary.schema_version == YVEX_RUNTIME_BINDING_SCHEMA_CURRENT &&
@@ -1985,16 +1933,40 @@ static int test_compiled_model_binding_v14(const char *root)
                                 descriptor->model_execution.identity) == 0 &&
                          summary.semantic_maximum_context ==
                              descriptor->model_execution.maximum_context,
-                     "v14 reader authenticates canonical operator and execution records");
+                     "v15 reader authenticates canonical operator and package records");
+    YVEX_TEST_ASSERT(yvex_runtime_capabilities_contract_valid(&summary.capabilities),
+                     "reopened v15 binding retains valid execution capabilities");
     yvex_runtime_binding_close(binding);
-    YVEX_TEST_ASSERT(runtime_model_open_fixture(
-                         &fixture, &prepared, &model, &model_failure, &err) == YVEX_OK,
-                     "v14 runtime model instantiates compiled execution geometry");
+    if (runtime_model_open_fixture(
+            &fixture, &prepared, &model, &model_failure, &err) != YVEX_OK) {
+        fprintf(stderr, "v15 engine open: %s: %s\n", err.where, err.message);
+        YVEX_TEST_FAIL("v15 runtime model instantiates package execution geometry");
+    }
+    YVEX_TEST_ASSERT(
+        yvex_model_engine_summary_copy(model, &model_summary, &err) == YVEX_OK &&
+            model_summary.engine_specialization_count == 1ull &&
+            model_summary.specialization_implementation_count == 1ull &&
+            yvex_sha256_hex_is_valid(
+                model_summary.engine_specialization_identity) &&
+            strcmp(model_summary.engine_specialization_identity,
+                   model_summary.physical_execution_identity) != 0,
+        "v15 package truth opens through one distinct engine specialization");
+    YVEX_TEST_ASSERT(
+        runtime_specialization_tensor(
+            model->specializations[YVEX_BACKEND_KIND_CPU],
+            model->physical_execution, ULLONG_MAX) == NULL,
+        "specialization cannot bind a decision to the wrong package tensor");
     session_request.backend = YVEX_BACKEND_KIND_CPU;
     YVEX_TEST_ASSERT(yvex_runtime_session_open(
                          &session, model, &session_request,
                          &model_failure, &err) == YVEX_OK,
-                     "v14 runtime session opens for capacity admission");
+                     "v15 runtime session opens for capacity admission");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_session_summary_copy(session, &session_summary, &err) ==
+                YVEX_OK &&
+            strcmp(session_summary.engine_specialization_identity,
+                   model_summary.engine_specialization_identity) == 0,
+        "session consumes the engine-owned package specialization");
     generation_options.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V5;
     generation_options.backend = YVEX_BACKEND_KIND_CPU;
     generation_options.mode = YVEX_GENERATION_MODE_TARGET_ONLY;
@@ -2014,7 +1986,7 @@ static int test_compiled_model_binding_v14(const char *root)
                          &err) == YVEX_ERR_BOUNDS && !generation,
                      "semantic context maximum refuses before state mutation");
     YVEX_TEST_ASSERT(yvex_runtime_session_close(&session, &err) == YVEX_OK && !session,
-                     "v14 capacity session closes");
+                     "v15 capacity session closes");
     yvex_model_engine_close(&model);
     fixture_close(&fixture);
     (void)unlink(prepared.path);
@@ -2077,7 +2049,7 @@ static int test_corruption_refusals(const yvex_runtime_binding_prepare_result *p
         } else {
             unsigned char legacy_header[16] = "YVRBND13";
             test_binding_put_u64(legacy_header, 8u,
-                                 YVEX_RUNTIME_BINDING_SCHEMA_CURRENT - 1u);
+                                 YVEX_RUNTIME_BINDING_SCHEMA_CURRENT - 2u);
             YVEX_TEST_ASSERT(pwrite(fd, legacy_header, sizeof(legacy_header), 0) ==
                                  (ssize_t)sizeof(legacy_header),
                              "previous v13 header written");
@@ -4535,7 +4507,7 @@ int yvex_test_runtime_binding(void)
     if (test_canonical_refusals(&prepared, root) != 0) goto done;
     if (test_graph_identity_refusals(&prepared, root) != 0) goto done;
     if (test_artifact_copy_portability(&fixture, &prepared, root) != 0) goto done;
-    if (test_compiled_model_binding_v14(root) != 0) goto done;
+    if (test_compiled_model_binding_v15(root) != 0) goto done;
     if (test_runtime_family_neutrality() != 0) goto done;
     if (test_runtime_model_compiled_execution(&fixture, &prepared) != 0) goto done;
     if (test_runtime_model_progress(&fixture, &prepared) != 0) goto done;
