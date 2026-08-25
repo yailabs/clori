@@ -115,10 +115,10 @@ ownership rules are in
 
 ## Application surfaces
 
-The private local protocol is version 6. It carries typed requests, streamed
+The private local protocol is version 12. It carries typed requests, streamed
 channels, status, session and partial-turn results, progress, terminal results,
-and refusals. Version 5 is refused rather than interpreted under the changed
-fixed-layout contract.
+and refusals. Every earlier version, including v11, is refused rather than
+interpreted under the current fixed-layout contract.
 The in-process OpenAI adapter translates the bounded compatibility profile to
 the same protocol/session semantics. Neither transport enters graph, tokenizer,
 sampling, or model APIs directly.
@@ -135,6 +135,12 @@ target-verified speculative text through one complete artifact, binding,
 runtime model, worker, and session authority on CPU and the admitted mixed GB10
 path. Candidate tokens remain private until the complete target admits an
 accepted prefix; native and HTTP clients see only committed text and usage.
+
+The admitted MiniMax-H3 FL2VA vertical reaches one bounded typed media result
+through the same foreground server, session, protocol, artifact and telemetry
+owners. Its logical hosted model is composite: independently authenticated
+component artifacts use staged residency and one transactional publication
+without introducing a family-specific server or runtime.
 
 The current CUDA path keeps target and draft model execution on CUDA while
 tokenizer work, sampling, protocol handling, and orchestration remain

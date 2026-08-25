@@ -132,7 +132,7 @@ three-terminal observation, sessions, shutdown, configuration, and recovery.
 | `yvex` | Explicit foreground model server, public REPL, one-shot and administrative protocol client, plus finite offline compile, artifact, inspect, execute, profile, and system operations |
 | `libyvex` | Reusable compilation, artifact, runtime, graph, backend, tokenizer, and generation implementation |
 
-Runtime-facing `yvex` operations always cross private local protocol v10. The
+Runtime-facing `yvex` operations always cross private local protocol v12. The
 finite offline lane may link engine owners but never hosts a persistent model.
 One compiled operation registry drives command paths, syntax, help, JSON
 discovery, completion, and slash schemas without becoming a domain-policy

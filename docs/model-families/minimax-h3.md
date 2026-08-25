@@ -26,25 +26,24 @@ residency registers the exact BF16 component with CUDA, tokenizes an ASCII
 operator transaction unloads each large component at its phase boundary,
 executes one exact paired latent update through all 50 Omni blocks, reconstructs
 124 RGB frames and stereo PCM, and atomically publishes a native AVI. It does
-not add a family runtime, multimodal Qwen vision conditioning, source-default or
+not add a family-specific runtime, multimodal Qwen vision conditioning, source-default or
 full-scale generation, model-quality evidence, or a release obligation. The
 frozen quantitative intake evidence is the
 [FL2VA intake audit](../audits/minimax-h3-fl2va-b8b09e3/README.md); the common
 promotion rules remain in the [family integration contract](integration.md).
 
-## Implementation branch lifecycle
+## Shared development lifecycle
 
 | Fact | Value |
 | --- | --- |
-| Implementation branch | `feature/minimax-h3` |
-| Branch status | end-to-end completion condition satisfied; retained for hardening and optimization |
-| Branch completion | first YVEX-authored playable synchronized MiniMax-H3 FL2VA audio-video output |
-| Current wave | `R011.MINIMAX.H3.RECANONICALIZE.CHAT.MEDIA.RUNTIME.0` |
+| Active development line | `models1` shared with the other admitted families |
+| Historical feature ref | `feature/minimax-h3` retains published provenance only |
+| Current status | bounded hosted direct-media execution admitted; quality, scale, performance and release remain unclaimed |
 | Current boundary | the canonical `yvex server MODEL` and `yvex chat` path negotiates one bounded request, executes all admitted FL2VA components with staged GB10 residency, and returns the atomically published playable AVI path |
-| Next expected boundary | PASS 2 correctness and ownership hardening for the admitted bounded vertical; no new macro milestone is activated by this family record |
+| Shared-substrate obligation | every generic compiler, runtime, server or backend change qualifies both MiniMax and DeepSeek consumers |
 
-The branch preserves the accepted intake and implementation history. Its
-original completion condition is now satisfied by the live evidence below;
+Git history and the historical feature ref preserve the accepted intake and
+implementation sequence. Current source truth is the shared development line;
 later correctness, scale, optimization, evaluation, and generalization work may
 continue without weakening the bounded end-to-end claim.
 

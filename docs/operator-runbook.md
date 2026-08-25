@@ -454,7 +454,7 @@ state, and persistent KV while sharing immutable model resources:
 
 Client disconnect and detach do not close the model. A partial or cancelled
 turn can retain model-committed state and is never silently marked complete.
-Protocol v9 reports the exact committed position, token/text counts, state
+Protocol v12 reports the exact committed position, token/text counts, state
 generations, failure class, and reset requirement. Reset clears the session KV,
 tokens, transcript, decoder, and RNG policy without closing the host.
 

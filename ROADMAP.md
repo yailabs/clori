@@ -110,7 +110,7 @@ not a replacement historical ledger.
 | Compiler and family boundary | Compiler-facing family adapters seal source-authored facts into Semantic Model IR and a canonical Operator Graph IR. Generic passes seal Physical Execution IR and one content-addressed binding; runtime model-open authenticates and instantiates that compiled truth without consulting a concrete family implementation. |
 | Artifact and admission | One complete DSpark bootstrap artifact contains the target and drafter; structural, payload, roundtrip, materialization, and one binding containing target/draft/verification plans are admitted outside Git. |
 | Runtime and generation | One authenticated model opens in the foreground `yvex server` process; server-owned sessions retain exact target KV/token truth and bounded candidate state; target-only and target-verified DSpark text run on CPU and the admitted mixed CUDA/host path. |
-| Application serving | Local protocol v10 and YVEX OpenAI Compatibility Profile v2 share one runtime, scheduler, session registry, and telemetry authority; bounded session fork composes immutable prefix sharing with independent semantic state. |
+| Application serving | Local protocol v12 and YVEX OpenAI Compatibility Profile v2 share one runtime, scheduler, session registry, and telemetry authority; bounded session fork composes immutable prefix sharing with independent semantic state. |
 | Product surface | `yvex` is the sole product executable. Its explicit foreground `server MODEL` mode hosts the model; `chat` and `run` remain protocol clients, while finite compiler and engineering lanes remain bounded offline operations. |
 | Command architecture | `yvex.operator.registry.v1` generates immutable descriptors compiled into `yvex`; canonical operation IDs drive the truthful command taxonomy, lane-safe dispatch, help, JSON discovery, completion, and slash-command schemas. |
 | Documentation architecture | Canonical doctrine, terminology, reference and implemented architecture, family records, contracts, operations, development policy, audits, migrations, and release surfaces have separate governed owners. |
@@ -130,12 +130,14 @@ are implementation input, not live command or project authority.
 ### GB10 runtime optimization
 
 The earlier performance delivery reduced cold startup and added internal
-profiling, but did not optimize warm decode. The continuation starts from
-measured owners rather than a preselected mechanism. Current accepted
-observations include approximately 0.794 prompt tokens/s, 0.432 decode
-tokens/s, attention at 43.88% of measured warm execution, MoE at 19.29%, about
-4,511 kernel launches and 63 synchronizations per token. These are diagnostic
-baseline facts, not a release benchmark.
+profiling, but did not close warm decode. Fresh consolidated-tree
+characterization retained a 9.83 token/s ten-sample target-only short median,
+7.62 token/s over three 256-token target-only samples, 10.68 token/s on the
+matching DSpark short lane, and 9.72 token/s over the three DSpark 256-token
+samples. One 1,000-token reasoning characterization measured 2.22 token/s
+target-only and 2.08 token/s DSpark. These are controlled characterization,
+not a release benchmark. The 20--24 token/s class is the first minimum
+engineering floor, not the optimization destination.
 
 The active implementation now derives execution geometry from one sealed model
 descriptor and admits binding v14 as the complete compiler authority; older
@@ -211,7 +213,7 @@ Machine-readable readiness facts retained for claim guards:
 ```text
 canonical_operation_registry_ready=1
 generated_command_descriptors_ready=1
-protocol_v8_ready=1
+protocol_v12_ready=1
 mature_repl_console_ready=1
 deepseek_dspark_source_ready=1
 target_only_generation_ready=1

@@ -421,9 +421,9 @@ static int test_operator_truth(void)
                      "missing exact source refuses IR and support promotion");
     yvex_model_target_report_close(&report);
     record = yvex_model_target_find(YVEX_MINIMAX_H3_TARGET_ID);
-    YVEX_TEST_ASSERT(record && strcmp(record->runtime_execution, "unsupported") == 0 &&
-                         strcmp(record->generation, "unsupported") == 0,
-                     "catalog target is explicitly non-runtime and non-generation");
+    YVEX_TEST_ASSERT(record && strcmp(record->runtime_execution, "hosted-composite") == 0 &&
+                         strcmp(record->generation, "typed-media") == 0,
+                     "catalog projects the already-admitted hosted media capability");
     return 0;
 }
 
