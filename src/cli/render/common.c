@@ -1051,6 +1051,14 @@ static void model_download_print_audit_patterns(const yvex_cli_models_download_o
     }
 }
 
+static const char *model_download_boundary(const yvex_model_download_report *report) {
+    if (report->source_scan.gguf_count && !report->source_scan.safetensors_count)
+        return "acquired GGUF, structural inspection and package admission required";
+    if (report->source_scan.gguf_count)
+        return "mixed provider representations, select and verify one package path";
+    return "acquired source, package preparation required";
+}
+
 static void model_download_print_normal(const yvex_cli_models_download_options *options,
                                         const yvex_model_download_report *report) {
     char bytes_text[32];
@@ -1108,17 +1116,7 @@ static void model_download_print_normal(const yvex_cli_models_download_options *
         yvex_cli_out_writef(stdout, "native_inventory: %s\n",
                             report->native_inventory_written ? report->native_inventory_path
                                                              : "skipped");
-        if (report->source_scan.gguf_count && !report->source_scan.safetensors_count) {
-            yvex_cli_out_writef(stdout,
-                                "boundary: acquired GGUF, structural inspection and package "
-                                "admission required\n");
-        } else if (report->source_scan.gguf_count) {
-            yvex_cli_out_writef(stdout,
-                                "boundary: mixed provider representations, select and verify one "
-                                "package path\n");
-        } else {
-            yvex_cli_out_writef(stdout, "boundary: acquired source, package preparation required\n");
-        }
+        yvex_cli_out_writef(stdout, "boundary: %s\n", model_download_boundary(report));
         yvex_cli_out_writef(stdout, "status: %s\n", report->status);
         return;
     }
@@ -1237,6 +1235,7 @@ static void model_download_print_audit(const yvex_cli_models_download_options *o
     render_object_fields(stdout, report, download_audit_source_fields,
                          sizeof(download_audit_source_fields) /
                              sizeof(download_audit_source_fields[0]));
+    yvex_cli_out_writef(stdout, "boundary: %s\n", model_download_boundary(report));
     yvex_cli_out_writef(stdout, "yvex_version: %s\n", yvex_version_string());
     yvex_cli_out_lines(stdout, literal_lines_3,
                        sizeof(literal_lines_3) / sizeof(literal_lines_3[0]));
