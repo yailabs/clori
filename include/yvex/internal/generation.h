@@ -522,19 +522,23 @@ int yvex_runtime_generation_context_open(yvex_runtime_generation_context **out,
 const yvex_runtime_generation_plan_summary *yvex_runtime_generation_plan_summary_get(
     const yvex_runtime_generation_context *context);
 int yvex_runtime_generation_execute(
-    yvex_runtime_generation_context *context,
-    const yvex_runtime_generation_request *request,
-    yvex_runtime_generation_token_result *tokens,
-    unsigned long long token_capacity, unsigned char *text,
+    yvex_runtime_generation_context *context, const yvex_runtime_generation_request *request,
+    yvex_runtime_generation_token_result *tokens, unsigned long long token_capacity,
+    unsigned char *text,
     unsigned long long text_capacity, yvex_runtime_generation_result *result,
     yvex_error *err);
-int yvex_runtime_generation_turn_execute(
-    yvex_runtime_generation_context *context,
-    const yvex_runtime_generation_turn_request *turn,
-    yvex_runtime_generation_token_result *tokens,
-    unsigned long long token_capacity, unsigned char *text,
-    unsigned long long text_capacity, yvex_runtime_generation_result *result,
-    yvex_error *err);
+/* Begin borrows request and output storage until mandatory finish; advance commits at most the
+ * requested scheduling quanta and reports when the transactional turn can be finished. */
+int yvex_runtime_generation_turn_begin(
+    yvex_runtime_generation_context *context, const yvex_runtime_generation_turn_request *turn,
+    yvex_runtime_generation_token_result *tokens, unsigned long long token_capacity,
+    unsigned char *text, unsigned long long text_capacity,
+    yvex_runtime_generation_result *result, yvex_error *err);
+int yvex_runtime_generation_turn_advance(
+    yvex_runtime_generation_context *context, unsigned long long work_budget,
+    int *complete, yvex_error *err);
+int yvex_runtime_generation_turn_finish(
+    yvex_runtime_generation_context *context, yvex_error *err);
 int yvex_runtime_generation_result_validate(
     const yvex_runtime_generation_plan_summary *plan,
     const yvex_runtime_generation_token_result *tokens,

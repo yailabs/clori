@@ -199,7 +199,7 @@ int yvex_runtime_generation_execute(
 {
     yvex_runtime_generation_turn_request turn;
     unsigned int *prompt_tokens;
-    int rc;
+    int active = 0, complete = 0, rc;
     if (!context || context->options.context_capacity > SIZE_MAX / sizeof(unsigned int))
         return generation_result_refuse(err, YVEX_ERR_INVALID_ARG,
                                         "generation context is required");
@@ -215,8 +215,12 @@ int yvex_runtime_generation_execute(
     turn.maximum_new_tokens = context->options.maximum_new_tokens;
     turn.prompt_token_ids = prompt_tokens;
     turn.prompt_token_capacity = context->options.context_capacity;
-    rc = yvex_runtime_generation_turn_execute(
+    rc = yvex_runtime_generation_turn_begin(
         context, &turn, tokens, token_capacity, text, text_capacity, result, err);
+    active = rc == YVEX_OK;
+    while (rc == YVEX_OK && !complete)
+        rc = yvex_runtime_generation_turn_advance(context, 1ull, &complete, err);
+    if (active) rc = yvex_runtime_generation_turn_finish(context, err);
     yvex_core_free(prompt_tokens);
     return rc;
 }

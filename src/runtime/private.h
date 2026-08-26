@@ -124,6 +124,7 @@ int yvex_runtime_private_binding_policies_match_model(
 
 typedef struct runtime_engine_scheduler runtime_engine_scheduler;
 typedef struct runtime_engine_work runtime_engine_work;
+typedef struct runtime_generation_turn_state runtime_generation_turn_state;
 typedef int (*runtime_engine_work_execute)(
     runtime_engine_work *const *tickets,
     unsigned long long ticket_count, yvex_error *err);
@@ -412,6 +413,7 @@ struct yvex_runtime_generation_context {
     yvex_runtime_speculation_context *speculation;
     yvex_tokenizer_decoder *decoder;
     yvex_token_sequence *sequence;
+    runtime_generation_turn_state *active_turn;
     yvex_runtime_generation_options options;
     yvex_runtime_generation_plan_summary plan;
     yvex_runtime_execution_profile execution_profile;

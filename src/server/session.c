@@ -1356,7 +1356,7 @@ static int session_turn(server_session_registry *registry,
     unsigned long long turn_maximum = request->provider_request
         ? request->provider_request->maximum_output_tokens : request->maximum_new_tokens;
     yvex_error primary_error;
-    int generation_rc, extends = 1, rc;
+    int generation_rc, extends = 1, rc, turn_complete = 0, turn_active = 0;
     if (!turn_maximum) turn_maximum = registry->options.maximum_new_tokens;
     {
         int provider_valid = request->provider_request &&
@@ -1484,11 +1484,18 @@ static int session_turn(server_session_registry *registry,
             session->committed_count, turn.maximum_new_tokens,
             0.0, 0.0, NULL, request->provider_request, NULL, err);
     memset(&result, 0, sizeof(result));
-    if (rc == YVEX_OK)
-        rc = yvex_runtime_generation_turn_execute(
+    if (rc == YVEX_OK) {
+        rc = yvex_runtime_generation_turn_begin(
             session->generation, &turn, session->token_results,
             registry->options.maximum_new_tokens, session->turn_text,
             session->text_capacity, &result, err);
+        turn_active = rc == YVEX_OK;
+    }
+    while (rc == YVEX_OK && !turn_complete)
+        rc = yvex_runtime_generation_turn_advance(
+            session->generation, 1ull, &turn_complete, err);
+    if (turn_active)
+        rc = yvex_runtime_generation_turn_finish(session->generation, err);
     {
         yvex_error stream_error;
         int stream_rc;

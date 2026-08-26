@@ -81,6 +81,22 @@ typedef struct {
     unsigned long long accepted, rejected, maximum_accepted_prefix;
 } live_acceptance_corpus;
 
+static int live_generation_turn_run(
+    yvex_runtime_generation_context *context,
+    const yvex_runtime_generation_turn_request *turn,
+    yvex_runtime_generation_token_result *tokens, unsigned long long token_capacity,
+    unsigned char *text, unsigned long long text_capacity,
+    yvex_runtime_generation_result *result, yvex_error *err)
+{
+    int active = 0, complete = 0, rc = yvex_runtime_generation_turn_begin(
+        context, turn, tokens, token_capacity, text, text_capacity, result, err);
+    active = rc == YVEX_OK;
+    while (rc == YVEX_OK && !complete)
+        rc = yvex_runtime_generation_turn_advance(context, 1ull, &complete, err);
+    if (active) rc = yvex_runtime_generation_turn_finish(context, err);
+    return rc;
+}
+
 static void live_failure(const char *step, int rc, const yvex_error *err)
 {
     fprintf(stderr, "generation_live step=%s status=%d where=%s reason=%s\n",
@@ -830,7 +846,7 @@ static int live_dspark_cancellation_proof(
     if (rc == YVEX_OK)
         plan = *yvex_runtime_generation_plan_summary_get(context);
     if (rc == YVEX_OK) {
-        execute_rc = yvex_runtime_generation_turn_execute(
+        execute_rc = live_generation_turn_run(
             context, &turn, tokens, LIVE_GENERATION_MAX_TOKENS,
             text, sizeof(text), &result, err);
         primary = *err;
@@ -895,7 +911,7 @@ static int live_dspark_cancellation_proof(
     if (rc == YVEX_OK)
         plan = *yvex_runtime_generation_plan_summary_get(context);
     if (rc == YVEX_OK)
-        rc = yvex_runtime_generation_turn_execute(
+        rc = live_generation_turn_run(
             context, &turn, tokens, LIVE_GENERATION_MAX_TOKENS,
             text, sizeof(text), &result, err);
     if (rc == YVEX_OK)

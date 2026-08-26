@@ -410,6 +410,7 @@ static int generation_test_refusals(void)
     yvex_runtime_generation_options options;
     yvex_generation_operator_result operator_result;
     yvex_runtime_cleanup_lease *cleanup = NULL;
+    int complete = 1;
     yvex_error err;
     memset(&result, 0, sizeof(result));
     memset(&options, 0, sizeof(options));
@@ -422,6 +423,19 @@ static int generation_test_refusals(void)
                          NULL, NULL, NULL, 0ull, NULL, 0ull, &result, &err) ==
                          YVEX_ERR_INVALID_ARG,
                      "generation execute must refuse absent context");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_generation_turn_begin(
+            NULL, NULL, NULL, 0ull, NULL, 0ull, &result, &err) ==
+            YVEX_ERR_INVALID_ARG,
+        "incremental turn begin must refuse absent ownership");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_generation_turn_advance(NULL, 1ull, &complete, &err) ==
+                YVEX_ERR_INVALID_ARG &&
+            !complete,
+        "incremental turn advance must refuse absent active work");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_generation_turn_finish(NULL, &err) == YVEX_ERR_STATE,
+        "incremental turn finish must refuse absent completed work");
     YVEX_TEST_ASSERT(yvex_runtime_generation_result_validate(
                          NULL, NULL, 0ull, NULL, 0ull, &result, &err) ==
                          YVEX_ERR_FORMAT,
