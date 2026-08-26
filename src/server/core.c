@@ -53,7 +53,6 @@ struct yvex_server {
     char lock_path[YVEX_SERVER_SOCKET_PATH_CAP];
     server_telemetry *telemetry;
     server_engine_manager *engines;
-    server_scheduler *scheduler;
     server_openai_listener *openai;
     unsigned long long next_request_id;
     server_client_slot *clients;
@@ -66,9 +65,6 @@ struct yvex_server {
 };
 
 static void model_work_execute(void *context, void *work);
-static void scheduler_observe(void *context, unsigned long long queued,
-                              unsigned long long capacity,
-                              unsigned long long active);
 
 static int server_refuse(yvex_error *err, yvex_status status,
                          const char *reason)
@@ -204,22 +200,18 @@ int yvex_server_create(yvex_server **out, const yvex_server_options *options,
                                "host connection allocation failed");
     }
     if (rc == YVEX_OK)
-        rc = yvex_server_scheduler_open(
-            &server->scheduler, admitted->request_queue_capacity,
-            admitted->worker_count,
-            model_work_execute, scheduler_observe, server, err);
-    if (rc == YVEX_OK)
         rc = yvex_server_telemetry_open(&server->telemetry,
                                    SERVER_TELEMETRY_CAPACITY,
                                    YVEX_SERVER_GENERATION_TARGET_ONLY,
                                    NULL, NULL, NULL, err);
     if (rc == YVEX_OK)
         rc = yvex_server_engine_manager_open(
-            &server->engines, YVEX_SERVER_ENGINE_CAP, server->scheduler,
-            server->telemetry, err);
+            &server->engines, YVEX_SERVER_ENGINE_CAP,
+            admitted->request_queue_capacity, admitted->worker_count,
+            model_work_execute, server, server->telemetry, err);
     if (rc == YVEX_OK)
         yvex_server_telemetry_queue(server->telemetry, 0u,
-                                    admitted->request_queue_capacity);
+                                    0u);
     if (rc == YVEX_OK && admitted->openai_enabled) {
         server_openai_options openai = {
             .yvex_socket = server->socket_path,
@@ -400,16 +392,6 @@ static int protocol_error(int fd, const yvex_client_request *request,
     return yvex_server_protocol_send(fd, &message, err);
 }
 
-static void scheduler_observe(void *context, unsigned long long queued,
-                              unsigned long long capacity,
-                              unsigned long long active)
-{
-    yvex_server *server = context;
-    (void)active;
-    if (server && server->telemetry)
-        yvex_server_telemetry_queue(server->telemetry, queued, capacity);
-}
-
 static void model_work_execute(void *context, void *work)
 {
     yvex_server *server = context;
@@ -519,8 +501,7 @@ int yvex_server_start(yvex_server *server, yvex_error *err)
     }
     server->summary.status = YVEX_SERVER_STATUS_STARTING;
     (void)pthread_mutex_unlock(&server->state_mutex);
-    rc = yvex_server_scheduler_start(server->scheduler, err);
-    if (rc == YVEX_OK) rc = listener_open(server, err);
+    rc = listener_open(server, err);
     if (rc == YVEX_OK)
         rc = yvex_server_telemetry_emit(
             server->telemetry, YVEX_SERVER_EVENT_LISTENER_READY,
@@ -547,7 +528,6 @@ int yvex_server_start(yvex_server *server, yvex_error *err)
 static int request_enqueue(yvex_server *server, server_work_item *item,
                            yvex_error *err)
 {
-    char serialization_key[SERVER_SCHEDULER_KEY_CAP];
     unsigned long long depth = 0ull;
     int batch_candidate, rc;
     rc = yvex_server_engine_manager_acquire(
@@ -561,16 +541,11 @@ static int request_enqueue(yvex_server *server, server_work_item *item,
     batch_candidate = item->engine_summary.generation_mode !=
                           YVEX_SERVER_GENERATION_MEDIA &&
                       item->request.operation == YVEX_CLIENT_OP_GENERATION_TURN;
-    rc = yvex_server_scheduler_key(
-        serialization_key, item->engine.generation,
-        item->request.session_name, err);
-    if (rc != YVEX_OK) {
-        yvex_server_engine_manager_release(server->engines, &item->engine);
-        return rc;
+    if (pthread_mutex_lock(&server->state_mutex) != 0) {
+        rc = server_refuse(err, YVEX_ERR_STATE,
+                           "request identity lock failed");
+        goto failed;
     }
-    if (pthread_mutex_lock(&server->state_mutex) != 0)
-        return server_refuse(err, YVEX_ERR_STATE,
-                             "request identity lock failed");
     server->next_request_id++;
     (void)snprintf(item->request_id, sizeof(item->request_id), "r%llu",
                    server->next_request_id);
@@ -583,8 +558,8 @@ static int request_enqueue(yvex_server *server, server_work_item *item,
             err) != YVEX_OK)
         goto failed;
     item->enqueued_ns = server_monotonic_ns();
-    rc = yvex_server_scheduler_submit(
-        server->scheduler, item, serialization_key, batch_candidate,
+    rc = yvex_server_engine_lease_submit(
+        &item->engine, item, item->request.session_name, batch_candidate,
         &depth, err);
     if (rc != YVEX_OK) {
         item->failure_class = rc == YVEX_ERR_BOUNDS
@@ -1043,7 +1018,8 @@ int yvex_server_stop(yvex_server *server, yvex_error *err)
         rc = yvex_server_openai_finish(server->openai, &openai_error);
     }
     atomic_store_explicit(&server->stopping, 1, memory_order_release);
-    yvex_server_scheduler_snapshot(server->scheduler, &scheduler);
+    (void)yvex_server_engine_manager_scheduler_snapshot(
+        server->engines, &scheduler, NULL);
     (void)yvex_server_telemetry_emit(
         server->telemetry, YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_START,
         YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "shutdown",
@@ -1055,7 +1031,6 @@ int yvex_server_stop(yvex_server *server, yvex_error *err)
         server->listen_fd = -1;
     }
     yvex_server_engine_manager_cancel_all(server->engines);
-    yvex_server_scheduler_request_stop(server->scheduler);
     if (rc != YVEX_OK) {
         if (err) *err = openai_error;
         return rc;
@@ -1093,11 +1068,6 @@ int yvex_server_finish(yvex_server *server, yvex_error *err)
     server->finish_started = 1;
     (void)pthread_mutex_unlock(&server->state_mutex);
     rc = yvex_server_stop(server, &primary);
-    cleanup_rc = yvex_server_scheduler_finish(server->scheduler, &cleanup);
-    if (cleanup_rc != YVEX_OK && rc == YVEX_OK) {
-        rc = cleanup_rc;
-        primary = cleanup;
-    }
     cleanup_rc = yvex_server_engine_manager_close(&server->engines, &cleanup);
     if (cleanup_rc != YVEX_OK && rc == YVEX_OK) {
         rc = cleanup_rc;
@@ -1138,20 +1108,28 @@ int yvex_server_get_summary(const yvex_server *server,
 {
     yvex_server *mutable = (yvex_server *)server;
     yvex_server_engine_summary engines[YVEX_SERVER_ENGINE_CAP];
+    server_scheduler_summary scheduler = {0};
     unsigned long long count = 0u, index;
     if (!server || !out || pthread_mutex_lock(&mutable->state_mutex) != 0)
         return server_refuse(err, YVEX_ERR_INVALID_ARG,
                              "host and summary output are required");
     *out = server->summary;
     (void)pthread_mutex_unlock(&mutable->state_mutex);
-    if (server->telemetry)
-        (void)yvex_server_telemetry_metrics_copy(server->telemetry,
-                                            &out->metrics, err);
     if (server->engines &&
         yvex_server_engine_manager_snapshot(
             server->engines, engines, YVEX_SERVER_ENGINE_CAP, &count, err) !=
             YVEX_OK)
         return yvex_error_code(err);
+    if (server->engines &&
+        yvex_server_engine_manager_scheduler_snapshot(
+            server->engines, &scheduler, err) != YVEX_OK)
+        return yvex_error_code(err);
+    if (server->telemetry) {
+        yvex_server_telemetry_queue(server->telemetry, scheduler.queued,
+                                    scheduler.capacity);
+        (void)yvex_server_telemetry_metrics_copy(server->telemetry,
+                                                 &out->metrics, err);
+    }
     out->engine_count = count;
     out->loaded_engine_count = 0ull;
     out->draining_engine_count = 0ull;
@@ -1226,7 +1204,6 @@ void yvex_server_close(yvex_server **server)
     if (owner->lock_owned && owner->lock_path[0])
         (void)unlink(owner->lock_path);
     yvex_server_openai_close(&owner->openai);
-    yvex_server_scheduler_close(&owner->scheduler);
     yvex_server_telemetry_close(&owner->telemetry);
     if (owner->clients_condition_ready)
         (void)pthread_cond_destroy(&owner->clients_condition);

@@ -341,7 +341,8 @@ int yvex_server_media_registry_start(
 void yvex_server_media_registry_close(server_media_registry **);
 
 int yvex_server_engine_manager_open(
-    server_engine_manager **, unsigned long long, server_scheduler *,
+    server_engine_manager **, unsigned long long, unsigned long long,
+    unsigned long long, server_scheduler_execute, void *,
     server_telemetry *, yvex_error *);
 int yvex_server_engine_summary_valid(const yvex_server_engine_summary *);
 int yvex_server_engine_manager_load(
@@ -358,6 +359,9 @@ int yvex_server_engine_manager_acquire(
     server_engine_lease *, yvex_server_engine_summary *, yvex_error *);
 void yvex_server_engine_manager_release(
     server_engine_manager *, server_engine_lease *);
+int yvex_server_engine_lease_submit(
+    server_engine_lease *, void *, const char *, int,
+    unsigned long long *, yvex_error *);
 int yvex_server_engine_lease_execute(
     server_engine_lease *, const yvex_client_request *, const char *, double,
     server_message_emit, void *, yvex_error *);
@@ -367,6 +371,8 @@ int yvex_server_engine_lease_console_status(
     server_engine_lease *, const char *, yvex_console_status *,
     yvex_client_partial_turn *, yvex_error *);
 void yvex_server_engine_manager_cancel_all(server_engine_manager *);
+int yvex_server_engine_manager_scheduler_snapshot(
+    server_engine_manager *, server_scheduler_summary *, yvex_error *);
 int yvex_server_engine_manager_close(server_engine_manager **, yvex_error *);
 
 #endif

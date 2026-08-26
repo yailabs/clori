@@ -282,8 +282,8 @@ static int test_configured_summary_and_event(void)
     YVEX_TEST_ASSERT(summary.metrics.model_open_count == 0u,
                      "model not opened during create");
     YVEX_TEST_ASSERT(summary.metrics.queue_depth == 0u &&
-                         summary.metrics.queue_capacity == 2u,
-                     "configured queue capacity is immediately observable");
+                         summary.metrics.queue_capacity == 0u,
+                     "empty host publishes no nonexistent execution queue");
     YVEX_TEST_ASSERT(!summary.host_ready && !summary.engine_count &&
                          !summary.loaded_engine_count,
                      "configured host owns no implicit model engine");
@@ -896,6 +896,8 @@ static int test_media_engine_lifecycle(void)
                      "engine manager publishes both real loaded engines");
     YVEX_TEST_ASSERT(yvex_server_get_summary(server, &summary, &err) == YVEX_OK &&
                          summary.host_ready && summary.loaded_engine_count == 2ull &&
+                         summary.metrics.queue_depth == 0ull &&
+                         summary.metrics.queue_capacity == 4ull &&
                          summary.metrics.model_open_count == 2ull &&
                          summary.metrics.artifact_open_count == 8ull &&
                          summary.metrics.binding_open_count == 2ull &&
@@ -904,7 +906,7 @@ static int test_media_engine_lifecycle(void)
                          summary.metrics.resident_device_bytes == 0ull &&
                          !first.runtime_binding_identity[0] &&
                          !first.artifact_identity[0],
-                     "composite engines admit components without false payload residency");
+                     "each engine owns a distinct bounded scheduler without false payload residency");
     wire.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
     wire.kind = YVEX_CLIENT_MESSAGE_ENGINE;
     wire.status = YVEX_OK;

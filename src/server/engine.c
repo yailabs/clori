@@ -2,6 +2,7 @@
 #include "src/server/private.h"
 
 #include <assert.h>
+#include <limits.h>
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,6 +23,7 @@ typedef struct {
     char runtime_binding_path[YVEX_PATH_CAP];
     char target_id[128];
     yvex_model_engine *model;
+    server_scheduler *scheduler;
     server_session_registry *sessions;
     server_media_registry *media;
     yvex_server_engine_summary summary;
@@ -33,7 +35,9 @@ struct server_engine_manager {
     pthread_cond_t condition;
     server_engine *engines;
     unsigned long long capacity, next_generation;
-    server_scheduler *scheduler;
+    unsigned long long scheduler_queue_capacity, scheduler_worker_count;
+    server_scheduler_execute scheduler_execute;
+    void *scheduler_context;
     server_telemetry *telemetry;
     int mutex_ready, condition_ready, closing;
 };
@@ -172,6 +176,21 @@ static void generation_options(const server_engine *engine,
     options->sampling_policy.seed = engine->options.sampling_seed;
 }
 
+static int engine_scheduler_open(server_engine_manager *manager,
+                                 server_engine *engine, yvex_error *err)
+{
+    unsigned long long workers = manager->scheduler_worker_count;
+    if (workers > engine->options.concurrent_sequences)
+        workers = engine->options.concurrent_sequences;
+    int rc = yvex_server_scheduler_open(
+        &engine->scheduler, manager->scheduler_queue_capacity,
+        workers, manager->scheduler_execute, NULL,
+        manager->scheduler_context, err);
+    if (rc == YVEX_OK)
+        rc = yvex_server_scheduler_start(engine->scheduler, err);
+    return rc;
+}
+
 static int execution_probe(server_engine *engine,
                            yvex_runtime_generation_context_summary *capacity,
                            yvex_runtime_residency_summary *residency,
@@ -251,7 +270,7 @@ static int text_engine_open(server_engine_manager *manager,
         rc = execution_probe(engine, &capacity, &residency, err);
     if (rc == YVEX_OK)
         rc = yvex_server_sessions_open(
-            &engine->sessions, engine->model, manager->scheduler,
+            &engine->sessions, engine->model, engine->scheduler,
             &engine->options, engine->generation,
             engine->continuous_batching, manager->telemetry, err);
     view = rc == YVEX_OK ? yvex_model_engine_view_get(engine->model) : NULL;
@@ -384,14 +403,25 @@ static void engine_cancel(server_engine *engine)
 static int engine_close(server_engine_manager *manager, server_engine *engine,
                         yvex_error *err)
 {
-    yvex_error primary = {0};
+    yvex_error primary = {0}, cleanup = {0};
     int rc = YVEX_OK, cleanup_rc;
+    if (engine->scheduler) {
+        cleanup_rc = yvex_server_scheduler_finish(engine->scheduler, &cleanup);
+        if (cleanup_rc != YVEX_OK) {
+            rc = cleanup_rc;
+            primary = cleanup;
+        }
+    }
     if (engine->sessions) {
-        cleanup_rc = yvex_server_sessions_close(&engine->sessions, &primary);
-        if (cleanup_rc != YVEX_OK) rc = cleanup_rc;
+        cleanup_rc = yvex_server_sessions_close(&engine->sessions, &cleanup);
+        if (cleanup_rc != YVEX_OK && rc == YVEX_OK) {
+            rc = cleanup_rc;
+            primary = cleanup;
+        }
     }
     yvex_server_media_registry_close(&engine->media);
     yvex_model_engine_close(&engine->model);
+    yvex_server_scheduler_close(&engine->scheduler);
     if (engine->telemetry_opened) {
         yvex_server_telemetry_model_closed(manager->telemetry);
         engine->telemetry_opened = 0;
@@ -433,12 +463,16 @@ static server_engine *engine_reserve(server_engine_manager *manager,
 
 int yvex_server_engine_manager_open(
     server_engine_manager **out, unsigned long long capacity,
-    server_scheduler *scheduler, server_telemetry *telemetry, yvex_error *err)
+    unsigned long long scheduler_queue_capacity,
+    unsigned long long scheduler_worker_count,
+    server_scheduler_execute scheduler_execute, void *scheduler_context,
+    server_telemetry *telemetry, yvex_error *err)
 {
     server_engine_manager *manager;
     if (out) *out = NULL;
     if (!out || !capacity || capacity > YVEX_SERVER_ENGINE_CAP ||
-        !scheduler || !telemetry)
+        !scheduler_queue_capacity || !scheduler_worker_count ||
+        !scheduler_execute || !telemetry)
         return engine_refuse(err, YVEX_ERR_INVALID_ARG,
                              "bounded engine manager inputs are required");
     manager = calloc(1u, sizeof(*manager));
@@ -452,7 +486,10 @@ int yvex_server_engine_manager_open(
     }
     manager->capacity = capacity;
     manager->next_generation = 1ull;
-    manager->scheduler = scheduler;
+    manager->scheduler_queue_capacity = scheduler_queue_capacity;
+    manager->scheduler_worker_count = scheduler_worker_count;
+    manager->scheduler_execute = scheduler_execute;
+    manager->scheduler_context = scheduler_context;
     manager->telemetry = telemetry;
     if (pthread_mutex_init(&manager->mutex, NULL) != 0 ||
         (manager->mutex_ready = 1,
@@ -499,9 +536,11 @@ int yvex_server_engine_manager_load(
     options_rebind(slot);
     (void)pthread_mutex_unlock(&manager->mutex);
     candidate.active_work = 0ull;
-    rc = candidate.options.generation_mode == YVEX_SERVER_GENERATION_MEDIA
-             ? media_engine_open(manager, &candidate, media, err)
-             : text_engine_open(manager, &candidate, err);
+    rc = engine_scheduler_open(manager, &candidate, err);
+    if (rc == YVEX_OK)
+        rc = candidate.options.generation_mode == YVEX_SERVER_GENERATION_MEDIA
+                 ? media_engine_open(manager, &candidate, media, err)
+                 : text_engine_open(manager, &candidate, err);
     if (rc != YVEX_OK) {
         yvex_error primary = err ? *err : (yvex_error){0}, cleanup;
         (void)engine_close(manager, &candidate, &cleanup);
@@ -585,6 +624,27 @@ void yvex_server_engine_manager_release(server_engine_manager *manager,
     memset(lease, 0, sizeof(*lease));
     (void)pthread_cond_broadcast(&manager->condition);
     (void)pthread_mutex_unlock(&manager->mutex);
+}
+
+int yvex_server_engine_lease_submit(
+    server_engine_lease *lease, void *work, const char *session_name,
+    int compatible_batch_candidate, unsigned long long *queued,
+    yvex_error *err)
+{
+    server_engine *engine = lease ? lease->engine : NULL;
+    char serialization_key[SERVER_SCHEDULER_KEY_CAP];
+    int rc;
+    if (!engine || engine->generation != lease->generation ||
+        !engine->scheduler)
+        return engine_refuse(err, YVEX_ERR_STATE,
+                             "live engine scheduler lease is required");
+    rc = yvex_server_scheduler_key(serialization_key, lease->generation,
+                                   session_name, err);
+    if (rc == YVEX_OK)
+        rc = yvex_server_scheduler_submit(
+            engine->scheduler, work, serialization_key,
+            compatible_batch_candidate, queued, err);
+    return rc;
 }
 
 int yvex_server_engine_manager_unload(
@@ -709,9 +769,57 @@ void yvex_server_engine_manager_cancel_all(server_engine_manager *manager)
     if (!manager || pthread_mutex_lock(&manager->mutex) != 0) return;
     for (index = 0ull; index < manager->capacity; ++index)
         if (manager->engines[index].state == YVEX_SERVER_ENGINE_LOADED ||
-            manager->engines[index].state == YVEX_SERVER_ENGINE_DRAINING)
+            manager->engines[index].state == YVEX_SERVER_ENGINE_DRAINING) {
             engine_cancel(&manager->engines[index]);
+            yvex_server_scheduler_request_stop(
+                manager->engines[index].scheduler);
+        }
     (void)pthread_mutex_unlock(&manager->mutex);
+}
+
+static unsigned long long summary_add(unsigned long long left,
+                                      unsigned long long right)
+{
+    return left > ULLONG_MAX - right ? ULLONG_MAX : left + right;
+}
+
+int yvex_server_engine_manager_scheduler_snapshot(
+    server_engine_manager *manager, server_scheduler_summary *summary,
+    yvex_error *err)
+{
+    unsigned long long index;
+    if (summary) memset(summary, 0, sizeof(*summary));
+    if (!manager || !summary || pthread_mutex_lock(&manager->mutex) != 0)
+        return engine_refuse(err, YVEX_ERR_INVALID_ARG,
+                             "engine scheduler summary is required");
+    for (index = 0ull; index < manager->capacity; ++index) {
+        server_scheduler_summary current = {0};
+        if (!manager->engines[index].scheduler) continue;
+        yvex_server_scheduler_snapshot(manager->engines[index].scheduler,
+                                       &current);
+        summary->queued = summary_add(summary->queued, current.queued);
+        summary->capacity = summary_add(summary->capacity, current.capacity);
+        summary->active = summary_add(summary->active, current.active);
+        summary->workers = summary_add(summary->workers, current.workers);
+        summary->execution_ready_waits = summary_add(
+            summary->execution_ready_waits, current.execution_ready_waits);
+        summary->execution_ready_timeouts = summary_add(
+            summary->execution_ready_timeouts,
+            current.execution_ready_timeouts);
+        summary->execution_ready_ns = summary_add(
+            summary->execution_ready_ns, current.execution_ready_ns);
+        if (current.execution_ready_limit_ns >
+            summary->execution_ready_limit_ns)
+            summary->execution_ready_limit_ns =
+                current.execution_ready_limit_ns;
+        if (current.maximum_execution_ready_width >
+            summary->maximum_execution_ready_width)
+            summary->maximum_execution_ready_width =
+                current.maximum_execution_ready_width;
+    }
+    (void)pthread_mutex_unlock(&manager->mutex);
+    yvex_error_clear(err);
+    return YVEX_OK;
 }
 
 int yvex_server_engine_manager_close(server_engine_manager **manager,
@@ -732,6 +840,7 @@ int yvex_server_engine_manager_close(server_engine_manager **manager,
         if (engine->state == YVEX_SERVER_ENGINE_LOADED) {
             engine->state = YVEX_SERVER_ENGINE_DRAINING;
             engine_cancel(engine);
+            yvex_server_scheduler_request_stop(engine->scheduler);
         }
     }
     for (;;) {
