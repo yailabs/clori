@@ -162,7 +162,8 @@ static int session_publish_locked(server_session_registry *registry,
     registry->count++;
     yvex_server_telemetry_session(registry->telemetry, 1, 1);
     rc = yvex_server_telemetry_emit(
-        registry->telemetry, YVEX_SERVER_EVENT_SESSION_CREATED,
+        registry->telemetry, &registry->event_scope,
+        YVEX_SERVER_EVENT_SESSION_CREATED,
         YVEX_SERVER_SEVERITY_INFO, session->name, NULL, NULL, phase,
         value_a, value_b, registry->count, 0.0, 0.0, err);
     if (rc == YVEX_OK) return YVEX_OK;
@@ -321,7 +322,8 @@ int yvex_server_session_reset_locked(server_session_registry *registry,
     session->state = session->attached_clients ? YVEX_SERVER_SESSION_READY
                                                : YVEX_SERVER_SESSION_DETACHED;
     return yvex_server_telemetry_emit(
-        registry->telemetry, YVEX_SERVER_EVENT_SESSION_RESET,
+        registry->telemetry, &registry->event_scope,
+        YVEX_SERVER_EVENT_SESSION_RESET,
         YVEX_SERVER_SEVERITY_INFO, session->name, NULL, NULL, "session",
         0u, 0u, 0u, 0.0, 0.0, err);
 }
@@ -343,7 +345,8 @@ int yvex_server_session_close_locked(server_session_registry *registry,
     registry->count--;
     yvex_server_telemetry_session(registry->telemetry, -1, 0);
     (void)yvex_server_telemetry_emit(
-        registry->telemetry, YVEX_SERVER_EVENT_SESSION_CLOSED,
+        registry->telemetry, &registry->event_scope,
+        YVEX_SERVER_EVENT_SESSION_CLOSED,
         YVEX_SERVER_SEVERITY_INFO, session->name, NULL, NULL, "session",
         0u, registry->count, 0u, 0.0, 0.0, err);
     memset(session, 0, sizeof(*session));
@@ -356,12 +359,17 @@ int yvex_server_sessions_open(server_session_registry **out,
                               const yvex_server_engine_options *options,
                               unsigned long long engine_generation,
                               int continuous_batching,
+                              const server_event_scope *event_scope,
                               server_telemetry *telemetry, yvex_error *err)
 {
     server_session_registry *registry;
     if (out) *out = NULL;
-    if (!out || !model || !options || !telemetry ||
+    if (!out || !model || !options || !event_scope || !telemetry ||
         !engine_generation ||
+        event_scope->generation_mode != options->generation_mode ||
+        !yvex_sha256_hex_valid(event_scope->runtime_model_identity) ||
+        !yvex_sha256_hex_valid(event_scope->artifact_identity) ||
+        !yvex_sha256_hex_valid(event_scope->specialization_identity) ||
         !options->maximum_sessions ||
         options->maximum_sessions > SIZE_MAX / sizeof(server_session)) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.session.registry",
@@ -381,6 +389,7 @@ int yvex_server_sessions_open(server_session_registry **out,
     registry->model = model;
     registry->options = *options;
     registry->engine_generation = engine_generation;
+    registry->event_scope = *event_scope;
     registry->continuous_batching = continuous_batching != 0;
     registry->default_reasoning_policy = server_reasoning_automatic_policy();
     registry->telemetry = telemetry;

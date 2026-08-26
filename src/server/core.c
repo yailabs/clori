@@ -30,6 +30,7 @@ typedef struct server_work_item {
     yvex_client_request request;
     server_engine_lease engine;
     yvex_server_engine_summary engine_summary;
+    server_event_scope event_scope;
     char request_id[YVEX_SERVER_ID_CAP];
     unsigned char *prompt;
     yvex_provider_request *provider;
@@ -200,10 +201,8 @@ int yvex_server_create(yvex_server **out, const yvex_server_options *options,
                                "host connection allocation failed");
     }
     if (rc == YVEX_OK)
-        rc = yvex_server_telemetry_open(&server->telemetry,
-                                   SERVER_TELEMETRY_CAPACITY,
-                                   YVEX_SERVER_GENERATION_TARGET_ONLY,
-                                   NULL, NULL, NULL, err);
+        rc = yvex_server_telemetry_open(
+            &server->telemetry, SERVER_TELEMETRY_CAPACITY, err);
     if (rc == YVEX_OK)
         rc = yvex_server_engine_manager_open(
             &server->engines, YVEX_SERVER_ENGINE_CAP,
@@ -241,11 +240,11 @@ int yvex_server_create(yvex_server **out, const yvex_server_options *options,
                         sizeof(server->summary.socket_path),
                         server->socket_path);
     (void)yvex_server_telemetry_emit(
-        server->telemetry, YVEX_SERVER_EVENT_PROCESS_START,
+        server->telemetry, NULL, YVEX_SERVER_EVENT_PROCESS_START,
         YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "process",
         (unsigned long long)getpid(), admitted->worker_count, 0u, 0.0, 0.0, err);
     (void)yvex_server_telemetry_emit(
-        server->telemetry, YVEX_SERVER_EVENT_TELEMETRY_READY,
+        server->telemetry, NULL, YVEX_SERVER_EVENT_TELEMETRY_READY,
         YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "telemetry",
         SERVER_TELEMETRY_CAPACITY, 0u, 0u, 0.0, 0.0, err);
     *out = server;
@@ -504,7 +503,7 @@ int yvex_server_start(yvex_server *server, yvex_error *err)
     rc = listener_open(server, err);
     if (rc == YVEX_OK)
         rc = yvex_server_telemetry_emit(
-            server->telemetry, YVEX_SERVER_EVENT_LISTENER_READY,
+            server->telemetry, NULL, YVEX_SERVER_EVENT_LISTENER_READY,
             YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "listener",
             0600u, server->options.request_queue_capacity,
             YVEX_SERVER_ENGINE_CAP, 0.0, 0.0, err);
@@ -519,7 +518,7 @@ int yvex_server_start(yvex_server *server, yvex_error *err)
     if (rc != YVEX_OK) return rc;
     if (server->openai) yvex_server_openai_activate(server->openai);
     rc = yvex_server_telemetry_emit(
-        server->telemetry, YVEX_SERVER_EVENT_RUNTIME_READY,
+        server->telemetry, NULL, YVEX_SERVER_EVENT_RUNTIME_READY,
         YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "host",
         0u, YVEX_SERVER_ENGINE_CAP, 0u, 0.0, 0.0, err);
     return rc;
@@ -538,6 +537,7 @@ static int request_enqueue(yvex_server *server, server_work_item *item,
         item->failure_class = YVEX_CLIENT_FAILURE_MODEL_NOT_FOUND;
         return rc;
     }
+    server_event_scope_from_engine(&item->event_scope, &item->engine_summary);
     if (pthread_mutex_lock(&server->state_mutex) != 0) {
         rc = server_refuse(err, YVEX_ERR_STATE,
                            "request identity lock failed");
@@ -548,7 +548,8 @@ static int request_enqueue(yvex_server *server, server_work_item *item,
                    server->next_request_id);
     (void)pthread_mutex_unlock(&server->state_mutex);
     if (yvex_server_telemetry_emit_provider(
-            server->telemetry, YVEX_SERVER_EVENT_REQUEST_RECEIVED,
+            server->telemetry, &item->event_scope,
+            YVEX_SERVER_EVENT_REQUEST_RECEIVED,
             YVEX_SERVER_SEVERITY_INFO, item->request.session_name,
             item->request_id, NULL, "queue", item->request.prompt_bytes,
             0u, 0u, 0.0, 0.0, NULL, item->request.provider_request, NULL,
@@ -564,7 +565,8 @@ static int request_enqueue(yvex_server *server, server_work_item *item,
         goto failed;
     }
     (void)yvex_server_telemetry_emit_provider(
-        server->telemetry, YVEX_SERVER_EVENT_REQUEST_QUEUED,
+        server->telemetry, &item->event_scope,
+        YVEX_SERVER_EVENT_REQUEST_QUEUED,
         YVEX_SERVER_SEVERITY_INFO, item->request.session_name,
         item->request_id, NULL, "queue", depth,
         server->options.request_queue_capacity,
@@ -896,7 +898,7 @@ static void *client_main(void *opaque)
         yvex_provider_request_close(&provider);
     }
     (void)yvex_server_telemetry_emit(
-        server->telemetry, YVEX_SERVER_EVENT_CLIENT_DISCONNECTED,
+        server->telemetry, NULL, YVEX_SERVER_EVENT_CLIENT_DISCONNECTED,
         YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "transport",
         0u, 0u, 0u, 0.0, 0.0, NULL);
     (void)close(fd);
@@ -1017,7 +1019,7 @@ int yvex_server_stop(yvex_server *server, yvex_error *err)
     (void)yvex_server_engine_manager_scheduler_snapshot(
         server->engines, &scheduler, NULL);
     (void)yvex_server_telemetry_emit(
-        server->telemetry, YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_START,
+        server->telemetry, NULL, YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_START,
         YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "shutdown",
         scheduler.queued, server->active_clients, scheduler.active,
         0.0, 0.0, err);
@@ -1072,7 +1074,7 @@ int yvex_server_finish(yvex_server *server, yvex_error *err)
     (void)yvex_server_telemetry_metrics_copy(server->telemetry, &metrics,
                                              &cleanup);
     cleanup_rc = yvex_server_telemetry_emit(
-        server->telemetry, YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_COMPLETE,
+        server->telemetry, NULL, YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_COMPLETE,
         rc == YVEX_OK ? YVEX_SERVER_SEVERITY_INFO : YVEX_SERVER_SEVERITY_ERROR,
         NULL, NULL, NULL, "shutdown", metrics.model_close_count,
         metrics.model_open_count, metrics.active_sessions, 0.0, 0.0,

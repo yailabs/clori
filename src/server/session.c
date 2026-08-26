@@ -445,7 +445,8 @@ static int turn_fragment(void *opaque,
     if (!sink->first_fragment_ns) {
         sink->first_fragment_ns = now;
         rc = yvex_server_telemetry_emit_provider(
-            sink->registry->telemetry, YVEX_SERVER_EVENT_GENERATION_FIRST_TOKEN,
+            sink->registry->telemetry, &sink->registry->event_scope,
+            YVEX_SERVER_EVENT_GENERATION_FIRST_TOKEN,
             YVEX_SERVER_SEVERITY_INFO, sink->session->name,
             sink->request_id, sink->turn_id, "decode", token->ordinal,
             token->sampled_token_id, 0u,
@@ -481,7 +482,8 @@ static int turn_fragment(void *opaque,
             sink->reasoning_stream, classified_bytes, classified_count, err);
     if (rc == YVEX_OK)
         rc = yvex_server_telemetry_emit_provider(
-            sink->registry->telemetry, YVEX_SERVER_EVENT_GENERATION_FRAGMENT,
+            sink->registry->telemetry, &sink->registry->event_scope,
+            YVEX_SERVER_EVENT_GENERATION_FRAGMENT,
             YVEX_SERVER_SEVERITY_DEBUG, sink->session->name,
             sink->request_id, sink->turn_id, "decode", token->ordinal,
             byte_count, token->sampled_token_id, 0.0, 0.0,
@@ -521,7 +523,7 @@ static int turn_progress(void *opaque,
         double elapsed = kind >= YVEX_GENERATION_PROGRESS_PREFILL_PROGRESS
                              ? elapsed_seconds(sink->prefill_started_ns, now) : 0.0;
         rc = yvex_server_telemetry_emit_provider(
-            sink->registry->telemetry, event_kind,
+            sink->registry->telemetry, &sink->registry->event_scope, event_kind,
             YVEX_SERVER_SEVERITY_INFO, sink->session->name,
             sink->request_id, sink->turn_id, phase, value_a, value_b, 0u,
             elapsed, elapsed > 0.0 ? (double)value_a / elapsed : 0.0,
@@ -561,7 +563,8 @@ static int turn_speculation_progress(
         return YVEX_ERR_INVALID_ARG;
     }
     rc = yvex_server_telemetry_emit_provider(
-        sink->registry->telemetry, kinds[progress->kind],
+        sink->registry->telemetry, &sink->registry->event_scope,
+        kinds[progress->kind],
         YVEX_SERVER_SEVERITY_INFO, sink->session->name, sink->request_id,
         sink->turn_id, "speculation", 0u, 0u, 0u, progress->seconds, 0.0,
         progress, sink->request->provider_request, &event, err);
@@ -1139,7 +1142,7 @@ static int session_turn_publish(server_session_registry *registry, server_sessio
         session_partial_turn_set(session, result, status);
     }
     (void)yvex_server_telemetry_emit_provider(
-        registry->telemetry,
+        registry->telemetry, &registry->event_scope,
         status == YVEX_OK
             ? YVEX_SERVER_EVENT_GENERATION_COMPLETED
             : (status == YVEX_ERR_CANCELLED
@@ -1168,7 +1171,8 @@ static int session_profile_publish(server_session_registry *registry,
     int rc;
 #define PROFILE_EVENT(phase_, a_, b_, c_, nanoseconds_)                                   \
     yvex_server_telemetry_emit_provider(                                                   \
-        registry->telemetry, YVEX_SERVER_EVENT_GENERATION_PROFILE,                        \
+        registry->telemetry, &registry->event_scope,                                      \
+        YVEX_SERVER_EVENT_GENERATION_PROFILE,                                             \
         YVEX_SERVER_SEVERITY_DEBUG, session->name, sink->request_id, sink->turn_id,       \
         (phase_), (a_), (b_), (c_), (double)(nanoseconds_) / 1000000000.0, 0.0,           \
         NULL, request->provider_request, NULL, err)
@@ -1470,7 +1474,8 @@ static int session_turn(server_session_registry *registry,
     rc = emit(emit_context, &started, err);
     if (rc == YVEX_OK)
         rc = yvex_server_telemetry_emit_provider(
-            registry->telemetry, YVEX_SERVER_EVENT_REQUEST_STARTED,
+            registry->telemetry, &registry->event_scope,
+            YVEX_SERVER_EVENT_REQUEST_STARTED,
             YVEX_SERVER_SEVERITY_INFO, session->name, sink.request_id,
             sink.turn_id, "turn",
             request->provider_request
@@ -1566,7 +1571,8 @@ int yvex_server_sessions_execute(server_session_registry *registry,
         if (session->state == YVEX_SERVER_SESSION_DETACHED)
             session->state = YVEX_SERVER_SESSION_READY;
         rc = yvex_server_telemetry_emit(
-            registry->telemetry, YVEX_SERVER_EVENT_SESSION_ATTACHED,
+            registry->telemetry, &registry->event_scope,
+            YVEX_SERVER_EVENT_SESSION_ATTACHED,
             YVEX_SERVER_SEVERITY_INFO, session->name, NULL, NULL, "session",
             session->attached_clients, 0u, 0u, 0.0, 0.0, err);
         if (rc == YVEX_OK)
@@ -1577,7 +1583,8 @@ int yvex_server_sessions_execute(server_session_registry *registry,
         if (!session->attached_clients && session->state == YVEX_SERVER_SESSION_READY)
             session->state = YVEX_SERVER_SESSION_DETACHED;
         rc = yvex_server_telemetry_emit(
-            registry->telemetry, YVEX_SERVER_EVENT_SESSION_DETACHED,
+            registry->telemetry, &registry->event_scope,
+            YVEX_SERVER_EVENT_SESSION_DETACHED,
             YVEX_SERVER_SEVERITY_INFO, session->name, NULL, NULL, "session",
             session->attached_clients, 0u, 0u, 0.0, 0.0, err);
         if (rc == YVEX_OK)

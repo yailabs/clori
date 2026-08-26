@@ -239,6 +239,7 @@ static int text_engine_open(server_engine_manager *manager,
     yvex_model_engine_summary model = {0};
     yvex_runtime_generation_context_summary capacity = {0};
     yvex_runtime_generation_options startup;
+    server_event_scope event_scope = {0};
     const yvex_model_engine_view *view;
     yvex_paths paths;
     yvex_error path_error;
@@ -259,10 +260,18 @@ static int text_engine_open(server_engine_manager *manager,
         rc = yvex_model_engine_summary_copy(engine->model, &model, err);
     if (rc == YVEX_OK)
         rc = execution_probe(engine, &capacity, err);
-    if (rc == YVEX_OK)
+    if (rc == YVEX_OK) {
+        event_scope.generation_mode = engine->options.generation_mode;
+        yvex_runtime_identity_copy(event_scope.runtime_model_identity,
+                                   model.runtime_model_identity);
+        yvex_runtime_identity_copy(event_scope.artifact_identity,
+                                   model.artifact_identity);
+        yvex_runtime_identity_copy(event_scope.specialization_identity,
+                                   model.engine_specialization_identity);
         rc = yvex_server_sessions_open(
             &engine->sessions, engine->model, &engine->options, engine->generation,
-            engine->continuous_batching, manager->telemetry, err);
+            engine->continuous_batching, &event_scope, manager->telemetry, err);
+    }
     view = rc == YVEX_OK ? yvex_model_engine_view_get(engine->model) : NULL;
     if (rc != YVEX_OK || !view) return rc != YVEX_OK ? rc : YVEX_ERR_STATE;
     engine->summary.context_capacity = engine->options.context_capacity;
@@ -547,8 +556,10 @@ int yvex_server_engine_manager_load(
     (void)pthread_cond_broadcast(&manager->condition);
     (void)pthread_mutex_unlock(&manager->mutex);
     if (rc == YVEX_OK) {
+        server_event_scope event_scope;
+        server_event_scope_from_engine(&event_scope, &published);
         (void)yvex_server_telemetry_emit(
-            manager->telemetry, YVEX_SERVER_EVENT_RUNTIME_READY,
+            manager->telemetry, &event_scope, YVEX_SERVER_EVENT_RUNTIME_READY,
             YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, published.alias,
             published.generation, published.generation_mode,
             published.backend, 0.0, 0.0, err);

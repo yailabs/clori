@@ -44,6 +44,7 @@ struct server_media_registry {
     char video_artifact[YVEX_PATH_CAP], audio_artifact[YVEX_PATH_CAP];
     char profile_identity[YVEX_SHA256_HEX_CAP];
     char runtime_model_identity[YVEX_SHA256_HEX_CAP];
+    server_event_scope event_scope;
     unsigned long long profile_count, frames_per_chunk, frame_remainder;
     unsigned long long minimum_frames, maximum_frames;
     unsigned long long minimum_inference_steps, maximum_inference_steps;
@@ -242,6 +243,9 @@ int yvex_server_media_registry_open(
     }
     if (preset_admit(registry, err) != YVEX_OK) goto failed;
     if (registry_identity(registry, err) != YVEX_OK) goto failed;
+    registry->event_scope.generation_mode = YVEX_SERVER_GENERATION_MEDIA;
+    yvex_runtime_identity_copy(registry->event_scope.specialization_identity,
+                               registry->profile_identity);
     *out = registry;
     yvex_error_clear(err);
     return YVEX_OK;
@@ -387,7 +391,8 @@ static int media_event_emit(
 {
     yvex_client_message message = {0};
     int rc = yvex_server_telemetry_emit_provider(
-        sink->registry->telemetry, kind, YVEX_SERVER_SEVERITY_INFO,
+        sink->registry->telemetry, &sink->registry->event_scope, kind,
+        YVEX_SERVER_SEVERITY_INFO,
         sink->session->name, sink->request_id, NULL, phase, value_a, value_b,
         value_c, seconds, 0.0, NULL, NULL, &message.event, err);
     if (rc != YVEX_OK) return rc;
@@ -506,7 +511,7 @@ static int generation_execute(server_media_registry *registry,
         session->state = rc == YVEX_ERR_CANCELLED ? YVEX_SERVER_SESSION_READY
                                                   : YVEX_SERVER_SESSION_FAILED;
         (void)yvex_server_telemetry_emit(
-            registry->telemetry,
+            registry->telemetry, &registry->event_scope,
             rc == YVEX_ERR_CANCELLED ? YVEX_SERVER_EVENT_GENERATION_CANCELLED
                                      : YVEX_SERVER_EVENT_GENERATION_FAILED,
             rc == YVEX_ERR_CANCELLED ? YVEX_SERVER_SEVERITY_INFO
@@ -519,7 +524,8 @@ static int generation_execute(server_media_registry *registry,
     }
     session->state = YVEX_SERVER_SESSION_READY;
     rc = yvex_server_telemetry_emit(
-        registry->telemetry, YVEX_SERVER_EVENT_GENERATION_COMPLETED,
+        registry->telemetry, &registry->event_scope,
+        YVEX_SERVER_EVENT_GENERATION_COMPLETED,
         YVEX_SERVER_SEVERITY_INFO, session->name, request_id, NULL,
         "completed", result.frames, result.file_bytes, result.audio_samples,
         seconds, 0.0, err);
@@ -759,7 +765,8 @@ static void component_admission_observe(
                : 0.0;
     yvex_error_clear(&event_error);
     (void)yvex_server_telemetry_emit(
-        registry->telemetry, YVEX_SERVER_EVENT_ARTIFACT_OPEN_COMPLETE,
+        registry->telemetry, &registry->event_scope,
+        YVEX_SERVER_EVENT_ARTIFACT_OPEN_COMPLETE,
         evidence->cache_failure ? YVEX_SERVER_SEVERITY_WARNING
                                 : YVEX_SERVER_SEVERITY_INFO,
         NULL, NULL, NULL, role, evidence->bytes_hashed, evidence->file_bytes,
@@ -788,10 +795,13 @@ int yvex_server_media_registry_start(
     open_options.observer_context = registry;
     rc = yvex_runtime_media_model_open(
         &registry->model, &registry->generation, &open_options, summary, err);
-    if (rc == YVEX_OK)
+    if (rc == YVEX_OK) {
         yvex_core_text_copy(registry->runtime_model_identity,
                             sizeof(registry->runtime_model_identity),
                             summary->model_identity);
+        yvex_runtime_identity_copy(registry->event_scope.runtime_model_identity,
+                                   summary->model_identity);
+    }
     (void)pthread_mutex_unlock(&registry->mutex);
     return rc;
 }

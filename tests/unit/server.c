@@ -449,13 +449,11 @@ static int test_bounded_telemetry_overflow(void)
     yvex_error err;
     unsigned long long cursor = 0u, index;
     int rc, saw_drop = 0;
-    rc = yvex_server_telemetry_open(
-        &telemetry, 2u, YVEX_SERVER_GENERATION_TARGET_ONLY,
-        NULL, NULL, NULL, &err);
+    rc = yvex_server_telemetry_open(&telemetry, 2u, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "bounded telemetry open");
     for (index = 0u; index < 4u; ++index) {
         rc = yvex_server_telemetry_emit(
-            telemetry, YVEX_SERVER_EVENT_GENERATION_PROGRESS,
+            telemetry, NULL, YVEX_SERVER_EVENT_GENERATION_PROGRESS,
             YVEX_SERVER_SEVERITY_DEBUG, "s", "r", "t", "decode",
             index, 0u, 0u, 0.0, 0.0, &err);
         YVEX_TEST_ASSERT(rc == YVEX_OK, "bounded telemetry publish");
@@ -774,8 +772,7 @@ static int test_media_direct_prompt_routing(void)
     int rc;
     YVEX_TEST_ASSERT(mkdtemp(root) != NULL, "direct media output root");
     YVEX_TEST_ASSERT(media_options(&options, root), "direct media options");
-    rc = yvex_server_telemetry_open(&telemetry, 16u, YVEX_SERVER_GENERATION_MEDIA,
-                                    NULL, NULL, NULL, &err);
+    rc = yvex_server_telemetry_open(&telemetry, 16u, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "direct media telemetry");
     rc = yvex_server_media_registry_open(&registry, &options, telemetry, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "direct media registry");
@@ -801,8 +798,7 @@ static int test_media_direct_prompt_routing(void)
     YVEX_TEST_ASSERT(yvex_server_media_registry_summary(registry, &first, &err) == YVEX_OK,
                      "media first identity");
     YVEX_TEST_ASSERT(yvex_server_telemetry_open(
-                         &second_telemetry, 16u, YVEX_SERVER_GENERATION_MEDIA,
-                         NULL, NULL, NULL, &err) == YVEX_OK &&
+                         &second_telemetry, 16u, &err) == YVEX_OK &&
                          yvex_server_media_registry_open(
                              &second, &options, second_telemetry, &err) == YVEX_OK &&
                          yvex_server_media_registry_summary(second, &repeated, &err) == YVEX_OK &&
@@ -1022,6 +1018,7 @@ static int test_provider_telemetry(void)
     yvex_provider_message message = {0};
     yvex_provider_request request = {0};
     yvex_runtime_speculation_progress progress = {0};
+    server_event_scope scope = {0};
     server_telemetry *telemetry = NULL;
     yvex_server_event emitted, event, observation;
     yvex_error err;
@@ -1042,12 +1039,14 @@ static int test_provider_telemetry(void)
     strcpy(request.external_correlation_id, "chatcmpl-yvex-1");
     rc = yvex_provider_request_seal(&request, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "provider telemetry request seal");
-    rc = yvex_server_telemetry_open(
-        &telemetry, 4u, YVEX_SERVER_GENERATION_DSPARK,
-        NULL, NULL, NULL, &err);
+    scope.generation_mode = YVEX_SERVER_GENERATION_DSPARK;
+    strcpy(scope.runtime_model_identity, request.request_identity);
+    strcpy(scope.artifact_identity, request.request_identity);
+    strcpy(scope.specialization_identity, request.request_identity);
+    rc = yvex_server_telemetry_open(&telemetry, 4u, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "provider telemetry open");
     rc = yvex_server_telemetry_emit_provider(
-        telemetry, YVEX_SERVER_EVENT_REQUEST_STARTED,
+        telemetry, &scope, YVEX_SERVER_EVENT_REQUEST_STARTED,
         YVEX_SERVER_SEVERITY_INFO, "session", "r1", "t1", "turn",
         1u, 0u, 4u, 0.0, 0.0, NULL, &request, &emitted, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "provider telemetry emit");
@@ -1061,7 +1060,15 @@ static int test_provider_telemetry(void)
                            request.request_identity,
                            "provider request event identity");
     YVEX_TEST_ASSERT(event.generation_mode == YVEX_SERVER_GENERATION_DSPARK,
-                     "generic telemetry preserves the configured generation mode");
+                     "event scope preserves the engine generation mode");
+    YVEX_TEST_ASSERT_STREQ(event.runtime_model_identity,
+                           scope.runtime_model_identity,
+                           "event scope owns model lineage");
+    YVEX_TEST_ASSERT_STREQ(event.artifact_identity, scope.artifact_identity,
+                           "event scope owns artifact lineage");
+    YVEX_TEST_ASSERT_STREQ(event.variant_identity,
+                           scope.specialization_identity,
+                           "event scope owns specialization lineage");
     observation = event;
     observation.process_id++;
     observation.wall_time_ns++;
@@ -1093,7 +1100,7 @@ static int test_provider_telemetry(void)
     progress.seconds = 0.25;
     strcpy(progress.policy_identity, request.request_identity);
     rc = yvex_server_telemetry_emit_provider(
-        telemetry, YVEX_SERVER_EVENT_SPECULATIVE_CYCLE_COMMITTED,
+        telemetry, &scope, YVEX_SERVER_EVENT_SPECULATIVE_CYCLE_COMMITTED,
         YVEX_SERVER_SEVERITY_INFO, "session", "r1", "t1", "speculation",
         0u, 0u, 0u, progress.seconds, 0.0, &progress, &request, &emitted,
         &err);
@@ -1118,6 +1125,13 @@ static int test_provider_telemetry(void)
                          strstr(json, "\"discarded_tokens\":1") != NULL &&
                          strstr(json, "\"confidence_logit_count\":5") != NULL,
                      "typed speculation telemetry JSON");
+    scope.runtime_model_identity[0] = 'z';
+    rc = yvex_server_telemetry_emit_provider(
+        telemetry, &scope, YVEX_SERVER_EVENT_REQUEST_STARTED,
+        YVEX_SERVER_SEVERITY_INFO, "session", "r2", "t2", "turn",
+        0u, 0u, 0u, 0.0, 0.0, NULL, &request, NULL, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_ERR_INVALID_ARG,
+                     "invalid engine event lineage refuses before publication");
     yvex_server_telemetry_close(&telemetry);
     return 0;
 }

@@ -172,17 +172,20 @@ static int send_native_progress(int fd, const yvex_client_request *request,
     static const char identity[] =
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     server_telemetry *telemetry = NULL;
+    server_event_scope scope = {0};
     size_t index;
-    int rc = yvex_server_telemetry_open(&telemetry, 8u,
-                                        YVEX_SERVER_GENERATION_TARGET_ONLY,
-                                        identity, identity,
-                                        identity, err);
+    int rc;
+    scope.generation_mode = YVEX_SERVER_GENERATION_TARGET_ONLY;
+    strcpy(scope.runtime_model_identity, identity);
+    strcpy(scope.artifact_identity, identity);
+    strcpy(scope.specialization_identity, identity);
+    rc = yvex_server_telemetry_open(&telemetry, 8u, err);
     for (index = 0u; rc == YVEX_OK && index < event_count; ++index) {
         yvex_client_message message;
         message_base(&message, YVEX_CLIENT_MESSAGE_EVENT, request);
         message.stream_channel = YVEX_CLIENT_STREAM_CONTROL_EVENT;
         rc = yvex_server_telemetry_emit_provider(
-            telemetry, kinds[index], YVEX_SERVER_SEVERITY_INFO,
+            telemetry, &scope, kinds[index], YVEX_SERVER_SEVERITY_INFO,
             request->session_name, "fixture-request", "fixture-turn",
             phases[index], values[index][0], values[index][1], 0u,
             index >= 2u ? (double)(index - 1u) : 0.0,
@@ -212,11 +215,14 @@ static int send_event_stream(int fd, const yvex_client_request *request,
     static const char identity[] =
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     server_telemetry *telemetry = NULL;
+    server_event_scope scope = {0};
     size_t index;
-    int rc = yvex_server_telemetry_open(&telemetry, 8u,
-                                        YVEX_SERVER_GENERATION_DSPARK,
-                                        identity, identity,
-                                        identity, err);
+    int rc;
+    scope.generation_mode = YVEX_SERVER_GENERATION_DSPARK;
+    strcpy(scope.runtime_model_identity, identity);
+    strcpy(scope.artifact_identity, identity);
+    strcpy(scope.specialization_identity, identity);
+    rc = yvex_server_telemetry_open(&telemetry, 8u, err);
     for (index = 0u; rc == YVEX_OK && index < sizeof(kinds) / sizeof(kinds[0]); ++index) {
         yvex_client_message message;
         yvex_runtime_speculation_progress speculation = {0};
@@ -242,7 +248,7 @@ static int send_event_stream(int fd, const yvex_client_request *request,
             speculation_ptr = &speculation;
         }
         rc = yvex_server_telemetry_emit_provider(
-            telemetry, kinds[index], YVEX_SERVER_SEVERITY_INFO,
+            telemetry, &scope, kinds[index], YVEX_SERVER_SEVERITY_INFO,
             index < 5u ? "fixture" : NULL, index < 5u ? "fixture-request" : NULL,
             index < 5u ? "fixture-turn" : NULL, phases[index], values[index][0],
             values[index][1], values[index][2],

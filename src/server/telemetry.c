@@ -24,11 +24,7 @@ struct server_telemetry {
     unsigned long long capacity, next_sequence, retained_count;
     struct timespec started;
     yvex_server_metrics metrics;
-    char runtime_model_identity[YVEX_SHA256_HEX_CAP];
-    char artifact_identity[YVEX_SHA256_HEX_CAP];
-    char variant_identity[YVEX_SHA256_HEX_CAP];
     unsigned long long active_subscribers;
-    yvex_server_generation_mode generation_mode;
     int mutex_ready, condition_ready, closing;
 };
 static int event_identity(yvex_server_event *event);
@@ -114,16 +110,12 @@ static int event_identity(yvex_server_event *event)
     return 1;
 }
 
-int yvex_server_telemetry_open(server_telemetry **out, unsigned long long capacity,
-                          yvex_server_generation_mode generation_mode,
-                          const char *runtime_model_identity,
-                          const char *artifact_identity,
-                          const char *variant_identity, yvex_error *err)
+int yvex_server_telemetry_open(server_telemetry **out,
+                               unsigned long long capacity, yvex_error *err)
 {
     server_telemetry *telemetry;
     if (out) *out = NULL;
-    if (!out || !capacity || capacity > SIZE_MAX / sizeof(yvex_server_event) ||
-        generation_mode > YVEX_SERVER_GENERATION_MEDIA) {
+    if (!out || !capacity || capacity > SIZE_MAX / sizeof(yvex_server_event)) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.telemetry.open",
                        "bounded telemetry capacity is required");
         return YVEX_ERR_INVALID_ARG;
@@ -140,18 +132,8 @@ int yvex_server_telemetry_open(server_telemetry **out, unsigned long long capaci
     }
     telemetry->capacity = capacity;
     telemetry->next_sequence = 1u;
-    telemetry->generation_mode = generation_mode;
     telemetry->metrics.schema_version = YVEX_RUNTIME_METRICS_SCHEMA_VERSION;
     (void)clock_gettime(CLOCK_MONOTONIC, &telemetry->started);
-    yvex_core_text_copy(telemetry->runtime_model_identity,
-                        sizeof(telemetry->runtime_model_identity),
-                        runtime_model_identity ? runtime_model_identity : "");
-    yvex_core_text_copy(telemetry->artifact_identity,
-                        sizeof(telemetry->artifact_identity),
-                        artifact_identity ? artifact_identity : "");
-    yvex_core_text_copy(telemetry->variant_identity,
-                        sizeof(telemetry->variant_identity),
-                        variant_identity ? variant_identity : "");
     if (pthread_mutex_init(&telemetry->mutex, NULL) != 0) {
         free(telemetry->events);
         free(telemetry);
@@ -179,7 +161,8 @@ int yvex_server_telemetry_open(server_telemetry **out, unsigned long long capaci
  * Refuses invalid ownership or identity derivation.
  */
 int yvex_server_telemetry_emit_provider(
-    server_telemetry *telemetry, yvex_server_event_kind kind,
+    server_telemetry *telemetry, const server_event_scope *scope,
+    yvex_server_event_kind kind,
     yvex_server_event_severity severity, const char *session_id,
     const char *request_id, const char *turn_id, const char *phase,
     unsigned long long value_a, unsigned long long value_b,
@@ -191,7 +174,15 @@ int yvex_server_telemetry_emit_provider(
     yvex_server_event event;
     int ring_full;
     if (!telemetry || kind > YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_COMPLETE ||
-        severity > YVEX_SERVER_SEVERITY_FATAL) {
+        severity > YVEX_SERVER_SEVERITY_FATAL ||
+        (scope &&
+         (scope->generation_mode > YVEX_SERVER_GENERATION_MEDIA ||
+          (scope->runtime_model_identity[0] &&
+           !yvex_sha256_hex_valid(scope->runtime_model_identity)) ||
+          (scope->artifact_identity[0] &&
+           !yvex_sha256_hex_valid(scope->artifact_identity)) ||
+          (scope->specialization_identity[0] &&
+           !yvex_sha256_hex_valid(scope->specialization_identity))))) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.telemetry.emit",
                        "valid telemetry owner and event facts are required");
         return YVEX_ERR_INVALID_ARG;
@@ -236,7 +227,8 @@ int yvex_server_telemetry_emit_provider(
     event.value_c = value_c;
     event.seconds = seconds;
     event.rate = rate;
-    event.generation_mode = telemetry->generation_mode;
+    event.generation_mode = scope ? scope->generation_mode
+                                  : YVEX_SERVER_GENERATION_TARGET_ONLY;
     if (speculation) {
         event.speculative_cycle = speculation->cycle;
         event.proposed_tokens = speculation->proposed_tokens;
@@ -272,13 +264,17 @@ int yvex_server_telemetry_emit_provider(
                             sizeof(event.external_correlation_id),
                             provider->external_correlation_id);
     }
-    yvex_core_text_copy(event.runtime_model_identity,
-                        sizeof(event.runtime_model_identity),
-                        telemetry->runtime_model_identity);
-    yvex_core_text_copy(event.artifact_identity, sizeof(event.artifact_identity),
-                        telemetry->artifact_identity);
-    yvex_core_text_copy(event.variant_identity, sizeof(event.variant_identity),
-                        telemetry->variant_identity);
+    if (scope) {
+        yvex_core_text_copy(event.runtime_model_identity,
+                            sizeof(event.runtime_model_identity),
+                            scope->runtime_model_identity);
+        yvex_core_text_copy(event.artifact_identity,
+                            sizeof(event.artifact_identity),
+                            scope->artifact_identity);
+        yvex_core_text_copy(event.variant_identity,
+                            sizeof(event.variant_identity),
+                            scope->specialization_identity);
+    }
     if (pthread_mutex_lock(&telemetry->mutex) != 0) {
         yvex_error_set(err, YVEX_ERR_STATE, "server.telemetry.emit",
                        "telemetry mutex acquisition failed");
@@ -342,6 +338,7 @@ int yvex_server_telemetry_emit_provider(
  * Appends one identity-sealed event.
  */
 int yvex_server_telemetry_emit(server_telemetry *telemetry,
+                               const server_event_scope *scope,
                                yvex_server_event_kind kind,
                                yvex_server_event_severity severity,
                                const char *session_id, const char *request_id,
@@ -352,7 +349,7 @@ int yvex_server_telemetry_emit(server_telemetry *telemetry,
                                double rate, yvex_error *err)
 {
     return yvex_server_telemetry_emit_provider(
-        telemetry, kind, severity, session_id, request_id, turn_id, phase,
+        telemetry, scope, kind, severity, session_id, request_id, turn_id, phase,
         value_a, value_b, value_c, seconds, rate, NULL, NULL, NULL, err);
 }
 
@@ -446,23 +443,6 @@ int yvex_server_telemetry_metrics_copy(server_telemetry *telemetry,
     return YVEX_OK;
 }
 
-void yvex_server_telemetry_identities(server_telemetry *telemetry,
-                                 const char *runtime_model_identity,
-                                 const char *artifact_identity,
-                                 const char *variant_identity)
-{
-    if (!telemetry || pthread_mutex_lock(&telemetry->mutex) != 0) return;
-    yvex_core_text_copy(telemetry->runtime_model_identity,
-                        sizeof(telemetry->runtime_model_identity),
-                        runtime_model_identity ? runtime_model_identity : "");
-    yvex_core_text_copy(telemetry->artifact_identity,
-                        sizeof(telemetry->artifact_identity),
-                        artifact_identity ? artifact_identity : "");
-    yvex_core_text_copy(telemetry->variant_identity,
-                        sizeof(telemetry->variant_identity),
-                        variant_identity ? variant_identity : "");
-    (void)pthread_mutex_unlock(&telemetry->mutex);
-}
 /*
  * Account one process-lifetime model admission.
  *

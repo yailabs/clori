@@ -9,6 +9,7 @@
 
 #include <pthread.h>
 #include <stdatomic.h>
+#include <string.h>
 
 #include <yvex/internal/generation.h>
 #include <yvex/internal/server_media.h>
@@ -26,6 +27,25 @@ typedef struct server_engine_lease {
     void *engine;
     unsigned long long generation;
 } server_engine_lease;
+typedef struct {
+    yvex_server_generation_mode generation_mode;
+    char runtime_model_identity[YVEX_SHA256_HEX_CAP];
+    char artifact_identity[YVEX_SHA256_HEX_CAP];
+    char specialization_identity[YVEX_SHA256_HEX_CAP];
+} server_event_scope;
+static inline void server_event_scope_from_engine(
+    server_event_scope *scope, const yvex_server_engine_summary *engine)
+{
+    memset(scope, 0, sizeof(*scope));
+    if (!engine) return;
+    scope->generation_mode = engine->generation_mode;
+    memcpy(scope->runtime_model_identity, engine->runtime_model_identity,
+           sizeof(scope->runtime_model_identity));
+    memcpy(scope->artifact_identity, engine->artifact_identity,
+           sizeof(scope->artifact_identity));
+    memcpy(scope->specialization_identity, engine->specialization_identity,
+           sizeof(scope->specialization_identity));
+}
 #define SERVER_SCHEDULER_KEY_CAP 224u
 
 typedef void (*server_scheduler_execute)(void *context, void *work);
@@ -100,6 +120,7 @@ struct server_session_registry {
     unsigned long long capacity, count, next_id;
     int mutex_ready, closing, continuous_batching;
     unsigned long long engine_generation;
+    server_event_scope event_scope;
 };
 
 typedef struct {
@@ -214,12 +235,10 @@ int yvex_server_protocol_receive(int fd, yvex_client_request *request,
 int yvex_server_protocol_send(int fd, const yvex_client_message *message,
                               yvex_error *err);
 
-int yvex_server_telemetry_open(server_telemetry **out, unsigned long long capacity,
-                          yvex_server_generation_mode generation_mode,
-                          const char *runtime_model_identity,
-                          const char *artifact_identity,
-                          const char *variant_identity, yvex_error *err);
+int yvex_server_telemetry_open(server_telemetry **out,
+                               unsigned long long capacity, yvex_error *err);
 int yvex_server_telemetry_emit(server_telemetry *telemetry,
+                          const server_event_scope *scope,
                           yvex_server_event_kind kind,
                           yvex_server_event_severity severity,
                           const char *session_id, const char *request_id,
@@ -229,7 +248,8 @@ int yvex_server_telemetry_emit(server_telemetry *telemetry,
                           unsigned long long value_c,
                           double seconds, double rate, yvex_error *err);
 int yvex_server_telemetry_emit_provider(
-    server_telemetry *telemetry, yvex_server_event_kind kind,
+    server_telemetry *telemetry, const server_event_scope *scope,
+    yvex_server_event_kind kind,
     yvex_server_event_severity severity, const char *session_id,
     const char *request_id, const char *turn_id, const char *phase,
     unsigned long long value_a, unsigned long long value_b,
@@ -243,10 +263,6 @@ int yvex_server_telemetry_next(server_telemetry *telemetry,
 int yvex_server_telemetry_metrics_copy(server_telemetry *telemetry,
                                   yvex_server_metrics *metrics,
                                   yvex_error *err);
-void yvex_server_telemetry_identities(server_telemetry *telemetry,
-                                 const char *runtime_model_identity,
-                                 const char *artifact_identity,
-                                 const char *variant_identity);
 void yvex_server_telemetry_model_opened(server_telemetry *telemetry,
                                    unsigned long long mapped_artifact_bytes,
                                    unsigned long long host_bytes,
@@ -289,6 +305,7 @@ int yvex_server_sessions_open(server_session_registry **out, yvex_model_engine *
                               const yvex_server_engine_options *options,
                               unsigned long long engine_generation,
                               int continuous_batching,
+                              const server_event_scope *event_scope,
                               server_telemetry *telemetry,
                               yvex_error *err);
 int yvex_server_sessions_execute(server_session_registry *registry,
