@@ -8,6 +8,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+typedef struct yvex_component_text_recipe yvex_component_text_recipe;
 /* Encoded attention is a private graph/backend ABI, never installed capability surface. */
 #define YVEX_BACKEND_ATTENTION_JOB_SCHEMA 3u
 typedef enum {
@@ -190,19 +191,6 @@ int yvex_backend_attention_complete(yvex_backend *backend,
                                     yvex_backend_attention_completion *completion,
                                     int barrier_observed, yvex_error *err);
 
-/* A family compiler supplies this complete text-stack geometry and semantic identity. The CUDA
- * operation executes it without recovering a source architecture or selecting family policy. */
-#define YVEX_BACKEND_TEXT_ENCODER_SCHEMA_V1 1u
-typedef struct {
-    unsigned int schema_version;
-    const char *semantic_identity;
-    const char *embedding_identity_domain;
-    const char *encoder_identity_domain;
-    unsigned long long layer_capacity, hidden_width, ffn_width;
-    unsigned long long query_heads, kv_heads, head_dimension;
-    unsigned long long vocabulary_size, rope_theta;
-    float normalization_epsilon;
-} yvex_backend_text_encoder_geometry;
 typedef enum {
     YVEX_BACKEND_TEXT_EMBEDDING = 0,
     YVEX_BACKEND_TEXT_INPUT_NORM,
@@ -232,7 +220,7 @@ typedef struct {
     int complete;
 } yvex_backend_text_execution_result;
 int yvex_backend_text_embedding_execute(
-    yvex_backend *backend, const yvex_backend_text_encoder_geometry *geometry,
+    yvex_backend *backend, const yvex_component_text_recipe *geometry,
     const unsigned char *encoded, unsigned long long encoded_bytes,
     unsigned int qtype, unsigned long long row_count, unsigned long long row_width,
     unsigned long long row_bytes, const char *residency_identity,
@@ -240,7 +228,7 @@ int yvex_backend_text_embedding_execute(
     unsigned long long token_count, float *output, unsigned long long output_capacity,
     yvex_backend_text_execution_result *result, yvex_error *err);
 int yvex_backend_text_encoder_execute(
-    yvex_backend *backend, const yvex_backend_text_encoder_geometry *geometry,
+    yvex_backend *backend, const yvex_component_text_recipe *geometry,
     const yvex_backend_text_weight *weights, unsigned long long layer_count,
     const char *residency_identity, unsigned long long resident_bytes,
     const unsigned int *token_ids, unsigned long long token_count, float *output,

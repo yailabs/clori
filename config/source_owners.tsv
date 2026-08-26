@@ -227,7 +227,7 @@ src/runtime/benchmark.c	runtime	runtime.benchmark	generic	private	file-serializa
 include/yvex/internal/runtime_prefill.h	runtime	runtime.prefill	generic	private	internal-abi	runtime,graph,cli,tests	interface	none
 src/runtime/prefill.c	runtime	runtime.prefill	generic	private	transactional-execution	runtime,graph,cli,tests	implementation	none
 include/yvex/internal/transformer.h	graph	graph.transformer	generic	private	internal-abi	graph,runtime,cli,tests	interface	none
-include/yvex/internal/joint_transformer.h	backend.cuda	backend.cuda.joint_transformer	backend	private	backend-interface	graph.family,backend	interface	none
+include/yvex/internal/joint_transformer.h	graph	graph.joint_transformer	generic	private	internal-abi	graph.family,runtime,backend	interface	none
 src/runtime/transformer.c	runtime	runtime.transformer	generic	private	transactional-execution	runtime,graph,cli,tests	implementation	none
 src/runtime/transformer_input.c	runtime	runtime.transformer_input	generic	private	file-serialization	runtime,cli,tests	implementation	none
 src/runtime/residency.c	runtime	runtime.residency	generic	private	resource-lifecycle	artifact,graph,runtime	implementation	none

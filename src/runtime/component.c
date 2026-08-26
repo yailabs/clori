@@ -8,6 +8,7 @@
 #include <yvex/internal/backend.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/convolution.h>
+#include <yvex/internal/joint_transformer.h>
 #include <yvex/internal/runtime.h>
 #include <yvex/internal/transformer.h>
 
@@ -20,6 +21,12 @@ struct yvex_runtime_component_session {
     unsigned long long workspace_bytes;
     yvex_runtime_residency_summary summary;
 };
+
+static const yvex_materialized_tensor_binding *component_binding_find(
+    const yvex_materialization_session *, const char *);
+static int component_weight_bind(
+    const yvex_materialization_session *, const yvex_runtime_residency *,
+    const char *, yvex_component_encoded_weight *, yvex_error *);
 
 int yvex_runtime_component_session_close(yvex_runtime_component_session **session,
                                          yvex_error *err)
@@ -61,7 +68,7 @@ int yvex_runtime_component_session_close(yvex_runtime_component_session **sessio
     return rc;
 }
 
-int yvex_runtime_component_session_prepare_workspace(
+static int component_session_prepare_workspace(
     yvex_runtime_component_session *session, unsigned long long bytes, yvex_error *err)
 {
     yvex_backend_tensor_desc descriptor = {0};
@@ -188,7 +195,7 @@ yvex_materialization_session *yvex_runtime_component_session_materialization(
     return session ? session->materialization : NULL;
 }
 
-const yvex_runtime_residency *yvex_runtime_component_session_residency(
+static const yvex_runtime_residency *component_session_residency(
     const yvex_runtime_component_session *session)
 {
     return session ? session->residency : NULL;
@@ -203,6 +210,240 @@ const yvex_runtime_residency_summary *yvex_runtime_component_session_summary(
     const yvex_runtime_component_session *session)
 {
     return session ? &session->summary : NULL;
+}
+
+static int component_text_weight_bind(
+    const yvex_runtime_component_session *session, const char *name,
+    yvex_backend_text_weight *weight, yvex_error *err)
+{
+    yvex_component_encoded_weight component = {0};
+    int rc = component_weight_bind(
+        session ? session->materialization : NULL, session ? session->residency : NULL,
+        name, &component, err);
+    if (rc == YVEX_OK) {
+        weight->encoded = component.encoded;
+        weight->encoded_bytes = component.encoded_bytes;
+        weight->row_count = component.row_count;
+        weight->row_width = component.row_width;
+        weight->row_bytes = component.row_bytes;
+        weight->qtype = component.qtype;
+    }
+    return rc;
+}
+
+static int component_text_weights_bind(
+    const yvex_runtime_component_session *session, const yvex_component_text_request *request,
+    yvex_backend_text_weight *weights, yvex_error *err)
+{
+    unsigned long long layer, slot, index;
+    int rc = component_text_weight_bind(session, request->embedding_weight_name, weights, err);
+    for (layer = 0ull; rc == YVEX_OK && layer < request->layer_count; ++layer) {
+        for (slot = 0ull; rc == YVEX_OK &&
+                            slot < YVEX_COMPONENT_TEXT_LAYER_WEIGHT_COUNT; ++slot) {
+            char name[256] = {0};
+            index = 1ull + layer * YVEX_COMPONENT_TEXT_LAYER_WEIGHT_COUNT + slot;
+            rc = request->layer_weight_name(
+                request->weight_name_context, layer, (unsigned int)slot, name, err);
+            if (rc == YVEX_OK)
+                rc = component_text_weight_bind(session, name, weights + index, err);
+        }
+    }
+    return rc;
+}
+
+static void component_text_result_project(
+    yvex_runtime_av_conditioning_result *out,
+    const yvex_backend_text_execution_result *source)
+{
+    out->token_count = source->token_count;
+    out->hidden_width = source->hidden_width;
+    out->layer_count = source->layer_count;
+    out->resident_bytes = source->resident_bytes;
+    out->kernel_launches = source->kernel_launches;
+    out->h2d_bytes = source->h2d_bytes;
+    out->d2h_bytes = source->d2h_bytes;
+    out->device_bytes = source->device_bytes;
+    memcpy(out->residency_identity, source->residency_identity,
+           sizeof(out->residency_identity));
+    memcpy(out->execution_identity, source->execution_identity,
+           sizeof(out->execution_identity));
+    out->complete = source->complete;
+}
+
+int yvex_runtime_component_text_artifact_cuda(
+    const yvex_complete_artifact_admission *admission, const yvex_artifact *artifact,
+    const yvex_gguf *gguf, const yvex_tensor_table *tensors,
+    const yvex_component_text_request *request,
+    yvex_runtime_av_conditioning_result *result, yvex_error *err)
+{
+    const yvex_materialized_tensor_binding *embedding = NULL;
+    yvex_runtime_component_session *session = NULL;
+    yvex_backend_text_weight *weights = NULL;
+    yvex_backend_text_execution_result backend_result = {0};
+    const unsigned char *encoded = NULL;
+    unsigned long long encoded_bytes = 0ull, output_values, output_bytes, weight_count = 0ull;
+    float *staged = NULL;
+    int rc, cleanup_rc;
+    yvex_error cleanup;
+    if (result) memset(result, 0, sizeof(*result));
+    if (!admission || !artifact || !gguf || !tensors || !request || !request->recipe ||
+        request->recipe->schema_version != YVEX_COMPONENT_TEXT_RECIPE_SCHEMA_V1 ||
+        !request->embedding_weight_name || !request->token_ids || !request->token_count ||
+        !request->output || !result || !request->maximum_device_bytes ||
+        request->layer_count > request->recipe->layer_capacity ||
+        (request->layer_count && !request->layer_weight_name) ||
+        !yvex_core_u64_mul(request->token_count, request->recipe->hidden_width,
+                           &output_values) ||
+        output_values > request->output_capacity ||
+        !yvex_core_u64_mul(output_values, sizeof(float), &output_bytes) ||
+        output_bytes > SIZE_MAX) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.component.text",
+                       "one admitted bounded text-component recipe is required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    staged = (float *)malloc((size_t)output_bytes);
+    if (!staged) {
+        yvex_error_set(err, YVEX_ERR_NOMEM, "runtime.component.text.output",
+                       "transactional text-component output allocation failed");
+        return YVEX_ERR_NOMEM;
+    }
+    if (request->layer_count &&
+        (!yvex_core_u64_mul(request->layer_count,
+                            YVEX_COMPONENT_TEXT_LAYER_WEIGHT_COUNT, &weight_count) ||
+         !yvex_core_u64_add(weight_count, 1ull, &weight_count) ||
+         weight_count > SIZE_MAX / sizeof(*weights) ||
+         !(weights = (yvex_backend_text_weight *)calloc(
+               (size_t)weight_count, sizeof(*weights))))) {
+        free(staged);
+        yvex_error_set(err, YVEX_ERR_NOMEM, "runtime.component.text.weights",
+                       "bounded text-component bindings could not be allocated");
+        return YVEX_ERR_NOMEM;
+    }
+    rc = yvex_runtime_component_session_open(
+        &session, admission, artifact, gguf, tensors, YVEX_BACKEND_KIND_CUDA,
+        request->maximum_host_bytes, request->maximum_device_bytes, err);
+    embedding = rc == YVEX_OK
+                    ? component_binding_find(
+                          session->materialization, request->embedding_weight_name)
+                    : NULL;
+    if (rc == YVEX_OK && !embedding) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "runtime.component.text.embedding",
+                       "admitted text component lacks its embedding binding");
+        rc = YVEX_ERR_FORMAT;
+    }
+    if (rc == YVEX_OK && request->layer_count)
+        rc = component_text_weights_bind(session, request, weights, err);
+    if (rc == YVEX_OK && !request->layer_count)
+        rc = yvex_runtime_residency_binding_view(
+            session->residency, embedding, &encoded, &encoded_bytes, err);
+    if (rc == YVEX_OK && !request->layer_count)
+        rc = yvex_backend_text_embedding_execute(
+            session->backend, request->recipe, encoded, encoded_bytes, embedding->qtype,
+            embedding->row_count, embedding->row_width,
+            embedding->encoded_bytes / embedding->row_count,
+            session->summary.residency_identity, session->summary.encoded_bytes,
+            request->token_ids, request->token_count, staged, output_values,
+            &backend_result, err);
+    if (rc == YVEX_OK && request->layer_count)
+        rc = yvex_backend_text_encoder_execute(
+            session->backend, request->recipe, weights, request->layer_count,
+            session->summary.residency_identity, session->summary.encoded_bytes,
+            request->token_ids, request->token_count, staged, output_values,
+            &backend_result, err);
+    yvex_error_clear(&cleanup);
+    cleanup_rc = yvex_runtime_component_session_close(&session, &cleanup);
+    if (cleanup_rc != YVEX_OK) {
+        rc = cleanup_rc;
+        if (err) *err = cleanup;
+    }
+    if (rc == YVEX_OK) {
+        memcpy(request->output, staged, (size_t)output_bytes);
+        component_text_result_project(result, &backend_result);
+        yvex_error_clear(err);
+    }
+    free(weights);
+    free(staged);
+    return rc;
+}
+
+static int component_joint_weight_bind(
+    const yvex_runtime_component_session *session, const char *name,
+    yvex_transformer_joint_encoded_weight *weight, yvex_error *err)
+{
+    yvex_component_encoded_weight component = {0};
+    int rc = component_weight_bind(
+        session ? session->materialization : NULL, session ? session->residency : NULL,
+        name, &component, err);
+    if (rc == YVEX_OK) {
+        weight->encoded = component.encoded;
+        weight->encoded_bytes = component.encoded_bytes;
+        weight->row_count = component.row_count;
+        weight->row_width = component.row_width;
+        weight->row_bytes = component.row_bytes;
+        weight->qtype = component.qtype;
+    }
+    return rc;
+}
+
+int yvex_runtime_component_joint_transformer_cuda(
+    yvex_runtime_component_session *session, const char *const *external_names,
+    unsigned long long external_count, yvex_component_joint_weight_name_fn block_weight_name,
+    void *weight_name_context, const yvex_transformer_joint_request *request,
+    yvex_transformer_joint_result *result, yvex_error *err)
+{
+    yvex_transformer_joint_encoded_weight external[YVEX_TRANSFORMER_JOINT_EXTERNAL_WEIGHT_COUNT] = {{0}};
+    yvex_transformer_joint_encoded_weight *blocks = NULL;
+    unsigned long long count, index, workspace_bytes = 0ull;
+    int rc = YVEX_OK;
+    if (result) memset(result, 0, sizeof(*result));
+    if (!session || !external_names ||
+        external_count != YVEX_TRANSFORMER_JOINT_EXTERNAL_WEIGHT_COUNT ||
+        !block_weight_name || !request || !request->recipe || !result ||
+        !request->block_count || request->block_count > request->recipe->block_count ||
+        !session->backend || !session->residency || !session->summary.sealed ||
+        !session->summary.cuda_ready || session->summary.invalidated ||
+        !yvex_core_u64_mul(request->block_count,
+                           YVEX_TRANSFORMER_JOINT_BLOCK_WEIGHT_COUNT, &count) ||
+        count > SIZE_MAX / sizeof(*blocks) ||
+        !(blocks = (yvex_transformer_joint_encoded_weight *)calloc(
+              (size_t)count, sizeof(*blocks)))) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.component.joint-transformer",
+                       "one sealed CUDA component and complete named recipe are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    for (index = 0ull; rc == YVEX_OK && index < external_count; ++index) {
+        if (!external_names[index]) {
+            yvex_error_set(err, YVEX_ERR_INVALID_ARG,
+                           "runtime.component.joint-transformer.external",
+                           "every external joint-transformer weight requires a name");
+            rc = YVEX_ERR_INVALID_ARG;
+        } else {
+            rc = component_joint_weight_bind(session, external_names[index],
+                                             external + index, err);
+        }
+    }
+    for (index = 0ull; rc == YVEX_OK && index < count; ++index) {
+        char name[256] = {0};
+        unsigned long long block = index / YVEX_TRANSFORMER_JOINT_BLOCK_WEIGHT_COUNT;
+        unsigned int slot = (unsigned int)(index % YVEX_TRANSFORMER_JOINT_BLOCK_WEIGHT_COUNT);
+        rc = block_weight_name(weight_name_context, block, slot, name, err);
+        if (rc == YVEX_OK)
+            rc = component_joint_weight_bind(session, name, blocks + index, err);
+    }
+    if (rc == YVEX_OK)
+        rc = yvex_backend_transformer_gqa_workspace_bytes(
+            request->packed_rows, request->recipe->attention_heads,
+            request->recipe->attention_heads, request->recipe->head_dimension,
+            &workspace_bytes, err);
+    if (rc == YVEX_OK && workspace_bytes)
+        rc = component_session_prepare_workspace(
+            session, workspace_bytes, err);
+    if (rc == YVEX_OK)
+        rc = yvex_backend_transformer_joint_cuda(
+            session->backend, external, blocks, session->summary.residency_identity,
+            session->summary.encoded_bytes, request, result, err);
+    free(blocks);
+    return rc;
 }
 
 static const yvex_materialized_tensor_binding *component_tensor_find(
@@ -361,7 +602,7 @@ void yvex_component_buffer_close(yvex_component_f32_buffer *buffer,
     memset(buffer, 0, sizeof(*buffer));
 }
 
-const yvex_materialized_tensor_binding *yvex_component_binding_find(
+static const yvex_materialized_tensor_binding *component_binding_find(
     const yvex_materialization_session *session, const char *name)
 {
     unsigned long long index;
@@ -373,13 +614,13 @@ const yvex_materialized_tensor_binding *yvex_component_binding_find(
     }
 }
 
-int yvex_component_weight_bind(
+static int component_weight_bind(
     const yvex_materialization_session *session,
     const yvex_runtime_residency *residency, const char *name,
     yvex_component_encoded_weight *weight, yvex_error *err)
 {
     const yvex_materialized_tensor_binding *binding =
-        yvex_component_binding_find(session, name);
+        component_binding_find(session, name);
     if (!binding || !binding->row_count || !residency || !weight) {
         yvex_error_set(err, YVEX_ERR_FORMAT, "runtime.component.binding",
                        "an exact resident component weight binding is unavailable");
@@ -410,9 +651,9 @@ int yvex_component_weight_bind_sized(
                        "component weight binding geometry is invalid");
         return YVEX_ERR_INVALID_ARG;
     }
-    rc = yvex_component_weight_bind(
+    rc = component_weight_bind(
         yvex_runtime_component_session_materialization(session),
-        yvex_runtime_component_session_residency(session), name, weight, err);
+        component_session_residency(session), name, weight, err);
     if (rc == YVEX_OK && weight->encoded_bytes != expected_bytes) {
         yvex_error_setf(err, YVEX_ERR_FORMAT, "runtime.component.binding",
                         "component tensor %s has %llu bytes, expected %llu",
@@ -456,7 +697,7 @@ int yvex_component_f32_load(
         return YVEX_ERR_INVALID_ARG;
     }
     memset(failure, 0, sizeof(*failure));
-    binding = yvex_component_binding_find(session, name);
+    binding = component_binding_find(session, name);
     if (!binding)
         return component_load_reject(failure, YVEX_COMPONENT_LOAD_MISSING, name,
                                      1ull, 0ull, "component tensor is missing",

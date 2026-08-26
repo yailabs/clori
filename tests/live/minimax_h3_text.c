@@ -122,7 +122,7 @@ static int layer_proof_execute(
     const yvex_minimax_h3_graph_api *graph = yvex_graph_register_minimax_h3();
     const yvex_minimax_h3_api *model = yvex_model_register_minimax_h3();
     yvex_minimax_h3_architecture architecture;
-    yvex_backend_text_encoder_geometry geometry;
+    yvex_component_text_recipe geometry;
     yvex_backend_text_execution_result backend_result = {0};
     yvex_minimax_h3_failure architecture_failure;
     yvex_complete_artifact_admission admission;
@@ -150,8 +150,8 @@ static int layer_proof_execute(
                        "exact artifact views, token, output, and production backend are required");
         return YVEX_ERR_INVALID_ARG;
     }
-    geometry = (yvex_backend_text_encoder_geometry){
-        .schema_version = YVEX_BACKEND_TEXT_ENCODER_SCHEMA_V1,
+    geometry = (yvex_component_text_recipe){
+        .schema_version = YVEX_COMPONENT_TEXT_RECIPE_SCHEMA_V1,
         .semantic_identity = YVEX_MINIMAX_H3_TEXT_COMPONENT_IDENTITY,
         .embedding_identity_domain = "yvex.minimax-h3.text-conditioning.cuda.v1",
         .encoder_identity_domain = "yvex.minimax-h3.qwen-text-stack.cuda.v1",

@@ -3,6 +3,7 @@
 
 #include <yvex/backend.h>
 #include <yvex/internal/backend.h>
+#include <yvex/internal/component.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/quant_numeric.h>
 #include <yvex/qtype.h>
@@ -54,12 +55,12 @@ typedef struct {
 
 static const unsigned int text_zero_row = 0u;
 
-static int text_geometry_build(const yvex_backend_text_encoder_geometry *source,
+static int text_geometry_build(const yvex_component_text_recipe *source,
                                text_geometry *out)
 {
     text_geometry geometry = {0};
     if (!source || !out ||
-        source->schema_version != YVEX_BACKEND_TEXT_ENCODER_SCHEMA_V1 ||
+        source->schema_version != YVEX_COMPONENT_TEXT_RECIPE_SCHEMA_V1 ||
         !yvex_sha256_hex_valid(source->semantic_identity) ||
         !source->embedding_identity_domain || !*source->embedding_identity_domain ||
         !source->encoder_identity_domain || !*source->encoder_identity_domain ||
@@ -161,7 +162,7 @@ static int text_embed_validate(
 }
 
 int yvex_backend_text_embedding_execute(
-    yvex_backend *backend, const yvex_backend_text_encoder_geometry *source,
+    yvex_backend *backend, const yvex_component_text_recipe *source,
     const unsigned char *encoded, unsigned long long encoded_bytes,
     unsigned int qtype, unsigned long long row_count, unsigned long long row_width,
     unsigned long long row_bytes, const char *residency_identity,
@@ -646,7 +647,7 @@ static int text_devices_release(text_layer_run *run, int rc, yvex_error *err)
 }
 
 int yvex_backend_text_encoder_execute(
-    yvex_backend *backend, const yvex_backend_text_encoder_geometry *source,
+    yvex_backend *backend, const yvex_component_text_recipe *source,
     const yvex_backend_text_weight *weights, unsigned long long layer_count,
     const char *residency_identity, unsigned long long resident_bytes,
     const unsigned int *token_ids, unsigned long long token_count, float *output,

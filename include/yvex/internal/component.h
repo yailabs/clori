@@ -15,6 +15,8 @@ typedef struct yvex_runtime_component_session yvex_runtime_component_session;
 typedef struct yvex_runtime_av_layout_output yvex_runtime_av_layout_output;
 typedef struct yvex_runtime_av_layout_result yvex_runtime_av_layout_result;
 typedef struct yvex_transformer_linear_physical_plan yvex_transformer_linear_physical_plan;
+typedef struct yvex_transformer_joint_request yvex_transformer_joint_request;
+typedef struct yvex_transformer_joint_result yvex_transformer_joint_result;
 
 typedef struct {
     float *data;
@@ -69,6 +71,35 @@ typedef struct yvex_runtime_av_conditioning_result {
     char execution_identity[YVEX_SHA256_HEX_CAP];
     int complete;
 } yvex_runtime_av_conditioning_result;
+
+/* Families supply stable text-stack meaning and canonical weight names. Component runtime owns
+ * artifact residency, transactional publication, and backend dispatch for that recipe. */
+#define YVEX_COMPONENT_TEXT_RECIPE_SCHEMA_V1 1u
+#define YVEX_COMPONENT_TEXT_LAYER_WEIGHT_COUNT 11u
+typedef struct yvex_component_text_recipe {
+    unsigned int schema_version;
+    const char *semantic_identity;
+    const char *embedding_identity_domain;
+    const char *encoder_identity_domain;
+    unsigned long long layer_capacity, hidden_width, ffn_width;
+    unsigned long long query_heads, kv_heads, head_dimension;
+    unsigned long long vocabulary_size, rope_theta;
+    float normalization_epsilon;
+} yvex_component_text_recipe;
+typedef int (*yvex_component_text_weight_name_fn)(
+    void *, unsigned long long, unsigned int, char[256], yvex_error *);
+typedef struct {
+    const yvex_component_text_recipe *recipe;
+    const char *embedding_weight_name;
+    yvex_component_text_weight_name_fn layer_weight_name;
+    void *weight_name_context;
+    const unsigned int *token_ids;
+    unsigned long long token_count, layer_count;
+    float *output;
+    unsigned long long output_capacity, maximum_host_bytes, maximum_device_bytes;
+} yvex_component_text_request;
+typedef int (*yvex_component_joint_weight_name_fn)(
+    void *, unsigned long long, unsigned int, char[256], yvex_error *);
 
 typedef struct yvex_runtime_av_audio_decode_options {
     const float *latent;
@@ -130,11 +161,6 @@ int yvex_component_buffer_open(
     yvex_component_f32_buffer *, unsigned long long, unsigned long long,
     unsigned long long *, unsigned long long *, const char *, const char *, yvex_error *);
 void yvex_component_buffer_close(yvex_component_f32_buffer *, unsigned long long *);
-const yvex_materialized_tensor_binding *yvex_component_binding_find(
-    const yvex_materialization_session *, const char *);
-int yvex_component_weight_bind(
-    const yvex_materialization_session *, const yvex_runtime_residency *,
-    const char *, yvex_component_encoded_weight *, yvex_error *);
 int yvex_component_weight_bind_sized(
     void *, const char *, unsigned long long, unsigned long long,
     yvex_component_encoded_weight *, yvex_error *);
@@ -149,11 +175,15 @@ int yvex_runtime_component_session_open(
     const yvex_artifact *, const yvex_gguf *, const yvex_tensor_table *, yvex_backend_kind,
     unsigned long long, unsigned long long, yvex_error *);
 int yvex_runtime_component_session_close(yvex_runtime_component_session **, yvex_error *);
-int yvex_runtime_component_session_prepare_workspace(
-    yvex_runtime_component_session *, unsigned long long, yvex_error *);
+int yvex_runtime_component_text_artifact_cuda(
+    const yvex_complete_artifact_admission *, const yvex_artifact *, const yvex_gguf *,
+    const yvex_tensor_table *, const yvex_component_text_request *,
+    yvex_runtime_av_conditioning_result *, yvex_error *);
+int yvex_runtime_component_joint_transformer_cuda(
+    yvex_runtime_component_session *, const char *const *, unsigned long long,
+    yvex_component_joint_weight_name_fn, void *, const yvex_transformer_joint_request *,
+    yvex_transformer_joint_result *, yvex_error *);
 yvex_materialization_session *yvex_runtime_component_session_materialization(
-    const yvex_runtime_component_session *);
-const yvex_runtime_residency *yvex_runtime_component_session_residency(
     const yvex_runtime_component_session *);
 yvex_backend *yvex_runtime_component_session_backend(const yvex_runtime_component_session *);
 const yvex_runtime_residency_summary *yvex_runtime_component_session_summary(

@@ -836,10 +836,13 @@ static int test_component_admission_routing(void)
     yvex_complete_artifact_admission admission;
     yvex_artifact_admission_failure failure;
     yvex_minimax_h3_architecture architecture;
-    yvex_backend_text_encoder_geometry geometry, invalid_geometry;
+    yvex_component_text_recipe geometry, invalid_geometry;
+    yvex_component_text_request component_request;
     yvex_minimax_h3_failure family_failure;
     yvex_minimax_h3_conditioning_result conditioning;
     yvex_backend_text_execution_result backend_result;
+    yvex_transformer_joint_request joint_request = {0};
+    yvex_transformer_joint_result joint_result;
     unsigned int token = 1u;
     float output[5120];
     int rc;
@@ -859,8 +862,8 @@ static int test_component_admission_routing(void)
     YVEX_TEST_ASSERT(yvex_model_register_minimax_h3()->architecture_canonical(
                          &architecture, &family_failure, &err) == YVEX_OK,
                      "component execution receives canonical family geometry");
-    geometry = (yvex_backend_text_encoder_geometry){
-        .schema_version = YVEX_BACKEND_TEXT_ENCODER_SCHEMA_V1,
+    geometry = (yvex_component_text_recipe){
+        .schema_version = YVEX_COMPONENT_TEXT_RECIPE_SCHEMA_V1,
         .semantic_identity = YVEX_MINIMAX_H3_TEXT_COMPONENT_IDENTITY,
         .embedding_identity_domain = "yvex.minimax-h3.text-conditioning.cuda.v1",
         .encoder_identity_domain = "yvex.minimax-h3.qwen-text-stack.cuda.v1",
@@ -873,7 +876,26 @@ static int test_component_admission_routing(void)
         .vocabulary_size = architecture.encoder.vocabulary_size,
         .rope_theta = architecture.encoder.rope_theta,
         .normalization_epsilon = 1.0e-6f};
+    component_request = (yvex_component_text_request){
+        .recipe = &geometry,
+        .embedding_weight_name = "model.language_model.embed_tokens.weight",
+        .token_ids = &token,
+        .token_count = 1ull,
+        .output = output,
+        .output_capacity = 5120ull,
+        .maximum_host_bytes = 1ull,
+        .maximum_device_bytes = 1ull};
     memset(output, 0x5a, sizeof(output));
+    YVEX_TEST_ASSERT(yvex_runtime_component_text_artifact_cuda(
+                         NULL, NULL, NULL, NULL, &component_request,
+                         &conditioning, &err) == YVEX_ERR_INVALID_ARG &&
+                         !conditioning.complete && ((unsigned char *)output)[0] == 0x5a,
+                     "generic text component refuses absent admitted artifact without publication");
+    YVEX_TEST_ASSERT(yvex_runtime_component_joint_transformer_cuda(
+                         NULL, NULL, 0ull, NULL, NULL, &joint_request,
+                         &joint_result, &err) == YVEX_ERR_INVALID_ARG &&
+                         !joint_result.complete,
+                     "generic joint component refuses an absent resident execution recipe");
     rc = yvex_backend_text_embedding_execute(
         NULL, &geometry, NULL, 0ull, 0u, 0ull, 0ull, 0ull, NULL, 0ull,
         &token, 1ull, output, 5120ull, &backend_result, &err);
