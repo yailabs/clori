@@ -20,6 +20,10 @@
     (8u + YVEX_MODEL_EXECUTION_SCALAR_COUNT * 8u +                                      \
      (YVEX_MODEL_EXECUTION_IDENTITY_COUNT + 1u) * YVEX_SHA256_HEX_BYTES)
 
+unsigned long long yvex_remote_catalog_provider_count(const yvex_remote_catalog *catalog);
+const char *yvex_remote_catalog_query(const yvex_remote_catalog *catalog);
+const char *yvex_remote_model_kind_name(yvex_remote_model_kind kind);
+
 typedef enum {
     YVEX_MODEL_ROPE_SCALING_NONE = 0,
     YVEX_MODEL_ROPE_SCALING_LINEAR,

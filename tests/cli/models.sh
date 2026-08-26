@@ -357,48 +357,125 @@ JSON
 yvex_test_cleanup "$ROOT"
 mkdir -p "$ROOT"
 case "$ROOT" in
-  /*) XDG_CONFIG_HOME="$ROOT/xdg" ;;
-  *) XDG_CONFIG_HOME="$PWD/$ROOT/xdg" ;;
+  /*)
+    XDG_CONFIG_HOME="$ROOT/xdg"
+    XDG_DATA_HOME="$ROOT/xdg-data"
+    XDG_RUNTIME_DIR="$ROOT/runtime"
+    YVEX_DATA_DIR="$ROOT/data"
+    ;;
+  *)
+    XDG_CONFIG_HOME="$PWD/$ROOT/xdg"
+    XDG_DATA_HOME="$PWD/$ROOT/xdg-data"
+    XDG_RUNTIME_DIR="$PWD/$ROOT/runtime"
+    YVEX_DATA_DIR="$PWD/$ROOT/data"
+    ;;
 esac
-export XDG_CONFIG_HOME
-mkdir -p "$XDG_CONFIG_HOME"
+export XDG_CONFIG_HOME XDG_DATA_HOME XDG_RUNTIME_DIR YVEX_DATA_DIR
+mkdir -p "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_RUNTIME_DIR" "$YVEX_DATA_DIR"
+chmod 700 "$XDG_RUNTIME_DIR"
 mkdir -p "$CATALOG_ROOT"
 
 FAKE_HF="$PWD/tests/fixtures/bin/fake-hf"
 FAKE_HF_LOG="$ROOT/fake-hf-discovery.log"
 export YVEX_FAKE_HF_LOG="$FAKE_HF_LOG"
 
-YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" model search MiniMax --limit 2 \
-  > "$ROOT/search.out"
-grep 'REMOTE MODELS  count=2' "$ROOT/search.out"
-grep 'FAMILY minimax-h3' "$ROOT/search.out"
-grep 'MiniMaxAI/MiniMax-H3' "$ROOT/search.out"
-grep 'package-preparation' "$ROOT/search.out"
-grep 'community/unknown-model' "$ROOT/search.out"
-grep 'source-ingest' "$ROOT/search.out"
+RECON_ROOT="$ROOT/catalog-reconcile"
+RECON_REV=b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08
+RECON_SOURCE="$RECON_ROOT/hf/minimax/MiniMax-H3/$RECON_REV"
+mkdir -p "$RECON_SOURCE"
+cat > "$RECON_SOURCE/yvex-source-acquisition.json" <<JSON
+{"schema":"yvex.source-acquisition.v1","repository":"MiniMaxAI/MiniMax-H3",\
+"revision":"$RECON_REV","acquisition_complete":true,"source_bytes":144016000740}
+JSON
+"$YVEX_BIN" model list --models-root "$RECON_ROOT" --registry "$REG" --json \
+  > "$ROOT/reconciled-source.json"
+python3 - "$ROOT/reconciled-source.json" <<'PY'
+import json
+import sys
 
-YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" model search MiniMax --page 2 --limit 2 --json \
+models = json.load(open(sys.argv[1], encoding="utf-8"))["models"]
+source = next(model for model in models if model["name"] == "MiniMax-H3")
+assert source["kind"] == "acquired-source"
+assert source["representation"] == "safetensors-source"
+assert source["package_state"] == "source-acquired"
+assert source["verification_state"] == "payload-verified"
+assert source["size_bytes"] == 144016000740
+PY
+
+YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" model search "MiniMax H3" --limit 2 \
+  --models-root "$RECON_ROOT" \
+  > "$ROOT/search.out"
+grep 'REMOTE MODELS · "MiniMax H3"' "$ROOT/search.out"
+grep 'MODEL / REPOSITORY.*KIND.*FAMILY.*PARAMS.*FORMAT.*LOCAL.*YVEX' "$ROOT/search.out"
+grep 'MiniMaxAI/MiniMax-H3' "$ROOT/search.out"
+grep 'full model.*minimax-h3.*source.*supported' "$ROOT/search.out"
+grep 'unsloth/MiniMax-H3-GGUF.*conversion.*inspect' "$ROOT/search.out"
+! grep 'package-preparation\|source-ingest\|physical-inspection' "$ROOT/search.out"
+
+YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" model search "MiniMax H3" --all --json \
+  --models-root "$RECON_ROOT" > "$ROOT/search-all.json"
+python3 - "$ROOT/search-all.json" <<'PY'
+import json
+import sys
+
+catalog = json.load(open(sys.argv[1], encoding="utf-8"))
+assert catalog["schema"] == "yvex.remote-model-catalog.v2"
+models = catalog["models"]
+assert models[0]["repository"] == "MiniMaxAI/MiniMax-H3"
+assert models[0]["kind"] == "full model"
+assert models[0]["model_identity"] == "MiniMaxAI/MiniMax-H3"
+assert models[0]["family_affinity"] == "minimax-h3"
+assert models[0]["local_source"] is True
+by_repo = {model["repository"]: model for model in models}
+assert by_repo["fal/MiniMax-H3-Realism-People-LoRA"]["kind"] == "adapter / LoRA"
+assert by_repo["fal/MiniMax-H3-Realism-People-LoRA"]["model_identity"] == ""
+assert by_repo["LBH-123-AI/Minimax_h3_latent_Upscaler"]["kind"] == "component"
+assert by_repo["unsloth/MiniMax-H3-GGUF"]["kind"] == "conversion"
+assert by_repo["community/MiniMax-H3-finetune"]["kind"] == "derivative / fork"
+assert by_repo["community/unknown-model"]["kind"] == "unknown"
+PY
+
+YVEX_FAKE_HF_RESOLVED_SHA=42ed227ee7df40d41602854ae760620d6eb651fe \
+  YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" model search "MiniMax H3" --limit 1 --json \
+  --models-root "$RECON_ROOT" > "$ROOT/search-other-revision.json"
+python3 - "$ROOT/search-other-revision.json" "$RECON_REV" <<'PY'
+import json
+import sys
+
+model = json.load(open(sys.argv[1], encoding="utf-8"))["models"][0]
+assert model["repository"] == "MiniMaxAI/MiniMax-H3"
+assert model["kind"] == "full model"
+assert model["canonical"] is True
+assert model["local_source"] is False
+assert model["local_related_revision"] is True
+assert model["local_source_revision"] == sys.argv[2]
+assert model["product_status"] == "acquirable"
+PY
+
+YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" model search "MiniMax H3" --page 2 --limit 2 \
+  --models-root "$RECON_ROOT" --json \
   > "$ROOT/search-page.json"
 python3 - "$ROOT/search-page.json" <<'PY'
 import json
 import sys
 
 catalog = json.load(open(sys.argv[1], encoding="utf-8"))
-assert catalog["schema"] == "yvex.remote-model-catalog.v1"
+assert catalog["schema"] == "yvex.remote-model-catalog.v2"
 assert [model["repository"] for model in catalog["models"]] == [
-    "community/minimax-h3-gguf",
-    "private/gated-model",
+    "community/MiniMax-H3-finetune",
+    "fal/MiniMax-H3-Realism-People-LoRA",
 ]
-assert catalog["models"][0]["support_stage"] == "physical-inspection"
-assert catalog["models"][1]["gated"] is True
 PY
 
 YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" model inspect MiniMaxAI/MiniMax-H3 \
-  --revision b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08 --audit \
+  --models-root "$RECON_ROOT" --audit \
   > "$ROOT/remote-inspect.out"
+grep 'revision_reference: default' "$ROOT/remote-inspect.out"
 grep 'resolved_revision: b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08' \
   "$ROOT/remote-inspect.out"
 grep 'family: minimax-h3' "$ROOT/remote-inspect.out"
+grep 'kind: full model' "$ROOT/remote-inspect.out"
+grep 'local_source: true' "$ROOT/remote-inspect.out"
 grep 'base_model: MiniMaxAI/MiniMax-H3-Base' "$ROOT/remote-inspect.out"
 grep 'identity=safetensors-source format=safetensors precision=BF16+F16' \
   "$ROOT/remote-inspect.out"
@@ -412,13 +489,17 @@ grep 'file\[0\]: path=config.json kind=configuration representation=configuratio
 grep 'path=tokenizer.json kind=tokenizer representation=tokenizer' "$ROOT/remote-inspect.out"
 grep 'path=README.md kind=sidecar representation=sidecar' "$ROOT/remote-inspect.out"
 
-YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" model inspect MiniMaxAI/MiniMax-H3 --json \
+YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" model inspect MiniMaxAI/MiniMax-H3 \
+  --models-root "$RECON_ROOT" --json \
   > "$ROOT/remote-inspect.json"
 python3 - "$ROOT/remote-inspect.json" <<'PY'
 import json
 import sys
 
 model = json.load(open(sys.argv[1], encoding="utf-8"))["models"][0]
+assert model["requested_revision"] == "default"
+assert model["resolved_revision"] == "b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08"
+assert model["local_source"] is True
 assert {file["kind"] for file in model["files"]} >= {
     "configuration",
     "tokenizer",
@@ -430,6 +511,23 @@ assert next(file for file in model["files"] if file["path"] == "model-Q4_K_M.ggu
     "representation"
 ] == "gguf-Q4_K_M"
 PY
+
+YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" model inspect unsloth/MiniMax-H3-GGUF \
+  --output table > "$ROOT/inspect-gguf.out"
+grep 'kind        conversion' "$ROOT/inspect-gguf.out"
+grep 'Q4_K_M (filename)' "$ROOT/inspect-gguf.out"
+grep 'acquire-and-inspect-required' "$ROOT/inspect-gguf.out"
+
+YVEX_FAKE_HF_DISCOVERY_MODE=model-not-found YVEX_HF_CLI="$FAKE_HF" \
+  expect_rc 1 "$YVEX_BIN" model inspect missing/model \
+  > "$ROOT/inspect-model-missing.out" 2> "$ROOT/inspect-model-missing.err"
+grep 'remote model was not found' "$ROOT/inspect-model-missing.err"
+YVEX_FAKE_HF_DISCOVERY_MODE=revision-not-found YVEX_HF_CLI="$FAKE_HF" \
+  expect_rc 1 "$YVEX_BIN" model inspect MiniMaxAI/MiniMax-H3 --revision DOES_NOT_EXIST \
+  > "$ROOT/inspect-revision-missing.out" 2> "$ROOT/inspect-revision-missing.err"
+grep 'remote revision or reference was not found' "$ROOT/inspect-revision-missing.err"
+
+! grep -A2 '^  download$' "$FAKE_HF_LOG"
 
 expect_rc 2 "$YVEX_BIN" model search MiniMax --interactive \
   > "$ROOT/search-interactive.out" 2> "$ROOT/search-interactive.err"
@@ -456,7 +554,7 @@ grep 'provider file listing is malformed or oversized' "$ROOT/inspect-unsafe-fil
 
 YVEX_FAKE_HF_DISCOVERY_MODE=empty YVEX_HF_CLI="$FAKE_HF" \
   "$YVEX_BIN" model search none > "$ROOT/search-empty.out"
-grep 'REMOTE MODELS  count=0' "$ROOT/search-empty.out"
+grep '^REMOTE MODELS · "none"' "$ROOT/search-empty.out"
 
 YVEX_FAKE_HF_DISCOVERY_MODE=malformed YVEX_HF_CLI="$FAKE_HF" \
   expect_rc 4 "$YVEX_BIN" model search malformed > "$ROOT/search-malformed.out" \
@@ -541,6 +639,10 @@ grep 'tensor_count: 1' "$ROOT/inspect-audit.out"
 grep 'status: models-inspect' "$ROOT/inspect-audit.out"
 
 COMPOSITE_ROOT=$(realpath "$ROOT")
+cat > "$COMPOSITE_ROOT/repository.json" <<JSON
+{"repository":"MiniMaxAI/MiniMax-H3","requested_revision":"$RECON_REV",\
+"resolved_revision":"$RECON_REV"}
+JSON
 "$YVEX_BIN" model registry add --path "$ARTIFACT" --registry "$REG" \
   --alias minimax-h3-fl2va-runtime-media --family minimax-h3 \
   --startup-profile composite --installation-root "$COMPOSITE_ROOT" \
@@ -558,6 +660,18 @@ grep "runtime_installation: $COMPOSITE_ROOT" "$ROOT/show-composite.out"
 grep 'runtime_binding: $' "$ROOT/show-composite.out"
 grep 'runtime_context: 0' "$ROOT/show-composite.out"
 grep 'startup_profile_status: ready' "$ROOT/show-composite.out"
+YVEX_MODELS_REGISTRY="$REG" YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" model inspect \
+  MiniMaxAI/MiniMax-H3 --models-root "$RECON_ROOT" --json \
+  > "$ROOT/reconciled-package.json"
+python3 - "$ROOT/reconciled-package.json" <<'PY'
+import json
+import sys
+
+model = json.load(open(sys.argv[1], encoding="utf-8"))["models"][0]
+assert model["local_source"] is True
+assert model["local_package"] is True
+assert model["product_status"] == "supported"
+PY
 set +e
 "$YVEX_BIN" model registry add --path "$ARTIFACT" --registry "$REG" \
   --alias minimax-h3-fl2va-runtime-incomplete --family minimax-h3 \

@@ -272,6 +272,16 @@ typedef enum {
 } yvex_model_representation_kind;
 
 typedef enum {
+    YVEX_REMOTE_MODEL_UNKNOWN = 0,
+    YVEX_REMOTE_MODEL_FULL,
+    YVEX_REMOTE_MODEL_CONVERSION,
+    YVEX_REMOTE_MODEL_ADAPTER,
+    YVEX_REMOTE_MODEL_COMPONENT,
+    YVEX_REMOTE_MODEL_DELTA,
+    YVEX_REMOTE_MODEL_DERIVATIVE
+} yvex_remote_model_kind;
+
+typedef enum {
     YVEX_REMOTE_FILE_UNKNOWN = 0,
     YVEX_REMOTE_FILE_SAFETENSORS,
     YVEX_REMOTE_FILE_GGUF,
@@ -325,19 +335,32 @@ typedef struct {
     char resolved_revision[YVEX_REMOTE_REVISION_CAP];
     char family[YVEX_REMOTE_FAMILY_CAP];
     char family_evidence[32];
+    char model_identity[YVEX_REMOTE_REPOSITORY_CAP];
+    char kind_evidence[32];
     char architecture[YVEX_REMOTE_NAME_CAP];
     char pipeline[YVEX_REMOTE_NAME_CAP];
     char base_model[YVEX_REMOTE_REPOSITORY_CAP];
     char lineage_relation[32];
     char support_reason[YVEX_REMOTE_REASON_CAP];
+    char engine_state[32];
+    char local_source_revision[YVEX_REMOTE_REVISION_CAP];
+    char local_package_revision[YVEX_REMOTE_REVISION_CAP];
     unsigned long long parameter_count;
+    yvex_remote_model_kind kind;
     yvex_model_support_stage support_stage;
+    unsigned int ranking_score;
+    unsigned int provider_rank;
     unsigned int representation_count;
     unsigned int available_file_count;
     int parameter_count_known;
     int gated;
     int gated_known;
     int local;
+    int local_source;
+    int local_package;
+    int local_related_revision;
+    int canonical;
+    int kind_provisional;
 } yvex_remote_model;
 
 typedef struct yvex_remote_catalog yvex_remote_catalog;

@@ -681,7 +681,7 @@ int model_search_options_parse(int arg_count,
     memset(options, 0, sizeof(*options));
     options->provider = "huggingface";
     options->page = 1u;
-    options->page_size = 20u;
+    options->page_size = 8u;
     options->output_mode = YVEX_MODEL_CATALOG_OUTPUT_TABLE;
     for (index = start; index < arg_count; ++index) {
         const char *value = NULL;
@@ -689,6 +689,9 @@ int model_search_options_parse(int arg_count,
 
         if (strcmp(args[index], "--interactive") == 0) {
             options->interactive = 1;
+        } else if (strcmp(args[index], "--all") == 0) {
+            options->page = 1u;
+            options->page_size = 50u;
         } else if (strcmp(args[index], "--json") == 0) {
             options->output_mode = YVEX_MODEL_CATALOG_OUTPUT_JSON;
         } else if (strcmp(args[index], "--audit") == 0) {

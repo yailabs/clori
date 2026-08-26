@@ -15,6 +15,7 @@
 #include <strings.h>
 
 #include <yvex/internal/core.h>
+#include <yvex/internal/model.h>
 
 #define REMOTE_OUTPUT_CAP (8u * 1024u * 1024u)
 #define REMOTE_ERROR_CAP (64u * 1024u)
@@ -26,7 +27,24 @@ typedef struct {
     char safetensors_precision[YVEX_REMOTE_PRECISION_CAP];
     int has_safetensors;
     int has_gguf;
+    int tag_adapter;
+    int tag_component;
+    int tag_delta;
+    int tag_conversion;
+    int tag_derivative;
 } parsed_remote_model;
+
+typedef struct {
+    const char *repository;
+    const char *revision;
+    const char *family;
+} qualified_remote_model;
+
+static const qualified_remote_model qualified_models[] = {
+    {"MiniMaxAI/MiniMax-H3", "b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08", "minimax-h3"},
+    {"deepseek-ai/DeepSeek-V4-Flash-DSpark",
+     "62af8fffb2f7030cac4de2f0169f5b8d1101b646", "deepseek"},
+};
 
 struct yvex_remote_catalog {
     yvex_remote_model *models;
@@ -40,6 +58,8 @@ struct yvex_remote_catalog {
     unsigned long long file_count;
     unsigned long long file_capacity;
     unsigned long long *file_offsets;
+    unsigned long long provider_result_count;
+    char query[257];
 };
 
 static int remote_refuse(yvex_error *err, yvex_status status, const char *message)
@@ -60,6 +80,20 @@ const char *yvex_model_representation_kind_name(yvex_model_representation_kind k
     case YVEX_MODEL_REPRESENTATION_SAFETENSORS: return "safetensors";
     case YVEX_MODEL_REPRESENTATION_GGUF: return "gguf";
     case YVEX_MODEL_REPRESENTATION_UNKNOWN: return "unknown";
+    }
+    return "unknown";
+}
+
+const char *yvex_remote_model_kind_name(yvex_remote_model_kind kind)
+{
+    switch (kind) {
+    case YVEX_REMOTE_MODEL_FULL: return "full model";
+    case YVEX_REMOTE_MODEL_CONVERSION: return "conversion";
+    case YVEX_REMOTE_MODEL_ADAPTER: return "adapter / LoRA";
+    case YVEX_REMOTE_MODEL_COMPONENT: return "component";
+    case YVEX_REMOTE_MODEL_DELTA: return "delta / patch";
+    case YVEX_REMOTE_MODEL_DERIVATIVE: return "derivative / fork";
+    case YVEX_REMOTE_MODEL_UNKNOWN: return "unknown";
     }
     return "unknown";
 }
@@ -306,6 +340,28 @@ static void remote_architecture_family(yvex_remote_model *model)
                     "provider-architecture");
 }
 
+static void remote_tag_kind(parsed_remote_model *parsed, const char *tag)
+{
+    char lowered[YVEX_REMOTE_REPOSITORY_CAP];
+    size_t index;
+
+    for (index = 0u; index + 1u < sizeof(lowered) && tag[index]; ++index)
+        lowered[index] = (char)tolower((unsigned char)tag[index]);
+    lowered[index] = '\0';
+    if (strstr(lowered, "lora") || strstr(lowered, "adapter") ||
+        strcmp(lowered, "peft") == 0)
+        parsed->tag_adapter = 1;
+    if (strstr(lowered, "controlnet") || strstr(lowered, "upscaler") ||
+        strstr(lowered, "text-encoder") || strcmp(lowered, "vae") == 0)
+        parsed->tag_component = 1;
+    if (strstr(lowered, "delta") || strstr(lowered, "patch")) parsed->tag_delta = 1;
+    if (strstr(lowered, "conversion") || strstr(lowered, "quantized"))
+        parsed->tag_conversion = 1;
+    if (strstr(lowered, "finetune") || strstr(lowered, "fine-tune") ||
+        strstr(lowered, "derived"))
+        parsed->tag_derivative = 1;
+}
+
 static int remote_parse_string_array(yvex_json *json,
                                      parsed_remote_model *parsed,
                                      int tags)
@@ -318,6 +374,7 @@ static int remote_parse_string_array(yvex_json *json,
         char value[YVEX_REMOTE_REPOSITORY_CAP];
         if (!yvex_json_string(json, value, sizeof(value))) return 0;
         if (!tags) continue;
+        remote_tag_kind(parsed, value);
         if (!parsed->model.family[0] && remote_tag_family(value, parsed->model.family,
                                                           sizeof(parsed->model.family)))
             remote_copy(parsed->model.family_evidence, sizeof(parsed->model.family_evidence),
@@ -473,7 +530,7 @@ static int remote_parse_model(yvex_json *json, parsed_remote_model *parsed)
     memset(parsed, 0, sizeof(*parsed));
     remote_copy(parsed->model.provider, sizeof(parsed->model.provider), "huggingface");
     remote_copy(parsed->model.revision_reference,
-                sizeof(parsed->model.revision_reference), "main");
+                sizeof(parsed->model.revision_reference), "default");
     if (!yvex_json_iter_begin(json, &iter, YVEX_JSON_COLLECTION_OBJECT)) return 0;
     while ((item = yvex_json_object_member(&iter, key, sizeof(key))) == YVEX_JSON_ITEM_READY) {
         if (strcmp(key, "id") == 0) {
@@ -510,33 +567,98 @@ static int remote_parse_model(yvex_json *json, parsed_remote_model *parsed)
            remote_repository_valid(parsed->model.repository);
 }
 
-static int remote_revision_is(const yvex_remote_model *model,
-                              const char *repository,
-                              const char *revision)
+static const qualified_remote_model *remote_qualified_source(const yvex_remote_model *model)
 {
-    return strcmp(model->repository, repository) == 0 &&
-           strcmp(model->resolved_revision, revision) == 0;
+    size_t index;
+
+    for (index = 0u; index < sizeof(qualified_models) / sizeof(qualified_models[0]); ++index)
+        if (strcmp(model->repository, qualified_models[index].repository) == 0)
+            return &qualified_models[index];
+    return NULL;
+}
+
+static int remote_qualified_revision(const yvex_remote_model *model,
+                                     const qualified_remote_model *qualified)
+{
+    return qualified && strcmp(model->resolved_revision, qualified->revision) == 0;
+}
+
+static int remote_name_hint(const char *repository, const char *needle)
+{
+    char lowered[YVEX_REMOTE_REPOSITORY_CAP];
+    size_t index;
+
+    for (index = 0u; index + 1u < sizeof(lowered) && repository[index]; ++index)
+        lowered[index] = (char)tolower((unsigned char)repository[index]);
+    lowered[index] = '\0';
+    return strstr(lowered, needle) != NULL;
+}
+
+static void remote_kind_classify(parsed_remote_model *parsed,
+                                 const qualified_remote_model *qualified)
+{
+    yvex_remote_model *model = &parsed->model;
+
+    if (qualified) {
+        model->kind = YVEX_REMOTE_MODEL_FULL;
+        model->canonical = 1;
+        remote_copy(model->kind_evidence, sizeof(model->kind_evidence),
+                    "yvex-source-catalog");
+    } else if (parsed->tag_adapter || strcasecmp(model->lineage_relation, "adapter") == 0) {
+        model->kind = YVEX_REMOTE_MODEL_ADAPTER;
+        remote_copy(model->kind_evidence, sizeof(model->kind_evidence), "provider-metadata");
+    } else if (parsed->tag_component) {
+        model->kind = YVEX_REMOTE_MODEL_COMPONENT;
+        remote_copy(model->kind_evidence, sizeof(model->kind_evidence), "provider-metadata");
+    } else if (parsed->tag_delta) {
+        model->kind = YVEX_REMOTE_MODEL_DELTA;
+        remote_copy(model->kind_evidence, sizeof(model->kind_evidence), "provider-metadata");
+    } else if (parsed->tag_conversion ||
+               strcasecmp(model->lineage_relation, "quantized") == 0) {
+        model->kind = YVEX_REMOTE_MODEL_CONVERSION;
+        remote_copy(model->kind_evidence, sizeof(model->kind_evidence), "provider-metadata");
+    } else if (model->base_model[0] || parsed->tag_derivative) {
+        model->kind = YVEX_REMOTE_MODEL_DERIVATIVE;
+        remote_copy(model->kind_evidence, sizeof(model->kind_evidence), "provider-lineage");
+    } else if (parsed->has_safetensors && model->architecture[0]) {
+        model->kind = YVEX_REMOTE_MODEL_FULL;
+        remote_copy(model->kind_evidence, sizeof(model->kind_evidence), "provider-model-metadata");
+    } else {
+        model->kind_provisional = 1;
+        remote_copy(model->kind_evidence, sizeof(model->kind_evidence), "repository-name-hint");
+        if (remote_name_hint(model->repository, "lora") ||
+            remote_name_hint(model->repository, "adapter"))
+            model->kind = YVEX_REMOTE_MODEL_ADAPTER;
+        else if (remote_name_hint(model->repository, "controlnet") ||
+                 remote_name_hint(model->repository, "upscaler") ||
+                 remote_name_hint(model->repository, "vae"))
+            model->kind = YVEX_REMOTE_MODEL_COMPONENT;
+        else if (remote_name_hint(model->repository, "delta") ||
+                 remote_name_hint(model->repository, "patch"))
+            model->kind = YVEX_REMOTE_MODEL_DELTA;
+        else if (remote_name_hint(model->repository, "gguf") ||
+                 remote_name_hint(model->repository, "conversion"))
+            model->kind = YVEX_REMOTE_MODEL_CONVERSION;
+        else
+            model->kind = YVEX_REMOTE_MODEL_UNKNOWN;
+    }
+    if (model->kind == YVEX_REMOTE_MODEL_FULL)
+        remote_copy(model->model_identity, sizeof(model->model_identity), model->repository);
 }
 
 static void remote_support_classify(parsed_remote_model *parsed)
 {
     yvex_remote_model *model = &parsed->model;
-    int qualified_minimax =
-        remote_revision_is(model, "MiniMaxAI/MiniMax-H3",
-                           "b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08");
-    int qualified_deepseek =
-        remote_revision_is(model, "deepseek-ai/DeepSeek-V4-Flash-DSpark",
-                           "62af8fffb2f7030cac4de2f0169f5b8d1101b646");
+    const qualified_remote_model *qualified = remote_qualified_source(model);
+    int qualified_revision = remote_qualified_revision(model, qualified);
 
-    if (qualified_minimax && !model->family[0]) {
-        remote_copy(model->family, sizeof(model->family), "minimax-h3");
+    if (qualified && !model->family[0]) {
+        remote_copy(model->family, sizeof(model->family), qualified->family);
         remote_copy(model->family_evidence, sizeof(model->family_evidence),
-                    "yvex-qualified-revision");
-    } else if (qualified_deepseek && !model->family[0]) {
-        remote_copy(model->family, sizeof(model->family), "deepseek");
-        remote_copy(model->family_evidence, sizeof(model->family_evidence),
-                    "yvex-qualified-revision");
+                    "yvex-source-catalog");
     }
+    remote_kind_classify(parsed, qualified);
+    remote_copy(model->engine_state, sizeof(model->engine_state), "not-observed");
 
     model->support_stage = YVEX_MODEL_SUPPORT_REMOTE_ONLY;
     remote_copy(model->support_reason, sizeof(model->support_reason),
@@ -551,7 +673,7 @@ static void remote_support_classify(parsed_remote_model *parsed)
         remote_copy(model->support_reason, sizeof(model->support_reason),
                     "safetensors source can be acquired and inspected; package preparation is separate");
     }
-    if (qualified_minimax || qualified_deepseek) {
+    if (qualified_revision) {
         model->support_stage = YVEX_MODEL_SUPPORT_PACKAGE_PREPARATION;
         remote_copy(model->support_reason, sizeof(model->support_reason),
                     "exact revision matches a YVEX-qualified source/package path");
@@ -583,7 +705,8 @@ static int remote_add_parsed(yvex_remote_catalog *catalog,
                     parsed->safetensors_precision[0] ? "provider-metadata" : "unknown");
         representation->source_ingest_supported = 1;
         representation->package_preparation_supported =
-            parsed->model.support_stage >= YVEX_MODEL_SUPPORT_PACKAGE_PREPARATION;
+            remote_qualified_revision(&parsed->model,
+                                      remote_qualified_source(&parsed->model));
         remote_copy(representation->compatibility, sizeof(representation->compatibility),
                     representation->package_preparation_supported
                         ? "exact-revision-package-path"
@@ -613,15 +736,12 @@ static int remote_add_parsed(yvex_remote_catalog *catalog,
 static int remote_parse_search_output(yvex_remote_catalog *catalog,
                                       const char *output,
                                       size_t output_length,
-                                      unsigned int skip,
-                                      unsigned int take,
                                       yvex_error *err)
 {
     yvex_json json;
     yvex_json_iter array;
     yvex_json_item item;
     unsigned int source_index = 0u;
-    unsigned int retained = 0u;
 
     yvex_json_init(&json, output, output_length);
     if (!yvex_json_iter_begin(&json, &array, YVEX_JSON_COLLECTION_ARRAY))
@@ -630,16 +750,18 @@ static int remote_parse_search_output(yvex_remote_catalog *catalog,
         parsed_remote_model parsed;
         if (!remote_parse_model(&json, &parsed))
             return remote_refuse(err, YVEX_ERR_FORMAT, "provider search returned malformed model metadata");
-        if (source_index++ < skip || retained >= take) continue;
+        if (++source_index > REMOTE_MODEL_CAP)
+            return remote_refuse(err, YVEX_ERR_BOUNDS, "provider search exceeded the model limit");
+        parsed.model.provider_rank = source_index;
         {
             unsigned long long ignored;
             if (!remote_add_parsed(catalog, &parsed, 1, &ignored))
                 return remote_refuse(err, YVEX_ERR_NOMEM, "remote catalog allocation failed");
         }
-        retained++;
     }
     if (item != YVEX_JSON_ITEM_END || array.trailing_separator || !yvex_json_complete(&json))
         return remote_refuse(err, YVEX_ERR_FORMAT, "provider search JSON is incomplete");
+    catalog->provider_result_count = source_index;
     yvex_error_clear(err);
     return YVEX_OK;
 }
@@ -738,6 +860,21 @@ static int remote_add_file(yvex_remote_catalog *catalog,
                 catalog, model_index, YVEX_MODEL_REPRESENTATION_SAFETENSORS,
                 "safetensors-source");
         if (!representation) return 0;
+        if (!representation->precision[0]) {
+            remote_copy(representation->precision, sizeof(representation->precision),
+                        "unknown");
+            remote_copy(representation->precision_evidence,
+                        sizeof(representation->precision_evidence), "not-inspected");
+            remote_copy(representation->compatibility,
+                        sizeof(representation->compatibility),
+                        catalog->models[model_index].family[0]
+                            ? "source-ingest-only"
+                            : "source-role-inspection-required");
+            remote_copy(representation->recommendation,
+                        sizeof(representation->recommendation),
+                        "inspect repository metadata before selecting source payloads");
+            representation->provisional = 1;
+        }
         remote_copy(representation->file_pattern, sizeof(representation->file_pattern),
                     "*.safetensors");
         remote_copy(file->representation, sizeof(file->representation),
@@ -829,6 +966,7 @@ static int remote_parse_files(yvex_remote_catalog *catalog,
 
 static int remote_run(const char *const *arguments,
                       const char *cli_override,
+                      const char *not_found_reason,
                       char **output,
                       size_t *output_length,
                       yvex_error *err)
@@ -879,7 +1017,7 @@ static int remote_run(const char *const *arguments,
                                      strstr(stderr_bytes, "auth")
                                  ? "provider authentication is required"
                                  : strstr(stderr_bytes, "not found") || strstr(stderr_bytes, "404")
-                                       ? "remote model was not found"
+                                       ? not_found_reason
                                        : "provider discovery failed";
         free(stdout_bytes);
         free(stderr_bytes);
@@ -911,18 +1049,35 @@ static void remote_mark_local(yvex_remote_catalog *catalog, const char *models_r
                 strcmp(entry->repository, model->repository) != 0)
                 continue;
             model->local = 1;
-            if (entry->revision[0] && model->resolved_revision[0] &&
-                strcmp(entry->revision, model->resolved_revision) != 0)
+            if (!entry->revision[0] || !model->resolved_revision[0] ||
+                strcmp(entry->revision, model->resolved_revision) != 0) {
+                model->local_related_revision = 1;
+                if (entry->kind == YVEX_LOCAL_MODEL_PACKAGE)
+                    remote_copy(model->local_package_revision,
+                                sizeof(model->local_package_revision), entry->revision);
+                else
+                    remote_copy(model->local_source_revision,
+                                sizeof(model->local_source_revision), entry->revision);
                 continue;
-            {
+            }
+            if (entry->kind == YVEX_LOCAL_MODEL_PACKAGE) {
+                model->local_package = 1;
+                remote_copy(model->local_package_revision,
+                            sizeof(model->local_package_revision), entry->revision);
+                if (entry->package_ready)
+                    model->support_stage = YVEX_MODEL_SUPPORT_PACKAGE_READY;
+            } else {
                 unsigned int representation_index;
+                model->local_source = 1;
+                remote_copy(model->local_source_revision,
+                            sizeof(model->local_source_revision), entry->revision);
                 for (representation_index = 0u;
                      representation_index < model->representation_count;
                      ++representation_index) {
                     yvex_model_representation *representation =
                         &catalog->representations[catalog->representation_offsets[model_index] +
                                                   representation_index];
-                    if ((entry->kind == YVEX_LOCAL_MODEL_ACQUIRED_SOURCE &&
+                    if ((strstr(entry->representation, "safetensors") &&
                          representation->kind == YVEX_MODEL_REPRESENTATION_SAFETENSORS) ||
                         (strstr(entry->representation, "gguf") &&
                          representation->kind == YVEX_MODEL_REPRESENTATION_GGUF))
@@ -932,6 +1087,111 @@ static void remote_mark_local(yvex_remote_catalog *catalog, const char *models_r
         }
     }
     yvex_local_model_catalog_close(local);
+}
+
+static void remote_normalize_name(char *out, size_t capacity, const char *value)
+{
+    size_t written = 0u;
+
+    while (value && *value && written + 1u < capacity) {
+        unsigned char byte = (unsigned char)*value++;
+        if (isalnum(byte)) out[written++] = (char)tolower(byte);
+    }
+    out[written] = '\0';
+}
+
+static unsigned int remote_rank_score(const yvex_remote_model *model, const char *query)
+{
+    const char *name = strrchr(model->repository, '/');
+    char normalized_query[257];
+    char normalized_name[YVEX_REMOTE_REPOSITORY_CAP];
+    unsigned int score = 0u;
+
+    remote_normalize_name(normalized_query, sizeof(normalized_query), query);
+    remote_normalize_name(normalized_name, sizeof(normalized_name), name ? name + 1 : model->repository);
+    if (normalized_query[0] && strcmp(normalized_query, normalized_name) == 0) score += 4000u;
+    else if (normalized_query[0] && strstr(normalized_name, normalized_query))
+        score += 2500u;
+    if (model->canonical) score += 3500u;
+    switch (model->kind) {
+    case YVEX_REMOTE_MODEL_FULL: score += 2000u; break;
+    case YVEX_REMOTE_MODEL_CONVERSION: score += 1200u; break;
+    case YVEX_REMOTE_MODEL_DERIVATIVE: score += 500u; break;
+    case YVEX_REMOTE_MODEL_ADAPTER: score += 300u; break;
+    case YVEX_REMOTE_MODEL_COMPONENT: score += 200u; break;
+    case YVEX_REMOTE_MODEL_DELTA: score += 100u; break;
+    case YVEX_REMOTE_MODEL_UNKNOWN: break;
+    }
+    if (model->family[0]) score += 400u;
+    score += (unsigned int)model->support_stage * 100u;
+    if (model->local_package) score += 900u;
+    else if (model->local_source) score += 500u;
+    else if (model->local_related_revision) score += 250u;
+    if (model->parameter_count_known) score += 50u;
+    if (model->provider_rank && model->provider_rank <= 50u) score += 51u - model->provider_rank;
+    return score;
+}
+
+typedef struct {
+    yvex_remote_model model;
+    unsigned long long representation_offset;
+    unsigned long long file_offset;
+} remote_model_slot;
+
+static int remote_slot_compare(const void *left, const void *right)
+{
+    const remote_model_slot *a = left;
+    const remote_model_slot *b = right;
+
+    if (a->model.ranking_score != b->model.ranking_score)
+        return a->model.ranking_score > b->model.ranking_score ? -1 : 1;
+    if (a->model.provider_rank != b->model.provider_rank)
+        return a->model.provider_rank < b->model.provider_rank ? -1 : 1;
+    return strcmp(a->model.repository, b->model.repository);
+}
+
+static int remote_catalog_rank(yvex_remote_catalog *catalog, const char *query)
+{
+    remote_model_slot *slots;
+    unsigned long long index;
+
+    if (!catalog->model_count) return 1;
+    slots = calloc((size_t)catalog->model_count, sizeof(*slots));
+    if (!slots) return 0;
+    for (index = 0u; index < catalog->model_count; ++index) {
+        catalog->models[index].ranking_score = remote_rank_score(&catalog->models[index], query);
+        slots[index].model = catalog->models[index];
+        slots[index].representation_offset = catalog->representation_offsets[index];
+        slots[index].file_offset = catalog->file_offsets[index];
+    }
+    qsort(slots, (size_t)catalog->model_count, sizeof(*slots), remote_slot_compare);
+    for (index = 0u; index < catalog->model_count; ++index) {
+        catalog->models[index] = slots[index].model;
+        catalog->representation_offsets[index] = slots[index].representation_offset;
+        catalog->file_offsets[index] = slots[index].file_offset;
+    }
+    free(slots);
+    return 1;
+}
+
+static void remote_catalog_page(yvex_remote_catalog *catalog,
+                                unsigned int skip,
+                                unsigned int take)
+{
+    unsigned long long retained;
+
+    if (skip >= catalog->model_count) {
+        catalog->model_count = 0u;
+        return;
+    }
+    retained = catalog->model_count - skip;
+    if (retained > take) retained = take;
+    memmove(catalog->models, catalog->models + skip, (size_t)retained * sizeof(*catalog->models));
+    memmove(catalog->representation_offsets, catalog->representation_offsets + skip,
+            (size_t)retained * sizeof(*catalog->representation_offsets));
+    memmove(catalog->file_offsets, catalog->file_offsets + skip,
+            (size_t)retained * sizeof(*catalog->file_offsets));
+    catalog->model_count = retained;
 }
 
 int yvex_remote_model_search(yvex_remote_catalog **out,
@@ -946,6 +1206,7 @@ int yvex_remote_model_search(yvex_remote_catalog **out,
     unsigned int page;
     unsigned int page_size;
     unsigned int cumulative;
+    unsigned int provider_limit;
     unsigned int argument_count = 0u;
     int rc;
 
@@ -958,11 +1219,12 @@ int yvex_remote_model_search(yvex_remote_catalog **out,
         return remote_refuse(err, YVEX_ERR_INVALID_ARG, "bounded Hugging Face search options are required");
     *out = NULL;
     page = options->page ? options->page : 1u;
-    page_size = options->page_size ? options->page_size : 20u;
+    page_size = options->page_size ? options->page_size : 8u;
     if (page > 20u || page_size > 50u || page > REMOTE_MODEL_CAP / page_size)
         return remote_refuse(err, YVEX_ERR_BOUNDS, "search page exceeds the bounded catalog window");
     cumulative = page * page_size;
-    snprintf(limit, sizeof(limit), "%u", cumulative);
+    provider_limit = cumulative < 50u ? 50u : cumulative;
+    snprintf(limit, sizeof(limit), "%u", provider_limit);
     arguments[argument_count++] = "models";
     arguments[argument_count++] = "list";
     if (options->query && options->query[0]) {
@@ -985,21 +1247,27 @@ int yvex_remote_model_search(yvex_remote_catalog **out,
     arguments[argument_count++] = "--format";
     arguments[argument_count++] = "json";
     arguments[argument_count] = NULL;
-    rc = remote_run(arguments, options->cli_override, &output, &output_length, err);
+    rc = remote_run(arguments, options->cli_override, "remote model was not found",
+                    &output, &output_length, err);
     if (rc != YVEX_OK) return rc;
     catalog = calloc(1u, sizeof(*catalog));
     if (!catalog) {
         free(output);
         return remote_refuse(err, YVEX_ERR_NOMEM, "remote catalog allocation failed");
     }
-    rc = remote_parse_search_output(catalog, output, output_length,
-                                    (page - 1u) * page_size, page_size, err);
+    remote_copy(catalog->query, sizeof(catalog->query), options->query);
+    rc = remote_parse_search_output(catalog, output, output_length, err);
     free(output);
     if (rc != YVEX_OK) {
         yvex_remote_catalog_close(catalog);
         return rc;
     }
     remote_mark_local(catalog, options->models_root);
+    if (!remote_catalog_rank(catalog, options->query)) {
+        yvex_remote_catalog_close(catalog);
+        return remote_refuse(err, YVEX_ERR_NOMEM, "remote ranking allocation failed");
+    }
+    remote_catalog_page(catalog, (page - 1u) * page_size, page_size);
     *out = catalog;
     return YVEX_OK;
 }
@@ -1038,7 +1306,11 @@ int yvex_remote_model_inspect(yvex_remote_catalog **out,
     info_arguments[count++] = "--format";
     info_arguments[count++] = "json";
     info_arguments[count] = NULL;
-    rc = remote_run(info_arguments, options->cli_override, &output, &output_length, err);
+    rc = remote_run(info_arguments, options->cli_override,
+                    options->revision && options->revision[0]
+                        ? "remote revision or reference was not found"
+                        : "remote model was not found",
+                    &output, &output_length, err);
     if (rc != YVEX_OK) return rc;
     yvex_json_init(&json, output, output_length);
     if (!remote_parse_model(&json, &parsed) || !yvex_json_complete(&json)) {
@@ -1071,7 +1343,9 @@ int yvex_remote_model_inspect(yvex_remote_catalog **out,
     file_arguments[count++] = "--format";
     file_arguments[count++] = "json";
     file_arguments[count] = NULL;
-    rc = remote_run(file_arguments, options->cli_override, &output, &output_length, err);
+    rc = remote_run(file_arguments, options->cli_override,
+                    "remote representation listing was not found",
+                    &output, &output_length, err);
     if (rc == YVEX_OK)
         rc = remote_parse_files(catalog, model_index, output, output_length, err);
     free(output);
@@ -1109,6 +1383,16 @@ const yvex_remote_file *yvex_remote_catalog_file_at(const yvex_remote_catalog *c
 unsigned long long yvex_remote_catalog_count(const yvex_remote_catalog *catalog)
 {
     return catalog ? catalog->model_count : 0u;
+}
+
+unsigned long long yvex_remote_catalog_provider_count(const yvex_remote_catalog *catalog)
+{
+    return catalog ? catalog->provider_result_count : 0u;
+}
+
+const char *yvex_remote_catalog_query(const yvex_remote_catalog *catalog)
+{
+    return catalog ? catalog->query : "";
 }
 
 const yvex_remote_model *yvex_remote_catalog_at(const yvex_remote_catalog *catalog,

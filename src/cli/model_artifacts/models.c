@@ -222,7 +222,7 @@ static const char *const literal_pair_4[] = { "identity_status: recorded",
     "status: models-added"};
 
 static const char *const models_help_lines[] = {
-    "usage: yvex model search [QUERY] [--author NAME] [--filter TAG] [--page N] [--limit N] "
+    "usage: yvex model search [QUERY] [--author NAME] [--filter TAG] [--page N] [--limit N | --all] "
         "[--interactive] [--output table|audit|json]",
     "       yvex model inspect OWNER/NAME [--revision REVISION] [--output table|audit|json]",
     "usage: yvex model registry scan --root DIR [--registry FILE]",
@@ -263,7 +263,7 @@ static const char *const models_help_lines[] = {
     "       yvex model registry remove ALIAS [--registry FILE]",
     "\nExamples:",
     "  yvex model search \"MiniMax H3\" --output table",
-    "  yvex model inspect MiniMaxAI/MiniMax-H3 --revision REVISION --output table",
+    "  yvex model inspect MiniMaxAI/MiniMax-H3 --output table",
     "  yvex model acquire --repo OWNER/GGUF_REPOSITORY --family FAMILY --name LOCAL_NAME "
         "--revision REVISION --include 'selected-file.gguf' --models-root ~/lab/models",
     "  yvex inspect artifact check deepseek4-v4-flash-dspark-selected-embed",

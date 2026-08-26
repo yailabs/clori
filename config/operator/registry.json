@@ -755,6 +755,7 @@
     },
     "cli_offline_model_discovery": {
       "booleans": [
+        "--all",
         "--audit",
         "--interactive",
         "--json"
@@ -2441,7 +2442,7 @@
       "operation_id": "model.search",
       "protocol_operation": "none",
       "renderer_id": "human-or-json",
-      "result_schema": "remote-model-catalog.v1",
+      "result_schema": "remote-model-catalog.v2",
       "side_effects": "provider metadata read",
       "slash_projection": "none",
       "summary": "Search remote provider model metadata without acquiring payloads.",
@@ -2486,7 +2487,7 @@
       "operation_id": "model.inspect",
       "protocol_operation": "none",
       "renderer_id": "human-or-json",
-      "result_schema": "remote-model-catalog.v1",
+      "result_schema": "remote-model-catalog.v2",
       "side_effects": "provider metadata read",
       "slash_projection": "none",
       "summary": "Inspect exact remote revision and representation metadata.",

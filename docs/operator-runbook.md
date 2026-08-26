@@ -54,11 +54,15 @@ Search Hugging Face metadata without downloading payloads:
 ./yvex model search "Qwen" --author Qwen --page 1 --limit 20
 ```
 
-The first view groups results by provider-derived family and reports remote
-representation classes, gated state, YVEX support stage, and local presence.
-Search may show unsupported models. Remote availability never implies source
-ingest, package readiness, or engine capability. `--json` returns the typed
-`yvex.remote-model-catalog.v1` record used by noninteractive consumers;
+The primary view is a compact YVEX-ranked catalog: canonical full models,
+conversions, adapters, components, deltas, and derivatives remain distinct.
+Family affinity does not make an adapter or component an interchangeable full
+model. Product-facing `LOCAL` and `YVEX` columns summarize lifecycle state;
+provider rank and internal support stages remain available through `--audit`.
+Use `--all` to retain the full bounded provider result set. Search may show
+unsupported models, and remote availability never implies source ingest,
+package readiness, or engine capability. `--json` returns the typed
+`yvex.remote-model-catalog.v2` record used by noninteractive consumers;
 `--interactive` offers a terminal drill-down while calling the same domain API.
 
 Inspect one repository before selecting a representation:
@@ -68,12 +72,19 @@ Inspect one repository before selecting a representation:
 ./yvex model inspect MiniMaxAI/MiniMax-H3 --revision REVISION --audit
 ```
 
-Inspection resolves the exact provider revision and lists its safetensors and
-GGUF files. Safetensors precision comes from provider metadata when present.
-Remote GGUF qtypes inferred from filenames remain explicitly provisional until
-the acquired container passes YVEX GGUF inspection. A provider-reported base
-model is retained as lineage; repositories without that evidence remain
-separate.
+Without `--revision`, inspection requests the provider default and reports the
+immutable revision currently resolved for it. An explicit tag, branch, or SHA
+is resolved separately; a missing ref is reported as a revision error rather
+than a missing repository. Inspection also reconciles exact repository and
+revision identities with historical acquisition manifests and package
+provenance. If only another revision is local, the UI reports that distinction
+instead of claiming the current remote snapshot is installed.
+
+The representation table lists safetensors and GGUF candidates separately.
+Safetensors precision comes from provider metadata when present. Remote GGUF
+qtypes inferred from filenames remain explicitly provisional until the acquired
+container passes YVEX GGUF inspection. A provider-reported base model is
+retained as lineage; repositories without that evidence remain separate.
 
 Acquire only after choosing the repository, representation, and immutable
 revision:
