@@ -201,11 +201,6 @@ static const yvex_runtime_residency *component_session_residency(
     return session ? session->residency : NULL;
 }
 
-yvex_backend *yvex_runtime_component_session_backend(const yvex_runtime_component_session *session)
-{
-    return session ? session->backend : NULL;
-}
-
 const yvex_runtime_residency_summary *yvex_runtime_component_session_summary(
     const yvex_runtime_component_session *session)
 {
@@ -637,7 +632,7 @@ static int component_weight_bind(
     return YVEX_OK;
 }
 
-int yvex_component_weight_bind_sized(
+static int component_weight_bind_sized(
     void *context, const char *name, unsigned long long rows,
     unsigned long long width, yvex_component_encoded_weight *weight, yvex_error *err)
 {
@@ -661,6 +656,28 @@ int yvex_component_weight_bind_sized(
         rc = YVEX_ERR_FORMAT;
     }
     return rc;
+}
+
+int yvex_runtime_component_alias_decoder_cuda(
+    const yvex_runtime_component_session *session,
+    const yvex_alias_decoder_request *request,
+    yvex_alias_decoder_result *result, yvex_error *err)
+{
+    yvex_alias_decoder_request execution;
+    if (result) memset(result, 0, sizeof(*result));
+    if (!session || !request || !result || !session->backend || !session->residency ||
+        yvex_backend_kind_of(session->backend) != YVEX_BACKEND_KIND_CUDA ||
+        !session->summary.sealed || !session->summary.cuda_ready ||
+        session->summary.invalidated || request->weight_bind ||
+        request->weight_bind_context) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.component.alias-decoder",
+                       "one sealed CUDA component and unbound decoder recipe are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    execution = *request;
+    execution.weight_bind = component_weight_bind_sized;
+    execution.weight_bind_context = (void *)session;
+    return yvex_backend_alias_decoder_execute(session->backend, &execution, result, err);
 }
 
 static int component_load_reject(

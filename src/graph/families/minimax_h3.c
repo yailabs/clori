@@ -1165,13 +1165,11 @@ static int audio_vae_execute_artifact_cuda(
             .input_count = options->batch * options->latent_channels * options->latent_steps,
             .output = options->output, .output_capacity = options->output_capacity,
             .weight_name = yvex_alias_decoder_template_name,
-            .weight_bind = yvex_component_weight_bind_sized,
-            .weight_name_context = (void *)&audio_decoder_names, .weight_bind_context = session,
+            .weight_name_context = (void *)&audio_decoder_names,
             .cancel_requested = options->cancelled,
             .cancel_context = options->cancellation_context,
         };
-        rc = yvex_backend_alias_decoder_execute(
-            yvex_runtime_component_session_backend(session), &request, &decoder, err);
+        rc = yvex_runtime_component_alias_decoder_cuda(session, &request, &decoder, err);
     }
     if (rc == YVEX_OK && !audio_execution_identity(
             "yvex.minimax-h3.audio-vae.cuda-f32.v1",

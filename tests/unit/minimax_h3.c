@@ -8,6 +8,7 @@
 #include <yvex/internal/backend.h>
 #include <yvex/internal/component.h>
 #include <yvex/internal/compilation.h>
+#include <yvex/internal/convolution.h>
 #include <yvex/internal/family_catalog.h>
 #include <yvex/internal/joint_transformer.h>
 #include <yvex/internal/latent.h>
@@ -841,6 +842,8 @@ static int test_component_admission_routing(void)
     yvex_minimax_h3_failure family_failure;
     yvex_minimax_h3_conditioning_result conditioning;
     yvex_backend_text_execution_result backend_result;
+    yvex_alias_decoder_request alias_request = {0};
+    yvex_alias_decoder_result alias_result;
     yvex_transformer_joint_request joint_request = {0};
     yvex_transformer_joint_result joint_result;
     unsigned int token = 1u;
@@ -896,6 +899,11 @@ static int test_component_admission_routing(void)
                          &joint_result, &err) == YVEX_ERR_INVALID_ARG &&
                          !joint_result.complete,
                      "generic joint component refuses an absent resident execution recipe");
+    YVEX_TEST_ASSERT(yvex_runtime_component_alias_decoder_cuda(
+                         NULL, &alias_request, &alias_result, &err) ==
+                         YVEX_ERR_INVALID_ARG &&
+                         !alias_result.complete,
+                     "generic alias decoder refuses an absent resident component");
     rc = yvex_backend_text_embedding_execute(
         NULL, &geometry, NULL, 0ull, 0u, 0ull, 0ull, 0ull, NULL, 0ull,
         &token, 1ull, output, 5120ull, &backend_result, &err);

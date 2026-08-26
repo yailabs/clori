@@ -288,7 +288,7 @@ src/model/families/minimax_h3.c'
 if rg -n -i '(families/|deepseek|minimax|qwen)' src/backend/cuda/text_encoder.c; then
     fail "generic CUDA text execution contains concrete family semantics"
 fi
-if rg -n 'yvex_backend_text_(embedding|encoder)_execute|yvex_backend_transformer_joint_cuda|yvex_backend_text_weight' \
+if rg -n 'yvex_backend_text_(embedding|encoder)_execute|yvex_backend_transformer_joint_cuda|yvex_backend_alias_decoder_execute|yvex_backend_text_weight' \
     src/graph/families/minimax_h3.c; then
     fail "MiniMax family owns generic component residency or backend dispatch"
 fi
@@ -297,6 +297,9 @@ rg -n 'yvex_runtime_component_text_artifact_cuda' src/graph/families/minimax_h3.
 rg -n 'yvex_runtime_component_joint_transformer_cuda' \
     src/graph/families/minimax_h3.c >/dev/null ||
     fail "MiniMax joint Transformer bypasses generic resident binding and dispatch"
+rg -n 'yvex_runtime_component_alias_decoder_cuda' \
+    src/graph/families/minimax_h3.c >/dev/null ||
+    fail "MiniMax audio decoder bypasses generic resident binding and dispatch"
 if rg -n '#include[[:space:]]+[<"]yvex/internal/backend[.]h[>"]|linear_numeric_policy' \
     include/yvex/internal/joint_transformer.h; then
     fail "joint Transformer semantics contain backend physical policy"

@@ -12,6 +12,7 @@ typedef struct yvex_backend yvex_backend;
 typedef struct yvex_component_encoded_weight yvex_convolution_weight;
 typedef struct yvex_component_execution_failure yvex_component_execution_failure;
 typedef struct yvex_materialization_session yvex_materialization_session;
+typedef struct yvex_runtime_component_session yvex_runtime_component_session;
 
 #define YVEX_ALIAS_DECODER_MAX_STAGES 8u
 #define YVEX_ALIAS_DECODER_MAX_RESBLOCKS 4u
@@ -104,6 +105,10 @@ int yvex_runtime_alias_decoder_execute_cpu(
     yvex_materialization_session *session, const yvex_alias_decoder_request *request,
     yvex_alias_decoder_result *result, yvex_component_execution_failure *failure,
     yvex_error *err);
+int yvex_runtime_component_alias_decoder_cuda(
+    const yvex_runtime_component_session *session,
+    const yvex_alias_decoder_request *request,
+    yvex_alias_decoder_result *result, yvex_error *err);
 int yvex_graph_conv1d_output_length(
     const yvex_graph_conv1d_geometry *geometry, unsigned long long *output_length,
     yvex_error *err);

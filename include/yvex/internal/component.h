@@ -161,9 +161,6 @@ int yvex_component_buffer_open(
     yvex_component_f32_buffer *, unsigned long long, unsigned long long,
     unsigned long long *, unsigned long long *, const char *, const char *, yvex_error *);
 void yvex_component_buffer_close(yvex_component_f32_buffer *, unsigned long long *);
-int yvex_component_weight_bind_sized(
-    void *, const char *, unsigned long long, unsigned long long,
-    yvex_component_encoded_weight *, yvex_error *);
 int yvex_component_f32_load(
     yvex_materialization_session *, const char *, unsigned int,
     const unsigned long long *, yvex_component_f32_buffer *, unsigned long long,
@@ -185,7 +182,6 @@ int yvex_runtime_component_joint_transformer_cuda(
     yvex_transformer_joint_result *, yvex_error *);
 yvex_materialization_session *yvex_runtime_component_session_materialization(
     const yvex_runtime_component_session *);
-yvex_backend *yvex_runtime_component_session_backend(const yvex_runtime_component_session *);
 const yvex_runtime_residency_summary *yvex_runtime_component_session_summary(
     const yvex_runtime_component_session *);
 
