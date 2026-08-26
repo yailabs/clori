@@ -956,28 +956,40 @@ static int live_fragment_append(yvex_tokenizer_decoder *decoder,
 static int live_execution_profile(
     yvex_model_engine *model, yvex_runtime_execution_session *session,
     yvex_backend_kind backend, yvex_sampling_strategy strategy,
-    yvex_compiled_execution_profile *profile, yvex_error *err)
+    yvex_runtime_execution_profile *profile, yvex_error *err)
 {
     const yvex_model_engine_view *model_view = yvex_model_engine_view_get(model);
     const yvex_runtime_session_view *session_view = yvex_runtime_session_view_get(session);
-    const yvex_physical_execution_summary *physical = model_view
-        ? yvex_physical_execution_ir_summary(model_view->physical_execution) : NULL;
     const yvex_runtime_binding_summary *binding = model_view ? model_view->binding : NULL;
     yvex_backend_cuda_attention_graph_summary cuda = {0};
     yvex_backend_cuda_graph_capability graph = {0};
     yvex_runtime_session_summary summary;
-    yvex_compiled_execution_profile_request request = {0};
-    const char *kernel_bundle = binding ? binding->identity : NULL;
-    char hardware[YVEX_EXECUTION_TEXT_CAP];
-    int rc, written;
+    yvex_runtime_execution_profile_request request = {0};
+    yvex_execution_workload_profile workload = {0};
+    const char *kernel_bundle = YVEX_BUILD_IDENTITY;
+    int rc;
 
-    if (!model_view || !session_view || !session_view->backend || !physical || !binding ||
-        !profile || yvex_runtime_session_summary_copy(session, &summary, err) != YVEX_OK) {
+    if (!model_view || !session_view || !session_view->backend || !binding || !profile ||
+        yvex_runtime_session_summary_copy(session, &summary, err) != YVEX_OK ||
+        !summary.engine_generation ||
+        !yvex_sha256_hex_valid(summary.engine_specialization_identity)) {
         if (!yvex_error_is_set(err))
             yvex_error_set(err, YVEX_ERR_STATE, "generation_live.profile",
-                           "compiled execution profile owners are unavailable");
+                           "runtime workload profile owners are unavailable");
         return yvex_error_is_set(err) ? yvex_error_code(err) : YVEX_ERR_STATE;
     }
+    workload.schema_version = YVEX_EXECUTION_WORKLOAD_PROFILE_SCHEMA_V1;
+    workload.kind = YVEX_EXECUTION_WORKLOAD_INTERACTIVE_LATENCY;
+    workload.minimum_session_context = workload.requested_session_context = 64ull;
+    workload.concurrent_sequences = 1ull;
+    workload.logical_batch_tokens = workload.prefill_chunk_tokens = 8ull;
+    workload.attention_microbatch_rows = workload.moe_row_tile = 8ull;
+    workload.output_head_rows = 1ull;
+    workload.system_reserve_bytes = YVEX_EXECUTION_MINIMUM_SYSTEM_RESERVE;
+    workload.latency_priority = 1;
+    yvex_core_text_copy(workload.name, sizeof(workload.name), "manual-generation");
+    if (yvex_execution_workload_profile_seal(&workload, err) != YVEX_OK)
+        return yvex_error_code(err);
     if (backend == YVEX_BACKEND_KIND_CUDA) {
         rc = yvex_backend_cuda_attention_graph_summary_get(
             session_view->backend, &cuda, err);
@@ -986,34 +998,13 @@ static int live_execution_profile(
         rc = yvex_backend_cuda_graph_query(session_view->backend, &graph, err);
         if (rc != YVEX_OK) return rc;
         kernel_bundle = cuda.cuda_build_identity;
-        written = snprintf(hardware, sizeof(hardware), "%s-cuda-sm%d%d",
-                           cuda.kernel_bundle_native ? "native" : "portable",
-                           summary.compute_capability_major,
-                           summary.compute_capability_minor);
-    } else {
-        written = snprintf(hardware, sizeof(hardware), "portable-cpu");
     }
-    if (written < 0 || (size_t)written >= sizeof(hardware)) {
-        yvex_error_set(err, YVEX_ERR_BOUNDS, "generation_live.profile",
-                       "hardware profile rendering overflowed");
-        return YVEX_ERR_BOUNDS;
-    }
-    request.schema_version = YVEX_COMPILED_EXECUTION_PROFILE_SCHEMA_V2;
-    request.logical_model_identity = binding->logical_model_identity;
-    request.physical_variant_identity = binding->profile_identity;
-    request.physical_execution_identity = physical->identity;
-    request.artifact_identity = binding->artifact_identity;
-    request.materialization_identity = binding->materialization_identity;
-    request.runtime_binding_identity = binding->identity;
+    request.schema_version = YVEX_RUNTIME_EXECUTION_PROFILE_SCHEMA_V1;
+    request.engine_generation = summary.engine_generation;
+    request.engine_specialization_identity = summary.engine_specialization_identity;
     request.kernel_bundle_identity = kernel_bundle;
-    request.hardware_profile = hardware;
-    request.backend = backend;
-    request.device_index = summary.device_index;
-    request.compute_major = summary.compute_capability_major;
-    request.compute_minor = summary.compute_capability_minor;
-    request.context_capacity = 64ull;
+    request.workload_profile_identity = workload.identity;
     request.generation_mode = YVEX_EXECUTION_GENERATION_TARGET_ONLY;
-    request.workload = YVEX_EXECUTION_WORKLOAD_INTERACTIVE;
     request.evidence = YVEX_EXECUTION_EVIDENCE_PRODUCTION;
     request.execution_class =
         backend == YVEX_BACKEND_KIND_CUDA && cuda.kernel_bundle_native
@@ -1038,7 +1029,7 @@ static int live_execution_profile(
                 graph.async_copy_available && graph.pinned_host_memory_available
             ? YVEX_EXECUTION_RESOLUTION_EXACT
             : YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
-    return yvex_compiled_execution_profile_seal(&request, profile, err);
+    return yvex_runtime_execution_profile_seal(&request, profile, err);
 }
 
 static int live_manual_execute(yvex_model_engine *model,
@@ -1072,7 +1063,7 @@ static int live_manual_execute(yvex_model_engine *model,
     yvex_runtime_sampling_context_summary sampling_summary;
     yvex_graph_attention_state_summary state;
     yvex_model_engine_failure failure = {0};
-    yvex_compiled_execution_profile execution_profile = {0};
+    yvex_runtime_execution_profile execution_profile = {0};
     const yvex_transformer_plan_summary *plan = NULL;
     const yvex_runtime_logits_plan_summary *logits_plan = NULL;
     float *prefill_hidden = NULL, *decode_hidden = NULL, *raw_logits = NULL;

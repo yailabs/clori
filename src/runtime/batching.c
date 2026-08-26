@@ -955,7 +955,7 @@ typedef struct {
     yvex_runtime_execution_session *session;
     yvex_runtime_logits_context *logits;
     yvex_backend *backend;
-    const yvex_compiled_execution_profile *execution_profile;
+    const yvex_runtime_execution_profile *execution_profile;
     const yvex_runtime_logits_source *source;
     yvex_runtime_logits_row_result *result;
     float *host_logits;

@@ -942,6 +942,8 @@ static int transformer_attention_configure(
     if (!context->options.execution_profile) return YVEX_OK;
     if (!width || width > context->options.workspace_token_capacity ||
         !session->workspace_generation ||
+        !runtime_execution_profile_matches(context->options.execution_profile,
+                                           &context->model->summary, session) ||
         !yvex_sha256_hex_valid(session->workspace_identity) ||
         !yvex_sha256_hex_valid(state->state_layout_identity))
         return transformer_runtime_refuse(err, YVEX_ERR_STATE,
@@ -1281,6 +1283,10 @@ int yvex_runtime_transformer_context_open(yvex_runtime_transformer_context **out
     context->options = *options;
     if (!context->model_view || !context->session_view || context->session_view->engine != model ||
         !context->model_view->binding->capabilities.transformer_ready ||
+        (options->execution_profile &&
+         !runtime_execution_profile_matches(options->execution_profile,
+                                            &model->summary,
+                                            &session->summary)) ||
         pthread_mutex_init(&context->mutex, NULL) != 0) {
         rc = transformer_runtime_refuse(err, YVEX_ERR_STATE,
                                         "transformer model/session capability is unavailable");

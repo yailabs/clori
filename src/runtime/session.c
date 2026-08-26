@@ -49,7 +49,7 @@ int yvex_runtime_device_view_bind(
     yvex_execution_device_view *out, yvex_execution_device_value_kind kind,
     yvex_model_engine *model, yvex_runtime_execution_session *session,
     const yvex_attention_state_provider *provider,
-    const yvex_compiled_execution_profile *profile, const yvex_device_tensor *tensor,
+    const yvex_runtime_execution_profile *profile, const yvex_device_tensor *tensor,
     unsigned long long offset, unsigned long long rows, unsigned long long columns,
     yvex_error *err)
 {
@@ -66,7 +66,9 @@ int yvex_runtime_device_view_bind(
         yvex_runtime_session_summary_copy(session, &session_summary, err) != YVEX_OK ||
         yvex_runtime_residency_snapshot(model_view->residency, &residency,
                                         NULL, NULL, err) != YVEX_OK ||
-        provider->summary(provider->context, &state, err) != YVEX_OK) {
+        provider->summary(provider->context, &state, err) != YVEX_OK ||
+        !runtime_execution_profile_matches(profile, &model_summary,
+                                           &session_summary)) {
         yvex_error_set(err, YVEX_ERR_STATE, "runtime.execution.device-view",
                        "device value generations are unavailable");
         return YVEX_ERR_STATE;

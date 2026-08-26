@@ -1,9 +1,4 @@
-/*
- * Make prefill and decode hidden rows directly consumable by the sampling owner.
- *
- * One complete canonical vocabulary row is published only after every value is finite.
- * Family-neutral runtime execution from typed normalized hidden state to raw F32 logits.
- */
+/* Publishes one complete finite vocabulary row from typed normalized hidden state. */
 #include <yvex/internal/logits.h>
 #include <float.h>
 #include <math.h>
@@ -16,6 +11,7 @@
 #include <yvex/internal/execution.h>
 #include <yvex/internal/quant_numeric.h>
 #include <yvex/internal/runtime.h>
+#include "src/runtime/private.h"
 
 struct yvex_runtime_logits_plan {
     yvex_runtime_logits_plan_summary summary;
@@ -99,6 +95,7 @@ int yvex_runtime_logits_context_open(
 {
     yvex_runtime_logits_context *context = NULL;
     yvex_model_engine_summary model_summary;
+    yvex_runtime_session_summary session_summary;
     yvex_runtime_residency_summary residency;
     unsigned long long candidate_bytes, hidden_elements, hidden_bytes;
     unsigned long long logits_elements, device_elements, device_bytes, device_total, host_bytes;
@@ -110,7 +107,6 @@ int yvex_runtime_logits_context_open(
         options->evidence_profile > YVEX_EXECUTION_EVIDENCE_FORENSIC ||
         (options->device_selection &&
          (!options->execution_profile ||
-          options->execution_profile->backend != YVEX_BACKEND_KIND_CUDA ||
           !yvex_sha256_hex_valid(options->execution_profile->identity))))
         return logits_refuse(err, YVEX_ERR_INVALID_ARG,
                              "logits requires model, session, transformer plan, and row budget");
@@ -125,7 +121,11 @@ int yvex_runtime_logits_context_open(
     if (!context->model_view || !context->session_view ||
         context->session_view->engine != model ||
         yvex_model_engine_summary_copy(model, &model_summary, err) != YVEX_OK ||
-        !model_summary.sealed || !model_summary.valid) {
+        yvex_runtime_session_summary_copy(session, &session_summary, err) != YVEX_OK ||
+        !model_summary.sealed || !model_summary.valid ||
+        (options->device_selection && session_summary.backend != YVEX_BACKEND_KIND_CUDA) ||
+        (options->execution_profile && !runtime_execution_profile_matches(
+             options->execution_profile, &model_summary, &session_summary))) {
         rc = logits_refuse(err, YVEX_ERR_STATE,
                            "logits model/session pairing is invalid");
         goto failure;

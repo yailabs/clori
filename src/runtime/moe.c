@@ -78,7 +78,7 @@ static int runtime_moe_activation(
             ? runtime_specialization_tensor(
                   context->session->specialization, physical, binding->tensor_id)
             : NULL;
-    const yvex_compiled_execution_profile *profile =
+    const yvex_runtime_execution_profile *profile =
         context ? context->options.execution_profile : NULL;
     int degraded = profile &&
         profile->moe_resolution == YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
@@ -795,6 +795,10 @@ int yvex_runtime_moe_context_open(yvex_runtime_moe_context **out, yvex_model_eng
         !context->model_view->binding->capabilities.moe_routed_expert_ready ||
         !context->model_view->binding->capabilities.moe_shared_expert_ready ||
         !context->model_view->binding->capabilities.moe_block_ready ||
+        (options->execution_profile &&
+         !runtime_execution_profile_matches(options->execution_profile,
+                                            &model->summary,
+                                            &session->summary)) ||
         pthread_mutex_init(&context->mutex, NULL) != 0) {
         rc = runtime_moe_refuse(err, YVEX_ERR_STATE, "MoE model/session ownership is invalid");
         goto fail;

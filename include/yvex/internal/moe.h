@@ -314,7 +314,7 @@ typedef struct {
     void *cancel_context;
     int defer_cuda_workspace, eager_execution;
     yvex_attention_evidence_level evidence_level;
-    const yvex_compiled_execution_profile *execution_profile;
+    const struct yvex_runtime_execution_profile *execution_profile;
 } yvex_runtime_moe_options;
 typedef struct {
     float *combined_outputs, *post, *combination;

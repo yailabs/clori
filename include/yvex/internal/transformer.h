@@ -358,7 +358,7 @@ typedef struct {
     int device_hidden_output, device_pre_normalized_output;
     int compatible_batching;
     unsigned long long compatible_batch_width;
-    const yvex_compiled_execution_profile *execution_profile;
+    const struct yvex_runtime_execution_profile *execution_profile;
 } yvex_runtime_transformer_options;
 typedef struct {
     unsigned long long chunk_tokens;

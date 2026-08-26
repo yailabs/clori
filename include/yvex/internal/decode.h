@@ -62,7 +62,7 @@ typedef struct {
     int compatible_batching;
     int (*cancel_requested)(void *context);
     void *cancel_context;
-    const yvex_compiled_execution_profile *execution_profile;
+    const yvex_runtime_execution_profile *execution_profile;
 } yvex_runtime_speculation_options;
 
 typedef struct {

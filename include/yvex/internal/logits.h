@@ -101,7 +101,7 @@ typedef struct {
     unsigned long long maximum_rows, maximum_host_bytes, maximum_device_bytes;
     yvex_execution_evidence_profile evidence_profile;
     int device_selection;
-    const yvex_compiled_execution_profile *execution_profile;
+    const yvex_runtime_execution_profile *execution_profile;
     int (*cancel_requested)(void *context);
     void *cancel_context;
 } yvex_runtime_logits_options;

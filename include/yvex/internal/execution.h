@@ -15,7 +15,6 @@
 extern "C" {
 #endif
 #define YVEX_PHYSICAL_EXECUTION_SCHEMA_V5 5u
-#define YVEX_COMPILED_EXECUTION_PROFILE_SCHEMA_V2 2u
 #define YVEX_EXECUTION_HARDWARE_PROFILE_SCHEMA_V1 1u
 #define YVEX_EXECUTION_WORKLOAD_PROFILE_SCHEMA_V1 1u
 #define YVEX_EXECUTION_CAPACITY_PLAN_SCHEMA_V1 1u
@@ -370,59 +369,9 @@ int yvex_execution_roofline_ledger_build(
     yvex_execution_roofline_ledger *ledger, yvex_error *err);
 
 typedef enum {
-    YVEX_EXECUTION_WORKLOAD_INTERACTIVE = 0,
-    YVEX_EXECUTION_WORKLOAD_BATCH,
-    YVEX_EXECUTION_WORKLOAD_QUALIFICATION
-} yvex_execution_workload_class;
-
-typedef enum {
     YVEX_EXECUTION_GENERATION_TARGET_ONLY = 0,
     YVEX_EXECUTION_GENERATION_SPECULATIVE
 } yvex_execution_generation_mode;
-
-typedef struct {
-    unsigned int schema_version;
-    const char *logical_model_identity;
-    const char *physical_variant_identity;
-    const char *physical_execution_identity;
-    const char *artifact_identity;
-    const char *materialization_identity;
-    const char *runtime_binding_identity;
-    const char *kernel_bundle_identity;
-    const char *hardware_profile;
-    yvex_backend_kind backend;
-    int device_index, compute_major, compute_minor;
-    unsigned long long context_capacity;
-    yvex_execution_generation_mode generation_mode;
-    yvex_execution_workload_class workload;
-    yvex_execution_evidence_profile evidence;
-    yvex_execution_class execution_class;
-    yvex_execution_resolution attention_resolution;
-    yvex_execution_resolution moe_resolution;
-    yvex_execution_resolution sampling_resolution;
-} yvex_compiled_execution_profile_request;
-
-typedef struct {
-    unsigned int schema_version;
-    yvex_backend_kind backend;
-    int device_index, compute_major, compute_minor;
-    unsigned long long context_capacity;
-    yvex_execution_generation_mode generation_mode;
-    yvex_execution_workload_class workload;
-    yvex_execution_evidence_profile evidence;
-    yvex_execution_class execution_class;
-    yvex_execution_resolution resolution;
-    yvex_execution_resolution attention_resolution;
-    yvex_execution_resolution moe_resolution;
-    yvex_execution_resolution sampling_resolution;
-    char hardware_profile[YVEX_EXECUTION_TEXT_CAP];
-    char kernel_bundle_identity[YVEX_SHA256_HEX_CAP];
-    char identity[YVEX_SHA256_HEX_CAP];
-} yvex_compiled_execution_profile;
-
-int yvex_compiled_execution_profile_seal(
-    const yvex_compiled_execution_profile_request *request,
-    yvex_compiled_execution_profile *profile, yvex_error *err);
 
 typedef enum {
     YVEX_EXECUTION_DEVICE_HIDDEN = 0,

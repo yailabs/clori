@@ -24,6 +24,75 @@ static int hash_finish(yvex_sha256 *hash, char output[YVEX_SHA256_HEX_CAP])
     return 1;
 }
 
+static int execution_resolution_executable(yvex_execution_resolution resolution)
+{
+    return resolution == YVEX_EXECUTION_RESOLUTION_EXACT ||
+           resolution == YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
+}
+
+int yvex_runtime_execution_profile_seal(
+    const yvex_runtime_execution_profile_request *request,
+    yvex_runtime_execution_profile *profile, yvex_error *err)
+{
+    yvex_sha256 hash;
+    if (profile) memset(profile, 0, sizeof(*profile));
+    if (!request || !profile ||
+        request->schema_version != YVEX_RUNTIME_EXECUTION_PROFILE_SCHEMA_V1 ||
+        !request->engine_generation ||
+        !yvex_sha256_hex_valid(request->engine_specialization_identity) ||
+        !yvex_sha256_hex_valid(request->kernel_bundle_identity) ||
+        !yvex_sha256_hex_valid(request->workload_profile_identity) ||
+        request->generation_mode > YVEX_EXECUTION_GENERATION_SPECULATIVE ||
+        request->evidence > YVEX_EXECUTION_EVIDENCE_FORENSIC ||
+        request->execution_class > YVEX_EXECUTION_CLASS_FORENSIC_REFERENCE ||
+        !execution_resolution_executable(request->attention_resolution) ||
+        !execution_resolution_executable(request->moe_resolution) ||
+        !execution_resolution_executable(request->sampling_resolution))
+        return specialization_refuse(
+            err, YVEX_ERR_INVALID_ARG,
+            "complete engine workload profile facts are required");
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime-execution-profile.v1") ||
+        !yvex_sha256_update_text(&hash, request->engine_specialization_identity) ||
+        !yvex_sha256_update_text(&hash, request->kernel_bundle_identity) ||
+        !yvex_sha256_update_text(&hash, request->workload_profile_identity) ||
+        !yvex_sha256_update_u64(&hash, request->generation_mode) ||
+        !yvex_sha256_update_u64(&hash, request->evidence) ||
+        !yvex_sha256_update_u64(&hash, request->execution_class) ||
+        !yvex_sha256_update_u64(&hash, request->attention_resolution) ||
+        !yvex_sha256_update_u64(&hash, request->moe_resolution) ||
+        !yvex_sha256_update_u64(&hash, request->sampling_resolution) ||
+        !hash_finish(&hash, profile->identity))
+        goto identity_failed;
+    profile->schema_version = YVEX_RUNTIME_EXECUTION_PROFILE_SCHEMA_V1;
+    profile->engine_generation = request->engine_generation;
+    profile->generation_mode = request->generation_mode;
+    profile->evidence = request->evidence;
+    profile->execution_class = request->execution_class;
+    profile->attention_resolution = request->attention_resolution;
+    profile->moe_resolution = request->moe_resolution;
+    profile->sampling_resolution = request->sampling_resolution;
+    profile->resolution =
+        request->attention_resolution == YVEX_EXECUTION_RESOLUTION_EXACT &&
+                request->moe_resolution == YVEX_EXECUTION_RESOLUTION_EXACT &&
+                request->sampling_resolution == YVEX_EXECUTION_RESOLUTION_EXACT
+            ? YVEX_EXECUTION_RESOLUTION_EXACT
+            : YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
+    yvex_runtime_identity_copy(profile->engine_specialization_identity,
+                               request->engine_specialization_identity);
+    yvex_runtime_identity_copy(profile->kernel_bundle_identity,
+                               request->kernel_bundle_identity);
+    yvex_runtime_identity_copy(profile->workload_profile_identity,
+                               request->workload_profile_identity);
+    yvex_error_clear(err);
+    return YVEX_OK;
+identity_failed:
+    memset(profile, 0, sizeof(*profile));
+    return specialization_refuse(
+        err, YVEX_ERR_STATE,
+        "engine workload profile identity derivation failed");
+}
+
 typedef struct {
     yvex_transformer_linear_operation operation;
     yvex_transformer_linear_numeric_contract numeric_contract;

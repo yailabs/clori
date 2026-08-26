@@ -25,6 +25,38 @@ static inline void yvex_runtime_identity_copy(char destination[YVEX_SHA256_HEX_C
     memset(destination, 0, YVEX_SHA256_HEX_CAP);
     if (length) memcpy(destination, source, length);
 }
+#define YVEX_RUNTIME_EXECUTION_PROFILE_SCHEMA_V1 1u
+typedef struct {
+    unsigned int schema_version;
+    unsigned long long engine_generation;
+    const char *engine_specialization_identity;
+    const char *kernel_bundle_identity;
+    const char *workload_profile_identity;
+    yvex_execution_generation_mode generation_mode;
+    yvex_execution_evidence_profile evidence;
+    yvex_execution_class execution_class;
+    yvex_execution_resolution attention_resolution;
+    yvex_execution_resolution moe_resolution;
+    yvex_execution_resolution sampling_resolution;
+} yvex_runtime_execution_profile_request;
+typedef struct yvex_runtime_execution_profile {
+    unsigned int schema_version;
+    unsigned long long engine_generation;
+    yvex_execution_generation_mode generation_mode;
+    yvex_execution_evidence_profile evidence;
+    yvex_execution_class execution_class;
+    yvex_execution_resolution resolution;
+    yvex_execution_resolution attention_resolution;
+    yvex_execution_resolution moe_resolution;
+    yvex_execution_resolution sampling_resolution;
+    char engine_specialization_identity[YVEX_SHA256_HEX_CAP];
+    char kernel_bundle_identity[YVEX_SHA256_HEX_CAP];
+    char workload_profile_identity[YVEX_SHA256_HEX_CAP];
+    char identity[YVEX_SHA256_HEX_CAP];
+} yvex_runtime_execution_profile;
+int yvex_runtime_execution_profile_seal(
+    const yvex_runtime_execution_profile_request *request,
+    yvex_runtime_execution_profile *profile, yvex_error *err);
 #define YVEX_RUNTIME_REASON_CAP 256u
 #define YVEX_RUNTIME_BINDING_SCHEMA_CURRENT 15u
 #define YVEX_RUNTIME_BINDING_SUFFIX ".yvex-runtime-binding"
@@ -433,7 +465,7 @@ const yvex_runtime_session_view *yvex_runtime_session_view_get(const yvex_runtim
 int yvex_runtime_device_view_bind(yvex_execution_device_view *out, yvex_execution_device_value_kind kind,
     yvex_model_engine *model, yvex_runtime_execution_session *session,
     const yvex_attention_state_provider *provider,
-    const yvex_compiled_execution_profile *profile, const yvex_device_tensor *tensor,
+    const yvex_runtime_execution_profile *profile, const yvex_device_tensor *tensor,
     unsigned long long offset, unsigned long long rows, unsigned long long columns,
     yvex_error *err);
 int yvex_runtime_cleanup_lease_acquire(

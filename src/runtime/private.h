@@ -9,6 +9,7 @@
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdlib.h>
+#include <string.h>
 #include <yvex/internal/backend.h>
 #include <yvex/internal/decode.h>
 #include <yvex/internal/generation.h>
@@ -34,6 +35,27 @@ static inline int runtime_compatible_batch_options_valid(
 {
     return (enabled == 0 || enabled == 1) &&
            (enabled ? width >= 2ull && width < 64ull : !width);
+}
+
+/* A workload profile is usable only inside the engine generation that admitted it. */
+static inline int runtime_execution_profile_matches(
+    const yvex_runtime_execution_profile *profile,
+    const yvex_model_engine_summary *model,
+    const yvex_runtime_session_summary *session)
+{
+    return profile && model && session && model->sealed && model->valid &&
+           profile->schema_version == YVEX_RUNTIME_EXECUTION_PROFILE_SCHEMA_V1 &&
+           yvex_sha256_hex_valid(profile->identity) &&
+           yvex_sha256_hex_valid(profile->engine_specialization_identity) &&
+           yvex_sha256_hex_valid(profile->kernel_bundle_identity) &&
+           yvex_sha256_hex_valid(profile->workload_profile_identity) &&
+           profile->engine_generation &&
+           profile->engine_generation == model->engine_generation &&
+           profile->engine_generation == session->engine_generation &&
+           strcmp(profile->engine_specialization_identity,
+                  model->engine_specialization_identity) == 0 &&
+           strcmp(profile->engine_specialization_identity,
+                  session->engine_specialization_identity) == 0;
 }
 
 #define YVEX_GENERATION_LIFECYCLE_ACTIVE 1u
@@ -129,7 +151,7 @@ typedef struct {
     yvex_runtime_execution_session *session;
     yvex_backend *backend;
     const yvex_transformer_plan_summary *transformer;
-    const yvex_compiled_execution_profile *execution_profile;
+    const yvex_runtime_execution_profile *execution_profile;
     yvex_tensor_scope tensor_scope;
     yvex_execution_phase phase;
     yvex_execution_class execution_class;
@@ -146,7 +168,7 @@ typedef struct {
     const yvex_transformer_plan_summary *transformer;
     const yvex_moe_layer_plan *layer;
     const yvex_attention_publication *attention;
-    const yvex_compiled_execution_profile *execution_profile;
+    const yvex_runtime_execution_profile *execution_profile;
     const unsigned int *token_ids;
     const yvex_device_tensor *device_rows;
     yvex_device_tensor *device_outputs;
@@ -392,7 +414,7 @@ struct yvex_runtime_generation_context {
     yvex_token_sequence *sequence;
     yvex_runtime_generation_options options;
     yvex_runtime_generation_plan_summary plan;
-    yvex_compiled_execution_profile execution_profile;
+    yvex_runtime_execution_profile execution_profile;
     yvex_execution_hardware_profile hardware_profile;
     yvex_backend_bandwidth_evidence bandwidth_evidence;
     yvex_execution_workload_profile workload_profile;

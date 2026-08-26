@@ -6,6 +6,7 @@
 
 #include <yvex/internal/backend.h>
 #include <yvex/internal/execution.h>
+#include <yvex/internal/runtime.h>
 
 static void execution_test_identity(char output[YVEX_SHA256_HEX_CAP], char digit)
 {
@@ -294,56 +295,69 @@ static int execution_test_planning(void)
 
 static int execution_test_profile(void)
 {
-    char identity[YVEX_SHA256_HEX_CAP];
-    yvex_compiled_execution_profile_request request = {0};
-    yvex_compiled_execution_profile first, second;
+    char identity[YVEX_SHA256_HEX_CAP], changed_identity[YVEX_SHA256_HEX_CAP];
+    yvex_runtime_execution_profile_request request = {0};
+    yvex_runtime_execution_profile first, second;
     yvex_error err;
 
     execution_test_identity(identity, 'a');
-    request.schema_version = YVEX_COMPILED_EXECUTION_PROFILE_SCHEMA_V2;
-    request.logical_model_identity = identity;
-    request.physical_variant_identity = identity;
-    request.physical_execution_identity = identity;
-    request.artifact_identity = identity;
-    request.materialization_identity = identity;
-    request.runtime_binding_identity = identity;
+    execution_test_identity(changed_identity, 'b');
+    request.schema_version = YVEX_RUNTIME_EXECUTION_PROFILE_SCHEMA_V1;
+    request.engine_generation = 1ull;
+    request.engine_specialization_identity = identity;
     request.kernel_bundle_identity = identity;
-    request.hardware_profile = "portable-cpu";
-    request.backend = YVEX_BACKEND_KIND_CPU;
-    request.context_capacity = 4096ull;
+    request.workload_profile_identity = identity;
     request.generation_mode = YVEX_EXECUTION_GENERATION_TARGET_ONLY;
-    request.workload = YVEX_EXECUTION_WORKLOAD_INTERACTIVE;
     request.evidence = YVEX_EXECUTION_EVIDENCE_PRODUCTION;
     request.execution_class = YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE;
     request.attention_resolution = YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
     request.moe_resolution = YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
     request.sampling_resolution = YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
-    YVEX_TEST_ASSERT(yvex_compiled_execution_profile_seal(
+    YVEX_TEST_ASSERT(yvex_runtime_execution_profile_seal(
                          &request, &first, &err) == YVEX_OK,
-                     "compiled execution profile should seal");
-    YVEX_TEST_ASSERT(yvex_compiled_execution_profile_seal(
+                     "engine workload profile should seal");
+    YVEX_TEST_ASSERT(yvex_runtime_execution_profile_seal(
                          &request, &second, &err) == YVEX_OK,
-                     "equal compiled execution profile should seal");
+                     "equal engine workload profile should seal");
     YVEX_TEST_ASSERT(strcmp(first.identity, second.identity) == 0,
-                     "compiled execution identity should be deterministic");
+                     "engine workload identity should be deterministic");
     YVEX_TEST_ASSERT(
         first.resolution == YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED,
-        "compiled profile should expose its admitted degraded resolution");
+        "runtime profile should expose its admitted degraded resolution");
+    request.engine_generation = 2ull;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_execution_profile_seal(&request, &second, &err) == YVEX_OK &&
+            second.engine_generation == 2ull &&
+            strcmp(first.identity, second.identity) == 0,
+        "process-local engine handles must not mutate workload identity");
+    request.engine_generation = 1ull;
+    request.engine_specialization_identity = changed_identity;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_execution_profile_seal(&request, &second, &err) == YVEX_OK &&
+            strcmp(first.identity, second.identity) != 0,
+        "deployment specialization must mutate workload identity");
+    request.engine_specialization_identity = identity;
+    request.workload_profile_identity = changed_identity;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_execution_profile_seal(&request, &second, &err) == YVEX_OK &&
+            strcmp(first.identity, second.identity) != 0,
+        "resource workload identity must mutate execution identity");
+    request.workload_profile_identity = identity;
     request.attention_resolution = YVEX_EXECUTION_RESOLUTION_EXACT;
-    YVEX_TEST_ASSERT(yvex_compiled_execution_profile_seal(
+    YVEX_TEST_ASSERT(yvex_runtime_execution_profile_seal(
                          &request, &second, &err) == YVEX_OK &&
                          strcmp(first.identity, second.identity) != 0,
                      "capability resolution should change execution identity");
     request.attention_resolution =
         YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
     request.evidence = YVEX_EXECUTION_EVIDENCE_FORENSIC;
-    YVEX_TEST_ASSERT(yvex_compiled_execution_profile_seal(
+    YVEX_TEST_ASSERT(yvex_runtime_execution_profile_seal(
                          &request, &second, &err) == YVEX_OK &&
                          strcmp(first.identity, second.identity) != 0,
                      "evidence profile should change execution identity");
     request.attention_resolution =
         YVEX_EXECUTION_RESOLUTION_TEMPORARILY_RESOURCE_LIMITED;
-    YVEX_TEST_ASSERT(yvex_compiled_execution_profile_seal(
+    YVEX_TEST_ASSERT(yvex_runtime_execution_profile_seal(
                          &request, &second, &err) == YVEX_ERR_INVALID_ARG,
                      "non-executable capability resolution should refuse profile admission");
     return 0;

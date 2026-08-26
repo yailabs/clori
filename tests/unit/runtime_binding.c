@@ -1902,6 +1902,9 @@ static int test_compiled_model_binding_v15(const char *root)
     yvex_runtime_generation_context *generation = NULL;
     yvex_runtime_generation_options generation_options = {0};
     yvex_runtime_session_open_request session_request = {0};
+    yvex_runtime_execution_profile_request profile_request = {0};
+    yvex_runtime_execution_profile profile, mismatched_profile;
+    yvex_execution_workload_profile profile_workload = {0};
     yvex_model_engine_summary model_summary;
     yvex_runtime_session_summary session_summary;
     yvex_model_engine_failure model_failure;
@@ -1967,6 +1970,56 @@ static int test_compiled_model_binding_v15(const char *root)
             strcmp(session_summary.engine_specialization_identity,
                    model_summary.engine_specialization_identity) == 0,
         "session consumes the engine-owned package specialization");
+    profile_workload.schema_version = YVEX_EXECUTION_WORKLOAD_PROFILE_SCHEMA_V1;
+    profile_workload.kind = YVEX_EXECUTION_WORKLOAD_INTERACTIVE_LATENCY;
+    profile_workload.minimum_session_context = 4ull;
+    profile_workload.requested_session_context = 4ull;
+    profile_workload.concurrent_sequences = 1ull;
+    profile_workload.logical_batch_tokens = 1ull;
+    profile_workload.prefill_chunk_tokens = 1ull;
+    profile_workload.attention_microbatch_rows = 1ull;
+    profile_workload.moe_row_tile = 1ull;
+    profile_workload.output_head_rows = 1ull;
+    profile_workload.system_reserve_bytes = YVEX_EXECUTION_MINIMUM_SYSTEM_RESERVE;
+    profile_workload.latency_priority = 1;
+    strcpy(profile_workload.name, "v15-profile-test");
+    YVEX_TEST_ASSERT(
+        yvex_execution_workload_profile_seal(&profile_workload, &err) == YVEX_OK,
+        "v15 profile test owns one sealed runtime workload");
+    profile_request.schema_version = YVEX_RUNTIME_EXECUTION_PROFILE_SCHEMA_V1;
+    profile_request.engine_generation = session_summary.engine_generation;
+    profile_request.engine_specialization_identity =
+        session_summary.engine_specialization_identity;
+    profile_request.kernel_bundle_identity =
+        session_summary.engine_specialization_identity;
+    profile_request.workload_profile_identity = profile_workload.identity;
+    profile_request.generation_mode = YVEX_EXECUTION_GENERATION_TARGET_ONLY;
+    profile_request.evidence = YVEX_EXECUTION_EVIDENCE_PRODUCTION;
+    profile_request.execution_class = YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE;
+    profile_request.attention_resolution =
+        YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
+    profile_request.moe_resolution =
+        YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
+    profile_request.sampling_resolution = YVEX_EXECUTION_RESOLUTION_EXACT;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_execution_profile_seal(
+            &profile_request, &profile, &err) == YVEX_OK &&
+            runtime_execution_profile_matches(
+                &profile, &model_summary, &session_summary),
+        "runtime workload profile binds to its admitted engine generation");
+    mismatched_profile = profile;
+    mismatched_profile.engine_generation++;
+    YVEX_TEST_ASSERT(
+        !runtime_execution_profile_matches(
+            &mismatched_profile, &model_summary, &session_summary),
+        "runtime workload profile refuses a stale engine generation");
+    mismatched_profile = profile;
+    mismatched_profile.engine_specialization_identity[0] =
+        mismatched_profile.engine_specialization_identity[0] == '0' ? '1' : '0';
+    YVEX_TEST_ASSERT(
+        !runtime_execution_profile_matches(
+            &mismatched_profile, &model_summary, &session_summary),
+        "runtime workload profile refuses a different engine specialization");
     generation_options.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V5;
     generation_options.backend = YVEX_BACKEND_KIND_CPU;
     generation_options.mode = YVEX_GENERATION_MODE_TARGET_ONLY;

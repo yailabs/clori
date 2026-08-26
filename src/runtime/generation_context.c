@@ -1039,20 +1039,23 @@ static int generation_stops_open(yvex_runtime_generation_context *context,
 static int generation_execution_profile_build(
     yvex_runtime_generation_context *context, yvex_error *err)
 {
-    const yvex_physical_execution_summary *physical =
-        yvex_physical_execution_ir_summary(context->model_view->physical_execution);
     const yvex_runtime_binding_summary *binding = context->model_view->binding;
     const yvex_runtime_session_view *session_view = yvex_runtime_session_view_get(context->session);
+    yvex_model_engine_summary model;
     yvex_runtime_session_summary session;
-    yvex_compiled_execution_profile_request request = {0};
+    yvex_runtime_execution_profile_request request = {0};
     yvex_backend_cuda_attention_graph_summary cuda = {0};
     yvex_backend_cuda_graph_capability graph = {0};
     const char *kernel_bundle = YVEX_BUILD_IDENTITY;
-    char hardware[YVEX_EXECUTION_TEXT_CAP];
     int rc;
 
-    if (!physical || !binding || !session_view || !session_view->backend ||
-        yvex_runtime_session_summary_copy(context->session, &session, err) != YVEX_OK)
+    if (!binding || !session_view || !session_view->backend ||
+        yvex_model_engine_summary_copy(context->model, &model, err) != YVEX_OK ||
+        yvex_runtime_session_summary_copy(context->session, &session, err) != YVEX_OK ||
+        !session.engine_generation || session.engine_generation != model.engine_generation ||
+        session.backend != context->options.backend ||
+        !yvex_sha256_hex_valid(session.engine_specialization_identity) ||
+        !yvex_sha256_hex_valid(context->workload_profile.identity))
         return generation_context_refuse(
             err, YVEX_ERR_STATE, "execution profile owners are unavailable");
     if (context->options.backend == YVEX_BACKEND_KIND_CUDA) {
@@ -1066,31 +1069,15 @@ static int generation_execution_profile_build(
             return generation_context_refuse(
                 err, YVEX_ERR_STATE, "CUDA graph capability is unavailable");
         kernel_bundle = cuda.cuda_build_identity;
-        (void)snprintf(hardware, sizeof(hardware), "%s-cuda-sm%d%d",
-                       cuda.kernel_bundle_native ? "native" : "portable",
-                       session.compute_capability_major,
-                       session.compute_capability_minor);
-    } else {
-        yvex_core_text_copy(hardware, sizeof(hardware), "portable-cpu");
     }
-    request.schema_version = YVEX_COMPILED_EXECUTION_PROFILE_SCHEMA_V2;
-    request.logical_model_identity = binding->logical_model_identity;
-    request.physical_variant_identity = binding->profile_identity;
-    request.physical_execution_identity = physical->identity;
-    request.artifact_identity = binding->artifact_identity;
-    request.materialization_identity = binding->materialization_identity;
-    request.runtime_binding_identity = binding->identity;
+    request.schema_version = YVEX_RUNTIME_EXECUTION_PROFILE_SCHEMA_V1;
+    request.engine_generation = session.engine_generation;
+    request.engine_specialization_identity = session.engine_specialization_identity;
     request.kernel_bundle_identity = kernel_bundle;
-    request.hardware_profile = hardware;
-    request.backend = context->options.backend;
-    request.device_index = session.device_index;
-    request.compute_major = session.compute_capability_major;
-    request.compute_minor = session.compute_capability_minor;
-    request.context_capacity = context->options.context_capacity;
+    request.workload_profile_identity = context->workload_profile.identity;
     request.generation_mode = context->options.mode == YVEX_GENERATION_MODE_DSPARK
                                   ? YVEX_EXECUTION_GENERATION_SPECULATIVE
                                   : YVEX_EXECUTION_GENERATION_TARGET_ONLY;
-    request.workload = YVEX_EXECUTION_WORKLOAD_INTERACTIVE;
     request.evidence = context->options.evidence_profile;
     request.execution_class =
         context->options.backend == YVEX_BACKEND_KIND_CUDA &&
@@ -1118,7 +1105,7 @@ static int generation_execution_profile_build(
                 graph.async_copy_available && graph.pinned_host_memory_available
             ? YVEX_EXECUTION_RESOLUTION_EXACT
             : YVEX_EXECUTION_RESOLUTION_COMPATIBLE_DEGRADED;
-    return yvex_compiled_execution_profile_seal(
+    return yvex_runtime_execution_profile_seal(
         &request, &context->execution_profile, err);
 }
 
@@ -1177,7 +1164,7 @@ static int generation_plan_build(yvex_runtime_generation_context *context,
                                context->execution_profile.identity);
     yvex_runtime_identity_copy(plan.workload_profile_identity, context->workload_profile.identity);
     yvex_core_text_copy(plan.hardware_profile, sizeof(plan.hardware_profile),
-                        context->execution_profile.hardware_profile);
+                        context->hardware_profile.name);
     if (context->speculation) {
         const yvex_speculation_family_policy *policy =
             yvex_runtime_speculation_policy_get(context->speculation);
@@ -1407,9 +1394,9 @@ int yvex_runtime_generation_context_open(
         &context->options.sampling_policy,
         yvex_tokenizer_vocab_size(context->tokenizer), err);
     if (rc != YVEX_OK) goto failure;
-    rc = generation_execution_profile_build(context, err);
-    if (rc != YVEX_OK) goto failure;
     rc = generation_capacity_build(context, &workspace_capacity, err);
+    if (rc != YVEX_OK) goto failure;
+    rc = generation_execution_profile_build(context, err);
     if (rc != YVEX_OK) goto failure;
     if (context->capacity_plan.schema_version) {
         rc = yvex_runtime_session_configure_persistent_pages(
@@ -1432,9 +1419,6 @@ int yvex_runtime_generation_context_open(
             workspace_capacity, physical_rows, execution_workspace,
             &workspace_failure, err);
     yvex_graph_attention_capacity_plan_close(&workspace_capacity);
-    if (rc != YVEX_OK) goto failure;
-    if (!context->workload_profile.schema_version)
-        rc = generation_capacity_workload(context, err);
     if (rc != YVEX_OK) goto failure;
     rc = generation_plan_build(context, err);
     if (rc != YVEX_OK) goto failure;
