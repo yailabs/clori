@@ -2061,17 +2061,19 @@ static int run_runtime_residency_close_order(yvex_model_engine *model,
         !before.cuda_ready || !before.binding_count ||
         before.cuda_upload_bytes || before.cuda_upload_count ||
         !((before.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED &&
-           before.artifact_backed_bytes &&
+           before.mapped_package_bytes && !before.prepared_bytes &&
            !before.host_resident_bytes &&
            !before.device_resident_bytes &&
-           before.cuda_addressable_bytes == before.artifact_backed_bytes &&
-           before.cuda_pageable_map_bytes == before.artifact_backed_bytes &&
+           before.cuda_addressable_bytes == before.mapped_package_bytes &&
+           before.cuda_pageable_map_bytes == before.mapped_package_bytes &&
            before.cuda_pageable_map_count == 1ull &&
            before.cuda_host_registration_count == 1ull &&
            !before.cuda_pageable_prefetch_bytes && !before.cuda_pageable_prefetch_count &&
            !before.cuda_managed_bytes && !before.cuda_managed_allocation_count &&
            !before.cuda_managed_prefetch_bytes && !before.cuda_managed_prefetch_count) ||
           (before.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED &&
+           !before.mapped_package_bytes &&
+           before.prepared_bytes == before.encoded_bytes &&
            !before.host_resident_bytes &&
            before.device_resident_bytes == before.encoded_bytes &&
            before.cuda_addressable_bytes == before.encoded_bytes &&
@@ -2124,7 +2126,8 @@ static int run_runtime_residency_close_order(yvex_model_engine *model,
         after.accelerator_encoded_bytes != before.accelerator_encoded_bytes ||
         after.host_resident_bytes != before.host_resident_bytes ||
         after.device_resident_bytes != before.device_resident_bytes ||
-        after.artifact_backed_bytes != before.artifact_backed_bytes ||
+        after.mapped_package_bytes != before.mapped_package_bytes ||
+        after.prepared_bytes != before.prepared_bytes ||
         after.cuda_upload_bytes != before.cuda_upload_bytes ||
         after.cuda_upload_count != before.cuda_upload_count ||
         after.cuda_host_registration_count != before.cuda_host_registration_count ||

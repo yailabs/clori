@@ -193,10 +193,8 @@ static int engine_scheduler_open(server_engine_manager *manager,
 
 static int execution_probe(server_engine *engine,
                            yvex_runtime_generation_context_summary *capacity,
-                           yvex_runtime_residency_summary *residency,
                            yvex_error *err)
 {
-    const yvex_model_engine_view *view = yvex_model_engine_view_get(engine->model);
     yvex_runtime_execution_session *session = NULL;
     yvex_runtime_generation_context *generation = NULL;
     yvex_runtime_session_open_request request = {0};
@@ -205,9 +203,6 @@ static int execution_probe(server_engine *engine,
     yvex_error primary = {0}, cleanup = {0};
     unsigned long long width = 1ull;
     int rc, cleanup_rc;
-    if (!view || !view->residency)
-        return engine_refuse(err, YVEX_ERR_STATE,
-                             "opened engine has no immutable residency");
     request.backend = engine->options.backend;
     request.maximum_host_bytes = engine->options.maximum_host_bytes;
     request.maximum_device_bytes = engine->options.maximum_device_bytes;
@@ -224,9 +219,6 @@ static int execution_probe(server_engine *engine,
             &generation, engine->model, session, &options, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_generation_context_summary_copy(generation, capacity, err);
-    if (rc == YVEX_OK)
-        rc = yvex_runtime_residency_snapshot(view->residency, residency,
-                                             NULL, NULL, err);
     if (err) primary = *err;
     cleanup_rc = yvex_runtime_generation_context_close(&generation, &cleanup);
     if (cleanup_rc == YVEX_OK)
@@ -246,7 +238,6 @@ static int text_engine_open(server_engine_manager *manager,
     yvex_model_engine_failure failure = {0};
     yvex_model_engine_summary model = {0};
     yvex_runtime_generation_context_summary capacity = {0};
-    yvex_runtime_residency_summary residency = {0};
     yvex_runtime_generation_options startup;
     const yvex_model_engine_view *view;
     yvex_paths paths;
@@ -267,7 +258,7 @@ static int text_engine_open(server_engine_manager *manager,
     if (rc == YVEX_OK)
         rc = yvex_model_engine_summary_copy(engine->model, &model, err);
     if (rc == YVEX_OK)
-        rc = execution_probe(engine, &capacity, &residency, err);
+        rc = execution_probe(engine, &capacity, err);
     if (rc == YVEX_OK)
         rc = yvex_server_sessions_open(
             &engine->sessions, engine->model, &engine->options, engine->generation,
@@ -280,9 +271,10 @@ static int text_engine_open(server_engine_manager *manager,
     engine->summary.maximum_output_bytes = engine->options.maximum_output_bytes;
     engine->summary.maximum_sessions = engine->options.maximum_sessions;
     engine->summary.concurrent_sequences = engine->options.concurrent_sequences;
-    engine->summary.mapped_package_bytes = residency.artifact_backed_bytes;
-    engine->summary.resident_host_bytes = residency.host_resident_bytes;
-    engine->summary.resident_device_bytes = residency.device_resident_bytes;
+    engine->summary.mapped_package_bytes = model.mapped_package_bytes;
+    engine->summary.prepared_bytes = model.prepared_bytes;
+    engine->summary.resident_host_bytes = model.resident_host_bytes;
+    engine->summary.resident_device_bytes = model.resident_device_bytes;
     yvex_runtime_identity_copy(engine->summary.runtime_model_identity,
                                model.runtime_model_identity);
     yvex_runtime_identity_copy(engine->summary.runtime_binding_identity,
@@ -300,9 +292,8 @@ static int text_engine_open(server_engine_manager *manager,
             tokenizer && tokenizer->explicit_reasoning_supported;
     }
     yvex_server_telemetry_model_opened(
-        manager->telemetry, residency.artifact_backed_bytes,
-        residency.host_resident_bytes, residency.device_resident_bytes,
-        residency.cuda_upload_count);
+        manager->telemetry, model.mapped_package_bytes,
+        model.resident_host_bytes, model.resident_device_bytes, 0ull);
     engine->telemetry_opened = 1;
     return YVEX_OK;
 }

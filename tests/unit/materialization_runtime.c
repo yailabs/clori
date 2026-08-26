@@ -408,7 +408,8 @@ static int test_component_residency(void)
             first_summary.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_HOST_LOCKED &&
             first_summary.host_locked && first_summary.model_complete &&
             first_summary.binding_count == 1ull && first_summary.model_binding_count == 1ull &&
-            first_summary.encoded_bytes == 128ull && arena && arena_bytes == 128ull &&
+            first_summary.encoded_bytes == 128ull && !first_summary.mapped_package_bytes &&
+            first_summary.prepared_bytes == 128ull && arena && arena_bytes == 128ull &&
             yvex_sha256_hex_valid(first_summary.payload_digest) &&
             yvex_sha256_hex_valid(first_summary.residency_identity),
         "component residency publishes complete deterministic host facts");

@@ -200,6 +200,8 @@ typedef struct {
     unsigned long long attention_binding_count, draft_attention_binding_count;
     unsigned long long physical_execution_decision_count;
     unsigned long long specialization_implementation_count, engine_specialization_count;
+    unsigned long long mapped_package_bytes, prepared_bytes;
+    unsigned long long resident_host_bytes, resident_device_bytes;
     double lifecycle_seconds[YVEX_RUNTIME_LIFECYCLE_COUNT], total_seconds;
     yvex_runtime_capabilities capabilities;
 } yvex_model_engine_summary;
@@ -245,7 +247,8 @@ typedef struct {
     unsigned long long expected_envelope_binding_count, core_binding_count, envelope_binding_count, binding_count;
     unsigned long long expected_output_head_binding_count, output_head_binding_count, output_head_encoded_bytes;
     unsigned long long accelerator_encoded_bytes, encoded_bytes;
-    unsigned long long host_resident_bytes, device_resident_bytes, artifact_backed_bytes;
+    unsigned long long host_resident_bytes, device_resident_bytes;
+    unsigned long long mapped_package_bytes, prepared_bytes;
     unsigned long long cuda_addressable_bytes, cuda_upload_bytes, cuda_upload_count, cuda_host_registration_count;
     unsigned long long cuda_pageable_map_bytes, cuda_pageable_map_count, cuda_managed_bytes,
         cuda_managed_allocation_count;

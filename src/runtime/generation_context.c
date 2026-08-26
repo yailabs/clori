@@ -970,8 +970,8 @@ static int generation_capacity_build(
                       ? residency.cuda_addressable_bytes
                       : residency.host_resident_bytes
                             ? residency.host_resident_bytes
-                            : residency.artifact_backed_bytes
-                                  ? residency.artifact_backed_bytes
+                            : residency.mapped_package_bytes
+                                  ? residency.mapped_package_bytes
                                   : residency.encoded_bytes;
     return generation_capacity_build_for(
         context, session->backend, residency.placement,

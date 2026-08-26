@@ -878,12 +878,16 @@ static int runtime_model_residency_open(
     memset(&summary, 0, sizeof(summary));
     rc = yvex_runtime_residency_snapshot(model->residency, &summary, NULL, NULL, err);
     if (rc != YVEX_OK || !summary.model_complete ||
-        (!summary.host_locked && !summary.artifact_backed_bytes &&
+        (!summary.host_locked && !summary.mapped_package_bytes &&
          !(summary.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_CUDA_MANAGED &&
            summary.cuda_managed_allocation_count == 1ull &&
            summary.cuda_managed_bytes == summary.cuda_addressable_bytes &&
            summary.cuda_managed_prefetch_count == 1ull &&
            summary.cuda_managed_prefetch_bytes == summary.cuda_addressable_bytes)) ||
+        (summary.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED &&
+         (!summary.mapped_package_bytes || summary.prepared_bytes)) ||
+        (summary.placement != YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED &&
+         (summary.mapped_package_bytes || summary.prepared_bytes != summary.encoded_bytes)) ||
         (request->residency_backend == YVEX_BACKEND_KIND_CUDA &&
          summary.placement == YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED &&
          (summary.cuda_pageable_map_count != 1ull ||
@@ -909,6 +913,10 @@ static int runtime_model_residency_open(
     model->summary.capabilities.attention_weight_residency_ready = 1;
     model->summary.capabilities.attention_envelope_ready =
         model->summary.capabilities.attention_envelope_ready && summary.envelope_complete;
+    model->summary.mapped_package_bytes = summary.mapped_package_bytes;
+    model->summary.prepared_bytes = summary.prepared_bytes;
+    model->summary.resident_host_bytes = summary.host_resident_bytes;
+    model->summary.resident_device_bytes = summary.device_resident_bytes;
     return YVEX_OK;
 }
 

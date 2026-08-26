@@ -2628,6 +2628,11 @@ static int test_runtime_model_session_reuse(
     YVEX_TEST_ASSERT(model_summary.attention_layer_count == 1ull &&
                          model_summary.attention_binding_count == 1ull,
                      "bounded runtime model retains its exact graph counts");
+    YVEX_TEST_ASSERT(
+        model_summary.mapped_package_bytes == fixture->admission.file_bytes &&
+            !model_summary.prepared_bytes && !model_summary.resident_host_bytes &&
+            !model_summary.resident_device_bytes,
+        "engine distinguishes its canonical package mapping from prepared resources");
     YVEX_TEST_ASSERT(model_summary.capabilities.attention_core_ready == 1 &&
                          model_summary.capabilities.attention_envelope_ready == 1 &&
                          model_summary.capabilities.cpu_prefill_eager_ready == 1 &&
@@ -4067,9 +4072,10 @@ static int test_runtime_model_cuda_residency_claim(
                          summary.placement ==
                                YVEX_RUNTIME_WEIGHT_PLACEMENT_ARTIFACT_MAPPED &&
                            !summary.host_resident_bytes && !summary.device_resident_bytes &&
-                           summary.artifact_backed_bytes == summary.cuda_addressable_bytes &&
+                           summary.mapped_package_bytes == summary.cuda_addressable_bytes &&
+                           !summary.prepared_bytes &&
                            summary.cuda_pageable_map_count == 1ull &&
-                           summary.cuda_pageable_map_bytes == summary.artifact_backed_bytes &&
+                           summary.cuda_pageable_map_bytes == summary.mapped_package_bytes &&
                            summary.cuda_host_registration_count == 1ull &&
                            !summary.cuda_pageable_prefetch_count &&
                            !summary.cuda_pageable_prefetch_bytes &&
