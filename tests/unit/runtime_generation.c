@@ -202,10 +202,10 @@ static int generation_test_bounded_batch_coalescing(void)
                      "bounded coalescing gate should initialize");
     YVEX_TEST_ASSERT(
         yvex_runtime_private_engine_scheduler_open(&scheduler, 4ull, &err) == YVEX_OK &&
-            yvex_runtime_private_engine_scheduler_set_producers(scheduler, 2ull, &err) ==
+            yvex_runtime_private_engine_scheduler_set_producers(scheduler, 1ull, &err) ==
                 YVEX_OK &&
             yvex_runtime_private_engine_scheduler_start(scheduler, &err) == YVEX_OK,
-        "two-producer engine scheduler should start");
+        "one ready producer should start bounded arrival coalescing");
     job.scheduler = scheduler;
     job.gate = &gate;
     job.ticket.row_count = 1ull;
@@ -230,7 +230,7 @@ static int generation_test_bounded_batch_coalescing(void)
         job.result == YVEX_OK &&
             yvex_runtime_private_engine_scheduler_snapshot(scheduler, &summary, &err) ==
                 YVEX_OK &&
-            summary.registered_producers == 2ull &&
+            summary.registered_producers == 1ull &&
             summary.coalescing_waits == 1ull &&
             summary.coalescing_timeouts == 1ull && summary.coalescing_ns &&
             summary.rendezvous_submissions == 1ull &&
@@ -240,7 +240,7 @@ static int generation_test_bounded_batch_coalescing(void)
             summary.multi_source_rendezvous == 0ull &&
             summary.maximum_rendezvous_width == 1ull &&
             summary.physical_batches == 0ull,
-        "declared width waits for a missing peer, then executes width one");
+        "the first ready quantum waits briefly for a peer, then executes width one");
     YVEX_TEST_ASSERT(
         yvex_runtime_private_engine_scheduler_close(&scheduler, &err) == YVEX_OK,
         "bounded coalescing owner should close cleanly");

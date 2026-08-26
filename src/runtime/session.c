@@ -67,8 +67,7 @@ int yvex_runtime_device_view_bind(
         yvex_runtime_residency_snapshot(model_view->residency, &residency,
                                         NULL, NULL, err) != YVEX_OK ||
         provider->summary(provider->context, &state, err) != YVEX_OK ||
-        !runtime_execution_profile_matches(profile, &model_summary,
-                                           &session_summary)) {
+        !runtime_execution_profile_matches(profile, model, session)) {
         yvex_error_set(err, YVEX_ERR_STATE, "runtime.execution.device-view",
                        "device value generations are unavailable");
         return YVEX_ERR_STATE;

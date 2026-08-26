@@ -1948,10 +1948,11 @@ static int test_compiled_model_binding_v15(const char *root)
     YVEX_TEST_ASSERT(
         yvex_model_engine_summary_copy(model, &model_summary, &err) == YVEX_OK &&
             model_summary.engine_specialization_count == 1ull &&
-            model_summary.specialization_implementation_count == 1ull &&
+            model->specializations[YVEX_BACKEND_KIND_CPU] &&
+            model->specializations[YVEX_BACKEND_KIND_CPU]->summary.implementation_count == 1ull &&
             yvex_sha256_hex_is_valid(
-                model_summary.engine_specialization_identity) &&
-            strcmp(model_summary.engine_specialization_identity,
+                model->specializations[YVEX_BACKEND_KIND_CPU]->summary.identity) &&
+            strcmp(model->specializations[YVEX_BACKEND_KIND_CPU]->summary.identity,
                    model_summary.physical_execution_identity) != 0,
         "v15 package truth opens through one distinct engine specialization");
     YVEX_TEST_ASSERT(
@@ -1968,7 +1969,7 @@ static int test_compiled_model_binding_v15(const char *root)
         yvex_runtime_session_summary_copy(session, &session_summary, &err) ==
                 YVEX_OK &&
             strcmp(session_summary.engine_specialization_identity,
-                   model_summary.engine_specialization_identity) == 0,
+                   model->specializations[YVEX_BACKEND_KIND_CPU]->summary.identity) == 0,
         "session consumes the engine-owned package specialization");
     profile_workload.schema_version = YVEX_EXECUTION_WORKLOAD_PROFILE_SCHEMA_V1;
     profile_workload.kind = YVEX_EXECUTION_WORKLOAD_INTERACTIVE_LATENCY;
@@ -2005,20 +2006,20 @@ static int test_compiled_model_binding_v15(const char *root)
         yvex_runtime_execution_profile_seal(
             &profile_request, &profile, &err) == YVEX_OK &&
             runtime_execution_profile_matches(
-                &profile, &model_summary, &session_summary),
+                &profile, model, session),
         "runtime workload profile binds to its admitted engine generation");
     mismatched_profile = profile;
     mismatched_profile.engine_generation++;
     YVEX_TEST_ASSERT(
         !runtime_execution_profile_matches(
-            &mismatched_profile, &model_summary, &session_summary),
+            &mismatched_profile, model, session),
         "runtime workload profile refuses a stale engine generation");
     mismatched_profile = profile;
     mismatched_profile.engine_specialization_identity[0] =
         mismatched_profile.engine_specialization_identity[0] == '0' ? '1' : '0';
     YVEX_TEST_ASSERT(
         !runtime_execution_profile_matches(
-            &mismatched_profile, &model_summary, &session_summary),
+            &mismatched_profile, model, session),
         "runtime workload profile refuses a different engine specialization");
     generation_options.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V5;
     generation_options.backend = YVEX_BACKEND_KIND_CPU;

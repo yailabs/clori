@@ -331,6 +331,8 @@ DECODE_LIVE_OBJ := $(OBJ_DIR)/tests/live/decode_deepseek.o
 LOGITS_LIVE_OBJ := $(OBJ_DIR)/tests/live/logits_deepseek.o
 TOKENIZER_LIVE_OBJ := $(OBJ_DIR)/tests/live/tokenizer_deepseek.o
 GENERATION_LIVE_OBJ := $(OBJ_DIR)/tests/live/generation_deepseek.o
+$(GENERATION_LIVE_OBJ): CPPFLAGS += -I$(BUILD_DIR)/generated
+$(GENERATION_LIVE_OBJ): $(BUILD_COMMIT_HEADER)
 OPENAI_FAKE_HOST_OBJ := $(OBJ_DIR)/tests/integration/openai_host.o
 OPENAI_ADAPTER_HOST_OBJ := $(OBJ_DIR)/tests/integration/openai_adapter.o
 TINY_VERTICAL_COMPILER_OBJ := $(OBJ_DIR)/tests/integration/tiny_compile.o
@@ -1262,6 +1264,8 @@ test-runtime-deepseek-generation-live: cuda $(GENERATION_LIVE_RUNNER) $(YVEX_BIN
 		cpu target-only greedy 0 1 >"$$tmp_dir/cpu.out"; \
 	$(GENERATION_LIVE_RUNNER) "$(DEEPSEEK_SELECTED_ARTIFACT)" "$$binding" \
 		cuda target-only greedy 0 3 >"$$tmp_dir/cuda-greedy.out"; \
+	grep -F 'generation_scheduler continuous_batching=pass' \
+		"$$tmp_dir/cuda-greedy.out" >/dev/null; \
 	$(GENERATION_LIVE_RUNNER) "$(DEEPSEEK_SELECTED_ARTIFACT)" "$$binding" \
 		cuda target-only stochastic 42 2 >"$$tmp_dir/cuda-stochastic-first.out"; \
 	$(GENERATION_LIVE_RUNNER) "$(DEEPSEEK_SELECTED_ARTIFACT)" "$$binding" \

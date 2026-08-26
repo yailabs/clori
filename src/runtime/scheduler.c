@@ -11,6 +11,7 @@
 enum {
     COMPATIBLE_COALESCING_NS = 5000000,
     COMPATIBLE_LOGITS_COALESCING_NS = 1000000,
+    COMPATIBLE_PRODUCER_ARRIVAL_NS = 1000000,
     COMPATIBLE_RENDEZVOUS_NS = 50000000
 };
 
@@ -21,6 +22,7 @@ struct runtime_engine_scheduler {
     pthread_t worker;
     runtime_engine_work **queue;
     unsigned long long queue_capacity, queue_count, producer_count;
+    unsigned long long producer_arrival_floor;
     yvex_engine_scheduler_summary summary;
     int mutex_ready, ready_condition, completed_condition;
     int worker_started, stopping;
@@ -96,17 +98,26 @@ static void scheduler_coalesce_locked(runtime_engine_scheduler *scheduler)
     int wait_status = 0;
     if (!scheduler->queue_count || scheduler->stopping)
         return;
-    expected = scheduler->producer_count;
+    expected = scheduler->producer_count > scheduler->producer_arrival_floor
+                   ? scheduler->producer_count
+                   : scheduler->producer_arrival_floor;
     if (expected < 2ull ||
         scheduler_compatible_count_locked(scheduler) >= expected ||
-        scheduler_possible_compatible_count_locked(scheduler, expected) < expected)
+        scheduler_possible_compatible_count_locked(scheduler, expected) < expected) {
+        scheduler->producer_arrival_floor = 0ull;
         return;
+    }
     limit = scheduler->queue[0]->coalescing_limit_ns
                 ? scheduler->queue[0]->coalescing_limit_ns
                 : COMPATIBLE_COALESCING_NS;
+    if (scheduler->producer_arrival_floor > scheduler->producer_count &&
+        limit > COMPATIBLE_PRODUCER_ARRIVAL_NS)
+        limit = COMPATIBLE_PRODUCER_ARRIVAL_NS;
     if (clock_gettime(CLOCK_REALTIME, &deadline) != 0 ||
-        clock_gettime(CLOCK_MONOTONIC, &start) != 0)
+        clock_gettime(CLOCK_MONOTONIC, &start) != 0) {
+        scheduler->producer_arrival_floor = 0ull;
         return;
+    }
     deadline.tv_sec += (time_t)(limit / 1000000000ull);
     deadline.tv_nsec += (long)(limit % 1000000000ull);
     if (deadline.tv_nsec >= 1000000000l) {
@@ -128,6 +139,7 @@ static void scheduler_coalesce_locked(runtime_engine_scheduler *scheduler)
         else
             scheduler->summary.coalescing_ns += elapsed;
     }
+    scheduler->producer_arrival_floor = 0ull;
 }
 
 static int scheduler_refuse(yvex_error *err, yvex_status status,
@@ -348,6 +360,11 @@ int yvex_runtime_private_engine_scheduler_set_producers(
         pthread_mutex_lock(&scheduler->mutex) != 0)
         return scheduler_refuse(err, YVEX_ERR_INVALID_ARG,
                                "bounded producer population is required");
+    if (!scheduler->producer_count && producers == 1ull &&
+        scheduler->queue_capacity >= 2ull)
+        scheduler->producer_arrival_floor = 2ull;
+    else if (!producers)
+        scheduler->producer_arrival_floor = 0ull;
     scheduler->producer_count = producers;
     scheduler->summary.registered_producers = producers;
     (void)pthread_cond_broadcast(&scheduler->ready);
@@ -1051,7 +1068,7 @@ int yvex_runtime_private_generation_logits_project(
     const yvex_runtime_session_view *session = context
         ? yvex_runtime_session_view_get(context->session) : NULL;
     compatible_logits_ticket ticket = {0};
-    int producer_active = 0, rc;
+    int rc;
     if (!context || !session)
         return scheduler_refuse(err, YVEX_ERR_INVALID_ARG,
                                "generation output-head owner is unavailable");
@@ -1081,15 +1098,10 @@ int yvex_runtime_private_generation_logits_project(
     ticket.ticket.cancel_requested = context->options.cancel_requested;
     ticket.ticket.cancel_context = context->options.cancel_context;
     rc = compatible_logits_key_prepare(&ticket, err);
-    if (rc == YVEX_OK) {
-        rc = yvex_runtime_private_model_scheduler_producer_enter(ticket.model, err);
-        producer_active = rc == YVEX_OK;
-    }
     if (rc == YVEX_OK)
         rc = yvex_runtime_private_engine_scheduler_submit(
             ticket.model->engine_scheduler, &ticket.ticket, err);
-    return yvex_runtime_private_engine_scheduler_producer_finish(
-        ticket.model, &producer_active, rc, err);
+    return rc;
 }
 
 static int compatible_step_execute(
@@ -1341,28 +1353,13 @@ int yvex_model_engine_scheduler_maximum_width_copy(
     return YVEX_OK;
 }
 
-int yvex_runtime_private_engine_scheduler_step_enter(
-    const runtime_engine_step_request *request, int *active,
-    yvex_error *err)
+int yvex_runtime_private_engine_scheduler_step_rendezvous(
+    const runtime_engine_step_request *request, yvex_error *err)
 {
-    yvex_error primary, cleanup;
-    int rc;
-    if (!request || !request->model || !active || *active)
+    if (!request || !request->model)
         return scheduler_refuse(err, YVEX_ERR_INVALID_ARG,
                                "compatible transformer step is required");
-    rc = yvex_runtime_private_model_scheduler_producer_enter(request->model, err);
-    if (rc != YVEX_OK) return rc;
-    rc = compatible_step_rendezvous(request, err);
-    if (rc == YVEX_OK) {
-        *active = 1;
-        return YVEX_OK;
-    }
-    primary = err ? *err : (yvex_error){0};
-    yvex_error_clear(&cleanup);
-    (void)yvex_runtime_private_model_scheduler_producer_leave(request->model,
-                                                            &cleanup);
-    if (err) *err = primary;
-    return rc;
+    return compatible_step_rendezvous(request, err);
 }
 
 int yvex_model_engine_scheduler_summary_copy(

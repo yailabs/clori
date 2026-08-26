@@ -192,12 +192,14 @@ static int engine_request_queue_open(server_engine_manager *manager,
 
 static int execution_probe(server_engine *engine,
                            yvex_runtime_generation_context_summary *capacity,
+                           char specialization_identity[YVEX_SHA256_HEX_CAP],
                            yvex_error *err)
 {
     yvex_runtime_execution_session *session = NULL;
     yvex_runtime_generation_context *generation = NULL;
     yvex_runtime_session_open_request request = {0};
     yvex_runtime_generation_options options;
+    yvex_runtime_session_summary session_summary = {0};
     yvex_model_engine_failure failure = {0};
     yvex_error primary = {0}, cleanup = {0};
     unsigned long long width = 1ull;
@@ -218,6 +220,17 @@ static int execution_probe(server_engine *engine,
             &generation, engine->model, session, &options, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_generation_context_summary_copy(generation, capacity, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_session_summary_copy(session, &session_summary, err);
+    if (rc == YVEX_OK &&
+        !yvex_sha256_hex_valid(session_summary.engine_specialization_identity)) {
+        yvex_error_set(err, YVEX_ERR_STATE, "server.engine.probe",
+                       "engine specialization identity is unavailable");
+        rc = YVEX_ERR_STATE;
+    }
+    if (rc == YVEX_OK)
+        yvex_runtime_identity_copy(specialization_identity,
+                                   session_summary.engine_specialization_identity);
     if (err) primary = *err;
     cleanup_rc = yvex_runtime_generation_context_close(&generation, &cleanup);
     if (cleanup_rc == YVEX_OK)
@@ -237,6 +250,7 @@ static int text_engine_open(server_engine_manager *manager,
     yvex_model_engine_failure failure = {0};
     yvex_model_engine_summary model = {0};
     yvex_runtime_generation_context_summary capacity = {0};
+    char specialization_identity[YVEX_SHA256_HEX_CAP] = {0};
     yvex_runtime_generation_options startup;
     server_event_scope event_scope = {0};
     const yvex_model_engine_view *view;
@@ -258,7 +272,7 @@ static int text_engine_open(server_engine_manager *manager,
     if (rc == YVEX_OK)
         rc = yvex_model_engine_summary_copy(engine->model, &model, err);
     if (rc == YVEX_OK)
-        rc = execution_probe(engine, &capacity, err);
+        rc = execution_probe(engine, &capacity, specialization_identity, err);
     if (rc == YVEX_OK) {
         event_scope.generation_mode = engine->options.generation_mode;
         yvex_runtime_identity_copy(event_scope.runtime_model_identity,
@@ -266,7 +280,7 @@ static int text_engine_open(server_engine_manager *manager,
         yvex_runtime_identity_copy(event_scope.artifact_identity,
                                    model.artifact_identity);
         yvex_runtime_identity_copy(event_scope.specialization_identity,
-                                   model.engine_specialization_identity);
+                                   specialization_identity);
         rc = yvex_server_sessions_open(
             &engine->sessions, engine->model, &engine->options, engine->generation,
             engine->continuous_batching, &event_scope, manager->telemetry, err);
@@ -290,7 +304,7 @@ static int text_engine_open(server_engine_manager *manager,
     yvex_runtime_identity_copy(engine->summary.artifact_identity,
                                model.artifact_identity);
     yvex_runtime_identity_copy(engine->summary.specialization_identity,
-                               model.engine_specialization_identity);
+                               specialization_identity);
     yvex_runtime_identity_copy(engine->summary.capacity_plan_identity,
                                capacity.capacity_plan_identity);
     {

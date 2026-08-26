@@ -789,8 +789,7 @@ int yvex_runtime_moe_context_open(yvex_runtime_moe_context **out, yvex_model_eng
         !context->model_view->binding->capabilities.moe_block_ready ||
         (options->execution_profile &&
          !runtime_execution_profile_matches(options->execution_profile,
-                                            &model->summary,
-                                            &session->summary)) ||
+                                            model, session)) ||
         pthread_mutex_init(&context->mutex, NULL) != 0) {
         rc = runtime_moe_refuse(err, YVEX_ERR_STATE, "MoE model/session ownership is invalid");
         goto fail;

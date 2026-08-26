@@ -247,7 +247,7 @@ typedef struct {
     char runtime_numeric_identity[YVEX_SHA256_HEX_CAP];
     char semantic_graph_identity[YVEX_SHA256_HEX_CAP];
     char executable_graph_identity[YVEX_SHA256_HEX_CAP];
-    char physical_execution_identity[YVEX_SHA256_HEX_CAP], engine_specialization_identity[YVEX_SHA256_HEX_CAP];
+    char physical_execution_identity[YVEX_SHA256_HEX_CAP];
     unsigned long long artifact_hash_passes, artifact_verified_reopen_passes;
     unsigned long long artifact_reopen_cache_failures, artifact_bytes_hashed;
     unsigned long long gguf_directory_parses, runtime_binding_parses;
@@ -255,7 +255,7 @@ typedef struct {
     unsigned long long tensor_count, attention_layer_count, draft_attention_layer_count;
     unsigned long long attention_binding_count, draft_attention_binding_count;
     unsigned long long physical_execution_decision_count;
-    unsigned long long specialization_implementation_count, engine_specialization_count;
+    unsigned long long engine_specialization_count;
     unsigned long long mapped_package_bytes, prepared_bytes;
     unsigned long long resident_host_bytes, resident_device_bytes;
     double lifecycle_seconds[YVEX_RUNTIME_LIFECYCLE_COUNT], total_seconds;

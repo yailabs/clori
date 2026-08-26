@@ -20,8 +20,7 @@ static int generation_result_refuse(yvex_error *err, yvex_status status,
     return status;
 }
 
-yvex_runtime_profile_mode yvex_runtime_generation_profile_mode(
-    yvex_runtime_trace_policy policy)
+static yvex_runtime_profile_mode generation_profile_mode(yvex_runtime_trace_policy policy)
 {
     static const yvex_runtime_profile_mode modes[] = {
         YVEX_RUNTIME_PROFILE_OFF, YVEX_RUNTIME_PROFILE_SUMMARY,
@@ -30,7 +29,7 @@ yvex_runtime_profile_mode yvex_runtime_generation_profile_mode(
                                              : YVEX_RUNTIME_PROFILE_OFF;
 }
 
-int yvex_runtime_generation_workload_identity(
+static int generation_workload_identity(
     const yvex_runtime_generation_context *context,
     const yvex_runtime_generation_turn_request *turn,
     char output[YVEX_SHA256_HEX_CAP])
@@ -78,6 +77,26 @@ int yvex_runtime_generation_workload_identity(
         }
     }
     return generation_hash_finish(&hash, output);
+}
+
+int yvex_runtime_generation_profile_begin(
+    const yvex_runtime_generation_context *context,
+    const yvex_runtime_generation_turn_request *turn,
+    yvex_runtime_profile_record *profile, yvex_error *err)
+{
+    char workload_identity[YVEX_SHA256_HEX_CAP];
+    if (!context || !context->model_view || !context->model_view->binding ||
+        !generation_workload_identity(context, turn, workload_identity))
+        return generation_result_refuse(
+            err, YVEX_ERR_STATE, "generation workload identity derivation failed");
+    return runtime_profile_begin(
+        profile, generation_profile_mode(context->options.trace_policy),
+        YVEX_RUNTIME_PROFILE_GENERATION, context->options.backend,
+        context->model_view->binding->artifact_identity,
+        context->model_view->binding->profile_identity,
+        context->model_view->binding->identity,
+        context->plan.runtime_model_identity,
+        context->plan.generation_plan_identity, workload_identity, err);
 }
 
 int yvex_runtime_generation_profile_phase(

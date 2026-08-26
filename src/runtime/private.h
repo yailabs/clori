@@ -37,27 +37,6 @@ static inline int runtime_engine_scheduler_options_valid(
            (enabled ? width >= 2ull && width < 64ull : !width);
 }
 
-/* A workload profile is usable only inside the engine generation that admitted it. */
-static inline int runtime_execution_profile_matches(
-    const yvex_runtime_execution_profile *profile,
-    const yvex_model_engine_summary *model,
-    const yvex_runtime_session_summary *session)
-{
-    return profile && model && session && model->sealed && model->valid &&
-           profile->schema_version == YVEX_RUNTIME_EXECUTION_PROFILE_SCHEMA_V1 &&
-           yvex_sha256_hex_valid(profile->identity) &&
-           yvex_sha256_hex_valid(profile->engine_specialization_identity) &&
-           yvex_sha256_hex_valid(profile->kernel_bundle_identity) &&
-           yvex_sha256_hex_valid(profile->workload_profile_identity) &&
-           profile->engine_generation &&
-           profile->engine_generation == model->engine_generation &&
-           profile->engine_generation == session->engine_generation &&
-           strcmp(profile->engine_specialization_identity,
-                  model->engine_specialization_identity) == 0 &&
-           strcmp(profile->engine_specialization_identity,
-                  session->engine_specialization_identity) == 0;
-}
-
 #define YVEX_GENERATION_LIFECYCLE_ACTIVE 1u
 #define YVEX_GENERATION_LIFECYCLE_CLOSING 2u
 #define YVEX_GENERATION_LIFECYCLE_CLOSED 6u
@@ -218,9 +197,8 @@ int yvex_runtime_private_model_scheduler_producer_leave(
     yvex_model_engine *model, yvex_error *err);
 int yvex_runtime_private_engine_scheduler_producer_finish(
     yvex_model_engine *model, int *active, int status, yvex_error *err);
-int yvex_runtime_private_engine_scheduler_step_enter(
-    const runtime_engine_step_request *request, int *active,
-    yvex_error *err);
+int yvex_runtime_private_engine_scheduler_step_rendezvous(
+    const runtime_engine_step_request *request, yvex_error *err);
 int yvex_runtime_private_engine_scheduler_moe_execute(
     const runtime_engine_moe_request *request, yvex_error *err);
 int yvex_runtime_private_generation_logits_project(
@@ -374,6 +352,33 @@ struct yvex_runtime_execution_session {
     int attention_state_provider_ready, draft_attention_state_provider_ready;
     int state_resolver_attached;
 };
+
+/* A workload profile binds one session to the exact engine-owned specialization it selected. */
+static inline int runtime_execution_profile_matches(
+    const yvex_runtime_execution_profile *profile,
+    const yvex_model_engine *model,
+    const yvex_runtime_execution_session *session)
+{
+    const yvex_engine_specialization *specialization;
+    if (!profile || !model || !session || !model->summary.sealed ||
+        !model->summary.valid || session->engine != model ||
+        session->summary.backend > YVEX_BACKEND_KIND_CUDA)
+        return 0;
+    specialization = model->specializations[session->summary.backend];
+    return specialization && session->specialization == specialization &&
+           profile->schema_version == YVEX_RUNTIME_EXECUTION_PROFILE_SCHEMA_V1 &&
+           yvex_sha256_hex_valid(profile->identity) &&
+           yvex_sha256_hex_valid(profile->engine_specialization_identity) &&
+           yvex_sha256_hex_valid(profile->kernel_bundle_identity) &&
+           yvex_sha256_hex_valid(profile->workload_profile_identity) &&
+           profile->engine_generation &&
+           profile->engine_generation == model->summary.engine_generation &&
+           profile->engine_generation == session->summary.engine_generation &&
+           strcmp(profile->engine_specialization_identity,
+                  specialization->summary.identity) == 0 &&
+           strcmp(profile->engine_specialization_identity,
+                  session->summary.engine_specialization_identity) == 0;
+}
 
 typedef struct {
     const yvex_attention_state_provider *provider;
@@ -561,12 +566,10 @@ int yvex_runtime_private_session_prepare_persistent_scope_state_locked(
 int yvex_runtime_private_state_residency_resolve(
     const void *context, const void *host, unsigned long long bytes,
     unsigned long long *device_address);
-yvex_runtime_profile_mode yvex_runtime_generation_profile_mode(
-    yvex_runtime_trace_policy policy);
-int yvex_runtime_generation_workload_identity(
+int yvex_runtime_generation_profile_begin(
     const yvex_runtime_generation_context *context,
     const yvex_runtime_generation_turn_request *turn,
-    char output[YVEX_SHA256_HEX_CAP]);
+    yvex_runtime_profile_record *profile, yvex_error *err);
 int yvex_runtime_generation_profile_phase(
     yvex_runtime_profile_record *profile, yvex_runtime_profile_phase phase,
     unsigned long long elapsed, yvex_error *err);

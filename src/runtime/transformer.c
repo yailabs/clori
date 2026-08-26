@@ -40,7 +40,7 @@ struct yvex_runtime_transformer_context {
     unsigned int *execution_tokens;
     unsigned long long token_capacity, host_bytes, final_weight_bytes, execution_count, moe_workspace_bytes;
     pthread_mutex_t mutex;
-    int mutex_ready, busy, invalidated, scheduler_acquired, scheduler_producer_active;
+    int mutex_ready, busy, invalidated, scheduler_acquired;
 };
 static const yvex_attention_plan *transformer_runtime_attention(
     const yvex_model_engine_view *view, yvex_tensor_scope scope)
@@ -943,7 +943,7 @@ static int transformer_attention_configure(
     if (!width || width > context->options.workspace_token_capacity ||
         !session->workspace_generation ||
         !runtime_execution_profile_matches(context->options.execution_profile,
-                                           &context->model->summary, session) ||
+                                           context->model, context->session) ||
         !yvex_sha256_hex_valid(session->workspace_identity) ||
         !yvex_sha256_hex_valid(state->state_layout_identity))
         return transformer_runtime_refuse(err, YVEX_ERR_STATE,
@@ -1006,7 +1006,7 @@ static int transformer_prepare(yvex_runtime_transformer_context *context,
                                 ? YVEX_EXECUTION_PHASE_VERIFY
                                 : request->phase;
     if (context->options.engine_scheduling) {
-        rc = yvex_runtime_private_engine_scheduler_step_enter(
+        rc = yvex_runtime_private_engine_scheduler_step_rendezvous(
             &(runtime_engine_step_request){
                 .model = context->model, .session = context->session,
                 .backend = context->session_view->backend, .transformer = plan,
@@ -1015,8 +1015,7 @@ static int transformer_prepare(yvex_runtime_transformer_context *context,
                 .execution_class = context->options.execution_profile->execution_class,
                 .maximum_width = context->options.scheduler_maximum_width,
                 .cancel_requested = context->options.cancel_requested,
-                .cancel_context = context->options.cancel_context},
-            &context->scheduler_producer_active, err);
+                .cancel_context = context->options.cancel_context}, err);
         if (rc != YVEX_OK) return rc;
     }
     if (!state->prepared_layer_count) {
@@ -1234,8 +1233,6 @@ static int transformer_core_features_execute(
             result->completed = 1;
         }
     }
-    rc = yvex_runtime_private_engine_scheduler_producer_finish(
-        context->model, &context->scheduler_producer_active, rc, err);
     if (pthread_mutex_lock(&context->mutex) == 0) {
         context->busy = 0;
         if (rc == YVEX_OK) context->execution_count++;
@@ -1286,8 +1283,7 @@ int yvex_runtime_transformer_context_open(yvex_runtime_transformer_context **out
         !context->model_view->binding->capabilities.transformer_ready ||
         (options->execution_profile &&
          !runtime_execution_profile_matches(options->execution_profile,
-                                            &model->summary,
-                                            &session->summary)) ||
+                                            model, session)) ||
         pthread_mutex_init(&context->mutex, NULL) != 0) {
         rc = transformer_runtime_refuse(err, YVEX_ERR_STATE,
                                         "transformer model/session capability is unavailable");
@@ -1531,8 +1527,6 @@ static int transformer_execution_finish(
         result->feature_row_count = input_summary->token_count;
         rc = transformer_execution_identity(plan, request, result, err);
     }
-    rc = yvex_runtime_private_engine_scheduler_producer_finish(
-        context->model, &context->scheduler_producer_active, rc, err);
     if (pthread_mutex_lock(&context->mutex) == 0) {
         context->busy = 0;
         if (rc == YVEX_OK) context->execution_count++;
@@ -1747,10 +1741,10 @@ int yvex_runtime_transformer_context_close(yvex_runtime_transformer_context **co
         return YVEX_OK;
     }
     if ((*context)->mutex_ready && pthread_mutex_lock(&(*context)->mutex) == 0) {
-        if ((*context)->busy || (*context)->scheduler_producer_active) {
+        if ((*context)->busy) {
             (void)pthread_mutex_unlock(&(*context)->mutex);
             return transformer_runtime_refuse(err, YVEX_ERR_STATE,
-                "busy transformer context or active batch producer cannot close");
+                "busy transformer context cannot close");
         }
         (void)pthread_mutex_unlock(&(*context)->mutex);
     }

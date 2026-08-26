@@ -125,7 +125,7 @@ int yvex_runtime_logits_context_open(
         !model_summary.sealed || !model_summary.valid ||
         (options->device_selection && session_summary.backend != YVEX_BACKEND_KIND_CUDA) ||
         (options->execution_profile && !runtime_execution_profile_matches(
-             options->execution_profile, &model_summary, &session_summary))) {
+             options->execution_profile, model, session))) {
         rc = logits_refuse(err, YVEX_ERR_STATE,
                            "logits model/session pairing is invalid");
         goto failure;

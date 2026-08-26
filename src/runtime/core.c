@@ -692,23 +692,9 @@ static void runtime_model_summary_bind(
                                        physical->identity);
         }
     }
-    {
-        const yvex_engine_specialization *owner =
-            model->specializations[YVEX_BACKEND_KIND_CPU]
-                ? model->specializations[YVEX_BACKEND_KIND_CPU]
-                : model->specializations[YVEX_BACKEND_KIND_CUDA];
-        const yvex_engine_specialization_summary *specialization =
-            owner ? &owner->summary : NULL;
-        if (specialization) {
-            model->summary.specialization_implementation_count =
-                specialization->implementation_count;
-            model->summary.engine_specialization_count =
-                (unsigned long long)(model->specializations[YVEX_BACKEND_KIND_CPU] != NULL) +
-                (unsigned long long)(model->specializations[YVEX_BACKEND_KIND_CUDA] != NULL);
-            yvex_runtime_identity_copy(model->summary.engine_specialization_identity,
-                                       specialization->identity);
-        }
-    }
+    model->summary.engine_specialization_count =
+        (unsigned long long)(model->specializations[YVEX_BACKEND_KIND_CPU] != NULL) +
+        (unsigned long long)(model->specializations[YVEX_BACKEND_KIND_CUDA] != NULL);
 }
 
 static int runtime_model_residency_open(
