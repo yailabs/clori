@@ -4,7 +4,7 @@ This deterministic migration matrix reconciles the frozen operator audit with
 `yvex.operator.registry.v1`. It is documentation, not runtime command authority.
 
 - Frozen audit baseline: `ec7dccede90c1a1efa87b4c2519c25b30d5e1733`
-- Registry identity: `2d52a579102d8d1830515bcbc5b0e9527c338212e18105fbac71a95d1c6d59dc`
+- Registry identity: `b4d216c8b0a1857ee557064bbd6e8cf9c3f6cd1b3ffcd8e22dcd26c8ae9c4ed8`
 - Compatibility policy: pre-v0.1 breaking grammar cutover; removed paths never execute aliases.
 
 | Old path | Old operation | Final operation | Final projection | Visibility | Compatibility | Rationale |
@@ -22,7 +22,7 @@ This deterministic migration matrix reconciles the frozen operator audit with
 | `yvex evidence backend` | `system.backend` | `system.backend` | `yvex inspect backend` | product-advanced | breaking-cutover | move: claim namespace obscures system operation |
 | `yvex evidence cuda` | `system.cuda` | `system.cuda` | `yvex system cuda` | product-advanced | breaking-cutover | move: claim namespace obscures system operation |
 | `yvex evidence model` | `evidence.model` | `inspect.model.full.report`, `inspect.model.full.materialization_plan`, `inspect.model.full.descriptor`, `inspect.model.full.family_runtime`, `execute.materialization.full_model` | `yvex inspect model full report`; `yvex inspect model full materialization-plan`; `yvex inspect model full descriptor`; `yvex inspect model full family-runtime`; `yvex execute model materialize` | engineering | breaking-cutover | split: mixes reports and bounded execution |
-| `yvex evidence models` | `model.registry` | `artifact.check`, `artifact.prepare`, `artifact.registry.list`, `artifact.registry.status`, `evidence.target`, `model.acquire`, `model.acquire.cleanup`, `model.acquire.resume`, `model.acquire.status`, `model.acquire.stop`, `model.list`, `model.registry.add`, `model.registry.remove`, `model.registry.scan`, `model.registry.verify`, `model.show` | `yvex inspect artifact check`; `yvex compile artifact prepare`; `yvex inspect artifact registry`; `yvex inspect artifact status`; `yvex inspect target`; `yvex model acquire`; `yvex model acquisition cleanup`; `yvex model acquisition resume`; `yvex model acquisition status`; `yvex model acquisition stop`; `yvex model list`; `yvex model registry add`; `yvex model registry remove`; `yvex model registry scan`; `yvex model registry verify`; `yvex model show` | engineering, product-advanced, product-default | breaking-cutover | split: large side-effecting catalog under evidence; overlaps product model |
+| `yvex evidence models` | `model.registry` | `artifact.check`, `artifact.prepare`, `artifact.registry.list`, `artifact.registry.status`, `evidence.target`, `model.acquire`, `model.acquire.cleanup`, `model.acquire.resume`, `model.acquire.status`, `model.acquire.stop`, `model.inspect`, `model.list`, `model.search`, `model.registry.add`, `model.registry.remove`, `model.registry.scan`, `model.registry.verify`, `model.show` | `yvex inspect artifact check`; `yvex compile artifact prepare`; `yvex inspect artifact registry`; `yvex inspect artifact status`; `yvex inspect target`; `yvex model acquire`; `yvex model acquisition cleanup`; `yvex model acquisition resume`; `yvex model acquisition status`; `yvex model acquisition stop`; `yvex model inspect`; `yvex model list`; `yvex model search`; `yvex model registry add`; `yvex model registry remove`; `yvex model registry scan`; `yvex model registry verify`; `yvex model show` | engineering, product-advanced, product-default | breaking-cutover | split: large side-effecting catalog under evidence; overlaps product model |
 | `yvex evidence moe` | `evidence.moe` | `evidence.moe` | `yvex inspect moe` | engineering | breaking-cutover | move: report-only but named by claim audience |
 | `yvex evidence paths` | `system.paths` | `system.paths` | `yvex system paths` | product-advanced | breaking-cutover | move: configuration operation under evidence |
 | `yvex evidence target` | `evidence.target` | `evidence.target` | `yvex inspect target` | engineering | breaking-cutover | dissolve: audience/claim namespace, not stable domain |
@@ -53,7 +53,7 @@ This deterministic migration matrix reconciles the frozen operator audit with
 | `yvex help` | `command.discovery` | `command.discovery` | `yvex help` | product-default | retained | replace-registry-projection: incomplete and manually duplicated |
 | `yvex model list` | `model.list` | `model.list` | `yvex model list` | product-default | retained | rename-or-remove: misleading: identical to model show and does not list models |
 | `yvex model show` | `model.show` | `model.show` | `yvex model show` | product-default | retained | rename: misleading: selected configuration is not live runtime identity |
-| `yvex model use` | `model.use` | `server.host` | `yvex server` | product-default | breaking-cutover | normalize: truthful but DeepSeek/CUDA/4096 defaults are client-local policy |
+| `yvex model use` | `model.use` | `server.load` | `yvex server load` | product-default | breaking-cutover | normalize: truthful but DeepSeek/CUDA/4096 defaults are client-local policy |
 | `yvex run` | `generation.turn` | `generation.turn` | `yvex run` | product-default | retained | keep: truthful; detailed help absent |
 | `yvex runtime start` | `runtime.start` | `server.host` | `yvex server` | product-default | breaking-cutover | keep: truthful foreground exec; selected config fallback |
 | `yvex runtime status` | `runtime.status` | `server.status` | `yvex server status` | product-default | breaking-cutover | keep-and-expand-renderer: human view omits authoritative variant/context facts |
@@ -86,14 +86,18 @@ This deterministic migration matrix reconciles the frozen operator audit with
 - `cli.offline.evidence.models --force-sidecars` — remove a parsed but unconsumed option.
 - `cli.offline.evidence.models --no-use` — separate acquisition from selected startup state.
 - `cli.yvex.model.use --artifact` — resolve startup facts from the selected registry profile.
+- `cli.yvex.model.use --backend` — resolve backend policy from the selected registry profile.
 - `cli.yvex.model.use --context` — resolve startup facts from the selected registry profile.
 - `cli.yvex.model.use --runtime-binding` — resolve startup facts from the selected registry profile.
 - `cli.yvex.model.use --target` — resolve startup facts from the selected registry profile.
 - `cli.yvex.runtime.trace --follow` — trace is already a continuous subscription.
-- `daemon.yvexd --context` — replace the retired daemon spelling with the canonical server --ctx option.
-- `daemon.yvexd --model` — replace separate startup paths with the explicit MODEL profile argument.
-- `daemon.yvexd --runtime-binding` — resolve the admitted binding from the explicit MODEL profile.
-- `daemon.yvexd --target` — resolve the target from the explicit MODEL profile.
+- `daemon.yvexd --backend` — resolve backend policy when loading the selected registry profile.
+- `daemon.yvexd --context` — resolve engine capacity when loading the selected registry profile.
+- `daemon.yvexd --max-new-tokens` — resolve generation bounds from the loaded engine profile and request.
+- `daemon.yvexd --model` — select registered packages through the explicit server load operation.
+- `daemon.yvexd --prefill-chunk` — resolve prefill policy from the loaded engine profile.
+- `daemon.yvexd --runtime-binding` — resolve the admitted binding from the loaded registry profile.
+- `daemon.yvexd --target` — resolve the target from the loaded registry profile.
 - `daemon.yvexd --version` — retain version reporting at the single yvex executable boundary.
 
 The retired top-level namespaces `evidence`, `graph`, `quant`, `source`,

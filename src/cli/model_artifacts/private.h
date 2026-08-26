@@ -22,15 +22,11 @@
 #include <yvex/internal/graph.h>
 #include <yvex/internal/source.h>
 #include <yvex/registry.h>
-#include <yvex/server.h>
 #include <yvex/source.h>
 #include <yvex/tokenizer.h>
 
-typedef struct {
-    int host_observed;
-    unsigned long long count;
-    yvex_server_engine_summary engines[YVEX_SERVER_ENGINE_CAP];
-} yvex_cli_engine_observation;
+typedef const char *(*yvex_cli_engine_state_resolver)(
+    const yvex_local_model *model, const void *context);
 
 int yvex_context_command(int arg_count, char **args);
 void yvex_context_help(FILE *fp);
@@ -56,7 +52,9 @@ int yvex_remote_catalog_render(FILE *fp,
                                int representations);
 int yvex_local_catalog_render(FILE *fp,
                               const yvex_local_model_catalog *catalog,
-                              const yvex_cli_engine_observation *engines,
+                              yvex_cli_engine_state_resolver engine_state,
+                              const void *engine_context,
+                              int engine_host_observed,
                               yvex_model_catalog_output_mode mode);
 int yvex_moe_command(int arg_count, char **args);
 void yvex_moe_help(FILE *fp);

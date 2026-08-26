@@ -1846,32 +1846,11 @@ int yvex_remote_catalog_render(FILE *fp,
     return remote_catalog_render_table(fp, catalog, representations);
 }
 
-static const char *local_engine_state(
-    const yvex_local_model *model,
-    const yvex_cli_engine_observation *observation)
-{
-    unsigned long long index;
-
-    if (model->kind != YVEX_LOCAL_MODEL_PACKAGE) return "not-applicable";
-    if (!observation || !observation->host_observed) return model->engine_state;
-    for (index = 0u; index < observation->count; ++index) {
-        if (strcmp(model->name, observation->engines[index].alias) != 0) continue;
-        switch (observation->engines[index].state) {
-        case YVEX_SERVER_ENGINE_UNLOADED: return "unloaded";
-        case YVEX_SERVER_ENGINE_LOADING: return "loading";
-        case YVEX_SERVER_ENGINE_LOADED: return "loaded";
-        case YVEX_SERVER_ENGINE_DRAINING: return "draining";
-        case YVEX_SERVER_ENGINE_UNLOADING: return "unloading";
-        case YVEX_SERVER_ENGINE_FAILED: return "failed";
-        }
-        return "unknown";
-    }
-    return "not-loaded";
-}
-
 int yvex_local_catalog_render(FILE *fp,
                               const yvex_local_model_catalog *catalog,
-                              const yvex_cli_engine_observation *engines,
+                              yvex_cli_engine_state_resolver engine_state,
+                              const void *engine_context,
+                              int engine_host_observed,
                               yvex_model_catalog_output_mode mode)
 {
     unsigned long long index;
@@ -1881,9 +1860,11 @@ int yvex_local_catalog_render(FILE *fp,
         yvex_cli_out_writef(fp,
                             "{\"schema\":\"yvex.local-model-catalog.v1\","
                             "\"engine_host_observed\":%s,\"models\":[",
-                            engines && engines->host_observed ? "true" : "false");
+                            engine_host_observed ? "true" : "false");
         for (index = 0u; index < yvex_local_model_catalog_count(catalog); ++index) {
             const yvex_local_model *model = yvex_local_model_catalog_at(catalog, index);
+            const char *state = engine_state ? engine_state(model, engine_context)
+                                             : model->engine_state;
             if (index) yvex_cli_out_fputs(",", fp);
             yvex_cli_out_fputs("{\"name\":", fp);
             yvex_file_json_write_string(fp, model->name);
@@ -1899,7 +1880,7 @@ int yvex_local_catalog_render(FILE *fp,
             yvex_cli_out_fputs(",\"verification_state\":", fp);
             yvex_file_json_write_string(fp, model->verification_state);
             yvex_cli_out_fputs(",\"engine_state\":", fp);
-            yvex_file_json_write_string(fp, local_engine_state(model, engines));
+            yvex_file_json_write_string(fp, state);
             yvex_cli_out_fputs(",\"blocker\":", fp);
             yvex_file_json_write_string(fp, model->blocker);
             yvex_cli_out_writef(fp, ",\"size_bytes\":%llu,\"size_known\":%s,"
@@ -1914,9 +1895,11 @@ int yvex_local_catalog_render(FILE *fp,
         yvex_cli_out_writef(fp, "local_models: %llu\n",
                             yvex_local_model_catalog_count(catalog));
         yvex_cli_out_writef(fp, "engine_host_observed: %s\n",
-                            engines && engines->host_observed ? "true" : "false");
+                            engine_host_observed ? "true" : "false");
         for (index = 0u; index < yvex_local_model_catalog_count(catalog); ++index) {
             const yvex_local_model *model = yvex_local_model_catalog_at(catalog, index);
+            const char *state = engine_state ? engine_state(model, engine_context)
+                                             : model->engine_state;
             yvex_cli_out_writef(fp, "model[%llu]: name=%s family=%s kind=%s representation=%s "
                                     "package_state=%s verification=%s engine=%s backend=%s "
                                     "bytes=%llu blocker=%s path=%s\n",
@@ -1924,7 +1907,7 @@ int yvex_local_catalog_render(FILE *fp,
                                 model->kind == YVEX_LOCAL_MODEL_PACKAGE ? "package"
                                                                         : "acquired-source",
                                 model->representation, model->package_state,
-                                model->verification_state, local_engine_state(model, engines),
+                                model->verification_state, state,
                                 model->backend[0] ? model->backend : "unknown", model->size_bytes,
                                 model->blocker[0] ? model->blocker : "none", model->path);
         }
@@ -1938,6 +1921,8 @@ int yvex_local_catalog_render(FILE *fp,
                         "VERIFICATION", "SIZE", "ENGINE", "BACKEND / BLOCKER");
     for (index = 0u; index < yvex_local_model_catalog_count(catalog); ++index) {
         const yvex_local_model *model = yvex_local_model_catalog_at(catalog, index);
+        const char *state = engine_state ? engine_state(model, engine_context)
+                                         : model->engine_state;
         char size[32];
         if (model->size_known)
             model_download_format_bytes(size, sizeof(size), model->size_bytes);
@@ -1949,7 +1934,7 @@ int yvex_local_catalog_render(FILE *fp,
                             model->kind == YVEX_LOCAL_MODEL_PACKAGE ? "package" : "source",
                             model->representation,
                             model->package_state, model->verification_state, size,
-                            local_engine_state(model, engines),
+                            state,
                             model->backend[0] ? model->backend : "-",
                             model->blocker[0] ? " · " : "", model->blocker);
     }

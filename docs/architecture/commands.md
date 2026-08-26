@@ -25,8 +25,9 @@ yvex
 yvex chat [--session NAME] [--max-new-tokens N]
 yvex run [options] TEXT
 
-yvex server MODEL [--ctx N] [server options]
-yvex server stop|status|model|memory|log [--json]
+yvex server [server options]
+yvex server load|unload MODEL
+yvex server stop|status|models|memory|log [--json]
 yvex session new|list|show|attach|detach|reset|close|cancel
 yvex model search [QUERY]
 yvex model inspect OWNER/REPOSITORY
@@ -42,8 +43,8 @@ yvex version
 ```
 
 Runtime-client controls have no dependency edge to engine execution. The
-`server MODEL` entrypoint is a separately guarded engine-linked foreground
-lane in the same ELF; it is not a client wrapper and does not execute a sibling
+`server` entrypoint is a separately guarded engine-linked foreground host lane
+in the same ELF; it is not a client wrapper and does not execute a sibling
 binary. Direct component execution, materialization, tokenizer conformance,
 metadata, tensor-map, and target-report operations enter the finite offline
 lane. Retired top-level namespaces refuse with a migration hint and never
@@ -54,35 +55,34 @@ representation records. Their table, audit, interactive drill-down, and JSON
 projections share one domain API; provider output is never parsed from a human
 table. Search proves remote availability only. Exact revision acquisition,
 source verification, package preparation, registry membership, and live engine
-state remain different lifecycle stages.
+state remain different lifecycle stages. `model list` may project the public
+engine inventory when the host is reachable, but it never opens an engine.
 
 The local model registry owns complete typed startup profiles. Text runtimes
 carry one artifact, runtime binding, target, backend, generation mode, and
 startup context; composite runtimes carry an installed component root, target,
 backend, and capability mode. `model list` marks which entries have a complete
-readable profile and `model show` inspects one entry. `server MODEL` names that
-profile explicitly; no persisted selection is required or consulted. `server
-model` reads the model actually open in the resident server.
+readable profile and `model show` inspects one entry. `server load MODEL` names
+that profile explicitly; no persisted selection is required or consulted.
+`server models` reads the engine generations actually known to the host.
 
 ### Hosted startup semantics
 
-There is no independent hosted `load` operation. In the normal product path,
-`yvex server MODEL` directly enters the server lifecycle and remains in the
-foreground. It resolves and authenticates the named profile, creates one
-immutable runtime model, establishes host/device residency, then publishes
-readiness. Before admission begins it prints and flushes the profile, target,
-backend, generation mode, requested context, artifact, binding, endpoint, and
-shutdown instruction. `--ctx N` overrides only the startup workload capacity;
-it does not alter the model-family semantic maximum.
+`yvex server` starts the persistent host without opening a package. A separate
+`server load MODEL` request resolves and authenticates the named profile,
+creates one immutable engine generation, establishes its admitted residency,
+and publishes engine readiness. `server unload MODEL` drains and closes that
+generation without stopping the host. Client requests bind to an exact alias
+and engine generation rather than a mutable process-global model selection.
 `yvex chat` and `yvex run` are protocol clients of that resident model; they do
 not link into runtime execution or open weights locally. The complete operator
 sequence and memory interpretation live in the
 [local runtime runbook](../operator-runbook.md).
 
 `yvex` and `yvex chat` require a TTY. `yvex run` is the noninteractive one-shot
-form. A missing server produces one concise refusal plus the exact
-`yvex server MODEL` hint. Unknown and duplicate options follow the product
-parser's typed refusal policy.
+form. A missing host produces one concise refusal plus the exact `yvex server`
+hint; a missing engine points to `yvex server load MODEL`. Unknown and
+duplicate options follow the product parser's typed refusal policy.
 
 The REPL owns bounded in-memory history, UTF-8 code-point deletion, bracketed
 multiline paste, resize redraw, and two-stage SIGINT/EOF behavior. History is

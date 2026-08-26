@@ -29,6 +29,11 @@
       },
       {
         "command_id": "cli.yvex.model.use",
+        "flag": "--backend",
+        "rationale": "resolve backend policy from the selected registry profile"
+      },
+      {
+        "command_id": "cli.yvex.model.use",
         "flag": "--context",
         "rationale": "resolve startup facts from the selected registry profile"
       },
@@ -49,23 +54,38 @@
       },
       {
         "command_id": "daemon.yvexd",
+        "flag": "--backend",
+        "rationale": "resolve backend policy when loading the selected registry profile"
+      },
+      {
+        "command_id": "daemon.yvexd",
         "flag": "--context",
-        "rationale": "replace the retired daemon spelling with the canonical server --ctx option"
+        "rationale": "resolve engine capacity when loading the selected registry profile"
+      },
+      {
+        "command_id": "daemon.yvexd",
+        "flag": "--max-new-tokens",
+        "rationale": "resolve generation bounds from the loaded engine profile and request"
       },
       {
         "command_id": "daemon.yvexd",
         "flag": "--model",
-        "rationale": "replace separate startup paths with the explicit MODEL profile argument"
+        "rationale": "select registered packages through the explicit server load operation"
+      },
+      {
+        "command_id": "daemon.yvexd",
+        "flag": "--prefill-chunk",
+        "rationale": "resolve prefill policy from the loaded engine profile"
       },
       {
         "command_id": "daemon.yvexd",
         "flag": "--runtime-binding",
-        "rationale": "resolve the admitted binding from the explicit MODEL profile"
+        "rationale": "resolve the admitted binding from the loaded registry profile"
       },
       {
         "command_id": "daemon.yvexd",
         "flag": "--target",
-        "rationale": "resolve the target from the explicit MODEL profile"
+        "rationale": "resolve the target from the loaded registry profile"
       },
       {
         "command_id": "daemon.yvexd",
@@ -2114,9 +2134,9 @@
       "result_schema": "human.v1",
       "side_effects": "read-only",
       "slash_projection": "none",
-      "summary": "Superseded by explicit foreground server launch.",
+      "summary": "Superseded by explicit engine load from the local registry.",
       "superseded_by": [
-        "server.host"
+        "server.load"
       ],
       "test_owner": "tests/test_operator_registry.py",
       "visibility": "removed"

@@ -31,7 +31,8 @@ curated explanation, not runtime evidence.
 - the runtime-client lane uses the private local protocol for chat, one-shot
   generation, runtime administration, sessions, live model inspection,
   cancellation, and the single human/JSON log surface;
-- the foreground `server MODEL` lane directly owns persistent model hosting;
+- the foreground `server` lane owns the persistent multi-engine host and its
+  independently loaded engine generations;
 - the finite offline-engine lane calls admitted library owners for compilation,
   artifact operations, inspection, direct component execution, profiling, and
   system facts.
@@ -41,11 +42,11 @@ Transformer, or host a model. The offline lane closes all resources before the
 process exits and never owns persistent sessions. The server lane is explicit
 in the invocation and never shells out to or executes a hidden binary.
 
-The foreground server lane owns one process-lifetime runtime model containing target and DSpark
-draft/verification plans, one bounded worker and queue, one server-session
-registry, one private Unix listener, one loopback OpenAI-compatible listener,
-and one telemetry authority. HTTP and native clients enter the same worker,
-model, session, KV, and cancellation owners.
+The foreground server lane owns one private Unix listener, one loopback
+OpenAI-compatible listener, one telemetry authority, and a bounded set of
+engine generations. Each loaded engine owns its immutable runtime model,
+scheduler, sessions, state, and resources. HTTP and native clients bind work to
+an exact alias and generation rather than a process-global model pointer.
 
 ## Subsystem direction
 

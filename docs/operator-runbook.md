@@ -2,7 +2,8 @@
 
 This runbook owns first startup and routine operation of the installed local
 server and clients. Normal operation is registry-first: users list a complete
-local model profile, name it when starting the foreground server, and enter
+local model profile, start the foreground host, load that package as one engine
+generation, and enter
 chat without exporting paths or repeating internal paths. Its commands follow
 the canonical operation registry. The REPL attaches to the resident server and
 uses the same typed session, progress, and result facts as noninteractive
@@ -12,12 +13,13 @@ gates.
 
 ## Prerequisites
 
-Builds provide one executable product. `yvex server MODEL` hosts one
-process-resident runtime model, the private Unix listener, and the bounded
-loopback OpenAI-compatible listener in the foreground. Other `yvex` modes own
-native clients and finite offline engineering operations.
+Builds provide one executable product. `yvex server` owns the private Unix
+listener and bounded loopback OpenAI-compatible listener in the foreground.
+`yvex server load MODEL` opens a registered package as one engine generation;
+several engine generations may coexist within the admitted host bound. Other
+`yvex` modes own native clients and finite offline engineering operations.
 
-Starting a host requires one complete registry startup profile. A text runtime
+Loading an engine requires one complete registry startup profile. A text runtime
 binds one admitted GGUF to its exact runtime binding, target, backend, and
 context capacity. A composite runtime instead binds an installed component root
 to its target, backend, and capability mode without inventing a singular
@@ -104,8 +106,20 @@ Use the local catalog to find the next legal state:
 opening payloads or engines. A moving provider reference is shown as
 `moving-reference`; it is not silently promoted to immutable source evidence.
 Package identities and startup facts remain available through `model show`.
-Engine state is `not-observed` until the committed host API provides a live
-projection; package readiness never implies residency or serving activity.
+Acquired sources report engine state as `not-applicable`. If no host can be
+observed, packages report `not-observed`; with a live host they report
+`not-loaded` or the engine state returned by protocol v13. Package readiness
+never implies residency or serving activity. The lifecycle handoff is explicit:
+
+```sh
+./yvex server
+./yvex server load PACKAGE_NAME
+./yvex server models
+./yvex model list
+```
+
+`model list` consumes the public engine inventory but does not open or manage an
+engine. `server load` and `server unload` remain the engine lifecycle authority.
 
 Hugging Face credentials remain owned by `yvex system accounts` and the
 official provider CLI. Discovery arguments, tables, JSON, receipts, and logs do
@@ -205,13 +219,17 @@ by `model list`:
 Then start the host in the first terminal:
 
 ```sh
-./yvex server deepseek4-v4-flash-dspark-runtime-iq2xxs --parallel 2
+./yvex server
 ```
 
-`server MODEL` directly enters the server entrypoint in the `yvex` process.
-Foreground operation is intentional: keep this terminal open. Exactly one
-server owns the model, sessions, KV, keyed scheduler, local socket, OpenAI listener, and
-telemetry.
+Foreground operation is intentional: keep this terminal open. The host owns the
+local socket, OpenAI listener, telemetry, and bounded engine manager. From a
+second terminal, load the selected package and inspect the resulting generation:
+
+```sh
+./yvex server load deepseek4-v4-flash-dspark-runtime-iq2xxs
+./yvex server models
+```
 
 Before the potentially long admission begins, the command prints the complete
 selected startup identity and states that the host remains in the foreground:
@@ -255,15 +273,17 @@ leaves no partially ready listener.
 
 ## What “load the model” means
 
-There is no separate hosted model-load command. The relevant commands have
-different responsibilities:
+The relevant commands have different responsibilities:
 
 - `yvex model list` reads the local model registry and marks complete readable
   startup profiles;
-- `yvex server NAME` opens and authenticates the named profile's artifact and
-  binding, constructs its compiler-selected residency, and keeps the resulting
-  runtime model open;
-- `yvex server model` reports the identities actually open in the server;
+- `yvex server` starts the model-neutral persistent host;
+- `yvex server load NAME` opens and authenticates the named profile's artifact
+  and binding, constructs compiler-selected residency, and publishes one engine
+  generation;
+- `yvex server models` reports the generations actually known to the host;
+- `yvex server unload NAME` drains and closes the selected generation without
+  stopping the host;
 - `yvex server memory` reports current process, mapped, host-resident, and
   device-resident memory facts;
 - `yvex chat` and `yvex run` use the already resident model through the local
@@ -286,7 +306,8 @@ the same registry-first command used by other hosted models:
 
 ```sh
 ./yvex model list
-./yvex server minimax-h3-fl2va-runtime-media
+./yvex server
+./yvex server load minimax-h3-fl2va-runtime-media
 ```
 
 The default publication directory is `$YVEX_DATA_DIR/media`, or
@@ -360,17 +381,19 @@ model copy.
 Terminal 1 owns the foreground host lifecycle:
 
 ```sh
-./yvex server deepseek4-v4-flash-dspark-runtime-iq2xxs
+./yvex server
 ```
 
-The foreground terminal transitions from admission into the compact operational
-event stream. A second terminal owns the interactive conversation:
+The foreground terminal transitions into the compact operational event stream.
+A second terminal loads the engine and owns the interactive conversation:
 
 ```sh
-./yvex chat --session main
+./yvex server load deepseek4-v4-flash-dspark-runtime-iq2xxs
+./yvex chat --model deepseek4-v4-flash-dspark-runtime-iq2xxs --session main
 ```
 
-Start Terminal 1 first and attach after `runtime.ready`. An optional observer can
+Start Terminal 1 first and attach after the selected engine reports `loaded`.
+An optional observer can
 run `./yvex server log`; add `--verbose` for individual DSpark cycles or `--json`
 for canonical JSONL. All views derive from the same typed event sequence. Default
 telemetry excludes prompt and answer content.
@@ -551,12 +574,13 @@ Use compact status for normal operation:
 ```sh
 ./yvex server status
 ./yvex server status --json
-./yvex server model
+./yvex server models
 ./yvex server memory
 ```
 
-`server model` proves which artifact, binding, physical variant, target, and
-backend are actually open. `server memory` separates mapped artifact bytes,
+`server models` reports the known engine generations and their model,
+specialization, backend, residency, and readiness facts. `server memory`
+separates mapped artifact bytes,
 the process-lifetime host arena, and device-resident allocations.
 
 Follow typed server activity independently of the foreground console:
@@ -629,14 +653,14 @@ separate facts.
 
 ```sh
 ./yvex model list
-./yvex server deepseek4-v4-flash-dspark-runtime-iq2xxs
+./yvex server
+./yvex server load deepseek4-v4-flash-dspark-runtime-iq2xxs
 ```
 
-`model list` reads registry entries; the positional `MODEL` argument selects
-one entry for this invocation; and `server model` reads the identities actually
-open in the resident server. Starting another model requires stopping the
-current server first; hot model switching and multi-model hosting are not
-current capabilities.
+`model list` reads registry entries; `server load MODEL` selects one entry and
+creates a generation; `server models` reads the identities actually known to
+the resident host. Loading and unloading an engine does not require restarting
+the host.
 
 Generation mode is part of the startup profile. `dspark` requires a binding
 that contains target, draft, and target-verification plans; `target-only` is
@@ -662,8 +686,8 @@ fallback.
 
 ## Recovery
 
-- Missing socket: run `yvex server MODEL` and wait for `server status` to
-  report `ready`.
+- Missing socket: run `yvex server` and wait for `server status` to report the
+  host ready, then use `yvex server load MODEL`.
 - Stale or unsafe socket: verify UID, mode, runtime-directory ownership, and
   singleton-lock ownership; never delete another user's socket.
 - Binding or artifact mismatch: select the binding for that exact artifact
@@ -674,9 +698,9 @@ fallback.
   CUDA request falls back silently.
 - Queue refusal: wait for current work or reduce client concurrency; do not
   launch another server against the same socket.
-- OpenAI `503 runtime_unavailable`: start the host with `yvex server MODEL`,
-  wait for `runtime.ready`, and confirm `openai_ready` in
-  `yvex server status --json`.
+- OpenAI `503 runtime_unavailable`: start the host with `yvex server`, load the
+  selected package with `yvex server load MODEL`, and confirm host and engine
+  readiness through `yvex server status --json` and `yvex server models --json`.
 - OpenAI `422 unsupported_parameter`: remove the named unsupported field;
   fields are never ignored silently.
 

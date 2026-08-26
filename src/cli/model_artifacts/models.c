@@ -7,6 +7,7 @@
 #include "src/cli/model_artifacts/private.h"
 
 #include <yvex/artifact.h>
+#include <yvex/server.h>
 
 #include <errno.h>
 #include <stdlib.h>
@@ -60,6 +61,12 @@ typedef struct {
     models_verify_source source;
     yvex_cli_field_spec field;
 } models_verify_field;
+
+typedef struct {
+    int host_observed;
+    unsigned long long count;
+    yvex_server_engine_summary engines[YVEX_SERVER_ENGINE_CAP];
+} models_engine_observation;
 
 #define REGISTRY_FIELD(key_, kind_, member_, fallback_)                                            \
     {key_, kind_, offsetof(yvex_model_registry_entry, member_), fallback_}
@@ -637,7 +644,26 @@ static int command_models_search(int arg_count, char **args)
     return 0;
 }
 
-static int local_engine_observation_capture(yvex_cli_engine_observation *observation,
+static const char *local_engine_state(const yvex_local_model *model,
+                                      const void *context)
+{
+    static const char *const names[] = {
+        "unloaded", "loading", "loaded", "draining", "unloading", "failed"};
+    const models_engine_observation *observation = context;
+    unsigned long long index;
+
+    if (model->kind != YVEX_LOCAL_MODEL_PACKAGE) return "not-applicable";
+    if (!observation || !observation->host_observed) return model->engine_state;
+    for (index = 0u; index < observation->count; ++index)
+        if (!strcmp(model->name, observation->engines[index].alias))
+            return (unsigned int)observation->engines[index].state <
+                       sizeof(names) / sizeof(names[0])
+                       ? names[(unsigned int)observation->engines[index].state]
+                       : "unknown";
+    return "not-loaded";
+}
+
+static int local_engine_observation_capture(models_engine_observation *observation,
                                             yvex_error *err)
 {
     yvex_client_request request;
@@ -687,7 +713,7 @@ static int local_engine_observation_capture(yvex_cli_engine_observation *observa
 static int command_models_list(int arg_count, char **args)
 {
     yvex_cli_model_list_options cli;
-    yvex_cli_engine_observation engines;
+    models_engine_observation engines;
     yvex_local_catalog_options options;
     yvex_local_model_catalog *catalog = NULL;
     yvex_error err;
@@ -703,7 +729,8 @@ static int command_models_list(int arg_count, char **args)
     if (rc != YVEX_OK) return print_yvex_error(&err, exit_for_status(rc));
     rc = local_engine_observation_capture(&engines, &err);
     if (rc == YVEX_OK)
-        rc = yvex_local_catalog_render(stdout, catalog, &engines, cli.output_mode);
+        rc = yvex_local_catalog_render(stdout, catalog, local_engine_state, &engines,
+                                       engines.host_observed, cli.output_mode);
     yvex_local_model_catalog_close(catalog);
     if (rc != YVEX_OK) {
         if (!yvex_error_is_set(&err))
