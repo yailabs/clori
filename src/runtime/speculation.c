@@ -362,8 +362,8 @@ int yvex_runtime_speculation_context_open(yvex_runtime_speculation_context **out
         (options->backend != YVEX_BACKEND_KIND_CPU &&
          options->backend != YVEX_BACKEND_KIND_CUDA) || !options->context_capacity ||
         !options->prefill_chunk_tokens ||
-        !runtime_compatible_batch_options_valid(options->compatible_batching,
-            options->compatible_batch_width))
+        !runtime_engine_scheduler_options_valid(options->engine_scheduling,
+            options->scheduler_maximum_width))
         return speculation_refuse(err, YVEX_ERR_INVALID_ARG, "complete DSpark runtime owners are required");
     context = yvex_core_calloc(1u, sizeof(*context));
     if (!context)
@@ -423,8 +423,8 @@ int yvex_runtime_speculation_context_open(yvex_runtime_speculation_context **out
     transformer_options.evidence_level = runtime_attention_evidence(options->execution_profile->evidence);
     transformer_options.device_hidden_output = context->device_draft_selection;
     transformer_options.device_pre_normalized_output = context->device_draft_selection;
-    transformer_options.compatible_batching = options->compatible_batching;
-    transformer_options.compatible_batch_width = options->compatible_batch_width;
+    transformer_options.engine_scheduling = options->engine_scheduling;
+    transformer_options.scheduler_maximum_width = options->scheduler_maximum_width;
     transformer_options.execution_profile = options->execution_profile;
     rc = yvex_runtime_transformer_context_open(
         &context->draft_transformer, model, session, &transformer_options, workspace_bytes, err);

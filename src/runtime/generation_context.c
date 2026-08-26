@@ -594,7 +594,7 @@ static int generation_physical_row_capacity(
     return YVEX_OK;
 }
 
-static int generation_compatible_batch_width(
+static int generation_scheduler_maximum_width(
     const yvex_runtime_generation_context *context,
     unsigned long long *width, yvex_error *err)
 {
@@ -604,7 +604,7 @@ static int generation_compatible_batch_width(
         return generation_context_refuse(
             err, YVEX_ERR_INVALID_ARG,
             "compatible execution width owner is unavailable");
-    rc = yvex_model_engine_compatible_batch_width_copy(
+    rc = yvex_model_engine_scheduler_maximum_width_copy(
         context->model, width, err);
     if (rc != YVEX_OK) return rc;
     if (*width > context->options.concurrent_sequences)
@@ -612,7 +612,7 @@ static int generation_compatible_batch_width(
     if (*width < 2ull || *width >= 64ull)
         return generation_context_refuse(
             err, YVEX_ERR_UNSUPPORTED,
-            "compiled execution does not admit compatible batching");
+            "engine specialization does not admit compatible scheduling");
     yvex_error_clear(err);
     return YVEX_OK;
 }
@@ -1208,7 +1208,7 @@ static int generation_execution_owners_open(
     context->device_selection = device_selection;
     *workspace_bytes = 0ull;
     if (options->continuous_batching) {
-        rc = generation_compatible_batch_width(context, &compatible_width, err);
+        rc = generation_scheduler_maximum_width(context, &compatible_width, err);
         if (rc != YVEX_OK) return rc;
     }
 
@@ -1223,8 +1223,8 @@ static int generation_execution_owners_open(
     if (options->continuous_batching &&
         transformer.workspace_token_capacity < options->concurrent_sequences)
         transformer.workspace_token_capacity = options->concurrent_sequences;
-    transformer.compatible_batching = options->continuous_batching;
-    transformer.compatible_batch_width = compatible_width;
+    transformer.engine_scheduling = options->continuous_batching;
+    transformer.scheduler_maximum_width = compatible_width;
     transformer.cancel_requested = options->cancel_requested;
     transformer.cancel_context = options->cancel_context;
     transformer.evidence_level =
@@ -1274,8 +1274,8 @@ static int generation_execution_owners_open(
     speculation.prefill_chunk_tokens = options->prefill_chunk_tokens;
     speculation.maximum_host_bytes = options->maximum_host_bytes;
     speculation.maximum_device_bytes = options->maximum_device_bytes;
-    speculation.compatible_batching = options->continuous_batching;
-    speculation.compatible_batch_width = compatible_width;
+    speculation.engine_scheduling = options->continuous_batching;
+    speculation.scheduler_maximum_width = compatible_width;
     speculation.cancel_requested = options->cancel_requested;
     speculation.cancel_context = options->cancel_context;
     speculation.execution_profile = &context->execution_profile;

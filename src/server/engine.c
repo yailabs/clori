@@ -8,7 +8,7 @@
 #include <string.h>
 
 #include <yvex/internal/core.h>
-#include <yvex/internal/runtime_batching.h>
+#include <yvex/internal/engine_scheduler.h>
 #include <yvex/internal/tokenizer.h>
 
 #define ENGINE_INTERACTIVE_PREFILL_CHUNK 64u
@@ -205,7 +205,7 @@ static int execution_probe(server_engine *engine,
     request.backend = engine->options.backend;
     request.maximum_host_bytes = engine->options.maximum_host_bytes;
     request.maximum_device_bytes = engine->options.maximum_device_bytes;
-    rc = yvex_model_engine_compatible_batch_width_copy(engine->model, &width, err);
+    rc = yvex_model_engine_scheduler_maximum_width_copy(engine->model, &width, err);
     if (rc == YVEX_OK)
         engine->continuous_batching =
             engine->options.concurrent_sequences > 1ull && width >= 2ull;

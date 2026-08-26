@@ -22,7 +22,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <yvex/internal/core.h>
-#include <yvex/internal/runtime_batching.h>
+#include <yvex/internal/engine_scheduler.h>
 #define SERVER_SCHEMA_V1 1u
 #define SERVER_TELEMETRY_CAPACITY 4096u
 #define SERVER_CLIENT_CAPACITY 64u

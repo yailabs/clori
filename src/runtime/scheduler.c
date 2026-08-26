@@ -1,4 +1,4 @@
-/* Form bounded FIFO physical batches only from compiler-sealed compatible runtime work. */
+/* Schedule bounded engine work and form physical batches only from sealed compatibility keys. */
 #include "src/runtime/private.h"
 
 #include <errno.h>
@@ -14,20 +14,20 @@ enum {
     COMPATIBLE_RENDEZVOUS_NS = 50000000
 };
 
-struct runtime_compatible_batcher {
+struct runtime_engine_scheduler {
     pthread_mutex_t mutex;
     pthread_cond_t ready;
     pthread_cond_t completed;
     pthread_t worker;
-    runtime_compatible_batch_ticket **queue;
+    runtime_engine_work **queue;
     unsigned long long queue_capacity, queue_count, producer_count;
-    yvex_runtime_execution_batch_summary summary;
+    yvex_engine_scheduler_summary summary;
     int mutex_ready, ready_condition, completed_condition;
     int worker_started, stopping;
 };
 
-static unsigned long long batching_elapsed_ns(const struct timespec *start,
-                                              const struct timespec *end)
+static unsigned long long scheduler_elapsed_ns(const struct timespec *start,
+                                               const struct timespec *end)
 {
     unsigned long long seconds, nanoseconds;
     if (end->tv_sec < start->tv_sec ||
@@ -47,22 +47,22 @@ static unsigned long long batching_elapsed_ns(const struct timespec *start,
     return seconds * 1000000000ull + nanoseconds;
 }
 
-static void batching_observation_add(unsigned long long *total,
-                                     unsigned long long value)
+static void scheduler_observation_add(unsigned long long *total,
+                                      unsigned long long value)
 {
     *total = ULLONG_MAX - *total < value ? ULLONG_MAX : *total + value;
 }
 
-static unsigned long long batching_compatible_count_locked(
-    const runtime_compatible_batcher *batcher)
+static unsigned long long scheduler_compatible_count_locked(
+    const runtime_engine_scheduler *scheduler)
 {
-    const runtime_compatible_batch_ticket *first;
+    const runtime_engine_work *first;
     unsigned long long count = 0ull, index, rows = 0ull;
-    if (!batcher || !batcher->queue_count) return 0ull;
-    first = batcher->queue[0];
-    for (index = 0ull; index < batcher->queue_count; ++index) {
-        const runtime_compatible_batch_ticket *candidate =
-            batcher->queue[index];
+    if (!scheduler || !scheduler->queue_count) return 0ull;
+    first = scheduler->queue[0];
+    for (index = 0ull; index < scheduler->queue_count; ++index) {
+        const runtime_engine_work *candidate =
+            scheduler->queue[index];
         if (!yvex_execution_compatibility_keys_match(
                 &first->key, &candidate->key, NULL) ||
             candidate->row_count > first->key.admitted_width - rows)
@@ -73,36 +73,36 @@ static unsigned long long batching_compatible_count_locked(
     return count;
 }
 
-static unsigned long long batching_possible_compatible_count_locked(
-    const runtime_compatible_batcher *batcher, unsigned long long expected)
+static unsigned long long scheduler_possible_compatible_count_locked(
+    const runtime_engine_scheduler *scheduler, unsigned long long expected)
 {
     unsigned long long compatible, available, potential_producers;
-    compatible = batching_compatible_count_locked(batcher);
-    potential_producers = batcher->producer_count > expected
-                              ? batcher->producer_count
+    compatible = scheduler_compatible_count_locked(scheduler);
+    potential_producers = scheduler->producer_count > expected
+                              ? scheduler->producer_count
                               : expected;
-    available = potential_producers > batcher->queue_count
-                    ? potential_producers - batcher->queue_count
+    available = potential_producers > scheduler->queue_count
+                    ? potential_producers - scheduler->queue_count
                     : 0ull;
     return compatible > ULLONG_MAX - available
                ? ULLONG_MAX
                : compatible + available;
 }
 
-static void batching_coalesce_locked(runtime_compatible_batcher *batcher)
+static void scheduler_coalesce_locked(runtime_engine_scheduler *scheduler)
 {
     struct timespec deadline, finish, start;
     unsigned long long elapsed, expected, limit;
     int wait_status = 0;
-    if (!batcher->queue_count || batcher->stopping)
+    if (!scheduler->queue_count || scheduler->stopping)
         return;
-    expected = batcher->producer_count;
+    expected = scheduler->producer_count;
     if (expected < 2ull ||
-        batching_compatible_count_locked(batcher) >= expected ||
-        batching_possible_compatible_count_locked(batcher, expected) < expected)
+        scheduler_compatible_count_locked(scheduler) >= expected ||
+        scheduler_possible_compatible_count_locked(scheduler, expected) < expected)
         return;
-    limit = batcher->queue[0]->coalescing_limit_ns
-                ? batcher->queue[0]->coalescing_limit_ns
+    limit = scheduler->queue[0]->coalescing_limit_ns
+                ? scheduler->queue[0]->coalescing_limit_ns
                 : COMPATIBLE_COALESCING_NS;
     if (clock_gettime(CLOCK_REALTIME, &deadline) != 0 ||
         clock_gettime(CLOCK_MONOTONIC, &start) != 0)
@@ -113,108 +113,108 @@ static void batching_coalesce_locked(runtime_compatible_batcher *batcher)
         deadline.tv_sec++;
         deadline.tv_nsec -= 1000000000l;
     }
-    batcher->summary.coalescing_waits++;
-    while (!batcher->stopping &&
-           batching_compatible_count_locked(batcher) < expected &&
-           batching_possible_compatible_count_locked(batcher, expected) >= expected &&
+    scheduler->summary.coalescing_waits++;
+    while (!scheduler->stopping &&
+           scheduler_compatible_count_locked(scheduler) < expected &&
+           scheduler_possible_compatible_count_locked(scheduler, expected) >= expected &&
            wait_status != ETIMEDOUT)
-        wait_status = pthread_cond_timedwait(&batcher->ready, &batcher->mutex,
+        wait_status = pthread_cond_timedwait(&scheduler->ready, &scheduler->mutex,
                                              &deadline);
-    if (wait_status == ETIMEDOUT) batcher->summary.coalescing_timeouts++;
+    if (wait_status == ETIMEDOUT) scheduler->summary.coalescing_timeouts++;
     if (clock_gettime(CLOCK_MONOTONIC, &finish) == 0) {
-        elapsed = batching_elapsed_ns(&start, &finish);
-        if (ULLONG_MAX - batcher->summary.coalescing_ns < elapsed)
-            batcher->summary.coalescing_ns = ULLONG_MAX;
+        elapsed = scheduler_elapsed_ns(&start, &finish);
+        if (ULLONG_MAX - scheduler->summary.coalescing_ns < elapsed)
+            scheduler->summary.coalescing_ns = ULLONG_MAX;
         else
-            batcher->summary.coalescing_ns += elapsed;
+            scheduler->summary.coalescing_ns += elapsed;
     }
 }
 
-static int batching_refuse(yvex_error *err, yvex_status status,
+static int scheduler_refuse(yvex_error *err, yvex_status status,
                            const char *reason)
 {
-    yvex_error_set(err, status, "runtime.compatible-batching", reason);
+    yvex_error_set(err, status, "runtime.engine-scheduler", reason);
     return status;
 }
 
-static int ticket_cancelled(const runtime_compatible_batch_ticket *ticket)
+static int ticket_cancelled(const runtime_engine_work *ticket)
 {
     return ticket && ticket->cancel_requested &&
            ticket->cancel_requested(ticket->cancel_context);
 }
 
-static void batching_remove(runtime_compatible_batcher *batcher,
+static void scheduler_remove(runtime_engine_scheduler *scheduler,
                             unsigned long long index)
 {
-    for (; index + 1ull < batcher->queue_count; ++index)
-        batcher->queue[index] = batcher->queue[index + 1ull];
-    batcher->queue_count--;
-    batcher->queue[batcher->queue_count] = NULL;
+    for (; index + 1ull < scheduler->queue_count; ++index)
+        scheduler->queue[index] = scheduler->queue[index + 1ull];
+    scheduler->queue_count--;
+    scheduler->queue[scheduler->queue_count] = NULL;
 }
 
-static void batching_complete_cancelled(runtime_compatible_batcher *batcher,
+static void scheduler_complete_cancelled(runtime_engine_scheduler *scheduler,
                                         unsigned long long index)
 {
-    runtime_compatible_batch_ticket *ticket = batcher->queue[index];
-    batching_remove(batcher, index);
+    runtime_engine_work *ticket = scheduler->queue[index];
+    scheduler_remove(scheduler, index);
     ticket->status = YVEX_ERR_CANCELLED;
     ticket->done = 1;
     yvex_error_set(&ticket->failure, YVEX_ERR_CANCELLED,
-                   "runtime.compatible-batching",
+                   "runtime.engine-scheduler",
                    "compatible execution was cancelled before dispatch");
-    batcher->summary.cancellations++;
+    scheduler->summary.cancellations++;
 }
 
-static int batching_keys_match(runtime_compatible_batcher *batcher,
+static int scheduler_keys_match(runtime_engine_scheduler *scheduler,
                                const yvex_execution_compatibility_key *left,
                                const yvex_execution_compatibility_key *right)
 {
-    batcher->summary.compatibility_candidates++;
+    scheduler->summary.compatibility_candidates++;
     if (yvex_execution_compatibility_keys_match(left, right, NULL)) return 1;
-    batcher->summary.compatibility_mismatches++;
+    scheduler->summary.compatibility_mismatches++;
     if (left->phase != right->phase) {
-        batcher->summary.phase_mismatches++;
+        scheduler->summary.phase_mismatches++;
     } else if (left->operation != right->operation) {
-        batcher->summary.operation_mismatches++;
+        scheduler->summary.operation_mismatches++;
     } else if (left->layer_ordinal != right->layer_ordinal) {
-        batcher->summary.layer_mismatches++;
+        scheduler->summary.layer_mismatches++;
     } else if (left->tensor_scope != right->tensor_scope ||
                left->row_width != right->row_width ||
                left->admitted_width != right->admitted_width) {
-        batcher->summary.geometry_mismatches++;
+        scheduler->summary.geometry_mismatches++;
     } else if (left->backend_kind != right->backend_kind ||
                left->execution_class != right->execution_class) {
-        batcher->summary.profile_mismatches++;
+        scheduler->summary.profile_mismatches++;
     } else {
-        batcher->summary.identity_mismatches++;
+        scheduler->summary.identity_mismatches++;
     }
     return 0;
 }
 
-static unsigned long long batching_select_locked(
-    runtime_compatible_batcher *batcher,
-    runtime_compatible_batch_ticket **selected)
+static unsigned long long scheduler_select_locked(
+    runtime_engine_scheduler *scheduler,
+    runtime_engine_work **selected)
 {
-    runtime_compatible_batch_ticket *first;
+    runtime_engine_work *first;
     unsigned long long index, count = 0ull, rows = 0ull;
-    while (batcher->queue_count && ticket_cancelled(batcher->queue[0]))
-        batching_complete_cancelled(batcher, 0ull);
-    if (!batcher->queue_count) return 0ull;
-    first = batcher->queue[0];
+    while (scheduler->queue_count && ticket_cancelled(scheduler->queue[0]))
+        scheduler_complete_cancelled(scheduler, 0ull);
+    if (!scheduler->queue_count) return 0ull;
+    first = scheduler->queue[0];
     selected[count++] = first;
     rows = first->row_count;
-    batching_remove(batcher, 0ull);
-    for (index = 0ull; index < batcher->queue_count;) {
-        runtime_compatible_batch_ticket *candidate = batcher->queue[index];
+    scheduler_remove(scheduler, 0ull);
+    for (index = 0ull; index < scheduler->queue_count;) {
+        runtime_engine_work *candidate = scheduler->queue[index];
         if (ticket_cancelled(candidate)) {
-            batching_complete_cancelled(batcher, index);
+            scheduler_complete_cancelled(scheduler, index);
             continue;
         }
-        if (batching_keys_match(batcher, &first->key, &candidate->key) &&
+        if (scheduler_keys_match(scheduler, &first->key, &candidate->key) &&
             candidate->row_count <= first->key.admitted_width - rows) {
             selected[count++] = candidate;
             rows += candidate->row_count;
-            batching_remove(batcher, index);
+            scheduler_remove(scheduler, index);
             continue;
         }
         index++;
@@ -223,261 +223,270 @@ static unsigned long long batching_select_locked(
         selected[index]->actual_width = rows;
         selected[index]->group_size = count;
     }
-    batcher->summary.active = count;
+    scheduler->summary.active = count;
     return count;
 }
 
-static void batching_finish_locked(
-    runtime_compatible_batcher *batcher,
-    runtime_compatible_batch_ticket **selected, unsigned long long count,
+static void scheduler_finish_locked(
+    runtime_engine_scheduler *scheduler,
+    runtime_engine_work **selected, unsigned long long count,
     int status, const yvex_error *failure)
 {
-    unsigned long long index, width = count ? selected[0]->actual_width : 0ull;
-    if (count && selected[0]->kind == RUNTIME_COMPATIBLE_BATCH_RENDEZVOUS) {
-        batcher->summary.rendezvous_steps++;
-        batcher->summary.multi_source_rendezvous += count > 1ull;
-        if (width > batcher->summary.maximum_rendezvous_width)
-            batcher->summary.maximum_rendezvous_width = width;
+    unsigned long long index, phase = count ? selected[0]->key.phase : 0ull;
+    unsigned long long width = count ? selected[0]->actual_width : 0ull;
+    if (count && selected[0]->kind == RUNTIME_ENGINE_WORK_RENDEZVOUS) {
+        scheduler->summary.rendezvous_steps++;
+        scheduler_observation_add(
+            &scheduler->summary.rendezvous_steps_by_phase[phase], 1ull);
+        scheduler->summary.multi_source_rendezvous += count > 1ull;
+        if (width > scheduler->summary.maximum_rendezvous_width)
+            scheduler->summary.maximum_rendezvous_width = width;
     } else {
-        batcher->summary.physical_batches++;
-        batcher->summary.executed_rows += width;
-        if (width > batcher->summary.maximum_width)
-            batcher->summary.maximum_width = width;
+        scheduler->summary.physical_batches++;
+        scheduler->summary.executed_rows += width;
+        scheduler_observation_add(
+            &scheduler->summary.physical_batches_by_phase[phase], 1ull);
+        scheduler_observation_add(
+            &scheduler->summary.executed_rows_by_phase[phase], width);
+        if (width > scheduler->summary.maximum_width)
+            scheduler->summary.maximum_width = width;
         if (count > 1ull) {
             unsigned long long bucket;
             const yvex_expert_worklist_observation *worklists =
                 &selected[0]->worklists;
-            batcher->summary.multi_source_batches++;
-            batcher->summary.multi_source_rows += width;
-            if (width > batcher->summary.maximum_multi_source_width)
-                batcher->summary.maximum_multi_source_width = width;
-            if (count > batcher->summary.maximum_source_count)
-                batcher->summary.maximum_source_count = count;
+            scheduler->summary.multi_source_batches++;
+            scheduler->summary.multi_source_rows += width;
+            if (width > scheduler->summary.maximum_multi_source_width)
+                scheduler->summary.maximum_multi_source_width = width;
+            if (count > scheduler->summary.maximum_source_count)
+                scheduler->summary.maximum_source_count = count;
             if (worklists->worklist_count) {
-                batching_observation_add(&batcher->summary.multi_source_worklists,
-                                         worklists->worklist_count);
-                batching_observation_add(&batcher->summary.multi_source_expert_pairs,
-                                         worklists->pair_count);
-                batching_observation_add(
-                    &batcher->summary.multi_source_tensor_core_eligible_pairs,
+                scheduler_observation_add(&scheduler->summary.multi_source_worklists,
+                                          worklists->worklist_count);
+                scheduler_observation_add(&scheduler->summary.multi_source_expert_pairs,
+                                          worklists->pair_count);
+                scheduler_observation_add(
+                    &scheduler->summary.multi_source_tensor_core_eligible_pairs,
                     worklists->tensor_core_eligible_pairs);
-                batching_observation_add(
-                    &batcher->summary.multi_source_tensor_core_executed_pairs,
+                scheduler_observation_add(
+                    &scheduler->summary.multi_source_tensor_core_executed_pairs,
                     worklists->tensor_core_executed_pairs);
-                batching_observation_add(&batcher->summary.multi_source_narrow_pairs,
-                                         worklists->narrow_pairs);
+                scheduler_observation_add(&scheduler->summary.multi_source_narrow_pairs,
+                                          worklists->narrow_pairs);
                 if (worklists->maximum_bucket_population >
-                    batcher->summary.maximum_multi_source_bucket_population)
-                    batcher->summary.maximum_multi_source_bucket_population =
+                    scheduler->summary.maximum_multi_source_bucket_population)
+                    scheduler->summary.maximum_multi_source_bucket_population =
                         worklists->maximum_bucket_population;
                 for (bucket = 0ull;
                      bucket < YVEX_EXPERT_WORKLIST_HISTOGRAM_CAP; ++bucket)
-                    batching_observation_add(
-                        &batcher->summary.multi_source_population_histogram[bucket],
+                    scheduler_observation_add(
+                        &scheduler->summary.multi_source_population_histogram[bucket],
                         worklists->population_histogram[bucket]);
             }
         }
     }
-    batcher->summary.failures += status != YVEX_OK;
-    batcher->summary.active = 0ull;
+    scheduler->summary.failures += status != YVEX_OK;
+    scheduler->summary.active = 0ull;
     for (index = 0ull; index < count; ++index) {
         selected[index]->status = status;
         if (status != YVEX_OK && failure) selected[index]->failure = *failure;
         selected[index]->done = 1;
     }
-    (void)pthread_cond_broadcast(&batcher->completed);
+    (void)pthread_cond_broadcast(&scheduler->completed);
 }
 
-static void *batching_worker(void *opaque)
+static void *scheduler_worker(void *opaque)
 {
-    runtime_compatible_batcher *batcher = opaque;
-    runtime_compatible_batch_ticket **selected = calloc(
-        (size_t)batcher->queue_capacity, sizeof(*selected));
+    runtime_engine_scheduler *scheduler = opaque;
+    runtime_engine_work **selected = calloc(
+        (size_t)scheduler->queue_capacity, sizeof(*selected));
     if (!selected) {
-        (void)pthread_mutex_lock(&batcher->mutex);
-        batcher->stopping = 1;
-        while (batcher->queue_count)
-            batching_complete_cancelled(batcher, 0ull);
-        (void)pthread_cond_broadcast(&batcher->completed);
-        (void)pthread_mutex_unlock(&batcher->mutex);
+        (void)pthread_mutex_lock(&scheduler->mutex);
+        scheduler->stopping = 1;
+        while (scheduler->queue_count)
+            scheduler_complete_cancelled(scheduler, 0ull);
+        (void)pthread_cond_broadcast(&scheduler->completed);
+        (void)pthread_mutex_unlock(&scheduler->mutex);
         return NULL;
     }
     for (;;) {
         yvex_error failure;
         unsigned long long count;
         int status;
-        (void)pthread_mutex_lock(&batcher->mutex);
-        while (!batcher->queue_count && !batcher->stopping)
-            (void)pthread_cond_wait(&batcher->ready, &batcher->mutex);
-        if (batcher->stopping && !batcher->queue_count) {
-            (void)pthread_mutex_unlock(&batcher->mutex);
+        (void)pthread_mutex_lock(&scheduler->mutex);
+        while (!scheduler->queue_count && !scheduler->stopping)
+            (void)pthread_cond_wait(&scheduler->ready, &scheduler->mutex);
+        if (scheduler->stopping && !scheduler->queue_count) {
+            (void)pthread_mutex_unlock(&scheduler->mutex);
             break;
         }
-        batching_coalesce_locked(batcher);
-        count = batching_select_locked(batcher, selected);
-        batcher->summary.queued = batcher->queue_count;
-        (void)pthread_cond_broadcast(&batcher->completed);
-        (void)pthread_mutex_unlock(&batcher->mutex);
+        scheduler_coalesce_locked(scheduler);
+        count = scheduler_select_locked(scheduler, selected);
+        scheduler->summary.queued = scheduler->queue_count;
+        (void)pthread_cond_broadcast(&scheduler->completed);
+        (void)pthread_mutex_unlock(&scheduler->mutex);
         if (!count) continue;
         yvex_error_clear(&failure);
         status = selected[0]->execute(selected, count, &failure);
         if (status != YVEX_OK && !yvex_error_is_set(&failure))
             yvex_error_set(&failure, (yvex_status)status,
-                           "runtime.compatible-batching",
+                           "runtime.engine-scheduler",
                            "compatible physical execution failed");
-        (void)pthread_mutex_lock(&batcher->mutex);
-        batching_finish_locked(batcher, selected, count, status, &failure);
-        (void)pthread_mutex_unlock(&batcher->mutex);
+        (void)pthread_mutex_lock(&scheduler->mutex);
+        scheduler_finish_locked(scheduler, selected, count, status, &failure);
+        (void)pthread_mutex_unlock(&scheduler->mutex);
     }
     free(selected);
     return NULL;
 }
 
-int yvex_runtime_private_batcher_set_producers(
-    runtime_compatible_batcher *batcher, unsigned long long producers,
+int yvex_runtime_private_engine_scheduler_set_producers(
+    runtime_engine_scheduler *scheduler, unsigned long long producers,
     yvex_error *err)
 {
-    if (!batcher || producers > batcher->queue_capacity ||
-        pthread_mutex_lock(&batcher->mutex) != 0)
-        return batching_refuse(err, YVEX_ERR_INVALID_ARG,
+    if (!scheduler || producers > scheduler->queue_capacity ||
+        pthread_mutex_lock(&scheduler->mutex) != 0)
+        return scheduler_refuse(err, YVEX_ERR_INVALID_ARG,
                                "bounded producer population is required");
-    batcher->producer_count = producers;
-    batcher->summary.registered_producers = producers;
-    (void)pthread_cond_broadcast(&batcher->ready);
-    (void)pthread_mutex_unlock(&batcher->mutex);
+    scheduler->producer_count = producers;
+    scheduler->summary.registered_producers = producers;
+    (void)pthread_cond_broadcast(&scheduler->ready);
+    (void)pthread_mutex_unlock(&scheduler->mutex);
     yvex_error_clear(err);
     return YVEX_OK;
 }
 
-int yvex_runtime_private_batcher_open(
-    runtime_compatible_batcher **out, unsigned long long queue_capacity,
+int yvex_runtime_private_engine_scheduler_open(
+    runtime_engine_scheduler **out, unsigned long long queue_capacity,
     yvex_error *err)
 {
-    runtime_compatible_batcher *batcher;
+    runtime_engine_scheduler *scheduler;
     int rc;
     if (out) *out = NULL;
     if (!out || queue_capacity < 2ull || queue_capacity >= 64ull ||
-        queue_capacity > SIZE_MAX / sizeof(*batcher->queue))
-        return batching_refuse(err, YVEX_ERR_INVALID_ARG,
-                               "bounded compatible batch capacity is required");
-    batcher = calloc(1u, sizeof(*batcher));
-    if (!batcher)
-        return batching_refuse(err, YVEX_ERR_NOMEM,
-                               "compatible batch owner allocation failed");
-    batcher->queue = calloc((size_t)queue_capacity, sizeof(*batcher->queue));
-    batcher->queue_capacity = queue_capacity;
-    batcher->summary.coalescing_limit_ns = COMPATIBLE_COALESCING_NS;
-    batcher->summary.rendezvous_limit_ns = COMPATIBLE_RENDEZVOUS_NS;
-    if (!batcher->queue || pthread_mutex_init(&batcher->mutex, NULL) != 0) {
-        rc = batching_refuse(err, YVEX_ERR_NOMEM,
-                             "compatible batch queue allocation failed");
+        queue_capacity > SIZE_MAX / sizeof(*scheduler->queue))
+        return scheduler_refuse(err, YVEX_ERR_INVALID_ARG,
+                                "bounded engine scheduler capacity is required");
+    scheduler = calloc(1u, sizeof(*scheduler));
+    if (!scheduler)
+        return scheduler_refuse(err, YVEX_ERR_NOMEM,
+                                "engine scheduler allocation failed");
+    scheduler->queue = calloc((size_t)queue_capacity, sizeof(*scheduler->queue));
+    scheduler->queue_capacity = queue_capacity;
+    scheduler->summary.coalescing_limit_ns = COMPATIBLE_COALESCING_NS;
+    scheduler->summary.rendezvous_limit_ns = COMPATIBLE_RENDEZVOUS_NS;
+    if (!scheduler->queue || pthread_mutex_init(&scheduler->mutex, NULL) != 0) {
+        rc = scheduler_refuse(err, YVEX_ERR_NOMEM,
+                              "engine scheduler queue allocation failed");
         goto failure;
     }
-    batcher->mutex_ready = 1;
-    if (pthread_cond_init(&batcher->ready, NULL) != 0) {
-        rc = batching_refuse(err, YVEX_ERR_STATE,
-                             "compatible batch conditions are unavailable");
+    scheduler->mutex_ready = 1;
+    if (pthread_cond_init(&scheduler->ready, NULL) != 0) {
+        rc = scheduler_refuse(err, YVEX_ERR_STATE,
+                              "engine scheduler conditions are unavailable");
         goto failure;
     }
-    batcher->ready_condition = 1;
-    if (pthread_cond_init(&batcher->completed, NULL) != 0) {
-        rc = batching_refuse(err, YVEX_ERR_STATE,
-                             "compatible batch conditions are unavailable");
+    scheduler->ready_condition = 1;
+    if (pthread_cond_init(&scheduler->completed, NULL) != 0) {
+        rc = scheduler_refuse(err, YVEX_ERR_STATE,
+                              "engine scheduler conditions are unavailable");
         goto failure;
     }
-    batcher->completed_condition = 1;
-    *out = batcher;
+    scheduler->completed_condition = 1;
+    *out = scheduler;
     yvex_error_clear(err);
     return YVEX_OK;
 failure:
-    (void)yvex_runtime_private_batcher_close(&batcher, NULL);
+    (void)yvex_runtime_private_engine_scheduler_close(&scheduler, NULL);
     return rc;
 }
 
-int yvex_runtime_private_batcher_start(
-    runtime_compatible_batcher *batcher, yvex_error *err)
+int yvex_runtime_private_engine_scheduler_start(
+    runtime_engine_scheduler *scheduler, yvex_error *err)
 {
-    if (!batcher || !batcher->mutex_ready ||
-        pthread_mutex_lock(&batcher->mutex) != 0)
-        return batching_refuse(err, YVEX_ERR_INVALID_ARG,
-                               "open compatible batch owner is required");
-    if (batcher->worker_started || batcher->stopping) {
-        (void)pthread_mutex_unlock(&batcher->mutex);
-        return batching_refuse(err, YVEX_ERR_STATE,
-                               "compatible batch owner cannot start twice");
+    if (!scheduler || !scheduler->mutex_ready ||
+        pthread_mutex_lock(&scheduler->mutex) != 0)
+        return scheduler_refuse(err, YVEX_ERR_INVALID_ARG,
+                                "open engine scheduler is required");
+    if (scheduler->worker_started || scheduler->stopping) {
+        (void)pthread_mutex_unlock(&scheduler->mutex);
+        return scheduler_refuse(err, YVEX_ERR_STATE,
+                                "engine scheduler cannot start twice");
     }
-    if (pthread_create(&batcher->worker, NULL, batching_worker, batcher) != 0) {
-        (void)pthread_mutex_unlock(&batcher->mutex);
-        return batching_refuse(err, YVEX_ERR_STATE,
-                               "compatible batch worker creation failed");
+    if (pthread_create(&scheduler->worker, NULL, scheduler_worker, scheduler) != 0) {
+        (void)pthread_mutex_unlock(&scheduler->mutex);
+        return scheduler_refuse(err, YVEX_ERR_STATE,
+                                "engine scheduler worker creation failed");
     }
-    batcher->worker_started = 1;
-    (void)pthread_mutex_unlock(&batcher->mutex);
+    scheduler->worker_started = 1;
+    (void)pthread_mutex_unlock(&scheduler->mutex);
     yvex_error_clear(err);
     return YVEX_OK;
 }
 
-int yvex_runtime_private_batcher_submit(
-    runtime_compatible_batcher *batcher,
-    runtime_compatible_batch_ticket *ticket, yvex_error *err)
+int yvex_runtime_private_engine_scheduler_submit(
+    runtime_engine_scheduler *scheduler,
+    runtime_engine_work *ticket, yvex_error *err)
 {
     int status;
-    if (!batcher || !ticket || !ticket->execute || !ticket->row_count ||
+    if (!scheduler || !ticket || !ticket->execute || !ticket->row_count ||
         yvex_execution_compatibility_key_validate(&ticket->key, err) != YVEX_OK ||
         ticket->row_count > ticket->key.admitted_width)
-        return batching_refuse(err, YVEX_ERR_INVALID_ARG,
-                               "one admitted compatible batch ticket is required");
-    if (pthread_mutex_lock(&batcher->mutex) != 0)
-        return batching_refuse(err, YVEX_ERR_STATE,
-                               "compatible batch lock is unavailable");
-    if (batcher->stopping || batcher->queue_count == batcher->queue_capacity) {
-        status = batcher->queue_count == batcher->queue_capacity
+        return scheduler_refuse(err, YVEX_ERR_INVALID_ARG,
+                                "one admitted executable work item is required");
+    if (pthread_mutex_lock(&scheduler->mutex) != 0)
+        return scheduler_refuse(err, YVEX_ERR_STATE,
+                                "engine scheduler lock is unavailable");
+    if (scheduler->stopping || scheduler->queue_count == scheduler->queue_capacity) {
+        status = scheduler->queue_count == scheduler->queue_capacity
                      ? YVEX_ERR_BOUNDS : YVEX_ERR_STATE;
-        (void)pthread_mutex_unlock(&batcher->mutex);
-        return batching_refuse(
+        (void)pthread_mutex_unlock(&scheduler->mutex);
+        return scheduler_refuse(
             err, (yvex_status)status,
-            status == YVEX_ERR_BOUNDS ? "compatible batch queue is full"
-                                      : "compatible batch owner is stopping");
+            status == YVEX_ERR_BOUNDS ? "engine scheduler queue is full"
+                                      : "engine scheduler is stopping");
     }
     ticket->actual_width = ticket->group_size = 0ull;
     ticket->status = YVEX_OK;
     ticket->done = 0;
     yvex_error_clear(&ticket->failure);
-    batcher->queue[batcher->queue_count++] = ticket;
-    if (ticket->kind == RUNTIME_COMPATIBLE_BATCH_RENDEZVOUS) {
-        batcher->summary.rendezvous_submissions++;
+    scheduler->queue[scheduler->queue_count++] = ticket;
+    scheduler_observation_add(
+        &scheduler->summary.submissions_by_phase[ticket->key.phase], 1ull);
+    if (ticket->kind == RUNTIME_ENGINE_WORK_RENDEZVOUS) {
+        scheduler->summary.rendezvous_submissions++;
     } else {
-        batcher->summary.submissions++;
-        batcher->summary.submitted_rows += ticket->row_count;
+        scheduler->summary.submissions++;
+        scheduler->summary.submitted_rows += ticket->row_count;
     }
-    batcher->summary.queued = batcher->queue_count;
-    (void)pthread_cond_signal(&batcher->ready);
-    while (!ticket->done && !batcher->stopping)
-        (void)pthread_cond_wait(&batcher->completed, &batcher->mutex);
+    scheduler->summary.queued = scheduler->queue_count;
+    (void)pthread_cond_signal(&scheduler->ready);
+    while (!ticket->done && !scheduler->stopping)
+        (void)pthread_cond_wait(&scheduler->completed, &scheduler->mutex);
     status = ticket->done ? ticket->status : YVEX_ERR_STATE;
     if (status != YVEX_OK) {
         if (ticket->done && yvex_error_is_set(&ticket->failure)) {
             if (err) *err = ticket->failure;
         } else {
-            batching_refuse(err, YVEX_ERR_STATE,
-                            "compatible batch stopped before completion");
+            scheduler_refuse(err, YVEX_ERR_STATE,
+                             "scheduled work stopped before completion");
         }
     } else {
         yvex_error_clear(err);
     }
-    (void)pthread_mutex_unlock(&batcher->mutex);
+    (void)pthread_mutex_unlock(&scheduler->mutex);
     return status;
 }
 
-int yvex_runtime_private_batcher_snapshot(
-    const runtime_compatible_batcher *batcher,
-    yvex_runtime_execution_batch_summary *summary, yvex_error *err)
+int yvex_runtime_private_engine_scheduler_snapshot(
+    const runtime_engine_scheduler *scheduler,
+    yvex_engine_scheduler_summary *summary, yvex_error *err)
 {
-    runtime_compatible_batcher *owner = (runtime_compatible_batcher *)batcher;
+    runtime_engine_scheduler *owner = (runtime_engine_scheduler *)scheduler;
     if (!owner || !summary || !owner->mutex_ready ||
         pthread_mutex_lock(&owner->mutex) != 0)
-        return batching_refuse(err, YVEX_ERR_INVALID_ARG,
-                               "compatible batch summary owner is unavailable");
+        return scheduler_refuse(err, YVEX_ERR_INVALID_ARG,
+                                "engine scheduler summary is unavailable");
     *summary = owner->summary;
     summary->queued = owner->queue_count;
     (void)pthread_mutex_unlock(&owner->mutex);
@@ -485,15 +494,15 @@ int yvex_runtime_private_batcher_snapshot(
     return YVEX_OK;
 }
 
-int yvex_runtime_private_batcher_close(
-    runtime_compatible_batcher **batcher, yvex_error *err)
+int yvex_runtime_private_engine_scheduler_close(
+    runtime_engine_scheduler **scheduler, yvex_error *err)
 {
-    runtime_compatible_batcher *owner;
-    if (!batcher || !*batcher) {
+    runtime_engine_scheduler *owner;
+    if (!scheduler || !*scheduler) {
         yvex_error_clear(err);
         return YVEX_OK;
     }
-    owner = *batcher;
+    owner = *scheduler;
     if (owner->mutex_ready) {
         (void)pthread_mutex_lock(&owner->mutex);
         owner->stopping = 1;
@@ -509,19 +518,19 @@ int yvex_runtime_private_batcher_close(
     free(owner->queue);
     memset(owner, 0, sizeof(*owner));
     free(owner);
-    *batcher = NULL;
+    *scheduler = NULL;
     yvex_error_clear(err);
     return YVEX_OK;
 }
 
 typedef struct {
-    runtime_compatible_batch_ticket ticket;
-    const runtime_compatible_moe_request *request;
+    runtime_engine_work ticket;
+    const runtime_engine_moe_request *request;
     yvex_execution_batch_source source;
 } compatible_moe_ticket;
 
 static int compatible_moe_request_valid(
-    const runtime_compatible_moe_request *request)
+    const runtime_engine_moe_request *request)
 {
     return request && request->model && request->session && request->moe &&
            request->backend && request->transformer && request->layer &&
@@ -542,7 +551,7 @@ static int compatible_moe_request_valid(
 }
 
 static void compatible_moe_transformer_result(
-    const runtime_compatible_moe_request *request)
+    const runtime_engine_moe_request *request)
 {
     const yvex_moe_row_batch_result *source = request->result;
     yvex_runtime_transformer_block_result *result = request->transformer_result;
@@ -581,7 +590,7 @@ static void compatible_moe_transformer_result(
 static int compatible_moe_source_prepare(compatible_moe_ticket *ticket,
                                          yvex_error *err)
 {
-    const runtime_compatible_moe_request *request = ticket->request;
+    const runtime_engine_moe_request *request = ticket->request;
     const yvex_runtime_session_view *view =
         yvex_runtime_session_view_get(request->session);
     const yvex_attention_state_provider *provider = view
@@ -599,7 +608,7 @@ static int compatible_moe_source_prepare(compatible_moe_ticket *ticket,
         !yvex_core_u64_add(session.execution_count, 1ull,
                            &ticket->source.execution_generation) ||
         !yvex_sha256_hex_valid(request->session->batch_source_identity))
-        return batching_refuse(
+        return scheduler_refuse(
             err, YVEX_ERR_STATE,
             "compatible MoE source generation is unavailable");
     ticket->source.state_generation = state.generation;
@@ -611,11 +620,11 @@ static int compatible_moe_source_prepare(compatible_moe_ticket *ticket,
 static int compatible_moe_key_prepare(compatible_moe_ticket *ticket,
                                       yvex_error *err)
 {
-    const runtime_compatible_moe_request *request = ticket->request;
+    const runtime_engine_moe_request *request = ticket->request;
     yvex_execution_compatibility_key *key = &ticket->ticket.key;
     if (request->session->engine != request->model ||
         !request->session->summary.engine_generation)
-        return batching_refuse(err, YVEX_ERR_STATE,
+        return scheduler_refuse(err, YVEX_ERR_STATE,
                                "compatible MoE engine handle is unavailable");
     memset(key, 0, sizeof(*key));
     key->schema_version = YVEX_EXECUTION_COMPATIBILITY_SCHEMA_V2;
@@ -653,7 +662,7 @@ static int compatible_moe_copy(yvex_backend *executor,
 }
 
 static int compatible_moe_direct(
-    const runtime_compatible_moe_request *request, yvex_error *err)
+    const runtime_engine_moe_request *request, yvex_error *err)
 {
     yvex_execution_batch_source source = {0};
     yvex_moe_row_batch batch = {0};
@@ -679,7 +688,7 @@ static int compatible_moe_direct(
         yvex_execution_batch_row *owner = &request->batch_rows[row];
         if (!yvex_core_u64_add(request->attention->token_position, row,
                                &owner->sequence_position))
-            return batching_refuse(err, YVEX_ERR_BOUNDS,
+            return scheduler_refuse(err, YVEX_ERR_BOUNDS,
                                    "MoE sequence position overflowed");
         owner->source_index = 0ull;
         owner->source_row = row;
@@ -720,7 +729,7 @@ static int compatible_moe_local_result(
     compatible_moe_ticket *ticket, const yvex_moe_row_batch_result *physical,
     int physical_owner, yvex_error *err)
 {
-    const runtime_compatible_moe_request *request = ticket->request;
+    const runtime_engine_moe_request *request = ticket->request;
     yvex_moe_row_batch local = {0};
     yvex_moe_row_batch_result *result = request->result;
     if (physical_owner) *result = *physical;
@@ -749,12 +758,12 @@ static int compatible_moe_local_result(
 }
 
 static int compatible_moe_batch_execute(
-    runtime_compatible_batch_ticket *const *tickets,
+    runtime_engine_work *const *tickets,
     unsigned long long ticket_count, yvex_error *err)
 {
     compatible_moe_ticket **ordered = (compatible_moe_ticket **)tickets;
     compatible_moe_ticket *leader;
-    const runtime_compatible_moe_request *owner;
+    const runtime_engine_moe_request *owner;
     yvex_moe_row_batch batch = {0};
     yvex_moe_row_batch_output output = {0};
     yvex_moe_row_batch_result physical = {0}, completion = {0};
@@ -764,7 +773,7 @@ static int compatible_moe_batch_execute(
     unsigned long long d2d_bytes = 0ull;
     int rc = YVEX_OK;
     if (!ticket_count)
-        return batching_refuse(err, YVEX_ERR_INVALID_ARG,
+        return scheduler_refuse(err, YVEX_ERR_INVALID_ARG,
                                "compatible MoE batch is empty");
     qsort(ordered, (size_t)ticket_count, sizeof(*ordered),
           compatible_moe_ticket_compare);
@@ -786,12 +795,12 @@ static int compatible_moe_batch_execute(
         !yvex_backend_tensor_f32_subview(
             owner->batch_device_outputs, 0ull, expanded_values,
             &batch_outputs_view))
-        return batching_refuse(err, YVEX_ERR_BOUNDS,
+        return scheduler_refuse(err, YVEX_ERR_BOUNDS,
                                "compatible MoE batch exceeds sealed capacity");
     for (source_index = 0ull; source_index < ticket_count && rc == YVEX_OK;
          ++source_index) {
         compatible_moe_ticket *entry = ordered[source_index];
-        const runtime_compatible_moe_request *request = entry->request;
+        const runtime_engine_moe_request *request = entry->request;
         yvex_device_tensor destination;
         unsigned long long values;
         if (!yvex_core_u64_mul(request->row_count,
@@ -800,7 +809,7 @@ static int compatible_moe_batch_execute(
                 owner->batch_device_rows,
                 row_next * owner->transformer->expanded_width, values,
                 &destination))
-            rc = batching_refuse(err, YVEX_ERR_BOUNDS,
+            rc = scheduler_refuse(err, YVEX_ERR_BOUNDS,
                                  "compatible MoE input view is invalid");
         if (rc == YVEX_OK)
             rc = compatible_moe_copy(owner->backend, &destination,
@@ -821,7 +830,7 @@ static int compatible_moe_batch_execute(
                 &owner->batch_rows[row_next + row_index];
             if (!yvex_core_u64_add(request->attention->token_position,
                                    row_index, &row->sequence_position)) {
-                rc = batching_refuse(err, YVEX_ERR_BOUNDS,
+                rc = scheduler_refuse(err, YVEX_ERR_BOUNDS,
                                      "compatible MoE row position overflowed");
                 break;
             }
@@ -892,7 +901,7 @@ static int compatible_moe_batch_execute(
     for (source_index = 0ull; source_index < ticket_count && rc == YVEX_OK;
          ++source_index) {
         compatible_moe_ticket *entry = ordered[source_index];
-        const runtime_compatible_moe_request *request = entry->request;
+        const runtime_engine_moe_request *request = entry->request;
         yvex_device_tensor source;
         unsigned long long values;
         if (!yvex_core_u64_mul(request->row_count,
@@ -901,7 +910,7 @@ static int compatible_moe_batch_execute(
                 &batch_outputs_view,
                 row_next * owner->transformer->expanded_width, values,
                 &source))
-            rc = batching_refuse(err, YVEX_ERR_BOUNDS,
+            rc = scheduler_refuse(err, YVEX_ERR_BOUNDS,
                                  "compatible MoE output view is invalid");
         if (rc == YVEX_OK)
             rc = compatible_moe_copy(request->backend,
@@ -918,15 +927,15 @@ static int compatible_moe_batch_execute(
     return rc;
 }
 
-int yvex_runtime_private_compatible_moe_execute(
-    const runtime_compatible_moe_request *request, yvex_error *err)
+int yvex_runtime_private_engine_scheduler_moe_execute(
+    const runtime_engine_moe_request *request, yvex_error *err)
 {
     compatible_moe_ticket ticket;
     int rc;
     if (!compatible_moe_request_valid(request))
-        return batching_refuse(err, YVEX_ERR_INVALID_ARG,
+        return scheduler_refuse(err, YVEX_ERR_INVALID_ARG,
                                "compatible MoE request is incomplete");
-    if (!request->model->compatible_batcher || !request->execution_profile ||
+    if (!request->model->engine_scheduler || !request->execution_profile ||
         request->row_count > request->admitted_width ||
         yvex_backend_kind_of(request->backend) != YVEX_BACKEND_KIND_CUDA ||
         request->execution_class != YVEX_EXECUTION_CLASS_DEVICE_NATIVE) {
@@ -942,15 +951,15 @@ int yvex_runtime_private_compatible_moe_execute(
         rc = compatible_moe_source_prepare(&ticket, err);
         if (rc == YVEX_OK) rc = compatible_moe_key_prepare(&ticket, err);
         if (rc == YVEX_OK)
-            rc = yvex_runtime_private_batcher_submit(
-                request->model->compatible_batcher, &ticket.ticket, err);
+            rc = yvex_runtime_private_engine_scheduler_submit(
+                request->model->engine_scheduler, &ticket.ticket, err);
     }
     if (rc == YVEX_OK) compatible_moe_transformer_result(request);
     return rc;
 }
 
 typedef struct {
-    runtime_compatible_batch_ticket ticket;
+    runtime_engine_work ticket;
     yvex_model_engine *model;
     yvex_runtime_execution_session *session;
     yvex_runtime_logits_context *logits;
@@ -987,7 +996,7 @@ static int compatible_logits_key_prepare(compatible_logits_ticket *ticket,
     if (!plan || ticket->session->engine != ticket->model ||
         ticket->admitted_width >= 64ull ||
         !ticket->session->summary.engine_generation)
-        return batching_refuse(err, YVEX_ERR_STATE,
+        return scheduler_refuse(err, YVEX_ERR_STATE,
                                "compatible output-head engine handle is unavailable");
     key->schema_version = YVEX_EXECUTION_COMPATIBILITY_SCHEMA_V2;
     key->phase = compatible_logits_phase(ticket->source->source_phase);
@@ -1011,7 +1020,7 @@ static int compatible_logits_ticket_compare(const void *left,
 }
 
 static int compatible_logits_batch_execute(
-    runtime_compatible_batch_ticket *const *tickets,
+    runtime_engine_work *const *tickets,
     unsigned long long ticket_count, yvex_error *err)
 {
     compatible_logits_ticket **ordered = (compatible_logits_ticket **)tickets;
@@ -1020,7 +1029,7 @@ static int compatible_logits_batch_execute(
     yvex_runtime_logits_row_result *rows[63];
     unsigned long long index;
     if (!ticket_count || ticket_count >= 64ull)
-        return batching_refuse(err, YVEX_ERR_BOUNDS,
+        return scheduler_refuse(err, YVEX_ERR_BOUNDS,
                                "compatible output-head batch exceeds capacity");
     if (ticket_count == 1ull) return compatible_logits_direct(ordered[0], err);
     qsort(ordered, (size_t)ticket_count, sizeof(*ordered),
@@ -1044,7 +1053,7 @@ int yvex_runtime_private_generation_logits_project(
     compatible_logits_ticket ticket = {0};
     int producer_active = 0, rc;
     if (!context || !session)
-        return batching_refuse(err, YVEX_ERR_INVALID_ARG,
+        return scheduler_refuse(err, YVEX_ERR_INVALID_ARG,
                                "generation output-head owner is unavailable");
     ticket.model = context->model;
     ticket.session = context->session;
@@ -1058,9 +1067,9 @@ int yvex_runtime_private_generation_logits_project(
     ticket.admitted_width = context->options.continuous_batching
                                 ? context->options.concurrent_sequences : 1ull;
     if (!source || !result || !ticket.admitted_width)
-        return batching_refuse(err, YVEX_ERR_INVALID_ARG,
+        return scheduler_refuse(err, YVEX_ERR_INVALID_ARG,
                                "compatible output-head request is incomplete");
-    if (!ticket.model->compatible_batcher || ticket.admitted_width < 2ull ||
+    if (!ticket.model->engine_scheduler || ticket.admitted_width < 2ull ||
         yvex_backend_kind_of(ticket.backend) != YVEX_BACKEND_KIND_CUDA ||
         ticket.execution_profile->execution_class != YVEX_EXECUTION_CLASS_DEVICE_NATIVE ||
         !source->device_values_available)
@@ -1073,26 +1082,26 @@ int yvex_runtime_private_generation_logits_project(
     ticket.ticket.cancel_context = context->options.cancel_context;
     rc = compatible_logits_key_prepare(&ticket, err);
     if (rc == YVEX_OK) {
-        rc = yvex_runtime_private_model_batcher_producer_enter(ticket.model, err);
+        rc = yvex_runtime_private_model_scheduler_producer_enter(ticket.model, err);
         producer_active = rc == YVEX_OK;
     }
     if (rc == YVEX_OK)
-        rc = yvex_runtime_private_batcher_submit(
-            ticket.model->compatible_batcher, &ticket.ticket, err);
-    return yvex_runtime_private_batcher_producer_finish(
+        rc = yvex_runtime_private_engine_scheduler_submit(
+            ticket.model->engine_scheduler, &ticket.ticket, err);
+    return yvex_runtime_private_engine_scheduler_producer_finish(
         ticket.model, &producer_active, rc, err);
 }
 
 static int compatible_step_execute(
-    runtime_compatible_batch_ticket *const *tickets,
+    runtime_engine_work *const *tickets,
     unsigned long long ticket_count, yvex_error *err)
 {
     unsigned long long index;
     for (index = 0ull; index < ticket_count; ++index)
         if (!tickets[index] ||
-            tickets[index]->kind != RUNTIME_COMPATIBLE_BATCH_RENDEZVOUS ||
+            tickets[index]->kind != RUNTIME_ENGINE_WORK_RENDEZVOUS ||
             tickets[index]->execute != compatible_step_execute)
-            return batching_refuse(
+            return scheduler_refuse(
                 err, YVEX_ERR_STATE,
                 "non-rendezvous work entered a compatible step barrier");
     yvex_error_clear(err);
@@ -1100,23 +1109,23 @@ static int compatible_step_execute(
 }
 
 static int compatible_step_rendezvous(
-    const runtime_compatible_step_request *request, yvex_error *err)
+    const runtime_engine_step_request *request, yvex_error *err)
 {
-    runtime_compatible_batch_ticket ticket = {0};
+    runtime_engine_work ticket = {0};
     yvex_execution_compatibility_key *key = &ticket.key;
     if (!request || !request->model || !request->session || !request->backend ||
         !request->transformer || !request->execution_profile ||
         request->maximum_width < 2ull || request->maximum_width >= 64ull ||
         request->phase >= YVEX_EXECUTION_PHASE_COUNT)
-        return batching_refuse(err, YVEX_ERR_INVALID_ARG,
+        return scheduler_refuse(err, YVEX_ERR_INVALID_ARG,
                                "compatible execution step is incomplete");
-    if (!request->model->compatible_batcher) {
+    if (!request->model->engine_scheduler) {
         yvex_error_clear(err);
         return YVEX_OK;
     }
     if (request->session->engine != request->model ||
         !request->session->summary.engine_generation)
-        return batching_refuse(err, YVEX_ERR_STATE,
+        return scheduler_refuse(err, YVEX_ERR_STATE,
                                "compatible execution step engine handle is unavailable");
     key->schema_version = YVEX_EXECUTION_COMPATIBILITY_SCHEMA_V2;
     key->phase = request->phase;
@@ -1134,88 +1143,88 @@ static int compatible_step_rendezvous(
     ticket.execute = compatible_step_execute;
     ticket.cancel_requested = request->cancel_requested;
     ticket.cancel_context = request->cancel_context;
-    ticket.kind = RUNTIME_COMPATIBLE_BATCH_RENDEZVOUS;
-    return yvex_runtime_private_batcher_submit(
-        request->model->compatible_batcher, &ticket, err);
+    ticket.kind = RUNTIME_ENGINE_WORK_RENDEZVOUS;
+    return yvex_runtime_private_engine_scheduler_submit(
+        request->model->engine_scheduler, &ticket, err);
 }
 
-int yvex_runtime_private_model_batcher_acquire(
+int yvex_runtime_private_model_scheduler_acquire(
     yvex_model_engine *model, unsigned long long maximum_width,
     yvex_error *err)
 {
-    runtime_compatible_batcher *created = NULL;
+    runtime_engine_scheduler *created = NULL;
     int rc = YVEX_OK;
     if (!model || maximum_width < 2ull || maximum_width >= 64ull ||
         !model->lifecycle_mutex_ready ||
         pthread_mutex_lock(&model->lifecycle_mutex) != 0)
-        return batching_refuse(err, YVEX_ERR_INVALID_ARG,
+        return scheduler_refuse(err, YVEX_ERR_INVALID_ARG,
                                "runtime model and compatible width are required");
     if (model->close_requested ||
-        (model->compatible_batcher &&
-         model->compatible_batch_width != maximum_width)) {
+        (model->engine_scheduler &&
+         model->scheduler_maximum_width != maximum_width)) {
         (void)pthread_mutex_unlock(&model->lifecycle_mutex);
-        return batching_refuse(
+        return scheduler_refuse(
             err, YVEX_ERR_STATE,
             model->close_requested
-                ? "draining runtime model cannot admit compatible batching"
+                ? "draining model engine cannot admit scheduling"
                 : "runtime model compatible width is already sealed");
     }
-    if (!model->compatible_batcher) {
-        rc = yvex_runtime_private_batcher_open(
+    if (!model->engine_scheduler) {
+        rc = yvex_runtime_private_engine_scheduler_open(
             &created, maximum_width, err);
         if (rc == YVEX_OK)
-            rc = yvex_runtime_private_batcher_start(created, err);
+            rc = yvex_runtime_private_engine_scheduler_start(created, err);
         if (rc == YVEX_OK) {
-            model->compatible_batcher = created;
-            model->compatible_batch_width = maximum_width;
+            model->engine_scheduler = created;
+            model->scheduler_maximum_width = maximum_width;
             created = NULL;
         }
     }
     if (rc == YVEX_OK &&
-        model->compatible_batcher_references == ULLONG_MAX)
-        rc = batching_refuse(err, YVEX_ERR_BOUNDS,
-                             "runtime model batching references overflowed");
-    if (rc == YVEX_OK) model->compatible_batcher_references++;
+        model->engine_scheduler_references == ULLONG_MAX)
+        rc = scheduler_refuse(err, YVEX_ERR_BOUNDS,
+                             "model engine scheduler references overflowed");
+    if (rc == YVEX_OK) model->engine_scheduler_references++;
     (void)pthread_mutex_unlock(&model->lifecycle_mutex);
-    if (created) (void)yvex_runtime_private_batcher_close(&created, NULL);
+    if (created) (void)yvex_runtime_private_engine_scheduler_close(&created, NULL);
     if (rc == YVEX_OK) yvex_error_clear(err);
     return rc;
 }
 
-int yvex_runtime_private_model_batcher_release(
+int yvex_runtime_private_model_scheduler_release(
     yvex_model_engine *model, yvex_error *err)
 {
-    runtime_compatible_batcher *owner = NULL;
+    runtime_engine_scheduler *owner = NULL;
     int rc;
     if (!model || !model->lifecycle_mutex_ready ||
         pthread_mutex_lock(&model->lifecycle_mutex) != 0)
-        return batching_refuse(err, YVEX_ERR_INVALID_ARG,
-                               "runtime model batching ownership is required");
-    if (!model->compatible_batcher || !model->compatible_batcher_references) {
+        return scheduler_refuse(err, YVEX_ERR_INVALID_ARG,
+                               "model engine scheduler ownership is required");
+    if (!model->engine_scheduler || !model->engine_scheduler_references) {
         (void)pthread_mutex_unlock(&model->lifecycle_mutex);
-        return batching_refuse(err, YVEX_ERR_STATE,
-                               "runtime model batching ownership is inconsistent");
+        return scheduler_refuse(err, YVEX_ERR_STATE,
+                               "model engine scheduler ownership is inconsistent");
     }
-    if (model->compatible_batcher_references == 1ull &&
-        model->compatible_batcher_producers) {
+    if (model->engine_scheduler_references == 1ull &&
+        model->engine_scheduler_producers) {
         (void)pthread_mutex_unlock(&model->lifecycle_mutex);
-        return batching_refuse(
+        return scheduler_refuse(
             err, YVEX_ERR_STATE,
             "active compatible producers prevent final ownership release");
     }
-    model->compatible_batcher_references--;
-    if (!model->compatible_batcher_references) {
-        owner = model->compatible_batcher;
-        model->compatible_batcher = NULL;
-        model->compatible_batch_width = 0ull;
+    model->engine_scheduler_references--;
+    if (!model->engine_scheduler_references) {
+        owner = model->engine_scheduler;
+        model->engine_scheduler = NULL;
+        model->scheduler_maximum_width = 0ull;
     }
     (void)pthread_mutex_unlock(&model->lifecycle_mutex);
-    rc = yvex_runtime_private_batcher_close(&owner, err);
+    rc = yvex_runtime_private_engine_scheduler_close(&owner, err);
     if (rc == YVEX_OK) yvex_error_clear(err);
     return rc;
 }
 
-int yvex_runtime_private_model_batcher_finish(
+int yvex_runtime_private_model_scheduler_finish(
     yvex_model_engine *model, int *acquired, yvex_error *err)
 {
     int rc;
@@ -1223,67 +1232,67 @@ int yvex_runtime_private_model_batcher_finish(
         yvex_error_clear(err);
         return YVEX_OK;
     }
-    rc = yvex_runtime_private_model_batcher_release(model, err);
+    rc = yvex_runtime_private_model_scheduler_release(model, err);
     if (rc == YVEX_OK) *acquired = 0;
     return rc;
 }
 
-int yvex_runtime_private_model_batcher_producer_enter(
+int yvex_runtime_private_model_scheduler_producer_enter(
     yvex_model_engine *model, yvex_error *err)
 {
     int rc;
     if (!model || !model->lifecycle_mutex_ready ||
         pthread_mutex_lock(&model->lifecycle_mutex) != 0)
-        return batching_refuse(err, YVEX_ERR_INVALID_ARG,
-                               "runtime model batching producer is required");
-    if (!model->compatible_batcher || !model->compatible_batcher_references ||
-        model->compatible_batcher_producers >= model->compatible_batch_width) {
+        return scheduler_refuse(err, YVEX_ERR_INVALID_ARG,
+                               "active engine scheduler producer is required");
+    if (!model->engine_scheduler || !model->engine_scheduler_references ||
+        model->engine_scheduler_producers >= model->scheduler_maximum_width) {
         (void)pthread_mutex_unlock(&model->lifecycle_mutex);
-        return batching_refuse(
+        return scheduler_refuse(
             err, YVEX_ERR_BOUNDS,
             "active compatible producer population exceeds admitted width");
     }
-    model->compatible_batcher_producers++;
-    rc = yvex_runtime_private_batcher_set_producers(
-        model->compatible_batcher, model->compatible_batcher_producers, err);
-    if (rc != YVEX_OK) model->compatible_batcher_producers--;
+    model->engine_scheduler_producers++;
+    rc = yvex_runtime_private_engine_scheduler_set_producers(
+        model->engine_scheduler, model->engine_scheduler_producers, err);
+    if (rc != YVEX_OK) model->engine_scheduler_producers--;
     (void)pthread_mutex_unlock(&model->lifecycle_mutex);
     return rc;
 }
 
-int yvex_runtime_private_model_batcher_producer_leave(
+int yvex_runtime_private_model_scheduler_producer_leave(
     yvex_model_engine *model, yvex_error *err)
 {
     int rc;
     if (!model || !model->lifecycle_mutex_ready ||
         pthread_mutex_lock(&model->lifecycle_mutex) != 0)
-        return batching_refuse(err, YVEX_ERR_INVALID_ARG,
-                               "runtime model batching producer is required");
-    if (!model->compatible_batcher || !model->compatible_batcher_producers) {
+        return scheduler_refuse(err, YVEX_ERR_INVALID_ARG,
+                               "active engine scheduler producer is required");
+    if (!model->engine_scheduler || !model->engine_scheduler_producers) {
         (void)pthread_mutex_unlock(&model->lifecycle_mutex);
-        return batching_refuse(err, YVEX_ERR_STATE,
-                               "runtime model batching producer is inconsistent");
+        return scheduler_refuse(err, YVEX_ERR_STATE,
+                               "engine scheduler producer state is inconsistent");
     }
-    model->compatible_batcher_producers--;
-    rc = yvex_runtime_private_batcher_set_producers(
-        model->compatible_batcher, model->compatible_batcher_producers, err);
-    if (rc != YVEX_OK) model->compatible_batcher_producers++;
+    model->engine_scheduler_producers--;
+    rc = yvex_runtime_private_engine_scheduler_set_producers(
+        model->engine_scheduler, model->engine_scheduler_producers, err);
+    if (rc != YVEX_OK) model->engine_scheduler_producers++;
     (void)pthread_mutex_unlock(&model->lifecycle_mutex);
     return rc;
 }
 
-int yvex_runtime_private_batcher_producer_finish(
+int yvex_runtime_private_engine_scheduler_producer_finish(
     yvex_model_engine *model, int *active, int status, yvex_error *err)
 {
     int leave_status;
     if (!active || !*active) return status;
-    leave_status = yvex_runtime_private_model_batcher_producer_leave(
+    leave_status = yvex_runtime_private_model_scheduler_producer_leave(
         model, status == YVEX_OK ? err : NULL);
     if (leave_status == YVEX_OK) *active = 0;
     return status == YVEX_OK ? leave_status : status;
 }
 
-int yvex_model_engine_compatible_batch_width_copy(
+int yvex_model_engine_scheduler_maximum_width_copy(
     const yvex_model_engine *model, unsigned long long *width,
     yvex_error *err)
 {
@@ -1294,7 +1303,7 @@ int yvex_model_engine_compatible_batch_width_copy(
     if (width) *width = 0ull;
     if (!owner || !width || !owner->lifecycle_mutex_ready ||
         pthread_mutex_lock(&owner->lifecycle_mutex) != 0)
-        return batching_refuse(
+        return scheduler_refuse(
             err, YVEX_ERR_INVALID_ARG,
             "runtime model compatible width is unavailable");
     summary = yvex_physical_execution_ir_summary(owner->physical_execution);
@@ -1332,16 +1341,16 @@ int yvex_model_engine_compatible_batch_width_copy(
     return YVEX_OK;
 }
 
-int yvex_runtime_private_compatible_step_enter(
-    const runtime_compatible_step_request *request, int *active,
+int yvex_runtime_private_engine_scheduler_step_enter(
+    const runtime_engine_step_request *request, int *active,
     yvex_error *err)
 {
     yvex_error primary, cleanup;
     int rc;
     if (!request || !request->model || !active || *active)
-        return batching_refuse(err, YVEX_ERR_INVALID_ARG,
+        return scheduler_refuse(err, YVEX_ERR_INVALID_ARG,
                                "compatible transformer step is required");
-    rc = yvex_runtime_private_model_batcher_producer_enter(request->model, err);
+    rc = yvex_runtime_private_model_scheduler_producer_enter(request->model, err);
     if (rc != YVEX_OK) return rc;
     rc = compatible_step_rendezvous(request, err);
     if (rc == YVEX_OK) {
@@ -1350,29 +1359,29 @@ int yvex_runtime_private_compatible_step_enter(
     }
     primary = err ? *err : (yvex_error){0};
     yvex_error_clear(&cleanup);
-    (void)yvex_runtime_private_model_batcher_producer_leave(request->model,
+    (void)yvex_runtime_private_model_scheduler_producer_leave(request->model,
                                                             &cleanup);
     if (err) *err = primary;
     return rc;
 }
 
-int yvex_model_engine_execution_batch_summary_copy(
-    const yvex_model_engine *model, yvex_runtime_execution_batch_summary *out,
+int yvex_model_engine_scheduler_summary_copy(
+    const yvex_model_engine *model, yvex_engine_scheduler_summary *out,
     yvex_error *err)
 {
     yvex_model_engine *owner = (yvex_model_engine *)model;
     int rc = YVEX_OK;
     if (!owner || !out || !owner->lifecycle_mutex_ready ||
         pthread_mutex_lock(&owner->lifecycle_mutex) != 0)
-        return batching_refuse(err, YVEX_ERR_INVALID_ARG,
-                               "runtime model batching summary is unavailable");
+        return scheduler_refuse(err, YVEX_ERR_INVALID_ARG,
+                               "model engine scheduler summary is unavailable");
     memset(out, 0, sizeof(*out));
-    if (owner->compatible_batcher)
-        rc = yvex_runtime_private_batcher_snapshot(owner->compatible_batcher,
+    if (owner->engine_scheduler)
+        rc = yvex_runtime_private_engine_scheduler_snapshot(owner->engine_scheduler,
                                                    out, err);
     if (rc == YVEX_OK) {
-        out->enabled = owner->compatible_batcher != NULL;
-        out->admitted_maximum_width = owner->compatible_batch_width;
+        out->enabled = owner->engine_scheduler != NULL;
+        out->admitted_maximum_width = owner->scheduler_maximum_width;
     }
     (void)pthread_mutex_unlock(&owner->lifecycle_mutex);
     if (rc == YVEX_OK) yvex_error_clear(err);

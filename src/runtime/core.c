@@ -259,15 +259,15 @@ static int runtime_model_release(yvex_model_engine *model, yvex_error *err) {
                        "injected runtime model cleanup failure");
         return YVEX_ERR_STATE;
     }
-    if (model->compatible_batcher_references ||
-        model->compatible_batcher_producers) {
+    if (model->engine_scheduler_references ||
+        model->engine_scheduler_producers) {
         yvex_error_set(err, YVEX_ERR_STATE, "runtime.model.release",
-                       "runtime model still owns compatible batch consumers");
+                       "model engine still owns scheduler consumers");
         return YVEX_ERR_STATE;
     }
-    rc = yvex_runtime_private_batcher_close(&model->compatible_batcher, err);
+    rc = yvex_runtime_private_engine_scheduler_close(&model->engine_scheduler, err);
     if (rc != YVEX_OK) return rc;
-    model->compatible_batch_width = 0ull;
+    model->scheduler_maximum_width = 0ull;
     rc = yvex_runtime_residency_close(&model->residency, err);
     if (rc != YVEX_OK) return rc;
     runtime_specialization_release(&model->specializations[YVEX_BACKEND_KIND_CPU]);

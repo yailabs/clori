@@ -16,7 +16,7 @@
 #include <yvex/internal/graph.h>
 #include <yvex/internal/logits.h>
 #include <yvex/internal/runtime.h>
-#include <yvex/internal/runtime_batching.h>
+#include <yvex/internal/engine_scheduler.h>
 
 static inline yvex_attention_evidence_level runtime_attention_evidence(
     yvex_execution_evidence_profile profile)
@@ -30,7 +30,7 @@ static inline yvex_attention_evidence_level runtime_attention_evidence(
                : YVEX_ATTENTION_EVIDENCE_NONE;
 }
 
-static inline int runtime_compatible_batch_options_valid(
+static inline int runtime_engine_scheduler_options_valid(
     int enabled, unsigned long long width)
 {
     return (enabled == 0 || enabled == 1) &&
@@ -122,27 +122,27 @@ int yvex_runtime_private_binding_policies_match_model(
     const yvex_logits_family_policy *logits,
     const yvex_speculation_family_policy *speculation);
 
-typedef struct runtime_compatible_batcher runtime_compatible_batcher;
-typedef struct runtime_compatible_batch_ticket runtime_compatible_batch_ticket;
-typedef int (*runtime_compatible_batch_execute)(
-    runtime_compatible_batch_ticket *const *tickets,
+typedef struct runtime_engine_scheduler runtime_engine_scheduler;
+typedef struct runtime_engine_work runtime_engine_work;
+typedef int (*runtime_engine_work_execute)(
+    runtime_engine_work *const *tickets,
     unsigned long long ticket_count, yvex_error *err);
 
 typedef enum {
-    RUNTIME_COMPATIBLE_BATCH_PHYSICAL = 0,
-    RUNTIME_COMPATIBLE_BATCH_RENDEZVOUS
-} runtime_compatible_batch_kind;
+    RUNTIME_ENGINE_WORK_PHYSICAL = 0,
+    RUNTIME_ENGINE_WORK_RENDEZVOUS
+} runtime_engine_work_kind;
 
-struct runtime_compatible_batch_ticket {
+struct runtime_engine_work {
     yvex_execution_compatibility_key key;
     unsigned long long row_count, actual_width, group_size, coalescing_limit_ns;
-    runtime_compatible_batch_execute execute;
+    runtime_engine_work_execute execute;
     void *context;
     int (*cancel_requested)(void *context);
     void *cancel_context;
     yvex_error failure;
     yvex_expert_worklist_observation worklists;
-    runtime_compatible_batch_kind kind;
+    runtime_engine_work_kind kind;
     int status, done;
 };
 
@@ -158,7 +158,7 @@ typedef struct {
     unsigned long long maximum_width;
     int (*cancel_requested)(void *context);
     void *cancel_context;
-} runtime_compatible_step_request;
+} runtime_engine_step_request;
 
 typedef struct {
     yvex_model_engine *model;
@@ -186,42 +186,42 @@ typedef struct {
     yvex_runtime_transformer_block_result *transformer_result;
     int (*cancel_requested)(void *context);
     void *cancel_context;
-} runtime_compatible_moe_request;
+} runtime_engine_moe_request;
 
-int yvex_runtime_private_batcher_open(
-    runtime_compatible_batcher **out, unsigned long long queue_capacity,
+int yvex_runtime_private_engine_scheduler_open(
+    runtime_engine_scheduler **out, unsigned long long queue_capacity,
     yvex_error *err);
-int yvex_runtime_private_batcher_start(
-    runtime_compatible_batcher *batcher, yvex_error *err);
-int yvex_runtime_private_batcher_set_producers(
-    runtime_compatible_batcher *batcher, unsigned long long producers,
+int yvex_runtime_private_engine_scheduler_start(
+    runtime_engine_scheduler *scheduler, yvex_error *err);
+int yvex_runtime_private_engine_scheduler_set_producers(
+    runtime_engine_scheduler *scheduler, unsigned long long producers,
     yvex_error *err);
-int yvex_runtime_private_batcher_submit(
-    runtime_compatible_batcher *batcher,
-    runtime_compatible_batch_ticket *ticket, yvex_error *err);
-int yvex_runtime_private_batcher_snapshot(
-    const runtime_compatible_batcher *batcher,
-    yvex_runtime_execution_batch_summary *summary, yvex_error *err);
-int yvex_runtime_private_batcher_close(
-    runtime_compatible_batcher **batcher, yvex_error *err);
-int yvex_runtime_private_model_batcher_acquire(
+int yvex_runtime_private_engine_scheduler_submit(
+    runtime_engine_scheduler *scheduler,
+    runtime_engine_work *ticket, yvex_error *err);
+int yvex_runtime_private_engine_scheduler_snapshot(
+    const runtime_engine_scheduler *scheduler,
+    yvex_engine_scheduler_summary *summary, yvex_error *err);
+int yvex_runtime_private_engine_scheduler_close(
+    runtime_engine_scheduler **scheduler, yvex_error *err);
+int yvex_runtime_private_model_scheduler_acquire(
     yvex_model_engine *model, unsigned long long maximum_width,
     yvex_error *err);
-int yvex_runtime_private_model_batcher_release(
+int yvex_runtime_private_model_scheduler_release(
     yvex_model_engine *model, yvex_error *err);
-int yvex_runtime_private_model_batcher_finish(
+int yvex_runtime_private_model_scheduler_finish(
     yvex_model_engine *model, int *acquired, yvex_error *err);
-int yvex_runtime_private_model_batcher_producer_enter(
+int yvex_runtime_private_model_scheduler_producer_enter(
     yvex_model_engine *model, yvex_error *err);
-int yvex_runtime_private_model_batcher_producer_leave(
+int yvex_runtime_private_model_scheduler_producer_leave(
     yvex_model_engine *model, yvex_error *err);
-int yvex_runtime_private_batcher_producer_finish(
+int yvex_runtime_private_engine_scheduler_producer_finish(
     yvex_model_engine *model, int *active, int status, yvex_error *err);
-int yvex_runtime_private_compatible_step_enter(
-    const runtime_compatible_step_request *request, int *active,
+int yvex_runtime_private_engine_scheduler_step_enter(
+    const runtime_engine_step_request *request, int *active,
     yvex_error *err);
-int yvex_runtime_private_compatible_moe_execute(
-    const runtime_compatible_moe_request *request, yvex_error *err);
+int yvex_runtime_private_engine_scheduler_moe_execute(
+    const runtime_engine_moe_request *request, yvex_error *err);
 int yvex_runtime_private_generation_logits_project(
     yvex_runtime_generation_context *context,
     const yvex_runtime_logits_source *source,
@@ -337,12 +337,12 @@ struct yvex_model_engine {
     yvex_model_engine_summary summary;
     yvex_model_engine_view view;
     pthread_mutex_t lifecycle_mutex;
-    runtime_compatible_batcher *compatible_batcher;
+    runtime_engine_scheduler *engine_scheduler;
     struct yvex_runtime_execution_session *sessions;
-    unsigned long long active_sessions, compatible_batcher_references;
-    unsigned long long compatible_batcher_producers;
+    unsigned long long active_sessions, engine_scheduler_references;
+    unsigned long long engine_scheduler_producers;
     unsigned long long next_session_ordinal;
-    unsigned long long compatible_batch_width;
+    unsigned long long scheduler_maximum_width;
     int lifecycle_mutex_ready, close_requested, dependent_invalidation_pending;
 };
 

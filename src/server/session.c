@@ -15,7 +15,7 @@
 #include <string.h>
 #include <time.h>
 #include <yvex/internal/core.h>
-#include <yvex/internal/runtime_batching.h>
+#include <yvex/internal/engine_scheduler.h>
 #include <yvex/internal/runtime_state_store.h>
 #include <yvex/internal/tokenizer.h>
 typedef struct {
@@ -1167,7 +1167,7 @@ static int session_profile_publish(server_session_registry *registry,
                                    yvex_error *err)
 {
     const yvex_runtime_profile_record *profile = result ? &result->profile : NULL;
-    yvex_runtime_execution_batch_summary batches;
+    yvex_engine_scheduler_summary batches;
     int rc;
 #define PROFILE_EVENT(phase_, a_, b_, c_, nanoseconds_)                                   \
     yvex_server_telemetry_emit_provider(                                                   \
@@ -1269,7 +1269,7 @@ static int session_profile_publish(server_session_registry *registry,
                 profile->phase_ns[YVEX_RUNTIME_PROFILE_SUBSEQUENT_DECODE]);
     memset(&batches, 0, sizeof(batches));
     if (rc == YVEX_OK &&
-        yvex_model_engine_execution_batch_summary_copy(
+        yvex_model_engine_scheduler_summary_copy(
             registry->model, &batches, err) == YVEX_OK && batches.enabled)
         rc = PROFILE_EVENT("execution-batches", batches.physical_batches,
                            batches.multi_source_batches, batches.maximum_width, 0ull);

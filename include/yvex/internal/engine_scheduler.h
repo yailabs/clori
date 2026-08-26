@@ -1,6 +1,6 @@
-/* Typed runtime/server observability for compiler-sealed compatible execution batches. */
-#ifndef INCLUDE_YVEX_INTERNAL_RUNTIME_BATCHING_H_INCLUDED
-#define INCLUDE_YVEX_INTERNAL_RUNTIME_BATCHING_H_INCLUDED
+/* Engine-owned scheduling facts for compiler-sealed executable work. */
+#ifndef INCLUDE_YVEX_INTERNAL_ENGINE_SCHEDULER_H_INCLUDED
+#define INCLUDE_YVEX_INTERNAL_ENGINE_SCHEDULER_H_INCLUDED
 
 #include <yvex/core.h>
 #include <yvex/internal/execution_batch.h>
@@ -32,17 +32,21 @@ typedef struct {
     unsigned long long rendezvous_limit_ns, rendezvous_submissions;
     unsigned long long rendezvous_steps, multi_source_rendezvous;
     unsigned long long maximum_rendezvous_width;
-} yvex_runtime_execution_batch_summary;
+    unsigned long long submissions_by_phase[YVEX_EXECUTION_PHASE_COUNT];
+    unsigned long long physical_batches_by_phase[YVEX_EXECUTION_PHASE_COUNT];
+    unsigned long long executed_rows_by_phase[YVEX_EXECUTION_PHASE_COUNT];
+    unsigned long long rendezvous_steps_by_phase[YVEX_EXECUTION_PHASE_COUNT];
+} yvex_engine_scheduler_summary;
 
 struct yvex_model_engine;
-int yvex_model_engine_compatible_batch_width_copy(
+int yvex_model_engine_scheduler_maximum_width_copy(
     const struct yvex_model_engine *model, unsigned long long *width,
     yvex_error *err);
-int yvex_model_engine_execution_batch_summary_copy(
+int yvex_model_engine_scheduler_summary_copy(
     const struct yvex_model_engine *model,
-    yvex_runtime_execution_batch_summary *out, yvex_error *err);
+    yvex_engine_scheduler_summary *out, yvex_error *err);
 
 #ifdef __cplusplus
 }
 #endif
-#endif /* INCLUDE_YVEX_INTERNAL_RUNTIME_BATCHING_H_INCLUDED */
+#endif /* INCLUDE_YVEX_INTERNAL_ENGINE_SCHEDULER_H_INCLUDED */

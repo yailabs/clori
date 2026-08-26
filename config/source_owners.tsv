@@ -39,7 +39,7 @@ include/yvex/internal/model_target.h	model.target	model.target.internal	generic	
 include/yvex/internal/quant_numeric.h	gguf	gguf.quant_numeric	generic	private	internal-abi	artifact,model,quant,backend	interface	none
 include/yvex/internal/runtime.h	runtime	runtime.internal	generic	private	internal-abi	runtime,graph,cli	interface	none
 include/yvex/internal/runtime_operator.h	runtime	runtime.operator	generic	private	internal-abi	runtime,cli,tests	interface	none
-include/yvex/internal/runtime_batching.h	runtime	runtime.compatible_batching	generic	private	internal-abi	runtime,server,cli,tests	interface	none
+include/yvex/internal/engine_scheduler.h	runtime	runtime.engine_scheduler	generic	private	internal-abi	runtime,server,cli,tests	interface	none
 include/yvex/internal/runtime_prefix.h	runtime	runtime.session_prefix	generic	private	internal-abi	runtime,server,tests	interface	none
 include/yvex/internal/runtime_state_store.h	runtime	runtime.state_store	generic	private	file-serialization	runtime,server,tests	interface	none
 include/yvex/internal/tokenizer.h	tokenizer	tokenizer.family_policy	generic	private	internal-abi	compilation,runtime,server,tokenizer	interface	none
@@ -205,7 +205,7 @@ src/runtime/binding.c	runtime	runtime.binding	generic	private	file-serialization
 src/runtime/component.c	runtime	runtime.component	generic	private	reusable-algorithm	graph.family,runtime	implementation	none
 src/runtime/binding_import.c	runtime	runtime.binding_import	generic	private	resource-lifecycle	runtime.transformer,runtime.logits,runtime.speculation	implementation	none
 src/runtime/binding_publish.c	runtime	runtime.binding_publish	generic	private	resource-lifecycle	model.compilation,runtime.binding	implementation	none
-src/runtime/batching.c	runtime	runtime.compatible_batching	generic	private	resource-lifecycle	runtime.transformer,runtime.generation,server,tests	implementation	none
+src/runtime/scheduler.c	runtime	runtime.engine_scheduler	generic	private	resource-lifecycle	runtime.transformer,runtime.generation,server,tests	implementation	none
 src/runtime/decode.c	runtime	runtime.decode	generic	private	transactional-execution	runtime,cli,tests	implementation	none
 src/runtime/acceptance.c	runtime	runtime.speculation_acceptance	generic	private	numerical-oracle	runtime,generation,tests	implementation	none
 src/runtime/generation.c	runtime	runtime.generation	generic	private	transactional-execution	runtime,cli,tests	implementation	none

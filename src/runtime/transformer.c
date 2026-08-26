@@ -40,7 +40,7 @@ struct yvex_runtime_transformer_context {
     unsigned int *execution_tokens;
     unsigned long long token_capacity, host_bytes, final_weight_bytes, execution_count, moe_workspace_bytes;
     pthread_mutex_t mutex;
-    int mutex_ready, busy, invalidated, batcher_acquired, batcher_producer_active;
+    int mutex_ready, busy, invalidated, scheduler_acquired, scheduler_producer_active;
 };
 static const yvex_attention_plan *transformer_runtime_attention(
     const yvex_model_engine_view *view, yvex_tensor_scope scope)
@@ -601,7 +601,7 @@ int yvex_runtime_transformer_execute_block(
     const yvex_moe_layer_plan *layer = moe_plan ? yvex_moe_plan_layer_at(moe_plan, layer_ordinal) : NULL;
     yvex_sha256 output_hash, identity_hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
-    runtime_compatible_moe_request moe_request = {0};
+    runtime_engine_moe_request moe_request = {0};
     yvex_moe_row_batch_result moe_result;
     unsigned long long output_elements, hidden_elements, post_elements, combination_elements;
     unsigned long long started_ns;
@@ -661,8 +661,8 @@ int yvex_runtime_transformer_execute_block(
     moe_request.layer_ordinal = layer_ordinal;
     moe_request.row_count = token_count;
     moe_request.row_capacity = context->token_capacity;
-    moe_request.admitted_width = context->options.compatible_batching
-                                     ? context->options.compatible_batch_width
+    moe_request.admitted_width = context->options.engine_scheduling
+                                     ? context->options.scheduler_maximum_width
                                      : token_count;
     moe_request.provenance = provenance;
     moe_request.phase = phase;
@@ -670,7 +670,7 @@ int yvex_runtime_transformer_execute_block(
     moe_request.transformer_result = result;
     moe_request.cancel_requested = context->options.cancel_requested;
     moe_request.cancel_context = context->options.cancel_context;
-    rc = yvex_runtime_private_compatible_moe_execute(&moe_request, err);
+    rc = yvex_runtime_private_engine_scheduler_moe_execute(&moe_request, err);
     if (rc != YVEX_OK) return rc;
     if (!normal_cuda) {
         rc = yvex_transformer_deferred_post(
@@ -964,7 +964,7 @@ static int transformer_attention_configure(
      * from the same state and workspace. */
     return yvex_backend_cuda_attention_configure(
         context->session_view->backend, (yvex_backend_attention_phase)phase,
-        context->options.compatible_batching
+        context->options.engine_scheduling
             ? YVEX_BACKEND_CUDA_ATTENTION_EAGER
             : YVEX_BACKEND_CUDA_ATTENTION_FULL,
         context->options.execution_profile->identity, "generation",
@@ -1005,18 +1005,18 @@ static int transformer_prepare(yvex_runtime_transformer_context *context,
                           : request->retain_prefix_checkpoints
                                 ? YVEX_EXECUTION_PHASE_VERIFY
                                 : request->phase;
-    if (context->options.compatible_batching) {
-        rc = yvex_runtime_private_compatible_step_enter(
-            &(runtime_compatible_step_request){
+    if (context->options.engine_scheduling) {
+        rc = yvex_runtime_private_engine_scheduler_step_enter(
+            &(runtime_engine_step_request){
                 .model = context->model, .session = context->session,
                 .backend = context->session_view->backend, .transformer = plan,
                 .execution_profile = context->options.execution_profile,
                 .tensor_scope = context->options.tensor_scope, .phase = execution_phase,
                 .execution_class = context->options.execution_profile->execution_class,
-                .maximum_width = context->options.compatible_batch_width,
+                .maximum_width = context->options.scheduler_maximum_width,
                 .cancel_requested = context->options.cancel_requested,
                 .cancel_context = context->options.cancel_context},
-            &context->batcher_producer_active, err);
+            &context->scheduler_producer_active, err);
         if (rc != YVEX_OK) return rc;
     }
     if (!state->prepared_layer_count) {
@@ -1041,7 +1041,7 @@ static int transformer_prepare(yvex_runtime_transformer_context *context,
         return transformer_runtime_refuse(err, YVEX_ERR_STATE,
                                           "transformer state position/capacity is incompatible");
     if (request->backend == YVEX_BACKEND_KIND_CPU) return YVEX_OK;
-    mode = context->options.compatible_batching
+    mode = context->options.engine_scheduling
                ? YVEX_RUNTIME_MODE_EAGER
                : context->options.execution_profile &&
                    context->options.execution_profile->attention_resolution ==
@@ -1234,7 +1234,8 @@ static int transformer_core_features_execute(
             result->completed = 1;
         }
     }
-    rc = yvex_runtime_private_batcher_producer_finish(context->model, &context->batcher_producer_active, rc, err);
+    rc = yvex_runtime_private_engine_scheduler_producer_finish(
+        context->model, &context->scheduler_producer_active, rc, err);
     if (pthread_mutex_lock(&context->mutex) == 0) {
         context->busy = 0;
         if (rc == YVEX_OK) context->execution_count++;
@@ -1268,8 +1269,8 @@ int yvex_runtime_transformer_context_open(yvex_runtime_transformer_context **out
     if (!out || !model || !session || !options || !options->context_capacity ||
         (options->tensor_scope != YVEX_TENSOR_SCOPE_GLOBAL &&
          options->tensor_scope != YVEX_TENSOR_SCOPE_DRAFT) ||
-        !runtime_compatible_batch_options_valid(options->compatible_batching,
-            options->compatible_batch_width) ||
+        !runtime_engine_scheduler_options_valid(options->engine_scheduling,
+            options->scheduler_maximum_width) ||
         options->workspace_token_capacity > options->context_capacity)
         return transformer_runtime_refuse(err, YVEX_ERR_INVALID_ARG,
                                           "transformer context owners/options are required");
@@ -1293,11 +1294,11 @@ int yvex_runtime_transformer_context_open(yvex_runtime_transformer_context **out
         goto failure;
     }
     context->mutex_ready = 1;
-    if (options->compatible_batching) {
-        rc = yvex_runtime_private_model_batcher_acquire(
-            model, options->compatible_batch_width, err);
+    if (options->engine_scheduling) {
+        rc = yvex_runtime_private_model_scheduler_acquire(
+            model, options->scheduler_maximum_width, err);
         if (rc != YVEX_OK) goto failure;
-        context->batcher_acquired = 1;
+        context->scheduler_acquired = 1;
     }
     memset(&moe_options, 0, sizeof(moe_options));
     moe_options.maximum_host_bytes = options->maximum_host_bytes;
@@ -1308,7 +1309,7 @@ int yvex_runtime_transformer_context_open(yvex_runtime_transformer_context **out
     moe_options.cancel_requested = options->cancel_requested;
     moe_options.cancel_context = options->cancel_context;
     moe_options.defer_cuda_workspace = 1;
-    moe_options.eager_execution = options->compatible_batching;
+    moe_options.eager_execution = options->engine_scheduling;
     moe_options.evidence_level = options->evidence_level;
     moe_options.execution_profile = options->execution_profile;
     rc = yvex_runtime_moe_context_open(&context->moe, model, session, &moe_options,
@@ -1530,7 +1531,8 @@ static int transformer_execution_finish(
         result->feature_row_count = input_summary->token_count;
         rc = transformer_execution_identity(plan, request, result, err);
     }
-    rc = yvex_runtime_private_batcher_producer_finish(context->model, &context->batcher_producer_active, rc, err);
+    rc = yvex_runtime_private_engine_scheduler_producer_finish(
+        context->model, &context->scheduler_producer_active, rc, err);
     if (pthread_mutex_lock(&context->mutex) == 0) {
         context->busy = 0;
         if (rc == YVEX_OK) context->execution_count++;
@@ -1745,7 +1747,7 @@ int yvex_runtime_transformer_context_close(yvex_runtime_transformer_context **co
         return YVEX_OK;
     }
     if ((*context)->mutex_ready && pthread_mutex_lock(&(*context)->mutex) == 0) {
-        if ((*context)->busy || (*context)->batcher_producer_active) {
+        if ((*context)->busy || (*context)->scheduler_producer_active) {
             (void)pthread_mutex_unlock(&(*context)->mutex);
             return transformer_runtime_refuse(err, YVEX_ERR_STATE,
                 "busy transformer context or active batch producer cannot close");
@@ -1769,8 +1771,8 @@ int yvex_runtime_transformer_context_close(yvex_runtime_transformer_context **co
     if (rc != YVEX_OK) return rc;
     rc = yvex_runtime_moe_context_close(&(*context)->moe, err);
     if (rc != YVEX_OK) return rc;
-    rc = yvex_runtime_private_model_batcher_finish(
-        (*context)->model, &(*context)->batcher_acquired, err);
+    rc = yvex_runtime_private_model_scheduler_finish(
+        (*context)->model, &(*context)->scheduler_acquired, err);
     if (rc != YVEX_OK) return rc;
     for (index = 0ull; index < YVEX_TRANSFORMER_WEIGHT_COUNT; ++index) {
         free((*context)->global[index].bytes);

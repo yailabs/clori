@@ -356,8 +356,8 @@ typedef struct {
     void *cancel_context;
     yvex_attention_evidence_level evidence_level;
     int device_hidden_output, device_pre_normalized_output;
-    int compatible_batching;
-    unsigned long long compatible_batch_width;
+    int engine_scheduling;
+    unsigned long long scheduler_maximum_width;
     const struct yvex_runtime_execution_profile *execution_profile;
 } yvex_runtime_transformer_options;
 typedef struct {

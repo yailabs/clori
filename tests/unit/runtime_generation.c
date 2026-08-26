@@ -30,17 +30,17 @@ typedef struct {
     pthread_cond_t condition;
     unsigned long long ready;
     int released;
-} generation_batching_gate;
+} generation_scheduler_gate;
 
 typedef struct {
-    runtime_compatible_batcher *batcher;
-    runtime_compatible_batch_ticket ticket;
-    generation_batching_gate *gate;
+    runtime_engine_scheduler *scheduler;
+    runtime_engine_work ticket;
+    generation_scheduler_gate *gate;
     int result;
-} generation_batching_job;
+} generation_scheduler_job;
 
-static void generation_batching_key(yvex_execution_compatibility_key *key,
-                                    unsigned long long layer)
+static void generation_scheduler_key(yvex_execution_compatibility_key *key,
+                                     unsigned long long layer)
 {
     memset(key, 0, sizeof(*key));
     key->schema_version = YVEX_EXECUTION_COMPATIBILITY_SCHEMA_V2;
@@ -55,24 +55,24 @@ static void generation_batching_key(yvex_execution_compatibility_key *key,
     key->admitted_width = 4ull;
 }
 
-static int generation_batching_execute(
-    runtime_compatible_batch_ticket *const *tickets,
-    unsigned long long ticket_count, yvex_error *err)
+static int generation_scheduler_execute(runtime_engine_work *const *tickets,
+                                        unsigned long long ticket_count,
+                                        yvex_error *err)
 {
     unsigned long long index, rows = 0ull;
     for (index = 0ull; index < ticket_count; ++index) {
-        generation_batching_job *job = tickets[index]->context;
+        generation_scheduler_job *job = tickets[index]->context;
         if (!job || tickets[index] != &job->ticket ||
             (index && !yvex_execution_compatibility_keys_match(
                           &tickets[0]->key, &tickets[index]->key, err))) {
-            yvex_error_set(err, YVEX_ERR_STATE, "test.runtime-batching",
+            yvex_error_set(err, YVEX_ERR_STATE, "test.engine-scheduler",
                            "incompatible ticket entered one physical batch");
             return YVEX_ERR_STATE;
         }
         rows += tickets[index]->row_count;
     }
     if (!rows || rows != tickets[0]->actual_width || rows > 4ull) {
-        yvex_error_set(err, YVEX_ERR_STATE, "test.runtime-batching",
+        yvex_error_set(err, YVEX_ERR_STATE, "test.engine-scheduler",
                        "physical batch width is not exact");
         return YVEX_ERR_STATE;
     }
@@ -88,9 +88,9 @@ static int generation_batching_execute(
     return YVEX_OK;
 }
 
-static void *generation_batching_submit(void *opaque)
+static void *generation_scheduler_submit(void *opaque)
 {
-    generation_batching_job *job = opaque;
+    generation_scheduler_job *job = opaque;
     yvex_error err;
     (void)pthread_mutex_lock(&job->gate->mutex);
     job->gate->ready++;
@@ -98,18 +98,18 @@ static void *generation_batching_submit(void *opaque)
     while (!job->gate->released)
         (void)pthread_cond_wait(&job->gate->condition, &job->gate->mutex);
     (void)pthread_mutex_unlock(&job->gate->mutex);
-    job->result = yvex_runtime_private_batcher_submit(
-        job->batcher, &job->ticket, &err);
+    job->result = yvex_runtime_private_engine_scheduler_submit(
+        job->scheduler, &job->ticket, &err);
     return NULL;
 }
 
-static int generation_test_compatible_batching(void)
+static int generation_test_engine_scheduling(void)
 {
-    runtime_compatible_batcher *batcher = NULL;
-    yvex_runtime_execution_batch_summary summary;
-    generation_batching_job jobs[8];
+    runtime_engine_scheduler *scheduler = NULL;
+    yvex_engine_scheduler_summary summary;
+    generation_scheduler_job jobs[8];
     pthread_t threads[8];
-    generation_batching_gate gate;
+    generation_scheduler_gate gate;
     yvex_error err;
     unsigned long long index;
     memset(&gate, 0, sizeof(gate));
@@ -118,20 +118,20 @@ static int generation_test_compatible_batching(void)
                          pthread_cond_init(&gate.condition, NULL) == 0,
                      "test submission gate should initialize");
     YVEX_TEST_ASSERT(
-        yvex_runtime_private_batcher_open(&batcher, 8ull, &err) == YVEX_OK,
-        "compatible batch owner should open");
+        yvex_runtime_private_engine_scheduler_open(&scheduler, 8ull, &err) == YVEX_OK,
+        "engine scheduler should open");
     for (index = 0ull; index < 8ull; ++index) {
-        jobs[index].batcher = batcher;
+        jobs[index].scheduler = scheduler;
         jobs[index].gate = &gate;
         jobs[index].ticket.row_count = 1ull;
-        jobs[index].ticket.execute = generation_batching_execute;
+        jobs[index].ticket.execute = generation_scheduler_execute;
         jobs[index].ticket.context = &jobs[index];
-        generation_batching_key(&jobs[index].ticket.key,
-                                index < 4ull ? 0ull : 1ull);
+        generation_scheduler_key(&jobs[index].ticket.key,
+                                 index < 4ull ? 0ull : 1ull);
         YVEX_TEST_ASSERT(
             yvex_execution_compatibility_key_validate(
                 &jobs[index].ticket.key, &err) == YVEX_OK &&
-                pthread_create(&threads[index], NULL, generation_batching_submit,
+                pthread_create(&threads[index], NULL, generation_scheduler_submit,
                                &jobs[index]) == 0,
             "compatible batch test ticket should start");
     }
@@ -143,12 +143,12 @@ static int generation_test_compatible_batching(void)
     (void)pthread_mutex_unlock(&gate.mutex);
     do {
         YVEX_TEST_ASSERT(
-            yvex_runtime_private_batcher_snapshot(batcher, &summary, &err) ==
+            yvex_runtime_private_engine_scheduler_snapshot(scheduler, &summary, &err) ==
                 YVEX_OK,
             "queued compatible batch facts should remain inspectable");
     } while (summary.queued != 8ull);
     YVEX_TEST_ASSERT(
-        yvex_runtime_private_batcher_start(batcher, &err) == YVEX_OK,
+        yvex_runtime_private_engine_scheduler_start(scheduler, &err) == YVEX_OK,
         "compatible batch worker should start after deterministic queueing");
     for (index = 0ull; index < 8ull; ++index) {
         (void)pthread_join(threads[index], NULL);
@@ -159,8 +159,11 @@ static int generation_test_compatible_batching(void)
             "compatible rows should form exact same-operation physical batches");
     }
     YVEX_TEST_ASSERT(
-        yvex_runtime_private_batcher_snapshot(batcher, &summary, &err) == YVEX_OK &&
+        yvex_runtime_private_engine_scheduler_snapshot(scheduler, &summary, &err) == YVEX_OK &&
             summary.submissions == 8ull && summary.physical_batches == 2ull &&
+            summary.submissions_by_phase[YVEX_EXECUTION_PHASE_DECODE] == 8ull &&
+            summary.physical_batches_by_phase[YVEX_EXECUTION_PHASE_DECODE] == 2ull &&
+            summary.executed_rows_by_phase[YVEX_EXECUTION_PHASE_DECODE] == 8ull &&
             summary.multi_source_batches == 2ull && summary.executed_rows == 8ull &&
             summary.maximum_width == 4ull && summary.multi_source_rows == 8ull &&
             summary.maximum_multi_source_width == 4ull &&
@@ -175,8 +178,8 @@ static int generation_test_compatible_batching(void)
             !summary.failures,
         "batch summary should expose real width without cross-operation merging");
     YVEX_TEST_ASSERT(
-        yvex_runtime_private_batcher_close(&batcher, &err) == YVEX_OK,
-        "compatible batch owner should close cleanly");
+        yvex_runtime_private_engine_scheduler_close(&scheduler, &err) == YVEX_OK,
+        "engine scheduler should close cleanly");
     (void)pthread_cond_destroy(&gate.condition);
     (void)pthread_mutex_destroy(&gate.mutex);
     return 0;
@@ -184,10 +187,10 @@ static int generation_test_compatible_batching(void)
 
 static int generation_test_bounded_batch_coalescing(void)
 {
-    runtime_compatible_batcher *batcher = NULL;
-    yvex_runtime_execution_batch_summary summary = {0};
-    generation_batching_gate gate;
-    generation_batching_job job;
+    runtime_engine_scheduler *scheduler = NULL;
+    yvex_engine_scheduler_summary summary = {0};
+    generation_scheduler_gate gate;
+    generation_scheduler_job job;
     pthread_t thread;
     yvex_error err;
     unsigned long long attempt;
@@ -198,26 +201,26 @@ static int generation_test_bounded_batch_coalescing(void)
                          pthread_cond_init(&gate.condition, NULL) == 0,
                      "bounded coalescing gate should initialize");
     YVEX_TEST_ASSERT(
-        yvex_runtime_private_batcher_open(&batcher, 4ull, &err) == YVEX_OK &&
-            yvex_runtime_private_batcher_set_producers(batcher, 2ull, &err) ==
+        yvex_runtime_private_engine_scheduler_open(&scheduler, 4ull, &err) == YVEX_OK &&
+            yvex_runtime_private_engine_scheduler_set_producers(scheduler, 2ull, &err) ==
                 YVEX_OK &&
-            yvex_runtime_private_batcher_start(batcher, &err) == YVEX_OK,
-        "two-producer compatible batch owner should start");
-    job.batcher = batcher;
+            yvex_runtime_private_engine_scheduler_start(scheduler, &err) == YVEX_OK,
+        "two-producer engine scheduler should start");
+    job.scheduler = scheduler;
     job.gate = &gate;
     job.ticket.row_count = 1ull;
     job.ticket.coalescing_limit_ns = 1000000ull;
-    job.ticket.execute = generation_batching_execute;
+    job.ticket.execute = generation_scheduler_execute;
     job.ticket.context = &job;
-    job.ticket.kind = RUNTIME_COMPATIBLE_BATCH_RENDEZVOUS;
-    generation_batching_key(&job.ticket.key, 0ull);
+    job.ticket.kind = RUNTIME_ENGINE_WORK_RENDEZVOUS;
+    generation_scheduler_key(&job.ticket.key, 0ull);
     YVEX_TEST_ASSERT(
         yvex_execution_compatibility_key_validate(&job.ticket.key, &err) == YVEX_OK &&
-            pthread_create(&thread, NULL, generation_batching_submit, &job) == 0,
+            pthread_create(&thread, NULL, generation_scheduler_submit, &job) == 0,
         "one producer should submit into the bounded rendezvous");
     for (attempt = 0ull; attempt < 100000ull; ++attempt) {
         YVEX_TEST_ASSERT(
-            yvex_runtime_private_batcher_snapshot(batcher, &summary, &err) ==
+            yvex_runtime_private_engine_scheduler_snapshot(scheduler, &summary, &err) ==
                 YVEX_OK,
             "bounded coalescing state should remain inspectable");
         if (summary.coalescing_waits) break;
@@ -225,19 +228,21 @@ static int generation_test_bounded_batch_coalescing(void)
     (void)pthread_join(thread, NULL);
     YVEX_TEST_ASSERT(
         job.result == YVEX_OK &&
-            yvex_runtime_private_batcher_snapshot(batcher, &summary, &err) ==
+            yvex_runtime_private_engine_scheduler_snapshot(scheduler, &summary, &err) ==
                 YVEX_OK &&
             summary.registered_producers == 2ull &&
             summary.coalescing_waits == 1ull &&
             summary.coalescing_timeouts == 1ull && summary.coalescing_ns &&
             summary.rendezvous_submissions == 1ull &&
             summary.rendezvous_steps == 1ull &&
+            summary.submissions_by_phase[YVEX_EXECUTION_PHASE_DECODE] == 1ull &&
+            summary.rendezvous_steps_by_phase[YVEX_EXECUTION_PHASE_DECODE] == 1ull &&
             summary.multi_source_rendezvous == 0ull &&
             summary.maximum_rendezvous_width == 1ull &&
             summary.physical_batches == 0ull,
         "declared width waits for a missing peer, then executes width one");
     YVEX_TEST_ASSERT(
-        yvex_runtime_private_batcher_close(&batcher, &err) == YVEX_OK,
+        yvex_runtime_private_engine_scheduler_close(&scheduler, &err) == YVEX_OK,
         "bounded coalescing owner should close cleanly");
     (void)pthread_cond_destroy(&gate.condition);
     (void)pthread_mutex_destroy(&gate.mutex);
@@ -246,10 +251,10 @@ static int generation_test_bounded_batch_coalescing(void)
 
 static int generation_test_incompatible_arrival_releases_impossible_wait(void)
 {
-    runtime_compatible_batcher *batcher = NULL;
-    yvex_runtime_execution_batch_summary summary = {0};
-    generation_batching_gate gate;
-    generation_batching_job jobs[2];
+    runtime_engine_scheduler *scheduler = NULL;
+    yvex_engine_scheduler_summary summary = {0};
+    generation_scheduler_gate gate;
+    generation_scheduler_job jobs[2];
     pthread_t threads[2];
     yvex_error err;
     unsigned long long attempt;
@@ -260,49 +265,50 @@ static int generation_test_incompatible_arrival_releases_impossible_wait(void)
                          pthread_cond_init(&gate.condition, NULL) == 0,
                      "incompatible-arrival gate should initialize");
     YVEX_TEST_ASSERT(
-        yvex_runtime_private_batcher_open(&batcher, 4ull, &err) == YVEX_OK &&
-            yvex_runtime_private_batcher_set_producers(batcher, 4ull, &err) ==
+        yvex_runtime_private_engine_scheduler_open(&scheduler, 4ull, &err) == YVEX_OK &&
+            yvex_runtime_private_engine_scheduler_set_producers(scheduler, 4ull, &err) ==
                 YVEX_OK &&
-            yvex_runtime_private_batcher_start(batcher, &err) == YVEX_OK,
-        "four-producer compatible batch owner should start");
-    jobs[0].batcher = batcher;
+            yvex_runtime_private_engine_scheduler_start(scheduler, &err) == YVEX_OK,
+        "four-producer engine scheduler should start");
+    jobs[0].scheduler = scheduler;
     jobs[0].gate = &gate;
     jobs[0].ticket.row_count = 1ull;
     jobs[0].ticket.coalescing_limit_ns = 100000000ull;
-    jobs[0].ticket.execute = generation_batching_execute;
+    jobs[0].ticket.execute = generation_scheduler_execute;
     jobs[0].ticket.context = &jobs[0];
-    generation_batching_key(&jobs[0].ticket.key, 0ull);
+    generation_scheduler_key(&jobs[0].ticket.key, 0ull);
     YVEX_TEST_ASSERT(
         yvex_execution_compatibility_key_validate(&jobs[0].ticket.key, &err) ==
                 YVEX_OK &&
-            pthread_create(&threads[0], NULL, generation_batching_submit,
+            pthread_create(&threads[0], NULL, generation_scheduler_submit,
                            &jobs[0]) == 0,
         "declared width-four ticket should enter coalescing");
     for (attempt = 0ull; attempt < 100000ull; ++attempt) {
         YVEX_TEST_ASSERT(
-            yvex_runtime_private_batcher_snapshot(batcher, &summary, &err) ==
+            yvex_runtime_private_engine_scheduler_snapshot(scheduler, &summary, &err) ==
                 YVEX_OK,
             "coalescing wait should remain observable");
         if (summary.coalescing_waits) break;
     }
     YVEX_TEST_ASSERT(summary.coalescing_waits == 1ull,
                      "declared width-four ticket should wait for peers");
-    jobs[1].batcher = batcher;
+    jobs[1].scheduler = scheduler;
     jobs[1].gate = &gate;
     jobs[1].ticket.row_count = 1ull;
     jobs[1].ticket.coalescing_limit_ns = 1ull;
-    jobs[1].ticket.execute = generation_batching_execute;
+    jobs[1].ticket.execute = generation_scheduler_execute;
     jobs[1].ticket.context = &jobs[1];
-    generation_batching_key(&jobs[1].ticket.key, 1ull);
+    generation_scheduler_key(&jobs[1].ticket.key, 1ull);
+    jobs[1].ticket.key.phase = YVEX_EXECUTION_PHASE_VERIFY;
     YVEX_TEST_ASSERT(
         yvex_execution_compatibility_key_validate(&jobs[1].ticket.key, &err) ==
                 YVEX_OK &&
-            pthread_create(&threads[1], NULL, generation_batching_submit,
+            pthread_create(&threads[1], NULL, generation_scheduler_submit,
                            &jobs[1]) == 0,
         "incompatible ticket should wake but not satisfy coalescing");
     (void)pthread_join(threads[0], NULL);
     YVEX_TEST_ASSERT(
-        yvex_runtime_private_batcher_set_producers(batcher, 1ull, &err) ==
+        yvex_runtime_private_engine_scheduler_set_producers(scheduler, 1ull, &err) ==
             YVEX_OK,
         "completed incompatible producer should leave the ready population");
     (void)pthread_join(threads[1], NULL);
@@ -310,64 +316,71 @@ static int generation_test_incompatible_arrival_releases_impossible_wait(void)
         jobs[0].result == YVEX_OK && jobs[1].result == YVEX_OK &&
             jobs[0].ticket.actual_width == 1ull &&
             jobs[1].ticket.actual_width == 1ull &&
-            yvex_runtime_private_batcher_snapshot(batcher, &summary, &err) ==
+            yvex_runtime_private_engine_scheduler_snapshot(scheduler, &summary, &err) ==
                 YVEX_OK &&
             summary.submissions == 2ull && summary.physical_batches == 2ull &&
+            summary.submissions_by_phase[YVEX_EXECUTION_PHASE_DECODE] == 1ull &&
+            summary.submissions_by_phase[YVEX_EXECUTION_PHASE_VERIFY] == 1ull &&
+            summary.physical_batches_by_phase[YVEX_EXECUTION_PHASE_DECODE] == 1ull &&
+            summary.physical_batches_by_phase[YVEX_EXECUTION_PHASE_VERIFY] == 1ull &&
+            summary.executed_rows_by_phase[YVEX_EXECUTION_PHASE_DECODE] == 1ull &&
+            summary.executed_rows_by_phase[YVEX_EXECUTION_PHASE_VERIFY] == 1ull &&
+            summary.phase_mismatches &&
             !summary.multi_source_batches && !summary.multi_source_rows &&
             !summary.maximum_multi_source_width && !summary.maximum_source_count &&
             summary.coalescing_waits == 2ull &&
             summary.coalescing_timeouts == 1ull,
         "incompatible work stays separate under bounded engine scheduling");
     YVEX_TEST_ASSERT(
-        yvex_runtime_private_batcher_close(&batcher, &err) == YVEX_OK,
+        yvex_runtime_private_engine_scheduler_close(&scheduler, &err) == YVEX_OK,
         "incompatible-arrival batch owner should close cleanly");
     (void)pthread_cond_destroy(&gate.condition);
     (void)pthread_mutex_destroy(&gate.mutex);
     return 0;
 }
 
-static int generation_test_active_batch_producers(void)
+static int generation_test_active_scheduler_producers(void)
 {
     yvex_model_engine model = {0};
-    yvex_runtime_execution_batch_summary summary = {0};
+    yvex_engine_scheduler_summary summary = {0};
     yvex_error err;
     YVEX_TEST_ASSERT(pthread_mutex_init(&model.lifecycle_mutex, NULL) == 0,
-                     "runtime model batching lock should initialize");
+                     "model engine scheduler lock should initialize");
     model.lifecycle_mutex_ready = 1;
     YVEX_TEST_ASSERT(
-        yvex_runtime_private_model_batcher_acquire(&model, 2ull, &err) ==
+        yvex_runtime_private_model_scheduler_acquire(&model, 2ull, &err) ==
                 YVEX_OK &&
-            yvex_runtime_private_model_batcher_acquire(&model, 2ull, &err) ==
+            yvex_runtime_private_model_scheduler_acquire(&model, 2ull, &err) ==
                 YVEX_OK &&
-            yvex_runtime_private_model_batcher_acquire(&model, 2ull, &err) ==
+            yvex_runtime_private_model_scheduler_acquire(&model, 2ull, &err) ==
                 YVEX_OK &&
-            model.compatible_batcher_references == 3ull,
+            model.engine_scheduler_references == 3ull,
         "idle context references must not consume admitted producer width");
     YVEX_TEST_ASSERT(
-        yvex_runtime_private_model_batcher_producer_enter(&model, &err) ==
+        yvex_runtime_private_model_scheduler_producer_enter(&model, &err) ==
                 YVEX_OK &&
-            yvex_runtime_private_model_batcher_producer_enter(&model, &err) ==
+            yvex_runtime_private_model_scheduler_producer_enter(&model, &err) ==
                 YVEX_OK &&
-            yvex_runtime_private_model_batcher_producer_enter(&model, &err) ==
+            yvex_runtime_private_model_scheduler_producer_enter(&model, &err) ==
                 YVEX_ERR_BOUNDS &&
-            yvex_runtime_private_batcher_snapshot(
-                model.compatible_batcher, &summary, &err) == YVEX_OK &&
+            yvex_runtime_private_engine_scheduler_snapshot(
+                model.engine_scheduler, &summary, &err) == YVEX_OK &&
             summary.registered_producers == 2ull &&
-            model.compatible_batcher_producers == 2ull,
+            model.engine_scheduler_producers == 2ull,
         "only active executions may consume bounded producer width");
     YVEX_TEST_ASSERT(
-        yvex_runtime_private_model_batcher_producer_leave(&model, &err) ==
+        yvex_runtime_private_model_scheduler_producer_leave(&model, &err) ==
                 YVEX_OK &&
-            yvex_runtime_private_model_batcher_producer_leave(&model, &err) ==
+            yvex_runtime_private_model_scheduler_producer_leave(&model, &err) ==
                 YVEX_OK &&
-            yvex_runtime_private_model_batcher_release(&model, &err) ==
+            yvex_runtime_private_model_scheduler_release(&model, &err) ==
                 YVEX_OK &&
-            yvex_runtime_private_model_batcher_release(&model, &err) ==
+            yvex_runtime_private_model_scheduler_release(&model, &err) ==
                 YVEX_OK &&
-            yvex_runtime_private_model_batcher_release(&model, &err) ==
+            yvex_runtime_private_model_scheduler_release(&model, &err) ==
                 YVEX_OK &&
-            !model.compatible_batcher && !model.compatible_batcher_references &&
-            !model.compatible_batcher_producers,
+            !model.engine_scheduler && !model.engine_scheduler_references &&
+            !model.engine_scheduler_producers,
         "active producers and idle references should drain independently");
     (void)pthread_mutex_destroy(&model.lifecycle_mutex);
     return 0;
@@ -609,11 +622,11 @@ static int generation_test_transaction_participants(void)
 
 int yvex_test_runtime_generation(void)
 {
-    if (generation_test_compatible_batching() != 0) return 1;
+    if (generation_test_engine_scheduling() != 0) return 1;
     if (generation_test_bounded_batch_coalescing() != 0) return 1;
     if (generation_test_incompatible_arrival_releases_impossible_wait() != 0)
         return 1;
-    if (generation_test_active_batch_producers() != 0) return 1;
+    if (generation_test_active_scheduler_producers() != 0) return 1;
     if (generation_test_stop_taxonomy() != 0) return 1;
     if (generation_test_refusals() != 0) return 1;
     if (generation_test_execution_identity_excludes_measurement() != 0) return 1;
