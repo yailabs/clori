@@ -2369,6 +2369,8 @@ static int test_runtime_model_progress(
     YVEX_TEST_ASSERT(
         yvex_model_engine_open(&model, &request, &failure, &err) == YVEX_ERR_BOUNDS &&
             !model && failure.code == YVEX_MODEL_ENGINE_FAILURE_ALLOCATION &&
+            failure.origin == YVEX_RUNTIME_FAILURE_ORIGIN_RESOURCE &&
+            failure.recovery == YVEX_RUNTIME_RECOVERY_PREPARE_OR_EVICT &&
             strcmp(failure.field, "model-host-budget") == 0 &&
             failure.expected == baseline_required &&
             failure.actual == request.maximum_host_bytes &&
@@ -4442,6 +4444,8 @@ static int test_runtime_model_snapshot_drift(
         (control.fail_invalidate_once = 1) == 1 &&
             yvex_model_engine_validate(model, &failure, &err) != YVEX_OK &&
             failure.code == YVEX_MODEL_ENGINE_FAILURE_DRIFT &&
+            failure.origin == YVEX_RUNTIME_FAILURE_ORIGIN_INTEGRITY &&
+            failure.recovery == YVEX_RUNTIME_RECOVERY_DRAIN_ENGINE &&
             control.invalidations == 0u && control.active->summary.transaction_active,
         "busy drift latches cancellation without racing the active provider candidate");
     YVEX_TEST_ASSERT(
@@ -4451,7 +4455,9 @@ static int test_runtime_model_snapshot_drift(
         "quiescent finish aborts the candidate before exposing deferred invalidation failure");
     YVEX_TEST_ASSERT(
         yvex_model_engine_validate(model, &failure, &err) != YVEX_OK &&
-            failure.code == YVEX_MODEL_ENGINE_FAILURE_DRIFT,
+            failure.code == YVEX_MODEL_ENGINE_FAILURE_DRIFT &&
+            failure.origin == YVEX_RUNTIME_FAILURE_ORIGIN_INTEGRITY &&
+            failure.recovery == YVEX_RUNTIME_RECOVERY_DRAIN_ENGINE,
         "invalid model remains refused after deferred session invalidation");
     YVEX_TEST_ASSERT(yvex_model_engine_summary_copy(model, &summary, &err) == YVEX_OK &&
                          !summary.valid && summary.invalidation_count == 1ull &&

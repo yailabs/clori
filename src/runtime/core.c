@@ -23,13 +23,139 @@
 #include <yvex/artifact.h>
 
 static atomic_ullong engine_generation_counter = 0;
+typedef struct {
+    yvex_runtime_failure_origin origin;
+    yvex_runtime_recovery_action recovery;
+} runtime_failure_disposition;
+
+static runtime_failure_disposition runtime_failure_default(
+    yvex_model_engine_failure_code code)
+{
+    runtime_failure_disposition disposition = {
+        YVEX_RUNTIME_FAILURE_ORIGIN_NONE, YVEX_RUNTIME_RECOVERY_NONE};
+    switch (code) {
+        case YVEX_MODEL_ENGINE_FAILURE_INVALID_ARGUMENT:
+            disposition.origin = YVEX_RUNTIME_FAILURE_ORIGIN_EXTERNAL_REQUEST;
+            disposition.recovery = YVEX_RUNTIME_RECOVERY_REFUSE_REQUEST;
+            break;
+        case YVEX_MODEL_ENGINE_FAILURE_ADAPTER:
+        case YVEX_MODEL_ENGINE_FAILURE_DESCRIPTOR:
+            disposition.origin = YVEX_RUNTIME_FAILURE_ORIGIN_CAPABILITY;
+            disposition.recovery = YVEX_RUNTIME_RECOVERY_REFUSE_ENGINE_OPEN;
+            break;
+        case YVEX_MODEL_ENGINE_FAILURE_BINDING:
+        case YVEX_MODEL_ENGINE_FAILURE_ARTIFACT:
+        case YVEX_MODEL_ENGINE_FAILURE_IDENTITY:
+        case YVEX_MODEL_ENGINE_FAILURE_MATERIALIZATION:
+            disposition.origin = YVEX_RUNTIME_FAILURE_ORIGIN_INTEGRITY;
+            disposition.recovery = YVEX_RUNTIME_RECOVERY_REFUSE_ENGINE_OPEN;
+            break;
+        case YVEX_MODEL_ENGINE_FAILURE_GRAPH:
+            disposition.origin = YVEX_RUNTIME_FAILURE_ORIGIN_SEQUENCE;
+            disposition.recovery = YVEX_RUNTIME_RECOVERY_ABORT_TRANSACTION;
+            break;
+        case YVEX_MODEL_ENGINE_FAILURE_BACKEND:
+            disposition.origin = YVEX_RUNTIME_FAILURE_ORIGIN_BACKEND;
+            disposition.recovery = YVEX_RUNTIME_RECOVERY_RETRY_EQUIVALENT;
+            break;
+        case YVEX_MODEL_ENGINE_FAILURE_DRIFT:
+            disposition.origin = YVEX_RUNTIME_FAILURE_ORIGIN_INTEGRITY;
+            disposition.recovery = YVEX_RUNTIME_RECOVERY_INVALIDATE_SEQUENCE;
+            break;
+        case YVEX_MODEL_ENGINE_FAILURE_BUSY:
+            disposition.origin = YVEX_RUNTIME_FAILURE_ORIGIN_ENGINE;
+            disposition.recovery = YVEX_RUNTIME_RECOVERY_REFUSE_REQUEST;
+            break;
+        case YVEX_MODEL_ENGINE_FAILURE_CANCELLED:
+            disposition.origin = YVEX_RUNTIME_FAILURE_ORIGIN_SEQUENCE;
+            disposition.recovery = YVEX_RUNTIME_RECOVERY_ABORT_TRANSACTION;
+            break;
+        case YVEX_MODEL_ENGINE_FAILURE_ALLOCATION:
+            disposition.origin = YVEX_RUNTIME_FAILURE_ORIGIN_RESOURCE;
+            disposition.recovery = YVEX_RUNTIME_RECOVERY_PREPARE_OR_EVICT;
+            break;
+        case YVEX_MODEL_ENGINE_FAILURE_CLEANUP:
+            disposition.origin = YVEX_RUNTIME_FAILURE_ORIGIN_INTERNAL;
+            disposition.recovery = YVEX_RUNTIME_RECOVERY_ABORT_TRANSACTION;
+            break;
+        case YVEX_MODEL_ENGINE_FAILURE_NONE:
+        default:
+            break;
+    }
+    return disposition;
+}
+
+static runtime_failure_disposition runtime_refusal_disposition(
+    yvex_runtime_private_refusal_id id, yvex_model_engine_failure_code code)
+{
+    runtime_failure_disposition disposition = runtime_failure_default(code);
+    switch (id) {
+        case YVEX_RUNTIME_REFUSE_MODEL_LOCK_UNAVAILABLE:
+        case YVEX_RUNTIME_REFUSE_DRIFT_COUNTER:
+            disposition.origin = YVEX_RUNTIME_FAILURE_ORIGIN_INTERNAL;
+            disposition.recovery = YVEX_RUNTIME_RECOVERY_DRAIN_ENGINE;
+            break;
+        case YVEX_RUNTIME_REFUSE_MODEL_LOCK_INITIALIZATION:
+            disposition.origin = YVEX_RUNTIME_FAILURE_ORIGIN_INTERNAL;
+            disposition.recovery = YVEX_RUNTIME_RECOVERY_REFUSE_ENGINE_OPEN;
+            break;
+        case YVEX_RUNTIME_REFUSE_HOST_RESIDENCY:
+        case YVEX_RUNTIME_REFUSE_WORKSPACE_BUDGET:
+        case YVEX_RUNTIME_REFUSE_DEVICE_WORKSPACE_BUDGET:
+        case YVEX_RUNTIME_REFUSE_OPEN_RESIDENCY:
+            disposition.origin = YVEX_RUNTIME_FAILURE_ORIGIN_RESOURCE;
+            disposition.recovery = YVEX_RUNTIME_RECOVERY_PREPARE_OR_EVICT;
+            break;
+        case YVEX_RUNTIME_REFUSE_CUDA_EAGER:
+        case YVEX_RUNTIME_REFUSE_DEVICE_CAPABILITY:
+        case YVEX_RUNTIME_REFUSE_CUDA_CAPABILITY:
+            disposition.origin = YVEX_RUNTIME_FAILURE_ORIGIN_CAPABILITY;
+            disposition.recovery = YVEX_RUNTIME_RECOVERY_RETRY_EQUIVALENT;
+            break;
+        case YVEX_RUNTIME_REFUSE_SESSION_LOCK_INITIALIZATION:
+        case YVEX_RUNTIME_REFUSE_SESSION_CONDITION_INITIALIZATION:
+            disposition.origin = YVEX_RUNTIME_FAILURE_ORIGIN_INTERNAL;
+            disposition.recovery = YVEX_RUNTIME_RECOVERY_REFUSE_REQUEST;
+            break;
+        case YVEX_RUNTIME_REFUSE_WORKSPACE_IDENTITY:
+        case YVEX_RUNTIME_REFUSE_SESSION_RESOURCE_INJECTION:
+        case YVEX_RUNTIME_REFUSE_WORKSPACE_CAPABILITY_INJECTION:
+            disposition.origin = YVEX_RUNTIME_FAILURE_ORIGIN_INTERNAL;
+            disposition.recovery = YVEX_RUNTIME_RECOVERY_ABORT_TRANSACTION;
+            break;
+        case YVEX_RUNTIME_REFUSE_SESSION_INVALIDATED:
+            disposition.origin = YVEX_RUNTIME_FAILURE_ORIGIN_INTEGRITY;
+            disposition.recovery = YVEX_RUNTIME_RECOVERY_INVALIDATE_SEQUENCE;
+            break;
+        case YVEX_RUNTIME_REFUSE_ARTIFACT_DRIFT:
+        case YVEX_RUNTIME_REFUSE_OPEN_DRIFT:
+            disposition.origin = YVEX_RUNTIME_FAILURE_ORIGIN_INTEGRITY;
+            disposition.recovery = YVEX_RUNTIME_RECOVERY_DRAIN_ENGINE;
+            break;
+        case YVEX_RUNTIME_REFUSE_ADAPTER_CAPABILITY_STALE:
+            disposition.origin = YVEX_RUNTIME_FAILURE_ORIGIN_INTEGRITY;
+            disposition.recovery = YVEX_RUNTIME_RECOVERY_REFUSE_ENGINE_OPEN;
+            break;
+        case YVEX_RUNTIME_REFUSE_OPEN_SEAL:
+            disposition.origin = YVEX_RUNTIME_FAILURE_ORIGIN_EXTERNAL_REQUEST;
+            disposition.recovery = YVEX_RUNTIME_RECOVERY_REFUSE_ENGINE_OPEN;
+            break;
+        default:
+            break;
+    }
+    return disposition;
+}
+
 void yvex_runtime_private_failure_record(yvex_model_engine_failure *failure,
                                          yvex_model_engine_failure_code code,
                                          const char *field, unsigned long long expected,
                                          unsigned long long actual, const char *reason) {
     if (failure) {
+        runtime_failure_disposition disposition = runtime_failure_default(code);
         memset(failure, 0, sizeof(*failure));
         failure->code = code;
+        failure->origin = disposition.origin;
+        failure->recovery = disposition.recovery;
         failure->expected = expected;
         failure->actual = actual;
         failure->reason = reason;
@@ -147,14 +273,23 @@ static int runtime_refuse_as(yvex_model_engine_failure *failure,
                              unsigned long long actual,
                              yvex_status status, yvex_error *err) {
     const runtime_refusal_spec *spec;
+    runtime_failure_disposition disposition;
+    int rc;
     if ((unsigned int)id >= YVEX_RUNTIME_REFUSE_COUNT) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.refusal",
                        "runtime refusal identity is invalid");
         return YVEX_ERR_INVALID_ARG;
     }
     spec = &runtime_refusals[id];
-    return yvex_runtime_private_reject(failure, spec->code, spec->field, expected, actual,
-                                spec->reason, err, status == YVEX_OK ? spec->status : status);
+    disposition = runtime_refusal_disposition(id, spec->code);
+    rc = yvex_runtime_private_reject(failure, spec->code, spec->field, expected, actual,
+                                     spec->reason, err,
+                                     status == YVEX_OK ? spec->status : status);
+    if (failure) {
+        failure->origin = disposition.origin;
+        failure->recovery = disposition.recovery;
+    }
+    return rc;
 }
 
 int yvex_runtime_private_refuse(yvex_model_engine_failure *failure, yvex_runtime_private_refusal_id id,
