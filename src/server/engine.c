@@ -23,7 +23,7 @@ typedef struct {
     char runtime_binding_path[YVEX_PATH_CAP];
     char target_id[128];
     yvex_model_engine *model;
-    server_scheduler *scheduler;
+    server_request_queue *request_queue;
     server_session_registry *sessions;
     server_media_registry *media;
     yvex_server_engine_summary summary;
@@ -35,9 +35,9 @@ struct server_engine_manager {
     pthread_cond_t condition;
     server_engine *engines;
     unsigned long long capacity, next_generation;
-    unsigned long long scheduler_queue_capacity, scheduler_worker_count;
-    server_scheduler_execute scheduler_execute;
-    void *scheduler_context;
+    unsigned long long request_capacity, request_workers;
+    server_request_queue_execute request_execute;
+    void *request_context;
     server_telemetry *telemetry;
     int mutex_ready, condition_ready, closing;
 };
@@ -176,18 +176,17 @@ static void generation_options(const server_engine *engine,
     options->sampling_policy.seed = engine->options.sampling_seed;
 }
 
-static int engine_scheduler_open(server_engine_manager *manager,
-                                 server_engine *engine, yvex_error *err)
+static int engine_request_queue_open(server_engine_manager *manager,
+                                     server_engine *engine, yvex_error *err)
 {
-    unsigned long long workers = manager->scheduler_worker_count;
+    unsigned long long workers = manager->request_workers;
     if (workers > engine->options.concurrent_sequences)
         workers = engine->options.concurrent_sequences;
-    int rc = yvex_server_scheduler_open(
-        &engine->scheduler, manager->scheduler_queue_capacity,
-        workers, manager->scheduler_execute, NULL,
-        manager->scheduler_context, err);
+    int rc = yvex_server_request_queue_open(
+        &engine->request_queue, manager->request_capacity, workers,
+        manager->request_execute, NULL, manager->request_context, err);
     if (rc == YVEX_OK)
-        rc = yvex_server_scheduler_start(engine->scheduler, err);
+        rc = yvex_server_request_queue_start(engine->request_queue, err);
     return rc;
 }
 
@@ -404,8 +403,8 @@ static int engine_close(server_engine_manager *manager, server_engine *engine,
 {
     yvex_error primary = {0}, cleanup = {0};
     int rc = YVEX_OK, cleanup_rc;
-    if (engine->scheduler) {
-        cleanup_rc = yvex_server_scheduler_finish(engine->scheduler, &cleanup);
+    if (engine->request_queue) {
+        cleanup_rc = yvex_server_request_queue_finish(engine->request_queue, &cleanup);
         if (cleanup_rc != YVEX_OK) {
             rc = cleanup_rc;
             primary = cleanup;
@@ -420,7 +419,7 @@ static int engine_close(server_engine_manager *manager, server_engine *engine,
     }
     yvex_server_media_registry_close(&engine->media);
     yvex_model_engine_close(&engine->model);
-    yvex_server_scheduler_close(&engine->scheduler);
+    yvex_server_request_queue_close(&engine->request_queue);
     if (engine->telemetry_opened) {
         yvex_server_telemetry_model_closed(manager->telemetry);
         engine->telemetry_opened = 0;
@@ -462,16 +461,14 @@ static server_engine *engine_reserve(server_engine_manager *manager,
 
 int yvex_server_engine_manager_open(
     server_engine_manager **out, unsigned long long capacity,
-    unsigned long long scheduler_queue_capacity,
-    unsigned long long scheduler_worker_count,
-    server_scheduler_execute scheduler_execute, void *scheduler_context,
+    unsigned long long request_capacity, unsigned long long request_workers,
+    server_request_queue_execute request_execute, void *request_context,
     server_telemetry *telemetry, yvex_error *err)
 {
     server_engine_manager *manager;
     if (out) *out = NULL;
     if (!out || !capacity || capacity > YVEX_SERVER_ENGINE_CAP ||
-        !scheduler_queue_capacity || !scheduler_worker_count ||
-        !scheduler_execute || !telemetry)
+        !request_capacity || !request_workers || !request_execute || !telemetry)
         return engine_refuse(err, YVEX_ERR_INVALID_ARG,
                              "bounded engine manager inputs are required");
     manager = calloc(1u, sizeof(*manager));
@@ -485,10 +482,10 @@ int yvex_server_engine_manager_open(
     }
     manager->capacity = capacity;
     manager->next_generation = 1ull;
-    manager->scheduler_queue_capacity = scheduler_queue_capacity;
-    manager->scheduler_worker_count = scheduler_worker_count;
-    manager->scheduler_execute = scheduler_execute;
-    manager->scheduler_context = scheduler_context;
+    manager->request_capacity = request_capacity;
+    manager->request_workers = request_workers;
+    manager->request_execute = request_execute;
+    manager->request_context = request_context;
     manager->telemetry = telemetry;
     if (pthread_mutex_init(&manager->mutex, NULL) != 0 ||
         (manager->mutex_ready = 1,
@@ -535,7 +532,7 @@ int yvex_server_engine_manager_load(
     options_rebind(slot);
     (void)pthread_mutex_unlock(&manager->mutex);
     candidate.active_work = 0ull;
-    rc = engine_scheduler_open(manager, &candidate, err);
+    rc = engine_request_queue_open(manager, &candidate, err);
     if (rc == YVEX_OK)
         rc = candidate.options.generation_mode == YVEX_SERVER_GENERATION_MEDIA
                  ? media_engine_open(manager, &candidate, media, err)
@@ -632,17 +629,17 @@ int yvex_server_engine_lease_submit(
     unsigned long long *queued, yvex_error *err)
 {
     server_engine *engine = lease ? lease->engine : NULL;
-    char serialization_key[SERVER_SCHEDULER_KEY_CAP];
+    char serialization_key[SERVER_REQUEST_QUEUE_KEY_CAP];
     int rc;
     if (!engine || engine->generation != lease->generation ||
-        !engine->scheduler)
+        !engine->request_queue)
         return engine_refuse(err, YVEX_ERR_STATE,
-                             "live engine scheduler lease is required");
-    rc = yvex_server_scheduler_key(serialization_key, lease->generation,
-                                   session_name, err);
+                             "live engine request queue lease is required");
+    rc = yvex_server_request_queue_key(serialization_key, lease->generation,
+                                       session_name, err);
     if (rc == YVEX_OK)
-        rc = yvex_server_scheduler_submit(
-            engine->scheduler, work, serialization_key, queued, err);
+        rc = yvex_server_request_queue_submit(
+            engine->request_queue, work, serialization_key, queued, err);
     return rc;
 }
 
@@ -770,8 +767,8 @@ void yvex_server_engine_manager_cancel_all(server_engine_manager *manager)
         if (manager->engines[index].state == YVEX_SERVER_ENGINE_LOADED ||
             manager->engines[index].state == YVEX_SERVER_ENGINE_DRAINING) {
             engine_cancel(&manager->engines[index]);
-            yvex_server_scheduler_request_stop(
-                manager->engines[index].scheduler);
+            yvex_server_request_queue_request_stop(
+                manager->engines[index].request_queue);
         }
     (void)pthread_mutex_unlock(&manager->mutex);
 }
@@ -782,20 +779,20 @@ static unsigned long long summary_add(unsigned long long left,
     return left > ULLONG_MAX - right ? ULLONG_MAX : left + right;
 }
 
-int yvex_server_engine_manager_scheduler_snapshot(
-    server_engine_manager *manager, server_scheduler_summary *summary,
+int yvex_server_engine_manager_request_queue_snapshot(
+    server_engine_manager *manager, server_request_queue_summary *summary,
     yvex_error *err)
 {
     unsigned long long index;
     if (summary) memset(summary, 0, sizeof(*summary));
     if (!manager || !summary || pthread_mutex_lock(&manager->mutex) != 0)
         return engine_refuse(err, YVEX_ERR_INVALID_ARG,
-                             "engine scheduler summary is required");
+                             "engine request queue summary is required");
     for (index = 0ull; index < manager->capacity; ++index) {
-        server_scheduler_summary current = {0};
-        if (!manager->engines[index].scheduler) continue;
-        yvex_server_scheduler_snapshot(manager->engines[index].scheduler,
-                                       &current);
+        server_request_queue_summary current = {0};
+        if (!manager->engines[index].request_queue) continue;
+        yvex_server_request_queue_snapshot(
+            manager->engines[index].request_queue, &current);
         summary->queued = summary_add(summary->queued, current.queued);
         summary->capacity = summary_add(summary->capacity, current.capacity);
         summary->active = summary_add(summary->active, current.active);
@@ -824,7 +821,7 @@ int yvex_server_engine_manager_close(server_engine_manager **manager,
         if (engine->state == YVEX_SERVER_ENGINE_LOADED) {
             engine->state = YVEX_SERVER_ENGINE_DRAINING;
             engine_cancel(engine);
-            yvex_server_scheduler_request_stop(engine->scheduler);
+            yvex_server_request_queue_request_stop(engine->request_queue);
         }
     }
     for (;;) {

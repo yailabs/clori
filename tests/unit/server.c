@@ -65,17 +65,17 @@ typedef struct {
     pthread_cond_t condition;
     unsigned long long active, peak, completed;
     int release, first_active, third_active, first_done, violation;
-} scheduler_probe;
+} request_queue_probe;
 
 typedef struct {
-    scheduler_probe *probe;
+    request_queue_probe *probe;
     int id;
-} scheduler_probe_work;
+} request_queue_probe_work;
 
-static void scheduler_probe_execute(void *context, void *opaque)
+static void request_queue_probe_execute(void *context, void *opaque)
 {
-    scheduler_probe *probe = context;
-    scheduler_probe_work *work = opaque;
+    request_queue_probe *probe = context;
+    request_queue_probe_work *work = opaque;
     (void)pthread_mutex_lock(&probe->mutex);
     if (work->id == 2 && !probe->first_done) probe->violation = 1;
     probe->active++;
@@ -92,34 +92,34 @@ static void scheduler_probe_execute(void *context, void *opaque)
     (void)pthread_mutex_unlock(&probe->mutex);
 }
 
-static int test_scheduler_serialization(void)
+static int test_request_queue_serialization(void)
 {
-    scheduler_probe probe = {0};
-    scheduler_probe_work work[] = {
+    request_queue_probe probe = {0};
+    request_queue_probe_work work[] = {
         {&probe, 1}, {&probe, 2}, {&probe, 3}
     };
-    server_scheduler *scheduler = NULL;
-    server_scheduler_summary summary = {0};
+    server_request_queue *request_queue = NULL;
+    server_request_queue_summary summary = {0};
     yvex_error err;
     YVEX_TEST_ASSERT(pthread_mutex_init(&probe.mutex, NULL) == 0 &&
                          pthread_cond_init(&probe.condition, NULL) == 0,
-                     "scheduler probe synchronization opens");
+                     "request_queue probe synchronization opens");
     YVEX_TEST_ASSERT(
-        yvex_server_scheduler_open(
-            &scheduler, 3ull, 2ull, scheduler_probe_execute, NULL,
-            &probe, &err) == YVEX_OK && scheduler,
-        "two-worker scheduler opens");
-    YVEX_TEST_ASSERT(yvex_server_scheduler_start(scheduler, &err) == YVEX_OK,
-                     "two-worker scheduler starts");
+        yvex_server_request_queue_open(
+            &request_queue, 3ull, 2ull, request_queue_probe_execute, NULL,
+            &probe, &err) == YVEX_OK && request_queue,
+        "two-worker request_queue opens");
+    YVEX_TEST_ASSERT(yvex_server_request_queue_start(request_queue, &err) == YVEX_OK,
+                     "two-worker request_queue starts");
     YVEX_TEST_ASSERT(
-        yvex_server_scheduler_submit(
-            scheduler, &work[0], "same", NULL, &err) == YVEX_OK,
+        yvex_server_request_queue_submit(
+            request_queue, &work[0], "same", NULL, &err) == YVEX_OK,
         "request executor accepts the first serialized session");
     YVEX_TEST_ASSERT(
-        yvex_server_scheduler_submit(
-                scheduler, &work[1], "same", NULL, &err) == YVEX_OK &&
-            yvex_server_scheduler_submit(
-                scheduler, &work[2], "other", NULL, &err) == YVEX_OK,
+        yvex_server_request_queue_submit(
+                request_queue, &work[1], "same", NULL, &err) == YVEX_OK &&
+            yvex_server_request_queue_submit(
+                request_queue, &work[2], "other", NULL, &err) == YVEX_OK,
         "request executor admits independent sessions without inference policy");
     (void)pthread_mutex_lock(&probe.mutex);
     while (probe.active < 2ull)
@@ -133,14 +133,14 @@ static int test_scheduler_serialization(void)
         (void)pthread_cond_wait(&probe.condition, &probe.mutex);
     (void)pthread_mutex_unlock(&probe.mutex);
     YVEX_TEST_ASSERT(
-        yvex_server_scheduler_finish(scheduler, &err) == YVEX_OK,
-        "scheduler drains and joins workers");
-    yvex_server_scheduler_snapshot(scheduler, &summary);
+        yvex_server_request_queue_finish(request_queue, &err) == YVEX_OK,
+        "request_queue drains and joins workers");
+    yvex_server_request_queue_snapshot(request_queue, &summary);
     YVEX_TEST_ASSERT(!summary.queued && !summary.active &&
                          !probe.violation &&
                          probe.first_done,
                      "same-key work starts only after its predecessor completes");
-    yvex_server_scheduler_close(&scheduler);
+    yvex_server_request_queue_close(&request_queue);
     (void)pthread_cond_destroy(&probe.condition);
     (void)pthread_mutex_destroy(&probe.mutex);
     return 0;
@@ -893,7 +893,7 @@ static int test_media_engine_lifecycle(void)
                          summary.metrics.resident_device_bytes == 0ull &&
                          !first.runtime_binding_identity[0] &&
                          !first.artifact_identity[0],
-                     "each engine owns a distinct bounded scheduler without false payload residency");
+                     "each engine owns a distinct bounded request_queue without false payload residency");
     wire.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
     wire.kind = YVEX_CLIENT_MESSAGE_ENGINE;
     wire.status = YVEX_OK;
@@ -1139,7 +1139,7 @@ static int test_provider_telemetry(void)
 int yvex_test_server(void)
 {
     if (test_automatic_reasoning_policy() != 0) return 1;
-    if (test_scheduler_serialization() != 0) return 1;
+    if (test_request_queue_serialization() != 0) return 1;
     if (test_session_store() != 0) return 1;
     if (test_configured_summary_and_event() != 0) return 1;
     if (test_adaptive_prefill_policy() != 0) return 1;

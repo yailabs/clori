@@ -995,7 +995,7 @@ int yvex_server_serve(yvex_server *server, yvex_error *err)
 int yvex_server_stop(yvex_server *server, yvex_error *err)
 {
     yvex_error openai_error = {0};
-    server_scheduler_summary scheduler = {0};
+    server_request_queue_summary request_queue = {0};
     int rc = YVEX_OK;
     if (!server || !server->state_mutex_ready ||
         pthread_mutex_lock(&server->state_mutex) != 0)
@@ -1016,12 +1016,12 @@ int yvex_server_stop(yvex_server *server, yvex_error *err)
         rc = yvex_server_openai_finish(server->openai, &openai_error);
     }
     atomic_store_explicit(&server->stopping, 1, memory_order_release);
-    (void)yvex_server_engine_manager_scheduler_snapshot(
-        server->engines, &scheduler, NULL);
+    (void)yvex_server_engine_manager_request_queue_snapshot(
+        server->engines, &request_queue, NULL);
     (void)yvex_server_telemetry_emit(
         server->telemetry, NULL, YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_START,
         YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "shutdown",
-        scheduler.queued, server->active_clients, scheduler.active,
+        request_queue.queued, server->active_clients, request_queue.active,
         0.0, 0.0, err);
     if (server->listen_fd >= 0) {
         (void)shutdown(server->listen_fd, SHUT_RDWR);
@@ -1040,7 +1040,7 @@ int yvex_server_stop(yvex_server *server, yvex_error *err)
 /*
  * Drain graph work and close sessions/model while telemetry remains readable.
  *
- * Joins scheduler workers, closes runtime ownership, emits shutdown.complete, and leaves
+ * Joins request-queue workers, closes runtime ownership, emits shutdown.complete, and leaves
  * protocol/telemetry storage alive for final subscribers. Concurrent finish refuses and cleanup
  * preserves the first causal error.
  */
@@ -1106,7 +1106,7 @@ int yvex_server_get_summary(const yvex_server *server,
 {
     yvex_server *mutable = (yvex_server *)server;
     yvex_server_engine_summary engines[YVEX_SERVER_ENGINE_CAP];
-    server_scheduler_summary scheduler = {0};
+    server_request_queue_summary request_queue = {0};
     unsigned long long count = 0u, index;
     if (!server || !out || pthread_mutex_lock(&mutable->state_mutex) != 0)
         return server_refuse(err, YVEX_ERR_INVALID_ARG,
@@ -1119,12 +1119,12 @@ int yvex_server_get_summary(const yvex_server *server,
             YVEX_OK)
         return yvex_error_code(err);
     if (server->engines &&
-        yvex_server_engine_manager_scheduler_snapshot(
-            server->engines, &scheduler, err) != YVEX_OK)
+        yvex_server_engine_manager_request_queue_snapshot(
+            server->engines, &request_queue, err) != YVEX_OK)
         return yvex_error_code(err);
     if (server->telemetry) {
-        yvex_server_telemetry_queue(server->telemetry, scheduler.queued,
-                                    scheduler.capacity);
+        yvex_server_telemetry_queue(server->telemetry, request_queue.queued,
+                                    request_queue.capacity);
         (void)yvex_server_telemetry_metrics_copy(server->telemetry,
                                                  &out->metrics, err);
     }

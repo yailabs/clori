@@ -21,7 +21,7 @@ typedef struct server_telemetry server_telemetry;
 typedef struct server_session_registry server_session_registry;
 typedef struct server_media_registry server_media_registry;
 typedef struct server_openai_listener server_openai_listener;
-typedef struct server_scheduler server_scheduler;
+typedef struct server_request_queue server_request_queue;
 typedef struct server_engine_manager server_engine_manager;
 typedef struct server_engine_lease {
     void *engine;
@@ -46,35 +46,37 @@ static inline void server_event_scope_from_engine(
     memcpy(scope->specialization_identity, engine->specialization_identity,
            sizeof(scope->specialization_identity));
 }
-#define SERVER_SCHEDULER_KEY_CAP 224u
+#define SERVER_REQUEST_QUEUE_KEY_CAP 224u
 
-typedef void (*server_scheduler_execute)(void *context, void *work);
-typedef void (*server_scheduler_observe)(void *context,
-                                         unsigned long long queued,
-                                         unsigned long long capacity,
-                                         unsigned long long active);
+typedef void (*server_request_queue_execute)(void *context, void *work);
+typedef void (*server_request_queue_observe)(void *context,
+                                             unsigned long long queued,
+                                             unsigned long long capacity,
+                                             unsigned long long active);
 
 typedef struct {
     unsigned long long queued, capacity, active, workers;
-} server_scheduler_summary;
+} server_request_queue_summary;
 
-int yvex_server_scheduler_open(
-    server_scheduler **out, unsigned long long queue_capacity,
-    unsigned long long worker_count, server_scheduler_execute execute,
-    server_scheduler_observe observe, void *context, yvex_error *err);
-int yvex_server_scheduler_start(server_scheduler *scheduler, yvex_error *err);
-int yvex_server_scheduler_key(
-    char output[SERVER_SCHEDULER_KEY_CAP],
+int yvex_server_request_queue_open(
+    server_request_queue **out, unsigned long long queue_capacity,
+    unsigned long long worker_count, server_request_queue_execute execute,
+    server_request_queue_observe observe, void *context, yvex_error *err);
+int yvex_server_request_queue_start(server_request_queue *request_queue,
+                                    yvex_error *err);
+int yvex_server_request_queue_key(
+    char output[SERVER_REQUEST_QUEUE_KEY_CAP],
     unsigned long long engine_generation, const char *session_name,
     yvex_error *err);
-int yvex_server_scheduler_submit(server_scheduler *scheduler, void *work,
-                                 const char *serialization_key,
-                                 unsigned long long *queued, yvex_error *err);
-void yvex_server_scheduler_request_stop(server_scheduler *scheduler);
-int yvex_server_scheduler_finish(server_scheduler *scheduler, yvex_error *err);
-void yvex_server_scheduler_snapshot(const server_scheduler *scheduler,
-                                    server_scheduler_summary *summary);
-void yvex_server_scheduler_close(server_scheduler **scheduler);
+int yvex_server_request_queue_submit(server_request_queue *request_queue, void *work,
+                                     const char *serialization_key,
+                                     unsigned long long *queued, yvex_error *err);
+void yvex_server_request_queue_request_stop(server_request_queue *request_queue);
+int yvex_server_request_queue_finish(server_request_queue *request_queue,
+                                     yvex_error *err);
+void yvex_server_request_queue_snapshot(const server_request_queue *request_queue,
+                                        server_request_queue_summary *summary);
+void yvex_server_request_queue_close(server_request_queue **request_queue);
 
 #define SESSION_SCHEMA_V1 1u
 #define SESSION_MAX_MESSAGES 128u
@@ -349,7 +351,7 @@ void yvex_server_media_registry_close(server_media_registry **);
 
 int yvex_server_engine_manager_open(
     server_engine_manager **, unsigned long long, unsigned long long,
-    unsigned long long, server_scheduler_execute, void *,
+    unsigned long long, server_request_queue_execute, void *,
     server_telemetry *, yvex_error *);
 int yvex_server_engine_summary_valid(const yvex_server_engine_summary *);
 int yvex_server_engine_manager_load(
@@ -378,8 +380,8 @@ int yvex_server_engine_lease_console_status(
     server_engine_lease *, const char *, yvex_console_status *,
     yvex_client_partial_turn *, yvex_error *);
 void yvex_server_engine_manager_cancel_all(server_engine_manager *);
-int yvex_server_engine_manager_scheduler_snapshot(
-    server_engine_manager *, server_scheduler_summary *, yvex_error *);
+int yvex_server_engine_manager_request_queue_snapshot(
+    server_engine_manager *, server_request_queue_summary *, yvex_error *);
 int yvex_server_engine_manager_close(server_engine_manager **, yvex_error *);
 
 #endif
