@@ -537,8 +537,6 @@ int yvex_runtime_generation_turn_execute(
     unsigned long long token_capacity, unsigned char *text,
     unsigned long long text_capacity, yvex_runtime_generation_result *result,
     yvex_error *err);
-int yvex_runtime_generation_execution_width_set(
-    yvex_runtime_generation_context *context, unsigned long long width, yvex_error *err);
 int yvex_runtime_generation_result_validate(
     const yvex_runtime_generation_plan_summary *plan,
     const yvex_runtime_generation_token_result *tokens,

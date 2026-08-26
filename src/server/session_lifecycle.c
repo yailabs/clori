@@ -353,7 +353,6 @@ int yvex_server_session_close_locked(server_session_registry *registry,
 
 int yvex_server_sessions_open(server_session_registry **out,
                               yvex_model_engine *model,
-                              server_scheduler *scheduler,
                               const yvex_server_engine_options *options,
                               unsigned long long engine_generation,
                               int continuous_batching,
@@ -361,7 +360,7 @@ int yvex_server_sessions_open(server_session_registry **out,
 {
     server_session_registry *registry;
     if (out) *out = NULL;
-    if (!out || !model || !scheduler || !options || !telemetry ||
+    if (!out || !model || !options || !telemetry ||
         !engine_generation ||
         !options->maximum_sessions ||
         options->maximum_sessions > SIZE_MAX / sizeof(server_session)) {
@@ -380,7 +379,6 @@ int yvex_server_sessions_open(server_session_registry **out,
         return YVEX_ERR_NOMEM;
     }
     registry->model = model;
-    registry->scheduler = scheduler;
     registry->options = *options;
     registry->engine_generation = engine_generation;
     registry->continuous_batching = continuous_batching != 0;

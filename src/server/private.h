@@ -36,9 +36,6 @@ typedef void (*server_scheduler_observe)(void *context,
 
 typedef struct {
     unsigned long long queued, capacity, active, workers;
-    unsigned long long execution_ready_limit_ns, execution_ready_waits;
-    unsigned long long execution_ready_timeouts, execution_ready_ns;
-    unsigned long long maximum_execution_ready_width;
 } server_scheduler_summary;
 
 int yvex_server_scheduler_open(
@@ -52,12 +49,7 @@ int yvex_server_scheduler_key(
     yvex_error *err);
 int yvex_server_scheduler_submit(server_scheduler *scheduler, void *work,
                                  const char *serialization_key,
-                                 int compatible_batch_candidate,
                                  unsigned long long *queued, yvex_error *err);
-int yvex_server_scheduler_execution_ready(
-    server_scheduler *scheduler, const char *serialization_key,
-    unsigned long long *compatible_width, unsigned long long *wait_ns,
-    int *timed_out, yvex_error *err);
 void yvex_server_scheduler_request_stop(server_scheduler *scheduler);
 int yvex_server_scheduler_finish(server_scheduler *scheduler, yvex_error *err);
 void yvex_server_scheduler_snapshot(const server_scheduler *scheduler,
@@ -101,7 +93,6 @@ typedef struct server_session {
 struct server_session_registry {
     pthread_mutex_t mutex;
     yvex_model_engine *model;
-    server_scheduler *scheduler;
     yvex_server_engine_options options;
     yvex_reasoning_policy default_reasoning_policy;
     server_telemetry *telemetry;
@@ -295,7 +286,6 @@ void yvex_server_openai_snapshot(const server_openai_listener *listener,
 void yvex_server_openai_close(server_openai_listener **listener);
 
 int yvex_server_sessions_open(server_session_registry **out, yvex_model_engine *model,
-                              server_scheduler *scheduler,
                               const yvex_server_engine_options *options,
                               unsigned long long engine_generation,
                               int continuous_batching,
@@ -360,7 +350,7 @@ int yvex_server_engine_manager_acquire(
 void yvex_server_engine_manager_release(
     server_engine_manager *, server_engine_lease *);
 int yvex_server_engine_lease_submit(
-    server_engine_lease *, void *, const char *, int,
+    server_engine_lease *, void *, const char *,
     unsigned long long *, yvex_error *);
 int yvex_server_engine_lease_execute(
     server_engine_lease *, const yvex_client_request *, const char *, double,

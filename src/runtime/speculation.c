@@ -364,7 +364,7 @@ int yvex_runtime_speculation_context_open(yvex_runtime_speculation_context **out
          options->backend != YVEX_BACKEND_KIND_CUDA) || !options->context_capacity ||
         !options->prefill_chunk_tokens ||
         !runtime_compatible_batch_options_valid(options->compatible_batching,
-            options->compatible_batch_width, options->execution_width))
+            options->compatible_batch_width))
         return speculation_refuse(err, YVEX_ERR_INVALID_ARG, "complete DSpark runtime owners are required");
     context = yvex_core_calloc(1u, sizeof(*context));
     if (!context)
@@ -426,7 +426,6 @@ int yvex_runtime_speculation_context_open(yvex_runtime_speculation_context **out
     transformer_options.device_pre_normalized_output = context->device_draft_selection;
     transformer_options.compatible_batching = options->compatible_batching;
     transformer_options.compatible_batch_width = options->compatible_batch_width;
-    transformer_options.execution_width = options->execution_width;
     transformer_options.execution_profile = options->execution_profile;
     transformer_options.shape_registry = options->shape_registry;
     rc = yvex_runtime_transformer_context_open(

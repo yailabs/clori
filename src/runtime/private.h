@@ -30,11 +30,10 @@ static inline yvex_attention_evidence_level runtime_attention_evidence(
 }
 
 static inline int runtime_compatible_batch_options_valid(
-    int enabled, unsigned long long width, const unsigned long long *actual_width)
+    int enabled, unsigned long long width)
 {
     return (enabled == 0 || enabled == 1) &&
-           (enabled ? width >= 2ull && width < 64ull && actual_width
-                    : !width && !actual_width);
+           (enabled ? width >= 2ull && width < 64ull : !width);
 }
 
 #define YVEX_GENERATION_LIFECYCLE_ACTIVE 1u
@@ -115,7 +114,6 @@ typedef enum {
 struct runtime_compatible_batch_ticket {
     yvex_execution_compatibility_key key;
     unsigned long long row_count, actual_width, group_size, coalescing_limit_ns;
-    unsigned long long expected_group_size;
     runtime_compatible_batch_execute execute;
     void *context;
     int (*cancel_requested)(void *context);
@@ -135,7 +133,7 @@ typedef struct {
     yvex_tensor_scope tensor_scope;
     yvex_execution_phase phase;
     yvex_execution_class execution_class;
-    unsigned long long maximum_width, expected_width;
+    unsigned long long maximum_width;
     int (*cancel_requested)(void *context);
     void *cancel_context;
 } runtime_compatible_step_request;
@@ -412,7 +410,6 @@ struct yvex_runtime_generation_context {
     pthread_mutex_t drain_mutex;
     pthread_cond_t drain_condition;
     unsigned long long execution_count, failure_count, cancellation_count;
-    unsigned long long compatible_execution_width;
     int drain_mutex_ready, drain_condition_ready, continuation_allowed;
     int device_selection;
 };

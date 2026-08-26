@@ -1335,39 +1335,6 @@ static int session_profile_publish(server_session_registry *registry,
     return rc;
 }
 
-static int session_execution_ready_admit(
-    server_session_registry *registry, const server_session *session,
-    const yvex_client_request *request, const char *request_id,
-    unsigned long long *width, yvex_error *err)
-{
-    char serialization_key[SERVER_SCHEDULER_KEY_CAP];
-    server_scheduler_summary summary;
-    unsigned long long wait_ns = 0ull;
-    int timed_out = 0;
-    int rc = yvex_server_scheduler_key(
-        serialization_key, registry->engine_generation, session->name, err);
-    if (rc == YVEX_OK)
-        rc = yvex_server_scheduler_execution_ready(
-            registry->scheduler, serialization_key, width, &wait_ns,
-            &timed_out, err);
-    if (rc == YVEX_OK && !registry->continuous_batching) *width = 1ull;
-    if (rc == YVEX_OK)
-        rc = yvex_runtime_generation_execution_width_set(
-            session->generation, *width, err);
-    memset(&summary, 0, sizeof(summary));
-    if (rc == YVEX_OK) {
-        yvex_server_scheduler_snapshot(registry->scheduler, &summary);
-        rc = yvex_server_telemetry_emit_provider(
-            registry->telemetry, YVEX_SERVER_EVENT_GENERATION_PROFILE,
-            YVEX_SERVER_SEVERITY_INFO, session->name, request_id, NULL,
-            "scheduler-ready", *width, (unsigned long long)timed_out,
-            summary.execution_ready_limit_ns,
-            (double)wait_ns / 1000000000.0, 0.0, NULL,
-            request->provider_request, NULL, err);
-    }
-    return rc;
-}
-
 static int session_turn(server_session_registry *registry,
                         server_session *session,
                         const yvex_client_request *request,
@@ -1385,7 +1352,6 @@ static int session_turn(server_session_registry *registry,
     yvex_runtime_sampling_policy policy;
     yvex_client_message started;
     turn_sink sink;
-    unsigned long long execution_ready_width = 0ull;
     unsigned long long prior_messages = session->message_count;
     unsigned long long prior_transcript = session->transcript_count;
     unsigned long long turn_maximum = request->provider_request
@@ -1451,10 +1417,6 @@ static int session_turn(server_session_registry *registry,
         rc = session_execution_rebase(registry, session, err);
     if (rc == YVEX_OK)
         rc = session_generation_open(registry, session, request, &policy, err);
-    if (rc == YVEX_OK)
-        rc = session_execution_ready_admit(
-            registry, session, request, request_id,
-            &execution_ready_width, err);
     if (rc != YVEX_OK) return rc;
     memset(&sink, 0, sizeof(sink));
     sink.registry = registry;

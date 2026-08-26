@@ -211,7 +211,7 @@ static int generation_test_bounded_batch_coalescing(void)
                      "bounded coalescing gate should initialize");
     YVEX_TEST_ASSERT(
         yvex_runtime_private_batcher_open(&batcher, 4ull, &err) == YVEX_OK &&
-            yvex_runtime_private_batcher_set_producers(batcher, 1ull, &err) ==
+            yvex_runtime_private_batcher_set_producers(batcher, 2ull, &err) ==
                 YVEX_OK &&
             yvex_runtime_private_batcher_start(batcher, &err) == YVEX_OK,
         "two-producer compatible batch owner should start");
@@ -219,7 +219,6 @@ static int generation_test_bounded_batch_coalescing(void)
     job.gate = &gate;
     job.ticket.row_count = 1ull;
     job.ticket.coalescing_limit_ns = 1000000ull;
-    job.ticket.expected_group_size = 2ull;
     job.ticket.execute = generation_batching_execute;
     job.ticket.context = &job;
     job.ticket.kind = RUNTIME_COMPATIBLE_BATCH_RENDEZVOUS;
@@ -240,7 +239,7 @@ static int generation_test_bounded_batch_coalescing(void)
         job.result == YVEX_OK &&
             yvex_runtime_private_batcher_snapshot(batcher, &summary, &err) ==
                 YVEX_OK &&
-            summary.registered_producers == 1ull &&
+            summary.registered_producers == 2ull &&
             summary.coalescing_waits == 1ull &&
             summary.coalescing_timeouts == 1ull && summary.coalescing_ns &&
             summary.rendezvous_submissions == 1ull &&
@@ -282,7 +281,6 @@ static int generation_test_incompatible_arrival_releases_impossible_wait(void)
     jobs[0].gate = &gate;
     jobs[0].ticket.row_count = 1ull;
     jobs[0].ticket.coalescing_limit_ns = 100000000ull;
-    jobs[0].ticket.expected_group_size = 4ull;
     jobs[0].ticket.execute = generation_batching_execute;
     jobs[0].ticket.context = &jobs[0];
     generation_batching_key(&jobs[0].ticket.key, 0ull);
@@ -304,7 +302,7 @@ static int generation_test_incompatible_arrival_releases_impossible_wait(void)
     jobs[1].batcher = batcher;
     jobs[1].gate = &gate;
     jobs[1].ticket.row_count = 1ull;
-    jobs[1].ticket.expected_group_size = 1ull;
+    jobs[1].ticket.coalescing_limit_ns = 1ull;
     jobs[1].ticket.execute = generation_batching_execute;
     jobs[1].ticket.context = &jobs[1];
     generation_batching_key(&jobs[1].ticket.key, 1ull);
@@ -315,6 +313,10 @@ static int generation_test_incompatible_arrival_releases_impossible_wait(void)
                            &jobs[1]) == 0,
         "incompatible ticket should wake but not satisfy coalescing");
     (void)pthread_join(threads[0], NULL);
+    YVEX_TEST_ASSERT(
+        yvex_runtime_private_batcher_set_producers(batcher, 1ull, &err) ==
+            YVEX_OK,
+        "completed incompatible producer should leave the ready population");
     (void)pthread_join(threads[1], NULL);
     YVEX_TEST_ASSERT(
         jobs[0].result == YVEX_OK && jobs[1].result == YVEX_OK &&
@@ -325,9 +327,9 @@ static int generation_test_incompatible_arrival_releases_impossible_wait(void)
             summary.submissions == 2ull && summary.physical_batches == 2ull &&
             !summary.multi_source_batches && !summary.multi_source_rows &&
             !summary.maximum_multi_source_width && !summary.maximum_source_count &&
-            summary.coalescing_waits == 1ull &&
-            summary.coalescing_timeouts == 0ull,
-        "an incompatible occupied producer makes the declared width impossible");
+            summary.coalescing_waits == 2ull &&
+            summary.coalescing_timeouts == 1ull,
+        "incompatible work stays separate under bounded engine scheduling");
     YVEX_TEST_ASSERT(
         yvex_runtime_private_batcher_close(&batcher, &err) == YVEX_OK,
         "incompatible-arrival batch owner should close cleanly");

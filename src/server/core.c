@@ -529,7 +529,7 @@ static int request_enqueue(yvex_server *server, server_work_item *item,
                            yvex_error *err)
 {
     unsigned long long depth = 0ull;
-    int batch_candidate, rc;
+    int rc;
     rc = yvex_server_engine_manager_acquire(
         server->engines, item->request.model_alias,
         item->request.engine_generation, &item->engine,
@@ -538,9 +538,6 @@ static int request_enqueue(yvex_server *server, server_work_item *item,
         item->failure_class = YVEX_CLIENT_FAILURE_MODEL_NOT_FOUND;
         return rc;
     }
-    batch_candidate = item->engine_summary.generation_mode !=
-                          YVEX_SERVER_GENERATION_MEDIA &&
-                      item->request.operation == YVEX_CLIENT_OP_GENERATION_TURN;
     if (pthread_mutex_lock(&server->state_mutex) != 0) {
         rc = server_refuse(err, YVEX_ERR_STATE,
                            "request identity lock failed");
@@ -559,8 +556,7 @@ static int request_enqueue(yvex_server *server, server_work_item *item,
         goto failed;
     item->enqueued_ns = server_monotonic_ns();
     rc = yvex_server_engine_lease_submit(
-        &item->engine, item, item->request.session_name, batch_candidate,
-        &depth, err);
+        &item->engine, item, item->request.session_name, &depth, err);
     if (rc != YVEX_OK) {
         item->failure_class = rc == YVEX_ERR_BOUNDS
                                   ? YVEX_CLIENT_FAILURE_QUEUE_FULL

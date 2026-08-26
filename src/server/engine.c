@@ -270,8 +270,7 @@ static int text_engine_open(server_engine_manager *manager,
         rc = execution_probe(engine, &capacity, &residency, err);
     if (rc == YVEX_OK)
         rc = yvex_server_sessions_open(
-            &engine->sessions, engine->model, engine->scheduler,
-            &engine->options, engine->generation,
+            &engine->sessions, engine->model, &engine->options, engine->generation,
             engine->continuous_batching, manager->telemetry, err);
     view = rc == YVEX_OK ? yvex_model_engine_view_get(engine->model) : NULL;
     if (rc != YVEX_OK || !view) return rc != YVEX_OK ? rc : YVEX_ERR_STATE;
@@ -628,8 +627,7 @@ void yvex_server_engine_manager_release(server_engine_manager *manager,
 
 int yvex_server_engine_lease_submit(
     server_engine_lease *lease, void *work, const char *session_name,
-    int compatible_batch_candidate, unsigned long long *queued,
-    yvex_error *err)
+    unsigned long long *queued, yvex_error *err)
 {
     server_engine *engine = lease ? lease->engine : NULL;
     char serialization_key[SERVER_SCHEDULER_KEY_CAP];
@@ -642,8 +640,7 @@ int yvex_server_engine_lease_submit(
                                    session_name, err);
     if (rc == YVEX_OK)
         rc = yvex_server_scheduler_submit(
-            engine->scheduler, work, serialization_key,
-            compatible_batch_candidate, queued, err);
+            engine->scheduler, work, serialization_key, queued, err);
     return rc;
 }
 
@@ -801,21 +798,6 @@ int yvex_server_engine_manager_scheduler_snapshot(
         summary->capacity = summary_add(summary->capacity, current.capacity);
         summary->active = summary_add(summary->active, current.active);
         summary->workers = summary_add(summary->workers, current.workers);
-        summary->execution_ready_waits = summary_add(
-            summary->execution_ready_waits, current.execution_ready_waits);
-        summary->execution_ready_timeouts = summary_add(
-            summary->execution_ready_timeouts,
-            current.execution_ready_timeouts);
-        summary->execution_ready_ns = summary_add(
-            summary->execution_ready_ns, current.execution_ready_ns);
-        if (current.execution_ready_limit_ns >
-            summary->execution_ready_limit_ns)
-            summary->execution_ready_limit_ns =
-                current.execution_ready_limit_ns;
-        if (current.maximum_execution_ready_width >
-            summary->maximum_execution_ready_width)
-            summary->maximum_execution_ready_width =
-                current.maximum_execution_ready_width;
     }
     (void)pthread_mutex_unlock(&manager->mutex);
     yvex_error_clear(err);

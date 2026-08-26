@@ -95,8 +95,7 @@ static void batching_coalesce_locked(runtime_compatible_batcher *batcher)
     int wait_status = 0;
     if (!batcher->queue_count || batcher->stopping)
         return;
-    expected = batcher->queue[0]->expected_group_size;
-    if (!expected) expected = batcher->producer_count;
+    expected = batcher->producer_count;
     if (expected < 2ull ||
         batching_compatible_count_locked(batcher) >= expected ||
         batching_possible_compatible_count_locked(batcher, expected) < expected)
@@ -427,8 +426,7 @@ int yvex_runtime_private_batcher_submit(
     int status;
     if (!batcher || !ticket || !ticket->execute || !ticket->row_count ||
         yvex_execution_compatibility_key_validate(&ticket->key, err) != YVEX_OK ||
-        ticket->row_count > ticket->key.admitted_width ||
-        ticket->expected_group_size > ticket->key.admitted_width)
+        ticket->row_count > ticket->key.admitted_width)
         return batching_refuse(err, YVEX_ERR_INVALID_ARG,
                                "one admitted compatible batch ticket is required");
     if (pthread_mutex_lock(&batcher->mutex) != 0)
@@ -978,7 +976,7 @@ typedef struct {
     yvex_runtime_logits_row_result *result;
     float *host_logits;
     unsigned long long host_logits_capacity;
-    unsigned long long admitted_width, expected_width;
+    unsigned long long admitted_width;
 } compatible_logits_ticket;
 
 static int compatible_logits_direct(
@@ -1088,19 +1086,15 @@ int yvex_runtime_private_generation_logits_project(
     ticket.host_logits_capacity = context->logits_row ? context->logits_count : 0ull;
     ticket.admitted_width = context->options.continuous_batching
                                 ? context->options.concurrent_sequences : 1ull;
-    ticket.expected_width = context->compatible_execution_width;
-    if (!source || !result || !ticket.admitted_width || !ticket.expected_width ||
-        ticket.expected_width > ticket.admitted_width)
+    if (!source || !result || !ticket.admitted_width)
         return batching_refuse(err, YVEX_ERR_INVALID_ARG,
                                "compatible output-head request is incomplete");
     if (!ticket.model->compatible_batcher || ticket.admitted_width < 2ull ||
-        ticket.expected_width < 2ull ||
         yvex_backend_kind_of(ticket.backend) != YVEX_BACKEND_KIND_CUDA ||
         ticket.execution_profile->execution_class != YVEX_EXECUTION_CLASS_DEVICE_NATIVE ||
         !source->device_values_available)
         return compatible_logits_direct(&ticket, err);
     ticket.ticket.row_count = 1ull;
-    ticket.ticket.expected_group_size = ticket.expected_width;
     ticket.ticket.coalescing_limit_ns = COMPATIBLE_LOGITS_COALESCING_NS;
     ticket.ticket.execute = compatible_logits_batch_execute;
     ticket.ticket.context = &ticket;
@@ -1145,8 +1139,6 @@ static int compatible_step_rendezvous(
     if (!request || !request->model || !request->session || !request->backend ||
         !request->transformer || !request->execution_profile ||
         request->maximum_width < 2ull || request->maximum_width >= 64ull ||
-        !request->expected_width ||
-        request->expected_width > request->maximum_width ||
         request->phase >= YVEX_EXECUTION_PHASE_COUNT)
         return batching_refuse(err, YVEX_ERR_INVALID_ARG,
                                "compatible execution step is incomplete");
@@ -1185,7 +1177,6 @@ static int compatible_step_rendezvous(
         return yvex_error_code(err);
     ticket.row_count = 1ull;
     ticket.coalescing_limit_ns = COMPATIBLE_RENDEZVOUS_NS;
-    ticket.expected_group_size = request->expected_width;
     ticket.execute = compatible_step_execute;
     ticket.cancel_requested = request->cancel_requested;
     ticket.cancel_context = request->cancel_context;

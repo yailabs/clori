@@ -1081,8 +1081,6 @@ static int transformer_prepare(yvex_runtime_transformer_context *context,
                 .tensor_scope = context->options.tensor_scope, .phase = execution_phase,
                 .execution_class = context->options.execution_profile->execution_class,
                 .maximum_width = context->options.compatible_batch_width,
-                .expected_width = context->options.execution_width
-                                      ? *context->options.execution_width : 1ull,
                 .cancel_requested = context->options.cancel_requested,
                 .cancel_context = context->options.cancel_context},
             &context->batcher_producer_active, err);
@@ -1338,7 +1336,7 @@ int yvex_runtime_transformer_context_open(yvex_runtime_transformer_context **out
         (options->tensor_scope != YVEX_TENSOR_SCOPE_GLOBAL &&
          options->tensor_scope != YVEX_TENSOR_SCOPE_DRAFT) ||
         !runtime_compatible_batch_options_valid(options->compatible_batching,
-            options->compatible_batch_width, options->execution_width) ||
+            options->compatible_batch_width) ||
         options->workspace_token_capacity > options->context_capacity)
         return transformer_runtime_refuse(err, YVEX_ERR_INVALID_ARG,
                                           "transformer context owners/options are required");
