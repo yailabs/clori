@@ -30,6 +30,7 @@
 #include <yvex/internal/graph.h>
 #include <yvex/internal/moe.h>
 #include <yvex/internal/runtime.h>
+#include <yvex/internal/runtime_operator.h>
 #include <yvex/internal/sampling.h>
 
 #include <build_commit.h>

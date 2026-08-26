@@ -38,6 +38,7 @@ include/yvex/internal/model_artifact.h	model.artifacts	model.artifacts.internal	
 include/yvex/internal/model_target.h	model.target	model.target.internal	generic	private	internal-abi	model,source,cli	interface	none
 include/yvex/internal/quant_numeric.h	gguf	gguf.quant_numeric	generic	private	internal-abi	artifact,model,quant,backend	interface	none
 include/yvex/internal/runtime.h	runtime	runtime.internal	generic	private	internal-abi	runtime,graph,cli	interface	none
+include/yvex/internal/runtime_operator.h	runtime	runtime.operator	generic	private	internal-abi	runtime,cli,tests	interface	none
 include/yvex/internal/runtime_batching.h	runtime	runtime.compatible_batching	generic	private	internal-abi	runtime,server,cli,tests	interface	none
 include/yvex/internal/runtime_prefix.h	runtime	runtime.session_prefix	generic	private	internal-abi	runtime,server,tests	interface	none
 include/yvex/internal/runtime_state_store.h	runtime	runtime.state_store	generic	private	file-serialization	runtime,server,tests	interface	none

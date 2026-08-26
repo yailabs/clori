@@ -13,6 +13,7 @@
 #include <yvex/internal/candidate.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/runtime.h>
+#include <yvex/internal/runtime_operator.h>
 
 #include "src/graph/private.h"
 #include "src/runtime/private.h"

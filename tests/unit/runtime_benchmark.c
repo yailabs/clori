@@ -7,6 +7,7 @@
 #define _GNU_SOURCE
 #include <yvex/internal/benchmark.h>
 #include <yvex/internal/runtime.h>
+#include <yvex/internal/runtime_operator.h>
 
 #include <errno.h>
 #include <fcntl.h>

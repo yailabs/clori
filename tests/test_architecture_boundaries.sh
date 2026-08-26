@@ -659,10 +659,10 @@ for digest_field in tensor_output_digest state_delta_digest; do
     rg -w "$digest_field" include/yvex/internal/graph.h >/dev/null ||
         fail "graph probe lacks canonical digest field: $digest_field"
 done
-rg -w 'yvex_attention_probe_result[[:space:]]+probe' include/yvex/internal/runtime.h >/dev/null ||
+rg -w 'yvex_attention_probe_result[[:space:]]+probe' include/yvex/internal/runtime_operator.h >/dev/null ||
     fail "runtime result does not embed the canonical graph probe result"
 for digest_field in execution_evidence_digest execution_identity; do
-    rg -w "$digest_field" include/yvex/internal/runtime.h >/dev/null ||
+    rg -w "$digest_field" include/yvex/internal/runtime_operator.h >/dev/null ||
         fail "runtime result lacks canonical digest field: $digest_field"
 done
 if rg -n "$deprecated_digest_hash_pattern" src/runtime src/cli; then

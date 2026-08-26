@@ -18,6 +18,7 @@
 #include <yvex/internal/model_target.h>
 #include <yvex/internal/moe.h>
 #include <yvex/internal/runtime.h>
+#include <yvex/internal/runtime_operator.h>
 #include <yvex/internal/sampling.h>
 #include <yvex/internal/transformer.h>
 #include <yvex/internal/source_payload.h>

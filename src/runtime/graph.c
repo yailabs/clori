@@ -7,6 +7,7 @@
 #include <yvex/internal/graph.h>
 #include <yvex/internal/graph_state.h>
 #include <yvex/internal/runtime.h>
+#include <yvex/internal/runtime_operator.h>
 #include <yvex/internal/runtime_prefill.h>
 #include <stddef.h>
 #include <stdint.h>

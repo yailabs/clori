@@ -12,6 +12,7 @@
 #include <yvex/internal/families/deepseek_v4.h>
 #include <yvex/internal/model.h>
 #include <yvex/internal/runtime.h>
+#include <yvex/internal/runtime_operator.h>
 #include "tests/reference/deepseek_attention.h"
 
 #include <stdio.h>

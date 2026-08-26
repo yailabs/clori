@@ -7,7 +7,7 @@
 #ifndef INCLUDE_YVEX_INTERNAL_RUNTIME_PREFILL_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_RUNTIME_PREFILL_H_INCLUDED
 
-#include <yvex/internal/runtime.h>
+#include <yvex/internal/runtime_operator.h>
 
 #ifdef __cplusplus
 extern "C" {
