@@ -12,6 +12,9 @@ change. Git history preserves implementation chronology.
 
 ### Added
 
+- Provider-neutral remote model discovery with Hugging Face search and exact-revision
+  inspection, typed safetensors/GGUF representation records, and a table-first local
+  lifecycle catalog that keeps acquired source, package readiness, and engine state distinct.
 - DeepSeek-V4-Flash-DSpark as the sole current DeepSeek source target, with
   target-only reference generation and target-verified speculative generation
   in the same resident runtime model and session authority.

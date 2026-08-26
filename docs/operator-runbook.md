@@ -21,18 +21,99 @@ Starting a host requires one complete registry startup profile. A text runtime
 binds one admitted GGUF to its exact runtime binding, target, backend, and
 context capacity. A composite runtime instead binds an installed component root
 to its target, backend, and capability mode without inventing a singular
-artifact or text-runtime binding. Inspect the available entries first:
+artifact or text-runtime binding. Inspect the local lifecycle catalog first:
 
 ```sh
 ./yvex model list
 ```
 
-Only a row with `STARTUP` equal to `yes` can be named for hosted execution.
-Use `model show NAME` to confirm its backend and `target-only` or `dspark`
-generation mode before startup. If the table is empty or every row says
-`no`, complete the one-time
+The table keeps acquired source, package readiness, and observed engine state
+separate. Only a `package-ready` package can cross the engine boundary. Use
+`model show NAME` for the package's full registry and startup facts. If the
+table has no ready package, complete the appropriate acquisition and preparation
+path or the one-time
 [registration procedure](#registering-an-existing-model). Backend selection is
 part of that profile and never falls back silently.
+
+## Discover, acquire, and prepare a model
+
+The normal model lifecycle is explicit:
+
+```text
+remote model -> representation -> exact revision -> acquired source
+             -> verified source or inspected GGUF -> YVEX package
+             -> local catalog -> engine handoff
+```
+
+Search Hugging Face metadata without downloading payloads:
+
+```sh
+./yvex model search "MiniMax H3"
+./yvex model search "Qwen" --author Qwen --page 1 --limit 20
+```
+
+The first view groups results by provider-derived family and reports remote
+representation classes, gated state, YVEX support stage, and local presence.
+Search may show unsupported models. Remote availability never implies source
+ingest, package readiness, or engine capability. `--json` returns the typed
+`yvex.remote-model-catalog.v1` record used by noninteractive consumers;
+`--interactive` offers a terminal drill-down while calling the same domain API.
+
+Inspect one repository before selecting a representation:
+
+```sh
+./yvex model inspect MiniMaxAI/MiniMax-H3
+./yvex model inspect MiniMaxAI/MiniMax-H3 --revision REVISION --audit
+```
+
+Inspection resolves the exact provider revision and lists its safetensors and
+GGUF files. Safetensors precision comes from provider metadata when present.
+Remote GGUF qtypes inferred from filenames remain explicitly provisional until
+the acquired container passes YVEX GGUF inspection. A provider-reported base
+model is retained as lineage; repositories without that evidence remain
+separate.
+
+Acquire only after choosing the repository, representation, and immutable
+revision:
+
+```sh
+./yvex model acquire --repo OWNER/NAME --family FAMILY --name LOCAL_NAME \
+  --revision EXACT_REVISION --include '*.safetensors' --models-root /srv/yvex
+
+./yvex model acquire --repo OWNER/GGUF_REPOSITORY --family FAMILY \
+  --name LOCAL_NAME --revision EXACT_REVISION --include 'selected-file.gguf' \
+  --models-root /srv/yvex
+```
+
+The first path creates an acquired source. Source verification, semantic
+compilation, physical policy, and transformation remain distinct preparation
+stages. The second path retains the GGUF qtype as acquired physical truth;
+compatible GGUF may be admitted directly after structural, family, role, qtype,
+layout, and package checks, while incompatible containers require an explicit
+repack. YVEX does not requantize a compatible external GGUF merely to relabel it.
+
+Use the local catalog to find the next legal state:
+
+```sh
+./yvex model list
+./yvex model list --json
+./yvex model show PACKAGE_NAME --audit
+```
+
+`model list` combines acquisition receipts and the package registry without
+opening payloads or engines. A moving provider reference is shown as
+`moving-reference`; it is not silently promoted to immutable source evidence.
+Package identities and startup facts remain available through `model show`.
+Engine state is `not-observed` until the committed host API provides a live
+projection; package readiness never implies residency or serving activity.
+
+Hugging Face credentials remain owned by `yvex system accounts` and the
+official provider CLI. Discovery arguments, tables, JSON, receipts, and logs do
+not contain token bytes. Public discovery can proceed without authentication;
+gated or authentication-required refusals remain explicit. Provider metadata is
+discovery evidence only. Acquisition binds the selected exact revision through
+the source provenance contract rather than allowing a later moving `main` to
+change a prepared package.
 
 Before admitting a GB10 performance result, inspect the compiled CUDA image and
 run the bounded bandwidth fixture:

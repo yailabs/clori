@@ -84,6 +84,7 @@ boundaries, not aliases for directories.
 | Boundary | Current owner |
 | --- | --- |
 | Source provenance, inventory, payload trust | `src/source/` |
+| Remote provider discovery and local model lifecycle catalog | `src/accounts/`, `src/model/remote.c`, `src/model/catalog.c` |
 | Family source facts, coverage and logical lowering | `src/model/families/` |
 | Artifact-neutral transformation and physical policy | `src/model/compilation/`, model compilation owners |
 | GGUF container, qtypes, writer, layout | `src/gguf/` |

@@ -28,6 +28,9 @@ yvex run [options] TEXT
 yvex server MODEL [--ctx N] [server options]
 yvex server stop|status|model|memory|log [--json]
 yvex session new|list|show|attach|detach|reset|close|cancel
+yvex model search [QUERY]
+yvex model inspect OWNER/REPOSITORY
+yvex model acquire ...
 yvex model list|show
 yvex compile ...
 yvex artifact show|verify|materialize
@@ -45,6 +48,13 @@ binary. Direct component execution, materialization, tokenizer conformance,
 metadata, tensor-map, and target-report operations enter the finite offline
 lane. Retired top-level namespaces refuse with a migration hint and never
 execute hidden aliases.
+
+Remote search and inspection consume provider-neutral typed model and
+representation records. Their table, audit, interactive drill-down, and JSON
+projections share one domain API; provider output is never parsed from a human
+table. Search proves remote availability only. Exact revision acquisition,
+source verification, package preparation, registry membership, and live engine
+state remain different lifecycle stages.
 
 The local model registry owns complete typed startup profiles. Text runtimes
 carry one artifact, runtime binding, target, backend, generation mode, and
