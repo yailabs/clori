@@ -7181,28 +7181,28 @@
       ]
     },
     {
-      "hint": "use `yvex server MODEL`",
+      "hint": "use `yvex server load MODEL`",
       "path": [
         "model",
         "use"
       ]
     },
     {
-      "hint": "use `yvex server MODEL`",
+      "hint": "use `yvex server load MODEL`",
       "path": [
         "model",
         "select"
       ]
     },
     {
-      "hint": "choose MODEL explicitly with `yvex server MODEL`",
+      "hint": "choose MODEL explicitly with `yvex server load MODEL`",
       "path": [
         "model",
         "selected"
       ]
     },
     {
-      "hint": "use `yvex server MODEL`",
+      "hint": "use `yvex server`",
       "path": [
         "runtime",
         "start"
@@ -7216,7 +7216,7 @@
       ]
     },
     {
-      "hint": "use `yvex server model`",
+      "hint": "use `yvex server models`",
       "path": [
         "runtime",
         "model"
