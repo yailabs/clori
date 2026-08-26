@@ -243,8 +243,8 @@ static const char *const models_help_lines[] = {
     "       yvex model acquisition cleanup TARGET [--models-root DIR] [--stale-locks] [--logs] "
         "[--receipts] [--failed-partials] [--all-provider-cache] [--dry-run] [--yes] [--audit]",
     "       yvex model acquire --repo OWNER/NAME --family deepseek|glm|qwen|gemma|minimax-h3 "
-        "[--name LOCAL_NAME] [--models-root DIR] [--auth auto|required|never] "
-        "[--progress auto|live|plain|log|off]",
+        "[--name LOCAL_NAME] [--revision REVISION] [--include GLOB ...] [--exclude GLOB ...] "
+        "[--models-root DIR] [--auth auto|required|never] [--progress auto|live|plain|log|off]",
     "       yvex model acquire --provider github --repo OWNER/NAME [--release TAG] --asset GLOB "
         "[--models-root DIR] [--auth auto|required|never] [--progress auto|live|plain|log|off]",
     "       yvex inspect artifact registry [--models-root DIR] [--family deepseek|glm|qwen|gemma] "
@@ -264,6 +264,8 @@ static const char *const models_help_lines[] = {
     "\nExamples:",
     "  yvex model search \"MiniMax H3\" --output table",
     "  yvex model inspect MiniMaxAI/MiniMax-H3 --revision REVISION --output table",
+    "  yvex model acquire --repo OWNER/GGUF_REPOSITORY --family FAMILY --name LOCAL_NAME "
+        "--revision REVISION --include 'selected-file.gguf' --models-root ~/lab/models",
     "  yvex inspect artifact check deepseek4-v4-flash-dspark-selected-embed",
     "  yvex model acquire gemma-4-12b-it --models-root ~/lab/models --dry-run --audit",
     "  yvex model acquisition status gemma-4-12b-it --models-root ~/lab/models --audit",

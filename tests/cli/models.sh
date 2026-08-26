@@ -656,6 +656,8 @@ grep 'yvex inspect artifact check' "$ROOT/help.out"
 "$YVEX_BIN" model acquire --help > "$ROOT/help-acquire.out"
 grep -- '--auth' "$ROOT/help-acquire.out"
 grep -- '--progress' "$ROOT/help-acquire.out"
+grep -- '--revision' "$ROOT/help-acquire.out"
+grep -- '--include' "$ROOT/help-acquire.out"
 "$YVEX_BIN" compile artifact prepare --help > "$ROOT/help-prepare.out"
 grep -- '--audit' "$ROOT/help-prepare.out"
 
