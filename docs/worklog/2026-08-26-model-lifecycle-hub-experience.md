@@ -160,6 +160,91 @@ its API. Three source snapshots or builds were superseded while the shared host/
 advanced; focused lifecycle evidence was rerun against the final exact checkpoint. Rereading the
 full diff before edits and commits prevented any Main-Session hunk from entering lifecycle commits.
 
+## Glow-up continuation
+
+Checkpoint `543237e390da3cd6248bb15a594a629addb0111a` repairs the product model over
+the same lifecycle boundary. Provider order is retained only as one ranking
+input. The YVEX catalog now scores normalized exact-name matches, qualified
+canonical source repositories, artifact kind, family evidence, support stage,
+exact local lifecycle state, metadata completeness, and provider rank. Equal
+scores fall back to provider rank and repository identity, so ordering is
+deterministic. The qualified-source catalog supplies generic canonical-publisher
+evidence; there is no query-specific MiniMax ranking branch.
+
+Remote records now distinguish full models, conversions, adapters, components,
+deltas, derivatives, and unknown artifacts. Kind evidence retains whether the
+classification came from the qualified source catalog, provider metadata or
+lineage, or a provisional repository-name hint. A related LoRA may retain
+`minimax-h3` family affinity without acquiring the full-model identity
+`MiniMaxAI/MiniMax-H3`. Repositories and their safetensors or GGUF
+representations remain separate records. Filename-derived GGUF qtypes render as
+provisional and stay structurally marked in JSON until local GGUF admission.
+
+Historical `yvex.source-acquisition.v1` manifests and composite-package
+`repository.json` provenance are now indexed read-only. Exact provider,
+repository, and immutable revision identities reconcile old source and package
+state without relying on directory names. The live provider default advanced
+after the original checkpoint: on 2026-08-26 `MiniMaxAI/MiniMax-H3` resolved to
+`42ed227ee7df40d41602854ae760620d6eb651fe`, while the qualified local source
+and package remain at
+`b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08`. Normal inspection therefore
+reports the local assets as another revision rather than claiming either
+`LOCAL=no` or an exact installation. Explicit inspection of `b8b09e34...`
+reconciles both the acquired source and package.
+
+The primary search table now projects repository, kind, family affinity,
+parameters, representation classes, local lifecycle, and product-facing YVEX
+status. Internal stages remain in audit/JSON. Inspection resolves a default or
+explicit reference to an immutable revision, separates repository-not-found
+from revision-not-found, and presents model, revision, local lifecycle, and
+representation sections. Remote JSON and operator result schemas advance to
+`yvex.remote-model-catalog.v2`; local JSON is
+`yvex.local-model-catalog.v2`. Engine state is still observed exclusively
+through the Main-owned engine inventory. Absence of a reachable host remains
+`not-observed`; no process inference or duplicate engine cache was introduced.
+
+Focused deterministic provider and CLI coverage passes for adversarial provider
+ordering, the full remote-kind taxonomy, exact and other-revision local
+reconciliation, default and explicit revision resolution, revision-specific
+refusal, typed JSON, compact tables, provisional GGUF qtypes, zero discovery
+payload downloads, and token redaction. Live metadata-only smoke placed the
+canonical MiniMax full model first, reconciled the historical source/package,
+and inspected `unsloth/MiniMax-H3-GGUF` without acquisition; all GGUF qtypes
+remained filename evidence. No model payload, engine, server, GPU workload, or
+benchmark was started by the continuation.
+
+The continuation observed four committed Main-session HEAD advances before
+`543237e` and preserved all of them. It then encountered a Main-owned
+execution-batching delta while uncommitted; one combined build was correctly
+classified `SOURCE MUTATED / EVIDENCE INVALID` when that delta changed an ABI
+mid-build. Lifecycle objects compiled independently and the focused suite
+passed, but final combined QA remains deferred until that shared Main boundary
+is committed and source-stable. No Main-owned runtime, graph, or unit-test hunk
+was staged in the lifecycle commit.
+
+Main subsequently published `84fb6a075599ba28bfaee957809e1060db50f3a9`
+and left only this worklog modified. On that stable source, two consecutive
+`BUILD_DIR=build/model-hub` builds, the complete isolated model CLI/provider
+suite, operator-registry generation/refusal, source ownership, documentation,
+project control, and `git diff --check` passed. The exact focused source
+snapshot remained `84fb6a0` with delta identity
+`0a0c34880d1ef83febca205200052b80f7badb1a7c9c73b5c8b6303b07dd3446`
+through those checks.
+
+Whole-tree layout and architecture remained Main-owned blockers at that
+snapshot: eight aggregate layout limits, the pre-existing CLI/client include
+cycle, public and non-public global-count ceilings, and the single-consumer
+`yvex_server_telemetry_identities` declaration were still outside policy. A
+canonical 110-row QA run then overlapped a new uncommitted Main execution and
+runtime reduction spanning 13 source files. QA correctly marked evidence
+`69a91fe21957dd5d39fea24d6c9df8240b0759ac8bb2b038617cc1cbdfc57641`
+as `SOURCE MUTATED / EVIDENCE INVALID`; its cascading build failures are not
+Model Hub evidence. The eight live/performance rows were independently
+`BLOCKED` by unconfigured external assets. The continuation therefore closes
+with focused lifecycle qualification PASS, whole-tree final qualification
+blocked by shared Main WIP, five committed Main HEAD advances observed, five
+source-mutated attempts retained, and zero lost foreign changes.
+
 ## Remaining limitations
 
 - No high-level `model use` orchestration was added. Acquisition and package preparation stay
