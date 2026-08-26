@@ -7,7 +7,6 @@
  */
 #include <build_commit.h>
 #include "src/cli/io/private.h"
-#include "src/cli/private.h"
 
 #include <ctype.h>
 #include <errno.h>
