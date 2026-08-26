@@ -7,7 +7,7 @@
 | Milestone | YVEX.MODEL.LIFECYCLE.HUB.EXPERIENCE.0 |
 | Branch | models1 |
 | Baseline | 1865659744672f5c5e841527caaf467758dfbedc |
-| Checkpoint | 61b123f87a05a404f3d216050e05f38433983a3a |
+| Checkpoint | bbcfe2c897eaea54390873ff23da514ffe89f22d |
 | Subsystem | model.catalog, accounts.provider, cli.models |
 | Model family | multifamily |
 | Hardware | not-applicable |
@@ -111,6 +111,8 @@ at the admitted package boundary.
   provider failure, malformed output, exact revision refusal, safetensors and GGUF
   representations, multiple GGUF qtypes, sharded safetensors, unknown sidecars, local catalog,
   acquisition, resume/cancellation owners, and token redaction.
+- Canonical `integration.cli`: PASS, evidence
+  `ae22a967c71eda0e925e4b48310e8b19d88a5c0eb2bc6109ed2d60ec781c6383`.
 - `tests/test_source_ownership.sh`: PASS for the two new catalog owners.
 - Two consecutive combined-tree `make yvex` builds completed against one unchanged shared-diff
   identity. The concurrent protocol implementation emitted two `unused-function` warnings, so
