@@ -100,7 +100,13 @@ static int test_request_queue_serialization(void)
     };
     server_request_queue *request_queue = NULL;
     server_request_queue_summary summary = {0};
+    char serialization_key[SERVER_REQUEST_QUEUE_KEY_CAP];
     yvex_error err;
+    YVEX_TEST_ASSERT(
+        yvex_server_request_queue_key(serialization_key, 7ull,
+                                      "@engine.sessions", &err) == YVEX_OK &&
+            !strcmp(serialization_key, "7:@engine.sessions"),
+        "engine-scoped work receives a deterministic non-session queue key");
     YVEX_TEST_ASSERT(pthread_mutex_init(&probe.mutex, NULL) == 0 &&
                          pthread_cond_init(&probe.condition, NULL) == 0,
                      "request_queue probe synchronization opens");

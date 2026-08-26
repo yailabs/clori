@@ -1244,6 +1244,13 @@
         "value_type": "name"
       }
     ],
+    "cli_yvex_session": [
+      {
+        "name": "--model",
+        "takes_value": true,
+        "value_type": "name"
+      }
+    ],
     "cli_yvex_run": [
       {
         "default_provider": "client.run",
@@ -6496,7 +6503,9 @@
       "default_providers": [],
       "deprecation_state": "current",
       "documentation_owner": "docs/operator-runbook.md",
-      "flag_sets": [],
+      "flag_sets": [
+        "cli_yvex_session"
+      ],
       "input_schema": "argv.v1",
       "lane": "runtime-client",
       "model_requirement": "runtime-model",
@@ -6536,7 +6545,9 @@
       "default_providers": [],
       "deprecation_state": "current",
       "documentation_owner": "docs/operator-runbook.md",
-      "flag_sets": [],
+      "flag_sets": [
+        "cli_yvex_session"
+      ],
       "input_schema": "argv.v1",
       "lane": "runtime-client",
       "model_requirement": "runtime-model",
@@ -6577,7 +6588,9 @@
       "default_providers": [],
       "deprecation_state": "current",
       "documentation_owner": "docs/operator-runbook.md",
-      "flag_sets": [],
+      "flag_sets": [
+        "cli_yvex_session"
+      ],
       "input_schema": "argv.v1",
       "lane": "runtime-client",
       "model_requirement": "runtime-model",
@@ -6618,7 +6631,9 @@
       "default_providers": [],
       "deprecation_state": "current",
       "documentation_owner": "docs/operator-runbook.md",
-      "flag_sets": [],
+      "flag_sets": [
+        "cli_yvex_session"
+      ],
       "input_schema": "argv.v1",
       "lane": "runtime-client",
       "model_requirement": "runtime-model",
@@ -6675,7 +6690,9 @@
       "default_providers": [],
       "deprecation_state": "current",
       "documentation_owner": "docs/operator-runbook.md",
-      "flag_sets": [],
+      "flag_sets": [
+        "cli_yvex_session"
+      ],
       "input_schema": "argv.v1",
       "lane": "runtime-client",
       "model_requirement": "runtime-model",
@@ -6706,7 +6723,9 @@
       "default_providers": [],
       "deprecation_state": "current",
       "documentation_owner": "docs/operator-runbook.md",
-      "flag_sets": [],
+      "flag_sets": [
+        "cli_yvex_session"
+      ],
       "input_schema": "argv.v1",
       "lane": "runtime-client",
       "model_requirement": "runtime-model",
@@ -6746,7 +6765,9 @@
       "default_providers": [],
       "deprecation_state": "current",
       "documentation_owner": "docs/operator-runbook.md",
-      "flag_sets": [],
+      "flag_sets": [
+        "cli_yvex_session"
+      ],
       "input_schema": "argv.v1",
       "lane": "runtime-client",
       "model_requirement": "runtime-model",
@@ -6786,7 +6807,9 @@
       "default_providers": [],
       "deprecation_state": "current",
       "documentation_owner": "docs/operator-runbook.md",
-      "flag_sets": [],
+      "flag_sets": [
+        "cli_yvex_session"
+      ],
       "input_schema": "argv.v1",
       "lane": "runtime-client",
       "model_requirement": "runtime-model",
@@ -6844,7 +6867,9 @@
       "default_providers": [],
       "deprecation_state": "current",
       "documentation_owner": "docs/operator-runbook.md",
-      "flag_sets": [],
+      "flag_sets": [
+        "cli_yvex_session"
+      ],
       "input_schema": "argv.v1",
       "lane": "runtime-client",
       "model_requirement": "runtime-model",
@@ -6893,7 +6918,9 @@
       "default_providers": [],
       "deprecation_state": "current",
       "documentation_owner": "docs/operator-runbook.md",
-      "flag_sets": [],
+      "flag_sets": [
+        "cli_yvex_session"
+      ],
       "input_schema": "argv.v1",
       "lane": "runtime-client",
       "model_requirement": "runtime-model",
@@ -6933,7 +6960,9 @@
       "default_providers": [],
       "deprecation_state": "current",
       "documentation_owner": "docs/operator-runbook.md",
-      "flag_sets": [],
+      "flag_sets": [
+        "cli_yvex_session"
+      ],
       "input_schema": "argv.v1",
       "lane": "runtime-client",
       "model_requirement": "runtime-model",

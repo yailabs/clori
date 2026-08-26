@@ -639,7 +639,7 @@ void yvex_server_engine_manager_release(server_engine_manager *manager,
 }
 
 int yvex_server_engine_lease_submit(
-    server_engine_lease *lease, void *work, const char *session_name,
+    server_engine_lease *lease, void *work, const char *serialization_scope,
     unsigned long long *queued, yvex_error *err)
 {
     server_engine *engine = lease ? lease->engine : NULL;
@@ -650,7 +650,7 @@ int yvex_server_engine_lease_submit(
         return engine_refuse(err, YVEX_ERR_STATE,
                              "live engine request queue lease is required");
     rc = yvex_server_request_queue_key(serialization_key, lease->generation,
-                                       session_name, err);
+                                       serialization_scope, err);
     if (rc == YVEX_OK)
         rc = yvex_server_request_queue_submit(
             engine->request_queue, work, serialization_key, queued, err);

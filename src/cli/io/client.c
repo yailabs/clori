@@ -43,6 +43,11 @@ typedef struct {
 } client_engine_binding;
 typedef struct {
     client_engine_binding engine;
+    const char *positionals[3];
+    size_t positional_count;
+} client_session_arguments;
+typedef struct {
+    client_engine_binding engine;
     char session[YVEX_SERVER_SESSION_NAME_CAP];
     atomic_int done, interrupts, force_exit;
     pthread_t thread;
@@ -450,6 +455,60 @@ static int engine_generation_resolve(const char *alias,
     }
     return rc;
 }
+static int session_arguments_parse(int argc, char **argv, size_t consumed,
+                                   client_session_arguments *arguments,
+                                   yvex_error *err)
+{
+    size_t index;
+    memset(arguments, 0, sizeof(*arguments));
+    for (index = consumed + 1u; index < (size_t)argc; ++index) {
+        if (!strcmp(argv[index], "--model")) {
+            if (index + 1u >= (size_t)argc) {
+                yvex_error_set(err, YVEX_ERR_INVALID_ARG, "client.session-route",
+                               "--model requires a model alias");
+                return YVEX_ERR_INVALID_ARG;
+            }
+            const char *alias = argv[++index];
+            if (!alias[0] || strlen(alias) >= sizeof(arguments->engine.alias)) {
+                yvex_error_set(err, YVEX_ERR_INVALID_ARG, "client.session-route",
+                               "model alias exceeds the protocol bound");
+                return YVEX_ERR_INVALID_ARG;
+            }
+            (void)snprintf(arguments->engine.alias,
+                           sizeof(arguments->engine.alias), "%s", alias);
+            continue;
+        }
+        if (arguments->positional_count ==
+            sizeof(arguments->positionals) / sizeof(arguments->positionals[0])) {
+            yvex_error_set(err, YVEX_ERR_BOUNDS, "client.session-route",
+                           "session command positional bound exceeded");
+            return YVEX_ERR_BOUNDS;
+        }
+        arguments->positionals[arguments->positional_count++] = argv[index];
+    }
+    if (arguments->engine.alias[0])
+        return engine_generation_resolve(arguments->engine.alias,
+                                         &arguments->engine.generation, err);
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+static int runtime_adapter_session_bound(yvex_operator_runtime_adapter adapter)
+{
+    switch (adapter) {
+    case YVEX_OPERATOR_RUNTIME_SESSION_ATTACH:
+    case YVEX_OPERATOR_RUNTIME_SESSION_CANCEL:
+    case YVEX_OPERATOR_RUNTIME_SESSION_CLOSE:
+    case YVEX_OPERATOR_RUNTIME_SESSION_DETACH:
+    case YVEX_OPERATOR_RUNTIME_SESSION_FORK:
+    case YVEX_OPERATOR_RUNTIME_SESSION_LIST:
+    case YVEX_OPERATOR_RUNTIME_SESSION_NEW:
+    case YVEX_OPERATOR_RUNTIME_SESSION_RESET:
+    case YVEX_OPERATOR_RUNTIME_SESSION_STATE_RESTORE:
+    case YVEX_OPERATOR_RUNTIME_SESSION_STATE_SAVE:
+    case YVEX_OPERATOR_RUNTIME_SESSION_SHOW: return 1;
+    default: return 0;
+    }
+}
 static int server_engine_control(yvex_client_operation operation,
                                  const char *alias)
 {
@@ -636,22 +695,26 @@ static int administration(yvex_client_operation operation,
     return administration_bound(operation, NULL, session_name, render_mode);
 }
 static int state_checkpoint(yvex_client_operation operation,
+                            const client_engine_binding *engine,
                             const char *session_name, const char *path,
                             unsigned long long maximum_file_bytes)
 {
     yvex_client_request request;
     request_init(&request, operation);
+    request_engine_bind(&request, engine);
     snprintf(request.session_name, sizeof(request.session_name), "%s",
              session_name);
     snprintf(request.state_path, sizeof(request.state_path), "%s", path);
     request.maximum_state_file_bytes = maximum_file_bytes;
     return administration_request(&request, 0);
 }
-static int session_fork(const char *source, const char *child,
+static int session_fork(const client_engine_binding *engine,
+                        const char *source, const char *child,
                         unsigned long long maximum_prefix_bytes)
 {
     yvex_client_request request;
     request_init(&request, YVEX_CLIENT_OP_SESSION_FORK);
+    request_engine_bind(&request, engine);
     snprintf(request.session_name, sizeof(request.session_name), "%s", source);
     snprintf(request.fork_session_name, sizeof(request.fork_session_name),
              "%s", child);
@@ -1767,7 +1830,19 @@ static int console_status(const client_engine_binding *engine,
 int yvex_client_dispatch(const yvex_operator_descriptor *operation, int argc,
                          char **argv, size_t consumed)
 {
+    client_session_arguments session_arguments;
+    yvex_error session_error;
+    const client_engine_binding *session_engine = NULL;
     const char *name = consumed + 1u < (size_t)argc ? argv[consumed + 1u] : NULL;
+    int session_bound = runtime_adapter_session_bound(operation->runtime_adapter);
+    if (session_bound) {
+        int rc = session_arguments_parse(argc, argv, consumed,
+                                         &session_arguments, &session_error);
+        if (rc != YVEX_OK) return client_error(&session_error);
+        session_engine = &session_arguments.engine;
+        name = session_arguments.positional_count
+                   ? session_arguments.positionals[0] : NULL;
+    }
     switch (operation->runtime_adapter) {
     case YVEX_OPERATOR_RUNTIME_CHAT: return chat_command(argc, argv);
     case YVEX_OPERATOR_RUNTIME_RUN: return run_command(argc, argv);
@@ -1796,46 +1871,64 @@ int yvex_client_dispatch(const yvex_operator_descriptor *operation, int argc,
     case YVEX_OPERATOR_RUNTIME_SERVER_STOP:
         return administration(YVEX_CLIENT_OP_RUNTIME_STOP, NULL, 0);
     case YVEX_OPERATOR_RUNTIME_SESSION_NEW:
-        return administration(YVEX_CLIENT_OP_SESSION_NEW, name, 0);
+        return administration_bound(YVEX_CLIENT_OP_SESSION_NEW, session_engine,
+                                    name, 0);
     case YVEX_OPERATOR_RUNTIME_SESSION_LIST:
-        return administration(YVEX_CLIENT_OP_SESSION_LIST, NULL, 1);
+        return administration_bound(YVEX_CLIENT_OP_SESSION_LIST, session_engine,
+                                    NULL, 1);
     case YVEX_OPERATOR_RUNTIME_SESSION_SHOW:
-        return administration(YVEX_CLIENT_OP_SESSION_SHOW, name, 0);
+        return administration_bound(YVEX_CLIENT_OP_SESSION_SHOW, session_engine,
+                                    name, 0);
     case YVEX_OPERATOR_RUNTIME_SESSION_ATTACH:
-        return administration(YVEX_CLIENT_OP_SESSION_ATTACH, name, 0);
+        return administration_bound(YVEX_CLIENT_OP_SESSION_ATTACH, session_engine,
+                                    name, 0);
     case YVEX_OPERATOR_RUNTIME_SESSION_DETACH:
-        return administration(YVEX_CLIENT_OP_SESSION_DETACH, name, 0);
+        return administration_bound(YVEX_CLIENT_OP_SESSION_DETACH, session_engine,
+                                    name, 0);
     case YVEX_OPERATOR_RUNTIME_SESSION_RESET:
-        return administration(YVEX_CLIENT_OP_SESSION_RESET, name, 0);
+        return administration_bound(YVEX_CLIENT_OP_SESSION_RESET, session_engine,
+                                    name, 0);
     case YVEX_OPERATOR_RUNTIME_SESSION_FORK: {
         unsigned long long maximum_prefix_bytes;
-        if (consumed + 3u >= (size_t)argc ||
-            !parse_u64(argv[consumed + 3u], &maximum_prefix_bytes, 0)) {
+        if (session_arguments.positional_count != 3u ||
+            !parse_u64(session_arguments.positionals[2],
+                       &maximum_prefix_bytes, 0)) {
             fputs("yvex: session fork requires a positive shared-prefix byte bound\n",
                   stderr);
             return 2;
         }
-        return session_fork(name, argv[consumed + 2u],
+        return session_fork(session_engine, name,
+                            session_arguments.positionals[1],
                             maximum_prefix_bytes);
     }
     case YVEX_OPERATOR_RUNTIME_SESSION_STATE_SAVE:
-        return state_checkpoint(YVEX_CLIENT_OP_SESSION_STATE_SAVE, name,
-                                argv[consumed + 2u], 0u);
+        if (session_arguments.positional_count != 2u) {
+            fputs("yvex: state save requires SESSION PATH\n", stderr);
+            return 2;
+        }
+        return state_checkpoint(YVEX_CLIENT_OP_SESSION_STATE_SAVE,
+                                session_engine, name,
+                                session_arguments.positionals[1], 0u);
     case YVEX_OPERATOR_RUNTIME_SESSION_STATE_RESTORE: {
         unsigned long long maximum_file_bytes;
-        if (consumed + 3u >= (size_t)argc ||
-            !parse_u64(argv[consumed + 3u], &maximum_file_bytes, 0)) {
+        if (session_arguments.positional_count != 3u ||
+            !parse_u64(session_arguments.positionals[2],
+                       &maximum_file_bytes, 0)) {
             fputs("yvex: state restore requires a positive maximum file byte bound\n",
                   stderr);
             return 2;
         }
-        return state_checkpoint(YVEX_CLIENT_OP_SESSION_STATE_RESTORE, name,
-                                argv[consumed + 2u], maximum_file_bytes);
+        return state_checkpoint(YVEX_CLIENT_OP_SESSION_STATE_RESTORE,
+                                session_engine, name,
+                                session_arguments.positionals[1],
+                                maximum_file_bytes);
     }
     case YVEX_OPERATOR_RUNTIME_SESSION_CLOSE:
-        return administration(YVEX_CLIENT_OP_SESSION_CLOSE, name, 0);
+        return administration_bound(YVEX_CLIENT_OP_SESSION_CLOSE, session_engine,
+                                    name, 0);
     case YVEX_OPERATOR_RUNTIME_SESSION_CANCEL:
-        puts(cancellation_request(NULL, name) ? "cancel requested" : "no active turn");
+        puts(cancellation_request(session_engine, name)
+                 ? "cancel requested" : "no active turn");
         return 0;
     case YVEX_OPERATOR_RUNTIME_HELP: return help_command(argc, argv, consumed);
     case YVEX_OPERATOR_RUNTIME_COMPLETION:

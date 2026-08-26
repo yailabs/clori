@@ -527,8 +527,13 @@ int yvex_server_start(yvex_server *server, yvex_error *err)
 static int request_enqueue(yvex_server *server, server_work_item *item,
                            yvex_error *err)
 {
+    const char *serialization_scope = item->request.session_name;
     unsigned long long depth = 0ull;
     int rc;
+    /* Engine-scoped catalog work has no sequence identity. Keep it out of a
+     * fabricated session while retaining one deterministic queue lane. */
+    if (item->request.operation == YVEX_CLIENT_OP_SESSION_LIST)
+        serialization_scope = "@engine.sessions";
     rc = yvex_server_engine_manager_acquire(
         server->engines, item->request.model_alias,
         item->request.engine_generation, &item->engine,
@@ -557,7 +562,7 @@ static int request_enqueue(yvex_server *server, server_work_item *item,
         goto failed;
     item->enqueued_ns = server_monotonic_ns();
     rc = yvex_server_engine_lease_submit(
-        &item->engine, item, item->request.session_name, &depth, err);
+        &item->engine, item, serialization_scope, &depth, err);
     if (rc != YVEX_OK) {
         item->failure_class = rc == YVEX_ERR_BOUNDS
                                   ? YVEX_CLIENT_FAILURE_QUEUE_FULL

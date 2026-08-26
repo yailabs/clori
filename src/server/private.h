@@ -66,7 +66,7 @@ int yvex_server_request_queue_start(server_request_queue *request_queue,
                                     yvex_error *err);
 int yvex_server_request_queue_key(
     char output[SERVER_REQUEST_QUEUE_KEY_CAP],
-    unsigned long long engine_generation, const char *session_name,
+    unsigned long long engine_generation, const char *serialization_scope,
     yvex_error *err);
 int yvex_server_request_queue_submit(server_request_queue *request_queue, void *work,
                                      const char *serialization_key,

@@ -309,6 +309,35 @@ assert all(engine["state"] == "loaded" for engine in engines.values())
 assert engines[sys.argv[2]]["generation"] == int(sys.argv[4])
 assert engines[sys.argv[2]]["generation"] != engines[sys.argv[3]]["generation"]
 PY
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session new shared \
+    --model "$profile" >"$root/session.shared.first"
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session new \
+    --model "$second_profile" shared >"$root/session.shared.second"
+if HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session list \
+    >"$root/session.list.ambiguous.out" 2>"$root/session.list.ambiguous.err"; then
+    printf 'ambiguous multi-engine session routing was admitted\n' >&2
+    exit 1
+fi
+grep -F 'one unambiguous loaded engine is required' \
+    "$root/session.list.ambiguous.err" >/dev/null
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session list \
+    --model "$profile" >"$root/session.list.first"
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session list \
+    --model "$second_profile" >"$root/session.list.second"
+grep -E '^shared[[:space:]]' "$root/session.list.first" >/dev/null
+grep -E '^shared[[:space:]]' "$root/session.list.second" >/dev/null
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run \
+    --model "$second_profile" --session shared --reasoning none \
+    --strategy greedy --max-new-tokens 1 a \
+    >"$root/run.shared.second.out" 2>"$root/run.shared.second.err"
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session show shared \
+    --model "$second_profile" >"$root/session.shared.second.after"
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session show \
+    --model "$profile" shared >"$root/session.shared.first.after"
+test "$(sed -n 's/^.*position=\([0-9][0-9]*\).*$/\1/p' \
+        "$root/session.shared.second.after")" -gt 0
+test "$(sed -n 's/^.*position=\([0-9][0-9]*\).*$/\1/p' \
+        "$root/session.shared.first.after")" -eq 0
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run \
     --model "$second_profile" --reasoning none --strategy greedy \
     --max-new-tokens 1 a >"$root/run.second.out" 2>"$root/run.second.err"

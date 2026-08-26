@@ -215,21 +215,22 @@ int yvex_server_request_queue_start(server_request_queue *request_queue,
 
 int yvex_server_request_queue_key(
     char output[SERVER_REQUEST_QUEUE_KEY_CAP],
-    unsigned long long engine_generation, const char *session_name,
+    unsigned long long engine_generation, const char *serialization_scope,
     yvex_error *err)
 {
     int written;
     if (output) output[0] = '\0';
-    if (!output || !engine_generation || !session_name || !session_name[0])
+    if (!output || !engine_generation || !serialization_scope ||
+        !serialization_scope[0])
         return request_queue_refuse(
             err, YVEX_ERR_INVALID_ARG,
-            "engine generation, session, and key output are required");
+            "engine generation, serialization scope, and key output are required");
     written = snprintf(output, SERVER_REQUEST_QUEUE_KEY_CAP, "%llu:%s",
-                       engine_generation, session_name);
+                       engine_generation, serialization_scope);
     if (written < 0 || (unsigned int)written >= SERVER_REQUEST_QUEUE_KEY_CAP) {
         output[0] = '\0';
         return request_queue_refuse(err, YVEX_ERR_BOUNDS,
-                                    "engine-session request queue key exceeds its bound");
+                                    "engine request serialization key exceeds its bound");
     }
     yvex_error_clear(err);
     return YVEX_OK;
