@@ -153,14 +153,14 @@ def test_refusals(registry: dict[str, object]) -> None:
 
     def duplicate_path(row: dict[str, object]) -> None:
         source = operation(row, "server.status")
-        target = operation(row, "server.model")
+        target = operation(row, "server.models")
         target["command_path"] = list(source["command_path"])
 
     mutation_failure(registry, duplicate_path, "duplicate canonical path")
 
     def alias_collision(row: dict[str, object]) -> None:
         operation(row, "server.status")["aliases"] = [
-            {"path": ["server", "model"], "deprecation": "current"}
+            {"path": ["server", "models"], "deprecation": "current"}
         ]
 
     mutation_failure(registry, alias_collision, "alias collides")
@@ -296,7 +296,7 @@ def test_audit_reconciliation(registry: dict[str, object]) -> None:
                 row.get("lane") == "daemon-entrypoint" and row.get("CLI_projection")
                 for row in rows), "foreground server entrypoint is not projected")
     slash = {row.get("slash_projection") for row in rows if row.get("slash_projection") != "none"}
-    require(slash == {"/help", "/status", "/model", "/memory", "/context", "/sessions",
+    require(slash == {"/help", "/status", "/models", "/memory", "/context", "/sessions",
                       "/session", "/new", "/attach", "/detach", "/reset", "/close",
                       "/cancel", "/quit", "/nothink", "/think", "/think-max"},
             f"unexpected slash catalog: {sorted(slash)}")
