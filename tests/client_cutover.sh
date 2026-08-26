@@ -31,9 +31,11 @@ trap cleanup EXIT HUP INT TERM
 for expected in \
     'yvex chat' \
     'yvex run' \
+    'yvex server                                     Run the persistent multi-engine host' \
+    'yvex server load MODEL' \
+    'yvex server models' \
     'yvex server status' \
     'yvex session list' \
-    'yvex server MODEL' \
     'yvex compile source manifest' \
     'yvex compile quant plan' \
     'yvex artifact verify' \
@@ -69,6 +71,9 @@ assert len(payload['registry_identity']) == 64
 paths = {row['command_path'] for row in payload['operations'] if row['projections']['cli']}
 assert 'server status' in paths
 assert 'server' in paths
+assert 'server load' in paths
+assert 'server unload' in paths
+assert 'server models' in paths
 assert 'runtime status' not in paths
 assert 'execute tokenizer encode' in paths
 assert not any(path.split(' ', 1)[0] in {
@@ -200,7 +205,8 @@ done
 "$YVEX_BIN" server -h >"$root/out" 2>"$root/err"
 grep -F 'operation: server.host' "$root/out" >/dev/null
 for arguments in \
-    'server' \
+    'server --workers' \
+    'server --workers 0' \
     'server current extra' \
     'server current --context 4096' \
     'compile artifact prepare --out artifact.gguf --out-dir artifacts'
@@ -218,7 +224,7 @@ set +e
 status=$?
 set -e
 test "$status" -eq 2
-grep -F 'did you mean `yvex server status`' "$root/err" >/dev/null
+grep -F 'usage: yvex server [options]' "$root/err" >/dev/null
 
 # Registry discovery remains distinct from the model hosted by a running server. No command writes
 # an implicit startup selection.
@@ -230,9 +236,10 @@ artifact=$(realpath "$artifact")
 binding=$(realpath "$binding")
 cat >"$registry" <<EOF
 {
-  "schema": "yvex.models.local.v3",
+  "schema": "yvex.models.local.v5",
   "models": [{
     "alias": "current-model-runtime-profile",
+    "family": "deepseek4",
     "path": "$artifact",
     "runtime_binding": "$binding",
     "runtime_target": "deepseek4-v4-flash-dspark",
@@ -245,13 +252,13 @@ EOF
 HOME="$home_root" "$YVEX_BIN" model list >"$root/out"
 grep -F 'current-model-runtime-profile' "$root/out" >/dev/null
 grep -F 'cuda' "$root/out" >/dev/null
-grep -F '4096' "$root/out" >/dev/null
-grep -F 'yes' "$root/out" >/dev/null
+grep -F 'package-ready' "$root/out" >/dev/null
 test ! -e "$home_root/.config/yvex/model.conf"
 
 set +e
 HOME="$home_root" XDG_RUNTIME_DIR="$root/absent-runtime" \
-    "$YVEX_BIN" server model >"$root/out2" 2>"$root/err"
+    "$YVEX_BIN" server load current-model-runtime-profile \
+    >"$root/out2" 2>"$root/err"
 status=$?
 set -e
 test "$status" -eq 1

@@ -17,6 +17,8 @@ mkdir -m 700 "$runtime" "$home" "$first" "$second"
 mkdir -p "$home/.local/share/yvex" "$first/bindings" "$second/bindings" "$corrupt"
 server_pid=
 log_pid=
+profile=tiny-executable-cpu-complete
+second_profile=tiny-executable-cpu-secondary
 
 cleanup()
 {
@@ -74,9 +76,19 @@ grep -F '"reason": "requested context exceeds the model-authored semantic maximu
     "$root/context-refusal.json" >/dev/null
 cat >"$home/.local/share/yvex/models.local.json" <<EOF
 {
-  "schema": "yvex.models.local.v3",
+  "schema": "yvex.models.local.v5",
   "models": [{
-    "alias": "tiny-executable-cpu-complete",
+    "alias": "$profile",
+    "family": "tiny",
+    "path": "$artifact",
+    "runtime_binding": "$binding",
+    "runtime_target": "tiny-executable",
+    "runtime_backend": "cpu",
+    "runtime_mode": "target-only",
+    "runtime_context": 8
+  }, {
+    "alias": "$second_profile",
+    "family": "tiny",
     "path": "$artifact",
     "runtime_binding": "$binding",
     "runtime_target": "tiny-executable",
@@ -87,9 +99,8 @@ cat >"$home/.local/share/yvex/models.local.json" <<EOF
 }
 EOF
 
-HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server tiny-executable-cpu-complete \
-    --backend cpu --ctx 8 --generation-mode target-only \
-    --parallel 2 --openai off >"$root/server.out" 2>"$root/server.err" &
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server \
+    --workers 2 --openai off >"$root/server.out" 2>"$root/server.err" &
 server_pid=$!
 
 ready=0
@@ -105,15 +116,39 @@ while test "$attempt" -lt 100; do
     sleep 0.05
 done
 test "$ready" -eq 1
-grep -F '"model_open_count":1' "$root/status.json" >/dev/null
-grep -F '"context_capacity":8' "$root/status.json" >/dev/null
-grep -F '"prefill_chunk_tokens":4' "$root/status.json" >/dev/null
-grep -F '"maximum_new_tokens":8' "$root/status.json" >/dev/null
-grep -F '"parallel":2' "$root/status.json" >/dev/null
-grep -F '"independent_session_scheduling":true' "$root/status.json" >/dev/null
-grep -F '"continuous_batching":false' "$root/status.json" >/dev/null
-grep -E '"capacity_plan_identity":"[0-9a-f]{64}"' "$root/status.json" >/dev/null
-grep -F 'requested ctx=8 · parallel=2' "$root/server.out" >/dev/null
+grep -F '"host_ready":true' "$root/status.json" >/dev/null
+grep -F '"loaded_engine_count":0' "$root/status.json" >/dev/null
+grep -F '"workers":2' "$root/status.json" >/dev/null
+grep -F '"model_open_count":0' "$root/status.json" >/dev/null
+grep -F 'YVEX server · persistent host' "$root/server.out" >/dev/null
+
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server load "$profile" \
+    >"$root/load.first"
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server status --json \
+    >"$root/status.loaded.json"
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server models --json \
+    >"$root/models.first.json"
+first_generation=$(python3 - "$root/status.loaded.json" "$root/models.first.json" \
+    "$profile" <<'PY'
+import json, pathlib, sys
+status = json.loads(pathlib.Path(sys.argv[1]).read_text())
+catalog = json.loads(pathlib.Path(sys.argv[2]).read_text())
+assert status["host_ready"] and status["loaded_engine_count"] == 1
+assert status["model_open_count"] == 1
+engine, = catalog["engines"]
+assert engine["alias"] == sys.argv[3]
+assert engine["state"] == "loaded" and engine["execution_ready"]
+assert engine["context_capacity"] == 8
+assert engine["prefill_chunk_tokens"] == 8
+assert engine["maximum_new_tokens"] == 8
+assert engine["concurrent_sequences"] == 1
+assert not engine["continuous_batching"]
+assert len(engine["model_identity"]) == 64
+assert len(engine["specialization_identity"]) == 64
+print(engine["generation"])
+PY
+)
+test "$first_generation" -gt 0
 
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server log --json \
     >"$root/server.log.jsonl" 2>"$root/server.log.err" &
@@ -201,35 +236,40 @@ grep -E '^state checkpoint saved position=[1-9][0-9]* bytes=[1-9][0-9]* digest=[
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session show persisted \
     >"$root/session.before"
 
-HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server stop >/dev/null
-wait "$server_pid"
-server_pid=
-wait "$log_pid"
-log_pid=
-grep -E 'REQUEST[[:space:]]+persisted/' "$root/server.out" >/dev/null
-grep -E 'COMPLETE[[:space:]]+[1-9][0-9]* token' "$root/server.out" >/dev/null
-! grep -F '"kind":' "$root/server.out" >/dev/null
-grep -F '"kind":"generation.completed"' "$root/server.log.jsonl" >/dev/null
-grep -F '"phase":"graphs"' "$root/server.log.jsonl" >/dev/null
-grep -F '"phase":"tensorcore"' "$root/server.log.jsonl" >/dev/null
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server unload "$profile" \
+    >"$root/unload.first"
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server status --json \
+    >"$root/status.unloaded.json"
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server models --json \
+    >"$root/models.unloaded.json"
+python3 - "$root/status.unloaded.json" "$root/models.unloaded.json" \
+    "$profile" "$first_generation" <<'PY'
+import json, pathlib, sys
+status = json.loads(pathlib.Path(sys.argv[1]).read_text())
+catalog = json.loads(pathlib.Path(sys.argv[2]).read_text())
+assert status["host_ready"] and status["loaded_engine_count"] == 0
+assert status["model_open_count"] == 1 and status["model_close_count"] == 1
+engine, = catalog["engines"]
+assert engine["alias"] == sys.argv[3]
+assert engine["generation"] == int(sys.argv[4])
+assert engine["state"] == "unloaded" and not engine["execution_ready"]
+PY
 
-HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server tiny-executable-cpu-complete \
-    --backend cpu --ctx 8 --generation-mode target-only \
-    --parallel 2 --console off --openai off >>"$root/server.out" 2>>"$root/server.err" &
-server_pid=$!
-ready=0
-attempt=0
-while test "$attempt" -lt 100; do
-    if HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server status --json \
-        >"$root/status.restart.json" 2>"$root/status.restart.err"; then
-        ready=1
-        break
-    fi
-    kill -0 "$server_pid" 2>/dev/null || break
-    attempt=$((attempt + 1))
-    sleep 0.05
-done
-test "$ready" -eq 1
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server load "$profile" \
+    >"$root/load.second"
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server models --json \
+    >"$root/models.second.json"
+second_generation=$(python3 - "$root/models.second.json" "$profile" \
+    "$first_generation" <<'PY'
+import json, pathlib, sys
+catalog = json.loads(pathlib.Path(sys.argv[1]).read_text())
+engine, = catalog["engines"]
+assert engine["alias"] == sys.argv[2]
+assert engine["state"] == "loaded" and engine["execution_ready"]
+assert engine["generation"] > int(sys.argv[3])
+print(engine["generation"])
+PY
+)
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session new persisted \
     >"$root/session.restart.new"
 if HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session state restore \
@@ -254,17 +294,46 @@ HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --session persisted a \
     >"$root/run.after-restore.out" 2>"$root/run.after-restore.err"
 grep -Fx 'ok' "$root/run.after-restore.out" >/dev/null
 grep -E '[1-9][0-9]* reused' "$root/run.after-restore.err" >/dev/null
-HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server stop >/dev/null
-wait "$server_pid"
-server_pid=
+
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server load "$second_profile" \
+    >"$root/load.parallel"
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server models --json \
+    >"$root/models.parallel.json"
+python3 - "$root/models.parallel.json" "$profile" "$second_profile" \
+    "$second_generation" <<'PY'
+import json, pathlib, sys
+catalog = json.loads(pathlib.Path(sys.argv[1]).read_text())
+engines = {engine["alias"]: engine for engine in catalog["engines"]}
+assert set(engines) == {sys.argv[2], sys.argv[3]}
+assert all(engine["state"] == "loaded" for engine in engines.values())
+assert engines[sys.argv[2]]["generation"] == int(sys.argv[4])
+assert engines[sys.argv[2]]["generation"] != engines[sys.argv[3]]["generation"]
+PY
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run \
+    --model "$second_profile" --reasoning none --strategy greedy \
+    --max-new-tokens 1 a >"$root/run.second.out" 2>"$root/run.second.err"
+grep -Fx 'ok' "$root/run.second.out" >/dev/null
+if HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run \
+    --reasoning none --strategy greedy --max-new-tokens 1 a \
+    >"$root/run.ambiguous.out" 2>"$root/run.ambiguous.err"; then
+    printf 'ambiguous multi-engine routing was admitted\n' >&2
+    exit 1
+fi
+grep -F 'one unambiguous loaded engine is required' \
+    "$root/run.ambiguous.err" >/dev/null
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server unload "$second_profile" \
+    >"$root/unload.parallel"
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server unload "$profile" \
+    >"$root/unload.second"
 
 python3 "$TINY_GENERATOR" "$corrupt/tiny.gguf" --corrupt
 corrupt_artifact=$(realpath "$corrupt/tiny.gguf")
 cat >"$home/.local/share/yvex/models.local.json" <<EOF
 {
-  "schema": "yvex.models.local.v3",
+  "schema": "yvex.models.local.v5",
   "models": [{
-    "alias": "tiny-executable-cpu-complete",
+    "alias": "$profile",
+    "family": "tiny",
     "path": "$corrupt_artifact",
     "runtime_binding": "$binding",
     "runtime_target": "tiny-executable",
@@ -274,13 +343,39 @@ cat >"$home/.local/share/yvex/models.local.json" <<EOF
   }]
 }
 EOF
-if HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server tiny-executable-cpu-complete \
-    --backend cpu --ctx 8 --generation-mode target-only --max-new-tokens 1 \
-    --console off --openai off >"$root/corrupt.out" 2>"$root/corrupt.err"; then
+if HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server load "$profile" \
+    >"$root/corrupt.out" 2>"$root/corrupt.err"; then
     printf 'corrupt tiny artifact was admitted\n' >&2
     exit 1
 fi
 grep -F 'artifact admission failed' "$root/corrupt.err" >/dev/null
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server status --json \
+    >"$root/status.corrupt.json"
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server models --json \
+    >"$root/models.corrupt.json"
+python3 - "$root/status.corrupt.json" "$root/models.corrupt.json" "$profile" \
+    "$second_generation" <<'PY'
+import json, pathlib, sys
+status = json.loads(pathlib.Path(sys.argv[1]).read_text())
+catalog = json.loads(pathlib.Path(sys.argv[2]).read_text())
+engines = {engine["alias"]: engine for engine in catalog["engines"]}
+assert status["host_ready"] and status["loaded_engine_count"] == 0
+assert status["model_open_count"] == 3 and status["model_close_count"] == 3
+assert engines[sys.argv[3]]["state"] == "failed"
+assert engines[sys.argv[3]]["generation"] > int(sys.argv[4])
+PY
+
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server stop >/dev/null
+wait "$server_pid"
+server_pid=
+wait "$log_pid"
+log_pid=
+grep -E 'REQUEST[[:space:]]+persisted/' "$root/server.out" >/dev/null
+grep -E 'COMPLETE[[:space:]]+[1-9][0-9]* token' "$root/server.out" >/dev/null
+! grep -F '"kind":' "$root/server.out" >/dev/null
+grep -F '"kind":"generation.completed"' "$root/server.log.jsonl" >/dev/null
+grep -F '"phase":"graphs"' "$root/server.log.jsonl" >/dev/null
+grep -F '"phase":"tensorcore"' "$root/server.log.jsonl" >/dev/null
 
 printf 'tiny vertical: artifact=%s binding=%s output=ok ctx=8\n' \
     "$first_artifact" "$first_binding"

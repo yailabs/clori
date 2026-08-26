@@ -20,8 +20,8 @@ static int admit_fixture(const char *json, openai_endpoint endpoint,
 
     request.body = (unsigned char *)json;
     request.body_count = strlen(json);
-    return openai_json_admit(&request, endpoint, "deepseek4-v4-flash-dspark",
-                             YVEX_REASONING_ENABLED, admitted, err);
+    return openai_json_admit(&request, endpoint, YVEX_REASONING_ENABLED,
+                             admitted, err);
 }
 
 static int test_chat_admission(void)
@@ -290,6 +290,72 @@ static int test_rendering(void)
     return 0;
 }
 
+static int test_model_catalog_rendering(void)
+{
+    yvex_server_engine_summary engines[2] = {0};
+    unsigned char *json = NULL;
+    unsigned long long count = 0ull;
+    yvex_error err;
+    strcpy(engines[0].alias, "deepseek");
+    strcpy(engines[1].alias, "minimax");
+    YVEX_TEST_ASSERT(openai_json_models(NULL, 0ull, 1, &json, &count, &err) ==
+                         YVEX_OK &&
+                         strstr((char *)json, "\"data\":[]"),
+                     "a healthy zero-engine host must expose an empty model catalog");
+    free(json);
+    json = NULL;
+    YVEX_TEST_ASSERT(openai_json_models(engines, 2ull, 1, &json, &count, &err) ==
+                         YVEX_OK &&
+                         strstr((char *)json, "\"id\":\"deepseek\"") &&
+                         strstr((char *)json, "\"id\":\"minimax\"") &&
+                         yvex_provider_json_value_validate(json, count, 1, &err) ==
+                             YVEX_OK,
+                     "the OpenAI catalog must project every loaded engine alias");
+    free(json);
+    json = NULL;
+    YVEX_TEST_ASSERT(openai_json_models(&engines[1], 1ull, 0, &json, &count,
+                                        &err) == YVEX_OK &&
+                         strstr((char *)json, "\"id\":\"minimax\""),
+                     "one exact model lookup must render only the selected engine");
+    free(json);
+    YVEX_TEST_ASSERT(openai_json_models(engines, 2ull, 0, &json, &count, &err) ==
+                         YVEX_ERR_INVALID_ARG,
+                     "an ambiguous singular model projection must refuse");
+    return 0;
+}
+
+static int test_response_engine_generation(void)
+{
+    static const char json[] =
+        "{\"model\":\"deepseek\",\"input\":\"hello\"}";
+    openai_gateway gateway = {0};
+    openai_admitted_request admitted = {0};
+    openai_response_record *record;
+    yvex_error err;
+    YVEX_TEST_ASSERT(admit_fixture(json, OPENAI_ENDPOINT_RESPONSES, &admitted,
+                                   &err) == YVEX_OK,
+                     "response-state fixture must admit");
+    YVEX_TEST_ASSERT(openai_state_store(&gateway, "resp_a", "session-a", 0ull,
+                                        admitted.provider, 10ull, &err) ==
+                         YVEX_ERR_INVALID_ARG,
+                     "response state without an engine generation must refuse");
+    YVEX_TEST_ASSERT(openai_state_store(&gateway, "resp_a", "session-a", 7ull,
+                                        admitted.provider, 10ull, &err) == YVEX_OK,
+                     "response state must retain one exact engine generation");
+    record = openai_state_find(&gateway, "resp_a", 11ull);
+    YVEX_TEST_ASSERT(record && record->engine_generation == 7ull &&
+                         !strcmp(record->model, "deepseek"),
+                     "retained response state must expose model and generation lineage");
+    YVEX_TEST_ASSERT(openai_state_replace(&gateway, record, "resp_b", 8ull,
+                                          admitted.provider, 12ull, &err) ==
+                         YVEX_OK &&
+                         record->engine_generation == 8ull,
+                     "response replacement must update its explicit generation lineage");
+    openai_state_clear(&gateway);
+    openai_admitted_request_clear(&admitted);
+    return 0;
+}
+
 static int test_http_admission(void)
 {
     static const char good[] =
@@ -351,6 +417,8 @@ int yvex_test_openai(void)
     if (test_request_refusals() != 0) return 1;
     if (test_responses_admission() != 0) return 1;
     if (test_rendering() != 0) return 1;
+    if (test_model_catalog_rendering() != 0) return 1;
+    if (test_response_engine_generation() != 0) return 1;
     if (test_http_admission() != 0) return 1;
     return test_http_peer_liveness();
 }

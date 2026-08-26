@@ -68,28 +68,58 @@ static int send_status(int fd, const yvex_client_request *request,
     message_base(&message, YVEX_CLIENT_MESSAGE_STATUS, request);
     message.runtime.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
     message.runtime.status = YVEX_SERVER_STATUS_READY;
-    message.runtime.runtime_ready = 1;
-    message.runtime.generation_ready = 1;
-    message.runtime.explicit_reasoning_channel_supported = 1;
-    message.runtime.concurrent_sequences = 1u;
-    message.runtime.capacity_required_bytes = 4096u;
-    message.runtime.capacity_unreserved_bytes = 8192u;
-    strcpy(message.runtime.target_id, "deepseek4-v4-flash-dspark");
-    memset(message.runtime.runtime_model_identity, 'a', 64u);
-    message.runtime.runtime_model_identity[64] = '\0';
-    memset(message.runtime.runtime_binding_identity, 'b', 64u);
-    message.runtime.runtime_binding_identity[64] = '\0';
-    memset(message.runtime.artifact_identity, 'c', 64u);
-    message.runtime.artifact_identity[64] = '\0';
-    memset(message.runtime.physical_variant_identity, 'd', 64u);
-    message.runtime.physical_variant_identity[64] = '\0';
-    memset(message.runtime.capacity_plan_identity, 'e', 64u);
-    message.runtime.capacity_plan_identity[64] = '\0';
-    message.runtime.context_capacity = 4096u;
+    message.runtime.host_ready = 1;
+    message.runtime.engine_count = 1u;
+    message.runtime.loaded_engine_count = 1u;
+    message.runtime.maximum_engines = YVEX_SERVER_ENGINE_CAP;
+    message.runtime.worker_count = 1u;
     message.runtime.metrics.model_open_count = 1u;
     message.runtime.metrics.artifact_open_count = 1u;
     message.runtime.metrics.materialization_count = 1u;
     return yvex_server_protocol_send(fd, &message, err);
+}
+
+static void fixture_engine(yvex_server_engine_summary *engine)
+{
+    memset(engine, 0, sizeof(*engine));
+    engine->schema_version = YVEX_SERVER_ENGINE_SCHEMA_V1;
+    engine->state = YVEX_SERVER_ENGINE_LOADED;
+    engine->backend = YVEX_BACKEND_KIND_CUDA;
+    engine->generation_mode = YVEX_SERVER_GENERATION_DSPARK;
+    engine->generation = 7ull;
+    engine->context_capacity = 4096u;
+    engine->prefill_chunk_tokens = 64u;
+    engine->maximum_new_tokens = 256u;
+    engine->maximum_output_bytes = 65536u;
+    engine->maximum_sessions = 8u;
+    engine->concurrent_sequences = 1u;
+    engine->mapped_package_bytes = 2ull * 1073741824ull;
+    engine->resident_device_bytes = 1073741824ull;
+    engine->execution_ready = 1;
+    engine->explicit_reasoning_channel_supported = 1;
+    strcpy(engine->alias, "deepseek4-v4-flash-dspark");
+    strcpy(engine->target_id, "deepseek4-v4-flash-dspark");
+    memset(engine->runtime_model_identity, 'a', 64u);
+    engine->runtime_model_identity[64] = '\0';
+    memset(engine->runtime_binding_identity, 'b', 64u);
+    engine->runtime_binding_identity[64] = '\0';
+    memset(engine->artifact_identity, 'c', 64u);
+    engine->artifact_identity[64] = '\0';
+    memset(engine->specialization_identity, 'd', 64u);
+    engine->specialization_identity[64] = '\0';
+    memset(engine->capacity_plan_identity, 'e', 64u);
+    engine->capacity_plan_identity[64] = '\0';
+}
+
+static int send_engine_list(int fd, const yvex_client_request *request,
+                            yvex_error *err)
+{
+    yvex_client_message message;
+    message_base(&message, YVEX_CLIENT_MESSAGE_ENGINE, request);
+    fixture_engine(&message.engine);
+    if (yvex_server_protocol_send(fd, &message, err) != YVEX_OK)
+        return yvex_error_code(err);
+    return send_ack(fd, request, err);
 }
 
 static int send_console_status(int fd, const yvex_client_request *request,
@@ -99,38 +129,26 @@ static int send_console_status(int fd, const yvex_client_request *request,
     message_base(&message, YVEX_CLIENT_MESSAGE_CONSOLE_STATUS, request);
     message.runtime.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
     message.runtime.status = YVEX_SERVER_STATUS_READY;
-    message.runtime.runtime_ready = 1;
-    message.runtime.generation_ready = 1;
-    message.runtime.explicit_reasoning_channel_supported = 1;
-    message.runtime.concurrent_sequences = 1u;
-    message.runtime.capacity_required_bytes = 4096u;
-    message.runtime.capacity_unreserved_bytes = 8192u;
-    message.runtime.backend = YVEX_BACKEND_KIND_CUDA;
-    message.runtime.context_capacity = 4096u;
+    message.runtime.host_ready = 1;
+    message.runtime.engine_count = 1u;
+    message.runtime.loaded_engine_count = 1u;
+    message.runtime.maximum_engines = YVEX_SERVER_ENGINE_CAP;
+    message.runtime.worker_count = 1u;
     message.runtime.metrics.current_rss_bytes = 3ull * 1073741824ull;
     message.runtime.metrics.mapped_artifact_bytes = 2ull * 1073741824ull;
     message.runtime.metrics.resident_device_bytes = 1073741824ull;
-    strcpy(message.runtime.target_id, "deepseek4-v4-flash-dspark");
-    memset(message.runtime.runtime_model_identity, 'a', 64u);
-    message.runtime.runtime_model_identity[64] = '\0';
-    memset(message.runtime.runtime_binding_identity, 'b', 64u);
-    message.runtime.runtime_binding_identity[64] = '\0';
-    memset(message.runtime.artifact_identity, 'c', 64u);
-    message.runtime.artifact_identity[64] = '\0';
-    memset(message.runtime.physical_variant_identity, 'd', 64u);
-    message.runtime.physical_variant_identity[64] = '\0';
-    memset(message.runtime.capacity_plan_identity, 'e', 64u);
-    message.runtime.capacity_plan_identity[64] = '\0';
     message.console.schema_version = 1u;
     message.console.backend = YVEX_BACKEND_KIND_CUDA;
     message.console.session_state = YVEX_SERVER_SESSION_READY;
     message.console.generation_phase = YVEX_CLIENT_PHASE_IDLE;
     message.console.context_capacity = 4096u;
+    message.console.engine_generation = 7ull;
     message.console.runtime_ready = 1;
     message.console.session_available = 1;
     message.console.attached = 1;
     message.console.explicit_reasoning_channel_supported = 1;
     message.console.reasoning_policy = YVEX_REASONING_ENABLED;
+    strcpy(message.console.model_alias, "deepseek4-v4-flash-dspark");
     strcpy(message.console.session_name, request->session_name);
     memset(message.console.live_model_identity, 'a', 64u);
     message.console.live_model_identity[64] = '\0';
@@ -662,6 +680,8 @@ static int serve_connection(int fd, yvex_error *err)
     request.provider_request = provider;
     if (request.operation == YVEX_CLIENT_OP_RUNTIME_STATUS)
         rc = send_status(fd, &request, err);
+    else if (request.operation == YVEX_CLIENT_OP_ENGINE_LIST)
+        rc = send_engine_list(fd, &request, err);
     else if (request.operation == YVEX_CLIENT_OP_CONSOLE_STATUS)
         rc = send_console_status(fd, &request, err);
     else if (request.operation == YVEX_CLIENT_OP_RUNTIME_WATCH ||

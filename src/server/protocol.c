@@ -8,6 +8,7 @@
 #include "src/server/private.h"
 #include <limits.h>
 #include <math.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -34,6 +35,8 @@ enum {
     TAG_MAXIMUM_STATE_FILE_BYTES,
     TAG_FORK_SESSION_NAME,
     TAG_MAXIMUM_PREFIX_BYTES,
+    TAG_MODEL_ALIAS,
+    TAG_ENGINE_GENERATION,
     TAG_MESSAGE_KIND = 32,
     TAG_STATUS,
     TAG_REASON,
@@ -70,7 +73,7 @@ enum {
     TAG_PREFILL_CHUNK_TOKENS,
     TAG_RUNTIME_MAXIMUM_NEW_TOKENS,
     TAG_RUNTIME_MAXIMUM_OUTPUT_BYTES,
-    TAG_RUNTIME_MAXIMUM_SESSIONS,
+    TAG_RUNTIME_WORKER_COUNT,
     TAG_METRICS = 80,
     TAG_OPENAI_PORT,
     TAG_RUNTIME_QUEUE_CAPACITY,
@@ -130,6 +133,8 @@ enum {
     TAG_CONSOLE_VARIANT_ID,
     TAG_CONSOLE_SESSION_NAME,
     TAG_CONSOLE_SELECTED_MODEL_ID,
+    TAG_CONSOLE_MODEL_ALIAS,
+    TAG_CONSOLE_ENGINE_GENERATION,
     TAG_RUNTIME_GENERATION_MODE,
     TAG_GENERATION_MODE,
     TAG_DRAFT_CYCLE_COUNT,
@@ -203,11 +208,36 @@ enum {
     TAG_CHECKPOINT_RUNTIME_BINDING_ID,
     TAG_CHECKPOINT_ARTIFACT_ID,
     TAG_CHECKPOINT_FILE_DIGEST,
-    TAG_RUNTIME_CONCURRENT_SEQUENCES,
-    TAG_RUNTIME_CAPACITY_REQUIRED_BYTES,
+    TAG_ENGINE_MAXIMUM_SESSIONS,
+    TAG_ENGINE_CONCURRENT_SEQUENCES,
     TAG_RUNTIME_CAPACITY_UNRESERVED_BYTES,
     TAG_RUNTIME_CAPACITY_PLAN_ID,
-    TAG_MEDIA_RESULT
+    TAG_RUNTIME_ENGINE_COUNT,
+    TAG_RUNTIME_LOADED_ENGINE_COUNT,
+    TAG_RUNTIME_DRAINING_ENGINE_COUNT,
+    TAG_RUNTIME_MAXIMUM_ENGINES,
+    TAG_MEDIA_RESULT,
+    TAG_ENGINE_STATE,
+    TAG_ENGINE_BACKEND,
+    TAG_ENGINE_GENERATION_MODE,
+    TAG_ENGINE_ALIAS,
+    TAG_ENGINE_TARGET,
+    TAG_ENGINE_ACTIVE_WORK,
+    TAG_ENGINE_SESSION_COUNT,
+    TAG_ENGINE_CONTEXT_CAPACITY,
+    TAG_ENGINE_PREFILL_CHUNK,
+    TAG_ENGINE_MAXIMUM_NEW_TOKENS,
+    TAG_ENGINE_MAXIMUM_OUTPUT_BYTES,
+    TAG_ENGINE_MAPPED_BYTES,
+    TAG_ENGINE_HOST_BYTES,
+    TAG_ENGINE_DEVICE_BYTES,
+    TAG_ENGINE_PREPARED_BYTES,
+    TAG_ENGINE_MODEL_ID,
+    TAG_ENGINE_BINDING_ID,
+    TAG_ENGINE_ARTIFACT_ID,
+    TAG_ENGINE_SPECIALIZATION_ID,
+    TAG_ENGINE_CAPACITY_PLAN_ID,
+    TAG_ENGINE_FLAGS
 };
 typedef struct {
     unsigned char *data;
@@ -218,8 +248,18 @@ typedef struct {
     unsigned long long count, offset;
     uint64_t seen[4];
 } wire_reader;
+typedef enum {
+    WIRE_MEMBER_U64 = 0,
+    WIRE_MEMBER_DOUBLE,
+    WIRE_MEMBER_TEXT
+} wire_member_kind;
+typedef struct {
+    unsigned int tag;
+    wire_member_kind kind;
+    size_t offset, extent;
+} wire_member;
 _Static_assert(sizeof(double) == 8u, "local protocol requires binary64 double");
-_Static_assert(TAG_MEDIA_RESULT < 256u,
+_Static_assert(TAG_ENGINE_FLAGS < 256u,
                "known protocol tags must fit the duplicate-field set");
 static int protocol_refuse(yvex_error *err, yvex_status status,
                            const char *reason)
@@ -361,6 +401,62 @@ static int reader_text(const unsigned char *bytes, unsigned long long count,
     output[count] = '\0';
     return 1;
 }
+static int writer_members(wire_writer *writer, const void *object,
+                          const wire_member *members, size_t member_count)
+{
+    const unsigned char *base = object;
+    size_t index;
+    for (index = 0u; index < member_count; ++index) {
+        const wire_member *member = &members[index];
+        if (member->kind == WIRE_MEMBER_U64) {
+            unsigned long long value;
+            if (member->extent != sizeof(value)) return 0;
+            memcpy(&value, base + member->offset, sizeof(value));
+            if (!writer_u64(writer, member->tag, value)) return 0;
+        } else if (member->kind == WIRE_MEMBER_DOUBLE) {
+            double value;
+            if (member->extent != sizeof(value)) return 0;
+            memcpy(&value, base + member->offset, sizeof(value));
+            if (!writer_double(writer, member->tag, value)) return 0;
+        } else {
+            const char *text = (const char *)(base + member->offset);
+            if (!memchr(text, '\0', member->extent) ||
+                !writer_text(writer, member->tag, text))
+                return 0;
+        }
+    }
+    return 1;
+}
+static int reader_member(void *object, const wire_member *members,
+                         size_t member_count, unsigned int tag,
+                         const unsigned char *bytes, unsigned long long count)
+{
+    unsigned char *base = object;
+    size_t index;
+    for (index = 0u; index < member_count; ++index) {
+        const wire_member *member = &members[index];
+        if (member->tag != tag) continue;
+        if (member->kind == WIRE_MEMBER_TEXT)
+            return reader_text(bytes, count, (char *)(base + member->offset),
+                               member->extent) ? 1 : -1;
+        if (member->kind == WIRE_MEMBER_U64 &&
+            member->extent == sizeof(unsigned long long)) {
+            unsigned long long value;
+            if (!reader_u64(bytes, count, &value)) return -1;
+            memcpy(base + member->offset, &value, sizeof(value));
+            return 1;
+        }
+        if (member->kind == WIRE_MEMBER_DOUBLE &&
+            member->extent == sizeof(double)) {
+            double value;
+            if (!reader_double(bytes, count, &value)) return -1;
+            memcpy(base + member->offset, &value, sizeof(value));
+            return 1;
+        }
+        return -1;
+    }
+    return 0;
+}
 static int request_state_fields_valid(const yvex_client_request *request)
 {
     int state_operation =
@@ -399,7 +495,7 @@ int yvex_protocol_request_encode(const yvex_client_request *request,
     if (!request || !output || !byte_count ||
         request->schema_version != YVEX_LOCAL_PROTOCOL_VERSION ||
         (int)request->operation < (int)YVEX_CLIENT_OP_HANDSHAKE ||
-        request->operation > YVEX_CLIENT_OP_CONSOLE_STATUS ||
+        request->operation > YVEX_CLIENT_OP_ENGINE_UNLOAD ||
         (int)request->trace_level < (int)YVEX_SERVER_TRACE_SUMMARY ||
         request->trace_level > YVEX_SERVER_TRACE_FULL ||
         request->reasoning_policy > YVEX_REASONING_MAXIMUM ||
@@ -412,7 +508,8 @@ int yvex_protocol_request_encode(const yvex_client_request *request,
         !isfinite(request->min_p) || !isfinite(request->typical_p) ||
         request->prompt_bytes > YVEX_SERVER_FRAME_MAX_BYTES ||
         (!request->prompt && request->prompt_bytes) ||
-        (request->prompt_bytes && request->provider_request))
+        (request->prompt_bytes && request->provider_request) ||
+        !memchr(request->model_alias, '\0', sizeof(request->model_alias)))
         return protocol_refuse(err, YVEX_ERR_INVALID_ARG,
                                "complete bounded client request is required");
     if (request->provider_request) {
@@ -433,6 +530,9 @@ int yvex_protocol_request_encode(const yvex_client_request *request,
             (request->trace_content ? 4u : 0u);
     if (!writer_u64(&writer, TAG_OPERATION, request->operation) ||
         !writer_u64(&writer, TAG_REQUEST_NUMBER, request->request_number) ||
+        !writer_text(&writer, TAG_MODEL_ALIAS, request->model_alias) ||
+        !writer_u64(&writer, TAG_ENGINE_GENERATION,
+                    request->engine_generation) ||
         !writer_text(&writer, TAG_SESSION_NAME, request->session_name) ||
         !writer_field(&writer, TAG_PROMPT, request->prompt,
                       request->prompt_bytes) ||
@@ -494,12 +594,19 @@ int yvex_protocol_request_decode(const unsigned char *input,
         switch (tag) {
         case TAG_OPERATION:
             valid = reader_u64(bytes, count, &value) &&
-                    value <= YVEX_CLIENT_OP_CONSOLE_STATUS;
+                    value <= YVEX_CLIENT_OP_ENGINE_UNLOAD;
             candidate.operation = (yvex_client_operation)value;
             have_operation = valid;
             break;
         case TAG_REQUEST_NUMBER:
             valid = reader_u64(bytes, count, &candidate.request_number);
+            break;
+        case TAG_MODEL_ALIAS:
+            valid = reader_text(bytes, count, candidate.model_alias,
+                                sizeof(candidate.model_alias));
+            break;
+        case TAG_ENGINE_GENERATION:
+            valid = reader_u64(bytes, count, &candidate.engine_generation);
             break;
         case TAG_SESSION_NAME:
             valid = reader_text(bytes, count, candidate.session_name,
@@ -722,11 +829,12 @@ static int message_fields_valid(const yvex_client_message *message)
 {
     const yvex_server_summary *runtime = &message->runtime;
     const yvex_console_status *console = &message->console;
+    const yvex_server_engine_summary *engine = &message->engine;
 #define ENUM_VALID(value, first, last) \
     ((int)(value) >= (int)(first) && (value) <= (last))
 #define BOOL_VALID(value) ((value) == 0 || (value) == 1)
     return ENUM_VALID(message->kind, YVEX_CLIENT_MESSAGE_ACK,
-                      YVEX_CLIENT_MESSAGE_CONSOLE_STATUS) &&
+                      YVEX_CLIENT_MESSAGE_ENGINE) &&
            ENUM_VALID(message->failure_class, YVEX_CLIENT_FAILURE_NONE,
                       YVEX_CLIENT_FAILURE_GATEWAY_TIMEOUT) &&
            ENUM_VALID(message->generation_phase, YVEX_CLIENT_PHASE_UNAVAILABLE,
@@ -758,7 +866,6 @@ static int message_fields_valid(const yvex_client_message *message)
            message->stop_reason <= YVEX_GENERATION_STOP_OUTPUT_FAILURE &&
            ENUM_VALID(runtime->status, YVEX_SERVER_STATUS_CONFIGURED,
                       YVEX_SERVER_STATUS_FAILED) &&
-           ENUM_VALID(runtime->backend, YVEX_BACKEND_KIND_CPU, YVEX_BACKEND_KIND_ROCM) &&
            ENUM_VALID(runtime->trace_level, YVEX_SERVER_TRACE_SUMMARY,
                       YVEX_SERVER_TRACE_FULL) &&
            ENUM_VALID(console->backend, YVEX_BACKEND_KIND_CPU, YVEX_BACKEND_KIND_ROCM) &&
@@ -773,31 +880,9 @@ static int message_fields_valid(const yvex_client_message *message)
            ENUM_VALID(message->event.severity, YVEX_SERVER_SEVERITY_DEBUG,
                       YVEX_SERVER_SEVERITY_FATAL) &&
            BOOL_VALID(message->kv_used_available) && BOOL_VALID(message->publication_timing_available) &&
-           BOOL_VALID(runtime->runtime_ready) && BOOL_VALID(runtime->generation_ready) &&
-           BOOL_VALID(runtime->public_server_ready) &&
+           BOOL_VALID(runtime->host_ready) &&
            BOOL_VALID(runtime->openai_listener_enabled) &&
            BOOL_VALID(runtime->openai_listener_ready) &&
-           BOOL_VALID(runtime->explicit_reasoning_channel_supported) &&
-           BOOL_VALID(runtime->independent_session_scheduling_ready) &&
-           BOOL_VALID(runtime->continuous_batching_ready) &&
-           optional_identity_valid(runtime->runtime_model_identity) &&
-           optional_identity_valid(runtime->runtime_binding_identity) &&
-           optional_identity_valid(runtime->artifact_identity) &&
-           optional_identity_valid(runtime->physical_variant_identity) &&
-           optional_identity_valid(runtime->capacity_plan_identity) &&
-           (!runtime->runtime_ready ||
-            (yvex_sha256_hex_valid(runtime->runtime_model_identity) &&
-             yvex_sha256_hex_valid(runtime->physical_variant_identity) &&
-             (runtime->generation_mode == YVEX_SERVER_GENERATION_MEDIA
-                  ? (runtime->concurrent_sequences && !runtime->context_capacity &&
-                     !runtime->prefill_chunk_tokens && !runtime->maximum_new_tokens &&
-                     !runtime->capacity_required_bytes && !runtime->capacity_unreserved_bytes &&
-                     !runtime->capacity_plan_identity[0] &&
-                     !runtime->runtime_binding_identity[0] && !runtime->artifact_identity[0])
-                  : (yvex_sha256_hex_valid(runtime->runtime_binding_identity) &&
-                     yvex_sha256_hex_valid(runtime->artifact_identity) &&
-                     runtime->concurrent_sequences && runtime->capacity_required_bytes &&
-                     yvex_sha256_hex_valid(runtime->capacity_plan_identity))))) &&
            BOOL_VALID(console->runtime_ready) && BOOL_VALID(console->session_available) &&
            BOOL_VALID(console->attached) && BOOL_VALID(console->cancel_requested) &&
            BOOL_VALID(console->kv_used_available) && BOOL_VALID(console->progress_available) &&
@@ -868,63 +953,65 @@ static int message_fields_valid(const yvex_client_message *message)
            (message->publication_timing_available ||
             message->publication_seconds == 0.0) &&
            (console->kv_used_available || !console->kv_used_bytes) &&
-           (console->selected_model_available || !console->selected_model_identity[0]);
+           (console->selected_model_available || !console->selected_model_identity[0]) &&
+           (message->kind != YVEX_CLIENT_MESSAGE_ENGINE ||
+            yvex_server_engine_summary_valid(engine));
 #undef BOOL_VALID
 #undef ENUM_VALID
 }
+#define WIRE_U64(type, tag, field) \
+    {tag, WIRE_MEMBER_U64, offsetof(type, field), sizeof(((type *)0)->field)}
+#define WIRE_DOUBLE(type, tag, field) \
+    {tag, WIRE_MEMBER_DOUBLE, offsetof(type, field), sizeof(((type *)0)->field)}
+#define WIRE_TEXT(type, tag, field) \
+    {tag, WIRE_MEMBER_TEXT, offsetof(type, field), sizeof(((type *)0)->field)}
+static const wire_member event_members[] = {
+    WIRE_U64(yvex_server_event, TAG_EVENT_SEQUENCE, sequence),
+    WIRE_U64(yvex_server_event, TAG_EVENT_WALL_TIME, wall_time_ns),
+    WIRE_U64(yvex_server_event, TAG_EVENT_MONOTONIC_TIME, monotonic_time_ns),
+    WIRE_U64(yvex_server_event, TAG_EVENT_PROCESS_ID, process_id),
+    WIRE_TEXT(yvex_server_event, TAG_EVENT_SESSION_ID, session_id),
+    WIRE_TEXT(yvex_server_event, TAG_EVENT_REQUEST_ID, request_id),
+    WIRE_TEXT(yvex_server_event, TAG_EVENT_TURN_ID, turn_id),
+    WIRE_TEXT(yvex_server_event, TAG_EVENT_PHASE, phase),
+    WIRE_TEXT(yvex_server_event, TAG_EVENT_PROVIDER_ADAPTER, provider_adapter),
+    WIRE_TEXT(yvex_server_event, TAG_EVENT_PROVIDER_REQUEST_ID, provider_request_identity),
+    WIRE_TEXT(yvex_server_event, TAG_EVENT_EXTERNAL_CORRELATION_ID, external_correlation_id),
+    WIRE_U64(yvex_server_event, TAG_EVENT_VALUE_A, value_a),
+    WIRE_U64(yvex_server_event, TAG_EVENT_VALUE_B, value_b),
+    WIRE_U64(yvex_server_event, TAG_EVENT_VALUE_C, value_c),
+    WIRE_U64(yvex_server_event, TAG_EVENT_SPECULATIVE_CYCLE, speculative_cycle),
+    WIRE_U64(yvex_server_event, TAG_EVENT_PROPOSED_TOKENS, proposed_tokens),
+    WIRE_U64(yvex_server_event, TAG_EVENT_SELECTED_VERIFICATION_TOKENS,
+             selected_verification_tokens),
+    WIRE_U64(yvex_server_event, TAG_EVENT_ACCEPTED_TOKENS, accepted_tokens),
+    WIRE_U64(yvex_server_event, TAG_EVENT_REJECTED_TOKENS, rejected_tokens),
+    WIRE_U64(yvex_server_event, TAG_EVENT_DISCARDED_TOKENS, discarded_tokens),
+    WIRE_U64(yvex_server_event, TAG_EVENT_VERIFICATION_COUNT, verification_count),
+    WIRE_U64(yvex_server_event, TAG_EVENT_CONFIDENCE_LOGIT_COUNT, confidence_logit_count),
+    WIRE_DOUBLE(yvex_server_event, TAG_EVENT_CONFIDENCE_LOGIT_MINIMUM,
+                confidence_logit_minimum),
+    WIRE_DOUBLE(yvex_server_event, TAG_EVENT_CONFIDENCE_LOGIT_MAXIMUM,
+                confidence_logit_maximum),
+    WIRE_DOUBLE(yvex_server_event, TAG_EVENT_CONFIDENCE_LOGIT_MEAN, confidence_logit_mean),
+    WIRE_TEXT(yvex_server_event, TAG_EVENT_SPECULATION_POLICY_ID, speculation_policy_identity),
+    WIRE_DOUBLE(yvex_server_event, TAG_EVENT_SECONDS, seconds),
+    WIRE_DOUBLE(yvex_server_event, TAG_EVENT_RATE, rate),
+    WIRE_TEXT(yvex_server_event, TAG_EVENT_VARIANT_ID, variant_identity),
+    WIRE_TEXT(yvex_server_event, TAG_EVENT_RUNTIME_MODEL_ID, runtime_model_identity),
+    WIRE_TEXT(yvex_server_event, TAG_EVENT_ARTIFACT_ID, artifact_identity),
+    WIRE_TEXT(yvex_server_event, TAG_EVENT_IDENTITY, event_identity)
+};
+
 static int protocol_event_write(wire_writer *writer,
                                 const yvex_server_event *event)
 {
-#define EVENT_U64(tag, field) \
-    writer_u64(writer, tag, (unsigned long long)(field))
-    int valid =
-        EVENT_U64(TAG_EVENT_SEQUENCE, event->sequence) &&
-        EVENT_U64(TAG_EVENT_WALL_TIME, event->wall_time_ns) &&
-        EVENT_U64(TAG_EVENT_MONOTONIC_TIME, event->monotonic_time_ns) &&
-        EVENT_U64(TAG_EVENT_PROCESS_ID, event->process_id) &&
-        EVENT_U64(TAG_EVENT_KIND, event->kind) &&
-        EVENT_U64(TAG_EVENT_SEVERITY, event->severity) &&
-        writer_text(writer, TAG_EVENT_SESSION_ID, event->session_id) &&
-        writer_text(writer, TAG_EVENT_REQUEST_ID, event->request_id) &&
-        writer_text(writer, TAG_EVENT_TURN_ID, event->turn_id) &&
-        writer_text(writer, TAG_EVENT_PHASE, event->phase) &&
-        writer_text(writer, TAG_EVENT_PROVIDER_ADAPTER,
-                    event->provider_adapter) &&
-        writer_text(writer, TAG_EVENT_PROVIDER_REQUEST_ID,
-                    event->provider_request_identity) &&
-        writer_text(writer, TAG_EVENT_EXTERNAL_CORRELATION_ID,
-                    event->external_correlation_id) &&
-        EVENT_U64(TAG_EVENT_VALUE_A, event->value_a) &&
-        EVENT_U64(TAG_EVENT_VALUE_B, event->value_b) &&
-        EVENT_U64(TAG_EVENT_VALUE_C, event->value_c) &&
-        EVENT_U64(TAG_EVENT_GENERATION_MODE, event->generation_mode) &&
-        EVENT_U64(TAG_EVENT_SPECULATIVE_CYCLE, event->speculative_cycle) &&
-        EVENT_U64(TAG_EVENT_PROPOSED_TOKENS, event->proposed_tokens) &&
-        EVENT_U64(TAG_EVENT_SELECTED_VERIFICATION_TOKENS,
-                  event->selected_verification_tokens) &&
-        EVENT_U64(TAG_EVENT_ACCEPTED_TOKENS, event->accepted_tokens) &&
-        EVENT_U64(TAG_EVENT_REJECTED_TOKENS, event->rejected_tokens) &&
-        EVENT_U64(TAG_EVENT_DISCARDED_TOKENS, event->discarded_tokens) &&
-        EVENT_U64(TAG_EVENT_VERIFICATION_COUNT, event->verification_count) &&
-        EVENT_U64(TAG_EVENT_CONFIDENCE_LOGIT_COUNT,
-                  event->confidence_logit_count) &&
-        writer_double(writer, TAG_EVENT_CONFIDENCE_LOGIT_MINIMUM,
-                      event->confidence_logit_minimum) &&
-        writer_double(writer, TAG_EVENT_CONFIDENCE_LOGIT_MAXIMUM,
-                      event->confidence_logit_maximum) &&
-        writer_double(writer, TAG_EVENT_CONFIDENCE_LOGIT_MEAN,
-                      event->confidence_logit_mean) &&
-        writer_text(writer, TAG_EVENT_SPECULATION_POLICY_ID,
-                    event->speculation_policy_identity) &&
-        writer_double(writer, TAG_EVENT_SECONDS, event->seconds) &&
-        writer_double(writer, TAG_EVENT_RATE, event->rate) &&
-        writer_text(writer, TAG_EVENT_VARIANT_ID, event->variant_identity) &&
-        writer_text(writer, TAG_EVENT_RUNTIME_MODEL_ID,
-                    event->runtime_model_identity) &&
-        writer_text(writer, TAG_EVENT_ARTIFACT_ID, event->artifact_identity) &&
-        writer_text(writer, TAG_EVENT_IDENTITY, event->event_identity);
-#undef EVENT_U64
-    return valid;
+    return writer_u64(writer, TAG_EVENT_KIND, event->kind) &&
+           writer_u64(writer, TAG_EVENT_SEVERITY, event->severity) &&
+           writer_u64(writer, TAG_EVENT_GENERATION_MODE,
+                      event->generation_mode) &&
+           writer_members(writer, event, event_members,
+                          sizeof(event_members) / sizeof(event_members[0]));
 }
 static int protocol_message_core_write(wire_writer *writer,
                                        const yvex_client_message *message,
@@ -1128,59 +1215,70 @@ static int protocol_partial_write(wire_writer *writer,
 #undef PARTIAL_U64
     return valid;
 }
+static const wire_member runtime_members[] = {
+    WIRE_TEXT(yvex_server_summary, TAG_SOCKET_PATH, socket_path),
+    WIRE_U64(yvex_server_summary, TAG_SESSION_COUNT, session_count),
+    WIRE_U64(yvex_server_summary, TAG_RUNTIME_REQUEST_COUNT, request_count),
+    WIRE_U64(yvex_server_summary, TAG_RUNTIME_QUEUE_CAPACITY, request_queue_capacity),
+    WIRE_U64(yvex_server_summary, TAG_RUNTIME_WORKER_COUNT, worker_count),
+    WIRE_U64(yvex_server_summary, TAG_RUNTIME_OPENAI_TIMEOUT, openai_timeout_ms),
+    WIRE_U64(yvex_server_summary, TAG_RUNTIME_ENGINE_COUNT, engine_count),
+    WIRE_U64(yvex_server_summary, TAG_RUNTIME_LOADED_ENGINE_COUNT, loaded_engine_count),
+    WIRE_U64(yvex_server_summary, TAG_RUNTIME_DRAINING_ENGINE_COUNT, draining_engine_count),
+    WIRE_U64(yvex_server_summary, TAG_RUNTIME_MAXIMUM_ENGINES, maximum_engines)
+};
+static const wire_member engine_members[] = {
+    WIRE_TEXT(yvex_server_engine_summary, TAG_ENGINE_ALIAS, alias),
+    WIRE_TEXT(yvex_server_engine_summary, TAG_ENGINE_TARGET, target_id),
+    WIRE_U64(yvex_server_engine_summary, TAG_ENGINE_GENERATION, generation),
+    WIRE_U64(yvex_server_engine_summary, TAG_ENGINE_ACTIVE_WORK, active_work),
+    WIRE_U64(yvex_server_engine_summary, TAG_ENGINE_SESSION_COUNT, session_count),
+    WIRE_U64(yvex_server_engine_summary, TAG_ENGINE_CONTEXT_CAPACITY, context_capacity),
+    WIRE_U64(yvex_server_engine_summary, TAG_ENGINE_PREFILL_CHUNK, prefill_chunk_tokens),
+    WIRE_U64(yvex_server_engine_summary, TAG_ENGINE_MAXIMUM_NEW_TOKENS, maximum_new_tokens),
+    WIRE_U64(yvex_server_engine_summary, TAG_ENGINE_MAXIMUM_OUTPUT_BYTES, maximum_output_bytes),
+    WIRE_U64(yvex_server_engine_summary, TAG_ENGINE_MAXIMUM_SESSIONS, maximum_sessions),
+    WIRE_U64(yvex_server_engine_summary, TAG_ENGINE_CONCURRENT_SEQUENCES, concurrent_sequences),
+    WIRE_U64(yvex_server_engine_summary, TAG_ENGINE_MAPPED_BYTES, mapped_package_bytes),
+    WIRE_U64(yvex_server_engine_summary, TAG_ENGINE_HOST_BYTES, resident_host_bytes),
+    WIRE_U64(yvex_server_engine_summary, TAG_ENGINE_DEVICE_BYTES, resident_device_bytes),
+    WIRE_U64(yvex_server_engine_summary, TAG_ENGINE_PREPARED_BYTES, prepared_bytes),
+    WIRE_TEXT(yvex_server_engine_summary, TAG_ENGINE_MODEL_ID, runtime_model_identity),
+    WIRE_TEXT(yvex_server_engine_summary, TAG_ENGINE_BINDING_ID, runtime_binding_identity),
+    WIRE_TEXT(yvex_server_engine_summary, TAG_ENGINE_ARTIFACT_ID, artifact_identity),
+    WIRE_TEXT(yvex_server_engine_summary, TAG_ENGINE_SPECIALIZATION_ID, specialization_identity),
+    WIRE_TEXT(yvex_server_engine_summary, TAG_ENGINE_CAPACITY_PLAN_ID, capacity_plan_identity)
+};
+static const wire_member console_members[] = {
+    WIRE_U64(yvex_console_status, TAG_CONSOLE_POSITION, position),
+    WIRE_U64(yvex_console_status, TAG_CONSOLE_TURN_COUNT, turn_count),
+    WIRE_U64(yvex_console_status, TAG_CONSOLE_CONTEXT_CAPACITY, context_capacity),
+    WIRE_U64(yvex_console_status, TAG_CONSOLE_CONTEXT_USED, context_used),
+    WIRE_U64(yvex_console_status, TAG_CONSOLE_KV_USED_BYTES, kv_used_bytes),
+    WIRE_U64(yvex_console_status, TAG_CONSOLE_ENGINE_GENERATION, engine_generation),
+    WIRE_TEXT(yvex_console_status, TAG_CONSOLE_LIVE_MODEL_ID, live_model_identity),
+    WIRE_TEXT(yvex_console_status, TAG_CONSOLE_VARIANT_ID, physical_variant_identity),
+    WIRE_TEXT(yvex_console_status, TAG_CONSOLE_SESSION_NAME, session_name),
+    WIRE_TEXT(yvex_console_status, TAG_CONSOLE_MODEL_ALIAS, model_alias),
+    WIRE_TEXT(yvex_console_status, TAG_CONSOLE_SELECTED_MODEL_ID, selected_model_identity)
+};
+#undef WIRE_TEXT
+#undef WIRE_DOUBLE
+#undef WIRE_U64
+
 static int protocol_runtime_write(wire_writer *writer,
                                   const yvex_server_summary *runtime)
 {
-    unsigned long long flags = (runtime->runtime_ready ? 1u : 0u) |
-                               (runtime->generation_ready ? 2u : 0u) |
-                               (runtime->public_server_ready ? 4u : 0u) |
-                               (runtime->openai_listener_enabled ? 8u : 0u) |
-                               (runtime->openai_listener_ready ? 16u : 0u) |
-                               (runtime->explicit_reasoning_channel_supported ? 32u : 0u) |
-                               (runtime->independent_session_scheduling_ready ? 64u : 0u) |
-                               (runtime->continuous_batching_ready ? 128u : 0u);
-#define RUNTIME_U64(tag, field) \
-    writer_u64(writer, tag, (unsigned long long)(field))
-    int valid =
-        RUNTIME_U64(TAG_RUNTIME_STATUS, runtime->status) &&
-        RUNTIME_U64(TAG_RUNTIME_BACKEND, runtime->backend) &&
-        RUNTIME_U64(TAG_RUNTIME_GENERATION_MODE, runtime->generation_mode) &&
-        writer_text(writer, TAG_SOCKET_PATH, runtime->socket_path) &&
-        writer_text(writer, TAG_TARGET_ID, runtime->target_id) &&
-        writer_text(writer, TAG_RUNTIME_MODEL_ID,
-                    runtime->runtime_model_identity) &&
-        writer_text(writer, TAG_RUNTIME_BINDING_ID,
-                    runtime->runtime_binding_identity) &&
-        writer_text(writer, TAG_ARTIFACT_ID, runtime->artifact_identity) &&
-        writer_text(writer, TAG_PHYSICAL_VARIANT_ID,
-                    runtime->physical_variant_identity) &&
-        RUNTIME_U64(TAG_CONTEXT_CAPACITY, runtime->context_capacity) &&
-        RUNTIME_U64(TAG_SESSION_COUNT, runtime->session_count) &&
-        RUNTIME_U64(TAG_RUNTIME_REQUEST_COUNT, runtime->request_count) &&
-        RUNTIME_U64(TAG_RUNTIME_FLAGS, flags) &&
-        RUNTIME_U64(TAG_PREFILL_CHUNK_TOKENS, runtime->prefill_chunk_tokens) &&
-        RUNTIME_U64(TAG_RUNTIME_MAXIMUM_NEW_TOKENS,
-                    runtime->maximum_new_tokens) &&
-        RUNTIME_U64(TAG_RUNTIME_MAXIMUM_OUTPUT_BYTES,
-                    runtime->maximum_output_bytes) &&
-        RUNTIME_U64(TAG_RUNTIME_MAXIMUM_SESSIONS,
-                    runtime->maximum_sessions) &&
-        RUNTIME_U64(TAG_OPENAI_PORT, runtime->openai_port) &&
-        RUNTIME_U64(TAG_RUNTIME_QUEUE_CAPACITY,
-                    runtime->request_queue_capacity) &&
-        RUNTIME_U64(TAG_RUNTIME_OPENAI_TIMEOUT, runtime->openai_timeout_ms) &&
-        RUNTIME_U64(TAG_RUNTIME_TRACE_LEVEL, runtime->trace_level) &&
-        RUNTIME_U64(TAG_RUNTIME_CONCURRENT_SEQUENCES,
-                    runtime->concurrent_sequences) &&
-        RUNTIME_U64(TAG_RUNTIME_CAPACITY_REQUIRED_BYTES,
-                    runtime->capacity_required_bytes) &&
-        RUNTIME_U64(TAG_RUNTIME_CAPACITY_UNRESERVED_BYTES,
-                    runtime->capacity_unreserved_bytes) &&
-        writer_text(writer, TAG_RUNTIME_CAPACITY_PLAN_ID,
-                    runtime->capacity_plan_identity) &&
-        writer_metrics(writer, &runtime->metrics);
-#undef RUNTIME_U64
-    return valid;
+    unsigned long long flags = (runtime->host_ready ? 1u : 0u) |
+                               (runtime->openai_listener_enabled ? 2u : 0u) |
+                               (runtime->openai_listener_ready ? 4u : 0u);
+    return writer_u64(writer, TAG_RUNTIME_STATUS, runtime->status) &&
+           writer_members(writer, runtime, runtime_members,
+                          sizeof(runtime_members) / sizeof(runtime_members[0])) &&
+           writer_u64(writer, TAG_RUNTIME_FLAGS, flags) &&
+           writer_u64(writer, TAG_OPENAI_PORT, runtime->openai_port) &&
+           writer_u64(writer, TAG_RUNTIME_TRACE_LEVEL, runtime->trace_level) &&
+           writer_metrics(writer, &runtime->metrics);
 }
 static int protocol_console_write(wire_writer *writer,
                                   const yvex_console_status *console)
@@ -1199,24 +1297,31 @@ static int protocol_console_write(wire_writer *writer,
         CONSOLE_U64(TAG_CONSOLE_FLAGS, flags) &&
         CONSOLE_U64(TAG_CONSOLE_BACKEND, console->backend) &&
         CONSOLE_U64(TAG_CONSOLE_SESSION_STATE, console->session_state) &&
-        CONSOLE_U64(TAG_CONSOLE_POSITION, console->position) &&
-        CONSOLE_U64(TAG_CONSOLE_TURN_COUNT, console->turn_count) &&
-        CONSOLE_U64(TAG_CONSOLE_CONTEXT_CAPACITY, console->context_capacity) &&
-        CONSOLE_U64(TAG_CONSOLE_CONTEXT_USED, console->context_used) &&
-        CONSOLE_U64(TAG_CONSOLE_KV_USED_BYTES, console->kv_used_bytes) &&
         CONSOLE_U64(TAG_CONSOLE_PHASE, console->generation_phase) &&
         CONSOLE_U64(TAG_CONSOLE_CANCELLATION, console->cancellation_class) &&
         CONSOLE_U64(TAG_CONSOLE_REASONING_POLICY,
                     console->reasoning_policy) &&
-        writer_text(writer, TAG_CONSOLE_LIVE_MODEL_ID,
-                    console->live_model_identity) &&
-        writer_text(writer, TAG_CONSOLE_VARIANT_ID,
-                    console->physical_variant_identity) &&
-        writer_text(writer, TAG_CONSOLE_SESSION_NAME, console->session_name) &&
-        writer_text(writer, TAG_CONSOLE_SELECTED_MODEL_ID,
-                    console->selected_model_identity);
+        writer_members(writer, console, console_members,
+                       sizeof(console_members) / sizeof(console_members[0]));
 #undef CONSOLE_U64
     return valid;
+}
+static int protocol_engine_write(wire_writer *writer,
+                                 const yvex_client_message *message)
+{
+    const yvex_server_engine_summary *engine = &message->engine;
+    unsigned long long flags;
+    if (message->kind != YVEX_CLIENT_MESSAGE_ENGINE) return 1;
+    flags = (engine->execution_ready ? 1u : 0u) |
+            (engine->explicit_reasoning_channel_supported ? 2u : 0u) |
+            (engine->continuous_batching_ready ? 4u : 0u);
+    return writer_u64(writer, TAG_ENGINE_STATE, engine->state) &&
+           writer_u64(writer, TAG_ENGINE_BACKEND, engine->backend) &&
+           writer_u64(writer, TAG_ENGINE_GENERATION_MODE,
+                      engine->generation_mode) &&
+           writer_members(writer, engine, engine_members,
+                          sizeof(engine_members) / sizeof(engine_members[0])) &&
+           writer_u64(writer, TAG_ENGINE_FLAGS, flags);
 }
 int yvex_protocol_message_encode(const yvex_client_message *message,
                                  unsigned char *output,
@@ -1244,6 +1349,7 @@ int yvex_protocol_message_encode(const yvex_client_message *message,
         !protocol_media_result_write(&writer, &message->media_result) ||
         !protocol_partial_write(&writer, &message->partial_turn) ||
         !protocol_runtime_write(&writer, &message->runtime) ||
+        !protocol_engine_write(&writer, message) ||
         !protocol_console_write(&writer, &message->console) ||
         !protocol_event_write(&writer, &message->event))
         return protocol_refuse(err, YVEX_ERR_BOUNDS,
@@ -1351,7 +1457,7 @@ static int message_base_field(yvex_client_message *candidate, unsigned int tag,
     switch (tag) {
     case TAG_MESSAGE_KIND:
         valid = reader_u64(bytes, count, &value) &&
-                value <= YVEX_CLIENT_MESSAGE_CONSOLE_STATUS;
+                value <= YVEX_CLIENT_MESSAGE_ENGINE;
         candidate->kind = (yvex_client_message_kind)value;
         *have_kind = valid;
         break;
@@ -1624,111 +1730,72 @@ static int message_runtime_field(yvex_client_message *candidate,
                                  unsigned long long count)
 {
     unsigned long long value = 0ull;
-    int valid = 1;
-#define RUNTIME_U64(field) (reader_u64(bytes, count, &value) ? ((field) = value, 1) : 0)
+    int valid = 1, member = reader_member(
+        &candidate->runtime, runtime_members,
+        sizeof(runtime_members) / sizeof(runtime_members[0]), tag, bytes, count);
+    if (member) return member;
     switch (tag) {
     case TAG_RUNTIME_STATUS:
         valid = reader_u64(bytes, count, &value) &&
                 value <= YVEX_SERVER_STATUS_FAILED;
         if (valid) candidate->runtime.status = (yvex_server_status)value;
         break;
-    case TAG_RUNTIME_BACKEND:
-        valid = reader_u64(bytes, count, &value) &&
-                value <= YVEX_BACKEND_KIND_ROCM;
-        if (valid) candidate->runtime.backend = (yvex_backend_kind)value;
-        break;
-    case TAG_RUNTIME_GENERATION_MODE:
-        valid = reader_u64(bytes, count, &value) &&
-                value <= YVEX_SERVER_GENERATION_MEDIA;
-        if (valid)
-            candidate->runtime.generation_mode =
-                (yvex_server_generation_mode)value;
-        break;
-    case TAG_SOCKET_PATH:
-        valid = reader_text(bytes, count, candidate->runtime.socket_path,
-                            sizeof(candidate->runtime.socket_path));
-        break;
-    case TAG_TARGET_ID:
-        valid = reader_text(bytes, count, candidate->runtime.target_id,
-                            sizeof(candidate->runtime.target_id));
-        break;
-    case TAG_RUNTIME_MODEL_ID:
-        valid = reader_text(bytes, count, candidate->runtime.runtime_model_identity,
-                            sizeof(candidate->runtime.runtime_model_identity));
-        break;
-    case TAG_RUNTIME_BINDING_ID:
-        valid = reader_text(bytes, count, candidate->runtime.runtime_binding_identity,
-                            sizeof(candidate->runtime.runtime_binding_identity));
-        break;
-    case TAG_ARTIFACT_ID:
-        valid = reader_text(bytes, count, candidate->runtime.artifact_identity,
-                            sizeof(candidate->runtime.artifact_identity));
-        break;
-    case TAG_PHYSICAL_VARIANT_ID:
-        valid = reader_text(bytes, count, candidate->runtime.physical_variant_identity,
-                            sizeof(candidate->runtime.physical_variant_identity));
-        break;
-    case TAG_CONTEXT_CAPACITY: valid = RUNTIME_U64(candidate->runtime.context_capacity); break;
-    case TAG_SESSION_COUNT: valid = RUNTIME_U64(candidate->runtime.session_count); break;
-    case TAG_RUNTIME_REQUEST_COUNT: valid = RUNTIME_U64(candidate->runtime.request_count); break;
-    case TAG_PREFILL_CHUNK_TOKENS:
-        valid = RUNTIME_U64(candidate->runtime.prefill_chunk_tokens);
-        break;
-    case TAG_RUNTIME_MAXIMUM_NEW_TOKENS:
-        valid = RUNTIME_U64(candidate->runtime.maximum_new_tokens);
-        break;
-    case TAG_RUNTIME_MAXIMUM_OUTPUT_BYTES:
-        valid = RUNTIME_U64(candidate->runtime.maximum_output_bytes);
-        break;
-    case TAG_RUNTIME_MAXIMUM_SESSIONS:
-        valid = RUNTIME_U64(candidate->runtime.maximum_sessions);
-        break;
-    case TAG_RUNTIME_QUEUE_CAPACITY:
-        valid = RUNTIME_U64(candidate->runtime.request_queue_capacity);
-        break;
-    case TAG_RUNTIME_OPENAI_TIMEOUT:
-        valid = RUNTIME_U64(candidate->runtime.openai_timeout_ms);
-        break;
     case TAG_RUNTIME_TRACE_LEVEL:
         valid = reader_u64(bytes, count, &value) &&
                 value <= YVEX_SERVER_TRACE_FULL;
         if (valid) candidate->runtime.trace_level = (yvex_server_trace_level)value;
-        break;
-    case TAG_RUNTIME_CONCURRENT_SEQUENCES:
-        valid = RUNTIME_U64(candidate->runtime.concurrent_sequences);
-        break;
-    case TAG_RUNTIME_CAPACITY_REQUIRED_BYTES:
-        valid = RUNTIME_U64(candidate->runtime.capacity_required_bytes);
-        break;
-    case TAG_RUNTIME_CAPACITY_UNRESERVED_BYTES:
-        valid = RUNTIME_U64(candidate->runtime.capacity_unreserved_bytes);
-        break;
-    case TAG_RUNTIME_CAPACITY_PLAN_ID:
-        valid = reader_text(bytes, count,
-                            candidate->runtime.capacity_plan_identity,
-                            sizeof(candidate->runtime.capacity_plan_identity));
         break;
     case TAG_OPENAI_PORT:
         valid = reader_u64(bytes, count, &value) && value <= 65535u;
         if (valid) candidate->runtime.openai_port = (unsigned short)value;
         break;
     case TAG_RUNTIME_FLAGS:
-        valid = reader_u64(bytes, count, &value) && !(value & ~255u);
-        candidate->runtime.runtime_ready = (value & 1u) != 0u;
-        candidate->runtime.generation_ready = (value & 2u) != 0u;
-        candidate->runtime.public_server_ready = (value & 4u) != 0u;
-        candidate->runtime.openai_listener_enabled = (value & 8u) != 0u;
-        candidate->runtime.openai_listener_ready = (value & 16u) != 0u;
-        candidate->runtime.explicit_reasoning_channel_supported =
-            (value & 32u) != 0u;
-        candidate->runtime.independent_session_scheduling_ready =
-            (value & 64u) != 0u;
-        candidate->runtime.continuous_batching_ready = (value & 128u) != 0u;
+        valid = reader_u64(bytes, count, &value) && !(value & ~7u);
+        candidate->runtime.host_ready = (value & 1u) != 0u;
+        candidate->runtime.openai_listener_enabled = (value & 2u) != 0u;
+        candidate->runtime.openai_listener_ready = (value & 4u) != 0u;
         break;
     case TAG_METRICS: valid = reader_metrics(bytes, count, &candidate->runtime.metrics); break;
     default: return 0;
     }
-#undef RUNTIME_U64
+    return valid ? 1 : -1;
+}
+static int message_engine_field(yvex_client_message *candidate,
+                                unsigned int tag,
+                                const unsigned char *bytes,
+                                unsigned long long count)
+{
+    yvex_server_engine_summary *engine = &candidate->engine;
+    unsigned long long value = 0ull;
+    int valid = 1, member = reader_member(
+        engine, engine_members, sizeof(engine_members) / sizeof(engine_members[0]),
+        tag, bytes, count);
+    if (member) return member;
+    switch (tag) {
+    case TAG_ENGINE_STATE:
+        valid = reader_u64(bytes, count, &value) &&
+                value <= YVEX_SERVER_ENGINE_FAILED;
+        if (valid) engine->state = (yvex_server_engine_state)value;
+        break;
+    case TAG_ENGINE_BACKEND:
+        valid = reader_u64(bytes, count, &value) &&
+                value <= YVEX_BACKEND_KIND_CUDA;
+        if (valid) engine->backend = (yvex_backend_kind)value;
+        break;
+    case TAG_ENGINE_GENERATION_MODE:
+        valid = reader_u64(bytes, count, &value) &&
+                value <= YVEX_SERVER_GENERATION_MEDIA;
+        if (valid)
+            engine->generation_mode = (yvex_server_generation_mode)value;
+        break;
+    case TAG_ENGINE_FLAGS:
+        valid = reader_u64(bytes, count, &value) && !(value & ~7u);
+        engine->execution_ready = (value & 1u) != 0u;
+        engine->explicit_reasoning_channel_supported = (value & 2u) != 0u;
+        engine->continuous_batching_ready = (value & 4u) != 0u;
+        break;
+    default: return 0;
+    }
     return valid ? 1 : -1;
 }
 static int message_console_field(yvex_client_message *candidate,
@@ -1737,7 +1804,10 @@ static int message_console_field(yvex_client_message *candidate,
                                  unsigned long long count)
 {
     unsigned long long value = 0u;
-    int valid = 1;
+    int valid = 1, member = reader_member(
+        &candidate->console, console_members,
+        sizeof(console_members) / sizeof(console_members[0]), tag, bytes, count);
+    if (member) return member;
 #define CONSOLE_U64(field) (reader_u64(bytes, count, &value) ? ((field) = value, 1) : 0)
     switch (tag) {
     case TAG_CONSOLE_FLAGS:
@@ -1761,17 +1831,6 @@ static int message_console_field(yvex_client_message *candidate,
                 value <= YVEX_SERVER_SESSION_FAILED;
         if (valid) candidate->console.session_state = (yvex_server_session_state)value;
         break;
-    case TAG_CONSOLE_POSITION: valid = CONSOLE_U64(candidate->console.position); break;
-    case TAG_CONSOLE_TURN_COUNT: valid = CONSOLE_U64(candidate->console.turn_count); break;
-    case TAG_CONSOLE_CONTEXT_CAPACITY:
-        valid = CONSOLE_U64(candidate->console.context_capacity);
-        break;
-    case TAG_CONSOLE_CONTEXT_USED:
-        valid = CONSOLE_U64(candidate->console.context_used);
-        break;
-    case TAG_CONSOLE_KV_USED_BYTES:
-        valid = CONSOLE_U64(candidate->console.kv_used_bytes);
-        break;
     case TAG_CONSOLE_PHASE:
         valid = reader_u64(bytes, count, &value) && value <= YVEX_CLIENT_PHASE_FAILED;
         if (valid) candidate->console.generation_phase = (yvex_client_generation_phase)value;
@@ -1790,24 +1849,6 @@ static int message_console_field(yvex_client_message *candidate,
             candidate->console.reasoning_policy =
                 (yvex_reasoning_policy)value;
         break;
-    case TAG_CONSOLE_LIVE_MODEL_ID:
-        valid = reader_text(bytes, count, candidate->console.live_model_identity,
-                            sizeof(candidate->console.live_model_identity));
-        break;
-    case TAG_CONSOLE_VARIANT_ID:
-        valid = reader_text(bytes, count,
-                            candidate->console.physical_variant_identity,
-                            sizeof(candidate->console.physical_variant_identity));
-        break;
-    case TAG_CONSOLE_SESSION_NAME:
-        valid = reader_text(bytes, count, candidate->console.session_name,
-                            sizeof(candidate->console.session_name));
-        break;
-    case TAG_CONSOLE_SELECTED_MODEL_ID:
-        valid = reader_text(bytes, count,
-                            candidate->console.selected_model_identity,
-                            sizeof(candidate->console.selected_model_identity));
-        break;
     default: return 0;
     }
 #undef CONSOLE_U64
@@ -1819,13 +1860,11 @@ static int message_event_field(yvex_client_message *candidate,
                                unsigned long long count)
 {
     unsigned long long value;
-    int valid = 1;
-#define EVENT_U64(field) (reader_u64(bytes, count, &value) ? ((field) = value, 1) : 0)
+    int valid = 1, member = reader_member(
+        &candidate->event, event_members,
+        sizeof(event_members) / sizeof(event_members[0]), tag, bytes, count);
+    if (member) return member;
     switch (tag) {
-    case TAG_EVENT_SEQUENCE: valid = EVENT_U64(candidate->event.sequence); break;
-    case TAG_EVENT_WALL_TIME: valid = EVENT_U64(candidate->event.wall_time_ns); break;
-    case TAG_EVENT_MONOTONIC_TIME: valid = EVENT_U64(candidate->event.monotonic_time_ns); break;
-    case TAG_EVENT_PROCESS_ID: valid = EVENT_U64(candidate->event.process_id); break;
     case TAG_EVENT_KIND:
         valid = reader_u64(bytes, count, &value) &&
                 value <= YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_COMPLETE;
@@ -1836,39 +1875,6 @@ static int message_event_field(yvex_client_message *candidate,
                 value <= YVEX_SERVER_SEVERITY_FATAL;
         if (valid) candidate->event.severity = (yvex_server_event_severity)value;
         break;
-    case TAG_EVENT_SESSION_ID:
-        valid = reader_text(bytes, count, candidate->event.session_id,
-                            sizeof(candidate->event.session_id));
-        break;
-    case TAG_EVENT_REQUEST_ID:
-        valid = reader_text(bytes, count, candidate->event.request_id,
-                            sizeof(candidate->event.request_id));
-        break;
-    case TAG_EVENT_TURN_ID:
-        valid = reader_text(bytes, count, candidate->event.turn_id,
-                            sizeof(candidate->event.turn_id));
-        break;
-    case TAG_EVENT_PHASE:
-        valid = reader_text(bytes, count, candidate->event.phase,
-                            sizeof(candidate->event.phase));
-        break;
-    case TAG_EVENT_PROVIDER_ADAPTER:
-        valid = reader_text(bytes, count, candidate->event.provider_adapter,
-                            sizeof(candidate->event.provider_adapter));
-        break;
-    case TAG_EVENT_PROVIDER_REQUEST_ID:
-        valid = reader_text(bytes, count,
-                            candidate->event.provider_request_identity,
-                            sizeof(candidate->event.provider_request_identity));
-        break;
-    case TAG_EVENT_EXTERNAL_CORRELATION_ID:
-        valid = reader_text(bytes, count,
-                            candidate->event.external_correlation_id,
-                            sizeof(candidate->event.external_correlation_id));
-        break;
-    case TAG_EVENT_VALUE_A: valid = EVENT_U64(candidate->event.value_a); break;
-    case TAG_EVENT_VALUE_B: valid = EVENT_U64(candidate->event.value_b); break;
-    case TAG_EVENT_VALUE_C: valid = EVENT_U64(candidate->event.value_c); break;
     case TAG_EVENT_GENERATION_MODE:
         valid = reader_u64(bytes, count, &value) &&
                 value <= YVEX_SERVER_GENERATION_MEDIA;
@@ -1876,68 +1882,8 @@ static int message_event_field(yvex_client_message *candidate,
             candidate->event.generation_mode =
                 (yvex_server_generation_mode)value;
         break;
-    case TAG_EVENT_SPECULATIVE_CYCLE:
-        valid = EVENT_U64(candidate->event.speculative_cycle);
-        break;
-    case TAG_EVENT_PROPOSED_TOKENS:
-        valid = EVENT_U64(candidate->event.proposed_tokens);
-        break;
-    case TAG_EVENT_SELECTED_VERIFICATION_TOKENS:
-        valid = EVENT_U64(candidate->event.selected_verification_tokens);
-        break;
-    case TAG_EVENT_ACCEPTED_TOKENS:
-        valid = EVENT_U64(candidate->event.accepted_tokens);
-        break;
-    case TAG_EVENT_REJECTED_TOKENS:
-        valid = EVENT_U64(candidate->event.rejected_tokens);
-        break;
-    case TAG_EVENT_DISCARDED_TOKENS:
-        valid = EVENT_U64(candidate->event.discarded_tokens);
-        break;
-    case TAG_EVENT_VERIFICATION_COUNT:
-        valid = EVENT_U64(candidate->event.verification_count);
-        break;
-    case TAG_EVENT_CONFIDENCE_LOGIT_COUNT:
-        valid = EVENT_U64(candidate->event.confidence_logit_count);
-        break;
-    case TAG_EVENT_CONFIDENCE_LOGIT_MINIMUM:
-        valid = reader_double(bytes, count,
-                              &candidate->event.confidence_logit_minimum);
-        break;
-    case TAG_EVENT_CONFIDENCE_LOGIT_MAXIMUM:
-        valid = reader_double(bytes, count,
-                              &candidate->event.confidence_logit_maximum);
-        break;
-    case TAG_EVENT_CONFIDENCE_LOGIT_MEAN:
-        valid = reader_double(bytes, count,
-                              &candidate->event.confidence_logit_mean);
-        break;
-    case TAG_EVENT_SPECULATION_POLICY_ID:
-        valid = reader_text(bytes, count,
-                            candidate->event.speculation_policy_identity,
-                            sizeof(candidate->event.speculation_policy_identity));
-        break;
-    case TAG_EVENT_SECONDS: valid = reader_double(bytes, count, &candidate->event.seconds); break;
-    case TAG_EVENT_RATE: valid = reader_double(bytes, count, &candidate->event.rate); break;
-    case TAG_EVENT_VARIANT_ID:
-        valid = reader_text(bytes, count, candidate->event.variant_identity,
-                            sizeof(candidate->event.variant_identity));
-        break;
-    case TAG_EVENT_RUNTIME_MODEL_ID:
-        valid = reader_text(bytes, count, candidate->event.runtime_model_identity,
-                            sizeof(candidate->event.runtime_model_identity));
-        break;
-    case TAG_EVENT_ARTIFACT_ID:
-        valid = reader_text(bytes, count, candidate->event.artifact_identity,
-                            sizeof(candidate->event.artifact_identity));
-        break;
-    case TAG_EVENT_IDENTITY:
-        valid = reader_text(bytes, count, candidate->event.event_identity,
-                            sizeof(candidate->event.event_identity));
-        break;
     default: return 0;
     }
-#undef EVENT_U64
     return valid ? 1 : -1;
 }
 static int message_publish(const yvex_client_message *candidate, int next,
@@ -1972,6 +1918,7 @@ int yvex_protocol_message_decode(const unsigned char *input,
     memset(&candidate, 0, sizeof(candidate));
     candidate.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
     candidate.runtime.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
+    candidate.engine.schema_version = YVEX_SERVER_ENGINE_SCHEMA_V1;
     candidate.console.schema_version = 1u;
     candidate.event.schema_version = YVEX_RUNTIME_EVENT_SCHEMA_VERSION;
     while ((next = reader_next(&reader, &tag, &bytes, &count)) > 0 && valid) {
@@ -1983,6 +1930,8 @@ int yvex_protocol_message_decode(const unsigned char *input,
             field = message_partial_field(&candidate, tag, bytes, count);
         if (!field)
             field = message_runtime_field(&candidate, tag, bytes, count);
+        if (!field)
+            field = message_engine_field(&candidate, tag, bytes, count);
         if (!field)
             field = message_console_field(&candidate, tag, bytes, count);
         if (!field)

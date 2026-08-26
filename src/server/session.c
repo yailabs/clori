@@ -1340,11 +1340,16 @@ static int session_execution_ready_admit(
     const yvex_client_request *request, const char *request_id,
     unsigned long long *width, yvex_error *err)
 {
+    char serialization_key[SERVER_SCHEDULER_KEY_CAP];
     server_scheduler_summary summary;
     unsigned long long wait_ns = 0ull;
     int timed_out = 0;
-    int rc = yvex_server_scheduler_execution_ready(
-        registry->scheduler, session->name, width, &wait_ns, &timed_out, err);
+    int rc = yvex_server_scheduler_key(
+        serialization_key, registry->engine_generation, session->name, err);
+    if (rc == YVEX_OK)
+        rc = yvex_server_scheduler_execution_ready(
+            registry->scheduler, serialization_key, width, &wait_ns,
+            &timed_out, err);
     if (rc == YVEX_OK && !registry->continuous_batching) *width = 1ull;
     if (rc == YVEX_OK)
         rc = yvex_runtime_generation_execution_width_set(

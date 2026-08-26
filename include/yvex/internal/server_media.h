@@ -28,8 +28,9 @@ typedef struct {
     unsigned long long canvas_multiple, maximum_canvas_pixels;
 } yvex_server_media_options;
 
-int yvex_server_media_configure(
-    yvex_server *, const yvex_server_media_options *, yvex_error *);
+int yvex_server_media_engine_load(
+    yvex_server *, const yvex_server_engine_options *,
+    const yvex_server_media_options *, yvex_server_engine_summary *, yvex_error *);
 
 #ifdef __cplusplus
 }

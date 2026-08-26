@@ -9,9 +9,10 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#define YVEX_LOCAL_PROTOCOL_VERSION 12u
+#define YVEX_LOCAL_PROTOCOL_VERSION 13u
 #define YVEX_CLIENT_MEDIA_RESULT_SCHEMA_V1 1u
-#define YVEX_SERVER_OPTIONS_SCHEMA_V2 2u
+#define YVEX_SERVER_OPTIONS_SCHEMA_V3 3u
+#define YVEX_SERVER_ENGINE_SCHEMA_V1 1u
 #define YVEX_CLIENT_PARTIAL_TURN_SCHEMA_V1 1u
 #define YVEX_CLIENT_STATE_CHECKPOINT_SCHEMA_V1 1u
 #define YVEX_RUNTIME_EVENT_SCHEMA_VERSION 3u
@@ -23,8 +24,12 @@ extern "C" {
 #define YVEX_SERVER_SOCKET_PATH_CAP 512u
 #define YVEX_SERVER_STATE_PATH_CAP 512u
 #define YVEX_SERVER_FRAME_MAX_BYTES 1048576u
+#define YVEX_SERVER_MODEL_ALIAS_CAP 128u
+#define YVEX_SERVER_ENGINE_CAP 8u
 typedef struct yvex_server yvex_server;
 typedef struct yvex_client yvex_client;
+typedef int (*yvex_server_model_loader)(
+    void *context, yvex_server *server, const char *alias, yvex_error *err);
 typedef enum {
     YVEX_SERVER_STATUS_CONFIGURED = 0,
     YVEX_SERVER_STATUS_STARTING,
@@ -33,6 +38,14 @@ typedef enum {
     YVEX_SERVER_STATUS_STOPPED,
     YVEX_SERVER_STATUS_FAILED
 } yvex_server_status;
+typedef enum {
+    YVEX_SERVER_ENGINE_UNLOADED = 0,
+    YVEX_SERVER_ENGINE_LOADING,
+    YVEX_SERVER_ENGINE_LOADED,
+    YVEX_SERVER_ENGINE_DRAINING,
+    YVEX_SERVER_ENGINE_UNLOADING,
+    YVEX_SERVER_ENGINE_FAILED
+} yvex_server_engine_state;
 typedef enum {
     YVEX_SERVER_TRACE_SUMMARY = 0,
     YVEX_SERVER_TRACE_STAGES,
@@ -153,50 +166,66 @@ typedef struct {
 } yvex_server_metrics;
 typedef struct {
     unsigned int schema_version;
-    const char *artifact_path;
-    const char *runtime_binding_path;
-    const char *target_id;
     const char *socket_path;
-    yvex_backend_kind backend;
-    yvex_server_generation_mode generation_mode;
-    unsigned long long context_capacity;
-    /* Zero selects the server-owned adaptive prefill policy. */
-    unsigned long long prefill_chunk_tokens;
-    unsigned long long maximum_new_tokens, maximum_output_bytes;
-    unsigned long long maximum_host_bytes, maximum_device_bytes;
-    unsigned long long maximum_sessions, request_queue_capacity, concurrent_sequences;
-    unsigned long long sampling_seed;
+    unsigned long long request_queue_capacity, worker_count;
     unsigned long long openai_timeout_ms;
     unsigned short openai_port;
     yvex_server_trace_level trace_level;
     yvex_server_console_kind console;
     int trace_content, openai_enabled;
+    yvex_server_model_loader model_loader;
+    void *model_loader_context;
 } yvex_server_options;
 typedef struct {
     unsigned int schema_version;
-    yvex_server_status status;
+    const char *alias;
+    const char *artifact_path;
+    const char *runtime_binding_path;
+    const char *target_id;
     yvex_backend_kind backend;
     yvex_server_generation_mode generation_mode;
-    char socket_path[YVEX_SERVER_SOCKET_PATH_CAP];
+    unsigned long long context_capacity, prefill_chunk_tokens;
+    unsigned long long maximum_new_tokens, maximum_output_bytes;
+    unsigned long long maximum_host_bytes, maximum_device_bytes;
+    unsigned long long maximum_sessions, concurrent_sequences;
+    unsigned long long sampling_seed;
+    yvex_server_trace_level trace_level;
+} yvex_server_engine_options;
+typedef struct {
+    unsigned int schema_version;
+    yvex_server_engine_state state;
+    yvex_backend_kind backend;
+    yvex_server_generation_mode generation_mode;
+    char alias[YVEX_SERVER_MODEL_ALIAS_CAP];
     char target_id[128];
+    unsigned long long generation, active_work, session_count;
+    unsigned long long context_capacity, prefill_chunk_tokens;
+    unsigned long long maximum_new_tokens, maximum_output_bytes;
+    unsigned long long maximum_sessions, concurrent_sequences;
+    unsigned long long mapped_package_bytes, resident_host_bytes;
+    unsigned long long resident_device_bytes, prepared_bytes;
     char runtime_model_identity[YVEX_SHA256_HEX_CAP];
     char runtime_binding_identity[YVEX_SHA256_HEX_CAP];
     char artifact_identity[YVEX_SHA256_HEX_CAP];
-    char physical_variant_identity[YVEX_SHA256_HEX_CAP];
+    char specialization_identity[YVEX_SHA256_HEX_CAP];
     char capacity_plan_identity[YVEX_SHA256_HEX_CAP];
-    unsigned long long context_capacity, session_count, request_count;
-    unsigned long long prefill_chunk_tokens, maximum_new_tokens;
-    unsigned long long maximum_output_bytes, maximum_sessions;
-    unsigned long long request_queue_capacity, concurrent_sequences;
-    unsigned long long capacity_required_bytes, capacity_unreserved_bytes;
+    int execution_ready, explicit_reasoning_channel_supported;
+    int continuous_batching_ready;
+} yvex_server_engine_summary;
+typedef struct {
+    unsigned int schema_version;
+    yvex_server_status status;
+    char socket_path[YVEX_SERVER_SOCKET_PATH_CAP];
+    unsigned long long session_count, request_count;
+    unsigned long long engine_count, loaded_engine_count;
+    unsigned long long draining_engine_count, maximum_engines;
+    unsigned long long request_queue_capacity, worker_count;
     unsigned long long openai_timeout_ms;
     unsigned short openai_port;
     yvex_server_trace_level trace_level;
     yvex_server_metrics metrics;
-    int runtime_ready, generation_ready, public_server_ready;
+    int host_ready;
     int openai_listener_enabled, openai_listener_ready;
-    int explicit_reasoning_channel_supported;
-    int independent_session_scheduling_ready, continuous_batching_ready;
 } yvex_server_summary;
 typedef enum {
     YVEX_CLIENT_OP_HANDSHAKE = 0,
@@ -216,7 +245,10 @@ typedef enum {
     YVEX_CLIENT_OP_SESSION_CLOSE,
     YVEX_CLIENT_OP_GENERATION_TURN,
     YVEX_CLIENT_OP_GENERATION_CANCEL,
-    YVEX_CLIENT_OP_CONSOLE_STATUS
+    YVEX_CLIENT_OP_CONSOLE_STATUS,
+    YVEX_CLIENT_OP_ENGINE_LOAD,
+    YVEX_CLIENT_OP_ENGINE_LIST,
+    YVEX_CLIENT_OP_ENGINE_UNLOAD
 } yvex_client_operation;
 typedef enum {
     YVEX_CLIENT_MESSAGE_ACK = 0,
@@ -228,7 +260,8 @@ typedef enum {
     YVEX_CLIENT_MESSAGE_TURN_STARTED,
     YVEX_CLIENT_MESSAGE_FRAGMENT,
     YVEX_CLIENT_MESSAGE_TURN_COMPLETE,
-    YVEX_CLIENT_MESSAGE_CONSOLE_STATUS
+    YVEX_CLIENT_MESSAGE_CONSOLE_STATUS,
+    YVEX_CLIENT_MESSAGE_ENGINE
 } yvex_client_message_kind;
 typedef enum {
     YVEX_CLIENT_FAILURE_NONE = 0,
@@ -316,6 +349,8 @@ typedef struct {
     unsigned long long position, turn_count, context_capacity, context_used;
     unsigned long long kv_used_bytes;
     char session_name[YVEX_SERVER_SESSION_NAME_CAP];
+    char model_alias[YVEX_SERVER_MODEL_ALIAS_CAP];
+    unsigned long long engine_generation;
     char live_model_identity[YVEX_SHA256_HEX_CAP];
     char physical_variant_identity[YVEX_SHA256_HEX_CAP];
     char selected_model_identity[YVEX_SHA256_HEX_CAP];
@@ -348,6 +383,8 @@ typedef struct {
     unsigned int schema_version;
     yvex_client_operation operation;
     unsigned long long request_number;
+    char model_alias[YVEX_SERVER_MODEL_ALIAS_CAP];
+    unsigned long long engine_generation;
     char session_name[YVEX_SERVER_SESSION_NAME_CAP];
     char fork_session_name[YVEX_SERVER_SESSION_NAME_CAP];
     char state_path[YVEX_SERVER_STATE_PATH_CAP];
@@ -418,6 +455,7 @@ typedef struct {
     yvex_client_partial_turn partial_turn;
     yvex_client_state_checkpoint state_checkpoint;
     yvex_client_media_result media_result;
+    yvex_server_engine_summary engine;
     yvex_server_summary runtime;
     yvex_console_status console;
     yvex_server_event event;
@@ -425,6 +463,15 @@ typedef struct {
 int yvex_server_create(yvex_server **out, const yvex_server_options *options,
                        yvex_error *err);
 int yvex_server_start(yvex_server *server, yvex_error *err);
+int yvex_server_engine_load(
+    yvex_server *server, const yvex_server_engine_options *options,
+    yvex_server_engine_summary *summary, yvex_error *err);
+int yvex_server_engine_unload(
+    yvex_server *server, const char *alias, unsigned long long generation,
+    yvex_server_engine_summary *summary, yvex_error *err);
+int yvex_server_engine_snapshot(
+    const yvex_server *server, yvex_server_engine_summary *engines,
+    unsigned long long capacity, unsigned long long *count, yvex_error *err);
 int yvex_server_serve(yvex_server *server, yvex_error *err);
 int yvex_server_stop(yvex_server *server, yvex_error *err);
 int yvex_server_finish(yvex_server *server, yvex_error *err);

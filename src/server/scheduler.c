@@ -13,6 +13,7 @@
 #include <limits.h>
 #include <pthread.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -21,12 +22,12 @@
 
 typedef struct {
     void *work;
-    char key[YVEX_SERVER_SESSION_NAME_CAP];
+    char key[SERVER_SCHEDULER_KEY_CAP];
     int compatible_batch_candidate;
 } scheduler_entry;
 
 typedef struct {
-    char key[YVEX_SERVER_SESSION_NAME_CAP];
+    char key[SERVER_SCHEDULER_KEY_CAP];
     int compatible_batch_candidate;
     int execution_ready;
 } scheduler_active;
@@ -275,6 +276,28 @@ int yvex_server_scheduler_start(server_scheduler *scheduler, yvex_error *err)
     return YVEX_OK;
 }
 
+int yvex_server_scheduler_key(
+    char output[SERVER_SCHEDULER_KEY_CAP],
+    unsigned long long engine_generation, const char *session_name,
+    yvex_error *err)
+{
+    int written;
+    if (output) output[0] = '\0';
+    if (!output || !engine_generation || !session_name || !session_name[0])
+        return scheduler_refuse(
+            err, YVEX_ERR_INVALID_ARG,
+            "engine generation, session, and key output are required");
+    written = snprintf(output, SERVER_SCHEDULER_KEY_CAP, "%llu:%s",
+                       engine_generation, session_name);
+    if (written < 0 || (unsigned int)written >= SERVER_SCHEDULER_KEY_CAP) {
+        output[0] = '\0';
+        return scheduler_refuse(err, YVEX_ERR_BOUNDS,
+                                "engine-session scheduler key exceeds its bound");
+    }
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
 int yvex_server_scheduler_submit(server_scheduler *scheduler, void *work,
                                  const char *serialization_key,
                                  int compatible_batch_candidate,
@@ -285,7 +308,7 @@ int yvex_server_scheduler_submit(server_scheduler *scheduler, void *work,
     if (queued) *queued = 0ull;
     if (!scheduler || !work || !serialization_key ||
         (compatible_batch_candidate != 0 && compatible_batch_candidate != 1) ||
-        strlen(serialization_key) >= YVEX_SERVER_SESSION_NAME_CAP ||
+        strlen(serialization_key) >= SERVER_SCHEDULER_KEY_CAP ||
         !scheduler->mutex_ready || pthread_mutex_lock(&scheduler->mutex) != 0)
         return scheduler_refuse(err, YVEX_ERR_INVALID_ARG,
                                 "scheduler work and bounded key are required");
@@ -324,7 +347,7 @@ int yvex_server_scheduler_execution_ready(
     if (wait_ns) *wait_ns = 0ull;
     if (timed_out) *timed_out = 0;
     if (!scheduler || !serialization_key ||
-        strlen(serialization_key) >= YVEX_SERVER_SESSION_NAME_CAP ||
+        strlen(serialization_key) >= SERVER_SCHEDULER_KEY_CAP ||
         !scheduler->mutex_ready || pthread_mutex_lock(&scheduler->mutex) != 0)
         return scheduler_refuse(err, YVEX_ERR_INVALID_ARG,
                                 "open scheduler and bounded active key are required");

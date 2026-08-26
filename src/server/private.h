@@ -21,6 +21,12 @@ typedef struct server_session_registry server_session_registry;
 typedef struct server_media_registry server_media_registry;
 typedef struct server_openai_listener server_openai_listener;
 typedef struct server_scheduler server_scheduler;
+typedef struct server_engine_manager server_engine_manager;
+typedef struct server_engine_lease {
+    void *engine;
+    unsigned long long generation;
+} server_engine_lease;
+#define SERVER_SCHEDULER_KEY_CAP 224u
 
 typedef void (*server_scheduler_execute)(void *context, void *work);
 typedef void (*server_scheduler_observe)(void *context,
@@ -40,6 +46,10 @@ int yvex_server_scheduler_open(
     unsigned long long worker_count, server_scheduler_execute execute,
     server_scheduler_observe observe, void *context, yvex_error *err);
 int yvex_server_scheduler_start(server_scheduler *scheduler, yvex_error *err);
+int yvex_server_scheduler_key(
+    char output[SERVER_SCHEDULER_KEY_CAP],
+    unsigned long long engine_generation, const char *session_name,
+    yvex_error *err);
 int yvex_server_scheduler_submit(server_scheduler *scheduler, void *work,
                                  const char *serialization_key,
                                  int compatible_batch_candidate,
@@ -92,13 +102,19 @@ struct server_session_registry {
     pthread_mutex_t mutex;
     yvex_model_engine *model;
     server_scheduler *scheduler;
-    yvex_server_options options;
+    yvex_server_engine_options options;
     yvex_reasoning_policy default_reasoning_policy;
     server_telemetry *telemetry;
     server_session *sessions;
     unsigned long long capacity, count, next_id;
     int mutex_ready, closing, continuous_batching;
+    unsigned long long engine_generation;
 };
+
+typedef struct {
+    char runtime_model_identity[YVEX_SHA256_HEX_CAP];
+    char specialization_identity[YVEX_SHA256_HEX_CAP];
+} server_media_summary;
 
 typedef struct {
     const char *yvex_socket;
@@ -280,7 +296,8 @@ void yvex_server_openai_close(server_openai_listener **listener);
 
 int yvex_server_sessions_open(server_session_registry **out, yvex_model_engine *model,
                               server_scheduler *scheduler,
-                              const yvex_server_options *options,
+                              const yvex_server_engine_options *options,
+                              unsigned long long engine_generation,
                               int continuous_batching,
                               server_telemetry *telemetry,
                               yvex_error *err);
@@ -318,9 +335,38 @@ void yvex_server_media_registry_cancel_all(server_media_registry *);
 int yvex_server_media_registry_count(
     server_media_registry *, unsigned long long *, yvex_error *);
 int yvex_server_media_registry_summary(
-    server_media_registry *, yvex_server_summary *, yvex_error *);
+    server_media_registry *, server_media_summary *, yvex_error *);
 int yvex_server_media_registry_start(
     server_media_registry *, yvex_runtime_media_model_summary *, yvex_error *);
 void yvex_server_media_registry_close(server_media_registry **);
+
+int yvex_server_engine_manager_open(
+    server_engine_manager **, unsigned long long, server_scheduler *,
+    server_telemetry *, yvex_error *);
+int yvex_server_engine_summary_valid(const yvex_server_engine_summary *);
+int yvex_server_engine_manager_load(
+    server_engine_manager *, const yvex_server_engine_options *,
+    const yvex_server_media_options *, yvex_server_engine_summary *, yvex_error *);
+int yvex_server_engine_manager_unload(
+    server_engine_manager *, const char *, unsigned long long,
+    yvex_server_engine_summary *, yvex_error *);
+int yvex_server_engine_manager_snapshot(
+    server_engine_manager *, yvex_server_engine_summary *, unsigned long long,
+    unsigned long long *, yvex_error *);
+int yvex_server_engine_manager_acquire(
+    server_engine_manager *, const char *, unsigned long long,
+    server_engine_lease *, yvex_server_engine_summary *, yvex_error *);
+void yvex_server_engine_manager_release(
+    server_engine_manager *, server_engine_lease *);
+int yvex_server_engine_lease_execute(
+    server_engine_lease *, const yvex_client_request *, const char *, double,
+    server_message_emit, void *, yvex_error *);
+int yvex_server_engine_lease_cancel(
+    server_engine_lease *, const char *, yvex_error *);
+int yvex_server_engine_lease_console_status(
+    server_engine_lease *, const char *, yvex_console_status *,
+    yvex_client_partial_turn *, yvex_error *);
+void yvex_server_engine_manager_cancel_all(server_engine_manager *);
+int yvex_server_engine_manager_close(server_engine_manager **, yvex_error *);
 
 #endif

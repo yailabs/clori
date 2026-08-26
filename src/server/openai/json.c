@@ -832,8 +832,9 @@ static int responses_input(yvex_json *json, yvex_provider_request *request,
  *
  * Allocates, validates, and identity-seals one provider-neutral request graph.
  */
-int openai_json_admit(const openai_http_request *http, openai_endpoint endpoint, const char *selected_model,
-    yvex_reasoning_policy default_reasoning, openai_admitted_request *admitted, yvex_error *err)
+int openai_json_admit(const openai_http_request *http, openai_endpoint endpoint,
+    yvex_reasoning_policy default_reasoning, openai_admitted_request *admitted,
+    yvex_error *err)
 {
     yvex_provider_request *request = NULL;
     yvex_provider_span instruction = {0};
@@ -845,7 +846,7 @@ int openai_json_admit(const openai_http_request *http, openai_endpoint endpoint,
     int model_seen = 0, input_seen = 0, maximum_seen = 0;
     int handled, rc = YVEX_OK;
     if (admitted) memset(admitted, 0, sizeof(*admitted));
-    if (!http || !admitted || !selected_model || !http->body || default_reasoning > YVEX_REASONING_MAXIMUM ||
+    if (!http || !admitted || !http->body || default_reasoning > YVEX_REASONING_MAXIMUM ||
         !http->body_count || http->body_count > SIZE_MAX)
         return json_refuse(err, YVEX_ERR_INVALID_ARG, "one bounded JSON request body is required");
     request = calloc(1u, sizeof(*request));
@@ -932,9 +933,6 @@ int openai_json_admit(const openai_http_request *http, openai_endpoint endpoint,
          !yvex_json_complete(&json) || !model_seen || !input_seen))
         rc = json_refuse(err, YVEX_ERR_FORMAT,
                          "model and complete input are required");
-    if (rc == YVEX_OK && strcmp(request->model, selected_model) != 0)
-        rc = json_refuse(err, YVEX_ERR_STATE,
-                         "requested model is not loaded by the YVEX server");
     if (rc == YVEX_OK && maximum_seen && !request->maximum_output_tokens)
         rc = json_refuse(err, YVEX_ERR_BOUNDS,
                          "explicit output token limit must be positive");

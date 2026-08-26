@@ -127,11 +127,13 @@
         "reasoning_enabled",
         "reasoning_maximum",
         "run",
+        "server_load",
         "server_memory",
-        "server_model",
+        "server_models",
         "server_status",
         "server_stop",
         "server_log",
+        "server_unload",
         "session_attach",
         "session_cancel",
         "session_close",
@@ -163,6 +165,9 @@
     ],
     "protocol_operations": [
       "console.status",
+      "engine.list",
+      "engine.load",
+      "engine.unload",
       "generation.cancel",
       "generation.turn",
       "handshake",
@@ -1208,6 +1213,11 @@
         "value_type": "u64"
       },
       {
+        "name": "--model",
+        "takes_value": true,
+        "value_type": "name"
+      },
+      {
         "name": "--session",
         "takes_value": true,
         "value_type": "name"
@@ -1220,6 +1230,11 @@
         "range": "1..18446744073709551615",
         "takes_value": true,
         "value_type": "u64"
+      },
+      {
+        "name": "--model",
+        "takes_value": true,
+        "value_type": "name"
       },
       {
         "default_provider": "client.run",
@@ -1303,39 +1318,10 @@
     },
     "cli_yvex_server": [
       {
-        "enum_values": ["cpu", "cuda"],
-        "name": "--backend",
-        "takes_value": true,
-        "value_type": "enum"
-      },
-      {
         "enum_values": ["human", "off", "raw"],
         "name": "--console",
         "takes_value": true,
         "value_type": "enum"
-      },
-      {
-        "name": "--ctx",
-        "range": "1..18446744073709551615",
-        "takes_value": true,
-        "value_type": "u64"
-      },
-      {
-        "enum_values": ["target-only", "dspark", "media"],
-        "name": "--generation-mode",
-        "takes_value": true,
-        "value_type": "enum"
-      },
-      {
-        "name": "--media-artifact-root",
-        "takes_value": true,
-        "value_type": "path"
-      },
-      {
-        "name": "--max-new-tokens",
-        "range": "1..18446744073709551615",
-        "takes_value": true,
-        "value_type": "u64"
       },
       {
         "enum_values": ["on", "off"],
@@ -1356,23 +1342,6 @@
         "value_type": "u64"
       },
       {
-        "name": "--output-root",
-        "takes_value": true,
-        "value_type": "path"
-      },
-      {
-        "name": "--parallel",
-        "range": "1..64",
-        "takes_value": true,
-        "value_type": "u64"
-      },
-      {
-        "name": "--prefill-chunk",
-        "range": "1..18446744073709551615",
-        "takes_value": true,
-        "value_type": "u64"
-      },
-      {
         "name": "--socket",
         "takes_value": true,
         "value_type": "path"
@@ -1387,6 +1356,12 @@
         "name": "--trace-level",
         "takes_value": true,
         "value_type": "enum"
+      },
+      {
+        "name": "--workers",
+        "range": "1..64",
+        "takes_value": true,
+        "value_type": "u64"
       }
     ],
     "help": [
@@ -2110,7 +2085,7 @@
       "slash_projection": "none",
       "summary": "Removed false model status facade.",
       "superseded_by": [
-        "server.model"
+        "server.models"
       ],
       "test_owner": "tests/test_operator_registry.py",
       "visibility": "removed"
@@ -2211,18 +2186,9 @@
       "adapter_id": "host",
       "aliases": [],
       "architectural_plane": "Run",
-      "arguments": [
-        {
-          "completion_provider": "model-registry",
-          "multiplicity": "one",
-          "name": "MODEL",
-          "required": true,
-          "validator": "syntax.name",
-          "value_type": "name"
-        }
-      ],
-      "artifact_requirement": "runtime-binding",
-      "backend_requirement": "required",
+      "arguments": [],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
       "command_path": [
         "server"
       ],
@@ -2235,14 +2201,14 @@
       ],
       "input_schema": "argv.v1",
       "lane": "daemon-entrypoint",
-      "model_requirement": "registry-model",
+      "model_requirement": "none",
       "operation_id": "server.host",
       "protocol_operation": "none",
       "renderer_id": "human",
       "result_schema": "human.v1",
       "side_effects": "persistent runtime host",
       "slash_projection": "none",
-      "summary": "Run one model server in the foreground.",
+      "summary": "Run the persistent multi-engine host in the foreground.",
       "test_owner": "tests/cli/server.sh",
       "visibility": "product-default"
     },
@@ -6276,15 +6242,64 @@
     {
       "CLI_projection": true,
       "adapter_argv": [],
-      "adapter_id": "server_model",
+      "adapter_id": "server_load",
       "aliases": [],
       "architectural_plane": "Run",
-      "arguments": [],
+      "arguments": [
+        {
+          "completion_provider": "model-registry",
+          "multiplicity": "one",
+          "name": "MODEL",
+          "required": true,
+          "validator": "syntax.name",
+          "value_type": "name"
+        }
+      ],
       "artifact_requirement": "none",
       "backend_requirement": "none",
       "command_path": [
         "server",
-        "model"
+        "load"
+      ],
+      "daemon_requirement": "required",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "runtime-client",
+      "model_requirement": "registry-model",
+      "operation_id": "server.load",
+      "protocol_operation": "engine.load",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "load model engine",
+      "slash_projection": "none",
+      "summary": "Load one registered model into the persistent host.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [],
+      "adapter_id": "server_unload",
+      "aliases": [],
+      "architectural_plane": "Run",
+      "arguments": [
+        {
+          "completion_provider": "model-registry",
+          "multiplicity": "one",
+          "name": "MODEL",
+          "required": true,
+          "validator": "syntax.name",
+          "value_type": "name"
+        }
+      ],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [
+        "server",
+        "unload"
       ],
       "daemon_requirement": "required",
       "default_providers": [],
@@ -6294,13 +6309,46 @@
       "input_schema": "argv.v1",
       "lane": "runtime-client",
       "model_requirement": "runtime-model",
-      "operation_id": "server.model",
-      "protocol_operation": "runtime.status",
+      "operation_id": "server.unload",
+      "protocol_operation": "engine.unload",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "drain and unload model engine",
+      "slash_projection": "none",
+      "summary": "Drain and unload one model engine without stopping the host.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [],
+      "adapter_id": "server_models",
+      "aliases": [],
+      "architectural_plane": "Run",
+      "arguments": [],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [
+        "server",
+        "models"
+      ],
+      "daemon_requirement": "required",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_yvex_server_status"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "runtime-client",
+      "model_requirement": "none",
+      "operation_id": "server.models",
+      "protocol_operation": "engine.list",
       "renderer_id": "human-or-json",
       "result_schema": "human.v1",
       "side_effects": "read-only",
-      "slash_projection": "/model",
-      "summary": "Show identities of the model hosted by the server.",
+      "slash_projection": "/models",
+      "summary": "List model engines known to the live host.",
       "test_owner": "tests/client_cutover.sh",
       "visibility": "product-default"
     },

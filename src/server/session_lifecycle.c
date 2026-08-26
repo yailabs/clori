@@ -41,6 +41,7 @@ static int session_identity(server_session_registry *registry,
     yvex_sha256_init(&hash);
     if (!yvex_sha256_update_text(&hash, "yvex.server.session.v1") ||
         !yvex_sha256_update_text(&hash, model.runtime_model_identity) ||
+        !yvex_sha256_update_u64(&hash, registry->engine_generation) ||
         !yvex_sha256_update_text(&hash, name) ||
         !yvex_sha256_final(&hash, digest))
         return 0;
@@ -353,13 +354,15 @@ int yvex_server_session_close_locked(server_session_registry *registry,
 int yvex_server_sessions_open(server_session_registry **out,
                               yvex_model_engine *model,
                               server_scheduler *scheduler,
-                              const yvex_server_options *options,
+                              const yvex_server_engine_options *options,
+                              unsigned long long engine_generation,
                               int continuous_batching,
                               server_telemetry *telemetry, yvex_error *err)
 {
     server_session_registry *registry;
     if (out) *out = NULL;
     if (!out || !model || !scheduler || !options || !telemetry ||
+        !engine_generation ||
         !options->maximum_sessions ||
         options->maximum_sessions > SIZE_MAX / sizeof(server_session)) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.session.registry",
@@ -379,6 +382,7 @@ int yvex_server_sessions_open(server_session_registry **out,
     registry->model = model;
     registry->scheduler = scheduler;
     registry->options = *options;
+    registry->engine_generation = engine_generation;
     registry->continuous_batching = continuous_batching != 0;
     registry->default_reasoning_policy = server_reasoning_automatic_policy();
     registry->telemetry = telemetry;

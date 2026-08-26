@@ -719,7 +719,7 @@ int yvex_server_media_registry_count(server_media_registry *registry,
 }
 
 int yvex_server_media_registry_summary(server_media_registry *registry,
-                                       yvex_server_summary *summary, yvex_error *err)
+                                       server_media_summary *summary, yvex_error *err)
 {
     if (!registry || !summary)
         return media_refuse(err, YVEX_ERR_INVALID_ARG, "media summary is required");
@@ -728,11 +728,9 @@ int yvex_server_media_registry_summary(server_media_registry *registry,
                         registry->runtime_model_identity[0]
                             ? registry->runtime_model_identity
                             : registry->profile_identity);
-    summary->runtime_binding_identity[0] = '\0';
-    summary->artifact_identity[0] = '\0';
-    yvex_core_text_copy(summary->physical_variant_identity,
-                        sizeof(summary->physical_variant_identity), registry->profile_identity);
-    summary->explicit_reasoning_channel_supported = 0;
+    yvex_core_text_copy(summary->specialization_identity,
+                        sizeof(summary->specialization_identity),
+                        registry->profile_identity);
     yvex_error_clear(err);
     return YVEX_OK;
 }

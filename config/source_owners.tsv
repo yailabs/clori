@@ -249,6 +249,7 @@ src/model/target/tokenizer_map.c	model.target	model.target.tokenizer_map	generic
 src/runtime/core.c	runtime	runtime.core	generic	private	resource-lifecycle	graph,cli	implementation	none
 src/runtime/graph.c	runtime	runtime.graph	generic	private	transactional-execution	graph,backend,tests	implementation	none
 src/server/core.c	server	server.core	generic	private	resource-lifecycle	daemon,protocol	implementation	none
+src/server/engine.c	server	server.engine_manager	generic	private	resource-lifecycle	server.core,server.protocol,server.openai.lifecycle	implementation	none
 src/server/openai/core.c	server.openai	server.openai.lifecycle	generic	private	resource-lifecycle	server.core,provider,protocol	implementation	none
 src/server/openai/http.c	server.openai	server.openai.http	generic	private	reusable-algorithm	server.openai.lifecycle	implementation	none
 src/server/openai/json.c	server.openai	server.openai.json	generic	private	reusable-algorithm	server.openai.lifecycle,provider	implementation	none

@@ -5,7 +5,9 @@
  * return behavior where legacy code checks it. Writer calls serialize existing facts only and do
  * not create capability.
  */
+#include <build_commit.h>
 #include "src/cli/io/private.h"
+#include "src/cli/private.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -1481,7 +1483,7 @@ int parse_dims_csv(const char *text, unsigned int rank, unsigned long long dims[
  * Helpers serialize only caller-provided fields and do not claim uniform JSON. JSON writer
  * primitives are not command-level JSON support by themselves.
  */
-static void json_string(FILE *fp, const char *text) {
+void yvex_cli_out_json_string(FILE *fp, const char *text) {
     const unsigned char *p = (const unsigned char *)(text ? text : "");
 
     (void)yvex_cli_out_char(fp, '"');
@@ -1505,6 +1507,311 @@ static void json_string(FILE *fp, const char *text) {
     (void)yvex_cli_out_char(fp, '"');
 }
 
+static void discovery_json_list(FILE *output, const char *value, int delimiter)
+{
+    const char *cursor = value;
+    int first = 1;
+    fputc('[', output);
+    if (strcmp(value, "none")) {
+        while (*cursor) {
+            const char *end = strchr(cursor, delimiter);
+            size_t extent = end ? (size_t)(end - cursor) : strlen(cursor);
+            char item[512];
+            if (extent >= sizeof(item)) extent = sizeof(item) - 1u;
+            memcpy(item, cursor, extent);
+            item[extent] = '\0';
+            if (!first) fputc(',', output);
+            yvex_cli_out_json_string(output, item);
+            first = 0;
+            if (!end) break;
+            cursor = end + 1;
+        }
+    }
+    fputc(']', output);
+}
+static const char *visibility_name(yvex_operator_visibility visibility)
+{
+    switch (visibility) {
+    case YVEX_OPERATOR_VISIBILITY_PRODUCT_DEFAULT: return "product-default";
+    case YVEX_OPERATOR_VISIBILITY_PRODUCT_ADVANCED: return "product-advanced";
+    case YVEX_OPERATOR_VISIBILITY_ENGINEERING: return "engineering";
+    case YVEX_OPERATOR_VISIBILITY_AUTOMATION: return "automation";
+    case YVEX_OPERATOR_VISIBILITY_API_ONLY: return "API-only";
+    case YVEX_OPERATOR_VISIBILITY_TEST_ONLY: return "test-only";
+    case YVEX_OPERATOR_VISIBILITY_REMOVED: return "removed";
+    }
+    return "unknown";
+}
+static const char *plane_name(yvex_operator_plane plane)
+{
+    static const char *const names[] = {
+        "Compile", "Execute", "Inspect", "Integrate", "Profile", "Run", "System"};
+    return (unsigned int)plane < sizeof(names) / sizeof(names[0]) ? names[plane]
+                                                                  : "Unknown";
+}
+static const char *lane_name(yvex_operator_lane lane)
+{
+    switch (lane) {
+    case YVEX_OPERATOR_LANE_RUNTIME_CLIENT: return "runtime-client";
+    case YVEX_OPERATOR_LANE_OFFLINE_ENGINE: return "offline-engine";
+    case YVEX_OPERATOR_LANE_DAEMON_ENTRYPOINT: return "server-entrypoint";
+    case YVEX_OPERATOR_LANE_REPL_LOCAL: return "REPL-local";
+    case YVEX_OPERATOR_LANE_API_ONLY: return "API-only";
+    case YVEX_OPERATOR_LANE_TEST_ONLY: return "test-only";
+    }
+    return "unknown";
+}
+static int descriptor_has_prefix(const yvex_operator_descriptor *descriptor,
+                                 size_t count, const char *const *path)
+{
+    size_t index;
+    if (count > descriptor->command_word_count) return 0;
+    for (index = 0u; index < count; ++index)
+        if (strcmp(path[index], descriptor->command_words[index])) return 0;
+    return 1;
+}
+static void render_leaf_usage(FILE *output,
+                              const yvex_operator_descriptor *descriptor)
+{
+    size_t index;
+    fprintf(output, "usage: yvex %s", descriptor->command_path);
+    for (index = 0u; index < descriptor->argument_count; ++index) {
+        const yvex_operator_argument_descriptor *argument = &descriptor->arguments[index];
+        if (!strcmp(argument->multiplicity, "many"))
+            fprintf(output, " [%s ...]", argument->name);
+        else if (argument->required)
+            fprintf(output, " %s", argument->name);
+        else
+            fprintf(output, " [%s]", argument->name);
+    }
+    if (descriptor->flag_count) fputs(" [options]", output);
+    fputc('\n', output);
+}
+static void render_leaf_help(const yvex_operator_descriptor *descriptor)
+{
+    size_t index;
+    render_leaf_usage(stdout, descriptor);
+    printf("\n%s\n\noperation: %s\nplane: %s\nvisibility: %s\nlane: %s\n",
+           descriptor->summary, descriptor->operation_id, plane_name(descriptor->plane),
+           visibility_name(descriptor->visibility), lane_name(descriptor->lane));
+    if (descriptor->flag_count) {
+        puts("\noptions:");
+        for (index = 0u; index < descriptor->flag_count; ++index) {
+            const yvex_operator_flag_descriptor *flag = &descriptor->flags[index];
+            printf("  %-24s", flag->name);
+            if (flag->takes_value) {
+                if (strcmp(flag->enum_values, "none"))
+                    printf(" %s", flag->enum_values);
+                else if (!strcmp(flag->value_type, "u64"))
+                    fputs(" N", stdout);
+                else
+                    fputs(" VALUE", stdout);
+            }
+            if (strcmp(flag->aliases, "none")) fputs("  (alias available)", stdout);
+            fputc('\n', stdout);
+        }
+    }
+}
+
+static void render_command_index_line(const yvex_operator_descriptor *descriptor)
+{
+    size_t index, width = strlen(descriptor->command_path);
+    printf("  yvex %s", descriptor->command_path);
+    for (index = 0u; index < descriptor->argument_count; ++index) {
+        const yvex_operator_argument_descriptor *argument = &descriptor->arguments[index];
+        if (!strcmp(argument->multiplicity, "many")) {
+            printf(" [%s ...]", argument->name);
+            width += strlen(argument->name) + 7u;
+        } else if (argument->required) {
+            printf(" %s", argument->name);
+            width += strlen(argument->name) + 1u;
+        } else {
+            printf(" [%s]", argument->name);
+            width += strlen(argument->name) + 3u;
+        }
+    }
+    if (width < 42u) printf("%*s", (int)(42u - width), "");
+    else fputc(' ', stdout);
+    printf(" %s%s\n", descriptor->summary,
+           descriptor->visibility == YVEX_OPERATOR_VISIBILITY_ENGINEERING
+               ? " [engineering]" : "");
+}
+void yvex_client_render_usage_error(const yvex_operator_descriptor *operation)
+{
+    render_leaf_usage(stderr, operation);
+}
+static void render_discovery_aliases(size_t operation_index)
+{
+    size_t index;
+    int first = 1;
+    fputc('[', stdout);
+    for (index = 0u; index < yvex_operator_alias_count; ++index) {
+        if (yvex_operator_aliases[index].operation_index != operation_index) continue;
+        if (!first) fputc(',', stdout);
+        yvex_cli_out_json_string(stdout, yvex_operator_aliases[index].path);
+        first = 0;
+    }
+    fputc(']', stdout);
+}
+static void render_discovery_arguments(
+    const yvex_operator_argument_descriptor *arguments, size_t count)
+{
+    size_t index;
+#define JSON_ARGUMENT_FIELD(name, value) \
+    do { fputs("\"" name "\":", stdout); yvex_cli_out_json_string(stdout, (value)); } while (0)
+    fputc('[', stdout);
+    for (index = 0u; index < count; ++index) {
+        const yvex_operator_argument_descriptor *argument = &arguments[index];
+        if (index) fputc(',', stdout);
+        fputc('{', stdout); JSON_ARGUMENT_FIELD("name", argument->name);
+        fputc(',', stdout); JSON_ARGUMENT_FIELD("type", argument->value_type);
+        printf(",\"required\":%s,", argument->required ? "true" : "false");
+        JSON_ARGUMENT_FIELD("multiplicity", argument->multiplicity);
+        fputc(',', stdout); JSON_ARGUMENT_FIELD("range", argument->range);
+        fputs(",\"enum_values\":", stdout);
+        discovery_json_list(stdout, argument->enum_values, '|');
+        fputc(',', stdout);
+        JSON_ARGUMENT_FIELD("completion_provider", argument->completion_provider);
+        fputc(',', stdout);
+        JSON_ARGUMENT_FIELD("sensitive_display", argument->sensitive_display);
+        fputc(',', stdout); JSON_ARGUMENT_FIELD("validator", argument->validator);
+        fputc('}', stdout);
+    }
+    fputc(']', stdout);
+#undef JSON_ARGUMENT_FIELD
+}
+static void render_discovery_operation(size_t operation_index,
+                                       const yvex_operator_descriptor *descriptor)
+{
+    size_t index;
+#define JSON_FIELD(name, value) \
+    do { fputs("\"" name "\":", stdout); yvex_cli_out_json_string(stdout, (value)); } while (0)
+    fputc('{', stdout);
+    printf("\"schema_version\":%u,", descriptor->schema_version);
+    JSON_FIELD("operation_id", descriptor->operation_id);
+    fputc(',', stdout); JSON_FIELD("command_path", descriptor->command_path);
+    fputs(",\"aliases\":", stdout); render_discovery_aliases(operation_index);
+    fputc(',', stdout); JSON_FIELD("visibility", visibility_name(descriptor->visibility));
+    fputc(',', stdout); JSON_FIELD("plane", plane_name(descriptor->plane));
+    fputc(',', stdout); JSON_FIELD("lane", lane_name(descriptor->lane));
+    fputc(',', stdout); JSON_FIELD("summary", descriptor->summary);
+    fputs(",\"arguments\":", stdout);
+    render_discovery_arguments(descriptor->arguments, descriptor->argument_count);
+    fputs(",\"slash_arguments\":", stdout);
+    render_discovery_arguments(descriptor->slash_arguments,
+                               descriptor->slash_argument_count);
+    fputs(",\"flags\":[", stdout);
+    for (index = 0u; index < descriptor->flag_count; ++index) {
+        const yvex_operator_flag_descriptor *flag = &descriptor->flags[index];
+        if (index) fputc(',', stdout);
+        fputc('{', stdout); JSON_FIELD("name", flag->name);
+        fputs(",\"aliases\":", stdout); discovery_json_list(stdout, flag->aliases, '|');
+        fputc(',', stdout); JSON_FIELD("type", flag->value_type);
+        printf(",\"takes_value\":%s,", flag->takes_value ? "true" : "false");
+        printf("\"required\":%s,", flag->required ? "true" : "false");
+        JSON_FIELD("multiplicity", flag->multiplicity);
+        fputc(',', stdout); JSON_FIELD("default_provider", flag->default_provider);
+        fputc(',', stdout); JSON_FIELD("range", flag->range);
+        fputs(",\"enum_values\":", stdout); discovery_json_list(stdout, flag->enum_values, '|');
+        fputs(",\"conflicts\":", stdout); discovery_json_list(stdout, flag->conflicts, '|');
+        fputs(",\"dependencies\":", stdout);
+        discovery_json_list(stdout, flag->dependencies, '|');
+        fputc(',', stdout); JSON_FIELD("environment", flag->environment);
+        fputc(',', stdout); JSON_FIELD("config", flag->config);
+        fputc(',', stdout); JSON_FIELD("protocol_field", flag->protocol_field);
+        fputc(',', stdout); JSON_FIELD("output_interaction", flag->output_interaction);
+        fputc(',', stdout); JSON_FIELD("deprecation", flag->deprecation);
+        fputc(',', stdout); JSON_FIELD("validator", flag->validator);
+        fputc('}', stdout);
+    }
+    fputs("],\"default_providers\":", stdout);
+    discovery_json_list(stdout, descriptor->default_providers, '|');
+    fputs(",\"validators\":", stdout);
+    discovery_json_list(stdout, descriptor->validator_ids, '|');
+    fputs(",\"input_schema\":", stdout); yvex_cli_out_json_string(stdout, descriptor->input_schema);
+    fputs(",\"result_schema\":", stdout); yvex_cli_out_json_string(stdout, descriptor->result_schema);
+    fputs(",\"side_effects\":", stdout); yvex_cli_out_json_string(stdout, descriptor->side_effects);
+    fputs(",\"tty_policy\":", stdout); yvex_cli_out_json_string(stdout, descriptor->tty_policy);
+    fputs(",\"requirements\":{", stdout); JSON_FIELD("daemon", descriptor->daemon_requirement);
+    fputc(',', stdout); JSON_FIELD("model", descriptor->model_requirement);
+    fputc(',', stdout); JSON_FIELD("artifact", descriptor->artifact_requirement);
+    fputc(',', stdout); JSON_FIELD("backend", descriptor->backend_requirement);
+    fputs("},\"output_schemas\":[", stdout); yvex_cli_out_json_string(stdout, descriptor->result_schema);
+    fputs("],\"adapter_id\":", stdout); yvex_cli_out_json_string(stdout, descriptor->adapter_id);
+    fputs(",\"renderer_id\":", stdout); yvex_cli_out_json_string(stdout, descriptor->renderer_id);
+    fputs(",\"completion_provider\":", stdout);
+    yvex_cli_out_json_string(stdout, descriptor->completion_provider);
+    fputs(",\"projections\":{\"cli\":", stdout);
+    fputs(descriptor->cli_projection ? "true" : "false", stdout);
+    fputs(",\"slash\":", stdout); yvex_cli_out_json_string(stdout, descriptor->slash_projection);
+    fputs(",\"slash_aliases\":", stdout);
+    discovery_json_list(stdout, descriptor->slash_aliases, ',');
+    fputs(",\"protocol\":", stdout); yvex_cli_out_json_string(stdout, descriptor->protocol_operation);
+    fputs(",\"future_tui\":", stdout); yvex_cli_out_json_string(stdout, descriptor->future_tui_projection);
+    fputs("},\"deprecation\":", stdout); yvex_cli_out_json_string(stdout, descriptor->deprecation_state);
+    fputs(",\"superseded_by\":", stdout);
+    discovery_json_list(stdout, descriptor->superseded_by, '|');
+    fputs(",\"test_owner\":", stdout); yvex_cli_out_json_string(stdout, descriptor->test_owner);
+    fputs(",\"documentation_owner\":", stdout);
+    yvex_cli_out_json_string(stdout, descriptor->documentation_owner);
+    fputc('}', stdout);
+#undef JSON_FIELD
+}
+static void render_discovery_json(void)
+{
+    size_t index;
+    fputs("{\"schema\":", stdout); yvex_cli_out_json_string(stdout, YVEX_COMMAND_DISCOVERY_SCHEMA);
+    fputs(",\"registry_identity\":", stdout); yvex_cli_out_json_string(stdout, yvex_operator_registry_identity);
+    fputs(",\"build_commit\":", stdout); yvex_cli_out_json_string(stdout, YVEX_BUILD_COMMIT);
+    fputs(",\"operations\":[", stdout);
+    for (index = 0u; index < yvex_operator_descriptor_count; ++index) {
+        if (index) fputc(',', stdout);
+        render_discovery_operation(index, &yvex_operator_descriptors[index]);
+    }
+    fputs("]}\n", stdout);
+}
+int yvex_client_render_help_path(size_t path_count, const char *const *path,
+                                 int advanced, int json)
+{
+    const yvex_operator_descriptor *exact = NULL;
+    size_t index, matches = 0u;
+    if (json) {
+        render_discovery_json();
+        return 0;
+    }
+    for (index = 0u; index < yvex_operator_descriptor_count; ++index) {
+        const yvex_operator_descriptor *descriptor = &yvex_operator_descriptors[index];
+        if (!descriptor->cli_projection || !descriptor_has_prefix(descriptor, path_count, path))
+            continue;
+        if (descriptor->command_word_count == path_count) exact = descriptor;
+        matches++;
+    }
+    if (!matches) {
+        fprintf(stderr, "yvex: unknown help path");
+        for (index = 0u; index < path_count; ++index) fprintf(stderr, " %s", path[index]);
+        fputc('\n', stderr);
+        return 2;
+    }
+    if (exact) {
+        render_leaf_help(exact);
+        if (matches == 1u) return 0;
+        puts("\nsubcommands:");
+    } else {
+        puts(path_count ? "YVEX command namespace\n" : "YVEX local inference\n");
+    }
+    for (index = 0u; index < yvex_operator_descriptor_count; ++index) {
+        const yvex_operator_descriptor *descriptor = &yvex_operator_descriptors[index];
+        int visible = path_count != 0u ||
+                      descriptor->visibility == YVEX_OPERATOR_VISIBILITY_PRODUCT_DEFAULT ||
+                      (advanced && (descriptor->visibility == YVEX_OPERATOR_VISIBILITY_PRODUCT_ADVANCED ||
+                                    descriptor->visibility == YVEX_OPERATOR_VISIBILITY_ENGINEERING));
+        if (descriptor != exact && descriptor->cli_projection && visible &&
+            descriptor_has_prefix(descriptor, path_count, path))
+            render_command_index_line(descriptor);
+    }
+    if (!advanced) puts("\nUse `yvex help --advanced` for advanced and engineering commands.");
+    return 0;
+}
 void yvex_cli_json_begin(FILE *fp) {
     yvex_cli_out_line(fp, "{");
 }
@@ -1516,12 +1823,12 @@ void yvex_cli_json_end(FILE *fp) {
 static int json_field(FILE *fp, const char *key, yvex_cli_field_kind kind, const void *value,
                       int comma) {
     (void)yvex_cli_out_puts(fp, "  ");
-    json_string(fp, key);
+    yvex_cli_out_json_string(fp, key);
     (void)yvex_cli_out_puts(fp, ": ");
     switch (kind) {
     case YVEX_CLI_FIELD_TEXT:
     case YVEX_CLI_FIELD_TEXT_ARRAY:
-        json_string(fp, value);
+        yvex_cli_out_json_string(fp, value);
         break;
     case YVEX_CLI_FIELD_U64:
         (void)yvex_cli_out_writef(fp, "%llu", *(const unsigned long long *)value);

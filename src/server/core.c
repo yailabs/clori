@@ -1,8 +1,8 @@
 /*
- * Keep immutable model resources resident while local clients submit typed work.
+ * Keep one persistent host alive while independently managed model engines serve typed work.
  *
- * One host opens at most one model. Its scheduler serializes per-session mutation while bounded
- * workers execute independent sessions over admitted runtime/session/protocol owners.
+ * The host owns transport and request admission. Engine generations own model resources and
+ * sessions; queued work holds a generation lease through completion.
  */
 #define _GNU_SOURCE
 #include "src/server/private.h"
@@ -26,10 +26,10 @@
 #define SERVER_SCHEMA_V1 1u
 #define SERVER_TELEMETRY_CAPACITY 4096u
 #define SERVER_CLIENT_CAPACITY 64u
-#define SERVER_INTERACTIVE_PREFILL_CHUNK 64u
-#define SERVER_BATCHED_PREFILL_FLOOR 4u
 typedef struct server_work_item {
     yvex_client_request request;
+    server_engine_lease engine;
+    yvex_server_engine_summary engine_summary;
     char request_id[YVEX_SERVER_ID_CAP];
     unsigned char *prompt;
     yvex_provider_request *provider;
@@ -49,26 +49,16 @@ struct yvex_server {
     pthread_cond_t clients_condition;
     yvex_server_options options;
     yvex_server_summary summary;
-    char artifact_path[YVEX_PATH_CAP];
-    char runtime_binding_path[YVEX_PATH_CAP];
-    char target_id[128];
     char socket_path[YVEX_SERVER_SOCKET_PATH_CAP];
     char lock_path[YVEX_SERVER_SOCKET_PATH_CAP];
-    yvex_model_engine *model;
-    yvex_runtime_generation_context_summary capacity_summary;
-    yvex_runtime_generation_context *warm_generation;
-    yvex_runtime_execution_session *warm_session;
     server_telemetry *telemetry;
-    server_session_registry *sessions;
-    server_media_registry *media;
+    server_engine_manager *engines;
     server_scheduler *scheduler;
     server_openai_listener *openai;
     unsigned long long next_request_id;
     server_client_slot *clients;
     unsigned long long client_capacity, active_clients;
     int listen_fd, lock_fd, lock_owned;
-    int media_model_open;
-    int continuous_batching_admitted;
     atomic_int stopping;
     int state_mutex_ready;
     int clients_mutex_ready, clients_condition_ready;
@@ -85,29 +75,6 @@ static int server_refuse(yvex_error *err, yvex_status status,
 {
     yvex_error_set(err, status, "server.host", reason);
     return status;
-}
-
-static void server_report_model_refusal(
-    int status, const yvex_model_engine_failure *failure, yvex_error *err)
-{
-    char where[YVEX_ERROR_WHERE_CAP];
-    char reason[YVEX_ERROR_MESSAGE_CAP];
-    if (!err || !failure || failure->code == YVEX_MODEL_ENGINE_FAILURE_NONE)
-        return;
-    yvex_core_text_copy(where, sizeof(where), yvex_error_where(err));
-    yvex_core_text_copy(reason, sizeof(reason),
-                        failure->reason ? failure->reason : yvex_error_message(err));
-    if (failure->code == YVEX_MODEL_ENGINE_FAILURE_ALLOCATION)
-        yvex_error_setf(
-            err, (yvex_status)status, where,
-            "model admission refused: field=%s required=%llu available=%llu reason=%s",
-            failure->field, failure->expected, failure->actual, reason);
-    else
-        yvex_error_setf(
-            err, (yvex_status)status, where,
-            "model admission refused: failure=%u field=%s expected=%llu actual=%llu reason=%s",
-            (unsigned int)failure->code, failure->field, failure->expected,
-            failure->actual, reason);
 }
 
 yvex_client_failure_class yvex_server_failure_class_from_status(int status)
@@ -153,72 +120,22 @@ static unsigned long long server_monotonic_ns(void)
            (unsigned long long)value.tv_nsec;
 }
 
-static double server_elapsed_seconds(unsigned long long start,
-                                     unsigned long long end)
-{
-    if (!start || end < start) return 0.0;
-    return (double)(end - start) / 1000000000.0;
-}
-
-static unsigned long long server_adaptive_prefill_chunk(
-    unsigned long long context_capacity,
-    unsigned long long concurrent_sequences)
-{
-    /* Keep the established wide interactive prefill, but do not multiply that
-       workspace across concurrent sessions. Serving starts from real scheduler
-       width with a small amortization floor; live capacity admission remains the
-       final authority and the resolved value is published in server status. */
-    unsigned long long selected = concurrent_sequences > 1ull
-                                      ? concurrent_sequences
-                                      : SERVER_INTERACTIVE_PREFILL_CHUNK;
-    if (concurrent_sequences > 1ull && selected < SERVER_BATCHED_PREFILL_FLOOR)
-        selected = SERVER_BATCHED_PREFILL_FLOOR;
-    return selected < context_capacity ? selected : context_capacity;
-}
-
 static int server_options_admit(yvex_server *server,
                                 const yvex_server_options *options,
                                 yvex_error *err)
 {
     char canonical[YVEX_SERVER_SOCKET_PATH_CAP];
-    if (!options || options->schema_version != YVEX_SERVER_OPTIONS_SCHEMA_V2 ||
-        !options->target_id ||
-        (options->generation_mode != YVEX_SERVER_GENERATION_MEDIA &&
-         (!options->artifact_path || !options->runtime_binding_path)) ||
-        (options->backend != YVEX_BACKEND_KIND_CPU &&
-         options->backend != YVEX_BACKEND_KIND_CUDA) ||
-        options->generation_mode > YVEX_SERVER_GENERATION_MEDIA ||
-        (options->generation_mode != YVEX_SERVER_GENERATION_MEDIA &&
-         (!options->context_capacity || !options->maximum_new_tokens)) ||
-        (options->generation_mode == YVEX_SERVER_GENERATION_MEDIA &&
-         (options->context_capacity || options->prefill_chunk_tokens ||
-          options->maximum_new_tokens)) ||
-        !options->maximum_output_bytes ||
-        !options->maximum_sessions || !options->request_queue_capacity || !options->concurrent_sequences ||
-        options->concurrent_sequences > options->maximum_sessions ||
-        options->maximum_sessions > SERVER_CLIENT_CAPACITY ||
-        (options->generation_mode == YVEX_SERVER_GENERATION_MEDIA &&
-         options->openai_enabled) ||
+    if (!options || options->schema_version != YVEX_SERVER_OPTIONS_SCHEMA_V3 ||
+        !options->request_queue_capacity || !options->worker_count ||
+        options->worker_count > SERVER_CLIENT_CAPACITY ||
+        options->trace_level > YVEX_SERVER_TRACE_FULL ||
+        options->console > YVEX_SERVER_CONSOLE_HUMAN ||
         (options->openai_enabled &&
          (!options->openai_port || options->openai_timeout_ms < 100u ||
           options->openai_timeout_ms > 86400000u)))
         return server_refuse(err, YVEX_ERR_INVALID_ARG,
                              "complete bounded runtime-host options are required");
     server->options = *options;
-    if (!server->options.prefill_chunk_tokens &&
-        server->options.generation_mode != YVEX_SERVER_GENERATION_MEDIA)
-        server->options.prefill_chunk_tokens = server_adaptive_prefill_chunk(
-            server->options.context_capacity,
-            server->options.concurrent_sequences);
-    if (options->artifact_path)
-        yvex_core_text_copy(server->artifact_path, sizeof(server->artifact_path),
-                            options->artifact_path);
-    if (options->runtime_binding_path)
-        yvex_core_text_copy(server->runtime_binding_path,
-                            sizeof(server->runtime_binding_path),
-                            options->runtime_binding_path);
-    yvex_core_text_copy(server->target_id, sizeof(server->target_id),
-                        options->target_id);
     if (options->socket_path)
         yvex_core_text_copy(server->socket_path, sizeof(server->socket_path),
                             options->socket_path);
@@ -237,10 +154,6 @@ static int server_options_admit(yvex_server *server,
         strlen(server->lock_path) >= sizeof(server->lock_path) - 1u)
         return server_refuse(err, YVEX_ERR_BOUNDS,
                              "daemon lock path exceeds its bound");
-    server->options.artifact_path = server->artifact_path[0] ? server->artifact_path : NULL;
-    server->options.runtime_binding_path = server->runtime_binding_path[0]
-                                               ? server->runtime_binding_path : NULL;
-    server->options.target_id = server->target_id;
     server->options.socket_path = server->socket_path;
     return YVEX_OK;
 }
@@ -293,13 +206,17 @@ int yvex_server_create(yvex_server **out, const yvex_server_options *options,
     if (rc == YVEX_OK)
         rc = yvex_server_scheduler_open(
             &server->scheduler, admitted->request_queue_capacity,
-            admitted->concurrent_sequences,
+            admitted->worker_count,
             model_work_execute, scheduler_observe, server, err);
     if (rc == YVEX_OK)
         rc = yvex_server_telemetry_open(&server->telemetry,
                                    SERVER_TELEMETRY_CAPACITY,
-                                   admitted->generation_mode,
+                                   YVEX_SERVER_GENERATION_TARGET_ONLY,
                                    NULL, NULL, NULL, err);
+    if (rc == YVEX_OK)
+        rc = yvex_server_engine_manager_open(
+            &server->engines, YVEX_SERVER_ENGINE_CAP, server->scheduler,
+            server->telemetry, err);
     if (rc == YVEX_OK)
         yvex_server_telemetry_queue(server->telemetry, 0u,
                                     admitted->request_queue_capacity);
@@ -308,7 +225,7 @@ int yvex_server_create(yvex_server **out, const yvex_server_options *options,
             .yvex_socket = server->socket_path,
             .port = admitted->openai_port,
             .timeout_ms = admitted->openai_timeout_ms,
-            .maximum_connections = admitted->concurrent_sequences
+            .maximum_connections = admitted->worker_count
         };
         rc = yvex_server_openai_prepare(&server->openai, &openai,
                                         server->telemetry, err);
@@ -320,31 +237,21 @@ int yvex_server_create(yvex_server **out, const yvex_server_options *options,
     memset(&server->summary, 0, sizeof(server->summary));
     server->summary.schema_version = SERVER_SCHEMA_V1;
     server->summary.status = YVEX_SERVER_STATUS_CONFIGURED;
-    server->summary.backend = admitted->backend;
-    server->summary.context_capacity = admitted->context_capacity;
-    server->summary.prefill_chunk_tokens = admitted->prefill_chunk_tokens;
-    server->summary.generation_mode = admitted->generation_mode;
-    server->summary.maximum_new_tokens = admitted->maximum_new_tokens;
-    server->summary.maximum_output_bytes = admitted->maximum_output_bytes;
-    server->summary.maximum_sessions = admitted->maximum_sessions;
     server->summary.request_queue_capacity = admitted->request_queue_capacity;
-    server->summary.concurrent_sequences = admitted->concurrent_sequences;
+    server->summary.maximum_engines = YVEX_SERVER_ENGINE_CAP;
+    server->summary.worker_count = admitted->worker_count;
     server->summary.openai_timeout_ms = admitted->openai_timeout_ms;
     server->summary.trace_level = admitted->trace_level;
-    server->summary.explicit_reasoning_channel_supported = 0;
     server->summary.openai_listener_enabled = admitted->openai_enabled;
     server->summary.openai_port = admitted->openai_enabled
                                       ? admitted->openai_port : 0u;
     yvex_core_text_copy(server->summary.socket_path,
                         sizeof(server->summary.socket_path),
                         server->socket_path);
-    yvex_core_text_copy(server->summary.target_id,
-                        sizeof(server->summary.target_id),
-                        server->target_id);
     (void)yvex_server_telemetry_emit(
         server->telemetry, YVEX_SERVER_EVENT_PROCESS_START,
         YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "process",
-        (unsigned long long)getpid(), admitted->backend, 0u, 0.0, 0.0, err);
+        (unsigned long long)getpid(), admitted->worker_count, 0u, 0.0, 0.0, err);
     (void)yvex_server_telemetry_emit(
         server->telemetry, YVEX_SERVER_EVENT_TELEMETRY_READY,
         YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "telemetry",
@@ -352,28 +259,6 @@ int yvex_server_create(yvex_server **out, const yvex_server_options *options,
     *out = server;
     yvex_error_clear(err);
     return YVEX_OK;
-}
-
-int yvex_server_media_configure(
-    yvex_server *server, const yvex_server_media_options *options, yvex_error *err)
-{
-    int rc;
-    if (!server || !options || !server->state_mutex_ready ||
-        pthread_mutex_lock(&server->state_mutex) != 0)
-        return server_refuse(err, YVEX_ERR_INVALID_ARG,
-                             "configured media host is required");
-    if (server->summary.status != YVEX_SERVER_STATUS_CONFIGURED || server->media ||
-        server->options.generation_mode != YVEX_SERVER_GENERATION_MEDIA) {
-        (void)pthread_mutex_unlock(&server->state_mutex);
-        return server_refuse(err, YVEX_ERR_STATE,
-                             "media options must bind once before server startup");
-    }
-    rc = yvex_server_media_registry_open(
-        &server->media, options, server->telemetry, err);
-    if (rc == YVEX_OK)
-        rc = yvex_server_media_registry_summary(server->media, &server->summary, err);
-    (void)pthread_mutex_unlock(&server->state_mutex);
-    return rc;
 }
 
 static int socket_directory_prepare(const char *socket_path, yvex_error *err)
@@ -540,14 +425,9 @@ static void model_work_execute(void *context, void *work)
                                    ? (double)(started - item->enqueued_ns) /
                                          1000000000.0
                                    : 0.0;
-        if (server->options.generation_mode == YVEX_SERVER_GENERATION_MEDIA)
-            rc = yvex_server_media_registry_execute(
-                server->media, &item->request, item->request_id, queue_seconds,
-                work_emit, item, &item->error);
-        else
-            rc = yvex_server_sessions_execute(
-                server->sessions, &item->request, item->request_id, queue_seconds,
-                work_emit, item, &item->error);
+        rc = yvex_server_engine_lease_execute(
+            &item->engine, &item->request, item->request_id, queue_seconds,
+            work_emit, item, &item->error);
     }
     if (rc != YVEX_OK && !item->response_sent) {
         yvex_error send_error;
@@ -561,6 +441,7 @@ static void model_work_execute(void *context, void *work)
     yvex_server_telemetry_request(server->telemetry, -1, rc == YVEX_OK,
                              rc != YVEX_OK && rc != YVEX_ERR_CANCELLED,
                              rc == YVEX_ERR_CANCELLED);
+    yvex_server_engine_manager_release(server->engines, &item->engine);
     (void)pthread_mutex_lock(&item->mutex);
     item->status = rc;
     item->done = 1;
@@ -568,383 +449,125 @@ static void model_work_execute(void *context, void *work)
     (void)pthread_mutex_unlock(&item->mutex);
 }
 
-static void server_generation_options(
-    const yvex_server *server, yvex_runtime_generation_options *options)
+int yvex_server_engine_load(
+    yvex_server *server, const yvex_server_engine_options *options,
+    yvex_server_engine_summary *summary, yvex_error *err)
 {
-    memset(options, 0, sizeof(*options));
-    options->schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V5;
-    options->backend = server->options.backend;
-    options->mode = server->options.generation_mode == YVEX_SERVER_GENERATION_DSPARK
-                        ? YVEX_GENERATION_MODE_DSPARK
-                        : YVEX_GENERATION_MODE_TARGET_ONLY;
-    options->workload_kind = server->options.concurrent_sequences > 1ull
-                                 ? YVEX_EXECUTION_WORKLOAD_BALANCED_SERVING
-                                 : YVEX_EXECUTION_WORKLOAD_INTERACTIVE_LATENCY;
-    options->context_capacity = server->options.context_capacity;
-    options->prefill_chunk_tokens = server->options.prefill_chunk_tokens;
-    options->maximum_new_tokens = server->options.maximum_new_tokens;
-    options->maximum_output_bytes = server->options.maximum_output_bytes;
-    options->maximum_host_bytes = server->options.maximum_host_bytes;
-    options->maximum_device_bytes = server->options.maximum_device_bytes;
-    options->concurrent_sequences = server->options.concurrent_sequences;
-    options->continuous_batching = server->continuous_batching_admitted;
-    options->trace_policy = server->options.trace_level == YVEX_SERVER_TRACE_FULL
-                                ? YVEX_RUNTIME_TRACE_FULL
-                                : YVEX_RUNTIME_TRACE_STAGES;
-    options->evidence_profile = YVEX_EXECUTION_EVIDENCE_PRODUCTION;
-    options->sampling_policy.schema_version = YVEX_RUNTIME_SAMPLING_SCHEMA_V1;
-    options->sampling_policy.strategy = YVEX_SAMPLING_STRATEGY_STOCHASTIC;
-    options->sampling_policy.temperature = 1.0;
-    options->sampling_policy.top_p = 1.0;
-    options->sampling_policy.typical_p = 1.0;
-    options->sampling_policy.seed_present = 1;
-    options->sampling_policy.seed = server->options.sampling_seed;
+    if (!server || !options || !summary || !server->engines ||
+        server->summary.status != YVEX_SERVER_STATUS_READY)
+        return server_refuse(err, YVEX_ERR_STATE,
+                             "ready host and text-engine options are required");
+    if (options->generation_mode == YVEX_SERVER_GENERATION_MEDIA)
+        return server_refuse(err, YVEX_ERR_INVALID_ARG,
+                             "media engine requires its composite profile");
+    return yvex_server_engine_manager_load(
+        server->engines, options, NULL, summary, err);
 }
 
-static int server_execution_prepare(yvex_server *server,
-                                    yvex_runtime_residency_summary *summary,
-                                    yvex_error *err)
+int yvex_server_media_engine_load(
+    yvex_server *server, const yvex_server_engine_options *options,
+    const yvex_server_media_options *media,
+    yvex_server_engine_summary *summary, yvex_error *err)
 {
-    const yvex_model_engine_view *view = server && server->model
-                                              ? yvex_model_engine_view_get(server->model)
-                                              : NULL;
-    yvex_runtime_execution_session *session = NULL;
-    yvex_runtime_generation_context *generation = NULL;
-    yvex_runtime_session_open_request request;
-    yvex_runtime_generation_options options;
-    yvex_model_engine_failure failure;
-    yvex_error primary, cleanup;
-    unsigned long long compatible_width = 1ull;
-    int rc, generation_cleanup_rc, session_cleanup_rc;
-    if (!server || !summary || !view || !view->residency)
+    if (!server || !options || !media || !summary || !server->engines ||
+        server->summary.status != YVEX_SERVER_STATUS_READY ||
+        options->generation_mode != YVEX_SERVER_GENERATION_MEDIA)
         return server_refuse(err, YVEX_ERR_STATE,
-                             "runtime residency is unavailable during startup");
-    memset(&request, 0, sizeof(request));
-    memset(&failure, 0, sizeof(failure));
-    request.backend = server->options.backend;
-    request.maximum_host_bytes = server->options.maximum_host_bytes;
-    request.maximum_device_bytes = server->options.maximum_device_bytes;
-    rc = yvex_model_engine_compatible_batch_width_copy(
-        server->model, &compatible_width, err);
-    if (rc == YVEX_OK)
-        server->continuous_batching_admitted =
-            server->options.concurrent_sequences > 1ull &&
-            compatible_width >= 2ull;
-    if (rc == YVEX_OK)
-        rc = yvex_runtime_session_open(&session, server->model, &request,
-                                       &failure, err);
-    server_generation_options(server, &options);
-    if (rc == YVEX_OK)
-        rc = yvex_runtime_generation_context_open(
-            &generation, server->model, session, &options, err);
-    if (rc == YVEX_OK)
-        rc = yvex_runtime_generation_context_summary_copy(
-            generation, &server->capacity_summary, err);
-    if (rc == YVEX_OK &&
-        (server->capacity_summary.concurrent_sequences !=
-             server->options.concurrent_sequences ||
-         server->capacity_summary.continuous_batching !=
-             server->continuous_batching_admitted))
-        rc = server_refuse(
-            err, YVEX_ERR_STATE,
-            "startup capacity plan does not match independent-session scheduling");
-    if (rc == YVEX_OK)
-        rc = yvex_runtime_residency_snapshot(view->residency, summary,
-                                             NULL, NULL, err);
-    primary = err ? *err : (yvex_error){0};
-    yvex_error_clear(&cleanup);
-    generation_cleanup_rc = yvex_runtime_generation_context_close(
-        &generation, &cleanup);
-    if (generation_cleanup_rc != YVEX_OK) {
-        server->warm_generation = generation;
-        server->warm_session = session;
-        if (err) *err = cleanup;
-        return generation_cleanup_rc;
-    }
-    session_cleanup_rc = yvex_runtime_session_close(&session, &cleanup);
-    if (session_cleanup_rc != YVEX_OK) {
-        server->warm_session = session;
-        if (err) *err = cleanup;
-        return session_cleanup_rc;
-    }
-    if (rc != YVEX_OK) {
-        if (err) *err = primary;
-        return rc;
-    }
-    if (server->options.backend == YVEX_BACKEND_KIND_CUDA &&
-        (!summary->cuda_ready ||
-        (!summary->cuda_upload_count && !summary->cuda_host_registration_count &&
-         !summary->cuda_managed_prefetch_count &&
-         !summary->cuda_pageable_prefetch_count)))
-        return server_refuse(err, YVEX_ERR_STATE,
-                             "CUDA residency did not complete before readiness");
-    if (err) *err = primary;
-    yvex_error_clear(err);
-    return YVEX_OK;
+                             "ready host and media-engine profile are required");
+    return yvex_server_engine_manager_load(
+        server->engines, options, media, summary, err);
 }
 
-static int server_media_start(yvex_server *server, unsigned long long started,
-                              yvex_error *err)
+int yvex_server_engine_unload(
+    yvex_server *server, const char *alias, unsigned long long generation,
+    yvex_server_engine_summary *summary, yvex_error *err)
 {
-    yvex_runtime_media_model_summary model = {0};
-    int rc;
-    if (!server->media)
+    if (!server || !server->engines ||
+        server->summary.status != YVEX_SERVER_STATUS_READY)
         return server_refuse(err, YVEX_ERR_STATE,
-                             "hosted media options were not configured");
-    rc = yvex_server_telemetry_emit(
-        server->telemetry, YVEX_SERVER_EVENT_ARTIFACT_OPEN_START,
-        YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "media-model",
-        4u, 0u, 0u, 0.0, 0.0, err);
-    if (rc == YVEX_OK)
-        rc = yvex_server_media_registry_start(server->media, &model, err);
-    if (rc == YVEX_OK) {
-        server->media_model_open = 1;
-        yvex_server_telemetry_media_model_opened(
-            server->telemetry, model.component_count);
-        rc = yvex_server_media_registry_summary(
-            server->media, &server->summary, err);
-    }
-    if (rc == YVEX_OK)
-        yvex_server_telemetry_identities(
-            server->telemetry, server->summary.runtime_model_identity, NULL,
-            server->summary.physical_variant_identity);
-    if (rc == YVEX_OK)
-        rc = yvex_server_telemetry_emit(
-            server->telemetry, YVEX_SERVER_EVENT_ARTIFACT_OPEN_COMPLETE,
-            YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "media-model",
-            model.artifact_bytes_hashed, model.artifact_bytes,
-            model.component_count,
-            server_elapsed_seconds(started, server_monotonic_ns()), 0.0, err);
-    if (rc == YVEX_OK)
-        rc = yvex_server_telemetry_emit(
-            server->telemetry, YVEX_SERVER_EVENT_BINDING_ADMITTED,
-            YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "media-profile",
-            1u, model.component_count, 0u, 0.0, 0.0, err);
-    if (rc == YVEX_OK)
-        rc = yvex_server_scheduler_start(server->scheduler, err);
-    if (rc == YVEX_OK) rc = listener_open(server, err);
-    if (rc == YVEX_OK)
-        rc = yvex_server_telemetry_emit(
-            server->telemetry, YVEX_SERVER_EVENT_LISTENER_READY,
-            YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "listener",
-            0600u, server->options.request_queue_capacity,
-            server->options.maximum_sessions,
-            0.0, 0.0, err);
-    if (rc == YVEX_OK)
-        rc = yvex_server_telemetry_emit(
-            server->telemetry, YVEX_SERVER_EVENT_RUNTIME_READY,
-            YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "media",
-            1u, 0u, server->options.backend,
-            server_elapsed_seconds(started, server_monotonic_ns()), 0.0, err);
-    (void)pthread_mutex_lock(&server->state_mutex);
-    if (rc == YVEX_OK) {
-        server->summary.status = YVEX_SERVER_STATUS_READY;
-        server->summary.runtime_ready = 1;
-        server->summary.generation_ready = 1;
-        server->summary.public_server_ready = 0;
-    } else {
-        server->summary.status = YVEX_SERVER_STATUS_FAILED;
-    }
-    (void)pthread_mutex_unlock(&server->state_mutex);
-    return rc;
+                             "ready host is required for engine unload");
+    return yvex_server_engine_manager_unload(
+        server->engines, alias, generation, summary, err);
+}
+
+int yvex_server_engine_snapshot(
+    const yvex_server *server, yvex_server_engine_summary *engines,
+    unsigned long long capacity, unsigned long long *count, yvex_error *err)
+{
+    if (!server || !server->engines)
+        return server_refuse(err, YVEX_ERR_INVALID_ARG,
+                             "open host is required for engine snapshot");
+    return yvex_server_engine_manager_snapshot(
+        server->engines, engines, capacity, count, err);
 }
 
 /*
- * Open the model once, then sessions, scheduler workers, and listener before READY.
- * Failed starts retain acquired owners for deterministic close.
+ * Publish the persistent host before any model is loaded.
  */
 int yvex_server_start(yvex_server *server, yvex_error *err)
 {
-    yvex_model_engine_open_request request;
-    yvex_runtime_generation_options startup_options;
-    yvex_model_engine_failure failure;
-    yvex_model_engine_summary model;
-    yvex_runtime_residency_summary residency;
-    yvex_paths paths;
-    yvex_error path_error;
-    const yvex_model_engine_view *view;
-    unsigned long long startup_started, cuda_started = 0u, startup_completed;
-    double cuda_seconds = 0.0, startup_seconds;
-    int rc = YVEX_OK;
+    int rc;
     if (!server || !server->state_mutex_ready ||
         (rc = socket_directory_prepare(server->socket_path, err)) != YVEX_OK ||
         pthread_mutex_lock(&server->state_mutex) != 0)
         return rc != YVEX_OK ? rc : server_refuse(
             err, YVEX_ERR_INVALID_ARG, "configured host is required");
-    if (server->summary.status != YVEX_SERVER_STATUS_CONFIGURED || server->model) {
+    if (server->summary.status != YVEX_SERVER_STATUS_CONFIGURED) {
         (void)pthread_mutex_unlock(&server->state_mutex);
         return server_refuse(err, YVEX_ERR_STATE,
                              "host has already started or failed");
     }
     server->summary.status = YVEX_SERVER_STATUS_STARTING;
     (void)pthread_mutex_unlock(&server->state_mutex);
-    startup_started = server_monotonic_ns();
-    if (server->options.generation_mode == YVEX_SERVER_GENERATION_MEDIA)
-        return server_media_start(server, startup_started, err);
-    (void)yvex_server_telemetry_emit(
-        server->telemetry, YVEX_SERVER_EVENT_ARTIFACT_OPEN_START,
-        YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "startup",
-        0u, 0u, 0u, 0.0, 0.0, err);
-    (void)yvex_server_telemetry_emit(
-        server->telemetry, YVEX_SERVER_EVENT_MATERIALIZATION_START,
-        YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "startup",
-        0u, 0u, 0u, 0.0, 0.0, err);
-    memset(&request, 0, sizeof(request));
-    memset(&failure, 0, sizeof(failure));
-    request.artifact_path = server->artifact_path;
-    request.runtime_binding_path = server->runtime_binding_path;
-    request.target_id = server->target_id;
-    yvex_error_clear(&path_error);
-    if (yvex_paths_default(&paths, &path_error) == YVEX_OK)
-        request.artifact_reopen_cache_root = paths.cache_dir;
-    server_generation_options(server, &startup_options);
-    request.startup_generation = &startup_options;
-    request.residency_backend = server->options.backend;
-    request.maximum_host_bytes = server->options.maximum_host_bytes;
-    request.maximum_device_bytes = server->options.maximum_device_bytes;
-    rc = yvex_model_engine_open(&server->model, &request, &failure, err);
-    if (rc != YVEX_OK) server_report_model_refusal(rc, &failure, err);
-    if (rc == YVEX_OK)
-        rc = yvex_model_engine_summary_copy(server->model, &model, err);
-    view = rc == YVEX_OK ? yvex_model_engine_view_get(server->model) : NULL;
-    memset(&residency, 0, sizeof(residency));
-    if (rc == YVEX_OK && (!view || !view->residency))
-        rc = server_refuse(err, YVEX_ERR_STATE,
-                           "runtime model did not publish immutable residency");
-    if (rc == YVEX_OK) {
-        const yvex_tokenizer_plan_summary *tokenizer =
-            yvex_tokenizer_plan_summary_get(view->tokenizer);
-        server->summary.explicit_reasoning_channel_supported =
-            tokenizer && tokenizer->explicit_reasoning_supported;
-        cuda_started = server_monotonic_ns();
-        rc = server_execution_prepare(server, &residency, err);
-        if (rc == YVEX_OK)
-            cuda_seconds = server_elapsed_seconds(cuda_started,
-                                                  server_monotonic_ns());
-    }
-    if (rc == YVEX_OK) {
-        yvex_server_telemetry_identities(server->telemetry,
-                                    model.runtime_model_identity,
-                                    model.artifact_identity,
-                                    view->binding->profile_identity);
-        yvex_server_telemetry_model_opened(
-            server->telemetry, residency.artifact_backed_bytes,
-            residency.host_resident_bytes, residency.device_resident_bytes,
-            residency.cuda_upload_count);
-        rc = yvex_server_telemetry_emit(
-            server->telemetry, YVEX_SERVER_EVENT_BINDING_ADMITTED,
-            YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "startup",
-            1u, 0u, 0u, 0.0, 0.0, err);
-    }
-    if (rc == YVEX_OK)
-        rc = yvex_server_telemetry_emit(
-            server->telemetry, YVEX_SERVER_EVENT_MATERIALIZATION_COMPLETE,
-            YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "startup",
-            residency.host_resident_bytes, residency.device_resident_bytes,
-            residency.binding_count,
-            model.lifecycle_seconds[YVEX_RUNTIME_LIFECYCLE_MATERIALIZATION_OPEN],
-            0.0, err);
-    if (rc == YVEX_OK)
-        rc = yvex_server_telemetry_emit(
-            server->telemetry, YVEX_SERVER_EVENT_RESIDENCY_READY,
-            YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "startup",
-            residency.host_resident_bytes, residency.device_resident_bytes,
-            residency.cuda_upload_count,
-            model.lifecycle_seconds[YVEX_RUNTIME_LIFECYCLE_RESIDENCY] + cuda_seconds,
-            0.0, err);
-    if (rc == YVEX_OK) {
-        startup_completed = server_monotonic_ns();
-        startup_seconds = server_elapsed_seconds(startup_started,
-                                                 startup_completed);
-        yvex_runtime_identity_copy(server->summary.runtime_model_identity,
-                                   model.runtime_model_identity);
-        yvex_runtime_identity_copy(server->summary.runtime_binding_identity,
-                                   model.runtime_binding_identity);
-        yvex_runtime_identity_copy(server->summary.artifact_identity,
-                                   model.artifact_identity);
-        yvex_runtime_identity_copy(server->summary.physical_variant_identity,
-                                   view->binding->profile_identity);
-        yvex_runtime_identity_copy(server->summary.capacity_plan_identity,
-                                   server->capacity_summary.capacity_plan_identity);
-        server->summary.capacity_required_bytes =
-            server->capacity_summary.capacity_required_bytes;
-        server->summary.capacity_unreserved_bytes =
-            server->capacity_summary.capacity_unreserved_bytes;
-        rc = yvex_server_telemetry_emit(
-            server->telemetry, YVEX_SERVER_EVENT_ARTIFACT_OPEN_COMPLETE,
-            YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "startup",
-            model.artifact_bytes_hashed, residency.host_resident_bytes,
-            residency.device_resident_bytes, startup_seconds, 0.0, err);
-    }
-    if (rc == YVEX_OK)
-        rc = yvex_server_sessions_open(
-            &server->sessions, server->model, server->scheduler, &server->options,
-            server->continuous_batching_admitted, server->telemetry, err);
-    if (rc == YVEX_OK)
-        rc = yvex_server_scheduler_start(server->scheduler, err);
+    rc = yvex_server_scheduler_start(server->scheduler, err);
     if (rc == YVEX_OK) rc = listener_open(server, err);
     if (rc == YVEX_OK)
         rc = yvex_server_telemetry_emit(
             server->telemetry, YVEX_SERVER_EVENT_LISTENER_READY,
             YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "listener",
             0600u, server->options.request_queue_capacity,
-            server->options.maximum_sessions,
-            0.0, 0.0, err);
+            YVEX_SERVER_ENGINE_CAP, 0.0, 0.0, err);
     if (rc == YVEX_OK && server->openai)
         rc = yvex_server_openai_start(server->openai, err);
-    if (rc == YVEX_OK)
-        rc = yvex_server_telemetry_emit(
-            server->telemetry, YVEX_SERVER_EVENT_RUNTIME_READY,
-            YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "runtime",
-            1u, server->options.context_capacity, server->options.backend,
-            server_elapsed_seconds(startup_started, server_monotonic_ns()),
-            0.0, err);
-    if (rc != YVEX_OK && server->openai) {
-        yvex_error cleanup;
-        yvex_server_openai_request_stop(server->openai);
-        (void)yvex_server_openai_finish(server->openai, &cleanup);
-    }
-    (void)pthread_mutex_lock(&server->state_mutex);
-    if (rc == YVEX_OK) {
-        server_openai_snapshot openai = {0};
-        yvex_server_openai_snapshot(server->openai, &openai);
-        server->summary.status = YVEX_SERVER_STATUS_READY;
-        server->summary.runtime_ready = 1;
-        server->summary.generation_ready = 1;
-        server->summary.public_server_ready = 0;
-        server->summary.independent_session_scheduling_ready =
-            server->options.concurrent_sequences > 1ull;
-        server->summary.continuous_batching_ready =
-            server->continuous_batching_admitted;
-        server->summary.openai_listener_enabled = openai.enabled;
-        server->summary.openai_listener_ready = openai.ready;
-        server->summary.openai_port = openai.port;
-    } else {
-        server->summary.status = YVEX_SERVER_STATUS_FAILED;
-    }
-    (void)pthread_mutex_unlock(&server->state_mutex);
-    if (rc == YVEX_OK && server->openai) {
-        yvex_server_openai_activate(server->openai);
-        (void)pthread_mutex_lock(&server->state_mutex);
-        server->summary.openai_listener_ready = 1;
+    if (pthread_mutex_lock(&server->state_mutex) == 0) {
+        server->summary.status = rc == YVEX_OK ? YVEX_SERVER_STATUS_READY
+                                              : YVEX_SERVER_STATUS_FAILED;
+        server->summary.host_ready = rc == YVEX_OK;
         (void)pthread_mutex_unlock(&server->state_mutex);
     }
+    if (rc != YVEX_OK) return rc;
+    if (server->openai) yvex_server_openai_activate(server->openai);
+    rc = yvex_server_telemetry_emit(
+        server->telemetry, YVEX_SERVER_EVENT_RUNTIME_READY,
+        YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "host",
+        0u, YVEX_SERVER_ENGINE_CAP, 0u, 0.0, 0.0, err);
     return rc;
 }
-/*
- * Enqueue one request pointer while its transport thread retains stack ownership.
- *
- * The session name is the serialization key. Global operations use the empty key and therefore
- * remain ordered with one another without preventing independent named sessions from executing.
- */
+
 static int request_enqueue(yvex_server *server, server_work_item *item,
                            yvex_error *err)
 {
+    char serialization_key[SERVER_SCHEDULER_KEY_CAP];
     unsigned long long depth = 0ull;
     int batch_candidate, rc;
-    batch_candidate =
-        server->options.generation_mode != YVEX_SERVER_GENERATION_MEDIA &&
-        item->request.operation == YVEX_CLIENT_OP_GENERATION_TURN;
+    rc = yvex_server_engine_manager_acquire(
+        server->engines, item->request.model_alias,
+        item->request.engine_generation, &item->engine,
+        &item->engine_summary, err);
+    if (rc != YVEX_OK) {
+        item->failure_class = YVEX_CLIENT_FAILURE_MODEL_NOT_FOUND;
+        return rc;
+    }
+    batch_candidate = item->engine_summary.generation_mode !=
+                          YVEX_SERVER_GENERATION_MEDIA &&
+                      item->request.operation == YVEX_CLIENT_OP_GENERATION_TURN;
+    rc = yvex_server_scheduler_key(
+        serialization_key, item->engine.generation,
+        item->request.session_name, err);
+    if (rc != YVEX_OK) {
+        yvex_server_engine_manager_release(server->engines, &item->engine);
+        return rc;
+    }
     if (pthread_mutex_lock(&server->state_mutex) != 0)
         return server_refuse(err, YVEX_ERR_STATE,
                              "request identity lock failed");
@@ -958,16 +581,16 @@ static int request_enqueue(yvex_server *server, server_work_item *item,
             item->request_id, NULL, "queue", item->request.prompt_bytes,
             0u, 0u, 0.0, 0.0, NULL, item->request.provider_request, NULL,
             err) != YVEX_OK)
-        return yvex_error_code(err);
+        goto failed;
     item->enqueued_ns = server_monotonic_ns();
     rc = yvex_server_scheduler_submit(
-        server->scheduler, item, item->request.session_name, batch_candidate,
+        server->scheduler, item, serialization_key, batch_candidate,
         &depth, err);
     if (rc != YVEX_OK) {
         item->failure_class = rc == YVEX_ERR_BOUNDS
                                   ? YVEX_CLIENT_FAILURE_QUEUE_FULL
                                   : YVEX_CLIENT_FAILURE_RUNTIME_UNAVAILABLE;
-        return rc;
+        goto failed;
     }
     (void)yvex_server_telemetry_emit_provider(
         server->telemetry, YVEX_SERVER_EVENT_REQUEST_QUEUED,
@@ -977,6 +600,9 @@ static int request_enqueue(yvex_server *server, server_work_item *item,
         0ull, 0.0, 0.0,
         NULL, item->request.provider_request, NULL, err);
     return YVEX_OK;
+failed:
+    yvex_server_engine_manager_release(server->engines, &item->engine);
+    return rc != YVEX_OK ? rc : yvex_error_code(err);
 }
 
 static int status_message(yvex_server *server,
@@ -997,6 +623,8 @@ static int console_status_message(yvex_server *server,
                                   yvex_error *err)
 {
     yvex_server_summary summary;
+    yvex_server_engine_summary engine;
+    server_engine_lease lease = {0};
     int rc;
     memset(message, 0, sizeof(*message));
     rc = yvex_server_get_summary(server, &summary, err);
@@ -1006,26 +634,32 @@ static int console_status_message(yvex_server *server,
     message->status = YVEX_OK;
     message->request_number = request->request_number;
     message->runtime = summary;
+    rc = yvex_server_engine_manager_acquire(
+        server->engines, request->model_alias, request->engine_generation,
+        &lease, &engine, err);
+    if (rc != YVEX_OK) return rc;
     message->console.schema_version = 1u;
-    message->console.runtime_ready = summary.runtime_ready;
-    message->console.backend = summary.backend;
-    message->console.context_capacity = summary.context_capacity;
+    message->console.runtime_ready = summary.host_ready && engine.execution_ready;
+    message->console.backend = engine.backend;
+    message->console.context_capacity = engine.context_capacity;
+    message->console.engine_generation = engine.generation;
+    message->generation_mode = engine.generation_mode;
     message->console.selected_model_available = 0;
     message->console.explicit_reasoning_channel_supported =
-        summary.explicit_reasoning_channel_supported;
+        engine.explicit_reasoning_channel_supported;
+    yvex_core_text_copy(message->console.model_alias,
+                        sizeof(message->console.model_alias), engine.alias);
     yvex_core_text_copy(message->console.live_model_identity,
                         sizeof(message->console.live_model_identity),
-                        summary.runtime_model_identity);
+                        engine.runtime_model_identity);
     yvex_core_text_copy(message->console.physical_variant_identity,
                         sizeof(message->console.physical_variant_identity),
-                        summary.physical_variant_identity);
-    if (server->options.generation_mode == YVEX_SERVER_GENERATION_MEDIA)
-        return yvex_server_media_registry_console_status(
-            server->media, request->session_name, &message->console,
-            &message->partial_turn, err);
-    return yvex_server_sessions_console_status(
-        server->sessions, request->session_name, &message->console,
+                        engine.specialization_identity);
+    rc = yvex_server_engine_lease_console_status(
+        &lease, request->session_name, &message->console,
         &message->partial_turn, err);
+    yvex_server_engine_manager_release(server->engines, &lease);
+    return rc;
 }
 
 static int event_subscription(yvex_server *server, int fd,
@@ -1066,8 +700,7 @@ static int event_subscription(yvex_server *server, int fd,
     return rc;
 }
 
-static int client_wait_work(yvex_server *server, server_work_item *item,
-                            int fd, yvex_error *err)
+static int client_wait_work(server_work_item *item, int fd, yvex_error *err)
 {
     int cancel_sent = 0;
     if (pthread_mutex_lock(&item->mutex) != 0)
@@ -1092,11 +725,8 @@ static int client_wait_work(yvex_server *server, server_work_item *item,
              errno != EINTR)) {
             yvex_error cancel_error;
             (void)pthread_mutex_unlock(&item->mutex);
-            int cancel_rc = server->options.generation_mode == YVEX_SERVER_GENERATION_MEDIA
-                                ? yvex_server_media_registry_cancel(
-                                      server->media, item->request.session_name, &cancel_error)
-                                : yvex_server_sessions_cancel(
-                                      server->sessions, item->request.session_name, &cancel_error);
+            int cancel_rc = yvex_server_engine_lease_cancel(
+                &item->engine, item->request.session_name, &cancel_error);
             if (cancel_rc == YVEX_OK)
                 cancel_sent = 1;
             (void)pthread_mutex_lock(&item->mutex);
@@ -1105,6 +735,67 @@ static int client_wait_work(yvex_server *server, server_work_item *item,
     (void)pthread_mutex_unlock(&item->mutex);
     if (item->status != YVEX_OK) *err = item->error;
     return item->status;
+}
+
+static int engine_message_send(int fd, unsigned long long request_number,
+                               const yvex_server_engine_summary *engine,
+                               yvex_error *err)
+{
+    yvex_client_message message;
+    memset(&message, 0, sizeof(message));
+    message.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
+    message.kind = YVEX_CLIENT_MESSAGE_ENGINE;
+    message.status = YVEX_OK;
+    message.request_number = request_number;
+    message.engine = *engine;
+    return yvex_server_protocol_send(fd, &message, err);
+}
+
+static int engine_list_send(yvex_server *server, int fd,
+                            const yvex_client_request *request,
+                            yvex_error *err)
+{
+    yvex_server_engine_summary engines[YVEX_SERVER_ENGINE_CAP];
+    yvex_client_message complete;
+    unsigned long long count = 0ull, index;
+    int rc = yvex_server_engine_snapshot(
+        server, engines, YVEX_SERVER_ENGINE_CAP, &count, err);
+    for (index = 0ull; index < count && rc == YVEX_OK; ++index)
+        rc = engine_message_send(fd, request->request_number,
+                                 &engines[index], err);
+    if (rc != YVEX_OK) return rc;
+    memset(&complete, 0, sizeof(complete));
+    complete.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
+    complete.kind = YVEX_CLIENT_MESSAGE_ACK;
+    complete.status = YVEX_OK;
+    complete.request_number = request->request_number;
+    return yvex_server_protocol_send(fd, &complete, err);
+}
+
+static int engine_load_control(yvex_server *server, int fd,
+                               const yvex_client_request *request,
+                               yvex_error *err)
+{
+    yvex_server_engine_summary engines[YVEX_SERVER_ENGINE_CAP];
+    unsigned long long count = 0ull, index;
+    int rc;
+    if (!request->model_alias[0] || !server->options.model_loader)
+        return server_refuse(err, YVEX_ERR_UNSUPPORTED,
+                             "host has no registry-backed model loader");
+    rc = server->options.model_loader(
+        server->options.model_loader_context, server,
+        request->model_alias, err);
+    if (rc == YVEX_OK)
+        rc = yvex_server_engine_snapshot(
+            server, engines, YVEX_SERVER_ENGINE_CAP, &count, err);
+    for (index = 0ull; index < count && rc == YVEX_OK; ++index)
+        if (!strcmp(engines[index].alias, request->model_alias))
+            return engine_message_send(fd, request->request_number,
+                                       &engines[index], err);
+    return rc != YVEX_OK
+               ? rc
+               : server_refuse(err, YVEX_ERR_STATE,
+                               "model loader did not publish the requested engine");
 }
 
 static void *client_main(void *opaque)
@@ -1128,6 +819,18 @@ static void *client_main(void *opaque)
             rc = status_message(server, &request, &message, &err);
             if (rc == YVEX_OK)
                 rc = yvex_server_protocol_send(fd, &message, &err);
+        } else if (request.operation == YVEX_CLIENT_OP_ENGINE_LIST) {
+            rc = engine_list_send(server, fd, &request, &err);
+        } else if (request.operation == YVEX_CLIENT_OP_ENGINE_LOAD) {
+            rc = engine_load_control(server, fd, &request, &err);
+        } else if (request.operation == YVEX_CLIENT_OP_ENGINE_UNLOAD) {
+            yvex_server_engine_summary engine;
+            rc = yvex_server_engine_unload(
+                server, request.model_alias, request.engine_generation,
+                &engine, &err);
+            if (rc == YVEX_OK)
+                rc = engine_message_send(fd, request.request_number,
+                                         &engine, &err);
         } else if (request.operation == YVEX_CLIENT_OP_CONSOLE_STATUS) {
             yvex_client_message message;
             rc = console_status_message(server, &request, &message, &err);
@@ -1141,11 +844,15 @@ static void *client_main(void *opaque)
             rc = event_subscription(server, fd, &request, &err);
             done = 1;
         } else if (request.operation == YVEX_CLIENT_OP_GENERATION_CANCEL) {
-            rc = server->options.generation_mode == YVEX_SERVER_GENERATION_MEDIA
-                     ? yvex_server_media_registry_cancel(
-                           server->media, request.session_name, &err)
-                     : yvex_server_sessions_cancel(
-                           server->sessions, request.session_name, &err);
+            server_engine_lease lease = {0};
+            yvex_server_engine_summary engine;
+            rc = yvex_server_engine_manager_acquire(
+                server->engines, request.model_alias,
+                request.engine_generation, &lease, &engine, &err);
+            if (rc == YVEX_OK)
+                rc = yvex_server_engine_lease_cancel(
+                    &lease, request.session_name, &err);
+            yvex_server_engine_manager_release(server->engines, &lease);
             if (rc == YVEX_OK) {
                 yvex_client_message message;
                 memset(&message, 0, sizeof(message));
@@ -1199,7 +906,7 @@ static void *client_main(void *opaque)
                 } else {
                     rc = request_enqueue(server, &item, &err);
                     if (rc == YVEX_OK)
-                        rc = client_wait_work(server, &item, fd, &err);
+                        rc = client_wait_work(&item, fd, &err);
                 }
                 if (condition_ready) (void)pthread_cond_destroy(&item.condition);
                 if (mutex_ready) (void)pthread_mutex_destroy(&item.mutex);
@@ -1347,10 +1054,7 @@ int yvex_server_stop(yvex_server *server, yvex_error *err)
         (void)close(server->listen_fd);
         server->listen_fd = -1;
     }
-    if (server->media)
-        yvex_server_media_registry_cancel_all(server->media);
-    else
-        yvex_server_sessions_cancel_all(server->sessions);
+    yvex_server_engine_manager_cancel_all(server->engines);
     yvex_server_scheduler_request_stop(server->scheduler);
     if (rc != YVEX_OK) {
         if (err) *err = openai_error;
@@ -1394,32 +1098,10 @@ int yvex_server_finish(yvex_server *server, yvex_error *err)
         rc = cleanup_rc;
         primary = cleanup;
     }
-    cleanup_rc = yvex_server_sessions_close(&server->sessions, &cleanup);
+    cleanup_rc = yvex_server_engine_manager_close(&server->engines, &cleanup);
     if (cleanup_rc != YVEX_OK && rc == YVEX_OK) {
         rc = cleanup_rc;
         primary = cleanup;
-    }
-    yvex_server_media_registry_close(&server->media);
-    if (server->media_model_open) {
-        yvex_server_telemetry_model_closed(server->telemetry);
-        server->media_model_open = 0;
-    }
-    cleanup_rc = yvex_runtime_generation_context_close(
-        &server->warm_generation, &cleanup);
-    if (cleanup_rc != YVEX_OK && rc == YVEX_OK) {
-        rc = cleanup_rc;
-        primary = cleanup;
-    }
-    if (!server->warm_generation) {
-        cleanup_rc = yvex_runtime_session_close(&server->warm_session, &cleanup);
-        if (cleanup_rc != YVEX_OK && rc == YVEX_OK) {
-            rc = cleanup_rc;
-            primary = cleanup;
-        }
-    }
-    if (server->model && !server->warm_generation && !server->warm_session) {
-        yvex_model_engine_close(&server->model);
-        yvex_server_telemetry_model_closed(server->telemetry);
     }
     (void)yvex_server_telemetry_metrics_copy(server->telemetry, &metrics,
                                              &cleanup);
@@ -1455,7 +1137,8 @@ int yvex_server_get_summary(const yvex_server *server,
                             yvex_server_summary *out, yvex_error *err)
 {
     yvex_server *mutable = (yvex_server *)server;
-    unsigned long long sessions = 0u;
+    yvex_server_engine_summary engines[YVEX_SERVER_ENGINE_CAP];
+    unsigned long long count = 0u, index;
     if (!server || !out || pthread_mutex_lock(&mutable->state_mutex) != 0)
         return server_refuse(err, YVEX_ERR_INVALID_ARG,
                              "host and summary output are required");
@@ -1464,11 +1147,23 @@ int yvex_server_get_summary(const yvex_server *server,
     if (server->telemetry)
         (void)yvex_server_telemetry_metrics_copy(server->telemetry,
                                             &out->metrics, err);
-    if (server->sessions)
-        (void)yvex_server_sessions_count(server->sessions, &sessions, err);
-    else if (server->media)
-        (void)yvex_server_media_registry_count(server->media, &sessions, err);
-    out->session_count = sessions;
+    if (server->engines &&
+        yvex_server_engine_manager_snapshot(
+            server->engines, engines, YVEX_SERVER_ENGINE_CAP, &count, err) !=
+            YVEX_OK)
+        return yvex_error_code(err);
+    out->engine_count = count;
+    out->loaded_engine_count = 0ull;
+    out->draining_engine_count = 0ull;
+    out->session_count = 0ull;
+    for (index = 0ull; index < count; ++index) {
+        out->session_count += engines[index].session_count;
+        out->loaded_engine_count +=
+            engines[index].state == YVEX_SERVER_ENGINE_LOADED;
+        out->draining_engine_count +=
+            engines[index].state == YVEX_SERVER_ENGINE_DRAINING ||
+            engines[index].state == YVEX_SERVER_ENGINE_UNLOADING;
+    }
     out->request_count = out->metrics.completed_requests +
                          out->metrics.failed_requests +
                          out->metrics.cancelled_requests;

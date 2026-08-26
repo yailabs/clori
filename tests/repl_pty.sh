@@ -191,7 +191,7 @@ clear=$(printf '\033[2J\033[H')
 redrawn=$(printf '\033[2J\033[H\r\033[2K\033[38;5;81myvex>\033[0m draft')
 sed "s/${esc}\\[[0-9;]*m//g" "$root/typescript" | tr -d '\r' \
     >"$root/typescript.plain"
-grep -F 'YVEX 0.1.0 · protocol 12' "$root/typescript.plain" >/dev/null
+grep -F 'YVEX 0.1.0 · protocol 13' "$root/typescript.plain" >/dev/null
 grep -F '  model      deepseek4-v4-flash-dspark' \
     "$root/typescript.plain" >/dev/null
 grep -F '  variant    dddddddddddd' "$root/typescript.plain" >/dev/null
@@ -519,7 +519,7 @@ XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server log >"$root/log"
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server log --verbose >"$root/log.verbose"
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server log --json >"$root/log.jsonl"
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server status >"$root/status"
-grep -F 'YVEX server ·' "$root/log" >/dev/null
+grep -F 'YVEX host ·' "$root/log" >/dev/null
 grep -F 'server log · operational history and live events · Ctrl-C to stop' \
     "$root/log" >/dev/null
 grep -E 'REQUEST[[:space:]]+fixture/fixture-request' "$root/log" >/dev/null
@@ -598,5 +598,6 @@ set -e
 
 test "$status" -eq 1
 ! grep -F 'chat requires a terminal' "$root/absent.typescript" >/dev/null
-grep -F '`yvex server MODEL`' "$root/absent.typescript" >/dev/null
+grep -F '`yvex server`, then `yvex server load MODEL`' \
+    "$root/absent.typescript" >/dev/null
 printf 'test: repl_pty\n'

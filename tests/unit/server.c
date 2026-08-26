@@ -1,10 +1,9 @@
 /*
- * Exercises configured-host truth, typed event/JSON projection, model-open refusal, privacy
- * defaults, and idempotent graceful close without requiring a model artifact.
+ * Exercises persistent-host truth, independent engine lifecycle, typed event/JSON projection,
+ * privacy defaults, and idempotent graceful close.
  */
 #include <stdlib.h>
 #include <string.h>
-#include <stdlib.h>
 
 #include <arpa/inet.h>
 #include <pthread.h>
@@ -22,18 +21,28 @@
 static void test_options(yvex_server_options *options)
 {
     memset(options, 0, sizeof(*options));
-    options->schema_version = YVEX_SERVER_OPTIONS_SCHEMA_V2;
+    options->schema_version = YVEX_SERVER_OPTIONS_SCHEMA_V3;
+    options->socket_path = "/tmp/yvex-test-host/yvexd.sock";
+    options->request_queue_capacity = 2u;
+    options->worker_count = 1u;
+}
+
+static void test_engine_options(yvex_server_engine_options *options,
+                                const char *alias)
+{
+    memset(options, 0, sizeof(*options));
+    options->schema_version = YVEX_SERVER_ENGINE_SCHEMA_V1;
+    options->alias = alias;
     options->artifact_path = "/definitely-absent/yvex-model.gguf";
     options->runtime_binding_path = "/definitely-absent/yvex-binding";
     options->target_id = "deepseek4-v4-flash-dspark";
-    options->socket_path = "/tmp/yvex-test-host/yvexd.sock";
     options->backend = YVEX_BACKEND_KIND_CPU;
+    options->generation_mode = YVEX_SERVER_GENERATION_TARGET_ONLY;
     options->context_capacity = 32u;
     options->prefill_chunk_tokens = 8u;
     options->maximum_new_tokens = 4u;
     options->maximum_output_bytes = 4096u;
     options->maximum_sessions = 2u;
-    options->request_queue_capacity = 2u;
     options->concurrent_sequences = 1u;
 }
 
@@ -275,8 +284,9 @@ static int test_configured_summary_and_event(void)
     YVEX_TEST_ASSERT(summary.metrics.queue_depth == 0u &&
                          summary.metrics.queue_capacity == 2u,
                      "configured queue capacity is immediately observable");
-    YVEX_TEST_ASSERT(!summary.runtime_ready && !summary.generation_ready,
-                     "no false readiness before start");
+    YVEX_TEST_ASSERT(!summary.host_ready && !summary.engine_count &&
+                         !summary.loaded_engine_count,
+                     "configured host owns no implicit model engine");
     rc = yvex_server_event_next(server, 0u, 0, &event, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "process event available");
     YVEX_TEST_ASSERT(event.kind == YVEX_SERVER_EVENT_PROCESS_START,
@@ -308,8 +318,16 @@ static int test_configured_summary_and_event(void)
     rc = yvex_server_event_validate(&event, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT,
                      "event evidence mutation refuses");
+    rc = yvex_server_start(server, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK, "zero-engine host starts");
+    rc = yvex_server_get_summary(server, &summary, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && summary.host_ready &&
+                         summary.status == YVEX_SERVER_STATUS_READY &&
+                         !summary.engine_count && !summary.loaded_engine_count &&
+                         summary.metrics.model_open_count == 0ull,
+                     "persistent host becomes ready without loading a model");
     rc = yvex_server_stop(server, &err);
-    YVEX_TEST_ASSERT(rc == YVEX_OK, "configured host stop");
+    YVEX_TEST_ASSERT(rc == YVEX_OK, "zero-engine host stop");
     rc = yvex_server_finish(server, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "configured host finish");
     rc = yvex_server_finish(server, &err);
@@ -351,34 +369,43 @@ static int test_adaptive_prefill_policy(void)
         {32ull, 1ull, 32ull},
     };
     yvex_server_options options;
-    yvex_server_summary summary;
+    yvex_server_engine_options engine_options;
+    yvex_server_engine_summary engine;
     yvex_server *server = NULL;
     yvex_error err;
     size_t index;
     int rc;
     for (index = 0u; index < sizeof(cases) / sizeof(cases[0]); ++index) {
         test_options(&options);
-        options.context_capacity = cases[index].context;
-        options.maximum_sessions = cases[index].concurrency;
-        options.concurrent_sequences = cases[index].concurrency;
-        options.prefill_chunk_tokens = 0ull;
         rc = yvex_server_create(&server, &options, &err);
-        YVEX_TEST_ASSERT(rc == YVEX_OK && server,
-                         "adaptive prefill host create");
-        rc = yvex_server_get_summary(server, &summary, &err);
-        YVEX_TEST_ASSERT(rc == YVEX_OK &&
-                             summary.prefill_chunk_tokens == cases[index].expected,
-                         "adaptive prefill policy is inspectable");
+        YVEX_TEST_ASSERT(rc == YVEX_OK && server &&
+                             yvex_server_start(server, &err) == YVEX_OK,
+                         "adaptive prefill host starts independently");
+        test_engine_options(&engine_options, "adaptive");
+        engine_options.context_capacity = cases[index].context;
+        engine_options.maximum_sessions = cases[index].concurrency;
+        engine_options.concurrent_sequences = cases[index].concurrency;
+        engine_options.prefill_chunk_tokens = 0ull;
+        memset(&engine, 0, sizeof(engine));
+        rc = yvex_server_engine_load(server, &engine_options, &engine, &err);
+        YVEX_TEST_ASSERT(rc != YVEX_OK &&
+                             engine.state == YVEX_SERVER_ENGINE_FAILED &&
+                             engine.prefill_chunk_tokens == cases[index].expected,
+                         "engine specialization publishes adaptive prefill before open refusal");
         yvex_server_close(&server);
     }
     test_options(&options);
-    options.concurrent_sequences = 2ull;
-    options.prefill_chunk_tokens = 7ull;
     rc = yvex_server_create(&server, &options, &err);
-    YVEX_TEST_ASSERT(rc == YVEX_OK && server,
-                     "explicit prefill host create");
-    rc = yvex_server_get_summary(server, &summary, &err);
-    YVEX_TEST_ASSERT(rc == YVEX_OK && summary.prefill_chunk_tokens == 7ull,
+    YVEX_TEST_ASSERT(rc == YVEX_OK && server &&
+                         yvex_server_start(server, &err) == YVEX_OK,
+                     "explicit prefill host starts independently");
+    test_engine_options(&engine_options, "explicit");
+    engine_options.maximum_sessions = 2ull;
+    engine_options.concurrent_sequences = 2ull;
+    engine_options.prefill_chunk_tokens = 7ull;
+    memset(&engine, 0, sizeof(engine));
+    rc = yvex_server_engine_load(server, &engine_options, &engine, &err);
+    YVEX_TEST_ASSERT(rc != YVEX_OK && engine.prefill_chunk_tokens == 7ull,
                      "explicit prefill override remains authoritative");
     yvex_server_close(&server);
     return 0;
@@ -387,6 +414,8 @@ static int test_adaptive_prefill_policy(void)
 static int test_model_open_refusal(void)
 {
     yvex_server_options options;
+    yvex_server_engine_options engine_options;
+    yvex_server_engine_summary engine;
     yvex_server_summary summary;
     yvex_server *server = NULL;
     yvex_error err;
@@ -396,11 +425,6 @@ static int test_model_open_refusal(void)
     rc = yvex_server_create(&server, &options, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_INVALID_ARG && !server,
                      "old server-options schema refuses");
-    test_options(&options);
-    options.concurrent_sequences = options.maximum_sessions + 1ull;
-    rc = yvex_server_create(&server, &options, &err);
-    YVEX_TEST_ASSERT(rc == YVEX_ERR_INVALID_ARG && !server,
-                     "execution concurrency above session capacity refuses");
     test_options(&options);
     options.socket_path = "/tmp/yvex-unsafe.sock";
     rc = yvex_server_create(&server, &options, &err);
@@ -412,15 +436,26 @@ static int test_model_open_refusal(void)
     rc = yvex_server_create(&server, &options, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "refusal host create");
     rc = yvex_server_start(server, &err);
-    YVEX_TEST_ASSERT(rc != YVEX_OK, "missing artifact refuses start");
-    YVEX_TEST_ASSERT(strstr(yvex_error_message(&err), "model admission refused:") != NULL &&
-                         strstr(yvex_error_message(&err), "field=runtime-binding") != NULL,
-                     "model-open refusal preserves typed failure facts");
+    YVEX_TEST_ASSERT(rc == YVEX_OK, "host start is independent from model admission");
+    test_engine_options(&engine_options, "invalid");
+    engine_options.concurrent_sequences = engine_options.maximum_sessions + 1ull;
+    rc = yvex_server_engine_load(server, &engine_options, &engine, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_ERR_INVALID_ARG,
+                     "engine concurrency above session capacity refuses locally");
+    test_engine_options(&engine_options, "missing");
+    memset(&engine, 0, sizeof(engine));
+    rc = yvex_server_engine_load(server, &engine_options, &engine, &err);
+    YVEX_TEST_ASSERT(rc != YVEX_OK &&
+                         engine.state == YVEX_SERVER_ENGINE_FAILED &&
+                         strstr(yvex_error_message(&err), "binding") != NULL,
+                     "missing package binding refuses only the engine load");
     rc = yvex_server_get_summary(server, &summary, &err);
-    YVEX_TEST_ASSERT(rc == YVEX_OK, "failed summary remains available");
-    YVEX_TEST_ASSERT(summary.status == YVEX_SERVER_STATUS_FAILED, "failed start status");
-    YVEX_TEST_ASSERT(summary.metrics.model_open_count == 0u,
-                     "failed start does not count model open");
+    YVEX_TEST_ASSERT(rc == YVEX_OK && summary.host_ready &&
+                         summary.status == YVEX_SERVER_STATUS_READY &&
+                         summary.engine_count == 1ull &&
+                         !summary.loaded_engine_count &&
+                         summary.metrics.model_open_count == 0u,
+                     "failed engine remains inspectable without failing the host");
     yvex_server_close(&server);
     return 0;
 }
@@ -529,10 +564,15 @@ static int test_openai_listener_admission(void)
                          summary.openai_port == port,
                      "configured listener status is truthful");
     rc = yvex_server_start(server, &err);
-    YVEX_TEST_ASSERT(rc != YVEX_OK, "model refusal precedes HTTP acceptance");
+    YVEX_TEST_ASSERT(rc == YVEX_OK, "OpenAI host starts without an implicit model");
+    rc = yvex_server_get_summary(server, &summary, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && summary.host_ready &&
+                         summary.openai_listener_ready &&
+                         !summary.loaded_engine_count,
+                     "OpenAI listener is healthy with an empty engine catalog");
     yvex_server_close(&server);
     probe = loopback_reserve(&port);
-    YVEX_TEST_ASSERT(probe >= 0, "failed startup releases HTTP listener");
+    YVEX_TEST_ASSERT(probe >= 0, "host shutdown releases HTTP listener");
     (void)close(probe);
     return 0;
 }
@@ -734,7 +774,7 @@ static int test_media_direct_prompt_routing(void)
     };
     char root[] = "/tmp/yvex-media-direct-XXXXXX";
     yvex_server_media_options options;
-    yvex_server_summary first = {0}, repeated = {0};
+    server_media_summary first = {0}, repeated = {0};
     server_media_registry *registry = NULL, *second = NULL;
     server_telemetry *telemetry = NULL, *second_telemetry = NULL;
     media_messages messages = {0};
@@ -777,10 +817,8 @@ static int test_media_direct_prompt_routing(void)
                          yvex_server_media_registry_summary(second, &repeated, &err) == YVEX_OK &&
                          !strcmp(first.runtime_model_identity,
                                  repeated.runtime_model_identity) &&
-                         !strcmp(first.physical_variant_identity,
-                                 repeated.physical_variant_identity) &&
-                         !first.runtime_binding_identity[0] &&
-                         !first.artifact_identity[0],
+                         !strcmp(first.specialization_identity,
+                                 repeated.specialization_identity),
                      "media runtime and profile identities are deterministic without aliases");
     yvex_server_media_registry_close(&second);
     yvex_server_telemetry_close(&second_telemetry);
@@ -790,17 +828,20 @@ static int test_media_direct_prompt_routing(void)
     return 0;
 }
 
-static int test_media_server_opens_model_before_ready(void)
+static int test_media_engine_lifecycle(void)
 {
     const char *fixture = "tests/fixtures/gguf/valid-tokenizer-simple.gguf";
     char root[] = "/tmp/yvex-media-host-XXXXXX";
     char socket_path[YVEX_SERVER_SOCKET_PATH_CAP];
     yvex_server_media_options media;
     yvex_server_options options;
+    yvex_server_engine_options engine_options;
+    yvex_server_engine_summary first, second, reloaded, unloaded;
+    yvex_server_engine_summary engines[YVEX_SERVER_ENGINE_CAP];
     yvex_server_summary summary;
     yvex_client_message wire = {0}, decoded;
     unsigned char frame[16384];
-    unsigned long long frame_count = 0ull;
+    unsigned long long frame_count = 0ull, engine_count = 0ull;
     yvex_server *server = NULL;
     yvex_error err;
     int rc;
@@ -808,60 +849,102 @@ static int test_media_server_opens_model_before_ready(void)
     YVEX_TEST_ASSERT(snprintf(socket_path, sizeof(socket_path), "%s/yvexd.sock", root) > 0,
                      "media host socket path");
     test_options(&options);
-    options.artifact_path = NULL;
-    options.runtime_binding_path = NULL;
-    options.target_id = "minimax-h3-base-fl2va-t2va";
     options.socket_path = socket_path;
-    options.backend = YVEX_BACKEND_KIND_CUDA;
-    options.generation_mode = YVEX_SERVER_GENERATION_MEDIA;
-    options.context_capacity = 0ull;
-    options.prefill_chunk_tokens = 0ull;
-    options.maximum_new_tokens = 0ull;
     YVEX_TEST_ASSERT(media_options(&media, root), "media host options");
     media.request_template.text_artifact_path = fixture;
     media.request_template.transformer_artifact_path = fixture;
     media.request_template.video_artifact_path = fixture;
     media.request_template.audio_artifact_path = fixture;
+    test_engine_options(&engine_options, "minimax-a");
+    engine_options.artifact_path = NULL;
+    engine_options.runtime_binding_path = NULL;
+    engine_options.target_id = "minimax-h3-base-fl2va-t2va";
+    engine_options.backend = YVEX_BACKEND_KIND_CUDA;
+    engine_options.generation_mode = YVEX_SERVER_GENERATION_MEDIA;
+    engine_options.context_capacity = 0ull;
+    engine_options.prefill_chunk_tokens = 0ull;
+    engine_options.maximum_new_tokens = 0ull;
     rc = yvex_server_create(&server, &options, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && server != NULL, "media host create");
-    YVEX_TEST_ASSERT(yvex_server_media_configure(server, &media, &err) == YVEX_OK,
-                     "media host configure");
     YVEX_TEST_ASSERT(yvex_server_start(server, &err) == YVEX_OK,
-                     "media host opens admitted components before readiness");
+                     "media host starts with no implicit model");
     YVEX_TEST_ASSERT(yvex_server_get_summary(server, &summary, &err) == YVEX_OK &&
                          summary.status == YVEX_SERVER_STATUS_READY &&
-                         summary.runtime_ready && summary.generation_ready &&
-                         summary.generation_mode == YVEX_SERVER_GENERATION_MEDIA &&
-                         summary.metrics.model_open_count == 1ull &&
-                         summary.metrics.artifact_open_count == 4ull &&
-                         summary.metrics.binding_open_count == 1ull &&
+                         summary.host_ready && !summary.engine_count &&
+                         !summary.metrics.model_open_count,
+                     "empty media-capable host is independently ready");
+    memset(&first, 0, sizeof(first));
+    YVEX_TEST_ASSERT(yvex_server_media_engine_load(
+                         server, &engine_options, &media, &first, &err) == YVEX_OK &&
+                         first.state == YVEX_SERVER_ENGINE_LOADED &&
+                         first.execution_ready && first.generation != 0ull &&
+                         first.generation_mode == YVEX_SERVER_GENERATION_MEDIA,
+                     "first composite engine loads into the running host");
+    engine_options.alias = "minimax-b";
+    memset(&second, 0, sizeof(second));
+    YVEX_TEST_ASSERT(yvex_server_media_engine_load(
+                         server, &engine_options, &media, &second, &err) == YVEX_OK &&
+                         second.state == YVEX_SERVER_ENGINE_LOADED &&
+                         second.generation != first.generation,
+                     "host can own a second fitting engine generation");
+    YVEX_TEST_ASSERT(yvex_server_engine_snapshot(
+                         server, engines, YVEX_SERVER_ENGINE_CAP,
+                         &engine_count, &err) == YVEX_OK &&
+                         engine_count == 2ull &&
+                         engines[0].state == YVEX_SERVER_ENGINE_LOADED &&
+                         engines[1].state == YVEX_SERVER_ENGINE_LOADED,
+                     "engine manager publishes both real loaded engines");
+    YVEX_TEST_ASSERT(yvex_server_get_summary(server, &summary, &err) == YVEX_OK &&
+                         summary.host_ready && summary.loaded_engine_count == 2ull &&
+                         summary.metrics.model_open_count == 2ull &&
+                         summary.metrics.artifact_open_count == 8ull &&
+                         summary.metrics.binding_open_count == 2ull &&
                          summary.metrics.materialization_count == 0ull &&
                          summary.metrics.residency_build_count == 0ull &&
                          summary.metrics.resident_device_bytes == 0ull &&
-                         summary.context_capacity == 0ull &&
-                         summary.prefill_chunk_tokens == 0ull &&
-                         summary.maximum_new_tokens == 0ull &&
-                         !summary.runtime_binding_identity[0] &&
-                         !summary.artifact_identity[0] &&
-                         !summary.capacity_plan_identity[0] &&
-                         summary.capacity_required_bytes == 0ull,
-                     "media host readiness admits the model without false payload residency");
+                         !first.runtime_binding_identity[0] &&
+                         !first.artifact_identity[0],
+                     "composite engines admit components without false payload residency");
     wire.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
-    wire.kind = YVEX_CLIENT_MESSAGE_STATUS;
+    wire.kind = YVEX_CLIENT_MESSAGE_ENGINE;
     wire.status = YVEX_OK;
-    wire.runtime = summary;
+    wire.engine = first;
     YVEX_TEST_ASSERT(
         yvex_protocol_message_encode(&wire, frame, sizeof(frame), &frame_count,
                                      &err) == YVEX_OK &&
             yvex_protocol_message_decode(frame, frame_count, &decoded, &err) == YVEX_OK &&
-            decoded.runtime.generation_mode == YVEX_SERVER_GENERATION_MEDIA &&
-            decoded.runtime.runtime_ready,
-        "ready media host crosses the capability-aware local protocol");
-    YVEX_TEST_ASSERT(yvex_server_finish(server, &err) == YVEX_OK,
-                     "media host finishes cleanly");
+            decoded.engine.generation_mode == YVEX_SERVER_GENERATION_MEDIA &&
+            decoded.engine.generation == first.generation &&
+            !strcmp(decoded.engine.alias, "minimax-a"),
+        "exact media engine generation crosses the local protocol");
+    YVEX_TEST_ASSERT(yvex_server_engine_unload(
+                         server, first.alias, first.generation,
+                         &unloaded, &err) == YVEX_OK &&
+                         unloaded.state == YVEX_SERVER_ENGINE_UNLOADED &&
+                         yvex_server_engine_unload(
+                             server, first.alias, first.generation,
+                             &unloaded, &err) == YVEX_ERR_STATE,
+                     "unload releases one exact generation and stale reuse refuses");
+    engine_options.alias = "minimax-a";
+    memset(&reloaded, 0, sizeof(reloaded));
+    YVEX_TEST_ASSERT(yvex_server_media_engine_load(
+                         server, &engine_options, &media, &reloaded, &err) == YVEX_OK &&
+                         reloaded.generation > first.generation,
+                     "reloading one alias creates a distinct engine generation");
+    YVEX_TEST_ASSERT(yvex_server_engine_unload(
+                         server, second.alias, second.generation,
+                         &unloaded, &err) == YVEX_OK &&
+                         yvex_server_engine_unload(
+                             server, reloaded.alias, reloaded.generation,
+                             &unloaded, &err) == YVEX_OK,
+                     "independent engines unload without stopping the host");
     YVEX_TEST_ASSERT(yvex_server_get_summary(server, &summary, &err) == YVEX_OK &&
-                         summary.metrics.model_close_count == 1ull,
-                     "media host closes the process-lifetime model once");
+                         summary.host_ready && !summary.loaded_engine_count &&
+                         summary.metrics.model_open_count == 3ull &&
+                         summary.metrics.model_close_count == 3ull,
+                     "all engine resources close while the host remains ready");
+    YVEX_TEST_ASSERT(yvex_server_finish(server, &err) == YVEX_OK,
+                     "empty persistent host finishes separately");
     yvex_server_close(&server);
     YVEX_TEST_ASSERT(rmdir(root) == 0, "media host output root removed empty");
     return 0;
@@ -1059,6 +1142,6 @@ int yvex_test_server(void)
     if (test_openai_listener_admission() != 0) return 1;
     if (test_media_direct_prompt_routing() != 0) return 1;
     if (test_media_family_profile() != 0) return 1;
-    if (test_media_server_opens_model_before_ready() != 0) return 1;
+    if (test_media_engine_lifecycle() != 0) return 1;
     return 0;
 }

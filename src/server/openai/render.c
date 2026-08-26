@@ -134,25 +134,31 @@ int openai_json_error(int status, const char *type, const char *param,
     return render_finish(&builder, output, count, err);
 }
 
-int openai_json_models(const yvex_server_summary *summary,
-                       const char *selected_model, int list,
+int openai_json_models(const yvex_server_engine_summary *engines,
+                       unsigned long long engine_count, int list,
                        unsigned char **output, unsigned long long *count,
                        yvex_error *err)
 {
     render_builder builder = {0};
+    unsigned long long index;
     int rc;
     if (output) *output = NULL;
     if (count) *count = 0u;
-    if (!summary || !selected_model || !selected_model[0]) return YVEX_ERR_INVALID_ARG;
+    if ((!engines && engine_count) || (!list && engine_count != 1u))
+        return YVEX_ERR_INVALID_ARG;
     rc = render_literal(&builder, list ? "{\"object\":\"list\",\"data\":["
                                        : "", err);
-    if (rc == YVEX_OK)
+    for (index = 0ull; rc == YVEX_OK && index < engine_count; ++index) {
+        if (list && index) rc = render_literal(&builder, ",", err);
+        if (rc == YVEX_OK)
         rc = render_literal(&builder, "{\"id\":", err);
-    if (rc == YVEX_OK) rc = render_text(&builder, selected_model, err);
-    if (rc == YVEX_OK)
-        rc = render_literal(&builder,
-            ",\"object\":\"model\",\"created\":0,\"owned_by\":\"yvex\","
-            "\"yvex_profile\":\"" OPENAI_COMPAT_PROFILE "\"}", err);
+        if (rc == YVEX_OK) rc = render_text(&builder, engines[index].alias, err);
+        if (rc == YVEX_OK)
+            rc = render_literal(
+                &builder,
+                ",\"object\":\"model\",\"created\":0,\"owned_by\":\"yvex\","
+                "\"yvex_profile\":\"" OPENAI_COMPAT_PROFILE "\"}", err);
+    }
     if (rc == YVEX_OK && list) rc = render_literal(&builder, "]}", err);
     if (rc != YVEX_OK) { free(builder.data); return rc; }
     return render_finish(&builder, output, count, err);

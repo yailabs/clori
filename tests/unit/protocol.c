@@ -82,7 +82,7 @@ static int test_all_operation_roundtrips(void)
     yvex_error err;
     unsigned int value;
     for (value = YVEX_CLIENT_OP_HANDSHAKE;
-         value <= YVEX_CLIENT_OP_CONSOLE_STATUS; ++value) {
+         value <= YVEX_CLIENT_OP_ENGINE_UNLOAD; ++value) {
         memset(&source, 0, sizeof(source));
         source.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
         source.operation = (yvex_client_operation)value;
@@ -103,12 +103,12 @@ static int test_all_operation_roundtrips(void)
         YVEX_TEST_ASSERT(
             yvex_protocol_request_encode(&source, frame, sizeof(frame), &count,
                                          &err) == YVEX_OK,
-            "all protocol-v12 operations encode");
+            "all current protocol operations encode");
         YVEX_TEST_ASSERT(
             yvex_protocol_request_decode(frame, count, &decoded, &prompt,
                                          &provider, &err) == YVEX_OK &&
                 decoded.operation == (yvex_client_operation)value,
-            "all protocol-v12 operations decode");
+            "all current protocol operations decode");
         if (source.operation == YVEX_CLIENT_OP_SESSION_FORK)
             YVEX_TEST_ASSERT(
                 strcmp(decoded.fork_session_name, "child") == 0 &&
@@ -354,30 +354,19 @@ static int test_message_roundtrip(void)
     strcpy(source.session_name, "session-a");
     source.runtime.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
     source.runtime.status = YVEX_SERVER_STATUS_READY;
-    source.runtime.backend = YVEX_BACKEND_KIND_CUDA;
-    source.runtime.generation_mode = YVEX_SERVER_GENERATION_DSPARK;
-    strcpy(source.runtime.target_id, "deepseek4-v4-flash-dspark");
-    source.runtime.runtime_ready = 1;
-    source.runtime.generation_ready = 1;
+    strcpy(source.runtime.socket_path, "/tmp/yvex.sock");
+    source.runtime.host_ready = 1;
     source.runtime.openai_listener_enabled = 1;
     source.runtime.openai_listener_ready = 1;
-    source.runtime.explicit_reasoning_channel_supported = 1;
-    source.runtime.independent_session_scheduling_ready = 1;
     source.runtime.openai_port = 8001u;
-    source.runtime.context_capacity = 4096u;
-    source.runtime.prefill_chunk_tokens = 64u;
-    source.runtime.maximum_new_tokens = 256u;
-    source.runtime.maximum_output_bytes = 1048576u;
-    source.runtime.maximum_sessions = 8u;
+    source.runtime.session_count = 3u;
+    source.runtime.request_count = 11u;
     source.runtime.request_queue_capacity = 16u;
-    source.runtime.concurrent_sequences = 4u;
-    source.runtime.capacity_required_bytes = 1024u;
-    source.runtime.capacity_unreserved_bytes = 2048u;
-    memset(source.runtime.runtime_model_identity, 'a', 64u);
-    memset(source.runtime.runtime_binding_identity, 'b', 64u);
-    memset(source.runtime.artifact_identity, 'c', 64u);
-    memset(source.runtime.physical_variant_identity, 'd', 64u);
-    memset(source.runtime.capacity_plan_identity, 'e', 64u);
+    source.runtime.worker_count = 4u;
+    source.runtime.engine_count = 2u;
+    source.runtime.loaded_engine_count = 1u;
+    source.runtime.draining_engine_count = 1u;
+    source.runtime.maximum_engines = 8u;
     source.runtime.openai_timeout_ms = 600000u;
     source.runtime.trace_level = YVEX_SERVER_TRACE_STAGES;
     source.runtime.metrics.model_open_count = 1u;
@@ -403,11 +392,9 @@ static int test_message_roundtrip(void)
     YVEX_TEST_ASSERT(decoded.kind == YVEX_CLIENT_MESSAGE_STATUS, "message kind");
     YVEX_TEST_ASSERT(decoded.runtime.status == YVEX_SERVER_STATUS_READY,
                      "runtime status");
-    YVEX_TEST_ASSERT(decoded.runtime.backend == YVEX_BACKEND_KIND_CUDA,
-                     "runtime backend");
-    YVEX_TEST_ASSERT(decoded.runtime.generation_mode ==
-                         YVEX_SERVER_GENERATION_DSPARK,
-                     "runtime generation mode");
+    YVEX_TEST_ASSERT(decoded.runtime.host_ready &&
+                         !strcmp(decoded.runtime.socket_path, "/tmp/yvex.sock"),
+                     "host readiness and endpoint roundtrip");
     YVEX_TEST_ASSERT(decoded.runtime.metrics.model_open_count == 1u,
                      "model-open metric");
     YVEX_TEST_ASSERT(decoded.runtime.metrics.queue_capacity == 16u,
@@ -416,42 +403,28 @@ static int test_message_roundtrip(void)
                          decoded.runtime.openai_listener_ready &&
                          decoded.runtime.openai_port == 8001u,
                      "integrated OpenAI listener roundtrip");
-    YVEX_TEST_ASSERT(decoded.runtime.context_capacity == 4096u &&
-                         decoded.runtime.prefill_chunk_tokens == 64u &&
-                         decoded.runtime.maximum_new_tokens == 256u &&
-                         decoded.runtime.maximum_output_bytes == 1048576u &&
-                         decoded.runtime.maximum_sessions == 8u &&
+    YVEX_TEST_ASSERT(decoded.runtime.session_count == 3u &&
+                         decoded.runtime.request_count == 11u &&
                          decoded.runtime.request_queue_capacity == 16u &&
-                         decoded.runtime.concurrent_sequences == 4u &&
-                         decoded.runtime.capacity_required_bytes == 1024u &&
-                         decoded.runtime.capacity_unreserved_bytes == 2048u &&
-                         decoded.runtime.independent_session_scheduling_ready &&
-                         !decoded.runtime.continuous_batching_ready &&
-                         strcmp(decoded.runtime.capacity_plan_identity,
-                                source.runtime.capacity_plan_identity) == 0 &&
+                         decoded.runtime.worker_count == 4u &&
+                         decoded.runtime.engine_count == 2u &&
+                         decoded.runtime.loaded_engine_count == 1u &&
+                         decoded.runtime.draining_engine_count == 1u &&
+                         decoded.runtime.maximum_engines == 8u &&
                          decoded.runtime.openai_timeout_ms == 600000u &&
-                         decoded.runtime.trace_level == YVEX_SERVER_TRACE_STAGES &&
-                         decoded.runtime.explicit_reasoning_channel_supported,
-                     "runtime configuration and channel capability roundtrip");
+                         decoded.runtime.trace_level == YVEX_SERVER_TRACE_STAGES,
+                     "host configuration and engine inventory roundtrip");
     YVEX_TEST_ASSERT(decoded.runtime.metrics.active_http_requests == 2u &&
                          decoded.runtime.metrics.completed_http_requests == 7u &&
                          decoded.runtime.metrics.failed_http_requests == 3u &&
                          decoded.runtime.metrics.cancelled_http_requests == 1u,
                      "integrated HTTP metrics roundtrip");
-    source.runtime.capacity_plan_identity[0] = 'x';
-    source.runtime.capacity_plan_identity[1] = '\0';
+    source.runtime.host_ready = 2;
     YVEX_TEST_ASSERT(
         yvex_protocol_message_encode(&source, frame, sizeof(frame), &count,
                                      &err) == YVEX_ERR_INVALID_ARG,
-        "ready status refuses an invalid capacity-plan identity");
-    memset(source.runtime.capacity_plan_identity, 'e', 64u);
-    source.runtime.capacity_plan_identity[64] = '\0';
-    source.runtime.concurrent_sequences = 0u;
-    YVEX_TEST_ASSERT(
-        yvex_protocol_message_encode(&source, frame, sizeof(frame), &count,
-                                     &err) == YVEX_ERR_INVALID_ARG,
-        "ready status refuses zero admitted concurrency");
-    source.runtime.concurrent_sequences = 4u;
+        "host status refuses a nonboolean readiness fact");
+    source.runtime.host_ready = 1;
     YVEX_TEST_ASSERT(
         decoded.state_checkpoint.schema_version ==
             YVEX_CLIENT_STATE_CHECKPOINT_SCHEMA_V1 &&
@@ -568,8 +541,11 @@ static int test_message_roundtrip(void)
     source.console.reasoning_policy = YVEX_REASONING_MAXIMUM;
     source.runtime.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
     source.runtime.status = YVEX_SERVER_STATUS_READY;
-    source.runtime.backend = YVEX_BACKEND_KIND_CUDA;
-    strcpy(source.runtime.target_id, "deepseek4-v4-flash-dspark");
+    source.runtime.host_ready = 1;
+    source.runtime.maximum_engines = 4u;
+    source.runtime.worker_count = 1u;
+    strcpy(source.console.model_alias, "deepseek");
+    source.console.engine_generation = 7ull;
     strcpy(source.console.session_name, "main");
     strcpy(source.console.live_model_identity,
            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
@@ -673,7 +649,9 @@ static int test_message_roundtrip(void)
                          decoded.console.generation_phase == YVEX_CLIENT_PHASE_DECODE &&
                          decoded.console.cancellation_class == YVEX_CLIENT_CANCELLATION_REQUESTED &&
                          strcmp(decoded.console.session_name, "main") == 0 &&
-                         strcmp(decoded.runtime.target_id, "deepseek4-v4-flash-dspark") == 0,
+                         strcmp(decoded.console.model_alias, "deepseek") == 0 &&
+                         decoded.console.engine_generation == 7ull &&
+                         decoded.runtime.host_ready,
                      "console status facts roundtrip");
     rc = yvex_protocol_message_decode(frame, count - 1u, &decoded, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT, "truncated message refuses");
@@ -720,7 +698,7 @@ static int test_v6_frame_refusal(void)
     pthread_t thread;
     v6_peer peer;
     int rc;
-    (void)snprintf(path, sizeof(path), "build/tests/protocol-v12-%lu.sock",
+    (void)snprintf(path, sizeof(path), "build/tests/protocol-current-%lu.sock",
                    (unsigned long)getpid());
     (void)unlink(path);
     peer.listener = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -736,7 +714,7 @@ static int test_v6_frame_refusal(void)
                      "v6 peer thread");
     rc = yvex_client_connect(&client, path, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT && client == NULL &&
-                         strstr(yvex_error_message(&err), "version 12") != NULL,
+                         strstr(yvex_error_message(&err), "version 13") != NULL,
                      "v6 frame explicitly refuses");
     YVEX_TEST_ASSERT(pthread_join(thread, NULL) == 0, "v6 peer join");
     (void)close(peer.listener);
@@ -752,43 +730,48 @@ static int test_capability_aware_readiness(void)
     yvex_error err;
 
     message.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
-    message.kind = YVEX_CLIENT_MESSAGE_STATUS;
+    message.kind = YVEX_CLIENT_MESSAGE_ENGINE;
     message.status = YVEX_OK;
-    message.runtime.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
-    message.runtime.status = YVEX_SERVER_STATUS_READY;
-    message.runtime.backend = YVEX_BACKEND_KIND_CUDA;
-    message.runtime.generation_mode = YVEX_SERVER_GENERATION_MEDIA;
-    message.runtime.runtime_ready = 1;
-    message.runtime.generation_ready = 1;
-    message.runtime.concurrent_sequences = 1ull;
-    memset(message.runtime.runtime_model_identity, 'a', 64u);
-    memset(message.runtime.physical_variant_identity, 'b', 64u);
+    message.engine.schema_version = YVEX_SERVER_ENGINE_SCHEMA_V1;
+    message.engine.state = YVEX_SERVER_ENGINE_LOADED;
+    message.engine.backend = YVEX_BACKEND_KIND_CUDA;
+    message.engine.generation_mode = YVEX_SERVER_GENERATION_MEDIA;
+    strcpy(message.engine.alias, "minimax");
+    strcpy(message.engine.target_id, "minimax-h3");
+    message.engine.generation = 7ull;
+    message.engine.maximum_sessions = 2ull;
+    message.engine.concurrent_sequences = 1ull;
+    message.engine.execution_ready = 1;
+    memset(message.engine.runtime_model_identity, 'a', 64u);
+    memset(message.engine.specialization_identity, 'b', 64u);
     YVEX_TEST_ASSERT(
         yvex_protocol_message_encode(&message, frame, sizeof(frame), &count,
                                      &err) == YVEX_OK &&
             yvex_protocol_message_decode(frame, count, &decoded, &err) == YVEX_OK &&
-            decoded.runtime.runtime_ready &&
-            !decoded.runtime.runtime_binding_identity[0] &&
-            !decoded.runtime.artifact_identity[0] &&
-            !decoded.runtime.capacity_plan_identity[0],
-        "media readiness roundtrip requires only its admitted identities");
-    message.runtime.capacity_required_bytes = 1ull;
+            decoded.engine.execution_ready &&
+            decoded.engine.generation == 7ull &&
+            !strcmp(decoded.engine.alias, "minimax") &&
+            !decoded.engine.runtime_binding_identity[0] &&
+            !decoded.engine.artifact_identity[0] &&
+            !decoded.engine.capacity_plan_identity[0],
+        "media engine readiness roundtrip requires only admitted engine identities");
+    message.engine.concurrent_sequences = 0ull;
     YVEX_TEST_ASSERT(
         yvex_protocol_message_encode(&message, frame, sizeof(frame), &count,
                                      &err) == YVEX_ERR_INVALID_ARG,
-        "media readiness refuses an aliased text capacity plan");
-    message.runtime.capacity_required_bytes = 0ull;
-    memset(message.runtime.runtime_binding_identity, 'c', 64u);
+        "engine readiness refuses zero executable concurrency");
+    message.engine.concurrent_sequences = 1ull;
+    message.engine.specialization_identity[0] = '\0';
     YVEX_TEST_ASSERT(
         yvex_protocol_message_encode(&message, frame, sizeof(frame), &count,
                                      &err) == YVEX_ERR_INVALID_ARG,
-        "media readiness refuses a fake runtime binding identity");
-    message.runtime.runtime_binding_identity[0] = '\0';
-    message.runtime.runtime_model_identity[0] = '\0';
+        "loaded engine readiness refuses without a specialization identity");
+    memset(message.engine.specialization_identity, 'b', 64u);
+    message.engine.runtime_model_identity[0] = '\0';
     YVEX_TEST_ASSERT(
         yvex_protocol_message_encode(&message, frame, sizeof(frame), &count,
                                      &err) == YVEX_ERR_INVALID_ARG,
-        "media readiness refuses without a composite runtime model identity");
+        "loaded engine readiness refuses without a runtime model identity");
     return 0;
 }
 
