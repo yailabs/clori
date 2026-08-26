@@ -13,7 +13,7 @@
 extern "C" {
 #endif
 
-#define YVEX_EXECUTION_BATCH_SCHEMA_V1 1u
+#define YVEX_EXECUTION_BATCH_SCHEMA_V2 2u
 #define YVEX_EXECUTION_COMPATIBILITY_SCHEMA_V2 2u
 #define YVEX_EXPERT_WORKLIST_POLICY_SCHEMA_V1 1u
 #define YVEX_EXPERT_WORKLIST_SCHEMA_V1 1u
@@ -73,9 +73,6 @@ typedef struct {
     unsigned long long row_count, source_count, engine_generation;
     const yvex_execution_batch_source *sources;
     const yvex_execution_batch_row *rows;
-    char runtime_model_identity[YVEX_SHA256_HEX_CAP];
-    char runtime_binding_identity[YVEX_SHA256_HEX_CAP];
-    char physical_variant_identity[YVEX_SHA256_HEX_CAP];
     char execution_profile_identity[YVEX_SHA256_HEX_CAP];
     char operation_identity[YVEX_SHA256_HEX_CAP];
     char identity[YVEX_SHA256_HEX_CAP];
@@ -83,9 +80,10 @@ typedef struct {
 
 /*
  * Process-local facts that prove rows may enter one engine operation. The engine generation is
- * the compact handle to already-authenticated package and specialization lineage; full lineage
- * remains on yvex_execution_batch when evidence crosses the engine boundary. This transient key
- * is neither persisted nor hashed.
+ * the compact handle to already-authenticated model, binding, package, and specialization
+ * lineage. Execution batches retain only the workload profile and operation identities needed to
+ * distinguish executable work within that generation; collectors join the generation to the
+ * engine summary when full lineage crosses the engine boundary. Neither object is persisted.
  */
 typedef struct {
     unsigned int schema_version;

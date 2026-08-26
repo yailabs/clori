@@ -84,7 +84,7 @@ static int execution_batch_sources_hash(yvex_sha256 *hash,
 int yvex_execution_batch_seal(yvex_execution_batch *batch, yvex_error *err)
 {
     yvex_sha256 hash;
-    if (!batch || batch->schema_version != YVEX_EXECUTION_BATCH_SCHEMA_V1 ||
+    if (!batch || batch->schema_version != YVEX_EXECUTION_BATCH_SCHEMA_V2 ||
         batch->provenance > YVEX_EXECUTION_BATCH_COMPILED_COMPATIBLE ||
         batch->phase >= YVEX_EXECUTION_PHASE_COUNT ||
         !batch->row_count || batch->row_count >= 64ull ||
@@ -97,15 +97,12 @@ int yvex_execution_batch_seal(yvex_execution_batch *batch, yvex_error *err)
         (batch->provenance == YVEX_EXECUTION_BATCH_PREFILL &&
          batch->phase != YVEX_EXECUTION_PHASE_PREFILL) ||
         !batch->engine_generation || !execution_batch_sources_valid(batch) ||
-        !worklist_identity_valid(batch->runtime_model_identity) ||
-        !worklist_identity_valid(batch->runtime_binding_identity) ||
-        !worklist_identity_valid(batch->physical_variant_identity) ||
         !worklist_identity_valid(batch->execution_profile_identity) ||
         !worklist_identity_valid(batch->operation_identity))
         return worklist_refuse(
             err, YVEX_ERR_INVALID_ARG, "execution batch identity or provenance is incomplete");
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.execution-batch.v1") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.execution-batch.v2") ||
         !yvex_sha256_update_u64(&hash, batch->schema_version) ||
         !yvex_sha256_update_u64(&hash, batch->provenance) ||
         !yvex_sha256_update_u64(&hash, batch->phase) ||
@@ -113,9 +110,6 @@ int yvex_execution_batch_seal(yvex_execution_batch *batch, yvex_error *err)
         !yvex_sha256_update_u64(&hash, batch->source_count) ||
         !yvex_sha256_update_u64(&hash, batch->engine_generation) ||
         !execution_batch_sources_hash(&hash, batch) ||
-        !yvex_sha256_update_text(&hash, batch->runtime_model_identity) ||
-        !yvex_sha256_update_text(&hash, batch->runtime_binding_identity) ||
-        !yvex_sha256_update_text(&hash, batch->physical_variant_identity) ||
         !yvex_sha256_update_text(&hash, batch->execution_profile_identity) ||
         !yvex_sha256_update_text(&hash, batch->operation_identity) ||
         !worklist_hash_finish(&hash, batch->identity))

@@ -270,7 +270,7 @@ static int moe_test_execution_contract(
         !row_count || row_count > 8ull)
         return 0;
     memset(batch, 0, sizeof(*batch));
-    batch->schema_version = YVEX_EXECUTION_BATCH_SCHEMA_V1;
+    batch->schema_version = YVEX_EXECUTION_BATCH_SCHEMA_V2;
     batch->provenance = row_count == 1ull
                             ? YVEX_EXECUTION_BATCH_SINGLE_ROW
                             : YVEX_EXECUTION_BATCH_COMPILED_COMPATIBLE;
@@ -290,9 +290,6 @@ static int moe_test_execution_contract(
     }
     batch->sources = source;
     batch->rows = batch_rows;
-    memset(batch->runtime_model_identity, 'a', YVEX_SHA256_HEX_CAP - 1u);
-    memset(batch->runtime_binding_identity, 'b', YVEX_SHA256_HEX_CAP - 1u);
-    memset(batch->physical_variant_identity, 'c', YVEX_SHA256_HEX_CAP - 1u);
     memset(batch->execution_profile_identity, 'd', YVEX_SHA256_HEX_CAP - 1u);
     memset(batch->operation_identity, 'e', YVEX_SHA256_HEX_CAP - 1u);
     memset(policy, 0, sizeof(*policy));

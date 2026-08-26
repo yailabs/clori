@@ -84,7 +84,7 @@ static int worklist_test_build(void)
     yvex_expert_worklist first, repeated;
     yvex_error err;
 
-    batch.schema_version = YVEX_EXECUTION_BATCH_SCHEMA_V1;
+    batch.schema_version = YVEX_EXECUTION_BATCH_SCHEMA_V2;
     batch.provenance = YVEX_EXECUTION_BATCH_SPECULATIVE_VERIFICATION;
     batch.phase = 3u;
     batch.row_count = 4ull;
@@ -100,9 +100,6 @@ static int worklist_test_build(void)
         batch_rows[row].candidate_ordinal = row;
         batch_rows[row].publication_ordinal = row;
     }
-    worklist_test_identity(batch.runtime_model_identity, '1');
-    worklist_test_identity(batch.runtime_binding_identity, '2');
-    worklist_test_identity(batch.physical_variant_identity, '3');
     worklist_test_identity(batch.execution_profile_identity, '4');
     worklist_test_identity(batch.operation_identity, '5');
     YVEX_TEST_ASSERT(yvex_execution_batch_seal(&batch, &err) == YVEX_OK,
@@ -174,21 +171,33 @@ static int worklist_test_refusals(void)
     yvex_expert_worklist_storage storage = {
         experts, offsets, populations, pairs, rows, destinations, ordered, 2ull, 2ull};
     yvex_expert_worklist worklist;
+    char batch_identity[YVEX_SHA256_HEX_CAP];
     yvex_error err;
 
-    batch.schema_version = YVEX_EXECUTION_BATCH_SCHEMA_V1;
+    batch.schema_version = YVEX_EXECUTION_BATCH_SCHEMA_V2;
     batch.provenance = YVEX_EXECUTION_BATCH_SINGLE_ROW;
     batch.row_count = batch.source_count = batch.engine_generation = 1ull;
     batch.sources = &source;
     batch.rows = batch_rows;
     worklist_test_identity(source.identity, '0');
-    worklist_test_identity(batch.runtime_model_identity, 'a');
-    worklist_test_identity(batch.runtime_binding_identity, 'b');
-    worklist_test_identity(batch.physical_variant_identity, 'c');
     worklist_test_identity(batch.execution_profile_identity, 'd');
     worklist_test_identity(batch.operation_identity, 'e');
     YVEX_TEST_ASSERT(yvex_execution_batch_seal(&batch, &err) == YVEX_OK,
                      "single-row execution batch should seal");
+    memcpy(batch_identity, batch.identity, sizeof(batch_identity));
+    batch.engine_generation++;
+    YVEX_TEST_ASSERT(yvex_execution_batch_seal(&batch, &err) == YVEX_OK &&
+                         strcmp(batch.identity, batch_identity) != 0,
+                     "engine-generation handle should remain batch identity-bearing");
+    batch.engine_generation--;
+    batch.execution_profile_identity[0] = 'c';
+    YVEX_TEST_ASSERT(yvex_execution_batch_seal(&batch, &err) == YVEX_OK &&
+                         strcmp(batch.identity, batch_identity) != 0,
+                     "workload profile should remain batch identity-bearing");
+    batch.execution_profile_identity[0] = 'd';
+    YVEX_TEST_ASSERT(yvex_execution_batch_seal(&batch, &err) == YVEX_OK &&
+                         strcmp(batch.identity, batch_identity) == 0,
+                     "restored compact lineage should reproduce the batch identity");
     policy.schema_version = YVEX_EXPERT_WORKLIST_POLICY_SCHEMA_V1;
     policy.supported_width_mask = 2ull;
     policy.narrow_implementation = YVEX_ENGINE_IMPLEMENTATION_CUDA_ENCODED_ROW;
@@ -303,15 +312,12 @@ static int worklist_test_multi_session_sources(void)
     yvex_error err;
     worklist_test_identity(sources[0].identity, '6');
     worklist_test_identity(sources[1].identity, '7');
-    batch.schema_version = YVEX_EXECUTION_BATCH_SCHEMA_V1;
+    batch.schema_version = YVEX_EXECUTION_BATCH_SCHEMA_V2;
     batch.provenance = YVEX_EXECUTION_BATCH_MULTI_SESSION;
     batch.phase = YVEX_EXECUTION_PHASE_DECODE;
     batch.row_count = batch.source_count = batch.engine_generation = 2ull;
     batch.sources = sources;
     batch.rows = rows;
-    worklist_test_identity(batch.runtime_model_identity, 'a');
-    worklist_test_identity(batch.runtime_binding_identity, 'b');
-    worklist_test_identity(batch.physical_variant_identity, 'c');
     worklist_test_identity(batch.execution_profile_identity, 'd');
     worklist_test_identity(batch.operation_identity, 'e');
     YVEX_TEST_ASSERT(yvex_execution_batch_seal(&batch, &err) == YVEX_OK,

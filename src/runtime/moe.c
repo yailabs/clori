@@ -106,8 +106,6 @@ static int runtime_moe_worklist_contract(
     yvex_expert_worklist_policy *policy, yvex_error *err)
 {
     const yvex_physical_execution_ir *physical = context->model_view->physical_execution;
-    const yvex_physical_execution_summary *physical_summary =
-        yvex_physical_execution_ir_summary(physical);
     const yvex_attention_state_provider *provider =
         layer->tensor_scope == YVEX_TENSOR_SCOPE_DRAFT
             ? context->session_view->draft_attention_state_provider
@@ -116,7 +114,7 @@ static int runtime_moe_worklist_contract(
     yvex_model_engine_summary model;
     yvex_graph_attention_state_summary state = {0};
     unsigned long long slot, next_execution;
-    if (!physical_summary || !provider || !provider->summary || !source ||
+    if (!physical || !provider || !provider->summary || !source ||
         !rows->execution_source_count || !rows->execution_sources ||
         !rows->execution_rows ||
         yvex_model_engine_summary_copy(context->model, &model, err) != YVEX_OK)
@@ -125,7 +123,7 @@ static int runtime_moe_worklist_contract(
                                         "expert worklist identity owners are unavailable")
                    : yvex_error_code(err);
     memset(batch, 0, sizeof(*batch));
-    batch->schema_version = YVEX_EXECUTION_BATCH_SCHEMA_V1;
+    batch->schema_version = YVEX_EXECUTION_BATCH_SCHEMA_V2;
     batch->provenance = rows->provenance;
     batch->phase = rows->phase;
     batch->row_count = rows->row_count;
@@ -148,12 +146,6 @@ static int runtime_moe_worklist_contract(
         batch->sources = rows->execution_sources;
     }
     batch->rows = rows->execution_rows;
-    yvex_runtime_identity_copy(batch->runtime_model_identity,
-                               model.runtime_model_identity);
-    yvex_runtime_identity_copy(batch->runtime_binding_identity,
-                               model.runtime_binding_identity);
-    yvex_runtime_identity_copy(batch->physical_variant_identity,
-                               physical_summary->physical_variant_identity);
     yvex_runtime_identity_copy(batch->execution_profile_identity,
                                rows->execution_profile_identity);
     yvex_runtime_identity_copy(batch->operation_identity, layer->layer_identity);
