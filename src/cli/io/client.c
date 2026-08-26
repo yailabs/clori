@@ -666,6 +666,47 @@ static void generation_progress_finish(int *active, int terminate_line)
     fflush(stdout);
     *active = 0;
 }
+static void generation_progress_event(const yvex_server_event *event,
+                                      int conversation,
+                                      const yvex_cli_terminal_style *style,
+                                      int *active)
+{
+    if (!conversation) return;
+    if (event->generation_mode == YVEX_SERVER_GENERATION_MEDIA) {
+        printf("\r\033[2K%smedia · %s", style->accent,
+               event->phase[0] ? event->phase : "executing");
+        if (event->value_b)
+            printf(" · %llu/%llu", event->value_a, event->value_b);
+        printf("%s", style->reset);
+        if (event->kind == YVEX_SERVER_EVENT_GENERATION_COMPLETED ||
+            event->kind == YVEX_SERVER_EVENT_GENERATION_CANCELLED ||
+            event->kind == YVEX_SERVER_EVENT_GENERATION_FAILED ||
+            strstr(event->phase, "complete"))
+            putchar('\n');
+        fflush(stdout);
+        *active = event->kind != YVEX_SERVER_EVENT_GENERATION_COMPLETED &&
+                  event->kind != YVEX_SERVER_EVENT_GENERATION_CANCELLED &&
+                  event->kind != YVEX_SERVER_EVENT_GENERATION_FAILED;
+    } else if (event->kind == YVEX_SERVER_EVENT_PREFILL_STARTED) {
+        printf("\r\033[2K%sprocessing %llu input tokens · 0/%llu · 0%%%s",
+               style->accent, event->value_a, event->value_a, style->reset);
+        fflush(stdout);
+        *active = 1;
+    } else if (event->kind == YVEX_SERVER_EVENT_PREFILL_PROGRESS) {
+        printf("\r\033[2K%sprocessing %llu input tokens · %llu/%llu · %.1f%%%s",
+               style->accent, event->value_b, event->value_a, event->value_b,
+               event->value_b ? 100.0 * (double)event->value_a /
+                                      (double)event->value_b : 0.0,
+               style->reset);
+        fflush(stdout);
+    } else if (event->kind == YVEX_SERVER_EVENT_PREFILL_COMPLETED) {
+        printf("\r\033[2K%sprocessing %llu input tokens · %llu/%llu · 100%%%s\n",
+               style->success, event->value_a, event->value_a, event->value_a,
+               style->reset);
+        fflush(stdout);
+        *active = 0;
+    }
+}
 static int generation_turn(const client_engine_binding *engine,
                            const char *session_name,
                            const unsigned char *prompt,
@@ -717,50 +758,8 @@ static int generation_turn(const client_engine_binding *engine,
         if (message.kind == YVEX_CLIENT_MESSAGE_TURN_STARTED) {
             continue;
         } else if (message.kind == YVEX_CLIENT_MESSAGE_EVENT) {
-            if (conversation &&
-                message.event.generation_mode == YVEX_SERVER_GENERATION_MEDIA) {
-                printf("\r\033[2K%smedia · %s", style.accent,
-                       message.event.phase[0] ? message.event.phase : "executing");
-                if (message.event.value_b)
-                    printf(" · %llu/%llu", message.event.value_a,
-                           message.event.value_b);
-                printf("%s", style.reset);
-                if (message.event.kind == YVEX_SERVER_EVENT_GENERATION_COMPLETED ||
-                    message.event.kind == YVEX_SERVER_EVENT_GENERATION_CANCELLED ||
-                    message.event.kind == YVEX_SERVER_EVENT_GENERATION_FAILED ||
-                    strstr(message.event.phase, "complete"))
-                    putchar('\n');
-                fflush(stdout);
-                progress_active = message.event.kind !=
-                                      YVEX_SERVER_EVENT_GENERATION_COMPLETED &&
-                                  message.event.kind !=
-                                      YVEX_SERVER_EVENT_GENERATION_CANCELLED &&
-                                  message.event.kind !=
-                                      YVEX_SERVER_EVENT_GENERATION_FAILED;
-            } else if (conversation &&
-                       message.event.kind == YVEX_SERVER_EVENT_PREFILL_STARTED) {
-                printf("\r\033[2K%sprocessing %llu input tokens · 0/%llu · 0%%%s",
-                       style.accent, message.event.value_a, message.event.value_a,
-                       style.reset);
-                fflush(stdout);
-                progress_active = 1;
-            } else if (conversation &&
-                       message.event.kind == YVEX_SERVER_EVENT_PREFILL_PROGRESS) {
-                printf("\r\033[2K%sprocessing %llu input tokens · %llu/%llu · %.1f%%%s",
-                       style.accent, message.event.value_b, message.event.value_a,
-                       message.event.value_b,
-                       message.event.value_b ? 100.0 * (double)message.event.value_a /
-                                                   (double)message.event.value_b : 0.0,
-                       style.reset);
-                fflush(stdout);
-            } else if (conversation &&
-                       message.event.kind == YVEX_SERVER_EVENT_PREFILL_COMPLETED) {
-                printf("\r\033[2K%sprocessing %llu input tokens · %llu/%llu · 100%%%s\n",
-                       style.success, message.event.value_a, message.event.value_a,
-                       message.event.value_a, style.reset);
-                fflush(stdout);
-                progress_active = 0;
-            }
+            generation_progress_event(&message.event, conversation, &style,
+                                      &progress_active);
         } else if (message.kind == YVEX_CLIENT_MESSAGE_FRAGMENT) {
             generation_progress_finish(&progress_active, 0);
             rc = yvex_cli_stream_renderer_write(

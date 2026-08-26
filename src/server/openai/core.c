@@ -956,13 +956,46 @@ static int handle_read(openai_gateway *gateway, int fd,
     return rc;
 }
 
+static int generation_admit_engine(openai_gateway *gateway,
+                                   const openai_http_request *http,
+                                   openai_endpoint endpoint,
+                                   openai_admitted_request *admitted,
+                                   yvex_server_engine_summary *engine,
+                                   int *error_status, yvex_error *err)
+{
+    yvex_server_engine_summary engines[YVEX_SERVER_ENGINE_CAP];
+    const yvex_server_engine_summary *selected;
+    unsigned long long engine_count = 0ull;
+    int rc = openai_json_admit(http, endpoint,
+                               server_reasoning_automatic_policy(), admitted, err);
+    if (rc != YVEX_OK) {
+        *error_status = http_status(rc, YVEX_CLIENT_FAILURE_NONE);
+        return rc;
+    }
+    rc = daemon_engines(gateway, engines, YVEX_SERVER_ENGINE_CAP,
+                        &engine_count, err);
+    if (rc != YVEX_OK) {
+        *error_status = 503;
+        yvex_error_set(err, rc, "server.openai.engines",
+                       "YVEX engine catalog is unavailable");
+        return rc;
+    }
+    selected = engine_find(engines, engine_count, admitted->provider->model);
+    if (!selected) {
+        *error_status = 404;
+        yvex_error_set(err, YVEX_ERR_STATE, "server.openai.engine",
+                       "requested model is not loaded");
+        return YVEX_ERR_STATE;
+    }
+    *engine = *selected;
+    return YVEX_OK;
+}
+
 static int handle_generation(openai_gateway *gateway, int fd,
                              const openai_http_request *http,
                              openai_endpoint endpoint)
 {
-    yvex_server_engine_summary engines[YVEX_SERVER_ENGINE_CAP];
     yvex_server_engine_summary engine = {0};
-    const yvex_server_engine_summary *selected;
     openai_admitted_request admitted = {0};
     openai_generation_result result = {0};
     disconnect_watch watch = {0};
@@ -977,30 +1010,19 @@ static int handle_generation(openai_gateway *gateway, int fd,
     char session[YVEX_SERVER_SESSION_NAME_CAP] = {0};
     unsigned char *json = NULL;
     unsigned long long json_count = 0u, now = wall_seconds();
-    unsigned long long request_ordinal, engine_count = 0ull;
+    unsigned long long request_ordinal;
     int stateful = endpoint == OPENAI_ENDPOINT_RESPONSES;
     int created_session = 0, generation_started = 0, peer_closed = 0;
-    int state_locked = 0, rc;
+    int state_locked = 0, error_status = 500, rc;
     yvex_error err, failure_error;
     rc = daemon_status(gateway, NULL, &err);
     if (rc != YVEX_OK) return send_error(fd, 503, "YVEX server is unavailable or not ready");
-    rc = openai_json_admit(http, endpoint, server_reasoning_automatic_policy(),
-                           &admitted, &err);
-    if (rc != YVEX_OK)
-        return send_error(fd, http_status(rc, YVEX_CLIENT_FAILURE_NONE),
-                          yvex_error_message(&err));
-    rc = daemon_engines(gateway, engines, YVEX_SERVER_ENGINE_CAP,
-                        &engine_count, &err);
+    rc = generation_admit_engine(gateway, http, endpoint, &admitted, &engine,
+                                 &error_status, &err);
     if (rc != YVEX_OK) {
         openai_admitted_request_clear(&admitted);
-        return send_error(fd, 503, "YVEX engine catalog is unavailable");
+        return send_error(fd, error_status, yvex_error_message(&err));
     }
-    selected = engine_find(engines, engine_count, admitted.provider->model);
-    if (!selected) {
-        openai_admitted_request_clear(&admitted);
-        return send_error(fd, 404, "requested model is not loaded");
-    }
-    engine = *selected;
     rc = next_request_ordinal(gateway, &request_ordinal, &err);
     if (rc != YVEX_OK) goto failure;
     (void)snprintf(id, sizeof(id), endpoint == OPENAI_ENDPOINT_CHAT
