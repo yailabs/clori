@@ -31,6 +31,25 @@ int yvex_fullmodel_command(int arg_count, char **args);
 void yvex_fullmodel_help(FILE *fp);
 int yvex_models_command(int arg_count, char **args);
 void yvex_models_help(FILE *fp);
+int model_search_options_parse(int arg_count,
+                               char **args,
+                               int start,
+                               yvex_cli_model_search_options *options);
+int model_remote_inspect_options_parse(int arg_count,
+                                       char **args,
+                                       int start,
+                                       yvex_cli_model_inspect_options *options);
+int model_local_list_options_parse(int arg_count,
+                                   char **args,
+                                   int start,
+                                   yvex_cli_model_list_options *options);
+int yvex_remote_catalog_render(FILE *fp,
+                               const yvex_remote_catalog *catalog,
+                               yvex_model_catalog_output_mode mode,
+                               int representations);
+int yvex_local_catalog_render(FILE *fp,
+                              const yvex_local_model_catalog *catalog,
+                              yvex_model_catalog_output_mode mode);
 int yvex_moe_command(int arg_count, char **args);
 void yvex_moe_help(FILE *fp);
 int yvex_tensor_collection_command(int arg_count, char **args);

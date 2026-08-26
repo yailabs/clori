@@ -11,6 +11,7 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 typedef struct {
     const char *registry_path;
@@ -214,6 +215,9 @@ static const char *const literal_pair_4[] = { "identity_status: recorded",
     "status: models-added"};
 
 static const char *const models_help_lines[] = {
+    "usage: yvex model search [QUERY] [--author NAME] [--filter TAG] [--page N] [--limit N] "
+        "[--interactive] [--output table|audit|json]",
+    "       yvex model inspect OWNER/NAME [--revision REVISION] [--output table|audit|json]",
     "usage: yvex model registry scan --root DIR [--registry FILE]",
     "       yvex model registry add --path FILE [--alias ALIAS] [--support-level LEVEL] "
         "[--startup-profile single-artifact --runtime-binding FILE --target ID "
@@ -231,7 +235,7 @@ static const char *const models_help_lines[] = {
         "[--progress auto|live|plain|log|off] [--tick-seconds N] [--clear-stale-locks] [--audit]",
     "       yvex model acquisition cleanup TARGET [--models-root DIR] [--stale-locks] [--logs] "
         "[--receipts] [--failed-partials] [--all-provider-cache] [--dry-run] [--yes] [--audit]",
-    "       yvex model acquire --repo OWNER/NAME --family deepseek|glm|qwen|gemma "
+    "       yvex model acquire --repo OWNER/NAME --family deepseek|glm|qwen|gemma|minimax-h3 "
         "[--name LOCAL_NAME] [--models-root DIR] [--auth auto|required|never] "
         "[--progress auto|live|plain|log|off]",
     "       yvex model acquire --provider github --repo OWNER/NAME [--release TAG] --asset GLOB "
@@ -246,10 +250,13 @@ static const char *const models_help_lines[] = {
     "       yvex inspect artifact check TARGET [--backend cpu|cuda] [--level quick|runtime|full] "
         "[--models-root DIR] [--registry FILE] [--report-dir DIR] [--no-materialize] [--no-graph] "
         "[--audit | --output normal|table|audit]",
-    "       yvex model list [--registry FILE] [--audit | --output normal|table|audit]",
+    "       yvex model list [--models-root DIR] [--registry FILE] "
+        "[--output table|audit|json]",
     "       yvex model registry verify|inspect ALIAS [--registry FILE] [--audit | --output normal|table|audit]",
     "       yvex model registry remove ALIAS [--registry FILE]",
     "\nExamples:",
+    "  yvex model search \"MiniMax H3\" --output table",
+    "  yvex model inspect MiniMaxAI/MiniMax-H3 --revision REVISION --output table",
     "  yvex inspect artifact check deepseek4-v4-flash-dspark-selected-embed",
     "  yvex model acquire gemma-4-12b-it --models-root ~/lab/models --dry-run --audit",
     "  yvex model acquisition status gemma-4-12b-it --models-root ~/lab/models --audit",
@@ -269,10 +276,11 @@ static const char *const models_help_lines[] = {
     "  yvex inspect artifact check deepseek4-v4-flash-dspark-selected-embed --backend cpu --level runtime",
     "  yvex inspect artifact check deepseek4-v4-flash-dspark-selected-embed --backend cuda --level runtime --no-graph",
     "  yvex inspect artifact check deepseek4-v4-flash-dspark-selected-embed --level full --report-dir build/reports",
-    "\nModels manages the local alias registry, source tensor download sidecars, GGUF artifact discovery, "
-        "selected artifact preparation, selected artifact checks, digest identity, and metadata drift facts "
-        "for registered artifacts. Download uses the local accounts/provider preflight for Hugging Face and "
-        "GitHub provider CLIs, writes source intake reports only, and does not register runtime artifacts. "
+    "\nModels separates remote provider discovery, physical representations, acquired sources, admitted "
+        "packages, the local catalog, and live engines. Search and remote inspect normalize Hugging Face "
+        "metadata without downloading payloads. Download uses the local accounts/provider preflight for "
+        "Hugging Face and GitHub provider CLIs, writes source intake reports only, and does not register "
+        "runtime artifacts. "
         "Artifacts list/status reads operator paths, GGUF filenames, and source sidecars only; it does not "
         "hash files, load tensor payloads, emit GGUF, materialize, execute runtime paths, generate, evaluate, "
         "or benchmark. Prepare currently supports deepseek4-v4-flash-dspark-selected-embed only and does not "
@@ -550,47 +558,107 @@ static int command_models_add(int arg_count, char **args)
     return 0;
 }
 
-static int command_models_list(int arg_count, char **args)
+static int command_models_remote(int arg_count, char **args)
 {
-    yvex_model_registry *registry = NULL;
+    yvex_cli_model_inspect_options cli;
+    yvex_remote_inspect_options options;
+    yvex_remote_catalog *catalog = NULL;
     yvex_error err;
-    const char *registry_path = NULL;
-    yvex_models_output_mode output_mode = YVEX_MODELS_OUTPUT_NORMAL;
-    unsigned long long i;
-    unsigned long long count;
+    yvex_account_provider provider;
     int rc;
 
-    yvex_error_clear(&err);
-    rc = parse_models_registry_options(arg_count, args, 3, &registry_path, &output_mode);
+    rc = model_remote_inspect_options_parse(arg_count, args, 3, &cli);
     if (rc != 0) return rc;
-    rc = models_registry_open(&registry, registry_path, 1, &err);
+    if (!yvex_account_provider_from_name(cli.provider, &provider)) return 2;
+    memset(&options, 0, sizeof(options));
+    options.provider = provider;
+    options.repository = cli.repository;
+    options.revision = cli.revision;
+    options.cli_override = cli.cli;
+    options.models_root = cli.models_root;
+    yvex_error_clear(&err);
+    rc = yvex_remote_model_inspect(&catalog, &options, &err);
     if (rc != YVEX_OK) return print_yvex_error(&err, exit_for_status(rc));
-    count = yvex_model_registry_count(registry);
-    if (output_mode != YVEX_MODELS_OUTPUT_AUDIT) {
-        yvex_cli_out_writef(stdout, "MODELS  count=%llu\n\n", count);
-        yvex_cli_out_writef(stdout, "%-44s  %-10s  %-8s  %-11s  %7s  %s\n",
-               "ALIAS",
-               "FAMILY",
-               "BACKEND",
-               "MODE",
-               "CONTEXT",
-               "STARTUP");
-        for (i = 0; i < count; ++i) {
-            const yvex_model_registry_entry *entry = yvex_model_registry_at(registry, i);
-            print_model_registry_entry_cli(entry);
-        }
-        yvex_cli_out_writef(stdout, "status: models-list\n");
-        yvex_model_registry_close(registry);
-        return 0;
+    rc = yvex_remote_catalog_render(stdout, catalog, cli.output_mode, 1);
+    yvex_remote_catalog_close(catalog);
+    if (rc != YVEX_OK) {
+        yvex_error_set(&err, rc, "model_inspect", "cannot render remote model catalog");
+        return print_yvex_error(&err, exit_for_status(rc));
     }
-    yvex_cli_out_writef(stdout, "models: list\n");
-    for (i = 0; i < count; ++i) {
-        const yvex_model_registry_entry *entry = yvex_model_registry_at(registry, i);
-        print_model_registry_entry_audit(entry);
+    return 0;
+}
+
+static int command_models_search(int arg_count, char **args)
+{
+    yvex_cli_model_search_options cli;
+    yvex_remote_search_options options;
+    yvex_remote_catalog *catalog = NULL;
+    yvex_error err;
+    yvex_account_provider provider;
+    int rc;
+
+    rc = model_search_options_parse(arg_count, args, 3, &cli);
+    if (rc != 0) return rc;
+    if (!yvex_account_provider_from_name(cli.provider, &provider)) return 2;
+    if (cli.interactive && (!isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO))) {
+        yvex_cli_out_fputs("yvex: model search --interactive requires a terminal\n", stderr);
+        return 2;
     }
-    yvex_cli_out_writef(stdout, "count: %llu\n", count);
-    yvex_cli_out_writef(stdout, "status: models-list\n");
-    yvex_model_registry_close(registry);
+    memset(&options, 0, sizeof(options));
+    options.provider = provider;
+    options.query = cli.query;
+    options.author = cli.author;
+    options.filter = cli.filter;
+    options.cli_override = cli.cli;
+    options.models_root = cli.models_root;
+    options.page = cli.page;
+    options.page_size = cli.page_size;
+    yvex_error_clear(&err);
+    rc = yvex_remote_model_search(&catalog, &options, &err);
+    if (rc != YVEX_OK) return print_yvex_error(&err, exit_for_status(rc));
+    rc = yvex_remote_catalog_render(stdout, catalog, cli.output_mode, 0);
+    yvex_remote_catalog_close(catalog);
+    if (rc != YVEX_OK) {
+        yvex_error_set(&err, rc, "model_search", "cannot render remote model catalog");
+        return print_yvex_error(&err, exit_for_status(rc));
+    }
+    if (cli.interactive) {
+        char repository[YVEX_REMOTE_REPOSITORY_CAP];
+        char *newline;
+        char *inspect_args[] = {args[0], "models", "remote", repository, NULL};
+
+        yvex_cli_out_fputs("\nSelect repository OWNER/NAME (blank to exit): ", stdout);
+        if (!fgets(repository, sizeof(repository), stdin)) return 0;
+        newline = strpbrk(repository, "\r\n");
+        if (newline) *newline = '\0';
+        if (!repository[0]) return 0;
+        return command_models_remote(4, inspect_args);
+    }
+    return 0;
+}
+
+static int command_models_list(int arg_count, char **args)
+{
+    yvex_cli_model_list_options cli;
+    yvex_local_catalog_options options;
+    yvex_local_model_catalog *catalog = NULL;
+    yvex_error err;
+    int rc;
+
+    rc = model_local_list_options_parse(arg_count, args, 3, &cli);
+    if (rc != 0) return rc;
+    memset(&options, 0, sizeof(options));
+    options.models_root = cli.models_root;
+    options.registry_path = cli.registry_path;
+    yvex_error_clear(&err);
+    rc = yvex_local_model_catalog_open(&catalog, &options, &err);
+    if (rc != YVEX_OK) return print_yvex_error(&err, exit_for_status(rc));
+    rc = yvex_local_catalog_render(stdout, catalog, cli.output_mode);
+    yvex_local_model_catalog_close(catalog);
+    if (rc != YVEX_OK) {
+        yvex_error_set(&err, rc, "model_list", "cannot render local model catalog");
+        return print_yvex_error(&err, exit_for_status(rc));
+    }
     return 0;
 }
 
@@ -916,6 +984,8 @@ static const yvex_models_subcommand model_subcommands[] = {
     { "artifacts", yvex_models_artifacts_surface_command },
     { "prepare", yvex_models_prepare_surface_command },
     { "check", yvex_models_check_surface_command },
+    { "search", command_models_search },
+    { "remote", command_models_remote },
     { "list", command_models_list },
     { "verify", command_models_verify },
     { "inspect", command_models_inspect },
@@ -932,7 +1002,7 @@ static int command_models(int arg_count, char **args)
     }
     if (arg_count < 3) {
         yvex_cli_out_writef(stderr,
-            "yvex: models requires scan, add, download, artifacts, prepare, check, list, "
+            "yvex: models requires search, remote, scan, add, download, artifacts, prepare, check, list, "
                 "verify, inspect, or remove\n");
         return 2;
     }

@@ -8,6 +8,7 @@
 #include "src/cli/model_artifacts/private.h"
 #include "src/cli/io/private.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 typedef struct {
@@ -1561,6 +1562,368 @@ void yvex_fullmodel_help(FILE *fp)
     yvex_cli_out_lines(fp, literal_lines_42, sizeof(literal_lines_42) / sizeof(literal_lines_42[0]));
     yvex_cli_out_line(fp, "  Default output is compact. Use --audit for full diagnostic fields.");
     yvex_cli_out_lines(fp, literal_lines_43, sizeof(literal_lines_43) / sizeof(literal_lines_43[0]));
+}
+
+typedef struct {
+    const yvex_remote_model *model;
+    unsigned long long index;
+} remote_catalog_row;
+
+static int remote_catalog_row_compare(const void *left, const void *right)
+{
+    const remote_catalog_row *a = left;
+    const remote_catalog_row *b = right;
+    const char *a_family = a->model->family[0] ? a->model->family : "unknown";
+    const char *b_family = b->model->family[0] ? b->model->family : "unknown";
+    int order = strcmp(a_family, b_family);
+
+    return order ? order : strcmp(a->model->repository, b->model->repository);
+}
+
+static void remote_parameter_text(char *out,
+                                  size_t capacity,
+                                  const yvex_remote_model *model)
+{
+    double billions;
+
+    if (!model->parameter_count_known) {
+        snprintf(out, capacity, "unknown");
+        return;
+    }
+    billions = (double)model->parameter_count / 1000000000.0;
+    if (billions >= 1.0)
+        snprintf(out, capacity, "%.1fB", billions);
+    else
+        snprintf(out, capacity, "%.1fM", (double)model->parameter_count / 1000000.0);
+}
+
+static void remote_representation_classes(char *out,
+                                          size_t capacity,
+                                          const yvex_remote_catalog *catalog,
+                                          unsigned long long model_index)
+{
+    const yvex_remote_model *model = yvex_remote_catalog_at(catalog, model_index);
+    unsigned int index;
+
+    out[0] = '\0';
+    if (!model) return;
+    for (index = 0u; index < model->representation_count; ++index) {
+        const yvex_model_representation *representation =
+            yvex_remote_catalog_representation_at(catalog, model_index, index);
+        size_t used = strlen(out);
+        if (!representation || strstr(out, representation->format)) continue;
+        snprintf(out + used, capacity - used, "%s%s", used ? "," : "",
+                 representation->format);
+    }
+    if (!out[0]) snprintf(out, capacity, "unknown");
+}
+
+static int remote_catalog_render_table(FILE *fp,
+                                       const yvex_remote_catalog *catalog,
+                                       int representations)
+{
+    unsigned long long count = yvex_remote_catalog_count(catalog);
+    unsigned long long row;
+    remote_catalog_row *rows;
+    const char *last_family = NULL;
+
+    if (representations && count == 1u) {
+        const yvex_remote_model *model = yvex_remote_catalog_at(catalog, 0u);
+        char parameters[32];
+        unsigned int index;
+
+        remote_parameter_text(parameters, sizeof(parameters), model);
+        yvex_cli_out_writef(fp, "MODEL  %s\n", model->repository);
+        yvex_cli_out_writef(fp, "family=%s  revision=%s  parameters=%s  gated=%s\n\n",
+                            model->family[0] ? model->family : "unknown",
+                            model->resolved_revision[0] ? model->resolved_revision : "unknown",
+                            parameters, model->gated_known ? (model->gated ? "yes" : "no")
+                                                          : "unknown");
+        yvex_cli_out_writef(fp, "%-23s %-13s %-18s %10s %6s %-9s %s\n",
+                            "REPRESENTATION", "FORMAT", "PRECISION/QTYPE", "SIZE", "FILES",
+                            "LOCAL", "YVEX COMPATIBILITY");
+        for (index = 0u; index < model->representation_count; ++index) {
+            const yvex_model_representation *representation =
+                yvex_remote_catalog_representation_at(catalog, 0u, index);
+            char size[32];
+            if (!representation) continue;
+            if (representation->size_known)
+                model_download_format_bytes(size, sizeof(size), representation->size_bytes);
+            else
+                snprintf(size, sizeof(size), "unknown");
+            yvex_cli_out_writef(fp, "%-23.23s %-13.13s %-18.18s %10.10s %6llu %-9s %s%s\n",
+                                representation->identity, representation->format,
+                                representation->precision[0] ? representation->precision
+                                                              : "unknown",
+                                size, representation->file_count,
+                                representation->local ? "yes" : "no",
+                                representation->compatibility,
+                                representation->provisional ? " (provisional)" : "");
+        }
+        yvex_cli_out_writef(fp, "\nsupport: %s\nreason: %s\n",
+                            yvex_model_support_stage_name(model->support_stage),
+                            model->support_reason);
+        yvex_cli_out_writef(fp, "provider_files: %u (use --audit or --json for exact paths)\n",
+                            model->available_file_count);
+        return ferror(fp) ? YVEX_ERR_IO : YVEX_OK;
+    }
+    rows = calloc(count ? (size_t)count : 1u, sizeof(*rows));
+    if (!rows) return YVEX_ERR_NOMEM;
+    for (row = 0u; row < count; ++row) {
+        rows[row].model = yvex_remote_catalog_at(catalog, row);
+        rows[row].index = row;
+    }
+    qsort(rows, (size_t)count, sizeof(*rows), remote_catalog_row_compare);
+    yvex_cli_out_writef(fp, "REMOTE MODELS  count=%llu\n", count);
+    for (row = 0u; row < count; ++row) {
+        const yvex_remote_model *model = rows[row].model;
+        const char *family = model->family[0] ? model->family : "unknown";
+        char parameters[32];
+        char classes[64];
+
+        if (!last_family || strcmp(last_family, family) != 0) {
+            yvex_cli_out_writef(fp, "\nFAMILY %s\n", family);
+            yvex_cli_out_writef(fp, "%-44s %9s %-18s %-7s %-22s %s\n", "MODEL / REPOSITORY",
+                                "PARAMS", "REPRESENTATIONS", "GATED", "YVEX STAGE", "LOCAL");
+            last_family = family;
+        }
+        remote_parameter_text(parameters, sizeof(parameters), model);
+        remote_representation_classes(classes, sizeof(classes), catalog, rows[row].index);
+        yvex_cli_out_writef(fp, "%-44.44s %9s %-18.18s %-7s %-22.22s %s\n",
+                            model->repository, parameters, classes,
+                            model->gated_known ? (model->gated ? "yes" : "no") : "unknown",
+                            yvex_model_support_stage_name(model->support_stage),
+                            model->local ? "yes" : "no");
+    }
+    free(rows);
+    return ferror(fp) ? YVEX_ERR_IO : YVEX_OK;
+}
+
+static int remote_catalog_render_audit(FILE *fp, const yvex_remote_catalog *catalog)
+{
+    unsigned long long model_index;
+
+    yvex_cli_out_writef(fp, "remote_models: %llu\n", yvex_remote_catalog_count(catalog));
+    for (model_index = 0u; model_index < yvex_remote_catalog_count(catalog); ++model_index) {
+        const yvex_remote_model *model = yvex_remote_catalog_at(catalog, model_index);
+        unsigned int representation_index;
+        yvex_cli_out_writef(fp, "model[%llu]:\n", model_index);
+        yvex_cli_out_writef(fp, "  provider: %s\n  repository: %s\n  author: %s\n",
+                            model->provider, model->repository,
+                            model->author[0] ? model->author : "unknown");
+        yvex_cli_out_writef(fp, "  revision_reference: %s\n  resolved_revision: %s\n",
+                            model->revision_reference[0] ? model->revision_reference : "unknown",
+                            model->resolved_revision[0] ? model->resolved_revision : "unknown");
+        yvex_cli_out_writef(fp, "  family: %s\n  family_evidence: %s\n  architecture: %s\n",
+                            model->family[0] ? model->family : "unknown",
+                            model->family_evidence[0] ? model->family_evidence : "unknown",
+                            model->architecture[0] ? model->architecture : "unknown");
+        yvex_cli_out_writef(fp, "  base_model: %s\n  lineage_relation: %s\n",
+                            model->base_model[0] ? model->base_model : "unknown",
+                            model->lineage_relation[0] ? model->lineage_relation : "unknown");
+        yvex_cli_out_writef(fp, "  support_stage: %s\n  support_reason: %s\n  local: %s\n",
+                            yvex_model_support_stage_name(model->support_stage),
+                            model->support_reason, model->local ? "true" : "false");
+        for (representation_index = 0u; representation_index < model->representation_count;
+             ++representation_index) {
+            const yvex_model_representation *representation =
+                yvex_remote_catalog_representation_at(catalog, model_index,
+                                                       representation_index);
+            yvex_cli_out_writef(
+                fp,
+                "  representation[%u]: identity=%s format=%s precision=%s evidence=%s "
+                "files=%llu bytes=%llu size_known=%s selector=%s local=%s compatibility=%s "
+                "recommendation=%s\n",
+                representation_index, representation->identity, representation->format,
+                representation->precision[0] ? representation->precision : "unknown",
+                representation->precision_evidence[0] ? representation->precision_evidence
+                                                       : "unknown",
+                representation->file_count, representation->size_bytes,
+                representation->size_known ? "true" : "false",
+                representation->file_pattern[0] ? representation->file_pattern : "multiple",
+                representation->local ? "true" : "false", representation->compatibility,
+                representation->recommendation);
+        }
+        for (representation_index = 0u; representation_index < model->available_file_count;
+             ++representation_index) {
+            const yvex_remote_file *file =
+                yvex_remote_catalog_file_at(catalog, model_index, representation_index);
+            yvex_cli_out_writef(fp, "  file[%u]: path=%s kind=%s representation=%s bytes=%llu "
+                                    "size_known=%s\n",
+                                representation_index, file->path,
+                                yvex_remote_file_kind_name(file->kind), file->representation,
+                                file->size_bytes, file->size_known ? "true" : "false");
+        }
+    }
+    return ferror(fp) ? YVEX_ERR_IO : YVEX_OK;
+}
+
+static int remote_catalog_render_json(FILE *fp, const yvex_remote_catalog *catalog)
+{
+    unsigned long long model_index;
+
+    yvex_cli_out_fputs("{\"schema\":\"yvex.remote-model-catalog.v1\",\"models\":[", fp);
+    for (model_index = 0u; model_index < yvex_remote_catalog_count(catalog); ++model_index) {
+        const yvex_remote_model *model = yvex_remote_catalog_at(catalog, model_index);
+        unsigned int representation_index;
+        if (model_index) yvex_cli_out_fputs(",", fp);
+        yvex_cli_out_fputs("{\"provider\":", fp);
+        yvex_file_json_write_string(fp, model->provider);
+        yvex_cli_out_fputs(",\"repository\":", fp);
+        yvex_file_json_write_string(fp, model->repository);
+        yvex_cli_out_fputs(",\"resolved_revision\":", fp);
+        yvex_file_json_write_string(fp, model->resolved_revision);
+        yvex_cli_out_fputs(",\"family\":", fp);
+        yvex_file_json_write_string(fp, model->family);
+        yvex_cli_out_fputs(",\"architecture\":", fp);
+        yvex_file_json_write_string(fp, model->architecture);
+        yvex_cli_out_fputs(",\"base_model\":", fp);
+        yvex_file_json_write_string(fp, model->base_model);
+        yvex_cli_out_fputs(",\"support_stage\":", fp);
+        yvex_file_json_write_string(fp, yvex_model_support_stage_name(model->support_stage));
+        yvex_cli_out_writef(fp, ",\"local\":%s,\"gated_known\":%s,\"gated\":%s,"
+                                "\"parameter_count_known\":%s,\"parameter_count\":%llu,"
+                                "\"representations\":[",
+                            model->local ? "true" : "false",
+                            model->gated_known ? "true" : "false",
+                            model->gated ? "true" : "false",
+                            model->parameter_count_known ? "true" : "false",
+                            model->parameter_count);
+        for (representation_index = 0u; representation_index < model->representation_count;
+             ++representation_index) {
+            const yvex_model_representation *representation =
+                yvex_remote_catalog_representation_at(catalog, model_index,
+                                                       representation_index);
+            if (representation_index) yvex_cli_out_fputs(",", fp);
+            yvex_cli_out_fputs("{\"identity\":", fp);
+            yvex_file_json_write_string(fp, representation->identity);
+            yvex_cli_out_fputs(",\"format\":", fp);
+            yvex_file_json_write_string(fp, representation->format);
+            yvex_cli_out_fputs(",\"precision\":", fp);
+            yvex_file_json_write_string(fp, representation->precision);
+            yvex_cli_out_fputs(",\"file_pattern\":", fp);
+            yvex_file_json_write_string(fp, representation->file_pattern);
+            yvex_cli_out_fputs(",\"compatibility\":", fp);
+            yvex_file_json_write_string(fp, representation->compatibility);
+            yvex_cli_out_writef(fp, ",\"file_count\":%llu,\"size_bytes\":%llu,"
+                                    "\"size_known\":%s,\"provisional\":%s,\"local\":%s}",
+                                representation->file_count, representation->size_bytes,
+                                representation->size_known ? "true" : "false",
+                                representation->provisional ? "true" : "false",
+                                representation->local ? "true" : "false");
+        }
+        yvex_cli_out_fputs("],\"files\":[", fp);
+        for (representation_index = 0u; representation_index < model->available_file_count;
+             ++representation_index) {
+            const yvex_remote_file *file =
+                yvex_remote_catalog_file_at(catalog, model_index, representation_index);
+            if (representation_index) yvex_cli_out_fputs(",", fp);
+            yvex_cli_out_fputs("{\"path\":", fp);
+            yvex_file_json_write_string(fp, file->path);
+            yvex_cli_out_fputs(",\"kind\":", fp);
+            yvex_file_json_write_string(fp, yvex_remote_file_kind_name(file->kind));
+            yvex_cli_out_fputs(",\"representation\":", fp);
+            yvex_file_json_write_string(fp, file->representation);
+            yvex_cli_out_writef(fp, ",\"size_bytes\":%llu,\"size_known\":%s}",
+                                file->size_bytes, file->size_known ? "true" : "false");
+        }
+        yvex_cli_out_fputs("]}", fp);
+    }
+    yvex_cli_out_fputs("]}\n", fp);
+    return ferror(fp) ? YVEX_ERR_IO : YVEX_OK;
+}
+
+int yvex_remote_catalog_render(FILE *fp,
+                               const yvex_remote_catalog *catalog,
+                               yvex_model_catalog_output_mode mode,
+                               int representations)
+{
+    if (!fp || !catalog) return YVEX_ERR_INVALID_ARG;
+    if (mode == YVEX_MODEL_CATALOG_OUTPUT_JSON)
+        return remote_catalog_render_json(fp, catalog);
+    if (mode == YVEX_MODEL_CATALOG_OUTPUT_AUDIT)
+        return remote_catalog_render_audit(fp, catalog);
+    return remote_catalog_render_table(fp, catalog, representations);
+}
+
+int yvex_local_catalog_render(FILE *fp,
+                              const yvex_local_model_catalog *catalog,
+                              yvex_model_catalog_output_mode mode)
+{
+    unsigned long long index;
+
+    if (!fp || !catalog) return YVEX_ERR_INVALID_ARG;
+    if (mode == YVEX_MODEL_CATALOG_OUTPUT_JSON) {
+        yvex_cli_out_fputs("{\"schema\":\"yvex.local-model-catalog.v1\",\"models\":[", fp);
+        for (index = 0u; index < yvex_local_model_catalog_count(catalog); ++index) {
+            const yvex_local_model *model = yvex_local_model_catalog_at(catalog, index);
+            if (index) yvex_cli_out_fputs(",", fp);
+            yvex_cli_out_fputs("{\"name\":", fp);
+            yvex_file_json_write_string(fp, model->name);
+            yvex_cli_out_fputs(",\"family\":", fp);
+            yvex_file_json_write_string(fp, model->family);
+            yvex_cli_out_fputs(",\"kind\":", fp);
+            yvex_file_json_write_string(
+                fp, model->kind == YVEX_LOCAL_MODEL_PACKAGE ? "package" : "acquired-source");
+            yvex_cli_out_fputs(",\"representation\":", fp);
+            yvex_file_json_write_string(fp, model->representation);
+            yvex_cli_out_fputs(",\"package_state\":", fp);
+            yvex_file_json_write_string(fp, model->package_state);
+            yvex_cli_out_fputs(",\"verification_state\":", fp);
+            yvex_file_json_write_string(fp, model->verification_state);
+            yvex_cli_out_fputs(",\"engine_state\":", fp);
+            yvex_file_json_write_string(fp, model->engine_state);
+            yvex_cli_out_fputs(",\"blocker\":", fp);
+            yvex_file_json_write_string(fp, model->blocker);
+            yvex_cli_out_writef(fp, ",\"size_bytes\":%llu,\"size_known\":%s,"
+                                    "\"package_ready\":%s}",
+                                model->size_bytes, model->size_known ? "true" : "false",
+                                model->package_ready ? "true" : "false");
+        }
+        yvex_cli_out_fputs("]}\n", fp);
+        return ferror(fp) ? YVEX_ERR_IO : YVEX_OK;
+    }
+    if (mode == YVEX_MODEL_CATALOG_OUTPUT_AUDIT) {
+        yvex_cli_out_writef(fp, "local_models: %llu\n",
+                            yvex_local_model_catalog_count(catalog));
+        for (index = 0u; index < yvex_local_model_catalog_count(catalog); ++index) {
+            const yvex_local_model *model = yvex_local_model_catalog_at(catalog, index);
+            yvex_cli_out_writef(fp, "model[%llu]: name=%s family=%s kind=%s representation=%s "
+                                    "package_state=%s verification=%s engine=%s backend=%s "
+                                    "bytes=%llu blocker=%s path=%s\n",
+                                index, model->name, model->family,
+                                model->kind == YVEX_LOCAL_MODEL_PACKAGE ? "package"
+                                                                        : "acquired-source",
+                                model->representation, model->package_state,
+                                model->verification_state, model->engine_state,
+                                model->backend[0] ? model->backend : "unknown", model->size_bytes,
+                                model->blocker[0] ? model->blocker : "none", model->path);
+        }
+        return ferror(fp) ? YVEX_ERR_IO : YVEX_OK;
+    }
+    yvex_cli_out_writef(fp, "LOCAL MODELS  count=%llu\n\n",
+                        yvex_local_model_catalog_count(catalog));
+    yvex_cli_out_writef(fp,
+                        "%-40s %-12s %-8s %-16s %-18s %-18s %10s %-12s %s\n",
+                        "MODEL", "FAMILY", "KIND", "REPRESENTATION", "PACKAGE STATE",
+                        "VERIFICATION", "SIZE", "ENGINE", "BACKEND / BLOCKER");
+    for (index = 0u; index < yvex_local_model_catalog_count(catalog); ++index) {
+        const yvex_local_model *model = yvex_local_model_catalog_at(catalog, index);
+        char size[32];
+        if (model->size_known)
+            model_download_format_bytes(size, sizeof(size), model->size_bytes);
+        else
+            snprintf(size, sizeof(size), "unknown");
+        yvex_cli_out_writef(fp, "%-40.40s %-12.12s %-8.8s %-16.16s %-18.18s %-18.18s "
+                                "%10.10s %-12.12s %s%s%s\n",
+                            model->name, model->family,
+                            model->kind == YVEX_LOCAL_MODEL_PACKAGE ? "package" : "source",
+                            model->representation,
+                            model->package_state, model->verification_state, size,
+                            model->engine_state, model->backend[0] ? model->backend : "-",
+                            model->blocker[0] ? " · " : "", model->blocker);
+    }
+    return ferror(fp) ? YVEX_ERR_IO : YVEX_OK;
 }
 
 #define COMPONENT_FIELD(KEY, KIND, MEMBER) \

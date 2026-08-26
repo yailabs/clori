@@ -120,7 +120,8 @@ int model_download_family_valid(const char *family)
            (strcmp(family, "deepseek") == 0 ||
             strcmp(family, "glm") == 0 ||
             strcmp(family, "qwen") == 0 ||
-            strcmp(family, "gemma") == 0);
+            strcmp(family, "gemma") == 0 ||
+            strcmp(family, "minimax-h3") == 0);
 }
 
 int model_download_local_name_valid(const char *name)
@@ -354,6 +355,7 @@ static int model_download_walk_tree(const char *root,
                 scan->file_count++;
                 scan->total_regular_file_bytes += bytes;
                 if (yvex_source_ends_with(rel_path, ".safetensors")) scan->safetensors_count++;
+                if (yvex_source_ends_with(rel_path, ".gguf")) scan->gguf_count++;
                 if (yvex_source_ends_with(rel_path, ".lock")) {
                     unsigned long long idx = scan->lock_count;
                     if (idx < YVEX_MODEL_DOWNLOAD_PATTERN_CAP) {
@@ -1238,8 +1240,8 @@ static int model_download_tick_scan_sync(yvex_model_download_report *report,
                                          const yvex_model_download_source_scan *scan,
                                          int store)
 {
-    unsigned long long facts[6] = {
-        scan->file_count, scan->safetensors_count, scan->partial_file_count,
+    unsigned long long facts[7] = {
+        scan->file_count, scan->safetensors_count, scan->gguf_count, scan->partial_file_count,
         scan->cache_file_count, scan->total_regular_file_bytes, scan->largest_file_bytes};
     int changed = report->tick_count == 0ull ||
                   memcmp(&report->tick_last_file_count, facts, sizeof(facts)) != 0 ||
@@ -1299,11 +1301,12 @@ static void model_download_print_tick_progress(const char *source_dir,
     model_download_short_file_name(largest_name, sizeof(largest_name),
                                    scan.largest_file_name[0] ? scan.largest_file_name : "none");
     yvex_cli_out_writef(stdout,
-        "tick: elapsed=%s files=%llu partial=%llu safetensors=%llu bytes=%s delta=%s%s largest=%s (%s)\n",
+        "tick: elapsed=%s files=%llu partial=%llu safetensors=%llu gguf=%llu bytes=%s delta=%s%s largest=%s (%s)\n",
            elapsed_text,
            scan.file_count,
            scan.partial_file_count,
            scan.safetensors_count,
+           scan.gguf_count,
            total_text,
            delta_sign,
            delta_text,
@@ -1372,6 +1375,7 @@ void model_download_print_status_report(
         }
         yvex_cli_out_writef(stdout, "source_file_count: %llu\n", report->source_scan.file_count);
         yvex_cli_out_writef(stdout, "safetensors_count: %llu\n", report->source_scan.safetensors_count);
+        yvex_cli_out_writef(stdout, "gguf_count: %llu\n", report->source_scan.gguf_count);
         yvex_cli_out_writef(stdout, "total_regular_file_bytes: %llu\n", report->source_scan.total_regular_file_bytes);
         yvex_cli_out_writef(stdout, "largest_file_name: %s\n",
                report->source_scan.largest_file_name[0] ? report->source_scan.largest_file_name : "none");
@@ -1407,10 +1411,11 @@ void model_download_print_status_report(
            last_receipt_present ? (last_receipt_status && last_receipt_status[0]
                                    ? last_receipt_status : "unknown") : "none");
     yvex_cli_out_writef(stdout, "locks: %llu\n", report->source_scan.lock_count);
-    yvex_cli_out_writef(stdout, "files: %llu partial=%llu safetensors=%llu bytes=%s\n",
+    yvex_cli_out_writef(stdout, "files: %llu partial=%llu safetensors=%llu gguf=%llu bytes=%s\n",
            report->source_scan.file_count,
            report->source_scan.partial_file_count,
            report->source_scan.safetensors_count,
+           report->source_scan.gguf_count,
            bytes_text);
     yvex_cli_out_writef(stdout, "largest: %s (%s)\n", largest_name, largest_text);
     yvex_cli_out_writef(stdout, "safetensors_size_status: %s\n", safe_check->status);

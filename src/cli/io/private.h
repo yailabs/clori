@@ -34,6 +34,40 @@ typedef enum {
 } yvex_models_output_mode;
 
 typedef enum {
+    YVEX_MODEL_CATALOG_OUTPUT_TABLE = 0,
+    YVEX_MODEL_CATALOG_OUTPUT_AUDIT,
+    YVEX_MODEL_CATALOG_OUTPUT_JSON
+} yvex_model_catalog_output_mode;
+
+typedef struct {
+    const char *query;
+    const char *author;
+    const char *filter;
+    const char *provider;
+    const char *cli;
+    const char *models_root;
+    unsigned int page;
+    unsigned int page_size;
+    int interactive;
+    yvex_model_catalog_output_mode output_mode;
+} yvex_cli_model_search_options;
+
+typedef struct {
+    const char *repository;
+    const char *revision;
+    const char *provider;
+    const char *cli;
+    const char *models_root;
+    yvex_model_catalog_output_mode output_mode;
+} yvex_cli_model_inspect_options;
+
+typedef struct {
+    const char *models_root;
+    const char *registry_path;
+    yvex_model_catalog_output_mode output_mode;
+} yvex_cli_model_list_options;
+
+typedef enum {
     YVEX_CLI_FIELD_TEXT = 0,
     YVEX_CLI_FIELD_TEXT_ARRAY,
     YVEX_CLI_FIELD_U64,
@@ -179,6 +213,7 @@ typedef struct yvex_cli_models_download_options {
 typedef struct yvex_model_download_source_scan {
     unsigned long long file_count;
     unsigned long long safetensors_count;
+    unsigned long long gguf_count;
     unsigned long long total_regular_file_bytes;
     unsigned long long largest_file_bytes;
     unsigned long long partial_file_count;
@@ -263,6 +298,7 @@ typedef struct yvex_model_download_report {
     unsigned long long tick_last_elapsed_seconds;
     unsigned long long tick_last_file_count;
     unsigned long long tick_last_safetensors_count;
+    unsigned long long tick_last_gguf_count;
     unsigned long long tick_last_partial_file_count;
     unsigned long long tick_last_cache_file_count;
     unsigned long long tick_last_total_regular_file_bytes;
@@ -481,6 +517,7 @@ int yvex_operator_paths_resolve_target(const yvex_operator_paths *operator_paths
                                        int *out_exists, yvex_error *err);
 
 /* JSON output. */
+void yvex_cli_out_json_string(FILE *fp, const char *text);
 void yvex_cli_json_begin(FILE *fp);
 void yvex_cli_json_end(FILE *fp);
 void yvex_cli_json_field_str(FILE *fp, const char *key, const char *value, int comma);

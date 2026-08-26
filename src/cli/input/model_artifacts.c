@@ -560,7 +560,9 @@ static int model_download_options_validate(yvex_cli_models_download_options *opt
     if (strcmp(options->provider, "github") != 0 && options->repo &&
         (!options->family || !model_download_family_valid(options->family))) {
         yvex_cli_out_writef(
-            stderr, "yvex: models download --repo requires --family deepseek|glm|qwen|gemma\n");
+            stderr,
+            "yvex: models download --repo requires --family "
+            "deepseek|glm|qwen|gemma|minimax-h3\n");
         return 2;
     }
     if (options->repo && !options->name) {
@@ -625,6 +627,241 @@ int parse_models_download_options_from(int arg_count, char **args, int start_ind
     }
 
     return model_download_options_validate(options);
+}
+
+static int model_catalog_output_parse(const char *value,
+                                      yvex_model_catalog_output_mode *mode)
+{
+    if (!value || !mode) return 0;
+    if (strcmp(value, "normal") == 0 || strcmp(value, "table") == 0)
+        *mode = YVEX_MODEL_CATALOG_OUTPUT_TABLE;
+    else if (strcmp(value, "audit") == 0)
+        *mode = YVEX_MODEL_CATALOG_OUTPUT_AUDIT;
+    else if (strcmp(value, "json") == 0)
+        *mode = YVEX_MODEL_CATALOG_OUTPUT_JSON;
+    else
+        return 0;
+    return 1;
+}
+
+static int model_catalog_value(const char *command,
+                               const char *flag,
+                               int arg_count,
+                               char **args,
+                               int *index,
+                               const char **value)
+{
+    if (*index + 1 >= arg_count || !cli_arg_value_valid(args[*index + 1])) {
+        yvex_cli_out_writef(stderr, "yvex: %s %s requires a value\n", command, flag);
+        return 0;
+    }
+    *value = args[++(*index)];
+    return 1;
+}
+
+static int model_catalog_provider(const char *value, const char **provider)
+{
+    yvex_account_provider parsed;
+
+    if (!yvex_account_provider_from_name(value, &parsed) ||
+        parsed != YVEX_ACCOUNT_PROVIDER_HUGGINGFACE)
+        return 0;
+    *provider = yvex_account_provider_name(parsed);
+    return 1;
+}
+
+int model_search_options_parse(int arg_count,
+                               char **args,
+                               int start,
+                               yvex_cli_model_search_options *options)
+{
+    int index;
+
+    if (!options) return 2;
+    memset(options, 0, sizeof(*options));
+    options->provider = "huggingface";
+    options->page = 1u;
+    options->page_size = 20u;
+    options->output_mode = YVEX_MODEL_CATALOG_OUTPUT_TABLE;
+    for (index = start; index < arg_count; ++index) {
+        const char *value = NULL;
+        unsigned long long number;
+
+        if (strcmp(args[index], "--interactive") == 0) {
+            options->interactive = 1;
+        } else if (strcmp(args[index], "--json") == 0) {
+            options->output_mode = YVEX_MODEL_CATALOG_OUTPUT_JSON;
+        } else if (strcmp(args[index], "--audit") == 0) {
+            options->output_mode = YVEX_MODEL_CATALOG_OUTPUT_AUDIT;
+        } else if (strcmp(args[index], "--provider") == 0) {
+            if (!model_catalog_value("model search", args[index], arg_count, args, &index,
+                                     &value) ||
+                !model_catalog_provider(value, &options->provider)) {
+                yvex_cli_out_fputs(
+                    "yvex: model search --provider currently requires hf|huggingface\n", stderr);
+                return 2;
+            }
+        } else if (strcmp(args[index], "--author") == 0) {
+            if (!model_catalog_value("model search", args[index], arg_count, args, &index,
+                                     &options->author))
+                return 2;
+        } else if (strcmp(args[index], "--filter") == 0) {
+            if (!model_catalog_value("model search", args[index], arg_count, args, &index,
+                                     &options->filter))
+                return 2;
+        } else if (strcmp(args[index], "--cli") == 0) {
+            if (!model_catalog_value("model search", args[index], arg_count, args, &index,
+                                     &options->cli))
+                return 2;
+        } else if (strcmp(args[index], "--models-root") == 0) {
+            if (!model_catalog_value("model search", args[index], arg_count, args, &index,
+                                     &options->models_root))
+                return 2;
+        } else if (strcmp(args[index], "--page") == 0 ||
+                   strcmp(args[index], "--limit") == 0) {
+            const char *flag = args[index];
+            if (!model_catalog_value("model search", flag, arg_count, args, &index, &value) ||
+                !parse_positive_ull(value, &number) || number == 0ull ||
+                (strcmp(flag, "--page") == 0 ? number > 20ull : number > 50ull)) {
+                yvex_cli_out_writef(stderr,
+                                    "yvex: model search %s requires an integer in range 1..%u\n",
+                                    flag, strcmp(flag, "--page") == 0 ? 20u : 50u);
+                return 2;
+            }
+            if (strcmp(flag, "--page") == 0)
+                options->page = (unsigned int)number;
+            else
+                options->page_size = (unsigned int)number;
+        } else if (strcmp(args[index], "--output") == 0) {
+            if (!model_catalog_value("model search", args[index], arg_count, args, &index,
+                                     &value) ||
+                !model_catalog_output_parse(value, &options->output_mode)) {
+                yvex_cli_out_fputs(
+                    "yvex: model search --output requires table|audit|json\n", stderr);
+                return 2;
+            }
+        } else if (args[index][0] == '-') {
+            yvex_cli_out_writef(stderr, "yvex: unknown model search option: %s\n", args[index]);
+            return 2;
+        } else if (!options->query) {
+            options->query = args[index];
+        } else {
+            yvex_cli_out_writef(stderr,
+                                "yvex: model search received extra query argument: %s\n",
+                                args[index]);
+            return 2;
+        }
+    }
+    if (options->interactive && options->output_mode == YVEX_MODEL_CATALOG_OUTPUT_JSON) {
+        yvex_cli_out_fputs("yvex: model search --interactive cannot be combined with JSON\n",
+                           stderr);
+        return 2;
+    }
+    return 0;
+}
+
+int model_remote_inspect_options_parse(int arg_count,
+                                       char **args,
+                                       int start,
+                                       yvex_cli_model_inspect_options *options)
+{
+    int index;
+
+    if (!options) return 2;
+    memset(options, 0, sizeof(*options));
+    options->provider = "huggingface";
+    options->output_mode = YVEX_MODEL_CATALOG_OUTPUT_TABLE;
+    for (index = start; index < arg_count; ++index) {
+        const char *value = NULL;
+        if (strcmp(args[index], "--json") == 0) {
+            options->output_mode = YVEX_MODEL_CATALOG_OUTPUT_JSON;
+        } else if (strcmp(args[index], "--audit") == 0) {
+            options->output_mode = YVEX_MODEL_CATALOG_OUTPUT_AUDIT;
+        } else if (strcmp(args[index], "--provider") == 0) {
+            if (!model_catalog_value("model inspect", args[index], arg_count, args, &index,
+                                     &value) ||
+                !model_catalog_provider(value, &options->provider)) {
+                yvex_cli_out_fputs(
+                    "yvex: model inspect --provider currently requires hf|huggingface\n", stderr);
+                return 2;
+            }
+        } else if (strcmp(args[index], "--revision") == 0) {
+            if (!model_catalog_value("model inspect", args[index], arg_count, args, &index,
+                                     &options->revision))
+                return 2;
+        } else if (strcmp(args[index], "--cli") == 0) {
+            if (!model_catalog_value("model inspect", args[index], arg_count, args, &index,
+                                     &options->cli))
+                return 2;
+        } else if (strcmp(args[index], "--models-root") == 0) {
+            if (!model_catalog_value("model inspect", args[index], arg_count, args, &index,
+                                     &options->models_root))
+                return 2;
+        } else if (strcmp(args[index], "--output") == 0) {
+            if (!model_catalog_value("model inspect", args[index], arg_count, args, &index,
+                                     &value) ||
+                !model_catalog_output_parse(value, &options->output_mode)) {
+                yvex_cli_out_fputs(
+                    "yvex: model inspect --output requires table|audit|json\n", stderr);
+                return 2;
+            }
+        } else if (args[index][0] == '-') {
+            yvex_cli_out_writef(stderr, "yvex: unknown model inspect option: %s\n", args[index]);
+            return 2;
+        } else if (!options->repository) {
+            options->repository = args[index];
+        } else {
+            yvex_cli_out_writef(stderr,
+                                "yvex: model inspect received extra repository argument: %s\n",
+                                args[index]);
+            return 2;
+        }
+    }
+    if (!options->repository) {
+        yvex_cli_out_fputs("yvex: model inspect requires OWNER/REPOSITORY\n", stderr);
+        return 2;
+    }
+    return 0;
+}
+
+int model_local_list_options_parse(int arg_count,
+                                   char **args,
+                                   int start,
+                                   yvex_cli_model_list_options *options)
+{
+    int index;
+
+    if (!options) return 2;
+    memset(options, 0, sizeof(*options));
+    options->output_mode = YVEX_MODEL_CATALOG_OUTPUT_TABLE;
+    for (index = start; index < arg_count; ++index) {
+        const char *value = NULL;
+        if (strcmp(args[index], "--json") == 0) {
+            options->output_mode = YVEX_MODEL_CATALOG_OUTPUT_JSON;
+        } else if (strcmp(args[index], "--audit") == 0) {
+            options->output_mode = YVEX_MODEL_CATALOG_OUTPUT_AUDIT;
+        } else if (strcmp(args[index], "--models-root") == 0) {
+            if (!model_catalog_value("model list", args[index], arg_count, args, &index,
+                                     &options->models_root))
+                return 2;
+        } else if (strcmp(args[index], "--registry") == 0) {
+            if (!model_catalog_value("model list", args[index], arg_count, args, &index,
+                                     &options->registry_path))
+                return 2;
+        } else if (strcmp(args[index], "--output") == 0) {
+            if (!model_catalog_value("model list", args[index], arg_count, args, &index,
+                                     &value) ||
+                !model_catalog_output_parse(value, &options->output_mode)) {
+                yvex_cli_out_fputs("yvex: model list --output requires table|audit|json\n",
+                                   stderr);
+                return 2;
+            }
+        } else {
+            yvex_cli_out_writef(stderr, "yvex: unknown model list option: %s\n", args[index]);
+            return 2;
+        }
+    }
+    return 0;
 }
 
 long long model_download_json_i64_field(const char *text, const char *key) {

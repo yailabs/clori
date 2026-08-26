@@ -208,6 +208,7 @@ static const yvex_render_field_spec download_audit_source_fields[] = {
     DOWNLOAD_FIELD("source_file_count", YVEX_RENDER_FIELD_U64, source_scan.file_count, NULL),
     DOWNLOAD_FIELD("file_count", YVEX_RENDER_FIELD_U64, source_scan.file_count, NULL),
     DOWNLOAD_FIELD("safetensors_count", YVEX_RENDER_FIELD_U64, source_scan.safetensors_count, NULL),
+    DOWNLOAD_FIELD("gguf_count", YVEX_RENDER_FIELD_U64, source_scan.gguf_count, NULL),
     DOWNLOAD_FIELD("config_present", YVEX_RENDER_FIELD_BOOL, source_scan.config_present, NULL),
     DOWNLOAD_FIELD("tokenizer_present", YVEX_RENDER_FIELD_BOOL, source_scan.tokenizer_present,
                    NULL),
@@ -1098,15 +1099,26 @@ static void model_download_print_normal(const yvex_cli_models_download_options *
         yvex_cli_out_writef(stdout, "account_provider: %s\n", report->stage_account_provider);
         model_download_format_bytes(bytes_text, sizeof(bytes_text),
                                     report->source_scan.total_regular_file_bytes);
-        yvex_cli_out_writef(stdout, "files: %llu partial=%llu safetensors=%llu bytes=%s\n",
+        yvex_cli_out_writef(stdout, "files: %llu partial=%llu safetensors=%llu gguf=%llu bytes=%s\n",
                             report->source_scan.file_count, report->source_scan.partial_file_count,
-                            report->source_scan.safetensors_count, bytes_text);
+                            report->source_scan.safetensors_count, report->source_scan.gguf_count,
+                            bytes_text);
         yvex_cli_out_writef(stdout, "manifest: %s\n",
                             report->source_manifest_written ? report->manifest_path : "skipped");
         yvex_cli_out_writef(stdout, "native_inventory: %s\n",
                             report->native_inventory_written ? report->native_inventory_path
                                                              : "skipped");
-        yvex_cli_out_writef(stdout, "boundary: source tensors only, runtime unsupported\n");
+        if (report->source_scan.gguf_count && !report->source_scan.safetensors_count) {
+            yvex_cli_out_writef(stdout,
+                                "boundary: acquired GGUF, structural inspection and package "
+                                "admission required\n");
+        } else if (report->source_scan.gguf_count) {
+            yvex_cli_out_writef(stdout,
+                                "boundary: mixed provider representations, select and verify one "
+                                "package path\n");
+        } else {
+            yvex_cli_out_writef(stdout, "boundary: acquired source, package preparation required\n");
+        }
         yvex_cli_out_writef(stdout, "status: %s\n", report->status);
         return;
     }
@@ -1127,9 +1139,10 @@ static void model_download_print_normal(const yvex_cli_models_download_options *
                                     report->source_scan.largest_file_bytes);
         model_download_short_file_name(largest_name, sizeof(largest_name),
                                        report->source_scan.largest_file_name);
-        yvex_cli_out_writef(stdout, "files: %llu partial=%llu safetensors=%llu bytes=%s\n",
+        yvex_cli_out_writef(stdout, "files: %llu partial=%llu safetensors=%llu gguf=%llu bytes=%s\n",
                             report->source_scan.file_count, report->source_scan.partial_file_count,
-                            report->source_scan.safetensors_count, bytes_text);
+                            report->source_scan.safetensors_count, report->source_scan.gguf_count,
+                            bytes_text);
         yvex_cli_out_writef(stdout, "largest: %s (%s)\n", largest_name, largest_text);
         yvex_cli_out_lines(stdout, literal_pair_4,
                            sizeof(literal_pair_4) / sizeof(literal_pair_4[0]));
@@ -1164,12 +1177,13 @@ static void model_download_print_table(const yvex_model_download_report *report)
     model_download_format_bytes(bytes_text, sizeof(bytes_text),
                                 report->source_scan.total_regular_file_bytes);
     yvex_cli_out_writef(stdout, "TARGET       PROVIDER     FAMILY  ACCOUNT  STATUS                 "
-                                "      FILES  PARTIAL  SAFETENSORS  BYTES\n");
-    yvex_cli_out_writef(stdout, "%-12s %-11s  %-6s  %-7s  %-27s  %5llu  %7llu  %11llu  %s\n",
+                                "      FILES  PARTIAL  SAFETENSORS  GGUF  BYTES\n");
+    yvex_cli_out_writef(stdout, "%-12s %-11s  %-6s  %-7s  %-27s  %5llu  %7llu  %11llu  %4llu  %s\n",
                         report->target_id, report->provider, report->family,
                         report->stage_account_provider, report->status,
                         report->source_scan.file_count, report->source_scan.partial_file_count,
-                        report->source_scan.safetensors_count, bytes_text);
+                        report->source_scan.safetensors_count, report->source_scan.gguf_count,
+                        bytes_text);
     yvex_cli_out_writef(stdout, "status: %s\n", report->status);
 }
 
@@ -1403,6 +1417,7 @@ int model_download_write_json_sidecar(const char *path, const char *schema,
     write_bool_field(fp, "", "lock_files_deleted", report->lock_files_deleted, 1);
     write_u64_field(fp, "", "file_count", report->source_scan.file_count, 1);
     write_u64_field(fp, "", "safetensors_count", report->source_scan.safetensors_count, 1);
+    write_u64_field(fp, "", "gguf_count", report->source_scan.gguf_count, 1);
     write_bool_field(fp, "", "config_present", report->source_scan.config_present, 1);
     write_bool_field(fp, "", "tokenizer_present", report->source_scan.tokenizer_present, 1);
     write_u64_field(fp, "", "total_regular_file_bytes",

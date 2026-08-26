@@ -6,6 +6,7 @@ set -eu
 YVEX_BIN="${YVEX_BIN:-./yvex}"
 ROOT=${YVEX_TEST_OUT_DIR:-build/tests/models-cli}
 REG="$ROOT/models.local.json"
+CATALOG_ROOT="$ROOT/catalog-empty"
 GGUF="$ROOT/deepseek4-v4-flash-dspark-selected-embed-F16-noimatrix-yvex-v1.gguf"
 
 matches() {
@@ -361,6 +362,121 @@ case "$ROOT" in
 esac
 export XDG_CONFIG_HOME
 mkdir -p "$XDG_CONFIG_HOME"
+mkdir -p "$CATALOG_ROOT"
+
+FAKE_HF="$PWD/tests/fixtures/bin/fake-hf"
+FAKE_HF_LOG="$ROOT/fake-hf-discovery.log"
+export YVEX_FAKE_HF_LOG="$FAKE_HF_LOG"
+
+YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" model search MiniMax --limit 2 \
+  > "$ROOT/search.out"
+grep 'REMOTE MODELS  count=2' "$ROOT/search.out"
+grep 'FAMILY minimax-h3' "$ROOT/search.out"
+grep 'MiniMaxAI/MiniMax-H3' "$ROOT/search.out"
+grep 'package-preparation' "$ROOT/search.out"
+grep 'community/unknown-model' "$ROOT/search.out"
+grep 'source-ingest' "$ROOT/search.out"
+
+YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" model search MiniMax --page 2 --limit 2 --json \
+  > "$ROOT/search-page.json"
+python3 - "$ROOT/search-page.json" <<'PY'
+import json
+import sys
+
+catalog = json.load(open(sys.argv[1], encoding="utf-8"))
+assert catalog["schema"] == "yvex.remote-model-catalog.v1"
+assert [model["repository"] for model in catalog["models"]] == [
+    "community/minimax-h3-gguf",
+    "private/gated-model",
+]
+assert catalog["models"][0]["support_stage"] == "physical-inspection"
+assert catalog["models"][1]["gated"] is True
+PY
+
+YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" model inspect MiniMaxAI/MiniMax-H3 \
+  --revision b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08 --audit \
+  > "$ROOT/remote-inspect.out"
+grep 'resolved_revision: b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08' \
+  "$ROOT/remote-inspect.out"
+grep 'family: minimax-h3' "$ROOT/remote-inspect.out"
+grep 'base_model: MiniMaxAI/MiniMax-H3-Base' "$ROOT/remote-inspect.out"
+grep 'identity=safetensors-source format=safetensors precision=BF16+F16' \
+  "$ROOT/remote-inspect.out"
+grep 'identity=gguf-Q4_K_M format=gguf precision=Q4_K_M evidence=filename-hint' \
+  "$ROOT/remote-inspect.out"
+grep 'selector=model-Q4_K_M.gguf' "$ROOT/remote-inspect.out"
+grep 'identity=gguf-IQ2_XXS format=gguf precision=IQ2_XXS evidence=filename-hint' \
+  "$ROOT/remote-inspect.out"
+grep 'file\[0\]: path=config.json kind=configuration representation=configuration' \
+  "$ROOT/remote-inspect.out"
+grep 'path=tokenizer.json kind=tokenizer representation=tokenizer' "$ROOT/remote-inspect.out"
+grep 'path=README.md kind=sidecar representation=sidecar' "$ROOT/remote-inspect.out"
+
+YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" model inspect MiniMaxAI/MiniMax-H3 --json \
+  > "$ROOT/remote-inspect.json"
+python3 - "$ROOT/remote-inspect.json" <<'PY'
+import json
+import sys
+
+model = json.load(open(sys.argv[1], encoding="utf-8"))["models"][0]
+assert {file["kind"] for file in model["files"]} >= {
+    "configuration",
+    "tokenizer",
+    "safetensors",
+    "gguf",
+    "sidecar",
+}
+assert next(file for file in model["files"] if file["path"] == "model-Q4_K_M.gguf")[
+    "representation"
+] == "gguf-Q4_K_M"
+PY
+
+expect_rc 2 "$YVEX_BIN" model search MiniMax --interactive \
+  > "$ROOT/search-interactive.out" 2> "$ROOT/search-interactive.err"
+grep 'model search --interactive requires a terminal' "$ROOT/search-interactive.err"
+
+YVEX_FAKE_HF_RESOLVED_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  YVEX_HF_CLI="$FAKE_HF" expect_rc 1 "$YVEX_BIN" model inspect MiniMaxAI/MiniMax-H3 \
+  --revision b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08 \
+  > "$ROOT/inspect-revision-mismatch.out" 2> "$ROOT/inspect-revision-mismatch.err"
+grep 'provider resolved revision does not match the requested identity' \
+  "$ROOT/inspect-revision-mismatch.err"
+
+YVEX_FAKE_HF_RESOLVED_SHA=62af8fffb2f7030cac4de2f0169f5b8d1101b646 \
+  YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" model inspect \
+  deepseek-ai/DeepSeek-V4-Flash-DSpark --revision \
+  62af8fffb2f7030cac4de2f0169f5b8d1101b646 --audit > "$ROOT/inspect-deepseek.out"
+grep 'family: deepseek' "$ROOT/inspect-deepseek.out"
+grep 'support_stage: package-preparation' "$ROOT/inspect-deepseek.out"
+
+YVEX_FAKE_HF_DISCOVERY_MODE=unsafe-file YVEX_HF_CLI="$FAKE_HF" \
+  expect_rc 4 "$YVEX_BIN" model inspect MiniMaxAI/MiniMax-H3 \
+  > "$ROOT/inspect-unsafe-file.out" 2> "$ROOT/inspect-unsafe-file.err"
+grep 'provider file listing is malformed or oversized' "$ROOT/inspect-unsafe-file.err"
+
+YVEX_FAKE_HF_DISCOVERY_MODE=empty YVEX_HF_CLI="$FAKE_HF" \
+  "$YVEX_BIN" model search none > "$ROOT/search-empty.out"
+grep 'REMOTE MODELS  count=0' "$ROOT/search-empty.out"
+
+YVEX_FAKE_HF_DISCOVERY_MODE=malformed YVEX_HF_CLI="$FAKE_HF" \
+  expect_rc 4 "$YVEX_BIN" model search malformed > "$ROOT/search-malformed.out" \
+  2> "$ROOT/search-malformed.err"
+grep 'provider search did not return a JSON array' "$ROOT/search-malformed.err"
+
+YVEX_FAKE_HF_DISCOVERY_AUTH=1 YVEX_HF_CLI="$FAKE_HF" \
+  expect_rc 1 "$YVEX_BIN" model search private > "$ROOT/search-auth.out" \
+  2> "$ROOT/search-auth.err"
+grep 'authentication is required' "$ROOT/search-auth.err"
+
+YVEX_FAKE_HF_FAIL=1 YVEX_HF_CLI="$FAKE_HF" \
+  expect_rc 1 "$YVEX_BIN" model search failed > "$ROOT/search-fail.out" \
+  2> "$ROOT/search-fail.err"
+grep 'provider discovery failed' "$ROOT/search-fail.err"
+
+HF_TOKEN='discovery-secret-must-not-leak' YVEX_HF_CLI="$FAKE_HF" \
+  "$YVEX_BIN" model search redaction --limit 1 --json > "$ROOT/search-redaction.json"
+! grep 'discovery-secret-must-not-leak' "$FAKE_HF_LOG"
+! grep 'discovery-secret-must-not-leak' "$ROOT/search-redaction.json"
 
 "$YVEX_BIN" compile emit artifact controlled \
   --out "$GGUF" \
@@ -384,27 +500,28 @@ grep 'alias: deepseek4-v4-flash-dspark-selected-embed' "$ROOT/add.out"
 grep 'status: models-added' "$ROOT/add.out"
 test -f "$REG"
 
-"$YVEX_BIN" model list --registry "$REG" > "$ROOT/list.out"
+"$YVEX_BIN" model list --models-root "$CATALOG_ROOT" --registry "$REG" > "$ROOT/list.out"
 grep 'deepseek4-v4-flash-dspark-selected-embed' "$ROOT/list.out"
-grep 'MODELS  count=1' "$ROOT/list.out"
-matches "$ROOT/list.out" '^ALIAS[[:space:]]{2,}FAMILY[[:space:]]{2,}BACKEND[[:space:]]{2,}MODE[[:space:]]{2,}CONTEXT[[:space:]]{2,}STARTUP$'
-matches "$ROOT/list.out" '^deepseek4-v4-flash-dspark-selected-embed[[:space:]]+deepseek4[[:space:]]+cpu[[:space:]]+dspark[[:space:]]+4096[[:space:]]+yes$'
-grep 'status: models-list' "$ROOT/list.out"
+grep 'LOCAL MODELS  count=1' "$ROOT/list.out"
+matches "$ROOT/list.out" '^MODEL[[:space:]]+FAMILY[[:space:]]+KIND[[:space:]]+REPRESENTATION[[:space:]]+PACKAGE STATE[[:space:]]+VERIFICATION[[:space:]]+SIZE[[:space:]]+ENGINE[[:space:]]+BACKEND / BLOCKER$'
+grep 'package-ready' "$ROOT/list.out"
+grep 'not-observed' "$ROOT/list.out"
 
-"$YVEX_BIN" model list --registry "$REG" --output table > "$ROOT/list-table.out"
-grep 'MODELS  count=1' "$ROOT/list-table.out"
-matches "$ROOT/list-table.out" '^ALIAS[[:space:]]{2,}FAMILY[[:space:]]{2,}BACKEND[[:space:]]{2,}MODE[[:space:]]{2,}CONTEXT[[:space:]]{2,}STARTUP$'
+"$YVEX_BIN" model list --models-root "$CATALOG_ROOT" --registry "$REG" --output table \
+  > "$ROOT/list-table.out"
+grep 'LOCAL MODELS  count=1' "$ROOT/list-table.out"
 grep 'deepseek4-v4-flash-dspark-selected-embed' "$ROOT/list-table.out"
-grep 'status: models-list' "$ROOT/list-table.out"
+grep 'package-ready' "$ROOT/list-table.out"
 
-"$YVEX_BIN" model list --registry "$REG" --audit > "$ROOT/list-audit.out"
-grep 'registered_sha256:' "$ROOT/list-audit.out"
-grep 'registered_selected_embedding_ready:' "$ROOT/list-audit.out"
-grep 'startup_profile_ready: true' "$ROOT/list-audit.out"
-grep 'status: models-list' "$ROOT/list-audit.out"
+"$YVEX_BIN" model list --models-root "$CATALOG_ROOT" --registry "$REG" --audit \
+  > "$ROOT/list-audit.out"
+grep 'local_models: 1' "$ROOT/list-audit.out"
+grep 'kind=package' "$ROOT/list-audit.out"
+grep 'package_state=package-ready' "$ROOT/list-audit.out"
 
-"$YVEX_BIN" model list --registry "$REG" --output nope > "$ROOT/list-bad-output.out" 2> "$ROOT/list-bad-output.err" && exit 1 || true
-grep 'unsupported output mode: nope' "$ROOT/list-bad-output.err"
+"$YVEX_BIN" model list --models-root "$CATALOG_ROOT" --registry "$REG" --output nope \
+  > "$ROOT/list-bad-output.out" 2> "$ROOT/list-bad-output.err" && exit 1 || true
+grep 'model list --output requires table|audit|json' "$ROOT/list-bad-output.err"
 
 "$YVEX_BIN" model show deepseek4-v4-flash-dspark-selected-embed --registry "$REG" > "$ROOT/inspect.out"
 grep 'model: deepseek4-v4-flash-dspark-selected-embed' "$ROOT/inspect.out"
@@ -429,8 +546,11 @@ COMPOSITE_ROOT=$(realpath "$ROOT")
   --startup-profile composite --installation-root "$COMPOSITE_ROOT" \
   --target minimax-h3-fl2va --backend cuda --generation-mode media \
   > "$ROOT/add-composite.out"
-"$YVEX_BIN" model list --registry "$REG" > "$ROOT/list-composite.out"
-matches "$ROOT/list-composite.out" '^minimax-h3-fl2va-runtime-media[[:space:]]+minimax-h3[[:space:]]+cuda[[:space:]]+media[[:space:]]+-[[:space:]]+yes$'
+"$YVEX_BIN" model list --models-root "$CATALOG_ROOT" --registry "$REG" \
+  > "$ROOT/list-composite.out"
+grep 'minimax-h3-fl2va-runtime-media' "$ROOT/list-composite.out"
+grep 'package-ready' "$ROOT/list-composite.out"
+grep 'cuda' "$ROOT/list-composite.out"
 "$YVEX_BIN" model show minimax-h3-fl2va-runtime-media --registry "$REG" --audit \
   > "$ROOT/show-composite.out"
 grep 'runtime_profile: composite' "$ROOT/show-composite.out"
@@ -455,22 +575,64 @@ grep 'unsupported output mode: nope' "$ROOT/inspect-bad-output.err"
 
 "$YVEX_BIN" model registry add --path "$ARTIFACT" --registry "$REG" \
   --alias deepseek4-v4-flash-dspark-runtime-incomplete > "$ROOT/add-incomplete.out"
-YVEX_MODELS_REGISTRY="$REG" \
-  "$YVEX_BIN" server deepseek4-v4-flash-dspark-runtime-incomplete \
-  > "$ROOT/use-incomplete.out" 2> "$ROOT/use-incomplete.err" && exit 1 || true
-grep 'model has no complete startup profile' "$ROOT/use-incomplete.err"
-"$YVEX_BIN" model registry remove deepseek4-v4-flash-dspark-runtime-incomplete \
-  --registry "$REG" > "$ROOT/remove-incomplete.out"
+SERVER_RUNTIME="$ROOT/server-runtime"
+yvex_test_cleanup "$SERVER_RUNTIME"
+mkdir -m 700 "$SERVER_RUNTIME"
+(
+  server_pid=
+  finish_model_host()
+  {
+    status=$?
+    trap - EXIT HUP INT TERM
+    if test -n "$server_pid" && kill -0 "$server_pid" 2>/dev/null; then
+      XDG_RUNTIME_DIR="$SERVER_RUNTIME" "$YVEX_BIN" server stop >/dev/null 2>&1 || true
+      wait "$server_pid" 2>/dev/null || true
+    fi
+    exit "$status"
+  }
+  trap finish_model_host EXIT HUP INT TERM
 
-"$YVEX_BIN" model registry remove deepseek4-v4-flash-dspark-selected-embed --registry "$REG" > "$ROOT/remove.out"
-grep 'removed: deepseek4-v4-flash-dspark-selected-embed' "$ROOT/remove.out"
-grep 'status: models-removed' "$ROOT/remove.out"
-"$YVEX_BIN" model registry remove minimax-h3-fl2va-runtime-media --registry "$REG" \
-  > "$ROOT/remove-composite.out"
+  YVEX_MODELS_REGISTRY="$REG" XDG_RUNTIME_DIR="$SERVER_RUNTIME" \
+    "$YVEX_BIN" server --console off --openai off \
+    > "$ROOT/lifecycle-host.out" 2> "$ROOT/lifecycle-host.err" &
+  server_pid=$!
+  ready=0
+  attempt=0
+  while test "$attempt" -lt 100; do
+    if XDG_RUNTIME_DIR="$SERVER_RUNTIME" "$YVEX_BIN" server status --json \
+        > "$ROOT/lifecycle-status.json" 2> "$ROOT/lifecycle-status.err"; then
+      ready=1
+      break
+    fi
+    kill -0 "$server_pid" 2>/dev/null || break
+    attempt=$((attempt + 1))
+    sleep 0.02
+  done
+  test "$ready" -eq 1
 
-YVEX_MODELS_REGISTRY="$REG" \
-  "$YVEX_BIN" server missing > "$ROOT/use-missing.out" 2> "$ROOT/use-missing.err" && exit 1 || true
-grep 'model is not registered: missing' "$ROOT/use-missing.err"
+  expect_rc 1 env XDG_RUNTIME_DIR="$SERVER_RUNTIME" "$YVEX_BIN" server load \
+    deepseek4-v4-flash-dspark-runtime-incomplete \
+    > "$ROOT/use-incomplete.out" 2> "$ROOT/use-incomplete.err"
+  grep 'model has no complete startup profile' "$ROOT/use-incomplete.err"
+  "$YVEX_BIN" model registry remove deepseek4-v4-flash-dspark-runtime-incomplete \
+    --registry "$REG" > "$ROOT/remove-incomplete.out"
+
+  "$YVEX_BIN" model registry remove deepseek4-v4-flash-dspark-selected-embed \
+    --registry "$REG" > "$ROOT/remove.out"
+  grep 'removed: deepseek4-v4-flash-dspark-selected-embed' "$ROOT/remove.out"
+  grep 'status: models-removed' "$ROOT/remove.out"
+  "$YVEX_BIN" model registry remove minimax-h3-fl2va-runtime-media --registry "$REG" \
+    > "$ROOT/remove-composite.out"
+
+  expect_rc 1 env XDG_RUNTIME_DIR="$SERVER_RUNTIME" "$YVEX_BIN" server load missing \
+    > "$ROOT/use-missing.out" 2> "$ROOT/use-missing.err"
+  grep 'model is not registered: missing' "$ROOT/use-missing.err"
+
+  XDG_RUNTIME_DIR="$SERVER_RUNTIME" "$YVEX_BIN" server stop \
+    > "$ROOT/lifecycle-stop.out" 2> "$ROOT/lifecycle-stop.err"
+  wait "$server_pid"
+  server_pid=
+)
 
 "$YVEX_BIN" help --advanced > "$ROOT/help.out"
 grep 'yvex model acquire' "$ROOT/help.out"
@@ -483,7 +645,6 @@ grep -- '--progress' "$ROOT/help-acquire.out"
 "$YVEX_BIN" compile artifact prepare --help > "$ROOT/help-prepare.out"
 grep -- '--audit' "$ROOT/help-prepare.out"
 
-FAKE_HF="$PWD/tests/fixtures/bin/fake-hf"
 FAKE_GH="$PWD/tests/fixtures/bin/fake-gh"
 DOWNLOAD_ROOT="$ROOT/download"
 export YVEX_CONFIG_DIR="$ROOT/accounts-config"
@@ -515,6 +676,52 @@ test -f "$DOWNLOAD_ROOT/reports/gemma/gemma-4-12b-it.native-inventory.json"
 test -f "$DOWNLOAD_ROOT/reports/gemma/gemma-4-12b-it.download-report.json"
 test -f "$DOWNLOAD_ROOT/registry/gemma/gemma-4-12b-it.download.json"
 ! find "$DOWNLOAD_ROOT/gguf" -type f -name '*.gguf' 2>/dev/null | grep .
+
+"$YVEX_BIN" model list --models-root "$DOWNLOAD_ROOT" --registry "$REG" --json \
+  > "$ROOT/local-catalog.json"
+python3 - "$ROOT/local-catalog.json" <<'PY'
+import json
+import sys
+
+catalog = json.load(open(sys.argv[1], encoding="utf-8"))
+source = next(model for model in catalog["models"] if model["name"] == "gemma-4-12b-it")
+assert source["kind"] == "acquired-source"
+assert source["representation"] == "safetensors-source"
+assert source["package_state"] == "source-acquired"
+assert source["verification_state"] == "moving-reference"
+assert source["package_ready"] is False
+assert source["engine_state"] == "not-observed"
+assert source["blocker"] == "resolve an immutable provider revision before package preparation"
+PY
+
+YVEX_FAKE_HF_AUTH=1 YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" model acquire \
+  --repo community/minimax-h3-gguf --family minimax-h3 --name minimax-h3-community-gguf \
+  --revision 2222222222222222222222222222222222222222 \
+  --include model-Q4_K_M.gguf --models-root "$DOWNLOAD_ROOT" --auth auto \
+  --no-native-inventory --audit > "$ROOT/download-gguf.out"
+grep 'status: model-download-pass' "$ROOT/download-gguf.out"
+grep 'safetensors_count: 0' "$ROOT/download-gguf.out"
+grep 'gguf_count: 1' "$ROOT/download-gguf.out"
+grep 'boundary: acquired GGUF, structural inspection and package admission required' \
+  "$ROOT/download-gguf.out"
+"$YVEX_BIN" model list --models-root "$DOWNLOAD_ROOT" --registry "$REG" --json \
+  > "$ROOT/local-catalog-gguf.json"
+python3 - "$ROOT/local-catalog-gguf.json" <<'PY'
+import json
+import sys
+
+catalog = json.load(open(sys.argv[1], encoding="utf-8"))
+source = next(
+    model for model in catalog["models"] if model["name"] == "minimax-h3-community-gguf"
+)
+assert source["kind"] == "acquired-source"
+assert source["representation"] == "gguf"
+assert source["package_state"] == "source-acquired"
+assert source["verification_state"] == "recorded-unverified"
+assert source["package_ready"] is False
+assert source["engine_state"] == "not-observed"
+assert source["blocker"] == "inspect GGUF compatibility, then admit or repack"
+PY
 
 LIVE_ROOT="$ROOT/download-live"
 YVEX_FAKE_HF_AUTH=1 YVEX_FAKE_HF_STEP_DELAY=1 YVEX_FAKE_HF_STEPS=3 YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" model acquire gemma-4-12b-it --models-root "$LIVE_ROOT" --auth required --progress plain --tick-seconds 1 --audit > "$ROOT/download-live.out" 2>&1 &

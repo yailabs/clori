@@ -728,6 +728,50 @@
         "--token-env"
       ]
     },
+    "cli_offline_model_discovery": {
+      "booleans": [
+        "--audit",
+        "--interactive",
+        "--json"
+      ],
+      "repeatable_values": [],
+      "values": [
+        "--author",
+        "--cli",
+        "--filter",
+        "--limit",
+        "--models-root",
+        "--output",
+        "--page",
+        "--provider"
+      ]
+    },
+    "cli_offline_model_remote_inspect": {
+      "booleans": [
+        "--audit",
+        "--json"
+      ],
+      "repeatable_values": [],
+      "values": [
+        "--cli",
+        "--models-root",
+        "--output",
+        "--provider",
+        "--revision"
+      ]
+    },
+    "cli_offline_model_local_catalog": {
+      "booleans": [
+        "--audit",
+        "--json"
+      ],
+      "repeatable_values": [],
+      "values": [
+        "--models-root",
+        "--output",
+        "--registry"
+      ]
+    },
     "cli_offline_model_acquisition_cleanup": {
       "booleans": [
         "--all-provider-cache",
@@ -2028,7 +2072,9 @@
         "model.acquire.resume",
         "model.acquire.status",
         "model.acquire.stop",
+        "model.inspect",
         "model.list",
+        "model.search",
         "model.registry.add",
         "model.registry.remove",
         "model.registry.scan",
@@ -2369,6 +2415,96 @@
       "slash_projection": "none",
       "summary": "Enter retained interactive chat.",
       "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "models",
+        "search"
+      ],
+      "adapter_id": "models",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "QUERY",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [
+        "model",
+        "search"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_model_discovery"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "model.search",
+      "protocol_operation": "none",
+      "renderer_id": "human-or-json",
+      "result_schema": "remote-model-catalog.v1",
+      "side_effects": "provider metadata read",
+      "slash_projection": "none",
+      "summary": "Search remote provider model metadata without acquiring payloads.",
+      "test_owner": "tests/cli/models.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "models",
+        "remote"
+      ],
+      "adapter_id": "models",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "one",
+          "name": "REPOSITORY",
+          "required": true,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [
+        "model",
+        "inspect"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_model_remote_inspect"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "model.inspect",
+      "protocol_operation": "none",
+      "renderer_id": "human-or-json",
+      "result_schema": "remote-model-catalog.v1",
+      "side_effects": "provider metadata read",
+      "slash_projection": "none",
+      "summary": "Inspect exact remote revision and representation metadata.",
+      "test_owner": "tests/cli/models.sh",
       "visibility": "product-default"
     },
     {
@@ -5388,18 +5524,18 @@
       "deprecation_state": "current",
       "documentation_owner": "docs/operator-runbook.md",
       "flag_sets": [
-        "cli_offline_model_registry_read"
+        "cli_offline_model_local_catalog"
       ],
       "input_schema": "argv.v1",
       "lane": "offline-engine",
-      "model_requirement": "registry-model",
+      "model_requirement": "none",
       "operation_id": "model.list",
       "protocol_operation": "none",
       "renderer_id": "human",
       "result_schema": "human.v1",
       "side_effects": "read-only",
       "slash_projection": "none",
-      "summary": "List real local model registry entries.",
+      "summary": "List acquired sources and prepared local packages without opening engines.",
       "test_owner": "tests/client_cutover.sh",
       "visibility": "product-default"
     },
