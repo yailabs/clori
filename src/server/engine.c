@@ -465,6 +465,8 @@ static int engine_close(server_engine_manager *manager, server_engine *engine,
         }
     }
     yvex_server_media_registry_close(&engine->media);
+    if (!engine->sessions && !engine->media)
+        engine->summary.session_count = 0ull;
     yvex_model_engine_close(&engine->model);
     yvex_server_request_queue_close(&engine->request_queue);
     if (engine->telemetry_opened) {

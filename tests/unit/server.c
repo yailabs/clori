@@ -779,6 +779,7 @@ static int test_media_direct_prompt_routing(void)
     server_media_summary first = {0}, repeated = {0};
     server_media_registry *registry = NULL, *second = NULL;
     server_telemetry *telemetry = NULL, *second_telemetry = NULL;
+    yvex_server_metrics metrics = {0};
     media_messages messages = {0};
     yvex_error err;
     unsigned long long index;
@@ -820,7 +821,22 @@ static int test_media_direct_prompt_routing(void)
                          !strcmp(first.specialization_identity,
                                  repeated.specialization_identity),
                      "media runtime and profile identities are deterministic without aliases");
+    memset(&messages, 0, sizeof(messages));
+    YVEX_TEST_ASSERT(media_registry_request(second, YVEX_CLIENT_OP_SESSION_NEW,
+                                            "unload-owned", NULL, &messages,
+                                            &err) == YVEX_OK &&
+                         yvex_server_telemetry_metrics_copy(
+                             second_telemetry, &metrics, &err) == YVEX_OK &&
+                         metrics.active_sessions == 1ull &&
+                         metrics.total_sessions == 1ull,
+                     "media registry owns one active session");
     yvex_server_media_registry_close(&second);
+    memset(&metrics, 0, sizeof(metrics));
+    YVEX_TEST_ASSERT(yvex_server_telemetry_metrics_copy(
+                         second_telemetry, &metrics, &err) == YVEX_OK &&
+                         metrics.active_sessions == 0ull &&
+                         metrics.total_sessions == 1ull,
+                     "media registry close releases active session telemetry");
     yvex_server_telemetry_close(&second_telemetry);
     yvex_server_media_registry_close(&registry);
     yvex_server_telemetry_close(&telemetry);

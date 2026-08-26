@@ -809,8 +809,20 @@ int yvex_server_media_registry_start(
 void yvex_server_media_registry_close(server_media_registry **registry)
 {
     server_media_registry *owner;
+    unsigned long long index;
     if (!registry || !*registry) return;
     owner = *registry;
+    if (owner->mutex_ready && pthread_mutex_lock(&owner->mutex) == 0) {
+        owner->closing = 1;
+        for (index = 0ull; index < MEDIA_SESSION_CAP; ++index) {
+            server_media_session *session = owner->sessions + index;
+            if (!session->name[0] || session->state == YVEX_SERVER_SESSION_CLOSED)
+                continue;
+            session->state = YVEX_SERVER_SESSION_CLOSED;
+            yvex_server_telemetry_session(owner->telemetry, -1, 0);
+        }
+        (void)pthread_mutex_unlock(&owner->mutex);
+    }
     yvex_runtime_media_model_close(&owner->model);
     if (owner->mutex_ready) (void)pthread_mutex_destroy(&owner->mutex);
     memset(owner, 0, sizeof(*owner));

@@ -256,6 +256,7 @@ engine, = catalog["engines"]
 assert engine["alias"] == sys.argv[3]
 assert engine["generation"] == int(sys.argv[4])
 assert engine["state"] == "unloaded" and not engine["execution_ready"]
+assert engine["sessions"] == 0
 assert engine["mapped_package_bytes"] == 0
 assert engine["resident_host_bytes"] == 0
 assert engine["resident_device_bytes"] == 0
