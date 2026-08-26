@@ -112,8 +112,9 @@ at the admitted package boundary.
   representations, multiple GGUF qtypes, sharded safetensors, unknown sidecars, local catalog,
   acquisition, resume/cancellation owners, and token redaction.
 - `tests/test_source_ownership.sh`: PASS for the two new catalog owners.
-- Two successful combined-tree `make yvex` builds established warning-clean compilation; final
-  repeated-build evidence remains subject to the concurrent source snapshot described below.
+- Two consecutive combined-tree `make yvex` builds completed against one unchanged shared-diff
+  identity. The concurrent protocol implementation emitted two `unused-function` warnings, so
+  warning-clean combined-tree closure is not claimed by this checkpoint.
 - Bounded live Hugging Face metadata smoke: `model search "MiniMax H3"` returned provider records
   without payload acquisition; exact MiniMax inspection resolved revision
   `b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08` and enumerated source representations and files.
