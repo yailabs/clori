@@ -9,6 +9,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -258,83 +259,164 @@ static void accounts_first_line(char *value) {
     }
 }
 
-/* Run one admitted provider CLI invocation and capture its bounded combined output. */
-static int accounts_run_capture(
-    const char *const *args, char *out, size_t out_cap, int *exit_code, yvex_error *err) {
-    int pipefd[2];
-    int devnull = -1;
+static void accounts_capture_append(char *out,
+                                    size_t capacity,
+                                    size_t *count,
+                                    int *truncated,
+                                    const char *bytes,
+                                    size_t byte_count) {
+    size_t available;
+    size_t copied;
+
+    if (!count || !truncated || !bytes)
+        return;
+    available = capacity > *count ? capacity - *count : 0u;
+    copied = available > 0u ? available - 1u : 0u;
+    if (copied > byte_count)
+        copied = byte_count;
+    if (copied && out)
+        memcpy(out + *count, bytes, copied);
+    *count += copied;
+    if (out && capacity)
+        out[*count < capacity ? *count : capacity - 1u] = '\0';
+    if (copied != byte_count)
+        *truncated = 1;
+}
+
+/* Capture one provider process without persisting or rendering its arguments or output. */
+int yvex_accounts_capture_provider_command(yvex_account_capture_options *options,
+                                           yvex_error *err) {
+    int stdout_pipe[2] = {-1, -1};
+    int stderr_pipe[2] = {-1, -1};
     pid_t pid;
     int status;
-    size_t used = 0u;
+    int stdout_open = 1;
+    int stderr_open = 1;
 
-    if (!args || !args[0] || !out || out_cap == 0u || !exit_code) {
+    if (!options || !options->args[0] || !options->stdout_bytes ||
+        options->stdout_capacity < 2u || !options->stderr_bytes ||
+        options->stderr_capacity < 2u) {
         yvex_error_set(
             err, YVEX_ERR_INVALID_ARG, "accounts_exec", "arguments and outputs are required");
         return YVEX_ERR_INVALID_ARG;
     }
-    out[0] = '\0';
-    *exit_code = 1;
-    if (pipe(pipefd) != 0) {
+    options->stdout_count = 0u;
+    options->stderr_count = 0u;
+    options->stdout_truncated = 0;
+    options->stderr_truncated = 0;
+    options->exit_code = 1;
+    options->stdout_bytes[0] = '\0';
+    options->stderr_bytes[0] = '\0';
+    if (pipe(stdout_pipe) != 0 || pipe(stderr_pipe) != 0) {
+        if (stdout_pipe[0] >= 0) {
+            close(stdout_pipe[0]);
+            close(stdout_pipe[1]);
+        }
+        if (stderr_pipe[0] >= 0) {
+            close(stderr_pipe[0]);
+            close(stderr_pipe[1]);
+        }
         yvex_error_setf(err, YVEX_ERR_IO, "accounts_exec", "pipe failed: %s", strerror(errno));
         return YVEX_ERR_IO;
     }
-    devnull = open("/dev/null", O_WRONLY);
     pid = fork();
     if (pid < 0) {
-        close(pipefd[0]);
-        close(pipefd[1]);
-        if (devnull >= 0)
-            close(devnull);
+        close(stdout_pipe[0]);
+        close(stdout_pipe[1]);
+        close(stderr_pipe[0]);
+        close(stderr_pipe[1]);
         yvex_error_setf(err, YVEX_ERR_IO, "accounts_exec", "fork failed: %s", strerror(errno));
         return YVEX_ERR_IO;
     }
     if (pid == 0) {
-        close(pipefd[0]);
-        dup2(pipefd[1], STDOUT_FILENO);
-        if (devnull >= 0)
-            dup2(devnull, STDERR_FILENO);
-        close(pipefd[1]);
-        if (devnull >= 0)
-            close(devnull);
-        execv(args[0], (char *const *)args);
+        close(stdout_pipe[0]);
+        close(stderr_pipe[0]);
+        (void)dup2(stdout_pipe[1], STDOUT_FILENO);
+        (void)dup2(stderr_pipe[1], STDERR_FILENO);
+        close(stdout_pipe[1]);
+        close(stderr_pipe[1]);
+        execv(options->args[0], (char *const *)options->args);
         _exit(127);
     }
-    close(pipefd[1]);
-    if (devnull >= 0)
-        close(devnull);
-    for (;;) {
-        char buf[512];
-        ssize_t n = read(pipefd[0], buf, sizeof(buf));
-        if (n < 0) {
+    close(stdout_pipe[1]);
+    close(stderr_pipe[1]);
+    while (stdout_open || stderr_open) {
+        struct pollfd descriptors[2];
+        int poll_result;
+        int index;
+
+        descriptors[0].fd = stdout_open ? stdout_pipe[0] : -1;
+        descriptors[0].events = POLLIN | POLLHUP;
+        descriptors[0].revents = 0;
+        descriptors[1].fd = stderr_open ? stderr_pipe[0] : -1;
+        descriptors[1].events = POLLIN | POLLHUP;
+        descriptors[1].revents = 0;
+        poll_result = poll(descriptors, 2u, -1);
+        if (poll_result < 0) {
             if (errno == EINTR)
                 continue;
-            close(pipefd[0]);
+            if (stdout_open) close(stdout_pipe[0]);
+            if (stderr_open) close(stderr_pipe[0]);
+            (void)waitpid(pid, &status, 0);
             yvex_error_setf(err, YVEX_ERR_IO, "accounts_exec", "read failed: %s", strerror(errno));
             return YVEX_ERR_IO;
         }
-        if (n == 0)
-            break;
-        if (used + 1u < out_cap) {
-            size_t take = (size_t)n;
-            if (take > out_cap - used - 1u)
-                take = out_cap - used - 1u;
-            memcpy(out + used, buf, take);
-            used += take;
-            out[used] = '\0';
+        for (index = 0; index < 2; ++index) {
+            char buffer[4096];
+            ssize_t got;
+            int *open = index == 0 ? &stdout_open : &stderr_open;
+            int fd = index == 0 ? stdout_pipe[0] : stderr_pipe[0];
+
+            if (!*open || !(descriptors[index].revents & (POLLIN | POLLHUP | POLLERR)))
+                continue;
+            got = read(fd, buffer, sizeof(buffer));
+            if (got > 0) {
+                if (index == 0)
+                    accounts_capture_append(options->stdout_bytes, options->stdout_capacity,
+                                            &options->stdout_count, &options->stdout_truncated,
+                                            buffer, (size_t)got);
+                else
+                    accounts_capture_append(options->stderr_bytes, options->stderr_capacity,
+                                            &options->stderr_count, &options->stderr_truncated,
+                                            buffer, (size_t)got);
+            } else if (got == 0 || (got < 0 && errno != EINTR)) {
+                close(fd);
+                *open = 0;
+            }
         }
     }
-    close(pipefd[0]);
     if (waitpid(pid, &status, 0) < 0) {
         yvex_error_setf(err, YVEX_ERR_IO, "accounts_exec", "waitpid failed: %s", strerror(errno));
         return YVEX_ERR_IO;
     }
     if (WIFEXITED(status))
-        *exit_code = WEXITSTATUS(status);
+        options->exit_code = WEXITSTATUS(status);
     else if (WIFSIGNALED(status))
-        *exit_code = 128 + WTERMSIG(status);
+        options->exit_code = 128 + WTERMSIG(status);
     else
-        *exit_code = 1;
+        options->exit_code = 1;
+    yvex_error_clear(err);
     return YVEX_OK;
+}
+
+/* Run one admitted provider CLI invocation and capture its bounded stdout. */
+static int accounts_run_capture(
+    const char *const *args, char *out, size_t out_cap, int *exit_code, yvex_error *err) {
+    yvex_account_capture_options options;
+    char stderr_bytes[512];
+    size_t index;
+    int rc;
+
+    memset(&options, 0, sizeof(options));
+    for (index = 0u; index + 1u < YVEX_ACCOUNT_ARG_CAP && args[index]; ++index)
+        options.args[index] = args[index];
+    options.stdout_bytes = out;
+    options.stdout_capacity = out_cap;
+    options.stderr_bytes = stderr_bytes;
+    options.stderr_capacity = sizeof(stderr_bytes);
+    rc = yvex_accounts_capture_provider_command(&options, err);
+    if (exit_code) *exit_code = options.exit_code;
+    return rc;
 }
 
 int yvex_accounts_run_provider_command(const yvex_account_command_options *options,
