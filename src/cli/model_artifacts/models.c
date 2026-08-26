@@ -637,9 +637,57 @@ static int command_models_search(int arg_count, char **args)
     return 0;
 }
 
+static int local_engine_observation_capture(yvex_cli_engine_observation *observation,
+                                            yvex_error *err)
+{
+    yvex_client_request request;
+    yvex_client_message message;
+    yvex_client *client = NULL;
+    int rc;
+
+    if (!observation) return YVEX_ERR_INVALID_ARG;
+    memset(observation, 0, sizeof(*observation));
+    rc = yvex_client_connect(&client, NULL, err);
+    if (rc == YVEX_ERR_IO) {
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    if (rc != YVEX_OK) return rc;
+    memset(&request, 0, sizeof(request));
+    request.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
+    request.operation = YVEX_CLIENT_OP_ENGINE_LIST;
+    request.request_number = 1u;
+    rc = yvex_client_send(client, &request, err);
+    while (rc == YVEX_OK) {
+        rc = yvex_client_receive(client, &message, err);
+        if (rc != YVEX_OK) break;
+        if (message.kind == YVEX_CLIENT_MESSAGE_ACK) {
+            observation->host_observed = 1;
+            break;
+        }
+        if (message.kind == YVEX_CLIENT_MESSAGE_ERROR) {
+            rc = message.status;
+            yvex_error_set(err, (yvex_status)rc, "model_list_engine_observation",
+                           message.reason);
+            break;
+        }
+        if (message.kind != YVEX_CLIENT_MESSAGE_ENGINE ||
+            observation->count >= YVEX_SERVER_ENGINE_CAP) {
+            rc = YVEX_ERR_FORMAT;
+            yvex_error_set(err, YVEX_ERR_FORMAT, "model_list_engine_observation",
+                           "server returned an invalid engine catalog");
+            break;
+        }
+        observation->engines[observation->count++] = message.engine;
+    }
+    yvex_client_close(&client);
+    return rc;
+}
+
 static int command_models_list(int arg_count, char **args)
 {
     yvex_cli_model_list_options cli;
+    yvex_cli_engine_observation engines;
     yvex_local_catalog_options options;
     yvex_local_model_catalog *catalog = NULL;
     yvex_error err;
@@ -653,10 +701,13 @@ static int command_models_list(int arg_count, char **args)
     yvex_error_clear(&err);
     rc = yvex_local_model_catalog_open(&catalog, &options, &err);
     if (rc != YVEX_OK) return print_yvex_error(&err, exit_for_status(rc));
-    rc = yvex_local_catalog_render(stdout, catalog, cli.output_mode);
+    rc = local_engine_observation_capture(&engines, &err);
+    if (rc == YVEX_OK)
+        rc = yvex_local_catalog_render(stdout, catalog, &engines, cli.output_mode);
     yvex_local_model_catalog_close(catalog);
     if (rc != YVEX_OK) {
-        yvex_error_set(&err, rc, "model_list", "cannot render local model catalog");
+        if (!yvex_error_is_set(&err))
+            yvex_error_set(&err, rc, "model_list", "cannot render local model catalog");
         return print_yvex_error(&err, exit_for_status(rc));
     }
     return 0;

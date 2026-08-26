@@ -161,6 +161,7 @@ static int local_source_record_add(yvex_local_model_catalog *catalog,
     entry = local_catalog_add(catalog);
     if (!entry) return local_refuse(err, YVEX_ERR_NOMEM, "local catalog allocation failed");
     entry->kind = YVEX_LOCAL_MODEL_ACQUIRED_SOURCE;
+    local_copy(entry->engine_state, sizeof(entry->engine_state), "not-applicable");
     local_copy(entry->name, sizeof(entry->name), target);
     local_copy(entry->family, sizeof(entry->family), family);
     local_copy(entry->provider, sizeof(entry->provider), provider);

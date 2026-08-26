@@ -610,6 +610,20 @@ mkdir -m 700 "$SERVER_RUNTIME"
   done
   test "$ready" -eq 1
 
+  XDG_RUNTIME_DIR="$SERVER_RUNTIME" "$YVEX_BIN" model list \
+    --models-root "$CATALOG_ROOT" --registry "$REG" --json \
+    > "$ROOT/list-host-observed.json"
+  python3 - "$ROOT/list-host-observed.json" <<'PY'
+import json
+import sys
+
+catalog = json.load(open(sys.argv[1], encoding="utf-8"))
+assert catalog["engine_host_observed"] is True
+packages = {model["name"]: model for model in catalog["models"]}
+assert packages["deepseek4-v4-flash-dspark-selected-embed"]["engine_state"] == "not-loaded"
+assert packages["minimax-h3-fl2va-runtime-media"]["engine_state"] == "not-loaded"
+PY
+
   expect_rc 1 env XDG_RUNTIME_DIR="$SERVER_RUNTIME" "$YVEX_BIN" server load \
     deepseek4-v4-flash-dspark-runtime-incomplete \
     > "$ROOT/use-incomplete.out" 2> "$ROOT/use-incomplete.err"
@@ -690,7 +704,7 @@ assert source["representation"] == "safetensors-source"
 assert source["package_state"] == "source-acquired"
 assert source["verification_state"] == "moving-reference"
 assert source["package_ready"] is False
-assert source["engine_state"] == "not-observed"
+assert source["engine_state"] == "not-applicable"
 assert source["blocker"] == "resolve an immutable provider revision before package preparation"
 PY
 
@@ -719,7 +733,7 @@ assert source["representation"] == "gguf"
 assert source["package_state"] == "source-acquired"
 assert source["verification_state"] == "recorded-unverified"
 assert source["package_ready"] is False
-assert source["engine_state"] == "not-observed"
+assert source["engine_state"] == "not-applicable"
 assert source["blocker"] == "inspect GGUF compatibility, then admit or repack"
 PY
 
