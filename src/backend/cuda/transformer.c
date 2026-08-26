@@ -1,4 +1,5 @@
 #include "src/backend/cuda/private.h"
+#include <yvex/internal/component.h>
 #include <yvex/internal/transformer.h>
 #include <yvex/quant.h>
 

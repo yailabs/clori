@@ -17,11 +17,7 @@ typedef struct yvex_backend yvex_backend;
 #define YVEX_TRANSFORMER_JOINT_BLOCK_WEIGHT_COUNT 10u
 #define YVEX_TRANSFORMER_JOINT_EXTERNAL_WEIGHT_COUNT 35u
 
-typedef struct yvex_transformer_joint_encoded_weight {
-    const unsigned char *encoded;
-    unsigned long long encoded_bytes, row_count, row_width, row_bytes;
-    unsigned int qtype;
-} yvex_transformer_joint_encoded_weight;
+typedef yvex_transformer_encoded_weight yvex_transformer_joint_encoded_weight;
 
 typedef enum {
     YVEX_TRANSFORMER_JOINT_NORM1 = 0,

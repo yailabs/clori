@@ -12,6 +12,7 @@
 #include <yvex/api.h>
 
 #include "src/backend/cuda/private.h"
+#include <yvex/internal/component.h>
 #include <yvex/internal/quant_numeric.h>
 #include <yvex/internal/transformer.h>
 

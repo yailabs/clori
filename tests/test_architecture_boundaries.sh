@@ -312,6 +312,17 @@ if rg -n -i 'minimax' src/backend/cuda/qtype.c src/backend/cuda/joint_transforme
     src/runtime/component.c; then
     fail "generic runtime or CUDA output-linear execution contains a MiniMax switch"
 fi
+if rg -n 'encoded_bytes, row_count, row_width, row_bytes' \
+    include/yvex/internal/backend.h include/yvex/internal/transformer.h \
+    include/yvex/internal/joint_transformer.h; then
+    fail "component execution duplicates the canonical encoded-weight descriptor"
+fi
+rg -n 'typedef struct yvex_component_encoded_weight yvex_backend_text_weight' \
+    include/yvex/internal/backend.h >/dev/null ||
+    fail "text execution does not reuse the canonical component weight view"
+rg -n 'typedef struct yvex_component_encoded_weight yvex_transformer_encoded_weight' \
+    include/yvex/internal/transformer.h >/dev/null ||
+    fail "dense Transformer execution does not reuse the canonical component weight view"
 
 if find src include -type f \( -name '*.c' -o -name '*.h' -o -name '*.cu' \) \
         ! -path 'src/model/families/*' -print0 |

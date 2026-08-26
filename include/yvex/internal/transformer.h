@@ -286,11 +286,7 @@ int yvex_cuda_transformer_rms_norm_bf16(yvex_backend *backend,
     yvex_device_tensor *output, unsigned long long rows, unsigned long long width,
     float epsilon, yvex_backend_cuda_operation_facts *facts, yvex_error *err);
 #define YVEX_TRANSFORMER_DENSE_DECODER_BLOCK_WEIGHT_COUNT 12u
-typedef struct {
-    const unsigned char *encoded;
-    unsigned long long encoded_bytes, row_count, row_width, row_bytes;
-    unsigned int qtype;
-} yvex_transformer_encoded_weight;
+typedef struct yvex_component_encoded_weight yvex_transformer_encoded_weight;
 typedef enum {
     YVEX_TRANSFORMER_DENSE_NORM1 = 0,
     YVEX_TRANSFORMER_DENSE_QKV_WEIGHT,

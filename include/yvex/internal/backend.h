@@ -207,11 +207,7 @@ typedef enum {
     YVEX_BACKEND_TEXT_WEIGHT_COUNT,
     YVEX_BACKEND_TEXT_LAYER_WEIGHT_COUNT = YVEX_BACKEND_TEXT_WEIGHT_COUNT - 1
 } yvex_backend_text_weight_slot;
-typedef struct {
-    const unsigned char *encoded;
-    unsigned long long encoded_bytes, row_count, row_width, row_bytes;
-    unsigned int qtype;
-} yvex_backend_text_weight;
+typedef struct yvex_component_encoded_weight yvex_backend_text_weight;
 typedef struct {
     unsigned long long token_count, hidden_width, layer_count, resident_bytes;
     unsigned long long kernel_launches, h2d_bytes, d2h_bytes, device_bytes;
