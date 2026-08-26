@@ -74,11 +74,11 @@ not reconstruct model topology.
 
 The product levels are verified source, logical model, family projection,
 Transformation IR, quantization decisions, physical variant, Physical
-Execution IR, complete artifact, admission, materialization, optional derived
-execution asset, runtime binding, immutable runtime model, compiled execution
-profile, mutable session, request transaction, workload evidence, benchmark,
-and release qualification. These levels are identities and lifecycle
-boundaries, not aliases for directories.
+Execution IR, complete artifact, admission, materialization, runtime binding,
+deployment specialization, model-engine generation, mutable session, executable
+batch, request transaction, workload evidence, benchmark, and release
+qualification. These levels are identities and lifecycle boundaries, not
+aliases for directories.
 
 ## Authority boundaries
 
@@ -91,10 +91,10 @@ boundaries, not aliases for directories.
 | GGUF container, qtypes, writer, layout | `src/gguf/` |
 | Artifact snapshot, integrity, admission, materialization | `src/artifact/` |
 | Semantic/executable graph and state protocols | `src/graph/` |
-| Runtime binding, immutable model, sessions, residency, workspace | `src/runtime/` |
+| Runtime binding, model engines, specialization, sessions, residency, scheduler | `src/runtime/` |
 | Device capability, memory, kernels, launch graphs | `src/backend/` |
 | Autoregressive composition | `src/runtime/generation.c` and typed generation owners |
-| Hosted model, sessions, protocol, telemetry | `src/server/` |
+| Persistent host, engine manager, routing, protocol, telemetry | `src/server/` |
 | OpenAI-compatible projection | `src/server/openai/` and `src/provider/` |
 | Command metadata and projections | `config/operator/registry.json`, generated descriptors, `src/cli/` |
 
@@ -117,9 +117,10 @@ ownership rules are in
 
 ## Application surfaces
 
-The private local protocol is version 12. It carries typed requests, streamed
-channels, status, session and partial-turn results, progress, terminal results,
-and refusals. Every earlier version, including v11, is refused rather than
+The private local protocol is version 13. It carries typed host and engine
+lifecycle operations, exact engine-generation routing, streamed channels,
+status, session and partial-turn results, progress, terminal results, and
+refusals. Every earlier version, including v12, is refused rather than
 interpreted under the current fixed-layout contract.
 The in-process OpenAI adapter translates the bounded compatibility profile to
 the same protocol/session semantics. Neither transport enters graph, tokenizer,
@@ -134,7 +135,7 @@ REPL slash schemas consume that one authority.
 
 The admitted DeepSeek-V4-Flash-DSpark vertical reaches target-only and
 target-verified speculative text through one complete artifact, binding,
-runtime model, worker, and session authority on CPU and the admitted mixed GB10
+engine generation, scheduler, and session authority on CPU and the admitted mixed GB10
 path. Candidate tokens remain private until the complete target admits an
 accepted prefix; native and HTTP clients see only committed text and usage.
 

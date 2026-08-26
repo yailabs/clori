@@ -24,15 +24,19 @@ yvex  one public executable with finite client/offline modes and an explicit
       foreground server mode
 ```
 
-`yvex server MODEL [--ctx N]` directly enters the foreground server lifecycle
-and owns the model, worker, queue, sessions, KV, Unix-domain protocol, loopback
-OpenAI-compatible listener, and runtime telemetry. Runtime-facing client
-operations cross the local protocol. Finite compiler and engineering operations
-may link engine owners but never become another hosted runtime.
+`yvex server` directly enters a persistent foreground host lifecycle with no
+loaded model. Explicit `server load MODEL` and `server unload MODEL` operations
+create and retire identity-bound engine generations while the Unix-domain
+protocol, loopback OpenAI-compatible listener, and telemetry remain alive.
+Runtime-facing clients route to one exact engine generation through the local
+protocol. Finite compiler and engineering operations may link engine owners but
+never become another hosted runtime.
 
-The current implementation can compile admitted physical variants, open one
-complete model, generate streamed text, retain exact multi-turn sessions, and
-serve the bounded `yvex.openai.compat.v2` profile. This establishes executable
+The current implementation can compile admitted physical packages, specialize
+them for one deployment, dynamically own several fitting engine generations,
+generate streamed text or typed media, retain exact multi-turn sessions, and
+serve the bounded `yvex.openai.compat.v2` profile. Resource admission may still
+permit only one very large engine on GB10. These facts establish executable
 product capability, not model quality, release benchmark, or release
 qualification.
 
@@ -109,9 +113,9 @@ not a replacement historical ledger.
 | Source and compilation | The pinned 48-shard DSpark source, tokenizer, 72,317-tensor coverage, 1,409-terminal Transformation IR, bootstrap physical policy, qtypes, and deterministic GGUF emission have typed owners and identity-bound outputs. |
 | Compiler and family boundary | Compiler-facing family adapters seal source-authored facts into Semantic Model IR and a canonical Operator Graph IR. Generic passes seal Physical Execution IR and one content-addressed binding; runtime model-open authenticates and instantiates that compiled truth without consulting a concrete family implementation. |
 | Artifact and admission | One complete DSpark bootstrap artifact contains the target and drafter; structural, payload, roundtrip, materialization, and one binding containing target/draft/verification plans are admitted outside Git. |
-| Runtime and generation | One authenticated model opens in the foreground `yvex server` process; server-owned sessions retain exact target KV/token truth and bounded candidate state; target-only and target-verified DSpark text run on CPU and the admitted mixed CUDA/host path. |
-| Application serving | Local protocol v12 and YVEX OpenAI Compatibility Profile v2 share one runtime, scheduler, session registry, and telemetry authority; bounded session fork composes immutable prefix sharing with independent semantic state. |
-| Product surface | `yvex` is the sole product executable. Its explicit foreground `server MODEL` mode hosts the model; `chat` and `run` remain protocol clients, while finite compiler and engineering lanes remain bounded offline operations. |
+| Runtime and generation | An authenticated package and deployment specialization open as one immutable engine generation; engine-bound sessions retain exact target KV/token truth and bounded candidate state; target-only and target-verified DSpark text and MiniMax typed media use the same host/runtime/backend substrate. |
+| Application serving | Local protocol v13 and YVEX OpenAI Compatibility Profile v2 share one persistent host, engine manager, session registry, request routing, and telemetry authority; bounded session fork composes immutable prefix sharing with independent semantic state. |
+| Product surface | `yvex` is the sole product executable. Its explicit foreground `server` mode starts with zero engines; `server load`, `server unload`, and `server models` control engine generations while `chat` and `run` remain protocol clients and finite compiler/engineering lanes remain bounded offline operations. |
 | Command architecture | `yvex.operator.registry.v1` generates immutable descriptors compiled into `yvex`; canonical operation IDs drive the truthful command taxonomy, lane-safe dispatch, help, JSON discovery, completion, and slash-command schemas. |
 | Documentation architecture | Canonical doctrine, terminology, reference and implemented architecture, family records, contracts, operations, development policy, audits, migrations, and release surfaces have separate governed owners. |
 | Code commentary | Every governed first-party source follows the natural selective-commentary doctrine; the structural guard rejects obsolete templates and boilerplate while production lexical tokens remain unchanged. |
@@ -139,12 +143,16 @@ target-only and 2.08 token/s DSpark. These are controlled characterization,
 not a release benchmark. The 20--24 token/s class is the first minimum
 engineering floor, not the optimization destination.
 
-The active implementation now derives execution geometry from one sealed model
-descriptor and admits binding v14 as the complete compiler authority; older
-bindings are refused because they cannot represent the legal expert-worklist
-widths and optional Tensor Core regime carried by Physical Execution IR v4.
-Runtime instantiates actual expert-major populations from typed execution batches;
-the backend cannot infer semantic compatibility or manufacture execution width.
+The active implementation now derives stable package geometry from Physical
+Execution IR v5 and authenticates it through runtime binding v15. The explicit
+v14 reader accepts compatible canonical package records, lifts them into v5,
+and refuses v14 derived-layout requirements that would misrepresent the new
+package/specialization boundary. Deployment implementation class, activation
+representation, admitted widths, hardware capability, and crossovers are
+sealed once in an engine specialization rather than persisted as package
+meaning. Runtime instantiates actual expert-major populations from typed
+execution batches; the backend cannot infer semantic compatibility or
+manufacture execution width.
 Hardware, workload, capacity and state-page facts remain separate. Admission
 refuses insufficient model-residency memory before artifact open. Host graph
 state commits through stable per-class virtual pages; a phase roofline ledger
@@ -213,7 +221,7 @@ Machine-readable readiness facts retained for claim guards:
 ```text
 canonical_operation_registry_ready=1
 generated_command_descriptors_ready=1
-protocol_v12_ready=1
+protocol_v13_ready=1
 mature_repl_console_ready=1
 deepseek_dspark_source_ready=1
 target_only_generation_ready=1
@@ -225,7 +233,7 @@ model_quality_evaluation_ready=0
 full_model_release_benchmark_ready=0
 release_qualification_ready=0
 continuous_batching_ready=0
-multi_model_server_ready=0
+multi_model_server_ready=1
 remote_server_ready=0
 authentication_ready=0
 tls_ready=0
@@ -267,7 +275,8 @@ YVEX does not currently claim:
 
 - a full-screen TUI or an explicit reasoning channel for a runtime profile that
   does not advertise one;
-- warm decode optimization or 5, 10, or 20 tokens/s admission;
+- the initial 20--24 token/s warm-decode performance class or a later
+  optimization destination;
 - DSpark acceleration, optimized block verification, or production load-aware
   confidence scheduling;
 - model behavior or model quality evaluation;
@@ -277,6 +286,7 @@ YVEX does not currently claim:
   security;
 - the full OpenAI API, Anthropic compatibility, hosted tools, multimodal
   OpenAI input, or model-server tool execution;
-- continuous batching, multi-model serving, distributed serving, or sessions
+- global ready-sequence continuous batching, arbitrary simultaneous residency
+  of huge models, automatic engine swap, distributed serving, or sessions
   persisted across server restart;
 - a second complete model-family vertical.

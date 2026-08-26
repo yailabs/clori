@@ -19,8 +19,7 @@ tools/                   bounded build-time projection generators and validators
 build/generated/sources.mk deterministic source/build projection, never tracked
 build/generated/operator generated immutable descriptor data, never tracked or installed
 src/cli/io/client.c      runtime-client lane, REPL, protocol projections
-src/daemon/              long-lived runtime-host entrypoint
-src/server/              protocol, worker, sessions, telemetry, host lifecycle and server adapters
+src/server/              persistent host, engine manager, protocol, sessions, telemetry and adapters
 src/provider/            transport-neutral application request/result semantics
 src/cli/                 unified runtime-client and offline command lanes, render and IO
 src/source/              source manifests, provenance, inventory, payload trust/streaming
@@ -39,16 +38,16 @@ src/runtime/             family-neutral immutable model, sessions, execution and
 
 ```text
 registry JSON -> strict build validation -> immutable compiled descriptors -> yvex dispatch/help
-product argv -> protocol v12 -> server scheduler/session -> typed events/results -> client render
+product argv -> protocol v13 -> host routing -> exact engine/session -> typed results -> client render
 application -> OpenAI profile -> provider contract -> local protocol -> same server worker/session
 engineering argv -> nested owner route -> report/domain -> engineering render -> cli/io
 
 file writer -> explicit local files only
 source facts -> architecture IR -> coverage -> contribution map -> transformation IR
 payload session -> bounded chunks -> transformation execution -> quantization
-GGUF ABI -> artifact descriptor -> Physical Execution IR -> materialization -> runtime binding
-runtime binding -> compiled execution profile -> immutable runtime model -> execution session
-execution session -> attention prefill/decode phases -> state delta
+GGUF ABI -> artifact descriptor -> package Physical Execution IR -> materialization -> binding v15
+binding -> deployment specialization -> immutable engine generation -> execution session
+ready sequence -> engine scheduler -> execution batch -> backend -> transactional state delta
 persistent KV -> model prefill -> transformer -> logits -> sampling -> generation
 ```
 
@@ -134,12 +133,12 @@ domain algorithms. No writer owns command output.
   emitted names, emitted layout, descriptor, and typed format facts.
 - Artifact owns YVEX artifact descriptors, materialization boundary, roundtrip
   gates, identity, integrity, and artifact reports.
-- Graph physical execution owns terminal consumer/layout/placement decisions,
-  compiled execution profiles, device-view admission, and shape registry.
-- Model owns runtime-descriptor projection. Runtime owns descriptor import and
-  consumption, binding import, immutable model lifecycle, mutable sessions,
-  residency, state, and bounded benchmark execution; model families supply
-  typed family facts.
+- Graph physical execution owns stable terminal consumer, package layout,
+  canonical qtype, encoded range, and persisted numerical-obligation facts.
+- Model owns runtime-descriptor projection. Runtime imports binding/package
+  truth, seals deployment specialization, owns immutable engine generations,
+  model resources, mutable sessions, ready-work scheduling, residency, state,
+  and bounded benchmark execution; model families supply typed semantic facts.
 - Graph owns bind plans and graph execution boundary.
 - Backend owns exact tensor, primitive, bundle, failure, cleanup, and qtype
   support/refusal facts.
@@ -188,19 +187,22 @@ domain algorithms. No writer owns command output.
 | Owner | Boundary |
 | --- | --- |
 | `src/runtime/descriptor.c` | runtime-descriptor ABI, deterministic import, validation, lookup, and typed result projection |
-| `src/runtime/core.c` | immutable runtime-model and mutable execution-session lifecycle |
+| `src/runtime/core.c` | immutable model-engine generations and mutable execution-session lifecycle |
 | `src/runtime/binding.c` | transactional, content-addressed runtime-binding serialization and admission |
-| `src/runtime/residency.c` | immutable model/component weight residency and model-lifetime sharing |
+| `src/runtime/specialization.c` | deployment implementation class, hardware capability, admitted execution envelope, and specialization identity |
+| `src/runtime/residency.c` | typed package mappings, prepared/resident engine resources, accounting and model-lifetime sharing |
+| `src/runtime/scheduler.c` | one engine-owned ready-work and compatible-operation scheduling authority |
 | `src/runtime/state_residency.c` | session persistent-state banks, CUDA paging, publication, rollback, reset and invalidation |
 | `src/runtime/graph.c` | execution descriptors, phase/mode dispatch, reusable workspace, and transactional publication |
 | `src/runtime/benchmark.c` | identity-bound runtime timing, baseline, CSV, and deterministic SVG serialization |
-| `src/graph/execution.c` | Physical Execution IR, compiled execution-profile identities, device-view admission, and execution-shape registry |
+| `src/graph/execution.c` | Physical Execution IR v5 package/storage facts, deterministic identity, validation, and device-view admission |
 | `src/graph/worklist.c` | deterministic execution-batch sealing, expert-major worklist construction, validation, identity, and observation aggregation |
 | `src/graph/candidate.c` | prefix-addressable attention candidate deltas and exact accepted-prefix projection |
 | `src/graph/state.c` | committed/candidate persistent-state transactions, prefix promotion, rollback and state identity |
 | `src/graph/state_pages.c` | stable virtual state spans, per-class host-page commitment, pool accounting and release lifecycle |
 | `src/graph/state_recipe.c` | immutable family-neutral persistent-state recipe projection |
-| `src/server/core.c` | one-model host, private listener, bounded queue, worker and shutdown |
+| `src/server/core.c` | zero-engine-capable persistent host, private listener, control dispatch and shutdown |
+| `src/server/engine.c` | load, generation-bound routing, draining, unload, resource admission and engine inventory |
 | `src/server/session.c` | exact conversation sessions, KV continuation, turns and partial state |
 | `src/server/protocol.c` | bounded versioned local framing and thin protocol client |
 | `src/server/telemetry.c` | one typed event sequence, subscribers and metrics accumulation |

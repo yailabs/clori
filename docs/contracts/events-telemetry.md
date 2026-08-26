@@ -23,9 +23,10 @@ full probes never enter normal watch merely because trace verbosity increased.
 ## Event identity
 
 Each event carries a schema, global sequence, wall and monotonic timestamps,
-severity, kind, process/runtime identities, and applicable model, artifact,
-variant, session, request, turn, phase, counter, timing, rate, and result
-fields. Content is excluded unless an explicit trace-content policy admits it.
+severity, kind, process/runtime identities, and applicable model, engine
+generation, artifact, specialization, session, request, turn, phase, counter,
+timing, rate, and result fields. Content is excluded unless an explicit
+trace-content policy admits it.
 The sealed semantic identity binds sequence, kind, correlations, counters,
 durations, result facts, and model identities. Process ID and observed wall or
 monotonic clock values remain diagnostic fields and do not enter that identity.
@@ -37,7 +38,8 @@ make an uncommitted state visible or promote capability.
 
 Typed events cover at least:
 
-- startup, artifact/binding admission, materialization, residency, and ready;
+- host startup/readiness, engine load, package/binding admission,
+  specialization, materialization, residency, draining, unload, and failure;
 - listener preparation/readiness/failure;
 - client/session attach and lifecycle;
 - request admission, queueing, tokenization, prefix reuse, and prefill;
@@ -48,7 +50,7 @@ Typed events cover at least:
   publication, completion, cancellation, and failure;
 - cancellation, refusal, failure, and partial progress;
 - memory/resource counters and bounded profile stages;
-- shutdown admission, drain, model close, and completion.
+- host shutdown admission, engine drain/close, and completion.
 
 ## Fan-out and overflow
 
@@ -58,22 +60,24 @@ under pressure, and overflow remains an explicit fact. Lifecycle and terminal
 events may not disappear silently.
 
 Subscription failure or a slow client cannot block scheduler workers
-indefinitely. Disconnect releases subscriber resources without closing the
-runtime model.
+indefinitely. Disconnect releases subscriber resources without closing an
+engine or the host.
 
 ## Projections
 
-`yvex server MODEL` renders the compact human projection in the owning foreground
-terminal by default. `yvex server log` attaches the same projection from another
-terminal, while `server log --verbose` additionally renders individual speculative
-cycles. `yvex server MODEL --console raw` and `yvex server log --json` emit canonical
-JSONL for the admitted trace schema. `server status` is a bounded snapshot rather
-than an event replay. Human projections render retained history plus live events in
-stable semantic categories. They retain operator-significant lifecycle, contended
-queue, prefill, first-token, aggregate speculative economics, completion,
-cancellation, and failure events while suppressing connection churn, uncontended
-queue admission, fragments, intermediate draft/verification steps, and profile
-rows. They render bytes in human units, speculative acceptance as
+`yvex server` renders the compact human projection in the owning foreground
+terminal by default. `yvex server log` attaches the same projection from
+another terminal, while `server log --verbose` additionally renders individual
+speculative cycles. `yvex server --console raw` and `yvex server log --json`
+emit canonical JSONL for the admitted trace schema. `server status` is a
+bounded host snapshot and `server models` is the engine-inventory snapshot;
+neither is an event replay. Human projections render retained history plus live
+events in stable semantic categories. They retain operator-significant host,
+engine, session, contended queue, prefill, first-token, aggregate speculative
+economics, completion, cancellation, and failure events while suppressing
+connection churn, uncontended queue admission, fragments, intermediate
+draft/verification steps, and profile rows. They render bytes in human units,
+speculative acceptance as
 accepted/proposed, and stop codes as their named contract values. The `--json`
 projection retains the full subscribed event sequence with sequence, severity,
 turn, phase, timing, and rate. Neither projection

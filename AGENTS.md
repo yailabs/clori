@@ -454,10 +454,11 @@ No renderer or output format owns capability or may imply a higher stage.
 The normal executable topology is one `yvex` product binary. Runtime-facing
 client handlers remain protocol-only while finite offline engineering handlers
 may consume admitted engine owners through a separately guarded dispatch lane.
-`yvex server MODEL` enters the foreground persistent server operation directly
-and owns both the private Unix listener and the loopback OpenAI-compatible
-adapter. Additional daemon, developer, or gateway executables are not
-compatibility surfaces.
+`yvex server` enters the model-neutral foreground host operation directly and
+owns both the private Unix listener and the loopback OpenAI-compatible adapter.
+`yvex server load|unload MODEL` changes host-owned engine generations without
+changing host lifetime. Additional daemon, developer, or gateway executables
+are not compatibility surfaces.
 
 Every first-class milestone that adds or changes executable behavior closes
 with a real operator-reachable command in the main `yvex` CLI. A milestone may

@@ -1,8 +1,8 @@
-# Local Protocol v12
+# Local Protocol v13
 
 Status: normative private protocol contract
 
-Schema/version: `YVEX_LOCAL_PROTOCOL_VERSION = 12`.
+Schema/version: `YVEX_LOCAL_PROTOCOL_VERSION = 13`.
 
 Authority: `include/yvex/server.h` and `src/server/protocol.c`. This document
 explains the wire and lifecycle contract; code remains authoritative for exact
@@ -17,23 +17,28 @@ Unix-domain socket and is not a public network API.
 
 ## Framing and negotiation
 
-Every connection negotiates version 12 and exchanges bounded typed frames.
+Every connection negotiates version 13 and exchanges bounded typed frames.
 Lengths, enums, strings, arrays, message/tool fields, and correlations are
 validated before dispatch. Oversized, truncated, duplicate, unknown, or
 malformed fields refuse without entering the server scheduler.
 
-Every earlier version, including v11, is refused explicitly. There is no private
+Every earlier version, including v12, is refused explicitly. There is no private
 pre-v0.1 compatibility decoder. Unknown operations and response kinds fail
 closed.
 
 ## Operations
 
-Protocol v12 carries server status/stop, live model and memory
-facts, selected target-only or DSpark generation mode, session lifecycle,
-bounded copy-on-write session fork, generation turns and cancellation,
-speculative lifecycle events, event subscriptions, and composed console status.
-Offline compile, artifact,
-inspect, execute, profile, and system operations do not cross this protocol.
+Protocol v13 carries host status/stop, engine load/list/unload, model and memory
+facts for each engine generation, selected target-only, DSpark, or media mode,
+session lifecycle, bounded copy-on-write session fork, generation turns and
+cancellation, speculative lifecycle events, event subscriptions, and composed
+console status. Offline compile, artifact, inspect, execute, profile, and system
+operations do not cross this protocol.
+
+Every engine-scoped request names a model alias and, after resolution, the exact
+process-local engine generation. Alias equality never permits a stale session or
+request to continue on a replacement generation. A load or unload operation is
+host administration; it is not inferred from a generation request.
 
 The removed model/artifact facade operation values are absent. Artifact
 inspection is an offline-engine operation; live model inspection comes from
@@ -73,7 +78,7 @@ decoder, publication, completion, cancellation, and failure progress. These
 are control facts, never assistant text. A successful media turn carries one
 typed result containing the publication path, geometry, frame and audio facts,
 seed, byte extent, and the hosted preset, execution, file, and publication
-identities. Protocol v12 adds that identity-bearing result and refuses a media
+identities. The protocol retains that identity-bearing result and refuses a media
 success that omits it. Creative prompt bytes are model input; the protocol does
 not parse them into execution policy.
 
@@ -94,27 +99,28 @@ never retracts a candidate because no candidate is published.
 
 ## Status and console facts
 
-`server.status` returns the bounded hosted-runtime snapshot. Readiness is
-capability-aware. A text-generation runtime includes its identity-bound startup
-capacity plan, required and unreserved bytes, singular artifact and runtime
-binding identities, and admitted concurrent-sequence count. A composite media
-runtime instead carries its composite runtime-model and media-profile
-identities; text capacity, singular artifact, and runtime-binding fields remain
-explicitly unavailable. Both retain separate facts for independent-session
-scheduling and physical continuous batching. The latter remains false until a
-compatible-row generation scheduler is admitted; multiple server workers do
-not manufacture that claim. `console.status` returns
-a server-composed snapshot containing, where authoritative:
+`server.status` returns the bounded host snapshot: host readiness, listener
+state, queue/worker capacity, engine counts, process memory, and aggregate
+lifecycle counters. A healthy host may have zero loaded engines. `server.models`
+returns one typed summary per known engine slot, including alias, generation,
+state, target, backend, mode, capacity, memory classes, package/runtime and
+specialization identities, session/work counts, and executable readiness.
 
-- readiness and runtime configuration;
-- live model, artifact, binding, physical variant, backend, and context;
+Text and composite media engines use the same summary while exposing only facts
+their engine owner can authenticate. Physical continuous-batching readiness is
+per engine and remains false until the engine scheduler and executable path have
+proved it; multiple host workers do not manufacture that claim. `console.status`
+returns a server-composed snapshot containing, where authoritative:
+
+- host readiness and the selected alias and engine generation;
+- live model, artifact, binding, specialization, backend, and context;
 - selected generation mode and speculative policy identity when admitted;
 - client attachment and selected session;
 - session position, turn count, context and KV use;
 - active phase, progress, cancellation, and last terminal facts.
 
-The named registry profile and the live runtime model are distinct. Values the
-server cannot own are explicitly unavailable.
+The local registry profile, loaded engine generation, and session binding are
+distinct. Values the server cannot own are explicitly unavailable.
 
 ## Turn result
 
@@ -145,10 +151,12 @@ progress. A partial session refuses an ordinary turn until reset.
 
 ## Side effects
 
-The protocol may create/reset/close sessions, fork one idle committed session
+The protocol may load an admitted registry profile into a new engine generation,
+drain and unload that exact generation while leaving the host alive,
+create/reset/close generation-bound sessions, fork one idle committed session
 into an independently mutable child under an explicit shared-byte budget,
 enqueue/cancel generation,
-commit runtime state through the keyed scheduler, save one immutable model-state
+commit runtime state through the engine scheduler, save one immutable model-state
 checkpoint, restore it at the exact current semantic-session position, publish
 events, or initiate bounded server shutdown. State checkpoint messages carry
 the file digest, byte extent, scope count, committed position, and bound model,
@@ -179,7 +187,7 @@ format.
 
 ## Non-claims
 
-Protocol v12 is not a public remote API, authentication protocol, TLS transport,
+Protocol v13 is not a public remote API, authentication protocol, TLS transport,
 stable cross-version SDK promise, distributed serving protocol, or model
 quality contract. Versioned checkpoints preserve the admitted model and
 semantic-session state across restart; the in-memory fork does not create a

@@ -1,49 +1,54 @@
 # Operating DeepSeek-V4-Flash-DSpark
 
-DeepSeek-V4-Flash-DSpark is the sole current complete hosted YVEX vertical.
+DeepSeek-V4-Flash-DSpark is the complete hosted text vertical for the v0.1
+target. MiniMax is the admitted composite media counterexample on the same
+host/runtime/backend substrate.
 Family identities and architecture facts live in the
 [DeepSeek technical record](../model-families/deepseek-v4-flash.md); current
 gates live in [`ROADMAP.md`](../../ROADMAP.md).
 
 ## Product path
 
-List the local startup profiles, inspect the admitted DeepSeek entry, then
-start the sole persistent foreground server:
+List the local startup profiles, inspect the admitted DeepSeek entry, start the
+persistent host, then load the package as one engine generation:
 
 ```sh
 ./yvex model list
 ./yvex model show deepseek4-v4-flash-dspark-runtime-iq2xxs
-./yvex server deepseek4-v4-flash-dspark-runtime-iq2xxs
+./yvex server
+./yvex server load deepseek4-v4-flash-dspark-runtime-iq2xxs
 ```
 
 The alias is an example; use a DeepSeek row whose `STARTUP` column is `yes` and
 whose generation mode is `dspark` for speculative execution.
 No model path or environment variable is required during normal operation.
-The command authenticates the selected artifact and binding and builds the
-resident runtime model. Importing an existing artifact into the registry is a
-one-time advanced operation documented in the
+`server load` authenticates the selected artifact and binding, seals the
+deployment specialization, and creates one immutable engine generation. The
+host itself starts with zero engines and stays alive across load and unload.
+Importing an existing artifact into the registry is a one-time advanced
+operation documented in the
 [operator runbook](../operator-runbook.md#registering-an-existing-model), not
 artifact admission.
 
-After `runtime.ready`, verify and use the same resident model from another
-terminal:
+After the engine reports `loaded`, verify and use that exact generation from
+another terminal:
 
 ```sh
 ./yvex server status
-./yvex server model
+./yvex server models
 ./yvex server memory
-./yvex chat --session main
+./yvex chat --model deepseek4-v4-flash-dspark-runtime-iq2xxs --session main
 ```
 
 An optional third terminal may run `yvex server log`. Status, logs, and chat
-are clients of the same server; none reloads weights or opens a second
-runtime model.
+are clients of the same host; none reloads weights or opens a second engine.
 
-The server opens one model and retains the complete encoded model payload in
-one immutable process-lifetime host arena together with tokenizer, attention,
-materialization, output-head, target, draft, and verification resources. Each
-named session owns independent DeepSeek persistent state, bounded speculative
-candidate workspace, and exact prompt/token continuation.
+The engine retains the canonical encoded package mapping plus its tokenizer,
+attention, output-head, target, draft, verification, and admitted prepared
+resources. The resource report distinguishes mapped package bytes from
+prepared, resident, sequence-state, and workspace bytes. Each named session is
+bound to the exact engine generation and owns independent DeepSeek persistent
+state, bounded speculative candidate workspace, and prompt/token continuation.
 
 On turn two, the host renders and encodes the complete expected conversation,
 proves that the committed token ledger is its exact prefix, and prefills only
@@ -52,7 +57,10 @@ the new suffix. An incompatible prefix refuses; reset is explicit.
 ## One-shot path
 
 ```sh
-./yvex run --strategy stochastic --temperature 0.8 --top-k 50 --top-p 0.95 --min-p 0.05 --typical-p 1.0 --seed 42 "Explain attention in one sentence."
+./yvex run --model deepseek4-v4-flash-dspark-runtime-iq2xxs \
+  --strategy stochastic --temperature 0.8 --top-k 50 --top-p 0.95 \
+  --min-p 0.05 --typical-p 1.0 --seed 42 \
+  "Explain attention in one sentence."
 ```
 
 CUDA greedy sampling selects the token on device without copying the complete
@@ -62,9 +70,9 @@ and incremental detokenization commit.
 
 ## Target-only and DSpark modes
 
-Generation mode belongs to the named startup profile. `server model` and
-`server status --json` report the mode actually open in the server. There is
-no per-turn fallback switch.
+Generation mode belongs to the named startup profile. `server models --json`
+reports the mode of each loaded generation. There is no per-turn fallback
+switch.
 
 `target-only` retains ordinary one-token target generation as the semantic
 reference. `dspark` uses the checkpoint drafter to propose bounded blocks and
@@ -108,7 +116,7 @@ thought.
 
 ## Application-provider path
 
-The same daemon exposes the bounded loopback profile without loading another
+The same host exposes the bounded loopback profile without loading another
 DeepSeek model. After `runtime.ready`, verify it:
 
 ```sh
@@ -159,13 +167,14 @@ batched-decode work are reported as unavailable and must not be read as zero.
 
 For a bounded direct comparison over one admitted artifact and binding, the
 engineering generator accepts `--generation-mode target-only|dspark`. This is
-not the ordinary chat path and does not alter the selected daemon profile.
+not the ordinary chat path and does not alter the loaded engine profile.
 
 ## Runtime evidence
 
 For a hosted two-turn proof record:
 
-- artifact, physical variant, binding, model, session, and turn identities;
+- artifact, package, binding, specialization, engine-generation, session, and
+  turn identities;
 - model/artifact open and residency build counts;
 - first and second prompt token counts;
 - exact reusable prefix and second-turn suffix counts;

@@ -6,15 +6,15 @@ flowchart LR
         apps[SDKs / applications]
     end
 
-    subgraph host[yvex server MODEL — foreground runtime host]
+    subgraph host[yvex server — persistent multi-engine host]
         protocol[Private local protocol]
         openai[In-process OpenAI adapter]
-        resources[Immutable model, tokenizer,<br/>binding, and residency]
+        resources[Engine manager<br/>package + specialization + resources]
         queue[Bounded request queue]
-        worker[Keyed scheduler workers]
+        worker[Per-engine scheduler workers]
         registry[Session registry]
 
-        subgraph session[Server-owned conversation session]
+        subgraph session[Generation-bound conversation session]
             transcript[Transcript + token ledger]
             execution[Persistent execution session<br/>KV + position]
             turn[Turn state + RNG + decoder]

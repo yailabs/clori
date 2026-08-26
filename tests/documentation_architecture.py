@@ -597,10 +597,11 @@ def check_content(rows: list[dict[str, str]]) -> None:
         if "unsupported runtime family" not in text:
             fail(f"{family} record does not state unsupported runtime stage")
 
-    if "The server-backed console uses one `yvex>` prompt" not in readme:
-        fail("README does not describe the current server-backed console")
-    if "Ctrl-D exits cleanly" not in readme:
-        fail("README omits the current console EOF contract")
+    if "The console renders server-authored committed channels" not in readme:
+        fail("README does not describe the committed-only console boundary")
+    commands = (ROOT / "docs/architecture/commands.md").read_text(encoding="utf-8")
+    if "Ctrl-D" not in commands or "unfinished line" not in commands:
+        fail("command architecture omits the console EOF contract")
     if "functional but transitional" in readme:
         fail("README still describes the implemented console as transitional")
     if "hidden chain of thought" not in (ROOT / "docs/milestones/runtime-console-repl.md").read_text(

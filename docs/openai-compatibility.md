@@ -9,8 +9,8 @@ adapter follows the hosted runtime lifecycle and owns no model, session, KV,
 worker, or telemetry authority.
 
 `yvex.openai.compat.v2` is a bounded, local application-provider profile. It
-adapts OpenAI-compatible HTTP/JSON/SSE requests to YVEX local protocol v12 and
-the existing foreground model server. It is not a claim of full OpenAI API or OpenAI
+adapts OpenAI-compatible HTTP/JSON/SSE requests to YVEX local protocol v13 and
+the persistent foreground host. It is not a claim of full OpenAI API or OpenAI
 service equivalence.
 
 The profile was audited on 2026-07-29 against the official OpenAI references
@@ -26,13 +26,15 @@ Those moving interfaces do not expand this explicitly versioned YVEX subset.
 application or SDK
   -> loopback HTTP/1.1
   -> YVEX server OpenAI adapter
-  -> provider-neutral request over YVEX protocol v12
-  -> server session and generation owners
+  -> provider-neutral request over YVEX protocol v13
+  -> engine-manager routing by model alias and generation
+  -> engine session and generation owners
 ```
 
-The adapter is source-separated from runtime mathematics, opens no second model
-or artifact, owns no KV, and executes no application tool. The foreground
-server remains the only model host process. The adapter refuses non-loopback bind addresses;
+The adapter is source-separated from runtime mathematics, opens no model or
+artifact, owns no KV, and executes no application tool. The foreground server
+remains the only model host process. It routes through the host engine manager
+and never retains a process-global model pointer. The adapter refuses non-loopback bind addresses;
 authentication, TLS, CORS, and remote exposure are outside this profile.
 
 When the selected runtime profile uses DSpark, the adapter receives only
@@ -57,14 +59,13 @@ continuity, merges tool results into the DeepSeek user block, and orders them
 by the preceding call IDs. HTTP state stores typed fields; it never reconstructs
 this history from rendered final text.
 
-The normal registry-backed server command enables the default loopback listener.
-Name a startup-ready model when starting the host; the listener is prepared
-before model admission and begins accepting requests only after
-`runtime.ready`:
+The normal server command enables the default loopback listener before any
+engine is loaded. Start the host, then load a startup-ready registry profile:
 
 ```sh
 ./yvex model list
-./yvex server deepseek4-v4-flash-dspark-runtime-iq2xxs
+./yvex server
+./yvex server load deepseek4-v4-flash-dspark-runtime-iq2xxs
 ```
 
 The alias is illustrative and must be replaced by a startup-ready local entry.
@@ -78,9 +79,9 @@ placeholder.
 
 | Method and path | Profile status | YVEX mapping |
 | --- | --- | --- |
-| `GET /health` | supported, YVEX extension | adapter and runtime readiness |
-| `GET /v1/models` | supported | loaded server model list containing one model |
-| `GET /v1/models/{id}` | supported | exact loaded-model lookup |
+| `GET /health` | supported, YVEX extension | host/listener readiness |
+| `GET /v1/models` | supported | currently loaded engine aliases |
+| `GET /v1/models/{id}` | supported | exact loaded-engine lookup |
 | `POST /v1/chat/completions` | supported subset | ephemeral YVEX session and typed turn |
 | `POST /v1/responses` | supported subset | typed turn plus bounded response-state mapping |
 
@@ -166,7 +167,8 @@ response.completed | response.incomplete | response.failed
 ```
 
 Every event has an ordered `sequence_number`. `previous_response_id` names a
-bounded in-memory adapter record tied to an existing YVEX session and model.
+bounded in-memory adapter record tied to an existing YVEX session and exact
+engine generation.
 Records do not survive daemon restart and never reconstruct hidden state from
 text. A successful continuation consumes the prior response ID and replaces it
 with the returned successor ID; branching an already-mutated KV session is

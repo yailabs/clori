@@ -182,6 +182,17 @@ change. Git history preserves implementation chronology.
 
 ### Changed
 
+- Model hosting is now a persistent zero-engine `yvex server` process. Explicit
+  `server load`, `server unload`, and `server models` operations manage
+  identity-bound engine generations without restarting the private protocol or
+  OpenAI listener; native and OpenAI requests route to an exact loaded model.
+  Local protocol v13 carries engine lifecycle, routing, generation, and resource
+  facts.
+- Physical Execution IR v5 and runtime binding v15 retain stable package/storage
+  truth while one deployment specialization owns backend, hardware, activation,
+  implementation-class, width, and crossover choices. The explicit v14 reader
+  imports compatible canonical package records and refuses legacy derived-layout
+  requirements that cannot cross the new boundary truthfully.
 - MiniMax hosted media turns now send the creative prompt directly to the
   native tokenizer/conditioning pipeline under one identity-bearing YVEX
   interactive preset. The removed hardcoded questionnaire no longer parses

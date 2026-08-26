@@ -29,7 +29,7 @@ docs/audits/topology-closure.md	audit	frozen	contributors	frozen	topology_closur
 docs/contracts/artifacts.md	contract	canonical	contributors-operators	living	artifact_admission_contract
 docs/contracts/c-api.md	contract	canonical	integrators-contributors	living	c_api_and_internal_abi_reference
 docs/contracts/events-telemetry.md	contract	canonical	operators-contributors	living	events_telemetry_contract
-docs/contracts/local-protocol.md	contract	canonical	contributors	living	local_protocol_v12_contract
+docs/contracts/local-protocol.md	contract	canonical	contributors	living	local_protocol_v13_contract
 docs/contracts/runtime.md	contract	canonical	operators-contributors	living	hosted_runtime_contract
 docs/decisions/0001-public-project-control.md	decision	canonical	contributors	accepted	public_project_control_decision
 docs/decisions/0002-command-operation-registry.md	decision	canonical	contributors	accepted	command_registry_decision

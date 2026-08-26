@@ -21,27 +21,24 @@ reader, writer, migration, and test consequences for every considered change.
 Runtime binding v8 was the first admitted persisted GB10 change because it
 authenticated source-derived execution geometry that v7 could not carry. The
 compiler/family consolidation subsequently admitted binding v12 as the first
-complete compiler authority. Binding v14 now carries Physical Execution IR v4,
-whose expert decisions seal legal worklist widths and any admitted Tensor Core
-regime without treating request population as a compiled fact; readers refuse
-v7-v13 because those versions cannot represent the current complete execution plan. The frozen contract matrix remains
-historical entry evidence, not the current writer contract. The source-authored conversation product path
-earns local protocol v7, provider
-request/wire v3, tokenizer plan v3, tokenizer provider result v2 and OpenAI
-compatibility profile v2. The installed server-construction API and public
-declaration count remain unchanged. Runtime events remain schema v3 and
-compiled profiles remain schema v2. Generation plan ABI v5
-binds the exact workload-profile identity needed to validate its phase roofline
-ledger. Generation-result schema v5 subsequently earned its bump because v4
-cannot bind the committed reasoning-to-final execution boundary; wire
-projections remain unchanged. Every
-admitted change has a concrete fact and compatibility rule in the
-contract matrix; state checkpoints subsequently earned protocol v8, the
-admitted capacity/scheduler projection earned protocol v9, and the explicit
-copy-on-write session-fork request earns protocol v10; adaptive provider limits earn v11. Server options earn
-schema v2 because the concrete `yvex server --parallel` consumer must pass an
-explicit concurrent-sequence request into startup admission. The size of this
-milestone alone earns no version bump.
+complete compiler authority. The current writer is runtime binding v15 over
+Physical Execution IR v5. That IR retains package/storage truth; one
+identity-bound engine specialization owns backend, hardware, activation,
+implementation-class, admitted-width, and crossover facts. The explicit v14
+reader imports compatible canonical package decisions into v5 and refuses v14
+derived-layout requirements that cannot cross the new boundary truthfully.
+Versions v7-v13 remain recognized and refused.
+
+The source-authored conversation path retains provider wire v3, tokenizer plan
+v3, tokenizer provider result v2, and OpenAI compatibility profile v2. Current
+local protocol v13 adds persistent-host engine lifecycle and generation-bound
+routing after v12 introduced typed media results. Server options v3 configure a
+model-neutral host; engine options carry package-specific capacity and execution
+facts. Runtime events remain schema v3, generation plan ABI v5 binds its
+workload-profile identity, and generation-result schema v5 binds the committed
+reasoning-to-final boundary. Every admitted change has a concrete fact and
+compatibility rule below. The size of this milestone alone earns no version
+bump.
 
 An implementation-discovered identity change is admitted beside that frozen
 entry audit:
@@ -52,6 +49,8 @@ entry audit:
 | Runtime binding | v12 | v13 | Physical Execution IR v3 records | persisted wire layout, payload domain and content identity | v12 is recognized then refused before body parsing because it cannot carry the new physical decision | publish a separate immutable v13 binding; retained v12 files are never overwritten or migrated in place | deterministic prepare/reopen, previous-schema refusal, corruption and physical-identity validation |
 | Physical Execution IR | v3 | v4 | legal expert-worklist widths plus an optional admitted Tensor Core minimum and kernel family | persisted decision layout and semantic identity | v3 can infer a large-row alternative only from total operation population and cannot authenticate compatible expert-bucket width | rebuild from family compiler policy; runtime instantiates actual compatible rows within the sealed mask; backend never invents width | identity mutation, invalid width/TC policy refusal, DeepSeek projection, worklist and CUDA qualification |
 | Runtime binding | v13 | v14 | Physical Execution IR v4 records | persisted wire layout, payload domain and content identity | v13 is recognized then refused before body parsing because it cannot carry the worklist-width decision | publish a separate immutable v14 binding; retained v13 files are never overwritten or migrated in place | deterministic prepare/reopen, previous-schema refusal, corruption and physical-identity validation |
+| Physical Execution IR | v4 | v5 | stable package/storage facts are separated from deployment specialization | persisted package-decision layout and physical identity | v4 mixes package truth with backend/hardware implementation policy | rebuild package decisions as v5; import compatible v4 canonical records through the binding reader; seal deployment facts in one engine specialization | v5 identity mutation, package/specialization separation, unsupported import refusal, DeepSeek and MiniMax projections |
+| Runtime binding | v14 | v15 | Physical Execution IR v5 package records | persisted wire layout, payload domain and content identity | v14 derived-layout requirements would reintroduce retired deployment policy as package truth | publish immutable v15; explicitly import compatible canonical v14 records and refuse incompatible derived-layout records without byte reinterpretation | v15 roundtrip/truncation/corruption, v14 compatibility/refusal, specialization authentication |
 | Kernel-bundle identity | v2 | v3 | ordered set of independently compiled modules | semantic identity derivation only; no wire or persisted layout | v2 hashes one image and cannot identify the module set | full rebuild admits all manifest-owned modules atomically; model artifacts do not migrate | PTX/native admission, missing-symbol rollback, checked unload retry, identity mutation |
 | Launch-graph identity | v2 | v3 | owned versus borrowed launch-stream policy | semantic identity derivation only; no wire or persisted layout | v2 cannot distinguish an isolated graph stream from the session stream | rebuilt graph registries recapture under the selected stream policy; no model, binding or profile migration | identity mutation, isolated/shared registry separation, capture and warm replay |
 | Graph-executable identity | v1 | v2 | owned versus borrowed launch-stream policy | semantic identity derivation only; no wire or persisted layout | v1 authenticates device and executable topology but omits completion ownership | rebuilt executables are admitted beneath launch-graph v3; old in-process objects are never mixed | exact identity, shared-stream capture/replay, checked teardown |
@@ -71,6 +70,7 @@ entry audit:
 | Local protocol | v8 | v9 | startup capacity-plan identity and bytes, admitted concurrent sequences, and distinct independent-scheduling versus continuous-batching readiness | private Unix framing and payload | every non-v9 peer fails handshake | atomic server/client cutover; no compatibility decoder | complete roundtrip, invalid capacity identity, zero concurrency and non-v9 refusal |
 | Local protocol | v9 | v10 | source session, child session and explicit maximum shared-prefix bytes for transactional fork | private Unix framing and payload | every non-v10 peer fails handshake and cannot express fork admission | atomic server/client cutover; no compatibility decoder | all-operation roundtrip, fork-only field refusal, bounded tiny-vertical fork, parent/child isolation |
 | Server options | v1 | v2 | explicit concurrent-sequence request consumed by startup capacity admission and the keyed scheduler | installed C structure layout | v1 writers cannot express concurrency and refuse at schema admission | complete pre-v0.1 rebuild; entrypoint name is unchanged and no side-by-side options authority remains | old-schema refusal, concurrency/session bound, CLI startup and tiny vertical |
+| Server options | v2 | v3 | model-neutral persistent-host configuration and model-loader callback | installed C structure layout | v2 binds one model's capacity to process startup | complete pre-v0.1 rebuild; engine options own package-specific context, capacity, backend, and generation mode | zero-engine start, several tiny engines, real family load/unload, old-schema refusal |
 
 The later source-authored conversation gate earned these product-boundary
 changes. Reader and writer behavior remain separate because compatibility in
@@ -85,6 +85,8 @@ one direction does not imply compatibility in the other.
 | Provider request/wire | v2 | v3 | zero maximum output tokens means an adaptive server-envelope selection, while an explicit API zero refuses | request identity and serialized schema meaning | v2 readers reject v3 | v2 writers must provide a positive limit | retain v1/v2 readers; only v3 may encode the adaptive value | v2 compatibility, v3 clone/wire roundtrip, omitted and explicit-zero admission |
 | Local protocol | v6 | v7 | typed error channel and separate reasoning/final metrics | private Unix framing and payload | every non-v7 peer fails handshake | v6 cannot carry the new terminal facts | atomic daemon/client cutover; no compatibility decoder | message/status roundtrip and non-v7 refusal |
 | Local protocol | v10 | v11 | provider v3 adaptive completion semantics | private Unix negotiation and nested provider request | every non-v11 peer fails handshake | v10 cannot execute the adaptive zero contract | atomic server/client cutover; no compatibility decoder | operation/message roundtrip, non-v11 refusal, adaptive provider turn |
+| Local protocol | v11 | v12 | typed media progress/result and terminal publication facts | private Unix framing and payload | every non-v12 peer fails handshake | v11 cannot represent a committed media result | atomic host/client cutover; no compatibility decoder | media roundtrip, cancellation, no partial publication, non-v12 refusal |
+| Local protocol | v12 | v13 | zero-engine host status, engine load/unload/list, exact engine generation routing, and per-engine resource facts | private Unix framing, operation set, and payload | every non-v13 peer fails handshake | v12 assumes one process-global model and cannot route or drain engine generations | atomic host/client cutover; no compatibility decoder | complete roundtrip, zero-engine host, two fitting engines, stale-generation and draining refusal |
 | OpenAI compatibility | v1 | v2 | reasoning policy, `reasoning_content`, reasoning SSE and multiple calls | documented HTTP JSON profile | v1 clients can consume shared additive fields | cannot express the new contract | v2 documents the YVEX-specific projections | Chat/Responses, SSE, tools, usage, cancellation |
 | Public server entrypoints | v1 | v1 | the existing entrypoints consume server-options v2; no second constructor is required | none in the function ABI | rebuilt caller uses options v2 | rebuilt product writes options v2 | one constructor remains canonical | declaration count, schema refusal and CLI reachability |
 
@@ -172,7 +174,7 @@ abort causes an exact committed-bank clone before reuse. The bounded D2H host
 oracle remains, while its duplicate state H2D is absent. Prefix-addressable
 speculation and audit/forensic evidence retain the explicit host upload path.
 The canonical lifecycle is documented in
-[`runtime.md`](../architecture/runtime.md#persistent-state); this does not yet
+[`runtime.md`](../architecture/runtime.md#sessions-and-transactional-state); this does not yet
 claim elimination of the retained host oracle or prefix-selection H2D. State
 identity now advances per committed token and position, so target-only,
 verification-width and prefix-promotion paths converge on one identity for the
@@ -575,7 +577,7 @@ non-interactive `--reasoning` policy. Only the exact model-emitted
 fails closed, arbitrary prose is never reclassified, and no hidden model state
 is exposed.
 
-Protocol v9 carries distinct reasoning, final, tool and error channels plus
+Current protocol v13 retains distinct reasoning, final, tool and error channels plus
 reasoning/final token counts, rates, first-token times and total completion
 time. The REPL renders explicit reasoning incrementally and distinctly; raw
 execution writes canonical channel payload bytes without terminal decoration.
@@ -587,8 +589,9 @@ tool sequence. These are explicit model outputs, not inferred chain of thought.
 
 ## Non-claims
 
-The currently admitted code establishes model-derived geometry, binding v14 as
-the sole complete compiler authority, typed capacity/page planning,
+The currently admitted code establishes model-derived geometry, binding v15 as
+the package authority, one identity-bound engine specialization, typed
+capacity/page planning,
 pre-materialization memory refusal,
 the availability-aware production phase ledger, and identity-bound native
 SM121 CUBIN admission. It also establishes identity-bound width-N CUDA logits
@@ -599,8 +602,9 @@ residency with stable device addresses.
 It also admits native integer Tensor Core execution for the supported expert
 qtypes and Q8_K activations: the SM121 CUBIN must expose its production
 entrypoints and contain `IMMA.16816.S8.S8`, while native device tests account
-launches and check numerical agreement. Physical Execution IR v4 seals legal
-expert-worklist widths and refuses to infer Tensor Core width from total rows.
+launches and check numerical agreement. Physical Execution IR v5 retains legal
+package geometry while the engine specialization seals implementation-class
+width and refuses to infer Tensor Core width from total rows.
 Runtime execution now constructs one typed expert-major worklist from real
 prefill, decode or DSpark verification rows, and the ordinary narrow CUDA path
 consumes that same authority. It does not yet establish specialized Tensor Core coverage

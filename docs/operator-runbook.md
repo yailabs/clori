@@ -242,45 +242,22 @@ second terminal, load the selected package and inspect the resulting generation:
 ./yvex server models
 ```
 
-Before the potentially long admission begins, the command prints the complete
-selected startup identity and states that the host remains in the foreground:
+The host publishes its socket before any engine exists. `server load` resolves
+the selected registry profile, authenticates its package and binding, seals the
+deployment specialization, builds admitted engine resources, then publishes
+one loaded engine generation. `server models` exposes `loading`, `loaded`,
+`draining`, `unloading`, and failure facts as applicable; `server status`
+continues to report the independent host lifecycle.
 
-```text
-YVEX server · foreground
-  profile deepseek4-v4-flash-dspark-runtime-iq2xxs
-  target deepseek4-v4-flash-dspark · backend=cuda · mode=dspark · requested ctx=4096 · parallel=2
-  artifact /absolute/path/to/model.gguf
-  binding /absolute/path/to/model.yvex-runtime-binding
-  local endpoint .../yvexd.sock · OpenAI 127.0.0.1:8001
-  stop with Ctrl-C here or `yvex server stop` from another terminal
-```
-
-This is the model the new server is about to open. It is not a projection of a
-previously running process and it is flushed before admission begins.
-
-Startup authenticates the selected artifact and binding, creates the immutable
-runtime model, builds residency once, and only then publishes the local socket.
-`--parallel N` admits capacity for N independently scheduled sessions before
-readiness. When the binding admits compatible execution width, ready independent
-sessions may contribute real rows to the same typed MoE or output-head execution
-batch; requests for one named session remain serialized. Attention and sampling
-remain session-local, so this is not transformer-wide continuous batching.
-
-When `--prefill-chunk` is omitted, the server resolves an adaptive chunk before
-capacity admission. Width-one operation retains the established interactive
-chunk, while concurrent serving starts from the real admitted scheduling width
-with a bounded amortization floor. `yvex server status` reports the resolved
-`prefill` value. An explicit positive `--prefill-chunk N` remains authoritative;
-zero is invalid, and an unsafe override is refused before model residency.
-DSpark keeps its separately admitted bounded lookahead workspace; prompt chunk
-selection does not truncate a real speculative verification batch.
-Large models can spend substantial time in this phase. On a TTY the foreground
-server maintains one in-place elapsed-time admission line until admission completes
-or fails; redirected output retains periodic ten-second receipts. Neither projection
-claims a percentage that the admission pipeline cannot prove.
-From a second terminal, `yvex server status` refuses while the socket is absent
-and reports `ready` only after admission completes. A refusal or startup failure
-leaves no partially ready listener.
+Large engines can spend substantial time in load. Typed events and bounded
+status expose real completed stages without inventing a percentage. A failed
+load releases its partial engine resources and leaves the host, socket, OpenAI
+listener, other engines, and telemetry alive. Package context, parallel
+capacity, prefill chunk, generation mode, and backend come from the admitted
+startup profile. When compatible execution width exists, independent active
+workers may rendezvous at the engine scheduler for real MoE or output-head
+rows; same-session mutation remains serialized. This is compatible-operation
+batching, not global ready-sequence continuous batching.
 
 ## What “load the model” means
 
@@ -303,9 +280,10 @@ The relevant commands have different responsibilities:
 The host keeps the immutable artifact mapping as canonical backing. A compiled
 artifact-backed placement registers that mapping once for CUDA addressability;
 compiler-required derived layouts instead own their separately accounted managed
-storage. `server memory` reports mapped, non-artifact host, device, RSS and capacity
-facts separately. Authentication and selected residency complete before the socket
-becomes ready.
+storage. `server memory` reports mapped, prepared, resident, sequence-state,
+workspace, device, RSS, and capacity facts separately. Authentication and
+selected resources complete before the engine becomes `loaded`; host readiness
+does not depend on one engine.
 
 ## Direct MiniMax-H3 media host
 
@@ -327,7 +305,7 @@ admits it as an owned absolute non-symlink directory. `--output-root` and
 `--media-artifact-root` remain explicit engineering overrides; they are not
 normal startup requirements. Startup opens the tokenizer and all four
 identity-bound component artifacts. The server retains their admitted immutable
-views under one runtime-model identity, but does not preload the component
+views under one engine-generation identity, but does not preload the component
 payloads or create a CUDA context. A completed media request stages each
 already-admitted component through the native YVEX runtime. The composite
 registry profile is a local deployment contract; family semantics still select
@@ -345,7 +323,7 @@ residency.
 From another terminal, start the ordinary client:
 
 ```sh
-./yvex chat --session video
+./yvex chat --model minimax-h3-fl2va-runtime-media --session video
 ```
 
 Submit one creative prompt. The prompt immediately starts native generation;
@@ -567,16 +545,18 @@ state, and persistent KV while sharing immutable model resources:
 ./yvex session close main
 ```
 
-Client disconnect and detach do not close the model. A partial or cancelled
+Client disconnect and detach do not close the engine. A partial or cancelled
 turn can retain model-committed state and is never silently marked complete.
-Protocol v12 reports the exact committed position, token/text counts, state
-generations, failure class, and reset requirement. Reset clears the session KV,
-tokens, transcript, decoder, and RNG policy without closing the host.
+Protocol v13 reports the exact engine generation, committed position,
+token/text counts, state generations, failure class, and reset requirement.
+Reset clears the session KV, tokens, transcript, decoder, and RNG policy without
+closing the engine or host.
 
 State checkpoints are immutable and restore only when their model, binding,
-artifact, scope and committed position match the live session. The restore byte
-bound is mandatory. This operation currently protects model state inside one
-live semantic session; it is not yet a cross-restart conversation restore.
+artifact, engine generation, scope, and committed position match the live
+session. The restore byte bound is mandatory. This operation currently protects
+model state inside one live semantic session on the same engine generation; it
+is not yet a cross-restart conversation restore.
 
 ## Status, metrics, and logs
 
@@ -591,8 +571,8 @@ Use compact status for normal operation:
 
 `server models` reports the known engine generations and their model,
 specialization, backend, residency, and readiness facts. `server memory`
-separates mapped artifact bytes,
-the process-lifetime host arena, and device-resident allocations.
+separates mapped package, prepared/derived, resident, sequence-state,
+workspace/temporary, process RSS, and backend allocation facts.
 
 Follow typed server activity independently of the foreground console:
 
@@ -619,7 +599,16 @@ started with the explicit `--trace-content` opt-in.
 
 ## Graceful shutdown
 
-Request shutdown through the local protocol:
+Release one engine while retaining the host and its other engines:
+
+```sh
+./yvex server unload deepseek4-v4-flash-dspark-runtime-iq2xxs
+./yvex server status
+```
+
+Unload enters draining, refuses new work for that generation, resolves active
+work under the bounded policy, closes its sessions and resources, and leaves
+the host ready. Request separate host shutdown through the local protocol:
 
 ```sh
 ./yvex server stop
@@ -653,9 +642,9 @@ once with the advanced registry operation and absolute paths:
 
 This operation reads the GGUF, records its identity and metadata, checks that
 the startup profile is structurally complete, and stores it in the user-local
-registry. It does not establish runtime admission; `yvex server` authenticates
-the artifact and binding again when it opens the model. Normal subsequent use
-contains no paths or environment variables:
+registry. It does not establish runtime admission; `yvex server load`
+authenticates the artifact and binding again when it opens the engine. Normal
+subsequent use contains no paths or environment variables:
 
 `--support-level` records only the artifact inspection/materialization stage.
 The binding, target, backend, mode, and context fields separately own startup

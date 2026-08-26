@@ -39,7 +39,7 @@ promotion rules remain in the [family integration contract](integration.md).
 | Active development line | `models1` shared with the other admitted families |
 | Historical feature ref | `feature/minimax-h3` retains published provenance only |
 | Current status | bounded hosted direct-media execution admitted; quality, scale, performance and release remain unclaimed |
-| Current boundary | the canonical `yvex server MODEL` and `yvex chat` path negotiates one bounded request, executes all admitted FL2VA components with staged GB10 residency, and returns the atomically published playable AVI path |
+| Current boundary | `yvex server` plus `server load minimax-h3-fl2va-runtime-media` creates one composite engine generation; `yvex chat --model ...` executes one bounded request with staged GB10 resources and returns the atomically published playable AVI path |
 | Shared-substrate obligation | every generic compiler, runtime, server or backend change qualifies both MiniMax and DeepSeek consumers |
 
 Git history and the historical feature ref preserve the accepted intake and
@@ -361,7 +361,7 @@ acceptable generation speed, 768p practicality, or any 2K path.
 
 | Alternative | Identity/artifact and reuse | Runtime/residency/output | Disposition |
 | --- | --- | --- | --- |
-| A. Existing target plus several artifacts and one program | preserves individual artifacts but the existing target/Physical Execution IR is decoder- and single-model-shaped; phase identity would be implicit | cannot represent component release, latent request state, or synchronized media output without hidden conventions | reject |
+| A. Pre-composite target plus several artifacts and one program | preserved individual artifacts but the then-current decoder-shaped target/Physical Execution IR left phase identity implicit | could not represent component release, latent request state, or synchronized media output without hidden conventions | reject |
 | B. Composite logical model target with component manifest | binds source derivation, roles, phase DAG, lifetime, and output domain while preserving later independent component artifacts | one common runtime remains the future owner of request/session transitions; graph and backend remain unimplemented | **adopt for the logical boundary only** |
 | C. Monolithic GGUF | one byte identity but destroys natural component lifetimes, selective reuse, and staged residency; no evidence supports one GGUF schema for media/codecs | forces 144 GB source payload into one artificial lifecycle and couples unrelated failures | reject |
 | D. Generic execution package above artifacts | could generalize to image/audio/video and encoder-decoder models | useful only after the concrete composite target proves which package invariants are common; premature now | defer |
@@ -1100,13 +1100,14 @@ runs are not benchmarks and establish no useful generation speed.
 ## Direct hosted media projection
 
 The common persistent server now admits MiniMax-H3 as generation mode `media`.
-`yvex server minimax-h3-fl2va-runtime-media` resolves the immutable component
-installation, CUDA backend, and media mode from its composite startup profile;
-the default owned publication directory comes from the common YVEX data path.
-`yvex chat` accepts one creative prompt and immediately invokes the staged
-native runtime transaction. It does not ask for resolution, duration,
-sigma-grid count, format, or seed, and MiniMax-H3 is not presented as a
-conversational assistant. The model registry profile selects the typed media
+`yvex server load minimax-h3-fl2va-runtime-media` resolves the immutable
+component installation, CUDA backend, and media mode from its composite startup
+profile and creates one engine generation; the default owned publication
+directory comes from the common YVEX data path. `yvex chat --model
+minimax-h3-fl2va-runtime-media` accepts one creative prompt and immediately
+invokes the staged native runtime transaction. It does not ask for resolution,
+duration, sigma-grid count, format, or seed, and MiniMax-H3 is not presented as
+a conversational assistant. The model registry profile selects the typed media
 adapter, so the operator does not choose family callbacks, component paths, or
 reconstruct the offline execution command. Explicit component/output roots
 remain engineering overrides.
@@ -1119,18 +1120,19 @@ bytes remain opaque input to tokenizer/conditioning; words, numbers, and
 format-like substrings in the scene do not select execution settings. There is
 no keyword rule engine, secondary LLM, agent loop, or Context-IR substitute.
 
-Server readiness nevertheless requires a real process-lifetime model open.
-Startup opens the tokenizer and all four component GGUF views, performs exact
-component admission, seals one composite runtime-model identity, and retains
-those immutable views until shutdown. The generic artifact owner authenticates
-each component independently: a cold open performs full byte verification and
-publishes a snapshot-bound verified-reopen receipt; an unchanged warm open uses
-that receipt without rereading the full payload. Missing, stale, malformed, or
-unavailable receipt evidence falls back to full verification and cannot admit
-mismatched bytes. Reopen neither materializes payload nor claims that the
-component population is simultaneously resident. Conditioning, Transformer,
-Visual VAE, and Audio VAE payload residency remains staged at request phase
-boundaries so the GB10 unified-memory envelope remains bounded.
+Host readiness is independent of MiniMax. Engine load opens the tokenizer and
+all four component GGUF views, performs exact component admission, seals one
+composite engine identity, and retains those immutable views until engine
+unload. The generic artifact owner authenticates each component independently:
+a cold open performs full byte verification and publishes a snapshot-bound
+verified-reopen receipt; an unchanged warm open uses that receipt without
+rereading the full payload. Missing, stale, malformed, or unavailable receipt
+evidence falls back to full verification and cannot admit mismatched bytes.
+Reopen neither materializes payload nor claims that the component population is
+simultaneously resident. Conditioning, Transformer, Visual VAE, and Audio VAE
+payload residency remains staged at request phase boundaries so the GB10
+unified-memory envelope remains bounded. Engine unload releases the component
+views while the host remains ready.
 
 The direct projection has focused opaque-prompt, preset-identity, model-open,
 reopen, progress/result, cancellation, and missing-component refusal tests. The
