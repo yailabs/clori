@@ -482,6 +482,12 @@ void yvex_server_telemetry_model_closed(server_telemetry *telemetry)
 {
     if (!telemetry || pthread_mutex_lock(&telemetry->mutex) != 0) return;
     telemetry->metrics.model_close_count++;
+    if (telemetry->metrics.model_close_count ==
+        telemetry->metrics.model_open_count) {
+        telemetry->metrics.mapped_artifact_bytes = 0ull;
+        telemetry->metrics.resident_host_bytes = 0ull;
+        telemetry->metrics.resident_device_bytes = 0ull;
+    }
     (void)pthread_mutex_unlock(&telemetry->mutex);
 }
 /* Raise process-resident resource evidence from one authoritative runtime session. */

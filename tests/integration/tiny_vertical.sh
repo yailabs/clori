@@ -249,10 +249,17 @@ status = json.loads(pathlib.Path(sys.argv[1]).read_text())
 catalog = json.loads(pathlib.Path(sys.argv[2]).read_text())
 assert status["host_ready"] and status["loaded_engine_count"] == 0
 assert status["model_open_count"] == 1 and status["model_close_count"] == 1
+assert status["mapped_artifact_bytes"] == 0
+assert status["resident_host_bytes"] == 0
+assert status["resident_device_bytes"] == 0
 engine, = catalog["engines"]
 assert engine["alias"] == sys.argv[3]
 assert engine["generation"] == int(sys.argv[4])
 assert engine["state"] == "unloaded" and not engine["execution_ready"]
+assert engine["mapped_package_bytes"] == 0
+assert engine["resident_host_bytes"] == 0
+assert engine["resident_device_bytes"] == 0
+assert engine["prepared_bytes"] == 0
 PY
 
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server load "$profile" \

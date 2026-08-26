@@ -1137,7 +1137,21 @@ int yvex_server_get_summary(const yvex_server *server,
     out->loaded_engine_count = 0ull;
     out->draining_engine_count = 0ull;
     out->session_count = 0ull;
+    out->metrics.mapped_artifact_bytes = 0ull;
+    out->metrics.resident_host_bytes = 0ull;
+    out->metrics.resident_device_bytes = 0ull;
     for (index = 0ull; index < count; ++index) {
+        if (!yvex_core_u64_add(out->metrics.mapped_artifact_bytes,
+                               engines[index].mapped_package_bytes,
+                               &out->metrics.mapped_artifact_bytes) ||
+            !yvex_core_u64_add(out->metrics.resident_host_bytes,
+                               engines[index].resident_host_bytes,
+                               &out->metrics.resident_host_bytes) ||
+            !yvex_core_u64_add(out->metrics.resident_device_bytes,
+                               engines[index].resident_device_bytes,
+                               &out->metrics.resident_device_bytes))
+            return server_refuse(err, YVEX_ERR_BOUNDS,
+                                 "host engine resource total overflowed");
         out->session_count += engines[index].session_count;
         out->loaded_engine_count +=
             engines[index].state == YVEX_SERVER_ENGINE_LOADED;

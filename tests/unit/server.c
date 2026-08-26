@@ -476,6 +476,13 @@ static int test_bounded_telemetry_overflow(void)
                          metrics.resident_device_bytes == 2048u &&
                          metrics.output_head_upload_count == 1u,
                      "mapped backing is distinct from resident resource high-water facts");
+    yvex_server_telemetry_model_closed(telemetry);
+    rc = yvex_server_telemetry_metrics_copy(telemetry, &metrics, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && !metrics.mapped_artifact_bytes &&
+                         !metrics.resident_host_bytes &&
+                         !metrics.resident_device_bytes &&
+                         metrics.model_close_count == metrics.model_open_count,
+                     "closing the final model clears current resource facts");
     yvex_server_telemetry_openai_request(telemetry, 1, 0, 0, 0);
     yvex_server_telemetry_openai_request(telemetry, -1, 1, 0, 0);
     yvex_server_telemetry_openai_request(telemetry, 0, 0, 1, 1);
@@ -936,7 +943,10 @@ static int test_media_engine_lifecycle(void)
     YVEX_TEST_ASSERT(yvex_server_get_summary(server, &summary, &err) == YVEX_OK &&
                          summary.host_ready && !summary.loaded_engine_count &&
                          summary.metrics.model_open_count == 3ull &&
-                         summary.metrics.model_close_count == 3ull,
+                         summary.metrics.model_close_count == 3ull &&
+                         !summary.metrics.mapped_artifact_bytes &&
+                         !summary.metrics.resident_host_bytes &&
+                         !summary.metrics.resident_device_bytes,
                      "all engine resources close while the host remains ready");
     YVEX_TEST_ASSERT(yvex_server_finish(server, &err) == YVEX_OK,
                      "empty persistent host finishes separately");

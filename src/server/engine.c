@@ -27,6 +27,9 @@ typedef struct {
     server_session_registry *sessions;
     server_media_registry *media;
     yvex_server_engine_summary summary;
+    unsigned long long mapped_package_bytes, prepared_bytes;
+    unsigned long long model_resident_host_bytes;
+    unsigned long long model_resident_device_bytes;
     int continuous_batching, telemetry_opened;
 } server_engine;
 
@@ -293,10 +296,14 @@ static int text_engine_open(server_engine_manager *manager,
     engine->summary.maximum_output_bytes = engine->options.maximum_output_bytes;
     engine->summary.maximum_sessions = engine->options.maximum_sessions;
     engine->summary.concurrent_sequences = engine->options.concurrent_sequences;
-    engine->summary.mapped_package_bytes = model.mapped_package_bytes;
-    engine->summary.prepared_bytes = model.prepared_bytes;
-    engine->summary.resident_host_bytes = model.resident_host_bytes;
-    engine->summary.resident_device_bytes = model.resident_device_bytes;
+    engine->mapped_package_bytes = model.mapped_package_bytes;
+    engine->prepared_bytes = model.prepared_bytes;
+    engine->model_resident_host_bytes = model.resident_host_bytes;
+    engine->model_resident_device_bytes = model.resident_device_bytes;
+    engine->summary.mapped_package_bytes = engine->mapped_package_bytes;
+    engine->summary.prepared_bytes = engine->prepared_bytes;
+    engine->summary.resident_host_bytes = engine->model_resident_host_bytes;
+    engine->summary.resident_device_bytes = engine->model_resident_device_bytes;
     yvex_runtime_identity_copy(engine->summary.runtime_model_identity,
                                model.runtime_model_identity);
     yvex_runtime_identity_copy(engine->summary.runtime_binding_identity,
@@ -404,6 +411,32 @@ static void summary_base(server_engine *engine)
     assert(yvex_server_engine_summary_valid(&engine->summary));
 }
 
+static int summary_resources(server_engine *engine, yvex_error *err)
+{
+    unsigned long long session_host = 0ull, session_device = 0ull;
+    int owns_resources = engine->model || engine->sessions || engine->media;
+    engine->summary.mapped_package_bytes =
+        owns_resources ? engine->mapped_package_bytes : 0ull;
+    engine->summary.prepared_bytes =
+        owns_resources ? engine->prepared_bytes : 0ull;
+    engine->summary.resident_host_bytes =
+        owns_resources ? engine->model_resident_host_bytes : 0ull;
+    engine->summary.resident_device_bytes =
+        owns_resources ? engine->model_resident_device_bytes : 0ull;
+    if (engine->sessions &&
+        yvex_server_sessions_resource_bytes(engine->sessions, &session_host,
+                                            &session_device, err) != YVEX_OK)
+        return yvex_error_code(err);
+    if (!yvex_core_u64_add(engine->summary.resident_host_bytes, session_host,
+                           &engine->summary.resident_host_bytes) ||
+        !yvex_core_u64_add(engine->summary.resident_device_bytes, session_device,
+                           &engine->summary.resident_device_bytes))
+        return engine_refuse(err, YVEX_ERR_BOUNDS,
+                             "engine resource total overflowed");
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
 static void engine_cancel(server_engine *engine)
 {
     if (engine->media)
@@ -439,6 +472,13 @@ static int engine_close(server_engine_manager *manager, server_engine *engine,
         engine->telemetry_opened = 0;
     }
     engine->summary.execution_ready = 0;
+    if (rc == YVEX_OK) {
+        engine->mapped_package_bytes = 0ull;
+        engine->prepared_bytes = 0ull;
+        engine->model_resident_host_bytes = 0ull;
+        engine->model_resident_device_bytes = 0ull;
+        (void)summary_resources(engine, NULL);
+    }
     if (err) *err = primary;
     if (rc == YVEX_OK) yvex_error_clear(err);
     return rc;
@@ -718,6 +758,10 @@ int yvex_server_engine_manager_snapshot(
         else if (engine->media)
             (void)yvex_server_media_registry_count(
                 engine->media, &engine->summary.session_count, NULL);
+        if (summary_resources(engine, err) != YVEX_OK) {
+            (void)pthread_mutex_unlock(&manager->mutex);
+            return yvex_error_code(err);
+        }
         summary_base(engine);
         engines[written++] = engine->summary;
     }

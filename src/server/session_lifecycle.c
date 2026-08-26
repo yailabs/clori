@@ -422,6 +422,53 @@ int yvex_server_sessions_count(server_session_registry *registry,
     return YVEX_OK;
 }
 
+int yvex_server_sessions_resource_bytes(
+    server_session_registry *registry, unsigned long long *host_bytes,
+    unsigned long long *device_bytes, yvex_error *err)
+{
+    unsigned long long index, host = 0ull, device = 0ull;
+    if (host_bytes) *host_bytes = 0ull;
+    if (device_bytes) *device_bytes = 0ull;
+    if (!registry || !host_bytes || !device_bytes ||
+        pthread_mutex_lock(&registry->mutex) != 0) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.session.resources",
+                       "registry and resource outputs are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    for (index = 0ull; index < registry->capacity; ++index) {
+        const server_session *session = &registry->sessions[index];
+        yvex_runtime_session_summary summary;
+        unsigned long long owned_host, owned_device;
+        if (!session->name[0] || !session->execution ||
+            session->state == YVEX_SERVER_SESSION_CLOSED)
+            continue;
+        if (yvex_runtime_session_summary_copy(session->execution, &summary,
+                                              err) != YVEX_OK) {
+            (void)pthread_mutex_unlock(&registry->mutex);
+            return yvex_error_code(err);
+        }
+        owned_host = summary.peak_host_bytes >= summary.host_resident_bytes
+                         ? summary.peak_host_bytes - summary.host_resident_bytes
+                         : 0ull;
+        owned_device =
+            summary.peak_device_bytes >= summary.device_resident_bytes
+                ? summary.peak_device_bytes - summary.device_resident_bytes
+                : 0ull;
+        if (!yvex_core_u64_add(host, owned_host, &host) ||
+            !yvex_core_u64_add(device, owned_device, &device)) {
+            (void)pthread_mutex_unlock(&registry->mutex);
+            yvex_error_set(err, YVEX_ERR_BOUNDS, "server.session.resources",
+                           "session resource total overflowed");
+            return YVEX_ERR_BOUNDS;
+        }
+    }
+    *host_bytes = host;
+    *device_bytes = device;
+    (void)pthread_mutex_unlock(&registry->mutex);
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
 int yvex_server_sessions_close(server_session_registry **registry,
                                yvex_error *err)
 {
