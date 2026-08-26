@@ -25,49 +25,43 @@ static int generation_run_target_only(yvex_runtime_generation_context *context,
     const yvex_runtime_transformer_result *prefill, const float *prefill_hidden, unsigned long long prefill_values,
     yvex_runtime_generation_token_result *tokens, unsigned char *text, unsigned long long text_capacity,
     yvex_runtime_generation_result *result, yvex_error *err);
-static int generation_publication_prepare(void *opaque, yvex_error *err)
-{
-    generation_publication *publication = opaque;
-    int rc = yvex_token_sequence_transaction_prepare(publication->sequence, err);
-    if (rc == YVEX_OK)
-        rc = yvex_tokenizer_decoder_transaction_prepare(publication->decoder, err);
-    return rc;
+static int generation_sequence_prepare(void *opaque, yvex_error *err) {
+    yvex_token_sequence_transaction **transaction = opaque;
+    return transaction && *transaction ?
+               yvex_token_sequence_transaction_prepare(*transaction, err)
+               : YVEX_ERR_STATE;
 }
-static void generation_publication_publish(void *opaque)
-{
-    generation_publication *publication = opaque;
-    yvex_token_sequence_transaction_publish(&publication->sequence);
-    yvex_tokenizer_decoder_transaction_publish(&publication->decoder);
+static void generation_sequence_publish(void *opaque) {
+    yvex_token_sequence_transaction_publish((yvex_token_sequence_transaction **)opaque);
 }
-static void generation_publication_cancel(void *opaque)
-{
-    generation_publication *publication = opaque;
-    yvex_tokenizer_decoder_transaction_abort(&publication->decoder);
-    yvex_token_sequence_transaction_abort(&publication->sequence);
+static int generation_sequence_abort(void *opaque, yvex_error *err) {
+    yvex_token_sequence_transaction_abort((yvex_token_sequence_transaction **)opaque);
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+static int generation_decoder_prepare(void *opaque, yvex_error *err) {
+    yvex_tokenizer_decoder_transaction **transaction = opaque;
+    return transaction && *transaction ?
+               yvex_tokenizer_decoder_transaction_prepare(*transaction, err)
+               : YVEX_ERR_STATE;
+}
+static void generation_decoder_publish(void *opaque) {
+    yvex_tokenizer_decoder_transaction_publish((yvex_tokenizer_decoder_transaction **)opaque);
+}
+static int generation_decoder_abort(void *opaque, yvex_error *err) {
+    yvex_tokenizer_decoder_transaction_abort((yvex_tokenizer_decoder_transaction **)opaque);
+    yvex_error_clear(err);
+    return YVEX_OK;
 }
 static void generation_publication_clear(generation_publication *publication)
 {
     unsigned long long index;
     if (!publication) return;
-    generation_publication_cancel(publication);
+    yvex_tokenizer_decoder_transaction_abort(&publication->decoder);
+    yvex_token_sequence_transaction_abort(&publication->sequence);
     for (index = 0ull; index < publication->count; ++index)
         yvex_tokenizer_fragment_clear(&publication->fragments[index]);
     memset(publication, 0, sizeof(*publication));
-}
-static int generation_terminal_prepare(void *opaque, yvex_error *err)
-{
-    generation_terminal_publication *publication = opaque;
-    return yvex_token_sequence_transaction_prepare(publication->sequence, err);
-}
-static void generation_terminal_publish(void *opaque)
-{
-    generation_terminal_publication *publication = opaque;
-    yvex_token_sequence_transaction_publish(&publication->sequence);
-}
-static void generation_terminal_cancel(void *opaque)
-{
-    generation_terminal_publication *publication = opaque;
-    yvex_token_sequence_transaction_abort(&publication->sequence);
 }
 static int generation_terminal_sequence_commit(yvex_runtime_generation_context *context,
     unsigned int token_id,
@@ -75,10 +69,10 @@ static int generation_terminal_sequence_commit(yvex_runtime_generation_context *
     unsigned long long *ordinal, yvex_error *err)
 {
     generation_terminal_publication publication = {0};
-    yvex_runtime_commit_participant participant = {
-        .context = &publication, .prepare = generation_terminal_prepare,
-        .publish = generation_terminal_publish,
-        .cancel = generation_terminal_cancel};
+    yvex_runtime_transaction_participant participant = {
+        .context = &publication.sequence, .prepare = generation_sequence_prepare,
+        .publish = generation_sequence_publish,
+        .abort = generation_sequence_abort};
     int rc;
     if (!pending_speculation)
         return yvex_token_sequence_append(
@@ -90,7 +84,8 @@ static int generation_terminal_sequence_commit(yvex_runtime_generation_context *
             publication.sequence, token_id, yvex_tokenizer_vocab_size(context->tokenizer),
             ordinal, err);
     if (rc == YVEX_OK)
-        rc = yvex_runtime_speculation_finish_terminal(pending_speculation, &participant, err);
+        rc = yvex_runtime_speculation_finish_terminal(
+            pending_speculation, &participant, 1u, err);
     if (publication.sequence) yvex_token_sequence_transaction_abort(&publication.sequence);
     return rc;
 }
@@ -811,10 +806,15 @@ static int generation_speculative_publish(
 {
     const yvex_tokenizer_plan_summary *tokenizer = yvex_tokenizer_plan_summary_get(context->tokenizer);
     generation_publication publication;
-    yvex_runtime_commit_participant participant = {
-        .context = &publication, .prepare = generation_publication_prepare,
-        .publish = generation_publication_publish,
-        .cancel = generation_publication_cancel};
+    yvex_runtime_transaction_participant participants[2] = {
+        {.context = &publication.sequence,
+         .prepare = generation_sequence_prepare,
+         .publish = generation_sequence_publish,
+         .abort = generation_sequence_abort},
+        {.context = &publication.decoder,
+         .prepare = generation_decoder_prepare,
+         .publish = generation_decoder_publish,
+         .abort = generation_decoder_abort}};
     unsigned long long index, started, completed;
     int rc = generation_publication_stage(
         context, token_ids, count, terminal_present, terminal_id, before,
@@ -825,7 +825,7 @@ static int generation_speculative_publish(
         started = yvex_core_monotonic_ns();
         rc = yvex_runtime_speculation_commit_prefix(
             context->speculation, count, context->hidden,
-            context->hidden_count, &participant, commit, err);
+            context->hidden_count, participants, 2u, commit, err);
         completed = yvex_core_monotonic_ns();
         if (commit->completed)
             result->speculative_commit_ns += completed - started;

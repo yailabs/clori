@@ -1353,14 +1353,16 @@ static int test_attention_graph_configuration(yvex_backend *backend)
     YVEX_TEST_ASSERT(
         rc == YVEX_OK && strcmp(full_key, dynamic_key) == 0,
         "logical workspace profile rebinding preserves physical graph compatibility");
-    rc = yvex_backend_state_residency_publish_generation(backend, 7ull, &err);
+    rc = yvex_backend_state_residency_validate_generation(backend, 7ull, &err);
+    if (rc == YVEX_OK)
+        yvex_backend_state_residency_publish_generation(backend, 7ull);
     YVEX_TEST_ASSERT(rc == YVEX_OK,
                      "publish state generation through the backend residency owner");
     rc = yvex_cuda_attention_graph_key(
         backend, &job, 0u, YVEX_CUDA_ATTENTION_STAGE_COUNT, dynamic_key, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && strcmp(full_key, dynamic_key) == 0,
                      "persistent-state generation preserves allocation-stable graph compatibility");
-    rc = yvex_backend_state_residency_publish_generation(backend, 6ull, &err);
+    rc = yvex_backend_state_residency_validate_generation(backend, 6ull, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_STATE,
                      "backend residency owner refuses generation regression");
     yvex_backend_state_residency_detach(backend);

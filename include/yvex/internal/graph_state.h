@@ -385,8 +385,10 @@ typedef struct {
     void *context;
     int (*prepare)(void *context, yvex_error *err);
     void (*publish)(void *context);
-    void (*cancel)(void *context);
-} yvex_runtime_commit_participant;
+    int (*abort)(void *context, yvex_error *err);
+} yvex_runtime_transaction_participant;
+
+#define YVEX_RUNTIME_TRANSACTION_PARTICIPANT_CAP 8u
 
 #define YVEX_RUNTIME_STATE_PROMOTION_FACTS_SCHEMA_V1 1u
 typedef struct {
@@ -442,7 +444,11 @@ int yvex_runtime_session_finish_scope(
     yvex_error *err);
 int yvex_runtime_session_finish_coordinated(
     struct yvex_runtime_execution_session *session, int status,
-    const yvex_runtime_commit_participant *participant, yvex_error *err);
+    const yvex_runtime_transaction_participant *participants,
+    unsigned int participant_count, yvex_error *err);
+int yvex_runtime_transaction_resolve(
+    const yvex_runtime_transaction_participant *participants,
+    unsigned int participant_count, int status, yvex_error *err);
 
 #ifdef __cplusplus
 }

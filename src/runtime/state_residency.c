@@ -33,7 +33,8 @@ struct yvex_runtime_state_residency {
     yvex_backend *backend;
     state_resident_layer *layers;
     unsigned long long layer_count;
-    int paging_selected;
+    unsigned long long prepared_generation, prepared_commit_count;
+    int paging_selected, commit_prepared;
     yvex_runtime_state_residency_summary summary;
 };
 
@@ -895,48 +896,56 @@ int yvex_runtime_state_residency_transition(
     return YVEX_ERR_INVALID_ARG;
 }
 
-int yvex_runtime_state_residency_publish(
+int yvex_runtime_state_residency_prepare_commit(
     yvex_runtime_state_residency *residency, yvex_error *err)
 {
     if (!residency || residency->summary.invalidated ||
+        residency->commit_prepared ||
         residency->summary.staged_layer_count != residency->summary.layer_count) {
-        yvex_error_set(err, YVEX_ERR_STATE, "runtime.state.residency.publish",
+        yvex_error_set(err, YVEX_ERR_STATE, "runtime.state.residency.prepare",
                        "complete staged persistent state residency is required");
         return YVEX_ERR_STATE;
+    }
+    if (!yvex_core_u64_add(residency->summary.generation, 1ull,
+                           &residency->prepared_generation) ||
+        !yvex_core_u64_add(residency->summary.commit_count, 1ull,
+                           &residency->prepared_commit_count)) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "runtime.state.residency.prepare",
+                       "persistent state publication counters overflowed");
+        return YVEX_ERR_BOUNDS;
+    }
+    if (yvex_backend_state_residency_validate_generation(
+            residency->backend, residency->prepared_generation, err) != YVEX_OK) {
+        residency->prepared_generation = 0ull;
+        residency->prepared_commit_count = 0ull;
+        return yvex_error_code(err);
     }
     /* Graph kernels rebind current state-bank pointers on replay. Publication changes content and
      * generation, not allocation layout, so invalidating the topology registry here would force
      * one capture per committed turn without protecting any pointer lifetime. */
+    residency->commit_prepared = 1;
     yvex_error_clear(err);
     return YVEX_OK;
 }
 
-int yvex_runtime_state_residency_commit(yvex_runtime_state_residency *residency,
-                                        yvex_error *err)
+void yvex_runtime_state_residency_publish_commit(
+    yvex_runtime_state_residency *residency)
 {
     unsigned long long index;
-    int rc;
-    if (!residency) {
-        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.state.residency.commit",
-                       "persistent state residency is required");
-        return YVEX_ERR_INVALID_ARG;
-    }
+    if (!residency || !residency->commit_prepared) return;
     for (index = 0ull; index < residency->layer_count; ++index) {
         state_resident_layer *layer = &residency->layers[index];
         if (layer->staged) layer->committed_bank = layer->staged_bank;
         layer->staged = 0;
     }
     residency->summary.staged_layer_count = 0ull;
-    residency->summary.commit_count++;
-    residency->summary.generation++;
-    rc = yvex_backend_state_residency_publish_generation(
-        residency->backend, residency->summary.generation, err);
-    if (rc != YVEX_OK) {
-        residency->summary.invalidated = 1;
-        return rc;
-    }
-    yvex_error_clear(err);
-    return YVEX_OK;
+    residency->summary.commit_count = residency->prepared_commit_count;
+    residency->summary.generation = residency->prepared_generation;
+    yvex_backend_state_residency_publish_generation(
+        residency->backend, residency->summary.generation);
+    residency->prepared_generation = 0ull;
+    residency->prepared_commit_count = 0ull;
+    residency->commit_prepared = 0;
 }
 
 void yvex_runtime_state_residency_abort(yvex_runtime_state_residency *residency)
@@ -946,16 +955,27 @@ void yvex_runtime_state_residency_abort(yvex_runtime_state_residency *residency)
     for (index = 0ull; index < residency->layer_count; ++index)
         residency->layers[index].staged = 0;
     residency->summary.staged_layer_count = 0ull;
+    residency->prepared_generation = 0ull;
+    residency->prepared_commit_count = 0ull;
+    residency->commit_prepared = 0;
     residency->summary.abort_count++;
 }
 
 int yvex_runtime_state_residency_reset(
     yvex_runtime_state_residency *residency, yvex_error *err)
 {
-    unsigned long long index;
+    unsigned long long index, next_generation;
     int rc = YVEX_OK;
     if (!residency || residency->summary.invalidated)
         return YVEX_ERR_STATE;
+    if (!yvex_core_u64_add(residency->summary.generation, 1ull,
+                           &next_generation)) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "runtime.state.residency.reset",
+                       "persistent state generation overflowed");
+        return YVEX_ERR_BOUNDS;
+    }
+    rc = yvex_backend_state_residency_validate_generation(
+        residency->backend, next_generation, err);
     for (index = 0ull; rc == YVEX_OK && index < residency->layer_count; ++index) {
         state_resident_layer *layer = &residency->layers[index];
         unsigned int bank;
@@ -1005,10 +1025,9 @@ int yvex_runtime_state_residency_reset(
             residency->layers[index].banks_synchronized =
                 !residency->layers[index].paged;
         }
-        residency->summary.generation++;
-        rc = yvex_backend_state_residency_publish_generation(
-            residency->backend, residency->summary.generation, err);
-        if (rc != YVEX_OK) residency->summary.invalidated = 1;
+        residency->summary.generation = next_generation;
+        yvex_backend_state_residency_publish_generation(
+            residency->backend, residency->summary.generation);
     }
     return rc;
 }

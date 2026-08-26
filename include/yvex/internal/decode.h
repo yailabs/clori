@@ -192,13 +192,15 @@ int yvex_runtime_speculation_commit_prefix(
     yvex_runtime_speculation_context *context,
     unsigned long long committed_count, float *final_hidden,
     unsigned long long final_hidden_capacity,
-    const yvex_runtime_commit_participant *publication,
+    const yvex_runtime_transaction_participant *participants,
+    unsigned int participant_count,
     yvex_runtime_speculation_commit_result *result, yvex_error *err);
 int yvex_runtime_speculation_cycle_abort(
     yvex_runtime_speculation_context *context, yvex_error *err);
 int yvex_runtime_speculation_finish_terminal(
     yvex_runtime_speculation_context *context,
-    const yvex_runtime_commit_participant *publication, yvex_error *err);
+    const yvex_runtime_transaction_participant *participants,
+    unsigned int participant_count, yvex_error *err);
 int yvex_runtime_speculation_context_close(
     yvex_runtime_speculation_context **context, yvex_error *err);
 typedef enum {

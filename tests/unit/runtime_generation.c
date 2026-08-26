@@ -517,6 +517,108 @@ static int generation_test_decode_profile_projection(void)
     return 0;
 }
 
+typedef struct {
+    unsigned int id, prepare_count, publish_count, abort_count;
+    unsigned int *events, *event_count;
+    int fail_prepare, fail_abort;
+} generation_transaction_probe;
+
+static void generation_transaction_event(
+    generation_transaction_probe *probe, unsigned int phase)
+{
+    probe->events[(*probe->event_count)++] = phase + probe->id;
+}
+
+static int generation_transaction_prepare(void *opaque, yvex_error *err)
+{
+    generation_transaction_probe *probe = opaque;
+    probe->prepare_count++;
+    generation_transaction_event(probe, 10u);
+    if (probe->fail_prepare) {
+        yvex_error_set(err, YVEX_ERR_STATE, "test.transaction.prepare",
+                       "injected transaction prepare failure");
+        return YVEX_ERR_STATE;
+    }
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+static void generation_transaction_publish(void *opaque)
+{
+    generation_transaction_probe *probe = opaque;
+    probe->publish_count++;
+    generation_transaction_event(probe, 20u);
+}
+
+static int generation_transaction_abort(void *opaque, yvex_error *err)
+{
+    generation_transaction_probe *probe = opaque;
+    probe->abort_count++;
+    generation_transaction_event(probe, 30u);
+    if (probe->fail_abort) {
+        yvex_error_set(err, YVEX_ERR_IO, "test.transaction.abort",
+                       "injected transaction abort failure");
+        return YVEX_ERR_IO;
+    }
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+static int generation_test_transaction_participants(void)
+{
+    generation_transaction_probe probes[3] = {{0}};
+    yvex_runtime_transaction_participant participants[3];
+    unsigned int events[12] = {0}, event_count = 0u, index;
+    const unsigned int published[] = {11u, 12u, 13u, 21u, 22u, 23u};
+    const unsigned int aborted[] = {11u, 12u, 33u, 32u, 31u};
+    yvex_error err;
+    for (index = 0u; index < 3u; ++index) {
+        probes[index].id = index + 1u;
+        probes[index].events = events;
+        probes[index].event_count = &event_count;
+        participants[index] = (yvex_runtime_transaction_participant){
+            .context = &probes[index],
+            .prepare = generation_transaction_prepare,
+            .publish = generation_transaction_publish,
+            .abort = generation_transaction_abort};
+    }
+    YVEX_TEST_ASSERT(
+        yvex_runtime_transaction_resolve(
+            participants, 3u, YVEX_OK, &err) == YVEX_OK &&
+            event_count == sizeof(published) / sizeof(published[0]) &&
+            memcmp(events, published, sizeof(published)) == 0,
+        "transaction participants prepare before ordered publication");
+    for (index = 0u; index < 3u; ++index) {
+        probes[index].prepare_count = 0u;
+        probes[index].publish_count = 0u;
+        probes[index].abort_count = 0u;
+    }
+    memset(events, 0, sizeof(events));
+    event_count = 0u;
+    probes[1].fail_prepare = 1;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_transaction_resolve(
+            participants, 3u, YVEX_OK, &err) == YVEX_ERR_STATE &&
+            event_count == sizeof(aborted) / sizeof(aborted[0]) &&
+            memcmp(events, aborted, sizeof(aborted)) == 0 &&
+            !probes[0].publish_count && !probes[1].publish_count &&
+            !probes[2].publish_count,
+        "prepare failure aborts every participant in reverse order without publication");
+    probes[1].fail_prepare = 0;
+    probes[2].fail_abort = 1;
+    event_count = 0u;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_transaction_resolve(
+            participants, 3u, YVEX_ERR_CANCELLED, &err) == YVEX_ERR_IO,
+        "abort failure replaces the primary status with exact cleanup failure");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_transaction_resolve(
+            participants, YVEX_RUNTIME_TRANSACTION_PARTICIPANT_CAP + 1u,
+            YVEX_OK, &err) == YVEX_ERR_INVALID_ARG,
+        "transaction participant population is bounded");
+    return 0;
+}
+
 int yvex_test_runtime_generation(void)
 {
     if (generation_test_compatible_batching() != 0) return 1;
@@ -529,5 +631,6 @@ int yvex_test_runtime_generation(void)
     if (generation_test_execution_identity_excludes_measurement() != 0) return 1;
     if (generation_test_plan_binds_workload_profile() != 0) return 1;
     if (generation_test_decode_profile_projection() != 0) return 1;
+    if (generation_test_transaction_participants() != 0) return 1;
     return 0;
 }

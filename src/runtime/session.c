@@ -836,6 +836,132 @@ int yvex_runtime_session_select_attention_prefix(
     return rc;
 }
 
+typedef struct {
+    yvex_attention_state_provider *provider;
+    yvex_runtime_state_residency *residency;
+    int provider_prepared;
+} runtime_state_transaction_participant;
+
+static int runtime_state_transaction_prepare(void *opaque, yvex_error *err)
+{
+    runtime_state_transaction_participant *participant = opaque;
+    yvex_attention_failure failure = {0};
+    int rc;
+    if (!participant || !participant->provider)
+        return YVEX_ERR_INVALID_ARG;
+    rc = participant->residency
+             ? yvex_runtime_state_residency_prepare_commit(
+                   participant->residency, err)
+             : YVEX_OK;
+    if (rc == YVEX_OK)
+        rc = participant->provider->prepare_commit(
+            participant->provider->context, &failure, err);
+    participant->provider_prepared = rc == YVEX_OK;
+    return rc;
+}
+
+static void runtime_state_transaction_publish(void *opaque)
+{
+    runtime_state_transaction_participant *participant = opaque;
+    if (!participant || !participant->provider_prepared) return;
+    if (participant->residency)
+        yvex_runtime_state_residency_publish_commit(participant->residency);
+    participant->provider->publish_commit(participant->provider->context);
+    participant->provider_prepared = 0;
+}
+
+static int runtime_state_transaction_abort(void *opaque, yvex_error *err)
+{
+    runtime_state_transaction_participant *participant = opaque;
+    yvex_attention_failure failure = {0};
+    yvex_error first = {0}, retry = {0};
+    int rc, retry_rc;
+    if (!participant || !participant->provider) return YVEX_ERR_INVALID_ARG;
+    if (participant->provider_prepared)
+        participant->provider->cancel_commit(participant->provider->context);
+    participant->provider_prepared = 0;
+    if (participant->residency)
+        yvex_runtime_state_residency_abort(participant->residency);
+    rc = participant->provider->abort(
+        participant->provider->context, &failure, err);
+    if (rc == YVEX_OK) return YVEX_OK;
+    first = err ? *err : (yvex_error){0};
+    retry_rc = participant->provider->abort(
+        participant->provider->context, &failure, &retry);
+    if (retry_rc != YVEX_OK) {
+        if (err) *err = retry;
+        return retry_rc;
+    }
+    if (err) *err = first;
+    return rc;
+}
+
+static int runtime_transaction_resolve(
+    const yvex_runtime_transaction_participant *participants,
+    unsigned int participant_count, int status, int *abort_failed,
+    yvex_error *err)
+{
+    yvex_error primary = err ? *err : (yvex_error){0};
+    yvex_error failure = {0}, abort_error = {0};
+    unsigned int index;
+    int rc = status, abort_rc = YVEX_OK;
+    if (abort_failed) *abort_failed = 0;
+    if (participant_count > YVEX_RUNTIME_TRANSACTION_PARTICIPANT_CAP ||
+        (participant_count && !participants)) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.transaction",
+                       "bounded transaction participants are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    for (index = 0u; index < participant_count; ++index)
+        if (!participants[index].context || !participants[index].prepare ||
+            !participants[index].publish || !participants[index].abort) {
+            yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.transaction",
+                           "every transaction participant must be complete");
+            return YVEX_ERR_INVALID_ARG;
+        }
+    for (index = 0u; rc == YVEX_OK && index < participant_count; ++index)
+        rc = participants[index].prepare(participants[index].context, err);
+    if (rc == YVEX_OK) {
+        for (index = 0u; index < participant_count; ++index)
+            participants[index].publish(participants[index].context);
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    failure = err ? *err : primary;
+    for (index = participant_count; index-- > 0u;) {
+        yvex_error current = {0};
+        int current_rc = participants[index].abort(
+            participants[index].context, &current);
+        if (current_rc != YVEX_OK && abort_rc == YVEX_OK) {
+            abort_rc = current_rc;
+            abort_error = current;
+        }
+    }
+    if (abort_rc != YVEX_OK) {
+        if (abort_failed) *abort_failed = 1;
+        if (err) *err = abort_error;
+        return abort_rc;
+    }
+    if (err) {
+        if (failure.code != YVEX_OK)
+            *err = failure;
+        else if (primary.code != YVEX_OK)
+            *err = primary;
+        else
+            yvex_error_set(err, (yvex_status)rc, "runtime.transaction",
+                           "transaction failed before publication");
+    }
+    return rc;
+}
+
+int yvex_runtime_transaction_resolve(
+    const yvex_runtime_transaction_participant *participants,
+    unsigned int participant_count, int status, yvex_error *err)
+{
+    return runtime_transaction_resolve(
+        participants, participant_count, status, NULL, err);
+}
+
 int yvex_runtime_session_finish_scope(
     yvex_runtime_execution_session *session, yvex_tensor_scope scope,
     yvex_attention_transaction_disposition disposition, int status,
@@ -844,7 +970,6 @@ int yvex_runtime_session_finish_scope(
     const yvex_attention_workspace_summary *workspace;
     yvex_attention_state_provider *provider;
     yvex_runtime_state_residency *residency;
-    yvex_attention_failure state_failure;
     yvex_error cleanup, state_error, primary_error;
     unsigned long long *counter = NULL, counter_next = 0ull;
     int provider_ready, cleanup_rc = YVEX_OK;
@@ -911,33 +1036,25 @@ int yvex_runtime_session_finish_scope(
     }
     if (provider_ready && ((state_ready && state.transaction_active) ||
         primary_status != YVEX_OK || cleanup_rc != YVEX_OK || session->invalidation_pending)) {
+        runtime_state_transaction_participant state_participant = {
+            .provider = provider, .residency = residency};
+        yvex_runtime_transaction_participant transaction = {
+            .context = &state_participant,
+            .prepare = runtime_state_transaction_prepare,
+            .publish = runtime_state_transaction_publish,
+            .abort = runtime_state_transaction_abort};
         int committing = primary_status == YVEX_OK && cleanup_rc == YVEX_OK &&
             !session->invalidation_pending &&
             disposition == YVEX_ATTENTION_TRANSACTION_COMMIT;
         yvex_error_clear(&state_error);
-        rc = committing && residency
-                 ? yvex_runtime_state_residency_publish(residency, &state_error)
-                 : YVEX_OK;
-        if (rc == YVEX_OK)
-            rc = committing
-                     ? provider->commit(provider->context, &state_failure,
-                                        &state_error)
-                     : provider->abort(provider->context, &state_failure,
-                                       &state_error);
-        if (rc == YVEX_OK && committing && residency)
-            rc = yvex_runtime_state_residency_commit(residency, &state_error);
-        else if (!committing && residency)
-            yvex_runtime_state_residency_abort(residency);
+        rc = committing
+                 ? runtime_transaction_resolve(
+                       &transaction, 1u, YVEX_OK, NULL, &state_error)
+                 : runtime_state_transaction_abort(
+                       &state_participant, &state_error);
         if (rc != YVEX_OK) {
             cleanup_rc = rc;
             cleanup = state_error;
-            yvex_error_clear(&state_error);
-            rc = provider->abort(provider->context, &state_failure, &state_error);
-            if (rc != YVEX_OK) {
-                cleanup_rc = rc;
-                cleanup = state_error;
-            }
-            if (residency) yvex_runtime_state_residency_abort(residency);
         }
     }
     if (session->invalidation_pending) {
@@ -984,47 +1101,94 @@ int yvex_runtime_session_finish_scope(
 
 int yvex_runtime_session_finish_coordinated(
     yvex_runtime_execution_session *session, int status,
-    const yvex_runtime_commit_participant *participant, yvex_error *err)
+    const yvex_runtime_transaction_participant *participants,
+    unsigned int participant_count, yvex_error *err)
 {
     yvex_attention_state_provider *providers[2];
     yvex_runtime_state_residency *residencies[2];
-    yvex_graph_attention_state_summary summaries[2] = {{0}};
-    yvex_attention_failure state_failure = {0};
-    yvex_error primary = err ? *err : (yvex_error){0}, failure = {0}, cleanup = {0};
-    unsigned long long counter_next = 0ull, index;
-    int prepared[2] = {0, 0}, participant_prepared = 0;
-    int rc = status, cleanup_rc = YVEX_OK;
-    if (!session || (participant && (!participant->prepare || !participant->publish ||
-                                     !participant->cancel)) ||
+    int provider_ready[2];
+    runtime_state_transaction_participant state_participants[2] = {{0}};
+    yvex_runtime_transaction_participant transaction[
+        YVEX_RUNTIME_TRANSACTION_PARTICIPANT_CAP] = {{0}};
+    yvex_error primary = err ? *err : (yvex_error){0};
+    yvex_error cleanup = {0}, transaction_error = {0};
+    unsigned long long counter_next = 0ull;
+    unsigned int index, state_count = 0u, transaction_count = 0u;
+    int abort_failed = 0, boundary_failure, cleanup_rc = YVEX_OK;
+    int rc = status, transaction_rc, transaction_status;
+    if (!session || participant_count >
+                        YVEX_RUNTIME_TRANSACTION_PARTICIPANT_CAP - 2u ||
+        (participant_count && !participants) ||
         !session->lifecycle_mutex_ready ||
         pthread_mutex_lock(&session->lifecycle_mutex) != 0) {
         yvex_error_set(err, YVEX_ERR_STATE, "runtime.session.coordinated",
-                       "busy session and complete commit participant are required");
+                       "busy session and bounded transaction participants are required");
         return YVEX_ERR_STATE;
     }
     providers[0] = &session->attention_state_provider;
     providers[1] = &session->draft_attention_state_provider;
     residencies[0] = session->state_residency;
     residencies[1] = session->draft_state_residency;
+    provider_ready[0] = session->attention_state_provider_ready;
+    provider_ready[1] = session->draft_attention_state_provider_ready;
     if (!session->summary.open || !session->summary.busy ||
         !runtime_session_owned_by_current_thread(session) || session->closing ||
-        !session->attention_state_provider_ready ||
-        !session->draft_attention_state_provider_ready ||
         session->invalidation_pending) {
         cleanup_rc = YVEX_ERR_STATE;
         yvex_error_set(&cleanup, cleanup_rc, "runtime.session.coordinated",
-                       "target and drafter state are not commit-ready");
+                       "session state is not commit-ready");
     }
-    for (index = 0ull; cleanup_rc == YVEX_OK && index < 2ull; ++index) {
-        cleanup_rc = providers[index]->summary(
-            providers[index]->context, &summaries[index], &cleanup);
-        if (rc == YVEX_OK && cleanup_rc == YVEX_OK &&
-            (!summaries[index].transaction_active || summaries[index].candidate_active ||
-             !summaries[index].staged_layer_count || summaries[index].invalidated)) {
+    for (index = 0u; index < 2u; ++index) {
+        yvex_graph_attention_state_summary summary = {0};
+        int summary_rc;
+        if (!provider_ready[index]) continue;
+        summary_rc = providers[index]->summary(
+            providers[index]->context, &summary, &cleanup);
+        if (summary_rc != YVEX_OK && cleanup_rc == YVEX_OK)
+            cleanup_rc = summary_rc;
+        if (summary_rc == YVEX_OK && summary.transaction_active) {
+            state_participants[state_count].provider = providers[index];
+            state_participants[state_count].residency = residencies[index];
+            transaction[state_count] = (yvex_runtime_transaction_participant){
+                .context = &state_participants[state_count],
+                .prepare = runtime_state_transaction_prepare,
+                .publish = runtime_state_transaction_publish,
+                .abort = runtime_state_transaction_abort};
+            state_count++;
+        }
+        if (rc == YVEX_OK && summary_rc == YVEX_OK &&
+            (!summary.transaction_active || summary.candidate_active ||
+             !summary.staged_layer_count || summary.invalidated) &&
+            cleanup_rc == YVEX_OK) {
             cleanup_rc = YVEX_ERR_STATE;
             yvex_error_set(&cleanup, cleanup_rc, "runtime.session.coordinated",
-                           "one coordinated state batch is incomplete");
+                           "one coordinated state participant is incomplete");
         }
+    }
+    transaction_count = state_count;
+    if (transaction_count + participant_count >
+        YVEX_RUNTIME_TRANSACTION_PARTICIPANT_CAP && cleanup_rc == YVEX_OK) {
+        cleanup_rc = YVEX_ERR_BOUNDS;
+        yvex_error_set(&cleanup, cleanup_rc, "runtime.session.coordinated",
+                       "transaction participant capacity was exceeded");
+    }
+    for (index = 0u; index < participant_count; ++index) {
+        if (!participants[index].context || !participants[index].prepare ||
+            !participants[index].publish || !participants[index].abort) {
+            if (cleanup_rc == YVEX_OK) {
+                cleanup_rc = YVEX_ERR_INVALID_ARG;
+                yvex_error_set(&cleanup, cleanup_rc,
+                               "runtime.session.coordinated",
+                               "transaction participant is incomplete");
+            }
+            continue;
+        }
+        transaction[transaction_count++] = participants[index];
+    }
+    if (rc == YVEX_OK && !state_count && cleanup_rc == YVEX_OK) {
+        cleanup_rc = YVEX_ERR_STATE;
+        yvex_error_set(&cleanup, cleanup_rc, "runtime.session.coordinated",
+                       "coordinated execution has no active state participant");
     }
     if (rc == YVEX_OK && cleanup_rc == YVEX_OK &&
         !yvex_core_u64_add(session->summary.execution_count, 1ull, &counter_next)) {
@@ -1033,74 +1197,32 @@ int yvex_runtime_session_finish_coordinated(
                        "runtime session execution counter overflowed");
     }
 
-    if (rc == YVEX_OK && cleanup_rc == YVEX_OK && participant) {
-        cleanup_rc = participant->prepare(participant->context, &cleanup);
-        participant_prepared = cleanup_rc == YVEX_OK;
-    }
-    for (index = 0ull; rc == YVEX_OK && cleanup_rc == YVEX_OK && index < 2ull;
-         ++index)
-        if (residencies[index])
-            cleanup_rc = yvex_runtime_state_residency_publish(
-                residencies[index], &cleanup);
-    for (index = 0ull; rc == YVEX_OK && cleanup_rc == YVEX_OK && index < 2ull;
-         ++index) {
-        cleanup_rc = providers[index]->prepare_commit(
-            providers[index]->context, &state_failure, &cleanup);
-        prepared[index] = cleanup_rc == YVEX_OK;
-    }
-    if (rc == YVEX_OK && cleanup_rc == YVEX_OK) {
-        for (index = 0ull; index < 2ull; ++index)
-            providers[index]->publish_commit(providers[index]->context);
-        for (index = 0ull; cleanup_rc == YVEX_OK && index < 2ull; ++index)
-            if (residencies[index])
-                cleanup_rc = yvex_runtime_state_residency_commit(
-                    residencies[index], &cleanup);
-        if (cleanup_rc == YVEX_OK && participant_prepared)
-            participant->publish(participant->context);
-        if (cleanup_rc == YVEX_OK)
-            session->summary.execution_count = counter_next;
-    } else {
-        for (index = 2ull; index-- > 0ull;)
-            if (prepared[index])
-                providers[index]->cancel_commit(providers[index]->context);
-        if (participant) participant->cancel(participant->context);
-        for (index = 0ull; index < 2ull; ++index) {
-            int abort_rc = providers[index]->abort(
-                providers[index]->context, &state_failure, &failure);
-            if (residencies[index])
-                yvex_runtime_state_residency_abort(residencies[index]);
-            if (abort_rc != YVEX_OK && cleanup_rc == YVEX_OK) {
-                cleanup_rc = abort_rc;
-                cleanup = failure;
-            }
-        }
-    }
-    if (rc != YVEX_OK || cleanup_rc != YVEX_OK) {
+    transaction_status = rc != YVEX_OK ? rc : cleanup_rc;
+    transaction_error = transaction_status == rc ? primary : cleanup;
+    transaction_rc = runtime_transaction_resolve(
+        transaction, transaction_count, transaction_status, &abort_failed,
+        &transaction_error);
+    boundary_failure = cleanup_rc != YVEX_OK || abort_failed ||
+                       (rc == YVEX_OK && transaction_rc != YVEX_OK);
+    if (transaction_rc == YVEX_OK)
+        session->summary.execution_count = counter_next;
+    else {
         unsigned long long *counter =
-            (rc != YVEX_OK ? rc : cleanup_rc) == YVEX_ERR_CANCELLED
+            transaction_rc == YVEX_ERR_CANCELLED
                 ? &session->summary.cancellation_count
                 : &session->summary.failure_count;
         if (yvex_core_u64_add(*counter, 1ull, &counter_next)) *counter = counter_next;
-        if (cleanup_rc != YVEX_OK && cleanup_rc != YVEX_ERR_CANCELLED)
+        if (boundary_failure && transaction_rc != YVEX_ERR_CANCELLED)
             session->summary.invalidated = 1;
     }
     session->execution_owner_ready = 0;
     session->summary.busy = 0;
     (void)pthread_cond_broadcast(&session->idle_condition);
     (void)pthread_mutex_unlock(&session->lifecycle_mutex);
-    if (cleanup_rc != YVEX_OK) {
-        if (err) *err = cleanup;
-        return cleanup_rc;
-    }
-    if (rc != YVEX_OK) {
-        if (err && primary.code != YVEX_OK)
-            *err = primary;
-        else
-            yvex_error_set(err, (yvex_status)rc, "runtime.session.execution",
-                           "coordinated execution failed before publication");
-        return rc;
-    }
-    return yvex_runtime_private_success(err);
+    if (transaction_rc == YVEX_OK)
+        return yvex_runtime_private_success(err);
+    if (err) *err = transaction_error;
+    return transaction_rc;
 }
 
 int yvex_runtime_session_finish(yvex_runtime_execution_session *session, int status,

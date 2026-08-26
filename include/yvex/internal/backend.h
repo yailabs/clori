@@ -358,8 +358,10 @@ int yvex_backend_cuda_encoded_gather(yvex_backend *backend, const unsigned char 
     yvex_backend_cuda_operation_facts *facts, yvex_error *err);
 int yvex_backend_state_residency_attach(yvex_backend *backend, const void *context,
     yvex_backend_state_resolve_fn resolve, unsigned long long generation, yvex_error *err);
-int yvex_backend_state_residency_publish_generation(
+int yvex_backend_state_residency_validate_generation(
     yvex_backend *backend, unsigned long long generation, yvex_error *err);
+void yvex_backend_state_residency_publish_generation(
+    yvex_backend *backend, unsigned long long generation);
 void yvex_backend_state_residency_detach(yvex_backend *backend);
 int yvex_backend_state_residency_resolve(const yvex_backend *backend, const void *host,
     unsigned long long bytes, unsigned long long *device_address);
