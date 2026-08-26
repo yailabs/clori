@@ -63,7 +63,8 @@ static unsigned long long batching_compatible_count_locked(
     for (index = 0ull; index < batcher->queue_count; ++index) {
         const runtime_compatible_batch_ticket *candidate =
             batcher->queue[index];
-        if (strcmp(first->key.identity, candidate->key.identity) != 0 ||
+        if (!yvex_execution_compatibility_keys_match(
+                &first->key, &candidate->key, NULL) ||
             candidate->row_count > first->key.admitted_width - rows)
             continue;
         rows += candidate->row_count;
@@ -173,19 +174,16 @@ static int batching_keys_match(runtime_compatible_batcher *batcher,
     batcher->summary.compatibility_mismatches++;
     if (left->phase != right->phase) {
         batcher->summary.phase_mismatches++;
+    } else if (left->operation != right->operation) {
+        batcher->summary.operation_mismatches++;
     } else if (left->layer_ordinal != right->layer_ordinal) {
         batcher->summary.layer_mismatches++;
-    } else if (strcmp(left->operation_identity, right->operation_identity)) {
-        batcher->summary.operation_mismatches++;
-    } else if (left->backend_kind != right->backend_kind ||
-               left->tensor_scope != right->tensor_scope ||
-               left->execution_class != right->execution_class ||
-               left->publication_contract != right->publication_contract ||
+    } else if (left->tensor_scope != right->tensor_scope ||
                left->row_width != right->row_width ||
                left->admitted_width != right->admitted_width) {
         batcher->summary.geometry_mismatches++;
-    } else if (strcmp(left->execution_profile_identity,
-                      right->execution_profile_identity)) {
+    } else if (left->backend_kind != right->backend_kind ||
+               left->execution_class != right->execution_class) {
         batcher->summary.profile_mismatches++;
     } else {
         batcher->summary.identity_mismatches++;
@@ -614,37 +612,23 @@ static int compatible_moe_key_prepare(compatible_moe_ticket *ticket,
                                       yvex_error *err)
 {
     const runtime_compatible_moe_request *request = ticket->request;
-    const yvex_model_engine_view *view = yvex_model_engine_view_get(request->model);
-    const yvex_physical_execution_summary *physical = view
-        ? yvex_physical_execution_ir_summary(view->physical_execution) : NULL;
-    yvex_model_engine_summary model;
     yvex_execution_compatibility_key *key = &ticket->ticket.key;
-    if (!view || !physical ||
-        yvex_model_engine_summary_copy(request->model, &model, err) != YVEX_OK)
+    if (request->session->engine != request->model ||
+        !request->session->summary.engine_generation)
         return batching_refuse(err, YVEX_ERR_STATE,
-                               "compatible MoE compiled facts are unavailable");
+                               "compatible MoE engine handle is unavailable");
     memset(key, 0, sizeof(*key));
-    key->schema_version = YVEX_EXECUTION_COMPATIBILITY_SCHEMA_V1;
+    key->schema_version = YVEX_EXECUTION_COMPATIBILITY_SCHEMA_V2;
     key->phase = request->phase;
+    key->operation = YVEX_EXECUTION_COMPATIBILITY_MOE;
     key->backend_kind = yvex_backend_kind_of(request->backend);
     key->tensor_scope = request->layer->tensor_scope;
     key->execution_class = request->execution_class;
-    key->publication_contract = 1u;
-    key->engine_generation = model.engine_generation;
+    key->engine_generation = request->session->summary.engine_generation;
     key->layer_ordinal = request->layer_ordinal;
     key->row_width = request->transformer->expanded_width;
     key->admitted_width = request->admitted_width;
-    yvex_runtime_identity_copy(key->runtime_model_identity,
-                               model.runtime_model_identity);
-    yvex_runtime_identity_copy(key->runtime_binding_identity,
-                               model.runtime_binding_identity);
-    yvex_runtime_identity_copy(key->physical_variant_identity,
-                               physical->physical_variant_identity);
-    yvex_runtime_identity_copy(key->execution_profile_identity,
-                               request->execution_profile->identity);
-    yvex_runtime_identity_copy(key->operation_identity,
-                               request->layer->layer_identity);
-    return yvex_execution_compatibility_key_seal(key, err);
+    return yvex_execution_compatibility_key_validate(key, err);
 }
 
 static int compatible_tensor_same_view(const yvex_device_tensor *left,
@@ -997,37 +981,24 @@ static yvex_execution_phase compatible_logits_phase(yvex_logits_source_phase pha
 static int compatible_logits_key_prepare(compatible_logits_ticket *ticket,
                                          yvex_error *err)
 {
-    const yvex_model_engine_view *view = yvex_model_engine_view_get(ticket->model);
-    const yvex_physical_execution_summary *physical = view
-        ? yvex_physical_execution_ir_summary(view->physical_execution) : NULL;
     const yvex_runtime_logits_plan_summary *plan =
         yvex_runtime_logits_plan_summary_get(ticket->logits);
-    yvex_model_engine_summary model;
     yvex_execution_compatibility_key *key = &ticket->ticket.key;
-    if (!physical || !plan || ticket->admitted_width >= 64ull ||
-        yvex_model_engine_summary_copy(ticket->model, &model, err) != YVEX_OK)
+    if (!plan || ticket->session->engine != ticket->model ||
+        ticket->admitted_width >= 64ull ||
+        !ticket->session->summary.engine_generation)
         return batching_refuse(err, YVEX_ERR_STATE,
-                               "compatible output-head facts are unavailable");
-    key->schema_version = YVEX_EXECUTION_COMPATIBILITY_SCHEMA_V1;
+                               "compatible output-head engine handle is unavailable");
+    key->schema_version = YVEX_EXECUTION_COMPATIBILITY_SCHEMA_V2;
     key->phase = compatible_logits_phase(ticket->source->source_phase);
+    key->operation = YVEX_EXECUTION_COMPATIBILITY_OUTPUT_HEAD;
     key->backend_kind = yvex_backend_kind_of(ticket->backend);
     key->tensor_scope = YVEX_TENSOR_SCOPE_GLOBAL;
     key->execution_class = ticket->execution_profile->execution_class;
-    key->publication_contract = 3u;
-    key->engine_generation = model.engine_generation;
+    key->engine_generation = ticket->session->summary.engine_generation;
     key->row_width = plan->hidden_width;
     key->admitted_width = ticket->admitted_width;
-    yvex_runtime_identity_copy(key->runtime_model_identity,
-                               model.runtime_model_identity);
-    yvex_runtime_identity_copy(key->runtime_binding_identity,
-                               model.runtime_binding_identity);
-    yvex_runtime_identity_copy(key->physical_variant_identity,
-                               physical->physical_variant_identity);
-    yvex_runtime_identity_copy(key->execution_profile_identity,
-                               ticket->execution_profile->identity);
-    yvex_runtime_identity_copy(key->operation_identity,
-                               plan->output_head_plan_identity);
-    return yvex_execution_compatibility_key_seal(key, err);
+    return yvex_execution_compatibility_key_validate(key, err);
 }
 
 static int compatible_logits_ticket_compare(const void *left,
@@ -1131,9 +1102,6 @@ static int compatible_step_execute(
 static int compatible_step_rendezvous(
     const runtime_compatible_step_request *request, yvex_error *err)
 {
-    const yvex_model_engine_view *view;
-    const yvex_physical_execution_summary *physical;
-    yvex_model_engine_summary model;
     runtime_compatible_batch_ticket ticket = {0};
     yvex_execution_compatibility_key *key = &ticket.key;
     if (!request || !request->model || !request->session || !request->backend ||
@@ -1146,34 +1114,20 @@ static int compatible_step_rendezvous(
         yvex_error_clear(err);
         return YVEX_OK;
     }
-    view = yvex_model_engine_view_get(request->model);
-    physical = view
-                   ? yvex_physical_execution_ir_summary(view->physical_execution)
-                   : NULL;
-    if (!physical ||
-        yvex_model_engine_summary_copy(request->model, &model, err) != YVEX_OK)
+    if (request->session->engine != request->model ||
+        !request->session->summary.engine_generation)
         return batching_refuse(err, YVEX_ERR_STATE,
-                               "compatible execution step facts are unavailable");
-    key->schema_version = YVEX_EXECUTION_COMPATIBILITY_SCHEMA_V1;
+                               "compatible execution step engine handle is unavailable");
+    key->schema_version = YVEX_EXECUTION_COMPATIBILITY_SCHEMA_V2;
     key->phase = request->phase;
+    key->operation = YVEX_EXECUTION_COMPATIBILITY_TRANSFORMER_STEP;
     key->backend_kind = yvex_backend_kind_of(request->backend);
     key->tensor_scope = request->tensor_scope;
     key->execution_class = request->execution_class;
-    key->publication_contract = 2u;
-    key->engine_generation = model.engine_generation;
+    key->engine_generation = request->session->summary.engine_generation;
     key->row_width = request->transformer->expanded_width;
     key->admitted_width = request->maximum_width;
-    yvex_runtime_identity_copy(key->runtime_model_identity,
-                               model.runtime_model_identity);
-    yvex_runtime_identity_copy(key->runtime_binding_identity,
-                               model.runtime_binding_identity);
-    yvex_runtime_identity_copy(key->physical_variant_identity,
-                               physical->physical_variant_identity);
-    yvex_runtime_identity_copy(key->execution_profile_identity,
-                               request->execution_profile->identity);
-    yvex_runtime_identity_copy(key->operation_identity,
-                               request->transformer->transformer_plan_identity);
-    if (yvex_execution_compatibility_key_seal(key, err) != YVEX_OK)
+    if (yvex_execution_compatibility_key_validate(key, err) != YVEX_OK)
         return yvex_error_code(err);
     ticket.row_count = 1ull;
     ticket.coalescing_limit_ns = COMPATIBLE_RENDEZVOUS_NS;

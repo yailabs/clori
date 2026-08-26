@@ -144,82 +144,17 @@ int yvex_execution_batch_validate(const yvex_execution_batch *batch,
     return YVEX_OK;
 }
 
-int yvex_execution_compatibility_key_seal(
-    yvex_execution_compatibility_key *key, yvex_error *err)
-{
-    yvex_sha256 hash;
-    if (!key)
-        return worklist_refuse(
-            err, YVEX_ERR_INVALID_ARG,
-            "execution compatibility key is unavailable");
-    if (key->schema_version != YVEX_EXECUTION_COMPATIBILITY_SCHEMA_V1 ||
-        key->phase >= YVEX_EXECUTION_PHASE_COUNT || !key->engine_generation ||
-        !key->row_width || !key->admitted_width || key->admitted_width >= 64ull)
-        return worklist_refuse(
-            err, YVEX_ERR_INVALID_ARG,
-            "execution compatibility geometry is incomplete");
-    if (!worklist_identity_valid(key->runtime_model_identity))
-        return worklist_refuse(
-            err, YVEX_ERR_INVALID_ARG,
-            "execution compatibility runtime model identity is invalid");
-    if (!worklist_identity_valid(key->runtime_binding_identity))
-        return worklist_refuse(
-            err, YVEX_ERR_INVALID_ARG,
-            "execution compatibility runtime binding identity is invalid");
-    if (!worklist_identity_valid(key->physical_variant_identity))
-        return worklist_refuse(
-            err, YVEX_ERR_INVALID_ARG,
-            "execution compatibility physical variant identity is invalid");
-    if (!worklist_identity_valid(key->execution_profile_identity))
-        return worklist_refuse(
-            err, YVEX_ERR_INVALID_ARG,
-            "execution compatibility execution profile identity is invalid");
-    if (!worklist_identity_valid(key->operation_identity))
-        return worklist_refuse(
-            err, YVEX_ERR_INVALID_ARG,
-            "execution compatibility operation identity is invalid");
-    yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.execution-compatibility.v1") ||
-        !yvex_sha256_update_u64(&hash, key->schema_version) ||
-        !yvex_sha256_update_u64(&hash, key->phase) ||
-        !yvex_sha256_update_u64(&hash, key->backend_kind) ||
-        !yvex_sha256_update_u64(&hash, key->tensor_scope) ||
-        !yvex_sha256_update_u64(&hash, key->execution_class) ||
-        !yvex_sha256_update_u64(&hash, key->publication_contract) ||
-        !yvex_sha256_update_u64(&hash, key->engine_generation) ||
-        !yvex_sha256_update_u64(&hash, key->layer_ordinal) ||
-        !yvex_sha256_update_u64(&hash, key->row_width) ||
-        !yvex_sha256_update_u64(&hash, key->admitted_width) ||
-        !yvex_sha256_update_text(&hash, key->runtime_model_identity) ||
-        !yvex_sha256_update_text(&hash, key->runtime_binding_identity) ||
-        !yvex_sha256_update_text(&hash, key->physical_variant_identity) ||
-        !yvex_sha256_update_text(&hash, key->execution_profile_identity) ||
-        !yvex_sha256_update_text(&hash, key->operation_identity) ||
-        !worklist_hash_finish(&hash, key->identity))
-        return worklist_refuse(
-            err, YVEX_ERR_STATE,
-            "execution compatibility identity derivation failed");
-    yvex_error_clear(err);
-    return YVEX_OK;
-}
-
 int yvex_execution_compatibility_key_validate(
     const yvex_execution_compatibility_key *key, yvex_error *err)
 {
-    yvex_execution_compatibility_key expected;
-    char identity[YVEX_SHA256_HEX_CAP];
-    if (!key || !worklist_identity_valid(key->identity))
+    if (!key || key->schema_version != YVEX_EXECUTION_COMPATIBILITY_SCHEMA_V2 ||
+        key->phase >= YVEX_EXECUTION_PHASE_COUNT ||
+        key->operation >= YVEX_EXECUTION_COMPATIBILITY_OPERATION_COUNT ||
+        !key->engine_generation || !key->row_width || !key->admitted_width ||
+        key->admitted_width >= 64ull)
         return worklist_refuse(
             err, YVEX_ERR_INVALID_ARG,
-            "execution compatibility identity is unavailable");
-    expected = *key;
-    yvex_core_text_copy(identity, sizeof(identity), key->identity);
-    if (yvex_execution_compatibility_key_seal(&expected, err) != YVEX_OK)
-        return yvex_error_code(err);
-    if (strcmp(identity, expected.identity) != 0)
-        return worklist_refuse(
-            err, YVEX_ERR_FORMAT,
-            "execution compatibility identity is stale");
+            "execution compatibility geometry or engine handle is incomplete");
     yvex_error_clear(err);
     return YVEX_OK;
 }
@@ -232,7 +167,15 @@ int yvex_execution_compatibility_keys_match(
         yvex_execution_compatibility_key_validate(right, err) != YVEX_OK)
         return 0;
     yvex_error_clear(err);
-    return strcmp(left->identity, right->identity) == 0;
+    return left->phase == right->phase &&
+           left->operation == right->operation &&
+           left->backend_kind == right->backend_kind &&
+           left->tensor_scope == right->tensor_scope &&
+           left->execution_class == right->execution_class &&
+           left->engine_generation == right->engine_generation &&
+           left->layer_ordinal == right->layer_ordinal &&
+           left->row_width == right->row_width &&
+           left->admitted_width == right->admitted_width;
 }
 
 int yvex_expert_worklist_policy_seal(yvex_expert_worklist_policy *policy,

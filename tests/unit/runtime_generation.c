@@ -39,32 +39,20 @@ typedef struct {
     int result;
 } generation_batching_job;
 
-static void generation_batching_identity(char output[YVEX_SHA256_HEX_CAP],
-                                         char digit)
-{
-    memset(output, digit, YVEX_SHA256_HEX_BYTES);
-    output[YVEX_SHA256_HEX_CAP - 1u] = '\0';
-}
-
 static void generation_batching_key(yvex_execution_compatibility_key *key,
                                     unsigned long long layer)
 {
     memset(key, 0, sizeof(*key));
-    key->schema_version = YVEX_EXECUTION_COMPATIBILITY_SCHEMA_V1;
+    key->schema_version = YVEX_EXECUTION_COMPATIBILITY_SCHEMA_V2;
     key->phase = YVEX_EXECUTION_PHASE_DECODE;
+    key->operation = YVEX_EXECUTION_COMPATIBILITY_MOE;
     key->backend_kind = 1u;
     key->tensor_scope = 1u;
     key->execution_class = 1u;
-    key->publication_contract = 1u;
     key->engine_generation = 1ull;
     key->layer_ordinal = layer;
     key->row_width = 64ull;
     key->admitted_width = 4ull;
-    generation_batching_identity(key->runtime_model_identity, '1');
-    generation_batching_identity(key->runtime_binding_identity, '2');
-    generation_batching_identity(key->physical_variant_identity, '3');
-    generation_batching_identity(key->execution_profile_identity, '4');
-    generation_batching_identity(key->operation_identity, layer ? '6' : '5');
 }
 
 static int generation_batching_execute(
@@ -141,7 +129,7 @@ static int generation_test_compatible_batching(void)
         generation_batching_key(&jobs[index].ticket.key,
                                 index < 4ull ? 0ull : 1ull);
         YVEX_TEST_ASSERT(
-            yvex_execution_compatibility_key_seal(
+            yvex_execution_compatibility_key_validate(
                 &jobs[index].ticket.key, &err) == YVEX_OK &&
                 pthread_create(&threads[index], NULL, generation_batching_submit,
                                &jobs[index]) == 0,
@@ -224,7 +212,7 @@ static int generation_test_bounded_batch_coalescing(void)
     job.ticket.kind = RUNTIME_COMPATIBLE_BATCH_RENDEZVOUS;
     generation_batching_key(&job.ticket.key, 0ull);
     YVEX_TEST_ASSERT(
-        yvex_execution_compatibility_key_seal(&job.ticket.key, &err) == YVEX_OK &&
+        yvex_execution_compatibility_key_validate(&job.ticket.key, &err) == YVEX_OK &&
             pthread_create(&thread, NULL, generation_batching_submit, &job) == 0,
         "one producer should submit into the bounded rendezvous");
     for (attempt = 0ull; attempt < 100000ull; ++attempt) {
@@ -285,7 +273,7 @@ static int generation_test_incompatible_arrival_releases_impossible_wait(void)
     jobs[0].ticket.context = &jobs[0];
     generation_batching_key(&jobs[0].ticket.key, 0ull);
     YVEX_TEST_ASSERT(
-        yvex_execution_compatibility_key_seal(&jobs[0].ticket.key, &err) ==
+        yvex_execution_compatibility_key_validate(&jobs[0].ticket.key, &err) ==
                 YVEX_OK &&
             pthread_create(&threads[0], NULL, generation_batching_submit,
                            &jobs[0]) == 0,
@@ -307,7 +295,7 @@ static int generation_test_incompatible_arrival_releases_impossible_wait(void)
     jobs[1].ticket.context = &jobs[1];
     generation_batching_key(&jobs[1].ticket.key, 1ull);
     YVEX_TEST_ASSERT(
-        yvex_execution_compatibility_key_seal(&jobs[1].ticket.key, &err) ==
+        yvex_execution_compatibility_key_validate(&jobs[1].ticket.key, &err) ==
                 YVEX_OK &&
             pthread_create(&threads[1], NULL, generation_batching_submit,
                            &jobs[1]) == 0,

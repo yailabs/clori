@@ -16,25 +16,20 @@ static int worklist_test_compatibility(void)
 {
     yvex_execution_compatibility_key first = {0}, same, different;
     yvex_error err;
-    first.schema_version = YVEX_EXECUTION_COMPATIBILITY_SCHEMA_V1;
+    first.schema_version = YVEX_EXECUTION_COMPATIBILITY_SCHEMA_V2;
     first.phase = YVEX_EXECUTION_PHASE_DECODE;
+    first.operation = YVEX_EXECUTION_COMPATIBILITY_MOE;
     first.backend_kind = 1u;
     first.tensor_scope = 2u;
     first.execution_class = 1u;
-    first.publication_contract = 1u;
     first.engine_generation = 7ull;
     first.layer_ordinal = 3ull;
     first.row_width = 14336ull;
     first.admitted_width = 8ull;
-    worklist_test_identity(first.runtime_model_identity, '1');
-    worklist_test_identity(first.runtime_binding_identity, '2');
-    worklist_test_identity(first.physical_variant_identity, '3');
-    worklist_test_identity(first.execution_profile_identity, '4');
-    worklist_test_identity(first.operation_identity, '5');
     YVEX_TEST_ASSERT(
-        yvex_execution_compatibility_key_seal(&first, &err) == YVEX_OK &&
+        sizeof(first) <= 64u &&
             yvex_execution_compatibility_key_validate(&first, &err) == YVEX_OK,
-        "complete execution compatibility facts should seal");
+        "compact engine-local compatibility facts should validate");
     same = first;
     YVEX_TEST_ASSERT(
         yvex_execution_compatibility_keys_match(&first, &same, &err),
@@ -42,21 +37,32 @@ static int worklist_test_compatibility(void)
     different = first;
     different.layer_ordinal++;
     YVEX_TEST_ASSERT(
-        yvex_execution_compatibility_key_seal(&different, &err) == YVEX_OK &&
+        yvex_execution_compatibility_key_validate(&different, &err) == YVEX_OK &&
             !yvex_execution_compatibility_keys_match(&first, &different, &err),
         "equal row geometry must not merge distinct compiled operations");
     different = first;
     different.admitted_width = 0ull;
     YVEX_TEST_ASSERT(
-        yvex_execution_compatibility_key_seal(&different, &err) ==
+        yvex_execution_compatibility_key_validate(&different, &err) ==
             YVEX_ERR_INVALID_ARG,
         "unbounded compatibility width should refuse");
     different = first;
-    different.runtime_binding_identity[0] = 'f';
+    different.engine_generation++;
+    YVEX_TEST_ASSERT(
+        yvex_execution_compatibility_key_validate(&different, &err) == YVEX_OK &&
+            !yvex_execution_compatibility_keys_match(&first, &different, &err),
+        "distinct engine generations must never share executable work");
+    different = first;
+    different.operation = YVEX_EXECUTION_COMPATIBILITY_OUTPUT_HEAD;
+    YVEX_TEST_ASSERT(
+        !yvex_execution_compatibility_keys_match(&first, &different, &err),
+        "typed operations must remain distinct without identity strings");
+    different = first;
+    different.schema_version = 1u;
     YVEX_TEST_ASSERT(
         yvex_execution_compatibility_key_validate(&different, &err) ==
-            YVEX_ERR_FORMAT,
-        "stale compatibility identity should refuse");
+            YVEX_ERR_INVALID_ARG,
+        "obsolete transient compatibility schemas should refuse");
     return 0;
 }
 
