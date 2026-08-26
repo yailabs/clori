@@ -783,9 +783,6 @@ static void server_event_values(const yvex_server_event *event, int detailed)
         else if (!strcmp(event->phase, "candidate"))
             printf(" · accepted %llu · discarded %llu · extensions %llu",
                    event->value_a, event->value_b, event->value_c);
-        else if (!strcmp(event->phase, "shape"))
-            printf(" · shape hits %llu · misses %llu · host scan %llu bytes",
-                   event->value_a, event->value_b, event->value_c);
         else if (!strcmp(event->phase, "moe"))
             printf(" · row/expert pairs %llu · subviews %llu · bytes %llu",
                    event->value_a, event->value_b, event->value_c);

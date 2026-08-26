@@ -793,7 +793,7 @@ static int attn_prepare(attn_run *run) {
         return attn_run_fail(
             run, YVEX_BACKEND_ATTENTION_FAILURE_BUDGET, "cuda.attention.capacity.phase",
             run->job->phase, YVEX_BACKEND_ATTENTION_PHASE_COUNT, YVEX_ERR_BOUNDS,
-            "CUDA attention phase has no active execution shape");
+            "CUDA attention phase has no active capacity configuration");
     run->phase_start_position = run->job->token_position;
     run->input_extent = run->job->operation_scope == YVEX_BACKEND_ATTENTION_SCOPE_ENVELOPE
                             ? run->job->residual_expanded_width : run->job->hidden_width;
@@ -868,19 +868,19 @@ static int attn_prepare(attn_run *run) {
             run, YVEX_BACKEND_ATTENTION_FAILURE_BUDGET,
             "cuda.attention.capacity.local", run->local_capacity,
             run->initial_local_count, YVEX_ERR_BOUNDS,
-            "CUDA attention local history exceeds the selected execution shape");
+            "CUDA attention local history exceeds configured capacity");
     if (compressed_end > run->compressed_capacity)
         return attn_run_fail(
             run, YVEX_BACKEND_ATTENTION_FAILURE_BUDGET,
             "cuda.attention.capacity.compressed", run->compressed_capacity,
             compressed_end, YVEX_ERR_BOUNDS,
-            "CUDA attention compressed history exceeds the selected execution shape");
+            "CUDA attention compressed history exceeds configured capacity");
     if (indexer_end > run->indexer_capacity)
         return attn_run_fail(
             run, YVEX_BACKEND_ATTENTION_FAILURE_BUDGET,
             "cuda.attention.capacity.indexer", run->indexer_capacity,
             indexer_end, YVEX_ERR_BOUNDS,
-            "CUDA attention indexer history exceeds the selected execution shape");
+            "CUDA attention indexer history exceeds configured capacity");
     {
         struct {
             unsigned long long left, right, *result;

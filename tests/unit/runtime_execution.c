@@ -612,99 +612,6 @@ static int execution_test_memory_facts(void)
     return 0;
 }
 
-static int execution_test_shape(void)
-{
-    yvex_execution_shape_registry *registry = NULL;
-    yvex_execution_shape configured = {0}, required;
-    yvex_execution_shape_failure failure;
-    yvex_execution_shape_registry_summary summary;
-    const yvex_execution_shape *selected = NULL;
-    unsigned long long generation;
-    yvex_error err;
-
-    configured.schema_version = YVEX_EXECUTION_SHAPE_SCHEMA_V1;
-    configured.target_scope = YVEX_EXECUTION_SCOPE_TARGET;
-    configured.phase = YVEX_EXECUTION_PHASE_VERIFY;
-    configured.operation_scope = YVEX_EXECUTION_OPERATION_ENVELOPE;
-    configured.token_width = 5ull;
-    configured.candidate_visible = 1;
-    configured.context_band = YVEX_EXECUTION_CONTEXT_SHORT;
-    configured.context_capacity = 32ull;
-    configured.local_capacity = 16ull;
-    configured.compressed_capacity = 8ull;
-    configured.indexer_capacity = 8ull;
-    configured.rolling_capacity = 2ull;
-    configured.candidate_capacity = 6ull;
-    configured.workspace_generation = 1ull;
-    configured.evidence = YVEX_EXECUTION_EVIDENCE_PRODUCTION;
-    execution_test_identity(configured.execution_profile_identity, '1');
-    execution_test_identity(configured.attention_plan_identity, '2');
-    execution_test_identity(configured.state_layout_identity, '3');
-    execution_test_identity(configured.kernel_bundle_identity, '4');
-    execution_test_identity(configured.workspace_identity, '5');
-    YVEX_TEST_ASSERT(yvex_execution_shape_seal(&configured, &err) == YVEX_OK,
-                     "execution shape should seal");
-    YVEX_TEST_ASSERT(yvex_execution_shape_registry_open(
-                         &registry, 2ull, &err) == YVEX_OK,
-                     "shape registry should open");
-    YVEX_TEST_ASSERT(yvex_execution_shape_registry_register(
-                         registry, &configured, &err) == YVEX_OK,
-                     "execution shape should register");
-    required = configured;
-    required.position = 10ull;
-    required.local_capacity = 12ull;
-    YVEX_TEST_ASSERT(yvex_execution_shape_seal(&required, &err) == YVEX_OK,
-                     "shape requirement should seal");
-    YVEX_TEST_ASSERT(yvex_execution_shape_registry_select(
-                         registry, &required, &selected, &failure, &err) == YVEX_OK &&
-                         selected != NULL,
-                     "compatible execution shape should select");
-    required.local_capacity = 17ull;
-    YVEX_TEST_ASSERT(yvex_execution_shape_seal(&required, &err) == YVEX_OK,
-                     "oversized shape requirement should seal");
-    YVEX_TEST_ASSERT(yvex_execution_shape_registry_select(
-                         registry, &required, &selected, &failure, &err) ==
-                         YVEX_ERR_BOUNDS &&
-                         failure.component == YVEX_EXECUTION_CAPACITY_LOCAL &&
-                         failure.configured == 16ull && failure.required == 17ull &&
-                         failure.position == 10ull,
-                     "shape capacity refusal should identify the exact component");
-    YVEX_TEST_ASSERT(yvex_execution_shape_registry_summary_copy(
-                         registry, &summary, &err) == YVEX_OK &&
-                         summary.count == 1ull && summary.hit_count == 1ull &&
-                         summary.miss_count == 1ull,
-                     "shape registry should publish hit and miss accounting");
-    for (generation = 2ull; generation <= 258ull; ++generation) {
-        configured.workspace_generation = generation;
-        execution_test_identity(configured.workspace_identity,
-                                generation % 2ull ? '5' : '6');
-        YVEX_TEST_ASSERT(yvex_execution_shape_seal(&configured, &err) == YVEX_OK &&
-                             yvex_execution_shape_registry_register(
-                                 registry, &configured, &err) == YVEX_OK,
-                         "workspace rebinds must replace stale shape classes");
-    }
-    YVEX_TEST_ASSERT(yvex_execution_shape_registry_summary_copy(
-                         registry, &summary, &err) == YVEX_OK &&
-                         summary.count == 1ull,
-                     "workspace generations must not consume registry capacity");
-    required = configured;
-    required.position = 11ull;
-    required.candidate_capacity = 5ull;
-    YVEX_TEST_ASSERT(yvex_execution_shape_seal(&required, &err) == YVEX_OK &&
-                         yvex_execution_shape_registry_select(
-                             registry, &required, &selected, &failure, &err) == YVEX_OK &&
-                         selected && selected->workspace_generation == 258ull,
-                     "shape selection should use only the current workspace generation");
-    configured.workspace_generation = 1ull;
-    execution_test_identity(configured.workspace_identity, '5');
-    YVEX_TEST_ASSERT(yvex_execution_shape_seal(&configured, &err) == YVEX_OK &&
-                         yvex_execution_shape_registry_register(
-                             registry, &configured, &err) == YVEX_ERR_STATE,
-                     "stale workspace generation should not replace current execution truth");
-    yvex_execution_shape_registry_close(&registry);
-    return 0;
-}
-
 static int execution_test_device_view(void)
 {
     yvex_backend *backend = NULL;
@@ -756,6 +663,5 @@ int yvex_test_runtime_execution(void)
     if (execution_test_profile() != 0) return 1;
     if (execution_test_memory_facts() != 0) return 1;
     if (execution_test_roofline() != 0) return 1;
-    if (execution_test_shape() != 0) return 1;
     return execution_test_device_view();
 }

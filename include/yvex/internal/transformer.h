@@ -359,7 +359,6 @@ typedef struct {
     int compatible_batching;
     unsigned long long compatible_batch_width;
     const yvex_compiled_execution_profile *execution_profile;
-    yvex_execution_shape_registry *shape_registry;
 } yvex_runtime_transformer_options;
 typedef struct {
     unsigned long long chunk_tokens;

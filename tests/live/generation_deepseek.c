@@ -1060,7 +1060,6 @@ static int live_manual_execute(yvex_model_engine *model,
     yvex_tokenizer_decode_options decoder_options = {
         .skip_special_tokens = 1, .require_complete_utf8 = 1};
     yvex_runtime_execution_session *session = NULL;
-    yvex_execution_shape_registry *shapes = NULL;
     yvex_runtime_transformer_context *transformer = NULL;
     yvex_runtime_decode_context *decode = NULL;
     yvex_runtime_logits_context *logits = NULL;
@@ -1085,14 +1084,7 @@ static int live_manual_execute(yvex_model_engine *model,
     if (rc == YVEX_OK)
         rc = live_execution_profile(
             model, session, backend, policy.strategy, &execution_profile, err);
-    if (rc == YVEX_OK)
-        rc = yvex_execution_shape_registry_open(
-            &shapes,
-            YVEX_EXECUTION_SHAPE_MAX_WIDTH * YVEX_EXECUTION_PHASE_COUNT *
-                (YVEX_EXECUTION_CONTEXT_NEAR_CAPACITY + 1ull) * 4ull,
-            err);
     transformer_options.execution_profile = &execution_profile;
-    transformer_options.shape_registry = shapes;
     if (rc == YVEX_OK)
         rc = yvex_runtime_transformer_context_open(
             &transformer, model, session, &transformer_options, NULL, err);
@@ -1216,7 +1208,6 @@ static int live_manual_execute(yvex_model_engine *model,
         if (rc == YVEX_OK && close_rc != YVEX_OK) { rc = close_rc; *err = cleanup; }
         close_rc = yvex_runtime_transformer_context_close(&transformer, &cleanup);
         if (rc == YVEX_OK && close_rc != YVEX_OK) { rc = close_rc; *err = cleanup; }
-        yvex_execution_shape_registry_close(&shapes);
         close_rc = yvex_runtime_session_close(&session, &cleanup);
         if (rc == YVEX_OK && close_rc != YVEX_OK) { rc = close_rc; *err = cleanup; }
     }

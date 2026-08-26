@@ -30,8 +30,14 @@ int yvex_test_runtime_profile(void)
 {
     yvex_runtime_profile_record record, mutated;
     yvex_error err;
-    YVEX_TEST_ASSERT(profile_fixture(&record, &err) == YVEX_OK,
-                     "profile fixture begins");
+    YVEX_TEST_ASSERT(
+        profile_fixture(&record, &err) == YVEX_OK &&
+            record.schema_version == YVEX_RUNTIME_PROFILE_SCHEMA_V4 &&
+            !strcmp(runtime_profile_counter_name(YVEX_RUNTIME_PROFILE_EXPERT_BYTES),
+                    "expert_bytes") &&
+            !strcmp(runtime_profile_counter_name(YVEX_RUNTIME_PROFILE_COUNTER_COUNT),
+                    "invalid"),
+        "profile v4 omits the retired execution-shape evidence vocabulary");
     YVEX_TEST_ASSERT(
         runtime_profile_counter_add(
             &record, YVEX_RUNTIME_PROFILE_H2D_BYTES, 4096ull, &err) == YVEX_OK &&

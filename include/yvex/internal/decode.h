@@ -63,7 +63,6 @@ typedef struct {
     int (*cancel_requested)(void *context);
     void *cancel_context;
     const yvex_compiled_execution_profile *execution_profile;
-    yvex_execution_shape_registry *shape_registry;
 } yvex_runtime_speculation_options;
 
 typedef struct {

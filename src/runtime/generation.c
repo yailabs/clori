@@ -1432,11 +1432,9 @@ static void generation_partial_turn_seal(
                                result->generated_text_digest);
 }
 static int generation_profile_final_counters(
-    yvex_runtime_generation_context *context,
     yvex_runtime_generation_result *result, yvex_error *err)
 {
     yvex_runtime_profile_record *profile = &result->profile;
-    yvex_execution_shape_registry_summary shapes = {0};
     unsigned long long target_forwards, target_rows, verified_rows;
     unsigned long long runtime_forwards, runtime_rows, discarded_rows;
     int rc = YVEX_OK;
@@ -1487,15 +1485,6 @@ static int generation_profile_final_counters(
                 result->target_correction_or_bonus_token_count);
     ADD_COUNTER(YVEX_RUNTIME_PROFILE_OUTPUT_HEAD_ROWS,
                 result->logits_projection_count);
-    if (rc == YVEX_OK && context->execution_shapes)
-        rc = yvex_execution_shape_registry_summary_copy(
-            context->execution_shapes, &shapes, err);
-    if (rc == YVEX_OK && context->execution_shapes) {
-        ADD_COUNTER(YVEX_RUNTIME_PROFILE_SHAPE_REGISTRY_HITS,
-                    shapes.hit_count);
-        ADD_COUNTER(YVEX_RUNTIME_PROFILE_SHAPE_REGISTRY_MISSES,
-                    shapes.miss_count);
-    }
 #undef ADD_COUNTER
     return rc;
 }
@@ -1559,7 +1548,7 @@ static int generation_result_finish(
     result->first_incomplete_token = result->has_incomplete_token
                                          ? result->sampled_token_count - 1ull
                                          : result->sampled_token_count;
-    if (result->profile.schema_version == YVEX_RUNTIME_PROFILE_SCHEMA_V3) {
+    if (result->profile.schema_version == YVEX_RUNTIME_PROFILE_SCHEMA_V4) {
         unsigned long long completed = yvex_core_monotonic_ns();
         if (result->draft_cycle_count)
             result->mean_accepted_prefix =
@@ -1569,7 +1558,7 @@ static int generation_result_finish(
             result->effective_committed_tokens_per_second =
                 (double)result->model_committed_token_count * 1000000000.0 /
                 (double)(completed - result->profile.started_ns);
-        finish_rc = generation_profile_final_counters(context, result, &secondary);
+        finish_rc = generation_profile_final_counters(result, &secondary);
         if (finish_rc == YVEX_OK)
             finish_rc = result->profile.mode == YVEX_RUNTIME_PROFILE_OFF
                             ? YVEX_OK

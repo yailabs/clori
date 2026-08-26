@@ -20,8 +20,6 @@ extern "C" {
 #define YVEX_EXECUTION_WORKLOAD_PROFILE_SCHEMA_V1 1u
 #define YVEX_EXECUTION_CAPACITY_PLAN_SCHEMA_V1 1u
 #define YVEX_EXECUTION_PHASE_ROOFLINE_SCHEMA_V1 1u
-#define YVEX_EXECUTION_SHAPE_MAX_WIDTH 64ull
-#define YVEX_EXECUTION_SHAPE_SCHEMA_V1 1u
 #define YVEX_EXECUTION_DEVICE_VIEW_SCHEMA_V1 1u
 #define YVEX_EXECUTION_TEXT_CAP 64u
 #define YVEX_EXECUTION_MINIMUM_SYSTEM_RESERVE (8ull * 1024ull * 1024ull * 1024ull)
@@ -462,87 +460,6 @@ typedef struct {
 
 int yvex_execution_device_view_validate(
     const yvex_execution_device_view *view, yvex_error *err);
-
-typedef enum {
-    YVEX_EXECUTION_SCOPE_TARGET = 0,
-    YVEX_EXECUTION_SCOPE_DRAFT
-} yvex_execution_target_scope;
-
-typedef enum {
-    YVEX_EXECUTION_CONTEXT_SHORT = 0,
-    YVEX_EXECUTION_CONTEXT_MEDIUM,
-    YVEX_EXECUTION_CONTEXT_LONG,
-    YVEX_EXECUTION_CONTEXT_NEAR_CAPACITY
-} yvex_execution_context_band;
-
-typedef enum {
-    YVEX_EXECUTION_OPERATION_CORE = 0,
-    YVEX_EXECUTION_OPERATION_ENVELOPE,
-    YVEX_EXECUTION_OPERATION_RELEASE_SET
-} yvex_execution_operation_scope;
-typedef struct {
-    unsigned int schema_version;
-    yvex_execution_target_scope target_scope;
-    yvex_execution_phase phase;
-    yvex_execution_operation_scope operation_scope;
-    unsigned long long token_width;
-    int candidate_visible;
-    yvex_execution_context_band context_band;
-    unsigned long long position, context_capacity;
-    unsigned long long local_capacity, compressed_capacity, indexer_capacity;
-    unsigned long long rolling_capacity, candidate_capacity;
-    unsigned long long workspace_generation;
-    yvex_execution_evidence_profile evidence;
-    char execution_profile_identity[YVEX_SHA256_HEX_CAP];
-    char attention_plan_identity[YVEX_SHA256_HEX_CAP];
-    char state_layout_identity[YVEX_SHA256_HEX_CAP];
-    char kernel_bundle_identity[YVEX_SHA256_HEX_CAP];
-    char workspace_identity[YVEX_SHA256_HEX_CAP];
-    char identity[YVEX_SHA256_HEX_CAP];
-} yvex_execution_shape;
-
-typedef enum {
-    YVEX_EXECUTION_CAPACITY_NONE = 0,
-    YVEX_EXECUTION_CAPACITY_LOCAL,
-    YVEX_EXECUTION_CAPACITY_COMPRESSED,
-    YVEX_EXECUTION_CAPACITY_INDEXER,
-    YVEX_EXECUTION_CAPACITY_ROLLING,
-    YVEX_EXECUTION_CAPACITY_CANDIDATE,
-    YVEX_EXECUTION_CAPACITY_CONTEXT,
-    YVEX_EXECUTION_CAPACITY_WORKSPACE
-} yvex_execution_capacity_component;
-
-typedef struct {
-    yvex_execution_capacity_component component;
-    unsigned long long configured, required, position, width;
-    yvex_execution_target_scope target_scope;
-    yvex_execution_phase phase;
-    yvex_execution_context_band context_band;
-    char shape_identity[YVEX_SHA256_HEX_CAP];
-    char workspace_identity[YVEX_SHA256_HEX_CAP];
-    char state_layout_identity[YVEX_SHA256_HEX_CAP];
-} yvex_execution_shape_failure;
-typedef struct yvex_execution_shape_registry yvex_execution_shape_registry;
-typedef struct {
-    unsigned long long count, capacity, hit_count, miss_count;
-} yvex_execution_shape_registry_summary;
-
-int yvex_execution_shape_seal(yvex_execution_shape *shape, yvex_error *err);
-int yvex_execution_shape_registry_open(
-    yvex_execution_shape_registry **out, unsigned long long capacity,
-    yvex_error *err);
-int yvex_execution_shape_registry_register(
-    yvex_execution_shape_registry *registry,
-    const yvex_execution_shape *shape, yvex_error *err);
-int yvex_execution_shape_registry_select(
-    yvex_execution_shape_registry *registry,
-    const yvex_execution_shape *request,
-    const yvex_execution_shape **selected,
-    yvex_execution_shape_failure *failure, yvex_error *err);
-int yvex_execution_shape_registry_summary_copy(
-    const yvex_execution_shape_registry *registry,
-    yvex_execution_shape_registry_summary *summary, yvex_error *err);
-void yvex_execution_shape_registry_close(yvex_execution_shape_registry **registry);
 
 #ifdef __cplusplus
 }

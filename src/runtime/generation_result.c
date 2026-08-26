@@ -615,7 +615,7 @@ int yvex_runtime_generation_result_validate(
         result->reusable_prefix_token_count > result->prompt_token_count ||
         result->new_prefill_token_count !=
             result->prompt_token_count - result->reusable_prefix_token_count ||
-        result->profile.schema_version != YVEX_RUNTIME_PROFILE_SCHEMA_V3 ||
+        result->profile.schema_version != YVEX_RUNTIME_PROFILE_SCHEMA_V4 ||
         runtime_profile_validate(&result->profile, NULL) != YVEX_OK ||
         !generation_roofline_validate(plan, result) ||
         !yvex_sha256_hex_valid(result->reusable_prefix_identity) ||

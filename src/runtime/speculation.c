@@ -358,7 +358,7 @@ int yvex_runtime_speculation_context_open(yvex_runtime_speculation_context **out
     if (workspace_bytes) *workspace_bytes = 0ull;
     if (!out || !model || !session || !target_transformer || !target_logits ||
         !target_sampling || !sampling_policy || !options || !workspace_bytes ||
-        !options->execution_profile || !options->shape_registry ||
+        !options->execution_profile ||
         (options->backend != YVEX_BACKEND_KIND_CPU &&
          options->backend != YVEX_BACKEND_KIND_CUDA) || !options->context_capacity ||
         !options->prefill_chunk_tokens ||
@@ -426,7 +426,6 @@ int yvex_runtime_speculation_context_open(yvex_runtime_speculation_context **out
     transformer_options.compatible_batching = options->compatible_batching;
     transformer_options.compatible_batch_width = options->compatible_batch_width;
     transformer_options.execution_profile = options->execution_profile;
-    transformer_options.shape_registry = options->shape_registry;
     rc = yvex_runtime_transformer_context_open(
         &context->draft_transformer, model, session, &transformer_options, workspace_bytes, err);
     if (rc == YVEX_OK) rc = yvex_runtime_logits_admit_shared_draft_plan(

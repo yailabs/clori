@@ -931,114 +931,45 @@ static int transformer_capacity_build(yvex_graph_attention_capacity_plan **out,
                                                      transformer_runtime_attention(model, scope),
                                                      &request, err);
 }
-static yvex_execution_context_band transformer_context_band(
-    unsigned long long position, unsigned long long capacity)
-{
-    if (position < capacity / 8ull) return YVEX_EXECUTION_CONTEXT_SHORT;
-    if (position < capacity / 2ull) return YVEX_EXECUTION_CONTEXT_MEDIUM;
-    if (position < capacity - capacity / 8ull)
-        return YVEX_EXECUTION_CONTEXT_LONG;
-    return YVEX_EXECUTION_CONTEXT_NEAR_CAPACITY;
-}
-static int transformer_shape_admit(
+static int transformer_attention_configure(
     yvex_runtime_transformer_context *context, const yvex_transformer_input_summary *input,
     const yvex_runtime_transformer_request *request, const yvex_graph_attention_state_summary *state,
     const yvex_runtime_session_summary *session, yvex_error *err)
 {
-    static const char *const capacity_names[] = {
-        "unregistered", "local", "compressed", "indexer",
-        "rolling", "candidate", "context", "workspace"};
-    const yvex_transformer_plan_summary *plan = yvex_transformer_plan_summary_get(context->plan);
-    const yvex_execution_shape *selected = NULL;
-    yvex_execution_shape admitted = {0}, required;
-    yvex_execution_shape_failure failure = {0};
+    yvex_execution_phase phase;
     unsigned long long width = input->token_count < request->chunk_tokens
                                    ? input->token_count : request->chunk_tokens;
-    int rc;
-    if (!context->options.execution_profile && !context->options.shape_registry)
-        return YVEX_OK;
-    if (!context->options.execution_profile || !context->options.shape_registry ||
-        !plan || !yvex_sha256_hex_valid(session->workspace_identity) ||
+    if (!context->options.execution_profile) return YVEX_OK;
+    if (!width || width > context->options.workspace_token_capacity ||
+        !session->workspace_generation ||
+        !yvex_sha256_hex_valid(session->workspace_identity) ||
         !yvex_sha256_hex_valid(state->state_layout_identity))
         return transformer_runtime_refuse(err, YVEX_ERR_STATE,
-            "compiled execution profile and shape registry must remain paired");
-    admitted.schema_version = YVEX_EXECUTION_SHAPE_SCHEMA_V1;
-    admitted.target_scope = context->options.tensor_scope == YVEX_TENSOR_SCOPE_DRAFT
-                                ? YVEX_EXECUTION_SCOPE_DRAFT : YVEX_EXECUTION_SCOPE_TARGET;
-    admitted.phase = admitted.target_scope == YVEX_EXECUTION_SCOPE_DRAFT
-                         ? YVEX_EXECUTION_PHASE_DRAFT
-                         : request->retain_prefix_checkpoints
-                               ? YVEX_EXECUTION_PHASE_VERIFY
-                               : request->phase == YVEX_TRANSFORMER_PHASE_DECODE
-                                     ? YVEX_EXECUTION_PHASE_DECODE : YVEX_EXECUTION_PHASE_PREFILL;
-    admitted.operation_scope = YVEX_EXECUTION_OPERATION_ENVELOPE;
-    admitted.token_width = width;
-    admitted.candidate_visible = request->candidate_block_visible;
-    admitted.context_band = transformer_context_band(
-        input->token_start, context->options.context_capacity);
-    admitted.context_capacity = context->options.context_capacity;
-    /* One backend shape is replayed independently for each layer. Aggregate
-     * state totals are accounting facts; the shape owns the largest layer. */
-    admitted.local_capacity = state->components[
-        YVEX_ATTENTION_STATE_BINDING_LOCAL_HISTORY].maximum_capacity;
-    admitted.compressed_capacity = state->components[
-        YVEX_ATTENTION_STATE_BINDING_COMPRESSED_HISTORY].maximum_capacity;
-    admitted.indexer_capacity = state->components[
-        YVEX_ATTENTION_STATE_BINDING_INDEXER_HISTORY].maximum_capacity;
-    admitted.rolling_capacity = state->components[
-        YVEX_ATTENTION_STATE_BINDING_MAIN_ROLLING].maximum_capacity;
-    if (state->components[YVEX_ATTENTION_STATE_BINDING_INDEXER_ROLLING].maximum_capacity >
-        admitted.rolling_capacity)
-        admitted.rolling_capacity = state->components[
-            YVEX_ATTENTION_STATE_BINDING_INDEXER_ROLLING].maximum_capacity;
-    admitted.candidate_capacity = context->options.workspace_token_capacity;
-    admitted.workspace_generation = session->workspace_generation;
-    admitted.evidence = context->options.execution_profile->evidence;
-    yvex_runtime_identity_copy(
-        admitted.execution_profile_identity, context->options.execution_profile->identity);
-    yvex_runtime_identity_copy(admitted.attention_plan_identity, plan->attention_plan_identity);
-    yvex_runtime_identity_copy(admitted.state_layout_identity, state->state_layout_identity);
-    yvex_runtime_identity_copy(admitted.kernel_bundle_identity,
-                               context->options.execution_profile->kernel_bundle_identity);
-    yvex_runtime_identity_copy(admitted.workspace_identity, session->workspace_identity);
-    rc = yvex_execution_shape_seal(&admitted, err);
-    if (rc == YVEX_OK)
-        rc = yvex_execution_shape_registry_register(
-            context->options.shape_registry, &admitted, err);
-    if (rc != YVEX_OK) return rc;
-    required = admitted;
-    required.position = input->token_start;
-    required.candidate_capacity = width;
-    rc = yvex_execution_shape_seal(&required, err);
-    if (rc != YVEX_OK) return rc;
-    rc = yvex_execution_shape_registry_select(
-        context->options.shape_registry, &required, &selected, &failure, err);
-    if (rc != YVEX_OK) {
-        const char *component = failure.component <
-                                        sizeof(capacity_names) / sizeof(capacity_names[0])
-                                    ? capacity_names[failure.component]
-                                    : "unknown";
-        yvex_error_setf(err, (yvex_status)rc, "runtime.transformer.shape",
-            "%s capacity configured=%llu required=%llu scope=%u phase=%u width=%llu "
-            "position=%llu shape=%.16s workspace=%.16s state=%.16s",
-            component, failure.configured, failure.required,
-            (unsigned int)required.target_scope, (unsigned int)required.phase,
-            required.token_width, required.position, failure.shape_identity,
-            required.workspace_identity, required.state_layout_identity);
-    }
-    if (rc == YVEX_OK && request->backend == YVEX_BACKEND_KIND_CUDA &&
-        context->options.execution_profile->attention_resolution ==
-            YVEX_EXECUTION_RESOLUTION_EXACT) {
-        rc = yvex_backend_cuda_attention_configure(
-            context->session_view->backend, (yvex_backend_attention_phase)selected->phase,
-            context->options.compatible_batching
-                ? YVEX_BACKEND_CUDA_ATTENTION_EAGER
-                : YVEX_BACKEND_CUDA_ATTENTION_FULL,
-            context->options.execution_profile->identity, "generation",
-            selected->local_capacity, selected->compressed_capacity,
-            selected->indexer_capacity, err);
-    }
-    return rc;
+            "current state and workspace owners are not executable");
+    if (request->backend != YVEX_BACKEND_KIND_CUDA ||
+        context->options.execution_profile->attention_resolution !=
+            YVEX_EXECUTION_RESOLUTION_EXACT)
+        return YVEX_OK;
+    phase = context->options.tensor_scope == YVEX_TENSOR_SCOPE_DRAFT
+                ? YVEX_EXECUTION_PHASE_DRAFT
+                : request->retain_prefix_checkpoints
+                      ? YVEX_EXECUTION_PHASE_VERIFY
+                      : request->phase == YVEX_TRANSFORMER_PHASE_DECODE
+                            ? YVEX_EXECUTION_PHASE_DECODE
+                            : YVEX_EXECUTION_PHASE_PREFILL;
+    /* State owns the real per-layer capacities. The backend consumes those
+     * current facts directly instead of selecting an object just synthesized
+     * from the same state and workspace. */
+    return yvex_backend_cuda_attention_configure(
+        context->session_view->backend, (yvex_backend_attention_phase)phase,
+        context->options.compatible_batching
+            ? YVEX_BACKEND_CUDA_ATTENTION_EAGER
+            : YVEX_BACKEND_CUDA_ATTENTION_FULL,
+        context->options.execution_profile->identity, "generation",
+        state->components[YVEX_ATTENTION_STATE_BINDING_LOCAL_HISTORY].maximum_capacity,
+        state->components[YVEX_ATTENTION_STATE_BINDING_COMPRESSED_HISTORY].maximum_capacity,
+        state->components[YVEX_ATTENTION_STATE_BINDING_INDEXER_HISTORY].maximum_capacity,
+        err);
 }
 static int transformer_prepare(yvex_runtime_transformer_context *context,
     const yvex_transformer_input_summary *input, const yvex_runtime_transformer_request *request,
@@ -1155,7 +1086,7 @@ static int transformer_prepare(yvex_runtime_transformer_context *context,
     if (rc != YVEX_OK) return rc;
     rc = yvex_runtime_moe_host_workspace_bind(context->moe, err);
     if (rc != YVEX_OK) return rc;
-    return transformer_shape_admit(context, input, request, state, &session, err);
+    return transformer_attention_configure(context, input, request, state, &session, err);
 }
 static int transformer_core_features_execute(
     yvex_runtime_transformer_context *context, const unsigned int *token_ids, unsigned long long token_start,

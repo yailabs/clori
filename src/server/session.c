@@ -1251,11 +1251,6 @@ static int session_profile_publish(server_session_registry *registry,
             profile->counters[YVEX_RUNTIME_PROFILE_DISCARDED_CANDIDATE_ROWS],
             profile->counters[YVEX_RUNTIME_PROFILE_TARGET_EXTENSIONS], 0ull);
     if (rc == YVEX_OK)
-        rc = PROFILE_EVENT("shape",
-            profile->counters[YVEX_RUNTIME_PROFILE_SHAPE_REGISTRY_HITS],
-            profile->counters[YVEX_RUNTIME_PROFILE_SHAPE_REGISTRY_MISSES],
-            profile->counters[YVEX_RUNTIME_PROFILE_FULL_ARRAY_HOST_SCAN_BYTES], 0ull);
-    if (rc == YVEX_OK)
         rc = PROFILE_EVENT("prefill",
             profile->counters[YVEX_RUNTIME_PROFILE_PROMPT_TOKENS],
             profile->counters[YVEX_RUNTIME_PROFILE_REUSED_TOKENS],

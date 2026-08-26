@@ -617,29 +617,6 @@ static int generation_compatible_batch_width(
     return YVEX_OK;
 }
 
-static int generation_shape_registry_capacity(
-    const yvex_runtime_generation_context *context,
-    unsigned long long *capacity, yvex_error *err)
-{
-    unsigned long long width, classes;
-    if (capacity) *capacity = 0ull;
-    if (generation_physical_row_capacity(context, &width, err) != YVEX_OK)
-        return yvex_error_code(err);
-    /* Workspace generations replace, rather than multiply, this admitted class envelope. */
-    if (width > YVEX_EXECUTION_SHAPE_MAX_WIDTH ||
-        !yvex_core_u64_mul(width, YVEX_EXECUTION_PHASE_COUNT, &classes) ||
-        !yvex_core_u64_mul(classes, YVEX_EXECUTION_CONTEXT_NEAR_CAPACITY + 1ull,
-                           &classes) ||
-        !yvex_core_u64_mul(classes, 2ull, &classes) ||
-        !yvex_core_u64_mul(classes, 2ull, &classes))
-        return generation_context_refuse(
-            err, YVEX_ERR_BOUNDS,
-            "compiled execution-shape envelope exceeds bounded geometry");
-    *capacity = classes;
-    yvex_error_clear(err);
-    return YVEX_OK;
-}
-
 static int generation_sampling_workspace(
     const yvex_runtime_generation_context *context, yvex_backend *backend,
     unsigned long long vocabulary_size, unsigned long long proposal_width,
@@ -1268,7 +1245,6 @@ static int generation_execution_owners_open(
     transformer.device_hidden_output =
         device_selection && options->mode == YVEX_GENERATION_MODE_TARGET_ONLY;
     transformer.execution_profile = &context->execution_profile;
-    transformer.shape_registry = context->execution_shapes;
     rc = yvex_runtime_transformer_context_open(
         &context->transformer, context->model, context->session, &transformer,
         workspace_bytes, err);
@@ -1316,7 +1292,6 @@ static int generation_execution_owners_open(
     speculation.cancel_requested = options->cancel_requested;
     speculation.cancel_context = options->cancel_context;
     speculation.execution_profile = &context->execution_profile;
-    speculation.shape_registry = context->execution_shapes;
     rc = yvex_runtime_speculation_context_open(
         &context->speculation, context->model, context->session,
         context->transformer, context->logits, context->sampling,
@@ -1395,7 +1370,6 @@ int yvex_runtime_generation_context_open(
     const yvex_runtime_logits_plan_summary *logits_plan = NULL;
     unsigned long long hidden_bytes, logits_bytes, execution_workspace = 0ull;
     unsigned long long physical_rows = 0ull;
-    unsigned long long shape_capacity = 0ull;
     int rc = YVEX_OK;
     if (out) *out = NULL;
     if (!out || !model || !session || !generation_options_valid(options))
@@ -1442,11 +1416,6 @@ int yvex_runtime_generation_context_open(
             session, &context->capacity_plan, &state_failure, err);
         if (rc != YVEX_OK) goto failure;
     }
-    rc = generation_shape_registry_capacity(context, &shape_capacity, err);
-    if (rc == YVEX_OK)
-        rc = yvex_execution_shape_registry_open(
-            &context->execution_shapes, shape_capacity, err);
-    if (rc != YVEX_OK) goto failure;
     rc = generation_execution_owners_open(
         context, &context->options, &logits_plan, &execution_workspace, err);
     if (rc == YVEX_OK)
@@ -1550,7 +1519,6 @@ failure:
         (void)yvex_runtime_logits_context_close(&context->logits, &cleanup);
         (void)yvex_runtime_transformer_context_close(
             &context->transformer, &cleanup);
-        yvex_execution_shape_registry_close(&context->execution_shapes);
         if (context->drain_condition_ready)
             (void)pthread_cond_destroy(&context->drain_condition);
         if (context->drain_mutex_ready)
@@ -1693,7 +1661,6 @@ int yvex_runtime_generation_context_close(
     if (rc == YVEX_OK)
         rc = yvex_runtime_transformer_context_close(&owner->transformer, err);
     if (rc != YVEX_OK) return rc;
-    yvex_execution_shape_registry_close(&owner->execution_shapes);
     yvex_tokenizer_decoder_close(&owner->decoder);
     yvex_token_sequence_close(&owner->sequence);
     if (owner->drain_condition_ready &&
