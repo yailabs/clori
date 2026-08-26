@@ -7,7 +7,7 @@
 | Milestone | YVEX.MODEL.LIFECYCLE.HUB.EXPERIENCE.0 |
 | Branch | models1 |
 | Baseline | 1865659744672f5c5e841527caaf467758dfbedc |
-| Checkpoint | 6960b26f6d457a6c55302e092dadb9defc964c63 |
+| Checkpoint | 913785507235deb1f5fb46128eba38dce6f0055e |
 | Subsystem | model.catalog, accounts.provider, cli.models |
 | Model family | multifamily |
 | Hardware | not-applicable |
@@ -81,6 +81,9 @@ scripts never need to drive prompts. `yvex model list` now combines source-acqui
 the model registry without opening payloads. It consumes protocol v13 `ENGINE_LIST` through a
 CLI-owned resolver, so the model domain and renderer remain independent of the server ABI.
 Existing granular acquisition, preparation, inspection, and registry commands remain intact.
+The acquisition help exposes immutable revision selection and repeatable include/exclude patterns,
+so a representation selector reported by remote inspection maps directly to an explicit payload
+acquisition rather than an implicit whole-repository download.
 
 Acquisition receipts now count GGUF files separately from safetensors. The local catalog directs
 an immutable safetensors source toward compilation/package preparation and an immutable GGUF source
@@ -116,8 +119,8 @@ at the admitted package boundary.
   provider failure, malformed output, exact revision refusal, safetensors and GGUF
   representations, multiple GGUF qtypes, sharded safetensors, unknown sidecars, local catalog,
   acquisition, resume/cancellation owners, and token redaction.
-- Canonical `integration.cli`: PASS at `6960b26f6d457a6c55302e092dadb9defc964c63`, evidence
-  `cb09d87a0f60523ee55f87f5a7614757ac5085802c20d3feb5732a80001d293c`.
+- Canonical `integration.cli`: PASS at `913785507235deb1f5fb46128eba38dce6f0055e`, evidence
+  `54ed1467ecc20012bc386a6c256766a4fe98bea94a13e1cb48a821ca2cd3b7d6`.
 - `tests/test_source_ownership.sh`: PASS for the two new catalog owners.
 - Canonical operator registry generation and its schema/refusal/audit/discovery tests: PASS after
   the committed host command cutover was reflected in its consumer test.
