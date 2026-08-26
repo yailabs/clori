@@ -32,6 +32,21 @@ from typing import Iterable, Iterator, Sequence
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_POLICY = ROOT / "config/c_policy.json"
 GROUPS = ("ownership", "layout", "architecture", "natural")
+AGGREGATE_METRICS = {
+    "code_lines",
+    "executable_lines",
+    "headers",
+    "internal_headers",
+    "library_global_symbols",
+    "nonpublic_global_symbols",
+    "physical_lines",
+    "production_files",
+    "public_function_declarations",
+    "public_headers",
+    "semantic_owners",
+    "source_headers",
+    "translation_units",
+}
 
 
 @dataclass(frozen=True)
@@ -440,6 +455,12 @@ class Audit:
         self.policy = json.loads(policy_path.read_text())
         if self.policy.get("schema_version") != 1:
             raise ValueError("unsupported C policy schema")
+        aggregate_limits = AGGREGATE_METRICS & self.policy["limits"].keys()
+        if aggregate_limits:
+            raise ValueError(
+                "aggregate repository metrics are observational, not limits: "
+                + ", ".join(sorted(aggregate_limits))
+            )
         suffixes = set(self.policy["production_suffixes"])
         self.files = sorted(
             path
@@ -1010,29 +1031,7 @@ class Audit:
             if path.parent.name and path.parent.name in stem.split("_"):
                 errors.append(f"basename repeats immediate directory: {name}")
 
-        metrics = self.metrics()
-        for key in (
-            "production_files",
-            "translation_units",
-            "headers",
-            "physical_lines",
-            "code_lines",
-            "executable_lines",
-            "semantic_owners",
-        ):
-            if int(metrics[key]) > limits[key]:
-                errors.append(f"{key} exceeds policy: {metrics[key]} > {limits[key]}")
-
         tier_counts = Counter(self.header_tier(path) or "invalid" for path in self.headers)
-        for tier, limit_key in (
-            ("public", "public_headers"),
-            ("internal", "internal_headers"),
-            ("source", "source_headers"),
-        ):
-            if tier_counts[tier] > limits[limit_key]:
-                errors.append(
-                    f"{tier} header count exceeds policy: {tier_counts[tier]} > {limits[limit_key]}"
-                )
         if tier_counts["invalid"]:
             invalid = [path for path in self.headers if self.header_tier(path) is None]
             errors.append(f"headers outside admitted tiers: {invalid}")
@@ -1347,12 +1346,6 @@ class Audit:
         public = self.public_declarations()
         private = self.private_declarations()
         defined = set(definitions)
-        limits = self.policy["limits"]
-        if len(public) > limits["public_function_declarations"]:
-            errors.append(
-                f"public declaration count increased: {len(public)} > "
-                f"{limits['public_function_declarations']}"
-            )
         for symbol in sorted(public):
             count = len(definitions.get(symbol, []))
             if count != 1:
@@ -1375,15 +1368,7 @@ class Audit:
             errors.append(f"duplicate global definitions: {duplicates}")
         if foreign:
             errors.append(f"globally visible symbols lack YVEX namespace: {foreign}")
-        if len(defined) > limits["library_global_symbols"]:
-            errors.append(f"library globals exceed policy: {len(defined)}")
-
         nonpublic = defined - public
-        if len(nonpublic) > limits["nonpublic_global_symbols"]:
-            errors.append(
-                f"non-public globals exceed policy: {len(nonpublic)} > "
-                f"{limits['nonpublic_global_symbols']}"
-            )
         undeclared = sorted(nonpublic - private)
         if undeclared:
             errors.append(f"non-public globals lack internal/private declarations: {undeclared}")

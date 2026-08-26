@@ -60,6 +60,11 @@ domain algorithms. No writer owns command output.
 - `config/source_owners.tsv` is the sole handwritten production membership
   authority. Its deterministic generator validates exact `src/` and `include/`
   parity and projects product/toolchain classes under `BUILD_DIR` for Make.
+- Aggregate file, line, header, owner, and symbol counts are review metrics, not
+  architectural ceilings. Admission is decided at each ABI, lifecycle,
+  algorithm, backend, family, or entrypoint boundary; machine guards enforce
+  owner partitions, consumer sets, family budgets, dependency direction, and
+  per-file and per-function limits.
 - The root Makefile composes products and supported validation entrypoints from
   that projection. It does not repeat individual production paths or use
   source wildcards.
