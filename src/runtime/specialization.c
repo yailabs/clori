@@ -1,6 +1,7 @@
 /* Seal one compact deployment implementation catalog for an opened model engine. */
 #include <yvex/internal/execution.h>
 #include <yvex/internal/core.h>
+#include <yvex/internal/media.h>
 #include <yvex/internal/moe.h>
 #include "src/runtime/private.h"
 
@@ -21,6 +22,153 @@ static int hash_finish(yvex_sha256 *hash, char output[YVEX_SHA256_HEX_CAP])
     if (!yvex_sha256_final(hash, digest)) return 0;
     yvex_sha256_hex(digest, output);
     return 1;
+}
+
+typedef struct {
+    yvex_transformer_linear_operation operation;
+    yvex_transformer_linear_numeric_contract numeric_contract;
+    yvex_dtype source_dtype;
+    yvex_backend_kind backend;
+    unsigned long long input_width, output_width, workspace_bytes;
+    unsigned int algorithm_id, tile_rows, tile_columns, split_k;
+    yvex_transformer_linear_reduction reduction;
+    yvex_transformer_linear_stages stages;
+    unsigned int compute_major, compute_minor;
+    int bias;
+} linear_implementation;
+
+/* These records are deployment implementations of one typed exactness contract. The family
+ * recipe names only source dtype, bias, operation geometry, and required numerical semantics. */
+static const linear_implementation linear_implementations[] = {
+    {YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_VIDEO_OUTPUT,
+     YVEX_TRANSFORMER_LINEAR_NUMERIC_SOURCE_EXACT, YVEX_DTYPE_F32,
+     YVEX_BACKEND_KIND_CUDA, 5376ull, 96ull, 1024ull * 1024ull,
+     10u, 32u, 32u, 10u, YVEX_TRANSFORMER_LINEAR_REDUCTION_INPLACE,
+     YVEX_TRANSFORMER_LINEAR_STAGES_DEFAULT, 12u, 1u, 1},
+    {YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_AUDIO_OUTPUT,
+     YVEX_TRANSFORMER_LINEAR_NUMERIC_SOURCE_EXACT, YVEX_DTYPE_F32,
+     YVEX_BACKEND_KIND_CUDA, 5376ull, 32ull, 1024ull * 1024ull,
+     20u, 128u, 32u, 3u, YVEX_TRANSFORMER_LINEAR_REDUCTION_COMPUTE_TYPE,
+     YVEX_TRANSFORMER_LINEAR_STAGES_8X5, 12u, 1u, 1},
+};
+
+static int linear_specialize_one(
+    const char *semantic_domain,
+    const yvex_transformer_linear_requirement *requirement,
+    yvex_backend_kind backend, yvex_transformer_linear_physical_plan *plan,
+    yvex_error *err)
+{
+    const linear_implementation *selected = NULL;
+    size_t domain_length, index;
+    domain_length = strnlen(semantic_domain,
+                            YVEX_TRANSFORMER_LINEAR_DOMAIN_CAP);
+    for (index = 0u; index < sizeof(linear_implementations) /
+                                  sizeof(linear_implementations[0]); ++index) {
+        const linear_implementation *candidate = linear_implementations + index;
+        if (candidate->operation == requirement->operation &&
+            candidate->numeric_contract == requirement->publication_contract &&
+            candidate->source_dtype == requirement->source_dtype &&
+            candidate->bias == requirement->bias && candidate->backend == backend &&
+            candidate->input_width == requirement->input_width &&
+            candidate->output_width == requirement->output_width) {
+            if (selected)
+                return specialization_refuse(
+                    err, YVEX_ERR_STATE,
+                    "joint linear requirement has ambiguous implementations");
+            selected = candidate;
+        }
+    }
+    if (!selected)
+        return specialization_refuse(
+            err, YVEX_ERR_UNSUPPORTED,
+            "joint linear requirement has no admitted deployment implementation");
+    memset(plan, 0, sizeof(*plan));
+    plan->schema_version = YVEX_TRANSFORMER_LINEAR_PHYSICAL_SCHEMA_V2;
+    memcpy(plan->semantic_domain, semantic_domain, domain_length);
+    plan->operation = selected->operation;
+    plan->numeric_contract = selected->numeric_contract;
+    plan->source_dtype = selected->source_dtype;
+    plan->implementation = YVEX_TRANSFORMER_LINEAR_IMPLEMENTATION_CUBLAS_LT_F32_BIAS;
+    plan->reduction = selected->reduction;
+    plan->stages = selected->stages;
+    plan->backend = selected->backend;
+    plan->algorithm_id = selected->algorithm_id;
+    plan->tile_rows = selected->tile_rows;
+    plan->tile_columns = selected->tile_columns;
+    plan->split_k = selected->split_k;
+    plan->compute_capability_major = selected->compute_major;
+    plan->compute_capability_minor = selected->compute_minor;
+    plan->input_width = selected->input_width;
+    plan->output_width = selected->output_width;
+    plan->workspace_bytes = selected->workspace_bytes;
+    plan->bias = selected->bias;
+    plan->deterministic = 1;
+    plan->exact = 1;
+    return yvex_transformer_linear_physical_seal(plan, err);
+}
+
+static int media_linear_specialization_compile(
+    const char *semantic_domain,
+    const yvex_transformer_linear_requirement *video_requirement,
+    const yvex_transformer_linear_requirement *audio_requirement,
+    yvex_backend_kind backend,
+    yvex_transformer_linear_physical_plan *video,
+    yvex_transformer_linear_physical_plan *audio, yvex_error *err)
+{
+    yvex_transformer_linear_physical_plan selected_video, selected_audio;
+    size_t domain_length;
+    int rc;
+    if (video) memset(video, 0, sizeof(*video));
+    if (audio) memset(audio, 0, sizeof(*audio));
+    domain_length = semantic_domain
+                        ? strnlen(semantic_domain, YVEX_TRANSFORMER_LINEAR_DOMAIN_CAP)
+                        : 0u;
+    if (!video_requirement || !audio_requirement || video_requirement == audio_requirement ||
+        !video || !audio || video == audio || !domain_length ||
+        domain_length >= YVEX_TRANSFORMER_LINEAR_DOMAIN_CAP ||
+        video_requirement->operation !=
+            YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_VIDEO_OUTPUT ||
+        audio_requirement->operation !=
+            YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_AUDIO_OUTPUT)
+        return specialization_refuse(
+            err, YVEX_ERR_INVALID_ARG,
+            "one complete pair of linear semantic requirements is required");
+    rc = linear_specialize_one(
+        semantic_domain, video_requirement, backend, &selected_video, err);
+    if (rc == YVEX_OK)
+        rc = linear_specialize_one(
+            semantic_domain, audio_requirement, backend, &selected_audio, err);
+    if (rc != YVEX_OK) return rc;
+    *video = selected_video;
+    *audio = selected_audio;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_runtime_media_request_specialize(
+    yvex_runtime_av_generation_request *request,
+    const char *semantic_domain,
+    const yvex_transformer_linear_requirement *video_requirement,
+    const yvex_transformer_linear_requirement *audio_requirement,
+    yvex_error *err)
+{
+    yvex_transformer_linear_physical_plan video, audio;
+    int rc;
+    if (!request)
+        return specialization_refuse(
+            err, YVEX_ERR_INVALID_ARG,
+            "media request is required for specialization");
+    rc = media_linear_specialization_compile(
+        semantic_domain, video_requirement, audio_requirement,
+        request->component_backend, &video, &audio, err);
+    if (rc != YVEX_OK) return rc;
+    request->output_semantic_domain = semantic_domain;
+    request->video_output_requirement = video_requirement;
+    request->audio_output_requirement = audio_requirement;
+    request->video_output_specialization = video;
+    request->audio_output_specialization = audio;
+    yvex_error_clear(err);
+    return YVEX_OK;
 }
 
 static int implementation_valid(yvex_engine_implementation implementation)

@@ -686,6 +686,16 @@ static int media_options(yvex_server_media_options *options, const char *output_
     options->request_template.maximum_workspace_bytes = target.maximum_workspace_bytes;
     options->request_template.maximum_file_bytes = target.maximum_file_bytes;
     options->request_template.component_backend = execution->component_backend;
+    options->request_template.output_semantic_domain =
+        host.request_template.output_semantic_domain;
+    options->request_template.video_output_requirement =
+        host.request_template.video_output_requirement;
+    options->request_template.audio_output_requirement =
+        host.request_template.audio_output_requirement;
+    options->request_template.video_output_specialization =
+        host.request_template.video_output_specialization;
+    options->request_template.audio_output_specialization =
+        host.request_template.audio_output_specialization;
     options->request_template.video_temporal_ratio = target.video_temporal_ratio;
     options->request_template.video_clip_length = target.video_clip_length;
     options->request_template.video_token_drop = target.video_token_drop;

@@ -9,6 +9,7 @@
 #include <yvex/internal/latent.h>
 #include <yvex/internal/media_target.h>
 #include <yvex/internal/runtime.h>
+#include <yvex/internal/transformer.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -93,6 +94,11 @@ typedef struct {
     unsigned long long maximum_host_bytes, maximum_device_bytes;
     unsigned long long maximum_workspace_bytes, maximum_file_bytes;
     yvex_backend_kind component_backend;
+    const char *output_semantic_domain;
+    const yvex_transformer_linear_requirement *video_output_requirement;
+    const yvex_transformer_linear_requirement *audio_output_requirement;
+    yvex_transformer_linear_physical_plan video_output_specialization;
+    yvex_transformer_linear_physical_plan audio_output_specialization;
     unsigned long long video_temporal_ratio, video_clip_length, video_token_drop;
     unsigned long long video_spatial_ratio, video_tile_size, video_minimum_tile_overlap;
     const float *video_mean, *video_std, *audio_mean, *audio_std;
@@ -187,6 +193,11 @@ int yvex_runtime_media_host_profile_build(
     yvex_runtime_media_host_profile *, const yvex_media_target_profile *,
     const yvex_media_execution_recipe *, const char *artifact_root,
     const char *output_root, yvex_error *);
+int yvex_runtime_media_request_specialize(
+    yvex_runtime_av_generation_request *, const char *,
+    const yvex_transformer_linear_requirement *,
+    const yvex_transformer_linear_requirement *,
+    yvex_error *);
 int yvex_runtime_media_execution_preset_build(
     const yvex_runtime_media_host_profile *, yvex_runtime_media_execution_preset *,
     yvex_error *);

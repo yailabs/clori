@@ -80,17 +80,25 @@ static float joint_bf16_value(float value)
 
 static int joint_linear_physical_supported(
     const yvex_transformer_linear_physical_plan *plan,
-    yvex_transformer_linear_operation operation, unsigned long long output_width)
+    const char *semantic_domain,
+    const yvex_transformer_linear_requirement *requirement)
 {
     yvex_error err;
-    return plan && plan->operation == operation && plan->input_width == JOINT_HIDDEN &&
-           plan->output_width == output_width && plan->backend == YVEX_BACKEND_KIND_CUDA &&
+    return plan && semantic_domain && requirement &&
+           !strcmp(plan->semantic_domain, semantic_domain) &&
+           plan->operation == requirement->operation &&
+           plan->numeric_contract == requirement->publication_contract &&
+           plan->source_dtype == requirement->source_dtype &&
+           plan->bias == requirement->bias &&
+           plan->input_width == requirement->input_width &&
+           plan->output_width == requirement->output_width &&
+           plan->backend == YVEX_BACKEND_KIND_CUDA &&
            yvex_transformer_linear_physical_validate(plan, &err) == YVEX_OK;
 }
 
 static int joint_recipe_supported(const yvex_transformer_joint_recipe *recipe)
 {
-    return recipe && recipe->schema_version == YVEX_TRANSFORMER_JOINT_SCHEMA_V3 &&
+    return recipe && recipe->schema_version == YVEX_TRANSFORMER_JOINT_SCHEMA_V4 &&
            recipe->qkv_layout == YVEX_TRANSFORMER_QKV_LAYOUT_PER_HEAD_THREE &&
            recipe->swiglu_layout == YVEX_TRANSFORMER_SWIGLU_LAYOUT_GATE_THEN_UP &&
            recipe->identity_domain && recipe->identity_domain[0] &&
@@ -104,8 +112,21 @@ static int joint_recipe_supported(const yvex_transformer_joint_recipe *recipe)
            recipe->maximum_timesteps == JOINT_MAX_TIMESTEPS &&
            recipe->maximum_packed_rows == JOINT_MAX_PACKED_ROWS &&
            recipe->video_input_width == 96ull && recipe->audio_input_width == 32ull &&
-           recipe->condition_input_width == 5120ull && recipe->video_output_width == 96ull &&
-           recipe->audio_output_width == 32ull;
+           recipe->condition_input_width == 5120ull &&
+           recipe->video_output.operation ==
+               YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_VIDEO_OUTPUT &&
+           recipe->video_output.publication_contract ==
+               YVEX_TRANSFORMER_LINEAR_NUMERIC_SOURCE_EXACT &&
+           recipe->video_output.source_dtype == YVEX_DTYPE_F32 &&
+           recipe->video_output.input_width == JOINT_HIDDEN &&
+           recipe->video_output.output_width == 96ull && recipe->video_output.bias == 1 &&
+           recipe->audio_output.operation ==
+               YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_AUDIO_OUTPUT &&
+           recipe->audio_output.publication_contract ==
+               YVEX_TRANSFORMER_LINEAR_NUMERIC_SOURCE_EXACT &&
+           recipe->audio_output.source_dtype == YVEX_DTYPE_F32 &&
+           recipe->audio_output.input_width == JOINT_HIDDEN &&
+           recipe->audio_output.output_width == 32ull && recipe->audio_output.bias == 1;
 }
 static int joint_facts_add(yvex_transformer_joint_block_result *total,
                           const yvex_backend_cuda_operation_facts *part)
@@ -1673,11 +1694,11 @@ static int transformer_request_valid(
         request->packed_rows > JOINT_MAX_PACKED_ROWS ||
         !request->block_count || request->block_count > JOINT_BLOCKS ||
         !joint_linear_physical_supported(
-            &request->video_output_physical,
-            YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_VIDEO_OUTPUT, 96ull) ||
+            &request->video_output_physical, request->recipe->identity_domain,
+            &request->recipe->video_output) ||
         !joint_linear_physical_supported(
-            &request->audio_output_physical,
-            YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_AUDIO_OUTPUT, 32ull) ||
+            &request->audio_output_physical, request->recipe->identity_domain,
+            &request->recipe->audio_output) ||
         !yvex_core_u64_add(request->video_rows, request->audio_rows, &total) ||
         !yvex_core_u64_add(total, request->text_rows, &total) || total != request->packed_rows ||
         !yvex_core_u64_mul(request->video_rows, 96ull, video_values) ||

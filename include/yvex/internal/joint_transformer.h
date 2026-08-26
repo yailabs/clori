@@ -13,6 +13,7 @@ typedef struct yvex_backend yvex_backend;
 #define YVEX_TRANSFORMER_JOINT_SCHEMA_V1 1u
 #define YVEX_TRANSFORMER_JOINT_SCHEMA_V2 2u
 #define YVEX_TRANSFORMER_JOINT_SCHEMA_V3 3u
+#define YVEX_TRANSFORMER_JOINT_SCHEMA_V4 4u
 #define YVEX_TRANSFORMER_JOINT_BLOCK_WEIGHT_COUNT 10u
 #define YVEX_TRANSFORMER_JOINT_EXTERNAL_WEIGHT_COUNT 35u
 
@@ -81,7 +82,7 @@ typedef struct yvex_transformer_joint_recipe {
     unsigned long long block_count, refiner_block_count;
     unsigned long long maximum_timesteps, maximum_packed_rows;
     unsigned long long video_input_width, audio_input_width, condition_input_width;
-    unsigned long long video_output_width, audio_output_width;
+    yvex_transformer_linear_requirement video_output, audio_output;
 } yvex_transformer_joint_recipe;
 
 typedef struct yvex_transformer_joint_block_result {

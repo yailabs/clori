@@ -434,8 +434,6 @@ typedef struct yvex_runtime_av_latent_context yvex_minimax_h3_t2va_omni_context;
 typedef yvex_runtime_latent_evaluator_result yvex_minimax_h3_t2va_omni_result;
 typedef struct {
     const yvex_transformer_joint_recipe *omni_recipe;
-    int (*omni_output_physical_compile)(yvex_transformer_linear_physical_plan *,
-        yvex_transformer_linear_physical_plan *, yvex_error *);
     int (*t2va_plan_build)(yvex_minimax_h3_t2va_plan *, unsigned long long,
         unsigned long long, unsigned long long, unsigned long long, unsigned int, yvex_error *);
     int (*scheduler_step)(float *output, const float *sample, const float *velocity,

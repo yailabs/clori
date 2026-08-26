@@ -2,6 +2,7 @@
 #ifndef INCLUDE_YVEX_INTERNAL_COMPONENT_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_COMPONENT_H_INCLUDED
 
+#include <yvex/backend.h>
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/latent.h>
 
@@ -13,6 +14,7 @@ typedef struct yvex_runtime_residency yvex_runtime_residency;
 typedef struct yvex_runtime_component_session yvex_runtime_component_session;
 typedef struct yvex_runtime_av_layout_output yvex_runtime_av_layout_output;
 typedef struct yvex_runtime_av_layout_result yvex_runtime_av_layout_result;
+typedef struct yvex_transformer_linear_physical_plan yvex_transformer_linear_physical_plan;
 
 typedef struct {
     float *data;
@@ -113,6 +115,8 @@ typedef struct yvex_runtime_av_latent_context {
     unsigned long long conditioning_capacity;
     const yvex_runtime_av_layout_output *layout;
     const yvex_runtime_av_layout_result *layout_result;
+    const yvex_transformer_linear_physical_plan *video_output_specialization;
+    const yvex_transformer_linear_physical_plan *audio_output_specialization;
     unsigned int *timestep_indices;
     unsigned long long timestep_capacity, block_count;
     const char *conditioning_identity;

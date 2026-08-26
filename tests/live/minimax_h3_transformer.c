@@ -16,6 +16,7 @@
 #include <yvex/internal/families/minimax_h3.h>
 #include <yvex/internal/joint_transformer.h>
 #include <yvex/internal/latent.h>
+#include <yvex/internal/media.h>
 #include <yvex/internal/runtime.h>
 
 enum { VIDEO_VALUES = 96u, AUDIO_VALUES = 32u, CONDITION_VALUES = 5120u };
@@ -378,6 +379,24 @@ static int refusal_checks(
     return YVEX_OK;
 }
 
+static int specialize_outputs(
+    const yvex_transformer_joint_recipe *recipe,
+    yvex_transformer_linear_physical_plan *video,
+    yvex_transformer_linear_physical_plan *audio, yvex_error *err)
+{
+    yvex_runtime_av_generation_request request = {
+        .component_backend = YVEX_BACKEND_KIND_CUDA};
+    int rc = yvex_runtime_media_request_specialize(
+        &request, recipe ? recipe->identity_domain : NULL,
+        recipe ? &recipe->video_output : NULL,
+        recipe ? &recipe->audio_output : NULL, err);
+    if (rc == YVEX_OK) {
+        *video = request.video_output_specialization;
+        *audio = request.audio_output_specialization;
+    }
+    return rc;
+}
+
 static int execute(const yvex_artifact *artifact, const yvex_gguf *gguf,
                    const yvex_tensor_table *tensors,
                    yvex_minimax_h3_omni_transformer_request *request,
@@ -402,12 +421,13 @@ static int execute(const yvex_artifact *artifact, const yvex_gguf *gguf,
     int attached = 0, rc, cleanup_rc;
     yvex_error cleanup;
     request->recipe = graph ? graph->omni_recipe : NULL;
-    if (!graph || !request->recipe || !graph->omni_output_physical_compile) {
+    if (!graph || !request->recipe) {
         yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "minimax-h3.transformer-proof",
                        "the admitted joint Transformer recipe is unavailable");
         rc = YVEX_ERR_UNSUPPORTED;
     } else {
-        rc = graph->omni_output_physical_compile(
+        rc = specialize_outputs(
+            request->recipe,
             &request->video_output_physical, &request->audio_output_physical, err);
     }
     if (rc == YVEX_OK) {
@@ -632,12 +652,13 @@ static int execute_artifact(const yvex_artifact *artifact, const yvex_gguf *gguf
     yvex_error cleanup;
     int rc;
     request->recipe = graph ? graph->omni_recipe : NULL;
-    if (!graph || !request->recipe || !graph->omni_output_physical_compile) {
+    if (!graph || !request->recipe) {
         yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "minimax-h3.transformer-proof",
                        "the admitted joint Transformer recipe is unavailable");
         rc = YVEX_ERR_UNSUPPORTED;
     } else {
-        rc = graph->omni_output_physical_compile(
+        rc = specialize_outputs(
+            request->recipe,
             &request->video_output_physical, &request->audio_output_physical, err);
     }
     if (rc == YVEX_OK) {
@@ -710,6 +731,8 @@ static int execute_latent(const char *path, const char *conditioning_path,
         .maximum_workspace_bytes = (192ull + 512ull) * sizeof(float),
     };
     yvex_minimax_h3_t2va_omni_context context = {0};
+    yvex_transformer_linear_physical_plan video_specialization = {0};
+    yvex_transformer_linear_physical_plan audio_specialization = {0};
     char conditioning_identity[65];
     yvex_error err, cleanup;
     int rc, cleanup_rc;
@@ -732,11 +755,17 @@ static int execute_latent(const char *path, const char *conditioning_path,
     if (rc == YVEX_OK)
         rc = graph->t2va_plan_build(&plan, 1ull, 32ull, 32ull, 5ull, steps, &err);
     if (rc == YVEX_OK) rc = graph->t2va_layout_build(&plan, &layout, &layout_result, &err);
+    if (rc == YVEX_OK)
+        rc = specialize_outputs(
+            graph->omni_recipe,
+            &video_specialization, &audio_specialization, &err);
     context.transformer_session = session;
     context.conditioning = conditioning;
     context.conditioning_capacity = CONDITION_VALUES;
     context.layout = &layout;
     context.layout_result = &layout_result;
+    context.video_output_specialization = &video_specialization;
+    context.audio_output_specialization = &audio_specialization;
     context.timestep_indices = timestep_indices;
     context.timestep_capacity = 19ull;
     context.block_count = block_count;
@@ -1014,6 +1043,8 @@ static int execute_latent_fixture(
     yvex_runtime_latent_result latent_result = {0};
     yvex_minimax_h3_t2va_omni_result omni_result = {0};
     yvex_minimax_h3_t2va_omni_context context = {0};
+    yvex_transformer_linear_physical_plan video_specialization = {0};
+    yvex_transformer_linear_physical_plan audio_specialization = {0};
     yvex_runtime_av_layout_output layout = {0};
     request_fixture fixture = {0};
     unsigned long long video_values, audio_values, conditioning_values, workspace_bytes;
@@ -1058,11 +1089,17 @@ static int execute_latent_fixture(
             &session, &admission, artifact, gguf, tensors, YVEX_BACKEND_KIND_CUDA,
             80ull * 1024ull * 1024ull * 1024ull, 4ull * 1024ull * 1024ull * 1024ull, &err);
     if (rc == YVEX_OK) rc = graph->t2va_layout_build(&plan, &layout, &layout_result, &err);
+    if (rc == YVEX_OK)
+        rc = specialize_outputs(
+            graph->omni_recipe,
+            &video_specialization, &audio_specialization, &err);
     context.transformer_session = session;
     context.conditioning = fixture.conditioning;
     context.conditioning_capacity = conditioning_values;
     context.layout = &layout;
     context.layout_result = &layout_result;
+    context.video_output_specialization = &video_specialization;
+    context.audio_output_specialization = &audio_specialization;
     context.timestep_indices = fixture.timestep_indices;
     context.timestep_capacity = plan.packed_rows;
     context.block_count = block_count;

@@ -824,11 +824,24 @@ static int quant_cuda_f32_linear_policy(yvex_backend *backend)
     int rc;
 
     YVEX_TEST_ASSERT(inputs && actual, "F32 linear policy fixtures allocate");
+    policy = (yvex_transformer_linear_physical_plan){
+        .schema_version = YVEX_TRANSFORMER_LINEAR_PHYSICAL_SCHEMA_V2,
+        .semantic_domain = "cuda-quant-qtype-fixture",
+        .operation = YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_VIDEO_OUTPUT,
+        .numeric_contract = YVEX_TRANSFORMER_LINEAR_NUMERIC_SOURCE_EXACT,
+        .source_dtype = YVEX_DTYPE_F32,
+        .implementation = YVEX_TRANSFORMER_LINEAR_IMPLEMENTATION_CUBLAS_LT_F32_BIAS,
+        .reduction = YVEX_TRANSFORMER_LINEAR_REDUCTION_INPLACE,
+        .stages = YVEX_TRANSFORMER_LINEAR_STAGES_DEFAULT,
+        .backend = YVEX_BACKEND_KIND_CUDA,
+        .algorithm_id = 10u, .tile_rows = 32u, .tile_columns = 32u, .split_k = 10u,
+        .compute_capability_major = 12u, .compute_capability_minor = 1u,
+        .input_width = WIDTH, .output_width = ROWS,
+        .workspace_bytes = 1024ull * 1024ull,
+        .bias = 1, .deterministic = 1, .exact = 1,
+    };
     YVEX_TEST_ASSERT(
-        yvex_transformer_linear_physical_profile_compile(
-            "cuda-quant-qtype-fixture", YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_VIDEO_OUTPUT,
-            WIDTH, ROWS, YVEX_TRANSFORMER_LINEAR_PROFILE_CUBLAS_LT_SM121_ALGORITHM_10,
-            &policy, &err) == YVEX_OK,
+        yvex_transformer_linear_physical_seal(&policy, &err) == YVEX_OK,
         "F32 linear policy is compiler-sealed before backend execution");
     descriptor.name = "f32_linear_policy_resident";
     descriptor.dtype = YVEX_DTYPE_I8;

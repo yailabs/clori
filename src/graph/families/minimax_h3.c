@@ -1473,7 +1473,7 @@ static int text_encoder_artifact_cuda(const yvex_artifact *artifact,
     return rc;
 }
 static const yvex_transformer_joint_recipe omni_transformer_recipe = {
-    .schema_version = YVEX_TRANSFORMER_JOINT_SCHEMA_V3, .identity_domain = "minimax-h3-fl2va-omni-transformer",
+    .schema_version = YVEX_TRANSFORMER_JOINT_SCHEMA_V4, .identity_domain = "minimax-h3-fl2va-omni-transformer",
     .qkv_layout = YVEX_TRANSFORMER_QKV_LAYOUT_PER_HEAD_THREE,
     .swiglu_layout = YVEX_TRANSFORMER_SWIGLU_LAYOUT_GATE_THEN_UP,
     .hidden_width = 5376ull, .attention_heads = 56ull, .head_dimension = 128ull,
@@ -1482,17 +1482,14 @@ static const yvex_transformer_joint_recipe omni_transformer_recipe = {
     .block_count = 50ull, .refiner_block_count = 2ull, .maximum_timesteps = 64ull,
     .maximum_packed_rows = YVEX_MINIMAX_H3_OMNI_MAX_PACKED_ROWS, .video_input_width = 96ull,
     .audio_input_width = 32ull, .condition_input_width = 5120ull,
-    .video_output_width = 96ull, .audio_output_width = 32ull};
-static int omni_output_physical_compile(yvex_transformer_linear_physical_plan *video,
-    yvex_transformer_linear_physical_plan *audio, yvex_error *err)
-{
-    int rc = yvex_transformer_linear_physical_profile_compile(omni_transformer_recipe.identity_domain,
-        YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_VIDEO_OUTPUT, 5376ull, 96ull,
-        YVEX_TRANSFORMER_LINEAR_PROFILE_CUBLAS_LT_SM121_ALGORITHM_10, video, err);
-    return rc != YVEX_OK ? rc : yvex_transformer_linear_physical_profile_compile(
-        omni_transformer_recipe.identity_domain, YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_AUDIO_OUTPUT,
-        5376ull, 32ull, YVEX_TRANSFORMER_LINEAR_PROFILE_CUBLAS_LT_SM121_ALGORITHM_20, audio, err);
-}
+    .video_output = {
+        .operation = YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_VIDEO_OUTPUT,
+        .publication_contract = YVEX_TRANSFORMER_LINEAR_NUMERIC_SOURCE_EXACT, .source_dtype = YVEX_DTYPE_F32,
+        .input_width = 5376ull, .output_width = 96ull, .bias = 1},
+    .audio_output = {
+        .operation = YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_AUDIO_OUTPUT,
+        .publication_contract = YVEX_TRANSFORMER_LINEAR_NUMERIC_SOURCE_EXACT, .source_dtype = YVEX_DTYPE_F32,
+        .input_width = 5376ull, .output_width = 32ull, .bias = 1}};
 static const char *const transformer_external_names[YVEX_TRANSFORMER_JOINT_EXTERNAL_WEIGHT_COUNT] = {
     "audio_patch_proj.weight", "audio_patch_proj.bias", "video_patch_proj.weight",
     "video_patch_proj.bias", "condition_proj.weight", "condition_proj.bias",
@@ -1667,6 +1664,7 @@ static int t2va_latent_execute(const yvex_minimax_h3_t2va_plan *plan,
         !summary->cuda_ready || summary->invalidated ||
         !yvex_sha256_hex_valid(summary->residency_identity) || !context->conditioning ||
         !context->conditioning_identity || !yvex_sha256_hex_valid(context->conditioning_identity) ||
+        !context->video_output_specialization || !context->audio_output_specialization ||
         !yvex_core_u64_mul(plan->text_tokens, 5120ull, &conditioning_values) ||
         context->conditioning_capacity < conditioning_values || !context->timestep_indices ||
         context->timestep_capacity < plan->packed_rows || !context->block_count ||
@@ -1676,9 +1674,9 @@ static int t2va_latent_execute(const yvex_minimax_h3_t2va_plan *plan,
         return YVEX_ERR_INVALID_ARG;
     }
     execution.plan = plan; execution.context = context;
-    rc = omni_output_physical_compile(&execution.video_output_physical,
-        &execution.audio_output_physical, err);
-    if (rc == YVEX_OK) rc = yvex_runtime_latent_binding_identity(
+    execution.video_output_physical = *context->video_output_specialization;
+    execution.audio_output_physical = *context->audio_output_specialization;
+    rc = yvex_runtime_latent_binding_identity(
         "yvex.minimax-h3.t2va.omni-evaluator.v1", (const char *[4]){plan->identity, summary->residency_identity,
             context->conditioning_identity, context->layout_result->layout_identity}, 4ull,
         (unsigned long long[2]){context->block_count, summary->encoded_bytes}, 2ull,
@@ -1702,8 +1700,7 @@ static int t2va_latent_execute(const yvex_minimax_h3_t2va_plan *plan,
 const yvex_minimax_h3_graph_api *yvex_graph_register_minimax_h3(void)
 {
     static const yvex_minimax_h3_graph_api api = {
-        &omni_transformer_recipe, omni_output_physical_compile,
-        t2va_plan_build, yvex_runtime_av_scheduler_step,
+        &omni_transformer_recipe, t2va_plan_build, yvex_runtime_av_scheduler_step,
         t2va_latent_execute, yvex_runtime_av_layout_from_plan,
         component_admit, text_encoder_artifact_cuda,
         transformer_component_cuda,
@@ -1820,6 +1817,9 @@ const yvex_component_variant_adapter *yvex_graph_minimax_h3_component_adapter(vo
         .conditioning_layers = YVEX_MINIMAX_H3_TEXT_CONDITIONING_LAYERS, .transformer_blocks = 50ull,
         .maximum_prompt_tokens = YVEX_MINIMAX_H3_TEXT_MAX_TOKENS,
         .maximum_packed_rows = YVEX_MINIMAX_H3_OMNI_MAX_PACKED_ROWS, .component_backend = YVEX_BACKEND_KIND_CUDA,
+        .output_semantic_domain = omni_transformer_recipe.identity_domain,
+        .video_output_requirement = &omni_transformer_recipe.video_output,
+        .audio_output_requirement = &omni_transformer_recipe.audio_output,
         .plan_build = t2va_plan_build, .layout_build = yvex_runtime_av_layout_from_plan,
         .component_admit = component_admit, .condition = text_encoder_artifact_cuda,
         .latent = t2va_latent_execute, .video_decode = video_vae_decode_cuda_session,

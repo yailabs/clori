@@ -199,6 +199,9 @@ int yvex_runtime_media_host_profile_build(
         .maximum_workspace_bytes = target->maximum_workspace_bytes,
         .maximum_file_bytes = target->maximum_file_bytes,
         .component_backend = execution->component_backend,
+        .output_semantic_domain = execution->output_semantic_domain,
+        .video_output_requirement = execution->video_output_requirement,
+        .audio_output_requirement = execution->audio_output_requirement,
         .video_temporal_ratio = target->video_temporal_ratio,
         .video_clip_length = target->video_clip_length,
         .video_token_drop = target->video_token_drop,
@@ -216,6 +219,13 @@ int yvex_runtime_media_host_profile_build(
         .component_admit = execution->component_admit, .condition = execution->condition,
         .latent = execution->latent, .video_decode = execution->video_decode,
         .audio_decode = execution->audio_decode};
+    if (execution->output_semantic_domain || execution->video_output_requirement ||
+        execution->audio_output_requirement)
+        rc = yvex_runtime_media_request_specialize(
+            request, execution->output_semantic_domain,
+            execution->video_output_requirement,
+            execution->audio_output_requirement, err);
+    if (rc != YVEX_OK) return rc;
     yvex_error_clear(err);
     return YVEX_OK;
 }
@@ -479,6 +489,8 @@ static void generation_state_close(generation_state *state)
 static int model_contract_validate(
     const yvex_runtime_av_generation_request *request, yvex_error *err)
 {
+    yvex_runtime_av_generation_request expected;
+    int rc;
     if (!request || request->schema_version != YVEX_RUNTIME_AV_GENERATION_SCHEMA_V1 ||
         !request->target || !request->target[0] ||
         !request->text_artifact_path || !request->transformer_artifact_path ||
@@ -503,6 +515,33 @@ static int model_contract_validate(
         !request->audio_decode)
         return generation_fail(err, YVEX_ERR_INVALID_ARG, "runtime.av-generation",
                                "one exact admitted media model contract is required");
+    if (!request->output_semantic_domain && !request->video_output_requirement &&
+        !request->audio_output_requirement) {
+        if (request->video_output_specialization.physical_identity[0] ||
+            request->audio_output_specialization.physical_identity[0])
+            return generation_fail(
+                err, YVEX_ERR_FORMAT, "runtime.av-generation",
+                "media specialization exists without output semantics");
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    if (!request->output_semantic_domain || !request->video_output_requirement ||
+        !request->audio_output_requirement)
+        return generation_fail(
+            err, YVEX_ERR_FORMAT, "runtime.av-generation",
+            "media output semantics are only partially specified");
+    expected = *request;
+    rc = yvex_runtime_media_request_specialize(
+        &expected, request->output_semantic_domain,
+        request->video_output_requirement, request->audio_output_requirement, err);
+    if (rc != YVEX_OK) return rc;
+    if (strcmp(expected.video_output_specialization.physical_identity,
+               request->video_output_specialization.physical_identity) != 0 ||
+        strcmp(expected.audio_output_specialization.physical_identity,
+               request->audio_output_specialization.physical_identity) != 0)
+        return generation_fail(
+            err, YVEX_ERR_FORMAT, "runtime.av-generation",
+            "media request does not carry its compiler-sealed specialization");
     return YVEX_OK;
 }
 
@@ -651,6 +690,13 @@ static int media_model_contract_matches(
            sealed->maximum_workspace_bytes == request->maximum_workspace_bytes &&
            sealed->maximum_file_bytes == request->maximum_file_bytes &&
            sealed->component_backend == request->component_backend &&
+           (!!sealed->output_semantic_domain == !!request->output_semantic_domain) &&
+           (!!sealed->video_output_requirement == !!request->video_output_requirement) &&
+           (!!sealed->audio_output_requirement == !!request->audio_output_requirement) &&
+           !strcmp(sealed->video_output_specialization.physical_identity,
+                   request->video_output_specialization.physical_identity) &&
+           !strcmp(sealed->audio_output_specialization.physical_identity,
+                   request->audio_output_specialization.physical_identity) &&
            sealed->video_temporal_ratio == request->video_temporal_ratio &&
            sealed->video_clip_length == request->video_clip_length &&
            sealed->video_token_drop == request->video_token_drop &&
@@ -891,6 +937,12 @@ static int latent_execute(generation_state *state, yvex_error *err)
     context.conditioning_identity = state->conditioning_result.execution_identity;
     context.layout = &state->layout;
     context.layout_result = &state->layout_result;
+    context.video_output_specialization =
+        request->output_semantic_domain
+            ? &request->video_output_specialization : NULL;
+    context.audio_output_specialization =
+        request->output_semantic_domain
+            ? &request->audio_output_specialization : NULL;
     context.timestep_indices = state->timestep_indices;
     context.timestep_capacity = state->plan.packed_rows;
     context.block_count = request->transformer_blocks;

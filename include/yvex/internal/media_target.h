@@ -33,6 +33,7 @@ typedef struct yvex_runtime_av_video_decode_result yvex_runtime_av_video_decode_
 typedef struct yvex_runtime_av_audio_decode_options yvex_runtime_av_audio_decode_options;
 typedef struct yvex_runtime_av_audio_decode_result yvex_runtime_av_audio_decode_result;
 typedef struct yvex_component_execution_failure yvex_component_execution_failure;
+typedef struct yvex_transformer_linear_requirement yvex_transformer_linear_requirement;
 
 typedef struct {
     const char *name;
@@ -95,6 +96,9 @@ typedef struct yvex_media_execution_recipe {
     unsigned long long conditioning_layers, transformer_blocks;
     unsigned long long maximum_prompt_tokens, maximum_packed_rows;
     yvex_backend_kind component_backend;
+    const char *output_semantic_domain;
+    const yvex_transformer_linear_requirement *video_output_requirement;
+    const yvex_transformer_linear_requirement *audio_output_requirement;
     yvex_media_plan_fn plan_build;
     yvex_media_layout_fn layout_build;
     yvex_media_component_admit_fn component_admit;

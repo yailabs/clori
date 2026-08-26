@@ -248,7 +248,7 @@ static int cuda_linear_physical_validate(
     unsigned long long input_width, unsigned long long output_width, yvex_error *err)
 {
     yvex_backend_device_info device;
-    int profile_10, profile_20, rc;
+    int rc;
     if (!backend || !plan || plan->input_width != input_width ||
         plan->output_width != output_width || plan->backend != YVEX_BACKEND_KIND_CUDA ||
         plan->implementation != YVEX_TRANSFORMER_LINEAR_IMPLEMENTATION_CUBLAS_LT_F32_BIAS) {
@@ -258,17 +258,10 @@ static int cuda_linear_physical_validate(
     }
     rc = yvex_transformer_linear_physical_validate(plan, err);
     if (rc != YVEX_OK) return rc;
-    profile_10 = plan->algorithm_id == 10u && plan->tile_rows == 32u &&
-                 plan->tile_columns == 32u && plan->split_k == 10u &&
-                 plan->reduction == YVEX_TRANSFORMER_LINEAR_REDUCTION_INPLACE &&
-                 plan->stages == YVEX_TRANSFORMER_LINEAR_STAGES_DEFAULT;
-    profile_20 = plan->algorithm_id == 20u && plan->tile_rows == 128u &&
-                 plan->tile_columns == 32u && plan->split_k == 3u &&
-                 plan->reduction == YVEX_TRANSFORMER_LINEAR_REDUCTION_COMPUTE_TYPE &&
-                 plan->stages == YVEX_TRANSFORMER_LINEAR_STAGES_8X5;
-    if ((!profile_10 && !profile_20) || plan->workspace_bytes > SIZE_MAX) {
+    if ((plan->tile_rows != 32u && plan->tile_rows != 128u) ||
+        plan->tile_columns != 32u || plan->workspace_bytes > SIZE_MAX) {
         yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "cuda.encoded-linear-f32.physical",
-                       "compiled linear algorithm is unavailable in this CUDA executor");
+                       "compiled linear implementation is unavailable in this CUDA executor");
         return YVEX_ERR_UNSUPPORTED;
     }
     rc = yvex_backend_get_device_info(backend, &device, err);

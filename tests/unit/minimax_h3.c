@@ -11,6 +11,7 @@
 #include <yvex/internal/family_catalog.h>
 #include <yvex/internal/joint_transformer.h>
 #include <yvex/internal/latent.h>
+#include <yvex/internal/media.h>
 #include <yvex/internal/model_target.h>
 #include <yvex/internal/operator_graph.h>
 #include <yvex/internal/runtime.h>
@@ -686,6 +687,9 @@ static int test_t2va_plan(void)
 {
     const yvex_minimax_h3_graph_api *graph = yvex_graph_register_minimax_h3();
     const yvex_transformer_joint_recipe *recipe = graph->omni_recipe;
+    yvex_transformer_linear_requirement unsupported_requirement;
+    yvex_runtime_av_generation_request specialization = {
+        .component_backend = YVEX_BACKEND_KIND_CUDA};
     yvex_transformer_linear_physical_plan video, audio, changed;
     char video_operation[65], video_physical[65], audio_physical[65];
     yvex_minimax_h3_t2va_plan first, repeated, source_scale;
@@ -701,9 +705,21 @@ static int test_t2va_plan(void)
                          recipe->swiglu_layout ==
                              YVEX_TRANSFORMER_SWIGLU_LAYOUT_GATE_THEN_UP,
                      "Omni recipe preserves the released gate-before-up SwiGLU row layout");
-    YVEX_TEST_ASSERT(recipe && recipe->schema_version == YVEX_TRANSFORMER_JOINT_SCHEMA_V3 &&
-                         graph->omni_output_physical_compile(&video, &audio, &err) == YVEX_OK,
-                     "Omni compiler seals output execution outside the semantic recipe");
+    YVEX_TEST_ASSERT(
+        recipe && recipe->schema_version == YVEX_TRANSFORMER_JOINT_SCHEMA_V4 &&
+            recipe->video_output.source_dtype == YVEX_DTYPE_F32 &&
+            recipe->audio_output.source_dtype == YVEX_DTYPE_F32 &&
+            recipe->video_output.publication_contract ==
+                YVEX_TRANSFORMER_LINEAR_NUMERIC_SOURCE_EXACT &&
+            recipe->audio_output.publication_contract ==
+                YVEX_TRANSFORMER_LINEAR_NUMERIC_SOURCE_EXACT &&
+            recipe->video_output.bias == 1 && recipe->audio_output.bias == 1 &&
+            yvex_runtime_media_request_specialize(
+                &specialization, recipe->identity_domain,
+                &recipe->video_output, &recipe->audio_output, &err) == YVEX_OK,
+        "runtime specialization seals output execution from semantic requirements");
+    video = specialization.video_output_specialization;
+    audio = specialization.audio_output_specialization;
     YVEX_TEST_ASSERT(
         video.operation == YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_VIDEO_OUTPUT &&
             video.input_width == 5376ull && video.output_width == 96ull &&
@@ -724,6 +740,12 @@ static int test_t2va_plan(void)
     memcpy(video_physical, video.physical_identity, sizeof(video_physical));
     memcpy(audio_physical, audio.physical_identity, sizeof(audio_physical));
     changed = video;
+    changed.tile_rows = 128u;
+    YVEX_TEST_ASSERT(yvex_transformer_linear_physical_seal(&changed, &err) == YVEX_OK &&
+                         strcmp(changed.operation_identity, video_operation) == 0 &&
+                         strcmp(changed.physical_identity, video_physical) != 0,
+                     "tile mutation changes physical identity but not semantic operation");
+    changed = video;
     changed.split_k = 9u;
     YVEX_TEST_ASSERT(yvex_transformer_linear_physical_seal(&changed, &err) == YVEX_OK &&
                          strcmp(changed.operation_identity, video_operation) == 0 &&
@@ -736,12 +758,20 @@ static int test_t2va_plan(void)
                          strcmp(changed.physical_identity, video_physical) != 0 &&
                          strcmp(audio.physical_identity, audio_physical) == 0,
                      "reduction mutation is physical and leaves other operation plans unchanged");
+    unsupported_requirement = recipe->video_output;
+    unsupported_requirement.publication_contract = YVEX_TRANSFORMER_LINEAR_NUMERIC_UNKNOWN;
     YVEX_TEST_ASSERT(
-        yvex_transformer_linear_physical_profile_compile(
-            recipe->identity_domain, YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_VIDEO_OUTPUT,
-            5376ull, 96ull, YVEX_TRANSFORMER_LINEAR_PROFILE_UNKNOWN, &changed, &err) ==
+        yvex_runtime_media_request_specialize(
+            &specialization, recipe->identity_domain,
+            &unsupported_requirement, &recipe->audio_output, &err) ==
             YVEX_ERR_UNSUPPORTED,
-        "physical compiler refuses an unknown output-linear profile");
+        "specialization refuses an unadmitted semantic numerical contract");
+    specialization.component_backend = YVEX_BACKEND_KIND_CPU;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_media_request_specialize(
+            &specialization, recipe->identity_domain,
+            &recipe->video_output, &recipe->audio_output, &err) == YVEX_ERR_UNSUPPORTED,
+        "specialization fails closed when the deployment backend is unsupported");
 
     YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->t2va_plan_build(
                          &first, 16ull, 1344ull, 768ull, 124ull, 19u, &err) == YVEX_OK &&

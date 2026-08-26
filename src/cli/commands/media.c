@@ -148,6 +148,13 @@ int yvex_media_generate_command(const yvex_graph_args *args, yvex_error *err)
     request.audio_decode = execution->audio_decode;
     request.cancel_requested = media_cancel_requested;
     media_signal_seen = 0;
+    if (rc == YVEX_OK &&
+        (execution->output_semantic_domain || execution->video_output_requirement ||
+         execution->audio_output_requirement))
+        rc = yvex_runtime_media_request_specialize(
+            &request, execution->output_semantic_domain,
+            execution->video_output_requirement,
+            execution->audio_output_requirement, err);
     if (rc == YVEX_OK) {
         rc = media_signals_install(&old_interrupt, &old_terminate, err);
         signals_installed = rc == YVEX_OK;

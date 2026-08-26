@@ -89,7 +89,11 @@ static int registry_identity(server_media_registry *registry, yvex_error *err)
     facts[6] = registry->maximum_inference_steps;
     if (!yvex_sha256_update_text(&hash, "yvex.server.media-profile.v1") ||
         !yvex_sha256_update_text(&hash, identities[0]) ||
-        !yvex_sha256_update_text(&hash, registry->preset.identity))
+        !yvex_sha256_update_text(&hash, registry->preset.identity) ||
+        !yvex_sha256_update_text(
+            &hash, registry->generation.video_output_specialization.physical_identity) ||
+        !yvex_sha256_update_text(
+            &hash, registry->generation.audio_output_specialization.physical_identity))
         return media_refuse(err, YVEX_ERR_STATE, "media profile identity could not start");
     for (index = 0ull; index < 7ull; ++index)
         if (!yvex_sha256_update_u64_be(&hash, facts[index]))
