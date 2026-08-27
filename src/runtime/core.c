@@ -343,7 +343,7 @@ static int runtime_model_resource_summary_refresh(yvex_model_engine *model,
                        "opened model engine resource catalog is required");
         return YVEX_ERR_STATE;
     }
-    rc = yvex_engine_resource_snapshot(
+    rc = yvex_runtime_resource_snapshot(
         model->resources, &resources, NULL, 0ull, &count, err);
     if (rc != YVEX_OK) return rc;
     model->summary.engine_resource_count = count;
@@ -377,7 +377,7 @@ static int runtime_model_release(yvex_model_engine *model, yvex_error *err) {
     if (rc != YVEX_OK) return rc;
     model->scheduler_sequence_capacity = 0ull;
     model->scheduler_maximum_width = 0ull;
-    rc = yvex_engine_resource_catalog_close(&model->resources, err);
+    rc = yvex_runtime_resource_catalog_close(&model->resources, err);
     if (rc != YVEX_OK) return rc;
     /* Failed registration during open may leave an unowned residency. */
     rc = yvex_runtime_residency_close(&model->residency, err);
@@ -756,7 +756,7 @@ static int runtime_model_residency_open(
     resource.release = runtime_model_residency_resource_release;
     resource.release_context = model;
     resource.ready = 1;
-    rc = yvex_engine_resource_register(
+    rc = yvex_runtime_resource_register(
         model->resources, &resource, &model->residency_resource, err);
     if (rc != YVEX_OK) return rc;
     return runtime_model_resource_summary_refresh(model, err);
@@ -992,7 +992,7 @@ int yvex_model_engine_open(yvex_model_engine **out, const yvex_model_engine_open
             out, model, failure, &open_imported_identity, 1ull, 0ull, err,
             YVEX_ERR_FORMAT);
     }
-    rc = yvex_engine_resource_catalog_open(
+    rc = yvex_runtime_resource_catalog_open(
         &model->resources, model->summary.engine_generation,
         model->summary.runtime_model_identity, 64ull, err);
     if (rc != YVEX_OK)
@@ -1203,7 +1203,7 @@ static int runtime_session_attach_cuda_residency(
     yvex_runtime_residency_summary summary = {0};
     yvex_runtime_residency *residency = NULL;
     yvex_error cleanup = {0};
-    int cleanup_rc, rc = yvex_engine_resource_acquire(
+    int cleanup_rc, rc = yvex_runtime_resource_acquire(
         session->engine->resources, session->engine->residency_resource,
         (void **)&residency, err);
     if (rc == YVEX_OK)
@@ -1211,7 +1211,7 @@ static int runtime_session_attach_cuda_residency(
             residency, &session->backend, session->maximum_device_bytes,
             uploaded, &summary, err);
     cleanup_rc = residency
-                     ? yvex_engine_resource_drop(
+                     ? yvex_runtime_resource_drop(
                            session->engine->resources,
                            session->engine->residency_resource, &cleanup)
                      : YVEX_OK;

@@ -202,7 +202,7 @@ static int resource_release(
     return rc;
 }
 
-int yvex_engine_resource_catalog_open(
+int yvex_runtime_resource_catalog_open(
     yvex_engine_resource_catalog **out, unsigned long long engine_generation,
     const char *engine_identity, unsigned long long capacity, yvex_error *err)
 {
@@ -236,7 +236,7 @@ int yvex_engine_resource_catalog_open(
     return YVEX_OK;
 }
 
-int yvex_engine_resource_register(
+int yvex_runtime_resource_register(
     yvex_engine_resource_catalog *catalog,
     const yvex_engine_resource_request *request,
     yvex_engine_resource_handle *handle, yvex_error *err)
@@ -325,7 +325,7 @@ int yvex_engine_resource_register(
     return YVEX_OK;
 }
 
-int yvex_engine_resource_acquire(
+int yvex_runtime_resource_acquire(
     yvex_engine_resource_catalog *catalog,
     yvex_engine_resource_handle handle, void **value, yvex_error *err)
 {
@@ -352,7 +352,7 @@ int yvex_engine_resource_acquire(
     return YVEX_OK;
 }
 
-int yvex_engine_resource_publish_ready(
+int yvex_runtime_resource_publish_ready(
     yvex_engine_resource_catalog *catalog,
     yvex_engine_resource_handle handle, yvex_error *err)
 {
@@ -377,7 +377,7 @@ int yvex_engine_resource_publish_ready(
     return YVEX_OK;
 }
 
-int yvex_engine_resource_drop(
+int yvex_runtime_resource_drop(
     yvex_engine_resource_catalog *catalog,
     yvex_engine_resource_handle handle, yvex_error *err)
 {
@@ -400,7 +400,7 @@ int yvex_engine_resource_drop(
     return YVEX_OK;
 }
 
-int yvex_engine_resource_evict(
+int yvex_runtime_resource_evict(
     yvex_engine_resource_catalog *catalog,
     yvex_engine_resource_handle *handle, yvex_error *err)
 {
@@ -414,7 +414,7 @@ int yvex_engine_resource_evict(
     return rc;
 }
 
-int yvex_engine_resource_snapshot(
+int yvex_runtime_resource_snapshot(
     const yvex_engine_resource_catalog *catalog,
     yvex_engine_resource_summary *summary,
     yvex_engine_resource_entry *entries, unsigned long long entry_capacity,
@@ -447,7 +447,7 @@ int yvex_engine_resource_snapshot(
     return YVEX_OK;
 }
 
-int yvex_engine_resource_catalog_close(
+int yvex_runtime_resource_catalog_close(
     yvex_engine_resource_catalog **catalog, yvex_error *err)
 {
     yvex_engine_resource_catalog *owner;

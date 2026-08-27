@@ -616,7 +616,7 @@ static int media_model_resources_open(yvex_runtime_media_model *model,
     if (!model->summary.engine_generation)
         return generation_fail(err, YVEX_ERR_BOUNDS, "runtime.media-resource",
                                "media engine generation space is exhausted");
-    rc = yvex_engine_resource_catalog_open(
+    rc = yvex_runtime_resource_catalog_open(
         &model->resources, model->summary.engine_generation,
         model->summary.model_identity, MEDIA_COMPONENT_COUNT + 4ull, err);
     for (index = 0ull; rc == YVEX_OK && index < MEDIA_COMPONENT_COUNT;
@@ -642,11 +642,11 @@ static int media_model_resources_open(yvex_runtime_media_model *model,
         resource.release = media_component_resource_release;
         resource.release_context = &model->release_contexts[index];
         resource.ready = 1;
-        rc = yvex_engine_resource_register(
+        rc = yvex_runtime_resource_register(
             model->resources, &resource, &model->resource_handles[index], err);
     }
     if (rc == YVEX_OK)
-        rc = yvex_engine_resource_snapshot(
+        rc = yvex_runtime_resource_snapshot(
             model->resources, &resources, NULL, 0ull, &count, err);
     if (rc != YVEX_OK) return rc;
     model->summary.resource_count = count;
@@ -894,7 +894,7 @@ void yvex_runtime_media_model_close(yvex_runtime_media_model **model)
     yvex_error cleanup = {0};
     if (!model || !*model) return;
     owner = *model;
-    if (yvex_engine_resource_catalog_close(&owner->resources, &cleanup) !=
+    if (yvex_runtime_resource_catalog_close(&owner->resources, &cleanup) !=
         YVEX_OK)
         return;
     /* Unregistered components can remain after a partial open. */

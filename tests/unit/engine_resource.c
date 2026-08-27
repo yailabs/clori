@@ -45,7 +45,7 @@ int yvex_test_engine_resource(void)
     yvex_error err;
 
     YVEX_TEST_ASSERT(
-        yvex_engine_resource_catalog_open(
+        yvex_runtime_resource_catalog_open(
             &catalog, 17ull, engine_identity, 4ull, &err) == YVEX_OK,
         "engine resource catalog opens for one authenticated generation");
     request.kind = YVEX_ENGINE_RESOURCE_PACKAGE_MAPPING;
@@ -60,7 +60,7 @@ int yvex_test_engine_resource(void)
     request.release_context = &package_probe;
     request.ready = 1;
     YVEX_TEST_ASSERT(
-        yvex_engine_resource_register(catalog, &request, &package, &err) ==
+        yvex_runtime_resource_register(catalog, &request, &package, &err) ==
             YVEX_OK,
         "canonical package mapping registers independently");
 
@@ -81,11 +81,11 @@ int yvex_test_engine_resource(void)
     request.release_context = &prepared_probe;
     request.evictable = 1;
     YVEX_TEST_ASSERT(
-        yvex_engine_resource_register(catalog, &request, &prepared, &err) ==
+        yvex_runtime_resource_register(catalog, &request, &prepared, &err) ==
             YVEX_OK,
         "one independently evictable prepared view registers");
     YVEX_TEST_ASSERT(
-        yvex_engine_resource_snapshot(
+        yvex_runtime_resource_snapshot(
             catalog, &summary, entries, 2ull, &count, &err) == YVEX_OK &&
             count == 2ull && summary.resource_count == 2ull &&
             summary.ready_count == 1ull &&
@@ -95,38 +95,38 @@ int yvex_test_engine_resource(void)
             entries[1].state == YVEX_ENGINE_RESOURCE_DECLARED,
         "snapshot separates declared prepared work from ready package truth");
     YVEX_TEST_ASSERT(
-        yvex_engine_resource_acquire(catalog, prepared, &borrowed, &err) ==
+        yvex_runtime_resource_acquire(catalog, prepared, &borrowed, &err) ==
             YVEX_ERR_STATE,
         "declared resource cannot be consumed before readiness publication");
     YVEX_TEST_ASSERT(
-        yvex_engine_resource_publish_ready(catalog, prepared, &err) ==
+        yvex_runtime_resource_publish_ready(catalog, prepared, &err) ==
             YVEX_OK,
         "prepared resource publishes readiness without changing package identity");
 
     YVEX_TEST_ASSERT(
-        yvex_engine_resource_acquire(catalog, prepared, &borrowed, &err) ==
+        yvex_runtime_resource_acquire(catalog, prepared, &borrowed, &err) ==
                 YVEX_OK &&
             borrowed == &prepared_probe,
         "consumer borrows an exact resource generation");
     YVEX_TEST_ASSERT(
-        yvex_engine_resource_evict(catalog, &prepared, &err) ==
+        yvex_runtime_resource_evict(catalog, &prepared, &err) ==
                 YVEX_ERR_STATE &&
             prepared_probe.releases == 0u,
         "borrowed prepared resource cannot be evicted");
     YVEX_TEST_ASSERT(
-        yvex_engine_resource_drop(catalog, prepared, &err) == YVEX_OK,
+        yvex_runtime_resource_drop(catalog, prepared, &err) == YVEX_OK,
         "consumer discharges the exact borrow");
     stale = prepared;
     YVEX_TEST_ASSERT(
-        yvex_engine_resource_evict(catalog, &prepared, &err) == YVEX_OK &&
+        yvex_runtime_resource_evict(catalog, &prepared, &err) == YVEX_OK &&
             !prepared.engine_generation && prepared_probe.releases == 1u,
         "prepared resource evicts independently from package truth");
     YVEX_TEST_ASSERT(
-        yvex_engine_resource_acquire(catalog, stale, &borrowed, &err) ==
+        yvex_runtime_resource_acquire(catalog, stale, &borrowed, &err) ==
             YVEX_ERR_STATE,
         "evicted generation handle is stale");
     YVEX_TEST_ASSERT(
-        yvex_engine_resource_snapshot(
+        yvex_runtime_resource_snapshot(
             catalog, &summary, entries, 2ull, &count, &err) == YVEX_OK &&
             count == 1ull && summary.resource_count == 1ull &&
             summary.eviction_count == 1ull &&
@@ -136,17 +136,17 @@ int yvex_test_engine_resource(void)
 
     package_probe.fail = 1;
     YVEX_TEST_ASSERT(
-        yvex_engine_resource_catalog_close(&catalog, &err) ==
+        yvex_runtime_resource_catalog_close(&catalog, &err) ==
                 YVEX_ERR_STATE &&
             catalog && package_probe.releases == 1u &&
-            yvex_engine_resource_snapshot(
+            yvex_runtime_resource_snapshot(
                 catalog, &summary, entries, 2ull, &count, &err) == YVEX_OK &&
             summary.failed_count == 1ull && !summary.ready_count &&
             summary.failed_release_count == 1ull,
         "failed release preserves exact ownership for a retry");
     package_probe.fail = 0;
     YVEX_TEST_ASSERT(
-        yvex_engine_resource_catalog_close(&catalog, &err) == YVEX_OK &&
+        yvex_runtime_resource_catalog_close(&catalog, &err) == YVEX_OK &&
             !catalog && package_probe.releases == 2u,
         "catalog retries and closes the remaining resource exactly");
     return 0;
