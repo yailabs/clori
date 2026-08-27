@@ -491,10 +491,12 @@ int yvex_local_catalog_open(yvex_local_catalog **out,
         yvex_local_catalog_close(catalog);
         return rc;
     }
-    qsort(catalog->sources, (size_t)catalog->source_count, sizeof(*catalog->sources),
-          local_source_compare);
-    qsort(catalog->packages, (size_t)catalog->package_count, sizeof(*catalog->packages),
-          local_package_compare);
+    if (catalog->source_count > 1u)
+        qsort(catalog->sources, (size_t)catalog->source_count, sizeof(*catalog->sources),
+              local_source_compare);
+    if (catalog->package_count > 1u)
+        qsort(catalog->packages, (size_t)catalog->package_count, sizeof(*catalog->packages),
+              local_package_compare);
     *out = catalog;
     yvex_error_clear(err);
     return YVEX_OK;
