@@ -5,7 +5,7 @@
  * precision remains provisional until artifact admission inspects the acquired container.
  */
 
-#include <yvex/model.h>
+#include <yvex/catalog.h>
 
 #include <ctype.h>
 #include <limits.h>

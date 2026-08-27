@@ -9,6 +9,7 @@
 
 #include <yvex/artifact.h>
 #include <yvex/graph.h>
+#include <yvex/materialization.h>
 
 static const char *const literal_pair_0[] = { "boundary: report-only refusal, generation unsupported",
     "status: model-check-unsupported"};

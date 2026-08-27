@@ -16,6 +16,7 @@
 #include <yvex/backend.h>
 #include <yvex/core.h>
 #include <yvex/gguf.h>
+#include <yvex/materialization.h>
 #include <yvex/model.h>
 #include <yvex/registry.h>
 

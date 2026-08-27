@@ -7,6 +7,7 @@
 #ifndef INCLUDE_YVEX_INTERNAL_MODEL_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_MODEL_H_INCLUDED
 
+#include <yvex/catalog.h>
 #include <yvex/model.h>
 #include <yvex/source.h>
 #include <yvex/internal/core.h>

@@ -16,6 +16,7 @@
 #include <yvex/gguf.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/quant_numeric.h>
+#include <yvex/materialization.h>
 #include <yvex/model.h>
 #include <yvex/qtype.h>
 #include <yvex/source.h>

@@ -7,7 +7,7 @@
 
 #define _POSIX_C_SOURCE 200809L
 
-#include <yvex/model.h>
+#include <yvex/catalog.h>
 
 #include <ctype.h>
 #include <dirent.h>
@@ -24,10 +24,13 @@
 #define LOCAL_CATALOG_FILE_CAP (1024u * 1024u)
 #define LOCAL_CATALOG_ENTRY_CAP 4096u
 
-struct yvex_local_model_catalog {
-    yvex_local_model *entries;
-    unsigned long long count;
-    unsigned long long capacity;
+struct yvex_local_catalog {
+    yvex_local_source_record *sources;
+    unsigned long long source_count;
+    unsigned long long source_capacity;
+    yvex_local_package_record *packages;
+    unsigned long long package_count;
+    unsigned long long package_capacity;
 };
 
 static int local_refuse(yvex_error *err, yvex_status status, const char *message)
@@ -42,30 +45,58 @@ static void local_copy(char *out, size_t capacity, const char *value)
     snprintf(out, capacity, "%s", value ? value : "");
 }
 
-static int local_catalog_reserve(yvex_local_model_catalog *catalog,
-                                 unsigned long long required)
+static int local_source_reserve(yvex_local_catalog *catalog,
+                                unsigned long long required)
 {
-    yvex_local_model *entries;
+    yvex_local_source_record *entries;
     unsigned long long capacity;
 
-    if (required <= catalog->capacity) return 1;
-    capacity = catalog->capacity ? catalog->capacity * 2u : 32u;
+    if (required <= catalog->source_capacity) return 1;
+    capacity = catalog->source_capacity ? catalog->source_capacity * 2u : 32u;
     while (capacity < required) capacity *= 2u;
     if (capacity > LOCAL_CATALOG_ENTRY_CAP) capacity = LOCAL_CATALOG_ENTRY_CAP;
     if (capacity < required) return 0;
-    entries = realloc(catalog->entries, (size_t)capacity * sizeof(*entries));
+    entries = realloc(catalog->sources, (size_t)capacity * sizeof(*entries));
     if (!entries) return 0;
-    catalog->entries = entries;
-    catalog->capacity = capacity;
+    catalog->sources = entries;
+    catalog->source_capacity = capacity;
     return 1;
 }
 
-static yvex_local_model *local_catalog_add(yvex_local_model_catalog *catalog)
+static yvex_local_source_record *local_source_add(yvex_local_catalog *catalog)
 {
-    yvex_local_model *entry;
+    yvex_local_source_record *entry;
 
-    if (!local_catalog_reserve(catalog, catalog->count + 1u)) return NULL;
-    entry = &catalog->entries[catalog->count++];
+    if (!local_source_reserve(catalog, catalog->source_count + 1u)) return NULL;
+    entry = &catalog->sources[catalog->source_count++];
+    memset(entry, 0, sizeof(*entry));
+    return entry;
+}
+
+static int local_package_reserve(yvex_local_catalog *catalog,
+                                 unsigned long long required)
+{
+    yvex_local_package_record *entries;
+    unsigned long long capacity;
+
+    if (required <= catalog->package_capacity) return 1;
+    capacity = catalog->package_capacity ? catalog->package_capacity * 2u : 32u;
+    while (capacity < required) capacity *= 2u;
+    if (capacity > LOCAL_CATALOG_ENTRY_CAP) capacity = LOCAL_CATALOG_ENTRY_CAP;
+    if (capacity < required) return 0;
+    entries = realloc(catalog->packages, (size_t)capacity * sizeof(*entries));
+    if (!entries) return 0;
+    catalog->packages = entries;
+    catalog->package_capacity = capacity;
+    return 1;
+}
+
+static yvex_local_package_record *local_package_add(yvex_local_catalog *catalog)
+{
+    yvex_local_package_record *entry;
+
+    if (!local_package_reserve(catalog, catalog->package_count + 1u)) return NULL;
+    entry = &catalog->packages[catalog->package_count++];
     memset(entry, 0, sizeof(*entry));
     return entry;
 }
@@ -103,7 +134,7 @@ static int local_revision_immutable(const char *revision)
     return 1;
 }
 
-static int local_source_record_add(yvex_local_model_catalog *catalog,
+static int local_source_record_add(yvex_local_catalog *catalog,
                                    const char *path,
                                    yvex_error *err)
 {
@@ -123,7 +154,7 @@ static int local_source_record_add(yvex_local_model_catalog *catalog,
     int upstream_verified = 0;
     int payload_verified = 0;
     struct stat source;
-    yvex_local_model *entry;
+    yvex_local_source_record *entry;
 
     text = yvex_read_bounded_file(path, LOCAL_CATALOG_FILE_CAP, &length, err);
     if (!text) return yvex_error_code(err);
@@ -157,9 +188,8 @@ static int local_source_record_add(yvex_local_model_catalog *catalog,
     (void)local_json_bool(text, "upstream_identity_verified", &upstream_verified);
     (void)local_json_bool(text, "payload_hash_verified", &payload_verified);
     free(text);
-    entry = local_catalog_add(catalog);
+    entry = local_source_add(catalog);
     if (!entry) return local_refuse(err, YVEX_ERR_NOMEM, "local catalog allocation failed");
-    entry->kind = YVEX_LOCAL_MODEL_ACQUIRED_SOURCE;
     local_copy(entry->name, sizeof(entry->name), target);
     local_copy(entry->family, sizeof(entry->family), family);
     local_copy(entry->provider, sizeof(entry->provider), provider);
@@ -173,12 +203,12 @@ static int local_source_record_add(yvex_local_model_catalog *catalog,
     entry->size_bytes = size;
     entry->size_known = size != 0u;
     if (stat(source_path, &source) != 0 || !S_ISDIR(source.st_mode)) {
-        local_copy(entry->package_state, sizeof(entry->package_state), "source-missing");
+        local_copy(entry->acquisition_state, sizeof(entry->acquisition_state), "source-missing");
         local_copy(entry->blocker, sizeof(entry->blocker), "recorded source directory is unavailable");
     } else if (strcmp(status, "model-download-pass") == 0) {
-        local_copy(entry->package_state, sizeof(entry->package_state), "source-acquired");
+        local_copy(entry->acquisition_state, sizeof(entry->acquisition_state), "source-acquired");
     } else {
-        local_copy(entry->package_state, sizeof(entry->package_state), "source-partial");
+        local_copy(entry->acquisition_state, sizeof(entry->acquisition_state), "source-partial");
         local_copy(entry->blocker, sizeof(entry->blocker), "acquisition did not complete successfully");
     }
     if (payload_verified)
@@ -191,19 +221,11 @@ static int local_source_record_add(yvex_local_model_catalog *catalog,
         local_copy(entry->verification_state, sizeof(entry->verification_state), "moving-reference");
         local_copy(entry->blocker, sizeof(entry->blocker),
                    "resolve an immutable provider revision before package preparation");
-    } else if (strcmp(entry->package_state, "source-acquired") == 0) {
-        local_copy(entry->blocker, sizeof(entry->blocker),
-                   safetensors && gguf
-                       ? "select one acquired representation before package preparation"
-                       : (safetensors
-                              ? "compile or prepare an admitted YVEX package"
-                              : (gguf ? "inspect GGUF compatibility, then admit or repack"
-                                      : "classify acquired files before package preparation")));
     }
     return YVEX_OK;
 }
 
-static int local_source_manifest_add(yvex_local_model_catalog *catalog,
+static int local_source_manifest_add(yvex_local_catalog *catalog,
                                      const char *path,
                                      yvex_error *err)
 {
@@ -218,7 +240,7 @@ static int local_source_manifest_add(yvex_local_model_catalog *catalog,
     unsigned long long size = 0u;
     int complete = 0;
     struct stat source;
-    yvex_local_model *entry;
+    yvex_local_source_record *entry;
 
     text = yvex_read_bounded_file(path, LOCAL_CATALOG_FILE_CAP, &length, err);
     if (!text) return yvex_error_code(err);
@@ -241,9 +263,8 @@ static int local_source_manifest_add(yvex_local_model_catalog *catalog,
     if (!slash || slash == source_path) return local_refuse(err, YVEX_ERR_FORMAT,
                                                              "source provenance path is invalid");
     *slash = '\0';
-    entry = local_catalog_add(catalog);
+    entry = local_source_add(catalog);
     if (!entry) return local_refuse(err, YVEX_ERR_NOMEM, "local catalog allocation failed");
-    entry->kind = YVEX_LOCAL_MODEL_ACQUIRED_SOURCE;
     name = strrchr(repository, '/');
     local_copy(entry->name, sizeof(entry->name), name ? name + 1 : repository);
     local_copy(entry->provider, sizeof(entry->provider), "huggingface");
@@ -254,16 +275,14 @@ static int local_source_manifest_add(yvex_local_model_catalog *catalog,
     entry->size_bytes = size;
     entry->size_known = size != 0u;
     if (lstat(source_path, &source) != 0 || !S_ISDIR(source.st_mode) || S_ISLNK(source.st_mode)) {
-        local_copy(entry->package_state, sizeof(entry->package_state), "source-missing");
+        local_copy(entry->acquisition_state, sizeof(entry->acquisition_state), "source-missing");
         local_copy(entry->verification_state, sizeof(entry->verification_state), "recorded-unverified");
         local_copy(entry->blocker, sizeof(entry->blocker), "recorded source directory is unavailable");
     } else if (complete) {
-        local_copy(entry->package_state, sizeof(entry->package_state), "source-acquired");
+        local_copy(entry->acquisition_state, sizeof(entry->acquisition_state), "source-acquired");
         local_copy(entry->verification_state, sizeof(entry->verification_state), "payload-verified");
-        local_copy(entry->blocker, sizeof(entry->blocker),
-                   "compile or prepare an admitted YVEX package");
     } else {
-        local_copy(entry->package_state, sizeof(entry->package_state), "source-partial");
+        local_copy(entry->acquisition_state, sizeof(entry->acquisition_state), "source-partial");
         local_copy(entry->verification_state, sizeof(entry->verification_state), "revision-verified");
         local_copy(entry->blocker, sizeof(entry->blocker), "source acquisition is incomplete");
     }
@@ -278,7 +297,7 @@ static int local_name_ends_with(const char *name, const char *suffix)
            strcmp(name + name_length - suffix_length, suffix) == 0;
 }
 
-static int local_scan_acquisitions(yvex_local_model_catalog *catalog,
+static int local_scan_acquisitions(yvex_local_catalog *catalog,
                                    const char *directory,
                                    unsigned int depth,
                                    int source_manifest,
@@ -313,13 +332,13 @@ static int local_scan_acquisitions(yvex_local_model_catalog *catalog,
             result = source_manifest ? local_source_manifest_add(catalog, path, err)
                                      : local_source_record_add(catalog, path, err);
         }
-        if (result != YVEX_OK || catalog->count >= LOCAL_CATALOG_ENTRY_CAP) break;
+        if (result != YVEX_OK || catalog->source_count >= LOCAL_CATALOG_ENTRY_CAP) break;
     }
     (void)closedir(dir);
     return result;
 }
 
-static void local_package_provenance(yvex_local_model *entry,
+static void local_package_provenance(yvex_local_package_record *entry,
                                      const yvex_model_registry_entry *registered)
 {
     const char *root = registered->runtime_installation;
@@ -349,17 +368,16 @@ static void local_package_provenance(yvex_local_model *entry,
     free(text);
 }
 
-static void local_package_add(yvex_local_model_catalog *catalog,
+static void local_package_record_add(yvex_local_catalog *catalog,
                               const yvex_model_registry_entry *registered)
 {
-    yvex_local_model *entry = local_catalog_add(catalog);
+    yvex_local_package_record *entry = local_package_add(catalog);
     yvex_error startup_error;
     int startup_ready;
 
     if (!entry) return;
     yvex_error_clear(&startup_error);
     startup_ready = yvex_model_registry_startup_validate(registered, &startup_error) == YVEX_OK;
-    entry->kind = YVEX_LOCAL_MODEL_PACKAGE;
     local_copy(entry->name, sizeof(entry->name), registered->alias);
     local_copy(entry->family, sizeof(entry->family), registered->family);
     local_copy(entry->path, sizeof(entry->path),
@@ -381,11 +399,11 @@ static void local_package_add(yvex_local_model_catalog *catalog,
         local_copy(entry->blocker, sizeof(entry->blocker), yvex_error_message(&startup_error));
     entry->size_bytes = registered->file_size;
     entry->size_known = registered->file_size != 0u;
-    entry->package_ready = startup_ready;
+    entry->ready = startup_ready;
     local_package_provenance(entry, registered);
 }
 
-static int local_scan_packages(yvex_local_model_catalog *catalog,
+static int local_scan_packages(yvex_local_catalog *catalog,
                                const char *registry_path,
                                yvex_error *err)
 {
@@ -408,59 +426,41 @@ static int local_scan_packages(yvex_local_model_catalog *catalog,
     }
     for (index = 0u; index < yvex_model_registry_count(registry); ++index) {
         const yvex_model_registry_entry *entry = yvex_model_registry_at(registry, index);
-        if (catalog->count >= LOCAL_CATALOG_ENTRY_CAP) {
+        if (catalog->package_count >= LOCAL_CATALOG_ENTRY_CAP) {
             yvex_model_registry_close(registry);
             return local_refuse(err, YVEX_ERR_BOUNDS, "local catalog entry limit exceeded");
         }
-        local_package_add(catalog, entry);
+        local_package_record_add(catalog, entry);
     }
     yvex_model_registry_close(registry);
     return YVEX_OK;
 }
 
-static int local_compare(const void *left, const void *right)
+static int local_source_compare(const void *left, const void *right)
 {
-    const yvex_local_model *a = left;
-    const yvex_local_model *b = right;
+    const yvex_local_source_record *a = left;
+    const yvex_local_source_record *b = right;
     int family = strcmp(a->family, b->family);
-    int name;
 
     if (family) return family;
-    name = strcmp(a->name, b->name);
-    if (name) return name;
-    return (int)a->kind - (int)b->kind;
+    return strcmp(a->name, b->name);
 }
 
-static void local_reconcile_entries(yvex_local_model_catalog *catalog)
+static int local_package_compare(const void *left, const void *right)
 {
-    unsigned long long source_index;
-    unsigned long long package_index;
+    const yvex_local_package_record *a = left;
+    const yvex_local_package_record *b = right;
+    int family = strcmp(a->family, b->family);
 
-    for (source_index = 0u; source_index < catalog->count; ++source_index) {
-        yvex_local_model *source = &catalog->entries[source_index];
-        if (source->kind != YVEX_LOCAL_MODEL_ACQUIRED_SOURCE || !source->repository[0] ||
-            !source->revision[0])
-            continue;
-        for (package_index = 0u; package_index < catalog->count; ++package_index) {
-            yvex_local_model *package = &catalog->entries[package_index];
-            if (package->kind != YVEX_LOCAL_MODEL_PACKAGE ||
-                strcmp(source->repository, package->repository) != 0 ||
-                strcmp(source->revision, package->revision) != 0)
-                continue;
-            if (!source->family[0])
-                local_copy(source->family, sizeof(source->family), package->family);
-            if (!package->provider[0])
-                local_copy(package->provider, sizeof(package->provider), source->provider);
-            if (package->package_ready) source->blocker[0] = '\0';
-        }
-    }
+    if (family) return family;
+    return strcmp(a->name, b->name);
 }
 
-int yvex_local_model_catalog_open(yvex_local_model_catalog **out,
-                                  const yvex_local_catalog_options *options,
-                                  yvex_error *err)
+int yvex_local_catalog_open(yvex_local_catalog **out,
+                            const yvex_local_catalog_options *options,
+                            yvex_error *err)
 {
-    yvex_local_model_catalog *catalog;
+    yvex_local_catalog *catalog;
     yvex_operator_paths operator_paths;
     yvex_paths paths;
     char registry_path[YVEX_PATH_CAP];
@@ -488,30 +488,44 @@ int yvex_local_model_catalog_open(yvex_local_model_catalog **out,
         rc = local_scan_acquisitions(catalog, operator_paths.hf_root, 0u, 1, err);
     if (rc == YVEX_OK) rc = local_scan_packages(catalog, registry_path, err);
     if (rc != YVEX_OK) {
-        yvex_local_model_catalog_close(catalog);
+        yvex_local_catalog_close(catalog);
         return rc;
     }
-    local_reconcile_entries(catalog);
-    qsort(catalog->entries, (size_t)catalog->count, sizeof(*catalog->entries), local_compare);
+    qsort(catalog->sources, (size_t)catalog->source_count, sizeof(*catalog->sources),
+          local_source_compare);
+    qsort(catalog->packages, (size_t)catalog->package_count, sizeof(*catalog->packages),
+          local_package_compare);
     *out = catalog;
     yvex_error_clear(err);
     return YVEX_OK;
 }
 
-void yvex_local_model_catalog_close(yvex_local_model_catalog *catalog)
+void yvex_local_catalog_close(yvex_local_catalog *catalog)
 {
     if (!catalog) return;
-    free(catalog->entries);
+    free(catalog->sources);
+    free(catalog->packages);
     free(catalog);
 }
 
-unsigned long long yvex_local_model_catalog_count(const yvex_local_model_catalog *catalog)
+unsigned long long yvex_local_catalog_source_count(const yvex_local_catalog *catalog)
 {
-    return catalog ? catalog->count : 0u;
+    return catalog ? catalog->source_count : 0u;
 }
 
-const yvex_local_model *yvex_local_model_catalog_at(const yvex_local_model_catalog *catalog,
-                                                    unsigned long long index)
+const yvex_local_source_record *yvex_local_catalog_source_at(
+    const yvex_local_catalog *catalog, unsigned long long index)
 {
-    return catalog && index < catalog->count ? &catalog->entries[index] : NULL;
+    return catalog && index < catalog->source_count ? &catalog->sources[index] : NULL;
+}
+
+unsigned long long yvex_local_catalog_package_count(const yvex_local_catalog *catalog)
+{
+    return catalog ? catalog->package_count : 0u;
+}
+
+const yvex_local_package_record *yvex_local_catalog_package_at(
+    const yvex_local_catalog *catalog, unsigned long long index)
+{
+    return catalog && index < catalog->package_count ? &catalog->packages[index] : NULL;
 }

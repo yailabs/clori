@@ -2,6 +2,7 @@
 include/yvex/api.h	abi	abi.api	generic	public	public-abi	repository	interface	none
 include/yvex/artifact.h	abi	abi.artifact	generic	public	public-abi	repository	interface	none
 include/yvex/backend.h	abi	abi.backend	generic	public	public-abi	repository	interface	none
+include/yvex/catalog.h	abi	abi.catalog	generic	public	public-abi	repository	interface	none
 include/yvex/core.h	abi	abi.core	generic	public	public-abi	repository	interface	none
 include/yvex/gguf.h	abi	abi.gguf	generic	public	public-abi	repository	interface	none
 include/yvex/graph.h	abi	abi.graph	generic	public	public-abi	repository	interface	none
@@ -52,6 +53,7 @@ src/runtime/private.h	runtime	runtime.private	generic	private	internal-abi	runti
 include/yvex/internal/source.h	source	source.internal	generic	private	internal-abi	model,compilation	interface	none
 include/yvex/internal/source_catalog.h	source	source.catalog	generic	private	internal-abi	source,model,graph	interface	none
 include/yvex/internal/source_payload.h	source	source.payload	generic	private	internal-abi	model,compilation,cli	interface	none
+include/yvex/materialization.h	abi	abi.materialization	generic	public	public-abi	repository	interface	none
 include/yvex/model.h	abi	abi.model	generic	public	public-abi	repository	interface	none
 include/yvex/provider.h	abi	abi.provider	generic	public	public-abi	repository	interface	none
 include/yvex/qtype.h	abi	abi.qtype	generic	public	public-abi	repository	interface	none
@@ -203,6 +205,7 @@ src/model/compilation/private.h	model.compilation	model.compilation.ir	generic	p
 src/deployment/plan.c	deployment	deployment.plan	generic	private	reusable-algorithm	graph,runtime,tests	implementation	none
 src/model/catalog.c	model.catalog	model.catalog.local	generic	private	reusable-algorithm	cli,model.remote	implementation	none
 src/model/core.c	model	model.core	generic	private	resource-lifecycle	artifact,graph,runtime	implementation	none
+src/model/materialization.c	model	model.materialization	generic	private	resource-lifecycle	artifact,backend,gguf,cli,tests	implementation	none
 src/model/remote.c	model.catalog	model.catalog.remote	generic	private	provider-adapter	cli,gui	implementation	none
 include/yvex/internal/families/deepseek_v4.h	model	model.families.deepseek_v4	family	private	family-interface	artifact,graph,runtime	interface	none
 include/yvex/internal/families/minimax_h3.h	model	model.families.minimax_h3	family	private	family-interface	model.compilation,cli,tests	interface	none

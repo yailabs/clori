@@ -16,6 +16,7 @@
 
 #include <yvex/artifact.h>
 #include <yvex/backend.h>
+#include <yvex/catalog.h>
 #include <yvex/gguf.h>
 #include <yvex/core.h>
 #include <yvex/internal/core.h>
@@ -26,7 +27,7 @@
 #include <yvex/tokenizer.h>
 
 typedef const char *(*yvex_cli_engine_state_resolver)(
-    const yvex_local_model *model, const void *context);
+    const yvex_local_package_record *package, const void *context);
 
 int yvex_context_command(int arg_count, char **args);
 void yvex_context_help(FILE *fp);
@@ -48,11 +49,11 @@ int model_local_list_options_parse(int arg_count,
                                    yvex_cli_model_list_options *options);
 int yvex_remote_catalog_render(FILE *fp,
                                const yvex_remote_catalog *catalog,
-                               const yvex_local_model_catalog *local_catalog,
+                               const yvex_local_catalog *local_catalog,
                                yvex_model_catalog_output_mode mode,
                                int representations);
 int yvex_local_catalog_render(FILE *fp,
-                              const yvex_local_model_catalog *catalog,
+                              const yvex_local_catalog *catalog,
                               yvex_cli_engine_state_resolver engine_state,
                               const void *engine_context,
                               int engine_host_observed,
