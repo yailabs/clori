@@ -49,6 +49,7 @@ implicit_physical_envelope_pattern='decision->(supported_width_mask[[:space:]]*=
 moe_family_registry_pattern='yvex_graph_moe_family_(at|find)[[:space:]]*\('
 conversation_family_registry_pattern='yvex_model_conversation_protocol_(at|find)[[:space:]]*\('
 legacy_resolution_boolean_pattern='(host_stochastic_reference|token_local_moe_reference|eager_attention_reference)'
+legacy_runtime_refusal_pattern='(YVEX_RUNTIME_REFUSE_[A-Z0-9_]+|yvex_runtime_private_refuse)'
 backend_representation_pattern='\bbackend->(vtable|virtual_tensor_ready|state_residency_generation|resident_host_base|workspace_device_tensor)'
 family_transform_builder_pattern='yvex_transform_builder_(create|add_source|declare_value|add_node|seal|release)[[:space:]]*\('
 generic_family_operator_lowering_pattern='yvex_operator_graph_ir_build_transformer[[:space:]]*\('
@@ -132,6 +133,13 @@ printf '%s\n' 'profile.eager_attention_reference = 1;' |
 if printf '%s\n' 'profile.attention_resolution = YVEX_EXECUTION_RESOLUTION_EXACT;' |
     rg "$legacy_resolution_boolean_pattern" >/dev/null; then
     fail "capability-resolution guard rejects a typed resolution"
+fi
+printf '%s\n' 'YVEX_RUNTIME_REFUSE_SESSION_BUSY' |
+    rg "$legacy_runtime_refusal_pattern" >/dev/null ||
+    fail "runtime failure guard misses the retired refusal ontology"
+if printf '%s\n' 'yvex_runtime_private_reject(failure, code, field, expected, actual, reason, err, status);' |
+    rg "$legacy_runtime_refusal_pattern" >/dev/null; then
+    fail "runtime failure guard rejects the canonical cause/recovery contract"
 fi
 printf '%s\n' 'yvex_graph_moe_family_at(index);' |
     rg "$moe_family_registry_pattern" >/dev/null ||
@@ -338,6 +346,9 @@ fi
 
 if rg -n "$legacy_resolution_boolean_pattern" src include; then
     fail "an execution owner retains an untyped fallback boolean"
+fi
+if rg -n "$legacy_runtime_refusal_pattern" src include; then
+    fail "runtime retains the parallel historical refusal ontology"
 fi
 if rg -n 'YVEX_EXECUTION_RESOLUTION_' src/backend; then
     fail "a backend selects execution capability policy"

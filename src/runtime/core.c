@@ -11,28 +11,89 @@
 #include <yvex/internal/core.h>
 #include <yvex/internal/graph_state.h>
 #include <yvex/internal/logits.h>
-#include <errno.h>
 #include <limits.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <yvex/artifact.h>
 
 static atomic_ullong engine_generation_counter = 0;
 
-static int runtime_refuse_status(
-    yvex_model_engine_failure *failure, yvex_runtime_private_refusal_id refusal,
-    unsigned long long expected, unsigned long long actual,
-    yvex_status status, yvex_error *err)
-{
-    (void)yvex_runtime_private_refuse(failure, refusal, expected, actual, err);
-    if (err) err->code = status;
-    return status;
-}
+typedef struct {
+    yvex_model_engine_failure_code code;
+    yvex_runtime_failure_origin origin;
+    yvex_runtime_recovery_action recovery;
+    const char *field, *reason;
+    int preserve_cause;
+} runtime_open_failure;
+
+static const runtime_open_failure open_binding = {
+    YVEX_MODEL_ENGINE_FAILURE_BINDING,
+    YVEX_RUNTIME_FAILURE_ORIGIN_INTEGRITY, YVEX_RUNTIME_RECOVERY_REFUSE_ENGINE_OPEN,
+    "runtime-binding", "runtime binding open failed", 0};
+static const runtime_open_failure open_artifact = {
+    YVEX_MODEL_ENGINE_FAILURE_ARTIFACT,
+    YVEX_RUNTIME_FAILURE_ORIGIN_INTEGRITY, YVEX_RUNTIME_RECOVERY_REFUSE_ENGINE_OPEN,
+    "artifact-open", "artifact admission failed", 0};
+static const runtime_open_failure open_materialization = {
+    YVEX_MODEL_ENGINE_FAILURE_MATERIALIZATION,
+    YVEX_RUNTIME_FAILURE_ORIGIN_INTEGRITY, YVEX_RUNTIME_RECOVERY_REFUSE_ENGINE_OPEN,
+    "runtime-materialization", "runtime binding materialization could not be reopened", 0};
+static const runtime_open_failure open_import = {
+    YVEX_MODEL_ENGINE_FAILURE_BINDING,
+    YVEX_RUNTIME_FAILURE_ORIGIN_INTEGRITY, YVEX_RUNTIME_RECOVERY_REFUSE_ENGINE_OPEN,
+    "runtime-import", "runtime binding import did not reconstruct sealed runtime facts", 0};
+static const runtime_open_failure open_imported_identity = {
+    YVEX_MODEL_ENGINE_FAILURE_IDENTITY,
+    YVEX_RUNTIME_FAILURE_ORIGIN_INTEGRITY, YVEX_RUNTIME_RECOVERY_REFUSE_ENGINE_OPEN,
+    "imported-identity", "import identity is invalid", 0};
+static const runtime_open_failure open_residency = {
+    YVEX_MODEL_ENGINE_FAILURE_MATERIALIZATION,
+    YVEX_RUNTIME_FAILURE_ORIGIN_RESOURCE, YVEX_RUNTIME_RECOVERY_PREPARE_OR_EVICT,
+    "model-residency", "runtime full-model residency could not be sealed", 1};
+static const runtime_open_failure open_residency_complete = {
+    YVEX_MODEL_ENGINE_FAILURE_MATERIALIZATION,
+    YVEX_RUNTIME_FAILURE_ORIGIN_INTEGRITY, YVEX_RUNTIME_RECOVERY_REFUSE_ENGINE_OPEN,
+    "model-residency-completeness",
+    "runtime full-model residency is not complete for every descriptor binding", 1};
+static const runtime_open_failure open_capabilities = {
+    YVEX_MODEL_ENGINE_FAILURE_ADAPTER,
+    YVEX_RUNTIME_FAILURE_ORIGIN_CAPABILITY, YVEX_RUNTIME_RECOVERY_REFUSE_ENGINE_OPEN,
+    "execution-capabilities", "runtime execution capability contract could not be admitted", 0};
+static const runtime_open_failure open_tokenizer = {
+    YVEX_MODEL_ENGINE_FAILURE_DESCRIPTOR,
+    YVEX_RUNTIME_FAILURE_ORIGIN_CAPABILITY, YVEX_RUNTIME_RECOVERY_REFUSE_ENGINE_OPEN,
+    "tokenizer-plan", "artifact tokenizer could not be admitted and bound to the runtime model", 0};
+static const runtime_open_failure open_seal = {
+    YVEX_MODEL_ENGINE_FAILURE_BINDING,
+    YVEX_RUNTIME_FAILURE_ORIGIN_EXTERNAL_REQUEST, YVEX_RUNTIME_RECOVERY_REFUSE_ENGINE_OPEN,
+    "runtime-model-seal", "model seal was cancelled", 0};
+static const runtime_open_failure open_host_budget = {
+    YVEX_MODEL_ENGINE_FAILURE_ALLOCATION,
+    YVEX_RUNTIME_FAILURE_ORIGIN_RESOURCE, YVEX_RUNTIME_RECOVERY_PREPARE_OR_EVICT,
+    "model-host-budget", "configured model host budget cannot preserve the reserve after model residency", 0};
+static const runtime_open_failure open_process_memory = {
+    YVEX_MODEL_ENGINE_FAILURE_ALLOCATION,
+    YVEX_RUNTIME_FAILURE_ORIGIN_RESOURCE, YVEX_RUNTIME_RECOVERY_PREPARE_OR_EVICT,
+    "process-memory-capacity",
+    "process memory control cannot preserve the required system reserve after model residency", 0};
+static const runtime_open_failure open_system_memory = {
+    YVEX_MODEL_ENGINE_FAILURE_ALLOCATION,
+    YVEX_RUNTIME_FAILURE_ORIGIN_RESOURCE, YVEX_RUNTIME_RECOVERY_PREPARE_OR_EVICT,
+    "system-memory-capacity",
+    "available system memory cannot preserve the required system reserve after model residency", 0};
+static const runtime_open_failure open_startup_capacity = {
+    YVEX_MODEL_ENGINE_FAILURE_ALLOCATION,
+    YVEX_RUNTIME_FAILURE_ORIGIN_RESOURCE, YVEX_RUNTIME_RECOVERY_PREPARE_OR_EVICT,
+    "startup-execution-capacity",
+    "startup workload peak cannot preserve the required system reserve before model residency", 1};
+static const runtime_open_failure open_drift = {
+    YVEX_MODEL_ENGINE_FAILURE_DRIFT,
+    YVEX_RUNTIME_FAILURE_ORIGIN_INTEGRITY, YVEX_RUNTIME_RECOVERY_DRAIN_ENGINE,
+    "artifact-snapshot", "artifact drifted before publication", 0};
 
 static int runtime_attention_state_provider_valid(const yvex_attention_state_provider *provider) {
     return provider && provider->schema_version == YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V8 &&
@@ -115,13 +176,21 @@ static int runtime_model_session_reserve(yvex_model_engine *model,
     int accepted;
     if (!model || !model->lifecycle_mutex_ready ||
         pthread_mutex_lock(&model->lifecycle_mutex) != 0)
-        return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_MODEL_LOCK_UNAVAILABLE, 1ull, 0ull, err);
+        return yvex_runtime_private_reject_as(
+            failure, YVEX_MODEL_ENGINE_FAILURE_CLEANUP,
+            YVEX_RUNTIME_FAILURE_ORIGIN_INTERNAL,
+            YVEX_RUNTIME_RECOVERY_DRAIN_ENGINE,
+            "model-lifecycle-lock", 1ull, 0ull, "model lock unavailable",
+            err, YVEX_ERR_STATE);
     accepted = model->summary.sealed && model->summary.valid && !model->close_requested;
     if (accepted && !yvex_core_u64_add(model->active_sessions, 1ull, &model->active_sessions))
         accepted = 0;
     (void)pthread_mutex_unlock(&model->lifecycle_mutex);
     if (!accepted)
-        return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_MODEL_INVALID_OR_DRAINING, 0ull, 1ull, err);
+        return yvex_runtime_private_reject(
+            failure, YVEX_MODEL_ENGINE_FAILURE_BUSY,
+            "runtime-model-draining", 0ull, 1ull,
+            "runtime model is invalid or draining", err, YVEX_ERR_STATE);
     return YVEX_OK;
 }
 
@@ -382,17 +451,16 @@ static int runtime_session_model_discharge(yvex_runtime_execution_session *sessi
 
 static int runtime_model_open_fail(yvex_model_engine **out, yvex_model_engine *model,
                                    yvex_model_engine_failure *failure,
-                                   yvex_runtime_private_refusal_id refusal,
+                                   const runtime_open_failure *cause_spec,
                                    unsigned long long expected, unsigned long long actual,
                                    yvex_error *err, yvex_status status) {
     yvex_error cause = err ? *err : (yvex_error){0}, primary;
     int cleanup_rc;
-    (void)runtime_refuse_status(failure, refusal, expected, actual, status, err);
+    (void)yvex_runtime_private_reject_as(
+        failure, cause_spec->code, cause_spec->origin, cause_spec->recovery,
+        cause_spec->field, expected, actual, cause_spec->reason, err, status);
     primary = err ? *err : (yvex_error){0};
-    if ((refusal == YVEX_RUNTIME_REFUSE_OPEN_STARTUP_CAPACITY ||
-         refusal == YVEX_RUNTIME_REFUSE_OPEN_RESIDENCY ||
-         refusal == YVEX_RUNTIME_REFUSE_OPEN_RESIDENCY_COMPLETE) &&
-        yvex_error_is_set(&cause))
+    if (cause_spec->preserve_cause && yvex_error_is_set(&cause))
         primary = cause;
     cleanup_rc = runtime_model_release(model, err);
     if (cleanup_rc != YVEX_OK) {
@@ -417,7 +485,10 @@ static int runtime_model_artifact_open(
     unsigned long long started;
     int rc;
     if (!model->admission.file_bytes || !model->admission.tensor_count)
-        return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_BINDING_ADMISSION, 1ull, 0ull, err);
+        return yvex_runtime_private_reject(
+            failure, YVEX_MODEL_ENGINE_FAILURE_BINDING,
+            "runtime-binding-admission", 1ull, 0ull,
+            "binding lacks artifact", err, YVEX_ERR_FORMAT);
     memset(&options, 0, sizeof(options));
     options.path = request->artifact_path;
     options.readonly = 1;
@@ -441,7 +512,9 @@ static int runtime_model_artifact_open(
     runtime_model_timing(model, YVEX_RUNTIME_LIFECYCLE_ARTIFACT_ADMISSION, started);
     if (rc == YVEX_OK &&
         strcmp(model->admission.artifact_identity, binding->artifact_identity) != 0)
-        rc = yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_ARTIFACT_IDENTITY, 1ull, 0ull, err);
+        rc = yvex_runtime_private_reject(
+            failure, YVEX_MODEL_ENGINE_FAILURE_IDENTITY, "artifact-identity",
+            1ull, 0ull, "artifact identity differs", err, YVEX_ERR_FORMAT);
     started = yvex_core_monotonic_ns();
     admission_options.schema_version = YVEX_ARTIFACT_ADMISSION_OPTIONS_SCHEMA_V1;
     admission_options.reopen_cache_root = request->artifact_reopen_cache_root;
@@ -474,176 +547,16 @@ static int runtime_model_artifact_open(
     return rc;
 }
 
-static int runtime_model_memory_value(const char *text, unsigned long long *value)
-{
-    char *tail = NULL;
-    unsigned long long parsed;
-    if (!text || !value || !text[0] || text[0] == '-' || !strncmp(text, "max", 3u)) return 0;
-    errno = 0;
-    parsed = strtoull(text, &tail, 10);
-    if (errno || tail == text) return 0;
-    while (*tail == ' ' || *tail == '\t' || *tail == '\r' || *tail == '\n') ++tail;
-    if (*tail) return 0;
-    *value = parsed;
-    return 1;
-}
-
-/* Return the tightest remaining cgroup-v2 memory extent across the process hierarchy. */
-static int runtime_model_cgroup_memory(unsigned long long *capacity,
-                                       unsigned long long *available)
-{
-    const char *injected = getenv("YVEX_TEST_RUNTIME_CGROUP_AVAILABLE_MEMORY_BYTES");
-    static const char *const controls[] = {"memory.max", "memory.high"};
-    const char *root = "/sys/fs/cgroup";
-    char group[PATH_MAX], directory[PATH_MAX], path[PATH_MAX], text[128];
-    char *relative, *newline, *slash;
-    unsigned long long tightest_capacity = ULLONG_MAX;
-    unsigned long long tightest_available = ULLONG_MAX;
-    size_t control, root_length = strlen(root);
-    int found = 0, written;
-    if (!capacity || !available) return -1;
-    if (injected) {
-        if (!runtime_model_memory_value(injected, available)) return -1;
-        *capacity = ULLONG_MAX;
-        return 1;
-    }
-    if (!yvex_core_file_read_text_prefix("/proc/self/cgroup", group, sizeof(group)) ||
-        !(relative = strstr(group, "0::")) ||
-        (relative != group && relative[-1] != '\n') ||
-        relative[3] != '/' || strstr(relative + 3, ".."))
-        return 0;
-    relative += 3;
-    if ((newline = strchr(relative, '\n'))) *newline = '\0';
-    written = snprintf(directory, sizeof(directory), "%s%s", root, relative);
-    if (written <= 0 || (size_t)written >= sizeof(directory)) return -1;
-    for (;;) {
-        unsigned long long current;
-        int current_known;
-        written = snprintf(path, sizeof(path), "%s/memory.current", directory);
-        if (written <= 0 || (size_t)written >= sizeof(path)) return -1;
-        current_known = yvex_core_file_read_text_prefix(path, text, sizeof(text)) &&
-                        runtime_model_memory_value(text, &current);
-        for (control = 0u; current_known && control < 2u; ++control) {
-            unsigned long long limit, remaining;
-            written = snprintf(path, sizeof(path), "%s/%s", directory, controls[control]);
-            if (written <= 0 || (size_t)written >= sizeof(path)) return -1;
-            if (!yvex_core_file_read_text_prefix(path, text, sizeof(text)) ||
-                !runtime_model_memory_value(text, &limit)) continue;
-            remaining = current < limit ? limit - current : 0ull;
-            if (!found || limit < tightest_capacity) tightest_capacity = limit;
-            if (!found || remaining < tightest_available)
-                tightest_available = remaining;
-            found = 1;
-        }
-        if (!strcmp(directory, root)) break;
-        slash = strrchr(directory, '/');
-        if (!slash || (size_t)(slash - directory) < root_length) return -1;
-        *slash = '\0';
-    }
-    if (found) {
-        *capacity = tightest_capacity;
-        *available = tightest_available;
-    }
-    return found;
-}
-static int runtime_model_system_memory(unsigned long long *total,
-                                       unsigned long long *available)
-{
-    const char *injected_total = getenv("YVEX_TEST_RUNTIME_TOTAL_MEMORY_BYTES");
-    const char *injected_available =
-        getenv("YVEX_TEST_RUNTIME_AVAILABLE_MEMORY_BYTES");
-    char line[128];
-    FILE *meminfo;
-    unsigned long long system_total = 0ull, system_available = 0ull;
-    long total_pages, available_pages, page_bytes;
-
-    if (!total || !available) return 0;
-    if (injected_total &&
-        !runtime_model_memory_value(injected_total, &system_total)) return 0;
-    if (injected_available &&
-        !runtime_model_memory_value(injected_available, &system_available)) return 0;
-    if ((!system_total || !system_available) &&
-        (meminfo = fopen("/proc/meminfo", "r"))) {
-        while (fgets(line, sizeof(line), meminfo)) {
-            unsigned long long value;
-            if (!system_total && sscanf(line, "MemTotal: %llu kB", &value) == 1)
-                if (!yvex_core_u64_mul(value, 1024ull, &system_total))
-                    system_total = 0ull;
-            if (!system_available &&
-                sscanf(line, "MemAvailable: %llu kB", &value) == 1)
-                if (!yvex_core_u64_mul(value, 1024ull, &system_available))
-                    system_available = 0ull;
-        }
-        if (fclose(meminfo) != 0) return 0;
-    }
-    if (!system_total || !system_available) {
-#if defined(_SC_PHYS_PAGES) && defined(_SC_AVPHYS_PAGES)
-        total_pages = sysconf(_SC_PHYS_PAGES);
-        available_pages = sysconf(_SC_AVPHYS_PAGES);
-        page_bytes = sysconf(_SC_PAGESIZE);
-        if (total_pages <= 0 || available_pages <= 0 || page_bytes <= 0 ||
-            (!system_total &&
-             !yvex_core_u64_mul((unsigned long long)total_pages,
-                                (unsigned long long)page_bytes, &system_total)) ||
-            (!system_available &&
-             !yvex_core_u64_mul((unsigned long long)available_pages,
-                                (unsigned long long)page_bytes,
-                                &system_available))) return 0;
-#else
-        (void)total_pages;
-        (void)available_pages;
-        (void)page_bytes;
-        return 0;
-#endif
-    }
-    if (system_available > system_total) system_available = system_total;
-    *total = system_total;
-    *available = system_available;
-    return 1;
-}
-
-int yvex_runtime_private_memory_capacity(unsigned long long *total_bytes,
-                                         unsigned long long *available_bytes,
-                                         int *process_limited)
-{
-    unsigned long long total, available, process_capacity, process_available;
-    int cgroup;
-
-    if (!total_bytes || !available_bytes || !process_limited ||
-        !runtime_model_system_memory(&total, &available)) return 0;
-    *process_limited = 0;
-    cgroup = runtime_model_cgroup_memory(&process_capacity, &process_available);
-    if (cgroup < 0) return 0;
-    if (cgroup > 0) {
-        int limited = process_capacity < total || process_available < available;
-        if (process_capacity < total) total = process_capacity;
-        if (process_available < available) available = process_available;
-        *process_limited = limited;
-    }
-    if (available > total) available = total;
-    *total_bytes = total;
-    *available_bytes = available;
-    return 1;
-}
-
-unsigned long long yvex_runtime_private_system_reserve(
-    unsigned long long capacity_bytes)
-{
-    unsigned long long proportional = capacity_bytes / 8ull;
-    return proportional > YVEX_EXECUTION_MINIMUM_SYSTEM_RESERVE
-               ? proportional : YVEX_EXECUTION_MINIMUM_SYSTEM_RESERVE;
-}
-
 static int runtime_model_memory_preflight(
     const yvex_model_engine_open_request *request,
     const yvex_runtime_binding *binding,
     const yvex_complete_artifact_admission *admission,
-    yvex_runtime_private_refusal_id *refusal,
+    const runtime_open_failure **failure_spec,
     unsigned long long *required, unsigned long long *available)
 {
     unsigned long long total, reserve, reserve_basis, transient;
     int process_limited;
-    if (!request || !binding || !admission || !refusal || !required || !available ||
+    if (!request || !binding || !admission || !failure_spec || !required || !available ||
         !admission->payload_bytes ||
         !runtime_binding_maximum_tensor_bytes(binding, &transient))
         return YVEX_ERR_INVALID_ARG;
@@ -660,12 +573,11 @@ static int runtime_model_memory_preflight(
         return YVEX_ERR_STATE;
     if (request->maximum_host_bytes &&
         *required > request->maximum_host_bytes) {
-        *refusal = YVEX_RUNTIME_REFUSE_OPEN_HOST_BUDGET;
+        *failure_spec = &open_host_budget;
         *available = request->maximum_host_bytes;
         return YVEX_ERR_BOUNDS;
     }
-    *refusal = process_limited ? YVEX_RUNTIME_REFUSE_OPEN_PROCESS_MEMORY
-                               : YVEX_RUNTIME_REFUSE_OPEN_SYSTEM_MEMORY;
+    *failure_spec = process_limited ? &open_process_memory : &open_system_memory;
     return *required <= *available ? YVEX_OK : YVEX_ERR_BOUNDS;
 }
 
@@ -681,10 +593,20 @@ static int runtime_model_capabilities_bind(
     const int cuda_ready = graph_ready && attention->cuda_execution_ready;
     if (!model || !binding ||
         !yvex_runtime_capabilities_contract_valid(&binding->capabilities))
-        return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_ADAPTER_CAPABILITY, 1ull, 0ull, err);
+        return yvex_runtime_private_reject(
+            failure, YVEX_MODEL_ENGINE_FAILURE_ADAPTER,
+            "execution-capabilities", 1ull, 0ull,
+            "family adapter has no typed execution capability contract", err,
+            YVEX_ERR_FORMAT);
     if (!yvex_runtime_capabilities_identity(&binding->capabilities, binding_identity) ||
         strcmp(binding_identity, binding->execution_capability_identity) != 0)
-        return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_ADAPTER_CAPABILITY_STALE, 1ull, 0ull, err);
+        return yvex_runtime_private_reject_as(
+            failure, YVEX_MODEL_ENGINE_FAILURE_ADAPTER,
+            YVEX_RUNTIME_FAILURE_ORIGIN_INTEGRITY,
+            YVEX_RUNTIME_RECOVERY_REFUSE_ENGINE_OPEN,
+            "execution-capabilities", 1ull, 0ull,
+            "bound family execution capability contract is stale or promoted",
+            err, YVEX_ERR_FORMAT);
     *capabilities = binding->capabilities;
     capabilities->attention_semantics_ready &= graph_ready;
     capabilities->attention_core_ready &= graph_ready;
@@ -745,7 +667,7 @@ static int runtime_model_residency_open(
     const yvex_runtime_descriptor_summary *descriptor_summary,
     const yvex_attention_summary *attention_summary,
     const yvex_engine_specialization *specialization,
-    yvex_runtime_private_refusal_id *refusal, yvex_error *err)
+    const runtime_open_failure **failure_spec, yvex_error *err)
 {
     yvex_engine_resource_request resource = {0};
     yvex_runtime_residency_options options;
@@ -753,7 +675,7 @@ static int runtime_model_residency_open(
     yvex_runtime_residency_summary summary;
     unsigned long long started;
     int rc;
-    *refusal = YVEX_RUNTIME_REFUSE_OPEN_RESIDENCY;
+    *failure_spec = &open_residency;
     if (!attention_summary->required_binding_count) return YVEX_OK;
     started = yvex_core_monotonic_ns();
     rc = runtime_model_progress(request, YVEX_RUNTIME_LIFECYCLE_RESIDENCY,
@@ -798,7 +720,7 @@ static int runtime_model_residency_open(
         !summary.core_complete || !summary.envelope_complete ||
         !yvex_runtime_logits_residency_admit(&model->summary.capabilities, &summary))
         {
-            *refusal = YVEX_RUNTIME_REFUSE_OPEN_RESIDENCY_COMPLETE;
+            *failure_spec = &open_residency_complete;
             if (rc == YVEX_OK) {
                 yvex_error_set(err, YVEX_ERR_FORMAT, "runtime.model.residency",
                                "runtime residency is incomplete for the admitted descriptor");
@@ -866,14 +788,14 @@ static void runtime_model_view_bind(yvex_model_engine *model)
 
 static int runtime_model_startup_preflight(
     yvex_model_engine *model, const yvex_model_engine_open_request *request,
-    yvex_runtime_private_refusal_id *refusal,
+    const runtime_open_failure **failure_spec,
     unsigned long long *required_bytes, unsigned long long *available_bytes,
     yvex_error *err)
 {
     yvex_runtime_weight_placement placement;
     unsigned long long backing_bytes, added_bytes;
     int rc = runtime_model_memory_preflight(
-        request, model->binding, &model->admission, refusal,
+        request, model->binding, &model->admission, failure_spec,
         required_bytes, available_bytes);
     if (rc != YVEX_OK) return rc;
     if (request->residency_backend == YVEX_BACKEND_KIND_CUDA) {
@@ -883,7 +805,7 @@ static int runtime_model_startup_preflight(
         };
         rc = yvex_backend_open(&model->opening_backend, &options, err);
         if (rc != YVEX_OK) {
-            *refusal = YVEX_RUNTIME_REFUSE_OPEN_RESIDENCY;
+            *failure_spec = &open_residency;
             *required_bytes = 1ull;
             *available_bytes = 0ull;
             return rc;
@@ -896,7 +818,7 @@ static int runtime_model_startup_preflight(
         rc = yvex_runtime_private_residency_backing_bytes(
             model->binding, model->opening_backend, placement, &backing_bytes, err);
     if (rc != YVEX_OK) {
-        *refusal = YVEX_RUNTIME_REFUSE_OPEN_RESIDENCY;
+        *failure_spec = &open_residency;
         return rc;
     }
     if (backing_bytes < model->admission.payload_bytes ||
@@ -907,16 +829,62 @@ static int runtime_model_startup_preflight(
     *required_bytes = added_bytes;
     if (request->maximum_host_bytes &&
         *required_bytes > request->maximum_host_bytes) {
-        *refusal = YVEX_RUNTIME_REFUSE_OPEN_HOST_BUDGET;
+        *failure_spec = &open_host_budget;
         *available_bytes = request->maximum_host_bytes;
         return YVEX_ERR_BOUNDS;
     }
     if (*required_bytes > *available_bytes) return YVEX_ERR_BOUNDS;
     if (!request->startup_generation) return YVEX_OK;
-    *refusal = YVEX_RUNTIME_REFUSE_OPEN_STARTUP_CAPACITY;
+    *failure_spec = &open_startup_capacity;
     return yvex_runtime_private_generation_capacity_preflight(
         model->binding, model->opening_backend, request->startup_generation,
         required_bytes, available_bytes, err);
+}
+
+static int runtime_model_candidate_create(
+    yvex_model_engine **out, const yvex_model_engine_open_request *request,
+    yvex_model_engine_failure *failure, yvex_error *err)
+{
+    yvex_model_engine *model;
+    if (!out || !request || !request->artifact_path ||
+        !request->runtime_binding_path || !request->target_id ||
+        !request->target_id[0] ||
+        strlen(request->target_id) >= sizeof(model->target_id) ||
+        request->residency_backend > YVEX_BACKEND_KIND_CUDA ||
+        (request->startup_generation &&
+         request->startup_generation->backend != request->residency_backend))
+        return yvex_runtime_private_reject(
+            failure, YVEX_MODEL_ENGINE_FAILURE_INVALID_ARGUMENT, "request",
+            1ull, 0ull, "model request is incomplete", err,
+            YVEX_ERR_INVALID_ARG);
+    model = calloc(1u, sizeof(*model));
+    if (!model)
+        return yvex_runtime_private_reject(
+            failure, YVEX_MODEL_ENGINE_FAILURE_ALLOCATION, "allocation",
+            sizeof(*model), 0ull, "runtime model allocation failed", err,
+            YVEX_ERR_NOMEM);
+    model->summary.engine_generation =
+        atomic_fetch_add_explicit(
+            &engine_generation_counter, 1ull, memory_order_relaxed) + 1ull;
+    if (!model->summary.engine_generation) {
+        free(model);
+        return yvex_runtime_private_reject(
+            failure, YVEX_MODEL_ENGINE_FAILURE_ALLOCATION, "allocation",
+            ULLONG_MAX, 0ull, "runtime model allocation failed", err,
+            YVEX_ERR_NOMEM);
+    }
+    if (pthread_mutex_init(&model->lifecycle_mutex, NULL) != 0) {
+        free(model);
+        return yvex_runtime_private_reject_as(
+            failure, YVEX_MODEL_ENGINE_FAILURE_CLEANUP,
+            YVEX_RUNTIME_FAILURE_ORIGIN_INTERNAL,
+            YVEX_RUNTIME_RECOVERY_REFUSE_ENGINE_OPEN,
+            "model-lifecycle-lock", 1ull, 0ull, "model lock init failed",
+            err, YVEX_ERR_STATE);
+    }
+    model->lifecycle_mutex_ready = 1;
+    *out = model;
+    return YVEX_OK;
 }
 
 int yvex_model_engine_open(yvex_model_engine **out, const yvex_model_engine_open_request *request,
@@ -928,38 +896,19 @@ int yvex_model_engine_open(yvex_model_engine **out, const yvex_model_engine_open
     const yvex_engine_specialization *opening_specialization = NULL;
     yvex_runtime_binding_failure binding_failure;
     yvex_materialization_options materialization_options;
-    yvex_runtime_private_refusal_id capacity_refusal = YVEX_RUNTIME_REFUSE_OPEN_SYSTEM_MEMORY;
-    yvex_runtime_private_refusal_id residency_refusal;
+    const runtime_open_failure *capacity_failure = &open_system_memory;
+    const runtime_open_failure *residency_failure = &open_residency;
     unsigned long long total_started, phase_started, required_bytes = 0ull, available_bytes = 0ull;
     int rc;
     if (out) *out = NULL;
     if (failure) memset(failure, 0, sizeof(*failure));
-    if (!out || !request || !request->artifact_path || !request->runtime_binding_path ||
-        !request->target_id || !request->target_id[0] ||
-        strlen(request->target_id) >= sizeof(model->target_id) ||
-        request->residency_backend > YVEX_BACKEND_KIND_CUDA ||
-        (request->startup_generation &&
-         request->startup_generation->backend != request->residency_backend))
-        return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_MODEL_OPEN_REQUEST, 1ull, 0ull, err);
-    model = (yvex_model_engine *)calloc(1u, sizeof(*model));
-    if (!model)
-        return yvex_runtime_private_refuse(
-            failure, YVEX_RUNTIME_REFUSE_MODEL_ALLOCATION,
-            sizeof(*model), 0ull, err);
-    model->summary.engine_generation =
-        atomic_fetch_add_explicit(&engine_generation_counter, 1ull,
-                                  memory_order_relaxed) + 1ull;
-    if (!model->summary.engine_generation) {
-        free(model);
-        return yvex_runtime_private_refuse(
-            failure, YVEX_RUNTIME_REFUSE_MODEL_ALLOCATION,
-            ULLONG_MAX, 0ull, err);
-    }
-    if (pthread_mutex_init(&model->lifecycle_mutex, NULL) != 0) {
-        free(model);
-        return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_MODEL_LOCK_INITIALIZATION, 1ull, 0ull, err);
-    }
-    model->lifecycle_mutex_ready = 1;
+    if (!out)
+        return yvex_runtime_private_reject(
+            failure, YVEX_MODEL_ENGINE_FAILURE_INVALID_ARGUMENT, "request",
+            1ull, 0ull, "model request is incomplete", err,
+            YVEX_ERR_INVALID_ARG);
+    rc = runtime_model_candidate_create(&model, request, failure, err);
+    if (rc != YVEX_OK) return rc;
     total_started = yvex_core_monotonic_ns();
     memset(&binding_failure, 0, sizeof(binding_failure));
     phase_started = yvex_core_monotonic_ns();
@@ -974,20 +923,22 @@ int yvex_model_engine_open(yvex_model_engine **out, const yvex_model_engine_open
     runtime_model_timing(model, YVEX_RUNTIME_LIFECYCLE_BINDING_OPEN, phase_started);
     if (rc != YVEX_OK)
         return runtime_model_open_fail(
-            out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_BINDING, 1ull, 0ull, err, (yvex_status)rc);
+            out, model, failure, &open_binding, 1ull, 0ull, err,
+            (yvex_status)rc);
     model->graph = &yvex_attention_execution_api;
     yvex_core_text_copy(model->target_id, sizeof(model->target_id), request->target_id);
     rc = runtime_model_startup_preflight(
-        model, request, &capacity_refusal, &required_bytes,
+        model, request, &capacity_failure, &required_bytes,
         &available_bytes, err);
     if (rc != YVEX_OK)
         return runtime_model_open_fail(
-            out, model, failure, capacity_refusal, required_bytes,
+            out, model, failure, capacity_failure, required_bytes,
             available_bytes, err, (yvex_status)rc);
     rc = runtime_model_artifact_open(model, request, &model->binding_summary, failure, err);
     if (rc != YVEX_OK)
         return runtime_model_open_fail(
-            out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_ARTIFACT, 1ull, 0ull, err, (yvex_status)rc);
+            out, model, failure, &open_artifact, 1ull, 0ull, err,
+            (yvex_status)rc);
     phase_started = yvex_core_monotonic_ns();
     rc = runtime_model_progress(
         request, YVEX_RUNTIME_LIFECYCLE_MATERIALIZATION_OPEN, 0ull, 1ull, err);
@@ -1004,7 +955,7 @@ int yvex_model_engine_open(yvex_model_engine **out, const yvex_model_engine_open
                                     1ull, 1ull, err);
     if (rc != YVEX_OK)
         return runtime_model_open_fail(
-            out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_MATERIALIZATION, 1ull, 0ull, err,
+            out, model, failure, &open_materialization, 1ull, 0ull, err,
             (yvex_status)rc);
     phase_started = yvex_core_monotonic_ns();
     rc = runtime_model_progress(request, YVEX_RUNTIME_LIFECYCLE_MODEL_SEAL, 0ull, 1ull, err);
@@ -1015,11 +966,12 @@ int yvex_model_engine_open(yvex_model_engine **out, const yvex_model_engine_open
             &model->physical_execution, &binding_failure, err);
     if (rc != YVEX_OK)
         return runtime_model_open_fail(
-            out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_IMPORT, 1ull, 0ull, err, (yvex_status)rc);
+            out, model, failure, &open_import, 1ull, 0ull, err,
+            (yvex_status)rc);
     descriptor_summary = yvex_runtime_descriptor_summary_get(model->descriptor);
     if (!descriptor_summary)
         return runtime_model_open_fail(
-            out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_IMPORTED_IDENTITY,
+            out, model, failure, &open_imported_identity,
             1ull, 0ull, err, YVEX_ERR_FORMAT);
     attention_summary = yvex_attention_plan_summary(model->attention);
     draft_attention_summary = yvex_attention_plan_summary(model->draft_attention);
@@ -1037,7 +989,7 @@ int yvex_model_engine_open(yvex_model_engine **out, const yvex_model_engine_open
         !runtime_model_identity_build(&model->binding_summary,
                                       model->summary.runtime_model_identity)) {
         return runtime_model_open_fail(
-            out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_IMPORTED_IDENTITY, 1ull, 0ull, err,
+            out, model, failure, &open_imported_identity, 1ull, 0ull, err,
             YVEX_ERR_FORMAT);
     }
     rc = yvex_engine_resource_catalog_open(
@@ -1045,14 +997,14 @@ int yvex_model_engine_open(yvex_model_engine **out, const yvex_model_engine_open
         model->summary.runtime_model_identity, 64ull, err);
     if (rc != YVEX_OK)
         return runtime_model_open_fail(
-            out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_RESIDENCY,
+            out, model, failure, &open_residency,
             1ull, 0ull, err, (yvex_status)rc);
     rc = yvex_runtime_private_model_specialization_prepare(
         model, request->residency_backend, model->opening_backend,
         &opening_specialization, err);
     if (rc != YVEX_OK)
         return runtime_model_open_fail(
-            out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_CAPABILITIES,
+            out, model, failure, &open_capabilities,
             1ull, 0ull, err, (yvex_status)rc);
     rc = yvex_tokenizer_from_compiled_gguf(
         &model->tokenizer, model->gguf,
@@ -1064,19 +1016,20 @@ int yvex_model_engine_open(yvex_model_engine **out, const yvex_model_engine_open
             model->binding_summary.runtime_descriptor_identity, err);
     if (rc != YVEX_OK)
         return runtime_model_open_fail(
-            out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_TOKENIZER, 1ull, 0ull, err,
+            out, model, failure, &open_tokenizer, 1ull, 0ull, err,
             (yvex_status)rc);
     runtime_model_timing(model, YVEX_RUNTIME_LIFECYCLE_MODEL_SEAL, phase_started);
     rc = runtime_model_progress(request, YVEX_RUNTIME_LIFECYCLE_MODEL_SEAL, 1ull, 1ull, err);
     if (rc != YVEX_OK)
         return runtime_model_open_fail(
-            out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_SEAL, 1ull, 0ull, err, (yvex_status)rc);
+            out, model, failure, &open_seal, 1ull, 0ull, err,
+            (yvex_status)rc);
     model->summary.sealed = model->summary.valid = 1;
     runtime_model_summary_bind(model, attention_summary, draft_attention_summary);
     rc = runtime_model_capabilities_bind(model, &model->binding_summary, attention_summary, failure, err);
     if (rc != YVEX_OK)
         return runtime_model_open_fail(
-            out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_CAPABILITIES, 1ull, 0ull, err,
+            out, model, failure, &open_capabilities, 1ull, 0ull, err,
             (yvex_status)rc);
     runtime_model_view_bind(model);
     rc = request->startup_generation
@@ -1086,24 +1039,24 @@ int yvex_model_engine_open(yvex_model_engine **out, const yvex_model_engine_open
                    &available_bytes, err)
              : runtime_model_memory_preflight(
                    request, model->binding, &model->admission,
-                   &capacity_refusal, &required_bytes, &available_bytes);
+                   &capacity_failure, &required_bytes, &available_bytes);
     if (rc != YVEX_OK)
         return runtime_model_open_fail(
             out, model, failure,
-            request->startup_generation
-                ? YVEX_RUNTIME_REFUSE_OPEN_STARTUP_CAPACITY : capacity_refusal,
+            request->startup_generation ? &open_startup_capacity : capacity_failure,
             required_bytes, available_bytes, err, (yvex_status)rc);
     rc = runtime_model_residency_open(
         model, request, descriptor_summary, attention_summary,
-        opening_specialization, &residency_refusal, err);
+        opening_specialization, &residency_failure, err);
     if (rc != YVEX_OK)
         return runtime_model_open_fail(
-            out, model, failure, residency_refusal, 1ull, 0ull, err,
+            out, model, failure, residency_failure, 1ull, 0ull, err,
             (yvex_status)rc);
     rc = yvex_artifact_snapshot_validate(model->artifact, NULL, err);
     if (rc != YVEX_OK)
         return runtime_model_open_fail(
-            out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_DRIFT, 1ull, 0ull, err, (yvex_status)rc);
+            out, model, failure, &open_drift, 1ull, 0ull, err,
+            (yvex_status)rc);
     model->summary.total_seconds = (double)(yvex_core_monotonic_ns() - total_started) / 1000000000.0;
     *out = model;
     if (failure) memset(failure, 0, sizeof(*failure));
@@ -1116,10 +1069,16 @@ int yvex_model_engine_validate(yvex_model_engine *model,
     int cleanup_rc = YVEX_OK, counter_overflow, rc;
     if (!model || !model->lifecycle_mutex_ready ||
         pthread_mutex_lock(&model->lifecycle_mutex) != 0)
-        return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_MODEL_REQUIRED, 1ull, 0ull, err);
+        return yvex_runtime_private_reject(
+            failure, YVEX_MODEL_ENGINE_FAILURE_INVALID_ARGUMENT,
+            "runtime-model", 1ull, 0ull, "runtime model is required", err,
+            YVEX_ERR_INVALID_ARG);
     if (!model->summary.sealed || model->close_requested) {
         (void)pthread_mutex_unlock(&model->lifecycle_mutex);
-        return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_MODEL_UNSEALED, 0ull, 1ull, err);
+        return yvex_runtime_private_reject(
+            failure, YVEX_MODEL_ENGINE_FAILURE_BUSY,
+            "runtime-model-draining", 0ull, 1ull,
+            "model is unsealed or draining", err, YVEX_ERR_STATE);
     }
     counter_overflow =
         !yvex_core_u64_add(model->summary.drift_checks, 1ull, &model->summary.drift_checks);
@@ -1153,10 +1112,18 @@ int yvex_model_engine_validate(yvex_model_engine *model,
     (void)pthread_mutex_unlock(&model->lifecycle_mutex);
     if (cleanup_rc != YVEX_OK) goto cleanup_failed;
     if (counter_overflow)
-        return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_DRIFT_COUNTER, ULLONG_MAX, 1ull, err);
-    return runtime_refuse_status(
-        failure, YVEX_RUNTIME_REFUSE_ARTIFACT_DRIFT, 1ull, 0ull,
-        rc == YVEX_OK ? YVEX_ERR_STATE : (yvex_status)rc, err);
+        return yvex_runtime_private_reject_as(
+            failure, YVEX_MODEL_ENGINE_FAILURE_DRIFT,
+            YVEX_RUNTIME_FAILURE_ORIGIN_INTERNAL,
+            YVEX_RUNTIME_RECOVERY_DRAIN_ENGINE,
+            "drift-check-counter", ULLONG_MAX, 1ull,
+            "drift counter overflowed", err, YVEX_ERR_BOUNDS);
+    return yvex_runtime_private_reject_as(
+        failure, YVEX_MODEL_ENGINE_FAILURE_DRIFT,
+        YVEX_RUNTIME_FAILURE_ORIGIN_INTEGRITY,
+        YVEX_RUNTIME_RECOVERY_DRAIN_ENGINE,
+        "artifact-snapshot", 1ull, 0ull, "artifact drift invalidated model",
+        err, rc == YVEX_OK ? YVEX_ERR_STATE : (yvex_status)rc);
 cleanup_failed:
     yvex_runtime_private_failure_record(failure, YVEX_MODEL_ENGINE_FAILURE_CLEANUP,
                                  cleanup.where[0] ? cleanup.where : "dependent-invalidation",
@@ -1308,16 +1275,24 @@ int yvex_runtime_private_session_capabilities_bind(
                             device.name ? device.name : "unavailable");
     }
     if (rc != YVEX_OK)
-        return runtime_refuse_status(failure, YVEX_RUNTIME_REFUSE_DEVICE_CAPABILITY,
-                                     1ull, 0ull, (yvex_status)rc, err);
+        return yvex_runtime_private_reject_as(
+            failure, YVEX_MODEL_ENGINE_FAILURE_BACKEND,
+            YVEX_RUNTIME_FAILURE_ORIGIN_CAPABILITY,
+            YVEX_RUNTIME_RECOVERY_RETRY_EQUIVALENT,
+            "device-capability", 1ull, 0ull, "device admission failed", err,
+            (yvex_status)rc);
     if (session->summary.backend == YVEX_BACKEND_KIND_CPU) {
         session->summary.capabilities = capabilities;
         return YVEX_OK;
     }
     rc = yvex_backend_bandwidth_probe(session->backend, &bandwidth, err);
     if (rc != YVEX_OK)
-        return runtime_refuse_status(failure, YVEX_RUNTIME_REFUSE_DEVICE_CAPABILITY,
-                                     1ull, 0ull, (yvex_status)rc, err);
+        return yvex_runtime_private_reject_as(
+            failure, YVEX_MODEL_ENGINE_FAILURE_BACKEND,
+            YVEX_RUNTIME_FAILURE_ORIGIN_CAPABILITY,
+            YVEX_RUNTIME_RECOVERY_RETRY_EQUIVALENT,
+            "device-capability", 1ull, 0ull, "device admission failed", err,
+            (yvex_status)rc);
     session->summary.sustainable_read_bytes_per_second =
         bandwidth.sustainable_read_bytes_per_second;
     session->summary.sustainable_copy_bytes_per_second =
@@ -1333,8 +1308,12 @@ int yvex_runtime_private_session_capabilities_bind(
         rc = yvex_backend_query_capability(session->backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
                                            &encoded, err);
     if (rc != YVEX_OK)
-        return runtime_refuse_status(failure, YVEX_RUNTIME_REFUSE_CUDA_CAPABILITY,
-                                     1ull, 0ull, (yvex_status)rc, err);
+        return yvex_runtime_private_reject_as(
+            failure, YVEX_MODEL_ENGINE_FAILURE_BACKEND,
+            YVEX_RUNTIME_FAILURE_ORIGIN_CAPABILITY,
+            YVEX_RUNTIME_RECOVERY_RETRY_EQUIVALENT,
+            "cuda-capability", 1ull, 0ull, "CUDA admission failed", err,
+            (yvex_status)rc);
     implementation_ready =
         capabilities.cuda_eager_implemented &&
         yvex_backend_status_of(session->backend) == YVEX_BACKEND_STATUS_READY &&
@@ -1347,7 +1326,13 @@ int yvex_runtime_private_session_capabilities_bind(
                       session->summary.host_workspace_bytes && session->workspace &&
                       session->summary.device_workspace_bytes;
     if (require_workspace && (!implementation_ready || !workspace_ready))
-        return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_CUDA_EAGER, 1ull, 0ull, err);
+        return yvex_runtime_private_reject_as(
+            failure, YVEX_MODEL_ENGINE_FAILURE_BACKEND,
+            YVEX_RUNTIME_FAILURE_ORIGIN_CAPABILITY,
+            YVEX_RUNTIME_RECOVERY_RETRY_EQUIVALENT,
+            "cuda-eager-capability", 1ull, 0ull,
+            "exact CUDA eager kernels, device, residency, and pinned workspace are required",
+            err, YVEX_ERR_UNSUPPORTED);
     if (!implementation_ready || !workspace_ready) {
         session->summary.capabilities = capabilities;
         return YVEX_OK;
@@ -1545,9 +1530,10 @@ static int runtime_session_open_fail(yvex_runtime_execution_session **out,
     }
     if (cleanup_rc != YVEX_OK) {
         if (out) *out = session;
-        return runtime_refuse_status(
-            failure, YVEX_RUNTIME_REFUSE_SESSION_OPEN_CLEANUP, 0ull, 1ull,
-            (yvex_status)cleanup_rc, err);
+        return yvex_runtime_private_reject(
+            failure, YVEX_MODEL_ENGINE_FAILURE_CLEANUP,
+            "session-open-cleanup", 0ull, 1ull, "session cleanup failed", err,
+            (yvex_status)cleanup_rc);
     }
     if (err) *err = primary;
     return status;
@@ -1651,23 +1637,37 @@ int yvex_runtime_session_open(yvex_runtime_execution_session **out,
     if (!out || !model || !request ||
         (request->backend != YVEX_BACKEND_KIND_CPU &&
          request->backend != YVEX_BACKEND_KIND_CUDA))
-        return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_SESSION_REQUEST, 1ull, 0ull, err);
+        return yvex_runtime_private_reject(
+            failure, YVEX_MODEL_ENGINE_FAILURE_INVALID_ARGUMENT,
+            "session-request", 1ull, 0ull,
+            "valid model and backend session request are required", err,
+            YVEX_ERR_INVALID_ARG);
     session = (yvex_runtime_execution_session *)calloc(1u, sizeof(*session));
     if (!session)
-        return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_SESSION_ALLOCATION,
-                              sizeof(*session), 0ull, err);
+        return yvex_runtime_private_reject(
+            failure, YVEX_MODEL_ENGINE_FAILURE_ALLOCATION,
+            "session-allocation", sizeof(*session), 0ull,
+            "runtime session allocation failed", err, YVEX_ERR_NOMEM);
     session->engine = model;
     session->summary.engine_generation = model->summary.engine_generation;
     session->view.engine = model;
     if (pthread_mutex_init(&session->lifecycle_mutex, NULL) != 0) {
-        rc = yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_SESSION_LOCK_INITIALIZATION,
-                            1ull, 0ull, err);
+        rc = yvex_runtime_private_reject_as(
+            failure, YVEX_MODEL_ENGINE_FAILURE_CLEANUP,
+            YVEX_RUNTIME_FAILURE_ORIGIN_INTERNAL,
+            YVEX_RUNTIME_RECOVERY_REFUSE_REQUEST,
+            "session-lifecycle-lock", 1ull, 0ull, "session lock init failed",
+            err, YVEX_ERR_STATE);
         return runtime_session_open_fail(out, session, rc, failure, err);
     }
     session->lifecycle_mutex_ready = 1;
     if (pthread_cond_init(&session->idle_condition, NULL) != 0) {
-        rc = yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_SESSION_CONDITION_INITIALIZATION,
-                            1ull, 0ull, err);
+        rc = yvex_runtime_private_reject_as(
+            failure, YVEX_MODEL_ENGINE_FAILURE_CLEANUP,
+            YVEX_RUNTIME_FAILURE_ORIGIN_INTERNAL,
+            YVEX_RUNTIME_RECOVERY_REFUSE_REQUEST,
+            "session-idle-condition", 1ull, 0ull,
+            "session condition init failed", err, YVEX_ERR_STATE);
         return runtime_session_open_fail(out, session, rc, failure, err);
     }
     session->idle_condition_ready = 1;
@@ -1757,7 +1757,12 @@ int yvex_runtime_session_open(yvex_runtime_execution_session **out,
             request->maximum_host_bytes, request->maximum_device_bytes,
             workspace_bytes, 0ull, NULL, session->summary.workspace_identity,
             err) != YVEX_OK) {
-        rc = yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_WORKSPACE_IDENTITY, 1ull, 0ull, err);
+        rc = yvex_runtime_private_reject_as(
+            failure, YVEX_MODEL_ENGINE_FAILURE_BACKEND,
+            YVEX_RUNTIME_FAILURE_ORIGIN_INTERNAL,
+            YVEX_RUNTIME_RECOVERY_ABORT_TRANSACTION,
+            "workspace-identity", 1ull, 0ull, "workspace identity failed", err,
+            YVEX_ERR_STATE);
         return runtime_session_open_fail(out, session, rc, failure, err);
     }
     if (request->backend != YVEX_BACKEND_KIND_CUDA && residency) {
@@ -1769,8 +1774,12 @@ int yvex_runtime_session_open(yvex_runtime_execution_session **out,
                                         residency->residency_identity);
     }
     if (getenv("YVEX_TEST_RUNTIME_SESSION_OPEN_FAILURE")) {
-        rc = yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_SESSION_RESOURCE_INJECTION,
-                            0ull, 1ull, err);
+        rc = yvex_runtime_private_reject_as(
+            failure, YVEX_MODEL_ENGINE_FAILURE_BACKEND,
+            YVEX_RUNTIME_FAILURE_ORIGIN_INTERNAL,
+            YVEX_RUNTIME_RECOVERY_ABORT_TRANSACTION,
+            "session-open-after-resources", 0ull, 1ull,
+            "injected resource failure", err, YVEX_ERR_STATE);
         return runtime_session_open_fail(out, session, rc, failure, err);
     }
     session->summary.peak_host_bytes = admitted_host_bytes;
@@ -1791,8 +1800,10 @@ int yvex_runtime_session_open(yvex_runtime_execution_session **out,
         (void)pthread_mutex_unlock(&model->lifecycle_mutex);
     }
     if (!publishable) {
-        rc = yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_MODEL_DRAINING_PUBLICATION,
-                            0ull, 1ull, err);
+        rc = yvex_runtime_private_reject(
+            failure, YVEX_MODEL_ENGINE_FAILURE_BUSY,
+            "runtime-model-draining", 0ull, 1ull, "model began draining", err,
+            YVEX_ERR_STATE);
         return runtime_session_open_fail(out, session, rc, failure, err);
     }
     if (failure)
@@ -1918,14 +1929,18 @@ int yvex_runtime_cleanup_lease_acquire(
     if (borrowed_session) *borrowed_session = NULL;
     if (!out || *out || !model_request || !borrowed_model ||
         (session_request && !borrowed_session))
-        return yvex_runtime_private_refuse(
-            failure, YVEX_RUNTIME_REFUSE_CLEANUP_LEASE, 1ull,
+        return yvex_runtime_private_reject(
+            failure, YVEX_MODEL_ENGINE_FAILURE_INVALID_ARGUMENT,
+            "cleanup-lease", 1ull,
             out && !*out && model_request && borrowed_model &&
                     (!session_request || borrowed_session) ? 1ull : 0ull,
-            err);
+            "empty cleanup lease, model request, and borrowed outputs are required",
+            err, YVEX_ERR_INVALID_ARG);
     lease = (yvex_runtime_cleanup_lease *)calloc(1u, sizeof(*lease));
     if (!lease)
-        return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_CLEANUP_LEASE_ALLOCATION, 1ull, 0ull, err);
+        return yvex_runtime_private_reject(
+            failure, YVEX_MODEL_ENGINE_FAILURE_ALLOCATION, "cleanup-lease",
+            1ull, 0ull, "lease allocation failed", err, YVEX_ERR_NOMEM);
     *out = lease;
     rc = yvex_model_engine_open(&lease->model, model_request, failure, err);
     if (rc == YVEX_OK) *borrowed_model = lease->model;
@@ -1956,7 +1971,11 @@ int yvex_runtime_cleanup_lease_session_open(
     int rc;
     if (borrowed_session) *borrowed_session = NULL;
     if (!lease || !lease->model || lease->session || !request || !borrowed_session)
-        return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_CLEANUP_LEASE_SESSION, 1ull, 0ull, err);
+        return yvex_runtime_private_reject(
+            failure, YVEX_MODEL_ENGINE_FAILURE_INVALID_ARGUMENT,
+            "cleanup-lease-session", 1ull, 0ull,
+            "model-owning cleanup lease and session request are required", err,
+            YVEX_ERR_INVALID_ARG);
     rc = yvex_runtime_session_open(&lease->session, lease->model, request, failure, err);
     if (rc == YVEX_OK) *borrowed_session = lease->session;
     return rc;

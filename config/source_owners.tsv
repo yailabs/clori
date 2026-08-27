@@ -252,6 +252,7 @@ src/model/target/sidecar_write.c	model.target	model.target.sidecar_write	generic
 src/model/target/tensor_collection.c	model.target	model.target.tensor_collection	generic	private	reusable-algorithm	model,cli	implementation	none
 src/model/target/tokenizer_map.c	model.target	model.target.tokenizer_map	generic	private	reusable-algorithm	model,cli	implementation	none
 src/runtime/core.c	runtime	runtime.core	generic	private	resource-lifecycle	graph,cli	implementation	none
+src/runtime/capacity.c	runtime	runtime.capacity	generic	private	reusable-algorithm	runtime.core,runtime.generation_context	implementation	none
 src/runtime/failure.c	runtime	runtime.failure	generic	private	internal-abi	runtime	implementation	none
 src/runtime/graph.c	runtime	runtime.graph	generic	private	transactional-execution	graph,backend,tests	implementation	none
 src/server/core.c	server	server.core	generic	private	resource-lifecycle	daemon,protocol	implementation	none
