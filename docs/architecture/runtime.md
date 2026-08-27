@@ -64,6 +64,10 @@ result, not a server-topology restriction. The CPU tiny vertical proves two
 simultaneously loaded engines, explicit routing, ambiguous-routing refusal,
 unload/reload, and host survival.
 
+An implementation safety ceiling bounds allocation, the `--max-engines`
+deployment option selects the host's visible slot capacity, and live resource
+admission remains a third independent decision.
+
 ## Model engine
 
 `yvex_model_engine` is one opened executable generation of one package. It
@@ -142,15 +146,17 @@ Scheduling has two scopes:
 
 - the server routes external requests to an engine and serializes operations
   that name the same session;
-- the engine scheduler admits ready physical work and forms compatible batches
-  from real active sequence rows.
+- the engine scheduler admits ready sequence progress and forms compatible
+  physical batches from real active rows.
 
 Generation exposes `begin`, bounded `advance`, and `finish`; one advance
-performs one target step or one speculative cycle. Active generation contexts
-rendezvous through their engine scheduler for compatible Transformer steps,
-routed MoE, and output-head work. A compatibility key binds engine generation,
-phase, operation, backend, scope, execution class, geometry, and admitted
-width.
+performs one target step or one speculative cycle. Each prefill, decode, draft,
+verify, correction, or publication transition enters one generation-bound
+ready-work lease. The scheduler selects which non-conflicting sequence lease
+advances, while active contexts rendezvous separately for compatible
+Transformer steps, routed MoE, and output-head work. A compatibility key binds
+engine generation, phase, operation, backend, scope, execution class, geometry,
+and admitted width.
 
 The canonical execution batch records selected real sources, rows, phase, and
 provenance. The expert worklist deterministically projects routed pairs into
@@ -190,11 +196,21 @@ and backend memory facts before creating large resources. Live availability is
 not part of model/package identity. Failure closes acquired resources and never
 publishes a partially ready engine.
 
-The current primary weight-residency object still selects one backing for the
-complete admitted tensor set. Its storage and execution resources are typed and
-independently released, but a general per-tensor prepared-view graph with
-independent eviction is not yet a production capability. Selective prepared
-representations must not be claimed merely from the `prepared_bytes` counter.
+One engine-owned resource catalog records canonical mappings, component
+resources, prepared tensor/group/layout views, backend handles, executable
+caches, sequence state, workspace, and temporaries as separate typed entries.
+Entries bind engine generation, package provenance, specialization and
+admission identities when applicable, numerical class, byte classes,
+dependencies, borrows, readiness, and release policy. A prepared entry may be
+published or evicted independently; eviction invalidates its handle without
+changing the canonical mapping or package identity.
+
+The current text residency owner still selects one primary backing for the
+complete admitted tensor population. The catalog makes selective preparation
+and independent release legal and is exercised with a bounded synthetic
+prepared layout, but no rejected DeepSeek cache or optimized selective weight
+layout is retained. `prepared_bytes` alone therefore remains no performance or
+residency claim.
 
 ## Backend boundary
 
@@ -247,10 +263,11 @@ lineage.
 
 ## Current limits
 
-YVEX currently does not claim full ready-sequence continuous batching,
-independently evictable selective prepared layouts, restart-persistent engine
-instances, distributed serving, public authentication/TLS, complete accelerator
-residency, load-aware DSpark confidence scheduling, model evaluation, a release
-benchmark, or release qualification. Warm DeepSeek performance remains explicit
-optimization debt; the 20--24 token/s class is an initial engineering floor,
-not an optimization destination.
+YVEX currently does not claim full ready-sequence continuous batching, a
+retained optimized selective DeepSeek layout or automatic resource-eviction
+policy, restart-persistent engine instances, distributed serving, public
+authentication/TLS, complete accelerator residency, load-aware DSpark
+confidence scheduling, model evaluation, a release benchmark, or release
+qualification. Warm DeepSeek performance remains explicit optimization debt;
+the 20--24 token/s class is an initial engineering floor, not an optimization
+destination.

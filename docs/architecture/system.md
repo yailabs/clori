@@ -85,16 +85,18 @@ aliases for directories.
 | Boundary | Current owner |
 | --- | --- |
 | Source provenance, inventory, payload trust | `src/source/` |
-| Remote provider discovery and local model lifecycle catalog | `src/accounts/`, `src/model/remote.c`, `src/model/catalog.c` |
+| Remote provider discovery and remote representation records | `src/accounts/`, `src/model/remote.c`, `include/yvex/catalog.h` |
+| Local acquired-source and admitted-package catalogs | `src/model/catalog.c`, `src/model/artifacts/`, `include/yvex/catalog.h` |
 | Family source facts, coverage and logical lowering | `src/model/families/` |
 | Artifact-neutral transformation and physical policy | `src/model/compilation/`, model compilation owners |
 | GGUF container, qtypes, writer, layout | `src/gguf/` |
-| Artifact snapshot, integrity, admission, materialization | `src/artifact/` |
+| Artifact snapshot, integrity, admission, and bounded artifact ranges | `src/artifact/` |
+| Backend-owned weight materialization | `src/model/materialization.c`, `include/yvex/materialization.h` |
 | Semantic/executable graph and state protocols | `src/graph/` |
 | Runtime binding, model engines, specialization, sessions, residency, scheduler | `src/runtime/` |
 | Device capability, memory, kernels, launch graphs | `src/backend/` |
 | Autoregressive composition | `src/runtime/generation.c` and typed generation owners |
-| Persistent host, engine manager, routing, protocol, telemetry | `src/server/` |
+| Persistent host, live engine observation, routing, protocol, telemetry | `src/server/` |
 | OpenAI-compatible projection | `src/server/openai/` and `src/provider/` |
 | Command metadata and projections | `config/operator/registry.json`, generated descriptors, `src/cli/` |
 

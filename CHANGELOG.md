@@ -22,7 +22,8 @@ change. Git history preserves implementation chronology.
 - Complete server-backed DeepSeek-V4-Flash source-to-streamed-text execution
   through native and bounded OpenAI-compatible local surfaces.
 - Exact server-owned multi-turn sessions with committed-prefix reuse,
-  cancellation, partial-progress truth, and one persistent model lifecycle.
+  cancellation, partial-progress truth, and generation-bound engine lifecycle
+  under one persistent host.
 - Bounded copy-on-write session fork through `yvex session fork SOURCE CHILD
   MAXIMUM_SHARED_BYTES`: immutable committed state pages are shared while token,
   RNG, decoder, transcript and conversation state remain independently mutable.
@@ -197,7 +198,7 @@ change. Git history preserves implementation chronology.
   native tokenizer/conditioning pipeline under one identity-bearing YVEX
   interactive preset. The removed hardcoded questionnaire no longer parses
   creative words or numbers as execution controls; progress is server-authored
-  control state and successful protocol-v12 turns carry a typed media result.
+  control state and current protocol-v13 turns carry a typed media result.
 - Composite artifact startup now reuses the generic verified-reopen authority
   independently for every component. Cold or invalid-cache opens fully verify
   and publish or repair receipts, unchanged warm opens avoid complete payload
@@ -216,9 +217,10 @@ change. Git history preserves implementation chronology.
 - Terminal-bound one-shot generation now renders explicit reasoning and final
   output as distinct blocks and flushes the completed model stream before
   metrics. Redirected `run` output retains its exact canonical byte stream.
-- Model hosting is now the explicit foreground `yvex server MODEL [--ctx N]`
-  operation. Status, model, memory, logs and shutdown use the same public
-  `server` noun; `server log [--json]` is the sole observability stream.
+- Model hosting now uses the explicit foreground `yvex server` host plus
+  `server load MODEL` and `server unload MODEL`. Status, engine inventory,
+  memory, logs and shutdown use the same public `server` noun;
+  `server log [--json]` is the sole observability stream.
 - Generation plan ABI v5 now binds the compiled workload-profile identity, so
   CUDA phase-roofline evidence validates against its actual workload instead
   of being rejected against the distinct per-request profiling identity.

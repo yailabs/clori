@@ -24,7 +24,7 @@ External consumers may include the convenience umbrella:
 ```
 
 Production YVEX code includes the exact domain header it consumes. The umbrella
-contains these twelve installed domain headers:
+contains these fifteen installed domain headers:
 
 | Header | Stable domain |
 | --- | --- |
@@ -32,11 +32,14 @@ contains these twelve installed domain headers:
 | `<yvex/source.h>` | source provenance, accounts, manifests, native tensor inventory |
 | `<yvex/gguf.h>` | bounded GGUF v3 parsing, metadata, tensor directory, layout facts |
 | `<yvex/artifact.h>` | immutable file snapshots, identity, integrity and admission |
-| `<yvex/model.h>` | dtypes, tensor roles, descriptors, materialized-weight views |
+| `<yvex/model.h>` | artifact-neutral dtypes, tensor roles and model descriptors |
+| `<yvex/catalog.h>` | remote-provider, acquired-source and local-package catalog records |
+| `<yvex/materialization.h>` | backend-owned materialized-weight lifecycle and views |
 | `<yvex/qtype.h>` | canonical GGUF qtype identity and storage geometry |
 | `<yvex/quant.h>` | quantization policy, job and calibration manifests |
 | `<yvex/graph.h>` | generic graph, planning and memory-plan contracts |
 | `<yvex/backend.h>` | backend admission, device tensors and primitive dispatch |
+| `<yvex/provider.h>` | transport-neutral application request and result semantics |
 | `<yvex/tokenizer.h>` | tokenizer views, tokenization and prompt rendering |
 | `<yvex/registry.h>` | local model registry and typed reference resolution |
 | `<yvex/server.h>` | local protocol, runtime host, sessions, telemetry and thin client lifecycle |
@@ -133,8 +136,14 @@ profile, and live runtime model are three distinct facts.
 ## Model, Materialization, And Backend
 
 `<yvex/model.h>` exposes canonical dtype, tensor-role and model-descriptor
-facts. Materialized-weight objects describe bounded backend-owned storage; their
-presence does not imply complete runtime-model residency.
+facts. `<yvex/materialization.h>` separately owns materialized-weight objects
+that describe bounded backend-owned storage; their presence does not imply
+complete runtime-model residency.
+
+`<yvex/catalog.h>` keeps provider records, acquired local sources, and admitted
+local packages as separate record types. A CLI or future GUI may join those
+records with live engine observations, but no catalog record acquires server or
+engine authority.
 
 `<yvex/backend.h>` exposes backend discovery, capability facts, device tensor
 lifecycle and admitted primitives. Backend code consumes typed operations and

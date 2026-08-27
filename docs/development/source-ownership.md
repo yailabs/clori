@@ -26,6 +26,9 @@ src/source/              source manifests, provenance, inventory, payload trust/
 src/model/target/        generic target catalogs, gates and qtype reports
 src/model/families/      family architecture, coverage and lowering recipes
 src/model/artifacts/     model registry serialization, references and gates
+src/model/catalog.c      distinct local source/package catalog records
+src/model/remote.c       provider-neutral remote model and representation records
+src/model/materialization.c backend-owned weight materialization lifecycle
 src/model/               core model tables and artifact-neutral compilation
 src/gguf/                GGUF parser plus target ABI/writer/roundtrip owners
 src/artifact/            artifact IO, identity, integrity, descriptor gates
@@ -131,8 +134,10 @@ domain algorithms. No writer owns command output.
 - GGUF owns container ABI, metadata ABI, tensor_info ABI, canonical qtype
   identity and row-aware storage geometry, ranges, reader, writer, roundtrip,
   emitted names, emitted layout, descriptor, and typed format facts.
-- Artifact owns YVEX artifact descriptors, materialization boundary, roundtrip
-  gates, identity, integrity, and artifact reports.
+- Artifact owns YVEX artifact descriptors, bounded artifact-range
+  materialization, roundtrip gates, identity, integrity, and artifact reports.
+- Model materialization owns backend weight-table construction and lifecycle;
+  it does not change semantic or package identity.
 - Graph physical execution owns stable terminal consumer, package layout,
   canonical qtype, encoded range, and persisted numerical-obligation facts.
 - Model owns runtime-descriptor projection. Runtime imports binding/package
@@ -179,8 +184,9 @@ domain algorithms. No writer owns command output.
 | Owner | Boundary |
 | --- | --- |
 | `src/artifact/descriptor.c` | YVEX artifact descriptor facts |
-| `src/artifact/materialize.c` | admitted artifact materialization, range binding, and lifecycle |
+| `src/artifact/materialize.c` | admitted artifact-range planning, binding, and session lifecycle |
 | `src/artifact/roundtrip_gate.c` | emitted artifact roundtrip gate |
+| `src/model/materialization.c` | backend-owned weight-table materialization and cleanup |
 
 ## Runtime ownership map
 
@@ -191,11 +197,13 @@ domain algorithms. No writer owns command output.
 | `src/runtime/binding.c` | transactional, content-addressed runtime-binding serialization and admission |
 | `src/runtime/specialization.c` | deployment implementation class, hardware capability, admitted execution envelope, and specialization identity |
 | `src/runtime/residency.c` | typed package mappings, prepared/resident engine resources, accounting and model-lifetime sharing |
+| `src/runtime/resource.c` | generation-bound resource catalog, dependencies, borrows, readiness, accounting, eviction and release |
 | `src/runtime/scheduler.c` | one engine-owned ready-work and compatible-operation scheduling authority |
 | `src/runtime/state_residency.c` | session persistent-state banks, CUDA paging, publication, rollback, reset and invalidation |
 | `src/runtime/graph.c` | execution descriptors, phase/mode dispatch, reusable workspace, and transactional publication |
 | `src/runtime/benchmark.c` | identity-bound runtime timing, baseline, CSV, and deterministic SVG serialization |
-| `src/graph/execution.c` | Physical Execution IR v5 package/storage facts, deterministic identity, validation, and device-view admission |
+| `src/graph/execution.c` | Physical Execution IR v5 package/storage facts, deterministic identity and validation |
+| `src/graph/device_view.c` | compact checked device-value view admission without model-policy reconstruction |
 | `src/graph/worklist.c` | deterministic execution-batch sealing, expert-major worklist construction, validation, identity, and observation aggregation |
 | `src/graph/candidate.c` | prefix-addressable attention candidate deltas and exact accepted-prefix projection |
 | `src/graph/state.c` | committed/candidate persistent-state transactions, prefix promotion, rollback and state identity |

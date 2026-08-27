@@ -33,6 +33,12 @@ and useful with zero loaded engines. Host stop refuses new connections, drains
 bounded client work, closes every engine, releases listeners, and then
 terminates the process.
 
+Engine count has three separate bounds. The implementation safety maximum is a
+memory/indexing guard, `--max-engines` selects the configured host-slot limit,
+and live package/resource admission decides how many engines can actually fit.
+Host status reports the configured maximum and current population; neither fact
+changes model or package meaning.
+
 A client connection is not a session. A model engine is not the server.
 Disconnecting a client, closing a session, or unloading one engine does not
 stop the host.
@@ -120,10 +126,21 @@ Sequence state, reusable workspace, and transient allocations are session or
 execution resources, not model-package meaning. Live free bytes may admit or
 refuse a resource action but never enter semantic/package identity.
 
-The current contract does not promise arbitrary per-tensor prepared views or
-independent eviction. A future selective resource must declare package
-provenance, specialization, numerical compatibility, bytes, consumers,
-lifecycle, and cleanup before it becomes admissible.
+Each engine generation owns a bounded resource catalog. Canonical mappings,
+component resources, prepared tensors/groups/layouts, backend handles,
+executable caches, sequence state, workspace, and temporaries are distinct
+entry kinds. Every entry declares package provenance, specialization and
+admission provenance where applicable, numerical class, byte classes,
+dependency, lifetime, readiness, borrows, release behavior, and eviction
+eligibility. Stale generations refuse. Referenced entries and entries with live
+dependents cannot be released.
+
+Evicting a prepared entry releases only its owned bytes and invalidates its
+process-local resource handle. The admitted package mapping and package
+identity remain unchanged, so an equivalent entry may be prepared again from
+the same package and specialization facts. The contract admits this lifecycle;
+it does not claim that a retained optimized DeepSeek selective layout or an
+automatic eviction policy currently exists.
 
 ## Session lifecycle and routing
 

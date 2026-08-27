@@ -41,7 +41,7 @@ unavailable exact implementations fail closed.
 make -j4 all
 ```
 
-### 2. Find a local model profile
+### 2. Find or prepare a model profile
 
 ```sh
 ./yvex model list
@@ -49,7 +49,20 @@ make -j4 all
 ```
 
 Use an alias printed by `model list` whose startup profile is complete. If no
-suitable profile exists, follow the runbook's
+suitable profile exists, discover a remote representation before acquiring an
+exact revision:
+
+```sh
+./yvex model search "MODEL"
+./yvex model inspect OWNER/REPOSITORY --revision REVISION
+./yvex model acquire --repo OWNER/REPOSITORY --family FAMILY \
+  --name LOCAL_NAME --revision EXACT_REVISION --include 'PAYLOAD_PATTERN'
+```
+
+Acquisition creates local source truth, not a ready engine package. Follow the
+runbook's
+[discovery and preparation procedure](docs/operator-runbook.md#discover-acquire-and-prepare-a-model)
+or, for an already prepared external package, its
 [registration procedure](docs/operator-runbook.md#registering-an-existing-model).
 
 ### 3. Start the persistent host
@@ -157,7 +170,8 @@ YVEX does not currently claim:
 - public or remote serving, authentication, TLS, or remote security;
 - complete OpenAI API or another provider compatibility surface;
 - global ready-sequence continuous batching or distributed serving;
-- independently evictable selective prepared-weight layouts;
+- a retained optimized selective DeepSeek weight layout or automatic
+  prepared-resource eviction policy;
 - restart-persistent engine instances or automatic resource-driven engine swap;
 - complete accelerator residency, device-side stochastic sampling, or tokenizer execution;
 - optimized DSpark execution or production load-aware confidence scheduling;
