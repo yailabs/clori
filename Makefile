@@ -80,7 +80,7 @@
 	test-artifact-live-structure test-artifact-live test-transform-ir-live-plan \
 	test-source-payload-live-plan test-source-payload-live test-gguf-artifact-abi \
 	test-gguf-layout-integrity test-gguf-qtype-abi test-layout test-code-natural \
-	test-project-control test-docs-surface \
+	test-project-control test-public-abi test-docs-surface \
 	test-documentation-architecture test-surface test-source-ownership \
 	test-repository-layout test-architecture-boundaries smoke check check-docs \
 	check-guardrails clean
@@ -1498,6 +1498,9 @@ test-code-natural: tests/test_code_natural.sh
 
 test-project-control: tests/test_project_control.sh ROADMAP.md CONTRIBUTING.md
 	sh tests/test_project_control.sh
+
+test-public-abi: tests/test_public_abi.py
+	python3 tests/test_public_abi.py
 
 test-docs-surface: $(YVEX_BIN) tests/test_docs_surface.sh
 	sh tests/test_docs_surface.sh

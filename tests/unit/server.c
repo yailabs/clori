@@ -21,7 +21,7 @@
 static void test_options(yvex_server_options *options)
 {
     memset(options, 0, sizeof(*options));
-    options->schema_version = YVEX_SERVER_OPTIONS_SCHEMA_V3;
+    options->schema_version = YVEX_SERVER_OPTIONS_SCHEMA_CURRENT;
     options->socket_path = "/tmp/yvex-test-host/yvexd.sock";
     options->request_queue_capacity = 2u;
     options->worker_count = 1u;
@@ -417,10 +417,12 @@ static int test_model_open_refusal(void)
     yvex_error err;
     int rc;
     test_options(&options);
-    options.schema_version = 1u;
+    options.schema_version = YVEX_SERVER_OPTIONS_SCHEMA_V3;
     rc = yvex_server_create(&server, &options, &err);
-    YVEX_TEST_ASSERT(rc == YVEX_ERR_INVALID_ARG && !server,
-                     "old server-options schema refuses");
+    YVEX_TEST_ASSERT(rc == YVEX_ERR_INVALID_ARG && !server &&
+                         strstr(yvex_error_message(&err),
+                                "unsupported server-options schema") != NULL,
+                     "legacy v3 server-options layout refuses before reinterpretation");
     test_options(&options);
     options.socket_path = "/tmp/yvex-unsafe.sock";
     rc = yvex_server_create(&server, &options, &err);

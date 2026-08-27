@@ -117,6 +117,13 @@
       "reason": "text conversion and conversation changes require exact roundtrip and complete text-path evidence"
     },
     {
+      "id": "public-abi",
+      "patterns": ["include/yvex/*.h", "tests/test_public_abi.py"],
+      "lanes": ["structural"],
+      "tests": ["structural.public-abi", "structural.source-layout"],
+      "reason": "installed ABI changes require explicit version decisions and C/C++ layout qualification"
+    },
+    {
       "id": "protocol-provider-api",
       "patterns": ["src/provider/**", "src/server/protocol.c", "include/yvex/provider.h", "include/yvex/protocol.h", "include/yvex/api.h"],
       "lanes": ["fast", "runtime", "sanitizer"],
@@ -132,7 +139,7 @@
     },
     {
       "id": "server",
-      "patterns": ["src/server/**", "include/yvex/internal/server.h"],
+      "patterns": ["src/server/**", "include/yvex/server.h", "include/yvex/internal/server.h"],
       "lanes": ["fast", "runtime", "sanitizer"],
       "tests": ["integration.openai", "integration.repl", "integration.tiny-vertical"],
       "reason": "server changes require process lifecycle, protocol, cancellation, and cleanup evidence"

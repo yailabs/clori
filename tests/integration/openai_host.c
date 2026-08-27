@@ -66,7 +66,8 @@ static int send_status(int fd, const yvex_client_request *request,
 {
     yvex_client_message message;
     message_base(&message, YVEX_CLIENT_MESSAGE_STATUS, request);
-    message.runtime.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
+    message.runtime.schema_version = YVEX_SERVER_SUMMARY_SCHEMA_V1;
+    message.runtime.metrics.schema_version = YVEX_RUNTIME_METRICS_SCHEMA_VERSION;
     message.runtime.status = YVEX_SERVER_STATUS_READY;
     message.runtime.host_ready = 1;
     message.runtime.engine_count = 1u;
@@ -127,7 +128,8 @@ static int send_console_status(int fd, const yvex_client_request *request,
 {
     yvex_client_message message;
     message_base(&message, YVEX_CLIENT_MESSAGE_CONSOLE_STATUS, request);
-    message.runtime.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
+    message.runtime.schema_version = YVEX_SERVER_SUMMARY_SCHEMA_V1;
+    message.runtime.metrics.schema_version = YVEX_RUNTIME_METRICS_SCHEMA_VERSION;
     message.runtime.status = YVEX_SERVER_STATUS_READY;
     message.runtime.host_ready = 1;
     message.runtime.engine_count = 1u;
@@ -137,7 +139,7 @@ static int send_console_status(int fd, const yvex_client_request *request,
     message.runtime.metrics.current_rss_bytes = 3ull * 1073741824ull;
     message.runtime.metrics.mapped_artifact_bytes = 2ull * 1073741824ull;
     message.runtime.metrics.resident_device_bytes = 1073741824ull;
-    message.console.schema_version = 1u;
+    message.console.schema_version = YVEX_CONSOLE_STATUS_SCHEMA_V1;
     message.console.backend = YVEX_BACKEND_KIND_CUDA;
     message.console.session_state = YVEX_SERVER_SESSION_READY;
     message.console.generation_phase = YVEX_CLIENT_PHASE_IDLE;

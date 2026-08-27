@@ -1695,7 +1695,7 @@ int yvex_server_sessions_console_status(server_session_registry *registry,
                        "unknown session");
         return YVEX_ERR_STATE;
     }
-    status->schema_version = 1u;
+    status->schema_version = YVEX_CONSOLE_STATUS_SCHEMA_V1;
     status->session_available = 1;
     status->attached = session->attached_clients != 0u;
     status->cancel_requested = atomic_load_explicit(&session->cancel_requested,

@@ -23,7 +23,6 @@
 #include <unistd.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/engine_scheduler.h>
-#define SERVER_SCHEMA_V1 1u
 #define SERVER_TELEMETRY_CAPACITY 4096u
 #define SERVER_CLIENT_CAPACITY 64u
 typedef struct server_work_item {
@@ -122,8 +121,14 @@ static int server_options_admit(yvex_server *server,
                                 yvex_error *err)
 {
     char canonical[YVEX_SERVER_SOCKET_PATH_CAP];
-    if (!options || options->schema_version != YVEX_SERVER_OPTIONS_SCHEMA_V3 ||
-        !options->request_queue_capacity || !options->worker_count ||
+    if (!options)
+        return server_refuse(err, YVEX_ERR_INVALID_ARG,
+                             "runtime-host options are required");
+    /* Classify the public layout before reading any field absent from legacy v3. */
+    if (options->schema_version != YVEX_SERVER_OPTIONS_SCHEMA_CURRENT)
+        return server_refuse(err, YVEX_ERR_INVALID_ARG,
+                             "unsupported server-options schema");
+    if (!options->request_queue_capacity || !options->worker_count ||
         options->worker_count > SERVER_CLIENT_CAPACITY ||
         options->maximum_engines > YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES ||
         options->trace_level > YVEX_SERVER_TRACE_FULL ||
@@ -230,7 +235,7 @@ int yvex_server_create(yvex_server **out, const yvex_server_options *options,
         return rc;
     }
     memset(&server->summary, 0, sizeof(server->summary));
-    server->summary.schema_version = SERVER_SCHEMA_V1;
+    server->summary.schema_version = YVEX_SERVER_SUMMARY_SCHEMA_V1;
     server->summary.status = YVEX_SERVER_STATUS_CONFIGURED;
     server->summary.request_queue_capacity = admitted->request_queue_capacity;
     server->summary.maximum_engines = admitted->maximum_engines;
@@ -620,7 +625,7 @@ static int console_status_message(yvex_server *server,
         server->engines, request->model_alias, request->engine_generation,
         &lease, &engine, err);
     if (rc != YVEX_OK) return rc;
-    message->console.schema_version = 1u;
+    message->console.schema_version = YVEX_CONSOLE_STATUS_SCHEMA_V1;
     message->console.runtime_ready = summary.host_ready && engine.execution_ready;
     message->console.backend = engine.backend;
     message->console.context_capacity = engine.context_capacity;

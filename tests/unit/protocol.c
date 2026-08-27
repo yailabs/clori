@@ -352,7 +352,8 @@ static int test_message_roundtrip(void)
     source.status = YVEX_OK;
     source.request_number = 9u;
     strcpy(source.session_name, "session-a");
-    source.runtime.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
+    source.runtime.schema_version = YVEX_SERVER_SUMMARY_SCHEMA_V1;
+    source.runtime.metrics.schema_version = YVEX_RUNTIME_METRICS_SCHEMA_VERSION;
     source.runtime.status = YVEX_SERVER_STATUS_READY;
     strcpy(source.runtime.socket_path, "/tmp/yvex.sock");
     source.runtime.host_ready = 1;
@@ -520,7 +521,7 @@ static int test_message_roundtrip(void)
     source.confidence_logit_mean = 0.75;
     strcpy(source.speculation_policy_identity,
            "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd");
-    source.console.schema_version = 1u;
+    source.console.schema_version = YVEX_CONSOLE_STATUS_SCHEMA_V1;
     source.console.backend = YVEX_BACKEND_KIND_CUDA;
     source.console.session_state = YVEX_SERVER_SESSION_READY;
     source.console.generation_phase = YVEX_CLIENT_PHASE_DECODE;
@@ -539,7 +540,8 @@ static int test_message_roundtrip(void)
     source.console.selected_model_available = 1;
     source.console.explicit_reasoning_channel_supported = 1;
     source.console.reasoning_policy = YVEX_REASONING_MAXIMUM;
-    source.runtime.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
+    source.runtime.schema_version = YVEX_SERVER_SUMMARY_SCHEMA_V1;
+    source.runtime.metrics.schema_version = YVEX_RUNTIME_METRICS_SCHEMA_VERSION;
     source.runtime.status = YVEX_SERVER_STATUS_READY;
     source.runtime.host_ready = 1;
     source.runtime.maximum_engines = 4u;

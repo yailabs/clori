@@ -701,7 +701,7 @@ int yvex_server_media_registry_console_status(
         return media_refuse(err, YVEX_ERR_STATE, "unknown media session");
     }
     memset(partial, 0, sizeof(*partial));
-    status->schema_version = 1u;
+    status->schema_version = YVEX_CONSOLE_STATUS_SCHEMA_V1;
     status->session_available = 1;
     status->attached = session->attached_clients != 0ull;
     status->session_state = session->state;

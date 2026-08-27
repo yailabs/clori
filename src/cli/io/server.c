@@ -377,7 +377,7 @@ static int media_prepare(const cli_server_profile *profile,
 static void host_options_defaults(yvex_server_options *options)
 {
     memset(options, 0, sizeof(*options));
-    options->schema_version = YVEX_SERVER_OPTIONS_SCHEMA_V3;
+    options->schema_version = YVEX_SERVER_OPTIONS_SCHEMA_CURRENT;
     options->request_queue_capacity = 16u;
     options->worker_count = 1u;
     options->maximum_engines = YVEX_SERVER_DEFAULT_MAXIMUM_ENGINES;

@@ -1337,8 +1337,13 @@ int yvex_protocol_message_encode(const yvex_client_message *message,
     if (!message || !output || !byte_count ||
         message->schema_version != YVEX_LOCAL_PROTOCOL_VERSION ||
         !message_fields_valid(message) ||
+        ((message->kind == YVEX_CLIENT_MESSAGE_STATUS ||
+          message->kind == YVEX_CLIENT_MESSAGE_CONSOLE_STATUS) &&
+         (message->runtime.schema_version != YVEX_SERVER_SUMMARY_SCHEMA_V1 ||
+          message->runtime.metrics.schema_version !=
+              YVEX_RUNTIME_METRICS_SCHEMA_VERSION)) ||
         (message->kind == YVEX_CLIENT_MESSAGE_CONSOLE_STATUS &&
-         message->console.schema_version != 1u) ||
+         message->console.schema_version != YVEX_CONSOLE_STATUS_SCHEMA_V1) ||
         message->byte_count > sizeof(message->bytes))
         return protocol_refuse(err, YVEX_ERR_INVALID_ARG,
                                "complete bounded server message is required");
@@ -1917,9 +1922,9 @@ int yvex_protocol_message_decode(const unsigned char *input,
                                "bounded message bytes and output are required");
     memset(&candidate, 0, sizeof(candidate));
     candidate.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
-    candidate.runtime.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
+    candidate.runtime.schema_version = YVEX_SERVER_SUMMARY_SCHEMA_V1;
     candidate.engine.schema_version = YVEX_SERVER_ENGINE_SCHEMA_V1;
-    candidate.console.schema_version = 1u;
+    candidate.console.schema_version = YVEX_CONSOLE_STATUS_SCHEMA_V1;
     candidate.event.schema_version = YVEX_RUNTIME_EVENT_SCHEMA_VERSION;
     while ((next = reader_next(&reader, &tag, &bytes, &count)) > 0 && valid) {
         int field = message_base_field(&candidate, tag, bytes, count,

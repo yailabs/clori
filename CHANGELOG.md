@@ -183,6 +183,11 @@ change. Git history preserves implementation chronology.
 
 ### Changed
 
+- Advanced the installed `yvex_server_options` ABI to schema v4 for the
+  `maximum_engines` field added by persistent multi-engine hosting. The
+  historical v3 identity remains explicit and is refused before legacy bytes
+  can be reinterpreted; a deterministic C/C++ guard now binds current
+  versioned public records to their declared layouts.
 - Model hosting is now a persistent zero-engine `yvex server` process. Explicit
   `server load`, `server unload`, and `server models` operations manage
   identity-bound engine generations without restarting the private protocol or

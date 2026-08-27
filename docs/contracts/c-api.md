@@ -63,6 +63,32 @@ structures borrow pointer fields for the duration of a call. An opaque object
 returned through an output pointer is caller-owned until its matching close or
 release function runs.
 
+## Installed ABI Versioning
+
+A versioned installed record is identified by its C type and schema value.
+One such pair names one field layout and semantic contract. A binary layout or
+incompatible semantic change advances that record's schema; it does not advance
+the private local protocol unless the wire contract also changes. Internal
+records rebuilt with the binary do not acquire public schema versions merely
+because their implementation changes.
+
+`yvex_server_options` schema v4 is the current host-options contract. It adds
+`maximum_engines` between worker capacity and listener policy, preserving the
+separate implementation ceiling, configured engine capacity, and actual
+resource admission. The public v3 constant remains as historical source
+identity, but `yvex_server_create` refuses v3 before reading any field absent
+from its legacy layout. Repository callers use
+`YVEX_SERVER_OPTIONS_SCHEMA_CURRENT`; there is no binary v3 reinterpretation.
+
+The installed catalog split introduced unversioned pre-v0.1 source/API
+migrations rather than assigning an existing schema identity to new layouts:
+remote records, local source records, local package records, and live engine
+observations now have distinct owners. Graph and materialization declarations
+moved to their installed domain headers without changing their layouts. The
+public ABI guard binds every explicitly versioned installed record to a
+comment-insensitive declaration signature and compiler-checked 64-bit C/C++
+layout facts. Changing one requires an explicit schema and migration decision.
+
 ## Status, Failure, And Publication
 
 Public functions return `YVEX_OK` on success and a typed status otherwise.
@@ -197,7 +223,7 @@ to PEIR v5; an unsupported legacy derived-layout requirement refuses. Bindings
 v7 through v13 remain explicit rebuild boundaries.
 Hardware-profile,
 workload-profile, capacity-plan and phase-roofline schemas begin at v1 as
-internal contracts. Server options schema v3 owns host/listener policy
+internal contracts. Server options schema v4 owns host/listener policy
 independently from `yvex_server_engine_options`; engine schema v1 owns alias,
 package, backend, mode, capacity, memory, and generation facts.
 The source-authored conversation boundary admits provider request/wire schema
