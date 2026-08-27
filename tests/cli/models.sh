@@ -419,7 +419,8 @@ import json
 import sys
 
 catalog = json.load(open(sys.argv[1], encoding="utf-8"))
-assert catalog["schema"] == "yvex.remote-model-catalog.v2"
+assert catalog["schema"] == "yvex.model-catalog-projection.v1"
+assert catalog["authorities"] == ["remote-provider", "local-catalog"]
 models = catalog["models"]
 assert models[0]["repository"] == "MiniMaxAI/MiniMax-H3"
 assert models[0]["kind"] == "full model"
@@ -460,7 +461,7 @@ import json
 import sys
 
 catalog = json.load(open(sys.argv[1], encoding="utf-8"))
-assert catalog["schema"] == "yvex.remote-model-catalog.v2"
+assert catalog["schema"] == "yvex.model-catalog-projection.v1"
 assert [model["repository"] for model in catalog["models"]] == [
     "community/MiniMax-H3-finetune",
     "fal/MiniMax-H3-Realism-People-LoRA",

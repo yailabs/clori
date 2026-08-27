@@ -67,7 +67,6 @@ static yvex_local_model *local_catalog_add(yvex_local_model_catalog *catalog)
     if (!local_catalog_reserve(catalog, catalog->count + 1u)) return NULL;
     entry = &catalog->entries[catalog->count++];
     memset(entry, 0, sizeof(*entry));
-    local_copy(entry->engine_state, sizeof(entry->engine_state), "not-observed");
     return entry;
 }
 
@@ -161,7 +160,6 @@ static int local_source_record_add(yvex_local_model_catalog *catalog,
     entry = local_catalog_add(catalog);
     if (!entry) return local_refuse(err, YVEX_ERR_NOMEM, "local catalog allocation failed");
     entry->kind = YVEX_LOCAL_MODEL_ACQUIRED_SOURCE;
-    local_copy(entry->engine_state, sizeof(entry->engine_state), "not-applicable");
     local_copy(entry->name, sizeof(entry->name), target);
     local_copy(entry->family, sizeof(entry->family), family);
     local_copy(entry->provider, sizeof(entry->provider), provider);
@@ -252,7 +250,6 @@ static int local_source_manifest_add(yvex_local_model_catalog *catalog,
     local_copy(entry->repository, sizeof(entry->repository), repository);
     local_copy(entry->revision, sizeof(entry->revision), revision);
     local_copy(entry->representation, sizeof(entry->representation), "safetensors-source");
-    local_copy(entry->engine_state, sizeof(entry->engine_state), "not-applicable");
     local_copy(entry->path, sizeof(entry->path), source_path);
     entry->size_bytes = size;
     entry->size_known = size != 0u;

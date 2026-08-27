@@ -571,7 +571,9 @@ static int command_models_remote(int arg_count, char **args)
 {
     yvex_cli_model_inspect_options cli;
     yvex_remote_inspect_options options;
+    yvex_local_catalog_options local_options;
     yvex_remote_catalog *catalog = NULL;
+    yvex_local_model_catalog *local_catalog = NULL;
     yvex_error err;
     yvex_account_provider provider;
     int rc;
@@ -583,12 +585,19 @@ static int command_models_remote(int arg_count, char **args)
     options.provider = provider;
     options.repository = cli.repository;
     options.revision = cli.revision;
-    options.cli_override = cli.cli;
-    options.models_root = cli.models_root;
     yvex_error_clear(&err);
     rc = yvex_remote_model_inspect(&catalog, &options, &err);
-    if (rc != YVEX_OK) return print_yvex_error(&err, exit_for_status(rc));
-    rc = yvex_remote_catalog_render(stdout, catalog, cli.output_mode, 1);
+    memset(&local_options, 0, sizeof(local_options));
+    local_options.models_root = cli.models_root;
+    if (rc == YVEX_OK)
+        rc = yvex_local_model_catalog_open(&local_catalog, &local_options, &err);
+    if (rc != YVEX_OK) {
+        yvex_remote_catalog_close(catalog);
+        return print_yvex_error(&err, exit_for_status(rc));
+    }
+    rc = yvex_remote_catalog_render(stdout, catalog, local_catalog,
+                                    cli.output_mode, 1);
+    yvex_local_model_catalog_close(local_catalog);
     yvex_remote_catalog_close(catalog);
     if (rc != YVEX_OK) {
         yvex_error_set(&err, rc, "model_inspect", "cannot render remote model catalog");
@@ -601,7 +610,9 @@ static int command_models_search(int arg_count, char **args)
 {
     yvex_cli_model_search_options cli;
     yvex_remote_search_options options;
+    yvex_local_catalog_options local_options;
     yvex_remote_catalog *catalog = NULL;
+    yvex_local_model_catalog *local_catalog = NULL;
     yvex_error err;
     yvex_account_provider provider;
     int rc;
@@ -618,14 +629,21 @@ static int command_models_search(int arg_count, char **args)
     options.query = cli.query;
     options.author = cli.author;
     options.filter = cli.filter;
-    options.cli_override = cli.cli;
-    options.models_root = cli.models_root;
     options.page = cli.page;
     options.page_size = cli.page_size;
     yvex_error_clear(&err);
     rc = yvex_remote_model_search(&catalog, &options, &err);
-    if (rc != YVEX_OK) return print_yvex_error(&err, exit_for_status(rc));
-    rc = yvex_remote_catalog_render(stdout, catalog, cli.output_mode, 0);
+    memset(&local_options, 0, sizeof(local_options));
+    local_options.models_root = cli.models_root;
+    if (rc == YVEX_OK)
+        rc = yvex_local_model_catalog_open(&local_catalog, &local_options, &err);
+    if (rc != YVEX_OK) {
+        yvex_remote_catalog_close(catalog);
+        return print_yvex_error(&err, exit_for_status(rc));
+    }
+    rc = yvex_remote_catalog_render(stdout, catalog, local_catalog,
+                                    cli.output_mode, 0);
+    yvex_local_model_catalog_close(local_catalog);
     yvex_remote_catalog_close(catalog);
     if (rc != YVEX_OK) {
         yvex_error_set(&err, rc, "model_search", "cannot render remote model catalog");
@@ -655,7 +673,7 @@ static const char *local_engine_state(const yvex_local_model *model,
     unsigned long long index;
 
     if (model->kind != YVEX_LOCAL_MODEL_PACKAGE) return "not-applicable";
-    if (!observation || !observation->host_observed) return model->engine_state;
+    if (!observation || !observation->host_observed) return "not-observed";
     for (index = 0u; index < observation->count; ++index)
         if (!strcmp(model->name, observation->engines[index].alias))
             return (unsigned int)observation->engines[index].state <

@@ -746,6 +746,20 @@ int yvex_test_source_verify(void)
                                     yvex_source_release_identity()) &&
             strcmp(path, "/models/hf/deepseek/DeepSeek-V4-Flash-DSpark") == 0,
         "source owner exposes the exact release identity and canonical path");
+    YVEX_TEST_ASSERT(
+        yvex_source_target_identity_find_repository(
+                YVEX_SOURCE_RELEASE_REPOSITORY) ==
+                yvex_source_release_identity() &&
+            strcmp(yvex_source_target_identity_find(
+                       YVEX_SOURCE_MINIMAX_H3_TARGET_ID)
+                       ->upstream_repo_id,
+                   YVEX_SOURCE_MINIMAX_H3_REPOSITORY) == 0 &&
+            strcmp(yvex_source_target_identity_find_repository(
+                       YVEX_SOURCE_MINIMAX_H3_REPOSITORY)
+                       ->upstream_revision,
+                   YVEX_SOURCE_MINIMAX_H3_REVISION) == 0 &&
+            !yvex_source_target_identity_find_repository("unknown/model"),
+        "one source catalog owns qualified target repository and revision truth");
 
     system("rm -rf build/tests/source-verify");
     YVEX_TEST_ASSERT(source_verify_make_valid(root), "create valid source fixture");

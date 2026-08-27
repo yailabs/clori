@@ -46,7 +46,6 @@ typedef struct {
     const char *author;
     const char *filter;
     const char *provider;
-    const char *cli;
     const char *models_root;
     unsigned int page;
     unsigned int page_size;
@@ -58,7 +57,6 @@ typedef struct {
     const char *repository;
     const char *revision;
     const char *provider;
-    const char *cli;
     const char *models_root;
     yvex_model_catalog_output_mode output_mode;
 } yvex_cli_model_inspect_options;

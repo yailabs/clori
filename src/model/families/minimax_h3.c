@@ -1320,8 +1320,8 @@ static int source_identity_validate(yvex_minimax_h3_target *target,
     char inventory_identity[65];
 
     if (!facts || !facts->complete ||
-        strcmp(facts->repository, YVEX_MINIMAX_H3_REPOSITORY) != 0 ||
-        strcmp(facts->revision, YVEX_MINIMAX_H3_REVISION) != 0 ||
+        strcmp(facts->repository, YVEX_SOURCE_MINIMAX_H3_REPOSITORY) != 0 ||
+        strcmp(facts->revision, YVEX_SOURCE_MINIMAX_H3_REVISION) != 0 ||
         strcmp(facts->subtree, YVEX_MINIMAX_H3_SUBTREE) != 0 ||
         facts->file_count != YVEX_MINIMAX_H3_SOURCE_FILES ||
         facts->shard_count != YVEX_MINIMAX_H3_SHARDS ||
@@ -1391,8 +1391,8 @@ static int target_open(yvex_minimax_h3_target **out,
     yvex_core_text_copy(target->source_root, sizeof(target->source_root), options->source_root);
     yvex_source_acquisition_options_default(&acquisition_options);
     acquisition_options.source_root = target->source_root;
-    acquisition_options.expected_repository = YVEX_MINIMAX_H3_REPOSITORY;
-    acquisition_options.expected_revision = YVEX_MINIMAX_H3_REVISION;
+    acquisition_options.expected_repository = YVEX_SOURCE_MINIMAX_H3_REPOSITORY;
+    acquisition_options.expected_revision = YVEX_SOURCE_MINIMAX_H3_REVISION;
     acquisition_options.expected_subtree = YVEX_MINIMAX_H3_SUBTREE;
     acquisition_options.maximum_files = YVEX_MINIMAX_H3_SOURCE_FILES;
     acquisition_options.maximum_source_bytes = YVEX_MINIMAX_H3_SOURCE_BYTES;

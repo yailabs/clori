@@ -96,7 +96,7 @@ static int t2va_plan_build(yvex_minimax_h3_t2va_plan *out,
         .temporal_scale = 5.0 / 3.0, .spatial_scale = 32.0,
         .identity_domain = "yvex.minimax-h3.t2va.res-multistep-layout.v3",
         .target_identity = YVEX_MINIMAX_H3_TARGET_ID,
-        .source_revision = YVEX_MINIMAX_H3_REVISION,
+        .source_revision = YVEX_SOURCE_MINIMAX_H3_REVISION,
     };
     return yvex_runtime_av_plan_build(
         &policy, text_tokens, width, height, frames, inference_steps, out, err);
@@ -1660,7 +1660,7 @@ static int component_variant_open(yvex_component_variant_source *out,
     COPY_SUMMARY(target_id, YVEX_MINIMAX_H3_TARGET_ID);
     COPY_SUMMARY(family, "minimax-h3");
     COPY_SUMMARY(component_id, component->canonical_id);
-    COPY_SUMMARY(source_revision, YVEX_MINIMAX_H3_REVISION);
+    COPY_SUMMARY(source_revision, YVEX_SOURCE_MINIMAX_H3_REVISION);
     COPY_SUMMARY(source_snapshot_identity, source->source_snapshot_identity);
     COPY_SUMMARY(component_identity, source->component_identity);
     COPY_SUMMARY(transform_identity, source->transform_identity);
@@ -1685,7 +1685,7 @@ const yvex_component_variant_adapter *yvex_graph_minimax_h3_component_adapter(vo
         .schema_version = YVEX_PHYSICAL_VARIANT_SESSION_SCHEMA_V1,
         .target_id = YVEX_MINIMAX_H3_TARGET_ID,
         .family = "minimax-h3",
-        .source_revision = YVEX_MINIMAX_H3_REVISION,
+        .source_revision = YVEX_SOURCE_MINIMAX_H3_REVISION,
         .profile_name = "minimax-h3-source-faithful-v1",
         .candidate_profile_name = YVEX_MINIMAX_H3_TRANSFORMER_Q8_PROFILE_NAME,
         .candidate_component_id = "transformer",
@@ -1776,8 +1776,8 @@ static int minimax_source_compile(yvex_family_source_products *out,
         edges[index].lifetime = (unsigned int)source->lifetime;
     }
     composite = (yvex_semantic_composite_request){
-        .repository = YVEX_MINIMAX_H3_REPOSITORY,
-        .revision = YVEX_MINIMAX_H3_REVISION,
+        .repository = YVEX_SOURCE_MINIMAX_H3_REPOSITORY,
+        .revision = YVEX_SOURCE_MINIMAX_H3_REVISION,
         .subtree = YVEX_MINIMAX_H3_SUBTREE,
         .source_snapshot_identity = summary->source_snapshot_identity,
         .component_manifest_identity = summary->component_manifest_identity,

@@ -36,56 +36,6 @@ struct yvex_source_acquisition {
     yvex_source_acquisition_file *files;
 };
 
-static const yvex_source_target_identity release_source_identity = {
-    YVEX_SOURCE_RELEASE_TARGET_ID,
-    YVEX_SOURCE_RELEASE_FAMILY_KEY,
-    YVEX_SOURCE_RELEASE_FAMILY_DISPLAY,
-    YVEX_SOURCE_RELEASE_NAME,
-    YVEX_SOURCE_RELEASE_REPOSITORY,
-    YVEX_SOURCE_RELEASE_SOURCE_LEAF,
-    YVEX_SOURCE_RELEASE_REVISION,
-    YVEX_SOURCE_RELEASE_INDEX_PATH,
-    YVEX_SOURCE_RELEASE_INDEX_OID,
-    YVEX_SOURCE_RELEASE_INDEX_SIZE,
-    YVEX_SOURCE_RELEASE_INVENTORY_AUTHORITY,
-    YVEX_SOURCE_RELEASE_CONFIG_TYPE,
-    YVEX_SOURCE_RELEASE_CONFIG_ARCHITECTURE,
-};
-
-/*
- * Expose the immutable release source identity owned by provenance.
- *
- * Releases only resources owned by source provenance; cleanup remains deterministic.
- */
-const yvex_source_target_identity *yvex_source_release_identity(void) {
-    return &release_source_identity;
-}
-
-/*
- * Test target equality without importing model-catalog policy.
- *
- * Releases only resources owned by source provenance; cleanup remains deterministic.
- */
-int yvex_source_is_release_target(const char *target_id) {
-    return target_id && strcmp(target_id, release_source_identity.target_id) == 0;
-}
-
-/* Derive the canonical source directory for an admitted identity. */
-int yvex_source_target_path(char *out,
-                            size_t cap,
-                            const char *models_root,
-                            const yvex_source_target_identity *identity) {
-    int n;
-
-    if (!out || cap == 0u || !models_root || !models_root[0] || !identity ||
-        !identity->family_key || !identity->source_dir_leaf) {
-        return 0;
-    }
-    n = snprintf(
-        out, cap, "%s/hf/%s/%s", models_root, identity->family_key, identity->source_dir_leaf);
-    return n >= 0 && (size_t)n < cap;
-}
-
 typedef struct {
     uint32_t state[5];
     unsigned long long length;

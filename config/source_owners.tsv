@@ -47,6 +47,7 @@ include/yvex/internal/runtime_state_store.h	runtime	runtime.state_store	generic	
 include/yvex/internal/tokenizer.h	tokenizer	tokenizer.family_policy	generic	private	internal-abi	compilation,runtime,server,tokenizer	interface	none
 src/runtime/private.h	runtime	runtime.private	generic	private	internal-abi	runtime	interface	none
 include/yvex/internal/source.h	source	source.internal	generic	private	internal-abi	model,compilation	interface	none
+include/yvex/internal/source_catalog.h	source	source.catalog	generic	private	internal-abi	source,model,graph	interface	none
 include/yvex/internal/source_payload.h	source	source.payload	generic	private	internal-abi	model,compilation,cli	interface	none
 include/yvex/model.h	abi	abi.model	generic	public	public-abi	repository	interface	none
 include/yvex/provider.h	abi	abi.provider	generic	public	public-abi	repository	interface	none
@@ -127,6 +128,7 @@ src/cli/model_artifacts/private.h	cli.model_artifacts	cli.model_artifacts.privat
 src/cli/model_artifacts/prepare.c	cli.model_artifacts	cli.model_artifacts.prepare	generic	private	cli-workflow	cli.commands	implementation	none
 src/cli/model_artifacts/tensors.c	cli.model_artifacts	cli.model_artifacts.tensors	generic	private	cli-workflow	cli.commands	implementation	none
 src/cli/render/backend.c	cli.render	cli.render.backend	generic	private	typed-projection	cli.commands,cli.model_artifacts	implementation	none
+src/cli/render/catalog.c	cli.render	cli.render.catalog	generic	private	typed-projection	cli.model_artifacts	implementation	none
 src/cli/render/common.c	cli.render	cli.render.common	generic	private	typed-projection	cli.commands,cli.model_artifacts	implementation	none
 src/cli/render/graph.c	cli.render	cli.render.graph	generic	private	typed-projection	cli.commands,cli.model_artifacts	implementation	none
 src/cli/render/media.c	cli.render	cli.render.media	generic	private	typed-projection	cli.commands	implementation	none
@@ -272,6 +274,7 @@ src/server/session.c	server	server.session	generic	private	transactional-executi
 src/server/session_lifecycle.c	server	server.session_lifecycle	generic	private	resource-lifecycle	server.core,server.session	implementation	none
 src/server/state_store.c	server	server.session_state_store	generic	private	persisted-schema	server.session,tests	implementation	none
 src/server/telemetry.c	server	server.telemetry	generic	private	resource-lifecycle	server.core,server.session	implementation	none
+src/source/catalog.c	source	source.catalog	generic	private	reusable-algorithm	source,model,graph	implementation	none
 src/source/inventory.c	source	source.inventory	generic	private	reusable-algorithm	model,compilation	implementation	none
 src/core/json.c	core	core.json	generic	private	bounded-parser	source,gguf	implementation	none
 src/source/native_weights.c	source	source.native_weights	generic	private	reusable-algorithm	model,compilation	implementation	none

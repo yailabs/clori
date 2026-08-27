@@ -712,10 +712,6 @@ int model_search_options_parse(int arg_count,
             if (!model_catalog_value("model search", args[index], arg_count, args, &index,
                                      &options->filter))
                 return 2;
-        } else if (strcmp(args[index], "--cli") == 0) {
-            if (!model_catalog_value("model search", args[index], arg_count, args, &index,
-                                     &options->cli))
-                return 2;
         } else if (strcmp(args[index], "--models-root") == 0) {
             if (!model_catalog_value("model search", args[index], arg_count, args, &index,
                                      &options->models_root))
@@ -791,10 +787,6 @@ int model_remote_inspect_options_parse(int arg_count,
         } else if (strcmp(args[index], "--revision") == 0) {
             if (!model_catalog_value("model inspect", args[index], arg_count, args, &index,
                                      &options->revision))
-                return 2;
-        } else if (strcmp(args[index], "--cli") == 0) {
-            if (!model_catalog_value("model inspect", args[index], arg_count, args, &index,
-                                     &options->cli))
                 return 2;
         } else if (strcmp(args[index], "--models-root") == 0) {
             if (!model_catalog_value("model inspect", args[index], arg_count, args, &index,

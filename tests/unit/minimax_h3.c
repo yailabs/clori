@@ -434,8 +434,8 @@ static int test_semantic_composite(void)
     yvex_semantic_component components[2] = {0};
     yvex_semantic_phase_edge edges[1] = {{1u, 2u, 3u, 4u}};
     yvex_semantic_composite_request composite = {
-        .repository = YVEX_MINIMAX_H3_REPOSITORY,
-        .revision = YVEX_MINIMAX_H3_REVISION,
+        .repository = YVEX_SOURCE_MINIMAX_H3_REPOSITORY,
+        .revision = YVEX_SOURCE_MINIMAX_H3_REVISION,
         .subtree = YVEX_MINIMAX_H3_SUBTREE,
         .source_snapshot_identity = TEST_ID_A,
         .component_manifest_identity = TEST_ID_B,

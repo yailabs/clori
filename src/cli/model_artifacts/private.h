@@ -48,6 +48,7 @@ int model_local_list_options_parse(int arg_count,
                                    yvex_cli_model_list_options *options);
 int yvex_remote_catalog_render(FILE *fp,
                                const yvex_remote_catalog *catalog,
+                               const yvex_local_model_catalog *local_catalog,
                                yvex_model_catalog_output_mode mode,
                                int representations);
 int yvex_local_catalog_render(FILE *fp,

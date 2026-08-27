@@ -5,6 +5,7 @@
 #include <yvex/core.h>
 #include <yvex/source.h>
 #include <yvex/internal/media_target.h>
+#include <yvex/internal/source_catalog.h>
 #include <yvex/internal/source_payload.h>
 typedef struct yvex_transform_ir yvex_transform_ir;
 typedef struct yvex_transform_binding yvex_transform_binding;
@@ -26,9 +27,7 @@ typedef struct yvex_transformer_linear_physical_plan yvex_transformer_linear_phy
 typedef struct yvex_transformer_joint_block_result yvex_minimax_h3_omni_result;
 typedef struct yvex_transformer_joint_request yvex_minimax_h3_omni_transformer_request;
 typedef struct yvex_transformer_joint_result yvex_minimax_h3_omni_transformer_result;
-#define YVEX_MINIMAX_H3_TARGET_ID "minimax-h3-fl2va"
-#define YVEX_MINIMAX_H3_REPOSITORY "MiniMaxAI/MiniMax-H3"
-#define YVEX_MINIMAX_H3_REVISION "b8b09e34f8d2b9d1b7a51982ccb26ae2b8b9ef08"
+#define YVEX_MINIMAX_H3_TARGET_ID YVEX_SOURCE_MINIMAX_H3_TARGET_ID
 #define YVEX_MINIMAX_H3_SUBTREE "FL2VA"
 #define YVEX_MINIMAX_H3_SOURCE_TREE_IDENTITY "91972f8e4e6562562456c339b43eed1fba5f7b9d7fb13987f495b416a5109b5e"
 #define YVEX_MINIMAX_H3_SOURCE_INVENTORY_IDENTITY "c37f859ce8cccf2465adcd0e31f0d21d603ec41cccd15301c8cf467d651625e3"

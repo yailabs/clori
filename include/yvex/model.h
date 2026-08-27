@@ -296,8 +296,7 @@ typedef enum {
     YVEX_MODEL_SUPPORT_SOURCE_INGEST,
     YVEX_MODEL_SUPPORT_SEMANTIC_FAMILY,
     YVEX_MODEL_SUPPORT_PHYSICAL_INSPECTION,
-    YVEX_MODEL_SUPPORT_PACKAGE_PREPARATION,
-    YVEX_MODEL_SUPPORT_PACKAGE_READY
+    YVEX_MODEL_SUPPORT_PACKAGE_PREPARATION
 } yvex_model_support_stage;
 
 typedef struct {
@@ -316,7 +315,6 @@ typedef struct {
     int source_ingest_supported;
     int package_preparation_supported;
     int direct_admission_requires_inspection;
-    int local;
 } yvex_model_representation;
 
 typedef struct {
@@ -342,9 +340,6 @@ typedef struct {
     char base_model[YVEX_REMOTE_REPOSITORY_CAP];
     char lineage_relation[32];
     char support_reason[YVEX_REMOTE_REASON_CAP];
-    char engine_state[32];
-    char local_source_revision[YVEX_REMOTE_REVISION_CAP];
-    char local_package_revision[YVEX_REMOTE_REVISION_CAP];
     unsigned long long parameter_count;
     yvex_remote_model_kind kind;
     yvex_model_support_stage support_stage;
@@ -355,10 +350,6 @@ typedef struct {
     int parameter_count_known;
     int gated;
     int gated_known;
-    int local;
-    int local_source;
-    int local_package;
-    int local_related_revision;
     int canonical;
     int kind_provisional;
 } yvex_remote_model;
@@ -370,8 +361,6 @@ typedef struct {
     const char *query;
     const char *author;
     const char *filter;
-    const char *cli_override;
-    const char *models_root;
     unsigned int page;
     unsigned int page_size;
 } yvex_remote_search_options;
@@ -380,8 +369,6 @@ typedef struct {
     yvex_account_provider provider;
     const char *repository;
     const char *revision;
-    const char *cli_override;
-    const char *models_root;
 } yvex_remote_inspect_options;
 
 int yvex_remote_model_search(yvex_remote_catalog **out,
@@ -420,7 +407,6 @@ typedef struct {
     char representation[YVEX_REMOTE_PRECISION_CAP];
     char package_state[32];
     char verification_state[32];
-    char engine_state[32];
     char backend[32];
     char blocker[YVEX_REMOTE_REASON_CAP];
     char path[YVEX_PATH_CAP];
