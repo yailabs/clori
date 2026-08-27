@@ -270,6 +270,7 @@ $(OBJ_DIR)/src/runtime/benchmark.o: $(BUILD_COMMIT_HEADER)
 $(OBJ_DIR)/src/runtime/generation_context.o: CPPFLAGS += -I$(BUILD_DIR)/generated
 $(OBJ_DIR)/src/runtime/generation_context.o: $(BUILD_COMMIT_HEADER)
 OPERATOR_REGISTRY_CONSUMER_OBJS := $(OBJ_DIR)/src/cli/main.o \
+	$(OBJ_DIR)/src/cli/commands/graph.o \
 	$(OBJ_DIR)/src/cli/io/client.o $(OBJ_DIR)/src/cli/io/out.o \
 	$(OBJ_DIR)/src/cli/input/operator.o
 $(OPERATOR_REGISTRY_CONSUMER_OBJS): CPPFLAGS += -I$(BUILD_DIR)/generated
