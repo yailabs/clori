@@ -232,6 +232,10 @@ static int option_parse(yvex_server_options *host, const char *flag,
     else if (!strcmp(flag, "--workers"))
         return parse_u64(value, &host->worker_count) &&
                host->worker_count <= 64ull;
+    else if (!strcmp(flag, "--max-engines"))
+        return parse_u64(value, &host->maximum_engines) &&
+               host->maximum_engines <=
+                   YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES;
     else if (!strcmp(flag, "--console")) {
         if (!strcmp(value, "human")) host->console = YVEX_SERVER_CONSOLE_HUMAN;
         else if (!strcmp(value, "raw")) host->console = YVEX_SERVER_CONSOLE_RAW;
@@ -376,6 +380,7 @@ static void host_options_defaults(yvex_server_options *options)
     options->schema_version = YVEX_SERVER_OPTIONS_SCHEMA_V3;
     options->request_queue_capacity = 16u;
     options->worker_count = 1u;
+    options->maximum_engines = YVEX_SERVER_DEFAULT_MAXIMUM_ENGINES;
     options->trace_level = YVEX_SERVER_TRACE_STAGES;
     options->console = YVEX_SERVER_CONSOLE_HUMAN;
     options->openai_enabled = 1;
@@ -427,7 +432,7 @@ static void startup_announce(const yvex_server_options *options)
     printf("YVEX server · persistent host\n"
            "  engines 0/%u · parallel workers=%llu\n"
            "  local endpoint %s",
-           YVEX_SERVER_ENGINE_CAP, options->worker_count,
+           (unsigned int)options->maximum_engines, options->worker_count,
            endpoint ? endpoint : "unavailable");
     if (options->openai_enabled)
         printf(" · OpenAI 127.0.0.1:%u", (unsigned int)options->openai_port);

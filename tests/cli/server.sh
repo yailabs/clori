@@ -74,6 +74,7 @@ EOF
 contains "$OUT_DIR/help.out" 'usage: yvex server [options]'
 contains "$OUT_DIR/help.out" 'Run the persistent multi-engine host in the foreground.'
 contains "$OUT_DIR/help.out" '--workers'
+contains "$OUT_DIR/help.out" '--max-engines'
 contains "$OUT_DIR/help.out" '--openai'
 ! grep -F -- '--ctx' "$OUT_DIR/help.out" >/dev/null
 ! grep -F -- '--backend' "$OUT_DIR/help.out" >/dev/null
@@ -92,6 +93,8 @@ set +e
 backend_status=$?
 "$YVEX_BIN" server --workers 0 >"$OUT_DIR/workers.out" 2>"$OUT_DIR/workers.err"
 workers_status=$?
+"$YVEX_BIN" server --max-engines 0 >"$OUT_DIR/engines.out" 2>"$OUT_DIR/engines.err"
+engines_status=$?
 "$YVEX_BIN" server --openai remote >"$OUT_DIR/remote.out" 2>"$OUT_DIR/remote.err"
 remote_status=$?
 "$YVEX_BIN" server --openai-port 0 >"$OUT_DIR/port.out" 2>"$OUT_DIR/port.err"
@@ -103,17 +106,19 @@ set -e
 
 test "$backend_status" -eq 2
 test "$workers_status" -eq 2
+test "$engines_status" -eq 2
 test "$remote_status" -eq 2
 test "$port_status" -eq 2
 test "$duplicate_status" -eq 2
 contains "$OUT_DIR/backend.err" 'unknown flag: --backend'
 contains "$OUT_DIR/workers.err" 'invalid value for --workers: 0'
+contains "$OUT_DIR/engines.err" 'invalid value for --max-engines: 0'
 contains "$OUT_DIR/remote.err" 'invalid value for --openai: remote'
 contains "$OUT_DIR/port.err" 'invalid value for --openai-port: 0'
 contains "$OUT_DIR/duplicate.err" 'duplicate flag: --openai'
 
 HOME="$HOME_ROOT" XDG_RUNTIME_DIR="$SOCKET_ROOT" \
-    "$YVEX_BIN" server --console off --openai off --workers 2 \
+    "$YVEX_BIN" server --console off --openai off --workers 2 --max-engines 2 \
     >"$OUT_DIR/host.out" 2>"$OUT_DIR/host.err" &
 server_pid=$!
 
@@ -130,13 +135,14 @@ while test "$attempt" -lt 100; do
 done
 test "$ready" -eq 1 || fail 'persistent host did not become ready'
 contains "$OUT_DIR/host.out" 'YVEX server · persistent host'
-contains "$OUT_DIR/host.out" 'engines 0/'
+contains "$OUT_DIR/host.out" 'engines 0/2'
 contains "$OUT_DIR/host.out" 'load with `yvex server load MODEL`'
 contains "$OUT_DIR/status.json" '"protocol":13'
 contains "$OUT_DIR/status.json" '"status":2'
 contains "$OUT_DIR/status.json" '"host_ready":true'
 contains "$OUT_DIR/status.json" '"engine_count":0'
 contains "$OUT_DIR/status.json" '"loaded_engine_count":0'
+contains "$OUT_DIR/status.json" '"maximum_engines":2'
 contains "$OUT_DIR/status.json" '"workers":2'
 contains "$OUT_DIR/status.json" '"model_open_count":0'
 contains "$OUT_DIR/status.json" '"openai_enabled":false'

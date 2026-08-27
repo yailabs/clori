@@ -71,7 +71,7 @@ static int send_status(int fd, const yvex_client_request *request,
     message.runtime.host_ready = 1;
     message.runtime.engine_count = 1u;
     message.runtime.loaded_engine_count = 1u;
-    message.runtime.maximum_engines = YVEX_SERVER_ENGINE_CAP;
+    message.runtime.maximum_engines = YVEX_SERVER_DEFAULT_MAXIMUM_ENGINES;
     message.runtime.worker_count = 1u;
     message.runtime.metrics.model_open_count = 1u;
     message.runtime.metrics.artifact_open_count = 1u;
@@ -132,7 +132,7 @@ static int send_console_status(int fd, const yvex_client_request *request,
     message.runtime.host_ready = 1;
     message.runtime.engine_count = 1u;
     message.runtime.loaded_engine_count = 1u;
-    message.runtime.maximum_engines = YVEX_SERVER_ENGINE_CAP;
+    message.runtime.maximum_engines = YVEX_SERVER_DEFAULT_MAXIMUM_ENGINES;
     message.runtime.worker_count = 1u;
     message.runtime.metrics.current_rss_bytes = 3ull * 1073741824ull;
     message.runtime.metrics.mapped_artifact_bytes = 2ull * 1073741824ull;

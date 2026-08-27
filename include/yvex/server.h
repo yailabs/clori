@@ -1,5 +1,6 @@
-/* Local clients and the foreground server exchange bounded versioned frames without sharing
- * engine pointers. The server alone owns model, scheduler, queue, session, and KV lifetimes. */
+/* Local clients and the persistent host exchange bounded versioned frames without sharing
+ * engine pointers. Engine generations own executable resources and sessions; the host owns
+ * routing, external admission, transport, and configured engine capacity. */
 #ifndef YVEX_SERVER_H
 #define YVEX_SERVER_H
 #include <yvex/artifact.h>
@@ -25,7 +26,8 @@ extern "C" {
 #define YVEX_SERVER_STATE_PATH_CAP 512u
 #define YVEX_SERVER_FRAME_MAX_BYTES 1048576u
 #define YVEX_SERVER_MODEL_ALIAS_CAP 128u
-#define YVEX_SERVER_ENGINE_CAP 8u
+#define YVEX_SERVER_DEFAULT_MAXIMUM_ENGINES 8u
+#define YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES 64u
 typedef struct yvex_server yvex_server;
 typedef struct yvex_client yvex_client;
 typedef int (*yvex_server_model_loader)(
@@ -167,7 +169,7 @@ typedef struct {
 typedef struct {
     unsigned int schema_version;
     const char *socket_path;
-    unsigned long long request_queue_capacity, worker_count;
+    unsigned long long request_queue_capacity, worker_count, maximum_engines;
     unsigned long long openai_timeout_ms;
     unsigned short openai_port;
     yvex_server_trace_level trace_level;

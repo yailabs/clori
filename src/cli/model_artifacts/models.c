@@ -65,7 +65,7 @@ typedef struct {
 typedef struct {
     int host_observed;
     unsigned long long count;
-    yvex_server_engine_summary engines[YVEX_SERVER_ENGINE_CAP];
+    yvex_server_engine_summary engines[YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES];
 } models_engine_observation;
 
 #define REGISTRY_FIELD(key_, kind_, member_, fallback_)                                            \
@@ -718,7 +718,7 @@ static int local_engine_observation_capture(models_engine_observation *observati
             break;
         }
         if (message.kind != YVEX_CLIENT_MESSAGE_ENGINE ||
-            observation->count >= YVEX_SERVER_ENGINE_CAP) {
+            observation->count >= YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES) {
             rc = YVEX_ERR_FORMAT;
             yvex_error_set(err, YVEX_ERR_FORMAT, "model_list_engine_observation",
                            "server returned an invalid engine catalog");

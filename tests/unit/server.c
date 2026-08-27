@@ -260,6 +260,13 @@ static int test_configured_summary_and_event(void)
     unsigned long long frame_count = 0u;
     int rc;
     test_options(&options);
+    options.maximum_engines =
+        YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES + 1ull;
+    rc = yvex_server_create(&server, &options, &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_ERR_INVALID_ARG && server == NULL,
+        "engine-slot configuration refuses beyond the implementation safety maximum");
+    test_options(&options);
     rc = yvex_server_create(&server, &options, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && server != NULL, "configured host create");
     rc = yvex_server_get_summary(server, &summary, &err);
@@ -272,7 +279,9 @@ static int test_configured_summary_and_event(void)
                          summary.metrics.queue_capacity == 0u,
                      "empty host publishes no nonexistent execution queue");
     YVEX_TEST_ASSERT(!summary.host_ready && !summary.engine_count &&
-                         !summary.loaded_engine_count,
+                         !summary.loaded_engine_count &&
+                         summary.maximum_engines ==
+                             YVEX_SERVER_DEFAULT_MAXIMUM_ENGINES,
                      "configured host owns no implicit model engine");
     rc = yvex_server_event_next(server, 0u, 0, &event, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "process event available");
@@ -853,7 +862,7 @@ static int test_media_engine_lifecycle(void)
     yvex_server_options options;
     yvex_server_engine_options engine_options;
     yvex_server_engine_summary first, second, reloaded, unloaded;
-    yvex_server_engine_summary engines[YVEX_SERVER_ENGINE_CAP];
+    yvex_server_engine_summary engines[YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES];
     yvex_server_summary summary;
     yvex_client_message wire = {0}, decoded;
     unsigned char frame[16384];
@@ -866,6 +875,7 @@ static int test_media_engine_lifecycle(void)
                      "media host socket path");
     test_options(&options);
     options.socket_path = socket_path;
+    options.maximum_engines = 2ull;
     YVEX_TEST_ASSERT(media_options(&media, root), "media host options");
     media.request_template.text_artifact_path = fixture;
     media.request_template.transformer_artifact_path = fixture;
@@ -887,7 +897,8 @@ static int test_media_engine_lifecycle(void)
     YVEX_TEST_ASSERT(yvex_server_get_summary(server, &summary, &err) == YVEX_OK &&
                          summary.status == YVEX_SERVER_STATUS_READY &&
                          summary.host_ready && !summary.engine_count &&
-                         !summary.metrics.model_open_count,
+                         !summary.metrics.model_open_count &&
+                         summary.maximum_engines == 2ull,
                      "empty media-capable host is independently ready");
     memset(&first, 0, sizeof(first));
     YVEX_TEST_ASSERT(yvex_server_media_engine_load(
@@ -903,8 +914,15 @@ static int test_media_engine_lifecycle(void)
                          second.state == YVEX_SERVER_ENGINE_LOADED &&
                          second.generation != first.generation,
                      "host can own a second fitting engine generation");
+    engine_options.alias = "minimax-c";
+    YVEX_TEST_ASSERT(
+        yvex_server_media_engine_load(
+            server, &engine_options, &media, &unloaded, &err) ==
+            YVEX_ERR_BOUNDS,
+        "configured engine-slot capacity refuses a third engine independently of resources");
+    engine_options.alias = "minimax-b";
     YVEX_TEST_ASSERT(yvex_server_engine_snapshot(
-                         server, engines, YVEX_SERVER_ENGINE_CAP,
+                         server, engines, YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES,
                          &engine_count, &err) == YVEX_OK &&
                          engine_count == 2ull &&
                          engines[0].state == YVEX_SERVER_ENGINE_LOADED &&

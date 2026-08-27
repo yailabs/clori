@@ -523,7 +523,8 @@ int yvex_server_engine_manager_open(
 {
     server_engine_manager *manager;
     if (out) *out = NULL;
-    if (!out || !capacity || capacity > YVEX_SERVER_ENGINE_CAP ||
+    if (!out || !capacity ||
+        capacity > YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES ||
         !request_capacity || !request_workers || !request_execute || !telemetry)
         return engine_refuse(err, YVEX_ERR_INVALID_ARG,
                              "bounded engine manager inputs are required");

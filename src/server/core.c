@@ -125,6 +125,7 @@ static int server_options_admit(yvex_server *server,
     if (!options || options->schema_version != YVEX_SERVER_OPTIONS_SCHEMA_V3 ||
         !options->request_queue_capacity || !options->worker_count ||
         options->worker_count > SERVER_CLIENT_CAPACITY ||
+        options->maximum_engines > YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES ||
         options->trace_level > YVEX_SERVER_TRACE_FULL ||
         options->console > YVEX_SERVER_CONSOLE_HUMAN ||
         (options->openai_enabled &&
@@ -133,6 +134,9 @@ static int server_options_admit(yvex_server *server,
         return server_refuse(err, YVEX_ERR_INVALID_ARG,
                              "complete bounded runtime-host options are required");
     server->options = *options;
+    if (!server->options.maximum_engines)
+        server->options.maximum_engines =
+            YVEX_SERVER_DEFAULT_MAXIMUM_ENGINES;
     if (options->socket_path)
         yvex_core_text_copy(server->socket_path, sizeof(server->socket_path),
                             options->socket_path);
@@ -205,7 +209,7 @@ int yvex_server_create(yvex_server **out, const yvex_server_options *options,
             &server->telemetry, SERVER_TELEMETRY_CAPACITY, err);
     if (rc == YVEX_OK)
         rc = yvex_server_engine_manager_open(
-            &server->engines, YVEX_SERVER_ENGINE_CAP,
+            &server->engines, admitted->maximum_engines,
             admitted->request_queue_capacity, admitted->worker_count,
             model_work_execute, server, server->telemetry, err);
     if (rc == YVEX_OK)
@@ -229,7 +233,7 @@ int yvex_server_create(yvex_server **out, const yvex_server_options *options,
     server->summary.schema_version = SERVER_SCHEMA_V1;
     server->summary.status = YVEX_SERVER_STATUS_CONFIGURED;
     server->summary.request_queue_capacity = admitted->request_queue_capacity;
-    server->summary.maximum_engines = YVEX_SERVER_ENGINE_CAP;
+    server->summary.maximum_engines = admitted->maximum_engines;
     server->summary.worker_count = admitted->worker_count;
     server->summary.openai_timeout_ms = admitted->openai_timeout_ms;
     server->summary.trace_level = admitted->trace_level;
@@ -506,7 +510,7 @@ int yvex_server_start(yvex_server *server, yvex_error *err)
             server->telemetry, NULL, YVEX_SERVER_EVENT_LISTENER_READY,
             YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "listener",
             0600u, server->options.request_queue_capacity,
-            YVEX_SERVER_ENGINE_CAP, 0.0, 0.0, err);
+            server->options.maximum_engines, 0.0, 0.0, err);
     if (rc == YVEX_OK && server->openai)
         rc = yvex_server_openai_start(server->openai, err);
     if (pthread_mutex_lock(&server->state_mutex) == 0) {
@@ -520,7 +524,7 @@ int yvex_server_start(yvex_server *server, yvex_error *err)
     rc = yvex_server_telemetry_emit(
         server->telemetry, NULL, YVEX_SERVER_EVENT_RUNTIME_READY,
         YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "host",
-        0u, YVEX_SERVER_ENGINE_CAP, 0u, 0.0, 0.0, err);
+        0u, server->options.maximum_engines, 0u, 0.0, 0.0, err);
     return rc;
 }
 
@@ -733,11 +737,11 @@ static int engine_list_send(yvex_server *server, int fd,
                             const yvex_client_request *request,
                             yvex_error *err)
 {
-    yvex_server_engine_summary engines[YVEX_SERVER_ENGINE_CAP];
+    yvex_server_engine_summary engines[YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES];
     yvex_client_message complete;
     unsigned long long count = 0ull, index;
     int rc = yvex_server_engine_snapshot(
-        server, engines, YVEX_SERVER_ENGINE_CAP, &count, err);
+        server, engines, YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES, &count, err);
     for (index = 0ull; index < count && rc == YVEX_OK; ++index)
         rc = engine_message_send(fd, request->request_number,
                                  &engines[index], err);
@@ -754,7 +758,7 @@ static int engine_load_control(yvex_server *server, int fd,
                                const yvex_client_request *request,
                                yvex_error *err)
 {
-    yvex_server_engine_summary engines[YVEX_SERVER_ENGINE_CAP];
+    yvex_server_engine_summary engines[YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES];
     unsigned long long count = 0ull, index;
     int rc;
     if (!request->model_alias[0] || !server->options.model_loader)
@@ -765,7 +769,7 @@ static int engine_load_control(yvex_server *server, int fd,
         request->model_alias, err);
     if (rc == YVEX_OK)
         rc = yvex_server_engine_snapshot(
-            server, engines, YVEX_SERVER_ENGINE_CAP, &count, err);
+            server, engines, YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES, &count, err);
     for (index = 0ull; index < count && rc == YVEX_OK; ++index)
         if (!strcmp(engines[index].alias, request->model_alias))
             return engine_message_send(fd, request->request_number,
@@ -1110,7 +1114,7 @@ int yvex_server_get_summary(const yvex_server *server,
                             yvex_server_summary *out, yvex_error *err)
 {
     yvex_server *mutable = (yvex_server *)server;
-    yvex_server_engine_summary engines[YVEX_SERVER_ENGINE_CAP];
+    yvex_server_engine_summary engines[YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES];
     server_request_queue_summary request_queue = {0};
     unsigned long long count = 0u, index;
     if (!server || !out || pthread_mutex_lock(&mutable->state_mutex) != 0)
@@ -1120,7 +1124,8 @@ int yvex_server_get_summary(const yvex_server *server,
     (void)pthread_mutex_unlock(&mutable->state_mutex);
     if (server->engines &&
         yvex_server_engine_manager_snapshot(
-            server->engines, engines, YVEX_SERVER_ENGINE_CAP, &count, err) !=
+            server->engines, engines, YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES,
+            &count, err) !=
             YVEX_OK)
         return yvex_error_code(err);
     if (server->engines &&

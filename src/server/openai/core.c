@@ -928,7 +928,7 @@ static int handle_read(openai_gateway *gateway, int fd,
         "{\"status\":\"ok\",\"adapter\":\"ready\",\"server\":\"ready\","
         "\"profile\":\"" OPENAI_COMPAT_PROFILE "\"}";
     yvex_server_summary summary;
-    yvex_server_engine_summary engines[YVEX_SERVER_ENGINE_CAP];
+    yvex_server_engine_summary engines[YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES];
     const yvex_server_engine_summary *selected = NULL;
     unsigned char *json = NULL;
     unsigned long long count = 0u, engine_count = 0u;
@@ -938,7 +938,7 @@ static int handle_read(openai_gateway *gateway, int fd,
         return send_error(fd, 503, "YVEX server is unavailable or not ready");
     if (endpoint == OPENAI_ENDPOINT_HEALTH)
         return openai_http_json(fd, 200, healthy, sizeof(healthy) - 1u, &err);
-    rc = daemon_engines(gateway, engines, YVEX_SERVER_ENGINE_CAP,
+    rc = daemon_engines(gateway, engines, YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES,
                         &engine_count, &err);
     if (rc != YVEX_OK)
         return send_error(fd, 503, "YVEX engine catalog is unavailable");
@@ -963,7 +963,7 @@ static int generation_admit_engine(openai_gateway *gateway,
                                    yvex_server_engine_summary *engine,
                                    int *error_status, yvex_error *err)
 {
-    yvex_server_engine_summary engines[YVEX_SERVER_ENGINE_CAP];
+    yvex_server_engine_summary engines[YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES];
     const yvex_server_engine_summary *selected;
     unsigned long long engine_count = 0ull;
     int rc = openai_json_admit(http, endpoint,
@@ -972,7 +972,7 @@ static int generation_admit_engine(openai_gateway *gateway,
         *error_status = http_status(rc, YVEX_CLIENT_FAILURE_NONE);
         return rc;
     }
-    rc = daemon_engines(gateway, engines, YVEX_SERVER_ENGINE_CAP,
+    rc = daemon_engines(gateway, engines, YVEX_SERVER_IMPLEMENTATION_MAXIMUM_ENGINES,
                         &engine_count, err);
     if (rc != YVEX_OK) {
         *error_status = 503;

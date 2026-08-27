@@ -1352,6 +1352,12 @@
         "value_type": "enum"
       },
       {
+        "name": "--max-engines",
+        "range": "1..64",
+        "takes_value": true,
+        "value_type": "u64"
+      },
+      {
         "enum_values": ["on", "off"],
         "name": "--openai",
         "takes_value": true,
