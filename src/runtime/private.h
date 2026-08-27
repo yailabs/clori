@@ -587,14 +587,14 @@ int yvex_runtime_generation_profile_begin(
 int yvex_runtime_generation_profile_phase(
     yvex_runtime_profile_record *profile, yvex_runtime_profile_phase phase,
     unsigned long long elapsed, yvex_error *err);
-int yvex_runtime_generation_profile_transformer(
-    yvex_runtime_profile_record *profile,
+int yvex_runtime_generation_profile_transformer(yvex_runtime_profile_record *profile,
     const yvex_runtime_transformer_result *value, yvex_error *err);
 int yvex_runtime_generation_profile_decode(
     yvex_runtime_profile_record *profile,
     const yvex_runtime_decode_step_result *value, yvex_error *err);
 int yvex_runtime_private_generation_result_finish(
-    yvex_runtime_generation_context *context, yvex_runtime_generation_token_result *tokens,
+    yvex_runtime_generation_context *context, yvex_runtime_generation_evidence *evidence,
+    yvex_runtime_generation_token_result *tokens,
     const unsigned char *text, unsigned long long text_capacity,
     yvex_runtime_generation_result *result, int status, yvex_error *err);
 #endif

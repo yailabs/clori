@@ -596,7 +596,8 @@ static int generation_test_refusals(void)
                          YVEX_ERR_INVALID_ARG && !context,
                      "generation context must refuse absent model/session");
     YVEX_TEST_ASSERT(yvex_runtime_generation_execute(
-                         NULL, NULL, NULL, 0ull, NULL, 0ull, &result, &err) ==
+                         NULL, NULL, NULL, 0ull, NULL, 0ull, &result, NULL,
+                         &err) ==
                          YVEX_ERR_INVALID_ARG,
                      "generation execute must refuse absent context");
     YVEX_TEST_ASSERT(
@@ -630,8 +631,10 @@ static int generation_test_refusals(void)
 static int generation_test_execution_identity_excludes_measurement(void)
 {
     yvex_runtime_generation_result result;
+    yvex_runtime_generation_evidence evidence;
     char before[YVEX_SHA256_HEX_CAP], after[YVEX_SHA256_HEX_CAP];
     memset(&result, 0, sizeof(result));
+    memset(&evidence, 0, sizeof(evidence));
     result.schema_version = YVEX_RUNTIME_GENERATION_RESULT_SCHEMA_V5;
     result.execution_mode = YVEX_GENERATION_MODE_DSPARK;
     result.draft_cycle_count = 2ull;
@@ -646,11 +649,12 @@ static int generation_test_execution_identity_excludes_measurement(void)
     result.speculative_commit_ns = 777ull;
     result.mean_accepted_prefix = 3.0;
     result.effective_committed_tokens_per_second = 0.75;
-    result.roofline_available = 1;
-    memset(result.roofline.identity, 'a', YVEX_SHA256_HEX_CAP - 1u);
-    result.roofline.identity[YVEX_SHA256_HEX_CAP - 1u] = '\0';
+    evidence.roofline_available = 1;
+    memset(evidence.roofline.identity, 'a', YVEX_SHA256_HEX_CAP - 1u);
+    evidence.roofline.identity[YVEX_SHA256_HEX_CAP - 1u] = '\0';
     YVEX_TEST_ASSERT(
-        yvex_runtime_generation_execution_identity(&result, NULL, after) &&
+        evidence.roofline_available &&
+            yvex_runtime_generation_execution_identity(&result, NULL, after) &&
             strcmp(before, after) == 0,
         "measurement values must not alter semantic execution identity");
     result.speculation_source_boundary_token_count = 1ull;
@@ -664,6 +668,37 @@ static int generation_test_execution_identity_excludes_measurement(void)
         yvex_runtime_generation_execution_identity(&result, NULL, after) &&
             strcmp(before, after) != 0,
         "semantic speculative counters must alter execution identity");
+    return 0;
+}
+
+static int generation_test_evidence_sidecar_validation(void)
+{
+    yvex_runtime_generation_plan_summary plan = {0};
+    yvex_runtime_generation_evidence evidence = {0}, mutated;
+    yvex_error err;
+    evidence.schema_version = YVEX_RUNTIME_GENERATION_EVIDENCE_SCHEMA_V1;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_profile_begin(
+            &evidence.profile, YVEX_RUNTIME_PROFILE_SUMMARY,
+            YVEX_RUNTIME_PROFILE_GENERATION, YVEX_BACKEND_KIND_CPU,
+            profile_id_a, profile_id_b, profile_id_c, profile_id_d,
+            profile_id_e, profile_id_f, &err) == YVEX_OK &&
+            yvex_runtime_profile_finish(&evidence.profile, &err) == YVEX_OK &&
+            yvex_runtime_generation_evidence_validate(
+                &plan, &evidence, &err) == YVEX_OK,
+        "generation evidence validates independently from semantic output");
+    mutated = evidence;
+    mutated.profile.counters[YVEX_RUNTIME_PROFILE_KERNEL_LAUNCHES]++;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_generation_evidence_validate(
+            &plan, &mutated, &err) == YVEX_ERR_FORMAT,
+        "mutated generation evidence fails closed without changing generation identity");
+    mutated = evidence;
+    mutated.schema_version++;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_generation_evidence_validate(
+            &plan, &mutated, &err) == YVEX_ERR_FORMAT,
+        "unknown generation evidence schema fails closed");
     return 0;
 }
 
@@ -694,7 +729,7 @@ static int generation_test_decode_profile_projection(void)
     decode.tensor_core_launches = 3ull;
     decode.attention_device_ns = 7000ull;
     YVEX_TEST_ASSERT(
-        runtime_profile_begin(
+        yvex_runtime_profile_begin(
             &profile, YVEX_RUNTIME_PROFILE_STAGES,
             YVEX_RUNTIME_PROFILE_DECODE, YVEX_BACKEND_KIND_CUDA,
             profile_id_a, profile_id_b, profile_id_c, profile_id_d,
@@ -821,6 +856,7 @@ int yvex_test_runtime_generation(void)
     if (generation_test_stop_taxonomy() != 0) return 1;
     if (generation_test_refusals() != 0) return 1;
     if (generation_test_execution_identity_excludes_measurement() != 0) return 1;
+    if (generation_test_evidence_sidecar_validation() != 0) return 1;
     if (generation_test_plan_binds_workload_profile() != 0) return 1;
     if (generation_test_decode_profile_projection() != 0) return 1;
     if (generation_test_transaction_participants() != 0) return 1;

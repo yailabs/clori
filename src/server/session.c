@@ -1164,9 +1164,11 @@ static int session_profile_publish(server_session_registry *registry,
                                    const yvex_client_request *request,
                                    const turn_sink *sink,
                                    const yvex_runtime_generation_result *result,
+                                   const yvex_runtime_generation_evidence *evidence,
                                    yvex_error *err)
 {
-    const yvex_runtime_profile_record *profile = result ? &result->profile : NULL;
+    const yvex_runtime_profile_record *profile =
+        evidence ? &evidence->profile : NULL;
     yvex_engine_scheduler_summary batches;
     int rc;
 #define PROFILE_EVENT(phase_, a_, b_, c_, nanoseconds_)                                   \
@@ -1214,19 +1216,19 @@ static int session_profile_publish(server_session_registry *registry,
             profile->counters[YVEX_RUNTIME_PROFILE_EXPERT_SUBVIEWS],
             profile->counters[YVEX_RUNTIME_PROFILE_EXPERT_BYTES],
             profile->phase_ns[YVEX_RUNTIME_PROFILE_MOE_TOTAL]);
-    if (rc == YVEX_OK && result->expert_worklists.worklist_count)
+    if (rc == YVEX_OK && evidence->expert_worklists.worklist_count)
         rc = PROFILE_EVENT("expert-worklist",
-            result->expert_worklists.worklist_count,
-            result->expert_worklists.pair_count,
-            result->expert_worklists.bucket_count, 0ull);
-    if (rc == YVEX_OK && result->expert_worklists.worklist_count)
+            evidence->expert_worklists.worklist_count,
+            evidence->expert_worklists.pair_count,
+            evidence->expert_worklists.bucket_count, 0ull);
+    if (rc == YVEX_OK && evidence->expert_worklists.worklist_count)
         rc = PROFILE_EVENT("expert-width",
-            result->expert_worklists.maximum_bucket_population,
-            result->expert_worklists.tensor_core_eligible_pairs,
-            result->expert_worklists.tensor_core_executed_pairs, 0ull);
-    if (rc == YVEX_OK && result->expert_worklists.worklist_count)
-        rc = PROFILE_EVENT("expert-rows", result->expert_worklists.narrow_pairs,
-            result->expert_worklists.tail_rows, 0ull, 0ull);
+            evidence->expert_worklists.maximum_bucket_population,
+            evidence->expert_worklists.tensor_core_eligible_pairs,
+            evidence->expert_worklists.tensor_core_executed_pairs, 0ull);
+    if (rc == YVEX_OK && evidence->expert_worklists.worklist_count)
+        rc = PROFILE_EVENT("expert-rows", evidence->expert_worklists.narrow_pairs,
+            evidence->expert_worklists.tail_rows, 0ull, 0ull);
     if (rc == YVEX_OK)
         rc = PROFILE_EVENT("output",
             profile->counters[YVEX_RUNTIME_PROFILE_OUTPUT_HEAD_ROWS],
@@ -1348,6 +1350,7 @@ static int session_turn(server_session_registry *registry,
     yvex_runtime_generation_request prompt;
     yvex_runtime_generation_turn_request turn;
     yvex_runtime_generation_result result;
+    yvex_runtime_generation_evidence evidence;
     yvex_runtime_sampling_policy policy;
     yvex_client_message started;
     turn_sink sink;
@@ -1459,6 +1462,7 @@ static int session_turn(server_session_registry *registry,
     turn.progress_context = &sink;
     turn.speculation_progress_sink = turn_speculation_progress;
     turn.speculation_progress_context = &sink;
+    turn.evidence = &evidence;
     atomic_store_explicit(&session->cancel_requested, 0, memory_order_release);
     atomic_store_explicit(&session->active_turn, 1, memory_order_release);
     session->state = YVEX_SERVER_SESSION_RUNNING;
@@ -1515,7 +1519,8 @@ static int session_turn(server_session_registry *registry,
                              prior_transcript, rc, err);
     if (generation_rc != YVEX_OK && err) *err = primary_error;
     if (rc == YVEX_OK)
-        rc = session_profile_publish(registry, session, request, &sink, &result, err);
+        rc = session_profile_publish(
+            registry, session, request, &sink, &result, &evidence, err);
     rc = session_turn_publish(registry, session, request, &sink, &result,
                               rc, err);
     atomic_store_explicit(&session->active_turn, 0, memory_order_release);

@@ -6,8 +6,215 @@
 #include <yvex/internal/core.h>
 #include <yvex/internal/graph_state.h>
 
+#include <limits.h>
 #include <stddef.h>
 #include <string.h>
+
+static int runtime_profile_refuse(
+    yvex_error *err, yvex_status status, const char *reason)
+{
+    yvex_error_set(err, status, "runtime.profile", reason);
+    return status;
+}
+
+static int runtime_profile_identity_copy(
+    char output[YVEX_SHA256_HEX_BYTES], const char *input)
+{
+    if (!output || !yvex_sha256_hex_valid(input)) return 0;
+    yvex_core_text_copy(output, YVEX_SHA256_HEX_BYTES, input);
+    return 1;
+}
+
+static int runtime_profile_identity(
+    const yvex_runtime_profile_record *record,
+    char output[YVEX_SHA256_HEX_BYTES])
+{
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    unsigned long long index;
+    yvex_sha256_init(&hash);
+    if (!record || !output ||
+        !yvex_sha256_update_text(&hash, "yvex.runtime.profile.v4") ||
+        !yvex_sha256_update_u64(&hash, record->schema_version) ||
+        !yvex_sha256_update_u64(&hash, record->mode) ||
+        !yvex_sha256_update_u64(&hash, record->scope) ||
+        !yvex_sha256_update_u64(&hash, record->backend) ||
+        !yvex_sha256_update_u64(&hash, record->started_ns) ||
+        !yvex_sha256_update_u64(&hash, record->completed_ns) ||
+        !yvex_sha256_update_text(&hash, record->artifact_identity) ||
+        !yvex_sha256_update_text(&hash, record->physical_variant_identity) ||
+        !yvex_sha256_update_text(&hash, record->runtime_binding_identity) ||
+        !yvex_sha256_update_text(&hash, record->runtime_model_identity) ||
+        !yvex_sha256_update_text(&hash, record->execution_plan_identity) ||
+        !yvex_sha256_update_text(&hash, record->workload_identity))
+        return 0;
+    for (index = 0ull; index < YVEX_RUNTIME_PROFILE_PHASE_COUNT; ++index)
+        if (!yvex_sha256_update_u64(&hash, record->phase_ns[index]) ||
+            !yvex_sha256_update_u64(&hash, record->phase_calls[index]))
+            return 0;
+    for (index = 0ull; index < YVEX_RUNTIME_PROFILE_COUNTER_COUNT; ++index)
+        if (!yvex_sha256_update_u64(&hash, record->counters[index])) return 0;
+    if (!yvex_sha256_final(&hash, digest)) return 0;
+    yvex_sha256_hex(digest, output);
+    return 1;
+}
+
+int yvex_runtime_profile_begin(
+    yvex_runtime_profile_record *record, yvex_runtime_profile_mode mode,
+    yvex_runtime_profile_scope scope, unsigned int backend,
+    const char *artifact_identity, const char *physical_variant_identity,
+    const char *runtime_binding_identity, const char *runtime_model_identity,
+    const char *execution_plan_identity, const char *workload_identity,
+    yvex_error *err)
+{
+    if (!record)
+        return runtime_profile_refuse(
+            err, YVEX_ERR_INVALID_ARG, "profile record is required");
+    memset(record, 0, sizeof(*record));
+    if (mode > YVEX_RUNTIME_PROFILE_DETAILED ||
+        scope > YVEX_RUNTIME_PROFILE_GENERATION ||
+        !runtime_profile_identity_copy(record->artifact_identity, artifact_identity) ||
+        !runtime_profile_identity_copy(
+            record->physical_variant_identity, physical_variant_identity) ||
+        !runtime_profile_identity_copy(
+            record->runtime_binding_identity, runtime_binding_identity) ||
+        !runtime_profile_identity_copy(
+            record->runtime_model_identity, runtime_model_identity) ||
+        !runtime_profile_identity_copy(
+            record->execution_plan_identity, execution_plan_identity) ||
+        !runtime_profile_identity_copy(record->workload_identity, workload_identity))
+        return runtime_profile_refuse(
+            err, YVEX_ERR_INVALID_ARG,
+            "profile mode, scope, and exact identities are required");
+    record->schema_version = YVEX_RUNTIME_PROFILE_SCHEMA_V4;
+    record->mode = mode;
+    record->scope = scope;
+    record->backend = backend;
+    record->started_ns = yvex_core_monotonic_ns();
+    if (!record->started_ns) {
+        memset(record, 0, sizeof(*record));
+        return runtime_profile_refuse(
+            err, YVEX_ERR_STATE, "monotonic profile clock is unavailable");
+    }
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_runtime_profile_counter_add(
+    yvex_runtime_profile_record *record, yvex_runtime_profile_counter counter,
+    unsigned long long value, yvex_error *err)
+{
+    if (!record || record->schema_version != YVEX_RUNTIME_PROFILE_SCHEMA_V4 ||
+        record->sealed || counter >= YVEX_RUNTIME_PROFILE_COUNTER_COUNT)
+        return runtime_profile_refuse(
+            err, YVEX_ERR_STATE, "profile counter mutation is invalid");
+    if (ULLONG_MAX - record->counters[counter] < value)
+        return runtime_profile_refuse(
+            err, YVEX_ERR_BOUNDS, "profile counter overflowed");
+    record->counters[counter] += value;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_runtime_profile_phase_add(
+    yvex_runtime_profile_record *record, yvex_runtime_profile_phase phase,
+    unsigned long long elapsed_ns, yvex_error *err)
+{
+    if (!record || record->schema_version != YVEX_RUNTIME_PROFILE_SCHEMA_V4 ||
+        record->sealed || phase >= YVEX_RUNTIME_PROFILE_PHASE_COUNT || !elapsed_ns)
+        return runtime_profile_refuse(
+            err, YVEX_ERR_STATE, "profile phase mutation is invalid");
+    if (ULLONG_MAX - record->phase_ns[phase] < elapsed_ns ||
+        record->phase_calls[phase] == ULLONG_MAX)
+        return runtime_profile_refuse(
+            err, YVEX_ERR_BOUNDS, "profile phase accounting overflowed");
+    record->phase_ns[phase] += elapsed_ns;
+    record->phase_calls[phase]++;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_runtime_profile_finish(
+    yvex_runtime_profile_record *record, yvex_error *err)
+{
+    if (!record || record->schema_version != YVEX_RUNTIME_PROFILE_SCHEMA_V4 ||
+        record->sealed)
+        return runtime_profile_refuse(
+            err, YVEX_ERR_STATE, "profile finish is invalid");
+    record->completed_ns = yvex_core_monotonic_ns();
+    if (record->completed_ns <= record->started_ns ||
+        !runtime_profile_identity(record, record->profile_identity)) {
+        record->completed_ns = 0ull;
+        return runtime_profile_refuse(
+            err, YVEX_ERR_STATE, "profile identity could not be sealed");
+    }
+    record->sealed = 1;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_runtime_profile_validate(
+    const yvex_runtime_profile_record *record, yvex_error *err)
+{
+    char identity[YVEX_SHA256_HEX_BYTES];
+    if (!record || record->schema_version != YVEX_RUNTIME_PROFILE_SCHEMA_V4 ||
+        !record->sealed || record->mode > YVEX_RUNTIME_PROFILE_DETAILED ||
+        record->scope > YVEX_RUNTIME_PROFILE_GENERATION ||
+        record->completed_ns <= record->started_ns ||
+        !yvex_sha256_hex_valid(record->artifact_identity) ||
+        !yvex_sha256_hex_valid(record->physical_variant_identity) ||
+        !yvex_sha256_hex_valid(record->runtime_binding_identity) ||
+        !yvex_sha256_hex_valid(record->runtime_model_identity) ||
+        !yvex_sha256_hex_valid(record->execution_plan_identity) ||
+        !yvex_sha256_hex_valid(record->workload_identity) ||
+        !runtime_profile_identity(record, identity) ||
+        strcmp(identity, record->profile_identity) != 0)
+        return runtime_profile_refuse(
+            err, YVEX_ERR_FORMAT, "profile record is stale or malformed");
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+const char *yvex_runtime_profile_mode_name(yvex_runtime_profile_mode mode)
+{
+    static const char *const names[] = {"off", "summary", "stages", "detailed"};
+    return mode <= YVEX_RUNTIME_PROFILE_DETAILED ? names[mode] : "invalid";
+}
+
+const char *yvex_runtime_profile_phase_name(yvex_runtime_profile_phase phase)
+{
+    static const char *const names[] = {
+        "queue", "tokenizer", "prompt_rendering", "embedding", "attention",
+        "moe_ingress", "router_projection", "router_topk",
+        "selected_expert_preparation", "routed_experts", "shared_experts",
+        "moe_post", "moe_total", "final_normalization", "output_head",
+        "logits_publication", "sampling", "state_validation",
+        "synchronization_wait", "kv_commit", "detokenization",
+        "provider_publication", "total_prefill", "first_decode",
+        "subsequent_decode", "total_generation"};
+    return phase < YVEX_RUNTIME_PROFILE_PHASE_COUNT ? names[phase] : "invalid";
+}
+
+const char *yvex_runtime_profile_counter_name(
+    yvex_runtime_profile_counter counter)
+{
+    static const char *const names[] = {
+        "host_payload_reads", "mapped_bytes_touched", "h2d_bytes", "d2h_bytes",
+        "d2d_bytes", "managed_prefetch_bytes", "uploads", "downloads",
+        "cache_hits", "cache_misses", "cache_evictions", "expert_subviews",
+        "kernel_launches", "tensor_core_launches", "graph_launches",
+        "graph_captures", "graph_replays", "stream_synchronizations",
+        "event_synchronizations", "device_synchronizations", "device_allocations",
+        "host_allocations", "workspace_resets", "prompt_tokens", "reused_tokens",
+        "new_prefill_tokens", "generated_tokens", "target_forwards", "target_rows",
+        "draft_forwards", "draft_rows", "target_verifications", "verified_rows",
+        "accepted_draft_tokens", "promoted_target_rows",
+        "discarded_candidate_rows", "target_extensions",
+        "replayed_accepted_target_rows", "output_head_rows", "logits_h2d_bytes",
+        "logits_d2h_bytes", "logits_d2d_bytes", "full_array_host_scan_bytes",
+        "row_expert_pairs", "unique_experts", "expert_bytes"};
+    return counter < YVEX_RUNTIME_PROFILE_COUNTER_COUNT ? names[counter] : "invalid";
+}
 
 typedef enum {
     EVIDENCE_FIELD_TEXT,

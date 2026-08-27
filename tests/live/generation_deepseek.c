@@ -33,6 +33,7 @@
 typedef struct {
     yvex_runtime_generation_plan_summary plan;
     yvex_runtime_generation_result result;
+    yvex_runtime_generation_evidence evidence;
     yvex_runtime_state_residency_summary state_residency;
     yvex_engine_scheduler_summary scheduler;
     yvex_runtime_generation_token_result tokens[LIVE_GENERATION_MAX_TOKENS];
@@ -165,7 +166,7 @@ static void live_failure_primary(const live_generation *primary)
     unsigned long long index;
     int width_present = 0;
     if (!primary || !primary->result.completed) return;
-    worklists = &primary->result.expert_worklists;
+    worklists = &primary->evidence.expert_worklists;
     fprintf(stderr,
             "generation_live primary mode=%u sampled=%llu committed=%llu cycles=%llu "
             "proposed=%llu verified=%llu accepted=%llu rejected=%llu tokens=",
@@ -335,7 +336,7 @@ static void *live_execute_main(void *opaque)
         .encode_options = {.maximum_tokens = 8ull}};
     thread->rc = yvex_runtime_generation_execute(
         thread->context, &request, &token, 1ull, text, sizeof(text),
-        &result, &thread->err);
+        &result, NULL, &thread->err);
     return NULL;
 }
 
@@ -414,11 +415,14 @@ static int live_production_request(
     if (rc == YVEX_OK)
         rc = yvex_runtime_generation_execute(
             context, request, out->tokens, LIVE_GENERATION_MAX_TOKENS,
-            out->text, sizeof(out->text), &out->result, err);
+            out->text, sizeof(out->text), &out->result, &out->evidence, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_generation_result_validate(
             &out->plan, out->tokens, LIVE_GENERATION_MAX_TOKENS,
             out->text, sizeof(out->text), &out->result, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_generation_evidence_validate(
+            &out->plan, &out->evidence, err);
     if (rc == YVEX_OK) {
         const yvex_runtime_session_view *view = yvex_runtime_session_view_get(session);
         rc = view && view->state_residency
@@ -436,7 +440,7 @@ static int live_production_request(
         rc = yvex_model_engine_scheduler_summary_copy(
             model, &out->scheduler, err);
     if (rc == YVEX_OK && backend == YVEX_BACKEND_KIND_CUDA &&
-        out->result.profile.counters[
+        out->evidence.profile.counters[
             YVEX_RUNTIME_PROFILE_FULL_ARRAY_HOST_SCAN_BYTES]) {
         rc = YVEX_ERR_FORMAT;
         yvex_error_set(
@@ -555,11 +559,14 @@ static int live_boundary_execute(
     if (rc == YVEX_OK)
         rc = yvex_runtime_generation_execute(
             context, &request, out->tokens, LIVE_GENERATION_MAX_TOKENS,
-            out->text, sizeof(out->text), &out->result, err);
+            out->text, sizeof(out->text), &out->result, &out->evidence, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_generation_result_validate(
             &out->plan, out->tokens, LIVE_GENERATION_MAX_TOKENS,
             out->text, sizeof(out->text), &out->result, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_generation_evidence_validate(
+            &out->plan, &out->evidence, err);
     yvex_error_clear(&cleanup);
     close_rc = yvex_runtime_generation_context_close(&context, &cleanup);
     if (rc == YVEX_OK && close_rc != YVEX_OK) { rc = close_rc; *err = cleanup; }
@@ -668,7 +675,7 @@ static int live_partial_execute(
     if (rc == YVEX_OK) {
         rc = yvex_runtime_generation_execute(
             context, &request, out->tokens, LIVE_GENERATION_MAX_TOKENS,
-            out->text, sizeof(out->text), &out->result, err);
+            out->text, sizeof(out->text), &out->result, &out->evidence, err);
         primary = *err;
     }
     if (monitor_created) {
@@ -817,7 +824,7 @@ static int live_lifecycle_proof(yvex_model_engine *model,
         }
         contender_rc = yvex_runtime_generation_execute(
             context, &request, &token, 1ull, text, sizeof(text),
-            &result, &contender);
+            &result, NULL, &contender);
         if (contender_rc == YVEX_ERR_STATE &&
             strstr(yvex_error_message(&contender), "closing")) {
             closing_refused = 1;
@@ -1953,65 +1960,65 @@ int main(int argc, char **argv)
             "attention_ns=%llu moe_ns=%llu output_sampling_ns=%llu sync_wait_ns=%llu "
             "prefill_ns=%llu first_decode_ns=%llu subsequent_decode_ns=%llu "
             "generation_ns=%llu\n",
-            production.result.profile.profile_identity,
-            production.result.profile.counters[YVEX_RUNTIME_PROFILE_KERNEL_LAUNCHES],
-            production.result.profile.counters[YVEX_RUNTIME_PROFILE_GRAPH_LAUNCHES],
-            production.result.profile.counters[YVEX_RUNTIME_PROFILE_GRAPH_CAPTURES],
-            production.result.profile.counters[YVEX_RUNTIME_PROFILE_GRAPH_REPLAYS],
-            production.result.profile.counters[YVEX_RUNTIME_PROFILE_STREAM_SYNCHRONIZATIONS],
-            production.result.profile.counters[YVEX_RUNTIME_PROFILE_EVENT_SYNCHRONIZATIONS],
-            production.result.profile.counters[YVEX_RUNTIME_PROFILE_DEVICE_SYNCHRONIZATIONS],
-            production.result.profile.counters[YVEX_RUNTIME_PROFILE_H2D_BYTES],
-            production.result.profile.counters[YVEX_RUNTIME_PROFILE_D2H_BYTES],
-            production.result.profile.counters[YVEX_RUNTIME_PROFILE_D2D_BYTES],
-            production.result.profile.counters[YVEX_RUNTIME_PROFILE_TARGET_FORWARDS],
-            production.result.profile.counters[YVEX_RUNTIME_PROFILE_TARGET_ROWS],
-            production.result.profile.counters[YVEX_RUNTIME_PROFILE_ROW_EXPERT_PAIRS],
-            production.result.profile.counters[YVEX_RUNTIME_PROFILE_UNIQUE_EXPERTS],
-            production.result.profile.counters[YVEX_RUNTIME_PROFILE_EXPERT_BYTES],
-            production.result.profile.counters[YVEX_RUNTIME_PROFILE_OUTPUT_HEAD_ROWS],
-            production.result.profile.counters[YVEX_RUNTIME_PROFILE_LOGITS_D2H_BYTES],
-            production.result.profile.counters[
+            production.evidence.profile.profile_identity,
+            production.evidence.profile.counters[YVEX_RUNTIME_PROFILE_KERNEL_LAUNCHES],
+            production.evidence.profile.counters[YVEX_RUNTIME_PROFILE_GRAPH_LAUNCHES],
+            production.evidence.profile.counters[YVEX_RUNTIME_PROFILE_GRAPH_CAPTURES],
+            production.evidence.profile.counters[YVEX_RUNTIME_PROFILE_GRAPH_REPLAYS],
+            production.evidence.profile.counters[YVEX_RUNTIME_PROFILE_STREAM_SYNCHRONIZATIONS],
+            production.evidence.profile.counters[YVEX_RUNTIME_PROFILE_EVENT_SYNCHRONIZATIONS],
+            production.evidence.profile.counters[YVEX_RUNTIME_PROFILE_DEVICE_SYNCHRONIZATIONS],
+            production.evidence.profile.counters[YVEX_RUNTIME_PROFILE_H2D_BYTES],
+            production.evidence.profile.counters[YVEX_RUNTIME_PROFILE_D2H_BYTES],
+            production.evidence.profile.counters[YVEX_RUNTIME_PROFILE_D2D_BYTES],
+            production.evidence.profile.counters[YVEX_RUNTIME_PROFILE_TARGET_FORWARDS],
+            production.evidence.profile.counters[YVEX_RUNTIME_PROFILE_TARGET_ROWS],
+            production.evidence.profile.counters[YVEX_RUNTIME_PROFILE_ROW_EXPERT_PAIRS],
+            production.evidence.profile.counters[YVEX_RUNTIME_PROFILE_UNIQUE_EXPERTS],
+            production.evidence.profile.counters[YVEX_RUNTIME_PROFILE_EXPERT_BYTES],
+            production.evidence.profile.counters[YVEX_RUNTIME_PROFILE_OUTPUT_HEAD_ROWS],
+            production.evidence.profile.counters[YVEX_RUNTIME_PROFILE_LOGITS_D2H_BYTES],
+            production.evidence.profile.counters[
                 YVEX_RUNTIME_PROFILE_REPLAYED_ACCEPTED_TARGET_ROWS],
-            production.result.profile.phase_ns[YVEX_RUNTIME_PROFILE_ATTENTION],
-            production.result.profile.phase_ns[YVEX_RUNTIME_PROFILE_MOE_TOTAL],
-            production.result.profile.phase_ns[YVEX_RUNTIME_PROFILE_OUTPUT_HEAD] +
-                production.result.profile.phase_ns[YVEX_RUNTIME_PROFILE_SAMPLING],
-            production.result.profile.phase_ns[YVEX_RUNTIME_PROFILE_SYNCHRONIZATION_WAIT],
-            production.result.profile.phase_ns[YVEX_RUNTIME_PROFILE_TOTAL_PREFILL],
-            production.result.profile.phase_ns[YVEX_RUNTIME_PROFILE_FIRST_DECODE],
-            production.result.profile.phase_ns[YVEX_RUNTIME_PROFILE_SUBSEQUENT_DECODE],
-            production.result.profile.phase_ns[YVEX_RUNTIME_PROFILE_TOTAL_GENERATION]);
+            production.evidence.profile.phase_ns[YVEX_RUNTIME_PROFILE_ATTENTION],
+            production.evidence.profile.phase_ns[YVEX_RUNTIME_PROFILE_MOE_TOTAL],
+            production.evidence.profile.phase_ns[YVEX_RUNTIME_PROFILE_OUTPUT_HEAD] +
+                production.evidence.profile.phase_ns[YVEX_RUNTIME_PROFILE_SAMPLING],
+            production.evidence.profile.phase_ns[YVEX_RUNTIME_PROFILE_SYNCHRONIZATION_WAIT],
+            production.evidence.profile.phase_ns[YVEX_RUNTIME_PROFILE_TOTAL_PREFILL],
+            production.evidence.profile.phase_ns[YVEX_RUNTIME_PROFILE_FIRST_DECODE],
+            production.evidence.profile.phase_ns[YVEX_RUNTIME_PROFILE_SUBSEQUENT_DECODE],
+            production.evidence.profile.phase_ns[YVEX_RUNTIME_PROFILE_TOTAL_GENERATION]);
         printf("generation_worklists count=%llu pairs=%llu buckets=%llu "
                "max_bucket=%llu tc_eligible=%llu tc_executed=%llu narrow=%llu "
                "tail=%llu widths=",
-               production.result.expert_worklists.worklist_count,
-               production.result.expert_worklists.pair_count,
-               production.result.expert_worklists.bucket_count,
-               production.result.expert_worklists.maximum_bucket_population,
-               production.result.expert_worklists.tensor_core_eligible_pairs,
-               production.result.expert_worklists.tensor_core_executed_pairs,
-               production.result.expert_worklists.narrow_pairs,
-               production.result.expert_worklists.tail_rows);
+               production.evidence.expert_worklists.worklist_count,
+               production.evidence.expert_worklists.pair_count,
+               production.evidence.expert_worklists.bucket_count,
+               production.evidence.expert_worklists.maximum_bucket_population,
+               production.evidence.expert_worklists.tensor_core_eligible_pairs,
+               production.evidence.expert_worklists.tensor_core_executed_pairs,
+               production.evidence.expert_worklists.narrow_pairs,
+               production.evidence.expert_worklists.tail_rows);
         for (unsigned int index = 1u;
              index < YVEX_EXPERT_WORKLIST_HISTOGRAM_CAP; ++index)
             printf("%s%u:%llu", index == 1u ? "" : ",", index,
-                   production.result.expert_worklists.width_histogram[index]);
+                   production.evidence.expert_worklists.width_histogram[index]);
         printf(" populations=");
         for (unsigned int index = 1u;
              index < YVEX_EXPERT_WORKLIST_HISTOGRAM_CAP; ++index)
             printf("%s%u:%llu", index == 1u ? "" : ",", index,
-                   production.result.expert_worklists.population_histogram[index]);
+                   production.evidence.expert_worklists.population_histogram[index]);
         printf(" provenance=%llu,%llu,%llu,%llu,%llu\n",
-               production.result.expert_worklists.provenance_counts[
+               production.evidence.expert_worklists.provenance_counts[
                    YVEX_EXECUTION_BATCH_SINGLE_ROW],
-               production.result.expert_worklists.provenance_counts[
+               production.evidence.expert_worklists.provenance_counts[
                    YVEX_EXECUTION_BATCH_SPECULATIVE_VERIFICATION],
-               production.result.expert_worklists.provenance_counts[
+               production.evidence.expert_worklists.provenance_counts[
                    YVEX_EXECUTION_BATCH_MULTI_SESSION],
-               production.result.expert_worklists.provenance_counts[
+               production.evidence.expert_worklists.provenance_counts[
                    YVEX_EXECUTION_BATCH_PREFILL],
-               production.result.expert_worklists.provenance_counts[
+               production.evidence.expert_worklists.provenance_counts[
                    YVEX_EXECUTION_BATCH_COMPILED_COMPATIBLE]);
         printf(
             "generation_scheduler continuous_batching=%s admitted_width=%llu "

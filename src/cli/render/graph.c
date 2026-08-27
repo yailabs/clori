@@ -1353,11 +1353,11 @@ int yvex_graph_sampling_render(FILE *fp, yvex_graph_report_mode mode,
 static const char *const generation_roofline_names[] = {
     "prefill-layer", "decode-layer", "verify-sweep", "draft-sweep",
     "output-head", "state-promotion", "batched-decode"};
-static int graph_generation_roofline_json(FILE *fp, const yvex_runtime_generation_result *run)
+static int graph_generation_roofline_json(FILE *fp, const yvex_runtime_generation_evidence *evidence)
 {
-    const yvex_execution_roofline_ledger *ledger = &run->roofline;
+    const yvex_execution_roofline_ledger *ledger = &evidence->roofline;
     unsigned long long index;
-    if (!run->roofline_available)
+    if (!evidence->roofline_available)
         return yvex_cli_out_puts(fp, "  \"roofline\": null,\n") < 0 ? YVEX_ERR_IO : YVEX_OK;
     if (yvex_cli_out_writef(
             fp, "  \"roofline\": {\"schema\":%u,\"identity\":\"%s\","
@@ -1396,11 +1396,11 @@ static int graph_generation_roofline_json(FILE *fp, const yvex_runtime_generatio
     }
     return yvex_cli_out_puts(fp, "  ]},\n") < 0 ? YVEX_ERR_IO : YVEX_OK;
 }
-static int graph_generation_roofline_audit(FILE *fp, const yvex_runtime_generation_result *run)
+static int graph_generation_roofline_audit(FILE *fp, const yvex_runtime_generation_evidence *evidence)
 {
-    const yvex_execution_roofline_ledger *ledger = &run->roofline;
+    const yvex_execution_roofline_ledger *ledger = &evidence->roofline;
     unsigned long long index;
-    if (!run->roofline_available) return YVEX_OK;
+    if (!evidence->roofline_available) return YVEX_OK;
     if (yvex_cli_out_writef(
             fp, "roofline: identity=%s measured=%llu missing=%llu rooflined=%llu provisional=%s\n",
             ledger->identity, ledger->measured_phase_mask, ledger->missing_phase_mask,
@@ -1432,9 +1432,12 @@ static int graph_generation_roofline_audit(FILE *fp, const yvex_runtime_generati
 int yvex_graph_generation_render(FILE *fp, yvex_graph_report_mode mode,
                                  const yvex_generation_operator_result *result)
 {
-    const yvex_runtime_generation_result *run; unsigned long long index;
+    const yvex_runtime_generation_result *run;
+    const yvex_runtime_generation_evidence *evidence;
+    unsigned long long index;
     if (!fp || !result || (result->token_count && !result->tokens)) return YVEX_ERR_INVALID_ARG;
     run = &result->execution;
+    evidence = &result->evidence;
     if (mode == YVEX_GRAPH_REPORT_MODE_JSON) {
         yvex_cli_json_begin(fp);
         yvex_cli_json_field_str(fp, "command", result->command, 1);
@@ -1507,24 +1510,26 @@ int yvex_graph_generation_render(FILE *fp, yvex_graph_report_mode mode,
         yvex_cli_json_field_bool(fp, "cli_generate_ready", result->cli_generate_ready, 1);
         if (yvex_cli_out_writef(fp,
                 "  \"profile\": {\"schema\":%u,\"mode\":\"%s\",\"identity\":\"%s\","
-                "\"phases_ns\":{", run->profile.schema_version,
-                runtime_profile_mode_name(run->profile.mode),
-                run->profile.profile_identity) < 0) return YVEX_ERR_IO;
+                "\"phases_ns\":{", evidence->profile.schema_version,
+                yvex_runtime_profile_mode_name(evidence->profile.mode),
+                evidence->profile.profile_identity) < 0) return YVEX_ERR_IO;
         for (index = 0ull; index < YVEX_RUNTIME_PROFILE_PHASE_COUNT; ++index)
             if (yvex_cli_out_writef(fp, "\"%s\":%llu%s",
-                    runtime_profile_phase_name((yvex_runtime_profile_phase)index),
-                    run->profile.phase_ns[index],
+                    yvex_runtime_profile_phase_name(
+                        (yvex_runtime_profile_phase)index),
+                    evidence->profile.phase_ns[index],
                     index + 1ull == YVEX_RUNTIME_PROFILE_PHASE_COUNT ? "" : ",") < 0)
                 return YVEX_ERR_IO;
         yvex_cli_out_puts(fp, "},\"counters\":{");
         for (index = 0ull; index < YVEX_RUNTIME_PROFILE_COUNTER_COUNT; ++index)
             if (yvex_cli_out_writef(fp, "\"%s\":%llu%s",
-                    runtime_profile_counter_name((yvex_runtime_profile_counter)index),
-                    run->profile.counters[index],
+                    yvex_runtime_profile_counter_name(
+                        (yvex_runtime_profile_counter)index),
+                    evidence->profile.counters[index],
                     index + 1ull == YVEX_RUNTIME_PROFILE_COUNTER_COUNT ? "" : ",") < 0)
                 return YVEX_ERR_IO;
         yvex_cli_out_puts(fp, "}},\n");
-        if (graph_generation_roofline_json(fp, run) != YVEX_OK) return YVEX_ERR_IO;
+        if (graph_generation_roofline_json(fp, evidence) != YVEX_OK) return YVEX_ERR_IO;
         yvex_cli_out_puts(fp, "  \"generated_tokens\": [\n");
         for (index = 0ull; index < result->token_count; ++index) {
             const yvex_runtime_generation_token_result *token = &result->tokens[index];
@@ -1569,8 +1574,8 @@ int yvex_graph_generation_render(FILE *fp, yvex_graph_report_mode mode,
                 run->confidence_logit_maximum,
                 run->confidence_logit_mean) < 0)
             return YVEX_ERR_IO;
-        if (mode == YVEX_GRAPH_REPORT_MODE_AUDIT &&
-            graph_generation_roofline_audit(fp, run) != YVEX_OK) return YVEX_ERR_IO;
+        if (mode == YVEX_GRAPH_REPORT_MODE_AUDIT && graph_generation_roofline_audit(fp, evidence) != YVEX_OK)
+            return YVEX_ERR_IO;
         for (index = 0ull; index < result->token_count; ++index)
             if (yvex_cli_out_writef(fp, "token.%llu: id=%u committed=%s terminal=%s text_bytes=%llu\n",
                     index, result->tokens[index].sampled_token_id,
