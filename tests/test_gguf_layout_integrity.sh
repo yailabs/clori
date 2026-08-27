@@ -14,7 +14,8 @@ grep -nF 'yvex_gguf_layout_validate(artifact, gguf' \
 # Runtime stays compilation-free: the binding carries the sealed complete
 # admission, then runtime authenticates that admission on its retained handle
 # before constructing the GGUF and tensor views. Family-specific admission
-# remains in the preparation plane checked immediately below.
+# remains in the preparation plane checked immediately below. Materialization
+# validates layout before it constructs backend-owned weight resources.
 grep -nF '&model->admission, &binding_failure, err)' \
   src/runtime/core.c >/dev/null
 grep -nF 'yvex_artifact_admission_authenticate(' src/runtime/core.c >/dev/null
@@ -25,7 +26,7 @@ grep -nF 'yvex_tensor_table_from_gguf(&model->tensors, model->gguf' \
 grep -nF 'yvex_artifact_integrity_validate' \
   src/model/artifacts/gate.c >/dev/null
 grep -nF 'yvex_gguf_layout_validate(artifact, gguf' \
-  src/model/core.c >/dev/null
+  src/model/materialization.c >/dev/null
 
 grep -nF '(out->alignment & (out->alignment - 1u)) != 0u' \
   src/gguf/layout_integrity.c >/dev/null
