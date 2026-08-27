@@ -667,6 +667,7 @@ int yvex_runtime_transformer_execute_block(
                                      : token_count;
     moe_request.provenance = provenance;
     moe_request.phase = phase;
+    moe_request.compatible_scheduling = context->options.engine_scheduling;
     moe_request.result = &moe_result;
     moe_request.transformer_result = result;
     moe_request.cancel_requested = context->options.cancel_requested;

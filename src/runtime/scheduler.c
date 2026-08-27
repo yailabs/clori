@@ -1335,7 +1335,8 @@ int yvex_runtime_private_engine_scheduler_moe_execute(
     if (!compatible_moe_request_valid(request))
         return scheduler_refuse(err, YVEX_ERR_INVALID_ARG,
                                "compatible MoE request is incomplete");
-    if (!request->model->engine_scheduler || !request->execution_profile ||
+    if (!request->compatible_scheduling || !request->model->engine_scheduler ||
+        !request->execution_profile ||
         request->row_count > request->admitted_width ||
         yvex_backend_kind_of(request->backend) != YVEX_BACKEND_KIND_CUDA ||
         request->execution_class != YVEX_EXECUTION_CLASS_DEVICE_NATIVE) {

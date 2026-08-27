@@ -163,6 +163,7 @@ typedef struct {
     yvex_execution_batch_provenance provenance;
     yvex_execution_phase phase;
     yvex_execution_class execution_class;
+    int compatible_scheduling;
     yvex_moe_row_batch_result *result;
     yvex_runtime_transformer_block_result *transformer_result;
     int (*cancel_requested)(void *context);

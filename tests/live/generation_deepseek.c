@@ -436,9 +436,16 @@ static int live_production_request(
     if (rc == YVEX_OK)
         rc = live_semantic_state_digest(
             session, out->semantic_state_digest, err);
-    if (rc == YVEX_OK && options.continuous_batching)
+    if (rc == YVEX_OK)
         rc = yvex_model_engine_scheduler_summary_copy(
             model, &out->scheduler, err);
+    if (rc == YVEX_OK && !options.continuous_batching &&
+        out->scheduler.physical_batches) {
+        rc = YVEX_ERR_STATE;
+        yvex_error_set(
+            err, rc, "generation_live.scheduler",
+            "single-sequence execution entered the compatible physical scheduler");
+    }
     if (rc == YVEX_OK && backend == YVEX_BACKEND_KIND_CUDA &&
         out->evidence.profile.counters[
             YVEX_RUNTIME_PROFILE_FULL_ARRAY_HOST_SCAN_BYTES]) {
