@@ -561,8 +561,7 @@ static int model_download_options_validate(yvex_cli_models_download_options *opt
         (!options->family || !model_download_family_valid(options->family))) {
         yvex_cli_out_writef(
             stderr,
-            "yvex: models download --repo requires --family "
-            "deepseek|glm|qwen|gemma|minimax-h3\n");
+            "yvex: models download --repo requires a safe lower-case --family key\n");
         return 2;
     }
     if (options->repo && !options->name) {

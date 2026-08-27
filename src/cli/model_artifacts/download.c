@@ -116,12 +116,19 @@ const yvex_model_download_catalog_row *model_download_find_catalog(const char *t
 
 int model_download_family_valid(const char *family)
 {
-    return family &&
-           (strcmp(family, "deepseek") == 0 ||
-            strcmp(family, "glm") == 0 ||
-            strcmp(family, "qwen") == 0 ||
-            strcmp(family, "gemma") == 0 ||
-            strcmp(family, "minimax-h3") == 0);
+    const unsigned char *cursor = (const unsigned char *)family;
+    size_t length;
+
+    if (!family || !family[0]) return 0;
+    length = strlen(family);
+    if (length >= YVEX_REMOTE_FAMILY_CAP || !islower(*cursor)) return 0;
+    while (*cursor) {
+        if (!(islower(*cursor) || isdigit(*cursor) || *cursor == '-' ||
+              *cursor == '_' || *cursor == '.'))
+            return 0;
+        ++cursor;
+    }
+    return 1;
 }
 
 int model_download_local_name_valid(const char *name)

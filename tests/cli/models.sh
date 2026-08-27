@@ -1686,9 +1686,9 @@ test -f "$DOWNLOAD_ROOT/github/github/test-org/test-model/v1/fake-model.gguf"
 "$YVEX_BIN" model acquire --models-root "$DOWNLOAD_ROOT/parser" > "$ROOT/download-missing-target.out" 2> "$ROOT/download-missing-target.err" && exit 1 || true
 grep 'requires TARGET or --repo' "$ROOT/download-missing-target.err"
 "$YVEX_BIN" model acquire --repo test-org/test-model --models-root "$DOWNLOAD_ROOT/parser" > "$ROOT/download-repo-no-family.out" 2> "$ROOT/download-repo-no-family.err" && exit 1 || true
-grep 'requires --family' "$ROOT/download-repo-no-family.err"
-"$YVEX_BIN" model acquire --repo test-org/test-model --family llama --models-root "$DOWNLOAD_ROOT/parser" > "$ROOT/download-bad-family.out" 2> "$ROOT/download-bad-family.err" && exit 1 || true
-grep 'requires --family deepseek|glm|qwen|gemma' "$ROOT/download-bad-family.err"
+grep 'requires a safe lower-case --family key' "$ROOT/download-repo-no-family.err"
+"$YVEX_BIN" model acquire --repo test-org/test-model --family 'llama/unsafe' --models-root "$DOWNLOAD_ROOT/parser" > "$ROOT/download-bad-family.out" 2> "$ROOT/download-bad-family.err" && exit 1 || true
+grep 'requires a safe lower-case --family key' "$ROOT/download-bad-family.err"
 "$YVEX_BIN" model acquire gemma-4-12b-it --models-root "" > "$ROOT/download-empty-root.out" 2> "$ROOT/download-empty-root.err" && exit 1 || true
 grep 'models download --models-root value is empty or invalid' "$ROOT/download-empty-root.err"
 "$YVEX_BIN" model acquire gemma-4-12b-it --max-workers 0 > "$ROOT/download-bad-workers.out" 2> "$ROOT/download-bad-workers.err" && exit 1 || true

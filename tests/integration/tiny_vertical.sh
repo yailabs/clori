@@ -1,5 +1,5 @@
 #!/bin/sh
-# Exercise the production artifact-to-CLI path with no external model or accelerator.
+# Exercise provider discovery through persistent serving with no external model or accelerator.
 set -eu
 
 YVEX_BIN=${YVEX_BIN:-./yvex}
@@ -10,10 +10,15 @@ TINY_GENERATOR=${TINY_GENERATOR:-tests/integration/tiny_model.py}
 root=$(mktemp -d "${TMPDIR:-/tmp}/yvex-tiny-vertical.XXXXXX")
 runtime="$root/runtime"
 home="$root/home"
+registry="$home/.local/share/yvex/models.local.json"
 first="$root/first"
 second="$root/second"
 corrupt="$root/corrupt"
-mkdir -m 700 "$runtime" "$home" "$first" "$second"
+models="$root/models"
+provider_repo=yvex-fixtures/tiny-executable
+provider_revision=7777777777777777777777777777777777777777
+fake_hf=$(realpath tests/fixtures/bin/fake-hf)
+mkdir -m 700 "$runtime" "$home" "$first" "$second" "$models"
 mkdir -p "$home/.local/share/yvex" "$first/bindings" "$second/bindings" "$corrupt"
 server_pid=
 log_pid=
@@ -47,7 +52,44 @@ trap cleanup EXIT HUP INT TERM
 python3 "$TINY_GENERATOR" "$first/tiny.gguf"
 python3 "$TINY_GENERATOR" "$second/tiny.gguf"
 cmp "$first/tiny.gguf" "$second/tiny.gguf"
-"$TINY_COMPILER" "$first/tiny.gguf" "$first/bindings" >"$first/compile.out"
+tiny_bytes=$(wc -c <"$first/tiny.gguf" | tr -d ' ')
+YVEX_HF_CLI="$fake_hf" YVEX_FAKE_HF_DISCOVERY_MODE=tiny \
+    YVEX_FAKE_HF_RESOLVED_SHA="$provider_revision" \
+    YVEX_FAKE_HF_TINY_BYTES="$tiny_bytes" \
+    "$YVEX_BIN" model search tiny --models-root "$models" --json \
+    >"$root/provider.search.json"
+YVEX_HF_CLI="$fake_hf" YVEX_FAKE_HF_DISCOVERY_MODE=tiny \
+    YVEX_FAKE_HF_RESOLVED_SHA="$provider_revision" \
+    YVEX_FAKE_HF_TINY_BYTES="$tiny_bytes" \
+    "$YVEX_BIN" model inspect "$provider_repo" --revision "$provider_revision" \
+    --models-root "$models" --json >"$root/provider.inspect.json"
+python3 - "$root/provider.search.json" "$root/provider.inspect.json" \
+    "$provider_repo" "$provider_revision" <<'PY'
+import json
+import pathlib
+import sys
+
+search = json.loads(pathlib.Path(sys.argv[1]).read_text())
+inspect = json.loads(pathlib.Path(sys.argv[2]).read_text())
+searched, = search["models"]
+inspected, = inspect["models"]
+assert searched["repository"] == sys.argv[3]
+assert searched["resolved_revision"] == sys.argv[4]
+assert inspected["repository"] == sys.argv[3]
+assert inspected["requested_revision"] == sys.argv[4]
+assert inspected["resolved_revision"] == sys.argv[4]
+assert inspected["representations"][0]["format"] == "gguf"
+PY
+YVEX_HF_CLI="$fake_hf" YVEX_FAKE_HF_DOWNLOAD_SOURCE="$first/tiny.gguf" \
+    "$YVEX_BIN" model acquire --repo "$provider_repo" --family tiny-fixture \
+    --name tiny-executable-source --revision "$provider_revision" \
+    --include model-Q4_K_M.gguf --models-root "$models" --auth never \
+    --no-native-inventory --audit >"$root/provider.acquire.out"
+grep -F 'status: model-download-pass' "$root/provider.acquire.out" >/dev/null
+grep -F "revision: $provider_revision" "$root/provider.acquire.out" >/dev/null
+acquired="$models/hf/tiny-fixture/tiny-executable-source/model-Q4_K_M.gguf"
+cmp "$first/tiny.gguf" "$acquired"
+"$TINY_COMPILER" "$acquired" "$first/bindings" >"$first/compile.out"
 "$TINY_COMPILER" "$second/tiny.gguf" "$second/bindings" >"$second/compile.out"
 
 first_artifact=$(sed -n 's/^artifact_identity=//p' "$first/compile.out")
@@ -59,7 +101,7 @@ test -n "$first_artifact" && test "$first_artifact" = "$second_artifact"
 test -n "$first_binding" && test "$first_binding" = "$second_binding"
 test -f "$binding_path"
 
-artifact=$(realpath "$first/tiny.gguf")
+artifact=$(realpath "$acquired")
 binding=$(realpath "$binding_path")
 if "$YVEX_BIN" execute transformer generate \
     --target tiny-executable --artifact "$artifact" \
@@ -74,7 +116,7 @@ fi
 grep -F '"status": "refused"' "$root/context-refusal.json" >/dev/null
 grep -F '"reason": "requested context exceeds the model-authored semantic maximum"' \
     "$root/context-refusal.json" >/dev/null
-cat >"$home/.local/share/yvex/models.local.json" <<EOF
+cat >"$registry" <<EOF
 {
   "schema": "yvex.models.local.v5",
   "models": [{
@@ -98,6 +140,28 @@ cat >"$home/.local/share/yvex/models.local.json" <<EOF
   }]
 }
 EOF
+
+HOME="$home" "$YVEX_BIN" model list --models-root "$models" \
+    --registry "$registry" --json >"$root/catalog.prehost.json"
+python3 - "$root/catalog.prehost.json" "$provider_revision" \
+    "$profile" "$second_profile" <<'PY'
+import json
+import pathlib
+import sys
+
+catalog = json.loads(pathlib.Path(sys.argv[1]).read_text())
+assert catalog["engine_host_observed"] is False
+sources = [row for row in catalog["models"] if row["kind"] == "acquired-source"]
+packages = {row["name"]: row for row in catalog["models"] if row["kind"] == "package"}
+source, = sources
+assert source["provider"] == "huggingface"
+assert source["revision"] == sys.argv[2]
+assert source["representation"] == "gguf"
+assert source["engine_state"] == "not-applicable"
+assert set(packages) == {sys.argv[3], sys.argv[4]}
+assert all(row["package_ready"] for row in packages.values())
+assert all(row["engine_state"] == "not-observed" for row in packages.values())
+PY
 
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server \
     --workers 2 --openai off >"$root/server.out" 2>"$root/server.err" &
@@ -128,15 +192,19 @@ HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server status --json \
     >"$root/status.loaded.json"
 HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server models --json \
     >"$root/models.first.json"
+HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" model list \
+    --models-root "$models" --registry "$registry" --json \
+    >"$root/catalog.loaded.json"
 first_generation=$(python3 - "$root/status.loaded.json" "$root/models.first.json" \
-    "$profile" <<'PY'
+    "$root/catalog.loaded.json" "$profile" "$second_profile" <<'PY'
 import json, pathlib, sys
 status = json.loads(pathlib.Path(sys.argv[1]).read_text())
 catalog = json.loads(pathlib.Path(sys.argv[2]).read_text())
+projection = json.loads(pathlib.Path(sys.argv[3]).read_text())
 assert status["host_ready"] and status["loaded_engine_count"] == 1
 assert status["model_open_count"] == 1
 engine, = catalog["engines"]
-assert engine["alias"] == sys.argv[3]
+assert engine["alias"] == sys.argv[4]
 assert engine["state"] == "loaded" and engine["execution_ready"]
 assert engine["context_capacity"] == 8
 assert engine["prefill_chunk_tokens"] == 8
@@ -145,6 +213,10 @@ assert engine["concurrent_sequences"] == 1
 assert not engine["continuous_batching"]
 assert len(engine["model_identity"]) == 64
 assert len(engine["specialization_identity"]) == 64
+packages = {row["name"]: row for row in projection["models"] if row["kind"] == "package"}
+assert projection["engine_host_observed"] is True
+assert packages[sys.argv[4]]["engine_state"] == "loaded"
+assert packages[sys.argv[5]]["engine_state"] == "not-loaded"
 print(engine["generation"])
 PY
 )
@@ -365,7 +437,7 @@ HOME="$home" XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server unload "$profile" \
 
 python3 "$TINY_GENERATOR" "$corrupt/tiny.gguf" --corrupt
 corrupt_artifact=$(realpath "$corrupt/tiny.gguf")
-cat >"$home/.local/share/yvex/models.local.json" <<EOF
+cat >"$registry" <<EOF
 {
   "schema": "yvex.models.local.v5",
   "models": [{
