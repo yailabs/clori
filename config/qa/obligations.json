@@ -118,7 +118,25 @@
     },
     {
       "id": "public-abi",
-      "patterns": ["include/yvex/*.h", "tests/test_public_abi.py"],
+      "patterns": [
+        "include/yvex/api.h",
+        "include/yvex/artifact.h",
+        "include/yvex/backend.h",
+        "include/yvex/catalog.h",
+        "include/yvex/core.h",
+        "include/yvex/gguf.h",
+        "include/yvex/graph.h",
+        "include/yvex/materialization.h",
+        "include/yvex/model.h",
+        "include/yvex/provider.h",
+        "include/yvex/qtype.h",
+        "include/yvex/quant.h",
+        "include/yvex/registry.h",
+        "include/yvex/server.h",
+        "include/yvex/source.h",
+        "include/yvex/tokenizer.h",
+        "tests/test_public_abi.py"
+      ],
       "lanes": ["structural"],
       "tests": ["structural.public-abi", "structural.source-layout"],
       "reason": "installed ABI changes require explicit version decisions and C/C++ layout qualification"

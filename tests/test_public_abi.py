@@ -104,6 +104,22 @@ def declaration_digest(header: str, record: str) -> str:
     return hashlib.sha256(" ".join(tokens).encode("utf-8")).hexdigest()
 
 
+def installed_versioned_records() -> set[str]:
+    records: set[str] = set()
+    for header in (ROOT / "include/yvex").glob("*.h"):
+        text = header.read_text(encoding="utf-8")
+        text = re.sub(r"/\*.*?\*/|//[^\n]*", " ", text, flags=re.DOTALL)
+        for match in re.finditer(
+            r"typedef\s+struct\s*\{(.*?)\}\s*([A-Za-z_]\w*)\s*;",
+            text,
+            flags=re.DOTALL,
+        ):
+            tokens = re.findall(r"[A-Za-z_]\w*|\d+[A-Za-z0-9_]*|[^\s]", match.group(1))
+            if tokens[:3] == ["unsigned", "int", "schema_version"]:
+                records.add(match.group(2))
+    return records
+
+
 def compiler_source() -> str:
     lines = [
         "#include <limits.h>",
@@ -196,6 +212,13 @@ def compile_contract(language: str, compiler: str, standard: str) -> list[str]:
 
 def main() -> int:
     errors: list[str] = []
+    discovered = installed_versioned_records()
+    untracked = sorted(discovered - RECORDS.keys())
+    stale = sorted(RECORDS.keys() - discovered)
+    if untracked:
+        errors.append(f"versioned installed records missing from manifest: {untracked}")
+    if stale:
+        errors.append(f"ABI manifest records no longer installed: {stale}")
     for record, (header, _, _, _, expected) in RECORDS.items():
         try:
             actual = declaration_digest(header, record)
