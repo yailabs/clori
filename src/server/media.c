@@ -368,6 +368,40 @@ static int turn_complete(server_message_emit emit, void *context,
     return emit(context, &message, err);
 }
 
+static int turn_error(server_message_emit emit, void *context,
+                      const yvex_client_request *request,
+                      const server_media_session *session, int status,
+                      double seconds, const yvex_error *failure,
+                      yvex_error *err)
+{
+    yvex_client_message message = {0};
+    message.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
+    message.kind = YVEX_CLIENT_MESSAGE_ERROR;
+    message.status = status;
+    message.failure_class = yvex_server_failure_class_from_status(status);
+    message.request_number = request->request_number;
+    message.generation_mode = YVEX_SERVER_GENERATION_MEDIA;
+    message.generation_phase = status == YVEX_ERR_CANCELLED
+                                   ? YVEX_CLIENT_PHASE_CANCELLED
+                                   : YVEX_CLIENT_PHASE_FAILED;
+    message.cancellation_class = status == YVEX_ERR_CANCELLED
+                                     ? YVEX_CLIENT_CANCELLATION_COMPLETED
+                                     : YVEX_CLIENT_CANCELLATION_NONE;
+    message.stream_channel = YVEX_CLIENT_STREAM_ERROR;
+    message.stop_reason = status == YVEX_ERR_CANCELLED
+                              ? YVEX_GENERATION_STOP_CANCELLED
+                              : YVEX_GENERATION_STOP_OUTPUT_FAILURE;
+    message.session_state = session->state;
+    message.turn_count = session->turn_count;
+    message.total_completion_seconds = seconds;
+    yvex_core_text_copy(message.session_name, sizeof(message.session_name),
+                        session->name);
+    yvex_core_text_copy(message.reason, sizeof(message.reason),
+                        failure ? yvex_error_message(failure)
+                                : "media generation failed");
+    return emit(context, &message, err);
+}
+
 static int media_cancel_requested(void *opaque)
 {
     server_media_session *session = opaque;
@@ -519,6 +553,9 @@ static int generation_execute(server_media_registry *registry,
             session->name, request_id, NULL,
             rc == YVEX_ERR_CANCELLED ? "cancelled" : "failed", 0ull, 0ull,
             0ull, seconds, 0.0, &telemetry_error);
+        yvex_error_clear(&telemetry_error);
+        (void)turn_error(emit, context, request, session, rc, seconds,
+                         &primary, &telemetry_error);
         if (err) *err = primary;
         return rc;
     }

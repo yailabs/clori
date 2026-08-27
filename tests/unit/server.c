@@ -580,7 +580,9 @@ static int test_openai_listener_admission(void)
 
 typedef struct {
     char text[YVEX_SERVER_FRAGMENT_CAP * 2u];
-    unsigned long long count, started, completed, events, media_results;
+    unsigned long long count, started, completed, errors, events, media_results;
+    int status;
+    yvex_client_generation_phase phase;
 } media_messages;
 
 static int media_message_collect(void *context, const yvex_client_message *message,
@@ -602,8 +604,13 @@ static int media_message_collect(void *context, const yvex_client_message *messa
     messages->count++;
     messages->started += message->kind == YVEX_CLIENT_MESSAGE_TURN_STARTED;
     messages->completed += message->kind == YVEX_CLIENT_MESSAGE_TURN_COMPLETE;
+    messages->errors += message->kind == YVEX_CLIENT_MESSAGE_ERROR;
     messages->events += message->kind == YVEX_CLIENT_MESSAGE_EVENT;
     messages->media_results += message->media_result.available != 0;
+    if (message->kind == YVEX_CLIENT_MESSAGE_ERROR) {
+        messages->status = message->status;
+        messages->phase = message->generation_phase;
+    }
     if (message->byte_count) {
         memcpy(messages->text + used, message->bytes, (size_t)message->byte_count);
         messages->text[used + message->byte_count] = '\0';
@@ -810,9 +817,12 @@ static int test_media_direct_prompt_routing(void)
         rc = media_registry_request(registry, YVEX_CLIENT_OP_GENERATION_TURN, name,
                                     prompts[index], &messages, &err);
         YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT && messages.started == 1ull &&
-                             messages.events == 2ull && !messages.completed &&
+                             messages.events == 2ull && messages.errors == 1ull &&
+                             messages.status == YVEX_ERR_FORMAT &&
+                             messages.phase == YVEX_CLIENT_PHASE_FAILED &&
+                             !messages.completed &&
                              !messages.media_results && !messages.text[0],
-                         "creative control-like text reaches the real engine unchanged");
+                         "media execution failure emits one terminal response");
         memset(&messages, 0, sizeof(messages));
         YVEX_TEST_ASSERT(media_registry_request(registry, YVEX_CLIENT_OP_SESSION_CLOSE,
                                                 name, NULL, &messages, &err) == YVEX_OK,
