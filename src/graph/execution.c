@@ -533,38 +533,6 @@ static int capacity_ceil_div(unsigned long long value, unsigned long long diviso
     *result = adjusted / divisor;
     return 1;
 }
-/* Compute one exact scaled ratio without requiring the numerator product to fit. */
-static int capacity_mul_div(unsigned long long left, unsigned long long right,
-                            unsigned long long divisor, int round_up,
-                            unsigned long long *result)
-{
-    unsigned long long quotient = 0ull, remainder = 0ull;
-    unsigned long long right_quotient, right_remainder;
-    unsigned int bit;
-    if (!divisor || !result) return 0;
-    right_quotient = right / divisor;
-    right_remainder = right % divisor;
-    for (bit = 64u; bit-- > 0u;) {
-        if (!yvex_core_u64_mul(quotient, 2ull, &quotient)) return 0;
-        if (remainder >= divisor - remainder) {
-            remainder -= divisor - remainder;
-            if (!capacity_add(&quotient, 1ull)) return 0;
-        } else {
-            remainder += remainder;
-        }
-        if (!(left & (1ull << bit))) continue;
-        if (!capacity_add(&quotient, right_quotient)) return 0;
-        if (right_remainder && remainder >= divisor - right_remainder) {
-            remainder -= divisor - right_remainder;
-            if (!capacity_add(&quotient, 1ull)) return 0;
-        } else {
-            remainder += right_remainder;
-        }
-    }
-    if (round_up && remainder && !capacity_add(&quotient, 1ull)) return 0;
-    *result = quotient;
-    return 1;
-}
 static int capacity_state_request_valid(
     const yvex_execution_state_class_request *request)
 {
