@@ -490,7 +490,7 @@ static int runtime_attention_execution_descriptor_identity(
         return runtime_refuse(err, YVEX_ERR_FORMAT, "runtime.attention.workspace",
                               "session workspace identity disagrees with execution facts");
     {
-        yvex_runtime_execution_descriptor_facts facts = {
+        yvex_runtime_operator_execution_facts facts = {
             .schema_version = YVEX_RUNTIME_EXECUTION_DESCRIPTOR_SCHEMA_V2,
             .runtime_model_identity = result->runtime_model_identity, .runtime_binding_identity = binding->identity,
             .artifact_identity = binding->artifact_identity, .selected_mode = result->selected_mode,
@@ -535,7 +535,7 @@ static int runtime_attention_execution_descriptor_identity(
         memcpy(facts.qtype_binding_counts, residency->qtype_binding_counts,
                sizeof(facts.qtype_binding_counts));
         memcpy(facts.qtype_bytes, residency->qtype_bytes, sizeof(facts.qtype_bytes));
-        return yvex_runtime_execution_descriptor_identity_compute(&facts, output, err);
+        return yvex_runtime_operator_execution_identity_compute(&facts, output, err);
     }
 }
 static int runtime_attention_action_dispatches(yvex_runtime_operator_action action) {

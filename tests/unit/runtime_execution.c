@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include <yvex/internal/backend.h>
+#include <yvex/internal/evidence.h>
 #include <yvex/internal/execution.h>
 #include <yvex/internal/runtime.h>
 

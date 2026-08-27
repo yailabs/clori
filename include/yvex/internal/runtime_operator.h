@@ -3,6 +3,7 @@
 #define INCLUDE_YVEX_INTERNAL_RUNTIME_OPERATOR_H_INCLUDED
 
 #include <yvex/internal/benchmark.h>
+#include <yvex/internal/evidence.h>
 #include <yvex/internal/runtime.h>
 
 #ifdef __cplusplus

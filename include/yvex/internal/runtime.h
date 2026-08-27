@@ -484,37 +484,6 @@ int yvex_runtime_cleanup_lease_close(yvex_runtime_cleanup_lease **lease, yvex_er
 typedef int (*yvex_runtime_cleanup_release_fn)(void **context, yvex_error *err);
 int yvex_runtime_cleanup_lease_adopt(yvex_runtime_cleanup_lease *lease, void *context,
     yvex_runtime_cleanup_release_fn release, yvex_error *err);
-/* Immutable compatibility facts hashed before one attention dispatch. */
-typedef struct {
-    unsigned int schema_version;
-    const char *runtime_model_identity, *runtime_binding_identity;
-    const char *artifact_identity, *runtime_numeric_identity;
-    const char *runtime_descriptor_identity, *semantic_graph_identity;
-    const char *executable_graph_identity, *selected_mode, *capture_bucket;
-    const char *residency_identity, *workspace_identity, *capacity_plan_identity;
-    const char *state_layout_identity;
-    unsigned long long family_adapter_id, family_adapter_version;
-    unsigned int probe, probe_scope, operation_scope, phase, backend, requested_mode;
-    int compare_backends;
-    unsigned long long token_count, request_count, start_position;
-    unsigned long long layer_start, layer_count, selection_key, binding_count;
-    unsigned long long state_component_entries[YVEX_ATTENTION_STATE_BINDING_COUNT];
-    unsigned long long state_component_capacities[YVEX_ATTENTION_STATE_BINDING_COUNT];
-    unsigned long long maximum_compression_ratio, maximum_topk_capacity;
-    unsigned int trace_policy;
-    unsigned long long maximum_host_bytes, maximum_device_bytes;
-    unsigned long long residency_generation, resident_binding_count;
-    unsigned long long resident_encoded_bytes, workspace_bytes, workspace_generation;
-    unsigned long long prepared_state_layers, state_allocated_bytes, state_generation;
-    unsigned long long qtype_binding_counts[YVEX_RUNTIME_DESCRIPTOR_QTYPE_CAP];
-    unsigned long long qtype_bytes[YVEX_RUNTIME_DESCRIPTOR_QTYPE_CAP];
-    unsigned int device_kind;
-    int device_index, compute_capability_major, compute_capability_minor;
-    unsigned long long total_device_bytes;
-} yvex_runtime_execution_descriptor_facts;
-int yvex_runtime_execution_descriptor_identity_compute(
-    const yvex_runtime_execution_descriptor_facts *facts,
-    char output[YVEX_SHA256_HEX_CAP], yvex_error *err);
 int yvex_runtime_workspace_identity_compute(
     const char *runtime_model_identity, yvex_backend_kind backend,
     unsigned long long maximum_host_bytes, unsigned long long maximum_device_bytes,

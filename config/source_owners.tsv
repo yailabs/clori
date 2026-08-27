@@ -19,6 +19,7 @@ include/yvex/internal/compiler_source.h	graph	graph.source_compiler	generic	priv
 include/yvex/internal/core.h	core	core.internal	generic	private	internal-abi	repository	interface	none
 include/yvex/internal/decode.h	runtime	runtime.decode	generic	private	internal-abi	runtime,cli,tests	interface	none
 include/yvex/internal/execution.h	graph	graph.execution	generic	private	internal-abi	compilation,artifact,runtime,backend,tests	interface	none
+include/yvex/internal/evidence.h	runtime	runtime.evidence	generic	private	internal-abi	runtime,cli,tests	interface	none
 include/yvex/internal/family_catalog.h	graph	graph.family_catalog	generic	private	internal-abi	graph.family,graph	interface	none
 include/yvex/internal/generation.h	runtime	runtime.generation	generic	private	internal-abi	runtime,cli,tests	interface	none
 include/yvex/internal/logits.h	runtime	runtime.logits	generic	private	internal-abi	runtime,cli,tests	interface	none
@@ -202,6 +203,7 @@ include/yvex/internal/families/minimax_h3.h	model	model.families.minimax_h3	fami
 src/model/families/deepseek_v4.c	model.family	model.family.deepseek_v4	family	private	reusable-algorithm	model,graph,gguf	implementation	none
 src/model/families/minimax_h3.c	model.family	model.family.minimax_h3	family	private	reusable-algorithm	model.compilation,cli,tests	implementation	none
 src/runtime/descriptor.c	runtime	runtime.descriptor	generic	private	resource-lifecycle	artifact,graph,runtime	implementation	none
+src/runtime/evidence.c	runtime	runtime.evidence	generic	private	reusable-algorithm	runtime,cli,tests	implementation	none
 src/runtime/binding.c	runtime	runtime.binding	generic	private	file-serialization	artifact,graph,runtime,cli	implementation	none
 src/runtime/component.c	runtime	runtime.component	generic	private	reusable-algorithm	graph.family,runtime	implementation	none
 src/runtime/binding_import.c	runtime	runtime.binding_import	generic	private	resource-lifecycle	runtime.transformer,runtime.logits,runtime.speculation	implementation	none

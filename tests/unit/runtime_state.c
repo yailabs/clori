@@ -1729,7 +1729,7 @@ static int test_summary_capacity_accounting(const state_plan_fixture *fixture)
 }
 
 static void execution_descriptor_fixture(
-    yvex_runtime_execution_descriptor_facts *facts)
+    yvex_runtime_operator_execution_facts *facts)
 {
     memset(facts, 0, sizeof(*facts));
     facts->schema_version = YVEX_RUNTIME_EXECUTION_DESCRIPTOR_SCHEMA_V2;
@@ -1798,13 +1798,13 @@ static void execution_descriptor_fixture(
 }
 
 static int execution_descriptor_changed(
-    const char *baseline, const yvex_runtime_execution_descriptor_facts *facts)
+    const char *baseline, const yvex_runtime_operator_execution_facts *facts)
 {
     char identity[YVEX_SHA256_HEX_CAP];
     yvex_error err;
 
     yvex_error_clear(&err);
-    return yvex_runtime_execution_descriptor_identity_compute(
+    return yvex_runtime_operator_execution_identity_compute(
                facts, identity, &err) == YVEX_OK &&
            strcmp(baseline, identity) != 0;
 }
@@ -1812,7 +1812,7 @@ static int execution_descriptor_changed(
 /* Prove descriptor identity covers compatibility and excludes orchestration evidence. */
 static int test_execution_descriptor_identity(void)
 {
-    yvex_runtime_execution_descriptor_facts facts, changed;
+    yvex_runtime_operator_execution_facts facts, changed;
     yvex_graph_attention_operator_request orchestration, unrelated;
     char first[YVEX_SHA256_HEX_CAP], second[YVEX_SHA256_HEX_CAP];
     double timing = 1.0, changed_timing = 999.0;
@@ -1820,7 +1820,7 @@ static int test_execution_descriptor_identity(void)
 
     execution_descriptor_fixture(&facts);
     yvex_error_clear(&err);
-    YVEX_TEST_ASSERT(yvex_runtime_execution_descriptor_identity_compute(
+    YVEX_TEST_ASSERT(yvex_runtime_operator_execution_identity_compute(
                          &facts, first, &err) == YVEX_OK,
                      "execution descriptor fixture seals");
     YVEX_TEST_ASSERT(strcmp(first,
@@ -1839,12 +1839,12 @@ static int test_execution_descriptor_identity(void)
     changed = facts;
     changed.probe = YVEX_ATTENTION_PROBE_UNSPECIFIED;
     YVEX_TEST_ASSERT(
-        yvex_runtime_execution_descriptor_identity_compute(
+        yvex_runtime_operator_execution_identity_compute(
             &changed, second, &err) == YVEX_ERR_INVALID_ARG,
         "legacy numeric zero probe refuses descriptor admission");
     changed.probe = (yvex_attention_probe_kind)(YVEX_ATTENTION_PROBE_CANONICAL_V2 + 1u);
     YVEX_TEST_ASSERT(
-        yvex_runtime_execution_descriptor_identity_compute(
+        yvex_runtime_operator_execution_identity_compute(
             &changed, second, &err) == YVEX_ERR_INVALID_ARG &&
             strcmp(facts.runtime_model_identity, changed.runtime_model_identity) == 0 &&
             strcmp(facts.runtime_binding_identity, changed.runtime_binding_identity) == 0 &&
@@ -1963,7 +1963,7 @@ static int test_execution_descriptor_identity(void)
     unrelated.warmup = 7ull;
     yvex_error_clear(&err);
     YVEX_TEST_ASSERT(
-        yvex_runtime_execution_descriptor_identity_compute(
+        yvex_runtime_operator_execution_identity_compute(
             &facts, second, &err) == YVEX_OK && strcmp(first, second) == 0 &&
             (orchestration.operator_action != unrelated.operator_action) &&
             orchestration.repeat != unrelated.repeat &&
@@ -1971,7 +1971,7 @@ static int test_execution_descriptor_identity(void)
         "action, repeat, warmup, and timing remain outside descriptor identity");
     changed = facts;
     changed.schema_version++;
-    YVEX_TEST_ASSERT(yvex_runtime_execution_descriptor_identity_compute(
+    YVEX_TEST_ASSERT(yvex_runtime_operator_execution_identity_compute(
                          &changed, second, &err) == YVEX_ERR_INVALID_ARG,
                      "unsupported execution descriptor schema refuses");
     return 0;

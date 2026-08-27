@@ -9,6 +9,7 @@
 #include <limits.h>
 #include <string.h>
 #include <yvex/internal/core.h>
+#include <yvex/internal/evidence.h>
 #include <yvex/internal/sampling.h>
 #include <yvex/tokenizer.h>
 #ifdef __cplusplus
