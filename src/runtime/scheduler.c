@@ -15,6 +15,15 @@ enum {
     COMPATIBLE_RENDEZVOUS_NS = 50000000
 };
 
+typedef struct {
+    unsigned long long generation, submission_ordinal;
+    unsigned long long engine_generation, sequence_handle;
+    yvex_engine_progress_kind kind;
+    int (*cancel_requested)(void *context);
+    void *cancel_context;
+    int in_use, queued, active, status;
+} runtime_engine_progress_work;
+
 struct runtime_engine_scheduler {
     pthread_mutex_t mutex;
     pthread_cond_t ready;
@@ -23,10 +32,17 @@ struct runtime_engine_scheduler {
     runtime_engine_work **queue;
     unsigned long long queue_capacity, queue_count, producer_count;
     unsigned long long producer_arrival_floor;
+    runtime_engine_progress_work *progress;
+    unsigned long long progress_capacity, progress_in_use_count;
+    unsigned long long progress_ready_count, progress_active_count;
+    unsigned long long next_progress_generation, next_progress_ordinal;
     yvex_engine_scheduler_summary summary;
     int mutex_ready, ready_condition, completed_condition;
     int worker_started, stopping;
 };
+
+static int scheduler_refuse(yvex_error *err, yvex_status status,
+                            const char *reason);
 
 static unsigned long long scheduler_elapsed_ns(const struct timespec *start,
                                                const struct timespec *end)
@@ -53,6 +69,190 @@ static void scheduler_observation_add(unsigned long long *total,
                                       unsigned long long value)
 {
     *total = ULLONG_MAX - *total < value ? ULLONG_MAX : *total + value;
+}
+
+static int progress_cancelled(const runtime_engine_progress_work *work)
+{
+    return work && work->cancel_requested &&
+           work->cancel_requested(work->cancel_context);
+}
+
+static void progress_summary_locked(runtime_engine_scheduler *scheduler)
+{
+    scheduler->summary.ready_sequence_work = scheduler->progress_ready_count;
+    scheduler->summary.active_sequences = scheduler->progress_active_count;
+    if (scheduler->progress_ready_count >
+        scheduler->summary.maximum_ready_sequence_work)
+        scheduler->summary.maximum_ready_sequence_work =
+            scheduler->progress_ready_count;
+    if (scheduler->progress_active_count >
+        scheduler->summary.maximum_active_sequences)
+        scheduler->summary.maximum_active_sequences =
+            scheduler->progress_active_count;
+}
+
+static runtime_engine_progress_work *progress_slot_locked(
+    runtime_engine_scheduler *scheduler,
+    const runtime_engine_progress_lease *lease)
+{
+    runtime_engine_progress_work *work;
+    if (!scheduler || !lease || lease->scheduler != scheduler ||
+        lease->slot >= scheduler->progress_capacity)
+        return NULL;
+    work = &scheduler->progress[lease->slot];
+    return work->in_use && work->generation == lease->generation
+               ? work : NULL;
+}
+
+static int progress_active_conflict_locked(
+    const runtime_engine_scheduler *scheduler,
+    const runtime_engine_progress_work *candidate)
+{
+    unsigned long long index;
+    for (index = 0ull; index < scheduler->progress_capacity; ++index) {
+        const runtime_engine_progress_work *active =
+            &scheduler->progress[index];
+        if (active != candidate && active->in_use && active->active &&
+            active->engine_generation == candidate->engine_generation &&
+            active->sequence_handle == candidate->sequence_handle)
+            return 1;
+    }
+    return 0;
+}
+
+static void progress_active_remove_locked(
+    runtime_engine_scheduler *scheduler,
+    runtime_engine_progress_work *work)
+{
+    if (!work || !work->active) return;
+    work->active = 0;
+    scheduler->progress_active_count--;
+}
+
+static void progress_complete_kind_locked(
+    runtime_engine_scheduler *scheduler,
+    const runtime_engine_progress_work *work)
+{
+    scheduler_observation_add(&scheduler->summary.progress_completions, 1ull);
+    scheduler_observation_add(
+        &scheduler->summary.progress_completions_by_kind[work->kind], 1ull);
+}
+
+static void progress_cancel_ready_locked(
+    runtime_engine_scheduler *scheduler,
+    runtime_engine_progress_work *work)
+{
+    if (!work || !work->queued) return;
+    work->queued = 0;
+    work->status = YVEX_ERR_CANCELLED;
+    scheduler->progress_ready_count--;
+    scheduler_observation_add(&scheduler->summary.progress_cancellations, 1ull);
+}
+
+static runtime_engine_progress_work *progress_next_ready_locked(
+    runtime_engine_scheduler *scheduler)
+{
+    runtime_engine_progress_work *selected = NULL;
+    unsigned long long index;
+    for (index = 0ull; index < scheduler->progress_capacity; ++index) {
+        runtime_engine_progress_work *candidate =
+            &scheduler->progress[index];
+        if (!candidate->in_use || !candidate->queued) continue;
+        if (progress_cancelled(candidate)) {
+            progress_cancel_ready_locked(scheduler, candidate);
+            continue;
+        }
+        if (progress_active_conflict_locked(scheduler, candidate)) {
+            scheduler_observation_add(
+                &scheduler->summary.sequence_conflicts, 1ull);
+            continue;
+        }
+        if (!selected ||
+            candidate->submission_ordinal < selected->submission_ordinal)
+            selected = candidate;
+    }
+    return selected;
+}
+
+static void progress_grant_locked(runtime_engine_scheduler *scheduler)
+{
+    while (!scheduler->stopping &&
+           scheduler->progress_active_count < scheduler->progress_capacity) {
+        runtime_engine_progress_work *candidate =
+            progress_next_ready_locked(scheduler);
+        if (!candidate) break;
+        candidate->queued = 0;
+        candidate->active = 1;
+        scheduler->progress_ready_count--;
+        scheduler->progress_active_count++;
+    }
+    progress_summary_locked(scheduler);
+    (void)pthread_cond_broadcast(&scheduler->completed);
+}
+
+static void progress_enqueue_locked(
+    runtime_engine_scheduler *scheduler,
+    runtime_engine_progress_work *work)
+{
+    scheduler->next_progress_ordinal++;
+    if (!scheduler->next_progress_ordinal)
+        scheduler->next_progress_ordinal++;
+    work->submission_ordinal = scheduler->next_progress_ordinal;
+    work->queued = 1;
+    work->active = 0;
+    work->status = YVEX_OK;
+    scheduler->progress_ready_count++;
+    scheduler_observation_add(&scheduler->summary.progress_submissions, 1ull);
+    scheduler_observation_add(
+        &scheduler->summary.progress_submissions_by_kind[work->kind], 1ull);
+    progress_grant_locked(scheduler);
+}
+
+static int progress_wait_locked(
+    runtime_engine_scheduler *scheduler,
+    runtime_engine_progress_work *work, yvex_error *err)
+{
+    while (work->queued && !scheduler->stopping) {
+        struct timespec deadline;
+        if (clock_gettime(CLOCK_REALTIME, &deadline) == 0) {
+            deadline.tv_nsec += 10000000l;
+            if (deadline.tv_nsec >= 1000000000l) {
+                deadline.tv_sec++;
+                deadline.tv_nsec -= 1000000000l;
+            }
+            (void)pthread_cond_timedwait(
+                &scheduler->completed, &scheduler->mutex, &deadline);
+        } else {
+            (void)pthread_cond_wait(&scheduler->completed, &scheduler->mutex);
+        }
+        progress_grant_locked(scheduler);
+    }
+    if (work->active) {
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    if (work->status == YVEX_ERR_CANCELLED)
+        return scheduler_refuse(
+            err, YVEX_ERR_CANCELLED,
+            "ready sequence work was cancelled before admission");
+    return scheduler_refuse(
+        err, YVEX_ERR_STATE,
+        "engine scheduler stopped before sequence work admission");
+}
+
+static void progress_release_locked(
+    runtime_engine_scheduler *scheduler, runtime_engine_progress_work *work)
+{
+    if (!work || !work->in_use) return;
+    if (work->queued) {
+        work->queued = 0;
+        scheduler->progress_ready_count--;
+    }
+    progress_active_remove_locked(scheduler, work);
+    memset(work, 0, sizeof(*work));
+    scheduler->progress_in_use_count--;
+    progress_summary_locked(scheduler);
+    (void)pthread_cond_broadcast(&scheduler->completed);
 }
 
 static unsigned long long scheduler_compatible_count_locked(
@@ -380,7 +580,7 @@ int yvex_runtime_private_engine_scheduler_open(
     runtime_engine_scheduler *scheduler;
     int rc;
     if (out) *out = NULL;
-    if (!out || queue_capacity < 2ull || queue_capacity >= 64ull ||
+    if (!out || !queue_capacity || queue_capacity >= 64ull ||
         queue_capacity > SIZE_MAX / sizeof(*scheduler->queue))
         return scheduler_refuse(err, YVEX_ERR_INVALID_ARG,
                                 "bounded engine scheduler capacity is required");
@@ -389,10 +589,15 @@ int yvex_runtime_private_engine_scheduler_open(
         return scheduler_refuse(err, YVEX_ERR_NOMEM,
                                 "engine scheduler allocation failed");
     scheduler->queue = calloc((size_t)queue_capacity, sizeof(*scheduler->queue));
+    scheduler->progress = calloc((size_t)queue_capacity,
+                                 sizeof(*scheduler->progress));
     scheduler->queue_capacity = queue_capacity;
+    scheduler->progress_capacity = queue_capacity;
+    scheduler->summary.sequence_capacity = queue_capacity;
     scheduler->summary.coalescing_limit_ns = COMPATIBLE_COALESCING_NS;
     scheduler->summary.rendezvous_limit_ns = COMPATIBLE_RENDEZVOUS_NS;
-    if (!scheduler->queue || pthread_mutex_init(&scheduler->mutex, NULL) != 0) {
+    if (!scheduler->queue || !scheduler->progress ||
+        pthread_mutex_init(&scheduler->mutex, NULL) != 0) {
         rc = scheduler_refuse(err, YVEX_ERR_NOMEM,
                               "engine scheduler queue allocation failed");
         goto failure;
@@ -515,6 +720,7 @@ int yvex_runtime_private_engine_scheduler_close(
     runtime_engine_scheduler **scheduler, yvex_error *err)
 {
     runtime_engine_scheduler *owner;
+    unsigned long long index;
     if (!scheduler || !*scheduler) {
         yvex_error_clear(err);
         return YVEX_OK;
@@ -523,21 +729,198 @@ int yvex_runtime_private_engine_scheduler_close(
     if (owner->mutex_ready) {
         (void)pthread_mutex_lock(&owner->mutex);
         owner->stopping = 1;
+        for (index = 0ull; index < owner->progress_capacity; ++index)
+            if (owner->progress[index].in_use &&
+                owner->progress[index].queued)
+                progress_cancel_ready_locked(
+                    owner, &owner->progress[index]);
+        progress_summary_locked(owner);
         if (owner->ready_condition) (void)pthread_cond_broadcast(&owner->ready);
         if (owner->completed_condition)
             (void)pthread_cond_broadcast(&owner->completed);
+        while (owner->progress_in_use_count && owner->completed_condition)
+            (void)pthread_cond_wait(&owner->completed, &owner->mutex);
         (void)pthread_mutex_unlock(&owner->mutex);
     }
     if (owner->worker_started) (void)pthread_join(owner->worker, NULL);
     if (owner->completed_condition) (void)pthread_cond_destroy(&owner->completed);
     if (owner->ready_condition) (void)pthread_cond_destroy(&owner->ready);
     if (owner->mutex_ready) (void)pthread_mutex_destroy(&owner->mutex);
+    free(owner->progress);
     free(owner->queue);
     memset(owner, 0, sizeof(*owner));
     free(owner);
     *scheduler = NULL;
     yvex_error_clear(err);
     return YVEX_OK;
+}
+
+int yvex_runtime_private_engine_progress_enter(
+    yvex_model_engine *model, yvex_runtime_execution_session *session,
+    yvex_engine_progress_kind kind,
+    int (*cancel_requested)(void *context), void *cancel_context,
+    runtime_engine_progress_lease *lease, yvex_error *err)
+{
+    runtime_engine_scheduler *scheduler;
+    runtime_engine_progress_work *work = NULL;
+    unsigned long long index;
+    int rc;
+    if (lease) memset(lease, 0, sizeof(*lease));
+    if (!model || !session || !lease ||
+        kind >= YVEX_ENGINE_PROGRESS_KIND_COUNT ||
+        !model->lifecycle_mutex_ready ||
+        pthread_mutex_lock(&model->lifecycle_mutex) != 0)
+        return scheduler_refuse(
+            err, YVEX_ERR_INVALID_ARG,
+            "engine-owned ready sequence work is required");
+    scheduler = model->engine_scheduler;
+    if (!scheduler || !model->engine_scheduler_references ||
+        model->close_requested || session->engine != model ||
+        !session->summary.engine_generation ||
+        session->summary.engine_generation != model->summary.engine_generation ||
+        !session->batch_source_ordinal ||
+        pthread_mutex_lock(&scheduler->mutex) != 0) {
+        (void)pthread_mutex_unlock(&model->lifecycle_mutex);
+        return scheduler_refuse(
+            err, YVEX_ERR_STATE,
+            "ready sequence work has no live engine scheduler generation");
+    }
+    (void)pthread_mutex_unlock(&model->lifecycle_mutex);
+    if (scheduler->stopping) {
+        (void)pthread_mutex_unlock(&scheduler->mutex);
+        memset(lease, 0, sizeof(*lease));
+        return scheduler_refuse(
+            err, YVEX_ERR_STATE,
+            "draining engine scheduler cannot admit sequence work");
+    }
+    for (index = 0ull; index < scheduler->progress_capacity; ++index)
+        if (!scheduler->progress[index].in_use) {
+            work = &scheduler->progress[index];
+            break;
+        }
+    if (!work) {
+        (void)pthread_mutex_unlock(&scheduler->mutex);
+        return scheduler_refuse(
+            err, YVEX_ERR_BOUNDS,
+            "engine ready-work capacity is exhausted");
+    }
+    scheduler->next_progress_generation++;
+    if (!scheduler->next_progress_generation)
+        scheduler->next_progress_generation++;
+    memset(work, 0, sizeof(*work));
+    work->generation = scheduler->next_progress_generation;
+    work->engine_generation = session->summary.engine_generation;
+    work->sequence_handle = session->batch_source_ordinal;
+    work->kind = kind;
+    work->cancel_requested = cancel_requested;
+    work->cancel_context = cancel_context;
+    work->in_use = 1;
+    scheduler->progress_in_use_count++;
+    lease->scheduler = scheduler;
+    lease->slot = index;
+    lease->generation = work->generation;
+    progress_enqueue_locked(scheduler, work);
+    rc = progress_wait_locked(scheduler, work, err);
+    if (rc != YVEX_OK) {
+        progress_release_locked(scheduler, work);
+        memset(lease, 0, sizeof(*lease));
+    }
+    (void)pthread_mutex_unlock(&scheduler->mutex);
+    return rc;
+}
+
+int yvex_runtime_private_engine_progress_transition(
+    runtime_engine_progress_lease *lease, yvex_engine_progress_kind kind,
+    yvex_error *err)
+{
+    runtime_engine_scheduler *scheduler;
+    runtime_engine_progress_work *work;
+    int rc;
+    if (!lease || !lease->scheduler ||
+        kind >= YVEX_ENGINE_PROGRESS_KIND_COUNT)
+        return scheduler_refuse(
+            err, YVEX_ERR_INVALID_ARG,
+            "active engine sequence work and next kind are required");
+    scheduler = lease->scheduler;
+    if (pthread_mutex_lock(&scheduler->mutex) != 0)
+        return scheduler_refuse(
+            err, YVEX_ERR_STATE,
+            "engine progress transition lock is unavailable");
+    work = progress_slot_locked(scheduler, lease);
+    if (!work || !work->active) {
+        (void)pthread_mutex_unlock(&scheduler->mutex);
+        return scheduler_refuse(
+            err, YVEX_ERR_STATE,
+            "engine progress transition has a stale sequence lease");
+    }
+    progress_complete_kind_locked(scheduler, work);
+    progress_active_remove_locked(scheduler, work);
+    scheduler_observation_add(&scheduler->summary.progress_transitions, 1ull);
+    if (scheduler->stopping) {
+        scheduler_observation_add(
+            &scheduler->summary.progress_failures, 1ull);
+        progress_release_locked(scheduler, work);
+        memset(lease, 0, sizeof(*lease));
+        (void)pthread_mutex_unlock(&scheduler->mutex);
+        return scheduler_refuse(
+            err, YVEX_ERR_STATE,
+            "draining engine scheduler rejected a phase transition");
+    }
+    work->kind = kind;
+    progress_enqueue_locked(scheduler, work);
+    rc = progress_wait_locked(scheduler, work, err);
+    if (rc != YVEX_OK) {
+        progress_release_locked(scheduler, work);
+        memset(lease, 0, sizeof(*lease));
+    }
+    (void)pthread_mutex_unlock(&scheduler->mutex);
+    return rc;
+}
+
+int yvex_runtime_private_engine_progress_leave(
+    runtime_engine_progress_lease *lease, int status, yvex_error *err)
+{
+    runtime_engine_scheduler *scheduler;
+    runtime_engine_progress_work *work;
+    if (!lease || !lease->scheduler)
+        return status == YVEX_OK
+                   ? scheduler_refuse(
+                         err, YVEX_ERR_INVALID_ARG,
+                         "engine progress lease is required")
+                   : status;
+    scheduler = lease->scheduler;
+    if (pthread_mutex_lock(&scheduler->mutex) != 0)
+        return status == YVEX_OK
+                   ? scheduler_refuse(
+                         err, YVEX_ERR_STATE,
+                         "engine progress completion lock is unavailable")
+                   : status;
+    work = progress_slot_locked(scheduler, lease);
+    if (!work) {
+        (void)pthread_mutex_unlock(&scheduler->mutex);
+        return status == YVEX_OK
+                   ? scheduler_refuse(
+                         err, YVEX_ERR_STATE,
+                         "engine progress lease is stale")
+                   : status;
+    }
+    if (work->active) {
+        progress_complete_kind_locked(scheduler, work);
+        progress_active_remove_locked(scheduler, work);
+    }
+    if (status == YVEX_ERR_CANCELLED &&
+        work->status != YVEX_ERR_CANCELLED)
+        scheduler_observation_add(
+            &scheduler->summary.progress_cancellations, 1ull);
+    else if (status != YVEX_OK)
+        scheduler_observation_add(
+            &scheduler->summary.progress_failures, 1ull);
+    progress_release_locked(scheduler, work);
+    progress_grant_locked(scheduler);
+    (void)pthread_mutex_unlock(&scheduler->mutex);
+    memset(lease, 0, sizeof(*lease));
+    if (status == YVEX_OK) yvex_error_clear(err);
+    return status;
 }
 
 typedef struct {
@@ -1161,33 +1544,37 @@ static int compatible_step_rendezvous(
 }
 
 int yvex_runtime_private_model_scheduler_acquire(
-    yvex_model_engine *model, unsigned long long maximum_width,
+    yvex_model_engine *model, unsigned long long sequence_capacity,
+    unsigned long long maximum_width,
     yvex_error *err)
 {
     runtime_engine_scheduler *created = NULL;
     int rc = YVEX_OK;
-    if (!model || maximum_width < 2ull || maximum_width >= 64ull ||
+    if (!model || !sequence_capacity || sequence_capacity >= 64ull ||
+        !maximum_width || maximum_width > sequence_capacity ||
         !model->lifecycle_mutex_ready ||
         pthread_mutex_lock(&model->lifecycle_mutex) != 0)
         return scheduler_refuse(err, YVEX_ERR_INVALID_ARG,
-                               "runtime model and compatible width are required");
+                               "bounded sequence and compatible widths are required");
     if (model->close_requested ||
         (model->engine_scheduler &&
-         model->scheduler_maximum_width != maximum_width)) {
+         (model->scheduler_sequence_capacity != sequence_capacity ||
+          model->scheduler_maximum_width != maximum_width))) {
         (void)pthread_mutex_unlock(&model->lifecycle_mutex);
         return scheduler_refuse(
             err, YVEX_ERR_STATE,
             model->close_requested
                 ? "draining model engine cannot admit scheduling"
-                : "runtime model compatible width is already sealed");
+                : "runtime model scheduling envelope is already sealed");
     }
     if (!model->engine_scheduler) {
         rc = yvex_runtime_private_engine_scheduler_open(
-            &created, maximum_width, err);
+            &created, sequence_capacity, err);
         if (rc == YVEX_OK)
             rc = yvex_runtime_private_engine_scheduler_start(created, err);
         if (rc == YVEX_OK) {
             model->engine_scheduler = created;
+            model->scheduler_sequence_capacity = sequence_capacity;
             model->scheduler_maximum_width = maximum_width;
             created = NULL;
         }
@@ -1228,6 +1615,7 @@ int yvex_runtime_private_model_scheduler_release(
     if (!model->engine_scheduler_references) {
         owner = model->engine_scheduler;
         model->engine_scheduler = NULL;
+        model->scheduler_sequence_capacity = 0ull;
         model->scheduler_maximum_width = 0ull;
     }
     (void)pthread_mutex_unlock(&model->lifecycle_mutex);
@@ -1258,7 +1646,8 @@ int yvex_runtime_private_model_scheduler_producer_enter(
         return scheduler_refuse(err, YVEX_ERR_INVALID_ARG,
                                "active engine scheduler producer is required");
     if (!model->engine_scheduler || !model->engine_scheduler_references ||
-        model->engine_scheduler_producers >= model->scheduler_maximum_width) {
+        model->engine_scheduler_producers >=
+            model->scheduler_sequence_capacity) {
         (void)pthread_mutex_unlock(&model->lifecycle_mutex);
         return scheduler_refuse(
             err, YVEX_ERR_BOUNDS,
@@ -1379,6 +1768,7 @@ int yvex_model_engine_scheduler_summary_copy(
     if (rc == YVEX_OK) {
         out->enabled = owner->engine_scheduler != NULL;
         out->admitted_maximum_width = owner->scheduler_maximum_width;
+        out->sequence_capacity = owner->scheduler_sequence_capacity;
     }
     (void)pthread_mutex_unlock(&owner->lifecycle_mutex);
     if (rc == YVEX_OK) yvex_error_clear(err);

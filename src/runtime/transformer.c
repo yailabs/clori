@@ -40,7 +40,7 @@ struct yvex_runtime_transformer_context {
     unsigned int *execution_tokens;
     unsigned long long token_capacity, host_bytes, final_weight_bytes, execution_count, moe_workspace_bytes;
     pthread_mutex_t mutex;
-    int mutex_ready, busy, invalidated, scheduler_acquired;
+    int mutex_ready, busy, invalidated;
 };
 static const yvex_attention_plan *transformer_runtime_attention(
     const yvex_model_engine_view *view, yvex_tensor_scope scope)
@@ -1290,12 +1290,6 @@ int yvex_runtime_transformer_context_open(yvex_runtime_transformer_context **out
         goto failure;
     }
     context->mutex_ready = 1;
-    if (options->engine_scheduling) {
-        rc = yvex_runtime_private_model_scheduler_acquire(
-            model, options->scheduler_maximum_width, err);
-        if (rc != YVEX_OK) goto failure;
-        context->scheduler_acquired = 1;
-    }
     memset(&moe_options, 0, sizeof(moe_options));
     moe_options.maximum_host_bytes = options->maximum_host_bytes;
     moe_options.maximum_device_bytes = options->maximum_device_bytes;
@@ -1764,9 +1758,6 @@ int yvex_runtime_transformer_context_close(yvex_runtime_transformer_context **co
                                              &(*context)->device_global[index], err);
     if (rc != YVEX_OK) return rc;
     rc = yvex_runtime_moe_context_close(&(*context)->moe, err);
-    if (rc != YVEX_OK) return rc;
-    rc = yvex_runtime_private_model_scheduler_finish(
-        (*context)->model, &(*context)->scheduler_acquired, err);
     if (rc != YVEX_OK) return rc;
     for (index = 0ull; index < YVEX_TRANSFORMER_WEIGHT_COUNT; ++index) {
         free((*context)->global[index].bytes);

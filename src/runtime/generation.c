@@ -252,6 +252,32 @@ static int generation_producer_begin(yvex_runtime_generation_context *context,
     if (rc == YVEX_OK) *active = 1;
     return rc;
 }
+
+static int generation_progress_enter(
+    yvex_runtime_generation_context *context,
+    yvex_engine_progress_kind kind,
+    runtime_engine_progress_lease *lease, yvex_error *err)
+{
+    return yvex_runtime_private_engine_progress_enter(
+        context->model, context->session, kind,
+        context->options.cancel_requested, context->options.cancel_context,
+        lease, err);
+}
+
+static int generation_progress_transition(
+    runtime_engine_progress_lease *lease,
+    yvex_engine_progress_kind kind, yvex_error *err)
+{
+    return yvex_runtime_private_engine_progress_transition(
+        lease, kind, err);
+}
+
+static int generation_progress_finish(
+    runtime_engine_progress_lease *lease, int status, yvex_error *err)
+{
+    return yvex_runtime_private_engine_progress_leave(
+        lease, status, err);
+}
 static int generation_token_classify(
     const yvex_runtime_generation_context *context, unsigned int token,
     yvex_tokenizer_token_classification *classification, int *additional_stop,
@@ -1084,6 +1110,7 @@ static int generation_speculation_progress(
 typedef struct {
     const yvex_runtime_generation_turn_request *turn;
     const yvex_runtime_generation_result *result;
+    runtime_engine_progress_lease *lease;
     unsigned long long proposed_count, candidate_count;
 } generation_speculation_phase_context;
 static int generation_speculation_phase(
@@ -1093,7 +1120,8 @@ static int generation_speculation_phase(
     generation_speculation_phase_context *context = opaque;
     yvex_runtime_speculation_cycle_result cycle = {0};
     yvex_runtime_speculation_progress_kind kind;
-    if (!context || !context->turn || !context->result)
+    int rc = YVEX_OK;
+    if (!context || !context->turn || !context->result || !context->lease)
         return generation_refuse(
             err, YVEX_ERR_INVALID_ARG,
             "speculation progress bridge requires an active generation turn");
@@ -1102,12 +1130,16 @@ static int generation_speculation_phase(
     switch (phase) {
     case YVEX_RUNTIME_SPECULATION_PHASE_DRAFT_STARTED:
         kind = YVEX_SPECULATION_PROGRESS_DRAFT_STARTED;
+        rc = generation_progress_transition(
+            context->lease, YVEX_ENGINE_PROGRESS_DRAFT, err);
         break;
     case YVEX_RUNTIME_SPECULATION_PHASE_DRAFT_COMPLETED:
         kind = YVEX_SPECULATION_PROGRESS_DRAFT_COMPLETED;
         break;
     case YVEX_RUNTIME_SPECULATION_PHASE_VERIFICATION_STARTED:
         kind = YVEX_SPECULATION_PROGRESS_VERIFICATION_STARTED;
+        rc = generation_progress_transition(
+            context->lease, YVEX_ENGINE_PROGRESS_VERIFY, err);
         break;
     case YVEX_RUNTIME_SPECULATION_PHASE_VERIFICATION_COMPLETED:
         kind = YVEX_SPECULATION_PROGRESS_VERIFICATION_COMPLETED;
@@ -1118,9 +1150,15 @@ static int generation_speculation_phase(
             err, YVEX_ERR_INVALID_ARG,
             "speculation progress phase is not admitted");
     }
-    return generation_speculation_progress(
-        context->turn, context->result, kind, &cycle,
-        (double)elapsed_ns / 1000000000.0, err);
+    if (rc == YVEX_OK)
+        rc = generation_speculation_progress(
+            context->turn, context->result, kind, &cycle,
+            (double)elapsed_ns / 1000000000.0, err);
+    if (rc == YVEX_OK &&
+        phase == YVEX_RUNTIME_SPECULATION_PHASE_VERIFICATION_COMPLETED)
+        rc = generation_progress_transition(
+            context->lease, YVEX_ENGINE_PROGRESS_CORRECTION, err);
+    return rc;
 }
 static int generation_speculative_current_step(
     yvex_runtime_generation_context *context,
@@ -1129,7 +1167,7 @@ static int generation_speculative_current_step(
     const yvex_graph_attention_state_summary *before,
     yvex_runtime_generation_token_result *tokens, yvex_runtime_generation_result *result,
     yvex_runtime_speculation_target_step_result *step,
-    int *terminal, yvex_error *err)
+    runtime_engine_progress_lease *lease, int *terminal, yvex_error *err)
 {
     yvex_runtime_logits_row_result logits = {0};
     yvex_runtime_sampling_source source = {0};
@@ -1168,7 +1206,11 @@ static int generation_speculative_current_step(
         rc = generation_speculative_terminal_find(
             context, &step->token_id, 1ull, terminal, &terminal_index, err);
     if (rc == YVEX_OK && *terminal)
-        return generation_speculative_terminal(context, step, before, tokens, result, err);
+        rc = generation_progress_transition(
+            lease, YVEX_ENGINE_PROGRESS_PUBLICATION, err);
+    if (rc == YVEX_OK && *terminal)
+        rc = generation_speculative_terminal(
+            context, step, before, tokens, result, err);
     return rc;
 }
 static int generation_speculative_candidate_cycle(
@@ -1179,7 +1221,7 @@ static int generation_speculative_candidate_cycle(
     yvex_runtime_generation_token_result *tokens, unsigned char *text,
     unsigned long long text_capacity, yvex_runtime_generation_result *result,
     yvex_runtime_speculation_commit_result *commit, int *terminal,
-    yvex_error *err)
+    runtime_engine_progress_lease *lease, yvex_error *err)
 {
     yvex_runtime_speculation_cycle_result cycle = {0}, cycle_metrics = {0};
     yvex_speculation_commit_plan commit_plan = {0};
@@ -1190,7 +1232,7 @@ static int generation_speculative_candidate_cycle(
     unsigned int terminal_id = 0u;
     unsigned int committed[YVEX_SPECULATION_MAX_BLOCK + 2u] = {0};
     generation_speculation_phase_context phase_context = {
-        .turn = turn, .result = result};
+        .turn = turn, .result = result, .lease = lease};
     int rc;
     *terminal = 0;
     memset(commit, 0, sizeof(*commit));
@@ -1205,7 +1247,10 @@ static int generation_speculative_candidate_cycle(
         &candidate_count, err);
     if (rc != YVEX_OK) return rc;
     if (!candidate_count) {
-        rc = generation_speculative_publish(
+        rc = generation_progress_transition(
+            lease, YVEX_ENGINE_PROGRESS_PUBLICATION, err);
+        if (rc == YVEX_OK)
+            rc = generation_speculative_publish(
             context, turn, committed, 1ull, 0, 0u, &before,
             anchor_step->source_selection_identity, anchor_step->sampling_identity,
             anchor_step->source_selection_identity, anchor_step->sampling_identity,
@@ -1276,6 +1321,9 @@ static int generation_speculative_candidate_cycle(
     committed_count = commit_plan.state_prefix_count;
     commit_ns_before = result->speculative_commit_ns;
     if (rc == YVEX_OK)
+        rc = generation_progress_transition(
+            lease, YVEX_ENGINE_PROGRESS_PUBLICATION, err);
+    if (rc == YVEX_OK)
         rc = generation_speculative_publish(
             context, turn, committed, committed_count,
             commit_plan.terminal, terminal_id, &before,
@@ -1329,7 +1377,9 @@ static int generation_speculative_candidate_cycle(
     return rc;
 }
 static int generation_dspark_step(yvex_runtime_generation_context *context,
-                                  runtime_generation_turn_state *turn, yvex_error *err)
+                                  runtime_generation_turn_state *turn,
+                                  runtime_engine_progress_lease *lease,
+                                  yvex_error *err)
 {
     yvex_runtime_generation_result *result = turn->result;
     const yvex_speculation_family_policy *policy =
@@ -1354,11 +1404,11 @@ static int generation_dspark_step(yvex_runtime_generation_context *context,
         rc = generation_speculative_current_step(
             context, &turn->current, turn->current_hidden,
             turn->current_hidden_count, &before, turn->tokens, result,
-            &anchor, &terminal, err);
+            &anchor, lease, &terminal, err);
     if (terminal || rc != YVEX_OK) return rc;
     rc = generation_speculative_candidate_cycle(
         context, &turn->request, policy, &anchor, turn->tokens, turn->text,
-        turn->text_capacity, result, &commit, &terminal, err);
+        turn->text_capacity, result, &commit, &terminal, lease, err);
     if (commit.completed) {
         turn->current = commit.target_result;
         turn->current_hidden = context->hidden;
@@ -1394,243 +1444,6 @@ static yvex_runtime_generation_stop_reason generation_failure_stop(
     if (token && token->detokenized && !token->text_published)
         return YVEX_GENERATION_STOP_OUTPUT_FAILURE;
     return YVEX_GENERATION_STOP_MODEL_FAILURE;
-}
-static void generation_partial_turn_seal(
-    yvex_runtime_generation_result *result, int status,
-    const yvex_runtime_sampling_context_summary *sampling,
-    const yvex_token_sequence_summary *sequence)
-{
-    yvex_runtime_partial_turn *partial = &result->partial_turn;
-    memset(partial, 0, sizeof(*partial));
-    if (status == YVEX_OK) return;
-    partial->schema_version = YVEX_RUNTIME_PARTIAL_TURN_SCHEMA_V1;
-    partial->available = 1;
-    partial->committed_progress =
-        result->final_position > result->initial_position ||
-        result->model_committed_token_count || result->generated_text_bytes;
-    partial->reset_required = 1;
-    partial->failure_status = status;
-    partial->stop_reason = result->stop_reason;
-    partial->initial_position = result->initial_position;
-    partial->final_committed_position = result->final_position;
-    partial->committed_token_count = result->model_committed_token_count;
-    partial->published_text_bytes = result->generated_text_bytes;
-    partial->target_state_generation = result->final_persistent_generation;
-    partial->rng_generation = sampling->stochastic_draws;
-    partial->token_ledger_generation = sequence->generation;
-    yvex_runtime_identity_copy(partial->target_state_identity,
-                               result->final_persistent_state_digest);
-    yvex_runtime_identity_copy(partial->rng_state_identity,
-                               sampling->rng_state_identity);
-    yvex_runtime_identity_copy(partial->token_ledger_identity,
-                               sequence->state_identity);
-    yvex_runtime_identity_copy(partial->published_text_identity,
-                               result->generated_text_digest);
-}
-static int generation_profile_final_counters(
-    yvex_runtime_generation_result *result, yvex_error *err)
-{
-    yvex_runtime_profile_record *profile = &result->profile;
-    unsigned long long target_forwards, target_rows, verified_rows;
-    unsigned long long runtime_forwards, runtime_rows, discarded_rows;
-    int rc = YVEX_OK;
-#define ADD_COUNTER(kind_, value_)                                                \
-    do {                                                                          \
-        if (rc == YVEX_OK && (value_) != 0ull)                                    \
-            rc = runtime_profile_counter_add(profile, (kind_), (value_), err);    \
-    } while (0)
-    if (profile->mode == YVEX_RUNTIME_PROFILE_OFF) return YVEX_OK;
-    if (!yvex_core_u64_add(result->selected_verification_token_count,
-                           result->target_verification_count, &verified_rows) ||
-        !yvex_core_u64_add(result->rejected_draft_token_count,
-                           result->discarded_draft_token_count,
-                           &discarded_rows))
-        return generation_refuse(err, YVEX_ERR_BOUNDS,
-                                 "profile execution counters overflowed");
-    runtime_forwards = result->decode_step_count;
-    runtime_rows = result->decode_step_count;
-    if (result->execution_mode == YVEX_GENERATION_MODE_DSPARK &&
-        (!yvex_core_u64_add(result->target_verification_count,
-                            result->target_correction_or_bonus_token_count,
-                            &runtime_forwards) ||
-         !yvex_core_u64_add(verified_rows,
-                            result->target_correction_or_bonus_token_count,
-                            &runtime_rows)))
-        return generation_refuse(err, YVEX_ERR_BOUNDS,
-                                 "profile target counters overflowed");
-    if (!yvex_core_u64_add(result->prefill_chunk_count, runtime_forwards,
-                           &target_forwards) ||
-        !yvex_core_u64_add(result->new_prefill_token_count, runtime_rows,
-                           &target_rows))
-        return generation_refuse(err, YVEX_ERR_BOUNDS,
-                                 "profile target totals overflowed");
-    ADD_COUNTER(YVEX_RUNTIME_PROFILE_TARGET_FORWARDS, target_forwards);
-    ADD_COUNTER(YVEX_RUNTIME_PROFILE_TARGET_ROWS, target_rows);
-    ADD_COUNTER(YVEX_RUNTIME_PROFILE_DRAFT_FORWARDS, result->draft_forward_count);
-    ADD_COUNTER(YVEX_RUNTIME_PROFILE_DRAFT_ROWS, result->proposed_token_count);
-    ADD_COUNTER(YVEX_RUNTIME_PROFILE_TARGET_VERIFICATIONS,
-                result->target_verification_count);
-    ADD_COUNTER(YVEX_RUNTIME_PROFILE_VERIFIED_ROWS, verified_rows);
-    ADD_COUNTER(YVEX_RUNTIME_PROFILE_ACCEPTED_DRAFT_TOKENS,
-                result->accepted_draft_token_count);
-    ADD_COUNTER(YVEX_RUNTIME_PROFILE_PROMOTED_TARGET_ROWS,
-                result->accepted_draft_token_count);
-    ADD_COUNTER(YVEX_RUNTIME_PROFILE_DISCARDED_CANDIDATE_ROWS,
-                discarded_rows);
-    ADD_COUNTER(YVEX_RUNTIME_PROFILE_TARGET_EXTENSIONS,
-                result->target_correction_or_bonus_token_count);
-    ADD_COUNTER(YVEX_RUNTIME_PROFILE_OUTPUT_HEAD_ROWS,
-                result->logits_projection_count);
-#undef ADD_COUNTER
-    return rc;
-}
-/* KV/RNG snapshots finalize progress without erasing evidence when snapshotting refuses. */
-static int generation_result_finish(
-    yvex_runtime_generation_context *context,
-    yvex_runtime_generation_token_result *tokens,
-    const unsigned char *text, unsigned long long text_capacity,
-    yvex_runtime_generation_result *result, int rc, yvex_error *err)
-{
-    yvex_graph_attention_state_summary state = {0};
-    yvex_runtime_sampling_context_summary sampling = {0};
-    yvex_token_sequence_summary sequence = {0};
-    char canonical[YVEX_SHA256_HEX_CAP];
-    unsigned long long index;
-    yvex_error secondary;
-    int finish_rc;
-    yvex_error_clear(&secondary);
-    finish_rc = generation_state_summary(context->session, &state, &secondary);
-    if (finish_rc == YVEX_OK) {
-        result->final_position = state.next_position;
-        result->final_persistent_generation = state.generation;
-        yvex_runtime_identity_copy(result->final_persistent_state_digest,
-                                   state.state_content_identity);
-    } else if (rc == YVEX_OK) {
-        rc = finish_rc;
-        if (err) *err = secondary;
-    }
-    finish_rc = yvex_runtime_sampling_context_snapshot(context->sampling,
-                                                       &sampling, &secondary);
-    if (finish_rc == YVEX_OK) {
-        result->final_rng_generation = sampling.stochastic_draws;
-        yvex_runtime_identity_copy(result->final_rng_identity,
-                                   sampling.rng_state_identity);
-    } else if (rc == YVEX_OK) {
-        rc = finish_rc;
-        if (err) *err = secondary;
-    }
-    finish_rc = yvex_token_sequence_summary_get(context->sequence, &sequence,
-                                                &secondary);
-    if (finish_rc == YVEX_OK) {
-        result->final_token_ledger_generation = sequence.generation;
-        yvex_runtime_identity_copy(result->final_token_ledger_identity,
-                                   sequence.state_identity);
-    }
-    if (finish_rc != YVEX_OK && rc == YVEX_OK) {
-        rc = finish_rc;
-        if (err) *err = secondary;
-    }
-    for (index = 0ull; index < result->sampled_token_count; ++index) {
-        if (!tokens[index].token_step_identity[0] &&
-            !yvex_runtime_generation_token_identity(&tokens[index],
-                                       tokens[index].token_step_identity) &&
-            rc == YVEX_OK)
-            rc = generation_refuse(err, YVEX_ERR_STATE,
-                                   "partial generation token identity failed");
-    }
-    result->has_incomplete_token =
-        result->sampled_token_count >
-        result->model_committed_token_count + result->terminal_token_count;
-    result->first_incomplete_token = result->has_incomplete_token
-                                         ? result->sampled_token_count - 1ull
-                                         : result->sampled_token_count;
-    if (result->profile.schema_version == YVEX_RUNTIME_PROFILE_SCHEMA_V4) {
-        unsigned long long completed = yvex_core_monotonic_ns();
-        if (result->draft_cycle_count)
-            result->mean_accepted_prefix =
-                (double)result->accepted_draft_token_count /
-                (double)result->draft_cycle_count;
-        if (completed > result->profile.started_ns)
-            result->effective_committed_tokens_per_second =
-                (double)result->model_committed_token_count * 1000000000.0 /
-                (double)(completed - result->profile.started_ns);
-        finish_rc = generation_profile_final_counters(result, &secondary);
-        if (finish_rc == YVEX_OK)
-            finish_rc = result->profile.mode == YVEX_RUNTIME_PROFILE_OFF
-                            ? YVEX_OK
-                            : runtime_profile_counter_add(
-                                  &result->profile,
-                                  YVEX_RUNTIME_PROFILE_GENERATED_TOKENS,
-                                  result->model_committed_token_count, &secondary);
-        if (finish_rc == YVEX_OK && result->profile.mode != YVEX_RUNTIME_PROFILE_OFF &&
-            completed > result->profile.started_ns)
-            finish_rc = runtime_profile_phase_add(
-                &result->profile, YVEX_RUNTIME_PROFILE_TOTAL_GENERATION,
-                completed - result->profile.started_ns, &secondary);
-        if (finish_rc == YVEX_OK)
-            finish_rc = runtime_profile_finish(&result->profile, &secondary);
-        if (finish_rc != YVEX_OK && rc == YVEX_OK) {
-            rc = finish_rc;
-            if (err) *err = secondary;
-        }
-    }
-    if (context->options.backend == YVEX_BACKEND_KIND_CUDA &&
-        context->phase_measurement_count) {
-        yvex_execution_roofline_ledger_request request = {
-            .schema_version = YVEX_EXECUTION_PHASE_ROOFLINE_SCHEMA_V1,
-            .hardware = &context->hardware_profile,
-            .artifact_identity = context->model_view->binding->artifact_identity,
-            .execution_profile_identity = context->execution_profile.identity,
-            .kernel_bundle_identity = context->plan.kernel_bundle_identity,
-            .workload_profile_identity = context->workload_profile.identity,
-            .measurements = context->phase_measurements,
-            .measurement_count = context->phase_measurement_count};
-        finish_rc = yvex_execution_roofline_ledger_build(&request, &result->roofline, &secondary);
-        if (finish_rc == YVEX_OK) result->roofline_available = 1;
-        else if (rc == YVEX_OK) {
-            rc = finish_rc;
-            if (err) *err = secondary;
-        }
-    }
-    result->completed = rc == YVEX_OK;
-    result->cancelled = rc == YVEX_ERR_CANCELLED;
-    result->failed = rc != YVEX_OK && rc != YVEX_ERR_CANCELLED;
-    result->partial = rc != YVEX_OK &&
-                      (result->prefill_chunk_count || result->sampled_token_count ||
-                       result->model_committed_token_count ||
-                       result->generated_text_bytes);
-    result->status = result->completed
-                         ? YVEX_GENERATION_STATUS_COMPLETE
-                         : (result->cancelled
-                                ? YVEX_GENERATION_STATUS_CANCELLED
-                                : (result->partial ? YVEX_GENERATION_STATUS_PARTIAL
-                                                   : YVEX_GENERATION_STATUS_FAILED));
-    if (!yvex_runtime_generation_tokens_identity(
-            tokens, result->sampled_token_count,
-            result->generated_token_identity) ||
-        !yvex_runtime_generation_bytes_digest(
-            "yvex.runtime.generation.text.v1", text,
-            result->generated_text_bytes, result->generated_text_digest)) {
-        if (rc == YVEX_OK)
-            rc = generation_refuse(err, YVEX_ERR_STATE,
-                                   "generation aggregate identity failed");
-    }
-    generation_partial_turn_seal(result, rc, &sampling, &sequence);
-    if (!yvex_runtime_generation_execution_identity(
-            result, tokens, result->generation_execution_identity)) {
-        if (rc == YVEX_OK)
-            rc = generation_refuse(err, YVEX_ERR_STATE,
-                                   "generation aggregate identity failed");
-    } else if (!yvex_runtime_generation_execution_identity(
-                   result, tokens, canonical) ||
-               strcmp(canonical, result->generation_execution_identity) != 0) {
-        if (rc == YVEX_OK)
-            rc = generation_refuse(err, YVEX_ERR_STATE,
-                                   "generation aggregate identity is not canonical");
-    }
-    if (text && text_capacity > result->generated_text_bytes)
-        ((unsigned char *)text)[result->generated_text_bytes] = '\0';
-    return rc;
 }
 static int generation_turn_prepare(
     yvex_runtime_generation_context *context,
@@ -1717,7 +1530,9 @@ static int generation_turn_prepare(
     return rc;
 }
 static int generation_target_step(yvex_runtime_generation_context *context,
-                                  runtime_generation_turn_state *turn, yvex_error *err)
+                                  runtime_generation_turn_state *turn,
+                                  runtime_engine_progress_lease *lease,
+                                  yvex_error *err)
 {
     yvex_runtime_generation_result *result = turn->result;
     yvex_runtime_generation_token_result *token;
@@ -1763,6 +1578,9 @@ static int generation_target_step(yvex_runtime_generation_context *context,
     rc = generation_token_classify(context, token->sampled_token_id,
                                    &token->classification, &additional_stop, err);
     if (rc == YVEX_OK)
+        rc = generation_progress_transition(
+            lease, YVEX_ENGINE_PROGRESS_PUBLICATION, err);
+    if (rc == YVEX_OK)
         rc = yvex_token_sequence_append(
             context->sequence, token->sampled_token_id,
             turn->transformer->vocabulary_size, &sequence_ordinal, err);
@@ -1798,8 +1616,9 @@ int yvex_runtime_generation_turn_begin(
     runtime_generation_turn_state *state = NULL;
     yvex_tokenizer_encode_result encoded = {0};
     yvex_rendered_prompt rendered = {0};
+    runtime_engine_progress_lease progress = {0};
     unsigned long long prefill_chunks = 0ull, started, completed;
-    int producer_active = 0, prompt_stage = 1, rc;
+    int producer_active = 0, progress_active = 0, prompt_stage = 1, rc;
     if (result) memset(result, 0, sizeof(*result));
     if (!context || !turn || turn->schema_version != YVEX_RUNTIME_GENERATION_TURN_SCHEMA_V1 ||
         !request || !tokens || !text || !result || !turn->maximum_new_tokens ||
@@ -1871,6 +1690,11 @@ int yvex_runtime_generation_turn_begin(
                 YVEX_RUNTIME_PROFILE_NEW_PREFILL_TOKENS, result->new_prefill_token_count, err);
     }
     if (rc == YVEX_OK) prompt_stage = 0;
+    if (rc == YVEX_OK) {
+        rc = generation_progress_enter(
+            context, YVEX_ENGINE_PROGRESS_PREFILL, &progress, err);
+        progress_active = rc == YVEX_OK;
+    }
     if (rc == YVEX_OK && turn->progress_sink)
         rc = turn->progress_sink(turn->progress_context,
             YVEX_GENERATION_PROGRESS_PREFILL_STARTED, result->new_prefill_token_count,
@@ -1886,6 +1710,10 @@ int yvex_runtime_generation_turn_begin(
     if (rc == YVEX_OK)
         rc = yvex_runtime_generation_profile_phase(
             &result->profile, YVEX_RUNTIME_PROFILE_TOTAL_PREFILL, completed - started, err);
+    if (progress_active) {
+        rc = generation_progress_finish(&progress, rc, err);
+        progress_active = 0;
+    }
     result->prefill_chunk_count = prefill_chunks;
     if (rc == YVEX_OK && turn->progress_sink)
         rc = turn->progress_sink(turn->progress_context,
@@ -1921,10 +1749,16 @@ int yvex_runtime_generation_turn_advance(yvex_runtime_generation_context *contex
     if (rc != YVEX_OK) return rc;
     while (turn->status == YVEX_OK && turn->result->stop_reason == YVEX_GENERATION_STOP_NONE &&
            work++ < work_budget) {
-        rc = context->options.mode == YVEX_GENERATION_MODE_TARGET_ONLY ||
-                     turn->result->speculation_source_boundary_token_count
-                 ? generation_target_step(context, turn, err)
-                 : generation_dspark_step(context, turn, err);
+        runtime_engine_progress_lease progress = {0};
+        rc = generation_progress_enter(
+            context, YVEX_ENGINE_PROGRESS_DECODE, &progress, err);
+        if (rc == YVEX_OK)
+            rc = context->options.mode == YVEX_GENERATION_MODE_TARGET_ONLY ||
+                         turn->result->speculation_source_boundary_token_count
+                     ? generation_target_step(context, turn, &progress, err)
+                     : generation_dspark_step(context, turn, &progress, err);
+        if (progress.scheduler)
+            rc = generation_progress_finish(&progress, rc, err);
         if (rc != YVEX_OK) {
             turn->status = rc;
             turn->failure = err ? *err : (yvex_error){0};
@@ -1985,8 +1819,9 @@ int yvex_runtime_generation_turn_finish(yvex_runtime_generation_context *context
                  : generation_refuse(err, YVEX_ERR_STATE,
                                      "CUDA graph evidence could not close the generation turn");
     }
-    rc = generation_result_finish(context, turn->tokens, turn->text, turn->text_capacity,
-                                  turn->result, rc, err);
+    rc = yvex_runtime_private_generation_result_finish(
+        context, turn->tokens, turn->text, turn->text_capacity,
+        turn->result, rc, err);
     yvex_core_free(turn->prefill_hidden);
     context->continuation_allowed = rc == YVEX_OK;
     context->active_turn = NULL;

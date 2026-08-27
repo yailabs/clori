@@ -348,11 +348,11 @@ static int generation_test_active_scheduler_producers(void)
                      "model engine scheduler lock should initialize");
     model.lifecycle_mutex_ready = 1;
     YVEX_TEST_ASSERT(
-        yvex_runtime_private_model_scheduler_acquire(&model, 2ull, &err) ==
+        yvex_runtime_private_model_scheduler_acquire(&model, 2ull, 2ull, &err) ==
                 YVEX_OK &&
-            yvex_runtime_private_model_scheduler_acquire(&model, 2ull, &err) ==
+            yvex_runtime_private_model_scheduler_acquire(&model, 2ull, 2ull, &err) ==
                 YVEX_OK &&
-            yvex_runtime_private_model_scheduler_acquire(&model, 2ull, &err) ==
+            yvex_runtime_private_model_scheduler_acquire(&model, 2ull, 2ull, &err) ==
                 YVEX_OK &&
             model.engine_scheduler_references == 3ull,
         "idle context references must not consume admitted producer width");
@@ -382,6 +382,182 @@ static int generation_test_active_scheduler_producers(void)
             !model.engine_scheduler && !model.engine_scheduler_references &&
             !model.engine_scheduler_producers,
         "active producers and idle references should drain independently");
+    (void)pthread_mutex_destroy(&model.lifecycle_mutex);
+    return 0;
+}
+
+typedef struct {
+    pthread_mutex_t mutex;
+    pthread_cond_t condition;
+    unsigned long long entered;
+    int released;
+} generation_progress_gate;
+
+typedef struct {
+    yvex_model_engine *model;
+    yvex_runtime_execution_session *session;
+    generation_progress_gate *gate;
+    int result;
+} generation_progress_job;
+
+static void *generation_progress_run(void *opaque)
+{
+    generation_progress_job *job = opaque;
+    runtime_engine_progress_lease lease = {0};
+    yvex_error err;
+    job->result = yvex_runtime_private_engine_progress_enter(
+        job->model, job->session, YVEX_ENGINE_PROGRESS_DECODE,
+        NULL, NULL, &lease, &err);
+    if (job->result != YVEX_OK) return NULL;
+    (void)pthread_mutex_lock(&job->gate->mutex);
+    job->gate->entered++;
+    (void)pthread_cond_broadcast(&job->gate->condition);
+    while (!job->gate->released)
+        (void)pthread_cond_wait(&job->gate->condition, &job->gate->mutex);
+    (void)pthread_mutex_unlock(&job->gate->mutex);
+    job->result = yvex_runtime_private_engine_progress_leave(
+        &lease, YVEX_OK, &err);
+    return NULL;
+}
+
+static int generation_progress_cancelled(void *opaque)
+{
+    return opaque && *(const int *)opaque;
+}
+
+static int generation_test_ready_progress_scheduling(void)
+{
+    yvex_model_engine model = {0};
+    yvex_runtime_execution_session sessions[2] = {{0}};
+    generation_progress_job jobs[2] = {{0}};
+    generation_progress_gate gate = {0};
+    runtime_engine_progress_lease lease = {0};
+    yvex_engine_scheduler_summary summary = {0};
+    pthread_t threads[2];
+    yvex_error err;
+    unsigned long long index;
+    int cancel_requested = 0;
+    YVEX_TEST_ASSERT(
+        pthread_mutex_init(&model.lifecycle_mutex, NULL) == 0 &&
+            pthread_mutex_init(&gate.mutex, NULL) == 0 &&
+            pthread_cond_init(&gate.condition, NULL) == 0,
+        "ready-progress test owners should initialize");
+    model.lifecycle_mutex_ready = 1;
+    model.summary.engine_generation = 7ull;
+    for (index = 0ull; index < 2ull; ++index) {
+        sessions[index].engine = &model;
+        sessions[index].summary.engine_generation = 7ull;
+        sessions[index].batch_source_ordinal = index + 1ull;
+        jobs[index].model = &model;
+        jobs[index].gate = &gate;
+    }
+    YVEX_TEST_ASSERT(
+        yvex_runtime_private_model_scheduler_acquire(
+            &model, 2ull, 2ull, &err) == YVEX_OK,
+        "engine ready-progress scheduler should open");
+    jobs[0].session = jobs[1].session = &sessions[0];
+    YVEX_TEST_ASSERT(
+        pthread_create(&threads[0], NULL, generation_progress_run, &jobs[0]) == 0 &&
+            pthread_create(&threads[1], NULL, generation_progress_run, &jobs[1]) == 0,
+        "same-sequence ready work should submit concurrently");
+    (void)pthread_mutex_lock(&gate.mutex);
+    while (gate.entered != 1ull)
+        (void)pthread_cond_wait(&gate.condition, &gate.mutex);
+    (void)pthread_mutex_unlock(&gate.mutex);
+    do {
+        YVEX_TEST_ASSERT(
+            yvex_model_engine_scheduler_summary_copy(
+                &model, &summary, &err) == YVEX_OK,
+            "same-sequence exclusion should remain observable");
+    } while (summary.ready_sequence_work != 1ull);
+    YVEX_TEST_ASSERT(
+        summary.active_sequences == 1ull && summary.sequence_conflicts,
+        "one sequence generation cannot advance concurrently");
+    (void)pthread_mutex_lock(&gate.mutex);
+    gate.released = 1;
+    (void)pthread_cond_broadcast(&gate.condition);
+    (void)pthread_mutex_unlock(&gate.mutex);
+    for (index = 0ull; index < 2ull; ++index) {
+        (void)pthread_join(threads[index], NULL);
+        YVEX_TEST_ASSERT(jobs[index].result == YVEX_OK,
+                         "serialized same-sequence work should complete");
+    }
+    (void)pthread_mutex_lock(&gate.mutex);
+    gate.entered = 0ull;
+    gate.released = 0;
+    (void)pthread_mutex_unlock(&gate.mutex);
+    jobs[0].session = &sessions[0];
+    jobs[1].session = &sessions[1];
+    YVEX_TEST_ASSERT(
+        pthread_create(&threads[0], NULL, generation_progress_run, &jobs[0]) == 0 &&
+            pthread_create(&threads[1], NULL, generation_progress_run, &jobs[1]) == 0,
+        "distinct ready sequences should submit concurrently");
+    (void)pthread_mutex_lock(&gate.mutex);
+    while (gate.entered != 2ull)
+        (void)pthread_cond_wait(&gate.condition, &gate.mutex);
+    gate.released = 1;
+    (void)pthread_cond_broadcast(&gate.condition);
+    (void)pthread_mutex_unlock(&gate.mutex);
+    for (index = 0ull; index < 2ull; ++index) {
+        (void)pthread_join(threads[index], NULL);
+        YVEX_TEST_ASSERT(jobs[index].result == YVEX_OK,
+                         "distinct ready sequences should complete");
+    }
+    YVEX_TEST_ASSERT(
+        yvex_runtime_private_engine_progress_enter(
+            &model, &sessions[0], YVEX_ENGINE_PROGRESS_DECODE,
+            NULL, NULL, &lease, &err) == YVEX_OK &&
+            yvex_runtime_private_engine_progress_transition(
+                &lease, YVEX_ENGINE_PROGRESS_DRAFT, &err) == YVEX_OK &&
+            yvex_runtime_private_engine_progress_transition(
+                &lease, YVEX_ENGINE_PROGRESS_VERIFY, &err) == YVEX_OK &&
+            yvex_runtime_private_engine_progress_transition(
+                &lease, YVEX_ENGINE_PROGRESS_CORRECTION, &err) == YVEX_OK &&
+            yvex_runtime_private_engine_progress_transition(
+                &lease, YVEX_ENGINE_PROGRESS_PUBLICATION, &err) == YVEX_OK &&
+            yvex_runtime_private_engine_progress_leave(
+                &lease, YVEX_OK, &err) == YVEX_OK &&
+            yvex_model_engine_scheduler_summary_copy(
+                &model, &summary, &err) == YVEX_OK &&
+            summary.sequence_capacity == 2ull &&
+            summary.admitted_maximum_width == 2ull &&
+            summary.maximum_active_sequences == 2ull &&
+            summary.progress_submissions == 9ull &&
+            summary.progress_transitions == 4ull &&
+            summary.progress_completions == 9ull &&
+            summary.progress_submissions_by_kind[YVEX_ENGINE_PROGRESS_DECODE] == 5ull &&
+            summary.progress_submissions_by_kind[YVEX_ENGINE_PROGRESS_DRAFT] == 1ull &&
+            summary.progress_submissions_by_kind[YVEX_ENGINE_PROGRESS_VERIFY] == 1ull &&
+            summary.progress_submissions_by_kind[YVEX_ENGINE_PROGRESS_CORRECTION] == 1ull &&
+            summary.progress_submissions_by_kind[YVEX_ENGINE_PROGRESS_PUBLICATION] == 1ull &&
+            !summary.ready_sequence_work && !summary.active_sequences,
+        "one engine authority should expose bounded phase progression");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_private_engine_progress_enter(
+            &model, &sessions[0], YVEX_ENGINE_PROGRESS_DECODE,
+            generation_progress_cancelled, &cancel_requested,
+            &lease, &err) == YVEX_OK,
+        "active sequence work should admit before cancellation");
+    cancel_requested = 1;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_private_engine_progress_transition(
+            &lease, YVEX_ENGINE_PROGRESS_DRAFT, &err) ==
+                YVEX_ERR_CANCELLED &&
+            yvex_runtime_private_engine_progress_leave(
+                &lease, YVEX_ERR_CANCELLED, &err) ==
+                YVEX_ERR_CANCELLED &&
+            yvex_model_engine_scheduler_summary_copy(
+                &model, &summary, &err) == YVEX_OK &&
+            summary.progress_submissions == 11ull &&
+            summary.progress_completions == 10ull &&
+            summary.progress_cancellations == 1ull &&
+            !summary.ready_sequence_work && !summary.active_sequences,
+        "queued phase cancellation should release one exact sequence lease");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_private_model_scheduler_release(&model, &err) == YVEX_OK,
+        "ready-progress scheduler should drain cleanly");
+    (void)pthread_cond_destroy(&gate.condition);
+    (void)pthread_mutex_destroy(&gate.mutex);
     (void)pthread_mutex_destroy(&model.lifecycle_mutex);
     return 0;
 }
@@ -641,6 +817,7 @@ int yvex_test_runtime_generation(void)
     if (generation_test_incompatible_arrival_releases_impossible_wait() != 0)
         return 1;
     if (generation_test_active_scheduler_producers() != 0) return 1;
+    if (generation_test_ready_progress_scheduling() != 0) return 1;
     if (generation_test_stop_taxonomy() != 0) return 1;
     if (generation_test_refusals() != 0) return 1;
     if (generation_test_execution_identity_excludes_measurement() != 0) return 1;

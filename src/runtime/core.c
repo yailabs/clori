@@ -267,6 +267,7 @@ static int runtime_model_release(yvex_model_engine *model, yvex_error *err) {
     }
     rc = yvex_runtime_private_engine_scheduler_close(&model->engine_scheduler, err);
     if (rc != YVEX_OK) return rc;
+    model->scheduler_sequence_capacity = 0ull;
     model->scheduler_maximum_width = 0ull;
     rc = yvex_runtime_residency_close(&model->residency, err);
     if (rc != YVEX_OK) return rc;

@@ -103,6 +103,10 @@ int yvex_runtime_private_binding_policies_match_model(
 
 typedef struct runtime_engine_scheduler runtime_engine_scheduler;
 typedef struct runtime_engine_work runtime_engine_work;
+typedef struct {
+    runtime_engine_scheduler *scheduler;
+    unsigned long long slot, generation;
+} runtime_engine_progress_lease;
 typedef struct runtime_generation_turn_state runtime_generation_turn_state;
 typedef int (*runtime_engine_work_execute)(
     runtime_engine_work *const *tickets,
@@ -125,7 +129,6 @@ struct runtime_engine_work {
     runtime_engine_work_kind kind;
     int status, done;
 };
-
 typedef struct {
     yvex_model_engine *model;
     yvex_runtime_execution_session *session;
@@ -139,7 +142,6 @@ typedef struct {
     int (*cancel_requested)(void *context);
     void *cancel_context;
 } runtime_engine_step_request;
-
 typedef struct {
     yvex_model_engine *model;
     yvex_runtime_execution_session *session;
@@ -185,8 +187,8 @@ int yvex_runtime_private_engine_scheduler_snapshot(
 int yvex_runtime_private_engine_scheduler_close(
     runtime_engine_scheduler **scheduler, yvex_error *err);
 int yvex_runtime_private_model_scheduler_acquire(
-    yvex_model_engine *model, unsigned long long maximum_width,
-    yvex_error *err);
+    yvex_model_engine *model, unsigned long long sequence_capacity,
+    unsigned long long maximum_width, yvex_error *err);
 int yvex_runtime_private_model_scheduler_release(
     yvex_model_engine *model, yvex_error *err);
 int yvex_runtime_private_model_scheduler_finish(
@@ -197,6 +199,16 @@ int yvex_runtime_private_model_scheduler_producer_leave(
     yvex_model_engine *model, yvex_error *err);
 int yvex_runtime_private_engine_scheduler_producer_finish(
     yvex_model_engine *model, int *active, int status, yvex_error *err);
+int yvex_runtime_private_engine_progress_enter(
+    yvex_model_engine *model, yvex_runtime_execution_session *session,
+    yvex_engine_progress_kind kind,
+    int (*cancel_requested)(void *context), void *cancel_context,
+    runtime_engine_progress_lease *lease, yvex_error *err);
+int yvex_runtime_private_engine_progress_transition(
+    runtime_engine_progress_lease *lease, yvex_engine_progress_kind kind,
+    yvex_error *err);
+int yvex_runtime_private_engine_progress_leave(
+    runtime_engine_progress_lease *lease, int status, yvex_error *err);
 int yvex_runtime_private_engine_scheduler_step_rendezvous(
     const runtime_engine_step_request *request, yvex_error *err);
 int yvex_runtime_private_engine_scheduler_moe_execute(
@@ -321,6 +333,7 @@ struct yvex_model_engine {
     unsigned long long active_sessions, engine_scheduler_references;
     unsigned long long engine_scheduler_producers;
     unsigned long long next_session_ordinal;
+    unsigned long long scheduler_sequence_capacity;
     unsigned long long scheduler_maximum_width;
     int lifecycle_mutex_ready, close_requested, dependent_invalidation_pending;
 };
@@ -439,7 +452,7 @@ struct yvex_runtime_generation_context {
     pthread_cond_t drain_condition;
     unsigned long long execution_count, failure_count, cancellation_count;
     int drain_mutex_ready, drain_condition_ready, continuation_allowed;
-    int device_selection;
+    int device_selection, scheduler_acquired;
 };
 
 int yvex_runtime_private_generation_enter(
@@ -579,5 +592,8 @@ int yvex_runtime_generation_profile_transformer(
 int yvex_runtime_generation_profile_decode(
     yvex_runtime_profile_record *profile,
     const yvex_runtime_decode_step_result *value, yvex_error *err);
-
+int yvex_runtime_private_generation_result_finish(
+    yvex_runtime_generation_context *context, yvex_runtime_generation_token_result *tokens,
+    const unsigned char *text, unsigned long long text_capacity,
+    yvex_runtime_generation_result *result, int status, yvex_error *err);
 #endif

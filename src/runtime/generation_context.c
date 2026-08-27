@@ -1210,7 +1210,14 @@ static int generation_execution_owners_open(
     if (options->continuous_batching) {
         rc = generation_scheduler_maximum_width(context, &compatible_width, err);
         if (rc != YVEX_OK) return rc;
+    } else {
+        compatible_width = 1ull;
     }
+    rc = yvex_runtime_private_model_scheduler_acquire(
+        context->model, options->concurrent_sequences,
+        compatible_width, err);
+    if (rc != YVEX_OK) return rc;
+    context->scheduler_acquired = 1;
 
     transformer.maximum_host_bytes = options->maximum_host_bytes;
     transformer.maximum_device_bytes = options->maximum_device_bytes;
@@ -1224,7 +1231,8 @@ static int generation_execution_owners_open(
         transformer.workspace_token_capacity < options->concurrent_sequences)
         transformer.workspace_token_capacity = options->concurrent_sequences;
     transformer.engine_scheduling = options->continuous_batching;
-    transformer.scheduler_maximum_width = compatible_width;
+    transformer.scheduler_maximum_width = options->continuous_batching
+                                              ? compatible_width : 0ull;
     transformer.cancel_requested = options->cancel_requested;
     transformer.cancel_context = options->cancel_context;
     transformer.evidence_level =
@@ -1275,7 +1283,8 @@ static int generation_execution_owners_open(
     speculation.maximum_host_bytes = options->maximum_host_bytes;
     speculation.maximum_device_bytes = options->maximum_device_bytes;
     speculation.engine_scheduling = options->continuous_batching;
-    speculation.scheduler_maximum_width = compatible_width;
+    speculation.scheduler_maximum_width = options->continuous_batching
+                                              ? compatible_width : 0ull;
     speculation.cancel_requested = options->cancel_requested;
     speculation.cancel_context = options->cancel_context;
     speculation.execution_profile = &context->execution_profile;
@@ -1503,6 +1512,8 @@ failure:
         (void)yvex_runtime_logits_context_close(&context->logits, &cleanup);
         (void)yvex_runtime_transformer_context_close(
             &context->transformer, &cleanup);
+        (void)yvex_runtime_private_model_scheduler_finish(
+            context->model, &context->scheduler_acquired, &cleanup);
         if (context->drain_condition_ready)
             (void)pthread_cond_destroy(&context->drain_condition);
         if (context->drain_mutex_ready)
@@ -1644,6 +1655,9 @@ int yvex_runtime_generation_context_close(
         rc = yvex_runtime_decode_context_close(&owner->decode, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_transformer_context_close(&owner->transformer, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_private_model_scheduler_finish(
+            owner->model, &owner->scheduler_acquired, err);
     if (rc != YVEX_OK) return rc;
     yvex_tokenizer_decoder_close(&owner->decoder);
     yvex_token_sequence_close(&owner->sequence);
