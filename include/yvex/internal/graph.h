@@ -11,7 +11,8 @@
 #include <yvex/core.h>
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/compiler.h>
-#include <yvex/internal/execution.h>
+#include <yvex/internal/execution_batch.h>
+#include <yvex/internal/execution_observation.h>
 #include <yvex/internal/model.h>
 #include <yvex/registry.h>
 struct yvex_backend_attention_completion;

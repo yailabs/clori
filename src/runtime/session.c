@@ -10,7 +10,6 @@
 #include <string.h>
 #include <yvex/internal/backend.h>
 #include <yvex/internal/core.h>
-#include <yvex/internal/execution.h>
 #include <yvex/internal/graph_state.h>
 
 typedef struct {
@@ -23,7 +22,6 @@ static int runtime_session_owned_by_current_thread(
     return session->execution_owner_ready &&
            pthread_equal(session->execution_owner, pthread_self());
 }
-
 /* The backend sees one session-owned resolver even when the session carries
  * distinct target and draft banks. Pointer membership selects the residency;
  * neither scope becomes a second backend or KV authority. */

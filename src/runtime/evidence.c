@@ -16,7 +16,6 @@ static int runtime_profile_refuse(
     yvex_error_set(err, status, "runtime.profile", reason);
     return status;
 }
-
 static int runtime_profile_identity_copy(
     char output[YVEX_SHA256_HEX_BYTES], const char *input)
 {

@@ -7,6 +7,7 @@
 #ifndef INCLUDE_YVEX_INTERNAL_GENERATION_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_GENERATION_H_INCLUDED
 #include <yvex/internal/core.h>
+#include <yvex/internal/deployment.h>
 #include <yvex/internal/evidence.h>
 #include <yvex/internal/sampling.h>
 #include <yvex/tokenizer.h>

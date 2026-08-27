@@ -7,6 +7,7 @@
 #ifndef INCLUDE_YVEX_INTERNAL_GRAPH_STATE_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_GRAPH_STATE_H_INCLUDED
 
+#include <yvex/internal/deployment.h>
 #include <yvex/internal/graph.h>
 
 #ifdef __cplusplus

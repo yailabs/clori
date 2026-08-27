@@ -7,7 +7,8 @@
 #ifndef INCLUDE_YVEX_INTERNAL_TRANSFORMER_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_TRANSFORMER_H_INCLUDED
 #include <yvex/internal/compiler.h>
-#include <yvex/internal/execution.h>
+#include <yvex/internal/device_view.h>
+#include <yvex/internal/execution_observation.h>
 #include <yvex/internal/moe.h>
 #ifdef __cplusplus
 extern "C" {

@@ -1,6 +1,7 @@
 /* Seal one compact deployment implementation catalog for an opened model engine. */
-#include <yvex/internal/execution.h>
 #include <yvex/internal/core.h>
+#include <yvex/internal/deployment.h>
+#include <yvex/internal/execution.h>
 #include <yvex/internal/media.h>
 #include <yvex/internal/moe.h>
 #include "src/runtime/private.h"

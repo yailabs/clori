@@ -10,6 +10,7 @@
 #include <yvex/internal/execution.h>
 #include <yvex/internal/graph.h>
 #include <yvex/internal/execution_batch.h>
+#include <yvex/internal/execution_observation.h>
 #ifdef __cplusplus
 extern "C" {
 #endif

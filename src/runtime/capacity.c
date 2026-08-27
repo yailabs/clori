@@ -8,6 +8,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <yvex/internal/core.h>
+#include <yvex/internal/deployment.h>
 
 static int runtime_capacity_value(const char *text, unsigned long long *value)
 {

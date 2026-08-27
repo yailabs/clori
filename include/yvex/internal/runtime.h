@@ -9,8 +9,11 @@
 #include <yvex/graph.h>
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/compiler.h>
+#include <yvex/internal/deployment.h>
+#include <yvex/internal/device_view.h>
 #include <yvex/internal/engine_resource.h>
 #include <yvex/internal/execution.h>
+#include <yvex/internal/execution_batch.h>
 #include <yvex/internal/graph.h>
 #include <yvex/internal/graph_state.h>
 #include <yvex/internal/tokenizer.h>

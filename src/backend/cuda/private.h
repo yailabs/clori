@@ -6,7 +6,6 @@
 #include <yvex/backend.h>
 #include <yvex/internal/backend.h>
 #include <yvex/internal/core.h>
-#include <yvex/internal/execution.h>
 #include <yvex/internal/quant_numeric.h>
 #include <yvex/internal/transformer.h>
 #include "src/backend/private.h"

@@ -5,8 +5,10 @@
 #include <string.h>
 
 #include <yvex/internal/backend.h>
+#include <yvex/internal/deployment.h>
+#include <yvex/internal/device_view.h>
 #include <yvex/internal/evidence.h>
-#include <yvex/internal/execution.h>
+#include <yvex/internal/execution_observation.h>
 #include <yvex/internal/runtime.h>
 
 static void execution_test_identity(char output[YVEX_SHA256_HEX_CAP], char digit)

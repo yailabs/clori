@@ -16,7 +16,7 @@
 #include <build_commit.h>
 #include <yvex/internal/backend.h>
 #include <yvex/internal/core.h>
-#include <yvex/internal/execution.h>
+#include <yvex/internal/deployment.h>
 #include <yvex/internal/moe.h>
 #include <yvex/internal/runtime_state_store.h>
 

@@ -12,6 +12,7 @@
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/compilation.h>
 #include <yvex/internal/compiler.h>
+#include <yvex/internal/execution.h>
 #include <yvex/internal/gguf.h>
 #include <yvex/internal/gguf_writer.h>
 #include <yvex/internal/graph.h>

@@ -6,8 +6,8 @@
 #include <yvex/internal/backend.h>
 #include <yvex/internal/decode.h>
 #include <yvex/internal/core.h>
+#include <yvex/internal/deployment.h>
 #include <yvex/internal/engine_scheduler.h>
-#include <yvex/internal/execution.h>
 #include <yvex/internal/execution_batch.h>
 #include <yvex/internal/generation.h>
 #include <yvex/internal/logits.h>

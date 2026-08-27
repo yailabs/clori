@@ -8,6 +8,8 @@
 #define INCLUDE_YVEX_INTERNAL_LOGITS_H_INCLUDED
 
 #include <yvex/internal/decode.h>
+#include <yvex/internal/device_view.h>
+#include <yvex/internal/execution_observation.h>
 #include <yvex/internal/runtime.h>
 
 #ifdef __cplusplus
