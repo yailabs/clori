@@ -760,6 +760,21 @@ int yvex_test_source_verify(void)
                    YVEX_SOURCE_MINIMAX_H3_REVISION) == 0 &&
             !yvex_source_target_identity_find_repository("unknown/model"),
         "one source catalog owns qualified target repository and revision truth");
+    {
+        const yvex_source_acquisition_target *qwen =
+            yvex_source_acquisition_target_find("qwen3-8b");
+        const yvex_source_acquisition_target *gemma =
+            yvex_source_acquisition_target_find("gemma-4-12b-it");
+
+        YVEX_TEST_ASSERT(
+            qwen && strcmp(qwen->family_key, "qwen") == 0 &&
+                strcmp(qwen->repository, "Qwen/Qwen3-8B") == 0 &&
+                strcmp(qwen->default_reference, "main") == 0 && gemma &&
+                strcmp(gemma->family_key, "gemma") == 0 &&
+                strcmp(gemma->repository, "google/gemma-4-12B-it") == 0 &&
+                !yvex_source_acquisition_target_find("unknown-target"),
+            "one source catalog owns provider acquisition defaults");
+    }
 
     system("rm -rf build/tests/source-verify");
     YVEX_TEST_ASSERT(source_verify_make_valid(root), "create valid source fixture");

@@ -590,7 +590,7 @@ static int download_identity_resolve(const yvex_cli_models_download_options *opt
     yvex_account_provider *provider_kind, download_identity *identity,
     yvex_error *err, int control_mode)
 {
-    const yvex_model_download_catalog_row *row;
+    const yvex_source_acquisition_target *row;
     yvex_paths paths;
     int rc;
 
@@ -622,7 +622,7 @@ static int download_identity_resolve(const yvex_cli_models_download_options *opt
     } else {
         identity->resolved_dynamic = model_download_resolve_downloaded_target(
             options->target, operator_paths, &identity->resolved, err);
-        row = model_download_find_catalog(options->target);
+        row = yvex_source_acquisition_target_find(options->target);
         if (identity->resolved_dynamic) {
             identity->target_id = identity->resolved.target_id;
             identity->family = identity->resolved.family;
@@ -636,10 +636,10 @@ static int download_identity_resolve(const yvex_cli_models_download_options *opt
             }
         } else if (row) {
             identity->target_id = row->target_id;
-            identity->family = row->family;
-            identity->repo_id = row->repo_id;
-            identity->local_name = row->local_name;
-            identity->revision = options->revision ? options->revision : row->revision_default;
+            identity->family = row->family_key;
+            identity->repo_id = row->repository;
+            identity->local_name = row->source_dir_leaf;
+            identity->revision = options->revision ? options->revision : row->default_reference;
             if (!yvex_account_provider_from_name(row->provider, provider_kind)) {
                 *provider_kind = YVEX_ACCOUNT_PROVIDER_HUGGINGFACE;
             }

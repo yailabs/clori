@@ -301,7 +301,6 @@ int model_download_resolve_downloaded_target(const char *target,
                                              const yvex_operator_paths *operator_paths,
                                              yvex_model_download_resolved_target *out,
                                              yvex_error *err);
-const yvex_model_download_catalog_row *model_download_find_catalog(const char *target);
 int model_download_family_valid(const char *family);
 int model_download_local_name_valid(const char *name);
 int model_download_repo_valid(const char *repo);

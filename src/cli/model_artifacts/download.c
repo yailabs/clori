@@ -57,33 +57,6 @@ static void model_download_mark_provider_interrupted(
 static void model_download_orphan_check(yvex_model_download_report *report);
 static const char *model_download_safetensors_file_status(const char *path);
 
-static const yvex_model_download_catalog_row model_download_catalog[] = {
-    { "gemma-4-e2b", "gemma", "hf", "google/gemma-4-E2B", "gemma-4-e2b", "main",
-      "official-safetensors", "huggingface-repository", "gemma-4-e2b", "target-routing-default" },
-    { "gemma-4-e2b-it", "gemma", "hf", "google/gemma-4-E2B-it", "gemma-4-e2b-it", "main",
-      "official-safetensors", "huggingface-repository", "gemma-4-e2b-it", "target-routing-default" },
-    { "gemma-4-e4b", "gemma", "hf", "google/gemma-4-E4B", "gemma-4-e4b", "main",
-      "official-safetensors", "huggingface-repository", "gemma-4-e4b", "target-routing-default" },
-    { "gemma-4-e4b-it", "gemma", "hf", "google/gemma-4-E4B-it", "gemma-4-e4b-it", "main",
-      "official-safetensors", "huggingface-repository", "gemma-4-e4b-it", "target-routing-default" },
-    { "gemma-4-12b", "gemma", "hf", "google/gemma-4-12B", "gemma-4-12b", "main",
-      "official-safetensors", "huggingface-repository", "gemma-4-12b", "target-routing-default" },
-    { "gemma-4-12b-it", "gemma", "hf", "google/gemma-4-12B-it", "gemma-4-12b-it", "main",
-      "official-safetensors", "huggingface-repository", "gemma-4-12b-it", "target-routing-default" },
-    { "gemma-4-26b-a4b", "gemma", "hf", "google/gemma-4-26B-A4B", "gemma-4-26b-a4b", "main",
-      "official-safetensors", "huggingface-repository", "gemma-4-26b-a4b", "target-routing-default" },
-    { "gemma-4-26b-a4b-it", "gemma", "hf", "google/gemma-4-26B-A4B-it", "gemma-4-26b-a4b-it", "main",
-      "official-safetensors", "huggingface-repository", "gemma-4-26b-a4b-it", "target-routing-default" },
-    { "gemma-4-31b", "gemma", "hf", "google/gemma-4-31B", "gemma-4-31b", "main",
-      "official-safetensors", "huggingface-repository", "gemma-4-31b", "target-routing-default" },
-    { "gemma-4-31b-it", "gemma", "hf", "google/gemma-4-31B-it", "gemma-4-31b-it", "main",
-      "official-safetensors", "huggingface-repository", "gemma-4-31b-it", "target-routing-default" },
-    { "qwen3-8b", "qwen", "hf", "Qwen/Qwen3-8B", "qwen3-8b", "main",
-      "official-safetensors", "huggingface-repository", "qwen3-8b", "target-routing-default" },
-    { "qwen3-32b", "qwen", "hf", "Qwen/Qwen3-32B", "qwen3-32b", "main",
-      "official-safetensors", "huggingface-repository", "qwen3-32b", "source-download-routing-only" }
-};
-
 static const char *const model_download_default_includes[] = { "*.safetensors",
     "*.json",
     "*.txt",
@@ -100,19 +73,6 @@ static const char *const model_download_default_excludes[] = { "*.bin",
     "*.ckpt",
     "*.tar",
     "*.zip"};
-
-const yvex_model_download_catalog_row *model_download_find_catalog(const char *target)
-{
-    unsigned long i;
-
-    if (!target) return NULL;
-    for (i = 0; i < sizeof(model_download_catalog) / sizeof(model_download_catalog[0]); ++i) {
-        if (strcmp(model_download_catalog[i].target_id, target) == 0) {
-            return &model_download_catalog[i];
-        }
-    }
-    return NULL;
-}
 
 int model_download_family_valid(const char *family)
 {

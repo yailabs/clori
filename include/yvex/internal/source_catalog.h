@@ -24,6 +24,19 @@ typedef struct {
     const char *config_architecture;
 } yvex_source_target_identity;
 
+/*
+ * Acquisition routing is colder and weaker than a qualified target identity: the default
+ * reference may be mutable and must be resolved to immutable provider evidence before use.
+ */
+typedef struct {
+    const char *target_id;
+    const char *family_key;
+    const char *provider;
+    const char *repository;
+    const char *source_dir_leaf;
+    const char *default_reference;
+} yvex_source_acquisition_target;
+
 #define YVEX_SOURCE_RELEASE_TARGET_ID "deepseek4-v4-flash-dspark"
 #define YVEX_SOURCE_RETIRED_TARGET_ID "deepseek4-v4-flash"
 #define YVEX_SOURCE_RELEASE_FAMILY_KEY "deepseek"
@@ -57,6 +70,8 @@ const yvex_source_target_identity *yvex_source_target_identity_find(
     const char *target_id);
 const yvex_source_target_identity *yvex_source_target_identity_find_repository(
     const char *repository);
+const yvex_source_acquisition_target *yvex_source_acquisition_target_find(
+    const char *target_id);
 int yvex_source_is_release_target(const char *target_id);
 int yvex_source_target_path(char *out, size_t cap, const char *models_root,
                             const yvex_source_target_identity *identity);

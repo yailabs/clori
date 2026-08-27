@@ -156,19 +156,6 @@ typedef enum {
     YVEX_MODEL_DOWNLOAD_PROGRESS_OFF
 } yvex_model_download_progress_mode;
 
-typedef struct yvex_model_download_catalog_row {
-    const char *target_id;
-    const char *family;
-    const char *provider;
-    const char *repo_id;
-    const char *local_name;
-    const char *revision_default;
-    const char *artifact_class;
-    const char *source_container;
-    const char *model_class_hint;
-    const char *boundary;
-} yvex_model_download_catalog_row;
-
 typedef struct yvex_cli_models_download_options {
     const char *target;
     const char *repo;

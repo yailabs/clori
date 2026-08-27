@@ -37,6 +37,21 @@ static const yvex_source_target_identity source_target_identities[] = {
     },
 };
 
+static const yvex_source_acquisition_target source_acquisition_targets[] = {
+    {"gemma-4-e2b", "gemma", "hf", "google/gemma-4-E2B", "gemma-4-e2b", "main"},
+    {"gemma-4-e2b-it", "gemma", "hf", "google/gemma-4-E2B-it", "gemma-4-e2b-it", "main"},
+    {"gemma-4-e4b", "gemma", "hf", "google/gemma-4-E4B", "gemma-4-e4b", "main"},
+    {"gemma-4-e4b-it", "gemma", "hf", "google/gemma-4-E4B-it", "gemma-4-e4b-it", "main"},
+    {"gemma-4-12b", "gemma", "hf", "google/gemma-4-12B", "gemma-4-12b", "main"},
+    {"gemma-4-12b-it", "gemma", "hf", "google/gemma-4-12B-it", "gemma-4-12b-it", "main"},
+    {"gemma-4-26b-a4b", "gemma", "hf", "google/gemma-4-26B-A4B", "gemma-4-26b-a4b", "main"},
+    {"gemma-4-26b-a4b-it", "gemma", "hf", "google/gemma-4-26B-A4B-it", "gemma-4-26b-a4b-it", "main"},
+    {"gemma-4-31b", "gemma", "hf", "google/gemma-4-31B", "gemma-4-31b", "main"},
+    {"gemma-4-31b-it", "gemma", "hf", "google/gemma-4-31B-it", "gemma-4-31b-it", "main"},
+    {"qwen3-8b", "qwen", "hf", "Qwen/Qwen3-8B", "qwen3-8b", "main"},
+    {"qwen3-32b", "qwen", "hf", "Qwen/Qwen3-32B", "qwen3-32b", "main"},
+};
+
 const yvex_source_target_identity *yvex_source_release_identity(void)
 {
     return &source_target_identities[0];
@@ -67,6 +82,20 @@ const yvex_source_target_identity *yvex_source_target_identity_find_repository(
          ++index)
         if (strcmp(source_target_identities[index].upstream_repo_id, repository) == 0)
             return &source_target_identities[index];
+    return NULL;
+}
+
+const yvex_source_acquisition_target *yvex_source_acquisition_target_find(
+    const char *target_id)
+{
+    unsigned long long index;
+
+    if (!target_id) return NULL;
+    for (index = 0ull;
+         index < sizeof(source_acquisition_targets) / sizeof(source_acquisition_targets[0]);
+         ++index)
+        if (strcmp(source_acquisition_targets[index].target_id, target_id) == 0)
+            return &source_acquisition_targets[index];
     return NULL;
 }
 
