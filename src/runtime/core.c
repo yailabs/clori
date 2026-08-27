@@ -250,6 +250,45 @@ static int runtime_model_dependents_invalidate_locked(yvex_model_engine *model, 
     return first_rc;
 }
 
+static int runtime_model_residency_resource_release(void *context,
+                                                    yvex_error *err)
+{
+    yvex_model_engine *model = context;
+    int rc = yvex_runtime_residency_close(&model->residency, err);
+    if (rc == YVEX_OK) {
+        model->view.residency = NULL;
+        memset(&model->residency_resource, 0,
+               sizeof(model->residency_resource));
+    }
+    return rc;
+}
+
+static int runtime_model_resource_summary_refresh(yvex_model_engine *model,
+                                                  yvex_error *err)
+{
+    yvex_engine_resource_summary resources = {0};
+    unsigned long long count = 0ull;
+    int rc;
+    if (!model || !model->resources) {
+        yvex_error_set(err, YVEX_ERR_STATE, "runtime.model.resources",
+                       "opened model engine resource catalog is required");
+        return YVEX_ERR_STATE;
+    }
+    rc = yvex_engine_resource_snapshot(
+        model->resources, &resources, NULL, 0ull, &count, err);
+    if (rc != YVEX_OK) return rc;
+    model->summary.engine_resource_count = count;
+    model->summary.engine_resource_generation = resources.generation;
+    model->summary.mapped_package_bytes =
+        resources.bytes.mapped_package_bytes;
+    model->summary.prepared_bytes = resources.bytes.prepared_bytes;
+    model->summary.resident_host_bytes =
+        resources.bytes.host_resident_bytes;
+    model->summary.resident_device_bytes =
+        resources.bytes.device_resident_bytes;
+    return YVEX_OK;
+}
+
 static int runtime_model_release(yvex_model_engine *model, yvex_error *err) {
     int rc;
     if (!model)
@@ -269,6 +308,9 @@ static int runtime_model_release(yvex_model_engine *model, yvex_error *err) {
     if (rc != YVEX_OK) return rc;
     model->scheduler_sequence_capacity = 0ull;
     model->scheduler_maximum_width = 0ull;
+    rc = yvex_engine_resource_catalog_close(&model->resources, err);
+    if (rc != YVEX_OK) return rc;
+    /* Failed registration during open may leave an unowned residency. */
     rc = yvex_runtime_residency_close(&model->residency, err);
     if (rc != YVEX_OK) return rc;
     runtime_specialization_release(&model->specializations[YVEX_BACKEND_KIND_CPU]);
@@ -702,8 +744,10 @@ static int runtime_model_residency_open(
     yvex_model_engine *model, const yvex_model_engine_open_request *request,
     const yvex_runtime_descriptor_summary *descriptor_summary,
     const yvex_attention_summary *attention_summary,
+    const yvex_engine_specialization *specialization,
     yvex_runtime_private_refusal_id *refusal, yvex_error *err)
 {
+    yvex_engine_resource_request resource = {0};
     yvex_runtime_residency_options options;
     yvex_runtime_residency_failure residency_failure;
     yvex_runtime_residency_summary summary;
@@ -765,15 +809,40 @@ static int runtime_model_residency_open(
     model->summary.capabilities.attention_weight_residency_ready = 1;
     model->summary.capabilities.attention_envelope_ready =
         model->summary.capabilities.attention_envelope_ready && summary.envelope_complete;
-    model->summary.mapped_package_bytes = summary.mapped_package_bytes;
-    model->summary.prepared_bytes = summary.prepared_bytes;
-    model->summary.resident_host_bytes = summary.host_resident_bytes;
-    model->summary.resident_device_bytes = summary.device_resident_bytes;
-    return YVEX_OK;
+    resource.kind = summary.mapped_package_bytes
+                        ? YVEX_ENGINE_RESOURCE_PACKAGE_MAPPING
+                        : YVEX_ENGINE_RESOURCE_PREPARED_GROUP;
+    resource.owner = summary.mapped_package_bytes
+                         ? YVEX_ENGINE_RESOURCE_OWNER_PACKAGE
+                         : YVEX_ENGINE_RESOURCE_OWNER_SPECIALIZATION;
+    resource.lifetime = YVEX_ENGINE_RESOURCE_LIFETIME_ENGINE;
+    resource.numeric_class = summary.mapped_package_bytes
+                                 ? YVEX_ENGINE_RESOURCE_NUMERIC_CANONICAL_PACKAGE
+                                 : YVEX_ENGINE_RESOURCE_NUMERIC_EXACT_SPECIALIZATION;
+    resource.name = summary.mapped_package_bytes ? "canonical-weights"
+                                                 : "prepared-weights";
+    resource.package_identity = model->binding_summary.artifact_identity;
+    resource.specialization_identity = summary.mapped_package_bytes
+                                           ? NULL
+                                           : specialization->summary.identity;
+    resource.admission_identity = summary.residency_identity;
+    resource.bytes.mapped_package_bytes = summary.mapped_package_bytes;
+    resource.bytes.host_resident_bytes = summary.host_resident_bytes;
+    resource.bytes.device_resident_bytes = summary.device_resident_bytes;
+    resource.bytes.prepared_bytes = summary.prepared_bytes;
+    resource.value = model->residency;
+    resource.release = runtime_model_residency_resource_release;
+    resource.release_context = model;
+    resource.ready = 1;
+    rc = yvex_engine_resource_register(
+        model->resources, &resource, &model->residency_resource, err);
+    if (rc != YVEX_OK) return rc;
+    return runtime_model_resource_summary_refresh(model, err);
 }
 
 static void runtime_model_view_bind(yvex_model_engine *model)
 {
+    model->view.resources = model->resources;
     model->view.binding = &model->binding_summary;
     model->view.compiled_binding = model->binding;
     model->view.compiled_plan = model->binding->plan;
@@ -971,6 +1040,13 @@ int yvex_model_engine_open(yvex_model_engine **out, const yvex_model_engine_open
             out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_IMPORTED_IDENTITY, 1ull, 0ull, err,
             YVEX_ERR_FORMAT);
     }
+    rc = yvex_engine_resource_catalog_open(
+        &model->resources, model->summary.engine_generation,
+        model->summary.runtime_model_identity, 64ull, err);
+    if (rc != YVEX_OK)
+        return runtime_model_open_fail(
+            out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_RESIDENCY,
+            1ull, 0ull, err, (yvex_status)rc);
     rc = yvex_runtime_private_model_specialization_prepare(
         model, request->residency_backend, model->opening_backend,
         &opening_specialization, err);
@@ -1017,8 +1093,9 @@ int yvex_model_engine_open(yvex_model_engine **out, const yvex_model_engine_open
             request->startup_generation
                 ? YVEX_RUNTIME_REFUSE_OPEN_STARTUP_CAPACITY : capacity_refusal,
             required_bytes, available_bytes, err, (yvex_status)rc);
-    rc = runtime_model_residency_open(model, request, descriptor_summary,
-                                      attention_summary, &residency_refusal, err);
+    rc = runtime_model_residency_open(
+        model, request, descriptor_summary, attention_summary,
+        opening_specialization, &residency_refusal, err);
     if (rc != YVEX_OK)
         return runtime_model_open_fail(
             out, model, failure, residency_refusal, 1ull, 0ull, err,
@@ -1110,12 +1187,23 @@ int yvex_model_engine_summary_copy(const yvex_model_engine *model,
                                     yvex_model_engine_summary *out,
                                     yvex_error *err) {
     yvex_model_engine *mutable_model = (yvex_model_engine *)model;
-    return runtime_summary_copy(
-        model, model ? &model->summary : NULL, out, sizeof(*out),
-        model ? model->lifecycle_mutex_ready : 0,
-        model ? &mutable_model->lifecycle_mutex : NULL, "runtime.model.summary",
-        "runtime model and summary output are required",
-        "runtime model synchronization is unavailable", err);
+    int rc;
+    if (!model || !out) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.model.summary",
+                       "runtime model and summary output are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    if (!model->lifecycle_mutex_ready ||
+        pthread_mutex_lock(&mutable_model->lifecycle_mutex) != 0) {
+        yvex_error_set(err, YVEX_ERR_STATE, "runtime.model.summary",
+                       "runtime model synchronization is unavailable");
+        return YVEX_ERR_STATE;
+    }
+    rc = runtime_model_resource_summary_refresh(mutable_model, err);
+    if (rc == YVEX_OK) memcpy(out, &model->summary, sizeof(*out));
+    (void)pthread_mutex_unlock(&mutable_model->lifecycle_mutex);
+    if (rc == YVEX_OK) yvex_error_clear(err);
+    return rc;
 }
 
 void yvex_model_engine_close(yvex_model_engine **model_ptr) {
@@ -1145,10 +1233,25 @@ const yvex_model_engine_view *yvex_model_engine_view_get(const yvex_model_engine
 static int runtime_session_attach_cuda_residency(
     yvex_runtime_execution_session *session, int *uploaded,
     yvex_model_engine_failure *failure, yvex_error *err) {
-    yvex_runtime_residency_summary summary;
-    int rc = yvex_runtime_residency_cuda_session_attach(
-        session->engine->residency, &session->backend, session->maximum_device_bytes,
-        uploaded, &summary, err);
+    yvex_runtime_residency_summary summary = {0};
+    yvex_runtime_residency *residency = NULL;
+    yvex_error cleanup = {0};
+    int cleanup_rc, rc = yvex_engine_resource_acquire(
+        session->engine->resources, session->engine->residency_resource,
+        (void **)&residency, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_residency_cuda_session_attach(
+            residency, &session->backend, session->maximum_device_bytes,
+            uploaded, &summary, err);
+    cleanup_rc = residency
+                     ? yvex_engine_resource_drop(
+                           session->engine->resources,
+                           session->engine->residency_resource, &cleanup)
+                     : YVEX_OK;
+    if (rc == YVEX_OK && cleanup_rc != YVEX_OK) {
+        rc = cleanup_rc;
+        if (err) *err = cleanup;
+    }
     if (rc != YVEX_OK) {
         yvex_runtime_private_failure_record(
             failure, YVEX_MODEL_ENGINE_FAILURE_BACKEND, "device-residency",

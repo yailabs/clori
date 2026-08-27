@@ -2687,8 +2687,10 @@ static int test_runtime_model_session_reuse(
     YVEX_TEST_ASSERT(
         model_summary.mapped_package_bytes == fixture->admission.file_bytes &&
             !model_summary.prepared_bytes && !model_summary.resident_host_bytes &&
-            !model_summary.resident_device_bytes,
-        "engine distinguishes its canonical package mapping from prepared resources");
+            !model_summary.resident_device_bytes &&
+            model_summary.engine_resource_count == 1ull &&
+            model_summary.engine_resource_generation == 1ull,
+        "engine owns one canonical package mapping as a distinct live resource");
     YVEX_TEST_ASSERT(model_summary.capabilities.attention_core_ready == 1 &&
                          model_summary.capabilities.attention_envelope_ready == 1 &&
                          model_summary.capabilities.cpu_prefill_eager_ready == 1 &&

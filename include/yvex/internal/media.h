@@ -172,7 +172,11 @@ typedef struct {
 
 typedef struct {
     unsigned int schema_version;
-    unsigned long long component_count, artifact_bytes, artifact_bytes_hashed;
+    unsigned long long engine_generation, component_count;
+    unsigned long long resource_count, resource_generation;
+    unsigned long long artifact_bytes, artifact_bytes_hashed;
+    unsigned long long mapped_package_bytes, prepared_bytes;
+    unsigned long long resident_host_bytes, resident_device_bytes;
     char model_identity[YVEX_SHA256_HEX_CAP];
     char source_identity[YVEX_SHA256_HEX_CAP];
     yvex_runtime_media_component_summary components[4];

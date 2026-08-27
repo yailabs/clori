@@ -8,6 +8,7 @@
 #include <yvex/internal/media.h>
 
 #include <stdint.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -30,13 +31,27 @@ typedef enum {
     MEDIA_COMPONENT_COUNT
 } media_component_index;
 
+static const char *const media_component_names[MEDIA_COMPONENT_COUNT] = {
+    "text_encoder", "transformer", "video_vae", "audio_vae",
+};
+
+typedef struct {
+    yvex_runtime_media_model *model;
+    media_component_index component;
+} media_resource_release_context;
+
 struct yvex_runtime_media_model {
     yvex_model_context text;
     component_view transformer, video, audio;
     yvex_complete_artifact_admission admissions[MEDIA_COMPONENT_COUNT];
     yvex_runtime_av_generation_request contract;
     yvex_runtime_media_model_summary summary;
+    yvex_engine_resource_catalog *resources;
+    yvex_engine_resource_handle resource_handles[MEDIA_COMPONENT_COUNT];
+    media_resource_release_context release_contexts[MEDIA_COMPONENT_COUNT];
 };
+
+static _Atomic unsigned long long media_engine_generation_counter;
 
 typedef struct {
     yvex_runtime_media_model *model;
@@ -568,6 +583,84 @@ static component_view *media_model_view(
     return NULL;
 }
 
+static int media_component_resource_release(void *opaque, yvex_error *err)
+{
+    media_resource_release_context *context = opaque;
+    component_view *view;
+    if (!context || !context->model ||
+        context->component >= MEDIA_COMPONENT_COUNT)
+        return generation_fail(err, YVEX_ERR_STATE, "runtime.media-resource",
+                               "component release context is invalid");
+    if (context->component == MEDIA_COMPONENT_TEXT)
+        yvex_model_context_close(&context->model->text);
+    else {
+        view = media_model_view(context->model, context->component);
+        component_view_close(view);
+    }
+    memset(&context->model->resource_handles[context->component], 0,
+           sizeof(context->model->resource_handles[context->component]));
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+static int media_model_resources_open(yvex_runtime_media_model *model,
+                                      yvex_error *err)
+{
+    yvex_engine_resource_request resource = {0};
+    yvex_engine_resource_summary resources = {0};
+    unsigned long long count = 0ull, index;
+    int rc;
+    model->summary.engine_generation =
+        atomic_fetch_add_explicit(&media_engine_generation_counter, 1ull,
+                                  memory_order_relaxed) + 1ull;
+    if (!model->summary.engine_generation)
+        return generation_fail(err, YVEX_ERR_BOUNDS, "runtime.media-resource",
+                               "media engine generation space is exhausted");
+    rc = yvex_engine_resource_catalog_open(
+        &model->resources, model->summary.engine_generation,
+        model->summary.model_identity, MEDIA_COMPONENT_COUNT + 4ull, err);
+    for (index = 0ull; rc == YVEX_OK && index < MEDIA_COMPONENT_COUNT;
+         ++index) {
+        model->release_contexts[index].model = model;
+        model->release_contexts[index].component =
+            (media_component_index)index;
+        memset(&resource, 0, sizeof(resource));
+        resource.kind = YVEX_ENGINE_RESOURCE_COMPONENT;
+        resource.owner = YVEX_ENGINE_RESOURCE_OWNER_PACKAGE;
+        resource.lifetime = YVEX_ENGINE_RESOURCE_LIFETIME_ENGINE;
+        resource.numeric_class =
+            YVEX_ENGINE_RESOURCE_NUMERIC_CANONICAL_PACKAGE;
+        resource.name = media_component_names[index];
+        resource.package_identity = model->admissions[index].artifact_identity;
+        resource.admission_identity = model->admissions[index].admission_identity;
+        resource.bytes.mapped_package_bytes =
+            model->admissions[index].file_bytes;
+        resource.value = index == MEDIA_COMPONENT_TEXT
+                             ? (void *)&model->text
+                             : (void *)media_model_view(
+                                   model, (media_component_index)index);
+        resource.release = media_component_resource_release;
+        resource.release_context = &model->release_contexts[index];
+        resource.ready = 1;
+        rc = yvex_engine_resource_register(
+            model->resources, &resource, &model->resource_handles[index], err);
+    }
+    if (rc == YVEX_OK)
+        rc = yvex_engine_resource_snapshot(
+            model->resources, &resources, NULL, 0ull, &count, err);
+    if (rc != YVEX_OK) return rc;
+    model->summary.resource_count = count;
+    model->summary.resource_generation = resources.generation;
+    model->summary.mapped_package_bytes =
+        resources.bytes.mapped_package_bytes;
+    model->summary.prepared_bytes = resources.bytes.prepared_bytes;
+    model->summary.resident_host_bytes =
+        resources.bytes.host_resident_bytes;
+    model->summary.resident_device_bytes =
+        resources.bytes.device_resident_bytes;
+    return YVEX_OK;
+}
+
 static int media_model_component_admit(
     yvex_runtime_media_model *model, media_component_index component,
     const char *name, const yvex_artifact *artifact, const yvex_gguf *gguf,
@@ -623,9 +716,6 @@ static int media_model_identity(
     yvex_runtime_media_model *model, unsigned long long artifact_bytes,
     yvex_error *err)
 {
-    static const char *names[MEDIA_COMPONENT_COUNT] = {
-        "text_encoder", "transformer", "video_vae", "audio_vae",
-    };
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     unsigned long long index;
@@ -638,7 +728,7 @@ static int media_model_identity(
         return generation_fail(err, YVEX_ERR_STATE, "runtime.media-model",
                                "media model identity could not start");
     for (index = 0ull; index < MEDIA_COMPONENT_COUNT; ++index)
-        if (!yvex_sha256_update_text(&hash, names[index]) ||
+        if (!yvex_sha256_update_text(&hash, media_component_names[index]) ||
             !yvex_sha256_update_text(
                 &hash, model->admissions[index].admission_identity))
             return generation_fail(err, YVEX_ERR_STATE, "runtime.media-model",
@@ -734,9 +824,6 @@ int yvex_runtime_media_model_open(
     const yvex_runtime_media_model_open_options *open_options,
     yvex_runtime_media_model_summary *summary, yvex_error *err)
 {
-    static const char *names[MEDIA_COMPONENT_COUNT] = {
-        "text_encoder", "transformer", "video_vae", "audio_vae",
-    };
     const char *paths[MEDIA_COMPONENT_COUNT];
     yvex_runtime_media_model *model = NULL;
     unsigned long long artifact_bytes = 0ull, index;
@@ -774,7 +861,8 @@ int yvex_runtime_media_model_open(
     }
     if (rc == YVEX_OK)
         rc = media_model_component_admit(
-            model, MEDIA_COMPONENT_TEXT, names[MEDIA_COMPONENT_TEXT],
+            model, MEDIA_COMPONENT_TEXT,
+            media_component_names[MEDIA_COMPONENT_TEXT],
             model->text.artifact, model->text.gguf, model->text.table,
             open_options, &artifact_bytes, err);
     for (index = MEDIA_COMPONENT_TRANSFORMER;
@@ -783,11 +871,13 @@ int yvex_runtime_media_model_open(
         rc = component_view_open(paths[index], view, err);
         if (rc == YVEX_OK)
             rc = media_model_component_admit(
-                model, (media_component_index)index, names[index],
+                model, (media_component_index)index,
+                media_component_names[index],
                 view->artifact, view->gguf, view->tensors, open_options,
                 &artifact_bytes, err);
     }
     if (rc == YVEX_OK) rc = media_model_identity(model, artifact_bytes, err);
+    if (rc == YVEX_OK) rc = media_model_resources_open(model, err);
     if (rc != YVEX_OK) {
         yvex_runtime_media_model_close(&model);
         return rc;
@@ -801,8 +891,13 @@ int yvex_runtime_media_model_open(
 void yvex_runtime_media_model_close(yvex_runtime_media_model **model)
 {
     yvex_runtime_media_model *owner;
+    yvex_error cleanup = {0};
     if (!model || !*model) return;
     owner = *model;
+    if (yvex_engine_resource_catalog_close(&owner->resources, &cleanup) !=
+        YVEX_OK)
+        return;
+    /* Unregistered components can remain after a partial open. */
     component_view_close(&owner->audio);
     component_view_close(&owner->video);
     component_view_close(&owner->transformer);

@@ -80,6 +80,15 @@
       "reason": "mutable state requires reset, cancellation, rollback, cleanup, and composed lifecycle evidence"
     },
     {
+      "id": "runtime-engine-resources",
+      "patterns": ["src/runtime/resource.c", "include/yvex/internal/engine_resource.h",
+                   "src/runtime/core.c", "src/runtime/media.c"],
+      "lanes": ["fast", "structural", "runtime", "sanitizer"],
+      "tests": ["unit.engine_resource", "unit.runtime_binding",
+                "unit.runtime_media", "integration.tiny-vertical"],
+      "reason": "engine resource ownership requires dependency, eviction, cleanup, both runtime verticals, and sanitizer evidence"
+    },
+    {
       "id": "backend-cpu",
       "patterns": ["src/backend/cpu.c", "src/backend/core.c", "src/backend/residency.c"],
       "lanes": ["fast", "numeric", "runtime", "sanitizer"],

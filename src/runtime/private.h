@@ -17,7 +17,6 @@
 #include <yvex/internal/logits.h>
 #include <yvex/internal/runtime.h>
 #include <yvex/internal/engine_scheduler.h>
-
 static inline yvex_attention_evidence_level runtime_attention_evidence(
     yvex_execution_evidence_profile profile)
 {
@@ -324,6 +323,8 @@ struct yvex_model_engine {
     yvex_attention_plan *draft_attention;
     yvex_tokenizer *tokenizer;
     yvex_runtime_residency *residency;
+    yvex_engine_resource_catalog *resources;
+    yvex_engine_resource_handle residency_resource;
     yvex_backend *opening_backend;
     yvex_model_engine_summary summary;
     yvex_model_engine_view view;

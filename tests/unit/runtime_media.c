@@ -537,6 +537,12 @@ static int test_composite_verified_reopen(void)
     options.artifact_reopen_cache_root = cache_root;
     rc = yvex_runtime_media_model_open(&model, &request, &options, &summary, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && model && summary.component_count == 4ull &&
+                         summary.engine_generation &&
+                         summary.resource_count == 4ull &&
+                         summary.resource_generation == 4ull &&
+                         summary.mapped_package_bytes == summary.artifact_bytes &&
+                         !summary.prepared_bytes && !summary.resident_host_bytes &&
+                         !summary.resident_device_bytes &&
                          summary.artifact_bytes_hashed == 4ull * FIXTURE_BYTES &&
                          summary_mode_count(&summary, YVEX_ARTIFACT_VERIFICATION_FULL_HASH) == 4ull,
                      "four-component cold admission hashes and leases every component");
@@ -643,8 +649,12 @@ static int test_generation_transaction(void)
         &repeated_model, &second, NULL, &repeated_summary, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && repeated_model &&
                          strcmp(model_summary.model_identity,
-                                repeated_summary.model_identity) == 0,
-                     "media model identity is deterministic across independent opens");
+                                repeated_summary.model_identity) == 0 &&
+                         model_summary.engine_generation !=
+                             repeated_summary.engine_generation &&
+                         model_summary.resource_count == 4ull &&
+                         repeated_summary.resource_count == 4ull,
+                     "package identity is stable while engine generations remain distinct");
     yvex_runtime_media_model_close(&repeated_model);
     active_fixture_context = &first_context;
     rc = yvex_runtime_media_model_generate(model, &first, &first_result, &err);

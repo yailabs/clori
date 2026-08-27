@@ -9,6 +9,7 @@
 #include <yvex/graph.h>
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/compiler.h>
+#include <yvex/internal/engine_resource.h>
 #include <yvex/internal/execution.h>
 #include <yvex/internal/graph.h>
 #include <yvex/internal/graph_state.h>
@@ -256,6 +257,7 @@ typedef struct {
     unsigned long long attention_binding_count, draft_attention_binding_count;
     unsigned long long physical_execution_decision_count;
     unsigned long long engine_specialization_count;
+    unsigned long long engine_resource_count, engine_resource_generation;
     unsigned long long mapped_package_bytes, prepared_bytes;
     unsigned long long resident_host_bytes, resident_device_bytes;
     double lifecycle_seconds[YVEX_RUNTIME_LIFECYCLE_COUNT], total_seconds;
@@ -331,6 +333,7 @@ typedef struct {
 } yvex_runtime_state_residency_summary;
 typedef struct {
     const yvex_runtime_residency *residency;
+    const yvex_engine_resource_catalog *resources;
     const yvex_runtime_binding *compiled_binding;
     const yvex_compiled_model_plan *compiled_plan;
     const yvex_runtime_binding_summary *binding;
