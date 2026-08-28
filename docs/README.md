@@ -42,7 +42,7 @@ behavior; [`ROADMAP.md`](../ROADMAP.md) owns the live project sequence.
 | MiniMax-H3 FL2VA research facts | [MiniMax-H3 record](model-families/minimax-h3.md) |
 | Artifact admission | [Artifact contract](contracts/artifacts.md) |
 | Hosted runtime behavior | [Runtime contract](contracts/runtime.md) |
-| Private local protocol | [Local protocol v13](contracts/local-protocol.md) |
+| Private local protocol | [Local protocol v14](contracts/local-protocol.md) |
 | OpenAI-compatible HTTP | [Compatibility profile](openai-compatibility.md) |
 | Installed and internal C interfaces | [C API](contracts/c-api.md) |
 | Events and telemetry | [Events contract](contracts/events-telemetry.md) |

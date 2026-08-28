@@ -1,8 +1,8 @@
-# Local Protocol v13
+# Local Protocol v14
 
 Status: normative private protocol contract
 
-Schema/version: `YVEX_LOCAL_PROTOCOL_VERSION = 13`.
+Schema/version: `YVEX_LOCAL_PROTOCOL_VERSION = 14`.
 
 Authority: `include/yvex/server.h` and `src/server/protocol.c`. This document
 explains the wire and lifecycle contract; code remains authoritative for exact
@@ -17,18 +17,18 @@ Unix-domain socket and is not a public network API.
 
 ## Framing and negotiation
 
-Every connection negotiates version 13 and exchanges bounded typed frames.
+Every connection negotiates version 14 and exchanges bounded typed frames.
 Lengths, enums, strings, arrays, message/tool fields, and correlations are
 validated before dispatch. Oversized, truncated, duplicate, unknown, or
 malformed fields refuse without entering the server scheduler.
 
-Every earlier version, including v12, is refused explicitly. There is no private
+Every earlier version, including v13, is refused explicitly. There is no private
 pre-v0.1 compatibility decoder. Unknown operations and response kinds fail
 closed.
 
 ## Operations
 
-Protocol v13 carries host status/stop, engine load/list/unload, model and memory
+Protocol v14 carries host status/stop, engine load/list/unload, model and memory
 facts for each engine generation, selected target-only, DSpark, or media mode,
 session lifecycle, bounded copy-on-write session fork, generation turns and
 cancellation, speculative lifecycle events, event subscriptions, and composed
@@ -81,6 +81,13 @@ seed, byte extent, and the hosted preset, execution, file, and publication
 identities. The protocol retains that identity-bearing result and refuses a media
 success that omits it. Creative prompt bytes are model input; the protocol does
 not parse them into execution policy.
+
+A media request may carry up to two typed image conditions with distinct
+`first` and `last` roles. Condition kind, role, admitted media identity, path
+extent, and exact path bytes are versioned wire facts. Duplicate roles,
+unsupported kinds, malformed extents, or a condition attached to a non-media
+request fail before scheduler admission. Conditions are request-owned and do
+not alter engine identity or persist in a later turn.
 
 The admitted DeepSeek DSpark tokenizer contract classifies source-authored
 explicit reasoning separately from final text when the request selects

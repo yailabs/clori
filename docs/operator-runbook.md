@@ -119,7 +119,7 @@ opening payloads or engines. A moving provider reference is shown as
 Package identities and startup facts remain available through `model show`.
 Acquired sources report engine state as `not-applicable`. If no host can be
 observed, packages report `not-observed`; with a live host they report
-`not-loaded` or the engine state returned by protocol v13. Package readiness
+`not-loaded` or the engine state returned by protocol v14. Package readiness
 never implies residency or serving activity. The lifecycle handoff is explicit:
 
 ```sh
