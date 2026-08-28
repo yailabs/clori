@@ -205,12 +205,16 @@ printf 'profiles\nload deepseek4-v4-flash-dspark\nload 2\nmodels\nstatus\nstop\n
         >"$OUT_DIR/console.out" 2>"$OUT_DIR/console.err"
 contains "$OUT_DIR/console.typescript" 'Interactive host console ready'
 contains "$OUT_DIR/console.typescript" 'yvex[host] >'
+contains "$OUT_DIR/console.typescript" \
+    'structurally complete local profiles · load authenticates artifact + binding'
 contains "$OUT_DIR/console.typescript" "[1] $LEGACY_PROFILE"
 contains "$OUT_DIR/console.typescript" "[2] $PROFILE"
 contains "$OUT_DIR/console.typescript" \
     'target matches 2 profiles; use an exact alias or number'
 contains "$OUT_DIR/console.typescript" "loading $PROFILE"
 contains "$OUT_DIR/console.typescript" 'runtime binding open failed'
+contains "$OUT_DIR/console.typescript" \
+    'load hint: registry readiness is structural; use `profiles` to select another exact alias or repair this profile'
 contains "$OUT_DIR/console.typescript" "$PROFILE · failed · generation 1"
 contains "$OUT_DIR/console.typescript" 'host ready · engines 0 loaded/1 known/2 max'
 test ! -e "$SOCKET_PATH"

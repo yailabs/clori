@@ -525,7 +525,8 @@ static int console_profiles(cli_server_loader_context *context,
         (void)pthread_mutex_unlock(&context->registry_mutex);
         return rc;
     }
-    if (render) puts("startup-ready local profiles");
+    if (render)
+        puts("structurally complete local profiles · load authenticates artifact + binding");
     for (index = 0u; index < yvex_model_registry_count(registry); ++index) {
         const yvex_model_registry_entry *entry =
             yvex_model_registry_at(registry, index);
@@ -559,7 +560,7 @@ static int console_profiles(cli_server_loader_context *context,
     }
     yvex_model_registry_close(registry);
     (void)pthread_mutex_unlock(&context->registry_mutex);
-    if (render && !visible) puts("  no startup-ready profile is registered");
+    if (render && !visible) puts("  no structurally complete profile is registered");
     if (alias && !direct_match && target_matches == 1u)
         (void)snprintf(alias, YVEX_SERVER_MODEL_ALIAS_CAP, "%s", target_alias);
     if (alias && !direct_match && target_matches > 1u) {
@@ -611,10 +612,12 @@ static int console_engine_load(cli_server_thread_state *state,
     printf("loading %s ...\n", alias);
     (void)fflush(stdout);
     rc = registered_model_load(state->loader, state->server, alias, &err);
-    if (rc != YVEX_OK)
+    if (rc != YVEX_OK) {
         fprintf(stderr, "load failed at %s: %s\n", yvex_error_where(&err),
                 yvex_error_message(&err));
-    else
+        fputs("load hint: registry readiness is structural; use `profiles` to select another "
+              "exact alias or repair this profile\n", stderr);
+    } else
         printf("loaded %s\n", alias);
     return rc;
 }
@@ -654,7 +657,7 @@ static int console_engine_unload(cli_server_thread_state *state,
 static void console_help(void)
 {
     puts("commands\n"
-         "  profiles              list loadable local runtime profiles\n"
+         "  profiles              list structurally complete local runtime profiles\n"
          "  load MODEL|N          load an exact alias, target, or profile number\n"
          "  models                list engines owned by this host\n"
          "  unload [MODEL]        unload one exact engine; omit when only one is loaded\n"

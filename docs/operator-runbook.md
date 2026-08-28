@@ -642,7 +642,7 @@ once with the advanced registry operation and absolute paths:
 
 ```sh
 ./yvex model registry add \
-  --alias deepseek4-v4-flash-dspark-runtime-iq2xxs \
+  --alias my-deepseek-dspark-profile \
   --family deepseek4 \
   --model v4-flash-dspark \
   --scope runtime \
