@@ -193,6 +193,97 @@ unsigned long long yvex_local_catalog_package_count(const yvex_local_catalog *ca
 const yvex_local_package_record *yvex_local_catalog_package_at(
     const yvex_local_catalog *catalog, unsigned long long index);
 
+#define YVEX_MODEL_LIBRARY_ID_CAP 448u
+#define YVEX_MODEL_LIBRARY_NAME_CAP 128u
+#define YVEX_MODEL_LIBRARY_REASON_CAP 192u
+#define YVEX_MODEL_ARTIFACT_ID_CAP 65u
+
+/* A model-library snapshot groups physical and launch facts under one exact logical identity.
+ * It owns only copied catalog metadata; artifacts, profiles, engines, and source payloads retain
+ * their existing owners and lifetimes. */
+typedef struct yvex_model_library yvex_model_library;
+
+typedef enum {
+    YVEX_MODEL_IDENTITY_ALIAS = 0,
+    YVEX_MODEL_IDENTITY_TARGET,
+    YVEX_MODEL_IDENTITY_FAMILY_MODEL_TARGET,
+    YVEX_MODEL_IDENTITY_PROVIDER_REPOSITORY_REVISION
+} yvex_model_identity_kind;
+
+typedef struct {
+    char identity[YVEX_MODEL_LIBRARY_ID_CAP];
+    yvex_model_identity_kind identity_kind;
+    char display_name[YVEX_MODEL_LIBRARY_NAME_CAP];
+    char family[YVEX_REMOTE_FAMILY_CAP];
+    char model[YVEX_MODEL_LIBRARY_NAME_CAP];
+    char runtime_target[YVEX_MODEL_LIBRARY_NAME_CAP];
+    char provider[YVEX_ACCOUNT_PROVIDER_CAP];
+    char repository[YVEX_REMOTE_REPOSITORY_CAP];
+    char revision[YVEX_REMOTE_REVISION_CAP];
+    unsigned long long remote_count;
+    unsigned long long source_count;
+    unsigned long long artifact_count;
+    unsigned long long profile_count;
+    unsigned long long launchable_profile_count;
+    int remote_available;
+    int source_local;
+    int artifact_ready;
+    int profile_launchable;
+} yvex_model_library_entry;
+
+typedef struct {
+    char identity[YVEX_MODEL_ARTIFACT_ID_CAP];
+    char path[YVEX_PATH_CAP];
+    char artifact_class[64];
+    char format[YVEX_REMOTE_FORMAT_CAP];
+    char physical_variant[YVEX_REMOTE_PRECISION_CAP];
+    unsigned long long file_size;
+    unsigned long long tensor_count;
+    int execution_ready;
+} yvex_model_artifact_fact;
+
+typedef struct {
+    char alias[YVEX_MODEL_LIBRARY_NAME_CAP];
+    char profile[YVEX_MODEL_LIBRARY_NAME_CAP];
+    char installation[YVEX_PATH_CAP];
+    char artifact_path[YVEX_PATH_CAP];
+    char artifact_identity[YVEX_MODEL_ARTIFACT_ID_CAP];
+    char artifact_class[64];
+    char runtime_binding[YVEX_PATH_CAP];
+    char runtime_target[YVEX_MODEL_LIBRARY_NAME_CAP];
+    char backend[32];
+    char generation_mode[32];
+    unsigned long long context_capacity;
+    int launchable;
+    char blocker[YVEX_MODEL_LIBRARY_REASON_CAP];
+} yvex_model_runtime_profile_fact;
+
+int yvex_model_library_open(yvex_model_library **out,
+                            const yvex_local_catalog_options *options,
+                            yvex_error *err);
+void yvex_model_library_close(yvex_model_library *library);
+unsigned long long yvex_model_library_count(const yvex_model_library *library);
+const yvex_model_library_entry *yvex_model_library_at(
+    const yvex_model_library *library, unsigned long long index);
+unsigned long long yvex_model_library_artifact_count(
+    const yvex_model_library *library, unsigned long long model_index);
+const yvex_model_artifact_fact *yvex_model_library_artifact_at(
+    const yvex_model_library *library, unsigned long long model_index,
+    unsigned long long artifact_index);
+unsigned long long yvex_model_library_profile_count(
+    const yvex_model_library *library, unsigned long long model_index);
+const yvex_model_runtime_profile_fact *yvex_model_library_profile_at(
+    const yvex_model_library *library, unsigned long long model_index,
+    unsigned long long profile_index);
+unsigned long long yvex_model_library_source_count(
+    const yvex_model_library *library, unsigned long long model_index);
+const yvex_local_source_record *yvex_model_library_source_at(
+    const yvex_model_library *library, unsigned long long model_index,
+    unsigned long long source_index);
+int yvex_model_library_remote_match(const yvex_model_library *library,
+                                    const yvex_remote_model *remote,
+                                    unsigned long long *model_index);
+
 #ifdef __cplusplus
 }
 #endif

@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <yvex/api.h>
 
@@ -396,6 +397,69 @@ static int test_legacy_v3_runtime_mode(void)
     return 0;
 }
 
+static int test_logical_model_library(void)
+{
+    const char *registry_path = "build/tests/model-registry/library.local.json";
+    const char *model_path =
+        "build/tests/model-registry/deepseek4-v4-flash-dspark-selected-embed-F16-noimatrix-yvex-v1.gguf";
+    const char *binding_path = "build/tests/model-registry/runtime.binding";
+    static const char *const identities[] = {
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    };
+    yvex_model_registry_options registry_options = {0};
+    yvex_local_catalog_options library_options = {0};
+    yvex_model_registry *registry = NULL;
+    yvex_model_library *library = NULL;
+    yvex_model_registry_entry entry;
+    const yvex_model_library_entry *logical;
+    char aliases[8][64];
+    char absolute_model[YVEX_PATH_CAP], absolute_binding[YVEX_PATH_CAP];
+    yvex_error err;
+    size_t index;
+
+    YVEX_TEST_ASSERT(realpath(model_path, absolute_model) != NULL &&
+                         realpath(binding_path, absolute_binding) != NULL,
+                     "resolve logical-library fixture paths");
+    (void)unlink(registry_path);
+    YVEX_TEST_ASSERT(system("mkdir -p build/tests/model-library-root") == 0,
+                     "prepare isolated logical-library source root");
+    registry_options.registry_path = registry_path;
+    registry_options.create_if_missing = 1;
+    YVEX_TEST_ASSERT(yvex_model_registry_open(&registry, &registry_options, &err) == YVEX_OK,
+                     "open logical-library registry");
+    for (index = 0u; index < 8u; ++index) {
+        fill_entry(&entry, absolute_model, absolute_binding);
+        (void)snprintf(aliases[index], sizeof(aliases[index]),
+                       "deepseek4-v4-flash-profile-%zu", index);
+        entry.alias = aliases[index];
+        entry.sha256 = identities[index / 4u];
+        YVEX_TEST_ASSERT(yvex_model_registry_add(registry, &entry, &err) == YVEX_OK,
+                         "add subordinate runtime profile");
+    }
+    YVEX_TEST_ASSERT(yvex_model_registry_save(registry, registry_path, &err) == YVEX_OK,
+                     "persist logical-library registry");
+    yvex_model_registry_close(registry);
+    library_options.models_root = "build/tests/model-library-root";
+    library_options.registry_path = registry_path;
+    YVEX_TEST_ASSERT(yvex_model_library_open(&library, &library_options, &err) == YVEX_OK,
+                     "open canonical logical model library");
+    logical = yvex_model_library_at(library, 0u);
+    YVEX_TEST_ASSERT(yvex_model_library_count(library) == 1u && logical &&
+                         logical->profile_count == 8u && logical->artifact_count == 2u,
+                     "eight profiles and two artifacts aggregate under one logical model");
+    YVEX_TEST_ASSERT(!strcmp(logical->family, "deepseek4") &&
+                         !strcmp(logical->model, "v4-flash-dspark") &&
+                         logical->identity_kind == YVEX_MODEL_IDENTITY_FAMILY_MODEL_TARGET,
+                     "logical identity uses exact family model and runtime target facts");
+    YVEX_TEST_ASSERT(yvex_model_library_profile_at(library, 0u, 7u) &&
+                         !strcmp(yvex_model_library_profile_at(library, 0u, 7u)->alias,
+                                 "deepseek4-v4-flash-profile-7"),
+                     "subordinate profiles retain their canonical aliases");
+    yvex_model_library_close(library);
+    return 0;
+}
+
 int yvex_test_model_registry(void)
 {
     if (test_alias_validation() != 0) return 1;
@@ -403,6 +467,7 @@ int yvex_test_model_registry(void)
     if (test_registry_lifecycle() != 0) return 1;
     if (test_composite_profile() != 0) return 1;
     if (test_legacy_v3_runtime_mode() != 0) return 1;
+    if (test_logical_model_library() != 0) return 1;
     if (test_invalid_args() != 0) return 1;
     return 0;
 }
