@@ -215,6 +215,18 @@ typedef struct {
     char execution_identity[YVEX_SHA256_HEX_BYTES];
     int complete;
 } yvex_backend_text_execution_result;
+typedef struct {
+    const unsigned long long *position_ids;
+    unsigned long long position_capacity;
+    const unsigned int *visual_token_indices;
+    unsigned long long visual_token_count;
+    const float *visual_embeddings;
+    unsigned long long visual_embedding_capacity;
+    const float *deepstack_embeddings;
+    unsigned long long deepstack_layer_count, deepstack_embedding_capacity;
+    unsigned long long mrope_sections[3];
+    const char *vision_execution_identity;
+} yvex_backend_text_multimodal_input;
 int yvex_backend_text_embedding_execute(
     yvex_backend *backend, const yvex_component_text_recipe *geometry,
     const unsigned char *encoded, unsigned long long encoded_bytes,
@@ -228,6 +240,14 @@ int yvex_backend_text_encoder_execute(
     const yvex_backend_text_weight *weights, unsigned long long layer_count,
     const char *residency_identity, unsigned long long resident_bytes,
     const unsigned int *token_ids, unsigned long long token_count, float *output,
+    unsigned long long output_capacity, yvex_backend_text_execution_result *result,
+    yvex_error *err);
+int yvex_backend_text_encoder_multimodal_execute(
+    yvex_backend *backend, const yvex_component_text_recipe *geometry,
+    const yvex_backend_text_weight *weights, unsigned long long layer_count,
+    const char *residency_identity, unsigned long long resident_bytes,
+    const unsigned int *token_ids, unsigned long long token_count,
+    const yvex_backend_text_multimodal_input *multimodal, float *output,
     unsigned long long output_capacity, yvex_backend_text_execution_result *result,
     yvex_error *err);
 typedef int (*yvex_backend_state_resolve_fn)(

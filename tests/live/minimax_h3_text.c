@@ -8,11 +8,15 @@
 
 #include <yvex/artifact.h>
 #include <yvex/gguf.h>
+#include <yvex/model.h>
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/backend.h>
 #include <yvex/internal/component.h>
 #include <yvex/internal/core.h>
+#include <yvex/internal/family_catalog.h>
 #include <yvex/internal/families/minimax_h3.h>
+#include <yvex/internal/image.h>
+#include <yvex/internal/multimodal.h>
 
 enum { TEXT_HIDDEN = 5120u };
 /* The independent PyTorch CPU/CUDA BF16 oracle pair differs by these measured bounds. */
@@ -289,6 +293,321 @@ static int output_write(const char *path, const float output[TEXT_HIDDEN])
     return written == TEXT_HIDDEN && close_rc == 0;
 }
 
+typedef struct {
+    const char *output_root;
+    const char *reference_root;
+} multimodal_observer;
+
+static int evidence_path(char path[1024], const char *root, const char *name)
+{
+    int length = snprintf(path, 1024u, "%s/%s", root, name);
+    return length > 0 && length < 1024;
+}
+
+static int evidence_write(const char *root, const char *name,
+                          const void *data, size_t bytes)
+{
+    char path[1024];
+    FILE *file;
+    int valid;
+    if (!evidence_path(path, root, name)) return 0;
+    file = fopen(path, "wb");
+    if (!file) return 0;
+    valid = fwrite(data, 1u, bytes, file) == bytes;
+    if (fclose(file) != 0) valid = 0;
+    return valid;
+}
+
+static int evidence_exact_compare(const char *root, const char *name,
+                                  const void *actual, size_t bytes)
+{
+    char path[1024];
+    unsigned char *reference;
+    FILE *file;
+    int matches;
+    if (!evidence_path(path, root, name) || !(reference = malloc(bytes))) return 0;
+    file = fopen(path, "rb");
+    matches = file && fread(reference, 1u, bytes, file) == bytes && fgetc(file) == EOF &&
+              memcmp(reference, actual, bytes) == 0;
+    if (file) fclose(file);
+    free(reference);
+    printf("multimodal_oracle=%s exact=%s\n", name, matches ? "yes" : "no");
+    return matches;
+}
+
+static int evidence_float_compare(const char *root, const char *name,
+                                  const float *actual, unsigned long long count,
+                                  double maximum_relative_l2, double minimum_cosine,
+                                  float maximum_absolute)
+{
+    char path[1024];
+    float *reference;
+    FILE *file;
+    long double squared_error = 0.0L, squared_reference = 0.0L;
+    long double squared_actual = 0.0L, dot = 0.0L;
+    double relative_l2, cosine;
+    float maximum = 0.0f;
+    unsigned long long index;
+    int accepted;
+    if (!count || count > SIZE_MAX / sizeof(float) || !evidence_path(path, root, name) ||
+        !(reference = malloc((size_t)count * sizeof(float)))) return 0;
+    file = fopen(path, "rb");
+    if (!file || fread(reference, sizeof(float), (size_t)count, file) != count ||
+        fgetc(file) != EOF) {
+        if (file) fclose(file);
+        free(reference);
+        return 0;
+    }
+    fclose(file);
+    for (index = 0ull; index < count; ++index) {
+        long double difference = (long double)actual[index] - reference[index];
+        float absolute = fabsf(actual[index] - reference[index]);
+        if (!isfinite(actual[index]) || !isfinite(reference[index])) {
+            free(reference);
+            return 0;
+        }
+        if (absolute > maximum) maximum = absolute;
+        squared_error += difference * difference;
+        squared_reference += (long double)reference[index] * reference[index];
+        squared_actual += (long double)actual[index] * actual[index];
+        dot += (long double)actual[index] * reference[index];
+    }
+    relative_l2 = squared_reference > 0.0L
+                      ? (double)sqrtl(squared_error / squared_reference) : INFINITY;
+    cosine = squared_reference > 0.0L && squared_actual > 0.0L
+                 ? (double)(dot / sqrtl(squared_reference * squared_actual)) : -1.0;
+    accepted = maximum <= maximum_absolute && relative_l2 <= maximum_relative_l2 &&
+               cosine >= minimum_cosine;
+    printf("multimodal_oracle=%s max_absolute=%.9g relative_l2=%.12g cosine=%.12g accepted=%s\n",
+           name, maximum, relative_l2, cosine, accepted ? "yes" : "no");
+    free(reference);
+    return accepted;
+}
+
+static int multimodal_observe(
+    void *opaque, const yvex_media_conditioning_observation *observation,
+    yvex_error *err)
+{
+    multimodal_observer *observer = opaque;
+    unsigned long long grid[3];
+    size_t token_bytes, position_bytes, patch_bytes, merged_bytes, deepstack_bytes;
+    if (!observer || !observer->output_root || !observation ||
+        observation->token_count > SIZE_MAX / sizeof(unsigned int) ||
+        observation->token_count > SIZE_MAX / (3u * sizeof(unsigned long long)) ||
+        observation->patch_values > SIZE_MAX / sizeof(float) ||
+        observation->merged_values > SIZE_MAX / sizeof(float) ||
+        observation->deepstack_values > SIZE_MAX / sizeof(float))
+        goto failed;
+    token_bytes = (size_t)observation->token_count * sizeof(unsigned int);
+    position_bytes = (size_t)observation->token_count * 3u * sizeof(unsigned long long);
+    patch_bytes = (size_t)observation->patch_values * sizeof(float);
+    merged_bytes = (size_t)observation->merged_values * sizeof(float);
+    deepstack_bytes = (size_t)observation->deepstack_values * sizeof(float);
+    grid[0] = observation->image_count;
+    grid[1] = observation->grid_height;
+    grid[2] = observation->grid_width;
+    if (!evidence_write(observer->output_root, "tokens.yvex.u32",
+                        observation->token_ids, token_bytes) ||
+        !evidence_write(observer->output_root, "types.yvex.u32",
+                        observation->token_types, token_bytes) ||
+        !evidence_write(observer->output_root, "tags.yvex.u32",
+                        observation->text_tags, token_bytes) ||
+        !evidence_write(observer->output_root, "positions.yvex.u64",
+                        observation->position_ids, position_bytes) ||
+        !evidence_write(observer->output_root, "grid.yvex.u64", grid, sizeof(grid)) ||
+        !evidence_write(observer->output_root, "vision-patches.yvex.f32",
+                        observation->vision_patches, patch_bytes) ||
+        !evidence_write(observer->output_root, "vision-merged.yvex.f32",
+                        observation->vision_merged, merged_bytes) ||
+        !evidence_write(observer->output_root, "vision-deepstack.yvex.f32",
+                        observation->vision_deepstack, deepstack_bytes))
+        goto failed;
+    if (observer->reference_root &&
+        (!evidence_exact_compare(observer->reference_root, "tokens.reference.u32",
+                                 observation->token_ids, token_bytes) ||
+         !evidence_exact_compare(observer->reference_root, "types.reference.u32",
+                                 observation->token_types, token_bytes) ||
+         !evidence_exact_compare(observer->reference_root, "tags.reference.u32",
+                                 observation->text_tags, token_bytes) ||
+         !evidence_exact_compare(observer->reference_root, "positions.reference.u64",
+                                 observation->position_ids, position_bytes) ||
+         !evidence_exact_compare(observer->reference_root, "grid.reference.u64",
+                                 grid, sizeof(grid)) ||
+         !evidence_float_compare(observer->reference_root, "vision-patches.reference.f32",
+                                 observation->vision_patches, observation->patch_values,
+                                 1.0e-6, 0.999999, 1.0e-6f) ||
+         !evidence_float_compare(observer->reference_root, "vision-merged.reference.f32",
+                                 observation->vision_merged, observation->merged_values,
+                                 0.05, 0.999, INFINITY) ||
+         !evidence_float_compare(observer->reference_root, "vision-deepstack.reference.f32",
+                                 observation->vision_deepstack, observation->deepstack_values,
+                                 0.03, 0.999, INFINITY))) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "minimax-h3.multimodal.oracle",
+                       "multimodal processor or vision output differs from the released oracle");
+        return YVEX_ERR_FORMAT;
+    }
+    return YVEX_OK;
+failed:
+    yvex_error_set(err, YVEX_ERR_IO, "minimax-h3.multimodal.evidence",
+                   "multimodal evidence could not be written completely");
+    return YVEX_ERR_IO;
+}
+
+static int vision_observe(
+    void *opaque, unsigned int stage, unsigned long long index,
+    const float *values, unsigned long long rows, unsigned long long width,
+    yvex_error *err)
+{
+    multimodal_observer *observer = opaque;
+    char name[64];
+    unsigned long long count;
+    int length;
+    if (!observer || !observer->output_root || !values || !rows || !width ||
+        !yvex_core_u64_mul(rows, width, &count) || count > SIZE_MAX / sizeof(float))
+        goto failed;
+    if (stage == YVEX_VISION_OBSERVE_PATCH)
+        length = snprintf(name, sizeof(name), "vision-patch-projection.yvex.f32");
+    else if (stage == YVEX_VISION_OBSERVE_POSITION)
+        length = snprintf(name, sizeof(name), "vision-position.yvex.f32");
+    else if (stage == YVEX_VISION_OBSERVE_BLOCK &&
+             (index < 2ull || index == 8ull || index == 16ull ||
+              index == 24ull || index == 26ull))
+        length = snprintf(name, sizeof(name), "vision-block-%llu.yvex.f32", index);
+    else if (index == 0ull && stage == YVEX_VISION_OBSERVE_NORM1)
+        length = snprintf(name, sizeof(name), "vision-block-0-norm1.yvex.f32");
+    else if (index == 0ull && stage == YVEX_VISION_OBSERVE_QKV)
+        length = snprintf(name, sizeof(name), "vision-block-0-qkv.yvex.f32");
+    else if (index == 0ull && stage == YVEX_VISION_OBSERVE_QUERY)
+        length = snprintf(name, sizeof(name), "vision-block-0-query.yvex.f32");
+    else if (index == 0ull && stage == YVEX_VISION_OBSERVE_KEY)
+        length = snprintf(name, sizeof(name), "vision-block-0-key.yvex.f32");
+    else if (index == 0ull && stage == YVEX_VISION_OBSERVE_ATTENTION)
+        length = snprintf(name, sizeof(name), "vision-block-0-attention.yvex.f32");
+    else if (index == 0ull && stage == YVEX_VISION_OBSERVE_ATTENTION_PROJECTION)
+        length = snprintf(name, sizeof(name), "vision-block-0-attention-projection.yvex.f32");
+    else if (index == 0ull && stage == YVEX_VISION_OBSERVE_NORM2)
+        length = snprintf(name, sizeof(name), "vision-block-0-norm2.yvex.f32");
+    else if (index == 0ull && stage == YVEX_VISION_OBSERVE_FF1)
+        length = snprintf(name, sizeof(name), "vision-block-0-ff1.yvex.f32");
+    else if (index == 0ull && stage == YVEX_VISION_OBSERVE_GELU)
+        length = snprintf(name, sizeof(name), "vision-block-0-gelu.yvex.f32");
+    else if (index == 0ull && stage == YVEX_VISION_OBSERVE_FF2)
+        length = snprintf(name, sizeof(name), "vision-block-0-ff2.yvex.f32");
+    else
+        return YVEX_OK;
+    if (length <= 0 || (size_t)length >= sizeof(name) ||
+        !evidence_write(observer->output_root, name, values,
+                        (size_t)count * sizeof(float)))
+        goto failed;
+    return YVEX_OK;
+failed:
+    yvex_error_set(err, YVEX_ERR_IO, "minimax-h3.vision.evidence",
+                   "vision stage evidence could not be written completely");
+    return YVEX_ERR_IO;
+}
+
+static int multimodal_execute(
+    const char *artifact_path, const char *image_path, const char *prompt,
+    const char *evidence_root, const char *reference_root)
+{
+    yvex_model_context model = {0};
+    yvex_complete_artifact_admission admission;
+    yvex_artifact_admission_failure failure = {0};
+    yvex_runtime_av_conditioning_result result;
+    yvex_media_condition condition = {
+        .schema_version = YVEX_MEDIA_CONDITION_SCHEMA_V1,
+        .kind = YVEX_MEDIA_CONDITION_IMAGE,
+        .role = YVEX_MEDIA_CONDITION_FIRST,
+        .source_path = image_path,
+    };
+    yvex_media_conditioning_request request = {0};
+    multimodal_observer observer = {evidence_root, reference_root};
+    yvex_image image = {0};
+    float *output = NULL;
+    unsigned int *tags = NULL;
+    unsigned long long maximum_tokens = 256ull, output_values;
+    char output_path[1024];
+    yvex_error err;
+    int rc;
+
+    output_values = maximum_tokens * TEXT_HIDDEN;
+    output = calloc((size_t)output_values, sizeof(*output));
+    tags = calloc((size_t)maximum_tokens, sizeof(*tags));
+    if (!output || !tags || !evidence_path(output_path, evidence_root,
+                                            "conditioning.yvex.f32")) {
+        free(tags); free(output);
+        return 2;
+    }
+    yvex_error_clear(&err);
+    rc = yvex_model_context_open(artifact_path, &model, &err);
+    if (rc == YVEX_OK)
+        rc = yvex_family_tokenizer_open(&model.tokenizer, model.gguf, &err);
+    if (rc == YVEX_OK)
+        rc = yvex_graph_register_minimax_h3()->component_admit(
+            "text_encoder", model.artifact, model.gguf, model.table, NULL,
+            &admission, NULL, &failure, &err);
+    if (rc == YVEX_OK)
+        rc = yvex_image_decode_file(&image, image_path,
+                                    256ull * 1024ull * 1024ull, &err);
+    request = (yvex_media_conditioning_request){
+        .schema_version = YVEX_MEDIA_CONDITIONING_SCHEMA_V2,
+        .prompt = prompt,
+        .tokenizer = model.tokenizer,
+        .conditions = &condition,
+        .condition_images = &image,
+        .condition_count = 1ull,
+        .width = 192ull,
+        .height = 192ull,
+        .layer_count = 50ull,
+        .maximum_prompt_tokens = maximum_tokens,
+        .maximum_host_bytes = admission.payload_bytes,
+        .maximum_device_bytes = 80ull * 1024ull * 1024ull * 1024ull,
+        .text_admission = &admission,
+        .text_artifact = model.artifact,
+        .text_gguf = model.gguf,
+        .text_tensors = model.table,
+        .conditioning = output,
+        .text_tags = tags,
+        .conditioning_capacity = output_values,
+        .text_tag_capacity = maximum_tokens,
+        .observe = multimodal_observe,
+        .observer_context = &observer,
+        .vision_observe = vision_observe,
+        .vision_observer_context = &observer,
+    };
+    if (rc == YVEX_OK)
+        rc = yvex_backend_minimax_h3_fl2va_condition(&request, &result, &err);
+    if (rc == YVEX_OK &&
+        !evidence_write(evidence_root, "conditioning.yvex.f32", output,
+                        (size_t)(result.token_count * TEXT_HIDDEN) * sizeof(float)))
+        rc = YVEX_ERR_IO;
+    if (rc == YVEX_OK && reference_root &&
+        !evidence_float_compare(reference_root, "conditioning.reference.f32", output,
+                                result.token_count * TEXT_HIDDEN,
+                                0.012, 0.9999, INFINITY)) {
+        yvex_error_set(&err, YVEX_ERR_FORMAT, "minimax-h3.multimodal-conditioning.oracle",
+                       "multimodal Qwen conditioning differs from the released oracle");
+        rc = YVEX_ERR_FORMAT;
+    }
+    if (rc == YVEX_OK)
+        printf("multimodal_conditioning=accepted tokens=%llu hidden=%llu layers=%llu "
+               "kernels=%llu resident_bytes=%llu device_bytes=%llu\n"
+               "prompt_identity=%s\nprocessor_identity=%s\nvision_identity=%s\n"
+               "residency_identity=%s\nexecution_identity=%s\nmedia_identity=%s\n",
+               result.token_count, result.hidden_width, result.layer_count,
+               result.kernel_launches, result.resident_bytes, result.device_bytes,
+               result.prompt_identity, result.processor_identity,
+               result.vision_identity, result.residency_identity,
+               result.execution_identity, result.media_identities[0]);
+    else
+        fprintf(stderr, "multimodal_conditioning=refused field=%s where=%s message=%s\n",
+                failure.field, yvex_error_where(&err), yvex_error_message(&err));
+    yvex_image_close(&image);
+    yvex_model_context_close(&model);
+    free(tags); free(output);
+    return rc == YVEX_OK ? 0 : 1;
+}
+
 int main(int argc, char **argv)
 {
     yvex_artifact_options options = {0};
@@ -303,10 +622,15 @@ int main(int argc, char **argv)
     yvex_error err;
     int execution_mode = 0, rc;
 
+    if ((argc == 6 || argc == 7) && strcmp(argv[1], "--multimodal") == 0)
+        return multimodal_execute(argv[2], argv[3], argv[4], argv[5],
+                                  argc == 7 ? argv[6] : NULL);
     if (argc != 5 && argc != 6) {
         fprintf(stderr,
                 "usage: minimax_h3_text TEXT_GGUF TOKEN OUTPUT_F32 REFERENCE_F32 "
-                "[layer0|layer0-proof|encoder50]\n");
+                "[layer0|layer0-proof|encoder50]\n"
+                "       minimax_h3_text --multimodal TEXT_GGUF IMAGE_PNG PROMPT "
+                "EVIDENCE_ROOT\n");
         return 2;
     }
     if (argc == 6) {

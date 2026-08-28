@@ -50,6 +50,7 @@ typedef struct {
     text_geometry geometry;
     unsigned long long tokens, values, output_bytes, device_bytes;
     unsigned long long layer_count, layer_index;
+    const yvex_backend_text_multimodal_input *multimodal;
     yvex_backend_text_execution_result facts;
 } text_layer_run;
 
@@ -248,6 +249,7 @@ static int text_layer_identity(
     const text_geometry *geometry, const char *residency_identity,
     const unsigned int *token_ids,
     unsigned long long token_count, unsigned long long layer_count,
+    const yvex_backend_text_multimodal_input *multimodal,
     const float *values, unsigned long long value_count,
     char output[TEXT_IDENTITY_CAP])
 {
@@ -264,7 +266,11 @@ static int text_layer_identity(
         !yvex_sha256_update_u64(&hash, geometry->query_heads) ||
         !yvex_sha256_update_u64(&hash, geometry->kv_heads) ||
         !yvex_sha256_update_u64(&hash, geometry->head_dimension) ||
-        !yvex_sha256_update_u64(&hash, geometry->ffn)) return 0;
+        !yvex_sha256_update_u64(&hash, geometry->ffn) ||
+        !yvex_sha256_update_u64(&hash, multimodal ? multimodal->visual_token_count : 0ull))
+        return 0;
+    if (multimodal && !yvex_sha256_update_text(&hash, multimodal->vision_execution_identity))
+        return 0;
     for (index = 0ull; index < token_count; ++index)
         if (!yvex_sha256_update_u64(&hash, token_ids[index])) return 0;
     for (index = 0ull; index < value_count; ++index) {
@@ -485,9 +491,19 @@ static int text_rope_tables(text_layer_run *run, yvex_error *err)
     for (token = 0ull; rc == YVEX_OK && token < run->tokens; ++token) {
         for (coordinate = 0ull; coordinate < geometry->head_dimension; ++coordinate) {
             unsigned long long pair = coordinate % (geometry->head_dimension / 2ull);
+            unsigned long long axis = 0ull;
+            unsigned long long position = token;
             double frequency = pow((double)geometry->rope_theta,
                                    -(double)(2ull * pair) / geometry->head_dimension);
-            double angle = (double)token * frequency;
+            if (run->multimodal) {
+                if (pair % 3ull == 1ull && pair < run->multimodal->mrope_sections[1] * 3ull)
+                    axis = 1ull;
+                else if (pair % 3ull == 2ull &&
+                         pair < run->multimodal->mrope_sections[2] * 3ull)
+                    axis = 2ull;
+                position = run->multimodal->position_ids[axis * run->tokens + token];
+            }
+            double angle = (double)position * frequency;
             unsigned long long index = token * geometry->head_dimension + coordinate;
             cosines[index] = text_bf16_value((float)cos(angle));
             sines[index] = text_bf16_value((float)sin(angle));
@@ -506,6 +522,48 @@ static int text_rope_tables(text_layer_run *run, yvex_error *err)
                                  "text rotary upload accounting overflowed");
     free(sines);
     free(cosines);
+    return rc;
+}
+
+static int text_multimodal_apply(text_layer_run *run, unsigned long long deepstack_layer,
+                                 yvex_error *err)
+{
+    const yvex_backend_text_multimodal_input *input = run->multimodal;
+    float *host;
+    unsigned long long row, column, bytes = run->output_bytes;
+    int rc;
+    if (!input) return YVEX_OK;
+    host = (float *)malloc((size_t)bytes);
+    if (!host)
+        return conditioning_refuse(err, YVEX_ERR_NOMEM, "cuda.text-multimodal",
+                                   "multimodal hidden staging allocation failed");
+    rc = yvex_backend_tensor_read(run->backend, run->device[TEXT_DEVICE_HIDDEN],
+                                  host, bytes, err);
+    if (rc == YVEX_OK) {
+        const float *source = deepstack_layer == ULLONG_MAX
+                                  ? input->visual_embeddings
+                                  : input->deepstack_embeddings +
+                                        deepstack_layer * input->visual_token_count *
+                                            run->geometry.hidden;
+        for (row = 0ull; row < input->visual_token_count; ++row) {
+            unsigned long long destination = input->visual_token_indices[row];
+            for (column = 0ull; column < run->geometry.hidden; ++column) {
+                unsigned long long output_index = destination * run->geometry.hidden + column;
+                unsigned long long source_index = row * run->geometry.hidden + column;
+                host[output_index] = deepstack_layer == ULLONG_MAX
+                                         ? source[source_index]
+                                         : text_bf16_value(host[output_index] + source[source_index]);
+            }
+        }
+        rc = yvex_backend_tensor_write(run->backend, run->device[TEXT_DEVICE_HIDDEN],
+                                       host, bytes, err);
+    }
+    if (rc == YVEX_OK &&
+        (!yvex_core_u64_add(run->facts.d2h_bytes, bytes, &run->facts.d2h_bytes) ||
+         !yvex_core_u64_add(run->facts.h2d_bytes, bytes, &run->facts.h2d_bytes)))
+        rc = conditioning_refuse(err, YVEX_ERR_BOUNDS, "cuda.text-layer.facts",
+                                 "multimodal hidden transfer accounting overflowed");
+    free(host);
     return rc;
 }
 
@@ -607,6 +665,8 @@ static int text_layer_compute(text_layer_run *run, const unsigned int *token_ids
         rc = text_weight_gather(run, YVEX_BACKEND_TEXT_EMBEDDING,
                                 run->device[TEXT_DEVICE_HIDDEN], token_ids,
                                 run->tokens, err);
+    if (rc == YVEX_OK && run->multimodal)
+        rc = text_multimodal_apply(run, ULLONG_MAX, err);
     for (run->layer_index = 0ull; rc == YVEX_OK && run->layer_index < run->layer_count;
          ++run->layer_index) {
         rc = text_norm(run, TEXT_DEVICE_HIDDEN, YVEX_BACKEND_TEXT_INPUT_NORM,
@@ -619,6 +679,9 @@ static int text_layer_compute(text_layer_run *run, const unsigned int *token_ids
                                      run->device[TEXT_DEVICE_RESIDUAL], err);
         if (rc == YVEX_OK) rc = text_round(run, TEXT_DEVICE_RESIDUAL, run->values, err);
         if (rc == YVEX_OK) rc = text_mlp(run, err);
+        if (rc == YVEX_OK && run->multimodal &&
+            run->layer_index < run->multimodal->deepstack_layer_count)
+            rc = text_multimodal_apply(run, run->layer_index, err);
     }
     if (rc == YVEX_OK)
         rc = yvex_backend_tensor_read(run->backend, run->device[TEXT_DEVICE_HIDDEN],
@@ -646,11 +709,12 @@ static int text_devices_release(text_layer_run *run, int rc, yvex_error *err)
     return rc;
 }
 
-int yvex_backend_text_encoder_execute(
+static int text_encoder_execute(
     yvex_backend *backend, const yvex_component_text_recipe *source,
     const yvex_backend_text_weight *weights, unsigned long long layer_count,
     const char *residency_identity, unsigned long long resident_bytes,
-    const unsigned int *token_ids, unsigned long long token_count, float *output,
+    const unsigned int *token_ids, unsigned long long token_count,
+    const yvex_backend_text_multimodal_input *multimodal, float *output,
     unsigned long long output_capacity, yvex_backend_text_execution_result *result,
     yvex_error *err)
 {
@@ -677,6 +741,27 @@ int yvex_backend_text_encoder_execute(
             return conditioning_refuse(err, YVEX_ERR_BOUNDS,
                                        "cuda.text-layer.token",
                                        "text token exceeds the compiled vocabulary");
+    if (multimodal &&
+        (!multimodal->position_ids ||
+         multimodal->position_capacity < token_count * 3ull ||
+         !multimodal->visual_token_indices || !multimodal->visual_token_count ||
+         !multimodal->visual_embeddings || !multimodal->deepstack_embeddings ||
+         multimodal->deepstack_layer_count != 3ull ||
+         multimodal->mrope_sections[0] + multimodal->mrope_sections[1] +
+                 multimodal->mrope_sections[2] !=
+             run.geometry.head_dimension / 2ull ||
+         multimodal->visual_embedding_capacity <
+             multimodal->visual_token_count * run.geometry.hidden ||
+         multimodal->deepstack_embedding_capacity <
+             multimodal->deepstack_layer_count * multimodal->visual_token_count *
+                 run.geometry.hidden ||
+         !yvex_sha256_hex_valid(multimodal->vision_execution_identity)))
+        return conditioning_refuse(err, YVEX_ERR_INVALID_ARG, "cuda.text-multimodal.validate",
+                                   "complete typed multimodal text inputs are required");
+    for (index = 0ull; multimodal && index < multimodal->visual_token_count; ++index)
+        if (multimodal->visual_token_indices[index] >= token_count)
+            return conditioning_refuse(err, YVEX_ERR_BOUNDS, "cuda.text-multimodal.index",
+                                       "visual token index exceeds the text presentation");
     staged = (float *)malloc((size_t)run.output_bytes);
     if (!staged)
         return conditioning_refuse(err, YVEX_ERR_NOMEM,
@@ -686,10 +771,12 @@ int yvex_backend_text_encoder_execute(
     run.weights = weights;
     run.tokens = token_count;
     run.layer_count = layer_count;
+    run.multimodal = multimodal;
     rc = text_layer_compute(&run, token_ids, staged, err);
     if (rc == YVEX_OK &&
         !text_layer_identity(&run.geometry, residency_identity, token_ids, token_count,
-                             layer_count, staged, run.values, published.execution_identity))
+                             layer_count, multimodal, staged, run.values,
+                             published.execution_identity))
         rc = conditioning_refuse(err, YVEX_ERR_STATE,
                                  "cuda.text-layer.identity",
                                  "text layer execution identity could not be sealed");
@@ -712,4 +799,31 @@ int yvex_backend_text_encoder_execute(
     }
     free(staged);
     return rc;
+}
+
+int yvex_backend_text_encoder_execute(
+    yvex_backend *backend, const yvex_component_text_recipe *source,
+    const yvex_backend_text_weight *weights, unsigned long long layer_count,
+    const char *residency_identity, unsigned long long resident_bytes,
+    const unsigned int *token_ids, unsigned long long token_count, float *output,
+    unsigned long long output_capacity, yvex_backend_text_execution_result *result,
+    yvex_error *err)
+{
+    return text_encoder_execute(
+        backend, source, weights, layer_count, residency_identity, resident_bytes,
+        token_ids, token_count, NULL, output, output_capacity, result, err);
+}
+
+int yvex_backend_text_encoder_multimodal_execute(
+    yvex_backend *backend, const yvex_component_text_recipe *source,
+    const yvex_backend_text_weight *weights, unsigned long long layer_count,
+    const char *residency_identity, unsigned long long resident_bytes,
+    const unsigned int *token_ids, unsigned long long token_count,
+    const yvex_backend_text_multimodal_input *multimodal, float *output,
+    unsigned long long output_capacity, yvex_backend_text_execution_result *result,
+    yvex_error *err)
+{
+    return text_encoder_execute(
+        backend, source, weights, layer_count, residency_identity, resident_bytes,
+        token_ids, token_count, multimodal, output, output_capacity, result, err);
 }

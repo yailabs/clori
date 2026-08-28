@@ -63,12 +63,15 @@ RECORDS = {
     "yvex_client_media_result": (
         "include/yvex/server.h", "YVEX_CLIENT_MEDIA_RESULT_SCHEMA_V1", 1, 856,
         "de0ddcbee4fbda54d79a13c7cf8a4ee6ef8fcc09c694e1eb293dfe5713ae58bc"),
+    "yvex_client_media_condition": (
+        "include/yvex/server.h", "YVEX_CLIENT_MEDIA_CONDITION_SCHEMA_V1", 1, 524,
+        "b120b49decb8b91cf649baae365a88ac5ea278d81df37075786bb782cf635eee"),
     "yvex_client_request": (
-        "include/yvex/server.h", "YVEX_LOCAL_PROTOCOL_VERSION", 13, 920,
-        "364c5afa2a79ae58ba4fa2629c9c172a9723235690db3b9e2323ef16766593f5"),
+        "include/yvex/server.h", "YVEX_LOCAL_PROTOCOL_VERSION", 14, 1976,
+        "3264fa41632d7b78ed6e958c67b522a03e31c35df2c36bb5d0b1daa40351c03d"),
     "yvex_client_message": (
-        "include/yvex/server.h", "YVEX_LOCAL_PROTOCOL_VERSION", 13, 10016,
-        "6da40c51bbb75df94cf19bc1a4f4e4124ec85f37ed1b3daf097bed8c2ac2b182"),
+        "include/yvex/server.h", "YVEX_LOCAL_PROTOCOL_VERSION", 14, 10016,
+        "f8bb4158a126291e17c05d8475755324177a4d619316f09f89c336824948520e"),
     "yvex_tokenizer_plan_summary": (
         "include/yvex/tokenizer.h", "YVEX_TOKENIZER_PLAN_SCHEMA_V3", 3, 864,
         "0dffc80772b1119db3d2004c7f989775280c461b389f805307c3a2465876fb31"),

@@ -1814,6 +1814,45 @@ int yvex_cuda_activation_views_valid(yvex_backend *backend,
            backend_tensor_f32_elements(input, input_elements) &&
            backend_tensor_f32_elements(output, output_elements);
 }
+int yvex_cuda_transformer_gelu(yvex_backend *backend, const yvex_device_tensor *input,
+    yvex_device_tensor *output, unsigned long long count, int tanh_approximation, int bf16_output,
+    yvex_backend_cuda_operation_facts *facts, yvex_error *err)
+{
+    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    CUdeviceptr input_ptr, output_ptr;
+    unsigned long long tasks;
+    unsigned int grid;
+    int rc;
+    if (facts) memset(facts, 0, sizeof(*facts));
+    if (!state || !state->gelu_function || !facts || !input || !output || !count || !input->is_written ||
+        (tanh_approximation != 0 && tanh_approximation != 1) ||
+        (bf16_output != 0 && bf16_output != 1) ||
+        !yvex_cuda_activation_views_valid(backend, input, count, output, count) ||
+        !yvex_core_u64_add(count, 255ull, &tasks) || tasks / 256ull > UINT_MAX) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "cuda.transformer.gelu",
+                       "bounded F32 GELU input and explicit output policy are required");
+        return YVEX_ERR_FORMAT;
+    }
+    grid = (unsigned int)(tasks / 256ull);
+    input_ptr = yvex_cuda_activation_pointer(backend, input);
+    output_ptr = yvex_cuda_activation_pointer(backend, output);
+    {
+        void *parameters[] = {&input_ptr, &output_ptr, &count, &tanh_approximation, &bf16_output};
+        rc = yvex_cuda_launch(backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+                              state->gelu_function, grid, 256u, 0u, parameters,
+                              "cuda.transformer.gelu", err);
+    }
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_synchronize(backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+                                   "cuda.transformer.gelu", err);
+    if (rc == YVEX_OK) {
+        output->is_written = 1;
+        facts->kernel_launches = 1ull;
+        facts->device_synchronizations = 1ull;
+        facts->compulsory_memory_facts_available = 1;
+    }
+    return rc;
+}
 /*
  * Resolve one admitted activation tensor.
  *

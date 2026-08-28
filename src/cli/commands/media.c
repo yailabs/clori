@@ -115,6 +115,7 @@ int yvex_media_generate_command(const yvex_graph_args *args, yvex_error *err)
     request.conditioning_layers = execution->conditioning_layers;
     request.transformer_blocks = args->media.transformer_blocks;
     request.seed = args->media.seed;
+    request.keyframe_encode_seed = 42ull;
     request.maximum_prompt_tokens = execution->maximum_prompt_tokens;
     request.maximum_packed_rows = execution->maximum_packed_rows;
     request.maximum_host_bytes = args->media.maximum_host_bytes;
@@ -143,6 +144,7 @@ int yvex_media_generate_command(const yvex_graph_args *args, yvex_error *err)
     request.layout_build = execution->layout_build;
     request.component_admit = execution->component_admit;
     request.condition = execution->condition;
+    request.keyframe_encode = execution->keyframe_encode;
     request.latent = execution->latent;
     request.video_decode = execution->video_decode;
     request.audio_decode = execution->audio_decode;

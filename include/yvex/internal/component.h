@@ -17,6 +17,7 @@ typedef struct yvex_runtime_av_layout_result yvex_runtime_av_layout_result;
 typedef struct yvex_transformer_linear_physical_plan yvex_transformer_linear_physical_plan;
 typedef struct yvex_transformer_joint_request yvex_transformer_joint_request;
 typedef struct yvex_transformer_joint_result yvex_transformer_joint_result;
+typedef struct yvex_media_condition yvex_media_condition;
 
 typedef struct {
     float *data;
@@ -65,12 +66,33 @@ typedef struct yvex_component_execution_failure {
 
 typedef struct yvex_runtime_av_conditioning_result {
     unsigned long long token_count, hidden_width, layer_count;
+    unsigned long long condition_count, condition_rows;
+    unsigned long long condition_latent_height, condition_latent_width;
+    unsigned long long condition_latent_values;
     unsigned long long resident_bytes, kernel_launches, h2d_bytes, d2h_bytes, device_bytes;
     unsigned long long peak_workspace_bytes;
+    char prompt_identity[YVEX_SHA256_HEX_CAP];
+    char processor_identity[YVEX_SHA256_HEX_CAP];
+    char vision_identity[YVEX_SHA256_HEX_CAP];
+    char condition_identity[YVEX_SHA256_HEX_CAP];
+    char media_identities[2][YVEX_SHA256_HEX_CAP];
+    char latent_identities[2][YVEX_SHA256_HEX_CAP];
     char residency_identity[YVEX_SHA256_HEX_CAP];
     char execution_identity[YVEX_SHA256_HEX_CAP];
     int complete;
 } yvex_runtime_av_conditioning_result;
+
+typedef struct yvex_runtime_av_keyframe_result {
+    unsigned long long condition_count, condition_rows;
+    unsigned long long latent_channels, latent_height, latent_width, latent_values;
+    unsigned long long resident_bytes, kernel_launches, h2d_bytes, d2h_bytes, device_bytes;
+    unsigned long long peak_workspace_bytes;
+    char residency_identity[YVEX_SHA256_HEX_CAP];
+    char media_identities[2][YVEX_SHA256_HEX_CAP];
+    char latent_identities[2][YVEX_SHA256_HEX_CAP];
+    char execution_identity[YVEX_SHA256_HEX_CAP];
+    int complete;
+} yvex_runtime_av_keyframe_result;
 
 /* Families supply stable text-stack meaning and canonical weight names. Component runtime owns
  * artifact residency, transactional publication, and backend dispatch for that recipe. */
@@ -144,6 +166,11 @@ typedef struct yvex_runtime_av_latent_context {
     yvex_runtime_component_session *transformer_session;
     const float *conditioning;
     unsigned long long conditioning_capacity;
+    const float *condition_latents;
+    unsigned long long condition_latent_capacity;
+    const yvex_runtime_av_keyframe_result *keyframes;
+    const yvex_media_condition *conditions;
+    unsigned long long condition_count;
     const yvex_runtime_av_layout_output *layout;
     const yvex_runtime_av_layout_result *layout_result;
     const yvex_transformer_linear_physical_plan *video_output_specialization;
@@ -181,6 +208,13 @@ int yvex_runtime_component_joint_transformer_cuda(
     yvex_component_joint_weight_name_fn, void *, const yvex_transformer_joint_request *,
     yvex_transformer_joint_result *, yvex_error *);
 yvex_materialization_session *yvex_runtime_component_session_materialization(
+    const yvex_runtime_component_session *);
+/* Family composition may inspect already-admitted resident weights, but it cannot own
+ * residency or reopen artifact bytes through this view. */
+int yvex_runtime_component_weight_view(
+    const yvex_runtime_component_session *, const char *,
+    yvex_component_encoded_weight *, yvex_error *);
+yvex_backend *yvex_runtime_component_session_backend(
     const yvex_runtime_component_session *);
 const yvex_runtime_residency_summary *yvex_runtime_component_session_summary(
     const yvex_runtime_component_session *);

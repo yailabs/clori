@@ -1208,14 +1208,21 @@ int yvex_tokenizer_encode(const yvex_tokenizer *tokenizer,
     unsigned long long offset = 0u;
     unsigned long long maximum = options && options->maximum_tokens
         ? options->maximum_tokens : ULLONG_MAX;
+    const unsigned char *normalized_bytes = bytes;
+    unsigned char *normalized_owner = NULL;
+    unsigned long long normalized_count = byte_count;
     int allow_special = options ? options->allow_special_tokens : 1;
     int rc = YVEX_OK;
 
-    if (!tokenizer || !tokenizer->plan.sealed || !result || (!bytes && byte_count) ||
-        byte_count > SIZE_MAX || !maximum) {
+    if (!tokenizer || !result || (!bytes && byte_count) || byte_count > SIZE_MAX || !maximum) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "tokenizer.encode",
                        "sealed tokenizer, explicit byte span, and output are required");
         return YVEX_ERR_INVALID_ARG;
+    }
+    if (!tokenizer->plan.sealed) {
+        yvex_error_set(err, YVEX_ERR_STATE, "tokenizer.encode",
+                       "tokenizer execution policy is not sealed");
+        return YVEX_ERR_STATE;
     }
     if (options && ((options->add_bos && !tokenizer->plan.add_bos_token) ||
                     (options->add_eos && !tokenizer->plan.add_eos_token))) {
@@ -1229,13 +1236,9 @@ int yvex_tokenizer_encode(const yvex_tokenizer *tokenizer,
         return YVEX_ERR_FORMAT;
     }
     if (tokenizer->plan.prompt_policy == YVEX_TOKENIZER_PROMPT_MINIMAX_H3_FL2VA) {
-        unsigned long long index;
-        for (index = 0u; index < byte_count; ++index)
-            if (bytes[index] >= 0x80u) {
-                yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "tokenizer.encode.normalizer",
-                               "MiniMax NFC tokenization is admitted only for exact ASCII input");
-                return YVEX_ERR_UNSUPPORTED;
-            }
+        rc = yvex_tokenizer_nfc_normalize(bytes, byte_count, &normalized_owner,
+                                          &normalized_count, err);
+        normalized_bytes = normalized_owner;
     }
     candidate.schema_version = YVEX_TOKENIZER_EXECUTION_SCHEMA_V1;
     candidate.input_bytes = byte_count;
@@ -1250,10 +1253,10 @@ int yvex_tokenizer_encode(const yvex_tokenizer *tokenizer,
             candidate.bos_inserted = rc == YVEX_OK;
         }
     }
-    while (rc == YVEX_OK && offset < byte_count) {
+    while (rc == YVEX_OK && offset < normalized_count) {
         unsigned int added_id;
         unsigned long long matched;
-        if (added_at(tokenizer, bytes, byte_count, offset, allow_special,
+        if (added_at(tokenizer, normalized_bytes, normalized_count, offset, allow_special,
                      &added_id, &matched)) {
             rc = encode_append(&candidate.tokens, added_id, maximum, err);
             if (rc == YVEX_OK) {
@@ -1261,9 +1264,9 @@ int yvex_tokenizer_encode(const yvex_tokenizer *tokenizer,
                 offset += matched;
             }
         } else {
-            unsigned long long end = next_added_offset(tokenizer, bytes, byte_count,
+            unsigned long long end = next_added_offset(tokenizer, normalized_bytes, normalized_count,
                                                        offset + 1u, allow_special);
-            rc = ordinary_encode(tokenizer, bytes + offset, end - offset,
+            rc = ordinary_encode(tokenizer, normalized_bytes + offset, end - offset,
                                  &candidate.tokens, maximum, err);
             offset = end;
         }
@@ -1288,9 +1291,11 @@ int yvex_tokenizer_encode(const yvex_tokenizer *tokenizer,
     }
     if (rc != YVEX_OK) {
         yvex_tokens_free(&candidate.tokens);
+        free(normalized_owner);
         memset(result, 0, sizeof(*result));
         return rc;
     }
+    free(normalized_owner);
     *result = candidate;
     yvex_error_clear(err);
     return YVEX_OK;

@@ -694,6 +694,10 @@ static int test_t2va_plan(void)
     yvex_transformer_linear_physical_plan video, audio, changed;
     char video_operation[65], video_physical[65], audio_physical[65];
     yvex_minimax_h3_t2va_plan first, repeated, source_scale;
+    yvex_media_plan_request plan_request = {
+        .schema_version = YVEX_RUNTIME_AV_PLAN_SCHEMA_V1,
+        .text_tokens = 16ull, .width = 1344ull, .height = 768ull,
+        .frames = 124ull, .inference_steps = 19u};
     float sample[2] = {0.5f, -1.0f}, velocity[2] = {2.0f, 4.0f};
     float stepped[2] = {13.0f, 13.0f};
     yvex_error err;
@@ -775,7 +779,7 @@ static int test_t2va_plan(void)
         "specialization fails closed when the deployment backend is unsupported");
 
     YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->t2va_plan_build(
-                         &first, 16ull, 1344ull, 768ull, 124ull, 19u, &err) == YVEX_OK &&
+                         &first, &plan_request, &err) == YVEX_OK &&
                          first.complete && first.video_latent_frames == 37ull &&
                          first.video_latent_height == 48ull &&
                          first.video_latent_width == 84ull &&
@@ -790,9 +794,12 @@ static int test_t2va_plan(void)
                          fabsf(first.audio_sigmas[18] - 0.142857149f) < 1.0e-7f &&
                          first.video_sigmas[19] == 0.0f && first.audio_sigmas[19] == 0.0f,
                      "t2va plan includes terminal zero in the paired shifted sigma grids");
+    plan_request.text_tokens = 28ull;
+    plan_request.width = 768ull;
+    plan_request.inference_steps = 49u;
     YVEX_TEST_ASSERT(
         yvex_graph_register_minimax_h3()->t2va_plan_build(
-            &source_scale, 28ull, 768ull, 768ull, 124ull, 49u, &err) == YVEX_OK &&
+            &source_scale, &plan_request, &err) == YVEX_OK &&
             float_bits(source_scale.video_sigmas[26]) == UINT32_C(0x3f69f5d3) &&
             float_bits(source_scale.video_sigmas[32]) == UINT32_C(0x3f5d49c4) &&
             float_bits(source_scale.video_sigmas[42]) == UINT32_C(0x3f2aaaaa) &&
@@ -818,17 +825,108 @@ static int test_t2va_plan(void)
                          &err) == YVEX_ERR_FORMAT && stepped[0] == 0.8f &&
                          stepped[1] == -0.4f,
                      "t2va scheduler validates every value before publishing output");
+    plan_request.text_tokens = 16ull;
+    plan_request.width = 1344ull;
+    plan_request.inference_steps = 19u;
     YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->t2va_plan_build(
-                         &repeated, 16ull, 1344ull, 768ull, 124ull, 19u, &err) == YVEX_OK &&
+                         &repeated, &plan_request, &err) == YVEX_OK &&
                          strcmp(first.identity, repeated.identity) == 0,
                      "t2va plan identity is deterministic");
+    plan_request.frames = 123ull;
     YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->t2va_plan_build(
-                         &repeated, 16ull, 1344ull, 768ull, 123ull, 19u, &err) ==
-                         YVEX_ERR_INVALID_ARG &&
-                         yvex_graph_register_minimax_h3()->t2va_plan_build(
-                             &repeated, 16ull, 1343ull, 768ull, 124ull, 19u, &err) ==
-                         YVEX_ERR_INVALID_ARG,
+                         &repeated, &plan_request, &err) == YVEX_ERR_INVALID_ARG,
+                     "t2va plan refuses invalid temporal grids");
+    plan_request.frames = 124ull;
+    plan_request.width = 1343ull;
+    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->t2va_plan_build(
+                         &repeated, &plan_request, &err) == YVEX_ERR_INVALID_ARG,
                      "t2va plan refuses invalid temporal and spatial grids");
+    return 0;
+}
+
+static int test_fl2va_keyframe_layout(void)
+{
+    const yvex_minimax_h3_graph_api *graph = yvex_graph_register_minimax_h3();
+    yvex_media_condition first = {
+        .schema_version = YVEX_MEDIA_CONDITION_SCHEMA_V1,
+        .kind = YVEX_MEDIA_CONDITION_IMAGE,
+        .role = YVEX_MEDIA_CONDITION_FIRST,
+    };
+    yvex_media_condition last = {
+        .schema_version = YVEX_MEDIA_CONDITION_SCHEMA_V1,
+        .kind = YVEX_MEDIA_CONDITION_IMAGE,
+        .role = YVEX_MEDIA_CONDITION_LAST,
+    };
+    yvex_media_condition both[2] = {first, last};
+    unsigned int text_tags[8] = {1u, 0u, 0u, 1u, 1u, 1u, 1u, 1u};
+    yvex_media_plan_request plan_request = {
+        .schema_version = YVEX_RUNTIME_AV_PLAN_SCHEMA_V1,
+        .text_tokens = 8ull, .width = 192ull, .height = 192ull,
+        .frames = 124ull, .inference_steps = 2u, .text_tags = text_tags,
+    };
+    yvex_media_layout_request layout_request = {.text_tags = text_tags};
+    yvex_minimax_h3_t2va_plan plan;
+    yvex_runtime_av_layout_result result;
+    float positions[2048 * 3];
+    unsigned int tags[2048], video_indices[1404], audio_indices[414], text_indices[8];
+    yvex_runtime_av_layout_output output = {
+        positions, 2048ull * 3ull, tags, video_indices, audio_indices, text_indices,
+        2048ull, 1404ull, 414ull, 8ull,
+    };
+    char first_identity[YVEX_SHA256_HEX_CAP], last_identity[YVEX_SHA256_HEX_CAP];
+    yvex_error err;
+
+    plan_request.conditions = &first;
+    plan_request.condition_count = 1ull;
+    plan_request.condition_rows = 36ull;
+    YVEX_TEST_ASSERT(
+        graph->t2va_plan_build(&plan, &plan_request, &err) == YVEX_OK &&
+            plan.condition_rows == 36ull && plan.packed_rows == 1790ull,
+        "first-frame plan reserves one exact 192-pixel keyframe grid");
+    layout_request.plan = &plan;
+    layout_request.conditions = &first;
+    layout_request.condition_count = 1ull;
+    YVEX_TEST_ASSERT(
+        graph->t2va_layout_build(&layout_request, &output, &result, &err) == YVEX_OK &&
+            result.complete && result.condition_rows == 36ull &&
+            tags[0] == 1u && tags[1] == 0u && tags[2] == 0u &&
+            video_indices[0] == 8u && video_indices[35] == 43u &&
+            audio_indices[0] == 44u && video_indices[36] == 458u &&
+            positions[8ull * 3ull] == 8.0f && positions[458ull * 3ull] == 8.0f,
+        "first-frame layout preserves Qwen visual tags and anchors the condition at the first target time");
+    memcpy(first_identity, result.layout_identity, sizeof(first_identity));
+
+    plan_request.conditions = &last;
+    layout_request.conditions = &last;
+    YVEX_TEST_ASSERT(
+        graph->t2va_plan_build(&plan, &plan_request, &err) == YVEX_OK &&
+            graph->t2va_layout_build(&layout_request, &output, &result, &err) == YVEX_OK &&
+            positions[8ull * 3ull] == 213.0f &&
+            strcmp(first_identity, result.layout_identity) != 0,
+        "last-frame layout uses the released pairwise-equivalent temporal anchor");
+    memcpy(last_identity, result.layout_identity, sizeof(last_identity));
+
+    plan_request.conditions = both;
+    plan_request.condition_count = 2ull;
+    plan_request.condition_rows = 72ull;
+    layout_request.conditions = both;
+    layout_request.condition_count = 2ull;
+    YVEX_TEST_ASSERT(
+        graph->t2va_plan_build(&plan, &plan_request, &err) == YVEX_OK &&
+            plan.condition_rows == 72ull && plan.packed_rows == 1826ull &&
+            graph->t2va_layout_build(&layout_request, &output, &result, &err) == YVEX_OK &&
+            positions[8ull * 3ull] == 8.0f && positions[44ull * 3ull] == 213.0f &&
+            video_indices[35] == 43u && video_indices[36] == 44u &&
+            video_indices[71] == 79u && audio_indices[0] == 80u &&
+            video_indices[72] == 494u && strcmp(first_identity, result.layout_identity) != 0 &&
+            strcmp(last_identity, result.layout_identity) != 0,
+        "first-plus-last layout preserves both ordered anchors in one packed trajectory");
+
+    both[1] = first;
+    YVEX_TEST_ASSERT(
+        graph->t2va_layout_build(&layout_request, &output, &result, &err) == YVEX_ERR_FORMAT &&
+            !result.complete,
+        "duplicate first-frame roles fail closed at family layout ownership");
     return 0;
 }
 
@@ -1027,6 +1125,7 @@ int yvex_test_minimax_h3(void)
     if (test_audio_numeric_primitives() != 0) return 1;
     if (test_video_numeric_primitives() != 0) return 1;
     if (test_t2va_plan() != 0) return 1;
+    if (test_fl2va_keyframe_layout() != 0) return 1;
     if (test_component_admission_routing() != 0) return 1;
     if (test_component_execution_plans() != 0) return 1;
     return 0;

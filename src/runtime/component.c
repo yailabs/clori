@@ -9,6 +9,7 @@
 #include <yvex/internal/core.h>
 #include <yvex/internal/convolution.h>
 #include <yvex/internal/joint_transformer.h>
+#include <yvex/internal/multimodal.h>
 #include <yvex/internal/runtime.h>
 #include <yvex/internal/transformer.h>
 
@@ -195,6 +196,28 @@ yvex_materialization_session *yvex_runtime_component_session_materialization(
     return session ? session->materialization : NULL;
 }
 
+int yvex_runtime_component_weight_view(
+    const yvex_runtime_component_session *session, const char *name,
+    yvex_component_encoded_weight *weight, yvex_error *err)
+{
+    if (!session || !name || !weight || !session->materialization ||
+        !session->residency || !session->summary.sealed ||
+        session->summary.invalidated) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.component.weight-view",
+                       "one sealed component session and weight name are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    return component_weight_bind(session->materialization, session->residency,
+                                 name, weight, err);
+}
+
+yvex_backend *yvex_runtime_component_session_backend(
+    const yvex_runtime_component_session *session)
+{
+    return session && session->summary.sealed && !session->summary.invalidated
+               ? session->backend : NULL;
+}
+
 static const yvex_runtime_residency *component_session_residency(
     const yvex_runtime_component_session *session)
 {
@@ -358,6 +381,106 @@ int yvex_runtime_component_text_artifact_cuda(
     }
     free(weights);
     free(staged);
+    return rc;
+}
+
+int yvex_runtime_component_vision_cuda(
+    const yvex_runtime_component_session *session, const yvex_vision_request *request,
+    yvex_vision_result *result, yvex_error *err)
+{
+    yvex_component_encoded_weight *weights = NULL;
+    yvex_backend_vision_request execution = {0};
+    unsigned long long count, index = 0ull, layer, slot;
+    int rc = YVEX_OK;
+    if (result) memset(result, 0, sizeof(*result));
+    if (!session || !request || !request->recipe || !request->weight_name || !result ||
+        !session->backend || !session->residency ||
+        yvex_backend_kind_of(session->backend) != YVEX_BACKEND_KIND_CUDA ||
+        !session->summary.sealed || !session->summary.cuda_ready || session->summary.invalidated ||
+        !yvex_core_u64_mul(request->recipe->layer_count,
+                           YVEX_VISION_BLOCK_WEIGHT_COUNT, &count) ||
+        !yvex_core_u64_add(count, YVEX_VISION_EXTERNAL_WEIGHT_COUNT, &count) ||
+        !yvex_core_u64_add(count,
+                           (1ull + request->recipe->deepstack_layer_count) *
+                               YVEX_VISION_MERGER_WEIGHT_COUNT,
+                           &count) || count > SIZE_MAX / sizeof(*weights) ||
+        !(weights = calloc((size_t)count, sizeof(*weights)))) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.component.vision",
+                       "one sealed CUDA component and bounded vision recipe are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+#define BIND(group, item, weight_slot) do { \
+    char name[256] = {0}; \
+    rc = request->weight_name(request->weight_name_context, group, item, weight_slot, name, err); \
+    if (rc == YVEX_OK) rc = component_weight_bind(session->materialization, session->residency, \
+                                                   name, weights + index, err); \
+    ++index; \
+} while (0)
+    for (slot = 0ull; rc == YVEX_OK && slot < YVEX_VISION_EXTERNAL_WEIGHT_COUNT; ++slot)
+        BIND(YVEX_VISION_WEIGHT_EXTERNAL, 0ull, (unsigned int)slot);
+    for (layer = 0ull; rc == YVEX_OK && layer < request->recipe->layer_count; ++layer)
+        for (slot = 0ull; rc == YVEX_OK && slot < YVEX_VISION_BLOCK_WEIGHT_COUNT; ++slot)
+            BIND(YVEX_VISION_WEIGHT_BLOCK, layer, (unsigned int)slot);
+    for (slot = 0ull; rc == YVEX_OK && slot < YVEX_VISION_MERGER_WEIGHT_COUNT; ++slot)
+        BIND(YVEX_VISION_WEIGHT_MERGER, 0ull, (unsigned int)slot);
+    for (layer = 0ull; rc == YVEX_OK && layer < request->recipe->deepstack_layer_count; ++layer)
+        for (slot = 0ull; rc == YVEX_OK && slot < YVEX_VISION_MERGER_WEIGHT_COUNT; ++slot)
+            BIND(YVEX_VISION_WEIGHT_DEEPSTACK, layer, (unsigned int)slot);
+#undef BIND
+    if (rc == YVEX_OK && index != count) {
+        yvex_error_set(err, YVEX_ERR_STATE, "runtime.component.vision",
+                       "vision weight binding count did not close");
+        rc = YVEX_ERR_STATE;
+    }
+    if (rc == YVEX_OK) {
+        execution.request = request; execution.weights = weights; execution.weight_count = count;
+        execution.residency_identity = session->summary.residency_identity;
+        execution.resident_bytes = session->summary.encoded_bytes;
+        rc = yvex_backend_vision_execute(session->backend, &execution, result, err);
+    }
+    free(weights);
+    return rc;
+}
+
+int yvex_runtime_component_multimodal_text_cuda(
+    const yvex_runtime_component_session *session,
+    const yvex_component_multimodal_text_request *request,
+    yvex_runtime_av_conditioning_result *result, yvex_error *err)
+{
+    yvex_component_text_request binding_request = {0};
+    yvex_backend_text_weight *weights = NULL;
+    yvex_backend_text_execution_result backend_result = {0};
+    unsigned long long weight_count;
+    int rc;
+    if (result) memset(result, 0, sizeof(*result));
+    if (!session || !request || !request->recipe || !request->embedding_weight_name ||
+        !request->layer_weight_name || !request->token_ids || !request->token_count ||
+        !request->layer_count || !request->multimodal || !request->output || !result ||
+        !session->backend || !session->residency ||
+        yvex_backend_kind_of(session->backend) != YVEX_BACKEND_KIND_CUDA ||
+        !session->summary.sealed || !session->summary.cuda_ready || session->summary.invalidated ||
+        !yvex_core_u64_mul(request->layer_count, YVEX_COMPONENT_TEXT_LAYER_WEIGHT_COUNT,
+                           &weight_count) || !yvex_core_u64_add(weight_count, 1ull, &weight_count) ||
+        weight_count > SIZE_MAX / sizeof(*weights) ||
+        !(weights = calloc((size_t)weight_count, sizeof(*weights)))) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.component.multimodal-text",
+                       "one sealed CUDA component and multimodal text request are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    binding_request.recipe = request->recipe;
+    binding_request.embedding_weight_name = request->embedding_weight_name;
+    binding_request.layer_weight_name = request->layer_weight_name;
+    binding_request.weight_name_context = request->weight_name_context;
+    binding_request.layer_count = request->layer_count;
+    rc = component_text_weights_bind(session, &binding_request, weights, err);
+    if (rc == YVEX_OK)
+        rc = yvex_backend_text_encoder_multimodal_execute(
+            session->backend, request->recipe, weights, request->layer_count,
+            session->summary.residency_identity, session->summary.encoded_bytes,
+            request->token_ids, request->token_count, request->multimodal,
+            request->output, request->output_capacity, &backend_result, err);
+    if (rc == YVEX_OK) component_text_result_project(result, &backend_result);
+    free(weights);
     return rc;
 }
 

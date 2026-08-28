@@ -34,6 +34,7 @@
 typedef struct {
     unsigned long long maximum_new_tokens, seed, top_k;
     double temperature, top_p, min_p, typical_p;
+    char first_image[YVEX_SERVER_STATE_PATH_CAP], last_image[YVEX_SERVER_STATE_PATH_CAP];
     int stochastic, seed_present;
     yvex_reasoning_policy reasoning_policy;
 } client_turn_options;
@@ -134,6 +135,16 @@ static void turn_options_init(client_turn_options *options)
     options->min_p = defaults.sampling.min_p;
     options->typical_p = defaults.sampling.typical_p;
     options->reasoning_policy = (yvex_reasoning_policy)(YVEX_REASONING_MAXIMUM + 1u);
+}
+static int turn_condition_path(char output[YVEX_SERVER_STATE_PATH_CAP], const char *source) {
+    char *resolved; if (!output || !source || !source[0] || !(resolved = realpath(source, NULL))) return 0;
+    if (strlen(resolved) >= YVEX_SERVER_STATE_PATH_CAP) {
+        free(resolved);
+        return 0;
+    }
+    (void)snprintf(output, YVEX_SERVER_STATE_PATH_CAP, "%s", resolved);
+    free(resolved);
+    return 1;
 }
 static int parse_u64(const char *text, unsigned long long *value, int allow_zero)
 {
@@ -803,6 +814,24 @@ static int generation_turn(const client_engine_binding *engine,
              session_name);
     request.prompt = prompt;
     request.prompt_bytes = prompt_bytes;
+    if (options->first_image[0]) {
+        yvex_client_media_condition *condition = request.media_conditions +
+            request.media_condition_count++;
+        condition->schema_version = YVEX_CLIENT_MEDIA_CONDITION_SCHEMA_V1;
+        condition->kind = YVEX_CLIENT_MEDIA_CONDITION_IMAGE;
+        condition->role = YVEX_CLIENT_MEDIA_CONDITION_FIRST;
+        (void)snprintf(condition->source_path, sizeof(condition->source_path),
+                       "%s", options->first_image);
+    }
+    if (options->last_image[0]) {
+        yvex_client_media_condition *condition = request.media_conditions +
+            request.media_condition_count++;
+        condition->schema_version = YVEX_CLIENT_MEDIA_CONDITION_SCHEMA_V1;
+        condition->kind = YVEX_CLIENT_MEDIA_CONDITION_IMAGE;
+        condition->role = YVEX_CLIENT_MEDIA_CONDITION_LAST;
+        (void)snprintf(condition->source_path, sizeof(condition->source_path),
+                       "%s", options->last_image);
+    }
     request.maximum_new_tokens = options->maximum_new_tokens;
     request.stochastic = options->stochastic;
     request.seed_present = options->seed_present;
@@ -1454,7 +1483,8 @@ static int repl_reconnect(client_engine_binding *engine, const char *session,
     return 1;
 }
 static int chat(const char *model_alias, const char *session_name,
-                unsigned long long maximum_new_tokens)
+                unsigned long long maximum_new_tokens,
+                const char *first_image, const char *last_image)
 {
     client_engine_binding engine = {0};
     client_turn_options options;
@@ -1484,6 +1514,13 @@ static int chat(const char *model_alias, const char *session_name,
     }
     turn_options_init(&options);
     options.maximum_new_tokens = maximum_new_tokens;
+    if ((first_image && !turn_condition_path(options.first_image, first_image)) ||
+        (last_image && !turn_condition_path(options.last_image, last_image))) {
+        fprintf(stderr, "yvex: media condition image could not be resolved\n");
+        (void)sigaction(SIGINT, &prior_interrupt, NULL);
+        (void)sigaction(SIGWINCH, &prior_resize, NULL);
+        return 2;
+    }
     if (model_alias)
         (void)snprintf(engine.alias, sizeof(engine.alias), "%s", model_alias);
     (void)snprintf(current, sizeof(current), "%s", session_name);
@@ -1583,7 +1620,7 @@ static int chat(const char *model_alias, const char *session_name,
 }
 static int chat_command(int argc, char **argv)
 {
-    const char *model = NULL, *session = "main";
+    const char *model = NULL, *session = "main", *first_image = NULL, *last_image = NULL;
     unsigned long long maximum_new_tokens = 0u;
     int index, saw_model = 0, saw_session = 0, saw_maximum = 0;
     for (index = 2; index < argc; ++index) {
@@ -1597,12 +1634,18 @@ static int chat_command(int argc, char **argv)
                    index + 1 < argc) {
             if (!parse_u64(argv[++index], &maximum_new_tokens, 0)) return 2;
             saw_maximum = 1;
+        } else if (!strcmp(argv[index], "--first-image") && !first_image &&
+                   index + 1 < argc) {
+            first_image = argv[++index];
+        } else if (!strcmp(argv[index], "--last-image") && !last_image &&
+                   index + 1 < argc) {
+            last_image = argv[++index];
         } else {
             return 2;
         }
     }
     if (model && (!model[0] || strlen(model) >= YVEX_SERVER_MODEL_ALIAS_CAP)) return 2;
-    return chat(model, session, maximum_new_tokens);
+    return chat(model, session, maximum_new_tokens, first_image, last_image);
 }
 /* Parse and execute one complete one-shot policy without inferring strategy. */
 static int run_command(int argc, char **argv)
@@ -1623,6 +1666,10 @@ static int run_command(int argc, char **argv)
             session = argv[++index];
         else if (!strcmp(argument, "--max-new-tokens") && index + 1 < argc) {
             if (!parse_u64(argv[++index], &options.maximum_new_tokens, 0)) return 2;
+        } else if (!strcmp(argument, "--first-image") && index + 1 < argc) {
+            if (!turn_condition_path(options.first_image, argv[++index])) return 2;
+        } else if (!strcmp(argument, "--last-image") && index + 1 < argc) {
+            if (!turn_condition_path(options.last_image, argv[++index])) return 2;
         } else if (!strcmp(argument, "--strategy") && index + 1 < argc) {
             const char *strategy = argv[++index];
             if (!strcmp(strategy, "greedy")) options.stochastic = 0;

@@ -37,6 +37,8 @@ enum {
     TAG_MAXIMUM_PREFIX_BYTES,
     TAG_MODEL_ALIAS,
     TAG_ENGINE_GENERATION,
+    TAG_MEDIA_FIRST_IMAGE,
+    TAG_MEDIA_LAST_IMAGE,
     TAG_MESSAGE_KIND = 32,
     TAG_STATUS,
     TAG_REASON,
@@ -480,6 +482,34 @@ static int request_fork_fields_valid(const yvex_client_request *request)
         return !request->fork_session_name[0] && !request->maximum_prefix_bytes;
     return request->fork_session_name[0] && request->maximum_prefix_bytes;
 }
+static int request_media_conditions_valid(const yvex_client_request *request)
+{
+    unsigned long long index; int first = 0, last = 0;
+    if (!request || request->media_condition_count > YVEX_CLIENT_MEDIA_CONDITION_CAP) return 0;
+    if (request->operation != YVEX_CLIENT_OP_GENERATION_TURN)
+        return request->media_condition_count == 0ull;
+    for (index = 0ull; index < request->media_condition_count; ++index) {
+        const yvex_client_media_condition *condition = request->media_conditions + index;
+        if (condition->schema_version != YVEX_CLIENT_MEDIA_CONDITION_SCHEMA_V1 ||
+            condition->kind != YVEX_CLIENT_MEDIA_CONDITION_IMAGE ||
+            !condition->source_path[0] ||
+            !memchr(condition->source_path, '\0', sizeof(condition->source_path)))
+            return 0;
+        if (condition->role == YVEX_CLIENT_MEDIA_CONDITION_FIRST && !first)
+            first = 1;
+        else if (condition->role == YVEX_CLIENT_MEDIA_CONDITION_LAST && !last)
+            last = 1;
+        else return 0;
+    }
+    return 1;
+}
+static const char *request_media_condition_path(
+    const yvex_client_request *request, yvex_client_media_condition_role role) {
+    for (unsigned long long index = 0ull; index < request->media_condition_count; ++index)
+        if (request->media_conditions[index].role == role)
+            return request->media_conditions[index].source_path;
+    return "";
+}
 int yvex_protocol_request_encode(const yvex_client_request *request,
                                  unsigned char *output,
                                  unsigned long long capacity,
@@ -501,6 +531,7 @@ int yvex_protocol_request_encode(const yvex_client_request *request,
         request->reasoning_policy > YVEX_REASONING_MAXIMUM ||
         !request_state_fields_valid(request) ||
         !request_fork_fields_valid(request) ||
+        !request_media_conditions_valid(request) ||
         (request->stochastic != 0 && request->stochastic != 1) ||
         (request->seed_present != 0 && request->seed_present != 1) ||
         (request->trace_content != 0 && request->trace_content != 1) ||
@@ -556,6 +587,12 @@ int yvex_protocol_request_encode(const yvex_client_request *request,
                      request->fork_session_name) ||
         !writer_u64(&writer, TAG_MAXIMUM_PREFIX_BYTES,
                     request->maximum_prefix_bytes) ||
+        !writer_text(&writer, TAG_MEDIA_FIRST_IMAGE,
+                     request_media_condition_path(
+                         request, YVEX_CLIENT_MEDIA_CONDITION_FIRST)) ||
+        !writer_text(&writer, TAG_MEDIA_LAST_IMAGE,
+                     request_media_condition_path(
+                         request, YVEX_CLIENT_MEDIA_CONDITION_LAST)) ||
         !writer_field(&writer, TAG_PROVIDER_REQUEST, provider_bytes,
                       provider_count)) {
         free(provider_bytes);
@@ -669,12 +706,29 @@ int yvex_protocol_request_decode(const unsigned char *input,
             valid = reader_u64(bytes, count,
                                &candidate.maximum_prefix_bytes);
             break;
+        case TAG_MEDIA_FIRST_IMAGE:
+        case TAG_MEDIA_LAST_IMAGE:
+            if (!count) break;
+            if (candidate.media_condition_count >= YVEX_CLIENT_MEDIA_CONDITION_CAP)
+                { valid = 0; break; }
+            {
+                yvex_client_media_condition *condition = candidate.media_conditions +
+                    candidate.media_condition_count;
+                condition->schema_version = YVEX_CLIENT_MEDIA_CONDITION_SCHEMA_V1;
+                condition->kind = YVEX_CLIENT_MEDIA_CONDITION_IMAGE;
+                condition->role = tag == TAG_MEDIA_FIRST_IMAGE
+                    ? YVEX_CLIENT_MEDIA_CONDITION_FIRST : YVEX_CLIENT_MEDIA_CONDITION_LAST;
+                valid = reader_text(bytes, count, condition->source_path, sizeof(condition->source_path));
+                if (valid) candidate.media_condition_count++;
+            }
+            break;
         default: valid = 0; break;
         }
     }
     if (next < 0 || !valid || !have_operation ||
         !request_state_fields_valid(&candidate) ||
         !request_fork_fields_valid(&candidate) ||
+        !request_media_conditions_valid(&candidate) ||
         (candidate.prompt_bytes && candidate.provider_request)) {
         free(prompt);
         yvex_provider_request_close(&provider);
@@ -1002,7 +1056,6 @@ static const wire_member event_members[] = {
     WIRE_TEXT(yvex_server_event, TAG_EVENT_ARTIFACT_ID, artifact_identity),
     WIRE_TEXT(yvex_server_event, TAG_EVENT_IDENTITY, event_identity)
 };
-
 static int protocol_event_write(wire_writer *writer,
                                 const yvex_server_event *event)
 {

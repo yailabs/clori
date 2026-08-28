@@ -730,6 +730,12 @@ static int execute_latent(const char *path, const char *conditioning_path,
         .video_row_capacity = 192ull, .audio_row_capacity = 512ull,
         .maximum_workspace_bytes = (192ull + 512ull) * sizeof(float),
     };
+    yvex_media_plan_request plan_request = {
+        .schema_version = YVEX_RUNTIME_AV_PLAN_SCHEMA_V1,
+        .text_tokens = 1ull, .width = 32ull, .height = 32ull, .frames = 5ull,
+        .inference_steps = steps,
+    };
+    yvex_media_layout_request layout_request = {0};
     yvex_minimax_h3_t2va_omni_context context = {0};
     yvex_transformer_linear_physical_plan video_specialization = {0};
     yvex_transformer_linear_physical_plan audio_specialization = {0};
@@ -752,9 +758,10 @@ static int execute_latent(const char *path, const char *conditioning_path,
         rc = yvex_runtime_component_session_open(
             &session, &admission, artifact, gguf, tensors, YVEX_BACKEND_KIND_CUDA,
             80ull * 1024ull * 1024ull * 1024ull, 16ull * 1024ull * 1024ull * 1024ull, &err);
+    if (rc == YVEX_OK) rc = graph->t2va_plan_build(&plan, &plan_request, &err);
+    layout_request.plan = &plan;
     if (rc == YVEX_OK)
-        rc = graph->t2va_plan_build(&plan, 1ull, 32ull, 32ull, 5ull, steps, &err);
-    if (rc == YVEX_OK) rc = graph->t2va_layout_build(&plan, &layout, &layout_result, &err);
+        rc = graph->t2va_layout_build(&layout_request, &layout, &layout_result, &err);
     if (rc == YVEX_OK)
         rc = specialize_outputs(
             graph->omni_recipe,
@@ -1047,6 +1054,12 @@ static int execute_latent_fixture(
     yvex_transformer_linear_physical_plan audio_specialization = {0};
     yvex_runtime_av_layout_output layout = {0};
     request_fixture fixture = {0};
+    yvex_media_plan_request plan_request = {
+        .schema_version = YVEX_RUNTIME_AV_PLAN_SCHEMA_V1,
+        .text_tokens = text_rows, .width = width, .height = height, .frames = frames,
+        .inference_steps = steps,
+    };
+    yvex_media_layout_request layout_request = {0};
     unsigned long long video_values, audio_values, conditioning_values, workspace_bytes;
     char conditioning_identity[65];
     const char *checkpoint_root = getenv("YVEX_MINIMAX_H3_LATENT_CHECKPOINT_ROOT");
@@ -1056,7 +1069,7 @@ static int execute_latent_fixture(
     if (!artifact_path || !fixture_root || !video_output_path || !audio_output_path ||
         !width || !height || !frames || !text_rows || !block_count || block_count > 50ull ||
         !steps || steps > 64u || !graph ||
-        graph->t2va_plan_build(&plan, text_rows, width, height, frames, steps, &err) != YVEX_OK ||
+        graph->t2va_plan_build(&plan, &plan_request, &err) != YVEX_OK ||
         plan.packed_rows > YVEX_MINIMAX_H3_OMNI_MAX_PACKED_ROWS ||
         !yvex_core_u64_mul(plan.video_rows, plan.video_value_width, &video_values) ||
         !yvex_core_u64_mul(plan.audio_rows, plan.audio_value_width, &audio_values) ||
@@ -1088,7 +1101,9 @@ static int execute_latent_fixture(
         rc = yvex_runtime_component_session_open(
             &session, &admission, artifact, gguf, tensors, YVEX_BACKEND_KIND_CUDA,
             80ull * 1024ull * 1024ull * 1024ull, 4ull * 1024ull * 1024ull * 1024ull, &err);
-    if (rc == YVEX_OK) rc = graph->t2va_layout_build(&plan, &layout, &layout_result, &err);
+    layout_request.plan = &plan;
+    if (rc == YVEX_OK)
+        rc = graph->t2va_layout_build(&layout_request, &layout, &layout_result, &err);
     if (rc == YVEX_OK)
         rc = specialize_outputs(
             graph->omni_recipe,

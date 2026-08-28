@@ -1713,7 +1713,10 @@ static int transformer_request_valid(
     for (kind = 0ull; kind < 3ull; ++kind)
         for (row = 0ull; row < counts[kind]; ++row) {
             unsigned int packed = indices[kind][row];
-            if (packed >= request->packed_rows || seen[packed] || request->token_tags[packed] != kind)
+            /* Input ownership and AdaLN modality are independent: multimodal encoders can
+               publish visual conditioning through the text-width input projection. */
+            if (packed >= request->packed_rows || seen[packed] ||
+                request->token_tags[packed] >= request->recipe->modality_count)
                 return conditioning_refuse(err, YVEX_ERR_FORMAT,
                                            "cuda.transformer.joint.transformer.layout",
                                            "packed modality indices must form one exact tagged partition");

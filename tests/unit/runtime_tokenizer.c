@@ -39,6 +39,51 @@ typedef struct {
     unsigned long long reasoning_count, final_count;
 } reasoning_capture;
 
+static int test_nfc_normalization(void)
+{
+    static const unsigned char decomposed_latin[] = "e\xcc\x80 a\xcc\x8a";
+    static const unsigned char composed_latin[] = "\xc3\xa8 \xc3\xa5";
+    static const unsigned char decomposed_hangul[] = "\xe1\x84\x80\xe1\x85\xa1";
+    static const unsigned char composed_hangul[] = "\xea\xb0\x80";
+    static const unsigned char multilingual[] = "\xe4\xb8\xad\xe6\x96\x87 \xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e";
+    static const unsigned char malformed[] = {0xc3u, 0x28u};
+    unsigned char *output = NULL;
+    unsigned long long count = 0u;
+    yvex_error err;
+
+    YVEX_TEST_ASSERT(
+        yvex_tokenizer_nfc_normalize(decomposed_latin, sizeof(decomposed_latin) - 1u,
+                                     &output, &count, &err) == YVEX_OK &&
+            count == sizeof(composed_latin) - 1u &&
+            memcmp(output, composed_latin, (size_t)count) == 0,
+        "NFC composes Latin canonical equivalents");
+    free(output);
+    output = NULL;
+    YVEX_TEST_ASSERT(
+        yvex_tokenizer_nfc_normalize(decomposed_hangul, sizeof(decomposed_hangul) - 1u,
+                                     &output, &count, &err) == YVEX_OK &&
+            count == sizeof(composed_hangul) - 1u &&
+            memcmp(output, composed_hangul, (size_t)count) == 0,
+        "NFC composes Hangul algorithmically");
+    free(output);
+    output = NULL;
+    YVEX_TEST_ASSERT(
+        yvex_tokenizer_nfc_normalize(multilingual, sizeof(multilingual) - 1u,
+                                     &output, &count, &err) == YVEX_OK &&
+            count == sizeof(multilingual) - 1u &&
+            memcmp(output, multilingual, (size_t)count) == 0,
+        "NFC preserves already-normalized multilingual input");
+    free(output);
+    output = (unsigned char *)1;
+    count = 7u;
+    YVEX_TEST_ASSERT(
+        yvex_tokenizer_nfc_normalize(malformed, sizeof(malformed), &output, &count, &err) ==
+                YVEX_ERR_FORMAT &&
+            output == NULL && count == 0u,
+        "NFC rejects malformed UTF-8 without publishing output");
+    return 0;
+}
+
 static int reasoning_capture_sink(void *opaque,
                                   yvex_reasoning_segment segment,
                                   const unsigned char *bytes,
@@ -962,6 +1007,8 @@ static int test_candidate_transactions(void)
 
 int yvex_test_runtime_tokenizer(void)
 {
+    if (test_nfc_normalization() != 0)
+        return 1;
     if (test_compiled_family_policy() != 0)
         return 1;
     if (test_reasoning_channel() != 0)

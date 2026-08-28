@@ -64,6 +64,9 @@ enum {
 int yvex_tokenizer_utf8_next(const unsigned char *bytes, unsigned long long count,
                              unsigned long long *offset, uint32_t *point);
 unsigned int yvex_tokenizer_unicode_class(uint32_t point);
+int yvex_tokenizer_nfc_normalize(const unsigned char *input, unsigned long long input_count,
+                                 unsigned char **output, unsigned long long *output_count,
+                                 yvex_error *err);
 
 int yvex_tokenizer_execution_seal(yvex_tokenizer *tokenizer, const yvex_gguf *gguf,
                                   const yvex_tokenizer_family_policy *policy,

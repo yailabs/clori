@@ -405,6 +405,27 @@ extern "C" __global__ void yvex_silu_f32(
     output[index] = bf16_output ? float_to_bf16_rne(value) : value;
 }
 
+/* Match the exact erf GELU used by vision towers; approximation policy is not implicit. */
+extern "C" __global__ void yvex_gelu_f32(
+    const float *input, float *output, unsigned long long count,
+    int tanh_approximation, int bf16_output)
+{
+    unsigned long long index =
+        (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+    float value;
+    if (!input || !output || index >= count) return;
+    if (tanh_approximation) {
+        float cube = input[index] * input[index] * input[index];
+        value = 0.5f * input[index] *
+                (1.0f + tanhf(0.7978845608028654f *
+                               (input[index] + 0.044715f * cube)));
+    } else {
+        value = 0.5f * input[index] *
+                (1.0f + erff(input[index] * 0.7071067811865475f));
+    }
+    output[index] = bf16_output ? float_to_bf16_rne(value) : value;
+}
+
 /* Source timestep features are constructed in F32 on the execution device. Host-double
  * reconstruction crosses rounding boundaries that become observable after repeated blocks. */
 extern "C" __global__ void yvex_timestep_embedding_f32(

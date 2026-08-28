@@ -16,6 +16,9 @@ extern "C" {
 #endif
 
 #define YVEX_RUNTIME_AV_GENERATION_SCHEMA_V1 1u
+#define YVEX_RUNTIME_AV_GENERATION_SCHEMA_V2 2u
+#define YVEX_RUNTIME_MEDIA_CONDITION_SCHEMA_V1 YVEX_MEDIA_CONDITION_SCHEMA_V1
+#define YVEX_RUNTIME_MEDIA_CONDITION_CAP YVEX_MEDIA_CONDITION_CAP
 #define YVEX_RUNTIME_MEDIA_HOST_SCHEMA_V1 1u
 #define YVEX_RUNTIME_MEDIA_MODEL_SCHEMA_V1 1u
 #define YVEX_RUNTIME_MEDIA_MODEL_OPEN_SCHEMA_V1 1u
@@ -72,6 +75,13 @@ typedef struct {
     int complete;
 } yvex_runtime_av_audio_result;
 
+typedef yvex_media_condition_kind yvex_runtime_media_condition_kind;
+typedef yvex_media_condition_role yvex_runtime_media_condition_role;
+typedef yvex_media_condition yvex_runtime_media_condition;
+#define YVEX_RUNTIME_MEDIA_CONDITION_IMAGE YVEX_MEDIA_CONDITION_IMAGE
+#define YVEX_RUNTIME_MEDIA_CONDITION_FIRST YVEX_MEDIA_CONDITION_FIRST
+#define YVEX_RUNTIME_MEDIA_CONDITION_LAST YVEX_MEDIA_CONDITION_LAST
+
 typedef yvex_media_plan_fn yvex_runtime_av_plan_fn;
 typedef yvex_media_layout_fn yvex_runtime_av_layout_fn;
 typedef yvex_media_component_admit_fn yvex_runtime_av_component_admit_fn;
@@ -83,13 +93,15 @@ typedef yvex_media_audio_fn yvex_runtime_av_audio_fn;
 typedef struct {
     unsigned int schema_version;
     const char *target, *prompt, *output_path;
+    const yvex_runtime_media_condition *conditions;
+    unsigned long long condition_count;
     const char *text_artifact_path, *transformer_artifact_path;
     const char *video_artifact_path, *audio_artifact_path;
     const char *source_identity;
     unsigned long long frames, width, height;
     unsigned long long fps_numerator, fps_denominator, audio_sample_rate;
     unsigned int inference_steps;
-    unsigned long long conditioning_layers, transformer_blocks, seed;
+    unsigned long long conditioning_layers, transformer_blocks, seed, keyframe_encode_seed;
     unsigned long long maximum_prompt_tokens, maximum_packed_rows;
     unsigned long long maximum_host_bytes, maximum_device_bytes;
     unsigned long long maximum_workspace_bytes, maximum_file_bytes;
@@ -109,6 +121,7 @@ typedef struct {
     yvex_runtime_av_layout_fn layout_build;
     yvex_runtime_av_component_admit_fn component_admit;
     yvex_runtime_av_condition_fn condition;
+    yvex_media_keyframe_fn keyframe_encode;
     yvex_runtime_av_latent_fn latent;
     yvex_runtime_av_video_fn video_decode;
     yvex_runtime_av_audio_fn audio_decode;

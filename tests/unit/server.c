@@ -7,6 +7,7 @@
 
 #include <arpa/inet.h>
 #include <pthread.h>
+#include <sys/stat.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -253,7 +254,7 @@ static int test_configured_summary_and_event(void)
     yvex_server_summary summary;
     yvex_server_event event;
     yvex_client_message wire, decoded;
-    yvex_server *server = NULL;
+    yvex_server *server = NULL, *contender = NULL;
     yvex_error err;
     char json[2048];
     unsigned char frame[8192];
@@ -322,6 +323,19 @@ static int test_configured_summary_and_event(void)
                          !summary.engine_count && !summary.loaded_engine_count &&
                          summary.metrics.model_open_count == 0ull,
                      "persistent host becomes ready without loading a model");
+    rc = yvex_server_create(&contender, &options, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && contender,
+                     "singleton contender configures independently");
+    rc = yvex_server_start(contender, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_ERR_STATE,
+                     "singleton contender refuses the live host lock");
+    yvex_server_close(&contender);
+    {
+        struct stat endpoint;
+        YVEX_TEST_ASSERT(lstat(options.socket_path, &endpoint) == 0 &&
+                             S_ISSOCK(endpoint.st_mode),
+                         "refused contender cleanup preserves the live host endpoint");
+    }
     rc = yvex_server_stop(server, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "zero-engine host stop");
     rc = yvex_server_finish(server, &err);
@@ -694,7 +708,7 @@ static int media_options(yvex_server_media_options *options, const char *output_
     options->schema_version = YVEX_SERVER_MEDIA_SCHEMA_V1;
     options->output_root = output_root;
     options->artifact_reopen_cache_root = output_root;
-    options->request_template.schema_version = YVEX_RUNTIME_AV_GENERATION_SCHEMA_V1;
+    options->request_template.schema_version = YVEX_RUNTIME_AV_GENERATION_SCHEMA_V2;
     options->request_template.target = "minimax-h3-base-fl2va-t2va";
     options->request_template.source_identity =
         "91972f8e4e6562562456c339b43eed1fba5f7b9d7fb13987f495b416a5109b5e";
@@ -706,6 +720,7 @@ static int media_options(yvex_server_media_options *options, const char *output_
     options->request_template.fps_denominator = target.fps_denominator;
     options->request_template.audio_sample_rate = target.audio_sample_rate;
     options->request_template.seed = target.seed;
+    options->request_template.keyframe_encode_seed = target.keyframe_encode_seed;
     options->request_template.conditioning_layers = execution->conditioning_layers;
     options->request_template.transformer_blocks = execution->transformer_blocks;
     options->request_template.maximum_prompt_tokens = execution->maximum_prompt_tokens;
@@ -746,6 +761,7 @@ static int media_options(yvex_server_media_options *options, const char *output_
     options->request_template.layout_build = execution->layout_build;
     options->request_template.component_admit = media_fixture_admit;
     options->request_template.condition = execution->condition;
+    options->request_template.keyframe_encode = execution->keyframe_encode;
     options->request_template.latent = execution->latent;
     options->request_template.video_decode = execution->video_decode;
     options->request_template.audio_decode = execution->audio_decode;
@@ -1025,7 +1041,9 @@ static int test_media_family_profile(void)
                            "minimax-h3-fl2va", "media host target");
     YVEX_TEST_ASSERT(profile.request_template.component_backend == YVEX_BACKEND_KIND_CUDA,
                      "media host CUDA backend");
-    YVEX_TEST_ASSERT(profile.request_template.condition && profile.request_template.latent &&
+    YVEX_TEST_ASSERT(profile.request_template.condition &&
+                         profile.request_template.keyframe_encode &&
+                         profile.request_template.latent &&
                          profile.request_template.video_decode &&
                          profile.request_template.audio_decode,
                      "media host execution callbacks");
