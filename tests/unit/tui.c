@@ -109,6 +109,110 @@ static int render_frame(yvex_tui_state *state, char *output, size_t capacity)
            count && count < capacity && row && column;
 }
 
+static void send_profile_event(yvex_tui_state *state, const char *turn,
+                               const char *phase, unsigned long long value_a,
+                               unsigned long long value_b,
+                               unsigned long long value_c, double seconds)
+{
+    yvex_cli_interactive_event event = {0};
+    event.kind = YVEX_CLI_INTERACTIVE_MESSAGE;
+    event.message.kind = YVEX_CLIENT_MESSAGE_EVENT;
+    event.message.event.kind = YVEX_SERVER_EVENT_GENERATION_PROFILE;
+    event.message.event.severity = YVEX_SERVER_SEVERITY_DEBUG;
+    event.message.event.value_a = value_a;
+    event.message.event.value_b = value_b;
+    event.message.event.value_c = value_c;
+    event.message.event.seconds = seconds;
+    (void)snprintf(event.message.event.turn_id,
+                   sizeof(event.message.event.turn_id), "%s", turn);
+    (void)snprintf(event.message.event.phase,
+                   sizeof(event.message.event.phase), "%s", phase);
+    yvex_tui_state_message(state, &event);
+}
+
+static int test_turn_observation(void)
+{
+    yvex_cli_interactive_event event = {0};
+    yvex_tui_state state;
+    char frame[262144];
+
+    yvex_tui_state_init(&state, 42u, 140u, "main");
+    event.kind = YVEX_CLI_INTERACTIVE_MESSAGE;
+    event.message.kind = YVEX_CLIENT_MESSAGE_STATUS;
+    event.message.runtime.status = YVEX_SERVER_STATUS_READY;
+    event.message.runtime.host_ready = 1;
+    (void)snprintf(event.message.runtime.socket_path,
+                   sizeof(event.message.runtime.socket_path), "%s",
+                   "/tmp/yvex.sock");
+    yvex_tui_state_message(&state, &event);
+    memset(&event, 0, sizeof(event));
+    event.kind = YVEX_CLI_INTERACTIVE_MESSAGE;
+    event.message.kind = YVEX_CLIENT_MESSAGE_ENGINE;
+    event.message.engine.state = YVEX_SERVER_ENGINE_LOADED;
+    event.message.engine.backend = YVEX_BACKEND_KIND_CUDA;
+    event.message.engine.engine_kind = YVEX_SERVER_ENGINE_TEXT;
+    event.message.engine.execution_strategy = YVEX_SERVER_EXECUTION_TARGET_ONLY;
+    event.message.engine.generation = 4u;
+    (void)snprintf(event.message.engine.alias,
+                   sizeof(event.message.engine.alias), "%s", "fixture");
+    yvex_tui_state_message(&state, &event);
+
+    memset(&event, 0, sizeof(event));
+    event.kind = YVEX_CLI_INTERACTIVE_MESSAGE;
+    event.message.kind = YVEX_CLIENT_MESSAGE_TURN_STARTED;
+    event.message.generation_phase = YVEX_CLIENT_PHASE_TOKENIZING;
+    yvex_tui_state_message(&state, &event);
+    send_profile_event(&state, "t1", "movement", 10u * 1048576u,
+                       2u * 1048576u, 1u * 1048576u, 0.0);
+    send_profile_event(&state, "t1", "launches", 320u, 4u, 2u, 0.125);
+    send_profile_event(&state, "t1", "graphs", 6u, 1u, 5u, 0.0);
+    send_profile_event(&state, "t1", "tensorcore", 48u, 320u, 3u, 0.0);
+    send_profile_event(&state, "t1", "attention", 20u, 18u, 2u, 0.5);
+    send_profile_event(&state, "t1", "moe", 64u, 8u, 4096u, 0.75);
+    send_profile_event(&state, "t1", "output", 8u, 1024u, 8u, 0.2);
+    memset(&event, 0, sizeof(event));
+    event.kind = YVEX_CLI_INTERACTIVE_MESSAGE;
+    event.message.kind = YVEX_CLIENT_MESSAGE_TURN_COMPLETE;
+    event.message.prompt_tokens = 12u;
+    event.message.reused_tokens = 4u;
+    event.message.prefill_tokens = 8u;
+    event.message.generated_tokens = 8u;
+    event.message.queue_seconds = 0.05;
+    event.message.prefill_seconds = 0.1;
+    event.message.first_token_seconds = 0.2;
+    event.message.decode_seconds = 0.8;
+    event.message.publication_seconds = 0.01;
+    event.message.total_completion_seconds = 1.0;
+    event.message.prefill_rate = 80.0;
+    event.message.decode_rate = 10.0;
+    yvex_tui_state_message(&state, &event);
+
+    state.surface = YVEX_TUI_SURFACE_RUNTIME;
+    YVEX_TEST_ASSERT(state.last_turn.turn_available &&
+                         state.last_turn.profile_available &&
+                         state.last_turn.kernel_launches == 320u &&
+                         state.last_turn.tensor_core_launches == 48u &&
+                         render_frame(&state, frame, sizeof(frame)) &&
+                         strstr(frame, "LAST TURN / EXECUTION") &&
+                         strstr(frame, "10.00 tok/s decode") &&
+                         strstr(frame, "320 kernels") &&
+                         strstr(frame, "10.00 MiB H2D") &&
+                         strstr(frame, "48/320 Tensor Core"),
+                     "TUI projects typed turn and profile facts without inventing telemetry");
+
+    memset(&event, 0, sizeof(event));
+    event.kind = YVEX_CLI_INTERACTIVE_MESSAGE;
+    event.message.kind = YVEX_CLIENT_MESSAGE_TURN_STARTED;
+    event.message.generation_phase = YVEX_CLIENT_PHASE_TOKENIZING;
+    yvex_tui_state_message(&state, &event);
+    YVEX_TEST_ASSERT(!state.last_turn.turn_available &&
+                         !state.last_turn.profile_available &&
+                         state.last_turn.kernel_launches == 0u,
+                     "new turn clears the prior observation before accepting profile facts");
+    yvex_tui_state_close(&state);
+    return 0;
+}
+
 static int test_state_render_and_input(void)
 {
     const char *root = "build/tests/tui-models";
@@ -385,6 +489,7 @@ static int test_launcher_bootstrap_failure(void)
 int yvex_test_tui(void)
 {
     if (test_state_render_and_input()) return 1;
+    if (test_turn_observation()) return 1;
     if (test_terminal_transaction()) return 1;
     if (test_terminal_partial_init_rollback()) return 1;
     if (test_launcher_bootstrap_failure()) return 1;

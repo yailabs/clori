@@ -1256,6 +1256,68 @@ static void runtime_metric(tui_frame *frame, unsigned int row,
     frame_text(frame, value, limit);
 }
 
+static void render_turn_observation(tui_frame *frame,
+                                    const yvex_tui_turn_observation *turn,
+                                    unsigned int *row, unsigned int last,
+                                    unsigned int limit)
+{
+    char value[256];
+    if (!turn->turn_available && !turn->profile_available) return;
+    if (*row < last) (*row)++;
+    if (*row <= last) {
+        frame_begin_line(frame, (*row)++);
+        frame_style(frame, frame->violet);
+        frame_text(frame, "  LAST TURN / EXECUTION", limit);
+    }
+    if (turn->turn_available && *row <= last) {
+        (void)snprintf(value, sizeof(value),
+                       "%llu generated · %.2f tok/s decode · %.2f tok/s prefill",
+                       turn->generated_tokens, turn->decode_rate, turn->prefill_rate);
+        runtime_metric(frame, (*row)++, "throughput", value, limit);
+    }
+    if (turn->turn_available && *row <= last) {
+        (void)snprintf(value, sizeof(value),
+                       "queue %.3f s · TTFT %.3f s · decode %.3f s · publish %.3f s",
+                       turn->queue_seconds, turn->first_token_seconds,
+                       turn->decode_seconds, turn->publication_seconds);
+        runtime_metric(frame, (*row)++, "latency", value, limit);
+    }
+    if (turn->profile_available && *row <= last) {
+        double per_token = turn->generated_tokens
+                               ? (double)turn->kernel_launches /
+                                     (double)turn->generated_tokens
+                               : 0.0;
+        (void)snprintf(value, sizeof(value),
+                       "%llu kernels · %.1f/token · %llu stream + %llu device waits",
+                       turn->kernel_launches, per_token,
+                       turn->stream_synchronizations,
+                       turn->device_synchronizations);
+        runtime_metric(frame, (*row)++, "commands", value, limit);
+    }
+    if (turn->profile_available && *row <= last) {
+        (void)snprintf(value, sizeof(value),
+                       "%.2f MiB H2D · %.2f MiB D2H · %.2f MiB D2D",
+                       (double)turn->h2d_bytes / 1048576.0,
+                       (double)turn->d2h_bytes / 1048576.0,
+                       (double)turn->d2d_bytes / 1048576.0);
+        runtime_metric(frame, (*row)++, "movement", value, limit);
+    }
+    if (turn->profile_available && *row <= last) {
+        (void)snprintf(value, sizeof(value),
+                       "attention %.3f s · MoE %.3f s · output %.3f s · sync %.3f s",
+                       turn->attention_seconds, turn->moe_seconds,
+                       turn->output_seconds, turn->synchronization_seconds);
+        runtime_metric(frame, (*row)++, "phase time", value, limit);
+    }
+    if (turn->profile_available && *row <= last) {
+        (void)snprintf(value, sizeof(value),
+                       "%llu/%llu Tensor Core · %llu graph launches · %llu replays",
+                       turn->tensor_core_launches, turn->kernel_launches,
+                       turn->graph_launches, turn->graph_replays);
+        runtime_metric(frame, (*row)++, "acceleration", value, limit);
+    }
+}
+
 static void render_runtime(tui_frame *frame, const yvex_tui_state *state,
                            unsigned int first, unsigned int last)
 {
@@ -1313,6 +1375,7 @@ static void render_runtime(tui_frame *frame, const yvex_tui_state *state,
                    state->runtime.metrics.active_sessions,
                    state->runtime.metrics.total_sessions);
     if (row <= last) runtime_metric(frame, row++, "sessions", value, limit);
+    render_turn_observation(frame, &state->last_turn, &row, last, limit);
     row++;
     (void)snprintf(value, sizeof(value), "%s%s",
                    state->runtime.openai_listener_enabled ? "enabled" : "disabled",

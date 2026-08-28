@@ -194,6 +194,25 @@ typedef struct {
 } yvex_tui_composer;
 
 typedef struct {
+    char turn_id[YVEX_SERVER_ID_CAP];
+    unsigned long long prompt_tokens, reused_tokens, prefill_tokens;
+    unsigned long long generated_tokens;
+    unsigned long long h2d_bytes, d2h_bytes, d2d_bytes;
+    unsigned long long kernel_launches, stream_synchronizations;
+    unsigned long long device_synchronizations, tensor_core_launches;
+    unsigned long long graph_launches, graph_captures, graph_replays;
+    unsigned long long attention_calls, attention_cache_hits;
+    unsigned long long attention_cache_misses, moe_row_expert_pairs;
+    unsigned long long moe_weight_bytes, output_rows, logits_d2h_bytes;
+    double queue_seconds, prefill_seconds, first_token_seconds;
+    double decode_seconds, publication_seconds, total_seconds;
+    double prefill_rate, decode_rate;
+    double synchronization_seconds, attention_seconds, moe_seconds;
+    double output_seconds;
+    int turn_available, profile_available;
+} yvex_tui_turn_observation;
+
+typedef struct {
     yvex_tui_terminal_view terminal;
     yvex_tui_surface surface, prior_surface;
     yvex_tui_focus focus;
@@ -234,6 +253,7 @@ typedef struct {
     unsigned long long next_activity_order;
     yvex_server_event events[YVEX_TUI_EVENT_CAP];
     size_t event_start, event_count;
+    yvex_tui_turn_observation last_turn;
     yvex_tui_composer composer;
     yvex_tui_composer command;
     yvex_tui_launch_request launch_request;
