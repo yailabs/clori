@@ -131,7 +131,10 @@ The REPL is a linear client attached to the already resident server. A compact
 vertical attachment block separates the live target, physical variant, runtime,
 session, context, memory, and OpenAI-listener facts instead of relying on
 terminal wrapping. The complete slash catalog then projects one registry-owned
-command and summary per line before the stable `yvex>` prompt. It streams
+command and summary per line before a prompt labelled with the attached
+engine's typed model alias, for example `deepseek4-v4-flash-dspark>`. The alias
+remains stable for that engine generation and gains an explicit
+`[disconnected]` marker when transport is lost. It streams
 committed model text without role labels through a bounded incremental UTF-8
 and Markdown renderer; raw output preserves exact canonical bytes. Prefill
 progress comes from sealed server events; one inline terminal result renders

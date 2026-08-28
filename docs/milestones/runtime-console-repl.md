@@ -58,11 +58,15 @@ It must communicate `attached to resident runtime`. It must not display:
 - generic `a=` or `b=` event fields; or
 - hidden-reasoning claims.
 
-The stable input prompt is:
+The stable input prompt projects the typed alias of the attached engine:
 
 ```text
-yvex>
+deepseek4-v4-flash-dspark>
 ```
+
+The alias is presentation, not engine identity; requests remain bound to the
+exact process-local engine generation. A disconnected console retains the
+alias and adds `[disconnected]` instead of implying another active model.
 
 Model output is streamed directly without a repeated role label.
 
@@ -73,7 +77,7 @@ YVEX 0.1-dev
 DeepSeek-V4-Flash · mixed IQ2/Q2 · CUDA/GB10
 runtime ready · session main · context 0/4096
 
-yvex> Explain RoPE briefly.
+deepseek4-v4-flash-dspark> Explain RoPE briefly.
 
 processing 11 input tokens · 11/11 · 100%
 
@@ -86,7 +90,7 @@ TTFT         11.53 s
 context      35 / 4096 · reused 0
 stop         EOS
 
-yvex>
+deepseek4-v4-flash-dspark>
 ```
 
 The exact typography may evolve. The semantic hierarchy may not.
@@ -241,7 +245,8 @@ bounded policy. Terminal state must always be restored.
 The milestone closes only when:
 
 - startup and attachment output is singular and truthful;
-- `yvex>` is stable and model output has no role prefix;
+- the model-labelled prompt is stable for one engine generation and model
+  output has no role prefix;
 - progress is semantic and protocol-authoritative;
 - explicit reasoning is distinct only when genuinely emitted and admitted;
 - slash commands derive from the canonical registry;

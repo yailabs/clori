@@ -1464,7 +1464,7 @@ static int chat(const char *model_alias, const char *session_name,
     yvex_cli_terminal_style style;
     struct sigaction action, prior_interrupt, prior_resize;
     char current[YVEX_SERVER_SESSION_NAME_CAP];
-    char prompt[64];
+    char prompt[YVEX_SERVER_MODEL_ALIAS_CAP + 64u];
     char *draft = NULL;
     unsigned long long generated_session = 1u;
     int closed = 0, connected = 1;
@@ -1514,8 +1514,11 @@ static int chat(const char *model_alias, const char *session_name,
         char *line = NULL;
         size_t count = 0u;
         int input;
-        (void)snprintf(prompt, sizeof(prompt), "%syvex%s>%s ", style.accent,
-                       connected ? "" : " [disconnected]", style.reset);
+        const char *prompt_model = status.console.model_alias[0]
+                                       ? status.console.model_alias : "yvex";
+        (void)snprintf(prompt, sizeof(prompt), "%s%s%s>%s ", style.accent,
+                       prompt_model, connected ? "" : " [disconnected]",
+                       style.reset);
         input = repl_read_line(prompt, draft, &history, &line, &count);
         free(draft);
         draft = NULL;

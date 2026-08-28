@@ -135,6 +135,7 @@ while test "$attempt" -lt 100; do
 done
 test "$ready" -eq 1 || fail 'persistent host did not become ready'
 contains "$OUT_DIR/host.out" 'YVEX server · persistent host'
+contains "$OUT_DIR/host.out" 'native verified inference · YVEX'
 contains "$OUT_DIR/host.out" 'engines 0/2'
 contains "$OUT_DIR/host.out" 'load with `yvex server load MODEL`'
 contains "$OUT_DIR/status.json" '"protocol":13'

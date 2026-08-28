@@ -425,14 +425,26 @@ static int registered_model_load(void *opaque, yvex_server *server,
 static void startup_announce(const yvex_server_options *options)
 {
     char socket_path[YVEX_SERVER_SOCKET_PATH_CAP];
+    yvex_cli_terminal_style style;
     yvex_error err;
     const char *endpoint = options->socket_path;
     if (!endpoint && yvex_server_socket_path(socket_path, &err) == YVEX_OK)
         endpoint = socket_path;
-    printf("YVEX server · persistent host\n"
+    yvex_cli_terminal_style_get(stdout, &style);
+    printf("%s"
+           "__   __  __     __  ______  __   __\n"
+           "\\ \\ / /  \\ \\   / / |  ____| \\ \\ / /\n"
+           " \\ V /    \\ \\ / /  | |__     \\ V /\n"
+           "  | |      \\ V /   |  __|     > <\n"
+           "  | |       \\ /    | |____   / . \\\n"
+           "  |_|        V     |______| /_/ \\_\\\n"
+           "%snative verified inference · YVEX %s · protocol %u\n\n"
+           "YVEX server · persistent host\n"
            "  engines 0/%u · parallel workers=%llu\n"
            "  local endpoint %s",
-           (unsigned int)options->maximum_engines, options->worker_count,
+           style.strong, style.reset, yvex_version_string(),
+           YVEX_LOCAL_PROTOCOL_VERSION, (unsigned int)options->maximum_engines,
+           options->worker_count,
            endpoint ? endpoint : "unavailable");
     if (options->openai_enabled)
         printf(" · OpenAI 127.0.0.1:%u", (unsigned int)options->openai_port);

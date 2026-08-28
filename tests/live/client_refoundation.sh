@@ -14,6 +14,7 @@ root=$(mktemp -d "${TMPDIR:-/tmp}/yvex-client-live.XXXXXX")
 runtime="$root/runtime"
 home="$root/home"
 profile=deepseek4-v4-flash-dspark-runtime-iq2xxs
+repl_prompt="$profile> "
 mkdir -m 700 "$runtime" "$home"
 mkdir -p "$home/.local/share/yvex"
 cat >"$home/.local/share/yvex/models.local.json" <<EOF
@@ -145,7 +146,7 @@ repl_pid=$!
 exec 3>"$root/repl.input"
 attempt=0
 while test "$attempt" -lt 100; do
-    test -f "$root/repl.typescript" && grep -F 'yvex> ' "$root/repl.typescript" >/dev/null && break
+    test -f "$root/repl.typescript" && grep -F "$repl_prompt" "$root/repl.typescript" >/dev/null && break
     attempt=$((attempt + 1))
     sleep 0.1
 done
@@ -153,7 +154,7 @@ test "$attempt" -lt 100
 printf 'Hi\n' >&3
 attempt=0
 while test "$attempt" -lt 900; do
-    prompts=$(grep -o 'yvex> ' "$root/repl.typescript" 2>/dev/null | wc -l)
+    prompts=$(grep -o "$repl_prompt" "$root/repl.typescript" 2>/dev/null | wc -l)
     test "$prompts" -ge 2 && break
     kill -0 "$repl_pid" 2>/dev/null || break
     attempt=$((attempt + 1))

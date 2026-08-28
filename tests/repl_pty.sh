@@ -4,6 +4,8 @@ set -eu
 
 YVEX_BIN=${YVEX_BIN:-./yvex}
 YVEX_TEST_HOST=${YVEX_TEST_HOST:-build/tests/openai_host}
+repl_model=deepseek4-v4-flash-dspark
+repl_prompt="$repl_model>"
 . tests/support/cleanup.sh
 
 root=$(mktemp -d "${TMPDIR:-/tmp}/yvex-repl-pty.XXXXXX")
@@ -95,7 +97,7 @@ repl_pid=$!
 exec 3>"$root/input"
 attempt=0
 while test "$attempt" -lt 100; do
-    test -f "$root/typescript" && grep -F 'yvex>' "$root/typescript" >/dev/null && break
+    test -f "$root/typescript" && grep -F "$repl_prompt" "$root/typescript" >/dev/null && break
     attempt=$((attempt + 1))
     sleep 0.01
 done
@@ -121,7 +123,7 @@ test "$attempt" -lt 100
 printf 'MARKDOWN_STREAM\n' >&3
 attempt=0
 while test "$attempt" -lt 100; do
-    prompts=$(grep -c 'yvex>' "$root/typescript" 2>/dev/null || true)
+    prompts=$(grep -c "$repl_prompt" "$root/typescript" 2>/dev/null || true)
     grep -F 'not-control' "$root/typescript" >/dev/null 2>&1 && \
         test "$prompts" -ge 4 && break
     attempt=$((attempt + 1))
@@ -139,7 +141,7 @@ test "$attempt" -lt 100
 printf '/think\n' >&3
 attempt=0
 while test "$attempt" -lt 100; do
-    prompts=$(grep -c 'yvex>' "$root/typescript" 2>/dev/null || true)
+    prompts=$(grep -c "$repl_prompt" "$root/typescript" 2>/dev/null || true)
     grep -F 'enabled for the next turn' "$root/typescript" \
         >/dev/null 2>&1 && test "$prompts" -ge 5 && break
     attempt=$((attempt + 1))
@@ -149,7 +151,7 @@ test "$attempt" -lt 100
 printf '/nothink\n' >&3
 attempt=0
 while test "$attempt" -lt 100; do
-    prompts=$(grep -c 'yvex>' "$root/typescript" 2>/dev/null || true)
+    prompts=$(grep -c "$repl_prompt" "$root/typescript" 2>/dev/null || true)
     grep -F 'disabled for the next turn' "$root/typescript" \
         >/dev/null 2>&1 && test "$prompts" -ge 6 && break
     attempt=$((attempt + 1))
@@ -159,7 +161,7 @@ test "$attempt" -lt 100
 printf '/think-max\n' >&3
 attempt=0
 while test "$attempt" -lt 100; do
-    prompts=$(grep -c 'yvex>' "$root/typescript" 2>/dev/null || true)
+    prompts=$(grep -c "$repl_prompt" "$root/typescript" 2>/dev/null || true)
     grep -F 'maximum for the next turn' "$root/typescript" \
         >/dev/null 2>&1 && test "$prompts" -ge 7 && break
     attempt=$((attempt + 1))
@@ -188,7 +190,7 @@ wait "$repl_pid"
 repl_pid=
 
 clear=$(printf '\033[2J\033[H')
-redrawn=$(printf '\033[2J\033[H\r\033[2K\033[38;5;81myvex>\033[0m draft')
+redrawn=$(printf '\033[2J\033[H\r\033[2K\033[38;5;81m%s\033[0m draft' "$repl_prompt")
 sed "s/${esc}\\[[0-9;]*m//g" "$root/typescript" | tr -d '\r' \
     >"$root/typescript.plain"
 grep -F 'YVEX 0.1.0 · protocol 13' "$root/typescript.plain" >/dev/null
@@ -221,7 +223,7 @@ test "$(awk '/^commands$/ { catalog = 1; next }
 ! grep -F 'commands ·' "$root/typescript.plain" >/dev/null
 grep -F "$clear" "$root/typescript" >/dev/null
 grep -F "$redrawn" "$root/typescript" >/dev/null
-grep -F 'yvex>' "$root/typescript" >/dev/null
+grep -F "$repl_prompt" "$root/typescript" >/dev/null
 grep -F 'processing 4 input tokens · 2/4 · 50.0%' "$root/typescript" >/dev/null
 grep -F 'processing 4 input tokens · 4/4 · 100%' "$root/typescript" >/dev/null
 grep -F 'hello from yvex' "$root/typescript" >/dev/null
@@ -271,7 +273,7 @@ exec 3>"$root/eof.input"
 attempt=0
 while test "$attempt" -lt 100; do
     test -f "$root/eof.typescript" && \
-        grep -F 'yvex> ' "$root/eof.typescript" >/dev/null && break
+        grep -F "$repl_prompt " "$root/eof.typescript" >/dev/null && break
     attempt=$((attempt + 1))
     sleep 0.01
 done
@@ -294,7 +296,7 @@ exec 3>"$root/cancel.input"
 attempt=0
 while test "$attempt" -lt 100; do
     client_pid=$(find_repl_client || true)
-    test -n "$client_pid" && grep -F 'yvex> ' "$root/cancel.typescript" \
+    test -n "$client_pid" && grep -F "$repl_prompt " "$root/cancel.typescript" \
         >/dev/null 2>&1 && break
     attempt=$((attempt + 1))
     sleep 0.01
@@ -377,7 +379,7 @@ attempt=0
 while test "$attempt" -lt 100; do
     client_pid=$(find_repl_client || true)
     test -n "$client_pid" && \
-        grep -F 'yvex> ' "$root/reasoning-cancel.typescript" \
+        grep -F "$repl_prompt " "$root/reasoning-cancel.typescript" \
             >/dev/null 2>&1 && break
     attempt=$((attempt + 1))
     sleep 0.01
@@ -432,7 +434,7 @@ exec 3>"$root/reasoning-partial.input"
 attempt=0
 while test "$attempt" -lt 100; do
     test -f "$root/reasoning-partial.typescript" && \
-        grep -F 'yvex> ' "$root/reasoning-partial.typescript" \
+        grep -F "$repl_prompt " "$root/reasoning-partial.typescript" \
             >/dev/null 2>&1 && break
     attempt=$((attempt + 1))
     sleep 0.01
@@ -478,7 +480,7 @@ exec 3>"$root/completion.input"
 attempt=0
 while test "$attempt" -lt 100; do
     test -f "$root/completion.typescript" && \
-        grep -F 'yvex> ' "$root/completion.typescript" >/dev/null && break
+        grep -F "$repl_prompt " "$root/completion.typescript" >/dev/null && break
     attempt=$((attempt + 1))
     sleep 0.01
 done
@@ -548,7 +550,7 @@ exec 3>"$root/disconnect.input"
 attempt=0
 while test "$attempt" -lt 100; do
     test -f "$root/disconnect.typescript" && \
-        grep -F 'yvex> ' "$root/disconnect.typescript" >/dev/null && break
+        grep -F "$repl_prompt " "$root/disconnect.typescript" >/dev/null && break
     attempt=$((attempt + 1))
     sleep 0.01
 done
@@ -574,7 +576,7 @@ done
 test "$attempt" -lt 100
 attempt=0
 while test "$attempt" -lt 100; do
-    grep -F 'yvex [disconnected]> ' "$root/disconnect.typescript" \
+    grep -F "$repl_model [disconnected]> " "$root/disconnect.typescript" \
         >/dev/null 2>&1 && break
     attempt=$((attempt + 1))
     sleep 0.01

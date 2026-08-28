@@ -373,8 +373,11 @@ Terminal 1 owns the foreground host lifecycle:
 ./yvex server
 ```
 
-The foreground terminal transitions into the compact operational event stream.
-A second terminal loads the engine and owns the interactive conversation:
+The foreground terminal opens with the YVEX hero, executable version and local
+protocol, then transitions into the compact operational event stream. The
+banner is a human projection; host readiness remains the typed status
+authority. A second terminal loads the engine and owns the interactive
+conversation:
 
 ```sh
 ./yvex server load deepseek4-v4-flash-dspark-runtime-iq2xxs
@@ -389,10 +392,11 @@ telemetry excludes prompt and answer content.
 
 ## Interactive console
 
-Chat opens one concise attachment view and the stable prompt:
+Chat opens one concise attachment view and a prompt labelled with the attached
+engine's model alias:
 
 ```text
-YVEX 0.1.0 · protocol 12
+YVEX 0.1.0 · protocol 13
 
   model      deepseek4-v4-flash-dspark
   variant    abcdef012345
@@ -413,15 +417,17 @@ commands
   Ctrl-D       exit and discard an unfinished line
   Ctrl-L       clear and redraw input
 
-yvex>
+deepseek4-v4-flash-dspark>
 ```
 
 The exact identities come from the running server; the example values are not
-admission evidence. Model output is streamed directly without repeated role
-labels. During a turn, the console updates one server-authored prefill line in
-place. The terminal result then reports prefill, generation, TTFT, speculation,
-context, stop reason, and session on one compact line. Candidate token text is
-never displayed.
+admission evidence. The prompt label is a human alias projection, while the
+session remains bound to the exact engine generation. On transport loss the
+same prompt adds `[disconnected]`; it never silently switches models. Model
+output is streamed directly without repeated role labels. During a turn, the
+console updates one server-authored prefill line in place. The terminal result
+then reports prefill, generation, TTFT, speculation, context, stop reason, and
+session on one compact line. Candidate token text is never displayed.
 
 On a TTY, cyan marks the prompt and active work, green marks readiness and
 completion, orange marks cancellation or warning, red marks refusal, and dim
