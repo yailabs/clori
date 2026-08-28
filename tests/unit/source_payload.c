@@ -443,7 +443,7 @@ static int payload_fixture_create_with_alpha_shape(
     snprintf(fixture->manifest, sizeof(fixture->manifest),
              "%s/manifest.json", fixture->root);
     snprintf(path, sizeof(path), "rm -rf %s", fixture->root);
-    (void)system(path);
+    YVEX_TEST_ASSERT(system(path) == 0, "clear source payload fixture");
     YVEX_TEST_ASSERT(payload_test_mkdir("build"), "payload fixture build dir");
     YVEX_TEST_ASSERT(payload_test_mkdir("build/tests"), "payload fixture tests dir");
     YVEX_TEST_ASSERT(payload_test_mkdir(fixture->root), "payload fixture root");
@@ -579,7 +579,9 @@ static void payload_fixture_close(payload_fixture *fixture)
     yvex_source_tensor_snapshot_release(fixture->snapshot);
     fixture->snapshot = NULL;
     snprintf(command, sizeof(command), "rm -rf %s", fixture->root);
-    (void)system(command);
+    if (system(command) != 0)
+        fprintf(stderr, "source payload fixture cleanup failed: %s\n",
+                fixture->root);
 }
 
 static int payload_fixture_transform_ir(

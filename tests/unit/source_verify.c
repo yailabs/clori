@@ -629,7 +629,8 @@ static int source_verify_acquisition(void)
     char path[512];
     int rc;
 
-    (void)system("rm -rf build/tests/source-acquisition");
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/source-acquisition") == 0,
+                     "clear source acquisition fixture");
     YVEX_TEST_ASSERT(source_verify_make_dir(root), "create acquisition root");
     snprintf(path, sizeof(path), "%s/FL2VA", root);
     YVEX_TEST_ASSERT(source_verify_make_dir(path), "create acquisition subtree");
@@ -713,7 +714,8 @@ static int source_verify_acquisition(void)
                              &acquisition, &options, &failure, &err) != YVEX_OK &&
                          failure.code == YVEX_SOURCE_ACQUISITION_FAILURE_MANIFEST_FORMAT,
                      "source admission rejects subtree traversal");
-    (void)system("rm -rf build/tests/source-acquisition");
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/source-acquisition") == 0,
+                     "release source acquisition fixture");
     return 0;
 }
 
@@ -776,7 +778,8 @@ int yvex_test_source_verify(void)
             "one source catalog owns provider acquisition defaults");
     }
 
-    system("rm -rf build/tests/source-verify");
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/source-verify") == 0,
+                     "clear source verification fixture");
     YVEX_TEST_ASSERT(source_verify_make_valid(root), "create valid source fixture");
     {
         yvex_source_manifest_file_list files;
@@ -938,7 +941,8 @@ int yvex_test_source_verify(void)
                          "derived inventory is deterministic");
     }
 
-    system("rm -rf build/tests/source-verify");
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/source-verify") == 0,
+                     "clear wrong repository fixture");
     YVEX_TEST_ASSERT(source_verify_make_valid(root), "recreate wrong repo fixture");
     YVEX_TEST_ASSERT(source_verify_write_manifest(root, "huggingface",
                                                   "wrong/repository",
@@ -990,7 +994,8 @@ int yvex_test_source_verify(void)
                          &result, "source-manifest-incomplete"),
                      "in-progress manifest is refused");
 
-    system("rm -rf build/tests/source-verify");
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/source-verify") == 0,
+                     "clear wrong config fixture");
     YVEX_TEST_ASSERT(source_verify_make_valid(root), "recreate wrong config fixture");
     YVEX_TEST_ASSERT(source_verify_write_config(root, "not_deepseek_v4",
                                                 yvex_source_release_identity()->config_architecture),
@@ -1005,7 +1010,8 @@ int yvex_test_source_verify(void)
                      source_verify_has_blocker(&result, "malformed-source-config"),
                      "malformed config is refused");
 
-    system("rm -rf build/tests/source-verify");
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/source-verify") == 0,
+                     "clear tokenizer fixture");
     YVEX_TEST_ASSERT(source_verify_make_valid(root), "recreate tokenizer fixture");
     snprintf(path, sizeof(path), "%s/tokenizer.json", root);
     YVEX_TEST_ASSERT(unlink(path) == 0, "remove tokenizer");
@@ -1019,7 +1025,8 @@ int yvex_test_source_verify(void)
                          &result, "malformed-tokenizer-json"),
                      "tokenizer structure is validated, not only JSON syntax");
 
-    system("rm -rf build/tests/source-verify");
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/source-verify") == 0,
+                     "clear generation config fixture");
     YVEX_TEST_ASSERT(source_verify_make_valid(root),
                      "recreate generation config fixture");
     snprintf(path, sizeof(path), "%s/generation_config.json", root);
@@ -1040,7 +1047,8 @@ int yvex_test_source_verify(void)
                          &result, "generation-config-token-mismatch"),
                      "generation token identity must match model config");
 
-    system("rm -rf build/tests/source-verify");
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/source-verify") == 0,
+                     "clear stale revision fixture");
     YVEX_TEST_ASSERT(source_verify_make_valid(root),
                      "recreate stale revision fixture");
     YVEX_TEST_ASSERT(source_verify_write_metadata_revision(
@@ -1054,7 +1062,8 @@ int yvex_test_source_verify(void)
                          &result, "inconsistent-source-revision"),
                      "stale provider metadata fails provenance");
 
-    system("rm -rf build/tests/source-verify");
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/source-verify") == 0,
+                     "clear manifest promotion fixture");
     YVEX_TEST_ASSERT(source_verify_make_valid(root),
                      "recreate manifest promotion refusal fixture");
     YVEX_TEST_ASSERT(source_verify_write_config(
@@ -1067,7 +1076,8 @@ int yvex_test_source_verify(void)
                                                "wrong-source-model-type"),
                      "invalid verifier facts cannot promote manifest");
 
-    system("rm -rf build/tests/source-verify");
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/source-verify") == 0,
+                     "clear atomic publication fixture");
     YVEX_TEST_ASSERT(source_verify_make_valid(root),
                      "recreate atomic publication fixture");
     YVEX_TEST_ASSERT(setenv("YVEX_TEST_FAIL_SOURCE_PUBLISH_AFTER_WRITE",
@@ -1085,7 +1095,8 @@ int yvex_test_source_verify(void)
     YVEX_TEST_ASSERT(access(path, F_OK) != 0,
                      "failed publication removes temporary output");
 
-    system("rm -rf build/tests/source-verify");
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/source-verify") == 0,
+                     "clear missing index fixture");
     YVEX_TEST_ASSERT(source_verify_make_valid(root),
                      "recreate missing upstream index fixture");
     snprintf(path, sizeof(path), "%s/model.safetensors.index.json", root);
@@ -1167,7 +1178,8 @@ int yvex_test_source_verify(void)
                          "duplicate tensor names across headers fail closed");
     }
 
-    system("rm -rf build/tests/source-verify");
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/source-verify") == 0,
+                     "clear malformed index fixture");
     YVEX_TEST_ASSERT(source_verify_make_valid(root), "recreate index fixture");
     snprintf(path, sizeof(path), "%s/model.safetensors.index.json", root);
     YVEX_TEST_ASSERT(source_verify_write_text(path, "{"),
@@ -1205,7 +1217,8 @@ int yvex_test_source_verify(void)
                      source_verify_has_blocker(&result, "missing-referenced-shard"),
                      "missing referenced shard is refused");
 
-    system("rm -rf build/tests/source-verify");
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/source-verify") == 0,
+                     "clear unexpected shard fixture");
     YVEX_TEST_ASSERT(source_verify_make_valid(root), "recreate unexpected shard fixture");
     snprintf(path, sizeof(path), "%s/weights.safetensors", root);
     YVEX_TEST_ASSERT(source_verify_write_safetensors(path),
@@ -1223,7 +1236,8 @@ int yvex_test_source_verify(void)
                                                "duplicate-source-shard"),
                      "inconsistent and duplicate shard numbering is refused");
 
-    system("rm -rf build/tests/source-verify");
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/source-verify") == 0,
+                     "clear invalid header fixture");
     YVEX_TEST_ASSERT(source_verify_make_valid(root), "recreate invalid header fixture");
     snprintf(path, sizeof(path), "%s/model-00001-of-00001.safetensors", root);
     YVEX_TEST_ASSERT(source_verify_write_text(path, "bad"),

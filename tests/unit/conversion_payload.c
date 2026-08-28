@@ -43,7 +43,8 @@ int yvex_test_conversion_payload(void)
     yvex_error err;
     int rc;
 
-    system("rm -rf build/tests/conversion-payload");
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/conversion-payload") == 0,
+                     "clear conversion payload fixture");
     YVEX_TEST_ASSERT(mkdir_ok("build") && mkdir_ok("build/tests") && mkdir_ok("build/tests/conversion-payload"), "mkdir");
     YVEX_TEST_ASSERT(write_st("build/tests/conversion-payload/model.safetensors"), "write st");
 
