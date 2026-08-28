@@ -211,18 +211,20 @@ static void engine_profile_defaults(yvex_server_engine_options *options,
                                     int media_requested)
 {
     memset(options, 0, sizeof(*options));
-    options->schema_version = YVEX_SERVER_ENGINE_SCHEMA_V1;
+    options->schema_version = YVEX_SERVER_ENGINE_SCHEMA_CURRENT;
     options->alias = profile->name;
     options->artifact_path = profile->artifact;
     options->runtime_binding_path = profile->binding;
     options->target_id = profile->target;
     options->backend = media_requested || !strcmp(profile->backend, "cuda")
                            ? YVEX_BACKEND_KIND_CUDA : YVEX_BACKEND_KIND_CPU;
-    options->generation_mode = media_requested
-                                   ? YVEX_SERVER_GENERATION_MEDIA
-                                   : (!strcmp(profile->mode, "dspark")
-                                          ? YVEX_SERVER_GENERATION_DSPARK
-                                          : YVEX_SERVER_GENERATION_TARGET_ONLY);
+    options->engine_kind = media_requested ? YVEX_SERVER_ENGINE_MEDIA
+                                           : YVEX_SERVER_ENGINE_TEXT;
+    options->execution_strategy =
+        media_requested ? YVEX_SERVER_EXECUTION_NOT_APPLICABLE
+                        : (!strcmp(profile->mode, "dspark")
+                               ? YVEX_SERVER_EXECUTION_SPECULATIVE
+                               : YVEX_SERVER_EXECUTION_TARGET_ONLY);
     options->context_capacity = media_requested ? 0u : profile->context_capacity;
     options->prefill_chunk_tokens = 0u;
     options->maximum_new_tokens = 0u;

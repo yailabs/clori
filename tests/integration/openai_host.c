@@ -83,10 +83,11 @@ static int send_status(int fd, const yvex_client_request *request,
 static void fixture_engine(yvex_server_engine_summary *engine)
 {
     memset(engine, 0, sizeof(*engine));
-    engine->schema_version = YVEX_SERVER_ENGINE_SCHEMA_V1;
+    engine->schema_version = YVEX_SERVER_ENGINE_SCHEMA_CURRENT;
     engine->state = YVEX_SERVER_ENGINE_LOADED;
     engine->backend = YVEX_BACKEND_KIND_CUDA;
-    engine->generation_mode = YVEX_SERVER_GENERATION_DSPARK;
+    engine->engine_kind = YVEX_SERVER_ENGINE_TEXT;
+    engine->execution_strategy = YVEX_SERVER_EXECUTION_SPECULATIVE;
     engine->generation = 7ull;
     engine->context_capacity = 4096u;
     engine->prefill_chunk_tokens = 64u;
@@ -177,7 +178,8 @@ static int send_native_progress(int fd, const yvex_client_request *request,
     server_event_scope scope = {0};
     size_t index;
     int rc;
-    scope.generation_mode = YVEX_SERVER_GENERATION_TARGET_ONLY;
+    scope.engine_kind = YVEX_SERVER_ENGINE_TEXT;
+    scope.execution_strategy = YVEX_SERVER_EXECUTION_TARGET_ONLY;
     strcpy(scope.runtime_model_identity, identity);
     strcpy(scope.artifact_identity, identity);
     strcpy(scope.specialization_identity, identity);
@@ -220,7 +222,8 @@ static int send_event_stream(int fd, const yvex_client_request *request,
     server_event_scope scope = {0};
     size_t index;
     int rc;
-    scope.generation_mode = YVEX_SERVER_GENERATION_DSPARK;
+    scope.engine_kind = YVEX_SERVER_ENGINE_TEXT;
+    scope.execution_strategy = YVEX_SERVER_EXECUTION_SPECULATIVE;
     strcpy(scope.runtime_model_identity, identity);
     strcpy(scope.artifact_identity, identity);
     strcpy(scope.specialization_identity, identity);

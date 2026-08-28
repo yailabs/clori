@@ -1,8 +1,8 @@
-# Local Protocol v13
+# Local Protocol v14
 
 Status: normative private protocol contract
 
-Schema/version: `YVEX_LOCAL_PROTOCOL_VERSION = 13`.
+Schema/version: `YVEX_LOCAL_PROTOCOL_VERSION = 14`.
 
 Authority: `include/yvex/server.h` and `src/server/protocol.c`. This document
 explains the wire and lifecycle contract; code remains authoritative for exact
@@ -17,19 +17,20 @@ Unix-domain socket and is not a public network API.
 
 ## Framing and negotiation
 
-Every connection negotiates version 13 and exchanges bounded typed frames.
+Every connection negotiates version 14 and exchanges bounded typed frames.
 Lengths, enums, strings, arrays, message/tool fields, and correlations are
 validated before dispatch. Oversized, truncated, duplicate, unknown, or
 malformed fields refuse without entering the server scheduler.
 
-Every earlier version, including v12, is refused explicitly. There is no private
+Every earlier version, including v13, is refused explicitly. There is no private
 pre-v0.1 compatibility decoder. Unknown operations and response kinds fail
 closed.
 
 ## Operations
 
-Protocol v13 carries host status/stop, engine load/list/unload, model and memory
-facts for each engine generation, selected target-only, DSpark, or media mode,
+Protocol v14 carries host status/stop, engine load/list/unload, model and memory
+facts for each engine generation, text or media engine kind, target-only or
+speculative text execution strategy,
 session lifecycle, bounded copy-on-write session fork, generation turns and
 cancellation, speculative lifecycle events, event subscriptions, and composed
 console status. Offline compile, artifact, inspect, execute, profile, and system
@@ -103,7 +104,7 @@ never retracts a candidate because no candidate is published.
 state, queue/worker capacity, engine counts, process memory, and aggregate
 lifecycle counters. A healthy host may have zero loaded engines. `server.models`
 returns one typed summary per known engine slot, including alias, generation,
-state, target, backend, mode, capacity, memory classes, package/runtime and
+state, target, backend, engine kind, execution strategy, capacity, memory classes, package/runtime and
 specialization identities, session/work counts, and executable readiness.
 
 Text and composite media engines use the same summary while exposing only facts
@@ -114,7 +115,7 @@ returns a server-composed snapshot containing, where authoritative:
 
 - host readiness and the selected alias and engine generation;
 - live model, artifact, binding, specialization, backend, and context;
-- selected generation mode and speculative policy identity when admitted;
+- selected execution strategy and speculative policy identity when admitted;
 - client attachment and selected session;
 - session position, turn count, context and KV use;
 - active phase, progress, cancellation, and last terminal facts.
@@ -187,7 +188,7 @@ format.
 
 ## Non-claims
 
-Protocol v13 is not a public remote API, authentication protocol, TLS transport,
+Protocol v14 is not a public remote API, authentication protocol, TLS transport,
 stable cross-version SDK promise, distributed serving protocol, or model
 quality contract. Versioned checkpoints preserve the admitted model and
 semantic-session state across restart; the in-memory fork does not create a

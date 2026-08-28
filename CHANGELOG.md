@@ -192,11 +192,15 @@ change. Git history preserves implementation chronology.
   historical v3 identity remains explicit and is refused before legacy bytes
   can be reinterpreted; a deterministic C/C++ guard now binds current
   versioned public records to their declared layouts.
+- Separated the installed server engine kind from semantic text execution
+  strategy. Engine schema v2 and runtime event schema v4 expose `text` versus
+  `media` independently from `target-only` versus `speculative`; local protocol
+  v14 refuses v13 peers and legacy layouts instead of reinterpreting them.
 - Model hosting is now a persistent zero-engine `yvex server` process. Explicit
   `server load`, `server unload`, and `server models` operations manage
   identity-bound engine generations without restarting the private protocol or
   OpenAI listener; native and OpenAI requests route to an exact loaded model.
-  Local protocol v13 carries engine lifecycle, routing, generation, and resource
+  Local protocol v14 carries engine lifecycle, routing, generation, and resource
   facts.
 - Physical Execution IR v5 and runtime binding v15 retain stable package/storage
   truth while one deployment specialization owns backend, hardware, activation,
@@ -207,7 +211,7 @@ change. Git history preserves implementation chronology.
   native tokenizer/conditioning pipeline under one identity-bearing YVEX
   interactive preset. The removed hardcoded questionnaire no longer parses
   creative words or numbers as execution controls; progress is server-authored
-  control state and current protocol-v13 turns carry a typed media result.
+  control state and current protocol-v14 turns carry a typed media result.
 - Composite artifact startup now reuses the generic verified-reopen authority
   independently for every component. Cold or invalid-cache opens fully verify
   and publish or repair receipts, unchanged warm opens avoid complete payload

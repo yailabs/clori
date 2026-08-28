@@ -74,11 +74,13 @@ enum {
     TAG_RUNTIME_MAXIMUM_NEW_TOKENS,
     TAG_RUNTIME_MAXIMUM_OUTPUT_BYTES,
     TAG_RUNTIME_WORKER_COUNT,
+    TAG_ENGINE_KIND = 79,
     TAG_METRICS = 80,
     TAG_OPENAI_PORT,
     TAG_RUNTIME_QUEUE_CAPACITY,
     TAG_RUNTIME_OPENAI_TIMEOUT,
     TAG_RUNTIME_TRACE_LEVEL,
+    TAG_EVENT_ENGINE_KIND = 85,
     TAG_EVENT_SEQUENCE = 96,
     TAG_EVENT_WALL_TIME,
     TAG_EVENT_MONOTONIC_TIME,
@@ -135,8 +137,8 @@ enum {
     TAG_CONSOLE_SELECTED_MODEL_ID,
     TAG_CONSOLE_MODEL_ALIAS,
     TAG_CONSOLE_ENGINE_GENERATION,
-    TAG_RUNTIME_GENERATION_MODE,
-    TAG_GENERATION_MODE,
+    TAG_MESSAGE_ENGINE_KIND,
+    TAG_EXECUTION_STRATEGY,
     TAG_DRAFT_CYCLE_COUNT,
     TAG_DRAFT_FORWARD_COUNT,
     TAG_PROPOSED_TOKENS,
@@ -152,7 +154,7 @@ enum {
     TAG_MEAN_ACCEPTED_PREFIX,
     TAG_EFFECTIVE_COMMITTED_RATE,
     TAG_SPECULATION_POLICY_ID,
-    TAG_EVENT_GENERATION_MODE,
+    TAG_EVENT_EXECUTION_STRATEGY,
     TAG_EVENT_SPECULATIVE_CYCLE,
     TAG_EVENT_PROPOSED_TOKENS,
     TAG_EVENT_SELECTED_VERIFICATION_TOKENS,
@@ -219,7 +221,7 @@ enum {
     TAG_MEDIA_RESULT,
     TAG_ENGINE_STATE,
     TAG_ENGINE_BACKEND,
-    TAG_ENGINE_GENERATION_MODE,
+    TAG_ENGINE_EXECUTION_STRATEGY,
     TAG_ENGINE_ALIAS,
     TAG_ENGINE_TARGET,
     TAG_ENGINE_ACTIVE_WORK,
@@ -854,8 +856,17 @@ static int message_fields_valid(const yvex_client_message *message)
              message->provider_output_kind == YVEX_PROVIDER_OUTPUT_FUNCTION_CALL) ||
             (message->stream_channel == YVEX_CLIENT_STREAM_ERROR &&
              message->provider_output_kind == YVEX_PROVIDER_OUTPUT_ERROR)) &&
-           ENUM_VALID(message->generation_mode, YVEX_SERVER_GENERATION_TARGET_ONLY,
-                      YVEX_SERVER_GENERATION_MEDIA) &&
+           ENUM_VALID(message->engine_kind, YVEX_SERVER_ENGINE_NONE,
+                      YVEX_SERVER_ENGINE_MEDIA) &&
+           ENUM_VALID(message->execution_strategy,
+                      YVEX_SERVER_EXECUTION_NOT_APPLICABLE,
+                      YVEX_SERVER_EXECUTION_SPECULATIVE) &&
+           (message->engine_kind == YVEX_SERVER_ENGINE_TEXT ||
+            message->execution_strategy ==
+                YVEX_SERVER_EXECUTION_NOT_APPLICABLE) &&
+           (message->engine_kind != YVEX_SERVER_ENGINE_TEXT ||
+            message->execution_strategy !=
+                YVEX_SERVER_EXECUTION_NOT_APPLICABLE) &&
            ENUM_VALID(message->session_state, YVEX_SERVER_SESSION_CREATED,
                       YVEX_SERVER_SESSION_FAILED) &&
            ENUM_VALID(message->provider_output_kind,
@@ -896,11 +907,11 @@ static int message_fields_valid(const yvex_client_message *message)
            (!message->media_result.available ||
             (message->kind == YVEX_CLIENT_MESSAGE_TURN_COMPLETE &&
              message->status == YVEX_OK &&
-             message->generation_mode == YVEX_SERVER_GENERATION_MEDIA &&
+             message->engine_kind == YVEX_SERVER_ENGINE_MEDIA &&
              message->generation_phase == YVEX_CLIENT_PHASE_COMPLETE)) &&
            (message->kind != YVEX_CLIENT_MESSAGE_TURN_COMPLETE ||
             message->status != YVEX_OK ||
-            message->generation_mode != YVEX_SERVER_GENERATION_MEDIA ||
+            message->engine_kind != YVEX_SERVER_ENGINE_MEDIA ||
             message->media_result.available) &&
            isfinite(message->queue_seconds) && isfinite(message->prefill_seconds) &&
            isfinite(message->first_token_seconds) && isfinite(message->first_reasoning_seconds) &&
@@ -934,7 +945,8 @@ static int message_fields_valid(const yvex_client_message *message)
            (message->kind != YVEX_CLIENT_MESSAGE_TURN_COMPLETE ||
             message->status != YVEX_OK ||
             message->generation_phase != YVEX_CLIENT_PHASE_COMPLETE ||
-            message->generation_mode != YVEX_SERVER_GENERATION_DSPARK ||
+            message->execution_strategy !=
+                YVEX_SERVER_EXECUTION_SPECULATIVE ||
             (message->draft_cycle_count == message->draft_forward_count &&
              message->draft_forward_count ==
                  message->target_verification_count)) &&
@@ -1008,8 +1020,9 @@ static int protocol_event_write(wire_writer *writer,
 {
     return writer_u64(writer, TAG_EVENT_KIND, event->kind) &&
            writer_u64(writer, TAG_EVENT_SEVERITY, event->severity) &&
-           writer_u64(writer, TAG_EVENT_GENERATION_MODE,
-                      event->generation_mode) &&
+           writer_u64(writer, TAG_EVENT_ENGINE_KIND, event->engine_kind) &&
+           writer_u64(writer, TAG_EVENT_EXECUTION_STRATEGY,
+                      event->execution_strategy) &&
            writer_members(writer, event, event_members,
                           sizeof(event_members) / sizeof(event_members[0]));
 }
@@ -1037,7 +1050,8 @@ static int protocol_message_core_write(wire_writer *writer,
         MESSAGE_U64(TAG_TURN_COUNT, message->turn_count) &&
         MESSAGE_U64(TAG_CONTEXT_USED, message->context_used) &&
         MESSAGE_U64(TAG_KV_USED_BYTES, message->kv_used_bytes) &&
-        MESSAGE_U64(TAG_GENERATION_MODE, message->generation_mode) &&
+        MESSAGE_U64(TAG_MESSAGE_ENGINE_KIND, message->engine_kind) &&
+        MESSAGE_U64(TAG_EXECUTION_STRATEGY, message->execution_strategy) &&
         MESSAGE_U64(TAG_DRAFT_CYCLE_COUNT, message->draft_cycle_count) &&
         MESSAGE_U64(TAG_DRAFT_FORWARD_COUNT, message->draft_forward_count) &&
         MESSAGE_U64(TAG_PROPOSED_TOKENS, message->proposed_tokens) &&
@@ -1317,8 +1331,9 @@ static int protocol_engine_write(wire_writer *writer,
             (engine->continuous_batching_ready ? 4u : 0u);
     return writer_u64(writer, TAG_ENGINE_STATE, engine->state) &&
            writer_u64(writer, TAG_ENGINE_BACKEND, engine->backend) &&
-           writer_u64(writer, TAG_ENGINE_GENERATION_MODE,
-                      engine->generation_mode) &&
+           writer_u64(writer, TAG_ENGINE_KIND, engine->engine_kind) &&
+           writer_u64(writer, TAG_ENGINE_EXECUTION_STRATEGY,
+                      engine->execution_strategy) &&
            writer_members(writer, engine, engine_members,
                           sizeof(engine_members) / sizeof(engine_members[0])) &&
            writer_u64(writer, TAG_ENGINE_FLAGS, flags);
@@ -1500,11 +1515,18 @@ static int message_base_field(yvex_client_message *candidate, unsigned int tag,
     case TAG_TURN_COUNT: valid = BASE_U64(candidate->turn_count); break;
     case TAG_CONTEXT_USED: valid = BASE_U64(candidate->context_used); break;
     case TAG_KV_USED_BYTES: valid = BASE_U64(candidate->kv_used_bytes); break;
-    case TAG_GENERATION_MODE:
+    case TAG_MESSAGE_ENGINE_KIND:
         valid = reader_u64(bytes, count, &value) &&
-                value <= YVEX_SERVER_GENERATION_MEDIA;
+                value <= YVEX_SERVER_ENGINE_MEDIA;
         if (valid)
-            candidate->generation_mode = (yvex_server_generation_mode)value;
+            candidate->engine_kind = (yvex_server_engine_kind)value;
+        break;
+    case TAG_EXECUTION_STRATEGY:
+        valid = reader_u64(bytes, count, &value) &&
+                value <= YVEX_SERVER_EXECUTION_SPECULATIVE;
+        if (valid)
+            candidate->execution_strategy =
+                (yvex_server_execution_strategy)value;
         break;
     case TAG_STOP_REASON:
         valid = reader_u64(bytes, count, &value) &&
@@ -1787,11 +1809,18 @@ static int message_engine_field(yvex_client_message *candidate,
                 value <= YVEX_BACKEND_KIND_CUDA;
         if (valid) engine->backend = (yvex_backend_kind)value;
         break;
-    case TAG_ENGINE_GENERATION_MODE:
+    case TAG_ENGINE_KIND:
         valid = reader_u64(bytes, count, &value) &&
-                value <= YVEX_SERVER_GENERATION_MEDIA;
+                value <= YVEX_SERVER_ENGINE_MEDIA;
         if (valid)
-            engine->generation_mode = (yvex_server_generation_mode)value;
+            engine->engine_kind = (yvex_server_engine_kind)value;
+        break;
+    case TAG_ENGINE_EXECUTION_STRATEGY:
+        valid = reader_u64(bytes, count, &value) &&
+                value <= YVEX_SERVER_EXECUTION_SPECULATIVE;
+        if (valid)
+            engine->execution_strategy =
+                (yvex_server_execution_strategy)value;
         break;
     case TAG_ENGINE_FLAGS:
         valid = reader_u64(bytes, count, &value) && !(value & ~7u);
@@ -1880,12 +1909,18 @@ static int message_event_field(yvex_client_message *candidate,
                 value <= YVEX_SERVER_SEVERITY_FATAL;
         if (valid) candidate->event.severity = (yvex_server_event_severity)value;
         break;
-    case TAG_EVENT_GENERATION_MODE:
+    case TAG_EVENT_ENGINE_KIND:
         valid = reader_u64(bytes, count, &value) &&
-                value <= YVEX_SERVER_GENERATION_MEDIA;
+                value <= YVEX_SERVER_ENGINE_MEDIA;
         if (valid)
-            candidate->event.generation_mode =
-                (yvex_server_generation_mode)value;
+            candidate->event.engine_kind = (yvex_server_engine_kind)value;
+        break;
+    case TAG_EVENT_EXECUTION_STRATEGY:
+        valid = reader_u64(bytes, count, &value) &&
+                value <= YVEX_SERVER_EXECUTION_SPECULATIVE;
+        if (valid)
+            candidate->event.execution_strategy =
+                (yvex_server_execution_strategy)value;
         break;
     default: return 0;
     }
@@ -1923,7 +1958,7 @@ int yvex_protocol_message_decode(const unsigned char *input,
     memset(&candidate, 0, sizeof(candidate));
     candidate.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
     candidate.runtime.schema_version = YVEX_SERVER_SUMMARY_SCHEMA_V1;
-    candidate.engine.schema_version = YVEX_SERVER_ENGINE_SCHEMA_V1;
+    candidate.engine.schema_version = YVEX_SERVER_ENGINE_SCHEMA_CURRENT;
     candidate.console.schema_version = YVEX_CONSOLE_STATUS_SCHEMA_V1;
     candidate.event.schema_version = YVEX_RUNTIME_EVENT_SCHEMA_VERSION;
     while ((next = reader_next(&reader, &tag, &bytes, &count)) > 0 && valid) {

@@ -242,10 +242,24 @@ static const char *backend_name(yvex_backend_kind backend)
 {
     return backend == YVEX_BACKEND_KIND_CUDA ? "CUDA" : "CPU";
 }
-static const char *generation_mode_name(yvex_server_generation_mode mode)
+static const char *engine_kind_name(yvex_server_engine_kind kind)
 {
-    if (mode == YVEX_SERVER_GENERATION_MEDIA) return "media";
-    return mode == YVEX_SERVER_GENERATION_DSPARK ? "DSpark" : "target-only";
+    if (kind == YVEX_SERVER_ENGINE_TEXT) return "text";
+    if (kind == YVEX_SERVER_ENGINE_MEDIA) return "media";
+    return "none";
+}
+static const char *execution_strategy_name(
+    yvex_server_execution_strategy strategy)
+{
+    if (strategy == YVEX_SERVER_EXECUTION_TARGET_ONLY) return "target-only";
+    if (strategy == YVEX_SERVER_EXECUTION_SPECULATIVE) return "speculative";
+    return "n/a";
+}
+static const char *engine_execution_name(
+    yvex_server_engine_kind kind, yvex_server_execution_strategy strategy)
+{
+    return kind == YVEX_SERVER_ENGINE_MEDIA ? "media"
+                                             : execution_strategy_name(strategy);
 }
 static void render_status(const yvex_server_summary *status, int json)
 {
@@ -382,8 +396,11 @@ static void render_engine(const yvex_server_engine_summary *engine, int json)
         yvex_cli_out_json_string(stdout, engine->alias);
         printf(",\"generation\":%llu,\"state\":", engine->generation);
         yvex_cli_out_json_string(stdout, engine_state_name(engine->state));
-        printf(",\"backend\":%u,\"generation_mode\":", (unsigned int)engine->backend);
-        yvex_cli_out_json_string(stdout, generation_mode_name(engine->generation_mode));
+        printf(",\"backend\":%u,\"engine_kind\":", (unsigned int)engine->backend);
+        yvex_cli_out_json_string(stdout, engine_kind_name(engine->engine_kind));
+        fputs(",\"execution_strategy\":", stdout);
+        yvex_cli_out_json_string(
+            stdout, execution_strategy_name(engine->execution_strategy));
         printf(",\"execution_ready\":%s,\"continuous_batching\":%s,"
                "\"context_capacity\":%llu,\"prefill_chunk_tokens\":%llu,"
                "\"maximum_new_tokens\":%llu,\"maximum_sessions\":%llu,"
@@ -406,10 +423,11 @@ static void render_engine(const yvex_server_engine_summary *engine, int json)
         fputc('}', stdout);
         return;
     }
-    printf("%-24s generation=%llu state=%-10s %s/%s work=%llu sessions=%llu "
+    printf("%-24s generation=%llu state=%-10s %s/%s/%s work=%llu sessions=%llu "
            "mapped=%.2f GiB prepared=%.2f GiB device=%.2f GiB\n",
            engine->alias, engine->generation, engine_state_name(engine->state),
-           backend_name(engine->backend), generation_mode_name(engine->generation_mode),
+           backend_name(engine->backend), engine_kind_name(engine->engine_kind),
+           execution_strategy_name(engine->execution_strategy),
            engine->active_work, engine->session_count,
            (double)engine->mapped_package_bytes / 1073741824.0,
            (double)engine->prepared_bytes / 1073741824.0,
@@ -735,7 +753,7 @@ static void generation_progress_event(const yvex_server_event *event,
                                       int *active)
 {
     if (!conversation) return;
-    if (event->generation_mode == YVEX_SERVER_GENERATION_MEDIA) {
+    if (event->engine_kind == YVEX_SERVER_ENGINE_MEDIA) {
         printf("\r\033[2K%smedia · %s", style->accent,
                event->phase[0] ? event->phase : "executing");
         if (event->value_b)
@@ -1767,7 +1785,8 @@ static void render_console_status(const yvex_client_message *message, int startu
                status->runtime_ready ? "● ready" : "● not ready", style.reset,
                status->attached ? "attached to resident runtime" : "detached from runtime",
                style.accent, backend_name(status->backend),
-               generation_mode_name(message->generation_mode), style.reset);
+               engine_execution_name(message->engine_kind,
+                                     message->execution_strategy), style.reset);
         printf("  %s%-10s%s %s · position %llu · turns %llu\n", style.dim, "session",
                style.reset, status->session_name, status->position, status->turn_count);
         if (message->partial_turn.available)
@@ -1775,7 +1794,7 @@ static void render_console_status(const yvex_client_message *message, int startu
                    style.dim, "recovery", style.reset, style.warning, style.reset,
                    message->partial_turn.committed_token_count,
                    message->partial_turn.committed_token_count == 1u ? "" : "s");
-        if (message->generation_mode == YVEX_SERVER_GENERATION_MEDIA)
+        if (message->engine_kind == YVEX_SERVER_ENGINE_MEDIA)
             printf("  %s%-10s%s direct media generation", style.dim, "context", style.reset);
         else
             printf("  %s%-10s%s %llu/%llu · reasoning %s", style.dim, "context", style.reset,
@@ -1802,13 +1821,14 @@ static void render_console_status(const yvex_client_message *message, int startu
     printf("%s · %s · %s · variant %.12s · %s%s%s · %s · "
            "session %s · position %llu · turns %llu",
            target, backend_name(status->backend),
-           generation_mode_name(message->generation_mode),
+           engine_execution_name(message->engine_kind,
+                                 message->execution_strategy),
            status->physical_variant_identity,
            status->runtime_ready ? style.success : style.warning,
            status->runtime_ready ? "● ready" : "● not ready", style.reset,
            status->attached ? "attached to resident runtime" : "detached from runtime",
            status->session_name, status->position, status->turn_count);
-    if (message->generation_mode == YVEX_SERVER_GENERATION_MEDIA)
+    if (message->engine_kind == YVEX_SERVER_ENGINE_MEDIA)
         printf(" · direct media generation");
     else
         printf(" · context %llu/%llu", status->context_used,

@@ -21,7 +21,7 @@ extern "C" {
 #define YVEX_RUNTIME_PARTIAL_TURN_SCHEMA_V1 1u
 typedef enum {
     YVEX_GENERATION_MODE_TARGET_ONLY = 0,
-    YVEX_GENERATION_MODE_DSPARK
+    YVEX_GENERATION_MODE_SPECULATIVE
 } yvex_runtime_generation_mode;
 typedef enum {
     YVEX_GENERATION_INPUT_TEXT = 0,

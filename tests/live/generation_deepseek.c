@@ -895,7 +895,7 @@ static int live_dspark_cancellation_proof(
     yvex_runtime_generation_options options = {
         .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V5,
         .backend = YVEX_BACKEND_KIND_CPU,
-        .mode = YVEX_GENERATION_MODE_DSPARK,
+        .mode = YVEX_GENERATION_MODE_SPECULATIVE,
         .context_capacity = 32ull,
         .prefill_chunk_tokens = 8ull,
         .maximum_new_tokens = 8ull,
@@ -1015,7 +1015,7 @@ static int live_dspark_cancellation_proof(
             &plan, tokens, LIVE_GENERATION_MAX_TOKENS, text, sizeof(text),
             &result, err);
     if (rc == YVEX_OK &&
-        (!result.completed || result.execution_mode != YVEX_GENERATION_MODE_DSPARK ||
+        (!result.completed || result.execution_mode != YVEX_GENERATION_MODE_SPECULATIVE ||
          !result.model_committed_token_count || !result.draft_cycle_count ||
          !result.target_verification_count))
         rc = YVEX_ERR_FORMAT;
@@ -1448,7 +1448,7 @@ static int live_greedy_equivalence(const live_generation *target,
         return YVEX_ERR_INVALID_ARG;
     }
     if (target->result.execution_mode != YVEX_GENERATION_MODE_TARGET_ONLY ||
-        dspark->result.execution_mode != YVEX_GENERATION_MODE_DSPARK ||
+        dspark->result.execution_mode != YVEX_GENERATION_MODE_SPECULATIVE ||
         !target->result.completed || !dspark->result.completed ||
         target->result.sampled_token_count != dspark->result.sampled_token_count ||
         target->result.model_committed_token_count !=
@@ -1691,7 +1691,7 @@ static int live_reasoning_mode_equivalence(
                 &request, 512u, 1u, 1u, NULL, &target, err);
         if (rc == YVEX_OK)
             rc = live_production_request(
-                model, backend, YVEX_GENERATION_MODE_DSPARK, policy,
+                model, backend, YVEX_GENERATION_MODE_SPECULATIVE, policy,
                 &request, 512u, 1u, 1u, NULL, &dspark, err);
         if (rc == YVEX_OK)
             rc = live_greedy_equivalence(&target, &dspark, err);
@@ -1745,7 +1745,7 @@ static int live_acceptance_corpus_proof(
             &target, err);
         if (rc == YVEX_OK)
             rc = live_production_prompt(
-                model, backend, YVEX_GENERATION_MODE_DSPARK, policy,
+                model, backend, YVEX_GENERATION_MODE_SPECULATIVE, policy,
                 prompts[index].text, prompts[index].bytes, maximum_tokens,
                 &dspark, err);
         if (rc == YVEX_OK) rc = live_greedy_equivalence(&target, &dspark, err);
@@ -1801,7 +1801,7 @@ int main(int argc, char **argv)
     backend = strcmp(argv[3], "cuda") == 0
                   ? YVEX_BACKEND_KIND_CUDA : YVEX_BACKEND_KIND_CPU;
     mode = strcmp(argv[4], "dspark") == 0
-               ? YVEX_GENERATION_MODE_DSPARK
+               ? YVEX_GENERATION_MODE_SPECULATIVE
                : YVEX_GENERATION_MODE_TARGET_ONLY;
     if (strcmp(argv[5], "stochastic") == 0) {
         policy.strategy = YVEX_SAMPLING_STRATEGY_STOCHASTIC;
@@ -1831,25 +1831,25 @@ int main(int argc, char **argv)
         step = "composition-compare";
         rc = live_compare(&production, &manual, &err);
     }
-    if (rc == YVEX_OK && mode == YVEX_GENERATION_MODE_DSPARK &&
+    if (rc == YVEX_OK && mode == YVEX_GENERATION_MODE_SPECULATIVE &&
         policy.strategy == YVEX_SAMPLING_STRATEGY_GREEDY) {
         step = "target-only-reference";
         rc = live_production(model, backend, YVEX_GENERATION_MODE_TARGET_ONLY,
                              policy, maximum_tokens, &reference, &err);
     }
-    if (rc == YVEX_OK && mode == YVEX_GENERATION_MODE_DSPARK &&
+    if (rc == YVEX_OK && mode == YVEX_GENERATION_MODE_SPECULATIVE &&
         policy.strategy == YVEX_SAMPLING_STRATEGY_GREEDY) {
         step = "greedy-equivalence";
         rc = live_greedy_equivalence(&reference, &production, &err);
     }
     if (rc == YVEX_OK && backend == YVEX_BACKEND_KIND_CUDA &&
-        mode == YVEX_GENERATION_MODE_DSPARK &&
+        mode == YVEX_GENERATION_MODE_SPECULATIVE &&
         policy.strategy == YVEX_SAMPLING_STRATEGY_GREEDY) {
         step = "reasoning-mode-equivalence";
         rc = live_reasoning_mode_equivalence(model, backend, policy, &err);
     }
     if (rc == YVEX_OK && backend == YVEX_BACKEND_KIND_CUDA &&
-        mode == YVEX_GENERATION_MODE_DSPARK &&
+        mode == YVEX_GENERATION_MODE_SPECULATIVE &&
         policy.strategy == YVEX_SAMPLING_STRATEGY_GREEDY &&
         maximum_tokens >= 8ull) {
         step = "acceptance-corpus";
@@ -1858,7 +1858,7 @@ int main(int argc, char **argv)
             &corpus, &err);
     }
     if (rc == YVEX_OK && backend == YVEX_BACKEND_KIND_CUDA &&
-        mode == YVEX_GENERATION_MODE_DSPARK &&
+        mode == YVEX_GENERATION_MODE_SPECULATIVE &&
         policy.strategy == YVEX_SAMPLING_STRATEGY_GREEDY &&
         maximum_tokens >= 8ull) {
         step = "speculation-cancellation";
@@ -1937,7 +1937,7 @@ int main(int argc, char **argv)
                production.result.accepted_draft_token_count,
                production.result.rejected_draft_token_count,
                production.result.maximum_accepted_prefix,
-               mode == YVEX_GENERATION_MODE_DSPARK &&
+               mode == YVEX_GENERATION_MODE_SPECULATIVE &&
                        policy.strategy == YVEX_SAMPLING_STRATEGY_GREEDY
                    ? "pass" : "not-applicable",
                corpus.prompt_count ? "pass" : "not-run",
@@ -1946,7 +1946,7 @@ int main(int argc, char **argv)
                corpus.maximum_accepted_prefix,
                corpus.prompt_count ? "pass" : "not-run",
                backend == YVEX_BACKEND_KIND_CUDA &&
-                       mode == YVEX_GENERATION_MODE_DSPARK &&
+                       mode == YVEX_GENERATION_MODE_SPECULATIVE &&
                        policy.strategy == YVEX_SAMPLING_STRATEGY_GREEDY
                    ? "pass" : "not-run",
                production.state_residency.device_stage_count,

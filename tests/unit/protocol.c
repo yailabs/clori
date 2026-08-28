@@ -268,7 +268,24 @@ static int test_schema_refusals(void)
     memset(&message, 0, sizeof(message));
     message.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
     message.kind = YVEX_CLIENT_MESSAGE_ACK;
-    message.generation_mode = YVEX_SERVER_GENERATION_DSPARK;
+    message.engine_kind = YVEX_SERVER_ENGINE_MEDIA;
+    message.execution_strategy = YVEX_SERVER_EXECUTION_SPECULATIVE;
+    YVEX_TEST_ASSERT(
+        yvex_protocol_message_encode(&message, frame, sizeof(frame), &count,
+                                     &err) == YVEX_ERR_INVALID_ARG,
+        "media engine kind refuses a text execution strategy");
+    message.engine_kind = YVEX_SERVER_ENGINE_TEXT;
+    message.execution_strategy = YVEX_SERVER_EXECUTION_NOT_APPLICABLE;
+    YVEX_TEST_ASSERT(
+        yvex_protocol_message_encode(&message, frame, sizeof(frame), &count,
+                                     &err) == YVEX_ERR_INVALID_ARG,
+        "text engine kind requires an explicit execution strategy");
+
+    memset(&message, 0, sizeof(message));
+    message.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
+    message.kind = YVEX_CLIENT_MESSAGE_ACK;
+    message.engine_kind = YVEX_SERVER_ENGINE_TEXT;
+    message.execution_strategy = YVEX_SERVER_EXECUTION_SPECULATIVE;
     message.draft_cycle_count = 1u;
     message.draft_forward_count = 1u;
     message.proposed_tokens = 257u;
@@ -312,7 +329,8 @@ static int test_schema_refusals(void)
     message.kind = YVEX_CLIENT_MESSAGE_TURN_COMPLETE;
     message.status = YVEX_ERR_CANCELLED;
     message.generation_phase = YVEX_CLIENT_PHASE_CANCELLED;
-    message.generation_mode = YVEX_SERVER_GENERATION_DSPARK;
+    message.engine_kind = YVEX_SERVER_ENGINE_TEXT;
+    message.execution_strategy = YVEX_SERVER_EXECUTION_SPECULATIVE;
     message.draft_cycle_count = 1u;
     message.draft_forward_count = 1u;
     message.proposed_tokens = 5u;
@@ -499,7 +517,8 @@ static int test_message_roundtrip(void)
     source.generation_phase = YVEX_CLIENT_PHASE_COMPLETE;
     source.cancellation_class = YVEX_CLIENT_CANCELLATION_COMPLETED;
     source.stream_channel = YVEX_CLIENT_STREAM_CONTROL_EVENT;
-    source.generation_mode = YVEX_SERVER_GENERATION_DSPARK;
+    source.engine_kind = YVEX_SERVER_ENGINE_TEXT;
+    source.execution_strategy = YVEX_SERVER_EXECUTION_SPECULATIVE;
     source.draft_cycle_count = 3u;
     source.draft_forward_count = 3u;
     source.proposed_tokens = 16u;
@@ -601,7 +620,9 @@ static int test_message_roundtrip(void)
                          decoded.generation_phase == YVEX_CLIENT_PHASE_COMPLETE &&
                          decoded.cancellation_class == YVEX_CLIENT_CANCELLATION_COMPLETED &&
                          decoded.stream_channel == YVEX_CLIENT_STREAM_CONTROL_EVENT &&
-                         decoded.generation_mode == YVEX_SERVER_GENERATION_DSPARK &&
+                         decoded.engine_kind == YVEX_SERVER_ENGINE_TEXT &&
+                         decoded.execution_strategy ==
+                             YVEX_SERVER_EXECUTION_SPECULATIVE &&
                          decoded.draft_cycle_count == 3u &&
                          decoded.draft_forward_count == 3u &&
                          decoded.proposed_tokens == 16u &&
@@ -662,13 +683,13 @@ static int test_message_roundtrip(void)
 
 typedef struct {
     int listener;
-} v6_peer;
+} stale_peer;
 
-static void *v6_peer_main(void *opaque)
+static void *stale_peer_main(void *opaque)
 {
     static const unsigned char response[12] = {
-        'Y', 'V', 'X', 'P', 0u, 6u, 0u, 2u, 0u, 0u, 0u, 0u};
-    v6_peer *peer = opaque;
+        'Y', 'V', 'X', 'P', 0u, 13u, 0u, 2u, 0u, 0u, 0u, 0u};
+    stale_peer *peer = opaque;
     unsigned char header[12], discard[4096];
     unsigned int length;
     int client = accept(peer->listener, NULL, NULL);
@@ -691,34 +712,34 @@ static void *v6_peer_main(void *opaque)
     return NULL;
 }
 
-static int test_v6_frame_refusal(void)
+static int test_stale_frame_refusal(void)
 {
     struct sockaddr_un address;
     char path[sizeof(address.sun_path)];
     yvex_client *client = NULL;
     yvex_error err;
     pthread_t thread;
-    v6_peer peer;
+    stale_peer peer;
     int rc;
     (void)snprintf(path, sizeof(path), "build/tests/protocol-current-%lu.sock",
                    (unsigned long)getpid());
     (void)unlink(path);
     peer.listener = socket(AF_UNIX, SOCK_STREAM, 0);
-    YVEX_TEST_ASSERT(peer.listener >= 0, "v6 peer socket");
+    YVEX_TEST_ASSERT(peer.listener >= 0, "stale peer socket");
     memset(&address, 0, sizeof(address));
     address.sun_family = AF_UNIX;
     memcpy(address.sun_path, path, strlen(path) + 1u);
     YVEX_TEST_ASSERT(bind(peer.listener, (struct sockaddr *)&address,
                           sizeof(address)) == 0 &&
                          chmod(path, 0600) == 0 && listen(peer.listener, 1) == 0,
-                     "v6 peer bind/listen");
-    YVEX_TEST_ASSERT(pthread_create(&thread, NULL, v6_peer_main, &peer) == 0,
-                     "v6 peer thread");
+                     "stale peer bind/listen");
+    YVEX_TEST_ASSERT(pthread_create(&thread, NULL, stale_peer_main, &peer) == 0,
+                     "stale peer thread");
     rc = yvex_client_connect(&client, path, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT && client == NULL &&
-                         strstr(yvex_error_message(&err), "version 13") != NULL,
-                     "v6 frame explicitly refuses");
-    YVEX_TEST_ASSERT(pthread_join(thread, NULL) == 0, "v6 peer join");
+                         strstr(yvex_error_message(&err), "version 14") != NULL,
+                     "immediately prior v13 frame explicitly refuses");
+    YVEX_TEST_ASSERT(pthread_join(thread, NULL) == 0, "stale peer join");
     (void)close(peer.listener);
     (void)unlink(path);
     return 0;
@@ -734,10 +755,12 @@ static int test_capability_aware_readiness(void)
     message.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
     message.kind = YVEX_CLIENT_MESSAGE_ENGINE;
     message.status = YVEX_OK;
-    message.engine.schema_version = YVEX_SERVER_ENGINE_SCHEMA_V1;
+    message.engine.schema_version = YVEX_SERVER_ENGINE_SCHEMA_CURRENT;
     message.engine.state = YVEX_SERVER_ENGINE_LOADED;
     message.engine.backend = YVEX_BACKEND_KIND_CUDA;
-    message.engine.generation_mode = YVEX_SERVER_GENERATION_MEDIA;
+    message.engine.engine_kind = YVEX_SERVER_ENGINE_MEDIA;
+    message.engine.execution_strategy =
+        YVEX_SERVER_EXECUTION_NOT_APPLICABLE;
     strcpy(message.engine.alias, "minimax");
     strcpy(message.engine.target_id, "minimax-h3");
     message.engine.generation = 7ull;
@@ -819,7 +842,8 @@ static int test_media_result_roundtrip(void)
     message.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
     message.kind = YVEX_CLIENT_MESSAGE_TURN_COMPLETE;
     message.status = YVEX_OK;
-    message.generation_mode = YVEX_SERVER_GENERATION_MEDIA;
+    message.engine_kind = YVEX_SERVER_ENGINE_MEDIA;
+    message.execution_strategy = YVEX_SERVER_EXECUTION_NOT_APPLICABLE;
     message.generation_phase = YVEX_CLIENT_PHASE_COMPLETE;
     message.stop_reason = YVEX_CLIENT_STOP_EOS;
     message.session_state = YVEX_SERVER_SESSION_READY;
@@ -876,7 +900,7 @@ int yvex_test_protocol(void)
     if (test_message_roundtrip() != 0) return 1;
     if (test_capability_aware_readiness() != 0) return 1;
     if (test_media_result_roundtrip() != 0) return 1;
-    if (test_v6_frame_refusal() != 0) return 1;
+    if (test_stale_frame_refusal() != 0) return 1;
     if (test_bounded_parser_mutation() != 0) return 1;
     return 0;
 }

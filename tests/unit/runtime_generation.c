@@ -636,7 +636,7 @@ static int generation_test_execution_identity_excludes_measurement(void)
     memset(&result, 0, sizeof(result));
     memset(&evidence, 0, sizeof(evidence));
     result.schema_version = YVEX_RUNTIME_GENERATION_RESULT_SCHEMA_V5;
-    result.execution_mode = YVEX_GENERATION_MODE_DSPARK;
+    result.execution_mode = YVEX_GENERATION_MODE_SPECULATIVE;
     result.draft_cycle_count = 2ull;
     result.proposed_token_count = 8ull;
     result.accepted_draft_token_count = 6ull;

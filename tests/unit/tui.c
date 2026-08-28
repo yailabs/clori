@@ -180,10 +180,12 @@ static int test_state_render_and_input(void)
     event.kind = YVEX_CLI_INTERACTIVE_MESSAGE;
     event.operation = YVEX_CLIENT_OP_ENGINE_LIST;
     event.message.kind = YVEX_CLIENT_MESSAGE_ENGINE;
-    event.message.engine.schema_version = YVEX_SERVER_ENGINE_SCHEMA_V1;
+    event.message.engine.schema_version = YVEX_SERVER_ENGINE_SCHEMA_CURRENT;
     event.message.engine.state = YVEX_SERVER_ENGINE_LOADED;
     event.message.engine.backend = YVEX_BACKEND_KIND_CUDA;
-    event.message.engine.generation_mode = YVEX_SERVER_GENERATION_DSPARK;
+    event.message.engine.engine_kind = YVEX_SERVER_ENGINE_TEXT;
+    event.message.engine.execution_strategy =
+        YVEX_SERVER_EXECUTION_SPECULATIVE;
     event.message.engine.generation = 7u;
     (void)snprintf(event.message.engine.alias, sizeof(event.message.engine.alias),
                    "%s", "deepseek4-v4-flash-profile-a");

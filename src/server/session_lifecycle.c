@@ -366,7 +366,8 @@ int yvex_server_sessions_open(server_session_registry **out,
     if (out) *out = NULL;
     if (!out || !model || !options || !event_scope || !telemetry ||
         !engine_generation ||
-        event_scope->generation_mode != options->generation_mode ||
+        event_scope->engine_kind != options->engine_kind ||
+        event_scope->execution_strategy != options->execution_strategy ||
         !yvex_sha256_hex_valid(event_scope->runtime_model_identity) ||
         !yvex_sha256_hex_valid(event_scope->artifact_identity) ||
         !yvex_sha256_hex_valid(event_scope->specialization_identity) ||

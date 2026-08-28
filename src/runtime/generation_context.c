@@ -65,7 +65,7 @@ static int generation_options_valid(const yvex_runtime_generation_options *optio
            options->schema_version == YVEX_RUNTIME_GENERATION_SCHEMA_V5 &&
            (options->backend == YVEX_BACKEND_KIND_CPU ||
             options->backend == YVEX_BACKEND_KIND_CUDA) &&
-           options->mode <= YVEX_GENERATION_MODE_DSPARK &&
+           options->mode <= YVEX_GENERATION_MODE_SPECULATIVE &&
            options->workload_kind <= YVEX_EXECUTION_WORKLOAD_FULL_MODEL_RESEARCH &&
            options->context_capacity && options->prefill_chunk_tokens &&
            options->maximum_new_tokens && options->maximum_output_bytes &&
@@ -518,7 +518,7 @@ static int generation_capacity_workload(
         "deep-context", "full-model-research"
     };
     const yvex_speculation_family_policy *speculation = NULL;
-    if (context && context->options.mode == YVEX_GENERATION_MODE_DSPARK &&
+    if (context && context->options.mode == YVEX_GENERATION_MODE_SPECULATIVE &&
         context->model_view && context->model_view->compiled_binding &&
         !yvex_runtime_binding_policies(
             context->model_view->compiled_binding, NULL, NULL, &speculation))
@@ -579,7 +579,7 @@ static int generation_physical_row_capacity(
             err, YVEX_ERR_STATE,
             "compiled physical row geometry is unavailable");
     *capacity = context->options.prefill_chunk_tokens;
-    if (context->options.mode == YVEX_GENERATION_MODE_DSPARK) {
+    if (context->options.mode == YVEX_GENERATION_MODE_SPECULATIVE) {
         if (!speculation ||
             !yvex_core_u64_add(speculation->block_size, 2ull, &draft_width))
             return generation_context_refuse(
@@ -637,7 +637,7 @@ static int generation_sampling_workspace(
         return generation_context_refuse(
             err, YVEX_ERR_STATE,
             "device stochastic workspace geometry is unavailable");
-    if (context->options.mode == YVEX_GENERATION_MODE_DSPARK &&
+    if (context->options.mode == YVEX_GENERATION_MODE_SPECULATIVE &&
         (!proposal_width ||
          !operations->speculation_workspace_required ||
          operations->speculation_workspace_required(
@@ -724,7 +724,7 @@ static int generation_attention_workspace(
     layers[1] = binding->draft_layers;
     layer_counts[0] = binding->summary.layer_count;
     layer_counts[1] = binding->summary.draft_layer_count;
-    plan_count = context->options.mode == YVEX_GENERATION_MODE_DSPARK ? 2ull : 1ull;
+    plan_count = context->options.mode == YVEX_GENERATION_MODE_SPECULATIVE ? 2ull : 1ull;
     for (plan_index = 0ull; plan_index < plan_count; ++plan_index) {
         yvex_graph_attention_capacity_plan *owned_capacity = NULL;
         const yvex_graph_attention_capacity_plan *selected_capacity = capacity;
@@ -830,7 +830,7 @@ static int generation_capacity_build_for(
             semantic.maximum_context, &context_envelope, err) != YVEX_OK ||
         yvex_compiled_context_envelope_admit(
             &context_envelope, context->options.context_capacity,
-            context->options.mode == YVEX_GENERATION_MODE_DSPARK, err) != YVEX_OK)
+            context->options.mode == YVEX_GENERATION_MODE_SPECULATIVE, err) != YVEX_OK)
         return yvex_error_code(err);
     if (generation_capacity_graph_geometry(
             context, &semantic, &geometry, workspace_capacity, err) != YVEX_OK)
@@ -838,7 +838,7 @@ static int generation_capacity_build_for(
     if (generation_physical_row_capacity(
             context, &physical_rows, err) != YVEX_OK)
         return yvex_error_code(err);
-    if (context->options.mode == YVEX_GENERATION_MODE_DSPARK &&
+    if (context->options.mode == YVEX_GENERATION_MODE_SPECULATIVE &&
         !yvex_core_u64_add(semantic.candidate_width, 1ull, &draft_rows))
         return generation_context_refuse(
             err, YVEX_ERR_BOUNDS,
@@ -1075,7 +1075,7 @@ static int generation_execution_profile_build(
     request.engine_specialization_identity = session.engine_specialization_identity;
     request.kernel_bundle_identity = kernel_bundle;
     request.workload_profile_identity = context->workload_profile.identity;
-    request.generation_mode = context->options.mode == YVEX_GENERATION_MODE_DSPARK
+    request.generation_mode = context->options.mode == YVEX_GENERATION_MODE_SPECULATIVE
                                   ? YVEX_EXECUTION_GENERATION_SPECULATIVE
                                   : YVEX_EXECUTION_GENERATION_TARGET_ONLY;
     request.evidence = context->options.evidence_profile;
@@ -1224,7 +1224,7 @@ static int generation_execution_owners_open(
     transformer.context_capacity = options->context_capacity;
     transformer.workspace_token_capacity = options->prefill_chunk_tokens;
     transformer.minimum_device_workspace_bytes = context->sampling_workspace_bytes;
-    if (options->mode == YVEX_GENERATION_MODE_DSPARK &&
+    if (options->mode == YVEX_GENERATION_MODE_SPECULATIVE &&
         transformer.workspace_token_capacity < YVEX_SPECULATION_MAX_BLOCK + 2ull)
         transformer.workspace_token_capacity = YVEX_SPECULATION_MAX_BLOCK + 2ull;
     if (options->continuous_batching &&
@@ -1243,7 +1243,7 @@ static int generation_execution_owners_open(
     rc = yvex_runtime_transformer_context_open(
         &context->transformer, context->model, context->session, &transformer,
         workspace_bytes, err);
-    logits.maximum_rows = options->mode == YVEX_GENERATION_MODE_DSPARK
+    logits.maximum_rows = options->mode == YVEX_GENERATION_MODE_SPECULATIVE
                               ? YVEX_SPECULATION_MAX_BLOCK + 1ull
                               : options->continuous_batching ? compatible_width : 1ull;
     logits.maximum_host_bytes = options->maximum_host_bytes;
@@ -1266,7 +1266,7 @@ static int generation_execution_owners_open(
             err, YVEX_ERR_STATE, "runtime logits plan is unavailable");
     if (rc != YVEX_OK) return rc;
     sampling.maximum_vocabulary_size = (*logits_plan)->vocabulary_size;
-    sampling.maximum_rows = options->mode == YVEX_GENERATION_MODE_DSPARK
+    sampling.maximum_rows = options->mode == YVEX_GENERATION_MODE_SPECULATIVE
                                 ? YVEX_SPECULATION_MAX_BLOCK + 1ull : 1ull;
     sampling.maximum_host_bytes = options->maximum_host_bytes;
     sampling.device_selection = device_selection;
@@ -1275,7 +1275,7 @@ static int generation_execution_owners_open(
     rc = yvex_runtime_sampling_context_open(
         &context->sampling, *logits_plan, &context->options.sampling_policy,
         &sampling, err);
-    if (rc != YVEX_OK || options->mode != YVEX_GENERATION_MODE_DSPARK)
+    if (rc != YVEX_OK || options->mode != YVEX_GENERATION_MODE_SPECULATIVE)
         return rc;
     speculation.backend = options->backend;
     speculation.context_capacity = options->context_capacity;
