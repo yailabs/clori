@@ -416,6 +416,89 @@ static void console_message(yvex_tui_state *state,
     }
 }
 
+static void turn_observation_reset(yvex_tui_state *state)
+{
+    memset(&state->last_turn, 0, sizeof(state->last_turn));
+}
+
+static void turn_profile_message(yvex_tui_state *state,
+                                 const yvex_server_event *event)
+{
+    yvex_tui_turn_observation *observation = &state->last_turn;
+    int recognized = 1;
+    if (event->turn_id[0] && observation->turn_id[0] &&
+        strcmp(event->turn_id, observation->turn_id) != 0)
+        turn_observation_reset(state);
+    if (event->turn_id[0])
+        text_copy(observation->turn_id, sizeof(observation->turn_id),
+                  event->turn_id);
+    if (!strcmp(event->phase, "movement")) {
+        observation->h2d_bytes = event->value_a;
+        observation->d2h_bytes = event->value_b;
+        observation->d2d_bytes = event->value_c;
+    } else if (!strcmp(event->phase, "launches")) {
+        observation->kernel_launches = event->value_a;
+        observation->stream_synchronizations = event->value_b;
+        observation->device_synchronizations = event->value_c;
+        observation->synchronization_seconds = event->seconds;
+    } else if (!strcmp(event->phase, "graphs")) {
+        observation->graph_launches = event->value_a;
+        observation->graph_captures = event->value_b;
+        observation->graph_replays = event->value_c;
+    } else if (!strcmp(event->phase, "tensorcore")) {
+        observation->tensor_core_launches = event->value_a;
+        observation->kernel_launches = event->value_b;
+    } else if (!strcmp(event->phase, "attention")) {
+        observation->attention_calls = event->value_a;
+        observation->attention_cache_hits = event->value_b;
+        observation->attention_cache_misses = event->value_c;
+        observation->attention_seconds = event->seconds;
+    } else if (!strcmp(event->phase, "moe")) {
+        observation->moe_row_expert_pairs = event->value_a;
+        observation->moe_weight_bytes = event->value_c;
+        observation->moe_seconds = event->seconds;
+    } else if (!strcmp(event->phase, "output")) {
+        observation->output_rows = event->value_a;
+        observation->logits_d2h_bytes = event->value_b;
+        observation->generated_tokens = event->value_c;
+        observation->output_seconds = event->seconds;
+    } else if (!strcmp(event->phase, "prefill")) {
+        observation->prompt_tokens = event->value_a;
+        observation->reused_tokens = event->value_b;
+        observation->prefill_tokens = event->value_c;
+        observation->prefill_seconds = event->seconds;
+    } else if (!strcmp(event->phase, "decode")) {
+        observation->generated_tokens = event->value_c;
+        observation->decode_seconds = event->seconds;
+    } else if (!strcmp(event->phase, "target")) {
+        observation->total_seconds = event->seconds;
+    } else {
+        recognized = 0;
+    }
+    if (recognized) observation->profile_available = 1;
+}
+
+static void turn_complete_message(yvex_tui_state *state,
+                                  const yvex_client_message *message)
+{
+    yvex_tui_turn_observation *observation = &state->last_turn;
+    observation->prompt_tokens = message->prompt_tokens;
+    observation->reused_tokens = message->reused_tokens;
+    observation->prefill_tokens = message->prefill_tokens;
+    observation->generated_tokens = message->generated_tokens;
+    observation->queue_seconds = message->queue_seconds;
+    observation->prefill_seconds = message->prefill_seconds;
+    observation->first_token_seconds = message->first_token_seconds;
+    observation->decode_seconds = message->decode_seconds;
+    observation->publication_seconds = message->publication_seconds;
+    observation->total_seconds = message->total_completion_seconds;
+    observation->prefill_rate = message->prefill_rate;
+    observation->decode_rate = message->decode_rate;
+    observation->turn_available = message->prompt_tokens ||
+        message->prefill_tokens || message->generated_tokens ||
+        message->total_completion_seconds > 0.0;
+}
+
 static void event_message(yvex_tui_state *state, const yvex_server_event *event)
 {
     size_t slot;
@@ -427,6 +510,8 @@ static void event_message(yvex_tui_state *state, const yvex_server_event *event)
     slot = (state->event_start + state->event_count) % YVEX_TUI_EVENT_CAP;
     state->events[slot] = *event;
     state->event_count++;
+    if (event->kind == YVEX_SERVER_EVENT_GENERATION_PROFILE)
+        turn_profile_message(state, event);
     if (event->kind == YVEX_SERVER_EVENT_PROCESS_START && state->launched_pid > 0 &&
         event->process_id == (unsigned long long)state->launched_pid)
         state->runtime_lifecycle = YVEX_TUI_RUNTIME_CONNECTED_OWNED;
@@ -559,6 +644,7 @@ void yvex_tui_state_message(yvex_tui_state *state,
     } else if (message->kind == YVEX_CLIENT_MESSAGE_EVENT) {
         event_message(state, &message->event);
     } else if (message->kind == YVEX_CLIENT_MESSAGE_TURN_STARTED) {
+        turn_observation_reset(state);
         state->generation_active = 1;
         state->generation_phase = message->generation_phase;
         yvex_tui_activity_add(state, YVEX_TUI_ACTIVITY_RUNTIME,
@@ -570,6 +656,7 @@ void yvex_tui_state_message(yvex_tui_state *state,
     } else if (message->kind == YVEX_CLIENT_MESSAGE_TURN_COMPLETE) {
         state->generation_active = 0;
         state->generation_phase = YVEX_CLIENT_PHASE_COMPLETE;
+        turn_complete_message(state, message);
         session_message(state, message);
         yvex_tui_activity_add(state, YVEX_TUI_ACTIVITY_RUNTIME,
                               YVEX_TUI_SEVERITY_SUCCESS,
