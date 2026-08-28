@@ -137,8 +137,8 @@ assert_terminal_background()
     ! grep -F "${esc}[40m" "$transcript" >/dev/null
 }
 
-# Offline Home is a designed recovery surface. Bare and explicit chat share it.
-start_tui offline 24 100 'chat --session offline' nocolor
+# Offline Home is a designed recovery surface owned by the bare application path.
+start_tui offline 24 100 '' nocolor
 wait_for "$root/offline.typescript" 'RUNTIME OFFLINE'
 wait_for "$root/offline.typescript" 'No startup-ready model'
 kill -INT "$client_pid"
@@ -180,8 +180,21 @@ grep -F 'chat requires a terminal' "$root/bare.err" >/dev/null
 ! grep "$(printf '\033')" "$root/non-tty.out" "$root/non-tty.err" \
     "$root/bare.out" "$root/bare.err" >/dev/null
 
+# Explicit chat remains the linear console and never enters alternate-screen mode.
+start_tui linear 24 100 'chat --session linear' nocolor
+wait_for "$root/linear.typescript" 'deepseek4-v4-flash-dspark>'
+printf 'hello\r' >&3
+wait_for "$root/linear.typescript" 'hello from yvex'
+printf '/quit\r' >&3
+finish_tui
+esc=$(printf '\033')
+! grep -F "${esc}[?1049h" "$root/linear.typescript" >/dev/null
+! grep -F "${esc}[?1049l" "$root/linear.typescript" >/dev/null
+grep -F "${esc}[?2004h" "$root/linear.typescript" >/dev/null
+grep -F "${esc}[?2004l" "$root/linear.typescript" >/dev/null
+
 # Connected Home consumes typed host, engine, session, and generation messages.
-start_tui main 32 150 'chat --session pty' color
+start_tui main 32 150 '' color
 wait_for "$root/main.typescript" 'deepseek4-v4-flash-dspark'
 wait_for "$root/main.typescript" 'ACTIVITY'
 wait_for "$root/main.typescript" 'CONTEXT'
@@ -205,12 +218,12 @@ assert_restored "$root/main.typescript"
 assert_terminal_background "$root/main.typescript"
 
 # Active generation Ctrl-C crosses the canonical cancellation operation.
-start_tui cancel 24 100 'chat --session cancellation' nocolor
+start_tui cancel 24 100 '' nocolor
 wait_for "$root/cancel.typescript" 'deepseek4-v4-flash-dspark'
 printf 'WAIT_PREFILL_CANCEL\r' >&3
 wait_for "$root/cancel.typescript" 'prefill.started'
 kill -INT "$client_pid"
-wait_for "$root/host.err" 'generation.cancel cancellation'
+wait_for "$root/host.err" 'generation.cancel main'
 wait_for "$root/cancel.typescript" 'cancelled'
 kill -INT "$client_pid"
 finish_tui
@@ -222,12 +235,12 @@ printf '\020quit\r' >&3
 finish_tui
 assert_restored "$root/compact.typescript"
 
-start_tui eof 18 88 'chat --session eof' nocolor
+start_tui eof 18 88 '' nocolor
 printf 'preserved-unsubmitted\004' >&3
 finish_tui
 assert_restored "$root/eof.typescript"
 
-start_tui terminate 20 96 'chat --session terminate' nocolor
+start_tui terminate 20 96 '' nocolor
 kill -TERM "$client_pid"
 finish_tui
 assert_restored "$root/terminate.typescript"
