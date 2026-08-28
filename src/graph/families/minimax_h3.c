@@ -64,6 +64,12 @@
 #define TRANSFORMER_ELEMENTS 33122992912ull
 #define TRANSFORMER_PAYLOAD_BYTES 66280430144ull
 #define TRANSFORMER_FILE_BYTES 66280465664ull
+static const char audio_execution_domain[] =
+    "yvex.minimax-h3.audio-vae.output-f32.v2";
+static const char video_execution_domain[] =
+    "yvex.minimax-h3.video-vae.output-f32.v3";
+static const char video_reduced_execution_domain[] =
+    "yvex.minimax-h3.video-vae.reduced-output-f32.v2";
 typedef yvex_component_f32_buffer component_buffer;
 typedef struct {
     yvex_materialization_session *session; const yvex_minimax_h3_audio_decode_options *options;
@@ -231,8 +237,7 @@ static int audio_vae_decode_cpu(yvex_materialization_session *session,
         result->tensor_reads = decoder.tensor_reads;
         result->payload_bytes_read = decoder.payload_bytes_read;
         result->peak_workspace_bytes = decoder.peak_host_bytes;
-        if (!audio_execution_identity(
-                "yvex.minimax-h3.audio-vae.cpu.v1", summary, options, result))
+        if (!audio_execution_identity(audio_execution_domain, summary, options, result))
             rc = audio_execution_refuse(
                 &execution, YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NUMERIC,
                 NULL, 1ull, 0ull, YVEX_ERR_STATE,
@@ -715,8 +720,8 @@ static int video_vae_decode_cpu(yvex_materialization_session *session,
             yvex_materialization_session_summary(session);
         if (!video_execution_identity(
                 result->output_values == 3072ull
-                    ? "yvex.minimax-h3.video-vae.cpu.reduced-v1"
-                    : "yvex.minimax-h3.video-vae.cpu.geometry-v2",
+                    ? video_reduced_execution_domain
+                    : video_execution_domain,
                 summary, options, result))
             rc = video_execution_refuse(
                 &execution, YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NUMERIC,
@@ -1173,12 +1178,12 @@ static int audio_vae_execute_artifact(
         rc = yvex_runtime_component_alias_decoder_execute(session, &request, &decoder, err);
     }
     if (rc == YVEX_OK && !audio_execution_identity(
-            "yvex.minimax-h3.audio-vae.cuda-f32.v1",
+            audio_execution_domain,
             yvex_materialization_session_summary(execution.session), options, result))
         rc = audio_execution_refuse(
             &execution, YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NUMERIC,
             NULL, 1ull, 0ull, YVEX_ERR_STATE,
-            "Audio VAE CUDA execution identity could not be sealed");
+            "Audio VAE output identity could not be sealed");
     if (rc == YVEX_OK) {
         result->kernel_launches = decoder.kernel_launches;
         result->h2d_bytes = decoder.h2d_bytes;
@@ -1262,13 +1267,13 @@ static int video_vae_decode_backend(
     }
     if (rc == YVEX_OK) video_output_unpack(&patch_output, options, result);
     if (rc == YVEX_OK &&
-        !video_execution_identity("yvex.minimax-h3.video-vae.cuda-f32.v1",
+        !video_execution_identity(video_execution_domain,
                                   yvex_materialization_session_summary(execution.session),
                                   options, result))
         rc = video_execution_refuse(
             &execution, YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NUMERIC,
             NULL, 1ull, 0ull, YVEX_ERR_STATE,
-            "Visual VAE CUDA execution identity could not be sealed");
+            "Visual VAE output identity could not be sealed");
     if (rc == YVEX_OK) {
         result->kernel_launches = decoder.kernel_launches;
         result->h2d_bytes = decoder.h2d_bytes;
@@ -1292,8 +1297,6 @@ static int video_vae_decode_backend(
 static const yvex_component_text_recipe text_recipe = {
     .schema_version = YVEX_COMPONENT_TEXT_RECIPE_SCHEMA_V1,
     .semantic_identity = YVEX_MINIMAX_H3_TEXT_COMPONENT_IDENTITY,
-    .embedding_identity_domain = "yvex.minimax-h3.text-conditioning.cuda.v1",
-    .encoder_identity_domain = "yvex.minimax-h3.qwen-text-stack.cuda.v1",
     .layer_capacity = YVEX_MINIMAX_H3_TEXT_CONDITIONING_LAYERS,
     .hidden_width = 5120ull,
     .ffn_width = 25600ull,

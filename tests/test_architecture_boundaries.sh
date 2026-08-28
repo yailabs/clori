@@ -300,6 +300,9 @@ if rg -n 'yvex_cuda_|yvex_backend_text_(embedding|encoder)_execute|yvex_backend_
     src/graph/families/minimax_h3.c; then
     fail "MiniMax family owns generic component residency or backend dispatch"
 fi
+if rg -n '"yvex[.][^"]*[.](cuda|cpu)[.-]' src/graph/families/minimax_h3.c; then
+    fail "MiniMax output identity domains encode one backend implementation"
+fi
 rg -n 'yvex_runtime_component_text_artifact_execute' src/graph/families/minimax_h3.c >/dev/null ||
     fail "MiniMax text recipe bypasses the generic component lifecycle"
 rg -n 'yvex_runtime_component_joint_transformer_execute' \

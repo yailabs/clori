@@ -154,8 +154,6 @@ static int layer_proof_execute(
     geometry = (yvex_component_text_recipe){
         .schema_version = YVEX_COMPONENT_TEXT_RECIPE_SCHEMA_V1,
         .semantic_identity = YVEX_MINIMAX_H3_TEXT_COMPONENT_IDENTITY,
-        .embedding_identity_domain = "yvex.minimax-h3.text-conditioning.cuda.v1",
-        .encoder_identity_domain = "yvex.minimax-h3.qwen-text-stack.cuda.v1",
         .layer_capacity = architecture.encoder.text_layers,
         .hidden_width = architecture.encoder.text_width,
         .ffn_width = architecture.encoder.text_ffn_width,

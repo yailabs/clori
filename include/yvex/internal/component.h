@@ -106,8 +106,6 @@ typedef struct yvex_runtime_av_conditioning_result {
 typedef struct yvex_component_text_recipe {
     unsigned int schema_version;
     const char *semantic_identity;
-    const char *embedding_identity_domain;
-    const char *encoder_identity_domain;
     unsigned long long layer_capacity, hidden_width, ffn_width;
     unsigned long long query_heads, kv_heads, head_dimension;
     unsigned long long vocabulary_size, rope_theta;

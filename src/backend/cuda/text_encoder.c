@@ -18,11 +18,15 @@
 enum {
     TEXT_IDENTITY_CAP = 65u
 };
+static const char text_embedding_identity_domain[] =
+    "yvex.component.text.embedding-output.f32.v1";
+static const char text_encoder_identity_domain[] =
+    "yvex.component.text.encoder-output.f32.v1";
 
 typedef struct {
     unsigned long long hidden, vocabulary, ffn, query_heads, kv_heads;
     unsigned long long head_dimension, query_width, kv_width, rope_theta, layer_capacity;
-    const char *semantic_identity, *embedding_identity_domain, *encoder_identity_domain;
+    const char *semantic_identity;
     float normalization_epsilon;
 } text_geometry;
 
@@ -64,8 +68,6 @@ static int text_geometry_build(const yvex_component_text_recipe *source,
     if (!source || !out ||
         source->schema_version != YVEX_COMPONENT_TEXT_RECIPE_SCHEMA_V1 ||
         !yvex_sha256_hex_valid(source->semantic_identity) ||
-        !source->embedding_identity_domain || !*source->embedding_identity_domain ||
-        !source->encoder_identity_domain || !*source->encoder_identity_domain ||
         !source->layer_capacity ||
         !source->hidden_width || !source->vocabulary_size || !source->ffn_width ||
         !source->query_heads || !source->kv_heads || !source->head_dimension ||
@@ -85,8 +87,6 @@ static int text_geometry_build(const yvex_component_text_recipe *source,
     geometry.rope_theta = source->rope_theta;
     geometry.layer_capacity = source->layer_capacity;
     geometry.semantic_identity = source->semantic_identity;
-    geometry.embedding_identity_domain = source->embedding_identity_domain;
-    geometry.encoder_identity_domain = source->encoder_identity_domain;
     geometry.normalization_epsilon = source->normalization_epsilon;
     *out = geometry;
     return 1;
@@ -109,7 +109,7 @@ static int conditioning_identity(
     unsigned long long index;
 
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, geometry->embedding_identity_domain) ||
+    if (!yvex_sha256_update_text(&hash, text_embedding_identity_domain) ||
         !yvex_sha256_update_text(&hash, geometry->semantic_identity) ||
         !yvex_sha256_update_text(&hash, residency_identity) ||
         !yvex_sha256_update_u64(&hash, token_count) ||
@@ -257,7 +257,7 @@ static int text_layer_identity(
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     unsigned long long index;
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, geometry->encoder_identity_domain) ||
+    if (!yvex_sha256_update_text(&hash, text_encoder_identity_domain) ||
         !yvex_sha256_update_text(&hash, geometry->semantic_identity) ||
         !yvex_sha256_update_text(&hash, residency_identity) ||
         !yvex_sha256_update_u64(&hash, layer_count) ||
