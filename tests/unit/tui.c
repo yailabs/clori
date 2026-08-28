@@ -138,6 +138,10 @@ static int test_state_render_and_input(void)
     YVEX_TEST_ASSERT(yvex_tui_models_load(&state, registry_path, &err) == YVEX_OK &&
                          state.model_count == 1u && state.models[0].profile_count == 2u,
                      "TUI consumes one logical model with subordinate profiles");
+    YVEX_TEST_ASSERT(yvex_tui_launch_profile(&state) &&
+                         !strcmp(yvex_tui_launch_profile(&state)->alias,
+                                 "deepseek4-v4-flash-profile-b"),
+                     "TUI defaults to the newest registered admissible profile");
     YVEX_TEST_ASSERT(render_frame(&state, frame, sizeof(frame)) &&
                          strstr(frame, "RUNTIME OFFLINE") &&
                          strstr(frame, "Enter  Start Runtime") &&

@@ -650,8 +650,8 @@ static void model_copy(yvex_tui_model_row *row,
                   "no runtime profile is registered");
 }
 
-static size_t first_launchable_profile(const yvex_tui_state *state,
-                                       size_t model_index);
+static size_t preferred_launchable_profile(const yvex_tui_state *state,
+                                           size_t model_index);
 
 static void models_publish(yvex_tui_state *state, yvex_tui_model_row *models,
                            yvex_model_library *library, size_t count,
@@ -683,7 +683,7 @@ static void models_publish(yvex_tui_state *state, yvex_tui_model_row *models,
     }
     state->launch_selected_model = state->selected_model;
     state->launch_selected_profile =
-        first_launchable_profile(state, state->launch_selected_model);
+        preferred_launchable_profile(state, state->launch_selected_model);
     if (state->launch_selected_profile == SIZE_MAX)
         state->launch_selected_profile = 0u;
     if (state->model_viewport >= count) state->model_viewport = 0u;
@@ -761,16 +761,21 @@ const yvex_model_runtime_profile_fact *yvex_tui_launch_profile(
         state->launch_selected_profile);
 }
 
-static size_t first_launchable_profile(const yvex_tui_state *state, size_t model_index)
+static size_t preferred_launchable_profile(const yvex_tui_state *state,
+                                           size_t model_index)
 {
     unsigned long long count, index;
     if (!state || !state->model_library || model_index >= state->model_count)
         return SIZE_MAX;
     count = yvex_model_library_profile_count(state->model_library, model_index);
-    for (index = 0u; index < count; ++index) {
+    /* The v5 registry has no explicit preferred-profile field.  Registration is
+     * append ordered, so default to the newest admissible profile while keeping
+     * every older profile available for explicit selection. */
+    for (index = count; index > 0u; --index) {
         const yvex_model_runtime_profile_fact *profile =
-            yvex_model_library_profile_at(state->model_library, model_index, index);
-        if (profile && profile->launchable) return (size_t)index;
+            yvex_model_library_profile_at(state->model_library, model_index,
+                                          index - 1u);
+        if (profile && profile->launchable) return (size_t)(index - 1u);
     }
     return SIZE_MAX;
 }
@@ -788,7 +793,8 @@ void yvex_tui_runtime_launch_open(yvex_tui_state *state, size_t model_index,
         model_index = index;
     }
     state->launch_selected_model = model_index;
-    state->launch_selected_profile = first_launchable_profile(state, model_index);
+    state->launch_selected_profile =
+        preferred_launchable_profile(state, model_index);
     if (state->launch_selected_profile == SIZE_MAX) return;
     text_copy(state->launch_request.profile, sizeof(state->launch_request.profile),
               yvex_tui_launch_profile(state)->alias);

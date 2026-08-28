@@ -147,14 +147,8 @@ static void launch_model_move(yvex_tui_state *state, int direction)
         if (direction < 0) index = index ? index - 1u : state->model_count - 1u;
         else index = (index + 1u) % state->model_count;
         if (state->models[index].startup_ready) {
-            state->launch_selected_model = index;
-            state->launch_selected_profile = 0u;
-            while (state->launch_selected_profile < state->models[index].profile_count) {
-                const yvex_model_runtime_profile_fact *profile = yvex_tui_launch_profile(state);
-                if (profile && profile->launchable) break;
-                state->launch_selected_profile++;
-            }
-            state->redraw = 1;
+            yvex_tui_runtime_launch_open(state, index,
+                                         state->restart_pending);
             return;
         }
     } while (index != state->launch_selected_model);
