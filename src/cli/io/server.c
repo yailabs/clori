@@ -18,6 +18,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <unistd.h>
 
 typedef struct {
@@ -701,12 +702,27 @@ static void console_line_run(cli_server_thread_state *state, char *line)
     }
 }
 
+static void console_ready_announce(void)
+{
+    yvex_cli_terminal_style style;
+
+    yvex_cli_terminal_style_get(stdout, &style);
+    printf("\n  %s● READY%s  %sInteractive host console ready%s\n",
+           style.success, style.reset, style.strong, style.reset);
+    printf("  %sLIFECYCLE%s  profiles  ·  load MODEL  ·  models  ·  unload [MODEL]\n",
+           style.dim, style.reset);
+    printf("  %sOBSERVE%s    status    ·  help        %sSHUTDOWN%s  stop\n",
+           style.dim, style.reset, style.dim, style.reset);
+    printf("  %sExternal Unix and OpenAI clients remain online while you operate here.%s\n\n",
+           style.dim, style.reset);
+}
+
 static void *operator_console_main(void *opaque)
 {
     cli_server_thread_state *state = opaque;
     struct pollfd input = {.fd = STDIN_FILENO, .events = POLLIN | POLLHUP};
     char line[1024];
-    puts("\nInteractive host console ready · type `profiles` to choose a model or `help`.");
+    console_ready_announce();
     console_prompt(state->server);
     for (;;) {
         yvex_server_summary summary;
@@ -734,29 +750,178 @@ static void *operator_console_main(void *opaque)
     return NULL;
 }
 
-static void startup_announce(const yvex_server_options *options, int interactive)
+static unsigned int startup_terminal_columns(void)
 {
-    char socket_path[YVEX_SERVER_SOCKET_PATH_CAP];
-    yvex_cli_terminal_style style;
-    yvex_error err;
-    const char *endpoint = options->socket_path;
-    if (!endpoint && yvex_server_socket_path(socket_path, &err) == YVEX_OK)
-        endpoint = socket_path;
-    yvex_cli_terminal_style_get(stdout, &style);
-    printf("%s"
-           "__   __  __     __  ______  __   __\n"
-           "\\ \\ / /  \\ \\   / / |  ____| \\ \\ / /\n"
-           " \\ V /    \\ \\ / /  | |__     \\ V /\n"
-           "  | |      \\ V /   |  __|     > <\n"
-           "  | |       \\ /    | |____   / . \\\n"
-           "  |_|        V     |______| /_/ \\_\\\n"
-           "%snative verified inference · YVEX %s · protocol %u\n\n"
-           "YVEX server · persistent host\n"
+    struct winsize window = {0};
+    unsigned long long configured;
+
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &window) == 0 && window.ws_col)
+        return window.ws_col;
+    if (parse_u64(getenv("COLUMNS"), &configured) && configured <= UINT_MAX)
+        return (unsigned int)configured;
+    return 80u;
+}
+
+static void startup_tail_fit(char *output, size_t capacity, const char *text,
+                             size_t maximum)
+{
+    size_t length, retained;
+
+    if (!output || !capacity) return;
+    text = text ? text : "unavailable";
+    length = strlen(text);
+    if (maximum >= capacity) maximum = capacity - 1u;
+    if (length <= maximum) {
+        (void)snprintf(output, capacity, "%s", text);
+        return;
+    }
+    if (maximum <= 3u) {
+        (void)snprintf(output, capacity, "%.*s", (int)maximum, text);
+        return;
+    }
+    retained = maximum - 3u;
+    (void)snprintf(output, capacity, "...%s", text + length - retained);
+}
+
+static size_t startup_text_columns(const char *text)
+{
+    const unsigned char *byte = (const unsigned char *)(text ? text : "");
+    size_t columns = 0u;
+
+    for (; *byte; ++byte)
+        if ((*byte & 0xc0u) != 0x80u) columns++;
+    return columns;
+}
+
+static const char *startup_logo_line(size_t index)
+{
+    /* Generated from the canonical traced mark at 88x64 dots, then packed into
+     * Unicode Braille cells.  The star is strengthened for terminal legibility. */
+    static const char *const logo[] = {
+        "                     ✦",
+        " ⢲⣤⣀          " "   ⡀   ⢸⡇   ⢀ " "            ⣀⣤" "⡖",
+        "  ⠙⢿⣿⣶⣤⣀      " "   ⠘⢆  ⢸⡇  ⡴⠃ " "        ⣀⣤⣶⣿⡿⠋",
+        "   ⠈⠻⣿⣿⣿⣿⣶⣄⡀  " "    ⠈⢷⡀  ⢀⡞⠁  " "    ⢀⣠⣶⣿⣿⣿⣿⠟⠁",
+        "     ⠈⢿⣿⣿⣿⣿⣿⣷⣦" "⣄     ⠻⣄⣠⠟    " " ⣠⣴⣾⣿⣿⣿⣿⣿⡿⠁",
+        "       ⠙⢿⣿⣿⣿⣿⣿" "⣿⣿⣶⣄⡀  ⣿⣿  ⢀⣠⣶" "⣿⣿⣿⣿⣿⣿⣿⡿⠋",
+        "         ⠹⣿⣿⣿⣿" "⣿⣿⣿⣟⣛⠲⢴⣿⣿⡤⠞⣛⣿⣿" "⣿⣿⣿⣿⣿⣿⠏",
+        "          ⠈⢻⣿⣿" "⣿⣿⣿⠿⢿⣻⣿⣿⣿⣿⣟⡿⠿⣿" "⣿⣿⣿⣿⡟⠁",
+        "            ⠙⠛" "⠉⢁⣤⣶⣿⣿⢻⣿⣿⡟⣿⣿⣶⣤" "⡈⠉⠛⠋",
+        "              " "⣰⣿⣿⣿⣿⠏⢀⣿⣿⡀⠹⣿⣿⣿" "⣿⣆",
+        "             ⢠" "⣿⣿⣿⣿⡟ ⠈⣿⣿⠃ ⢻⣿⣿" "⣿⣿⡄",
+        "            ⢠⣿" "⣿⣿⡿⠛⠁  ⣿⣿  ⠈⠻⢿" "⣿⣿⣿⡄",
+        "           ⢀⣾⡿" "⠛⠁     ⣿⣿     " "⠉⠛⢿⣷⡀",
+        "           ⠘⠁ " "       ⢸⡇     " "   ⠈⠃",
+        "                     ⢸⡇",
+        "                     ⠘⠃",
+        "",
+        "                Y  V  E  X",
+    };
+
+    return index < sizeof(logo) / sizeof(logo[0]) ? logo[index] : "";
+}
+
+static void startup_hero_row(const yvex_cli_terminal_style *style,
+                             const char *art, const char *label,
+                             const char *value, const char *tone)
+{
+    size_t width;
+
+    art = art ? art : "";
+    printf("  %s%s%s", style->strong, art, style->reset);
+    width = startup_text_columns(art);
+    while (width++ < 46u) fputc(' ', stdout);
+    fputs("  ", stdout);
+    if (label && label[0])
+        printf("%s%-10s%s ", style->dim, label, style->reset);
+    if (value && value[0])
+        printf("%s%s%s", tone ? tone : "", value, style->reset);
+    fputc('\n', stdout);
+}
+
+static void startup_logo_render(const yvex_cli_terminal_style *style)
+{
+    size_t index;
+
+    fputc('\n', stdout);
+    for (index = 0u; index < 18u; ++index)
+        printf("  %s%s%s\n", style->strong, startup_logo_line(index),
+               style->reset);
+    fputc('\n', stdout);
+}
+
+static void startup_announce_wide(const yvex_server_options *options,
+                                  const char *endpoint,
+                                  const yvex_cli_terminal_style *style,
+                                  unsigned int columns)
+{
+    char engines[64], workers[64], protocol[96], local[YVEX_SERVER_SOCKET_PATH_CAP];
+    char openai[64];
+    size_t endpoint_width = columns > 64u ? columns - 64u : 24u;
+
+    (void)snprintf(engines, sizeof(engines), "0 / %u capacity",
+                   (unsigned int)options->maximum_engines);
+    (void)snprintf(workers, sizeof(workers), "%llu parallel",
+                   options->worker_count);
+    (void)snprintf(protocol, sizeof(protocol), "v%u · YVEX %s",
+                   YVEX_LOCAL_PROTOCOL_VERSION, yvex_version_string());
+    startup_tail_fit(local, sizeof(local), endpoint, endpoint_width);
+    if (options->openai_enabled)
+        (void)snprintf(openai, sizeof(openai), "127.0.0.1:%u · loopback",
+                       (unsigned int)options->openai_port);
+    else
+        (void)snprintf(openai, sizeof(openai), "disabled");
+
+    fputc('\n', stdout);
+    startup_hero_row(style, startup_logo_line(0u), NULL,
+                     "YVEX SERVER · PERSISTENT HOST",
+                     style->accent);
+    startup_hero_row(style, startup_logo_line(1u), NULL,
+                     "native verified inference command center",
+                     style->dim);
+    startup_hero_row(style, startup_logo_line(2u), NULL, NULL, NULL);
+    startup_hero_row(style, startup_logo_line(3u), "STATE", "● STARTING",
+                     style->warning);
+    startup_hero_row(style, startup_logo_line(4u), "ENGINES", engines,
+                     style->strong);
+    startup_hero_row(style, startup_logo_line(5u), "WORKERS", workers,
+                     style->strong);
+    startup_hero_row(style, startup_logo_line(6u), "PROTOCOL", protocol,
+                     style->strong);
+    startup_hero_row(style, startup_logo_line(7u), "CONSOLE", "human · interactive",
+                     style->strong);
+    startup_hero_row(style, startup_logo_line(8u), NULL, NULL, NULL);
+    startup_hero_row(style, startup_logo_line(9u), "LOCAL IPC", local,
+                     style->strong);
+    startup_hero_row(style, startup_logo_line(10u), "OPENAI", openai,
+                     options->openai_enabled ? style->success : style->dim);
+    startup_hero_row(style, startup_logo_line(11u), "ACCESS",
+                     "external clients enabled", style->success);
+    startup_hero_row(style, startup_logo_line(12u), NULL, NULL, NULL);
+    startup_hero_row(style, startup_logo_line(13u), "CONTROL",
+                     "profiles · load · models",
+                     style->strong);
+    startup_hero_row(style, startup_logo_line(14u), "OPERATE",
+                     "status · help · unload",
+                     style->strong);
+    startup_hero_row(style, startup_logo_line(15u), "SHUTDOWN", "stop",
+                     style->warning);
+    startup_hero_row(style, startup_logo_line(16u), NULL, NULL, NULL);
+    startup_hero_row(style, startup_logo_line(17u), "HELP",
+                     "type `help` for the full command map", style->dim);
+}
+
+static void startup_announce_compact(const yvex_server_options *options,
+                                     const char *endpoint, int interactive,
+                                     const yvex_cli_terminal_style *style)
+{
+    printf("%sYVEX server%s · persistent host\n"
+           "%snative verified inference%s · YVEX %s · protocol %u\n"
            "  engines 0/%u · parallel workers=%llu\n"
            "  local endpoint %s",
-           style.strong, style.reset, yvex_version_string(),
-           YVEX_LOCAL_PROTOCOL_VERSION, (unsigned int)options->maximum_engines,
-           options->worker_count,
+           style->strong, style->reset, style->dim, style->reset,
+           yvex_version_string(), YVEX_LOCAL_PROTOCOL_VERSION,
+           (unsigned int)options->maximum_engines, options->worker_count,
            endpoint ? endpoint : "unavailable");
     if (options->openai_enabled)
         printf(" · OpenAI 127.0.0.1:%u", (unsigned int)options->openai_port);
@@ -767,6 +932,25 @@ static void startup_announce(const yvex_server_options *options, int interactive
     else
         printf("\n  load with `yvex server load MODEL`"
                " · stop with Ctrl-C or `yvex server stop`\n");
+}
+
+static void startup_announce(const yvex_server_options *options, int interactive)
+{
+    char socket_path[YVEX_SERVER_SOCKET_PATH_CAP];
+    yvex_cli_terminal_style style;
+    unsigned int columns;
+    yvex_error err;
+    const char *endpoint = options->socket_path;
+    if (!endpoint && yvex_server_socket_path(socket_path, &err) == YVEX_OK)
+        endpoint = socket_path;
+    yvex_cli_terminal_style_get(stdout, &style);
+    columns = startup_terminal_columns();
+    if (interactive && columns >= 104u)
+        startup_announce_wide(options, endpoint, &style, columns);
+    else {
+        if (interactive) startup_logo_render(&style);
+        startup_announce_compact(options, endpoint, interactive, &style);
+    }
     (void)fflush(stdout);
 }
 

@@ -200,10 +200,16 @@ test ! -e "$SOCKET_PATH"
 printf 'profiles\nload deepseek4-v4-flash-dspark\nload 2\nmodels\nstatus\nstop\n' |
     HOME="$HOME_ROOT" XDG_RUNTIME_DIR="$SOCKET_ROOT" NO_COLOR=1 TERM=xterm-256color \
     script -q -e -c \
-        "$YVEX_BIN server --openai off --workers 2 --max-engines 2" \
+        "stty cols 132 rows 44; $YVEX_BIN server --openai off --workers 2 --max-engines 2" \
         "$OUT_DIR/console.typescript" \
         >"$OUT_DIR/console.out" 2>"$OUT_DIR/console.err"
+contains "$OUT_DIR/console.typescript" 'YVEX SERVER · PERSISTENT HOST'
+contains "$OUT_DIR/console.typescript" 'STATE      ● STARTING'
+contains "$OUT_DIR/console.typescript" 'LOCAL IPC'
+contains "$OUT_DIR/console.typescript" 'CONTROL    profiles · load · models'
 contains "$OUT_DIR/console.typescript" 'Interactive host console ready'
+contains "$OUT_DIR/console.typescript" 'LIFECYCLE  profiles  ·  load MODEL'
+contains "$OUT_DIR/console.typescript" 'OBSERVE    status    ·  help'
 contains "$OUT_DIR/console.typescript" 'yvex[host] >'
 contains "$OUT_DIR/console.typescript" \
     'structurally complete local profiles · load authenticates artifact + binding'
