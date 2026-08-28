@@ -288,36 +288,46 @@ static void component_text_result_project(
     out->complete = source->complete;
 }
 
-int yvex_runtime_component_text_artifact_execute(
-    const yvex_complete_artifact_admission *admission, const yvex_artifact *artifact,
-    const yvex_gguf *gguf, const yvex_tensor_table *tensors,
-    yvex_backend_kind backend_kind, const yvex_component_text_request *request,
+static int component_text_request_validate(
+    const yvex_component_text_request *request, const yvex_runtime_av_conditioning_result *result,
+    unsigned long long *output_values, unsigned long long *output_bytes, yvex_error *err)
+{
+    if (!request || !request->recipe ||
+        request->recipe->schema_version != YVEX_COMPONENT_TEXT_RECIPE_SCHEMA_V1 ||
+        !request->embedding_weight_name || !request->token_ids || !request->token_count ||
+        !request->output || !result || !output_values || !output_bytes ||
+        request->layer_count > request->recipe->layer_capacity ||
+        (request->layer_count && !request->layer_weight_name) ||
+        !yvex_core_u64_mul(request->token_count, request->recipe->hidden_width, output_values) ||
+        *output_values > request->output_capacity ||
+        !yvex_core_u64_mul(*output_values, sizeof(float), output_bytes) ||
+        *output_bytes > SIZE_MAX) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.component.text",
+                       "one admitted bounded text-component recipe is required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    return YVEX_OK;
+}
+
+int yvex_runtime_component_text_execute(
+    const yvex_runtime_component_session *session, const yvex_component_text_request *request,
     yvex_runtime_av_conditioning_result *result, yvex_error *err)
 {
     const yvex_backend_component_operations *operations = NULL;
     const yvex_materialized_tensor_binding *embedding = NULL;
-    yvex_runtime_component_session *session = NULL;
     yvex_backend_text_weight *weights = NULL;
     yvex_backend_text_execution_result backend_result = {0};
     const unsigned char *encoded = NULL;
     unsigned long long encoded_bytes = 0ull, output_values, output_bytes, weight_count = 0ull;
     float *staged = NULL;
-    int rc, cleanup_rc;
-    yvex_error cleanup;
+    int rc;
     if (result) memset(result, 0, sizeof(*result));
-    if (!admission || !artifact || !gguf || !tensors || !request || !request->recipe ||
-        request->recipe->schema_version != YVEX_COMPONENT_TEXT_RECIPE_SCHEMA_V1 ||
-        !request->embedding_weight_name || !request->token_ids || !request->token_count ||
-        !request->output || !result || !request->maximum_device_bytes ||
-        request->layer_count > request->recipe->layer_capacity ||
-        (request->layer_count && !request->layer_weight_name) ||
-        !yvex_core_u64_mul(request->token_count, request->recipe->hidden_width,
-                           &output_values) ||
-        output_values > request->output_capacity ||
-        !yvex_core_u64_mul(output_values, sizeof(float), &output_bytes) ||
-        output_bytes > SIZE_MAX) {
+    rc = component_text_request_validate(request, result, &output_values, &output_bytes, err);
+    if (rc != YVEX_OK) return rc;
+    if (!session || !session->materialization || !session->residency || !session->backend ||
+        !session->summary.sealed || session->summary.invalidated) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.component.text",
-                       "one admitted bounded text-component recipe is required");
+                       "one sealed component execution session is required");
         return YVEX_ERR_INVALID_ARG;
     }
     staged = (float *)malloc((size_t)output_bytes);
@@ -338,18 +348,13 @@ int yvex_runtime_component_text_artifact_execute(
                        "bounded text-component bindings could not be allocated");
         return YVEX_ERR_NOMEM;
     }
-    rc = yvex_runtime_component_session_open(
-        &session, admission, artifact, gguf, tensors, backend_kind,
-        request->maximum_host_bytes, request->maximum_device_bytes, err);
-    if (rc == YVEX_OK) {
-        operations = yvex_backend_component_operations_get(session->backend);
-        if (!operations ||
-            (!request->layer_count && !operations->text_embedding_execute) ||
-            (request->layer_count && !operations->text_encoder_execute)) {
-            yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "runtime.component.text",
-                           "the selected backend lacks admitted text-component execution");
-            rc = YVEX_ERR_UNSUPPORTED;
-        }
+    operations = yvex_backend_component_operations_get(session->backend);
+    if (!operations ||
+        (!request->layer_count && !operations->text_embedding_execute) ||
+        (request->layer_count && !operations->text_encoder_execute)) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "runtime.component.text",
+                       "the selected backend lacks admitted text-component execution");
+        rc = YVEX_ERR_UNSUPPORTED;
     }
     embedding = rc == YVEX_OK
                     ? component_binding_find(
@@ -379,12 +384,6 @@ int yvex_runtime_component_text_artifact_execute(
             session->summary.residency_identity, session->summary.encoded_bytes,
             request->token_ids, request->token_count, staged, output_values,
             &backend_result, err);
-    yvex_error_clear(&cleanup);
-    cleanup_rc = yvex_runtime_component_session_close(&session, &cleanup);
-    if (cleanup_rc != YVEX_OK) {
-        rc = cleanup_rc;
-        if (err) *err = cleanup;
-    }
     if (rc == YVEX_OK) {
         memcpy(request->output, staged, (size_t)output_bytes);
         component_text_result_project(result, &backend_result);
@@ -392,6 +391,38 @@ int yvex_runtime_component_text_artifact_execute(
     }
     free(weights);
     free(staged);
+    return rc;
+}
+
+int yvex_runtime_component_text_artifact_execute(
+    const yvex_complete_artifact_admission *admission, const yvex_artifact *artifact,
+    const yvex_gguf *gguf, const yvex_tensor_table *tensors,
+    yvex_backend_kind backend_kind, const yvex_component_text_request *request,
+    yvex_runtime_av_conditioning_result *result, yvex_error *err)
+{
+    yvex_runtime_component_session *session = NULL;
+    unsigned long long output_values, output_bytes;
+    yvex_error cleanup;
+    int rc, cleanup_rc;
+    if (result) memset(result, 0, sizeof(*result));
+    rc = component_text_request_validate(request, result, &output_values, &output_bytes, err);
+    if (rc != YVEX_OK) return rc;
+    if (!admission || !artifact || !gguf || !tensors || !request->maximum_device_bytes) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.component.text",
+                       "one admitted text-component artifact and resource budget are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    rc = yvex_runtime_component_session_open(
+        &session, admission, artifact, gguf, tensors, backend_kind,
+        request->maximum_host_bytes, request->maximum_device_bytes, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_component_text_execute(session, request, result, err);
+    yvex_error_clear(&cleanup);
+    cleanup_rc = yvex_runtime_component_session_close(&session, &cleanup);
+    if (cleanup_rc != YVEX_OK) {
+        rc = cleanup_rc;
+        if (err) *err = cleanup;
+    }
     return rc;
 }
 

@@ -297,6 +297,10 @@ src/model/families/minimax_h3.c'
 if rg -n -i '(families/|deepseek|minimax|qwen)' src/backend/cuda/text_encoder.c; then
     fail "generic CUDA text execution contains concrete family semantics"
 fi
+if rg -n 'yvex_runtime_component_session_(open|close)|yvex_runtime_component_text_artifact_execute' \
+    src/backend; then
+    fail "a backend owns component admission or runtime session lifecycle"
+fi
 if rg -n 'yvex_cuda_|yvex_backend_text_(embedding|encoder)_execute|yvex_backend_transformer_joint_cuda|yvex_backend_alias_decoder_execute' \
     src/graph/families/minimax_h3.c; then
     fail "MiniMax family owns generic component residency or backend dispatch"

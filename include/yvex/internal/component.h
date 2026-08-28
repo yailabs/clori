@@ -264,6 +264,10 @@ int yvex_runtime_component_session_open(
     const yvex_artifact *, const yvex_gguf *, const yvex_tensor_table *, yvex_backend_kind,
     unsigned long long, unsigned long long, yvex_error *);
 int yvex_runtime_component_session_close(yvex_runtime_component_session **, yvex_error *);
+/* Execute against a sealed borrowed session; the caller retains lifecycle ownership. */
+int yvex_runtime_component_text_execute(
+    const yvex_runtime_component_session *, const yvex_component_text_request *,
+    yvex_runtime_av_conditioning_result *, yvex_error *);
 int yvex_runtime_component_text_artifact_execute(
     const yvex_complete_artifact_admission *, const yvex_artifact *, const yvex_gguf *,
     const yvex_tensor_table *, yvex_backend_kind, const yvex_component_text_request *,

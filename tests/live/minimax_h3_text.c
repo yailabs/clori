@@ -512,6 +512,7 @@ static int multimodal_execute(
     yvex_model_context model = {0};
     yvex_complete_artifact_admission admission;
     yvex_artifact_admission_failure failure = {0};
+    yvex_runtime_component_session *session = NULL;
     yvex_runtime_av_conditioning_result result;
     yvex_media_condition condition = {
         .schema_version = YVEX_MEDIA_CONDITION_SCHEMA_V1,
@@ -526,8 +527,8 @@ static int multimodal_execute(
     unsigned int *tags = NULL;
     unsigned long long maximum_tokens = 256ull, output_values;
     char output_path[1024];
-    yvex_error err;
-    int rc;
+    yvex_error err, cleanup;
+    int rc, cleanup_rc;
 
     output_values = maximum_tokens * TEXT_HIDDEN;
     output = calloc((size_t)output_values, sizeof(*output));
@@ -548,6 +549,11 @@ static int multimodal_execute(
     if (rc == YVEX_OK)
         rc = yvex_image_decode_file(&image, image_path,
                                     256ull * 1024ull * 1024ull, &err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_component_session_open(
+            &session, &admission, model.artifact, model.gguf, model.table,
+            YVEX_BACKEND_KIND_CUDA, admission.payload_bytes,
+            80ull * 1024ull * 1024ull * 1024ull, &err);
     request = (yvex_media_conditioning_request){
         .schema_version = YVEX_MEDIA_CONDITIONING_SCHEMA_V2,
         .prompt = prompt,
@@ -559,12 +565,7 @@ static int multimodal_execute(
         .height = 192ull,
         .layer_count = 50ull,
         .maximum_prompt_tokens = maximum_tokens,
-        .maximum_host_bytes = admission.payload_bytes,
-        .maximum_device_bytes = 80ull * 1024ull * 1024ull * 1024ull,
-        .text_admission = &admission,
-        .text_artifact = model.artifact,
-        .text_gguf = model.gguf,
-        .text_tensors = model.table,
+        .text_session = session,
         .conditioning = output,
         .text_tags = tags,
         .conditioning_capacity = output_values,
@@ -576,6 +577,12 @@ static int multimodal_execute(
     };
     if (rc == YVEX_OK)
         rc = yvex_backend_minimax_h3_fl2va_condition(&request, &result, &err);
+    yvex_error_clear(&cleanup);
+    cleanup_rc = yvex_runtime_component_session_close(&session, &cleanup);
+    if (cleanup_rc != YVEX_OK) {
+        rc = cleanup_rc;
+        err = cleanup;
+    }
     if (rc == YVEX_OK &&
         !evidence_write(evidence_root, "conditioning.yvex.f32", output,
                         (size_t)(result.token_count * TEXT_HIDDEN) * sizeof(float)))
