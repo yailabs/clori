@@ -6,6 +6,7 @@
  * runtime support.
  */
 #include "src/backend/cuda/private.h"
+#include "src/backend/cuda/component_ops.h"
 #include <ctype.h>
 #include <dlfcn.h>
 #include <limits.h>
@@ -14,7 +15,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-
 #define CUDA_BANDWIDTH_WORKING_SET (32ull * 1024ull * 1024ull)
 #define CUDA_BANDWIDTH_ITERATIONS 8ull
 #define CUDA_BANDWIDTH_BLOCK 256u
@@ -1680,7 +1680,6 @@ static int cuda_bandwidth_probe(yvex_backend *backend,
     }
     return rc;
 }
-
 static const yvex_backend_vtable cuda_vtable = {
     .close = cuda_close,
     .memory_stats = cuda_memory_stats,
@@ -1714,6 +1713,7 @@ static const yvex_backend_vtable cuda_vtable = {
     .sampling_operations = yvex_cuda_sampling_operations_get,
     .moe_operations = yvex_cuda_moe_operations_get,
     .transformer_operations = yvex_cuda_transformer_operations_get,
+    .component_operations = yvex_cuda_component_operations_get,
 };
 
 static int shared_owner_acquire(yvex_backend *owner, yvex_error *err)

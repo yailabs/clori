@@ -265,12 +265,13 @@ static void component_text_result_project(
     out->complete = source->complete;
 }
 
-int yvex_runtime_component_text_artifact_cuda(
+int yvex_runtime_component_text_artifact_execute(
     const yvex_complete_artifact_admission *admission, const yvex_artifact *artifact,
     const yvex_gguf *gguf, const yvex_tensor_table *tensors,
-    const yvex_component_text_request *request,
+    yvex_backend_kind backend_kind, const yvex_component_text_request *request,
     yvex_runtime_av_conditioning_result *result, yvex_error *err)
 {
+    const yvex_backend_component_operations *operations = NULL;
     const yvex_materialized_tensor_binding *embedding = NULL;
     yvex_runtime_component_session *session = NULL;
     yvex_backend_text_weight *weights = NULL;
@@ -315,8 +316,18 @@ int yvex_runtime_component_text_artifact_cuda(
         return YVEX_ERR_NOMEM;
     }
     rc = yvex_runtime_component_session_open(
-        &session, admission, artifact, gguf, tensors, YVEX_BACKEND_KIND_CUDA,
+        &session, admission, artifact, gguf, tensors, backend_kind,
         request->maximum_host_bytes, request->maximum_device_bytes, err);
+    if (rc == YVEX_OK) {
+        operations = yvex_backend_component_operations_get(session->backend);
+        if (!operations ||
+            (!request->layer_count && !operations->text_embedding_execute) ||
+            (request->layer_count && !operations->text_encoder_execute)) {
+            yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "runtime.component.text",
+                           "the selected backend lacks admitted text-component execution");
+            rc = YVEX_ERR_UNSUPPORTED;
+        }
+    }
     embedding = rc == YVEX_OK
                     ? component_binding_find(
                           session->materialization, request->embedding_weight_name)
@@ -332,7 +343,7 @@ int yvex_runtime_component_text_artifact_cuda(
         rc = yvex_runtime_residency_binding_view(
             session->residency, embedding, &encoded, &encoded_bytes, err);
     if (rc == YVEX_OK && !request->layer_count)
-        rc = yvex_backend_text_embedding_execute(
+        rc = operations->text_embedding_execute(
             session->backend, request->recipe, encoded, encoded_bytes, embedding->qtype,
             embedding->row_count, embedding->row_width,
             embedding->encoded_bytes / embedding->row_count,
@@ -340,7 +351,7 @@ int yvex_runtime_component_text_artifact_cuda(
             request->token_ids, request->token_count, staged, output_values,
             &backend_result, err);
     if (rc == YVEX_OK && request->layer_count)
-        rc = yvex_backend_text_encoder_execute(
+        rc = operations->text_encoder_execute(
             session->backend, request->recipe, weights, request->layer_count,
             session->summary.residency_identity, session->summary.encoded_bytes,
             request->token_ids, request->token_count, staged, output_values,
@@ -380,13 +391,14 @@ static int component_joint_weight_bind(
     return rc;
 }
 
-int yvex_runtime_component_joint_transformer_cuda(
+int yvex_runtime_component_joint_transformer_execute(
     yvex_runtime_component_session *session, const char *const *external_names,
     unsigned long long external_count, yvex_component_joint_weight_name_fn block_weight_name,
     void *weight_name_context, const yvex_transformer_joint_request *request,
     yvex_transformer_joint_result *result, yvex_error *err)
 {
-    const yvex_backend_transformer_operations *operations = NULL;
+    const yvex_backend_transformer_operations *transformer_operations = NULL;
+    const yvex_backend_component_operations *component_operations = NULL;
     yvex_transformer_joint_encoded_weight external[YVEX_TRANSFORMER_JOINT_EXTERNAL_WEIGHT_COUNT] = {{0}};
     yvex_transformer_joint_encoded_weight *blocks = NULL;
     unsigned long long count, index, workspace_bytes = 0ull;
@@ -397,14 +409,14 @@ int yvex_runtime_component_joint_transformer_cuda(
         !block_weight_name || !request || !request->recipe || !result ||
         !request->block_count || request->block_count > request->recipe->block_count ||
         !session->backend || !session->residency || !session->summary.sealed ||
-        !session->summary.cuda_ready || session->summary.invalidated ||
+        session->summary.invalidated ||
         !yvex_core_u64_mul(request->block_count,
                            YVEX_TRANSFORMER_JOINT_BLOCK_WEIGHT_COUNT, &count) ||
         count > SIZE_MAX / sizeof(*blocks) ||
         !(blocks = (yvex_transformer_joint_encoded_weight *)calloc(
               (size_t)count, sizeof(*blocks)))) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.component.joint-transformer",
-                       "one sealed CUDA component and complete named recipe are required");
+                       "one sealed backend component and complete named recipe are required");
         return YVEX_ERR_INVALID_ARG;
     }
     for (index = 0ull; rc == YVEX_OK && index < external_count; ++index) {
@@ -427,8 +439,10 @@ int yvex_runtime_component_joint_transformer_cuda(
             rc = component_joint_weight_bind(session, name, blocks + index, err);
     }
     if (rc == YVEX_OK) {
-        operations = yvex_backend_transformer_operations_get(session->backend);
-        if (!operations || !operations->gqa_workspace_required) {
+        transformer_operations = yvex_backend_transformer_operations_get(session->backend);
+        component_operations = yvex_backend_component_operations_get(session->backend);
+        if (!transformer_operations || !transformer_operations->gqa_workspace_required ||
+            !component_operations || !component_operations->joint_transformer_execute) {
             yvex_error_set(err, YVEX_ERR_UNSUPPORTED,
                            "runtime.component.joint-transformer",
                            "the admitted backend lacks transformer workspace planning");
@@ -436,7 +450,7 @@ int yvex_runtime_component_joint_transformer_cuda(
         }
     }
     if (rc == YVEX_OK)
-        rc = operations->gqa_workspace_required(
+        rc = transformer_operations->gqa_workspace_required(
             request->packed_rows, request->recipe->attention_heads,
             request->recipe->attention_heads, request->recipe->head_dimension,
             &workspace_bytes, err);
@@ -444,7 +458,7 @@ int yvex_runtime_component_joint_transformer_cuda(
         rc = component_session_prepare_workspace(
             session, workspace_bytes, err);
     if (rc == YVEX_OK)
-        rc = yvex_backend_transformer_joint_cuda(
+        rc = component_operations->joint_transformer_execute(
             session->backend, external, blocks, session->summary.residency_identity,
             session->summary.encoded_bytes, request, result, err);
     free(blocks);
@@ -513,13 +527,12 @@ int yvex_runtime_component_dense_decoder_execute(
         !request->output_weight_name || !request->output_bias_name ||
         !request->execution.block_count || !session->backend || !session->residency ||
         !operations || !operations->dense_decoder_execute ||
-        !session->summary.sealed || !session->summary.cuda_ready ||
-        session->summary.invalidated ||
+        !session->summary.sealed || session->summary.invalidated ||
         !yvex_core_u64_mul(request->execution.block_count,
                            YVEX_TRANSFORMER_DENSE_DECODER_BLOCK_WEIGHT_COUNT,
                            &weight_count) || weight_count > SIZE_MAX / sizeof(*blocks)) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.component.dense-decoder",
-                       "one sealed CUDA component and complete named decoder recipe are required");
+                       "one sealed backend component and complete named decoder recipe are required");
         return YVEX_ERR_INVALID_ARG;
     }
     blocks = (yvex_transformer_encoded_weight *)calloc(
@@ -670,26 +683,27 @@ static int component_weight_bind_sized(
     return rc;
 }
 
-int yvex_runtime_component_alias_decoder_cuda(
+int yvex_runtime_component_alias_decoder_execute(
     const yvex_runtime_component_session *session,
     const yvex_alias_decoder_request *request,
     yvex_alias_decoder_result *result, yvex_error *err)
 {
+    const yvex_backend_component_operations *operations =
+        yvex_backend_component_operations_get(session ? session->backend : NULL);
     yvex_alias_decoder_request execution;
     if (result) memset(result, 0, sizeof(*result));
     if (!session || !request || !result || !session->backend || !session->residency ||
-        yvex_backend_kind_of(session->backend) != YVEX_BACKEND_KIND_CUDA ||
-        !session->summary.sealed || !session->summary.cuda_ready ||
+        !operations || !operations->alias_decoder_execute || !session->summary.sealed ||
         session->summary.invalidated || request->weight_bind ||
         request->weight_bind_context) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.component.alias-decoder",
-                       "one sealed CUDA component and unbound decoder recipe are required");
+                       "one sealed backend component and unbound decoder recipe are required");
         return YVEX_ERR_INVALID_ARG;
     }
     execution = *request;
     execution.weight_bind = component_weight_bind_sized;
     execution.weight_bind_context = (void *)session;
-    return yvex_backend_alias_decoder_execute(session->backend, &execution, result, err);
+    return operations->alias_decoder_execute(session->backend, &execution, result, err);
 }
 
 static int component_load_reject(

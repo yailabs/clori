@@ -1,5 +1,6 @@
 /* Execute an admitted text-encoder operation through generic CUDA primitives. */
 #include "src/backend/cuda/private.h"
+#include "src/backend/cuda/component_ops.h"
 #include "src/backend/cuda/transformer_ops.h"
 
 #include <yvex/backend.h>
@@ -162,7 +163,7 @@ static int text_embed_validate(
     return YVEX_OK;
 }
 
-int yvex_backend_text_embedding_execute(
+int yvex_cuda_text_embedding_execute(
     yvex_backend *backend, const yvex_component_text_recipe *source,
     const unsigned char *encoded, unsigned long long encoded_bytes,
     unsigned int qtype, unsigned long long row_count, unsigned long long row_width,
@@ -647,7 +648,7 @@ static int text_devices_release(text_layer_run *run, int rc, yvex_error *err)
     return rc;
 }
 
-int yvex_backend_text_encoder_execute(
+int yvex_cuda_text_encoder_execute(
     yvex_backend *backend, const yvex_component_text_recipe *source,
     const yvex_backend_text_weight *weights, unsigned long long layer_count,
     const char *residency_identity, unsigned long long resident_bytes,

@@ -13,6 +13,7 @@
 #include <yvex/internal/core.h>
 #include <yvex/internal/families/minimax_h3.h>
 #include <yvex/internal/joint_transformer.h>
+#include "src/backend/cuda/component_ops.h"
 
 enum { OMNI_ROWS = 3u, OMNI_HIDDEN = 5376u, OMNI_TIME = 2688u, OMNI_BLOCKS = 50u };
 /* Independent PyTorch CUDA BF16 execution bounds the composed block across
@@ -294,7 +295,7 @@ static int execute_block(
     }
     if (rc == YVEX_OK) {
         yvex_minimax_h3_omni_result refused = {0};
-        int refusal = yvex_backend_transformer_joint_blocks_cuda(
+        int refusal = yvex_cuda_transformer_joint_blocks_execute(
             backend, recipe, weights, 0ull, identity, arena_bytes, hidden, temb, timesteps,
             positions, adaln_indices, rows, output, rows * OMNI_HIDDEN, &refused, NULL, err);
         if (refusal != YVEX_ERR_INVALID_ARG || refused.complete) {
@@ -305,7 +306,7 @@ static int execute_block(
     }
     if (rc == YVEX_OK) {
         yvex_minimax_h3_omni_result refused = {0};
-        int refusal = yvex_backend_transformer_joint_blocks_cuda(
+        int refusal = yvex_cuda_transformer_joint_blocks_execute(
             backend, recipe, weights, block_count, identity, arena_bytes, hidden, temb, timesteps,
             positions, invalid_indices, rows, output, rows * OMNI_HIDDEN, &refused, NULL, err);
         if (refusal != YVEX_ERR_BOUNDS || refused.complete) {
@@ -316,7 +317,7 @@ static int execute_block(
     }
     if (rc == YVEX_OK) {
         yvex_minimax_h3_omni_result refused = {0};
-        int refusal = yvex_backend_transformer_joint_blocks_cuda(
+        int refusal = yvex_cuda_transformer_joint_blocks_execute(
             backend, recipe, weights, block_count, identity, arena_bytes, hidden, temb, timesteps,
             positions, adaln_indices, rows, output, rows * OMNI_HIDDEN - 1ull, &refused, NULL, err);
         if (refusal != YVEX_ERR_INVALID_ARG || refused.complete) {
@@ -326,7 +327,7 @@ static int execute_block(
         }
     }
     if (rc == YVEX_OK)
-        rc = yvex_backend_transformer_joint_blocks_cuda(
+        rc = yvex_cuda_transformer_joint_blocks_execute(
             backend, recipe, weights, block_count, identity, arena_bytes, hidden, temb, timesteps,
             positions, adaln_indices, rows, output, rows * OMNI_HIDDEN, result, NULL, err);
     if (attached) {

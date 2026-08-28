@@ -31,7 +31,7 @@ static int reconstruction_decode(
     options.latent_height = window->latent_height; options.latent_width = window->latent_width;
     options.output_capacity = window->output_capacity;
     options.max_workspace_bytes = 256ull * 1024ull * 1024ull;
-    rc = yvex_graph_register_minimax_h3()->video_vae_decode_cuda(
+    rc = yvex_graph_register_minimax_h3()->video_vae_decode_backend(
         context->session, &options, &result, &context->failure, err);
     if (rc == YVEX_OK) {
         memset(evidence, 0, sizeof(*evidence));
@@ -322,7 +322,7 @@ int main(int argc, char **argv)
                 yvex_runtime_component_session_materialization(session), &decode_options,
                 &result, &execution_failure, &err);
         if (rc == YVEX_OK && cuda)
-            rc = yvex_graph_register_minimax_h3()->video_vae_decode_cuda(
+            rc = yvex_graph_register_minimax_h3()->video_vae_decode_backend(
                 session, &decode_options, &result, &execution_failure, &err);
         if (rc != YVEX_OK) {
             fprintf(stderr,

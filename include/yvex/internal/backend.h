@@ -9,6 +9,7 @@
 extern "C" {
 #endif
 typedef struct yvex_component_text_recipe yvex_component_text_recipe;
+typedef struct yvex_backend_component_operations yvex_backend_component_operations;
 typedef struct yvex_backend_moe_operations yvex_backend_moe_operations;
 typedef struct yvex_backend_sampling_operations yvex_backend_sampling_operations;
 typedef struct yvex_backend_transformer_operations yvex_backend_transformer_operations;
@@ -194,45 +195,6 @@ int yvex_backend_attention_complete(yvex_backend *backend,
                                     yvex_backend_attention_completion *completion,
                                     int barrier_observed, yvex_error *err);
 
-typedef enum {
-    YVEX_BACKEND_TEXT_EMBEDDING = 0,
-    YVEX_BACKEND_TEXT_INPUT_NORM,
-    YVEX_BACKEND_TEXT_Q_PROJECTION,
-    YVEX_BACKEND_TEXT_K_PROJECTION,
-    YVEX_BACKEND_TEXT_V_PROJECTION,
-    YVEX_BACKEND_TEXT_O_PROJECTION,
-    YVEX_BACKEND_TEXT_Q_NORM,
-    YVEX_BACKEND_TEXT_K_NORM,
-    YVEX_BACKEND_TEXT_POST_NORM,
-    YVEX_BACKEND_TEXT_GATE_PROJECTION,
-    YVEX_BACKEND_TEXT_UP_PROJECTION,
-    YVEX_BACKEND_TEXT_DOWN_PROJECTION,
-    YVEX_BACKEND_TEXT_WEIGHT_COUNT,
-    YVEX_BACKEND_TEXT_LAYER_WEIGHT_COUNT = YVEX_BACKEND_TEXT_WEIGHT_COUNT - 1
-} yvex_backend_text_weight_slot;
-typedef struct yvex_component_encoded_weight yvex_backend_text_weight;
-typedef struct {
-    unsigned long long token_count, hidden_width, layer_count, resident_bytes;
-    unsigned long long kernel_launches, h2d_bytes, d2h_bytes, device_bytes;
-    char residency_identity[YVEX_SHA256_HEX_BYTES];
-    char execution_identity[YVEX_SHA256_HEX_BYTES];
-    int complete;
-} yvex_backend_text_execution_result;
-int yvex_backend_text_embedding_execute(
-    yvex_backend *backend, const yvex_component_text_recipe *geometry,
-    const unsigned char *encoded, unsigned long long encoded_bytes,
-    unsigned int qtype, unsigned long long row_count, unsigned long long row_width,
-    unsigned long long row_bytes, const char *residency_identity,
-    unsigned long long resident_bytes, const unsigned int *token_ids,
-    unsigned long long token_count, float *output, unsigned long long output_capacity,
-    yvex_backend_text_execution_result *result, yvex_error *err);
-int yvex_backend_text_encoder_execute(
-    yvex_backend *backend, const yvex_component_text_recipe *geometry,
-    const yvex_backend_text_weight *weights, unsigned long long layer_count,
-    const char *residency_identity, unsigned long long resident_bytes,
-    const unsigned int *token_ids, unsigned long long token_count, float *output,
-    unsigned long long output_capacity, yvex_backend_text_execution_result *result,
-    yvex_error *err);
 typedef int (*yvex_backend_state_resolve_fn)(
     const void *context, const void *host, unsigned long long bytes,
     unsigned long long *device_address);
@@ -245,6 +207,8 @@ const yvex_backend_sampling_operations *yvex_backend_sampling_operations_get(
 const yvex_backend_moe_operations *yvex_backend_moe_operations_get(
     const yvex_backend *backend);
 const yvex_backend_transformer_operations *yvex_backend_transformer_operations_get(
+    const yvex_backend *backend);
+const yvex_backend_component_operations *yvex_backend_component_operations_get(
     const yvex_backend *backend);
 struct yvex_device_tensor {
     yvex_backend *owner;

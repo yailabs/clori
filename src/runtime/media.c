@@ -937,8 +937,8 @@ static int conditioning_execute(generation_state *state, yvex_error *err)
                            (void **)&state->conditioning, "conditioning", err);
     if (rc == YVEX_OK)
         rc = request->condition(
-            context->artifact, context->gguf, context->table, tokens->ids, tokens->len,
-            request->conditioning_layers, state->conditioning,
+            context->artifact, context->gguf, context->table, request->component_backend,
+            tokens->ids, tokens->len, request->conditioning_layers, state->conditioning,
             state->conditioning_values, request->maximum_host_bytes,
             request->maximum_device_bytes, &state->conditioning_result, err);
     if (rc == YVEX_OK &&
@@ -1232,7 +1232,7 @@ static int audio_execute(generation_state *state, yvex_error *err)
     options.cancellation_context = request->cancel_context;
     if (rc == YVEX_OK)
         rc = request->audio_decode(
-            view->artifact, view->gguf, view->tensors, &options,
+            view->artifact, view->gguf, view->tensors, request->component_backend, &options,
             request->maximum_device_bytes, &state->audio_result, &failure, err);
     if (rc == YVEX_OK &&
         !yvex_core_u64_mul(state->plan.audio_latent_steps,

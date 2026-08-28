@@ -133,7 +133,8 @@ static int fixture_admit(
 
 static int fixture_condition(
     const yvex_artifact *artifact, const yvex_gguf *gguf,
-    const yvex_tensor_table *tensors, const unsigned int *tokens,
+    const yvex_tensor_table *tensors, yvex_backend_kind backend_kind,
+    const unsigned int *tokens,
     unsigned long long token_count, unsigned long long layer_count,
     float *output, unsigned long long output_capacity,
     unsigned long long maximum_host_bytes, unsigned long long maximum_device_bytes,
@@ -144,6 +145,7 @@ static int fixture_condition(
     (void)artifact;
     (void)gguf;
     (void)tensors;
+    (void)backend_kind;
     (void)maximum_device_bytes;
     context->condition_calls++;
     if (token_count <= sizeof(context->token_ids) / sizeof(context->token_ids[0])) {
@@ -280,7 +282,8 @@ static int fixture_video(
 
 static int fixture_audio(
     const yvex_artifact *artifact, const yvex_gguf *gguf,
-    const yvex_tensor_table *tensors, const yvex_runtime_av_audio_decode_options *options,
+    const yvex_tensor_table *tensors, yvex_backend_kind backend_kind,
+    const yvex_runtime_av_audio_decode_options *options,
     unsigned long long maximum_device_bytes, yvex_runtime_av_audio_decode_result *result,
     yvex_component_execution_failure *failure, yvex_error *err)
 {
@@ -289,6 +292,7 @@ static int fixture_audio(
     (void)artifact;
     (void)gguf;
     (void)tensors;
+    (void)backend_kind;
     (void)maximum_device_bytes;
     (void)failure;
     context->audio_calls++;

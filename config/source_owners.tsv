@@ -76,6 +76,7 @@ src/backend/private.h	backend	backend.private	generic	private	private-interface	
 src/backend/residency.c	backend	backend.residency	generic	private	resource-lifecycle	runtime,graph	implementation	none
 src/backend/cuda/backend.c	backend.cuda	backend.cuda.backend	backend	private	reusable-algorithm	backend,graph	implementation	none
 src/backend/cuda/capability.c	backend.cuda	backend.cuda.capability	backend	private	reusable-algorithm	backend,graph	implementation	none
+src/backend/cuda/component_ops.h	backend.cuda	backend.cuda.component_ops	backend	private	platform-interface	backend.cuda.capability,backend.cuda.convolution,backend.cuda.joint_transformer,backend.cuda.text_encoder,tests	interface	none
 src/backend/cuda/convolution.c	backend.cuda	backend.cuda.convolution	backend	private	reusable-algorithm	graph.family,backend.cuda.family	implementation	none
 src/backend/cuda/convolution_kernels.cu	backend.cuda	backend.cuda.convolution	backend	private	backend-kernel	graph.family,backend.cuda.family	backend-kernel	none
 src/backend/cuda/errors.c	backend.cuda	backend.cuda.errors	backend	private	reusable-algorithm	backend,graph	implementation	none

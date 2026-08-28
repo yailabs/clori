@@ -449,29 +449,30 @@ typedef struct {
         const yvex_tensor_table *tensors, const yvex_artifact_admission_options *options,
         yvex_complete_artifact_admission *out, yvex_artifact_admission_evidence *evidence,
         yvex_artifact_admission_failure *failure, yvex_error *err);
-    int (*text_encoder_artifact_cuda)(
+    int (*text_encoder_artifact_execute)(
         const yvex_artifact *artifact, const yvex_gguf *gguf, const yvex_tensor_table *tensors,
-        const unsigned int *token_ids, unsigned long long token_count, unsigned long long layer_count,
-        float *output, unsigned long long output_capacity,
+        yvex_backend_kind backend_kind, const unsigned int *token_ids,
+        unsigned long long token_count, unsigned long long layer_count, float *output,
+        unsigned long long output_capacity,
         unsigned long long maximum_host_bytes, unsigned long long maximum_device_bytes,
         yvex_minimax_h3_conditioning_result *result, yvex_error *err);
-    int (*transformer_component_cuda)(yvex_runtime_component_session *,
+    int (*transformer_component_execute)(yvex_runtime_component_session *,
         const yvex_minimax_h3_omni_transformer_request *,
         yvex_minimax_h3_omni_transformer_result *, yvex_error *);
     int (*audio_vae_decode_cpu)(yvex_materialization_session *session,
         const yvex_minimax_h3_audio_decode_options *options,
         yvex_minimax_h3_audio_decode_result *result, yvex_minimax_h3_component_execution_failure *failure,
         yvex_error *err);
-    int (*audio_vae_execute_artifact_cuda)(
+    int (*audio_vae_execute_artifact)(
         const yvex_artifact *, const yvex_gguf *, const yvex_tensor_table *,
-        const yvex_minimax_h3_audio_decode_options *, unsigned long long,
+        yvex_backend_kind, const yvex_minimax_h3_audio_decode_options *, unsigned long long,
         yvex_minimax_h3_audio_decode_result *, yvex_minimax_h3_component_execution_failure *,
         yvex_error *);
     int (*video_vae_decode_cpu)(yvex_materialization_session *session,
         const yvex_minimax_h3_video_decode_options *options,
         yvex_minimax_h3_video_decode_result *result, yvex_minimax_h3_component_execution_failure *failure,
         yvex_error *err);
-    int (*video_vae_decode_cuda)(yvex_runtime_component_session *,
+    int (*video_vae_decode_backend)(yvex_runtime_component_session *,
         const yvex_minimax_h3_video_decode_options *, yvex_minimax_h3_video_decode_result *,
         yvex_minimax_h3_component_execution_failure *, yvex_error *);
 } yvex_minimax_h3_graph_api;

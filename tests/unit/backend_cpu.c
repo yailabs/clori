@@ -43,7 +43,8 @@ static int test_open_and_unsupported(void)
     YVEX_TEST_ASSERT(yvex_backend_sync(backend, &err) == YVEX_OK, "cpu sync no-op");
     YVEX_TEST_ASSERT(!yvex_backend_sampling_operations_get(backend) &&
                          !yvex_backend_moe_operations_get(backend) &&
-                         !yvex_backend_transformer_operations_get(backend),
+                         !yvex_backend_transformer_operations_get(backend) &&
+                         !yvex_backend_component_operations_get(backend),
                      "CPU does not publish device-only operation tables");
     YVEX_TEST_ASSERT(yvex_backend_bandwidth_probe(backend, &bandwidth, &err) ==
                          YVEX_ERR_UNSUPPORTED && !bandwidth.schema_version,

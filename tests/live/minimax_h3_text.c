@@ -13,6 +13,7 @@
 #include <yvex/internal/component.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/families/minimax_h3.h>
+#include "src/backend/cuda/component_ops.h"
 
 enum { TEXT_HIDDEN = 5120u };
 /* The independent PyTorch CPU/CUDA BF16 oracle pair differs by these measured bounds. */
@@ -202,7 +203,7 @@ static int layer_proof_execute(
         attached = rc == YVEX_OK;
     }
     if (rc == YVEX_OK)
-        rc = yvex_backend_text_encoder_execute(
+        rc = yvex_cuda_text_encoder_execute(
             backend, &geometry, weights, 1ull, identity, arena_bytes, token, 1ull,
             output, TEXT_HIDDEN, &backend_result, err);
     if (rc == YVEX_OK) {
@@ -336,8 +337,8 @@ int main(int argc, char **argv)
             rc = layer_proof_execute(
                 artifact, gguf, tensors, &token, output, &result, &err);
         else
-            rc = api->text_encoder_artifact_cuda(
-                artifact, gguf, tensors, &token, 1ull,
+            rc = api->text_encoder_artifact_execute(
+                artifact, gguf, tensors, YVEX_BACKEND_KIND_CUDA, &token, 1ull,
                 execution_mode == 3 ? 50ull : execution_mode == 1 ? 1ull : 0ull,
                 output, TEXT_HIDDEN, 70ull * 1024ull * 1024ull * 1024ull,
                 execution_mode ? 512ull * 1024ull * 1024ull : 256ull * 1024ull * 1024ull,

@@ -75,7 +75,8 @@ typedef int (*yvex_media_component_admit_fn)(
     yvex_artifact_admission_evidence *, yvex_artifact_admission_failure *, yvex_error *);
 typedef int (*yvex_media_condition_fn)(
     const yvex_artifact *, const yvex_gguf *, const yvex_tensor_table *,
-    const unsigned int *, unsigned long long, unsigned long long, float *, unsigned long long,
+    yvex_backend_kind, const unsigned int *, unsigned long long, unsigned long long, float *,
+    unsigned long long,
     unsigned long long, unsigned long long, yvex_runtime_av_conditioning_result *,
     yvex_error *);
 typedef int (*yvex_media_latent_fn)(
@@ -88,7 +89,7 @@ typedef int (*yvex_media_video_fn)(
     yvex_runtime_av_video_decode_result *, yvex_component_execution_failure *, yvex_error *);
 typedef int (*yvex_media_audio_fn)(
     const yvex_artifact *, const yvex_gguf *, const yvex_tensor_table *,
-    const yvex_runtime_av_audio_decode_options *, unsigned long long,
+    yvex_backend_kind, const yvex_runtime_av_audio_decode_options *, unsigned long long,
     yvex_runtime_av_audio_decode_result *, yvex_component_execution_failure *, yvex_error *);
 
 typedef struct yvex_media_execution_recipe {

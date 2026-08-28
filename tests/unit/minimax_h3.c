@@ -4,6 +4,7 @@
 #include <yvex/internal/families/minimax_h3.h>
 
 #include "src/graph/private.h"
+#include "src/backend/cuda/component_ops.h"
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/backend.h>
 #include <yvex/internal/component.h>
@@ -889,22 +890,22 @@ static int test_component_admission_routing(void)
         .maximum_host_bytes = 1ull,
         .maximum_device_bytes = 1ull};
     memset(output, 0x5a, sizeof(output));
-    YVEX_TEST_ASSERT(yvex_runtime_component_text_artifact_cuda(
-                         NULL, NULL, NULL, NULL, &component_request,
+    YVEX_TEST_ASSERT(yvex_runtime_component_text_artifact_execute(
+                         NULL, NULL, NULL, NULL, YVEX_BACKEND_KIND_CUDA, &component_request,
                          &conditioning, &err) == YVEX_ERR_INVALID_ARG &&
                          !conditioning.complete && ((unsigned char *)output)[0] == 0x5a,
                      "generic text component refuses absent admitted artifact without publication");
-    YVEX_TEST_ASSERT(yvex_runtime_component_joint_transformer_cuda(
+    YVEX_TEST_ASSERT(yvex_runtime_component_joint_transformer_execute(
                          NULL, NULL, 0ull, NULL, NULL, &joint_request,
                          &joint_result, &err) == YVEX_ERR_INVALID_ARG &&
                          !joint_result.complete,
                      "generic joint component refuses an absent resident execution recipe");
-    YVEX_TEST_ASSERT(yvex_runtime_component_alias_decoder_cuda(
+    YVEX_TEST_ASSERT(yvex_runtime_component_alias_decoder_execute(
                          NULL, &alias_request, &alias_result, &err) ==
                          YVEX_ERR_INVALID_ARG &&
                          !alias_result.complete,
                      "generic alias decoder refuses an absent resident component");
-    rc = yvex_backend_text_embedding_execute(
+    rc = yvex_cuda_text_embedding_execute(
         NULL, &geometry, NULL, 0ull, 0u, 0ull, 0ull, 0ull, NULL, 0ull,
         &token, 1ull, output, 5120ull, &backend_result, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_INVALID_ARG,
@@ -916,21 +917,21 @@ static int test_component_admission_routing(void)
                      "CUDA conditioning refuses absent materialization without publication");
     invalid_geometry = geometry;
     ++invalid_geometry.query_heads;
-    YVEX_TEST_ASSERT(yvex_backend_text_embedding_execute(
+    YVEX_TEST_ASSERT(yvex_cuda_text_embedding_execute(
                          NULL, &invalid_geometry, NULL, 0ull, 0u, 0ull, 0ull, 0ull,
                          NULL, 0ull, &token, 1ull, output, 5120ull, &backend_result,
                          &err) == YVEX_ERR_INVALID_ARG &&
                          strcmp(yvex_error_where(&err),
                                 "cuda.text-geometry") == 0,
                      "CUDA conditioning refuses inconsistent family geometry");
-    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->text_encoder_artifact_cuda(
-                         NULL, NULL, NULL, &token, 1ull, 0ull,
+    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->text_encoder_artifact_execute(
+                         NULL, NULL, NULL, YVEX_BACKEND_KIND_CUDA, &token, 1ull, 0ull,
                          output, 5120ull, 1ull, 1ull,
                          &conditioning, &err) == YVEX_ERR_INVALID_ARG &&
                          !conditioning.complete && ((unsigned char *)output)[0] == 0x5a,
                      "artifact conditioning refuses absent exact component views");
-    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->text_encoder_artifact_cuda(
-                         NULL, NULL, NULL, &token, 1ull, 50ull,
+    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->text_encoder_artifact_execute(
+                         NULL, NULL, NULL, YVEX_BACKEND_KIND_CUDA, &token, 1ull, 50ull,
                          output, 5120ull, 1ull, 1ull,
                          &conditioning, &err) == YVEX_ERR_INVALID_ARG &&
                          !conditioning.complete && ((unsigned char *)output)[0] == 0x5a,
