@@ -300,7 +300,8 @@ static int decoder_convolution(
     unsigned long long batch, input_channels, output_channels, input_length;
     unsigned long long kernel_size, stride, dilation, padding;
     unsigned long long output_length, weight_rows, weight_width, tasks;
-    int transposed, rc;
+    CUfunction function;
+    int rc;
     if (!geometry || !input || !output ||
         decoder_output_length(geometry, &output_length, err) != YVEX_OK)
         return yvex_error_code(err);
@@ -337,14 +338,16 @@ static int decoder_convolution(
         stride = geometry->stride;
         dilation = geometry->dilation;
         padding = geometry->padding;
-        transposed = geometry->transposed;
+        function = geometry->transposed
+                       ? (state ? state->conv1d_transposed_function : NULL)
+                       : (state ? state->conv1d_function : NULL);
         void *parameters[] = {
             &input_address, &weight, &bias, &scale_address, &output_address,
             &batch, &input_channels, &output_channels, &input_length,
-            &output_length, &kernel_size, &stride, &dilation, &padding, &transposed,
+            &output_length, &kernel_size, &stride, &dilation, &padding,
         };
-        rc = decoder_launch(run, state ? state->conv1d_function : NULL,
-                            tasks, parameters, "cuda.alias-decoder.convolution", err);
+        rc = decoder_launch(run, function, tasks, parameters,
+                            "cuda.alias-decoder.convolution", err);
     }
     return decoder_tensor_close(run, &scale, rc, err);
 }

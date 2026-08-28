@@ -206,6 +206,8 @@ static const cuda_kernel_binding cuda_kernel_bindings[] = {
      CUDA_HANDLE_OFFSET(conv_scale_function)},
     {"yvex_conv1d_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(conv1d_function)},
+    {"yvex_conv1d_transposed_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(conv1d_transposed_function)},
     {"yvex_alias_snake_up_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(alias_up_function)},
     {"yvex_alias_snake_down_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,

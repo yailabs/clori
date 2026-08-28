@@ -1524,7 +1524,9 @@ int yvex_cuda_test_info(void)
         "yvex_attention_activation_quantize",
         "yvex_attention_rolling_state",
         "yvex_attention_topk",
-        "yvex_attention_reduce"
+        "yvex_attention_reduce",
+        "yvex_conv1d_f32",
+        "yvex_conv1d_transposed_f32"
     };
     size_t symbol_index;
     unsigned char *imported = NULL, *mapped = NULL, *pageable = NULL;
@@ -1735,7 +1737,7 @@ int yvex_cuda_test_info(void)
                              attention_symbols[symbol_index],
                              YVEX_BACKEND_CAPABILITY_REASON_FUNCTION_MISSING,
                              YVEX_BACKEND_VARIANT_ATTENTION_ENCODED) == 0,
-                         "each encoded-attention symbol is atomically required");
+                         "each encoded CUDA bundle symbol is atomically required");
     }
     backend = NULL;
     rc = yvex_backend_open(&backend, &options, &err);

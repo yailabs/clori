@@ -282,7 +282,8 @@ typedef struct {
     CUfunction swiglu_split_function, swiglu_split_f32_function;
     CUfunction modulation_function, gated_residual_function, bias_function, add_bf16_function;
     CUfunction scaled_residual_f32_function, layer_norm_f32_function;
-    CUfunction conv_scale_function, conv1d_function, alias_up_function, alias_down_function;
+    CUfunction conv_scale_function, conv1d_function, conv1d_transposed_function;
+    CUfunction alias_up_function, alias_down_function;
     CUfunction vector_update_function, clamp_function;
     yvex_cuda_kernel_bundle_state kernel_bundle_state;
     yvex_backend_capability_reason kernel_bundle_reason;
