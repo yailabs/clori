@@ -124,5 +124,7 @@ docs/worklog/2026-08-26-yvex-core-architectural-refoundation.md	worklog	canonica
 docs/worklog/2026-08-27-minimax-audio-vae-gb10-stage-localization.md	worklog	canonical	contributors	retained	minimax_audio_vae_gb10_stage_localization_worklog
 docs/worklog/2026-08-27-public-abi-versioning-repair.md	worklog	canonical	contributors	retained	public_abi_versioning_repair_worklog
 docs/worklog/2026-08-27-yvex-branch-architectural-realignment-repair.md	worklog	canonical	contributors	retained	yvex_branch_architectural_realignment_repair_worklog
+docs/worklog/2026-08-28-deepseek-gb10-matrix-tile-execution.md	worklog	canonical	contributors	retained	deepseek_gb10_matrix_tile_execution_worklog
+docs/worklog/2026-08-28-foreground-host-lifecycle-console.md	worklog	canonical	contributors	retained	foreground_host_lifecycle_console_worklog
 docs/worklog/2026-08-28-generic-cuda-transposed-conv.md	worklog	canonical	contributors	retained	generic_cuda_transposed_conv_worklog
 tests/vectors/README.md	test-support	canonical	contributors	living	test_vector_format
