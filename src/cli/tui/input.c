@@ -252,6 +252,12 @@ static yvex_tui_input_action normal_ascii(yvex_tui_state *state,
         state->redraw = 1;
         return YVEX_TUI_INPUT_REFRESH;
     }
+    if (byte == 0x0fu && state->overlay == YVEX_TUI_OVERLAY_NONE &&
+        state->surface == YVEX_TUI_SURFACE_HOME &&
+        yvex_tui_startup_model_count(state)) {
+        yvex_tui_runtime_launch_open(state, state->selected_model, 0);
+        return YVEX_TUI_INPUT_NONE;
+    }
     if (byte == 'r' && state->focus == YVEX_TUI_FOCUS_CONTENT)
         return YVEX_TUI_INPUT_REFRESH;
     if (state->surface == YVEX_TUI_SURFACE_MODELS &&

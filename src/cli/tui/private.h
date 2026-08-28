@@ -249,6 +249,8 @@ typedef struct {
     unsigned long long launch_started_ns;
     yvex_reasoning_policy reasoning_policy;
     yvex_client_generation_phase generation_phase;
+    yvex_tui_severity notice_severity;
+    char notice[256];
     int generation_active, redraw, shutdown_requested;
     unsigned long long maximum_new_tokens;
 } yvex_tui_state;

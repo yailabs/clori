@@ -427,6 +427,10 @@ static const yvex_operator_descriptor *slash_descriptor(const char *line,
 static void local_notice(yvex_tui_state *state, yvex_tui_severity severity,
                          const char *text)
 {
+    size_t count = text ? strnlen(text, sizeof(state->notice) - 1u) : 0u;
+    state->notice_severity = severity;
+    if (count) memcpy(state->notice, text, count);
+    state->notice[count] = '\0';
     yvex_tui_activity_add(state, YVEX_TUI_ACTIVITY_SYSTEM, severity,
                           severity == YVEX_TUI_SEVERITY_ERROR
                               ? YVEX_CLIENT_STREAM_ERROR
@@ -647,6 +651,7 @@ static void generation_submit(yvex_tui_state *state,
                      "Interactive request queue is busy; composer draft preserved");
         return;
     }
+    state->notice[0] = '\0';
     yvex_tui_activity_add(state, YVEX_TUI_ACTIVITY_USER,
                           YVEX_TUI_SEVERITY_INFO,
                           YVEX_CLIENT_STREAM_UNSPECIFIED,

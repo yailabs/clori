@@ -193,9 +193,40 @@ static int test_state_render_and_input(void)
     yvex_tui_state_message(&state, &event);
     YVEX_TEST_ASSERT(state.active_engine.generation == 7u && state.models[0].resident &&
                          render_frame(&state, frame, sizeof(frame)) &&
-                         strstr(frame, "ACTIVITY") && strstr(frame, "deepseek4-v4-flash-profile-a"),
-                     "typed engine summary establishes connected Home and residency");
+                         strstr(frame, "CHAT") && strstr(frame, "Ready to work") &&
+                         strstr(frame, "deepseek4-v4-flash-profile-a") &&
+                         !strstr(frame, "ACTIVITY") && !strstr(frame, "CONTEXT"),
+                     "typed engine summary establishes conversation-first Home");
+    yvex_tui_activity_add(&state, YVEX_TUI_ACTIVITY_RUNTIME,
+                          YVEX_TUI_SEVERITY_INFO,
+                          YVEX_CLIENT_STREAM_CONTROL_EVENT,
+                          "runtime event must stay out of chat");
+    yvex_tui_activity_add(&state, YVEX_TUI_ACTIVITY_ERROR,
+                          YVEX_TUI_SEVERITY_ERROR,
+                          YVEX_CLIENT_STREAM_ERROR,
+                          "technical failure must stay contextual");
+    yvex_tui_activity_add(&state, YVEX_TUI_ACTIVITY_USER,
+                          YVEX_TUI_SEVERITY_INFO,
+                          YVEX_CLIENT_STREAM_UNSPECIFIED,
+                          "explain this model");
+    yvex_tui_activity_add(&state, YVEX_TUI_ACTIVITY_GENERATION,
+                          YVEX_TUI_SEVERITY_INFO,
+                          YVEX_CLIENT_STREAM_FINAL_TEXT,
+                          "This is the assistant response.");
+    YVEX_TEST_ASSERT(render_frame(&state, frame, sizeof(frame)) &&
+                         strstr(frame, "explain this model") &&
+                         strstr(frame, "This is the assistant response.") &&
+                         !strstr(frame, "runtime event must stay out of chat") &&
+                         !strstr(frame, "technical failure must stay contextual"),
+                     "Home separates conversation from runtime event history");
+    YVEX_TEST_ASSERT(yvex_tui_input_byte(&input, &state, 0x0fu) ==
+                             YVEX_TUI_INPUT_NONE &&
+                         state.overlay == YVEX_TUI_OVERLAY_RUNTIME_LAUNCH &&
+                         render_frame(&state, frame, sizeof(frame)) &&
+                         strstr(frame, "SELECT MODEL") && strstr(frame, "Load Model"),
+                     "Ctrl-O opens the model and runtime-profile selector");
 
+    state.overlay = YVEX_TUI_OVERLAY_NONE;
     memset(&state.active_engine, 0, sizeof(state.active_engine));
     memset(&event, 0, sizeof(event));
     event.kind = YVEX_CLI_INTERACTIVE_MESSAGE;

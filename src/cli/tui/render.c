@@ -243,27 +243,6 @@ static const char *phase_name(yvex_client_generation_phase phase)
     return "unavailable";
 }
 
-static void render_tabs(tui_frame *frame, const yvex_tui_state *state,
-                        unsigned int limit)
-{
-    static const yvex_tui_surface surfaces[] = {
-        YVEX_TUI_SURFACE_HOME,
-        YVEX_TUI_SURFACE_MODELS,
-        YVEX_TUI_SURFACE_SESSIONS,
-        YVEX_TUI_SURFACE_RUNTIME,
-    };
-    size_t index;
-    yvex_tui_surface selected = state->surface == YVEX_TUI_SURFACE_MODEL_DETAIL
-                                    ? YVEX_TUI_SURFACE_MODELS
-                                    : state->surface;
-    for (index = 0u; index < sizeof(surfaces) / sizeof(surfaces[0]); ++index) {
-        frame_text(frame, index ? "  " : "   ", limit);
-        frame_style(frame, surfaces[index] == selected ? frame->accent : frame->dim);
-        frame_text(frame, surface_name(surfaces[index]), limit);
-        frame_style(frame, frame->reset);
-    }
-}
-
 static void render_top(tui_frame *frame, const yvex_tui_state *state)
 {
     const yvex_server_engine_summary *engine = active_engine(state);
@@ -274,11 +253,17 @@ static void render_top(tui_frame *frame, const yvex_tui_state *state)
     frame_style(frame, frame->accent);
     frame_text(frame, "  YVEX", limit);
     frame_style(frame, frame->reset);
-    if (frame->columns >= 72u) render_tabs(frame, state, limit);
+    if (state->surface != YVEX_TUI_SURFACE_HOME) {
+        frame_style(frame, frame->dim);
+        frame_text(frame, "  /  ", limit);
+        frame_style(frame, frame->strong);
+        frame_text(frame, surface_name(state->surface), limit);
+        frame_style(frame, frame->reset);
+    }
     if (state->runtime_available && engine)
-        (void)snprintf(right, sizeof(right), "%s  %s  %s",
-                       lifecycle_name(state), engine->alias,
-                       backend_name(engine->backend));
+        (void)snprintf(right, sizeof(right), "%s  ·  %s  ·  %s",
+                       engine->alias, backend_name(engine->backend),
+                       state->active_session);
     else if (state->runtime_available)
         (void)snprintf(right, sizeof(right), "%s  no model loaded",
                        lifecycle_name(state));
@@ -292,7 +277,7 @@ static void render_top(tui_frame *frame, const yvex_tui_state *state)
         unsigned int start = limit - right_width;
         frame_to_column(frame, start, limit);
         frame_style(frame, state->connection == YVEX_TUI_CONNECTION_CONNECTED
-                               ? frame->success
+                               ? frame->dim
                            : state->runtime_lifecycle == YVEX_TUI_RUNTIME_LAUNCH_FAILED
                                ? frame->error : frame->warning);
         frame_text(frame, right, limit);
@@ -302,17 +287,16 @@ static void render_top(tui_frame *frame, const yvex_tui_state *state)
 
 static const char *activity_label(const yvex_tui_activity *activity)
 {
-    if (activity->kind == YVEX_TUI_ACTIVITY_USER) return "you";
+    if (activity->kind == YVEX_TUI_ACTIVITY_USER) return "";
     if (activity->kind == YVEX_TUI_ACTIVITY_ERROR) return "error";
-    if (activity->kind == YVEX_TUI_ACTIVITY_RUNTIME) return "runtime";
     if (activity->kind == YVEX_TUI_ACTIVITY_GENERATION) {
-        if (activity->channel == YVEX_CLIENT_STREAM_EXPLICIT_REASONING) return "reasoning";
-        if (activity->channel == YVEX_CLIENT_STREAM_TOOL_CALL) return "tool call";
+        if (activity->channel == YVEX_CLIENT_STREAM_EXPLICIT_REASONING) return "thinking";
+        if (activity->channel == YVEX_CLIENT_STREAM_TOOL_CALL) return "tool";
         if (activity->channel == YVEX_CLIENT_STREAM_TOOL_RESULT) return "tool result";
         if (activity->channel == YVEX_CLIENT_STREAM_ERROR) return "error";
-        return "assistant";
+        return "";
     }
-    return "system";
+    return "";
 }
 
 static const char *activity_style(tui_frame *frame,
@@ -358,27 +342,6 @@ static const char *engine_state_name(yvex_server_engine_state state)
     return "unknown";
 }
 
-static const yvex_tui_session_row *active_session_row(const yvex_tui_state *state)
-{
-    size_t index;
-    for (index = 0u; index < state->session_count; ++index)
-        if (!strcmp(state->sessions[index].name, state->active_session))
-            return &state->sessions[index];
-    return NULL;
-}
-
-static void format_bytes(char output[32], unsigned long long bytes)
-{
-    if (bytes >= 1073741824u)
-        (void)snprintf(output, 32u, "%.2f GiB", (double)bytes / 1073741824.0);
-    else if (bytes >= 1048576u)
-        (void)snprintf(output, 32u, "%.1f MiB", (double)bytes / 1048576.0);
-    else if (bytes >= 1024u)
-        (void)snprintf(output, 32u, "%.1f KiB", (double)bytes / 1024.0);
-    else
-        (void)snprintf(output, 32u, "%llu B", bytes);
-}
-
 static void inspector_field(tui_frame *frame, const char *label,
                             const char *value, unsigned int limit)
 {
@@ -390,222 +353,78 @@ static void inspector_field(tui_frame *frame, const char *label,
     frame_text(frame, value, limit);
 }
 
-static void inspector_line(tui_frame *frame, const yvex_tui_state *state,
-                           unsigned int offset, unsigned int limit)
+static int conversation_activity(const yvex_tui_activity *activity)
 {
-    const yvex_server_engine_summary *engine = active_engine(state);
-    const yvex_tui_session_row *session = active_session_row(state);
-    char value[256], first[32], second[32];
-    if (offset == 0u) {
-        frame_style(frame, frame->violet);
-        frame_text(frame, "CONTEXT", limit);
-    } else if (offset == 1u) {
-        frame_style(frame, frame->dim);
-        frame_text(frame, "state     ", limit);
-        frame_style(frame, state->connection == YVEX_TUI_CONNECTION_CONNECTED
-                               ? frame->success : frame->warning);
-        frame_text(frame, connection_name(state->connection), limit);
-        frame_style(frame, frame->reset);
-    } else if (offset == 2u) {
-        if (engine) inspector_field(frame, "model", engine->alias, limit);
-    } else if (offset == 3u) {
-        value[0] = '\0';
-        if (engine)
-            (void)snprintf(value, sizeof(value), "%s / %s",
-                           backend_name(engine->backend),
-                           generation_mode_name(engine->generation_mode));
-        if (engine) inspector_field(frame, "backend", value, limit);
-    } else if (offset == 4u) {
-        (void)snprintf(value, sizeof(value), "%s%s%s", state->active_session,
-                       session ? " / " : "", session
-                           ? yvex_server_session_state_name(session->state) : "");
-        inspector_field(frame, "session", value, limit);
-    } else if (offset == 5u) {
-        inspector_field(frame, "phase", phase_name(state->generation_phase), limit);
-    } else if (offset == 6u) {
-        if (state->console_available)
-            (void)snprintf(value, sizeof(value), "%llu / %llu",
-                           state->console.context_used,
-                           state->console.context_capacity);
-        if (state->console_available) inspector_field(frame, "context", value, limit);
-    } else if (offset == 7u) {
-        if (state->console_available && state->console.kv_used_available)
-            format_bytes(value, state->console.kv_used_bytes);
-        if (state->console_available && state->console.kv_used_available)
-            inspector_field(frame, "KV", value, limit);
-    } else if (offset == 9u) {
-        format_bytes(value, state->runtime.metrics.current_rss_bytes);
-        inspector_field(frame, "RSS", value, limit);
-    } else if (offset == 10u) {
-        format_bytes(first, state->runtime.metrics.mapped_artifact_bytes);
-        format_bytes(second, state->runtime.metrics.resident_host_bytes);
-        (void)snprintf(value, sizeof(value), "%s / %s", first, second);
-        inspector_field(frame, "map/host", value, limit);
-    } else if (offset == 11u) {
-        format_bytes(value, state->runtime.metrics.resident_device_bytes);
-        inspector_field(frame, "device", value, limit);
-    } else if (offset == 12u) {
-        (void)snprintf(value, sizeof(value), "%llu active / %llu total",
-                       state->runtime.metrics.active_sessions,
-                       state->runtime.metrics.total_sessions);
-        inspector_field(frame, "sessions", value, limit);
-    } else if (offset == 13u) {
-        (void)snprintf(value, sizeof(value), "%llu/%llu / %llu active",
-                       state->runtime.metrics.queue_depth,
-                       state->runtime.metrics.queue_capacity,
-                       state->runtime.metrics.active_requests);
-        inspector_field(frame, "queue", value, limit);
-    } else if (offset == 14u) {
-        frame_style(frame, frame->dim);
-        frame_text(frame, "r refresh   / commands", limit);
-    }
+    return activity->kind == YVEX_TUI_ACTIVITY_USER ||
+           activity->kind == YVEX_TUI_ACTIVITY_GENERATION;
 }
 
-static void home_finish_line(tui_frame *frame, const yvex_tui_state *state,
-                             unsigned int row, unsigned int first,
-                             unsigned int primary, unsigned int limit)
-{
-    if (primary >= limit) return;
-    frame_to_column(frame, primary, limit);
-    frame_style(frame, frame->dim);
-    frame_text(frame, frame->unicode ? "│  " : "|  ", limit);
-    frame_style(frame, frame->reset);
-    inspector_line(frame, state, row - first, limit);
-}
-
-static unsigned int render_activity_group(tui_frame *frame,
-                                          const yvex_tui_state *state,
-                                          const yvex_tui_activity *activity,
-                                          unsigned int row, unsigned int last,
-                                          unsigned int first,
-                                          unsigned int primary,
-                                          unsigned int limit,
-                                          unsigned int text_rows)
+static unsigned int conversation_line_count(const yvex_tui_activity *activity,
+                                            unsigned int columns)
 {
     const char *text = activity->text[0] ? activity->text : "…";
-    const char *marker = frame->unicode ? "● " : "* ";
-    char metadata[192];
-    size_t cursor = 0u, count = strlen(text);
-    unsigned int metadata_width, line;
-    (void)snprintf(metadata, sizeof(metadata), "#%llu  %s",
-                   activity->order, activity->session);
-    metadata_width = text_width(metadata, strlen(metadata));
-    frame_begin_line(frame, row);
-    frame_text(frame, "  ", primary);
-    frame_style(frame, activity_style(frame, activity));
-    frame_text(frame, marker, primary);
-    frame_text(frame, activity_label(activity), primary);
-    frame_style(frame, frame->reset);
-    if (primary > metadata_width + 3u) {
-        frame_to_column(frame, primary - metadata_width - 2u, primary);
-        frame_style(frame, frame->dim);
-        frame_text(frame, metadata, primary);
-    }
-    home_finish_line(frame, state, row, first, primary, limit);
-    row++;
-    for (line = 0u; line < text_rows && row <= last; ++line, ++row) {
-        size_t extent;
-        while (cursor < count && (text[cursor] == '\n' || text[cursor] == '\r'))
-            cursor++;
-        extent = text_line_bytes(text + cursor, count - cursor,
-                                 primary > 8u ? primary - 8u : 1u);
-        frame_begin_line(frame, row);
-        frame_style(frame, frame->dim);
-        frame_text(frame, frame->unicode ? "  │ " : "  | ", primary);
-        frame_style(frame, frame->reset);
-        frame_text_n(frame, text + cursor, extent, primary > 2u ? primary - 2u : primary);
+    size_t count = strlen(text), cursor = 0u;
+    unsigned int lines = 0u;
+    while (cursor < count) {
+        size_t previous = cursor;
+        size_t extent = text_line_bytes(text + cursor, count - cursor, columns);
+        lines++;
         cursor += extent;
-        if (cursor < count && text[cursor] != '\n' && line + 1u == text_rows)
-            frame_text(frame, frame->unicode ? "…" : ">", primary);
-        home_finish_line(frame, state, row, first, primary, limit);
-        if (cursor >= count) {
-            row++;
-            break;
+        if (cursor < count && text[cursor] == '\r') cursor++;
+        if (cursor < count && text[cursor] == '\n') cursor++;
+        if (cursor == previous) cursor++;
+    }
+    return lines ? lines : 1u;
+}
+
+static const char *conversation_marker(const tui_frame *frame,
+                                       const yvex_tui_activity *activity)
+{
+    if (activity->kind == YVEX_TUI_ACTIVITY_USER) return frame->unicode ? "› " : "> ";
+    if (activity->kind == YVEX_TUI_ACTIVITY_ERROR ||
+        activity->channel == YVEX_CLIENT_STREAM_ERROR)
+        return "! ";
+    if (activity->channel == YVEX_CLIENT_STREAM_EXPLICIT_REASONING) return "· ";
+    if (activity->channel == YVEX_CLIENT_STREAM_TOOL_CALL ||
+        activity->channel == YVEX_CLIENT_STREAM_TOOL_RESULT)
+        return frame->unicode ? "↳ " : "> ";
+    return frame->unicode ? "● " : "* ";
+}
+
+static unsigned int render_conversation_activity(
+    tui_frame *frame, const yvex_tui_activity *activity,
+    unsigned int row, unsigned int last, unsigned int limit,
+    unsigned int wrap_columns, unsigned int skip_lines)
+{
+    const char *text = activity->text[0] ? activity->text : "…";
+    const char *label = activity_label(activity);
+    size_t count = strlen(text), cursor = 0u;
+    unsigned int line = 0u;
+    while (cursor < count && row <= last) {
+        size_t previous = cursor;
+        size_t extent = text_line_bytes(text + cursor, count - cursor, wrap_columns);
+        if (line >= skip_lines) {
+            frame_begin_line(frame, row++);
+            frame_text(frame, "  ", limit);
+            frame_style(frame, activity_style(frame, activity));
+            if (line == 0u)
+                frame_text(frame, conversation_marker(frame, activity), limit);
+            else if (line == skip_lines && skip_lines)
+                frame_text(frame, frame->unicode ? "… " : "> ", limit);
+            else
+                frame_text(frame, "  ", limit);
+            if (line == 0u && label[0]) {
+                frame_text(frame, label, limit);
+                frame_text(frame, "  ", limit);
+            }
+            frame_text_n(frame, text + cursor, extent, limit);
+            frame_style(frame, frame->reset);
         }
-    }
-    return row;
-}
-
-static unsigned int render_home_snapshot(tui_frame *frame,
-                                         const yvex_tui_state *state,
-                                         unsigned int row, unsigned int last,
-                                         unsigned int first,
-                                         unsigned int primary,
-                                         unsigned int limit)
-{
-    const yvex_server_engine_summary *engine = active_engine(state);
-    char text[512], memory[32];
-    if (!state->runtime_available || row + 3u > last) return row;
-    frame_begin_line(frame, row);
-    frame_text(frame, "  ", primary);
-    frame_style(frame, frame->violet);
-    frame_text(frame, "RUNTIME SNAPSHOT", primary);
-    home_finish_line(frame, state, row, first, primary, limit);
-    row++;
-    frame_begin_line(frame, row);
-    if (engine)
-        (void)snprintf(text, sizeof(text), "  model  %s   backend  %s / %s",
-                       engine->alias, backend_name(engine->backend),
-                       generation_mode_name(engine->generation_mode));
-    else
-        (void)snprintf(text, sizeof(text),
-                       "  host ready   no model loaded · Models to select and load");
-    frame_text(frame, text, primary);
-    home_finish_line(frame, state, row, first, primary, limit);
-    row++;
-    frame_begin_line(frame, row);
-    (void)snprintf(text, sizeof(text),
-                   "  sessions  %llu active / %llu total   queue  %llu/%llu",
-                   state->runtime.metrics.active_sessions,
-                   state->runtime.metrics.total_sessions,
-                   state->runtime.metrics.queue_depth,
-                   state->runtime.metrics.queue_capacity);
-    frame_text(frame, text, primary);
-    home_finish_line(frame, state, row, first, primary, limit);
-    row++;
-    frame_begin_line(frame, row);
-    format_bytes(memory, state->runtime.metrics.current_rss_bytes);
-    (void)snprintf(text, sizeof(text), "  process RSS  %s", memory);
-    frame_text(frame, text, primary);
-    home_finish_line(frame, state, row, first, primary, limit);
-    return row + 1u;
-}
-
-static unsigned int render_home_guidance(tui_frame *frame,
-                                         const yvex_tui_state *state,
-                                         unsigned int row, unsigned int last,
-                                         unsigned int first,
-                                         unsigned int primary,
-                                         unsigned int limit)
-{
-    const char *title = state->generation_active ? "IN PROGRESS" : "READY";
-    const char *detail = state->generation_active ? phase_name(state->generation_phase)
-                                                   : "Composer is ready for the active session";
-    const char *action = "Enter sends   Ctrl-P commands   Tab navigate";
-    if (row <= last) {
-        frame_begin_line(frame, row);
-        frame_text(frame, "  ", primary);
-        frame_style(frame, frame->success);
-        frame_text(frame, title, primary);
-        home_finish_line(frame, state, row, first, primary, limit);
-        row++;
-    }
-    if (row <= last) {
-        frame_begin_line(frame, row);
-        frame_style(frame, frame->dim);
-        frame_text(frame, frame->unicode ? "  └─ " : "  `- ", primary);
-        frame_style(frame, frame->reset);
-        frame_text(frame, detail, primary);
-        home_finish_line(frame, state, row, first, primary, limit);
-        row++;
-    }
-    if (row <= last) {
-        frame_begin_line(frame, row);
-        frame_text(frame, "     ", primary);
-        frame_style(frame, frame->dim);
-        frame_text(frame, action, primary);
-        home_finish_line(frame, state, row, first, primary, limit);
-        row++;
+        cursor += extent;
+        if (cursor < count && text[cursor] == '\r') cursor++;
+        if (cursor < count && text[cursor] == '\n') cursor++;
+        if (cursor == previous) cursor++;
+        line++;
     }
     return row;
 }
@@ -787,66 +606,97 @@ static void render_lifecycle_state(tui_frame *frame, const yvex_tui_state *state
 static void render_home(tui_frame *frame, const yvex_tui_state *state,
                         unsigned int first, unsigned int last)
 {
-    unsigned int row, body_rows, limit = frame->columns > 1u
-                                              ? frame->columns - 1u : 1u;
-    unsigned int primary = state->terminal.layout == YVEX_TUI_LAYOUT_COMPACT
-                               ? limit
-                               : state->terminal.layout == YVEX_TUI_LAYOUT_STANDARD
-                                     ? limit * 72u / 100u : limit * 76u / 100u;
+    const yvex_server_engine_summary *engine = active_engine(state);
+    size_t visible[YVEX_TUI_ACTIVITY_CAP], line_counts[YVEX_TUI_ACTIVITY_CAP];
+    unsigned int row, body_rows, used = 0u, skip = 0u;
+    unsigned int limit = frame->columns > 1u ? frame->columns - 1u : 1u;
+    unsigned int content_limit = limit > 128u ? 128u : limit;
+    unsigned int wrap_columns = content_limit > 18u ? content_limit - 18u : 1u;
     size_t end = state->activity_count > state->activity_scroll
                      ? state->activity_count - state->activity_scroll : 0u;
-    size_t maximum, begin, ordinal;
-    char metadata[96];
+    size_t begin, count = 0u, ordinal;
     if (!state->runtime_available || !state->active_engine.alias[0]) {
-        render_lifecycle_state(frame, state, first, last, "HOME / RUNTIME CONTROL");
+        render_lifecycle_state(frame, state, first, last, "CHAT / RUNTIME CONTROL");
         return;
     }
     frame_begin_line(frame, first);
-    frame_style(frame, frame->accent);
-    frame_text(frame, "  ACTIVITY", primary);
     frame_style(frame, frame->dim);
-    (void)snprintf(metadata, sizeof(metadata), "  %zu events  %s", state->activity_count,
-                   state->activity_scroll ? "HISTORY" : "LIVE");
-    frame_text(frame, metadata, primary);
-    home_finish_line(frame, state, first, first, primary, limit);
+    frame_text(frame, "  CHAT", content_limit);
+    frame_text(frame, "  ·  ", content_limit);
+    frame_style(frame, frame->accent);
+    frame_text(frame, state->active_session, content_limit);
+    frame_style(frame, frame->reset);
     if (first + 1u <= last) {
         frame_begin_line(frame, first + 1u);
-        frame_text(frame, "  ", primary);
-        frame_rule_until(frame, primary > 1u ? primary - 1u : primary);
-        home_finish_line(frame, state, first + 1u, first, primary, limit);
+        frame_text(frame, "  ", content_limit);
+        frame_rule_until(frame, content_limit > 3u ? content_limit - 2u : content_limit);
     }
     row = first + 2u;
     body_rows = row <= last ? last - row + 1u : 0u;
-    maximum = body_rows / 3u;
-    if (!maximum && body_rows) maximum = 1u;
-    begin = end > maximum ? end - maximum : 0u;
-    for (ordinal = begin; ordinal < end && row <= last; ++ordinal) {
+    for (ordinal = 0u; ordinal < end; ++ordinal) {
         size_t slot = (state->activity_start + ordinal) % YVEX_TUI_ACTIVITY_CAP;
-        size_t remaining_items = end - ordinal - 1u;
-        unsigned int remaining_rows = last - row + 1u;
-        unsigned int reserve = (unsigned int)(remaining_items * 2u);
-        unsigned int text_rows = remaining_rows > reserve + 1u
-                                     ? remaining_rows - reserve - 1u : 1u;
-        if (text_rows > 2u) text_rows = 2u;
-        row = render_activity_group(frame, state, &state->activities[slot],
-                                    row, last, first, primary, limit, text_rows);
-        if (ordinal + 1u < end && row <= last) {
+        if (!conversation_activity(&state->activities[slot])) continue;
+        visible[count] = slot;
+        line_counts[count] = conversation_line_count(&state->activities[slot],
+                                                     wrap_columns);
+        count++;
+    }
+    if (!count) {
+        if (body_rows > 9u) row += 2u;
+        if (row <= last) {
+            frame_begin_line(frame, row++);
+            frame_style(frame, frame->strong);
+            frame_text(frame, "  Ready to work", content_limit);
+        }
+        if (row <= last) {
+            frame_begin_line(frame, row++);
+            frame_style(frame, frame->accent);
+            frame_text(frame, "  ", content_limit);
+            frame_text(frame, engine->alias, content_limit);
+        }
+        if (row <= last) {
+            char context[256];
+            (void)snprintf(context, sizeof(context), "  %s · %s · session %s",
+                           backend_name(engine->backend),
+                           generation_mode_name(engine->generation_mode),
+                           state->active_session);
+            frame_begin_line(frame, row++);
+            frame_style(frame, frame->dim);
+            frame_text(frame, context, content_limit);
+        }
+        if (row < last) row++;
+        if (row <= last) {
             frame_begin_line(frame, row);
-            home_finish_line(frame, state, row, first, primary, limit);
+            frame_style(frame, frame->dim);
+            frame_text(frame,
+                       "  Type below to begin · Ctrl-O model · Ctrl-P commands",
+                       content_limit);
+        }
+        return;
+    }
+    begin = count;
+    while (begin) {
+        unsigned int need = (unsigned int)line_counts[begin - 1u] + 1u;
+        unsigned int remaining = body_rows > used ? body_rows - used : 0u;
+        if (need > remaining) {
+            if (remaining) {
+                begin--;
+                if (line_counts[begin] > remaining)
+                    skip = (unsigned int)line_counts[begin] - remaining;
+            }
+            break;
+        }
+        begin--;
+        used += need;
+    }
+    for (ordinal = begin; ordinal < count && row <= last; ++ordinal) {
+        row = render_conversation_activity(frame, &state->activities[visible[ordinal]],
+                                           row, last, content_limit, wrap_columns,
+                                           ordinal == begin ? skip : 0u);
+        if (ordinal + 1u < count && row <= last) {
+            frame_begin_line(frame, row);
             row++;
         }
-    }
-    if (state->runtime_available && row + 6u <= last)
-        row = render_home_snapshot(frame, state, row, last, first,
-                                   primary, limit);
-    if (row + 2u <= last)
-        row = render_home_guidance(frame, state, row, last, first,
-                                   primary, limit);
-    while (row <= last) {
-        frame_begin_line(frame, row);
-        if (row - first <= 15u)
-            home_finish_line(frame, state, row, first, primary, limit);
-        row++;
     }
 }
 
@@ -1591,12 +1441,17 @@ static void render_launch_overlay(tui_frame *frame, const yvex_tui_state *state,
 {
     const yvex_tui_model_row *model = launch_model(state);
     const yvex_model_runtime_profile_fact *profile = yvex_tui_launch_profile(state);
+    int selecting_model = state->runtime_available && state->active_engine.alias[0] &&
+                          !state->restart_pending;
     unsigned int row = first, limit = frame->columns > 1u ? frame->columns - 1u : 1u;
     frame_begin_line(frame, row++);
     frame_style(frame, frame->violet);
-    frame_text(frame, state->restart_pending ? "  RESTART RUNTIME" : "  START RUNTIME", limit);
+    frame_text(frame, state->restart_pending ? "  RESTART RUNTIME"
+                          : selecting_model ? "  SELECT MODEL"
+                                            : "  START RUNTIME", limit);
     frame_style(frame, frame->dim);
-    frame_text(frame, "  separate canonical server process", limit);
+    frame_text(frame, selecting_model ? "  canonical model and runtime profile"
+                                      : "  separate canonical server process", limit);
     if (row <= last) {
         frame_begin_line(frame, row++);
         frame_text(frame, "  ", limit);
@@ -1610,7 +1465,8 @@ static void render_launch_overlay(tui_frame *frame, const yvex_tui_state *state,
     if (row < last) row++;
     if (row <= last)
         launch_option(frame, row++, state, 2u, "Action",
-                      state->restart_pending ? "Stop then launch" : "Start Runtime", limit);
+                      state->restart_pending ? "Stop then launch"
+                          : selecting_model ? "Load Model" : "Start Runtime", limit);
     if (row < last) row++;
     if (row <= last) {
         frame_begin_line(frame, row++);
@@ -1633,6 +1489,7 @@ static void render_help(tui_frame *frame, unsigned int first, unsigned int last)
         "  Up / Down or j/k   move the active list or activity viewport",
         "  Enter              inspect selection or submit the composer",
         "  Ctrl-J             insert a composer newline",
+        "  Ctrl-O             choose a model/runtime profile from Home",
         "  /                  search Models or discover registry operations",
         "  Ctrl-P             open command palette",
         "  Esc                close context or return",
@@ -1679,7 +1536,7 @@ static void render_composer(tui_frame *frame, const yvex_tui_state *state,
     const unsigned char *bytes = state->composer.bytes;
     size_t count = state->composer.count, cursor = state->composer.cursor;
     size_t line_start = cursor, line_end = cursor, visible_start;
-    const char *prefix = "  › ", *placeholder = "Message the active YVEX session";
+    const char *prefix = "  › ", *placeholder = "Ask YVEX anything";
     int editable = 1;
     unsigned int prefix_width;
     unsigned int limit = frame->columns > 1u ? frame->columns - 1u : 1u;
@@ -1773,10 +1630,11 @@ static void render_composer(tui_frame *frame, const yvex_tui_state *state,
 static void render_composer_rule(tui_frame *frame, const yvex_tui_state *state,
                                  unsigned int row)
 {
+    const yvex_server_engine_summary *engine = active_engine(state);
     const char *label = "COMPOSE", *context = state->active_session;
+    char home_context[512];
     unsigned int limit = frame->columns > 1u ? frame->columns - 1u : 1u;
-    unsigned int context_width = text_width(context, strlen(context));
-    unsigned int right = limit > context_width + 2u ? limit - context_width : limit;
+    unsigned int context_width, right;
     if (state->overlay == YVEX_TUI_OVERLAY_PALETTE) {
         label = "COMMAND";
         context = "operator registry";
@@ -1800,16 +1658,23 @@ static void render_composer_rule(tui_frame *frame, const yvex_tui_state *state,
     } else if (!state->runtime_available || !state->active_engine.alias[0]) {
         label = "RUNTIME ACTION";
         context = lifecycle_name(state);
-    } else if (state->generation_active) {
-        context = phase_name(state->generation_phase);
+    } else if (state->surface == YVEX_TUI_SURFACE_HOME && engine) {
+        label = "";
+        (void)snprintf(home_context, sizeof(home_context), "%s · %s%s%s",
+                       engine->alias, state->active_session,
+                       state->generation_active ? " · " : "",
+                       state->generation_active ? phase_name(state->generation_phase) : "");
+        context = home_context;
     }
     context_width = text_width(context, strlen(context));
     right = limit > context_width + 2u ? limit - context_width : limit;
     frame_begin_line(frame, row);
     frame_text(frame, "  ", limit);
-    frame_style(frame, frame->accent);
-    frame_text(frame, label, limit);
-    frame_text(frame, " ", limit);
+    if (label[0]) {
+        frame_style(frame, frame->accent);
+        frame_text(frame, label, limit);
+        frame_text(frame, " ", limit);
+    }
     frame_rule_until(frame, right > 2u ? right - 2u : right);
     if (right > frame->column) frame_to_column(frame, right, limit);
     frame_style(frame, state->generation_active ? frame->violet : frame->dim);
@@ -1833,19 +1698,30 @@ static void render_footer(tui_frame *frame, const yvex_tui_state *state,
                            ? "←→ action   Enter apply   r refresh   ? help"
                            : !state->runtime_available || !state->active_engine.alias[0]
                                ? "Enter start/load   Tab navigate   Ctrl-P commands   ? help"
-                               : "Enter send   Tab navigate   Ctrl-P commands   ? help";
+                               : "Enter send   Ctrl-O model   Ctrl-P commands   Tab views";
     char status[256];
+    const char *status_style;
     unsigned int hint_width = text_width(hint, strlen(hint));
     unsigned int status_width;
-    (void)snprintf(status, sizeof(status), "%s  %s%s%s",
-                   lifecycle_name(state), state->runtime_available ? state->active_session : "",
-                   state->generation_active ? "  " : "",
-                   state->generation_active ? phase_name(state->generation_phase) : "");
+    if (state->notice[0])
+        (void)snprintf(status, sizeof(status), "%s", state->notice);
+    else
+        (void)snprintf(status, sizeof(status), "%s  %s%s%s",
+                       lifecycle_name(state),
+                       state->runtime_available ? state->active_session : "",
+                       state->generation_active ? "  " : "",
+                       state->generation_active ? phase_name(state->generation_phase) : "");
+    status_style = state->notice[0]
+                       ? state->notice_severity == YVEX_TUI_SEVERITY_ERROR
+                             ? frame->error
+                         : state->notice_severity == YVEX_TUI_SEVERITY_WARNING
+                             ? frame->warning : frame->dim
+                       : state->connection == YVEX_TUI_CONNECTION_CONNECTED
+                             ? frame->success : frame->warning;
     status_width = text_width(status, strlen(status));
     frame_begin_line(frame, row);
     frame_text(frame, "  ", limit);
-    frame_style(frame, state->connection == YVEX_TUI_CONNECTION_CONNECTED
-                           ? frame->success : frame->warning);
+    frame_style(frame, status_style);
     frame_text(frame, status, limit);
     frame_style(frame, frame->dim);
     if (hint_width + status_width + 6u < limit) {

@@ -540,6 +540,8 @@ void yvex_tui_state_message(yvex_tui_state *state,
         return;
     }
     if (event->kind == YVEX_CLI_INTERACTIVE_FAILURE) {
+        state->notice_severity = YVEX_TUI_SEVERITY_ERROR;
+        text_copy(state->notice, sizeof(state->notice), event->reason);
         yvex_tui_activity_add(state, YVEX_TUI_ACTIVITY_ERROR,
                               YVEX_TUI_SEVERITY_ERROR,
                               YVEX_CLIENT_STREAM_ERROR, event->reason);
@@ -578,6 +580,10 @@ void yvex_tui_state_message(yvex_tui_state *state,
                         message->failure_class == YVEX_CLIENT_FAILURE_CLIENT_CANCELLED;
         if (event->operation == YVEX_CLIENT_OP_ENGINE_LOAD) {
             state->engine_load_requested = 0;
+            state->notice_severity = YVEX_TUI_SEVERITY_ERROR;
+            text_copy(state->notice, sizeof(state->notice),
+                      message->reason[0] ? message->reason
+                                         : "Model engine load failed");
             yvex_tui_runtime_launch_failed(
                 state, YVEX_TUI_LAUNCH_FAILURE_ENGINE_LOAD,
                 message->reason[0] ? message->reason : "model engine load failed",
@@ -594,6 +600,10 @@ void yvex_tui_state_message(yvex_tui_state *state,
         state->generation_phase = cancelled ? YVEX_CLIENT_PHASE_CANCELLED
                                             : YVEX_CLIENT_PHASE_FAILED;
         state->partial_turn = message->partial_turn;
+        state->notice_severity = cancelled ? YVEX_TUI_SEVERITY_WARNING
+                                           : YVEX_TUI_SEVERITY_ERROR;
+        text_copy(state->notice, sizeof(state->notice),
+                  message->reason[0] ? message->reason : "Request failed");
         yvex_tui_activity_add(state, cancelled ? YVEX_TUI_ACTIVITY_RUNTIME
                                                : YVEX_TUI_ACTIVITY_ERROR,
                               cancelled ? YVEX_TUI_SEVERITY_WARNING

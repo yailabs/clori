@@ -193,18 +193,18 @@ esc=$(printf '\033')
 grep -F "${esc}[?2004h" "$root/linear.typescript" >/dev/null
 grep -F "${esc}[?2004l" "$root/linear.typescript" >/dev/null
 
-# Connected Home consumes typed host, engine, session, and generation messages.
+# Connected Home is conversation-first while technical events remain contextual.
 start_tui main 32 150 '' color
 wait_for "$root/main.typescript" 'deepseek4-v4-flash-dspark'
-wait_for "$root/main.typescript" 'ACTIVITY'
-wait_for "$root/main.typescript" 'CONTEXT'
-wait_for "$root/main.typescript" 'COMPOSE'
+wait_for "$root/main.typescript" 'CHAT'
+wait_for "$root/main.typescript" 'Ready to work'
+wait_for "$root/main.typescript" 'Ask YVEX anything'
 printf 'hello\r' >&3
 wait_for "$root/main.typescript" 'hello from yvex'
 printf '\t\t\t' >&3
 wait_for "$root/main.typescript" 'RUNTIME / TELEMETRY'
 printf '\t' >&3
-wait_for "$root/main.typescript" 'HOME'
+wait_for "$root/main.typescript" 'CHAT'
 printf '\033[200~hello\nworld 🌍\033[201~' >&3
 wait_for "$root/main.typescript" 'world 🌍'
 printf 'draft-resize' >&3
@@ -221,10 +221,10 @@ assert_terminal_background "$root/main.typescript"
 start_tui cancel 24 100 '' nocolor
 wait_for "$root/cancel.typescript" 'deepseek4-v4-flash-dspark'
 printf 'WAIT_PREFILL_CANCEL\r' >&3
-wait_for "$root/cancel.typescript" 'prefill.started'
+wait_for "$root/cancel.typescript" 'main · prefill'
 kill -INT "$client_pid"
 wait_for "$root/host.err" 'generation.cancel main'
-wait_for "$root/cancel.typescript" 'cancelled'
+wait_for "$root/cancel.typescript" 'native generation cancellation admitted'
 kill -INT "$client_pid"
 finish_tui
 assert_restored "$root/cancel.typescript"
