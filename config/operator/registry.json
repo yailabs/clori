@@ -786,6 +786,7 @@
         "--calibration",
         "--class",
         "--ctx",
+        "--execution-strategy",
         "--family",
         "--generation-mode",
         "--installation-root",

@@ -31,6 +31,7 @@ static void registry_entry(yvex_model_registry_entry *entry, const char *alias,
                            const char *identity)
 {
     memset(entry, 0, sizeof(*entry));
+    entry->schema_version = YVEX_MODEL_REGISTRY_ENTRY_SCHEMA_CURRENT;
     entry->alias = alias;
     entry->family = "deepseek4";
     entry->model = "v4-flash-dspark";
@@ -39,7 +40,7 @@ static void registry_entry(yvex_model_registry_entry *entry, const char *alias,
     entry->qprofile = "Q4_K_M";
     entry->calibration = "noimatrix";
     entry->producer = "yvex";
-    entry->schema_version = "v1";
+    entry->artifact_schema = "v1";
     entry->path = artifact;
     entry->sha256 = identity;
     entry->file_size = 4096u;
@@ -52,7 +53,8 @@ static void registry_entry(yvex_model_registry_entry *entry, const char *alias,
     entry->runtime_binding = binding;
     entry->runtime_target = "deepseek4-v4-flash-dspark";
     entry->runtime_backend = "cuda";
-    entry->runtime_mode = "dspark";
+    entry->runtime_engine_kind = "text";
+    entry->runtime_execution_strategy = "speculative";
     entry->runtime_context = 8192u;
 }
 

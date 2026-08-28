@@ -16,14 +16,15 @@ mkdir -m 700 "$runtime" "$home"
 mkdir -p "$home/.local/share/yvex"
 cat >"$home/.local/share/yvex/models.local.json" <<EOF
 {
-  "schema": "yvex.models.local.v3",
+  "schema": "yvex.models.local.v6",
   "models": [{
     "alias": "deepseek4-v4-flash-dspark-runtime-openai-live",
     "path": "$ARTIFACT",
     "runtime_binding": "$BINDING",
     "runtime_target": "deepseek4-v4-flash-dspark",
     "runtime_backend": "cuda",
-    "runtime_mode": "dspark",
+    "runtime_engine_kind": "text",
+    "runtime_execution_strategy": "speculative",
     "runtime_context": 512
   }]
 }

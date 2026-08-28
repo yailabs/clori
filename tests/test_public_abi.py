@@ -18,6 +18,12 @@ ROOT = Path(__file__).resolve().parents[1]
 # schema decision. Updating an entry is therefore a reviewable ABI migration,
 # not a mechanical consequence of editing an installed header.
 RECORDS = {
+    "yvex_model_runtime_profile_fact": (
+        "include/yvex/catalog.h", "YVEX_MODEL_RUNTIME_PROFILE_SCHEMA_CURRENT", 1, 13112,
+        "fb3b820b05b924de5824d3b6f59debc3570a083b330a02195d94742638cfaeef"),
+    "yvex_model_registry_entry": (
+        "include/yvex/registry.h", "YVEX_MODEL_REGISTRY_ENTRY_SCHEMA_CURRENT", 1, 304,
+        "5e137d2540df9dfcfb8d6ec7402cf0a0480b8aa00495f2b93869fc7fa869263f"),
     "yvex_provider_request": (
         "include/yvex/provider.h", "YVEX_PROVIDER_SCHEMA_V3", 3, 584,
         "3a388fb2e598e86e1f5e5bcc8870ac46061489808a8e97becde33c5b321e5f9b"),
@@ -128,8 +134,10 @@ def compiler_source() -> str:
     lines = [
         "#include <limits.h>",
         "#include <stddef.h>",
+        "#include <yvex/catalog.h>",
         "#include <yvex/provider.h>",
         "#include <yvex/quant.h>",
+        "#include <yvex/registry.h>",
         "#include <yvex/server.h>",
         "#include <yvex/tokenizer.h>",
         "#if defined(__cplusplus)",

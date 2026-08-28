@@ -9,10 +9,18 @@
 extern "C" {
 #endif
 
+#define YVEX_MODEL_REGISTRY_SCHEMA_V5 "yvex.models.local.v5"
+#define YVEX_MODEL_REGISTRY_SCHEMA_V6 "yvex.models.local.v6"
+#define YVEX_MODEL_REGISTRY_SCHEMA_CURRENT YVEX_MODEL_REGISTRY_SCHEMA_V6
+#define YVEX_MODEL_REGISTRY_ENTRY_SCHEMA_V1 1u
+#define YVEX_MODEL_REGISTRY_ENTRY_SCHEMA_CURRENT \
+    YVEX_MODEL_REGISTRY_ENTRY_SCHEMA_V1
+
 /* Model registry. */
 typedef struct yvex_model_registry yvex_model_registry;
 
 typedef struct {
+    unsigned int schema_version;
     const char *alias;
     const char *family;
     const char *model;
@@ -21,7 +29,7 @@ typedef struct {
     const char *qprofile;
     const char *calibration;
     const char *producer;
-    const char *schema_version;
+    const char *artifact_schema;
     const char *path;
     const char *sha256;
     unsigned long long file_size;
@@ -47,7 +55,8 @@ typedef struct {
     const char *runtime_binding;
     const char *runtime_target;
     const char *runtime_backend;
-    const char *runtime_mode;
+    const char *runtime_engine_kind;
+    const char *runtime_execution_strategy;
     unsigned long long runtime_context;
 } yvex_model_registry_entry;
 

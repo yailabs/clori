@@ -25,7 +25,7 @@ host_pid=
 tui_pid=
 client_pid=
 mkdir -m 700 "$runtime" "$runtime/yvex" "$config" "$models"
-printf '{"schema":"yvex.models.local.v5","models":[]}\n' >"$registry"
+printf '{"schema":"yvex.models.local.v6","models":[]}\n' >"$registry"
 
 cleanup()
 {

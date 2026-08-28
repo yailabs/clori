@@ -594,7 +594,7 @@ grep 'status: models-scan' "$ROOT/scan.out"
 "$YVEX_BIN" model registry add --path "$ARTIFACT" --registry "$REG" \
   --support-level selected-tensor-materialized \
   --runtime-binding "$BINDING" --target deepseek4-v4-flash-dspark \
-  --backend cpu --generation-mode dspark --ctx 4096 > "$ROOT/add.out"
+  --backend cpu --execution-strategy speculative --ctx 4096 > "$ROOT/add.out"
 grep 'alias: deepseek4-v4-flash-dspark-selected-embed' "$ROOT/add.out"
 grep 'status: models-added' "$ROOT/add.out"
 test -f "$REG"
@@ -626,7 +626,8 @@ grep 'model list --output requires table|audit|json' "$ROOT/list-bad-output.err"
 grep 'model: deepseek4-v4-flash-dspark-selected-embed' "$ROOT/inspect.out"
 grep 'family: deepseek4 class=embed' "$ROOT/inspect.out"
 grep 'artifact: support=selected-tensor-materialized execution=not-established-by-inspection' "$ROOT/inspect.out"
-grep 'runtime profile: ready binding=available backend=cpu mode=dspark context=4096' "$ROOT/inspect.out"
+grep 'runtime profile: ready kind=text backend=cpu strategy=speculative context=4096' \
+  "$ROOT/inspect.out"
 grep 'status: models-inspect' "$ROOT/inspect.out"
 test "$(wc -l < "$ROOT/inspect.out")" -le 8
 
@@ -647,7 +648,7 @@ JSON
 "$YVEX_BIN" model registry add --path "$ARTIFACT" --registry "$REG" \
   --alias minimax-h3-fl2va-runtime-media --family minimax-h3 \
   --startup-profile composite --installation-root "$COMPOSITE_ROOT" \
-  --target minimax-h3-fl2va --backend cuda --generation-mode media \
+  --target minimax-h3-fl2va --backend cuda \
   > "$ROOT/add-composite.out"
 "$YVEX_BIN" model list --models-root "$CATALOG_ROOT" --registry "$REG" \
   > "$ROOT/list-composite.out"
@@ -677,7 +678,7 @@ set +e
 "$YVEX_BIN" model registry add --path "$ARTIFACT" --registry "$REG" \
   --alias minimax-h3-fl2va-runtime-incomplete --family minimax-h3 \
   --startup-profile composite --target minimax-h3-fl2va --backend cuda \
-  --generation-mode media > "$ROOT/add-composite-bad.out" \
+  > "$ROOT/add-composite-bad.out" \
   2> "$ROOT/add-composite-bad.err"
 composite_bad_status=$?
 set -e

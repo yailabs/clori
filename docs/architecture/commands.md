@@ -59,9 +59,10 @@ state remain different lifecycle stages. `model list` may project the public
 engine inventory when the host is reachable, but it never opens an engine.
 
 The local model registry owns complete typed startup profiles. Text runtimes
-carry one artifact, runtime binding, target, backend, generation mode, and
-startup context; composite runtimes carry an installed component root, target,
-backend, and capability mode. `model list` marks which entries have a complete
+carry one artifact, runtime binding, target, backend, execution strategy, and
+startup context; composite media runtimes carry an installed component root,
+target and backend. Engine kind and execution strategy are independent facts.
+`model list` marks which entries have a complete
 readable profile and `model show` inspects one entry. The foreground TTY console
 lists complete aliases with `profiles`; its `load MODEL|N` resolves an exact
 alias, a numbered row, or an unambiguous runtime target. Multiple profiles for

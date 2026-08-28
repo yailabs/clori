@@ -64,7 +64,7 @@ artifact=$(realpath "$artifact")
 binding=$(realpath "$binding")
 cat >"$HOME_ROOT/.local/share/yvex/models.local.json" <<EOF
 {
-  "schema": "yvex.models.local.v5",
+  "schema": "yvex.models.local.v6",
   "models": [{
     "alias": "$LEGACY_PROFILE",
     "family": "deepseek4",
@@ -72,7 +72,8 @@ cat >"$HOME_ROOT/.local/share/yvex/models.local.json" <<EOF
     "runtime_binding": "$binding",
     "runtime_target": "deepseek4-v4-flash-dspark",
     "runtime_backend": "cpu",
-    "runtime_mode": "target-only",
+    "runtime_engine_kind": "text",
+    "runtime_execution_strategy": "target-only",
     "runtime_context": 4096
   }, {
     "alias": "$PROFILE",
@@ -81,7 +82,8 @@ cat >"$HOME_ROOT/.local/share/yvex/models.local.json" <<EOF
     "runtime_binding": "$binding",
     "runtime_target": "deepseek4-v4-flash-dspark",
     "runtime_backend": "cpu",
-    "runtime_mode": "target-only",
+    "runtime_engine_kind": "text",
+    "runtime_execution_strategy": "target-only",
     "runtime_context": 4096
   }]
 }

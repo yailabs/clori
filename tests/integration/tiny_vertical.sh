@@ -118,7 +118,7 @@ grep -F '"reason": "requested context exceeds the model-authored semantic maximu
     "$root/context-refusal.json" >/dev/null
 cat >"$registry" <<EOF
 {
-  "schema": "yvex.models.local.v5",
+  "schema": "yvex.models.local.v6",
   "models": [{
     "alias": "$profile",
     "family": "tiny",
@@ -126,7 +126,8 @@ cat >"$registry" <<EOF
     "runtime_binding": "$binding",
     "runtime_target": "tiny-executable",
     "runtime_backend": "cpu",
-    "runtime_mode": "target-only",
+    "runtime_engine_kind": "text",
+    "runtime_execution_strategy": "target-only",
     "runtime_context": 8
   }, {
     "alias": "$second_profile",
@@ -135,7 +136,8 @@ cat >"$registry" <<EOF
     "runtime_binding": "$binding",
     "runtime_target": "tiny-executable",
     "runtime_backend": "cpu",
-    "runtime_mode": "target-only",
+    "runtime_engine_kind": "text",
+    "runtime_execution_strategy": "target-only",
     "runtime_context": 8
   }]
 }
@@ -439,7 +441,7 @@ python3 "$TINY_GENERATOR" "$corrupt/tiny.gguf" --corrupt
 corrupt_artifact=$(realpath "$corrupt/tiny.gguf")
 cat >"$registry" <<EOF
 {
-  "schema": "yvex.models.local.v5",
+  "schema": "yvex.models.local.v6",
   "models": [{
     "alias": "$profile",
     "family": "tiny",
@@ -447,7 +449,8 @@ cat >"$registry" <<EOF
     "runtime_binding": "$binding",
     "runtime_target": "tiny-executable",
     "runtime_backend": "cpu",
-    "runtime_mode": "target-only",
+    "runtime_engine_kind": "text",
+    "runtime_execution_strategy": "target-only",
     "runtime_context": 8
   }]
 }

@@ -131,14 +131,25 @@ artifact is still not a supported artifact.
 ## Model Registry And Startup Profiles
 
 `<yvex/registry.h>` owns the local model catalog and typed reference
-resolution. Registry schema `yvex.models.local.v5` binds a catalog entry to one
-typed startup profile. `single-artifact` profiles carry the absolute artifact,
-exact runtime-binding path, runtime target, backend, generation mode, and
-positive context capacity. `composite` profiles carry an installed component
-root, target, backend, and capability mode without manufacturing a singular
-artifact or runtime binding. Older v1 through v4 catalogs remain readable;
-v1/v2 contain no complete startup profile, v3 profiles are interpreted as
-explicit `target-only`, and v4 single-artifact profiles retain their meaning.
+resolution. Registry schema `yvex.models.local.v6` binds a catalog entry to one
+typed startup profile. Every profile records engine kind independently from
+execution strategy. `single-artifact` text profiles carry the absolute
+artifact, exact runtime-binding path, runtime target, backend, semantic
+`target-only` or `speculative` strategy, and positive context capacity.
+`composite` media profiles carry an installed component root, target and
+backend with a `not-applicable` execution strategy; they do not manufacture a
+singular artifact or runtime binding. Older v1 through v5 catalogs remain
+readable. The importer maps the former `target-only`, `dspark`, and `media`
+mode values onto the two current axes; current writers never emit the mixed
+legacy mode.
+
+The installed in-process `yvex_model_registry_entry` contract is explicitly
+versioned at schema v1. Callers set `schema_version` to
+`YVEX_MODEL_REGISTRY_ENTRY_SCHEMA_CURRENT`; mutation and startup validation
+reject any other value before reading the remaining fields. The former
+unversioned layout is not a binary compatibility surface. Model-library
+projections expose the separately versioned
+`yvex_model_runtime_profile_fact` v1 record.
 
 `yvex_model_registry_startup_validate` checks the facts required by the profile
 kind and the corresponding local file or installation accessibility. It does

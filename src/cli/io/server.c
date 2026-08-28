@@ -30,7 +30,8 @@ typedef struct {
     char binding[PATH_MAX];
     char target[128];
     char backend[8];
-    char mode[16];
+    char engine_kind[16];
+    char execution_strategy[32];
     unsigned long long context_capacity;
 } cli_server_profile;
 
@@ -75,12 +76,15 @@ static int profile_copy(cli_server_profile *profile,
     const char *artifact;
     const char *binding;
     if (!profile || !entry || !entry->alias || !entry->family ||
-        !entry->runtime_target || !entry->runtime_backend || !entry->runtime_mode ||
+        !entry->runtime_target || !entry->runtime_backend ||
+        !entry->runtime_engine_kind || !entry->runtime_execution_strategy ||
         strlen(entry->alias) >= sizeof(profile->name) ||
         strlen(entry->family) >= sizeof(profile->family) ||
         strlen(entry->runtime_target) >= sizeof(profile->target) ||
         strlen(entry->runtime_backend) >= sizeof(profile->backend) ||
-        strlen(entry->runtime_mode) >= sizeof(profile->mode))
+        strlen(entry->runtime_engine_kind) >= sizeof(profile->engine_kind) ||
+        strlen(entry->runtime_execution_strategy) >=
+            sizeof(profile->execution_strategy))
         return 0;
     profile_kind = entry->runtime_profile && entry->runtime_profile[0]
                        ? entry->runtime_profile : "single-artifact";
@@ -104,12 +108,15 @@ static int profile_copy(cli_server_profile *profile,
                     entry->runtime_target) >= 0 &&
            snprintf(profile->backend, sizeof(profile->backend), "%s",
                     entry->runtime_backend) >= 0 &&
-           snprintf(profile->mode, sizeof(profile->mode), "%s",
-                    entry->runtime_mode) >= 0;
+           snprintf(profile->engine_kind, sizeof(profile->engine_kind), "%s",
+                    entry->runtime_engine_kind) >= 0 &&
+           snprintf(profile->execution_strategy,
+                    sizeof(profile->execution_strategy), "%s",
+                    entry->runtime_execution_strategy) >= 0;
 }
 
 static int profile_resolve(const char *name, cli_server_profile *profile,
-                           int *media_requested, yvex_error *err)
+                           yvex_error *err)
 {
     yvex_model_registry_options options;
     yvex_model_registry *registry = NULL;
@@ -126,9 +133,6 @@ static int profile_resolve(const char *name, cli_server_profile *profile,
         yvex_model_registry_close(registry);
         return YVEX_ERR_STATE;
     }
-    *media_requested = entry->runtime_profile &&
-                       !strcmp(entry->runtime_profile, "composite") &&
-                       entry->runtime_mode && !strcmp(entry->runtime_mode, "media");
     rc = yvex_model_registry_startup_validate(entry, err);
     if (rc != YVEX_OK) {
         yvex_model_registry_close(registry);
@@ -207,9 +211,10 @@ static void *human_console_main(void *opaque)
 }
 
 static void engine_profile_defaults(yvex_server_engine_options *options,
-                                    const cli_server_profile *profile,
-                                    int media_requested)
+                                    const cli_server_profile *profile)
 {
+    int media_requested = !strcmp(profile->engine_kind, "media");
+
     memset(options, 0, sizeof(*options));
     options->schema_version = YVEX_SERVER_ENGINE_SCHEMA_CURRENT;
     options->alias = profile->name;
@@ -222,7 +227,7 @@ static void engine_profile_defaults(yvex_server_engine_options *options,
                                            : YVEX_SERVER_ENGINE_TEXT;
     options->execution_strategy =
         media_requested ? YVEX_SERVER_EXECUTION_NOT_APPLICABLE
-                        : (!strcmp(profile->mode, "dspark")
+                        : (!strcmp(profile->execution_strategy, "speculative")
                                ? YVEX_SERVER_EXECUTION_SPECULATIVE
                                : YVEX_SERVER_EXECUTION_TARGET_ONLY);
     options->context_capacity = media_requested ? 0u : profile->context_capacity;
@@ -413,10 +418,11 @@ static int registered_model_load(void *opaque, yvex_server *server,
                        "model registry lock failed");
         return YVEX_ERR_STATE;
     }
-    rc = profile_resolve(alias, &profile, &media_requested, err);
+    rc = profile_resolve(alias, &profile, err);
     (void)pthread_mutex_unlock(&context->registry_mutex);
     if (rc != YVEX_OK) return rc;
-    engine_profile_defaults(&selected, &profile, media_requested);
+    media_requested = !strcmp(profile.engine_kind, "media");
+    engine_profile_defaults(&selected, &profile);
     selected.maximum_new_tokens = media_requested ? 0ull
                                                   : selected.context_capacity;
     selected.trace_level = context->host.trace_level;
@@ -675,7 +681,7 @@ static int console_profiles(cli_server_loader_context *context,
         const yvex_model_registry_entry *entry =
             yvex_model_registry_at(registry, index);
         char entry_alias[YVEX_SERVER_MODEL_ALIAS_CAP];
-        char target[128], backend[8], mode[16];
+        char target[128], backend[8], engine_kind[16], strategy[32];
         unsigned long long file_size;
         yvex_error ignored;
         if (!entry ||
@@ -684,13 +690,16 @@ static int console_profiles(cli_server_loader_context *context,
         (void)snprintf(entry_alias, sizeof(entry_alias), "%s", entry->alias);
         (void)snprintf(target, sizeof(target), "%s", entry->runtime_target);
         (void)snprintf(backend, sizeof(backend), "%s", entry->runtime_backend);
-        (void)snprintf(mode, sizeof(mode), "%s", entry->runtime_mode);
+        (void)snprintf(engine_kind, sizeof(engine_kind), "%s",
+                       entry->runtime_engine_kind);
+        (void)snprintf(strategy, sizeof(strategy), "%s",
+                       entry->runtime_execution_strategy);
         file_size = entry->file_size;
         visible++;
         if (render)
             printf("  [%llu] %s\n"
-                   "      %s · %s/%s · %.2f GiB\n",
-                   visible, entry_alias, target, backend, mode,
+                   "      %s · %s/%s/%s · %.2f GiB\n",
+                   visible, entry_alias, target, backend, engine_kind, strategy,
                    (double)file_size / 1073741824.0);
         if (alias && selector &&
             ((numeric && visible == requested) ||

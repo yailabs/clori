@@ -55,6 +55,7 @@ void yvex_model_ref_registry_entry_view(const yvex_model_ref *ref,
 {
     if (!entry) return;
     memset(entry, 0, sizeof(*entry));
+    entry->schema_version = YVEX_MODEL_REGISTRY_ENTRY_SCHEMA_CURRENT;
     if (!ref) return;
     entry->alias = ref->alias;
     entry->path = ref->path;
@@ -235,7 +236,9 @@ static int ref_copy_entry(yvex_model_ref *out,
                                    yvex_error *err)
 {
     memset(out, 0, sizeof(*out));
-    if (!input || !entry || !entry->alias || !entry->path) {
+    if (!input || !entry ||
+        entry->schema_version != YVEX_MODEL_REGISTRY_ENTRY_SCHEMA_CURRENT ||
+        !entry->alias || !entry->path) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "model_ref", "input and registry entry are required");
         return YVEX_ERR_INVALID_ARG;
     }

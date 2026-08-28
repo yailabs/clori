@@ -657,7 +657,7 @@ once with the advanced registry operation and absolute paths:
   --runtime-binding /srv/yvex/models/deepseek-v4-flash-dspark.yvex-runtime-binding \
   --target deepseek4-v4-flash-dspark \
   --backend cuda \
-  --generation-mode dspark \
+  --execution-strategy speculative \
   --ctx 4096 \
   --support-level selected-tensor-materialized
 ```
