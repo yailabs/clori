@@ -497,8 +497,14 @@ def check_content(rows: list[dict[str, str]]) -> None:
         fail(f"unexpected flat documentation surface: {sorted(flat)}")
 
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    branded_title = re.search(
+        r'\A<p align="center">\s*<img\s+src="docs/yvex-primary-lockup\.svg"\s+'
+        r'alt="YVEX logo"(?:\s+[^>]*)?>\s*</p>',
+        readme,
+    )
+    if "# YVEX" not in readme and not branded_title:
+        fail("README.md lacks an accessible YVEX title")
     for heading in (
-        "# YVEX",
         "## Why YVEX",
         "## Quick start",
         "## Product boundary",
