@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/yvex-primary-lockup.svg" alt="YVEX logo" width="360">
+  <img src="docs/yvex-primary-lockup.svg" alt="YVEX logo" width="320">
 </p>
 
 YVEX is a native C/CUDA model compiler and local inference system for
