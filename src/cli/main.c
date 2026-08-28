@@ -272,6 +272,15 @@ int main(int argc, char **argv)
     if (invocation.help_requested)
         return yvex_client_render_help_path(operation->command_word_count,
                                             operation->command_words, 0, 0);
+    if (operation->lane == YVEX_OPERATOR_LANE_RUNTIME_CLIENT &&
+        operation->runtime_adapter == YVEX_OPERATOR_RUNTIME_CHAT) {
+        int index;
+        for (index = 1; index < argc; ++index)
+            if (!strcmp(argv[index], "--first-image") ||
+                !strcmp(argv[index], "--last-image"))
+                return yvex_client_dispatch(operation, argc, argv, consumed);
+        return yvex_tui_dispatch(argc, argv);
+    }
     if (operation->lane == YVEX_OPERATOR_LANE_RUNTIME_CLIENT)
         return yvex_client_dispatch(operation, argc, argv, consumed);
     if (operation->lane == YVEX_OPERATOR_LANE_OFFLINE_ENGINE)

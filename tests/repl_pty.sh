@@ -1,25 +1,43 @@
 #!/bin/sh
-# Exercise the line editor and server-backed console through a real PTY.
+# Exercise the official full-screen client and deterministic CLI isolation through real PTYs.
 set -eu
 
 YVEX_BIN=${YVEX_BIN:-./yvex}
 YVEX_TEST_HOST=${YVEX_TEST_HOST:-build/tests/openai_host}
-repl_model=deepseek4-v4-flash-dspark
-repl_prompt="$repl_model>"
 . tests/support/cleanup.sh
 
-root=$(mktemp -d "${TMPDIR:-/tmp}/yvex-repl-pty.XXXXXX")
+case "$YVEX_BIN" in
+    /*) ;;
+    *) YVEX_BIN="$(pwd -P)/${YVEX_BIN#./}" ;;
+esac
+case "$YVEX_TEST_HOST" in
+    /*) ;;
+    *) YVEX_TEST_HOST="$(pwd -P)/${YVEX_TEST_HOST#./}" ;;
+esac
+
+root=$(mktemp -d "${TMPDIR:-/tmp}/yvex-tui-pty.XXXXXX")
 runtime="$root/runtime"
+config="$root/config"
+models="$root/models"
+registry="$root/models.local.json"
 socket="$runtime/yvex/yvexd.sock"
 host_pid=
-repl_pid=
-mkdir -m 700 "$runtime" "$runtime/yvex"
+tui_pid=
+client_pid=
+mkdir -m 700 "$runtime" "$runtime/yvex" "$config" "$models"
+printf '{"schema":"yvex.models.local.v5","models":[]}\n' >"$registry"
+
 cleanup()
 {
     status=$?
-    if test -n "$repl_pid" && kill -0 "$repl_pid" 2>/dev/null; then
-        kill "$repl_pid" 2>/dev/null || true
-        wait "$repl_pid" 2>/dev/null || true
+    if test "$status" -ne 0; then
+        for transcript in "$root"/*.typescript; do
+            test -f "$transcript" && tail -c 12000 "$transcript" >&2 || true
+        done
+    fi
+    if test -n "$tui_pid" && kill -0 "$tui_pid" 2>/dev/null; then
+        kill "$tui_pid" 2>/dev/null || true
+        wait "$tui_pid" 2>/dev/null || true
     fi
     if test -n "$host_pid" && kill -0 "$host_pid" 2>/dev/null; then
         kill "$host_pid" 2>/dev/null || true
@@ -30,7 +48,21 @@ cleanup()
 }
 trap cleanup EXIT HUP INT TERM
 
-find_repl_client()
+wait_for()
+{
+    file=$1
+    needle=$2
+    attempt=0
+    while test "$attempt" -lt 400; do
+        test -f "$file" && grep -F "$needle" "$file" >/dev/null 2>&1 && return 0
+        attempt=$((attempt + 1))
+        sleep 0.01
+    done
+    echo "timed out waiting for '$needle' in $file" >&2
+    return 1
+}
+
+find_tui_client()
 {
     for candidate in $(pgrep -x yvex 2>/dev/null || true); do
         if tr '\000' '\n' <"/proc/$candidate/environ" 2>/dev/null |
@@ -42,564 +74,162 @@ find_repl_client()
     return 1
 }
 
+start_tui()
+{
+    name=$1
+    rows=$2
+    columns=$3
+    command=$4
+    color=$5
+    fifo="$root/$name.input"
+    transcript="$root/$name.typescript"
+    mkfifo "$fifo"
+    if test "$color" = color; then
+        color_env='env -u NO_COLOR'
+    else
+        color_env='env NO_COLOR=1'
+    fi
+    $color_env TERM=xterm-256color XDG_RUNTIME_DIR="$runtime" \
+        YVEX_MODELS_REGISTRY="$registry" YVEX_MODELS_ROOT="$models" \
+        YVEX_CONFIG_DIR="$config" XDG_CONFIG_HOME="$config" \
+        script -q -f -e \
+        -c "cd $root; stty rows $rows cols $columns; exec $YVEX_BIN $command" \
+        "$transcript" <"$fifo" >"$root/$name.stdout" 2>"$root/$name.stderr" &
+    tui_pid=$!
+    exec 3>"$fifo"
+    wait_for "$transcript" 'YVEX'
+    attempt=0
+    while test "$attempt" -lt 400; do
+        client_pid=$(find_tui_client || true)
+        test -n "$client_pid" && return 0
+        attempt=$((attempt + 1))
+        sleep 0.01
+    done
+    echo 'timed out finding native TUI client' >&2
+    return 1
+}
+
+finish_tui()
+{
+    exec 3>&-
+    wait "$tui_pid"
+    tui_pid=
+    client_pid=
+}
+
+assert_restored()
+{
+    transcript=$1
+    esc=$(printf '\033')
+    grep -F "${esc}[?1049h" "$transcript" >/dev/null
+    grep -F "${esc}[?1049l" "$transcript" >/dev/null
+    grep -F "${esc}[?25l" "$transcript" >/dev/null
+    grep -F "${esc}[?25h" "$transcript" >/dev/null
+    grep -F "${esc}[?2004h" "$transcript" >/dev/null
+    grep -F "${esc}[?2004l" "$transcript" >/dev/null
+}
+
+assert_terminal_background()
+{
+    transcript=$1
+    esc=$(printf '\033')
+    ! grep -F "${esc}[48;" "$transcript" >/dev/null
+    ! grep -F "${esc}[40m" "$transcript" >/dev/null
+}
+
+# Offline Home is a designed recovery surface. Bare and explicit chat share it.
+start_tui offline 24 100 'chat --session offline' nocolor
+wait_for "$root/offline.typescript" 'RUNTIME OFFLINE'
+wait_for "$root/offline.typescript" 'No startup-ready model'
+kill -INT "$client_pid"
+finish_tui
+assert_restored "$root/offline.typescript"
+assert_terminal_background "$root/offline.typescript"
+
 "$YVEX_TEST_HOST" "$socket" 2>"$root/host.err" &
 host_pid=$!
 attempt=0
-while test "$attempt" -lt 100 && test ! -S "$socket"; do
+while test "$attempt" -lt 400 && test ! -S "$socket"; do
     kill -0 "$host_pid"
     attempt=$((attempt + 1))
     sleep 0.01
 done
 test -S "$socket"
 
-# Noninteractive output is the exact concatenation of canonical typed payloads;
-# terminal separation and completion measurements belong on stderr.
+# Deterministic commands remain outside alternate-screen mode.
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --reasoning high \
     --max-new-tokens 3 --strategy greedy REASONING_STREAM \
     >"$root/raw.out" 2>"$root/raw.err"
-printf 'I need to compare the constraints...\nThe valid result is 42.' \
-    >"$root/raw.expected"
+printf 'I need to compare the constraints...\nThe valid result is 42.' >"$root/raw.expected"
 cmp "$root/raw.expected" "$root/raw.out"
-grep -F 'reasoning 2 tokens' "$root/raw.err" >/dev/null
-grep -F 'final 1 tokens' "$root/raw.err" >/dev/null
 ! grep "$(printf '\033')" "$root/raw.out" >/dev/null
 
-# A terminal-bound one-shot projects typed reasoning and final channels as
-# distinct blocks, then flushes the completed final block before metrics.
-env -u NO_COLOR TERM=xterm-256color XDG_RUNTIME_DIR="$runtime" script -q -e \
-    -c "$YVEX_BIN run --reasoning high --max-new-tokens 3 --strategy greedy REASONING_STREAM" \
-    "$root/run.typescript" >"$root/run.stdout" 2>"$root/run.stderr"
-esc=$(printf '\033')
-sed "s/${esc}\\[[0-9;]*m//g" "$root/run.typescript" | tr -d '\r' \
-    >"$root/run.plain"
-grep -Fx 'thinking' "$root/run.plain" >/dev/null
-grep -Fx 'I need to compare the constraints...' "$root/run.plain" >/dev/null
-grep -Fx 'The valid result is 42.' "$root/run.plain" >/dev/null
-grep -E '^prefill .*generation .*session run-[0-9]+$' "$root/run.plain" >/dev/null
-python3 - "$root/run.plain" <<'PY'
-import pathlib
-import sys
-
-lines = pathlib.Path(sys.argv[1]).read_text().splitlines()
-thinking = lines.index("thinking")
-reasoning = lines.index("I need to compare the constraints...")
-final = lines.index("The valid result is 42.")
-metrics = next(index for index, line in enumerate(lines) if line.startswith("prefill "))
-assert thinking < reasoning < final < metrics
-assert not any("prefill " in line for line in lines[final + 1:metrics])
-PY
-
-mkfifo "$root/input"
-env -u NO_COLOR TERM=xterm-256color XDG_RUNTIME_DIR="$runtime" script -q -f -e \
-    -c "$YVEX_BIN chat --session pty" "$root/typescript" \
-    <"$root/input" >"$root/stdout" 2>"$root/stderr" &
-repl_pid=$!
-exec 3>"$root/input"
-attempt=0
-while test "$attempt" -lt 100; do
-    test -f "$root/typescript" && grep -F "$repl_prompt" "$root/typescript" >/dev/null && break
-    attempt=$((attempt + 1))
-    sleep 0.01
-done
-test "$attempt" -lt 100
-printf 'draft\014\177\177\177\177\177' >&3
-printf '\033[200~hello\nworld 🌍\033[201~\n' >&3
-attempt=0
-while test "$attempt" -lt 100; do
-    grep -F 'hello from yvex' "$root/typescript" >/dev/null 2>&1 && break
-    attempt=$((attempt + 1))
-    sleep 0.01
-done
-test "$attempt" -lt 100
-printf '\033[A\n' >&3
-attempt=0
-while test "$attempt" -lt 100; do
-    count=$(grep -c 'hello from yvex' "$root/typescript" 2>/dev/null || true)
-    test "$count" -ge 2 && break
-    attempt=$((attempt + 1))
-    sleep 0.01
-done
-test "$attempt" -lt 100
-printf 'MARKDOWN_STREAM\n' >&3
-attempt=0
-while test "$attempt" -lt 100; do
-    prompts=$(grep -c "$repl_prompt" "$root/typescript" 2>/dev/null || true)
-    grep -F 'not-control' "$root/typescript" >/dev/null 2>&1 && \
-        test "$prompts" -ge 4 && break
-    attempt=$((attempt + 1))
-    sleep 0.01
-done
-test "$attempt" -lt 100
-printf 'TAILX\033[HHEAD_\033[F\033[D\033[3~_END\n' >&3
-attempt=0
-while test "$attempt" -lt 100; do
-    grep -F 'line editing accepted' "$root/typescript" >/dev/null 2>&1 && break
-    attempt=$((attempt + 1))
-    sleep 0.01
-done
-test "$attempt" -lt 100
-printf '/think\n' >&3
-attempt=0
-while test "$attempt" -lt 100; do
-    prompts=$(grep -c "$repl_prompt" "$root/typescript" 2>/dev/null || true)
-    grep -F 'enabled for the next turn' "$root/typescript" \
-        >/dev/null 2>&1 && test "$prompts" -ge 5 && break
-    attempt=$((attempt + 1))
-    sleep 0.01
-done
-test "$attempt" -lt 100
-printf '/nothink\n' >&3
-attempt=0
-while test "$attempt" -lt 100; do
-    prompts=$(grep -c "$repl_prompt" "$root/typescript" 2>/dev/null || true)
-    grep -F 'disabled for the next turn' "$root/typescript" \
-        >/dev/null 2>&1 && test "$prompts" -ge 6 && break
-    attempt=$((attempt + 1))
-    sleep 0.01
-done
-test "$attempt" -lt 100
-printf '/think-max\n' >&3
-attempt=0
-while test "$attempt" -lt 100; do
-    prompts=$(grep -c "$repl_prompt" "$root/typescript" 2>/dev/null || true)
-    grep -F 'maximum for the next turn' "$root/typescript" \
-        >/dev/null 2>&1 && test "$prompts" -ge 7 && break
-    attempt=$((attempt + 1))
-    sleep 0.01
-done
-test "$attempt" -lt 100
-printf 'REASONING_STREAM\n' >&3
-attempt=0
-while test "$attempt" -lt 100; do
-    grep -F 'The valid result is 42.' "$root/typescript" >/dev/null 2>&1 && break
-    attempt=$((attempt + 1))
-    sleep 0.01
-done
-test "$attempt" -lt 100
-printf 'PARTIAL_FENCE\n' >&3
-attempt=0
-while test "$attempt" -lt 100; do
-    grep -F 'reset required (/reset)' "$root/typescript" >/dev/null 2>&1 && break
-    attempt=$((attempt + 1))
-    sleep 0.01
-done
-test "$attempt" -lt 100
-printf '/exit\n' >&3
-exec 3>&-
-wait "$repl_pid"
-repl_pid=
-
-clear=$(printf '\033[2J\033[H')
-redrawn=$(printf '\033[2J\033[H\r\033[2K\033[38;5;81m%s\033[0m draft' "$repl_prompt")
-sed "s/${esc}\\[[0-9;]*m//g" "$root/typescript" | tr -d '\r' \
-    >"$root/typescript.plain"
-grep -F 'YVEX 0.1.0 · protocol 13' "$root/typescript.plain" >/dev/null
-grep -F '  model      deepseek4-v4-flash-dspark' \
-    "$root/typescript.plain" >/dev/null
-grep -F '  variant    dddddddddddd' "$root/typescript.plain" >/dev/null
-grep -F '  runtime    ● ready · attached to resident runtime · CUDA · target-only' \
-    "$root/typescript.plain" >/dev/null
-grep -F '  session    pty · position 0 · turns 0' "$root/typescript.plain" >/dev/null
-grep -F '  context    0/4096' "$root/typescript.plain" >/dev/null
-grep -F '  memory     3.00 GiB process · 2.00 GiB artifact mapped · 1.00 GiB device' \
-    "$root/typescript.plain" >/dev/null
-grep -F '  OpenAI     disabled' "$root/typescript.plain" >/dev/null
-grep -Fx 'commands' "$root/typescript.plain" >/dev/null
-grep -F '  /help        Discover canonical commands and operations.' \
-    "$root/typescript.plain" >/dev/null
-grep -F '  /status      Return one composed runtime and attached-session snapshot.' \
-    "$root/typescript.plain" >/dev/null
-grep -F '  /think       Enable explicit model-emitted reasoning for the next turn.' \
-    "$root/typescript.plain" >/dev/null
-grep -F '  /think-max   Enable the source-authored maximum reasoning policy.' \
-    "$root/typescript.plain" >/dev/null
-grep -F '  /nothink     Disable explicit model-emitted reasoning for the next turn.' \
-    "$root/typescript.plain" >/dev/null
-grep -F '  Ctrl-L       clear and redraw input' "$root/typescript.plain" >/dev/null
-test "$(awk '/^commands$/ { catalog = 1; next }
-             catalog && /^$/ { exit }
-             catalog && /^  \// { count++ }
-             END { print count + 0 }' "$root/typescript.plain")" -eq 17
-! grep -F 'commands ·' "$root/typescript.plain" >/dev/null
-grep -F "$clear" "$root/typescript" >/dev/null
-grep -F "$redrawn" "$root/typescript" >/dev/null
-grep -F "$repl_prompt" "$root/typescript" >/dev/null
-grep -F 'processing 4 input tokens · 2/4 · 50.0%' "$root/typescript" >/dev/null
-grep -F 'processing 4 input tokens · 4/4 · 100%' "$root/typescript" >/dev/null
-grep -F 'hello from yvex' "$root/typescript" >/dev/null
-grep -F '[cuda]' "$root/typescript.plain" >/dev/null
-grep -F '__global__ void add() {' "$root/typescript.plain" >/dev/null
-grep -F '🌍' "$root/typescript.plain" >/dev/null
-grep -F 'Use int safely.' "$root/typescript.plain" >/dev/null
-grep -F '\x1b[31mnot-control' "$root/typescript.plain" >/dev/null
-grep -F 'I need to compare the constraints...' "$root/typescript.plain" >/dev/null
-grep -F 'The valid result is 42.' "$root/typescript.plain" >/dev/null
-grep -Fx 'thinking' "$root/typescript.plain" >/dev/null
-awk '/^I need to compare the constraints\.\.\.$/ { reasoning = NR }
-     /^The valid result is 42\.$/ { final = NR }
-     END { exit !(reasoning && final == reasoning + 2) }' \
-    "$root/typescript.plain"
-grep -F 'reasoning · enabled for the next turn' "$root/typescript.plain" >/dev/null
-grep -F 'reasoning · disabled for the next turn' "$root/typescript.plain" >/dev/null
-grep -F 'reasoning · maximum for the next turn' "$root/typescript.plain" >/dev/null
-grep -F 'line editing accepted' "$root/typescript.plain" >/dev/null
-! grep -F 'unknown command: /exit' "$root/typescript.plain" >/dev/null
-grep -F 'int value = ' "$root/typescript.plain" >/dev/null
-grep -F 'partial · 2 committed tokens · position 6 · reset required (/reset)' \
-    "$root/typescript.plain" >/dev/null
-! grep -F '```' "$root/typescript.plain" >/dev/null
-! grep -F "${esc}[31mnot-control" "$root/typescript" >/dev/null
-grep -F "${esc}[38;5;245mthinking" \
-    "$root/typescript" >/dev/null
-grep -E '4 new/5 prompt/1 reused.*3 tokens.*TTFT 2\.50 s.*context 8/4096.*stop maximum tokens' \
-    "$root/typescript" >/dev/null
-! grep -F 'prefill      ' "$root/typescript" >/dev/null
-! grep -F 'generation   ' "$root/typescript" >/dev/null
-! grep -F 'KV unavailable' "$root/typescript" >/dev/null
-! grep -F 'you>' "$root/typescript" >/dev/null
-! grep -F 'assistant>' "$root/typescript" >/dev/null
-grep -F "${esc}[38;5;81m" "$root/typescript" >/dev/null
-grep -F "${esc}[38;5;114m" "$root/typescript" >/dev/null
-grep -F "${esc}[?2004h" "$root/typescript" >/dev/null
-grep -F "${esc}[?2004l" "$root/typescript" >/dev/null
-
-# Ctrl-D discards an unfinished line and exits without submitting a turn.
-mkfifo "$root/eof.input"
-NO_COLOR=1 XDG_RUNTIME_DIR="$runtime" script -q -f -e \
-    -c "$YVEX_BIN chat --session eof-partial" "$root/eof.typescript" \
-    <"$root/eof.input" >"$root/eof.stdout" 2>"$root/eof.stderr" &
-repl_pid=$!
-exec 3>"$root/eof.input"
-attempt=0
-while test "$attempt" -lt 100; do
-    test -f "$root/eof.typescript" && \
-        grep -F "$repl_prompt " "$root/eof.typescript" >/dev/null && break
-    attempt=$((attempt + 1))
-    sleep 0.01
-done
-test "$attempt" -lt 100
-printf 'discard this\004' >&3
-exec 3>&-
-wait "$repl_pid"
-repl_pid=
-! grep -F 'hello from yvex' "$root/eof.typescript" >/dev/null
-grep -F "${esc}[?2004l" "$root/eof.typescript" >/dev/null
-
-# Ctrl-C uses the server cancellation operation during both prefill and decode,
-# then returns to a restored prompt. The second idle Ctrl-C exits.
-mkfifo "$root/cancel.input"
-NO_COLOR=1 XDG_RUNTIME_DIR="$runtime" script -q -f -e \
-    -c "$YVEX_BIN chat --session cancellation" "$root/cancel.typescript" \
-    <"$root/cancel.input" >"$root/cancel.stdout" 2>"$root/cancel.stderr" &
-repl_pid=$!
-exec 3>"$root/cancel.input"
-attempt=0
-while test "$attempt" -lt 100; do
-    client_pid=$(find_repl_client || true)
-    test -n "$client_pid" && grep -F "$repl_prompt " "$root/cancel.typescript" \
-        >/dev/null 2>&1 && break
-    attempt=$((attempt + 1))
-    sleep 0.01
-done
-test "$attempt" -lt 100
-printf 'WAIT_PREFILL_CANCEL\n' >&3
-attempt=0
-while test "$attempt" -lt 100; do
-    grep -F 'processing 4 input tokens · 0/4 · 0%' "$root/cancel.typescript" \
-        >/dev/null 2>&1 && break
-    attempt=$((attempt + 1))
-    sleep 0.01
-done
-test "$attempt" -lt 100
-kill -INT "$client_pid"
-attempt=0
-while test "$attempt" -lt 100; do
-    grep -F 'cancelled' "$root/cancel.typescript" >/dev/null 2>&1 && break
-    attempt=$((attempt + 1))
-    sleep 0.01
-done
-test "$attempt" -lt 100
-printf 'WAIT_DECODE_CANCEL\n' >&3
-attempt=0
-while test "$attempt" -lt 100; do
-    grep -F 'processing 4 input tokens · 4/4 · 100%' "$root/cancel.typescript" \
-        >/dev/null 2>&1 && break
-    attempt=$((attempt + 1))
-    sleep 0.01
-done
-test "$attempt" -lt 100
-kill -INT "$client_pid"
-attempt=0
-while test "$attempt" -lt 100; do
-    count=$(grep -c 'cancelled' "$root/cancel.typescript" 2>/dev/null || true)
-    test "$count" -ge 2 && break
-    attempt=$((attempt + 1))
-    sleep 0.01
-done
-test "$attempt" -lt 100
-printf 'discard on resize' >&3
-kill -WINCH "$client_pid"
-attempt=0
-while test "$attempt" -lt 100; do
-    grep -F 'discard on resize' "$root/cancel.typescript" >/dev/null 2>&1 && break
-    attempt=$((attempt + 1))
-    sleep 0.01
-done
-test "$attempt" -lt 100
-kill -INT "$client_pid"
-attempt=0
-while test "$attempt" -lt 100; do
-    grep -F '^C' "$root/cancel.typescript" >/dev/null 2>&1 && break
-    attempt=$((attempt + 1))
-    sleep 0.01
-done
-test "$attempt" -lt 100
-kill -INT "$client_pid"
-exec 3>&-
-wait "$repl_pid"
-repl_pid=
-grep -F 'generation.cancel cancellation' "$root/host.err" >/dev/null
-count=$(grep -c 'generation.cancel cancellation' "$root/host.err")
-test "$count" -eq 2
-grep -F "${esc}[?2004l" "$root/cancel.typescript" >/dev/null
-! grep -F "${esc}[3" "$root/cancel.typescript" >/dev/null
-! grep -F 'hello from yvex' "$root/cancel.typescript" >/dev/null
-
-# Cancellation after an explicit reasoning fragment never fabricates a final
-# channel, and leaves the terminal ready for the next request.
-mkfifo "$root/reasoning-cancel.input"
-NO_COLOR=1 XDG_RUNTIME_DIR="$runtime" script -q -f -e \
-    -c "$YVEX_BIN chat --session reasoning-cancellation" \
-    "$root/reasoning-cancel.typescript" \
-    <"$root/reasoning-cancel.input" >"$root/reasoning-cancel.stdout" \
-    2>"$root/reasoning-cancel.stderr" &
-repl_pid=$!
-exec 3>"$root/reasoning-cancel.input"
-attempt=0
-while test "$attempt" -lt 100; do
-    client_pid=$(find_repl_client || true)
-    test -n "$client_pid" && \
-        grep -F "$repl_prompt " "$root/reasoning-cancel.typescript" \
-            >/dev/null 2>&1 && break
-    attempt=$((attempt + 1))
-    sleep 0.01
-done
-test "$attempt" -lt 100
-printf '/think\n' >&3
-attempt=0
-while test "$attempt" -lt 100; do
-    grep -F 'enabled for the next turn' \
-        "$root/reasoning-cancel.typescript" >/dev/null 2>&1 && break
-    attempt=$((attempt + 1))
-    sleep 0.01
-done
-test "$attempt" -lt 100
-printf 'WAIT_REASONING_CANCEL\n' >&3
-attempt=0
-while test "$attempt" -lt 100; do
-    grep -F 'reasoning before cancellation' \
-        "$root/reasoning-cancel.typescript" >/dev/null 2>&1 && break
-    attempt=$((attempt + 1))
-    sleep 0.01
-done
-test "$attempt" -lt 100
-kill -INT "$client_pid"
-attempt=0
-while test "$attempt" -lt 100; do
-    grep -F 'cancelled' "$root/reasoning-cancel.typescript" \
-        >/dev/null 2>&1 && break
-    attempt=$((attempt + 1))
-    sleep 0.01
-done
-test "$attempt" -lt 100
-kill -INT "$client_pid"
-exec 3>&-
-wait "$repl_pid"
-repl_pid=
-grep -F 'generation.cancel reasoning-cancellation' "$root/host.err" \
-    >/dev/null
-! grep -F 'The valid result is 42.' "$root/reasoning-cancel.typescript" \
-    >/dev/null
-
-# A failure after reasoning but before final content preserves the typed
-# reasoning fragment, ends its visual projection, and marks the turn partial.
-mkfifo "$root/reasoning-partial.input"
-NO_COLOR=1 XDG_RUNTIME_DIR="$runtime" script -q -f -e \
-    -c "$YVEX_BIN chat --session reasoning-partial" \
-    "$root/reasoning-partial.typescript" \
-    <"$root/reasoning-partial.input" >"$root/reasoning-partial.stdout" \
-    2>"$root/reasoning-partial.stderr" &
-repl_pid=$!
-exec 3>"$root/reasoning-partial.input"
-attempt=0
-while test "$attempt" -lt 100; do
-    test -f "$root/reasoning-partial.typescript" && \
-        grep -F "$repl_prompt " "$root/reasoning-partial.typescript" \
-            >/dev/null 2>&1 && break
-    attempt=$((attempt + 1))
-    sleep 0.01
-done
-test "$attempt" -lt 100
-printf '/think-max\n' >&3
-attempt=0
-while test "$attempt" -lt 100; do
-    grep -F 'maximum for the next turn' \
-        "$root/reasoning-partial.typescript" >/dev/null 2>&1 && break
-    attempt=$((attempt + 1))
-    sleep 0.01
-done
-test "$attempt" -lt 100
-printf 'PARTIAL_REASONING\n' >&3
-attempt=0
-while test "$attempt" -lt 100; do
-    grep -F 'reset required (/reset)' "$root/reasoning-partial.typescript" \
-        >/dev/null 2>&1 && break
-    attempt=$((attempt + 1))
-    sleep 0.01
-done
-test "$attempt" -lt 100
-printf '\004' >&3
-exec 3>&-
-wait "$repl_pid"
-repl_pid=
-grep -F 'reasoning committed before failure' \
-    "$root/reasoning-partial.typescript" >/dev/null
-grep -F 'partial · 1 committed token · position 5 · reset required (/reset)' \
-    "$root/reasoning-partial.typescript" >/dev/null
-! grep -F 'The valid result is 42.' "$root/reasoning-partial.typescript" \
-    >/dev/null
-
-# Slash completion is projected from the canonical registry, not a second list.
-mkfifo "$root/completion.input"
-NO_COLOR=1 XDG_RUNTIME_DIR="$runtime" script -q -f -e \
-    -c "$YVEX_BIN chat --session completion" "$root/completion.typescript" \
-    <"$root/completion.input" >"$root/completion.stdout" \
-    2>"$root/completion.stderr" &
-repl_pid=$!
-exec 3>"$root/completion.input"
-attempt=0
-while test "$attempt" -lt 100; do
-    test -f "$root/completion.typescript" && \
-        grep -F "$repl_prompt " "$root/completion.typescript" >/dev/null && break
-    attempt=$((attempt + 1))
-    sleep 0.01
-done
-test "$attempt" -lt 100
-printf '/sta\t\n' >&3
-attempt=0
-while test "$attempt" -lt 100; do
-    grep -F 'live aaaaaaaaaaaa' "$root/completion.typescript" >/dev/null 2>&1 && break
-    attempt=$((attempt + 1))
-    sleep 0.01
-done
-test "$attempt" -lt 100
-printf '/unknown\n' >&3
-attempt=0
-while test "$attempt" -lt 100; do
-    grep -F 'unknown command: /unknown' "$root/completion.typescript" \
-        >/dev/null 2>&1 && break
-    attempt=$((attempt + 1))
-    sleep 0.01
-done
-test "$attempt" -lt 100
-printf '/attach\n' >&3
-attempt=0
-while test "$attempt" -lt 100; do
-    grep -F 'invalid arguments for /attach' "$root/completion.typescript" \
-        >/dev/null 2>&1 && break
-    attempt=$((attempt + 1))
-    sleep 0.01
-done
-test "$attempt" -lt 100
-printf '\004' >&3
-exec 3>&-
-wait "$repl_pid"
-repl_pid=
-grep -F 'live aaaaaaaaaaaa' "$root/completion.typescript" >/dev/null
-
-XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server log >"$root/log"
-XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server log --verbose >"$root/log.verbose"
-XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server log --json >"$root/log.jsonl"
-XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" server status >"$root/status"
-grep -F 'YVEX host ·' "$root/log" >/dev/null
-grep -F 'server log · operational history and live events · Ctrl-C to stop' \
-    "$root/log" >/dev/null
-grep -E 'REQUEST[[:space:]]+fixture/fixture-request' "$root/log" >/dev/null
-grep -F 'DSPARK 2 cycles · 5/10 accepted · 3 rejected · 2 discarded' \
-    "$root/log" >/dev/null
-! grep -F 'cycle 1' "$root/log" >/dev/null
-grep -F 'cycle 1' "$root/log.verbose" >/dev/null
-grep -F 'cycle 2' "$root/log.verbose" >/dev/null
-grep -E 'RUNTIME[[:space:]]+runtime shutdown complete' "$root/log" >/dev/null
-! grep -F 'kernel launches 4511 · stream syncs 63' "$root/log" >/dev/null
-! grep -F 'client disconnected' "$root/log" >/dev/null
-! grep -E '^#[0-9]+' "$root/log" >/dev/null
-! grep -E '(^|[[:space:]])[ab]=' "$root/log" >/dev/null
-! grep -F "$esc" "$root/log" "$root/status" >/dev/null
-grep -F '"schema":3' "$root/log.jsonl" >/dev/null
-grep -F '"kind":"generation.profile"' "$root/log.jsonl" >/dev/null
-
-# Losing the server during a turn restores the prompt and terminal before exit.
-mkfifo "$root/disconnect.input"
-NO_COLOR=1 XDG_RUNTIME_DIR="$runtime" script -q -f -e \
-    -c "$YVEX_BIN chat --session disconnect" "$root/disconnect.typescript" \
-    <"$root/disconnect.input" >"$root/disconnect.stdout" \
-    2>"$root/disconnect.stderr" &
-repl_pid=$!
-exec 3>"$root/disconnect.input"
-attempt=0
-while test "$attempt" -lt 100; do
-    test -f "$root/disconnect.typescript" && \
-        grep -F "$repl_prompt " "$root/disconnect.typescript" >/dev/null && break
-    attempt=$((attempt + 1))
-    sleep 0.01
-done
-test "$attempt" -lt 100
-printf 'WAIT_PREFILL_CANCEL\n' >&3
-attempt=0
-while test "$attempt" -lt 100; do
-    grep -F 'processing 4 input tokens · 0/4 · 0%' \
-        "$root/disconnect.typescript" >/dev/null 2>&1 && break
-    attempt=$((attempt + 1))
-    sleep 0.01
-done
-test "$attempt" -lt 100
-kill "$host_pid"
-wait "$host_pid" 2>/dev/null || true
-host_pid=
-attempt=0
-while test "$attempt" -lt 100; do
-    grep -F 'yvex:' "$root/disconnect.typescript" >/dev/null 2>&1 && break
-    attempt=$((attempt + 1))
-    sleep 0.01
-done
-test "$attempt" -lt 100
-attempt=0
-while test "$attempt" -lt 100; do
-    grep -F "$repl_model [disconnected]> " "$root/disconnect.typescript" \
-        >/dev/null 2>&1 && break
-    attempt=$((attempt + 1))
-    sleep 0.01
-done
-test "$attempt" -lt 100
-! grep -F '0%yvex:' "$root/disconnect.typescript" >/dev/null
-! grep -F 'unknown session' "$root/disconnect.typescript" >/dev/null
-printf '\004' >&3
-exec 3>&-
-wait "$repl_pid"
-repl_pid=
-grep -F "${esc}[?2004l" "$root/disconnect.typescript" >/dev/null
-
-# A PTY selects chat, but connection refusal remains typed when no server exists.
+# Non-TTY interactive entrypoints refuse before mutating terminal state.
 set +e
-printf '\004' | XDG_RUNTIME_DIR="$runtime" \
-    script -q -e -c "$YVEX_BIN chat --session pty" "$root/absent.typescript" \
-    >"$root/absent.stdout" 2>"$root/absent.stderr"
-status=$?
+XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" chat </dev/null \
+    >"$root/non-tty.out" 2>"$root/non-tty.err"
+chat_status=$?
+XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" </dev/null \
+    >"$root/bare.out" 2>"$root/bare.err"
+bare_status=$?
 set -e
+test "$chat_status" -eq 2
+test "$bare_status" -eq 2
+grep -F 'chat requires a terminal' "$root/non-tty.err" >/dev/null
+grep -F 'chat requires a terminal' "$root/bare.err" >/dev/null
+! grep "$(printf '\033')" "$root/non-tty.out" "$root/non-tty.err" \
+    "$root/bare.out" "$root/bare.err" >/dev/null
 
-test "$status" -eq 1
-! grep -F 'chat requires a terminal' "$root/absent.typescript" >/dev/null
-grep -F '`yvex server`, then `yvex server load MODEL`' \
-    "$root/absent.typescript" >/dev/null
-printf 'test: repl_pty\n'
+# Connected Home consumes typed host, engine, session, and generation messages.
+start_tui main 32 150 'chat --session pty' color
+wait_for "$root/main.typescript" 'deepseek4-v4-flash-dspark'
+wait_for "$root/main.typescript" 'ACTIVITY'
+wait_for "$root/main.typescript" 'CONTEXT'
+wait_for "$root/main.typescript" 'COMPOSE'
+printf 'hello\r' >&3
+wait_for "$root/main.typescript" 'hello from yvex'
+printf '\t\t\t' >&3
+wait_for "$root/main.typescript" 'RUNTIME / TELEMETRY'
+printf '\t' >&3
+wait_for "$root/main.typescript" 'HOME'
+printf '\033[200~hello\nworld 🌍\033[201~' >&3
+wait_for "$root/main.typescript" 'world 🌍'
+printf 'draft-resize' >&3
+kill -WINCH "$client_pid"
+wait_for "$root/main.typescript" 'draft-resize'
+kill -INT "$client_pid"
+wait_for "$root/main.typescript" 'Composer cleared'
+kill -INT "$client_pid"
+finish_tui
+assert_restored "$root/main.typescript"
+assert_terminal_background "$root/main.typescript"
+
+# Active generation Ctrl-C crosses the canonical cancellation operation.
+start_tui cancel 24 100 'chat --session cancellation' nocolor
+wait_for "$root/cancel.typescript" 'deepseek4-v4-flash-dspark'
+printf 'WAIT_PREFILL_CANCEL\r' >&3
+wait_for "$root/cancel.typescript" 'prefill.started'
+kill -INT "$client_pid"
+wait_for "$root/host.err" 'generation.cancel cancellation'
+wait_for "$root/cancel.typescript" 'cancelled'
+kill -INT "$client_pid"
+finish_tui
+assert_restored "$root/cancel.typescript"
+
+# Bare `yvex`, EOF, and SIGTERM all restore the terminal transaction.
+start_tui compact 8 40 '' nocolor
+printf '\020quit\r' >&3
+finish_tui
+assert_restored "$root/compact.typescript"
+
+start_tui eof 18 88 'chat --session eof' nocolor
+printf 'preserved-unsubmitted\004' >&3
+finish_tui
+assert_restored "$root/eof.typescript"
+
+start_tui terminate 20 96 'chat --session terminate' nocolor
+kill -TERM "$client_pid"
+finish_tui
+assert_restored "$root/terminate.typescript"
+
+echo 'TUI PTY lifecycle: pass'

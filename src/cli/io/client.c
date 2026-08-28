@@ -73,8 +73,7 @@ static int client_error(const yvex_error *err)
         fprintf(stderr, "hint: run `yvex server`, then `yvex server load MODEL`\n");
     return 1;
 }
-static void request_init(yvex_client_request *request,
-                         yvex_client_operation operation)
+void yvex_cli_client_request_init(yvex_client_request *request, yvex_client_operation operation)
 {
     static unsigned long long next_request = 1u;
     yvex_provider_request defaults;
@@ -94,6 +93,7 @@ static void request_init(yvex_client_request *request,
     request->typical_p = defaults.sampling.typical_p;
     request->reasoning_policy = YVEX_REASONING_DISABLED;
 }
+#define request_init yvex_cli_client_request_init
 static void request_engine_bind(yvex_client_request *request,
                                 const client_engine_binding *engine)
 {
@@ -155,14 +155,14 @@ static int parse_double(const char *text, double *value)
     *value = parsed;
     return 1;
 }
-static int request_open(yvex_client **client,
-                        const yvex_client_request *request, yvex_error *err)
+int yvex_cli_client_request_open(yvex_client **client, const yvex_client_request *request, yvex_error *err)
 {
     int rc = yvex_client_connect(client, NULL, err);
     if (rc == YVEX_OK) rc = yvex_client_send(*client, request, err);
     if (rc != YVEX_OK) yvex_client_close(client);
     return rc;
 }
+#define request_open yvex_cli_client_request_open
 static int cancellation_request(const client_engine_binding *engine,
                                 const char *session)
 {

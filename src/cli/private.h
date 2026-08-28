@@ -15,5 +15,6 @@ int yvex_client_dispatch(const struct yvex_operator_descriptor *operation,
                          int argc, char **argv, size_t consumed);
 size_t yvex_cli_command_distance(const char *left, const char *right);
 int yvex_cli_server_dispatch(int argc, char **argv, size_t consumed);
+int yvex_tui_dispatch(int argc, char **argv);
 
 #endif
