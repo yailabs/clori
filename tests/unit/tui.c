@@ -153,6 +153,10 @@ static int test_turn_observation(void)
     event.message.engine.engine_kind = YVEX_SERVER_ENGINE_TEXT;
     event.message.engine.execution_strategy = YVEX_SERVER_EXECUTION_TARGET_ONLY;
     event.message.engine.generation = 4u;
+    event.message.engine.mapped_package_bytes = 4ull * 1073741824ull;
+    event.message.engine.prepared_bytes = 1ull * 1073741824ull;
+    event.message.engine.resident_host_bytes = 3ull * 1073741824ull;
+    event.message.engine.resident_device_bytes = 2ull * 1073741824ull;
     (void)snprintf(event.message.engine.alias,
                    sizeof(event.message.engine.alias), "%s", "fixture");
     yvex_tui_state_message(&state, &event);
@@ -197,7 +201,8 @@ static int test_turn_observation(void)
                          strstr(frame, "10.00 tok/s decode") &&
                          strstr(frame, "320 kernels") &&
                          strstr(frame, "10.00 MiB H2D") &&
-                         strstr(frame, "48/320 Tensor Core"),
+                         strstr(frame, "48/320 Tensor Core") &&
+                         strstr(frame, "1.00 GiB prepared"),
                      "TUI projects typed turn and profile facts without inventing telemetry");
 
     memset(&event, 0, sizeof(event));

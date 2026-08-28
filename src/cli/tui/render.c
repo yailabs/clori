@@ -1351,8 +1351,10 @@ static void render_runtime(tui_frame *frame, const yvex_tui_state *state,
     (void)snprintf(value, sizeof(value), "%.1f s", (double)state->runtime.metrics.uptime_ns / 1000000000.0);
     if (row <= last) runtime_metric(frame, row++, "uptime", value, limit);
     row++;
-    (void)snprintf(value, sizeof(value), "%.2f GiB mapped · %.2f GiB host · %.2f GiB device",
+    (void)snprintf(value, sizeof(value),
+                   "%.2f GiB mapped · %.2f GiB prepared · %.2f GiB host · %.2f GiB device",
                    (double)(engine ? engine->mapped_package_bytes : 0u) / 1073741824.0,
+                   (double)(engine ? engine->prepared_bytes : 0u) / 1073741824.0,
                    (double)(engine ? engine->resident_host_bytes : 0u) / 1073741824.0,
                    (double)(engine ? engine->resident_device_bytes : 0u) / 1073741824.0);
     if (row <= last) runtime_metric(frame, row++, "memory / residency", value, limit);
