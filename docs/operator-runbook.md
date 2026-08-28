@@ -4,10 +4,12 @@ This runbook owns first startup and routine operation of the installed local
 server and clients. Normal operation is registry-first: users list a complete
 local model profile, start the foreground host, load that package as one engine
 generation, and enter
-chat without exporting paths or repeating internal paths. Its commands follow
-the canonical operation registry. The REPL attaches to the resident server and
-uses the same typed session, progress, and result facts as noninteractive
-clients.
+chat without exporting paths or repeating internal paths. Running `yvex`
+provides the full-screen terminal path over the same catalog and protocol APIs;
+`yvex chat` retains the linear console. Both attach to the resident server and
+use the same typed session, progress, runtime-observation, and result facts as
+noninteractive clients. Neither reads backend-private state. Their commands
+follow the canonical operation registry.
 It is not a capability ledger: consult [`ROADMAP.md`](../ROADMAP.md) for current
 gates.
 

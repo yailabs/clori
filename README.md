@@ -39,6 +39,11 @@ unavailable exact implementations fail closed.
 make -j4 all
 ```
 
+Running `./yvex` opens the full-screen terminal application. It can discover
+local and remote models, start or attach to the persistent host, load an
+engine, chat, and inspect typed runtime facts without exposing compiler or CUDA
+internals. The commands below are the exact explicit CLI equivalents.
+
 ### 2. Find or prepare a model profile
 
 ```sh

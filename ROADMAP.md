@@ -101,7 +101,7 @@ not a replacement historical ledger.
 | Command architecture | `yvex.operator.registry.v1` generates immutable descriptors compiled into `yvex`; canonical operation IDs drive the truthful command taxonomy, lane-safe dispatch, help, JSON discovery, completion, and slash-command schemas. |
 | Documentation architecture | A compact current map links implemented architecture, family records, contracts, operation, development and release owners; retired audits, plans and migrations live in Git history. |
 | Code commentary | Every governed first-party source follows the natural selective-commentary doctrine; the structural guard rejects obsolete templates and boilerplate while production lexical tokens remain unchanged. |
-| Runtime console | The server-backed `yvex>` console renders one composed attachment view, protocol-authored prefill progress, direct model output, typed final metrics, registry-derived slash discovery and completion, the canonical `server log` observability stream, server cancellation, and bounded terminal restoration including Ctrl-D. |
+| Runtime console | The empty `yvex` path is a client-owned full-screen terminal application over public catalog and protocol facts; explicit `yvex chat` retains the linear console. Both render protocol-authored progress, committed output, typed metrics, cancellation and bounded terminal restoration without backend-private reads. |
 | Operator surface | The strict generated operation registry drives compiled discovery, help, completion and slash projections; executable tests validate the current graph directly rather than reconciling a frozen audit. |
 | Performance | `V010.RUNTIME.DEEPSEEK.PERFORMANCE.0` remains `partial`: startup and bounded profiling are accepted; warm decode remains below admission. |
 
@@ -197,8 +197,9 @@ Machine-readable readiness facts retained for claim guards:
 ```text
 canonical_operation_registry_ready=1
 generated_command_descriptors_ready=1
-protocol_v13_ready=1
+protocol_v14_ready=1
 mature_repl_console_ready=1
+terminal_application_ready=1
 deepseek_dspark_source_ready=1
 target_only_generation_ready=1
 dspark_verified_generation_ready=1
@@ -249,8 +250,8 @@ used for this cutover.
 
 YVEX does not currently claim:
 
-- a full-screen TUI or an explicit reasoning channel for a runtime profile that
-  does not advertise one;
+- an explicit reasoning channel for a runtime profile that does not advertise
+  one;
 - the initial 20--24 token/s warm-decode performance class or a later
   optimization destination;
 - DSpark acceleration, optimized block verification, or production load-aware

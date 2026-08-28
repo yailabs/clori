@@ -21,7 +21,7 @@ explicit server entrypoint, write terminal streams.
 ## Product grammar
 
 ```text
-yvex
+yvex                                            # full-screen terminal application
 yvex chat [--session NAME] [--max-new-tokens N]
 yvex run [options] TEXT
 
@@ -91,14 +91,21 @@ not link into runtime execution or open weights locally. The complete operator
 sequence and memory interpretation live in the
 [local runtime runbook](../operator-runbook.md).
 
-`yvex` and `yvex chat` require a TTY. `yvex run` is the noninteractive one-shot
-form. A missing host produces one concise refusal plus the exact `yvex server`
-hint; a missing engine points to `yvex server load MODEL`. Unknown and
-duplicate options follow the product parser's typed refusal policy.
+The empty `yvex` path opens the full-screen terminal application. It is a
+client-owned projection of the public catalog and local protocol: it may
+discover models, start or attach to the canonical host, load an engine, chat,
+and inspect typed runtime facts, but it never reads runtime- or CUDA-private
+state. Explicit `yvex chat` retains the linear console contract. Both require a
+TTY; `yvex run` is the noninteractive one-shot form. A missing host produces
+one concise refusal plus the exact `yvex server` hint; a missing engine points
+to `yvex server load MODEL`. Unknown and duplicate options follow the product
+parser's typed refusal policy.
 
-The REPL owns bounded in-memory history, UTF-8 code-point deletion, bracketed
-multiline paste, resize redraw, and two-stage SIGINT/EOF behavior. History is
-not persisted and never becomes telemetry content.
+The interactive clients own bounded in-memory history, UTF-8 code-point
+deletion, bracketed multiline paste, resize redraw, and two-stage SIGINT/EOF
+behavior. The full-screen application additionally owns alternate-screen
+entry/rollback and resize-safe terminal layout. History is not persisted and
+never becomes telemetry content.
 
 ## Offline engineering grammar
 
