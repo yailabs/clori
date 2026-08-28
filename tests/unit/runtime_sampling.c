@@ -374,7 +374,7 @@ static int sampling_test_stochastic(void)
     yvex_runtime_sampling_result a, b;
     yvex_runtime_sampling_context_summary summary;
     yvex_test_sampling_rng rng;
-    yvex_test_sampling_reference_result reference;
+    yvex_test_sampling_reference_result reference, divergent;
     yvex_error err;
     sampling_test_plan(&plan, 8ull);
     YVEX_TEST_ASSERT(sampling_test_row(&plan, logits, 8ull, 1ull, &row) &&
@@ -393,12 +393,17 @@ static int sampling_test_stochastic(void)
                          yvex_test_sampling_reference_select(
                              logits, 8ull, &policy, &rng, &reference),
                      "production and independent filtered samplers execute");
-    YVEX_TEST_ASSERT(a.selected_token_id == reference.selected_token_id &&
-                         a.final_candidate_count == reference.candidate_count &&
-                         fabs(a.selected_probability - reference.selected_probability) < 1.0e-15 &&
+    YVEX_TEST_ASSERT(yvex_test_sampling_reference_first_divergence(
+                         &a, &reference, 1.0e-15) == NULL &&
                          a.selected_token_id == b.selected_token_id &&
                          strcmp(a.selected_token_identity, b.selected_token_identity) == 0,
-                     "reference and same-seed contexts select identically");
+                     "reference and same-seed contexts match through every sampling stage");
+    divergent = reference;
+    divergent.candidates_after_min_p++;
+    YVEX_TEST_ASSERT(strcmp(yvex_test_sampling_reference_first_divergence(
+                                &a, &divergent, 1.0e-15),
+                            "min-p") == 0,
+                     "sampling differential names the first mismatching stage");
     YVEX_TEST_ASSERT(yvex_runtime_sampling_context_snapshot(first, &summary, &err) == YVEX_OK &&
                          summary.stochastic_draws == 1ull &&
                          summary.successful_samples == 1ull &&
