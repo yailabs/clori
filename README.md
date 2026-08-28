@@ -73,7 +73,9 @@ this in the first terminal:
 ```
 
 The host publishes its private socket and optional loopback OpenAI listener with
-zero loaded engines. It remains alive across model load and unload.
+zero loaded engines. It remains alive across model load and unload. Invoking
+`./yvex server` again on a human terminal attaches to that same healthy host;
+`exit` leaves only the attached console, while `stop` shuts down the host.
 
 ### 4. Load and inspect an engine
 

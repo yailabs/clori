@@ -394,6 +394,12 @@ yvex[host] > load N
 deepseek4-v4-flash-dspark > models
 ```
 
+Running `./yvex server` from another terminal while this compatible host is
+healthy attaches a second operator console to the same engine manager. It does
+not reserve another Unix or OpenAI listener. Use `exit` to detach that console
+without affecting the host; use `stop` only when the shared host itself should
+shut down.
+
 After the engine reports `loaded`, an optional second terminal may run
 `./yvex chat --model PROFILE --session main` or `./yvex server log`. Add
 `--verbose` for individual DSpark cycles or `--json` for canonical JSONL. All

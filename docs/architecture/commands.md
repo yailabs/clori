@@ -75,7 +75,11 @@ reads the engine generations actually known to the host.
 `yvex server` starts the persistent host without opening a package. On a human
 TTY the same foreground process exposes a small operator console for profile
 selection, load, inventory, status, unload, and host stop; external protocol
-clients remain available concurrently. A lifecycle request resolves and
+clients remain available concurrently. If the configured socket already owns a
+healthy compatible YVEX host, the command attaches that console to the existing
+host instead of creating another listener or engine manager. In an attached
+console, `exit` detaches while `stop` explicitly shuts down the shared host. A
+lifecycle request resolves and
 authenticates the named profile, creates one immutable engine generation,
 establishes its admitted residency, and publishes engine readiness. Unload
 drains and closes that generation without stopping the host. Client requests
