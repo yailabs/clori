@@ -547,10 +547,10 @@ $(QA_C_UNIT_LEGACY_TARGETS): generate-qa-registry
 # Runtime model/session lifecycle is exercised by the binding owner because the
 # sealed model consumes one independently reopened binding.
 test-runtime-model-session: $(TEST_RUNNER)
-	YVEX_TEST_FILTER=runtime_binding $(TEST_RUNNER)
+	YVEX_TEST_FILTER=unit.runtime_binding $(TEST_RUNNER)
 
 test-runtime-residency: $(TEST_RUNNER)
-	YVEX_TEST_FILTER=runtime_binding $(TEST_RUNNER)
+	YVEX_TEST_FILTER=unit.runtime_binding $(TEST_RUNNER)
 
 test-runtime-phases: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_state,deepseek_attention $(TEST_RUNNER)
@@ -565,7 +565,7 @@ test-runtime-digests: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_state,runtime_benchmark,deepseek_attention $(TEST_RUNNER)
 
 test-runtime-family-neutrality: $(TEST_RUNNER) test-architecture-boundaries
-	YVEX_TEST_FILTER=runtime_binding $(TEST_RUNNER)
+	YVEX_TEST_FILTER=unit.runtime_binding $(TEST_RUNNER)
 
 test-tokenizer: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=tokenizer,runtime_tokenizer,prompt $(TEST_RUNNER)
@@ -666,7 +666,7 @@ test-runtime: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=provider $(TEST_RUNNER)
 	YVEX_TEST_FILTER=openai $(TEST_RUNNER)
 	YVEX_TEST_FILTER=server $(TEST_RUNNER)
-	YVEX_TEST_FILTER=runtime_binding $(TEST_RUNNER)
+	YVEX_TEST_FILTER=unit.runtime_binding $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_decode $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_logits $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_sampling $(TEST_RUNNER)
