@@ -121,7 +121,7 @@ opening payloads or engines. A moving provider reference is shown as
 Package identities and startup facts remain available through `model show`.
 Acquired sources report engine state as `not-applicable`. If no host can be
 observed, packages report `not-observed`; with a live host they report
-`not-loaded` or the engine state returned by protocol v14. Package readiness
+`not-loaded` or the engine state returned by protocol v15. Package readiness
 never implies residency or serving activity. The lifecycle handoff is explicit:
 
 ```sh
@@ -571,7 +571,7 @@ state, and persistent KV while sharing immutable model resources:
 
 Client disconnect and detach do not close the engine. A partial or cancelled
 turn can retain model-committed state and is never silently marked complete.
-Protocol v14 reports the exact engine generation, committed position,
+Protocol v15 reports the exact engine generation, committed position,
 token/text counts, state generations, failure class, and reset requirement.
 Reset clears the session KV, tokens, transcript, decoder, and RNG policy without
 closing the engine or host.

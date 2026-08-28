@@ -12,6 +12,7 @@ extern "C" {
 
 #define YVEX_RUNTIME_LATENT_SCHEMA_V1 1u
 #define YVEX_RUNTIME_AV_LAYOUT_SCHEMA_V1 1u
+#define YVEX_RUNTIME_AV_LAYOUT_SCHEMA_V2 2u
 #define YVEX_RUNTIME_AV_PLAN_SCHEMA_V1 1u
 #define YVEX_RUNTIME_AV_UNPACK_SCHEMA_V1 1u
 #define YVEX_RUNTIME_AV_VIDEO_RECONSTRUCTION_SCHEMA_V1 1u
@@ -23,7 +24,8 @@ extern "C" {
 typedef struct {
     unsigned int schema_version, rng_algorithm, rng_version;
     int completed;
-    unsigned long long seed, value_count, uniform_draw_count, workspace_bytes;
+    unsigned long long seed, discarded_value_count, value_count;
+    unsigned long long uniform_draw_count, workspace_bytes;
     char normal_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_latent_normal_result;
 
@@ -47,7 +49,7 @@ typedef struct yvex_runtime_av_plan {
     unsigned int text_tag, audio_tag, video_tag;
     unsigned long long text_tokens, frames, width, height;
     unsigned long long video_latent_frames, video_latent_height, video_latent_width;
-    unsigned long long audio_latent_steps, audio_rows, video_rows, packed_rows;
+    unsigned long long audio_latent_steps, audio_rows, condition_rows, video_rows, packed_rows;
     unsigned long long patch_height, patch_width, audio_channels;
     unsigned long long video_value_width, audio_value_width;
     unsigned int temporal_pattern[YVEX_RUNTIME_AV_TEMPORAL_PATTERN_CAP];
@@ -90,7 +92,8 @@ typedef int (*yvex_runtime_latent_observe_fn)(
 
 typedef struct yvex_runtime_latent_request {
     unsigned int schema_version;
-    unsigned long long seed, video_values, audio_values, step_count;
+    unsigned long long seed, initialization_skip_values;
+    unsigned long long video_values, audio_values, step_count;
     unsigned long long maximum_workspace_bytes;
     const float *video_sigmas, *audio_sigmas;
     const char *plan_identity, *evaluator_identity;
@@ -133,13 +136,19 @@ typedef struct yvex_runtime_latent_evaluator_evidence {
 int yvex_runtime_latent_normal_f32(
     float *, unsigned long long, unsigned long long, unsigned long long,
     unsigned long long, yvex_runtime_latent_normal_result *, yvex_error *);
+int yvex_runtime_latent_normal_f32_from_offset(
+    float *, unsigned long long, unsigned long long, unsigned long long,
+    unsigned long long, unsigned long long, yvex_runtime_latent_normal_result *, yvex_error *);
 
 typedef struct yvex_runtime_av_layout_request {
     unsigned int schema_version;
     unsigned int text_tag, audio_tag, video_tag;
-    unsigned long long text_rows, audio_steps, audio_channels;
+    unsigned long long text_rows, condition_rows, condition_count, condition_rows_per_image;
+    unsigned long long audio_steps, audio_channels;
     unsigned long long video_frames, latent_height, latent_width, patch_height, patch_width;
-    unsigned long long text_start, audio_start, video_start, packed_rows;
+    unsigned long long text_start, condition_start, audio_start, video_start, packed_rows;
+    const unsigned int *text_tags;
+    const double *condition_time_origins;
     const unsigned long long *audio_width_indices;
     const unsigned int *temporal_pattern;
     unsigned long long temporal_pattern_count, maximum_workspace_bytes;
@@ -150,7 +159,8 @@ typedef struct yvex_runtime_av_layout_request {
 typedef struct yvex_runtime_av_layout_result {
     unsigned int schema_version;
     int complete;
-    unsigned long long text_rows, audio_rows, video_rows, packed_rows, workspace_bytes;
+    unsigned long long text_rows, condition_rows, audio_rows, video_rows, packed_rows;
+    unsigned long long workspace_bytes;
     char layout_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_av_layout_result;
 
@@ -278,6 +288,8 @@ int yvex_runtime_av_plan_build(
     const yvex_runtime_av_plan_policy *policy, unsigned long long text_tokens,
     unsigned long long width, unsigned long long height, unsigned long long frames,
     unsigned int inference_steps, yvex_runtime_av_plan *out, yvex_error *err);
+int yvex_runtime_av_plan_add_condition_rows(
+    yvex_runtime_av_plan *, unsigned long long, yvex_error *);
 int yvex_runtime_av_scheduler_step(
     float *output, const float *sample, const float *velocity,
     unsigned long long values, float timestep, float sigma, float sigma_next,
@@ -289,6 +301,9 @@ int yvex_runtime_av_latent_execute(
 int yvex_runtime_av_layout_from_plan(
     const yvex_runtime_av_plan *plan, const yvex_runtime_av_layout_output *output,
     yvex_runtime_av_layout_result *result, yvex_error *err);
+int yvex_runtime_av_layout_from_conditioned_plan(
+    const yvex_runtime_av_plan *, const unsigned int *, const double *, unsigned long long,
+    const yvex_runtime_av_layout_output *, yvex_runtime_av_layout_result *, yvex_error *);
 int yvex_runtime_av_layout_matches_plan(
     const yvex_runtime_av_plan *plan, const yvex_runtime_av_layout_output *output,
     const yvex_runtime_av_layout_result *result, yvex_error *err);

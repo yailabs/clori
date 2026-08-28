@@ -69,11 +69,14 @@ RECORDS = {
     "yvex_client_media_result": (
         "include/yvex/server.h", "YVEX_CLIENT_MEDIA_RESULT_SCHEMA_V1", 1, 856,
         "812c35fbd87c5f621d3a8b52ffbe39c32cdcc41580bf562dc07fd8b6ff6123b2"),
+    "yvex_client_media_condition": (
+        "include/yvex/server.h", "YVEX_CLIENT_MEDIA_CONDITION_SCHEMA_V1", 1, 524,
+        "15b251a93051e0f0cf0c70e1a14c2cdcb019b54d7e27851b6c36b02bcac9802b"),
     "yvex_client_request": (
-        "include/yvex/server.h", "YVEX_LOCAL_PROTOCOL_VERSION", 14, 920,
-        "e564c4dfa3c471b5efa0a4a493c63452d9a92d24cd8c273a58d13c5017f9ff41"),
+        "include/yvex/server.h", "YVEX_LOCAL_PROTOCOL_VERSION", 15, 1976,
+        "6292fe4202c13833b2d5c475491ab32d78287284ab67b0f66828aced6b9f4638"),
     "yvex_client_message": (
-        "include/yvex/server.h", "YVEX_LOCAL_PROTOCOL_VERSION", 14, 10024,
+        "include/yvex/server.h", "YVEX_LOCAL_PROTOCOL_VERSION", 15, 10024,
         "7427bba88c63a0443c240058c0117c2e6f2169fce79854305a3b4b372408759c"),
     "yvex_tokenizer_plan_summary": (
         "include/yvex/tokenizer.h", "YVEX_TOKENIZER_PLAN_SCHEMA_V3", 3, 864,
@@ -156,7 +159,7 @@ def compiler_source() -> str:
         'ABI_ASSERT(YVEX_SERVER_ENGINE_SCHEMA_V2 == 2u, "engine v2 identity changed");',
         'ABI_ASSERT(YVEX_RUNTIME_EVENT_SCHEMA_V3 == 3u, "legacy event v3 identity changed");',
         'ABI_ASSERT(YVEX_RUNTIME_EVENT_SCHEMA_V4 == 4u, "event v4 identity changed");',
-        'ABI_ASSERT(YVEX_LOCAL_PROTOCOL_VERSION == 14u, "local protocol identity changed");',
+        'ABI_ASSERT(YVEX_LOCAL_PROTOCOL_VERSION == 15u, "local protocol identity changed");',
         'ABI_ASSERT(YVEX_SERVER_ENGINE_NONE == 0, "engine-kind none value changed");',
         'ABI_ASSERT(YVEX_SERVER_ENGINE_TEXT == 1, "engine-kind text value changed");',
         'ABI_ASSERT(YVEX_SERVER_ENGINE_MEDIA == 2, "engine-kind media value changed");',

@@ -33,6 +33,17 @@ static int test_request_roundtrip(void)
     strcpy(source.session_name, "main");
     source.prompt = prompt;
     source.prompt_bytes = sizeof(prompt);
+    source.media_condition_count = 2u;
+    source.media_conditions[0].schema_version =
+        YVEX_CLIENT_MEDIA_CONDITION_SCHEMA_V1;
+    source.media_conditions[0].kind = YVEX_CLIENT_MEDIA_CONDITION_IMAGE;
+    source.media_conditions[0].role = YVEX_CLIENT_MEDIA_CONDITION_FIRST;
+    strcpy(source.media_conditions[0].source_path, "/tmp/first.png");
+    source.media_conditions[1].schema_version =
+        YVEX_CLIENT_MEDIA_CONDITION_SCHEMA_V1;
+    source.media_conditions[1].kind = YVEX_CLIENT_MEDIA_CONDITION_IMAGE;
+    source.media_conditions[1].role = YVEX_CLIENT_MEDIA_CONDITION_LAST;
+    strcpy(source.media_conditions[1].source_path, "/tmp/last.png");
     source.maximum_new_tokens = 17u;
     source.stochastic = 1;
     source.seed_present = 1;
@@ -58,6 +69,13 @@ static int test_request_roundtrip(void)
     YVEX_TEST_ASSERT(decoded.seed_present && decoded.seed == 0u, "seed zero");
     YVEX_TEST_ASSERT(decoded.reasoning_policy == YVEX_REASONING_MAXIMUM,
                      "request-bound reasoning policy");
+    YVEX_TEST_ASSERT(
+        decoded.media_condition_count == 2u &&
+            decoded.media_conditions[0].role == YVEX_CLIENT_MEDIA_CONDITION_FIRST &&
+            decoded.media_conditions[1].role == YVEX_CLIENT_MEDIA_CONDITION_LAST &&
+            strcmp(decoded.media_conditions[0].source_path, "/tmp/first.png") == 0 &&
+            strcmp(decoded.media_conditions[1].source_path, "/tmp/last.png") == 0,
+        "typed first and last media conditions roundtrip");
     free(owned_prompt);
     yvex_provider_request_close(&owned_provider);
 
@@ -189,6 +207,27 @@ static int test_schema_refusals(void)
         "non-fork operations refuse fork-only fields");
     request.fork_session_name[0] = '\0';
     request.maximum_prefix_bytes = 0u;
+    request.media_condition_count = 1u;
+    request.media_conditions[0].schema_version =
+        YVEX_CLIENT_MEDIA_CONDITION_SCHEMA_V1;
+    request.media_conditions[0].kind = YVEX_CLIENT_MEDIA_CONDITION_IMAGE;
+    request.media_conditions[0].role = YVEX_CLIENT_MEDIA_CONDITION_FIRST;
+    strcpy(request.media_conditions[0].source_path, "/tmp/first.png");
+    YVEX_TEST_ASSERT(
+        yvex_protocol_request_encode(&request, frame, sizeof(frame), &count,
+                                     &err) == YVEX_ERR_INVALID_ARG,
+        "non-generation operations refuse media conditions");
+    request.operation = YVEX_CLIENT_OP_GENERATION_TURN;
+    request.media_condition_count = 2u;
+    request.media_conditions[1] = request.media_conditions[0];
+    strcpy(request.media_conditions[1].source_path, "/tmp/duplicate.png");
+    YVEX_TEST_ASSERT(
+        yvex_protocol_request_encode(&request, frame, sizeof(frame), &count,
+                                     &err) == YVEX_ERR_INVALID_ARG,
+        "duplicate media condition roles refuse");
+    request.media_condition_count = 0u;
+    memset(request.media_conditions, 0, sizeof(request.media_conditions));
+    request.operation = YVEX_CLIENT_OP_RUNTIME_STATUS;
     request.temperature = NAN;
     YVEX_TEST_ASSERT(
         yvex_protocol_request_encode(&request, frame, sizeof(frame), &count,
@@ -688,7 +727,7 @@ typedef struct {
 static void *stale_peer_main(void *opaque)
 {
     static const unsigned char response[12] = {
-        'Y', 'V', 'X', 'P', 0u, 13u, 0u, 2u, 0u, 0u, 0u, 0u};
+        'Y', 'V', 'X', 'P', 0u, 14u, 0u, 2u, 0u, 0u, 0u, 0u};
     stale_peer *peer = opaque;
     unsigned char header[12], discard[4096];
     unsigned int length;
@@ -737,8 +776,8 @@ static int test_stale_frame_refusal(void)
                      "stale peer thread");
     rc = yvex_client_connect(&client, path, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT && client == NULL &&
-                         strstr(yvex_error_message(&err), "version 14") != NULL,
-                     "immediately prior v13 frame explicitly refuses");
+                         strstr(yvex_error_message(&err), "version 15") != NULL,
+                     "immediately prior v14 frame explicitly refuses");
     YVEX_TEST_ASSERT(pthread_join(thread, NULL) == 0, "stale peer join");
     (void)close(peer.listener);
     (void)unlink(path);

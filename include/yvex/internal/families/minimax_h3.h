@@ -433,8 +433,8 @@ typedef struct yvex_runtime_av_latent_context yvex_minimax_h3_t2va_omni_context;
 typedef yvex_runtime_latent_evaluator_result yvex_minimax_h3_t2va_omni_result;
 typedef struct {
     const yvex_transformer_joint_recipe *omni_recipe;
-    int (*t2va_plan_build)(yvex_minimax_h3_t2va_plan *, unsigned long long,
-        unsigned long long, unsigned long long, unsigned long long, unsigned int, yvex_error *);
+    int (*t2va_plan_build)(yvex_minimax_h3_t2va_plan *,
+        const yvex_media_plan_request *, yvex_error *);
     int (*scheduler_step)(float *output, const float *sample, const float *velocity,
                           unsigned long long values, float timestep, float sigma,
                           float sigma_next, yvex_error *err);
@@ -442,7 +442,7 @@ typedef struct {
         const yvex_minimax_h3_t2va_omni_context *, unsigned long long, unsigned long long,
         float *, unsigned long long, float *, unsigned long long, yvex_runtime_latent_result *,
         yvex_minimax_h3_t2va_omni_result *, yvex_error *);
-    int (*t2va_layout_build)(const yvex_minimax_h3_t2va_plan *, const yvex_runtime_av_layout_output *,
+    int (*t2va_layout_build)(const yvex_media_layout_request *, const yvex_runtime_av_layout_output *,
         yvex_runtime_av_layout_result *, yvex_error *);
     int (*component_admit)(const char *component,
         const yvex_artifact *artifact, const yvex_gguf *gguf,
@@ -481,5 +481,10 @@ const yvex_minimax_h3_transform_api *yvex_model_minimax_h3_transform_api(void);
 const yvex_minimax_h3_handoff_api *yvex_model_minimax_h3_handoff_api(void);
 int yvex_model_minimax_h3_media_target_profile(
     yvex_media_target_profile *, yvex_error *);
+int yvex_backend_minimax_h3_fl2va_condition(
+    const yvex_media_conditioning_request *, yvex_runtime_av_conditioning_result *,
+    yvex_error *);
+int yvex_backend_minimax_h3_keyframe_encode(
+    const yvex_media_keyframe_request *, yvex_runtime_av_keyframe_result *, yvex_error *);
 const yvex_minimax_h3_graph_api *yvex_graph_register_minimax_h3(void);
 #endif /* INCLUDE_YVEX_INTERNAL_FAMILIES_MINIMAX_H3_H_INCLUDED */

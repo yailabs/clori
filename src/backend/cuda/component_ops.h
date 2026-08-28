@@ -27,6 +27,14 @@ int yvex_cuda_text_encoder_execute(
     const unsigned int *token_ids, unsigned long long token_count, float *output,
     unsigned long long output_capacity, yvex_backend_text_execution_result *result,
     yvex_error *err);
+int yvex_cuda_text_encoder_multimodal_execute(
+    yvex_backend *backend, const yvex_component_text_recipe *geometry,
+    const yvex_backend_text_weight *weights, unsigned long long layer_count,
+    const char *residency_identity, unsigned long long resident_bytes,
+    const unsigned int *token_ids, unsigned long long token_count,
+    const yvex_backend_text_multimodal_input *multimodal, float *output,
+    unsigned long long output_capacity, yvex_backend_text_execution_result *result,
+    yvex_error *err);
 int yvex_cuda_transformer_joint_blocks_execute(
     yvex_backend *backend, const yvex_transformer_joint_recipe *recipe,
     const yvex_transformer_joint_encoded_weight *weights, unsigned long long block_count,

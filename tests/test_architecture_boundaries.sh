@@ -285,14 +285,15 @@ if rg -n -i '(families/|deepseek|minimax)' src/backend/cuda/attention.c; then
     fail "generic CUDA attention execution contains concrete family semantics"
 fi
 
-# MiniMax retains source interpretation and irreducible graph composition. Its
-# dense text stack is now a compiled generic backend operation rather than a
-# third family projection that owns execution resource mechanics.
+# MiniMax retains source interpretation and irreducible graph composition. The
+# third projection owns the released Qwen3-VL and Visual VAE composition over
+# generic CUDA operations; it owns neither runtime nor resource mechanics.
 minimax_family_sources=$(find src -path '*/families/minimax_h3.c' -type f | sort)
-expected_minimax_family_sources='src/graph/families/minimax_h3.c
+expected_minimax_family_sources='src/backend/cuda/families/minimax_h3.c
+src/graph/families/minimax_h3.c
 src/model/families/minimax_h3.c'
 [ "$minimax_family_sources" = "$expected_minimax_family_sources" ] ||
-    fail "MiniMax must terminate at its model and graph family projections"
+    fail "MiniMax must terminate at its model, graph, and CUDA composition projections"
 if rg -n -i '(families/|deepseek|minimax|qwen)' src/backend/cuda/text_encoder.c; then
     fail "generic CUDA text execution contains concrete family semantics"
 fi

@@ -10,7 +10,9 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#define YVEX_LOCAL_PROTOCOL_VERSION 14u
+#define YVEX_LOCAL_PROTOCOL_VERSION 15u
+#define YVEX_CLIENT_MEDIA_CONDITION_SCHEMA_V1 1u
+#define YVEX_CLIENT_MEDIA_CONDITION_CAP 2u
 #define YVEX_CLIENT_MEDIA_RESULT_SCHEMA_V1 1u
 #define YVEX_SERVER_OPTIONS_SCHEMA_V3 3u
 #define YVEX_SERVER_OPTIONS_SCHEMA_V4 4u
@@ -397,6 +399,19 @@ typedef struct {
     char file_identity[YVEX_SHA256_HEX_CAP];
     char publication_identity[YVEX_SHA256_HEX_CAP];
 } yvex_client_media_result;
+typedef enum {
+    YVEX_CLIENT_MEDIA_CONDITION_IMAGE = 1
+} yvex_client_media_condition_kind;
+typedef enum {
+    YVEX_CLIENT_MEDIA_CONDITION_FIRST = 1,
+    YVEX_CLIENT_MEDIA_CONDITION_LAST = 2
+} yvex_client_media_condition_role;
+typedef struct {
+    unsigned int schema_version;
+    yvex_client_media_condition_kind kind;
+    yvex_client_media_condition_role role;
+    char source_path[YVEX_SERVER_STATE_PATH_CAP];
+} yvex_client_media_condition;
 typedef struct {
     unsigned int schema_version;
     yvex_client_operation operation;
@@ -408,6 +423,8 @@ typedef struct {
     char state_path[YVEX_SERVER_STATE_PATH_CAP];
     const unsigned char *prompt;
     unsigned long long prompt_bytes, maximum_new_tokens;
+    yvex_client_media_condition media_conditions[YVEX_CLIENT_MEDIA_CONDITION_CAP];
+    unsigned long long media_condition_count;
     unsigned long long maximum_state_file_bytes;
     unsigned long long maximum_prefix_bytes;
     int stochastic, seed_present;

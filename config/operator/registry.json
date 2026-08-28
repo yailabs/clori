@@ -1133,6 +1133,16 @@
     },
     "cli_yvex_chat": [
       {
+        "name": "--first-image",
+        "takes_value": true,
+        "value_type": "path"
+      },
+      {
+        "name": "--last-image",
+        "takes_value": true,
+        "value_type": "path"
+      },
+      {
         "default_provider": "client.chat",
         "name": "--max-new-tokens",
         "range": "1..18446744073709551615",
@@ -1158,6 +1168,16 @@
       }
     ],
     "cli_yvex_run": [
+      {
+        "name": "--first-image",
+        "takes_value": true,
+        "value_type": "path"
+      },
+      {
+        "name": "--last-image",
+        "takes_value": true,
+        "value_type": "path"
+      },
       {
         "default_provider": "client.run",
         "name": "--max-new-tokens",

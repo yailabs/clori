@@ -276,12 +276,13 @@ typedef struct {
     CUfunction rotary_half_function, rotary_half_plain_function, gqa_function;
     CUfunction gqa_pack_value_function, gqa_score_function, gqa_scale_function, gqa_softmax_function;
     CUfunction gqa_softmax_warp_function, gqa_value_function, gqa_unpack_function;
-    CUfunction silu_product_function, silu_function, timestep_embedding_function;
+    CUfunction silu_product_function, silu_function, gelu_function, timestep_embedding_function;
     CUfunction split_three_function, split_interleaved_function;
     CUfunction swiglu_split_function, swiglu_split_f32_function;
     CUfunction modulation_function, gated_residual_function, bias_function, add_bf16_function;
     CUfunction scaled_residual_f32_function, layer_norm_f32_function;
     CUfunction conv_scale_function, conv1d_function, conv1d_transposed_function;
+    CUfunction conv2d_function, group_norm_silu_function;
     CUfunction alias_up_function, alias_down_function;
     CUfunction vector_update_function, clamp_function;
     yvex_cuda_kernel_bundle_state kernel_bundle_state;

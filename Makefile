@@ -132,7 +132,7 @@ CFLAGS ?= -O3 -std=c11 -Wall -Wextra -pedantic -Wstrict-prototypes \
 	-Wundef -Wvla -pthread
 DEPFLAGS ?= -MMD -MP
 LDFLAGS ?=
-LDLIBS ?= -ldl -pthread -lm
+LDLIBS ?= -ldl -pthread -lm -lz
 TEST_CPPFLAGS := $(CPPFLAGS)
 
 BUILD_DIR ?= build

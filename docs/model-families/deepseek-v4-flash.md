@@ -171,7 +171,7 @@ DeepSeek-V4-Flash-DSpark is the sole complete YVEX source-to-streamed-text verti
 The hosted native, interactive, and bounded OpenAI-compatible paths
 consume one target-verified runtime authority. Target-only and DSpark modes,
 multi-turn reuse, cancellation, reset, and committed-only streaming are
-implemented under private local protocol v14. The admitted tokenizer/prompt
+implemented under private local protocol v15. The admitted tokenizer/prompt
 profile also supports explicit reasoning high, maximum, and disabled policies
 through separate reasoning, final, tool, and error channels.
 

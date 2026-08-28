@@ -66,6 +66,10 @@ int yvex_cuda_transformer_silu(
     yvex_backend *backend, const yvex_device_tensor *input,
     yvex_device_tensor *output, unsigned long long count, int bf16_output,
     yvex_backend_cuda_operation_facts *facts, yvex_error *err);
+int yvex_cuda_transformer_gelu(
+    yvex_backend *backend, const yvex_device_tensor *input,
+    yvex_device_tensor *output, unsigned long long count, int tanh_approximation,
+    int bf16_output, yvex_backend_cuda_operation_facts *facts, yvex_error *err);
 int yvex_cuda_transformer_timestep_embedding(
     yvex_backend *backend, const yvex_device_tensor *timesteps,
     yvex_device_tensor *output, unsigned long long rows,

@@ -1235,7 +1235,11 @@ void yvex_server_close(yvex_server **server)
                                     &owner->clients_mutex);
         (void)pthread_mutex_unlock(&owner->clients_mutex);
     }
-    if (owner->socket_path[0]) (void)unlink(owner->socket_path);
+    /* A contender can have the canonical path configured without ever acquiring
+       publication ownership.  Its refusal cleanup must not unlink the live
+       listener owned by the process that holds the singleton lock. */
+    if (owner->lock_owned && owner->socket_path[0])
+        (void)unlink(owner->socket_path);
     if (owner->lock_fd >= 0) (void)close(owner->lock_fd);
     if (owner->lock_owned && owner->lock_path[0])
         (void)unlink(owner->lock_path);

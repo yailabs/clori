@@ -51,17 +51,29 @@ contains "$OUT_DIR/space-runs.out" "ids: 12621 256 2163 220"
     --text 'abc123xyz' >"$OUT_DIR/letter-number.out"
 contains "$OUT_DIR/letter-number.out" "ids: 13683 16 17 18 28854"
 
-set +e
+decomposed=$(printf 'citta\314\200')
 "$YVEX_BIN" execute tokenizer encode "$ARTIFACT" --text 'città' \
-    >"$OUT_DIR/non-ascii.out" 2>"$OUT_DIR/non-ascii.err"
-non_ascii_status=$?
+    >"$OUT_DIR/nfc-composed.out"
+"$YVEX_BIN" execute tokenizer encode "$ARTIFACT" --text "$decomposed" \
+    >"$OUT_DIR/nfc-decomposed.out"
+composed_ids=$(sed -n 's/^ids: //p' "$OUT_DIR/nfc-composed.out")
+decomposed_ids=$(sed -n 's/^ids: //p' "$OUT_DIR/nfc-decomposed.out")
+[ -n "$composed_ids" ] || fail "composed NFC input produced no token IDs"
+[ "$composed_ids" = "$decomposed_ids" ] ||
+    fail "canonically equivalent Unicode input produced different token IDs"
+contains "$OUT_DIR/nfc-composed.out" "ids: 66 1442 6362"
+contains "$OUT_DIR/nfc-composed.out" "tokenizer_runtime_ready: true"
+
+"$YVEX_BIN" execute tokenizer encode "$ARTIFACT" --text '中文 日本語' \
+    >"$OUT_DIR/multilingual.out"
+contains "$OUT_DIR/multilingual.out" "tokenizer_runtime_ready: true"
+
+set +e
 "$YVEX_BIN" execute tokenizer prompt "$ARTIFACT" --user hello \
     >"$OUT_DIR/chat.out" 2>"$OUT_DIR/chat.err"
 chat_status=$?
 set -e
-[ "$non_ascii_status" -ne 0 ] || fail "non-NFC-qualified input was silently admitted"
 [ "$chat_status" -ne 0 ] || fail "verbatim FL2VA tokenizer silently admitted chat rendering"
-contains "$OUT_DIR/non-ascii.err" "MiniMax NFC tokenization is admitted only for exact ASCII input"
 contains "$OUT_DIR/chat.err" "verbatim encoding rather than chat rendering"
 
 printf 'cli minimax tokenizer: ok\n'

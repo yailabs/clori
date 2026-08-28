@@ -14,6 +14,7 @@
 #include <string.h>
 #include <yvex/gguf.h>
 #include <yvex/internal/family_catalog.h>
+#include <yvex/internal/image.h>
 #include <yvex/model.h>
 #include <yvex/tokenizer.h>
 
@@ -66,10 +67,14 @@ typedef struct {
     yvex_runtime_av_audio_decode_result audio_result;
     yvex_media_avi_result media_result;
     yvex_runtime_av_conditioning_result conditioning_result;
-    float *conditioning, *video_rows, *audio_rows, *video_latent, *audio_latent;
+    yvex_runtime_av_keyframe_result keyframe_result;
+    yvex_image condition_images[YVEX_RUNTIME_MEDIA_CONDITION_CAP];
+    float *conditioning, *condition_latents, *video_rows, *audio_rows;
+    float *video_latent, *audio_latent;
     float *rgb, *pcm;
-    unsigned int *timestep_indices;
-    unsigned long long conditioning_values, video_row_values, audio_row_values;
+    unsigned int *text_tags, *timestep_indices;
+    unsigned long long conditioning_values, condition_latent_values;
+    unsigned long long video_row_values, audio_row_values;
     unsigned long long video_latent_values, audio_latent_values, rgb_values, pcm_values;
     unsigned long long layout_position_values;
     unsigned long long host_live, host_peak;
@@ -113,7 +118,8 @@ static int media_target_validate(
         !execution->conditioning_layers || !execution->transformer_blocks ||
         !execution->maximum_prompt_tokens || !execution->maximum_packed_rows ||
         !execution->plan_build || !execution->layout_build || !execution->component_admit ||
-        !execution->condition || !execution->latent || !execution->video_decode ||
+        !execution->condition || !execution->keyframe_encode || !execution->latent ||
+        !execution->video_decode ||
         !execution->audio_decode) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.media-profile",
                        "complete target facts and execution recipe are required");
@@ -164,9 +170,13 @@ int yvex_runtime_media_host_profile_build(
                            "media tier exceeds its admitted bounds");
             return YVEX_ERR_BOUNDS;
         }
-        rc = execution->plan_build(
-            &plan, execution->maximum_prompt_tokens, tier->width, tier->height,
-            tier->maximum_frames, 1u, err);
+        yvex_media_plan_request plan_request = {
+            .schema_version = YVEX_RUNTIME_AV_PLAN_SCHEMA_V1,
+            .text_tokens = execution->maximum_prompt_tokens,
+            .width = tier->width, .height = tier->height,
+            .frames = tier->maximum_frames, .inference_steps = 1u,
+        };
+        rc = execution->plan_build(&plan, &plan_request, err);
         if (rc != YVEX_OK) return rc;
         if (plan.packed_rows > execution->maximum_packed_rows) {
             yvex_error_set(err, YVEX_ERR_BOUNDS, "runtime.media-profile",
@@ -196,7 +206,7 @@ int yvex_runtime_media_host_profile_build(
     out->maximum_canvas_pixels = target->maximum_canvas_pixels;
     request = &out->request_template;
     *request = (yvex_runtime_av_generation_request){
-        .schema_version = YVEX_RUNTIME_AV_GENERATION_SCHEMA_V1,
+        .schema_version = YVEX_RUNTIME_AV_GENERATION_SCHEMA_V2,
         .target = out->target,
         .text_artifact_path = out->text_artifact,
         .transformer_artifact_path = out->transformer_artifact,
@@ -205,6 +215,7 @@ int yvex_runtime_media_host_profile_build(
         .source_identity = out->source_identity,
         .fps_numerator = target->fps_numerator, .fps_denominator = target->fps_denominator,
         .audio_sample_rate = target->audio_sample_rate, .seed = target->seed,
+        .keyframe_encode_seed = target->keyframe_encode_seed,
         .conditioning_layers = execution->conditioning_layers,
         .transformer_blocks = execution->transformer_blocks,
         .maximum_prompt_tokens = execution->maximum_prompt_tokens,
@@ -232,6 +243,7 @@ int yvex_runtime_media_host_profile_build(
         .audio_samples_per_step = target->audio_samples_per_step,
         .plan_build = execution->plan_build, .layout_build = execution->layout_build,
         .component_admit = execution->component_admit, .condition = execution->condition,
+        .keyframe_encode = execution->keyframe_encode,
         .latent = execution->latent, .video_decode = execution->video_decode,
         .audio_decode = execution->audio_decode};
     if (execution->output_semantic_domain || execution->video_output_requirement ||
@@ -412,24 +424,6 @@ static int component_view_open(const char *path, component_view *view, yvex_erro
     return rc;
 }
 
-static int fixture_prompt_identity(const yvex_tokens *tokens,
-                                   char output[YVEX_SHA256_HEX_CAP])
-{
-    yvex_sha256 hash;
-    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
-    unsigned long long index;
-    yvex_sha256_init(&hash);
-    if (!tokens || !tokens->ids || !tokens->len ||
-        !yvex_sha256_update_text(&hash, "yvex.runtime.av-generation.fixture-token-ids.v1") ||
-        !yvex_sha256_update_u64_be(&hash, tokens->len))
-        return 0;
-    for (index = 0ull; index < tokens->len; ++index)
-        if (!yvex_sha256_update_u64_be(&hash, tokens->ids[index])) return 0;
-    if (!yvex_sha256_final(&hash, digest)) return 0;
-    yvex_sha256_hex(digest, output);
-    return 1;
-}
-
 static void component_view_close(component_view *view)
 {
     if (!view) return;
@@ -478,7 +472,10 @@ static void host_release(
 
 static void generation_state_close(generation_state *state)
 {
+    unsigned long long index;
     if (!state) return;
+    for (index = 0ull; index < YVEX_RUNTIME_MEDIA_CONDITION_CAP; ++index)
+        yvex_image_close(state->condition_images + index);
     host_release(state, (void **)&state->pcm, state->pcm_values, sizeof(float));
     host_release(state, (void **)&state->rgb, state->rgb_values, sizeof(float));
     host_release(state, (void **)&state->audio_latent, state->audio_latent_values, sizeof(float));
@@ -487,13 +484,19 @@ static void generation_state_close(generation_state *state)
     host_release(state, (void **)&state->video_rows, state->video_row_values, sizeof(float));
     host_release(state, (void **)&state->conditioning,
                  state->conditioning_values, sizeof(float));
+    host_release(state, (void **)&state->condition_latents,
+                 state->condition_latent_values, sizeof(float));
+    host_release(state, (void **)&state->text_tags,
+                 state->request ? state->request->maximum_prompt_tokens : 0ull,
+                 sizeof(unsigned int));
     host_release(state, (void **)&state->timestep_indices, state->plan.packed_rows,
                  sizeof(unsigned int));
     host_release(state, (void **)&state->layout.text_indices, state->plan.text_tokens,
                  sizeof(unsigned int));
     host_release(state, (void **)&state->layout.audio_indices, state->plan.audio_rows,
                  sizeof(unsigned int));
-    host_release(state, (void **)&state->layout.video_indices, state->plan.video_rows,
+    host_release(state, (void **)&state->layout.video_indices,
+                 state->plan.condition_rows + state->plan.video_rows,
                  sizeof(unsigned int));
     host_release(state, (void **)&state->layout.token_tags, state->plan.packed_rows,
                  sizeof(unsigned int));
@@ -506,7 +509,9 @@ static int model_contract_validate(
 {
     yvex_runtime_av_generation_request expected;
     int rc;
-    if (!request || request->schema_version != YVEX_RUNTIME_AV_GENERATION_SCHEMA_V1 ||
+    if (!request ||
+        (request->schema_version != YVEX_RUNTIME_AV_GENERATION_SCHEMA_V1 &&
+         request->schema_version != YVEX_RUNTIME_AV_GENERATION_SCHEMA_V2) ||
         !request->target || !request->target[0] ||
         !request->text_artifact_path || !request->transformer_artifact_path ||
         !request->video_artifact_path || !request->audio_artifact_path ||
@@ -526,7 +531,8 @@ static int model_contract_validate(
         !request->audio_output_channels || request->audio_output_channels > 2ull ||
         !request->audio_samples_per_step || !request->plan_build ||
         !request->layout_build || !request->component_admit ||
-        !request->condition || !request->latent || !request->video_decode ||
+        !request->condition || !request->keyframe_encode || !request->latent ||
+        !request->video_decode ||
         !request->audio_decode)
         return generation_fail(err, YVEX_ERR_INVALID_ARG, "runtime.av-generation",
                                "one exact admitted media model contract is required");
@@ -563,8 +569,34 @@ static int model_contract_validate(
 static int request_validate(
     const yvex_runtime_av_generation_request *request, yvex_error *err)
 {
+    unsigned long long index;
+    int first = 0, last = 0;
     int rc = model_contract_validate(request, err);
     if (rc != YVEX_OK) return rc;
+    if ((request->schema_version == YVEX_RUNTIME_AV_GENERATION_SCHEMA_V1 &&
+         (request->conditions || request->condition_count)) ||
+        request->condition_count > YVEX_RUNTIME_MEDIA_CONDITION_CAP ||
+        (request->condition_count && !request->conditions))
+        return generation_fail(err, YVEX_ERR_INVALID_ARG,
+                               "runtime.av-generation.condition",
+                               "media conditions require the bounded generation-v2 contract");
+    for (index = 0ull; index < request->condition_count; ++index) {
+        const yvex_runtime_media_condition *condition = request->conditions + index;
+        if (condition->schema_version != YVEX_RUNTIME_MEDIA_CONDITION_SCHEMA_V1 ||
+            condition->kind != YVEX_RUNTIME_MEDIA_CONDITION_IMAGE ||
+            !condition->source_path || condition->source_path[0] != '/')
+            return generation_fail(err, YVEX_ERR_INVALID_ARG,
+                                   "runtime.av-generation.condition",
+                                   "one admitted absolute image condition is required");
+        if (condition->role == YVEX_RUNTIME_MEDIA_CONDITION_FIRST && !first)
+            first = 1;
+        else if (condition->role == YVEX_RUNTIME_MEDIA_CONDITION_LAST && !last)
+            last = 1;
+        else
+            return generation_fail(err, YVEX_ERR_INVALID_ARG,
+                                   "runtime.av-generation.condition",
+                                   "media condition roles must be unique first or last anchors");
+    }
     if (!request->prompt || !request->prompt[0] || !request->output_path ||
         !request->frames || !request->width || !request->height ||
         !request->inference_steps)
@@ -771,6 +803,7 @@ static int media_model_contract_matches(
            sealed->fps_numerator == request->fps_numerator &&
            sealed->fps_denominator == request->fps_denominator &&
            sealed->audio_sample_rate == request->audio_sample_rate &&
+           sealed->keyframe_encode_seed == request->keyframe_encode_seed &&
            sealed->conditioning_layers == request->conditioning_layers &&
            sealed->transformer_blocks == request->transformer_blocks &&
            sealed->maximum_prompt_tokens == request->maximum_prompt_tokens &&
@@ -813,7 +846,9 @@ static int media_model_contract_matches(
            sealed->plan_build == request->plan_build &&
            sealed->layout_build == request->layout_build &&
            sealed->component_admit == request->component_admit &&
-           sealed->condition == request->condition && sealed->latent == request->latent &&
+           sealed->condition == request->condition &&
+           sealed->keyframe_encode == request->keyframe_encode &&
+           sealed->latent == request->latent &&
            sealed->video_decode == request->video_decode &&
            sealed->audio_decode == request->audio_decode;
 }
@@ -910,61 +945,135 @@ void yvex_runtime_media_model_close(yvex_runtime_media_model **model)
 static int conditioning_execute(generation_state *state, yvex_error *err)
 {
     const yvex_runtime_av_generation_request *request = state->request;
-    yvex_model_context *context = &state->model->text;
-    yvex_tokenizer_encode_options options = {
-        0, 0, 1, state->request->maximum_prompt_tokens
-    };
-    yvex_tokenizer_encode_result encoded = {0};
-    yvex_tokens fixture = {0};
-    const yvex_tokens *tokens = NULL;
+    yvex_model_context *text = &state->model->text;
+    yvex_media_conditioning_request conditioning = {0};
+    yvex_media_keyframe_request keyframes = {0};
+    unsigned long long index, latent_height = 0ull, latent_width = 0ull;
     int rc = generation_cancelled(request, err);
-    if (rc == YVEX_OK && yvex_tokenizer_plan_summary_get(context->tokenizer)) {
-        rc = yvex_tokenizer_encode(
-            context->tokenizer, (const unsigned char *)request->prompt,
-            (unsigned long long)strlen(request->prompt), &options, &encoded, err);
-        tokens = &encoded.tokens;
-    } else if (rc == YVEX_OK) {
-        rc = yvex_tokenize_text(context->tokenizer, request->prompt, &fixture, err);
-        tokens = &fixture;
-    }
+
+    for (index = 0ull; rc == YVEX_OK && index < request->condition_count; ++index)
+        rc = yvex_image_decode_file(state->condition_images + index,
+                                    request->conditions[index].source_path,
+                                    request->maximum_file_bytes, err);
     if (rc == YVEX_OK &&
-        (!tokens || !tokens->len ||
-         !yvex_core_u64_mul(tokens->len, 5120ull, &state->conditioning_values)))
-        rc = generation_fail(err, YVEX_ERR_FORMAT, "runtime.av-generation.conditioning",
-                             "prompt tokenization did not produce exact conditioning geometry");
+        !yvex_core_u64_mul(request->maximum_prompt_tokens, 5120ull,
+                           &state->conditioning_values))
+        rc = generation_fail(err, YVEX_ERR_BOUNDS, "runtime.av-generation.conditioning",
+                             "conditioning capacity overflowed");
     if (rc == YVEX_OK)
         rc = host_allocate(state, state->conditioning_values, sizeof(float),
                            (void **)&state->conditioning, "conditioning", err);
     if (rc == YVEX_OK)
-        rc = request->condition(
-            context->artifact, context->gguf, context->table, request->component_backend,
-            tokens->ids, tokens->len, request->conditioning_layers, state->conditioning,
-            state->conditioning_values, request->maximum_host_bytes,
-            request->maximum_device_bytes, &state->conditioning_result, err);
+        rc = host_allocate(state, request->maximum_prompt_tokens, sizeof(unsigned int),
+                           (void **)&state->text_tags, "conditioning tags", err);
+    conditioning = (yvex_media_conditioning_request){
+        .schema_version = YVEX_MEDIA_CONDITIONING_SCHEMA_V2,
+        .prompt = request->prompt, .tokenizer = text->tokenizer,
+        .conditions = request->conditions, .condition_images = state->condition_images,
+        .condition_count = request->condition_count, .width = request->width,
+        .height = request->height, .layer_count = request->conditioning_layers,
+        .maximum_prompt_tokens = request->maximum_prompt_tokens,
+        .maximum_host_bytes = request->maximum_host_bytes,
+        .maximum_device_bytes = request->maximum_device_bytes,
+        .text_admission = state->model->admissions + MEDIA_COMPONENT_TEXT,
+        .text_artifact = text->artifact, .text_gguf = text->gguf,
+        .text_tensors = text->table, .conditioning = state->conditioning,
+        .conditioning_capacity = state->conditioning_values,
+        .text_tags = state->text_tags,
+        .text_tag_capacity = request->maximum_prompt_tokens,
+    };
+    if (rc == YVEX_OK)
+        rc = request->condition(&conditioning, &state->conditioning_result, err);
     if (rc == YVEX_OK &&
-         (!state->conditioning_result.complete ||
-         state->conditioning_result.token_count != tokens->len ||
+        (!state->conditioning_result.complete ||
+         !state->conditioning_result.token_count ||
+         state->conditioning_result.token_count > request->maximum_prompt_tokens ||
          state->conditioning_result.hidden_width != 5120ull ||
+         state->conditioning_result.condition_count != request->condition_count ||
+         !yvex_sha256_hex_valid(state->conditioning_result.prompt_identity) ||
          !yvex_sha256_hex_valid(state->conditioning_result.execution_identity)))
         rc = generation_fail(err, YVEX_ERR_STATE, "runtime.av-generation.conditioning",
                              "family conditioning returned incomplete execution evidence");
-    if (rc == YVEX_OK && encoded.completed)
+    if (rc == YVEX_OK)
         yvex_core_text_copy(state->prompt_identity, sizeof(state->prompt_identity),
-                            encoded.encoding_identity);
-    else if (rc == YVEX_OK && !fixture_prompt_identity(&fixture, state->prompt_identity))
-        rc = generation_fail(err, YVEX_ERR_STATE, "runtime.av-generation.conditioning",
-                             "fixture prompt identity could not be sealed");
-    yvex_tokenizer_encode_result_clear(&encoded);
-    yvex_tokens_clear(&fixture);
+                            state->conditioning_result.prompt_identity);
+    if (rc == YVEX_OK && request->condition_count) {
+        if (request->width % request->video_spatial_ratio ||
+            request->height % request->video_spatial_ratio)
+            rc = generation_fail(err, YVEX_ERR_FORMAT, "runtime.av-generation.keyframe",
+                                 "keyframe canvas is incompatible with Visual VAE geometry");
+        else {
+            latent_width = request->width / request->video_spatial_ratio;
+            latent_height = request->height / request->video_spatial_ratio;
+        }
+    }
+    if (rc == YVEX_OK && request->condition_count &&
+        (!yvex_core_u64_mul(request->condition_count, request->video_channels,
+                            &state->condition_latent_values) ||
+         !yvex_core_u64_mul(state->condition_latent_values, latent_height,
+                            &state->condition_latent_values) ||
+         !yvex_core_u64_mul(state->condition_latent_values, latent_width,
+                            &state->condition_latent_values)))
+        rc = generation_fail(err, YVEX_ERR_BOUNDS, "runtime.av-generation.keyframe",
+                             "keyframe latent capacity overflowed");
+    if (rc == YVEX_OK && request->condition_count)
+        rc = host_allocate(state, state->condition_latent_values, sizeof(float),
+                           (void **)&state->condition_latents, "keyframe latents", err);
+    {
+        component_view *video = &state->model->video;
+    keyframes = (yvex_media_keyframe_request){
+        .schema_version = YVEX_MEDIA_CONDITIONING_SCHEMA_V2,
+        .conditions = request->conditions, .condition_images = state->condition_images,
+        .condition_count = request->condition_count, .width = request->width,
+        .height = request->height, .posterior_seed = request->keyframe_encode_seed,
+        .maximum_host_bytes = request->maximum_host_bytes,
+        .maximum_device_bytes = request->maximum_device_bytes,
+        .pixel_mean = request->pixel_mean, .pixel_std = request->pixel_std,
+        .latent_mean = request->video_mean, .latent_std = request->video_std,
+        .pixel_channels = request->pixel_channels,
+        .latent_channels = request->video_channels,
+        .video_admission = state->model->admissions + MEDIA_COMPONENT_VIDEO,
+        .video_artifact = video->artifact, .video_gguf = video->gguf,
+        .video_tensors = video->tensors,
+        .condition_latents = state->condition_latents,
+        .condition_latent_capacity = state->condition_latent_values,
+    };
+    }
+    if (rc == YVEX_OK && request->condition_count)
+        rc = request->keyframe_encode(&keyframes, &state->keyframe_result, err);
+    if (rc == YVEX_OK && request->condition_count &&
+        (!state->keyframe_result.complete ||
+         state->keyframe_result.condition_count != request->condition_count ||
+         state->keyframe_result.latent_values != state->condition_latent_values ||
+         !yvex_sha256_hex_valid(state->keyframe_result.execution_identity)))
+        rc = generation_fail(err, YVEX_ERR_STATE, "runtime.av-generation.keyframe",
+                             "Visual VAE encoder returned incomplete keyframe evidence");
+    if (rc == YVEX_OK && request->condition_count) {
+        state->conditioning_result.condition_rows = state->keyframe_result.condition_rows;
+        yvex_core_text_copy(state->conditioning_result.condition_identity,
+                            sizeof(state->conditioning_result.condition_identity),
+                            state->keyframe_result.execution_identity);
+    }
     return rc;
 }
 
 static int plan_and_layout_build(generation_state *state, yvex_error *err)
 {
     const yvex_runtime_av_generation_request *request = state->request;
-    int rc = request->plan_build(
-        &state->plan, state->conditioning_result.token_count, request->width,
-        request->height, request->frames, request->inference_steps, err);
+    yvex_media_plan_request plan_request = {
+        .schema_version = YVEX_RUNTIME_AV_PLAN_SCHEMA_V1,
+        .text_tokens = state->conditioning_result.token_count,
+        .width = request->width, .height = request->height,
+        .frames = request->frames, .inference_steps = request->inference_steps,
+        .text_tags = state->text_tags, .conditions = request->conditions,
+        .condition_count = request->condition_count,
+        .condition_rows = state->keyframe_result.condition_rows,
+    };
+    yvex_media_layout_request layout_request = {
+        .text_tags = state->text_tags, .conditions = request->conditions,
+        .condition_count = request->condition_count,
+    };
+    int rc = request->plan_build(&state->plan, &plan_request, err);
     if (rc == YVEX_OK && state->plan.packed_rows > request->maximum_packed_rows)
         rc = generation_fail(err, YVEX_ERR_BOUNDS, "runtime.av-generation.plan",
                              "packed AV plan exceeds the admitted execution capacity");
@@ -979,7 +1088,8 @@ static int plan_and_layout_build(generation_state *state, yvex_error *err)
         rc = host_allocate(state, state->plan.packed_rows, sizeof(unsigned int),
                            (void **)&state->layout.token_tags, "layout tags", err);
     if (rc == YVEX_OK)
-        rc = host_allocate(state, state->plan.video_rows, sizeof(unsigned int),
+        rc = host_allocate(state, state->plan.condition_rows + state->plan.video_rows,
+                           sizeof(unsigned int),
                            (void **)&state->layout.video_indices, "video indices", err);
     if (rc == YVEX_OK)
         rc = host_allocate(state, state->plan.audio_rows, sizeof(unsigned int),
@@ -992,11 +1102,14 @@ static int plan_and_layout_build(generation_state *state, yvex_error *err)
                            (void **)&state->timestep_indices, "timestep indices", err);
     state->layout.position_capacity = state->plan.packed_rows * 3ull;
     state->layout.tag_capacity = state->plan.packed_rows;
-    state->layout.video_capacity = state->plan.video_rows;
+    state->layout.video_capacity = state->plan.condition_rows + state->plan.video_rows;
     state->layout.audio_capacity = state->plan.audio_rows;
     state->layout.text_capacity = state->plan.text_tokens;
     if (rc == YVEX_OK)
-        rc = request->layout_build(&state->plan, &state->layout, &state->layout_result, err);
+        layout_request.plan = &state->plan;
+    if (rc == YVEX_OK)
+        rc = request->layout_build(&layout_request, &state->layout,
+                                   &state->layout_result, err);
     return rc;
 }
 
@@ -1029,6 +1142,11 @@ static int latent_execute(generation_state *state, yvex_error *err)
     context.transformer_session = session;
     context.conditioning = state->conditioning;
     context.conditioning_capacity = state->conditioning_values;
+    context.condition_latents = state->condition_latents;
+    context.condition_latent_capacity = state->condition_latent_values;
+    context.keyframes = &state->keyframe_result;
+    context.conditions = request->conditions;
+    context.condition_count = request->condition_count;
     context.conditioning_identity = state->conditioning_result.execution_identity;
     context.layout = &state->layout;
     context.layout_result = &state->layout_result;
@@ -1401,6 +1519,10 @@ int yvex_runtime_media_model_generate(
     host_release(&state, (void **)&state.audio_rows, state.audio_row_values, sizeof(float));
     host_release(&state, (void **)&state.conditioning,
                  state.conditioning_values, sizeof(float));
+    host_release(&state, (void **)&state.condition_latents,
+                 state.condition_latent_values, sizeof(float));
+    host_release(&state, (void **)&state.text_tags,
+                 request->maximum_prompt_tokens, sizeof(unsigned int));
     if (rc == YVEX_OK) rc = generation_cancelled(request, err);
     if (rc == YVEX_OK)
         rc = generation_progress(request, YVEX_RUNTIME_MEDIA_PROGRESS_VIDEO_START,

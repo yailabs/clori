@@ -30,6 +30,7 @@ static const yvex_backend_transformer_operations transformer_operations = {
 static const yvex_backend_component_operations component_operations = {
     .text_embedding_execute = yvex_cuda_text_embedding_execute,
     .text_encoder_execute = yvex_cuda_text_encoder_execute,
+    .text_encoder_multimodal_execute = yvex_cuda_text_encoder_multimodal_execute,
     .joint_transformer_execute = yvex_cuda_transformer_joint_execute,
     .alias_decoder_execute = yvex_cuda_alias_decoder_execute,
 };
@@ -219,6 +220,8 @@ static const cuda_kernel_binding cuda_kernel_bindings[] = {
      CUDA_HANDLE_OFFSET(silu_product_function)},
     {"yvex_silu_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(silu_function)},
+    {"yvex_gelu_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(gelu_function)},
     {"yvex_timestep_embedding_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(timestep_embedding_function)},
     {"yvex_split_three_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
@@ -247,6 +250,10 @@ static const cuda_kernel_binding cuda_kernel_bindings[] = {
      CUDA_HANDLE_OFFSET(conv1d_function)},
     {"yvex_conv1d_transposed_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(conv1d_transposed_function)},
+    {"yvex_conv2d_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(conv2d_function)},
+    {"yvex_group_norm_silu_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(group_norm_silu_function)},
     {"yvex_alias_snake_up_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(alias_up_function)},
     {"yvex_alias_snake_down_f32", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,

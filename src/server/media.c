@@ -19,6 +19,8 @@
 typedef struct {
     char name[YVEX_SERVER_SESSION_NAME_CAP];
     char prompt[MEDIA_PROMPT_CAP];
+    yvex_client_media_condition conditions[YVEX_CLIENT_MEDIA_CONDITION_CAP];
+    unsigned long long condition_count;
     yvex_server_session_state state;
     unsigned long long attached_clients, turn_count;
     atomic_int active, cancelled;
@@ -502,6 +504,7 @@ static int generation_execute(server_media_registry *registry,
                               yvex_error *err)
 {
     yvex_runtime_av_generation_request generation = registry->generation;
+    yvex_runtime_media_condition conditions[YVEX_RUNTIME_MEDIA_CONDITION_CAP] = {0};
     yvex_runtime_av_generation_result result = {0};
     media_progress_sink sink = {
         registry, session, request, request_id, emit, context,
@@ -513,6 +516,17 @@ static int generation_execute(server_media_registry *registry,
     rc = output_path_build(registry, session, path, err);
     if (rc != YVEX_OK) return rc;
     generation.prompt = session->prompt;
+    for (unsigned long long index = 0ull; index < session->condition_count; ++index) {
+        conditions[index].schema_version = YVEX_RUNTIME_MEDIA_CONDITION_SCHEMA_V1;
+        conditions[index].kind = YVEX_RUNTIME_MEDIA_CONDITION_IMAGE;
+        conditions[index].role = session->conditions[index].role ==
+                                         YVEX_CLIENT_MEDIA_CONDITION_FIRST
+                                     ? YVEX_RUNTIME_MEDIA_CONDITION_FIRST
+                                     : YVEX_RUNTIME_MEDIA_CONDITION_LAST;
+        conditions[index].source_path = session->conditions[index].source_path;
+    }
+    generation.conditions = conditions;
+    generation.condition_count = session->condition_count;
     generation.output_path = path;
     generation.width = registry->preset.width;
     generation.height = registry->preset.height;
@@ -681,8 +695,19 @@ int yvex_server_media_registry_execute(
                               "media session already owns an active generation");
             goto done;
         }
+        for (unsigned long long index = 0ull;
+             index < request->media_condition_count; ++index) {
+            if (request->media_conditions[index].source_path[0] != '/') {
+                rc = media_refuse(err, YVEX_ERR_INVALID_ARG,
+                                  "media condition paths must be absolute");
+                goto done;
+            }
+        }
         memcpy(session->prompt, request->prompt, (size_t)request->prompt_bytes);
         session->prompt[request->prompt_bytes] = '\0';
+        session->condition_count = request->media_condition_count;
+        memcpy(session->conditions, request->media_conditions,
+               sizeof(session->conditions));
         (void)pthread_mutex_unlock(&registry->mutex);
         return generation_execute(registry, session, request, request_id,
                                   emit, emit_context, err);

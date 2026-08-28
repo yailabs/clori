@@ -538,7 +538,8 @@ static int test_video_reconstruction_execution(void)
 static int test_normal_vectors(void)
 {
     float first[5] = {0}, repeated[5] = {0}, refused[5];
-    yvex_runtime_latent_normal_result a, b, failure;
+    float complete_stream[8] = {0}, offset_stream[4] = {0};
+    yvex_runtime_latent_normal_result a, b, complete, offset, failure;
     yvex_error err;
 
     memset(refused, 0x5a, sizeof(refused));
@@ -564,6 +565,18 @@ static int test_normal_vectors(void)
             repeated, 5ull, 5ull, 41ull, sizeof(repeated), &b, &err) == YVEX_OK &&
             strcmp(a.normal_identity, b.normal_identity) != 0,
         "latent initialization binds its seed into values and identity");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_latent_normal_f32(
+            complete_stream, 8ull, 8ull, 42ull, sizeof(complete_stream), &complete,
+            &err) == YVEX_OK &&
+            yvex_runtime_latent_normal_f32_from_offset(
+                offset_stream, 4ull, 4ull, 4ull, 42ull, sizeof(offset_stream), &offset,
+                &err) == YVEX_OK &&
+            offset.completed && offset.discarded_value_count == 4ull &&
+            offset.uniform_draw_count == complete.uniform_draw_count &&
+            memcmp(offset_stream, complete_stream + 4, sizeof(offset_stream)) == 0 &&
+            strcmp(offset.normal_identity, complete.normal_identity) != 0,
+        "condition draws can be discarded without changing the target RNG stream order");
     return 0;
 }
 

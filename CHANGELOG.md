@@ -195,23 +195,26 @@ change. Git history preserves implementation chronology.
 - Separated the installed server engine kind from semantic text execution
   strategy. Engine schema v2 and runtime event schema v4 expose `text` versus
   `media` independently from `target-only` versus `speculative`; local protocol
-  v14 refuses v13 peers and legacy layouts instead of reinterpreting them.
+  v15 refuses v14 peers and legacy layouts instead of reinterpreting them.
 - Model hosting is now a persistent zero-engine `yvex server` process. Explicit
   `server load`, `server unload`, and `server models` operations manage
   identity-bound engine generations without restarting the private protocol or
   OpenAI listener; native and OpenAI requests route to an exact loaded model.
-  Local protocol v14 carries engine lifecycle, routing, generation, and resource
+  Local protocol v15 carries engine lifecycle, routing, generation, and resource
   facts.
 - Physical Execution IR v5 and runtime binding v15 retain stable package/storage
   truth while one deployment specialization owns backend, hardware, activation,
   implementation-class, width, and crossover choices. The explicit v14 reader
   imports compatible canonical package records and refuses legacy derived-layout
   requirements that cannot cross the new boundary truthfully.
-- MiniMax hosted media turns now send the creative prompt directly to the
+- MiniMax hosted media turns now send Unicode creative prompts directly to the
   native tokenizer/conditioning pipeline under one identity-bearing YVEX
-  interactive preset. The removed hardcoded questionnaire no longer parses
-  creative words or numbers as execution controls; progress is server-authored
-  control state and current protocol-v14 turns carry a typed media result.
+  interactive preset. Protocol v15 carries typed first- and last-image
+  conditions, and the same FL2VA engine generation executes text-only,
+  first-frame, last-frame, or dual-anchor requests through Qwen3-VL vision,
+  Visual VAE encoding and condition-aware Omni execution. The removed hardcoded
+  questionnaire parses no creative words or numbers as execution controls;
+  progress remains server-authored control state with a typed media result.
 - Composite artifact startup now reuses the generic verified-reopen authority
   independently for every component. Cold or invalid-cache opens fully verify
   and publish or repair receipts, unchanged warm opens avoid complete payload

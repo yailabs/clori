@@ -37,6 +37,8 @@ enum {
     TAG_MAXIMUM_PREFIX_BYTES,
     TAG_MODEL_ALIAS,
     TAG_ENGINE_GENERATION,
+    TAG_MEDIA_FIRST_IMAGE,
+    TAG_MEDIA_LAST_IMAGE,
     TAG_MESSAGE_KIND = 32,
     TAG_STATUS,
     TAG_REASON,
@@ -482,6 +484,34 @@ static int request_fork_fields_valid(const yvex_client_request *request)
         return !request->fork_session_name[0] && !request->maximum_prefix_bytes;
     return request->fork_session_name[0] && request->maximum_prefix_bytes;
 }
+static int request_media_conditions_valid(const yvex_client_request *request)
+{
+    unsigned long long index; int first = 0, last = 0;
+    if (!request || request->media_condition_count > YVEX_CLIENT_MEDIA_CONDITION_CAP) return 0;
+    if (request->operation != YVEX_CLIENT_OP_GENERATION_TURN)
+        return request->media_condition_count == 0ull;
+    for (index = 0ull; index < request->media_condition_count; ++index) {
+        const yvex_client_media_condition *condition = request->media_conditions + index;
+        if (condition->schema_version != YVEX_CLIENT_MEDIA_CONDITION_SCHEMA_V1 ||
+            condition->kind != YVEX_CLIENT_MEDIA_CONDITION_IMAGE ||
+            !condition->source_path[0] ||
+            !memchr(condition->source_path, '\0', sizeof(condition->source_path)))
+            return 0;
+        if (condition->role == YVEX_CLIENT_MEDIA_CONDITION_FIRST && !first)
+            first = 1;
+        else if (condition->role == YVEX_CLIENT_MEDIA_CONDITION_LAST && !last)
+            last = 1;
+        else return 0;
+    }
+    return 1;
+}
+static const char *request_media_condition_path(
+    const yvex_client_request *request, yvex_client_media_condition_role role) {
+    for (unsigned long long index = 0ull; index < request->media_condition_count; ++index)
+        if (request->media_conditions[index].role == role)
+            return request->media_conditions[index].source_path;
+    return "";
+}
 int yvex_protocol_request_encode(const yvex_client_request *request,
                                  unsigned char *output,
                                  unsigned long long capacity,
@@ -503,6 +533,7 @@ int yvex_protocol_request_encode(const yvex_client_request *request,
         request->reasoning_policy > YVEX_REASONING_MAXIMUM ||
         !request_state_fields_valid(request) ||
         !request_fork_fields_valid(request) ||
+        !request_media_conditions_valid(request) ||
         (request->stochastic != 0 && request->stochastic != 1) ||
         (request->seed_present != 0 && request->seed_present != 1) ||
         (request->trace_content != 0 && request->trace_content != 1) ||
@@ -558,6 +589,12 @@ int yvex_protocol_request_encode(const yvex_client_request *request,
                      request->fork_session_name) ||
         !writer_u64(&writer, TAG_MAXIMUM_PREFIX_BYTES,
                     request->maximum_prefix_bytes) ||
+        !writer_text(&writer, TAG_MEDIA_FIRST_IMAGE,
+                     request_media_condition_path(
+                         request, YVEX_CLIENT_MEDIA_CONDITION_FIRST)) ||
+        !writer_text(&writer, TAG_MEDIA_LAST_IMAGE,
+                     request_media_condition_path(
+                         request, YVEX_CLIENT_MEDIA_CONDITION_LAST)) ||
         !writer_field(&writer, TAG_PROVIDER_REQUEST, provider_bytes,
                       provider_count)) {
         free(provider_bytes);
@@ -671,12 +708,29 @@ int yvex_protocol_request_decode(const unsigned char *input,
             valid = reader_u64(bytes, count,
                                &candidate.maximum_prefix_bytes);
             break;
+        case TAG_MEDIA_FIRST_IMAGE:
+        case TAG_MEDIA_LAST_IMAGE:
+            if (!count) break;
+            if (candidate.media_condition_count >= YVEX_CLIENT_MEDIA_CONDITION_CAP)
+                { valid = 0; break; }
+            {
+                yvex_client_media_condition *condition = candidate.media_conditions +
+                    candidate.media_condition_count;
+                condition->schema_version = YVEX_CLIENT_MEDIA_CONDITION_SCHEMA_V1;
+                condition->kind = YVEX_CLIENT_MEDIA_CONDITION_IMAGE;
+                condition->role = tag == TAG_MEDIA_FIRST_IMAGE
+                    ? YVEX_CLIENT_MEDIA_CONDITION_FIRST : YVEX_CLIENT_MEDIA_CONDITION_LAST;
+                valid = reader_text(bytes, count, condition->source_path, sizeof(condition->source_path));
+                if (valid) candidate.media_condition_count++;
+            }
+            break;
         default: valid = 0; break;
         }
     }
     if (next < 0 || !valid || !have_operation ||
         !request_state_fields_valid(&candidate) ||
         !request_fork_fields_valid(&candidate) ||
+        !request_media_conditions_valid(&candidate) ||
         (candidate.prompt_bytes && candidate.provider_request)) {
         free(prompt);
         yvex_provider_request_close(&provider);
@@ -1014,7 +1068,6 @@ static const wire_member event_members[] = {
     WIRE_TEXT(yvex_server_event, TAG_EVENT_ARTIFACT_ID, artifact_identity),
     WIRE_TEXT(yvex_server_event, TAG_EVENT_IDENTITY, event_identity)
 };
-
 static int protocol_event_write(wire_writer *writer,
                                 const yvex_server_event *event)
 {
@@ -1276,6 +1329,51 @@ static const wire_member console_members[] = {
     WIRE_TEXT(yvex_console_status, TAG_CONSOLE_MODEL_ALIAS, model_alias),
     WIRE_TEXT(yvex_console_status, TAG_CONSOLE_SELECTED_MODEL_ID, selected_model_identity)
 };
+static const wire_member message_speculation_members[] = {
+    WIRE_U64(yvex_client_message, TAG_DRAFT_CYCLE_COUNT, draft_cycle_count),
+    WIRE_U64(yvex_client_message, TAG_DRAFT_FORWARD_COUNT, draft_forward_count),
+    WIRE_U64(yvex_client_message, TAG_PROPOSED_TOKENS, proposed_tokens),
+    WIRE_U64(yvex_client_message, TAG_SELECTED_VERIFICATION_TOKENS,
+             selected_verification_tokens),
+    WIRE_U64(yvex_client_message, TAG_TARGET_VERIFICATION_COUNT,
+             target_verification_count),
+    WIRE_U64(yvex_client_message, TAG_ACCEPTED_DRAFT_TOKENS, accepted_draft_tokens),
+    WIRE_U64(yvex_client_message, TAG_REJECTED_DRAFT_TOKENS, rejected_draft_tokens),
+    WIRE_U64(yvex_client_message, TAG_DISCARDED_DRAFT_TOKENS, discarded_draft_tokens),
+    WIRE_U64(yvex_client_message, TAG_TARGET_CORRECTION_OR_BONUS_TOKENS,
+             target_correction_or_bonus_tokens),
+    WIRE_U64(yvex_client_message, TAG_MAXIMUM_ACCEPTED_PREFIX, maximum_accepted_prefix),
+    WIRE_U64(yvex_client_message, TAG_CONFIDENCE_LOGIT_COUNT, confidence_logit_count)
+};
+static const wire_member message_timing_members[] = {
+    WIRE_DOUBLE(yvex_client_message, TAG_QUEUE_SECONDS, queue_seconds),
+    WIRE_DOUBLE(yvex_client_message, TAG_PREFILL_SECONDS, prefill_seconds),
+    WIRE_DOUBLE(yvex_client_message, TAG_FIRST_TOKEN_SECONDS, first_token_seconds),
+    WIRE_DOUBLE(yvex_client_message, TAG_FIRST_REASONING_SECONDS, first_reasoning_seconds),
+    WIRE_DOUBLE(yvex_client_message, TAG_FIRST_FINAL_SECONDS, first_final_seconds),
+    WIRE_DOUBLE(yvex_client_message, TAG_DECODE_SECONDS, decode_seconds),
+    WIRE_DOUBLE(yvex_client_message, TAG_PREFILL_RATE, prefill_rate),
+    WIRE_DOUBLE(yvex_client_message, TAG_DECODE_RATE, decode_rate),
+    WIRE_DOUBLE(yvex_client_message, TAG_REASONING_SECONDS, reasoning_seconds),
+    WIRE_DOUBLE(yvex_client_message, TAG_FINAL_SECONDS, final_seconds),
+    WIRE_DOUBLE(yvex_client_message, TAG_TOTAL_COMPLETION_SECONDS, total_completion_seconds),
+    WIRE_DOUBLE(yvex_client_message, TAG_REASONING_RATE, reasoning_rate),
+    WIRE_DOUBLE(yvex_client_message, TAG_FINAL_RATE, final_rate),
+    WIRE_DOUBLE(yvex_client_message, TAG_TOTAL_COMPLETION_RATE, total_completion_rate),
+    WIRE_DOUBLE(yvex_client_message, TAG_PUBLICATION_SECONDS, publication_seconds),
+    WIRE_DOUBLE(yvex_client_message, TAG_DRAFT_SECONDS, draft_seconds),
+    WIRE_DOUBLE(yvex_client_message, TAG_VERIFICATION_SECONDS, verification_seconds),
+    WIRE_DOUBLE(yvex_client_message, TAG_SPECULATIVE_COMMIT_SECONDS,
+                speculative_commit_seconds),
+    WIRE_DOUBLE(yvex_client_message, TAG_MEAN_ACCEPTED_PREFIX, mean_accepted_prefix),
+    WIRE_DOUBLE(yvex_client_message, TAG_EFFECTIVE_COMMITTED_RATE,
+                effective_committed_rate),
+    WIRE_DOUBLE(yvex_client_message, TAG_CONFIDENCE_LOGIT_MINIMUM,
+                confidence_logit_minimum),
+    WIRE_DOUBLE(yvex_client_message, TAG_CONFIDENCE_LOGIT_MAXIMUM,
+                confidence_logit_maximum),
+    WIRE_DOUBLE(yvex_client_message, TAG_CONFIDENCE_LOGIT_MEAN, confidence_logit_mean)
+};
 #undef WIRE_TEXT
 #undef WIRE_DOUBLE
 #undef WIRE_U64
@@ -1378,101 +1476,21 @@ int yvex_protocol_message_encode(const yvex_client_message *message,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-static int message_speculation_u64_field(yvex_client_message *candidate,
-                                         unsigned int tag,
-                                         const unsigned char *bytes,
-                                         unsigned long long count)
-{
-    unsigned long long value;
-    switch (tag) {
-    case TAG_DRAFT_CYCLE_COUNT:
-    case TAG_DRAFT_FORWARD_COUNT:
-    case TAG_PROPOSED_TOKENS:
-    case TAG_SELECTED_VERIFICATION_TOKENS:
-    case TAG_TARGET_VERIFICATION_COUNT:
-    case TAG_ACCEPTED_DRAFT_TOKENS:
-    case TAG_REJECTED_DRAFT_TOKENS:
-    case TAG_DISCARDED_DRAFT_TOKENS:
-    case TAG_TARGET_CORRECTION_OR_BONUS_TOKENS:
-    case TAG_MAXIMUM_ACCEPTED_PREFIX:
-    case TAG_CONFIDENCE_LOGIT_COUNT:
-        break;
-    default:
-        return 0;
-    }
-    if (!reader_u64(bytes, count, &value)) return -1;
-    switch (tag) {
-    case TAG_DRAFT_CYCLE_COUNT: candidate->draft_cycle_count = value; break;
-    case TAG_DRAFT_FORWARD_COUNT: candidate->draft_forward_count = value; break;
-    case TAG_PROPOSED_TOKENS: candidate->proposed_tokens = value; break;
-    case TAG_SELECTED_VERIFICATION_TOKENS:
-        candidate->selected_verification_tokens = value;
-        break;
-    case TAG_TARGET_VERIFICATION_COUNT:
-        candidate->target_verification_count = value;
-        break;
-    case TAG_ACCEPTED_DRAFT_TOKENS: candidate->accepted_draft_tokens = value; break;
-    case TAG_REJECTED_DRAFT_TOKENS: candidate->rejected_draft_tokens = value; break;
-    case TAG_DISCARDED_DRAFT_TOKENS: candidate->discarded_draft_tokens = value; break;
-    case TAG_TARGET_CORRECTION_OR_BONUS_TOKENS:
-        candidate->target_correction_or_bonus_tokens = value;
-        break;
-    case TAG_MAXIMUM_ACCEPTED_PREFIX: candidate->maximum_accepted_prefix = value; break;
-    case TAG_CONFIDENCE_LOGIT_COUNT: candidate->confidence_logit_count = value; break;
-    default: return 0;
-    }
-    return 1;
-}
-static int message_timing_field(yvex_client_message *candidate,
-                                unsigned int tag,
-                                const unsigned char *bytes,
-                                unsigned long long count)
-{
-    double *destination = NULL;
-    switch (tag) {
-    case TAG_QUEUE_SECONDS: destination = &candidate->queue_seconds; break;
-    case TAG_PREFILL_SECONDS: destination = &candidate->prefill_seconds; break;
-    case TAG_FIRST_TOKEN_SECONDS: destination = &candidate->first_token_seconds; break;
-    case TAG_FIRST_REASONING_SECONDS: destination = &candidate->first_reasoning_seconds; break;
-    case TAG_FIRST_FINAL_SECONDS: destination = &candidate->first_final_seconds; break;
-    case TAG_DECODE_SECONDS: destination = &candidate->decode_seconds; break;
-    case TAG_PREFILL_RATE: destination = &candidate->prefill_rate; break;
-    case TAG_DECODE_RATE: destination = &candidate->decode_rate; break;
-    case TAG_REASONING_SECONDS: destination = &candidate->reasoning_seconds; break;
-    case TAG_FINAL_SECONDS: destination = &candidate->final_seconds; break;
-    case TAG_TOTAL_COMPLETION_SECONDS: destination = &candidate->total_completion_seconds; break;
-    case TAG_REASONING_RATE: destination = &candidate->reasoning_rate; break;
-    case TAG_FINAL_RATE: destination = &candidate->final_rate; break;
-    case TAG_TOTAL_COMPLETION_RATE: destination = &candidate->total_completion_rate; break;
-    case TAG_PUBLICATION_SECONDS: destination = &candidate->publication_seconds; break;
-    case TAG_DRAFT_SECONDS: destination = &candidate->draft_seconds; break;
-    case TAG_VERIFICATION_SECONDS: destination = &candidate->verification_seconds; break;
-    case TAG_SPECULATIVE_COMMIT_SECONDS:
-        destination = &candidate->speculative_commit_seconds;
-        break;
-    case TAG_MEAN_ACCEPTED_PREFIX: destination = &candidate->mean_accepted_prefix; break;
-    case TAG_EFFECTIVE_COMMITTED_RATE:
-        destination = &candidate->effective_committed_rate;
-        break;
-    case TAG_CONFIDENCE_LOGIT_MINIMUM:
-        destination = &candidate->confidence_logit_minimum;
-        break;
-    case TAG_CONFIDENCE_LOGIT_MAXIMUM:
-        destination = &candidate->confidence_logit_maximum;
-        break;
-    case TAG_CONFIDENCE_LOGIT_MEAN: destination = &candidate->confidence_logit_mean; break;
-    default: return 0;
-    }
-    return reader_double(bytes, count, destination) ? 1 : -1;
-}
 static int message_base_field(yvex_client_message *candidate, unsigned int tag,
                               const unsigned char *bytes,
                               unsigned long long count, int *have_kind)
 {
     unsigned long long value = 0ull;
-    int valid = message_timing_field(candidate, tag, bytes, count);
-    if (valid) return valid;
-    valid = 1;
+    int member = reader_member(candidate, message_timing_members,
+                               sizeof(message_timing_members) / sizeof(message_timing_members[0]),
+                               tag, bytes, count);
+    int valid = 1;
+    if (member) return member;
+    member = reader_member(candidate, message_speculation_members,
+                           sizeof(message_speculation_members) /
+                               sizeof(message_speculation_members[0]),
+                           tag, bytes, count);
+    if (member) return member;
 #define BASE_U64(field) (reader_u64(bytes, count, &value) ? ((field) = value, 1) : 0)
     switch (tag) {
     case TAG_MESSAGE_KIND:
@@ -1649,7 +1667,7 @@ static int message_base_field(yvex_client_message *candidate, unsigned int tag,
         valid = reader_text(bytes, count, candidate->tool_name,
                             sizeof(candidate->tool_name));
         break;
-    default: return message_speculation_u64_field(candidate, tag, bytes, count);
+    default: return 0;
     }
 #undef BASE_U64
     return valid ? 1 : -1;

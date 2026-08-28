@@ -38,9 +38,11 @@ include/yvex/internal/moe.h	graph	graph.moe	generic	private	internal-abi	graph,r
 include/yvex/internal/gguf.h	gguf	gguf.internal	generic	private	internal-abi	artifact,model,quant	interface	none
 include/yvex/internal/gguf_writer.h	gguf	gguf.writer	generic	private	internal-abi	artifact,quant	interface	none
 include/yvex/internal/io.h	io	io.internal	generic	private	internal-abi	repository	interface	none
+include/yvex/internal/image.h	io	io.image	generic	private	cross-subsystem-interface	cli,model,runtime	interface	none
 include/yvex/internal/model.h	model	model.numeric_policy	generic	private	internal-abi	model.family,compilation,graph,runtime	interface	none
 include/yvex/internal/model_artifact.h	model.artifacts	model.artifacts.internal	generic	private	internal-abi	cli,artifact	interface	none
 include/yvex/internal/model_target.h	model.target	model.target.internal	generic	private	internal-abi	model,source,cli	interface	none
+include/yvex/internal/multimodal.h	runtime	runtime.multimodal	generic	private	internal-abi	graph.family,runtime,backend.cuda,tests	interface	none
 include/yvex/internal/quant_numeric.h	gguf	gguf.quant_numeric	generic	private	internal-abi	artifact,model,quant,backend	interface	none
 include/yvex/internal/runtime.h	runtime	runtime.internal	generic	private	internal-abi	runtime,graph,cli	interface	none
 include/yvex/internal/runtime_operator.h	runtime	runtime.operator	generic	private	internal-abi	runtime,cli,tests	interface	none
@@ -85,6 +87,8 @@ src/backend/cuda/attention.c	backend.cuda	backend.cuda.attention	backend	private
 src/backend/cuda/attention_kernels.cu	backend.cuda	backend.cuda.attention_kernels	backend	private	backend-kernel	backend.cuda.attention,graph	backend-kernel	none
 src/backend/cuda/attention_completion.c	backend.cuda	backend.cuda.attention-completion	backend	private	resource-lifecycle	graph,backend.cuda.attention	implementation	none
 src/backend/cuda/text_encoder.c	backend.cuda	backend.cuda.text_encoder	backend	private	reusable-algorithm	graph.family	implementation	none
+src/backend/cuda/vision.c	backend.cuda	backend.cuda.vision	backend	private	reusable-algorithm	graph.family,runtime	implementation	none
+src/backend/cuda/families/minimax_h3.c	backend.cuda.family	backend.cuda.family.minimax_h3	family	private	backend-implementation	graph.family,runtime	implementation	none
 src/backend/cuda/joint_transformer.c	backend.cuda	backend.cuda.joint_transformer	backend	private	backend-implementation	graph.family	implementation	none
 src/backend/cuda/info.c	backend.cuda	backend.cuda.info	backend	private	reusable-algorithm	backend,graph	implementation	none
 src/backend/cuda/kernel_primitives.h	backend.cuda	backend.cuda.kernel_primitives	backend	private	platform-interface	backend.cuda.kernels,backend.cuda.moe_kernels,backend.cuda.sampling_kernels,backend.cuda.tensorcore,backend.cuda.transformer	interface	none
@@ -200,6 +204,7 @@ src/graph/private.h	graph	graph.private	generic	private	private-interface	runtim
 src/graph/state_recipe.c	graph	graph.state_recipe	generic	private	immutable-planning	model,graph,runtime,tests	implementation	none
 src/graph/state_pages.c	graph	graph.state_pages	generic	private	resource-lifecycle	graph.state,runtime,tests	implementation	none
 src/io/media.c	io	io.media	generic	private	file-serialization	runtime,cli,tests	implementation	none
+src/io/image.c	io	io.image	generic	private	file-serialization	cli,model,runtime	implementation	none
 src/graph/state_prefix.c	graph	graph.state_prefix	generic	private	resource-lifecycle	graph.state,runtime,server,tests	implementation	none
 src/graph/source_compile.c	graph	graph.source_compiler	generic	private	resource-lifecycle	model.family,graph	implementation	none
 src/io/writer.c	io	io.writer	generic	private	transactional-io	repository	implementation	none
@@ -311,6 +316,7 @@ src/tokenizer/core.c	tokenizer	tokenizer.core	generic	private	resource-lifecycle
 src/tokenizer/compilation.c	tokenizer	tokenizer.family_policy	generic	private	file-serialization	compilation,runtime,tokenizer	implementation	none
 src/tokenizer/decode.c	tokenizer	tokenizer.decode	generic	private	resource-lifecycle	runtime,generation	implementation	none
 src/tokenizer/execution.c	tokenizer	tokenizer.execution	generic	private	reusable-algorithm	runtime,cli,generation	implementation	none
+src/tokenizer/normalization.c	tokenizer	tokenizer.normalization	generic	private	reusable-algorithm	tokenizer.execution	implementation	none
 src/tokenizer/provider.c	tokenizer	tokenizer.provider	generic	private	reusable-algorithm	server,generation,provider	implementation	none
 src/tokenizer/private.h	tokenizer	tokenizer.shared	generic	private	source-local-interface	tokenizer.core,tokenizer.execution,tokenizer.decode,tokenizer.provider	interface	none
 src/tokenizer/token_input.c	tokenizer	tokenizer.token_input	generic	private	reusable-algorithm	runtime,cli	implementation	none
