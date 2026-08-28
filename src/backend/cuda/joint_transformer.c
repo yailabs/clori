@@ -1,12 +1,12 @@
 /* Execute one explicitly described joint-modality Transformer through CUDA primitives. */
 #include "src/backend/cuda/private.h"
+#include "src/backend/cuda/transformer_ops.h"
 #include <yvex/backend.h>
 #include <yvex/internal/backend.h>
 #include <yvex/internal/component.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/joint_transformer.h>
 #include <yvex/internal/quant_numeric.h>
-#include <yvex/internal/transformer.h>
 #include <yvex/qtype.h>
 #include <math.h>
 #include <stdint.h>

@@ -1,5 +1,6 @@
 /* Execute an admitted text-encoder operation through generic CUDA primitives. */
 #include "src/backend/cuda/private.h"
+#include "src/backend/cuda/transformer_ops.h"
 
 #include <yvex/backend.h>
 #include <yvex/internal/backend.h>

@@ -1,6 +1,6 @@
 #include "src/backend/cuda/private.h"
+#include "src/backend/cuda/transformer_ops.h"
 #include <yvex/internal/component.h>
-#include <yvex/internal/transformer.h>
 #include <yvex/quant.h>
 
 #include <limits.h>
@@ -129,7 +129,7 @@ static int cuda_transformer_refuse(yvex_error *err, yvex_status status,
  * launch, copy, status, sync, or cleanup refusal leaves output unadmitted. Transformer embedding
  * initialization only; no tokenizer or host numerical fallback.
  */
-int yvex_backend_transformer_cuda_initial(
+int yvex_cuda_transformer_initial(
     yvex_backend *backend, const yvex_device_tensor *encoded, unsigned int qtype,
     unsigned long long token_count, unsigned long long hidden_width,
     unsigned long long residual_streams, yvex_device_tensor *embedding,
@@ -216,7 +216,7 @@ int yvex_backend_transformer_cuda_initial(
  * The caller supplies reusable device storage and may request compact host evidence. Bounded
  * status and resident rows become visible together; expanded input never leaves the device.
  */
-int yvex_backend_transformer_cuda_feature_mean(
+int yvex_cuda_transformer_feature_mean(
     yvex_backend *backend, const yvex_device_tensor *expanded,
     unsigned long long token_count, unsigned long long hidden_width,
     unsigned long long residual_streams, yvex_device_tensor *device_output,
@@ -299,7 +299,7 @@ int yvex_backend_transformer_cuda_feature_mean(
     return rc;
 }
 
-int yvex_backend_transformer_cuda_final(
+int yvex_cuda_transformer_final(
     yvex_backend *backend, const yvex_device_tensor *expanded,
     const yvex_device_tensor *function, const yvex_device_tensor *base,
     const yvex_device_tensor *scale, const yvex_device_tensor *norm,
@@ -768,7 +768,7 @@ static int gqa_workspace_add(unsigned long long *cursor, unsigned long long byte
     return yvex_core_u64_add(aligned, bytes, cursor);
 }
 
-int yvex_backend_transformer_gqa_workspace_bytes(
+int yvex_cuda_transformer_gqa_workspace_required(
     unsigned long long tokens, unsigned long long query_heads,
     unsigned long long kv_heads, unsigned long long head_dim,
     unsigned long long *bytes, yvex_error *err)

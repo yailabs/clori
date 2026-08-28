@@ -91,6 +91,17 @@ static int transformer_runtime_refuse(yvex_error *err, yvex_status status, const
     yvex_error_set(err, status, "runtime.transformer", reason);
     return status;
 }
+static const yvex_backend_transformer_operations *transformer_backend_operations(
+    const yvex_backend *backend, yvex_error *err)
+{
+    const yvex_backend_transformer_operations *operations =
+        yvex_backend_transformer_operations_get(backend);
+    if (!operations)
+        transformer_runtime_refuse(
+            err, YVEX_ERR_UNSUPPORTED,
+            "the admitted backend does not publish transformer execution operations");
+    return operations;
+}
 int yvex_runtime_transformer_cuda_facts_add(yvex_runtime_transformer_result *result,
     const yvex_backend_cuda_operation_facts *facts, unsigned long long h2d_bytes,
     unsigned long long download_count, unsigned long long device_synchronizations, yvex_error *err)
@@ -486,16 +497,19 @@ static int transformer_runtime_embedding(transformer_chunk_context *chunk, yvex_
                                           "transformer embedding digest update failed");
     if (chunk->backend == YVEX_BACKEND_KIND_CUDA) {
         unsigned long long bytes = chunk->token_count * context->embedding_row_bytes;
+        const yvex_backend_transformer_operations *operations =
+            transformer_backend_operations(context->session_view->backend, err);
         yvex_backend_cuda_operation_facts facts;
         yvex_device_tensor encoded_view;
         int rc;
+        if (!operations || !operations->initial) return yvex_error_code(err);
         if (!transformer_encoded_subview(context->device_embedding_encoded, bytes, &encoded_view))
             return transformer_runtime_refuse(err, YVEX_ERR_BOUNDS,
                 "transformer CUDA embedding upload view is invalid");
         rc = yvex_backend_tensor_write(context->session_view->backend, &encoded_view,
                                        context->embedding_encoded, bytes, err);
         if (rc == YVEX_OK)
-            rc = yvex_backend_transformer_cuda_initial(
+            rc = operations->initial(
                 context->session_view->backend, &encoded_view,
                 binding->qtype, chunk->token_count, s->hidden_width,
                 s->residual_streams, context->device_embedding,
@@ -553,12 +567,15 @@ static int transformer_feature_capture(transformer_chunk_context *chunk,
         : NULL;
     if (chunk->backend == YVEX_BACKEND_KIND_CUDA &&
         chunk->owner->options.evidence_level != YVEX_ATTENTION_EVIDENCE_FULL) {
+        const yvex_backend_transformer_operations *operations =
+            transformer_backend_operations(chunk->owner->session_view->backend, err);
         yvex_backend_cuda_operation_facts facts = {0};
+        if (!operations || !operations->feature_mean) return yvex_error_code(err);
         if (!yvex_core_u64_add(chunk->output->device_feature_row_offset, chunk->token_offset,
                                &resident_row_offset))
             return transformer_runtime_refuse(err, YVEX_ERR_BOUNDS,
                                                "transformer device feature row overflowed");
-        int rc = yvex_backend_transformer_cuda_feature_mean(
+        int rc = operations->feature_mean(
             chunk->owner->session_view->backend, &chunk->device_current,
             chunk->token_count, plan->hidden_width, plan->residual_streams,
             &chunk->device_hidden, chunk->output->device_features,
@@ -807,6 +824,8 @@ static int transformer_layer_evidence(void *opaque, yvex_backend_kind backend,
     if (chunk->layer_ordinal == s->layer_count)
         chunk->result->final_weight_bytes += context->final_weight_bytes;
     if (chunk->layer_ordinal == s->layer_count && backend == YVEX_BACKEND_KIND_CUDA) {
+        const yvex_backend_transformer_operations *operations =
+            transformer_backend_operations(context->session_view->backend, err);
         unsigned long long expanded_bytes = chunk->token_count * s->expanded_width * sizeof(float);
         unsigned long long hidden_bytes = chunk->token_count * s->hidden_width * sizeof(float);
         unsigned long long started_ns = yvex_core_monotonic_ns();
@@ -816,6 +835,7 @@ static int transformer_layer_evidence(void *opaque, yvex_backend_kind backend,
         int full = context->options.evidence_level == YVEX_ATTENTION_EVIDENCE_FULL;
         int device_pre = context->options.device_pre_normalized_output;
         int reference_pre = chunk->output->pre_normalized_hidden && full && !device_pre;
+        if (!operations || !operations->final) return yvex_error_code(err);
         if (reference_pre) {
             rc = yvex_backend_tensor_read(context->session_view->backend, &chunk->device_current,
                                           chunk->current, expanded_bytes, err);
@@ -837,7 +857,7 @@ static int transformer_layer_evidence(void *opaque, yvex_backend_kind backend,
                 rc = transformer_runtime_refuse(err, YVEX_ERR_BOUNDS,
                     "transformer final pre-normalized view is invalid");
             if (rc == YVEX_OK)
-                rc = yvex_backend_transformer_cuda_final(
+                rc = operations->final(
                     context->session_view->backend, &chunk->device_current,
                     context->device_global[YVEX_TRANSFORMER_WEIGHT_FINAL_FUNCTION],
                     context->device_global[YVEX_TRANSFORMER_WEIGHT_FINAL_BASE],

@@ -1256,7 +1256,7 @@ static int video_vae_decode_cuda_session(
         request.execution.output = patch_output.data;
         request.execution.cancel_requested = options->cancelled;
         request.execution.cancel_context = options->cancellation_context;
-        rc = yvex_runtime_component_dense_decoder_cuda(
+        rc = yvex_runtime_component_dense_decoder_execute(
             session, &request, &decoder, err);
     }
     if (rc == YVEX_OK) video_output_unpack(&patch_output, options, result);

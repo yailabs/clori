@@ -6,6 +6,7 @@
  */
 #ifndef INCLUDE_YVEX_INTERNAL_TRANSFORMER_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_TRANSFORMER_H_INCLUDED
+#include <yvex/internal/backend.h>
 #include <yvex/internal/compiler.h>
 #include <yvex/internal/device_view.h>
 #include <yvex/internal/execution_observation.h>
@@ -13,7 +14,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-typedef struct yvex_backend_cuda_operation_facts yvex_backend_cuda_operation_facts;
 #define YVEX_TRANSFORMER_INPUT_SCHEMA_V1 1u
 #define YVEX_TRANSFORMER_INPUT_SUFFIX ".yvex-transformer-input"
 #define YVEX_TRANSFORMER_WEIGHT_COUNT 5u
@@ -184,108 +184,6 @@ int yvex_transformer_feature_normalize(float *values,
                                        unsigned long long value_count,
                                        const float *weights, double epsilon,
                                        yvex_error *err);
-int yvex_backend_transformer_cuda_initial(
-    yvex_backend *backend, const yvex_device_tensor *encoded, unsigned int qtype,
-    unsigned long long token_count, unsigned long long hidden_width,
-    unsigned long long residual_streams, yvex_device_tensor *embedding,
-    yvex_device_tensor *expanded, yvex_backend_cuda_operation_facts *facts,
-    yvex_error *err);
-/* Host output is optional bounded evidence; device publication still waits for checked status. */
-int yvex_backend_transformer_cuda_feature_mean(
-    yvex_backend *backend, const yvex_device_tensor *expanded,
-    unsigned long long token_count, unsigned long long hidden_width,
-    unsigned long long residual_streams, yvex_device_tensor *device_output,
-    yvex_device_tensor *resident_output, unsigned long long resident_row_offset,
-    unsigned long long resident_row_stride, unsigned long long resident_column_offset,
-    float *host_output, yvex_backend_cuda_operation_facts *facts,
-    yvex_error *err);
-int yvex_backend_transformer_cuda_final(
-    yvex_backend *backend, const yvex_device_tensor *expanded,
-    const yvex_device_tensor *function, const yvex_device_tensor *base,
-    const yvex_device_tensor *scale, const yvex_device_tensor *norm,
-    unsigned long long token_count, unsigned long long hidden_width,
-    unsigned long long residual_streams, double epsilon, double mhc_epsilon,
-    yvex_device_tensor *pre_normalized, yvex_device_tensor *output,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err);
-int yvex_cuda_transformer_rotary_half(yvex_backend *backend, yvex_device_tensor *values,
-    const yvex_device_tensor *cosines, const yvex_device_tensor *sines,
-    unsigned long long tokens, unsigned long long heads, unsigned long long head_dim,
-    unsigned long long rotary_dim, yvex_backend_cuda_operation_facts *facts, yvex_error *err);
-int yvex_cuda_transformer_rotary_half_f32(yvex_backend *backend, yvex_device_tensor *values,
-    const yvex_device_tensor *cosines, const yvex_device_tensor *sines,
-    unsigned long long tokens, unsigned long long heads, unsigned long long head_dim,
-    unsigned long long rotary_dim, yvex_backend_cuda_operation_facts *facts, yvex_error *err);
-int yvex_cuda_transformer_gqa(yvex_backend *backend, const yvex_device_tensor *query,
-    const yvex_device_tensor *key, const yvex_device_tensor *value, yvex_device_tensor *output,
-    unsigned long long tokens, unsigned long long query_heads, unsigned long long kv_heads,
-    unsigned long long head_dim, int causal, yvex_backend_cuda_operation_facts *facts,
-    yvex_error *err);
-/* Return exact BLAS GQA scratch bytes; zero selects the allocation-free online path. */
-int yvex_backend_transformer_gqa_workspace_bytes(unsigned long long, unsigned long long,
-    unsigned long long, unsigned long long, unsigned long long *, yvex_error *);
-int yvex_cuda_transformer_silu_product_bf16(yvex_backend *backend,
-    const yvex_device_tensor *gate, const yvex_device_tensor *up, yvex_device_tensor *output,
-    unsigned long long count, yvex_backend_cuda_operation_facts *facts, yvex_error *err);
-int yvex_cuda_transformer_silu(yvex_backend *backend, const yvex_device_tensor *input,
-    yvex_device_tensor *output, unsigned long long count, int bf16_output,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err);
-int yvex_cuda_transformer_timestep_embedding(
-    yvex_backend *backend, const yvex_device_tensor *timesteps,
-    yvex_device_tensor *output, unsigned long long rows,
-    unsigned long long half_width, float maximum_period,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err);
-int yvex_cuda_transformer_split_three(yvex_backend *backend,
-    const yvex_device_tensor *input, yvex_device_tensor *first, yvex_device_tensor *second,
-    yvex_device_tensor *third, unsigned long long rows, unsigned long long width,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err);
-int yvex_cuda_transformer_split_interleaved_three(yvex_backend *backend,
-    const yvex_device_tensor *input, yvex_device_tensor *first, yvex_device_tensor *second,
-    yvex_device_tensor *third, unsigned long long rows, unsigned long long heads,
-    unsigned long long head_dim, yvex_backend_cuda_operation_facts *facts, yvex_error *err);
-int yvex_cuda_transformer_swiglu_split_bf16(yvex_backend *backend,
-    const yvex_device_tensor *input, yvex_device_tensor *output,
-    unsigned long long rows, unsigned long long width,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err);
-int yvex_cuda_transformer_swiglu_split_f32(yvex_backend *backend,
-    const yvex_device_tensor *input, yvex_device_tensor *output,
-    unsigned long long rows, unsigned long long width, int gate_first,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err);
-int yvex_cuda_transformer_modulate_bf16(yvex_backend *backend,
-    const yvex_device_tensor *input, const yvex_device_tensor *table,
-    const unsigned int *row_indices, yvex_device_tensor *output,
-    unsigned long long rows, unsigned long long width, unsigned long long table_rows,
-    unsigned long long parameters, unsigned int shift_slot, unsigned int scale_slot,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err);
-int yvex_cuda_transformer_gated_residual_bf16(yvex_backend *backend,
-    const yvex_device_tensor *residual, const yvex_device_tensor *table,
-    const unsigned int *row_indices, const yvex_device_tensor *update,
-    yvex_device_tensor *output, unsigned long long rows, unsigned long long width,
-    unsigned long long table_rows, unsigned long long parameters, unsigned int gate_slot,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err);
-int yvex_cuda_transformer_bias(yvex_backend *backend,
-    const yvex_device_tensor *input, const yvex_device_tensor *bias,
-    yvex_device_tensor *output, unsigned long long rows, unsigned long long width,
-    int bf16_output, yvex_backend_cuda_operation_facts *facts, yvex_error *err);
-int yvex_cuda_transformer_add_bf16(yvex_backend *backend,
-    const yvex_device_tensor *left, const yvex_device_tensor *right,
-    yvex_device_tensor *output, unsigned long long rows, unsigned long long width,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err);
-int yvex_cuda_transformer_scaled_residual_f32(yvex_backend *backend,
-    const yvex_device_tensor *residual, const yvex_device_tensor *update,
-    const yvex_device_tensor *scale, yvex_device_tensor *output,
-    unsigned long long rows, unsigned long long width,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err);
-int yvex_cuda_transformer_layer_norm_f32(yvex_backend *backend,
-    const yvex_device_tensor *input, const yvex_device_tensor *weight,
-    const yvex_device_tensor *bias, yvex_device_tensor *output,
-    unsigned long long rows, unsigned long long width, float epsilon,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err);
-int yvex_cuda_transformer_bf16_round(yvex_backend *backend, yvex_device_tensor *values,
-    unsigned long long count, yvex_backend_cuda_operation_facts *facts, yvex_error *err);
-int yvex_cuda_transformer_rms_norm_bf16(yvex_backend *backend,
-    const yvex_device_tensor *input, const yvex_device_tensor *weight,
-    yvex_device_tensor *output, unsigned long long rows, unsigned long long width,
-    float epsilon, yvex_backend_cuda_operation_facts *facts, yvex_error *err);
 #define YVEX_TRANSFORMER_DENSE_DECODER_BLOCK_WEIGHT_COUNT 12u
 typedef struct yvex_component_encoded_weight yvex_transformer_encoded_weight;
 typedef enum {
@@ -302,7 +200,7 @@ typedef enum {
     YVEX_TRANSFORMER_DENSE_FF2_BIAS,
     YVEX_TRANSFORMER_DENSE_SCALE2
 } yvex_transformer_dense_decoder_weight_slot;
-typedef struct {
+typedef struct yvex_transformer_dense_decoder_request {
     const yvex_transformer_encoded_weight *block_weights;
     const yvex_transformer_encoded_weight *final_norm_weight;
     const yvex_transformer_encoded_weight *final_norm_bias;
@@ -316,14 +214,33 @@ typedef struct {
     int (*cancel_requested)(void *context);
     void *cancel_context;
 } yvex_transformer_dense_decoder_request;
-typedef struct {
+typedef struct yvex_transformer_dense_decoder_result {
     unsigned long long rows, output_rows, block_count, output_values;
     unsigned long long kernel_launches, h2d_bytes, d2h_bytes, device_bytes;
     int complete;
 } yvex_transformer_dense_decoder_result;
-int yvex_cuda_transformer_dense_decoder_execute(
-    yvex_backend *backend, const yvex_transformer_dense_decoder_request *request,
-    yvex_transformer_dense_decoder_result *result, yvex_error *err);
+struct yvex_backend_transformer_operations {
+    int (*initial)(yvex_backend *, const yvex_device_tensor *, unsigned int,
+                   unsigned long long, unsigned long long, unsigned long long,
+                   yvex_device_tensor *, yvex_device_tensor *,
+                   yvex_backend_cuda_operation_facts *, yvex_error *);
+    int (*feature_mean)(yvex_backend *, const yvex_device_tensor *,
+                        unsigned long long, unsigned long long, unsigned long long,
+                        yvex_device_tensor *, yvex_device_tensor *, unsigned long long,
+                        unsigned long long, unsigned long long, float *,
+                        yvex_backend_cuda_operation_facts *, yvex_error *);
+    int (*final)(yvex_backend *, const yvex_device_tensor *, const yvex_device_tensor *,
+                 const yvex_device_tensor *, const yvex_device_tensor *,
+                 const yvex_device_tensor *, unsigned long long, unsigned long long,
+                 unsigned long long, double, double, yvex_device_tensor *,
+                 yvex_device_tensor *, yvex_backend_cuda_operation_facts *, yvex_error *);
+    int (*gqa_workspace_required)(unsigned long long, unsigned long long,
+                                  unsigned long long, unsigned long long,
+                                  unsigned long long *, yvex_error *);
+    int (*dense_decoder_execute)(yvex_backend *,
+                                 const yvex_transformer_dense_decoder_request *,
+                                 yvex_transformer_dense_decoder_result *, yvex_error *);
+};
 typedef struct yvex_runtime_component_session yvex_runtime_component_session;
 typedef int (*yvex_transformer_decoder_weight_name_fn)(
     void *context, unsigned long long block, unsigned int slot,
@@ -335,7 +252,7 @@ typedef struct {
     const char *output_weight_name, *output_bias_name;
     yvex_transformer_dense_decoder_request execution;
 } yvex_transformer_resident_decoder_request;
-int yvex_runtime_component_dense_decoder_cuda(
+int yvex_runtime_component_dense_decoder_execute(
     const yvex_runtime_component_session *session,
     const yvex_transformer_resident_decoder_request *request,
     yvex_transformer_dense_decoder_result *result, yvex_error *err);

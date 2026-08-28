@@ -115,6 +115,14 @@ const struct yvex_backend_moe_operations *yvex_backend_moe_operations_get(
                : NULL;
 }
 
+const struct yvex_backend_transformer_operations *yvex_backend_transformer_operations_get(
+    const yvex_backend *backend)
+{
+    return backend && backend->vtable && backend->vtable->transformer_operations
+               ? backend->vtable->transformer_operations(backend)
+               : NULL;
+}
+
 static const char *backend_name_at(const char *const *names,
                                    size_t count,
                                    unsigned int index)

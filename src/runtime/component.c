@@ -386,6 +386,7 @@ int yvex_runtime_component_joint_transformer_cuda(
     void *weight_name_context, const yvex_transformer_joint_request *request,
     yvex_transformer_joint_result *result, yvex_error *err)
 {
+    const yvex_backend_transformer_operations *operations = NULL;
     yvex_transformer_joint_encoded_weight external[YVEX_TRANSFORMER_JOINT_EXTERNAL_WEIGHT_COUNT] = {{0}};
     yvex_transformer_joint_encoded_weight *blocks = NULL;
     unsigned long long count, index, workspace_bytes = 0ull;
@@ -425,8 +426,17 @@ int yvex_runtime_component_joint_transformer_cuda(
         if (rc == YVEX_OK)
             rc = component_joint_weight_bind(session, name, blocks + index, err);
     }
+    if (rc == YVEX_OK) {
+        operations = yvex_backend_transformer_operations_get(session->backend);
+        if (!operations || !operations->gqa_workspace_required) {
+            yvex_error_set(err, YVEX_ERR_UNSUPPORTED,
+                           "runtime.component.joint-transformer",
+                           "the admitted backend lacks transformer workspace planning");
+            rc = YVEX_ERR_UNSUPPORTED;
+        }
+    }
     if (rc == YVEX_OK)
-        rc = yvex_backend_transformer_gqa_workspace_bytes(
+        rc = operations->gqa_workspace_required(
             request->packed_rows, request->recipe->attention_heads,
             request->recipe->attention_heads, request->recipe->head_dimension,
             &workspace_bytes, err);
@@ -484,11 +494,13 @@ static int component_decoder_weight_bind(
     return YVEX_OK;
 }
 
-int yvex_runtime_component_dense_decoder_cuda(
+int yvex_runtime_component_dense_decoder_execute(
     const yvex_runtime_component_session *session,
     const yvex_transformer_resident_decoder_request *request,
     yvex_transformer_dense_decoder_result *result, yvex_error *err)
 {
+    const yvex_backend_transformer_operations *operations =
+        yvex_backend_transformer_operations_get(session ? session->backend : NULL);
     yvex_transformer_dense_decoder_request execution;
     yvex_transformer_encoded_weight *blocks = NULL;
     yvex_transformer_encoded_weight final_norm = {0}, final_bias = {0};
@@ -500,7 +512,7 @@ int yvex_runtime_component_dense_decoder_cuda(
         !request->final_norm_weight_name || !request->final_norm_bias_name ||
         !request->output_weight_name || !request->output_bias_name ||
         !request->execution.block_count || !session->backend || !session->residency ||
-        yvex_backend_kind_of(session->backend) != YVEX_BACKEND_KIND_CUDA ||
+        !operations || !operations->dense_decoder_execute ||
         !session->summary.sealed || !session->summary.cuda_ready ||
         session->summary.invalidated ||
         !yvex_core_u64_mul(request->execution.block_count,
@@ -548,7 +560,7 @@ int yvex_runtime_component_dense_decoder_cuda(
     execution.output_weight = &output_weight;
     execution.output_bias = &output_bias;
     if (rc == YVEX_OK)
-        rc = yvex_cuda_transformer_dense_decoder_execute(
+        rc = operations->dense_decoder_execute(
             session->backend, &execution, result, err);
     free(blocks);
     return rc;

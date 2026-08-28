@@ -18,7 +18,6 @@
 #define CUDA_BANDWIDTH_WORKING_SET (32ull * 1024ull * 1024ull)
 #define CUDA_BANDWIDTH_ITERATIONS 8ull
 #define CUDA_BANDWIDTH_BLOCK 256u
-
 /* Initialize one stable work range without breaking active stream capture. */
 int yvex_cuda_work_initialize(yvex_cuda_work *work, CUdeviceptr target,
                               size_t bytes, const void *source, int zero,
@@ -1714,6 +1713,7 @@ static const yvex_backend_vtable cuda_vtable = {
     .host_workspace_free = cuda_host_workspace_free,
     .sampling_operations = yvex_cuda_sampling_operations_get,
     .moe_operations = yvex_cuda_moe_operations_get,
+    .transformer_operations = yvex_cuda_transformer_operations_get,
 };
 
 static int shared_owner_acquire(yvex_backend *owner, yvex_error *err)
