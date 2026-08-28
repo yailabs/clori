@@ -1128,9 +1128,8 @@ static void generation_operator_ready(yvex_generation_operator_result *result,
     result->generation_cuda_model_path_ready = backend == YVEX_BACKEND_KIND_CUDA;
     result->generation_loop_ready = 1;
     result->generation_ready = 1;
-    result->dspark_ready =
-        result->execution.execution_mode == YVEX_GENERATION_MODE_SPECULATIVE;
-    result->speculative_execution_ready = result->dspark_ready &&
+    result->speculative_execution_ready =
+        result->execution.execution_mode == YVEX_GENERATION_MODE_SPECULATIVE &&
         result->execution.draft_cycle_count > 0ull &&
         result->execution.target_verification_count > 0ull;
 }
