@@ -41,6 +41,9 @@ static int test_open_and_unsupported(void)
     YVEX_TEST_ASSERT_STREQ(yvex_backend_kind_name(YVEX_BACKEND_KIND_CPU), "cpu", "cpu kind name");
     YVEX_TEST_ASSERT_STREQ(yvex_backend_status_name(YVEX_BACKEND_STATUS_READY), "ready", "ready name");
     YVEX_TEST_ASSERT(yvex_backend_sync(backend, &err) == YVEX_OK, "cpu sync no-op");
+    YVEX_TEST_ASSERT(!yvex_backend_sampling_operations_get(backend) &&
+                         !yvex_backend_moe_operations_get(backend),
+                     "CPU does not publish device-only sampling or MoE operation tables");
     YVEX_TEST_ASSERT(yvex_backend_bandwidth_probe(backend, &bandwidth, &err) ==
                          YVEX_ERR_UNSUPPORTED && !bandwidth.schema_version,
                      "CPU refuses CUDA bandwidth evidence without partial facts");
@@ -52,21 +55,10 @@ static int test_open_and_unsupported(void)
     yvex_backend_close(backend);
 
     memset(&options, 0, sizeof(options));
-    options.kind = YVEX_BACKEND_KIND_CUDA;
+    options.kind = YVEX_BACKEND_KIND_METAL;
     rc = yvex_backend_open(&backend, &options, &err);
-    YVEX_TEST_ASSERT(rc == YVEX_OK || rc == YVEX_ERR_UNSUPPORTED,
-                     "cuda opens or reports unsupported cleanly");
-    if (rc == YVEX_OK) {
-        yvex_backend_status status = yvex_backend_status_of(backend);
-
-        YVEX_TEST_ASSERT(yvex_backend_kind_of(backend) == YVEX_BACKEND_KIND_CUDA, "cuda kind");
-        YVEX_TEST_ASSERT(status == YVEX_BACKEND_STATUS_READY ||
-                             status == YVEX_BACKEND_STATUS_CONTEXT_READY,
-                         "cuda context or kernels ready");
-        yvex_backend_close(backend);
-    } else {
-        YVEX_TEST_ASSERT(backend == NULL, "unsupported backend remains null");
-    }
+    YVEX_TEST_ASSERT(rc == YVEX_ERR_UNSUPPORTED && backend == NULL,
+                     "unimplemented backend refuses without probing hardware");
     return 0;
 }
 

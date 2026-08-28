@@ -9,6 +9,8 @@
 extern "C" {
 #endif
 typedef struct yvex_component_text_recipe yvex_component_text_recipe;
+typedef struct yvex_backend_moe_operations yvex_backend_moe_operations;
+typedef struct yvex_backend_sampling_operations yvex_backend_sampling_operations;
 /* Encoded attention is a private graph/backend ABI, never installed capability surface. */
 #define YVEX_BACKEND_ATTENTION_JOB_SCHEMA 3u
 typedef enum {
@@ -237,6 +239,10 @@ int yvex_backend_close_admit(yvex_backend *backend, yvex_error *err);
 /* Admission failure publishes only a FAILED cleanup owner when checked rollback also fails. */
 int yvex_backend_open_shared_cuda(yvex_backend **out, yvex_backend *context_owner,
                                   unsigned long long memory_limit_bytes, yvex_error *err);
+const yvex_backend_sampling_operations *yvex_backend_sampling_operations_get(
+    const yvex_backend *backend);
+const yvex_backend_moe_operations *yvex_backend_moe_operations_get(
+    const yvex_backend *backend);
 struct yvex_device_tensor {
     yvex_backend *owner;
     unsigned long long owner_id;
