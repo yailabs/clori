@@ -185,7 +185,7 @@
     },
     {
       "id": "documentation-only",
-      "patterns": ["docs/**", "config/documentation_owners.tsv", "README.md", "CHANGELOG.md", "ROADMAP.md", "CONTRIBUTING.md", "AGENTS.md"],
+      "patterns": ["docs/**", "README.md", "CHANGELOG.md", "ROADMAP.md", "CONTRIBUTING.md", "AGENTS.md"],
       "lanes": ["structural"],
       "tests": [],
       "reason": "documentation changes require ownership, links, project-control, and architecture checks only"
@@ -199,7 +199,7 @@
     },
     {
       "id": "test-infrastructure",
-      "patterns": ["tests/test.c", "tests/test.h", "tests/test_cuda.c", "tests/support/**", "tests/unit/*_runner.c", "tools/qa*.py", "tools/generate_qa_registry.py", "config/qa/**", ".agents/skills/engineering-worklog/**", ".github/workflows/**", ".github/pull_request_template.md", ".gitignore"],
+      "patterns": ["tests/test.c", "tests/test.h", "tests/test_cuda.c", "tests/support/**", "tests/unit/*_runner.c", "tools/qa*.py", "tools/generate_qa_registry.py", "config/qa/**", ".github/workflows/**", ".github/pull_request_template.md", ".gitignore"],
       "lanes": ["fast", "structural", "runtime", "sanitizer"],
       "tests": ["property.qa-registry"],
       "reason": "QA infrastructure changes must validate registry parity, orchestration, and representative execution"

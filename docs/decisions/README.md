@@ -31,7 +31,6 @@ record superseded.
 | --- | --- | --- |
 | [0001](0001-public-project-control.md) | accepted | Separate compact live project control from historical ledger evidence and issue/PR delivery workflow. |
 | [0002](0002-command-operation-registry.md) | accepted | Generate immutable command descriptors from one strict, versioned operation registry while preserving typed execution lanes. |
-| [0003](0003-documentation-architecture.md) | accepted | Separate documentation by authority and lifecycle, with exact ownership and frozen-evidence validation. |
 | [0004](0004-target-verified-speculation.md) | accepted | Keep target and DSpark drafting in one runtime model and publish only an atomically committed target-verified prefix. |
 | [0005](0005-execution-substrate.md) | accepted | Separate execution identity from evidence depth, promote verified candidate state without replay, and admit CUDA work through typed profiles and shapes. |
 | [0006](0006-shared-multifamily-development.md) | accepted | Admit shared multi-family branches and worktrees while preserving semantic ownership, source-stable evidence, and stable main integration. |

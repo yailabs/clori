@@ -160,9 +160,10 @@ Live milestone and release-gate state remains only in
   [artifact](docs/contracts/artifacts.md),
   [local protocol](docs/contracts/local-protocol.md), and
   [OpenAI compatibility](docs/openai-compatibility.md) — normative contracts.
-- [Principles](docs/doctrine/principles.md),
-  [glossary](docs/doctrine/glossary.md), and
-  [evidence discipline](docs/doctrine/evidence.md) — stable doctrine.
+- [Engineering contract](AGENTS.md),
+  [QA evidence](docs/development/qa.md), and
+  [source ownership](docs/development/source-ownership.md) — executable
+  repository invariants.
 - [Contributing](CONTRIBUTING.md),
   [roadmap](ROADMAP.md), and [release target](docs/releases/v0.1.md).
 

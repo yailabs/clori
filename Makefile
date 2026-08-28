@@ -41,7 +41,6 @@
 .PHONY: all info lib client package generate-source-manifest \
 	check-source-manifest generate-operator-registry \
 	generate-qa-registry check-qa-registry qa qa-fast qa-structural qa-cuda qa-ci qa-doctor \
-	generate-command-migration \
 	check-operator-registry test-operator-registry cuda-info cuda-kernels cuda test-cuda test-cuda-graph \
 	test-cuda-native-sm121 test-cuda-native-sm121-sass \
 	test-cuda-no-nvcc smoke-cuda check-cuda test test-core test-cli test-materialize \
@@ -163,11 +162,6 @@ OPERATOR_REGISTRY_HEADER := $(OPERATOR_REGISTRY_DIR)/registry.h
 OPERATOR_REGISTRY_C := $(OPERATOR_REGISTRY_DIR)/registry.c
 OPERATOR_REGISTRY_IDENTITY := $(OPERATOR_REGISTRY_DIR)/registry.sha256
 OPERATOR_REGISTRY_OBJ := $(OBJ_DIR)/generated/operator/registry.o
-OPERATOR_AUDIT_ROOT := docs/audits/operator-surface-ec7dcc
-OPERATOR_AUDIT_FILES := $(OPERATOR_AUDIT_ROOT)/commands.tsv \
-	$(OPERATOR_AUDIT_ROOT)/flags.tsv $(OPERATOR_AUDIT_ROOT)/operations.tsv \
-	$(OPERATOR_AUDIT_ROOT)/surfaces.tsv
-OPERATOR_MIGRATION_DOC := docs/migrations/command-architecture-v1.md
 DEEPSEEK_SOURCE ?= $(HOME)/lab/models/hf/deepseek/DeepSeek-V4-Flash-DSpark
 DEEPSEEK_MODELS_ROOT ?= $(HOME)/lab/models/gguf
 DEEPSEEK_SOURCE_MANIFEST ?= $(DEEPSEEK_MODELS_ROOT)/deepseek/deepseek-v4-flash-dspark-source-manifest.json
@@ -420,12 +414,9 @@ check-source-manifest: $(SOURCE_MANIFEST_MK)
 generate-operator-registry: $(OPERATOR_REGISTRY_HEADER) $(OPERATOR_REGISTRY_C) \
 	$(OPERATOR_REGISTRY_IDENTITY)
 
-generate-command-migration: $(OPERATOR_MIGRATION_DOC)
-
 check-operator-registry: generate-operator-registry
 	python3 $(OPERATOR_REGISTRY_GENERATOR) --registry $(OPERATOR_REGISTRY_SOURCE) \
-		--output $(OPERATOR_REGISTRY_DIR) --audit-root $(OPERATOR_AUDIT_ROOT) \
-		--migration-output $(OPERATOR_MIGRATION_DOC) --check
+		--output $(OPERATOR_REGISTRY_DIR) --check
 	@set -eu; \
 	. tests/support/cleanup.sh; \
 	first=$$(mktemp -d "$${TMPDIR:-/tmp}/yvex-operator-registry.XXXXXX"); \
@@ -1510,8 +1501,7 @@ test-public-abi: tests/test_public_abi.py
 test-docs-surface: $(YVEX_BIN) tests/test_docs_surface.sh
 	sh tests/test_docs_surface.sh
 
-test-documentation-architecture: tests/documentation_architecture.py \
-		config/documentation_owners.tsv config/frozen_documents.tsv
+test-documentation-architecture: tests/documentation_architecture.py
 	python3 tests/documentation_architecture.py
 
 test-surface: tests/test_surface.sh
@@ -1556,12 +1546,6 @@ $(OPERATOR_REGISTRY_HEADER) $(OPERATOR_REGISTRY_C) $(OPERATOR_REGISTRY_IDENTITY)
 		$(OPERATOR_REGISTRY_SOURCE) $(OPERATOR_REGISTRY_GENERATOR)
 	python3 $(OPERATOR_REGISTRY_GENERATOR) --registry $(OPERATOR_REGISTRY_SOURCE) \
 		--output $(OPERATOR_REGISTRY_DIR)
-
-$(OPERATOR_MIGRATION_DOC): $(OPERATOR_REGISTRY_SOURCE) $(OPERATOR_REGISTRY_GENERATOR) \
-		$(OPERATOR_AUDIT_FILES)
-	python3 $(OPERATOR_REGISTRY_GENERATOR) --registry $(OPERATOR_REGISTRY_SOURCE) \
-		--output $(OPERATOR_REGISTRY_DIR) --audit-root $(OPERATOR_AUDIT_ROOT) \
-		--migration-output $@
 
 $(OPERATOR_REGISTRY_OBJ): $(OPERATOR_REGISTRY_C) $(OPERATOR_REGISTRY_HEADER)
 	@mkdir -p $(@D)

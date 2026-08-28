@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Validate the canonical operator registry, generator, and audit reconciliation."""
+"""Validate the canonical operator registry, generator, and product projections."""
 
 from __future__ import annotations
 
 import copy
-import csv
 import hashlib
 import json
 import pathlib
@@ -16,7 +15,6 @@ import tempfile
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 REGISTRY = ROOT / "config/operator/registry.json"
 GENERATOR = ROOT / "tools/generate_operator_registry.py"
-AUDIT = ROOT / "docs/audits/operator-surface-ec7dcc"
 GENERATED = ROOT / "build/generated/operator"
 FORBIDDEN_TOP_LEVEL = {
     "evidence",
@@ -44,8 +42,6 @@ def invoke(
     registry: pathlib.Path,
     output: pathlib.Path,
     check: bool = False,
-    audit: pathlib.Path | None = None,
-    migration: pathlib.Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     command = [
         "python3",
@@ -55,10 +51,6 @@ def invoke(
         "--output",
         str(output),
     ]
-    if audit is not None:
-        command.extend(["--audit-root", str(audit)])
-    if migration is not None:
-        command.extend(["--migration-output", str(migration)])
     if check:
         command.append("--check")
     return subprocess.run(command, cwd=ROOT, text=True, capture_output=True, check=False)
@@ -259,23 +251,13 @@ def test_refusals(registry: dict[str, object]) -> None:
     mutation_failure(registry, unknown_flag_set_field, "unknown field 'surprise'")
 
 
-def read_tsv(name: str) -> list[dict[str, str]]:
-    with (AUDIT / name).open(encoding="utf-8", newline="") as source:
-        return list(csv.DictReader(source, delimiter="\t"))
-
-
-def test_audit_reconciliation(registry: dict[str, object]) -> None:
-    commands = read_tsv("commands.tsv")
-    flags = read_tsv("flags.tsv")
-    operations = read_tsv("operations.tsv")
-    require(len(commands) == 70, "frozen command count changed")
-    require(len(flags) == 426, "frozen command/flag count changed")
-    require(len(operations) == 99, "frozen operation count changed")
+def test_product_surface(registry: dict[str, object]) -> None:
+    require("audit_reconciliation" not in registry,
+            "retired audit reconciliation remains in the runtime registry")
     rows = registry["operations"]
     assert isinstance(rows, list)
     by_id = {row["operation_id"]: row for row in rows}
-    unmatched = sorted({row["operation_id"] for row in operations} - set(by_id))
-    require(not unmatched, f"unmatched audit operations: {unmatched}")
+    require(len(by_id) == len(rows), "operation IDs are not unique")
     for row in rows:
         if row.get("deprecation_state") != "removed":
             continue
@@ -283,39 +265,26 @@ def test_audit_reconciliation(registry: dict[str, object]) -> None:
         require(successors, f"removed operation has no successor: {row['operation_id']}")
         require(all(successor in by_id for successor in successors),
                 f"unknown successor for {row['operation_id']}")
-        require(all(by_id[successor].get("deprecation_state") == "current" for successor in successors),
+        require(all(by_id[successor].get("deprecation_state") == "current"
+                    for successor in successors),
                 f"removed successor for {row['operation_id']}")
-    command_ids = {row["command_id"] for row in commands}
-    require(all(row["command_id"] in command_ids for row in flags),
-            "flag row has no audited command owner")
-    require(sum(row.get("lane") == "offline-engine" and row.get("CLI_projection") for row in rows) >= 39,
-            "offline capabilities were not preserved")
-    require(sum(row.get("lane") == "runtime-client" and row.get("CLI_projection") for row in rows) >= 17,
-            "client capabilities were not preserved")
+
+    active = [row for row in rows if row.get("deprecation_state") != "removed"]
+    lanes = {row["lane"] for row in active}
+    require({"runtime-client", "offline-engine", "daemon-entrypoint", "REPL-local"} <= lanes,
+            f"missing product lane: {sorted(lanes)}")
     require(any(row.get("operation_id") == "server.host" and
                 row.get("lane") == "daemon-entrypoint" and row.get("CLI_projection")
-                for row in rows), "foreground server entrypoint is not projected")
-    slash = {row.get("slash_projection") for row in rows if row.get("slash_projection") != "none"}
+                for row in active), "foreground server entrypoint is not projected")
+    slash = {row.get("slash_projection") for row in active
+             if row.get("slash_projection") != "none"}
     require(slash == {"/help", "/status", "/models", "/memory", "/context", "/sessions",
                       "/session", "/new", "/attach", "/detach", "/reset", "/close",
                       "/cancel", "/quit", "/nothink", "/think", "/think-max"},
             f"unexpected slash catalog: {sorted(slash)}")
-    slash_aliases = {alias for row in rows for alias in row.get("slash_aliases", [])}
+    slash_aliases = {alias for row in active for alias in row.get("slash_aliases", [])}
     require(slash_aliases == {"/exit"},
             f"unexpected slash aliases: {sorted(slash_aliases)}")
-    with tempfile.TemporaryDirectory(prefix="yvex-audit-reconciliation-") as temporary:
-        root = pathlib.Path(temporary)
-        first = root / "first.md"
-        second = root / "second.md"
-        generated = root / "generated"
-        result = invoke(REGISTRY, generated, audit=AUDIT, migration=first)
-        require(result.returncode == 0, result.stderr)
-        result = invoke(REGISTRY, generated, audit=AUDIT, migration=second)
-        require(result.returncode == 0, result.stderr)
-        require(first.read_bytes() == second.read_bytes(), "nondeterministic migration matrix")
-        require(first.read_bytes() ==
-                (ROOT / "docs/migrations/command-architecture-v1.md").read_bytes(),
-                "tracked migration matrix is stale")
 
 
 def test_compiled_discovery(registry: dict[str, object]) -> None:
@@ -426,10 +395,10 @@ def main() -> int:
     registry = read_registry()
     test_generation(registry)
     test_refusals(registry)
-    test_audit_reconciliation(registry)
+    test_product_surface(registry)
     test_compiled_discovery(registry)
     test_completion()
-    print("operator registry: schema/generation/refusal/audit/discovery checks passed")
+    print("operator registry: schema/generation/refusal/product/discovery checks passed")
     return 0
 
 

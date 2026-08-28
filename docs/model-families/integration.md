@@ -247,8 +247,10 @@ same hosted path exposed to the operator.
 - [DeepSeek-V4-Flash-DSpark](deepseek-v4-flash.md) is the sole complete
   source-to-text vertical and the only family with target-verified speculative
   generation; optimization, evaluation, benchmark, and release remain open.
-- [Qwen](qwen.md) has source/header and candidate-role evidence only.
-- [Gemma](gemma.md) has source/header and candidate-role evidence only.
+- Qwen has source/header and candidate-role evidence only; it is not a runtime
+  family.
+- Gemma has source/header and candidate-role evidence only; it is not a
+  runtime family.
 - [MiniMax-H3 FL2VA](minimax-h3.md) has an exact verified source snapshot,
   composite logical architecture, complete tensor-role map, and admitted
   artifact-neutral Transformation IR; it is not an executable family.

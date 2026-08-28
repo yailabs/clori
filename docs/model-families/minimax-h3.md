@@ -28,8 +28,7 @@ executes one exact paired latent update through all 50 Omni blocks, reconstructs
 124 RGB frames and stereo PCM, and atomically publishes a native AVI. It does
 not add a family-specific runtime, multimodal Qwen vision conditioning, source-default or
 full-scale generation, model-quality evidence, or a release obligation. The
-frozen quantitative intake evidence is the
-[FL2VA intake audit](../audits/minimax-h3-fl2va-b8b09e3/README.md); the common
+current family record retains the admitted quantitative facts; the common
 promotion rules remain in the [family integration contract](integration.md).
 
 ## Shared development lifecycle
@@ -113,11 +112,9 @@ operator authorization question outside this engineering intake.
 
 ## Component inventory
 
-The audit’s [`components.tsv`](../audits/minimax-h3-fl2va-b8b09e3/components.tsv)
-retains bounded file counts, inputs, outputs, lifetimes, reference owners, and
-blockers. Exact metadata and shard file lists plus the ten largest tensors per
-weighted component remain in the external `component-summary.json`, whose
-SHA-256 is frozen by the audit.
+The table below retains bounded file counts, inputs, outputs, lifetimes,
+reference owners, and blockers. Exact metadata and shard file lists plus the
+ten largest tensors per weighted component remain external operator evidence.
 
 | Component | Declared class | Shards | Tensors | Elements | Tensor payload bytes | Source dtype | Initial `t2va` role |
 | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
@@ -273,9 +270,8 @@ text-only profile.
 
 ## Intake operation-gap baseline
 
-The complete 46-row map is in
-[`operation-gap.tsv`](../audits/minimax-h3-fl2va-b8b09e3/operation-gap.tsv).
-At intake it found 2 available generic mechanisms, 14 bounded extensions, 22 new generic
+The intake inventory found 2 available generic mechanisms, 14 bounded
+extensions, 22 new generic
 primitives, 3 backend-fusion candidates, 4 family-specific compositions, and
 1 unknown schedule boundary.
 
@@ -294,11 +290,11 @@ compositions over those generic mechanisms. Generic F32 Conv1D, transposed
 Conv1D, and alias-free SnakeBeta now have bounded CPU implementations consumed
 by the exact Audio VAE recipe; no CUDA admission follows from that evidence.
 
-That frozen map remains the historical intake oracle. The current branch has
+That intake map remains recoverable in Git history. The current branch has
 closed the concrete target-only attention, MM-RoPE, patching, modulation, VAE,
 paired scheduler, phase-residency, and media-transaction requirements consumed
 by the bounded end-to-end path. It does not retroactively promote unused modes
-or hypothetical consumers in the frozen audit.
+or hypothetical consumers from the original intake.
 
 ## Single-GB10 memory feasibility
 
@@ -1209,8 +1205,7 @@ The first 21,741-row source-square block failed the independent video contract: 
 `0.0385166827` against `0.02`, cosine was `0.99927958` against `0.9998`, and scaled maximum
 absolute error was about `0.0701` against `0.02`. YVEX therefore does not register or execute
 this profile in the media runtime, and no complete Q8 trajectory was attempted. The semantic
-record and exact candidate identities are retained in the
-[selective-Q8 worklog](../worklog/2026-08-16-minimax-selective-q8-candidate.md).
+record and exact candidate identities remain recoverable from Git history.
 
 ## Reusable source-scale attention workspace
 
@@ -1229,8 +1224,8 @@ are 3,430,740,740 bytes at 5,757 rows and 12,952,601,348 bytes at 21,741 rows.
 
 This proves source-square one-block numerical conformance, exact workspace ownership, reuse, and
 cleanup. It does not yet prove a complete 49-evaluation 768x768 trajectory, recognizable video,
-or practical generation time. The durable semantic and memory evidence is retained in the
-[reusable-workspace worklog](../worklog/2026-08-16-minimax-reusable-attention-workspace.md).
+or practical generation time. The exact experiment record remains recoverable
+from Git history.
 
 ## Source-square media qualification
 

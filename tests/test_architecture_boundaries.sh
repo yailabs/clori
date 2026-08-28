@@ -747,16 +747,6 @@ if rg -n 'yvex_(artifact|backend|generation|graph|protocol|runtime|server)_|mall
     fail "generated operator descriptors contain domain logic or resource behavior"
 fi
 
-for reachability_contract in \
-    '### Executable reachability' \
-    'production API directly' \
-    'operator_command_available' \
-    'cli_applicability=not_applicable'
-do
-    rg -F "$reachability_contract" AGENTS.md >/dev/null ||
-        fail "executable-reachability contract is incomplete: $reachability_contract"
-done
-
 pending_identity_pattern='pending-payload-'\
 '(plan|byte)-identity'
 if rg -n "$pending_identity_pattern" src include; then

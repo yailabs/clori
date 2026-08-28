@@ -82,26 +82,8 @@ run, or a self-authored report cannot promote a capability by itself.
 
 Active Next: V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0
 
-Detailed accepted and successor contracts for the current sequence are:
-
-- [Canonical Operation and Command Architecture](docs/milestones/command-architecture.md)
-- [Documentation and Information Architecture](docs/milestones/documentation-architecture.md)
-- [Natural Technical Commentary](docs/milestones/code-commentary.md)
-- [Mature Runtime Console and Interactive REPL](docs/milestones/runtime-console-repl.md)
-- [DeepSeek V4 Flash DSpark Rebase](docs/milestones/deepseek-dspark-rebase.md)
-- [Verified Execution-Substrate Refoundation](docs/milestones/product-architecture.md)
-- [Repository Architecture Compression](docs/milestones/repository-compression.md)
-- [Core Compiler and Family Consolidation](docs/milestones/core-compilation-consolidation.md)
-- [Repository-Native Engineering Worklog](docs/milestones/engineering-worklog.md)
-- [Model-Derived GB10 Execution](docs/milestones/gb10-optimization.md)
-
-The pre-implementation combined plans remain traceable without staying on the
-active path:
-
-| Milestone | State | Successor |
-| --- | --- | --- |
-| `V010.OPERATOR.RUNTIME.CONSOLE.0` | `superseded` | `V010.OPERATOR.REPL.CONSOLE.0` |
-| `V010.OPERATOR.COMMAND.CONSOLE.0` | `superseded` | `V010.OPERATOR.COMMAND.ARCHITECTURE.0` then `V010.OPERATOR.REPL.CONSOLE.0` |
+Detailed retired contracts and superseded plans remain traceable in Git
+history; they are not required to understand the current implementation.
 
 ## Accepted foundations
 
@@ -117,17 +99,11 @@ not a replacement historical ledger.
 | Application serving | Local protocol v13 and YVEX OpenAI Compatibility Profile v2 share one persistent host, engine manager, session registry, request routing, and telemetry authority; bounded session fork composes immutable prefix sharing with independent semantic state. |
 | Product surface | `yvex` is the sole product executable. Its explicit foreground `server` mode starts with zero engines; `server load`, `server unload`, and `server models` control engine generations while `chat` and `run` remain protocol clients and finite compiler/engineering lanes remain bounded offline operations. |
 | Command architecture | `yvex.operator.registry.v1` generates immutable descriptors compiled into `yvex`; canonical operation IDs drive the truthful command taxonomy, lane-safe dispatch, help, JSON discovery, completion, and slash-command schemas. |
-| Documentation architecture | Canonical doctrine, terminology, reference and implemented architecture, family records, contracts, operations, development policy, audits, migrations, and release surfaces have separate governed owners. |
+| Documentation architecture | A compact current map links implemented architecture, family records, contracts, operation, development and release owners; retired audits, plans and migrations live in Git history. |
 | Code commentary | Every governed first-party source follows the natural selective-commentary doctrine; the structural guard rejects obsolete templates and boilerplate while production lexical tokens remain unchanged. |
-| Engineering worklog | One repository-scoped Codex skill captures selected material semantic changes and evidence in retained records; ignored drafts and optional communication projections create no product or publication authority. |
 | Runtime console | The server-backed `yvex>` console renders one composed attachment view, protocol-authored prefill progress, direct model output, typed final metrics, registry-derived slash discovery and completion, the canonical `server log` observability stream, server cancellation, and bounded terminal restoration including Ctrl-D. |
-| Operator audit | The frozen post-cutover audit inventories 70 route-level commands, 426 command/flag pairs, 99 semantic operations, 10 slash commands, 14 protocol operations, 5 HTTP endpoints, and every Make/script/environment surface with zero unmatched categories. |
+| Operator surface | The strict generated operation registry drives compiled discovery, help, completion and slash projections; executable tests validate the current graph directly rather than reconciling a frozen audit. |
 | Performance | `V010.RUNTIME.DEEPSEEK.PERFORMANCE.0` remains `partial`: startup and bounded profiling are accepted; warm decode remains below admission. |
-
-The frozen audit is under
-[`docs/audits/operator-surface-ec7dcc/`](docs/audits/operator-surface-ec7dcc/README.md).
-Its tables describe baseline `ec7dccede90c1a1efa87b4c2519c25b30d5e1733` and
-are implementation input, not live command or project authority.
 
 ## Open work
 
