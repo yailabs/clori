@@ -43,7 +43,7 @@ make -j4 all
 
 ```sh
 ./yvex model list
-./yvex model show deepseek4-v4-flash-dspark-runtime-iq2xxs
+./yvex model show PROFILE
 ```
 
 Use an alias printed by `model list` whose startup profile is complete. If no
@@ -77,25 +77,30 @@ zero loaded engines. It remains alive across model load and unload.
 
 ### 4. Load and inspect an engine
 
-In a second terminal:
+At the foreground host prompt, select one complete profile without opening a
+second terminal:
 
-```sh
-./yvex server load deepseek4-v4-flash-dspark-runtime-iq2xxs
-./yvex server status
-./yvex server models
-./yvex server memory
+```text
+profiles
+load N
+models
+status
 ```
 
 Loading authenticates the named registry profile and creates one process-local
-engine generation. Large packages can take several minutes. `server models`
-shows the exact alias, generation, lifecycle, backend, capability, and memory
-facts owned by the live host.
+engine generation. The list uses full aliases; duplicate runtime targets require
+an exact alias or number. Large packages can take several minutes. `models`
+shows the exact alias, generation, lifecycle, backend, and active-work facts
+owned by the live host. Noninteractive operators may still run
+`./yvex server load PROFILE`; external `./yvex server status`,
+`./yvex server models`, and `./yvex server memory` clients remain available
+concurrently.
 
 ### 5. Use the engine
 
 ```sh
-./yvex chat --model deepseek4-v4-flash-dspark-runtime-iq2xxs --session main
-./yvex run --model deepseek4-v4-flash-dspark-runtime-iq2xxs \
+./yvex chat --model PROFILE --session main
+./yvex run --model PROFILE \
   "Explain attention in one sentence."
 ```
 
@@ -106,7 +111,7 @@ selection must be explicit.
 Unload the engine without stopping the host, or stop the host separately:
 
 ```sh
-./yvex server unload deepseek4-v4-flash-dspark-runtime-iq2xxs
+./yvex server unload PROFILE
 ./yvex server stop
 ```
 

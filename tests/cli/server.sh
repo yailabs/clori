@@ -10,6 +10,7 @@ HOME_ROOT=$OUT_DIR/home
 SOCKET_ROOT=$OUT_DIR/runtime
 SOCKET_PATH=$SOCKET_ROOT/yvex/yvexd.sock
 PROFILE=deepseek4-v4-flash-dspark-runtime-iq2xxs-q2k-mxfp4-b9825a07-sm121-tc
+LEGACY_PROFILE=deepseek4-v4-flash-dspark-runtime-iq2xxs-legacy
 server_pid=
 
 finish()
@@ -58,6 +59,15 @@ cat >"$HOME_ROOT/.local/share/yvex/models.local.json" <<EOF
 {
   "schema": "yvex.models.local.v5",
   "models": [{
+    "alias": "$LEGACY_PROFILE",
+    "family": "deepseek4",
+    "path": "$artifact",
+    "runtime_binding": "$binding",
+    "runtime_target": "deepseek4-v4-flash-dspark",
+    "runtime_backend": "cpu",
+    "runtime_mode": "target-only",
+    "runtime_context": 4096
+  }, {
     "alias": "$PROFILE",
     "family": "deepseek4",
     "path": "$artifact",
@@ -184,6 +194,25 @@ contains "$OUT_DIR/unload.err" 'requested model engine is not loaded'
 run_client server stop >"$OUT_DIR/stop.out" 2>"$OUT_DIR/stop.err"
 wait "$server_pid"
 server_pid=
+test ! -e "$SOCKET_PATH"
+
+# A foreground TTY owns model lifecycle commands without requiring a second terminal.
+printf 'profiles\nload deepseek4-v4-flash-dspark\nload 2\nmodels\nstatus\nstop\n' |
+    HOME="$HOME_ROOT" XDG_RUNTIME_DIR="$SOCKET_ROOT" NO_COLOR=1 TERM=xterm-256color \
+    script -q -e -c \
+        "$YVEX_BIN server --openai off --workers 2 --max-engines 2" \
+        "$OUT_DIR/console.typescript" \
+        >"$OUT_DIR/console.out" 2>"$OUT_DIR/console.err"
+contains "$OUT_DIR/console.typescript" 'Interactive host console ready'
+contains "$OUT_DIR/console.typescript" 'yvex[host] >'
+contains "$OUT_DIR/console.typescript" "[1] $LEGACY_PROFILE"
+contains "$OUT_DIR/console.typescript" "[2] $PROFILE"
+contains "$OUT_DIR/console.typescript" \
+    'target matches 2 profiles; use an exact alias or number'
+contains "$OUT_DIR/console.typescript" "loading $PROFILE"
+contains "$OUT_DIR/console.typescript" 'runtime binding open failed'
+contains "$OUT_DIR/console.typescript" "$PROFILE · failed · generation 1"
+contains "$OUT_DIR/console.typescript" 'host ready · engines 0 loaded/1 known/2 max'
 test ! -e "$SOCKET_PATH"
 
 printf 'cli persistent server lifecycle: ok\n'

@@ -36,7 +36,9 @@ change. Git history preserves implementation chronology.
   prefill progress, direct streamed output, typed turn metrics,
   registry-derived slash completion, semantic watch/human trace, clean
   Ctrl-C/Ctrl-D handling, and a persistent-host startup hero carrying the
-  executable version and local protocol.
+  executable version and local protocol. The foreground host now also owns a
+  TTY lifecycle console for full profile listing and same-terminal load,
+  inventory, status, unload, and stop.
 - Exact source-authored chat/non-think, think-high and think-max conversation
   encoding, including tool continuity and drop-thinking multi-turn behavior.
   Typed reasoning, final, tool and error streams remain separate; REPL and raw

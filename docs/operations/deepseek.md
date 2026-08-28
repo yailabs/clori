@@ -14,13 +14,22 @@ persistent host, then load the package as one engine generation:
 
 ```sh
 ./yvex model list
-./yvex model show deepseek4-v4-flash-dspark-runtime-iq2xxs
 ./yvex server
-./yvex server load deepseek4-v4-flash-dspark-runtime-iq2xxs
 ```
 
-The alias is an example; use a DeepSeek row whose `STARTUP` column is `yes` and
-whose generation mode is `dspark` for speculative execution.
+At the foreground host prompt, inspect complete aliases and select the current
+DeepSeek runtime target without opening another terminal:
+
+```text
+profiles
+load N
+models
+```
+
+The console prints full aliases and accepts exact aliases or numeric rows. A
+runtime target is accepted only when it identifies one startup-ready profile;
+multiple matches refuse as ambiguous. Use a DeepSeek row whose generation mode
+is `dspark` for speculative execution.
 No model path or environment variable is required during normal operation.
 `server load` authenticates the selected artifact and binding, seals the
 deployment specialization, and creates one immutable engine generation. The
@@ -37,7 +46,7 @@ another terminal:
 ./yvex server status
 ./yvex server models
 ./yvex server memory
-./yvex chat --model deepseek4-v4-flash-dspark-runtime-iq2xxs --session main
+./yvex chat --model PROFILE --session main
 ```
 
 An optional third terminal may run `yvex server log`. Status, logs, and chat
@@ -57,7 +66,7 @@ the new suffix. An incompatible prefix refuses; reset is explicit.
 ## One-shot path
 
 ```sh
-./yvex run --model deepseek4-v4-flash-dspark-runtime-iq2xxs \
+./yvex run --model PROFILE \
   --strategy stochastic --temperature 0.8 --top-k 50 --top-p 0.95 \
   --min-p 0.05 --typical-p 1.0 --seed 42 \
   "Explain attention in one sentence."

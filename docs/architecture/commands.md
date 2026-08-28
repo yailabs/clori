@@ -62,18 +62,25 @@ The local model registry owns complete typed startup profiles. Text runtimes
 carry one artifact, runtime binding, target, backend, generation mode, and
 startup context; composite runtimes carry an installed component root, target,
 backend, and capability mode. `model list` marks which entries have a complete
-readable profile and `model show` inspects one entry. `server load MODEL` names
-that profile explicitly; no persisted selection is required or consulted.
-`server models` reads the engine generations actually known to the host.
+readable profile and `model show` inspects one entry. The foreground TTY console
+lists complete aliases with `profiles`; its `load MODEL|N` resolves an exact
+alias, a numbered row, or an unambiguous runtime target. Multiple profiles for
+one target require an exact alias or number; the CLI does not invent a preferred
+model policy. The protocol command `server load MODEL` continues to name one
+exact profile. No persisted selection is required or consulted. `server models`
+reads the engine generations actually known to the host.
 
 ### Hosted startup semantics
 
-`yvex server` starts the persistent host without opening a package. A separate
-`server load MODEL` request resolves and authenticates the named profile,
-creates one immutable engine generation, establishes its admitted residency,
-and publishes engine readiness. `server unload MODEL` drains and closes that
-generation without stopping the host. Client requests bind to an exact alias
-and engine generation rather than a mutable process-global model selection.
+`yvex server` starts the persistent host without opening a package. On a human
+TTY the same foreground process exposes a small operator console for profile
+selection, load, inventory, status, unload, and host stop; external protocol
+clients remain available concurrently. A lifecycle request resolves and
+authenticates the named profile, creates one immutable engine generation,
+establishes its admitted residency, and publishes engine readiness. Unload
+drains and closes that generation without stopping the host. Client requests
+bind to an exact alias and engine generation rather than a mutable
+process-global model selection.
 `yvex chat` and `yvex run` are protocol clients of that resident model; they do
 not link into runtime execution or open weights locally. The complete operator
 sequence and memory interpretation live in the

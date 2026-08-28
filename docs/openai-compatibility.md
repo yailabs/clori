@@ -65,10 +65,12 @@ engine is loaded. Start the host, then load a startup-ready registry profile:
 ```sh
 ./yvex model list
 ./yvex server
-./yvex server load deepseek4-v4-flash-dspark-runtime-iq2xxs
 ```
 
-The alias is illustrative and must be replaced by a startup-ready local entry.
+At the foreground host prompt, run `profiles` and then `load N` or load one
+exact alias. A noninteractive operator may use `./yvex server load PROFILE`
+from another process. The OpenAI listener remains available while the
+foreground console manages engine lifecycle.
 Adapter-to-runtime frame I/O has a bounded 600000 ms default timeout; local
 operators may override it with `--openai-timeout-ms` for their admitted workload.
 
