@@ -2,8 +2,6 @@
   <img src="docs/yvex-primary-lockup.svg" alt="YVEX logo" width="360">
 </p>
 
-# YVEX
-
 YVEX is a native C/CUDA model compiler and local inference system for
 identity-bound, verified open-weight execution. It turns authenticated source
 facts into immutable model packages, specializes those packages for an admitted
