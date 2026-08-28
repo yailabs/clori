@@ -413,6 +413,7 @@ static int test_logical_model_library(void)
     yvex_model_library *library = NULL;
     yvex_model_registry_entry entry;
     const yvex_model_library_entry *logical;
+    const yvex_model_runtime_profile_fact *profile;
     char aliases[8][64];
     char absolute_model[YVEX_PATH_CAP], absolute_binding[YVEX_PATH_CAP];
     yvex_error err;
@@ -446,8 +447,13 @@ static int test_logical_model_library(void)
                      "open canonical logical model library");
     logical = yvex_model_library_at(library, 0u);
     YVEX_TEST_ASSERT(yvex_model_library_count(library) == 1u && logical &&
-                         logical->profile_count == 8u && logical->artifact_count == 2u,
+                         logical->profile_count == 8u && logical->artifact_count == 2u &&
+                         logical->launchable_profile_count == 8u &&
+                         logical->profile_launchable,
                      "eight profiles and two artifacts aggregate under one logical model");
+    profile = yvex_model_library_profile_at(library, 0u, 0u);
+    YVEX_TEST_ASSERT(profile && profile->launchable,
+                     "startup validation admits v5 profiles without the legacy readiness bit");
     YVEX_TEST_ASSERT(!strcmp(logical->family, "deepseek4") &&
                          !strcmp(logical->model, "v4-flash-dspark") &&
                          logical->identity_kind == YVEX_MODEL_IDENTITY_FAMILY_MODEL_TARGET,

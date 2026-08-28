@@ -47,7 +47,7 @@ static void registry_entry(yvex_model_registry_entry *entry, const char *alias,
     entry->architecture = "deepseek";
     entry->tensor_count = 128u;
     entry->support_level = "generation-ready";
-    entry->execution_ready = 1;
+    entry->execution_ready = 0;
     entry->runtime_profile = "single-artifact";
     entry->runtime_binding = binding;
     entry->runtime_target = "deepseek4-v4-flash-dspark";

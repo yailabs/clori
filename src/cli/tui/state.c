@@ -650,6 +650,9 @@ static void model_copy(yvex_tui_model_row *row,
                   "no runtime profile is registered");
 }
 
+static size_t first_launchable_profile(const yvex_tui_state *state,
+                                       size_t model_index);
+
 static void models_publish(yvex_tui_state *state, yvex_tui_model_row *models,
                            yvex_model_library *library, size_t count,
                            const char *selected_identity)
@@ -665,12 +668,24 @@ static void models_publish(yvex_tui_state *state, yvex_tui_model_row *models,
                                         : YVEX_TUI_MODEL_CATALOG_EMPTY;
     state->model_catalog_reason[0] = '\0';
     state->selected_model = 0u;
-    if (selected_identity && selected_identity[0])
+    if (selected_identity && selected_identity[0]) {
         for (index = 0u; index < count; ++index)
             if (!strcmp(models[index].identity, selected_identity)) {
                 state->selected_model = index;
                 break;
             }
+    } else {
+        for (index = 0u; index < count; ++index)
+            if (models[index].startup_ready) {
+                state->selected_model = index;
+                break;
+            }
+    }
+    state->launch_selected_model = state->selected_model;
+    state->launch_selected_profile =
+        first_launchable_profile(state, state->launch_selected_model);
+    if (state->launch_selected_profile == SIZE_MAX)
+        state->launch_selected_profile = 0u;
     if (state->model_viewport >= count) state->model_viewport = 0u;
     state->redraw = 1;
 }

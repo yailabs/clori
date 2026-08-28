@@ -709,12 +709,14 @@ static int library_profile_add(library_model *model,
     local_copy(fact->generation_mode, sizeof(fact->generation_mode), entry->runtime_mode);
     fact->context_capacity = entry->runtime_context;
     yvex_error_clear(&admission);
-    fact->launchable = entry->execution_ready &&
-                       yvex_model_registry_startup_validate(entry, &admission) == YVEX_OK;
+    /* Startup readiness belongs to the canonical profile validator.  The legacy
+     * execution_ready bit describes an older artifact capability and is false in
+     * valid v5 launch records that the server host accepts. */
+    fact->launchable =
+        yvex_model_registry_startup_validate(entry, &admission) == YVEX_OK;
     if (!fact->launchable)
         local_copy(fact->blocker, sizeof(fact->blocker),
-                   entry->execution_ready ? yvex_error_message(&admission)
-                                          : "registered artifact is not execution-ready");
+                   yvex_error_message(&admission));
     model->summary.profile_count = model->profile_count;
     if (fact->launchable) {
         model->summary.launchable_profile_count++;
