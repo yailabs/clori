@@ -62,8 +62,7 @@
 	test-runtime-sanitizers-live test-materialize-live-plan \
 	test-materialize-live test-minimax-audio-artifact-live \
 	test-minimax-video-artifact-live test-minimax-text-conditioning-live \
-	test-minimax-text-layer-live test-minimax-omni-block-live \
-	test-minimax-omni-transformer-live test-minimax-omni-transformer-artifact-live \
+	test-minimax-text-layer-live test-minimax-omni-transformer-artifact-live \
 	test-minimax-latent-live test-minimax-tokenizer-live \
 	test-attention test-attention-fixture-isolation \
 	test-attention-live-plan test-attention-live test-attention-cli-live \
@@ -178,7 +177,7 @@ MINIMAX_H3_OMNI_VIDEO_ROWS ?= 37
 MINIMAX_H3_OMNI_AUDIO_ROWS ?= 414
 MINIMAX_H3_OMNI_TEXT_ROWS ?= 15
 MINIMAX_H3_OMNI_BLOCKS ?= 50
-MINIMAX_H3_OMNI_TIMESTEPS ?= 1
+MINIMAX_H3_OMNI_TIMESTEPS ?= 2
 MINIMAX_H3_LATENT_BLOCKS ?= 50
 MINIMAX_H3_LATENT_STEPS ?= 2
 MINIMAX_H3_LATENT_FIXTURE_ROOT ?=
@@ -282,7 +281,6 @@ MATERIALIZE_LIVE_RUNNER := $(TEST_DIR)/materialize_deepseek
 MINIMAX_AUDIO_LIVE_RUNNER := $(TEST_DIR)/minimax_h3_audio
 MINIMAX_VIDEO_LIVE_RUNNER := $(TEST_DIR)/minimax_h3_video
 MINIMAX_TEXT_LIVE_RUNNER := $(TEST_DIR)/minimax_h3_text
-MINIMAX_OMNI_LIVE_RUNNER := $(TEST_DIR)/minimax_h3_omni
 MINIMAX_TRANSFORMER_LIVE_RUNNER := $(TEST_DIR)/minimax_h3_transformer
 ATTENTION_LIVE_RUNNER := $(TEST_DIR)/attention_deepseek
 PREFILL_LIVE_RUNNER := $(TEST_DIR)/prefill_deepseek
@@ -321,7 +319,6 @@ MATERIALIZE_LIVE_OBJ := $(OBJ_DIR)/tests/live/materialize_deepseek.o
 MINIMAX_AUDIO_LIVE_OBJ := $(OBJ_DIR)/tests/live/minimax_h3_audio.o
 MINIMAX_VIDEO_LIVE_OBJ := $(OBJ_DIR)/tests/live/minimax_h3_video.o
 MINIMAX_TEXT_LIVE_OBJ := $(OBJ_DIR)/tests/live/minimax_h3_text.o
-MINIMAX_OMNI_LIVE_OBJ := $(OBJ_DIR)/tests/live/minimax_h3_omni.o
 MINIMAX_TRANSFORMER_LIVE_OBJ := $(OBJ_DIR)/tests/live/minimax_h3_transformer.o
 ATTENTION_LIVE_OBJ := $(OBJ_DIR)/tests/live/attention_deepseek.o
 PREFILL_LIVE_OBJ := $(OBJ_DIR)/tests/live/prefill_deepseek.o
@@ -341,7 +338,7 @@ RUNNER_OBJS := $(TEST_MAIN_OBJ) $(QUANT_TEST_RUNNER_OBJ) \
 	$(ARTIFACT_TEST_RUNNER_OBJ) $(CUDA_TEST_MAIN_OBJ) \
 	$(SOURCE_PAYLOAD_LIVE_OBJ) $(QUANT_LIVE_OBJ) $(ARTIFACT_LIVE_OBJ) \
 	$(MATERIALIZE_LIVE_OBJ) $(MINIMAX_AUDIO_LIVE_OBJ) $(MINIMAX_VIDEO_LIVE_OBJ) \
-	$(MINIMAX_TEXT_LIVE_OBJ) $(MINIMAX_OMNI_LIVE_OBJ) $(MINIMAX_TRANSFORMER_LIVE_OBJ) \
+	$(MINIMAX_TEXT_LIVE_OBJ) $(MINIMAX_TRANSFORMER_LIVE_OBJ) \
 	$(ATTENTION_LIVE_OBJ) \
 	$(PREFILL_LIVE_OBJ) $(MOE_LIVE_OBJ) \
 	$(TRANSFORMER_LIVE_OBJ) $(DECODE_LIVE_OBJ) $(LOGITS_LIVE_OBJ) $(TOKENIZER_LIVE_OBJ) \
@@ -870,31 +867,6 @@ test-minimax-text-encoder-live: $(MINIMAX_TEXT_LIVE_RUNNER)
 		"$(MINIMAX_H3_TEXT_ENCODER_TOKENS)" \
 		"$(BUILD_DIR)/tests/minimax_h3_text_encoder.f32" \
 		"$(MINIMAX_H3_TEXT_ENCODER_REFERENCE)" encoder50
-
-test-minimax-omni-block-live: $(MINIMAX_OMNI_LIVE_RUNNER)
-	@test -n "$(MINIMAX_H3_TRANSFORMER_ARTIFACT)" || { \
-		echo "MINIMAX_H3_TRANSFORMER_ARTIFACT is required" >&2; exit 2; }
-	@test -n "$(MINIMAX_H3_OMNI_FIXTURE_ROOT)" || { \
-		echo "MINIMAX_H3_OMNI_FIXTURE_ROOT is required" >&2; exit 2; }
-	$(MINIMAX_OMNI_LIVE_RUNNER) "$(MINIMAX_H3_TRANSFORMER_ARTIFACT)" \
-		"$(MINIMAX_H3_OMNI_FIXTURE_ROOT)/omni.block0.input.f32" \
-		"$(MINIMAX_H3_OMNI_FIXTURE_ROOT)/omni.block0.temb.f32" \
-		"$(BUILD_DIR)/tests/minimax_h3_omni_block0.f32" \
-		"$(MINIMAX_H3_OMNI_FIXTURE_ROOT)/omni.block0.oracle.f32"
-
-test-minimax-omni-transformer-live: $(MINIMAX_TRANSFORMER_LIVE_RUNNER)
-	@test -n "$(MINIMAX_H3_TRANSFORMER_ARTIFACT)" || { \
-		echo "MINIMAX_H3_TRANSFORMER_ARTIFACT is required" >&2; exit 2; }
-	@test -n "$(MINIMAX_H3_OMNI_FIXTURE_ROOT)" || { \
-		echo "MINIMAX_H3_OMNI_FIXTURE_ROOT is required" >&2; exit 2; }
-	$(MINIMAX_TRANSFORMER_LIVE_RUNNER) "$(MINIMAX_H3_TRANSFORMER_ARTIFACT)" \
-		"$(MINIMAX_H3_OMNI_FIXTURE_ROOT)/omni.transformer.video.f32" \
-		"$(MINIMAX_H3_OMNI_FIXTURE_ROOT)/omni.transformer.audio.f32" \
-		"$(MINIMAX_H3_OMNI_FIXTURE_ROOT)/omni.transformer.conditioning.f32" \
-		"$(BUILD_DIR)/tests/minimax_h3_omni_video.f32" \
-		"$(BUILD_DIR)/tests/minimax_h3_omni_audio.f32" \
-		"$(MINIMAX_H3_OMNI_FIXTURE_ROOT)/omni.transformer.video.oracle.f32" \
-		"$(MINIMAX_H3_OMNI_FIXTURE_ROOT)/omni.transformer.audio.oracle.f32"
 
 test-minimax-omni-transformer-artifact-live: $(MINIMAX_TRANSFORMER_LIVE_RUNNER)
 	@test -n "$(MINIMAX_H3_TRANSFORMER_ARTIFACT)" || { \
@@ -1709,10 +1681,6 @@ $(MINIMAX_VIDEO_LIVE_RUNNER): $(MINIMAX_VIDEO_LIVE_OBJ) $(LIBYVEX)
 $(MINIMAX_TEXT_LIVE_RUNNER): $(MINIMAX_TEXT_LIVE_OBJ) $(LIBYVEX)
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $(MINIMAX_TEXT_LIVE_OBJ) $(LIBYVEX) $(LDFLAGS) $(LDLIBS) -o $@
-
-$(MINIMAX_OMNI_LIVE_RUNNER): $(MINIMAX_OMNI_LIVE_OBJ) $(LIBYVEX)
-	@mkdir -p $(@D)
-	$(CC) $(CFLAGS) $(MINIMAX_OMNI_LIVE_OBJ) $(LIBYVEX) $(LDFLAGS) $(LDLIBS) -o $@
 
 $(MINIMAX_TRANSFORMER_LIVE_RUNNER): $(MINIMAX_TRANSFORMER_LIVE_OBJ) $(LIBYVEX)
 	@mkdir -p $(@D)
