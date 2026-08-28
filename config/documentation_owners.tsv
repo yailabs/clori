@@ -127,4 +127,5 @@ docs/worklog/2026-08-27-yvex-branch-architectural-realignment-repair.md	worklog	
 docs/worklog/2026-08-28-deepseek-gb10-matrix-tile-execution.md	worklog	canonical	contributors	retained	deepseek_gb10_matrix_tile_execution_worklog
 docs/worklog/2026-08-28-foreground-host-lifecycle-console.md	worklog	canonical	contributors	retained	foreground_host_lifecycle_console_worklog
 docs/worklog/2026-08-28-generic-cuda-transposed-conv.md	worklog	canonical	contributors	retained	generic_cuda_transposed_conv_worklog
+docs/worklog/2026-08-28-minimax-h3-canonical-fl2va-keyframes.md	worklog	canonical	contributors	retained	minimax_h3_canonical_fl2va_keyframes_worklog
 tests/vectors/README.md	test-support	canonical	contributors	living	test_vector_format

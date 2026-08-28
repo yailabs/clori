@@ -203,11 +203,14 @@ change. Git history preserves implementation chronology.
   implementation-class, width, and crossover choices. The explicit v14 reader
   imports compatible canonical package records and refuses legacy derived-layout
   requirements that cannot cross the new boundary truthfully.
-- MiniMax hosted media turns now send the creative prompt directly to the
+- MiniMax hosted media turns now send Unicode creative prompts directly to the
   native tokenizer/conditioning pipeline under one identity-bearing YVEX
-  interactive preset. The removed hardcoded questionnaire no longer parses
-  creative words or numbers as execution controls; progress is server-authored
-  control state and current protocol-v13 turns carry a typed media result.
+  interactive preset. Protocol v14 carries typed first- and last-image
+  conditions, and the same FL2VA engine generation executes text-only,
+  first-frame, last-frame, or dual-anchor requests through Qwen3-VL vision,
+  Visual VAE encoding and condition-aware Omni execution. The removed hardcoded
+  questionnaire parses no creative words or numbers as execution controls;
+  progress remains server-authored control state with a typed media result.
 - Composite artifact startup now reuses the generic verified-reopen authority
   independently for every component. Cold or invalid-cache opens fully verify
   and publish or repair receipts, unchanged warm opens avoid complete payload
