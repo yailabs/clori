@@ -104,8 +104,6 @@ void yvex_tui_state_init(yvex_tui_state *state, unsigned int rows,
     state->terminal.unicode = language &&
         (strstr(language, "UTF-8") || strstr(language, "utf8") ||
          strstr(language, "UTF8"));
-    state->surface = YVEX_TUI_SURFACE_HOME;
-    state->prior_surface = YVEX_TUI_SURFACE_HOME;
     state->focus = YVEX_TUI_FOCUS_COMPOSER;
     state->connection = YVEX_TUI_CONNECTION_UNAVAILABLE;
     state->runtime_lifecycle = YVEX_TUI_RUNTIME_NONE;
@@ -116,10 +114,6 @@ void yvex_tui_state_init(yvex_tui_state *state, unsigned int rows,
     state->redraw = 1;
     text_copy(state->active_session, sizeof(state->active_session),
               session && session[0] ? session : "main");
-    yvex_tui_activity_add(state, YVEX_TUI_ACTIVITY_SYSTEM,
-                          YVEX_TUI_SEVERITY_INFO,
-                          YVEX_CLIENT_STREAM_CONTROL_EVENT,
-                          "Official terminal client started");
 }
 
 void yvex_tui_state_close(yvex_tui_state *state)
@@ -188,6 +182,7 @@ void yvex_tui_state_connection(yvex_tui_state *state,
                  state->runtime_lifecycle != YVEX_TUI_RUNTIME_CONNECTED_OWNED)
             state->runtime_lifecycle = YVEX_TUI_RUNTIME_CONNECTED_EXTERNAL;
     } else {
+        if (changed && state->pending_count) yvex_tui_pending_restore(state);
         state->generation_active = 0;
         state->generation_phase = YVEX_CLIENT_PHASE_UNAVAILABLE;
         state->runtime_available = 0;
@@ -361,6 +356,71 @@ void yvex_tui_composer_history_move(yvex_tui_composer *composer, int direction)
     composer->count = count;
     composer->cursor = count;
     composer_multiline(composer);
+}
+
+int yvex_tui_pending_enqueue(yvex_tui_state *state)
+{
+    size_t slot;
+    yvex_tui_pending_message *pending;
+    if (!state || !state->composer.count ||
+        state->composer.count >= YVEX_TUI_PENDING_TEXT_CAP ||
+        state->pending_count == YVEX_TUI_PENDING_CAP ||
+        !state->active_engine.alias[0] || !state->active_engine.generation)
+        return 0;
+    slot = (state->pending_start + state->pending_count) % YVEX_TUI_PENDING_CAP;
+    pending = &state->pending[slot];
+    memset(pending, 0, sizeof(*pending));
+    memcpy(pending->bytes, state->composer.bytes, state->composer.count);
+    pending->count = state->composer.count;
+    text_copy(pending->session, sizeof(pending->session), state->active_session);
+    text_copy(pending->engine, sizeof(pending->engine),
+              state->active_engine.alias);
+    pending->engine_generation = state->active_engine.generation;
+    state->pending_count++;
+    state->pending_review = 0;
+    yvex_tui_composer_history_push(&state->composer);
+    yvex_tui_composer_clear(&state->composer);
+    state->redraw = 1;
+    return 1;
+}
+
+const yvex_tui_pending_message *yvex_tui_pending_front(
+    const yvex_tui_state *state)
+{
+    if (!state || !state->pending_count) return NULL;
+    return &state->pending[state->pending_start];
+}
+
+void yvex_tui_pending_pop(yvex_tui_state *state)
+{
+    if (!state || !state->pending_count) return;
+    memset(&state->pending[state->pending_start], 0,
+           sizeof(state->pending[state->pending_start]));
+    state->pending_start = (state->pending_start + 1u) % YVEX_TUI_PENDING_CAP;
+    state->pending_count--;
+    if (!state->pending_count) {
+        state->pending_start = 0u;
+        state->pending_review = 0;
+    }
+    state->redraw = 1;
+}
+
+void yvex_tui_pending_restore(yvex_tui_state *state)
+{
+    const yvex_tui_pending_message *pending;
+    if (!state || !state->pending_count) return;
+    state->pending_review = 1;
+    if (state->composer.count) {
+        state->redraw = 1;
+        return;
+    }
+    pending = yvex_tui_pending_front(state);
+    if (!pending) return;
+    (void)yvex_tui_composer_insert(&state->composer, pending->bytes,
+                                   pending->count);
+    yvex_tui_pending_pop(state);
+    state->pending_review = 1;
+    state->redraw = 1;
 }
 
 static yvex_tui_session_row *session_upsert(yvex_tui_state *state,
@@ -880,25 +940,26 @@ static size_t preferred_launchable_profile(const yvex_tui_state *state,
 void yvex_tui_runtime_launch_open(yvex_tui_state *state, size_t model_index,
                                   int restart)
 {
-    size_t index;
-    if (!state || !state->model_count) return;
-    if (model_index >= state->model_count ||
-        !state->models[model_index].startup_ready) {
-        for (index = 0u; index < state->model_count; ++index)
-            if (state->models[index].startup_ready) break;
-        if (index == state->model_count) return;
-        model_index = index;
+    const yvex_model_runtime_profile_fact *profile;
+    if (!state) return;
+    state->overlay = YVEX_TUI_OVERLAY_MODEL;
+    state->focus = YVEX_TUI_FOCUS_MODEL_SEARCH;
+    state->launch_field = 0u;
+    state->restart_pending = restart != 0;
+    if (!state->model_count) {
+        state->redraw = 1;
+        return;
     }
+    if (model_index >= state->model_count) model_index = 0u;
+    state->selected_model = model_index;
     state->launch_selected_model = model_index;
     state->launch_selected_profile =
         preferred_launchable_profile(state, model_index);
-    if (state->launch_selected_profile == SIZE_MAX) return;
+    if (state->launch_selected_profile == SIZE_MAX)
+        state->launch_selected_profile = 0u;
+    profile = yvex_tui_launch_profile(state);
     text_copy(state->launch_request.profile, sizeof(state->launch_request.profile),
-              yvex_tui_launch_profile(state)->alias);
-    state->launch_field = 0u;
-    state->restart_pending = restart != 0;
-    state->overlay = YVEX_TUI_OVERLAY_RUNTIME_LAUNCH;
-    state->focus = YVEX_TUI_FOCUS_RUNTIME_LAUNCH;
+              profile ? profile->alias : "");
     state->redraw = 1;
 }
 
@@ -913,7 +974,7 @@ void yvex_tui_runtime_launch_started(yvex_tui_state *state, pid_t pid,
     state->launch_failure_reason[0] = '\0';
     state->launch_diagnostic[0] = '\0';
     state->overlay = YVEX_TUI_OVERLAY_NONE;
-    state->focus = YVEX_TUI_FOCUS_CONTENT;
+    state->focus = YVEX_TUI_FOCUS_COMPOSER;
     state->redraw = 1;
 }
 
@@ -950,7 +1011,8 @@ void yvex_tui_remote_search_started(yvex_tui_state *state)
     state->remote_detail = 0;
     state->selected_remote = 0u;
     state->remote_viewport = 0u;
-    state->focus = YVEX_TUI_FOCUS_CONTENT;
+    state->overlay = YVEX_TUI_OVERLAY_REMOTE;
+    state->focus = YVEX_TUI_FOCUS_OVERLAY;
     state->redraw = 1;
 }
 
@@ -970,7 +1032,8 @@ void yvex_tui_remote_search_publish(yvex_tui_state *state,
     state->remote_detail = 0;
     state->selected_remote = 0u;
     state->remote_viewport = 0u;
-    state->focus = YVEX_TUI_FOCUS_CONTENT;
+    state->overlay = YVEX_TUI_OVERLAY_REMOTE;
+    state->focus = YVEX_TUI_FOCUS_OVERLAY;
     state->redraw = 1;
 }
 
@@ -1050,21 +1113,19 @@ void yvex_tui_selection_move(yvex_tui_state *state, int direction,
 {
     size_t count, ordinal = 0u, index;
     if (!state || !direction) return;
-    if (state->surface == YVEX_TUI_SURFACE_MODELS) {
-        if (state->models_mode == YVEX_TUI_MODELS_DISCOVER) {
-            count = state->remote_count;
-            if (!count) return;
-            ordinal = state->selected_remote;
-            if (direction < 0 && ordinal) ordinal--;
-            else if (direction > 0 && ordinal + 1u < count) ordinal++;
-            state->selected_remote = ordinal;
-            if (ordinal < state->remote_viewport) state->remote_viewport = ordinal;
-            if (page_rows && ordinal >= state->remote_viewport + page_rows)
-                state->remote_viewport = ordinal - page_rows + 1u;
-            state->redraw = 1;
-            return;
-        }
+    if (state->overlay == YVEX_TUI_OVERLAY_REMOTE) {
+        count = state->remote_count;
+        if (!count) return;
+        ordinal = state->selected_remote;
+        if (direction < 0 && ordinal) ordinal--;
+        else if (direction > 0 && ordinal + 1u < count) ordinal++;
+        state->selected_remote = ordinal;
+        if (ordinal < state->remote_viewport) state->remote_viewport = ordinal;
+        if (page_rows && ordinal >= state->remote_viewport + page_rows)
+            state->remote_viewport = ordinal - page_rows + 1u;
+    } else if (state->overlay == YVEX_TUI_OVERLAY_MODEL) {
         count = yvex_tui_model_visible_count(state);
+        if (!count) return;
         for (index = 0u; index < count; ++index)
             if (yvex_tui_model_visible_at(state, index) == state->selected_model) {
                 ordinal = index;
@@ -1074,11 +1135,17 @@ void yvex_tui_selection_move(yvex_tui_state *state, int direction,
         else if (direction > 0 && ordinal + 1u < count) ordinal++;
         index = yvex_tui_model_visible_at(state, ordinal);
         if (index != SIZE_MAX) state->selected_model = index;
+        state->launch_selected_model = state->selected_model;
+        state->launch_selected_profile =
+            preferred_launchable_profile(state, state->launch_selected_model);
+        if (state->launch_selected_profile == SIZE_MAX)
+            state->launch_selected_profile = 0u;
         if (ordinal < state->model_viewport) state->model_viewport = ordinal;
         if (page_rows && ordinal >= state->model_viewport + page_rows)
             state->model_viewport = ordinal - page_rows + 1u;
-    } else if (state->surface == YVEX_TUI_SURFACE_SESSIONS && state->session_count) {
+    } else if (state->overlay == YVEX_TUI_OVERLAY_SESSION && state->session_count) {
         count = yvex_tui_session_visible_count(state);
+        if (!count) return;
         for (index = 0u; index < count; ++index)
             if (yvex_tui_session_visible_at(state, index) == state->selected_session) {
                 ordinal = index;
@@ -1092,7 +1159,7 @@ void yvex_tui_selection_move(yvex_tui_state *state, int direction,
             state->session_viewport = ordinal;
         if (page_rows && ordinal >= state->session_viewport + page_rows)
             state->session_viewport = ordinal - page_rows + 1u;
-    } else if (state->surface == YVEX_TUI_SURFACE_HOME) {
+    } else if (state->overlay == YVEX_TUI_OVERLAY_NONE) {
         if (direction < 0 && state->activity_scroll + 1u < state->activity_count)
             state->activity_scroll++;
         else if (direction > 0 && state->activity_scroll)

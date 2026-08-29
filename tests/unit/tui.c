@@ -193,13 +193,11 @@ static int test_turn_observation(void)
     event.message.decode_rate = 10.0;
     yvex_tui_state_message(&state, &event);
 
-    state.surface = YVEX_TUI_SURFACE_RUNTIME;
     YVEX_TEST_ASSERT(state.last_turn.turn_available &&
                          state.last_turn.profile_available &&
                          state.last_turn.kernel_launches == 320u &&
                          state.last_turn.tensor_core_launches == 48u &&
                          render_frame(&state, frame, sizeof(frame)) &&
-                         strstr(frame, "LAST TURN / EXECUTION") &&
                          strstr(frame, "10.00 tok/s decode") &&
                          strstr(frame, "320 kernels") &&
                          strstr(frame, "10.00 MiB H2D") &&
@@ -254,14 +252,17 @@ static int test_state_render_and_input(void)
                                  "deepseek4-v4-flash-profile-b"),
                      "TUI defaults to the newest registered admissible profile");
     YVEX_TEST_ASSERT(render_frame(&state, frame, sizeof(frame)) &&
-                         strstr(frame, "RUNTIME OFFLINE") &&
-                         strstr(frame, "Enter  Start Runtime") &&
+                         strstr(frame, ">_ YVEX") &&
+                         strstr(frame, "No model loaded") &&
+                         strstr(frame, "Ready to work") &&
+                         strstr(frame, "Ask YVEX anything") &&
                          !strstr(frame, "\033[48;") && !strstr(frame, "\033[40m"),
-                     "offline Home is actionable and uses terminal-default background");
+                     "offline transcript keeps an editable composer and default background");
     memset(&input, 0, sizeof(input));
-    YVEX_TEST_ASSERT(yvex_tui_input_byte(&input, &state, '\r') == YVEX_TUI_INPUT_NONE &&
-                         state.overlay == YVEX_TUI_OVERLAY_RUNTIME_LAUNCH,
-                     "Home Enter opens runtime launch selection");
+    YVEX_TEST_ASSERT(yvex_tui_input_byte(&input, &state, 0x0fu) ==
+                             YVEX_TUI_INPUT_NONE &&
+                         state.overlay == YVEX_TUI_OVERLAY_MODEL,
+                     "Ctrl-O opens the transient model selector while offline");
     YVEX_TEST_ASSERT(yvex_tui_launch_prepare("/opt/yvex", &command, &err) == YVEX_OK &&
                          command.argc == 4 && !strcmp(command.argv[0], "/opt/yvex") &&
                          !strcmp(command.argv[1], "server") &&
@@ -270,7 +271,7 @@ static int test_state_render_and_input(void)
                      "launcher enters the model-neutral canonical host with structured argv");
 
     state.overlay = YVEX_TUI_OVERLAY_NONE;
-    state.focus = YVEX_TUI_FOCUS_CONTENT;
+    state.focus = YVEX_TUI_FOCUS_COMPOSER;
     yvex_tui_state_connection(&state, YVEX_TUI_CONNECTION_CONNECTED, "");
     memset(&event, 0, sizeof(event));
     event.kind = YVEX_CLI_INTERACTIVE_MESSAGE;
@@ -280,11 +281,13 @@ static int test_state_render_and_input(void)
     memcpy(event.message.runtime.socket_path, "/tmp/yvex.sock", 15u);
     yvex_tui_state_message(&state, &event);
     YVEX_TEST_ASSERT(render_frame(&state, frame, sizeof(frame)) &&
-                         strstr(frame, "HOST READY") && strstr(frame, "Enter  Load Model"),
-                     "connected host without an engine collapses around model loading");
-    YVEX_TEST_ASSERT(yvex_tui_input_byte(&input, &state, '\r') == YVEX_TUI_INPUT_NONE &&
-                         state.overlay == YVEX_TUI_OVERLAY_RUNTIME_LAUNCH,
-                     "host-ready Home can load a model without leaving the TUI");
+                         strstr(frame, "No model loaded") &&
+                         strstr(frame, "Ask YVEX anything"),
+                     "connected host without an engine retains the composer");
+    YVEX_TEST_ASSERT(yvex_tui_input_byte(&input, &state, 0x0fu) ==
+                             YVEX_TUI_INPUT_NONE &&
+                         state.overlay == YVEX_TUI_OVERLAY_MODEL,
+                     "host-ready transcript opens model selection without a screen change");
 
     state.overlay = YVEX_TUI_OVERLAY_NONE;
     memset(&event, 0, sizeof(event));
@@ -306,10 +309,11 @@ static int test_state_render_and_input(void)
     yvex_tui_state_message(&state, &event);
     YVEX_TEST_ASSERT(state.active_engine.generation == 7u && state.models[0].resident &&
                          render_frame(&state, frame, sizeof(frame)) &&
-                         strstr(frame, "CHAT") && strstr(frame, "Ready to work") &&
+                         strstr(frame, ">_ YVEX") &&
                          strstr(frame, "deepseek4-v4-flash-profile-a") &&
-                         !strstr(frame, "ACTIVITY") && !strstr(frame, "CONTEXT"),
-                     "typed engine summary establishes conversation-first Home");
+                         !strstr(frame, "RUNTIME / TELEMETRY") &&
+                         !strstr(frame, "Models  Sessions"),
+                     "typed engine summary stays in the single transcript chrome");
     yvex_tui_activity_add(&state, YVEX_TUI_ACTIVITY_RUNTIME,
                           YVEX_TUI_SEVERITY_INFO,
                           YVEX_CLIENT_STREAM_CONTROL_EVENT,
@@ -330,14 +334,15 @@ static int test_state_render_and_input(void)
                          strstr(frame, "explain this model") &&
                          strstr(frame, "This is the assistant response.") &&
                          !strstr(frame, "runtime event must stay out of chat") &&
-                         !strstr(frame, "technical failure must stay contextual"),
-                     "Home separates conversation from runtime event history");
+                         strstr(frame, "technical failure must stay contextual"),
+                     "transcript keeps user, assistant, and relevant error activity inline");
     YVEX_TEST_ASSERT(yvex_tui_input_byte(&input, &state, 0x0fu) ==
                              YVEX_TUI_INPUT_NONE &&
-                         state.overlay == YVEX_TUI_OVERLAY_RUNTIME_LAUNCH &&
+                         state.overlay == YVEX_TUI_OVERLAY_MODEL &&
                          render_frame(&state, frame, sizeof(frame)) &&
-                         strstr(frame, "SELECT MODEL") && strstr(frame, "Load Model"),
-                     "Ctrl-O opens the model and runtime-profile selector");
+                         strstr(frame, "Select model") &&
+                         strstr(frame, "deepseek4-v4-flash-profile-b"),
+                     "Ctrl-O opens a temporary typed model and profile selector");
 
     state.overlay = YVEX_TUI_OVERLAY_NONE;
     memset(&state.active_engine, 0, sizeof(state.active_engine));
@@ -349,12 +354,90 @@ static int test_state_render_and_input(void)
     yvex_tui_state_message(&state, &event);
     YVEX_TEST_ASSERT(state.launch_failure == YVEX_TUI_LAUNCH_FAILURE_ENGINE_LOAD &&
                          render_frame(&state, frame, sizeof(frame)) &&
-                         strstr(frame, "MODEL LOAD FAILURE") &&
                          strstr(frame, "runtime binding rejected"),
-                     "model-load refusal remains distinct from process exit metadata");
+                     "model-load refusal remains visible in the transcript");
 
     yvex_tui_composer_clear(&state.composer);
-    state.surface = YVEX_TUI_SURFACE_HOME;
+    state.overlay = YVEX_TUI_OVERLAY_NONE;
+    memset(&input, 0, sizeof(input));
+    for (index = 0u; index < 4u; ++index)
+        (void)yvex_tui_input_byte(&input, &state,
+                                  (unsigned char)"/sta"[index]);
+    YVEX_TEST_ASSERT(state.overlay == YVEX_TUI_OVERLAY_SLASH &&
+                         render_frame(&state, frame, sizeof(frame)) &&
+                         strstr(frame, "Commands") &&
+                         yvex_tui_input_byte(&input, &state, '\t') ==
+                             YVEX_TUI_INPUT_NONE &&
+                         !strncmp((const char *)state.composer.bytes,
+                                  "/status", 7u),
+                     "slash commands are discovered and completed inside the composer");
+    yvex_tui_composer_clear(&state.composer);
+    state.overlay = YVEX_TUI_OVERLAY_NONE;
+    for (index = 0u; index < 4u; ++index)
+        (void)yvex_tui_input_byte(&input, &state,
+                                  (unsigned char)"/mod"[index]);
+    YVEX_TEST_ASSERT(state.overlay == YVEX_TUI_OVERLAY_SLASH &&
+                         yvex_tui_input_byte(&input, &state, '\t') ==
+                             YVEX_TUI_INPUT_NONE &&
+                         !strcmp((const char *)state.composer.bytes, "/model "),
+                     "/model is the typed model-selector command projection");
+    yvex_tui_composer_clear(&state.composer);
+    state.overlay = YVEX_TUI_OVERLAY_NONE;
+    for (index = 0u; index < 4u; ++index)
+        (void)yvex_tui_input_byte(&input, &state,
+                                  (unsigned char)"/run"[index]);
+    YVEX_TEST_ASSERT(state.overlay == YVEX_TUI_OVERLAY_SLASH &&
+                         yvex_tui_input_byte(&input, &state, '\t') ==
+                             YVEX_TUI_INPUT_NONE &&
+                         !strcmp((const char *)state.composer.bytes, "/runtime"),
+                     "/runtime is the typed inline-status command projection");
+    state.overlay = YVEX_TUI_OVERLAY_NONE;
+    yvex_tui_composer_clear(&state.composer);
+    (void)yvex_tui_composer_insert(&state.composer,
+                                   (const unsigned char *)"draft", 5u);
+    YVEX_TEST_ASSERT(yvex_tui_input_byte(&input, &state, '\t') ==
+                             YVEX_TUI_INPUT_NONE &&
+                         state.overlay == YVEX_TUI_OVERLAY_NONE &&
+                         !strcmp((const char *)state.composer.bytes, "draft"),
+                     "Tab never changes the application screen");
+    yvex_tui_composer_clear(&state.composer);
+    YVEX_TEST_ASSERT(yvex_tui_input_byte(&input, &state, '?') ==
+                             YVEX_TUI_INPUT_NONE &&
+                         state.overlay == YVEX_TUI_OVERLAY_HELP &&
+                         render_frame(&state, frame, sizeof(frame)) &&
+                         strstr(frame, "Keyboard shortcuts"),
+                     "question mark opens transient shortcut help");
+    state.overlay = YVEX_TUI_OVERLAY_NONE;
+    memset(&input, 0, sizeof(input));
+    (void)yvex_tui_input_byte(&input, &state, '\033');
+    for (index = 0u; index < 6u; ++index)
+        (void)yvex_tui_input_byte(&input, &state,
+                                  (unsigned char)"[13;2u"[index]);
+    YVEX_TEST_ASSERT(state.composer.count == 1u &&
+                         state.composer.bytes[0] == '\n',
+                     "Shift-Enter inserts a composer newline");
+
+    yvex_tui_composer_clear(&state.composer);
+    (void)snprintf(state.active_engine.alias,
+                   sizeof(state.active_engine.alias), "%s", "fixture");
+    state.active_engine.generation = 11u;
+    state.generation_active = 1;
+    (void)yvex_tui_composer_insert(&state.composer,
+                                   (const unsigned char *)"queued one", 10u);
+    YVEX_TEST_ASSERT(yvex_tui_pending_enqueue(&state) &&
+                         state.pending_count == 1u &&
+                         yvex_tui_pending_front(&state) &&
+                         yvex_tui_pending_front(&state)->engine_generation == 11u &&
+                         !strcmp(yvex_tui_pending_front(&state)->session, "main"),
+                     "active turns queue bounded drafts against session and engine identity");
+    state.generation_active = 0;
+    yvex_tui_state_connection(&state, YVEX_TUI_CONNECTION_DISCONNECTED,
+                              "fixture disconnect");
+    YVEX_TEST_ASSERT(state.pending_review && !state.pending_count &&
+                         !strcmp((const char *)state.composer.bytes, "queued one"),
+                     "runtime identity drift restores a queued draft for review");
+
+    yvex_tui_composer_clear(&state.composer);
     state.focus = YVEX_TUI_FOCUS_COMPOSER;
     memset(&input, 0, sizeof(input));
     for (index = 0u; index < sizeof(paste) - 1u; ++index)

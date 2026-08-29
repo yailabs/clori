@@ -266,6 +266,7 @@ OPERATOR_REGISTRY_CONSUMER_OBJS := $(OBJ_DIR)/src/cli/main.o \
 	$(OBJ_DIR)/src/cli/commands/graph.o \
 	$(OBJ_DIR)/src/cli/io/client.o $(OBJ_DIR)/src/cli/io/out.o \
 	$(OBJ_DIR)/src/cli/input/operator.o $(OBJ_DIR)/src/cli/tui/core.o \
+	$(OBJ_DIR)/src/cli/tui/input.o \
 	$(OBJ_DIR)/src/cli/tui/launcher.o $(OBJ_DIR)/src/cli/tui/render.o
 $(OPERATOR_REGISTRY_CONSUMER_OBJS): CPPFLAGS += -I$(BUILD_DIR)/generated
 $(OPERATOR_REGISTRY_CONSUMER_OBJS): $(OPERATOR_REGISTRY_HEADER)

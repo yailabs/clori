@@ -6286,7 +6286,7 @@
       "renderer_id": "human",
       "result_schema": "human.v1",
       "side_effects": "load model engine",
-      "slash_projection": "none",
+      "slash_projection": "/model",
       "summary": "Load one registered model into the persistent host.",
       "test_owner": "tests/client_cutover.sh",
       "visibility": "product-default"
@@ -6392,7 +6392,7 @@
       "renderer_id": "human-or-json",
       "result_schema": "human.v1",
       "side_effects": "read-only",
-      "slash_projection": "none",
+      "slash_projection": "/runtime",
       "summary": "Show the authoritative server snapshot.",
       "test_owner": "tests/client_cutover.sh",
       "visibility": "product-default"

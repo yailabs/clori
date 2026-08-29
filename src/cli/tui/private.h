@@ -21,6 +21,8 @@
 #define YVEX_TUI_COMPOSER_CAP 65536u
 #define YVEX_TUI_HISTORY_CAP 32u
 #define YVEX_TUI_HISTORY_TEXT_CAP 4096u
+#define YVEX_TUI_PENDING_CAP 8u
+#define YVEX_TUI_PENDING_TEXT_CAP 4096u
 #define YVEX_TUI_SESSION_CAP 128u
 #define YVEX_TUI_EVENT_CAP 32u
 #define YVEX_TUI_ENGINE_CAP 32u
@@ -38,28 +40,21 @@ typedef enum {
 } yvex_tui_layout;
 
 typedef enum {
-    YVEX_TUI_SURFACE_HOME = 0,
-    YVEX_TUI_SURFACE_MODELS,
-    YVEX_TUI_SURFACE_MODEL_DETAIL,
-    YVEX_TUI_SURFACE_SESSIONS,
-    YVEX_TUI_SURFACE_RUNTIME,
-    YVEX_TUI_SURFACE_COUNT
-} yvex_tui_surface;
-
-typedef enum {
     YVEX_TUI_FOCUS_COMPOSER = 0,
-    YVEX_TUI_FOCUS_CONTENT,
-    YVEX_TUI_FOCUS_PALETTE,
+    YVEX_TUI_FOCUS_OVERLAY,
     YVEX_TUI_FOCUS_MODEL_SEARCH,
     YVEX_TUI_FOCUS_SESSION_SEARCH,
-    YVEX_TUI_FOCUS_RUNTIME_LAUNCH
+    YVEX_TUI_FOCUS_REMOTE_SEARCH,
+    YVEX_TUI_FOCUS_MODEL_PROFILE
 } yvex_tui_focus;
 
 typedef enum {
     YVEX_TUI_OVERLAY_NONE = 0,
-    YVEX_TUI_OVERLAY_PALETTE,
+    YVEX_TUI_OVERLAY_SLASH,
     YVEX_TUI_OVERLAY_HELP,
-    YVEX_TUI_OVERLAY_RUNTIME_LAUNCH
+    YVEX_TUI_OVERLAY_MODEL,
+    YVEX_TUI_OVERLAY_SESSION,
+    YVEX_TUI_OVERLAY_REMOTE
 } yvex_tui_overlay;
 
 typedef enum {
@@ -90,11 +85,6 @@ typedef enum {
     YVEX_TUI_MODEL_CATALOG_EMPTY,
     YVEX_TUI_MODEL_CATALOG_ERROR
 } yvex_tui_model_catalog_status;
-
-typedef enum {
-    YVEX_TUI_MODELS_LIBRARY = 0,
-    YVEX_TUI_MODELS_DISCOVER
-} yvex_tui_models_mode;
 
 typedef yvex_cli_interactive_connection yvex_tui_connection;
 
@@ -194,6 +184,14 @@ typedef struct {
 } yvex_tui_composer;
 
 typedef struct {
+    unsigned char bytes[YVEX_TUI_PENDING_TEXT_CAP];
+    size_t count;
+    char session[YVEX_SERVER_SESSION_NAME_CAP];
+    char engine[YVEX_MODEL_LIBRARY_NAME_CAP];
+    unsigned long long engine_generation;
+} yvex_tui_pending_message;
+
+typedef struct {
     char turn_id[YVEX_SERVER_ID_CAP];
     unsigned long long prompt_tokens, reused_tokens, prefill_tokens;
     unsigned long long generated_tokens;
@@ -214,7 +212,6 @@ typedef struct {
 
 typedef struct {
     yvex_tui_terminal_view terminal;
-    yvex_tui_surface surface, prior_surface;
     yvex_tui_focus focus;
     yvex_tui_overlay overlay;
     yvex_tui_connection connection;
@@ -234,7 +231,6 @@ typedef struct {
     yvex_model_library *model_library;
     size_t model_count, model_capacity, selected_model, model_viewport;
     yvex_tui_model_catalog_status model_catalog_status;
-    yvex_tui_models_mode models_mode;
     char model_catalog_reason[256];
     char model_search[128];
     size_t model_search_count;
@@ -255,7 +251,10 @@ typedef struct {
     size_t event_start, event_count;
     yvex_tui_turn_observation last_turn;
     yvex_tui_composer composer;
-    yvex_tui_composer command;
+    size_t slash_selected;
+    yvex_tui_pending_message pending[YVEX_TUI_PENDING_CAP];
+    size_t pending_start, pending_count;
+    int pending_review;
     yvex_tui_launch_request launch_request;
     size_t launch_selected_model;
     size_t launch_selected_profile;
@@ -271,7 +270,7 @@ typedef struct {
     yvex_client_generation_phase generation_phase;
     yvex_tui_severity notice_severity;
     char notice[256];
-    int generation_active, redraw, shutdown_requested;
+    int generation_active, submit_after_launch, redraw, shutdown_requested;
     unsigned long long maximum_new_tokens;
 } yvex_tui_state;
 
@@ -290,6 +289,7 @@ typedef struct {
 typedef enum {
     YVEX_TUI_INPUT_NONE = 0,
     YVEX_TUI_INPUT_SUBMIT,
+    YVEX_TUI_INPUT_CANCEL,
     YVEX_TUI_INPUT_REMOTE_SEARCH,
     YVEX_TUI_INPUT_ACQUIRE,
     YVEX_TUI_INPUT_EXIT,
@@ -339,6 +339,11 @@ void yvex_tui_composer_erase(yvex_tui_composer *composer, int backward);
 void yvex_tui_composer_clear(yvex_tui_composer *composer);
 void yvex_tui_composer_history_push(yvex_tui_composer *composer);
 void yvex_tui_composer_history_move(yvex_tui_composer *composer, int direction);
+int yvex_tui_pending_enqueue(yvex_tui_state *state);
+const yvex_tui_pending_message *yvex_tui_pending_front(
+    const yvex_tui_state *state);
+void yvex_tui_pending_pop(yvex_tui_state *state);
+void yvex_tui_pending_restore(yvex_tui_state *state);
 int yvex_tui_models_load(yvex_tui_state *state, const char *registry_path,
                          yvex_error *err);
 size_t yvex_tui_model_visible_count(const yvex_tui_state *state);

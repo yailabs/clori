@@ -278,9 +278,10 @@ def test_product_surface(registry: dict[str, object]) -> None:
                 for row in active), "foreground server entrypoint is not projected")
     slash = {row.get("slash_projection") for row in active
              if row.get("slash_projection") != "none"}
-    require(slash == {"/help", "/status", "/models", "/memory", "/context", "/sessions",
-                      "/session", "/new", "/attach", "/detach", "/reset", "/close",
-                      "/cancel", "/quit", "/nothink", "/think", "/think-max"},
+    require(slash == {"/help", "/status", "/runtime", "/model", "/models", "/memory",
+                      "/context", "/sessions", "/session", "/new", "/attach", "/detach",
+                      "/reset", "/close", "/cancel", "/quit", "/nothink", "/think",
+                      "/think-max"},
             f"unexpected slash catalog: {sorted(slash)}")
     slash_aliases = {alias for row in active for alias in row.get("slash_aliases", [])}
     require(slash_aliases == {"/exit"},

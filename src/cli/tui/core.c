@@ -450,12 +450,10 @@ static int runtime_operation(yvex_tui_state *state,
         state->overlay = YVEX_TUI_OVERLAY_HELP;
         return 1;
     case YVEX_OPERATOR_RUNTIME_CONSOLE_STATUS:
-        state->surface = YVEX_TUI_SURFACE_HOME;
         return yvex_cli_interactive_refresh(interactive, &state->active_engine,
                                             state->active_session);
     case YVEX_OPERATOR_RUNTIME_SERVER_STATUS:
     case YVEX_OPERATOR_RUNTIME_SERVER_MEMORY:
-        state->surface = YVEX_TUI_SURFACE_RUNTIME;
         return yvex_cli_interactive_refresh(interactive, &state->active_engine,
                                             state->active_session);
     case YVEX_OPERATOR_RUNTIME_SERVER_STOP:
@@ -497,12 +495,12 @@ static int runtime_operation(yvex_tui_state *state,
                                             YVEX_CLIENT_OP_ENGINE_UNLOAD,
                                             &state->active_engine, NULL);
     case YVEX_OPERATOR_RUNTIME_SESSION_LIST:
-        state->surface = YVEX_TUI_SURFACE_SESSIONS;
+        state->overlay = YVEX_TUI_OVERLAY_SESSION;
+        state->focus = YVEX_TUI_FOCUS_SESSION_SEARCH;
         return yvex_cli_interactive_request(interactive,
                                             YVEX_CLIENT_OP_SESSION_LIST,
                                             &state->active_engine, NULL);
     case YVEX_OPERATOR_RUNTIME_SESSION_SHOW:
-        state->surface = YVEX_TUI_SURFACE_SESSIONS;
         return yvex_cli_interactive_request(interactive,
                                             YVEX_CLIENT_OP_SESSION_SHOW,
                                             &state->active_engine, session);
@@ -567,17 +565,34 @@ static int runtime_operation(yvex_tui_state *state,
     }
 }
 
-static void palette_submit(yvex_tui_state *state,
-                           yvex_cli_interactive *interactive)
+static void slash_submit(yvex_tui_state *state,
+                         yvex_cli_interactive *interactive)
 {
     const yvex_operator_descriptor *descriptor;
     yvex_cli_operator_invocation invocation;
     const char *argument = NULL, *parsed_argument = NULL;
     int status, accepted = 1;
-    descriptor = slash_descriptor((const char *)state->command.bytes, &argument);
+    descriptor = slash_descriptor((const char *)state->composer.bytes, &argument);
     if (!descriptor) {
         local_notice(state, YVEX_TUI_SEVERITY_ERROR,
-                     "Unknown command; palette entries come from the operator registry");
+                     "Unknown command; slash entries come from the operator registry");
+        return;
+    }
+    if (descriptor->runtime_adapter == YVEX_OPERATOR_RUNTIME_SERVER_LOAD &&
+        !argument) {
+        yvex_tui_composer_clear(&state->composer);
+        yvex_tui_runtime_launch_open(state, state->selected_model, 0);
+        return;
+    }
+    if (descriptor->runtime_adapter == YVEX_OPERATOR_RUNTIME_SESSION_ATTACH &&
+        !argument) {
+        yvex_tui_composer_clear(&state->composer);
+        state->overlay = YVEX_TUI_OVERLAY_SESSION;
+        state->focus = YVEX_TUI_FOCUS_SESSION_SEARCH;
+        if (state->connection == YVEX_TUI_CONNECTION_CONNECTED)
+            (void)yvex_cli_interactive_request(interactive,
+                                               YVEX_CLIENT_OP_SESSION_LIST,
+                                               &state->active_engine, NULL);
         return;
     }
     status = yvex_cli_operator_slash_parse(descriptor, argument, &invocation);
@@ -606,60 +621,79 @@ static void palette_submit(yvex_tui_state *state,
     yvex_cli_operator_invocation_close(&invocation);
     state->overlay = YVEX_TUI_OVERLAY_NONE;
     state->focus = YVEX_TUI_FOCUS_COMPOSER;
-    yvex_tui_composer_clear(&state->command);
+    yvex_tui_composer_clear(&state->composer);
     state->redraw = 1;
+}
+
+static void generation_options(const yvex_tui_state *state,
+                               yvex_cli_interactive_turn *options)
+{
+    yvex_provider_request defaults;
+    yvex_provider_request_default(&defaults);
+    memset(options, 0, sizeof(*options));
+    options->maximum_new_tokens = state->maximum_new_tokens;
+    options->stochastic = defaults.sampling.stochastic;
+    options->seed_present = defaults.sampling.seed_present;
+    options->seed = defaults.sampling.seed;
+    options->temperature = defaults.sampling.temperature;
+    options->top_k = defaults.sampling.top_k;
+    options->top_p = defaults.sampling.top_p;
+    options->min_p = defaults.sampling.min_p;
+    options->typical_p = defaults.sampling.typical_p;
+    options->reasoning_policy = state->reasoning_policy;
+}
+
+static int generation_send(yvex_tui_state *state,
+                           yvex_cli_interactive *interactive,
+                           const unsigned char *bytes, size_t count)
+{
+    yvex_cli_interactive_turn options;
+    generation_options(state, &options);
+    if (!yvex_cli_interactive_generate(interactive, &state->active_engine,
+                                       state->active_session,
+                                       bytes, count, &options))
+        return 0;
+    state->notice[0] = '\0';
+    yvex_tui_activity_add(state, YVEX_TUI_ACTIVITY_USER,
+                          YVEX_TUI_SEVERITY_INFO,
+                          YVEX_CLIENT_STREAM_UNSPECIFIED,
+                          (const char *)bytes);
+    state->generation_active = 1;
+    state->generation_phase = YVEX_CLIENT_PHASE_IDLE;
+    return 1;
 }
 
 static void generation_submit(yvex_tui_state *state,
                               yvex_cli_interactive *interactive)
 {
-    yvex_provider_request defaults;
-    yvex_cli_interactive_turn options;
     if (!state->composer.count) return;
-    if (state->connection != YVEX_TUI_CONNECTION_CONNECTED) {
-        local_notice(state, YVEX_TUI_SEVERITY_WARNING,
-                     "Runtime unavailable; composer draft preserved");
-        return;
-    }
     if (state->generation_active) {
-        local_notice(state, YVEX_TUI_SEVERITY_WARNING,
-                     "A generation is already active; composer draft preserved");
+        if (yvex_tui_pending_enqueue(state))
+            local_notice(state, YVEX_TUI_SEVERITY_INFO,
+                         "Message queued for this session and engine generation");
+        else
+            local_notice(state, YVEX_TUI_SEVERITY_WARNING,
+                         "Queue full or message exceeds the 4095-byte queued-message limit");
         return;
     }
-    yvex_provider_request_default(&defaults);
-    memset(&options, 0, sizeof(options));
-    options.maximum_new_tokens = state->maximum_new_tokens;
-    options.stochastic = defaults.sampling.stochastic;
-    options.seed_present = defaults.sampling.seed_present;
-    options.seed = defaults.sampling.seed;
-    options.temperature = defaults.sampling.temperature;
-    options.top_k = defaults.sampling.top_k;
-    options.top_p = defaults.sampling.top_p;
-    options.min_p = defaults.sampling.min_p;
-    options.typical_p = defaults.sampling.typical_p;
-    options.reasoning_policy = state->reasoning_policy;
-    if (!state->active_engine.alias[0] || !state->active_engine.generation) {
+    if (state->connection != YVEX_TUI_CONNECTION_CONNECTED ||
+        !state->active_engine.alias[0] || !state->active_engine.generation) {
+        state->submit_after_launch = 1;
+        yvex_tui_runtime_launch_open(state, state->selected_model, 0);
         local_notice(state, YVEX_TUI_SEVERITY_WARNING,
-                     "Load a model engine before sending a message");
+                     "Select a launchable model; composer draft is preserved");
         return;
     }
-    if (!yvex_cli_interactive_generate(interactive, &state->active_engine,
-                                       state->active_session,
-                                       state->composer.bytes,
-                                       state->composer.count, &options)) {
+    if (!generation_send(state, interactive, state->composer.bytes,
+                         state->composer.count)) {
         local_notice(state, YVEX_TUI_SEVERITY_WARNING,
                      "Interactive request queue is busy; composer draft preserved");
         return;
     }
-    state->notice[0] = '\0';
-    yvex_tui_activity_add(state, YVEX_TUI_ACTIVITY_USER,
-                          YVEX_TUI_SEVERITY_INFO,
-                          YVEX_CLIENT_STREAM_UNSPECIFIED,
-                          (const char *)state->composer.bytes);
+    state->submit_after_launch = 0;
+    state->pending_review = 0;
     yvex_tui_composer_history_push(&state->composer);
     yvex_tui_composer_clear(&state->composer);
-    state->generation_active = 1;
-    state->generation_phase = YVEX_CLIENT_PHASE_IDLE;
 }
 
 static void error_notice(yvex_tui_state *state, const char *operation,
@@ -723,7 +757,7 @@ static void launch_submit(yvex_tui_state *state,
         state->connection == YVEX_TUI_CONNECTION_CONNECTED) {
         if (!launch_configure(state)) return;
         state->overlay = YVEX_TUI_OVERLAY_NONE;
-        state->focus = YVEX_TUI_FOCUS_CONTENT;
+        state->focus = YVEX_TUI_FOCUS_COMPOSER;
         if (yvex_cli_interactive_request(interactive,
                                          YVEX_CLIENT_OP_RUNTIME_STOP, NULL, NULL)) {
             yvex_tui_runtime_stop_requested(state, 1);
@@ -737,7 +771,7 @@ static void launch_submit(yvex_tui_state *state,
     }
     if (!launch_configure(state)) return;
     state->overlay = YVEX_TUI_OVERLAY_NONE;
-    state->focus = YVEX_TUI_FOCUS_CONTENT;
+    state->focus = YVEX_TUI_FOCUS_COMPOSER;
     if (state->connection == YVEX_TUI_CONNECTION_CONNECTED) {
         if (yvex_cli_interactive_request(interactive, YVEX_CLIENT_OP_ENGINE_LOAD,
                                          NULL, state->launch_request.profile)) {
@@ -755,51 +789,26 @@ static void launch_submit(yvex_tui_state *state,
     }
 }
 
-static void runtime_action_submit(yvex_tui_state *state,
-                                  yvex_cli_interactive *interactive)
-{
-    if (state->connection != YVEX_TUI_CONNECTION_CONNECTED) return;
-    if (state->runtime_action == 1u) {
-        if (!yvex_tui_startup_model_count(state)) {
-            local_notice(state, YVEX_TUI_SEVERITY_WARNING,
-                         "Restart requires a startup-ready registry model");
-            return;
-        }
-        yvex_tui_runtime_launch_open(state, state->selected_model, 1);
-        return;
-    }
-    if (yvex_cli_interactive_request(interactive, YVEX_CLIENT_OP_RUNTIME_STOP,
-                                     NULL, NULL)) {
-        yvex_tui_runtime_stop_requested(state, 0);
-        local_notice(state, YVEX_TUI_SEVERITY_INFO,
-                     "Canonical runtime shutdown requested");
-    } else {
-        local_notice(state, YVEX_TUI_SEVERITY_WARNING,
-                     "Interactive request queue is busy");
-    }
-}
-
 static void submit_action(yvex_tui_state *state,
                           yvex_cli_interactive *interactive,
                           yvex_tui_launcher *launcher)
 {
-    if (state->overlay == YVEX_TUI_OVERLAY_PALETTE) {
-        palette_submit(state, interactive);
-    } else if (state->overlay == YVEX_TUI_OVERLAY_RUNTIME_LAUNCH) {
+    if (state->overlay == YVEX_TUI_OVERLAY_SLASH) {
+        slash_submit(state, interactive);
+    } else if (state->overlay == YVEX_TUI_OVERLAY_MODEL) {
         launch_submit(state, interactive, launcher);
-    } else if (state->surface == YVEX_TUI_SURFACE_RUNTIME &&
-               state->focus == YVEX_TUI_FOCUS_CONTENT &&
-               state->connection == YVEX_TUI_CONNECTION_CONNECTED) {
-        runtime_action_submit(state, interactive);
-    } else if (state->focus == YVEX_TUI_FOCUS_CONTENT &&
-               state->surface == YVEX_TUI_SURFACE_SESSIONS &&
-               !state->composer.count && state->session_count) {
+    } else if (state->overlay == YVEX_TUI_OVERLAY_SESSION &&
+               state->session_count) {
         const char *session = state->sessions[state->selected_session].name;
         if (!yvex_cli_interactive_request(interactive,
                                           YVEX_CLIENT_OP_SESSION_ATTACH,
                                           &state->active_engine, session))
             local_notice(state, YVEX_TUI_SEVERITY_WARNING,
                          "Interactive request queue is busy");
+        else {
+            state->overlay = YVEX_TUI_OVERLAY_NONE;
+            state->focus = YVEX_TUI_FOCUS_COMPOSER;
+        }
     } else {
         generation_submit(state, interactive);
     }
@@ -871,6 +880,18 @@ static void acquisition_events(tui_acquisition_worker *worker,
     }
 }
 
+static void generation_cancel(yvex_tui_state *state)
+{
+    if (state->generation_active &&
+        yvex_cli_interactive_cancel(&state->active_engine,
+                                    state->active_session))
+        local_notice(state, YVEX_TUI_SEVERITY_WARNING,
+                     "Cancellation requested");
+    else
+        local_notice(state, YVEX_TUI_SEVERITY_WARNING,
+                     "No active server request accepted cancellation");
+}
+
 static void input_read(yvex_tui_terminal *terminal, yvex_tui_input *input,
                        yvex_tui_state *state,
                        yvex_cli_interactive *interactive,
@@ -894,6 +915,8 @@ static void input_read(yvex_tui_terminal *terminal, yvex_tui_input *input,
         yvex_tui_input_action action = yvex_tui_input_byte(input, state, bytes[index]);
         if (action == YVEX_TUI_INPUT_SUBMIT)
             submit_action(state, interactive, launcher);
+        else if (action == YVEX_TUI_INPUT_CANCEL)
+            generation_cancel(state);
         else if (action == YVEX_TUI_INPUT_REMOTE_SEARCH)
             remote_search_submit(state, remote_worker);
         else if (action == YVEX_TUI_INPUT_ACQUIRE)
@@ -901,9 +924,8 @@ static void input_read(yvex_tui_terminal *terminal, yvex_tui_input *input,
         else if (action == YVEX_TUI_INPUT_EXIT)
             state->shutdown_requested = 1;
         else if (action == YVEX_TUI_INPUT_REFRESH) {
-            if (state->surface == YVEX_TUI_SURFACE_MODELS ||
-                (!state->runtime_available &&
-                 state->model_catalog_status == YVEX_TUI_MODEL_CATALOG_ERROR)) {
+            if (!state->runtime_available &&
+                state->model_catalog_status == YVEX_TUI_MODEL_CATALOG_ERROR) {
                 yvex_error err;
                 if (yvex_tui_models_load(state, NULL, &err) != YVEX_OK)
                     error_notice(state, "Model registry refresh failed", &err);
@@ -927,13 +949,7 @@ static void signal_events(yvex_tui_terminal *terminal, yvex_tui_state *state)
     if (terminate) state->shutdown_requested = 1;
     if (!interrupt) return;
     if (state->generation_active) {
-        if (yvex_cli_interactive_cancel(&state->active_engine,
-                                        state->active_session))
-            local_notice(state, YVEX_TUI_SEVERITY_WARNING,
-                         "Cancellation requested");
-        else
-            local_notice(state, YVEX_TUI_SEVERITY_WARNING,
-                         "No active server request accepted cancellation");
+        generation_cancel(state);
     } else if (state->composer.count || state->overlay != YVEX_TUI_OVERLAY_NONE) {
         yvex_tui_composer_clear(&state->composer);
         state->overlay = YVEX_TUI_OVERLAY_NONE;
@@ -942,6 +958,29 @@ static void signal_events(yvex_tui_terminal *terminal, yvex_tui_state *state)
     } else {
         state->shutdown_requested = 1;
     }
+}
+
+static void pending_submit(yvex_cli_interactive *interactive,
+                           yvex_tui_state *state)
+{
+    const yvex_tui_pending_message *pending = yvex_tui_pending_front(state);
+    if (!pending || state->generation_active) return;
+    if (state->pending_review) {
+        if (!state->composer.count) yvex_tui_pending_restore(state);
+        return;
+    }
+    if (state->connection != YVEX_TUI_CONNECTION_CONNECTED ||
+        strcmp(pending->session, state->active_session) ||
+        strcmp(pending->engine, state->active_engine.alias) ||
+        pending->engine_generation != state->active_engine.generation) {
+        yvex_tui_pending_restore(state);
+        local_notice(state, YVEX_TUI_SEVERITY_WARNING,
+                     "Queued message restored for review after runtime identity drift");
+        return;
+    }
+    if (!generation_send(state, interactive, pending->bytes, pending->count))
+        return;
+    yvex_tui_pending_pop(state);
 }
 
 static void protocol_events(yvex_cli_interactive *interactive,
@@ -976,6 +1015,11 @@ static void protocol_events(yvex_cli_interactive *interactive,
     if (!had_engine && state->active_engine.alias[0])
         (void)yvex_cli_interactive_refresh(interactive, &state->active_engine,
                                            state->active_session);
+    if (state->submit_after_launch && state->composer.count &&
+        state->active_engine.alias[0] && !state->generation_active)
+        generation_submit(state, interactive);
+    else
+        pending_submit(interactive, state);
 }
 
 static int endpoint_absent(void)

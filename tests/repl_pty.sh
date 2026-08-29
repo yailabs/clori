@@ -137,10 +137,10 @@ assert_terminal_background()
     ! grep -F "${esc}[40m" "$transcript" >/dev/null
 }
 
-# Offline Home is a designed recovery surface owned by the bare application path.
+# Offline transcript preserves the same composer and exposes model selection.
 start_tui offline 24 100 '' nocolor
-wait_for "$root/offline.typescript" 'RUNTIME OFFLINE'
-wait_for "$root/offline.typescript" 'No startup-ready model'
+wait_for "$root/offline.typescript" 'No model loaded'
+wait_for "$root/offline.typescript" 'Ask YVEX anything'
 kill -INT "$client_pid"
 finish_tui
 assert_restored "$root/offline.typescript"
@@ -193,18 +193,19 @@ esc=$(printf '\033')
 grep -F "${esc}[?2004h" "$root/linear.typescript" >/dev/null
 grep -F "${esc}[?2004l" "$root/linear.typescript" >/dev/null
 
-# Connected Home is conversation-first while technical events remain contextual.
+# Connected mode remains one transcript; slash discovery replaces screen tabs.
 start_tui main 32 150 '' color
 wait_for "$root/main.typescript" 'deepseek4-v4-flash-dspark'
-wait_for "$root/main.typescript" 'CHAT'
-wait_for "$root/main.typescript" 'Ready to work'
+wait_for "$root/main.typescript" '>_ YVEX'
 wait_for "$root/main.typescript" 'Ask YVEX anything'
 printf 'hello\r' >&3
 wait_for "$root/main.typescript" 'hello from yvex'
-printf '\t\t\t' >&3
-wait_for "$root/main.typescript" 'RUNTIME / TELEMETRY'
+printf '/sta' >&3
+wait_for "$root/main.typescript" 'Commands'
 printf '\t' >&3
-wait_for "$root/main.typescript" 'CHAT'
+wait_for "$root/main.typescript" '/status'
+kill -INT "$client_pid"
+wait_for "$root/main.typescript" 'Composer cleared'
 printf '\033[200~hello\nworld 🌍\033[201~' >&3
 wait_for "$root/main.typescript" 'world 🌍'
 printf 'draft-resize' >&3
@@ -221,7 +222,7 @@ assert_terminal_background "$root/main.typescript"
 start_tui cancel 24 100 '' nocolor
 wait_for "$root/cancel.typescript" 'deepseek4-v4-flash-dspark'
 printf 'WAIT_PREFILL_CANCEL\r' >&3
-wait_for "$root/cancel.typescript" 'main · prefill'
+wait_for "$root/cancel.typescript" 'Esc to interrupt'
 kill -INT "$client_pid"
 wait_for "$root/host.err" 'generation.cancel main'
 wait_for "$root/cancel.typescript" 'native generation cancellation admitted'

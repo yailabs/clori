@@ -421,6 +421,27 @@ After the engine reports `loaded`, an optional second terminal may run
 views derive from the same typed event sequence. Default telemetry excludes
 prompt and answer content.
 
+## Full-screen terminal
+
+Running bare `./yvex` opens one conversation transcript and one multiline
+composer. It has no persistent page tabs: `/` discovers typed registry commands
+inside the composer, `Ctrl-O` or `/model` opens a temporary model/profile
+selector, `/runtime` refreshes inline host state, and `?` opens temporary
+shortcut help. Tab completes the selected slash command or moves between fields
+inside a selector; it never changes application screens. Enter sends or
+confirms, while Ctrl-J or Shift-Enter inserts a newline. PageUp and PageDown
+scroll the transcript, and Esc closes an overlay or requests cancellation of an
+active turn.
+
+The composer stays editable while the host or model is unavailable. Sending in
+that state opens the selector and preserves the draft. During an active turn,
+up to eight later messages may be queued against the exact session, engine
+alias, and engine generation. A disconnect, session change, unload, or generation
+change restores affected queued text for review instead of sending it to a
+different runtime identity. Runtime observations and prepared-memory facts are
+rendered inline from typed protocol records; the terminal does not parse human
+output or read backend-private state.
+
 ## Interactive console
 
 Chat opens one concise attachment view and a prompt labelled with the attached
