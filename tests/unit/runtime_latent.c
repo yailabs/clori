@@ -92,6 +92,195 @@ static yvex_runtime_latent_request latent_request(latent_fixture *fixture)
     return request;
 }
 
+typedef struct {
+    unsigned int retains, release_attempts, releases, release_failures;
+    unsigned int executions, publications, discards;
+    unsigned int cancel_on_execution, yield_on_execution;
+    int cancel, yield, pending, canonical;
+} transaction_fixture;
+
+static int transaction_resource_retain(void *opaque, yvex_error *err)
+{
+    transaction_fixture *fixture = opaque;
+    fixture->retains++;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+static int transaction_resource_release(void *opaque, yvex_error *err)
+{
+    transaction_fixture *fixture = opaque;
+    fixture->release_attempts++;
+    if (fixture->release_failures) {
+        fixture->release_failures--;
+        yvex_error_set(err, YVEX_ERR_STATE, "test.execution-transaction",
+                       "requested resource release failure");
+        return YVEX_ERR_STATE;
+    }
+    fixture->releases++;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+static int transaction_cancel_requested(void *opaque)
+{
+    return ((transaction_fixture *)opaque)->cancel;
+}
+
+static int transaction_yield_requested(void *opaque)
+{
+    return ((transaction_fixture *)opaque)->yield;
+}
+
+static int transaction_execute(
+    void *opaque, unsigned long long ordinal, yvex_error *err)
+{
+    transaction_fixture *fixture = opaque;
+    if (ordinal != fixture->executions) {
+        yvex_error_set(err, YVEX_ERR_STATE, "test.execution-transaction",
+                       "execution quantum order changed");
+        return YVEX_ERR_STATE;
+    }
+    fixture->executions++;
+    fixture->pending++;
+    if (fixture->cancel_on_execution == fixture->executions) fixture->cancel = 1;
+    if (fixture->yield_on_execution == fixture->executions) fixture->yield = 1;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+static int transaction_publish(void *opaque, yvex_error *err)
+{
+    transaction_fixture *fixture = opaque;
+    fixture->canonical = fixture->pending;
+    fixture->publications++;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+static void transaction_discard(void *opaque)
+{
+    transaction_fixture *fixture = opaque;
+    fixture->pending = -1;
+    fixture->discards++;
+}
+
+static int test_execution_transaction(void)
+{
+    static const char request_identity[] =
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    static const char resource_identity[] =
+        "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+    transaction_fixture completed = {
+        .yield_on_execution = 2u, .canonical = 1};
+    transaction_fixture cancelled = {
+        .cancel_on_execution = 2u, .canonical = 7};
+    yvex_execution_resource_lease completed_resource = {
+        resource_identity, &completed, transaction_resource_retain,
+        transaction_resource_release};
+    yvex_execution_resource_lease cancelled_resource = {
+        resource_identity, &cancelled, transaction_resource_retain,
+        transaction_resource_release};
+    yvex_execution_transaction_options completed_options = {
+        .request_identity = request_identity,
+        .quantum_count = 3ull,
+        .resource = &completed_resource,
+        .execute = transaction_execute,
+        .execution_context = &completed,
+        .cancel_requested = transaction_cancel_requested,
+        .cancel_context = &completed,
+        .yield_requested = transaction_yield_requested,
+        .yield_context = &completed,
+        .publish = transaction_publish,
+        .discard = transaction_discard,
+        .publication_context = &completed,
+    };
+    yvex_execution_transaction_options cancelled_options = {
+        .request_identity = request_identity,
+        .quantum_count = 3ull,
+        .resource = &cancelled_resource,
+        .execute = transaction_execute,
+        .execution_context = &cancelled,
+        .cancel_requested = transaction_cancel_requested,
+        .cancel_context = &cancelled,
+        .publish = transaction_publish,
+        .discard = transaction_discard,
+        .publication_context = &cancelled,
+    };
+    yvex_runtime_execution_transaction *transaction = NULL;
+    yvex_execution_transaction_summary summary;
+    yvex_execution_safe_point_action action;
+    yvex_error err;
+
+    YVEX_TEST_ASSERT(
+        yvex_runtime_execution_transaction_open(
+            &transaction, &completed_options, &err) == YVEX_OK &&
+            completed.retains == 1u && completed.releases == 0u &&
+            yvex_runtime_execution_transaction_execute_quantum(
+                transaction, &action, &err) == YVEX_OK &&
+            action == YVEX_EXECUTION_SAFE_POINT_CONTINUE,
+        "an execution transaction retains resources across its first quantum");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_execution_transaction_execute_quantum(
+            transaction, &action, &err) == YVEX_OK &&
+            action == YVEX_EXECUTION_SAFE_POINT_YIELD &&
+            yvex_runtime_execution_transaction_execute_quantum(
+                transaction, &action, &err) == YVEX_ERR_STATE &&
+            completed.executions == 2u,
+        "a yielded transaction cannot execute another quantum before resumption");
+    completed.yield = 0;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_execution_transaction_resume(transaction, &err) == YVEX_OK &&
+            yvex_runtime_execution_transaction_execute_quantum(
+                transaction, &action, &err) == YVEX_OK &&
+            action == YVEX_EXECUTION_SAFE_POINT_COMMIT &&
+            yvex_runtime_execution_transaction_commit(transaction, &err) == YVEX_OK &&
+            yvex_runtime_execution_transaction_summary_copy(
+                transaction, &summary, &err) == YVEX_OK &&
+            summary.state == YVEX_EXECUTION_TRANSACTION_COMMITTED &&
+            summary.started_quanta == 3ull && summary.completed_quanta == 3ull &&
+            summary.safe_points == 3ull && summary.yields == 1ull &&
+            summary.publications == 1ull && summary.discards == 0ull &&
+            summary.retained_resources == 1ull && completed.executions == 3u &&
+            completed.canonical == 3 &&
+            completed.publications == 1u && completed.discards == 0u &&
+            completed.releases == 0u &&
+            yvex_runtime_execution_transaction_close(&transaction, &err) == YVEX_OK &&
+            !transaction && completed.releases == 1u,
+        "resumed execution publishes once and releases its retained resource after close");
+
+    YVEX_TEST_ASSERT(
+        yvex_runtime_execution_transaction_open(
+            &transaction, &cancelled_options, &err) == YVEX_OK &&
+            yvex_runtime_execution_transaction_execute_quantum(
+                transaction, &action, &err) == YVEX_OK &&
+            action == YVEX_EXECUTION_SAFE_POINT_CONTINUE &&
+            yvex_runtime_execution_transaction_execute_quantum(
+                transaction, &action, &err) == YVEX_OK &&
+            action == YVEX_EXECUTION_SAFE_POINT_CANCEL,
+        "cancellation fixture reaches its second admitted quantum");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_execution_transaction_summary_copy(
+                transaction, &summary, &err) == YVEX_OK &&
+            summary.state == YVEX_EXECUTION_TRANSACTION_ABORTED &&
+            summary.started_quanta == 2ull && summary.completed_quanta == 2ull &&
+            summary.safe_points == 2ull && summary.cancellations == 1ull &&
+            summary.publications == 0ull && summary.discards == 1ull &&
+            cancelled.executions == 2u &&
+            cancelled.canonical == 7 && cancelled.pending == -1 &&
+            cancelled.publications == 0u && cancelled.discards == 1u &&
+            yvex_runtime_execution_transaction_commit(transaction, &err) == YVEX_ERR_STATE,
+        "safe-point cancellation discards uncommitted state without publication");
+    cancelled.release_failures = 1u;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_execution_transaction_close(&transaction, &err) == YVEX_ERR_STATE &&
+            transaction && cancelled.release_attempts == 1u && cancelled.releases == 0u &&
+            yvex_runtime_execution_transaction_close(&transaction, &err) == YVEX_OK &&
+            !transaction && cancelled.release_attempts == 2u && cancelled.releases == 1u,
+        "failed resource release preserves the transaction so cleanup can be retried");
+    return 0;
+}
+
 static int test_packed_av_layout(void)
 {
     static const char plan_identity[] =
@@ -591,6 +780,7 @@ int yvex_test_runtime_latent(void)
     yvex_runtime_latent_request observation_request = latent_request(&observation_failed);
     yvex_runtime_latent_request unobserved_request = latent_request(&unobserved_fixture);
     yvex_runtime_latent_result first, second, unobserved, refused;
+    yvex_execution_transaction_summary cancelled_transaction;
     float first_video[3], first_audio[2], second_video[3], second_audio[2];
     float unobserved_video[3], unobserved_audio[2];
     float refused_video[3], refused_audio[2];
@@ -598,6 +788,7 @@ int yvex_test_runtime_latent(void)
 
     unobserved_request.observe = NULL;
     unobserved_request.observer_context = NULL;
+    refused_request.transaction_summary = &cancelled_transaction;
     memset(refused_video, 0x5a, sizeof(refused_video));
     memset(refused_audio, 0x5a, sizeof(refused_audio));
     YVEX_TEST_ASSERT(
@@ -607,6 +798,12 @@ int yvex_test_runtime_latent(void)
                                         &second, &err) == YVEX_OK &&
             first.completed && first.completed_steps == 2ull && first.model_evaluations == 2ull &&
             first.peak_workspace_bytes == 5ull * sizeof(float) * 4ull &&
+            first.transaction.state == YVEX_EXECUTION_TRANSACTION_COMMITTED &&
+            first.transaction.started_quanta == 2ull &&
+            first.transaction.completed_quanta == 2ull &&
+            first.transaction.safe_points == 2ull &&
+            first.transaction.publications == 1ull &&
+            first.transaction.retained_resources == 0ull &&
             first_fixture.evaluations == 2 && second_fixture.evaluations == 2 &&
             first_fixture.observations == 6 && second_fixture.observations == 6 &&
             !first_fixture.observation_mismatch && !second_fixture.observation_mismatch &&
@@ -637,7 +834,12 @@ int yvex_test_runtime_latent(void)
     YVEX_TEST_ASSERT(
         yvex_runtime_latent_execute(&refused_request, refused_video, 3ull, refused_audio, 2ull,
                                     &refused, &err) == YVEX_ERR_CANCELLED &&
-            !refused.completed && ((unsigned char *)refused_video)[0] == 0x5a &&
+            !refused.completed &&
+            cancelled_transaction.state == YVEX_EXECUTION_TRANSACTION_ABORTED &&
+            cancelled_transaction.cancellations == 1ull &&
+            cancelled_transaction.started_quanta == 0ull &&
+            cancelled_transaction.completed_quanta == 0ull &&
+            ((unsigned char *)refused_video)[0] == 0x5a &&
             ((unsigned char *)refused_audio)[0] == 0x5a,
         "cancelled latent execution leaves both output domains unpublished");
     memset(refused_video, 0x5a, sizeof(refused_video));
@@ -657,6 +859,7 @@ int yvex_test_runtime_latent(void)
         yvex_runtime_latent_execute(&refused_request, refused_video, 3ull, refused_audio, 2ull,
                                     &refused, &err) == YVEX_ERR_BOUNDS && !refused.completed,
         "paired latent execution refuses an undersized workspace budget");
+    if (test_execution_transaction() != 0) return 1;
     if (test_normal_vectors() != 0 || test_packed_av_layout() != 0) return 1;
     if (test_evaluator_evidence() != 0) return 1;
     if (test_av_unpack() != 0) return 1;

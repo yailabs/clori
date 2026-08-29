@@ -4,6 +4,7 @@
 
 #include <yvex/backend.h>
 #include <yvex/internal/artifact.h>
+#include <yvex/internal/execution_transaction.h>
 #include <yvex/internal/latent.h>
 
 #ifdef __cplusplus
@@ -32,9 +33,9 @@ typedef struct yvex_component_encoded_weight {
     unsigned int qtype;
 } yvex_component_encoded_weight;
 
-/* A runtime-owned component session lends this view for one synchronous family/backend
- * callback. The receiver may execute admitted operations but cannot retain the view or
- * acquire, invalidate, or release the underlying runtime resources. */
+/* A runtime-owned component session lends this view for synchronous family/backend execution.
+ * A runtime transaction may retain the owner through the typed resource lease; backend and
+ * family consumers still cannot acquire, invalidate, or release resources directly. */
 #define YVEX_COMPONENT_EXECUTION_SCHEMA_V1 1u
 typedef int (*yvex_component_weight_view_fn)(
     void *, const char *, yvex_component_encoded_weight *, yvex_error *);
@@ -284,6 +285,8 @@ int yvex_runtime_component_session_open(
 int yvex_runtime_component_session_close(yvex_runtime_component_session **, yvex_error *);
 int yvex_runtime_component_session_borrow(
     yvex_runtime_component_session *, yvex_component_execution *, yvex_error *);
+int yvex_component_execution_resource_lease(
+    const yvex_component_execution *, yvex_execution_resource_lease *, yvex_error *);
 int yvex_component_execution_weight_view(
     const yvex_component_execution *, const char *, yvex_component_encoded_weight *,
     yvex_error *);

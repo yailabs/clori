@@ -396,6 +396,7 @@ fi
 backend_neutral_headers='include/yvex/internal/sampling.h
 include/yvex/internal/transformer.h
 include/yvex/internal/execution_batch.h
+include/yvex/internal/execution_transaction.h
 include/yvex/internal/moe.h'
 if printf '%s\n' "$backend_neutral_headers" |
     xargs rg -n -i '(cuda|sm[0-9]+|cc[0-9]+|compute_capability|cublas|tensor.?core|stream_synchronizations)'; then
@@ -406,9 +407,14 @@ if rg -n 'yvex_backend_cuda_(operation_facts|encoded_)' src/runtime src/graph; t
 fi
 if rg -n 'YVEX_ENGINE_IMPLEMENTATION_CUDA|SM121|CUBLAS|compute_capability' \
     include/yvex/internal/sampling.h include/yvex/internal/transformer.h \
-    include/yvex/internal/execution_batch.h include/yvex/internal/moe.h \
+    include/yvex/internal/execution_batch.h include/yvex/internal/execution_transaction.h \
+    include/yvex/internal/moe.h \
     src/graph/transformer.c src/graph/worklist.c; then
     fail "generic execution admission selects one backend implementation"
+fi
+if rg -n -i '(deepseek|minimax|sigma|modality|trajectory|first.?anchor|last.?anchor)' \
+    include/yvex/internal/execution_transaction.h src/runtime/transaction.c; then
+    fail "generic execution transaction contains family trajectory semantics"
 fi
 if rg -n 'dedicated_(cpu|cuda)_compute_available' \
     src/graph/transformer.c src/graph/moe.c src/graph/output_head.c; then

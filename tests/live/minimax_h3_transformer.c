@@ -789,8 +789,14 @@ static int execute_latent(const char *path, const char *conditioning_path,
         rc = graph->t2va_latent_execute(
             &plan, &context, 42ull, (192ull + 512ull) * sizeof(float) * 4ull,
             video, 192ull, audio, 512ull, &latent_result, &omni_result, &err);
-    if (rc == YVEX_OK && (!latent_result.completed || !omni_result.complete ||
-                          omni_result.model_evaluations != steps)) {
+    if (rc == YVEX_OK &&
+        (!latent_result.completed || !omni_result.complete ||
+         omni_result.model_evaluations != steps ||
+         latent_result.transaction.state != YVEX_EXECUTION_TRANSACTION_COMMITTED ||
+         latent_result.transaction.started_quanta != steps ||
+         latent_result.transaction.completed_quanta != steps ||
+         latent_result.transaction.safe_points != steps ||
+         latent_result.transaction.retained_resources != 1ull)) {
         yvex_error_set(&err, YVEX_ERR_STATE, "minimax-h3.latent-proof",
                        "the exact resident latent iteration did not complete");
         rc = YVEX_ERR_STATE;
@@ -814,12 +820,18 @@ static int execute_latent(const char *path, const char *conditioning_path,
     }
     if (rc == YVEX_OK)
         printf("t2va_latent=accepted steps=%u blocks=%llu packed_rows=%llu\n"
-               "kernel_launches=%llu peak_device_bytes=%llu\nplan_identity=%s\n"
+               "kernel_launches=%llu peak_device_bytes=%llu\n"
+               "execution_quanta=%llu safe_points=%llu transaction_setup_ns=%llu "
+               "safe_point_ns=%llu\nplan_identity=%s\n"
                "layout_identity=%s\nevaluator_identity=%s\nlatent_identity=%s\n"
                "transformer_chain_identity=%s\nresidency_identity=%s\n"
                "vae_input_identity=%s\n",
                steps, block_count, plan.packed_rows, omni_result.kernel_launches,
-               omni_result.peak_device_bytes, plan.identity, layout_result.layout_identity,
+               omni_result.peak_device_bytes, latent_result.transaction.completed_quanta,
+               latent_result.transaction.safe_points,
+               latent_result.transaction.setup_nanoseconds,
+               latent_result.transaction.safe_point_nanoseconds,
+               plan.identity, layout_result.layout_identity,
                omni_result.evaluator_identity, latent_result.execution_identity,
                omni_result.execution_chain_identity, omni_result.residency_identity,
                unpack_result.input_identity);
@@ -1137,6 +1149,15 @@ static int execute_latent_fixture(
             &plan, &context, seed, workspace_bytes, fixture.video_output, video_values,
             fixture.audio_output, audio_values, &latent_result, &omni_result, &err);
     if (rc == YVEX_OK &&
+        (latent_result.transaction.state != YVEX_EXECUTION_TRANSACTION_COMMITTED ||
+         latent_result.transaction.completed_quanta != steps ||
+         latent_result.transaction.safe_points != steps ||
+         latent_result.transaction.retained_resources != 1ull)) {
+        yvex_error_set(&err, YVEX_ERR_STATE, "minimax-h3.latent-request.transaction",
+                       "the iterative request did not retain one admitted execution resource");
+        rc = YVEX_ERR_STATE;
+    }
+    if (rc == YVEX_OK &&
         (!file_write(video_output_path, fixture.video_output, video_values) ||
          !file_write(audio_output_path, fixture.audio_output, audio_values)))
         rc = YVEX_ERR_IO;
@@ -1153,10 +1174,16 @@ static int execute_latent_fixture(
     }
     if (rc == YVEX_OK)
         printf("t2va_latent_request=accepted rows=%llu blocks=%llu steps=%u seed=%llu\n"
-               "kernel_launches=%llu peak_device_bytes=%llu\nplan_identity=%s\n"
+               "kernel_launches=%llu peak_device_bytes=%llu\n"
+               "execution_quanta=%llu safe_points=%llu transaction_setup_ns=%llu "
+               "safe_point_ns=%llu\nplan_identity=%s\n"
                "layout_identity=%s\nlatent_identity=%s\ntransformer_chain_identity=%s\n",
                plan.packed_rows, block_count, steps, seed, omni_result.kernel_launches,
-               omni_result.peak_device_bytes, plan.identity, layout_result.layout_identity,
+               omni_result.peak_device_bytes, latent_result.transaction.completed_quanta,
+               latent_result.transaction.safe_points,
+               latent_result.transaction.setup_nanoseconds,
+               latent_result.transaction.safe_point_nanoseconds,
+               plan.identity, layout_result.layout_identity,
                latent_result.execution_identity, omni_result.execution_chain_identity);
     else
         fprintf(stderr, "t2va_latent_request=refused where=%s message=%s\n",

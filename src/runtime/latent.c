@@ -1654,6 +1654,92 @@ int yvex_runtime_av_layout_build(
     return rc;
 }
 
+typedef struct {
+    yvex_runtime_latent_result *destination, *staged;
+    float *video_output, *audio_output;
+    const float *state;
+    unsigned long long video_values, audio_values;
+} latent_transaction_publication;
+
+typedef struct {
+    const yvex_runtime_latent_request *request;
+    yvex_runtime_latent_result *staged;
+    float *state, *next, *velocity;
+} latent_transaction_execution;
+
+static int latent_transaction_publish(void *opaque, yvex_error *err)
+{
+    latent_transaction_publication *publication = opaque;
+    if (!publication || !publication->destination || !publication->staged ||
+        !publication->video_output || !publication->audio_output || !publication->state)
+        return latent_refuse(err, YVEX_ERR_STATE,
+                             "latent transaction publication state is incomplete");
+    memcpy(publication->video_output, publication->state,
+           (size_t)(publication->video_values * sizeof(float)));
+    memcpy(publication->audio_output, publication->state + publication->video_values,
+           (size_t)(publication->audio_values * sizeof(float)));
+    publication->staged->completed = 1;
+    *publication->destination = *publication->staged;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+static void latent_transaction_discard(void *opaque)
+{
+    latent_transaction_publication *publication = opaque;
+    if (publication && publication->destination)
+        memset(publication->destination, 0, sizeof(*publication->destination));
+}
+
+static int latent_transaction_execute_quantum(
+    void *opaque, unsigned long long step, yvex_error *err)
+{
+    latent_transaction_execution *execution = opaque;
+    const yvex_runtime_latent_request *request;
+    float video_timestep, audio_timestep, *swap;
+    int rc;
+    if (!execution || !execution->request || !execution->staged ||
+        !execution->state || !execution->next || !execution->velocity)
+        return latent_refuse(err, YVEX_ERR_STATE,
+                             "latent transaction execution state is incomplete");
+    request = execution->request;
+    if (step >= request->step_count)
+        return latent_refuse(err, YVEX_ERR_BOUNDS,
+                             "latent transaction quantum exceeds its family schedule");
+    video_timestep = 1.0f - request->video_sigmas[step];
+    audio_timestep = 1.0f - request->audio_sigmas[step];
+    rc = request->evaluate(
+        request->execution_context, execution->state, request->video_values,
+        execution->state + request->video_values, request->audio_values,
+        video_timestep, audio_timestep, execution->velocity,
+        execution->velocity + request->video_values, err);
+    if (rc == YVEX_OK)
+        rc = latent_observe(request, YVEX_RUNTIME_LATENT_OBSERVATION_EVALUATED, step,
+                            execution->state, execution->velocity,
+                            video_timestep, audio_timestep, err);
+    if (rc == YVEX_OK)
+        rc = request->advance(
+            execution->next, execution->state, execution->velocity,
+            request->video_values, video_timestep,
+            request->video_sigmas[step], request->video_sigmas[step + 1ull], err);
+    if (rc == YVEX_OK)
+        rc = request->advance(
+            execution->next + request->video_values,
+            execution->state + request->video_values,
+            execution->velocity + request->video_values,
+            request->audio_values, audio_timestep,
+            request->audio_sigmas[step], request->audio_sigmas[step + 1ull], err);
+    if (rc != YVEX_OK) return rc;
+    swap = execution->state;
+    execution->state = execution->next;
+    execution->next = swap;
+    execution->staged->completed_steps++;
+    return latent_observe(
+        request, YVEX_RUNTIME_LATENT_OBSERVATION_ADVANCED,
+        execution->staged->completed_steps, execution->state, NULL,
+        video_timestep, audio_timestep, err);
+}
+
 int yvex_runtime_latent_execute(
     const yvex_runtime_latent_request *request,
     float *video_output, unsigned long long video_capacity,
@@ -1661,10 +1747,19 @@ int yvex_runtime_latent_execute(
     yvex_runtime_latent_result *result, yvex_error *err)
 {
     yvex_runtime_latent_result staged = {0};
-    float *storage = NULL, *state, *next, *velocity, *swap;
+    yvex_runtime_execution_transaction *transaction = NULL;
+    yvex_execution_transaction_options transaction_options = {0};
+    yvex_execution_safe_point_action safe_point = 0;
+    yvex_execution_transaction_summary transaction_summary = {0};
+    latent_transaction_publication publication = {0};
+    latent_transaction_execution execution = {0};
+    float *storage = NULL;
     unsigned long long total = 0ull, bytes = 0ull, storage_bytes, step;
-    int rc;
+    yvex_error primary, cleanup;
+    int rc, cleanup_rc;
     if (result) memset(result, 0, sizeof(*result));
+    if (request && request->transaction_summary)
+        memset(request->transaction_summary, 0, sizeof(*request->transaction_summary));
     if (!video_output || !audio_output || !result)
         return latent_refuse(err, YVEX_ERR_INVALID_ARG,
                              "latent outputs and result storage are required");
@@ -1673,65 +1768,58 @@ int yvex_runtime_latent_execute(
     if (!yvex_core_u64_mul(bytes, 3ull, &storage_bytes) || storage_bytes > SIZE_MAX)
         return latent_refuse(err, YVEX_ERR_BOUNDS, "latent workspace extent overflowed");
     storage = yvex_core_malloc((size_t)storage_bytes);
-    if (!storage) return latent_refuse(err, YVEX_ERR_NOMEM,
-                                       "latent workspace allocation failed");
-    state = storage;
-    next = state + total;
-    velocity = next + total;
-    rc = yvex_runtime_latent_normal_f32_from_offset(
-        state, total, total, request->initialization_skip_values,
-        request->seed, bytes, &staged.initialization, err);
+    if (!storage)
+        return latent_refuse(err, YVEX_ERR_NOMEM, "latent workspace allocation failed");
+    execution = (latent_transaction_execution){
+        request, &staged, storage, storage + total, storage + total * 2ull};
+    publication = (latent_transaction_publication){
+        result, &staged, video_output, audio_output, NULL,
+        request->video_values, request->audio_values};
+    transaction_options.request_identity = request->plan_identity;
+    transaction_options.quantum_count = request->step_count;
+    transaction_options.resource = request->execution_resource;
+    transaction_options.execute = latent_transaction_execute_quantum;
+    transaction_options.execution_context = &execution;
+    transaction_options.cancel_requested = request->cancel_requested;
+    transaction_options.cancel_context = request->cancel_context;
+    transaction_options.publish = latent_transaction_publish;
+    transaction_options.discard = latent_transaction_discard;
+    transaction_options.publication_context = &publication;
+    rc = yvex_runtime_execution_transaction_open(&transaction, &transaction_options, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_latent_normal_f32_from_offset(
+            execution.state, total, total, request->initialization_skip_values, request->seed,
+            bytes, &staged.initialization, err);
     if (rc == YVEX_OK &&
-        !latent_state_identity("yvex.runtime.latent.initial.v1", state, total,
+        !latent_state_identity("yvex.runtime.latent.initial.v1", execution.state, total,
                                staged.initial_state_identity))
         rc = latent_refuse(err, YVEX_ERR_STATE, "initial latent identity failed");
     if (rc == YVEX_OK)
         rc = latent_observe(request, YVEX_RUNTIME_LATENT_OBSERVATION_INITIAL, 0ull,
-                            state, NULL, 0.0f, 0.0f, err);
+                            execution.state, NULL, 0.0f, 0.0f, err);
     for (step = 0ull; rc == YVEX_OK && step < request->step_count; ++step) {
-        float video_timestep = 1.0f - request->video_sigmas[step];
-        float audio_timestep = 1.0f - request->audio_sigmas[step];
-        if (request->cancel_requested && request->cancel_requested(request->cancel_context)) {
-            rc = latent_refuse(err, YVEX_ERR_CANCELLED, "latent iteration was cancelled");
-            break;
-        }
-        rc = request->evaluate(
-            request->execution_context, state, request->video_values,
-            state + request->video_values, request->audio_values,
-            video_timestep, audio_timestep, velocity,
-            velocity + request->video_values, err);
-        if (rc == YVEX_OK)
-            rc = latent_observe(request, YVEX_RUNTIME_LATENT_OBSERVATION_EVALUATED, step,
-                                state, velocity, video_timestep, audio_timestep, err);
-        if (rc == YVEX_OK)
-            rc = request->advance(
-                next, state, velocity,
-                request->video_values, video_timestep, request->video_sigmas[step],
-                request->video_sigmas[step + 1ull], err);
-        if (rc == YVEX_OK)
-            rc = request->advance(
-                next + request->video_values,
-                state + request->video_values, velocity + request->video_values,
-                request->audio_values, audio_timestep, request->audio_sigmas[step],
-                request->audio_sigmas[step + 1ull], err);
-        if (rc == YVEX_OK) {
-            swap = state; state = next; next = swap; staged.completed_steps++;
-            rc = latent_observe(request, YVEX_RUNTIME_LATENT_OBSERVATION_ADVANCED,
-                                staged.completed_steps, state, NULL,
-                                video_timestep, audio_timestep, err);
-        }
+        rc = yvex_runtime_execution_transaction_execute_quantum(
+            transaction, &safe_point, err);
+        if (rc == YVEX_OK && safe_point == YVEX_EXECUTION_SAFE_POINT_CANCEL)
+            rc = latent_refuse(err, YVEX_ERR_CANCELLED,
+                               "latent iteration was cancelled at a safe point");
+        if (rc == YVEX_OK && safe_point == YVEX_EXECUTION_SAFE_POINT_YIELD)
+            rc = yvex_runtime_execution_transaction_resume(transaction, err);
+        if (rc == YVEX_OK &&
+            ((step + 1ull == request->step_count &&
+              safe_point != YVEX_EXECUTION_SAFE_POINT_COMMIT) ||
+             (step + 1ull < request->step_count &&
+              safe_point != YVEX_EXECUTION_SAFE_POINT_CONTINUE)))
+            rc = latent_refuse(err, YVEX_ERR_STATE,
+                               "latent safe-point action does not match execution progress");
     }
-    if (rc == YVEX_OK && request->cancel_requested &&
-        request->cancel_requested(request->cancel_context))
-        rc = latent_refuse(err, YVEX_ERR_CANCELLED,
-                           "latent publication was cancelled");
     if (rc == YVEX_OK &&
-        !latent_state_identity("yvex.runtime.latent.final.v1", state, total,
+        !latent_state_identity("yvex.runtime.latent.final.v1", execution.state, total,
                                staged.final_state_identity))
         rc = latent_refuse(err, YVEX_ERR_STATE, "final latent identity failed");
     if (rc == YVEX_OK)
         rc = latent_observe(request, YVEX_RUNTIME_LATENT_OBSERVATION_FINAL,
-                            staged.completed_steps, state, NULL, 0.0f, 0.0f, err);
+                            staged.completed_steps, execution.state, NULL, 0.0f, 0.0f, err);
     staged.schema_version = YVEX_RUNTIME_LATENT_SCHEMA_V1;
     staged.video_values = request->video_values;
     staged.audio_values = request->audio_values;
@@ -1739,12 +1827,31 @@ int yvex_runtime_latent_execute(
     staged.peak_workspace_bytes = bytes * 4ull;
     if (rc == YVEX_OK && !latent_execution_identity(request, &staged, staged.execution_identity))
         rc = latent_refuse(err, YVEX_ERR_STATE, "latent execution identity failed");
-    if (rc == YVEX_OK) {
-        memcpy(video_output, state, (size_t)(request->video_values * sizeof(float)));
-        memcpy(audio_output, state + request->video_values,
-               (size_t)(request->audio_values * sizeof(float)));
-        staged.completed = 1;
-        *result = staged;
+    publication.state = execution.state;
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_execution_transaction_commit(transaction, err);
+    if (rc != YVEX_OK && transaction) {
+        primary = err ? *err : (yvex_error){0};
+        yvex_error_clear(&cleanup);
+        (void)yvex_runtime_execution_transaction_abort(transaction, &cleanup);
+        if (err) *err = primary;
+    }
+    if (transaction &&
+        yvex_runtime_execution_transaction_summary_copy(
+            transaction, &transaction_summary, &cleanup) == YVEX_OK) {
+        if (request->transaction_summary)
+            *request->transaction_summary = transaction_summary;
+        if (rc == YVEX_OK) result->transaction = transaction_summary;
+    }
+    if (rc != YVEX_OK) primary = err ? *err : (yvex_error){0};
+    yvex_error_clear(&cleanup);
+    cleanup_rc = yvex_runtime_execution_transaction_close(&transaction, &cleanup);
+    if (rc != YVEX_OK) {
+        if (err) *err = primary;
+    } else if (cleanup_rc != YVEX_OK) {
+        rc = cleanup_rc;
+        if (err) *err = cleanup;
+    } else {
         yvex_error_clear(err);
     }
     yvex_core_free(storage);

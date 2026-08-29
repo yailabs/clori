@@ -2,6 +2,7 @@
 #include <yvex/internal/component.h>
 
 #include <math.h>
+#include <limits.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,7 +20,7 @@ struct yvex_runtime_component_session {
     yvex_runtime_residency *residency;
     yvex_backend *backend;
     yvex_device_tensor *workspace;
-    unsigned long long workspace_bytes;
+    unsigned long long workspace_bytes, execution_transaction_leases;
     yvex_runtime_residency_summary summary;
 };
 
@@ -40,6 +41,11 @@ int yvex_runtime_component_session_close(yvex_runtime_component_session **sessio
         return YVEX_OK;
     }
     owned = *session;
+    if (owned->execution_transaction_leases) {
+        yvex_error_set(err, YVEX_ERR_STATE, "runtime.component-session",
+                       "an active execution transaction still retains component resources");
+        return YVEX_ERR_STATE;
+    }
     *session = NULL;
     if (owned->workspace) {
         yvex_backend_workspace_detach(owned->backend);
@@ -210,6 +216,34 @@ static int component_session_workspace_reserve(
     return component_session_prepare_workspace(context, bytes, err);
 }
 
+static int component_session_transaction_retain(void *context, yvex_error *err)
+{
+    yvex_runtime_component_session *session = context;
+    if (!session || !session->materialization || !session->residency ||
+        !session->summary.sealed || session->summary.invalidated ||
+        session->execution_transaction_leases == ULLONG_MAX) {
+        yvex_error_set(err, YVEX_ERR_STATE, "runtime.component-session.transaction",
+                       "sealed component resources are required for execution retention");
+        return YVEX_ERR_STATE;
+    }
+    session->execution_transaction_leases++;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+static int component_session_transaction_release(void *context, yvex_error *err)
+{
+    yvex_runtime_component_session *session = context;
+    if (!session || !session->execution_transaction_leases) {
+        yvex_error_set(err, YVEX_ERR_STATE, "runtime.component-session.transaction",
+                       "component execution retention is not active");
+        return YVEX_ERR_STATE;
+    }
+    session->execution_transaction_leases--;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
 int yvex_runtime_component_session_borrow(
     yvex_runtime_component_session *session, yvex_component_execution *execution,
     yvex_error *err)
@@ -243,6 +277,24 @@ static int component_execution_valid(const yvex_component_execution *execution)
            execution->materialization && execution->owner_context &&
            execution->weight_view && execution->workspace_reserve &&
            yvex_sha256_hex_valid(execution->residency_identity);
+}
+
+int yvex_component_execution_resource_lease(
+    const yvex_component_execution *execution, yvex_execution_resource_lease *lease,
+    yvex_error *err)
+{
+    if (lease) memset(lease, 0, sizeof(*lease));
+    if (!component_execution_valid(execution) || !lease) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "component.execution.resource-lease",
+                       "one runtime-owned component execution is required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    lease->identity = execution->residency_identity;
+    lease->context = execution->owner_context;
+    lease->retain = component_session_transaction_retain;
+    lease->release = component_session_transaction_release;
+    yvex_error_clear(err);
+    return YVEX_OK;
 }
 
 int yvex_component_execution_weight_view(

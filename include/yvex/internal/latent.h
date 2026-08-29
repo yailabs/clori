@@ -4,6 +4,7 @@
 
 #include <yvex/core.h>
 #include <yvex/internal/core.h>
+#include <yvex/internal/execution_transaction.h>
 #include <yvex/internal/sampling.h>
 
 #ifdef __cplusplus
@@ -104,6 +105,8 @@ typedef struct yvex_runtime_latent_request {
     void *cancel_context;
     yvex_runtime_latent_observe_fn observe;
     void *observer_context;
+    const yvex_execution_resource_lease *execution_resource;
+    yvex_execution_transaction_summary *transaction_summary;
 } yvex_runtime_latent_request;
 
 typedef struct yvex_runtime_latent_result {
@@ -115,6 +118,7 @@ typedef struct yvex_runtime_latent_result {
     char initial_state_identity[YVEX_SHA256_HEX_CAP];
     char final_state_identity[YVEX_SHA256_HEX_CAP];
     char execution_identity[YVEX_SHA256_HEX_CAP];
+    yvex_execution_transaction_summary transaction;
 } yvex_runtime_latent_result;
 
 typedef struct yvex_runtime_latent_evaluator_result {

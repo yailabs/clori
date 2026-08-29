@@ -1628,6 +1628,7 @@ static int t2va_latent_execute(const yvex_minimax_h3_t2va_plan *plan,
     yvex_minimax_h3_t2va_omni_result *omni_result, yvex_error *err)
 {
     yvex_runtime_latent_request request = {0}; t2va_omni_execution execution = {0};
+    yvex_execution_resource_lease execution_resource = {0};
     unsigned long long conditioning_values;
     char condition_identity[YVEX_SHA256_HEX_CAP] = {0};
     int rc;
@@ -1680,12 +1681,16 @@ static int t2va_latent_execute(const yvex_minimax_h3_t2va_plan *plan,
     if (rc == YVEX_OK) rc = yvex_runtime_latent_evaluator_begin(
             &execution.evidence, "yvex.minimax-h3.t2va.transformer-chain.v1",
             execution.evidence.staged.evaluator_identity, err);
+    if (rc == YVEX_OK)
+        rc = yvex_component_execution_resource_lease(
+            context->transformer_component, &execution_resource, err);
     request.seed = seed; request.maximum_workspace_bytes = maximum_workspace_bytes;
     request.initialization_skip_values = execution.condition_values;
     request.evaluator_identity = execution.evidence.staged.evaluator_identity;
     request.evaluate = t2va_omni_evaluate; request.execution_context = &execution;
     request.cancel_requested = context->cancelled; request.cancel_context = context->cancellation_context;
     request.observe = context->observe; request.observer_context = context->observer_context;
+    request.execution_resource = &execution_resource;
     if (rc == YVEX_OK) rc = yvex_runtime_av_latent_execute(plan, &request, video, video_capacity,
                                              audio, audio_capacity, latent_result, err);
     if (rc == YVEX_OK)
