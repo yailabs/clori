@@ -808,7 +808,7 @@ static int quant_cuda_f32_gemm(yvex_backend *backend)
 
 static int quant_cuda_f32_linear_policy(yvex_backend *backend)
 {
-    enum { ROWS = 96, WIDTH = 5376, INPUT_ROWS = 466 };
+    enum { ROWS = 32, WIDTH = 5376, INPUT_ROWS = 21793 };
     const size_t weight_bytes = (size_t)ROWS * WIDTH * sizeof(float);
     const size_t bias_bytes = ROWS * sizeof(float);
     const size_t input_bytes = (size_t)INPUT_ROWS * WIDTH * sizeof(float);
@@ -820,22 +820,23 @@ static int quant_cuda_f32_linear_policy(yvex_backend *backend)
     unsigned char *mapped = NULL;
     float *inputs = (float *)calloc(1u, input_bytes);
     float *actual = (float *)malloc(output_bytes);
-    unsigned long long row, output_row;
+    float *repeated = (float *)malloc(output_bytes);
+    unsigned long long row, output_row, first_launches;
     yvex_error err;
     int rc;
 
-    YVEX_TEST_ASSERT(inputs && actual, "F32 linear policy fixtures allocate");
+    YVEX_TEST_ASSERT(inputs && actual && repeated, "F32 linear policy fixtures allocate");
     policy = (yvex_transformer_linear_physical_plan){
         .schema_version = YVEX_TRANSFORMER_LINEAR_PHYSICAL_SCHEMA_V2,
         .semantic_domain = "cuda-quant-qtype-fixture",
-        .operation = YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_VIDEO_OUTPUT,
+        .operation = YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_AUDIO_OUTPUT,
         .numeric_contract = YVEX_TRANSFORMER_LINEAR_NUMERIC_SOURCE_EXACT,
         .source_dtype = YVEX_DTYPE_F32,
         .implementation = YVEX_TRANSFORMER_LINEAR_IMPLEMENTATION_CUBLAS_LT_F32_BIAS,
-        .reduction = YVEX_TRANSFORMER_LINEAR_REDUCTION_INPLACE,
-        .stages = YVEX_TRANSFORMER_LINEAR_STAGES_DEFAULT,
+        .reduction = YVEX_TRANSFORMER_LINEAR_REDUCTION_COMPUTE_TYPE,
+        .stages = YVEX_TRANSFORMER_LINEAR_STAGES_8X5,
         .backend = YVEX_BACKEND_KIND_CUDA,
-        .algorithm_id = 10u, .tile_rows = 32u, .tile_columns = 32u, .split_k = 10u,
+        .algorithm_id = 20u, .tile_rows = 128u, .tile_columns = 32u, .split_k = 3u,
         .compute_capability_major = 12u, .compute_capability_minor = 1u,
         .input_width = WIDTH, .output_width = ROWS,
         .workspace_bytes = 1024ull * 1024ull,
@@ -880,12 +881,18 @@ static int quant_cuda_f32_linear_policy(yvex_backend *backend)
     rc = yvex_backend_cuda_encoded_linear_f32(
         backend, mapped, weight_bytes, mapped + weight_bytes, bias_bytes,
         ROWS, WIDTH, INPUT_ROWS, input, output, &policy, &facts, &err);
-    YVEX_TEST_ASSERT(rc == YVEX_OK && facts.kernel_launches == 1ull &&
-                         facts.tensor_core_launches == 1ull &&
+    if (rc != YVEX_OK)
+        fprintf(stderr, "released F32 linear rc=%d launches=%llu error=%s\n",
+                rc, facts.kernel_launches, yvex_error_message(&err));
+    YVEX_TEST_ASSERT(rc == YVEX_OK && facts.kernel_launches > 1ull &&
+                         facts.tensor_core_launches == facts.kernel_launches &&
                          facts.temporary_bytes == weight_bytes + bias_bytes + 1024u * 1024u &&
                          yvex_backend_tensor_read(
                              backend, output, actual, output_bytes, &err) == YVEX_OK,
-                     "F32 linear policy executes one bounded split reduction");
+                     "F32 linear policy chunks the released packed-row extent");
+    first_launches = facts.kernel_launches;
+    printf("cuda F32 released audio output rows=%u launches=%llu\n",
+           INPUT_ROWS, first_launches);
     for (row = 0ull; row < INPUT_ROWS; ++row)
         for (output_row = 0ull; output_row < ROWS; ++output_row) {
             float expected = inputs[row * WIDTH] * (float)(output_row + 1ull) / 128.0f +
@@ -893,6 +900,15 @@ static int quant_cuda_f32_linear_policy(yvex_backend *backend)
             YVEX_TEST_ASSERT(actual[row * ROWS + output_row] == expected,
                              "F32 linear policy matches its exact sparse reference");
         }
+    YVEX_TEST_ASSERT(
+        yvex_backend_cuda_encoded_linear_f32(
+            backend, mapped, weight_bytes, mapped + weight_bytes, bias_bytes,
+            ROWS, WIDTH, INPUT_ROWS, input, output, &policy, &facts, &err) == YVEX_OK &&
+            facts.kernel_launches == first_launches &&
+            yvex_backend_tensor_read(
+                backend, output, repeated, output_bytes, &err) == YVEX_OK &&
+            memcmp(actual, repeated, output_bytes) == 0,
+        "F32 released packed-row chunks repeat byte exactly");
     changed = policy;
     changed.tile_rows = 64u;
     YVEX_TEST_ASSERT(yvex_transformer_linear_physical_seal(&changed, &err) == YVEX_OK &&
@@ -922,6 +938,7 @@ static int quant_cuda_f32_linear_policy(yvex_backend *backend)
                          yvex_backend_tensor_release(backend, &input, &err) == YVEX_OK &&
                          yvex_backend_tensor_release(backend, &resident, &err) == YVEX_OK,
                      "F32 linear policy releases all CUDA ownership");
+    free(repeated);
     free(actual);
     free(inputs);
     return 0;
