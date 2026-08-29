@@ -2089,6 +2089,7 @@ static int quant_cuda_gqa_blas(yvex_backend *backend)
     yvex_backend_cuda_operation_facts facts;
     yvex_error err;
     unsigned long long workspace_bytes = 0ull, source_workspace_bytes = 0ull;
+    unsigned long long released_workspace_bytes = 0ull;
     unsigned long long aligned_workspace_bytes = 0ull;
     unsigned long long small_workspace_bytes = 0ull;
     unsigned int index;
@@ -2128,6 +2129,11 @@ static int quant_cuda_gqa_blas(yvex_backend *backend)
                 21741ull, 56ull, 56ull, HEAD_DIM, &source_workspace_bytes, &err) == YVEX_OK &&
             source_workspace_bytes == 3116789764ull &&
             source_workspace_bytes < 4ull * 1024ull * 1024ull * 1024ull &&
+            operations->gqa_workspace_required(
+                106238ull, 56ull, 56ull, HEAD_DIM,
+                &released_workspace_bytes, &err) == YVEX_OK &&
+            released_workspace_bytes == 15230279684ull &&
+            released_workspace_bytes < 16ull * 1024ull * 1024ull * 1024ull &&
             operations->gqa_workspace_required(
                 129ull, 1ull, 1ull, 33ull, &aligned_workspace_bytes, &err) == YVEX_OK &&
             aligned_workspace_bytes == 134660ull &&

@@ -1107,8 +1107,10 @@ static int test_media_family_profile(void)
                          profile.released_width == 1344ull &&
                          profile.released_height == 768ull &&
                          profile.released_sigma_grid_points == 50ull &&
+                         profile.request_template.maximum_device_bytes == 64ull << 30u &&
+                         profile.request_template.maximum_workspace_bytes == 16ull << 30u &&
                          profile.request_template.maximum_packed_rows == 106238ull,
-                     "released FL2VA canvas, trajectory, and packed envelope");
+                     "released FL2VA canvas, trajectory, row, and memory envelope");
     rc = yvex_runtime_media_execution_preset_build(&profile, &preset, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && preset.complete &&
                          !strcmp(preset.name, "interactive-preview-v1") &&

@@ -860,7 +860,7 @@ int yvex_model_minimax_h3_media_target_profile(yvex_media_target_profile *out, y
         .fps_numerator = 24ull, .fps_denominator = 1ull,
         .audio_sample_rate = architecture.audio_vae.sample_rate, .seed = 42ull,
         .keyframe_encode_seed = 42ull,
-        .maximum_host_bytes = 96ull << 30u, .maximum_device_bytes = 48ull << 30u,
+        .maximum_host_bytes = 96ull << 30u, .maximum_device_bytes = 64ull << 30u,
         .maximum_workspace_bytes = 16ull << 30u, .maximum_file_bytes = 2ull << 30u,
         .video_temporal_ratio = architecture.video_vae.temporal_ratio,
         .video_clip_length = architecture.video_vae.clip_length,
