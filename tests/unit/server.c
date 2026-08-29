@@ -722,7 +722,7 @@ static int media_options(yvex_server_media_options *options, const char *output_
             &err) != YVEX_OK)
         return 0;
     memset(options, 0, sizeof(*options));
-    options->schema_version = YVEX_SERVER_MEDIA_SCHEMA_V1;
+    options->schema_version = YVEX_SERVER_MEDIA_SCHEMA_V2;
     options->output_root = output_root;
     options->artifact_reopen_cache_root = output_root;
     options->request_template.schema_version = YVEX_RUNTIME_AV_GENERATION_SCHEMA_V2;
@@ -790,8 +790,20 @@ static int media_options(yvex_server_media_options *options, const char *output_
     options->maximum_frames = 345ull;
     options->minimum_inference_steps = 2ull;
     options->maximum_inference_steps = 64ull;
-    options->canvas_multiple = 32ull;
-    options->maximum_canvas_pixels = 768ull * 768ull;
+    options->released_sigma_grid_points = target.released_sigma_grid_points;
+    options->default_seed = target.seed;
+    options->canvas_multiple = target.canvas_multiple;
+    options->canvas_short_edge = target.canvas_short_edge;
+    options->minimum_canvas_pixels = target.minimum_canvas_pixels;
+    options->maximum_canvas_pixels = target.maximum_canvas_pixels;
+    options->released_width = target.released_width;
+    options->released_height = target.released_height;
+    options->minimum_duration_milliseconds = target.minimum_duration_milliseconds;
+    options->maximum_duration_milliseconds = target.maximum_duration_milliseconds;
+    options->minimum_aspect_numerator = target.minimum_aspect_numerator;
+    options->minimum_aspect_denominator = target.minimum_aspect_denominator;
+    options->maximum_aspect_numerator = target.maximum_aspect_numerator;
+    options->maximum_aspect_denominator = target.maximum_aspect_denominator;
     if (yvex_runtime_media_execution_preset_build(
             &host, &options->execution_preset, &err) != YVEX_OK)
         return 0;
@@ -1051,7 +1063,8 @@ static int test_media_engine_lifecycle(void)
 static int test_media_family_profile(void)
 {
     const yvex_component_variant_adapter *adapter;
-    yvex_runtime_media_execution_preset preset, mutated;
+    yvex_runtime_media_execution_preset preset, released, mutated;
+    yvex_runtime_media_execution_request request = {0};
     yvex_media_target_profile target;
     yvex_runtime_media_host_profile profile, repeated;
     yvex_error err;
@@ -1066,7 +1079,7 @@ static int test_media_family_profile(void)
         &profile, &target, adapter->media_execution, "/models/minimax-h3/revision",
         "/outputs/minimax-h3", &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "family catalog builds media host profile");
-    YVEX_TEST_ASSERT(profile.schema_version == YVEX_RUNTIME_MEDIA_HOST_SCHEMA_V1,
+    YVEX_TEST_ASSERT(profile.schema_version == YVEX_RUNTIME_MEDIA_HOST_SCHEMA_V2,
                      "media host profile schema");
     YVEX_TEST_ASSERT_STREQ(profile.request_template.target,
                            "minimax-h3-fl2va", "media host target");
@@ -1088,6 +1101,14 @@ static int test_media_family_profile(void)
     YVEX_TEST_ASSERT(strstr(profile.transformer_artifact,
                             "physical-v4/transformer.gguf") != NULL,
                      "media host transformer artifact path");
+    YVEX_TEST_ASSERT(profile.canvas_short_edge == 768ull &&
+                         profile.minimum_canvas_pixels == 768ull * 768ull &&
+                         profile.maximum_canvas_pixels == 768ull * 1344ull &&
+                         profile.released_width == 1344ull &&
+                         profile.released_height == 768ull &&
+                         profile.released_sigma_grid_points == 50ull &&
+                         profile.request_template.maximum_packed_rows == 106238ull,
+                     "released FL2VA canvas, trajectory, and packed envelope");
     rc = yvex_runtime_media_execution_preset_build(&profile, &preset, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && preset.complete &&
                          !strcmp(preset.name, "interactive-preview-v1") &&
@@ -1097,6 +1118,46 @@ static int test_media_family_profile(void)
                          preset.frames == 124ull && preset.sigma_grid_points == 2ull &&
                          preset.seed == 42ull && yvex_sha256_hex_valid(preset.identity),
                      "hosted media preset is one explicit identity-bearing YVEX policy");
+    request.schema_version = YVEX_RUNTIME_MEDIA_EXECUTION_SCHEMA_V1;
+    request.kind = YVEX_RUNTIME_MEDIA_EXECUTION_DEFAULT;
+    rc = yvex_runtime_media_execution_resolve(&profile, &request, &released, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && released.complete &&
+                         !strcmp(released.name, "released-fl2va-v1") &&
+                         !strcmp(released.profile, "released") &&
+                         released.width == 1344ull && released.height == 768ull &&
+                         released.frames == 124ull &&
+                         released.sigma_grid_points == 50ull &&
+                         released.seed == 42ull,
+                     "normal media execution resolves to released FL2VA independently from preview");
+    request.present = YVEX_RUNTIME_MEDIA_EXECUTION_WIDTH |
+                      YVEX_RUNTIME_MEDIA_EXECUTION_HEIGHT |
+                      YVEX_RUNTIME_MEDIA_EXECUTION_DURATION |
+                      YVEX_RUNTIME_MEDIA_EXECUTION_SEED;
+    request.width = 768ull;
+    request.height = 1344ull;
+    request.duration_milliseconds = 10000ull;
+    request.seed = 7ull;
+    rc = yvex_runtime_media_execution_resolve(&profile, &request, &released, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && released.width == 768ull &&
+                         released.height == 1344ull && released.frames == 243ull &&
+                         released.seed == 7ull &&
+                         yvex_sha256_hex_valid(released.identity),
+                     "portrait duration aligns upward under the released contract");
+    request.duration_milliseconds = 15000ull;
+    YVEX_TEST_ASSERT(yvex_runtime_media_execution_resolve(
+                         &profile, &request, &released, &err) == YVEX_ERR_BOUNDS,
+                     "duration that aligns beyond 15 seconds refuses instead of truncating");
+    request.duration_milliseconds = 5000ull;
+    request.width = 192ull;
+    request.height = 192ull;
+    YVEX_TEST_ASSERT(yvex_runtime_media_execution_resolve(
+                         &profile, &request, &released, &err) == YVEX_ERR_BOUNDS,
+                     "released trajectory refuses the bounded preview canvas");
+    request.width = 4096ull;
+    request.height = 768ull;
+    YVEX_TEST_ASSERT(yvex_runtime_media_execution_resolve(
+                         &profile, &request, &released, &err) == YVEX_ERR_BOUNDS,
+                     "released canvas outside aspect and area bounds refuses");
     mutated = preset;
     mutated.seed++;
     YVEX_TEST_ASSERT(yvex_runtime_media_execution_preset_validate(

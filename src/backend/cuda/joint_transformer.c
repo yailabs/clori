@@ -26,7 +26,7 @@ enum {
     JOINT_PARAMETERS = 6u,
     JOINT_BLOCKS = 50u,
     JOINT_MAX_TIMESTEPS = 64u,
-    JOINT_MAX_PACKED_ROWS = 22016u
+    JOINT_IMPLEMENTATION_MAX_PACKED_ROWS = 131072u
 };
 typedef enum {
     JOINT_DEVICE_HIDDEN = 0,
@@ -111,7 +111,8 @@ static int joint_recipe_supported(const yvex_transformer_joint_recipe *recipe)
            recipe->modulation_parameters == JOINT_PARAMETERS &&
            recipe->block_count == JOINT_BLOCKS && recipe->refiner_block_count == 2ull &&
            recipe->maximum_timesteps == JOINT_MAX_TIMESTEPS &&
-           recipe->maximum_packed_rows == JOINT_MAX_PACKED_ROWS &&
+           recipe->maximum_packed_rows &&
+           recipe->maximum_packed_rows <= JOINT_IMPLEMENTATION_MAX_PACKED_ROWS &&
            recipe->video_input_width == 96ull && recipe->audio_input_width == 32ull &&
            recipe->condition_input_width == 5120ull &&
            recipe->video_output.operation ==
@@ -190,7 +191,7 @@ static int joint_validate(joint_run *run, const char *residency_identity,
         !joint_weights_validate(run->weights, run->block_count, weight_bytes) ||
         !yvex_sha256_hex_valid(residency_identity) || resident_bytes < *weight_bytes ||
         !run->hidden || !run->temb || !run->positions || !run->adaln_indices ||
-        !run->rows || run->rows > JOINT_MAX_PACKED_ROWS || !run->timesteps ||
+        !run->rows || run->rows > run->recipe->maximum_packed_rows || !run->timesteps ||
         run->timesteps > JOINT_MAX_TIMESTEPS || !output || !result ||
         !yvex_core_u64_mul(run->rows, JOINT_HIDDEN, &run->values) ||
         run->values > output_capacity ||
@@ -1680,7 +1681,7 @@ static int transformer_request_valid(
     unsigned long long *video_values, unsigned long long *audio_values,
     yvex_error *err)
 {
-    unsigned char seen[JOINT_MAX_PACKED_ROWS] = {0};
+    unsigned char *seen = NULL;
     unsigned long long kind, row, total;
     const unsigned int *indices[3];
     unsigned long long counts[3];
@@ -1692,7 +1693,7 @@ static int transformer_request_valid(
         !request->video_rows || !request->audio_rows || !request->text_rows ||
         !request->timestep_count || request->timestep_count > JOINT_MAX_TIMESTEPS ||
         !request->packed_rows ||
-        request->packed_rows > JOINT_MAX_PACKED_ROWS ||
+        request->packed_rows > request->recipe->maximum_packed_rows ||
         !request->block_count || request->block_count > JOINT_BLOCKS ||
         !joint_linear_physical_supported(
             &request->video_output_physical, request->recipe->identity_domain,
@@ -1707,7 +1708,12 @@ static int transformer_request_valid(
         *video_values > request->video_output_capacity ||
         *audio_values > request->audio_output_capacity)
         return conditioning_refuse(err, YVEX_ERR_INVALID_ARG, "cuda.transformer.joint.transformer.request",
-                                   "one complete bounded packed FL2VA request is required");
+                                   "one complete bounded packed joint request is required");
+    seen = calloc((size_t)request->packed_rows, 1u);
+    if (!seen)
+        return conditioning_refuse(err, YVEX_ERR_NOMEM,
+                                   "cuda.transformer.joint.transformer.layout",
+                                   "packed-row partition allocation failed");
     indices[0] = request->video_indices; counts[0] = request->video_rows;
     indices[1] = request->text_indices; counts[1] = request->text_rows;
     indices[2] = request->audio_indices; counts[2] = request->audio_rows;
@@ -1718,23 +1724,31 @@ static int transformer_request_valid(
                publish visual conditioning through the text-width input projection. */
             if (packed >= request->packed_rows || seen[packed] ||
                 request->token_tags[packed] >= request->recipe->modality_count)
-                return conditioning_refuse(err, YVEX_ERR_FORMAT,
-                                           "cuda.transformer.joint.transformer.layout",
-                                           "packed modality indices must form one exact tagged partition");
+                {
+                    free(seen);
+                    return conditioning_refuse(err, YVEX_ERR_FORMAT,
+                                               "cuda.transformer.joint.transformer.layout",
+                                               "packed modality indices must form one exact tagged partition");
+                }
             seen[packed] = 1u;
         }
     for (row = 0ull; row < request->packed_rows; ++row)
         if (!seen[row] || request->timestep_indices[row] >= request->timestep_count ||
             !isfinite(request->position_ids[row * 3ull]) ||
             !isfinite(request->position_ids[row * 3ull + 1ull]) ||
-            !isfinite(request->position_ids[row * 3ull + 2ull]))
+            !isfinite(request->position_ids[row * 3ull + 2ull])) {
+            free(seen);
             return conditioning_refuse(err, YVEX_ERR_FORMAT, "cuda.transformer.joint.transformer.layout",
                                        "packed rows require finite positions and admitted timesteps");
+        }
     for (row = 0ull; row < request->timestep_count; ++row)
         if (!isfinite(request->timesteps[row]) || request->timesteps[row] < 0.0f ||
-            request->timesteps[row] > 1.0f)
+            request->timesteps[row] > 1.0f) {
+            free(seen);
             return conditioning_refuse(err, YVEX_ERR_FORMAT, "cuda.transformer.joint.transformer.timestep",
                                        "distinct timesteps must be finite values in [0,1]");
+        }
+    free(seen);
     return YVEX_OK;
 }
 

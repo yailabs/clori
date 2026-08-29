@@ -50,7 +50,13 @@ struct server_media_registry {
     unsigned long long profile_count, frames_per_chunk, frame_remainder;
     unsigned long long minimum_frames, maximum_frames;
     unsigned long long minimum_inference_steps, maximum_inference_steps;
-    unsigned long long canvas_multiple, maximum_canvas_pixels;
+    unsigned long long released_sigma_grid_points, default_seed;
+    unsigned long long canvas_multiple, canvas_short_edge;
+    unsigned long long minimum_canvas_pixels, maximum_canvas_pixels;
+    unsigned long long released_width, released_height;
+    unsigned long long minimum_duration_milliseconds, maximum_duration_milliseconds;
+    unsigned long long minimum_aspect_numerator, minimum_aspect_denominator;
+    unsigned long long maximum_aspect_numerator, maximum_aspect_denominator;
     int mutex_ready, closing;
 };
 
@@ -78,7 +84,7 @@ static int output_root_admit(const char *path, char output[YVEX_PATH_CAP], yvex_
 static int registry_identity(server_media_registry *registry, yvex_error *err)
 {
     const char *identities[1] = {registry->source_identity};
-    unsigned long long facts[7];
+    unsigned long long facts[20];
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     unsigned long long index;
@@ -87,10 +93,23 @@ static int registry_identity(server_media_registry *registry, yvex_error *err)
     facts[1] = registry->minimum_frames;
     facts[2] = registry->maximum_frames;
     facts[3] = registry->canvas_multiple;
-    facts[4] = registry->maximum_canvas_pixels;
+    facts[4] = registry->minimum_canvas_pixels;
     facts[5] = registry->minimum_inference_steps;
     facts[6] = registry->maximum_inference_steps;
-    if (!yvex_sha256_update_text(&hash, "yvex.server.media-profile.v1") ||
+    facts[7] = registry->released_sigma_grid_points;
+    facts[8] = registry->default_seed;
+    facts[9] = registry->canvas_short_edge;
+    facts[10] = registry->released_width;
+    facts[11] = registry->released_height;
+    facts[12] = registry->minimum_duration_milliseconds;
+    facts[13] = registry->maximum_duration_milliseconds;
+    facts[14] = registry->minimum_aspect_numerator;
+    facts[15] = registry->minimum_aspect_denominator;
+    facts[16] = registry->maximum_aspect_numerator;
+    facts[17] = registry->maximum_aspect_denominator;
+    facts[18] = registry->maximum_canvas_pixels;
+    facts[19] = registry->generation.maximum_packed_rows;
+    if (!yvex_sha256_update_text(&hash, "yvex.server.media-profile.v2") ||
         !yvex_sha256_update_text(&hash, identities[0]) ||
         !yvex_sha256_update_text(&hash, registry->preset.identity) ||
         !yvex_sha256_update_text(
@@ -98,7 +117,7 @@ static int registry_identity(server_media_registry *registry, yvex_error *err)
         !yvex_sha256_update_text(
             &hash, registry->generation.audio_output_specialization.physical_identity))
         return media_refuse(err, YVEX_ERR_STATE, "media profile identity could not start");
-    for (index = 0ull; index < 7ull; ++index)
+    for (index = 0ull; index < 20ull; ++index)
         if (!yvex_sha256_update_u64_be(&hash, facts[index]))
             return media_refuse(err, YVEX_ERR_STATE, "media profile identity facts failed");
     for (index = 0ull; index < registry->profile_count; ++index) {
@@ -116,29 +135,50 @@ static int registry_identity(server_media_registry *registry, yvex_error *err)
     return YVEX_OK;
 }
 
+static void host_profile_project(const server_media_registry *registry,
+                                 yvex_runtime_media_host_profile *host)
+{
+    unsigned long long index;
+    memset(host, 0, sizeof(*host));
+    host->schema_version = YVEX_RUNTIME_MEDIA_HOST_SCHEMA_V2;
+    host->request_template = registry->generation;
+    host->profile_count = registry->profile_count;
+    host->frames_per_chunk = registry->frames_per_chunk;
+    host->frame_remainder = registry->frame_remainder;
+    host->minimum_frames = registry->minimum_frames;
+    host->maximum_frames = registry->maximum_frames;
+    host->minimum_inference_steps = registry->minimum_inference_steps;
+    host->maximum_inference_steps = registry->maximum_inference_steps;
+    host->released_sigma_grid_points = registry->released_sigma_grid_points;
+    host->default_seed = registry->default_seed;
+    host->canvas_multiple = registry->canvas_multiple;
+    host->canvas_short_edge = registry->canvas_short_edge;
+    host->minimum_canvas_pixels = registry->minimum_canvas_pixels;
+    host->maximum_canvas_pixels = registry->maximum_canvas_pixels;
+    host->released_width = registry->released_width;
+    host->released_height = registry->released_height;
+    host->minimum_duration_milliseconds = registry->minimum_duration_milliseconds;
+    host->maximum_duration_milliseconds = registry->maximum_duration_milliseconds;
+    host->minimum_aspect_numerator = registry->minimum_aspect_numerator;
+    host->minimum_aspect_denominator = registry->minimum_aspect_denominator;
+    host->maximum_aspect_numerator = registry->maximum_aspect_numerator;
+    host->maximum_aspect_denominator = registry->maximum_aspect_denominator;
+    for (index = 0ull; index < registry->profile_count; ++index) {
+        yvex_core_text_copy(host->profiles[index].name,
+                            sizeof(host->profiles[index].name),
+                            registry->profiles[index].name);
+        host->profiles[index].width = registry->profiles[index].width;
+        host->profiles[index].height = registry->profiles[index].height;
+        host->profiles[index].maximum_frames =
+            registry->profiles[index].maximum_frames;
+        host->profiles[index].preview_alias = registry->profiles[index].preview_alias;
+    }
+}
+
 static int preset_admit(server_media_registry *registry, yvex_error *err)
 {
-    yvex_runtime_media_host_profile host = {0};
-    unsigned long long index;
-
-    host.schema_version = YVEX_RUNTIME_MEDIA_HOST_SCHEMA_V1;
-    host.profile_count = registry->profile_count;
-    host.frames_per_chunk = registry->frames_per_chunk;
-    host.frame_remainder = registry->frame_remainder;
-    host.minimum_frames = registry->minimum_frames;
-    host.maximum_frames = registry->maximum_frames;
-    host.minimum_inference_steps = registry->minimum_inference_steps;
-    host.maximum_inference_steps = registry->maximum_inference_steps;
-    for (index = 0ull; index < registry->profile_count; ++index) {
-        yvex_core_text_copy(host.profiles[index].name,
-                            sizeof(host.profiles[index].name),
-                            registry->profiles[index].name);
-        host.profiles[index].width = registry->profiles[index].width;
-        host.profiles[index].height = registry->profiles[index].height;
-        host.profiles[index].maximum_frames =
-            registry->profiles[index].maximum_frames;
-        host.profiles[index].preview_alias = registry->profiles[index].preview_alias;
-    }
+    yvex_runtime_media_host_profile host;
+    host_profile_project(registry, &host);
     return yvex_runtime_media_execution_preset_validate(
         &host, &registry->preset, err);
 }
@@ -173,14 +213,22 @@ int yvex_server_media_registry_open(
     server_media_registry *registry;
     unsigned long long index;
     if (out) *out = NULL;
-    if (!out || !options || options->schema_version != YVEX_SERVER_MEDIA_SCHEMA_V1 ||
+    if (!out || !options || options->schema_version != YVEX_SERVER_MEDIA_SCHEMA_V2 ||
         !telemetry || !options->profiles || !options->profile_count ||
         options->profile_count > YVEX_SERVER_MEDIA_PROFILE_CAP ||
         !options->frames_per_chunk || options->frame_remainder >= options->frames_per_chunk ||
         !options->minimum_frames || options->minimum_frames > options->maximum_frames ||
         options->minimum_inference_steps < 2ull ||
         options->minimum_inference_steps > options->maximum_inference_steps ||
-        !options->canvas_multiple || !options->maximum_canvas_pixels)
+        !options->released_sigma_grid_points || !options->canvas_multiple ||
+        !options->canvas_short_edge || !options->minimum_canvas_pixels ||
+        options->minimum_canvas_pixels > options->maximum_canvas_pixels ||
+        !options->released_width || !options->released_height ||
+        !options->minimum_duration_milliseconds ||
+        options->minimum_duration_milliseconds >
+            options->maximum_duration_milliseconds ||
+        !options->minimum_aspect_numerator || !options->minimum_aspect_denominator ||
+        !options->maximum_aspect_numerator || !options->maximum_aspect_denominator)
         return media_refuse(err, YVEX_ERR_INVALID_ARG,
                             "complete bounded hosted media options are required");
     registry = calloc(1u, sizeof(*registry));
@@ -194,8 +242,20 @@ int yvex_server_media_registry_open(
     registry->maximum_frames = options->maximum_frames;
     registry->minimum_inference_steps = options->minimum_inference_steps;
     registry->maximum_inference_steps = options->maximum_inference_steps;
+    registry->released_sigma_grid_points = options->released_sigma_grid_points;
+    registry->default_seed = options->default_seed;
     registry->canvas_multiple = options->canvas_multiple;
+    registry->canvas_short_edge = options->canvas_short_edge;
+    registry->minimum_canvas_pixels = options->minimum_canvas_pixels;
     registry->maximum_canvas_pixels = options->maximum_canvas_pixels;
+    registry->released_width = options->released_width;
+    registry->released_height = options->released_height;
+    registry->minimum_duration_milliseconds = options->minimum_duration_milliseconds;
+    registry->maximum_duration_milliseconds = options->maximum_duration_milliseconds;
+    registry->minimum_aspect_numerator = options->minimum_aspect_numerator;
+    registry->minimum_aspect_denominator = options->minimum_aspect_denominator;
+    registry->maximum_aspect_numerator = options->maximum_aspect_numerator;
+    registry->maximum_aspect_denominator = options->maximum_aspect_denominator;
     registry->preset = options->execution_preset;
     if (pthread_mutex_init(&registry->mutex, NULL) != 0) {
         free(registry);
@@ -329,11 +389,21 @@ static int turn_complete(server_message_emit emit, void *context,
                          const yvex_client_request *request,
                          const server_media_session *session,
                          const server_media_registry *registry,
+                         const yvex_runtime_media_execution_preset *preset,
                          const yvex_runtime_av_generation_result *result,
                          const char *output_path, double seconds,
                          yvex_error *err)
 {
     yvex_client_message message = {0};
+    unsigned long long duration_numerator;
+    if (!result || result->schema_version != YVEX_RUNTIME_AV_GENERATION_SCHEMA_V2 ||
+        !result->complete ||
+        !yvex_core_u64_mul(result->frames, 1000ull, &duration_numerator) ||
+        !yvex_core_u64_mul(duration_numerator,
+                           registry->generation.fps_denominator,
+                           &duration_numerator))
+        return media_refuse(err, YVEX_ERR_STATE,
+                            "completed media result is malformed");
     message.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
     message.kind = YVEX_CLIENT_MESSAGE_TURN_COMPLETE;
     message.status = YVEX_OK;
@@ -345,22 +415,44 @@ static int turn_complete(server_message_emit emit, void *context,
     message.decode_seconds = seconds;
     message.turn_count = session->turn_count;
     message.session_state = session->state;
-    message.media_result.schema_version = YVEX_CLIENT_MEDIA_RESULT_SCHEMA_V1;
+    message.media_result.schema_version = YVEX_CLIENT_MEDIA_RESULT_SCHEMA_V2;
     message.media_result.available = 1;
     message.media_result.width = result->width;
     message.media_result.height = result->height;
     message.media_result.frames = result->frames;
     message.media_result.fps_numerator = registry->generation.fps_numerator;
     message.media_result.fps_denominator = registry->generation.fps_denominator;
+    message.media_result.duration_milliseconds =
+        duration_numerator / registry->generation.fps_numerator;
     message.media_result.audio_samples = result->audio_samples;
     message.media_result.audio_sample_rate = registry->generation.audio_sample_rate;
-    message.media_result.seed = registry->preset.seed;
+    message.media_result.seed = preset->seed;
+    message.media_result.model_evaluations = result->model_evaluations;
+    message.media_result.engine_generation = request->engine_generation;
+    message.media_result.condition_count = session->condition_count;
+    message.media_result.task = session->condition_count == 2ull
+                                    ? YVEX_CLIENT_MEDIA_TASK_FIRST_LAST
+                                    : session->condition_count == 0ull
+                                          ? YVEX_CLIENT_MEDIA_TASK_T2VA
+                                          : session->conditions[0].role ==
+                                                    YVEX_CLIENT_MEDIA_CONDITION_FIRST
+                                                ? YVEX_CLIENT_MEDIA_TASK_FIRST
+                                                : YVEX_CLIENT_MEDIA_TASK_LAST;
     message.media_result.file_bytes = result->file_bytes;
     yvex_core_text_copy(message.media_result.output_path,
                         sizeof(message.media_result.output_path), output_path);
     yvex_core_text_copy(message.media_result.preset_identity,
                         sizeof(message.media_result.preset_identity),
-                        registry->preset.identity);
+                        preset->identity);
+    yvex_core_text_copy(message.media_result.trajectory_identity,
+                        sizeof(message.media_result.trajectory_identity),
+                        result->trajectory_identity);
+    yvex_core_text_copy(message.media_result.rng_identity,
+                        sizeof(message.media_result.rng_identity),
+                        result->rng_identity);
+    yvex_core_text_copy(message.media_result.plan_identity,
+                        sizeof(message.media_result.plan_identity),
+                        result->plan_identity);
     yvex_core_text_copy(message.media_result.execution_identity,
                         sizeof(message.media_result.execution_identity),
                         result->execution_identity);
@@ -475,6 +567,7 @@ static int media_progress_observe(
 
 static int output_path_build(server_media_registry *registry,
                              const server_media_session *session,
+                             const yvex_runtime_media_execution_preset *preset,
                              char path[YVEX_PATH_CAP], yvex_error *err)
 {
     yvex_sha256 hash;
@@ -483,7 +576,7 @@ static int output_path_build(server_media_registry *registry,
     int length;
     yvex_sha256_init(&hash);
     if (!yvex_sha256_update_text(&hash, "yvex.server.media-request.v1") ||
-        !yvex_sha256_update_text(&hash, registry->preset.identity) ||
+        !yvex_sha256_update_text(&hash, preset->identity) ||
         !yvex_sha256_update_text(&hash, session->prompt) ||
         !yvex_sha256_update_u64_be(&hash, session->turn_count) ||
         !yvex_sha256_final(&hash, digest))
@@ -504,6 +597,9 @@ static int generation_execute(server_media_registry *registry,
                               yvex_error *err)
 {
     yvex_runtime_av_generation_request generation = registry->generation;
+    yvex_runtime_media_execution_request execution = {0};
+    yvex_runtime_media_execution_preset preset = {0};
+    yvex_runtime_media_host_profile host;
     yvex_runtime_media_condition conditions[YVEX_RUNTIME_MEDIA_CONDITION_CAP] = {0};
     yvex_runtime_av_generation_result result = {0};
     media_progress_sink sink = {
@@ -513,7 +609,19 @@ static int generation_execute(server_media_registry *registry,
     unsigned long long started = yvex_core_monotonic_ns(), completed;
     double seconds;
     int rc;
-    rc = output_path_build(registry, session, path, err);
+    execution.schema_version = YVEX_RUNTIME_MEDIA_EXECUTION_SCHEMA_V1;
+    execution.kind = (yvex_runtime_media_execution_kind)
+        request->media_execution.trajectory;
+    execution.present = request->media_execution.present;
+    execution.width = request->media_execution.width;
+    execution.height = request->media_execution.height;
+    execution.duration_milliseconds =
+        request->media_execution.duration_milliseconds;
+    execution.seed = request->media_execution.seed;
+    host_profile_project(registry, &host);
+    rc = yvex_runtime_media_execution_resolve(&host, &execution, &preset, err);
+    if (rc != YVEX_OK) return rc;
+    rc = output_path_build(registry, session, &preset, path, err);
     if (rc != YVEX_OK) return rc;
     generation.prompt = session->prompt;
     for (unsigned long long index = 0ull; index < session->condition_count; ++index) {
@@ -528,12 +636,12 @@ static int generation_execute(server_media_registry *registry,
     generation.conditions = conditions;
     generation.condition_count = session->condition_count;
     generation.output_path = path;
-    generation.width = registry->preset.width;
-    generation.height = registry->preset.height;
-    generation.frames = registry->preset.frames;
+    generation.width = preset.width;
+    generation.height = preset.height;
+    generation.frames = preset.frames;
     generation.inference_steps =
-        (unsigned int)(registry->preset.sigma_grid_points - 1ull);
-    generation.seed = registry->preset.seed;
+        (unsigned int)(preset.sigma_grid_points - 1ull);
+    generation.seed = preset.seed;
     generation.cancel_requested = media_cancel_requested;
     generation.cancel_context = session;
     generation.observe_progress = media_progress_observe;
@@ -549,8 +657,7 @@ static int generation_execute(server_media_registry *registry,
     if (rc == YVEX_OK)
         rc = media_event_emit(
             &sink, YVEX_SERVER_EVENT_GENERATION_PROFILE, "hosted-preset",
-            registry->preset.width, registry->preset.height,
-            registry->preset.frames, 0.0, err);
+            preset.width, preset.height, preset.frames, 0.0, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_media_model_generate(
             registry->model, &generation, &result, err);
@@ -587,7 +694,7 @@ static int generation_execute(server_media_registry *registry,
         "completed", result.frames, result.file_bytes, result.audio_samples,
         seconds, 0.0, err);
     if (rc != YVEX_OK) return rc;
-    return turn_complete(emit, context, request, session, registry, &result,
+    return turn_complete(emit, context, request, session, registry, &preset, &result,
                          path, seconds, err);
 }
 

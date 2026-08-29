@@ -1143,6 +1143,35 @@
         "value_type": "path"
       },
       {
+        "name": "--trajectory",
+        "takes_value": true,
+        "value_type": "enum",
+        "enum_values": ["preview", "released"]
+      },
+      {
+        "name": "--width",
+        "takes_value": true,
+        "value_type": "u64",
+        "range": "1..18446744073709551615"
+      },
+      {
+        "name": "--height",
+        "takes_value": true,
+        "value_type": "u64",
+        "range": "1..18446744073709551615"
+      },
+      {
+        "name": "--duration",
+        "takes_value": true,
+        "value_type": "number"
+      },
+      {
+        "name": "--seed",
+        "takes_value": true,
+        "value_type": "u64",
+        "range": "0..18446744073709551615"
+      },
+      {
         "default_provider": "client.chat",
         "name": "--max-new-tokens",
         "range": "1..18446744073709551615",
@@ -1177,6 +1206,29 @@
         "name": "--last-image",
         "takes_value": true,
         "value_type": "path"
+      },
+      {
+        "name": "--trajectory",
+        "takes_value": true,
+        "value_type": "enum",
+        "enum_values": ["preview", "released"]
+      },
+      {
+        "name": "--width",
+        "takes_value": true,
+        "value_type": "u64",
+        "range": "1..18446744073709551615"
+      },
+      {
+        "name": "--height",
+        "takes_value": true,
+        "value_type": "u64",
+        "range": "1..18446744073709551615"
+      },
+      {
+        "name": "--duration",
+        "takes_value": true,
+        "value_type": "number"
       },
       {
         "default_provider": "client.run",

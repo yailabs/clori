@@ -694,7 +694,13 @@ static int test_t2va_plan(void)
         .component_backend = YVEX_BACKEND_KIND_CUDA};
     yvex_transformer_linear_physical_plan video, audio, changed;
     char video_operation[65], video_physical[65], audio_physical[65];
-    yvex_minimax_h3_t2va_plan first, repeated, source_scale;
+    yvex_minimax_h3_t2va_plan first, repeated, source_scale, released_max;
+    yvex_media_condition released_conditions[2] = {
+        {YVEX_MEDIA_CONDITION_SCHEMA_V1, YVEX_MEDIA_CONDITION_IMAGE,
+         YVEX_MEDIA_CONDITION_FIRST, NULL},
+        {YVEX_MEDIA_CONDITION_SCHEMA_V1, YVEX_MEDIA_CONDITION_IMAGE,
+         YVEX_MEDIA_CONDITION_LAST, NULL},
+    };
     yvex_media_plan_request plan_request = {
         .schema_version = YVEX_RUNTIME_AV_PLAN_SCHEMA_V1,
         .text_tokens = 16ull, .width = 1344ull, .height = 768ull,
@@ -814,6 +820,27 @@ static int test_t2va_plan(void)
             float_bits(source_scale.audio_sigmas[42]) == UINT32_C(0x3eaaaaaa) &&
             float_bits(source_scale.audio_sigmas[44]) == UINT32_C(0x3e822b63),
         "source-scale sigma grids reproduce the released torch.linspace F32 bit patterns");
+    plan_request.text_tokens = 256ull;
+    plan_request.width = 1344ull;
+    plan_request.height = 768ull;
+    plan_request.frames = 345ull;
+    plan_request.inference_steps = 49u;
+    plan_request.conditions = released_conditions;
+    plan_request.condition_count = 2ull;
+    plan_request.condition_rows = 2016ull;
+    YVEX_TEST_ASSERT(
+        yvex_graph_register_minimax_h3()->t2va_plan_build(
+            &released_max, &plan_request, &err) == YVEX_OK &&
+            released_max.video_latent_frames == 102ull &&
+            released_max.video_rows == 102816ull &&
+            released_max.audio_latent_steps == 575ull &&
+            released_max.audio_rows == 1150ull &&
+            released_max.condition_rows == 2016ull &&
+            released_max.packed_rows == 106238ull &&
+            released_max.sigma_grid_points == 50u &&
+            released_max.model_evaluations == 49u &&
+            recipe->maximum_packed_rows == released_max.packed_rows,
+        "maximum released wide dual-anchor request exactly consumes the admitted row envelope");
     YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->scheduler_step(
                          stepped, sample, velocity, 2ull, 0.75f, 0.25f, 0.1f,
                          &err) == YVEX_OK &&
@@ -828,7 +855,12 @@ static int test_t2va_plan(void)
                      "t2va scheduler validates every value before publishing output");
     plan_request.text_tokens = 16ull;
     plan_request.width = 1344ull;
+    plan_request.height = 768ull;
+    plan_request.frames = 124ull;
     plan_request.inference_steps = 19u;
+    plan_request.conditions = NULL;
+    plan_request.condition_count = 0ull;
+    plan_request.condition_rows = 0ull;
     YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->t2va_plan_build(
                          &repeated, &plan_request, &err) == YVEX_OK &&
                          strcmp(first.identity, repeated.identity) == 0,

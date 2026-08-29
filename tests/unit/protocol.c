@@ -44,6 +44,17 @@ static int test_request_roundtrip(void)
     source.media_conditions[1].kind = YVEX_CLIENT_MEDIA_CONDITION_IMAGE;
     source.media_conditions[1].role = YVEX_CLIENT_MEDIA_CONDITION_LAST;
     strcpy(source.media_conditions[1].source_path, "/tmp/last.png");
+    source.media_execution.schema_version =
+        YVEX_CLIENT_MEDIA_EXECUTION_SCHEMA_V1;
+    source.media_execution.trajectory = YVEX_CLIENT_MEDIA_TRAJECTORY_RELEASED;
+    source.media_execution.present = YVEX_CLIENT_MEDIA_EXECUTION_WIDTH |
+                                     YVEX_CLIENT_MEDIA_EXECUTION_HEIGHT |
+                                     YVEX_CLIENT_MEDIA_EXECUTION_DURATION |
+                                     YVEX_CLIENT_MEDIA_EXECUTION_SEED;
+    source.media_execution.width = 1344ull;
+    source.media_execution.height = 768ull;
+    source.media_execution.duration_milliseconds = 5000ull;
+    source.media_execution.seed = 42ull;
     source.maximum_new_tokens = 17u;
     source.stochastic = 1;
     source.seed_present = 1;
@@ -76,6 +87,16 @@ static int test_request_roundtrip(void)
             strcmp(decoded.media_conditions[0].source_path, "/tmp/first.png") == 0 &&
             strcmp(decoded.media_conditions[1].source_path, "/tmp/last.png") == 0,
         "typed first and last media conditions roundtrip");
+    YVEX_TEST_ASSERT(
+        decoded.media_execution.schema_version ==
+                YVEX_CLIENT_MEDIA_EXECUTION_SCHEMA_V1 &&
+            decoded.media_execution.trajectory ==
+                YVEX_CLIENT_MEDIA_TRAJECTORY_RELEASED &&
+            decoded.media_execution.width == 1344ull &&
+            decoded.media_execution.height == 768ull &&
+            decoded.media_execution.duration_milliseconds == 5000ull &&
+            decoded.media_execution.seed == 42ull,
+        "typed released media execution roundtrip");
     free(owned_prompt);
     yvex_provider_request_close(&owned_provider);
 
@@ -84,6 +105,12 @@ static int test_request_roundtrip(void)
     rc = yvex_protocol_request_encode(&source, frame, sizeof(frame), &count, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_INVALID_ARG && count == 0u,
                      "unsupported request version refuses");
+    source.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
+    source.media_execution.present &= ~YVEX_CLIENT_MEDIA_EXECUTION_HEIGHT;
+    YVEX_TEST_ASSERT(
+        yvex_protocol_request_encode(&source, frame, sizeof(frame), &count,
+                                     &err) == YVEX_ERR_INVALID_ARG,
+        "media execution refuses an unpaired canvas axis");
     rc = yvex_protocol_request_decode(frame, 3u, &decoded, &owned_prompt,
                                       &owned_provider, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT, "truncated request refuses");
@@ -776,8 +803,8 @@ static int test_stale_frame_refusal(void)
                      "stale peer thread");
     rc = yvex_client_connect(&client, path, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT && client == NULL &&
-                         strstr(yvex_error_message(&err), "version 15") != NULL,
-                     "immediately prior v14 frame explicitly refuses");
+                         strstr(yvex_error_message(&err), "version 16") != NULL,
+                     "immediately prior v15 frame explicitly refuses");
     YVEX_TEST_ASSERT(pthread_join(thread, NULL) == 0, "stale peer join");
     (void)close(peer.listener);
     (void)unlink(path);
@@ -886,7 +913,7 @@ static int test_media_result_roundtrip(void)
     message.generation_phase = YVEX_CLIENT_PHASE_COMPLETE;
     message.stop_reason = YVEX_CLIENT_STOP_EOS;
     message.session_state = YVEX_SERVER_SESSION_READY;
-    message.media_result.schema_version = YVEX_CLIENT_MEDIA_RESULT_SCHEMA_V1;
+    message.media_result.schema_version = YVEX_CLIENT_MEDIA_RESULT_SCHEMA_V2;
     message.media_result.available = 1;
     strcpy(message.media_result.output_path, "/tmp/yvex-media-result.avi");
     message.media_result.width = 192ull;
@@ -894,14 +921,22 @@ static int test_media_result_roundtrip(void)
     message.media_result.frames = 124ull;
     message.media_result.fps_numerator = 24ull;
     message.media_result.fps_denominator = 1ull;
+    message.media_result.duration_milliseconds = 5166ull;
     message.media_result.audio_samples = 248000ull;
     message.media_result.audio_sample_rate = 48000ull;
     message.media_result.seed = 42ull;
+    message.media_result.model_evaluations = 49ull;
+    message.media_result.engine_generation = 3ull;
+    message.media_result.task = YVEX_CLIENT_MEDIA_TASK_FIRST_LAST;
+    message.media_result.condition_count = 2ull;
     message.media_result.file_bytes = 123456ull;
     memset(message.media_result.preset_identity, 'a', 64u);
-    memset(message.media_result.execution_identity, 'b', 64u);
-    memset(message.media_result.file_identity, 'c', 64u);
-    memset(message.media_result.publication_identity, 'd', 64u);
+    memset(message.media_result.trajectory_identity, 'b', 64u);
+    memset(message.media_result.rng_identity, 'c', 64u);
+    memset(message.media_result.plan_identity, 'd', 64u);
+    memset(message.media_result.execution_identity, 'e', 64u);
+    memset(message.media_result.file_identity, 'f', 64u);
+    memset(message.media_result.publication_identity, '1', 64u);
     YVEX_TEST_ASSERT(
         yvex_protocol_message_encode(&message, frame, sizeof(frame), &count,
                                      &err) == YVEX_OK &&
@@ -915,9 +950,19 @@ static int test_media_result_roundtrip(void)
             decoded.media_result.frames == 124ull &&
             decoded.media_result.audio_samples == 248000ull &&
             decoded.media_result.seed == 42ull &&
+            decoded.media_result.model_evaluations == 49ull &&
+            decoded.media_result.task == YVEX_CLIENT_MEDIA_TASK_FIRST_LAST &&
+            !strcmp(decoded.media_result.trajectory_identity,
+                    message.media_result.trajectory_identity) &&
             !strcmp(decoded.media_result.publication_identity,
                     message.media_result.publication_identity),
         "typed media result roundtrip preserves publication facts");
+    message.media_result.condition_count = 1ull;
+    YVEX_TEST_ASSERT(
+        yvex_protocol_message_encode(&message, frame, sizeof(frame), &count,
+                                     &err) == YVEX_ERR_INVALID_ARG,
+        "typed media result refuses a task-condition mismatch");
+    message.media_result.condition_count = 2ull;
     message.media_result.output_path[0] = 'x';
     YVEX_TEST_ASSERT(
         yvex_protocol_message_encode(&message, frame, sizeof(frame), &count,

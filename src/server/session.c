@@ -1658,6 +1658,13 @@ int yvex_server_sessions_execute(server_session_registry *registry,
             rc = session_message(emit, emit_context, YVEX_CLIENT_MESSAGE_ACK,
                                  YVEX_OK, request, NULL, "closed", err);
     } else if (request->operation == YVEX_CLIENT_OP_GENERATION_TURN) {
+        if (request->media_condition_count ||
+            request->media_execution.schema_version) {
+            rc = YVEX_ERR_UNSUPPORTED;
+            yvex_error_set(err, rc, "server.session.execute",
+                           "media conditions and execution policy require a media engine");
+            goto done;
+        }
         (void)pthread_mutex_unlock(&registry->mutex);
         rc = session_turn(registry, session, request, request_id, queue_seconds,
                           emit, emit_context, err);

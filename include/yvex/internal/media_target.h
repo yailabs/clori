@@ -9,7 +9,7 @@
 extern "C" {
 #endif
 
-#define YVEX_MEDIA_TARGET_PROFILE_SCHEMA_V1 1u
+#define YVEX_MEDIA_TARGET_PROFILE_SCHEMA_V2 2u
 #define YVEX_MEDIA_EXECUTION_RECIPE_SCHEMA_V1 1u
 #define YVEX_MEDIA_TARGET_TIER_CAP 5u
 
@@ -146,7 +146,13 @@ typedef struct yvex_media_target_profile {
     unsigned long long frames_per_chunk, frame_remainder;
     unsigned long long minimum_frames, maximum_frames;
     unsigned long long minimum_inference_steps, maximum_inference_steps;
-    unsigned long long canvas_multiple, maximum_canvas_pixels;
+    unsigned long long released_sigma_grid_points;
+    unsigned long long canvas_multiple, canvas_short_edge;
+    unsigned long long minimum_canvas_pixels, maximum_canvas_pixels;
+    unsigned long long released_width, released_height;
+    unsigned long long minimum_duration_milliseconds, maximum_duration_milliseconds;
+    unsigned long long minimum_aspect_numerator, minimum_aspect_denominator;
+    unsigned long long maximum_aspect_numerator, maximum_aspect_denominator;
 } yvex_media_target_profile;
 
 typedef int (*yvex_media_plan_fn)(

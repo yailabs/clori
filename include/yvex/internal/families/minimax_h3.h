@@ -415,7 +415,9 @@ typedef struct yvex_runtime_av_video_decode_result yvex_minimax_h3_video_decode_
 typedef struct yvex_runtime_av_conditioning_result yvex_minimax_h3_conditioning_result;
 enum {
     YVEX_MINIMAX_H3_TEXT_MAX_TOKENS = 256u,
-    YVEX_MINIMAX_H3_OMNI_MAX_PACKED_ROWS = 22016u
+    /* The maximum aligned 345-frame released request at 1344x768 with two image anchors,
+       stereo audio, and the complete admitted text envelope. */
+    YVEX_MINIMAX_H3_OMNI_MAX_PACKED_ROWS = 106238u
 };
 typedef enum {
     YVEX_MINIMAX_H3_TEXT_EMBEDDING = 0, YVEX_MINIMAX_H3_TEXT_INPUT_NORM,

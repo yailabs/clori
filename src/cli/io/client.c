@@ -13,6 +13,7 @@
 #include "src/cli/input/private.h"
 #include "src/cli/io/private.h"
 #include "src/cli/private.h"
+#include <yvex/internal/core.h>
 #include <yvex/server.h>
 #include <ctype.h>
 #include <errno.h>
@@ -35,6 +36,8 @@ typedef struct {
     unsigned long long maximum_new_tokens;
     yvex_provider_sampling sampling;
     char first_image[YVEX_SERVER_STATE_PATH_CAP], last_image[YVEX_SERVER_STATE_PATH_CAP];
+    yvex_client_media_execution media_execution;
+    int text_policy_explicit;
     yvex_reasoning_policy reasoning_policy;
 } client_turn_options;
 typedef struct {
@@ -154,6 +157,38 @@ static int parse_double(const char *text, double *value)
     if (errno || !end || *end || !isfinite(parsed)) return 0;
     *value = parsed;
     return 1;
+}
+static int parse_duration_milliseconds(const char *text,
+                                       unsigned long long *milliseconds)
+{
+    const char *cursor = text;
+    unsigned long long seconds = 0ull, fraction = 0ull, scale = 100ull;
+    int digits = 0;
+    if (!text || !text[0] || !milliseconds) return 0;
+    while (*cursor >= '0' && *cursor <= '9') {
+        if (!yvex_core_u64_mul(seconds, 10ull, &seconds) ||
+            !yvex_core_u64_add(seconds, (unsigned long long)(*cursor - '0'),
+                               &seconds))
+            return 0;
+        cursor++;
+        digits = 1;
+    }
+    if (!digits) return 0;
+    if (*cursor == '.') {
+        cursor++;
+        digits = 0;
+        while (*cursor >= '0' && *cursor <= '9' && scale) {
+            fraction += (unsigned long long)(*cursor - '0') * scale;
+            scale /= 10ull;
+            cursor++;
+            digits = 1;
+        }
+        if (!digits || (*cursor >= '0' && *cursor <= '9')) return 0;
+    }
+    if (*cursor || !yvex_core_u64_mul(seconds, 1000ull, milliseconds) ||
+        !yvex_core_u64_add(*milliseconds, fraction, milliseconds))
+        return 0;
+    return *milliseconds != 0ull;
 }
 int yvex_cli_client_request_open(yvex_client **client, const yvex_client_request *request, yvex_error *err)
 {
@@ -788,6 +823,7 @@ static int generation_turn(const client_engine_binding *engine,
                            const unsigned char *prompt,
                            unsigned long long prompt_bytes,
                            const client_turn_options *options, int conversation,
+                           yvex_server_engine_kind engine_kind,
                            unsigned long long context_capacity,
                            int *connection_lost)
 {
@@ -833,14 +869,32 @@ static int generation_turn(const client_engine_binding *engine,
         }
     }
     request.maximum_new_tokens = options->maximum_new_tokens;
-    request.stochastic = options->sampling.stochastic;
-    request.seed_present = options->sampling.seed_present;
-    request.seed = options->sampling.seed;
-    request.temperature = options->sampling.temperature;
-    request.top_k = options->sampling.top_k;
-    request.top_p = options->sampling.top_p;
-    request.min_p = options->sampling.min_p;
-    request.typical_p = options->sampling.typical_p;
+    if (engine_kind == YVEX_SERVER_ENGINE_MEDIA) {
+        request.media_execution = options->media_execution;
+        request.media_execution.schema_version =
+            YVEX_CLIENT_MEDIA_EXECUTION_SCHEMA_V1;
+        if (options->sampling.seed_present) {
+            request.media_execution.present |= YVEX_CLIENT_MEDIA_EXECUTION_SEED;
+            request.media_execution.seed = options->sampling.seed;
+        }
+        request.stochastic = 0;
+        request.seed_present = 0;
+        request.seed = 0ull;
+        request.temperature = 1.0;
+        request.top_k = 0ull;
+        request.top_p = 1.0;
+        request.min_p = 0.0;
+        request.typical_p = 1.0;
+    } else {
+        request.stochastic = options->sampling.stochastic;
+        request.seed_present = options->sampling.seed_present;
+        request.seed = options->sampling.seed;
+        request.temperature = options->sampling.temperature;
+        request.top_k = options->sampling.top_k;
+        request.top_p = options->sampling.top_p;
+        request.min_p = options->sampling.min_p;
+        request.typical_p = options->sampling.typical_p;
+    }
     request.reasoning_policy = reasoning_policy;
     turn_signals_open(&signals, engine, session_name);
     rc = request_open(&client, &request, &err);
@@ -878,19 +932,22 @@ static int generation_turn(const client_engine_binding *engine,
             if (message.media_result.available) {
                 fprintf(status_output,
                         "%smedia complete%s · %s\n"
-                        "%llux%llu · %llu frames · %llu/%llu fps · "
-                        "%llu audio samples · %llu bytes · seed %llu\n"
-                        "%spreset %s · execution %s%s\n",
+                        "%llux%llu · %llu frames · %.3f s · %llu/%llu fps · "
+                        "%llu audio samples · %llu bytes · seed %llu · %llu evals\n"
+                        "%spreset %s · trajectory %s · execution %s%s\n",
                         style.success, style.reset,
                         message.media_result.output_path,
                         message.media_result.width, message.media_result.height,
                         message.media_result.frames,
+                        (double)message.media_result.duration_milliseconds / 1000.0,
                         message.media_result.fps_numerator,
                         message.media_result.fps_denominator,
                         message.media_result.audio_samples,
                         message.media_result.file_bytes,
-                        message.media_result.seed, style.dim,
+                        message.media_result.seed,
+                        message.media_result.model_evaluations, style.dim,
                         message.media_result.preset_identity,
+                        message.media_result.trajectory_identity,
                         message.media_result.execution_identity, style.reset);
             } else {
                 yvex_cli_out_turn_metrics(status_output, &message,
@@ -1484,7 +1541,7 @@ static int repl_reconnect(client_engine_binding *engine, const char *session,
 }
 static int chat(const char *model_alias, const char *session_name,
                 unsigned long long maximum_new_tokens,
-                const char *first_image, const char *last_image)
+                const client_turn_options *initial_options)
 {
     client_engine_binding engine = {0};
     client_turn_options options;
@@ -1512,14 +1569,8 @@ static int chat(const char *model_alias, const char *session_name,
         (void)sigaction(SIGINT, &prior_interrupt, NULL);
         return 1;
     }
-    turn_options_init(&options);
+    options = *initial_options;
     options.maximum_new_tokens = maximum_new_tokens;
-    if ((first_image && !turn_condition_path(options.first_image, first_image)) ||
-        (last_image && !turn_condition_path(options.last_image, last_image))) {
-        fprintf(stderr, "yvex: media condition image could not be resolved\n");
-        result = 2;
-        goto cleanup;
-    }
     if (model_alias)
         (void)snprintf(engine.alias, sizeof(engine.alias), "%s", model_alias);
     (void)snprintf(current, sizeof(current), "%s", session_name);
@@ -1536,6 +1587,17 @@ static int chat(const char *model_alias, const char *session_name,
     if (console_status_fetch(&engine, current, &status, &err) != YVEX_OK ||
         engine_binding_capture(&engine, &status.console, &err) != YVEX_OK) {
         result = client_error(&err);
+        goto cleanup;
+    }
+    if ((status.engine_kind == YVEX_SERVER_ENGINE_MEDIA &&
+         options.maximum_new_tokens) ||
+        (status.engine_kind != YVEX_SERVER_ENGINE_MEDIA &&
+         (options.first_image[0] || options.last_image[0] ||
+          options.media_execution.trajectory !=
+              YVEX_CLIENT_MEDIA_TRAJECTORY_DEFAULT ||
+          options.media_execution.present || options.sampling.seed_present))) {
+        fprintf(stderr, "yvex: selected options do not apply to the attached engine\n");
+        result = 2;
         goto cleanup;
     }
     render_console_status(&status, 1);
@@ -1595,6 +1657,7 @@ static int chat(const char *model_alias, const char *session_name,
             int turn = generation_turn(
                 &engine, current, (const unsigned char *)line,
                 (unsigned long long)count, &options, 1,
+                status.engine_kind,
                 status.console.context_capacity, &connection_lost);
             if (connection_lost) connected = 0;
             if (turn == 131) {
@@ -1616,9 +1679,11 @@ cleanup:
 }
 static int chat_command(int argc, char **argv)
 {
-    const char *model = NULL, *session = "main", *first_image = NULL, *last_image = NULL;
+    const char *model = NULL, *session = "main";
+    client_turn_options options;
     unsigned long long maximum_new_tokens = 0u;
     int index, saw_model = 0, saw_session = 0, saw_maximum = 0;
+    turn_options_init(&options);
     for (index = 2; index < argc; ++index) {
         if (!strcmp(argv[index], "--model") && !saw_model && index + 1 < argc) {
             model = argv[++index];
@@ -1630,18 +1695,54 @@ static int chat_command(int argc, char **argv)
                    index + 1 < argc) {
             if (!parse_u64(argv[++index], &maximum_new_tokens, 0)) return 2;
             saw_maximum = 1;
-        } else if (!strcmp(argv[index], "--first-image") && !first_image &&
+        } else if (!strcmp(argv[index], "--first-image") && !options.first_image[0] &&
                    index + 1 < argc) {
-            first_image = argv[++index];
-        } else if (!strcmp(argv[index], "--last-image") && !last_image &&
+            if (!turn_condition_path(options.first_image, argv[++index])) return 2;
+        } else if (!strcmp(argv[index], "--last-image") && !options.last_image[0] &&
                    index + 1 < argc) {
-            last_image = argv[++index];
+            if (!turn_condition_path(options.last_image, argv[++index])) return 2;
+        } else if (!strcmp(argv[index], "--trajectory") &&
+                   options.media_execution.trajectory ==
+                       YVEX_CLIENT_MEDIA_TRAJECTORY_DEFAULT &&
+                   index + 1 < argc) {
+            const char *value = argv[++index];
+            if (!strcmp(value, "preview"))
+                options.media_execution.trajectory =
+                    YVEX_CLIENT_MEDIA_TRAJECTORY_PREVIEW;
+            else if (!strcmp(value, "released"))
+                options.media_execution.trajectory =
+                    YVEX_CLIENT_MEDIA_TRAJECTORY_RELEASED;
+            else return 2;
+        } else if (!strcmp(argv[index], "--width") &&
+                   !(options.media_execution.present &
+                     YVEX_CLIENT_MEDIA_EXECUTION_WIDTH) && index + 1 < argc) {
+            if (!parse_u64(argv[++index], &options.media_execution.width, 0)) return 2;
+            options.media_execution.present |= YVEX_CLIENT_MEDIA_EXECUTION_WIDTH;
+        } else if (!strcmp(argv[index], "--height") &&
+                   !(options.media_execution.present &
+                     YVEX_CLIENT_MEDIA_EXECUTION_HEIGHT) && index + 1 < argc) {
+            if (!parse_u64(argv[++index], &options.media_execution.height, 0)) return 2;
+            options.media_execution.present |= YVEX_CLIENT_MEDIA_EXECUTION_HEIGHT;
+        } else if (!strcmp(argv[index], "--duration") &&
+                   !(options.media_execution.present &
+                     YVEX_CLIENT_MEDIA_EXECUTION_DURATION) && index + 1 < argc) {
+            if (!parse_duration_milliseconds(
+                    argv[++index], &options.media_execution.duration_milliseconds))
+                return 2;
+            options.media_execution.present |= YVEX_CLIENT_MEDIA_EXECUTION_DURATION;
+        } else if (!strcmp(argv[index], "--seed") &&
+                   !options.sampling.seed_present && index + 1 < argc) {
+            if (!parse_u64(argv[++index], &options.sampling.seed, 1)) return 2;
+            options.sampling.seed_present = 1;
         } else {
             return 2;
         }
     }
     if (model && (!model[0] || strlen(model) >= YVEX_SERVER_MODEL_ALIAS_CAP)) return 2;
-    return chat(model, session, maximum_new_tokens, first_image, last_image);
+    if (!!(options.media_execution.present & YVEX_CLIENT_MEDIA_EXECUTION_WIDTH) !=
+        !!(options.media_execution.present & YVEX_CLIENT_MEDIA_EXECUTION_HEIGHT))
+        return 2;
+    return chat(model, session, maximum_new_tokens, &options);
 }
 /* Parse and execute one complete one-shot policy without inferring strategy. */
 static int run_command(int argc, char **argv)
@@ -1671,6 +1772,7 @@ static int run_command(int argc, char **argv)
             if (!strcmp(strategy, "greedy")) options.sampling.stochastic = 0;
             else if (!strcmp(strategy, "stochastic")) options.sampling.stochastic = 1;
             else return 2;
+            options.text_policy_explicit = 1;
         } else if (!strcmp(argument, "--reasoning") && index + 1 < argc) {
             const char *reasoning = argv[++index];
             if (!strcmp(reasoning, "none"))
@@ -1686,14 +1788,43 @@ static int run_command(int argc, char **argv)
             options.sampling.seed_present = 1;
         } else if (!strcmp(argument, "--temperature") && index + 1 < argc) {
             if (!parse_double(argv[++index], &options.sampling.temperature)) return 2;
+            options.text_policy_explicit = 1;
         } else if (!strcmp(argument, "--top-k") && index + 1 < argc) {
             if (!parse_u64(argv[++index], &options.sampling.top_k, 1)) return 2;
+            options.text_policy_explicit = 1;
         } else if (!strcmp(argument, "--top-p") && index + 1 < argc) {
             if (!parse_double(argv[++index], &options.sampling.top_p)) return 2;
+            options.text_policy_explicit = 1;
         } else if (!strcmp(argument, "--min-p") && index + 1 < argc) {
             if (!parse_double(argv[++index], &options.sampling.min_p)) return 2;
+            options.text_policy_explicit = 1;
         } else if (!strcmp(argument, "--typical-p") && index + 1 < argc) {
             if (!parse_double(argv[++index], &options.sampling.typical_p)) return 2;
+            options.text_policy_explicit = 1;
+        } else if (!strcmp(argument, "--trajectory") && index + 1 < argc) {
+            const char *trajectory = argv[++index];
+            if (options.media_execution.trajectory !=
+                YVEX_CLIENT_MEDIA_TRAJECTORY_DEFAULT) return 2;
+            if (!strcmp(trajectory, "preview"))
+                options.media_execution.trajectory =
+                    YVEX_CLIENT_MEDIA_TRAJECTORY_PREVIEW;
+            else if (!strcmp(trajectory, "released"))
+                options.media_execution.trajectory =
+                    YVEX_CLIENT_MEDIA_TRAJECTORY_RELEASED;
+            else return 2;
+        } else if (!strcmp(argument, "--width") && index + 1 < argc) {
+            if (options.media_execution.present & YVEX_CLIENT_MEDIA_EXECUTION_WIDTH ||
+                !parse_u64(argv[++index], &options.media_execution.width, 0)) return 2;
+            options.media_execution.present |= YVEX_CLIENT_MEDIA_EXECUTION_WIDTH;
+        } else if (!strcmp(argument, "--height") && index + 1 < argc) {
+            if (options.media_execution.present & YVEX_CLIENT_MEDIA_EXECUTION_HEIGHT ||
+                !parse_u64(argv[++index], &options.media_execution.height, 0)) return 2;
+            options.media_execution.present |= YVEX_CLIENT_MEDIA_EXECUTION_HEIGHT;
+        } else if (!strcmp(argument, "--duration") && index + 1 < argc) {
+            if (options.media_execution.present & YVEX_CLIENT_MEDIA_EXECUTION_DURATION ||
+                !parse_duration_milliseconds(
+                    argv[++index], &options.media_execution.duration_milliseconds)) return 2;
+            options.media_execution.present |= YVEX_CLIENT_MEDIA_EXECUTION_DURATION;
         } else if (argument[0] == '-') {
             fprintf(stderr, "yvex: unknown run option: %s\n", argument);
             return 2;
@@ -1709,11 +1840,8 @@ static int run_command(int argc, char **argv)
         options.sampling.top_p > 1.0 || options.sampling.min_p < 0.0 ||
         options.sampling.min_p > 1.0 || options.sampling.typical_p <= 0.0 ||
         options.sampling.typical_p > 1.0 ||
-        (options.sampling.stochastic && !options.sampling.seed_present) ||
-        (!options.sampling.stochastic &&
-         (options.sampling.seed_present || options.sampling.temperature != 1.0 ||
-          options.sampling.top_k || options.sampling.top_p != 1.0 ||
-          options.sampling.min_p != 0.0 || options.sampling.typical_p != 1.0))) {
+        (!!(options.media_execution.present & YVEX_CLIENT_MEDIA_EXECUTION_WIDTH) !=
+         !!(options.media_execution.present & YVEX_CLIENT_MEDIA_EXECUTION_HEIGHT))) {
         fprintf(stderr,
                 "yvex: run requires one prompt and an explicit valid strategy policy\n");
         return 2;
@@ -1736,11 +1864,44 @@ static int run_command(int argc, char **argv)
                                        session, -1);
         return client_error(&err);
     }
+    if (console.engine_kind == YVEX_SERVER_ENGINE_MEDIA) {
+        if (options.text_policy_explicit ||
+            options.reasoning_policy <= YVEX_REASONING_MAXIMUM ||
+            options.maximum_new_tokens) {
+            fprintf(stderr, "yvex: text sampling options are unavailable for media generation\n");
+            if (owns_session)
+                (void)administration_bound(YVEX_CLIENT_OP_SESSION_CLOSE, &engine,
+                                           session, -1);
+            return 2;
+        }
+    } else if (options.first_image[0] || options.last_image[0] ||
+               options.media_execution.trajectory !=
+                   YVEX_CLIENT_MEDIA_TRAJECTORY_DEFAULT ||
+               options.media_execution.present) {
+        fprintf(stderr, "yvex: media options require a media engine\n");
+        if (owns_session)
+            (void)administration_bound(YVEX_CLIENT_OP_SESSION_CLOSE, &engine,
+                                       session, -1);
+        return 2;
+    } else if ((options.sampling.stochastic && !options.sampling.seed_present) ||
+               (!options.sampling.stochastic &&
+                (options.sampling.seed_present ||
+                 options.sampling.temperature != 1.0 ||
+                 options.sampling.top_k || options.sampling.top_p != 1.0 ||
+                 options.sampling.min_p != 0.0 ||
+                 options.sampling.typical_p != 1.0))) {
+        fprintf(stderr, "yvex: run requires an explicit valid strategy policy\n");
+        if (owns_session)
+            (void)administration_bound(YVEX_CLIENT_OP_SESSION_CLOSE, &engine,
+                                       session, -1);
+        return 2;
+    }
     {
         int status = generation_turn(&engine, session,
                                      (const unsigned char *)prompt,
                                      (unsigned long long)strlen(prompt),
                                      &options, 0,
+                                     console.engine_kind,
                                      console.console.context_capacity, NULL);
         if (owns_session)
             (void)administration_bound(YVEX_CLIENT_OP_SESSION_CLOSE, &engine,

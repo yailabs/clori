@@ -845,7 +845,7 @@ int yvex_model_minimax_h3_media_target_profile(yvex_media_target_profile *out, y
     normalization = rc == YVEX_OK ? latent_normalization() : NULL;
     if (rc != YVEX_OK || !normalization) return rc != YVEX_OK ? rc : YVEX_ERR_STATE;
     *out = (yvex_media_target_profile){
-        .schema_version = YVEX_MEDIA_TARGET_PROFILE_SCHEMA_V1,
+        .schema_version = YVEX_MEDIA_TARGET_PROFILE_SCHEMA_V2,
         .target = YVEX_MINIMAX_H3_TARGET_ID, .family = "minimax-h3",
         .source_identity = YVEX_MINIMAX_H3_SOURCE_TREE_IDENTITY,
         .text_artifact = "physical-v3/text_encoder.gguf",
@@ -855,12 +855,12 @@ int yvex_model_minimax_h3_media_target_profile(yvex_media_target_profile *out, y
         .tiers = {{"preview", 192ull, 192ull, 124ull, 1},
                   {"preview-256", 256ull, 256ull, 124ull, 0},
                   {"preview-384", 384ull, 384ull, 124ull, 0},
-                  {"source-768", 768ull, 768ull, 124ull, 0},
+                  {"source-768", 768ull, 768ull, 345ull, 0},
                   {"smoke", 32ull, 32ull, 345ull, 0}}, .tier_count = 5ull,
         .fps_numerator = 24ull, .fps_denominator = 1ull,
         .audio_sample_rate = architecture.audio_vae.sample_rate, .seed = 42ull,
         .keyframe_encode_seed = 42ull,
-        .maximum_host_bytes = 80ull << 30u, .maximum_device_bytes = 16ull << 30u,
+        .maximum_host_bytes = 96ull << 30u, .maximum_device_bytes = 48ull << 30u,
         .maximum_workspace_bytes = 16ull << 30u, .maximum_file_bytes = 2ull << 30u,
         .video_temporal_ratio = architecture.video_vae.temporal_ratio,
         .video_clip_length = architecture.video_vae.clip_length,
@@ -879,7 +879,15 @@ int yvex_model_minimax_h3_media_target_profile(yvex_media_target_profile *out, y
         .frames_per_chunk = 17ull, .frame_remainder = 5ull,
         .minimum_frames = 124ull, .maximum_frames = 345ull,
         .minimum_inference_steps = 2ull, .maximum_inference_steps = 64ull,
-        .canvas_multiple = 32ull, .maximum_canvas_pixels = 768ull * 768ull};
+        .released_sigma_grid_points = 50ull,
+        .canvas_multiple = 32ull, .canvas_short_edge = 768ull,
+        .minimum_canvas_pixels = 768ull * 768ull,
+        .maximum_canvas_pixels = 768ull * 1344ull,
+        .released_width = 1344ull, .released_height = 768ull,
+        .minimum_duration_milliseconds = 5000ull,
+        .maximum_duration_milliseconds = 15000ull,
+        .minimum_aspect_numerator = 1ull, .minimum_aspect_denominator = 4ull,
+        .maximum_aspect_numerator = 4ull, .maximum_aspect_denominator = 1ull};
     yvex_error_clear(err);
     return YVEX_OK;
 }

@@ -39,6 +39,7 @@ enum {
     TAG_ENGINE_GENERATION,
     TAG_MEDIA_FIRST_IMAGE,
     TAG_MEDIA_LAST_IMAGE,
+    TAG_MEDIA_EXECUTION,
     TAG_MESSAGE_KIND = 32,
     TAG_STATUS,
     TAG_REASON,
@@ -505,6 +506,49 @@ static int request_media_conditions_valid(const yvex_client_request *request)
     }
     return 1;
 }
+static int request_media_execution_valid(const yvex_client_request *request)
+{
+    const yvex_client_media_execution *execution;
+    unsigned int allowed = YVEX_CLIENT_MEDIA_EXECUTION_WIDTH |
+                           YVEX_CLIENT_MEDIA_EXECUTION_HEIGHT |
+                           YVEX_CLIENT_MEDIA_EXECUTION_DURATION |
+                           YVEX_CLIENT_MEDIA_EXECUTION_SEED;
+    if (!request) return 0;
+    execution = &request->media_execution;
+    if (!execution->schema_version)
+        return !execution->trajectory && !execution->present &&
+               !execution->width && !execution->height &&
+               !execution->duration_milliseconds && !execution->seed;
+    return request->operation == YVEX_CLIENT_OP_GENERATION_TURN &&
+           execution->schema_version == YVEX_CLIENT_MEDIA_EXECUTION_SCHEMA_V1 &&
+           execution->trajectory <= YVEX_CLIENT_MEDIA_TRAJECTORY_RELEASED &&
+           !(execution->present & ~allowed) &&
+           (!!(execution->present & YVEX_CLIENT_MEDIA_EXECUTION_WIDTH) ==
+            !!(execution->present & YVEX_CLIENT_MEDIA_EXECUTION_HEIGHT)) &&
+           (!!(execution->present & YVEX_CLIENT_MEDIA_EXECUTION_WIDTH) ==
+            !!execution->width) &&
+           (!!(execution->present & YVEX_CLIENT_MEDIA_EXECUTION_HEIGHT) ==
+            !!execution->height) &&
+           (!!(execution->present & YVEX_CLIENT_MEDIA_EXECUTION_DURATION) ==
+            !!execution->duration_milliseconds) &&
+           ((execution->present & YVEX_CLIENT_MEDIA_EXECUTION_SEED) ||
+            !execution->seed);
+}
+static int request_media_execution_write(
+    wire_writer *writer, const yvex_client_media_execution *execution)
+{
+    unsigned char bytes[7u * 8u];
+    const unsigned long long facts[] = {
+        execution->schema_version, execution->trajectory, execution->present,
+        execution->width, execution->height, execution->duration_milliseconds,
+        execution->seed,
+    };
+    unsigned long long index;
+    if (!execution->schema_version) return 1;
+    for (index = 0ull; index < 7ull; ++index)
+        put_u64(bytes + index * 8ull, facts[index]);
+    return writer_field(writer, TAG_MEDIA_EXECUTION, bytes, sizeof(bytes));
+}
 static const char *request_media_condition_path(
     const yvex_client_request *request, yvex_client_media_condition_role role) {
     for (unsigned long long index = 0ull; index < request->media_condition_count; ++index)
@@ -534,6 +578,7 @@ int yvex_protocol_request_encode(const yvex_client_request *request,
         !request_state_fields_valid(request) ||
         !request_fork_fields_valid(request) ||
         !request_media_conditions_valid(request) ||
+        !request_media_execution_valid(request) ||
         (request->stochastic != 0 && request->stochastic != 1) ||
         (request->seed_present != 0 && request->seed_present != 1) ||
         (request->trace_content != 0 && request->trace_content != 1) ||
@@ -595,6 +640,7 @@ int yvex_protocol_request_encode(const yvex_client_request *request,
         !writer_text(&writer, TAG_MEDIA_LAST_IMAGE,
                      request_media_condition_path(
                          request, YVEX_CLIENT_MEDIA_CONDITION_LAST)) ||
+        !request_media_execution_write(&writer, &request->media_execution) ||
         !writer_field(&writer, TAG_PROVIDER_REQUEST, provider_bytes,
                       provider_count)) {
         free(provider_bytes);
@@ -724,6 +770,29 @@ int yvex_protocol_request_decode(const unsigned char *input,
                 if (valid) candidate.media_condition_count++;
             }
             break;
+        case TAG_MEDIA_EXECUTION:
+            if (count != 7ull * 8ull) {
+                valid = 0;
+                break;
+            }
+            if (get_u64(bytes) > UINT_MAX ||
+                get_u64(bytes + 8ull) > YVEX_CLIENT_MEDIA_TRAJECTORY_RELEASED ||
+                get_u64(bytes + 16ull) > UINT_MAX) {
+                valid = 0;
+                break;
+            }
+            candidate.media_execution.schema_version =
+                (unsigned int)get_u64(bytes);
+            candidate.media_execution.trajectory =
+                (yvex_client_media_trajectory)get_u64(bytes + 8ull);
+            candidate.media_execution.present =
+                (unsigned int)get_u64(bytes + 16ull);
+            candidate.media_execution.width = get_u64(bytes + 24ull);
+            candidate.media_execution.height = get_u64(bytes + 32ull);
+            candidate.media_execution.duration_milliseconds =
+                get_u64(bytes + 40ull);
+            candidate.media_execution.seed = get_u64(bytes + 48ull);
+            break;
         default: valid = 0; break;
         }
     }
@@ -731,6 +800,7 @@ int yvex_protocol_request_decode(const unsigned char *input,
         !request_state_fields_valid(&candidate) ||
         !request_fork_fields_valid(&candidate) ||
         !request_media_conditions_valid(&candidate) ||
+        !request_media_execution_valid(&candidate) ||
         (candidate.prompt_bytes && candidate.provider_request)) {
         free(prompt);
         yvex_provider_request_close(&provider);
@@ -866,17 +936,36 @@ static int media_result_fields_valid(const yvex_client_media_result *result)
     if (!result->available)
         return !result->schema_version && !result->output_path[0] &&
                !result->width && !result->height && !result->frames &&
-               !result->fps_numerator && !result->fps_denominator && !result->audio_samples &&
-               !result->audio_sample_rate && !result->seed && !result->file_bytes &&
-               !result->preset_identity[0] && !result->execution_identity[0] &&
+               !result->fps_numerator && !result->fps_denominator &&
+               !result->duration_milliseconds && !result->audio_samples &&
+               !result->audio_sample_rate && !result->seed &&
+               !result->model_evaluations && !result->engine_generation &&
+               !result->task && !result->condition_count && !result->file_bytes &&
+               !result->preset_identity[0] && !result->trajectory_identity[0] &&
+               !result->rng_identity[0] && !result->plan_identity[0] &&
+               !result->execution_identity[0] &&
                !result->file_identity[0] && !result->publication_identity[0];
-    return result->schema_version == YVEX_CLIENT_MEDIA_RESULT_SCHEMA_V1 &&
+    return result->schema_version == YVEX_CLIENT_MEDIA_RESULT_SCHEMA_V2 &&
            result->output_path[0] == '/' && !strstr(result->output_path, "/../") &&
            strcmp(result->output_path + strlen(result->output_path) - 1u, "/..") &&
            result->width && result->height && result->frames && result->fps_numerator &&
-           result->fps_denominator && result->audio_samples && result->audio_sample_rate &&
+           result->fps_denominator && result->duration_milliseconds &&
+           result->audio_samples && result->audio_sample_rate &&
+           result->model_evaluations && result->engine_generation &&
+           result->task <= YVEX_CLIENT_MEDIA_TASK_FIRST_LAST &&
+           result->condition_count <= YVEX_CLIENT_MEDIA_CONDITION_CAP &&
+           ((result->task == YVEX_CLIENT_MEDIA_TASK_T2VA &&
+             result->condition_count == 0ull) ||
+            ((result->task == YVEX_CLIENT_MEDIA_TASK_FIRST ||
+              result->task == YVEX_CLIENT_MEDIA_TASK_LAST) &&
+             result->condition_count == 1ull) ||
+            (result->task == YVEX_CLIENT_MEDIA_TASK_FIRST_LAST &&
+             result->condition_count == 2ull)) &&
            result->file_bytes &&
            yvex_sha256_hex_valid(result->preset_identity) &&
+           yvex_sha256_hex_valid(result->trajectory_identity) &&
+           yvex_sha256_hex_valid(result->rng_identity) &&
+           yvex_sha256_hex_valid(result->plan_identity) &&
            yvex_sha256_hex_valid(result->execution_identity) &&
            yvex_sha256_hex_valid(result->file_identity) &&
            yvex_sha256_hex_valid(result->publication_identity);
@@ -1209,14 +1298,19 @@ static int protocol_message_core_write(wire_writer *writer,
 static int protocol_media_result_write(
     wire_writer *writer, const yvex_client_media_result *result)
 {
-    unsigned char bytes[YVEX_SERVER_STATE_PATH_CAP + 400u];
+    unsigned char bytes[YVEX_SERVER_STATE_PATH_CAP + 640u];
     const unsigned long long facts[] = {
         result->width, result->height, result->frames, result->fps_numerator,
-        result->fps_denominator, result->audio_samples, result->audio_sample_rate, result->seed,
-        result->file_bytes,
+        result->fps_denominator, result->duration_milliseconds,
+        result->audio_samples, result->audio_sample_rate, result->seed,
+        result->model_evaluations, result->engine_generation, result->task,
+        result->condition_count, result->file_bytes,
     };
-    const char *identities[] = {result->preset_identity, result->execution_identity,
-                                result->file_identity, result->publication_identity};
+    const char *identities[] = {
+        result->preset_identity, result->trajectory_identity,
+        result->rng_identity, result->plan_identity, result->execution_identity,
+        result->file_identity, result->publication_identity,
+    };
     const unsigned long long path_offset = sizeof(facts);
     size_t path_bytes = strlen(result->output_path);
     unsigned long long index, identity_offset;
@@ -1233,7 +1327,7 @@ static int protocol_media_result_write(
         memcpy(bytes + identity_offset + index * YVEX_SHA256_HEX_BYTES,
                identities[index], YVEX_SHA256_HEX_BYTES);
     return writer_field(writer, TAG_MEDIA_RESULT, bytes,
-                        identity_offset + 4ull * YVEX_SHA256_HEX_BYTES);
+                        identity_offset + 7ull * YVEX_SHA256_HEX_BYTES);
 }
 static int protocol_partial_write(wire_writer *writer,
                                   const yvex_client_partial_turn *partial)
@@ -1679,24 +1773,36 @@ static int message_media_result_field(
     yvex_client_media_result *result = &candidate->media_result;
     unsigned long long *facts[] = {
         &result->width, &result->height, &result->frames, &result->fps_numerator,
-        &result->fps_denominator, &result->audio_samples, &result->audio_sample_rate, &result->seed,
+        &result->fps_denominator, &result->duration_milliseconds,
+        &result->audio_samples, &result->audio_sample_rate, &result->seed,
+        &result->model_evaluations, &result->engine_generation,
+        NULL, &result->condition_count,
         &result->file_bytes,
     };
-    char *identities[] = {result->preset_identity, result->execution_identity,
-                          result->file_identity, result->publication_identity};
-    const unsigned long long path_offset = 9ull * 8ull;
+    char *identities[] = {
+        result->preset_identity, result->trajectory_identity,
+        result->rng_identity, result->plan_identity, result->execution_identity,
+        result->file_identity, result->publication_identity,
+    };
+    const unsigned long long path_offset = 14ull * 8ull;
     unsigned long long index, identity_offset;
     unsigned int path_bytes;
     if (tag != TAG_MEDIA_RESULT)
         return 0;
-    if (count < path_offset + 2ull + 4ull * YVEX_SHA256_HEX_BYTES)
+    if (count < path_offset + 2ull + 7ull * YVEX_SHA256_HEX_BYTES)
         return -1;
-    for (index = 0ull; index < sizeof(facts) / sizeof(facts[0]); ++index)
-        *facts[index] = get_u64(bytes + index * 8ull);
+    for (index = 0ull; index < sizeof(facts) / sizeof(facts[0]); ++index) {
+        unsigned long long value = get_u64(bytes + index * 8ull);
+        if (index == 11ull) {
+            if (value > YVEX_CLIENT_MEDIA_TASK_FIRST_LAST) return -1;
+            result->task = (yvex_client_media_task)value;
+        } else
+            *facts[index] = value;
+    }
     path_bytes = ((unsigned int)bytes[path_offset] << 8u) | bytes[path_offset + 1ull];
     identity_offset = path_offset + 2ull + path_bytes;
     if (!path_bytes || path_bytes >= sizeof(result->output_path) ||
-        count != identity_offset + 4ull * YVEX_SHA256_HEX_BYTES)
+        count != identity_offset + 7ull * YVEX_SHA256_HEX_BYTES)
         return -1;
     memcpy(result->output_path, bytes + path_offset + 2ull, path_bytes);
     result->output_path[path_bytes] = '\0';
@@ -1705,7 +1811,7 @@ static int message_media_result_field(
                YVEX_SHA256_HEX_BYTES);
         identities[index][YVEX_SHA256_HEX_BYTES] = '\0';
     }
-    result->schema_version = YVEX_CLIENT_MEDIA_RESULT_SCHEMA_V1;
+    result->schema_version = YVEX_CLIENT_MEDIA_RESULT_SCHEMA_V2;
     result->available = 1;
     return 1;
 }

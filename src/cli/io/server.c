@@ -371,7 +371,7 @@ static int media_prepare(const cli_server_profile *profile,
     options->artifact_path = NULL;
     options->runtime_binding_path = NULL;
     options->target_id = host->target;
-    media->schema_version = YVEX_SERVER_MEDIA_SCHEMA_V1;
+    media->schema_version = YVEX_SERVER_MEDIA_SCHEMA_V2;
     media->output_root = host->output_root;
     media->artifact_reopen_cache_root = configuration->artifact_reopen_cache_root;
     media->request_template = host->request_template;
@@ -383,8 +383,20 @@ static int media_prepare(const cli_server_profile *profile,
     media->maximum_frames = host->maximum_frames;
     media->minimum_inference_steps = host->minimum_inference_steps;
     media->maximum_inference_steps = host->maximum_inference_steps;
+    media->released_sigma_grid_points = host->released_sigma_grid_points;
+    media->default_seed = host->default_seed;
     media->canvas_multiple = host->canvas_multiple;
+    media->canvas_short_edge = host->canvas_short_edge;
+    media->minimum_canvas_pixels = host->minimum_canvas_pixels;
     media->maximum_canvas_pixels = host->maximum_canvas_pixels;
+    media->released_width = host->released_width;
+    media->released_height = host->released_height;
+    media->minimum_duration_milliseconds = host->minimum_duration_milliseconds;
+    media->maximum_duration_milliseconds = host->maximum_duration_milliseconds;
+    media->minimum_aspect_numerator = host->minimum_aspect_numerator;
+    media->minimum_aspect_denominator = host->minimum_aspect_denominator;
+    media->maximum_aspect_numerator = host->maximum_aspect_numerator;
+    media->maximum_aspect_denominator = host->maximum_aspect_denominator;
     return YVEX_OK;
 }
 

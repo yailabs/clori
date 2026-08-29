@@ -67,16 +67,19 @@ RECORDS = {
         "include/yvex/server.h", "YVEX_CLIENT_STATE_CHECKPOINT_SCHEMA_V1", 1, 296,
         "d7fd385982bb24fc091d6702c0def19e1cae0070cd6717ef2211775b9aecb444"),
     "yvex_client_media_result": (
-        "include/yvex/server.h", "YVEX_CLIENT_MEDIA_RESULT_SCHEMA_V1", 1, 856,
-        "812c35fbd87c5f621d3a8b52ffbe39c32cdcc41580bf562dc07fd8b6ff6123b2"),
+        "include/yvex/server.h", "YVEX_CLIENT_MEDIA_RESULT_SCHEMA_V2", 2, 1088,
+        "7650ccd0807c5b0b774e93fe2a5be6e513604a24d0c08e04a04ed780bd0aeb72"),
+    "yvex_client_media_execution": (
+        "include/yvex/server.h", "YVEX_CLIENT_MEDIA_EXECUTION_SCHEMA_V1", 1, 48,
+        "391eb61668620470921d4663079286a6946f363df02c509b0f963d00a66245a3"),
     "yvex_client_media_condition": (
         "include/yvex/server.h", "YVEX_CLIENT_MEDIA_CONDITION_SCHEMA_V1", 1, 524,
         "15b251a93051e0f0cf0c70e1a14c2cdcb019b54d7e27851b6c36b02bcac9802b"),
     "yvex_client_request": (
-        "include/yvex/server.h", "YVEX_LOCAL_PROTOCOL_VERSION", 15, 1976,
-        "6292fe4202c13833b2d5c475491ab32d78287284ab67b0f66828aced6b9f4638"),
+        "include/yvex/server.h", "YVEX_LOCAL_PROTOCOL_VERSION", 16, 2024,
+        "eda70b9000088f58c57b639c0eb14a15d4893bf1c128d2b7f5f477b20a0a8c84"),
     "yvex_client_message": (
-        "include/yvex/server.h", "YVEX_LOCAL_PROTOCOL_VERSION", 15, 10024,
+        "include/yvex/server.h", "YVEX_LOCAL_PROTOCOL_VERSION", 16, 10256,
         "7427bba88c63a0443c240058c0117c2e6f2169fce79854305a3b4b372408759c"),
     "yvex_tokenizer_plan_summary": (
         "include/yvex/tokenizer.h", "YVEX_TOKENIZER_PLAN_SCHEMA_V3", 3, 864,
@@ -159,7 +162,7 @@ def compiler_source() -> str:
         'ABI_ASSERT(YVEX_SERVER_ENGINE_SCHEMA_V2 == 2u, "engine v2 identity changed");',
         'ABI_ASSERT(YVEX_RUNTIME_EVENT_SCHEMA_V3 == 3u, "legacy event v3 identity changed");',
         'ABI_ASSERT(YVEX_RUNTIME_EVENT_SCHEMA_V4 == 4u, "event v4 identity changed");',
-        'ABI_ASSERT(YVEX_LOCAL_PROTOCOL_VERSION == 15u, "local protocol identity changed");',
+        'ABI_ASSERT(YVEX_LOCAL_PROTOCOL_VERSION == 16u, "local protocol identity changed");',
         'ABI_ASSERT(YVEX_SERVER_ENGINE_NONE == 0, "engine-kind none value changed");',
         'ABI_ASSERT(YVEX_SERVER_ENGINE_TEXT == 1, "engine-kind text value changed");',
         'ABI_ASSERT(YVEX_SERVER_ENGINE_MEDIA == 2, "engine-kind media value changed");',

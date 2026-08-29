@@ -103,7 +103,7 @@ static int media_target_validate(
     const yvex_media_target_profile *target,
     const yvex_media_execution_recipe *execution, yvex_error *err)
 {
-    if (!target || target->schema_version != YVEX_MEDIA_TARGET_PROFILE_SCHEMA_V1 ||
+    if (!target || target->schema_version != YVEX_MEDIA_TARGET_PROFILE_SCHEMA_V2 ||
         !target->target || !target->target[0] || !target->family || !target->family[0] ||
         !target->source_identity || strlen(target->source_identity) != 64u ||
         !target->tier_count || target->tier_count > YVEX_MEDIA_TARGET_TIER_CAP ||
@@ -113,7 +113,17 @@ static int media_target_validate(
         !target->minimum_frames || target->minimum_frames > target->maximum_frames ||
         !target->minimum_inference_steps ||
         target->minimum_inference_steps > target->maximum_inference_steps ||
-        !target->canvas_multiple || !target->maximum_canvas_pixels ||
+        !target->released_sigma_grid_points ||
+        target->released_sigma_grid_points < target->minimum_inference_steps ||
+        target->released_sigma_grid_points > target->maximum_inference_steps ||
+        !target->canvas_multiple || !target->canvas_short_edge ||
+        !target->minimum_canvas_pixels ||
+        target->minimum_canvas_pixels > target->maximum_canvas_pixels ||
+        !target->released_width ||
+        !target->released_height || !target->minimum_duration_milliseconds ||
+        target->minimum_duration_milliseconds > target->maximum_duration_milliseconds ||
+        !target->minimum_aspect_numerator || !target->minimum_aspect_denominator ||
+        !target->maximum_aspect_numerator || !target->maximum_aspect_denominator ||
         !execution || execution->schema_version != YVEX_MEDIA_EXECUTION_RECIPE_SCHEMA_V1 ||
         !execution->conditioning_layers || !execution->transformer_blocks ||
         !execution->maximum_prompt_tokens || !execution->maximum_packed_rows ||
@@ -194,7 +204,7 @@ int yvex_runtime_media_host_profile_build(
     yvex_core_text_copy(out->source_identity, sizeof(out->source_identity),
                         target->source_identity);
     yvex_core_text_copy(out->output_root, sizeof(out->output_root), output_root);
-    out->schema_version = YVEX_RUNTIME_MEDIA_HOST_SCHEMA_V1;
+    out->schema_version = YVEX_RUNTIME_MEDIA_HOST_SCHEMA_V2;
     out->profile_count = target->tier_count;
     out->frames_per_chunk = target->frames_per_chunk;
     out->frame_remainder = target->frame_remainder;
@@ -202,8 +212,20 @@ int yvex_runtime_media_host_profile_build(
     out->maximum_frames = target->maximum_frames;
     out->minimum_inference_steps = target->minimum_inference_steps;
     out->maximum_inference_steps = target->maximum_inference_steps;
+    out->released_sigma_grid_points = target->released_sigma_grid_points;
+    out->default_seed = target->seed;
     out->canvas_multiple = target->canvas_multiple;
+    out->canvas_short_edge = target->canvas_short_edge;
+    out->minimum_canvas_pixels = target->minimum_canvas_pixels;
     out->maximum_canvas_pixels = target->maximum_canvas_pixels;
+    out->released_width = target->released_width;
+    out->released_height = target->released_height;
+    out->minimum_duration_milliseconds = target->minimum_duration_milliseconds;
+    out->maximum_duration_milliseconds = target->maximum_duration_milliseconds;
+    out->minimum_aspect_numerator = target->minimum_aspect_numerator;
+    out->minimum_aspect_denominator = target->minimum_aspect_denominator;
+    out->maximum_aspect_numerator = target->maximum_aspect_numerator;
+    out->maximum_aspect_denominator = target->maximum_aspect_denominator;
     request = &out->request_template;
     *request = (yvex_runtime_av_generation_request){
         .schema_version = YVEX_RUNTIME_AV_GENERATION_SCHEMA_V2,
@@ -299,7 +321,7 @@ int yvex_runtime_media_execution_preset_validate(
     unsigned long long index;
     int rc;
 
-    if (!host || host->schema_version != YVEX_RUNTIME_MEDIA_HOST_SCHEMA_V1 ||
+    if (!host || host->schema_version != YVEX_RUNTIME_MEDIA_HOST_SCHEMA_V2 ||
         !preset || preset->schema_version != YVEX_RUNTIME_MEDIA_PRESET_SCHEMA_V1 ||
         !preset->name[0] || !preset->profile[0] || strcmp(preset->format, "avi") ||
         !preset->width || !preset->height || !preset->frames ||
@@ -314,8 +336,30 @@ int yvex_runtime_media_execution_preset_validate(
             profile = host->profiles + index;
             break;
         }
-    if (!profile || profile->width != preset->width || profile->height != preset->height ||
-        preset->frames > profile->maximum_frames)
+    if (!strcmp(preset->profile, "released")) {
+        unsigned long long pixels, left, right;
+        if (preset->width % host->canvas_multiple ||
+            preset->height % host->canvas_multiple ||
+            !yvex_core_u64_mul(preset->width, preset->height, &pixels) ||
+            pixels < host->minimum_canvas_pixels ||
+            pixels > host->maximum_canvas_pixels ||
+            !yvex_core_u64_mul(preset->width,
+                               host->minimum_aspect_denominator, &left) ||
+            !yvex_core_u64_mul(preset->height,
+                               host->minimum_aspect_numerator, &right) ||
+            left < right ||
+            !yvex_core_u64_mul(preset->width,
+                               host->maximum_aspect_denominator, &left) ||
+            !yvex_core_u64_mul(preset->height,
+                               host->maximum_aspect_numerator, &right) ||
+            left > right ||
+            preset->sigma_grid_points != host->released_sigma_grid_points)
+            return generation_fail(err, YVEX_ERR_BOUNDS,
+                                   "runtime.media-preset",
+                                   "released media execution exceeds its admitted canvas or trajectory");
+    } else if (!profile || profile->width != preset->width ||
+               profile->height != preset->height ||
+               preset->frames > profile->maximum_frames)
         return generation_fail(err, YVEX_ERR_BOUNDS, "runtime.media-preset",
                                "hosted media preset exceeds its admitted profile");
     rc = media_preset_identity(preset, identity, err);
@@ -334,7 +378,7 @@ int yvex_runtime_media_execution_preset_build(
     int rc;
 
     if (out) memset(out, 0, sizeof(*out));
-    if (!host || !out || host->schema_version != YVEX_RUNTIME_MEDIA_HOST_SCHEMA_V1)
+    if (!host || !out || host->schema_version != YVEX_RUNTIME_MEDIA_HOST_SCHEMA_V2)
         return generation_fail(err, YVEX_ERR_INVALID_ARG, "runtime.media-preset",
                                "one admitted media host profile is required");
     for (index = 0ull; index < host->profile_count; ++index) {
@@ -359,6 +403,111 @@ int yvex_runtime_media_execution_preset_build(
     out->complete = 1;
     rc = media_preset_identity(out, out->identity, err);
     if (rc == YVEX_OK) rc = yvex_runtime_media_execution_preset_validate(host, out, err);
+    return rc;
+}
+
+static int released_frames_resolve(
+    const yvex_runtime_media_host_profile *host,
+    unsigned long long duration_milliseconds,
+    unsigned long long *frames, yvex_error *err)
+{
+    unsigned long long numerator, denominator, requested, remainder, aligned;
+    if (!duration_milliseconds ||
+        duration_milliseconds < host->minimum_duration_milliseconds ||
+        duration_milliseconds > host->maximum_duration_milliseconds ||
+        !yvex_core_u64_mul(duration_milliseconds,
+                           host->request_template.fps_numerator, &numerator) ||
+        !yvex_core_u64_mul(1000ull,
+                           host->request_template.fps_denominator, &denominator) ||
+        !denominator)
+        return generation_fail(err, YVEX_ERR_BOUNDS, "runtime.media-execution",
+                               "released duration is outside the admitted source contract");
+    requested = numerator / denominator;
+    if (numerator % denominator &&
+        !yvex_core_u64_add(requested, 1ull, &requested))
+        return generation_fail(err, YVEX_ERR_BOUNDS, "runtime.media-execution",
+                               "released duration frame count overflowed");
+    remainder = requested % host->frames_per_chunk;
+    if (remainder <= host->frame_remainder) {
+        if (!yvex_core_u64_add(requested,
+                               host->frame_remainder - remainder, &aligned))
+            return generation_fail(err, YVEX_ERR_BOUNDS,
+                                   "runtime.media-execution",
+                                   "released duration alignment overflowed");
+    }
+    else if (!yvex_core_u64_add(
+                 requested, host->frames_per_chunk - remainder +
+                                  host->frame_remainder, &aligned))
+        return generation_fail(err, YVEX_ERR_BOUNDS, "runtime.media-execution",
+                               "released duration alignment overflowed");
+    if (aligned < host->minimum_frames || aligned > host->maximum_frames)
+        return generation_fail(err, YVEX_ERR_BOUNDS, "runtime.media-execution",
+                               "released duration cannot align inside the source frame envelope");
+    *frames = aligned;
+    return YVEX_OK;
+}
+
+int yvex_runtime_media_execution_resolve(
+    const yvex_runtime_media_host_profile *host,
+    const yvex_runtime_media_execution_request *request,
+    yvex_runtime_media_execution_preset *out, yvex_error *err)
+{
+    yvex_runtime_media_execution_kind kind;
+    unsigned int allowed = YVEX_RUNTIME_MEDIA_EXECUTION_WIDTH |
+                           YVEX_RUNTIME_MEDIA_EXECUTION_HEIGHT |
+                           YVEX_RUNTIME_MEDIA_EXECUTION_DURATION |
+                           YVEX_RUNTIME_MEDIA_EXECUTION_SEED;
+    int rc;
+    if (out) memset(out, 0, sizeof(*out));
+    if (!host || host->schema_version != YVEX_RUNTIME_MEDIA_HOST_SCHEMA_V2 ||
+        !request || request->schema_version != YVEX_RUNTIME_MEDIA_EXECUTION_SCHEMA_V1 ||
+        !out || request->kind > YVEX_RUNTIME_MEDIA_EXECUTION_RELEASED ||
+        request->present & ~allowed ||
+        (!!(request->present & YVEX_RUNTIME_MEDIA_EXECUTION_WIDTH) !=
+         !!(request->present & YVEX_RUNTIME_MEDIA_EXECUTION_HEIGHT)) ||
+        (!(request->present & YVEX_RUNTIME_MEDIA_EXECUTION_WIDTH) &&
+         (request->width || request->height)) ||
+        (!(request->present & YVEX_RUNTIME_MEDIA_EXECUTION_DURATION) &&
+         request->duration_milliseconds) ||
+        (!(request->present & YVEX_RUNTIME_MEDIA_EXECUTION_SEED) && request->seed))
+        return generation_fail(err, YVEX_ERR_INVALID_ARG, "runtime.media-execution",
+                               "one complete typed media execution request is required");
+    kind = request->kind == YVEX_RUNTIME_MEDIA_EXECUTION_DEFAULT
+               ? YVEX_RUNTIME_MEDIA_EXECUTION_RELEASED : request->kind;
+    if (kind == YVEX_RUNTIME_MEDIA_EXECUTION_PREVIEW) {
+        if (request->present & ~(unsigned int)YVEX_RUNTIME_MEDIA_EXECUTION_SEED)
+            return generation_fail(err, YVEX_ERR_UNSUPPORTED,
+                                   "runtime.media-execution",
+                                   "preview geometry and trajectory are immutable");
+        rc = yvex_runtime_media_execution_preset_build(host, out, err);
+        if (rc != YVEX_OK) return rc;
+        if (request->present & YVEX_RUNTIME_MEDIA_EXECUTION_SEED) {
+            out->seed = request->seed;
+            rc = media_preset_identity(out, out->identity, err);
+        }
+        return rc;
+    }
+    out->schema_version = YVEX_RUNTIME_MEDIA_PRESET_SCHEMA_V1;
+    yvex_core_text_copy(out->name, sizeof(out->name), "released-fl2va-v1");
+    yvex_core_text_copy(out->profile, sizeof(out->profile), "released");
+    yvex_core_text_copy(out->format, sizeof(out->format), "avi");
+    out->width = request->present & YVEX_RUNTIME_MEDIA_EXECUTION_WIDTH
+                     ? request->width : host->released_width;
+    out->height = request->present & YVEX_RUNTIME_MEDIA_EXECUTION_HEIGHT
+                      ? request->height : host->released_height;
+    out->frames = host->minimum_frames;
+    if (request->present & YVEX_RUNTIME_MEDIA_EXECUTION_DURATION) {
+        rc = released_frames_resolve(host, request->duration_milliseconds,
+                                     &out->frames, err);
+        if (rc != YVEX_OK) return rc;
+    }
+    out->sigma_grid_points = host->released_sigma_grid_points;
+    out->seed = request->present & YVEX_RUNTIME_MEDIA_EXECUTION_SEED
+                    ? request->seed : host->default_seed;
+    out->complete = 1;
+    rc = media_preset_identity(out, out->identity, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_media_execution_preset_validate(host, out, err);
     return rc;
 }
 
@@ -1454,8 +1603,11 @@ static int result_publish(
     const generation_state *state, yvex_runtime_av_generation_result *result,
     yvex_error *err)
 {
+    yvex_sha256 trajectory, rng;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    unsigned long long index;
     unsigned long long launches;
-    result->schema_version = YVEX_RUNTIME_AV_GENERATION_SCHEMA_V1;
+    result->schema_version = YVEX_RUNTIME_AV_GENERATION_SCHEMA_V2;
     result->prompt_tokens = state->conditioning_result.token_count;
     result->frames = state->request->frames;
     result->width = state->request->width;
@@ -1490,6 +1642,42 @@ static int result_publish(
                         state->conditioning_result.execution_identity);
     yvex_core_text_copy(result->plan_identity, sizeof(result->plan_identity),
                         state->plan.identity);
+    yvex_sha256_init(&trajectory);
+    if (!yvex_sha256_update_text(&trajectory,
+                                 "yvex.runtime.media-trajectory.v1") ||
+        !yvex_sha256_update_u64(&trajectory, state->plan.sigma_grid_points) ||
+        !yvex_sha256_update_u64(&trajectory, state->plan.model_evaluations))
+        return generation_fail(err, YVEX_ERR_STATE,
+                               "runtime.av-generation.result",
+                               "trajectory identity could not start");
+    for (index = 0ull; index < state->plan.sigma_grid_points; ++index) {
+        uint32_t video_bits, audio_bits;
+        memcpy(&video_bits, state->plan.video_sigmas + index,
+               sizeof(video_bits));
+        memcpy(&audio_bits, state->plan.audio_sigmas + index,
+               sizeof(audio_bits));
+        if (!yvex_sha256_update_u64(&trajectory, video_bits) ||
+            !yvex_sha256_update_u64(&trajectory, audio_bits))
+            return generation_fail(err, YVEX_ERR_STATE,
+                                   "runtime.av-generation.result",
+                                   "trajectory identity facts failed");
+    }
+    if (!yvex_sha256_final(&trajectory, digest))
+        return generation_fail(err, YVEX_ERR_STATE,
+                               "runtime.av-generation.result",
+                               "trajectory identity could not finish");
+    yvex_sha256_hex(digest, result->trajectory_identity);
+    yvex_sha256_init(&rng);
+    if (!yvex_sha256_update_text(&rng, "yvex.runtime.media-rng.v1") ||
+        !yvex_sha256_update_u64(&rng, state->request->seed) ||
+        !yvex_sha256_update_u64(&rng, state->request->keyframe_encode_seed) ||
+        !yvex_sha256_update_u64(&rng, state->request->condition_count) ||
+        !yvex_sha256_update_text(&rng, state->latent_result.initial_state_identity) ||
+        !yvex_sha256_final(&rng, digest))
+        return generation_fail(err, YVEX_ERR_STATE,
+                               "runtime.av-generation.result",
+                               "media RNG identity could not seal");
+    yvex_sha256_hex(digest, result->rng_identity);
     yvex_core_text_copy(result->layout_identity, sizeof(result->layout_identity),
                         state->layout_result.layout_identity);
     yvex_core_text_copy(result->latent_identity, sizeof(result->latent_identity),

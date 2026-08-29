@@ -10,10 +10,16 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#define YVEX_LOCAL_PROTOCOL_VERSION 15u
+#define YVEX_LOCAL_PROTOCOL_VERSION 16u
 #define YVEX_CLIENT_MEDIA_CONDITION_SCHEMA_V1 1u
 #define YVEX_CLIENT_MEDIA_CONDITION_CAP 2u
 #define YVEX_CLIENT_MEDIA_RESULT_SCHEMA_V1 1u
+#define YVEX_CLIENT_MEDIA_EXECUTION_SCHEMA_V1 1u
+#define YVEX_CLIENT_MEDIA_RESULT_SCHEMA_V2 2u
+#define YVEX_CLIENT_MEDIA_EXECUTION_WIDTH 1u
+#define YVEX_CLIENT_MEDIA_EXECUTION_HEIGHT 2u
+#define YVEX_CLIENT_MEDIA_EXECUTION_DURATION 4u
+#define YVEX_CLIENT_MEDIA_EXECUTION_SEED 8u
 #define YVEX_SERVER_OPTIONS_SCHEMA_V3 3u
 #define YVEX_SERVER_OPTIONS_SCHEMA_V4 4u
 #define YVEX_SERVER_OPTIONS_SCHEMA_CURRENT YVEX_SERVER_OPTIONS_SCHEMA_V4
@@ -387,14 +393,37 @@ typedef struct {
     char artifact_identity[YVEX_SHA256_HEX_CAP];
     char file_digest[YVEX_SHA256_HEX_CAP];
 } yvex_client_state_checkpoint;
+typedef enum {
+    YVEX_CLIENT_MEDIA_TRAJECTORY_DEFAULT = 0,
+    YVEX_CLIENT_MEDIA_TRAJECTORY_PREVIEW,
+    YVEX_CLIENT_MEDIA_TRAJECTORY_RELEASED
+} yvex_client_media_trajectory;
+typedef enum {
+    YVEX_CLIENT_MEDIA_TASK_T2VA = 0,
+    YVEX_CLIENT_MEDIA_TASK_FIRST,
+    YVEX_CLIENT_MEDIA_TASK_LAST,
+    YVEX_CLIENT_MEDIA_TASK_FIRST_LAST
+} yvex_client_media_task;
+typedef struct {
+    unsigned int schema_version;
+    yvex_client_media_trajectory trajectory;
+    unsigned int present;
+    unsigned long long width, height, duration_milliseconds, seed;
+} yvex_client_media_execution;
 typedef struct {
     unsigned int schema_version;
     int available;
     char output_path[YVEX_SERVER_STATE_PATH_CAP];
     unsigned long long width, height, frames;
     unsigned long long fps_numerator, fps_denominator;
-    unsigned long long audio_samples, audio_sample_rate, seed, file_bytes;
+    unsigned long long duration_milliseconds, audio_samples, audio_sample_rate;
+    unsigned long long seed, model_evaluations, engine_generation, file_bytes;
+    yvex_client_media_task task;
+    unsigned long long condition_count;
     char preset_identity[YVEX_SHA256_HEX_CAP];
+    char trajectory_identity[YVEX_SHA256_HEX_CAP];
+    char rng_identity[YVEX_SHA256_HEX_CAP];
+    char plan_identity[YVEX_SHA256_HEX_CAP];
     char execution_identity[YVEX_SHA256_HEX_CAP];
     char file_identity[YVEX_SHA256_HEX_CAP];
     char publication_identity[YVEX_SHA256_HEX_CAP];
@@ -425,6 +454,7 @@ typedef struct {
     unsigned long long prompt_bytes, maximum_new_tokens;
     yvex_client_media_condition media_conditions[YVEX_CLIENT_MEDIA_CONDITION_CAP];
     unsigned long long media_condition_count;
+    yvex_client_media_execution media_execution;
     unsigned long long maximum_state_file_bytes;
     unsigned long long maximum_prefix_bytes;
     int stochastic, seed_present;
