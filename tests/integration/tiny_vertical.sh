@@ -487,7 +487,7 @@ grep -E 'COMPLETE[[:space:]]+[1-9][0-9]* token' "$root/server.out" >/dev/null
 ! grep -F '"kind":' "$root/server.out" >/dev/null
 grep -F '"kind":"generation.completed"' "$root/server.log.jsonl" >/dev/null
 grep -F '"phase":"graphs"' "$root/server.log.jsonl" >/dev/null
-grep -F '"phase":"tensorcore"' "$root/server.log.jsonl" >/dev/null
+grep -F '"phase":"accelerated_matrix"' "$root/server.log.jsonl" >/dev/null
 
 printf 'tiny vertical: artifact=%s binding=%s output=ok ctx=8\n' \
     "$first_artifact" "$first_binding"
