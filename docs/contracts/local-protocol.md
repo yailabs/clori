@@ -1,8 +1,8 @@
-# Local Protocol v15
+# Local Protocol v16
 
 Status: normative private protocol contract
 
-Schema/version: `YVEX_LOCAL_PROTOCOL_VERSION = 15`.
+Schema/version: `YVEX_LOCAL_PROTOCOL_VERSION = 16`.
 
 Authority: `include/yvex/server.h` and `src/server/protocol.c`. This document
 explains the wire and lifecycle contract; code remains authoritative for exact
@@ -17,18 +17,18 @@ Unix-domain socket and is not a public network API.
 
 ## Framing and negotiation
 
-Every connection negotiates version 15 and exchanges bounded typed frames.
+Every connection negotiates version 16 and exchanges bounded typed frames.
 Lengths, enums, strings, arrays, message/tool fields, and correlations are
 validated before dispatch. Oversized, truncated, duplicate, unknown, or
 malformed fields refuse without entering the server scheduler.
 
-Every earlier version, including v14, is refused explicitly. There is no private
+Every earlier version, including v15, is refused explicitly. There is no private
 pre-v0.1 compatibility decoder. Unknown operations and response kinds fail
 closed.
 
 ## Operations
 
-Protocol v15 carries host status/stop, engine load/list/unload, model and memory
+Protocol v16 carries host status/stop, engine load/list/unload, model and memory
 facts for each engine generation, text or media engine kind, target-only or
 speculative text execution strategy,
 session lifecycle, bounded copy-on-write session fork, generation turns and
@@ -77,11 +77,21 @@ messages.
 Native media turns carry server-authored request, conditioning, latent,
 decoder, publication, completion, cancellation, and failure progress. These
 are control facts, never assistant text. A successful media turn carries one
-typed result containing the publication path, geometry, frame and audio facts,
-seed, byte extent, and the hosted preset, execution, file, and publication
-identities. The protocol retains that identity-bearing result and refuses a media
-success that omits it. Creative prompt bytes are model input; the protocol does
-not parse them into execution policy.
+typed result containing the publication path, resolved geometry, duration,
+frame and audio facts, seed, model-evaluation count, engine generation, task,
+condition count, byte extent, and the hosted preset, trajectory, RNG, plan,
+execution, file, and publication identities. The protocol retains that
+identity-bearing result and refuses a media success that omits it. Creative
+prompt bytes are model input; the protocol does not parse them into execution
+policy.
+
+A media turn may select the explicit preview or released FL2VA trajectory and
+may carry paired width/height, duration in milliseconds, and seed facts. An
+omitted trajectory selects the released product policy at the media runtime
+owner. Width without height, a zero material value, an unknown trajectory, or
+media execution facts on a text engine fail before generation. The resolved
+request is identity-bearing; no client or server silently reduces geometry,
+duration, evaluation count, or seed.
 
 A media request may carry up to two typed image conditions with distinct
 `first` and `last` roles. Condition kind, role, admitted media identity, path
@@ -195,7 +205,7 @@ format.
 
 ## Non-claims
 
-Protocol v15 is not a public remote API, authentication protocol, TLS transport,
+Protocol v16 is not a public remote API, authentication protocol, TLS transport,
 stable cross-version SDK promise, distributed serving protocol, or model
 quality contract. Versioned checkpoints preserve the admitted model and
 semantic-session state across restart; the in-memory fork does not create a

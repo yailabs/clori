@@ -1,5 +1,5 @@
 #!/bin/sh
-# Exercises production HTTP/SSE translation over the real local protocol v15 codec.
+# Exercises production HTTP/SSE translation over the real local protocol v16 codec.
 set -eu
 
 YVEX_OPENAI_ADAPTER=${YVEX_OPENAI_ADAPTER:-build/tests/openai_adapter}

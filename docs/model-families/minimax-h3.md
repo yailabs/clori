@@ -233,10 +233,8 @@ target-only layout and do not execute the vision or encoder paths.
 ### Unknowns and deliberately unadmitted defaults
 
 - equivalence between the explicit YVEX seed stream and an upstream PyTorch
-  seed value;
-- source-default inference count, output frame count, frame rate, width, height,
-  and duration; the bounded operator path requires each material value instead
-  of inventing a default;
+  seed value; YVEX preserves the released draw ordering without claiming
+  byte-identical framework generators;
 - numerical acceptability of weight quantization, modulation caching, or other
   derived execution assets beyond the admitted source-dtype artifacts;
 - useful-resolution quality, speed, and memory behavior outside the exact live
@@ -1139,7 +1137,7 @@ The common persistent server now admits MiniMax-H3 as engine kind `media`.
 `yvex server load minimax-h3-fl2va-runtime-media` resolves the immutable
 component installation, CUDA backend, and media kind from its composite startup
 profile and creates one engine generation; the default owned publication
-directory comes from the common YVEX data path. Protocol v15 carries zero, one,
+directory comes from the common YVEX data path. Protocol v16 carries zero, one,
 or two typed image conditions with distinct `first` and `last` roles. The
 normal product surfaces are:
 
@@ -1149,23 +1147,30 @@ yvex run --model minimax-h3-fl2va-runtime-media --first-image IMAGE PROMPT
 yvex run --model minimax-h3-fl2va-runtime-media --last-image IMAGE PROMPT
 yvex run --model minimax-h3-fl2va-runtime-media \
   --first-image FIRST --last-image LAST PROMPT
+yvex run --model minimax-h3-fl2va-runtime-media \
+  --trajectory released --width 1344 --height 768 \
+  --duration 5 --seed 42 PROMPT
 ```
 
 `yvex chat --model ...` accepts the same condition options before attachment.
 Each creative prompt immediately invokes the staged native runtime transaction.
-It does not ask for resolution, duration, sigma-grid count, format, or seed,
+It does not ask for missing execution parameters,
 and MiniMax-H3 is not presented as a conversational assistant. The model
 registry profile selects the typed media adapter, so the operator does not
 choose family callbacks, component paths, or reconstruct the offline execution
 command. Explicit component/output roots remain engineering overrides.
 
-The hosted operator policy is the identity-bearing
-`interactive-preview-v1` preset: profile `preview`, 192x192, 124 frames, two
-sigma-grid points (one Transformer evaluation), AVI, and seed 42. These values
-are YVEX interactive test policy, not source-declared MiniMax defaults. Prompt
-bytes remain opaque input to tokenizer/conditioning; words, numbers, and
-format-like substrings in the scene do not select execution settings. There is
-no keyword rule engine, secondary LLM, agent loop, or Context-IR substitute.
+Normal hosted execution resolves to identity-bearing `released-fl2va-v1`:
+50 sigma points and 49 paired model evaluations, terminal zero, video shift 12,
+audio shift 3, 24 fps, stereo 32 kHz audio, a 1344x768 default canvas, 124
+frames, and seed 42. The product accepts explicit paired width/height, duration,
+and seed fields; it aligns duration upward to the released `17n+5` frame rule
+and reports the resolved frame, duration, and audio extents. `--trajectory
+preview` retains the separate identity-bearing `interactive-preview-v1` YVEX
+test policy at 192x192, 124 frames, two sigma points, and AVI publication.
+Prompt bytes remain opaque input to tokenizer/conditioning; words, numbers,
+and format-like substrings in the scene do not select execution settings. There
+is no keyword rule engine, secondary LLM, agent loop, or Context-IR substitute.
 
 One stable persistent engine generation completed all four request forms with
 Unicode prompts. T2VA, first, last, and dual-anchor requests completed in
@@ -1193,13 +1198,15 @@ views while the host remains ready.
 
 The direct projection has focused opaque-prompt, preset-identity, model-open,
 reopen, progress/result, cancellation, and missing-component refusal tests. The
-underlying engine admits `preview` at
-192x192, `preview-256` at 256x256, and `preview-384` at 384x384, all for exactly
-124 frames, plus `smoke` at 32x32 for 124 through 345 frames. The server validates each profile against
-the exact worst-case 256-token plan before publishing readiness; runtime
-independently refuses any plan above the 8,192-row Omni execution bound before
-latent or component materialization. Source, draft, HD, FHD, 2K, and 4K
-requests are not advertised and fail closed.
+underlying engine retains `preview` at 192x192, `preview-256` at 256x256,
+`preview-384` at 384x384, and `smoke` at 32x32. Released execution admits
+canvases whose dimensions are multiples of 32, area is between 768x768 and
+768x1344, and aspect ratio is between 1:4 and 4:1. The exact maximum 1344x768,
+345-frame, dual-anchor plan contains 106,238 packed rows; the generic CUDA
+implementation admits 131,072 rows, its exact chunked-attention workspace is
+15,230,279,684 bytes, and the family caps workspace at 16 GiB and peak device
+resources at 64 GiB. Requests outside these semantic or resource envelopes fail
+before silent canvas, duration, or trajectory reduction.
 
 Historical evidence from 2026-08-14 predates the direct hosted policy. That
 operator-reachable `yvex server` -> `yvex chat` transaction
@@ -1232,14 +1239,13 @@ YVEX completed in 3 minutes 13 seconds with 65,318,864 KiB peak RSS, 205,342,208
 bytes, and zero swap under a 100 GiB hard memory limit.
 
 This evidence covers initialization, two paired scheduler advances, two complete resident
-Transformer evaluations, and final latent publication. It does not establish the full 49-step
+Transformer evaluations, and final latent publication. It did not establish the full 49-step
 trajectory or useful media quality. The released checkpoint targets a 768-pixel short edge:
-768x768 needs about 21,741 packed rows and 1344x768 about 37,725 for 124 frames and 15 text rows,
-versus the current 8,192-row admission maximum. The unrecognizable 192x192 output is therefore no
-longer attributed to an observed early recurrent mismatch; useful-resolution capacity and longer
-trajectory evidence remain separate downstream work.
+768x768 needs about 21,741 packed rows and 1344x768 about 37,725 for 124 frames and 15 text rows.
+The former 8,192-row admission ceiling has since been replaced by the exact 106,238-row released
+envelope; this older two-step result remains numerical evidence, not current scale qualification.
 
-The next admitted spatial envelope is `preview-384`: 384x384 for 124 frames. Its exact
+The subsequent historical spatial envelope was `preview-384`: 384x384 for 124 frames. Its exact
 fifty-block, 5,757-row request passed the independent manual BF16 oracle with video relative L2
 `0.004785907` and cosine `0.999988564`, plus audio relative L2 `0.013636469` and cosine
 `0.999907030`. YVEX reached 65,760,132 KiB peak RSS and 2,522,884,864 device bytes with zero swap.

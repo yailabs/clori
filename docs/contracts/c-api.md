@@ -240,7 +240,7 @@ engine kind from text execution strategy while retaining alias, package,
 backend, capacity, memory, and generation facts. Engine schema v1 is refused
 before the added fields are read.
 The source-authored conversation boundary admits provider request/wire schema
-v3, tokenizer plan v3, tokenizer provider result v2, and local protocol v15.
+v3, tokenizer plan v3, tokenizer provider result v2, and local protocol v16.
 Runtime event schema v4 and generation plan/result schema v5 remain current.
 Generation plan ABI v5 adds the workload-profile identity
 required to bind phase evidence to the compiled workload. Generation result
@@ -590,7 +590,7 @@ Domain APIs retain semantic validation and lifecycle. Runtime-client adapter
 objects remain protocol-only, while finite offline adapters may consume the
 non-installed engine interfaces already documented here.
 
-## Application Provider And Local Protocol v15
+## Application Provider And Local Protocol v16
 
 `<yvex/provider.h>` is the installed transport-neutral application request and
 result ABI. Provider schema v3 additionally represents an omitted completion
@@ -602,13 +602,13 @@ reasoning, at most one assistant tool call, and its original field semantics.
 Clone and wire-decode publish only a complete owned request graph. The provider
 owner neither parses HTTP nor renders model-family prompt syntax.
 
-`<yvex/server.h>` protocol v15 carries the sealed provider request through the
+`<yvex/server.h>` protocol v16 carries the sealed provider request through the
 private Unix socket. Provider output messages distinguish assistant text,
 explicit reasoning, function calls, usage, terminal completion, and failure.
 Typed events bind the provider adapter, provider-request identity, and external
 correlation ID while excluding prompt and output content.
 
-Protocol v15 carries host status/stop, engine load/list/unload, exact
+Protocol v16 carries host status/stop, engine load/list/unload, exact
 alias/generation routing, separate engine kind and semantic execution strategy,
 speculative lifecycle events,
 accepted-prefix facts, exact proposal/verification/commit accounting, turn

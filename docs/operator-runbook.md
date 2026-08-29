@@ -121,7 +121,7 @@ opening payloads or engines. A moving provider reference is shown as
 Package identities and startup facts remain available through `model show`.
 Acquired sources report engine state as `not-applicable`. If no host can be
 observed, packages report `not-observed`; with a live host they report
-`not-loaded` or the engine state returned by protocol v15. Package readiness
+`not-loaded` or the engine state returned by protocol v16. Package readiness
 never implies residency or serving activity. The lifecycle handoff is explicit:
 
 ```sh
@@ -341,13 +341,27 @@ there is no parameter questionnaire, keyword parser, assistant model, or
 conversation planner. Prompt bytes are opaque execution input and reach the
 existing tokenizer/conditioning path unchanged by operator policy.
 
-Ordinary hosted execution currently selects the identity-bearing YVEX policy
-`interactive-preview-v1`: profile `preview`, 192x192, 124 frames, two sigma-grid
-points (one Transformer evaluation), AVI publication, and seed 42. These are
-explicit YVEX interactive test policy, not MiniMax or upstream defaults.
-Changing the policy changes its identity. Advanced offline engineering commands
-retain explicit parameter surfaces; creative words such as `HD`, `seed`,
-`draft`, `MOV`, numbers, or durations do not alter the hosted preset.
+Ordinary hosted execution selects the identity-bearing released FL2VA policy:
+50 sigma points, 49 paired evaluations, terminal zero, a 1344x768 default
+canvas, 124 frames, and seed 42. Use the normal product request to select the
+released canvas, duration, and deterministic seed explicitly:
+
+```sh
+./yvex run --model minimax-h3-fl2va-runtime-media \
+  --trajectory released --width 768 --height 768 \
+  --duration 5 --seed 42 \
+  "Voglio un'eclissi sopra un vasto deserto, con luce naturale e cielo limpido."
+```
+
+Dimensions are paired, multiples of 32, within the released area and aspect
+envelope, and include square, wide 1344x768, and portrait 768x1344 canvases.
+Duration is aligned upward to the released `17n+5` frame rule and must remain
+inside the 124-to-345-frame contract. The terminal result reports the resolved
+duration, frame count, evaluation count, seed, trajectory, RNG, plan, engine,
+and publication identities. `--trajectory preview` retains the separate
+`interactive-preview-v1` YVEX test policy at 192x192, 124 frames, one
+evaluation, and seed 42. Creative words such as `HD`, `seed`, `draft`, `MOV`,
+numbers, or durations never alter either typed policy.
 
 Chat projects server-authored conditioning, latent, decoder, publication,
 completion, cancellation, and failure events as control state rather than
@@ -355,15 +369,14 @@ model-authored prose. On success it renders the typed publication path and
 media identities. Ctrl-C uses the existing request cancellation contract and
 must leave no partial published file.
 
-All preview profiles fit the current 8,192-row Omni execution bound even for a
-256-token prompt. The 5,757-row `preview-384` Transformer envelope passed all
-50 blocks against an independent manual BF16 oracle under a 100 GiB hard limit
-with zero swap. Full media playback at that tier is still pending; the earlier
-192x192 AVI playback and synchronization are verified, but sampled frames
-remain visually unrecognizable. Preview names describe bounded geometry, not
-model quality. The source-sized path would require 37,726 packed rows at the
-same prompt and duration and therefore refuses before model materialization.
-The smoke profile retains the earlier repeatable 32x32 evidence. The historical
+The released maximum wide dual-anchor plan contains 106,238 packed rows. The
+generic CUDA joint Transformer admits up to 131,072 rows and uses a 64-query
+chunked exact attention path whose maximum released workspace is
+15,230,279,684 bytes. The family admits 16 GiB of workspace and 64 GiB of peak
+device resources, while retaining explicit resource refusal rather than
+silently reducing canvas or trajectory. Preview names still describe bounded
+geometry, not model quality. The smoke profile retains the earlier repeatable
+32x32 evidence. The historical
 pre-direct-execution server/chat acceptance used `smoke`, five seconds, two
 sigma-grid points, AVI, and seed 42; it returned a 1,048,544-byte seekable file
 after 560.36 seconds.
