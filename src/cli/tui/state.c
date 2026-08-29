@@ -498,15 +498,15 @@ static void turn_profile_message(yvex_tui_state *state,
         observation->d2d_bytes = event->value_c;
     } else if (!strcmp(event->phase, "launches")) {
         observation->kernel_launches = event->value_a;
-        observation->stream_synchronizations = event->value_b;
+        observation->queue_synchronizations = event->value_b;
         observation->device_synchronizations = event->value_c;
         observation->synchronization_seconds = event->seconds;
     } else if (!strcmp(event->phase, "graphs")) {
         observation->graph_launches = event->value_a;
         observation->graph_captures = event->value_b;
         observation->graph_replays = event->value_c;
-    } else if (!strcmp(event->phase, "tensorcore")) {
-        observation->tensor_core_launches = event->value_a;
+    } else if (!strcmp(event->phase, "accelerated_matrix")) {
+        observation->accelerated_matrix_launches = event->value_a;
         observation->kernel_launches = event->value_b;
     } else if (!strcmp(event->phase, "attention")) {
         observation->attention_calls = event->value_a;

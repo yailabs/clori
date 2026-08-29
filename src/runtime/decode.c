@@ -391,7 +391,7 @@ static int decode_step_locked(
         result->h2d_bytes = transformer.h2d_bytes;
         result->d2h_bytes = transformer.d2h_bytes;
         result->kernel_launches = transformer.kernel_launches;
-        result->tensor_core_launches = transformer.tensor_core_launches;
+        result->accelerated_matrix_launches = transformer.accelerated_matrix_launches;
         result->graph_launches = transformer.graph_launches;
         result->graph_captures = transformer.graph_captures;
         result->graph_replays = transformer.graph_replays;
@@ -400,7 +400,7 @@ static int decode_step_locked(
         result->download_count = transformer.download_count;
         result->cache_hits = transformer.cache_hits;
         result->cache_misses = transformer.cache_misses;
-        result->stream_synchronizations = transformer.stream_synchronizations;
+        result->queue_synchronizations = transformer.queue_synchronizations;
         result->device_synchronizations = transformer.device_synchronizations;
         result->embedding_ns = transformer.embedding_ns;
         result->attention_ns = transformer.attention_ns;
@@ -482,7 +482,7 @@ static int decode_accumulate(yvex_runtime_decode_result *result,
     result->h2d_bytes += step->h2d_bytes;
     result->d2h_bytes += step->d2h_bytes;
     result->kernel_launches += step->kernel_launches;
-    result->tensor_core_launches += step->tensor_core_launches;
+    result->accelerated_matrix_launches += step->accelerated_matrix_launches;
     result->graph_launches += step->graph_launches;
     result->graph_captures += step->graph_captures;
     result->graph_replays += step->graph_replays;
@@ -491,7 +491,7 @@ static int decode_accumulate(yvex_runtime_decode_result *result,
     result->download_count += step->download_count;
     result->cache_hits += step->cache_hits;
     result->cache_misses += step->cache_misses;
-    result->stream_synchronizations += step->stream_synchronizations;
+    result->queue_synchronizations += step->queue_synchronizations;
     result->device_synchronizations += step->device_synchronizations;
     result->embedding_ns += step->embedding_ns;
     result->attention_ns += step->attention_ns;

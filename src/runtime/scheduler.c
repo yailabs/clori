@@ -478,11 +478,11 @@ static void scheduler_finish_locked(
                 scheduler_observation_add(&scheduler->summary.multi_source_expert_pairs,
                                           worklists->pair_count);
                 scheduler_observation_add(
-                    &scheduler->summary.multi_source_tensor_core_eligible_pairs,
-                    worklists->tensor_core_eligible_pairs);
+                    &scheduler->summary.multi_source_matrix_tile_eligible_pairs,
+                    worklists->matrix_tile_eligible_pairs);
                 scheduler_observation_add(
-                    &scheduler->summary.multi_source_tensor_core_executed_pairs,
-                    worklists->tensor_core_executed_pairs);
+                    &scheduler->summary.multi_source_matrix_tile_executed_pairs,
+                    worklists->matrix_tile_executed_pairs);
                 scheduler_observation_add(&scheduler->summary.multi_source_narrow_pairs,
                                           worklists->narrow_pairs);
                 if (worklists->maximum_bucket_population >
@@ -972,7 +972,7 @@ static void compatible_moe_transformer_result(
     result->d2h_bytes = source->d2h_bytes;
     result->d2d_bytes = source->d2d_bytes;
     result->kernel_launches = source->kernel_launches;
-    result->tensor_core_launches = source->tensor_core_launches;
+    result->accelerated_matrix_launches = source->accelerated_matrix_launches;
     result->graph_launches = source->graph_launches;
     result->graph_captures = source->graph_captures;
     result->graph_replays = source->graph_replays;
@@ -980,7 +980,7 @@ static void compatible_moe_transformer_result(
     result->download_count = source->download_count;
     result->cache_hits = source->cache_hits;
     result->cache_misses = source->cache_misses;
-    result->stream_synchronizations = source->stream_synchronizations;
+    result->queue_synchronizations = source->queue_synchronizations;
     result->device_synchronizations = source->device_synchronizations;
     result->moe_ns = source->total_ns;
     result->synchronization_ns = source->synchronization_ns;
@@ -1289,7 +1289,7 @@ static int compatible_moe_batch_execute(
         physical.device_completion_pending = 0;
         batch_outputs_view.is_written = 1;
         physical.d2d_bytes += d2d_bytes;
-        physical.stream_synchronizations += completion.stream_synchronizations;
+        physical.queue_synchronizations += completion.queue_synchronizations;
         physical.device_synchronizations += completion.device_synchronizations;
         physical.synchronization_ns += completion.synchronization_ns;
         physical.total_ns += completion.synchronization_ns;

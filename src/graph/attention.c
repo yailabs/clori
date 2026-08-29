@@ -1347,9 +1347,9 @@ static int attention_probe_backend_execute(
         !yvex_core_u64_add(context->candidate.kernel_launches,
                            run->evidence.cuda_kernel_launches,
                            &context->candidate.kernel_launches) ||
-        !yvex_core_u64_add(context->candidate.tensor_core_launches,
+        !yvex_core_u64_add(context->candidate.accelerated_matrix_launches,
                            run->evidence.cuda_tensor_core_launches,
-                           &context->candidate.tensor_core_launches) ||
+                           &context->candidate.accelerated_matrix_launches) ||
         !yvex_core_u64_add(context->candidate.h2d_bytes,
                            run->evidence.cuda_h2d_bytes,
                            &context->candidate.h2d_bytes) ||
@@ -1359,9 +1359,9 @@ static int attention_probe_backend_execute(
         !yvex_core_u64_add(context->candidate.d2d_bytes,
                            run->evidence.cuda_d2d_bytes,
                            &context->candidate.d2d_bytes) ||
-        !yvex_core_u64_add(context->candidate.stream_synchronizations,
+        !yvex_core_u64_add(context->candidate.queue_synchronizations,
                            run->evidence.cuda_stream_synchronizations,
-                           &context->candidate.stream_synchronizations) ||
+                           &context->candidate.queue_synchronizations) ||
         !yvex_core_u64_add(context->candidate.device_synchronizations,
                            run->evidence.cuda_device_synchronizations,
                            &context->candidate.device_synchronizations) ||
@@ -1599,9 +1599,9 @@ static int attention_probe_pending_complete(
                                          run->publication.layer_index) ||
                  !yvex_sha256_update_text(&context->metrics.committed_state_hash,
                                           state_identity) ||
-                 !yvex_core_u64_add(context->candidate.stream_synchronizations,
+                 !yvex_core_u64_add(context->candidate.queue_synchronizations,
                                     run->evidence.cuda_stream_synchronizations,
-                                    &context->candidate.stream_synchronizations) ||
+                                    &context->candidate.queue_synchronizations) ||
                  !yvex_core_u64_add(context->candidate.device_synchronizations,
                                     run->evidence.cuda_device_synchronizations,
                                     &context->candidate.device_synchronizations))) {

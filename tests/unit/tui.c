@@ -196,7 +196,7 @@ static int test_turn_observation(void)
     YVEX_TEST_ASSERT(state.last_turn.turn_available &&
                          state.last_turn.profile_available &&
                          state.last_turn.kernel_launches == 320u &&
-                         state.last_turn.tensor_core_launches == 48u &&
+                         state.last_turn.accelerated_matrix_launches == 48u &&
                          render_frame(&state, frame, sizeof(frame)) &&
                          strstr(frame, "10.00 tok/s decode") &&
                          strstr(frame, "320 kernels") &&

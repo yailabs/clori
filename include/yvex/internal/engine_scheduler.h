@@ -41,8 +41,8 @@ typedef struct {
     unsigned long long maximum_source_count;
     unsigned long long multi_source_worklists, multi_source_expert_pairs;
     unsigned long long maximum_multi_source_bucket_population;
-    unsigned long long multi_source_tensor_core_eligible_pairs;
-    unsigned long long multi_source_tensor_core_executed_pairs;
+    unsigned long long multi_source_matrix_tile_eligible_pairs;
+    unsigned long long multi_source_matrix_tile_executed_pairs;
     unsigned long long multi_source_narrow_pairs;
     unsigned long long multi_source_population_histogram[
         YVEX_EXPERT_WORKLIST_HISTOGRAM_CAP];

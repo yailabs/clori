@@ -71,7 +71,7 @@ static int status_transaction_open(yvex_backend *backend, yvex_cuda_work *work,
         work, &work->status, sizeof(int), NULL, 1, stage, NULL, err);
 }
 static int status_transaction_close(yvex_cuda_work *work, int wait, int complete, int rc,
-                                       yvex_backend_cuda_operation_facts *facts,
+                                       yvex_backend_operation_facts *facts,
                                        const char *stage, yvex_error *err)
 {
     yvex_cuda_backend_state *state;
@@ -112,7 +112,7 @@ static int status_transaction_close(yvex_cuda_work *work, int wait, int complete
         facts->d2h_bytes += sizeof(host_status);
         facts->download_count++;
         if (device_wide) facts->device_synchronizations++;
-        else facts->stream_synchronizations++;
+        else facts->queue_synchronizations++;
     }
     return rc;
 }
@@ -133,7 +133,7 @@ int yvex_cuda_transformer_initial(
     yvex_backend *backend, const yvex_device_tensor *encoded, unsigned int qtype,
     unsigned long long token_count, unsigned long long hidden_width,
     unsigned long long residual_streams, yvex_device_tensor *embedding,
-    yvex_device_tensor *expanded, yvex_backend_cuda_operation_facts *facts,
+    yvex_device_tensor *expanded, yvex_backend_operation_facts *facts,
     yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
@@ -222,7 +222,7 @@ int yvex_cuda_transformer_feature_mean(
     unsigned long long residual_streams, yvex_device_tensor *device_output,
     yvex_device_tensor *resident_output, unsigned long long resident_row_offset,
     unsigned long long resident_row_stride, unsigned long long resident_column_offset,
-    float *host_output, yvex_backend_cuda_operation_facts *facts,
+    float *host_output, yvex_backend_operation_facts *facts,
     yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
@@ -306,7 +306,7 @@ int yvex_cuda_transformer_final(
     unsigned long long token_count, unsigned long long hidden_width,
     unsigned long long residual_streams, double epsilon, double mhc_epsilon,
     yvex_device_tensor *pre_normalized, yvex_device_tensor *output,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err)
+    yvex_backend_operation_facts *facts, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     yvex_cuda_work work;
@@ -383,7 +383,7 @@ static int transformer_tensor(const yvex_backend *backend, const yvex_device_ten
 static int transformer_launch(yvex_backend *backend, CUfunction function,
                               unsigned int grid, unsigned int shared_bytes,
                               void **parameters, const char *stage,
-                              yvex_backend_cuda_operation_facts *facts, yvex_error *err)
+                              yvex_backend_operation_facts *facts, yvex_error *err)
 {
     int rc;
     if (facts) memset(facts, 0, sizeof(*facts));
@@ -411,7 +411,7 @@ static int transformer_rotary_half(
     const yvex_device_tensor *cosines, const yvex_device_tensor *sines,
     unsigned long long tokens, unsigned long long heads, unsigned long long head_dim,
     unsigned long long rotary_dim, CUfunction function, const char *stage,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err)
+    yvex_backend_operation_facts *facts, yvex_error *err)
 {
     unsigned long long vectors, elements, table_elements, tasks;
     CUdeviceptr value_ptr, cosine_ptr, sine_ptr;
@@ -449,7 +449,7 @@ int yvex_cuda_transformer_rotary_half(
     yvex_backend *backend, yvex_device_tensor *values,
     const yvex_device_tensor *cosines, const yvex_device_tensor *sines,
     unsigned long long tokens, unsigned long long heads, unsigned long long head_dim,
-    unsigned long long rotary_dim, yvex_backend_cuda_operation_facts *facts, yvex_error *err)
+    unsigned long long rotary_dim, yvex_backend_operation_facts *facts, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     return transformer_rotary_half(
@@ -461,7 +461,7 @@ int yvex_cuda_transformer_rotary_half_f32(
     yvex_backend *backend, yvex_device_tensor *values,
     const yvex_device_tensor *cosines, const yvex_device_tensor *sines,
     unsigned long long tokens, unsigned long long heads, unsigned long long head_dim,
-    unsigned long long rotary_dim, yvex_backend_cuda_operation_facts *facts, yvex_error *err)
+    unsigned long long rotary_dim, yvex_backend_operation_facts *facts, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     return transformer_rotary_half(
@@ -628,7 +628,7 @@ static int gqa_chunked_execute(
     const yvex_device_tensor *key, const yvex_device_tensor *value,
     yvex_device_tensor *output, unsigned long long tokens,
     unsigned long long heads, unsigned long long head_dim, int causal,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err)
+    yvex_backend_operation_facts *facts, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     yvex_cuda_work work = {0};
@@ -751,7 +751,7 @@ static int gqa_chunked_execute(
     facts->download_count = 1ull;
     facts->d2h_bytes = sizeof(host_status);
     facts->temporary_bytes = temporary_bytes;
-    facts->tensor_core_launches = blas_path ? chunks * 2ull : 0ull;
+    facts->accelerated_matrix_launches = blas_path ? chunks * 2ull : 0ull;
     facts->device_synchronizations = 1ull;
     facts->compulsory_memory_facts_available = 1;
     yvex_error_clear(err);
@@ -814,7 +814,7 @@ int yvex_cuda_transformer_gqa(
     const yvex_device_tensor *key, const yvex_device_tensor *value,
     yvex_device_tensor *output, unsigned long long tokens,
     unsigned long long query_heads, unsigned long long kv_heads,
-    unsigned long long head_dim, int causal, yvex_backend_cuda_operation_facts *facts,
+    unsigned long long head_dim, int causal, yvex_backend_operation_facts *facts,
     yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
@@ -871,7 +871,7 @@ int yvex_cuda_transformer_gqa(
 int yvex_cuda_transformer_silu_product_bf16(
     yvex_backend *backend, const yvex_device_tensor *gate,
     const yvex_device_tensor *up, yvex_device_tensor *output,
-    unsigned long long count, yvex_backend_cuda_operation_facts *facts, yvex_error *err)
+    unsigned long long count, yvex_backend_operation_facts *facts, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     CUdeviceptr gate_ptr, up_ptr, output_ptr;
@@ -904,7 +904,7 @@ int yvex_cuda_transformer_silu_product_bf16(
 int yvex_cuda_transformer_silu(
     yvex_backend *backend, const yvex_device_tensor *input,
     yvex_device_tensor *output, unsigned long long count, int bf16_output,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err)
+    yvex_backend_operation_facts *facts, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     CUdeviceptr input_ptr, output_ptr;
@@ -936,7 +936,7 @@ int yvex_cuda_transformer_timestep_embedding(
     yvex_backend *backend, const yvex_device_tensor *timesteps,
     yvex_device_tensor *output, unsigned long long rows,
     unsigned long long half_width, float maximum_period,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err)
+    yvex_backend_operation_facts *facts, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     CUdeviceptr timestep_ptr, output_ptr;
@@ -972,7 +972,7 @@ int yvex_cuda_transformer_split_three(
     yvex_backend *backend, const yvex_device_tensor *input,
     yvex_device_tensor *first, yvex_device_tensor *second, yvex_device_tensor *third,
     unsigned long long rows, unsigned long long width,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err)
+    yvex_backend_operation_facts *facts, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     CUdeviceptr input_ptr, first_ptr, second_ptr, third_ptr;
@@ -1013,7 +1013,7 @@ int yvex_cuda_transformer_split_interleaved_three(
     yvex_backend *backend, const yvex_device_tensor *input,
     yvex_device_tensor *first, yvex_device_tensor *second, yvex_device_tensor *third,
     unsigned long long rows, unsigned long long heads, unsigned long long head_dim,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err)
+    yvex_backend_operation_facts *facts, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     CUdeviceptr input_ptr, first_ptr, second_ptr, third_ptr;
@@ -1056,7 +1056,7 @@ int yvex_cuda_transformer_split_interleaved_three(
 int yvex_cuda_transformer_swiglu_split_bf16(
     yvex_backend *backend, const yvex_device_tensor *input, yvex_device_tensor *output,
     unsigned long long rows, unsigned long long width,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err)
+    yvex_backend_operation_facts *facts, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     CUdeviceptr input_ptr, output_ptr;
@@ -1088,7 +1088,7 @@ int yvex_cuda_transformer_swiglu_split_bf16(
 int yvex_cuda_transformer_swiglu_split_f32(
     yvex_backend *backend, const yvex_device_tensor *input, yvex_device_tensor *output,
     unsigned long long rows, unsigned long long width, int gate_first,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err)
+    yvex_backend_operation_facts *facts, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     CUdeviceptr input_ptr, output_ptr;
@@ -1136,7 +1136,7 @@ int yvex_cuda_transformer_modulate_bf16(
     yvex_device_tensor *output, unsigned long long rows, unsigned long long width,
     unsigned long long table_rows, unsigned long long parameters,
     unsigned int shift_slot, unsigned int scale_slot,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err)
+    yvex_backend_operation_facts *facts, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     yvex_cuda_work work = {0};
@@ -1195,7 +1195,7 @@ int yvex_cuda_transformer_gated_residual_bf16(
     const yvex_device_tensor *update, yvex_device_tensor *output,
     unsigned long long rows, unsigned long long width, unsigned long long table_rows,
     unsigned long long parameters, unsigned int gate_slot,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err)
+    yvex_backend_operation_facts *facts, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     yvex_cuda_work work = {0};
@@ -1254,7 +1254,7 @@ int yvex_cuda_transformer_bias(
     yvex_backend *backend, const yvex_device_tensor *input,
     const yvex_device_tensor *bias, yvex_device_tensor *output,
     unsigned long long rows, unsigned long long width, int bf16_output,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err)
+    yvex_backend_operation_facts *facts, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     CUdeviceptr input_ptr, bias_ptr, output_ptr;
@@ -1291,7 +1291,7 @@ int yvex_cuda_transformer_add_bf16(
     yvex_backend *backend, const yvex_device_tensor *left,
     const yvex_device_tensor *right, yvex_device_tensor *output,
     unsigned long long rows, unsigned long long width,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err)
+    yvex_backend_operation_facts *facts, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     CUdeviceptr left_ptr, right_ptr, output_ptr;
@@ -1327,7 +1327,7 @@ int yvex_cuda_transformer_scaled_residual_f32(
     yvex_backend *backend, const yvex_device_tensor *residual,
     const yvex_device_tensor *update, const yvex_device_tensor *scale,
     yvex_device_tensor *output, unsigned long long rows, unsigned long long width,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err)
+    yvex_backend_operation_facts *facts, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     CUdeviceptr residual_ptr, update_ptr, scale_ptr, output_ptr;
@@ -1366,7 +1366,7 @@ int yvex_cuda_transformer_layer_norm_f32(
     yvex_backend *backend, const yvex_device_tensor *input,
     const yvex_device_tensor *weight, const yvex_device_tensor *bias,
     yvex_device_tensor *output, unsigned long long rows, unsigned long long width,
-    float epsilon, yvex_backend_cuda_operation_facts *facts, yvex_error *err)
+    float epsilon, yvex_backend_operation_facts *facts, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     CUdeviceptr input_ptr, weight_ptr, bias_ptr, output_ptr;
@@ -1402,7 +1402,7 @@ int yvex_cuda_transformer_layer_norm_f32(
 
 int yvex_cuda_transformer_bf16_round(
     yvex_backend *backend, yvex_device_tensor *values, unsigned long long count,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err)
+    yvex_backend_operation_facts *facts, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     yvex_cuda_work work;
@@ -1441,7 +1441,7 @@ int yvex_cuda_transformer_rms_norm_bf16(
     yvex_backend *backend, const yvex_device_tensor *input,
     const yvex_device_tensor *weight, yvex_device_tensor *output,
     unsigned long long rows, unsigned long long width, float epsilon,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err)
+    yvex_backend_operation_facts *facts, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     unsigned long long elements;
@@ -1495,7 +1495,7 @@ typedef struct {
     yvex_backend *backend;
     const yvex_transformer_dense_decoder_request *request;
     yvex_device_tensor *device[DENSE_DEVICE_COUNT];
-    yvex_backend_cuda_operation_facts facts;
+    yvex_backend_operation_facts facts;
     unsigned long long device_bytes;
 } dense_decoder_run;
 
@@ -1507,7 +1507,7 @@ static int dense_refuse(yvex_error *err, yvex_status status,
 }
 
 static int dense_facts_add(dense_decoder_run *run,
-                           const yvex_backend_cuda_operation_facts *part)
+                           const yvex_backend_operation_facts *part)
 {
     return run && part && part->compulsory_memory_facts_available &&
            yvex_core_u64_add(run->facts.kernel_launches, part->kernel_launches,
@@ -1657,8 +1657,8 @@ static int dense_gather(dense_decoder_run *run,
                         yvex_device_tensor *output, yvex_error *err)
 {
     static const unsigned int row = 0u;
-    yvex_backend_cuda_operation_facts facts;
-    int rc = yvex_backend_cuda_encoded_gather(
+    yvex_backend_operation_facts facts;
+    int rc = yvex_backend_encoded_gather(
         run->backend, weight->encoded, weight->encoded_bytes, weight->qtype,
         weight->row_count, weight->row_width, weight->row_bytes,
         &row, 1ull, output, &facts, err);
@@ -1673,8 +1673,8 @@ static int dense_project(dense_decoder_run *run,
                          unsigned long long rows, const yvex_device_tensor *input,
                          yvex_device_tensor *output, yvex_error *err)
 {
-    yvex_backend_cuda_operation_facts facts;
-    int rc = yvex_backend_cuda_encoded_matvec(
+    yvex_backend_operation_facts facts;
+    int rc = yvex_backend_encoded_matvec(
         run->backend, weight->encoded, weight->encoded_bytes, weight->qtype,
         weight->row_count, weight->row_width, weight->row_bytes, rows,
         input, NULL, 0ull, NULL, output, 0, &facts, err);
@@ -1685,7 +1685,7 @@ static int dense_project(dense_decoder_run *run,
 }
 
 static int dense_primitive(dense_decoder_run *run, int rc,
-                           const yvex_backend_cuda_operation_facts *facts,
+                           const yvex_backend_operation_facts *facts,
                            yvex_error *err)
 {
     if (rc == YVEX_OK && !dense_facts_add(run, facts))
@@ -1713,7 +1713,7 @@ static int dense_bias(dense_decoder_run *run,
                       yvex_device_tensor *values, unsigned long long width,
                       yvex_error *err)
 {
-    yvex_backend_cuda_operation_facts facts;
+    yvex_backend_operation_facts facts;
     yvex_device_tensor bias_view = {0};
     int rc = dense_gather(run, weight, run->device[DENSE_BIAS], err);
     if (rc == YVEX_OK && !yvex_backend_tensor_f32_subview(
@@ -1736,7 +1736,7 @@ static int dense_attention(dense_decoder_run *run,
                            yvex_error *err)
 {
     const yvex_transformer_dense_decoder_request *r = run->request;
-    yvex_backend_cuda_operation_facts facts;
+    yvex_backend_operation_facts facts;
     unsigned long long qkv_width;
     int rc;
     if (!yvex_core_u64_mul(r->width, 3ull, &qkv_width))
@@ -1789,7 +1789,7 @@ static int dense_mlp(dense_decoder_run *run,
                      yvex_error *err)
 {
     const yvex_transformer_dense_decoder_request *r = run->request;
-    yvex_backend_cuda_operation_facts facts;
+    yvex_backend_operation_facts facts;
     unsigned long long fused_width;
     int rc;
     if (!yvex_core_u64_mul(r->ffn_width, 2ull, &fused_width))
@@ -1820,7 +1820,7 @@ static int dense_block_execute(dense_decoder_run *run, unsigned long long block,
     const yvex_transformer_dense_decoder_request *r = run->request;
     const yvex_transformer_encoded_weight *weights =
         r->block_weights + block * YVEX_TRANSFORMER_DENSE_DECODER_BLOCK_WEIGHT_COUNT;
-    yvex_backend_cuda_operation_facts facts;
+    yvex_backend_operation_facts facts;
     int rc;
     if (r->cancel_requested && r->cancel_requested(r->cancel_context))
         return dense_refuse(err, YVEX_ERR_CANCELLED, "cuda.dense-decoder.cancel",
@@ -1902,7 +1902,7 @@ static int dense_output_execute(dense_decoder_run *run, float *staged,
                                 yvex_error *err)
 {
     const yvex_transformer_dense_decoder_request *r = run->request;
-    yvex_backend_cuda_operation_facts facts;
+    yvex_backend_operation_facts facts;
     yvex_device_tensor bias_view = {0};
     unsigned long long values, index;
     int rc = dense_gather(run, r->final_norm_weight, run->device[DENSE_VECTOR], err);

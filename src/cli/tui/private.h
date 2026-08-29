@@ -196,8 +196,8 @@ typedef struct {
     unsigned long long prompt_tokens, reused_tokens, prefill_tokens;
     unsigned long long generated_tokens;
     unsigned long long h2d_bytes, d2h_bytes, d2d_bytes;
-    unsigned long long kernel_launches, stream_synchronizations;
-    unsigned long long device_synchronizations, tensor_core_launches;
+    unsigned long long kernel_launches, queue_synchronizations;
+    unsigned long long device_synchronizations, accelerated_matrix_launches;
     unsigned long long graph_launches, graph_captures, graph_replays;
     unsigned long long attention_calls, attention_cache_hits;
     unsigned long long attention_cache_misses, moe_row_expert_pairs;

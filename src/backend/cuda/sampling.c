@@ -285,7 +285,7 @@ static int sampling_cuda_select_greedy_rows(
     yvex_backend *backend, const yvex_device_tensor *logits,
     unsigned long long row_count, unsigned long long row_width,
     unsigned int *selected_tokens, float *selected_values,
-    unsigned long long *tie_counts, yvex_backend_cuda_operation_facts *facts,
+    unsigned long long *tie_counts, yvex_backend_operation_facts *facts,
     yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
@@ -371,7 +371,7 @@ static int sampling_cuda_select_greedy_rows(
         facts->d2h_bytes = temporary_bytes;
         facts->kernel_launches = 1ull;
         facts->download_count = 4ull;
-        facts->stream_synchronizations = (unsigned long long)!device_wide;
+        facts->queue_synchronizations = (unsigned long long)!device_wide;
         facts->device_synchronizations = (unsigned long long)device_wide;
         facts->activation_bytes = value_bytes;
         facts->temporary_bytes = temporary_bytes;
@@ -386,7 +386,7 @@ static int sampling_cuda_select_stochastic(
     unsigned long long vocabulary_size,
     const yvex_runtime_sampling_policy *policy, unsigned int random_value,
     yvex_backend_sampling_result *result,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err)
+    yvex_backend_operation_facts *facts, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     yvex_cuda_work work = {0};
@@ -502,7 +502,7 @@ static int sampling_cuda_select_stochastic(
         facts->d2h_bytes = sizeof(status) + sizeof(counts) + sizeof(statistics) +
                            sizeof(output_values) + sizeof(selection);
         facts->kernel_launches = 1ull; facts->download_count = 5ull;
-        facts->stream_synchronizations = (unsigned long long)!device_wide;
+        facts->queue_synchronizations = (unsigned long long)!device_wide;
         facts->device_synchronizations = (unsigned long long)device_wide;
         facts->activation_bytes = logits_bytes;
         facts->temporary_bytes = required;
@@ -564,7 +564,7 @@ static int sampling_cuda_accept_stochastic(
     double correction_uniform, unsigned int *committed_tokens,
     unsigned long long committed_capacity,
     yvex_backend_speculation_result *result,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err)
+    yvex_backend_operation_facts *facts, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     yvex_cuda_work work = {0};
@@ -706,7 +706,7 @@ static int sampling_cuda_accept_stochastic(
         facts->kernel_launches = 1ull;
         facts->upload_count = 2ull;
         facts->download_count = 3ull;
-        facts->stream_synchronizations = (unsigned long long)!device_wide;
+        facts->queue_synchronizations = (unsigned long long)!device_wide;
         facts->device_synchronizations = (unsigned long long)device_wide;
         facts->activation_bytes = activation_bytes;
         facts->temporary_bytes = required;

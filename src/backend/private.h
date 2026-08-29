@@ -11,6 +11,7 @@ struct yvex_backend_moe_operations;
 struct yvex_backend_sampling_operations;
 struct yvex_backend_transformer_operations;
 struct yvex_backend_component_operations;
+struct yvex_backend_encoded_operations;
 
 typedef struct yvex_backend_vtable {
     int (*close)(yvex_backend *, yvex_error *);
@@ -73,6 +74,8 @@ typedef struct yvex_backend_vtable {
     const struct yvex_backend_transformer_operations *(*transformer_operations)(
         const yvex_backend *);
     const struct yvex_backend_component_operations *(*component_operations)(
+        const yvex_backend *);
+    const struct yvex_backend_encoded_operations *(*encoded_operations)(
         const yvex_backend *);
 } yvex_backend_vtable;
 

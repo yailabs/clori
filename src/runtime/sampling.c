@@ -796,7 +796,7 @@ static int sampling_execution_identity(
            yvex_sha256_update_u64(&hash, result->rng_draw_count) &&
            yvex_sha256_update_u64(&hash, result->d2h_bytes) &&
            yvex_sha256_update_u64(&hash, result->kernel_launches) &&
-           yvex_sha256_update_u64(&hash, result->stream_synchronizations) &&
+           yvex_sha256_update_u64(&hash, result->queue_synchronizations) &&
            yvex_sha256_update_u64(&hash, result->device_synchronizations) &&
            yvex_sha256_update_u64(&hash, result->full_array_host_scan_bytes) &&
            sampling_hash_f64(&hash, result->effective_top_p) &&
@@ -945,7 +945,7 @@ static int sampling_select_device_stochastic(
     const yvex_backend_sampling_operations *operations =
         yvex_backend_sampling_operations_get(source->device_logits.backend);
     yvex_backend_sampling_result selected;
-    yvex_backend_cuda_operation_facts facts;
+    yvex_backend_operation_facts facts;
     yvex_device_tensor view;
     uint64_t next_state = initial_state;
     unsigned long long next_draws;
@@ -995,7 +995,7 @@ static int sampling_select_device_stochastic(
     result->normalization_error = selected.normalization_error;
     result->d2h_bytes = facts.d2h_bytes;
     result->kernel_launches = facts.kernel_launches;
-    result->stream_synchronizations = facts.stream_synchronizations;
+    result->queue_synchronizations = facts.queue_synchronizations;
     result->device_synchronizations = facts.device_synchronizations;
     result->rng_draw_count = 1ull;
     if (!sampling_device_stochastic_candidate_identity(
@@ -1122,7 +1122,7 @@ static int sampling_select_device_greedy_batch(
     const yvex_execution_device_view *first = &sources[0].device_logits;
     const yvex_backend_sampling_operations *operations =
         yvex_backend_sampling_operations_get(first->backend);
-    yvex_backend_cuda_operation_facts facts;
+    yvex_backend_operation_facts facts;
     yvex_device_tensor rows;
     unsigned long long index, expected, total;
     int rc = operations && operations->select_greedy_rows ? YVEX_OK : YVEX_ERR_UNSUPPORTED;
@@ -1177,7 +1177,7 @@ static int sampling_select_device_greedy_batch(
         if (!index) {
             result->d2h_bytes = facts.d2h_bytes;
             result->kernel_launches = facts.kernel_launches;
-            result->stream_synchronizations = facts.stream_synchronizations;
+            result->queue_synchronizations = facts.queue_synchronizations;
             result->device_synchronizations = facts.device_synchronizations;
         }
         if (!sampling_device_candidate_identity(

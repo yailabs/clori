@@ -131,6 +131,53 @@ const struct yvex_backend_component_operations *yvex_backend_component_operation
                : NULL;
 }
 
+static const yvex_backend_encoded_operations *backend_encoded_operations(
+    const yvex_backend *backend)
+{
+    return backend && backend->vtable && backend->vtable->encoded_operations
+               ? backend->vtable->encoded_operations(backend)
+               : NULL;
+}
+
+int yvex_backend_encoded_matvec(
+    yvex_backend *backend, const unsigned char *resident_encoded,
+    unsigned long long encoded_bytes, unsigned int qtype,
+    unsigned long long row_count, unsigned long long row_width,
+    unsigned long long row_bytes, unsigned long long input_rows,
+    const yvex_device_tensor *input, const yvex_device_tensor *input_tail,
+    unsigned long long input_head_width, const yvex_device_tensor *additive,
+    yvex_device_tensor *output, int activation_q8,
+    yvex_backend_operation_facts *facts, yvex_error *err)
+{
+    const yvex_backend_encoded_operations *operations =
+        backend_encoded_operations(backend);
+    if (!operations || !operations->matvec)
+        return backend_refuse(err, YVEX_ERR_UNSUPPORTED, "backend.encoded-matvec",
+                              "backend has no encoded matrix-row implementation");
+    return operations->matvec(
+        backend, resident_encoded, encoded_bytes, qtype, row_count, row_width,
+        row_bytes, input_rows, input, input_tail, input_head_width, additive,
+        output, activation_q8, facts, err);
+}
+
+int yvex_backend_encoded_gather(
+    yvex_backend *backend, const unsigned char *resident_encoded,
+    unsigned long long encoded_bytes, unsigned int qtype,
+    unsigned long long row_count, unsigned long long row_width,
+    unsigned long long row_bytes, const unsigned int *row_ids,
+    unsigned long long selected_rows, yvex_device_tensor *output,
+    yvex_backend_operation_facts *facts, yvex_error *err)
+{
+    const yvex_backend_encoded_operations *operations =
+        backend_encoded_operations(backend);
+    if (!operations || !operations->gather)
+        return backend_refuse(err, YVEX_ERR_UNSUPPORTED, "backend.encoded-gather",
+                              "backend has no encoded row-gather implementation");
+    return operations->gather(
+        backend, resident_encoded, encoded_bytes, qtype, row_count, row_width,
+        row_bytes, row_ids, selected_rows, output, facts, err);
+}
+
 static const char *backend_name_at(const char *const *names,
                                    size_t count,
                                    unsigned int index)

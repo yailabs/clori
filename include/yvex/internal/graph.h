@@ -534,10 +534,10 @@ typedef struct {
     unsigned long long layers_executed, bindings_executed;
     unsigned long long swa_layers_executed, csa_layers_executed, hca_layers_executed;
     unsigned long long topk_selected, hca_ratio, payload_bytes_read;
-    unsigned long long kernel_launches, tensor_core_launches, peak_device_bytes;
+    unsigned long long kernel_launches, accelerated_matrix_launches, peak_device_bytes;
     unsigned long long comparison_values;
     unsigned long long h2d_bytes, d2h_bytes, d2d_bytes;
-    unsigned long long stream_synchronizations, device_synchronizations;
+    unsigned long long queue_synchronizations, device_synchronizations;
     yvex_execution_memory_facts memory;
     unsigned long long cuda_device_execution_elapsed_ns;
     unsigned long long comparison_output_values, comparison_state_values;

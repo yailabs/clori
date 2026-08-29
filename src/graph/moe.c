@@ -96,8 +96,7 @@ static int moe_binding_geometry(const yvex_materialized_tensor_binding *binding,
     if (!numerical) return 1;
     if (!binding->backend_compatible) return 0;
     capability = yvex_quant_numeric_capability_at(binding->qtype);
-    return capability && capability->dedicated_cpu_compute_available &&
-           capability->dedicated_cuda_compute_available;
+    return capability && capability->reference_decoder_available;
 }
 
 static int moe_layer_bind(yvex_moe_layer_plan *layer,

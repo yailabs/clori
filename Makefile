@@ -1172,7 +1172,7 @@ test-runtime-deepseek-logits-live: cuda $(LOGITS_LIVE_RUNNER) $(YVEX_BIN)
 		        and x["source_identity"] and x["candidate_identity"] \
 		        for x in r["selected_tokens"]) \
 		and not r["token_append_ready"] and not r["tokenizer_runtime_ready"] \
-		and not r["generation_ready"] and not r["cuda_sampling_ready"]' \
+		and not r["generation_ready"] and not r["device_sampling_ready"]' \
 		"$$tmp_dir/sample.json"; \
 	cat "$$tmp_dir/api.out"; \
 	echo "production DeepSeek logits live: CPU/CUDA complete-vocabulary prefill/decode projection"

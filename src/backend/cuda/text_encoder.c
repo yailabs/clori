@@ -174,7 +174,7 @@ int yvex_cuda_text_embedding_execute(
     yvex_backend_text_execution_result *result, yvex_error *err)
 {
     text_geometry geometry;
-    yvex_backend_cuda_operation_facts operation = {0};
+    yvex_backend_operation_facts operation = {0};
     yvex_backend_tensor_desc descriptor = {0};
     yvex_device_tensor *device_output = NULL;
     yvex_backend_text_execution_result published = {0};
@@ -208,7 +208,7 @@ int yvex_cuda_text_embedding_execute(
     if (rc == YVEX_OK)
         rc = yvex_backend_tensor_alloc(backend, &descriptor, &device_output, err);
     if (rc == YVEX_OK)
-        rc = yvex_backend_cuda_encoded_gather(
+        rc = yvex_backend_encoded_gather(
             backend, encoded, encoded_bytes, YVEX_GGUF_QTYPE_BF16, row_count,
             row_width, row_bytes, token_ids, token_count, device_output, &operation, err);
     if (rc == YVEX_OK)
@@ -329,7 +329,7 @@ static int text_weights_validate(
 }
 
 static int text_facts_add(yvex_backend_text_execution_result *total,
-                          const yvex_backend_cuda_operation_facts *part)
+                          const yvex_backend_operation_facts *part)
 {
     return total && part && part->compulsory_memory_facts_available &&
            yvex_core_u64_add(total->kernel_launches, part->kernel_launches,
@@ -404,8 +404,8 @@ static int text_weight_gather(text_layer_run *run, yvex_backend_text_weight_slot
                               unsigned long long row_count, yvex_error *err)
 {
     const yvex_backend_text_weight *weight = text_weight(run, slot);
-    yvex_backend_cuda_operation_facts facts;
-    int rc = yvex_backend_cuda_encoded_gather(
+    yvex_backend_operation_facts facts;
+    int rc = yvex_backend_encoded_gather(
         run->backend, weight->encoded, weight->encoded_bytes, weight->qtype,
         weight->row_count, weight->row_width, weight->row_bytes,
         rows, row_count, output, &facts, err);
@@ -421,8 +421,8 @@ static int text_weight_project(text_layer_run *run, yvex_backend_text_weight_slo
                                yvex_device_tensor *output, yvex_error *err)
 {
     const yvex_backend_text_weight *weight = text_weight(run, slot);
-    yvex_backend_cuda_operation_facts facts;
-    int rc = yvex_backend_cuda_encoded_matvec(
+    yvex_backend_operation_facts facts;
+    int rc = yvex_backend_encoded_matvec(
         run->backend, weight->encoded, weight->encoded_bytes, weight->qtype,
         weight->row_count, weight->row_width, weight->row_bytes, run->tokens,
         input, NULL, 0ull, additive, output, 0, &facts, err);
@@ -435,7 +435,7 @@ static int text_weight_project(text_layer_run *run, yvex_backend_text_weight_slo
 static int text_round(text_layer_run *run, text_device_slot slot,
                       unsigned long long count, yvex_error *err)
 {
-    yvex_backend_cuda_operation_facts facts;
+    yvex_backend_operation_facts facts;
     int rc = yvex_cuda_transformer_bf16_round(
         run->backend, run->device[slot], count, &facts, err);
     if (rc == YVEX_OK && !text_facts_add(&run->facts, &facts))
@@ -449,7 +449,7 @@ static int text_norm(text_layer_run *run, text_device_slot input,
                      text_device_slot output, unsigned long long count,
                      yvex_error *err)
 {
-    yvex_backend_cuda_operation_facts facts;
+    yvex_backend_operation_facts facts;
     text_device_slot weight_device =
         weight == YVEX_BACKEND_TEXT_Q_NORM ? TEXT_DEVICE_Q_NORM
         : weight == YVEX_BACKEND_TEXT_K_NORM ? TEXT_DEVICE_K_NORM
@@ -572,7 +572,7 @@ static int text_multimodal_apply(text_layer_run *run, unsigned long long deepsta
 static int text_attention(text_layer_run *run, yvex_error *err)
 {
     const text_geometry *geometry = &run->geometry;
-    yvex_backend_cuda_operation_facts facts;
+    yvex_backend_operation_facts facts;
     unsigned long long q_values = run->tokens * geometry->query_width;
     unsigned long long kv_values = run->tokens * geometry->kv_width;
     int rc = text_weight_project(run, YVEX_BACKEND_TEXT_Q_PROJECTION,
@@ -629,7 +629,7 @@ static int text_attention(text_layer_run *run, yvex_error *err)
 
 static int text_mlp(text_layer_run *run, yvex_error *err)
 {
-    yvex_backend_cuda_operation_facts facts;
+    yvex_backend_operation_facts facts;
     unsigned long long ffn_values = run->tokens * run->geometry.ffn;
     int rc = text_norm(run, TEXT_DEVICE_RESIDUAL, YVEX_BACKEND_TEXT_POST_NORM,
                        TEXT_DEVICE_NORM, run->values, err);

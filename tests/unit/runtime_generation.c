@@ -171,8 +171,8 @@ static int generation_test_engine_scheduling(void)
             summary.multi_source_worklists == 2ull &&
             summary.multi_source_expert_pairs == 16ull &&
             summary.maximum_multi_source_bucket_population == 4ull &&
-            !summary.multi_source_tensor_core_eligible_pairs &&
-            !summary.multi_source_tensor_core_executed_pairs &&
+            !summary.multi_source_matrix_tile_eligible_pairs &&
+            !summary.multi_source_matrix_tile_executed_pairs &&
             summary.multi_source_narrow_pairs == 16ull &&
             summary.multi_source_population_histogram[4] == 8ull &&
             !summary.failures,
@@ -726,7 +726,7 @@ static int generation_test_decode_profile_projection(void)
     yvex_error err;
     decode.completed = 1;
     decode.kernel_launches = 19ull;
-    decode.tensor_core_launches = 3ull;
+    decode.accelerated_matrix_launches = 3ull;
     decode.attention_device_ns = 7000ull;
     YVEX_TEST_ASSERT(
         yvex_runtime_profile_begin(
@@ -737,7 +737,7 @@ static int generation_test_decode_profile_projection(void)
             yvex_runtime_generation_profile_decode(&profile, &decode, &err) ==
                 YVEX_OK &&
             profile.counters[YVEX_RUNTIME_PROFILE_KERNEL_LAUNCHES] == 19ull &&
-            profile.counters[YVEX_RUNTIME_PROFILE_TENSOR_CORE_LAUNCHES] == 3ull &&
+            profile.counters[YVEX_RUNTIME_PROFILE_ACCELERATED_MATRIX_LAUNCHES] == 3ull &&
             profile.phase_ns[YVEX_RUNTIME_PROFILE_ATTENTION] == 7000ull,
         "decode profile preserves backend launch classes and device timing");
     return 0;

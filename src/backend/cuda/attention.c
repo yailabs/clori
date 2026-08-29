@@ -1728,11 +1728,11 @@ static int attn_completion_prepare(attn_run *run)
     completion->output.device_bytes = 0ull;
     completion->output.peak_device_bytes = run->resources.peak_bytes;
     completion->output.kernel_launches = run->resources.launches;
-    completion->output.tensor_core_launches = run->resources.tensor_core_launches;
+    completion->output.accelerated_matrix_launches = run->resources.tensor_core_launches;
     completion->output.h2d_bytes = run->h2d_bytes;
     completion->output.d2h_bytes = run->d2h_bytes;
     completion->output.d2d_bytes = run->d2d_bytes;
-    completion->output.stream_synchronizations = run->stream_synchronizations;
+    completion->output.queue_synchronizations = run->stream_synchronizations;
     completion->output.device_synchronizations = run->device_synchronizations;
     completion->output.device_execution_elapsed_ns = run->device_execution_elapsed_ns;
     if (yvex_backend_host_workspace_summary_get(run->backend, &workspace)) {

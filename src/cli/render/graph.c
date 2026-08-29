@@ -400,7 +400,7 @@ static const yvex_cli_field_spec sampling_fields[] = {
     SAMPLE_BOOL(token_append_ready), SAMPLE_BOOL(tokenizer_runtime_ready),
     SAMPLE_BOOL(eos_policy_ready), SAMPLE_BOOL(stop_policy_ready),
     SAMPLE_BOOL(detokenization_ready), SAMPLE_BOOL(generation_ready),
-    SAMPLE_BOOL(cuda_sampling_ready), SAMPLE_BOOL(model_behavior_evaluation_ready),
+    SAMPLE_BOOL(device_sampling_ready), SAMPLE_BOOL(model_behavior_evaluation_ready),
     SAMPLE_BOOL(full_model_benchmark_ready), SAMPLE_BOOL(release_qualification_ready),
     SAMPLE_FIELD("reason", YVEX_CLI_FIELD_TEXT_ARRAY, reason),
     SAMPLE_FIELD("completed", YVEX_CLI_FIELD_BOOL, completed),

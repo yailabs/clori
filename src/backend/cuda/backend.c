@@ -1714,8 +1714,8 @@ static const yvex_backend_vtable cuda_vtable = {
     .moe_operations = yvex_cuda_moe_operations_get,
     .transformer_operations = yvex_cuda_transformer_operations_get,
     .component_operations = yvex_cuda_component_operations_get,
+    .encoded_operations = yvex_cuda_encoded_operations_get,
 };
-
 static int shared_owner_acquire(yvex_backend *owner, yvex_error *err)
 {
     unsigned long long desired, observed;

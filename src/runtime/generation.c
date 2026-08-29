@@ -447,7 +447,7 @@ static int generation_prefill(
             rc = yvex_expert_worklist_observation_add(
                 &worklists, &result.expert_worklists, err);
         if (rc == YVEX_OK && !context->speculation &&
-            !yvex_core_u64_add(result.stream_synchronizations, result.device_synchronizations,
+            !yvex_core_u64_add(result.queue_synchronizations, result.device_synchronizations,
                                &synchronizations))
             rc = generation_refuse(err, YVEX_ERR_BOUNDS, "prefill physical accounting overflowed");
         if (rc == YVEX_OK && context->speculation)
@@ -586,7 +586,7 @@ static int generation_sampling_account(
     unsigned long long elapsed, yvex_error *err)
 {
     const unsigned long long d2h = sampling->d2h_bytes, scans = sampling->full_array_host_scan_bytes;
-    const unsigned long long kernels = sampling->kernel_launches, streams = sampling->stream_synchronizations;
+    const unsigned long long kernels = sampling->kernel_launches, streams = sampling->queue_synchronizations;
     const unsigned long long devices = sampling->device_synchronizations;
     int rc = yvex_runtime_generation_profile_phase(profile, YVEX_RUNTIME_PROFILE_SAMPLING, elapsed, err);
     if (rc == YVEX_OK && profile &&
@@ -595,7 +595,7 @@ static int generation_sampling_account(
          generation_profile_count(profile, YVEX_RUNTIME_PROFILE_LOGITS_D2H_BYTES, d2h, err) != YVEX_OK ||
          generation_profile_count(profile, YVEX_RUNTIME_PROFILE_FULL_ARRAY_HOST_SCAN_BYTES, scans, err) != YVEX_OK ||
          generation_profile_count(profile, YVEX_RUNTIME_PROFILE_KERNEL_LAUNCHES, kernels, err) != YVEX_OK ||
-         generation_profile_count(profile, YVEX_RUNTIME_PROFILE_STREAM_SYNCHRONIZATIONS, streams, err) != YVEX_OK ||
+         generation_profile_count(profile, YVEX_RUNTIME_PROFILE_QUEUE_SYNCHRONIZATIONS, streams, err) != YVEX_OK ||
          generation_profile_count(profile, YVEX_RUNTIME_PROFILE_DEVICE_SYNCHRONIZATIONS, devices, err) != YVEX_OK))
         rc = yvex_error_code(err);
     return rc;
@@ -729,7 +729,7 @@ static int generation_commit_ordinary(
                                    decode_result->persistent_state_digest);
         result->model_committed_token_count++;
         result->decode_step_count++;
-        if (!yvex_core_u64_add(decode_result->stream_synchronizations,
+        if (!yvex_core_u64_add(decode_result->queue_synchronizations,
                                decode_result->device_synchronizations, &synchronizations))
             rc = generation_refuse(err, YVEX_ERR_BOUNDS, "decode physical accounting overflowed");
         if (rc == YVEX_OK)

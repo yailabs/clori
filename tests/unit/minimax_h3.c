@@ -735,41 +735,37 @@ static int test_t2va_plan(void)
     YVEX_TEST_ASSERT(
         video.operation == YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_VIDEO_OUTPUT &&
             video.input_width == 5376ull && video.output_width == 96ull &&
-            video.algorithm_id == 10u && video.tile_rows == 32u && video.tile_columns == 32u &&
-            video.split_k == 10u &&
-            video.reduction == YVEX_TRANSFORMER_LINEAR_REDUCTION_INPLACE &&
-            video.stages == YVEX_TRANSFORMER_LINEAR_STAGES_DEFAULT &&
+            video.implementation ==
+                YVEX_TRANSFORMER_LINEAR_IMPLEMENTATION_DEVICE_F32_BIAS &&
+            video.backend == YVEX_BACKEND_KIND_CUDA &&
+            video.workspace_bytes == 1024ull * 1024ull &&
             audio.operation == YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_AUDIO_OUTPUT &&
             audio.input_width == 5376ull && audio.output_width == 32ull &&
-            audio.algorithm_id == 20u && audio.tile_rows == 128u && audio.tile_columns == 32u &&
-            audio.split_k == 3u &&
-            audio.reduction == YVEX_TRANSFORMER_LINEAR_REDUCTION_COMPUTE_TYPE &&
-            audio.stages == YVEX_TRANSFORMER_LINEAR_STAGES_8X5 &&
-            video.compute_capability_major == 12u && video.compute_capability_minor == 1u &&
-            audio.compute_capability_major == 12u && audio.compute_capability_minor == 1u,
-        "Omni physical compiler emits the exact qualified SM121 output configurations");
+            audio.implementation ==
+                YVEX_TRANSFORMER_LINEAR_IMPLEMENTATION_DEVICE_F32_BIAS &&
+            audio.backend == YVEX_BACKEND_KIND_CUDA &&
+            audio.workspace_bytes == 1024ull * 1024ull,
+        "Omni specialization emits backend-neutral exact output contracts");
     memcpy(video_operation, video.operation_identity, sizeof(video_operation));
     memcpy(video_physical, video.physical_identity, sizeof(video_physical));
     memcpy(audio_physical, audio.physical_identity, sizeof(audio_physical));
     changed = video;
-    changed.tile_rows = 128u;
+    changed.workspace_bytes *= 2ull;
     YVEX_TEST_ASSERT(yvex_transformer_linear_physical_seal(&changed, &err) == YVEX_OK &&
                          strcmp(changed.operation_identity, video_operation) == 0 &&
                          strcmp(changed.physical_identity, video_physical) != 0,
-                     "tile mutation changes physical identity but not semantic operation");
+                     "workspace mutation changes physical identity but not semantic operation");
     changed = video;
-    changed.split_k = 9u;
+    changed.backend = YVEX_BACKEND_KIND_METAL;
     YVEX_TEST_ASSERT(yvex_transformer_linear_physical_seal(&changed, &err) == YVEX_OK &&
                          strcmp(changed.operation_identity, video_operation) == 0 &&
                          strcmp(changed.physical_identity, video_physical) != 0,
-                     "split-K mutation changes physical identity but not semantic operation");
+                     "backend mutation changes physical identity but not semantic operation");
     changed = video;
-    changed.reduction = YVEX_TRANSFORMER_LINEAR_REDUCTION_COMPUTE_TYPE;
-    YVEX_TEST_ASSERT(yvex_transformer_linear_physical_seal(&changed, &err) == YVEX_OK &&
-                         strcmp(changed.operation_identity, video_operation) == 0 &&
-                         strcmp(changed.physical_identity, video_physical) != 0 &&
+    changed.deterministic = 0;
+    YVEX_TEST_ASSERT(yvex_transformer_linear_physical_seal(&changed, &err) != YVEX_OK &&
                          strcmp(audio.physical_identity, audio_physical) == 0,
-                     "reduction mutation is physical and leaves other operation plans unchanged");
+                     "specialization refuses a weakened deterministic contract");
     unsupported_requirement = recipe->video_output;
     unsupported_requirement.publication_contract = YVEX_TRANSFORMER_LINEAR_NUMERIC_UNKNOWN;
     YVEX_TEST_ASSERT(

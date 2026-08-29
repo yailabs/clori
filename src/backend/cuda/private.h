@@ -545,6 +545,8 @@ const struct yvex_backend_moe_operations *yvex_cuda_moe_operations_get(
     const yvex_backend *);
 const struct yvex_backend_transformer_operations *yvex_cuda_transformer_operations_get(
     const yvex_backend *);
+const struct yvex_backend_encoded_operations *yvex_cuda_encoded_operations_get(
+    const yvex_backend *);
 int yvex_cuda_kernel_bundle_admit(yvex_backend *backend, yvex_error *err);
 const char *yvex_cuda_kernel_function_identity(const yvex_cuda_backend_state *, CUfunction);
 int yvex_cuda_kernel_bundle_close(yvex_backend *backend, yvex_error *err);
@@ -584,7 +586,6 @@ int yvex_cuda_op_attention(yvex_backend *backend, const yvex_device_tensor *quer
                            int causal, yvex_device_tensor *score_scratch,
                            yvex_device_tensor *probability_scratch, yvex_device_tensor *out,
                            yvex_error *err);
-/* Qtype. */
 int yvex_cuda_quant_row_dot(yvex_backend *backend,
                             unsigned int qtype,
                             const unsigned char *encoded,
@@ -592,8 +593,7 @@ int yvex_cuda_quant_row_dot(yvex_backend *backend,
                             const float *vector,
                             unsigned long long elements,
                             float *out,
-                            yvex_quant_failure *failure,
-                            yvex_error *err);
+                            yvex_quant_failure *failure, yvex_error *err);
 #ifdef __cplusplus
 }
 #endif

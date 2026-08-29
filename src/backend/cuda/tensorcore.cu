@@ -552,5 +552,5 @@ extern "C" __global__ void yvex_moe_grouped_down_tensorcore(
             else pair_outputs[source_pair * hidden + row_base + lane] = value;
         }
     if (!lane && !row_base && !*status)
-        atomicAdd(&summary->tensor_core_executed_pairs, population);
+        atomicAdd(&summary->matrix_tile_executed_pairs, population);
 }

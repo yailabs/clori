@@ -15,17 +15,16 @@ extern "C" {
 
 #define YVEX_EXECUTION_BATCH_SCHEMA_V2 2u
 #define YVEX_EXECUTION_COMPATIBILITY_SCHEMA_V2 2u
-#define YVEX_EXPERT_WORKLIST_POLICY_SCHEMA_V1 1u
+#define YVEX_EXPERT_WORKLIST_POLICY_SCHEMA_V2 2u
 #define YVEX_EXPERT_WORKLIST_SCHEMA_V1 1u
 #define YVEX_EXPERT_WORKLIST_OBSERVATION_SCHEMA_V1 1u
 #define YVEX_EXPERT_WORKLIST_HISTOGRAM_CAP 17u
 
 typedef enum {
     YVEX_ENGINE_IMPLEMENTATION_PORTABLE_F32 = 0,
-    YVEX_ENGINE_IMPLEMENTATION_CUDA_F32,
-    YVEX_ENGINE_IMPLEMENTATION_CUDA_ENCODED_ROW,
-    YVEX_ENGINE_IMPLEMENTATION_CUDA_SM121_MOE_ROW,
-    YVEX_ENGINE_IMPLEMENTATION_CUDA_SM121_MOE_TENSORCORE,
+    YVEX_ENGINE_IMPLEMENTATION_DEVICE_F32,
+    YVEX_ENGINE_IMPLEMENTATION_DEVICE_ENCODED_ROW,
+    YVEX_ENGINE_IMPLEMENTATION_DEVICE_MATRIX_TILE,
     YVEX_ENGINE_IMPLEMENTATION_COUNT
 } yvex_engine_implementation;
 
@@ -109,8 +108,8 @@ typedef struct {
 typedef struct {
     unsigned int schema_version;
     unsigned long long supported_width_mask;
-    unsigned long long tensor_core_minimum;
-    yvex_engine_implementation narrow_implementation, wide_implementation;
+    unsigned long long matrix_tile_minimum;
+    yvex_engine_implementation row_implementation, matrix_implementation;
     char identity[YVEX_SHA256_HEX_CAP];
 } yvex_expert_worklist_policy;
 
@@ -136,7 +135,7 @@ typedef struct {
     yvex_execution_phase phase;
     unsigned long long actual_width, expert_count, pair_count, bucket_count;
     unsigned long long maximum_bucket_population, admitted_tile_width;
-    unsigned long long tensor_core_eligible_pairs, narrow_pairs, tail_rows;
+    unsigned long long matrix_tile_eligible_pairs, narrow_pairs, tail_rows;
     const unsigned long long *expert_ids, *bucket_offsets, *bucket_populations;
     const unsigned long long *source_pairs, *source_rows, *destination_rows;
     const float *route_weights;
@@ -151,7 +150,7 @@ typedef struct {
     unsigned int schema_version;
     unsigned long long worklist_count, pair_count, bucket_count;
     unsigned long long maximum_bucket_population;
-    unsigned long long tensor_core_eligible_pairs, tensor_core_executed_pairs;
+    unsigned long long matrix_tile_eligible_pairs, matrix_tile_executed_pairs;
     unsigned long long narrow_pairs, tail_rows;
     unsigned long long width_histogram[YVEX_EXPERT_WORKLIST_HISTOGRAM_CAP];
     unsigned long long population_histogram[YVEX_EXPERT_WORKLIST_HISTOGRAM_CAP];

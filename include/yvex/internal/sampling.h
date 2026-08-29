@@ -71,7 +71,7 @@ typedef struct yvex_runtime_sampling_result {
     double temperature, selected_probability, selected_log_probability;
     unsigned long long tied_maximum_count, effective_top_k, rng_draw_count;
     unsigned long long d2h_bytes, kernel_launches;
-    unsigned long long stream_synchronizations, device_synchronizations;
+    unsigned long long queue_synchronizations, device_synchronizations;
     unsigned long long full_array_host_scan_bytes;
     double effective_top_p, effective_min_p, effective_typical_p;
     double min_p_threshold, entropy, typical_retained_mass, top_p_retained_mass;
@@ -135,7 +135,7 @@ struct yvex_backend_sampling_operations {
                               unsigned int *selected_tokens,
                               float *selected_values,
                               unsigned long long *tie_counts,
-                              yvex_backend_cuda_operation_facts *facts,
+                              yvex_backend_operation_facts *facts,
                               yvex_error *err);
     int (*select_stochastic)(yvex_backend *backend,
                              const yvex_device_tensor *logits,
@@ -143,7 +143,7 @@ struct yvex_backend_sampling_operations {
                              const yvex_runtime_sampling_policy *policy,
                              unsigned int random_value,
                              yvex_backend_sampling_result *result,
-                             yvex_backend_cuda_operation_facts *facts,
+                             yvex_backend_operation_facts *facts,
                              yvex_error *err);
     int (*accept_stochastic)(
         yvex_backend *backend, const yvex_device_tensor *draft_logits,
@@ -156,7 +156,7 @@ struct yvex_backend_sampling_operations {
         unsigned int *committed_tokens,
         unsigned long long committed_capacity,
         yvex_backend_speculation_result *result,
-        yvex_backend_cuda_operation_facts *facts, yvex_error *err);
+        yvex_backend_operation_facts *facts, yvex_error *err);
 };
 
 typedef struct {
@@ -282,7 +282,7 @@ typedef struct {
     int sampling_real_logits_ready, sampling_partial_progress_ready, sampling_ready;
     int persistent_state_unchanged;
     int token_append_ready, tokenizer_runtime_ready, eos_policy_ready, stop_policy_ready;
-    int detokenization_ready, generation_ready, cuda_sampling_ready;
+    int detokenization_ready, generation_ready, device_sampling_ready;
     int model_behavior_evaluation_ready, full_model_benchmark_ready;
     int release_qualification_ready;
 } yvex_sampling_operator_result;

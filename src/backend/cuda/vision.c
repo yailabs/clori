@@ -35,7 +35,7 @@ static int vision_refuse(yvex_error *err, yvex_status status, const char *stage,
     return status;
 }
 
-static int vision_facts_add(vision_run *run, const yvex_backend_cuda_operation_facts *part)
+static int vision_facts_add(vision_run *run, const yvex_backend_operation_facts *part)
 {
     return run && part && part->compulsory_memory_facts_available &&
            yvex_core_u64_add(run->facts.kernel_launches, part->kernel_launches,
@@ -140,12 +140,12 @@ static int vision_gather(vision_run *run, const yvex_component_encoded_weight *w
                          yvex_device_tensor *output, yvex_error *err)
 {
     static const unsigned int row = 0u;
-    yvex_backend_cuda_operation_facts facts = {0};
+    yvex_backend_operation_facts facts = {0};
     int rc;
     if (!weight)
         return vision_refuse(err, YVEX_ERR_FORMAT, "cuda.vision.weight",
                              "vision weight binding is absent");
-    rc = yvex_backend_cuda_encoded_gather(
+    rc = yvex_backend_encoded_gather(
         run->backend, weight->encoded, weight->encoded_bytes, weight->qtype,
         weight->row_count, weight->row_width, weight->row_bytes,
         &row, 1ull, output, &facts, err);
@@ -161,13 +161,13 @@ static int vision_linear(vision_run *run, const yvex_component_encoded_weight *w
                          unsigned long long output_width, const yvex_device_tensor *input,
                          yvex_device_tensor *output, yvex_error *err)
 {
-    yvex_backend_cuda_operation_facts facts = {0};
+    yvex_backend_operation_facts facts = {0};
     int rc;
     if (!weight || !bias || weight->qtype != YVEX_GGUF_QTYPE_BF16 ||
         bias->qtype != YVEX_GGUF_QTYPE_BF16)
         return vision_refuse(err, YVEX_ERR_FORMAT, "cuda.vision.linear",
                              "vision linear requires BF16 source weights and bias");
-    rc = yvex_backend_cuda_encoded_linear_bf16(
+    rc = yvex_cuda_transformer_linear_bf16(
         run->backend, weight->encoded, weight->encoded_bytes,
         bias->encoded, bias->encoded_bytes, output_width, input_width, rows,
         input, output, &facts, err);
@@ -180,7 +180,7 @@ static int vision_linear(vision_run *run, const yvex_component_encoded_weight *w
 static int vision_round(vision_run *run, yvex_device_tensor *tensor,
                         unsigned long long values, yvex_error *err)
 {
-    yvex_backend_cuda_operation_facts facts = {0};
+    yvex_backend_operation_facts facts = {0};
     int rc = yvex_cuda_transformer_bf16_round(run->backend, tensor, values, &facts, err);
     if (rc == YVEX_OK && !vision_facts_add(run, &facts))
         rc = vision_refuse(err, YVEX_ERR_BOUNDS, "cuda.vision.facts",
@@ -220,7 +220,7 @@ static int vision_norm(vision_run *run, const yvex_device_tensor *input,
                        const yvex_component_encoded_weight *bias, unsigned long long rows,
                        unsigned long long width, int large, yvex_error *err)
 {
-    yvex_backend_cuda_operation_facts facts = {0};
+    yvex_backend_operation_facts facts = {0};
     yvex_device_tensor *device_weight = run->device[large ? VISION_LARGE_WEIGHT
                                                           : VISION_SMALL_WEIGHT];
     yvex_device_tensor *device_bias = run->device[large ? VISION_LARGE_BIAS
@@ -367,7 +367,7 @@ static int vision_block_attention(vision_run *run, unsigned long long layer,
                                   yvex_error *err)
 {
     unsigned long long base = vision_block_base(layer);
-    yvex_backend_cuda_operation_facts facts = {0};
+    yvex_backend_operation_facts facts = {0};
     int rc = vision_norm(
         run, run->device[VISION_HIDDEN], run->device[VISION_NORM],
         vision_weight(run, base + YVEX_VISION_NORM1_WEIGHT),
@@ -454,7 +454,7 @@ static int vision_block_attention(vision_run *run, unsigned long long layer,
 static int vision_block_mlp(vision_run *run, unsigned long long layer, yvex_error *err)
 {
     unsigned long long base = vision_block_base(layer);
-    yvex_backend_cuda_operation_facts facts = {0};
+    yvex_backend_operation_facts facts = {0};
     int rc = vision_norm(
         run, run->device[VISION_HIDDEN], run->device[VISION_NORM],
         vision_weight(run, base + YVEX_VISION_NORM2_WEIGHT),
@@ -552,7 +552,7 @@ static int vision_merge(vision_run *run, unsigned long long merger, int postshuf
     unsigned long long merge_width = run->recipe->hidden_width *
                                      run->recipe->merge * run->recipe->merge;
     unsigned long long output_values, output_bytes;
-    yvex_backend_cuda_operation_facts facts = {0};
+    yvex_backend_operation_facts facts = {0};
     const yvex_device_tensor *fc_input = postshuffle_norm
                                             ? run->device[VISION_MERGE_NORM]
                                             : run->device[VISION_MERGE_INPUT];

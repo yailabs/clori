@@ -186,8 +186,8 @@ static void live_failure_primary(const live_generation *primary)
             "narrow=%llu widths=",
             worklists->worklist_count, worklists->pair_count,
             worklists->bucket_count, worklists->maximum_bucket_population,
-            worklists->tensor_core_executed_pairs,
-            worklists->tensor_core_eligible_pairs, worklists->narrow_pairs);
+            worklists->matrix_tile_executed_pairs,
+            worklists->matrix_tile_eligible_pairs, worklists->narrow_pairs);
     for (index = 1ull; index < YVEX_EXPERT_WORKLIST_HISTOGRAM_CAP; ++index)
         if (worklists->width_histogram[index]) {
             fprintf(stderr, "%s%llu:%llu", width_present ? "," : "",
@@ -2003,8 +2003,8 @@ int main(int argc, char **argv)
                production.evidence.expert_worklists.pair_count,
                production.evidence.expert_worklists.bucket_count,
                production.evidence.expert_worklists.maximum_bucket_population,
-               production.evidence.expert_worklists.tensor_core_eligible_pairs,
-               production.evidence.expert_worklists.tensor_core_executed_pairs,
+               production.evidence.expert_worklists.matrix_tile_eligible_pairs,
+               production.evidence.expert_worklists.matrix_tile_executed_pairs,
                production.evidence.expert_worklists.narrow_pairs,
                production.evidence.expert_worklists.tail_rows);
         for (unsigned int index = 1u;

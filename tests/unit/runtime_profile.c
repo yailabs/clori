@@ -92,8 +92,8 @@ int yvex_test_runtime_profile(void)
                                      YVEX_RUNTIME_PROFILE_KERNEL_LAUNCHES),
                                  "kernel_launches") &&
                          !strcmp(yvex_runtime_profile_counter_name(
-                                     YVEX_RUNTIME_PROFILE_TENSOR_CORE_LAUNCHES),
-                                 "tensor_core_launches") &&
+                                     YVEX_RUNTIME_PROFILE_ACCELERATED_MATRIX_LAUNCHES),
+                                 "accelerated_matrix_launches") &&
                          !strcmp(yvex_runtime_profile_counter_name(
                                      YVEX_RUNTIME_PROFILE_DOWNLOADS),
                                  "downloads") &&

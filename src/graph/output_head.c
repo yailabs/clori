@@ -122,9 +122,8 @@ int yvex_output_head_plan_build(
         binding->row_width != transformer_summary->hidden_width ||
         binding->row_count != transformer_summary->vocabulary_size ||
         !geometry || !geometry->block_size || !geometry->bytes_per_block ||
-        binding->row_width % geometry->block_size || !numeric ||
-        !numeric->dedicated_cpu_compute_available ||
-        !numeric->dedicated_cuda_compute_available)
+        binding->row_width % geometry->block_size || !binding->backend_compatible ||
+        !numeric || !numeric->reference_decoder_available)
         return output_head_refuse(
             err, YVEX_ERR_FORMAT,
             "exact separate output-head binding or qtype compute is unavailable");

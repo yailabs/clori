@@ -293,10 +293,10 @@ static int moe_test_execution_contract(
     memset(batch->execution_profile_identity, 'd', YVEX_SHA256_HEX_CAP - 1u);
     memset(batch->operation_identity, 'e', YVEX_SHA256_HEX_CAP - 1u);
     memset(policy, 0, sizeof(*policy));
-    policy->schema_version = YVEX_EXPERT_WORKLIST_POLICY_SCHEMA_V1;
+    policy->schema_version = YVEX_EXPERT_WORKLIST_POLICY_SCHEMA_V2;
     policy->supported_width_mask = 0x1feull;
-    policy->narrow_implementation = YVEX_ENGINE_IMPLEMENTATION_CUDA_SM121_MOE_ROW;
-    policy->wide_implementation = YVEX_ENGINE_IMPLEMENTATION_COUNT;
+    policy->row_implementation = YVEX_ENGINE_IMPLEMENTATION_DEVICE_ENCODED_ROW;
+    policy->matrix_implementation = YVEX_ENGINE_IMPLEMENTATION_COUNT;
     if (yvex_execution_batch_seal(batch, err) != YVEX_OK ||
         yvex_expert_worklist_policy_seal(policy, err) != YVEX_OK)
         return 0;
@@ -559,7 +559,7 @@ static int assert_encoded_moe(yvex_backend *backend)
     for (slot = YVEX_MOE_WEIGHT_ROUTED_GATE;
          slot <= YVEX_MOE_WEIGHT_SHARED_DOWN; ++slot) {
         job.weights[slot].activation = YVEX_EXECUTION_ACTIVATION_DEVICE_ENCODED;
-        job.weights[slot].implementation = YVEX_ENGINE_IMPLEMENTATION_CUDA_ENCODED_ROW;
+        job.weights[slot].implementation = YVEX_ENGINE_IMPLEMENTATION_DEVICE_ENCODED_ROW;
     }
     native = yvex_cuda_state(backend)->kernel_bundle_native;
     rows.row_count = 2ull;
@@ -614,7 +614,7 @@ static int assert_encoded_moe(yvex_backend *backend)
         for (slot = YVEX_MOE_WEIGHT_ROUTED_GATE;
              slot <= YVEX_MOE_WEIGHT_SHARED_DOWN; ++slot)
             job.weights[slot].implementation =
-                YVEX_ENGINE_IMPLEMENTATION_CUDA_SM121_MOE_ROW;
+                YVEX_ENGINE_IMPLEMENTATION_DEVICE_ENCODED_ROW;
         for (slot = YVEX_MOE_WEIGHT_ROUTED_GATE;
              slot <= YVEX_MOE_WEIGHT_ROUTED_DOWN; ++slot)
             job.weights[slot].layout = YVEX_EXECUTION_LAYOUT_EXPERT_MAJOR;
@@ -694,9 +694,9 @@ static int assert_encoded_moe(yvex_backend *backend)
         }
         YVEX_TEST_ASSERT(maximum_error <= 1e-6f,
                          "width-four DP4A comparison matches its encoded oracle");
-        worklist_policy.tensor_core_minimum = 4ull;
-        worklist_policy.wide_implementation =
-            YVEX_ENGINE_IMPLEMENTATION_CUDA_SM121_MOE_TENSORCORE;
+        worklist_policy.matrix_tile_minimum = 4ull;
+        worklist_policy.matrix_implementation =
+            YVEX_ENGINE_IMPLEMENTATION_DEVICE_MATRIX_TILE;
         YVEX_TEST_ASSERT(
             yvex_expert_worklist_policy_seal(&worklist_policy, &err) == YVEX_OK,
             "seal the compiler-admitted real-width Tensor Core worklist");
@@ -706,8 +706,8 @@ static int assert_encoded_moe(yvex_backend *backend)
             backend, &job, &rows, &output, &result, &err);
         YVEX_TEST_ASSERT(
             rc == YVEX_OK && result.completed && result.tensor_core_launches == 2ull &&
-                result.worklists.tensor_core_eligible_pairs == 24ull &&
-                result.worklists.tensor_core_executed_pairs == 24ull &&
+                result.worklists.matrix_tile_eligible_pairs == 24ull &&
+                result.worklists.matrix_tile_executed_pairs == 24ull &&
                 result.worklists.narrow_pairs == 0ull &&
                 result.worklists.maximum_bucket_population == 4ull &&
                 yvex_device_tensor_is_written(wide_output) &&
@@ -729,9 +729,9 @@ static int assert_encoded_moe(yvex_backend *backend)
                 &job, &rows, &execution_batch, &worklist_policy,
                 &execution_source, execution_rows, 2ull, &err),
             "seal a narrow batch under the Tensor Core-capable policy");
-        worklist_policy.tensor_core_minimum = 4ull;
-        worklist_policy.wide_implementation =
-            YVEX_ENGINE_IMPLEMENTATION_CUDA_SM121_MOE_TENSORCORE;
+        worklist_policy.matrix_tile_minimum = 4ull;
+        worklist_policy.matrix_implementation =
+            YVEX_ENGINE_IMPLEMENTATION_DEVICE_MATRIX_TILE;
         YVEX_TEST_ASSERT(
             yvex_expert_worklist_policy_seal(&worklist_policy, &err) == YVEX_OK,
             "reseal the Tensor Core policy for its exact narrow fallback");
@@ -741,8 +741,8 @@ static int assert_encoded_moe(yvex_backend *backend)
             backend, &job, &rows, &output, &result, &err);
         YVEX_TEST_ASSERT(
             rc == YVEX_OK && result.completed && result.tensor_core_launches == 0ull &&
-                result.worklists.tensor_core_eligible_pairs == 0ull &&
-                result.worklists.tensor_core_executed_pairs == 0ull &&
+                result.worklists.matrix_tile_eligible_pairs == 0ull &&
+                result.worklists.matrix_tile_executed_pairs == 0ull &&
                 result.worklists.narrow_pairs == 12ull &&
                 yvex_device_tensor_is_written(small_output) &&
                 yvex_backend_tensor_read(backend, small_output, tensorcore,
@@ -759,7 +759,7 @@ static int assert_encoded_moe(yvex_backend *backend)
         for (slot = YVEX_MOE_WEIGHT_ROUTED_GATE;
              slot <= YVEX_MOE_WEIGHT_ROUTED_DOWN; ++slot)
             job.weights[slot].implementation =
-                YVEX_ENGINE_IMPLEMENTATION_CUDA_SM121_MOE_ROW;
+                YVEX_ENGINE_IMPLEMENTATION_DEVICE_ENCODED_ROW;
         rows.row_count = ROWS;
         rows.device_rows = input;
         rows.device_outputs = reference_output;
@@ -769,7 +769,7 @@ static int assert_encoded_moe(yvex_backend *backend)
                 &execution_source, execution_rows, ROWS, &err),
             "reseal the kernel-refusal worklist contract");
         job.weights[YVEX_MOE_WEIGHT_ROUTED_GATE].implementation =
-            YVEX_ENGINE_IMPLEMENTATION_CUDA_F32;
+            YVEX_ENGINE_IMPLEMENTATION_DEVICE_F32;
         reference_output->is_written = 0;
         memset(&result, 0, sizeof(result));
         rc = operations->execute_rows(backend, &job, &rows, &output, &result, &err);
@@ -778,7 +778,7 @@ static int assert_encoded_moe(yvex_backend *backend)
                 !yvex_device_tensor_is_written(reference_output),
             "mismatched compiler-selected expert kernels refuse without fallback");
         job.weights[YVEX_MOE_WEIGHT_ROUTED_GATE].implementation =
-            YVEX_ENGINE_IMPLEMENTATION_CUDA_SM121_MOE_ROW;
+            YVEX_ENGINE_IMPLEMENTATION_DEVICE_ENCODED_ROW;
     } else {
         YVEX_TEST_ASSERT(
             rc == YVEX_ERR_UNSUPPORTED && !result.completed &&

@@ -602,7 +602,7 @@ static int logits_project_cuda(yvex_runtime_logits_context *context,
                                yvex_error *err)
 {
     unsigned long long hidden_bytes, logits_bytes;
-    yvex_backend_cuda_operation_facts facts;
+    yvex_backend_operation_facts facts;
     yvex_device_tensor borrowed_hidden, staging_hidden, logits_view;
     const yvex_device_tensor *device_hidden = context->device_hidden;
     int rc;
@@ -640,7 +640,7 @@ static int logits_project_cuda(yvex_runtime_logits_context *context,
                                        hidden_bytes, err);
     }
     if (rc == YVEX_OK)
-        rc = yvex_backend_cuda_encoded_matvec(
+        rc = yvex_backend_encoded_matvec(
             context->session_view->backend, context->resident_head,
             context->resident_head_bytes, context->plan.summary.qtype,
             context->plan.summary.row_count, context->plan.summary.row_width,
@@ -1250,7 +1250,7 @@ static int logits_cuda_batch_compatible(
 }
 static int logits_cuda_batch_physical(
     yvex_runtime_logits_result *result,
-    const yvex_backend_cuda_operation_facts *facts, int device_input, int device_output,
+    const yvex_backend_operation_facts *facts, int device_input, int device_output,
     unsigned long long hidden_bytes, unsigned long long logits_bytes,
     yvex_error *err)
 {
@@ -1289,7 +1289,7 @@ static int logits_project_cuda_batch(
     int device_output, float *logits, yvex_runtime_logits_row_result *rows,
     yvex_runtime_logits_result *result, yvex_error *err)
 {
-    yvex_backend_cuda_operation_facts facts = {0};
+    yvex_backend_operation_facts facts = {0};
     yvex_device_tensor borrowed_hidden, staging_hidden, logits_view;
     const yvex_device_tensor *device_hidden = context->device_hidden;
     unsigned long long hidden_elements, logits_elements, hidden_bytes, logits_bytes, index;
@@ -1343,7 +1343,7 @@ static int logits_project_cuda_batch(
         }
     }
     if (rc == YVEX_OK)
-        rc = yvex_backend_cuda_encoded_matvec(
+        rc = yvex_backend_encoded_matvec(
             context->session_view->backend, context->resident_head,
             context->resident_head_bytes, context->plan.summary.qtype,
             context->plan.summary.row_count, context->plan.summary.row_width,
@@ -1498,7 +1498,7 @@ int yvex_runtime_logits_project_compatible(
     yvex_runtime_logits_row_result *const *rows, unsigned long long row_count, yvex_error *err)
 {
     yvex_runtime_logits_context *leader;
-    yvex_backend_cuda_operation_facts facts = {0};
+    yvex_backend_operation_facts facts = {0};
     yvex_device_tensor input_view, output_view;
     unsigned long long hidden_elements, output_elements, row_values, row_bytes, d2d_bytes = 0ull, index, entered = 0ull;
     int rc = YVEX_OK;
@@ -1548,7 +1548,7 @@ int yvex_runtime_logits_project_compatible(
     }
     if (rc == YVEX_OK) {
         input_view.is_written = 1;
-        rc = yvex_backend_cuda_encoded_matvec(
+        rc = yvex_backend_encoded_matvec(
             leader->session_view->backend, leader->resident_head,
             leader->resident_head_bytes, leader->plan.summary.qtype,
             leader->plan.summary.row_count, leader->plan.summary.row_width,

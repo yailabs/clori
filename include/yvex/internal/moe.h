@@ -1,8 +1,8 @@
 /*
  * Expose the complete production MoE-local boundary without CLI-shaped numerical APIs.
  *
- * Family policy is projected by adapter identity. Production CUDA consumes one ordered row batch;
- * the token-local entrypoints remain the independent CPU/CUDA numerical oracle.
+ * Family policy is projected by adapter identity. A device backend consumes one ordered row batch;
+ * the token-local entrypoints remain the independent portable/device numerical oracle.
  */
 #ifndef INCLUDE_YVEX_INTERNAL_MOE_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_MOE_H_INCLUDED
@@ -168,7 +168,7 @@ int yvex_moe_router_result_identity(const yvex_moe_router_result *router,
 typedef struct {
     unsigned long long row_count, row_expert_pairs;
     yvex_expert_worklist_observation worklist;
-    unsigned long long tensor_core_executed_pairs;
+    unsigned long long matrix_tile_executed_pairs;
     unsigned long long routed_experts, active_base_bytes, active_per_expert_bytes;
     unsigned long long activation_bytes, temporary_bytes;
     int status, pending;
@@ -202,7 +202,7 @@ typedef struct {
     unsigned long long expert_subviews_accessed, encoded_bytes_read;
     unsigned long long host_to_device_bytes, device_to_host_bytes, kernel_launches;
     unsigned long long cache_hits, cache_misses, upload_count, download_count;
-    unsigned long long stream_synchronizations, device_synchronizations, device_to_device_bytes;
+    unsigned long long queue_synchronizations, device_synchronizations, device_to_device_bytes;
     yvex_execution_memory_facts memory;
     unsigned long long ingress_ns, routing_ns, routed_ns, shared_ns, post_ns, total_ns;
     unsigned long long synchronization_ns;
@@ -252,10 +252,10 @@ typedef struct {
     unsigned long long grouped_expert_operations, shared_expert_operations;
     unsigned long long expert_subviews_accessed, encoded_bytes_read;
     unsigned long long h2d_bytes, d2h_bytes, d2d_bytes, kernel_launches;
-    unsigned long long tensor_core_launches;
+    unsigned long long accelerated_matrix_launches;
     unsigned long long graph_launches, graph_captures, graph_replays;
     unsigned long long upload_count, download_count, cache_hits, cache_misses;
-    unsigned long long stream_synchronizations, device_synchronizations;
+    unsigned long long queue_synchronizations, device_synchronizations;
     unsigned long long active_weight_base_bytes;
     unsigned long long active_weight_per_unique_expert_bytes;
     yvex_execution_memory_facts memory;
@@ -268,7 +268,7 @@ typedef struct {
     char execution_identity[YVEX_SHA256_HEX_CAP];
 } yvex_moe_row_batch_result;
 /*
- * Optional backend-owned width-N implementation. The table keeps concrete CUDA helpers private
+ * Optional backend-owned width-N implementation. The table keeps concrete device helpers private
  * while runtime can admit capability, derive the exact stable workspace, and dispatch through one
  * family-neutral ABI.
  */
@@ -312,7 +312,7 @@ typedef struct {
     yvex_tensor_scope tensor_scope;
     int (*cancel_requested)(void *context);
     void *cancel_context;
-    int defer_cuda_workspace, eager_execution;
+    int defer_device_workspace, eager_execution;
     yvex_attention_evidence_level evidence_level;
     const struct yvex_runtime_execution_profile *execution_profile;
 } yvex_runtime_moe_options;
@@ -327,7 +327,7 @@ typedef struct {
     unsigned long long shared_expert_executions, expert_subviews_accessed;
     unsigned long long encoded_bytes_read, host_to_device_bytes, device_to_host_bytes;
     unsigned long long kernel_launches, upload_count, download_count, cache_hits, cache_misses;
-    unsigned long long stream_synchronizations, device_synchronizations, device_to_device_bytes;
+    unsigned long long queue_synchronizations, device_synchronizations, device_to_device_bytes;
     yvex_execution_memory_facts memory;
     unsigned long long ingress_ns, routing_ns, routed_ns, shared_ns, post_ns, total_ns;
     unsigned long long synchronization_ns;
@@ -340,7 +340,7 @@ typedef struct {
 int yvex_runtime_moe_context_open(yvex_runtime_moe_context **out, yvex_model_engine *model,
                                   yvex_runtime_execution_session *session,
                                   const yvex_runtime_moe_options *options,
-                                  unsigned long long *cuda_workspace_bytes,
+                                  unsigned long long *device_workspace_bytes,
                                   yvex_error *err);
 const yvex_moe_plan *yvex_runtime_moe_context_plan(const yvex_runtime_moe_context *context);
 int yvex_runtime_moe_host_workspace_bind(yvex_runtime_moe_context *, yvex_error *);

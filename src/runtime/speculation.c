@@ -79,7 +79,7 @@ static int speculation_markov_row_identity(const yvex_runtime_speculation_contex
     return speculation_hash_finish(&hash, output);
 }
 static int speculation_cuda_physical_add(yvex_execution_physical_facts *physical,
-    const yvex_backend_cuda_operation_facts *facts, yvex_error *err)
+    const yvex_backend_operation_facts *facts, yvex_error *err)
 {
     yvex_execution_memory_facts memory = {0};
     if (!facts) return speculation_refuse(err, YVEX_ERR_INVALID_ARG, "CUDA physical facts are required");
@@ -90,7 +90,7 @@ static int speculation_cuda_physical_add(yvex_execution_physical_facts *physical
         return yvex_error_code(err);
     return yvex_execution_physical_facts_add(
         physical, &memory, facts->h2d_bytes, facts->d2h_bytes, facts->d2d_bytes,
-        facts->kernel_launches, facts->stream_synchronizations, facts->device_synchronizations, err);
+        facts->kernel_launches, facts->queue_synchronizations, facts->device_synchronizations, err);
 }
 static int speculation_sampling_physical_add(yvex_execution_physical_facts *physical,
     const yvex_runtime_sampling_result *selection, yvex_error *err)
@@ -99,7 +99,7 @@ static int speculation_sampling_physical_add(yvex_execution_physical_facts *phys
     if (!selection) return speculation_refuse(err, YVEX_ERR_INVALID_ARG, "sampling physical facts are required");
     return yvex_execution_physical_facts_add(
         physical, &no_memory, 0ull, selection->d2h_bytes, 0ull,
-        selection->kernel_launches, selection->stream_synchronizations,
+        selection->kernel_launches, selection->queue_synchronizations,
         selection->device_synchronizations, err);
 }
 static int speculation_draft_sampling_policy(const yvex_runtime_sampling_policy *target_policy,
@@ -496,7 +496,7 @@ static int speculation_project_target_features(yvex_runtime_speculation_context 
     if (context->device_feature_input) {
         const yvex_transformer_plan_summary *plan = yvex_transformer_plan_summary_get(
             yvex_runtime_transformer_context_plan(context->draft_transformer));
-        yvex_backend_cuda_operation_facts facts = {0};
+        yvex_backend_operation_facts facts = {0};
         yvex_device_tensor input = *context->device_feature_input;
         yvex_device_tensor projected = *context->device_feature_projected;
         yvex_device_tensor normalized = *context->device_feature_normalized;
@@ -525,7 +525,7 @@ static int speculation_project_target_features(yvex_runtime_speculation_context 
         rc = resident_input ? YVEX_OK : yvex_backend_tensor_write(
             context->device_backend, &input, features, input_bytes, err);
         if (rc == YVEX_OK)
-            rc = yvex_backend_cuda_encoded_matvec(
+            rc = yvex_backend_encoded_matvec(
                 context->device_backend, context->feature_projection.encoded,
                 context->feature_projection.encoded_bytes,
                 context->feature_projection.binding->qtype, context->hidden_width,
@@ -547,7 +547,7 @@ static int speculation_project_target_features(yvex_runtime_speculation_context 
             !yvex_core_u64_add(facts.d2h_bytes, materialize ? output_bytes : 0ull,
                                &facts.d2h_bytes))
             return speculation_refuse(err, YVEX_ERR_BOUNDS, "DSpark CUDA feature accounting overflowed");
-        rc = yvex_runtime_transformer_cuda_facts_add(
+        rc = yvex_runtime_transformer_operation_facts_add(
             result, &facts, resident_input ? 0ull : input_bytes, materialize ? 1ull : 0ull,
             (resident_input ? 1ull : 2ull) + materialize, err);
         if (rc != YVEX_OK) return rc;
@@ -737,8 +737,8 @@ static int speculation_draft_one(
     yvex_runtime_sampling_source source = {0};
     yvex_runtime_sampling_distribution_result distribution = {0};
     yvex_runtime_sampling_result selection = {0};
-    yvex_backend_cuda_operation_facts gather_facts = {0}, device_facts = {0};
-    yvex_backend_cuda_operation_facts confidence_facts = {0};
+    yvex_backend_operation_facts gather_facts = {0}, device_facts = {0};
+    yvex_backend_operation_facts confidence_facts = {0};
     yvex_execution_memory_facts no_memory = {0};
     yvex_device_tensor markov_input = {0}, additive = {0}, adjusted_output = {0};
     yvex_device_tensor pre_normalized = {0};
@@ -772,14 +772,14 @@ static int speculation_draft_one(
              context->vocabulary_size, &adjusted_output)))
         rc = speculation_refuse(err, YVEX_ERR_BOUNDS, "device Markov projection extent is invalid");
     if (rc == YVEX_OK && context->device_draft_selection)
-        rc = yvex_backend_cuda_encoded_gather(
+        rc = yvex_backend_encoded_gather(
             context->device_backend, context->markov_embedding.encoded,
             context->markov_embedding.encoded_bytes, context->markov_embedding.binding->qtype,
             context->markov_embedding.binding->row_count,
             context->policy.markov_rank, context->markov_embedding.row_bytes,
             &previous_token, 1ull, &markov_input, &gather_facts, err);
     if (rc == YVEX_OK && context->device_draft_selection)
-        rc = yvex_backend_cuda_encoded_matvec(
+        rc = yvex_backend_encoded_matvec(
             context->device_backend, context->markov_output.encoded,
             context->markov_output.encoded_bytes, context->markov_output.binding->qtype,
             context->vocabulary_size, context->policy.markov_rank, context->markov_output.row_bytes,
@@ -829,7 +829,7 @@ static int speculation_draft_one(
     if (rc == YVEX_OK && token == UINT32_MAX)
         rc = speculation_refuse(err, YVEX_ERR_FORMAT, "draft distribution has no selectable mass");
     if (rc == YVEX_OK && context->device_draft_selection)
-        rc = yvex_backend_cuda_encoded_matvec(
+        rc = yvex_backend_encoded_matvec(
             context->device_backend, context->confidence.encoded,
             context->confidence.encoded_bytes, context->confidence.binding->qtype,
             1ull, context->confidence.binding->row_width, context->confidence.row_bytes,
@@ -875,7 +875,7 @@ static int speculation_phase_physical(const yvex_runtime_transformer_result *tra
     rc = yvex_execution_physical_facts_add(
         &candidate, &transformer->memory, transformer->h2d_bytes, transformer->d2h_bytes,
         transformer->d2d_bytes, transformer->kernel_launches,
-        transformer->stream_synchronizations, transformer->device_synchronizations, err);
+        transformer->queue_synchronizations, transformer->device_synchronizations, err);
     if (rc == YVEX_OK)
         rc = yvex_execution_physical_facts_add(
             &candidate, &execution->physical.memory, execution->physical.h2d_bytes,
@@ -1142,7 +1142,7 @@ static int speculation_accept_device(yvex_runtime_speculation_context *context,
     const yvex_backend_sampling_operations *operations =
         yvex_backend_sampling_operations_get(context->device_backend);
     yvex_backend_speculation_result device = {0};
-    yvex_backend_cuda_operation_facts facts = {0};
+    yvex_backend_operation_facts facts = {0};
     yvex_device_tensor draft = {0}, target = {0};
     yvex_speculation_acceptance_result acceptance = {0};
     unsigned long long draft_values, target_values;
@@ -1545,7 +1545,7 @@ int yvex_runtime_speculation_prefill(
         (yvex_execution_physical_facts_add(
              &prepared.physical, &target.memory, target.h2d_bytes,
              target.d2h_bytes, target.d2d_bytes, target.kernel_launches,
-             target.stream_synchronizations, target.device_synchronizations, err) != YVEX_OK ||
+             target.queue_synchronizations, target.device_synchronizations, err) != YVEX_OK ||
          yvex_execution_physical_facts_add(
              &prepared.physical, &draft.physical.memory,
              draft.physical.h2d_bytes, draft.physical.d2h_bytes,

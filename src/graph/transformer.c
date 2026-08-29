@@ -62,20 +62,16 @@ static int linear_physical_facts_valid(const yvex_transformer_linear_physical_pl
     size_t domain_length;
     if (!plan) return 0;
     domain_length = strnlen(plan->semantic_domain, sizeof(plan->semantic_domain));
-    return plan->schema_version == YVEX_TRANSFORMER_LINEAR_PHYSICAL_SCHEMA_V2 &&
+    return plan->schema_version == YVEX_TRANSFORMER_LINEAR_PHYSICAL_SCHEMA_V3 &&
            domain_length > 0u && domain_length < sizeof(plan->semantic_domain) &&
            plan->operation >= YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_VIDEO_OUTPUT &&
            plan->operation <= YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_AUDIO_OUTPUT &&
            plan->numeric_contract == YVEX_TRANSFORMER_LINEAR_NUMERIC_SOURCE_EXACT &&
            plan->source_dtype == YVEX_DTYPE_F32 && plan->bias == 1 &&
            plan->implementation ==
-               YVEX_TRANSFORMER_LINEAR_IMPLEMENTATION_CUBLAS_LT_F32_BIAS &&
-           plan->reduction >= YVEX_TRANSFORMER_LINEAR_REDUCTION_INPLACE &&
-           plan->reduction <= YVEX_TRANSFORMER_LINEAR_REDUCTION_COMPUTE_TYPE &&
-           plan->stages <= YVEX_TRANSFORMER_LINEAR_STAGES_8X5 &&
-           plan->backend == YVEX_BACKEND_KIND_CUDA && plan->algorithm_id &&
-           plan->tile_rows && plan->tile_columns && plan->split_k > 1u &&
-           plan->compute_capability_major && plan->input_width && plan->output_width &&
+               YVEX_TRANSFORMER_LINEAR_IMPLEMENTATION_DEVICE_F32_BIAS &&
+           plan->backend != YVEX_BACKEND_KIND_CPU &&
+           plan->backend <= YVEX_BACKEND_KIND_ROCM && plan->input_width && plan->output_width &&
            plan->workspace_bytes && plan->deterministic == 1 && plan->exact == 1;
 }
 
@@ -84,7 +80,7 @@ static int linear_operation_identity(yvex_transformer_linear_physical_plan *plan
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.transformer.linear.operation.v2") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.transformer.linear.operation.v3") ||
         !yvex_sha256_update_text(&hash, plan->semantic_domain) ||
         !yvex_sha256_update_u64(&hash, plan->operation) ||
         !yvex_sha256_update_u64(&hash, plan->numeric_contract) ||
@@ -103,18 +99,10 @@ static int linear_physical_identity(yvex_transformer_linear_physical_plan *plan)
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.transformer.linear.physical.v2") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.transformer.linear.physical.v3") ||
         !yvex_sha256_update_text(&hash, plan->operation_identity) ||
         !yvex_sha256_update_u64(&hash, plan->implementation) ||
-        !yvex_sha256_update_u64(&hash, plan->reduction) ||
-        !yvex_sha256_update_u64(&hash, plan->stages) ||
         !yvex_sha256_update_u64(&hash, plan->backend) ||
-        !yvex_sha256_update_u64(&hash, plan->algorithm_id) ||
-        !yvex_sha256_update_u64(&hash, plan->tile_rows) ||
-        !yvex_sha256_update_u64(&hash, plan->tile_columns) ||
-        !yvex_sha256_update_u64(&hash, plan->split_k) ||
-        !yvex_sha256_update_u64(&hash, plan->compute_capability_major) ||
-        !yvex_sha256_update_u64(&hash, plan->compute_capability_minor) ||
         !yvex_sha256_update_u64(&hash, plan->input_width) ||
         !yvex_sha256_update_u64(&hash, plan->output_width) ||
         !yvex_sha256_update_u64(&hash, plan->workspace_bytes) ||
@@ -216,12 +204,10 @@ static int transformer_binding_project(
         binding->expert_count > 1ull || !binding->backend_compatible)
         return transformer_refuse(err, YVEX_ERR_FORMAT,
                                   "transformer global binding is unavailable");
-    if (!capability || !capability->reference_decoder_available ||
-        !capability->dedicated_cpu_compute_available ||
-        !capability->dedicated_cuda_compute_available)
+    if (!capability || !capability->reference_decoder_available)
         return transformer_refuse(
             err, YVEX_ERR_UNSUPPORTED,
-            "transformer global binding qtype lacks CPU/CUDA execution");
+            "transformer global binding qtype lacks admitted encoded semantics");
     *out = (yvex_transformer_weight_binding){
         .tensor_id = binding->tensor_id,
         .row_width = binding->row_width,

@@ -176,31 +176,31 @@ int yvex_expert_worklist_policy_seal(yvex_expert_worklist_policy *policy,
                                      yvex_error *err)
 {
     yvex_sha256 hash;
-    int tensor_core;
-    if (!policy || policy->schema_version != YVEX_EXPERT_WORKLIST_POLICY_SCHEMA_V1 ||
+    int matrix_tile;
+    if (!policy || policy->schema_version != YVEX_EXPERT_WORKLIST_POLICY_SCHEMA_V2 ||
         !(policy->supported_width_mask & 2ull) ||
         (policy->supported_width_mask & 1ull) ||
         (policy->supported_width_mask >> 63u) ||
-        policy->narrow_implementation >= YVEX_ENGINE_IMPLEMENTATION_COUNT)
+        policy->row_implementation >= YVEX_ENGINE_IMPLEMENTATION_COUNT)
         return worklist_refuse(err, YVEX_ERR_INVALID_ARG,
                                "expert worklist width policy is incomplete");
-    tensor_core = policy->tensor_core_minimum != 0ull;
-    if (tensor_core != (policy->wide_implementation != YVEX_ENGINE_IMPLEMENTATION_COUNT) ||
-        (tensor_core &&
-         (policy->tensor_core_minimum >= 63ull ||
-          !(policy->supported_width_mask & (1ull << policy->tensor_core_minimum)) ||
-          policy->wide_implementation !=
-              YVEX_ENGINE_IMPLEMENTATION_CUDA_SM121_MOE_TENSORCORE ||
-          policy->narrow_implementation == policy->wide_implementation)))
+    matrix_tile = policy->matrix_tile_minimum != 0ull;
+    if (matrix_tile != (policy->matrix_implementation != YVEX_ENGINE_IMPLEMENTATION_COUNT) ||
+        (matrix_tile &&
+         (policy->matrix_tile_minimum >= 63ull ||
+          !(policy->supported_width_mask & (1ull << policy->matrix_tile_minimum)) ||
+          policy->matrix_implementation !=
+              YVEX_ENGINE_IMPLEMENTATION_DEVICE_MATRIX_TILE ||
+          policy->row_implementation == policy->matrix_implementation)))
         return worklist_refuse(err, YVEX_ERR_INVALID_ARG,
-                               "expert Tensor Core width policy is inconsistent");
+                               "expert matrix-tile width policy is inconsistent");
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.expert-worklist-policy.v1") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.expert-worklist-policy.v2") ||
         !yvex_sha256_update_u64(&hash, policy->schema_version) ||
         !yvex_sha256_update_u64(&hash, policy->supported_width_mask) ||
-        !yvex_sha256_update_u64(&hash, policy->tensor_core_minimum) ||
-        !yvex_sha256_update_u64(&hash, policy->narrow_implementation) ||
-        !yvex_sha256_update_u64(&hash, policy->wide_implementation) ||
+        !yvex_sha256_update_u64(&hash, policy->matrix_tile_minimum) ||
+        !yvex_sha256_update_u64(&hash, policy->row_implementation) ||
+        !yvex_sha256_update_u64(&hash, policy->matrix_implementation) ||
         !worklist_hash_finish(&hash, policy->identity))
         return worklist_refuse(err, YVEX_ERR_STATE,
                                "expert worklist policy identity derivation failed");
@@ -326,9 +326,9 @@ int yvex_expert_worklist_build(const yvex_expert_worklist_request *request,
         worklist->population_histogram[
             population < YVEX_EXPERT_WORKLIST_HISTOGRAM_CAP
                 ? population : YVEX_EXPERT_WORKLIST_HISTOGRAM_CAP - 1u]++;
-        if (request->policy->tensor_core_minimum &&
-            population >= request->policy->tensor_core_minimum) {
-            worklist->tensor_core_eligible_pairs += population;
+        if (request->policy->matrix_tile_minimum &&
+            population >= request->policy->matrix_tile_minimum) {
+            worklist->matrix_tile_eligible_pairs += population;
             if (population % maximum_width)
                 worklist->tail_rows += maximum_width - population % maximum_width;
         }
@@ -346,7 +346,7 @@ int yvex_expert_worklist_build(const yvex_expert_worklist_request *request,
     worklist->pair_count = request->pair_count;
     worklist->bucket_count = bucket;
     worklist->admitted_tile_width = maximum_width;
-    worklist->narrow_pairs = request->pair_count - worklist->tensor_core_eligible_pairs;
+    worklist->narrow_pairs = request->pair_count - worklist->matrix_tile_eligible_pairs;
     worklist->expert_ids = storage->expert_ids;
     worklist->bucket_offsets = storage->bucket_offsets;
     worklist->bucket_populations = storage->bucket_populations;
@@ -461,7 +461,7 @@ int yvex_expert_worklist_observation_add(
         delta->schema_version != YVEX_EXPERT_WORKLIST_OBSERVATION_SCHEMA_V1 ||
         !delta->worklist_count || !delta->pair_count || !delta->bucket_count ||
         !delta->maximum_bucket_population ||
-        !yvex_core_u64_add(delta->tensor_core_eligible_pairs, delta->narrow_pairs,
+        !yvex_core_u64_add(delta->matrix_tile_eligible_pairs, delta->narrow_pairs,
                            &classified_pairs) || classified_pairs != delta->pair_count)
         return worklist_refuse(err, YVEX_ERR_INVALID_ARG,
                                "expert worklist observation is incomplete");
@@ -491,12 +491,12 @@ int yvex_expert_worklist_observation_add(
                            &candidate.pair_count) ||
         !yvex_core_u64_add(candidate.bucket_count, delta->bucket_count,
                            &candidate.bucket_count) ||
-        !yvex_core_u64_add(candidate.tensor_core_eligible_pairs,
-                           delta->tensor_core_eligible_pairs,
-                           &candidate.tensor_core_eligible_pairs) ||
-        !yvex_core_u64_add(candidate.tensor_core_executed_pairs,
-                           delta->tensor_core_executed_pairs,
-                           &candidate.tensor_core_executed_pairs) ||
+        !yvex_core_u64_add(candidate.matrix_tile_eligible_pairs,
+                           delta->matrix_tile_eligible_pairs,
+                           &candidate.matrix_tile_eligible_pairs) ||
+        !yvex_core_u64_add(candidate.matrix_tile_executed_pairs,
+                           delta->matrix_tile_executed_pairs,
+                           &candidate.matrix_tile_executed_pairs) ||
         !yvex_core_u64_add(candidate.narrow_pairs, delta->narrow_pairs,
                            &candidate.narrow_pairs) ||
         !yvex_core_u64_add(candidate.tail_rows, delta->tail_rows,

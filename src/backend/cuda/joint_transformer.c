@@ -131,7 +131,7 @@ static int joint_recipe_supported(const yvex_transformer_joint_recipe *recipe)
            recipe->audio_output.output_width == 32ull && recipe->audio_output.bias == 1;
 }
 static int joint_facts_add(yvex_transformer_joint_block_result *total,
-                          const yvex_backend_cuda_operation_facts *part)
+                          const yvex_backend_operation_facts *part)
 {
     if (!total || !part || !part->compulsory_memory_facts_available) return 0;
     if (part->temporary_bytes > total->temporary_bytes)
@@ -266,8 +266,8 @@ static int joint_weight_gather(joint_run *run, yvex_transformer_joint_weight_slo
                               yvex_device_tensor *output, yvex_error *err)
 {
     const yvex_transformer_joint_encoded_weight *weight = joint_weight(run, slot);
-    yvex_backend_cuda_operation_facts facts;
-    int rc = yvex_backend_cuda_encoded_gather(
+    yvex_backend_operation_facts facts;
+    int rc = yvex_backend_encoded_gather(
         run->backend, weight->encoded, weight->encoded_bytes, weight->qtype,
         weight->row_count, weight->row_width, weight->row_bytes,
         &text_zero_row, 1ull, output, &facts, err);
@@ -282,8 +282,8 @@ static int joint_weight_project(joint_run *run, yvex_transformer_joint_weight_sl
                                yvex_device_tensor *output, yvex_error *err)
 {
     const yvex_transformer_joint_encoded_weight *weight = joint_weight(run, slot);
-    yvex_backend_cuda_operation_facts facts;
-    int rc = yvex_backend_cuda_encoded_matvec(
+    yvex_backend_operation_facts facts;
+    int rc = yvex_backend_encoded_matvec(
         run->backend, weight->encoded, weight->encoded_bytes, weight->qtype,
         weight->row_count, weight->row_width, weight->row_bytes, rows,
         input, NULL, 0ull, NULL, output, 0, &facts, err);
@@ -296,7 +296,7 @@ static int joint_weight_project(joint_run *run, yvex_transformer_joint_weight_sl
 static int joint_round(joint_run *run, joint_device_slot slot,
                       unsigned long long count, yvex_error *err)
 {
-    yvex_backend_cuda_operation_facts facts;
+    yvex_backend_operation_facts facts;
     int rc = yvex_cuda_transformer_bf16_round(
         run->backend, run->device[slot], count, &facts, err);
     if (rc == YVEX_OK && !joint_facts_add(&run->facts, &facts))
@@ -357,7 +357,7 @@ static int joint_norm(joint_run *run, joint_device_slot input,
                      unsigned long long rows, unsigned long long width,
                      float epsilon, yvex_error *err)
 {
-    yvex_backend_cuda_operation_facts facts;
+    yvex_backend_operation_facts facts;
     int rc = joint_weight_gather(run, weight, run->device[weight_device], err);
     if (rc == YVEX_OK)
         rc = yvex_cuda_transformer_rms_norm_bf16(
@@ -439,7 +439,7 @@ static int joint_rope_tables(joint_run *run, yvex_error *err)
 
 static int joint_modulation(joint_run *run, yvex_error *err)
 {
-    yvex_backend_cuda_operation_facts facts;
+    yvex_backend_operation_facts facts;
     unsigned long long temb_values = run->timesteps * JOINT_TIME;
     unsigned long long table_width = JOINT_PARAMETERS * JOINT_MODALITIES * JOINT_HIDDEN;
     int rc = yvex_cuda_transformer_silu(
@@ -480,7 +480,7 @@ static int joint_modulation(joint_run *run, yvex_error *err)
 static int joint_modulate(joint_run *run, unsigned int shift_slot,
                          unsigned int scale_slot, yvex_error *err)
 {
-    yvex_backend_cuda_operation_facts facts;
+    yvex_backend_operation_facts facts;
     int rc = yvex_cuda_transformer_modulate_bf16(
         run->backend, run->device[JOINT_DEVICE_NORM],
         run->device[JOINT_DEVICE_MODULATION], run->adaln_indices,
@@ -495,7 +495,7 @@ static int joint_modulate(joint_run *run, unsigned int shift_slot,
 
 static int joint_residual(joint_run *run, unsigned int gate_slot, yvex_error *err)
 {
-    yvex_backend_cuda_operation_facts facts;
+    yvex_backend_operation_facts facts;
     int rc = yvex_cuda_transformer_gated_residual_bf16(
         run->backend, run->device[JOINT_DEVICE_HIDDEN],
         run->device[JOINT_DEVICE_MODULATION], run->adaln_indices,
@@ -510,7 +510,7 @@ static int joint_residual(joint_run *run, unsigned int gate_slot, yvex_error *er
 
 static int joint_attention(joint_run *run, yvex_error *err)
 {
-    yvex_backend_cuda_operation_facts facts;
+    yvex_backend_operation_facts facts;
     unsigned long long attention_values = run->rows * JOINT_ATTENTION_WIDTH;
     int rc = joint_weight_project(run, YVEX_TRANSFORMER_JOINT_QKV, run->rows,
                                  run->device[JOINT_DEVICE_NORM],
@@ -621,7 +621,7 @@ static int joint_attention(joint_run *run, yvex_error *err)
 
 static int joint_mlp(joint_run *run, yvex_error *err)
 {
-    yvex_backend_cuda_operation_facts facts;
+    yvex_backend_operation_facts facts;
     unsigned long long ffn_values = run->rows * JOINT_FFN;
     int rc = joint_weight_project(run, YVEX_TRANSFORMER_JOINT_FC1, run->rows,
                                  run->device[JOINT_DEVICE_NORM],
@@ -926,7 +926,7 @@ typedef struct {
 } refiner_run;
 
 static int transformer_facts_add(yvex_transformer_joint_result *total,
-                                 const yvex_backend_cuda_operation_facts *part)
+                                 const yvex_backend_operation_facts *part)
 {
     return total && part && part->compulsory_memory_facts_available &&
            yvex_core_u64_add(total->kernel_launches, part->kernel_launches,
@@ -1042,8 +1042,8 @@ static int transformer_gather(yvex_backend *backend,
                               yvex_transformer_joint_result *facts,
                               yvex_error *err)
 {
-    yvex_backend_cuda_operation_facts part;
-    int rc = yvex_backend_cuda_encoded_gather(
+    yvex_backend_operation_facts part;
+    int rc = yvex_backend_encoded_gather(
         backend, weight->encoded, weight->encoded_bytes, weight->qtype,
         weight->row_count, weight->row_width, weight->row_bytes,
         &text_zero_row, 1ull, output, &part, err);
@@ -1060,8 +1060,8 @@ static int transformer_project(yvex_backend *backend,
                                yvex_transformer_joint_result *facts,
                                yvex_error *err)
 {
-    yvex_backend_cuda_operation_facts part;
-    int rc = yvex_backend_cuda_encoded_matvec(
+    yvex_backend_operation_facts part;
+    int rc = yvex_backend_encoded_matvec(
         backend, weight->encoded, weight->encoded_bytes, weight->qtype,
         weight->row_count, weight->row_width, weight->row_bytes, rows,
         input, NULL, 0ull, additive, output, 0, &part, err);
@@ -1076,7 +1076,7 @@ static int transformer_round(yvex_backend *backend, yvex_device_tensor *tensor,
                              yvex_transformer_joint_result *facts,
                              yvex_error *err)
 {
-    yvex_backend_cuda_operation_facts part;
+    yvex_backend_operation_facts part;
     int rc = yvex_cuda_transformer_bf16_round(backend, tensor, values, &part, err);
     if (rc == YVEX_OK && !transformer_facts_add(facts, &part))
         rc = conditioning_refuse(err, YVEX_ERR_BOUNDS, "cuda.transformer.joint.transformer.facts",
@@ -1093,7 +1093,7 @@ static int transformer_linear_host(
 {
     enum { INPUT = 0, OUTPUT, BIAS, COUNT };
     yvex_device_tensor *device[COUNT] = {0};
-    yvex_backend_cuda_operation_facts part;
+    yvex_backend_operation_facts part;
     unsigned long long device_bytes = 0ull, input_values, input_bytes, output_values, output_bytes;
     int rc;
     if (!yvex_core_u64_mul(rows, weight->row_width, &input_values) ||
@@ -1114,7 +1114,7 @@ static int transformer_linear_host(
         rc = yvex_backend_tensor_write(backend, device[INPUT], input, input_bytes, err);
     if (rc == YVEX_OK) rc = transformer_fact_bytes(&facts->h2d_bytes, input_bytes, err);
     if (rc == YVEX_OK && physical_plan)
-        rc = yvex_backend_cuda_encoded_linear_f32(
+        rc = yvex_cuda_transformer_linear_f32(
             backend, weight->encoded, weight->encoded_bytes, bias->encoded,
             bias->encoded_bytes, weight->row_count, weight->row_width, rows,
             device[INPUT], device[OUTPUT], physical_plan, &part, err);
@@ -1151,7 +1151,7 @@ static int refiner_norm(refiner_run *run, refiner_device_slot input,
                         refiner_device_slot weight_device, refiner_device_slot output,
                         unsigned long long rows, unsigned long long width, yvex_error *err)
 {
-    yvex_backend_cuda_operation_facts part;
+    yvex_backend_operation_facts part;
     int rc = transformer_gather(run->backend, weight, run->device[weight_device], run->facts, err);
     if (rc == YVEX_OK)
         rc = yvex_cuda_transformer_rms_norm_bf16(
@@ -1238,7 +1238,7 @@ static int refiner_devices_prepare(refiner_run *run, yvex_error *err)
 static int refiner_block(refiner_run *run, unsigned long long block, yvex_error *err)
 {
     const yvex_transformer_joint_encoded_weight *weight = refiner_weight(run, block, 0ull);
-    yvex_backend_cuda_operation_facts part;
+    yvex_backend_operation_facts part;
     unsigned long long attention_values = run->rows * JOINT_ATTENTION_WIDTH;
     unsigned long long ffn_values = run->rows * JOINT_FFN;
     int rc = refiner_norm(run, REFINER_HIDDEN, weight, REFINER_NORM_WEIGHT,
@@ -1491,7 +1491,7 @@ static int transformer_time_embed(
 {
     enum { TIMESTEPS = 0, INPUT, HIDDEN, OUTPUT, BIAS_IN, BIAS_OUT, COUNT };
     yvex_device_tensor *device[COUNT] = {0};
-    yvex_backend_cuda_operation_facts part;
+    yvex_backend_operation_facts part;
     unsigned long long input_values, input_bytes, output_bytes, timestep_bytes;
     unsigned long long device_bytes = 0ull;
     int rc = YVEX_OK;
@@ -1599,7 +1599,7 @@ static int transformer_final_norm(
 {
     enum { HIDDEN = 0, NORM, NORM_WEIGHT, TEMB, TABLE, COUNT };
     yvex_device_tensor *device[COUNT] = {0};
-    yvex_backend_cuda_operation_facts part;
+    yvex_backend_operation_facts part;
     unsigned long long device_bytes = 0ull, hidden_bytes = rows * JOINT_HIDDEN * 4ull;
     unsigned long long temb_bytes = timesteps * JOINT_TIME * 4ull;
     int rc = transformer_tensor(backend, "final-hidden", rows, JOINT_HIDDEN,
@@ -1642,7 +1642,7 @@ static int transformer_final_norm(
             timesteps, JOINT_TIME, final_block, observer, observer_context, observed_scope,
             observed_block, observed_stage, facts, err);
     if (rc == YVEX_OK)
-        rc = yvex_backend_cuda_encoded_linear_bf16(
+        rc = yvex_cuda_transformer_linear_bf16(
             backend, weights[YVEX_TRANSFORMER_JOINT_FINAL_ADALN_WEIGHT].encoded,
             weights[YVEX_TRANSFORMER_JOINT_FINAL_ADALN_WEIGHT].encoded_bytes,
             weights[YVEX_TRANSFORMER_JOINT_FINAL_ADALN_BIAS].encoded,

@@ -426,8 +426,8 @@ static unsigned int render_metrics(tui_frame *frame, const yvex_tui_state *state
         frame_begin_line(frame, row++);
         frame_style(frame, frame->dim);
         frame_text(frame, "    ", limit);
-        frame_format(frame, "%llu kernels · %llu/%llu Tensor Core · %s H2D",
-                     turn->kernel_launches, turn->tensor_core_launches,
+        frame_format(frame, "%llu kernels · %llu/%llu accelerated matrix · %s H2D",
+                     turn->kernel_launches, turn->accelerated_matrix_launches,
                      turn->kernel_launches, h2d);
     }
     frame_style(frame, frame->reset);

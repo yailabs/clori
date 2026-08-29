@@ -1817,7 +1817,7 @@ int yvex_cuda_activation_views_valid(yvex_backend *backend,
 }
 int yvex_cuda_transformer_gelu(yvex_backend *backend, const yvex_device_tensor *input,
     yvex_device_tensor *output, unsigned long long count, int tanh_approximation, int bf16_output,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err)
+    yvex_backend_operation_facts *facts, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     CUdeviceptr input_ptr, output_ptr;

@@ -255,7 +255,7 @@ typedef struct {
     unsigned int schema_version;
     yvex_engine_implementation implementation, fallback_implementation;
     yvex_execution_activation_class activation, fallback_activation;
-    unsigned long long supported_width_mask, worklist_width_mask, tensor_core_minimum;
+    unsigned long long supported_width_mask, worklist_width_mask, matrix_tile_minimum;
     char identity[YVEX_SHA256_HEX_CAP];
 } yvex_engine_implementation_record;
 typedef struct {

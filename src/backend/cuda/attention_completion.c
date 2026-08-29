@@ -130,7 +130,7 @@ int yvex_backend_attention_complete(
             "cuda.attention.complete.synchronize", 1ull, 0ull,
             (yvex_status)rc, "CUDA attention completion barrier failed", err);
     completion->barrier_observed = 1;
-    completion->output.stream_synchronizations +=
+    completion->output.queue_synchronizations +=
         (unsigned long long)(!barrier_observed && !device_wide);
     completion->output.device_synchronizations +=
         (unsigned long long)(!barrier_observed && device_wide);

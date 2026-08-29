@@ -1192,7 +1192,7 @@ static int session_profile_publish(server_session_registry *registry,
     if (rc == YVEX_OK)
         rc = PROFILE_EVENT("launches",
             profile->counters[YVEX_RUNTIME_PROFILE_KERNEL_LAUNCHES],
-            profile->counters[YVEX_RUNTIME_PROFILE_STREAM_SYNCHRONIZATIONS],
+            profile->counters[YVEX_RUNTIME_PROFILE_QUEUE_SYNCHRONIZATIONS],
             profile->counters[YVEX_RUNTIME_PROFILE_DEVICE_SYNCHRONIZATIONS],
             profile->phase_ns[YVEX_RUNTIME_PROFILE_SYNCHRONIZATION_WAIT]);
     if (rc == YVEX_OK)
@@ -1201,8 +1201,8 @@ static int session_profile_publish(server_session_registry *registry,
             profile->counters[YVEX_RUNTIME_PROFILE_GRAPH_CAPTURES],
             profile->counters[YVEX_RUNTIME_PROFILE_GRAPH_REPLAYS], 0ull);
     if (rc == YVEX_OK)
-        rc = PROFILE_EVENT("tensorcore",
-            profile->counters[YVEX_RUNTIME_PROFILE_TENSOR_CORE_LAUNCHES],
+        rc = PROFILE_EVENT("accelerated_matrix",
+            profile->counters[YVEX_RUNTIME_PROFILE_ACCELERATED_MATRIX_LAUNCHES],
             profile->counters[YVEX_RUNTIME_PROFILE_KERNEL_LAUNCHES],
             profile->counters[YVEX_RUNTIME_PROFILE_UNIQUE_EXPERTS], 0ull);
     if (rc == YVEX_OK)
@@ -1225,8 +1225,8 @@ static int session_profile_publish(server_session_registry *registry,
     if (rc == YVEX_OK && evidence->expert_worklists.worklist_count)
         rc = PROFILE_EVENT("expert-width",
             evidence->expert_worklists.maximum_bucket_population,
-            evidence->expert_worklists.tensor_core_eligible_pairs,
-            evidence->expert_worklists.tensor_core_executed_pairs, 0ull);
+            evidence->expert_worklists.matrix_tile_eligible_pairs,
+            evidence->expert_worklists.matrix_tile_executed_pairs, 0ull);
     if (rc == YVEX_OK && evidence->expert_worklists.worklist_count)
         rc = PROFILE_EVENT("expert-rows", evidence->expert_worklists.narrow_pairs,
             evidence->expert_worklists.tail_rows, 0ull, 0ull);
@@ -1295,8 +1295,8 @@ static int session_profile_publish(server_session_registry *registry,
                            batches.maximum_multi_source_bucket_population, 0ull);
     if (rc == YVEX_OK && batches.enabled)
         rc = PROFILE_EVENT("execution-batch-expert-rows",
-                           batches.multi_source_tensor_core_eligible_pairs,
-                           batches.multi_source_tensor_core_executed_pairs,
+                           batches.multi_source_matrix_tile_eligible_pairs,
+                           batches.multi_source_matrix_tile_executed_pairs,
                            batches.multi_source_narrow_pairs, 0ull);
     if (rc == YVEX_OK && batches.enabled)
         rc = PROFILE_EVENT("batch-expert-population-1-3",

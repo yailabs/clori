@@ -381,6 +381,86 @@ if rg -n -- "$backend_representation_pattern" src/runtime src/graph; then
     fail "runtime or graph owner manipulates concrete backend state"
 fi
 
+# Sampling, Transformer, MoE, and executable-worklist contracts describe semantic work and
+# backend-neutral operation facts. A backend may specialize those facts, but generic consumers
+# cannot require one device API, compute capability, or implementation class.
+backend_neutral_headers='include/yvex/internal/sampling.h
+include/yvex/internal/transformer.h
+include/yvex/internal/execution_batch.h
+include/yvex/internal/moe.h'
+if printf '%s\n' "$backend_neutral_headers" |
+    xargs rg -n -i '(cuda|sm[0-9]+|cc[0-9]+|compute_capability|cublas|tensor.?core|stream_synchronizations)'; then
+    fail "generic execution contract contains backend-specific physical facts"
+fi
+if rg -n 'yvex_backend_cuda_(operation_facts|encoded_)' src/runtime src/graph; then
+    fail "generic execution owner bypasses backend-neutral operation dispatch"
+fi
+if rg -n 'YVEX_ENGINE_IMPLEMENTATION_CUDA|SM121|CUBLAS|compute_capability' \
+    include/yvex/internal/sampling.h include/yvex/internal/transformer.h \
+    include/yvex/internal/execution_batch.h include/yvex/internal/moe.h \
+    src/graph/transformer.c src/graph/worklist.c; then
+    fail "generic execution admission selects one backend implementation"
+fi
+if rg -n 'dedicated_(cpu|cuda)_compute_available' \
+    src/graph/transformer.c src/graph/moe.c src/graph/output_head.c; then
+    fail "generic graph admission requires concrete backend availability"
+fi
+
+# Compile a deliberately small non-CUDA adapter against the same operation tables. It supplies
+# only representative capabilities, so optional entries remain absent without fabricated device
+# facts or placeholder implementations.
+cat <<'EOF' | "${CC:-cc}" -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L \
+        -Iinclude -I. -std=c11 -Wall -Wextra -pedantic -Werror -x c -fsyntax-only -
+#include <yvex/internal/sampling.h>
+#include <yvex/internal/transformer.h>
+
+static int neutral_workspace(unsigned long long rows, unsigned long long *bytes,
+                             yvex_error *err)
+{
+    (void)err;
+    if (!rows || !bytes) return YVEX_ERR_INVALID_ARG;
+    *bytes = rows * sizeof(float);
+    return YVEX_OK;
+}
+
+static int neutral_greedy(yvex_backend *backend, const yvex_device_tensor *logits,
+                          unsigned long long rows, unsigned long long width,
+                          unsigned int *tokens, float *values,
+                          unsigned long long *ties, yvex_backend_operation_facts *facts,
+                          yvex_error *err)
+{
+    (void)backend; (void)logits; (void)rows; (void)width; (void)tokens;
+    (void)values; (void)ties; (void)err;
+    if (facts) *facts = (yvex_backend_operation_facts){0};
+    return YVEX_ERR_UNSUPPORTED;
+}
+
+static int neutral_transformer_workspace(unsigned long long rows,
+                                         unsigned long long heads,
+                                         unsigned long long width,
+                                         unsigned long long history,
+                                         unsigned long long *bytes,
+                                         yvex_error *err)
+{
+    (void)heads; (void)width; (void)history;
+    return neutral_workspace(rows, bytes, err);
+}
+
+int main(void)
+{
+    const yvex_backend_sampling_operations sampling = {
+        .workspace_required = neutral_workspace,
+        .select_greedy_rows = neutral_greedy,
+    };
+    const yvex_backend_transformer_operations transformer = {
+        .gqa_workspace_required = neutral_transformer_workspace,
+    };
+    const yvex_backend_encoded_operations encoded = {0};
+    return !sampling.workspace_required || !sampling.select_greedy_rows ||
+           !transformer.gqa_workspace_required || encoded.matvec || encoded.gather;
+}
+EOF
+
 # Families project semantic recipes into a generic compiler-owned sink. They
 # cannot own mutable IR construction or sealing, and its concrete storage stays
 # inside the compilation subsystem.

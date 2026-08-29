@@ -100,10 +100,6 @@ typedef struct {
     yvex_dtype source_dtype;
     yvex_backend_kind backend;
     unsigned long long input_width, output_width, workspace_bytes;
-    unsigned int algorithm_id, tile_rows, tile_columns, split_k;
-    yvex_transformer_linear_reduction reduction;
-    yvex_transformer_linear_stages stages;
-    unsigned int compute_major, compute_minor;
     int bias;
 } linear_implementation;
 
@@ -112,14 +108,10 @@ typedef struct {
 static const linear_implementation linear_implementations[] = {
     {YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_VIDEO_OUTPUT,
      YVEX_TRANSFORMER_LINEAR_NUMERIC_SOURCE_EXACT, YVEX_DTYPE_F32,
-     YVEX_BACKEND_KIND_CUDA, 5376ull, 96ull, 1024ull * 1024ull,
-     10u, 32u, 32u, 10u, YVEX_TRANSFORMER_LINEAR_REDUCTION_INPLACE,
-     YVEX_TRANSFORMER_LINEAR_STAGES_DEFAULT, 12u, 1u, 1},
+     YVEX_BACKEND_KIND_CUDA, 5376ull, 96ull, 1024ull * 1024ull, 1},
     {YVEX_TRANSFORMER_LINEAR_OPERATION_JOINT_AUDIO_OUTPUT,
      YVEX_TRANSFORMER_LINEAR_NUMERIC_SOURCE_EXACT, YVEX_DTYPE_F32,
-     YVEX_BACKEND_KIND_CUDA, 5376ull, 32ull, 1024ull * 1024ull,
-     20u, 128u, 32u, 3u, YVEX_TRANSFORMER_LINEAR_REDUCTION_COMPUTE_TYPE,
-     YVEX_TRANSFORMER_LINEAR_STAGES_8X5, 12u, 1u, 1},
+     YVEX_BACKEND_KIND_CUDA, 5376ull, 32ull, 1024ull * 1024ull, 1},
 };
 
 static int linear_specialize_one(
@@ -153,21 +145,13 @@ static int linear_specialize_one(
             err, YVEX_ERR_UNSUPPORTED,
             "joint linear requirement has no admitted deployment implementation");
     memset(plan, 0, sizeof(*plan));
-    plan->schema_version = YVEX_TRANSFORMER_LINEAR_PHYSICAL_SCHEMA_V2;
+    plan->schema_version = YVEX_TRANSFORMER_LINEAR_PHYSICAL_SCHEMA_V3;
     memcpy(plan->semantic_domain, semantic_domain, domain_length);
     plan->operation = selected->operation;
     plan->numeric_contract = selected->numeric_contract;
     plan->source_dtype = selected->source_dtype;
-    plan->implementation = YVEX_TRANSFORMER_LINEAR_IMPLEMENTATION_CUBLAS_LT_F32_BIAS;
-    plan->reduction = selected->reduction;
-    plan->stages = selected->stages;
+    plan->implementation = YVEX_TRANSFORMER_LINEAR_IMPLEMENTATION_DEVICE_F32_BIAS;
     plan->backend = selected->backend;
-    plan->algorithm_id = selected->algorithm_id;
-    plan->tile_rows = selected->tile_rows;
-    plan->tile_columns = selected->tile_columns;
-    plan->split_k = selected->split_k;
-    plan->compute_capability_major = selected->compute_major;
-    plan->compute_capability_minor = selected->compute_minor;
     plan->input_width = selected->input_width;
     plan->output_width = selected->output_width;
     plan->workspace_bytes = selected->workspace_bytes;
@@ -276,7 +260,7 @@ static int implementation_equal(const yvex_engine_implementation_record *left,
            left->fallback_activation == right->fallback_activation &&
            left->supported_width_mask == right->supported_width_mask &&
            left->worklist_width_mask == right->worklist_width_mask &&
-           left->tensor_core_minimum == right->tensor_core_minimum;
+           left->matrix_tile_minimum == right->matrix_tile_minimum;
 }
 
 static int implementation_seal(yvex_engine_implementation_record *record,
@@ -288,9 +272,9 @@ static int implementation_seal(yvex_engine_implementation_record *record,
         record->activation > YVEX_EXECUTION_ACTIVATION_DEVICE_ENCODED ||
         record->fallback_activation > YVEX_EXECUTION_ACTIVATION_DEVICE_ENCODED ||
         !record->supported_width_mask ||
-        (record->tensor_core_minimum &&
-         (!record->worklist_width_mask || record->tensor_core_minimum >= 63ull ||
-          !(record->worklist_width_mask & (1ull << record->tensor_core_minimum)))))
+        (record->matrix_tile_minimum &&
+         (!record->worklist_width_mask || record->matrix_tile_minimum >= 63ull ||
+          !(record->worklist_width_mask & (1ull << record->matrix_tile_minimum)))))
         return specialization_refuse(err, YVEX_ERR_INVALID_ARG,
                                      "implementation record is incomplete");
     record->schema_version = YVEX_ENGINE_SPECIALIZATION_SCHEMA_V1;
@@ -303,7 +287,7 @@ static int implementation_seal(yvex_engine_implementation_record *record,
         !yvex_sha256_update_u64(&hash, record->fallback_activation) ||
         !yvex_sha256_update_u64(&hash, record->supported_width_mask) ||
         !yvex_sha256_update_u64(&hash, record->worklist_width_mask) ||
-        !yvex_sha256_update_u64(&hash, record->tensor_core_minimum) ||
+        !yvex_sha256_update_u64(&hash, record->matrix_tile_minimum) ||
         !hash_finish(&hash, record->identity))
         return specialization_refuse(err, YVEX_ERR_STATE,
                                      "implementation identity derivation failed");
@@ -352,12 +336,10 @@ static int implementation_select(
         candidate.activation = encoded ? YVEX_EXECUTION_ACTIVATION_DEVICE_ENCODED
                                        : YVEX_EXECUTION_ACTIVATION_DEVICE_F32;
         candidate.fallback_activation = YVEX_EXECUTION_ACTIVATION_DEVICE_F32;
-        candidate.implementation = encoded && device->compute_capability_major == 12 &&
-                                           device->compute_capability_minor == 1
-                                       ? YVEX_ENGINE_IMPLEMENTATION_CUDA_SM121_MOE_ROW
-                                       : encoded ? YVEX_ENGINE_IMPLEMENTATION_CUDA_ENCODED_ROW
-                                                 : YVEX_ENGINE_IMPLEMENTATION_CUDA_F32;
-        candidate.fallback_implementation = YVEX_ENGINE_IMPLEMENTATION_CUDA_F32;
+        candidate.implementation = encoded
+                                       ? YVEX_ENGINE_IMPLEMENTATION_DEVICE_ENCODED_ROW
+                                       : YVEX_ENGINE_IMPLEMENTATION_DEVICE_F32;
+        candidate.fallback_implementation = YVEX_ENGINE_IMPLEMENTATION_DEVICE_F32;
     } else {
         return specialization_refuse(err, YVEX_ERR_UNSUPPORTED,
                                      "backend has no admitted implementation class");

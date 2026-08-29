@@ -102,13 +102,14 @@ static const yvex_backend_transformer_operations *transformer_backend_operations
             "the admitted backend does not publish transformer execution operations");
     return operations;
 }
-int yvex_runtime_transformer_cuda_facts_add(yvex_runtime_transformer_result *result,
-    const yvex_backend_cuda_operation_facts *facts, unsigned long long h2d_bytes,
+int yvex_runtime_transformer_operation_facts_add(yvex_runtime_transformer_result *result,
+    const yvex_backend_operation_facts *facts, unsigned long long h2d_bytes,
     unsigned long long download_count, unsigned long long device_synchronizations, yvex_error *err)
 {
     unsigned long long downloads, uploads, synchronizations;
     if (!result || !facts)
-        return transformer_runtime_refuse(err, YVEX_ERR_INVALID_ARG, "CUDA physical facts are required");
+        return transformer_runtime_refuse(err, YVEX_ERR_INVALID_ARG,
+                                          "backend operation facts are required");
     if (yvex_execution_memory_facts_add(&result->memory, facts->active_weight_bytes,
             facts->state_bytes, facts->activation_bytes, facts->temporary_bytes,
             facts->compulsory_memory_facts_available,
@@ -121,15 +122,17 @@ int yvex_runtime_transformer_cuda_facts_add(yvex_runtime_transformer_result *res
         !yvex_core_u64_add(result->d2h_bytes, facts->d2h_bytes, &result->d2h_bytes) ||
         !yvex_core_u64_add(result->d2d_bytes, facts->d2d_bytes, &result->d2d_bytes) ||
         !yvex_core_u64_add(result->kernel_launches, facts->kernel_launches, &result->kernel_launches) ||
-        !yvex_core_u64_add(result->tensor_core_launches, facts->tensor_core_launches,
-                           &result->tensor_core_launches) ||
+        !yvex_core_u64_add(result->accelerated_matrix_launches,
+                           facts->accelerated_matrix_launches,
+                           &result->accelerated_matrix_launches) ||
         !yvex_core_u64_add(result->upload_count, uploads, &result->upload_count) ||
         !yvex_core_u64_add(result->download_count, downloads, &result->download_count) ||
-        !yvex_core_u64_add(result->stream_synchronizations, facts->stream_synchronizations,
-                           &result->stream_synchronizations) ||
+        !yvex_core_u64_add(result->queue_synchronizations, facts->queue_synchronizations,
+                           &result->queue_synchronizations) ||
         !yvex_core_u64_add(result->device_synchronizations, synchronizations,
                            &result->device_synchronizations))
-        return transformer_runtime_refuse(err, YVEX_ERR_BOUNDS, "CUDA physical accounting overflowed");
+        return transformer_runtime_refuse(err, YVEX_ERR_BOUNDS,
+                                          "backend operation accounting overflowed");
     return YVEX_OK;
 }
 static int transformer_moe_complete(transformer_chunk_context *chunk, int barrier_observed,
@@ -159,8 +162,8 @@ static int transformer_moe_complete(transformer_chunk_context *chunk, int barrie
                            &result->unique_experts) ||
         !yvex_core_u64_add(result->expert_weight_bytes, completion.encoded_bytes_read,
                            &result->expert_weight_bytes) ||
-        !yvex_core_u64_add(result->stream_synchronizations, completion.stream_synchronizations,
-                           &result->stream_synchronizations) ||
+        !yvex_core_u64_add(result->queue_synchronizations, completion.queue_synchronizations,
+                           &result->queue_synchronizations) ||
         !yvex_core_u64_add(result->device_synchronizations, completion.device_synchronizations,
                            &result->device_synchronizations) ||
         !yvex_core_u64_add(result->synchronization_ns, completion.synchronization_ns,
@@ -499,7 +502,7 @@ static int transformer_runtime_embedding(transformer_chunk_context *chunk, yvex_
         unsigned long long bytes = chunk->token_count * context->embedding_row_bytes;
         const yvex_backend_transformer_operations *operations =
             transformer_backend_operations(context->session_view->backend, err);
-        yvex_backend_cuda_operation_facts facts;
+        yvex_backend_operation_facts facts;
         yvex_device_tensor encoded_view;
         int rc;
         if (!operations || !operations->initial) return yvex_error_code(err);
@@ -515,7 +518,7 @@ static int transformer_runtime_embedding(transformer_chunk_context *chunk, yvex_
                 s->residual_streams, context->device_embedding,
                 context->device_residual[0], &facts, err);
         if (rc != YVEX_OK) return rc;
-        rc = yvex_runtime_transformer_cuda_facts_add(chunk->result, &facts, bytes, 0ull, 1ull, err);
+        rc = yvex_runtime_transformer_operation_facts_add(chunk->result, &facts, bytes, 0ull, 1ull, err);
         if (rc != YVEX_OK) return rc;
     }
     return yvex_transformer_initial_residual(context->plan, context->embedding,
@@ -569,7 +572,7 @@ static int transformer_feature_capture(transformer_chunk_context *chunk,
         chunk->owner->options.evidence_level != YVEX_ATTENTION_EVIDENCE_FULL) {
         const yvex_backend_transformer_operations *operations =
             transformer_backend_operations(chunk->owner->session_view->backend, err);
-        yvex_backend_cuda_operation_facts facts = {0};
+        yvex_backend_operation_facts facts = {0};
         if (!operations || !operations->feature_mean) return yvex_error_code(err);
         if (!yvex_core_u64_add(chunk->output->device_feature_row_offset, chunk->token_offset,
                                &resident_row_offset))
@@ -583,7 +586,7 @@ static int transformer_feature_capture(transformer_chunk_context *chunk,
             chunk->output->device_features ? feature_index * plan->hidden_width : 0ull,
             destination ? chunk->owner->candidate_hidden : NULL, &facts, err);
         if (rc != YVEX_OK) return rc;
-        rc = yvex_runtime_transformer_cuda_facts_add(chunk->result, &facts, 0ull, 0ull, 0ull, err);
+        rc = yvex_runtime_transformer_operation_facts_add(chunk->result, &facts, 0ull, 0ull, 0ull, err);
         if (rc != YVEX_OK) return rc;
         if (destination)
             for (token = 0ull; token < chunk->token_count; ++token)
@@ -797,10 +800,10 @@ static int transformer_layer_evidence(void *opaque, yvex_backend_kind backend,
     chunk->result->download_count += block.download_count;
     chunk->result->cache_hits += block.cache_hits;
     chunk->result->cache_misses += block.cache_misses;
-    chunk->result->stream_synchronizations += block.stream_synchronizations;
+    chunk->result->queue_synchronizations += block.queue_synchronizations;
     chunk->result->device_synchronizations += block.device_synchronizations;
     chunk->result->kernel_launches += block.kernel_launches;
-    chunk->result->tensor_core_launches += block.tensor_core_launches;
+    chunk->result->accelerated_matrix_launches += block.accelerated_matrix_launches;
     chunk->result->graph_launches += block.graph_launches;
     chunk->result->graph_captures += block.graph_captures;
     chunk->result->graph_replays += block.graph_replays;
@@ -830,7 +833,7 @@ static int transformer_layer_evidence(void *opaque, yvex_backend_kind backend,
         unsigned long long hidden_bytes = chunk->token_count * s->hidden_width * sizeof(float);
         unsigned long long started_ns = yvex_core_monotonic_ns();
         unsigned long long read_count = 0ull;
-        yvex_backend_cuda_operation_facts facts = {0};
+        yvex_backend_operation_facts facts = {0};
         yvex_device_tensor device_pre_normalized = {0};
         int full = context->options.evidence_level == YVEX_ATTENTION_EVIDENCE_FULL;
         int device_pre = context->options.device_pre_normalized_output;
@@ -890,7 +893,7 @@ static int transformer_layer_evidence(void *opaque, yvex_backend_kind backend,
                   (unsigned long long)(chunk->output->normalized_hidden != NULL || full) +
                   (unsigned long long)(chunk->output->pre_normalized_hidden != NULL);
         if (rc == YVEX_OK)
-            rc = yvex_runtime_transformer_cuda_facts_add(
+            rc = yvex_runtime_transformer_operation_facts_add(
                 chunk->result, &facts, 0ull, read_count, read_count, err);
         if (rc == YVEX_OK) {
             chunk->result->d2h_bytes += reference_pre ? expanded_bytes
@@ -903,7 +906,7 @@ static int transformer_layer_evidence(void *opaque, yvex_backend_kind backend,
         }
         rc = transformer_moe_complete(
             chunk, rc == YVEX_OK &&
-                       (read_count || facts.stream_synchronizations ||
+                       (read_count || facts.queue_synchronizations ||
                         facts.device_synchronizations), rc, err);
         return rc;
     }
@@ -1203,7 +1206,7 @@ static int transformer_core_features_execute(
     if (rc == YVEX_OK &&
         yvex_execution_physical_facts_add(
              &result->physical, &probe.memory, probe.h2d_bytes, probe.d2h_bytes,
-             probe.d2d_bytes, probe.kernel_launches, probe.stream_synchronizations,
+             probe.d2d_bytes, probe.kernel_launches, probe.queue_synchronizations,
              probe.device_synchronizations, err) != YVEX_OK)
         rc = yvex_error_is_set(err) ? yvex_error_code(err)
                                     : transformer_runtime_refuse(
@@ -1320,7 +1323,7 @@ int yvex_runtime_transformer_context_open(yvex_runtime_transformer_context **out
     moe_options.tensor_scope = options->tensor_scope;
     moe_options.cancel_requested = options->cancel_requested;
     moe_options.cancel_context = options->cancel_context;
-    moe_options.defer_cuda_workspace = 1;
+    moe_options.defer_device_workspace = 1;
     moe_options.eager_execution = options->engine_scheduling;
     moe_options.evidence_level = options->evidence_level;
     moe_options.execution_profile = options->execution_profile;
@@ -1733,10 +1736,10 @@ int yvex_runtime_transformer_execute(yvex_runtime_transformer_context *context,
             result->h2d_bytes += attention_result.h2d_bytes;
             result->d2h_bytes += attention_result.d2h_bytes;
             result->d2d_bytes += attention_result.d2d_bytes;
-            result->stream_synchronizations += attention_result.stream_synchronizations;
+            result->queue_synchronizations += attention_result.queue_synchronizations;
             result->device_synchronizations += attention_result.device_synchronizations;
             result->kernel_launches += attention_result.kernel_launches;
-            result->tensor_core_launches += attention_result.tensor_core_launches;
+            result->accelerated_matrix_launches += attention_result.accelerated_matrix_launches;
             result->attention_device_ns += attention_result.cuda_device_execution_elapsed_ns;
             result->chunk_count++;
             offset += count;

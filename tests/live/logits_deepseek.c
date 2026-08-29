@@ -466,7 +466,7 @@ static int live_device_batch(live_logits *execution, yvex_model_engine *model,
         sampling_d2h += out->sampling.rows[index].d2h_bytes;
         sampling_kernels += out->sampling.rows[index].kernel_launches;
         sampling_synchronizations +=
-            out->sampling.rows[index].stream_synchronizations +
+            out->sampling.rows[index].queue_synchronizations +
             out->sampling.rows[index].device_synchronizations;
         if (!out->sampling.rows[index].device_selection ||
             out->sampling.rows[index].full_array_host_scan_bytes ||
@@ -881,7 +881,7 @@ int main(int argc, char **argv)
                "aggregate_sampling_identity=%s selected_probability=%.17g "
                "selected_log_probability=%.17g rng_draws=%llu\n"
                "logits_ready=1 sampling_ready=1 token_append_ready=0 tokenizer_runtime_ready=0 "
-               "generation_ready=0 cuda_sampling_ready=0\n",
+               "generation_ready=0 device_sampling_ready=0\n",
                values, cpu_reference.maximum_absolute,
                cuda_reference.maximum_absolute, cuda_reference.maximum_relative,
                sqrt(cuda_reference.squared / (double)values),
