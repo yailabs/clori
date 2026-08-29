@@ -140,7 +140,8 @@ assert_terminal_background()
 # Offline transcript preserves the same composer and exposes model selection.
 start_tui offline 24 100 '' nocolor
 wait_for "$root/offline.typescript" 'No model loaded'
-wait_for "$root/offline.typescript" 'Ask YVEX anything'
+wait_for "$root/offline.typescript" 'YVEX (v0.1.0)'
+wait_for "$root/offline.typescript" 'Ask YVEX to do anything'
 kill -INT "$client_pid"
 finish_tui
 assert_restored "$root/offline.typescript"
@@ -196,8 +197,8 @@ grep -F "${esc}[?2004l" "$root/linear.typescript" >/dev/null
 # Connected mode remains one transcript; slash discovery replaces screen tabs.
 start_tui main 32 150 '' color
 wait_for "$root/main.typescript" 'deepseek4-v4-flash-dspark'
-wait_for "$root/main.typescript" '>_ YVEX'
-wait_for "$root/main.typescript" 'Ask YVEX anything'
+wait_for "$root/main.typescript" '(v0.1.0)'
+wait_for "$root/main.typescript" 'Ask YVEX to do anything'
 printf 'hello\r' >&3
 wait_for "$root/main.typescript" 'hello from yvex'
 printf '/sta' >&3

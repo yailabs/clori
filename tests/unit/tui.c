@@ -253,11 +253,14 @@ static int test_state_render_and_input(void)
                      "TUI defaults to the newest registered admissible profile");
     YVEX_TEST_ASSERT(render_frame(&state, frame, sizeof(frame)) &&
                          strstr(frame, ">_ YVEX") &&
+                         strstr(frame, "(v0.1.0)") &&
                          strstr(frame, "No model loaded") &&
-                         strstr(frame, "Ready to work") &&
-                         strstr(frame, "Ask YVEX anything") &&
+                         strstr(frame, "runtime:") &&
+                         strstr(frame, "Ask YVEX to do anything") &&
+                         !strstr(frame, "Ready to work") &&
+                         !strstr(frame, "0 prompt") &&
                          !strstr(frame, "\033[48;") && !strstr(frame, "\033[40m"),
-                     "offline transcript keeps an editable composer and default background");
+                     "offline entry matches the compact Codex welcome and composer hierarchy");
     memset(&input, 0, sizeof(input));
     YVEX_TEST_ASSERT(yvex_tui_input_byte(&input, &state, 0x0fu) ==
                              YVEX_TUI_INPUT_NONE &&
@@ -282,7 +285,7 @@ static int test_state_render_and_input(void)
     yvex_tui_state_message(&state, &event);
     YVEX_TEST_ASSERT(render_frame(&state, frame, sizeof(frame)) &&
                          strstr(frame, "No model loaded") &&
-                         strstr(frame, "Ask YVEX anything"),
+                         strstr(frame, "Ask YVEX to do anything"),
                      "connected host without an engine retains the composer");
     YVEX_TEST_ASSERT(yvex_tui_input_byte(&input, &state, 0x0fu) ==
                              YVEX_TUI_INPUT_NONE &&
@@ -334,8 +337,9 @@ static int test_state_render_and_input(void)
                          strstr(frame, "explain this model") &&
                          strstr(frame, "This is the assistant response.") &&
                          !strstr(frame, "runtime event must stay out of chat") &&
-                         strstr(frame, "technical failure must stay contextual"),
-                     "transcript keeps user, assistant, and relevant error activity inline");
+                         strstr(frame, "technical failure must stay contextual") &&
+                         !strstr(frame, "(v0.1.0)"),
+                     "conversation replaces the welcome card with the live transcript");
     YVEX_TEST_ASSERT(yvex_tui_input_byte(&input, &state, 0x0fu) ==
                              YVEX_TUI_INPUT_NONE &&
                          state.overlay == YVEX_TUI_OVERLAY_MODEL &&

@@ -4,6 +4,7 @@
 #include "src/cli/tui/private.h"
 
 #include <operator/registry.h>
+#include <yvex/core.h>
 
 #include <stdint.h>
 #include <stdarg.h>
@@ -200,29 +201,99 @@ static void format_bytes(char *output, size_t capacity,
         (void)snprintf(output, capacity, "%.2f %s", value, units[unit]);
 }
 
-static void render_top(tui_frame *frame, const yvex_tui_state *state)
+static void frame_repeat(tui_frame *frame, const char *glyph,
+                         unsigned int count, unsigned int limit)
+{
+    while (count-- && frame->column < limit) {
+        frame_raw(frame, glyph, strlen(glyph));
+        frame->column++;
+    }
+}
+
+static void welcome_border(tui_frame *frame, unsigned int row,
+                           unsigned int width, int top)
+{
+    unsigned int limit = frame->columns > 1u ? frame->columns - 1u : 1u;
+    const char *left = frame->unicode ? (top ? "╭" : "╰") : "+";
+    const char *right = frame->unicode ? (top ? "╮" : "╯") : "+";
+    const char *rule = frame->unicode ? "─" : "-";
+    frame_begin_line(frame, row);
+    frame_style(frame, frame->dim);
+    frame_text(frame, left, limit);
+    if (width > 2u) frame_repeat(frame, rule, width - 2u, limit);
+    frame_text(frame, right, limit);
+    frame_style(frame, frame->reset);
+}
+
+static void welcome_row(tui_frame *frame, unsigned int row,
+                        unsigned int width, const char *label,
+                        const char *value, const char *hint)
+{
+    unsigned int limit = frame->columns > 1u ? frame->columns - 1u : 1u;
+    unsigned int content_limit = width > 1u ? width - 1u : limit;
+    frame_begin_line(frame, row);
+    frame_style(frame, frame->dim);
+    frame_text(frame, frame->unicode ? "│ " : "| ", content_limit);
+    if (label) frame_text(frame, label, content_limit);
+    frame_style(frame, frame->reset);
+    if (value) frame_text(frame, value, content_limit);
+    if (hint) {
+        frame_style(frame, frame->dim);
+        frame_text(frame, hint, content_limit);
+    }
+    frame_style(frame, frame->dim);
+    if (width > 1u) frame_to_column(frame, width - 1u, limit);
+    frame_text(frame, frame->unicode ? "│" : "|", limit);
+    frame_style(frame, frame->reset);
+}
+
+static unsigned int welcome_width(const tui_frame *frame,
+                                  const char *model)
+{
+    char line[512];
+    unsigned int width = 43u;
+    unsigned int limit = frame->columns > 2u ? frame->columns - 2u : 1u;
+    (void)snprintf(line, sizeof(line), "model:       %s   /model to change", model);
+    if (strlen(line) + 4u > width) width = (unsigned int)strlen(line) + 4u;
+    if (width > limit) width = limit;
+    if (width < 20u) width = limit;
+    return width;
+}
+
+static void render_welcome(tui_frame *frame, const yvex_tui_state *state)
 {
     const yvex_server_engine_summary *engine = active_engine(state);
+    const char *model = engine ? engine->alias : "No model loaded";
+    const char *runtime = connection_name(state->connection);
+    unsigned int width = welcome_width(frame, model);
     unsigned int limit = frame->columns > 1u ? frame->columns - 1u : 1u;
-    char right[384];
-    unsigned int width;
-    frame_begin_line(frame, 1u);
-    frame_style(frame, frame->accent);
-    frame_text(frame, "  >_ YVEX", limit);
+    unsigned int content_limit = width > 1u ? width - 1u : limit;
+    char version[64];
+    welcome_border(frame, 1u, width, 1);
+    (void)snprintf(version, sizeof(version), " (v%u.%u.%u)",
+                   YVEX_VERSION_MAJOR, YVEX_VERSION_MINOR, YVEX_VERSION_PATCH);
+    frame_begin_line(frame, 2u);
+    frame_style(frame, frame->dim);
+    frame_text(frame, frame->unicode ? "│ >_ " : "| >_ ", content_limit);
+    frame_style(frame, frame->strong);
+    frame_text(frame, "YVEX", content_limit);
+    frame_style(frame, frame->dim);
+    frame_text(frame, version, content_limit);
+    if (width > 1u) frame_to_column(frame, width - 1u, limit);
+    frame_text(frame, frame->unicode ? "│" : "|", limit);
     frame_style(frame, frame->reset);
-    if (engine)
-        (void)snprintf(right, sizeof(right), "%s  ·  %s", engine->alias,
-                       state->active_session);
-    else
-        (void)snprintf(right, sizeof(right), "No model loaded  ·  %s",
-                       state->active_session);
-    width = text_width(right, strlen(right));
-    if (width + frame->column + 3u < limit) {
-        frame_to_column(frame, limit - width, limit);
-        frame_style(frame, engine ? frame->dim : frame->warning);
-        frame_text(frame, right, limit);
-        frame_style(frame, frame->reset);
-    }
+    welcome_row(frame, 3u, width, NULL, NULL, NULL);
+    welcome_row(frame, 4u, width, "model:       ", model,
+                "   /model to change");
+    welcome_row(frame, 5u, width, "session:     ", state->active_session, NULL);
+    welcome_row(frame, 6u, width, "runtime:     ", runtime, NULL);
+    welcome_border(frame, 7u, width, 0);
+    frame_begin_line(frame, 9u);
+    frame_text(frame, "  ", limit);
+    frame_style(frame, frame->strong);
+    frame_text(frame, "Tip:", limit);
+    frame_style(frame, frame->reset);
+    frame_text(frame, " Type / to open commands; Tab completes slash commands.", limit);
 }
 
 static int transcript_activity(const yvex_tui_activity *activity)
@@ -241,7 +312,7 @@ static const char *activity_marker(const tui_frame *frame,
     if (activity->channel == YVEX_CLIENT_STREAM_TOOL_CALL ||
         activity->channel == YVEX_CLIENT_STREAM_TOOL_RESULT)
         return frame->unicode ? "↳ " : "> ";
-    return frame->unicode ? "● " : "* ";
+    return frame->unicode ? "• " : "* ";
 }
 
 static const char *activity_style(tui_frame *frame,
@@ -300,12 +371,11 @@ static unsigned int render_activity(tui_frame *frame,
     size_t count = strlen(text), cursor = 0u;
     unsigned int line = 0u;
     unsigned int limit = frame->columns > 1u ? frame->columns - 1u : 1u;
-    unsigned int wrap = limit > 6u ? limit - 6u : 1u;
+    unsigned int wrap = limit > 4u ? limit - 4u : 1u;
     while (cursor < count && row <= last) {
         size_t previous = cursor;
         size_t extent = line_extent(text + cursor, count - cursor, wrap);
         frame_begin_line(frame, row++);
-        frame_text(frame, "  ", limit);
         frame_style(frame, activity_style(frame, activity));
         frame_text(frame, line ? "  " : activity_marker(frame, activity), limit);
         frame_text_n(frame, text + cursor, extent, limit);
@@ -321,10 +391,7 @@ static unsigned int render_activity(tui_frame *frame,
 
 static unsigned int metrics_rows(const yvex_tui_state *state)
 {
-    const yvex_server_engine_summary *engine = active_engine(state);
-    if (!state->last_turn.turn_available && !state->last_turn.profile_available &&
-        !(engine && engine->prepared_bytes))
-        return 0u;
+    if (!state->last_turn.turn_available) return 0u;
     return state->last_turn.profile_available ? 3u : 2u;
 }
 
@@ -388,13 +455,37 @@ static size_t transcript_count(const yvex_tui_state *state)
     return count;
 }
 
-static void render_transcript(tui_frame *frame, const yvex_tui_state *state,
-                              unsigned int first, unsigned int last)
+static unsigned int transcript_rows(const yvex_tui_state *state,
+                                    unsigned int columns,
+                                    unsigned int available)
+{
+    size_t total = transcript_count(state), end, start;
+    unsigned int used = 0u, metric_count;
+    end = total > state->activity_scroll ? total - state->activity_scroll : 0u;
+    metric_count = state->activity_scroll ? 0u : metrics_rows(state);
+    if (metric_count > available) metric_count = available;
+    used = metric_count;
+    start = end;
+    while (start) {
+        size_t slot = transcript_ordinal_at(state, start - 1u);
+        unsigned int lines;
+        if (slot == SIZE_MAX) break;
+        lines = activity_lines(&state->activities[slot], columns);
+        if (used + lines > available) break;
+        used += lines;
+        start--;
+    }
+    return used;
+}
+
+static unsigned int render_transcript(tui_frame *frame,
+                                      const yvex_tui_state *state,
+                                      unsigned int first, unsigned int last)
 {
     size_t total = transcript_count(state), end, start, ordinal;
     unsigned int available, used = 0u, metric_count;
     unsigned int row = first;
-    if (last < first) return;
+    if (last < first) return first;
     available = last - first + 1u;
     end = total > state->activity_scroll ? total - state->activity_scroll : 0u;
     metric_count = state->activity_scroll ? 0u : metrics_rows(state);
@@ -410,24 +501,14 @@ static void render_transcript(tui_frame *frame, const yvex_tui_state *state,
         used += lines;
         start--;
     }
-    if (!end && row <= last) {
-        frame_begin_line(frame, row++);
-        frame_style(frame, frame->strong);
-        frame_text(frame, "  Ready to work", frame->columns - 1u);
-        if (row <= last) {
-            frame_begin_line(frame, row++);
-            frame_style(frame, frame->dim);
-            frame_text(frame, "  Type a request, / for commands, or Ctrl-O to choose a model.",
-                       frame->columns - 1u);
-        }
-    }
     for (ordinal = start; ordinal < end && row <= last; ++ordinal) {
         size_t slot = transcript_ordinal_at(state, ordinal);
         if (slot != SIZE_MAX)
             row = render_activity(frame, &state->activities[slot], row, last);
     }
     if (!state->activity_scroll && row <= last)
-        (void)render_metrics(frame, state, row, last);
+        row = render_metrics(frame, state, row, last);
+    return row;
 }
 
 static size_t slash_extent(const yvex_tui_state *state)
@@ -730,7 +811,7 @@ static void render_composer(tui_frame *frame, const yvex_tui_state *state,
     for (line = start; line < total && line < start + rows; ++line) {
         size_t begin, end, visible = 0u;
         unsigned int row = first + (unsigned int)(line - start);
-        unsigned int prefix = 4u;
+        unsigned int prefix = 2u;
         composer_bounds(composer, line, &begin, &end);
         if (line == active && composer->cursor >= begin) {
             unsigned int available = limit > prefix ? limit - prefix : 1u;
@@ -741,14 +822,15 @@ static void render_composer(tui_frame *frame, const yvex_tui_state *state,
         }
         frame_begin_line(frame, row);
         frame_style(frame, line == start ? frame->accent : frame->dim);
-        frame_text(frame, line == start ? "  › " : "    ", limit);
+        frame_text(frame, line == start ? (frame->unicode ? "› " : "> ") : "  ",
+                   limit);
         frame_style(frame, frame->reset);
         if (visible) frame_text(frame, frame->unicode ? "…" : "<", limit);
         frame_text_n(frame, (const char *)composer->bytes + begin + visible,
                      end - begin - visible, limit);
         if (!composer->count && line == 0u) {
             frame_style(frame, frame->dim);
-            frame_text(frame, "Ask YVEX anything", limit);
+            frame_text(frame, "Ask YVEX to do anything", limit);
             frame_style(frame, frame->reset);
         }
         if (line == active) {
@@ -761,48 +843,37 @@ static void render_composer(tui_frame *frame, const yvex_tui_state *state,
     }
 }
 
-static void render_composer_rule(tui_frame *frame, const yvex_tui_state *state,
-                                 unsigned int row)
-{
-    char context[384];
-    unsigned int limit = frame->columns - 1u, width;
-    frame_begin_line(frame, row);
-    frame_text(frame, "  ", limit);
-    frame_rule_until(frame, limit);
-    if (state->generation_active)
-        (void)snprintf(context, sizeof(context), "%s · Esc to interrupt",
-                       phase_name(state->generation_phase));
-    else if (state->pending_count)
-        (void)snprintf(context, sizeof(context), "%zu queued", state->pending_count);
-    else
-        (void)snprintf(context, sizeof(context), "%s", state->active_session);
-    width = text_width(context, strlen(context));
-    if (width + 2u < limit) {
-        frame_begin_line(frame, row);
-        frame_to_column(frame, limit - width, limit);
-        frame_style(frame, state->generation_active ? frame->violet : frame->dim);
-        frame_text(frame, context, limit);
-        frame_style(frame, frame->reset);
-    }
-}
-
 static void render_footer(tui_frame *frame, const yvex_tui_state *state,
                           unsigned int row)
 {
-    char left[384], right[192];
+    const yvex_server_engine_summary *engine = active_engine(state);
+    char left[512], right[192];
     unsigned int limit = frame->columns - 1u, width;
     const char *style;
     if (state->notice[0])
         (void)snprintf(left, sizeof(left), "%s", state->notice);
     else if (state->pending_review)
         (void)snprintf(left, sizeof(left), "queued draft restored for review");
-    else if (state->console_available && state->console.context_capacity)
-        (void)snprintf(left, sizeof(left), "%s · context %llu/%llu",
-                       connection_name(state->connection), state->console.context_used,
-                       state->console.context_capacity);
+    else if (engine && state->console_available && state->console.context_capacity)
+        (void)snprintf(
+            left, sizeof(left), "%s · %s · Context %llu%% used", engine->alias,
+            state->active_session,
+            state->console.context_used * 100ull / state->console.context_capacity);
+    else if (engine)
+        (void)snprintf(left, sizeof(left), "%s · %s", engine->alias,
+                       state->active_session);
     else
-        (void)snprintf(left, sizeof(left), "%s", connection_name(state->connection));
-    (void)snprintf(right, sizeof(right), "? shortcuts · / commands");
+        (void)snprintf(left, sizeof(left), "? for shortcuts");
+    if (state->generation_active)
+        (void)snprintf(right, sizeof(right), "%s · Esc to interrupt",
+                       phase_name(state->generation_phase));
+    else if (state->pending_count)
+        (void)snprintf(right, sizeof(right), "%zu queued", state->pending_count);
+    else if (state->connection != YVEX_TUI_CONNECTION_CONNECTED)
+        (void)snprintf(right, sizeof(right), "%s",
+                       connection_name(state->connection));
+    else
+        right[0] = '\0';
     style = state->notice[0] && state->notice_severity == YVEX_TUI_SEVERITY_ERROR
                 ? frame->error
             : state->notice[0] && state->notice_severity == YVEX_TUI_SEVERITY_WARNING
@@ -814,7 +885,7 @@ static void render_footer(tui_frame *frame, const yvex_tui_state *state,
     frame_style(frame, style);
     frame_text(frame, left, limit);
     width = text_width(right, strlen(right));
-    if (frame->column + width + 3u < limit) {
+    if (right[0] && frame->column + width + 3u < limit) {
         frame_to_column(frame, limit - width, limit);
         frame_style(frame, frame->dim);
         frame_text(frame, right, limit);
@@ -827,8 +898,8 @@ static void frame_styles(tui_frame *frame, int color)
     frame->color = color;
     frame->reset = color ? "\033[0m" : "";
     frame->strong = color ? "\033[1;38;5;255m" : "";
-    frame->accent = color ? "\033[1;38;5;81m" : "";
-    frame->violet = color ? "\033[1;38;5;141m" : "";
+    frame->accent = color ? "\033[1;38;5;255m" : "";
+    frame->violet = color ? "\033[1;38;5;255m" : "";
     frame->dim = color ? "\033[38;5;245m" : "";
     frame->success = color ? "\033[38;5;114m" : "";
     frame->warning = color ? "\033[38;5;221m" : "";
@@ -858,8 +929,9 @@ int yvex_tui_render(const yvex_tui_state *state, char *output, size_t capacity,
                     unsigned int *cursor_column)
 {
     tui_frame frame;
-    unsigned int rows, composer_count, composer_first, rule_row, footer_row;
-    unsigned int transcript_first = 3u, transcript_last;
+    unsigned int rows, composer_count, composer_first, footer_row;
+    unsigned int content_capacity = 0u, content_rows = 0u;
+    int welcome;
     if (!state || !output || capacity < 128u || !count ||
         !cursor_row || !cursor_column)
         return YVEX_ERR_INVALID_ARG;
@@ -875,25 +947,35 @@ int yvex_tui_render(const yvex_tui_state *state, char *output, size_t capacity,
     }
     rows = state->terminal.rows ? state->terminal.rows : 1u;
     composer_count = composer_rows(state);
-    if (rows < composer_count + 3u) composer_count = rows > 3u ? rows - 3u : 1u;
-    footer_row = rows;
-    composer_first = rows > composer_count ? rows - composer_count : 1u;
-    rule_row = composer_first > 1u ? composer_first - 1u : 1u;
-    transcript_last = rule_row > transcript_first ? rule_row - 1u : transcript_first;
-    render_top(&frame, state);
-    if (rows > 1u) {
-        frame_begin_line(&frame, 2u);
-        frame_text(&frame, "  ", frame.columns - 1u);
-        frame_rule_until(&frame, frame.columns - 1u);
+    if (rows < composer_count + 2u) composer_count = rows > 2u ? rows - 2u : 1u;
+    welcome = state->overlay == YVEX_TUI_OVERLAY_NONE &&
+              !transcript_count(state) && !state->last_turn.turn_available &&
+              rows >= 13u && frame.columns >= 44u;
+    if (welcome) {
+        render_welcome(&frame, state);
+        composer_first = 11u;
+    } else {
+        if (rows > composer_count + 2u)
+            content_capacity = rows - composer_count - 2u;
+        if (state->overlay != YVEX_TUI_OVERLAY_NONE)
+            content_rows = content_capacity;
+        else if (content_capacity)
+            content_rows = transcript_rows(
+                state, frame.columns > 7u ? frame.columns - 7u : 1u,
+                content_capacity);
+        if (content_rows && state->overlay == YVEX_TUI_OVERLAY_NONE)
+            (void)render_transcript(&frame, state, 1u, content_rows);
+        composer_first = content_rows ? content_rows + 2u : 1u;
     }
-    if (rows >= 6u && frame.columns >= 20u)
-        render_transcript(&frame, state, transcript_first, transcript_last);
-    render_composer_rule(&frame, state, rule_row);
+    if (composer_first + composer_count > rows)
+        composer_first = rows >= composer_count ? rows - composer_count + 1u : 1u;
+    footer_row = composer_first + composer_count + 1u;
+    if (footer_row > rows) footer_row = rows;
     render_composer(&frame, state, composer_first, composer_count,
                     cursor_row, cursor_column);
     if (rows > 1u) render_footer(&frame, state, footer_row);
-    if (rows >= 6u && frame.columns >= 20u)
-        render_overlay(&frame, state, transcript_first, transcript_last,
+    if (content_rows && frame.columns >= 20u)
+        render_overlay(&frame, state, 1u, content_rows,
                        cursor_row, cursor_column);
     frame_style(&frame, frame.reset);
     frame_format(&frame, "\033[%u;%uH\033[?25h", *cursor_row, *cursor_column);
