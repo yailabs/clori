@@ -586,7 +586,7 @@ static int plan_identity_build(yvex_tokenizer *tokenizer)
     size_t index;
 
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.tokenizer.plan.v3") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.tokenizer.plan.v4") ||
         !yvex_sha256_update_u64_be(&hash, plan->schema_version) ||
         !yvex_sha256_update_u64_be(&hash, plan->family_adapter_id) ||
         !yvex_sha256_update_u64_be(&hash, plan->family_adapter_version) ||
@@ -702,7 +702,7 @@ int yvex_tokenizer_execution_seal(yvex_tokenizer *tokenizer, const yvex_gguf *gg
     rc = exact_policy_admit(tokenizer, gguf, err);
     if (rc != YVEX_OK)
         return rc;
-    tokenizer->plan.schema_version = YVEX_TOKENIZER_PLAN_SCHEMA_V3;
+    tokenizer->plan.schema_version = YVEX_TOKENIZER_PLAN_SCHEMA_CURRENT;
     tokenizer->plan.family_adapter_id = policy->family_adapter_id;
     tokenizer->plan.family_adapter_version = policy->family_adapter_version;
     tokenizer->plan.vocabulary_size = tokenizer->vocab_size;
@@ -979,7 +979,7 @@ static unsigned long long take_space(const tokenizer_span *span, unsigned long l
 }
 
 static unsigned long long next_piece(const tokenizer_span *span, unsigned long long offset,
-                                     yvex_tokenizer_prompt_policy policy)
+                                     int qwen2_pretokenizer)
 {
     uint32_t point;
     unsigned long long next, end;
@@ -989,9 +989,8 @@ static unsigned long long next_piece(const tokenizer_span *span, unsigned long l
         return span->count;
     classification = yvex_tokenizer_unicode_class(point);
     if ((classification & TOKENIZER_UNICODE_NUMBER) != 0u)
-        return take_numbers(span, offset,
-                            policy == YVEX_TOKENIZER_PROMPT_MINIMAX_H3_FL2VA ? 1u : 3u);
-    if (policy != YVEX_TOKENIZER_PROMPT_MINIMAX_H3_FL2VA && is_cjk_split(point))
+        return take_numbers(span, offset, qwen2_pretokenizer ? 1u : 3u);
+    if (!qwen2_pretokenizer && is_cjk_split(point))
         return take_cjk(span, offset);
     end = take_word_or_symbol(span, offset, point, next);
     if (end != offset)
@@ -1133,8 +1132,10 @@ static int ordinary_encode(const yvex_tokenizer *tokenizer, const unsigned char 
                            unsigned long long maximum, yvex_error *err)
 {
     tokenizer_span span = {bytes, count, 0u};
+    int qwen2_pretokenizer = strcmp(tokenizer->compiled_policy.tokenizer_pre, "qwen2") == 0;
+
     while (span.offset < span.count) {
-        unsigned long long end = next_piece(&span, span.offset, tokenizer->plan.prompt_policy);
+        unsigned long long end = next_piece(&span, span.offset, qwen2_pretokenizer);
         int rc;
         if (end <= span.offset || end > span.count) {
             yvex_error_set(err, YVEX_ERR_FORMAT, "tokenizer.encode.pretokenizer",
@@ -1235,7 +1236,7 @@ int yvex_tokenizer_encode(const yvex_tokenizer *tokenizer,
         yvex_error_set(err, YVEX_ERR_FORMAT, "tokenizer.encode.utf8", "input is not canonical UTF-8");
         return YVEX_ERR_FORMAT;
     }
-    if (tokenizer->plan.prompt_policy == YVEX_TOKENIZER_PROMPT_MINIMAX_H3_FL2VA) {
+    if (strcmp(tokenizer->compiled_policy.tokenizer_pre, "qwen2") == 0) {
         rc = yvex_tokenizer_nfc_normalize(bytes, byte_count, &normalized_owner,
                                           &normalized_count, err);
         normalized_bytes = normalized_owner;

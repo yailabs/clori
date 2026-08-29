@@ -270,10 +270,16 @@ fi
 if rg -n 'yvex_graph_component_variant_find[[:space:]]*\(' src/graph/families; then
     fail "a family projection owns the common component catalog lookup"
 fi
-rg -n 'yvex_graph_deepseek_v4_execution_binding' src/graph/catalog.c >/dev/null ||
-    fail "graph catalog no longer composes the DeepSeek execution binding"
-rg -n 'yvex_graph_minimax_h3_component_adapter' src/graph/catalog.c >/dev/null ||
-    fail "graph catalog no longer composes the MiniMax component adapter"
+rg -n 'YVEX_GRAPH_FAMILY_DESCRIPTORS' src/graph/catalog.c >/dev/null ||
+    fail "graph catalog no longer consumes generated family descriptor membership"
+if rg -n '(execution_providers|component_providers|quant_preset_providers|source_providers)' \
+    src/graph/catalog.c; then
+    fail "graph catalog retains a handwritten per-capability family registry"
+fi
+if rg -n -i "$generic_family_symbol_pattern" \
+    include/yvex/internal/family_catalog.h src/graph/catalog.c include/yvex/tokenizer.h; then
+    fail "generic family registration or prompt ABI names a concrete family"
+fi
 while IFS= read -r source; do
     awk -F '\t' -v source="$source" '$1 == source && $4 == "family" { found = 1 } END { exit !found }' \
         config/source_owners.tsv ||

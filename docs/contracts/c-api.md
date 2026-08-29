@@ -80,6 +80,11 @@ identity, but `yvex_server_create` refuses v3 before reading any field absent
 from its legacy layout. Repository callers use
 `YVEX_SERVER_OPTIONS_SCHEMA_CURRENT`; there is no binary v3 reinterpretation.
 
+`yvex_tokenizer_plan_summary` schema v4 identifies prompt composition with
+family-neutral `conversation` and `verbatim` values. Pretokenizer behavior is
+selected independently from the admitted tokenizer metadata. Schema v3 remains
+the historical family-named semantic identity; newly sealed plans publish v4.
+
 The installed catalog split introduced unversioned pre-v0.1 source/API
 migrations rather than assigning an existing schema identity to new layouts:
 remote records, local source records, local package records, and live engine

@@ -871,11 +871,19 @@ class Audit:
         }
 
     def private_declarations(self) -> set[str]:
-        return {
+        declared = {
             symbol
             for name, unit in self.headers.items()
             if self.header_tier(name) in {"internal", "source"}
             for symbol in declarations(unit) | data_declarations(unit)
+        }
+        return declared | self.family_descriptor_entrypoints()
+
+    def family_descriptor_entrypoints(self) -> set[str]:
+        return {
+            f"yvex_graph_family_descriptor_{Path(row[0]).stem}"
+            for row in self.manifest_rows
+            if row[0].startswith("src/graph/families/") and row[0].endswith(".c")
         }
 
     def symbol_snapshot(self) -> dict[str, object]:
@@ -1302,7 +1310,10 @@ class Audit:
             for name in tuple(family_tokens)
             if (token := re.sub(r"_v?[0-9].*$", "", name))
         )
-        allowed_family_symbols = set(self.policy["symbols"]["family_entrypoints"])
+        allowed_family_symbols = (
+            set(self.policy["symbols"]["family_entrypoints"])
+            | self.family_descriptor_entrypoints()
+        )
         for name, unit in self.headers.items():
             row = self.manifest.get(name)
             if row and row[3] == "family":
@@ -1383,6 +1394,7 @@ class Audit:
         required_entrypoints = (
             self.policy["symbols"]["family_entrypoints"]
             + self.policy["symbols"]["required_internal_entrypoints"]
+            + sorted(self.family_descriptor_entrypoints())
         )
         for entrypoint in required_entrypoints:
             if len(definitions.get(entrypoint, [])) != 1:

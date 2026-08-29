@@ -82,7 +82,7 @@ RECORDS = {
         "include/yvex/server.h", "YVEX_LOCAL_PROTOCOL_VERSION", 16, 10256,
         "7427bba88c63a0443c240058c0117c2e6f2169fce79854305a3b4b372408759c"),
     "yvex_tokenizer_plan_summary": (
-        "include/yvex/tokenizer.h", "YVEX_TOKENIZER_PLAN_SCHEMA_V3", 3, 864,
+        "include/yvex/tokenizer.h", "YVEX_TOKENIZER_PLAN_SCHEMA_CURRENT", 4, 864,
         "cca1ce6ec52182dcee89615b486db711590c2bcdb05a94117deecda5f695beb4"),
     "yvex_tokenizer_encode_result": (
         "include/yvex/tokenizer.h", "YVEX_TOKENIZER_EXECUTION_SCHEMA_V1", 1, 328,
@@ -162,6 +162,15 @@ def compiler_source() -> str:
         'ABI_ASSERT(YVEX_SERVER_ENGINE_SCHEMA_V2 == 2u, "engine v2 identity changed");',
         'ABI_ASSERT(YVEX_RUNTIME_EVENT_SCHEMA_V3 == 3u, "legacy event v3 identity changed");',
         'ABI_ASSERT(YVEX_RUNTIME_EVENT_SCHEMA_V4 == 4u, "event v4 identity changed");',
+        'ABI_ASSERT(YVEX_TOKENIZER_PLAN_SCHEMA_V3 == 3u, '
+        '"legacy tokenizer plan v3 identity changed");',
+        'ABI_ASSERT(YVEX_TOKENIZER_PLAN_SCHEMA_V4 == 4u, '
+        '"tokenizer plan v4 identity changed");',
+        'ABI_ASSERT(YVEX_TOKENIZER_PROMPT_NONE == 0, "prompt none value changed");',
+        'ABI_ASSERT(YVEX_TOKENIZER_PROMPT_CONVERSATION == 1, '
+        '"prompt conversation value changed");',
+        'ABI_ASSERT(YVEX_TOKENIZER_PROMPT_VERBATIM == 2, '
+        '"prompt verbatim value changed");',
         'ABI_ASSERT(YVEX_LOCAL_PROTOCOL_VERSION == 16u, "local protocol identity changed");',
         'ABI_ASSERT(YVEX_SERVER_ENGINE_NONE == 0, "engine-kind none value changed");',
         'ABI_ASSERT(YVEX_SERVER_ENGINE_TEXT == 1, "engine-kind text value changed");',

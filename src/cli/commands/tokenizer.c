@@ -120,7 +120,7 @@ static int command_tokenizer(int arg_count, char **args)
         yvex_cli_out_writef(
             stdout, "chat_template: %s\n",
             plan->prompt_policy == YVEX_TOKENIZER_PROMPT_CONVERSATION
-                ? "deepseek-v4-family-policy" : "verbatim-no-special");
+                ? "conversation-family-policy" : "verbatim-no-special");
     } else {
         yvex_cli_out_writef(stdout, "runtime_support: unavailable\n");
         yvex_cli_out_writef(stdout, "chat_template: absent\n");
@@ -410,7 +410,7 @@ static int command_prompt(int arg_count, char **args)
         return print_yvex_error(&err, exit_for_status(rc));
     }
 
-    yvex_cli_out_writef(stdout, "template: deepseek-v4-family-policy\n");
+    yvex_cli_out_writef(stdout, "template: conversation-family-policy\n");
     yvex_cli_out_writef(stdout, "rendered_bytes: %llu\n", rendered.len);
     yvex_cli_out_writef(stdout, "rendered:\n%s\n", rendered.text);
 

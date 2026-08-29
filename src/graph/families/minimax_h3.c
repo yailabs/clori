@@ -18,6 +18,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+extern const yvex_family_descriptor yvex_graph_family_descriptor_minimax_h3;
 #define VIDEO_COMPONENT_IDENTITY "c45d914061f4a8d71e84d70cf79f286793919bdc040f48e94b4ec83c2ee8a0e7"
 #define VIDEO_SOURCE_SNAPSHOT_IDENTITY "897ceaff08708f431132c6643bc8f1041ace8c0444a3ea248bbf727fc7da9943"
 #define VIDEO_COMPONENT_MANIFEST_IDENTITY "715f2359aaff048ccca8207976421af5f9f76b08b6f24986b3cc186d2822bc0e"
@@ -1824,7 +1825,7 @@ static int component_variant_open(yvex_component_variant_source *out,
 #undef COPY_SUMMARY
     return YVEX_OK;
 }
-const yvex_component_variant_adapter *yvex_graph_minimax_h3_component_adapter(void)
+static const yvex_component_variant_adapter *minimax_component_adapter(void)
 {
     static const yvex_media_execution_recipe media = {
         .schema_version = YVEX_MEDIA_EXECUTION_RECIPE_SCHEMA_V1,
@@ -1972,7 +1973,7 @@ static int minimax_tokenizer_policy(yvex_tokenizer_family_policy *out, yvex_erro
         .family_adapter_id = 0x4d4d4833ull, .family_adapter_version = 1ull,
         .tokenizer_kind = YVEX_TOKENIZER_KIND_GGML_GPT2,
         .model_policy = YVEX_TOKENIZER_MODEL_BPE_BYTELEVEL,
-        .prompt_policy = YVEX_TOKENIZER_PROMPT_MINIMAX_H3_FL2VA,
+        .prompt_policy = YVEX_TOKENIZER_PROMPT_VERBATIM,
         .vocabulary_size = 151669ull, .base_vocabulary_size = 151643ull,
         .merge_count = 151387ull, .added_token_count = 26ull, .special_token_count = 14ull,
         .eos_token_id = 151645u, .pad_token_id = 151643u, .eos_present = 1, .pad_present = 1,
@@ -1984,7 +1985,7 @@ static int minimax_tokenizer_policy(yvex_tokenizer_family_policy *out, yvex_erro
         .prompt_name = "verbatim-no-special-v1"};
     return yvex_tokenizer_family_policy_compile_direct(out, &policy, err) == YVEX_OK;
 }
-const yvex_family_source_adapter *yvex_graph_minimax_h3_source_adapter(void)
+static const yvex_family_source_adapter *minimax_source_adapter(void)
 {
     static const yvex_family_source_adapter adapter = {
         .schema_version = YVEX_FAMILY_SOURCE_ADAPTER_SCHEMA_V1, .target_id = YVEX_MINIMAX_H3_TARGET_ID,
@@ -1992,3 +1993,7 @@ const yvex_family_source_adapter *yvex_graph_minimax_h3_source_adapter(void)
         .tokenizer_policy = minimax_tokenizer_policy, .compile = minimax_source_compile};
     return &adapter;
 }
+const yvex_family_descriptor yvex_graph_family_descriptor_minimax_h3 = {
+    .schema_version = YVEX_FAMILY_DESCRIPTOR_SCHEMA_V1, .target_id = YVEX_MINIMAX_H3_TARGET_ID,
+    .family = "minimax-h3", .tokenizer_architecture = "minimax-h3",
+    .component = minimax_component_adapter, .source = minimax_source_adapter};

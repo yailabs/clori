@@ -107,7 +107,7 @@
   "symbols": {
     "namespace": "yvex_",
     "forbidden_public_fragments": ["_fixture_", "_reference_", "_test_", "_render_", "_deepseek_"],
-    "family_entrypoints": ["yvex_model_register_deepseek_v4", "yvex_compiler_family_deepseek_v4", "yvex_graph_register_minimax_h3", "yvex_graph_deepseek_v4_execution_binding", "yvex_graph_deepseek_v4_quant_presets", "yvex_graph_minimax_h3_component_adapter", "yvex_graph_minimax_h3_source_adapter"],
+    "family_entrypoints": ["yvex_model_register_deepseek_v4", "yvex_compiler_family_deepseek_v4", "yvex_graph_register_minimax_h3"],
     "required_internal_entrypoints": ["yvex_backend_attention_execute", "yvex_backend_component_operations_get"]
   },
   "archive": {

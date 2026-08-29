@@ -3,14 +3,11 @@
 #define INCLUDE_YVEX_INTERNAL_FAMILY_CATALOG_H_INCLUDED
 
 #include <yvex/internal/graph.h>
+#include <string.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-const yvex_graph_execution_binding *yvex_graph_deepseek_v4_execution_binding(void);
-const yvex_component_variant_adapter *yvex_graph_minimax_h3_component_adapter(void);
-const yvex_quant_preset_catalog *yvex_graph_deepseek_v4_quant_presets(void);
 
 #define YVEX_FAMILY_SOURCE_ADAPTER_SCHEMA_V1 1u
 typedef struct {
@@ -32,7 +29,43 @@ typedef struct {
                    const struct yvex_compilation_runtime_binding_request *request,
                    yvex_error *err);
 } yvex_family_source_adapter;
-const yvex_family_source_adapter *yvex_graph_minimax_h3_source_adapter(void);
+
+#define YVEX_FAMILY_DESCRIPTOR_SCHEMA_V1 1u
+typedef const yvex_graph_execution_binding *(*yvex_family_execution_provider)(void);
+typedef const yvex_component_variant_adapter *(*yvex_family_component_provider)(void);
+typedef const yvex_quant_preset_catalog *(*yvex_family_quant_provider)(void);
+typedef const yvex_family_source_adapter *(*yvex_family_source_provider)(void);
+typedef struct yvex_family_descriptor {
+    unsigned int schema_version;
+    const char *target_id, *family, *tokenizer_architecture;
+    yvex_family_execution_provider execution;
+    yvex_family_component_provider component;
+    yvex_family_quant_provider quant_presets;
+    yvex_family_source_provider source;
+} yvex_family_descriptor;
+
+static inline const yvex_family_descriptor *yvex_family_descriptor_find_registered(
+    const yvex_family_descriptor *const *descriptors,
+    unsigned long long count, const char *target_id)
+{
+    const yvex_family_descriptor *selected = NULL;
+    unsigned long long index;
+
+    if (!descriptors || !target_id || !target_id[0]) return NULL;
+    for (index = 0ull; index < count; ++index) {
+        const yvex_family_descriptor *descriptor = descriptors[index];
+
+        if (!descriptor || descriptor->schema_version != YVEX_FAMILY_DESCRIPTOR_SCHEMA_V1 ||
+            !descriptor->target_id || !descriptor->family ||
+            (!descriptor->execution && !descriptor->component && !descriptor->source) ||
+            strcmp(descriptor->target_id, target_id) != 0)
+            continue;
+        if (selected) return NULL;
+        selected = descriptor;
+    }
+    return selected;
+}
+
 int yvex_family_source_compile(
     const char *target_id, const struct yvex_compilation_runtime_binding_request *request,
     yvex_family_source_products *products, yvex_error *err);

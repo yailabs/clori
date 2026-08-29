@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include <yvex/api.h>
+#include <yvex/internal/family_catalog.h>
 
 #include "src/graph/private.h"
 #include "tests/test.h"
@@ -157,9 +158,61 @@ static int test_component_execution_transaction(void)
     return 0;
 }
 
+static int synthetic_family_compile(
+    yvex_family_source_products *out,
+    const yvex_compilation_runtime_binding_request *request,
+    yvex_error *err)
+{
+    (void)out;
+    (void)request;
+    yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "test.synthetic-family",
+                   "synthetic descriptor does not execute a model");
+    return YVEX_ERR_UNSUPPORTED;
+}
+
+static const yvex_family_source_adapter *synthetic_family_source(void)
+{
+    static const yvex_family_source_adapter source = {
+        .schema_version = YVEX_FAMILY_SOURCE_ADAPTER_SCHEMA_V1,
+        .target_id = "synthetic-family-test",
+        .family = "synthetic",
+        .tokenizer_architecture = "synthetic",
+        .compile = synthetic_family_compile,
+    };
+
+    return &source;
+}
+
+static int test_family_descriptor_registration(void)
+{
+    static const yvex_family_descriptor descriptor = {
+        .schema_version = YVEX_FAMILY_DESCRIPTOR_SCHEMA_V1,
+        .target_id = "synthetic-family-test",
+        .family = "synthetic",
+        .tokenizer_architecture = "synthetic",
+        .source = synthetic_family_source,
+    };
+    const yvex_family_descriptor *registered[] = {&descriptor};
+    const yvex_family_descriptor *duplicate[] = {&descriptor, &descriptor};
+
+    YVEX_TEST_ASSERT(
+        yvex_family_descriptor_find_registered(registered, 1ull,
+                                               "synthetic-family-test") == &descriptor,
+        "synthetic family descriptor registers without a central catalog edit");
+    YVEX_TEST_ASSERT(
+        yvex_family_descriptor_find_registered(registered, 1ull, "unknown") == NULL,
+        "family descriptor discovery rejects an unknown target");
+    YVEX_TEST_ASSERT(
+        yvex_family_descriptor_find_registered(duplicate, 2ull,
+                                               "synthetic-family-test") == NULL,
+        "family descriptor discovery rejects ambiguous registration");
+    return 0;
+}
+
 int yvex_test_graph(void)
 {
     if (test_graph_from_fixture() != 0) return 1;
     if (test_component_execution_transaction() != 0) return 1;
+    if (test_family_descriptor_registration() != 0) return 1;
     return 0;
 }

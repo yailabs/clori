@@ -20,6 +20,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+extern const yvex_family_descriptor yvex_graph_family_descriptor_deepseek_v4;
+
 static int graph_recipe_project(const yvex_deepseek_v4_layer_spec *layer,
                                 unsigned long long ordinal, yvex_tensor_scope scope,
                                 unsigned long long predictor,
@@ -338,7 +341,7 @@ static const yvex_family_compiler_adapter deepseek_compiler = {
 const yvex_family_compiler_adapter *yvex_compiler_family_deepseek_v4(void) {
     return &deepseek_compiler;
 }
-const yvex_graph_execution_binding *yvex_graph_deepseek_v4_execution_binding(void)
+static const yvex_graph_execution_binding *deepseek_execution_binding(void)
 {
     return &deepseek_execution;
 }
@@ -1578,7 +1581,7 @@ static int deepseek_quant_preset_open(
     return yvex_quant_policy_create_definition(out, &definition, err);
 }
 
-const yvex_quant_preset_catalog *yvex_graph_deepseek_v4_quant_presets(void)
+static const yvex_quant_preset_catalog *deepseek_quant_presets(void)
 {
     static const yvex_quant_preset_catalog catalog = {
         YVEX_QUANT_PRESET_CATALOG_SCHEMA_V1,
@@ -1589,6 +1592,12 @@ const yvex_quant_preset_catalog *yvex_graph_deepseek_v4_quant_presets(void)
 
     return &catalog;
 }
+
+const yvex_family_descriptor yvex_graph_family_descriptor_deepseek_v4 = {
+    .schema_version = YVEX_FAMILY_DESCRIPTOR_SCHEMA_V1,
+    .target_id = "deepseek4-v4-flash-dspark", .family = "deepseek-v4",
+    .tokenizer_architecture = "deepseek-v3", .execution = deepseek_execution_binding,
+    .quant_presets = deepseek_quant_presets};
 
 typedef struct {
     unsigned long long payload_bytes, file_bytes;

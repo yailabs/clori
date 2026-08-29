@@ -124,7 +124,7 @@ int yvex_tokenizer_family_policy_validate(
         policy->tokenizer_kind > YVEX_TOKENIZER_KIND_FIXTURE_SIMPLE ||
         policy->model_policy > YVEX_TOKENIZER_MODEL_BPE_BYTELEVEL ||
         (policy->prompt_policy != YVEX_TOKENIZER_PROMPT_CONVERSATION &&
-         policy->prompt_policy != YVEX_TOKENIZER_PROMPT_MINIMAX_H3_FL2VA) ||
+         policy->prompt_policy != YVEX_TOKENIZER_PROMPT_VERBATIM) ||
         !policy->vocabulary_size || !policy->base_vocabulary_size ||
         policy->base_vocabulary_size > policy->vocabulary_size ||
         !policy->architecture[0] || !policy->tokenizer_model[0] ||

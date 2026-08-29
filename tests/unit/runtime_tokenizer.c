@@ -18,6 +18,8 @@
 
 #define TEST_DSML "\xef\xbd\x9c" "DSML" "\xef\xbd\x9c"
 
+extern const yvex_family_descriptor yvex_graph_family_descriptor_minimax_h3;
+
 typedef struct {
     pthread_mutex_t mutex;
     pthread_cond_t condition;
@@ -167,7 +169,7 @@ static void fixture_open(yvex_tokenizer *tokenizer, yvex_token_info tokens[4])
     tokenizer->plan.sealed = 1;
     tokenizer->plan.vocabulary_size = 4u;
     tokenizer->plan.prompt_policy = YVEX_TOKENIZER_PROMPT_CONVERSATION;
-    tokenizer->plan.schema_version = YVEX_TOKENIZER_PLAN_SCHEMA_V3;
+    tokenizer->plan.schema_version = YVEX_TOKENIZER_PLAN_SCHEMA_CURRENT;
     tokenizer->plan.explicit_reasoning_supported = 1;
     tokenizer->plan.maximum_reasoning_supported = 1;
     tokenizer->plan.reasoning_start_token_id = 10u;
@@ -191,7 +193,11 @@ static yvex_provider_span text_span(const char *text)
 static int test_compiled_family_policy(void)
 {
     const yvex_family_compiler_adapter *compiler = yvex_compiler_family_deepseek_v4();
-    const yvex_family_source_adapter *minimax = yvex_graph_minimax_h3_source_adapter();
+    const yvex_family_descriptor *minimax_descriptor =
+        &yvex_graph_family_descriptor_minimax_h3;
+    const yvex_family_source_adapter *minimax =
+        minimax_descriptor && minimax_descriptor->source
+            ? minimax_descriptor->source() : NULL;
     yvex_tokenizer_family_policy first, decoded, changed, direct, direct_decoded;
     yvex_conversation_protocol view;
     yvex_core_bytes encoded = {0}, repeated = {0}, direct_encoded = {0};
@@ -232,7 +238,7 @@ static int test_compiled_family_policy(void)
     YVEX_TEST_ASSERT(
         minimax && minimax->tokenizer_policy &&
             minimax->tokenizer_policy(&direct, &err) &&
-            direct.prompt_policy == YVEX_TOKENIZER_PROMPT_MINIMAX_H3_FL2VA &&
+            direct.prompt_policy == YVEX_TOKENIZER_PROMPT_VERBATIM &&
             strcmp(direct.direct_prompt_name, "verbatim-no-special-v1") == 0 &&
             yvex_tokenizer_family_policy_encode(
                 &direct, &direct_encoded, &err) == YVEX_OK &&

@@ -144,6 +144,7 @@ CUDA_BUILD_CONFIG := $(BUILD_DIR)/generated/cuda_build_config
 SOURCE_OWNER_MANIFEST := config/source_owners.tsv
 SOURCE_MANIFEST_GENERATOR := tools/generate_source_manifest.py
 SOURCE_MANIFEST_MK := $(BUILD_DIR)/generated/sources.mk
+SOURCE_FAMILY_HEADER := $(BUILD_DIR)/generated/source/families.h
 QA_REGISTRY_SOURCE := config/qa/registry.json
 QA_REGISTRY_GENERATOR := tools/generate_qa_registry.py
 QA_REGISTRY_DIR := $(BUILD_DIR)/generated/qa
@@ -196,6 +197,7 @@ include $(SOURCE_MANIFEST_MK)
 include $(QA_REGISTRY_MK)
 endif
 
+CPPFLAGS += -I$(BUILD_DIR)/generated
 TEST_CPPFLAGS += -I$(BUILD_DIR)/generated
 
 # Attention wrappers own a collision-free temporary root and delete only that
@@ -371,7 +373,7 @@ info:
 
 all: generate-source-manifest generate-operator-registry lib client
 
-generate-source-manifest: $(SOURCE_MANIFEST_MK)
+generate-source-manifest: $(SOURCE_MANIFEST_MK) $(SOURCE_FAMILY_HEADER)
 
 generate-qa-registry: $(QA_REGISTRY_MK) $(QA_REGISTRY_PROJECTIONS)
 
@@ -397,17 +399,23 @@ qa-ci:
 qa-doctor:
 	python3 tools/qa.py doctor
 
-check-source-manifest: $(SOURCE_MANIFEST_MK)
+check-source-manifest: $(SOURCE_MANIFEST_MK) $(SOURCE_FAMILY_HEADER)
 	python3 $(SOURCE_MANIFEST_GENERATOR) --manifest $(SOURCE_OWNER_MANIFEST) \
-		--output $(SOURCE_MANIFEST_MK) --check
+		--output $(SOURCE_MANIFEST_MK) --family-header $(SOURCE_FAMILY_HEADER) --check
 	@set -eu; \
 	. tests/support/cleanup.sh; \
 	first=$$(mktemp "$${TMPDIR:-/tmp}/yvex-sources.XXXXXX"); \
 	second=$$(mktemp "$${TMPDIR:-/tmp}/yvex-sources.XXXXXX"); \
-	trap 'yvex_test_cleanup "$$first" "$$second"' EXIT HUP INT TERM; \
-	python3 $(SOURCE_MANIFEST_GENERATOR) --manifest $(SOURCE_OWNER_MANIFEST) --output "$$first"; \
-	python3 $(SOURCE_MANIFEST_GENERATOR) --manifest $(SOURCE_OWNER_MANIFEST) --output "$$second"; \
-	cmp "$$first" "$$second"
+	first_header=$$(mktemp "$${TMPDIR:-/tmp}/yvex-families.XXXXXX"); \
+	second_header=$$(mktemp "$${TMPDIR:-/tmp}/yvex-families.XXXXXX"); \
+	trap 'yvex_test_cleanup "$$first" "$$second" "$$first_header" "$$second_header"' \
+		EXIT HUP INT TERM; \
+	python3 $(SOURCE_MANIFEST_GENERATOR) --manifest $(SOURCE_OWNER_MANIFEST) \
+		--output "$$first" --family-header "$$first_header"; \
+	python3 $(SOURCE_MANIFEST_GENERATOR) --manifest $(SOURCE_OWNER_MANIFEST) \
+		--output "$$second" --family-header "$$second_header"; \
+	cmp "$$first" "$$second"; \
+	cmp "$$first_header" "$$second_header"
 
 generate-operator-registry: $(OPERATOR_REGISTRY_HEADER) $(OPERATOR_REGISTRY_C) \
 	$(OPERATOR_REGISTRY_IDENTITY)
@@ -1506,9 +1514,13 @@ $(OBJ_DIR)/%.o: %.c
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
 
-$(SOURCE_MANIFEST_MK): $(SOURCE_OWNER_MANIFEST) $(SOURCE_MANIFEST_GENERATOR)
+$(SOURCE_MANIFEST_MK) $(SOURCE_FAMILY_HEADER) &: \
+		$(SOURCE_OWNER_MANIFEST) $(SOURCE_MANIFEST_GENERATOR)
 	@mkdir -p $(@D)
-	python3 $(SOURCE_MANIFEST_GENERATOR) --manifest $(SOURCE_OWNER_MANIFEST) --output $@
+	python3 $(SOURCE_MANIFEST_GENERATOR) --manifest $(SOURCE_OWNER_MANIFEST) \
+		--output $(SOURCE_MANIFEST_MK) --family-header $(SOURCE_FAMILY_HEADER)
+
+$(OBJ_DIR)/src/graph/catalog.o: $(SOURCE_FAMILY_HEADER)
 
 $(QA_REGISTRY_MK) $(QA_REGISTRY_PROJECTIONS) &: \
 		$(QA_REGISTRY_SOURCE) $(QA_REGISTRY_GENERATOR)
