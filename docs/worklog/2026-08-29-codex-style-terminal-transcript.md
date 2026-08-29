@@ -7,7 +7,7 @@
 | Milestone | operator TUI/UX repair |
 | Branch | `models1` |
 | Baseline | `be38e60d40a84308716c008a2985d417d63f78d0` |
-| Checkpoint | `4464ef5c45df5305c6306de867e13abd9bcdbf70` |
+| Checkpoint | `005dd70c750c3cfe225cf5dab9e66cd28a7625ad` |
 | Subsystem | terminal UI, typed operator registry projection, operator runbook |
 | Model family | generic |
 | Hardware | not applicable |
@@ -49,6 +49,14 @@ No model-family, runtime-private, MiniMax, backend, protocol, or artifact owner 
 continues to render typed protocol and registry facts rather than parsing human output or reading
 backend-private state.
 
+The initial consolidation still rendered a wide product header, a full-width rule, persistent
+empty-state copy, zero-valued metrics, and a bottom-pinned composer. A real PTY comparison against
+the locally installed `codex-cli 0.151.0` rejected that visual result. The repaired entry frame is
+now a compact bordered YVEX identity card followed by one tip, the primary composer, and one
+context line. The card leaves the frame when conversation activity begins. Empty turn metrics are
+absent, prompt and activity markers align with the Codex hierarchy, and secondary color is kept
+quiet instead of acting as dashboard chrome.
+
 ## Evidence
 
 Focused evidence passed for `unit.tui`, `integration.repl`, and
@@ -68,15 +76,24 @@ The documentation-only follow-up recorded 11 PASS and the same four source-struc
 `build/qa/evidence/02805e0f9b33cc569882a5d0338d5cb5c8cc0fe0ae6a3044114c234724274ea4.json`;
 all documentation-specific guards passed.
 
+After the visual acceptance repair, `unit.tui` and the complete PTY lifecycle passed again. The
+canonical 100-test changed-file plan recorded 94 PASS and 6 FAIL in
+`build/qa/evidence/cbd90646d1549dec7581a43d5ed3f4a608648896c625d37901973d1e1dbc3808.json`.
+Every TUI test passed. The existing protocol-v15 fixture and four source-structure failures
+remained; `integration.tiny-vertical` additionally observed the already-running default host in
+its pre-host assertion. None intersects the renderer or authorizes modifying MiniMax, client, or
+protocol ownership in this delivery.
+
 ## After
 
-Bare `yvex` presents a stable conversation-first terminal without persistent tabs. Operator
+Bare `yvex` now opens with the same compact information hierarchy as the compared Codex terminal:
+identity card, composer, and one contextual footer instead of a full-screen dashboard. Operator
 actions remain reachable through the composer and temporary selectors, disconnected work keeps
 its draft, queued work cannot cross runtime identity silently, and live execution facts remain
-typed inline projections.
+typed inline projections after a real turn.
 
 This checkpoint establishes the requested TUI interaction contract. It does not claim that the
-five unrelated branch-wide QA failures are repaired, nor does it make a model-support,
+six unrelated branch-wide QA failures are repaired, nor does it make a model-support,
 performance, evaluation, or release claim.
 
 ```text
@@ -85,11 +102,11 @@ downstream_safe: true for the delivered TUI interaction contract
 downstream_consumer: normal bare yvex operator path
 gate blockers: none in the TUI owner
 boundary incompleteness: none in the delivered TUI scope
-evidence gaps: five unrelated existing branch-wide QA failures remain outside this delivery
+evidence gaps: six unrelated branch-wide QA failures remain outside this delivery
 deferred depth: none in the delivered TUI scope
 optimization debt: none measured
 generalization debt: none; the interaction contract is family-neutral
-external blockers: none
-required repairs: the owners of client protocol fixtures and source-size limits retain their failures
+external blockers: an already-running host invalidates the tiny-vertical pre-host assumption
+required repairs: protocol fixture, tiny isolation, and source-size owners retain their failures
 higher-capability non-claims: no model support, benchmark, evaluation or release qualification
 ```
