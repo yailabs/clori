@@ -172,7 +172,7 @@ static int test_turn_observation(void)
                        2u * 1048576u, 1u * 1048576u, 0.0);
     send_profile_event(&state, "t1", "launches", 320u, 4u, 2u, 0.125);
     send_profile_event(&state, "t1", "graphs", 6u, 1u, 5u, 0.0);
-    send_profile_event(&state, "t1", "tensorcore", 48u, 320u, 3u, 0.0);
+    send_profile_event(&state, "t1", "accelerated_matrix", 48u, 320u, 3u, 0.0);
     send_profile_event(&state, "t1", "attention", 20u, 18u, 2u, 0.5);
     send_profile_event(&state, "t1", "moe", 64u, 8u, 4096u, 0.75);
     send_profile_event(&state, "t1", "output", 8u, 1024u, 8u, 0.2);
@@ -201,7 +201,7 @@ static int test_turn_observation(void)
                          strstr(frame, "10.00 tok/s decode") &&
                          strstr(frame, "320 kernels") &&
                          strstr(frame, "10.00 MiB H2D") &&
-                         strstr(frame, "48/320 Tensor Core") &&
+                         strstr(frame, "48/320 accelerated matrix") &&
                          strstr(frame, "1.00 GiB prepared"),
                      "TUI projects typed turn and profile facts without inventing telemetry");
 
