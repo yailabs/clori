@@ -513,6 +513,7 @@ static int multimodal_execute(
     yvex_complete_artifact_admission admission;
     yvex_artifact_admission_failure failure = {0};
     yvex_runtime_component_session *session = NULL;
+    yvex_component_execution component = {0};
     yvex_runtime_av_conditioning_result result;
     yvex_media_condition condition = {
         .schema_version = YVEX_MEDIA_CONDITION_SCHEMA_V1,
@@ -554,6 +555,8 @@ static int multimodal_execute(
             &session, &admission, model.artifact, model.gguf, model.table,
             YVEX_BACKEND_KIND_CUDA, admission.payload_bytes,
             80ull * 1024ull * 1024ull * 1024ull, &err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_component_session_borrow(session, &component, &err);
     request = (yvex_media_conditioning_request){
         .schema_version = YVEX_MEDIA_CONDITIONING_SCHEMA_V2,
         .prompt = prompt,
@@ -565,7 +568,7 @@ static int multimodal_execute(
         .height = 192ull,
         .layer_count = 50ull,
         .maximum_prompt_tokens = maximum_tokens,
-        .text_session = session,
+        .text_component = &component,
         .conditioning = output,
         .text_tags = tags,
         .conditioning_capacity = output_values,

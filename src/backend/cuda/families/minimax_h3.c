@@ -45,7 +45,7 @@ typedef struct {
 } h3_torch_rng;
 
 typedef struct {
-    yvex_runtime_component_session *session;
+    const yvex_component_execution *component;
     yvex_backend *backend;
     unsigned long long batch, channels, height, width;
     unsigned long long kernel_launches, h2d_bytes, d2h_bytes;
@@ -542,8 +542,8 @@ static int h3_text_only(const yvex_media_conditioning_request *request,
     text.layer_count = request->layer_count; text.output = request->conditioning;
     text.output_capacity = request->conditioning_capacity;
     if (rc == YVEX_OK)
-        rc = yvex_runtime_component_text_execute(
-            request->text_session, &text, result, err);
+        rc = yvex_component_text_execute(
+            request->text_component, &text, result, err);
     if (rc == YVEX_OK && !h3_token_identity(&presentation, result->prompt_identity))
         rc = h3_refuse(err, YVEX_ERR_STATE, "minimax-h3.presentation.identity",
                         "T2VA presentation identity could not be sealed");
@@ -570,7 +570,7 @@ int yvex_backend_minimax_h3_fl2va_condition(
     int rc;
     if (result) memset(result, 0, sizeof(*result));
     if (!request || request->schema_version != YVEX_MEDIA_CONDITIONING_SCHEMA_V2 ||
-        !request->prompt || !request->tokenizer || !request->text_session ||
+        !request->prompt || !request->tokenizer || !request->text_component ||
         !request->conditioning || !request->text_tags || !result ||
         request->condition_count > YVEX_MEDIA_CONDITION_CAP ||
         (request->condition_count && (!request->conditions || !request->condition_images)))
@@ -601,8 +601,8 @@ int yvex_backend_minimax_h3_fl2va_condition(
         .observer_context = request->vision_observer_context,
     };
     if (rc == YVEX_OK)
-        rc = yvex_runtime_component_vision_cuda(
-            request->text_session, &vision, &vision_result, err);
+        rc = yvex_component_vision_execute(
+            request->text_component, &vision, &vision_result, err);
     if (rc == YVEX_OK && request->observe) {
         yvex_media_conditioning_observation observation = {
             .token_ids = presentation.ids,
@@ -641,8 +641,8 @@ int yvex_backend_minimax_h3_fl2va_condition(
     text.layer_count = request->layer_count; text.multimodal = &multimodal;
     text.output = request->conditioning; text.output_capacity = request->conditioning_capacity;
     if (rc == YVEX_OK)
-        rc = yvex_runtime_component_multimodal_text_cuda(
-            request->text_session, &text, result, err);
+        rc = yvex_component_multimodal_text_execute(
+            request->text_component, &text, result, err);
     if (rc == YVEX_OK &&
         (!h3_token_identity(&presentation, result->prompt_identity) ||
          !h3_processor_identity(&presentation, &images, result->processor_identity)))
@@ -818,7 +818,7 @@ static int h3_encoder_weight(h3_encoder_run *run, const char *prefix,
     if (length < 0 || (size_t)length >= sizeof(name))
         return h3_refuse(err, YVEX_ERR_BOUNDS, "minimax-h3.vae.binding",
                          "Visual VAE tensor name exceeded its bound");
-    return yvex_runtime_component_weight_view(run->session, name, weight, err);
+    return yvex_component_execution_weight_view(run->component, name, weight, err);
 }
 
 static int h3_encoder_conv(
@@ -1062,7 +1062,6 @@ int yvex_backend_minimax_h3_keyframe_encode(
     float *pixels = NULL, *moments = NULL, *noise = NULL;
     unsigned long long latent_height, latent_width, spatial, latent_values;
     unsigned long long pixel_values, moment_values, image, channel, position;
-    const yvex_runtime_residency_summary *summary;
     int rc;
     if (result) memset(result, 0, sizeof(*result));
     if (!request || request->schema_version != YVEX_MEDIA_CONDITIONING_SCHEMA_V2 ||
@@ -1072,7 +1071,7 @@ int yvex_backend_minimax_h3_keyframe_encode(
         request->height % 16ull || request->pixel_channels != 3ull ||
         request->latent_channels != 24ull || !request->pixel_mean ||
         !request->pixel_std || !request->latent_mean || !request->latent_std ||
-        !request->video_session || !request->condition_latents || !result)
+        !request->video_component || !request->condition_latents || !result)
         return h3_refuse(err, YVEX_ERR_INVALID_ARG, "minimax-h3.fl2va.keyframe",
                          "one admitted typed FL2VA keyframe request is required");
     rc = h3_condition_order(request->conditions, request->condition_count, &images, err);
@@ -1112,14 +1111,14 @@ int yvex_backend_minimax_h3_keyframe_encode(
                     ((float)images.canvas[image].data[source] / 255.0f -
                      request->pixel_mean[channel]) / request->pixel_std[channel];
             }
-    run.session = request->video_session;
-    run.backend = yvex_runtime_component_session_backend(request->video_session);
+    run.component = request->video_component;
+    run.backend = request->video_component->backend;
     run.batch = request->condition_count;
     run.channels = 3ull;
     run.height = request->height;
     run.width = request->width;
     if (rc == YVEX_OK && !run.backend)
-        rc = h3_refuse(err, YVEX_ERR_STATE, "minimax-h3.vae.session",
+        rc = h3_refuse(err, YVEX_ERR_STATE, "minimax-h3.vae.execution",
                         "Visual VAE component has no admitted CUDA backend");
     if (rc == YVEX_OK) rc = h3_encoder_execute(&run, pixels, moments, err);
     if (rc == YVEX_OK && request->observe)
@@ -1147,8 +1146,8 @@ int yvex_backend_minimax_h3_keyframe_encode(
             rc = h3_refuse(err, YVEX_ERR_STATE, "minimax-h3.vae.identity",
                             "Visual VAE latent identity could not be sealed");
     }
-    summary = yvex_runtime_component_session_summary(request->video_session);
-    if (rc == YVEX_OK && (!summary || !summary->sealed))
+    if (rc == YVEX_OK &&
+        !yvex_sha256_hex_valid(request->video_component->residency_identity))
         rc = h3_refuse(err, YVEX_ERR_STATE, "minimax-h3.vae.evidence",
                         "Visual VAE residency evidence is incomplete");
     if (rc == YVEX_OK) {
@@ -1159,13 +1158,13 @@ int yvex_backend_minimax_h3_keyframe_encode(
         result->latent_height = latent_height;
         result->latent_width = latent_width;
         result->latent_values = latent_values;
-        result->resident_bytes = summary->encoded_bytes;
+        result->resident_bytes = request->video_component->resident_encoded_bytes;
         result->kernel_launches = run.kernel_launches;
         result->h2d_bytes = run.h2d_bytes;
         result->d2h_bytes = run.d2h_bytes;
         result->device_bytes = run.peak_device_bytes;
         result->peak_workspace_bytes = run.peak_device_bytes;
-        memcpy(result->residency_identity, summary->residency_identity,
+        memcpy(result->residency_identity, request->video_component->residency_identity,
                sizeof(result->residency_identity));
         for (image = 0ull; image < request->condition_count; ++image)
             memcpy(result->media_identities[image], images.canvas[image].content_identity,

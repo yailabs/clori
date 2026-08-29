@@ -28,7 +28,7 @@ typedef struct yvex_runtime_av_keyframe_result yvex_runtime_av_keyframe_result;
 typedef struct yvex_runtime_av_latent_context yvex_runtime_av_latent_context;
 typedef struct yvex_runtime_latent_result yvex_runtime_latent_result;
 typedef struct yvex_runtime_latent_evaluator_result yvex_runtime_latent_evaluator_result;
-typedef struct yvex_runtime_component_session yvex_runtime_component_session;
+typedef struct yvex_component_execution yvex_component_execution;
 typedef struct yvex_tokenizer yvex_tokenizer;
 typedef struct yvex_image yvex_image;
 typedef struct yvex_runtime_av_video_decode_options yvex_runtime_av_video_decode_options;
@@ -74,8 +74,7 @@ typedef struct {
     const yvex_image *condition_images;
     unsigned long long condition_count, width, height, layer_count;
     unsigned long long maximum_prompt_tokens;
-    /* Borrowed from runtime and valid only for the conditioning callback. */
-    yvex_runtime_component_session *text_session;
+    const yvex_component_execution *text_component;
     float *conditioning;
     unsigned int *text_tags;
     unsigned long long conditioning_capacity, text_tag_capacity;
@@ -94,8 +93,7 @@ typedef struct {
     unsigned long long condition_count, width, height, posterior_seed;
     const float *pixel_mean, *pixel_std, *latent_mean, *latent_std;
     unsigned long long pixel_channels, latent_channels;
-    /* Borrowed from runtime and valid only for the keyframe callback. */
-    yvex_runtime_component_session *video_session;
+    const yvex_component_execution *video_component;
     float *condition_latents;
     unsigned long long condition_latent_capacity;
     int (*observe)(void *, const float *, unsigned long long,
@@ -174,11 +172,10 @@ typedef int (*yvex_media_latent_fn)(
     unsigned long long, yvex_runtime_latent_result *,
     yvex_runtime_latent_evaluator_result *, yvex_error *);
 typedef int (*yvex_media_video_fn)(
-    yvex_runtime_component_session *, const yvex_runtime_av_video_decode_options *,
+    const yvex_component_execution *, const yvex_runtime_av_video_decode_options *,
     yvex_runtime_av_video_decode_result *, yvex_component_execution_failure *, yvex_error *);
 typedef int (*yvex_media_audio_fn)(
-    const yvex_artifact *, const yvex_gguf *, const yvex_tensor_table *,
-    yvex_backend_kind, const yvex_runtime_av_audio_decode_options *, unsigned long long,
+    const yvex_component_execution *, const yvex_runtime_av_audio_decode_options *,
     yvex_runtime_av_audio_decode_result *, yvex_component_execution_failure *, yvex_error *);
 
 typedef struct yvex_media_execution_recipe {

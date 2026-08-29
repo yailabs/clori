@@ -16,7 +16,7 @@ typedef struct yvex_complete_artifact_admission yvex_complete_artifact_admission
 typedef struct yvex_artifact_admission_failure yvex_artifact_admission_failure;
 typedef struct yvex_materialization_session yvex_materialization_session;
 typedef struct yvex_backend yvex_backend;
-typedef struct yvex_runtime_component_session yvex_runtime_component_session;
+typedef struct yvex_component_execution yvex_component_execution;
 typedef struct yvex_runtime_latent_result yvex_runtime_latent_result;
 typedef struct yvex_runtime_latent_evaluator_result yvex_runtime_latent_evaluator_result;
 typedef struct yvex_runtime_av_layout_output yvex_runtime_av_layout_output;
@@ -458,23 +458,22 @@ typedef struct {
         unsigned long long output_capacity,
         unsigned long long maximum_host_bytes, unsigned long long maximum_device_bytes,
         yvex_minimax_h3_conditioning_result *result, yvex_error *err);
-    int (*transformer_component_execute)(yvex_runtime_component_session *,
+    int (*transformer_component_execute)(const yvex_component_execution *,
         const yvex_minimax_h3_omni_transformer_request *,
         yvex_minimax_h3_omni_transformer_result *, yvex_error *);
     int (*audio_vae_decode_cpu)(yvex_materialization_session *session,
         const yvex_minimax_h3_audio_decode_options *options,
         yvex_minimax_h3_audio_decode_result *result, yvex_minimax_h3_component_execution_failure *failure,
         yvex_error *err);
-    int (*audio_vae_execute_artifact)(
-        const yvex_artifact *, const yvex_gguf *, const yvex_tensor_table *,
-        yvex_backend_kind, const yvex_minimax_h3_audio_decode_options *, unsigned long long,
+    int (*audio_vae_decode_backend)(
+        const yvex_component_execution *, const yvex_minimax_h3_audio_decode_options *,
         yvex_minimax_h3_audio_decode_result *, yvex_minimax_h3_component_execution_failure *,
         yvex_error *);
     int (*video_vae_decode_cpu)(yvex_materialization_session *session,
         const yvex_minimax_h3_video_decode_options *options,
         yvex_minimax_h3_video_decode_result *result, yvex_minimax_h3_component_execution_failure *failure,
         yvex_error *err);
-    int (*video_vae_decode_backend)(yvex_runtime_component_session *,
+    int (*video_vae_decode_backend)(const yvex_component_execution *,
         const yvex_minimax_h3_video_decode_options *, yvex_minimax_h3_video_decode_result *,
         yvex_minimax_h3_component_execution_failure *, yvex_error *);
 } yvex_minimax_h3_graph_api;

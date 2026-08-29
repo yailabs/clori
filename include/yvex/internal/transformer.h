@@ -228,7 +228,7 @@ struct yvex_backend_transformer_operations {
                                  const yvex_transformer_dense_decoder_request *,
                                  yvex_transformer_dense_decoder_result *, yvex_error *);
 };
-typedef struct yvex_runtime_component_session yvex_runtime_component_session;
+typedef struct yvex_component_execution yvex_component_execution;
 typedef int (*yvex_transformer_decoder_weight_name_fn)(
     void *context, unsigned long long block, unsigned int slot,
     char output[256], yvex_error *err);
@@ -239,8 +239,8 @@ typedef struct {
     const char *output_weight_name, *output_bias_name;
     yvex_transformer_dense_decoder_request execution;
 } yvex_transformer_resident_decoder_request;
-int yvex_runtime_component_dense_decoder_execute(
-    const yvex_runtime_component_session *session,
+int yvex_component_dense_decoder_execute(
+    const yvex_component_execution *execution,
     const yvex_transformer_resident_decoder_request *request,
     yvex_transformer_dense_decoder_result *result, yvex_error *err);
 

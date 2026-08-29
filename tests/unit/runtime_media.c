@@ -171,7 +171,7 @@ static int fixture_condition(
     unsigned int tokens[256];
     unsigned long long token_count;
     unsigned long long index, expected;
-    if (!request || !request->tokenizer || !request->prompt || !request->text_session ||
+    if (!request || !request->tokenizer || !request->prompt || !request->text_component ||
         request->condition_count > YVEX_RUNTIME_MEDIA_CONDITION_CAP ||
         (request->condition_count &&
          (!request->conditions || !request->condition_images))) {
@@ -242,7 +242,7 @@ static int fixture_keyframe(const yvex_media_keyframe_request *request,
                             yvex_runtime_av_keyframe_result *result, yvex_error *err)
 {
     unsigned long long index, latent_height, latent_width, values;
-    if (!request || !result || !request->video_session ||
+    if (!request || !result || !request->video_component ||
         request->condition_count > YVEX_RUNTIME_MEDIA_CONDITION_CAP)
         return YVEX_ERR_INVALID_ARG;
     memset(result, 0, sizeof(*result));
@@ -296,7 +296,8 @@ static int fixture_latent(
     yvex_runtime_latent_observation observation = {0};
     unsigned long long index;
     context->latent_calls++;
-    if (!execution || !execution->transformer_session || !plan || !execution->conditioning ||
+    if (!execution || !execution->transformer_component || !plan ||
+        !execution->conditioning ||
         !execution->conditioning_capacity ||
         !yvex_sha256_hex_valid(execution->conditioning_identity) || !execution->layout ||
         !execution->layout_result || !execution->layout_result->complete ||
@@ -362,7 +363,7 @@ static int fixture_latent(
 }
 
 static int fixture_video(
-    yvex_runtime_component_session *session,
+    const yvex_component_execution *component,
     const yvex_runtime_av_video_decode_options *options,
     yvex_runtime_av_video_decode_result *result,
     yvex_component_execution_failure *failure, yvex_error *err)
@@ -371,7 +372,7 @@ static int fixture_video(
     unsigned long long index;
     (void)failure;
     context->video_calls++;
-    if (!session || !options || !options->output || !options->output_capacity ||
+    if (!component || !options || !options->output || !options->output_capacity ||
         options->max_workspace_bytes < (1ull << 20u) ||
         (options->cancelled && options->cancelled(options->cancellation_context))) {
         yvex_error_set(err, YVEX_ERR_CANCELLED, "test.runtime-media.video",
@@ -392,22 +393,16 @@ static int fixture_video(
 }
 
 static int fixture_audio(
-    const yvex_artifact *artifact, const yvex_gguf *gguf,
-    const yvex_tensor_table *tensors, yvex_backend_kind backend_kind,
+    const yvex_component_execution *component,
     const yvex_runtime_av_audio_decode_options *options,
-    unsigned long long maximum_device_bytes, yvex_runtime_av_audio_decode_result *result,
+    yvex_runtime_av_audio_decode_result *result,
     yvex_component_execution_failure *failure, yvex_error *err)
 {
     media_fixture_context *context = active_fixture_context;
     unsigned long long index, samples;
-    (void)artifact;
-    (void)gguf;
-    (void)tensors;
-    (void)backend_kind;
-    (void)maximum_device_bytes;
     (void)failure;
     context->audio_calls++;
-    if (!options || !options->latent || options->batch != 2ull ||
+    if (!component || !options || !options->latent || options->batch != 2ull ||
         options->latent_steps != FIXTURE_AUDIO_STEPS ||
         !yvex_core_u64_mul(options->latent_steps, 800ull, &samples) ||
         options->output_capacity != options->batch * samples ||

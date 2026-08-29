@@ -212,7 +212,12 @@ static int decode_cuda(const audio_arguments *arguments, const yvex_artifact *ar
     yvex_minimax_h3_audio_decode_options options = {0};
     yvex_minimax_h3_audio_decode_result result;
     yvex_minimax_h3_component_execution_failure failure = {0};
+    yvex_artifact_admission_failure admission_failure = {0};
+    yvex_complete_artifact_admission admission;
+    yvex_runtime_component_session *session = NULL;
+    yvex_component_execution component = {0};
     struct timespec begin, end;
+    yvex_error cleanup;
     size_t latent_values, output_values;
     float *latent = NULL, *output = NULL;
     int rc = YVEX_ERR_BOUNDS;
@@ -237,10 +242,24 @@ static int decode_cuda(const audio_arguments *arguments, const yvex_artifact *ar
     options.output_capacity = output_values;
     options.max_workspace_bytes = 16ull * 1024ull * 1024ull * 1024ull;
     (void)clock_gettime(CLOCK_MONOTONIC, &begin);
-    rc = yvex_graph_register_minimax_h3()->audio_vae_execute_artifact(
-        artifact, gguf, tensors, YVEX_BACKEND_KIND_CUDA, &options,
-        16ull * 1024ull * 1024ull * 1024ull,
-        &result, &failure, err);
+    rc = yvex_graph_register_minimax_h3()->component_admit(
+        "audio_vae", artifact, gguf, tensors, NULL, &admission, NULL,
+        &admission_failure, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_component_session_open(
+            &session, &admission, artifact, gguf, tensors, YVEX_BACKEND_KIND_CUDA,
+            admission.payload_bytes, 16ull * 1024ull * 1024ull * 1024ull, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_component_session_borrow(session, &component, err);
+    if (rc == YVEX_OK)
+        rc = yvex_graph_register_minimax_h3()->audio_vae_decode_backend(
+            &component, &options, &result, &failure, err);
+    yvex_error_clear(&cleanup);
+    if (yvex_runtime_component_session_close(&session, &cleanup) != YVEX_OK &&
+        rc == YVEX_OK) {
+        rc = yvex_error_code(&cleanup);
+        if (err) *err = cleanup;
+    }
     (void)clock_gettime(CLOCK_MONOTONIC, &end);
     printf("decode_wall_seconds=%.6f\n", elapsed_seconds(&begin, &end));
     if (rc != YVEX_OK) {

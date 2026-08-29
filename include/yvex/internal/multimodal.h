@@ -132,11 +132,11 @@ typedef struct {
 
 int yvex_backend_vision_execute(
     yvex_backend *, const yvex_backend_vision_request *, yvex_vision_result *, yvex_error *);
-int yvex_runtime_component_vision_cuda(
-    const yvex_runtime_component_session *, const yvex_vision_request *,
+int yvex_component_vision_execute(
+    const yvex_component_execution *, const yvex_vision_request *,
     yvex_vision_result *, yvex_error *);
-int yvex_runtime_component_multimodal_text_cuda(
-    const yvex_runtime_component_session *, const yvex_component_multimodal_text_request *,
+int yvex_component_multimodal_text_execute(
+    const yvex_component_execution *, const yvex_component_multimodal_text_request *,
     yvex_runtime_av_conditioning_result *, yvex_error *);
 
 #ifdef __cplusplus

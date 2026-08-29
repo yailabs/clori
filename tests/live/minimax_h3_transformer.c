@@ -650,6 +650,7 @@ static int execute_artifact(const yvex_artifact *artifact, const yvex_gguf *gguf
     yvex_complete_artifact_admission admission;
     yvex_artifact_admission_failure failure;
     yvex_runtime_component_session *session = NULL;
+    yvex_component_execution component = {0};
     yvex_error cleanup;
     int rc;
     request->recipe = graph ? graph->omni_recipe : NULL;
@@ -670,7 +671,10 @@ static int execute_artifact(const yvex_artifact *artifact, const yvex_gguf *gguf
         rc = yvex_runtime_component_session_open(
             &session, &admission, artifact, gguf, tensors, YVEX_BACKEND_KIND_CUDA,
             80ull * 1024ull * 1024ull * 1024ull, 16ull * 1024ull * 1024ull * 1024ull, err);
-    if (rc == YVEX_OK) rc = graph->transformer_component_execute(session, request, result, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_component_session_borrow(session, &component, err);
+    if (rc == YVEX_OK)
+        rc = graph->transformer_component_execute(&component, request, result, err);
     yvex_error_clear(&cleanup);
     if (yvex_runtime_component_session_close(&session, &cleanup) != YVEX_OK && rc == YVEX_OK) {
         rc = yvex_error_code(&cleanup);
@@ -710,6 +714,7 @@ static int execute_latent(const char *path, const char *conditioning_path,
     yvex_complete_artifact_admission admission;
     yvex_artifact_admission_failure failure;
     yvex_runtime_component_session *session = NULL;
+    yvex_component_execution component = {0};
     yvex_minimax_h3_t2va_plan plan;
     yvex_runtime_av_layout_result layout_result;
     yvex_runtime_latent_result latent_result;
@@ -759,6 +764,8 @@ static int execute_latent(const char *path, const char *conditioning_path,
         rc = yvex_runtime_component_session_open(
             &session, &admission, artifact, gguf, tensors, YVEX_BACKEND_KIND_CUDA,
             80ull * 1024ull * 1024ull * 1024ull, 16ull * 1024ull * 1024ull * 1024ull, &err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_component_session_borrow(session, &component, &err);
     if (rc == YVEX_OK) rc = graph->t2va_plan_build(&plan, &plan_request, &err);
     layout_request.plan = &plan;
     if (rc == YVEX_OK)
@@ -767,7 +774,7 @@ static int execute_latent(const char *path, const char *conditioning_path,
         rc = specialize_outputs(
             graph->omni_recipe,
             &video_specialization, &audio_specialization, &err);
-    context.transformer_session = session;
+    context.transformer_component = &component;
     context.conditioning = conditioning;
     context.conditioning_capacity = CONDITION_VALUES;
     context.layout = &layout;
@@ -1046,6 +1053,7 @@ static int execute_latent_fixture(
     yvex_complete_artifact_admission admission;
     yvex_artifact_admission_failure failure;
     yvex_runtime_component_session *session = NULL;
+    yvex_component_execution component = {0};
     yvex_minimax_h3_t2va_plan plan = {0};
     yvex_runtime_av_layout_result layout_result = {0};
     yvex_runtime_latent_result latent_result = {0};
@@ -1102,6 +1110,8 @@ static int execute_latent_fixture(
         rc = yvex_runtime_component_session_open(
             &session, &admission, artifact, gguf, tensors, YVEX_BACKEND_KIND_CUDA,
             80ull * 1024ull * 1024ull * 1024ull, 4ull * 1024ull * 1024ull * 1024ull, &err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_component_session_borrow(session, &component, &err);
     layout_request.plan = &plan;
     if (rc == YVEX_OK)
         rc = graph->t2va_layout_build(&layout_request, &layout, &layout_result, &err);
@@ -1109,7 +1119,7 @@ static int execute_latent_fixture(
         rc = specialize_outputs(
             graph->omni_recipe,
             &video_specialization, &audio_specialization, &err);
-    context.transformer_session = session;
+    context.transformer_component = &component;
     context.conditioning = fixture.conditioning;
     context.conditioning_capacity = conditioning_values;
     context.layout = &layout;

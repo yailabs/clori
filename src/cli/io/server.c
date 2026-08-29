@@ -348,10 +348,10 @@ static int media_prepare(const cli_server_profile *profile,
                        "media mode requires a composite installation and publication root");
         return YVEX_ERR_INVALID_ARG;
     }
-    adapter = yvex_graph_component_variant_find_family(profile->family);
+    adapter = yvex_graph_component_variant_find(profile->target);
     if (!adapter || !adapter->media_target_profile || !adapter->media_execution) {
         yvex_error_setf(err, YVEX_ERR_UNSUPPORTED, "server.media-profile",
-                        "family has no conversational media adapter: %s", profile->family);
+                        "target has no conversational media adapter: %s", profile->target);
         return YVEX_ERR_UNSUPPORTED;
     }
     rc = adapter->media_target_profile(&target, err);

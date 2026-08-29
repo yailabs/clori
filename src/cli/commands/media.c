@@ -6,7 +6,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <yvex/internal/core.h>
-#include <yvex/internal/families/minimax_h3.h>
 #include <yvex/internal/graph.h>
 #include <yvex/internal/io.h>
 #include <yvex/internal/media.h>
@@ -67,35 +66,23 @@ static int media_command_error(const yvex_error *err)
 
 int yvex_media_generate_command(const yvex_graph_args *args, yvex_error *err)
 {
-    const yvex_minimax_h3_api *model = yvex_model_register_minimax_h3();
     const yvex_component_variant_adapter *adapter =
-        yvex_graph_component_variant_find_family("minimax-h3");
+        args ? yvex_graph_component_variant_find(args->media.target) : NULL;
     const yvex_media_execution_recipe *execution =
         adapter ? adapter->media_execution : NULL;
-    const yvex_minimax_h3_latent_normalization *normalization;
-    yvex_minimax_h3_architecture architecture;
-    yvex_minimax_h3_failure failure;
+    yvex_media_target_profile target = {0};
     yvex_runtime_av_generation_request request = {0};
     yvex_runtime_av_generation_result result;
     struct sigaction old_interrupt, old_terminate;
     yvex_error restore_error;
     int rc, restore_rc, render_rc, signals_installed = 0;
-    if (!args || !args->media.generate ||
-        strcmp(args->media.target, YVEX_MINIMAX_H3_TARGET_ID) != 0 || !model ||
-        !execution) {
+    if (!args || !args->media.generate || !adapter ||
+        !adapter->media_target_profile || !execution) {
         yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "media.generate.cli",
-                       "only the admitted MiniMax-H3 FL2VA target is available");
+                       "the requested target has no admitted media adapter");
         return media_command_error(err);
     }
-    memset(&architecture, 0, sizeof(architecture));
-    memset(&failure, 0, sizeof(failure));
-    rc = model->architecture_canonical(&architecture, &failure, err);
-    normalization = rc == YVEX_OK ? model->latent_normalization() : NULL;
-    if (rc == YVEX_OK && !normalization) {
-        yvex_error_set(err, YVEX_ERR_STATE, "media.generate.cli",
-                       "MiniMax-H3 latent normalization is unavailable");
-        rc = YVEX_ERR_STATE;
-    }
+    rc = adapter->media_target_profile(&target, err);
     request.schema_version = YVEX_RUNTIME_AV_GENERATION_SCHEMA_V1;
     request.target = args->media.target;
     request.prompt = args->media.prompt;
@@ -104,18 +91,18 @@ int yvex_media_generate_command(const yvex_graph_args *args, yvex_error *err)
     request.transformer_artifact_path = args->media.transformer_artifact;
     request.video_artifact_path = args->media.video_artifact;
     request.audio_artifact_path = args->media.audio_artifact;
-    request.source_identity = YVEX_MINIMAX_H3_SOURCE_TREE_IDENTITY;
+    request.source_identity = target.source_identity;
     request.frames = args->media.frames;
     request.width = args->media.width;
     request.height = args->media.height;
     request.fps_numerator = args->media.fps_numerator;
     request.fps_denominator = args->media.fps_denominator;
-    request.audio_sample_rate = architecture.audio_vae.sample_rate;
+    request.audio_sample_rate = target.audio_sample_rate;
     request.inference_steps = (unsigned int)args->media.inference_steps;
     request.conditioning_layers = execution->conditioning_layers;
     request.transformer_blocks = args->media.transformer_blocks;
     request.seed = args->media.seed;
-    request.keyframe_encode_seed = 42ull;
+    request.keyframe_encode_seed = target.keyframe_encode_seed;
     request.maximum_prompt_tokens = execution->maximum_prompt_tokens;
     request.maximum_packed_rows = execution->maximum_packed_rows;
     request.maximum_host_bytes = args->media.maximum_host_bytes;
@@ -123,23 +110,23 @@ int yvex_media_generate_command(const yvex_graph_args *args, yvex_error *err)
     request.maximum_workspace_bytes = args->media.maximum_workspace_bytes;
     request.maximum_file_bytes = args->media.maximum_output_bytes;
     request.component_backend = execution->component_backend;
-    request.video_temporal_ratio = architecture.video_vae.temporal_ratio;
-    request.video_clip_length = architecture.video_vae.clip_length;
-    request.video_token_drop = architecture.video_vae.token_drop;
-    request.video_spatial_ratio = architecture.video_vae.spatial_ratio;
-    request.video_tile_size = architecture.video_vae.tile_size;
-    request.video_minimum_tile_overlap = architecture.video_vae.tile_overlap;
-    request.video_mean = normalization ? normalization->video_mean : NULL;
-    request.video_std = normalization ? normalization->video_std : NULL;
-    request.audio_mean = normalization ? normalization->audio_mean : NULL;
-    request.audio_std = normalization ? normalization->audio_std : NULL;
-    request.pixel_mean = normalization ? normalization->pixel_mean : NULL;
-    request.pixel_std = normalization ? normalization->pixel_std : NULL;
-    request.video_channels = normalization ? normalization->video_channels : 0ull;
-    request.audio_channels = normalization ? normalization->audio_channels : 0ull;
-    request.pixel_channels = normalization ? normalization->pixel_channels : 0ull;
-    request.audio_output_channels = architecture.audio_vae.output_channels;
-    request.audio_samples_per_step = architecture.audio_vae.decoder_rate_product;
+    request.video_temporal_ratio = target.video_temporal_ratio;
+    request.video_clip_length = target.video_clip_length;
+    request.video_token_drop = target.video_token_drop;
+    request.video_spatial_ratio = target.video_spatial_ratio;
+    request.video_tile_size = target.video_tile_size;
+    request.video_minimum_tile_overlap = target.video_minimum_tile_overlap;
+    request.video_mean = target.video_mean;
+    request.video_std = target.video_std;
+    request.audio_mean = target.audio_mean;
+    request.audio_std = target.audio_std;
+    request.pixel_mean = target.pixel_mean;
+    request.pixel_std = target.pixel_std;
+    request.video_channels = target.video_channels;
+    request.audio_channels = target.audio_channels;
+    request.pixel_channels = target.pixel_channels;
+    request.audio_output_channels = target.audio_output_channels;
+    request.audio_samples_per_step = target.audio_samples_per_step;
     request.plan_build = execution->plan_build;
     request.layout_build = execution->layout_build;
     request.component_admit = execution->component_admit;

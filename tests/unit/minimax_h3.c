@@ -1019,12 +1019,12 @@ static int test_component_admission_routing(void)
                          &conditioning, &err) == YVEX_ERR_INVALID_ARG &&
                          !conditioning.complete && ((unsigned char *)output)[0] == 0x5a,
                      "generic text component refuses absent admitted artifact without publication");
-    YVEX_TEST_ASSERT(yvex_runtime_component_joint_transformer_execute(
+    YVEX_TEST_ASSERT(yvex_component_joint_transformer_execute(
                          NULL, NULL, 0ull, NULL, NULL, &joint_request,
                          &joint_result, &err) == YVEX_ERR_INVALID_ARG &&
                          !joint_result.complete,
                      "generic joint component refuses an absent resident execution recipe");
-    YVEX_TEST_ASSERT(yvex_runtime_component_alias_decoder_execute(
+    YVEX_TEST_ASSERT(yvex_component_alias_decoder_execute(
                          NULL, &alias_request, &alias_result, &err) ==
                          YVEX_ERR_INVALID_ARG &&
                          !alias_result.complete,

@@ -84,7 +84,7 @@ typedef struct {
 
 typedef struct {
     const yvex_runtime_av_generation_request *request;
-    yvex_runtime_component_session *session;
+    const yvex_component_execution *component;
 } video_decode_context;
 
 static int media_artifact_path(char output[YVEX_PATH_CAP], const char *root,
@@ -1097,16 +1097,19 @@ static int conditioning_component_execute(
     const yvex_runtime_av_generation_request *generation = state->request;
     yvex_model_context *text = &state->model->text;
     yvex_runtime_component_session *session = NULL;
+    yvex_component_execution component = {0};
     yvex_error cleanup;
     int rc, cleanup_rc;
     rc = yvex_runtime_component_session_open(
         &session, state->model->admissions + MEDIA_COMPONENT_TEXT,
         text->artifact, text->gguf, text->table, generation->component_backend,
         generation->maximum_host_bytes, generation->maximum_device_bytes, err);
-    request->text_session = session;
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_component_session_borrow(session, &component, err);
+    request->text_component = rc == YVEX_OK ? &component : NULL;
     if (rc == YVEX_OK)
         rc = generation->condition(request, &state->conditioning_result, err);
-    request->text_session = NULL;
+    request->text_component = NULL;
     yvex_error_clear(&cleanup);
     cleanup_rc = yvex_runtime_component_session_close(&session, &cleanup);
     if (cleanup_rc != YVEX_OK) {
@@ -1122,16 +1125,19 @@ static int keyframe_component_execute(
     const yvex_runtime_av_generation_request *generation = state->request;
     component_view *video = &state->model->video;
     yvex_runtime_component_session *session = NULL;
+    yvex_component_execution component = {0};
     yvex_error cleanup;
     int rc, cleanup_rc;
     rc = yvex_runtime_component_session_open(
         &session, state->model->admissions + MEDIA_COMPONENT_VIDEO,
         video->artifact, video->gguf, video->tensors, generation->component_backend,
         generation->maximum_host_bytes, generation->maximum_device_bytes, err);
-    request->video_session = session;
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_component_session_borrow(session, &component, err);
+    request->video_component = rc == YVEX_OK ? &component : NULL;
     if (rc == YVEX_OK)
         rc = generation->keyframe_encode(request, &state->keyframe_result, err);
-    request->video_session = NULL;
+    request->video_component = NULL;
     yvex_error_clear(&cleanup);
     cleanup_rc = yvex_runtime_component_session_close(&session, &cleanup);
     if (cleanup_rc != YVEX_OK) {
@@ -1307,6 +1313,7 @@ static int latent_execute(generation_state *state, yvex_error *err)
     const yvex_complete_artifact_admission *admission =
         state->model->admissions + MEDIA_COMPONENT_TRANSFORMER;
     yvex_runtime_component_session *session = NULL;
+    yvex_component_execution component = {0};
     yvex_runtime_av_latent_context context = {0};
     yvex_error cleanup;
     int rc, cleanup_rc;
@@ -1326,7 +1333,9 @@ static int latent_execute(generation_state *state, yvex_error *err)
             &session, admission, view->artifact, view->gguf, view->tensors,
             request->component_backend, request->maximum_host_bytes,
             request->maximum_device_bytes, err);
-    context.transformer_session = session;
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_component_session_borrow(session, &component, err);
+    context.transformer_component = rc == YVEX_OK ? &component : NULL;
     context.conditioning = state->conditioning;
     context.conditioning_capacity = state->conditioning_values;
     context.condition_latents = state->condition_latents;
@@ -1433,7 +1442,7 @@ static int video_decode(
     options.cancelled = context->request->cancel_requested;
     options.cancellation_context = context->request->cancel_context;
     rc = context->request->video_decode(
-        context->session, &options, &result, &failure, err);
+        context->component, &options, &result, &failure, err);
     if (rc == YVEX_OK) {
         evidence->output_values = result.output_values;
         evidence->kernel_launches = result.kernel_launches;
@@ -1457,7 +1466,9 @@ static int video_execute(generation_state *state, yvex_error *err)
     component_view *view = &state->model->video;
     const yvex_complete_artifact_admission *admission =
         state->model->admissions + MEDIA_COMPONENT_VIDEO;
-    video_decode_context context = {request, NULL};
+    yvex_runtime_component_session *session = NULL;
+    yvex_component_execution component = {0};
+    video_decode_context context = {request, &component};
     yvex_error cleanup;
     int rc, cleanup_rc;
     if (!yvex_core_u64_mul(3ull, request->frames, &state->rgb_values) ||
@@ -1485,9 +1496,11 @@ static int video_execute(generation_state *state, yvex_error *err)
         rc = yvex_runtime_av_video_reconstruction_plan_build(&plan_request, &plan, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_component_session_open(
-            &context.session, admission, view->artifact, view->gguf, view->tensors,
+            &session, admission, view->artifact, view->gguf, view->tensors,
             request->component_backend, request->maximum_host_bytes,
             request->maximum_device_bytes, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_component_session_borrow(session, &component, err);
     execution.schema_version = YVEX_RUNTIME_AV_VIDEO_RECONSTRUCTION_SCHEMA_V1;
     execution.plan = &plan;
     execution.latent = state->video_latent;
@@ -1505,7 +1518,7 @@ static int video_execute(generation_state *state, yvex_error *err)
         rc = yvex_runtime_av_video_reconstruct(
             &execution, state->rgb, state->rgb_values, &state->video_result, err);
     yvex_error_clear(&cleanup);
-    cleanup_rc = yvex_runtime_component_session_close(&context.session, &cleanup);
+    cleanup_rc = yvex_runtime_component_session_close(&session, &cleanup);
     if (cleanup_rc != YVEX_OK) { rc = cleanup_rc; if (err) *err = cleanup; }
     return rc;
 }
@@ -1514,10 +1527,15 @@ static int audio_execute(generation_state *state, yvex_error *err)
 {
     const yvex_runtime_av_generation_request *request = state->request;
     component_view *view = &state->model->audio;
+    const yvex_complete_artifact_admission *admission =
+        state->model->admissions + MEDIA_COMPONENT_AUDIO;
+    yvex_runtime_component_session *session = NULL;
+    yvex_component_execution component = {0};
     yvex_runtime_av_audio_decode_options options = {0};
     yvex_component_execution_failure failure = {0};
     unsigned long long expected_samples;
-    int rc;
+    yvex_error cleanup;
+    int rc, cleanup_rc;
     if (!yvex_core_u64_mul(request->audio_output_channels,
                            state->plan.audio_latent_steps, &state->pcm_values) ||
         !yvex_core_u64_mul(state->pcm_values, request->audio_samples_per_step,
@@ -1536,9 +1554,18 @@ static int audio_execute(generation_state *state, yvex_error *err)
     options.cancelled = request->cancel_requested;
     options.cancellation_context = request->cancel_context;
     if (rc == YVEX_OK)
+        rc = yvex_runtime_component_session_open(
+            &session, admission, view->artifact, view->gguf, view->tensors,
+            request->component_backend, request->maximum_host_bytes,
+            request->maximum_device_bytes, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_component_session_borrow(session, &component, err);
+    if (rc == YVEX_OK)
         rc = request->audio_decode(
-            view->artifact, view->gguf, view->tensors, request->component_backend, &options,
-            request->maximum_device_bytes, &state->audio_result, &failure, err);
+            &component, &options, &state->audio_result, &failure, err);
+    yvex_error_clear(&cleanup);
+    cleanup_rc = yvex_runtime_component_session_close(&session, &cleanup);
+    if (cleanup_rc != YVEX_OK) { rc = cleanup_rc; if (err) *err = cleanup; }
     if (rc == YVEX_OK &&
         !yvex_core_u64_mul(state->plan.audio_latent_steps,
                            request->audio_samples_per_step, &expected_samples))

@@ -303,9 +303,12 @@ src/model/families/minimax_h3.c'
 if rg -n -i '(families/|deepseek|minimax|qwen)' src/backend/cuda/text_encoder.c; then
     fail "generic CUDA text execution contains concrete family semantics"
 fi
-if rg -n 'yvex_runtime_component_session_(open|close)|yvex_runtime_component_text_artifact_execute' \
+if rg -n 'yvex_runtime_component_session|yvex_runtime_component_text_artifact_execute|yvex_materialization_session_(open|commit|close)|yvex_artifact_(open|close)' \
     src/backend; then
-    fail "a backend owns component admission or runtime session lifecycle"
+    fail "a backend imports artifact admission or component-session lifecycle ownership"
+fi
+if rg -n '#include[[:space:]]+[<"]yvex/internal/families/' src/cli; then
+    fail "the CLI bypasses generic application adapters for one model family"
 fi
 if rg -n 'yvex_cuda_|yvex_backend_text_(embedding|encoder)_execute|yvex_backend_transformer_joint_cuda|yvex_backend_alias_decoder_execute' \
     src/graph/families/minimax_h3.c; then
@@ -316,10 +319,10 @@ if rg -n '"yvex[.][^"]*[.](cuda|cpu)[.-]' src/graph/families/minimax_h3.c; then
 fi
 rg -n 'yvex_runtime_component_text_artifact_execute' src/graph/families/minimax_h3.c >/dev/null ||
     fail "MiniMax text recipe bypasses the generic component lifecycle"
-rg -n 'yvex_runtime_component_joint_transformer_execute' \
+rg -n 'yvex_component_joint_transformer_execute' \
     src/graph/families/minimax_h3.c >/dev/null ||
     fail "MiniMax joint Transformer bypasses generic resident binding and dispatch"
-rg -n 'yvex_runtime_component_alias_decoder_execute' \
+rg -n 'yvex_component_alias_decoder_execute' \
     src/graph/families/minimax_h3.c >/dev/null ||
     fail "MiniMax audio decoder bypasses generic resident binding and dispatch"
 if rg -n 'yvex_cuda_|yvex_backend_text_(embedding|encoder)_execute|yvex_backend_transformer_joint_cuda|yvex_backend_alias_decoder_execute' \

@@ -15,6 +15,7 @@
 
 typedef struct {
     yvex_runtime_component_session *session;
+    yvex_component_execution component;
     yvex_component_execution_failure failure;
 } reconstruction_context;
 
@@ -38,7 +39,7 @@ static int reconstruction_decode(
     options.output_capacity = window->output_capacity;
     options.max_workspace_bytes = 256ull * 1024ull * 1024ull;
     rc = yvex_graph_register_minimax_h3()->video_vae_decode_backend(
-        context->session, &options, &result, &context->failure, err);
+        &context->component, &options, &result, &context->failure, err);
     if (rc == YVEX_OK) {
         memset(evidence, 0, sizeof(*evidence));
         evidence->output_values = result.output_values;
@@ -199,6 +200,7 @@ static int keyframe_encode(
     yvex_artifact_admission_failure failure = {0};
     yvex_complete_artifact_admission admission;
     yvex_runtime_component_session *session = NULL;
+    yvex_component_execution component = {0};
     yvex_runtime_av_keyframe_result result;
     yvex_media_condition condition = {
         .schema_version = YVEX_MEDIA_CONDITION_SCHEMA_V1,
@@ -230,6 +232,8 @@ static int keyframe_encode(
         rc = yvex_runtime_component_session_open(
             &session, &admission, artifact, gguf, tensors, YVEX_BACKEND_KIND_CUDA,
             admission.payload_bytes, 16ull * 1024ull * 1024ull * 1024ull, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_component_session_borrow(session, &component, err);
     request = (yvex_media_keyframe_request){
         .schema_version = YVEX_MEDIA_CONDITIONING_SCHEMA_V2,
         .conditions = &condition,
@@ -244,7 +248,7 @@ static int keyframe_encode(
         .latent_std = normalization->video_std,
         .pixel_channels = normalization->pixel_channels,
         .latent_channels = normalization->video_channels,
-        .video_session = session,
+        .video_component = &component,
         .condition_latents = output,
         .condition_latent_capacity = values,
         .observe = moments_path ? posterior_observe : NULL,
@@ -399,6 +403,9 @@ int main(int argc, char **argv)
             rc = yvex_runtime_component_session_open(
                 &context.session, &component, artifact, gguf, tensors, YVEX_BACKEND_KIND_CUDA,
                 component.payload_bytes, 16ull * 1024ull * 1024ull * 1024ull, &err);
+        if (rc == YVEX_OK)
+            rc = yvex_runtime_component_session_borrow(
+                context.session, &context.component, &err);
         execution.schema_version = YVEX_RUNTIME_AV_VIDEO_RECONSTRUCTION_SCHEMA_V1;
         execution.plan = &plan; execution.latent = latent;
         execution.latent_channels = 24ull; execution.latent_capacity = latent_values;
@@ -437,6 +444,7 @@ int main(int argc, char **argv)
         yvex_runtime_av_video_decode_result result;
         yvex_component_execution_failure execution_failure;
         yvex_runtime_component_session *session = NULL;
+        yvex_component_execution component_execution = {0};
         unsigned long long patches = frames * height * width;
         size_t latent_values = (size_t)(patches * 24ull);
         size_t output_values = (size_t)(patches * 3072ull);
@@ -469,13 +477,16 @@ int main(int argc, char **argv)
                 cuda ? YVEX_BACKEND_KIND_CUDA : YVEX_BACKEND_KIND_CPU,
                 admission.payload_bytes,
                 cuda ? 16ull * 1024ull * 1024ull * 1024ull : 0ull, &err);
+        if (rc == YVEX_OK)
+            rc = yvex_runtime_component_session_borrow(
+                session, &component_execution, &err);
         if (rc == YVEX_OK && !cuda)
             rc = yvex_graph_register_minimax_h3()->video_vae_decode_cpu(
-                yvex_runtime_component_session_materialization(session), &decode_options,
+                component_execution.materialization, &decode_options,
                 &result, &execution_failure, &err);
         if (rc == YVEX_OK && cuda)
             rc = yvex_graph_register_minimax_h3()->video_vae_decode_backend(
-                session, &decode_options, &result, &execution_failure, &err);
+                &component_execution, &decode_options, &result, &execution_failure, &err);
         if (rc != YVEX_OK) {
             fprintf(stderr,
                     "video_vae_decode=refused code=%d tensor=%s expected=%llu actual=%llu "

@@ -32,6 +32,24 @@ typedef struct yvex_component_encoded_weight {
     unsigned int qtype;
 } yvex_component_encoded_weight;
 
+/* A runtime-owned component session lends this view for one synchronous family/backend
+ * callback. The receiver may execute admitted operations but cannot retain the view or
+ * acquire, invalidate, or release the underlying runtime resources. */
+#define YVEX_COMPONENT_EXECUTION_SCHEMA_V1 1u
+typedef int (*yvex_component_weight_view_fn)(
+    void *, const char *, yvex_component_encoded_weight *, yvex_error *);
+typedef int (*yvex_component_workspace_reserve_fn)(void *, unsigned long long, yvex_error *);
+typedef struct yvex_component_execution {
+    unsigned int schema_version;
+    yvex_materialization_session *materialization;
+    yvex_backend *backend;
+    char residency_identity[YVEX_SHA256_HEX_CAP];
+    unsigned long long resident_encoded_bytes;
+    void *owner_context;
+    yvex_component_weight_view_fn weight_view;
+    yvex_component_workspace_reserve_fn workspace_reserve;
+} yvex_component_execution;
+
 typedef enum {
     YVEX_BACKEND_TEXT_EMBEDDING = 0,
     YVEX_BACKEND_TEXT_INPUT_NORM,
@@ -228,7 +246,7 @@ typedef struct yvex_runtime_av_video_decode_result {
 } yvex_runtime_av_video_decode_result;
 
 typedef struct yvex_runtime_av_latent_context {
-    yvex_runtime_component_session *transformer_session;
+    const yvex_component_execution *transformer_component;
     const float *conditioning;
     unsigned long long conditioning_capacity;
     const float *condition_latents;
@@ -264,29 +282,22 @@ int yvex_runtime_component_session_open(
     const yvex_artifact *, const yvex_gguf *, const yvex_tensor_table *, yvex_backend_kind,
     unsigned long long, unsigned long long, yvex_error *);
 int yvex_runtime_component_session_close(yvex_runtime_component_session **, yvex_error *);
-/* Execute against a sealed borrowed session; the caller retains lifecycle ownership. */
-int yvex_runtime_component_text_execute(
-    const yvex_runtime_component_session *, const yvex_component_text_request *,
+int yvex_runtime_component_session_borrow(
+    yvex_runtime_component_session *, yvex_component_execution *, yvex_error *);
+int yvex_component_execution_weight_view(
+    const yvex_component_execution *, const char *, yvex_component_encoded_weight *,
+    yvex_error *);
+int yvex_component_text_execute(
+    const yvex_component_execution *, const yvex_component_text_request *,
     yvex_runtime_av_conditioning_result *, yvex_error *);
 int yvex_runtime_component_text_artifact_execute(
     const yvex_complete_artifact_admission *, const yvex_artifact *, const yvex_gguf *,
     const yvex_tensor_table *, yvex_backend_kind, const yvex_component_text_request *,
     yvex_runtime_av_conditioning_result *, yvex_error *);
-int yvex_runtime_component_joint_transformer_execute(
-    yvex_runtime_component_session *, const char *const *, unsigned long long,
+int yvex_component_joint_transformer_execute(
+    const yvex_component_execution *, const char *const *, unsigned long long,
     yvex_component_joint_weight_name_fn, void *, const yvex_transformer_joint_request *,
     yvex_transformer_joint_result *, yvex_error *);
-yvex_materialization_session *yvex_runtime_component_session_materialization(
-    const yvex_runtime_component_session *);
-/* Family composition may inspect already-admitted resident weights, but it cannot own
- * residency or reopen artifact bytes through this view. */
-int yvex_runtime_component_weight_view(
-    const yvex_runtime_component_session *, const char *,
-    yvex_component_encoded_weight *, yvex_error *);
-yvex_backend *yvex_runtime_component_session_backend(
-    const yvex_runtime_component_session *);
-const yvex_runtime_residency_summary *yvex_runtime_component_session_summary(
-    const yvex_runtime_component_session *);
 
 #ifdef __cplusplus
 }
